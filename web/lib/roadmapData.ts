@@ -43,6 +43,20 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'aa-faction-accuracy',
+    title: 'AA lists cleaned up + faction page tells the truth',
+    version: 'Web 1.0.196 · Bot 3.0.157',
+    date: '2026-07-09',
+    headline: 'Your Gear page no longer shows AAs you can’t have, and the faction page stops claiming you’re at max and min at the same time.',
+    features: [
+      { name: 'Conned mobs show their faction', blurb: 'The faction page’s consider table now resolves each mob to its faction (with a PQDI link) — the lookup was reading an empty mirror table, so the column never appeared.' },
+    ],
+    fixes: [
+      'The Quarmy export writes junk AA rows for some slots (a monk showing Jewelcraft Mastery rank 255, Elemental Form…). Those are now rejected at upload, filtered from the Gear page, and 285 bad rows across 112 characters were purged — everyone’s AA list is real now.',
+      'A faction can’t be at max and min at once: the Position column now shows the most recent signal (“raise capped” / “at floor”) with the older one in the hover — and the wording reflects what the server actually says: the kills you’re doing can’t push it further, which isn’t necessarily ally.',
+    ],
+  },
+  {
     key: 'mana-macro-reports',
     title: 'Mana list hears your macros',
     version: 'Web 1.0.192 · Bot 3.0.155',

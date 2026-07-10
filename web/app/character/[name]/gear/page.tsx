@@ -295,7 +295,21 @@ export default async function CharacterGearPage({ params }: { params: Promise<{ 
   const aaByMac = new Map<number, AaCat>();
   for (const a of aaCatalog) if (!aaByMac.has(a.eqmacid)) aaByMac.set(a.eqmacid, a);
   const classBit = char?.class ? 1 << (CLASS_ID[String(char.class).toLowerCase()] ?? 0) : 0;
-  const trainedIdx = new Set(aas.map(a => a.aa_index));
+  // Quarmy's exporter writes JUNK rows for some AA indices — rank-255
+  // sentinels and stray bytes (Hitya the monk carried "Jewelcraft Mastery
+  // r255" and "Elemental Form: Fire r79", 2026-07-09). A trained row only
+  // renders when it's plausible: a catalog entry exists, the rank fits the
+  // catalog's max_level, and the character's class can actually train it.
+  // Bot 3.0.157 rejects these at ingest too — this filter covers rows stored
+  // before that.
+  const validAas = aas.filter(a => {
+    const cat = aaByMac.get(a.aa_index);
+    if (!cat) return false;
+    if (cat.max_level != null && cat.max_level > 0 && a.rank > cat.max_level) return false;
+    if (classBit > 1 && cat.classes != null && cat.classes !== 0 && (cat.classes & classBit) === 0) return false;
+    return true;
+  });
+  const trainedIdx = new Set(validAas.map(a => a.aa_index));
   // Live era = Luclin (aa_expansion <= 3). PoP AAs surface as a count only
   // until the 2026-10-01 unlock.
   const availableNow = classBit > 1
@@ -307,8 +321,8 @@ export default async function CharacterGearPage({ params }: { params: Promise<{ 
   const popCount = classBit > 1
     ? aaCatalog.filter(a => a.aa_expansion === 4 && ((a.classes ?? 0) & classBit) !== 0).length
     : 0;
-  const trainedRanks = aas.reduce((s, a) => s + a.rank, 0);
-  const spentPoints = aas.reduce((s, a) => {
+  const trainedRanks = validAas.reduce((s, a) => s + a.rank, 0);
+  const spentPoints = validAas.reduce((s, a) => {
     const cat = aaByMac.get(a.aa_index);
     // cost = first-rank cost; later ranks step by cost_inc which we don't
     // mirror — cost × ranks is the right floor for Luclin-era flat-cost AAs.
@@ -502,13 +516,13 @@ export default async function CharacterGearPage({ params }: { params: Promise<{ 
 
           <section className="bg-panel border border-border rounded-lg p-4">
             <h3 className="text-sm text-orange mb-2">
-              AAs — {aas.length} trained ({trainedRanks} ranks{spentPoints > 0 ? `, ≥${spentPoints} points spent` : ''})
+              AAs — {validAas.length} trained ({trainedRanks} ranks{spentPoints > 0 ? `, ≥${spentPoints} points spent` : ''})
             </h3>
-            {aas.length === 0 ? (
+            {validAas.length === 0 ? (
               <p className="text-xs text-dim">No AA data in the export yet.</p>
             ) : (
               <div className="flex flex-wrap gap-2 text-xs">
-                {aas.map(a => {
+                {validAas.map(a => {
                   const cat = aaByMac.get(a.aa_index);
                   const maxed = cat?.max_level != null && a.rank >= cat.max_level;
                   return (
@@ -546,7 +560,7 @@ export default async function CharacterGearPage({ params }: { params: Promise<{ 
                 +{popCount} more {char?.class} AAs arrive with PoP (locked until Oct 1).
               </p>
             )}
-            {classBit <= 1 && aas.length > 0 && (
+            {classBit <= 1 && validAas.length > 0 && (
               <p className="text-xs text-dim mt-3">
                 Class unknown — can&apos;t compute the available-to-train list. The roster sync fills
                 class in within a few hours of the next OpenDKP pull.

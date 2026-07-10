@@ -134,8 +134,13 @@ async function load(decoded: string) {
     const factionIds = [...new Set([...primaryByNpcFaction.values()])];
     const factionNameById = new Map<number, string>();
     if (factionIds.length > 0) {
-      const { data } = await sb.from('eqemu_faction_list').select('id, name').in('id', factionIds);
-      for (const r of ((data ?? []) as { id: number; name: string }[])) factionNameById.set(r.id, r.name);
+      // eqemu_faction_list_full — NOT eqemu_faction_list, which is empty in
+      // our mirror (0 rows; the _full variant carries all 2,123 factions and
+      // covers every npc_faction.primaryfaction). Reading the empty table
+      // meant no con ever resolved a faction name, so the cons table's
+      // Faction column never rendered (Uilnayar 2026-07-09).
+      const { data } = await sb.from('eqemu_faction_list_full').select('id, name').in('id', factionIds);
+      for (const r of ((data ?? []) as { id: number; name: string }[])) if (r.name) factionNameById.set(r.id, r.name);
     }
     for (const name of conNames) {
       const npc = npcByName.get(toUnder(name).toLowerCase());
@@ -272,8 +277,10 @@ export default async function CharacterFactionsPage({ params }: { params: Promis
           Classic logs don&apos;t print point values — counts below are <b>hits</b>, not points; cross-reference
           per-mob and per-quest magnitudes on{' '}
           <a href="https://www.pqdi.cc/factions" target="_blank" rel="noreferrer" className="text-blue hover:underline">PQDI&apos;s faction pages</a>.
-          An <span className="text-gold">at-cap</span> flag means the server said standing could not possibly get any
-          better/worse — that pins the absolute position. Re-running the agent over old logs backfills history.
+          A <span className="text-gold">raise capped</span> / <span className="text-red">at floor</span> flag means the
+          server said standing could not possibly get any better/worse from the kills being done — that pins your
+          position against <i>that activity&apos;s</i> ceiling or floor (hover for dates). Re-running the agent over old
+          logs backfills history.
         </p>
       </section>
 
@@ -352,10 +359,27 @@ export default async function CharacterFactionsPage({ params }: { params: Promis
                         <td className="py-1.5 pr-3 text-right text-green" title={betterHead.tip}>{betterHead.val}</td>
                         <td className="py-1.5 pr-3 text-right text-red"   title={worseHead.tip}>{worseHead.val}</td>
                         <td className="py-1.5 pr-3">
-                          {f.capped_max_at && <span className="text-gold text-xs" title={`hit the max cap ${fmtDate(f.capped_max_at)}`}>▲ at max cap</span>}
-                          {f.capped_max_at && f.capped_min_at && <span className="text-dim text-xs"> · </span>}
-                          {f.capped_min_at && <span className="text-red text-xs" title={`hit the min cap ${fmtDate(f.capped_min_at)}`}>▼ at min cap</span>}
-                          {!f.capped_max_at && !f.capped_min_at && <span className="text-dim text-xs">—</span>}
+                          {(() => {
+                            // A position can't be at both caps — when both
+                            // stamps exist (Bardtholemu's Seru rows: floored
+                            // Jun 26 grinding Katta, then raise-capped Jul 6
+                            // re-raising), the MOST RECENT signal is the
+                            // current state and the older one is history.
+                            // Note the server's cap lines are EVENT-relative:
+                            // "could not possibly get any better" means the
+                            // kills being done can't push it further (their
+                            // ceiling), not necessarily ally/max.
+                            const maxMs = f.capped_max_at ? Date.parse(f.capped_max_at) : null;
+                            const minMs = f.capped_min_at ? Date.parse(f.capped_min_at) : null;
+                            if (maxMs == null && minMs == null) return <span className="text-dim text-xs">—</span>;
+                            const showMax = maxMs != null && (minMs == null || maxMs >= minMs);
+                            const older = showMax
+                              ? (minMs != null ? ` — was at the floor ${fmtDate(f.capped_min_at!)}` : '')
+                              : (maxMs != null ? ` — was raise-capped ${fmtDate(f.capped_max_at!)}` : '');
+                            return showMax
+                              ? <span className="text-gold text-xs" title={`${fmtDate(f.capped_max_at!)}: the server said this couldn't get any better from the kills being done (their raise ceiling — not necessarily ally)${older}`}>▲ raise capped</span>
+                              : <span className="text-red text-xs" title={`${fmtDate(f.capped_min_at!)}: the server said this couldn't get any worse from the kills being done${older}`}>▼ at floor</span>;
+                          })()}
                         </td>
                         <td className="py-1.5 text-dim text-xs">
                           {fmtDate(f.last_hit_at)}

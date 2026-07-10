@@ -5759,6 +5759,29 @@ async function _handleAgentPopFlags(req, res) {
 // anything for a character whose owner set exclude_inventory on /me.
 // Latest-state overwrite: each upload replaces the character's rows.
 const _QUARMY_BANNED_SLOT_RX = /^(bank|sharedbank)|coin/i;
+// AA-catalog memo for ingest validation (eqmacid → { max_level, classes }).
+// Quarmy's in-game exporter writes JUNK AA rows for some indices — rank-255
+// sentinels and stray bytes (Hitya the monk uploaded "Jewelcraft Mastery
+// r255", "Elemental Form: Fire r79", bard-only "Fleet of Foot", 2026-07-09).
+// A row is only stored when the catalog knows the index, the rank fits
+// max_level, and the character's class can actually train it.
+const _AA_CLASS_BIT = {
+  warrior: 1, cleric: 2, paladin: 3, ranger: 4, 'shadow knight': 5, shadowknight: 5,
+  druid: 6, monk: 7, bard: 8, rogue: 9, shaman: 10, necromancer: 11,
+  wizard: 12, magician: 13, mage: 13, enchanter: 14,
+};
+let _aaCatalogCache = { at: 0, byId: null };
+async function _aaCatalogById(supabase) {
+  if (_aaCatalogCache.byId && (Date.now() - _aaCatalogCache.at) < 6 * 60 * 60 * 1000) return _aaCatalogCache.byId;
+  const rows = await supabase
+    .select('eqemu_altadv_vars', 'select=eqmacid,max_level,classes&limit=2000')
+    .catch(() => null);
+  if (!Array.isArray(rows) || rows.length === 0) return _aaCatalogCache.byId;   // keep stale on failure
+  const byId = new Map();
+  for (const r of rows) if (r && r.eqmacid != null) byId.set(Number(r.eqmacid), r);
+  _aaCatalogCache = { at: Date.now(), byId };
+  return byId;
+}
 async function _handleAgentQuarmy(req, res) {
   const identity = await mimicLink.requireAgentAuth(req, res);
   if (!identity) return;
@@ -5785,7 +5808,7 @@ async function _handleAgentQuarmy(req, res) {
   // Owner opt-out is enforced server-side too — a stale agent that missed the
   // prefs poll cannot write an excluded character's gear.
   const charRows = await supabase
-    .select('characters', `select=name,exclude_inventory,quarmy_checksum&guild_id=eq.${encodeURIComponent(guildId)}&name=ilike.${encodeURIComponent(character)}&limit=1`)
+    .select('characters', `select=name,class,exclude_inventory,quarmy_checksum&guild_id=eq.${encodeURIComponent(guildId)}&name=ilike.${encodeURIComponent(character)}&limit=1`)
     .catch(() => null);
   const charRow = Array.isArray(charRows) ? charRows[0] : null;
   if (charRow && charRow.exclude_inventory) {
@@ -5817,10 +5840,26 @@ async function _handleAgentQuarmy(req, res) {
     const r = cleanItem(e, 'bag'); if (r) gearRows.push(r);
   }
   const aaRows = [];
-  for (const a of Array.isArray(payload.aas) ? payload.aas : []) {
-    const idx = parseInt(a?.index, 10), rank = parseInt(a?.rank, 10);
-    if (!Number.isFinite(idx) || !Number.isFinite(rank) || rank <= 0) continue;
-    aaRows.push({ guild_id: guildId, character, aa_index: idx, rank, updated_at: new Date().toISOString() });
+  {
+    const catalog = await _aaCatalogById(supabase);
+    const classId = charRow?.class ? (_AA_CLASS_BIT[String(charRow.class).toLowerCase().trim()] ?? null) : null;
+    const classBit = classId != null ? (1 << classId) : 0;
+    let junk = 0;
+    for (const a of Array.isArray(payload.aas) ? payload.aas : []) {
+      const idx = parseInt(a?.index, 10), rank = parseInt(a?.rank, 10);
+      if (!Number.isFinite(idx) || !Number.isFinite(rank) || rank <= 0) continue;
+      // Plausibility gates (see _aaCatalogById comment). When the catalog is
+      // unavailable we fall back to a bare numeric ceiling so a Supabase blip
+      // can't let rank-255 sentinels back in.
+      const cat = catalog ? catalog.get(idx) : null;
+      if (catalog && !cat) { junk++; continue; }                              // index the catalog doesn't know
+      const maxL = cat && Number.isFinite(Number(cat.max_level)) ? Number(cat.max_level) : 0;
+      if (maxL > 0 ? rank > maxL : rank > 10) { junk++; continue; }           // rank-255 sentinels / stray bytes
+      const clsMask = cat && cat.classes != null ? Number(cat.classes) : 0;
+      if (classBit > 1 && clsMask > 0 && (clsMask & classBit) === 0) { junk++; continue; }   // class can't train it
+      aaRows.push({ guild_id: guildId, character, aa_index: idx, rank, updated_at: new Date().toISOString() });
+    }
+    if (junk > 0) console.log(`[quarmy] ${character}: dropped ${junk} implausible AA row(s) from the export`);
   }
 
   // Replace wholesale — delete-then-insert handles unequipped slots, emptied

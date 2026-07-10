@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.0.157': [
+    '**AA lists cleaned up + honest faction flags.** The in-game Quarmy export writes junk AA rows for some slots (a monk "with" Jewelcraft Mastery rank 255 or Elemental Form) — those are now rejected at upload and **285 bad rows across 112 characters were purged**, so the Gear page shows only AAs your class can actually train. The faction page also stops showing "at max cap · at min cap" together: the Position column now shows the most recent signal ("raise capped" / "at floor"), and the consider table finally shows each conned mob\'s **faction** with a PQDI link.',
+  ],
   '3.0.155': [
     '**Raid mana at a glance + Twitch Queue.** The wolfpack.quest/raid sidebar now shows **everyone\'s mana** and a **⚡ Twitch Queue** (lowest-mana casters up top — Wizards and Enchanters first, then Clerics, then the rest). It fills from TWO sources: casters running Mimic report exact mana straight off their client, and everyone else is covered by the **"% mana" macros** healers already call in raid chat — if any one Mimic user hears the call-out, it lands on the board. Readings persist through the whole fight. Also: Quarm\'s **PoP-beta buffs now rank above the era tops** (Beta Virtue fills the Aego slots instead of reading as "missing HP buff"), and the phantom "Kneel Test" debuff is gone from the target panel.',
   ],
