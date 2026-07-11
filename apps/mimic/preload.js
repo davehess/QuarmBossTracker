@@ -104,6 +104,9 @@ function _buildOverlayMenu(onClose, state) {
     'display:flex', 'flex-direction:column', 'gap:2px',
     'font-family:ui-monospace,Menlo,Consolas,monospace',
     'min-width:180px', 'box-shadow:0 4px 12px rgba(0,0,0,0.6)',
+    // Belt-and-braces vs clipping: if the window can't grow to fit (tiny
+    // display, or a resize raced us), the menu scrolls instead of cutting off.
+    'max-height:calc(100vh - 40px)', 'overflow-y:auto',
   ].join(';');
   const mkItem = (label, accent, onClick) => {
     const b = document.createElement('button');
@@ -128,6 +131,10 @@ function _buildOverlayMenu(onClose, state) {
   menu.appendChild(mkItem('👁 Hide this overlay', '#6b2130', () => ipcRenderer.invoke('hide-overlay')));
   menu.appendChild(mkItem('🌫 Background: ' + (st.backdrop ? 'ON' : 'off') + ' (this overlay)', '#3a3320',
     () => ipcRenderer.invoke('wp-backdrop-toggle')));
+  // Bottom-anchored auto-height — for overlays parked near the bottom edge
+  // (Extended Target etc.): the list grows UP instead of running off-screen.
+  menu.appendChild(mkItem('⬆ Grow upward: ' + (st.growUp ? 'ON' : 'off') + ' (this overlay)', '#20374a',
+    () => ipcRenderer.invoke('wp-growup-toggle')));
   menu.appendChild(mkItem('✨ Auto-arrange overlays', '#20503a',
     () => ipcRenderer.invoke('auto-arrange-overlays')));
   menu.appendChild(mkItem('✨ Arrange when overlays open: ' + (st.arrangeOnShow ? 'ON' : 'off'), '#20503a',
@@ -144,11 +151,24 @@ function _buildOverlayMenu(onClose, state) {
   return menu;
 }
 
+// Chrome-menu open state. While the menu is open, the page's auto-fit calls
+// are SUPPRESSED — overlays that re-fit every poll tick (Target Info, CH
+// chain, /who…) were shrinking the window right back down while the menu was
+// still open, clipping it to the first two items (Uilnayar 2026-07-11). The
+// deferred fit runs once on close so the window snaps back to content size.
+let _wpMenuOpen = false;
+let _wpMenuCleanupFn = null;
+let _wpMenuSuppressedFit = null;   // wrap element from a suppressed fit
+let _wpPageUsesAutoFit = false;    // page opted into auto-height at least once
+
 function _attachOverlayMenu(moveBtn) {
   if (!moveBtn || moveBtn._wpMenuAttached) return;
   moveBtn._wpMenuAttached = true;
   moveBtn.addEventListener('contextmenu', function(ev) {
     ev.preventDefault();
+    // Block auto-fit BEFORE growing — a poll tick between grow and open was
+    // the race that re-shrunk the window under the menu.
+    _wpMenuOpen = true;
     // Grow window first so the menu doesn't clip on tiny overlays. Menu is
     // ~380 px tall (11 items + paddings + divider); 420 leaves a buffer.
     try { ipcRenderer.invoke('overlay-ensure-min-height', 420); } catch (e) {}
@@ -161,18 +181,46 @@ function _attachOverlayMenu(moveBtn) {
 }
 
 function _openOverlayMenu(state) {
-  const menu = _buildOverlayMenu(_hoverOff, state);
+  // Re-open while one is up: tear the old one down cleanly first.
+  if (_wpMenuCleanupFn) { try { _wpMenuCleanupFn(); } catch (e) {} }
+  _wpMenuOpen = true;
+  let closed = false;
+  let idleTimer = null;
+  const IDLE_MS = 4000;   // click-through clicks land in EQ, not on us — the
+                          // idle timer is the "clicked something else" fallback
+  const cleanup = function() {
+    if (closed) return; closed = true;
+    _wpMenuCleanupFn = null;
+    _wpMenuOpen = false;
+    try { if (idleTimer) clearTimeout(idleTimer); } catch (e) {}
+    try { document.removeEventListener('mousedown', onDown, true); } catch (e) {}
+    try { document.removeEventListener('keydown', onKey, true); } catch (e) {}
+    try { window.removeEventListener('blur', onBlur); } catch (e) {}
+    try { if (menu.parentNode) menu.remove(); } catch (e) {}
+    _hoverOff();
+    // Give the window its height back — ensure-min-height grew it and fits
+    // were suppressed while open. Only for pages that use auto-height.
+    if (_wpPageUsesAutoFit) { try { _autoFitOverlay(_wpMenuSuppressedFit || undefined); } catch (e) {} }
+    _wpMenuSuppressedFit = null;
+  };
+  const menu = _buildOverlayMenu(cleanup, state);
+  _wpMenuCleanupFn = cleanup;
   _hoverOn();
-  // Dismiss on outside click. Defer so the click that opened the menu
-  // doesn't immediately close it on the same event loop tick.
+  // Idle auto-close: arms on open and whenever the cursor leaves the menu;
+  // hovering it keeps it alive indefinitely.
+  const armIdle = function() { if (idleTimer) clearTimeout(idleTimer); idleTimer = setTimeout(cleanup, IDLE_MS); };
+  menu.addEventListener('mouseenter', function() { if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; } });
+  menu.addEventListener('mouseleave', armIdle);
+  armIdle();
+  const onDown = function(e) { if (!menu.contains(e.target)) cleanup(); };
+  const onKey  = function(e) { if (e.key === 'Escape') cleanup(); };
+  const onBlur = function() { cleanup(); };
+  // Defer so the click that opened the menu doesn't immediately close it.
   setTimeout(function() {
-    document.addEventListener('mousedown', function closer(e) {
-      if (!menu.contains(e.target)) {
-        menu.remove();
-        document.removeEventListener('mousedown', closer);
-        _hoverOff();
-      }
-    });
+    if (closed) return;
+    document.addEventListener('mousedown', onDown, true);
+    document.addEventListener('keydown', onKey, true);
+    window.addEventListener('blur', onBlur);
   }, 0);
 }
 
@@ -182,6 +230,9 @@ function _openOverlayMenu(state) {
 // the last card isn't flush against the window edge.
 function _autoFitOverlay(wrapEl) {
   try {
+    _wpPageUsesAutoFit = true;
+    // Chrome menu open → defer; the menu's close handler replays the fit.
+    if (_wpMenuOpen) { _wpMenuSuppressedFit = wrapEl || null; return; }
     const w = wrapEl || document.getElementById('wrap') || document.body;
     if (!w) return;
     const h = (w.scrollHeight || 0) + 12;

@@ -2493,40 +2493,66 @@ function _autoArrangeOverlays() {
   const occupied = [];
   if (ui) for (const r of ui.rects) occupied.push({ x: r.x - MARGIN, y: r.y - MARGIN, w: r.w + MARGIN * 2, h: r.h + MARGIN * 2 });
   const overlaps = (a, b) => a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
-  const fits = (rect) =>
-    rect.x >= area.x && rect.y >= area.y
-    && rect.x + rect.w <= area.x + area.width && rect.y + rect.h <= area.y + area.height
-    && !occupied.some(o => overlaps(rect, o));
+  // Perimeter rule (Uilnayar 2026-07-11 — "they should stay out of the center
+  // of the screen for the most part, lining the outside"): the middle ~52% of
+  // the display is the play view and is a soft no-go zone. Pass 1 blocks it,
+  // which fills the right column → top/bottom bands → left column; pass 2
+  // (per overlay, only when NOTHING fits on the perimeter at any width)
+  // allows it rather than stranding the overlay.
+  const czW = Math.round(area.width * 0.52), czH = Math.round(area.height * 0.52);
+  const centerZone = {
+    x: area.x + Math.round((area.width - czW) / 2),
+    y: area.y + Math.round((area.height - czH) / 2),
+    w: czW, h: czH,
+  };
+  // Every candidate's CURRENT rect blocks placement until that overlay is
+  // itself moved — placing A onto B's spot while B ends up skipped was the
+  // "overlays in contention" pile-up. Skipped overlays keep their block.
+  const pendingCur = new Map();
+  const pad = (b) => ({ x: b.x - MARGIN, y: b.y - MARGIN, w: b.width + MARGIN * 2, h: b.height + MARGIN * 2 });
+  const fits = (rect, blockCenter, selfKey) => {
+    if (rect.x < area.x || rect.y < area.y
+      || rect.x + rect.w > area.x + area.width || rect.y + rect.h > area.y + area.height) return false;
+    if (blockCenter && overlaps(rect, centerZone)) return false;
+    if (occupied.some(o => overlaps(rect, o))) return false;
+    for (const [k, r] of pendingCur) if (k !== selfKey && overlaps(rect, r)) return false;
+    return true;
+  };
   // Visible overlays, biggest first (big ones need the scarce large gaps).
   const wins = _overlayEntries()
     .filter(([, w]) => { try { return w.isVisible(); } catch { return false; } })
     .map(([key, win]) => ({ key, win, b: win.getBounds() }))
     .sort((a, b) => (b.b.width * b.b.height) - (a.b.width * a.b.height));
+  for (const o of wins) pendingCur.set(o.key, pad(o.b));
   let placed = 0, skipped = 0;
   for (const o of wins) {
     // Shrink-only preset ladder: try the current width, then narrower presets
     // ("auto-resize" — a too-wide overlay steps down until it fits somewhere).
     const ladder = [...new Set([o.b.width, 400, 320, 260, 200])].filter(w => w <= o.b.width || w === 200).sort((a, b) => b - a);
     let done = false;
-    for (const w of ladder) {
-      const h = o.b.height;   // height re-fits to content via overlayAutoHeight
-      let spot = null;
-      // Right edge first, then sweep left — keeps the EQ center clear and
-      // matches how raiders park overlays today.
-      outer:
-      for (let x = area.x + area.width - w; x >= area.x; x -= STEP) {
-        for (let y = area.y; y + h <= area.y + area.height; y += STEP) {
-          const rect = { x, y, w, h };
-          if (fits(rect)) { spot = rect; break outer; }
+    for (const blockCenter of [true, false]) {
+      for (const w of ladder) {
+        const h = o.b.height;   // height re-fits to content via overlayAutoHeight
+        let spot = null;
+        // Right edge first, then sweep left — keeps the EQ center clear and
+        // matches how raiders park overlays today.
+        outer:
+        for (let x = area.x + area.width - w; x >= area.x; x -= STEP) {
+          for (let y = area.y; y + h <= area.y + area.height; y += STEP) {
+            const rect = { x, y, w, h };
+            if (fits(rect, blockCenter, o.key)) { spot = rect; break outer; }
+          }
+        }
+        if (spot) {
+          try { o.win.setBounds({ x: spot.x, y: spot.y, width: w, height: h }); } catch {}
+          pendingCur.delete(o.key);
+          occupied.push({ x: spot.x - MARGIN, y: spot.y - MARGIN, w: w + MARGIN * 2, h: h + MARGIN * 2 });
+          placed++; done = true; break;
         }
       }
-      if (spot) {
-        try { o.win.setBounds({ x: spot.x, y: spot.y, width: w, height: h }); } catch {}
-        occupied.push({ x: spot.x - MARGIN, y: spot.y - MARGIN, w: w + MARGIN * 2, h: h + MARGIN * 2 });
-        placed++; done = true; break;
-      }
+      if (done) break;
     }
-    if (!done) skipped++;   // left where it was — no clear spot at any width
+    if (!done) skipped++;   // left where it was — its pendingCur rect keeps blocking
   }
   const summary = { placed, skipped, uiWindows: ui ? ui.rects.length : 0, uiFile: ui ? path.basename(ui.file) : null, resolution: ui ? ui.resolution : null };
   appendAgentLog('[auto-arrange] ' + JSON.stringify(summary) + '\n');
@@ -4874,10 +4900,29 @@ ipcMain.handle('overlay-auto-height', (e, h) => {
     const delta = target - bounds.height;
     if (Math.abs(delta) < 4) return true;
     if (delta < 0 && delta > -12) return true;
-    win.setBounds({ x: bounds.x, y: bounds.y, width: bounds.width, height: target });
+    // Grow-upward mode (Uilnayar 2026-07-11, asked for Extended Target): the
+    // BOTTOM edge stays anchored and the top moves — for overlays parked
+    // near the bottom of the screen, where growing downward runs off-screen.
+    // Per-overlay opt-in via the right-click chrome menu (cfg.overlayGrowUp).
+    let y = bounds.y;
+    if (_overlayGrowsUp(win)) {
+      y = Math.max(disp.workArea.y, bounds.y + bounds.height - target);
+    }
+    win.setBounds({ x: bounds.x, y, width: bounds.width, height: target });
     return true;
   } catch { return false; }
 });
+
+// Does this overlay grow upward (bottom-anchored auto-height)?
+function _overlayGrowsUp(win) {
+  try {
+    let key = null;
+    for (const [k, w] of _overlayEntries()) if (w === win) { key = k; break; }
+    if (!key) return false;
+    const cfg = loadConfig();
+    return !!((cfg.overlayGrowUp && typeof cfg.overlayGrowUp === 'object') ? cfg.overlayGrowUp[key] : false);
+  } catch { return false; }
+}
 
 // Ensure the calling overlay window has at least `h` px of height — the
 // shared right-click chrome menu needs ~280 px to render its 7 buttons,
@@ -4895,7 +4940,12 @@ ipcMain.handle('overlay-ensure-min-height', (e, h) => {
     if (b.height >= wanted) return true;
     const disp = screen.getDisplayMatching(b);
     const maxH = Math.max(80, disp.workArea.height - 20);
-    win.setBounds({ x: b.x, y: b.y, width: b.width, height: Math.min(maxH, wanted) });
+    const target = Math.min(maxH, wanted);
+    // Grow-upward overlays sit near the bottom edge — extending downward
+    // would push the menu off-screen, so anchor the bottom here too.
+    let y = b.y;
+    if (_overlayGrowsUp(win)) y = Math.max(disp.workArea.y, b.y + b.height - target);
+    win.setBounds({ x: b.x, y, width: b.width, height: target });
     return true;
   } catch { return false; }
 });
@@ -5065,7 +5115,23 @@ ipcMain.handle('wp-overlay-menu-state', (e) => {
     key,
     backdrop: key ? !!((cfg.overlayBackdrop || {})[key]) : false,
     arrangeOnShow: !!cfg.autoArrangeOnShow,
+    growUp: key ? !!((cfg.overlayGrowUp || {})[key]) : false,
   };
+});
+// Per-overlay grow-upward toggle (bottom-anchored auto-height). Flipping it
+// on immediately re-anchors: the window keeps its current bounds, and the
+// next auto-height call moves the top edge instead of the bottom.
+ipcMain.handle('wp-growup-toggle', (e) => {
+  const win = BrowserWindow.fromWebContents(e.sender);
+  let key = null;
+  for (const [k, w] of _overlayEntries()) if (w === win) { key = k; break; }
+  if (!key) return false;
+  const cfg = loadConfig();
+  const map = (cfg.overlayGrowUp && typeof cfg.overlayGrowUp === 'object') ? cfg.overlayGrowUp : {};
+  map[key] = !map[key];
+  cfg.overlayGrowUp = map;
+  saveConfig(cfg);
+  return !!map[key];
 });
 ipcMain.handle('wp-backdrop-toggle', (e) => {
   const win = BrowserWindow.fromWebContents(e.sender);
