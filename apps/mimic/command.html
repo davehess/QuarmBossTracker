@@ -292,6 +292,24 @@
       html += '</div></div>';
     }
 
+    // /random roll sets (last 15 min) — "333 (Item name) — Winner names"
+    // (Uilnayar 2026-07-10). Winners = top-(qty) first-rolls; the qty comes
+    // from the loot link "Item (3)333". Full per-roll detail lives on the
+    // agent dashboard's 🎲 Rolls card.
+    if (s.rolls && s.rolls.length) {
+      html += '<div class="card"><div class="head">🎲 Rolls</div><div class="list">';
+      var rMax = Math.min(s.rolls.length, 4);
+      for (var ri = 0; ri < rMax; ri++) {
+        var rs = s.rolls[ri];
+        var winners = (rs.winners || []).map(function(w){ return esc(w.name) + ' <b>' + w.value + '</b>'; }).join(', ');
+        html += '<div class="row"><span class="nm"><b>' + rs.to + '</b>'
+             +    (rs.item ? ' (' + esc(rs.item) + (rs.qty ? ' ×' + rs.qty : '') + ')' : '')
+             +    ' — <span style="color:#f0c419">' + (winners || '—') + '</span></span>'
+             +    '<span class="cls">' + rs.players + ' roll' + (rs.players === 1 ? '' : 's') + (rs.open ? ' · open' : '') + '</span></div>';
+      }
+      html += '</div></div>';
+    }
+
     // Curse/Cure alerts — reuses the buff queue's real observed-debuff
     // tracking (not chat parsing) so it stays accurate even when nobody's
     // typed a "please cure" macro.
@@ -308,7 +326,7 @@
       html += '</div></div>';
     }
 
-    if (!html) html = '<div id="empty">Nothing to report — no active target, DA/mana call-outs, or curses seen yet.</div>';
+    if (!html) html = '<div id="empty">Nothing to report — no active target, DA/mana call-outs, rolls, or curses seen yet.</div>';
 
     if (contentEl.__wpHtml !== html) {   // byte-stability guard (2026-07-07)
       contentEl.innerHTML = html;

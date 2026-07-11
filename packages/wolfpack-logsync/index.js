@@ -3444,6 +3444,126 @@ function healerManaRosterSnapshot() {
   return out;
 }
 
+// ── Roll tracker (/random) — Command Center + dashboard ─────────────────────
+// EQ prints every nearby /random as a two-line pair (Uilnayar 2026-07-10):
+//   [ts] **A Magic Die is rolled by Seigneur.
+//   [ts] **It could have been any number from 0 to 333, but this time it turned up a 116.
+// Rolls with the same 0–N range within a window group into a SET (EQ Log
+// Parser's "Sets of Randoms"). The guild's loot-link convention ties a set to
+// its item: loot is linked in raid chat as `Item Name (qty)NNN | ...` where
+// NNN is the roll range for that item and (qty) means the top-qty rolls each
+// win one — so a set renders as "333 (Item name) — winner names". Local-only
+// (rolls are zone-visible); first roll per player counts, re-rolls are shown
+// but never win.
+const _ROLL_DIE_RX    = /\]\s+\*\*A Magic Die is rolled by (\w+)\.\s*$/;
+const _ROLL_RESULT_RX = /\]\s+\*\*It could have been any number from (\d+) to (\d+), but this time it turned up a (\d+)\.\s*$/;
+const ROLL_SET_GAP_MS  = 10 * 60 * 1000;   // same range this long after the last roll = a NEW set
+const ROLL_SET_KEEP_MS = 2 * 60 * 60 * 1000;
+const _pendingDieByChar = new Map();   // watched-log charLower → { name, atMs } (pair lines per log)
+const _rollSets = [];                  // oldest-first [{ from, to, item, qty, rolls, startMs, lastMs }]
+const _rollItemByNumber = new Map();   // roll number (the range TO) → { item, qty, atMs }
+
+function trackRollLine(line, character) {
+  if (!line || !character) return;
+  const cl = String(character).toLowerCase();
+  if (line.indexOf('A Magic Die') !== -1) {
+    const m = line.match(_ROLL_DIE_RX);
+    if (!m) return;
+    const ts = parseEqTimestamp(line);
+    _pendingDieByChar.set(cl, { name: m[1], atMs: ts ? ts.getTime() : Date.now() });
+    return;
+  }
+  if (line.indexOf('It could have been any number') === -1) return;   // cheap gate
+  const m = line.match(_ROLL_RESULT_RX);
+  if (!m) return;
+  const pending = _pendingDieByChar.get(cl);
+  _pendingDieByChar.delete(cl);
+  const ts = parseEqTimestamp(line);
+  const atMs = ts ? ts.getTime() : Date.now();
+  // The pair is adjacent in the log (same timestamp) — a stale stash means we
+  // missed the result line and this one belongs to a die line we never saw.
+  if (!pending || Math.abs(atMs - pending.atMs) > 2000) return;
+  const from = parseInt(m[1], 10), to = parseInt(m[2], 10), value = parseInt(m[3], 10);
+  if (!Number.isFinite(from) || !Number.isFinite(to) || !Number.isFinite(value)) return;
+  let set = null;
+  for (let i = _rollSets.length - 1; i >= 0; i--) {
+    const s = _rollSets[i];
+    if (s.from === from && s.to === to && (atMs - s.lastMs) <= ROLL_SET_GAP_MS) { set = s; break; }
+  }
+  if (!set) {
+    set = { from, to, item: null, qty: null, rolls: [], startMs: atMs, lastMs: atMs };
+    _rollSets.push(set);
+    if (_rollSets.length > 40) _rollSets.splice(0, _rollSets.length - 40);
+  }
+  // Multi-box dedup: every watched log hears the same broadcast — the same
+  // (name, value) within a few seconds is one roll, not two.
+  const nameLower = pending.name.toLowerCase();
+  if (set.rolls.some(r => r.nameLower === nameLower && r.value === value && Math.abs(r.atMs - atMs) < 5000)) return;
+  set.rolls.push({
+    name: pending.name, nameLower, value, atMs,
+    reroll: set.rolls.some(r => r.nameLower === nameLower),
+  });
+  set.lastMs = atMs;
+  if (!set.item) {
+    const linked = _rollItemByNumber.get(to);
+    if (linked) { set.item = linked.item; set.qty = linked.qty; }
+  }
+}
+
+// Loot-link lines in raid/guild chat: `Blue Resistance Stone 111| Boots of the
+// Ancients 222 | Primal Velium Battlehammer (3)333 | ...` — each |-separated
+// segment ends with that item's roll number, optionally preceded by (qty).
+function trackRollItemLine(line) {
+  if (!line || line.indexOf('|') === -1) return;   // the convention always separates with |
+  const m = line.match(_CH_SPEAKER_RX);
+  if (!m) return;
+  const text = m[2];
+  if (text.indexOf('|') === -1) return;
+  const ts = parseEqTimestamp(line);
+  const atMs = ts ? ts.getTime() : Date.now();
+  for (const rawSeg of text.split('|')) {
+    // Strip EQ item-link control bytes; keep the display text.
+    const seg = rawSeg.replace(/[\x00-\x1f]/g, '').trim();
+    if (!seg) continue;
+    const mm = seg.match(/^(.*?)\s*(?:\((\d{1,2})\)\s*)?(\d{2,4})$/);
+    if (!mm) continue;
+    const item = mm[1].replace(/[,–—-]+\s*$/, '').trim();
+    const num = parseInt(mm[3], 10);
+    if (!item || item.length < 3 || !Number.isFinite(num) || num < 10) continue;
+    _rollItemByNumber.set(num, { item: item.slice(0, 64), qty: mm[2] ? parseInt(mm[2], 10) : null, atMs });
+  }
+  if (_rollItemByNumber.size > 200) {
+    for (const [k, v] of _rollItemByNumber) if (Date.now() - v.atMs > 2 * 60 * 60 * 1000) _rollItemByNumber.delete(k);
+  }
+}
+
+// Serialized sets, newest first. Winners = the top-(qty) rolls counting each
+// player's FIRST roll only ((3) linked on the item = three winners).
+function rollSetsSnapshot(maxAgeMs) {
+  const now = Date.now();
+  for (let i = _rollSets.length - 1; i >= 0; i--) {
+    if (now - _rollSets[i].lastMs > ROLL_SET_KEEP_MS) _rollSets.splice(i, 1);
+  }
+  const out = [];
+  for (const s of _rollSets) {
+    if (maxAgeMs && (now - s.lastMs) > maxAgeMs) continue;
+    const firstByName = new Map();
+    for (const r of s.rolls) if (!firstByName.has(r.nameLower)) firstByName.set(r.nameLower, r);
+    const ranked = [...firstByName.values()].sort((a, b) => b.value - a.value);
+    const nWinners = Math.max(1, Math.min(s.qty || 1, ranked.length));
+    out.push({
+      from: s.from, to: s.to, item: s.item || null, qty: s.qty || null,
+      players: firstByName.size,
+      winners: ranked.slice(0, nWinners).map(r => ({ name: r.name, value: r.value })),
+      open: (now - s.lastMs) <= ROLL_SET_GAP_MS,
+      started_at_ms: s.startMs, last_at_ms: s.lastMs,
+      rolls: s.rolls.map(r => ({ name: r.name, value: r.value, at_ms: r.atMs, reroll: r.reroll || undefined })),
+    });
+  }
+  out.sort((a, b) => b.last_at_ms - a.last_at_ms);
+  return out;
+}
+
 // Long-term who_data registry filter — anonymous rows + level 50+. The
 // transient OVERLAY (whoSnapshot) shows everyone /who returned, but the
 // persistent uploads only carry threat-relevant entries: low-level bank
@@ -7416,6 +7536,8 @@ function _serializeCommandCenterState() {
     deathtouch:    tank.deathtouch,
     da_broadcasts: daBroadcastsSnapshot(),
     healer_mana:   healerManaRosterSnapshot(),
+    // Recent /random sets — "333 (Item name) — winner names" rows.
+    rolls:         rollSetsSnapshot(15 * 60 * 1000),
     cures,
     updated_at:    Date.now(),
   };
@@ -7572,6 +7694,8 @@ function _serializeForDashboard() {
     // CH chain rotation snapshot (cleric Complete Heal callouts) — null when
     // no chain has called in the last 5 minutes. Drives chchain.html.
     chChain: chChainSnapshot(),
+    // /random roll sets (EQ Log Parser-style) — dashboard "🎲 Rolls" card.
+    rollSets: rollSetsSnapshot(),
     // Officer knob overrides currently in effect (see pollOverlayTuning) —
     // surfaced so the dashboard/overlays can show which values are remote-set.
     overlayTuning: _overlayTuning,
@@ -10624,6 +10748,38 @@ function renderInfo(s) {
         }
         h += '</details>';
       });
+    h += '</div>';
+  }
+
+  // /random roll sets — EQ Log Parser-style table. One expandable row per set
+  // ("333 (Item name) — winner names"); the winners come from the loot-link
+  // roll-number convention: Item (3)333 in raid chat = top-3 rolls on 0-333
+  // each win one. Absolute times only (byte-stable across polls).
+  var _rollSets = s.rollSets || [];
+  if (_rollSets.length > 0) {
+    h += '<div class="card wide"><h2>🎲 Rolls (this session)</h2>';
+    h += '<div class="subtle" style="font-size:11px;margin-bottom:6px">Every /random heard in the zone, grouped by roll range. Link loot in raid chat as <code>Item Name (qty)NNN | ...</code> and each set picks up its item name — (3) means the top three rolls win one each. First roll per player counts; re-rolls are listed struck through.</div>';
+    for (var rsi = 0; rsi < _rollSets.length; rsi++) {
+      var rset = _rollSets[rsi];
+      var rWinners = (rset.winners || []).map(function (w) { return esc(w.name) + ' <b>' + w.value + '</b>'; }).join(', ');
+      var rTime = new Date(rset.started_at_ms).toLocaleTimeString();
+      h += '<details ' + wpKeep('roll|' + rset.started_at_ms + '|' + rset.to) + '>';
+      h += '<summary><b>' + rset.from + '–' + rset.to + '</b>'
+         + (rset.item ? ' (' + esc(rset.item) + (rset.qty ? ' ×' + rset.qty : '') + ')' : '')
+         + ' — <span style="color:var(--gold,#f0c419)">' + (rWinners || '—') + '</span>'
+         + ' <span class="dim">· ' + rset.players + ' roller' + (rset.players === 1 ? '' : 's')
+         + ' · ' + rTime + (rset.open ? ' · open' : '') + '</span></summary>';
+      h += '<table><tr><th>Rolled</th><th>Player</th><th>Time</th></tr>';
+      var rRows = (rset.rolls || []).slice().sort(function (a, b) { return b.value - a.value; });
+      for (var rri = 0; rri < rRows.length; rri++) {
+        var rr = rRows[rri];
+        h += '<tr' + (rr.reroll ? ' style="opacity:0.45;text-decoration:line-through"' : '') + '>'
+           + '<td class="num">' + rr.value + '</td>'
+           + '<td>' + esc(rr.name) + (rr.reroll ? ' (re-roll)' : '') + '</td>'
+           + '<td class="dim">' + new Date(rr.at_ms).toLocaleTimeString() + '</td></tr>';
+      }
+      h += '</table></details>';
+    }
     h += '</div>';
   }
 
@@ -21494,6 +21650,9 @@ async function main() {
         if (!_sourceExcluded) { try { trackDaBroadcastLine(line, b.character); } catch {} }
         if (!_sourceExcluded) { try { trackDefensiveDiscLine(line, b.character); } catch {} }
         if (!_sourceExcluded) { try { trackHealerManaLine(line, b.character); } catch {} }
+        // /random rolls + the loot-link roll-number convention — feeds the
+        // Command Center Rolls card + the dashboard roll table. Local-only.
+        if (!_sourceExcluded) { try { trackRollLine(line, b.character); trackRollItemLine(line); } catch {} }
 
         // /pet health output (Quarm: standalone HP line + bare buff names in the
         // owner's own log). Feeds the per-owner pet buff SET + HP. Pure local UI
