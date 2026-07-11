@@ -406,6 +406,13 @@ function clearQuake()            { const s = loadState(); s.quake = null; saveSt
 function getServerQuake()       { return loadState().serverQuake || null; }
 function saveServerQuake(data)  { const s = loadState(); s.serverQuake = data; saveState(s); }
 
+// PoP raid slideshow — raid-wide shared objective checkboxes. One board for
+// the whole guild (matches the shared-trigger-set model):
+// { rev, encounters: { [encounterId]: { [objectiveId]: { c, by, at } } } }.
+// rev increments on every write so the overlay's poll can skip repaints.
+function getPopObjectives()      { return loadState().popObjectives || null; }
+function savePopObjectives(data) { const s = loadState(); s.popObjectives = data; saveState(s); }
+
 // ── Welcome card seen tracking ────────────────────────────────────────────────────────────────────
 function hasSeenWelcome(userId) { return (loadState().seenWelcome || []).includes(userId); }
 function markWelcomeSeen(userId) {
@@ -983,6 +990,7 @@ module.exports = {
   setLiveKillTimerUnknown, setPvpKillTimerUnknown,
   getQuake, saveQuake, clearQuake,
   getServerQuake, saveServerQuake,
+  getPopObjectives, savePopObjectives,
   getPvpAlertHowlers, addPvpAlertHowler, clearPvpAlert,
   getPvpNight, getActivePvpNightUserIds, addPvpNightTonight, addPvpNightPermanent,
   removePvpNight, getPvpNightBoardMsg, setPvpNightBoardMsg,

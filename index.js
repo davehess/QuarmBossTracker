@@ -9032,6 +9032,160 @@ async function _handleAgentQuake(req, res) {
   res.writeHead(200); return res.end(JSON.stringify({ ok: true, next_quake_at: nextAtIso }));
 }
 
+// ── PoP raid slideshow — shared objectives + anomaly flags ───────────────────
+//
+// The Mimic PoP-raid overlay (apps/mimic/popraid.html) shows per-encounter
+// objective checkboxes that are RAID-WIDE: one shared board, so when the puller
+// ticks "north wing split" everyone's overlay updates. State lives in memory
+// with a state.json mirror (survives redeploys); `rev` bumps on every write so
+// the agents' ~3s poll can skip repaints when nothing changed.
+//
+//   GET  /api/agent/raid-objectives[?encounter_id=<id>]
+//     → { rev, encounters: { [encId]: { [objId]: { c, by, at } } } }
+//   POST /api/agent/raid-objectives
+//     { encounter_id, objective_id, checked, character }  → toggle (any raider)
+//     { encounter_id, op: 'reset' }                       → clear encounter (officer only)
+let _popObjectives = null;
+const _POP_OBJ_MAX_ENCOUNTERS = 80;   // catalog has ~34; hard cap vs junk ids
+const _POP_OBJ_MAX_PER_ENC    = 48;
+
+function _popObjState() {
+  if (!_popObjectives) {
+    const state = require('./utils/state');
+    const saved = state.getPopObjectives();
+    _popObjectives = (saved && typeof saved === 'object' && saved.encounters)
+      ? saved
+      : { rev: 0, encounters: {} };
+  }
+  return _popObjectives;
+}
+
+async function _handleAgentRaidObjectivesGet(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const url   = new URL(req.url, 'http://localhost');
+  const encId = (url.searchParams.get('encounter_id') || '').slice(0, 64).trim();
+  const st    = _popObjState();
+  const body  = encId
+    ? { rev: st.rev || 0, encounters: { [encId]: st.encounters[encId] || {} } }
+    : { rev: st.rev || 0, encounters: st.encounters };
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  return res.end(JSON.stringify(body));
+}
+
+async function _handleAgentRaidObjectivesPost(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const chunks = []; let total = 0;
+  for await (const chunk of req) { total += chunk.length; if (total > 16 * 1024) { res.writeHead(413); return res.end(); } chunks.push(chunk); }
+  let payload;
+  try { payload = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+  catch { res.writeHead(400); return res.end(JSON.stringify({ error: 'invalid JSON' })); }
+
+  const encId = String(payload.encounter_id || '').slice(0, 64).trim();
+  if (!encId) { res.writeHead(400); return res.end(JSON.stringify({ error: 'encounter_id required' })); }
+  const st = _popObjState();
+
+  if (payload.op === 'reset') {
+    if (!identity.is_officer) {
+      res.writeHead(403);
+      return res.end(JSON.stringify({ error: 'reset is officer-only', rev: st.rev || 0 }));
+    }
+    delete st.encounters[encId];
+  } else {
+    const objId = String(payload.objective_id || '').slice(0, 64).trim();
+    if (!objId) { res.writeHead(400); return res.end(JSON.stringify({ error: 'objective_id required' })); }
+    if (payload.checked) {
+      const enc = st.encounters[encId] || (st.encounters[encId] = {});
+      if (Object.keys(st.encounters).length > _POP_OBJ_MAX_ENCOUNTERS
+          || Object.keys(enc).length >= _POP_OBJ_MAX_PER_ENC) {
+        res.writeHead(400); return res.end(JSON.stringify({ error: 'objective board full' }));
+      }
+      // `by` prefers the in-game character (what raiders recognize mid-pull)
+      // over the Discord display name behind the session token.
+      const by = String(payload.character || identity.display_name || '').slice(0, 32);
+      enc[objId] = { c: true, by, at: new Date().toISOString() };
+    } else {
+      const enc = st.encounters[encId];
+      if (enc) {
+        delete enc[objId];
+        if (Object.keys(enc).length === 0) delete st.encounters[encId];
+      }
+    }
+  }
+
+  st.rev = (st.rev || 0) + 1;
+  try { require('./utils/state').savePopObjectives(st); }
+  catch (e) { console.warn('[raid-objectives] persist failed:', e?.message); }
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  return res.end(JSON.stringify({ ok: true, rev: st.rev }));
+}
+
+// POST /api/agent/pop-anomaly — a raider hit ⚑ on the PoP overlay: something
+// on Quarm doesn't match the guide baseline (different HP, missing mechanic,
+// extra adds…). Lands in the QOL thread (QOL_THREAD_ID, falling back to
+// FEEDBACK_THREAD_ID) with the full encounter context so an officer can chase
+// it without opening Mimic. Body:
+//   { character, encounter_id, encounter_name, zone, section, expected,
+//     observed, note, quarm_notes: [..] }
+const _popAnomalyLastByUser = new Map();   // user_id → last accepted ms
+async function _handleAgentPopAnomaly(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const chunks = []; let total = 0;
+  for await (const chunk of req) { total += chunk.length; if (total > 32 * 1024) { res.writeHead(413); return res.end(); } chunks.push(chunk); }
+  let payload;
+  try { payload = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+  catch { res.writeHead(400); return res.end(JSON.stringify({ error: 'invalid JSON' })); }
+
+  const note     = String(payload.note || payload.observed || '').trim();
+  if (!note) { res.writeHead(400); return res.end(JSON.stringify({ error: 'note or observed required' })); }
+  // Anti-spam: one flag per user per 30s (a stuck hover-click double-fires).
+  const lastAt = _popAnomalyLastByUser.get(identity.user_id) || 0;
+  if (Date.now() - lastAt < 30 * 1000) {
+    res.writeHead(429); return res.end(JSON.stringify({ error: 'slow down — one flag per 30s' }));
+  }
+  _popAnomalyLastByUser.set(identity.user_id, Date.now());
+
+  const threadId = process.env.QOL_THREAD_ID || process.env.FEEDBACK_THREAD_ID;
+  if (!threadId) {
+    // Config gap, not a transient failure — 200 so the agent's durable queue
+    // doesn't retry forever (5xx would); posted:false tells the overlay.
+    res.writeHead(200); return res.end(JSON.stringify({ ok: false, posted: false, reason: 'no QOL thread configured' }));
+  }
+  const thread = await client.channels.fetch(threadId).catch(() => null);
+  if (!thread) {
+    res.writeHead(200); return res.end(JSON.stringify({ ok: false, posted: false, reason: 'QOL thread unreachable' }));
+  }
+
+  const clip = (v, n) => (v == null ? null : String(v).slice(0, n));
+  const encName   = clip(payload.encounter_name, 100) || clip(payload.encounter_id, 64) || 'unknown encounter';
+  const character = clip(payload.character, 32) || identity.display_name || 'unknown';
+  const { EmbedBuilder } = require('discord.js');
+  const embed = new EmbedBuilder()
+    .setColor(0xe67e22)
+    .setTitle(`⚑ PoP anomaly — ${encName}`)
+    .setDescription(note.slice(0, 3500))
+    .setTimestamp(new Date());
+  const fields = [];
+  const where = [clip(payload.zone, 60), clip(payload.section, 80)].filter(Boolean).join(' · ');
+  if (where) fields.push({ name: 'Where', value: where, inline: true });
+  fields.push({ name: 'Reported by', value: `${character} (${identity.display_name || identity.discord_id})`, inline: true });
+  if (payload.expected) fields.push({ name: 'Guide baseline', value: clip(payload.expected, 1000) });
+  if (payload.observed && payload.note) fields.push({ name: 'Observed', value: clip(payload.observed, 1000) });
+  const qn = Array.isArray(payload.quarm_notes) ? payload.quarm_notes.map(x => clip(x, 200)).filter(Boolean) : [];
+  if (qn.length) fields.push({ name: 'Known Quarm divergences (already documented)', value: qn.slice(0, 6).map(x => `• ${x}`).join('\n').slice(0, 1000) });
+  if (fields.length) embed.addFields(fields);
+  embed.setFooter({ text: `encounter:${clip(payload.encounter_id, 64) || '?'} · via Mimic PoP overlay` });
+
+  const sent = await thread.send({ embeds: [embed], allowedMentions: { parse: [] } }).catch((e) => {
+    console.warn('[pop-anomaly] post failed:', e?.message);
+    return null;
+  });
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  return res.end(JSON.stringify({ ok: true, posted: !!sent }));
+}
+
 // Cross-client casting relay. Each Mimic raider's agent reports its OWN
 // in-progress casts (spell + current target + cast time); we keep a short-lived
 // per-target index so anyone targeting that mob can see "who is casting what on
@@ -11180,6 +11334,33 @@ http.createServer(async (req, res) => {
     try { return await _handleAgentQuake(req, res); }
     catch (err) {
       console.error('[quake] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  // PoP raid slideshow — raid-wide shared objective checkboxes (GET poll +
+  // POST toggle/reset) and the ⚑ flag-an-anomaly path to the QOL thread.
+  if (req.method === 'GET' && req.url.startsWith('/api/agent/raid-objectives')) {
+    try { return await _handleAgentRaidObjectivesGet(req, res); }
+    catch (err) {
+      console.error('[raid-objectives] get error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+  if (req.method === 'POST' && req.url === '/api/agent/raid-objectives') {
+    try { return await _handleAgentRaidObjectivesPost(req, res); }
+    catch (err) {
+      console.error('[raid-objectives] post error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+  if (req.method === 'POST' && req.url === '/api/agent/pop-anomaly') {
+    try { return await _handleAgentPopAnomaly(req, res); }
+    catch (err) {
+      console.error('[pop-anomaly] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
     }
