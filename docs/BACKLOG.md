@@ -33,6 +33,17 @@ class filter + "only gaps" + "hide logged-off" toggles, accuracy caveat banner.
 - The PvP overnight board got "howl through the night" theming + lists the wolves.
 
 ## Quick requested features (buildable, queued)
+- **Guild bazaar price index (no live tracker exists for Quarm).** quarm.tips
+  is dead; quarmtraders.com froze 2024-03 (EC-tunnel era, 1,294 items only).
+  Two feeds we already own: (a) each trader's own satchel prices persist
+  locally as `BZR_<Char>_pq.proj.ini` → `[ItemToSell] <Item>=<copper>` —
+  agent uploads OUR traders' listings; (b) agents parked in the Bazaar can
+  relay `/auction` WTS/WTB lines the way chat relay already works. Either
+  feeds a `bazaar_listings` table → price history on the web. The Quarm
+  Discord auction feed is NOT scrapable without putting a bot in their
+  server (and self-token scraping is a Discord-ToS violation) — skip it.
+  Companion doc: `docs/bazaar-filter-pack.md` (curated filter presets,
+  2026-07-11).
 - **PoP Raid Slideshow — fill PoTime P2/P3 + Quarm-divergence loop.**
   (Shipped 2026-07-11: data module `apps/mimic/pop-raids.js` + overlay
   `popraid.html` on beta, bot 3.0.158 endpoints `raid-objectives` /

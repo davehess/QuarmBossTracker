@@ -64,5 +64,14 @@ how to prove it to yourself.
 - Your stats only count from **when you joined us** — we don't reach back before your
   first guild day. (PvP kills are public server events, counted from the start.)
 
+**Crash reports (opt-in, default OFF).**
+If you flip on "Share crash reports" in Mimic's tray menu, the agent reads the
+crash summaries Zeal already writes to your EQ folder (`crashes/*.zip`) and
+uploads the *metadata only*: exception code, which DLL crashed, Zeal version,
+zone, and a system snapshot (GPU model/driver, and fingerprints of the game
+DLLs so we can spot "your dpvs.dll differs from everyone else's"). The memory
+dump itself **never leaves your machine**. Turn it off anytime; nothing older
+than 30 days is collected at opt-in.
+
 **That's it.** No selling, no ads, no leaderboards of who whispered whom. Just tools
 to help the Pack run smoother on a crazy night.

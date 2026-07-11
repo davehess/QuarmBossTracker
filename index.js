@@ -7011,6 +7011,68 @@ async function _handleAgentOverlayTuning(req, res) {
   return res.end(JSON.stringify({ tuning, notices, class_sets: classSets }));
 }
 
+// POST /api/agent/crash_report — opt-in EQ client crash telemetry (agent
+// 3.3.18+, tray toggle default OFF). The agent parses Zeal's
+// crashes/<ts>.zip bundles locally and sends ONLY the crash_reason metadata
+// + a system snapshot (never the minidump). Rows dedup on
+// (guild, uploader, zip_name) so re-scans are idempotent. Ported from the
+// 2026-07-11 local-desktop session's handoff.
+async function _handleAgentCrashReport(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+
+  const chunks = []; let total = 0;
+  for await (const chunk of req) {
+    total += chunk.length;
+    if (total > 256 * 1024) { res.writeHead(413); return res.end(); }
+    chunks.push(chunk);
+  }
+  let payload;
+  try { payload = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+  catch { res.writeHead(400); return res.end(JSON.stringify({ error: 'invalid JSON' })); }
+
+  const reports = Array.isArray(payload?.reports) ? payload.reports : [];
+  if (reports.length === 0) {
+    res.writeHead(200); return res.end(JSON.stringify({ ok: true, written: 0 }));
+  }
+
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) {
+    res.writeHead(200); return res.end(JSON.stringify({ ok: true, written: 0, note: 'supabase disabled' }));
+  }
+
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+  const rows = reports
+    .filter(r => r && r.zip_name && r.crashed_at)
+    .slice(0, 60)                       // sanity bound per upload
+    .map(r => ({
+      guild_id:          guildId,
+      character:         r.character || null,
+      crashed_at:        new Date(r.crashed_at).toISOString(),
+      zip_name:          String(r.zip_name).slice(0, 120),
+      exception_code:    r.exception_code || null,
+      exception_module:  r.exception_module ? String(r.exception_module).toLowerCase().slice(0, 80) : null,
+      exception_address: r.exception_address || null,
+      address_low16:     r.address_low16 || null,
+      zeal_version:      r.zeal_version || null,
+      callbacks:         r.callbacks || null,
+      zone_id:           r.zone_id || null,
+      ui_skin:           r.ui_skin || null,
+      raw_reason:        r.raw_reason ? String(r.raw_reason).slice(0, 4000) : null,
+      system:            (r.system && typeof r.system === 'object') ? r.system : null,
+      agent_version:     payload?.agent_version || null,
+      uploaded_by_discord_id: identity.discord_id,
+    }));
+  if (rows.length === 0) {
+    res.writeHead(200); return res.end(JSON.stringify({ ok: true, written: 0 }));
+  }
+  const written = await supabase.upsert('crash_reports', rows, 'guild_id,uploaded_by_discord_id,zip_name')
+    .catch(err => { console.warn('[crash-report] upsert failed:', err?.message); return null; });
+  _trackUpload({ endpoint: 'crash_report', character: payload?.character, agentVersion: payload?.agent_version, payloadBytes: total, agentState: payload?.agent_state || null, uploadedBy: identity.discord_id });
+  res.writeHead(200);
+  res.end(JSON.stringify({ ok: true, written: Array.isArray(written) ? written.length : 0 }));
+}
+
 // GET /api/agent/character-live-state?name=<char> — one character's uploaded
 // Zeal state (HP + buffs) for the agents' cross-client MT/Rampage resolution
 // (_mtLiveStateByName). The agent has polled this route since the Tank
@@ -11270,6 +11332,16 @@ http.createServer(async (req, res) => {
     try { return await _handleAgentOverlayTuning(req, res); }
     catch (err) {
       console.error('[overlay-tuning] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  // Opt-in crash telemetry (parsed Zeal crash bundles, metadata only).
+  if (req.method === 'POST' && req.url.startsWith('/api/agent/crash_report')) {
+    try { return await _handleAgentCrashReport(req, res); }
+    catch (err) {
+      console.error('[crash-report] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
     }

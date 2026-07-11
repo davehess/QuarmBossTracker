@@ -175,6 +175,20 @@ export default function PrivacyPage() {
         </ul>
       </section>
 
+      <section className="space-y-3">
+        <h2 className="text-lg text-orange">Crash reports (opt-in, default OFF)</h2>
+        <p>
+          If you flip on <strong className="text-text">&quot;Share crash reports&quot;</strong> in
+          Mimic&apos;s tray menu, the agent reads the crash summaries Zeal already writes to
+          your EQ folder (<code>crashes/*.zip</code>) and uploads the{' '}
+          <em>metadata only</em>: exception code, which DLL crashed, Zeal version, zone,
+          and a system snapshot (GPU model/driver, and fingerprints of the game DLLs so we
+          can spot &quot;your dpvs.dll differs from everyone else&apos;s&quot;). The memory
+          dump itself <strong className="text-text">never leaves your machine</strong>.
+          Turn it off anytime; nothing older than 30 days is collected at opt-in.
+        </p>
+      </section>
+
       <section className="bg-panel border border-border rounded-lg p-5">
         <p className="text-text">
           <strong>That's it.</strong> No selling, no ads, no leaderboards of who whispered

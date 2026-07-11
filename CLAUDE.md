@@ -79,6 +79,43 @@ Then rebuild on the true head.
 
 ---
 
+## Working across sessions (local desktop ↔ cloud)
+
+Two kinds of Claude sessions work on this platform, and they cannot share a
+conversation — they share **the repo, Supabase, and these docs** instead:
+
+- **Local (desktop) sessions** have the machine: `A:\EQ` (live Quarm client,
+  Zeal, crash bundles in `crashes/`, character exports, trader `BZR_*.ini`
+  price files), `D:\EQServer` (local MariaDB — authoritative `peq` item/NPC
+  DB; creds in `eqemu_config.json`), `D:\EQLegends` (modern-client
+  reference), and open egress (pqdi.cc, quarm.guide, eqemulator.org).
+- **Cloud sessions** get the repo + Supabase MCP, but **no local files** and
+  a restrictive egress proxy (eqemulator.org and PQDI are blocked there).
+
+Rules that keep them married:
+1. **Durable state lives in committed docs, never chat.** Queue + in-flight
+   notes: `docs/BACKLOG.md`. Cross-session handoffs: write a handoff doc and
+   commit it (the `*HANDOFF.md` pattern).
+2. **Cloud sessions blocked on local-only data**: don't guess — add a
+   "needs local session" item to `docs/BACKLOG.md` with the exact query or
+   file wanted. A local (or phone-Dispatched) session picks it up.
+3. **Local sessions mirror local-only facts into Supabase** so cloud
+   sessions can use them. Precedents: `spell_level_seed` (PQDI scrape ran
+   locally because the server 403s cloud IPs), the `eqemu_items`
+   haste/regen/manaregen/damageshield/attack backfill (555 items from the
+   local `peq` DB, 2026-07-11 — the eqmac dump omits those columns, so the
+   weekly sync can't overwrite the backfill), `crash_reports` signatures.
+4. **Only local sessions run migrations that need local verification**, and
+   any session applying via MCP must also commit the identical file (see
+   Migrations above).
+5. **A stale local checkout hands work over as a zip** (patches + bundle +
+   HANDOFF.md); the cloud session cherry-picks/ports onto the TRUE branch
+   heads and re-versions — never fast-forward to a bundle from an old base
+   (the 2026-07-11 handoff was built on a Jul-2 beta and shipped fine as
+   cherry-picks).
+
+---
+
 ## Scope boundaries (read before changing related code)
 
 - **Historical chat: collection IS in scope, display is NOT.** Old-log `/gu` +
