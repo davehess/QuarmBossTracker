@@ -90,6 +90,7 @@ let chChainWindow = null;
 let tankWindow    = null;
 let extTargetWindow = null;
 let commandWindow = null;
+let popRaidWindow = null;
 let uiStudioWindow = null;
 let settingsWindow = null;
 // Per-panel overlay windows — keyed by panel slug (e.g. "live-threat",
@@ -710,6 +711,7 @@ function _boundsKeyForWindow(win) {
   if (win === tankWindow)    return 'tankBounds';
   if (win === extTargetWindow) return 'extTargetBounds';
   if (win === commandWindow) return 'commandBounds';
+  if (win === popRaidWindow) return 'popRaidBounds';
   for (const [panelKey, w] of panelOverlays.entries()) {
     if (w === win) return 'panelBounds_' + panelKey;
   }
@@ -2265,6 +2267,7 @@ function _overlayEntries() {
   if (tankWindow    && !tankWindow.isDestroyed())    out.push(['tank',    tankWindow]);
   if (extTargetWindow && !extTargetWindow.isDestroyed()) out.push(['exttarget', extTargetWindow]);
   if (commandWindow && !commandWindow.isDestroyed()) out.push(['command', commandWindow]);
+  if (popRaidWindow && !popRaidWindow.isDestroyed()) out.push(['popraid', popRaidWindow]);
   for (const [panelKey, win] of panelOverlays.entries()) {
     if (win && !win.isDestroyed()) out.push(['panel:' + panelKey, win]);
   }
@@ -2507,6 +2510,7 @@ function applySetupMode(on) {
     if (!tankWindow)    createTankOverlay();
     if (!extTargetWindow) createExtTargetOverlay();
     if (!commandWindow) createCommandOverlay();
+    if (!popRaidWindow) createPopRaidOverlay();
     // Force-show every overlay
     for (const [, win] of _overlayEntries()) {
       try { win.showInactive(); } catch {}
@@ -3577,6 +3581,41 @@ function applyBuffQueueVisibility() {
   if (shouldShow) buffQueueWindow.showInactive(); else buffQueueWindow.hide();
 }
 
+// PoP Raid Slideshow — encounter-by-encounter raid guide (callouts, guide
+// stats, shared raid-wide objective checkboxes, hotlinked EQProgression
+// diagrams, ⚑ anomaly flags). Data ships in pop-raids.js; the shared
+// objective board + loot proxy through the local agent.
+function createPopRaidOverlay() {
+  const b = _resolveBounds('popRaidBounds', 'popRaidBoundsSig', { x: 880, y: 80, width: 440, height: 540 });
+  popRaidWindow = new BrowserWindow({
+    title: 'Wolf Pack miMIC — PoP raids overlay',
+    width: b.width, height: b.height, x: b.x, y: b.y,
+    minWidth: 300, minHeight: 160,
+    frame: false, transparent: true, resizable: true,
+    alwaysOnTop: true, skipTaskbar: true, focusable: true, show: false,
+    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true },
+  });
+  popRaidWindow.setAlwaysOnTop(true, 'screen-saver');
+  popRaidWindow.setVisibleOnAllWorkspaces(true);
+  popRaidWindow.loadFile('popraid.html');
+  popRaidWindow.on('moved',  () => _persistBounds('popRaidBounds', popRaidWindow));
+  popRaidWindow.on('resize', () => _persistBounds('popRaidBounds', popRaidWindow));
+  popRaidWindow.once('ready-to-show', () => {
+    popRaidWindow.webContents.send('agent-port', agentPort);
+    applyPopRaidVisibility();
+    applyOverlayInteractivity();
+    applyOverlayOpacity(popRaidWindow, 'popraid');
+  });
+}
+function applyPopRaidVisibility() {
+  if (!popRaidWindow) return;
+  const cfg = loadConfig();
+  const unlocked  = cfg.overlaysLocked === false;
+  // Opt-in (default off) — raid leaders + anyone following the fight plan.
+  const shouldShow = unlocked || (cfg.showPopRaid && !cfg.quietMode && _eqGateOk(cfg));
+  if (shouldShow) popRaidWindow.showInactive(); else popRaidWindow.hide();
+}
+
 // Mob Info — current target's catalog stats (HP/AC/resists/special attacks).
 function createMobInfoOverlay() {
   const b = _resolveBounds('mobInfoBounds', 'mobInfoBoundsSig', { x: 700, y: 60, width: 320, height: 200 });
@@ -3912,6 +3951,7 @@ function applyAllVisibility() {
   applyTankVisibility();
   applyExtTargetVisibility();
   applyCommandVisibility();
+  applyPopRaidVisibility();
 }
 
 // ── Hide-all-overlays toggle ────────────────────────────────────────────────
@@ -3937,7 +3977,7 @@ function _hideAllHotkeyLabelNow() { const a = _hideAllAccelerator(); return a ? 
 const _HIDEALL_FLAGS = [
   'showHud', 'enableTriggerTts', 'showCharm', 'showPets', 'showMobInfo',
   'showBuffQueue', 'showWho', 'showMelody', 'showZeal', 'showThreat',
-  'showChChain', 'showTank', 'showExtTarget', 'showCommand',
+  'showChChain', 'showTank', 'showExtTarget', 'showCommand', 'showPopRaid',
 ];
 function toggleHideAllOverlays() {
   const cfg = loadConfig();
@@ -4100,6 +4140,7 @@ function currentStatus() {
     showTank: !!cfg.showTank,
     showExtTarget: !!cfg.showExtTarget,
     showCommand: !!cfg.showCommand,
+    showPopRaid: !!cfg.showPopRaid,
     overlaysLocked: cfg.overlaysLocked !== false,
     setupMode: !!setupMode,
     onboarded: !!cfg.onboarded,
@@ -4300,6 +4341,11 @@ function buildTrayMenu() {
     { label: 'Command Center (one-window raid board)', type: 'checkbox', checked: s.showCommand, enabled: !s.quietMode, click: (mi) => {
         const cfg = loadConfig(); cfg.showCommand = mi.checked; saveConfig(cfg);
         if (mi.checked && !commandWindow) createCommandOverlay(); else applyCommandVisibility();
+        pushStatus();
+      } },
+    { label: 'PoP raids (encounter slideshow)', type: 'checkbox', checked: s.showPopRaid, enabled: !s.quietMode, click: (mi) => {
+        const cfg = loadConfig(); cfg.showPopRaid = mi.checked; saveConfig(cfg);
+        if (mi.checked && !popRaidWindow) createPopRaidOverlay(); else applyPopRaidVisibility();
         pushStatus();
       } },
     { type: 'separator' },
@@ -4901,6 +4947,10 @@ ipcMain.handle('toggle-overlay', (_e, name) => {
       cfg.showCommand = !cfg.showCommand; saveConfig(cfg);
       if (cfg.showCommand && !commandWindow) createCommandOverlay(); else applyCommandVisibility();
       break;
+    case 'popraid':
+      cfg.showPopRaid = !cfg.showPopRaid; saveConfig(cfg);
+      if (cfg.showPopRaid && !popRaidWindow) createPopRaidOverlay(); else applyPopRaidVisibility();
+      break;
     default:
       return null;
   }
@@ -4913,7 +4963,7 @@ ipcMain.handle('toggle-overlay', (_e, name) => {
       hud: 'showHud', trigger: 'enableTriggerTts', charm: 'showCharm', pet: 'showPets',
       mobinfo: 'showMobInfo', buffQueue: 'showBuffQueue', who: 'showWho', melody: 'showMelody',
       zeal: 'showZeal', threat: 'showThreat', chchain: 'showChChain', tank: 'showTank',
-      exttarget: 'showExtTarget', command: 'showCommand',
+      exttarget: 'showExtTarget', command: 'showCommand', popraid: 'showPopRaid',
     };
     if (cfg.autoArrangeOnShow && cfg[FLAG_BY_NAME[name]]) {
       setTimeout(() => { try { _autoArrangeOverlays(); } catch {} }, 450);
@@ -5012,6 +5062,9 @@ ipcMain.handle('hide-overlay', (e) => {
     } else if (win === commandWindow) {
       cfg.showCommand = false; saveConfig(cfg);
       try { commandWindow.hide(); } catch {}
+    } else if (win === popRaidWindow) {
+      cfg.showPopRaid = false; saveConfig(cfg);
+      try { popRaidWindow.hide(); } catch {}
     } else {
       for (const [key, w] of panelOverlays.entries()) {
         if (w === win) { try { w.close(); } catch {} panelOverlays.delete(key); break; }
@@ -5397,8 +5450,9 @@ ipcMain.handle('save-config', async (_e, incoming) => {
     if (merged.showTank         && !tankWindow)      createTankOverlay();
     if (merged.showExtTarget    && !extTargetWindow) createExtTargetOverlay();
     if (merged.showCommand      && !commandWindow)   createCommandOverlay();
+    if (merged.showPopRaid      && !popRaidWindow)   createPopRaidOverlay();
   } catch (e) { void e; }
-  applyOverlayVisibility(); applyTriggerVisibility(); applyCharmVisibility(); applyPetsVisibility(); applyMobInfoVisibility(); applyBuffQueueVisibility(); applyWhoVisibility(); applyMelodyVisibility(); applyZealVisibility(); applyThreatVisibility(); applyChChainVisibility(); applyTankVisibility(); applyExtTargetVisibility(); applyCommandVisibility(); applyOverlayInteractivity();
+  applyOverlayVisibility(); applyTriggerVisibility(); applyCharmVisibility(); applyPetsVisibility(); applyMobInfoVisibility(); applyBuffQueueVisibility(); applyWhoVisibility(); applyMelodyVisibility(); applyZealVisibility(); applyThreatVisibility(); applyChChainVisibility(); applyTankVisibility(); applyExtTargetVisibility(); applyCommandVisibility(); applyPopRaidVisibility(); applyOverlayInteractivity();
   // Sync autostart-with-Windows with the saved pref. No-op on non-Windows;
   // on Windows this writes/removes the HKCU\…\Run registry entry via
   // setLoginItemSettings — no UAC, no admin rights.
@@ -5520,11 +5574,14 @@ ipcMain.handle('set-overlay-opacity', (_e, key, value) => {
   for (const [k, win] of _overlayEntries()) if (k === key) applyOverlayOpacity(win, k);
   return true;
 });
-// Open an external URL in the OS default browser. Allowlist to wolfpack.quest
-// and the GitHub repo so a compromised renderer can't open arbitrary links.
+// Open an external URL in the OS default browser. Allowlist so a compromised
+// renderer can't open arbitrary links: wolfpack.quest, the GitHub repo, plus
+// the PoP raid overlay's sources — EQProgression guide pages/diagrams and the
+// phase strategy videos on YouTube.
 ipcMain.handle('open-external', (_e, url) => {
   if (typeof url !== 'string') return false;
-  if (!/^https:\/\/(wolfpack\.quest|github\.com\/davehess\/QuarmBossTracker)/i.test(url)) {
+  const ALLOW = /^https:\/\/(wolfpack\.quest|github\.com\/davehess\/QuarmBossTracker|(www\.)?eqprogression\.com\/|(www\.)?youtube\.com\/watch|youtu\.be\/)/i;
+  if (!ALLOW.test(url)) {
     appendAgentLog(`[mimic] refused open-external: ${url}\n`);
     return false;
   }

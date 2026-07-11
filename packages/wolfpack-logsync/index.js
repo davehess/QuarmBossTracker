@@ -10200,6 +10200,7 @@ var WP_OVERLAY_ROWS = [
   ['tank',    'Tank HUD',            'Main-Tank focus card: MT HP + THEIR buffs and DS returns (CH-chain target or whoever the boss is meleeing), boss HP + enrage warning, Divine Aura countdown with start-CH callout, current Rampage target. Falls back to your own view when no MT is resolved. Reads /api/tank-state.'],
   ['exttarget','Extended Target',    'Raid-wide target list: every mob/player raiders are on, sorted by how many are targeting it, with HP + debuffs. Named mobs flagged; non-unique names asterisked (same-name mobs split out by HP). Players/pets hurt for >10s fold in as needs-attention rows.'],
   ['command', 'Command Center',      'One-window raid board: boss/MT/rampage/enrage/Death Touch (same data as Tank HUD), plus raid-wide DA/invuln status and healer mana parsed from raid-chat macros, plus Curse/Cure alerts from the buff queue. Reads /api/command-center.'],
+  ['popraid', 'PoP raids',           'Planes of Power / PoTime encounter slideshow: callouts, guide stats + live drop table, raid-wide shared objective checkboxes, EQProgression diagrams + phase videos, and a flag button that reports guide-vs-Quarm anomalies to the officers.'],
 ];
 
 function renderOverlays(s) {
@@ -10319,7 +10320,7 @@ function wpRefreshOverlayToggles() {
   try {
     window.mimic.getStatus().then(function(st){
       st = st || {};
-      var on = { hud: !!st.showHud, trigger: !!st.enableTriggerTts, charm: !!st.showCharm, pet: !!st.showPets, mobinfo: !!st.showMobInfo, buffQueue: !!st.showBuffQueue, who: !!st.showWho, melody: !!st.showMelody, zeal: !!st.showZeal, threat: !!st.showThreat, chchain: !!st.showChChain, tank: !!st.showTank, exttarget: !!st.showExtTarget, command: !!st.showCommand };
+      var on = { hud: !!st.showHud, trigger: !!st.enableTriggerTts, charm: !!st.showCharm, pet: !!st.showPets, mobinfo: !!st.showMobInfo, buffQueue: !!st.showBuffQueue, who: !!st.showWho, melody: !!st.showMelody, zeal: !!st.showZeal, threat: !!st.showThreat, chchain: !!st.showChChain, tank: !!st.showTank, exttarget: !!st.showExtTarget, command: !!st.showCommand, popraid: !!st.showPopRaid };
       var btns = document.querySelectorAll('.wp-ov-toggle');
       for (var i = 0; i < btns.length; i++) {
         var b = btns[i]; var k = b.getAttribute('data-ov'); var isOn = !!on[k];
@@ -13787,6 +13788,92 @@ function startWebDashboard(port) {
         reportBuffLag(character);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ ok: true, snappy_until: _buffQueueSnappyUntil }));
+      }
+      // ── PoP Raid Slideshow overlay (popraid.html) ─────────────────────────
+      // Shared raid-wide objective checkboxes. GET is fire-and-serve like
+      // /api/buff-queue (kick a refresh, return the cache immediately); the
+      // page skips `loading` payloads so a cache miss never wipes its
+      // optimistic state. Unlinked installs get local_only so the overlay can
+      // say the board isn't shared.
+      if (req.method === 'GET' && req.url.startsWith('/api/pop-objectives')) {
+        let encId = '';
+        try { encId = new URL(req.url, 'http://x').searchParams.get('encounter_id') || ''; } catch { /* */ }
+        const opts = _uploadOpts;
+        if (!opts || !opts.botUrl || !opts.token) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ rev: 0, encounters: {}, local_only: true }));
+        }
+        fetchPopObjectives(encId);
+        const cached = _popObjCache.get(String(encId || '').toLowerCase());
+        const payload = (cached && cached.payload) || { rev: -1, encounters: {}, loading: true };
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify(payload));
+      }
+      // Toggle/reset an objective, or ⚑-flag an anomaly — synchronous forward
+      // to the bot (the overlay needs the real status: 403 = reset is
+      // officer-only, 429 = anomaly rate limit). Objective writes drop the
+      // poll cache so the next tick refetches the authoritative board.
+      if (req.method === 'POST' && (req.url === '/api/pop-objectives' || req.url === '/api/pop-anomaly')) {
+        const opts = _uploadOpts;
+        if (!opts || !opts.botUrl || !opts.token) {
+          res.writeHead(503, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ error: 'not connected — link Mimic in Settings first' }));
+        }
+        const isAnomaly = req.url === '/api/pop-anomaly';
+        try {
+          const raw = await _readBody(req);
+          let bodyObj = {};
+          try { bodyObj = JSON.parse(raw || '{}'); } catch { /* forward as-is */ }
+          // The overlay doesn't know which character is active — stamp it so
+          // the QOL-thread report says who saw the anomaly in-game.
+          if (isAnomaly && !bodyObj.character) {
+            try { if (stats && stats.activeCharacter) bodyObj.character = String(stats.activeCharacter); } catch { /* */ }
+          }
+          const body = JSON.stringify(bodyObj);
+          const target = opts.botUrl.replace(/\/encounter(\?.*)?$/, isAnomaly ? '/pop-anomaly' : '/raid-objectives');
+          const u = new URL(target);
+          const mod = u.protocol === 'https:' ? https : http;
+          const upstream = mod.request({
+            method: 'POST', hostname: u.hostname, port: u.port || (u.protocol === 'https:' ? 443 : 80),
+            path: u.pathname,
+            headers: {
+              'Authorization': `Bearer ${opts.token}`,
+              'Content-Type': 'application/json',
+              'Content-Length': Buffer.byteLength(body),
+              'Accept': 'application/json',
+            },
+            timeout: 8000,
+          }, (upRes) => {
+            if (!isAnomaly) _popObjCache.clear();
+            res.writeHead(upRes.statusCode || 502, { 'Content-Type': 'application/json' });
+            upRes.pipe(res);
+          });
+          upstream.on('error', (err) => {
+            res.writeHead(502, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'upstream failed', detail: err.message }));
+          });
+          upstream.on('timeout', () => { upstream.destroy(new Error('timeout')); });
+          upstream.end(body);
+          return;
+        } catch (err) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ error: 'proxy error', detail: err.message }));
+        }
+      }
+      // Boss loot for the PoP overlay's target panel — same catalog cache the
+      // Mob Info overlay uses (fetchMobInfo, 6h TTL), keyed by guide npcName
+      // instead of the live Zeal target.
+      if (req.method === 'GET' && req.url.startsWith('/api/pop-mob-info')) {
+        let mobName = '';
+        try { mobName = new URL(req.url, 'http://x').searchParams.get('name') || ''; } catch { /* */ }
+        if (!mobName) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ error: 'name required' }));
+        }
+        fetchMobInfo(mobName);
+        const mobCached = _mobInfoByName.get(_normMobNameAgent(mobName));
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify(mobCached ? { mob: mobCached.mob } : { mob: null, loading: true }));
       }
       // Browser-side spell lookup. The dashboard fetches this ONCE on load to
       // turn spell names rendered on the resisted / inbound-damage / NPC cast
@@ -19709,6 +19796,46 @@ function fetchRaidBuffQueue(bufferClass, bufferCharacter) {
     req.on('timeout', () => { req.destroy(); _buffQueueInflight.delete(key); });
     req.end();
   } catch { _buffQueueInflight.delete(key); }
+}
+
+// ── PoP raid objectives proxy (popraid.html) ─────────────────────────────────
+// The PoP overlay polls the local agent's /api/pop-objectives; we proxy the
+// bot's /api/agent/raid-objectives (the raid-wide shared checkbox board) with
+// a short cache so a raid of Mimics is a handful of upstream GETs, not 50/s.
+// Toggle POSTs clear this cache (see the dispatcher) so the next poll is fresh.
+const _popObjCache = new Map();     // encounterIdLower ('' = all) → { at, payload }
+const _popObjInflight = new Set();
+const POP_OBJ_TTL_MS = parseInt(process.env.WP_POP_OBJ_TTL_MS, 10) || 2500;
+function fetchPopObjectives(encId) {
+  const opts = _uploadOpts;
+  if (!opts || !opts.botUrl || !opts.token) return;
+  const key = String(encId || '').trim().toLowerCase();
+  if (_popObjInflight.has(key)) return;
+  const cached = _popObjCache.get(key);
+  if (cached && (Date.now() - cached.at) < POP_OBJ_TTL_MS) return;
+  _popObjInflight.add(key);
+  const url = opts.botUrl.replace(/\/encounter(\?.*)?$/, '/raid-objectives')
+            + (encId ? '?encounter_id=' + encodeURIComponent(encId) : '');
+  try {
+    const u = new URL(url);
+    const mod = u.protocol === 'https:' ? https : http;
+    const req = mod.request({
+      method: 'GET', hostname: u.hostname, port: u.port, path: u.pathname + u.search,
+      headers: { 'Authorization': 'Bearer ' + opts.token, 'User-Agent': `wolfpack-logsync/${AGENT_VERSION}` },
+      timeout: 8000,
+    }, (res) => {
+      let body = '';
+      res.on('data', c => body += c);
+      res.on('end', () => {
+        _popObjInflight.delete(key);
+        try { const j = JSON.parse(body); _popObjCache.set(key, { at: Date.now(), payload: j }); }
+        catch { _popObjCache.set(key, { at: Date.now(), payload: { rev: -1, encounters: {} } }); }
+      });
+    });
+    req.on('error',   () => { _popObjInflight.delete(key); });
+    req.on('timeout', () => { req.destroy(); _popObjInflight.delete(key); });
+    req.end();
+  } catch { _popObjInflight.delete(key); }
 }
 
 // ── Extended Target overlay proxy ───────────────────────────────────────────

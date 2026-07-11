@@ -1,0 +1,602 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>popraid</title>
+<style>
+  /* PoP Raid Slideshow overlay — encounter-by-encounter raid guide pinned
+     in-game: callouts, guide stats vs live loot, shared raid-wide objective
+     checkboxes (agent proxies the bot's raid-objectives board), hotlinked
+     EQProgression diagrams, and the ⚑ flag-an-anomaly path to the QOL thread.
+     Data module: pop-raids.js (same dir). */
+  :root{ --bg-alpha:0.62; }
+  html,body{margin:0;height:100%;background:transparent;overflow:hidden;
+    font-family:ui-monospace,Menlo,Consolas,monospace;color:#fff;user-select:none;}
+  #wrap{padding:6px 8px;}
+  .title{display:flex;align-items:center;gap:5px;flex-wrap:nowrap;
+    font-size:12px;color:#e9d5ff;text-shadow:0 1px 2px #000;margin-bottom:5px;}
+  .conn{font-size:11px}
+  .conn.ok{color:#56d364} .conn.bad{color:#8b949e}
+  /* 30px right gutter so the encounter picker's dropdown-dismiss click can't
+     land on the fixed ✕ (same hazard the Buff queue class picker had). */
+  .navbtns{margin-left:auto;margin-right:30px;display:flex;gap:3px;align-items:center}
+  select.pick{background:#0d1117;color:#c9d1d9;border:1px solid #30363d;
+    border-radius:3px;font-size:10px;padding:1px 3px;font-family:inherit;cursor:pointer;
+    max-width:150px}
+  select.pick:focus{outline:1px solid #a371f7}
+  .nbtn{background:#161b22;color:#c9d1d9;border:1px solid #30363d;border-radius:3px;
+    font-size:10px;line-height:1;padding:3px 6px;cursor:pointer;font-family:inherit}
+  .nbtn:hover{border-color:#a371f7;color:#e9d5ff}
+  .nbtn.on{background:rgba(163,113,247,0.25);border-color:#a371f7;color:#e9d5ff}
+  /* Encounter header */
+  .enc-hdr{padding:4px 7px;background:rgb(20 10 34 / var(--bg-alpha));border-radius:6px;
+    border:1px solid rgba(163,113,247,0.35);text-shadow:0 1px 2px #000;margin-bottom:5px}
+  .enc-hdr .nm{font-size:13px;font-weight:bold;color:#e9d5ff}
+  .enc-hdr .zone{font-size:10px;color:#79c0ff}
+  .enc-hdr .sect{font-size:9px;color:#8b949e}
+  .enc-hdr .pos{float:right;font-size:9px;color:#6e7681;font-variant-numeric:tabular-nums}
+  /* Panels. Single-column by default; body.framed lays the panels out as a
+     multi-column "framed" row for ultrawide monitors. */
+  #panels{display:flex;flex-direction:column;gap:5px}
+  body.framed #panels{display:grid;grid-template-columns:repeat(3,minmax(230px,1fr));
+    grid-auto-rows:min-content;align-items:start;gap:6px}
+  .panel{background:rgb(8 5 16 / var(--bg-alpha));border-radius:5px;padding:4px 6px;
+    text-shadow:0 1px 2px #000;border-left:3px solid #a371f7}
+  .panel .ph{font-size:9px;color:#c4b5fd;letter-spacing:0.06em;text-transform:uppercase;
+    margin-bottom:3px;display:flex;align-items:baseline;gap:5px}
+  .panel .ph .ct{color:#6e7681;font-variant-numeric:tabular-nums}
+  .panel .ph .act{margin-left:auto}
+  .callout{font-size:10px;color:#e6edf3;padding:2px 0 2px 10px;position:relative;line-height:1.35}
+  .callout::before{content:'▸';position:absolute;left:0;color:#a371f7;font-size:9px}
+  /* Stats chips */
+  .stats{display:flex;flex-wrap:wrap;gap:4px}
+  .stat{padding:1px 5px;border-radius:3px;font-size:9px;line-height:1.5;
+    border:1px solid rgba(255,255,255,0.12);background:rgba(255,255,255,0.05);color:#c9d1d9}
+  .stat b{color:#e6edf3;font-weight:600}
+  .stat.hp{border-color:rgba(248,113,113,0.4);color:#fca5a5}
+  .stat.slow{border-color:rgba(126,231,135,0.4);color:#7ee787}
+  .stat.ramp{border-color:rgba(240,136,62,0.45);color:#fdba74}
+  .stat.imm{border-color:rgba(139,148,158,0.5);color:#c9d1d9}
+  .abil{font-size:10px;padding:1px 0 1px 2px;line-height:1.35}
+  .abil .an{color:#f0b429;font-weight:600}
+  .abil .at{color:#c9d1d9}
+  /* Tracker — the raid-wide shared checkboxes */
+  .obj{display:flex;align-items:baseline;gap:5px;padding:2px 4px;border-radius:3px;
+    font-size:10px;cursor:pointer;line-height:1.4}
+  .obj:hover{background:rgba(163,113,247,0.12)}
+  .obj .bx{color:#8b949e;font-size:11px;width:12px;text-align:center}
+  .obj.done .bx{color:#56d364}
+  .obj .lb{color:#e6edf3}
+  .obj.done .lb{color:#8b949e;text-decoration:line-through}
+  .obj .by{margin-left:auto;font-size:9px;color:#6e7681;white-space:nowrap}
+  .obj.done .by{color:#7ee787}
+  .resetBtn{background:none;border:1px solid rgba(248,113,113,0.4);color:#f87171;
+    border-radius:3px;font-size:9px;line-height:1;padding:1px 4px;cursor:pointer;opacity:0.6}
+  .resetBtn:hover{opacity:1;background:rgba(248,113,113,0.15)}
+  .syncNote{font-size:8px;color:#6e7681;font-style:italic}
+  /* Links + diagrams */
+  .links{display:flex;flex-wrap:wrap;gap:4px}
+  .lnk{padding:2px 6px;border-radius:3px;font-size:10px;line-height:1.5;cursor:pointer;
+    border:1px solid rgba(88,166,255,0.4);background:rgba(88,166,255,0.10);color:#79c0ff}
+  .lnk:hover{background:rgba(88,166,255,0.22)}
+  .lnk.vid{border-color:rgba(248,113,113,0.4);background:rgba(248,113,113,0.10);color:#fca5a5}
+  .lnk.vid:hover{background:rgba(248,113,113,0.2)}
+  .diagrams{display:flex;flex-wrap:wrap;gap:5px;margin-top:4px}
+  .dg{cursor:pointer;border:1px solid rgba(163,113,247,0.35);border-radius:4px;
+    max-width:100%;overflow:hidden;background:rgba(0,0,0,0.35)}
+  .dg img{display:block;max-width:100%;max-height:170px;object-fit:contain}
+  body.framed .dg img{max-height:300px}
+  .dg .cap{font-size:8px;color:#8b949e;padding:1px 4px;text-align:center}
+  .credit{font-size:8px;color:#6e7681;font-style:italic;margin-top:3px}
+  /* Loot (live drop table via agent's mob-info cache) */
+  .loot-row{display:flex;align-items:baseline;gap:5px;padding:1px 4px;font-size:9px;
+    background:rgba(255,255,255,0.03);border-radius:2px;border-left:2px solid #3b82f6;margin-bottom:1px}
+  .loot-row.t100{border-left-color:#56d364}.loot-row.t5{border-left-color:#f0883e}
+  .loot-row.t1{border-left-color:#f85149}.loot-row.t20{border-left-color:#a371f7}
+  .loot-row .nm{color:#e6edf3;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .loot-row .pct{font-variant-numeric:tabular-nums;color:#c9d1d9}
+  details.sub{margin-top:2px}
+  details.sub summary{font-size:9px;color:#79c0ff;cursor:pointer;list-style:none;padding:1px 0}
+  details.sub summary::before{content:'▸ '}
+  details.sub[open] summary::before{content:'▾ '}
+  .empty{color:rgba(255,255,255,0.45);font-size:10px;font-style:italic;padding:3px 2px}
+  /* Quarm-notes strip + pending sections */
+  .qnote{font-size:9px;color:#fde68a;padding:1px 0 1px 12px;position:relative;line-height:1.35}
+  .qnote::before{content:'⚠';position:absolute;left:0;font-size:8px}
+  /* ⚑ anomaly form */
+  #flagForm{display:none;background:rgb(40 24 8 / var(--bg-alpha));border-left-color:#f0883e}
+  #flagForm.open{display:block}
+  #flagForm textarea{width:100%;box-sizing:border-box;height:52px;background:#0d1117;color:#e6edf3;
+    border:1px solid #30363d;border-radius:3px;font-size:10px;font-family:inherit;padding:3px 5px;resize:none}
+  #flagForm textarea:focus{outline:1px solid #f0883e}
+  #flagForm .fr{display:flex;gap:5px;margin-top:3px;align-items:center}
+  #flagStatus{font-size:9px;color:#8b949e}
+  #flagStatus.ok{color:#56d364} #flagStatus.err{color:#f87171}
+  /* drag/lock/setup chrome — same pattern as the other overlays. */
+  #drag-controls{display:none;position:fixed;top:4px;left:4px;gap:4px;z-index:60}
+  body.unlocked #drag-controls{display:flex}
+  body.unlocked{outline:2px solid rgba(163,113,247,0.7);outline-offset:-2px}
+  .drag-btn{width:24px;height:24px;display:flex;align-items:center;justify-content:center;
+    background:rgba(163,113,247,0.92);color:#fff;border:1px solid rgba(255,255,255,0.4);
+    border-radius:4px;font-size:13px;line-height:1;cursor:move;user-select:none}
+  #lock-btn{cursor:pointer;font-size:11px}
+  #setupbar{display:none;position:fixed;top:0;left:0;right:0;align-items:center;gap:8px;
+    padding:4px 8px;background:rgba(163,113,247,0.92);color:#fff;font-size:10px;font-weight:600;z-index:50}
+  body.setup #setupbar{display:flex}
+  body.setup #drag-controls{top:28px}
+  body.setup #wrap{margin-top:26px}
+  #setupbar input[type=range]{flex:1;cursor:pointer}
+  #hide-btn{position:fixed;top:6px;right:6px;z-index:65;width:18px;height:18px;
+    display:flex;align-items:center;justify-content:center;border-radius:4px;
+    background:rgba(14,17,22,0.6);color:#8b949e;border:1px solid rgba(110,118,129,0.3);
+    font-size:11px;line-height:1;cursor:pointer;opacity:0.45;transition:opacity .12s}
+  #hide-btn:hover{opacity:1;color:#f87171;border-color:#f87171}
+  body.setup #hide-btn{top:30px}
+  #move-btn{position:fixed;top:6px;left:6px;z-index:65;width:18px;height:18px;
+    display:flex;align-items:center;justify-content:center;border-radius:4px;
+    background:rgba(14,17,22,0.6);color:#8b949e;border:1px solid rgba(110,118,129,0.3);
+    font-size:11px;line-height:1;cursor:move;opacity:0.45;transition:opacity .12s}
+  #move-btn:hover{opacity:1;color:#a371f7;border-color:#a371f7}
+  body.setup #move-btn{top:30px}
+</style></head>
+<body>
+  <button id="move-btn" title="Drag from this icon to move the overlay">✥</button>
+  <button id="hide-btn" title="Hide the PoP raid overlay (turn back on from the tray → Overlays)">✕</button>
+  <div id="drag-controls">
+    <div id="move-handle" class="drag-btn" title="Drag to move">✥</div>
+    <div id="lock-btn"   class="drag-btn" title="Lock in place">🔒</div>
+  </div>
+  <div id="setupbar">
+    <span>🛠 PoP raids</span>
+    <span>opacity</span><input id="opacitySlider" type="range" min="0.15" max="1" step="0.05" value="1" /><span id="opacityVal">100%</span>
+    <button id="exitSetupBtn">Done</button>
+  </div>
+  <div id="wrap">
+    <div class="title">
+      <span id="conn" class="conn bad" title="agent connection">○</span>
+      <span>⚔ PoP raids</span>
+      <div class="navbtns">
+        <select id="encPick" class="pick" title="Jump to an encounter"></select>
+        <button id="prevBtn" class="nbtn" title="Previous encounter">◀</button>
+        <button id="nextBtn" class="nbtn" title="Next encounter">▶</button>
+        <button id="frameBtn" class="nbtn" title="Framed multi-panel layout (ultrawide monitors)">🖥</button>
+        <button id="flagBtn" class="nbtn" title="Flag an anomaly — Quarm doesn't match the guide? Report it to the QOL thread with full encounter context.">⚑</button>
+      </div>
+    </div>
+    <div id="content"></div>
+  </div>
+<script src="pop-raids.js"></script>
+<script>
+  let PORT = 7779;
+  window.mimic && window.mimic.onAgentPort && window.mimic.onAgentPort(p => { PORT = p; });
+  window.mimic && window.mimic.getAgentPort && window.mimic.getAgentPort().then(p => { if (p) PORT = p; });
+
+  if (window.mimic && window.mimic.onOverlayLocked) {
+    window.mimic.onOverlayLocked(locked => { document.body.classList.toggle('unlocked', !locked); });
+  }
+  var lockBtn = document.getElementById('lock-btn');
+  if (lockBtn) lockBtn.addEventListener('click', function(){ try { window.mimic.setOverlaysLocked(true); } catch (e) {} });
+
+  var hideBtn = document.getElementById('hide-btn');
+  if (hideBtn) {
+    // Stray-click guard (same as Buff queue): the pickers' native dropdowns
+    // dismiss with a click that can land on ✕. Require 250ms of hover first.
+    var _hideHoverAt = 0;
+    hideBtn.addEventListener('mouseenter', function(){ _hideHoverAt = Date.now(); try { window.mimic.overlayHoverInteractive(true); } catch (e) {} });
+    hideBtn.addEventListener('mouseleave', function(){ _hideHoverAt = 0; try { window.mimic.overlayHoverInteractive(false); } catch (e) {} });
+    hideBtn.addEventListener('click', function(){
+      if (!_hideHoverAt || (Date.now() - _hideHoverAt) < 250) {
+        hideBtn.style.opacity = '1'; hideBtn.style.borderColor = '#f87171'; hideBtn.style.color = '#f87171';
+        setTimeout(function(){ hideBtn.style.opacity = ''; hideBtn.style.borderColor = ''; hideBtn.style.color = ''; }, 600);
+        return;
+      }
+      try { window.mimic.hideThisOverlay(); } catch (e) {}
+    });
+  }
+
+  // Manual drag — same workaround as the other overlays.
+  var moveHandle = document.getElementById('move-handle');
+  var moveBtn    = document.getElementById('move-btn');
+  var _dragging = false;
+  function _beginDrag(e){
+    if (e.button !== 0) return; e.preventDefault(); _dragging = true;
+    try { window.mimic.overlayDragStart(); } catch (err) {}
+  }
+  if (moveHandle) moveHandle.addEventListener('mousedown', _beginDrag);
+  if (moveBtn) {
+    moveBtn.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch (e) {} });
+    moveBtn.addEventListener('mouseleave', function(){ if (!_dragging) { try { window.mimic.overlayHoverInteractive(false); } catch (e) {} } });
+    moveBtn.addEventListener('mousedown', _beginDrag);
+    try { window.mimic.attachOverlayMenu(moveBtn); } catch (e) {}
+  }
+  document.addEventListener('mouseup', function(){ if (_dragging){ _dragging=false; try{window.mimic.overlayDragEnd();}catch(e){} try{window.mimic.overlayHoverInteractive(false);}catch(e){} } });
+  window.addEventListener('blur', function(){ if (_dragging){ _dragging=false; try{window.mimic.overlayDragEnd();}catch(e){} } });
+
+  var _overlayKey = null;
+  var _setupScope = null;
+  if (window.mimic && window.mimic.onSetupMode) {
+    window.mimic.onSetupMode(function(p){
+      _overlayKey = p && p.overlayKey;
+      if (p && p.scope) _setupScope = p.scope;
+      else if (p && p.active) _setupScope = 'all';
+      document.body.classList.toggle('setup', !!(p && p.active));
+    });
+  }
+  if (window.mimic && window.mimic.onBgAlpha) {
+    window.mimic.onBgAlpha(function(v){
+      var a = (typeof v === 'number' && v >= 0.15 && v <= 1.0) ? v : 0.62;
+      try { document.documentElement.style.setProperty('--bg-alpha', String(a)); } catch (e) {}
+    });
+  }
+  var slider = document.getElementById('opacitySlider'); var oVal = document.getElementById('opacityVal');
+  if (slider) slider.addEventListener('input', function(){
+    var v = parseFloat(slider.value || '1'); if (oVal) oVal.textContent = Math.round(v*100)+'%';
+    if (_overlayKey && window.mimic && window.mimic.setOverlayOpacity) { try { window.mimic.setOverlayOpacity(_overlayKey, v); } catch (e) {} }
+  });
+  var doneBtn = document.getElementById('exitSetupBtn');
+  if (doneBtn) doneBtn.addEventListener('click', function(){ try { document.body.classList.remove('setup'); } catch (e) {} try { if (_setupScope === 'this') window.mimic.setSetupModeThis(false); else window.mimic.setSetupMode(false); } catch (e) {} _setupScope = null; });
+
+  // ── Hover-interact handshake, delegated ────────────────────────────────────
+  // Locked overlays are click-through; every interactive control needs the
+  // handshake or "the button does nothing". Content rerenders on slide change,
+  // so delegate ONCE at document level for anything interactive.
+  var _IA_SEL = 'button, select, input, textarea, a, .obj, .lnk, .dg, summary';
+  document.addEventListener('mouseover', function(e){
+    if (e.target && e.target.closest && e.target.closest(_IA_SEL)) {
+      try { window.mimic.overlayHoverInteractive(true); } catch (er) {}
+    }
+  });
+  document.addEventListener('mouseout', function(e){
+    if (!e.target || !e.target.closest || !e.target.closest(_IA_SEL)) return;
+    var to = e.relatedTarget;
+    if (to && to.closest && to.closest(_IA_SEL)) return;   // still on a control
+    try { window.mimic.overlayHoverInteractive(false); } catch (er) {}
+  });
+
+  // ── Slideshow state ─────────────────────────────────────────────────────────
+  var DB = window.POP_RAIDS || { sections: [], quarmGlobalNotes: [], imageBase: '' };
+  // Flattened slide list: every encounter, plus one "section card" slide for
+  // pending sections (P2/P3) so they're visible and explain themselves.
+  var SLIDES = [];
+  (DB.sections || []).forEach(function(sec){
+    if (sec.pending) { SLIDES.push({ sec: sec, enc: null }); return; }
+    (sec.encounters || []).forEach(function(enc){ SLIDES.push({ sec: sec, enc: enc }); });
+  });
+  var idx = 0;
+  try {
+    var savedId = localStorage.getItem('wp:pop:enc');
+    if (savedId) { var f = SLIDES.findIndex(function(s){ return s.enc && s.enc.id === savedId; }); if (f >= 0) idx = f; }
+  } catch (e) {}
+  var framed = false;
+  try { framed = localStorage.getItem('wp:pop:framed') === '1'; } catch (e) {}
+
+  function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]); }); }
+  function imgUrl(f){ return /^https?:/i.test(f) ? f : (DB.imageBase + f); }
+  function openExt(url){
+    try { if (window.mimic && window.mimic.openExternal) { window.mimic.openExternal(url); return; } } catch (e) {}
+    try { window.open(url); } catch (e) {}
+  }
+
+  // Encounter picker — grouped by section.
+  var encPick = document.getElementById('encPick');
+  (function buildPicker(){
+    var html = '';
+    (DB.sections || []).forEach(function(sec){
+      html += '<optgroup label="' + esc(sec.title) + '">';
+      if (sec.pending) {
+        html += '<option value="sec:' + esc(sec.id) + '">' + esc(sec.title) + ' (pending)</option>';
+      } else {
+        (sec.encounters || []).forEach(function(enc){
+          html += '<option value="' + esc(enc.id) + '">' + esc(enc.name) + '</option>';
+        });
+      }
+      html += '</optgroup>';
+    });
+    encPick.innerHTML = html;
+  })();
+  encPick.addEventListener('change', function(){
+    var v = encPick.value;
+    var f = SLIDES.findIndex(function(s){
+      return v.indexOf('sec:') === 0 ? (!s.enc && s.sec.id === v.slice(4)) : (s.enc && s.enc.id === v);
+    });
+    if (f >= 0) { idx = f; renderSlide(); }
+  });
+  document.getElementById('prevBtn').addEventListener('click', function(){ idx = (idx - 1 + SLIDES.length) % SLIDES.length; renderSlide(); });
+  document.getElementById('nextBtn').addEventListener('click', function(){ idx = (idx + 1) % SLIDES.length; renderSlide(); });
+
+  var frameBtn = document.getElementById('frameBtn');
+  function applyFramed(){
+    document.body.classList.toggle('framed', framed);
+    frameBtn.classList.toggle('on', framed);
+    try { localStorage.setItem('wp:pop:framed', framed ? '1' : '0'); } catch (e) {}
+    _fit();
+  }
+  frameBtn.addEventListener('click', function(){ framed = !framed; applyFramed(); });
+
+  function _fit(){
+    try { window.mimic && window.mimic.autoFitOverlay && window.mimic.autoFitOverlay(document.getElementById('wrap')); } catch (e) {}
+  }
+
+  // ── Shared objectives (raid-wide, via agent proxy of the bot board) ────────
+  var _objRev = -1;
+  var _objByEnc = {};       // encId → { objId: {c, by, at} }
+  var _objSynced = false;
+  function currentEnc(){ var s = SLIDES[idx]; return s && s.enc; }
+
+  async function pollObjectives(){
+    var enc = currentEnc();
+    if (!enc || !enc.tracker || !enc.tracker.length) return;
+    try {
+      var r = await fetch('http://127.0.0.1:'+PORT+'/api/pop-objectives?encounter_id='+encodeURIComponent(enc.id), { cache: 'no-store' });
+      var s = await r.json();
+      document.getElementById('conn').className = 'conn ok';
+      document.getElementById('conn').textContent = '●';
+      _objSynced = !(s && s.local_only);
+      var note = document.getElementById('syncNote');
+      if (note) note.textContent = _objSynced ? '' : 'not linked — checks stay local';
+      // `loading` = the agent had no cache yet (first poll, or a toggle just
+      // cleared it) — skip so we never wipe optimistic state with a stub.
+      if (s && s.encounters && !s.loading) {
+        var changed = (s.rev !== _objRev);
+        _objRev = s.rev;
+        Object.keys(s.encounters).forEach(function(k){ _objByEnc[k] = s.encounters[k] || {}; });
+        if (changed) renderTracker();
+      }
+    } catch (e) {
+      var c = document.getElementById('conn'); c.className = 'conn bad'; c.textContent = '○';
+    }
+  }
+  function postObjective(body){
+    return fetch('http://127.0.0.1:'+PORT+'/api/pop-objectives', {
+      method: 'POST', cache: 'no-store',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  }
+
+  function renderTracker(){
+    var enc = currentEnc();
+    var box = document.getElementById('trackerBody');
+    if (!enc || !box) return;
+    var st = _objByEnc[enc.id] || {};
+    var html = '';
+    (enc.tracker || []).forEach(function(t){
+      var o = st[t.id];
+      var done = !!(o && o.c);
+      html += '<div class="obj' + (done ? ' done' : '') + '" data-obj="' + esc(t.id) + '" title="' + (done ? 'Un-check (raid-wide)' : 'Check off — the whole raid sees it') + '">'
+            +   '<span class="bx">' + (done ? '☑' : '☐') + '</span>'
+            +   '<span class="lb">' + esc(t.label) + '</span>'
+            +   (done && o.by ? '<span class="by">✓ ' + esc(o.by) + '</span>' : '')
+            + '</div>';
+    });
+    if (box.__wpHtml !== html) { box.innerHTML = html; box.__wpHtml = html; _fit(); }
+  }
+
+  // ── Loot (live drop table through the agent's mob-info cache) ──────────────
+  var _lootLoadedFor = null;
+  async function loadLoot(){
+    var enc = currentEnc();
+    var box = document.getElementById('lootBody');
+    if (!enc || !enc.npcName || !box) return;
+    if (_lootLoadedFor === enc.id) return;
+    _lootLoadedFor = enc.id;
+    box.innerHTML = '<div class="empty">loading drop table…</div>';
+    try {
+      var r = await fetch('http://127.0.0.1:'+PORT+'/api/pop-mob-info?name='+encodeURIComponent(enc.npcName), { cache: 'no-store' });
+      var s = await r.json();
+      var mob = s && s.mob;
+      if (s && s.loading) {
+        // fetch in flight on the agent — try again shortly
+        _lootLoadedFor = null;
+        setTimeout(function(){ var e2 = currentEnc(); if (e2 && e2.id === enc.id) loadLoot(); }, 2500);
+        return;
+      }
+      if (!mob || !Array.isArray(mob.loot) || !mob.loot.length) {
+        box.innerHTML = '<div class="empty">no published drop table for this NPC</div>'; _fit(); return;
+      }
+      var html = '';
+      mob.loot.forEach(function(it){
+        if (!it || !it.name) return;
+        var pct = (it.pct != null) ? Number(it.pct) : null;
+        var tier = pct == null ? '' : pct >= 99 ? 't100' : pct >= 50 ? 't50' : pct >= 20 ? 't20' : pct >= 5 ? 't5' : 't1';
+        html += '<div class="loot-row ' + tier + '">'
+              +   '<span class="nm">' + (it.unique_to_mob ? '⭐ ' : '') + esc(it.name) + (it.lore ? ' <span style="color:#d2a8ff;font-size:8px">LORE</span>' : '') + '</span>'
+              +   (it.seen > 0 ? '<span style="color:#a371f7;font-size:8px">' + it.seen + '× won</span>' : '')
+              +   '<span class="pct">' + (pct != null ? (pct >= 1 ? Math.round(pct) + '%' : pct.toFixed(1) + '%') : '?') + '</span>'
+              + '</div>';
+      });
+      box.innerHTML = html; _fit();
+    } catch (e) {
+      box.innerHTML = '<div class="empty">agent offline — loot lookup needs Mimic\'s agent running</div>'; _fit();
+    }
+  }
+
+  // ── ⚑ anomaly flag ──────────────────────────────────────────────────────────
+  var flagBtn = document.getElementById('flagBtn');
+  flagBtn.addEventListener('click', function(){
+    var f = document.getElementById('flagForm');
+    if (f) { f.classList.toggle('open'); _fit(); var ta = document.getElementById('flagText'); if (f.classList.contains('open') && ta) ta.focus(); }
+  });
+  function guideBaseline(enc){
+    if (!enc) return '';
+    var bits = [];
+    var st = enc.stats || {};
+    if (st.hp)   bits.push('HP ' + st.hp);
+    if (st.hits) bits.push('hits ' + st.hits);
+    if (st.slow) bits.push(st.slow);
+    if (st.ramp) bits.push(st.ramp);
+    if (st.immune) bits.push('immune: ' + st.immune);
+    (enc.abilities || []).forEach(function(a){ bits.push(a.name + (a.note ? ' (' + a.note + ')' : '')); });
+    return bits.join(' · ');
+  }
+  async function sendFlag(){
+    var enc = currentEnc(); var s = SLIDES[idx];
+    var ta = document.getElementById('flagText');
+    var stat = document.getElementById('flagStatus');
+    var note = ta ? ta.value.trim() : '';
+    if (!note) { if (stat) { stat.textContent = 'describe what you saw first'; stat.className = 'err'; } return; }
+    if (stat) { stat.textContent = 'sending…'; stat.className = ''; }
+    try {
+      var r = await fetch('http://127.0.0.1:'+PORT+'/api/pop-anomaly', {
+        method: 'POST', cache: 'no-store',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          encounter_id:   enc ? enc.id : (s && s.sec && s.sec.id),
+          encounter_name: enc ? enc.name : (s && s.sec && s.sec.title),
+          zone:           enc ? enc.zone : null,
+          section:        s && s.sec ? s.sec.title : null,
+          expected:       guideBaseline(enc),
+          note:           note,
+          quarm_notes:    DB.quarmGlobalNotes || [],
+        }),
+      });
+      var j = await r.json().catch(function(){ return {}; });
+      if (r.ok && j && j.ok !== false) {
+        if (stat) { stat.textContent = '✓ flagged — lands in the QOL thread'; stat.className = 'ok'; }
+        if (ta) ta.value = '';
+        setTimeout(function(){ var f = document.getElementById('flagForm'); if (f) f.classList.remove('open'); if (stat) { stat.textContent = ''; } _fit(); }, 2500);
+      } else {
+        if (stat) { stat.textContent = (j && j.error) ? j.error : 'failed — is the agent linked?'; stat.className = 'err'; }
+      }
+    } catch (e) {
+      if (stat) { stat.textContent = 'agent offline'; stat.className = 'err'; }
+    }
+  }
+
+  // ── Slide renderer ──────────────────────────────────────────────────────────
+  function renderSlide(){
+    var s = SLIDES[idx]; if (!s) return;
+    var sec = s.sec, enc = s.enc;
+    _lootLoadedFor = null;
+    try { if (enc) localStorage.setItem('wp:pop:enc', enc.id); } catch (e) {}
+    encPick.value = enc ? enc.id : ('sec:' + sec.id);
+
+    var html = '';
+    // Header
+    html += '<div class="enc-hdr">'
+          +   '<span class="pos">' + (idx + 1) + '/' + SLIDES.length + '</span>'
+          +   '<div class="nm">' + esc(enc ? enc.name : sec.title) + '</div>'
+          +   (enc && enc.zone ? '<div class="zone">' + esc(enc.zone) + '</div>' : '')
+          +   '<div class="sect">' + esc(sec.title) + (sec.note ? ' — ' + esc(sec.note) : '') + '</div>'
+          + '</div>';
+    html += '<div id="panels">';
+
+    if (!enc) {
+      // Pending section card (PoTime P2/P3 until the local capture runbook runs)
+      html += '<div class="panel"><div class="ph">⏳ Awaiting capture</div>'
+            +   '<div class="callout">' + esc(sec.note || 'Not captured yet.') + '</div>'
+            +   (sec.guide ? '<div class="links" style="margin-top:4px"><span class="lnk" data-url="' + esc(sec.guide) + '">📖 Guide page</span></div>' : '')
+            + '</div>';
+    } else {
+      // Callouts
+      if (enc.callouts && enc.callouts.length) {
+        html += '<div class="panel"><div class="ph">📣 Callouts</div>';
+        enc.callouts.forEach(function(c){ html += '<div class="callout">' + esc(c) + '</div>'; });
+        html += '</div>';
+      }
+      // Stats + abilities + loot
+      html += '<div class="panel"><div class="ph">🎯 Target</div><div class="stats">';
+      var st = enc.stats || {};
+      if (st.hp)     html += '<span class="stat hp"><b>HP</b> ' + esc(st.hp) + '</span>';
+      if (st.hits)   html += '<span class="stat"><b>Hits</b> ' + esc(st.hits) + '</span>';
+      if (st.slow)   html += '<span class="stat slow">' + esc(st.slow) + '</span>';
+      if (st.ramp)   html += '<span class="stat ramp">' + esc(st.ramp) + '</span>';
+      if (st.immune) html += '<span class="stat imm"><b>Immune</b> ' + esc(st.immune) + '</span>';
+      html += '</div>';
+      (enc.abilities || []).forEach(function(a){
+        html += '<div class="abil"><span class="an">' + esc(a.name) + '</span>' + (a.note ? ' <span class="at">— ' + esc(a.note) + '</span>' : '') + '</div>';
+      });
+      if (enc.npcName) {
+        html += '<details class="sub"><summary>💰 Live drop table</summary><div id="lootBody"><div class="empty">open to load</div></div></details>';
+      }
+      html += '</div>';
+      // Tracker
+      if (enc.tracker && enc.tracker.length) {
+        html += '<div class="panel"><div class="ph">☑ Objectives <span class="ct">' + enc.tracker.length + '</span>'
+              +   '<span class="syncNote" id="syncNote"></span>'
+              +   '<span class="act"><button class="resetBtn" id="objReset" title="Clear every checkbox for this encounter (officers)">↺ reset</button></span>'
+              + '</div><div id="trackerBody"></div></div>';
+      }
+      // Links + diagrams
+      var diagrams = (enc.diagrams || []).concat(enc.pageImages || []);
+      var hasLinks = enc.guide || enc.video || sec.video || sec.guide || diagrams.length || sec.overviewDiagram;
+      if (hasLinks) {
+        html += '<div class="panel"><div class="ph">🔗 Guide &amp; diagrams</div><div class="links">';
+        if (enc.guide)  html += '<span class="lnk" data-url="' + esc(enc.guide) + '">📖 Guide page</span>';
+        if (!enc.guide && sec.guide) html += '<span class="lnk" data-url="' + esc(sec.guide) + '">📖 Phase guide</span>';
+        var vid = enc.video || sec.video;
+        if (vid) html += '<span class="lnk vid" data-url="' + esc(vid) + '">🎬 Video</span>';
+        html += '</div>';
+        var dgs = diagrams.slice();
+        if (sec.overviewDiagram) dgs.unshift(sec.overviewDiagram);
+        if (dgs.length) {
+          html += '<div class="diagrams">';
+          dgs.forEach(function(d){
+            var u = imgUrl(d);
+            html += '<div class="dg" data-url="' + esc(u) + '" title="Click to open full size">'
+                  +   '<img src="' + esc(u) + '" loading="lazy" alt="" onerror="this.parentNode.style.display=\'none\'">'
+                  +   '<div class="cap">' + esc(d.replace(/^.*\//, '')) + '</div>'
+                  + '</div>';
+          });
+          html += '</div>';
+          html += '<div class="credit">diagrams © EQProgression — loaded directly from their site; guide link above is the source</div>';
+        }
+        html += '</div>';
+      }
+    }
+    // Quarm global notes (every slide — these apply across PoP)
+    html += '<details class="sub panel" style="border-left-color:#d4a72c"><summary>⚠ Quarm divergences (known)</summary>';
+    (DB.quarmGlobalNotes || []).forEach(function(n){ html += '<div class="qnote">' + esc(n) + '</div>'; });
+    html += '</details>';
+    // ⚑ form
+    html += '<div class="panel" id="flagForm"><div class="ph">⚑ Flag an anomaly</div>'
+          +   '<textarea id="flagText" placeholder="What did Quarm do differently? (HP, missing mechanic, extra adds, timing…)"></textarea>'
+          +   '<div class="fr"><button class="nbtn" id="flagSend">Send to QOL thread</button><span id="flagStatus"></span></div>'
+          + '</div>';
+    html += '</div>';
+
+    var content = document.getElementById('content');
+    content.innerHTML = html;
+
+    // Wire per-render controls (content was just replaced).
+    var reset = document.getElementById('objReset');
+    if (reset) reset.addEventListener('click', function(){
+      var enc2 = currentEnc(); if (!enc2) return;
+      postObjective({ encounter_id: enc2.id, op: 'reset' }).then(function(r){
+        if (r.status === 403) {
+          reset.textContent = 'officer only'; setTimeout(function(){ reset.textContent = '↺ reset'; }, 1500);
+        } else { delete _objByEnc[enc2.id]; renderTracker(); pollObjectives(); }
+      }).catch(function(){});
+    });
+    var send = document.getElementById('flagSend');
+    if (send) send.addEventListener('click', sendFlag);
+    var loot = document.getElementById('lootBody');
+    if (loot) {
+      var det = loot.closest('details');
+      if (det) det.addEventListener('toggle', function(){ if (det.open) loadLoot(); });
+    }
+    renderTracker();
+    pollObjectives();
+    _fit();
+  }
+
+  // Delegated clicks: objectives toggle + external links/diagrams.
+  document.getElementById('content').addEventListener('click', function(e){
+    var lnk = e.target && e.target.closest ? e.target.closest('.lnk, .dg') : null;
+    if (lnk && lnk.getAttribute('data-url')) { openExt(lnk.getAttribute('data-url')); return; }
+    var obj = e.target && e.target.closest ? e.target.closest('.obj') : null;
+    if (obj) {
+      var enc = currentEnc(); if (!enc) return;
+      var objId = obj.getAttribute('data-obj');
+      var st = _objByEnc[enc.id] || (_objByEnc[enc.id] = {});
+      var was = !!(st[objId] && st[objId].c);
+      // Optimistic flip; authoritative state arrives on the next poll.
+      if (was) delete st[objId]; else st[objId] = { c: true, by: 'you', at: new Date().toISOString() };
+      renderTracker();
+      postObjective({ encounter_id: enc.id, objective_id: objId, checked: !was }).then(function(){ pollObjectives(); }).catch(function(){});
+    }
+  });
+
+  applyFramed();
+  renderSlide();
+  setInterval(pollObjectives, 3000);
+</script>
+</body>
+</html>
