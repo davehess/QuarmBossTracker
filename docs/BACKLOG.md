@@ -33,6 +33,17 @@ class filter + "only gaps" + "hide logged-off" toggles, accuracy caveat banner.
 - The PvP overnight board got "howl through the night" theming + lists the wolves.
 
 ## Quick requested features (buildable, queued)
+- **PoP Raid Slideshow — fill PoTime P2/P3 + Quarm-divergence loop.**
+  (Shipped 2026-07-11: data module `apps/mimic/pop-raids.js` + overlay
+  `popraid.html` on beta, bot 3.0.158 endpoints `raid-objectives` /
+  `pop-anomaly` on main.) Remaining: (a) PoTime Phases 2 & 3 are
+  `pending:true` stubs — EQProgression 403s our server; run
+  **`docs/pop-raids-local.md`** (local capture → transcribe into the
+  encounter shape, ship on beta); (b) after the 2026-10-01 PoP unlock, fold
+  confirmed ⚑ QOL-thread anomalies back into `pop-raids.js`
+  (encounter callouts/stats or `quarmGlobalNotes`) — the guide numbers are
+  estimates, Quarm observations win; (c) set `QOL_THREAD_ID` on Railway
+  (falls back to FEEDBACK_THREAD_ID until then).
 - **Overlay pretty-place phase 2 — first-boot placement + per-class default
   sets** (Uilnayar 2026-07-10; V1 shipped in the 1.7.2 beta line). V1 gives
   every overlay's right-click menu: ✨ Auto-arrange (packs VISIBLE overlays

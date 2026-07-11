@@ -43,6 +43,22 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'pop-raid-slideshow',
+    title: '⚔ PoP raid guide, in-game',
+    version: 'Mimic 1.7.2 beta · Agent 3.3.16 · Bot 3.0.158',
+    date: '2026-07-11',
+    channel: 'beta',
+    headline: 'A new overlay walks the raid through every Planes of Power + Plane of Time encounter — callouts, boss stats, diagrams, and objective checkboxes the whole raid shares.',
+    features: [
+      { name: 'Encounter slideshow', blurb: 'Flip through 34 encounters from Grummus to Quarm (Tier 1–4 plus PoTime phase by phase). Each slide has the raid-leader callouts, boss HP/hits/slow/rampage, its named abilities, and the live drop table.' },
+      { name: 'Shared objectives', blurb: 'Every encounter has objective checkboxes — “doors held”, “50% dispel dodged” — that are raid-wide: when the puller checks one, everyone’s overlay ticks it and shows who did. Officers can reset the board between attempts.' },
+      { name: 'Diagrams & videos', blurb: 'Strategy diagrams load straight from EQProgression (credited, and never re-hosted by us), and each PoTime phase links its strategy video — one click opens it in your browser.' },
+      { name: 'Flag an anomaly', blurb: 'Quarm not matching the guide? Hit ⚑, type what you saw, and it lands in the officers’ QOL thread with the guide numbers attached for comparison.' },
+      { name: 'Ultrawide layout', blurb: 'A framed multi-panel mode (🖥) spreads callouts, target info, and objectives side-by-side for ultrawide monitors instead of one tall column.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'overlay-auto-arrange',
     title: '✨ Overlays arrange themselves around YOUR UI',
     version: 'Mimic 1.7.2 beta',

@@ -4,7 +4,7 @@
 > session. When you come back, point me at this file: **"pick up the continuation
 > queue."** Branch in flight: `claude/sharp-lamport-dC0TW`.
 >
-> Last updated: 2026-06-01 (overnight).
+> Last updated: 2026-07-11.
 
 ## How to resume
 - This container is ephemeral — everything below is already committed + pushed.
@@ -14,14 +14,28 @@
   but those start fresh, so this queue is what makes a fresh start productive.
 - Resume command: **"pick up the continuation queue, start at #1."**
 
-## 🔥 IN FLIGHT 2026-07-10 — PoP Raid Slideshow overlay (batched build)
+## ✅ SHIPPED 2026-07-11 — PoP Raid Slideshow overlay (all 4 batches)
+Batch 1: `apps/mimic/pop-raids.js` (beta a14a840, 34 encounters, P2/P3
+pending stubs). Batch 2: bot 3.0.158 (main c993e40) — `/api/agent/
+raid-objectives` GET/POST (raid-wide shared checkboxes, officer-only reset,
+state.json persist) + `/api/agent/pop-anomaly` → QOL thread (QOL_THREAD_ID,
+fallback FEEDBACK_THREAD_ID). Batch 3: agent 3.3.16 / Mimic popraid.html
+(beta 7fa0e31) — slideshow overlay, parity checklist 1-6, framed ultrawide
+mode, hotlinked EQProgression diagrams, ⚑ flags. Batch 4: roadmap (web
+1.0.200) + BACKLOG + `docs/pop-raids-local.md`.
+**Follow-ups live in docs/BACKLOG.md** (P2/P3 local capture; divergence
+fold-in after PoP unlock; set QOL_THREAD_ID on Railway).
+
+<details><summary>Original batch plan (done)</summary>
+
+
 User request (three uploaded md refs: wolfpackplaneoftimeslideshow.md,
 wolfpack-pop-raid-reference.md, poptodo.md — content summarized below):
 build a Plane of Time / PoP raid overlay suite. **Resume command: "continue
 the PoP slideshow batches, next batch."**
 
 ### Batches (do in order, ship each separately)
-1. **[ ] Data module** `apps/mimic/pop-raids.js` (beta): encounter DB from the
+1. **[x] Data module** `apps/mimic/pop-raids.js` (beta): encounter DB from the
    two reference docs — P1 five trials (Neimon/Terlok/Kazrok/Rythor/Anar),
    P4 gods (Tallon/Vallon/Saryrn/Terris), P5 (Cazic/Bertox/Rallos/Innoruuk/
    QUARM incl. 4-head phases), plus Tier1-4 (Grummus, Behemoth+Xanamech,
@@ -38,14 +52,14 @@ the PoP slideshow batches, next batch."**
    docs/spell-levels-local.md for user local fetch. Hotlink images (user:
    end-user loads them directly from EQProgression = no storage/egress for us;
    link source pages as credit).
-2. **[ ] Bot endpoints (main)**: `/api/agent/raid-objectives` GET/POST —
+2. **[x] Bot endpoints (main)**: `/api/agent/raid-objectives` GET/POST —
    raid-wide shared checkbox state keyed (encounterId, objectiveId), bearer
    auth, in-memory + state.json persist, "reset encounter" op; officer gating
    per existing permissions pattern. And `/api/agent/pop-anomaly` POST →
    posts to QOL thread (env QOL_THREAD_ID, fallback FEEDBACK_THREAD_ID)
    with FULL encounter context (encounter, phase, guide baseline vs observed,
    character, quarmNotes) — the "QOL-thread context for flagging anomalies".
-3. **[ ] Mimic overlay** `apps/mimic/popraid.html` + main.js wiring (beta):
+3. **[x] Mimic overlay** `apps/mimic/popraid.html` + main.js wiring (beta):
    phase slideshow (prev/next + encounter picker), per-encounter panel =
    callouts / stats+abilities+resists / tracker checkboxes (shared via agent
    proxy of raid-objectives, buff-queue cache pattern) / diagram+video links
@@ -56,7 +70,7 @@ the PoP slideshow batches, next batch."**
    WP_OVERLAY_ROWS+toggle-overlay case, apply*Visibility, _HIDEALL_FLAGS +
    _overlayEntries + _boundsKeyForWindow + bounds keys). Boss "target" info:
    guide stats + live loot via existing /api/agent/mob-info drop-table lookup.
-4. **[ ] Docs/roadmap**: roadmap entry (web bump, beta channel), BACKLOG
+4. **[x] Docs/roadmap**: roadmap entry (web bump, beta channel), BACKLOG
    note for P2/P3 completion + Quarm-divergence fill-in workflow
    (poptodo.md: access levels 46/55/60/62 differ by source; PoStorms flag =
    Askr collect quest; flag caps 72/36 Carprin/54 EarthA; pet/invis rework,
@@ -69,6 +83,8 @@ the PoP slideshow batches, next batch."**
 - beta @ e0b7f8d: agent 3.3.15 (roll tracker 🎲, healer-mana fix, rampage
   persist) + Mimic auto-arrange/backdrops/hide-all-fix. Mimic stable v1.7.1
   released; beta parked 1.7.2.
+
+</details>
 
 ## ✅ Shipped this session (recent)
 - **Overnight 2026-06-01 batch** (raid-night + after):
