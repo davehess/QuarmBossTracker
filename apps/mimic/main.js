@@ -1706,6 +1706,8 @@ function _pollBlindState() {
       // Per-character overlay profiles — swap the visibility set when the
       // active toon changes (cheap; only acts on an actual change).
       try { _onActiveCharacter(s && s.activeCharacter); } catch {}
+      // Fresh-install class seeding (one-shot; no-ops instantly once done).
+      try { _maybeSeedClassSet(s); } catch {}
       const a = s && s.blind && s.blind.active;
       const nowOn = !!(a && a.active);
       if (nowOn && !_blindActive) {
@@ -1830,6 +1832,75 @@ function _onActiveCharacter(name) {
   // still rebuild so the "Save layout for <toon>" label tracks the new char.
   if (cfg.charProfilesEnabled && _applyCharProfile(cl)) return;
   try { buildTrayMenu(); } catch {}
+}
+
+// ── Class-default overlay seeding (pretty-place phase 2) ─────────────────────
+// Officer-crafted per-class overlay sets from /admin/overlays ride the agent's
+// overlay-tuning poll and surface on /api/state as `classOverlaySets` (+ the
+// active toon's class as `activeCharacterClass`). A BRAND-NEW install — user
+// has never enabled an overlay, no per-character profiles — gets the class's
+// set applied ONCE, then auto-arranged around the player's in-game windows.
+// One-shot per install (cfg.classSetSeeded): an install the user has already
+// shaped is marked seeded without changes, and a later set edit never re-fires.
+const _CLASS_SET_WINDOWS = [
+  ['showHud',          () => overlayWindow,   createOverlayWindow],
+  ['enableTriggerTts', () => triggerWindow,   createTriggerOverlay],
+  ['showCharm',        () => charmWindow,     createCharmOverlay],
+  ['showPets',         () => petsWindow,      createPetsOverlay],
+  ['showMobInfo',      () => mobInfoWindow,   createMobInfoOverlay],
+  ['showBuffQueue',    () => buffQueueWindow, createBuffQueueOverlay],
+  ['showWho',          () => whoWindow,       createWhoOverlay],
+  ['showMelody',       () => melodyWindow,    createMelodyOverlay],
+  ['showZeal',         () => zealWindow,      createZealHealthOverlay],
+  ['showThreat',       () => threatWindow,    createThreatMeterOverlay],
+  ['showChChain',      () => chChainWindow,   createChChainOverlay],
+  ['showTank',         () => tankWindow,      createTankOverlay],
+  ['showExtTarget',    () => extTargetWindow, createExtTargetOverlay],
+  ['showCommand',      () => commandWindow,   createCommandOverlay],
+  ['showPopRaid',      () => popRaidWindow,   createPopRaidOverlay],
+];
+// toggle-overlay key (what /admin/overlays stores) → cfg flag.
+const _CLASS_SET_FLAG_BY_KEY = {
+  hud: 'showHud', trigger: 'enableTriggerTts', charm: 'showCharm', pet: 'showPets',
+  mobinfo: 'showMobInfo', buffQueue: 'showBuffQueue', who: 'showWho', melody: 'showMelody',
+  zeal: 'showZeal', threat: 'showThreat', chchain: 'showChChain', tank: 'showTank',
+  exttarget: 'showExtTarget', command: 'showCommand', popraid: 'showPopRaid',
+};
+function _maybeSeedClassSet(s) {
+  const sets = s && s.classOverlaySets;
+  const cls  = s && s.activeCharacterClass;
+  if (!sets || !cls) return;                       // wait for a poll that has both
+  const cfg = loadConfig();
+  if (cfg.classSetSeeded) return;
+  if (_hideAllActive || setupMode) return;
+  // An install the user already shaped is off-limits: any overlay flag on
+  // (trigger TTS defaults ON — excluded) or any saved per-char profile means
+  // this isn't fresh. Mark seeded so this check never runs again.
+  const shaped = cfg.charProfilesEnabled
+    || _HIDEALL_FLAGS.some(f => f !== 'enableTriggerTts' && cfg[f]);
+  if (shaped) { cfg.classSetSeeded = true; saveConfig(cfg); return; }
+  const classKey = String(cls).toLowerCase().replace(/[^a-z]/g, '');
+  const set = Array.isArray(sets[classKey]) ? sets[classKey] : null;
+  if (!set || !set.length) return;                 // no set crafted → leave alone
+  const flags = set.map(k => _CLASS_SET_FLAG_BY_KEY[k]).filter(Boolean);
+  if (!flags.length) return;
+  for (const f of flags) cfg[f] = true;
+  cfg.classSetSeeded = true;
+  saveConfig(cfg);
+  for (const [flag, get, create] of _CLASS_SET_WINDOWS) {
+    if (cfg[flag] && !get()) { try { create(); } catch {} }
+  }
+  applyAllVisibility();
+  pushStatus();
+  try { buildTrayMenu(); } catch {}
+  appendAgentLog(`[class-set] seeded ${flags.length} overlay(s) for ${cls} (${_activeCharName || '?'})\n`);
+  // First-boot pretty-place: pack the new set around the player's in-game
+  // windows once everything has created + auto-heighted.
+  setTimeout(() => {
+    try { _autoArrangeOverlays(); } catch {}
+    const c2 = loadConfig();
+    if (!c2.firstArrangeDone) { c2.firstArrangeDone = true; saveConfig(c2); }
+  }, 1500);
 }
 // Tray-menu items for the per-character overlay layouts — the on/off switch,
 // "save layout for <toon>", and (if one exists) "forget". Built fresh each
@@ -5492,6 +5563,20 @@ ipcMain.handle('set-tells-mode', (_e, mode) => {
 ipcMain.handle('mark-onboarded', () => {
   const cfg = loadConfig(); cfg.onboarded = true; saveConfig(cfg);
   pushStatus();
+  // First-boot pretty-place (pretty-place phase 2): if onboarding enabled any
+  // overlays, pack them into the free space around the player's in-game
+  // windows instead of leaving them at the stacked defaults. mark-onboarded
+  // fires exactly once per install, so existing setups can never be touched.
+  // (Class-set seeding runs its own arrange; the firstArrangeDone flag keeps
+  // the two paths from double-packing.)
+  try {
+    const anyOn = _HIDEALL_FLAGS.some(f => f !== 'enableTriggerTts' && cfg[f]);
+    if (!cfg.firstArrangeDone && anyOn) {
+      cfg.firstArrangeDone = true; saveConfig(cfg);
+      setTimeout(() => { try { _autoArrangeOverlays(); } catch {} }, 1500);
+      appendAgentLog('[arrange] first-boot auto-arrange scheduled (onboarding)\n');
+    }
+  } catch {}
   return true;
 });
 // Renderer asks the main process to navigate to the agent's dashboard.

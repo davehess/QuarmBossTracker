@@ -7634,6 +7634,18 @@ function _serializeForDashboard() {
     version:            AGENT_VERSION,
     startedAt:          stats.startedAt,
     activeCharacter:    _activeCharacter,
+    // Active toon's base class ("Shadow Knight"), best-effort: /who data
+    // first, Zeal type-5 raid roster second. null until either has seen the
+    // character — Mimic's class-set seeding just waits for a later poll.
+    activeCharacterClass: (() => {
+      const a = _activeCharacter ? String(_activeCharacter).toLowerCase() : '';
+      if (!a) return null;
+      const who = whoData.get(a);
+      const cls = (who && who.class) || _raidClassByName.get(a) || null;
+      return cls ? normalizeClass(String(cls)) : null;
+    })(),
+    // Officer-crafted per-class default overlay sets (see pollOverlayTuning).
+    classOverlaySets:   _classOverlaySets,
     blind:              { byChar: _blindOut, active: _blindActive && _blindActive.active ? _blindActive : null },
     // Blind-event ring buffer (start / end / self-hit / target-change). The
     // trigger overlay dedupes on `ts` and speaks `tts`, same as trigger fires.
@@ -18591,6 +18603,12 @@ let _overlayTuning = {};
 // a pulsing ✉ in the dashboard header; critical ones ALSO post to Discord
 // bot-side. Version-independent from 1.6 forward: any future agent sees them.
 let _guildNotices = [];
+// Per-class default overlay sets (pretty-place phase 2) — officer-crafted on
+// /admin/overlays, served on the same poll. { classkey: ['hud','tank',…] }
+// where classkey is the base class lowercased with non-letters stripped.
+// Consumed by Mimic (via /api/state) to seed a never-customized install the
+// first time it learns the active character's class.
+let _classOverlaySets = {};
 function tuneNum(key, dflt) {
   const v = _overlayTuning[key];
   return (typeof v === 'number' && isFinite(v)) ? v : dflt;
@@ -18616,6 +18634,9 @@ function pollOverlayTuning({ botUrl, token }) {
               _overlayTuning = resp.tuning;
             }
             if (resp && Array.isArray(resp.notices)) _guildNotices = resp.notices;
+            if (resp && resp.class_sets && typeof resp.class_sets === 'object' && !Array.isArray(resp.class_sets)) {
+              _classOverlaySets = resp.class_sets;
+            }
           } catch { /* non-fatal — keep last good values */ }
           resolve();
         });
