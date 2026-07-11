@@ -43,6 +43,19 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'crash-telemetry',
+    title: '🩺 Crash clustering (opt-in) + /who name copy',
+    version: 'Mimic 1.7.2 beta · Agent 3.3.18 · Bot 3.0.160',
+    date: '2026-07-11',
+    channel: 'beta',
+    headline: 'Opt in to share Zeal crash summaries (never the memory dump) so we can spot crash patterns across the guild, and copy unknown names off the /who overlay in one click.',
+    features: [
+      { name: 'Share crash reports (opt-in, default OFF)', blurb: 'A new tray toggle. When on, Mimic reads the small crash summaries Zeal already writes and uploads just the metadata — which DLL crashed, where, your GPU/driver — so officers can see “five of us crash at the same spot”. The memory dump never leaves your machine. Details on the privacy page.' },
+      { name: '/who copy button', blurb: 'Rows with no known class/level get a ⧉ button that copies the name — paste it into the Quarm Discord search to check their public posts.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'overlay-chrome-fixes',
     title: '🧰 Overlay polish: menus behave, arranging lines the edges',
     version: 'Mimic 1.7.2 beta',
