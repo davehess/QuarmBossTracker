@@ -159,7 +159,22 @@ function _buildOverlayMenu(onClose, state) {
 let _wpMenuOpen = false;
 let _wpMenuCleanupFn = null;
 let _wpMenuSuppressedFit = null;   // wrap element from a suppressed fit
+let _wpMenuSuppressedRawH = null;  // raw height from a suppressed overlayAutoHeight
 let _wpPageUsesAutoFit = false;    // page opted into auto-height at least once
+
+// Raw-height twin of _autoFitOverlay's gate. NINE overlays (who, charm,
+// command, melody, mobinfo, pets, tank, triggers, zealhealth) call
+// window.mimic.overlayAutoHeight(h) directly instead of autoFitOverlay —
+// the first menu-suppression pass only gated the latter, so those pages
+// kept re-shrinking the window under the open menu (the "/who still
+// clipped" report). Same rule: hold the last height while the menu is
+// open, replay it on close.
+function _overlayAutoHeightRaw(h) {
+  try {
+    if (_wpMenuOpen) { _wpMenuSuppressedRawH = h; return Promise.resolve(true); }
+    return ipcRenderer.invoke('overlay-auto-height', h);
+  } catch (e) { return Promise.resolve(false); }
+}
 
 function _attachOverlayMenu(moveBtn) {
   if (!moveBtn || moveBtn._wpMenuAttached) return;
@@ -202,6 +217,10 @@ function _openOverlayMenu(state) {
     // were suppressed while open. Only for pages that use auto-height.
     if (_wpPageUsesAutoFit) { try { _autoFitOverlay(_wpMenuSuppressedFit || undefined); } catch (e) {} }
     _wpMenuSuppressedFit = null;
+    if (_wpMenuSuppressedRawH != null) {
+      try { ipcRenderer.invoke('overlay-auto-height', _wpMenuSuppressedRawH); } catch (e) {}
+      _wpMenuSuppressedRawH = null;
+    }
   };
   const menu = _buildOverlayMenu(cleanup, state);
   _wpMenuCleanupFn = cleanup;
@@ -289,7 +308,7 @@ contextBridge.exposeInMainWorld('mimic', {
   overlayDragEnd:   () => ipcRenderer.invoke('overlay-drag-end'),
   // Renderer reports its content height; main resizes the window to fit so
   // multi-card overlays (charm, pets, /who) grow with their content.
-  overlayAutoHeight: (h) => ipcRenderer.invoke('overlay-auto-height', h),
+  overlayAutoHeight: (h) => _overlayAutoHeightRaw(h),
   // (overlayResizePreset / overlayEnsureMinHeight bridge wrappers deleted
   // 2026-07-09 — no overlay ever called them; the shared chrome below invokes
   // the 'overlay-resize-preset' / 'overlay-ensure-min-height' IPC directly.)

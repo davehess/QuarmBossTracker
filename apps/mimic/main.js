@@ -4873,6 +4873,7 @@ function scheduleAgentUpdates() {
 ipcMain.handle('overlay-drag-start', (e) => {
   try {
     const win = BrowserWindow.fromWebContents(e.sender);
+    if (win) win.__wpPreMenuBounds = null;   // drag supersedes the menu-grow stash
     _startWindowDrag(win, _boundsKeyForWindow(win));
   } catch {}
   return true;
@@ -4904,9 +4905,19 @@ ipcMain.handle('overlay-auto-height', (e, h) => {
     // BOTTOM edge stays anchored and the top moves — for overlays parked
     // near the bottom of the screen, where growing downward runs off-screen.
     // Per-overlay opt-in via the right-click chrome menu (cfg.overlayGrowUp).
+    // If the chrome menu temporarily grew this window (ensure-min-height),
+    // anchor against the STASHED pre-grow bounds instead of the grown ones —
+    // otherwise the re-fit would treat the artificially extended edge as the
+    // real one and relocate the overlay.
+    const stash = win.__wpPreMenuBounds;
+    const stashFresh = !!(stash && (Date.now() - stash.at) < 60_000);
+    win.__wpPreMenuBounds = null;
     let y = bounds.y;
     if (_overlayGrowsUp(win)) {
-      y = Math.max(disp.workArea.y, bounds.y + bounds.height - target);
+      const anchorBottom = stashFresh ? (stash.y + stash.height) : (bounds.y + bounds.height);
+      y = Math.max(disp.workArea.y, anchorBottom - target);
+    } else if (stashFresh) {
+      y = stash.y;
     }
     win.setBounds({ x: bounds.x, y, width: bounds.width, height: target });
     return true;
@@ -4941,6 +4952,14 @@ ipcMain.handle('overlay-ensure-min-height', (e, h) => {
     const disp = screen.getDisplayMatching(b);
     const maxH = Math.max(80, disp.workArea.height - 20);
     const target = Math.min(maxH, wanted);
+    // Stash the REAL (pre-grow) bounds so the post-menu re-fit anchors
+    // against them, not the temporarily grown edges. Without this, toggling
+    // ⬆ Grow upward from the menu bottom-anchored the re-fit to the grown
+    // window's extended bottom and teleported the overlay far south
+    // (Uilnayar 2026-07-11). Consumed by the next overlay-auto-height.
+    if (!win.__wpPreMenuBounds) {
+      win.__wpPreMenuBounds = { x: b.x, y: b.y, width: b.width, height: b.height, at: Date.now() };
+    }
     // Grow-upward overlays sit near the bottom edge — extending downward
     // would push the menu off-screen, so anchor the bottom here too.
     let y = b.y;
