@@ -43,6 +43,23 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'overlay-chrome-fixes',
+    title: '🧰 Overlay polish: menus behave, arranging lines the edges',
+    version: 'Mimic 1.7.2 beta',
+    date: '2026-07-11',
+    channel: 'beta',
+    headline: 'The right-click overlay menu no longer clips or lingers, auto-arrange keeps the middle of your screen clear, and overlays can grow upward.',
+    features: [
+      { name: 'Grow upward', blurb: 'Any overlay can now anchor its BOTTOM edge (right-click → ⬆ Grow upward) — perfect for Extended Target parked at the bottom of the screen: the list grows up instead of running off-screen.' },
+      { name: 'Edge-first arranging', blurb: 'Auto-arrange now treats the middle of your screen as the play area — overlays line the outside (right side first, then top/bottom, then left) and only use the center if there is truly nowhere else.' },
+    ],
+    fixes: [
+      'The right-click menu was getting cut off on Target Info, CH chain, /who and others — the overlay kept resizing itself to its content underneath the open menu. It now stays put while the menu is up (and the menu scrolls if it ever must).',
+      'That menu also stays open forever if you click into EQ. It now closes on an outside click, Escape, or on its own ~4 seconds after your cursor leaves it.',
+      'Auto-arrange could leave overlays stacked on top of each other — anything it could not move now blocks its spot so nothing else gets placed on top of it.',
+    ],
+  },
+  {
     key: 'class-default-overlays',
     title: '🧩 New installs set themselves up for your class',
     version: 'Mimic 1.7.2 beta · Agent 3.3.17 · Bot 3.0.159 · Web 1.0.201',
