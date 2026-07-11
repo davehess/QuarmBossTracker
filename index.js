@@ -6930,20 +6930,31 @@ async function _handleAgentTargetBuffs(req, res) {
 // (2) GET /api/agent/overlay-tuning serves the raw object to every agent
 // (polled ~90s) for the agent-side knobs (off-heal cutoff, CH GO window…).
 // 60s cache; fetch failure keeps the last good values (or {} — defaults).
-let _overlayTuningCache = { at: 0, values: {} };
-async function _overlayTuningMap() {
-  if (Date.now() - _overlayTuningCache.at < 60_000) return _overlayTuningCache.values;
+// The same row also carries `class_sets` (per-class default overlay sets —
+// which overlays a fresh Mimic install enables for each class; pretty-place
+// phase 2). Fetched together, served together on the same agent poll.
+let _overlayTuningCache = { at: 0, values: {}, classSets: {} };
+async function _refreshOverlayTuningCache() {
+  if (Date.now() - _overlayTuningCache.at < 60_000) return;
   const supabase = require('./utils/supabase');
   try {
     const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
     const rows = await supabase.select('overlay_tuning',
-      `guild_id=eq.${encodeURIComponent(guildId)}&select=tuning&limit=1`);
-    const t = Array.isArray(rows) && rows[0] && rows[0].tuning;
-    _overlayTuningCache = { at: Date.now(), values: (t && typeof t === 'object' && !Array.isArray(t)) ? t : {} };
+      `guild_id=eq.${encodeURIComponent(guildId)}&select=tuning,class_sets&limit=1`);
+    const row = Array.isArray(rows) && rows[0];
+    const asObj = (v) => (v && typeof v === 'object' && !Array.isArray(v)) ? v : {};
+    _overlayTuningCache = { at: Date.now(), values: asObj(row && row.tuning), classSets: asObj(row && row.class_sets) };
   } catch {
     _overlayTuningCache.at = Date.now();   // don't hammer on failure
   }
+}
+async function _overlayTuningMap() {
+  await _refreshOverlayTuningCache();
   return _overlayTuningCache.values;
+}
+async function _overlayClassSets() {
+  await _refreshOverlayTuningCache();
+  return _overlayTuningCache.classSets;
 }
 // ── Mimic Mail — guild notices (Uilnayar 2026-07-07) ────────────────────────
 // Officer broadcasts from /admin/notices (mimic_notices table). Served to
@@ -6990,13 +7001,14 @@ setInterval(() => { _postCriticalNotices().catch(() => {}); }, 60_000);
 
 // GET /api/agent/overlay-tuning — bearer-auth'd override object for agents,
 // with active guild notices riding along (Mimic Mail; agents 3.2.0+ read
-// `notices`, older ones ignore the extra field).
+// `notices`, older ones ignore the extra field). `class_sets` (agents 3.3.17+)
+// carries the per-class default overlay sets for first-boot seeding.
 async function _handleAgentOverlayTuning(req, res) {
   const identity = await mimicLink.requireAgentAuth(req, res);
   if (!identity) return;
-  const [tuning, notices] = await Promise.all([_overlayTuningMap(), _activeNotices()]);
+  const [tuning, notices, classSets] = await Promise.all([_overlayTuningMap(), _activeNotices(), _overlayClassSets()]);
   res.writeHead(200, { 'Content-Type': 'application/json' });
-  return res.end(JSON.stringify({ tuning, notices }));
+  return res.end(JSON.stringify({ tuning, notices, class_sets: classSets }));
 }
 
 // GET /api/agent/character-live-state?name=<char> — one character's uploaded

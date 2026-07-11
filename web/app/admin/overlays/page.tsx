@@ -78,6 +78,40 @@ const GROUPS: KnobGroup[] = [
 
 const ALL_KNOBS: Knob[] = GROUPS.flatMap(g => g.knobs);
 
+// ── Per-class default overlay sets (pretty-place phase 2) ────────────────────
+// Which overlays a FRESH Mimic install turns on for each class. Stored in
+// overlay_tuning.class_sets (separate column — the knob save above rebuilds
+// `tuning` wholesale and must never clobber this). Ships to agents on the same
+// 90s poll; Mimic applies a class's set once per character on a never-
+// customized install, then auto-arranges. Existing users are never touched.
+// Keys here MUST match Mimic's toggle-overlay names.
+const OVERLAY_KEYS: { key: string; label: string }[] = [
+  { key: 'hud',       label: 'DPS HUD' },
+  { key: 'trigger',   label: 'Trigger alerts' },
+  { key: 'charm',     label: 'Charm tracker' },
+  { key: 'pet',       label: 'Pet tracker' },
+  { key: 'mobinfo',   label: 'Target Info' },
+  { key: 'buffQueue', label: 'Buff queue' },
+  { key: 'who',       label: '/who' },
+  { key: 'melody',    label: 'Melody' },
+  { key: 'zeal',      label: 'Zeal health' },
+  { key: 'threat',    label: 'Threat meter' },
+  { key: 'chchain',   label: 'CH chain' },
+  { key: 'tank',      label: 'Tank HUD' },
+  { key: 'exttarget', label: 'Extended Target' },
+  { key: 'command',   label: 'Command Center' },
+  { key: 'popraid',   label: 'PoP raids' },
+];
+const OVERLAY_KEY_SET = new Set(OVERLAY_KEYS.map(o => o.key));
+
+// Class key = lowercase letters only ("Shadow Knight" → "shadowknight") —
+// same normalization Mimic applies to the agent-reported class.
+const CLASSES: { key: string; label: string }[] = [
+  'Bard', 'Beastlord', 'Cleric', 'Druid', 'Enchanter', 'Magician', 'Monk',
+  'Necromancer', 'Paladin', 'Ranger', 'Rogue', 'Shadow Knight', 'Shaman',
+  'Warrior', 'Wizard',
+].map(label => ({ key: label.toLowerCase().replace(/[^a-z]/g, ''), label }));
+
 async function saveOverlayTuning(formData: FormData) {
   'use server';
   const { data: { user } } = await supabaseServer().auth.getUser();
@@ -111,6 +145,39 @@ async function saveOverlayTuning(formData: FormData) {
   revalidatePath('/admin/overlays');
 }
 
+async function saveClassSets(formData: FormData) {
+  'use server';
+  const { data: { user } } = await supabaseServer().auth.getUser();
+  if (!user || !(await isOfficer(user.id))) redirect('/?error=admin_required');
+
+  // Checkbox names are "cs.<classkey>.<overlaykey>". Only known keys land;
+  // classes with nothing checked are omitted entirely (Mimic treats a missing
+  // class as "no set crafted — leave the fresh install alone").
+  const classSets: Record<string, string[]> = {};
+  for (const c of CLASSES) {
+    const picked = OVERLAY_KEYS
+      .filter(o => formData.get(`cs.${c.key}.${o.key}`) != null)
+      .map(o => o.key);
+    if (picked.length) classSets[c.key] = picked;
+  }
+
+  const meta = (user.user_metadata ?? {}) as Record<string, unknown>;
+  const display = String(meta.full_name || meta.name || meta.preferred_username || meta.email || 'officer');
+
+  // Upsert touches ONLY class_sets (+ audit columns) — `tuning` stays as-is.
+  await supabaseAdmin()
+    .from('overlay_tuning')
+    .upsert({
+      guild_id: 'wolfpack',
+      class_sets: classSets,
+      updated_by_discord_id: (user.app_metadata?.provider_id || meta.provider_id || null) as string | null,
+      updated_by_name: display,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'guild_id' });
+
+  revalidatePath('/admin/overlays');
+}
+
 export default async function OverlayTuningPage() {
   const sb = supabaseAdmin();
   const { data } = await sb
@@ -121,6 +188,12 @@ export default async function OverlayTuningPage() {
 
   const tuning: Record<string, number> = (data?.tuning as Record<string, number>) ?? {};
   const overrideCount = ALL_KNOBS.filter(k => typeof tuning[k.key] === 'number').length;
+  const rawClassSets = (data?.class_sets as Record<string, string[]>) ?? {};
+  const classSets: Record<string, Set<string>> = {};
+  for (const [ck, arr] of Object.entries(rawClassSets)) {
+    if (Array.isArray(arr)) classSets[ck] = new Set(arr.filter(k => OVERLAY_KEY_SET.has(k)));
+  }
+  const craftedCount = Object.keys(classSets).length;
 
   return (
     <div className="space-y-6 max-w-3xl">
@@ -194,11 +267,63 @@ export default async function OverlayTuningPage() {
         </div>
       </form>
 
+      <form action={saveClassSets} className="space-y-5">
+        <section className="bg-panel border border-border rounded-lg p-5">
+          <div className="text-base font-semibold text-text mb-1">🧩 Per-class default overlay sets</div>
+          <p className="text-xs text-dim mb-4 leading-5">
+            Which overlays a <b>brand-new</b> Mimic install turns on, per class. Applied once
+            per character the first time Mimic learns their class — <b>only</b> on installs
+            where the user has never enabled an overlay themselves, then auto-arranged around
+            their in-game windows. Existing setups are never touched. A class with nothing
+            checked gets no seeding at all.
+            {craftedCount > 0 && (
+              <> Currently <span className="text-orange font-semibold">{craftedCount} class set{craftedCount === 1 ? '' : 's'}</span> crafted.</>
+            )}
+          </p>
+          <div className="space-y-3">
+            {CLASSES.map(c => (
+              <div key={c.key} className="border border-border rounded p-3">
+                <div className="text-sm font-semibold text-text mb-2">
+                  {c.label}
+                  {classSets[c.key]?.size ? (
+                    <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded bg-orange/20 text-orange border border-orange/40">
+                      {classSets[c.key].size} overlay{classSets[c.key].size === 1 ? '' : 's'}
+                    </span>
+                  ) : null}
+                </div>
+                <div className="flex flex-wrap gap-x-4 gap-y-1.5">
+                  {OVERLAY_KEYS.map(o => (
+                    <label key={o.key} className="inline-flex items-center gap-1.5 text-xs text-dim cursor-pointer hover:text-text">
+                      <input
+                        type="checkbox"
+                        name={`cs.${c.key}.${o.key}`}
+                        defaultChecked={!!classSets[c.key]?.has(o.key)}
+                        className="accent-orange"
+                      />
+                      {o.label}
+                    </label>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="flex justify-end mt-4">
+            <button
+              type="submit"
+              className="px-4 py-2 bg-orange/80 hover:bg-orange text-bg rounded text-sm font-semibold"
+            >
+              Save class sets
+            </button>
+          </div>
+        </section>
+      </form>
+
       <section className="bg-panel border border-border rounded-lg p-4 text-xs text-dim leading-5">
         <div className="font-semibold text-text mb-1">How it propagates</div>
         <ul className="list-disc list-inside space-y-1">
           <li><b>Extended Target knobs</b> — read by the bot on the next board refresh (60s cache).</li>
           <li><b>Off-heal / CH knobs</b> — every agent polls <code>/api/agent/overlay-tuning</code> every 90s and applies them on the next overlay tick. Requires Mimic 1.5.0+ (older Mimics silently keep their built-in defaults).</li>
+          <li><b>Class default sets</b> — ride the same 90s poll; consumed by Mimic 1.7.2-beta+ on fresh installs only (a set change never toggles overlays on an install that already has some).</li>
           <li>Clearing a field and saving removes the override — the compiled default takes back over on the same schedule.</li>
         </ul>
       </section>
