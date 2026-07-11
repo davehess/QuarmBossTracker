@@ -71,9 +71,29 @@ document.addEventListener('mouseout', function (ev) {
   if (!ev.relatedTarget && _wpHoverArmed) { _wpHoverArmed = false; _hoverOff(); }
 }, { capture: true, passive: true });
 
-// Build the right-click menu: 5 width presets + 2 setup-mode entries.
-// Identical structure + styling on every overlay so the muscle memory carries.
-function _buildOverlayMenu(onClose) {
+// ── Solid backdrop (Uilnayar 2026-07-10) ────────────────────────────────────
+// One injected rule + a body class = every overlay gets a toggleable opaque
+// plate with zero per-HTML changes. Main pushes 'wp-backdrop' on toggle; the
+// load-time pull covers windows created after the last push. Gated to overlay
+// documents (the main window / settings must never get a forced background).
+ipcRenderer.on('wp-backdrop', function (_e, on) {
+  try { if (_wpOverlayDoc()) document.body.classList.toggle('wp-backdrop', !!on); } catch (e) {}
+});
+document.addEventListener('DOMContentLoaded', function () {
+  try {
+    const st = document.createElement('style');
+    st.textContent = 'body.wp-backdrop{background:rgba(8,10,14,0.92) !important}';
+    document.head.appendChild(st);
+    ipcRenderer.invoke('wp-overlay-menu-state').then(function (s) {
+      if (s && s.backdrop && _wpOverlayDoc()) document.body.classList.add('wp-backdrop');
+    }).catch(function () {});
+  } catch (e) {}
+});
+
+// Build the right-click menu: setup entries, visibility/layout actions, and
+// the 5 width presets. Identical structure + styling on every overlay so the
+// muscle memory carries. `state` = wp-overlay-menu-state (toggle labels).
+function _buildOverlayMenu(onClose, state) {
   const prior = document.getElementById('wpResizeMenu'); if (prior) prior.remove();
   const menu = document.createElement('div');
   menu.id = 'wpResizeMenu';
@@ -102,6 +122,16 @@ function _buildOverlayMenu(onClose) {
   // "Setup ALL" first — the most-used entry sits at the top.
   menu.appendChild(mkItem('🛠 Setup ALL overlays', '#2a3d57', () => ipcRenderer.invoke('set-setup-mode', true)));
   menu.appendChild(mkItem('🛠 Setup THIS overlay',  '#3d2a57', () => ipcRenderer.invoke('set-setup-mode-this', true)));
+  // Visibility + layout actions (Uilnayar 2026-07-10). `state` comes from
+  // main's wp-overlay-menu-state so the toggles show their current value.
+  const st = state || {};
+  menu.appendChild(mkItem('👁 Hide this overlay', '#6b2130', () => ipcRenderer.invoke('hide-overlay')));
+  menu.appendChild(mkItem('🌫 Background: ' + (st.backdrop ? 'ON' : 'off') + ' (this overlay)', '#3a3320',
+    () => ipcRenderer.invoke('wp-backdrop-toggle')));
+  menu.appendChild(mkItem('✨ Auto-arrange overlays', '#20503a',
+    () => ipcRenderer.invoke('auto-arrange-overlays')));
+  menu.appendChild(mkItem('✨ Arrange when overlays open: ' + (st.arrangeOnShow ? 'ON' : 'off'), '#20503a',
+    () => ipcRenderer.invoke('auto-arrange-onshow-toggle')));
   // Thin divider before the size presets so the menu reads "actions / sizes".
   const sep = document.createElement('div');
   sep.style.cssText = 'height:1px;background:rgba(255,255,255,0.08);margin:3px 0';
@@ -120,22 +150,30 @@ function _attachOverlayMenu(moveBtn) {
   moveBtn.addEventListener('contextmenu', function(ev) {
     ev.preventDefault();
     // Grow window first so the menu doesn't clip on tiny overlays. Menu is
-    // ~250 px tall (7 items + paddings + divider); use 290 to leave a buffer.
-    try { ipcRenderer.invoke('overlay-ensure-min-height', 290); } catch (e) {}
-    const menu = _buildOverlayMenu(_hoverOff);
-    _hoverOn();
-    // Dismiss on outside click. Defer so the click that opened the menu
-    // doesn't immediately close it on the same event loop tick.
-    setTimeout(function() {
-      document.addEventListener('mousedown', function closer(e) {
-        if (!menu.contains(e.target)) {
-          menu.remove();
-          document.removeEventListener('mousedown', closer);
-          _hoverOff();
-        }
-      });
-    }, 0);
+    // ~380 px tall (11 items + paddings + divider); 420 leaves a buffer.
+    try { ipcRenderer.invoke('overlay-ensure-min-height', 420); } catch (e) {}
+    // Fetch toggle states first so Background / Arrange-on-show labels are
+    // accurate; menu still opens (with default labels) if the invoke fails.
+    ipcRenderer.invoke('wp-overlay-menu-state').catch(function () { return null; }).then(function (state) {
+      _openOverlayMenu(state);
+    });
   });
+}
+
+function _openOverlayMenu(state) {
+  const menu = _buildOverlayMenu(_hoverOff, state);
+  _hoverOn();
+  // Dismiss on outside click. Defer so the click that opened the menu
+  // doesn't immediately close it on the same event loop tick.
+  setTimeout(function() {
+    document.addEventListener('mousedown', function closer(e) {
+      if (!menu.contains(e.target)) {
+        menu.remove();
+        document.removeEventListener('mousedown', closer);
+        _hoverOff();
+      }
+    });
+  }, 0);
 }
 
 // Ask main to size the window to the renderer's content height. Pass the

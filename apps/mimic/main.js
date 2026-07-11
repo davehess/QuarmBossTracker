@@ -2294,6 +2294,171 @@ function applyAllOverlayOpacities() {
   for (const [key, win] of _overlayEntries()) applyOverlayOpacity(win, key);
 }
 
+// ── Per-overlay solid backdrop (Uilnayar 2026-07-10) ─────────────────────────
+// A dark opaque plate behind the WHOLE overlay window (not just the cards) so
+// overlays stay readable over bright scenes. Per-overlay in the right-click
+// chrome menu; all-at-once via the backdrop hotkey (default Ctrl+Shift+B,
+// override with cfg.backdropHotkey). The renderer side is injected by
+// preload.js (body.wp-backdrop class), so every overlay gets it with no
+// per-HTML change. State: cfg.overlayBackdrop = { key → bool }.
+function _backdropOn(key) {
+  const cfg = loadConfig();
+  return !!((cfg.overlayBackdrop || {})[key]);
+}
+function applyOverlayBackdrop(win, key) {
+  if (!win || win.isDestroyed()) return;
+  try { win.webContents.send('wp-backdrop', _backdropOn(key)); } catch {}
+}
+function applyAllOverlayBackdrops() {
+  for (const [key, win] of _overlayEntries()) applyOverlayBackdrop(win, key);
+}
+function toggleAllBackdrops() {
+  const cfg = loadConfig();
+  const map = (cfg.overlayBackdrop && typeof cfg.overlayBackdrop === 'object') ? cfg.overlayBackdrop : {};
+  const keys = _overlayEntries().map(([k]) => k);
+  if (keys.length === 0) return;
+  const anyOff = keys.some(k => !map[k]);   // uniform flip: any off → all on
+  for (const k of keys) map[k] = anyOff;
+  cfg.overlayBackdrop = map;
+  saveConfig(cfg);
+  applyAllOverlayBackdrops();
+}
+
+// ── Auto-arrange overlays around the in-game UI (Uilnayar 2026-07-10) ────────
+// Reads the freshest UI_<Char>_*.ini (position data EQ itself writes; we NEVER
+// write these — EQ overwrites them on camp/zone/quit), projects the player's
+// window rects onto the primary display, and packs the VISIBLE overlay windows
+// into the free space (right edge first). Sizes are kept, shrinking through
+// the preset ladder only when a spot can't be found at the current width.
+// V1 heuristics, deliberately conservative: every positioned UI section counts
+// as occupied (a placed-but-closed EQ window just costs free space), and the
+// dominant XPos<W>x<H> resolution block is assumed to be the live layout.
+const _UI_PHANTOM_RX = /^(zoneselect|characterlist|charselect|charactercreate|serverselect|login|connection|cursorattachment|confirmationdialog|mailwnd|barter|tribute|guildbank|expedition|mercenary|overseer|voicemacro|raidoptions|dragitem|itemdisplay|spelldisplay|bookwindow|givewnd|tradewnd|lootwnd|colorpicker|fileselection|helpwnd|storewnd|bazaarwnd|bazaarsearchwnd|alarmwnd|musicplayer|videomodes|textentrywnd)/i;
+function _newestUiIniFile() {
+  const cfg = loadConfig();
+  const hints = Array.isArray(cfg.eqPaths) ? cfg.eqPaths : (cfg.eqPath ? [cfg.eqPath] : []);
+  const dirs = new Set();
+  for (const h of [...hints, null]) {
+    try {
+      const r = findEqInstalls(h);
+      for (const f of (r.found || [])) dirs.add(f.path);
+    } catch { /* keep scanning */ }
+  }
+  let newest = null;
+  for (const dir of dirs) {
+    let entries = [];
+    try { entries = fs.readdirSync(dir); } catch { continue; }
+    for (const f of entries) {
+      if (!/^UI_[A-Za-z]+.*\.ini$/i.test(f)) continue;
+      try {
+        const full = path.join(dir, f);
+        const mt = fs.statSync(full).mtimeMs || 0;
+        if (!newest || mt > newest.mtimeMs) newest = { file: full, mtimeMs: mt };
+      } catch { /* unreadable — skip */ }
+    }
+  }
+  return newest ? newest.file : null;
+}
+function _parseUiWindowRects() {
+  try {
+    const file = _newestUiIniFile();
+    if (!file) return null;
+    const text = fs.readFileSync(file, 'utf8');
+    const sections = {};
+    let cur = null;
+    for (const raw of text.split(/\r?\n/)) {
+      const s = raw.trim();
+      const m = s.match(/^\[(.+)\]$/);
+      if (m) { cur = {}; sections[m[1]] = cur; continue; }
+      if (!cur) continue;
+      const eq = s.indexOf('=');
+      if (eq > 0) cur[s.slice(0, eq).trim()] = s.slice(eq + 1).trim();
+    }
+    // The live layout = the resolution block with the most XPos<W>x<H> keys.
+    const resCount = new Map();
+    for (const props of Object.values(sections)) {
+      for (const k of Object.keys(props)) {
+        const m = k.match(/^XPos(\d+)x(\d+)$/i);
+        if (m) { const key = m[1] + 'x' + m[2]; resCount.set(key, (resCount.get(key) || 0) + 1); }
+      }
+    }
+    let res = null, best = 0;
+    for (const [k, n] of resCount) if (n > best) { best = n; res = k; }
+    const rw = res ? parseInt(res.split('x')[0], 10) : null;
+    const rh = res ? parseInt(res.split('x')[1], 10) : null;
+    const db = screen.getPrimaryDisplay().bounds;   // fullscreen EQ covers the full display
+    const sx = rw > 0 ? db.width / rw : 1;
+    const sy = rh > 0 ? db.height / rh : 1;
+    const rects = [];
+    for (const [name, props] of Object.entries(sections)) {
+      if (_UI_PHANTOM_RX.test(name)) continue;
+      const gx = (res && props['XPos' + res] != null) ? props['XPos' + res] : props.XPos;
+      const gy = (res && props['YPos' + res] != null) ? props['YPos' + res] : props.YPos;
+      if (gx == null || gy == null) continue;
+      const x = parseInt(gx, 10), y = parseInt(gy, 10);
+      const w = parseInt(props.Width != null ? props.Width : (props['Size.cx'] != null ? props['Size.cx'] : 200), 10);
+      const h = parseInt(props.Height != null ? props.Height : (props['Size.cy'] != null ? props['Size.cy'] : 100), 10);
+      if (![x, y, w, h].every(Number.isFinite)) continue;
+      if (w <= 0 || h <= 0 || x < -50 || y < -50) continue;
+      rects.push({
+        name,
+        x: Math.round(db.x + x * sx), y: Math.round(db.y + y * sy),
+        w: Math.round(w * sx), h: Math.round(h * sy),
+      });
+    }
+    return { rects, file, resolution: res || null };
+  } catch (e) {
+    appendAgentLog('[auto-arrange] UI parse failed: ' + e.message + '\n');
+    return null;
+  }
+}
+function _autoArrangeOverlays() {
+  const area = screen.getPrimaryDisplay().workArea;
+  const ui = _parseUiWindowRects();
+  const MARGIN = 8, STEP = 16;
+  const occupied = [];
+  if (ui) for (const r of ui.rects) occupied.push({ x: r.x - MARGIN, y: r.y - MARGIN, w: r.w + MARGIN * 2, h: r.h + MARGIN * 2 });
+  const overlaps = (a, b) => a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+  const fits = (rect) =>
+    rect.x >= area.x && rect.y >= area.y
+    && rect.x + rect.w <= area.x + area.width && rect.y + rect.h <= area.y + area.height
+    && !occupied.some(o => overlaps(rect, o));
+  // Visible overlays, biggest first (big ones need the scarce large gaps).
+  const wins = _overlayEntries()
+    .filter(([, w]) => { try { return w.isVisible(); } catch { return false; } })
+    .map(([key, win]) => ({ key, win, b: win.getBounds() }))
+    .sort((a, b) => (b.b.width * b.b.height) - (a.b.width * a.b.height));
+  let placed = 0, skipped = 0;
+  for (const o of wins) {
+    // Shrink-only preset ladder: try the current width, then narrower presets
+    // ("auto-resize" — a too-wide overlay steps down until it fits somewhere).
+    const ladder = [...new Set([o.b.width, 400, 320, 260, 200])].filter(w => w <= o.b.width || w === 200).sort((a, b) => b - a);
+    let done = false;
+    for (const w of ladder) {
+      const h = o.b.height;   // height re-fits to content via overlayAutoHeight
+      let spot = null;
+      // Right edge first, then sweep left — keeps the EQ center clear and
+      // matches how raiders park overlays today.
+      outer:
+      for (let x = area.x + area.width - w; x >= area.x; x -= STEP) {
+        for (let y = area.y; y + h <= area.y + area.height; y += STEP) {
+          const rect = { x, y, w, h };
+          if (fits(rect)) { spot = rect; break outer; }
+        }
+      }
+      if (spot) {
+        try { o.win.setBounds({ x: spot.x, y: spot.y, width: w, height: h }); } catch {}
+        occupied.push({ x: spot.x - MARGIN, y: spot.y - MARGIN, w: w + MARGIN * 2, h: h + MARGIN * 2 });
+        placed++; done = true; break;
+      }
+    }
+    if (!done) skipped++;   // left where it was — no clear spot at any width
+  }
+  const summary = { placed, skipped, uiWindows: ui ? ui.rects.length : 0, uiFile: ui ? path.basename(ui.file) : null, resolution: ui ? ui.resolution : null };
+  appendAgentLog('[auto-arrange] ' + JSON.stringify(summary) + '\n');
+  return summary;
+}
+
 function applyOverlayInteractivity() {
   const cfg = loadConfig();
   // Setup mode overrides: every overlay is unlocked + visible regardless of
@@ -3765,38 +3930,21 @@ function _hideAllAccelerator() {
 }
 function _fmtAccel(accel) { return String(accel || '').replace(/CommandOrControl|CmdOrCtrl/gi, 'Ctrl'); }
 function _hideAllHotkeyLabelNow() { const a = _hideAllAccelerator(); return a ? _fmtAccel(a) : ''; }
+// EVERY overlay's show flag, in one list — the old hand-written snapshot/flip
+// blocks silently missed showCommand (the Command Center kept showing through
+// hide-all, Uilnayar 2026-07-10). New overlays: add the flag HERE and it's
+// covered automatically.
+const _HIDEALL_FLAGS = [
+  'showHud', 'enableTriggerTts', 'showCharm', 'showPets', 'showMobInfo',
+  'showBuffQueue', 'showWho', 'showMelody', 'showZeal', 'showThreat',
+  'showChChain', 'showTank', 'showExtTarget', 'showCommand',
+];
 function toggleHideAllOverlays() {
   const cfg = loadConfig();
   if (!_hideAllActive) {
     // Snapshot + flip all off.
-    _hideAllPrev = {
-      showHud:          !!cfg.showHud,
-      enableTriggerTts: !!cfg.enableTriggerTts,
-      showCharm:        !!cfg.showCharm,
-      showPets:         !!cfg.showPets,
-      showMobInfo:      !!cfg.showMobInfo,
-      showBuffQueue:    !!cfg.showBuffQueue,
-      showWho:          !!cfg.showWho,
-      showMelody:       !!cfg.showMelody,
-      showZeal:         !!cfg.showZeal,
-      showThreat:       !!cfg.showThreat,
-      showChChain:      !!cfg.showChChain,
-      showTank:         !!cfg.showTank,
-      showExtTarget:    !!cfg.showExtTarget,
-    };
-    cfg.showHud = false;
-    cfg.enableTriggerTts = false;
-    cfg.showCharm = false;
-    cfg.showPets = false;
-    cfg.showMobInfo = false;
-    cfg.showBuffQueue = false;
-    cfg.showWho = false;
-    cfg.showMelody = false;
-    cfg.showZeal = false;
-    cfg.showThreat = false;
-    cfg.showChChain = false;
-    cfg.showTank = false;
-    cfg.showExtTarget = false;
+    _hideAllPrev = {};
+    for (const f of _HIDEALL_FLAGS) { _hideAllPrev[f] = !!cfg[f]; cfg[f] = false; }
     _hideAllActive = true;
   } else if (_hideAllPrev) {
     // Restore from snapshot — respects whatever individual prefs the user
@@ -3820,6 +3968,8 @@ function toggleHideAllOverlays() {
   applyAllVisibility();
   pushStatus();
 }
+let _registeredBackdropAccel = null;
+const _DEFAULT_BACKDROP_HOTKEY = 'CommandOrControl+Shift+B';
 function registerHideAllHotkey() {
   try {
     const { globalShortcut } = require('electron');
@@ -3830,10 +3980,21 @@ function registerHideAllHotkey() {
     // (Re)register the configured accelerator, dropping any prior binding.
     if (_registeredHideAccel) { try { globalShortcut.unregister(_registeredHideAccel); } catch {} _registeredHideAccel = null; }
     const accel = _hideAllAccelerator();
-    if (!accel) return;
-    const ok = globalShortcut.register(accel, toggleHideAllOverlays);
-    if (ok) _registeredHideAccel = accel;
-    else appendAgentLog(`[mimic] failed to register hide-all hotkey "${accel}" (in use by another app?)\n`);
+    if (accel) {
+      const ok = globalShortcut.register(accel, toggleHideAllOverlays);
+      if (ok) _registeredHideAccel = accel;
+      else appendAgentLog(`[mimic] failed to register hide-all hotkey "${accel}" (in use by another app?)\n`);
+    }
+    // Backdrop hotkey — flips the solid background on/off for ALL overlays at
+    // once (per-overlay control lives in the right-click chrome menu).
+    // Override with cfg.backdropHotkey.
+    if (_registeredBackdropAccel) { try { globalShortcut.unregister(_registeredBackdropAccel); } catch {} _registeredBackdropAccel = null; }
+    const bAccel = (typeof cfg.backdropHotkey === 'string' && cfg.backdropHotkey.trim()) ? cfg.backdropHotkey.trim() : _DEFAULT_BACKDROP_HOTKEY;
+    if (bAccel) {
+      const ok2 = globalShortcut.register(bAccel, toggleAllBackdrops);
+      if (ok2) _registeredBackdropAccel = bAccel;
+      else appendAgentLog(`[mimic] failed to register backdrop hotkey "${bAccel}" (in use by another app?)\n`);
+    }
   } catch (e) { appendAgentLog('[mimic] hide-all hotkey error: ' + e.message + '\n'); }
 }
 
@@ -4743,8 +4904,60 @@ ipcMain.handle('toggle-overlay', (_e, name) => {
     default:
       return null;
   }
+  // Auto-arrange on show: when the user has it enabled, turning an overlay ON
+  // re-packs the visible set so the newcomer gets clear space and the others
+  // slide out of the way (Uilnayar 2026-07-10). Delayed so create/auto-height
+  // settle first. Never fires on hide.
+  try {
+    const FLAG_BY_NAME = {
+      hud: 'showHud', trigger: 'enableTriggerTts', charm: 'showCharm', pet: 'showPets',
+      mobinfo: 'showMobInfo', buffQueue: 'showBuffQueue', who: 'showWho', melody: 'showMelody',
+      zeal: 'showZeal', threat: 'showThreat', chchain: 'showChChain', tank: 'showTank',
+      exttarget: 'showExtTarget', command: 'showCommand',
+    };
+    if (cfg.autoArrangeOnShow && cfg[FLAG_BY_NAME[name]]) {
+      setTimeout(() => { try { _autoArrangeOverlays(); } catch {} }, 450);
+    }
+  } catch { /* arrangement is best-effort */ }
   pushStatus();
   return currentStatus();
+});
+
+// ── Overlay chrome-menu IPC (auto-arrange / backdrop / menu state) ───────────
+ipcMain.handle('auto-arrange-overlays', () => {
+  try { return _autoArrangeOverlays(); } catch (e) { return { error: e.message }; }
+});
+ipcMain.handle('auto-arrange-onshow-toggle', () => {
+  const cfg = loadConfig();
+  cfg.autoArrangeOnShow = !cfg.autoArrangeOnShow;
+  saveConfig(cfg);
+  return !!cfg.autoArrangeOnShow;
+});
+// State for the right-click chrome menu — which overlay this window is, its
+// backdrop flag, and the arrange-on-show setting (labels reflect state).
+ipcMain.handle('wp-overlay-menu-state', (e) => {
+  const win = BrowserWindow.fromWebContents(e.sender);
+  let key = null;
+  for (const [k, w] of _overlayEntries()) if (w === win) { key = k; break; }
+  const cfg = loadConfig();
+  return {
+    key,
+    backdrop: key ? !!((cfg.overlayBackdrop || {})[key]) : false,
+    arrangeOnShow: !!cfg.autoArrangeOnShow,
+  };
+});
+ipcMain.handle('wp-backdrop-toggle', (e) => {
+  const win = BrowserWindow.fromWebContents(e.sender);
+  let key = null;
+  for (const [k, w] of _overlayEntries()) if (w === win) { key = k; break; }
+  if (!key) return false;
+  const cfg = loadConfig();
+  const map = (cfg.overlayBackdrop && typeof cfg.overlayBackdrop === 'object') ? cfg.overlayBackdrop : {};
+  map[key] = !map[key];
+  cfg.overlayBackdrop = map;
+  saveConfig(cfg);
+  applyOverlayBackdrop(win, key);
+  return !!map[key];
 });
 
 // Hide the overlay that sent this — the ✕ in an overlay's corner. For the
