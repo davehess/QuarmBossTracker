@@ -290,7 +290,11 @@ missing Overlays-tab row):
 4. a row in the dashboard's `WP_OVERLAY_ROWS` + its key in
    `wpRefreshOverlayToggles` + a case in the `toggle-overlay` IPC;
 5. visibility via its `apply*Visibility()` fn (unlocked override, quiet
-   mode, `_eqGateOk` EQ-running gate).
+   mode, `_eqGateOk` EQ-running gate);
+6. its `cfg.show*` flag in main.js's `_HIDEALL_FLAGS` list — the hide-all
+   hotkey snapshots/flips exactly that list (the Command Center missed it
+   and kept showing through hide-all, 2026-07-10) — and an entry in
+   `_overlayEntries()` (drives opacity, backdrops, auto-arrange, hover).
 
 Layout collisions matter: anything at the title bar's right edge sits under
 the fixed-position ✕ (the Buff queue class picker hid the overlay on a stray

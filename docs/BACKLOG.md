@@ -33,6 +33,20 @@ class filter + "only gaps" + "hide logged-off" toggles, accuracy caveat banner.
 - The PvP overnight board got "howl through the night" theming + lists the wolves.
 
 ## Quick requested features (buildable, queued)
+- **Overlay pretty-place phase 2 — first-boot placement + per-class default
+  sets** (Uilnayar 2026-07-10; V1 shipped in the 1.7.2 beta line). V1 gives
+  every overlay's right-click menu: ✨ Auto-arrange (packs VISIBLE overlays
+  into the free space computed from the player's `UI_<Char>_*.ini` window
+  rects — read-only, dominant `XPos<W>x<H>` resolution block, phantom
+  char-select sections filtered), an arrange-on-show mode, 👁 hide, and 🌫
+  per-overlay solid backdrops (all-at-once hotkey Ctrl+Shift+B). Phase 2:
+  (a) run the same packer on FIRST BOOT so a new user's overlays land
+  arranged instead of stacked top-left; (b) seed WHICH overlays to enable
+  from per-class default sets — admin-crafted on /admin/overlays (ships via
+  the existing overlay-tuning poll) or observed from same-class raiders'
+  configs; (c) multi-monitor placement (V1 packs the primary display only).
+  The packer + UI parser live in apps/mimic/main.js
+  (`_autoArrangeOverlays` / `_parseUiWindowRects`).
 - **Capture the `wolfpacktag` raid channel → live raid-leader overlays.**
   (Uilnayar 2026-07-08. ⛔ BLOCKED on a raw log sample — not ready to provide
   yet.) The guild already runs an in-game custom chat channel (`ztwolfpacktag`

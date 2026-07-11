@@ -43,6 +43,21 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'overlay-auto-arrange',
+    title: '✨ Overlays arrange themselves around YOUR UI',
+    version: 'Mimic 1.7.2 beta',
+    date: '2026-07-10',
+    channel: 'beta',
+    headline: 'Right-click any overlay → Auto-arrange: Mimic reads your in-game window layout and packs the visible overlays into the free space.',
+    features: [
+      { name: 'Auto-arrange', blurb: 'Mimic reads the window positions EQ itself saves (your UI files — never modified), maps them onto your screen, and slots the visible overlays into the gaps — right edge first, never on top of your game windows or each other. Overlays that don’t fit shrink through the size presets until they do. There’s also an “arrange when overlays open” mode: turning an overlay on slides the others out of its way.' },
+      { name: 'Solid backgrounds', blurb: 'Every overlay can now have an opaque dark plate behind it for readability over bright zones — toggle one overlay from its right-click menu, or ALL of them at once with Ctrl+Shift+B.' },
+    ],
+    fixes: [
+      'The Command Center now obeys the hide-all-overlays hotkey — it was missing from the hide list and stayed on screen when everything else hid.',
+    ],
+  },
+  {
     key: 'roll-tracker',
     title: '🎲 Roll tracker on the Command Center',
     version: 'Mimic 1.7.2 beta · Agent 3.3.15',
