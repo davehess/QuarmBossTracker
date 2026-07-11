@@ -2034,6 +2034,9 @@ async function launchAgent() {
     ? cfg.excludedCharacters.map(s => String(s || '').trim()).filter(Boolean)
     : [];
   if (excluded.length > 0) env.WOLFPACK_EXCLUDED_CHARS = excluded.join(',');
+  // Opt-in crash telemetry (tray → "Share crash reports"). Env-gated so the
+  // agent literally cannot scan the crashes/ folder unless the user opted in.
+  if (cfg.crashReports === true) env.WOLFPACK_CRASH_REPORTS = '1';
 
   agentProc = spawn(process.execPath, args, {
     env,
@@ -4549,6 +4552,25 @@ function buildTrayMenu() {
       pushStatus();
     },
   };
+  // Crash-report sharing — OPT-IN, default off. When on, the agent watches
+  // the EQ folder's Zeal crashes/ directory and uploads parsed crash_reason
+  // metadata + a system snapshot (GPU, client-DLL fingerprints) to the guild
+  // DB so crash clusters can be compared across users. The minidump itself
+  // NEVER leaves the machine. Flag reaches the agent as an env var at spawn,
+  // so toggling restarts the agent (same auto-relaunch path as Restart agent).
+  const crashReportsItem = {
+    label: 'Share crash reports with the guild (opt-in)',
+    type: 'checkbox',
+    checked: loadConfig().crashReports === true,
+    click: (mi) => {
+      const cfg = loadConfig();
+      cfg.crashReports = !!mi.checked;
+      saveConfig(cfg);
+      appendAgentLog(`[mimic] crash-report sharing ${cfg.crashReports ? 'ENABLED — dumps stay local; only crash metadata uploads' : 'disabled'}; restarting agent\n`);
+      if (agentProc) { try { agentProc.kill(); } catch {} } else { launchAgent(); }
+      pushStatus();
+    },
+  };
 
   const menu = Menu.buildFromTemplate([
     { label: headerLabel, enabled: false },
@@ -4583,6 +4605,7 @@ function buildTrayMenu() {
     { label: 'UI Studio — rescale EQ UI for a new resolution', click: () => openUiStudio() },
     updatePopupItem,
     betaChannelItem,
+    crashReportsItem,
     // Uninstall lives in the maintenance block — deliberately NOT next to Quit.
     // The tray menu opens upward with the cursor resting at the BOTTOM, so a
     // bottom-adjacent uninstall was far too easy to mis-click (tester feedback).

@@ -53,6 +53,7 @@ const os   = require('os');
 const https = require('https');
 const http  = require('http');
 const crypto = require('crypto');
+const zlib = require('zlib');
 const { URL } = require('url');
 
 // Read version from package.json so we only have to bump it in one place per release.
@@ -6100,6 +6101,7 @@ function _endpointForKind(kind, botUrl) {
     case 'trigger_relay':   return base + '/trigger-relay';
     case 'quake':           return base + '/quake';
     case 'casting':         return base + '/casting';
+    case 'crash_report':    return base + '/crash_report';
     default:                return botUrl;
   }
 }
@@ -20136,6 +20138,210 @@ function _postLiveState(targetUrl, token, payload) {
   req.on('timeout', () => req.destroy());
   req.write(body); req.end();
 }
+// ── Opt-in crash telemetry ───────────────────────────────────────────────────
+// Zeal's crash handler already writes the perfect small footprint: on any
+// unhandled exception it drops crashes/<YYYY-MM-DD_HH-MM-SS>.zip containing
+// minidump.dmp + crash_reason.txt (exception code/module/address, Zeal
+// version, character, zone, UI skin, callback phase). We DON'T re-implement
+// crash capture — we watch that folder and upload the PARSED crash_reason
+// metadata plus a cheap system snapshot. The minidump itself never leaves
+// the machine (privacy + size); zip_name lets an officer request a specific
+// dump by hand when a cluster warrants real WinDbg work.
+//
+// Signature note (from a 366-bundle corpus on the dev machine, 2025-01 →
+// 2026-07): the exception address's LOW 16 BITS are stable across ASLR
+// bases for the same crash site (all ntdll AVs ended ...FB03/FBF3), so
+// (module, address_low16) is the cluster key the DB indexes.
+//
+// Requires NOTHING beyond normal user permissions: it's plain file reads in
+// the user's own EQ folder + a WMI GPU query. No admin, no debug privilege.
+const CRASH_REPORTS_ENABLED = process.env.WOLFPACK_CRASH_REPORTS === '1';
+const CRASH_STATE_FILE = path.join(process.cwd(), 'crash-reports.state.json');
+const CRASH_BACKLOG_DAYS = 30;    // first-enable backlog window
+const CRASH_BACKLOG_MAX  = 50;    // first-enable backlog cap
+let _crashState = null;           // { reported: { zipName: epochMs } }
+
+function _loadCrashState() {
+  if (_crashState) return _crashState;
+  try { _crashState = JSON.parse(fs.readFileSync(CRASH_STATE_FILE, 'utf8')); }
+  catch { _crashState = null; }
+  if (!_crashState || typeof _crashState !== 'object' || !_crashState.reported) {
+    _crashState = { reported: {} };
+  }
+  return _crashState;
+}
+function _saveCrashState() {
+  try {
+    const tmp = CRASH_STATE_FILE + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(_crashState));
+    fs.renameSync(tmp, CRASH_STATE_FILE);
+  } catch {}
+}
+
+// EQ dirs — same derivation the zeal.ini checker uses: explicit env dir plus
+// every watched log's folder (Logs/ parent → EQ root).
+function _crashDirs() {
+  const dirs = new Set();
+  if (process.env.WOLFPACK_EQ_DIR) dirs.add(process.env.WOLFPACK_EQ_DIR);
+  for (const w of (stats.watchedLogs || [])) {
+    if (!w || !w.logPath) continue;
+    let d = path.dirname(w.logPath);
+    if (/^logs$/i.test(path.basename(d))) d = path.dirname(d);
+    dirs.add(d);
+  }
+  return [...dirs].map(d => path.join(d, 'crashes')).filter(d => {
+    try { return fs.statSync(d).isDirectory(); } catch { return false; }
+  });
+}
+
+// Minimal ZIP reader — extract ONE entry by name. Zeal bundles are ordinary
+// deflate/store zips of two small files; a full zip lib would be the agent's
+// first npm dep, so we parse the central directory by hand instead.
+function _readZipEntry(zipPath, entryName) {
+  const buf = fs.readFileSync(zipPath);
+  // End-of-central-directory: scan back for PK\x05\x06 (max comment 64KB).
+  let eocd = -1;
+  for (let i = buf.length - 22; i >= Math.max(0, buf.length - 22 - 65535); i--) {
+    if (buf.readUInt32LE(i) === 0x06054b50) { eocd = i; break; }
+  }
+  if (eocd < 0) throw new Error('no EOCD');
+  const count = buf.readUInt16LE(eocd + 10);
+  let off = buf.readUInt32LE(eocd + 16);
+  for (let n = 0; n < count; n++) {
+    if (buf.readUInt32LE(off) !== 0x02014b50) throw new Error('bad central dir');
+    const method   = buf.readUInt16LE(off + 10);
+    const csize    = buf.readUInt32LE(off + 20);
+    const nameLen  = buf.readUInt16LE(off + 28);
+    const extraLen = buf.readUInt16LE(off + 30);
+    const cmtLen   = buf.readUInt16LE(off + 32);
+    const lho      = buf.readUInt32LE(off + 42);
+    const name     = buf.toString('utf8', off + 46, off + 46 + nameLen);
+    if (name === entryName) {
+      if (buf.readUInt32LE(lho) !== 0x04034b50) throw new Error('bad local header');
+      const lNameLen  = buf.readUInt16LE(lho + 26);
+      const lExtraLen = buf.readUInt16LE(lho + 28);
+      const dataStart = lho + 30 + lNameLen + lExtraLen;
+      const data = buf.subarray(dataStart, dataStart + csize);
+      if (method === 0) return Buffer.from(data);
+      if (method === 8) return zlib.inflateRawSync(data);
+      throw new Error(`unsupported method ${method}`);
+    }
+    off += 46 + nameLen + extraLen + cmtLen;
+  }
+  throw new Error(`entry not found: ${entryName}`);
+}
+
+// crash_reason.txt → structured fields. Lines look like "Key: value"; the
+// leading "Unhandled exception occurred: ..." headline is kept in raw only.
+function _parseCrashReason(text) {
+  const pick = (rx) => { const m = text.match(rx); return m ? m[1].trim() : null; };
+  const address = pick(/Exception Address:\s*(\S+)/i);
+  const modulePath = pick(/Exception occurred in module:\s*(.+)/i);
+  const character = pick(/Character:\s*(.+)/i);
+  return {
+    exception_code:    pick(/Exception Code:\s*(\S+)/i),
+    exception_module:  modulePath ? path.basename(modulePath).toLowerCase() : null,
+    exception_address: address,
+    address_low16:     address ? address.replace(/^0x/i, '').slice(-4).toLowerCase() : null,
+    zeal_version:      pick(/Zeal Version:\s*(.+)/i),
+    character:         (character && !/^unknown$/i.test(character)) ? character : null,
+    ui_skin:           pick(/UI Skin:\s*(.+)/i),
+    zone_id:           pick(/Zone ID:\s*(\S+)/i),
+    callbacks:         pick(/Callbacks:\s*(.+)/i),
+    raw_reason:        text.slice(0, 4000),
+  };
+}
+
+// System snapshot, computed once per agent run (crashes cluster by machine
+// config, which doesn't change mid-session). GPU via a one-shot PowerShell
+// CIM query — standard-user, no admin. Client-file fingerprints cover the
+// binaries that historically get swapped/wrapped (eqgame, dpvs, d3d8,
+// dgVoodoo, eqw, Zeal) so "your dpvs.dll differs from everyone else's" is
+// answerable straight from the table.
+let _crashSysSnapshot;
+const CRASH_FINGERPRINT_FILES = [
+  'eqgame.exe', 'eqgame.dll', 'dpvs.dll', 'd3d8.dll', 'eqgfx_dx8.dll',
+  'eqw.dll', 'dinput8.dll', 'Zeal.asi', 'dgVoodoo.conf',
+];
+function _crashSystemSnapshot(eqDir) {
+  if (_crashSysSnapshot) return _crashSysSnapshot;
+  const snap = {
+    os: { platform: os.platform(), release: os.release(), arch: os.arch(),
+          totalmem_gb: Math.round(os.totalmem() / 1073741824) },
+    gpus: null,
+    files: {},
+  };
+  try {
+    const { execFileSync } = require('child_process');
+    const out = execFileSync('powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-Command',
+       'Get-CimInstance Win32_VideoController | Select-Object Name,DriverVersion | ConvertTo-Json -Compress'],
+      { timeout: 15000, windowsHide: true }).toString('utf8').trim();
+    const j = JSON.parse(out);
+    snap.gpus = (Array.isArray(j) ? j : [j]).map(g => ({ name: g.Name, driver: g.DriverVersion }));
+  } catch { /* GPU info is best-effort */ }
+  for (const f of CRASH_FINGERPRINT_FILES) {
+    try {
+      const p = path.join(eqDir, f);
+      const st = fs.statSync(p);
+      const md5 = crypto.createHash('md5').update(fs.readFileSync(p)).digest('hex');
+      snap.files[f.toLowerCase()] = { size: st.size, mtime: st.mtimeMs, md5 };
+    } catch { /* absent file = absent fingerprint, itself a signal */ }
+  }
+  _crashSysSnapshot = snap;
+  return snap;
+}
+
+// Zip filenames are local-time YYYY-MM-DD_HH-MM-SS stamps from Zeal.
+function _crashZipTime(name) {
+  const m = name.match(/^(\d{4})-(\d{2})-(\d{2})_(\d{2})-(\d{2})-(\d{2})\.zip$/);
+  if (!m) return null;
+  const d = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+function scanCrashDirs() {
+  if (!CRASH_REPORTS_ENABLED || !_isUploaderInstance) return;
+  const state = _loadCrashState();
+  const firstRun = Object.keys(state.reported).length === 0;
+  const backlogCutoff = Date.now() - CRASH_BACKLOG_DAYS * 86400_000;
+  const reports = [];
+  for (const dir of _crashDirs()) {
+    const eqDir = path.dirname(dir);
+    let names;
+    try { names = fs.readdirSync(dir).filter(n => /\.zip$/i.test(n)); } catch { continue; }
+    // Oldest first so the backlog cap keeps the RECENT crashes.
+    const dated = names.map(n => ({ n, t: _crashZipTime(n) })).filter(x => x.t)
+      .sort((a, b) => a.t - b.t);
+    for (const { n, t } of dated) {
+      if (state.reported[n]) continue;
+      if (firstRun && t.getTime() < backlogCutoff) { state.reported[n] = 0; continue; }
+      if (reports.length >= CRASH_BACKLOG_MAX) break;
+      let parsed;
+      try {
+        parsed = _parseCrashReason(_readZipEntry(path.join(dir, n), 'crash_reason.txt').toString('utf8'));
+      } catch (e) {
+        // Zero-byte / malformed bundle (they exist in the wild) — mark seen
+        // so we don't reparse it every minute, but record nothing.
+        state.reported[n] = 0;
+        continue;
+      }
+      reports.push({
+        ...parsed,
+        zip_name: n,
+        crashed_at: t.toISOString(),
+        system: _crashSystemSnapshot(eqDir),
+      });
+      state.reported[n] = Date.now();
+    }
+  }
+  if (reports.length > 0) {
+    enqueueUpload('crash_report', { agent_version: AGENT_VERSION, reports });
+    console.log(`[crash-reports] queued ${reports.length} crash report(s)`);
+  }
+  _saveCrashState();
+}
+
 function flushLiveStateToBot(opts) {
   if (!_isUploaderInstance) return;          // only the elected uploader sends
   if (!opts || !opts.botUrl) return;
@@ -21295,6 +21501,14 @@ async function main() {
     // signature check below only actually POSTs on a real change, so a
     // shorter interval mostly just means "notice sooner", not "send more".
     setInterval(() => { try { flushLiveStateToBot({ botUrl, token }); } catch {} }, 5_000);
+    // Opt-in crash telemetry: scan the EQ folder's Zeal crashes/ dir for new
+    // bundles. Gated on WOLFPACK_CRASH_REPORTS=1 (Mimic tray toggle) — never
+    // runs otherwise. 60s cadence; startup scan delayed so watchedLogs (the
+    // EQ-dir source) is populated.
+    if (CRASH_REPORTS_ENABLED) {
+      setTimeout(() => { try { scanCrashDirs(); } catch {} }, 15_000);
+      setInterval(() => { try { scanCrashDirs(); } catch {} }, 60_000);
+    }
   }
 
   // Optional web dashboard — bind 127.0.0.1 only, single HTML page polls /api/state.
@@ -21901,6 +22115,7 @@ module.exports = {
   SOURCELESS_SPELLS, BARD_SONGS,
   EncounterBuilder, characterFromFilename,
   trackChChainLine, chChainSnapshot,
+  _readZipEntry, _parseCrashReason, _crashZipTime,
 };
 
 if (require.main === module) {
