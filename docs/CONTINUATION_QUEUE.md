@@ -14,6 +14,62 @@
   but those start fresh, so this queue is what makes a fresh start productive.
 - Resume command: **"pick up the continuation queue, start at #1."**
 
+## 🔥 IN FLIGHT 2026-07-10 — PoP Raid Slideshow overlay (batched build)
+User request (three uploaded md refs: wolfpackplaneoftimeslideshow.md,
+wolfpack-pop-raid-reference.md, poptodo.md — content summarized below):
+build a Plane of Time / PoP raid overlay suite. **Resume command: "continue
+the PoP slideshow batches, next batch."**
+
+### Batches (do in order, ship each separately)
+1. **[ ] Data module** `apps/mimic/pop-raids.js` (beta): encounter DB from the
+   two reference docs — P1 five trials (Neimon/Terlok/Kazrok/Rythor/Anar),
+   P4 gods (Tallon/Vallon/Saryrn/Terris), P5 (Cazic/Bertox/Rallos/Innoruuk/
+   QUARM incl. 4-head phases), plus Tier1-4 (Grummus, Behemoth+Xanamech,
+   Terris-A, PoJ trials, Aerin`Dar, Carprin, Bertox-CoD, Keeper, Saryrn-A,
+   Agnarr 3-phase, HoH trials, Mithaniel Marr, Vallon-A, Rallos-event 4-phase,
+   SolRo tower 5 minis+SolRo, Xegony 6 waves, Rathe Council 12+Avatar,
+   Fennin 5-phase, Coirnav 14-min). Per encounter: callouts, stats
+   (hp/hits/slowable/ramp), abilities[], tracker[] objective ids+labels,
+   diagram URLs (base https://www.eqprogression.com/wp-content/uploads/
+   PoTime_Raid_Guide/ + per-tier pages), video URLs (P1 youtu.be/8DRj1LSBwg0,
+   P4 watch?v=w-V5joD1UNI, P5 youtu.be/l2vt7VHUppg), guideUrl, quarmNotes.
+   ⚠ P2/P3 NOT captured (user tabs lacked them; eqprogression.com 403s our
+   server like PQDI) — stub panels "awaiting capture" + add md runbook like
+   docs/spell-levels-local.md for user local fetch. Hotlink images (user:
+   end-user loads them directly from EQProgression = no storage/egress for us;
+   link source pages as credit).
+2. **[ ] Bot endpoints (main)**: `/api/agent/raid-objectives` GET/POST —
+   raid-wide shared checkbox state keyed (encounterId, objectiveId), bearer
+   auth, in-memory + state.json persist, "reset encounter" op; officer gating
+   per existing permissions pattern. And `/api/agent/pop-anomaly` POST →
+   posts to QOL thread (env QOL_THREAD_ID, fallback FEEDBACK_THREAD_ID)
+   with FULL encounter context (encounter, phase, guide baseline vs observed,
+   character, quarmNotes) — the "QOL-thread context for flagging anomalies".
+3. **[ ] Mimic overlay** `apps/mimic/popraid.html` + main.js wiring (beta):
+   phase slideshow (prev/next + encounter picker), per-encounter panel =
+   callouts / stats+abilities+resists / tracker checkboxes (shared via agent
+   proxy of raid-objectives, buff-queue cache pattern) / diagram+video links
+   via shell.openExternal + hotlinked <img> thumbs / ⚑ Flag-anomaly form →
+   pop-anomaly. **Ultrawide "framed" layout toggle** (multi-panel row like the
+   md's framed boxes vs single panel). MUST follow CLAUDE.md overlay parity
+   checklist items 1-6 (✕+hide-overlay branch, ✥+menu, hover-interact,
+   WP_OVERLAY_ROWS+toggle-overlay case, apply*Visibility, _HIDEALL_FLAGS +
+   _overlayEntries + _boundsKeyForWindow + bounds keys). Boss "target" info:
+   guide stats + live loot via existing /api/agent/mob-info drop-table lookup.
+4. **[ ] Docs/roadmap**: roadmap entry (web bump, beta channel), BACKLOG
+   note for P2/P3 completion + Quarm-divergence fill-in workflow
+   (poptodo.md: access levels 46/55/60/62 differ by source; PoStorms flag =
+   Askr collect quest; flag caps 72/36 Carprin/54 EarthA; pet/invis rework,
+   hybrid fizzle, zone-punt grace already on Quarm).
+
+### Session state (already shipped today, all pushed)
+- main @ 79dbb78: bot 3.0.157 / web 1.0.199 (AA validation+purge, faction
+  fixes, roster family attendance + alt nights, /who RPC, auth dedup,
+  threat-snapshot retention+downsample+VACUUM ~367MB, mana_reports).
+- beta @ e0b7f8d: agent 3.3.15 (roll tracker 🎲, healer-mana fix, rampage
+  persist) + Mimic auto-arrange/backdrops/hide-all-fix. Mimic stable v1.7.1
+  released; beta parked 1.7.2.
+
 ## ✅ Shipped this session (recent)
 - **Overnight 2026-06-01 batch** (raid-night + after):
   - **Mimic beta.13** — moveable/lockable overlays without engine restart;
