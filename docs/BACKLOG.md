@@ -44,20 +44,22 @@ class filter + "only gaps" + "hide logged-off" toggles, accuracy caveat banner.
   (encounter callouts/stats or `quarmGlobalNotes`) — the guide numbers are
   estimates, Quarm observations win; (c) set `QOL_THREAD_ID` on Railway
   (falls back to FEEDBACK_THREAD_ID until then).
-- **Overlay pretty-place phase 2 — first-boot placement + per-class default
-  sets** (Uilnayar 2026-07-10; V1 shipped in the 1.7.2 beta line). V1 gives
-  every overlay's right-click menu: ✨ Auto-arrange (packs VISIBLE overlays
-  into the free space computed from the player's `UI_<Char>_*.ini` window
-  rects — read-only, dominant `XPos<W>x<H>` resolution block, phantom
-  char-select sections filtered), an arrange-on-show mode, 👁 hide, and 🌫
-  per-overlay solid backdrops (all-at-once hotkey Ctrl+Shift+B). Phase 2:
-  (a) run the same packer on FIRST BOOT so a new user's overlays land
-  arranged instead of stacked top-left; (b) seed WHICH overlays to enable
-  from per-class default sets — admin-crafted on /admin/overlays (ships via
-  the existing overlay-tuning poll) or observed from same-class raiders'
-  configs; (c) multi-monitor placement (V1 packs the primary display only).
-  The packer + UI parser live in apps/mimic/main.js
-  (`_autoArrangeOverlays` / `_parseUiWindowRects`).
+- **Overlay pretty-place phase 2 — ✅ (a)+(b) SHIPPED 2026-07-11** (bot
+  3.0.159 / web 1.0.201 on main; agent 3.3.17 / Mimic on beta). (a) First-boot
+  arrange: class-set seeding runs the packer after applying, and
+  mark-onboarded runs it once when onboarding enabled overlays (deliberately
+  NOT the EQ-presence flip — that would re-pack existing installs that
+  predate the `firstArrangeDone` flag). (b) Per-class default sets:
+  `overlay_tuning.class_sets` jsonb (SEPARATE column — the knob save rebuilds
+  `tuning` wholesale), 🧩 editor on /admin/overlays, served on the same
+  90s agent poll, surfaced on /api/state as `classOverlaySets` +
+  `activeCharacterClass` (/who → Zeal type-5 fallback), consumed by Mimic's
+  one-shot `_maybeSeedClassSet` (fresh installs ONLY — any user-enabled
+  overlay or saved char profile marks the install seeded untouched).
+  REMAINING: (c) multi-monitor placement (packer works the primary display
+  only); (b2) "observed" sets — seed from same-class raiders' actual configs
+  instead of/alongside admin-crafted. Packer + UI parser:
+  apps/mimic/main.js (`_autoArrangeOverlays` / `_parseUiWindowRects`).
 - **Capture the `wolfpacktag` raid channel → live raid-leader overlays.**
   (Uilnayar 2026-07-08. ⛔ BLOCKED on a raw log sample — not ready to provide
   yet.) The guild already runs an in-game custom chat channel (`ztwolfpacktag`

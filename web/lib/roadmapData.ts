@@ -43,6 +43,20 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'class-default-overlays',
+    title: '🧩 New installs set themselves up for your class',
+    version: 'Mimic 1.7.2 beta · Agent 3.3.17 · Bot 3.0.159 · Web 1.0.201',
+    date: '2026-07-11',
+    channel: 'beta',
+    headline: 'Officers craft a default overlay set per class; a brand-new Mimic install turns on the right overlays for your toon and arranges them around your in-game windows automatically.',
+    features: [
+      { name: 'Class default sets', blurb: 'On /admin/overlays, officers pick which overlays each class starts with — clerics get the CH chain and Buff queue, warriors get the Tank HUD and Command Center, and so on. New installs pick their set up within a couple of minutes of logging in.' },
+      { name: 'First-boot arrangement', blurb: 'A fresh install no longer leaves overlays stacked in default spots — the first time it knows your class (or right after onboarding), it packs everything into the free space around your actual EQ windows.' },
+      { name: 'Your setup is safe', blurb: 'This only ever touches brand-new installs. If you have ever turned an overlay on yourself, saved a per-character layout, or placed things where you like them, nothing changes — updates and set edits never rearrange you.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'pop-raid-slideshow',
     title: '⚔ PoP raid guide, in-game',
     version: 'Mimic 1.7.2 beta · Agent 3.3.16 · Bot 3.0.158',
