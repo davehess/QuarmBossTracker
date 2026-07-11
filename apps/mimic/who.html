@@ -30,6 +30,12 @@
   .r .sp{flex:1;min-width:4px}
   .r .flag{font-size:9px;padding:0 4px;border-radius:3px;flex-shrink:0}
   .r .flag.anon{background:#2d2150;color:#c9a0ff}
+  /* Copy-name button on unknown-identity rows — dim until hovered so it
+     doesn't clutter the roster; turns green briefly after a copy. */
+  .r .copybtn{background:none;border:none;color:#6e7681;cursor:pointer;font-size:11px;
+    padding:0 3px;line-height:1;opacity:0.65}
+  .r .copybtn:hover{color:#e6edf3;opacity:1}
+  .r .copybtn.copied{color:#56d364;opacity:1}
   .r .flag.gm{background:#3d3416;color:#f0d264}
   .r .flag.zek{background:#3d1d1d;color:#ff7b72}
   /* Class + level columns: dim, right-side. Italic on de-anon'd values
@@ -163,6 +169,13 @@
     var lvlIsDeanon   = !liveLvl   && lvl   != null;
     var klassIsDeanon = !liveKlass && klass != null;
     var parts = ['<span class="nm">' + esc(p.name || '?') + '</span>'];
+    // Unknown identity (no class/level, live OR de-anon'd) → copy button so
+    // the user can paste the name into the Quarm Discord search and check
+    // the player's own public posts for class/level. Officer then records
+    // finds via /admin/who (who_overrides).
+    if (!klass && !lvl && p.name) {
+      parts.push('<button class="copybtn" data-name="' + esc(p.name) + '" title="Copy name — search Quarm Discord for their public posts">⧉</button>');
+    }
     if (guild) parts.push('<span class="guild">&lt;' + esc(guild) + '&gt;</span>');
     parts.push('<span class="sp"></span>');
     if (p.anonymous) parts.push('<span class="flag anon">anon</span>');
@@ -177,7 +190,42 @@
   var bodyEl = document.getElementById('body');
   var emptyEl = document.getElementById('empty');
 
+  // Copy-name buttons: rows re-render every 500ms, so everything is
+  // DELEGATED off bodyEl. The hover-interact handshake is mandatory — a
+  // locked overlay is click-through, so without it the click would fall
+  // through to EQ (overlay checklist item 3). mouseover/out (which bubble)
+  // stand in for mouseenter/leave.
+  var _copyFlashUntil = 0;
+  bodyEl.addEventListener('mouseover', function(e){
+    if (e.target && e.target.classList && e.target.classList.contains('copybtn')) {
+      try { window.mimic.overlayHoverInteractive(true); } catch (err) {}
+    }
+  });
+  bodyEl.addEventListener('mouseout', function(e){
+    if (e.target && e.target.classList && e.target.classList.contains('copybtn')) {
+      try { window.mimic.overlayHoverInteractive(false); } catch (err) {}
+    }
+  });
+  bodyEl.addEventListener('click', function(e){
+    var btn = e.target && e.target.classList && e.target.classList.contains('copybtn') ? e.target : null;
+    if (!btn) return;
+    var name = btn.getAttribute('data-name') || '';
+    if (!name) return;
+    function flash(){ btn.textContent = '✓'; btn.classList.add('copied'); _copyFlashUntil = Date.now() + 1200; }
+    try { navigator.clipboard.writeText(name).then(flash, flash); }
+    catch (err) {
+      // execCommand fallback for older Electron renderers.
+      try {
+        var ta = document.createElement('textarea');
+        ta.value = name; document.body.appendChild(ta); ta.select();
+        document.execCommand('copy'); document.body.removeChild(ta);
+        flash();
+      } catch (err2) {}
+    }
+  });
+
   async function tick(){
+    if (Date.now() < _copyFlashUntil) return;   // let the ✓ copied flash survive a beat
     try {
       const r = await fetch('http://127.0.0.1:'+PORT+'/api/state',{cache:'no-store'});
       const s = await r.json();
