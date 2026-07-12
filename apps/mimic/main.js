@@ -2489,7 +2489,7 @@ function _parseUiWindowRects() {
     return null;
   }
 }
-function _autoArrangeOverlays() {
+function _autoArrangeOverlays(pinnedKey) {
   const area = screen.getPrimaryDisplay().workArea;
   const ui = _parseUiWindowRects();
   const MARGIN = 8, STEP = 16;
@@ -2527,8 +2527,13 @@ function _autoArrangeOverlays() {
     .map(([key, win]) => ({ key, win, b: win.getBounds() }))
     .sort((a, b) => (b.b.width * b.b.height) - (a.b.width * a.b.height));
   for (const o of wins) pendingCur.set(o.key, pad(o.b));
+  // Pinned overlay (arrange-on-show passes the just-opened one, Uilnayar
+  // 2026-07-12: "the overlay must not jump when opening"): it stays exactly
+  // at its saved bounds — its rect blocks placement and it is never moved.
+  // Manual auto-arrange passes nothing and repacks everything as before.
+  const moveList = pinnedKey ? wins.filter(o => o.key !== pinnedKey) : wins;
   let placed = 0, skipped = 0;
-  for (const o of wins) {
+  for (const o of moveList) {
     // Shrink-only preset ladder: try the current width, then narrower presets
     // ("auto-resize" — a too-wide overlay steps down until it fits somewhere).
     const ladder = [...new Set([o.b.width, 400, 320, 260, 200])].filter(w => w <= o.b.width || w === 200).sort((a, b) => b - a);
@@ -4241,6 +4246,7 @@ function currentStatus() {
     showExtTarget: !!cfg.showExtTarget,
     showCommand: !!cfg.showCommand,
     showPopRaid: !!cfg.showPopRaid,
+    overlayTheme: cfg.overlayTheme || 'default',
     overlaysLocked: cfg.overlaysLocked !== false,
     setupMode: !!setupMode,
     onboarded: !!cfg.onboarded,
@@ -5129,7 +5135,9 @@ ipcMain.handle('toggle-overlay', (_e, name) => {
       exttarget: 'showExtTarget', command: 'showCommand', popraid: 'showPopRaid',
     };
     if (cfg.autoArrangeOnShow && cfg[FLAG_BY_NAME[name]]) {
-      setTimeout(() => { try { _autoArrangeOverlays(); } catch {} }, 450);
+      // Pin the overlay that was just opened — only the OTHERS slide away.
+      const entryKey = name === 'pet' ? 'pets' : name;
+      setTimeout(() => { try { _autoArrangeOverlays(entryKey); } catch {} }, 450);
     }
   } catch { /* arrangement is best-effort */ }
   pushStatus();
@@ -5166,6 +5174,18 @@ ipcMain.handle('wp-overlay-menu-state', (e) => {
 // chrome-menu item cycles through the list; new windows pick the theme up
 // from their wp-overlay-menu-state pull at load.
 const _WP_THEMES = ['default', 'light', 'bright', 'soft', 'contrast'];
+// Direct theme set (dashboard Overlays-tab picker) — same broadcast path.
+ipcMain.handle('wp-theme-set', (_e, theme) => {
+  if (!_WP_THEMES.includes(theme)) return false;
+  const cfg = loadConfig();
+  cfg.overlayTheme = theme;
+  saveConfig(cfg);
+  for (const [, win] of _overlayEntries()) {
+    try { win.webContents.send('wp-theme', theme); } catch { /* mid-close */ }
+  }
+  pushStatus();
+  return theme;
+});
 ipcMain.handle('wp-theme-cycle', () => {
   const cfg = loadConfig();
   const cur = _WP_THEMES.indexOf(cfg.overlayTheme || 'default');

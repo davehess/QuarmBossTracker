@@ -306,6 +306,7 @@ contextBridge.exposeInMainWorld('mimic', {
   // Toggle a named built-in overlay (hud/trigger/charm/pet/mobinfo) on/off from
   // the dashboard's Overlays tab. Returns the updated status snapshot.
   toggleOverlay:   (name) => ipcRenderer.invoke('toggle-overlay', name),
+  setOverlayTheme: (t)    => ipcRenderer.invoke('wp-theme-set', t),
   markOnboarded:   ()     => ipcRenderer.invoke('mark-onboarded'),
   openDashboard:   ()     => ipcRenderer.invoke('open-dashboard'),
   openExternal:    (url)  => ipcRenderer.invoke('open-external', url),

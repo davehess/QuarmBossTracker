@@ -10229,6 +10229,18 @@ function renderOverlays(s) {
     return;
   }
   h += '<div class="dim" style="font-size:12px;margin-bottom:8px">Toggle any overlay on or off here — same as the tray menu (right-click the wolf in the system tray → <b>Overlays</b>), which also has lock/unlock, <b>Setup mode</b> placement, and per-overlay opacity.</div>';
+  // 🎨 Theme picker (Uilnayar 2026-07-12) — direct pick instead of cycling
+  // the chrome-menu item. Buttons call wp-theme-set via the bridge; the
+  // active one highlights from status.overlayTheme.
+  h += '<div style="font-size:12px;padding:8px 10px;background:#161b22;border:1px solid var(--border);border-radius:6px;margin-bottom:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">';
+  h += '<b>🎨 Theme</b><span class="dim">applies to all overlays</span>';
+  var thCur = (s && s.overlayTheme) || 'default';
+  var THEMES = [['default','Wolf (dark)'],['light','Light'],['bright','Vivid'],['soft','Muted'],['contrast','High contrast']];
+  for (var ti = 0; ti < THEMES.length; ti++) {
+    var on = THEMES[ti][0] === thCur;
+    h += '<button class="wp-theme-pick" data-th="' + THEMES[ti][0] + '" style="font-size:11px;padding:3px 10px;border-radius:4px;cursor:pointer;border:1px solid ' + (on ? '#a371f7' : 'var(--border)') + ';background:' + (on ? 'rgba(163,113,247,0.25)' : '#21262d') + ';color:' + (on ? '#e9d5ff' : '#c9d1d9') + '">' + THEMES[ti][1] + '</button>';
+  }
+  h += '</div>';
   // How to move them. Convention is consistent across every overlay so users
   // build muscle memory: ✥ in the TOP-RIGHT corner = drag handle (hover to
   // grab + drag — works while locked); ✕ in the TOP-LEFT = hide that overlay.
@@ -10350,9 +10362,13 @@ if (typeof window !== 'undefined' && !window.__wpOvDelegated) {
   document.addEventListener('click', function(e){
     var t = e.target;
     var b = (t && t.closest) ? t.closest('.wp-ov-toggle') : null;
-    if (!b) return;
-    var name = b.getAttribute('data-ov');
-    if (name) wpToggleOverlay(name);
+    if (b) { var name = b.getAttribute('data-ov'); if (name) wpToggleOverlay(name); return; }
+    var th = (t && t.closest) ? t.closest('.wp-theme-pick') : null;
+    if (th && window.mimic && window.mimic.setOverlayTheme) {
+      window.mimic.setOverlayTheme(th.getAttribute('data-th'));
+      // Re-render soon so the highlight moves (status push lands within a tick).
+      setTimeout(function(){ try { window.__wpForceOverlayRender && window.__wpForceOverlayRender(); } catch (e2) {} }, 300);
+    }
   });
 }
 
