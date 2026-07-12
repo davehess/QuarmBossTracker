@@ -5629,8 +5629,11 @@ ipcMain.handle('save-config', async (_e, incoming) => {
     tokenChanged = true;
   }
   saveConfig(merged);
-  // Re-bind the hide-all hotkey if the user changed it in settings.
-  if (incoming && Object.prototype.hasOwnProperty.call(incoming, 'hideAllHotkey')) {
+  // Re-bind the global hotkeys if the user changed any binding OR enable
+  // flag (2026-07-12: backdropHotkey saves were ignored until restart —
+  // only hideAllHotkey was in this condition).
+  const HOTKEY_KEYS = ['hideAllHotkey', 'backdropHotkey', 'hideAllHotkeyEnabled', 'backdropHotkeyEnabled'];
+  if (incoming && HOTKEY_KEYS.some(k => Object.prototype.hasOwnProperty.call(incoming, k))) {
     try { registerHideAllHotkey(); } catch {}
   }
   // Apply a raw-Zeal-capture toggle live (Info tab control) without a restart.
