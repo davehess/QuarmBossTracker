@@ -4125,7 +4125,8 @@ function registerHideAllHotkey() {
     // (Re)register the configured accelerator, dropping any prior binding.
     if (_registeredHideAccel) { try { globalShortcut.unregister(_registeredHideAccel); } catch {} _registeredHideAccel = null; }
     const accel = _hideAllAccelerator();
-    if (accel) {
+    // Per-hotkey kill switch (dashboard Enable/Disable) — default enabled.
+    if (accel && cfg.hideAllHotkeyEnabled !== false) {
       const ok = globalShortcut.register(accel, toggleHideAllOverlays);
       if (ok) _registeredHideAccel = accel;
       else appendAgentLog(`[mimic] failed to register hide-all hotkey "${accel}" (in use by another app?)\n`);
@@ -4135,7 +4136,7 @@ function registerHideAllHotkey() {
     // Override with cfg.backdropHotkey.
     if (_registeredBackdropAccel) { try { globalShortcut.unregister(_registeredBackdropAccel); } catch {} _registeredBackdropAccel = null; }
     const bAccel = (typeof cfg.backdropHotkey === 'string' && cfg.backdropHotkey.trim()) ? cfg.backdropHotkey.trim() : _DEFAULT_BACKDROP_HOTKEY;
-    if (bAccel) {
+    if (bAccel && cfg.backdropHotkeyEnabled !== false) {
       const ok2 = globalShortcut.register(bAccel, toggleAllBackdrops);
       if (ok2) _registeredBackdropAccel = bAccel;
       else appendAgentLog(`[mimic] failed to register backdrop hotkey "${bAccel}" (in use by another app?)\n`);

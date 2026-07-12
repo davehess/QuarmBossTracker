@@ -10253,10 +10253,18 @@ function renderOverlays(s) {
     + '<b style="color:var(--gold)">Show / hide ALL overlays:</b>'
     + '<code id="wpHideHotkeyCur" style="background:#0d1117;padding:2px 10px;border-radius:3px;border:1px solid var(--border)">…</code>'
     + '<button type="button" id="wpHideHotkeyBtn" style="background:#21262d;color:var(--blue);border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px">Change…</button>'
+    + '<button type="button" id="wpHideHotkeyEn" style="background:#21262d;color:var(--red)"></button>'
     + '<span id="wpHideHotkeyHint" class="dim" style="font-size:11px"></span>'
+    + '</div>';
+  h += '<div style="font-size:12px;padding:8px 10px;background:#161b22;border:1px solid var(--border);border-radius:6px;margin-bottom:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">'
+    + '<b style="color:var(--gold)">Toggle backgrounds on ALL overlays:</b>'
+    + '<code id="wpBdHotkeyCur" style="background:#0d1117;padding:2px 10px;border-radius:3px;border:1px solid var(--border)">…</code>'
+    + '<button type="button" id="wpBdHotkeyBtn" style="background:#21262d;color:var(--blue);border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px">Change…</button>'
+    + '<button type="button" id="wpBdHotkeyEn" style="background:#21262d;color:var(--red)"></button>'
+    + '<span id="wpBdHotkeyHint" class="dim" style="font-size:11px"></span>'
     + '<span style="flex-basis:100%"></span>'
     + '<button type="button" class="wp-ov-act" data-act="arrange" style="background:#21262d;color:#7ee787;border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px">✨ Auto-arrange overlays now</button>'
-    + '<button type="button" class="wp-ov-act" data-act="backdrops" style="background:#21262d;color:#c9d1d9;border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px">🌫 Toggle backgrounds on all (Ctrl+Shift+B)</button>'
+    + '<button type="button" class="wp-ov-act" data-act="backdrops" style="background:#21262d;color:#c9d1d9;border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px">🌫 Toggle backgrounds now</button>'
     + '<span class="dim" style="font-size:11px">arranging only ever runs when you click it — never automatically</span>'
     + '</div>';
   h += '<div style="font-size:12px;padding:8px 10px;background:#161b22;border:1px solid var(--border);border-radius:6px;margin-bottom:8px">'
@@ -10293,14 +10301,39 @@ function renderOverlays(s) {
 var _wpHotkeyCapturing = false;
 function _wpFmtAccel(a) { return String(a || '').replace(/CommandOrControl|CmdOrCtrl/gi, 'Ctrl'); }
 function wpWireHideHotkey() {
-  var cur = document.getElementById('wpHideHotkeyCur');
-  var btn = document.getElementById('wpHideHotkeyBtn');
-  var hint = document.getElementById('wpHideHotkeyHint');
+  _wpWireHotkeyRow('wpHideHotkey', 'hideAllHotkey', 'hideAllHotkeyEnabled', 'CommandOrControl+Shift+H');
+  _wpWireHotkeyRow('wpBdHotkey', 'backdropHotkey', 'backdropHotkeyEnabled', 'CommandOrControl+Shift+B');
+}
+// One hotkey row: chip + Change… capture + Enable/Disable kill switch. The
+// enable flag re-registers live via saveConfig (registerHideAllHotkey runs
+// on every config apply and skips disabled hotkeys).
+function _wpWireHotkeyRow(prefix, cfgKey, enKey, defAccel) {
+  var cur = document.getElementById(prefix + 'Cur');
+  var btn = document.getElementById(prefix + 'Btn');
+  var en  = document.getElementById(prefix + 'En');
+  var hint = document.getElementById(prefix + 'Hint');
   if (!cur || !btn || !window.mimic || !window.mimic.getConfig) return;
-  window.mimic.getConfig().then(function(cfg){
-    var a = (cfg && typeof cfg.hideAllHotkey === 'string' && cfg.hideAllHotkey.trim()) ? cfg.hideAllHotkey.trim() : 'CommandOrControl+Shift+H';
-    cur.textContent = _wpFmtAccel(a);
-  }).catch(function(){ cur.textContent = 'Ctrl+Shift+H'; });
+  function paint(cfg) {
+    var a = (cfg && typeof cfg[cfgKey] === 'string' && cfg[cfgKey].trim()) ? cfg[cfgKey].trim() : defAccel;
+    var enabled = !cfg || cfg[enKey] !== false;
+    cur.textContent = enabled ? _wpFmtAccel(a) : 'disabled';
+    cur.style.opacity = enabled ? '1' : '0.5';
+    if (en) {
+      en.textContent = enabled ? 'Disable' : 'Enable';
+      en.style.cssText = 'border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px;background:#21262d;color:' + (enabled ? 'var(--red)' : '#7ee787');
+    }
+  }
+  window.mimic.getConfig().then(paint).catch(function(){ cur.textContent = _wpFmtAccel(defAccel); });
+  if (en) _bindOnce(en, 'click', function(){
+    window.mimic.getConfig().then(function(cfg){
+      var next = !(cfg && cfg[enKey] !== false);
+      var patch = {}; patch[enKey] = next;
+      window.mimic.saveConfig(patch).then(function(){
+        window.mimic.getConfig().then(paint).catch(function(){});
+        if (hint) { hint.textContent = next ? 'Hotkey enabled.' : 'Hotkey disabled.'; setTimeout(function(){ hint.textContent = ''; }, 3000); }
+      }).catch(function(){});
+    }).catch(function(){});
+  });
   _bindOnce(btn, 'click', function(){
     if (_wpHotkeyCapturing) return;
     _wpHotkeyCapturing = true;
@@ -10325,7 +10358,8 @@ function wpWireHideHotkey() {
       if (e.shiftKey) parts.push('Shift');
       parts.push(key);
       var accel = parts.join('+');
-      window.mimic.saveConfig({ hideAllHotkey: accel }).then(function(){
+      var patch2 = {}; patch2[cfgKey] = accel;
+      window.mimic.saveConfig(patch2).then(function(){
         cur.textContent = _wpFmtAccel(accel);
         done('Saved — active immediately.');
       }).catch(function(){ done('Save failed.'); });
