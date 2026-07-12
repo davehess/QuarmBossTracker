@@ -104,7 +104,11 @@ ipcRenderer.on('wp-theme', function (_e, theme) { _wpApplyTheme(theme); });
 document.addEventListener('DOMContentLoaded', function () {
   try {
     const st = document.createElement('style');
-    st.textContent = 'body.wp-backdrop{background:rgb(8 10 14 / var(--bg-alpha,0.92)) !important;border-radius:8px}' + _WP_THEME_CSS;
+    st.textContent = 'body.wp-backdrop{background:rgb(8 10 14 / var(--bg-alpha,0.92)) !important;border-radius:8px}'
+      // Setup strip must survive narrow windows: wrap onto a second row
+      // instead of pushing the Done button past the right edge.
+      + '#setupbar{flex-wrap:wrap;row-gap:4px}#setupbar input[type=range]{min-width:60px}'
+      + _WP_THEME_CSS;
     document.head.appendChild(st);
     ipcRenderer.invoke('wp-overlay-menu-state').then(function (s) {
       if (s && s.backdrop && _wpOverlayDoc()) document.body.classList.add('wp-backdrop');
