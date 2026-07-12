@@ -164,8 +164,6 @@ function _buildOverlayMenu(onClose, state) {
     () => ipcRenderer.invoke('wp-theme-cycle')));
   menu.appendChild(mkItem('✨ Auto-arrange overlays', '#20503a',
     () => ipcRenderer.invoke('auto-arrange-overlays')));
-  menu.appendChild(mkItem('✨ Arrange when overlays open: ' + (st.arrangeOnShow ? 'ON' : 'off'), '#20503a',
-    () => ipcRenderer.invoke('auto-arrange-onshow-toggle')));
   // Thin divider before the size presets so the menu reads "actions / sizes".
   const sep = document.createElement('div');
   sep.style.cssText = 'height:1px;background:rgba(255,255,255,0.08);margin:3px 0';

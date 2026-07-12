@@ -5123,23 +5123,10 @@ ipcMain.handle('toggle-overlay', (_e, name) => {
     default:
       return null;
   }
-  // Auto-arrange on show: when the user has it enabled, turning an overlay ON
-  // re-packs the visible set so the newcomer gets clear space and the others
-  // slide out of the way (Uilnayar 2026-07-10). Delayed so create/auto-height
-  // settle first. Never fires on hide.
-  try {
-    const FLAG_BY_NAME = {
-      hud: 'showHud', trigger: 'enableTriggerTts', charm: 'showCharm', pet: 'showPets',
-      mobinfo: 'showMobInfo', buffQueue: 'showBuffQueue', who: 'showWho', melody: 'showMelody',
-      zeal: 'showZeal', threat: 'showThreat', chchain: 'showChChain', tank: 'showTank',
-      exttarget: 'showExtTarget', command: 'showCommand', popraid: 'showPopRaid',
-    };
-    if (cfg.autoArrangeOnShow && cfg[FLAG_BY_NAME[name]]) {
-      // Pin the overlay that was just opened — only the OTHERS slide away.
-      const entryKey = name === 'pet' ? 'pets' : name;
-      setTimeout(() => { try { _autoArrangeOverlays(entryKey); } catch {} }, 450);
-    }
-  } catch { /* arrangement is best-effort */ }
+  // Auto-arrange on toggle REMOVED (Uilnayar 2026-07-12, 1.7.4-beta.2 test:
+  // "take out that automatic movement — it's very disruptive"). Turning an
+  // overlay on/off never moves anything; arranging is manual-only via the
+  // right-click ✨ Auto-arrange item.
   pushStatus();
   return currentStatus();
 });
