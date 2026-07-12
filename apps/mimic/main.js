@@ -5165,6 +5165,21 @@ ipcMain.handle('wp-overlay-menu-state', (e) => {
 // chrome-menu item cycles through the list; new windows pick the theme up
 // from their wp-overlay-menu-state pull at load.
 const _WP_THEMES = ['default', 'light', 'bright', 'soft', 'contrast'];
+// Global opacity — one slider on the dashboard drives every overlay. Writes
+// cfg.overlayOpacity for ALL known keys (so windows opened later inherit it)
+// and re-applies to the live set.
+const _ALL_OVERLAY_KEYS = ['hud','trigger','charm','pets','mobinfo','buffQueue','who','melody','zeal','threat','chchain','tank','exttarget','command','popraid'];
+ipcMain.handle('wp-opacity-all', (_e, v) => {
+  const val = Math.max(0.15, Math.min(1, +v || 1));
+  const cfg = loadConfig();
+  const map = (cfg.overlayOpacity && typeof cfg.overlayOpacity === 'object') ? cfg.overlayOpacity : {};
+  for (const k of _ALL_OVERLAY_KEYS) map[k] = val;
+  for (const [k] of _overlayEntries()) map[k] = val;   // panels + anything new
+  cfg.overlayOpacity = map;
+  saveConfig(cfg);
+  applyAllOverlayOpacities();
+  return val;
+});
 // Direct theme set (dashboard Overlays-tab picker) — same broadcast path.
 // All-overlay backdrop flip — same as the Ctrl+Shift+B hotkey.
 ipcMain.handle('wp-backdrop-toggle-all', () => { try { toggleAllBackdrops(); return true; } catch { return false; } });

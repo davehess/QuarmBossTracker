@@ -10241,6 +10241,12 @@ function renderOverlays(s) {
     h += '<button class="wp-theme-pick" data-th="' + THEMES[ti][0] + '" style="font-size:11px;padding:3px 10px;border-radius:4px;cursor:pointer;border:1px solid ' + (on ? '#a371f7' : 'var(--border)') + ';background:' + (on ? 'rgba(163,113,247,0.25)' : '#21262d') + ';color:' + (on ? '#e9d5ff' : '#c9d1d9') + '">' + THEMES[ti][1] + '</button>';
   }
   h += '</div>';
+  h += '<div style="font-size:12px;padding:8px 10px;background:#161b22;border:1px solid var(--border);border-radius:6px;margin-bottom:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">'
+    + '<b>🔅 Opacity — all overlays</b>'
+    + '<input id="wpAllOpacity" type="range" min="0.15" max="1" step="0.05" value="1" style="flex:1;min-width:120px;cursor:pointer" />'
+    + '<span id="wpAllOpacityVal" style="font-variant-numeric:tabular-nums">100%</span>'
+    + '<span class="dim" style="font-size:11px">sets every overlay at once — fine-tune single ones in their setup bar</span>'
+    + '</div>';
   // How to move them. Convention is consistent across every overlay so users
   // build muscle memory: ✥ in the TOP-RIGHT corner = drag handle (hover to
   // grab + drag — works while locked); ✕ in the TOP-LEFT = hide that overlay.
@@ -10301,6 +10307,15 @@ function renderOverlays(s) {
 var _wpHotkeyCapturing = false;
 function _wpFmtAccel(a) { return String(a || '').replace(/CommandOrControl|CmdOrCtrl/gi, 'Ctrl'); }
 function wpWireHideHotkey() {
+  var ao = document.getElementById('wpAllOpacity');
+  var aov = document.getElementById('wpAllOpacityVal');
+  if (ao && window.mimic && window.mimic.setAllOpacity) {
+    _bindOnce(ao, 'input', function(){
+      var v = parseFloat(ao.value || '1');
+      if (aov) aov.textContent = Math.round(v * 100) + '%';
+      try { window.mimic.setAllOpacity(v); } catch (e) {}
+    });
+  }
   _wpWireHotkeyRow('wpHideHotkey', 'hideAllHotkey', 'hideAllHotkeyEnabled', 'CommandOrControl+Shift+H');
   _wpWireHotkeyRow('wpBdHotkey', 'backdropHotkey', 'backdropHotkeyEnabled', 'CommandOrControl+Shift+B');
 }
