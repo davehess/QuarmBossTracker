@@ -43,6 +43,25 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'mimic-173-stable',
+    title: '\u{1F43A} Mimic 1.7.3 — the big beta lands for everyone',
+    version: 'Mimic 1.7.3 · Agent 3.3.18',
+    date: '2026-07-11',
+    headline: 'Everything from the 1.7.2 beta line graduates to stable: the PoP raid slideshow, auto-arrange, color themes, class-default setups, and a pile of overlay polish.',
+    features: [
+      { name: 'PoP raid slideshow', blurb: 'A new overlay walks the raid through every PoP/PoTime encounter — callouts, boss stats, live drop tables, shared objective checkboxes, EQProgression diagrams and phase videos, plus a ⚑ button to report where Quarm differs from the guides.' },
+      { name: 'Auto-arrange + themes', blurb: 'Right-click any overlay: auto-arrange packs your overlays around your in-game windows (edges first, center kept clear), five color themes (dark/light/vivid/muted/high-contrast), solid backgrounds, and a grow-upward mode for bottom-parked overlays.' },
+      { name: 'Class-default setups', blurb: 'A brand-new install turns on the right overlays for your class (officer-crafted on /admin/overlays) and arranges them automatically. Existing setups are never touched.' },
+      { name: 'Roll tracker + crash reports', blurb: 'The Command Center tracks loot rolls (winners per item, re-rolls struck out), and an opt-in tray toggle shares Zeal crash metadata so crash clusters can be spotted guild-wide — the memory dump never leaves your machine.' },
+    ],
+    fixes: [
+      'Right-click menu no longer clips or lingers on any overlay; dismisses on outside click, Escape, or a 4s idle.',
+      'Auto-arrange no longer stacks overlays on top of each other.',
+      'Grow-upward keeps the overlay exactly in place when toggled.',
+      '/who gains a copy-name button on unknown-identity rows.',
+    ],
+  },
+  {
     key: 'overlay-themes',
     title: '\u{1F3A8} Overlay color themes',
     version: 'Mimic 1.7.2 beta',

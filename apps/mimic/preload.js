@@ -71,9 +71,52 @@ document.addEventListener('mouseout', function (ev) {
   if (!ev.relatedTarget && _wpHoverArmed) { _wpHoverArmed = false; _hoverOff(); }
 }, { capture: true, passive: true });
 
-// Build the right-click menu: 5 width presets + 2 setup-mode entries.
-// Identical structure + styling on every overlay so the muscle memory carries.
-function _buildOverlayMenu(onClose) {
+// ── Solid backdrop (Uilnayar 2026-07-10) ────────────────────────────────────
+// One injected rule + a body class = every overlay gets a toggleable opaque
+// plate with zero per-HTML changes. Main pushes 'wp-backdrop' on toggle; the
+// load-time pull covers windows created after the last push. Gated to overlay
+// documents (the main window / settings must never get a forced background).
+ipcRenderer.on('wp-backdrop', function (_e, on) {
+  try { if (_wpOverlayDoc()) document.body.classList.toggle('wp-backdrop', !!on); } catch (e) {}
+});
+// ── Overlay color themes (Uilnayar 2026-07-11: "alternative color schemes
+// for people that prefer brighter colors") ─────────────────────────────────
+// One body-level CSS filter per theme restyles EVERY overlay at once with
+// zero per-page changes. 'light' uses the invert+hue-rotate(180) pair so
+// hues survive (red HP bars stay red — plain invert would turn danger
+// colors green); the rest adjust brightness/saturation/contrast only, never
+// raw hue, so color semantics hold everywhere.
+const _WP_THEME_CSS =
+  'body.wp-theme-light{filter:invert(0.92) hue-rotate(180deg)}' +
+  'body.wp-theme-bright{filter:brightness(1.2) saturate(1.3)}' +
+  'body.wp-theme-soft{filter:saturate(0.7) brightness(1.08)}' +
+  'body.wp-theme-contrast{filter:contrast(1.3) saturate(1.1) brightness(1.05)}';
+const _WP_THEME_LABELS = { 'default': 'Wolf (dark)', light: 'Light', bright: 'Vivid', soft: 'Muted', contrast: 'High contrast' };
+function _wpApplyTheme(theme) {
+  try {
+    if (!_wpOverlayDoc()) return;
+    const cl = document.body.classList;
+    for (const c of [...cl]) if (c.indexOf('wp-theme-') === 0) cl.remove(c);
+    if (theme && theme !== 'default') cl.add('wp-theme-' + theme);
+  } catch (e) {}
+}
+ipcRenderer.on('wp-theme', function (_e, theme) { _wpApplyTheme(theme); });
+document.addEventListener('DOMContentLoaded', function () {
+  try {
+    const st = document.createElement('style');
+    st.textContent = 'body.wp-backdrop{background:rgba(8,10,14,0.92) !important}' + _WP_THEME_CSS;
+    document.head.appendChild(st);
+    ipcRenderer.invoke('wp-overlay-menu-state').then(function (s) {
+      if (s && s.backdrop && _wpOverlayDoc()) document.body.classList.add('wp-backdrop');
+      if (s && s.theme) _wpApplyTheme(s.theme);
+    }).catch(function () {});
+  } catch (e) {}
+});
+
+// Build the right-click menu: setup entries, visibility/layout actions, and
+// the 5 width presets. Identical structure + styling on every overlay so the
+// muscle memory carries. `state` = wp-overlay-menu-state (toggle labels).
+function _buildOverlayMenu(onClose, state) {
   const prior = document.getElementById('wpResizeMenu'); if (prior) prior.remove();
   const menu = document.createElement('div');
   menu.id = 'wpResizeMenu';
@@ -84,6 +127,9 @@ function _buildOverlayMenu(onClose) {
     'display:flex', 'flex-direction:column', 'gap:2px',
     'font-family:ui-monospace,Menlo,Consolas,monospace',
     'min-width:180px', 'box-shadow:0 4px 12px rgba(0,0,0,0.6)',
+    // Belt-and-braces vs clipping: if the window can't grow to fit (tiny
+    // display, or a resize raced us), the menu scrolls instead of cutting off.
+    'max-height:calc(100vh - 40px)', 'overflow-y:auto',
   ].join(';');
   const mkItem = (label, accent, onClick) => {
     const b = document.createElement('button');
@@ -102,6 +148,24 @@ function _buildOverlayMenu(onClose) {
   // "Setup ALL" first — the most-used entry sits at the top.
   menu.appendChild(mkItem('🛠 Setup ALL overlays', '#2a3d57', () => ipcRenderer.invoke('set-setup-mode', true)));
   menu.appendChild(mkItem('🛠 Setup THIS overlay',  '#3d2a57', () => ipcRenderer.invoke('set-setup-mode-this', true)));
+  // Visibility + layout actions (Uilnayar 2026-07-10). `state` comes from
+  // main's wp-overlay-menu-state so the toggles show their current value.
+  const st = state || {};
+  menu.appendChild(mkItem('👁 Hide this overlay', '#6b2130', () => ipcRenderer.invoke('hide-overlay')));
+  menu.appendChild(mkItem('🌫 Background: ' + (st.backdrop ? 'ON' : 'off') + ' (this overlay)', '#3a3320',
+    () => ipcRenderer.invoke('wp-backdrop-toggle')));
+  // Bottom-anchored auto-height — for overlays parked near the bottom edge
+  // (Extended Target etc.): the list grows UP instead of running off-screen.
+  menu.appendChild(mkItem('⬆ Grow upward: ' + (st.growUp ? 'ON' : 'off') + ' (this overlay)', '#20374a',
+    () => ipcRenderer.invoke('wp-growup-toggle')));
+  // Color theme — cycles Wolf (dark) → Light → Vivid → Muted → High contrast
+  // and applies to ALL overlays at once. Click repeatedly to step through.
+  menu.appendChild(mkItem('🎨 Theme: ' + (_WP_THEME_LABELS[st.theme || 'default'] || st.theme) + ' (all overlays)', '#3a2440',
+    () => ipcRenderer.invoke('wp-theme-cycle')));
+  menu.appendChild(mkItem('✨ Auto-arrange overlays', '#20503a',
+    () => ipcRenderer.invoke('auto-arrange-overlays')));
+  menu.appendChild(mkItem('✨ Arrange when overlays open: ' + (st.arrangeOnShow ? 'ON' : 'off'), '#20503a',
+    () => ipcRenderer.invoke('auto-arrange-onshow-toggle')));
   // Thin divider before the size presets so the menu reads "actions / sizes".
   const sep = document.createElement('div');
   sep.style.cssText = 'height:1px;background:rgba(255,255,255,0.08);margin:3px 0';
@@ -114,28 +178,96 @@ function _buildOverlayMenu(onClose) {
   return menu;
 }
 
+// Chrome-menu open state. While the menu is open, the page's auto-fit calls
+// are SUPPRESSED — overlays that re-fit every poll tick (Target Info, CH
+// chain, /who…) were shrinking the window right back down while the menu was
+// still open, clipping it to the first two items (Uilnayar 2026-07-11). The
+// deferred fit runs once on close so the window snaps back to content size.
+let _wpMenuOpen = false;
+let _wpMenuCleanupFn = null;
+let _wpMenuSuppressedFit = null;   // wrap element from a suppressed fit
+let _wpMenuSuppressedRawH = null;  // raw height from a suppressed overlayAutoHeight
+let _wpPageUsesAutoFit = false;    // page opted into auto-height at least once
+
+// Raw-height twin of _autoFitOverlay's gate. NINE overlays (who, charm,
+// command, melody, mobinfo, pets, tank, triggers, zealhealth) call
+// window.mimic.overlayAutoHeight(h) directly instead of autoFitOverlay —
+// the first menu-suppression pass only gated the latter, so those pages
+// kept re-shrinking the window under the open menu (the "/who still
+// clipped" report). Same rule: hold the last height while the menu is
+// open, replay it on close.
+function _overlayAutoHeightRaw(h) {
+  try {
+    if (_wpMenuOpen) { _wpMenuSuppressedRawH = h; return Promise.resolve(true); }
+    return ipcRenderer.invoke('overlay-auto-height', h);
+  } catch (e) { return Promise.resolve(false); }
+}
+
 function _attachOverlayMenu(moveBtn) {
   if (!moveBtn || moveBtn._wpMenuAttached) return;
   moveBtn._wpMenuAttached = true;
   moveBtn.addEventListener('contextmenu', function(ev) {
     ev.preventDefault();
+    // Block auto-fit BEFORE growing — a poll tick between grow and open was
+    // the race that re-shrunk the window under the menu.
+    _wpMenuOpen = true;
     // Grow window first so the menu doesn't clip on tiny overlays. Menu is
-    // ~250 px tall (7 items + paddings + divider); use 290 to leave a buffer.
-    try { ipcRenderer.invoke('overlay-ensure-min-height', 290); } catch (e) {}
-    const menu = _buildOverlayMenu(_hoverOff);
-    _hoverOn();
-    // Dismiss on outside click. Defer so the click that opened the menu
-    // doesn't immediately close it on the same event loop tick.
-    setTimeout(function() {
-      document.addEventListener('mousedown', function closer(e) {
-        if (!menu.contains(e.target)) {
-          menu.remove();
-          document.removeEventListener('mousedown', closer);
-          _hoverOff();
-        }
-      });
-    }, 0);
+    // ~380 px tall (11 items + paddings + divider); 420 leaves a buffer.
+    try { ipcRenderer.invoke('overlay-ensure-min-height', 420); } catch (e) {}
+    // Fetch toggle states first so Background / Arrange-on-show labels are
+    // accurate; menu still opens (with default labels) if the invoke fails.
+    ipcRenderer.invoke('wp-overlay-menu-state').catch(function () { return null; }).then(function (state) {
+      _openOverlayMenu(state);
+    });
   });
+}
+
+function _openOverlayMenu(state) {
+  // Re-open while one is up: tear the old one down cleanly first.
+  if (_wpMenuCleanupFn) { try { _wpMenuCleanupFn(); } catch (e) {} }
+  _wpMenuOpen = true;
+  let closed = false;
+  let idleTimer = null;
+  const IDLE_MS = 4000;   // click-through clicks land in EQ, not on us — the
+                          // idle timer is the "clicked something else" fallback
+  const cleanup = function() {
+    if (closed) return; closed = true;
+    _wpMenuCleanupFn = null;
+    _wpMenuOpen = false;
+    try { if (idleTimer) clearTimeout(idleTimer); } catch (e) {}
+    try { document.removeEventListener('mousedown', onDown, true); } catch (e) {}
+    try { document.removeEventListener('keydown', onKey, true); } catch (e) {}
+    try { window.removeEventListener('blur', onBlur); } catch (e) {}
+    try { if (menu.parentNode) menu.remove(); } catch (e) {}
+    _hoverOff();
+    // Give the window its height back — ensure-min-height grew it and fits
+    // were suppressed while open. Only for pages that use auto-height.
+    if (_wpPageUsesAutoFit) { try { _autoFitOverlay(_wpMenuSuppressedFit || undefined); } catch (e) {} }
+    _wpMenuSuppressedFit = null;
+    if (_wpMenuSuppressedRawH != null) {
+      try { ipcRenderer.invoke('overlay-auto-height', _wpMenuSuppressedRawH); } catch (e) {}
+      _wpMenuSuppressedRawH = null;
+    }
+  };
+  const menu = _buildOverlayMenu(cleanup, state);
+  _wpMenuCleanupFn = cleanup;
+  _hoverOn();
+  // Idle auto-close: arms on open and whenever the cursor leaves the menu;
+  // hovering it keeps it alive indefinitely.
+  const armIdle = function() { if (idleTimer) clearTimeout(idleTimer); idleTimer = setTimeout(cleanup, IDLE_MS); };
+  menu.addEventListener('mouseenter', function() { if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; } });
+  menu.addEventListener('mouseleave', armIdle);
+  armIdle();
+  const onDown = function(e) { if (!menu.contains(e.target)) cleanup(); };
+  const onKey  = function(e) { if (e.key === 'Escape') cleanup(); };
+  const onBlur = function() { cleanup(); };
+  // Defer so the click that opened the menu doesn't immediately close it.
+  setTimeout(function() {
+    if (closed) return;
+    document.addEventListener('mousedown', onDown, true);
+    document.addEventListener('keydown', onKey, true);
+    window.addEventListener('blur', onBlur);
+  }, 0);
 }
 
 // Ask main to size the window to the renderer's content height. Pass the
@@ -144,6 +276,9 @@ function _attachOverlayMenu(moveBtn) {
 // the last card isn't flush against the window edge.
 function _autoFitOverlay(wrapEl) {
   try {
+    _wpPageUsesAutoFit = true;
+    // Chrome menu open → defer; the menu's close handler replays the fit.
+    if (_wpMenuOpen) { _wpMenuSuppressedFit = wrapEl || null; return; }
     const w = wrapEl || document.getElementById('wrap') || document.body;
     if (!w) return;
     const h = (w.scrollHeight || 0) + 12;
@@ -200,16 +335,10 @@ contextBridge.exposeInMainWorld('mimic', {
   overlayDragEnd:   () => ipcRenderer.invoke('overlay-drag-end'),
   // Renderer reports its content height; main resizes the window to fit so
   // multi-card overlays (charm, pets, /who) grow with their content.
-  overlayAutoHeight: (h) => ipcRenderer.invoke('overlay-auto-height', h),
-  // Per-overlay named-size preset (xs / sm / md / lg / xl). Driven by the
-  // right-click context menu on each overlay's ✥ move icon so users can size
-  // a single overlay without diving into Setup mode.
-  overlayResizePreset: (preset) => ipcRenderer.invoke('overlay-resize-preset', preset),
-  // Grow the window vertically to at least `h` px before showing the shared
-  // right-click chrome menu — keeps the bottom of the menu from being clipped
-  // when an XS-preset overlay is shorter than the menu DOM. Overlay's regular
-  // overlayAutoHeight call shrinks back to content size after the menu closes.
-  overlayEnsureMinHeight: (h) => ipcRenderer.invoke('overlay-ensure-min-height', h),
+  overlayAutoHeight: (h) => _overlayAutoHeightRaw(h),
+  // (overlayResizePreset / overlayEnsureMinHeight bridge wrappers deleted
+  // 2026-07-09 — no overlay ever called them; the shared chrome below invokes
+  // the 'overlay-resize-preset' / 'overlay-ensure-min-height' IPC directly.)
   // Shared chrome — wires the right-click "resize presets + Setup THIS/ALL"
   // menu on the ✥ move icon and a content-size auto-fit helper. Every overlay
   // calls these instead of re-implementing them, so they're guaranteed to

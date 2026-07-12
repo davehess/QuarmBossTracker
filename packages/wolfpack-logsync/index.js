@@ -53,6 +53,7 @@ const os   = require('os');
 const https = require('https');
 const http  = require('http');
 const crypto = require('crypto');
+const zlib = require('zlib');
 const { URL } = require('url');
 
 // Read version from package.json so we only have to bump it in one place per release.
@@ -2371,11 +2372,17 @@ function _zealTargetForChar(charLower) {
   }
   return null;
 }
+// "You begin casting/singing <Spell>." — shared by noteSelfCast (landing
+// attribution) and relaySelfCastForCasting (cross-client Casting relay).
+const _CAST_BEGIN_RX = /\]\s+You begin (?:casting|singing)\s+(.+?)\.\s*$/i;
+// Returns the parsed cast ({ name, atMs }) or null, so the relay can reuse the
+// match instead of re-running the identical regex on the same line (the two
+// ran back-to-back per log line — efficiency review 2026-07-07).
 function noteSelfCast(line, character) {
-  if (!line || !character) return;
-  if (line.indexOf('You begin') === -1) return;   // cheap gate
-  const m = line.match(/\]\s+You begin (?:casting|singing)\s+(.+?)\.\s*$/i);
-  if (!m) return;
+  if (!line || !character) return null;
+  if (line.indexOf('You begin') === -1) return null;   // cheap gate
+  const m = line.match(_CAST_BEGIN_RX);
+  if (!m) return null;
   const ts = parseEqTimestamp(line);
   const atMs = ts ? ts.getTime() : Date.now();
   const cl = String(character).toLowerCase();
@@ -2398,12 +2405,12 @@ function noteSelfCast(line, character) {
   // regex match we just did, same character context.
   const ci = CHARM_SPELLS.get(spellLower);
   if (ci) _pendingCharmSpell = { cls: ci.cls, dur: ci.dur, name: m[1].trim(), owner: String(character), ts: atMs };
+  return { name: m[1].trim(), atMs };
 }
 // Cross-client casting relay: when WE begin a cast with a target, tell the bot
 // so anyone with that target up sees it in Mob Info's "Casting" section. Only
 // our own casts are nameable (EQ hides others' spell/target), so coverage scales
 // with Mimic adoption. LIVE path only (never backfill — stale casts are useless).
-const _CAST_BEGIN_RX = /\]\s+You begin (?:casting|singing)\s+(.+?)\.\s*$/i;
 // Heal-spell name detector for the per-encounter spell-count tally surfaced on
 // the heal perspective panel (Uilnayar 2026-06-25). Word-boundary'd so we
 // don't pick up unrelated names like "Annul Magic" or "Reflect Spell"; a
@@ -2411,17 +2418,24 @@ const _CAST_BEGIN_RX = /\]\s+You begin (?:casting|singing)\s+(.+?)\.\s*$/i;
 // they're named recognisably.
 const HEAL_SPELL_RX = /\b(heal(?:ing)?|renewal|chloropl|regrowth|torpor|lay on hands|restoration|touch of the divine|vigor|salve)\b/i;
 const _lastCastRelay = new Map();   // charLower → { sig, at }
-function relaySelfCastForCasting(line, character) {
+function relaySelfCastForCasting(line, character, pre) {
   if (!line || !character) return;
-  if (line.indexOf('You begin') === -1) return;   // cheap gate
-  const m = line.match(_CAST_BEGIN_RX);
-  if (!m) return;
+  // `pre` = the cast noteSelfCast already parsed from this exact line — skip
+  // the duplicate regex. The standalone path stays for any caller without it.
+  let spell, atMs;
+  if (pre) {
+    spell = pre.name; atMs = pre.atMs;
+  } else {
+    if (line.indexOf('You begin') === -1) return;   // cheap gate
+    const m = line.match(_CAST_BEGIN_RX);
+    if (!m) return;
+    spell = m[1].trim();
+    const ts = parseEqTimestamp(line);
+    atMs = ts ? ts.getTime() : Date.now();
+  }
   const cl = String(character).toLowerCase();
   const target = _zealTargetForChar(cl);
   if (!target) return;                       // can't attribute without a target
-  const spell = m[1].trim();
-  const ts = parseEqTimestamp(line);
-  const atMs = ts ? ts.getTime() : Date.now();
   // Dedup a duplicated log line for the same cast within 2s.
   const sig = cl + '|' + spell.toLowerCase() + '|' + String(target).toLowerCase();
   const prev = _lastCastRelay.get(cl);
@@ -3428,6 +3442,126 @@ function healerManaRosterSnapshot() {
     out.push({ name: e.name, class: cls || null, pct: e.pct, stale_secs: Math.round((now - e.updatedAtMs) / 1000) });
   }
   out.sort((a, b) => a.pct - b.pct);   // lowest mana first — who needs a mana break
+  return out;
+}
+
+// ── Roll tracker (/random) — Command Center + dashboard ─────────────────────
+// EQ prints every nearby /random as a two-line pair (Uilnayar 2026-07-10):
+//   [ts] **A Magic Die is rolled by Seigneur.
+//   [ts] **It could have been any number from 0 to 333, but this time it turned up a 116.
+// Rolls with the same 0–N range within a window group into a SET (EQ Log
+// Parser's "Sets of Randoms"). The guild's loot-link convention ties a set to
+// its item: loot is linked in raid chat as `Item Name (qty)NNN | ...` where
+// NNN is the roll range for that item and (qty) means the top-qty rolls each
+// win one — so a set renders as "333 (Item name) — winner names". Local-only
+// (rolls are zone-visible); first roll per player counts, re-rolls are shown
+// but never win.
+const _ROLL_DIE_RX    = /\]\s+\*\*A Magic Die is rolled by (\w+)\.\s*$/;
+const _ROLL_RESULT_RX = /\]\s+\*\*It could have been any number from (\d+) to (\d+), but this time it turned up a (\d+)\.\s*$/;
+const ROLL_SET_GAP_MS  = 10 * 60 * 1000;   // same range this long after the last roll = a NEW set
+const ROLL_SET_KEEP_MS = 2 * 60 * 60 * 1000;
+const _pendingDieByChar = new Map();   // watched-log charLower → { name, atMs } (pair lines per log)
+const _rollSets = [];                  // oldest-first [{ from, to, item, qty, rolls, startMs, lastMs }]
+const _rollItemByNumber = new Map();   // roll number (the range TO) → { item, qty, atMs }
+
+function trackRollLine(line, character) {
+  if (!line || !character) return;
+  const cl = String(character).toLowerCase();
+  if (line.indexOf('A Magic Die') !== -1) {
+    const m = line.match(_ROLL_DIE_RX);
+    if (!m) return;
+    const ts = parseEqTimestamp(line);
+    _pendingDieByChar.set(cl, { name: m[1], atMs: ts ? ts.getTime() : Date.now() });
+    return;
+  }
+  if (line.indexOf('It could have been any number') === -1) return;   // cheap gate
+  const m = line.match(_ROLL_RESULT_RX);
+  if (!m) return;
+  const pending = _pendingDieByChar.get(cl);
+  _pendingDieByChar.delete(cl);
+  const ts = parseEqTimestamp(line);
+  const atMs = ts ? ts.getTime() : Date.now();
+  // The pair is adjacent in the log (same timestamp) — a stale stash means we
+  // missed the result line and this one belongs to a die line we never saw.
+  if (!pending || Math.abs(atMs - pending.atMs) > 2000) return;
+  const from = parseInt(m[1], 10), to = parseInt(m[2], 10), value = parseInt(m[3], 10);
+  if (!Number.isFinite(from) || !Number.isFinite(to) || !Number.isFinite(value)) return;
+  let set = null;
+  for (let i = _rollSets.length - 1; i >= 0; i--) {
+    const s = _rollSets[i];
+    if (s.from === from && s.to === to && (atMs - s.lastMs) <= ROLL_SET_GAP_MS) { set = s; break; }
+  }
+  if (!set) {
+    set = { from, to, item: null, qty: null, rolls: [], startMs: atMs, lastMs: atMs };
+    _rollSets.push(set);
+    if (_rollSets.length > 40) _rollSets.splice(0, _rollSets.length - 40);
+  }
+  // Multi-box dedup: every watched log hears the same broadcast — the same
+  // (name, value) within a few seconds is one roll, not two.
+  const nameLower = pending.name.toLowerCase();
+  if (set.rolls.some(r => r.nameLower === nameLower && r.value === value && Math.abs(r.atMs - atMs) < 5000)) return;
+  set.rolls.push({
+    name: pending.name, nameLower, value, atMs,
+    reroll: set.rolls.some(r => r.nameLower === nameLower),
+  });
+  set.lastMs = atMs;
+  if (!set.item) {
+    const linked = _rollItemByNumber.get(to);
+    if (linked) { set.item = linked.item; set.qty = linked.qty; }
+  }
+}
+
+// Loot-link lines in raid/guild chat: `Blue Resistance Stone 111| Boots of the
+// Ancients 222 | Primal Velium Battlehammer (3)333 | ...` — each |-separated
+// segment ends with that item's roll number, optionally preceded by (qty).
+function trackRollItemLine(line) {
+  if (!line || line.indexOf('|') === -1) return;   // the convention always separates with |
+  const m = line.match(_CH_SPEAKER_RX);
+  if (!m) return;
+  const text = m[2];
+  if (text.indexOf('|') === -1) return;
+  const ts = parseEqTimestamp(line);
+  const atMs = ts ? ts.getTime() : Date.now();
+  for (const rawSeg of text.split('|')) {
+    // Strip EQ item-link control bytes; keep the display text.
+    const seg = rawSeg.replace(/[\x00-\x1f]/g, '').trim();
+    if (!seg) continue;
+    const mm = seg.match(/^(.*?)\s*(?:\((\d{1,2})\)\s*)?(\d{2,4})$/);
+    if (!mm) continue;
+    const item = mm[1].replace(/[,–—-]+\s*$/, '').trim();
+    const num = parseInt(mm[3], 10);
+    if (!item || item.length < 3 || !Number.isFinite(num) || num < 10) continue;
+    _rollItemByNumber.set(num, { item: item.slice(0, 64), qty: mm[2] ? parseInt(mm[2], 10) : null, atMs });
+  }
+  if (_rollItemByNumber.size > 200) {
+    for (const [k, v] of _rollItemByNumber) if (Date.now() - v.atMs > 2 * 60 * 60 * 1000) _rollItemByNumber.delete(k);
+  }
+}
+
+// Serialized sets, newest first. Winners = the top-(qty) rolls counting each
+// player's FIRST roll only ((3) linked on the item = three winners).
+function rollSetsSnapshot(maxAgeMs) {
+  const now = Date.now();
+  for (let i = _rollSets.length - 1; i >= 0; i--) {
+    if (now - _rollSets[i].lastMs > ROLL_SET_KEEP_MS) _rollSets.splice(i, 1);
+  }
+  const out = [];
+  for (const s of _rollSets) {
+    if (maxAgeMs && (now - s.lastMs) > maxAgeMs) continue;
+    const firstByName = new Map();
+    for (const r of s.rolls) if (!firstByName.has(r.nameLower)) firstByName.set(r.nameLower, r);
+    const ranked = [...firstByName.values()].sort((a, b) => b.value - a.value);
+    const nWinners = Math.max(1, Math.min(s.qty || 1, ranked.length));
+    out.push({
+      from: s.from, to: s.to, item: s.item || null, qty: s.qty || null,
+      players: firstByName.size,
+      winners: ranked.slice(0, nWinners).map(r => ({ name: r.name, value: r.value })),
+      open: (now - s.lastMs) <= ROLL_SET_GAP_MS,
+      started_at_ms: s.startMs, last_at_ms: s.lastMs,
+      rolls: s.rolls.map(r => ({ name: r.name, value: r.value, at_ms: r.atMs, reroll: r.reroll || undefined })),
+    });
+  }
+  out.sort((a, b) => b.last_at_ms - a.last_at_ms);
   return out;
 }
 
@@ -5967,6 +6101,7 @@ function _endpointForKind(kind, botUrl) {
     case 'trigger_relay':   return base + '/trigger-relay';
     case 'quake':           return base + '/quake';
     case 'casting':         return base + '/casting';
+    case 'crash_report':    return base + '/crash_report';
     default:                return botUrl;
   }
 }
@@ -7403,6 +7538,8 @@ function _serializeCommandCenterState() {
     deathtouch:    tank.deathtouch,
     da_broadcasts: daBroadcastsSnapshot(),
     healer_mana:   healerManaRosterSnapshot(),
+    // Recent /random sets — "333 (Item name) — winner names" rows.
+    rolls:         rollSetsSnapshot(15 * 60 * 1000),
     cures,
     updated_at:    Date.now(),
   };
@@ -7499,6 +7636,18 @@ function _serializeForDashboard() {
     version:            AGENT_VERSION,
     startedAt:          stats.startedAt,
     activeCharacter:    _activeCharacter,
+    // Active toon's base class ("Shadow Knight"), best-effort: /who data
+    // first, Zeal type-5 raid roster second. null until either has seen the
+    // character — Mimic's class-set seeding just waits for a later poll.
+    activeCharacterClass: (() => {
+      const a = _activeCharacter ? String(_activeCharacter).toLowerCase() : '';
+      if (!a) return null;
+      const who = whoData.get(a);
+      const cls = (who && who.class) || _raidClassByName.get(a) || null;
+      return cls ? normalizeClass(String(cls)) : null;
+    })(),
+    // Officer-crafted per-class default overlay sets (see pollOverlayTuning).
+    classOverlaySets:   _classOverlaySets,
     blind:              { byChar: _blindOut, active: _blindActive && _blindActive.active ? _blindActive : null },
     // Blind-event ring buffer (start / end / self-hit / target-change). The
     // trigger overlay dedupes on `ts` and speaks `tts`, same as trigger fires.
@@ -7559,6 +7708,8 @@ function _serializeForDashboard() {
     // CH chain rotation snapshot (cleric Complete Heal callouts) — null when
     // no chain has called in the last 5 minutes. Drives chchain.html.
     chChain: chChainSnapshot(),
+    // /random roll sets (EQ Log Parser-style) — dashboard "🎲 Rolls" card.
+    rollSets: rollSetsSnapshot(),
     // Officer knob overrides currently in effect (see pollOverlayTuning) —
     // surfaced so the dashboard/overlays can show which values are remote-set.
     overlayTuning: _overlayTuning,
@@ -10063,6 +10214,7 @@ var WP_OVERLAY_ROWS = [
   ['tank',    'Tank HUD',            'Main-Tank focus card: MT HP + THEIR buffs and DS returns (CH-chain target or whoever the boss is meleeing), boss HP + enrage warning, Divine Aura countdown with start-CH callout, current Rampage target. Falls back to your own view when no MT is resolved. Reads /api/tank-state.'],
   ['exttarget','Extended Target',    'Raid-wide target list: every mob/player raiders are on, sorted by how many are targeting it, with HP + debuffs. Named mobs flagged; non-unique names asterisked (same-name mobs split out by HP). Players/pets hurt for >10s fold in as needs-attention rows.'],
   ['command', 'Command Center',      'One-window raid board: boss/MT/rampage/enrage/Death Touch (same data as Tank HUD), plus raid-wide DA/invuln status and healer mana parsed from raid-chat macros, plus Curse/Cure alerts from the buff queue. Reads /api/command-center.'],
+  ['popraid', 'PoP raids',           'Planes of Power / PoTime encounter slideshow: callouts, guide stats + live drop table, raid-wide shared objective checkboxes, EQProgression diagrams + phase videos, and a flag button that reports guide-vs-Quarm anomalies to the officers.'],
 ];
 
 function renderOverlays(s) {
@@ -10182,7 +10334,7 @@ function wpRefreshOverlayToggles() {
   try {
     window.mimic.getStatus().then(function(st){
       st = st || {};
-      var on = { hud: !!st.showHud, trigger: !!st.enableTriggerTts, charm: !!st.showCharm, pet: !!st.showPets, mobinfo: !!st.showMobInfo, buffQueue: !!st.showBuffQueue, who: !!st.showWho, melody: !!st.showMelody, zeal: !!st.showZeal, threat: !!st.showThreat, chchain: !!st.showChChain, tank: !!st.showTank, exttarget: !!st.showExtTarget, command: !!st.showCommand };
+      var on = { hud: !!st.showHud, trigger: !!st.enableTriggerTts, charm: !!st.showCharm, pet: !!st.showPets, mobinfo: !!st.showMobInfo, buffQueue: !!st.showBuffQueue, who: !!st.showWho, melody: !!st.showMelody, zeal: !!st.showZeal, threat: !!st.showThreat, chchain: !!st.showChChain, tank: !!st.showTank, exttarget: !!st.showExtTarget, command: !!st.showCommand, popraid: !!st.showPopRaid };
       var btns = document.querySelectorAll('.wp-ov-toggle');
       for (var i = 0; i < btns.length; i++) {
         var b = btns[i]; var k = b.getAttribute('data-ov'); var isOn = !!on[k];
@@ -10611,6 +10763,38 @@ function renderInfo(s) {
         }
         h += '</details>';
       });
+    h += '</div>';
+  }
+
+  // /random roll sets — EQ Log Parser-style table. One expandable row per set
+  // ("333 (Item name) — winner names"); the winners come from the loot-link
+  // roll-number convention: Item (3)333 in raid chat = top-3 rolls on 0-333
+  // each win one. Absolute times only (byte-stable across polls).
+  var _rollSets = s.rollSets || [];
+  if (_rollSets.length > 0) {
+    h += '<div class="card wide"><h2>🎲 Rolls (this session)</h2>';
+    h += '<div class="subtle" style="font-size:11px;margin-bottom:6px">Every /random heard in the zone, grouped by roll range. Link loot in raid chat as <code>Item Name (qty)NNN | ...</code> and each set picks up its item name — (3) means the top three rolls win one each. First roll per player counts; re-rolls are listed struck through.</div>';
+    for (var rsi = 0; rsi < _rollSets.length; rsi++) {
+      var rset = _rollSets[rsi];
+      var rWinners = (rset.winners || []).map(function (w) { return esc(w.name) + ' <b>' + w.value + '</b>'; }).join(', ');
+      var rTime = new Date(rset.started_at_ms).toLocaleTimeString();
+      h += '<details ' + wpKeep('roll|' + rset.started_at_ms + '|' + rset.to) + '>';
+      h += '<summary><b>' + rset.from + '–' + rset.to + '</b>'
+         + (rset.item ? ' (' + esc(rset.item) + (rset.qty ? ' ×' + rset.qty : '') + ')' : '')
+         + ' — <span style="color:var(--gold,#f0c419)">' + (rWinners || '—') + '</span>'
+         + ' <span class="dim">· ' + rset.players + ' roller' + (rset.players === 1 ? '' : 's')
+         + ' · ' + rTime + (rset.open ? ' · open' : '') + '</span></summary>';
+      h += '<table><tr><th>Rolled</th><th>Player</th><th>Time</th></tr>';
+      var rRows = (rset.rolls || []).slice().sort(function (a, b) { return b.value - a.value; });
+      for (var rri = 0; rri < rRows.length; rri++) {
+        var rr = rRows[rri];
+        h += '<tr' + (rr.reroll ? ' style="opacity:0.45;text-decoration:line-through"' : '') + '>'
+           + '<td class="num">' + rr.value + '</td>'
+           + '<td>' + esc(rr.name) + (rr.reroll ? ' (re-roll)' : '') + '</td>'
+           + '<td class="dim">' + new Date(rr.at_ms).toLocaleTimeString() + '</td></tr>';
+      }
+      h += '</table></details>';
+    }
     h += '</div>';
   }
 
@@ -13619,6 +13803,92 @@ function startWebDashboard(port) {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ ok: true, snappy_until: _buffQueueSnappyUntil }));
       }
+      // ── PoP Raid Slideshow overlay (popraid.html) ─────────────────────────
+      // Shared raid-wide objective checkboxes. GET is fire-and-serve like
+      // /api/buff-queue (kick a refresh, return the cache immediately); the
+      // page skips `loading` payloads so a cache miss never wipes its
+      // optimistic state. Unlinked installs get local_only so the overlay can
+      // say the board isn't shared.
+      if (req.method === 'GET' && req.url.startsWith('/api/pop-objectives')) {
+        let encId = '';
+        try { encId = new URL(req.url, 'http://x').searchParams.get('encounter_id') || ''; } catch { /* */ }
+        const opts = _uploadOpts;
+        if (!opts || !opts.botUrl || !opts.token) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ rev: 0, encounters: {}, local_only: true }));
+        }
+        fetchPopObjectives(encId);
+        const cached = _popObjCache.get(String(encId || '').toLowerCase());
+        const payload = (cached && cached.payload) || { rev: -1, encounters: {}, loading: true };
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify(payload));
+      }
+      // Toggle/reset an objective, or ⚑-flag an anomaly — synchronous forward
+      // to the bot (the overlay needs the real status: 403 = reset is
+      // officer-only, 429 = anomaly rate limit). Objective writes drop the
+      // poll cache so the next tick refetches the authoritative board.
+      if (req.method === 'POST' && (req.url === '/api/pop-objectives' || req.url === '/api/pop-anomaly')) {
+        const opts = _uploadOpts;
+        if (!opts || !opts.botUrl || !opts.token) {
+          res.writeHead(503, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ error: 'not connected — link Mimic in Settings first' }));
+        }
+        const isAnomaly = req.url === '/api/pop-anomaly';
+        try {
+          const raw = await _readBody(req);
+          let bodyObj = {};
+          try { bodyObj = JSON.parse(raw || '{}'); } catch { /* forward as-is */ }
+          // The overlay doesn't know which character is active — stamp it so
+          // the QOL-thread report says who saw the anomaly in-game.
+          if (isAnomaly && !bodyObj.character) {
+            try { if (stats && stats.activeCharacter) bodyObj.character = String(stats.activeCharacter); } catch { /* */ }
+          }
+          const body = JSON.stringify(bodyObj);
+          const target = opts.botUrl.replace(/\/encounter(\?.*)?$/, isAnomaly ? '/pop-anomaly' : '/raid-objectives');
+          const u = new URL(target);
+          const mod = u.protocol === 'https:' ? https : http;
+          const upstream = mod.request({
+            method: 'POST', hostname: u.hostname, port: u.port || (u.protocol === 'https:' ? 443 : 80),
+            path: u.pathname,
+            headers: {
+              'Authorization': `Bearer ${opts.token}`,
+              'Content-Type': 'application/json',
+              'Content-Length': Buffer.byteLength(body),
+              'Accept': 'application/json',
+            },
+            timeout: 8000,
+          }, (upRes) => {
+            if (!isAnomaly) _popObjCache.clear();
+            res.writeHead(upRes.statusCode || 502, { 'Content-Type': 'application/json' });
+            upRes.pipe(res);
+          });
+          upstream.on('error', (err) => {
+            res.writeHead(502, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'upstream failed', detail: err.message }));
+          });
+          upstream.on('timeout', () => { upstream.destroy(new Error('timeout')); });
+          upstream.end(body);
+          return;
+        } catch (err) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ error: 'proxy error', detail: err.message }));
+        }
+      }
+      // Boss loot for the PoP overlay's target panel — same catalog cache the
+      // Mob Info overlay uses (fetchMobInfo, 6h TTL), keyed by guide npcName
+      // instead of the live Zeal target.
+      if (req.method === 'GET' && req.url.startsWith('/api/pop-mob-info')) {
+        let mobName = '';
+        try { mobName = new URL(req.url, 'http://x').searchParams.get('name') || ''; } catch { /* */ }
+        if (!mobName) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ error: 'name required' }));
+        }
+        fetchMobInfo(mobName);
+        const mobCached = _mobInfoByName.get(_normMobNameAgent(mobName));
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify(mobCached ? { mob: mobCached.mob } : { mob: null, loading: true }));
+      }
       // Browser-side spell lookup. The dashboard fetches this ONCE on load to
       // turn spell names rendered on the resisted / inbound-damage / NPC cast
       // cards into PQDI links. We only ship { lowercaseName: id } (~3.9k * ~30
@@ -16450,22 +16720,14 @@ function _ciEq(a, b) {
 }
 
 // (Instanced) [PVP]-echo relay policy — PASS EVERYTHING through to the bot,
-// which is the single place that decides what to record/post. This used to
-// DROP own-guild instance echoes here, on the theory that a Druzzil "tells
-// the guild" broadcast already routed them through /bosskill. That theory
-// fails for a killer who doesn't run Mimic (and has no Mimic guildmate in
-// the instance): no /bosskill ever fires, and dropping the [PVP] echo lost
-// the kill entirely — Timberr's Lord of Ire instance kill vanished with no
-// ledger row, no /pvp/hate entry, and no #pvp post (Uilnayar 2026-07-05).
-// So the agent no longer second-guesses: it relays every instance echo and
-// the bot records own-guild ones (informational #pvp post, no open-world
-// timer tick — instances don't share a spawn) and dedups as needed.
-// Kept as a named no-op so the call sites read intentionally; _observedOwnGuild
-// is still learned from Druzzil for any future use.
-function _isOwnGuildInstanceEcho(_text, _killerGuild) {
-  return false;
-}
-
+// which is the single place that decides what to record/post. The agent used
+// to DROP own-guild instance echoes (via an _isOwnGuildInstanceEcho check,
+// deleted 2026-07-09 as a shipped no-op) on the theory that Druzzil's "tells
+// the guild" broadcast already routed them through /bosskill — which fails
+// when the killer doesn't run Mimic: Timberr's Lord of Ire instance kill
+// vanished with no ledger row, no /pvp/hate entry, and no #pvp post
+// (Uilnayar 2026-07-05). The bot records own-guild echoes (informational
+// #pvp post, no open-world timer tick) and dedups as needed.
 function parseDruzzilKill(line) {
   if (line.indexOf('Druzzil Ro') === -1) return null;   // cheap gate
   const m = DRUZZIL_KILL_RX.exec(line);
@@ -16531,13 +16793,6 @@ function parsePvpBroadcast(line) {
     // the kill credits to the Wolf Pack killer on /pvp/server.
     const bossA = PVP_BOSS_KILL_ACTIVE_RX.exec(text);
     if (bossA) {
-      // OWN-guild PvE instance kill is the Druzzil-Ro broadcast that the
-      // /bosskill path already turns into a normal instance timer; the
-      // [PVP] echo is a duplicate, drop it. FOREIGN-guild instance kills
-      // are silently dropped under the old behavior — they reach us only
-      // through this echo, and Uilnayar's missed-Lord-of-Ire-by-<Freedom>
-      // report (2026-06-21) was exactly that. Now we let those through.
-      if (_isOwnGuildInstanceEcho(text, bossA[2])) return null;
       return {
         ts: tsOf(), text, killType: 'pvp',
         killer: bossA[1], killerGuild: bossA[2],
@@ -16604,10 +16859,6 @@ function parsePvpBroadcast(line) {
 
   const bossBareA = PVP_BARE_BOSS_ACTIVE_RX.exec(line);
   if (bossBareA) {
-    // Own-guild PvE instance kill echoed in the [PVP] channel — duplicate
-    // of the Druzzil broadcast that drives /bosskill. Foreign-guild kills
-    // pass through (see Path A's note for the Uilnayar fix).
-    if (_isOwnGuildInstanceEcho(line, bossBareA[3])) return null;
     return {
       ts: tsOf(),
       text: `${bossBareA[2]} of <${bossBareA[3]}> has killed ${bossBareA[4]}${bossBareA[5] ? ` in ${bossBareA[5]}` : ''}!`,
@@ -18354,6 +18605,12 @@ let _overlayTuning = {};
 // a pulsing ✉ in the dashboard header; critical ones ALSO post to Discord
 // bot-side. Version-independent from 1.6 forward: any future agent sees them.
 let _guildNotices = [];
+// Per-class default overlay sets (pretty-place phase 2) — officer-crafted on
+// /admin/overlays, served on the same poll. { classkey: ['hud','tank',…] }
+// where classkey is the base class lowercased with non-letters stripped.
+// Consumed by Mimic (via /api/state) to seed a never-customized install the
+// first time it learns the active character's class.
+let _classOverlaySets = {};
 function tuneNum(key, dflt) {
   const v = _overlayTuning[key];
   return (typeof v === 'number' && isFinite(v)) ? v : dflt;
@@ -18379,6 +18636,9 @@ function pollOverlayTuning({ botUrl, token }) {
               _overlayTuning = resp.tuning;
             }
             if (resp && Array.isArray(resp.notices)) _guildNotices = resp.notices;
+            if (resp && resp.class_sets && typeof resp.class_sets === 'object' && !Array.isArray(resp.class_sets)) {
+              _classOverlaySets = resp.class_sets;
+            }
           } catch { /* non-fatal — keep last good values */ }
           resolve();
         });
@@ -19561,6 +19821,46 @@ function fetchRaidBuffQueue(bufferClass, bufferCharacter) {
   } catch { _buffQueueInflight.delete(key); }
 }
 
+// ── PoP raid objectives proxy (popraid.html) ─────────────────────────────────
+// The PoP overlay polls the local agent's /api/pop-objectives; we proxy the
+// bot's /api/agent/raid-objectives (the raid-wide shared checkbox board) with
+// a short cache so a raid of Mimics is a handful of upstream GETs, not 50/s.
+// Toggle POSTs clear this cache (see the dispatcher) so the next poll is fresh.
+const _popObjCache = new Map();     // encounterIdLower ('' = all) → { at, payload }
+const _popObjInflight = new Set();
+const POP_OBJ_TTL_MS = parseInt(process.env.WP_POP_OBJ_TTL_MS, 10) || 2500;
+function fetchPopObjectives(encId) {
+  const opts = _uploadOpts;
+  if (!opts || !opts.botUrl || !opts.token) return;
+  const key = String(encId || '').trim().toLowerCase();
+  if (_popObjInflight.has(key)) return;
+  const cached = _popObjCache.get(key);
+  if (cached && (Date.now() - cached.at) < POP_OBJ_TTL_MS) return;
+  _popObjInflight.add(key);
+  const url = opts.botUrl.replace(/\/encounter(\?.*)?$/, '/raid-objectives')
+            + (encId ? '?encounter_id=' + encodeURIComponent(encId) : '');
+  try {
+    const u = new URL(url);
+    const mod = u.protocol === 'https:' ? https : http;
+    const req = mod.request({
+      method: 'GET', hostname: u.hostname, port: u.port, path: u.pathname + u.search,
+      headers: { 'Authorization': 'Bearer ' + opts.token, 'User-Agent': `wolfpack-logsync/${AGENT_VERSION}` },
+      timeout: 8000,
+    }, (res) => {
+      let body = '';
+      res.on('data', c => body += c);
+      res.on('end', () => {
+        _popObjInflight.delete(key);
+        try { const j = JSON.parse(body); _popObjCache.set(key, { at: Date.now(), payload: j }); }
+        catch { _popObjCache.set(key, { at: Date.now(), payload: { rev: -1, encounters: {} } }); }
+      });
+    });
+    req.on('error',   () => { _popObjInflight.delete(key); });
+    req.on('timeout', () => { req.destroy(); _popObjInflight.delete(key); });
+    req.end();
+  } catch { _popObjInflight.delete(key); }
+}
+
 // ── Extended Target overlay proxy ───────────────────────────────────────────
 // The Mimic extarget.html overlay polls the local agent's /api/extended-target;
 // we proxy the bot's /api/agent/extended-target with a short cache so a room of
@@ -19838,6 +20138,210 @@ function _postLiveState(targetUrl, token, payload) {
   req.on('timeout', () => req.destroy());
   req.write(body); req.end();
 }
+// ── Opt-in crash telemetry ───────────────────────────────────────────────────
+// Zeal's crash handler already writes the perfect small footprint: on any
+// unhandled exception it drops crashes/<YYYY-MM-DD_HH-MM-SS>.zip containing
+// minidump.dmp + crash_reason.txt (exception code/module/address, Zeal
+// version, character, zone, UI skin, callback phase). We DON'T re-implement
+// crash capture — we watch that folder and upload the PARSED crash_reason
+// metadata plus a cheap system snapshot. The minidump itself never leaves
+// the machine (privacy + size); zip_name lets an officer request a specific
+// dump by hand when a cluster warrants real WinDbg work.
+//
+// Signature note (from a 366-bundle corpus on the dev machine, 2025-01 →
+// 2026-07): the exception address's LOW 16 BITS are stable across ASLR
+// bases for the same crash site (all ntdll AVs ended ...FB03/FBF3), so
+// (module, address_low16) is the cluster key the DB indexes.
+//
+// Requires NOTHING beyond normal user permissions: it's plain file reads in
+// the user's own EQ folder + a WMI GPU query. No admin, no debug privilege.
+const CRASH_REPORTS_ENABLED = process.env.WOLFPACK_CRASH_REPORTS === '1';
+const CRASH_STATE_FILE = path.join(process.cwd(), 'crash-reports.state.json');
+const CRASH_BACKLOG_DAYS = 30;    // first-enable backlog window
+const CRASH_BACKLOG_MAX  = 50;    // first-enable backlog cap
+let _crashState = null;           // { reported: { zipName: epochMs } }
+
+function _loadCrashState() {
+  if (_crashState) return _crashState;
+  try { _crashState = JSON.parse(fs.readFileSync(CRASH_STATE_FILE, 'utf8')); }
+  catch { _crashState = null; }
+  if (!_crashState || typeof _crashState !== 'object' || !_crashState.reported) {
+    _crashState = { reported: {} };
+  }
+  return _crashState;
+}
+function _saveCrashState() {
+  try {
+    const tmp = CRASH_STATE_FILE + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(_crashState));
+    fs.renameSync(tmp, CRASH_STATE_FILE);
+  } catch {}
+}
+
+// EQ dirs — same derivation the zeal.ini checker uses: explicit env dir plus
+// every watched log's folder (Logs/ parent → EQ root).
+function _crashDirs() {
+  const dirs = new Set();
+  if (process.env.WOLFPACK_EQ_DIR) dirs.add(process.env.WOLFPACK_EQ_DIR);
+  for (const w of (stats.watchedLogs || [])) {
+    if (!w || !w.logPath) continue;
+    let d = path.dirname(w.logPath);
+    if (/^logs$/i.test(path.basename(d))) d = path.dirname(d);
+    dirs.add(d);
+  }
+  return [...dirs].map(d => path.join(d, 'crashes')).filter(d => {
+    try { return fs.statSync(d).isDirectory(); } catch { return false; }
+  });
+}
+
+// Minimal ZIP reader — extract ONE entry by name. Zeal bundles are ordinary
+// deflate/store zips of two small files; a full zip lib would be the agent's
+// first npm dep, so we parse the central directory by hand instead.
+function _readZipEntry(zipPath, entryName) {
+  const buf = fs.readFileSync(zipPath);
+  // End-of-central-directory: scan back for PK\x05\x06 (max comment 64KB).
+  let eocd = -1;
+  for (let i = buf.length - 22; i >= Math.max(0, buf.length - 22 - 65535); i--) {
+    if (buf.readUInt32LE(i) === 0x06054b50) { eocd = i; break; }
+  }
+  if (eocd < 0) throw new Error('no EOCD');
+  const count = buf.readUInt16LE(eocd + 10);
+  let off = buf.readUInt32LE(eocd + 16);
+  for (let n = 0; n < count; n++) {
+    if (buf.readUInt32LE(off) !== 0x02014b50) throw new Error('bad central dir');
+    const method   = buf.readUInt16LE(off + 10);
+    const csize    = buf.readUInt32LE(off + 20);
+    const nameLen  = buf.readUInt16LE(off + 28);
+    const extraLen = buf.readUInt16LE(off + 30);
+    const cmtLen   = buf.readUInt16LE(off + 32);
+    const lho      = buf.readUInt32LE(off + 42);
+    const name     = buf.toString('utf8', off + 46, off + 46 + nameLen);
+    if (name === entryName) {
+      if (buf.readUInt32LE(lho) !== 0x04034b50) throw new Error('bad local header');
+      const lNameLen  = buf.readUInt16LE(lho + 26);
+      const lExtraLen = buf.readUInt16LE(lho + 28);
+      const dataStart = lho + 30 + lNameLen + lExtraLen;
+      const data = buf.subarray(dataStart, dataStart + csize);
+      if (method === 0) return Buffer.from(data);
+      if (method === 8) return zlib.inflateRawSync(data);
+      throw new Error(`unsupported method ${method}`);
+    }
+    off += 46 + nameLen + extraLen + cmtLen;
+  }
+  throw new Error(`entry not found: ${entryName}`);
+}
+
+// crash_reason.txt → structured fields. Lines look like "Key: value"; the
+// leading "Unhandled exception occurred: ..." headline is kept in raw only.
+function _parseCrashReason(text) {
+  const pick = (rx) => { const m = text.match(rx); return m ? m[1].trim() : null; };
+  const address = pick(/Exception Address:\s*(\S+)/i);
+  const modulePath = pick(/Exception occurred in module:\s*(.+)/i);
+  const character = pick(/Character:\s*(.+)/i);
+  return {
+    exception_code:    pick(/Exception Code:\s*(\S+)/i),
+    exception_module:  modulePath ? path.basename(modulePath).toLowerCase() : null,
+    exception_address: address,
+    address_low16:     address ? address.replace(/^0x/i, '').slice(-4).toLowerCase() : null,
+    zeal_version:      pick(/Zeal Version:\s*(.+)/i),
+    character:         (character && !/^unknown$/i.test(character)) ? character : null,
+    ui_skin:           pick(/UI Skin:\s*(.+)/i),
+    zone_id:           pick(/Zone ID:\s*(\S+)/i),
+    callbacks:         pick(/Callbacks:\s*(.+)/i),
+    raw_reason:        text.slice(0, 4000),
+  };
+}
+
+// System snapshot, computed once per agent run (crashes cluster by machine
+// config, which doesn't change mid-session). GPU via a one-shot PowerShell
+// CIM query — standard-user, no admin. Client-file fingerprints cover the
+// binaries that historically get swapped/wrapped (eqgame, dpvs, d3d8,
+// dgVoodoo, eqw, Zeal) so "your dpvs.dll differs from everyone else's" is
+// answerable straight from the table.
+let _crashSysSnapshot;
+const CRASH_FINGERPRINT_FILES = [
+  'eqgame.exe', 'eqgame.dll', 'dpvs.dll', 'd3d8.dll', 'eqgfx_dx8.dll',
+  'eqw.dll', 'dinput8.dll', 'Zeal.asi', 'dgVoodoo.conf',
+];
+function _crashSystemSnapshot(eqDir) {
+  if (_crashSysSnapshot) return _crashSysSnapshot;
+  const snap = {
+    os: { platform: os.platform(), release: os.release(), arch: os.arch(),
+          totalmem_gb: Math.round(os.totalmem() / 1073741824) },
+    gpus: null,
+    files: {},
+  };
+  try {
+    const { execFileSync } = require('child_process');
+    const out = execFileSync('powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-Command',
+       'Get-CimInstance Win32_VideoController | Select-Object Name,DriverVersion | ConvertTo-Json -Compress'],
+      { timeout: 15000, windowsHide: true }).toString('utf8').trim();
+    const j = JSON.parse(out);
+    snap.gpus = (Array.isArray(j) ? j : [j]).map(g => ({ name: g.Name, driver: g.DriverVersion }));
+  } catch { /* GPU info is best-effort */ }
+  for (const f of CRASH_FINGERPRINT_FILES) {
+    try {
+      const p = path.join(eqDir, f);
+      const st = fs.statSync(p);
+      const md5 = crypto.createHash('md5').update(fs.readFileSync(p)).digest('hex');
+      snap.files[f.toLowerCase()] = { size: st.size, mtime: st.mtimeMs, md5 };
+    } catch { /* absent file = absent fingerprint, itself a signal */ }
+  }
+  _crashSysSnapshot = snap;
+  return snap;
+}
+
+// Zip filenames are local-time YYYY-MM-DD_HH-MM-SS stamps from Zeal.
+function _crashZipTime(name) {
+  const m = name.match(/^(\d{4})-(\d{2})-(\d{2})_(\d{2})-(\d{2})-(\d{2})\.zip$/);
+  if (!m) return null;
+  const d = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+function scanCrashDirs() {
+  if (!CRASH_REPORTS_ENABLED || !_isUploaderInstance) return;
+  const state = _loadCrashState();
+  const firstRun = Object.keys(state.reported).length === 0;
+  const backlogCutoff = Date.now() - CRASH_BACKLOG_DAYS * 86400_000;
+  const reports = [];
+  for (const dir of _crashDirs()) {
+    const eqDir = path.dirname(dir);
+    let names;
+    try { names = fs.readdirSync(dir).filter(n => /\.zip$/i.test(n)); } catch { continue; }
+    // Oldest first so the backlog cap keeps the RECENT crashes.
+    const dated = names.map(n => ({ n, t: _crashZipTime(n) })).filter(x => x.t)
+      .sort((a, b) => a.t - b.t);
+    for (const { n, t } of dated) {
+      if (state.reported[n]) continue;
+      if (firstRun && t.getTime() < backlogCutoff) { state.reported[n] = 0; continue; }
+      if (reports.length >= CRASH_BACKLOG_MAX) break;
+      let parsed;
+      try {
+        parsed = _parseCrashReason(_readZipEntry(path.join(dir, n), 'crash_reason.txt').toString('utf8'));
+      } catch (e) {
+        // Zero-byte / malformed bundle (they exist in the wild) — mark seen
+        // so we don't reparse it every minute, but record nothing.
+        state.reported[n] = 0;
+        continue;
+      }
+      reports.push({
+        ...parsed,
+        zip_name: n,
+        crashed_at: t.toISOString(),
+        system: _crashSystemSnapshot(eqDir),
+      });
+      state.reported[n] = Date.now();
+    }
+  }
+  if (reports.length > 0) {
+    enqueueUpload('crash_report', { agent_version: AGENT_VERSION, reports });
+    console.log(`[crash-reports] queued ${reports.length} crash report(s)`);
+  }
+  _saveCrashState();
+}
+
 function flushLiveStateToBot(opts) {
   if (!_isUploaderInstance) return;          // only the elected uploader sends
   if (!opts || !opts.botUrl) return;
@@ -20997,6 +21501,14 @@ async function main() {
     // signature check below only actually POSTs on a real change, so a
     // shorter interval mostly just means "notice sooner", not "send more".
     setInterval(() => { try { flushLiveStateToBot({ botUrl, token }); } catch {} }, 5_000);
+    // Opt-in crash telemetry: scan the EQ folder's Zeal crashes/ dir for new
+    // bundles. Gated on WOLFPACK_CRASH_REPORTS=1 (Mimic tray toggle) — never
+    // runs otherwise. 60s cadence; startup scan delayed so watchedLogs (the
+    // EQ-dir source) is populated.
+    if (CRASH_REPORTS_ENABLED) {
+      setTimeout(() => { try { scanCrashDirs(); } catch {} }, 15_000);
+      setInterval(() => { try { scanCrashDirs(); } catch {} }, 60_000);
+    }
   }
 
   // Optional web dashboard — bind 127.0.0.1 only, single HTML page polls /api/state.
@@ -21426,10 +21938,15 @@ async function main() {
         // Track our own casts so a landing can be named from what WE cast
         // (authoritative — disambiguates shared landing messages + catches
         // spells the tracked-buff index doesn't carry).
-        if (!_sourceExcluded) noteSelfCast(line, b.character);
-        // Relay our own cast → bot, so anyone targeting the same mob/player sees
-        // it in Mob Info's Casting section (cross-client; only our casts nameable).
-        if (!_sourceExcluded) relaySelfCastForCasting(line, b.character);
+        // One parse feeds both: noteSelfCast returns the parsed cast, and the
+        // relay reuses it instead of re-running the identical regex.
+        if (!_sourceExcluded) {
+          const selfCast = noteSelfCast(line, b.character);
+          // Relay our own cast → bot, so anyone targeting the same mob/player
+          // sees it in Mob Info's Casting section (cross-client; only our
+          // casts nameable).
+          if (selfCast) relaySelfCastForCasting(line, b.character, selfCast);
+        }
         // Blind landings / fades (Pitted Iron Ring + generic NPC blind) —
         // drives the Mimic Blind Mode auto-pop in v1.1.8. Cheap regex set,
         // always runs (no _sourceExcluded gate — blindness is a UI thing,
@@ -21495,6 +22012,9 @@ async function main() {
         if (!_sourceExcluded) { try { trackDaBroadcastLine(line, b.character); } catch {} }
         if (!_sourceExcluded) { try { trackDefensiveDiscLine(line, b.character); } catch {} }
         if (!_sourceExcluded) { try { trackHealerManaLine(line, b.character); } catch {} }
+        // /random rolls + the loot-link roll-number convention — feeds the
+        // Command Center Rolls card + the dashboard roll table. Local-only.
+        if (!_sourceExcluded) { try { trackRollLine(line, b.character); trackRollItemLine(line); } catch {} }
 
         // /pet health output (Quarm: standalone HP line + bare buff names in the
         // owner's own log). Feeds the per-owner pet buff SET + HP. Pure local UI
@@ -21595,6 +22115,7 @@ module.exports = {
   SOURCELESS_SPELLS, BARD_SONGS,
   EncounterBuilder, characterFromFilename,
   trackChChainLine, chChainSnapshot,
+  _readZipEntry, _parseCrashReason, _crashZipTime,
 };
 
 if (require.main === module) {
