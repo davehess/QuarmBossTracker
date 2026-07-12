@@ -3260,6 +3260,8 @@ function _trackUpload({ endpoint, character, agentVersion, ok = true, statusCode
 const _MANA_PCT_RX = /(?:mana\D{0,12}(\d{1,3})\s*%|(\d{1,3})\s*%\D{0,12}mana)/i;
 const _manaReportLast = new Map();   // speakerLower → last write ms (rate limit)
 
+// Session-sticky speaker tags for the chat relay — speakerLower → { tag, at }.
+const _chatTagCache = new Map();
 async function _handleAgentChat(req, res) {
   const identity = await mimicLink.requireAgentAuth(req, res);
   if (!identity) return;
@@ -3540,7 +3542,23 @@ async function _handleAgentChat(req, res) {
     const { getWhoEntry } = require('./utils/state');
     const whoEntry = getWhoEntry(effectiveSpeaker) || whoForSpeaker || null;
     const whoBits  = whoEntry ? [whoEntry.level, whoEntry.race, whoEntry.class].filter(Boolean) : [];
-    const whoTag   = whoBits.length ? ` [${whoBits.join(' ')}]` : '';
+    let whoTag     = whoBits.length ? ` [${whoBits.join(' ')}]` : '';
+    // Sticky tags (Uilnayar 2026-07-12: "why does this sometimes show info
+    // and sometimes not"): once a speaker resolves to a FULL [lvl race class]
+    // tag, reuse it for the rest of the session instead of flickering back to
+    // bare/partial whenever the /who data ages out mid-conversation. A fresh
+    // full tag always overwrites the cache (level-ups propagate).
+    const tagKey = effectiveSpeaker.toLowerCase();
+    if (whoBits.length >= 3) {
+      _chatTagCache.set(tagKey, { tag: whoTag, at: Date.now() });
+    } else {
+      const cached = _chatTagCache.get(tagKey);
+      if (cached && (Date.now() - cached.at) < 12 * 3600_000) whoTag = cached.tag;
+    }
+    // In-game timestamp prefix — <t:..:t> renders in each reader's local time
+    // and stays correct even when the line was delivered late (queue drain).
+    const tsSecs = msgTs ? Math.floor(Date.parse(msgTs) / 1000) : NaN;
+    const tsPrefix = Number.isFinite(tsSecs) ? `<t:${tsSecs}:t> ` : '';
     // Format matches Quarm's #ingame-general style:  "**Name** [60 Race Class]: message"
     // Both speaker name and text are sanitized — no @pings, no code-block injection.
     const safeSpeaker = sanitizeChatText(effectiveSpeaker).replace(/\*/g, '');  // strip bold markers from name
@@ -3564,7 +3582,7 @@ async function _handleAgentChat(req, res) {
       const healable = !sameName && relayEntry.source !== 'line' && speakerSource === 'line';
       if (healable && relayEntry.msg) {
         try {
-          await relayEntry.msg.edit(`**${safeSpeaker}**${whoTag}: ${safeText}`);
+          await relayEntry.msg.edit(`${tsPrefix}**${safeSpeaker}**${whoTag}: ${safeText}`);
           relayEntry.speaker = effectiveSpeaker;
           relayEntry.source  = 'line';
           console.log(`[chat-relay] healed speaker attribution: ${relayEntry.msg.id} → ${effectiveSpeaker}`);
@@ -3580,7 +3598,7 @@ async function _handleAgentChat(req, res) {
     try {
       const ch = await client.channels.fetch(channelId).catch(() => null);
       if (!ch) continue;
-      const sent = await ch.send(`**${safeSpeaker}**${whoTag}: ${safeText}`);
+      const sent = await ch.send(`${tsPrefix}**${safeSpeaker}**${whoTag}: ${safeText}`);
       relayEntry.at = Date.now();
       relayEntry.speaker = effectiveSpeaker;
       relayEntry.source = speakerSource;
