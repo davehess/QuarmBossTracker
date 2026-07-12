@@ -87,7 +87,7 @@ ipcRenderer.on('wp-backdrop', function (_e, on) {
 // colors green); the rest adjust brightness/saturation/contrast only, never
 // raw hue, so color semantics hold everywhere.
 const _WP_THEME_CSS =
-  'body.wp-theme-light{filter:invert(1) hue-rotate(180deg) contrast(0.92)}' +
+  'body.wp-theme-light{filter:invert(1) hue-rotate(180deg) contrast(1.15) brightness(1.03)}' +
   'body.wp-theme-bright{filter:brightness(1.2) saturate(1.3)}' +
   'body.wp-theme-soft{filter:saturate(0.7) brightness(1.08)}' +
   'body.wp-theme-contrast{filter:contrast(1.3) saturate(1.1) brightness(1.05)}';
