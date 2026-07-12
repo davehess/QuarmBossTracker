@@ -87,7 +87,7 @@ ipcRenderer.on('wp-backdrop', function (_e, on) {
 // colors green); the rest adjust brightness/saturation/contrast only, never
 // raw hue, so color semantics hold everywhere.
 const _WP_THEME_CSS =
-  'body.wp-theme-light{filter:invert(0.92) hue-rotate(180deg)}' +
+  'body.wp-theme-light{filter:invert(1) hue-rotate(180deg) contrast(1.15) brightness(1.03)}' +
   'body.wp-theme-bright{filter:brightness(1.2) saturate(1.3)}' +
   'body.wp-theme-soft{filter:saturate(0.7) brightness(1.08)}' +
   'body.wp-theme-contrast{filter:contrast(1.3) saturate(1.1) brightness(1.05)}';
@@ -104,7 +104,12 @@ ipcRenderer.on('wp-theme', function (_e, theme) { _wpApplyTheme(theme); });
 document.addEventListener('DOMContentLoaded', function () {
   try {
     const st = document.createElement('style');
-    st.textContent = 'body.wp-backdrop{background:rgba(8,10,14,0.92) !important}' + _WP_THEME_CSS;
+    st.textContent = 'body.wp-backdrop #wrap{background:rgb(8 10 14 / var(--bg-alpha,0.92)) !important;border-radius:8px}'
+      + 'body.wp-backdrop:not(:has(#wrap)){background:rgb(8 10 14 / var(--bg-alpha,0.92)) !important;border-radius:8px}'
+      // Setup strip must survive narrow windows: wrap onto a second row
+      // instead of pushing the Done button past the right edge.
+      + '#setupbar{flex-wrap:wrap;row-gap:4px}#setupbar input[type=range]{min-width:60px}'
+      + _WP_THEME_CSS;
     document.head.appendChild(st);
     ipcRenderer.invoke('wp-overlay-menu-state').then(function (s) {
       if (s && s.backdrop && _wpOverlayDoc()) document.body.classList.add('wp-backdrop');
@@ -164,8 +169,6 @@ function _buildOverlayMenu(onClose, state) {
     () => ipcRenderer.invoke('wp-theme-cycle')));
   menu.appendChild(mkItem('✨ Auto-arrange overlays', '#20503a',
     () => ipcRenderer.invoke('auto-arrange-overlays')));
-  menu.appendChild(mkItem('✨ Arrange when overlays open: ' + (st.arrangeOnShow ? 'ON' : 'off'), '#20503a',
-    () => ipcRenderer.invoke('auto-arrange-onshow-toggle')));
   // Thin divider before the size presets so the menu reads "actions / sizes".
   const sep = document.createElement('div');
   sep.style.cssText = 'height:1px;background:rgba(255,255,255,0.08);margin:3px 0';
@@ -306,6 +309,10 @@ contextBridge.exposeInMainWorld('mimic', {
   // Toggle a named built-in overlay (hud/trigger/charm/pet/mobinfo) on/off from
   // the dashboard's Overlays tab. Returns the updated status snapshot.
   toggleOverlay:   (name) => ipcRenderer.invoke('toggle-overlay', name),
+  setOverlayTheme: (t)    => ipcRenderer.invoke('wp-theme-set', t),
+  autoArrangeNow:  ()     => ipcRenderer.invoke('auto-arrange-overlays'),
+  setAllOpacity:   (v)    => ipcRenderer.invoke('wp-opacity-all', v),
+  toggleBackdrops: ()     => ipcRenderer.invoke('wp-backdrop-toggle-all'),
   markOnboarded:   ()     => ipcRenderer.invoke('mark-onboarded'),
   openDashboard:   ()     => ipcRenderer.invoke('open-dashboard'),
   openExternal:    (url)  => ipcRenderer.invoke('open-external', url),

@@ -10221,7 +10221,7 @@ function renderOverlays(s) {
   let h = '';
   const mimic = !!(window.mimic && window.mimic.openDashboard);
   h += '<div class="grid">';
-  h += '<div class="card wide"><h2>🪟 Overlays <span class="dim" style="font-size:11px;font-weight:normal">(transparent windows that float over EQ — DnDOverlay-style)</span></h2>';
+  h += '<div class="card wide"><h2>🪟 Overlays <span class="dim" style="font-size:11px;font-weight:normal">(transparent windows that float over EQ)</span></h2>';
   if (!mimic) {
     h += '<div class="dim" style="font-size:12px;padding:8px 0">Overlay controls require Mimic — open this dashboard from the desktop app to use them. (You are viewing it from a browser.)</div>';
     h += '</div></div>';
@@ -10229,6 +10229,24 @@ function renderOverlays(s) {
     return;
   }
   h += '<div class="dim" style="font-size:12px;margin-bottom:8px">Toggle any overlay on or off here — same as the tray menu (right-click the wolf in the system tray → <b>Overlays</b>), which also has lock/unlock, <b>Setup mode</b> placement, and per-overlay opacity.</div>';
+  // 🎨 Theme picker (Uilnayar 2026-07-12) — direct pick instead of cycling
+  // the chrome-menu item. Buttons call wp-theme-set via the bridge; the
+  // active one highlights from status.overlayTheme.
+  h += '<div style="font-size:12px;padding:8px 10px;background:#161b22;border:1px solid var(--border);border-radius:6px;margin-bottom:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">';
+  h += '<b>🎨 Theme</b><span class="dim">applies to all overlays</span>';
+  var thCur = (s && s.overlayTheme) || 'default';
+  var THEMES = [['default','Wolf (dark)'],['light','Light'],['bright','Vivid'],['soft','Muted'],['contrast','High contrast']];
+  for (var ti = 0; ti < THEMES.length; ti++) {
+    var on = THEMES[ti][0] === thCur;
+    h += '<button class="wp-theme-pick" data-th="' + THEMES[ti][0] + '" style="font-size:11px;padding:3px 10px;border-radius:4px;cursor:pointer;border:1px solid ' + (on ? '#a371f7' : 'var(--border)') + ';background:' + (on ? 'rgba(163,113,247,0.25)' : '#21262d') + ';color:' + (on ? '#e9d5ff' : '#c9d1d9') + '">' + THEMES[ti][1] + '</button>';
+  }
+  h += '</div>';
+  h += '<div style="font-size:12px;padding:8px 10px;background:#161b22;border:1px solid var(--border);border-radius:6px;margin-bottom:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">'
+    + '<b>🔅 Opacity — all overlays</b>'
+    + '<input id="wpAllOpacity" type="range" min="0.15" max="1" step="0.05" value="1" style="flex:1;min-width:120px;cursor:pointer" />'
+    + '<span id="wpAllOpacityVal" style="font-variant-numeric:tabular-nums">100%</span>'
+    + '<span class="dim" style="font-size:11px">sets every overlay at once — fine-tune single ones in their setup bar</span>'
+    + '</div>';
   // How to move them. Convention is consistent across every overlay so users
   // build muscle memory: ✥ in the TOP-RIGHT corner = drag handle (hover to
   // grab + drag — works while locked); ✕ in the TOP-LEFT = hide that overlay.
@@ -10241,7 +10259,19 @@ function renderOverlays(s) {
     + '<b style="color:var(--gold)">Show / hide ALL overlays:</b>'
     + '<code id="wpHideHotkeyCur" style="background:#0d1117;padding:2px 10px;border-radius:3px;border:1px solid var(--border)">…</code>'
     + '<button type="button" id="wpHideHotkeyBtn" style="background:#21262d;color:var(--blue);border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px">Change…</button>'
+    + '<button type="button" id="wpHideHotkeyEn" style="background:#21262d;color:var(--red)"></button>'
     + '<span id="wpHideHotkeyHint" class="dim" style="font-size:11px"></span>'
+    + '</div>';
+  h += '<div style="font-size:12px;padding:8px 10px;background:#161b22;border:1px solid var(--border);border-radius:6px;margin-bottom:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">'
+    + '<b style="color:var(--gold)">Toggle backgrounds on ALL overlays:</b>'
+    + '<code id="wpBdHotkeyCur" style="background:#0d1117;padding:2px 10px;border-radius:3px;border:1px solid var(--border)">…</code>'
+    + '<button type="button" id="wpBdHotkeyBtn" style="background:#21262d;color:var(--blue);border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px">Change…</button>'
+    + '<button type="button" id="wpBdHotkeyEn" style="background:#21262d;color:var(--red)"></button>'
+    + '<span id="wpBdHotkeyHint" class="dim" style="font-size:11px"></span>'
+    + '<span style="flex-basis:100%"></span>'
+    + '<button type="button" class="wp-ov-act" data-act="arrange" style="background:#21262d;color:#7ee787;border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px">✨ Auto-arrange overlays now</button>'
+    + '<button type="button" class="wp-ov-act" data-act="backdrops" style="background:#21262d;color:#c9d1d9;border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px">🌫 Toggle backgrounds now</button>'
+    + '<span class="dim" style="font-size:11px">arranging only ever runs when you click it — never automatically</span>'
     + '</div>';
   h += '<div style="font-size:12px;padding:8px 10px;background:#161b22;border:1px solid var(--border);border-radius:6px;margin-bottom:8px">'
     + '<b style="color:var(--blue)">How to move an overlay:</b> hover the small <code style="background:#0d1117;padding:1px 5px;border-radius:3px">✥</code> icon in the <b>top-left corner</b> of any overlay and drag. Works whether the overlays are locked or unlocked &mdash; same in every overlay so the muscle memory carries. The <code style="background:#0d1117;padding:1px 5px;border-radius:3px">✕</code> in the <b>top-right</b> hides that overlay (turn it back on from this page or the tray).'
@@ -10277,14 +10307,48 @@ function renderOverlays(s) {
 var _wpHotkeyCapturing = false;
 function _wpFmtAccel(a) { return String(a || '').replace(/CommandOrControl|CmdOrCtrl/gi, 'Ctrl'); }
 function wpWireHideHotkey() {
-  var cur = document.getElementById('wpHideHotkeyCur');
-  var btn = document.getElementById('wpHideHotkeyBtn');
-  var hint = document.getElementById('wpHideHotkeyHint');
+  var ao = document.getElementById('wpAllOpacity');
+  var aov = document.getElementById('wpAllOpacityVal');
+  if (ao && window.mimic && window.mimic.setAllOpacity) {
+    _bindOnce(ao, 'input', function(){
+      var v = parseFloat(ao.value || '1');
+      if (aov) aov.textContent = Math.round(v * 100) + '%';
+      try { window.mimic.setAllOpacity(v); } catch (e) {}
+    });
+  }
+  _wpWireHotkeyRow('wpHideHotkey', 'hideAllHotkey', 'hideAllHotkeyEnabled', 'CommandOrControl+Shift+H');
+  _wpWireHotkeyRow('wpBdHotkey', 'backdropHotkey', 'backdropHotkeyEnabled', 'CommandOrControl+Shift+B');
+}
+// One hotkey row: chip + Change… capture + Enable/Disable kill switch. The
+// enable flag re-registers live via saveConfig (registerHideAllHotkey runs
+// on every config apply and skips disabled hotkeys).
+function _wpWireHotkeyRow(prefix, cfgKey, enKey, defAccel) {
+  var cur = document.getElementById(prefix + 'Cur');
+  var btn = document.getElementById(prefix + 'Btn');
+  var en  = document.getElementById(prefix + 'En');
+  var hint = document.getElementById(prefix + 'Hint');
   if (!cur || !btn || !window.mimic || !window.mimic.getConfig) return;
-  window.mimic.getConfig().then(function(cfg){
-    var a = (cfg && typeof cfg.hideAllHotkey === 'string' && cfg.hideAllHotkey.trim()) ? cfg.hideAllHotkey.trim() : 'CommandOrControl+Shift+H';
-    cur.textContent = _wpFmtAccel(a);
-  }).catch(function(){ cur.textContent = 'Ctrl+Shift+H'; });
+  function paint(cfg) {
+    var a = (cfg && typeof cfg[cfgKey] === 'string' && cfg[cfgKey].trim()) ? cfg[cfgKey].trim() : defAccel;
+    var enabled = !cfg || cfg[enKey] !== false;
+    cur.textContent = enabled ? _wpFmtAccel(a) : 'disabled';
+    cur.style.opacity = enabled ? '1' : '0.5';
+    if (en) {
+      en.textContent = enabled ? 'Disable' : 'Enable';
+      en.style.cssText = 'border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px;background:#21262d;color:' + (enabled ? 'var(--red)' : '#7ee787');
+    }
+  }
+  window.mimic.getConfig().then(paint).catch(function(){ cur.textContent = _wpFmtAccel(defAccel); });
+  if (en) _bindOnce(en, 'click', function(){
+    window.mimic.getConfig().then(function(cfg){
+      var next = !(cfg && cfg[enKey] !== false);
+      var patch = {}; patch[enKey] = next;
+      window.mimic.saveConfig(patch).then(function(){
+        window.mimic.getConfig().then(paint).catch(function(){});
+        if (hint) { hint.textContent = next ? 'Hotkey enabled.' : 'Hotkey disabled.'; setTimeout(function(){ hint.textContent = ''; }, 3000); }
+      }).catch(function(){});
+    }).catch(function(){});
+  });
   _bindOnce(btn, 'click', function(){
     if (_wpHotkeyCapturing) return;
     _wpHotkeyCapturing = true;
@@ -10309,7 +10373,8 @@ function wpWireHideHotkey() {
       if (e.shiftKey) parts.push('Shift');
       parts.push(key);
       var accel = parts.join('+');
-      window.mimic.saveConfig({ hideAllHotkey: accel }).then(function(){
+      var patch2 = {}; patch2[cfgKey] = accel;
+      window.mimic.saveConfig(patch2).then(function(){
         cur.textContent = _wpFmtAccel(accel);
         done('Saved — active immediately.');
       }).catch(function(){ done('Save failed.'); });
@@ -10341,6 +10406,16 @@ function wpRefreshOverlayToggles() {
         b.textContent = isOn ? 'ON' : 'OFF';
         b.className = 'wp-ov-toggle' + (isOn ? ' on' : '');
       }
+      // Theme picker highlight — driven from Mimic status (st.overlayTheme),
+      // not the render's state blob (which never carries it).
+      var tcur = st.overlayTheme || 'default';
+      var tb = document.querySelectorAll('.wp-theme-pick');
+      for (var j = 0; j < tb.length; j++) {
+        var onb = tb[j].getAttribute('data-th') === tcur;
+        tb[j].style.borderColor = onb ? '#a371f7' : 'var(--border)';
+        tb[j].style.background  = onb ? 'rgba(163,113,247,0.25)' : '#21262d';
+        tb[j].style.color       = onb ? '#e9d5ff' : '#c9d1d9';
+      }
     }).catch(function(){});
   } catch (e) { void e; }
 }
@@ -10350,9 +10425,19 @@ if (typeof window !== 'undefined' && !window.__wpOvDelegated) {
   document.addEventListener('click', function(e){
     var t = e.target;
     var b = (t && t.closest) ? t.closest('.wp-ov-toggle') : null;
-    if (!b) return;
-    var name = b.getAttribute('data-ov');
-    if (name) wpToggleOverlay(name);
+    if (b) { var name = b.getAttribute('data-ov'); if (name) wpToggleOverlay(name); return; }
+    var act = (t && t.closest) ? t.closest('.wp-ov-act') : null;
+    if (act && window.mimic) {
+      var a = act.getAttribute('data-act');
+      if (a === 'arrange' && window.mimic.autoArrangeNow) window.mimic.autoArrangeNow();
+      if (a === 'backdrops' && window.mimic.toggleBackdrops) window.mimic.toggleBackdrops();
+      return;
+    }
+    var th = (t && t.closest) ? t.closest('.wp-theme-pick') : null;
+    if (th && window.mimic && window.mimic.setOverlayTheme) {
+      window.mimic.setOverlayTheme(th.getAttribute('data-th'));
+      setTimeout(function(){ try { wpRefreshOverlayToggles(); } catch (e2) {} }, 250);
+    }
   });
 }
 

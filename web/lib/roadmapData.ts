@@ -43,6 +43,24 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'mimic-180-stable',
+    title: '\u{1F43A} Mimic 1.8.0 \u2014 overlay control center',
+    version: 'Mimic 1.8.0 \u00b7 Agent 3.3.24',
+    date: '2026-07-12',
+    headline: 'Everything from the 1.7.4 beta round: color themes with a one-click picker, hotkeys you can rebind or disable, an all-overlays opacity slider, backgrounds that hug their cards, and no surprise rearranging \u2014 ever.',
+    features: [
+      { name: 'One control center', blurb: 'The Overlays page now holds it all: theme picker (Wolf/Light/Vivid/Muted/High contrast), rebindable + disableable hotkeys for hide-all and backgrounds, auto-arrange on demand, and a single opacity slider that sets every overlay at once.' },
+      { name: 'Backgrounds done right', blurb: 'Solid backgrounds are rounded, follow the opacity slider, and extend exactly as far as the content \u2014 no more tall empty slabs.' },
+      { name: 'Your layout is sacred', blurb: 'Opening an overlay never moves anything, and auto-arrange never resizes \u2014 it only runs when you click it, and windows keep their exact size.' },
+    ],
+    fixes: [
+      'Light theme sharpened \u2014 pale grey text now lands near-black.',
+      'Buff queue scrolls when longer than the screen; buff sections stay collapsible.',
+      'Setup strip wraps on narrow overlays so the Done button never clips.',
+      'Chat relay (bot): speaker tags stick for the session and every line carries its real in-game time.',
+    ],
+  },
+  {
     key: 'mimic-173-stable',
     title: '\u{1F43A} Mimic 1.7.3 — the big beta lands for everyone',
     version: 'Mimic 1.7.3 · Agent 3.3.18',

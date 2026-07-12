@@ -2489,7 +2489,7 @@ function _parseUiWindowRects() {
     return null;
   }
 }
-function _autoArrangeOverlays() {
+function _autoArrangeOverlays(pinnedKey) {
   const area = screen.getPrimaryDisplay().workArea;
   const ui = _parseUiWindowRects();
   const MARGIN = 8, STEP = 16;
@@ -2527,11 +2527,19 @@ function _autoArrangeOverlays() {
     .map(([key, win]) => ({ key, win, b: win.getBounds() }))
     .sort((a, b) => (b.b.width * b.b.height) - (a.b.width * a.b.height));
   for (const o of wins) pendingCur.set(o.key, pad(o.b));
+  // Pinned overlay (arrange-on-show passes the just-opened one, Uilnayar
+  // 2026-07-12: "the overlay must not jump when opening"): it stays exactly
+  // at its saved bounds — its rect blocks placement and it is never moved.
+  // Manual auto-arrange passes nothing and repacks everything as before.
+  const moveList = pinnedKey ? wins.filter(o => o.key !== pinnedKey) : wins;
   let placed = 0, skipped = 0;
-  for (const o of wins) {
+  for (const o of moveList) {
     // Shrink-only preset ladder: try the current width, then narrower presets
     // ("auto-resize" — a too-wide overlay steps down until it fits somewhere).
-    const ladder = [...new Set([o.b.width, 400, 320, 260, 200])].filter(w => w <= o.b.width || w === 200).sort((a, b) => b - a);
+    // No resizing during arrange (Uilnayar 2026-07-12): windows keep their
+    // exact size — an overlay that fits nowhere at its current size is
+    // simply left where it was.
+    const ladder = [o.b.width];
     let done = false;
     for (const blockCenter of [true, false]) {
       for (const w of ladder) {
@@ -4120,7 +4128,8 @@ function registerHideAllHotkey() {
     // (Re)register the configured accelerator, dropping any prior binding.
     if (_registeredHideAccel) { try { globalShortcut.unregister(_registeredHideAccel); } catch {} _registeredHideAccel = null; }
     const accel = _hideAllAccelerator();
-    if (accel) {
+    // Per-hotkey kill switch (dashboard Enable/Disable) — default enabled.
+    if (accel && cfg.hideAllHotkeyEnabled !== false) {
       const ok = globalShortcut.register(accel, toggleHideAllOverlays);
       if (ok) _registeredHideAccel = accel;
       else appendAgentLog(`[mimic] failed to register hide-all hotkey "${accel}" (in use by another app?)\n`);
@@ -4130,7 +4139,7 @@ function registerHideAllHotkey() {
     // Override with cfg.backdropHotkey.
     if (_registeredBackdropAccel) { try { globalShortcut.unregister(_registeredBackdropAccel); } catch {} _registeredBackdropAccel = null; }
     const bAccel = (typeof cfg.backdropHotkey === 'string' && cfg.backdropHotkey.trim()) ? cfg.backdropHotkey.trim() : _DEFAULT_BACKDROP_HOTKEY;
-    if (bAccel) {
+    if (bAccel && cfg.backdropHotkeyEnabled !== false) {
       const ok2 = globalShortcut.register(bAccel, toggleAllBackdrops);
       if (ok2) _registeredBackdropAccel = bAccel;
       else appendAgentLog(`[mimic] failed to register backdrop hotkey "${bAccel}" (in use by another app?)\n`);
@@ -4241,6 +4250,7 @@ function currentStatus() {
     showExtTarget: !!cfg.showExtTarget,
     showCommand: !!cfg.showCommand,
     showPopRaid: !!cfg.showPopRaid,
+    overlayTheme: cfg.overlayTheme || 'default',
     overlaysLocked: cfg.overlaysLocked !== false,
     setupMode: !!setupMode,
     onboarded: !!cfg.onboarded,
@@ -5117,21 +5127,10 @@ ipcMain.handle('toggle-overlay', (_e, name) => {
     default:
       return null;
   }
-  // Auto-arrange on show: when the user has it enabled, turning an overlay ON
-  // re-packs the visible set so the newcomer gets clear space and the others
-  // slide out of the way (Uilnayar 2026-07-10). Delayed so create/auto-height
-  // settle first. Never fires on hide.
-  try {
-    const FLAG_BY_NAME = {
-      hud: 'showHud', trigger: 'enableTriggerTts', charm: 'showCharm', pet: 'showPets',
-      mobinfo: 'showMobInfo', buffQueue: 'showBuffQueue', who: 'showWho', melody: 'showMelody',
-      zeal: 'showZeal', threat: 'showThreat', chchain: 'showChChain', tank: 'showTank',
-      exttarget: 'showExtTarget', command: 'showCommand', popraid: 'showPopRaid',
-    };
-    if (cfg.autoArrangeOnShow && cfg[FLAG_BY_NAME[name]]) {
-      setTimeout(() => { try { _autoArrangeOverlays(); } catch {} }, 450);
-    }
-  } catch { /* arrangement is best-effort */ }
+  // Auto-arrange on toggle REMOVED (Uilnayar 2026-07-12, 1.7.4-beta.2 test:
+  // "take out that automatic movement — it's very disruptive"). Turning an
+  // overlay on/off never moves anything; arranging is manual-only via the
+  // right-click ✨ Auto-arrange item.
   pushStatus();
   return currentStatus();
 });
@@ -5166,6 +5165,35 @@ ipcMain.handle('wp-overlay-menu-state', (e) => {
 // chrome-menu item cycles through the list; new windows pick the theme up
 // from their wp-overlay-menu-state pull at load.
 const _WP_THEMES = ['default', 'light', 'bright', 'soft', 'contrast'];
+// Global opacity — one slider on the dashboard drives every overlay. Writes
+// cfg.overlayOpacity for ALL known keys (so windows opened later inherit it)
+// and re-applies to the live set.
+const _ALL_OVERLAY_KEYS = ['hud','trigger','charm','pets','mobinfo','buffQueue','who','melody','zeal','threat','chchain','tank','exttarget','command','popraid'];
+ipcMain.handle('wp-opacity-all', (_e, v) => {
+  const val = Math.max(0.15, Math.min(1, +v || 1));
+  const cfg = loadConfig();
+  const map = (cfg.overlayOpacity && typeof cfg.overlayOpacity === 'object') ? cfg.overlayOpacity : {};
+  for (const k of _ALL_OVERLAY_KEYS) map[k] = val;
+  for (const [k] of _overlayEntries()) map[k] = val;   // panels + anything new
+  cfg.overlayOpacity = map;
+  saveConfig(cfg);
+  applyAllOverlayOpacities();
+  return val;
+});
+// Direct theme set (dashboard Overlays-tab picker) — same broadcast path.
+// All-overlay backdrop flip — same as the Ctrl+Shift+B hotkey.
+ipcMain.handle('wp-backdrop-toggle-all', () => { try { toggleAllBackdrops(); return true; } catch { return false; } });
+ipcMain.handle('wp-theme-set', (_e, theme) => {
+  if (!_WP_THEMES.includes(theme)) return false;
+  const cfg = loadConfig();
+  cfg.overlayTheme = theme;
+  saveConfig(cfg);
+  for (const [, win] of _overlayEntries()) {
+    try { win.webContents.send('wp-theme', theme); } catch { /* mid-close */ }
+  }
+  pushStatus();
+  return theme;
+});
 ipcMain.handle('wp-theme-cycle', () => {
   const cfg = loadConfig();
   const cur = _WP_THEMES.indexOf(cfg.overlayTheme || 'default');
@@ -5619,8 +5647,11 @@ ipcMain.handle('save-config', async (_e, incoming) => {
     tokenChanged = true;
   }
   saveConfig(merged);
-  // Re-bind the hide-all hotkey if the user changed it in settings.
-  if (incoming && Object.prototype.hasOwnProperty.call(incoming, 'hideAllHotkey')) {
+  // Re-bind the global hotkeys if the user changed any binding OR enable
+  // flag (2026-07-12: backdropHotkey saves were ignored until restart —
+  // only hideAllHotkey was in this condition).
+  const HOTKEY_KEYS = ['hideAllHotkey', 'backdropHotkey', 'hideAllHotkeyEnabled', 'backdropHotkeyEnabled'];
+  if (incoming && HOTKEY_KEYS.some(k => Object.prototype.hasOwnProperty.call(incoming, k))) {
     try { registerHideAllHotkey(); } catch {}
   }
   // Apply a raw-Zeal-capture toggle live (Info tab control) without a restart.
