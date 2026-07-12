@@ -5158,7 +5158,24 @@ ipcMain.handle('wp-overlay-menu-state', (e) => {
     backdrop: key ? !!((cfg.overlayBackdrop || {})[key]) : false,
     arrangeOnShow: !!cfg.autoArrangeOnShow,
     growUp: key ? !!((cfg.overlayGrowUp || {})[key]) : false,
+    theme: cfg.overlayTheme || 'default',
   };
+});
+// Overlay color theme — one global setting for every overlay window, applied
+// renderer-side as a body-level CSS filter (see preload _WP_THEME_CSS). The
+// chrome-menu item cycles through the list; new windows pick the theme up
+// from their wp-overlay-menu-state pull at load.
+const _WP_THEMES = ['default', 'light', 'bright', 'soft', 'contrast'];
+ipcMain.handle('wp-theme-cycle', () => {
+  const cfg = loadConfig();
+  const cur = _WP_THEMES.indexOf(cfg.overlayTheme || 'default');
+  const next = _WP_THEMES[(cur + 1) % _WP_THEMES.length];
+  cfg.overlayTheme = next;
+  saveConfig(cfg);
+  for (const [, win] of _overlayEntries()) {
+    try { win.webContents.send('wp-theme', next); } catch { /* window mid-close */ }
+  }
+  return next;
 });
 // Per-overlay grow-upward toggle (bottom-anchored auto-height). Flipping it
 // on immediately re-anchors: the window keeps its current bounds, and the

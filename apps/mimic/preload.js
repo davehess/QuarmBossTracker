@@ -79,13 +79,36 @@ document.addEventListener('mouseout', function (ev) {
 ipcRenderer.on('wp-backdrop', function (_e, on) {
   try { if (_wpOverlayDoc()) document.body.classList.toggle('wp-backdrop', !!on); } catch (e) {}
 });
+// ── Overlay color themes (Uilnayar 2026-07-11: "alternative color schemes
+// for people that prefer brighter colors") ─────────────────────────────────
+// One body-level CSS filter per theme restyles EVERY overlay at once with
+// zero per-page changes. 'light' uses the invert+hue-rotate(180) pair so
+// hues survive (red HP bars stay red — plain invert would turn danger
+// colors green); the rest adjust brightness/saturation/contrast only, never
+// raw hue, so color semantics hold everywhere.
+const _WP_THEME_CSS =
+  'body.wp-theme-light{filter:invert(0.92) hue-rotate(180deg)}' +
+  'body.wp-theme-bright{filter:brightness(1.2) saturate(1.3)}' +
+  'body.wp-theme-soft{filter:saturate(0.7) brightness(1.08)}' +
+  'body.wp-theme-contrast{filter:contrast(1.3) saturate(1.1) brightness(1.05)}';
+const _WP_THEME_LABELS = { 'default': 'Wolf (dark)', light: 'Light', bright: 'Vivid', soft: 'Muted', contrast: 'High contrast' };
+function _wpApplyTheme(theme) {
+  try {
+    if (!_wpOverlayDoc()) return;
+    const cl = document.body.classList;
+    for (const c of [...cl]) if (c.indexOf('wp-theme-') === 0) cl.remove(c);
+    if (theme && theme !== 'default') cl.add('wp-theme-' + theme);
+  } catch (e) {}
+}
+ipcRenderer.on('wp-theme', function (_e, theme) { _wpApplyTheme(theme); });
 document.addEventListener('DOMContentLoaded', function () {
   try {
     const st = document.createElement('style');
-    st.textContent = 'body.wp-backdrop{background:rgba(8,10,14,0.92) !important}';
+    st.textContent = 'body.wp-backdrop{background:rgba(8,10,14,0.92) !important}' + _WP_THEME_CSS;
     document.head.appendChild(st);
     ipcRenderer.invoke('wp-overlay-menu-state').then(function (s) {
       if (s && s.backdrop && _wpOverlayDoc()) document.body.classList.add('wp-backdrop');
+      if (s && s.theme) _wpApplyTheme(s.theme);
     }).catch(function () {});
   } catch (e) {}
 });
@@ -135,6 +158,10 @@ function _buildOverlayMenu(onClose, state) {
   // (Extended Target etc.): the list grows UP instead of running off-screen.
   menu.appendChild(mkItem('⬆ Grow upward: ' + (st.growUp ? 'ON' : 'off') + ' (this overlay)', '#20374a',
     () => ipcRenderer.invoke('wp-growup-toggle')));
+  // Color theme — cycles Wolf (dark) → Light → Vivid → Muted → High contrast
+  // and applies to ALL overlays at once. Click repeatedly to step through.
+  menu.appendChild(mkItem('🎨 Theme: ' + (_WP_THEME_LABELS[st.theme || 'default'] || st.theme) + ' (all overlays)', '#3a2440',
+    () => ipcRenderer.invoke('wp-theme-cycle')));
   menu.appendChild(mkItem('✨ Auto-arrange overlays', '#20503a',
     () => ipcRenderer.invoke('auto-arrange-overlays')));
   menu.appendChild(mkItem('✨ Arrange when overlays open: ' + (st.arrangeOnShow ? 'ON' : 'off'), '#20503a',
