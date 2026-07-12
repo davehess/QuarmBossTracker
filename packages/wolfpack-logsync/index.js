@@ -10221,7 +10221,7 @@ function renderOverlays(s) {
   let h = '';
   const mimic = !!(window.mimic && window.mimic.openDashboard);
   h += '<div class="grid">';
-  h += '<div class="card wide"><h2>🪟 Overlays <span class="dim" style="font-size:11px;font-weight:normal">(transparent windows that float over EQ — DnDOverlay-style)</span></h2>';
+  h += '<div class="card wide"><h2>🪟 Overlays <span class="dim" style="font-size:11px;font-weight:normal">(transparent windows that float over EQ)</span></h2>';
   if (!mimic) {
     h += '<div class="dim" style="font-size:12px;padding:8px 0">Overlay controls require Mimic — open this dashboard from the desktop app to use them. (You are viewing it from a browser.)</div>';
     h += '</div></div>';
