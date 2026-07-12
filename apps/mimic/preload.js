@@ -305,6 +305,8 @@ contextBridge.exposeInMainWorld('mimic', {
   // the dashboard's Overlays tab. Returns the updated status snapshot.
   toggleOverlay:   (name) => ipcRenderer.invoke('toggle-overlay', name),
   setOverlayTheme: (t)    => ipcRenderer.invoke('wp-theme-set', t),
+  autoArrangeNow:  ()     => ipcRenderer.invoke('auto-arrange-overlays'),
+  toggleBackdrops: ()     => ipcRenderer.invoke('wp-backdrop-toggle-all'),
   markOnboarded:   ()     => ipcRenderer.invoke('mark-onboarded'),
   openDashboard:   ()     => ipcRenderer.invoke('open-dashboard'),
   openExternal:    (url)  => ipcRenderer.invoke('open-external', url),

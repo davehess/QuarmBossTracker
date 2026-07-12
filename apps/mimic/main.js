@@ -5162,6 +5162,8 @@ ipcMain.handle('wp-overlay-menu-state', (e) => {
 // from their wp-overlay-menu-state pull at load.
 const _WP_THEMES = ['default', 'light', 'bright', 'soft', 'contrast'];
 // Direct theme set (dashboard Overlays-tab picker) — same broadcast path.
+// All-overlay backdrop flip — same as the Ctrl+Shift+B hotkey.
+ipcMain.handle('wp-backdrop-toggle-all', () => { try { toggleAllBackdrops(); return true; } catch { return false; } });
 ipcMain.handle('wp-theme-set', (_e, theme) => {
   if (!_WP_THEMES.includes(theme)) return false;
   const cfg = loadConfig();
