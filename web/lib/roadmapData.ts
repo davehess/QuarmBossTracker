@@ -43,6 +43,18 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'overlay-themes',
+    title: '\u{1F3A8} Overlay color themes',
+    version: 'Mimic 1.7.2 beta',
+    date: '2026-07-11',
+    channel: 'beta',
+    headline: 'Prefer brighter overlays? Right-click any overlay and cycle the theme — it changes every overlay at once.',
+    features: [
+      { name: 'Five themes', blurb: 'Wolf (the classic dark), Light, Vivid (brighter + punchier colors), Muted (softer), and High contrast. Danger colors stay meaningful in every theme — red is still red in Light mode. Your pick persists and composes with the solid-background toggle and opacity slider.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'crash-telemetry',
     title: '🩺 Crash clustering (opt-in) + /who name copy',
     version: 'Mimic 1.7.2 beta · Agent 3.3.18 · Bot 3.0.160',

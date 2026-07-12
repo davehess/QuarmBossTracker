@@ -33,6 +33,26 @@ class filter + "only gaps" + "hide logged-off" toggles, accuracy caveat banner.
 - The PvP overnight board got "howl through the night" theming + lists the wolves.
 
 ## Quick requested features (buildable, queued)
+- **Per-class name colors on overlays — 📐 designed, ⛔ NEEDS LOCAL SESSION
+  for the data.** (Uilnayar 2026-07-11: use each user's own EQ raid-window
+  class colors "in some capacity for different class types; use Hitya's
+  color palette for classes as a template, with the ability to turn that
+  off in options".) Design: (1) agent parses the player's raid-window class
+  colors from their EQ config at startup (same newest-UI-ini discovery as
+  `_parseUiWindowRects`) → serves on /api/state as `classColors`
+  (classkey → #rrggbb); (2) ships a guild-default template = HITYA'S
+  palette as a constant; (3) cfg.classColorMode: 'template' (default) |
+  'mine' (own EQ colors, template fallback) | 'off'; chrome-menu or
+  Overlays-tab toggle; (4) consumers color class-known names: buff queue
+  rows, Extended Target, /who overlay, CH chain healers, raid rosters.
+  **Needs local session FIRST (blocker):** the exact file+section where the
+  Quarm client persists raid-window class colors, plus Hitya's actual
+  values. On the desktop: check `UI_Hitya_pq.proj.ini` (grep for sections
+  with Color/RGBA keys near Raid), `eqclient.ini`, and Zeal's ini; paste
+  the section verbatim + key format into this item (or mirror to a
+  `class_color_template` row). UI snapshots in Supabase are AES-encrypted
+  with the bot-side WISHLIST_BID_KEY — cloud sessions cannot read them,
+  so this data must travel via this doc.
 - **Guild bazaar price index (no live tracker exists for Quarm).** quarm.tips
   is dead; quarmtraders.com froze 2024-03 (EC-tunnel era, 1,294 items only).
   Two feeds we already own: (a) each trader's own satchel prices persist
