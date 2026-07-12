@@ -10391,6 +10391,16 @@ function wpRefreshOverlayToggles() {
         b.textContent = isOn ? 'ON' : 'OFF';
         b.className = 'wp-ov-toggle' + (isOn ? ' on' : '');
       }
+      // Theme picker highlight — driven from Mimic status (st.overlayTheme),
+      // not the render's state blob (which never carries it).
+      var tcur = st.overlayTheme || 'default';
+      var tb = document.querySelectorAll('.wp-theme-pick');
+      for (var j = 0; j < tb.length; j++) {
+        var onb = tb[j].getAttribute('data-th') === tcur;
+        tb[j].style.borderColor = onb ? '#a371f7' : 'var(--border)';
+        tb[j].style.background  = onb ? 'rgba(163,113,247,0.25)' : '#21262d';
+        tb[j].style.color       = onb ? '#e9d5ff' : '#c9d1d9';
+      }
     }).catch(function(){});
   } catch (e) { void e; }
 }
@@ -10411,8 +10421,7 @@ if (typeof window !== 'undefined' && !window.__wpOvDelegated) {
     var th = (t && t.closest) ? t.closest('.wp-theme-pick') : null;
     if (th && window.mimic && window.mimic.setOverlayTheme) {
       window.mimic.setOverlayTheme(th.getAttribute('data-th'));
-      // Re-render soon so the highlight moves (status push lands within a tick).
-      setTimeout(function(){ try { window.__wpForceOverlayRender && window.__wpForceOverlayRender(); } catch (e2) {} }, 300);
+      setTimeout(function(){ try { wpRefreshOverlayToggles(); } catch (e2) {} }, 250);
     }
   });
 }
