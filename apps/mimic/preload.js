@@ -104,7 +104,7 @@ ipcRenderer.on('wp-theme', function (_e, theme) { _wpApplyTheme(theme); });
 document.addEventListener('DOMContentLoaded', function () {
   try {
     const st = document.createElement('style');
-    st.textContent = 'body.wp-backdrop{background:rgba(8,10,14,0.92) !important}' + _WP_THEME_CSS;
+    st.textContent = 'body.wp-backdrop{background:rgba(8,10,14,0.92) !important;border-radius:8px}' + _WP_THEME_CSS;
     document.head.appendChild(st);
     ipcRenderer.invoke('wp-overlay-menu-state').then(function (s) {
       if (s && s.backdrop && _wpOverlayDoc()) document.body.classList.add('wp-backdrop');
