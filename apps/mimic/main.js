@@ -2536,7 +2536,10 @@ function _autoArrangeOverlays(pinnedKey) {
   for (const o of moveList) {
     // Shrink-only preset ladder: try the current width, then narrower presets
     // ("auto-resize" — a too-wide overlay steps down until it fits somewhere).
-    const ladder = [...new Set([o.b.width, 400, 320, 260, 200])].filter(w => w <= o.b.width || w === 200).sort((a, b) => b - a);
+    // No resizing during arrange (Uilnayar 2026-07-12): windows keep their
+    // exact size — an overlay that fits nowhere at its current size is
+    // simply left where it was.
+    const ladder = [o.b.width];
     let done = false;
     for (const blockCenter of [true, false]) {
       for (const w of ladder) {
