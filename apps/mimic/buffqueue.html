@@ -10,7 +10,12 @@
   :root{ --bg-alpha:0.55; }
   html,body{margin:0;height:100%;background:transparent;overflow:hidden;
     font-family:ui-monospace,Menlo,Consolas,monospace;color:#fff;user-select:none;}
-  #wrap{padding:6px 8px;}
+  /* Long queues: the window height clamps to the work area (auto-height),
+     so anything beyond scrolls inside the overlay instead of clipping.
+     Thin scrollbar so it doesn't read as a browser widget. */
+  #wrap{padding:6px 8px;max-height:100vh;overflow-y:auto;overflow-x:hidden;}
+  #wrap::-webkit-scrollbar{width:6px}
+  #wrap::-webkit-scrollbar-thumb{background:rgba(110,118,129,0.5);border-radius:3px}
   .title{display:flex;align-items:center;gap:6px;
     font-size:12px;color:#79c0ff;text-shadow:0 1px 2px #000;margin-bottom:5px;}
   .title .conn{font-size:11px}
