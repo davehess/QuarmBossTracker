@@ -5930,6 +5930,22 @@ const QUEUE_MAX_PER_DRAIN_PASS = 50;     // cap parallel work per drain so a
                                          // 5000-entry backlog doesn't wedge
                                          // a single pass for hours
 const QUEUE_BACKOFF_MS = [30_000, 60_000, 120_000, 240_000, 480_000, 600_000];
+// Head-of-line-block protection (Hitya raid-night 2026-07-13: "a number queued
+// that won't drain", 91 pending). A POISON entry — one the bot keeps rejecting
+// in a transient-looking way (5xx / timeout, not a clean 4xx which already
+// drops) — never leaves the queue and rides in EVERY drain pass, so the pending
+// count never reaches zero and the poison crowds the per-pass budget ahead of
+// good data. Once an entry has failed this many times WHILE the pipe is proven
+// healthy (a success within QUEUE_PARK_HEALTHY_WINDOW_MS), we PARK it: it moves
+// to a slow retry lane (QUEUE_PARK_RETRY_MS) and only a bounded trickle
+// (QUEUE_PARK_PER_PASS) is retried per drain, so it can never starve live/
+// backfill. Parked entries are never dropped (data is preserved) and are
+// surfaced separately so the operator knows something needs a look; "drain now"
+// un-parks everything for a fresh full-speed attempt.
+const QUEUE_PARK_AFTER_ATTEMPTS   = 25;         // same-entry failures before parking
+const QUEUE_PARK_HEALTHY_WINDOW_MS = 5 * 60_000; // only park if the pipe worked recently (else it's an outage — don't park)
+const QUEUE_PARK_RETRY_MS         = 30 * 60_000; // parked entries retry every 30m
+const QUEUE_PARK_PER_PASS         = 3;           // max parked entries retried per drain pass
 // 413 (payload too large) / 431 (headers too large) never succeed on retry —
 // treat them as permanent so an over-limit encounter doesn't retry forever and
 // hold a slot. 4xx already means "the bot is intentionally rejecting".
@@ -5954,6 +5970,8 @@ let _queueDraining     = false;     // re-entrancy guard for the drain loop
 let _queueUploadOpts   = null;      // { botUrl, token } — set by startUploadQueueDrain
 let _queuePermanentDropCount = 0;   // 4xx responses since startup
 let _queueCapEvictCount      = 0;   // FIFO evictions because queue hit MAX_SIZE
+let _lastUploadSuccessAt     = 0;   // ms of the last OK upload — gates poison-parking (below) so a
+                                    // real outage, where NOTHING is succeeding, never parks good data
 
 // Serialized byte size of one entry, cached on the entry so the byte-cap can
 // sum without re-stringifying. Falls back to a live stringify when absent.
@@ -6481,9 +6499,18 @@ async function _drainUploadQueue(opts = {}) {
     // every time the queue has both kinds.
     const allDue = _uploadQueue.filter(e => e.next_try_at <= now);
     if (allDue.length === 0) return;
-    const live    = allDue.filter(e => !e?.payload?.backfill);
-    const back    = allDue.filter(e =>  e?.payload?.backfill);
-    const due     = [...live, ...back].slice(0, QUEUE_MAX_PER_DRAIN_PASS);
+    // Parked (poison) entries get their own bounded trickle so they can never
+    // consume the active per-pass budget ahead of live/backfill data — the
+    // head-of-line-block fix. Active work is chosen first (live before backfill),
+    // then up to QUEUE_PARK_PER_PASS parked retries ride along at the tail.
+    const active  = allDue.filter(e => !e.parked);
+    const parked  = allDue.filter(e =>  e.parked);
+    const live    = active.filter(e => !e?.payload?.backfill);
+    const back    = active.filter(e =>  e?.payload?.backfill);
+    const due     = [
+      ...[...live, ...back].slice(0, QUEUE_MAX_PER_DRAIN_PASS),
+      ...parked.slice(0, QUEUE_PARK_PER_PASS),
+    ];
 
     let stateChanged = false;
     // Apply one upload result to the queue (splice on success/permanent-fail,
@@ -6495,6 +6522,7 @@ async function _drainUploadQueue(opts = {}) {
       if (idx === -1) return; // dropped under us (queue cap)
       if (result.ok) {
         _uploadQueue.splice(idx, 1);
+        _lastUploadSuccessAt = Date.now();   // pipe is demonstrably working — arms poison-parking
         try { _onUploadSuccess(entry, result.body); } catch {}
         stateChanged = true;
       } else if (result.permanent) {
@@ -6520,9 +6548,25 @@ async function _drainUploadQueue(opts = {}) {
         // ladder because those mean the bot is intentionally rejecting.
         const isTransport = !result.statusCode &&
           /ECONNRESET|ETIMEDOUT|ENETUNREACH|EHOSTUNREACH|EPIPE|socket hang up|^timeout$/i.test(errBody);
-        const backoffMs = isTransport
-          ? 30_000
-          : QUEUE_BACKOFF_MS[Math.min(entry.attempts - 1, QUEUE_BACKOFF_MS.length - 1)];
+        // Poison-parking: this ONE entry has failed a lot, yet the pipe has
+        // succeeded on something else recently — so it isn't an outage, it's a
+        // payload the bot won't accept. Park it to the slow lane so it stops
+        // riding every drain pass and crowding good data. Never dropped — a
+        // parked entry still retries (rarely), and "drain now" un-parks all.
+        // Gated on a recent success so a genuine outage (nothing succeeding)
+        // walks the normal backoff ladder and resumes at full speed on recovery.
+        if (!entry.parked
+            && entry.attempts >= QUEUE_PARK_AFTER_ATTEMPTS
+            && _lastUploadSuccessAt > 0
+            && (Date.now() - _lastUploadSuccessAt) < QUEUE_PARK_HEALTHY_WINDOW_MS) {
+          entry.parked = true;
+          console.warn(`[upload-queue] PARKING ${entry.kind} after ${entry.attempts} failures (pipe healthy — likely a payload the bot rejects): ${entry.last_error}`);
+        }
+        const backoffMs = entry.parked
+          ? QUEUE_PARK_RETRY_MS
+          : isTransport
+            ? 30_000
+            : QUEUE_BACKOFF_MS[Math.min(entry.attempts - 1, QUEUE_BACKOFF_MS.length - 1)];
         entry.next_try_at = Date.now() + backoffMs;
         stats.uploadErrors++;
         if (entry.attempts === 1 || entry.attempts === 5 || entry.attempts === 20) {
@@ -6601,9 +6645,11 @@ function uploadQueueSnapshot() {
   let maxAttempts = 0;
   let lastError = null;
   let bytes = 0;
+  let parked = 0;
   for (const e of _uploadQueue) {
     byKind[e.kind] = (byKind[e.kind] || 0) + 1;
     bytes += _entryBytes(e);
+    if (e.parked) parked++;
     if (!oldest || e.queued_at < oldest) oldest = e.queued_at;
     if (e.attempts > maxAttempts) {
       maxAttempts = e.attempts;
@@ -6612,6 +6658,7 @@ function uploadQueueSnapshot() {
   }
   return {
     pending:           _uploadQueue.length,
+    parked,                             // poison entries in the slow retry lane (see QUEUE_PARK_*)
     byKind,
     bytes,                              // total serialized size — the real cap
     maxBytes:          QUEUE_MAX_BYTES,
@@ -8981,13 +9028,18 @@ function renderHeader(s) {
   const q = s.uploadQueue || {};
   if (q.pending > 0) {
     const kinds = Object.entries(q.byKind || {}).map(([k, n]) => k + ':' + n).join(' · ');
-    const tip = (q.lastError ? 'Last error: ' + q.lastError + ' · ' : '') + kinds;
+    // Parked (poison) entries are in the slow retry lane so they don't crowd
+    // good data — call them out so a non-zero-but-not-draining count reads as
+    // "these few need a look / a drain-now", not "the whole pipe is stuck".
+    const parkedNote = q.parked > 0 ? q.parked + ' parked (repeatedly rejected — slow-retry lane) · ' : '';
+    const tip = parkedNote + (q.lastError ? 'Last error: ' + q.lastError + ' · ' : '') + kinds;
     // Click-to-force-drain link — POSTs /api/drain which resets next_try_at
-    // on every entry to now() and kicks an immediate pass. Helpful when the
-    // queue gets stuck in a long exponential backoff after a transient
-    // server hiccup (added 2026-06-21 from Uilnayar's stalled-queue
-    // report).
-    queueChip = ' · <span style="background:#3b2a06;color:#ffd07a;border:1px solid #d18a2d;border-radius:3px;font-size:11px;padding:2px 6px;margin-left:4px" title="' + esc(tip) + '">⏳ ' + q.pending + ' queued · <a href="#" id="wpDrainNow" style="color:#ffd07a;text-decoration:underline;cursor:pointer" title="Reset all backoff timers and force an immediate drain pass">drain now</a></span>';
+    // on every entry to now(), un-parks poison entries, and kicks an immediate
+    // pass. Helpful when the queue gets stuck in a long exponential backoff
+    // after a transient server hiccup (added 2026-06-21 from Uilnayar's
+    // stalled-queue report).
+    const parkedTag = q.parked > 0 ? ' <span style="color:#d18a2d" title="Entries the bot keeps rejecting — parked to a slow retry lane so they don&rsquo;t block live uploads. Drain now to retry them at full speed.">(' + q.parked + ' parked)</span>' : '';
+    queueChip = ' · <span style="background:#3b2a06;color:#ffd07a;border:1px solid #d18a2d;border-radius:3px;font-size:11px;padding:2px 6px;margin-left:4px" title="' + esc(tip) + '">⏳ ' + q.pending + ' queued' + parkedTag + ' · <a href="#" id="wpDrainNow" style="color:#ffd07a;text-decoration:underline;cursor:pointer" title="Reset all backoff timers and force an immediate drain pass">drain now</a></span>';
   } else if (q.permanentDropped > 0 || q.capEvicted > 0) {
     const dropTip =
       (q.permanentDropped > 0 ? q.permanentDropped + ' permanent 4xx · ' : '') +
@@ -9119,7 +9171,8 @@ function renderHeader(s) {
       const kinds = j.byKind ? Object.entries(j.byKind).map(([k,n]) => k+':'+n).join(', ') : '';
       const msg = 'Drain kicked.\\n\\n' +
         'Reset backoff on: ' + (j.backoffReset || 0) + ' entries\\n' +
-        'Now pending: '      + (j.pending || 0) + '\\n' +
+        (j.unparked ? 'Un-parked (poison → full-speed retry): ' + j.unparked + '\\n' : '') +
+        'Now pending: '      + (j.pending || 0) + (j.parked ? ' (' + j.parked + ' parked)' : '') + '\\n' +
         (j.draining ? 'A drain pass is already running — give it a moment.\\n' : '') +
         (j.isUploader === false
           ? 'NOTE: this instance is read-only (another agent holds the uploader lock'
@@ -14228,10 +14281,16 @@ function startWebDashboard(port) {
       if (req.url === '/api/drain' && req.method === 'POST') {
         const now = Date.now();
         let resetCount = 0;
+        let unparkedCount = 0;
         for (const e of _uploadQueue) {
+          // "Drain now" is the operator's manual recovery lever — un-park every
+          // poison entry so it gets a fresh full-speed attempt (the bot bug that
+          // was rejecting it may have been fixed). They re-park on their own if
+          // they keep failing while the pipe is healthy.
+          if (e.parked) { e.parked = false; unparkedCount++; }
           if (e.next_try_at > now) { e.next_try_at = now; resetCount++; }
         }
-        if (resetCount > 0) {
+        if (resetCount > 0 || unparkedCount > 0) {
           try { _saveQueueToDisk(); } catch {}
         }
         // Fire-and-forget force pass — the drain itself awaits HTTP requests, we
@@ -14244,7 +14303,9 @@ function startWebDashboard(port) {
         return res.end(JSON.stringify({
           ok:           true,
           backoffReset: resetCount,
+          unparked:     unparkedCount,
           pending:      q.pending,
+          parked:       q.parked,
           byKind:       q.byKind,
           lastError:    q.lastError,
           maxAttempts:  q.maxAttempts,
