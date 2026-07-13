@@ -270,7 +270,11 @@
     // debuffs render once, pooled, in debuffBlock() below.
     var deb = suppressDeb ? '' : debuffBlock(t.debuffs);
     var ctTitle = pureOffTank ? 'held by an off-tank, not targeted' : (ct + ' raider' + (ct === 1 ? '' : 's') + ' targeting');
-    return '<div class="' + rowCls + '" title="' + ctTitle + '">'
+    // data-k: stable identity for the FLIP reorder animation (glide when a
+    // mob's raider-count changes its sort position). Same-name mobs stay
+    // distinct via dup_index; pets via owner.
+    var key = 'row:' + (t.name || '?') + '|' + (t.kind || '') + '|' + (t.dup_index || '') + '|' + (t.owner || '');
+    return '<div class="' + rowCls + '" data-k="' + esc(key) + '" title="' + ctTitle + '">'
       +    '<span class="' + ctCls + '">' + ctHtml + '</span>'
       +    '<span class="nm-wrap"><span class="nm">' + nm + '</span></span>'
       +    '<span class="hp ' + tier + '">' + hpTxt + '</span>'
@@ -347,7 +351,7 @@
         renderedGroup[t.name] = true;
         for (var j = 0; j < grp.length; j++) html += rowHtml(grp[j], true);   // rows w/o per-mob debuffs
         var pooled = pooledDebuffs(grp);
-        if (pooled.length) html += debuffBlock(pooled, 'on one of these ' + grp.length + ':');
+        if (pooled.length) html += debuffBlock(pooled, 'on one of these ' + grp.length + ':').replace('<div class="debuffs">', '<div class="debuffs" data-k="pool:' + esc(t.name) + '">');
       } else {
         html += rowHtml(t, false);
       }
@@ -355,8 +359,31 @@
     // Byte-stability guard (2026-07-07 review): identical HTML -> skip the
     // innerHTML re-layout AND the autofit IPC round-trip.
     if (rowsEl.__wpHtml !== html) {
+      // FLIP reorder animation (Uilnayar #7): rows glide to their new sort
+      // position when raider-count changes instead of jumping. Capture each
+      // keyed child's top BEFORE the swap, then translate it from there to 0.
+      // Node identity is lost across innerHTML, but position is keyed by
+      // data-k so the glide is still correct; new rows just appear.
+      var oldTops = {};
+      for (var oc = 0; oc < rowsEl.children.length; oc++) {
+        var och = rowsEl.children[oc], ok = och.getAttribute('data-k');
+        if (ok) oldTops[ok] = och.getBoundingClientRect().top;
+      }
       rowsEl.innerHTML = html;
       rowsEl.__wpHtml = html;
+      var moved = [];
+      for (var nc = 0; nc < rowsEl.children.length; nc++) {
+        var nch = rowsEl.children[nc], nk = nch.getAttribute('data-k');
+        if (nk && oldTops[nk] != null) {
+          var d = oldTops[nk] - nch.getBoundingClientRect().top;
+          if (Math.abs(d) > 1) { nch.style.transition = 'none'; nch.style.transform = 'translateY(' + d + 'px)'; moved.push(nch); }
+        }
+      }
+      if (moved.length) {
+        requestAnimationFrame(function(){ requestAnimationFrame(function(){
+          for (var mc = 0; mc < moved.length; mc++) { moved[mc].style.transition = 'transform 200ms ease'; moved[mc].style.transform = ''; }
+        }); });
+      }
       try { window.mimic && window.mimic.autoFitOverlay && window.mimic.autoFitOverlay(document.getElementById('wrap')); } catch (e) {}
     }
     footEl.style.display = anyAmb ? 'block' : 'none';
