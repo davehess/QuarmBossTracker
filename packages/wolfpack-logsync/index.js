@@ -6429,11 +6429,13 @@ async function _drainUploadQueue(opts = {}) {
     const due     = [...live, ...back].slice(0, QUEUE_MAX_PER_DRAIN_PASS);
 
     let stateChanged = false;
-    for (const entry of due) {
-      const result = await _doOneUpload(entry);
+    // Apply one upload result to the queue (splice on success/permanent-fail,
+    // backoff on transient). Factored out of the old serial loop so the
+    // parallel version below can reuse it verbatim — queue MUTATION stays
+    // single-threaded (JS is single-threaded; only the network I/O overlaps).
+    const applyResult = (entry, result) => {
       const idx = _uploadQueue.indexOf(entry);
-      if (idx === -1) continue; // dropped under us (queue cap)
-
+      if (idx === -1) return; // dropped under us (queue cap)
       if (result.ok) {
         _uploadQueue.splice(idx, 1);
         try { _onUploadSuccess(entry, result.body); } catch {}
@@ -6471,6 +6473,27 @@ async function _drainUploadQueue(opts = {}) {
         }
         stateChanged = true;
       }
+    };
+
+    // PARALLEL drain (Uilnayar 2026-07-13, raid queue backup): the old serial
+    // for-await sent ONE upload at a time and waited its full timeout before
+    // starting the next — so on a congested raid-night link (net: timeout) the
+    // drain couldn't keep pace with the inflow and the queue only grew. Fire
+    // uploads in bounded-concurrency chunks so slow round-trips overlap; the
+    // network I/O is independent per entry and every upload is idempotent
+    // (dedup_key + find_or_create_encounter), so concurrency is safe. Live
+    // entries stay ahead of backfill (due[] is already ordered), and queue
+    // mutation is applied serially after each chunk resolves. Tunable; default 5.
+    const CONCURRENCY = Math.max(1, Math.min(12, parseInt(process.env.WP_QUEUE_CONCURRENCY, 10) || 5));
+    for (let i = 0; i < due.length; i += CONCURRENCY) {
+      const chunk = due.slice(i, i + CONCURRENCY);
+      const settled = await Promise.all(
+        chunk.map(entry => _doOneUpload(entry).then(
+          result => ({ entry, result }),
+          err => ({ entry, result: { ok: false, statusCode: null, body: String(err && err.message || err) } }),
+        )),
+      );
+      for (const { entry, result } of settled) applyResult(entry, result);
     }
     if (stateChanged) {
       _saveQueueToDisk();
