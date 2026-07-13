@@ -61,6 +61,10 @@
     background:rgba(163,113,247,0.16);border:1px solid rgba(163,113,247,0.4);color:#d2a8ff;
     white-space:nowrap}
   .debuffs .chip .rem{color:#9aa4ad;margin-left:3px}
+  /* Pooled-group label — "on one of these N:" caption before the shared
+     same-name debuff chips. Reads as a caption, not a debuff. */
+  .debuffs .chip.pool-lbl{background:none;border:none;color:#8b949e;font-style:italic;
+    padding:0 2px 0 0;cursor:help}
   /* Hurt rows (player/pet missing >15% for >10s) — red accent + ⚠ badge. */
   .row.hurt{background:rgba(248,113,113,0.12);border-left-color:#f87171}
   .row .warn{display:inline-flex;align-items:center;gap:2px;color:#fca5a5;font-size:9px;
@@ -206,7 +210,33 @@
   function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]; }); }
   function hpTier(h){ if (h == null) return 'unk'; if (h >= 60) return 'hi'; if (h >= 30) return 'mid'; return 'lo'; }
 
-  function rowHtml(t){
+  // Render a debuff-chip block from a debuff array. `label` (optional) prefixes
+  // the block — used for the pooled same-name group ("on one of these N").
+  function debuffBlock(debuffs, label){
+    if (!debuffs || !debuffs.length) return '';
+    var s = '<div class="debuffs">';
+    if (label) s += '<span class="chip pool-lbl" title="Same-name mobs share one name on the Zeal pipe, so these debuffs can\'t be pinned to a specific one — shown pooled for the group.">' + esc(label) + '</span>';
+    for (var i = 0; i < debuffs.length; i++) {
+      var d = debuffs[i];
+      var rem = (d.remaining_secs != null) ? '<span class="rem">' + d.remaining_secs + 's</span>' : '';
+      s += '<span class="chip">' + esc(d.name) + rem + '</span>';
+    }
+    return s + '</div>';
+  }
+  // Union the debuffs across a same-name group, deduped by name (keep the max
+  // remaining time seen), so the pooled block shows each unique debuff once.
+  function pooledDebuffs(group){
+    var byName = {};
+    for (var g = 0; g < group.length; g++) {
+      var ds = group[g].debuffs || [];
+      for (var i = 0; i < ds.length; i++) {
+        var d = ds[i], k = String(d.name || '').toLowerCase();
+        if (!byName[k] || (d.remaining_secs || 0) > (byName[k].remaining_secs || 0)) byName[k] = d;
+      }
+    }
+    return Object.keys(byName).map(function(k){ return byName[k]; });
+  }
+  function rowHtml(t, suppressDeb){
     var kind = t.kind || 'npc';
     var tier = hpTier(t.hp_pct);
     var named = (kind === 'npc' && t.is_named);
@@ -234,17 +264,11 @@
     var ctCls = pureOffTank ? 'ct offtank-ct' : 'ct';
     var hpTxt = (t.hp_pct != null ? Math.round(t.hp_pct) + '%' : '—');
     var bw = (t.hp_pct != null ? Math.max(0, Math.min(100, t.hp_pct)) : 0);
-    // Debuff chips.
-    var deb = '';
-    if (t.debuffs && t.debuffs.length) {
-      deb = '<div class="debuffs">';
-      for (var i = 0; i < t.debuffs.length; i++) {
-        var d = t.debuffs[i];
-        var rem = (d.remaining_secs != null) ? '<span class="rem">' + d.remaining_secs + 's</span>' : '';
-        deb += '<span class="chip">' + esc(d.name) + rem + '</span>';
-      }
-      deb += '</div>';
-    }
+    // Debuff chips. Suppressed for members of a same-name group — the pipe
+    // can't attribute a debuff to a SPECIFIC same-name mob, so showing them
+    // divided per row is false precision (Uilnayar 2026-07-13). The group's
+    // debuffs render once, pooled, in debuffBlock() below.
+    var deb = suppressDeb ? '' : debuffBlock(t.debuffs);
     var ctTitle = pureOffTank ? 'held by an off-tank, not targeted' : (ct + ' raider' + (ct === 1 ? '' : 's') + ' targeting');
     return '<div class="' + rowCls + '" title="' + ctTitle + '">'
       +    '<span class="' + ctCls + '">' + ctHtml + '</span>'
@@ -301,9 +325,32 @@
     cntEl.textContent = cntTxt;
     var html = '';
     var anyAmb = false;
+    // Group same-name mobs (ambiguous / same_name_count>1) so their debuffs
+    // pool into ONE block instead of being falsely divided per row (Uilnayar
+    // 2026-07-13). HP rows stay per-mob (HP is reliable per target). Members
+    // render together at the first member's sort position; other kinds render
+    // normally.
+    var groupsByName = {};
+    for (var gi = 0; gi < targets.length; gi++) {
+      var gt = targets[gi];
+      if (gt.ambiguous || (gt.same_name_count && gt.same_name_count > 1)) {
+        (groupsByName[gt.name] = groupsByName[gt.name] || []).push(gt);
+      }
+    }
+    var renderedGroup = {};
     for (var i = 0; i < targets.length; i++) {
-      html += rowHtml(targets[i]);
-      if (targets[i].ambiguous) anyAmb = true;
+      var t = targets[i];
+      if (t.ambiguous) anyAmb = true;
+      var grp = groupsByName[t.name];
+      if (grp && grp.length > 1) {
+        if (renderedGroup[t.name]) continue;   // group already emitted
+        renderedGroup[t.name] = true;
+        for (var j = 0; j < grp.length; j++) html += rowHtml(grp[j], true);   // rows w/o per-mob debuffs
+        var pooled = pooledDebuffs(grp);
+        if (pooled.length) html += debuffBlock(pooled, 'on one of these ' + grp.length + ':');
+      } else {
+        html += rowHtml(t, false);
+      }
     }
     // Byte-stability guard (2026-07-07 review): identical HTML -> skip the
     // innerHTML re-layout AND the autofit IPC round-trip.
