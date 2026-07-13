@@ -2262,6 +2262,16 @@ function petBuffsForOwner(ownerLower) {
 const _buffLandingsByTarget = new Map();   // targetLower → Map<spellLower,{name,dur_ticks,landed_at}>
 function recordTargetBuffLanding(bcEvt) {
   if (!bcEvt || !bcEvt.spell_name || !bcEvt.target) return;
+  // Instant spells — nukes, stuns, dispels (Abolish Enchantment), interrupts,
+  // gates — have NO lasting effect and must never linger on the target as a
+  // debuff / "fell off" cue (Uilnayar 2026-07-13). They leak in via
+  // resolveSelfCastLanding (matches ANY self-cast by landing text, ungated on
+  // duration). Catalog buffduration + formula both non-timed = instant → drop.
+  // Charm spells are exempt (cast_on_other NULL, synthesized with is_charm_spell).
+  if (!bcEvt.is_charm_spell) {
+    const _cat = _spellByNameLower.get(String(bcEvt.spell_name).toLowerCase());
+    if (_cat && !_isTimedDurationFormula(_cat.durf) && !(Number(_cat.dur) > 0)) return;
+  }
   const k = String(bcEvt.target).toLowerCase();
   let mp = _buffLandingsByTarget.get(k);
   if (!mp) { mp = new Map(); _buffLandingsByTarget.set(k, mp); }
