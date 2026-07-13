@@ -3292,6 +3292,17 @@ async function _handleAgentChat(req, res) {
   const guildChId = process.env.GUILD_CHAT_CHANNEL_ID;
   const raidChId  = process.env.RAID_CHAT_CHANNEL_ID;
   let posted = 0;
+  // DEFERRED Discord sends (2026-07-13, raid-night hardening): the per-line
+  // relay used to await channels.fetch + ch.send INSIDE this handler, so a
+  // rate-limited channel (a raid's "111" count-off burst pins the per-channel
+  // 5-msgs/5s bucket) held the agent's connection open until its 30s client
+  // timeout → retry → queue growth. The sync pass below now only DECIDES and
+  // COLLECTS each send as a job; the jobs run sequentially (chat order
+  // matters) after the 200 goes back. Dedup stays sync (_chatDedup is set in
+  // the loop before any job runs), and the Supabase chat_messages mirror
+  // stays pre-ack as the durability boundary — only Discord presentation
+  // moves off the agent's clock.
+  const chatSendJobs = [];
 
   // Module has no top-level supabase binding — every consumer requires it
   // locally. The uploader-characters query below referenced a bare `supabase`
@@ -3576,6 +3587,14 @@ async function _handleAgentChat(req, res) {
     //   • DISTINCT REPEAT: both copies are authoritative with different names
     //     → two people genuinely typed the same text; post this one too
     //     (the old text-only dedup silently swallowed raid "111" count-offs).
+    // Deferred send job — decision + heal + post, verbatim from the old
+    // inline version (continue → return). Evaluating the alreadyRelayed
+    // branch at RUN time (not collection time) is deliberate: jobs execute
+    // sequentially after the ack, so an earlier job's `relayEntry.msg = sent`
+    // is visible to a later heal check exactly as it was inline. relayEntry
+    // is a per-iteration binding and its _chatRelayDedup registration already
+    // happened synchronously above, so batch-internal dedup is unchanged.
+    chatSendJobs.push(async () => {
     if (alreadyRelayed) {
       const sameName = String(relayEntry.speaker || '').toLowerCase() === effectiveSpeaker.toLowerCase();
       const distinctRepeat = !sameName && relayEntry.source === 'line' && speakerSource === 'line';
@@ -3592,12 +3611,12 @@ async function _handleAgentChat(req, res) {
       }
       // Fall through to post when this is a genuine second utterance, or when
       // the guessed copy never actually reached Discord (nothing to heal).
-      if (!distinctRepeat && !(healable && !relayEntry.msg)) continue;
+      if (!distinctRepeat && !(healable && !relayEntry.msg)) return;
     }
 
     try {
       const ch = await client.channels.fetch(channelId).catch(() => null);
-      if (!ch) continue;
+      if (!ch) return;
       const sent = await ch.send(`${tsPrefix}**${safeSpeaker}**${whoTag}: ${safeText}`);
       relayEntry.at = Date.now();
       relayEntry.speaker = effectiveSpeaker;
@@ -3607,6 +3626,7 @@ async function _handleAgentChat(req, res) {
     } catch (err) {
       console.warn(`[chat-relay] failed to post to ${channel}:`, err?.message);
     }
+    });   // end deferred send job
   }
 
   // Best-effort fun_events flush — pottymouth + drunkard for /fun leaderboards.
@@ -3655,7 +3675,17 @@ async function _handleAgentChat(req, res) {
 
   _trackUpload({ endpoint: 'chat', character: payload?.character, agentVersion: payload?.agent_version, payloadBytes: total, agentState: payload?.agent_state || null, uploadedBy: identity.discord_id });
   res.writeHead(200, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify({ ok: true, posted }));
+  // `posted` = jobs queued for Discord (nothing reads this field — the agent
+  // only checks the status code). Actual sends run below, after the ack.
+  res.end(JSON.stringify({ ok: true, posted: chatSendJobs.length }));
+  // Run the Discord sends AFTER the agent has its 200 — sequentially, because
+  // chat order matters (and the heal path relies on earlier jobs' relayEntry
+  // updates). A rate-limited channel now slows only this background chain,
+  // never the agent's upload pipe.
+  if (chatSendJobs.length > 0) {
+    (async () => { for (const job of chatSendJobs) await job(); })()
+      .catch(err => console.warn('[chat-relay] deferred send chain failed:', err?.message));
+  }
 }
 
 // ── PVP broadcast relay ────────────────────────────────────────────────────
@@ -9709,6 +9739,15 @@ async function _handleAgentTrigger(req, res) {
   const now = Date.now();
   let posted = 0, spoken = 0;
   let ch = null;
+  // DEFERRED (2026-07-13, raid-night hardening): dedup + rate caps stay sync,
+  // but the Discord I/O — ch.send and especially _playVoiceTrigger (voice
+  // connect + TTS transcode can take SECONDS) — is collected as jobs and run
+  // after the 200. Two wins: the agent's upload pipe never waits on Discord,
+  // and a _playVoiceTrigger throw (previously UNWRAPPED — it 500'd the agent
+  // into retry, a poison-payload source) is now contained per-job. Rate is
+  // charged on ACCEPT rather than on send success — stricter, and correct
+  // for a cap meant to bound the firehose.
+  const triggerJobs = [];
   for (const ev of triggers) {
     const message = String(ev?.message || '').trim().slice(0, 300);
     if (!message) continue;
@@ -9723,39 +9762,49 @@ async function _handleAgentTrigger(req, res) {
     _triggerDedup.set(dedupKey, now);
 
     if (mode === 'voice') {
-      // Voice playback STUB. Real impl in commit B (adds @discordjs/voice +
-      // ffmpeg + TTS engines). Logging the fire here makes the chain
-      // verifiable now — set RAID_VOICE_CHANNEL_ID and the bot log shows
-      // exactly what would speak, when, from whom.
-      if (!voiceCh) {
-        // No channel configured — drop silently. Caller still gets an OK.
-      } else {
-        await _playVoiceTrigger({
-          message,
-          voiceId:     ev?.voice_id || null,
-          channelId:   voiceCh,
-          uploadedBy:  identity.discord_id,
-          triggerName: ev?.name || null,
-        });
-        spoken++;
-        _triggerRate.set(identity.discord_id, [...rate, now]);
-      }
+      // No channel configured — drop silently. Caller still gets an OK.
+      if (!voiceCh) continue;
+      _triggerRate.set(identity.discord_id, [...rate, now]);
+      spoken++;
+      triggerJobs.push(async () => {
+        try {
+          await _playVoiceTrigger({
+            message,
+            voiceId:     ev?.voice_id || null,
+            channelId:   voiceCh,
+            uploadedBy:  identity.discord_id,
+            triggerName: ev?.name || null,
+          });
+        } catch (err) {
+          console.warn('[trigger] voice play failed:', err?.message);
+        }
+      });
       continue;
     }
 
     if (!postCh) continue; // post mode but no channel — drop
-    try {
-      if (!ch) ch = await client.channels.fetch(postCh).catch(() => null);
-      if (!ch || typeof ch.send !== 'function') break;
-      await ch.send({ content: message, allowedMentions: { parse: [] } });
-      posted++;
-      _triggerRate.set(identity.discord_id, [...rate, now]);
-    } catch (err) {
-      console.warn('[trigger] post failed:', err?.message);
-    }
+    _triggerRate.set(identity.discord_id, [...rate, now]);
+    posted++;
+    triggerJobs.push(async () => {
+      try {
+        if (!ch) ch = await client.channels.fetch(postCh).catch(() => null);
+        if (!ch || typeof ch.send !== 'function') return;
+        await ch.send({ content: message, allowedMentions: { parse: [] } });
+      } catch (err) {
+        console.warn('[trigger] post failed:', err?.message);
+      }
+    });
   }
   res.writeHead(200, { 'Content-Type': 'application/json' });
+  // Counts now mean "accepted for delivery" (nothing reads them — the agent
+  // only checks the status code); the sends run below, after the ack.
   res.end(JSON.stringify({ ok: true, posted, spoken }));
+  // Sequential so countdown marks keep their order; per-job try/catch above
+  // means one bad fire can't stop the rest.
+  if (triggerJobs.length > 0) {
+    (async () => { for (const job of triggerJobs) await job(); })()
+      .catch(err => console.warn('[trigger] deferred chain failed:', err?.message));
+  }
 }
 
 // ── Cross-Mimic trigger relay handlers ────────────────────────────────────
@@ -10572,6 +10621,16 @@ async function _handleAgentUpload(req, res) {
   //
   // Also posts/edits a session leaderboard card showing all-night running totals.
   const testThreadId = process.env.AUTOPARSE_TEST_THREAD_ID;
+  // DEFERRED (2026-07-13, raid-night hardening): all Discord card work is
+  // captured in this closure and fired AFTER the 200 goes back to the agent.
+  // It used to run inline — channel fetch + send/edit awaited before the ack —
+  // so a Discord slowdown (rate limits on a busy card night) held every
+  // agent's upload connection open until it hit the client's 30s timeout,
+  // retried, and backed up the queue. Discord is presentation, not the record
+  // (Supabase recordParse below stays pre-ack as the durability boundary);
+  // agents must never wait on it. Body unchanged from the inline version —
+  // verified free of return/res/req so deferral can't change handler flow.
+  const _postParseCardsDeferred = async () => {
   if (testThreadId && players.length > 0 && !isBackfill) {
     try {
       const testThread = await client.channels.fetch(testThreadId).catch(() => null);
@@ -10961,6 +11020,7 @@ async function _handleAgentUpload(req, res) {
       console.warn('[agent] session leaderboard post failed:', err?.message);
     }
   }
+  };   // end _postParseCardsDeferred — fired after the 200, see below
 
   // ── Match boss against bosses.json, then mirror /parse instance behavior:
   //    write to parses.json, record the kill, update the board ─────────────────
@@ -11193,6 +11253,12 @@ async function _handleAgentUpload(req, res) {
     latest_agent_version:  _currentAgentVersion(),
     requested_characters:  requestedChars,
   }));
+  // Discord card work runs AFTER the agent has its ack — a rate-limited or
+  // slow Discord must never stall the upload pipe mid-raid (see the closure
+  // definition above). Interior try/catches handle per-card failures; this
+  // catch is the backstop so an unexpected throw can't become an unhandled
+  // rejection.
+  _postParseCardsDeferred().catch(err => console.warn('[agent] deferred card work failed:', err?.message));
 }
 
 http.createServer(async (req, res) => {
