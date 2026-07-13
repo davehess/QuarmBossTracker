@@ -1,6 +1,30 @@
 [build]
 builder = "DOCKERFILE"
 dockerfilePath = "Dockerfile"
+# Only rebuild/redeploy the BOT when files the bot actually depends on change.
+# Railway's Dockerfile does `COPY . .`, so before this every push to main —
+# including web-only (Vercel) and beta-graduation (agent/Mimic) changes —
+# rebuilt and bounced the bot (~30-45s down). Mid-raid that stalled agent
+# uploads and backed up client queues (Hitya raid-night 2026-07-13).
+#
+# Gitignore-style, evaluated from repo root. We include EVERYTHING (`**`) then
+# subtract the sibling components that deploy elsewhere or aren't bot runtime:
+#   web/      → Vercel        apps/     → Mimic (GitHub Actions)
+#   packages/ → agent (bundled in Mimic / release-parser.yml)
+#   docs/ releases/ experiments/ → non-code
+# Negations REQUIRE the preceding `**` include (Railway rule). This errs toward
+# deploying: any NEW top-level bot dir is auto-included, so we never silently
+# skip a real bot deploy — only the known non-bot trees are excluded.
+# (config-as-code watchPatterns OVERRIDE any dashboard Watch Paths setting.)
+watchPatterns = [
+  "**",
+  "!web/**",
+  "!apps/**",
+  "!packages/**",
+  "!docs/**",
+  "!releases/**",
+  "!experiments/**",
+]
 
 [deploy]
 startCommand = "node index.js"
