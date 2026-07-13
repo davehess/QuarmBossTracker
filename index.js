@@ -7017,79 +7017,73 @@ async function _postCriticalNotices() {
 }
 setInterval(() => { _postCriticalNotices().catch(() => {}); }, 60_000);
 
-// ── Mimic release announcements (Uilnayar 2026-07-11) ───────────────────────
-// Every Mimic release gets a post in MIMIC_RELEASE_CHANNEL_ID: short summary,
-// 🧪 Beta / ✅ Release tag, installer link. First run backfills one summary per
-// x.y line to date. State (backfill flag + last-announced tag) persists in
-// data/mimic-announce.json (Railway volume, atomic write).
-const _MIMIC_ANNOUNCE_FILE = require('path').join(__dirname, 'data', 'mimic-announce.json');
-const _MIMIC_BACKFILL = [
-  ['1.0', 'stable', 'v1.0.8',  'The first Mimic: DPS HUD, trigger alerts with TTS, charm + pet trackers, bundled auto-updating agent.'],
-  ['1.1', 'stable', 'v1.1.2',  'Trigger overlay upgrades — countdown timers, timing-feedback votes — plus Mob Info drop tables and overlay fixes.'],
-  ['1.2', 'stable', 'v1.2.0',  'Per-character overlay profiles (each toon remembers its own overlay set) and the per-overlay opacity engine.'],
-  ['1.3', 'beta',   'v1.3.4',  'Tank overlay refocused on the Main Tank, threat meter moved to real hate formulas, moveable/lockable overlays without restart.'],
-  ['1.4', 'stable', 'v1.4.9',  'UI Studio v2 (macro editor + resolution rescale), overlay bounds that survive monitor changes, /who overlay.'],
-  ['1.5', 'stable', 'v1.5.0',  'Buff + debuff/cure queue overlay with severity sort, remote overlay tuning from /admin/overlays, CH chain overlay.'],
-  ['1.6', 'stable', 'v1.6.0',  'Mimic Mail (guild notices in the dashboard), Melody + Zeal health overlays, web UI Studio on wolfpack.quest.'],
-  ['1.7', 'stable', 'v1.7.3',  'The big one: PoP raid slideshow with shared objectives, auto-arrange around your EQ windows, 5 color themes, class-default setups for new installs, Command Center + Extended Target + roll tracker, opt-in crash reports.'],
-];
-function _mimicAnnState() {
-  try { return JSON.parse(require('fs').readFileSync(_MIMIC_ANNOUNCE_FILE, 'utf8')); } catch { return {}; }
-}
-function _mimicAnnSave(st) {
+// ── Mimic release announcements (Uilnayar 2026-07-11; re-homed to Supabase
+// 2026-07-13) ────────────────────────────────────────────────────────────────
+// Posts one embed in MIMIC_RELEASE_CHANNEL_ID when a new STABLE Mimic release
+// ships. The dedup cursor (last-announced tag) lives in Supabase bot_kv — the
+// old local data/mimic-announce.json was wiped on every Railway restart, so the
+// announcer re-posted its whole history on each bounce (the 2026-07-13 spam).
+//
+// Stable-only on purpose: betas auto-increment several times a day and reach
+// testers via electron-updater, so announcing every -beta.N would just be spam
+// in a new form. The one-time historical backfill was REMOVED (it already ran,
+// twice over) — going forward this only ever posts genuinely-new stable tags.
+const _MIMIC_ANN_KEY = 'mimic_announce';
+async function _mimicAnnState() {
+  const supabase = require('./utils/supabase');
   try {
-    const fs = require('fs');
-    fs.writeFileSync(_MIMIC_ANNOUNCE_FILE + '.tmp', JSON.stringify(st));
-    fs.renameSync(_MIMIC_ANNOUNCE_FILE + '.tmp', _MIMIC_ANNOUNCE_FILE);
+    const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+    const rows = await supabase.select('bot_kv',
+      `guild_id=eq.${encodeURIComponent(guildId)}&key=eq.${_MIMIC_ANN_KEY}&select=value&limit=1`);
+    const row = Array.isArray(rows) && rows[0];
+    if (row && row.value && typeof row.value === 'object') return row.value;
+  } catch (e) { console.warn('[mimic-announce] state read failed:', e?.message); }
+  return {};
+}
+async function _mimicAnnSave(st) {
+  const supabase = require('./utils/supabase');
+  try {
+    const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+    await supabase.upsert('bot_kv',
+      [{ guild_id: guildId, key: _MIMIC_ANN_KEY, value: st, updated_at: new Date().toISOString() }],
+      'guild_id,key');
   } catch (e) { console.warn('[mimic-announce] state save failed:', e?.message); }
 }
 async function _announceMimicReleases() {
   const chId = process.env.MIMIC_RELEASE_CHANNEL_ID || '1525569949551300729';
   const ch = await client.channels.fetch(chId).catch(() => null);
   if (!ch) return;
-  const st = _mimicAnnState();
-  const { EmbedBuilder } = require('discord.js');
-  const REL = 'https://github.com/davehess/QuarmBossTracker/releases';
-  if (!st.backfillDone) {
-    for (const [line, kind, tag, blurb] of _MIMIC_BACKFILL) {
-      const emb = new EmbedBuilder()
-        .setColor(kind === 'beta' ? 0xd4a72c : 0x56d364)
-        .setTitle((kind === 'beta' ? '🧪 Beta' : '✅ Release') + ' — Mimic ' + line)
-        .setDescription(blurb + '\n[Download](' + REL + '/tag/' + tag + ') · [all releases](' + REL + ')');
-      await ch.send({ embeds: [emb], allowedMentions: { parse: [] } }).catch(e => console.warn('[mimic-announce] backfill post failed:', e?.message));
-    }
-    st.backfillDone = true;
-    st.lastTag = 'v1.7.3';   // backfill covers through the 1.7.3 stable
-    _mimicAnnSave(st);
-    console.log('[mimic-announce] backfill posted');
-    return;
-  }
-  // Steady state: announce the newest GitHub release once.
+  const st = await _mimicAnnState();
+  // Require a seeded cursor. A failed/empty Supabase read returns {} — treating
+  // THAT as "nothing announced yet" is exactly the old spam (ephemeral state
+  // read empty on every restart). The cursor is seeded in bot_kv (migration
+  // 20260713050000), so a missing lastTag means Supabase is unreachable → bail
+  // rather than risk re-posting.
+  if (!st || !st.lastTag) return;
+  // Newest STABLE (non-prerelease, non-draft) release.
   const rel = await new Promise((resolve) => {
     const https = require('https');
-    https.get({ hostname: 'api.github.com', path: '/repos/davehess/QuarmBossTracker/releases?per_page=1',
+    https.get({ hostname: 'api.github.com', path: '/repos/davehess/QuarmBossTracker/releases?per_page=20',
       headers: { 'User-Agent': 'wolfpack-bot', 'Accept': 'application/vnd.github+json' }, timeout: 10000 },
-      (res) => { let b = ''; res.on('data', c => b += c); res.on('end', () => { try { resolve(JSON.parse(b)[0] || null); } catch { resolve(null); } }); }
+      (res) => { let b = ''; res.on('data', c => b += c); res.on('end', () => { try { const arr = JSON.parse(b); resolve((Array.isArray(arr) ? arr : []).find(r => r && !r.prerelease && !r.draft) || null); } catch { resolve(null); } }); }
     ).on('error', () => resolve(null)).on('timeout', function () { this.destroy(); resolve(null); });
   });
   if (!rel || !rel.tag_name || rel.tag_name === st.lastTag) return;
+  const { EmbedBuilder } = require('discord.js');
+  const REL = 'https://github.com/davehess/QuarmBossTracker/releases';
   const exe = (rel.assets || []).find(a => /\.exe$/i.test(a.name));
   const summary = String(rel.body || '').split('\n').filter(l => l.trim()).slice(0, 4).join('\n').slice(0, 800);
   const emb = new EmbedBuilder()
-    .setColor(rel.prerelease ? 0xd4a72c : 0x56d364)
-    .setTitle((rel.prerelease ? '🧪 Beta' : '✅ Release') + ' — Mimic ' + rel.tag_name)
-    .setDescription((summary || rel.name || '') + '\n[Download](' + (exe ? exe.browser_download_url : rel.html_url) + ')');
+    .setColor(0x56d364)
+    .setTitle('✅ Release — Mimic ' + rel.tag_name)
+    .setDescription((summary || rel.name || '') + '\n[Download](' + (exe ? exe.browser_download_url : rel.html_url) + ') · [all releases](' + REL + ')');
   const sent = await ch.send({ embeds: [emb], allowedMentions: { parse: [] } }).catch(() => null);
-  if (sent) { st.lastTag = rel.tag_name; _mimicAnnSave(st); console.log('[mimic-announce] announced', rel.tag_name); }
+  if (sent) { st.lastTag = rel.tag_name; await _mimicAnnSave(st); console.log('[mimic-announce] announced', rel.tag_name); }
 }
-// DISABLED 2026-07-13: this re-posted the whole backfill on every bot restart
-// (the local data/mimic-announce.json state did NOT survive Railway restarts,
-// and the bot restarted many times during a release-heavy night → the channel
-// got spammed with the 8 backfill embeds over and over). Kept behind an env
-// gate so it can't run until the state is re-homed in a proven-durable store
-// (utils/state.js / Supabase) — see the follow-up task. Set
-// MIMIC_RELEASE_ANNOUNCE=1 only after that rework lands.
-if (process.env.MIMIC_RELEASE_ANNOUNCE === '1') {
+// Re-enabled 2026-07-13 after re-homing the dedup cursor to Supabase (bot_kv).
+// On by default; set MIMIC_RELEASE_ANNOUNCE=0 to silence. Backfill removed and
+// the cursor seeded caught-up (v1.8.0), so a restart can no longer re-spam.
+if (process.env.MIMIC_RELEASE_ANNOUNCE !== '0') {
   setTimeout(() => { _announceMimicReleases().catch(() => {}); }, 45_000);
   setInterval(() => { _announceMimicReleases().catch(() => {}); }, 15 * 60_000);
 }
