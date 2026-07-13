@@ -135,8 +135,13 @@ Rules that keep them married:
   era subdivision. Era-thread routing in `_handleAgentChat` and
   `commands/initerathreads.js` are deprecated.
 - **PoP expansion locked until `2026-10-01`** via `isPopLocked()` in
-  `utils/config.js`. PoP boss buttons return ephemeral lock messages. After
-  unlock: run `/board`, refresh `pqdiUrl`s via `/addboss`.
+  `utils/config.js`. PoP boss buttons return ephemeral lock messages, and the
+  automated relays (`/api/agent/bosskill`, `/api/agent/lockout`) skip locked
+  bosses too — PVP-event lockouts named for the war gods ("Tallon Zek" /
+  "Vallon Zek") name-match Plane of Tactics bosses and used to synthesize
+  timers onto the locked board (2026-07-13). A startup sweep clears any timer
+  that leaks onto a locked boss. After unlock: run `/board`, refresh
+  `pqdiUrl`s via `/addboss`.
 - **`encounters.zone_short`**: `eqemu_npc_types.zone_short` is NULL across the
   catalog (sync doesn't pull spawn data). Historical rows were backfilled from
   `data/bosses.json`; `find_or_create_encounter` still doesn't set zone on

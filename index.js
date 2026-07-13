@@ -4393,6 +4393,18 @@ async function _handleAgentBossKill(req, res) {
 
     const killedAt = ts ? Date.parse(ts) : Date.now();
 
+    // PoP is locked until 2026-10-01 — the manual paths (buttons, /kill,
+    // /updatetimer) already enforce this, but this automated relay didn't,
+    // and PVP-event content shares names with PoP bosses (the war gods:
+    // "Tallon Zek" / "Vallon Zek" are both PVP-event entities AND Plane of
+    // Tactics bosses in bosses.json). Uilnayar 2026-07-13: bogus Tactics
+    // timers appeared on the locked PoP board. Date-gated, so this relay
+    // starts working for PoP the moment the expansion unlocks.
+    if (boss && isPopLocked(boss)) {
+      console.log(`[bosskill] ignoring "${boss.name}" kill relay — PoP locked until 2026-10-01`);
+      continue;
+    }
+
     if (boss) {
       // Record kill and refresh all tracker cards
       recordKill(boss.id, boss.timerHours, character, killedAt);
@@ -6369,6 +6381,16 @@ async function _handleAgentLockout(req, res) {
       (b.nicknames || []).some(n => n.toLowerCase() === nameLower)
     );
     if (!boss) continue;
+    // PoP locked until 2026-10-01: /sll lockout entries from PVP events carry
+    // the war gods' names ("Tallon Zek"/"Vallon Zek") and name-match the
+    // Plane of Tactics bosses — without this gate the relay SYNTHESIZED kills
+    // for locked PoP bosses from those lockouts (Uilnayar 2026-07-13, the
+    // exact source of the bogus 17h Tactics timers). Date-gated; goes live
+    // for PoP automatically at unlock.
+    if (isPopLocked(boss)) {
+      console.log(`[lockout] ignoring "${boss.name}" lockout relay — PoP locked until 2026-10-01`);
+      continue;
+    }
 
     const nextSpawn   = Date.now() + remainingMs;
     const existing    = getBossState(boss.id);
@@ -7138,6 +7160,39 @@ if (process.env.MIMIC_RELEASE_ANNOUNCE !== '0') {
   setTimeout(() => { _announceMimicReleases().catch(() => {}); }, 45_000);
   setInterval(() => { _announceMimicReleases().catch(() => {}); }, 15 * 60_000);
 }
+
+// ── PoP-lock timer sweep (Uilnayar 2026-07-13) ──────────────────────────────
+// One-shot at startup: clear any active timer on a PoP-locked boss. The
+// automated ingest relays (bosskill + /sll lockout) historically had no lock
+// gate, and PVP-event lockouts named for the war gods ("Tallon Zek" /
+// "Vallon Zek") matched the Plane of Tactics bosses and synthesized timers
+// onto the locked PoP board. The relays are gated now; this sweep cleans up
+// what already leaked in — necessary because every MANUAL clear path
+// (/updatetimer, board buttons) is itself PoP-locked, so an officer can't
+// remove the bogus timers by hand. No-op once PoP unlocks (isPopLocked is
+// date-based) and no-op when state is clean.
+setTimeout(() => {
+  try {
+    const { getBossState, clearKill } = require('./utils/state');
+    const { postKillUpdate } = require('./utils/killops');
+    let cleared = 0;
+    for (const b of getBosses()) {
+      if (!isPopLocked(b)) continue;
+      const st = getBossState(b.id);
+      if (st && (st.killedAt || st.nextSpawn)) {
+        clearKill(b.id);
+        cleared++;
+        console.log(`[pop-lock] cleared leaked timer on locked PoP boss "${b.name}"`);
+        if (process.env.TIMER_CHANNEL_ID) {
+          postKillUpdate(client, process.env.TIMER_CHANNEL_ID, b.id).catch(() => {});
+        }
+      }
+    }
+    if (cleared > 0) console.log(`[pop-lock] startup sweep cleared ${cleared} locked-boss timer(s)`);
+  } catch (err) {
+    console.warn('[pop-lock] sweep failed:', err?.message);
+  }
+}, 60_000);
 
 // ── Pre-raid health check (Uilnayar 2026-07-13, raid-night hardening) ───────
 // At 7:30pm ET on raid nights (Sun/Wed/Thu), probe every dependency the raid
