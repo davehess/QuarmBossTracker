@@ -21,13 +21,13 @@
      breakdown's "(142×, ~21/hit)" annotation read as dim/secondary as intended. */
   .opacity-70{opacity:0.7}
   .title{display:flex;align-items:center;gap:8px;
-    font-size:12px;color:#f8b87b;text-shadow:0 1px 2px #000;margin-bottom:5px;}
+    font-size:12px;color:#f8b87b;text-shadow:-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000,0 1px 2px #000;margin-bottom:5px;}
   .title .who{font-size:11px;color:#9aa4ad;font-weight:normal}
   .title .badge{font-size:9px;border:1px solid rgba(255,255,255,0.2);border-radius:3px;
     padding:1px 4px;color:#9aa4ad;letter-spacing:0.5px}
   .card{background:rgb(0 0 0 / var(--bg-alpha));border-radius:5px;padding:5px 7px;margin-bottom:4px}
   .card .head{font-size:10px;color:#9aa4ad;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:2px;
-    text-shadow:0 1px 2px #000}
+    text-shadow:-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000,0 1px 2px #000}
   .hpwrap{position:relative;height:14px;background:#222;border-radius:3px;overflow:hidden;
     border:1px solid rgba(255,255,255,0.06)}
   .hpbar{position:absolute;left:0;top:0;bottom:0;background:linear-gradient(to right,#56d364,#56d364);
@@ -41,16 +41,16 @@
   .hpbar.gold{background:linear-gradient(to right,#f0c419,#d4a017)}
   .hpbar.inv-soon{background:linear-gradient(to right,#56d364,#2ea043);box-shadow:0 0 8px rgba(86,211,100,0.9) inset}
   .hpwrap .val{position:absolute;left:0;right:0;top:0;bottom:0;display:flex;align-items:center;justify-content:center;
-    font-size:10px;color:#fff;text-shadow:0 1px 2px #000;font-weight:600}
+    font-size:10px;color:#fff;text-shadow:-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000,0 1px 2px #000;font-weight:600}
   .hpwrap .inv-tag{position:absolute;top:0;bottom:0;display:flex;align-items:center;
-    font-size:9px;font-weight:800;letter-spacing:0.5px;color:#fff;text-shadow:0 1px 2px #000;z-index:2}
+    font-size:9px;font-weight:800;letter-spacing:0.5px;color:#fff;text-shadow:-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000,0 1px 2px #000;z-index:2}
   .hpwrap .inv-tag.l{left:4px}
   .hpwrap .inv-tag.r{right:4px}
   .da{display:flex;align-items:center;gap:6px;padding:5px 7px;background:rgba(31,75,140,0.5);
     border:1px solid #4287f5;border-radius:5px;margin-bottom:4px;font-size:11px}
   .da.crit{background:rgba(220,38,38,0.45);border-color:#f87171;animation:flash 0.6s linear infinite alternate}
   .da .sec{font-size:13px;font-weight:700;color:#fff;font-variant-numeric:tabular-nums}
-  .da .call{font-size:10px;color:#fff;text-shadow:0 1px 2px #000}
+  .da .call{font-size:10px;color:#fff;text-shadow:-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000,0 1px 2px #000}
   @keyframes flash{from{box-shadow:0 0 8px rgba(248,113,113,0.9)}to{box-shadow:0 0 16px rgba(248,113,113,0.4)}}
   .enrage{display:flex;align-items:center;gap:6px;padding:4px 7px;background:rgba(140,72,31,0.45);
     border:1px solid #f0a52d;border-radius:5px;margin-bottom:4px;font-size:11px}
@@ -69,7 +69,7 @@
   .ds-total{font-size:13px;color:#56d364;font-variant-numeric:tabular-nums;font-weight:700}
   .ds-total .avg{color:#7ee787;font-weight:700}
   .ds-total .hits{color:#9aa4ad;font-weight:400;font-size:10px}
-  .ds-breakdown{font-size:10px;color:#9aa4ad;text-shadow:0 1px 2px #000;line-height:1.4}
+  .ds-breakdown{font-size:10px;color:#9aa4ad;text-shadow:-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000,0 1px 2px #000;line-height:1.4}
   /* DS sources — which of the tank's CURRENT buffs are a KNOWN damage-shield
      spell (catalog SPA-59 lookup), and its designed per-hit value. EQ's combat
      log can't say which buff caused a given reflect line, so this is the one
@@ -92,7 +92,7 @@
   .offheal-row .oh-mob{color:#9aa4ad;font-size:9px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .offheal-row .oh-hp{font-variant-numeric:tabular-nums;font-weight:700;flex-shrink:0}
   .oh-hp.hi{color:#56d364} .oh-hp.mid{color:#f0b429} .oh-hp.lo{color:#f87171}
-  #empty{color:rgba(255,255,255,0.5);font-size:11px;text-shadow:0 1px 2px #000;padding:3px 0;text-align:center}
+  #empty{color:rgba(255,255,255,0.5);font-size:11px;text-shadow:-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000,0 1px 2px #000;padding:3px 0;text-align:center}
   /* drag/lock/setup chrome — shared pattern. */
   #drag-controls{display:none;position:fixed;top:4px;left:4px;gap:4px;z-index:60}
   body.unlocked #drag-controls{display:flex}
