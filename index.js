@@ -7004,6 +7004,27 @@ async function _overlayClassSets() {
   await _refreshOverlayTuningCache();
   return _overlayTuningCache.classSets;
 }
+// ── Mid-raid load-shed kill switches (Uilnayar 2026-07-13) ──────────────────
+// Officers can shed a misbehaving/flooding ingest stream DURING a raid with
+// no deploy and no agent update: set `flag_shed_<kind>` to 1 in the tuning
+// editor (/admin/overlays — same numbers-only jsonb the overlay knobs use;
+// 0 or delete to restore, live within the 60s tuning cache). A shedded kind
+// is 200-acked and dropped BEFORE auth/body work — the cheapest possible
+// path, so shedding actually relieves pressure instead of moving it.
+// Ephemeral, latest-wins streams only (casting, live-state, threat-snapshot,
+// raid-roster): dropping them mid-raid costs a stale overlay panel, never
+// durable data. The 200 (not 4xx/5xx) matters: agents treat it as delivered
+// and move on — no retries, no queue growth, no parked entries.
+async function _isShedded(kind, res) {
+  let tune = {};
+  try { tune = await _overlayTuningMap(); } catch { /* fail-open: never shed on error */ }
+  if (Number(tune[`flag_shed_${kind}`]) >= 1) {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true, shed: kind }));
+    return true;
+  }
+  return false;
+}
 // ── Mimic Mail — guild notices (Uilnayar 2026-07-07) ────────────────────────
 // Officer broadcasts from /admin/notices (mimic_notices table). Served to
 // every agent alongside the overlay tuning (same poll, zero new timers) →
@@ -7117,6 +7138,107 @@ if (process.env.MIMIC_RELEASE_ANNOUNCE !== '0') {
   setTimeout(() => { _announceMimicReleases().catch(() => {}); }, 45_000);
   setInterval(() => { _announceMimicReleases().catch(() => {}); }, 15 * 60_000);
 }
+
+// ── Pre-raid health check (Uilnayar 2026-07-13, raid-night hardening) ───────
+// At 7:30pm ET on raid nights (Sun/Wed/Thu), probe every dependency the raid
+// leans on and post ONE green/red line to Discord — so a wedged GoTrue or a
+// slow DB surfaces at setup time, not at the first CH chain. Probes:
+//   • Discord gateway latency (client.ws.ping — no round trip)
+//   • Supabase REST/Postgres (timed Tier-1 select)
+//   • Supabase Auth / GoTrue (its own /auth/v1/health — the 2026-07-13 killer)
+//   • wolfpack.quest /api/health (Vercel's vantage: site up + its own auth/db view)
+// Once-per-day latch lives in bot_kv (survives restarts — the announcer's
+// local-file latch failure is exactly the bug class this avoids). Channel:
+// PRERAID_CHECK_CHANNEL_ID, falling back to the officer parse thread.
+const _PRERAID_KV_KEY = 'preraid_check';
+async function _timedProbe(url, timeoutMs = 5000) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  const started = Date.now();
+  try {
+    const r = await fetch(url, { cache: 'no-store', signal: ctrl.signal });
+    const ms = Date.now() - started;
+    let body = null;
+    try { body = await r.json(); } catch { /* non-JSON is fine for health probes */ }
+    return { ok: r.status < 500, status: r.status, ms, body };
+  } catch {
+    return { ok: false, status: 0, ms: Date.now() - started, body: null };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+async function _preRaidHealthCheck() {
+  const chId = process.env.PRERAID_CHECK_CHANNEL_ID || process.env.AUTOPARSE_TEST_THREAD_ID;
+  if (!chId) return;
+  const ch = await client.channels.fetch(chId).catch(() => null);
+  if (!ch) return;
+
+  const supabase = require('./utils/supabase');
+  const SLOW_MS = 1200;
+  const mark = (ok, ms) => ok ? (ms > SLOW_MS ? '⚠' : '✅') : '🛑';
+
+  // Discord gateway — already-measured heartbeat latency.
+  const wsPing = Math.round(client.ws?.ping ?? -1);
+  const discordLine = `${wsPing >= 0 && wsPing < 400 ? '✅' : '⚠'} Discord ${wsPing}ms`;
+
+  // Postgres/PostgREST via the service-role client the bot actually uses.
+  const dbStart = Date.now();
+  const dbRows = await supabase.select('eqemu_zone', 'select=id&limit=1').catch(() => null);
+  const dbMs = Date.now() - dbStart;
+  const dbOk = Array.isArray(dbRows);
+  const dbLine = `${mark(dbOk, dbMs)} DB ${dbMs}ms`;
+
+  // GoTrue — independent of Postgres, and the thing that actually wedged.
+  const auth = process.env.SUPABASE_URL
+    ? await _timedProbe(`${process.env.SUPABASE_URL}/auth/v1/health`)
+    : { ok: false, status: 0, ms: 0 };
+  const authLine = `${mark(auth.ok, auth.ms)} Auth ${auth.ms}ms`;
+
+  // The site, from outside — its /api/health separates auth vs db from
+  // Vercel's vantage point.
+  const site = await _timedProbe('https://wolfpack.quest/api/health');
+  const siteDetail = site.body && site.body.checks
+    ? ` (auth ${site.body.checks.auth?.state || '?'} · db ${site.body.checks.db?.state || '?'})`
+    : '';
+  const siteLine = `${mark(site.ok, site.ms)} wolfpack.quest ${site.ms}ms${siteDetail}`;
+
+  const lines = [discordLine, dbLine, authLine, siteLine];
+  const anyBad = lines.some(l => l.startsWith('🛑'));
+  const anySlow = lines.some(l => l.startsWith('⚠'));
+  const verdict = anyBad
+    ? '🛑 **Something is down — investigate before the pull.**'
+    : anySlow
+      ? '⚠ Slow but alive — keep an eye on it.'
+      : 'All green — good hunting. 🐺';
+  await ch.send({
+    content: `🐺 **Pre-raid check** — ${lines.join(' · ')}\n${verdict}`,
+    allowedMentions: { parse: [] },
+  }).catch(err => console.warn('[preraid] post failed:', err?.message));
+}
+setInterval(async () => {
+  try {
+    const { nowPartsInTz } = require('./utils/timezone');
+    const p = nowPartsInTz('America/New_York');
+    const raidDay = ['sunday', 'wednesday', 'thursday'].includes(p.dayOfWeek);
+    // 5-minute firing window so a restart at 19:31 doesn't skip the night.
+    if (!raidDay || p.hour !== 19 || p.minute < 30 || p.minute > 34) return;
+    const today = `${p.year}-${String(p.month).padStart(2, '0')}-${String(p.day).padStart(2, '0')}`;
+    const supabase = require('./utils/supabase');
+    const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+    const rows = await supabase.select('bot_kv',
+      `guild_id=eq.${encodeURIComponent(guildId)}&key=eq.${_PRERAID_KV_KEY}&select=value&limit=1`);
+    const st = (Array.isArray(rows) && rows[0]?.value) || {};
+    if (st.lastRunDate === today) return;   // already ran tonight
+    // Latch FIRST (a failed post shouldn't retry every minute for 5 minutes
+    // and quintuple-post on a flaky Discord).
+    await supabase.upsert('bot_kv',
+      [{ guild_id: guildId, key: _PRERAID_KV_KEY, value: { lastRunDate: today }, updated_at: new Date().toISOString() }],
+      'guild_id,key');
+    await _preRaidHealthCheck();
+  } catch (err) {
+    console.warn('[preraid] scheduler pass failed:', err?.message);
+  }
+}, 60_000);
 
 // GET /api/agent/overlay-tuning — bearer-auth'd override object for agents,
 // with active guild notices riding along (Mimic Mail; agents 3.2.0+ read
@@ -11595,6 +11717,7 @@ http.createServer(async (req, res) => {
   }
 
   if (req.method === 'POST' && req.url === '/api/agent/live-state') {
+    if (await _isShedded('live_state', res)) return;
     try { return await _handleAgentLiveState(req, res); }
     catch (err) {
       console.error('[live-state] handler error:', err);
@@ -11604,6 +11727,7 @@ http.createServer(async (req, res) => {
   }
 
   if (req.method === 'POST' && req.url === '/api/agent/raid-roster') {
+    if (await _isShedded('raid_roster', res)) return;
     try { return await _handleAgentRaidRoster(req, res); }
     catch (err) {
       console.error('[raid-roster] handler error:', err);
@@ -11667,6 +11791,7 @@ http.createServer(async (req, res) => {
   }
 
   if (req.method === 'POST' && req.url === '/api/agent/casting') {
+    if (await _isShedded('casting', res)) return;
     try { return await _handleAgentCasting(req, res); }
     catch (err) {
       console.error('[casting] handler error:', err);
@@ -11864,6 +11989,7 @@ http.createServer(async (req, res) => {
   }
 
   if (req.method === 'POST' && req.url === '/api/agent/threat-snapshot') {
+    if (await _isShedded('threat_snapshot', res)) return;
     try { return await _handleAgentThreatSnapshot(req, res); }
     catch (err) {
       console.error('[threat-snap] handler error:', err);

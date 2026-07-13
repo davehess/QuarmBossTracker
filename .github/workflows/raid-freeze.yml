@@ -1,0 +1,47 @@
+# Raid-night deploy freeze — a LOUD TRIPWIRE, not a gate.
+#
+# Railway and Vercel deploy on push regardless of workflow outcomes, so this
+# can't physically stop a deploy — it turns the push red and notifies, so a
+# push during the raid window is a deliberate act instead of a habit. The
+# 2026-07-13 raid taught us why: web-only pushes used to bounce the bot
+# (fixed via railway.toml watchPatterns), and the release-announcer spam was
+# amplified by mid-raid restarts. The enforcement for Claude sessions lives
+# in CLAUDE.md ("never push to main during a raid window"); this catches
+# everyone else.
+#
+# Window (generous around the official Sun/Wed/Thu 8:30–11:30pm ET raids):
+#   Sun/Wed/Thu 19:30 ET  →  next-day 00:30 ET
+# Escape hatch: include [hotfix] in the commit message — mid-raid fixes are
+# exactly what SHOULD ship during the window when something is broken.
+name: raid-freeze
+on:
+  push:
+    branches: [main]
+
+jobs:
+  check-window:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail loudly on non-hotfix pushes during the raid window
+        env:
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
+        run: |
+          if printf '%s' "$COMMIT_MSG" | grep -qi '\[hotfix\]'; then
+            echo "::notice::[hotfix] push — raid-freeze waived."
+            exit 0
+          fi
+          # ET wall clock (DST-correct via tzdata).
+          DOW=$(TZ=America/New_York date +%a)    # Sun, Mon, ...
+          HHMM=$(TZ=America/New_York date +%H%M) # 24h, zero-padded
+          IN_WINDOW=0
+          case "$DOW" in
+            Sun|Wed|Thu) [ "$HHMM" -ge 1930 ] && IN_WINDOW=1 ;;
+          esac
+          case "$DOW" in
+            Mon|Thu|Fri) [ "$HHMM" -lt 0030 ] && IN_WINDOW=1 ;;
+          esac
+          if [ "$IN_WINDOW" = "1" ]; then
+            echo "::error::RAID-NIGHT FREEZE: it is $DOW $HHMM ET — pushes to main during Sun/Wed/Thu raids restart production while the guild depends on it. If this is a deliberate mid-raid fix, amend the commit message to include [hotfix]."
+            exit 1
+          fi
+          echo "Outside the raid window ($DOW $HHMM ET) — all clear."

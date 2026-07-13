@@ -63,6 +63,16 @@ and the **bug fixes at the bottom**. This is what a raider reads (mirrors the
 `/onboarding` CHANGELOGS in tone) — keep it human, not a git log. Bump
 `web/package.json` for the roadmap edit like any web change.
 
+### Raid-night deploy freeze (Uilnayar 2026-07-13)
+**Never push to `main` during a raid window: Sun/Wed/Thu 19:30 ET → 00:30 ET.**
+Any main push restarts production surfaces the raid depends on (and mid-raid
+restarts are what amplified the 2026-07-13 queue backup + announcer spam).
+Beta pushes are fine (Mimic updates are pull-based). If something is broken
+*during* the raid and the fix must ship now, include `[hotfix]` in the commit
+message — that's also the escape hatch for the `raid-freeze.yml` tripwire
+(advisory red X; Railway/Vercel deploy on push regardless). Stage everything
+else on a working branch and land it after midnight ET.
+
 ### Migrations
 Timestamped `YYYYMMDDHHMMSS_description.sql` in `supabase/migrations/`,
 idempotent (`IF NOT EXISTS`). The GitHub integration auto-applies on merge to
@@ -201,6 +211,14 @@ raiders only, same-zone first, tank-HP priority, curse-counter sort),
 
 Payload limits: chat 256KB, encounter 10MB. Returns 503 if
 `WOLFPACK_AGENT_TOKEN` unset.
+
+**Mid-raid load-shed:** the ephemeral streams (`casting`, `live-state`,
+`threat-snapshot`, `raid-roster`) can be shed live — set `flag_shed_<kind>`
+(snake_case, e.g. `flag_shed_live_state`) to `1` in the `/admin/overlays`
+tuning editor; the bot 200-acks-and-drops that stream within its 60s tuning
+cache, no deploy or agent update. `0`/delete restores. Discord posting is
+deferred post-ack in the `encounter`/`chat`/`trigger` handlers (v3.0.166) —
+agents never wait on Discord.
 
 ### Background jobs
 Spawn checker (5 min; also PvP/live/quake checks, stale-alert suppression
