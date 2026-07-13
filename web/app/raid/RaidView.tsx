@@ -636,8 +636,13 @@ export default function RaidView({
           <ComingSoon />
         </div>
 
-        {/* Side panel — character detail (real buffs/HP-slots/zone). */}
-        <aside className="bg-panel border border-border rounded-lg p-3 text-xs self-start">
+        {/* Side panel — character detail (real buffs/HP-slots/zone). Sticky on
+            wide layouts so it tracks the viewport: click a raider near the
+            bottom of a long roster and the detail stays in view instead of
+            rendering way up at the column top. Own max-height + internal scroll
+            so a tall detail (many buffs) is still fully reachable while pinned.
+            Mobile (single column) stacks normally — no sticky. */}
+        <aside className="bg-panel border border-border rounded-lg p-3 text-xs self-start lg:sticky lg:top-4 lg:max-h-[calc(100vh-2rem)] lg:overflow-y-auto">
           {!selected ? (
             <div className="text-dim text-center py-10">
               Click a raider to see their full buff state, missing slots, and a one-tap <code>/target</code> copy.
