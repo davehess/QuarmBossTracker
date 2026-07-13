@@ -4945,12 +4945,24 @@ ipcMain.handle('overlay-auto-height', (e, h) => {
     const stash = win.__wpPreMenuBounds;
     const stashFresh = !!(stash && (Date.now() - stash.at) < 60_000);
     win.__wpPreMenuBounds = null;
+    const growsUp = _overlayGrowsUp(win);
     let y = bounds.y;
-    if (_overlayGrowsUp(win)) {
+    let clampedAtTop = false;
+    if (growsUp) {
       const anchorBottom = stashFresh ? (stash.y + stash.height) : (bounds.y + bounds.height);
-      y = Math.max(disp.workArea.y, anchorBottom - target);
+      const wantY = anchorBottom - target;
+      y = Math.max(disp.workArea.y, wantY);
+      clampedAtTop = y > wantY;   // couldn't grow up any further — hit the screen top
     } else if (stashFresh) {
       y = stash.y;
+    }
+    // Temporary grow-up diagnostic (Uilnayar 2026-07-13 "grows downward"): one
+    // line per resize while grow-up is enabled, so a live repro shows whether
+    // the branch fired and whether it clamped at the screen top (= overlay is
+    // parked too high to grow up). Remove once confirmed.
+    if (growsUp) {
+      let key = null; for (const [k, w] of _overlayEntries()) if (w === win) { key = k; break; }
+      appendAgentLog(`[grow-up] ${key} h ${bounds.height}->${target} y ${bounds.y}->${y}${clampedAtTop ? ' CLAMPED-AT-TOP(no room above)' : ''} workAreaY=${disp.workArea.y}\n`);
     }
     win.setBounds({ x: bounds.x, y, width: bounds.width, height: target });
     return true;
