@@ -2372,6 +2372,52 @@ function _zealTargetForChar(charLower) {
   }
   return null;
 }
+// ── Auto-Raid Invite lead detection (Uilnayar 2026-07-13) ───────────────────
+// The raid leader who turns on in-game Auto-Raid invite IS who members should
+// /who for an auto-invite. Two self-lines drive it (from that char's own log):
+//   "You are now the leader of the raid."   → this char is raid leader
+//   "Auto-Raid invite enabled."             → ARI on
+//   "Auto-Raid invite disabled."            → ARI off
+//   "<Name> is now the leader of your raid." / "You are no longer the leader…"
+//                                           → this char lost raid lead
+// When a char is leader AND enabled we report {character, active:true} so the
+// bot auto-sets /autoraidinvite; when that stops, {active:false}. Only the
+// LIVE tail calls this (never backfill — a replayed old "you are now leader"
+// must not set a stale ARI). State-change-gated so the queue isn't spammed.
+const _ariCharState = new Map();   // charLower → { leader, enabled, name }
+let _ariReportedActive = null;     // charLower currently reported active, or null
+function trackAriLeadLine(line, character) {
+  if (!line || !character) return;
+  const key = String(character).toLowerCase();
+  const get = () => { let s = _ariCharState.get(key); if (!s) { s = { leader: false, enabled: false, name: character }; _ariCharState.set(key, s); } s.name = character; return s; };
+  if (/\bYou are now the leader of the raid\b/i.test(line)) {
+    get().leader = true;
+    for (const [k, o] of _ariCharState) if (k !== key) o.leader = false;   // only one raid leader
+  } else if (/\bAuto-Raid invite enabled\b/i.test(line)) {
+    get().enabled = true;
+  } else if (/\bAuto-Raid invite disabled\b/i.test(line)) {
+    get().enabled = false;
+  } else if (/\bis now the leader of your raid\b/i.test(line) || /\bYou are no longer (?:the |a )?(?:raid )?leader\b/i.test(line)) {
+    for (const [, o] of _ariCharState) o.leader = false;
+  } else {
+    return;   // not an ARI-relevant line
+  }
+  // Current ARI-active char = the one that is BOTH leader and enabled.
+  let activeKey = null, activeName = null;
+  for (const [k, o] of _ariCharState) if (o.leader && o.enabled) { activeKey = k; activeName = o.name; break; }
+  if (activeKey === _ariReportedActive) return;   // no change since last report
+  if (activeKey) {
+    _ariReportedActive = activeKey;
+    enqueueUpload('ari_lead', { agent_version: AGENT_VERSION, character: activeName, active: true });
+    console.log(`[ari] ${activeName} is raid leader with Auto-Raid invite ON — reporting as ARI lead`);
+  } else if (_ariReportedActive) {
+    const prevName = (_ariCharState.get(_ariReportedActive) || {}).name || _ariReportedActive;
+    enqueueUpload('ari_lead', { agent_version: AGENT_VERSION, character: prevName, active: false });
+    _ariReportedActive = null;
+    console.log(`[ari] ${prevName} no longer raid leader + ARI — reporting clear`);
+  }
+}
+
 // "You begin casting/singing <Spell>." — shared by noteSelfCast (landing
 // attribution) and relaySelfCastForCasting (cross-client Casting relay).
 const _CAST_BEGIN_RX = /\]\s+You begin (?:casting|singing)\s+(.+?)\.\s*$/i;
@@ -6101,6 +6147,7 @@ function _endpointForKind(kind, botUrl) {
     case 'trigger_relay':   return base + '/trigger-relay';
     case 'quake':           return base + '/quake';
     case 'casting':         return base + '/casting';
+    case 'ari_lead':        return base + '/ari-lead';
     case 'crash_report':    return base + '/crash_report';
     default:                return botUrl;
   }
@@ -22123,6 +22170,9 @@ async function main() {
         // /random rolls + the loot-link roll-number convention — feeds the
         // Command Center Rolls card + the dashboard roll table. Local-only.
         if (!_sourceExcluded) { try { trackRollLine(line, b.character); trackRollItemLine(line); } catch {} }
+        // Auto-Raid Invite lead — raid-leader + ARI-enabled self-lines → the
+        // bot auto-sets /autoraidinvite to this character. Live tail only.
+        if (!_sourceExcluded) { try { trackAriLeadLine(line, b.character); } catch {} }
 
         // /pet health output (Quarm: standalone HP line + bare buff names in the
         // owner's own log). Feeds the per-owner pet buff SET + HP. Pure local UI
