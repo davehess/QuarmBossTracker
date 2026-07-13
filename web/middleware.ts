@@ -82,15 +82,26 @@ export async function middleware(request: NextRequest) {
   // + page-view purposes. Protected pages run their own getUser server-side and
   // redirect if genuinely unauthed, so this softens the refresh without
   // weakening access control — and recovers automatically when auth is healthy.
+  // Load-shed (2026-07-13 mid-raid): only touch GoTrue when there's actually a
+  // session to refresh. Anonymous visitors, bots, and RSC prefetches carry no
+  // Supabase auth cookie — for them getUser() would just return null after a
+  // full network round-trip, so during a raid-night traffic burst they pile
+  // useless load onto the auth service and help wedge it. Gate on cookie
+  // presence: no `sb-…-auth-token` cookie → skip the call entirely (user stays
+  // null, identical outcome, zero auth traffic). Real logged-in users are
+  // unaffected. This is what stops us AMPLIFYING a Supabase auth blip.
   let user: Awaited<ReturnType<typeof supabase.auth.getUser>>['data']['user'] = null;
-  try {
-    const res = await Promise.race([
-      supabase.auth.getUser(),
-      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('auth-timeout')), 3000)),
-    ]);
-    user = res.data.user;
-  } catch {
-    user = null;
+  const hasAuthCookie = request.cookies.getAll().some(c => /^sb-.*-auth-token(\.\d+)?$/.test(c.name));
+  if (hasAuthCookie) {
+    try {
+      const res = await Promise.race([
+        supabase.auth.getUser(),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('auth-timeout')), 3000)),
+      ]);
+      user = res.data.user;
+    } catch {
+      user = null;
+    }
   }
 
   // Page-view logging — only on real, authenticated GETs to non-skipped paths.
