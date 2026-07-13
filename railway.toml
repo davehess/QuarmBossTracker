@@ -24,6 +24,7 @@ watchPatterns = [
   "!docs/**",
   "!releases/**",
   "!experiments/**",
+  "!supabase/**",   # migrations apply via the GitHub↔Supabase integration — no bot restart needed
 ]
 
 [deploy]

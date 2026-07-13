@@ -393,6 +393,12 @@ columns), `character_live_state`, `buff_casts` (+ `is_charm_spell`),
 
 RPCs: `find_or_create_encounter(p_guild_id, p_npc_id, p_started_at,
 p_duration, p_window_min)` and `merge_encounter_players(p_encounter_id)`.
+The find-or-create dedup has a sequential-kill splitter (damage ≥ 0.9×catalog
+HP + new start past the matched fight's window → separate encounter) that
+additionally requires the matched encounter to be a CONFIRMED kill
+(`ended_at` set) — an unconfirmed engagement can't have respawned, so a
+dispel/FD reset that full-heals the mob knits into ONE kill instead of two
+cards (Lord of Ire, 2026-07-13).
 Views: `eqemu_npc_drops`, `item_with_proc`, `character_data_floor`,
 `character_rollup_coverage`, `who_directory`.
 
