@@ -49,7 +49,7 @@ module.exports = {
         .setDescription(isOfficer
           ? `/who **${ari.character}** to find them in game.`
           : `Ping an officer in game for an invite — they'll get you in.`)
-        .setFooter({ text: `Set by ${ari.setByName || 'an officer'}` })
+        .setFooter({ text: ari.auto ? '🎯 auto-detected from the in-game raid window' : `Set by ${ari.setByName || 'an officer'}` })
         .setTimestamp(ari.setAt || null);
       if (isOfficer && ari.password) {
         embed.addFields({ name: 'Credential', value: `\`${ari.password}\``, inline: true });

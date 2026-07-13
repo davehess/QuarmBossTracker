@@ -9129,6 +9129,58 @@ async function _handleAgentLiveState(req, res) {
   }
 }
 
+// POST /api/agent/ari-lead — the agent detected, from the raid-leader's own
+// log, that a character is BOTH the raid leader ("You are now the leader of
+// the raid.") AND has in-game Auto-Raid invite enabled ("Auto-Raid invite
+// enabled."). That character IS who members should /who for an auto-invite,
+// so we auto-set the ARI to them (Uilnayar 2026-07-13: "this is what we go off
+// of for autoraidinvite"). Body: { character, active }. active:false (they
+// disabled ARI or lost raid lead) clears an AUTO-set ARI for that character —
+// never clobbers a manual /autoraidinvite set by an officer.
+async function _handleAgentAriLead(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const chunks = []; let total = 0;
+  for await (const chunk of req) { total += chunk.length; if (total > 8 * 1024) { res.writeHead(413); return res.end(); } chunks.push(chunk); }
+  let payload;
+  try { payload = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+  catch { res.writeHead(400); return res.end(JSON.stringify({ error: 'invalid JSON' })); }
+
+  const character = String(payload.character || '').trim();
+  if (!character) { res.writeHead(400); return res.end(JSON.stringify({ error: 'character required' })); }
+  const { getAri, setAri, clearAri } = require('./utils/state');
+  const cur = getAri();
+  const sameChar = cur && String(cur.character || '').toLowerCase() === character.toLowerCase();
+
+  if (payload.active) {
+    // Set (or refresh) the ARI to the detected raid leader. The live raid
+    // signal is authoritative for who's actually inviting, so it overrides a
+    // stale value — but skip the write if it's already this character (avoid
+    // churn/log spam). Password falls back to the env default, then any
+    // existing one.
+    if (!sameChar || !cur.auto) {
+      setAri({
+        character,
+        password:  process.env.ARI_DEFAULT_PASSWORD || (cur && cur.password) || null,
+        setBy:     identity.discord_id || null,
+        setByName: 'auto-detected (raid window)',
+        setAt:     Date.now(),
+        auto:      true,
+      });
+      console.log(`[ari] auto-set to ${character} (raid leader + ARI enabled), reported by ${identity.display_name || identity.discord_id}`);
+    }
+  } else {
+    // Deactivated (disabled ARI / lost raid lead). Only clear if the current
+    // ARI is the AUTO one for THIS character — never wipe an officer's manual set.
+    if (sameChar && cur.auto) {
+      clearAri();
+      console.log(`[ari] auto-cleared (${character} disabled Auto-Raid invite or lost raid lead)`);
+    }
+  }
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  return res.end(JSON.stringify({ ok: true }));
+}
+
 // POST /api/agent/quake — the agent parsed the in-game "The next earthquake will
 // begin in…" line and computed the absolute next-quake time. We dedup across
 // agents, mirror to Supabase (pvp_quake) for the web banner, and post/edit a
@@ -11504,6 +11556,15 @@ http.createServer(async (req, res) => {
     try { return await _handleAgentTrigger(req, res); }
     catch (err) {
       console.error('[trigger] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  if (req.method === 'POST' && req.url === '/api/agent/ari-lead') {
+    try { return await _handleAgentAriLead(req, res); }
+    catch (err) {
+      console.error('[ari-lead] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
     }
