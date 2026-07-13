@@ -7082,8 +7082,17 @@ async function _announceMimicReleases() {
   const sent = await ch.send({ embeds: [emb], allowedMentions: { parse: [] } }).catch(() => null);
   if (sent) { st.lastTag = rel.tag_name; _mimicAnnSave(st); console.log('[mimic-announce] announced', rel.tag_name); }
 }
-setTimeout(() => { _announceMimicReleases().catch(() => {}); }, 45_000);
-setInterval(() => { _announceMimicReleases().catch(() => {}); }, 15 * 60_000);
+// DISABLED 2026-07-13: this re-posted the whole backfill on every bot restart
+// (the local data/mimic-announce.json state did NOT survive Railway restarts,
+// and the bot restarted many times during a release-heavy night → the channel
+// got spammed with the 8 backfill embeds over and over). Kept behind an env
+// gate so it can't run until the state is re-homed in a proven-durable store
+// (utils/state.js / Supabase) — see the follow-up task. Set
+// MIMIC_RELEASE_ANNOUNCE=1 only after that rework lands.
+if (process.env.MIMIC_RELEASE_ANNOUNCE === '1') {
+  setTimeout(() => { _announceMimicReleases().catch(() => {}); }, 45_000);
+  setInterval(() => { _announceMimicReleases().catch(() => {}); }, 15 * 60_000);
+}
 
 // GET /api/agent/overlay-tuning — bearer-auth'd override object for agents,
 // with active guild notices riding along (Mimic Mail; agents 3.2.0+ read
