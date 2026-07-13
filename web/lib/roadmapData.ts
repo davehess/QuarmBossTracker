@@ -43,6 +43,26 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'raid-night-hardening',
+    title: '\u{1F6E1}️ Raid-night hardening',
+    version: 'Bot 3.0.167 · Web 1.0.212 · Agent 3.3.28 (beta)',
+    date: '2026-07-13',
+    headline: 'After Sunday’s speed bumps we went through everything the raid depends on and made it tougher: uploads can’t back up behind Discord anymore, a stuck upload can’t jam the queue, and the CH Chain overlay now TELLS you if it ever goes blind.',
+    features: [
+      { name: 'CH Chain trust banner', blurb: 'The chain overlay now watches its own data feed. If calls stop mid-fight it shows an amber “verify verbally” warning — and if the feed itself dies it flashes a red GO MANUAL banner and says so out loud, so clerics switch to the classic chain before a tank drops, not after.' },
+      { name: 'Uploads never wait on Discord', blurb: 'Your parser gets its “got it” immediately; posting parse cards and chat to Discord happens afterwards. Busy-night Discord slowdowns can’t back up your upload queue anymore.' },
+      { name: 'Stuck uploads get parked', blurb: 'If one bad upload keeps getting rejected, it moves to a slow lane instead of clogging everything behind it. “Drain now” retries parked items at full speed.' },
+      { name: 'Pre-raid health check', blurb: 'At 7:30pm on raid nights the bot checks Discord, the database, sign-in, and wolfpack.quest, and posts one green/red line — so problems surface at setup, not at the first pull.' },
+      { name: '/raid in the menu', blurb: 'The live raid page now sits in the main menu next to Buffs, and the character detail panel follows you as you scroll.' },
+    ],
+    fixes: [
+      'Web pushes no longer restart the bot mid-raid (this was the root of Sunday’s queue backups).',
+      'The Mimic release announcer is back — its memory now survives restarts, so no more repeat spam. Stable releases only.',
+      'wolfpack.quest rides out sign-in service hiccups instead of 504ing the whole site.',
+      'A failing voice trigger can’t make your parser retry forever anymore.',
+    ],
+  },
+  {
     key: 'mimic-180-stable',
     title: '\u{1F43A} Mimic 1.8.0 \u2014 overlay control center',
     version: 'Mimic 1.8.0 \u00b7 Agent 3.3.24',
