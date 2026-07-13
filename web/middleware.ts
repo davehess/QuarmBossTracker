@@ -73,7 +73,25 @@ export async function middleware(request: NextRequest) {
     },
   );
 
-  const { data: { user } } = await supabase.auth.getUser();
+  // Best-effort session refresh, but NEVER let a slow/degraded Supabase Auth
+  // (GoTrue) hang the request. This middleware runs on EVERY route, so an
+  // un-timed getUser() during an auth incident makes the WHOLE site 504
+  // (MIDDLEWARE_INVOCATION_TIMEOUT — observed 2026-07-13 mid-raid: GoTrue
+  // returned 504s/HTML while Postgres stayed healthy). Cap at 3s and fail
+  // open: on timeout/error we treat the request as anonymous for cookie-refresh
+  // + page-view purposes. Protected pages run their own getUser server-side and
+  // redirect if genuinely unauthed, so this softens the refresh without
+  // weakening access control — and recovers automatically when auth is healthy.
+  let user: Awaited<ReturnType<typeof supabase.auth.getUser>>['data']['user'] = null;
+  try {
+    const res = await Promise.race([
+      supabase.auth.getUser(),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('auth-timeout')), 3000)),
+    ]);
+    user = res.data.user;
+  } catch {
+    user = null;
+  }
 
   // Page-view logging — only on real, authenticated GETs to non-skipped paths.
   // Fire-and-forget: never await, so a slow insert can't delay the response.
