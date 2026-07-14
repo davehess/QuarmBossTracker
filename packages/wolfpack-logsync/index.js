@@ -7749,6 +7749,86 @@ function _zealExportOnCampState() {
   return _zealCampVal;
 }
 
+// EQ install dirs the agent knows about — WOLFPACK_EQ_DIR plus each watched
+// log's folder (the Logs/ parent). Shared by the checklist + the setup writer.
+function _eqSetupDirs() {
+  const dirs = new Set();
+  if (process.env.WOLFPACK_EQ_DIR) dirs.add(process.env.WOLFPACK_EQ_DIR);
+  for (const w of (stats.watchedLogs || [])) {
+    if (!w || !w.logPath) continue;
+    let d = path.dirname(w.logPath);
+    if (/^logs$/i.test(path.basename(d))) d = path.dirname(d);
+    dirs.add(d);
+  }
+  return [...dirs];
+}
+
+// Set-or-insert `key=value` under [section] in a Windows INI, preserving every
+// other line + the file's newline style. Creates the section if absent. Atomic
+// write (.tmp + rename). Returns { changed, existed } or null if unreadable.
+function _iniSetKey(filePath, section, key, value) {
+  let text;
+  try { text = fs.readFileSync(filePath, 'utf8'); } catch { return null; }
+  const nl = text.includes('\r\n') ? '\r\n' : '\n';
+  const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const secRx = new RegExp('^\\s*\\[' + esc(section) + '\\]\\s*$', 'i');
+  const keyRx = new RegExp('^\\s*' + esc(key) + '\\s*=', 'i');
+  const lines = text.split(/\r?\n/);
+  let inSec = false, secLine = -1, existed = false, changed = false;
+  for (let i = 0; i < lines.length; i++) {
+    if (/^\s*\[.+\]\s*$/.test(lines[i])) { inSec = secRx.test(lines[i]); if (inSec) secLine = i; continue; }
+    if (inSec && keyRx.test(lines[i])) {
+      existed = true;
+      const want = key + '=' + value;
+      if (lines[i].trim() !== want) { lines[i] = want; changed = true; }
+      break;
+    }
+  }
+  if (!existed) {
+    if (secLine >= 0) { lines.splice(secLine + 1, 0, key + '=' + value); }
+    else { if (lines.length && lines[lines.length - 1] !== '') lines.push(''); lines.push('[' + section + ']', key + '=' + value); }
+    changed = true;
+  }
+  if (changed) {
+    fs.writeFileSync(filePath + '.tmp', lines.join(nl));
+    fs.renameSync(filePath + '.tmp', filePath);
+  }
+  return { changed, existed };
+}
+
+// "Set up for me" — write the four settings that make data flow, across every
+// known EQ folder: zeal.ini ExportOnCamp/PipeDelay/PipeVerbose + eqclient.ini
+// Log. EQ REWRITES eqclient.ini on exit, so writing while it's running is lost —
+// refuse (rather than silently no-op) if a log updated in the last 90s, which
+// means a client is live. Returns a per-folder report the dashboard renders.
+// (Uilnayar 2026-07-14.)
+const _EQ_SETUP_KEYS = [
+  ['zeal.ini',     'Zeal',     'ExportOnCamp', 'TRUE'],
+  ['zeal.ini',     'Zeal',     'PipeDelay',    '100'],
+  ['zeal.ini',     'Zeal',     'PipeVerbose',  'TRUE'],
+  ['eqclient.ini', 'Defaults', 'Log',          'TRUE'],
+];
+function _applyEqSetup() {
+  const now = Date.now();
+  if ((stats.watchedLogs || []).some(w => w && w.lastSeen && (now - w.lastSeen) < 90_000)) {
+    return { ok: false, eqRunning: true, message: 'EverQuest looks like it is running (a log updated in the last 90 seconds). Close EQ first — it rewrites eqclient.ini on exit, so the change would be lost. Then click again.' };
+  }
+  const dirs = _eqSetupDirs();
+  if (!dirs.length) return { ok: false, message: 'No EQ folder known yet — point Mimic at your EverQuest folder in Settings first.' };
+  const folders = [];
+  for (const dir of dirs) {
+    const applied = [], notFound = [];
+    for (const [file, section, key, value] of _EQ_SETUP_KEYS) {
+      const r = _iniSetKey(path.join(dir, file), section, key, value);
+      if (r === null) { if (!notFound.includes(file)) notFound.push(file); continue; }
+      applied.push(key + '=' + value);
+    }
+    folders.push({ dir: path.basename(dir), applied, notFound });
+  }
+  _zealCampAt = 0;   // let the checklist re-probe ExportOnCamp immediately
+  return { ok: true, folders };
+}
+
 function _serializeForDashboard() {
   const healersOut = {};
   for (const [name, s] of Object.entries(stats.sessionHealers || {})) {
@@ -9413,7 +9493,39 @@ function renderSetupChecks(s) {
      + '<td style="white-space:nowrap;font-weight:600;color:var(--text)">miMIC in the Windows taskbar</td>'
      + '<td class="dim" style="font-size:11px">Drag the miMIC icon out of the hidden-icons arrow (the <b>^</b> next to the clock) onto the taskbar tray so it is always visible — Overlays, Restart agent, and updates all live in that tray menu.</td></tr>';
   h += '</table>';
+  // One-click writer for the EQ logging + Zeal export/pipe settings. The note
+  // is deliberate: EQ rewrites eqclient.ini on exit so it must be CLOSED, and
+  // the in-game equivalents are spelled out so a user can act live too.
+  h += '<div style="margin-top:8px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">'
+     + '<button class="wp-eq-setup" style="background:#1f6feb;color:#fff;border:0;border-radius:5px;padding:5px 12px;cursor:pointer;font-weight:600;font-size:12px">🔧 Set up for me</button>'
+     + '<span class="dim" style="font-size:11px">Writes <b>Log=TRUE</b> (eqclient.ini) + <b>ExportOnCamp</b> / <b>PipeDelay</b> / <b>PipeVerbose</b> (zeal.ini). <b>EQ must be CLOSED</b> — it overwrites eqclient.ini on exit. Live in-game: <code>/log on</code> starts logging this session; the Zeal settings apply when EQ restarts.</span>'
+     + '</div>';
   morphInto(el, h);
+  // Delegated so it survives the morphInto repaint; bound once.
+  if (!window.__wpEqSetupBound) {
+    window.__wpEqSetupBound = true;
+    document.addEventListener('click', async function (e) {
+      var btn = e.target && e.target.closest ? e.target.closest('.wp-eq-setup') : null;
+      if (!btn) return;
+      var orig = btn.textContent; btn.disabled = true; btn.textContent = 'Setting up…';
+      try {
+        var resp = await fetch('/api/eq-setup', { method: 'POST' });
+        var j = await resp.json();
+        if (j && j.eqRunning) { alert('⚠ ' + j.message); }
+        else if (!j || !j.ok) { alert('Could not set up: ' + ((j && j.message) || 'unknown error')); }
+        else {
+          var lines = (j.folders || []).map(function (f) {
+            var s2 = f.dir + ': ' + (f.applied || []).join(', ');
+            if (f.notFound && f.notFound.length) s2 += '  (missing: ' + f.notFound.join(', ') + ')';
+            return s2;
+          });
+          alert('✓ Done. Wrote:\\n' + lines.join('\\n') +
+            '\\n\\nEQ was closed, so these apply next launch. Right now you can type /log on in-game to start logging this session; the Zeal export/pipe settings take effect when EQ restarts.');
+        }
+      } catch (err) { alert('Setup request failed: ' + ((err && err.message) || err)); }
+      finally { btn.disabled = false; btn.textContent = orig; }
+    });
+  }
 }
 function renderDamageDoneCard(s) {
   const el = document.getElementById('wpDamageDone');
@@ -14353,6 +14465,14 @@ function startWebDashboard(port) {
         }
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ ok: true, name, class: klass }));
+      }
+      // "Set up for me" — write the EQ logging + Zeal export/pipe settings.
+      if (req.url === '/api/eq-setup' && req.method === 'POST') {
+        let result;
+        try { result = _applyEqSetup(); }
+        catch (e) { result = { ok: false, message: String((e && e.message) || e) }; }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify(result));
       }
       // Force a queue drain attempt right now. Used by the "Drain now" link
       // on the dashboard queue chip when a backlog appears stalled — resets
