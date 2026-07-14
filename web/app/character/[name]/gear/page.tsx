@@ -99,7 +99,16 @@ type ItemRow = {
   damage: number | null; delay: number | null; attack: number | null; haste: number | null;
   focus_effect: number | null; proc_effect: number | null; clickeffect: number | null; worneffect: number | null;
   clicktype: number | null; casttime: number | null; slots: number | null; classes: number | null;
+  str: number | null; sta: number | null; agi: number | null; dex: number | null;
+  wis: number | null; intel: number | null; cha: number | null;
+  fr: number | null; cr: number | null; mr: number | null; dr: number | null; pr: number | null;
 };
+
+// Base attribute cap this era (Luclin); PoP + its AAs raise it to 355. Applied
+// to the GEAR-ONLY stat sums as context — the true capped value needs base +
+// buffs (base-stat capture on death is the follow-up), so we show gear sums
+// labeled, not a false total-vs-cap.
+const STAT_CAP = 255;
 
 const SLOT_ORDER = [
   'Charm', 'Ear1', 'Head', 'Face', 'Ear2', 'Neck', 'Shoulders', 'Arms', 'Back',
@@ -143,7 +152,7 @@ async function load(decoded: string) {
   if (itemIds.length) {
     const { data: itemRows } = await sb
       .from('eqemu_items')
-      .select('id, name, ac, hp, mana, damage, delay, attack, haste, focus_effect, proc_effect, clickeffect, worneffect, clicktype, casttime, slots, classes')
+      .select('id, name, ac, hp, mana, damage, delay, attack, haste, focus_effect, proc_effect, clickeffect, worneffect, clicktype, casttime, slots, classes, str, sta, agi, dex, wis, intel, cha, fr, cr, mr, dr, pr')
       .in('id', itemIds);
     for (const it of (itemRows ?? []) as ItemRow[]) items[it.id] = it;
     const spellIds = [...new Set(
@@ -248,10 +257,16 @@ export default async function CharacterGearPage({ params }: { params: Promise<{ 
   // era's items (the item catalog has no columns for them), decoded above.
   let acSum = 0, hpSum = 0, manaSum = 0, atkSum = 0, hasteMax = 0, ftSum = 0, regenSum = 0;
   let hasteUnknownItems = 0;
+  // Attribute + resist sums from GEAR ONLY (not base/buffs). Keyed so the render
+  // can loop them. `intel` is the eqemu column name; label it INT.
+  const gearStat: Record<string, number> = { str: 0, sta: 0, agi: 0, dex: 0, wis: 0, intel: 0, cha: 0 };
+  const gearResist: Record<string, number> = { fr: 0, cr: 0, mr: 0, dr: 0, pr: 0 };
   for (const g of equipped) {
     const it = items[g.item_id];
     if (!it) continue;
     acSum += it.ac ?? 0; hpSum += it.hp ?? 0; manaSum += it.mana ?? 0;
+    for (const k of Object.keys(gearStat))   gearStat[k]   += (it as unknown as Record<string, number | null>)[k] ?? 0;
+    for (const k of Object.keys(gearResist)) gearResist[k] += (it as unknown as Record<string, number | null>)[k] ?? 0;
     // Per-item haste %, not derived. In-game the highest worn haste wins —
     // they don't stack — so max across slots.
     if ((it.haste ?? 0) > hasteMax) hasteMax = it.haste ?? 0;
@@ -437,6 +452,34 @@ export default async function CharacterGearPage({ params }: { params: Promise<{ 
                 <> Haste % is per-item (Yelinak&apos;s 41, Hierophant&apos;s 27, …) and our eqmac mirror leaves the column empty — {hasteUnknownItems} worn-haste item{hasteUnknownItems === 1 ? '' : 's'} are missing their % until the quarmy.com harvester populates them.</>
               )}
               {' '}The full calculator (base stats, softcaps, self-buffs, clicky layers, PvP best-practice buffs) is on the roadmap.
+            </p>
+          </section>
+
+          <section className="bg-panel border border-border rounded-lg p-4">
+            <h3 className="text-sm text-orange mb-2">Attributes &amp; resists (from gear only)</h3>
+            <div className="grid grid-cols-4 sm:grid-cols-7 gap-3 text-center">
+              {([['STR','str'],['STA','sta'],['AGI','agi'],['DEX','dex'],['WIS','wis'],['INT','intel'],['CHA','cha']] as const).map(([label, key]) => (
+                <div key={key} className="bg-[#1f242c] rounded p-2">
+                  <div className={`text-lg ${gearStat[key] >= STAT_CAP ? 'text-orange' : 'text-text'}`}>{gearStat[key]}</div>
+                  <div className="text-[10px] uppercase tracking-wide text-dim">{label}</div>
+                </div>
+              ))}
+            </div>
+            <div className="grid grid-cols-5 gap-3 text-center mt-3">
+              {([['FR','fr'],['CR','cr'],['MR','mr'],['DR','dr'],['PR','pr']] as const).map(([label, key]) => (
+                <div key={key} className="bg-[#1f242c] rounded p-2">
+                  <div className="text-lg text-text">{gearResist[key]}</div>
+                  <div className="text-[10px] uppercase tracking-wide text-dim">{label}</div>
+                </div>
+              ))}
+            </div>
+            <p className="text-xs text-dim mt-2">
+              <span className="text-text">Gear contribution only</span> — this is NOT the character&apos;s total. In-game each
+              attribute also includes race/class base, level, and AAs, then buffs, and the whole
+              thing caps at {STAT_CAP} (rising to 355 with Planes of Power AAs). So a gear sum well
+              under {STAT_CAP} can still be capped in play. True <span className="text-text">255(280)</span>-style over-cap detection
+              lands once we capture each raider&apos;s base stats — planned via a naked (post-death)
+              stat snapshot, added to these gear sums.
             </p>
           </section>
 
