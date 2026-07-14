@@ -9105,23 +9105,62 @@ async function _handleAgentWhoLookup(req, res) {
     if (!results[key].class) needSupabase.push(nm);
   }
 
-  // Pass 2: backfill missing-class names from supabase characters (one batched
-  // query, only when needed). Best-effort — if supabase is off or errors,
-  // we just return what we have from passes 1.
-  if (needSupabase.length) {
+  // Pass 2: who_directory — the DURABLE de-anon source, best-ever-seen
+  // class/level/guild per character from who_observations (survives bot
+  // restarts, covers CROSS-GUILD raiders the roster/characters tables never
+  // hold). This is the source that was missing entirely: Uilnayar 2026-07-14
+  // saw Cataran (Wizard/Savage), Jinroh (Enchanter/Eclipse) and even the
+  // guild's own Camping (Necro, but recently-gone) render as bare "anon"
+  // though the who DB had every class. Runs for any requested name still
+  // without a class — INCLUDING names pass 1 skipped for having no in-memory
+  // or roster row (a cross-guild toon has neither), so this pass can CREATE a
+  // result, not just fill one.
+  const needDir = names.filter(nm => { const r = results[nm.toLowerCase()]; return !r || !r.class; });
+  if (needDir.length) {
     try {
       const supabase = require('./utils/supabase');
       if (supabase.isEnabled()) {
-        const inList = needSupabase.map(n => `"${n.replace(/"/g, '')}"`).join(',');
+        const inList = needDir.map(n => `"${String(n).toLowerCase().replace(/"/g, '')}"`).join(',');
+        const rows = await supabase.select('who_directory',
+          `character_key=in.(${encodeURIComponent(inList)})&select=character_key,observed_class,level,guild_name,last_seen,ever_zek_guild,ever_inferred_zek&limit=80`);
+        if (Array.isArray(rows)) {
+          for (const row of rows) {
+            const key = String(row.character_key || '').toLowerCase();
+            if (!key || !row.observed_class) continue;   // no non-anon class ever seen → nothing to de-anon with
+            const cur = results[key] || (results[key] = {
+              class: null, level: null, guild: null, guild_rank: null, is_zek: false, last_seen: null, source: 'who_directory',
+            });
+            if (!cur.class)     { cur.class = row.observed_class; cur.source = 'who_directory'; }
+            if (!cur.level)       cur.level = row.level || null;      // who_directory carries the last non-null level too
+            if (!cur.guild)       cur.guild = row.guild_name || null;
+            if (!cur.last_seen)   cur.last_seen = row.last_seen || null;
+            if (!cur.is_zek && (row.ever_zek_guild || row.ever_inferred_zek)) cur.is_zek = true;
+          }
+        }
+      }
+    } catch (err) { console.warn('[who-lookup] who_directory backfill failed:', err?.message); }
+  }
+
+  // Pass 3: characters table — final fallback for a guild member whose class
+  // we registered (OpenDKP) but who has never been seen non-anon in any /who
+  // (so who_directory has no class for them). Rare, but cheap and it can also
+  // create a result the earlier passes skipped.
+  const needChars = names.filter(nm => { const r = results[nm.toLowerCase()]; return !r || !r.class; });
+  if (needChars.length) {
+    try {
+      const supabase = require('./utils/supabase');
+      if (supabase.isEnabled()) {
+        const inList = needChars.map(n => `"${n.replace(/"/g, '')}"`).join(',');
         const rows = await supabase.select('characters',
           `name=in.(${encodeURIComponent(inList)})&select=name,class&limit=80`);
         if (Array.isArray(rows)) {
           for (const row of rows) {
+            if (!row.class) continue;
             const key = String(row.name || '').toLowerCase();
-            if (results[key] && !results[key].class && row.class) {
-              results[key].class  = row.class;
-              results[key].source = 'characters';
-            }
+            const cur = results[key] || (results[key] = {
+              class: null, level: null, guild: null, guild_rank: null, is_zek: false, last_seen: null, source: 'characters',
+            });
+            if (!cur.class) { cur.class = row.class; cur.source = 'characters'; }
           }
         }
       }
