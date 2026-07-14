@@ -3823,21 +3823,27 @@ function buildWhoSnapshot() {
   if (!currentNames || !currentNames.size) return null;
   const RECENT_GONE_MS = 30 * 60 * 1000;
   const current = [], gone = [], anonNeeded = [];
+  // De-anon an anon row from the lookup cache, or queue a fetch. Applied to
+  // BOTH current and recently-gone rows — the gone list used to skip this
+  // entirely, so a raider who just /anon'd and walked off still showed a bare
+  // "anon" with no class even though we had it (Uilnayar 2026-07-14, Camping).
+  const deanon = (entry, v, k) => {
+    if (!v.anonymous) return;
+    const known = _whoLookupCache.get(k);
+    if (known && (now - known.at) < WHO_LOOKUP_TTL_MS) entry.known = known.data || null;
+    else anonNeeded.push(v.name);
+  };
   for (const [k, v] of whoData) {
     const entry = {
       name: v.name, level: v.level || null, class: v.class || null, race: v.race || null,
       guild: v.guild || null, anonymous: !!v.anonymous, gm: !!v.gm, observedAt: v.observedAt || null,
     };
     if (currentNames.has(k)) {
-      if (v.anonymous) {
-        const known = _whoLookupCache.get(k);
-        if (known && (now - known.at) < WHO_LOOKUP_TTL_MS) entry.known = known.data || null;
-        else anonNeeded.push(v.name);
-      }
+      deanon(entry, v, k);
       current.push(entry);
     } else {
       const tt = Date.parse(v.observedAt || 0) || 0;
-      if (tt && (now - tt) <= RECENT_GONE_MS) gone.push(entry);
+      if (tt && (now - tt) <= RECENT_GONE_MS) { deanon(entry, v, k); gone.push(entry); }
     }
   }
   if (anonNeeded.length) fetchWhoLookup(anonNeeded);
