@@ -507,19 +507,11 @@ const CHARM_SPELLS = new Map([
   ["solon`s bewitching bravura", { cls: 'bard', dur: 60 }],
   ["solon's song of the sirens",  { cls: 'bard', dur: 18 }],
   ["solon`s song of the sirens",  { cls: 'bard', dur: 18 }],
-  // "Dreams of" bard charm line (no possessive → no backtick variant).
-  // Catalog: buffduration=3, formula=7 → capped at 3 ticks = 18s max, same
-  // shape as Sirens — the bard holds the charm by re-twisting the song.
-  // Field bug (Uilnayar 2026-07-13): a bard charmed a Dark Elf Reaver with
-  // Dreams of Ayonae — with no CHARM_SPELLS entry nothing staged
-  // _pendingCharmSpell, and "Dark Elf Reaver" is a proper-noun pet name so
-  // the slot-16 article-prefix heuristic rejected it too. Both accept paths
-  // dead → tracker never latched ("no active charm", no callouts). Thule
-  // (L64) and Terris (L65) added alongside so PoP launch doesn't replay
-  // this bug on the next verse of the same song line.
-  ['dreams of ayonae',  { cls: 'bard', dur: 18 }],
-  ['dreams of thule',   { cls: 'bard', dur: 18 }],
-  ['dreams of terris',  { cls: 'bard', dur: 18 }],
+  // NOT charm, don't re-add: the "Dreams of" line (Ayonae L60 / Thule L64 /
+  // Terris L65) is the bard MEZ — briefly shipped here 2026-07-13 after
+  // misreading a field report, which would have staged a false pending-charm
+  // on every mez twist. The named-mob charm gap it was trying to fix is
+  // handled by the bard-class gauge bypass in _reconcileGaugeCharms.
   // Enchanter (+ druid/necro animal/undead charm share the same 205/formula-10
   // line). Single-target timed charm.
   ['charm',             { cls: 'enchanter', dur: 720 }],
@@ -1491,6 +1483,24 @@ function _recordCharmSpellOnTarget(pet, owner, spellName, durSec) {
 // up from zone-visible log lines) are left to the log path — untouched here.
 const _pendingGaugeCharms = new Map();        // ownerLower → Map<petKey, firstSeenAt>
 const GAUGE_CHARM_DEBOUNCE_MS = 1500;
+// Bards cannot SUMMON a pet — no mage/necro summons, no enchanter animations
+// — so for a bard, a slot-16 pet is ALWAYS a charm and the article/pending
+// gates below are unnecessary. They're also insufficient: a bard charming a
+// proper-named mob ("Dark Elf Reaver") slips the article heuristic, and the
+// SBB begin-cast line can predate the gauge by more than the 12s pending
+// window (resists, melody re-twists), killing the pending bypass too
+// (Uilnayar 2026-07-13 — charm tracker latched "a crag spider" but not the
+// reaver; a same-named second reaver was mezzed nearby, which is fine here:
+// slot 16 is only ever the LOCAL client's pet, so name twins can't confuse
+// attribution). Class comes from the same whoData → raid-roster chain
+// /api/state uses; unknown class stays conservative (gates still apply).
+function _gaugeOwnerIsBard(name) {
+  const a = String(name || '').toLowerCase();
+  if (!a) return false;
+  const who = whoData.get(a);
+  const cls = (who && who.class) || _raidClassByName.get(a) || null;
+  return cls ? /^bard$/i.test(String(normalizeClass(String(cls)))) : false;
+}
 function _reconcileGaugeCharms() {
   const now = Date.now();
   const gaugeOwners = new Set();              // ownerLower currently streaming a gauge
@@ -1518,6 +1528,7 @@ function _reconcileGaugeCharms() {
       const txt = String(g.text);
       if (/^(?:an?|the)\s+/i.test(txt)) return true;
       if (_hasPendingCharmSpell(ch, now))   return true;
+      if (_gaugeOwnerIsBard(ch))            return true;   // bards can't summon — slot 16 IS a charm
       return false;
     });
     if (!petG) continue;
