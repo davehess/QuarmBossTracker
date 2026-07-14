@@ -41,7 +41,7 @@ const CLASS_ID: Record<string, number> = {
 // ({eff, base, max} arrays, populated by sync-from-eqmac); the 3 dedicated
 // columns are the fallback until the next catalog sync lands.
 type SpellRaw = { eff: (number | null)[]; base: (number | null)[]; max: (number | null)[] } | null;
-type Fx = { atk: number; ft: number; focus: string | null };
+type Fx = { atk: number; regen: number; ft: number; focus: string | null };
 
 const RESIST_NAME: Record<number, string> = { 1: 'magic', 2: 'fire', 3: 'cold', 4: 'poison', 5: 'disease' };
 const TARGET_NAME: Record<number, string> = { 3: 'group', 4: 'PB AE', 5: 'single-target', 6: 'self', 8: 'targeted AE', 14: 'pet', 41: 'group' };
@@ -62,11 +62,12 @@ function decodeSpell(s: any): Fx {
       slots.push({ eff, base: s?.[`effect_base_value_${i}`] ?? 0, max: 0 });
     }
   }
-  const fx: Fx = { atk: 0, ft: 0, focus: null };
+  const fx: Fx = { atk: 0, regen: 0, ft: 0, focus: null };
   let primary: string | null = null;
   const quals: string[] = [];
   for (const { eff, base, max } of slots) {
     switch (eff) {
+      case 0:   if (base > 0) fx.regen += base; break;   // worn SPA 0 = HP regen/tick (Fungal Regrowth etc.)
       case 2:   fx.atk += base; break;
       // Haste is a per-item percentage (Yelinak's 41, Hierophant's 27, …),
       // NOT derivable from the worn spell — the spell carries the family
@@ -245,17 +246,24 @@ export default async function CharacterGearPage({ params }: { params: Promise<{ 
   // base, softcaps, self-buffs, clicky layers) is the design doc's phase 7.
   // +ATK, haste %, and Flowing Thought ride the worn-effect SPELL on this
   // era's items (the item catalog has no columns for them), decoded above.
-  let acSum = 0, hpSum = 0, manaSum = 0, atkSum = 0, hasteMax = 0, ftSum = 0;
+  let acSum = 0, hpSum = 0, manaSum = 0, atkSum = 0, hasteMax = 0, ftSum = 0, regenSum = 0;
   let hasteUnknownItems = 0;
   for (const g of equipped) {
     const it = items[g.item_id];
     if (!it) continue;
-    acSum += it.ac ?? 0; hpSum += it.hp ?? 0; manaSum += it.mana ?? 0; atkSum += it.attack ?? 0;
+    acSum += it.ac ?? 0; hpSum += it.hp ?? 0; manaSum += it.mana ?? 0;
     // Per-item haste %, not derived. In-game the highest worn haste wins —
     // they don't stack — so max across slots.
     if ((it.haste ?? 0) > hasteMax) hasteMax = it.haste ?? 0;
     const wfx = it.worneffect && it.worneffect > 0 ? spellFx[it.worneffect] : null;
-    if (wfx) { atkSum += wfx.atk; ftSum += wfx.ft; }
+    // Worn ATK: the item `attack` column and its worn-effect +ATK are the SAME
+    // stat — the worn spell is how the item DELIVERS its attack, so they're
+    // equal on every atk piece (Hoop 10 = Vengeance II 10, Legs 50 = Vengeance
+    // X 50, …). Take the MAX per item, never the sum. Adding both double-counted
+    // every piece: a set whose real worn atk is 150 read 300 (Uilnayar
+    // 2026-07-14; the in-game ItemAtk 250 was 150 gear + 100 self-Avatar).
+    atkSum += Math.max(it.attack ?? 0, wfx?.atk ?? 0);
+    if (wfx) { ftSum += wfx.ft; regenSum += wfx.regen; }
     // Flag haste-spell items lacking a recorded %: the harvester populates
     // it from quarmy.com itemsMap; until it lands we can't sum truthfully.
     const wornNameLower = it.worneffect && spellNames[it.worneffect] ? spellNames[it.worneffect].toLowerCase() : '';
@@ -402,10 +410,11 @@ export default async function CharacterGearPage({ params }: { params: Promise<{ 
         <>
           <section className="bg-panel border border-border rounded-lg p-4">
             <h3 className="text-sm text-orange mb-2">Item totals (worn gear only)</h3>
-            <div className="grid grid-cols-3 sm:grid-cols-6 gap-3 text-center">
+            <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-7 gap-3 text-center">
               {[
                 ['AC', acSum], ['HP', hpSum], ['Mana', manaSum], ['+ATK', atkCapped],
                 ['Haste', hasteMax > 0 ? `${hasteMax}%` : '—'],
+                ['Regen (hp/tick)', regenSum > 0 ? `+${regenSum}` : '—'],
                 ['FT (mana/tick)', ftSum > 0 ? `+${ftSum}` : '—'],
               ].map(([label, val]) => (
                 <div key={String(label)} className="bg-[#1f242c] rounded p-2">
@@ -415,12 +424,14 @@ export default async function CharacterGearPage({ params }: { params: Promise<{ 
               ))}
             </div>
             <p className="text-xs text-dim mt-2">
-              Item stats plus what their worn effects grant (+ATK, Flowing Thought) — this era
-              delivers those via the worn spell, not item columns. Worn <span className="text-text">+ATK caps at {WORN_ATK_CAP}</span> (item + worn-effect
-              attack share one ceiling); buff attack from shaman/druid/bard/beastlord/SK is a
-              separate pool, not counted here.
+              Item stats plus what their worn effects grant (+ATK, Regen, Flowing Thought). An
+              item&apos;s <span className="text-text">+ATK column and its worn effect are the same stat</span> (the effect delivers
+              the attack) — counted once, not summed. The in-game <span className="text-text">item-attack pool caps at {WORN_ATK_CAP}</span> and
+              also counts a self-procced Avatar (+100); a shaman/beastlord&apos;s Avatar/Savagery is
+              <span className="text-text"> separate spell-attack</span>, uncapped by this — so a raider near {WORN_ATK_CAP} worn ATK is the
+              one to hand those buffs.
               {atkOverCap > 0 && (
-                <> This set&apos;s worn ATK sums to {atkSum} — <span className="text-orange">{atkOverCap} over cap</span>, so those ATK pieces are wasting the stat and could carry AC/HP instead.</>
+                <> This gear alone sums to {atkSum} worn ATK — <span className="text-orange">{atkOverCap} over the {WORN_ATK_CAP} cap</span>, so some ATK pieces are wasted and could carry AC/HP instead.</>
               )}
               {hasteUnknownItems > 0 && (
                 <> Haste % is per-item (Yelinak&apos;s 41, Hierophant&apos;s 27, …) and our eqmac mirror leaves the column empty — {hasteUnknownItems} worn-haste item{hasteUnknownItems === 1 ? '' : 's'} are missing their % until the quarmy.com harvester populates them.</>
@@ -449,6 +460,20 @@ export default async function CharacterGearPage({ params }: { params: Promise<{ 
                   {equipped.map(g => {
                     const it = items[g.item_id];
                     const worn = fx(it?.worneffect, spellNames);
+                    // What the worn effect grants, shown inline (Uilnayar
+                    // 2026-07-14: "Vengeance X (+50 atk)", plus regen + FT).
+                    // Makes it legible which pieces feed the 250 item-atk pool —
+                    // once capped, a raider gains nothing from more ITEM atk and
+                    // is the right target for a shaman's Avatar or beastlord's
+                    // Savagery (those are SEPARATE spell-atk, uncapped by this).
+                    // ATK is max(item column, worn-effect) — same stat, not summed.
+                    const wfx2 = it?.worneffect ? spellFx[it.worneffect] : null;
+                    const wornAtk = Math.max(it?.attack ?? 0, wfx2?.atk ?? 0);
+                    const wornBits = [
+                      wornAtk > 0 ? `+${wornAtk} atk` : null,
+                      (wfx2?.regen ?? 0) > 0 ? `+${wfx2!.regen} regen` : null,
+                      (wfx2?.ft ?? 0) > 0 ? `+${wfx2!.ft} ft` : null,
+                    ].filter(Boolean).join(', ');
                     return (
                       <tr key={g.slot} className="border-t border-border hover:bg-[#1f242c]">
                         <td className="py-1 text-dim">{g.slot.replace(/(\d)$/, ' $1')}</td>
@@ -462,7 +487,7 @@ export default async function CharacterGearPage({ params }: { params: Promise<{ 
                         <td className="pl-4 text-green" title={(it?.focus_effect && spellFx[it.focus_effect]?.focus) || undefined}>
                           {fx(it?.focus_effect, spellNames) || <span className="text-dim">—</span>}
                         </td>
-                        <td className={`pl-4 ${worn && VISION_RX.test(worn) ? 'text-gold' : 'text-text'}`}>{worn || <span className="text-dim">—</span>}</td>
+                        <td className={`pl-4 ${worn && VISION_RX.test(worn) ? 'text-gold' : 'text-text'}`}>{worn || wornBits ? <>{worn || <span className="text-dim">gear stat</span>}{wornBits && <span className="text-dim"> ({wornBits})</span>}</> : <span className="text-dim">—</span>}</td>
                         <td className="pl-4 text-blue">{fx(it?.clickeffect, spellNames) || <span className="text-dim">—</span>}</td>
                         <td className="pl-4 text-orange">{fx(it?.proc_effect, spellNames) || <span className="text-dim">—</span>}</td>
                       </tr>
