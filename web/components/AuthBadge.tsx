@@ -3,6 +3,7 @@
 // either a Sign In link or a small avatar + Sign Out form.
 import Link from 'next/link';
 import { supabaseServer } from '@/lib/supabase-server';
+import { supabaseAdmin } from '@/lib/supabase';
 
 export default async function AuthBadge() {
   const supabase = supabaseServer();
@@ -30,16 +31,27 @@ export default async function AuthBadge() {
   // whose user_id link hadn't been written was falling through to the
   // Discord global name. Look up by Discord ID from the OAuth identity
   // as a fallback so the server nickname renders for everyone.
+  //
+  // These reads MUST use the service-role client, not the user's session.
+  // wolfpack_members RLS is a single self-read policy (auth.uid() = user_id),
+  // so under the user's JWT a row whose user_id is NULL (or not yet stamped)
+  // is INVISIBLE — which silently killed the discord_id fallback for the 94%
+  // of un-stamped rows and re-broke the "vaporjesus instead of Hitya" case
+  // (2026-07-14). We only ever query the logged-in user's OWN row (by their
+  // user.id / their own OAuth discord_id), so service-role is safe here.
+  const admin = supabaseAdmin();
   let nickname: string | null = null;
   let avatarUrl: string | null = null;
   {
-    const { data } = await supabase
+    const { data } = await admin
       .from('wolfpack_members')
-      .select('nickname, avatar_url')
+      .select('nickname, global_name, avatar_url')
       .eq('user_id', user.id)
       .maybeSingle();
     if (data) {
-      nickname  = data.nickname ?? null;
+      // Server nickname if set, else the member's guild display name — both
+      // beat the raw Discord OAuth name for "our server's profile".
+      nickname  = data.nickname ?? data.global_name ?? null;
       avatarUrl = data.avatar_url ?? null;
     }
   }
@@ -50,13 +62,13 @@ export default async function AuthBadge() {
     const meta = (user.user_metadata || {}) as { provider_id?: string; sub?: string };
     const did = meta.provider_id || meta.sub || null;
     if (did) {
-      const { data } = await supabase
+      const { data } = await admin
         .from('wolfpack_members')
-        .select('nickname, avatar_url')
+        .select('nickname, global_name, avatar_url')
         .eq('discord_id', did)
         .maybeSingle();
       if (data) {
-        nickname  = data.nickname  ?? null;
+        nickname  = data.nickname ?? data.global_name ?? null;
         avatarUrl = data.avatar_url ?? null;
       }
     }
