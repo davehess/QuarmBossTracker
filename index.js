@@ -6568,16 +6568,58 @@ async function _handleAgentSpellCatalog(req, res) {
       // DS spells put it in slot 1-3; verified 94/117 catalog-wide), then falls
       // back to the full raw.eff/raw.base arrays for the rest. Returns a
       // positive per-hit number, or null.
+      // Era caster level for level-scaled effects — Luclin cap 60 now, 65 once
+      // PoP unlocks. Raid DS buffs are self-cast on level-cap tanks, so this is
+      // the right reference (the catalog is global; we can't scale per-tank).
+      const _dsLevel = isPopLocked() ? 60 : 65;
+      // Value of a DS effect at a level, from its EQEmu spell formula. Fixed
+      // spells (formula 100 — Spikecoat, Thorny Shield, most thorn/fire lines)
+      // are just |base|. The Illusion DS line scales: Illusion: Fire Elemental
+      // is base -1 / formula 109 = |base| + level/4, i.e. 1 + 60/4 = 16 at L60
+      // (matches the in-game "9 (L34) to 17 (L64)"; the old |base| showed 1).
+      // Uilnayar 2026-07-14. Only formulas verified/canonical are scaled; any
+      // other falls back to |base| (no worse than before) and is logged once.
+      const _dsFormulaWarned = new Set();
+      function _dsFormulaValue(base, formula, level, maxAbs) {
+        const b = Math.abs(base || 0);
+        let v;
+        switch (Number(formula)) {
+          case 100: v = b; break;                       // fixed
+          case 101: v = b + Math.floor(level / 2); break;
+          case 102: v = b + level; break;
+          case 103: v = b + level * 2; break;
+          case 104: v = b + level * 3; break;
+          case 105: v = b + level * 4; break;
+          case 106: v = b + level * 5; break;
+          case 109: v = b + Math.floor(level / 4); break;   // Illusion DS line (verified)
+          default:
+            if (Number(formula) !== 100 && !_dsFormulaWarned.has(formula)) {
+              _dsFormulaWarned.add(formula);
+              console.warn(`[spell-catalog] DS formula ${formula} not modeled — using |base| (add it if a real DS buff needs it)`);
+            }
+            v = b;
+        }
+        return maxAbs > 0 ? Math.min(v, maxAbs) : v;
+      }
       function _dsMagnitude(r) {
+        // Prefer raw — it carries the per-slot formula the indexed columns lack,
+        // which is what makes level-scaled DS (Illusion line) come out right.
+        const eff  = r.raw && Array.isArray(r.raw.eff)     ? r.raw.eff     : null;
+        const base = r.raw && Array.isArray(r.raw.base)    ? r.raw.base    : null;
+        const form = r.raw && Array.isArray(r.raw.formula) ? r.raw.formula : null;
+        const maxA = r.raw && Array.isArray(r.raw.max)     ? r.raw.max     : null;
+        if (eff && base) {
+          const idx = eff.indexOf(59);
+          if (idx >= 0 && base[idx] != null && base[idx] < 0) {
+            const f  = form ? (form[idx] || 100) : 100;
+            const mx = (maxA && maxA[idx] != null) ? Math.abs(maxA[idx]) : 0;
+            return _dsFormulaValue(base[idx], f, _dsLevel, mx);
+          }
+        }
+        // Fallback: indexed columns (no formula available → treat as fixed).
         const slots = [[r.effect_id_1, r.effect_base_value_1], [r.effect_id_2, r.effect_base_value_2], [r.effect_id_3, r.effect_base_value_3]];
         for (const [id, val] of slots) {
           if (id === 59 && val != null && val < 0) return Math.abs(val);
-        }
-        const eff = r.raw && Array.isArray(r.raw.eff) ? r.raw.eff : null;
-        const base = r.raw && Array.isArray(r.raw.base) ? r.raw.base : null;
-        if (eff && base) {
-          const idx = eff.indexOf(59);
-          if (idx >= 0 && base[idx] != null && base[idx] < 0) return Math.abs(base[idx]);
         }
         return null;
       }
@@ -6608,7 +6650,7 @@ async function _handleAgentSpellCatalog(req, res) {
         from += PAGE;
       }
       const body = JSON.stringify({
-        version: 5,   // v5 adds `ds` (damage-shield per-hit magnitude, SPA 59)
+        version: 6,   // v6: `ds` is now level-scaled via the spell formula (Illusion DS line)
         fetched_at: new Date().toISOString(),
         count: entries.length,
         entries,
