@@ -32,6 +32,10 @@ type MissingSpell = {
   scribe_level: number | null;
   held_by: string[];
   buyable: boolean;
+  // PoP = only obtainable from Planes of Power sources (sold only in PoK or
+  // dropped in a PoP zone) or scribe level 61+. Locked until 2026-10-01, so it's
+  // called out separately — no point chasing a scroll you can't scribe yet.
+  pop: boolean;
 };
 
 export default async function CharacterSpellsPage({ params }: { params: Promise<{ name: string }> }) {
@@ -114,6 +118,7 @@ export default async function CharacterSpellsPage({ params }: { params: Promise<
   const heldCount = missing.filter(m => m.held_by.length > 0).length;
   const buyableCount = missing.filter(m => m.buyable).length;
   const otherCount = missing.length - buyableCount;
+  const popCount = missing.filter(m => m.pop).length;
 
   return (
     <div className="space-y-6">
@@ -134,8 +139,11 @@ export default async function CharacterSpellsPage({ params }: { params: Promise<
           <span className="text-purple">⚔</span> = not sold, acquire it in the world
           (the <b>find ↗</b> link opens PQDI so you can see where it drops).{' '}
           <span className="text-green">🎒</span> = a guildmate is holding the
-          scroll right now — ask them first. Levels come from guild spellbooks,
-          so a few may be blank until someone with the spell uploads.
+          scroll right now — ask them first.{' '}
+          <span className="text-[10px] font-bold px-1 py-0.5 rounded bg-blue/20 border border-blue/60 text-blue align-middle">PoP</span>{' '}
+          = Planes of Power (level 61+, or only sold in PoK / dropped in a PoP
+          zone) — <b>locked until Oct 1</b>, so don&apos;t chase it yet. Levels come
+          from guild spellbooks, so a few may be blank until someone uploads.
         </p>
         <div className="mt-3 flex flex-wrap gap-x-6 gap-y-1 text-xs text-dim">
           <span>Class: <span className="text-text">{baseClass ?? '—'}</span></span>
@@ -144,6 +152,7 @@ export default async function CharacterSpellsPage({ params }: { params: Promise<
           <span>🛒 Buyable: <span className="text-orange">{buyableCount}</span></span>
           <span>⚔ Go get: <span className="text-purple">{otherCount}</span></span>
           <span>🎒 Held by a guildmate: <span className="text-green">{heldCount}</span></span>
+          <span>PoP-locked: <span className="text-blue">{popCount}</span></span>
         </div>
         {!hasBook && (
           <p className="text-xs text-orange mt-3">
@@ -187,7 +196,13 @@ export default async function CharacterSpellsPage({ params }: { params: Promise<
                           <span title={m.buyable ? 'Sold by a vendor' : 'Not sold — quest / drop / planar'}>
                             {m.buyable ? '🛒' : '⚔'}
                           </span>
-                          <span className="text-text">{m.spell_name}</span>
+                          <span className={m.pop ? 'text-dim' : 'text-text'}>{m.spell_name}</span>
+                          {m.pop && (
+                            <span className="text-[9px] font-bold px-1 py-0.5 rounded bg-blue/20 border border-blue/60 text-blue"
+                                  title="Planes of Power — locked until Oct 1 (level 61+, or only from PoK / a PoP-zone drop). Can't scribe it yet.">
+                              PoP
+                            </span>
+                          )}
                           {m.scroll_item_id && (
                             <a href={`https://pqdi.cc/item/${m.scroll_item_id}`} target="_blank" rel="noreferrer"
                                className="text-blue text-[10px] hover:underline"

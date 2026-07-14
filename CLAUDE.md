@@ -387,7 +387,13 @@ sessions fresh without re-rendering (and visually flashing) the whole list.
 
 Tier 1 `eqemu_*` mirrors (zone/items/npc_types/spells/loot tree/spawn —
 weekly sync via `sync-quarm.yml`; `spawn*` and `npc_types.zone_short` are
-still empty/NULL upstream). Tier 2 guild data we write: `characters`,
+still empty/NULL upstream). **Before querying `eqemu_*` or touching the
+gear/spells/inventory pages, read `docs/eqemu-catalog-cheatsheet.md`** — the
+load-bearing conventions (NPC id encodes zone `id=zoneid*1000+n`,
+`eqemu_zone.expansion` era codes, spell scrolls = items `Spell: %` with no
+level data, the Quarmy-export vs `/output inventory` vs spellbook file split,
+the `character_missing_spells` data path) live there so they don't get
+re-derived from EXPLAIN plans each time. Tier 2 guild data we write: `characters`,
 `bosses_local`, `raid_nights`, `encounters`, `encounter_players`,
 `contributions` (with `agent_version` + `has_ability_detail` watermark),
 `encounter_combat_rollup`, `loot_drops`, `wishlists` (encrypted bids),
