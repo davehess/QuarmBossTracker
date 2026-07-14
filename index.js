@@ -9139,6 +9139,50 @@ async function _freshWhoOverrides() {
   return _whoOverrideCache.map;
 }
 
+// POST /api/agent/who-override  { character, class }
+// Crowd-sourced /who de-anon: ANY guild member running Mimic (the shared agent
+// token is the gate — not officer-only, Uilnayar 2026-07-14) can set a player's
+// class from the in-game /who overlay when they know it (e.g. they inspected
+// gear). Writes who_overrides — the same table /admin/who uses — so the
+// /who-lookup fast path (60s cache) propagates it to every overlay within
+// minutes. Last-write-wins, so a wrong pick is corrected by the next set
+// (in-game or web). Attribution recorded when the Mimic is signed in.
+const _WHO_CLASSES = new Set(['Warrior', 'Cleric', 'Paladin', 'Ranger', 'Shadow Knight', 'Druid', 'Monk', 'Bard', 'Rogue', 'Shaman', 'Necromancer', 'Wizard', 'Magician', 'Enchanter', 'Beastlord']);
+async function _handleAgentWhoOverride(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const chunks = []; let total = 0;
+  for await (const chunk of req) { total += chunk.length; if (total > 8 * 1024) { res.writeHead(413); return res.end(); } chunks.push(chunk); }
+  let body; try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+  catch { res.writeHead(400, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: 'invalid JSON' })); }
+  const character = String(body?.character || '').trim();
+  const klass     = String(body?.class || '').trim();
+  if (!character || !_WHO_CLASSES.has(klass)) {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'need character + a valid class' }));
+  }
+  // Attribution is best-effort — the shared token already proves guild Mimic.
+  let session = null;
+  try { session = await mimicLink.resolveMimicSession(req); } catch { /* anon set is fine */ }
+  try {
+    const supabase = require('./utils/supabase');
+    await supabase.upsertWhoOverride({
+      character, klass,
+      setBy:     session?.discord_id || null,
+      setByName: session?.display_name || null,
+      note:      'in-game /who overlay',
+    });
+    _whoOverrideCache.at = 0;   // force the /who-lookup fast-path cache to refresh next call
+  } catch (err) {
+    console.warn('[who-override] upsert failed:', err?.message);
+    res.writeHead(500, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'save failed' }));
+  }
+  console.log(`[who-override] ${session?.display_name || session?.discord_id || 'a raider'} set ${character} = ${klass}`);
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ ok: true, character, class: klass }));
+}
+
 async function _handleAgentWhoLookup(req, res) {
   const identity = await mimicLink.requireAgentAuth(req, res);
   if (!identity) return;
@@ -11788,6 +11832,15 @@ http.createServer(async (req, res) => {
     try { return await _handleAgentWhoLookup(req, res); }
     catch (err) {
       console.error('[who-lookup] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  if (req.method === 'POST' && req.url === '/api/agent/who-override') {
+    try { return await _handleAgentWhoOverride(req, res); }
+    catch (err) {
+      console.error('[who-override] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
     }
