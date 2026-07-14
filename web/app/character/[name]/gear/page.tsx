@@ -262,6 +262,17 @@ export default async function CharacterGearPage({ params }: { params: Promise<{ 
     if ((!it.haste || it.haste <= 0) && /\bhaste\b/.test(wornNameLower)) hasteUnknownItems++;
   }
 
+  // Worn ATK caps at 250 in-game (Uilnayar 2026-07-14: page showed 300, game
+  // capped ItemAtk at 250). Item `attack` columns and EVERY worn-effect +ATK
+  // stack toward ONE 250 ceiling — so a set with five Aura of Battle / Vengeance
+  // pieces still tops out at 250. Buff spell-ATK (shaman/druid/bard/beastlord/SK,
+  // and an Avatar buff) is a SEPARATE pool that doesn't count here — this box is
+  // worn gear only. Over the cap = dead stats: those ATK pieces could carry AC/HP
+  // instead, so we surface the overflow rather than hide it.
+  const WORN_ATK_CAP = 250;
+  const atkCapped = Math.min(atkSum, WORN_ATK_CAP);
+  const atkOverCap = Math.max(0, atkSum - WORN_ATK_CAP);
+
   const wornEffects = [...new Set(
     equipped
       .map(g => fx(items[g.item_id]?.worneffect, spellNames))
@@ -393,7 +404,7 @@ export default async function CharacterGearPage({ params }: { params: Promise<{ 
             <h3 className="text-sm text-orange mb-2">Item totals (worn gear only)</h3>
             <div className="grid grid-cols-3 sm:grid-cols-6 gap-3 text-center">
               {[
-                ['AC', acSum], ['HP', hpSum], ['Mana', manaSum], ['+ATK', atkSum],
+                ['AC', acSum], ['HP', hpSum], ['Mana', manaSum], ['+ATK', atkCapped],
                 ['Haste', hasteMax > 0 ? `${hasteMax}%` : '—'],
                 ['FT (mana/tick)', ftSum > 0 ? `+${ftSum}` : '—'],
               ].map(([label, val]) => (
@@ -405,7 +416,12 @@ export default async function CharacterGearPage({ params }: { params: Promise<{ 
             </div>
             <p className="text-xs text-dim mt-2">
               Item stats plus what their worn effects grant (+ATK, Flowing Thought) — this era
-              delivers those via the worn spell, not item columns.
+              delivers those via the worn spell, not item columns. Worn <span className="text-text">+ATK caps at {WORN_ATK_CAP}</span> (item + worn-effect
+              attack share one ceiling); buff attack from shaman/druid/bard/beastlord/SK is a
+              separate pool, not counted here.
+              {atkOverCap > 0 && (
+                <> This set&apos;s worn ATK sums to {atkSum} — <span className="text-orange">{atkOverCap} over cap</span>, so those ATK pieces are wasting the stat and could carry AC/HP instead.</>
+              )}
               {hasteUnknownItems > 0 && (
                 <> Haste % is per-item (Yelinak&apos;s 41, Hierophant&apos;s 27, …) and our eqmac mirror leaves the column empty — {hasteUnknownItems} worn-haste item{hasteUnknownItems === 1 ? '' : 's'} are missing their % until the quarmy.com harvester populates them.</>
               )}
