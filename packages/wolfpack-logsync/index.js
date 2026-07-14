@@ -583,6 +583,20 @@ function normalizeClass(raw) {
   return CLASS_TITLES.get(key) || String(raw).trim();
 }
 
+// Finishing-blow / anomalous-hit guard (Uilnayar 2026-07-14). Quarm's finishing
+// blows log as an ordinary melee "hit … for N" where N is a mob-HP-sized number
+// — e.g. "hit a goblin cavehunter for 32011" from a monk whose real hits are a
+// few hundred. Counted as damage they wreck parses: one such line roughly
+// DOUBLES a player's total for that mob, and parsers that caught more of them
+// inflated more — the exact 1.4–2× divergence and doubled DPS seen across the
+// Aten/Terror/raid parses. No legit Luclin-era MELEE or archery hit comes near
+// this, so any attack-verb hit over the cap is dropped. Spells/DoTs (the
+// "non-melee" forms) are NOT capped — real nukes land 5–8k. Precise detection
+// would key on the finishing-blow log signature; until we capture it from a
+// live log, magnitude is the safe filter. Tunable via WP_MELEE_HIT_MAX.
+const MELEE_HIT_MAX = Math.max(6000, parseInt(process.env.WP_MELEE_HIT_MAX, 10) || 15000);
+let _finishingBlowsDropped = 0;
+
 // ── Event parser ────────────────────────────────────────────────────────────
 // Turn a kept line into a structured event. Returns null if we can't parse it.
 // This is intentionally conservative — unparseable lines are dropped silently
@@ -702,6 +716,7 @@ function parseEvent(line, ts) {
   // "You <verb> X for N points of damage." (player attacking, second-person)
   m = line.match(new RegExp(`\\]\\s+You\\s+${ATTACK_VERBS_RX}\\s+(.+?)\\s+for\\s+(\\d+)(?:\\s+\\((\\d+)\\))?\\s+points?\\s+of\\s+(?:non-melee\\s+)?damage`, 'i'));
   if (m) {
+    if (parseInt(m[2], 10) > MELEE_HIT_MAX) { _finishingBlowsDropped++; return null; }   // finishing blow — not real melee
     const verb = m[0].match(new RegExp(`\\bYou\\s+(${ATTACK_VERBS_RX})\\b`, 'i'))?.[1] || 'hit';
     return { ts: tsIso, type: 'damage', attacker: null /* self */, defender: m[1], ability: verb.toLowerCase().replace(/(?:sh|ch|ss|x)es$/, m => m.slice(0, -2)).replace(/s$/, ''), amount: parseInt(m[2], 10) };
   }
@@ -715,6 +730,7 @@ function parseEvent(line, ts) {
     // Drop fragments where the lazy (.+?) grabbed a connector word as the
     // attacker (e.g. "to") instead of a real name — see isPlausibleAttacker.
     if (!isPlausibleAttacker(m[1])) return null;
+    if (parseInt(m[3], 10) > MELEE_HIT_MAX) { _finishingBlowsDropped++; return null; }   // finishing blow — not real melee
     // Extract the verb that matched (it's between the two captures)
     const verbMatch = m[0].match(new RegExp(`\\s+(${ATTACK_VERBS_RX})\\s+`, 'i'));
     const verb = (verbMatch?.[1] || 'hit').toLowerCase().replace(/(?:sh|ch|ss|x)es$/, m => m.slice(0, -2)).replace(/s$/, '');
