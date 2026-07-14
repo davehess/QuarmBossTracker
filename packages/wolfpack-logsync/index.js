@@ -14317,6 +14317,43 @@ function startWebDashboard(port) {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ ok: true }));
       }
+      // Crowd-sourced /who class set (Uilnayar 2026-07-14): the /who overlay's
+      // dropdown POSTs { name, class } here when someone identifies an anon
+      // player. We (1) reflect it LOCALLY at once so the picker's own overlay
+      // updates immediately, and (2) forward to the bot's /api/agent/who-override
+      // so it lands in who_overrides and propagates to everyone within minutes.
+      if (req.url === '/api/who-class' && req.method === 'POST') {
+        let payload = {};
+        try { payload = JSON.parse(await _readBody(req, 4 * 1024) || '{}'); } catch { /* */ }
+        const name  = String(payload.name  || '').trim();
+        const klass = String(payload.class || '').trim();
+        if (!name || !klass) { res.writeHead(400, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: 'need name + class' })); }
+        // Optimistic local reflect — the overlay shows the pick right away
+        // (cross-client propagation rides who_overrides → who-lookup, ~minutes).
+        _whoLookupCache.set(name.toLowerCase(), { at: Date.now(), data: { class: klass, source: 'you' } });
+        try { scheduleRender(); } catch {}
+        const opts = _uploadOpts;
+        if (opts && opts.botUrl && opts.token && !opts.dryRun) {
+          try {
+            const url = new URL(opts.botUrl.replace(/\/encounter(\?.*)?$/, '/who-override'));
+            const mod = url.protocol === 'https:' ? https : http;
+            const b = JSON.stringify({ character: name, class: klass });
+            const fr = mod.request({
+              method: 'POST', hostname: url.hostname, port: url.port, path: url.pathname + url.search,
+              headers: {
+                'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(b),
+                'Authorization': `Bearer ${opts.token}`, 'User-Agent': `wolfpack-logsync/${AGENT_VERSION}`,
+                ...(_mimicSessionToken ? { 'X-Wolfpack-Mimic-Session': _mimicSessionToken } : {}),
+              },
+              timeout: 8000,
+            }, (r2) => r2.resume());
+            fr.on('error', () => {}); fr.on('timeout', () => fr.destroy());   // fire-and-forget; queue not needed for a hint
+            fr.write(b); fr.end();
+          } catch { /* forward is best-effort */ }
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ ok: true, name, class: klass }));
+      }
       // Force a queue drain attempt right now. Used by the "Drain now" link
       // on the dashboard queue chip when a backlog appears stalled — resets
       // every entry's next_try_at to right now (skipping backoff windows)
