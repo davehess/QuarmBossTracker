@@ -2490,12 +2490,27 @@ function _parseUiWindowRects() {
   }
 }
 function _autoArrangeOverlays(pinnedKey) {
+  const t0 = Date.now();
   const area = screen.getPrimaryDisplay().workArea;
   const ui = _parseUiWindowRects();
   const MARGIN = 8, STEP = 16;
   const occupied = [];
   if (ui) for (const r of ui.rects) occupied.push({ x: r.x - MARGIN, y: r.y - MARGIN, w: r.w + MARGIN * 2, h: r.h + MARGIN * 2 });
-  const overlaps = (a, b) => a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+  // Drop UI rects fully contained in another (bags inside the inventory,
+  // gems inside the spellbar, …) — they add obstacle-scan cost but never
+  // change placement. EQ inis carry 60-100 sections; this typically halves
+  // the obstacle list.
+  for (let i = occupied.length - 1; i >= 0; i--) {
+    const a = occupied[i];
+    for (let j = 0; j < occupied.length; j++) {
+      if (i === j) continue;
+      const b = occupied[j];
+      if (a.x >= b.x && a.y >= b.y && a.x + a.w <= b.x + b.w && a.y + a.h <= b.y + b.h) {
+        occupied.splice(i, 1);
+        break;
+      }
+    }
+  }
   // Perimeter rule (Uilnayar 2026-07-11 — "they should stay out of the center
   // of the screen for the most part, lining the outside"): the middle ~52% of
   // the display is the play view and is a soft no-go zone. Pass 1 blocks it,
@@ -2513,14 +2528,6 @@ function _autoArrangeOverlays(pinnedKey) {
   // "overlays in contention" pile-up. Skipped overlays keep their block.
   const pendingCur = new Map();
   const pad = (b) => ({ x: b.x - MARGIN, y: b.y - MARGIN, w: b.width + MARGIN * 2, h: b.height + MARGIN * 2 });
-  const fits = (rect, blockCenter, selfKey) => {
-    if (rect.x < area.x || rect.y < area.y
-      || rect.x + rect.w > area.x + area.width || rect.y + rect.h > area.y + area.height) return false;
-    if (blockCenter && overlaps(rect, centerZone)) return false;
-    if (occupied.some(o => overlaps(rect, o))) return false;
-    for (const [k, r] of pendingCur) if (k !== selfKey && overlaps(rect, r)) return false;
-    return true;
-  };
   // Visible overlays, biggest first (big ones need the scarce large gaps).
   const wins = _overlayEntries()
     .filter(([, w]) => { try { return w.isVisible(); } catch { return false; } })
@@ -2547,11 +2554,34 @@ function _autoArrangeOverlays(pinnedKey) {
         let spot = null;
         // Right edge first, then sweep left — keeps the EQ center clear and
         // matches how raiders park overlays today.
-        outer:
-        for (let x = area.x + area.width - w; x >= area.x; x -= STEP) {
-          for (let y = area.y; y + h <= area.y + area.height; y += STEP) {
-            const rect = { x, y, w, h };
-            if (fits(rect, blockCenter, o.key)) { spot = rect; break outer; }
+        //
+        // Skip-ahead sweep (Uilnayar 2026-07-13: "hitting autoarrange lags
+        // out the system"): the old inner loop stepped y 16px at a time
+        // through BLOCKED space — up to ~12k candidate rects per overlay,
+        // each overlap-checked against every obstacle, all synchronous on
+        // the Electron main process (which freezes every overlay window +
+        // IPC while it runs). Now each column pre-filters the obstacles
+        // that overlap it, and on a collision y JUMPS straight past the
+        // blocking rect instead of crawling through it — same placement
+        // semantics (first fit, right-to-left, top-to-bottom), ~100× fewer
+        // checks, zero per-candidate allocations.
+        const colObstacles = [];
+        for (let x = area.x + area.width - w; x >= area.x && !spot; x -= STEP) {
+          // Obstacles whose x-range intersects this column (padded rects).
+          colObstacles.length = 0;
+          if (blockCenter && centerZone.x < x + w && centerZone.x + centerZone.w > x) colObstacles.push(centerZone);
+          for (const ob of occupied) if (ob.x < x + w && ob.x + ob.w > x) colObstacles.push(ob);
+          for (const [k, r] of pendingCur) if (k !== o.key && r.x < x + w && r.x + r.w > x) colObstacles.push(r);
+          let y = area.y;
+          while (y + h <= area.y + area.height) {
+            let blocker = null;
+            for (const ob of colObstacles) {
+              if (ob.y < y + h && ob.y + ob.h > y) { blocker = ob; break; }
+            }
+            if (!blocker) { spot = { x, y, w, h }; break; }
+            // Jump to the first y where this blocker clears; never move by
+            // less than STEP so a stack of touching obstacles can't stall.
+            y = Math.max(y + STEP, blocker.y + blocker.h);
           }
         }
         if (spot) {
@@ -2565,7 +2595,7 @@ function _autoArrangeOverlays(pinnedKey) {
     }
     if (!done) skipped++;   // left where it was — its pendingCur rect keeps blocking
   }
-  const summary = { placed, skipped, uiWindows: ui ? ui.rects.length : 0, uiFile: ui ? path.basename(ui.file) : null, resolution: ui ? ui.resolution : null };
+  const summary = { placed, skipped, ms: Date.now() - t0, uiWindows: ui ? ui.rects.length : 0, uiFile: ui ? path.basename(ui.file) : null, resolution: ui ? ui.resolution : null };
   appendAgentLog('[auto-arrange] ' + JSON.stringify(summary) + '\n');
   return summary;
 }
