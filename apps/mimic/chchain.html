@@ -132,6 +132,21 @@
   .gaprow .sep{color:#6e7681;font-weight:400}
   .gaprow .tank{color:#fde68a}
   .gaprow .cleric{color:#c9d1d9;font-weight:600}
+  /* Chain-integrity banner — trust indicator for the DATA FEED itself, as
+     opposed to gaprow (chain healthy, a cleric is late) and pivotrow (chain
+     healthy, a slot slipped). Amber = calls stopped mid-fight, verify
+     verbally. Red = the overlay is BLIND (log tail dead / agent gone) — the
+     one state where clerics must drop to the classic manual chain NOW.
+     Fail-loud is the whole point: a quiet stale overlay reads as "chain
+     fine" and gets a tank killed. */
+  .integrow{display:none;align-items:center;gap:6px;margin-bottom:5px;
+    background:rgba(240,180,41,0.18);border:1px solid rgba(240,180,41,0.55);
+    border-radius:4px;padding:4px 7px;font-size:11px;font-weight:700;
+    text-shadow:0 1px 2px #000;color:#f6c365;letter-spacing:0.03em}
+  .integrow.show{display:flex}
+  .integrow.red{background:rgba(220,38,38,0.55);border-color:#f87171;color:#fff;
+    font-size:12px;animation:pivot-pulse 0.55s ease-in-out infinite alternate}
+  .integrow .integ-icon{flex-shrink:0}
   .gaprow.late{background:rgba(248,113,113,0.22);border-color:rgba(248,113,113,0.65);
     color:#fca5a5;animation:gappulse 0.5s infinite alternate}
   .gaprow.late .label,.gaprow.late .tank{color:#fca5a5}
@@ -242,6 +257,14 @@
         <span class="val" id="leadVal">1.5s</span>
       </div>
       <div class="hint"><b>Auto</b> (default) tracks this chain's own measured beat — the gap between callouts — and sets the lead to ~25% of it, so a tight 2-4s chain doesn't fire <b>CH GAP SOON</b> on nearly every single call. Drag the slider to pin a manual value instead (switches off Auto). Persists per-machine.</div>
+    </div>
+    <!-- Chain-integrity banner — is the DATA FEED itself trustworthy? Sits
+         above every other alert because it invalidates them: a gap/pivot
+         computed from stale data is noise. Amber = calls stopped mid-fight;
+         red = overlay blind (log dead / agent gone) → GO MANUAL. -->
+    <div id="integrow" class="integrow">
+      <span class="integ-icon" id="integicon">⚠</span>
+      <span id="integmsg"></span>
     </div>
     <div id="gaprow" class="gaprow">
       <span class="label" id="gaplbl">CH GAP SOON</span>
@@ -469,6 +492,21 @@
 
   var _last = null;             // last fetched chChain snapshot
   var _lastOffHeal = [];        // last fetched offHealCandidates list
+  // ── Chain-integrity heartbeat state (fail loud, not silent) ─────────────
+  // The worst chain failure isn't a late cleric — it's this overlay going
+  // quietly stale while clerics keep trusting it. Track the freshness of
+  // every link in the data path so we can SAY when we're blind:
+  //   fetch ok        → agent process alive
+  //   watchedLogs[].lastSeen → the log tail itself is producing lines
+  //   chChain.updated_at     → chain calls are being parsed
+  //   currentEncounterThreat → a fight is actually live (gates amber so a
+  //                            quiet chain between pulls doesn't cry wolf)
+  var _lastFetchOkAt = 0;       // last successful /api/state round-trip
+  var _logAliveAt    = 0;       // max lastSeen across watched logs
+  var _logsWatched   = -1;      // -1 = unknown yet
+  var _fightLive     = false;   // live encounter (threat data, not flushed)
+  var _chainSeenAt   = 0;       // last time a non-null chain snapshot existed
+  var _integSpoken   = null;    // 'amber'|'red' already announced (reset on green)
   // TTS dedup — track which gap event we've already spoken for, so a single
   // late call doesn't trigger the alert dozens of times per second. Keyed on
   // (last_ch.atMs, next_num) so a NEW chain step resets cleanly.
@@ -509,6 +547,59 @@
     rowsEl.innerHTML = html;
   }
 
+  // ── Chain-integrity evaluation ───────────────────────────────────────────
+  // Only ever alarms while a chain was live in the last 5 min (_chainSeenAt —
+  // mirrors the agent's own idle reset), so an idle overlay never nags.
+  // Priority: red (feed dead — GO MANUAL) over amber (calls stopped mid-fight).
+  var INTEG_CHAIN_MEMORY_MS = 5 * 60 * 1000;
+  var INTEG_FETCH_DEAD_MS   = 5000;    // agent hasn't answered in 5s (polls every 600ms)
+  var INTEG_LOG_DEAD_MS     = 45000;   // zero log lines in 45s — mid-raid logs emit
+                                       // many lines/sec, so this is unambiguous death
+  function integrityState(){
+    var now = Date.now();
+    if (!_chainSeenAt || (now - _chainSeenAt) > INTEG_CHAIN_MEMORY_MS) return null;
+    if (_lastFetchOkAt && (now - _lastFetchOkAt) > INTEG_FETCH_DEAD_MS) {
+      return { level: 'red', msg: 'OVERLAY BLIND — agent not responding. GO MANUAL.' };
+    }
+    if (_logsWatched === 0) {
+      return { level: 'red', msg: 'OVERLAY BLIND — no log being watched. GO MANUAL.' };
+    }
+    if (_logAliveAt && (now - _logAliveAt) > INTEG_LOG_DEAD_MS) {
+      return { level: 'red', msg: 'OVERLAY BLIND — log stopped ' + fmtAgo((now - _logAliveAt) / 1000) + ' ago (check /log). GO MANUAL.' };
+    }
+    // Feed is alive — is the CHAIN data fresh? Only alarm while a fight is
+    // actually live: between pulls the chain going quiet is normal.
+    if (_last && _fightLive && _last.updated_at) {
+      var quiet = now - _last.updated_at;
+      var amberAfter = Math.max(2 * (_last.beat_ms || 0), 20000);
+      if (quiet > amberAfter) {
+        return { level: 'amber', msg: 'No chain calls heard for ' + fmtAgo(quiet / 1000) + ' — verify chain verbally.' };
+      }
+    }
+    return null;
+  }
+  function renderIntegrity(){
+    var el = document.getElementById('integrow');
+    var st = integrityState();
+    if (!st) {
+      el.classList.remove('show', 'red');
+      _integSpoken = null;
+      return;
+    }
+    el.classList.add('show');
+    el.classList.toggle('red', st.level === 'red');
+    document.getElementById('integicon').textContent = st.level === 'red' ? '🛑' : '⚠';
+    document.getElementById('integmsg').textContent = st.msg;
+    // Announce once per level entry — red outranks a previously-spoken amber,
+    // but the same level never re-speaks (the banner keeps counting visually).
+    if (_integSpoken !== st.level && !(st.level === 'amber' && _integSpoken === 'red')) {
+      _integSpoken = st.level;
+      speakGap(st.level === 'red'
+        ? 'C H overlay blind — go manual.'
+        : 'C H data stale — verify chain verbally.');
+    }
+  }
+
   // v1.1.5 — pivot announcement state (only speak once per slip).
   var _lastPivotKey = null;
   // Spot-heal announcement state (only speak once per event — keyed on its
@@ -516,6 +607,11 @@
   var _lastSpotHealKey = null;
   function render(){
     renderOffHeal();
+    // Integrity FIRST, before the empty-chain early return below — the red
+    // GO MANUAL state must stay visible even after the snapshot resets to
+    // null (a dead log stops feeding the agent, whose 5-min idle reset then
+    // clears the chain — exactly the moment clerics most need the banner).
+    renderIntegrity();
     var rowsEl  = document.getElementById('rows');
     var emptyEl = document.getElementById('empty');
     var nextEl  = document.getElementById('nextrow');
@@ -699,6 +795,18 @@
       document.getElementById('conn').textContent = '●';
       _last = s && s.chChain;
       _lastOffHeal = (s && s.offHealCandidates) || [];
+      // Integrity signals — every link in the chain-data path (see the
+      // heartbeat state block above for why each one matters).
+      _lastFetchOkAt = Date.now();
+      var wl = (s && s.watchedLogs) || [];
+      _logsWatched = wl.length;
+      _logAliveAt = 0;
+      for (var wi = 0; wi < wl.length; wi++) {
+        if (wl[wi] && wl[wi].lastSeen > _logAliveAt) _logAliveAt = wl[wi].lastSeen;
+      }
+      var et = s && s.currentEncounterThreat;
+      _fightLive = !!(et && et.perPlayer && !et.flushedAt);
+      if (_last) _chainSeenAt = Date.now();
     } catch (e) {
       var c = document.getElementById('conn'); c.className = 'conn bad'; c.textContent = '○';
     }

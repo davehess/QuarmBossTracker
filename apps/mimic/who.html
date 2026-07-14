@@ -36,6 +36,11 @@
     padding:0 3px;line-height:1;opacity:0.65}
   .r .copybtn:hover{color:#e6edf3;opacity:1}
   .r .copybtn.copied{color:#56d364;opacity:1}
+  /* Crowd-sourced class picker — set an anon player's class for the guild. */
+  .r .clspick{font-family:inherit;font-size:10px;background:#151b26;color:#e6edf3;
+    border:1px solid #30414f;border-radius:3px;padding:0 2px;margin:0 2px 0 4px;
+    max-width:118px;cursor:pointer;height:16px;line-height:14px}
+  .r .clspick:hover{border-color:#58a6ff}
   .r .flag.gm{background:#3d3416;color:#f0d264}
   .r .flag.zek{background:#3d1d1d;color:#ff7b72}
   /* Class + level columns: dim, right-side. Italic on de-anon'd values
@@ -154,6 +159,26 @@
     try { window.mimic.overlayAutoHeight(w.scrollHeight + 8); } catch (e) {}
   }
 
+  // Crowd-sourced class picker (Uilnayar 2026-07-14): anyone who KNOWS an anon
+  // player's class (inspected their gear, etc.) can set it for the whole guild
+  // from the dropdown on that row. The pick POSTs to the agent → who_overrides →
+  // propagates via /who-lookup. _pendingClass keeps a just-made pick shown +
+  // editable for a grace window so a mis-click can be corrected before the row
+  // resolves to the plain class.
+  var WHO_CLASSES = ['Warrior','Cleric','Paladin','Ranger','Shadow Knight','Druid','Monk','Bard','Rogue','Shaman','Necromancer','Wizard','Magician','Enchanter','Beastlord'];
+  var _pendingClass = {};        // nameLower → { cls, at }
+  var CLASS_GRACE_MS = 12000;    // keep the dropdown editable this long after a pick
+  function classPickerHtml(name){
+    var nk = (name || '').toLowerCase();
+    var pend = (_pendingClass[nk] && _pendingClass[nk].cls) || '';
+    var opts = '<option value="">— class? —</option>';
+    for (var i=0;i<WHO_CLASSES.length;i++){
+      var c = WHO_CLASSES[i];
+      opts += '<option value="' + esc(c) + '"' + (c===pend ? ' selected' : '') + '>' + esc(c) + '</option>';
+    }
+    return '<select class="clspick" data-name="' + esc(name) + '" title="Know their class? Set it for the whole guild">' + opts + '</select>';
+  }
+
   function rowHtml(p, gone){
     var zek = !!(p.known && p.known.is_zek);
     var cls = 'r' + (zek ? ' zek' : '');
@@ -168,12 +193,15 @@
     var guild = liveGuild || (p.known && p.known.guild) || null;
     var lvlIsDeanon   = !liveLvl   && lvl   != null;
     var klassIsDeanon = !liveKlass && klass != null;
+    // Show the picker when class is unknown, OR briefly after a pick (grace)
+    // so a wrong choice is correctable before the row collapses to the class.
+    var nkey = (p.name || '').toLowerCase();
+    var recentPick = _pendingClass[nkey] && (Date.now() - _pendingClass[nkey].at) < CLASS_GRACE_MS;
+    var showPicker = !!p.name && (!klass || recentPick);
     var parts = ['<span class="nm">' + esc(p.name || '?') + '</span>'];
-    // Unknown identity (no class/level, live OR de-anon'd) → copy button so
-    // the user can paste the name into the Quarm Discord search and check
-    // the player's own public posts for class/level. Officer then records
-    // finds via /admin/who (who_overrides).
-    if (!klass && !lvl && p.name) {
+    if (showPicker) {
+      parts.push(classPickerHtml(p.name));
+      // Copy-name stays for the Quarm-Discord lookup path.
       parts.push('<button class="copybtn" data-name="' + esc(p.name) + '" title="Copy name — search Quarm Discord for their public posts">⧉</button>');
     }
     if (guild) parts.push('<span class="guild">&lt;' + esc(guild) + '&gt;</span>');
@@ -181,7 +209,7 @@
     if (p.anonymous) parts.push('<span class="flag anon">anon</span>');
     if (p.gm)        parts.push('<span class="flag gm">GM</span>');
     if (zek)         parts.push('<span class="flag zek">ZEK</span>');
-    if (klass) parts.push('<span class="klass' + (klassIsDeanon ? ' deanon' : '') + '">' + esc(klass) + '</span>');
+    if (klass && !showPicker) parts.push('<span class="klass' + (klassIsDeanon ? ' deanon' : '') + '">' + esc(klass) + '</span>');
     if (lvl)   parts.push('<span class="lvl'   + (lvlIsDeanon   ? ' deanon' : '') + '">L' + lvl + '</span>');
     if (gone)  parts.push('<span class="goneAt">· ' + ago(p.observedAt) + ' ago</span>');
     return '<div class="' + cls + '">' + parts.join('') + '</div>';
@@ -224,8 +252,39 @@
     }
   });
 
+  // Class picker: hover-interact handshake (locked overlay is click-through)
+  // + change → POST the pick to the local agent (which forwards to the bot).
+  bodyEl.addEventListener('mouseover', function(e){
+    if (e.target && e.target.classList && e.target.classList.contains('clspick')) {
+      try { window.mimic.overlayHoverInteractive(true); } catch (err) {}
+    }
+  });
+  bodyEl.addEventListener('mouseout', function(e){
+    if (e.target && e.target.classList && e.target.classList.contains('clspick')) {
+      try { window.mimic.overlayHoverInteractive(false); } catch (err) {}
+    }
+  });
+  bodyEl.addEventListener('change', function(e){
+    var sel = e.target && e.target.classList && e.target.classList.contains('clspick') ? e.target : null;
+    if (!sel) return;
+    var name = sel.getAttribute('data-name') || '';
+    var cls  = sel.value || '';
+    if (!name || !cls) return;
+    _pendingClass[name.toLowerCase()] = { cls: cls, at: Date.now() };   // shown + editable through the grace window
+    try {
+      fetch('http://127.0.0.1:'+PORT+'/api/who-class', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: name, class: cls }),
+      }).catch(function(){});
+    } catch (err) {}
+  });
+
   async function tick(){
     if (Date.now() < _copyFlashUntil) return;   // let the ✓ copied flash survive a beat
+    // Don't repaint the list while someone is mid-pick — an innerHTML swap would
+    // slam the open dropdown shut (the "let me correct it" window).
+    var _ae = document.activeElement;
+    if (_ae && _ae.classList && _ae.classList.contains('clspick')) return;
     try {
       const r = await fetch('http://127.0.0.1:'+PORT+'/api/state',{cache:'no-store'});
       const s = await r.json();

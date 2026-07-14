@@ -507,6 +507,11 @@ const CHARM_SPELLS = new Map([
   ["solon`s bewitching bravura", { cls: 'bard', dur: 60 }],
   ["solon's song of the sirens",  { cls: 'bard', dur: 18 }],
   ["solon`s song of the sirens",  { cls: 'bard', dur: 18 }],
+  // NOT charm, don't re-add: the "Dreams of" line (Ayonae L60 / Thule L64 /
+  // Terris L65) is the bard MEZ — briefly shipped here 2026-07-13 after
+  // misreading a field report, which would have staged a false pending-charm
+  // on every mez twist. The named-mob charm gap it was trying to fix is
+  // handled by the bard-class gauge bypass in _reconcileGaugeCharms.
   // Enchanter (+ druid/necro animal/undead charm share the same 205/formula-10
   // line). Single-target timed charm.
   ['charm',             { cls: 'enchanter', dur: 720 }],
@@ -577,6 +582,20 @@ function normalizeClass(raw) {
   const key = String(raw).trim().toLowerCase();
   return CLASS_TITLES.get(key) || String(raw).trim();
 }
+
+// Finishing-blow / anomalous-hit guard (Uilnayar 2026-07-14). Quarm's finishing
+// blows log as an ordinary melee "hit … for N" where N is a mob-HP-sized number
+// — e.g. "hit a goblin cavehunter for 32011" from a monk whose real hits are a
+// few hundred. Counted as damage they wreck parses: one such line roughly
+// DOUBLES a player's total for that mob, and parsers that caught more of them
+// inflated more — the exact 1.4–2× divergence and doubled DPS seen across the
+// Aten/Terror/raid parses. No legit Luclin-era MELEE or archery hit comes near
+// this, so any attack-verb hit over the cap is dropped. Spells/DoTs (the
+// "non-melee" forms) are NOT capped — real nukes land 5–8k. Precise detection
+// would key on the finishing-blow log signature; until we capture it from a
+// live log, magnitude is the safe filter. Tunable via WP_MELEE_HIT_MAX.
+const MELEE_HIT_MAX = Math.max(6000, parseInt(process.env.WP_MELEE_HIT_MAX, 10) || 15000);
+let _finishingBlowsDropped = 0;
 
 // ── Event parser ────────────────────────────────────────────────────────────
 // Turn a kept line into a structured event. Returns null if we can't parse it.
@@ -697,6 +716,7 @@ function parseEvent(line, ts) {
   // "You <verb> X for N points of damage." (player attacking, second-person)
   m = line.match(new RegExp(`\\]\\s+You\\s+${ATTACK_VERBS_RX}\\s+(.+?)\\s+for\\s+(\\d+)(?:\\s+\\((\\d+)\\))?\\s+points?\\s+of\\s+(?:non-melee\\s+)?damage`, 'i'));
   if (m) {
+    if (parseInt(m[2], 10) > MELEE_HIT_MAX) { _finishingBlowsDropped++; return null; }   // finishing blow — not real melee
     const verb = m[0].match(new RegExp(`\\bYou\\s+(${ATTACK_VERBS_RX})\\b`, 'i'))?.[1] || 'hit';
     return { ts: tsIso, type: 'damage', attacker: null /* self */, defender: m[1], ability: verb.toLowerCase().replace(/(?:sh|ch|ss|x)es$/, m => m.slice(0, -2)).replace(/s$/, ''), amount: parseInt(m[2], 10) };
   }
@@ -710,6 +730,7 @@ function parseEvent(line, ts) {
     // Drop fragments where the lazy (.+?) grabbed a connector word as the
     // attacker (e.g. "to") instead of a real name — see isPlausibleAttacker.
     if (!isPlausibleAttacker(m[1])) return null;
+    if (parseInt(m[3], 10) > MELEE_HIT_MAX) { _finishingBlowsDropped++; return null; }   // finishing blow — not real melee
     // Extract the verb that matched (it's between the two captures)
     const verbMatch = m[0].match(new RegExp(`\\s+(${ATTACK_VERBS_RX})\\s+`, 'i'));
     const verb = (verbMatch?.[1] || 'hit').toLowerCase().replace(/(?:sh|ch|ss|x)es$/, m => m.slice(0, -2)).replace(/s$/, '');
@@ -1478,6 +1499,24 @@ function _recordCharmSpellOnTarget(pet, owner, spellName, durSec) {
 // up from zone-visible log lines) are left to the log path — untouched here.
 const _pendingGaugeCharms = new Map();        // ownerLower → Map<petKey, firstSeenAt>
 const GAUGE_CHARM_DEBOUNCE_MS = 1500;
+// Bards cannot SUMMON a pet — no mage/necro summons, no enchanter animations
+// — so for a bard, a slot-16 pet is ALWAYS a charm and the article/pending
+// gates below are unnecessary. They're also insufficient: a bard charming a
+// proper-named mob ("Dark Elf Reaver") slips the article heuristic, and the
+// SBB begin-cast line can predate the gauge by more than the 12s pending
+// window (resists, melody re-twists), killing the pending bypass too
+// (Uilnayar 2026-07-13 — charm tracker latched "a crag spider" but not the
+// reaver; a same-named second reaver was mezzed nearby, which is fine here:
+// slot 16 is only ever the LOCAL client's pet, so name twins can't confuse
+// attribution). Class comes from the same whoData → raid-roster chain
+// /api/state uses; unknown class stays conservative (gates still apply).
+function _gaugeOwnerIsBard(name) {
+  const a = String(name || '').toLowerCase();
+  if (!a) return false;
+  const who = whoData.get(a);
+  const cls = (who && who.class) || _raidClassByName.get(a) || null;
+  return cls ? /^bard$/i.test(String(normalizeClass(String(cls)))) : false;
+}
 function _reconcileGaugeCharms() {
   const now = Date.now();
   const gaugeOwners = new Set();              // ownerLower currently streaming a gauge
@@ -1505,6 +1544,7 @@ function _reconcileGaugeCharms() {
       const txt = String(g.text);
       if (/^(?:an?|the)\s+/i.test(txt)) return true;
       if (_hasPendingCharmSpell(ch, now))   return true;
+      if (_gaugeOwnerIsBard(ch))            return true;   // bards can't summon — slot 16 IS a charm
       return false;
     });
     if (!petG) continue;
@@ -2262,6 +2302,16 @@ function petBuffsForOwner(ownerLower) {
 const _buffLandingsByTarget = new Map();   // targetLower → Map<spellLower,{name,dur_ticks,landed_at}>
 function recordTargetBuffLanding(bcEvt) {
   if (!bcEvt || !bcEvt.spell_name || !bcEvt.target) return;
+  // Instant spells — nukes, stuns, dispels (Abolish Enchantment), interrupts,
+  // gates — have NO lasting effect and must never linger on the target as a
+  // debuff / "fell off" cue (Uilnayar 2026-07-13). They leak in via
+  // resolveSelfCastLanding (matches ANY self-cast by landing text, ungated on
+  // duration). Catalog buffduration + formula both non-timed = instant → drop.
+  // Charm spells are exempt (cast_on_other NULL, synthesized with is_charm_spell).
+  if (!bcEvt.is_charm_spell) {
+    const _cat = _spellByNameLower.get(String(bcEvt.spell_name).toLowerCase());
+    if (_cat && !_isTimedDurationFormula(_cat.durf) && !(Number(_cat.dur) > 0)) return;
+  }
   const k = String(bcEvt.target).toLowerCase();
   let mp = _buffLandingsByTarget.get(k);
   if (!mp) { mp = new Map(); _buffLandingsByTarget.set(k, mp); }
@@ -2372,6 +2422,52 @@ function _zealTargetForChar(charLower) {
   }
   return null;
 }
+// ── Auto-Raid Invite lead detection (Uilnayar 2026-07-13) ───────────────────
+// The raid leader who turns on in-game Auto-Raid invite IS who members should
+// /who for an auto-invite. Two self-lines drive it (from that char's own log):
+//   "You are now the leader of the raid."   → this char is raid leader
+//   "Auto-Raid invite enabled."             → ARI on
+//   "Auto-Raid invite disabled."            → ARI off
+//   "<Name> is now the leader of your raid." / "You are no longer the leader…"
+//                                           → this char lost raid lead
+// When a char is leader AND enabled we report {character, active:true} so the
+// bot auto-sets /autoraidinvite; when that stops, {active:false}. Only the
+// LIVE tail calls this (never backfill — a replayed old "you are now leader"
+// must not set a stale ARI). State-change-gated so the queue isn't spammed.
+const _ariCharState = new Map();   // charLower → { leader, enabled, name }
+let _ariReportedActive = null;     // charLower currently reported active, or null
+function trackAriLeadLine(line, character) {
+  if (!line || !character) return;
+  const key = String(character).toLowerCase();
+  const get = () => { let s = _ariCharState.get(key); if (!s) { s = { leader: false, enabled: false, name: character }; _ariCharState.set(key, s); } s.name = character; return s; };
+  if (/\bYou are now the leader of the raid\b/i.test(line)) {
+    get().leader = true;
+    for (const [k, o] of _ariCharState) if (k !== key) o.leader = false;   // only one raid leader
+  } else if (/\bAuto-Raid invite enabled\b/i.test(line)) {
+    get().enabled = true;
+  } else if (/\bAuto-Raid invite disabled\b/i.test(line)) {
+    get().enabled = false;
+  } else if (/\bis now the leader of your raid\b/i.test(line) || /\bYou are no longer (?:the |a )?(?:raid )?leader\b/i.test(line)) {
+    for (const [, o] of _ariCharState) o.leader = false;
+  } else {
+    return;   // not an ARI-relevant line
+  }
+  // Current ARI-active char = the one that is BOTH leader and enabled.
+  let activeKey = null, activeName = null;
+  for (const [k, o] of _ariCharState) if (o.leader && o.enabled) { activeKey = k; activeName = o.name; break; }
+  if (activeKey === _ariReportedActive) return;   // no change since last report
+  if (activeKey) {
+    _ariReportedActive = activeKey;
+    enqueueUpload('ari_lead', { agent_version: AGENT_VERSION, character: activeName, active: true });
+    console.log(`[ari] ${activeName} is raid leader with Auto-Raid invite ON — reporting as ARI lead`);
+  } else if (_ariReportedActive) {
+    const prevName = (_ariCharState.get(_ariReportedActive) || {}).name || _ariReportedActive;
+    enqueueUpload('ari_lead', { agent_version: AGENT_VERSION, character: prevName, active: false });
+    _ariReportedActive = null;
+    console.log(`[ari] ${prevName} no longer raid leader + ARI — reporting clear`);
+  }
+}
+
 // "You begin casting/singing <Spell>." — shared by noteSelfCast (landing
 // attribution) and relaySelfCastForCasting (cross-client Casting relay).
 const _CAST_BEGIN_RX = /\]\s+You begin (?:casting|singing)\s+(.+?)\.\s*$/i;
@@ -3743,21 +3839,27 @@ function buildWhoSnapshot() {
   if (!currentNames || !currentNames.size) return null;
   const RECENT_GONE_MS = 30 * 60 * 1000;
   const current = [], gone = [], anonNeeded = [];
+  // De-anon an anon row from the lookup cache, or queue a fetch. Applied to
+  // BOTH current and recently-gone rows — the gone list used to skip this
+  // entirely, so a raider who just /anon'd and walked off still showed a bare
+  // "anon" with no class even though we had it (Uilnayar 2026-07-14, Camping).
+  const deanon = (entry, v, k) => {
+    if (!v.anonymous) return;
+    const known = _whoLookupCache.get(k);
+    if (known && (now - known.at) < WHO_LOOKUP_TTL_MS) entry.known = known.data || null;
+    else anonNeeded.push(v.name);
+  };
   for (const [k, v] of whoData) {
     const entry = {
       name: v.name, level: v.level || null, class: v.class || null, race: v.race || null,
       guild: v.guild || null, anonymous: !!v.anonymous, gm: !!v.gm, observedAt: v.observedAt || null,
     };
     if (currentNames.has(k)) {
-      if (v.anonymous) {
-        const known = _whoLookupCache.get(k);
-        if (known && (now - known.at) < WHO_LOOKUP_TTL_MS) entry.known = known.data || null;
-        else anonNeeded.push(v.name);
-      }
+      deanon(entry, v, k);
       current.push(entry);
     } else {
       const tt = Date.parse(v.observedAt || 0) || 0;
-      if (tt && (now - tt) <= RECENT_GONE_MS) gone.push(entry);
+      if (tt && (now - tt) <= RECENT_GONE_MS) { deanon(entry, v, k); gone.push(entry); }
     }
   }
   if (anonNeeded.length) fetchWhoLookup(anonNeeded);
@@ -5874,6 +5976,22 @@ const QUEUE_MAX_PER_DRAIN_PASS = 50;     // cap parallel work per drain so a
                                          // 5000-entry backlog doesn't wedge
                                          // a single pass for hours
 const QUEUE_BACKOFF_MS = [30_000, 60_000, 120_000, 240_000, 480_000, 600_000];
+// Head-of-line-block protection (Hitya raid-night 2026-07-13: "a number queued
+// that won't drain", 91 pending). A POISON entry — one the bot keeps rejecting
+// in a transient-looking way (5xx / timeout, not a clean 4xx which already
+// drops) — never leaves the queue and rides in EVERY drain pass, so the pending
+// count never reaches zero and the poison crowds the per-pass budget ahead of
+// good data. Once an entry has failed this many times WHILE the pipe is proven
+// healthy (a success within QUEUE_PARK_HEALTHY_WINDOW_MS), we PARK it: it moves
+// to a slow retry lane (QUEUE_PARK_RETRY_MS) and only a bounded trickle
+// (QUEUE_PARK_PER_PASS) is retried per drain, so it can never starve live/
+// backfill. Parked entries are never dropped (data is preserved) and are
+// surfaced separately so the operator knows something needs a look; "drain now"
+// un-parks everything for a fresh full-speed attempt.
+const QUEUE_PARK_AFTER_ATTEMPTS   = 25;         // same-entry failures before parking
+const QUEUE_PARK_HEALTHY_WINDOW_MS = 5 * 60_000; // only park if the pipe worked recently (else it's an outage — don't park)
+const QUEUE_PARK_RETRY_MS         = 30 * 60_000; // parked entries retry every 30m
+const QUEUE_PARK_PER_PASS         = 3;           // max parked entries retried per drain pass
 // 413 (payload too large) / 431 (headers too large) never succeed on retry —
 // treat them as permanent so an over-limit encounter doesn't retry forever and
 // hold a slot. 4xx already means "the bot is intentionally rejecting".
@@ -5898,6 +6016,8 @@ let _queueDraining     = false;     // re-entrancy guard for the drain loop
 let _queueUploadOpts   = null;      // { botUrl, token } — set by startUploadQueueDrain
 let _queuePermanentDropCount = 0;   // 4xx responses since startup
 let _queueCapEvictCount      = 0;   // FIFO evictions because queue hit MAX_SIZE
+let _lastUploadSuccessAt     = 0;   // ms of the last OK upload — gates poison-parking (below) so a
+                                    // real outage, where NOTHING is succeeding, never parks good data
 
 // Serialized byte size of one entry, cached on the entry so the byte-cap can
 // sum without re-stringifying. Falls back to a live stringify when absent.
@@ -6101,6 +6221,7 @@ function _endpointForKind(kind, botUrl) {
     case 'trigger_relay':   return base + '/trigger-relay';
     case 'quake':           return base + '/quake';
     case 'casting':         return base + '/casting';
+    case 'ari_lead':        return base + '/ari-lead';
     case 'crash_report':    return base + '/crash_report';
     default:                return botUrl;
   }
@@ -6424,18 +6545,30 @@ async function _drainUploadQueue(opts = {}) {
     // every time the queue has both kinds.
     const allDue = _uploadQueue.filter(e => e.next_try_at <= now);
     if (allDue.length === 0) return;
-    const live    = allDue.filter(e => !e?.payload?.backfill);
-    const back    = allDue.filter(e =>  e?.payload?.backfill);
-    const due     = [...live, ...back].slice(0, QUEUE_MAX_PER_DRAIN_PASS);
+    // Parked (poison) entries get their own bounded trickle so they can never
+    // consume the active per-pass budget ahead of live/backfill data — the
+    // head-of-line-block fix. Active work is chosen first (live before backfill),
+    // then up to QUEUE_PARK_PER_PASS parked retries ride along at the tail.
+    const active  = allDue.filter(e => !e.parked);
+    const parked  = allDue.filter(e =>  e.parked);
+    const live    = active.filter(e => !e?.payload?.backfill);
+    const back    = active.filter(e =>  e?.payload?.backfill);
+    const due     = [
+      ...[...live, ...back].slice(0, QUEUE_MAX_PER_DRAIN_PASS),
+      ...parked.slice(0, QUEUE_PARK_PER_PASS),
+    ];
 
     let stateChanged = false;
-    for (const entry of due) {
-      const result = await _doOneUpload(entry);
+    // Apply one upload result to the queue (splice on success/permanent-fail,
+    // backoff on transient). Factored out of the old serial loop so the
+    // parallel version below can reuse it verbatim — queue MUTATION stays
+    // single-threaded (JS is single-threaded; only the network I/O overlaps).
+    const applyResult = (entry, result) => {
       const idx = _uploadQueue.indexOf(entry);
-      if (idx === -1) continue; // dropped under us (queue cap)
-
+      if (idx === -1) return; // dropped under us (queue cap)
       if (result.ok) {
         _uploadQueue.splice(idx, 1);
+        _lastUploadSuccessAt = Date.now();   // pipe is demonstrably working — arms poison-parking
         try { _onUploadSuccess(entry, result.body); } catch {}
         stateChanged = true;
       } else if (result.permanent) {
@@ -6461,9 +6594,25 @@ async function _drainUploadQueue(opts = {}) {
         // ladder because those mean the bot is intentionally rejecting.
         const isTransport = !result.statusCode &&
           /ECONNRESET|ETIMEDOUT|ENETUNREACH|EHOSTUNREACH|EPIPE|socket hang up|^timeout$/i.test(errBody);
-        const backoffMs = isTransport
-          ? 30_000
-          : QUEUE_BACKOFF_MS[Math.min(entry.attempts - 1, QUEUE_BACKOFF_MS.length - 1)];
+        // Poison-parking: this ONE entry has failed a lot, yet the pipe has
+        // succeeded on something else recently — so it isn't an outage, it's a
+        // payload the bot won't accept. Park it to the slow lane so it stops
+        // riding every drain pass and crowding good data. Never dropped — a
+        // parked entry still retries (rarely), and "drain now" un-parks all.
+        // Gated on a recent success so a genuine outage (nothing succeeding)
+        // walks the normal backoff ladder and resumes at full speed on recovery.
+        if (!entry.parked
+            && entry.attempts >= QUEUE_PARK_AFTER_ATTEMPTS
+            && _lastUploadSuccessAt > 0
+            && (Date.now() - _lastUploadSuccessAt) < QUEUE_PARK_HEALTHY_WINDOW_MS) {
+          entry.parked = true;
+          console.warn(`[upload-queue] PARKING ${entry.kind} after ${entry.attempts} failures (pipe healthy — likely a payload the bot rejects): ${entry.last_error}`);
+        }
+        const backoffMs = entry.parked
+          ? QUEUE_PARK_RETRY_MS
+          : isTransport
+            ? 30_000
+            : QUEUE_BACKOFF_MS[Math.min(entry.attempts - 1, QUEUE_BACKOFF_MS.length - 1)];
         entry.next_try_at = Date.now() + backoffMs;
         stats.uploadErrors++;
         if (entry.attempts === 1 || entry.attempts === 5 || entry.attempts === 20) {
@@ -6471,6 +6620,27 @@ async function _drainUploadQueue(opts = {}) {
         }
         stateChanged = true;
       }
+    };
+
+    // PARALLEL drain (Uilnayar 2026-07-13, raid queue backup): the old serial
+    // for-await sent ONE upload at a time and waited its full timeout before
+    // starting the next — so on a congested raid-night link (net: timeout) the
+    // drain couldn't keep pace with the inflow and the queue only grew. Fire
+    // uploads in bounded-concurrency chunks so slow round-trips overlap; the
+    // network I/O is independent per entry and every upload is idempotent
+    // (dedup_key + find_or_create_encounter), so concurrency is safe. Live
+    // entries stay ahead of backfill (due[] is already ordered), and queue
+    // mutation is applied serially after each chunk resolves. Tunable; default 5.
+    const CONCURRENCY = Math.max(1, Math.min(12, parseInt(process.env.WP_QUEUE_CONCURRENCY, 10) || 5));
+    for (let i = 0; i < due.length; i += CONCURRENCY) {
+      const chunk = due.slice(i, i + CONCURRENCY);
+      const settled = await Promise.all(
+        chunk.map(entry => _doOneUpload(entry).then(
+          result => ({ entry, result }),
+          err => ({ entry, result: { ok: false, statusCode: null, body: String(err && err.message || err) } }),
+        )),
+      );
+      for (const { entry, result } of settled) applyResult(entry, result);
     }
     if (stateChanged) {
       _saveQueueToDisk();
@@ -6521,9 +6691,11 @@ function uploadQueueSnapshot() {
   let maxAttempts = 0;
   let lastError = null;
   let bytes = 0;
+  let parked = 0;
   for (const e of _uploadQueue) {
     byKind[e.kind] = (byKind[e.kind] || 0) + 1;
     bytes += _entryBytes(e);
+    if (e.parked) parked++;
     if (!oldest || e.queued_at < oldest) oldest = e.queued_at;
     if (e.attempts > maxAttempts) {
       maxAttempts = e.attempts;
@@ -6532,6 +6704,7 @@ function uploadQueueSnapshot() {
   }
   return {
     pending:           _uploadQueue.length,
+    parked,                             // poison entries in the slow retry lane (see QUEUE_PARK_*)
     byKind,
     bytes,                              // total serialized size — the real cap
     maxBytes:          QUEUE_MAX_BYTES,
@@ -7574,6 +7747,86 @@ function _zealExportOnCampState() {
     _zealCampVal = found === 0 ? null : (on === found);
   } catch { _zealCampVal = null; }
   return _zealCampVal;
+}
+
+// EQ install dirs the agent knows about — WOLFPACK_EQ_DIR plus each watched
+// log's folder (the Logs/ parent). Shared by the checklist + the setup writer.
+function _eqSetupDirs() {
+  const dirs = new Set();
+  if (process.env.WOLFPACK_EQ_DIR) dirs.add(process.env.WOLFPACK_EQ_DIR);
+  for (const w of (stats.watchedLogs || [])) {
+    if (!w || !w.logPath) continue;
+    let d = path.dirname(w.logPath);
+    if (/^logs$/i.test(path.basename(d))) d = path.dirname(d);
+    dirs.add(d);
+  }
+  return [...dirs];
+}
+
+// Set-or-insert `key=value` under [section] in a Windows INI, preserving every
+// other line + the file's newline style. Creates the section if absent. Atomic
+// write (.tmp + rename). Returns { changed, existed } or null if unreadable.
+function _iniSetKey(filePath, section, key, value) {
+  let text;
+  try { text = fs.readFileSync(filePath, 'utf8'); } catch { return null; }
+  const nl = text.includes('\r\n') ? '\r\n' : '\n';
+  const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const secRx = new RegExp('^\\s*\\[' + esc(section) + '\\]\\s*$', 'i');
+  const keyRx = new RegExp('^\\s*' + esc(key) + '\\s*=', 'i');
+  const lines = text.split(/\r?\n/);
+  let inSec = false, secLine = -1, existed = false, changed = false;
+  for (let i = 0; i < lines.length; i++) {
+    if (/^\s*\[.+\]\s*$/.test(lines[i])) { inSec = secRx.test(lines[i]); if (inSec) secLine = i; continue; }
+    if (inSec && keyRx.test(lines[i])) {
+      existed = true;
+      const want = key + '=' + value;
+      if (lines[i].trim() !== want) { lines[i] = want; changed = true; }
+      break;
+    }
+  }
+  if (!existed) {
+    if (secLine >= 0) { lines.splice(secLine + 1, 0, key + '=' + value); }
+    else { if (lines.length && lines[lines.length - 1] !== '') lines.push(''); lines.push('[' + section + ']', key + '=' + value); }
+    changed = true;
+  }
+  if (changed) {
+    fs.writeFileSync(filePath + '.tmp', lines.join(nl));
+    fs.renameSync(filePath + '.tmp', filePath);
+  }
+  return { changed, existed };
+}
+
+// "Set up for me" — write the four settings that make data flow, across every
+// known EQ folder: zeal.ini ExportOnCamp/PipeDelay/PipeVerbose + eqclient.ini
+// Log. EQ REWRITES eqclient.ini on exit, so writing while it's running is lost —
+// refuse (rather than silently no-op) if a log updated in the last 90s, which
+// means a client is live. Returns a per-folder report the dashboard renders.
+// (Uilnayar 2026-07-14.)
+const _EQ_SETUP_KEYS = [
+  ['zeal.ini',     'Zeal',     'ExportOnCamp', 'TRUE'],
+  ['zeal.ini',     'Zeal',     'PipeDelay',    '100'],
+  ['zeal.ini',     'Zeal',     'PipeVerbose',  'TRUE'],
+  ['eqclient.ini', 'Defaults', 'Log',          'TRUE'],
+];
+function _applyEqSetup() {
+  const now = Date.now();
+  if ((stats.watchedLogs || []).some(w => w && w.lastSeen && (now - w.lastSeen) < 90_000)) {
+    return { ok: false, eqRunning: true, message: 'EverQuest looks like it is running (a log updated in the last 90 seconds). Close EQ first — it rewrites eqclient.ini on exit, so the change would be lost. Then click again.' };
+  }
+  const dirs = _eqSetupDirs();
+  if (!dirs.length) return { ok: false, message: 'No EQ folder known yet — point Mimic at your EverQuest folder in Settings first.' };
+  const folders = [];
+  for (const dir of dirs) {
+    const applied = [], notFound = [];
+    for (const [file, section, key, value] of _EQ_SETUP_KEYS) {
+      const r = _iniSetKey(path.join(dir, file), section, key, value);
+      if (r === null) { if (!notFound.includes(file)) notFound.push(file); continue; }
+      applied.push(key + '=' + value);
+    }
+    folders.push({ dir: path.basename(dir), applied, notFound });
+  }
+  _zealCampAt = 0;   // let the checklist re-probe ExportOnCamp immediately
+  return { ok: true, folders };
 }
 
 function _serializeForDashboard() {
@@ -8901,13 +9154,18 @@ function renderHeader(s) {
   const q = s.uploadQueue || {};
   if (q.pending > 0) {
     const kinds = Object.entries(q.byKind || {}).map(([k, n]) => k + ':' + n).join(' · ');
-    const tip = (q.lastError ? 'Last error: ' + q.lastError + ' · ' : '') + kinds;
+    // Parked (poison) entries are in the slow retry lane so they don't crowd
+    // good data — call them out so a non-zero-but-not-draining count reads as
+    // "these few need a look / a drain-now", not "the whole pipe is stuck".
+    const parkedNote = q.parked > 0 ? q.parked + ' parked (repeatedly rejected — slow-retry lane) · ' : '';
+    const tip = parkedNote + (q.lastError ? 'Last error: ' + q.lastError + ' · ' : '') + kinds;
     // Click-to-force-drain link — POSTs /api/drain which resets next_try_at
-    // on every entry to now() and kicks an immediate pass. Helpful when the
-    // queue gets stuck in a long exponential backoff after a transient
-    // server hiccup (added 2026-06-21 from Uilnayar's stalled-queue
-    // report).
-    queueChip = ' · <span style="background:#3b2a06;color:#ffd07a;border:1px solid #d18a2d;border-radius:3px;font-size:11px;padding:2px 6px;margin-left:4px" title="' + esc(tip) + '">⏳ ' + q.pending + ' queued · <a href="#" id="wpDrainNow" style="color:#ffd07a;text-decoration:underline;cursor:pointer" title="Reset all backoff timers and force an immediate drain pass">drain now</a></span>';
+    // on every entry to now(), un-parks poison entries, and kicks an immediate
+    // pass. Helpful when the queue gets stuck in a long exponential backoff
+    // after a transient server hiccup (added 2026-06-21 from Uilnayar's
+    // stalled-queue report).
+    const parkedTag = q.parked > 0 ? ' <span style="color:#d18a2d" title="Entries the bot keeps rejecting — parked to a slow retry lane so they don&rsquo;t block live uploads. Drain now to retry them at full speed.">(' + q.parked + ' parked)</span>' : '';
+    queueChip = ' · <span style="background:#3b2a06;color:#ffd07a;border:1px solid #d18a2d;border-radius:3px;font-size:11px;padding:2px 6px;margin-left:4px" title="' + esc(tip) + '">⏳ ' + q.pending + ' queued' + parkedTag + ' · <a href="#" id="wpDrainNow" style="color:#ffd07a;text-decoration:underline;cursor:pointer" title="Reset all backoff timers and force an immediate drain pass">drain now</a></span>';
   } else if (q.permanentDropped > 0 || q.capEvicted > 0) {
     const dropTip =
       (q.permanentDropped > 0 ? q.permanentDropped + ' permanent 4xx · ' : '') +
@@ -9039,7 +9297,8 @@ function renderHeader(s) {
       const kinds = j.byKind ? Object.entries(j.byKind).map(([k,n]) => k+':'+n).join(', ') : '';
       const msg = 'Drain kicked.\\n\\n' +
         'Reset backoff on: ' + (j.backoffReset || 0) + ' entries\\n' +
-        'Now pending: '      + (j.pending || 0) + '\\n' +
+        (j.unparked ? 'Un-parked (poison → full-speed retry): ' + j.unparked + '\\n' : '') +
+        'Now pending: '      + (j.pending || 0) + (j.parked ? ' (' + j.parked + ' parked)' : '') + '\\n' +
         (j.draining ? 'A drain pass is already running — give it a moment.\\n' : '') +
         (j.isUploader === false
           ? 'NOTE: this instance is read-only (another agent holds the uploader lock'
@@ -9234,7 +9493,39 @@ function renderSetupChecks(s) {
      + '<td style="white-space:nowrap;font-weight:600;color:var(--text)">miMIC in the Windows taskbar</td>'
      + '<td class="dim" style="font-size:11px">Drag the miMIC icon out of the hidden-icons arrow (the <b>^</b> next to the clock) onto the taskbar tray so it is always visible — Overlays, Restart agent, and updates all live in that tray menu.</td></tr>';
   h += '</table>';
+  // One-click writer for the EQ logging + Zeal export/pipe settings. The note
+  // is deliberate: EQ rewrites eqclient.ini on exit so it must be CLOSED, and
+  // the in-game equivalents are spelled out so a user can act live too.
+  h += '<div style="margin-top:8px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">'
+     + '<button class="wp-eq-setup" style="background:#1f6feb;color:#fff;border:0;border-radius:5px;padding:5px 12px;cursor:pointer;font-weight:600;font-size:12px">🔧 Set up for me</button>'
+     + '<span class="dim" style="font-size:11px">Writes <b>Log=TRUE</b> (eqclient.ini) + <b>ExportOnCamp</b> / <b>PipeDelay</b> / <b>PipeVerbose</b> (zeal.ini). <b>EQ must be CLOSED</b> — it overwrites eqclient.ini on exit. Live in-game: <code>/log on</code> starts logging this session; the Zeal settings apply when EQ restarts.</span>'
+     + '</div>';
   morphInto(el, h);
+  // Delegated so it survives the morphInto repaint; bound once.
+  if (!window.__wpEqSetupBound) {
+    window.__wpEqSetupBound = true;
+    document.addEventListener('click', async function (e) {
+      var btn = e.target && e.target.closest ? e.target.closest('.wp-eq-setup') : null;
+      if (!btn) return;
+      var orig = btn.textContent; btn.disabled = true; btn.textContent = 'Setting up…';
+      try {
+        var resp = await fetch('/api/eq-setup', { method: 'POST' });
+        var j = await resp.json();
+        if (j && j.eqRunning) { alert('⚠ ' + j.message); }
+        else if (!j || !j.ok) { alert('Could not set up: ' + ((j && j.message) || 'unknown error')); }
+        else {
+          var lines = (j.folders || []).map(function (f) {
+            var s2 = f.dir + ': ' + (f.applied || []).join(', ');
+            if (f.notFound && f.notFound.length) s2 += '  (missing: ' + f.notFound.join(', ') + ')';
+            return s2;
+          });
+          alert('✓ Done. Wrote:\\n' + lines.join('\\n') +
+            '\\n\\nEQ was closed, so these apply next launch. Right now you can type /log on in-game to start logging this session; the Zeal export/pipe settings take effect when EQ restarts.');
+        }
+      } catch (err) { alert('Setup request failed: ' + ((err && err.message) || err)); }
+      finally { btn.disabled = false; btn.textContent = orig; }
+    });
+  }
 }
 function renderDamageDoneCard(s) {
   const el = document.getElementById('wpDamageDone');
@@ -14138,6 +14429,51 @@ function startWebDashboard(port) {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ ok: true }));
       }
+      // Crowd-sourced /who class set (Uilnayar 2026-07-14): the /who overlay's
+      // dropdown POSTs { name, class } here when someone identifies an anon
+      // player. We (1) reflect it LOCALLY at once so the picker's own overlay
+      // updates immediately, and (2) forward to the bot's /api/agent/who-override
+      // so it lands in who_overrides and propagates to everyone within minutes.
+      if (req.url === '/api/who-class' && req.method === 'POST') {
+        let payload = {};
+        try { payload = JSON.parse(await _readBody(req, 4 * 1024) || '{}'); } catch { /* */ }
+        const name  = String(payload.name  || '').trim();
+        const klass = String(payload.class || '').trim();
+        if (!name || !klass) { res.writeHead(400, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: 'need name + class' })); }
+        // Optimistic local reflect — the overlay shows the pick right away
+        // (cross-client propagation rides who_overrides → who-lookup, ~minutes).
+        _whoLookupCache.set(name.toLowerCase(), { at: Date.now(), data: { class: klass, source: 'you' } });
+        try { scheduleRender(); } catch {}
+        const opts = _uploadOpts;
+        if (opts && opts.botUrl && opts.token && !opts.dryRun) {
+          try {
+            const url = new URL(opts.botUrl.replace(/\/encounter(\?.*)?$/, '/who-override'));
+            const mod = url.protocol === 'https:' ? https : http;
+            const b = JSON.stringify({ character: name, class: klass });
+            const fr = mod.request({
+              method: 'POST', hostname: url.hostname, port: url.port, path: url.pathname + url.search,
+              headers: {
+                'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(b),
+                'Authorization': `Bearer ${opts.token}`, 'User-Agent': `wolfpack-logsync/${AGENT_VERSION}`,
+                ...(_mimicSessionToken ? { 'X-Wolfpack-Mimic-Session': _mimicSessionToken } : {}),
+              },
+              timeout: 8000,
+            }, (r2) => r2.resume());
+            fr.on('error', () => {}); fr.on('timeout', () => fr.destroy());   // fire-and-forget; queue not needed for a hint
+            fr.write(b); fr.end();
+          } catch { /* forward is best-effort */ }
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ ok: true, name, class: klass }));
+      }
+      // "Set up for me" — write the EQ logging + Zeal export/pipe settings.
+      if (req.url === '/api/eq-setup' && req.method === 'POST') {
+        let result;
+        try { result = _applyEqSetup(); }
+        catch (e) { result = { ok: false, message: String((e && e.message) || e) }; }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify(result));
+      }
       // Force a queue drain attempt right now. Used by the "Drain now" link
       // on the dashboard queue chip when a backlog appears stalled — resets
       // every entry's next_try_at to right now (skipping backoff windows)
@@ -14148,10 +14484,16 @@ function startWebDashboard(port) {
       if (req.url === '/api/drain' && req.method === 'POST') {
         const now = Date.now();
         let resetCount = 0;
+        let unparkedCount = 0;
         for (const e of _uploadQueue) {
+          // "Drain now" is the operator's manual recovery lever — un-park every
+          // poison entry so it gets a fresh full-speed attempt (the bot bug that
+          // was rejecting it may have been fixed). They re-park on their own if
+          // they keep failing while the pipe is healthy.
+          if (e.parked) { e.parked = false; unparkedCount++; }
           if (e.next_try_at > now) { e.next_try_at = now; resetCount++; }
         }
-        if (resetCount > 0) {
+        if (resetCount > 0 || unparkedCount > 0) {
           try { _saveQueueToDisk(); } catch {}
         }
         // Fire-and-forget force pass — the drain itself awaits HTTP requests, we
@@ -14164,7 +14506,9 @@ function startWebDashboard(port) {
         return res.end(JSON.stringify({
           ok:           true,
           backoffReset: resetCount,
+          unparked:     unparkedCount,
           pending:      q.pending,
+          parked:       q.parked,
           byKind:       q.byKind,
           lastError:    q.lastError,
           maxAttempts:  q.maxAttempts,
@@ -22100,6 +22444,9 @@ async function main() {
         // /random rolls + the loot-link roll-number convention — feeds the
         // Command Center Rolls card + the dashboard roll table. Local-only.
         if (!_sourceExcluded) { try { trackRollLine(line, b.character); trackRollItemLine(line); } catch {} }
+        // Auto-Raid Invite lead — raid-leader + ARI-enabled self-lines → the
+        // bot auto-sets /autoraidinvite to this character. Live tail only.
+        if (!_sourceExcluded) { try { trackAriLeadLine(line, b.character); } catch {} }
 
         // /pet health output (Quarm: standalone HP line + bare buff names in the
         // owner's own log). Feeds the per-owner pet buff SET + HP. Pure local UI
