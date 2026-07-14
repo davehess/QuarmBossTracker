@@ -507,6 +507,19 @@ const CHARM_SPELLS = new Map([
   ["solon`s bewitching bravura", { cls: 'bard', dur: 60 }],
   ["solon's song of the sirens",  { cls: 'bard', dur: 18 }],
   ["solon`s song of the sirens",  { cls: 'bard', dur: 18 }],
+  // "Dreams of" bard charm line (no possessive → no backtick variant).
+  // Catalog: buffduration=3, formula=7 → capped at 3 ticks = 18s max, same
+  // shape as Sirens — the bard holds the charm by re-twisting the song.
+  // Field bug (Uilnayar 2026-07-13): a bard charmed a Dark Elf Reaver with
+  // Dreams of Ayonae — with no CHARM_SPELLS entry nothing staged
+  // _pendingCharmSpell, and "Dark Elf Reaver" is a proper-noun pet name so
+  // the slot-16 article-prefix heuristic rejected it too. Both accept paths
+  // dead → tracker never latched ("no active charm", no callouts). Thule
+  // (L64) and Terris (L65) added alongside so PoP launch doesn't replay
+  // this bug on the next verse of the same song line.
+  ['dreams of ayonae',  { cls: 'bard', dur: 18 }],
+  ['dreams of thule',   { cls: 'bard', dur: 18 }],
+  ['dreams of terris',  { cls: 'bard', dur: 18 }],
   // Enchanter (+ druid/necro animal/undead charm share the same 205/formula-10
   // line). Single-target timed charm.
   ['charm',             { cls: 'enchanter', dur: 720 }],
