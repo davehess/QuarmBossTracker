@@ -9114,6 +9114,31 @@ async function _handleAgentMobInfo(req, res) {
 //                           (Quarm's anon-by-default raiders); class lives here
 //   3. supabase characters — secondary backstop / pulled if roster misses
 // All in-memory after the first lookup, so it's cheap to call per /who.
+// Officer-curated /who overrides (class + Zek, set on /admin/who) cached with a
+// SHORT TTL just for the de-anon path. state.whoData only pulls who_overrides
+// every 30 min (fine for /whois), but that made an officer's just-set class take
+// up to ~30 min to reach the in-game /who overlay (Uilnayar 2026-07-14, set a
+// dozen classes by inspecting gear, none showed up). This makes /who-lookup read
+// who_overrides directly on a 60s cache, so a curation reaches the overlay within
+// the agent's own 5-min lookup cache instead of behind the 30-min refresh.
+let _whoOverrideCache = { at: 0, map: new Map() };
+const WHO_OVERRIDE_TTL_MS = 60_000;
+async function _freshWhoOverrides() {
+  if (Date.now() - _whoOverrideCache.at < WHO_OVERRIDE_TTL_MS) return _whoOverrideCache.map;
+  try {
+    const sb = require('./utils/supabase');
+    const rows = sb.isEnabled() ? await sb.getWhoOverrides() : null;
+    if (Array.isArray(rows)) {
+      const map = new Map();
+      for (const r of rows) if (r && r.character) map.set(String(r.character).toLowerCase(), r);
+      _whoOverrideCache = { at: Date.now(), map };
+    } else {
+      _whoOverrideCache.at = Date.now();   // don't hammer on a failed fetch
+    }
+  } catch { _whoOverrideCache.at = Date.now(); }
+  return _whoOverrideCache.map;
+}
+
 async function _handleAgentWhoLookup(req, res) {
   const identity = await mimicLink.requireAgentAuth(req, res);
   if (!identity) return;
@@ -9125,24 +9150,26 @@ async function _handleAgentWhoLookup(req, res) {
   try { namesParam = new URL(req.url, 'http://x').searchParams.get('names') || ''; } catch { /* */ }
   const names = namesParam.split(',').map(s => s.trim()).filter(Boolean).slice(0, 80);
 
-  // Pass 1: state.whoData + roster (both in-memory). Note any name still missing
-  // a class so pass 2 can backfill from supabase characters.
+  // Pass 0: officer-curated who_overrides (highest authority — someone set this
+  // class by hand) on a 60s cache; then state.whoData + roster (both in-memory).
+  const overrides = await _freshWhoOverrides();
   const results = {};
   const needSupabase = [];
   for (const nm of names) {
     const key = nm.toLowerCase();
+    const ov = overrides.get(key) || null;
     const w = (() => { try { return getWhoEntry(nm); } catch { return null; } })();
     const r = getRosterChar ? getRosterChar(nm) : null;
     // Skip names we have NOTHING on — overlay treats absent as "no history."
-    if (!w && !r) continue;
+    if (!ov && !w && !r) continue;
     results[key] = {
-      class:      (w && w.class)   || (r && r.class)   || null,
-      level:      (w && w.level)   || null,                            // roster has no level
+      class:      (ov && ov.class) || (w && w.class) || (r && r.class) || null,   // override wins
+      level:      (w && w.level)   || null,                            // roster/override have no level
       guild:      (w && w.guild)   || null,
       guild_rank: (w && w.guildRank) || null,
-      is_zek:     !!(w && w.is_zek),
+      is_zek:     !!((ov && ov.is_zek) || (w && w.is_zek)),
       last_seen:  (w && w.lastSeen) || null,
-      source:     (w && w.class) ? 'who' : (r && r.class) ? 'roster' : 'who',
+      source:     (ov && ov.class) ? 'override' : (w && w.class) ? 'who' : (r && r.class) ? 'roster' : 'who',
     };
     if (!results[key].class) needSupabase.push(nm);
   }
