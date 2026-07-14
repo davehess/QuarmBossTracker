@@ -359,15 +359,36 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
     }
     for (const [k, n] of perName) if (n >= 2) phantomNames.add(k);
   }
-  const deathsMap = new Map<string, RawDeath>();
+  // Collapse the SAME death seen by multiple parsers. The old key was
+  // `name|ts` exact — but each machine logs the death at its own clock second,
+  // so Xobobab dying once showed up 4× (one row per parser that witnessed it,
+  // ts off by 1-2s). Dedup by name within a time WINDOW instead: walk deaths
+  // sorted by (name, ts) and drop any within DEATH_DEDUP_MS of the last KEPT
+  // death for that name. Cross-parser skew (a few seconds) collapses; a genuine
+  // rez-and-die-again (well beyond the window) stays a separate row.
+  // (Uilnayar 2026-07-14: 4× Xobobab / 3× Currygoat on one Aten Ha Ra kill.)
+  const DEATH_DEDUP_MS = 30_000;
+  const collected: RawDeath[] = [];
   for (const c of contribs) {
     for (const d of (c.raw_parse?.deaths ?? [])) {
       if (phantomNames.has((d.name || '').toLowerCase())) continue;
-      const k = `${d.name}|${d.ts}`;
-      if (!deathsMap.has(k)) deathsMap.set(k, d);
+      collected.push(d);
     }
   }
-  const deaths = [...deathsMap.values()].sort(
+  collected.sort((a, b) =>
+    (a.name || '').toLowerCase().localeCompare((b.name || '').toLowerCase())
+    || new Date(a.ts).getTime() - new Date(b.ts).getTime());
+  const deathsDeduped: RawDeath[] = [];
+  const lastKeptByName = new Map<string, number>();
+  for (const d of collected) {
+    const nk = (d.name || '').toLowerCase();
+    const t = new Date(d.ts).getTime();
+    const prev = lastKeptByName.get(nk);
+    if (prev != null && Math.abs(t - prev) <= DEATH_DEDUP_MS) continue;   // same death, another parser's view
+    lastKeptByName.set(nk, t);
+    deathsDeduped.push(d);
+  }
+  const deaths = deathsDeduped.sort(
     (a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime(),
   );
 
