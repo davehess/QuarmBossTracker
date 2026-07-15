@@ -936,9 +936,20 @@ function parseEvent(line, ts) {
   }
   m = line.match(/\]\s+You have been healed for\s+(\d+)\s+points? of damage\./i);
   if (m) {
-    // Self-target, amount only, no healer attribution. Goes through the
-    // healers pipeline as an incoming heal we received but can't attribute.
+    // Self-target, amount only, no healer attribution. Recorded as a RECEIVED
+    // heal (heals_received) — the bot joins it against other Mimic healers'
+    // heal_casts to attribute; a local same-machine healer joins instantly.
     return { ts: tsIso, type: 'heal', defender: 'You', attacker: null, amount: parseInt(m[1], 10) };
+  }
+  // First-person OUTGOING heal — "You have healed <target> for <N> points."
+  // DEFENSIVE (2026-07-14): not yet confirmed against a healer's Quarm log
+  // (Manamana's 70MB reference log has no healer POV — see BACKLOG "verify
+  // outgoing heal line"). attacker:null means self in the heal handler, so if
+  // the line exists this gives the healer full self-attribution with amounts;
+  // if it never occurs the pattern simply never fires.
+  m = line.match(/\]\s+You have healed\s+(.+?)\s+for\s+(\d+)\s+points?/i);
+  if (m) {
+    return { ts: tsIso, type: 'heal', defender: m[1], attacker: null, amount: parseInt(m[2], 10) };
   }
   m = line.match(/\]\s+(.+?)\s+performs an exceptional heal!\s*\((\d+)\)/i);
   if (m) {
@@ -2514,6 +2525,30 @@ function noteSelfCast(line, character) {
 // they're named recognisably.
 const HEAL_SPELL_RX = /\b(heal(?:ing)?|renewal|chloropl|regrowth|torpor|lay on hands|restoration|touch of the divine|vigor|salve)\b/i;
 const _lastCastRelay = new Map();   // charLower → { sig, at }
+// Recent self heal-casts with their Zeal target + expected LAND time (cast
+// start + cast length). Two consumers:
+//   1. Local join — a multiboxed healer + recipient on the SAME machine lets
+//      the recipient's "You have been healed for N" attribute to the boxed
+//      caster with no server round-trip.
+//   2. Encounter payload `heal_casts` — the bot joins these against OTHER
+//      Mimic users' heals_received events to build real per-healer totals
+//      (Quarm never logs other people's heal amounts, so cross-client join
+//      is the only way to attribute; Uilnayar 2026-07-14).
+// `consumed` stops one cast from absorbing two landed events.
+const _recentHealCasts = [];        // { caster, spell, target, land_at(ms), consumed }
+function _noteHealCast(caster, spell, target, atMs, castSecs) {
+  if (!caster || !spell || !target) return;
+  _recentHealCasts.push({
+    caster, spell, target,
+    land_at: atMs + Math.max(0, (castSecs || 0)) * 1000,
+    consumed: false,
+  });
+  // Prune: keep 10 min of history, hard cap 600 entries (CH-chain spam bound).
+  const cutoff = Date.now() - 10 * 60_000;
+  while (_recentHealCasts.length > 600 || (_recentHealCasts.length && _recentHealCasts[0].land_at < cutoff)) {
+    _recentHealCasts.shift();
+  }
+}
 function relaySelfCastForCasting(line, character, pre) {
   if (!line || !character) return;
   // `pre` = the cast noteSelfCast already parsed from this exact line — skip
@@ -2537,11 +2572,15 @@ function relaySelfCastForCasting(line, character, pre) {
   const prev = _lastCastRelay.get(cl);
   if (prev && prev.sig === sig && (atMs - prev.at) < 2000) return;
   _lastCastRelay.set(cl, { sig, at: atMs });
+  const castSecs = _spellCastSecs(spell);
   enqueueUpload('casting', { agent_version: AGENT_VERSION, casts: [{
     caster: character, spell, target,
     started_at: new Date(atMs).toISOString(),
-    cast_secs: _spellCastSecs(spell),
+    cast_secs: castSecs,
   }] });
+  // Heal casts also feed the attribution ring (local multibox join + the
+  // encounter payload's heal_casts for the bot-side cross-client join).
+  if (HEAL_SPELL_RX.test(spell)) _noteHealCast(character, spell, target, atMs, castSecs);
 }
 // ── Blind Mode (v1.1.8) ─────────────────────────────────────────────────────
 // Detect when the watched character is blinded — either from a self-clicky
@@ -4017,6 +4056,11 @@ class EncounterBuilder {
     // Attached to the uploader's own healer entry at emit time. (Uilnayar
     // 2026-06-25: "x CHs and other heal types".)
     this.healSpellCounts = {};
+    // Heals WE received that no local heal-cast could attribute ("You have
+    // been healed for N" with no multiboxed caster on this machine). Uploaded
+    // as heals_received so the bot can join them against other Mimic users'
+    // heal_casts. events capped at 300 (HoT-tick spam bound).
+    this.healsReceived = { total: 0, ticks: 0, events: [] };
     // Pending riposte: when X attacks Y and Y ripostes, the next damage event
     // where Y attacks X within ~1.5s IS the riposte counter-hit. We tag it so
     // the tank can see total damage-from-ripostes per fight.
@@ -5336,6 +5380,36 @@ class EncounterBuilder {
     }
 
     if (event.type === 'heal' && (event.attacker || this.character)) {
+      // Unattributed RECEIVED heal ("You have been healed for N") — this used
+      // to run through `healer = this.character`, crediting the RECIPIENT as a
+      // healer of themselves (the "Tildias 1,300 → You" rows on parse cards,
+      // Uilnayar 2026-07-14). Divert: try the local heal-cast ring (multiboxed
+      // healer on this machine attributes instantly); otherwise record it as a
+      // received event for the bot's cross-client cast×landing join.
+      if (!event.attacker && event.defender === 'You') {
+        const tsMs = Date.parse(event.ts) || Date.now();
+        const amount = event.amount || 0;
+        let matched = null;
+        if (this.character && amount > 0) {
+          const mel = this.character.toLowerCase();
+          let bestD = 2500;
+          for (const c of _recentHealCasts) {
+            if (c.consumed || String(c.target).toLowerCase() !== mel) continue;
+            const d = Math.abs(c.land_at - tsMs);
+            if (d <= bestD) { matched = c; bestD = d; }
+          }
+        }
+        if (matched) {
+          matched.consumed = true;
+          this._bumpHealer(matched.caster, this.character, amount, tsMs);
+        } else if (amount > 0) {
+          const hr = this.healsReceived;
+          hr.total += amount;
+          hr.ticks += 1;
+          if (hr.events.length < 300) hr.events.push({ ts: event.ts, amount });
+        }
+        return; // handled — no healer-side bookkeeping applies (threat/boss-self-heal need an attributed healer)
+      }
       const healer = event.attacker || this.character;
       this._bumpHealer(healer, event.defender, event.amount || 0, Date.parse(event.ts) || Date.now());
       // Live threat: heal hate = 2/3 of healed amount, capped per cast — per
@@ -5776,6 +5850,26 @@ class EncounterBuilder {
                 : undefined,
             }))
           : undefined,
+        // Heals this character RECEIVED that couldn't be attributed locally.
+        // { name: recipient, total, ticks, events: [{ts, amount}] } — the bot
+        // joins events against heal_casts from OTHER uploaders (±2.5s on the
+        // expected land time) to build real per-healer totals.
+        heals_received: (this.character && this.healsReceived && this.healsReceived.ticks > 0)
+          ? { name: this.character, total: this.healsReceived.total,
+              ticks: this.healsReceived.ticks, events: [...this.healsReceived.events] }
+          : undefined,
+        // OUR heal casts during this fight window (spell + Zeal target +
+        // expected land time). Server-side join partner for heals_received.
+        heal_casts: (() => {
+          if (!this.character) return undefined;
+          const startMs = this.startedAt ? (Date.parse(this.startedAt) || 0) : 0;
+          const endMs   = this.lastEvent ? (Date.parse(this.lastEvent) || Date.now()) : Date.now();
+          const cl = this.character;
+          const out = _recentHealCasts
+            .filter(c => c.caster === cl && c.land_at >= startMs - 5000 && c.land_at <= endMs + 5000)
+            .map(c => ({ caster: c.caster, spell: c.spell, target: c.target, land_at: c.land_at }));
+          return out.length > 0 ? out.slice(0, 200) : undefined;
+        })(),
         // Player deaths in this encounter.
         // [{ name, ts, riposteDeath: bool, class: string|null }]
         // riposteDeath = true when a confirmed riposte hit landed on this player
