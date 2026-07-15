@@ -2148,6 +2148,36 @@ function _curWindowUrl() {
   try { return (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents.getURL()) || '(none)'; }
   catch { return '(err)'; }
 }
+// Self-healing port watcher (Uilnayar 2026-07-15: "Can't reach the parser
+// engine at :7779" appearing constantly). The one-shot reload after
+// launchAgent() only fires when waitForAgent succeeds INSIDE its window — a
+// slow agent boot (23 logs to open), a crash-restart with backoff, or a
+// lingering old process holding the port all leave the dashboard window
+// stranded on a dead port showing the banner until a manual click. This
+// watcher closes every one of those gaps: whenever the window's URL port
+// drifts from the live agentPort AND the live port answers, re-navigate.
+// Throttled so a flapping agent can't thrash the window.
+let _lastDriftNavAt = 0;
+setInterval(() => {
+  try {
+    if (!mainWindow || mainWindow.isDestroyed() || !agentPort) return;
+    const cur = mainWindow.webContents.getURL() || '';
+    const m = cur.match(/^https?:\/\/127\.0\.0\.1:(\d+)\//);
+    if (!m || parseInt(m[1], 10) === agentPort) return;   // not on the agent, or already right
+    if (Date.now() - _lastDriftNavAt < 15000) return;
+    const probe = http.get({ host: '127.0.0.1', port: agentPort, path: '/api/state', timeout: 1200 }, (res) => {
+      res.resume();
+      if (res.statusCode === 200) {
+        _lastDriftNavAt = Date.now();
+        appendAgentLog(`[mimic] port drift detected (window ${m[1]} → agent ${agentPort}) — auto-reloading\n`);
+        navigateToDashboard('port-drift');
+      }
+    });
+    probe.on('error', () => {});
+    probe.on('timeout', () => { try { probe.destroy(); } catch {} });
+  } catch { /* watcher must never throw */ }
+}, 4000);
+
 function navigateToDashboard(reason) {
   if (!mainWindow || mainWindow.isDestroyed()) {
     appendAgentLog(`[mimic] dashboard nav skipped — no window (reason=${reason})\n`);
@@ -2314,12 +2344,19 @@ function _rescueOverlays() {
   const disp = screen.getDisplayNearestPoint(pt);
   const a = disp.workArea;
   let moved = 0;
+  const report = [];
+  const present = new Set();
   for (const [key, win] of _overlayEntries()) {
     try {
+      present.add(key);
       const b = win.getBounds();
-      const onHome = b.x + b.width  > a.x + 20 && b.x < a.x + a.width  - 20 &&
-                     b.y + b.height > a.y + 20 && b.y < a.y + a.height - 20;
-      if (onHome) continue;
+      // "Already home" = the window's CENTER sits on the home display. The
+      // first cut tested for a mere sliver of overlap, so a window straddling
+      // the monitor boundary (Uilnayar 2026-07-15: CH chain never came back)
+      // was counted as home and skipped — still mostly lost off-screen.
+      const cx = b.x + b.width / 2, cy = b.y + b.height / 2;
+      const onHome = cx >= a.x && cx < a.x + a.width && cy >= a.y && cy < a.y + a.height;
+      if (onHome) { report.push(`${key}: kept (${b.x},${b.y} ${win.isVisible() ? 'visible' : 'hidden'})`); continue; }
       // Park inside the home display; auto-arrange below finds real spots.
       win.setBounds({
         x: Math.max(a.x + 8, Math.min(a.x + a.width  - b.width  - 8, a.x + 40 + (moved * 24))),
@@ -2327,12 +2364,23 @@ function _rescueOverlays() {
         width: b.width, height: b.height,
       });
       moved++;
-      appendAgentLog(`[rescue] ${key} → home display (${disp.id})\n`);
-    } catch { /* window mid-teardown — skip */ }
+      report.push(`${key}: moved from (${b.x},${b.y}) ${win.isVisible() ? 'visible' : 'HIDDEN'}`);
+    } catch (e) { report.push(`${key}: error ${e.message}`); }
   }
+  // Overlays with NO window at all (disabled via ✕/tray, or gated off) can't
+  // be rescued — name them in the log so "still missing X" has an answer:
+  // it needs re-enabling from tray → Overlays, not another rescue.
+  const KNOWN = ['hud', 'trigger', 'charm', 'pets', 'mobinfo', 'buffQueue', 'who', 'melody', 'zeal', 'threat', 'chchain', 'tank', 'exttarget', 'command', 'popraid'];
+  const missing = KNOWN.filter(k => !present.has(k));
+  // Re-evaluate every show/hide gate BEFORE arranging so anything that should
+  // be visible on the home display participates in the packing.
+  try { applyAllVisibility(); } catch { /* best effort */ }
   let arranged = null;
   try { arranged = _autoArrangeOverlays(); } catch { /* best effort */ }
-  return { moved, display: `${disp.size.width}x${disp.size.height}`, arranged };
+  appendAgentLog(`[rescue] home display ${disp.id} (${disp.size.width}x${disp.size.height}) · moved ${moved}\n`
+    + report.map(r => `[rescue]   ${r}`).join('\n') + '\n'
+    + (missing.length ? `[rescue]   NO WINDOW (disabled/gated — re-enable from tray → Overlays): ${missing.join(', ')}\n` : ''));
+  return { moved, display: `${disp.size.width}x${disp.size.height}`, missing, arranged };
 }
 
 // Resolve the starting bounds for an overlay: use the saved rect only if the

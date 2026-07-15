@@ -6402,8 +6402,47 @@ function _saveQueueToDisk() {
   if (_queueSaveTimer) return;
   _queueSaveTimer = setTimeout(() => {
     _queueSaveTimer = null;
-    _flushQueueToDiskSync();
+    _flushQueueToDiskAsync();
   }, 500);
+}
+
+// ASYNC flush for the debounced hot path (Uilnayar 2026-07-15: "spurts" —
+// blank overlays + dead /api/state in bursts). The sync flush blocks the
+// event loop for the WHOLE multi-MB write; with a gear+spellbook sweep in
+// the queue (17 alts' Quarmy exports + 200-spell books) every 500ms save
+// stalled the agent long enough to time out every overlay poll. Streaming
+// the same NDJSON through a write stream keeps the loop free; the SYNC
+// variant remains for process-exit paths only (last-gasp durability).
+// Re-entrancy: one write in flight at a time; a save requested mid-write
+// marks dirty and re-flushes after.
+let _queueFlushInFlight = false;
+let _queueFlushDirty = false;
+function _flushQueueToDiskAsync() {
+  if (_queueFlushInFlight) { _queueFlushDirty = true; return; }
+  _queueFlushInFlight = true;
+  const tmp = QUEUE_FILE + '.tmp';
+  const done = (err) => {
+    _queueFlushInFlight = false;
+    if (err) console.warn(`[upload-queue] async save failed: ${err.message}`);
+    if (_queueFlushDirty) { _queueFlushDirty = false; _flushQueueToDiskAsync(); }
+  };
+  try {
+    const ws = fs.createWriteStream(tmp);
+    ws.on('error', (err) => done(err));
+    for (const entry of _uploadQueue) {
+      let line;
+      try { line = JSON.stringify(entry); }
+      catch (e) { console.warn(`[upload-queue] dropping unserializable entry ${entry && entry.id}: ${e.message}`); continue; }
+      if (line.length > _QUEUE_ENTRY_MAX_BYTES) {
+        console.warn(`[upload-queue] skipping oversized entry ${entry && entry.id} (${Math.round(line.length / 1048576)}MB) from persistence`);
+        continue;
+      }
+      ws.write(line + '\n');
+    }
+    ws.end(() => {
+      fs.rename(tmp, QUEUE_FILE, (err) => done(err));
+    });
+  } catch (err) { done(err); }
 }
 
 // Synchronous flush used by debounced timer AND by every process-exit
@@ -8086,7 +8125,53 @@ function _serializeCommandCenterState() {
     enrage:        tank.enrage,
     deathtouch:    tank.deathtouch,
     da_broadcasts: daBroadcastsSnapshot(),
-    healer_mana:   healerManaRosterSnapshot(),
+    // ALL healer mana, merged from every source we have (Uilnayar 2026-07-15:
+    // "Command center should have all healer mana if its reported in the CH
+    // chain or as %n mana or mana %n or if they're in mimic"):
+    //   1. exact — local Zeal mana for characters on THIS machine;
+    //   2. exact — Mimic-running priests raid-wide (bot /di-status piggyback);
+    //   3. called — CH-chain call-outs ("004 - CH - Naggato - Mana: 52%");
+    //   4. called — the "% mana" macro roster (both word orders).
+    // Exact Mimic readings override called ones; per-name dedup, lowest first.
+    healer_mana:   (() => {
+      const byName = new Map();
+      const put = (name, cls, pct, staleSecs, exact) => {
+        if (!name || pct == null || !Number.isFinite(Number(pct))) return;
+        const k = String(name).toLowerCase();
+        const cur = byName.get(k);
+        // Exact beats called; within the same tier, fresher wins.
+        if (cur && (cur.exact && !exact || (cur.exact === exact && cur.stale_secs <= staleSecs))) return;
+        byName.set(k, { name, class: cls || (cur && cur.class) || null, pct: Math.max(0, Math.min(100, Math.round(Number(pct)))), stale_secs: Math.max(0, Math.round(staleSecs)), exact });
+      };
+      const nowMs = Date.now();
+      // 4. Macro roster (existing behavior — keeps its healer-class filter).
+      for (const r of healerManaRosterSnapshot()) put(r.name, r.class, r.pct, r.stale_secs || 0, false);
+      // 3. CH-chain slots carry the caller's mana from the call-out itself.
+      const chain = chChainSnapshot();
+      if (chain && chain.slots) {
+        for (const num of Object.keys(chain.slots)) {
+          const s = chain.slots[num];
+          if (s && s.name && s.mana != null) put(s.name, 'Cleric', s.mana, s.lastAtMs ? (nowMs - s.lastAtMs) / 1000 : 0, false);
+        }
+      }
+      // 2. Mimic priests raid-wide (exact, via the /di-status piggyback).
+      for (const h of (_diStatusCache.healer_mana || [])) {
+        const age = h.updated_at ? Math.max(0, (nowMs - Date.parse(h.updated_at)) / 1000) : 0;
+        put(h.name, h.class, h.mana_pct, age, true);
+      }
+      // 1. Local Zeal (exact, zero latency) — healer classes only so a warrior
+      // alt on this machine doesn't pad the healer board.
+      for (const ch of Object.keys(_zealState || {})) {
+        const st = _zealState[ch];
+        if (!st || (nowMs - (st.updatedAt || 0)) > 60_000) continue;
+        if (st.self_mana_cur == null || st.self_mana_max == null || !(st.self_mana_max > 0)) continue;
+        const cl = String(ch).toLowerCase();
+        const cls = ((whoData.get(cl) || {}).class) || _raidClassByName.get(cl) || null;
+        if (cls && !_isHealerClass(cls)) continue;
+        put(ch, cls, Math.round((st.self_mana_cur / st.self_mana_max) * 100), 0, true);
+      }
+      return [...byName.values()].sort((a, b) => a.pct - b.pct);
+    })(),
     // Recent /random sets — "333 (Item name) — winner names" rows.
     rolls:         rollSetsSnapshot(15 * 60 * 1000),
     cures,
@@ -12402,6 +12487,20 @@ async function refresh() {
     // Make it VISIBLE instead of a silent blank, with the exact origin so the
     // problem is obvious, plus a one-click reload to the live engine.
     _refreshFailures++;
+    // SELF-HEAL (Uilnayar 2026-07-15: banner sat for minutes — "ITS A PROBLEM
+    // FOR ME"): after ~30s of continuous failure, invoke the same reload the
+    // button does — openDashboard() navigates this window to whatever port
+    // the agent is on NOW, no human required. Once per 60s (sessionStorage
+    // so the throttle survives the reload itself); the banner still shows
+    // during the gap so a truly-dead agent stays visible.
+    if (_refreshFailures >= 15) {
+      var _lastAuto = 0;
+      try { _lastAuto = parseInt(sessionStorage.getItem('wpAutoRescueAt') || '0', 10) || 0; } catch (e) {}
+      if (Date.now() - _lastAuto > 60000) {
+        try { sessionStorage.setItem('wpAutoRescueAt', String(Date.now())); } catch (e) {}
+        try { if (window.mimic && window.mimic.openDashboard) { window.mimic.openDashboard(); } else { location.reload(); } } catch (e) {}
+      }
+    }
     if (_refreshFailures >= 2 && !document.getElementById('wpConnError')) {
       var d = document.createElement('div');
       d.id = 'wpConnError';
@@ -20601,7 +20700,7 @@ function fetchTargetBuffs(name) {
 // Command Center overlays read it off /api/state / /api/command-center. Our
 // OWN clerics' state is merged from _diStateByChar at serialize time so the
 // local view never waits on the round trip.
-let _diStatusCache = { at: 0, clerics: [] };
+let _diStatusCache = { at: 0, clerics: [], healer_mana: [] };
 let _diStatusInflight = false;
 const DI_STATUS_TTL_MS = 4000;
 function fetchDiStatus() {
@@ -20624,8 +20723,14 @@ function fetchDiStatus() {
         _diStatusInflight = false;
         try {
           const j = JSON.parse(body);
-          _diStatusCache = { at: Date.now(), clerics: Array.isArray(j && j.clerics) ? j.clerics : [] };
-        } catch { _diStatusCache = { at: Date.now(), clerics: _diStatusCache.clerics }; }
+          _diStatusCache = {
+            at: Date.now(),
+            clerics: Array.isArray(j && j.clerics) ? j.clerics : [],
+            // Piggybacked Mimic healers' exact mana (bot 3.0.187+) — feeds
+            // the Command Center HEALER MANA merge.
+            healer_mana: Array.isArray(j && j.healer_mana) ? j.healer_mana : [],
+          };
+        } catch { _diStatusCache = { at: Date.now(), clerics: _diStatusCache.clerics, healer_mana: _diStatusCache.healer_mana || [] }; }
       });
     });
     req.on('error',   () => { _diStatusInflight = false; });
