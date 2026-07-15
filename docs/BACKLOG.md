@@ -168,17 +168,27 @@ class filter + "only gaps" + "hide logged-off" toggles, accuracy caveat banner.
 
 ## Needs local session (exact data wanted)
 
-- **Verify the first-person OUTGOING heal line on Quarm** (2026-07-14, healer
-  attribution v1). Agent 3.3.35 added a DEFENSIVE pattern
-  `You have healed <target> for <N> points` — plausible eqmac wording, but our
-  only reference log (Manamana, 70MB) has no healer POV so it's unconfirmed.
-  Wanted: grep a CLERIC/DRUID/SHAMAN player's `eqlog_*_pq.proj.txt` for
-  `have healed` / `You heal` / `healed .* for [0-9]+` and paste the exact
-  line(s) into this doc. If the wording differs, fix the pattern in
-  `parseEvent` (packages/wolfpack-logsync/index.js, "First-person OUTGOING
-  heal") — it currently fires never rather than wrongly if the line doesn't
-  exist. If the line DOES exist, healers' own uploads carry full amounts and
-  the cross-client join becomes a fallback instead of the primary source.
+- ~~Verify the first-person OUTGOING heal line~~ **RESOLVED (Uilnayar
+  2026-07-14): it does not exist.** Heal amounts are private to the healed;
+  bystanders only see the spell's `cast_on_other` landing message with the
+  target's name ("X is completely healed." / "X feels much better."). The
+  defensive pattern in the agent stays as a no-op.
+
+## Heal attribution — follow-up: generic landing matcher (queued)
+
+Agent 3.3.36 witnesses **Complete Heal** landings only (`is completely
+healed.`, joined bot-side at the fixed 7,500). Generalize to every heal spell
+using the catalog's `cast_on_other` suffixes — verified rows (eqemu_spells):
+Remedy `'s wounds fade away.` (408–438, formula 101) · Superior/Greater
+Healing/Nature's Touch `feels much better.` (shared suffix — disambiguate by
+the joined cast's spell) · Chloroblast `is blasted with chlorophyll.` ·
+Celestial Healing `'s body is covered with a soft glow.` (HoT, SPA 100) ·
+Divine Light `is bathed in a divine light.` Amount = SPA-0 base..max by
+formula (fixed for formula 100; midpoint estimate otherwise, keep the `~`
+estimated flag). Plumbing already exists end-to-end: agent `heal_lands` →
+bot merge → join pass 2 → `~` on the card — only the matcher set and a
+bot-side per-spell amount lookup (eqemu_spells) are new. Also queued: live
+"heals in flight" surface (/raid or overlay) off the same casting relay.
 
 ## In-flight findings (not yet acted on)
 - **Supabase size (checked 2026-06-04): 280 MB / 500 MB free tier = 56%.** Growers:

@@ -325,7 +325,9 @@ function buildParseEmbed(bossName, parsed, bossEmoji, extras = {}) {
     const healDiv  = '─'.repeat(healHdr.length);
     const healRows = sorted.map((h, i) => {
       const name   = (h.name || '?').slice(0, 14).padEnd(14);
-      const total  = (h.healed > 0 ? fmt(h.healed) : '—').padStart(8);
+      // ~ = includes catalog-estimated amounts (public CH landings joined to
+      // casts when the recipient runs no Mimic — exact only from their client).
+      const total  = (h.healed > 0 ? (h.estimated ? '~' : '') + fmt(h.healed) : '—').padStart(8);
       const casts  = String(h.casts ?? h.ticks ?? 0).padStart(5);
       // Top recipients by amount when we have them; name list otherwise.
       // 'You' is a legacy self-received artifact — never a real recipient.

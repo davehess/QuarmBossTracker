@@ -10937,6 +10937,11 @@ async function _handleAgentUpload(req, res) {
   let uploadedHealsReceived = (encounter.heals_received && typeof encounter.heals_received === 'object'
                                && encounter.heals_received.name) ? { ...encounter.heals_received } : null;
   const uploadedHealCasts   = Array.isArray(encounter.heal_casts) ? encounter.heal_casts.slice(0, 200) : [];
+  // Public CH-landing sightings ("X is completely healed.", agent 3.3.36+) —
+  // bystander-visible, so ANY parser in the raid can witness them. Joined
+  // against heal_casts at the catalog CH amount when the recipient's own
+  // amount events aren't available (tank not running Mimic).
+  const uploadedHealLands   = Array.isArray(encounter.heal_lands) ? encounter.heal_lands.slice(0, 200) : [];
   // Legacy-agent guard (< 3.3.35): those agents miscredit the uploader's own
   // RECEIVED heals as a healer entry { name: uploader, targets: ['You'] }.
   // Reclassify to received-heals (no events → can't join, but they count in
@@ -11041,7 +11046,7 @@ async function _handleAgentUpload(req, res) {
         const withinWindow = overlaps || sequential;
 
         let mergedPlayers, mergedHealers, mergedDefenders, mergedDeaths, mergedHealGaps, perspectives, newDuration, newTotalDamage, newTotalDps;
-        let mergedHealsReceived, mergedHealCasts;
+        let mergedHealsReceived, mergedHealCasts, mergedHealLands;
 
         if (withinWindow) {
           // Two distinct merge semantics:
@@ -11188,6 +11193,18 @@ async function _handleAgentUpload(req, res) {
               if (cOut.length >= 500) break;
             }
             mergedHealCasts = cOut;
+            // Landing sightings: several parsers witness the SAME landing —
+            // dedupe by target + landing-second.
+            const lSeen = new Set(), lOut = [];
+            for (const l of [...(existing.healLands || []), ...uploadedHealLands]) {
+              if (!l || !l.target || !l.ts) continue;
+              const sig = `${String(l.target).toLowerCase()}|${Math.round(l.ts / 1000)}`;
+              if (lSeen.has(sig)) continue;
+              lSeen.add(sig);
+              lOut.push({ ts: l.ts, target: l.target, spell: l.spell || 'Complete Heal' });
+              if (lOut.length >= 500) break;
+            }
+            mergedHealLands = lOut;
           }
         } else {
           mergedPlayers   = players;
@@ -11198,6 +11215,8 @@ async function _handleAgentUpload(req, res) {
           mergedHealsReceived = uploadedHealsReceived ? [uploadedHealsReceived] : [];
           mergedHealCasts     = uploadedHealCasts.map(c => ({ caster: c.caster, spell: c.spell, target: c.target, land_at: c.land_at }))
                                                  .filter(c => c.caster && c.target && c.land_at);
+          mergedHealLands     = uploadedHealLands.filter(l => l && l.target && l.ts)
+                                                 .map(l => ({ ts: l.ts, target: l.target, spell: l.spell || 'Complete Heal' }));
           perspectives    = character ? [character] : [];
           newDuration     = duration;
           newTotalDamage  = totalDamage;
@@ -11243,6 +11262,36 @@ async function _handleAgentUpload(req, res) {
             const restTotal = (hr.total || 0) - matchedTotal;
             if (restTotal > 0) { unTotal += restTotal; unTicks += Math.max(0, (hr.ticks || 0) - matchedTicks); unWho.add(hr.name); }
           }
+          // Pass 2 — public CH-landing sightings × remaining casts. Covers the
+          // recipient-not-running-Mimic case (usually the MT): a cleric's cast
+          // + anyone's "X is completely healed." sighting = healer, target, and
+          // the catalog CH amount. ESTIMATED (marked ~ on the card). Recipients
+          // who self-report amounts are skipped — their precise events above
+          // already own their casts, and a skew-missed pair must not show up
+          // twice (once as ~7,500, once in the unattributed footnote).
+          const CH_LAND_AMOUNT = 7500;
+          {
+            const selfReporting = new Set(mergedHealsReceived.map(hr => (hr.name || '').toLowerCase()));
+            for (const l of (mergedHealLands || [])) {
+              const rl = String(l.target).toLowerCase();
+              if (selfReporting.has(rl)) continue;
+              let best = null, bestD = 4000;   // wider window: cross-machine clock skew
+              for (const c of casts) {
+                if (c.consumed || String(c.target).toLowerCase() !== rl) continue;
+                if (!/complete heal/i.test(String(c.spell || ''))) continue;
+                const d = Math.abs(c.land_at - l.ts);
+                if (d <= bestD) { best = c; bestD = d; }
+              }
+              if (!best) continue;
+              best.consumed = true;
+              const k = best.caster.toLowerCase();
+              if (!joined.has(k)) joined.set(k, { name: best.caster, healed: 0, ticks: 0, targets: new Set(), byTarget: {} });
+              const j = joined.get(k);
+              j.healed += CH_LAND_AMOUNT; j.ticks += 1; j.targets.add(l.target);
+              j.byTarget[l.target] = (j.byTarget[l.target] || 0) + CH_LAND_AMOUNT;
+              j.estimated = true;
+            }
+          }
           const castCount = new Map();
           for (const c of mergedHealCasts) {
             const k = String(c.caster).toLowerCase();
@@ -11267,9 +11316,10 @@ async function _handleAgentUpload(req, res) {
                 ticks:   Math.max(cur.ticks || 0, j.ticks),
                 targets: [...new Set([...(cur.targets || []), ...j.targets])],
                 byTarget: Object.keys(bt).length ? bt : undefined,
+                estimated: cur.estimated || j.estimated || undefined,
               });
             } else {
-              hMap.set(k, { name: j.name, healed: j.healed, ticks: j.ticks, targets: [...j.targets], byTarget: { ...j.byTarget } });
+              hMap.set(k, { name: j.name, healed: j.healed, ticks: j.ticks, targets: [...j.targets], byTarget: { ...j.byTarget }, estimated: j.estimated || undefined });
             }
           }
           for (const [k, n] of castCount) {
@@ -11352,6 +11402,7 @@ async function _handleAgentUpload(req, res) {
           // full union instead of only its own half.
           healsReceived: mergedHealsReceived?.length > 0 ? mergedHealsReceived : [],
           healCasts:     mergedHealCasts?.length     > 0 ? mergedHealCasts     : [],
+          healLands:     mergedHealLands?.length     > 0 ? mergedHealLands     : [],
         });
 
         // Stamp _liveCards immediately (before the awaited Discord send) so any
