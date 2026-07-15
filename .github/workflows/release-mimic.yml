@@ -167,6 +167,41 @@ jobs:
       # (SignPath code-signing block removed — the Foundation declined the
       #  certificate request. docs/code-signing.md kept for a future provider.)
 
+      # Release notes = WHAT CHANGED, not boilerplate. The release commit's
+      # message already describes the change (stable graduations list the
+      # highlights; a beta push names its one fix), so we lead with that, strip
+      # git trailers, and demote the install/SmartScreen note below a rule. This
+      # is what the #mimic-releases announcer surfaces (it shows the part above
+      # the ---), so a raider sees "finishing-blow fix, Set up for me, …" instead
+      # of "Electron desktop client, bundles Node runtime" (Uilnayar 2026-07-14).
+      - name: Build release notes
+        id: notes
+        if: steps.tag.outputs.build == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          subject=$(git log -1 --pretty=%s HEAD)
+          # Body minus git trailers (Co-Authored-By / Claude-Session / Signed-off-by).
+          body=$(git log -1 --pretty=%b HEAD | grep -viE '^(co-authored-by|claude-session|signed-off-by):' || true)
+          # Trim leading + trailing blank lines (pure awk — no `tac`, which the
+          # Windows runner's Git Bash may not ship).
+          body=$(printf '%s\n' "$body" | awk '
+            { lines[NR]=$0 }
+            END {
+              s=1; while (s<=NR && lines[s] ~ /^[[:space:]]*$/) s++
+              e=NR; while (e>=s && lines[e] ~ /^[[:space:]]*$/) e--
+              for (i=s;i<=e;i++) print lines[i]
+            }')
+          {
+            printf '**%s**\n' "$subject"
+            if [ -n "$(printf '%s' "$body" | tr -d '[:space:]')" ]; then
+              printf '\n%s\n' "$body"
+            fi
+            printf '\n---\n'
+            printf 'Windows installer — not code-signed (SmartScreen → More info → Run anyway). Bundles its own Node runtime; auto-updates in place via electron-updater, no re-download.\n'
+          } > "$GITHUB_WORKSPACE/release-notes.md"
+          echo "----- release-notes.md -----"; cat "$GITHUB_WORKSPACE/release-notes.md"
+
       - name: Publish release with installer
         if: steps.tag.outputs.build == 'true'
         uses: softprops/action-gh-release@v2
@@ -182,14 +217,7 @@ jobs:
           # that's how the auto-bump path materializes the tag without us
           # needing tag-push permissions in the sandbox.
           target_commitish: ${{ github.sha }}
-          body: |
-            Wolf Pack Mimic — Electron desktop client.
-            Bundles its own Node runtime; no separate Node.js install needed.
-            Not code-signed — Windows SmartScreen will warn: More info → Run anyway.
-
-            Auto-updates: once installed, future Mimic releases land in place via electron-updater. No re-download.
-
-            > **Upgrading from a pre-1.0.0 beta?** The `mimic-beta` update channel was retired at 1.0.0 — beta installs won't auto-update across the channel switch. Reinstall once from <https://wolfpack.quest/mimic> and you're back on auto-update for everything after.
+          body_path:        ${{ github.workspace }}/release-notes.md
           files: |
             apps/mimic/dist/Wolf-Pack-Mimic-Setup-*.exe
             apps/mimic/dist/Wolf-Pack-Mimic-*.zip

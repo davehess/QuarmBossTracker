@@ -7187,7 +7187,13 @@ async function _announceMimicReleases() {
   const { EmbedBuilder } = require('discord.js');
   const REL = 'https://github.com/davehess/QuarmBossTracker/releases';
   const exe = (rel.assets || []).find(a => /\.exe$/i.test(a.name));
-  const summary = String(rel.body || '').split('\n').filter(l => l.trim()).slice(0, 4).join('\n').slice(0, 800);
+  // The release body now leads with the actual changelog (from the release
+  // commit message) and puts the install boilerplate below a `---` rule — show
+  // the changelog part only, so the embed says WHAT changed, not "Electron
+  // desktop client…" (Uilnayar 2026-07-14). Falls back gracefully to the whole
+  // body for older releases that have no rule.
+  const changelog = String(rel.body || '').split(/\n\s*-{3,}\s*\n/)[0].trim();
+  const summary = changelog.split('\n').filter(l => l.trim()).slice(0, 14).join('\n').slice(0, 1600);
   const emb = new EmbedBuilder()
     .setColor(0x56d364)
     .setTitle('✅ Release — Mimic ' + rel.tag_name)
