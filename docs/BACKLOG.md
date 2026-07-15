@@ -236,6 +236,38 @@ class filter + "only gaps" + "hide logged-off" toggles, accuracy caveat banner.
   /me named-mob kill counts, and mob-immunity observed capture (§6 Fix A)
   are the next unblocked items, in that order.
 
+### 1c. Gameplay-first + scale readiness (Uilnayar 2026-07-15, raid-day findings)
+Design principle (owner, verbatim intent): "we ALWAYS want to prioritize
+gameplay over background activity." Encode in every future agent change: no
+sync I/O, no unbounded CPU on the event loop; background work yields to the
+overlay-serving path. The 3.3.51 async queue-flush is the reference fix.
+
+- **Ingest checksums do NOT survive restarts.** Quarmy gear + spellbook
+  ingest dedup by checksum (_quarmyUploaded/_spellbookUploaded) — but the
+  maps are IN-MEMORY, so every agent restart re-enqueues every alt's gear +
+  spellbook (17 gear + 11 books in one burst in the field log; each of
+  today's 13 hot-swaps repeated it). Fix: persist the two maps beside the
+  queue file, OR seed at startup from the bot (characters already stores
+  quarmy_checksum / spellbook_checksum / inventory_checksum). Cheap, kills
+  the restart burst entirely.
+- **72-raider scale review (before recruiting the whole raid onto Mimic).**
+  Current shape holds because the heavy bot endpoints compute once per ~2-3s
+  for the WHOLE raid (buff queue, extended-target, di-status, live-state
+  relay caches) and agents self-TTL their polls — worst case is a few
+  hundred req/s of in-memory cache hits on one Railway node. Real risks, in
+  order: (1) single bot instance = single point of failure mid-raid — NEVER
+  deploy during the raid window (rule exists; now doubly load-bearing);
+  (2) per-NAME cache fan-out (target-casts / character-live-state key per
+  target — bounded by distinct targets, fine at raid scale but measure);
+  (3) kill-moment bursts: 72 encounter uploads inside a minute — the ack is
+  pre-Discord already, Supabase upserts are the ceiling; (4) Supabase free
+  tier connection/row-write limits (live-state ≈ 72 upserts/5s ≈ 15/s —
+  fine, but budget it). Build BEFORE the big raid: a replay harness that
+  simulates N agents against staging (synthetic live-state + polls), and
+  per-endpoint QPS/latency counters on the bot admin page so saturation is
+  visible before it hurts. Add small random jitter to agent poll timers so
+  72 clients don't synchronize.
+
 ### 2. Data scrubbing (unblocks stats features) — NEXT PRIORITY (Opus)
 - **#47 same-name trash segmentation** (Terror over-aggregation). NOT small —
   it touches the agent's EncounterBuilder `add(event)`/`flush()` (~line 4059+),
