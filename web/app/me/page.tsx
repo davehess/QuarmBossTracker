@@ -24,6 +24,7 @@
 
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
+import { unstable_cache } from 'next/cache';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
 import { userTz, fmtAbs, relTime, fmtDateOnly } from '@/lib/timezone';
@@ -190,26 +191,45 @@ type CoverageRow = { encounters_total: number | null; encounters_with_detail: nu
 // were previously queried once PER CHARACTER inside loadCharStats, so a member
 // with N alts paid N × 3.5s and /me crawled. Fetch each view ONCE for everyone
 // here and pass the resulting maps down; per-character lookup is then free.
+//
+// 2026-07-15 ("/me takes over a minute"): EXPLAIN showed the floor view alone
+// at 22.5s on a cold instance (three MIN(ts)-per-speaker aggregates over ~300k
+// chat_messages rows) — indexed down to ~1.5s (chat_messages_channel_speaker_ts
+// migration), and since the result is GUILD-WIDE (identical for every member,
+// member_since effectively never moves), it's cached server-side for 30 min so
+// page loads normally skip the aggregation entirely. Cached as entry ARRAYS
+// (unstable_cache JSON-serializes — Maps don't survive); Maps rebuilt outside.
+const _loadFloorAndCoverageCached = unstable_cache(
+  async (): Promise<{
+    floors: [string, FloorRow][];
+    coverage: [string, CoverageRow][];
+  }> => {
+    const admin = supabaseAdmin();
+    const floors: [string, FloorRow][] = [];
+    const coverage: [string, CoverageRow][] = [];
+    const [{ data: floorRows }, { data: covRows }] = await Promise.all([
+      admin.from('character_data_floor').select('character_name, member_since, floor_source').limit(5000),
+      admin.from('character_rollup_coverage').select('character_name, encounters_total, encounters_with_detail, encounters_resubmittable').limit(5000),
+    ]);
+    for (const r of (floorRows ?? []) as (FloorRow & { character_name: string | null })[]) {
+      if (r.character_name) floors.push([r.character_name.toLowerCase(), { member_since: r.member_since, floor_source: r.floor_source }]);
+    }
+    for (const r of (covRows ?? []) as (CoverageRow & { character_name: string | null })[]) {
+      if (r.character_name) coverage.push([r.character_name.toLowerCase(), {
+        encounters_total: r.encounters_total, encounters_with_detail: r.encounters_with_detail, encounters_resubmittable: r.encounters_resubmittable,
+      }]);
+    }
+    return { floors, coverage };
+  },
+  ['me-floor-coverage'],
+  { revalidate: 1800 },
+);
 async function loadFloorAndCoverage(): Promise<{
   floors: Map<string, FloorRow>;
   coverage: Map<string, CoverageRow>;
 }> {
-  const admin = supabaseAdmin();
-  const floors = new Map<string, FloorRow>();
-  const coverage = new Map<string, CoverageRow>();
-  const [{ data: floorRows }, { data: covRows }] = await Promise.all([
-    admin.from('character_data_floor').select('character_name, member_since, floor_source').limit(5000),
-    admin.from('character_rollup_coverage').select('character_name, encounters_total, encounters_with_detail, encounters_resubmittable').limit(5000),
-  ]);
-  for (const r of (floorRows ?? []) as (FloorRow & { character_name: string | null })[]) {
-    if (r.character_name) floors.set(r.character_name.toLowerCase(), { member_since: r.member_since, floor_source: r.floor_source });
-  }
-  for (const r of (covRows ?? []) as (CoverageRow & { character_name: string | null })[]) {
-    if (r.character_name) coverage.set(r.character_name.toLowerCase(), {
-      encounters_total: r.encounters_total, encounters_with_detail: r.encounters_with_detail, encounters_resubmittable: r.encounters_resubmittable,
-    });
-  }
-  return { floors, coverage };
+  const { floors, coverage } = await _loadFloorAndCoverageCached();
+  return { floors: new Map(floors), coverage: new Map(coverage) };
 }
 
 async function loadCharStats(name: string, floorRow: FloorRow | null, coverageRow: CoverageRow | null): Promise<CharStats> {
