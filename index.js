@@ -7279,31 +7279,62 @@ async function _announceMimicReleases() {
   // 20260713050000), so a missing lastTag means Supabase is unreachable → bail
   // rather than risk re-posting.
   if (!st || !st.lastTag) return;
-  // Newest STABLE (non-prerelease, non-draft) release.
-  const rel = await new Promise((resolve) => {
+  // Newest stable AND newest beta from one listing.
+  const rels = await new Promise((resolve) => {
     const https = require('https');
     https.get({ hostname: 'api.github.com', path: '/repos/davehess/QuarmBossTracker/releases?per_page=20',
       headers: { 'User-Agent': 'wolfpack-bot', 'Accept': 'application/vnd.github+json' }, timeout: 10000 },
-      (res) => { let b = ''; res.on('data', c => b += c); res.on('end', () => { try { const arr = JSON.parse(b); resolve((Array.isArray(arr) ? arr : []).find(r => r && !r.prerelease && !r.draft) || null); } catch { resolve(null); } }); }
-    ).on('error', () => resolve(null)).on('timeout', function () { this.destroy(); resolve(null); });
+      (res) => { let b = ''; res.on('data', c => b += c); res.on('end', () => { try { const arr = JSON.parse(b); resolve(Array.isArray(arr) ? arr : []); } catch { resolve([]); } }); }
+    ).on('error', () => resolve([])).on('timeout', function () { this.destroy(); resolve([]); });
   });
-  if (!rel || !rel.tag_name || rel.tag_name === st.lastTag) return;
   const { EmbedBuilder } = require('discord.js');
   const REL = 'https://github.com/davehess/QuarmBossTracker/releases';
-  const exe = (rel.assets || []).find(a => /\.exe$/i.test(a.name));
-  // The release body now leads with the actual changelog (from the release
-  // commit message) and puts the install boilerplate below a `---` rule — show
-  // the changelog part only, so the embed says WHAT changed, not "Electron
-  // desktop client…" (Uilnayar 2026-07-14). Falls back gracefully to the whole
-  // body for older releases that have no rule.
-  const changelog = String(rel.body || '').split(/\n\s*-{3,}\s*\n/)[0].trim();
-  const summary = changelog.split('\n').filter(l => l.trim()).slice(0, 14).join('\n').slice(0, 1600);
-  const emb = new EmbedBuilder()
-    .setColor(0x56d364)
-    .setTitle('✅ Release — Mimic ' + rel.tag_name)
-    .setDescription((summary || rel.name || '') + '\n[Download](' + (exe ? exe.browser_download_url : rel.html_url) + ') · [all releases](' + REL + ')');
-  const sent = await ch.send({ embeds: [emb], allowedMentions: { parse: [] } }).catch(() => null);
-  if (sent) { st.lastTag = rel.tag_name; await _mimicAnnSave(st); console.log('[mimic-announce] announced', rel.tag_name); }
+  // The release body leads with the actual changelog (from the release commit
+  // message) with install boilerplate below a `---` rule — show the changelog
+  // part only (Uilnayar 2026-07-14). Falls back to the whole body for older
+  // releases that have no rule.
+  const _summaryOf = (rel) => {
+    const changelog = String(rel.body || '').split(/\n\s*-{3,}\s*\n/)[0].trim();
+    return changelog.split('\n').filter(l => l.trim()).slice(0, 14).join('\n').slice(0, 1600);
+  };
+  const _dlLink = (rel) => {
+    const exe = (rel.assets || []).find(a => /\.exe$/i.test(a.name));
+    return '[Download](' + (exe ? exe.browser_download_url : rel.html_url) + ') · [all releases](' + REL + ')';
+  };
+  // STABLE — a new tag gets a fresh post (the announcement of record).
+  const rel = rels.find(r => r && !r.prerelease && !r.draft) || null;
+  if (rel && rel.tag_name && rel.tag_name !== st.lastTag) {
+    const emb = new EmbedBuilder()
+      .setColor(0x56d364)
+      .setTitle('✅ Release — Mimic ' + rel.tag_name)
+      .setDescription((_summaryOf(rel) || rel.name || '') + '\n' + _dlLink(rel));
+    const sent = await ch.send({ embeds: [emb], allowedMentions: { parse: [] } }).catch(() => null);
+    if (sent) { st.lastTag = rel.tag_name; await _mimicAnnSave(st); console.log('[mimic-announce] announced', rel.tag_name); }
+  }
+  // BETA — ONE rolling card edited in place (Uilnayar 2026-07-15: "none of
+  // these betas have posted"). Betas auto-increment several times a day, so
+  // per-beta posts are the exact spam the stable-only rule was written
+  // against — instead the channel keeps a single 🧪 card that always shows
+  // the newest beta + its notes. Edits don't ping anyone; a deleted card
+  // just gets re-posted once.
+  const beta = rels.find(r => r && r.prerelease && !r.draft) || null;
+  if (beta && beta.tag_name && beta.tag_name !== st.lastBetaTag) {
+    const embB = new EmbedBuilder()
+      .setColor(0xf0b429)
+      .setTitle('🧪 Beta — Mimic ' + beta.tag_name)
+      .setDescription((_summaryOf(beta) || beta.name || '') + '\n' + _dlLink(beta))
+      .setFooter({ text: 'beta channel · this card updates in place (no ping) · Mimic betas auto-update' });
+    let placed = null;
+    if (st.betaMsgId) {
+      const msg = await ch.messages.fetch(st.betaMsgId).catch(() => null);
+      if (msg) placed = await msg.edit({ embeds: [embB] }).catch(() => null);
+    }
+    if (!placed) {
+      placed = await ch.send({ embeds: [embB], allowedMentions: { parse: [] } }).catch(() => null);
+      if (placed) st.betaMsgId = placed.id;
+    }
+    if (placed) { st.lastBetaTag = beta.tag_name; await _mimicAnnSave(st); console.log('[mimic-announce] beta card →', beta.tag_name); }
+  }
 }
 // Re-enabled 2026-07-13 after re-homing the dedup cursor to Supabase (bot_kv).
 // On by default; set MIMIC_RELEASE_ANNOUNCE=0 to silence. Backfill removed and
