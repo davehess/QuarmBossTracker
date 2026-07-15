@@ -262,6 +262,19 @@ overlay-serving path. The 3.3.51 async queue-flush is the reference fix.
   [Discord bot + jobs + announcers, deployed freely] with a notify queue
   between. Revisit at >40 concurrent Mimics or when the QPS counters (below)
   show pressure.
+- **Raid Burst mode — 2s cross-client latency → ~1s (designed 2026-07-15).**
+  Measured budget for the cast relay: tail 500ms poll (~250 avg) + upload
+  (~150-400) + recipient TARGET_CASTS_TTL_MS 2000 (~1000 avg) + tank poll
+  1000 (~550 avg) = 2.1-2.5s avg. Dominant terms are TTLs/polls, not network.
+  Burst values: tail 500→250, target-casts TTL 2000→750, MT_LIVE_STATE_TTL
+  2500→1000, live-state flush 5000→2000, tank/overlay polls 1000→500, bot
+  LIVE_STATE_RELAY_CACHE 2000→1000 → ~1.0-1.2s avg. Cost ≈ 2-2.5× relay QPS
+  per client (bot cache traffic, not Supabase). Implementation: register the
+  constants as overlay_tuning knobs (the officer remote-knob system already
+  polled every 90s) + ONE "⚡ raid burst" preset; AUTO trigger on presence,
+  not calendar — ≥12 raiders online (extended-target online count) for 5 min
+  → burst, <8 for 15 min → relax; officer force-override both ways. Same
+  knobs double as the load-shedding lever if QPS counters ever show stress.
 - **72-raider scale review (before recruiting the whole raid onto Mimic).**
   Current shape holds because the heavy bot endpoints compute once per ~2-3s
   for the WHOLE raid (buff queue, extended-target, di-status, live-state
