@@ -7790,15 +7790,35 @@ function _serializeTankState() {
     if (ctc && Array.isArray(ctc.casts)) {
       const fetchedAt = ctc.at || now;
       inboundHeals = ctc.casts
-        .filter(c => c && c.heal_amount != null && c.heal_amount > 0 && !/complete heal/i.test(String(c.spell || '')))
-        .map(c => ({
-          caster:      c.caster,
-          spell:       c.spell,
-          amount:      c.heal_amount,
-          estimated:   c.heal_fixed !== true,
-          lands_in_ms: Math.max(0, (fetchedAt + (c.remaining_secs || 0) * 1000) - now),
-          cast_secs:   c.cast_secs || null,
-        }))
+        .filter(c => c && !/complete heal/i.test(String(c.spell || '')))
+        .map(c => {
+          // Amount rides on the cast (bot fills it from the catalog); fall back
+          // to OUR local catalog so a heal still sizes if the bot didn't attach
+          // one (older bot, catalog gap). Drop casts we can't size as heals.
+          let amount = (c.heal_amount != null && c.heal_amount > 0) ? c.heal_amount : 0;
+          let fixed  = c.heal_fixed === true;
+          if (amount <= 0) {
+            const he = _healEstForSpell(c.spell);
+            if (he) { amount = he.amount; fixed = he.fixed; }
+          }
+          if (amount <= 0) return null;
+          return {
+            caster:      c.caster,
+            spell:       c.spell,
+            amount,
+            estimated:   !fixed,
+            // Absolute land time in the BOT's clock — a STABLE key the overlay
+            // dedups on across polls. remaining_secs collapses to 0 the instant
+            // a heal lands cross-client, so a now-relative land time re-mints
+            // every second and the overlay can't keep the heal's identity
+            // (Uilnayar 2026-07-15: spot heals never showed — they arrived
+            // already landed and flashed for <1s).
+            ends_at_ms:  (c.ends_at_ms != null ? c.ends_at_ms : null),
+            lands_in_ms: Math.max(0, (fetchedAt + (c.remaining_secs || 0) * 1000) - now),
+            cast_secs:   c.cast_secs || null,
+          };
+        })
+        .filter(Boolean)
         .sort((a, b) => a.lands_in_ms - b.lands_in_ms)
         .slice(0, 6);
     }

@@ -65,6 +65,10 @@
     text-shadow:-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000}
   .ih-sec{color:#fff;font-weight:600;font-variant-numeric:tabular-nums;min-width:24px;text-align:right;
     text-shadow:-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000}
+  /* Landed (already-healed) row — reads as a positive event; fades via inline
+     opacity set per 100ms frame. */
+  .ih-landed .ih-sec{color:#4ade80;font-weight:700}
+  .ih-landed .ih-amt{color:#86efac}
   .da{display:flex;align-items:center;gap:6px;padding:5px 7px;background:rgba(31,75,140,0.5);
     border:1px solid #4287f5;border-radius:5px;margin-bottom:4px;font-size:11px}
   .da.crit{background:rgba(220,38,38,0.45);border-color:#f87171;animation:flash 0.6s linear infinite alternate}
@@ -226,10 +230,13 @@
   function hpClass(pct){ if (pct == null) return ''; if (pct <= 25) return 'crit'; if (pct <= 50) return 'low'; return ''; }
   function fmtK(n){ n = Number(n)||0; if (n >= 1000) return (n/1000).toFixed(n>=10000?0:1)+'k'; return String(Math.round(n)); }
   // Projected-HP ghost segment: from current HP% to (current + sum of inbound
-  // non-CH heals)%. Only drawable when we have the tank's real cur/max HP.
+  // non-CH heals STILL IN FLIGHT)%. Landed heals are excluded — the HP bar
+  // already reflects them, so counting them would leave a permanent overhang.
+  // Only drawable when we have the tank's real cur/max HP.
   function ghostSeg(hp_cur, hp_max, inb){
     if (hp_cur == null || hp_max == null || !hp_max || !inb || !inb.length) return '';
-    var sum = 0; for (var i=0;i<inb.length;i++) sum += (inb[i].amount||0);
+    var now = Date.now();
+    var sum = 0; for (var i=0;i<inb.length;i++){ if ((inb[i].landsAt - now) > 150) sum += (inb[i].amount||0); }
     if (sum <= 0) return '';
     var curPct  = Math.max(0, Math.min(100, (hp_cur/hp_max)*100));
     var projPct = Math.max(0, Math.min(100, ((hp_cur+sum)/hp_max)*100));
@@ -237,33 +244,57 @@
     if (w <= 0.5) return '';
     return '<div class="hpghost" style="left:'+curPct.toFixed(1)+'%;width:'+w.toFixed(1)+'%"></div>';
   }
-  // Inbound-heal cast bars — painted on a 100ms ticker so the countdown is
-  // smooth between the 1s state polls. Each heal keeps its color across polls
-  // (keyed caster+spell) so a bar doesn't jump palette slots as others land.
+  // Inbound-heal rows — painted on a 100ms ticker so the countdown is smooth
+  // between the 1s state polls. Each heal keeps its color across polls (keyed
+  // caster+spell+land-time) so a bar doesn't jump palette slots as others land.
+  // In flight → a filling cast bar counting down to the land. Already landed
+  // → a full green "+N healed" row that LINGERS a few seconds and fades. The
+  // linger is essential: cross-client latency (2-4s) means most non-CH heals
+  // arrive already landed, so an in-flight-only bar showed nothing (Uilnayar
+  // 2026-07-15: "he's still not seeing my heals load up on his tank overlay").
   var _inb = [];
   var IH_COLORS = ['#38bdf8','#a78bfa','#f472b6','#fb923c','#facc15','#4ade80','#22d3ee'];
+  var IH_LINGER_MS = 3500;
   function paintInbound(){
     var el = document.getElementById('inbound-heals');
     if (!el) return;
     var now = Date.now();
     var live = [];
-    for (var i=0;i<_inb.length;i++){ if (now - _inb[i].landsAt <= 800) live.push(_inb[i]); }
+    for (var i=0;i<_inb.length;i++){ if (now - _inb[i].landsAt <= IH_LINGER_MS) live.push(_inb[i]); }
     if (!live.length){ if (el.innerHTML !== '') el.innerHTML=''; return; }
+    // In-flight (future land time) on top, then most-recently-landed; cap the
+    // rows so a burst can't run the overlay off-screen.
+    live.sort(function(a,b){ return b.landsAt - a.landsAt; });
+    if (live.length > 6) live = live.slice(0, 6);
     var h = '';
     for (var j=0;j<live.length;j++){
       var x = live[j];
-      var landsIn = Math.max(0, x.landsAt - now);
-      var castMs = x.castMs || 3000;
-      var pct = Math.max(0, Math.min(100, ((castMs - landsIn)/castMs)*100));
+      var landsIn = x.landsAt - now;
       var col = x.color;
       var amt = (x.estimated ? '~' : '') + fmtK(x.amount);
-      h += '<div class="ih-row">'
-         +   '<span class="ih-dot" style="background:'+col+'"></span>'
-         +   '<span class="ih-who">'+esc(x.caster)+'</span>'
-         +   '<span class="ih-bar"><span class="ih-fill" style="width:'+pct.toFixed(0)+'%;background:'+col+'"></span></span>'
-         +   '<span class="ih-amt">'+amt+'</span>'
-         +   '<span class="ih-sec">'+(landsIn<120?'now':(landsIn/1000).toFixed(1)+'s')+'</span>'
-         + '</div>';
+      if (landsIn > 150){
+        // Still in flight — cast bar filling toward the land.
+        var castMs = x.castMs || 3000;
+        var pct = Math.max(0, Math.min(100, ((castMs - landsIn)/castMs)*100));
+        h += '<div class="ih-row">'
+           +   '<span class="ih-dot" style="background:'+col+'"></span>'
+           +   '<span class="ih-who">'+esc(x.caster)+'</span>'
+           +   '<span class="ih-bar"><span class="ih-fill" style="width:'+pct.toFixed(0)+'%;background:'+col+'"></span></span>'
+           +   '<span class="ih-amt">'+amt+'</span>'
+           +   '<span class="ih-sec">'+(landsIn/1000).toFixed(1)+'s</span>'
+           + '</div>';
+      } else {
+        // Landed — full bar, fading over the linger window; "+N healed".
+        var age = now - x.landsAt;
+        var op = Math.max(0.3, 1 - (age / IH_LINGER_MS));
+        h += '<div class="ih-row ih-landed" style="opacity:'+op.toFixed(2)+'">'
+           +   '<span class="ih-dot" style="background:'+col+'"></span>'
+           +   '<span class="ih-who">'+esc(x.caster)+'</span>'
+           +   '<span class="ih-bar"><span class="ih-fill" style="width:100%;background:'+col+'"></span></span>'
+           +   '<span class="ih-amt">+'+amt+'</span>'
+           +   '<span class="ih-sec">healed</span>'
+           + '</div>';
+      }
     }
     el.innerHTML = h;
   }
@@ -289,21 +320,39 @@
     var html = '';
 
     // Inbound heals (non-CH) targeting the displayed tank — persist each heal's
-    // color across polls (keyed caster+spell+land-time) so a bar doesn't hop
-    // palette slots as siblings land. Feeds the HP ghost segment + cast bars.
+    // color + land-time across polls (keyed caster+spell+bot-clock land time)
+    // so a bar doesn't hop palette slots as siblings land, AND so a landed heal
+    // lingers a few seconds even after the bot prunes it from its short cast
+    // window (cross-client latency means most arrive already landed). Feeds the
+    // HP ghost segment + cast/landed rows.
     var now = Date.now();
     var inbRaw = Array.isArray(s.inbound_heals) ? s.inbound_heals : [];
     var prevByKey = {}; for (var _p=0;_p<_inb.length;_p++) prevByKey[_inb[_p].key] = _inb[_p];
-    _inb = inbRaw.map(function(x, i){
-      var key = (x.caster||'') + '|' + (x.spell||'') + '|' + Math.round((now + x.lands_in_ms)/1000);
+    var seen = {}, merged = [], colorCursor = _inb.length;
+    for (var _i=0;_i<inbRaw.length;_i++){
+      var x = inbRaw[_i];
+      // Stable key: prefer the bot-clock land time (ends_at_ms). remaining_secs
+      // collapses to 0 the instant a heal lands cross-client, so a now-relative
+      // land time re-mints every second and the heal loses its identity.
+      var key = (x.caster||'') + '|' + (x.spell||'') + '|'
+              + (x.ends_at_ms != null ? x.ends_at_ms : Math.round((now + x.lands_in_ms)/1000));
+      if (seen[key]) continue;
+      seen[key] = 1;
       var prev = prevByKey[key];
-      return {
+      merged.push({
         key: key, caster: x.caster, spell: x.spell, amount: x.amount, estimated: x.estimated,
         landsAt: prev ? prev.landsAt : (now + x.lands_in_ms),
         castMs:  (x.cast_secs ? x.cast_secs*1000 : 3000),
-        color:   prev ? prev.color : IH_COLORS[(Object.keys(prevByKey).length + i) % IH_COLORS.length],
-      };
-    });
+        color:   prev ? prev.color : IH_COLORS[(colorCursor++) % IH_COLORS.length],
+      });
+    }
+    // Retain recently-landed heals the bot has already dropped from its cast
+    // window so they finish their linger + fade instead of vanishing.
+    for (var _q=0;_q<_inb.length;_q++){
+      var old = _inb[_q];
+      if (!seen[old.key] && (now - old.landsAt) <= IH_LINGER_MS) merged.push(old);
+    }
+    _inb = merged;
 
     // Main Tank HP — when the agent has resolved an MT (CH-chain target or
     // whoever the boss's melee is connecting on), the overlay is about THEM,
