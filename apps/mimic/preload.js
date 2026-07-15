@@ -311,6 +311,7 @@ contextBridge.exposeInMainWorld('mimic', {
   toggleOverlay:   (name) => ipcRenderer.invoke('toggle-overlay', name),
   setOverlayTheme: (t)    => ipcRenderer.invoke('wp-theme-set', t),
   autoArrangeNow:  ()     => ipcRenderer.invoke('auto-arrange-overlays'),
+  rescueOverlays:  ()     => ipcRenderer.invoke('rescue-overlays'),
   setAllOpacity:   (v)    => ipcRenderer.invoke('wp-opacity-all', v),
   toggleBackdrops: ()     => ipcRenderer.invoke('wp-backdrop-toggle-all'),
   markOnboarded:   ()     => ipcRenderer.invoke('mark-onboarded'),

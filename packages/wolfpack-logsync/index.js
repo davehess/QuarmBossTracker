@@ -10936,6 +10936,7 @@ function renderOverlays(s) {
     + '<span id="wpBdHotkeyHint" class="dim" style="font-size:11px"></span>'
     + '<span style="flex-basis:100%"></span>'
     + '<button type="button" class="wp-ov-act" data-act="arrange" style="background:#21262d;color:#7ee787;border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px">✨ Auto-arrange overlays now</button>'
+    + '<button type="button" class="wp-ov-act" data-act="rescue" title="Lost an overlay on another monitor? Gathers every overlay onto the screen this window is on and re-arranges there. That screen becomes the overlays\\' home for future arranges." style="background:#21262d;color:#f8b87b;border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px">🧲 Rescue overlays to this screen</button>'
     + '<button type="button" class="wp-ov-act" data-act="backdrops" style="background:#21262d;color:#c9d1d9;border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px">🌫 Toggle backgrounds now</button>'
     + '<span class="dim" style="font-size:11px">arranging only ever runs when you click it — never automatically</span>'
     + '</div>';
@@ -11096,6 +11097,7 @@ if (typeof window !== 'undefined' && !window.__wpOvDelegated) {
     if (act && window.mimic) {
       var a = act.getAttribute('data-act');
       if (a === 'arrange' && window.mimic.autoArrangeNow) window.mimic.autoArrangeNow();
+      if (a === 'rescue' && window.mimic.rescueOverlays) window.mimic.rescueOverlays();
       if (a === 'backdrops' && window.mimic.toggleBackdrops) window.mimic.toggleBackdrops();
       return;
     }
@@ -14480,6 +14482,20 @@ function startWebDashboard(port) {
             }
           }
         } catch { /* */ }
+        // No explicit class picked = AUTO: default to the class of the
+        // character you're logged in as (Uilnayar 2026-07-15: "the Buff
+        // queue should default to the character class you're logged in as,
+        // versus making us change it"). Same resolution the class-default
+        // overlay sets use: /who first, Zeal type-5 raid roster fallback.
+        let autoClass = null;
+        if (!bufferClass && bufferCharacter) {
+          try {
+            const bl = String(bufferCharacter).toLowerCase();
+            const who = whoData.get(bl);
+            const cls = (who && who.class) || _raidClassByName.get(bl) || null;
+            if (cls) { autoClass = normalizeClass(String(cls)); bufferClass = autoClass; }
+          } catch { /* fall through to unfiltered */ }
+        }
         fetchRaidBuffQueue(bufferClass, bufferCharacter);
         const cacheKey = String(bufferClass || '').toLowerCase() + '|' + String(bufferCharacter || '').toLowerCase();
         const cached = _buffQueueCache.get(cacheKey);
@@ -14494,6 +14510,9 @@ function startWebDashboard(port) {
             ? mel.order.map(e => e && (e.name || e)).filter(Boolean).slice(0, 12)
             : [];
         } catch { payload.recent_casts = []; }
+        // Tell the overlay which class AUTO resolved to so the picker can
+        // read "Auto (Druid)" instead of a blank.
+        payload.auto_class = autoClass;
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify(payload));
       }
