@@ -2314,12 +2314,19 @@ function _rescueOverlays() {
   const disp = screen.getDisplayNearestPoint(pt);
   const a = disp.workArea;
   let moved = 0;
+  const report = [];
+  const present = new Set();
   for (const [key, win] of _overlayEntries()) {
     try {
+      present.add(key);
       const b = win.getBounds();
-      const onHome = b.x + b.width  > a.x + 20 && b.x < a.x + a.width  - 20 &&
-                     b.y + b.height > a.y + 20 && b.y < a.y + a.height - 20;
-      if (onHome) continue;
+      // "Already home" = the window's CENTER sits on the home display. The
+      // first cut tested for a mere sliver of overlap, so a window straddling
+      // the monitor boundary (Uilnayar 2026-07-15: CH chain never came back)
+      // was counted as home and skipped — still mostly lost off-screen.
+      const cx = b.x + b.width / 2, cy = b.y + b.height / 2;
+      const onHome = cx >= a.x && cx < a.x + a.width && cy >= a.y && cy < a.y + a.height;
+      if (onHome) { report.push(`${key}: kept (${b.x},${b.y} ${win.isVisible() ? 'visible' : 'hidden'})`); continue; }
       // Park inside the home display; auto-arrange below finds real spots.
       win.setBounds({
         x: Math.max(a.x + 8, Math.min(a.x + a.width  - b.width  - 8, a.x + 40 + (moved * 24))),
@@ -2327,12 +2334,23 @@ function _rescueOverlays() {
         width: b.width, height: b.height,
       });
       moved++;
-      appendAgentLog(`[rescue] ${key} → home display (${disp.id})\n`);
-    } catch { /* window mid-teardown — skip */ }
+      report.push(`${key}: moved from (${b.x},${b.y}) ${win.isVisible() ? 'visible' : 'HIDDEN'}`);
+    } catch (e) { report.push(`${key}: error ${e.message}`); }
   }
+  // Overlays with NO window at all (disabled via ✕/tray, or gated off) can't
+  // be rescued — name them in the log so "still missing X" has an answer:
+  // it needs re-enabling from tray → Overlays, not another rescue.
+  const KNOWN = ['hud', 'trigger', 'charm', 'pets', 'mobinfo', 'buffQueue', 'who', 'melody', 'zeal', 'threat', 'chchain', 'tank', 'exttarget', 'command', 'popraid'];
+  const missing = KNOWN.filter(k => !present.has(k));
+  // Re-evaluate every show/hide gate BEFORE arranging so anything that should
+  // be visible on the home display participates in the packing.
+  try { applyAllVisibility(); } catch { /* best effort */ }
   let arranged = null;
   try { arranged = _autoArrangeOverlays(); } catch { /* best effort */ }
-  return { moved, display: `${disp.size.width}x${disp.size.height}`, arranged };
+  appendAgentLog(`[rescue] home display ${disp.id} (${disp.size.width}x${disp.size.height}) · moved ${moved}\n`
+    + report.map(r => `[rescue]   ${r}`).join('\n') + '\n'
+    + (missing.length ? `[rescue]   NO WINDOW (disabled/gated — re-enable from tray → Overlays): ${missing.join(', ')}\n` : ''));
+  return { moved, display: `${disp.size.width}x${disp.size.height}`, missing, arranged };
 }
 
 // Resolve the starting bounds for an overlay: use the saved rect only if the
