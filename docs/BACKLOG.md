@@ -194,6 +194,13 @@ class filter + "only gaps" + "hide logged-off" toggles, accuracy caveat banner.
     cleric, add a bot-side fallback: look up the heal amount in the `/casting`
     ingest from the catalog when `heal_amount` is absent (the bot already
     computes `_healMagnitude`; lift it to a cached name→amount map).
+- **✅ Divine Intervention tracker SHIPPED (2026-07-15: agent 3.3.44 beta +
+  bot 3.0.183 main + character_live_state.di_ready_at migration).** Log-driven
+  (noteSelfCast stamps cast+6s+90s; interrupts refund; default ready);
+  GET /api/agent/di-status aggregates clerics; chips on chchain.html (with the
+  one-shot "only <X> has DI" TTS) + command.html (display-only). CHA-awareness
+  (recipient CHA from gear sums) NOT built — small follow-up if wanted.
+  Original scaffold kept below for reference:
 - **Divine Intervention availability tracker — SCAFFOLD (data confirmed).**
   DI = eqemu_spells id **1546**: cast_time **6000ms**, **recast_time 90000ms**
   (90s — short, so "who has it up" is meaningful mid-fight), cast_on_you
@@ -214,6 +221,20 @@ class filter + "only gaps" + "hide logged-off" toggles, accuracy caveat banner.
     chchain.html; when exactly ONE cleric is up, highlight + TTS "only <X>
     has DI — save it for the tank". Recipient-CHA awareness: pull CHA from the
     gear page's stat sums when available (DI success scales with target CHA).
+
+### 1b. Backlog-pass status (2026-07-15 session, raid day)
+- ✅ DI tracker shipped (see above). ✅ UI Studio drag/drop reorder +
+  class-common macros (bot 3.0.182 / web 1.0.223). ✅ task #44 HALF: bosskill
+  raid-channel posts deferred post-ack (bot 3.0.183). ⚠ pvp handler NOT
+  deferred: its kill-ledger recording is ENTANGLED with the channel fetch
+  (`if (!ch) continue` inside the loop skips pvp_kill rows whenever Discord
+  is down — an existing latent bug). Fix = record rows unconditionally, then
+  defer sends; needs its own careful pass, not a raid-day rush.
+- #47 trash segmentation deliberately NOT touched (its own warning: don't
+  rush into the 1.9 beta on a raid day). Bulk re-merge still awaiting the
+  owner's explicit go. Base stats v1, "Set up for me" onboarding wiring,
+  /me named-mob kill counts, and mob-immunity observed capture (§6 Fix A)
+  are the next unblocked items, in that order.
 
 ### 2. Data scrubbing (unblocks stats features) — NEXT PRIORITY (Opus)
 - **#47 same-name trash segmentation** (Terror over-aggregation). NOT small —
