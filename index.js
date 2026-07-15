@@ -7507,7 +7507,7 @@ async function _handleAgentCharacterLiveState(req, res) {
   const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
   const rows = await supabase.select('character_live_state',
     `guild_id=eq.${encodeURIComponent(guildId)}&character=ilike.${encodeURIComponent(name)}` +
-    `&select=character,zone_name,self_hp_pct,buffs,updated_at&limit=1`).catch(() => []);
+    `&select=character,zone_name,self_hp_pct,self_hp_cur,self_hp_max,buffs,updated_at&limit=1`).catch(() => []);
   const r = Array.isArray(rows) && rows[0];
   let state = null;
   if (r && r.updated_at) {
@@ -7518,6 +7518,11 @@ async function _handleAgentCharacterLiveState(req, res) {
         zone_name: r.zone_name || null,
         // Stale HP is worse than no HP for the healers watching the MT bar.
         self_hp_pct: (ageMs < 90_000 && typeof r.self_hp_pct === 'number') ? r.self_hp_pct : null,
+        // Exact cur/max (agent v3.3.42+ uploads, Zeal labels 17/18) — same
+        // freshness gate; the pipeverbose raid_roster fallback below still
+        // fills these when the row predates the columns.
+        self_hp_cur: (ageMs < 90_000 && typeof r.self_hp_cur === 'number') ? r.self_hp_cur : null,
+        self_hp_max: (ageMs < 90_000 && typeof r.self_hp_max === 'number') ? r.self_hp_max : null,
         buffs: Array.isArray(r.buffs)
           ? r.buffs.map(b => ({
               name: b && b.name,
@@ -9483,6 +9488,10 @@ async function _handleAgentLiveState(req, res) {
     })).filter(b => b.name);
     const zoneId    = Number.isFinite(Number(st?.zone_id)) ? Math.trunc(Number(st.zone_id)) : null;
     const selfHp    = (st?.self_hp_pct != null && Number.isFinite(Number(st.self_hp_pct))) ? Number(st.self_hp_pct) : null;
+    // Exact self HP (agent v3.3.42+, Zeal labels 17/18) — powers the
+    // cross-client Tank overlay "cur / max · pct%" label for a Mimic MT.
+    const selfHpCur = (st?.self_hp_cur != null && Number.isFinite(Number(st.self_hp_cur))) ? Math.max(0, Math.trunc(Number(st.self_hp_cur))) : null;
+    const selfHpMax = (st?.self_hp_max != null && Number.isFinite(Number(st.self_hp_max))) ? Math.max(0, Math.trunc(Number(st.self_hp_max))) : null;
     // Self mana (agent v3.3.10+) — powers the /raid mana list + Twitch Queue.
     const selfManaPct = (st?.self_mana_pct != null && Number.isFinite(Number(st.self_mana_pct))) ? Math.max(0, Math.min(100, Number(st.self_mana_pct))) : null;
     const selfManaCur = (st?.self_mana_cur != null && Number.isFinite(Number(st.self_mana_cur))) ? Math.max(0, Math.trunc(Number(st.self_mana_cur))) : null;
@@ -9512,6 +9521,8 @@ async function _handleAgentLiveState(req, res) {
       zone_id:     zoneId,
       zone_name:   st?.zone_name ? String(st.zone_name).slice(0, 80) : null,
       self_hp_pct: selfHp,
+      self_hp_cur: selfHpCur,
+      self_hp_max: selfHpMax,
       self_mana_pct: selfManaPct,
       self_mana_cur: selfManaCur,
       self_mana_max: selfManaMax,
