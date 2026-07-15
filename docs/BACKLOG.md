@@ -174,6 +174,65 @@ class filter + "only gaps" + "hide logged-off" toggles, accuracy caveat banner.
   target's name ("X is completely healed." / "X feels much better."). The
   defensive pattern in the agent stays as a no-op.
 
+## CONTINUATION QUEUE (2026-07-14 handoff — Uilnayar-approved order)
+
+> Scaffolding for the next session (any model). Designs below are agreed with
+> the owner; implement top-to-bottom. Mimic/agent work lands on `beta` (the
+> **1.9 line** — healing features graduate as Mimic 1.9.0 once raid-tested);
+> bot/web straight to `main` per the CLAUDE.md cadence rule.
+
+### 1. Healing elements (finish the feature)
+- **Generic heal-landing matcher** — next section below (verified catalog
+  suffixes + per-spell amount lookup; plumbing exists end-to-end).
+- **Tank overlay: inbound heals with cast countdowns (owner: "tremendous").**
+  Tanks see heals coming: each inbound heal cast on the tank renders a cast
+  bar counting down to land, and the tank's HP bar gets a GHOST SEGMENT in a
+  different color showing projected post-heal HP (catalog non-crit estimate).
+  Each inbound heal gets its own color, matching its cast bar. **EXCLUDE
+  Complete Heals from this visual** — CH volume would overwhelm the UI (the
+  CH chain overlay already owns that). Data path: heal casts are already
+  relayed to the bot (`casting`: caster, spell, target, started_at,
+  cast_secs) — add an agent poll "casts targeting MY character" (or extend
+  `target-casts`), feed `apps/mimic/tank.html`. We already have tank cur/max
+  HP cross-client. Amounts: eqemu_spells SPA-0 base (non-crit).
+- **Divine Intervention availability tracker.** DI: cleric-only, emerald
+  reagent, long cooldown; blocks a killing blow on a low-HP tank (success
+  needs HIGH CHA on the recipient). Zeal pipes expose spell-gem cooldowns —
+  each cleric's Mimic reports DI gem readiness (live-state-style upload);
+  surface per-cleric DI availability in the Command Center / CH chain
+  overlay, and when only ONE cleric has it up, call that cleric out to cast
+  it (overlay highlight + TTS). Include recipient-CHA awareness where we
+  have gear data.
+
+### 2. Data scrubbing (unblocks stats features)
+- **#47 same-name trash segmentation** (Terror over-aggregation) — PRIORITY
+  right after healing. Agent-side: split sequential same-name kills into
+  separate encounters (death-boundary + HP-continuity; see the ±20% catalog
+  HP splitter notes in CLAUDE.md — pipe carries no spawn id, sequential only).
+- Then the offered **bulk re-merge of historical encounter_players** with the
+  robust median (owner hasn't said go yet — ask before running).
+
+### 3. Character pages: base stats + bind
+- **Base stats v1:** race+class base tables are "good enough to start";
+  users MANUALLY set their creation-point allocation on /me; ALSO capture a
+  review snapshot when they die and respawn naked at bind. Gear page total =
+  base + allocation + gear (existing sums). 255 cap now / 355 with PoP AAs.
+- **Bind location from /charinfo:** the in-game `/charinfo` output includes
+  the bind location — agent parses it, lands on the character's row, shown
+  in that character's section on /me.
+
+### 4. Pre-2.0 requirement
+- **"Set up for me" wired into Mimic first-run onboarding** (currently a
+  dashboard button). NOTE (owner): Zeal has **`/pipeverbose on`** as an
+  in-game command (no EQ restart needed for that key); ExportOnCamp has no
+  known command — INI edit with EQ closed remains the path for it. Update the
+  setup card's note accordingly.
+
+### 5. After data scrubbing
+- **/me named-mob kill counts** (encounter_players ⋈ encounters.npc_id ⋈
+  eqemu_npc_types — design in "Quick requested features" above) + a
+  searchable section and timeframe filtering on those views.
+
 ## Heal attribution — follow-up: generic landing matcher (queued)
 
 Agent 3.3.36 witnesses **Complete Heal** landings only (`is completely
@@ -195,7 +254,10 @@ bot-side per-spell amount lookup (eqemu_spells) are new. Also queued: live
   `chat_messages` 79MB, `agent_uploads` 60MB, `who_observations` 44MB. Fixed:
   eqemu_* catalog ~50MB. Cheapest cap = prune `agent_uploads` (pure heartbeat
   log). Pro tier is $25/mo (8GB) if we'd rather not prune.
-- **Windows code signing — pre-staged, awaiting SignPath Foundation approval.**
+- **Windows code signing — CLOSED (2026-07-14): SignPath DECLINED** (use case
+  too small, not enough users). Installers stay unsigned; the pre-staged
+  pipeline in `release-mimic.yml` + `docs/code-signing.md` stays dormant in
+  case another provider ever appears. Original notes:
   Applied to SignPath.io Foundation (free OSS code signing) 2026-06. Signing
   pipeline is wired but OFF in `.github/workflows/release-mimic.yml` (gated on
   `vars.SIGNPATH_ENABLED`); footer credit live; `patch-latest-yml.js` handles the

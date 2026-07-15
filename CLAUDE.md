@@ -42,7 +42,7 @@ Other fixed facts: Node 20, discord.js v14, Supabase project
 | Bot (`index.js`, `commands/`, `utils/`) | `main` | root `package.json` (+ a `CHANGELOGS` entry in `utils/onboarding.js` — drives `/onboarding` "what's new"; skip if nothing user-facing) |
 | Web (`web/`) | `main` | `web/package.json` |
 | Agent, for beta users | `beta` | `packages/wolfpack-logsync/package.json` only. Since 2026-07-08 ANY beta push touching `apps/mimic/**` or `packages/wolfpack-logsync/**` builds; do NOT bump Mimic per iteration |
-| Mimic | `beta` (or `main` to cut stable) | `apps/mimic/package.json` stays PARKED at the line's target — the workflow auto-increments the `-beta.N` tag per push (v1.7.2-beta.1, -beta.2, …). Bump only when opening a new line or cutting stable on `main`. **After cutting a stable, immediately re-park beta at the NEXT patch** (stable 1.7.1 → beta parks at 1.7.2): a park at/below the stable would tag prereleases that semver-sort BELOW it, and the updater would stop offering new betas (Uilnayar 2026-07-09) |
+| Mimic | `beta` (or `main` to cut stable) | `apps/mimic/package.json` stays PARKED at the line's target — the workflow auto-increments the `-beta.N` tag per push (v1.7.2-beta.1, -beta.2, …). Bump only when opening a new line or cutting stable on `main`. **Cadence rule (Uilnayar 2026-07-14): everything EXCEPT Mimic ships straight to `main`; Mimic alone runs the beta→stable loop** — cut stable when the line is *meaningful*, re-park beta, iterate, repeat. A meaningful feature set takes a MINOR bump for its line (the healer-attribution work is the **1.9** line), routine fix rounds take a patch. **After cutting a stable, immediately re-park beta above it** (stable 1.7.1 → beta parks at 1.7.2): a park at/below the stable would tag prereleases that semver-sort BELOW it, and the updater would stop offering new betas (Uilnayar 2026-07-09) |
 | Supabase migration | `main` (file) + apply | see Migrations below |
 | Docs only | `main` | none |
 
@@ -465,7 +465,7 @@ Live queue + in-flight notes: `docs/BACKLOG.md`. Deeper designs:
 `docs/raid-hub-roadmap.md`, `docs/trigger-system-roadmap.md`,
 `docs/DESIGN-buff-debuff-queue.md`, `docs/DESIGN-ch-chain.md`,
 `docs/MIMIC.md` / `docs/MIMIC_AGENT.md`, `docs/opendkp-capture-playbook.md`,
-`docs/code-signing.md` (SignPath, pre-staged off), `docs/PRIVACY.md`.
+`docs/code-signing.md` (CLOSED 2026-07-14 — SignPath declined: user base too small; installers stay unsigned unless another provider appears), `docs/PRIVACY.md`.
 Headline items parked for later: UI Studio web viewer/editor on `/me/ui` +
 automatic UI/eqclient.ini cloud backups; OpenDKP auction wiring (creation
 captured, bid/award endpoints not); guild timeline; chat→parse extraction;
