@@ -250,6 +250,18 @@ overlay-serving path. The 3.3.51 async queue-flush is the reference fix.
   queue file, OR seed at startup from the bot (characters already stores
   quarmy_checksum / spellbook_checksum / inventory_checksum). Cheap, kills
   the restart burst entirely.
+- **FIRST post-raid item: Railway zero-downtime deploys (healthcheck).**
+  Configure a health endpoint + Railway healthcheck so the old bot instance
+  keeps serving until the new one is ready — every deploy today cost ~60s of
+  502s that grew every agent's queue and (pre-3.3.51) stalled their UIs.
+  Config change, not architecture. Owner asked about splitting the monolith
+  (2026-07-15); verdict: NOT yet — in-memory relay caches fragment across
+  instances, Discord wants one gateway, load is far from capacity, and two
+  services double one-operator ops. IF a split ever happens, the seam is
+  [agent API: ingest + relays + caches, boring/rarely deployed] vs
+  [Discord bot + jobs + announcers, deployed freely] with a notify queue
+  between. Revisit at >40 concurrent Mimics or when the QPS counters (below)
+  show pressure.
 - **72-raider scale review (before recruiting the whole raid onto Mimic).**
   Current shape holds because the heavy bot endpoints compute once per ~2-3s
   for the WHOLE raid (buff queue, extended-target, di-status, live-state
