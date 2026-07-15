@@ -6531,6 +6531,12 @@ async function _handleAgentIncomplete(req, res) {
 // generous enough that a fresh sync becomes visible within an hour without
 // pounding Supabase on every agent restart.
 let _spellCatalogCache = null;       // { fetchedAt: ms, body: string, etag: string }
+// Live heal-amount lookup (spellNameLower → { amount, fixed }), populated as a
+// side effect of the catalog build. Lets the heal-attribution join + casting
+// relay fill an amount for a cast that arrived without one (healer on an old
+// catalog), so attribution only depends on the BOT being current.
+const _healAmountByName = new Map();
+const _healAmtFor = (spell) => { const e = _healAmountByName.get(String(spell || '').toLowerCase()); return e && e.amount > 0 ? e.amount : 0; };
 const _SPELL_CATALOG_TTL_MS = 60 * 60 * 1000;
 async function _handleAgentSpellCatalog(req, res) {
   const identity = await mimicLink.requireAgentAuth(req, res);
@@ -6664,6 +6670,12 @@ async function _handleAgentSpellCatalog(req, res) {
         if (!Array.isArray(data) || data.length === 0) break;
         for (const r of data) {
           const _hm = _healMagnitude(r);
+          // Live bot-side name→amount map so a relayed heal cast that arrives
+          // WITHOUT an amount (a healer on a pre-v7 catalog) can still be
+          // attributed — only the BOT needs to be current. Populated as a side
+          // effect of the catalog build (which runs on the first agent's
+          // startup fetch, so it's warm before any encounter uploads).
+          if (_hm) _healAmountByName.set(String(r.name || '').toLowerCase(), { amount: _hm.amount, fixed: _hm.fixed });
           entries.push({
             id: r.id, name: r.name, you: r.cast_on_you, other: r.cast_on_other, fades: r.spell_fades,
             dur: r.buffduration, durf: r.buffdurationformula,
@@ -9943,8 +9955,13 @@ async function _handleAgentCasting(req, res) {
       cast_secs: castSecs, received_at: now,
       // Heal casts carry their estimated catalog amount (agent-attached, agent
       // 3.3.37+) so the recipient's tank overlay can render the inbound heal +
-      // a projected-HP ghost segment. Absent for non-heal casts.
-      heal_amount: (Number.isFinite(Number(c.heal_amount)) && Number(c.heal_amount) > 0) ? Number(c.heal_amount) : undefined,
+      // a projected-HP ghost segment. If the healer's agent is on an old
+      // catalog and didn't attach one, fill it from the bot's own catalog so
+      // the overlay still works (only the bot need be current). Non-heal casts
+      // resolve to 0 → left undefined.
+      heal_amount: (Number.isFinite(Number(c.heal_amount)) && Number(c.heal_amount) > 0)
+        ? Number(c.heal_amount)
+        : (_healAmtFor(spell) || undefined),
       heal_fixed:  c.heal_fixed === true ? true : undefined,
     });
     // Cure-cast tracking → optimistic debuff removal. If this cast is a CURE
@@ -11285,7 +11302,11 @@ async function _handleAgentUpload(req, res) {
         {
           const casts = mergedHealCasts.map(c => ({ ...c, consumed: false }));
           const joined = new Map();   // healerLower → { name, healed, ticks, targets:Set }
-          let unTotal = 0, unTicks = 0; const unWho = new Set();
+          // Per-recipient totals — the unattributed math is deferred to AFTER
+          // pass 2 so a heal that pass 1 missed on clock skew but pass 2 picks
+          // up from a landing isn't double-booked as both attributed AND
+          // unattributed (the old per-recipient exclusion silently blanked it).
+          const recTotals = new Map();   // recipLower → { name, total, ticks, matched, matchedTicks, landed }
           for (const hr of mergedHealsReceived) {
             const rl = (hr.name || '').toLowerCase();
             let matchedTotal = 0, matchedTicks = 0;
@@ -11307,8 +11328,7 @@ async function _handleAgentUpload(req, res) {
                 matchedTotal += ev.amount || 0; matchedTicks += 1;
               }
             }
-            const restTotal = (hr.total || 0) - matchedTotal;
-            if (restTotal > 0) { unTotal += restTotal; unTicks += Math.max(0, (hr.ticks || 0) - matchedTicks); unWho.add(hr.name); }
+            recTotals.set(rl, { name: hr.name, total: hr.total || 0, ticks: hr.ticks || 0, matched: matchedTotal, matchedTicks, landed: 0 });
           }
           // Pass 2 — public heal-LANDING sightings × remaining casts. Covers
           // the recipient-not-running-Mimic case (usually the MT): a cleric's
@@ -11319,38 +11339,42 @@ async function _handleAgentUpload(req, res) {
           // who self-report precise amounts are skipped so a skew-missed pair
           // can't show up twice. Marked ~ on the card (estimated).
           const CH_LAND_AMOUNT = 7500;
+          // Amount for a heal cast: rides on the cast (agent 3.3.37+), else the
+          // bot's OWN catalog (resilience — a healer on a pre-v7 catalog still
+          // attributes), else the fixed CH amount for a CH cast. 0 = can't
+          // resolve (healer still shows via its cast count).
+          const castAmt = (c) => {
+            if (c.heal_amount != null && c.heal_amount > 0) return c.heal_amount;
+            const a = _healAmtFor(c.spell);
+            if (a > 0) return a;
+            return /complete heal/i.test(String(c.spell || '')) ? CH_LAND_AMOUNT : 0;
+          };
           {
-            const selfReporting = new Set(mergedHealsReceived.map(hr => (hr.name || '').toLowerCase()));
             for (const l of (mergedHealLands || [])) {
               const rl = String(l.target).toLowerCase();
-              if (selfReporting.has(rl)) continue;
-              let best = null, bestD = 4000;   // wider window: cross-machine clock skew
+              let best = null, bestAmt = 0, bestD = 4000;   // wide window: clock skew
               for (const c of casts) {
                 if (c.consumed || String(c.target).toLowerCase() !== rl) continue;
-                // Amount rides the cast (agent-attached from the spell catalog);
-                // fall back to the fixed CH amount only for a CH cast so older
-                // agents (CH-only landings) still attribute. A heal cast with no
-                // resolvable amount is skipped (healer still shows via casts).
-                const isCH = /complete heal/i.test(String(c.spell || ''));
-                const amt  = (c.heal_amount != null && c.heal_amount > 0) ? c.heal_amount
-                           : (isCH ? CH_LAND_AMOUNT : 0);
+                const amt = castAmt(c);
                 if (amt <= 0) continue;
                 const d = Math.abs(c.land_at - l.ts);
-                if (d <= bestD) { best = c; bestD = d; }
+                if (d <= bestD) { best = c; bestAmt = amt; bestD = d; }
               }
               if (!best) continue;
               best.consumed = true;
-              const isCH = /complete heal/i.test(String(best.spell || ''));
-              const amt  = (best.heal_amount != null && best.heal_amount > 0) ? best.heal_amount : CH_LAND_AMOUNT;
               const k = best.caster.toLowerCase();
               if (!joined.has(k)) joined.set(k, { name: best.caster, healed: 0, ticks: 0, targets: new Set(), byTarget: {} });
               const j = joined.get(k);
-              j.healed += amt; j.ticks += 1; j.targets.add(l.target);
-              j.byTarget[l.target] = (j.byTarget[l.target] || 0) + amt;
-              // A formula-100 heal (heal_fixed) attributed by a landing is still
-              // an estimate of the RECIPIENT's actual gain (crit/overheal), so
-              // any landing-joined amount marks the healer estimated.
+              j.healed += bestAmt; j.ticks += 1; j.targets.add(l.target);
+              j.byTarget[l.target] = (j.byTarget[l.target] || 0) + bestAmt;
+              // Landing-joined amounts are estimates of the recipient's real gain
+              // (crit/overheal), so mark the healer estimated.
               j.estimated = true;
+              // Self-reporting recipient? Count this toward their COVERED total
+              // (not double-booked as unattributed). The `consumed` flag already
+              // stops a cast pass 1 matched from being reused here, so removing
+              // the old blanket self-reporter skip is safe.
+              const rec = recTotals.get(rl); if (rec) rec.landed += bestAmt;
             }
           }
           const castCount = new Map();
@@ -11391,6 +11415,14 @@ async function _handleAgentUpload(req, res) {
             hMap.get(k).casts = n;
           }
           mergedHealers = [...hMap.values()].sort((a, b) => (b.healed - a.healed) || ((b.casts || 0) - (a.casts || 0)));
+          // Unattributed = what a recipient RECEIVED that neither pass covered.
+          // Computed here (after both passes) so a landing-attributed heal isn't
+          // also counted as unattributed.
+          let unTotal = 0, unTicks = 0; const unWho = new Set();
+          for (const rec of recTotals.values()) {
+            const rest = (rec.total || 0) - (rec.matched + rec.landed);
+            if (rest > 0) { unTotal += rest; unTicks += Math.max(0, (rec.ticks || 0) - rec.matchedTicks); unWho.add(rec.name); }
+          }
           if (unTotal > 0) healUnattributed = { total: unTotal, ticks: unTicks, recipients: unWho.size };
         }
 
