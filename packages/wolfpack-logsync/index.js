@@ -12487,6 +12487,20 @@ async function refresh() {
     // Make it VISIBLE instead of a silent blank, with the exact origin so the
     // problem is obvious, plus a one-click reload to the live engine.
     _refreshFailures++;
+    // SELF-HEAL (Uilnayar 2026-07-15: banner sat for minutes — "ITS A PROBLEM
+    // FOR ME"): after ~30s of continuous failure, invoke the same reload the
+    // button does — openDashboard() navigates this window to whatever port
+    // the agent is on NOW, no human required. Once per 60s (sessionStorage
+    // so the throttle survives the reload itself); the banner still shows
+    // during the gap so a truly-dead agent stays visible.
+    if (_refreshFailures >= 15) {
+      var _lastAuto = 0;
+      try { _lastAuto = parseInt(sessionStorage.getItem('wpAutoRescueAt') || '0', 10) || 0; } catch (e) {}
+      if (Date.now() - _lastAuto > 60000) {
+        try { sessionStorage.setItem('wpAutoRescueAt', String(Date.now())); } catch (e) {}
+        try { if (window.mimic && window.mimic.openDashboard) { window.mimic.openDashboard(); } else { location.reload(); } } catch (e) {}
+      }
+    }
     if (_refreshFailures >= 2 && !document.getElementById('wpConnError')) {
       var d = document.createElement('div');
       d.id = 'wpConnError';
