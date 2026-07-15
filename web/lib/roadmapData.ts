@@ -52,6 +52,7 @@ export const releases: Release[] = [
     features: [
       { name: 'Heals incoming, on the Tank overlay', blurb: 'Every heal being cast on the tank draws its own countdown bar to when it lands, colored to its healer, and a striped “ghost” segment on the HP bar shows where the tank’s health lands once it connects. Tanks and healers can see the save arriving. Complete Heals are left off this view — the CH-chain overlay owns those, and their volume would swamp it.' },
       { name: 'Every heal attributed', blurb: 'Parse cards used to only credit Complete Heals from a witnessed landing. Now ANY heal landing anyone in the raid sees (Remedy, Superior Healing, …) is credited to the caster at the spell’s catalog value — so a CH chain (or any heal) on a tank who isn’t running Mimic still shows real numbers.' },
+      { name: 'Extended Target: target-of-target + declutter', blurb: 'Each mob row now shows 🎯 who it’s meleeing (usually the tank). And player/pet rows that used to clutter the list are hidden by default (👥 to show them), with a ✕ on any row to hide it and a “show all” to bring them back.' },
     ],
     fixes: [],
   },
