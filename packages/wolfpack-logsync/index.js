@@ -917,6 +917,13 @@ function parseEvent(line, ts) {
   }
 
   // ── Heals ─────────────────────────────────────────────────────────────────
+  // CONFIRMED PHYSICS (Uilnayar 2026-07-14): heal AMOUNTS are private — only
+  // the healed sees "You have been healed for N". What bystanders see is the
+  // spell's cast_on_other LANDING message with the target's name ("X is
+  // completely healed.", "X feels much better.", "X's wounds fade away.") —
+  // no amount, no healer. There is NO first-person outgoing amount line for
+  // the healer (the "You have healed X for N" pattern below is a defensive
+  // no-op kept in case the server ever adds one).
   // Quarm-confirmed heal-line variants (verified against Manamana's log,
   // ~70MB, ~10mo of raid + group play):
   //   1. "<Target> has been healed by <Healer> for <X> points." — third-person
@@ -2581,6 +2588,26 @@ function relaySelfCastForCasting(line, character, pre) {
   // Heal casts also feed the attribution ring (local multibox join + the
   // encounter payload's heal_casts for the bot-side cross-client join).
   if (HEAL_SPELL_RX.test(spell)) _noteHealCast(character, spell, target, atMs, castSecs);
+}
+// Bystander-visible Complete Heal landing — "<Target> is completely healed."
+// (the spell's cast_on_other; Uilnayar 2026-07-14: heal AMOUNTS are private to
+// the healed, but LANDINGS are public to everyone). One suffix, the era's
+// defining heal, fixed catalog amount — any single Mimic in the raid witnessing
+// the landing lets the bot attribute a CH (cleric's heal_cast × this sighting)
+// even when the TANK runs no Mimic. Single-capitalized-token targets only
+// (player names); multi-word NPC self-CHs never match and have no cast to join.
+const _CH_LAND_RX = /\]\s+([A-Z]\w+) is completely healed\.\s*$/;
+const _recentHealLands = [];   // { ts(ms), target }
+function noteChLandLine(line) {
+  if (line.indexOf(' is completely healed.') === -1) return;   // cheap gate
+  const m = line.match(_CH_LAND_RX);
+  if (!m) return;
+  const t = parseEqTimestamp(line);
+  _recentHealLands.push({ ts: t ? t.getTime() : Date.now(), target: m[1] });
+  const cutoff = Date.now() - 10 * 60_000;
+  while (_recentHealLands.length > 400 || (_recentHealLands.length && _recentHealLands[0].ts < cutoff)) {
+    _recentHealLands.shift();
+  }
 }
 // ── Blind Mode (v1.1.8) ─────────────────────────────────────────────────────
 // Detect when the watched character is blinded — either from a self-clicky
@@ -5868,6 +5895,18 @@ class EncounterBuilder {
           const out = _recentHealCasts
             .filter(c => c.caster === cl && c.land_at >= startMs - 5000 && c.land_at <= endMs + 5000)
             .map(c => ({ caster: c.caster, spell: c.spell, target: c.target, land_at: c.land_at }));
+          return out.length > 0 ? out.slice(0, 200) : undefined;
+        })(),
+        // Public CH landings witnessed in this fight window ("X is completely
+        // healed."). Amounts are private to the healed, landings are not — the
+        // bot joins these against heal_casts to attribute CH chains at the
+        // catalog amount even when the tank runs no Mimic.
+        heal_lands: (() => {
+          const startMs = this.startedAt ? (Date.parse(this.startedAt) || 0) : 0;
+          const endMs   = this.lastEvent ? (Date.parse(this.lastEvent) || Date.now()) : Date.now();
+          const out = _recentHealLands
+            .filter(l => l.ts >= startMs - 5000 && l.ts <= endMs + 5000)
+            .map(l => ({ ts: l.ts, target: l.target, spell: 'Complete Heal' }));
           return out.length > 0 ? out.slice(0, 200) : undefined;
         })(),
         // Player deaths in this encounter.
@@ -22475,6 +22514,8 @@ async function main() {
         // always runs (no _sourceExcluded gate — blindness is a UI thing,
         // not stat data we'd ever want suppressed).
         noteBlindLine(line, b.character);
+        // Public CH landings ("X is completely healed.") → heal-attribution ring.
+        if (!_sourceExcluded) noteChLandLine(line);
         // "Your pet's <X> spell has worn off." → drop it from the pet's buffs.
         if (!_sourceExcluded) notePetBuffWornOff(line, b.character);
         // Prefer the cast-correlated resolution (our own cast); fall back to the
