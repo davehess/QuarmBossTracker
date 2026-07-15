@@ -7853,21 +7853,20 @@ function _serializeTankState() {
   // counting down to each land + a projected-HP ghost segment from these
   // amounts. Anchored to the fetch timestamp so the countdown survives the
   // agent↔bot clock skew.
-  let inboundHeals = [];
-  const healTargetName = mtName || active || null;
-  if (healTargetName) {
-    const htl = String(healTargetName).toLowerCase();
-    // Characters on THIS machine — their heals use the local instant path
-    // below; their cross-client echoes are skipped so a heal doesn't double.
+  // Shared inbound-heal resolver — LOCAL instant path (our own heal casts,
+  // straight from the log line + Zeal target, zero relay latency) merged with
+  // the cross-client target-casts relay (our own echoes skipped so nothing
+  // doubles). null amount = a heal we can't size (HoT / catalog gap) — the
+  // overlay shows "?" and the ghost segment skips it, but the cast shows.
+  // Used for the MT card AND the Rampage card (Uilnayar 2026-07-15: "will
+  // heals to Rampage tanks also show up?").
+  const _inboundHealsFor = (targetName) => {
+    if (!targetName) return [];
+    const tl = String(targetName).toLowerCase();
     const ownChars = new Set(Object.keys(_zealState || {}).map(c => String(c).toLowerCase()));
-    // LOCAL instant path — our own heal casts on the displayed tank, straight
-    // from the log line + Zeal target with ZERO relay latency. Without this,
-    // the healer's own overlay waited on the full agent→bot→agent round trip
-    // (2-4s) and short casts arrived already landed (Uilnayar 2026-07-15:
-    // "we still did not see me casting chloroblast or nature's touch — it
-    // shows on the target info easily, bring in that immediate cast time").
+    const out = [];
     for (const rc of _recentHealCasts) {
-      if (!rc || String(rc.target).toLowerCase() !== htl) continue;
+      if (!rc || String(rc.target).toLowerCase() !== tl) continue;
       if (/complete heal/i.test(String(rc.spell || ''))) continue;
       if (rc.land_at < now - 4000 || rc.land_at > now + 15_000) continue;
       let amount = (rc.heal_amount != null && rc.heal_amount > 0) ? rc.heal_amount : 0;
@@ -7876,11 +7875,9 @@ function _serializeTankState() {
         const he = _healEstForSpell(rc.spell);
         if (he) { amount = he.amount; fixed = he.fixed; }
       }
-      inboundHeals.push({
+      out.push({
         caster:      rc.caster,
         spell:       rc.spell,
-        // null amount = a heal we can't size (HoT / catalog gap) — the overlay
-        // shows "?" and the ghost segment skips it, but the cast still shows.
         amount:      amount > 0 ? amount : null,
         estimated:   amount > 0 ? !fixed : true,
         ends_at_ms:  rc.land_at,
@@ -7888,48 +7885,49 @@ function _serializeTankState() {
         cast_secs:   _spellCastSecs(rc.spell) || null,
       });
     }
-    try { fetchTargetCasts(healTargetName); } catch { /* fire-and-forget, cached */ }
-    const ctc = _targetCastsByName.get(htl);
+    try { fetchTargetCasts(targetName); } catch { /* fire-and-forget, cached */ }
+    const ctc = _targetCastsByName.get(tl);
     if (ctc && Array.isArray(ctc.casts)) {
       const fetchedAt = ctc.at || now;
-      const remote = ctc.casts
-        .filter(c => c && !/complete heal/i.test(String(c.spell || '')))
+      for (const c of ctc.casts) {
+        if (!c || /complete heal/i.test(String(c.spell || ''))) continue;
         // Our own casts already came in via the local path above.
-        .filter(c => !ownChars.has(String(c.caster || '').toLowerCase()))
-        .map(c => {
-          // Amount rides on the cast (bot fills it from the catalog); fall back
-          // to OUR local catalog so a heal still sizes if the bot didn't attach
-          // one (older bot, catalog gap). A cast with NO resolvable amount only
-          // counts as a heal if its name reads like one (cross-client casts
-          // carry no is-heal flag — the amount is normally that signal).
-          let amount = (c.heal_amount != null && c.heal_amount > 0) ? c.heal_amount : 0;
-          let fixed  = c.heal_fixed === true;
-          if (amount <= 0) {
-            const he = _healEstForSpell(c.spell);
-            if (he) { amount = he.amount; fixed = he.fixed; }
-          }
-          if (amount <= 0 && !HEAL_SPELL_RX.test(String(c.spell || ''))) return null;
-          return {
-            caster:      c.caster,
-            spell:       c.spell,
-            amount:      amount > 0 ? amount : null,
-            estimated:   amount > 0 ? !fixed : true,
-            // Absolute land time in the BOT's clock — a STABLE key the overlay
-            // dedups on across polls. remaining_secs collapses to 0 the instant
-            // a heal lands cross-client, so a now-relative land time re-mints
-            // every second and the overlay can't keep the heal's identity
-            // (Uilnayar 2026-07-15: spot heals never showed — they arrived
-            // already landed and flashed for <1s).
-            ends_at_ms:  (c.ends_at_ms != null ? c.ends_at_ms : null),
-            lands_in_ms: Math.max(0, (fetchedAt + (c.remaining_secs || 0) * 1000) - now),
-            cast_secs:   c.cast_secs || null,
-          };
-        })
-        .filter(Boolean);
-      inboundHeals.push(...remote);
+        if (ownChars.has(String(c.caster || '').toLowerCase())) continue;
+        // Amount rides on the cast (bot fills it from the catalog); fall back
+        // to OUR local catalog. A cast with NO resolvable amount only counts
+        // as a heal if its name reads like one (cross-client casts carry no
+        // is-heal flag — the amount is normally that signal).
+        let amount = (c.heal_amount != null && c.heal_amount > 0) ? c.heal_amount : 0;
+        let fixed  = c.heal_fixed === true;
+        if (amount <= 0) {
+          const he = _healEstForSpell(c.spell);
+          if (he) { amount = he.amount; fixed = he.fixed; }
+        }
+        if (amount <= 0 && !HEAL_SPELL_RX.test(String(c.spell || ''))) continue;
+        out.push({
+          caster:      c.caster,
+          spell:       c.spell,
+          amount:      amount > 0 ? amount : null,
+          estimated:   amount > 0 ? !fixed : true,
+          // Absolute land time in the BOT's clock — a STABLE key the overlay
+          // dedups on across polls (remaining_secs collapses to 0 the instant
+          // a heal lands cross-client).
+          ends_at_ms:  (c.ends_at_ms != null ? c.ends_at_ms : null),
+          lands_in_ms: Math.max(0, (fetchedAt + (c.remaining_secs || 0) * 1000) - now),
+          cast_secs:   c.cast_secs || null,
+        });
+      }
     }
-    inboundHeals.sort((a, b) => a.lands_in_ms - b.lands_in_ms);
-    inboundHeals = inboundHeals.slice(0, 6);
+    out.sort((a, b) => a.lands_in_ms - b.lands_in_ms);
+    return out.slice(0, 6);
+  };
+  const healTargetName = mtName || active || null;
+  const inboundHeals = _inboundHealsFor(healTargetName);
+  // Rampage tank's inbound heals — its own list unless the rampage target IS
+  // the displayed tank (then the MT card already shows them; sending the same
+  // list twice would double the visual).
+  if (rampage && rampage.target && (!healTargetName || String(rampage.target).toLowerCase() !== String(healTargetName).toLowerCase())) {
+    rampage.inbound_heals = _inboundHealsFor(rampage.target);
   }
 
   // Boss + enrage hint. Drives the enrage countdown / warning. We use the
