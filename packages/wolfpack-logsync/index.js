@@ -539,7 +539,31 @@ const CHARM_SPELLS = new Map([
   ['cajole undead',     { cls: 'enchanter', dur: 720 }],
   ['thrall of bones',   { cls: 'enchanter', dur: 720 }],
   ['dominate undead',   { cls: 'enchanter', dur: 720 }],
+  // Druid Velious animal charm — spell 1556, formula 3 (level×30 ticks, cap
+  // 1950): 1800 ticks = 3h at L60, which is what the pet-buff row already
+  // computes. Missing from this table entirely until 2026-07-15 (Canopy's
+  // dire wolf showed the estimated "tick N/10~"). catalogDur: stage-time
+  // level-aware duration from the spell catalog (_charmDurationSec); the
+  // static dur is the L60 fallback. Both possessive spellings — EQ logs
+  // backticks.
+  ["tunare's request",  { cls: 'enchanter', dur: 10800, catalogDur: true }],
+  ["tunare`s request",  { cls: 'enchanter', dur: 10800, catalogDur: true }],
 ]);
+// Level-aware charm duration from the spell catalog, for CHARM_SPELLS entries
+// flagged catalogDur (curated durations stay authoritative for the rest —
+// e.g. Boltran's has a duplicate catalog row with the wrong formula, so a
+// blanket catalog-first would regress it). Falls back to the entry's static
+// dur when the catalog can't resolve.
+function _charmDurationSec(spellName, mapDur, owner) {
+  const key = String(spellName || '').toLowerCase();
+  const e = _spellByNameLower.get(key) || _spellByNameLower.get(key.replace(/`/g, "'"));
+  if (e && Number(e.dur) > 0) {
+    const lvl = (whoData.get(String(owner || '').toLowerCase()) || {}).level || _assumedCasterLevel();
+    const t = _durTicksForLevel(e.durf, e.dur, lvl);
+    if (t > 0 && t < 72000) return t * 6;
+  }
+  return mapDur;
+}
 
 // ── EQ class-title → base class ───────────────────────────────────────────────
 // A /who line shows the LEVEL TITLE for the character's class (e.g. a level-55
@@ -917,6 +941,13 @@ function parseEvent(line, ts) {
   }
 
   // ── Heals ─────────────────────────────────────────────────────────────────
+  // CONFIRMED PHYSICS (Uilnayar 2026-07-14): heal AMOUNTS are private — only
+  // the healed sees "You have been healed for N". What bystanders see is the
+  // spell's cast_on_other LANDING message with the target's name ("X is
+  // completely healed.", "X feels much better.", "X's wounds fade away.") —
+  // no amount, no healer. There is NO first-person outgoing amount line for
+  // the healer (the "You have healed X for N" pattern below is a defensive
+  // no-op kept in case the server ever adds one).
   // Quarm-confirmed heal-line variants (verified against Manamana's log,
   // ~70MB, ~10mo of raid + group play):
   //   1. "<Target> has been healed by <Healer> for <X> points." — third-person
@@ -936,9 +967,20 @@ function parseEvent(line, ts) {
   }
   m = line.match(/\]\s+You have been healed for\s+(\d+)\s+points? of damage\./i);
   if (m) {
-    // Self-target, amount only, no healer attribution. Goes through the
-    // healers pipeline as an incoming heal we received but can't attribute.
+    // Self-target, amount only, no healer attribution. Recorded as a RECEIVED
+    // heal (heals_received) — the bot joins it against other Mimic healers'
+    // heal_casts to attribute; a local same-machine healer joins instantly.
     return { ts: tsIso, type: 'heal', defender: 'You', attacker: null, amount: parseInt(m[1], 10) };
+  }
+  // First-person OUTGOING heal — "You have healed <target> for <N> points."
+  // DEFENSIVE (2026-07-14): not yet confirmed against a healer's Quarm log
+  // (Manamana's 70MB reference log has no healer POV — see BACKLOG "verify
+  // outgoing heal line"). attacker:null means self in the heal handler, so if
+  // the line exists this gives the healer full self-attribution with amounts;
+  // if it never occurs the pattern simply never fires.
+  m = line.match(/\]\s+You have healed\s+(.+?)\s+for\s+(\d+)\s+points?/i);
+  if (m) {
+    return { ts: tsIso, type: 'heal', defender: m[1], attacker: null, amount: parseInt(m[2], 10) };
   }
   m = line.match(/\]\s+(.+?)\s+performs an exceptional heal!\s*\((\d+)\)/i);
   if (m) {
@@ -2471,6 +2513,32 @@ function trackAriLeadLine(line, character) {
 // "You begin casting/singing <Spell>." — shared by noteSelfCast (landing
 // attribution) and relaySelfCastForCasting (cross-client Casting relay).
 const _CAST_BEGIN_RX = /\]\s+You begin (?:casting|singing)\s+(.+?)\.\s*$/i;
+// ── Divine Intervention availability (BACKLOG §1, Uilnayar 2026-07-14) ───────
+// DI = spell 1546: 6s cast + 90s recast, short enough that "who has it up"
+// matters mid-fight. Zeal's gem/recast payloads aren't wired (zealPipe.js:
+// "need ground truth, not inference"), so this is LOG-driven: a self-cast of
+// Divine Intervention stamps ready_at = castStart + 6s + 90s; an interrupt/
+// fizzle within the cast window clears the stamp (no recast consumed).
+// Default = ready (a cleric who hasn't cast this session shows "up").
+// Rides live-state (di_ready_at) → bot aggregates per-cleric → CH-chain +
+// Command Center chips.
+const DI_CAST_MS = 6000, DI_RECAST_MS = 90_000;
+const _diStateByChar = new Map();   // charLower → { castAt, readyAt }
+function _noteDiCast(charLower, atMs) {
+  _diStateByChar.set(charLower, { castAt: atMs, readyAt: atMs + DI_CAST_MS + DI_RECAST_MS });
+}
+// An interrupted/fizzled DI never consumed its recast — revert to ready.
+function noteDiInterrupt(line, character) {
+  if (!character || !line) return;
+  if (line.indexOf('interrupted') === -1 && line.indexOf('fizzles') === -1) return;
+  if (!/\]\s+Your spell (?:is interrupted|fizzles)[.!]\s*$/i.test(line)) return;
+  const st = _diStateByChar.get(String(character).toLowerCase());
+  if (!st) return;
+  const ts = parseEqTimestamp(line);
+  const atMs = ts ? ts.getTime() : Date.now();
+  // Only within the cast window — a later unrelated interrupt is not DI's.
+  if (atMs - st.castAt <= DI_CAST_MS + 1500) _diStateByChar.delete(String(character).toLowerCase());
+}
 // Returns the parsed cast ({ name, atMs }) or null, so the relay can reuse the
 // match instead of re-running the identical regex on the same line (the two
 // ran back-to-back per log line — efficiency review 2026-07-07).
@@ -2489,6 +2557,8 @@ function noteSelfCast(line, character) {
   if (!arr) { arr = []; _recentSelfCast.set(cl, arr); }
   const spellLower = m[1].trim().toLowerCase();
   arr.push({ spellLower, name: m[1].trim(), atMs, target: _zealTargetForChar(cl) });
+  // DI availability — stamp the recast on every Divine Intervention cast.
+  if (spellLower === 'divine intervention') _noteDiCast(cl, atMs);
   // Prune old / cap length.
   const cutoff = atMs - SELF_CAST_WINDOW_MS;
   while (arr.length && arr[0].atMs < cutoff) arr.shift();
@@ -2500,7 +2570,7 @@ function noteSelfCast(line, character) {
   // ("tick N/10~"). Doing it here covers the gap with no extra cost: same
   // regex match we just did, same character context.
   const ci = CHARM_SPELLS.get(spellLower);
-  if (ci) _pendingCharmSpell = { cls: ci.cls, dur: ci.dur, name: m[1].trim(), owner: String(character), ts: atMs };
+  if (ci) _pendingCharmSpell = { cls: ci.cls, dur: ci.catalogDur ? _charmDurationSec(m[1].trim(), ci.dur, character) : ci.dur, name: m[1].trim(), owner: String(character), ts: atMs };
   return { name: m[1].trim(), atMs };
 }
 // Cross-client casting relay: when WE begin a cast with a target, tell the bot
@@ -2512,8 +2582,51 @@ function noteSelfCast(line, character) {
 // don't pick up unrelated names like "Annul Magic" or "Reflect Spell"; a
 // broad-enough match that custom Quarm heal spells are still captured if
 // they're named recognisably.
-const HEAL_SPELL_RX = /\b(heal(?:ing)?|renewal|chloropl|regrowth|torpor|lay on hands|restoration|touch of the divine|vigor|salve)\b/i;
+// `chloro\w*` (not `chloropl`): the druid direct heal is ChloroBLast — the old
+// `chloropl` alternative matched neither Chloroblast NOR Chloroplast (the
+// trailing \b killed the prefix match) and both spells fell out of heal
+// detection entirely (Uilnayar 2026-07-15). nature[`']s touch: both possessive
+// spellings — EQ logs backticks.
+const HEAL_SPELL_RX = /\b(heal(?:ing)?|renewal|chloro\w*|regrowth|torpor|lay on hands|restoration|touch of the divine|nature[`']s touch|vigor|salve)\b/i;
 const _lastCastRelay = new Map();   // charLower → { sig, at }
+// Recent self heal-casts with their Zeal target + expected LAND time (cast
+// start + cast length). Two consumers:
+//   1. Local join — a multiboxed healer + recipient on the SAME machine lets
+//      the recipient's "You have been healed for N" attribute to the boxed
+//      caster with no server round-trip.
+//   2. Encounter payload `heal_casts` — the bot joins these against OTHER
+//      Mimic users' heals_received events to build real per-healer totals
+//      (Quarm never logs other people's heal amounts, so cross-client join
+//      is the only way to attribute; Uilnayar 2026-07-14).
+// `consumed` stops one cast from absorbing two landed events.
+// Estimated heal amount for a spell, from the bot's spell catalog (v7+ carries
+// `heal`/`heal_fixed` per heal spell — computed at the era level). Rides on the
+// cast so the bot's landing-join and the tank overlay need no DB lookup.
+function _healEstForSpell(spell) {
+  // EQ logs backtick possessives ("You begin casting Nature`s Touch.") while
+  // the catalog stores apostrophes — normalize or the lookup misses and the
+  // cast silently loses its heal amount (the tank overlay then drops it).
+  const key = String(spell || '').toLowerCase();
+  const e = _spellByNameLower.get(key) || _spellByNameLower.get(key.replace(/`/g, "'"));
+  if (e && e.heal != null && e.heal > 0) return { amount: e.heal, fixed: e.heal_fixed === true };
+  return null;
+}
+const _recentHealCasts = [];        // { caster, spell, target, land_at(ms), heal_amount, heal_fixed, consumed }
+function _noteHealCast(caster, spell, target, atMs, castSecs, he) {
+  if (!caster || !spell || !target) return;
+  _recentHealCasts.push({
+    caster, spell, target,
+    land_at: atMs + Math.max(0, (castSecs || 0)) * 1000,
+    heal_amount: he ? he.amount : undefined,
+    heal_fixed:  he ? he.fixed  : undefined,
+    consumed: false,
+  });
+  // Prune: keep 10 min of history, hard cap 600 entries (CH-chain spam bound).
+  const cutoff = Date.now() - 10 * 60_000;
+  while (_recentHealCasts.length > 600 || (_recentHealCasts.length && _recentHealCasts[0].land_at < cutoff)) {
+    _recentHealCasts.shift();
+  }
+}
 function relaySelfCastForCasting(line, character, pre) {
   if (!line || !character) return;
   // `pre` = the cast noteSelfCast already parsed from this exact line — skip
@@ -2537,11 +2650,87 @@ function relaySelfCastForCasting(line, character, pre) {
   const prev = _lastCastRelay.get(cl);
   if (prev && prev.sig === sig && (atMs - prev.at) < 2000) return;
   _lastCastRelay.set(cl, { sig, at: atMs });
+  const castSecs = _spellCastSecs(spell);
+  // Catalog first (any SPA-0-positive/CH spell IS a heal, whatever it's
+  // named), name regex as the fallback for heals the catalog can't size
+  // (HoTs like Regrowth/Torpor still count as heals, just without an amount).
+  const he = _healEstForSpell(spell);
+  const isHeal = !!he || HEAL_SPELL_RX.test(spell);
   enqueueUpload('casting', { agent_version: AGENT_VERSION, casts: [{
     caster: character, spell, target,
     started_at: new Date(atMs).toISOString(),
-    cast_secs: _spellCastSecs(spell),
+    cast_secs: castSecs,
+    // Inbound-heal fields for the recipient's tank overlay (est. catalog amount).
+    heal_amount: he ? he.amount : undefined,
+    heal_fixed:  he ? he.fixed  : undefined,
   }] });
+  // Heal casts also feed the attribution ring (local multibox join + the
+  // encounter payload's heal_casts for the bot-side cross-client join).
+  if (isHeal) _noteHealCast(character, spell, target, atMs, castSecs, he);
+}
+// Recipient-side heal attribution (Uilnayar 2026-07-15). EQ shows OTHER
+// players' cast starts as "<Caster> begins to cast a spell." (caster named,
+// spell hidden). Ring these so that when a heal LANDS on us ("You have been
+// healed for N") we can name the healer from OUR OWN log — no cross-client
+// relay, no dependency on the healer's Zeal target or catalog version. This is
+// what fixes group heals (Tunare's Renewal etc., where the cast recipient !=
+// the healer's target), the cast-count under-count, and unmerged parse cards.
+// Player = single capitalized token; NPCs ("a grimling …") start lowercase, so
+// they never match.
+const _OTHER_CAST_RX = /\]\s+([A-Z][A-Za-z'`]+) begins to cast a spell\.\s*$/;
+const _recentCasterStarts = [];   // { caster, atMs }
+function noteCasterStart(line) {
+  if (line.indexOf('begins to cast a spell') === -1) return;   // cheap gate
+  const m = line.match(_OTHER_CAST_RX);
+  if (!m) return;
+  const t = parseEqTimestamp(line);
+  _recentCasterStarts.push({ caster: m[1], atMs: t ? t.getTime() : Date.now() });
+  const cutoff = Date.now() - 12_000;
+  while (_recentCasterStarts.length > 200 || (_recentCasterStarts.length && _recentCasterStarts[0].atMs < cutoff)) {
+    _recentCasterStarts.shift();
+  }
+}
+// Nearest player whose cast STARTED 0.2–7s before a heal landed on us = the
+// most likely healer (their cast completed → we got healed). Heuristic —
+// ambiguous when several people cast at once, but decisive for group/spot
+// heals; CH-chain tank heals are covered separately by the landing-sighting
+// path. Consumes the matched start so two landings don't share one cast.
+function _correlateHealer(landMs) {
+  let best = null, bestLead = Infinity;
+  for (const c of _recentCasterStarts) {
+    if (c.consumed) continue;
+    const lead = landMs - c.atMs;
+    if (lead < 200 || lead > 7000) continue;
+    if (lead < bestLead) { best = c; bestLead = lead; }
+  }
+  if (best) { best.consumed = true; return best.caster; }
+  return null;
+}
+// Bystander-visible heal LANDINGS — the spell's cast_on_other message with the
+// target's name (Uilnayar 2026-07-14: heal AMOUNTS are private to the healed,
+// but LANDINGS are public to everyone). Any single Mimic in the raid witnessing
+// a landing lets the bot attribute the heal (cleric's heal_cast × this sighting)
+// even when the TARGET runs no Mimic — the amount rides on the matched cast.
+// Verified cast_on_other suffixes (eqemu_spells): "is completely healed." (CH) ·
+// "'s wounds fade away." (Remedy) · "feels much better." (Healing/Greater/
+// Superior/Nature's Touch — shared, disambiguated by the joined cast's spell) ·
+// "feels better." (Light Healing) · "is blasted with chlorophyll." (Chloroblast)
+// · "'s body is covered with a soft glow." (Celestial Healing HoT) · "is bathed
+// in a divine light." (Divine Light). Single-capitalized-token targets only
+// (player names); multi-word NPC names never match and have no cast to join.
+const _HEAL_LAND_HINT = /(?:healed|better|chlorophyll|glow|light|away)\.\s*$/;
+const _HEAL_LAND_RX = /\]\s+([A-Z][A-Za-z]+)(?:'s wounds fade away|'s body is covered with a soft glow| is completely healed| feels much better| feels better| is blasted with chlorophyll| is bathed in a divine light)\.\s*$/;
+const _recentHealLands = [];   // { ts(ms), target }
+function noteHealLandLine(line) {
+  if (!_HEAL_LAND_HINT.test(line)) return;   // cheap end-anchored prefilter
+  const m = line.match(_HEAL_LAND_RX);
+  if (!m) return;
+  const t = parseEqTimestamp(line);
+  _recentHealLands.push({ ts: t ? t.getTime() : Date.now(), target: m[1] });
+  const cutoff = Date.now() - 10 * 60_000;
+  while (_recentHealLands.length > 400 || (_recentHealLands.length && _recentHealLands[0].ts < cutoff)) {
+    _recentHealLands.shift();
+  }
 }
 // ── Blind Mode (v1.1.8) ─────────────────────────────────────────────────────
 // Detect when the watched character is blinded — either from a self-clicky
@@ -4017,6 +4206,11 @@ class EncounterBuilder {
     // Attached to the uploader's own healer entry at emit time. (Uilnayar
     // 2026-06-25: "x CHs and other heal types".)
     this.healSpellCounts = {};
+    // Heals WE received that no local heal-cast could attribute ("You have
+    // been healed for N" with no multiboxed caster on this machine). Uploaded
+    // as heals_received so the bot can join them against other Mimic users'
+    // heal_casts. events capped at 300 (HoT-tick spam bound).
+    this.healsReceived = { total: 0, ticks: 0, events: [] };
     // Pending riposte: when X attacks Y and Y ripostes, the next damage event
     // where Y attacks X within ~1.5s IS the riposte counter-hit. We tag it so
     // the tank can see total damage-from-ripostes per fight.
@@ -5288,7 +5482,7 @@ class EncounterBuilder {
         // The `name` field on _pendingCharmSpell lets the charm overlay show
         // which spell opened the session (Allure / Boltran's / …) in its
         // "pending charm staged?" diagnostic line.
-        if (ci) _pendingCharmSpell = { cls: ci.cls, dur: ci.dur, name: spell, owner: this.character || null, ts: Date.now() };
+        if (ci) _pendingCharmSpell = { cls: ci.cls, dur: ci.catalogDur ? _charmDurationSec(spell, ci.dur, this.character) : ci.dur, name: spell, owner: this.character || null, ts: Date.now() };
         // Direct-hate AAs / spells — Voice of Thule, Disruptive Persecution,
         // Hate's Attraction, etc. — never produce a damage line, so they're
         // invisible to the rest of the threat math. Bump the caster's spell
@@ -5336,6 +5530,40 @@ class EncounterBuilder {
     }
 
     if (event.type === 'heal' && (event.attacker || this.character)) {
+      // Unattributed RECEIVED heal ("You have been healed for N") — this used
+      // to run through `healer = this.character`, crediting the RECIPIENT as a
+      // healer of themselves (the "Tildias 1,300 → You" rows on parse cards,
+      // Uilnayar 2026-07-14). Divert: try the local heal-cast ring (multiboxed
+      // healer on this machine attributes instantly); otherwise record it as a
+      // received event for the bot's cross-client cast×landing join.
+      if (!event.attacker && event.defender === 'You') {
+        const tsMs = Date.parse(event.ts) || Date.now();
+        const amount = event.amount || 0;
+        let matched = null;
+        if (this.character && amount > 0) {
+          const mel = this.character.toLowerCase();
+          let bestD = 2500;
+          for (const c of _recentHealCasts) {
+            if (c.consumed || String(c.target).toLowerCase() !== mel) continue;
+            const d = Math.abs(c.land_at - tsMs);
+            if (d <= bestD) { matched = c; bestD = d; }
+          }
+        }
+        if (matched) {
+          matched.consumed = true;
+          this._bumpHealer(matched.caster, this.character, amount, tsMs);
+        } else if (amount > 0) {
+          const hr = this.healsReceived;
+          hr.total += amount;
+          hr.ticks += 1;
+          // Name the healer from OUR OWN log (nearest player cast-start). The
+          // bot credits a `healer`-tagged event directly, so a group heal or an
+          // unmerged card still attributes without the healer's cast upload.
+          const healer = _correlateHealer(tsMs) || undefined;
+          if (hr.events.length < 300) hr.events.push({ ts: event.ts, amount, healer });
+        }
+        return; // handled — no healer-side bookkeeping applies (threat/boss-self-heal need an attributed healer)
+      }
       const healer = event.attacker || this.character;
       this._bumpHealer(healer, event.defender, event.amount || 0, Date.parse(event.ts) || Date.now());
       // Live threat: heal hate = 2/3 of healed amount, capped per cast — per
@@ -5776,6 +6004,38 @@ class EncounterBuilder {
                 : undefined,
             }))
           : undefined,
+        // Heals this character RECEIVED that couldn't be attributed locally.
+        // { name: recipient, total, ticks, events: [{ts, amount}] } — the bot
+        // joins events against heal_casts from OTHER uploaders (±2.5s on the
+        // expected land time) to build real per-healer totals.
+        heals_received: (this.character && this.healsReceived && this.healsReceived.ticks > 0)
+          ? { name: this.character, total: this.healsReceived.total,
+              ticks: this.healsReceived.ticks, events: [...this.healsReceived.events] }
+          : undefined,
+        // OUR heal casts during this fight window (spell + Zeal target +
+        // expected land time). Server-side join partner for heals_received.
+        heal_casts: (() => {
+          if (!this.character) return undefined;
+          const startMs = this.startedAt ? (Date.parse(this.startedAt) || 0) : 0;
+          const endMs   = this.lastEvent ? (Date.parse(this.lastEvent) || Date.now()) : Date.now();
+          const cl = this.character;
+          const out = _recentHealCasts
+            .filter(c => c.caster === cl && c.land_at >= startMs - 5000 && c.land_at <= endMs + 5000)
+            .map(c => ({ caster: c.caster, spell: c.spell, target: c.target, land_at: c.land_at, heal_amount: c.heal_amount, heal_fixed: c.heal_fixed }));
+          return out.length > 0 ? out.slice(0, 200) : undefined;
+        })(),
+        // Public CH landings witnessed in this fight window ("X is completely
+        // healed."). Amounts are private to the healed, landings are not — the
+        // bot joins these against heal_casts to attribute CH chains at the
+        // catalog amount even when the tank runs no Mimic.
+        heal_lands: (() => {
+          const startMs = this.startedAt ? (Date.parse(this.startedAt) || 0) : 0;
+          const endMs   = this.lastEvent ? (Date.parse(this.lastEvent) || Date.now()) : Date.now();
+          const out = _recentHealLands
+            .filter(l => l.ts >= startMs - 5000 && l.ts <= endMs + 5000)
+            .map(l => ({ ts: l.ts, target: l.target, spell: 'Complete Heal' }));
+          return out.length > 0 ? out.slice(0, 200) : undefined;
+        })(),
         // Player deaths in this encounter.
         // [{ name, ts, riposteDeath: bool, class: string|null }]
         // riposteDeath = true when a confirmed riposte hit landed on this player
@@ -6235,6 +6495,9 @@ function _endpointForKind(kind, botUrl) {
 // any one running agent uploading it is sufficient — the bot dedups latest.
 let _raidRosterLastUpload = 0;
 let _raidRosterLastHash   = '';
+// Last decoded type-5 raid sample — the dashboard's Zeal Pipe explorer shows
+// it as the "raid (type 5)" section (Uilnayar 2026-07-15).
+let _lastRaidPipe = null;   // { at, members: [{name,class,group,level,rank,hp_pct,hp_current,hp_max}] }
 // HP heartbeat cadence — how often the roster (incl. cross-client HP for the
 // Tank overlay) is re-uploaded when composition is unchanged. Was 10s, which
 // made a non-local tank's HP bar step only every ~10s (+ the relay/fetch lag on
@@ -6304,6 +6567,11 @@ function _maybeUploadRaidRoster(sample) {
         };
       });
     if (compact.length === 0) return;
+    // Stash the decoded roster for the dashboard's Zeal Pipe explorer (Info
+    // tab "raid (type 5)" section — Uilnayar 2026-07-15). Updated on EVERY
+    // pipe fire, before the upload debounce below, so the local view stays
+    // live even between heartbeat uploads.
+    _lastRaidPipe = { at: Date.now(), members: compact };
     // Refresh the local raid-member lookup that trigger actions consult via
     // require_raid_member. Lowercased names only — matched against captured
     // values like victim/target. Replaces (not merges) so a raider leaving
@@ -7318,6 +7586,25 @@ function _findDA(buffsList, greenSecs) {
 //      (stats.recentTankHits; rampage hits already excluded at record
 //      time so a rampage cycle can't flip the MT).
 // Returns { name, source } or null when neither fires (out of combat / solo).
+// Target-of-target for a mob: which raider it's meleeing, from recentTankHits
+// (the local combat log's "<mob> hits <player>"; Zeal's gauge stream has no ToT
+// slot). Cross-client mobs the local client isn't in range of won't have hits,
+// so tot is null for those. Uilnayar 2026-07-15 — Extended Target ToT column.
+function _totForMob(mobLower) {
+  if (!mobLower) return null;
+  const now = Date.now();
+  const tally = new Map();
+  for (const h of (stats.recentTankHits || [])) {
+    if (now - h.tsMs > 15_000) continue;
+    if (h.mob !== mobLower) continue;
+    const k = h.tank.toLowerCase();
+    const e = tally.get(k) || { name: h.tank, hits: 0 };
+    e.hits++; tally.set(k, e);
+  }
+  let best = null;
+  for (const e of tally.values()) if (!best || e.hits > best.hits) best = e;
+  return best ? best.name : null;
+}
 function _resolveMainTank(mainTargetName) {
   const chc = chChainSnapshot();
   if (chc && chc.target) return { name: String(chc.target), source: 'ch_chain' };
@@ -7557,6 +7844,92 @@ function _serializeTankState() {
     };
   }
 
+  // Inbound heals on the displayed tank (MT if resolved, else the local
+  // character) — cross-client heal casts targeting them, from the casting relay
+  // via target-casts (which now carries the estimated catalog amount). EXCLUDES
+  // Complete Heal — the CH-chain overlay owns that, and CH volume would swamp
+  // this cast-bar view (Uilnayar 2026-07-14: "tanks seeing the heals coming in…
+  // the complete heals would overwhelm the UI"). The overlay draws a cast bar
+  // counting down to each land + a projected-HP ghost segment from these
+  // amounts. Anchored to the fetch timestamp so the countdown survives the
+  // agent↔bot clock skew.
+  // Shared inbound-heal resolver — LOCAL instant path (our own heal casts,
+  // straight from the log line + Zeal target, zero relay latency) merged with
+  // the cross-client target-casts relay (our own echoes skipped so nothing
+  // doubles). null amount = a heal we can't size (HoT / catalog gap) — the
+  // overlay shows "?" and the ghost segment skips it, but the cast shows.
+  // Used for the MT card AND the Rampage card (Uilnayar 2026-07-15: "will
+  // heals to Rampage tanks also show up?").
+  const _inboundHealsFor = (targetName) => {
+    if (!targetName) return [];
+    const tl = String(targetName).toLowerCase();
+    const ownChars = new Set(Object.keys(_zealState || {}).map(c => String(c).toLowerCase()));
+    const out = [];
+    for (const rc of _recentHealCasts) {
+      if (!rc || String(rc.target).toLowerCase() !== tl) continue;
+      if (/complete heal/i.test(String(rc.spell || ''))) continue;
+      if (rc.land_at < now - 4000 || rc.land_at > now + 15_000) continue;
+      let amount = (rc.heal_amount != null && rc.heal_amount > 0) ? rc.heal_amount : 0;
+      let fixed  = rc.heal_fixed === true;
+      if (amount <= 0) {
+        const he = _healEstForSpell(rc.spell);
+        if (he) { amount = he.amount; fixed = he.fixed; }
+      }
+      out.push({
+        caster:      rc.caster,
+        spell:       rc.spell,
+        amount:      amount > 0 ? amount : null,
+        estimated:   amount > 0 ? !fixed : true,
+        ends_at_ms:  rc.land_at,
+        lands_in_ms: Math.max(0, rc.land_at - now),
+        cast_secs:   _spellCastSecs(rc.spell) || null,
+      });
+    }
+    try { fetchTargetCasts(targetName); } catch { /* fire-and-forget, cached */ }
+    const ctc = _targetCastsByName.get(tl);
+    if (ctc && Array.isArray(ctc.casts)) {
+      const fetchedAt = ctc.at || now;
+      for (const c of ctc.casts) {
+        if (!c || /complete heal/i.test(String(c.spell || ''))) continue;
+        // Our own casts already came in via the local path above.
+        if (ownChars.has(String(c.caster || '').toLowerCase())) continue;
+        // Amount rides on the cast (bot fills it from the catalog); fall back
+        // to OUR local catalog. A cast with NO resolvable amount only counts
+        // as a heal if its name reads like one (cross-client casts carry no
+        // is-heal flag — the amount is normally that signal).
+        let amount = (c.heal_amount != null && c.heal_amount > 0) ? c.heal_amount : 0;
+        let fixed  = c.heal_fixed === true;
+        if (amount <= 0) {
+          const he = _healEstForSpell(c.spell);
+          if (he) { amount = he.amount; fixed = he.fixed; }
+        }
+        if (amount <= 0 && !HEAL_SPELL_RX.test(String(c.spell || ''))) continue;
+        out.push({
+          caster:      c.caster,
+          spell:       c.spell,
+          amount:      amount > 0 ? amount : null,
+          estimated:   amount > 0 ? !fixed : true,
+          // Absolute land time in the BOT's clock — a STABLE key the overlay
+          // dedups on across polls (remaining_secs collapses to 0 the instant
+          // a heal lands cross-client).
+          ends_at_ms:  (c.ends_at_ms != null ? c.ends_at_ms : null),
+          lands_in_ms: Math.max(0, (fetchedAt + (c.remaining_secs || 0) * 1000) - now),
+          cast_secs:   c.cast_secs || null,
+        });
+      }
+    }
+    out.sort((a, b) => a.lands_in_ms - b.lands_in_ms);
+    return out.slice(0, 6);
+  };
+  const healTargetName = mtName || active || null;
+  const inboundHeals = _inboundHealsFor(healTargetName);
+  // Rampage tank's inbound heals — its own list unless the rampage target IS
+  // the displayed tank (then the MT card already shows them; sending the same
+  // list twice would double the visual).
+  if (rampage && rampage.target && (!healTargetName || String(rampage.target).toLowerCase() !== String(healTargetName).toLowerCase())) {
+    rampage.inbound_heals = _inboundHealsFor(rampage.target);
+  }
+
   // Boss + enrage hint. Drives the enrage countdown / warning. We use the
   // active boss name from the DS reflects struct as a fallback when the
   // target gauge is empty (e.g. tank is targeting an offtank).
@@ -7619,6 +7992,9 @@ function _serializeTankState() {
     // Main-Tank focus block — null out of combat. When present the overlay
     // renders the MT's HP/buffs/DS instead of the local character's.
     mt,
+    // Inbound heals on the displayed tank (MT or self) — cast bars + projected
+    // HP. CH excluded (CH-chain overlay owns those). Empty when none in flight.
+    inbound_heals: inboundHeals,
     da,
     ds: {
       total: dsTotal,
@@ -7714,6 +8090,8 @@ function _serializeCommandCenterState() {
     // Recent /random sets — "333 (Item name) — winner names" rows.
     rolls:         rollSetsSnapshot(15 * 60 * 1000),
     cures,
+    // Per-cleric Divine Intervention readiness — chips on the board.
+    di:            diStatusSnapshot(),
     updated_at:    Date.now(),
   };
 }
@@ -7961,6 +8339,13 @@ function _serializeForDashboard() {
     // CH chain rotation snapshot (cleric Complete Heal callouts) — null when
     // no chain has called in the last 5 minutes. Drives chchain.html.
     chChain: chChainSnapshot(),
+    // Per-cleric Divine Intervention readiness (bot aggregate ⊕ local casts) —
+    // chchain.html renders the chips + "only <X> has DI" callout.
+    diStatus: diStatusSnapshot(),
+    // Last decoded Zeal type-5 raid sample — Info tab pipe explorer's
+    // "raid (type 5)" section. null until the client fires one (you must be
+    // in a raid; Zeal re-sends on composition change).
+    raidPipe: _lastRaidPipe,
     // /random roll sets (EQ Log Parser-style) — dashboard "🎲 Rolls" card.
     rollSets: rollSetsSnapshot(),
     // Officer knob overrides currently in effect (see pollOverlayTuning) —
@@ -10503,7 +10888,7 @@ var WP_OVERLAY_ROWS = [
   ['threat',  'Threat meter',        'Per-fight aggro: swing/proc/spell/heal stacked breakdown per player, leader highlighted, pet hate rolled into owner. AAs like Voice of Thule + Disruptive Persecution count via a CAST_HATE map.'],
   ['chchain', 'CH chain',            'Cleric Complete Heal rotation from the shout/raid callouts: slot order, caller + mana, who is casting, who is NEXT, and a beat countdown for the next cast.'],
   ['tank',    'Tank HUD',            'Main-Tank focus card: MT HP + THEIR buffs and DS returns (CH-chain target or whoever the boss is meleeing), boss HP + enrage warning, Divine Aura countdown with start-CH callout, current Rampage target. Falls back to your own view when no MT is resolved. Reads /api/tank-state.'],
-  ['exttarget','Extended Target',    'Raid-wide target list: every mob/player raiders are on, sorted by how many are targeting it, with HP + debuffs. Named mobs flagged; non-unique names asterisked (same-name mobs split out by HP). Players/pets hurt for >10s fold in as needs-attention rows.'],
+  ['exttarget','Extended Target',    'Raid-wide target list: every mob/player raiders are on, sorted by how many are targeting it, with HP + debuffs and 🎯 target-of-target (who each mob is meleeing). Named mobs flagged; non-unique names asterisked. Players/pets are hidden by default (👥 toggle to show); ✕ hides any single row.'],
   ['command', 'Command Center',      'One-window raid board: boss/MT/rampage/enrage/Death Touch (same data as Tank HUD), plus raid-wide DA/invuln status and healer mana parsed from raid-chat macros, plus Curse/Cure alerts from the buff queue. Reads /api/command-center.'],
   ['popraid', 'PoP raids',           'Planes of Power / PoTime encounter slideshow: callouts, guide stats + live drop table, raid-wide shared objective checkboxes, EQProgression diagrams + phase videos, and a flag button that reports guide-vs-Quarm anomalies to the officers.'],
 ];
@@ -10561,6 +10946,7 @@ function renderOverlays(s) {
     + '<span id="wpBdHotkeyHint" class="dim" style="font-size:11px"></span>'
     + '<span style="flex-basis:100%"></span>'
     + '<button type="button" class="wp-ov-act" data-act="arrange" style="background:#21262d;color:#7ee787;border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px">✨ Auto-arrange overlays now</button>'
+    + '<button type="button" class="wp-ov-act" data-act="rescue" title="Lost an overlay on another monitor? Gathers every overlay onto the screen this window is on and re-arranges there. That screen becomes the overlays\\' home for future arranges." style="background:#21262d;color:#f8b87b;border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px">🧲 Rescue overlays to this screen</button>'
     + '<button type="button" class="wp-ov-act" data-act="backdrops" style="background:#21262d;color:#c9d1d9;border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px">🌫 Toggle backgrounds now</button>'
     + '<span class="dim" style="font-size:11px">arranging only ever runs when you click it — never automatically</span>'
     + '</div>';
@@ -10721,6 +11107,7 @@ if (typeof window !== 'undefined' && !window.__wpOvDelegated) {
     if (act && window.mimic) {
       var a = act.getAttribute('data-act');
       if (a === 'arrange' && window.mimic.autoArrangeNow) window.mimic.autoArrangeNow();
+      if (a === 'rescue' && window.mimic.rescueOverlays) window.mimic.rescueOverlays();
       if (a === 'backdrops' && window.mimic.toggleBackdrops) window.mimic.toggleBackdrops();
       return;
     }
@@ -10963,6 +11350,31 @@ function renderZealExplorer(s) {
         + '<td class="num">' + esc(String(aci.value)) + '</td></tr>';
     }
     if (allRows) h += grp(k + '|raw', 'All labels (raw)', (c.char_info || []).length, tbl(allRows, ['Id', 'Field', 'Value']));
+  }
+  // Raid (type 5) — the raid-window roster Zeal broadcasts on composition
+  // change (the same sample that feeds raid_roster uploads + the /buffs
+  // grid). Raid-wide, not per-character, so it renders once after the
+  // per-client sections. Sorted by group; HP is the merged live view
+  // (verbose exact values beat the group-gauge cross-ref).
+  var rp = s.raidPipe;
+  if (rp && Array.isArray(rp.members) && rp.members.length) {
+    var rpSorted = rp.members.slice().sort(function(a, b){
+      var ga = parseInt(a.group, 10) || 99, gb = parseInt(b.group, 10) || 99;
+      return (ga - gb) || String(a.name).localeCompare(String(b.name));
+    });
+    var rpRows = '';
+    for (var rpi = 0; rpi < rpSorted.length; rpi++) {
+      var rm = rpSorted[rpi];
+      var rhp = rm.hp_pct != null ? (rm.hp_current != null && rm.hp_max != null ? rm.hp_current + '/' + rm.hp_max + ' - ' + rm.hp_pct + '%' : rm.hp_pct + '%') : '';
+      rpRows += '<tr><td class="num">' + esc(String(rm.group || '')) + '</td>'
+        + '<td>' + esc(String(rm.name)) + '</td>'
+        + '<td class="dim">' + esc(String(rm.class || '')) + '</td>'
+        + '<td class="num">' + esc(String(rm.level || '')) + '</td>'
+        + '<td class="dim">' + esc(String(rm.rank || '')) + '</td>'
+        + '<td class="num">' + esc(rhp) + '</td></tr>';
+    }
+    h += grp('zx|raid', '5 - raid (last sample ' + fmtAgo((Date.now() - rp.at) / 1000) + ' ago)', rp.members.length,
+      tbl(rpRows, ['Grp', 'Name', 'Class', 'Lvl', 'Rank', 'HP']));
   }
   morphInto(el, h);
 }
@@ -14105,6 +14517,20 @@ function startWebDashboard(port) {
             }
           }
         } catch { /* */ }
+        // No explicit class picked = AUTO: default to the class of the
+        // character you're logged in as (Uilnayar 2026-07-15: "the Buff
+        // queue should default to the character class you're logged in as,
+        // versus making us change it"). Same resolution the class-default
+        // overlay sets use: /who first, Zeal type-5 raid roster fallback.
+        let autoClass = null;
+        if (!bufferClass && bufferCharacter) {
+          try {
+            const bl = String(bufferCharacter).toLowerCase();
+            const who = whoData.get(bl);
+            const cls = (who && who.class) || _raidClassByName.get(bl) || null;
+            if (cls) { autoClass = normalizeClass(String(cls)); bufferClass = autoClass; }
+          } catch { /* fall through to unfiltered */ }
+        }
         fetchRaidBuffQueue(bufferClass, bufferCharacter);
         const cacheKey = String(bufferClass || '').toLowerCase() + '|' + String(bufferCharacter || '').toLowerCase();
         const cached = _buffQueueCache.get(cacheKey);
@@ -14119,6 +14545,9 @@ function startWebDashboard(port) {
             ? mel.order.map(e => e && (e.name || e)).filter(Boolean).slice(0, 12)
             : [];
         } catch { payload.recent_casts = []; }
+        // Tell the overlay which class AUTO resolved to so the picker can
+        // read "Auto (Druid)" instead of a blank.
+        payload.auto_class = autoClass;
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify(payload));
       }
@@ -14140,8 +14569,22 @@ function startWebDashboard(port) {
         fetchExtendedTarget(selfCharacter);
         const cached = _extTargetCache.get(String(selfCharacter || '').toLowerCase());
         const payload = (cached && cached.payload) || { targets: [], loading: true };
+        // Enrich mob rows with target-of-target (who the mob is meleeing) from
+        // the local combat log — the bot aggregation has no ToT (Zeal's gauge
+        // stream carries none). A player/pet name never matches a mob-hit
+        // record so its tot stays null; enrich all rows, keep only non-null.
+        let outPayload = payload;
+        try {
+          if (Array.isArray(payload.targets) && payload.targets.length && (stats.recentTankHits || []).length) {
+            outPayload = { ...payload, targets: payload.targets.map(t => {
+              if (!t || !t.name) return t;
+              const tot = _totForMob(String(t.name).toLowerCase());
+              return tot ? { ...t, tot } : t;
+            }) };
+          }
+        } catch { outPayload = payload; }
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify(payload));
+        return res.end(JSON.stringify(outPayload));
       }
       // "Buffs feel laggy" click from the buff-queue overlay. Drops the agent
       // into snappy mode for 60s AND forwards the click to the bot for audit.
@@ -20152,8 +20595,77 @@ function fetchTargetBuffs(name) {
 // inference, which never sees worn clickies or pre-fight buffs. Same lazy
 // cache/inflight pattern as fetchTargetBuffs; 8s TTL keeps a roomful of
 // Mimics from stacking Supabase reads while the overlay still feels live.
-const _mtLiveStateByName = new Map();   // nameLower → { at, state|null }
-const _mtLiveStateInflight = new Set();
+// ── DI status poll (BACKLOG §1) ──────────────────────────────────────────────
+// Per-cleric Divine Intervention readiness from the bot (aggregated across
+// every Mimic cleric's live-state di_ready_at). Cached ~4s; the CH-chain +
+// Command Center overlays read it off /api/state / /api/command-center. Our
+// OWN clerics' state is merged from _diStateByChar at serialize time so the
+// local view never waits on the round trip.
+let _diStatusCache = { at: 0, clerics: [] };
+let _diStatusInflight = false;
+const DI_STATUS_TTL_MS = 4000;
+function fetchDiStatus() {
+  const opts = _uploadOpts;
+  if (!opts || !opts.botUrl || !opts.token) return;
+  if (_diStatusInflight || (Date.now() - _diStatusCache.at) < DI_STATUS_TTL_MS) return;
+  _diStatusInflight = true;
+  const url = opts.botUrl.replace(/\/encounter(\?.*)?$/, '/di-status');
+  try {
+    const u = new URL(url);
+    const mod = u.protocol === 'https:' ? https : http;
+    const req = mod.request({
+      method: 'GET', hostname: u.hostname, port: u.port, path: u.pathname + u.search,
+      headers: { 'Authorization': 'Bearer ' + opts.token, 'User-Agent': `wolfpack-logsync/${AGENT_VERSION}` },
+      timeout: 6000,
+    }, (res) => {
+      let body = '';
+      res.on('data', c => body += c);
+      res.on('end', () => {
+        _diStatusInflight = false;
+        try {
+          const j = JSON.parse(body);
+          _diStatusCache = { at: Date.now(), clerics: Array.isArray(j && j.clerics) ? j.clerics : [] };
+        } catch { _diStatusCache = { at: Date.now(), clerics: _diStatusCache.clerics }; }
+      });
+    });
+    req.on('error',   () => { _diStatusInflight = false; });
+    req.on('timeout', () => { req.destroy(); _diStatusInflight = false; });
+    req.end();
+  } catch { _diStatusInflight = false; }
+}
+// Snapshot for overlays: bot list ⊕ local override (our own machine's DI
+// stamps are authoritative + latency-free for characters we watch).
+function diStatusSnapshot() {
+  fetchDiStatus();
+  const now = Date.now();
+  const byName = new Map();
+  for (const c of (_diStatusCache.clerics || [])) {
+    if (!c || !c.name) continue;
+    const readyMs = c.ready_at ? Date.parse(c.ready_at) : null;
+    byName.set(String(c.name).toLowerCase(), {
+      name: c.name,
+      ready_at_ms: readyMs,
+      up: readyMs == null || readyMs <= now,
+      seconds: readyMs != null && readyMs > now ? Math.ceil((readyMs - now) / 1000) : 0,
+    });
+  }
+  for (const [cl, di] of _diStateByChar) {
+    // Resolve the display-cased name from our watched characters; a name
+    // unknown to both the local watch AND the bot list is skipped.
+    let display = null;
+    for (const ch of Object.keys(_zealState || {})) if (String(ch).toLowerCase() === cl) display = ch;
+    if (!display && !byName.has(cl)) continue;
+    const name = display || byName.get(cl).name;
+    byName.set(cl, {
+      name,
+      ready_at_ms: di.readyAt,
+      up: di.readyAt <= now,
+      seconds: di.readyAt > now ? Math.ceil((di.readyAt - now) / 1000) : 0,
+    });
+  }
+  const list = [...byName.values()].sort((a, b) => (a.up === b.up ? a.name.localeCompare(b.name) : a.up ? -1 : 1));
+  return { clerics: list, up_count: list.filter(c => c.up).length };
+}
 // 8s felt sluggish once cross-client tank HP shipped (a non-local MT's bar only
 // refreshed every ~8s on top of the roster/relay lag). 2.5s keeps the Tank bar
 // live; reads dedup through the bot's own relay cache so a roomful of Mimics
@@ -20467,8 +20979,33 @@ function buildMobInfo() {
   const ctb = _targetBuffsByName.get(tnameLower);
   if (!ctb || (Date.now() - ctb.at) >= TARGET_BUFFS_TTL_MS) fetchTargetBuffs(st.target_name);
   let buffs;
+  // Cross-client live buffs — the target is another Mimic-running raider:
+  // use THEIR uploaded Zeal list (real remaining time — actual counters, not
+  // "?"-duration observed landings), same source the Tank overlay's MT buffs
+  // already use (Uilnayar 2026-07-15: "buff counters in the target info like
+  // we had discussed" — targeting Peopleslayer showed observed-only). EQ
+  // character names never contain spaces, so anything with one skips the
+  // fetch (mobs would just churn null lookups).
+  let liveBuffs = null;
+  if (zealBuffs === null && !/\s/.test(String(st.target_name).trim())) {
+    try { fetchCharacterLiveState(st.target_name); } catch { /* cached/TTL */ }
+    const live = _mtLiveStateByName.get(tnameLower);
+    if (live && live.state && Array.isArray(live.state.buffs) && live.state.buffs.length) {
+      liveBuffs = live.state.buffs.filter(b => b && b.name).map(b => ({
+        name: b.name,
+        remaining_secs: (typeof b.seconds === 'number') ? b.seconds : null,
+        total_secs: null,
+        observed_at_ms: Date.now(),
+        source: 'live',
+        good: _spellGood(b.name),
+        song: false,
+      }));
+    }
+  }
   if (zealBuffs !== null) {
     buffs = zealBuffs;
+  } else if (liveBuffs !== null) {
+    buffs = liveBuffs;
   } else {
     const local  = targetBuffsFor(tnameLower);
     const remote = (ctb && Array.isArray(ctb.buffs)) ? ctb.buffs : [];
@@ -20505,7 +21042,9 @@ function buildMobInfo() {
     mob:            cached ? cached.mob : null,   // null until the lookup returns
     loading:        !cached,
     target_buffs:   buffs,
-    target_is_pc:   zealBuffs !== null,
+    // PC = live buff data (own Zeal list OR the target's uploaded live-state)
+    // — drives the "(live)" header suffix instead of "(observed)".
+    target_is_pc:   zealBuffs !== null || liveBuffs !== null,
     target_slots:   slotCounts,
     target_casting: ctc ? ctc.casts : [],
   };
@@ -20816,6 +21355,20 @@ function flushLiveStateToBot(opts) {
       zone_id:     st.zone != null ? st.zone : null,
       zone_name:   _zoneName(st.zone),
       self_hp_pct: st.self_hp_pct != null ? st.self_hp_pct : null,
+      // Exact self HP (Zeal labels 17/18) — powers the cross-client Tank
+      // overlay's "cur / max · pct%" label for a Mimic-running MT. These
+      // never left the machine before (only the pipeverbose raid-sample path
+      // carried exact numbers), so the MT bar showed % only
+      // (Uilnayar 2026-07-15). NOT in the change signature — refreshes ride
+      // the heartbeat + existing sig triggers.
+      self_hp_cur: st.self_hp_cur != null ? st.self_hp_cur : null,
+      self_hp_max: st.self_hp_max != null ? st.self_hp_max : null,
+      // Divine Intervention readiness (log-driven, see _noteDiCast) — null
+      // when this character never cast DI this session (= assumed ready).
+      di_ready_at: (() => {
+        const di = _diStateByChar.get(String(ch).toLowerCase());
+        return di ? new Date(di.readyAt).toISOString() : null;
+      })(),
       // Self mana — feeds the web /raid mana list + Twitch Queue. pct from
       // cur/max (labels 124/125) so it's exact when the pipe supplies them.
       self_mana_pct: (st.self_mana_cur != null && st.self_mana_max != null && st.self_mana_max > 0)
@@ -20855,6 +21408,17 @@ function flushLiveStateToBot(opts) {
     // Same coarse-bucket trick for self mana so the /raid mana list + Twitch
     // Queue track drain without a re-send on every 1% tick.
     const selfManaBucket = (rec.self_mana_pct != null) ? Math.floor(rec.self_mana_pct / 10) : null;
+    // Self HP bucket — so a Mimic MT's HP on a REMOTE healer's Tank overlay
+    // tracks their real swings, not just the 45s heartbeat. Without this, the
+    // exact cur/max we now upload (v3.3.42) landed but sat frozen between
+    // sig changes — the healer saw a stale bar (Uilnayar 2026-07-15, "we need
+    // cross-raid HP sync"). 5% is finer than the 10% target/mana buckets (a
+    // tank bar wants tighter tracking) and still bounded by the 5s flush, so
+    // at most one re-send per 5s per raider who crossed a 5% line.
+    const selfHpBucket = (rec.self_hp_pct != null) ? Math.floor(rec.self_hp_pct / 5) : null;
+    // DI up/down transition (not the raw timestamp — that's static between
+    // casts; the STATE flip 96s after a cast is what the raid cares about).
+    const diUp = rec.di_ready_at == null || Date.parse(rec.di_ready_at) <= now;
     const sig = JSON.stringify([
       rec.zone_id,
       buffs.map(b => b && b.name),
@@ -20863,6 +21427,8 @@ function flushLiveStateToBot(opts) {
       (rec.target_name || '').toLowerCase(),
       targetHpBucket,
       selfManaBucket,
+      selfHpBucket,
+      diUp,
       (rec.incoming_mob || '').toLowerCase(),
     ]);
     // Send when the signature changed, OR the heartbeat floor elapsed —
@@ -22375,12 +22941,18 @@ async function main() {
           // sees it in Mob Info's Casting section (cross-client; only our
           // casts nameable).
           if (selfCast) relaySelfCastForCasting(line, b.character, selfCast);
+          // A DI cast that gets interrupted/fizzles never consumed its recast.
+          noteDiInterrupt(line, b.character);
         }
         // Blind landings / fades (Pitted Iron Ring + generic NPC blind) —
         // drives the Mimic Blind Mode auto-pop in v1.1.8. Cheap regex set,
         // always runs (no _sourceExcluded gate — blindness is a UI thing,
         // not stat data we'd ever want suppressed).
         noteBlindLine(line, b.character);
+        // Public CH landings ("X is completely healed.") → heal-attribution ring.
+        if (!_sourceExcluded) noteHealLandLine(line);
+        // Other players' cast-starts → recipient-side heal attribution ring.
+        if (!_sourceExcluded) noteCasterStart(line);
         // "Your pet's <X> spell has worn off." → drop it from the pet's buffs.
         if (!_sourceExcluded) notePetBuffWornOff(line, b.character);
         // Prefer the cast-correlated resolution (our own cast); fall back to the

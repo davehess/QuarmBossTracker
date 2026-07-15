@@ -146,8 +146,8 @@
     <div class="title">
       <span id="conn" class="conn bad">○</span>
       <span>🛡 Buff queue</span>
-      <select id="clsPick" class="clsPick" title="The class you're buffing as. Filters the buff list to gaps you can fill.">
-        <option value="">(any class)</option>
+      <select id="clsPick" class="clsPick" title="The class you're buffing as. Auto follows whichever character you're logged in as; pick a class to override.">
+        <option value="">Auto (my class)</option>
         <option>Cleric</option><option>Druid</option><option>Shaman</option>
         <option>Enchanter</option><option>Bard</option><option>Paladin</option>
         <option>Ranger</option><option>Beastlord</option><option>Magician</option>
@@ -570,6 +570,12 @@
       var s = await r.json();
       document.getElementById('conn').className = 'conn ok';
       document.getElementById('conn').textContent = '●';
+      // Auto mode: show which class it resolved to ("Auto (Druid)") so the
+      // picker never reads as an unset blank.
+      if (clsPick && !bufferClass && clsPick.options.length) {
+        var autoLbl = s && s.auto_class ? 'Auto (' + s.auto_class + ')' : 'Auto (my class)';
+        if (clsPick.options[0].textContent !== autoLbl) clsPick.options[0].textContent = autoLbl;
+      }
       _lastPayload = s;
       render(s);
     } catch (e) {

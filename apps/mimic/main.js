@@ -2286,6 +2286,55 @@ function _boundsOnScreen(b) {
   } catch { return false; }
 }
 
+// ── Overlay home display (multi-monitor, Uilnayar 2026-07-15) ────────────────
+// "I've lost several overlays off my window and cannot find them." Overlays
+// can legitimately sit on ANY connected display (so _boundsOnScreen passes)
+// while the user plays EQ on another. The HOME display is where overlays
+// belong: stamped from the cursor position whenever the user runs 🧲 Rescue
+// (they click it on the monitor they're playing on — we can't ask Windows
+// where the EQ window is without native deps). Auto-arrange + the fullscreen
+// EQ scaler target this display; default = primary (pre-2026-07-15 behavior).
+function _overlayHomeDisplay() {
+  try {
+    const cfg = loadConfig();
+    if (cfg.overlayHomePoint && Number.isFinite(cfg.overlayHomePoint.x)) {
+      return screen.getDisplayNearestPoint({ x: cfg.overlayHomePoint.x, y: cfg.overlayHomePoint.y });
+    }
+  } catch { /* fall through */ }
+  return screen.getPrimaryDisplay();
+}
+// Gather every overlay window onto the display under the cursor, then
+// auto-arrange there. Stamps that display as home so future arranges (and
+// the resolution-change fallback) stay on it.
+function _rescueOverlays() {
+  const pt = screen.getCursorScreenPoint();
+  const cfg = loadConfig();
+  cfg.overlayHomePoint = { x: pt.x, y: pt.y };
+  saveConfig(cfg);
+  const disp = screen.getDisplayNearestPoint(pt);
+  const a = disp.workArea;
+  let moved = 0;
+  for (const [key, win] of _overlayEntries()) {
+    try {
+      const b = win.getBounds();
+      const onHome = b.x + b.width  > a.x + 20 && b.x < a.x + a.width  - 20 &&
+                     b.y + b.height > a.y + 20 && b.y < a.y + a.height - 20;
+      if (onHome) continue;
+      // Park inside the home display; auto-arrange below finds real spots.
+      win.setBounds({
+        x: Math.max(a.x + 8, Math.min(a.x + a.width  - b.width  - 8, a.x + 40 + (moved * 24))),
+        y: Math.max(a.y + 8, Math.min(a.y + a.height - b.height - 8, a.y + 40 + (moved * 24))),
+        width: b.width, height: b.height,
+      });
+      moved++;
+      appendAgentLog(`[rescue] ${key} → home display (${disp.id})\n`);
+    } catch { /* window mid-teardown — skip */ }
+  }
+  let arranged = null;
+  try { arranged = _autoArrangeOverlays(); } catch { /* best effort */ }
+  return { moved, display: `${disp.size.width}x${disp.size.height}`, arranged };
+}
+
 // Resolve the starting bounds for an overlay: use the saved rect only if the
 // screen signature still matches what it was saved under AND it's on-screen;
 // otherwise use the default. This is the "persist position unless resolution
@@ -2463,7 +2512,7 @@ function _parseUiWindowRects() {
     for (const [k, n] of resCount) if (n > best) { best = n; res = k; }
     const rw = res ? parseInt(res.split('x')[0], 10) : null;
     const rh = res ? parseInt(res.split('x')[1], 10) : null;
-    const db = screen.getPrimaryDisplay().bounds;   // fullscreen EQ covers the full display
+    const db = _overlayHomeDisplay().bounds;   // fullscreen EQ covers the HOME display (multi-monitor)
     const sx = rw > 0 ? db.width / rw : 1;
     const sy = rh > 0 ? db.height / rh : 1;
     const rects = [];
@@ -2491,7 +2540,7 @@ function _parseUiWindowRects() {
 }
 function _autoArrangeOverlays(pinnedKey) {
   const t0 = Date.now();
-  const area = screen.getPrimaryDisplay().workArea;
+  const area = _overlayHomeDisplay().workArea;   // home display, not always primary (multi-monitor)
   const ui = _parseUiWindowRects();
   const MARGIN = 8, STEP = 16;
   const occupied = [];
@@ -4619,6 +4668,12 @@ function buildTrayMenu() {
     { label: 'Show dashboard', click: () => { if (mainWindow) { mainWindow.show(); mainWindow.focus(); } } },
     { label: 'Open wolfpack.quest ↗', click: () => shell.openExternal(WOLFPACK_URL) },
     { type: 'separator' },
+    // Multi-monitor rescue — run from the tray on the monitor you play on;
+    // every overlay gathers there and auto-arranges (Uilnayar 2026-07-15:
+    // "lost several overlays off my window and cannot find them").
+    { label: '🧲 Rescue overlays to this screen', click: () => {
+        try { _rescueOverlays(); } catch (e) { appendAgentLog('[rescue] failed: ' + e.message + '\n'); }
+      } },
     { label: 'I use EQLogParser / other parser (Quiet mode)', type: 'checkbox', checked: s.quietMode, click: (mi) => {
         const cfg = loadConfig(); cfg.quietMode = mi.checked; saveConfig(cfg);
         applyAllVisibility();
@@ -5180,6 +5235,13 @@ ipcMain.handle('toggle-overlay', (_e, name) => {
 // ── Overlay chrome-menu IPC (auto-arrange / backdrop / menu state) ───────────
 ipcMain.handle('auto-arrange-overlays', () => {
   try { return _autoArrangeOverlays(); } catch (e) { return { error: e.message }; }
+});
+// 🧲 Rescue — gather every overlay onto the display under the cursor (the
+// monitor the user is looking at when they click the button), stamp it as
+// the overlay HOME display, and auto-arrange there. The fix for "I've lost
+// overlays somewhere on my other monitors" (Uilnayar 2026-07-15).
+ipcMain.handle('rescue-overlays', () => {
+  try { return _rescueOverlays(); } catch (e) { return { error: e.message }; }
 });
 ipcMain.handle('auto-arrange-onshow-toggle', () => {
   const cfg = loadConfig();

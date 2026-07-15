@@ -37,8 +37,11 @@
     font-size:12px;font-weight:700;font-variant-numeric:tabular-nums;
     color:#5fd0c9;background:rgba(95,208,201,0.12);border:1px solid rgba(95,208,201,0.35);
     border-radius:3px;padding:1px 0;letter-spacing:-0.02em}
-  .row .nm-wrap{min-width:0;overflow:hidden}
-  .row .nm{color:#e6edf3;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block}
+  /* Flex so the always-visible hide ✕ sits inline right of the name while
+     the name itself shrinks/ellipsizes (block + overflow:hidden would push
+     the ✕ to a clipped second line). */
+  .row .nm-wrap{min-width:0;overflow:hidden;display:flex;align-items:center}
+  .row .nm{color:#e6edf3;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex:0 1 auto}
   /* Named/unique NPC — gold, with a ★ so it reads as "a real named mob". */
   .row.named .nm{color:#f6c365}
   .row .star{color:#f6c365;font-size:9px;margin-left:3px}
@@ -90,6 +93,28 @@
     background:rgba(95,208,201,0.12);border:1px solid rgba(95,208,201,0.35);color:#5fd0c9;
     flex-shrink:0}
   .head .offtank-btn.on{background:rgba(95,208,201,0.9);color:#08231f}
+  /* Target-of-target — who this mob is meleeing (from the local combat log's
+     "<mob> hits <player>"; Zeal's gauge stream has no ToT slot). */
+  .row .tot{color:#f0b429;font-size:9px;font-weight:600;margin-left:5px;white-space:nowrap;
+    text-shadow:0 1px 2px #000}
+  .row .tot .arrow{color:#9aa4ad;font-weight:400;margin-right:2px}
+  /* Per-row hide ✕ — sits right next to the target name and is ALWAYS
+     visible (it was hover-only at the row's far edge, which on a locked
+     click-through overlay meant effectively invisible — Uilnayar
+     2026-07-15: "the X isn't very visible, it should be next to the
+     target name"). Dim by default, red on hover. */
+  .row .rowhide{margin-left:5px;color:#8b949e;cursor:pointer;font-size:10px;flex-shrink:0;
+    opacity:0.55;transition:opacity .1s,color .1s;text-shadow:0 1px 2px #000}
+  .row:hover .rowhide{opacity:0.9}
+  .row .rowhide:hover{color:#f87171;opacity:1}
+  /* Who's targeting this — the raiders on each target, dim full-width line
+     under the row (Uilnayar 2026-07-15: "Extended Target should show who is
+     targeting which target"). */
+  .row .who{grid-column:1 / -1;color:#9aa4ad;font-size:9px;line-height:1.4;
+    padding-left:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+    text-shadow:0 1px 2px #000}
+  .row .who .arrow{color:#6e7681;margin-right:2px}
+  .foot .unhide{color:#5fd0c9;cursor:pointer;text-decoration:underline;margin-left:6px}
   #empty{color:rgba(255,255,255,0.5);font-size:11px;text-shadow:0 1px 2px #000;padding:4px 0;text-align:center;font-style:italic}
   .foot{margin-top:4px;font-size:8px;color:#6e7681;padding:0 4px;line-height:1.3}
   .foot b{color:#f0b429;font-weight:700}
@@ -138,6 +163,7 @@
       <span class="icon">🎯</span>
       <span class="ttl">Extended Target</span>
       <button type="button" class="offtank-btn" id="offtankBtn" title="Show mobs held by an off-tank at full health that nobody's targeting (Emperor-style adds)">🛡 off-tanks</button>
+      <button type="button" class="offtank-btn" id="playersBtn" title="Show players/pets that raiders are targeting or that folded in as hurt (off by default — they clutter the mob list)">👥 players</button>
       <span class="cnt" id="cnt"></span>
     </div>
     <div id="rows" class="rows"></div>
@@ -236,6 +262,11 @@
     }
     return Object.keys(byName).map(function(k){ return byName[k]; });
   }
+  // Stable per-entry key — shared by the FLIP animation, per-row hide, and the
+  // hidden-set filter so they all agree on identity.
+  function rowKey(t){
+    return 'row:' + (t.name || '?') + '|' + (t.kind || '') + '|' + (t.dup_index || '') + '|' + (t.owner || '');
+  }
   function rowHtml(t, suppressDeb){
     var kind = t.kind || 'npc';
     var tier = hpTier(t.hp_pct);
@@ -259,6 +290,10 @@
       var lastRaiders = (t.last_raiders || []).join(', ');
       nm += '<span class="stale-tag" title="Last targeted by: ' + esc(lastRaiders) + '">last seen ' + (t.stale_secs || 0) + 's ago</span>';
     }
+    // Target of target — who this mob is meleeing (usually the tank).
+    if (kind === 'npc' && t.tot) {
+      nm += '<span class="tot" title="This mob is meleeing ' + esc(t.tot) + ' (from combat log)"><span class="arrow">🎯</span>' + esc(t.tot) + '</span>';
+    }
     var ct = (t.raider_count != null ? t.raider_count : 0);
     var ctHtml = pureOffTank ? '🛡' : String(ct);
     var ctCls = pureOffTank ? 'ct offtank-ct' : 'ct';
@@ -269,16 +304,32 @@
     // divided per row is false precision (Uilnayar 2026-07-13). The group's
     // debuffs render once, pooled, in debuffBlock() below.
     var deb = suppressDeb ? '' : debuffBlock(t.debuffs);
-    var ctTitle = pureOffTank ? 'held by an off-tank, not targeted' : (ct + ' raider' + (ct === 1 ? '' : 's') + ' targeting');
+    // Who's targeting this — the bot already ships the names (raiders[]);
+    // show up to 4 + "+N", full list on the row tooltip (Uilnayar
+    // 2026-07-15: "should show who is targeting which target").
+    var raiders = Array.isArray(t.raiders) ? t.raiders.filter(Boolean) : [];
+    var whoLine = '';
+    if (raiders.length) {
+      var shown = raiders.slice(0, 4).map(esc).join(', ');
+      var more  = raiders.length > 4 ? ' +' + (raiders.length - 4) : '';
+      whoLine = '<div class="who" title="Targeted by: ' + esc(raiders.join(', ')) + '">'
+              +   '<span class="arrow">→</span>' + shown + more
+              + '</div>';
+    }
+    var ctTitle = pureOffTank ? 'held by an off-tank, not targeted'
+      : (ct + ' raider' + (ct === 1 ? '' : 's') + ' targeting' + (raiders.length ? ': ' + esc(raiders.join(', ')) : ''));
     // data-k: stable identity for the FLIP reorder animation (glide when a
     // mob's raider-count changes its sort position). Same-name mobs stay
     // distinct via dup_index; pets via owner.
-    var key = 'row:' + (t.name || '?') + '|' + (t.kind || '') + '|' + (t.dup_index || '') + '|' + (t.owner || '');
+    // The hide ✕ sits INSIDE nm-wrap, right after the name — always visible.
+    var key = rowKey(t);
     return '<div class="' + rowCls + '" data-k="' + esc(key) + '" title="' + ctTitle + '">'
       +    '<span class="' + ctCls + '">' + ctHtml + '</span>'
-      +    '<span class="nm-wrap"><span class="nm">' + nm + '</span></span>'
+      +    '<span class="nm-wrap"><span class="nm">' + nm + '</span>'
+      +      '<span class="rowhide" data-hk="' + esc(key) + '" title="Hide this entry (restore from the footer)">✕</span></span>'
       +    '<span class="hp ' + tier + '">' + hpTxt + '</span>'
       +    '<div class="bar"><div class="fill ' + tier + '" style="width:' + bw + '%"></div></div>'
+      +    whoLine
       +    deb
       +  '</div>';
   }
@@ -303,6 +354,46 @@
     });
   }
 
+  // "Show players/pets" toggle — player/pet entries (a raider targeting a
+  // friendly, or a hurt pet folding in) clutter the mob list and are hidden by
+  // default (Uilnayar 2026-07-15: "remove or hide entries that are not
+  // targeted — often these are players or pets"). Persisted like the off-tank
+  // toggle.
+  var _showPlayers = localStorage.getItem('wp_ext_show_players') === '1';
+  var playersBtn = document.getElementById('playersBtn');
+  function _paintPlayersBtn(){ if (playersBtn) playersBtn.className = 'offtank-btn' + (_showPlayers ? ' on' : ''); }
+  _paintPlayersBtn();
+  if (playersBtn) {
+    playersBtn.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch (e) {} });
+    playersBtn.addEventListener('mouseleave', function(){ try { window.mimic.overlayHoverInteractive(false); } catch (e) {} });
+    playersBtn.addEventListener('click', function(){
+      _showPlayers = !_showPlayers;
+      localStorage.setItem('wp_ext_show_players', _showPlayers ? '1' : '0');
+      _paintPlayersBtn();
+      render(_lastPayload);
+    });
+  }
+
+  // Per-row hide — a persistent set of entry keys the user has ✕'d out. Keyed
+  // by rowKey so a specific mob/player/pet stays hidden across polls until the
+  // footer's "show" restores them all.
+  var _hidden = new Set();
+  try { _hidden = new Set(JSON.parse(localStorage.getItem('wp_ext_hidden') || '[]')); } catch (e) {}
+  function _saveHidden(){ try { localStorage.setItem('wp_ext_hidden', JSON.stringify([].slice.call(_hidden))); } catch (e) {} }
+  // Delegated click on the rows container: ✕ hides that entry; the rows area
+  // needs the hover handshake so the click isn't swallowed by click-through.
+  var rowsElRef = document.getElementById('rows');
+  if (rowsElRef) {
+    rowsElRef.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch (e) {} });
+    rowsElRef.addEventListener('mouseleave', function(){ try { window.mimic.overlayHoverInteractive(false); } catch (e) {} });
+    rowsElRef.addEventListener('click', function(ev){
+      var b = ev.target && ev.target.closest ? ev.target.closest('.rowhide') : null;
+      if (!b) return;
+      var hk = b.getAttribute('data-hk');
+      if (hk) { _hidden.add(hk); _saveHidden(); render(_lastPayload); }
+    });
+  }
+
   var _lastPayload = null;
   function render(payload){
     _lastPayload = payload;
@@ -311,7 +402,13 @@
     var cntEl   = document.getElementById('cnt');
     var footEl  = document.getElementById('foot');
     var all = (payload && Array.isArray(payload.targets)) ? payload.targets : [];
-    var targets = _showOffTank ? all : all.filter(function(t){ return !(t.off_tank && !t.raider_count); });
+    var hiddenNow = 0;
+    var targets = all.filter(function(t){
+      if (!_showOffTank && t.off_tank && !t.raider_count) return false;
+      if (!_showPlayers && (t.kind === 'player' || t.kind === 'pet')) return false;
+      if (_hidden.size && _hidden.has(rowKey(t))) { hiddenNow++; return false; }
+      return true;
+    });
     var offTankCount = (payload && payload.off_tank_count) || 0;
     if (!targets.length) {
       rowsEl.innerHTML = '';
@@ -386,7 +483,24 @@
       }
       try { window.mimic && window.mimic.autoFitOverlay && window.mimic.autoFitOverlay(document.getElementById('wrap')); } catch (e) {}
     }
-    footEl.style.display = anyAmb ? 'block' : 'none';
+    var footParts = [];
+    if (anyAmb) footParts.push('<span><b>*</b> non-unique name — buffs/debuffs may be inaccurate (same-name mobs share a name on the pipe).</span>');
+    if (hiddenNow > 0) footParts.push('<span>' + hiddenNow + ' hidden<span class="unhide" data-unhide="1">show all</span></span>');
+    if (footParts.length) { footEl.innerHTML = footParts.join(' · '); footEl.style.display = 'block'; }
+    else footEl.style.display = 'none';
+  }
+
+  // Footer "show all" restore — bound once (footer content is rebuilt each
+  // render). Hover handshake so the click lands through the click-through veil.
+  var footRef = document.getElementById('foot');
+  if (footRef) {
+    footRef.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch (e) {} });
+    footRef.addEventListener('mouseleave', function(){ try { window.mimic.overlayHoverInteractive(false); } catch (e) {} });
+    footRef.addEventListener('click', function(ev){
+      var u = ev.target && ev.target.closest ? ev.target.closest('[data-unhide]') : null;
+      if (!u) return;
+      _hidden.clear(); _saveHidden(); render(_lastPayload);
+    });
   }
 
   async function tick(){
