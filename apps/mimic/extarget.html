@@ -37,8 +37,11 @@
     font-size:12px;font-weight:700;font-variant-numeric:tabular-nums;
     color:#5fd0c9;background:rgba(95,208,201,0.12);border:1px solid rgba(95,208,201,0.35);
     border-radius:3px;padding:1px 0;letter-spacing:-0.02em}
-  .row .nm-wrap{min-width:0;overflow:hidden}
-  .row .nm{color:#e6edf3;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block}
+  /* Flex so the always-visible hide ✕ sits inline right of the name while
+     the name itself shrinks/ellipsizes (block + overflow:hidden would push
+     the ✕ to a clipped second line). */
+  .row .nm-wrap{min-width:0;overflow:hidden;display:flex;align-items:center}
+  .row .nm{color:#e6edf3;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex:0 1 auto}
   /* Named/unique NPC — gold, with a ★ so it reads as "a real named mob". */
   .row.named .nm{color:#f6c365}
   .row .star{color:#f6c365;font-size:9px;margin-left:3px}
@@ -95,12 +98,22 @@
   .row .tot{color:#f0b429;font-size:9px;font-weight:600;margin-left:5px;white-space:nowrap;
     text-shadow:0 1px 2px #000}
   .row .tot .arrow{color:#9aa4ad;font-weight:400;margin-right:2px}
-  /* Per-row hide ✕ — appears on hover, drops that entry from the list until the
-     "N hidden · show" footer restores it. */
-  .row .rowhide{margin-left:4px;color:#6e7681;cursor:pointer;font-size:10px;flex-shrink:0;opacity:0;
-    transition:opacity .1s}
-  .row:hover .rowhide{opacity:0.8}
+  /* Per-row hide ✕ — sits right next to the target name and is ALWAYS
+     visible (it was hover-only at the row's far edge, which on a locked
+     click-through overlay meant effectively invisible — Uilnayar
+     2026-07-15: "the X isn't very visible, it should be next to the
+     target name"). Dim by default, red on hover. */
+  .row .rowhide{margin-left:5px;color:#8b949e;cursor:pointer;font-size:10px;flex-shrink:0;
+    opacity:0.55;transition:opacity .1s,color .1s;text-shadow:0 1px 2px #000}
+  .row:hover .rowhide{opacity:0.9}
   .row .rowhide:hover{color:#f87171;opacity:1}
+  /* Who's targeting this — the raiders on each target, dim full-width line
+     under the row (Uilnayar 2026-07-15: "Extended Target should show who is
+     targeting which target"). */
+  .row .who{grid-column:1 / -1;color:#9aa4ad;font-size:9px;line-height:1.4;
+    padding-left:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+    text-shadow:0 1px 2px #000}
+  .row .who .arrow{color:#6e7681;margin-right:2px}
   .foot .unhide{color:#5fd0c9;cursor:pointer;text-decoration:underline;margin-left:6px}
   #empty{color:rgba(255,255,255,0.5);font-size:11px;text-shadow:0 1px 2px #000;padding:4px 0;text-align:center;font-style:italic}
   .foot{margin-top:4px;font-size:8px;color:#6e7681;padding:0 4px;line-height:1.3}
@@ -291,18 +304,33 @@
     // divided per row is false precision (Uilnayar 2026-07-13). The group's
     // debuffs render once, pooled, in debuffBlock() below.
     var deb = suppressDeb ? '' : debuffBlock(t.debuffs);
-    var ctTitle = pureOffTank ? 'held by an off-tank, not targeted' : (ct + ' raider' + (ct === 1 ? '' : 's') + ' targeting');
+    // Who's targeting this — the bot already ships the names (raiders[]);
+    // show up to 4 + "+N", full list on the row tooltip (Uilnayar
+    // 2026-07-15: "should show who is targeting which target").
+    var raiders = Array.isArray(t.raiders) ? t.raiders.filter(Boolean) : [];
+    var whoLine = '';
+    if (raiders.length) {
+      var shown = raiders.slice(0, 4).map(esc).join(', ');
+      var more  = raiders.length > 4 ? ' +' + (raiders.length - 4) : '';
+      whoLine = '<div class="who" title="Targeted by: ' + esc(raiders.join(', ')) + '">'
+              +   '<span class="arrow">→</span>' + shown + more
+              + '</div>';
+    }
+    var ctTitle = pureOffTank ? 'held by an off-tank, not targeted'
+      : (ct + ' raider' + (ct === 1 ? '' : 's') + ' targeting' + (raiders.length ? ': ' + esc(raiders.join(', ')) : ''));
     // data-k: stable identity for the FLIP reorder animation (glide when a
     // mob's raider-count changes its sort position). Same-name mobs stay
     // distinct via dup_index; pets via owner.
+    // The hide ✕ sits INSIDE nm-wrap, right after the name — always visible.
     var key = rowKey(t);
     return '<div class="' + rowCls + '" data-k="' + esc(key) + '" title="' + ctTitle + '">'
       +    '<span class="' + ctCls + '">' + ctHtml + '</span>'
-      +    '<span class="nm-wrap"><span class="nm">' + nm + '</span></span>'
+      +    '<span class="nm-wrap"><span class="nm">' + nm + '</span>'
+      +      '<span class="rowhide" data-hk="' + esc(key) + '" title="Hide this entry (restore from the footer)">✕</span></span>'
       +    '<span class="hp ' + tier + '">' + hpTxt + '</span>'
       +    '<div class="bar"><div class="fill ' + tier + '" style="width:' + bw + '%"></div></div>'
+      +    whoLine
       +    deb
-      +    '<span class="rowhide" data-hk="' + esc(key) + '" title="Hide this entry (restore from the footer)">✕</span>'
       +  '</div>';
   }
 
