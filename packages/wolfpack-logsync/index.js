@@ -2513,6 +2513,32 @@ function trackAriLeadLine(line, character) {
 // "You begin casting/singing <Spell>." — shared by noteSelfCast (landing
 // attribution) and relaySelfCastForCasting (cross-client Casting relay).
 const _CAST_BEGIN_RX = /\]\s+You begin (?:casting|singing)\s+(.+?)\.\s*$/i;
+// ── Divine Intervention availability (BACKLOG §1, Uilnayar 2026-07-14) ───────
+// DI = spell 1546: 6s cast + 90s recast, short enough that "who has it up"
+// matters mid-fight. Zeal's gem/recast payloads aren't wired (zealPipe.js:
+// "need ground truth, not inference"), so this is LOG-driven: a self-cast of
+// Divine Intervention stamps ready_at = castStart + 6s + 90s; an interrupt/
+// fizzle within the cast window clears the stamp (no recast consumed).
+// Default = ready (a cleric who hasn't cast this session shows "up").
+// Rides live-state (di_ready_at) → bot aggregates per-cleric → CH-chain +
+// Command Center chips.
+const DI_CAST_MS = 6000, DI_RECAST_MS = 90_000;
+const _diStateByChar = new Map();   // charLower → { castAt, readyAt }
+function _noteDiCast(charLower, atMs) {
+  _diStateByChar.set(charLower, { castAt: atMs, readyAt: atMs + DI_CAST_MS + DI_RECAST_MS });
+}
+// An interrupted/fizzled DI never consumed its recast — revert to ready.
+function noteDiInterrupt(line, character) {
+  if (!character || !line) return;
+  if (line.indexOf('interrupted') === -1 && line.indexOf('fizzles') === -1) return;
+  if (!/\]\s+Your spell (?:is interrupted|fizzles)[.!]\s*$/i.test(line)) return;
+  const st = _diStateByChar.get(String(character).toLowerCase());
+  if (!st) return;
+  const ts = parseEqTimestamp(line);
+  const atMs = ts ? ts.getTime() : Date.now();
+  // Only within the cast window — a later unrelated interrupt is not DI's.
+  if (atMs - st.castAt <= DI_CAST_MS + 1500) _diStateByChar.delete(String(character).toLowerCase());
+}
 // Returns the parsed cast ({ name, atMs }) or null, so the relay can reuse the
 // match instead of re-running the identical regex on the same line (the two
 // ran back-to-back per log line — efficiency review 2026-07-07).
@@ -2531,6 +2557,8 @@ function noteSelfCast(line, character) {
   if (!arr) { arr = []; _recentSelfCast.set(cl, arr); }
   const spellLower = m[1].trim().toLowerCase();
   arr.push({ spellLower, name: m[1].trim(), atMs, target: _zealTargetForChar(cl) });
+  // DI availability — stamp the recast on every Divine Intervention cast.
+  if (spellLower === 'divine intervention') _noteDiCast(cl, atMs);
   // Prune old / cap length.
   const cutoff = atMs - SELF_CAST_WINDOW_MS;
   while (arr.length && arr[0].atMs < cutoff) arr.shift();
@@ -8056,6 +8084,8 @@ function _serializeCommandCenterState() {
     // Recent /random sets — "333 (Item name) — winner names" rows.
     rolls:         rollSetsSnapshot(15 * 60 * 1000),
     cures,
+    // Per-cleric Divine Intervention readiness — chips on the board.
+    di:            diStatusSnapshot(),
     updated_at:    Date.now(),
   };
 }
@@ -8303,6 +8333,9 @@ function _serializeForDashboard() {
     // CH chain rotation snapshot (cleric Complete Heal callouts) — null when
     // no chain has called in the last 5 minutes. Drives chchain.html.
     chChain: chChainSnapshot(),
+    // Per-cleric Divine Intervention readiness (bot aggregate ⊕ local casts) —
+    // chchain.html renders the chips + "only <X> has DI" callout.
+    diStatus: diStatusSnapshot(),
     // /random roll sets (EQ Log Parser-style) — dashboard "🎲 Rolls" card.
     rollSets: rollSetsSnapshot(),
     // Officer knob overrides currently in effect (see pollOverlayTuning) —
@@ -20508,8 +20541,77 @@ function fetchTargetBuffs(name) {
 // inference, which never sees worn clickies or pre-fight buffs. Same lazy
 // cache/inflight pattern as fetchTargetBuffs; 8s TTL keeps a roomful of
 // Mimics from stacking Supabase reads while the overlay still feels live.
-const _mtLiveStateByName = new Map();   // nameLower → { at, state|null }
-const _mtLiveStateInflight = new Set();
+// ── DI status poll (BACKLOG §1) ──────────────────────────────────────────────
+// Per-cleric Divine Intervention readiness from the bot (aggregated across
+// every Mimic cleric's live-state di_ready_at). Cached ~4s; the CH-chain +
+// Command Center overlays read it off /api/state / /api/command-center. Our
+// OWN clerics' state is merged from _diStateByChar at serialize time so the
+// local view never waits on the round trip.
+let _diStatusCache = { at: 0, clerics: [] };
+let _diStatusInflight = false;
+const DI_STATUS_TTL_MS = 4000;
+function fetchDiStatus() {
+  const opts = _uploadOpts;
+  if (!opts || !opts.botUrl || !opts.token) return;
+  if (_diStatusInflight || (Date.now() - _diStatusCache.at) < DI_STATUS_TTL_MS) return;
+  _diStatusInflight = true;
+  const url = opts.botUrl.replace(/\/encounter(\?.*)?$/, '/di-status');
+  try {
+    const u = new URL(url);
+    const mod = u.protocol === 'https:' ? https : http;
+    const req = mod.request({
+      method: 'GET', hostname: u.hostname, port: u.port, path: u.pathname + u.search,
+      headers: { 'Authorization': 'Bearer ' + opts.token, 'User-Agent': `wolfpack-logsync/${AGENT_VERSION}` },
+      timeout: 6000,
+    }, (res) => {
+      let body = '';
+      res.on('data', c => body += c);
+      res.on('end', () => {
+        _diStatusInflight = false;
+        try {
+          const j = JSON.parse(body);
+          _diStatusCache = { at: Date.now(), clerics: Array.isArray(j && j.clerics) ? j.clerics : [] };
+        } catch { _diStatusCache = { at: Date.now(), clerics: _diStatusCache.clerics }; }
+      });
+    });
+    req.on('error',   () => { _diStatusInflight = false; });
+    req.on('timeout', () => { req.destroy(); _diStatusInflight = false; });
+    req.end();
+  } catch { _diStatusInflight = false; }
+}
+// Snapshot for overlays: bot list ⊕ local override (our own machine's DI
+// stamps are authoritative + latency-free for characters we watch).
+function diStatusSnapshot() {
+  fetchDiStatus();
+  const now = Date.now();
+  const byName = new Map();
+  for (const c of (_diStatusCache.clerics || [])) {
+    if (!c || !c.name) continue;
+    const readyMs = c.ready_at ? Date.parse(c.ready_at) : null;
+    byName.set(String(c.name).toLowerCase(), {
+      name: c.name,
+      ready_at_ms: readyMs,
+      up: readyMs == null || readyMs <= now,
+      seconds: readyMs != null && readyMs > now ? Math.ceil((readyMs - now) / 1000) : 0,
+    });
+  }
+  for (const [cl, di] of _diStateByChar) {
+    // Resolve the display-cased name from our watched characters; a name
+    // unknown to both the local watch AND the bot list is skipped.
+    let display = null;
+    for (const ch of Object.keys(_zealState || {})) if (String(ch).toLowerCase() === cl) display = ch;
+    if (!display && !byName.has(cl)) continue;
+    const name = display || byName.get(cl).name;
+    byName.set(cl, {
+      name,
+      ready_at_ms: di.readyAt,
+      up: di.readyAt <= now,
+      seconds: di.readyAt > now ? Math.ceil((di.readyAt - now) / 1000) : 0,
+    });
+  }
+  const list = [...byName.values()].sort((a, b) => (a.up === b.up ? a.name.localeCompare(b.name) : a.up ? -1 : 1));
+  return { clerics: list, up_count: list.filter(c => c.up).length };
+}
 // 8s felt sluggish once cross-client tank HP shipped (a non-local MT's bar only
 // refreshed every ~8s on top of the roster/relay lag). 2.5s keeps the Tank bar
 // live; reads dedup through the bot's own relay cache so a roomful of Mimics
@@ -21207,6 +21309,12 @@ function flushLiveStateToBot(opts) {
       // the heartbeat + existing sig triggers.
       self_hp_cur: st.self_hp_cur != null ? st.self_hp_cur : null,
       self_hp_max: st.self_hp_max != null ? st.self_hp_max : null,
+      // Divine Intervention readiness (log-driven, see _noteDiCast) — null
+      // when this character never cast DI this session (= assumed ready).
+      di_ready_at: (() => {
+        const di = _diStateByChar.get(String(ch).toLowerCase());
+        return di ? new Date(di.readyAt).toISOString() : null;
+      })(),
       // Self mana — feeds the web /raid mana list + Twitch Queue. pct from
       // cur/max (labels 124/125) so it's exact when the pipe supplies them.
       self_mana_pct: (st.self_mana_cur != null && st.self_mana_max != null && st.self_mana_max > 0)
@@ -21254,6 +21362,9 @@ function flushLiveStateToBot(opts) {
     // tank bar wants tighter tracking) and still bounded by the 5s flush, so
     // at most one re-send per 5s per raider who crossed a 5% line.
     const selfHpBucket = (rec.self_hp_pct != null) ? Math.floor(rec.self_hp_pct / 5) : null;
+    // DI up/down transition (not the raw timestamp — that's static between
+    // casts; the STATE flip 96s after a cast is what the raid cares about).
+    const diUp = rec.di_ready_at == null || Date.parse(rec.di_ready_at) <= now;
     const sig = JSON.stringify([
       rec.zone_id,
       buffs.map(b => b && b.name),
@@ -21263,6 +21374,7 @@ function flushLiveStateToBot(opts) {
       targetHpBucket,
       selfManaBucket,
       selfHpBucket,
+      diUp,
       (rec.incoming_mob || '').toLowerCase(),
     ]);
     // Send when the signature changed, OR the heartbeat floor elapsed —
@@ -22775,6 +22887,8 @@ async function main() {
           // sees it in Mob Info's Casting section (cross-client; only our
           // casts nameable).
           if (selfCast) relaySelfCastForCasting(line, b.character, selfCast);
+          // A DI cast that gets interrupted/fizzles never consumed its recast.
+          noteDiInterrupt(line, b.character);
         }
         // Blind landings / fades (Pitted Iron Ring + generic NPC blind) —
         // drives the Mimic Blind Mode auto-pop in v1.1.8. Cheap regex set,

@@ -201,6 +201,14 @@
      seconds-under-fire (Uilnayar 2026-07-06: "we should see their percentage"). */
   .offheal-row .oh-hp{font-variant-numeric:tabular-nums;font-weight:700;flex-shrink:0}
   .oh-hp.hi{color:#56d364} .oh-hp.mid{color:#f0b429} .oh-hp.lo{color:#f87171} .oh-hp.unk{color:#6e7681}
+  /* DI readiness chips — green = up, amber = recast countdown. When only ONE
+     cleric has DI up the whole section gets the gold "save it" outline. */
+  .di-rows{display:flex;flex-wrap:wrap;gap:4px;padding:2px 0}
+  .di-chip{display:inline-flex;align-items:center;gap:4px;font-size:10px;border-radius:3px;
+    padding:1px 6px;border:1px solid rgba(86,211,100,0.6);color:#7ee787;text-shadow:0 1px 2px #000}
+  .di-chip.cd{border-color:rgba(240,180,41,0.6);color:#f0b429}
+  .di-chip .di-sec{font-variant-numeric:tabular-nums;font-weight:700}
+  #diready.di-last{outline:1px solid #f0c419;outline-offset:2px;border-radius:4px}
   /* drag/lock/setup chrome — same pattern as every other overlay. */
   #drag-controls{display:none;position:fixed;top:4px;left:4px;gap:4px;z-index:60}
   body.unlocked #drag-controls{display:flex}
@@ -297,6 +305,14 @@
     <div id="offheal" class="offheal" style="display:none">
       <div class="offheal-hd">⚕ Off-heal candidates</div>
       <div id="offhealRows"></div>
+    </div>
+    <!-- Divine Intervention readiness (BACKLOG §1, Uilnayar 2026-07-14):
+         per-cleric DI up/cooldown chips from log-driven recast tracking
+         (cast = 6s + 90s recast; interrupts refund). Independent of chain
+         state; hidden until at least one Mimic cleric reports. -->
+    <div id="diready" class="offheal" style="display:none">
+      <div class="offheal-hd">🛡 Divine Intervention</div>
+      <div id="direadyRows" class="di-rows"></div>
     </div>
   </div>
 <script>
@@ -525,6 +541,39 @@
     } catch (e) {}
   }
 
+  // DI readiness chips — independent of chain state (like off-heal). The
+  // "only <X> has DI" callout fires ONCE per transition into exactly-one-up
+  // (and only while more than one cleric reports, so a lone Mimic cleric
+  // doesn't hear it all night).
+  var _lastDi = null;
+  var _diSoloSpokenFor = null;   // cleric name we already called out
+  function renderDi(){
+    var el = document.getElementById('diready');
+    var rowsEl = document.getElementById('direadyRows');
+    var di = _lastDi;
+    var list = (di && di.clerics) || [];
+    if (!list.length) { el.style.display = 'none'; _diSoloSpokenFor = null; return; }
+    el.style.display = 'block';
+    var html = '';
+    for (var i = 0; i < list.length; i++) {
+      var c = list[i];
+      html += c.up
+        ? '<span class="di-chip">✓ ' + esc(c.name) + '</span>'
+        : '<span class="di-chip cd">' + esc(c.name) + ' <span class="di-sec">' + Math.max(1, c.seconds || 1) + 's</span></span>';
+    }
+    rowsEl.innerHTML = html;
+    var soloUp = (di.up_count === 1 && list.length > 1) ? list.filter(function(c){ return c.up; })[0] : null;
+    el.classList.toggle('di-last', !!soloUp);
+    if (soloUp) {
+      if (_diSoloSpokenFor !== soloUp.name) {
+        _diSoloSpokenFor = soloUp.name;
+        speakGap('only ' + soloUp.name + ' has D I up — save it for the tank');
+      }
+    } else {
+      _diSoloSpokenFor = null;
+    }
+  }
+
   // Off-heal candidates — independent of chain state, so it's rendered on
   // its own rather than nested inside the chain-empty early return below.
   function renderOffHeal(){
@@ -607,6 +656,7 @@
   var _lastSpotHealKey = null;
   function render(){
     renderOffHeal();
+    renderDi();
     // Integrity FIRST, before the empty-chain early return below — the red
     // GO MANUAL state must stay visible even after the snapshot resets to
     // null (a dead log stops feeding the agent, whose 5-min idle reset then
@@ -795,6 +845,7 @@
       document.getElementById('conn').textContent = '●';
       _last = s && s.chChain;
       _lastOffHeal = (s && s.offHealCandidates) || [];
+      _lastDi = (s && s.diStatus) || null;
       // Integrity signals — every link in the chain-data path (see the
       // heartbeat state block above for why each one matters).
       _lastFetchOkAt = Date.now();
