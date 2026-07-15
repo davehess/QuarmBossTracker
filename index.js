@@ -7295,7 +7295,18 @@ async function _announceMimicReleases() {
   // releases that have no rule.
   const _summaryOf = (rel) => {
     const changelog = String(rel.body || '').split(/\n\s*-{3,}\s*\n/)[0].trim();
-    return changelog.split('\n').filter(l => l.trim()).slice(0, 14).join('\n').slice(0, 1600);
+    // Budgeted at LINE granularity — the old hard .slice(0, 1600) cut the
+    // v1.9.0 notice mid-sentence (Uilnayar 2026-07-15). Keep whole lines
+    // until the budget is spent, then close with an ellipsis; the full notes
+    // are one click away via the release link.
+    const lines = changelog.split('\n').filter(l => l.trim()).slice(0, 20);
+    const out = [];
+    let used = 0;
+    for (const l of lines) {
+      if (used + l.length + 1 > 1550) { out.push('…'); break; }
+      out.push(l); used += l.length + 1;
+    }
+    return out.join('\n');
   };
   const _dlLink = (rel) => {
     const exe = (rel.assets || []).find(a => /\.exe$/i.test(a.name));
