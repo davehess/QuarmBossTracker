@@ -6623,6 +6623,38 @@ async function _handleAgentSpellCatalog(req, res) {
         }
         return null;
       }
+      // Estimated heal magnitude for the heal-attribution join + the tank
+      // overlay's inbound-heal amounts (Uilnayar 2026-07-14: heal amounts are
+      // private to the healed, so a witnessed landing is credited at the
+      // catalog value). SPA 0 (current HP) with a POSITIVE base is a direct
+      // heal — level-scaled by the same formula math as DS, capped at max.
+      // SPA 101 is the special "complete heal" effect (base is a flag, not the
+      // value) → the fixed Quarm CH amount. `fixed` = formula 100 (exact, no
+      // level scaling); everything else is an estimate (renders with ~).
+      const CH_HEAL_AMOUNT = 7500;
+      function _healMagnitude(r) {
+        const eff  = r.raw && Array.isArray(r.raw.eff)     ? r.raw.eff     : null;
+        const base = r.raw && Array.isArray(r.raw.base)    ? r.raw.base    : null;
+        const form = r.raw && Array.isArray(r.raw.formula) ? r.raw.formula : null;
+        const maxA = r.raw && Array.isArray(r.raw.max)     ? r.raw.max     : null;
+        if (eff && base) {
+          if (eff.indexOf(101) >= 0) return { amount: CH_HEAL_AMOUNT, fixed: true };
+          const idx = eff.indexOf(0);
+          if (idx >= 0 && base[idx] != null && base[idx] > 0) {
+            const f  = form ? (form[idx] || 100) : 100;
+            const mx = (maxA && maxA[idx] != null) ? Math.abs(maxA[idx]) : 0;
+            return { amount: _dsFormulaValue(base[idx], f, _dsLevel, mx), fixed: (Number(f) === 100) };
+          }
+          return null;
+        }
+        // Indexed fallback (no formula → fixed).
+        const slots = [[r.effect_id_1, r.effect_base_value_1], [r.effect_id_2, r.effect_base_value_2], [r.effect_id_3, r.effect_base_value_3]];
+        for (const [id, val] of slots) {
+          if (id === 101) return { amount: CH_HEAL_AMOUNT, fixed: true };
+          if (id === 0 && val != null && val > 0) return { amount: Math.abs(val), fixed: true };
+        }
+        return null;
+      }
       while (true) {
         // PostgREST paging via Range header is wrapped by Supabase's REST API
         // as offset/limit query params. We pass them as `&offset=X&limit=Y`
@@ -6631,6 +6663,7 @@ async function _handleAgentSpellCatalog(req, res) {
           `${SELECT}&order=id.asc&offset=${from}&limit=${PAGE}`);
         if (!Array.isArray(data) || data.length === 0) break;
         for (const r of data) {
+          const _hm = _healMagnitude(r);
           entries.push({
             id: r.id, name: r.name, you: r.cast_on_you, other: r.cast_on_other, fades: r.spell_fades,
             dur: r.buffduration, durf: r.buffdurationformula,
@@ -6644,13 +6677,19 @@ async function _handleAgentSpellCatalog(req, res) {
             // from a raider's CURRENT buff list (Uilnayar 2026-06-29: "Highlight
             // the DS spells and songs and how much you're getting from each").
             ds: _dsMagnitude(r) || undefined,
+            // Estimated heal amount (SPA 0 / SPA 101). Only heal spells carry
+            // it, so the payload barely grows. The agent attaches it to each
+            // heal_cast → the bot's heal-attribution join credits a witnessed
+            // landing at this amount; the tank overlay shows inbound-heal size.
+            heal:       _hm ? _hm.amount : undefined,
+            heal_fixed: _hm ? _hm.fixed  : undefined,
           });
         }
         if (data.length < PAGE) break;
         from += PAGE;
       }
       const body = JSON.stringify({
-        version: 6,   // v6: `ds` is now level-scaled via the spell formula (Illusion DS line)
+        version: 7,   // v7: adds `heal`/`heal_fixed` (est. heal amount) per heal spell
         fetched_at: new Date().toISOString(),
         count: entries.length,
         entries,
@@ -6930,6 +6969,10 @@ async function _handleAgentTargetCasts(req, res) {
         ends_at_ms:     c.started_at_ms + c.cast_secs * 1000,   // overlay counts down to this
         remaining_secs: Math.max(0, Math.round((c.started_at_ms + c.cast_secs * 1000 - now) / 1000)),
         cast_secs:      c.cast_secs,
+        // Inbound-heal fields (tank overlay): estimated amount + whether it's a
+        // fixed-formula heal. Present only on heal casts.
+        heal_amount:    c.heal_amount,
+        heal_fixed:     c.heal_fixed,
       });
     }
   }
@@ -9898,6 +9941,11 @@ async function _handleAgentCasting(req, res) {
       caster, spell, target,
       started_at_ms: startMs,
       cast_secs: castSecs, received_at: now,
+      // Heal casts carry their estimated catalog amount (agent-attached, agent
+      // 3.3.37+) so the recipient's tank overlay can render the inbound heal +
+      // a projected-HP ghost segment. Absent for non-heal casts.
+      heal_amount: (Number.isFinite(Number(c.heal_amount)) && Number(c.heal_amount) > 0) ? Number(c.heal_amount) : undefined,
+      heal_fixed:  c.heal_fixed === true ? true : undefined,
     });
     // Cure-cast tracking → optimistic debuff removal. If this cast is a CURE
     // (catalog SPA 35/36/116 negative or 20 beneficial), record which
@@ -11189,7 +11237,7 @@ async function _handleAgentUpload(req, res) {
               const sig = `${String(c.caster).toLowerCase()}|${String(c.target).toLowerCase()}|${Math.round(c.land_at / 1000)}`;
               if (cSeen.has(sig)) continue;
               cSeen.add(sig);
-              cOut.push({ caster: c.caster, spell: c.spell, target: c.target, land_at: c.land_at });
+              cOut.push({ caster: c.caster, spell: c.spell, target: c.target, land_at: c.land_at, heal_amount: c.heal_amount, heal_fixed: c.heal_fixed });
               if (cOut.length >= 500) break;
             }
             mergedHealCasts = cOut;
@@ -11213,7 +11261,7 @@ async function _handleAgentUpload(req, res) {
           mergedDeaths    = uploadedDeaths.map(d => ({ ...d, count: 1 }));
           mergedHealGaps  = uploadedHealGaps;
           mergedHealsReceived = uploadedHealsReceived ? [uploadedHealsReceived] : [];
-          mergedHealCasts     = uploadedHealCasts.map(c => ({ caster: c.caster, spell: c.spell, target: c.target, land_at: c.land_at }))
+          mergedHealCasts     = uploadedHealCasts.map(c => ({ caster: c.caster, spell: c.spell, target: c.target, land_at: c.land_at, heal_amount: c.heal_amount, heal_fixed: c.heal_fixed }))
                                                  .filter(c => c.caster && c.target && c.land_at);
           mergedHealLands     = uploadedHealLands.filter(l => l && l.target && l.ts)
                                                  .map(l => ({ ts: l.ts, target: l.target, spell: l.spell || 'Complete Heal' }));
@@ -11262,13 +11310,14 @@ async function _handleAgentUpload(req, res) {
             const restTotal = (hr.total || 0) - matchedTotal;
             if (restTotal > 0) { unTotal += restTotal; unTicks += Math.max(0, (hr.ticks || 0) - matchedTicks); unWho.add(hr.name); }
           }
-          // Pass 2 — public CH-landing sightings × remaining casts. Covers the
-          // recipient-not-running-Mimic case (usually the MT): a cleric's cast
-          // + anyone's "X is completely healed." sighting = healer, target, and
-          // the catalog CH amount. ESTIMATED (marked ~ on the card). Recipients
-          // who self-report amounts are skipped — their precise events above
-          // already own their casts, and a skew-missed pair must not show up
-          // twice (once as ~7,500, once in the unattributed footnote).
+          // Pass 2 — public heal-LANDING sightings × remaining casts. Covers
+          // the recipient-not-running-Mimic case (usually the MT): a cleric's
+          // heal_cast + anyone's landing sighting ("X is completely healed.",
+          // "X's wounds fade away.", …) = healer, target, and the ESTIMATED
+          // catalog amount that rides on the cast (agent 3.3.37+; falls back to
+          // the fixed CH amount for a CH cast from an older agent). Recipients
+          // who self-report precise amounts are skipped so a skew-missed pair
+          // can't show up twice. Marked ~ on the card (estimated).
           const CH_LAND_AMOUNT = 7500;
           {
             const selfReporting = new Set(mergedHealsReceived.map(hr => (hr.name || '').toLowerCase()));
@@ -11278,17 +11327,29 @@ async function _handleAgentUpload(req, res) {
               let best = null, bestD = 4000;   // wider window: cross-machine clock skew
               for (const c of casts) {
                 if (c.consumed || String(c.target).toLowerCase() !== rl) continue;
-                if (!/complete heal/i.test(String(c.spell || ''))) continue;
+                // Amount rides the cast (agent-attached from the spell catalog);
+                // fall back to the fixed CH amount only for a CH cast so older
+                // agents (CH-only landings) still attribute. A heal cast with no
+                // resolvable amount is skipped (healer still shows via casts).
+                const isCH = /complete heal/i.test(String(c.spell || ''));
+                const amt  = (c.heal_amount != null && c.heal_amount > 0) ? c.heal_amount
+                           : (isCH ? CH_LAND_AMOUNT : 0);
+                if (amt <= 0) continue;
                 const d = Math.abs(c.land_at - l.ts);
                 if (d <= bestD) { best = c; bestD = d; }
               }
               if (!best) continue;
               best.consumed = true;
+              const isCH = /complete heal/i.test(String(best.spell || ''));
+              const amt  = (best.heal_amount != null && best.heal_amount > 0) ? best.heal_amount : CH_LAND_AMOUNT;
               const k = best.caster.toLowerCase();
               if (!joined.has(k)) joined.set(k, { name: best.caster, healed: 0, ticks: 0, targets: new Set(), byTarget: {} });
               const j = joined.get(k);
-              j.healed += CH_LAND_AMOUNT; j.ticks += 1; j.targets.add(l.target);
-              j.byTarget[l.target] = (j.byTarget[l.target] || 0) + CH_LAND_AMOUNT;
+              j.healed += amt; j.ticks += 1; j.targets.add(l.target);
+              j.byTarget[l.target] = (j.byTarget[l.target] || 0) + amt;
+              // A formula-100 heal (heal_fixed) attributed by a landing is still
+              // an estimate of the RECIPIENT's actual gain (crit/overheal), so
+              // any landing-joined amount marks the healer estimated.
               j.estimated = true;
             }
           }
