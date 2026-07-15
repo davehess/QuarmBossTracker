@@ -6495,6 +6495,9 @@ function _endpointForKind(kind, botUrl) {
 // any one running agent uploading it is sufficient — the bot dedups latest.
 let _raidRosterLastUpload = 0;
 let _raidRosterLastHash   = '';
+// Last decoded type-5 raid sample — the dashboard's Zeal Pipe explorer shows
+// it as the "raid (type 5)" section (Uilnayar 2026-07-15).
+let _lastRaidPipe = null;   // { at, members: [{name,class,group,level,rank,hp_pct,hp_current,hp_max}] }
 // HP heartbeat cadence — how often the roster (incl. cross-client HP for the
 // Tank overlay) is re-uploaded when composition is unchanged. Was 10s, which
 // made a non-local tank's HP bar step only every ~10s (+ the relay/fetch lag on
@@ -6564,6 +6567,11 @@ function _maybeUploadRaidRoster(sample) {
         };
       });
     if (compact.length === 0) return;
+    // Stash the decoded roster for the dashboard's Zeal Pipe explorer (Info
+    // tab "raid (type 5)" section — Uilnayar 2026-07-15). Updated on EVERY
+    // pipe fire, before the upload debounce below, so the local view stays
+    // live even between heartbeat uploads.
+    _lastRaidPipe = { at: Date.now(), members: compact };
     // Refresh the local raid-member lookup that trigger actions consult via
     // require_raid_member. Lowercased names only — matched against captured
     // values like victim/target. Replaces (not merges) so a raider leaving
@@ -8336,6 +8344,10 @@ function _serializeForDashboard() {
     // Per-cleric Divine Intervention readiness (bot aggregate ⊕ local casts) —
     // chchain.html renders the chips + "only <X> has DI" callout.
     diStatus: diStatusSnapshot(),
+    // Last decoded Zeal type-5 raid sample — Info tab pipe explorer's
+    // "raid (type 5)" section. null until the client fires one (you must be
+    // in a raid; Zeal re-sends on composition change).
+    raidPipe: _lastRaidPipe,
     // /random roll sets (EQ Log Parser-style) — dashboard "🎲 Rolls" card.
     rollSets: rollSetsSnapshot(),
     // Officer knob overrides currently in effect (see pollOverlayTuning) —
@@ -11340,6 +11352,31 @@ function renderZealExplorer(s) {
         + '<td class="num">' + esc(String(aci.value)) + '</td></tr>';
     }
     if (allRows) h += grp(k + '|raw', 'All labels (raw)', (c.char_info || []).length, tbl(allRows, ['Id', 'Field', 'Value']));
+  }
+  // Raid (type 5) — the raid-window roster Zeal broadcasts on composition
+  // change (the same sample that feeds raid_roster uploads + the /buffs
+  // grid). Raid-wide, not per-character, so it renders once after the
+  // per-client sections. Sorted by group; HP is the merged live view
+  // (verbose exact values beat the group-gauge cross-ref).
+  var rp = s.raidPipe;
+  if (rp && Array.isArray(rp.members) && rp.members.length) {
+    var rpSorted = rp.members.slice().sort(function(a, b){
+      var ga = parseInt(a.group, 10) || 99, gb = parseInt(b.group, 10) || 99;
+      return (ga - gb) || String(a.name).localeCompare(String(b.name));
+    });
+    var rpRows = '';
+    for (var rpi = 0; rpi < rpSorted.length; rpi++) {
+      var rm = rpSorted[rpi];
+      var rhp = rm.hp_pct != null ? (rm.hp_current != null && rm.hp_max != null ? rm.hp_current + '/' + rm.hp_max + ' - ' + rm.hp_pct + '%' : rm.hp_pct + '%') : '';
+      rpRows += '<tr><td class="num">' + esc(String(rm.group || '')) + '</td>'
+        + '<td>' + esc(String(rm.name)) + '</td>'
+        + '<td class="dim">' + esc(String(rm.class || '')) + '</td>'
+        + '<td class="num">' + esc(String(rm.level || '')) + '</td>'
+        + '<td class="dim">' + esc(String(rm.rank || '')) + '</td>'
+        + '<td class="num">' + esc(rhp) + '</td></tr>';
+    }
+    h += grp('zx|raid', '5 - raid (last sample ' + fmtAgo((Date.now() - rp.at) / 1000) + ' ago)', rp.members.length,
+      tbl(rpRows, ['Grp', 'Name', 'Class', 'Lvl', 'Rank', 'HP']));
   }
   morphInto(el, h);
 }
