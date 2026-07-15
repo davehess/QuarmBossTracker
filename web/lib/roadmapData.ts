@@ -43,6 +43,19 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'tank-sees-heals-mimic-19',
+    title: '\u{1FA7A} Tanks see heals coming · Mimic 1.9 (beta)',
+    version: 'Bot 3.0.176 · Mimic 1.9.0 · Agent 3.3.37 (beta)',
+    date: '2026-07-15',
+    channel: 'beta',
+    headline: 'The Tank overlay now shows heals in flight — a countdown to each landing plus a projected-HP bar — and every heal (not just Complete Heal) now gets attributed on parse cards, even for tanks who aren’t running Mimic.',
+    features: [
+      { name: 'Heals incoming, on the Tank overlay', blurb: 'Every heal being cast on the tank draws its own countdown bar to when it lands, colored to its healer, and a striped “ghost” segment on the HP bar shows where the tank’s health lands once it connects. Tanks and healers can see the save arriving. Complete Heals are left off this view — the CH-chain overlay owns those, and their volume would swamp it.' },
+      { name: 'Every heal attributed', blurb: 'Parse cards used to only credit Complete Heals from a witnessed landing. Now ANY heal landing anyone in the raid sees (Remedy, Superior Healing, …) is credited to the caster at the spell’s catalog value — so a CH chain (or any heal) on a tank who isn’t running Mimic still shows real numbers.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'healer-truth-and-mimic-181',
     title: '\u{1FA7A} Real healer numbers · Mimic 1.8.1 stable',
     version: 'Bot 3.0.174 · Web 1.0.220 · Mimic 1.8.1 · Agent 3.3.35 (beta)',

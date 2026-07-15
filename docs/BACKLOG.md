@@ -182,51 +182,78 @@ class filter + "only gaps" + "hide logged-off" toggles, accuracy caveat banner.
 > bot/web straight to `main` per the CLAUDE.md cadence rule.
 
 ### 1. Healing elements (finish the feature)
-- **Generic heal-landing matcher** — next section below (verified catalog
-  suffixes + per-spell amount lookup; plumbing exists end-to-end).
-- **Tank overlay: inbound heals with cast countdowns (owner: "tremendous").**
-  Tanks see heals coming: each inbound heal cast on the tank renders a cast
-  bar counting down to land, and the tank's HP bar gets a GHOST SEGMENT in a
-  different color showing projected post-heal HP (catalog non-crit estimate).
-  Each inbound heal gets its own color, matching its cast bar. **EXCLUDE
-  Complete Heals from this visual** — CH volume would overwhelm the UI (the
-  CH chain overlay already owns that). Data path: heal casts are already
-  relayed to the bot (`casting`: caster, spell, target, started_at,
-  cast_secs) — add an agent poll "casts targeting MY character" (or extend
-  `target-casts`), feed `apps/mimic/tank.html`. We already have tank cur/max
-  HP cross-client. Amounts: eqemu_spells SPA-0 base (non-crit).
-- **Divine Intervention availability tracker.** DI: cleric-only, emerald
-  reagent, long cooldown; blocks a killing blow on a low-HP tank (success
-  needs HIGH CHA on the recipient). Zeal pipes expose spell-gem cooldowns —
-  each cleric's Mimic reports DI gem readiness (live-state-style upload);
-  surface per-cleric DI availability in the Command Center / CH chain
-  overlay, and when only ONE cleric has it up, call that cleric out to cast
-  it (overlay highlight + TTS). Include recipient-CHA awareness where we
-  have gear data.
+- **✅ SHIPPED (2026-07-15, session A).** Generic heal-landing matcher
+  (agent 3.3.37 `noteHealLandLine` all suffixes; bot spell-catalog v7
+  `heal`/`heal_fixed`; join pass 2 credits any witnessed landing at the
+  cast's amount) AND the Tank overlay inbound heals (agent
+  `_serializeTankState` inbound_heals via target-casts; `apps/mimic/tank.html`
+  ghost HP segment + 100ms cast-bar ticker; CH excluded). Bot 3.0.176 (main),
+  agent 3.3.37 + tank.html (beta / Mimic 1.9 line).
+  - Follow-up: the tank overlay only shows a heal when the CLERIC runs agent
+    3.3.37 (amount is agent-attached). To cover a new-agent tank + old-agent
+    cleric, add a bot-side fallback: look up the heal amount in the `/casting`
+    ingest from the catalog when `heal_amount` is absent (the bot already
+    computes `_healMagnitude`; lift it to a cached name→amount map).
+- **Divine Intervention availability tracker — SCAFFOLD (data confirmed).**
+  DI = eqemu_spells id **1546**: cast_time **6000ms**, **recast_time 90000ms**
+  (90s — short, so "who has it up" is meaningful mid-fight), cast_on_you
+  "You feel the watchful eyes of the gods upon you.", cast_on_other
+  "<X> feels the watchful eyes of the gods upon them." Zeal's gem/recast
+  payloads are NOT wired into the agent yet (zealPipe.js header: "need ground
+  truth, not inference"), so go **log-driven**:
+  - Agent (beta): on a self-cast of Divine Intervention, set
+    `di_ready_at = castStartMs + 6000 + 90000`. Default = ready (up) until a
+    cast is seen. Upload per-cleric readiness — cleanest is to add a
+    `di_ready_at` field to the existing `live-state` upload (the cleric's own
+    character_live_state row) rather than a new kind.
+  - Bot (main): store di_ready_at (new nullable column on
+    `character_live_state`, or stash in the buffs jsonb). Aggregate across
+    clerics (class=Cleric via roster/who). Serve on `/raid` + a small relay
+    the Command Center / CH-chain overlay polls.
+  - Overlay (beta): per-cleric DI up/cooldown chip in Command Center /
+    chchain.html; when exactly ONE cleric is up, highlight + TTS "only <X>
+    has DI — save it for the tank". Recipient-CHA awareness: pull CHA from the
+    gear page's stat sums when available (DI success scales with target CHA).
 
-### 2. Data scrubbing (unblocks stats features)
-- **#47 same-name trash segmentation** (Terror over-aggregation) — PRIORITY
-  right after healing. Agent-side: split sequential same-name kills into
-  separate encounters (death-boundary + HP-continuity; see the ±20% catalog
-  HP splitter notes in CLAUDE.md — pipe carries no spawn id, sequential only).
+### 2. Data scrubbing (unblocks stats features) — NEXT PRIORITY (Opus)
+- **#47 same-name trash segmentation** (Terror over-aggregation). NOT small —
+  it touches the agent's EncounterBuilder `add(event)`/`flush()` (~line 4059+),
+  which governs ALL parses, so do it carefully against a real log and do NOT
+  rush it into the 1.9 beta. Approach: when a same-named mob's "has been slain"
+  fires and combat continues on a FRESH same-name spawn, flush the current
+  encounter and start a new one instead of aggregating. Death-boundary +
+  HP-continuity (damage >= 0.9x catalog HP since last segment). Pipe carries no
+  spawn id (CLAUDE.md scope note) so ONLY sequential same-name kills are
+  separable. Align with the bot's existing sequential-kill splitter in
+  find_or_create_encounter (needs a CONFIRMED prior kill) so they don't
+  double-split.
 - Then the offered **bulk re-merge of historical encounter_players** with the
-  robust median (owner hasn't said go yet — ask before running).
+  robust median (owner hasn't said go yet — ASK before running; rewrites
+  history).
 
 ### 3. Character pages: base stats + bind
-- **Base stats v1:** race+class base tables are "good enough to start";
-  users MANUALLY set their creation-point allocation on /me; ALSO capture a
-  review snapshot when they die and respawn naked at bind. Gear page total =
-  base + allocation + gear (existing sums). 255 cap now / 355 with PoP AAs.
-- **Bind location from /charinfo:** the in-game `/charinfo` output includes
-  the bind location — agent parses it, lands on the character's row, shown
-  in that character's section on /me.
+- **Base stats v1.** Surfaces: agent capture + bot endpoint + web /me +
+  migration. (a) Seed a race x class base-stats table (STR/STA/AGI/DEX/WIS/INT/
+  CHA at creation — classic values, "good enough to start"). (b) /me: manual
+  creation-point allocation editor (server action -> new column on characters).
+  (c) Death-respawn review: gear stays on at bind, so a true naked snapshot
+  isn't automatic — capture the client's base readout or prompt to confirm
+  allocation on death. Gear total = base + allocation + gear (gear sums exist
+  in gear/page.tsx). Cap 255 now / **355 with PoP AAs** — show "255(280)".
+- **Bind location from `/charinfo`.** Agent (beta): parse the `/charinfo` bind
+  line -> new `characters.bind_location` column (bot endpoint + migration);
+  web shows it on /me. Small once the column exists — but get the exact
+  `/charinfo` line format from a LOCAL session first (not in our reference
+  logs).
 
 ### 4. Pre-2.0 requirement
 - **"Set up for me" wired into Mimic first-run onboarding** (currently a
-  dashboard button). NOTE (owner): Zeal has **`/pipeverbose on`** as an
-  in-game command (no EQ restart needed for that key); ExportOnCamp has no
-  known command — INI edit with EQ closed remains the path for it. Update the
-  setup card's note accordingly.
+  dashboard button — agent `_applyEqSetup` / POST `/api/eq-setup`, `.wp-eq-setup`
+  in the dashboard). Wire the same call into Mimic's first-run flow
+  (`apps/mimic/main.js` onboarding/loading window). NOTE (owner, confirmed):
+  **`/pipeverbose on`** works LIVE in-game (no EQ restart for that Zeal key);
+  **ExportOnCamp has NO in-game command** — INI edit with EQ closed stays the
+  path. Update the setup card note + onboarding copy to say exactly that.
 
 ### 5. After data scrubbing
 - **/me named-mob kill counts** (encounter_players ⋈ encounters.npc_id ⋈

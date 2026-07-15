@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.0.176': [
+    '**Healers, fully attributed — and tanks can see heals coming.** Building on last update: the parse card now credits EVERY heal, not just Complete Heals. Any raider running Mimic who witnesses a heal land ("X\'s wounds fade away", "X feels much better", …) lets us attribute it to the caster at the spell\'s value — so a **CH chain on a tank who isn\'t running Mimic still shows up**. And the **Tank overlay now shows heals INCOMING**: each heal being cast on the tank draws a countdown bar to when it lands, plus a striped "ghost" segment on the HP bar showing where their health will be once it connects — so tanks and healers can see the save arriving (Complete Heals are left off this view; the CH-chain overlay owns those). Needs the healer + tank on the next Mimic beta (1.9).',
+  ],
   '3.0.174': [
     '**Parse cards now show real healer numbers.** The 🩺 Healers table used to list each parser\'s own *received* heals as "→ You" — useless. Now every heal is attributed by marrying two things Mimic already knows: the **healer\'s** Mimic reports what they cast and on whom (from their Zeal target), and the **recipient\'s** Mimic reports how much actually landed. The card shows each healer\'s **Healed total, cast count, and top recipients** — and healers whose targets don\'t run Mimic still appear with their cast count. The more of us run Mimic, the more complete it gets (needs the healer on agent 3.3.35+/next Mimic update).',
   ],
