@@ -309,6 +309,59 @@ are going to rely on it."
   so verify against in-game behavior — (A) is the trustworthy source, (B) makes
   it show up before anyone casts.
 
+### 7. Cross-client HP serialization of simultaneous same-name mobs (Uilnayar 2026-07-15)
+Report: two "a grimling marauder" up at once, each with the in-game target
+ring (clearly distinct entities). The Mob Info "DEBUFFS (OBSERVED)" card
+merges BOTH mobs' debuffs onto whichever one you target — Engulfing Roots on
+the 3%-HP grimling shows up on the 44%-HP grimling's card and vice-versa. This
+is the over-merge / "dedup in reverse" case the owner flagged.
+
+**Why it happens (data path):** the `casting` relay (agent index.js ~2540)
+uploads `{caster, spell, target(NAME), started_at, cast_secs}` — **target NAME
+only, no HP**. buff_casts / `target-buffs` therefore key debuffs by mob name,
+so N same-name mobs collapse to one card. This is the exact CLAUDE.md scope
+boundary ("Zeal pipe carries no spawn id — same-name mobs are NOT
+disambiguable"; the pipe surface is name + HP‰ only).
+
+**Owner's insight (valid, and a real extension):** a SINGLE client's pipe
+can't tell two same-name mobs apart, but the bot already aggregates target
+observations from EVERY Mimic client. If caster A is targeting the mob at HP‰
+X and player B is targeting the one at HP‰ Y, we have two *simultaneous*
+distinct HP readings = two serializable entities — something the raw pipe
+can't do alone. Attribute each debuff to the entity whose HP‰ matches the
+CASTER's target HP at cast time.
+
+**Sketch (queued, NOT for the 1.9 raid build — substantial + fragile):**
+1. Agent: attach `target_hp_pct` (already computed for live-state, ~7404) to
+   the `casting` AND buff_casts uploads at cast time. First and smallest step;
+   nothing downstream is possible without it.
+2. Bot: build per-client target-HP‰ time series (target snapshots already
+   flow via live-state / extended-target). Cluster into distinct entities by
+   HP-continuity (a monotonic-ish descending trajectory = one mob; two
+   trajectories that hold different HP at the same instant = two mobs).
+3. Attribute each debuff to the entity whose trajectory passes through the
+   caster's cast-time target-HP‰. Key the overlay card by (name, entityId).
+4. Overlay: when you target a same-name mob at HP‰ Z, show only the entity
+   whose current HP‰ ≈ Z.
+
+**Hard edges — document, don't over-trust (this is why it stays queued):**
+- Both mobs spawn at 100% → indistinguishable until they diverge; early
+  debuffs can't be attributed (accept: improves as HP spreads).
+- HP crossover (mob A descending through 44% while mob B sits at 44%) is
+  momentarily ambiguous; needs velocity/direction continuity, still fragile.
+- Any heal / regen breaks HP monotonicity (grimlings barely regen; a healed
+  or FD-reset mob will).
+- Cross-client clock skew (same problem the heal correlation already fights)
+  must be handled before comparing HP "at the same time".
+- **N≥3 simultaneous same-name identities stays PROHIBITED** (CLAUDE.md) — HP
+  diversity can plausibly separate 2, not a pack of 3+ churning through
+  overlapping HP. Bound the feature to N=2 and fall back to name-merge (with a
+  "⚠ multiple same-name mobs" note on the card) above that.
+- Related but distinct from **#47** (sequential same-name kill segmentation,
+  Continuation Queue §2): #47 separates same-name mobs killed one-after-another
+  in ONE client's log; this separates same-name mobs alive AT ONCE using
+  MANY clients' HP. Design them to share the HP-continuity primitive.
+
 ## Heal attribution — follow-up: generic landing matcher (queued)
 
 Agent 3.3.36 witnesses **Complete Heal** landings only (`is completely
