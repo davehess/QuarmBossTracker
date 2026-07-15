@@ -7472,6 +7472,25 @@ function _findDA(buffsList, greenSecs) {
 //      (stats.recentTankHits; rampage hits already excluded at record
 //      time so a rampage cycle can't flip the MT).
 // Returns { name, source } or null when neither fires (out of combat / solo).
+// Target-of-target for a mob: which raider it's meleeing, from recentTankHits
+// (the local combat log's "<mob> hits <player>"; Zeal's gauge stream has no ToT
+// slot). Cross-client mobs the local client isn't in range of won't have hits,
+// so tot is null for those. Uilnayar 2026-07-15 — Extended Target ToT column.
+function _totForMob(mobLower) {
+  if (!mobLower) return null;
+  const now = Date.now();
+  const tally = new Map();
+  for (const h of (stats.recentTankHits || [])) {
+    if (now - h.tsMs > 15_000) continue;
+    if (h.mob !== mobLower) continue;
+    const k = h.tank.toLowerCase();
+    const e = tally.get(k) || { name: h.tank, hits: 0 };
+    e.hits++; tally.set(k, e);
+  }
+  let best = null;
+  for (const e of tally.values()) if (!best || e.hits > best.hits) best = e;
+  return best ? best.name : null;
+}
 function _resolveMainTank(mainTargetName) {
   const chc = chChainSnapshot();
   if (chc && chc.target) return { name: String(chc.target), source: 'ch_chain' };
@@ -10692,7 +10711,7 @@ var WP_OVERLAY_ROWS = [
   ['threat',  'Threat meter',        'Per-fight aggro: swing/proc/spell/heal stacked breakdown per player, leader highlighted, pet hate rolled into owner. AAs like Voice of Thule + Disruptive Persecution count via a CAST_HATE map.'],
   ['chchain', 'CH chain',            'Cleric Complete Heal rotation from the shout/raid callouts: slot order, caller + mana, who is casting, who is NEXT, and a beat countdown for the next cast.'],
   ['tank',    'Tank HUD',            'Main-Tank focus card: MT HP + THEIR buffs and DS returns (CH-chain target or whoever the boss is meleeing), boss HP + enrage warning, Divine Aura countdown with start-CH callout, current Rampage target. Falls back to your own view when no MT is resolved. Reads /api/tank-state.'],
-  ['exttarget','Extended Target',    'Raid-wide target list: every mob/player raiders are on, sorted by how many are targeting it, with HP + debuffs. Named mobs flagged; non-unique names asterisked (same-name mobs split out by HP). Players/pets hurt for >10s fold in as needs-attention rows.'],
+  ['exttarget','Extended Target',    'Raid-wide target list: every mob/player raiders are on, sorted by how many are targeting it, with HP + debuffs and 🎯 target-of-target (who each mob is meleeing). Named mobs flagged; non-unique names asterisked. Players/pets are hidden by default (👥 toggle to show); ✕ hides any single row.'],
   ['command', 'Command Center',      'One-window raid board: boss/MT/rampage/enrage/Death Touch (same data as Tank HUD), plus raid-wide DA/invuln status and healer mana parsed from raid-chat macros, plus Curse/Cure alerts from the buff queue. Reads /api/command-center.'],
   ['popraid', 'PoP raids',           'Planes of Power / PoTime encounter slideshow: callouts, guide stats + live drop table, raid-wide shared objective checkboxes, EQProgression diagrams + phase videos, and a flag button that reports guide-vs-Quarm anomalies to the officers.'],
 ];
@@ -14329,8 +14348,22 @@ function startWebDashboard(port) {
         fetchExtendedTarget(selfCharacter);
         const cached = _extTargetCache.get(String(selfCharacter || '').toLowerCase());
         const payload = (cached && cached.payload) || { targets: [], loading: true };
+        // Enrich mob rows with target-of-target (who the mob is meleeing) from
+        // the local combat log — the bot aggregation has no ToT (Zeal's gauge
+        // stream carries none). A player/pet name never matches a mob-hit
+        // record so its tot stays null; enrich all rows, keep only non-null.
+        let outPayload = payload;
+        try {
+          if (Array.isArray(payload.targets) && payload.targets.length && (stats.recentTankHits || []).length) {
+            outPayload = { ...payload, targets: payload.targets.map(t => {
+              if (!t || !t.name) return t;
+              const tot = _totForMob(String(t.name).toLowerCase());
+              return tot ? { ...t, tot } : t;
+            }) };
+          }
+        } catch { outPayload = payload; }
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify(payload));
+        return res.end(JSON.stringify(outPayload));
       }
       // "Buffs feel laggy" click from the buff-queue overlay. Drops the agent
       // into snappy mode for 60s AND forwards the click to the bot for audit.
