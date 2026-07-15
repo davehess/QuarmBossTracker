@@ -21246,6 +21246,14 @@ function flushLiveStateToBot(opts) {
     // Same coarse-bucket trick for self mana so the /raid mana list + Twitch
     // Queue track drain without a re-send on every 1% tick.
     const selfManaBucket = (rec.self_mana_pct != null) ? Math.floor(rec.self_mana_pct / 10) : null;
+    // Self HP bucket — so a Mimic MT's HP on a REMOTE healer's Tank overlay
+    // tracks their real swings, not just the 45s heartbeat. Without this, the
+    // exact cur/max we now upload (v3.3.42) landed but sat frozen between
+    // sig changes — the healer saw a stale bar (Uilnayar 2026-07-15, "we need
+    // cross-raid HP sync"). 5% is finer than the 10% target/mana buckets (a
+    // tank bar wants tighter tracking) and still bounded by the 5s flush, so
+    // at most one re-send per 5s per raider who crossed a 5% line.
+    const selfHpBucket = (rec.self_hp_pct != null) ? Math.floor(rec.self_hp_pct / 5) : null;
     const sig = JSON.stringify([
       rec.zone_id,
       buffs.map(b => b && b.name),
@@ -21254,6 +21262,7 @@ function flushLiveStateToBot(opts) {
       (rec.target_name || '').toLowerCase(),
       targetHpBucket,
       selfManaBucket,
+      selfHpBucket,
       (rec.incoming_mob || '').toLowerCase(),
     ]);
     // Send when the signature changed, OR the heartbeat floor elapsed —
