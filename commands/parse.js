@@ -343,7 +343,7 @@ function buildParseEmbed(bossName, parsed, bossEmoji, extras = {}) {
       ? `\n> ⚠️ **${healGaps.count}** heal gap${healGaps.count !== 1 ? 's' : ''} on **${healGaps.tank}** (longest: **${Math.round(healGaps.maxGapMs / 1000)}s**)`
       : '';
     const unattribNote = healUnattributed?.total > 0
-      ? `\n*+${fmt(healUnattributed.total)} received by ${healUnattributed.recipients} raider${healUnattributed.recipients !== 1 ? 's' : ''} couldn't be attributed — the healer isn't running Mimic*`
+      ? `\n*+${fmt(healUnattributed.total)} received by ${healUnattributed.recipients} raider${healUnattributed.recipients !== 1 ? 's' : ''} not yet matched to a caster (clock skew, a group heal, or a non-Mimic healer)*`
       : '';
     const reserved = gapNote.length + unattribNote.length;
     while (healRows.length > 0 && (wrapH(healRows).length + reserved) > 1024) healRows.pop();
@@ -352,7 +352,7 @@ function buildParseEmbed(bossName, parsed, bossEmoji, extras = {}) {
     // No attributable healer rows at all — still show the raid what landed.
     embed.addFields({
       name: '🩺 Healers',
-      value: `*${fmt(healUnattributed.total)} healing received by ${healUnattributed.recipients} raider${healUnattributed.recipients !== 1 ? 's' : ''} — no Mimic-running healer to attribute it to yet*`,
+      value: `*${fmt(healUnattributed.total)} healing received by ${healUnattributed.recipients} raider${healUnattributed.recipients !== 1 ? 's' : ''} — not yet matched to a caster (clock skew, a group heal, or a non-Mimic healer)*`,
       inline: false,
     });
   }
