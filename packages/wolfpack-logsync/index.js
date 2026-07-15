@@ -6402,8 +6402,47 @@ function _saveQueueToDisk() {
   if (_queueSaveTimer) return;
   _queueSaveTimer = setTimeout(() => {
     _queueSaveTimer = null;
-    _flushQueueToDiskSync();
+    _flushQueueToDiskAsync();
   }, 500);
+}
+
+// ASYNC flush for the debounced hot path (Uilnayar 2026-07-15: "spurts" —
+// blank overlays + dead /api/state in bursts). The sync flush blocks the
+// event loop for the WHOLE multi-MB write; with a gear+spellbook sweep in
+// the queue (17 alts' Quarmy exports + 200-spell books) every 500ms save
+// stalled the agent long enough to time out every overlay poll. Streaming
+// the same NDJSON through a write stream keeps the loop free; the SYNC
+// variant remains for process-exit paths only (last-gasp durability).
+// Re-entrancy: one write in flight at a time; a save requested mid-write
+// marks dirty and re-flushes after.
+let _queueFlushInFlight = false;
+let _queueFlushDirty = false;
+function _flushQueueToDiskAsync() {
+  if (_queueFlushInFlight) { _queueFlushDirty = true; return; }
+  _queueFlushInFlight = true;
+  const tmp = QUEUE_FILE + '.tmp';
+  const done = (err) => {
+    _queueFlushInFlight = false;
+    if (err) console.warn(`[upload-queue] async save failed: ${err.message}`);
+    if (_queueFlushDirty) { _queueFlushDirty = false; _flushQueueToDiskAsync(); }
+  };
+  try {
+    const ws = fs.createWriteStream(tmp);
+    ws.on('error', (err) => done(err));
+    for (const entry of _uploadQueue) {
+      let line;
+      try { line = JSON.stringify(entry); }
+      catch (e) { console.warn(`[upload-queue] dropping unserializable entry ${entry && entry.id}: ${e.message}`); continue; }
+      if (line.length > _QUEUE_ENTRY_MAX_BYTES) {
+        console.warn(`[upload-queue] skipping oversized entry ${entry && entry.id} (${Math.round(line.length / 1048576)}MB) from persistence`);
+        continue;
+      }
+      ws.write(line + '\n');
+    }
+    ws.end(() => {
+      fs.rename(tmp, QUEUE_FILE, (err) => done(err));
+    });
+  } catch (err) { done(err); }
 }
 
 // Synchronous flush used by debounced timer AND by every process-exit
