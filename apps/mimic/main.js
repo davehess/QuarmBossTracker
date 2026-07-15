@@ -2148,6 +2148,36 @@ function _curWindowUrl() {
   try { return (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents.getURL()) || '(none)'; }
   catch { return '(err)'; }
 }
+// Self-healing port watcher (Uilnayar 2026-07-15: "Can't reach the parser
+// engine at :7779" appearing constantly). The one-shot reload after
+// launchAgent() only fires when waitForAgent succeeds INSIDE its window — a
+// slow agent boot (23 logs to open), a crash-restart with backoff, or a
+// lingering old process holding the port all leave the dashboard window
+// stranded on a dead port showing the banner until a manual click. This
+// watcher closes every one of those gaps: whenever the window's URL port
+// drifts from the live agentPort AND the live port answers, re-navigate.
+// Throttled so a flapping agent can't thrash the window.
+let _lastDriftNavAt = 0;
+setInterval(() => {
+  try {
+    if (!mainWindow || mainWindow.isDestroyed() || !agentPort) return;
+    const cur = mainWindow.webContents.getURL() || '';
+    const m = cur.match(/^https?:\/\/127\.0\.0\.1:(\d+)\//);
+    if (!m || parseInt(m[1], 10) === agentPort) return;   // not on the agent, or already right
+    if (Date.now() - _lastDriftNavAt < 15000) return;
+    const probe = http.get({ host: '127.0.0.1', port: agentPort, path: '/api/state', timeout: 1200 }, (res) => {
+      res.resume();
+      if (res.statusCode === 200) {
+        _lastDriftNavAt = Date.now();
+        appendAgentLog(`[mimic] port drift detected (window ${m[1]} → agent ${agentPort}) — auto-reloading\n`);
+        navigateToDashboard('port-drift');
+      }
+    });
+    probe.on('error', () => {});
+    probe.on('timeout', () => { try { probe.destroy(); } catch {} });
+  } catch { /* watcher must never throw */ }
+}, 4000);
+
 function navigateToDashboard(reason) {
   if (!mainWindow || mainWindow.isDestroyed()) {
     appendAgentLog(`[mimic] dashboard nav skipped — no window (reason=${reason})\n`);
