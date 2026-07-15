@@ -2604,6 +2604,44 @@ function relaySelfCastForCasting(line, character, pre) {
   // encounter payload's heal_casts for the bot-side cross-client join).
   if (isHeal) _noteHealCast(character, spell, target, atMs, castSecs, he);
 }
+// Recipient-side heal attribution (Uilnayar 2026-07-15). EQ shows OTHER
+// players' cast starts as "<Caster> begins to cast a spell." (caster named,
+// spell hidden). Ring these so that when a heal LANDS on us ("You have been
+// healed for N") we can name the healer from OUR OWN log — no cross-client
+// relay, no dependency on the healer's Zeal target or catalog version. This is
+// what fixes group heals (Tunare's Renewal etc., where the cast recipient !=
+// the healer's target), the cast-count under-count, and unmerged parse cards.
+// Player = single capitalized token; NPCs ("a grimling …") start lowercase, so
+// they never match.
+const _OTHER_CAST_RX = /\]\s+([A-Z][A-Za-z'`]+) begins to cast a spell\.\s*$/;
+const _recentCasterStarts = [];   // { caster, atMs }
+function noteCasterStart(line) {
+  if (line.indexOf('begins to cast a spell') === -1) return;   // cheap gate
+  const m = line.match(_OTHER_CAST_RX);
+  if (!m) return;
+  const t = parseEqTimestamp(line);
+  _recentCasterStarts.push({ caster: m[1], atMs: t ? t.getTime() : Date.now() });
+  const cutoff = Date.now() - 12_000;
+  while (_recentCasterStarts.length > 200 || (_recentCasterStarts.length && _recentCasterStarts[0].atMs < cutoff)) {
+    _recentCasterStarts.shift();
+  }
+}
+// Nearest player whose cast STARTED 0.2–7s before a heal landed on us = the
+// most likely healer (their cast completed → we got healed). Heuristic —
+// ambiguous when several people cast at once, but decisive for group/spot
+// heals; CH-chain tank heals are covered separately by the landing-sighting
+// path. Consumes the matched start so two landings don't share one cast.
+function _correlateHealer(landMs) {
+  let best = null, bestLead = Infinity;
+  for (const c of _recentCasterStarts) {
+    if (c.consumed) continue;
+    const lead = landMs - c.atMs;
+    if (lead < 200 || lead > 7000) continue;
+    if (lead < bestLead) { best = c; bestLead = lead; }
+  }
+  if (best) { best.consumed = true; return best.caster; }
+  return null;
+}
 // Bystander-visible heal LANDINGS — the spell's cast_on_other message with the
 // target's name (Uilnayar 2026-07-14: heal AMOUNTS are private to the healed,
 // but LANDINGS are public to everyone). Any single Mimic in the raid witnessing
@@ -5454,7 +5492,11 @@ class EncounterBuilder {
           const hr = this.healsReceived;
           hr.total += amount;
           hr.ticks += 1;
-          if (hr.events.length < 300) hr.events.push({ ts: event.ts, amount });
+          // Name the healer from OUR OWN log (nearest player cast-start). The
+          // bot credits a `healer`-tagged event directly, so a group heal or an
+          // unmerged card still attributes without the healer's cast upload.
+          const healer = _correlateHealer(tsMs) || undefined;
+          if (hr.events.length < 300) hr.events.push({ ts: event.ts, amount, healer });
         }
         return; // handled — no healer-side bookkeeping applies (threat/boss-self-heal need an attributed healer)
       }
@@ -22605,6 +22647,8 @@ async function main() {
         noteBlindLine(line, b.character);
         // Public CH landings ("X is completely healed.") → heal-attribution ring.
         if (!_sourceExcluded) noteHealLandLine(line);
+        // Other players' cast-starts → recipient-side heal attribution ring.
+        if (!_sourceExcluded) noteCasterStart(line);
         // "Your pet's <X> spell has worn off." → drop it from the pet's buffs.
         if (!_sourceExcluded) notePetBuffWornOff(line, b.character);
         // Prefer the cast-correlated resolution (our own cast); fall back to the
