@@ -6536,7 +6536,13 @@ let _spellCatalogCache = null;       // { fetchedAt: ms, body: string, etag: str
 // relay fill an amount for a cast that arrived without one (healer on an old
 // catalog), so attribution only depends on the BOT being current.
 const _healAmountByName = new Map();
-const _healAmtFor = (spell) => { const e = _healAmountByName.get(String(spell || '').toLowerCase()); return e && e.amount > 0 ? e.amount : 0; };
+// EQ logs backtick possessives ("Nature`s Touch") while the catalog stores
+// apostrophes — normalize or the lookup misses and the cast loses its amount.
+const _healAmtFor = (spell) => {
+  const key = String(spell || '').toLowerCase();
+  const e = _healAmountByName.get(key) || _healAmountByName.get(key.replace(/`/g, "'"));
+  return e && e.amount > 0 ? e.amount : 0;
+};
 const _SPELL_CATALOG_TTL_MS = 60 * 60 * 1000;
 async function _handleAgentSpellCatalog(req, res) {
   const identity = await mimicLink.requireAgentAuth(req, res);
@@ -9853,8 +9859,14 @@ function _noteRaiderDeaths(deaths) {
 function _pruneCasts(now) {
   for (const [tk, mp] of _castingByTarget) {
     for (const [ck, c] of mp) {
-      // Keep until the cast should have finished + a 3s grace; hard cap 30s.
-      const done = c.started_at_ms + (c.cast_secs || 6) * 1000 + 3000;
+      // Keep until the cast should have finished + a grace; hard cap 30s.
+      // HEAL casts get a longer grace (9s vs 3s): the recipient's tank overlay
+      // lingers landed heals as a "+N healed" cue, and its poll cadence
+      // (1s tick + 2s fetch TTL) needs the entry to survive a couple of
+      // cycles past the land or a cross-client spot heal vanishes before the
+      // recipient ever fetches it (Uilnayar 2026-07-15).
+      const grace = (c.heal_amount != null && c.heal_amount > 0) ? 9000 : 3000;
+      const done = c.started_at_ms + (c.cast_secs || 6) * 1000 + grace;
       if (now > done || (now - c.received_at) > 30000) mp.delete(ck);
     }
     if (mp.size === 0) _castingByTarget.delete(tk);
