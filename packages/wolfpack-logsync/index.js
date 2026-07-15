@@ -8125,7 +8125,53 @@ function _serializeCommandCenterState() {
     enrage:        tank.enrage,
     deathtouch:    tank.deathtouch,
     da_broadcasts: daBroadcastsSnapshot(),
-    healer_mana:   healerManaRosterSnapshot(),
+    // ALL healer mana, merged from every source we have (Uilnayar 2026-07-15:
+    // "Command center should have all healer mana if its reported in the CH
+    // chain or as %n mana or mana %n or if they're in mimic"):
+    //   1. exact — local Zeal mana for characters on THIS machine;
+    //   2. exact — Mimic-running priests raid-wide (bot /di-status piggyback);
+    //   3. called — CH-chain call-outs ("004 - CH - Naggato - Mana: 52%");
+    //   4. called — the "% mana" macro roster (both word orders).
+    // Exact Mimic readings override called ones; per-name dedup, lowest first.
+    healer_mana:   (() => {
+      const byName = new Map();
+      const put = (name, cls, pct, staleSecs, exact) => {
+        if (!name || pct == null || !Number.isFinite(Number(pct))) return;
+        const k = String(name).toLowerCase();
+        const cur = byName.get(k);
+        // Exact beats called; within the same tier, fresher wins.
+        if (cur && (cur.exact && !exact || (cur.exact === exact && cur.stale_secs <= staleSecs))) return;
+        byName.set(k, { name, class: cls || (cur && cur.class) || null, pct: Math.max(0, Math.min(100, Math.round(Number(pct)))), stale_secs: Math.max(0, Math.round(staleSecs)), exact });
+      };
+      const nowMs = Date.now();
+      // 4. Macro roster (existing behavior — keeps its healer-class filter).
+      for (const r of healerManaRosterSnapshot()) put(r.name, r.class, r.pct, r.stale_secs || 0, false);
+      // 3. CH-chain slots carry the caller's mana from the call-out itself.
+      const chain = chChainSnapshot();
+      if (chain && chain.slots) {
+        for (const num of Object.keys(chain.slots)) {
+          const s = chain.slots[num];
+          if (s && s.name && s.mana != null) put(s.name, 'Cleric', s.mana, s.lastAtMs ? (nowMs - s.lastAtMs) / 1000 : 0, false);
+        }
+      }
+      // 2. Mimic priests raid-wide (exact, via the /di-status piggyback).
+      for (const h of (_diStatusCache.healer_mana || [])) {
+        const age = h.updated_at ? Math.max(0, (nowMs - Date.parse(h.updated_at)) / 1000) : 0;
+        put(h.name, h.class, h.mana_pct, age, true);
+      }
+      // 1. Local Zeal (exact, zero latency) — healer classes only so a warrior
+      // alt on this machine doesn't pad the healer board.
+      for (const ch of Object.keys(_zealState || {})) {
+        const st = _zealState[ch];
+        if (!st || (nowMs - (st.updatedAt || 0)) > 60_000) continue;
+        if (st.self_mana_cur == null || st.self_mana_max == null || !(st.self_mana_max > 0)) continue;
+        const cl = String(ch).toLowerCase();
+        const cls = ((whoData.get(cl) || {}).class) || _raidClassByName.get(cl) || null;
+        if (cls && !_isHealerClass(cls)) continue;
+        put(ch, cls, Math.round((st.self_mana_cur / st.self_mana_max) * 100), 0, true);
+      }
+      return [...byName.values()].sort((a, b) => a.pct - b.pct);
+    })(),
     // Recent /random sets — "333 (Item name) — winner names" rows.
     rolls:         rollSetsSnapshot(15 * 60 * 1000),
     cures,
@@ -20640,7 +20686,7 @@ function fetchTargetBuffs(name) {
 // Command Center overlays read it off /api/state / /api/command-center. Our
 // OWN clerics' state is merged from _diStateByChar at serialize time so the
 // local view never waits on the round trip.
-let _diStatusCache = { at: 0, clerics: [] };
+let _diStatusCache = { at: 0, clerics: [], healer_mana: [] };
 let _diStatusInflight = false;
 const DI_STATUS_TTL_MS = 4000;
 function fetchDiStatus() {
@@ -20663,8 +20709,14 @@ function fetchDiStatus() {
         _diStatusInflight = false;
         try {
           const j = JSON.parse(body);
-          _diStatusCache = { at: Date.now(), clerics: Array.isArray(j && j.clerics) ? j.clerics : [] };
-        } catch { _diStatusCache = { at: Date.now(), clerics: _diStatusCache.clerics }; }
+          _diStatusCache = {
+            at: Date.now(),
+            clerics: Array.isArray(j && j.clerics) ? j.clerics : [],
+            // Piggybacked Mimic healers' exact mana (bot 3.0.187+) — feeds
+            // the Command Center HEALER MANA merge.
+            healer_mana: Array.isArray(j && j.healer_mana) ? j.healer_mana : [],
+          };
+        } catch { _diStatusCache = { at: Date.now(), clerics: _diStatusCache.clerics, healer_mana: _diStatusCache.healer_mana || [] }; }
       });
     });
     req.on('error',   () => { _diStatusInflight = false; });
