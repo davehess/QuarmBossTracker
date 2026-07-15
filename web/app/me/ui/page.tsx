@@ -96,13 +96,28 @@ export default async function MeUiPage() {
 
   const { data: common } = await admin
     .from('common_macros')
-    .select('name, lines, char_count')
+    .select('name, lines, char_count, classes')
     .eq('guild_id', 'wolfpack')
     .order('char_count', { ascending: false })
     .limit(40);
 
+  // Class per owned character — seeds the common-macro class filter to the
+  // selected character's class ("what do other druids run").
+  const classByChar = new Map<string, string>();
+  if (chars.length) {
+    const { data: classRows } = await admin
+      .from('characters')
+      .select('name, class')
+      .eq('guild_id', 'wolfpack')
+      .in('name', chars);
+    for (const r of (classRows ?? []) as { name: string; class: string | null }[]) {
+      if (r.class) classByChar.set(r.name.toLowerCase(), r.class);
+    }
+  }
+
   const charData: CharUiData[] = chars.map(name => ({
     name,
+    clazz: classByChar.get(name.toLowerCase()) ?? null,
     snapshot: snapByChar.get(name.toLowerCase()) ?? null,
     socials: (socialsByChar.get(name.toLowerCase()) ?? []).sort((a, b) => a.page - b.page || a.button - b.button),
   }));

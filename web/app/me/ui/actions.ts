@@ -111,6 +111,80 @@ export async function stageMacroEdit(input: StageMacroInput): Promise<{ ok: bool
   return { ok: true };
 }
 
+export type StageMoveInput = {
+  character: string;
+  from: { page: number; button: number };
+  to: { page: number; button: number };
+};
+
+// Move a macro to another slot (swap when the destination is occupied).
+// Staged as ONE pending edit writing both slots in full — the agent's apply
+// already treats value:null as "delete the key", so vacating the source is
+// just seven null writes. NOTE for users: EQ hot-bar buttons reference
+// socials BY SLOT, so a hot button pointing at a moved macro must be
+// re-dragged in game — identical to the in-game behavior when you rearrange
+// the socials window by hand.
+export async function stageMacroMove(input: StageMoveInput): Promise<{ ok: boolean; error?: string }> {
+  const { data: { user } } = await supabaseServer().auth.getUser();
+  if (!user) return { ok: false, error: 'not signed in' };
+  const { discordId, owned } = await _ownedCharacterSet(user.id);
+  if (!discordId) return { ok: false, error: 'no Discord link — ask an officer to link your characters' };
+
+  const character = String(input.character || '').trim();
+  if (!character || !owned.has(character.toLowerCase())) return { ok: false, error: 'not your character' };
+  const fp = Math.trunc(Number(input.from?.page)), fb = Math.trunc(Number(input.from?.button));
+  const tp = Math.trunc(Number(input.to?.page)),   tb = Math.trunc(Number(input.to?.button));
+  for (const [p, b] of [[fp, fb], [tp, tb]] as const) {
+    if (!(p >= 1 && p <= 10) || !(b >= 1 && b <= 12)) return { ok: false, error: 'slot out of range' };
+  }
+  if (fp === tp && fb === tb) return { ok: false, error: 'same slot' };
+
+  const admin = supabaseAdmin();
+  const { data: cells } = await admin
+    .from('ui_socials_index')
+    .select('page, button, name, color, lines')
+    .eq('guild_id', 'wolfpack')
+    .ilike('character', character)
+    .or(`and(page.eq.${fp},button.eq.${fb}),and(page.eq.${tp},button.eq.${tb})`);
+  type Cell = { page: number; button: number; name: string | null; color: number | null; lines: string[] };
+  const src = ((cells ?? []) as Cell[]).find(c => c.page === fp && c.button === fb);
+  const dst = ((cells ?? []) as Cell[]).find(c => c.page === tp && c.button === tb);
+  if (!src) return { ok: false, error: 'source slot is empty (index may be stale — take a fresh UI Studio backup)' };
+
+  // Full seven-key write per slot: Name, Color, Line1-5 (null deletes).
+  const writeCell = (page: number, button: number, cell: Cell | null) => {
+    const base = `Page${page}Button${button}`;
+    const lines = cell && Array.isArray(cell.lines) ? cell.lines : [];
+    const edits: { section: string; key: string; value: string | null }[] = [
+      { section: 'Socials', key: `${base}Name`,  value: cell ? (cell.name ?? '') : null },
+      { section: 'Socials', key: `${base}Color`, value: cell ? String(cell.color ?? 0) : null },
+    ];
+    for (let i = 0; i < 5; i++) {
+      const v = lines[i] != null && lines[i] !== '' ? lines[i] : null;
+      edits.push({ section: 'Socials', key: `${base}Line${i + 1}`, value: v });
+    }
+    return edits;
+  };
+  const edits = [...writeCell(tp, tb, src), ...writeCell(fp, fb, dst ?? null)];
+
+  const label = src.name || '(unnamed)';
+  const summary = dst
+    ? `swap ${label} P${fp}B${fb} ⇄ ${dst.name || '(unnamed)'} P${tp}B${tb}`
+    : `move ${label} P${fp}B${fb} → P${tp}B${tb}`;
+  const { error } = await admin.from('ui_pending_edits').insert({
+    guild_id: 'wolfpack',
+    character,
+    owner_discord_id: discordId,
+    target_file: null,
+    edits,
+    note: summary,
+    status: 'pending',
+  });
+  if (error) return { ok: false, error: error.message };
+  revalidatePath('/me/ui');
+  return { ok: true };
+}
+
 export async function cancelPendingEdit(id: number): Promise<{ ok: boolean; error?: string }> {
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) return { ok: false, error: 'not signed in' };

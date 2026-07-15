@@ -4705,6 +4705,19 @@ async function _recomputeCommonMacros() {
     all.push(...rows);
     if (rows.length < 1000) break;
   }
+  // Class per carrying character — powers the /me/ui "what do other druids
+  // run" filter. Best-effort: characters without a known class just don't
+  // contribute to the tally (the macro still counts toward char_count).
+  const classByChar = new Map();
+  try {
+    for (let from = 0; ; from += 1000) {
+      const rows = await supabase.select('characters',
+        `guild_id=eq.${encodeURIComponent(guildId)}&select=name,class&offset=${from}&limit=1000`);
+      if (!Array.isArray(rows) || rows.length === 0) break;
+      for (const r of rows) if (r.name && r.class) classByChar.set(String(r.name).toLowerCase(), String(r.class));
+      if (rows.length < 1000) break;
+    }
+  } catch { /* class column is enrichment only */ }
   const bySig = new Map();   // sig → { chars:Set, names:Map, lines }
   for (const r of all) {
     const lines = Array.isArray(r.lines) ? r.lines : [];
@@ -4721,9 +4734,18 @@ async function _recomputeCommonMacros() {
     if (e.chars.size < COMMON_MACRO_MIN_CHARS) continue;
     let bestName = null, bestN = 0;
     for (const [n, c] of e.names) if (c > bestN) { bestN = c; bestName = n; }
+    // Per-class carrier counts — only computed for macros that already
+    // cleared the >=3-character privacy floor above.
+    const classes = {};
+    for (const cl of e.chars) {
+      const k = classByChar.get(cl);
+      if (k) classes[k] = (classes[k] || 0) + 1;
+    }
     out.push({
       guild_id: guildId, sig: sig.slice(0, 500), name: bestName,
-      lines: e.lines, char_count: e.chars.size, updated_at: new Date().toISOString(),
+      lines: e.lines, char_count: e.chars.size,
+      classes: Object.keys(classes).length ? classes : null,
+      updated_at: new Date().toISOString(),
     });
   }
   await supabase.del('common_macros', `guild_id=eq.${encodeURIComponent(guildId)}`);
@@ -4859,7 +4881,15 @@ async function _handleAgentUiEditResult(req, res) {
             }
           }
           next.lines = next.lines.filter(x => x != null && x !== '');
-          await supabase.upsert('ui_socials_index', [next], 'guild_id,character,page,button');
+          // A MOVE deletes every key at its source slot — if nothing survives
+          // (no label, no lines), drop the index row instead of leaving an
+          // empty husk that renders as "(unnamed) —" on /me/ui.
+          if ((!next.name || next.name === '') && next.lines.length === 0) {
+            await supabase.del('ui_socials_index',
+              `guild_id=eq.${encodeURIComponent(guildId)}&character=ilike.${encodeURIComponent(row.character)}&page=eq.${cell.page}&button=eq.${cell.button}`);
+          } else {
+            await supabase.upsert('ui_socials_index', [next], 'guild_id,character,page,button');
+          }
         }
         _scheduleCommonMacroRecompute();
       }

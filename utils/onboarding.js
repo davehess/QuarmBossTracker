@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.0.182': [
+    '**Drag-and-drop your macros on wolfpack.quest/me/ui.** The UI Studio macro page is now a full social-grid: every page shows all 12 slots, **drag a macro onto an empty cell to move it or onto another macro to swap them** — no more tedious in-game rebuilding. Click an empty cell to create a macro in that exact slot. Moves apply the same way edits do (Mimic writes the ini once the character logs out, ~5 min). One heads-up: hot-bar buttons point at *slots*, so after moving a macro, re-drag its hot button in game. The **guild common-macro library also gained a class filter** — pick Druid and see what other druids actually run (privacy floor unchanged: only macros carried by 3+ characters ever appear).',
+  ],
   '3.0.179': [
     '**Group heals and spot heals now get credited too.** Attribution used to lean on the *healer\'s* Mimic reporting the cast, which missed group heals, clock-skewed casts, and any heal where the healer\'s upload didn\'t line up with the recipient\'s. Now your OWN Mimic watches for "*Someone* begins to cast a spell" right before you get healed and ties the heal to that caster from your side — so a druid spot-healing a groupmate shows up on the card with the exact amount, even when the two casts never matched up on the clock. Needs the recipient on the next Mimic beta (1.9); the more of us run it, the fewer heals fall through.',
   ],
