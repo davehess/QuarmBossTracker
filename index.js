@@ -11311,6 +11311,20 @@ async function _handleAgentUpload(req, res) {
             const rl = (hr.name || '').toLowerCase();
             let matchedTotal = 0, matchedTicks = 0;
             for (const ev of (Array.isArray(hr.events) ? hr.events : [])) {
+              // Recipient named the healer from their OWN log (agent 3.3.39+) —
+              // attribute the EXACT received amount directly, no cast needed.
+              // This is the group/spot-heal + unmerged-card fix; the amount is
+              // real (the recipient's "healed for N"), only the healer is the
+              // recipient's heuristic, so it's NOT marked estimated.
+              if (ev.healer) {
+                const hk = String(ev.healer).toLowerCase();
+                if (!joined.has(hk)) joined.set(hk, { name: ev.healer, healed: 0, ticks: 0, targets: new Set(), byTarget: {} });
+                const jh = joined.get(hk);
+                jh.healed += ev.amount || 0; jh.ticks += 1; jh.targets.add(hr.name);
+                jh.byTarget[hr.name] = (jh.byTarget[hr.name] || 0) + (ev.amount || 0);
+                matchedTotal += ev.amount || 0; matchedTicks += 1;
+                continue;
+              }
               const t = Date.parse(ev.ts) || 0;
               let best = null, bestD = 2500;
               for (const c of casts) {

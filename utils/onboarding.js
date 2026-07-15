@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.0.179': [
+    '**Group heals and spot heals now get credited too.** Attribution used to lean on the *healer\'s* Mimic reporting the cast, which missed group heals, clock-skewed casts, and any heal where the healer\'s upload didn\'t line up with the recipient\'s. Now your OWN Mimic watches for "*Someone* begins to cast a spell" right before you get healed and ties the heal to that caster from your side — so a druid spot-healing a groupmate shows up on the card with the exact amount, even when the two casts never matched up on the clock. Needs the recipient on the next Mimic beta (1.9); the more of us run it, the fewer heals fall through.',
+  ],
   '3.0.176': [
     '**Healers, fully attributed — and tanks can see heals coming.** Building on last update: the parse card now credits EVERY heal, not just Complete Heals. Any raider running Mimic who witnesses a heal land ("X\'s wounds fade away", "X feels much better", …) lets us attribute it to the caster at the spell\'s value — so a **CH chain on a tank who isn\'t running Mimic still shows up**. And the **Tank overlay now shows heals INCOMING**: each heal being cast on the tank draws a countdown bar to when it lands, plus a striped "ghost" segment on the HP bar showing where their health will be once it connects — so tanks and healers can see the save arriving (Complete Heals are left off this view; the CH-chain overlay owns those). Needs the healer + tank on the next Mimic beta (1.9).',
   ],
