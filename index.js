@@ -4378,6 +4378,12 @@ async function _handleAgentBossKill(req, res) {
   const channelId  = process.env.TIMER_CHANNEL_ID;
   const raidChId   = process.env.RAID_CHAT_CHANNEL_ID;
 
+  // DEFERRED Discord sends (task #44, same pattern as the v3.0.166 encounter/
+  // chat handlers): the raid-channel announcements used to await inside the
+  // kill loop, so a rate-limited channel held the agent's connection open.
+  // recordKill/postKillUpdate stay in the loop (timer state is the record);
+  // only the presentational sends move after the 200.
+  const discordJobs = [];
   let set = 0;
   for (const kill of kills) {
     const { character, guild, boss: bossName, zone, ts } = kill || {};
@@ -4413,9 +4419,9 @@ async function _handleAgentBossKill(req, res) {
         postKillUpdate(client, channelId, boss.id).catch(e =>
           console.warn('[bosskill] postKillUpdate error:', e?.message));
       }
-      // Announce in raid channel with next-spawn time
+      // Announce in raid channel with next-spawn time (deferred post-ack).
       if (raidChId) {
-        try {
+        discordJobs.push(async () => {
           const ch = await client.channels.fetch(raidChId).catch(() => null);
           if (ch) {
             await ch.send(
@@ -4423,13 +4429,13 @@ async function _handleAgentBossKill(req, res) {
               `next spawn ${discordRelativeTime(nextSpawn)} ✅`
             );
           }
-        } catch (err) { console.warn('[bosskill] raid-channel post error:', err?.message); }
+        });
       }
       set++;
     } else {
-      // Boss not in database — still post to raid channel as FYI
+      // Boss not in database — still post to raid channel as FYI (deferred).
       if (raidChId) {
-        try {
+        discordJobs.push(async () => {
           const ch = await client.channels.fetch(raidChId).catch(() => null);
           if (ch) {
             await ch.send(
@@ -4437,7 +4443,7 @@ async function _handleAgentBossKill(req, res) {
               `*(not in timer database — use \`/addboss\` to add it)*`
             );
           }
-        } catch (err) { console.warn('[bosskill] raid-channel post error:', err?.message); }
+        });
       }
     }
   }
@@ -4445,6 +4451,13 @@ async function _handleAgentBossKill(req, res) {
   _trackUpload({ endpoint: 'bosskill', character: payload?.character, agentVersion: payload?.agent_version, payloadBytes: total, agentState: payload?.agent_state || null, uploadedBy: identity.discord_id });
   res.writeHead(200);
   res.end(JSON.stringify({ ok: true, set }));
+  // Discord is presentation, not the record — run the sends off the agent's
+  // clock, sequentially (announcement order matters on multi-kill payloads).
+  (async () => {
+    for (const job of discordJobs) {
+      try { await job(); } catch (err) { console.warn('[bosskill] deferred raid-channel post error:', err?.message); }
+    }
+  })();
 }
 
 // ── /api/agent/hatekill ─────────────────────────────────────────────────────
@@ -7606,6 +7619,46 @@ async function _handleAgentCharacterLiveState(req, res) {
   return res.end(payload);
 }
 
+// GET /api/agent/di-status — per-cleric Divine Intervention readiness for the
+// CH-chain + Command Center overlay chips (BACKLOG §1). Sources: every
+// Mimic-running cleric's live-state di_ready_at (agent v3.3.44+, log-driven
+// 6s cast + 90s recast; NULL = no cast seen = assumed ready). Clerics come
+// from characters.class; only rows fresh within 10 min appear (a camped
+// cleric's readiness is meaningless). One cached payload serves the whole
+// raid's poll fan-in.
+const DI_STATUS_CACHE_MS = 3000;
+let _diStatusRelayCache = { at: 0, payload: null };
+async function _handleAgentDiStatus(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  if (_diStatusRelayCache.payload && Date.now() - _diStatusRelayCache.at < DI_STATUS_CACHE_MS) {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(_diStatusRelayCache.payload);
+  }
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) { res.writeHead(503); return res.end(JSON.stringify({ error: 'supabase disabled' })); }
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+  const freshIso = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+  const [rows, clerics] = await Promise.all([
+    supabase.select('character_live_state',
+      `guild_id=eq.${encodeURIComponent(guildId)}&updated_at=gte.${encodeURIComponent(freshIso)}` +
+      `&select=character,di_ready_at,updated_at`).catch(() => []),
+    supabase.select('characters',
+      `guild_id=eq.${encodeURIComponent(guildId)}&class=eq.Cleric&select=name`).catch(() => []),
+  ]);
+  const clericSet = new Set((clerics || []).map(c => String(c.name || '').toLowerCase()));
+  const out = [];
+  for (const r of (rows || [])) {
+    if (!r || !r.character || !clericSet.has(String(r.character).toLowerCase())) continue;
+    out.push({ name: r.character, ready_at: r.di_ready_at || null });
+  }
+  out.sort((a, b) => a.name.localeCompare(b.name));
+  const payload = JSON.stringify({ clerics: out, updated_at: Date.now() });
+  _diStatusRelayCache = { at: Date.now(), payload };
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  return res.end(payload);
+}
+
 // Server-side hurt-duration tracker for the Extended Target overlay. A single
 // live-state snapshot can't answer "below 85% for >10s" — character_live_state
 // only holds the CURRENT value — so we remember when each entity first dropped
@@ -9522,6 +9575,10 @@ async function _handleAgentLiveState(req, res) {
     // cross-client Tank overlay "cur / max · pct%" label for a Mimic MT.
     const selfHpCur = (st?.self_hp_cur != null && Number.isFinite(Number(st.self_hp_cur))) ? Math.max(0, Math.trunc(Number(st.self_hp_cur))) : null;
     const selfHpMax = (st?.self_hp_max != null && Number.isFinite(Number(st.self_hp_max))) ? Math.max(0, Math.trunc(Number(st.self_hp_max))) : null;
+    // Divine Intervention readiness (agent v3.3.44+, log-driven recast).
+    // NULL = no DI cast this session = assumed ready.
+    const diReadyAt = (st?.di_ready_at && Number.isFinite(Date.parse(st.di_ready_at)))
+      ? new Date(Date.parse(st.di_ready_at)).toISOString() : null;
     // Self mana (agent v3.3.10+) — powers the /raid mana list + Twitch Queue.
     const selfManaPct = (st?.self_mana_pct != null && Number.isFinite(Number(st.self_mana_pct))) ? Math.max(0, Math.min(100, Number(st.self_mana_pct))) : null;
     const selfManaCur = (st?.self_mana_cur != null && Number.isFinite(Number(st.self_mana_cur))) ? Math.max(0, Math.trunc(Number(st.self_mana_cur))) : null;
@@ -9553,6 +9610,7 @@ async function _handleAgentLiveState(req, res) {
       self_hp_pct: selfHp,
       self_hp_cur: selfHpCur,
       self_hp_max: selfHpMax,
+      di_ready_at: diReadyAt,
       self_mana_pct: selfManaPct,
       self_mana_cur: selfManaCur,
       self_mana_max: selfManaMax,
@@ -12212,6 +12270,15 @@ http.createServer(async (req, res) => {
     try { return await _handleAgentItemClickies(req, res); }
     catch (err) {
       console.error('[item-clickies] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  if (req.method === 'GET' && req.url.startsWith('/api/agent/di-status')) {
+    try { return await _handleAgentDiStatus(req, res); }
+    catch (err) {
+      console.error('[di-status] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
     }
