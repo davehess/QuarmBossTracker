@@ -7692,21 +7692,31 @@ async function _handleAgentDiStatus(req, res) {
   if (!supabase.isEnabled()) { res.writeHead(503); return res.end(JSON.stringify({ error: 'supabase disabled' })); }
   const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
   const freshIso = new Date(Date.now() - 10 * 60 * 1000).toISOString();
-  const [rows, clerics] = await Promise.all([
+  const [rows, healers] = await Promise.all([
     supabase.select('character_live_state',
       `guild_id=eq.${encodeURIComponent(guildId)}&updated_at=gte.${encodeURIComponent(freshIso)}` +
-      `&select=character,di_ready_at,updated_at`).catch(() => []),
+      `&select=character,di_ready_at,self_mana_pct,updated_at`).catch(() => []),
     supabase.select('characters',
-      `guild_id=eq.${encodeURIComponent(guildId)}&class=eq.Cleric&select=name`).catch(() => []),
+      `guild_id=eq.${encodeURIComponent(guildId)}&class=in.(Cleric,Druid,Shaman)&select=name,class`).catch(() => []),
   ]);
-  const clericSet = new Set((clerics || []).map(c => String(c.name || '').toLowerCase()));
+  const healerClassByName = new Map((healers || []).map(c => [String(c.name || '').toLowerCase(), String(c.class || '')]));
   const out = [];
+  // Piggybacked healer mana (Uilnayar 2026-07-15: "Command center should have
+  // all healer mana … if they're in mimic") — every Mimic-running priest's
+  // exact self mana, same freshness window, zero extra polls for the raid.
+  const healerMana = [];
   for (const r of (rows || [])) {
-    if (!r || !r.character || !clericSet.has(String(r.character).toLowerCase())) continue;
-    out.push({ name: r.character, ready_at: r.di_ready_at || null });
+    if (!r || !r.character) continue;
+    const cls = healerClassByName.get(String(r.character).toLowerCase());
+    if (!cls) continue;
+    if (cls === 'Cleric') out.push({ name: r.character, ready_at: r.di_ready_at || null });
+    if (typeof r.self_mana_pct === 'number') {
+      healerMana.push({ name: r.character, class: cls, mana_pct: r.self_mana_pct, updated_at: r.updated_at });
+    }
   }
   out.sort((a, b) => a.name.localeCompare(b.name));
-  const payload = JSON.stringify({ clerics: out, updated_at: Date.now() });
+  healerMana.sort((a, b) => a.mana_pct - b.mana_pct);
+  const payload = JSON.stringify({ clerics: out, healer_mana: healerMana, updated_at: Date.now() });
   _diStatusRelayCache = { at: Date.now(), payload };
   res.writeHead(200, { 'Content-Type': 'application/json' });
   return res.end(payload);
