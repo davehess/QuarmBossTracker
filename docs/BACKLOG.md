@@ -260,6 +260,55 @@ class filter + "only gaps" + "hide logged-off" toggles, accuracy caveat banner.
   eqemu_npc_types — design in "Quick requested features" above) + a
   searchable section and timeframe filtering on those views.
 
+### 6. Mob immunity display on Target/Mob Info (Uilnayar 2026-07-15)
+Report: "a sonic warwolf" showed **"Your target is immune to changes in its
+run speed"** in-game, but the Target Info / Mob Info Stats tab gave **no**
+snare/root-immune warning — "it needs to show up on the target info if people
+are going to rely on it."
+
+**Diagnosis is DONE — this is a DATA gap, not a code gap:**
+- The decoder AND the overlay render are already complete. `_decodeMobSpecials`
+  + `_MOB_SPECIAL_LABELS` (index.js ~6806-6836) already map every immunity ID
+  we care about — 12 Unslowable, 13 Unmezzable, 14 Uncharmable, 15 Unstunnable,
+  **16 Unsnareable**, 17 Unfearable, 18/19/20/21/23/27/28/31. The bot ships them
+  as `specials: _decodeMobSpecials(...)` (index.js ~9153) from the mob-info
+  select (~8912). The overlay renders `mob.specials` as chips (mobinfo.html
+  442-444 + 520-522, styled via `specClass(lab)`). The **"Magical"** badge in
+  the screenshot IS this pipeline working — it's the decode of `"10,1"`
+  (ability 10 = requires-magical-weapons).
+- Root cause: `eqemu_npc_types.special_abilities` is **incomplete for Quarm.**
+  Screenshot mob `a_sonic_warwolf` **L30 (id 166061)** has `special_abilities =
+  "10,1"` — Magical only, **no ability 16** — yet the game enforces snare
+  immunity. The **L39 variant (id 167662)** correctly carries `"10,1^16,1"`.
+  So the catalog cannot be trusted for immunities, and a pure catalog-decode
+  path would keep showing nothing here.
+
+**Two fixes (A is the reliable one the request is really asking for):**
+- **A. Agent-observed immunity capture (beta / 1.9-or-later agent).** The
+  combat log carries the *definitive* immunity lines; flag them live for the
+  current target, independent of catalog:
+  - `Your target is immune to changes in its run speed.` → snare/root immune
+  - mez-immune / charm-immune / stun-immune / "cannot be mesmerized" lines
+  - ⚠ **IMMUNE ≠ RESISTED.** `Your target resisted the Snare spell.` /
+    `resisted the Grasping Roots spell.` are RESISTS (MR / level gap), NOT
+    immunity — do NOT flag those. Only the "is immune to…" lines are truth.
+  - Surface as a live "🚫 Snare immune (seen)" chip on the Mob Info Stats tab
+    (append to `specials`, or a separate `observedImmunities` field so it can
+    render with a distinct "observed" style). Upload keyed by mob name so it's
+    cross-client + persists (who-style), and optionally upsert back to the
+    catalog to make it PROACTIVE next time.
+  - Inherent limitation: the immune line only appears on the client that
+    actually *tried* to snare/mez/stun the mob, so observed-only won't warn
+    until someone attempts it — which is exactly why (B) matters for proactive
+    display.
+- **B. Local peq backfill of `special_abilities` — ⛔ NEEDS LOCAL SESSION.**
+  Same pattern as the haste/regen/etc. backfill (CLAUDE.md, 2026-07-11): the
+  authoritative local Quarm/`peq` NPC DB on `D:\EQServer` likely has the real
+  special_abilities the eqmac dump omits. Mirror it into `eqemu_npc_types`
+  where ours is thinner. Caveat: Quarm may genuinely differ from stock EQEmu,
+  so verify against in-game behavior — (A) is the trustworthy source, (B) makes
+  it show up before anyone casts.
+
 ## Heal attribution — follow-up: generic landing matcher (queued)
 
 Agent 3.3.36 witnesses **Complete Heal** landings only (`is completely
