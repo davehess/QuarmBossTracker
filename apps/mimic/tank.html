@@ -271,7 +271,9 @@
       var x = live[j];
       var landsIn = x.landsAt - now;
       var col = x.color;
-      var amt = (x.estimated ? '~' : '') + fmtK(x.amount);
+      // null amount = a heal we couldn't size (HoT / catalog gap) — still show
+      // the cast, just without a number.
+      var amt = (x.amount == null) ? '?' : (x.estimated ? '~' : '') + fmtK(x.amount);
       if (landsIn > 150){
         // Still in flight — cast bar filling toward the land.
         var castMs = x.castMs || 3000;
@@ -291,7 +293,7 @@
            +   '<span class="ih-dot" style="background:'+col+'"></span>'
            +   '<span class="ih-who">'+esc(x.caster)+'</span>'
            +   '<span class="ih-bar"><span class="ih-fill" style="width:100%;background:'+col+'"></span></span>'
-           +   '<span class="ih-amt">+'+amt+'</span>'
+           +   '<span class="ih-amt">'+(x.amount == null ? '' : '+'+amt)+'</span>'
            +   '<span class="ih-sec">healed</span>'
            + '</div>';
       }

@@ -2530,7 +2530,12 @@ function noteSelfCast(line, character) {
 // don't pick up unrelated names like "Annul Magic" or "Reflect Spell"; a
 // broad-enough match that custom Quarm heal spells are still captured if
 // they're named recognisably.
-const HEAL_SPELL_RX = /\b(heal(?:ing)?|renewal|chloropl|regrowth|torpor|lay on hands|restoration|touch of the divine|vigor|salve)\b/i;
+// `chloro\w*` (not `chloropl`): the druid direct heal is ChloroBLast — the old
+// `chloropl` alternative matched neither Chloroblast NOR Chloroplast (the
+// trailing \b killed the prefix match) and both spells fell out of heal
+// detection entirely (Uilnayar 2026-07-15). nature[`']s touch: both possessive
+// spellings — EQ logs backticks.
+const HEAL_SPELL_RX = /\b(heal(?:ing)?|renewal|chloro\w*|regrowth|torpor|lay on hands|restoration|touch of the divine|nature[`']s touch|vigor|salve)\b/i;
 const _lastCastRelay = new Map();   // charLower → { sig, at }
 // Recent self heal-casts with their Zeal target + expected LAND time (cast
 // start + cast length). Two consumers:
@@ -2546,7 +2551,11 @@ const _lastCastRelay = new Map();   // charLower → { sig, at }
 // `heal`/`heal_fixed` per heal spell — computed at the era level). Rides on the
 // cast so the bot's landing-join and the tank overlay need no DB lookup.
 function _healEstForSpell(spell) {
-  const e = _spellByNameLower.get(String(spell || '').toLowerCase());
+  // EQ logs backtick possessives ("You begin casting Nature`s Touch.") while
+  // the catalog stores apostrophes — normalize or the lookup misses and the
+  // cast silently loses its heal amount (the tank overlay then drops it).
+  const key = String(spell || '').toLowerCase();
+  const e = _spellByNameLower.get(key) || _spellByNameLower.get(key.replace(/`/g, "'"));
   if (e && e.heal != null && e.heal > 0) return { amount: e.heal, fixed: e.heal_fixed === true };
   return null;
 }
@@ -2590,8 +2599,11 @@ function relaySelfCastForCasting(line, character, pre) {
   if (prev && prev.sig === sig && (atMs - prev.at) < 2000) return;
   _lastCastRelay.set(cl, { sig, at: atMs });
   const castSecs = _spellCastSecs(spell);
-  const isHeal = HEAL_SPELL_RX.test(spell);
-  const he = isHeal ? _healEstForSpell(spell) : null;
+  // Catalog first (any SPA-0-positive/CH spell IS a heal, whatever it's
+  // named), name regex as the fallback for heals the catalog can't size
+  // (HoTs like Regrowth/Torpor still count as heals, just without an amount).
+  const he = _healEstForSpell(spell);
+  const isHeal = !!he || HEAL_SPELL_RX.test(spell);
   enqueueUpload('casting', { agent_version: AGENT_VERSION, casts: [{
     caster: character, spell, target,
     started_at: new Date(atMs).toISOString(),
@@ -7785,28 +7797,63 @@ function _serializeTankState() {
   const healTargetName = mtName || active || null;
   if (healTargetName) {
     const htl = String(healTargetName).toLowerCase();
+    // Characters on THIS machine — their heals use the local instant path
+    // below; their cross-client echoes are skipped so a heal doesn't double.
+    const ownChars = new Set(Object.keys(_zealState || {}).map(c => String(c).toLowerCase()));
+    // LOCAL instant path — our own heal casts on the displayed tank, straight
+    // from the log line + Zeal target with ZERO relay latency. Without this,
+    // the healer's own overlay waited on the full agent→bot→agent round trip
+    // (2-4s) and short casts arrived already landed (Uilnayar 2026-07-15:
+    // "we still did not see me casting chloroblast or nature's touch — it
+    // shows on the target info easily, bring in that immediate cast time").
+    for (const rc of _recentHealCasts) {
+      if (!rc || String(rc.target).toLowerCase() !== htl) continue;
+      if (/complete heal/i.test(String(rc.spell || ''))) continue;
+      if (rc.land_at < now - 4000 || rc.land_at > now + 15_000) continue;
+      let amount = (rc.heal_amount != null && rc.heal_amount > 0) ? rc.heal_amount : 0;
+      let fixed  = rc.heal_fixed === true;
+      if (amount <= 0) {
+        const he = _healEstForSpell(rc.spell);
+        if (he) { amount = he.amount; fixed = he.fixed; }
+      }
+      inboundHeals.push({
+        caster:      rc.caster,
+        spell:       rc.spell,
+        // null amount = a heal we can't size (HoT / catalog gap) — the overlay
+        // shows "?" and the ghost segment skips it, but the cast still shows.
+        amount:      amount > 0 ? amount : null,
+        estimated:   amount > 0 ? !fixed : true,
+        ends_at_ms:  rc.land_at,
+        lands_in_ms: Math.max(0, rc.land_at - now),
+        cast_secs:   _spellCastSecs(rc.spell) || null,
+      });
+    }
     try { fetchTargetCasts(healTargetName); } catch { /* fire-and-forget, cached */ }
     const ctc = _targetCastsByName.get(htl);
     if (ctc && Array.isArray(ctc.casts)) {
       const fetchedAt = ctc.at || now;
-      inboundHeals = ctc.casts
+      const remote = ctc.casts
         .filter(c => c && !/complete heal/i.test(String(c.spell || '')))
+        // Our own casts already came in via the local path above.
+        .filter(c => !ownChars.has(String(c.caster || '').toLowerCase()))
         .map(c => {
           // Amount rides on the cast (bot fills it from the catalog); fall back
           // to OUR local catalog so a heal still sizes if the bot didn't attach
-          // one (older bot, catalog gap). Drop casts we can't size as heals.
+          // one (older bot, catalog gap). A cast with NO resolvable amount only
+          // counts as a heal if its name reads like one (cross-client casts
+          // carry no is-heal flag — the amount is normally that signal).
           let amount = (c.heal_amount != null && c.heal_amount > 0) ? c.heal_amount : 0;
           let fixed  = c.heal_fixed === true;
           if (amount <= 0) {
             const he = _healEstForSpell(c.spell);
             if (he) { amount = he.amount; fixed = he.fixed; }
           }
-          if (amount <= 0) return null;
+          if (amount <= 0 && !HEAL_SPELL_RX.test(String(c.spell || ''))) return null;
           return {
             caster:      c.caster,
             spell:       c.spell,
-            amount,
-            estimated:   !fixed,
+            amount:      amount > 0 ? amount : null,
+            estimated:   amount > 0 ? !fixed : true,
             // Absolute land time in the BOT's clock — a STABLE key the overlay
             // dedups on across polls. remaining_secs collapses to 0 the instant
             // a heal lands cross-client, so a now-relative land time re-mints
@@ -7818,10 +7865,11 @@ function _serializeTankState() {
             cast_secs:   c.cast_secs || null,
           };
         })
-        .filter(Boolean)
-        .sort((a, b) => a.lands_in_ms - b.lands_in_ms)
-        .slice(0, 6);
+        .filter(Boolean);
+      inboundHeals.push(...remote);
     }
+    inboundHeals.sort((a, b) => a.lands_in_ms - b.lands_in_ms);
+    inboundHeals = inboundHeals.slice(0, 6);
   }
 
   // Boss + enrage hint. Drives the enrage countdown / warning. We use the
@@ -20751,8 +20799,33 @@ function buildMobInfo() {
   const ctb = _targetBuffsByName.get(tnameLower);
   if (!ctb || (Date.now() - ctb.at) >= TARGET_BUFFS_TTL_MS) fetchTargetBuffs(st.target_name);
   let buffs;
+  // Cross-client live buffs — the target is another Mimic-running raider:
+  // use THEIR uploaded Zeal list (real remaining time — actual counters, not
+  // "?"-duration observed landings), same source the Tank overlay's MT buffs
+  // already use (Uilnayar 2026-07-15: "buff counters in the target info like
+  // we had discussed" — targeting Peopleslayer showed observed-only). EQ
+  // character names never contain spaces, so anything with one skips the
+  // fetch (mobs would just churn null lookups).
+  let liveBuffs = null;
+  if (zealBuffs === null && !/\s/.test(String(st.target_name).trim())) {
+    try { fetchCharacterLiveState(st.target_name); } catch { /* cached/TTL */ }
+    const live = _mtLiveStateByName.get(tnameLower);
+    if (live && live.state && Array.isArray(live.state.buffs) && live.state.buffs.length) {
+      liveBuffs = live.state.buffs.filter(b => b && b.name).map(b => ({
+        name: b.name,
+        remaining_secs: (typeof b.seconds === 'number') ? b.seconds : null,
+        total_secs: null,
+        observed_at_ms: Date.now(),
+        source: 'live',
+        good: _spellGood(b.name),
+        song: false,
+      }));
+    }
+  }
   if (zealBuffs !== null) {
     buffs = zealBuffs;
+  } else if (liveBuffs !== null) {
+    buffs = liveBuffs;
   } else {
     const local  = targetBuffsFor(tnameLower);
     const remote = (ctb && Array.isArray(ctb.buffs)) ? ctb.buffs : [];
@@ -20789,7 +20862,9 @@ function buildMobInfo() {
     mob:            cached ? cached.mob : null,   // null until the lookup returns
     loading:        !cached,
     target_buffs:   buffs,
-    target_is_pc:   zealBuffs !== null,
+    // PC = live buff data (own Zeal list OR the target's uploaded live-state)
+    // — drives the "(live)" header suffix instead of "(observed)".
+    target_is_pc:   zealBuffs !== null || liveBuffs !== null,
     target_slots:   slotCounts,
     target_casting: ctc ? ctc.casts : [],
   };
