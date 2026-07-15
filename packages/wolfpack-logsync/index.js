@@ -2542,12 +2542,22 @@ const _lastCastRelay = new Map();   // charLower → { sig, at }
 //      (Quarm never logs other people's heal amounts, so cross-client join
 //      is the only way to attribute; Uilnayar 2026-07-14).
 // `consumed` stops one cast from absorbing two landed events.
-const _recentHealCasts = [];        // { caster, spell, target, land_at(ms), consumed }
-function _noteHealCast(caster, spell, target, atMs, castSecs) {
+// Estimated heal amount for a spell, from the bot's spell catalog (v7+ carries
+// `heal`/`heal_fixed` per heal spell — computed at the era level). Rides on the
+// cast so the bot's landing-join and the tank overlay need no DB lookup.
+function _healEstForSpell(spell) {
+  const e = _spellByNameLower.get(String(spell || '').toLowerCase());
+  if (e && e.heal != null && e.heal > 0) return { amount: e.heal, fixed: e.heal_fixed === true };
+  return null;
+}
+const _recentHealCasts = [];        // { caster, spell, target, land_at(ms), heal_amount, heal_fixed, consumed }
+function _noteHealCast(caster, spell, target, atMs, castSecs, he) {
   if (!caster || !spell || !target) return;
   _recentHealCasts.push({
     caster, spell, target,
     land_at: atMs + Math.max(0, (castSecs || 0)) * 1000,
+    heal_amount: he ? he.amount : undefined,
+    heal_fixed:  he ? he.fixed  : undefined,
     consumed: false,
   });
   // Prune: keep 10 min of history, hard cap 600 entries (CH-chain spam bound).
@@ -2580,27 +2590,38 @@ function relaySelfCastForCasting(line, character, pre) {
   if (prev && prev.sig === sig && (atMs - prev.at) < 2000) return;
   _lastCastRelay.set(cl, { sig, at: atMs });
   const castSecs = _spellCastSecs(spell);
+  const isHeal = HEAL_SPELL_RX.test(spell);
+  const he = isHeal ? _healEstForSpell(spell) : null;
   enqueueUpload('casting', { agent_version: AGENT_VERSION, casts: [{
     caster: character, spell, target,
     started_at: new Date(atMs).toISOString(),
     cast_secs: castSecs,
+    // Inbound-heal fields for the recipient's tank overlay (est. catalog amount).
+    heal_amount: he ? he.amount : undefined,
+    heal_fixed:  he ? he.fixed  : undefined,
   }] });
   // Heal casts also feed the attribution ring (local multibox join + the
   // encounter payload's heal_casts for the bot-side cross-client join).
-  if (HEAL_SPELL_RX.test(spell)) _noteHealCast(character, spell, target, atMs, castSecs);
+  if (isHeal) _noteHealCast(character, spell, target, atMs, castSecs, he);
 }
-// Bystander-visible Complete Heal landing — "<Target> is completely healed."
-// (the spell's cast_on_other; Uilnayar 2026-07-14: heal AMOUNTS are private to
-// the healed, but LANDINGS are public to everyone). One suffix, the era's
-// defining heal, fixed catalog amount — any single Mimic in the raid witnessing
-// the landing lets the bot attribute a CH (cleric's heal_cast × this sighting)
-// even when the TANK runs no Mimic. Single-capitalized-token targets only
-// (player names); multi-word NPC self-CHs never match and have no cast to join.
-const _CH_LAND_RX = /\]\s+([A-Z]\w+) is completely healed\.\s*$/;
+// Bystander-visible heal LANDINGS — the spell's cast_on_other message with the
+// target's name (Uilnayar 2026-07-14: heal AMOUNTS are private to the healed,
+// but LANDINGS are public to everyone). Any single Mimic in the raid witnessing
+// a landing lets the bot attribute the heal (cleric's heal_cast × this sighting)
+// even when the TARGET runs no Mimic — the amount rides on the matched cast.
+// Verified cast_on_other suffixes (eqemu_spells): "is completely healed." (CH) ·
+// "'s wounds fade away." (Remedy) · "feels much better." (Healing/Greater/
+// Superior/Nature's Touch — shared, disambiguated by the joined cast's spell) ·
+// "feels better." (Light Healing) · "is blasted with chlorophyll." (Chloroblast)
+// · "'s body is covered with a soft glow." (Celestial Healing HoT) · "is bathed
+// in a divine light." (Divine Light). Single-capitalized-token targets only
+// (player names); multi-word NPC names never match and have no cast to join.
+const _HEAL_LAND_HINT = /(?:healed|better|chlorophyll|glow|light|away)\.\s*$/;
+const _HEAL_LAND_RX = /\]\s+([A-Z][A-Za-z]+)(?:'s wounds fade away|'s body is covered with a soft glow| is completely healed| feels much better| feels better| is blasted with chlorophyll| is bathed in a divine light)\.\s*$/;
 const _recentHealLands = [];   // { ts(ms), target }
-function noteChLandLine(line) {
-  if (line.indexOf(' is completely healed.') === -1) return;   // cheap gate
-  const m = line.match(_CH_LAND_RX);
+function noteHealLandLine(line) {
+  if (!_HEAL_LAND_HINT.test(line)) return;   // cheap end-anchored prefilter
+  const m = line.match(_HEAL_LAND_RX);
   if (!m) return;
   const t = parseEqTimestamp(line);
   _recentHealLands.push({ ts: t ? t.getTime() : Date.now(), target: m[1] });
@@ -5894,7 +5915,7 @@ class EncounterBuilder {
           const cl = this.character;
           const out = _recentHealCasts
             .filter(c => c.caster === cl && c.land_at >= startMs - 5000 && c.land_at <= endMs + 5000)
-            .map(c => ({ caster: c.caster, spell: c.spell, target: c.target, land_at: c.land_at }));
+            .map(c => ({ caster: c.caster, spell: c.spell, target: c.target, land_at: c.land_at, heal_amount: c.heal_amount, heal_fixed: c.heal_fixed }));
           return out.length > 0 ? out.slice(0, 200) : undefined;
         })(),
         // Public CH landings witnessed in this fight window ("X is completely
@@ -7690,6 +7711,38 @@ function _serializeTankState() {
     };
   }
 
+  // Inbound heals on the displayed tank (MT if resolved, else the local
+  // character) — cross-client heal casts targeting them, from the casting relay
+  // via target-casts (which now carries the estimated catalog amount). EXCLUDES
+  // Complete Heal — the CH-chain overlay owns that, and CH volume would swamp
+  // this cast-bar view (Uilnayar 2026-07-14: "tanks seeing the heals coming in…
+  // the complete heals would overwhelm the UI"). The overlay draws a cast bar
+  // counting down to each land + a projected-HP ghost segment from these
+  // amounts. Anchored to the fetch timestamp so the countdown survives the
+  // agent↔bot clock skew.
+  let inboundHeals = [];
+  const healTargetName = mtName || active || null;
+  if (healTargetName) {
+    const htl = String(healTargetName).toLowerCase();
+    try { fetchTargetCasts(healTargetName); } catch { /* fire-and-forget, cached */ }
+    const ctc = _targetCastsByName.get(htl);
+    if (ctc && Array.isArray(ctc.casts)) {
+      const fetchedAt = ctc.at || now;
+      inboundHeals = ctc.casts
+        .filter(c => c && c.heal_amount != null && c.heal_amount > 0 && !/complete heal/i.test(String(c.spell || '')))
+        .map(c => ({
+          caster:      c.caster,
+          spell:       c.spell,
+          amount:      c.heal_amount,
+          estimated:   c.heal_fixed !== true,
+          lands_in_ms: Math.max(0, (fetchedAt + (c.remaining_secs || 0) * 1000) - now),
+          cast_secs:   c.cast_secs || null,
+        }))
+        .sort((a, b) => a.lands_in_ms - b.lands_in_ms)
+        .slice(0, 6);
+    }
+  }
+
   // Boss + enrage hint. Drives the enrage countdown / warning. We use the
   // active boss name from the DS reflects struct as a fallback when the
   // target gauge is empty (e.g. tank is targeting an offtank).
@@ -7752,6 +7805,9 @@ function _serializeTankState() {
     // Main-Tank focus block — null out of combat. When present the overlay
     // renders the MT's HP/buffs/DS instead of the local character's.
     mt,
+    // Inbound heals on the displayed tank (MT or self) — cast bars + projected
+    // HP. CH excluded (CH-chain overlay owns those). Empty when none in flight.
+    inbound_heals: inboundHeals,
     da,
     ds: {
       total: dsTotal,
@@ -22515,7 +22571,7 @@ async function main() {
         // not stat data we'd ever want suppressed).
         noteBlindLine(line, b.character);
         // Public CH landings ("X is completely healed.") → heal-attribution ring.
-        if (!_sourceExcluded) noteChLandLine(line);
+        if (!_sourceExcluded) noteHealLandLine(line);
         // "Your pet's <X> spell has worn off." → drop it from the pet's buffs.
         if (!_sourceExcluded) notePetBuffWornOff(line, b.character);
         // Prefer the cast-correlated resolution (our own cast); fall back to the

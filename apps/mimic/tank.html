@@ -46,6 +46,25 @@
     font-size:9px;font-weight:800;letter-spacing:0.5px;color:#fff;text-shadow:-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000,0 1px 2px #000;z-index:2}
   .hpwrap .inv-tag.l{left:4px}
   .hpwrap .inv-tag.r{right:4px}
+  /* Projected-HP ghost segment — where the tank's HP lands once the inbound
+     (non-CH) heals connect. Striped so it reads as "incoming", not current HP.
+     Sits right after the current-HP fill; z below the value text. */
+  .hpwrap .hpghost{position:absolute;top:0;bottom:0;z-index:1;
+    background:repeating-linear-gradient(45deg,rgba(86,211,100,0.60),rgba(86,211,100,0.60) 4px,rgba(86,211,100,0.28) 4px,rgba(86,211,100,0.28) 8px);
+    transition:left .25s ease,width .25s ease}
+  /* Inbound heal cast bars — one row per heal in flight under the HP bar,
+     colored to match, filling as its cast completes; countdown to land. */
+  .inbound{margin:2px 0 4px}
+  .ih-row{display:flex;align-items:center;gap:5px;font-size:10px;margin-top:2px}
+  .ih-dot{width:8px;height:8px;border-radius:50%;flex:0 0 auto;box-shadow:0 0 3px #000}
+  .ih-who{color:#e6edf3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:88px;
+    text-shadow:-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000}
+  .ih-bar{position:relative;flex:1 1 auto;height:8px;background:#222;border-radius:2px;overflow:hidden;min-width:28px}
+  .ih-fill{position:absolute;left:0;top:0;bottom:0;border-radius:2px;transition:width .1s linear}
+  .ih-amt{color:#c9d1d9;white-space:nowrap;font-variant-numeric:tabular-nums;
+    text-shadow:-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000}
+  .ih-sec{color:#fff;font-weight:600;font-variant-numeric:tabular-nums;min-width:24px;text-align:right;
+    text-shadow:-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000}
   .da{display:flex;align-items:center;gap:6px;padding:5px 7px;background:rgba(31,75,140,0.5);
     border:1px solid #4287f5;border-radius:5px;margin-bottom:4px;font-size:11px}
   .da.crit{background:rgba(220,38,38,0.45);border-color:#f87171;animation:flash 0.6s linear infinite alternate}
@@ -205,6 +224,50 @@
   var syncEl    = document.getElementById('syncBadge');
 
   function hpClass(pct){ if (pct == null) return ''; if (pct <= 25) return 'crit'; if (pct <= 50) return 'low'; return ''; }
+  function fmtK(n){ n = Number(n)||0; if (n >= 1000) return (n/1000).toFixed(n>=10000?0:1)+'k'; return String(Math.round(n)); }
+  // Projected-HP ghost segment: from current HP% to (current + sum of inbound
+  // non-CH heals)%. Only drawable when we have the tank's real cur/max HP.
+  function ghostSeg(hp_cur, hp_max, inb){
+    if (hp_cur == null || hp_max == null || !hp_max || !inb || !inb.length) return '';
+    var sum = 0; for (var i=0;i<inb.length;i++) sum += (inb[i].amount||0);
+    if (sum <= 0) return '';
+    var curPct  = Math.max(0, Math.min(100, (hp_cur/hp_max)*100));
+    var projPct = Math.max(0, Math.min(100, ((hp_cur+sum)/hp_max)*100));
+    var w = projPct - curPct;
+    if (w <= 0.5) return '';
+    return '<div class="hpghost" style="left:'+curPct.toFixed(1)+'%;width:'+w.toFixed(1)+'%"></div>';
+  }
+  // Inbound-heal cast bars — painted on a 100ms ticker so the countdown is
+  // smooth between the 1s state polls. Each heal keeps its color across polls
+  // (keyed caster+spell) so a bar doesn't jump palette slots as others land.
+  var _inb = [];
+  var IH_COLORS = ['#38bdf8','#a78bfa','#f472b6','#fb923c','#facc15','#4ade80','#22d3ee'];
+  function paintInbound(){
+    var el = document.getElementById('inbound-heals');
+    if (!el) return;
+    var now = Date.now();
+    var live = [];
+    for (var i=0;i<_inb.length;i++){ if (now - _inb[i].landsAt <= 800) live.push(_inb[i]); }
+    if (!live.length){ if (el.innerHTML !== '') el.innerHTML=''; return; }
+    var h = '';
+    for (var j=0;j<live.length;j++){
+      var x = live[j];
+      var landsIn = Math.max(0, x.landsAt - now);
+      var castMs = x.castMs || 3000;
+      var pct = Math.max(0, Math.min(100, ((castMs - landsIn)/castMs)*100));
+      var col = x.color;
+      var amt = (x.estimated ? '~' : '') + fmtK(x.amount);
+      h += '<div class="ih-row">'
+         +   '<span class="ih-dot" style="background:'+col+'"></span>'
+         +   '<span class="ih-who">'+esc(x.caster)+'</span>'
+         +   '<span class="ih-bar"><span class="ih-fill" style="width:'+pct.toFixed(0)+'%;background:'+col+'"></span></span>'
+         +   '<span class="ih-amt">'+amt+'</span>'
+         +   '<span class="ih-sec">'+(landsIn<120?'now':(landsIn/1000).toFixed(1)+'s')+'</span>'
+         + '</div>';
+    }
+    el.innerHTML = h;
+  }
+  setInterval(paintInbound, 100);
   // HP bar label — raw "cur / max · pct%" when we have the real numbers (only
   // the local character's own Zeal reports them), else just the percentage.
   function hpValText(pct, cur, max){
@@ -225,6 +288,23 @@
 
     var html = '';
 
+    // Inbound heals (non-CH) targeting the displayed tank — persist each heal's
+    // color across polls (keyed caster+spell+land-time) so a bar doesn't hop
+    // palette slots as siblings land. Feeds the HP ghost segment + cast bars.
+    var now = Date.now();
+    var inbRaw = Array.isArray(s.inbound_heals) ? s.inbound_heals : [];
+    var prevByKey = {}; for (var _p=0;_p<_inb.length;_p++) prevByKey[_inb[_p].key] = _inb[_p];
+    _inb = inbRaw.map(function(x, i){
+      var key = (x.caster||'') + '|' + (x.spell||'') + '|' + Math.round((now + x.lands_in_ms)/1000);
+      var prev = prevByKey[key];
+      return {
+        key: key, caster: x.caster, spell: x.spell, amount: x.amount, estimated: x.estimated,
+        landsAt: prev ? prev.landsAt : (now + x.lands_in_ms),
+        castMs:  (x.cast_secs ? x.cast_secs*1000 : 3000),
+        color:   prev ? prev.color : IH_COLORS[(Object.keys(prevByKey).length + i) % IH_COLORS.length],
+      };
+    });
+
     // Main Tank HP — when the agent has resolved an MT (CH-chain target or
     // whoever the boss's melee is connecting on), the overlay is about THEM,
     // not the local character (2026-07-01: "focus on the Main Tank and
@@ -237,7 +317,9 @@
       html += '<div class="card">'
            +    '<div class="head">Main Tank — ' + esc(mt.name) + (mt.is_self ? ' (you)' : '') + '</div>'
            +    '<div class="hpwrap"><div class="hpbar ' + hpClass(mthp) + '" style="width:' + (mthp == null ? 0 : mthp) + '%"></div>'
+           +      ghostSeg(mt.hp_cur, mt.hp_max, _inb)
            +      '<div class="val">' + (mtVal == null ? 'HP not visible — target or group the MT' : mtVal) + '</div></div>'
+           +    '<div id="inbound-heals" class="inbound"></div>'
            +  '</div>';
     } else {
       var hp = s.hp_pct == null ? null : Math.max(0, Math.min(100, Math.round(s.hp_pct)));
@@ -245,7 +327,9 @@
       html += '<div class="card">'
            +    '<div class="head">Your HP</div>'
            +    '<div class="hpwrap"><div class="hpbar ' + hpClass(hp) + '" style="width:' + (hp == null ? 0 : hp) + '%"></div>'
+           +      ghostSeg(s.hp_cur, s.hp_max, _inb)
            +      '<div class="val">' + (selfVal == null ? '—' : selfVal) + '</div></div>'
+           +    '<div id="inbound-heals" class="inbound"></div>'
            +  '</div>';
     }
 
@@ -415,6 +499,10 @@
       contentEl.__wpHtml = html;
       _requestAutoHeight();
     }
+    // The 1s poll may have rewritten (or left) the #inbound-heals placeholder;
+    // refill it now so the cast bars don't blank between the poll and the next
+    // 100ms ticker frame.
+    paintInbound();
   }
 
   async function tick(){
