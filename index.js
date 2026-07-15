@@ -10927,9 +10927,31 @@ async function _handleAgentUpload(req, res) {
   // The agent uploads per-encounter healer totals ({ name, healed, ticks, targets })
   // and defender tanking stats ({ name, hits, damageTaken, ripostedFor, … }).
   // Extract them here so we can merge across parsers and feed to the parse card.
-  const uploadedHealers   = Array.isArray(encounter.healers)   ? encounter.healers   : [];
+  let uploadedHealers     = Array.isArray(encounter.healers)   ? encounter.healers   : [];
   const uploadedDefenders = Array.isArray(encounter.defenders) ? encounter.defenders : [];
   const uploadedDeaths    = Array.isArray(encounter.deaths)    ? encounter.deaths    : [];
+  // Heal attribution inputs (agent 3.3.35+): the recipient's unattributed
+  // received heals + the uploader's own heal casts (spell, Zeal target,
+  // expected land time). Joined below so the Healers table shows how much
+  // each healer actually healed instead of "→ You" self rows (2026-07-14).
+  let uploadedHealsReceived = (encounter.heals_received && typeof encounter.heals_received === 'object'
+                               && encounter.heals_received.name) ? { ...encounter.heals_received } : null;
+  const uploadedHealCasts   = Array.isArray(encounter.heal_casts) ? encounter.heal_casts.slice(0, 200) : [];
+  // Legacy-agent guard (< 3.3.35): those agents miscredit the uploader's own
+  // RECEIVED heals as a healer entry { name: uploader, targets: ['You'] }.
+  // Reclassify to received-heals (no events → can't join, but they count in
+  // the unattributed pool instead of rendering as fake healer rows).
+  {
+    const legacyIdx = uploadedHealers.findIndex(h =>
+      h && h.name === character
+      && Array.isArray(h.targets) && h.targets.length > 0
+      && h.targets.every(t => t === 'You'));
+    if (legacyIdx !== -1 && !uploadedHealsReceived) {
+      const legacy = uploadedHealers[legacyIdx];
+      uploadedHealsReceived = { name: character, total: legacy.healed || 0, ticks: legacy.ticks || 0, events: [] };
+      uploadedHealers = uploadedHealers.filter((_, i) => i !== legacyIdx);
+    }
+  }
   // Index per-raider deaths for the buff-queue inference path — when we infer
   // a non-Mimic raider's current buffs from buff_casts, we must discard any
   // cast that happened before their most recent death (dying clears buffs).
@@ -11019,6 +11041,7 @@ async function _handleAgentUpload(req, res) {
         const withinWindow = overlaps || sequential;
 
         let mergedPlayers, mergedHealers, mergedDefenders, mergedDeaths, mergedHealGaps, perspectives, newDuration, newTotalDamage, newTotalDps;
+        let mergedHealsReceived, mergedHealCasts;
 
         if (withinWindow) {
           // Two distinct merge semantics:
@@ -11141,16 +11164,123 @@ async function _handleAgentUpload(req, res) {
             uploadedHealGaps.count > (existing.healGaps?.count || 0) ||
             (uploadedHealGaps.count === (existing.healGaps?.count || 0) && uploadedHealGaps.maxGapMs > (existing.healGaps?.maxGapMs || 0))
           ) ? uploadedHealGaps : (existing.healGaps || null);
+
+          // ── Merge heal-attribution inputs ─────────────────────────────────
+          // healsReceived: keyed by recipient — each recipient only self-
+          // reports, so a repeat upload is a resubmission → keep the richer
+          // entry (more ticks). healCasts: union, deduped by caster+target+
+          // land-second (a resubmitted fight repeats identical casts).
+          {
+            const rMap = new Map((existing.healsReceived || []).map(r => [(r.name || '').toLowerCase(), { ...r }]));
+            if (uploadedHealsReceived) {
+              const k = (uploadedHealsReceived.name || '').toLowerCase();
+              const cur = rMap.get(k);
+              if (!cur || (uploadedHealsReceived.ticks || 0) > (cur.ticks || 0)) rMap.set(k, { ...uploadedHealsReceived });
+            }
+            mergedHealsReceived = [...rMap.values()];
+            const cSeen = new Set(), cOut = [];
+            for (const c of [...(existing.healCasts || []), ...uploadedHealCasts]) {
+              if (!c || !c.caster || !c.target || !c.land_at) continue;
+              const sig = `${String(c.caster).toLowerCase()}|${String(c.target).toLowerCase()}|${Math.round(c.land_at / 1000)}`;
+              if (cSeen.has(sig)) continue;
+              cSeen.add(sig);
+              cOut.push({ caster: c.caster, spell: c.spell, target: c.target, land_at: c.land_at });
+              if (cOut.length >= 500) break;
+            }
+            mergedHealCasts = cOut;
+          }
         } else {
           mergedPlayers   = players;
           mergedHealers   = [...uploadedHealers];
           mergedDefenders = [...uploadedDefenders];
           mergedDeaths    = uploadedDeaths.map(d => ({ ...d, count: 1 }));
           mergedHealGaps  = uploadedHealGaps;
+          mergedHealsReceived = uploadedHealsReceived ? [uploadedHealsReceived] : [];
+          mergedHealCasts     = uploadedHealCasts.map(c => ({ caster: c.caster, spell: c.spell, target: c.target, land_at: c.land_at }))
+                                                 .filter(c => c.caster && c.target && c.land_at);
           perspectives    = character ? [character] : [];
           newDuration     = duration;
           newTotalDamage  = totalDamage;
           newTotalDps     = totalDps;
+        }
+
+        // ── Heal attribution join (bot 3.0.174) ─────────────────────────────
+        // Quarm never logs another player's heal AMOUNT — only the recipient
+        // sees "You have been healed for N" (no healer name) and only the
+        // healer knows what they cast on whom (via Mimic's Zeal target). So:
+        // join each received event to the nearest same-target heal cast within
+        // ±2.5s of its expected land time; one cast attributes one landing.
+        // Attributed totals reconcile into mergedHealers with MAX (they're a
+        // second estimate of the same truth as any directly-observed entry).
+        // Healers with casts but no joinable amounts still get a row (casts
+        // column) — their recipients just aren't running Mimic yet.
+        let healUnattributed = null;
+        {
+          const casts = mergedHealCasts.map(c => ({ ...c, consumed: false }));
+          const joined = new Map();   // healerLower → { name, healed, ticks, targets:Set }
+          let unTotal = 0, unTicks = 0; const unWho = new Set();
+          for (const hr of mergedHealsReceived) {
+            const rl = (hr.name || '').toLowerCase();
+            let matchedTotal = 0, matchedTicks = 0;
+            for (const ev of (Array.isArray(hr.events) ? hr.events : [])) {
+              const t = Date.parse(ev.ts) || 0;
+              let best = null, bestD = 2500;
+              for (const c of casts) {
+                if (c.consumed || String(c.target).toLowerCase() !== rl) continue;
+                const d = Math.abs(c.land_at - t);
+                if (d <= bestD) { best = c; bestD = d; }
+              }
+              if (best) {
+                best.consumed = true;
+                const k = best.caster.toLowerCase();
+                if (!joined.has(k)) joined.set(k, { name: best.caster, healed: 0, ticks: 0, targets: new Set(), byTarget: {} });
+                const j = joined.get(k);
+                j.healed += ev.amount || 0; j.ticks += 1; j.targets.add(hr.name);
+                j.byTarget[hr.name] = (j.byTarget[hr.name] || 0) + (ev.amount || 0);
+                matchedTotal += ev.amount || 0; matchedTicks += 1;
+              }
+            }
+            const restTotal = (hr.total || 0) - matchedTotal;
+            if (restTotal > 0) { unTotal += restTotal; unTicks += Math.max(0, (hr.ticks || 0) - matchedTicks); unWho.add(hr.name); }
+          }
+          const castCount = new Map();
+          for (const c of mergedHealCasts) {
+            const k = String(c.caster).toLowerCase();
+            castCount.set(k, (castCount.get(k) || 0) + 1);
+          }
+          const hMap = new Map(mergedHealers.map(h => [(h.name || '').toLowerCase(), { ...h }]));
+          for (const [k, j] of joined) {
+            const cur = hMap.get(k);
+            if (cur) {
+              // Per-TARGET reconcile when the direct entry carries byTarget: a
+              // multiboxed cleric's locally-attributed heals (their own box)
+              // and the bot-joined heals (other Mimic raiders) hit DISJOINT
+              // recipients — per-target MAX then sum keeps both, while the
+              // same recipient seen from both sides dedupes. Flat MAX stays
+              // the floor for legacy entries with no byTarget.
+              const bt = { ...(cur.byTarget || {}) };
+              for (const [t, amt] of Object.entries(j.byTarget)) bt[t] = Math.max(bt[t] || 0, amt);
+              const btSum = Object.values(bt).reduce((s, x) => s + x, 0);
+              hMap.set(k, {
+                ...cur,
+                healed:  Math.max(btSum, cur.healed || 0, j.healed),
+                ticks:   Math.max(cur.ticks || 0, j.ticks),
+                targets: [...new Set([...(cur.targets || []), ...j.targets])],
+                byTarget: Object.keys(bt).length ? bt : undefined,
+              });
+            } else {
+              hMap.set(k, { name: j.name, healed: j.healed, ticks: j.ticks, targets: [...j.targets], byTarget: { ...j.byTarget } });
+            }
+          }
+          for (const [k, n] of castCount) {
+            if (!hMap.has(k)) {
+              const mine = mergedHealCasts.filter(c => String(c.caster).toLowerCase() === k);
+              hMap.set(k, { name: mine[0].caster, healed: 0, ticks: 0, targets: [...new Set(mine.map(c => c.target))] });
+            }
+            hMap.get(k).casts = n;
+          }
+          mergedHealers = [...hMap.values()].sort((a, b) => (b.healed - a.healed) || ((b.casts || 0) - (a.casts || 0)));
+          if (unTotal > 0) healUnattributed = { total: unTotal, ticks: unTicks, recipients: unWho.size };
         }
 
         const perspCount = perspectives.length;
@@ -11163,6 +11293,7 @@ async function _handleAgentUpload(req, res) {
           defenders:    mergedDefenders.length > 0 ? mergedDefenders : undefined,
           deaths:       mergedDeaths?.length   > 0 ? mergedDeaths    : undefined,
           healGaps:     mergedHealGaps || undefined,
+          healUnattributed: healUnattributed || undefined,
           isRaidWindow,
         });
 
@@ -11216,6 +11347,11 @@ async function _handleAgentUpload(req, res) {
           defenders:  mergedDefenders.length > 0 ? mergedDefenders : [],
           deaths:     mergedDeaths?.length   > 0 ? mergedDeaths    : [],
           healGaps:   mergedHealGaps || null,
+          // Heal-attribution inputs persist so a LATE perspective (the healer
+          // uploading after the recipient, or vice versa) re-joins over the
+          // full union instead of only its own half.
+          healsReceived: mergedHealsReceived?.length > 0 ? mergedHealsReceived : [],
+          healCasts:     mergedHealCasts?.length     > 0 ? mergedHealCasts     : [],
         });
 
         // Stamp _liveCards immediately (before the awaited Discord send) so any

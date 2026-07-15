@@ -271,7 +271,7 @@ async function handleParseBreakdown(interaction) {
  *   isRaidWindow: bool — tag the footer with a 🎯 badge when this is an official night
  */
 function buildParseEmbed(bossName, parsed, bossEmoji, extras = {}) {
-  const { healers, defenders, isRaidWindow, deaths, healGaps } = extras;
+  const { healers, defenders, isRaidWindow, deaths, healGaps, healUnattributed } = extras;
 
   const hdr     = `${'#'.padStart(2)}  ${'Player'.padEnd(20)} ${'Damage'.padStart(7)}  ${'DPS'.padStart(7)}  Time`;
   const divider = '─'.repeat(hdr.length);
@@ -309,29 +309,50 @@ function buildParseEmbed(bossName, parsed, bossEmoji, extras = {}) {
     .setTimestamp();
 
   // ── 🩺 Healers section ────────────────────────────────────────────────────
-  // Rendered when healer data is present (requires uploader to be in the fight
-  // and their log must contain "X has been healed by Y for N" lines).
+  // Amounts come from the bot's cast×landing join: each healer's Mimic reports
+  // WHAT they cast on WHOM, each recipient's Mimic reports the landed amount,
+  // and the bot marries the two (Quarm never logs another player's heal
+  // amount). Healers whose recipients don't run Mimic still show with a casts
+  // count and "—" healed. Recipient-only rows ("→ You" self heals) are gone —
+  // those now pool into the unattributed footnote (Uilnayar 2026-07-14).
   // Heal chain gap warning is appended when gaps >8s were detected on the
   // primary tank (8s = ~2 missed CH ticks in Luclin-era chain healing).
   if (Array.isArray(healers) && healers.length > 0) {
-    const sorted = [...healers].sort((a, b) => b.healed - a.healed).slice(0, 10);
-    const healHdr  = `${'#'.padStart(2)}  ${'Healer'.padEnd(16)} ${'Total'.padStart(8)}  ${'Ticks'.padStart(5)}`;
+    const sorted = [...healers]
+      .sort((a, b) => (b.healed - a.healed) || ((b.casts || 0) - (a.casts || 0)))
+      .slice(0, 10);
+    const healHdr  = `${'#'.padStart(2)}  ${'Healer'.padEnd(14)} ${'Healed'.padStart(8)} ${'Casts'.padStart(5)}`;
     const healDiv  = '─'.repeat(healHdr.length);
     const healRows = sorted.map((h, i) => {
-      const name   = (h.name || '?').slice(0, 16).padEnd(16);
-      const total  = fmt(h.healed).padStart(8);
-      const ticks  = String(h.ticks || 0).padStart(5);
-      const extra  = (h.targets?.length > 0) ? `  → ${h.targets.slice(0, 3).join(', ')}` : '';
-      return `${String(i + 1).padStart(2)}. ${name} ${total}  ${ticks}${extra}`;
+      const name   = (h.name || '?').slice(0, 14).padEnd(14);
+      const total  = (h.healed > 0 ? fmt(h.healed) : '—').padStart(8);
+      const casts  = String(h.casts ?? h.ticks ?? 0).padStart(5);
+      // Top recipients by amount when we have them; name list otherwise.
+      // 'You' is a legacy self-received artifact — never a real recipient.
+      const tgts   = h.byTarget && Object.keys(h.byTarget).length > 0
+        ? Object.entries(h.byTarget).filter(([t]) => t !== 'You')
+            .sort((a, b) => b[1] - a[1]).slice(0, 2).map(([t, amt]) => `${t} ${fmt(amt)}`)
+        : (h.targets || []).filter(t => t !== 'You').slice(0, 2);
+      const extra  = tgts.length > 0 ? `  → ${tgts.join(', ')}` : '';
+      return `${String(i + 1).padStart(2)}. ${name} ${total} ${casts}${extra}`;
     });
-    // Reserve ~80 chars for an optional gap warning appended below the table
     const wrapH = (r) => '```\n' + [healHdr, healDiv, ...r].join('\n') + '\n```';
     const gapNote = healGaps?.count > 0
       ? `\n> ⚠️ **${healGaps.count}** heal gap${healGaps.count !== 1 ? 's' : ''} on **${healGaps.tank}** (longest: **${Math.round(healGaps.maxGapMs / 1000)}s**)`
       : '';
-    const reserved = gapNote.length;
+    const unattribNote = healUnattributed?.total > 0
+      ? `\n*+${fmt(healUnattributed.total)} received by ${healUnattributed.recipients} raider${healUnattributed.recipients !== 1 ? 's' : ''} couldn't be attributed — the healer isn't running Mimic*`
+      : '';
+    const reserved = gapNote.length + unattribNote.length;
     while (healRows.length > 0 && (wrapH(healRows).length + reserved) > 1024) healRows.pop();
-    embed.addFields({ name: '🩺 Healers', value: wrapH(healRows) + gapNote, inline: false });
+    embed.addFields({ name: '🩺 Healers', value: wrapH(healRows) + gapNote + unattribNote, inline: false });
+  } else if (healUnattributed?.total > 0) {
+    // No attributable healer rows at all — still show the raid what landed.
+    embed.addFields({
+      name: '🩺 Healers',
+      value: `*${fmt(healUnattributed.total)} healing received by ${healUnattributed.recipients} raider${healUnattributed.recipients !== 1 ? 's' : ''} — no Mimic-running healer to attribute it to yet*`,
+      inline: false,
+    });
   }
 
   // ── 💀 Deaths section ─────────────────────────────────────────────────────

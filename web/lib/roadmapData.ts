@@ -43,6 +43,24 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'healer-truth-and-mimic-181',
+    title: '\u{1FA7A} Real healer numbers · Mimic 1.8.1 stable',
+    version: 'Bot 3.0.174 · Web 1.0.220 · Mimic 1.8.1 · Agent 3.3.35 (beta)',
+    date: '2026-07-14',
+    headline: 'Parse cards finally show how much each healer actually healed — and the whole 1.8.1 beta round (finishing-blow fix, "Set up for me", /who class picker) went out to every Mimic as a stable update.',
+    features: [
+      { name: 'Healers, attributed', blurb: 'EQ never tells anyone else how big your heal was — so Mimic now marries what the healer cast (and on whom) with what the recipient felt land. The 🩺 table shows each healer’s healed total, cast count, and top recipients; healers whose targets don’t run Mimic still show their casts. The useless "→ You" self rows are gone. Coverage grows with every Mimic install.' },
+      { name: 'Mimic 1.8.1 stable', blurb: 'The beta round is now the stable build: one-click "Set up for me" (turns on EQ logging + Zeal exports for you), the /who overlay class picker anyone can use, the CH-chain trust banner, HP-bar text you can read on any color, and the auto-arrange freeze fix.' },
+      { name: 'PoP spells marked', blurb: 'The missing-spells page tags Planes of Power spells with a PoP pill — they’re locked until Oct 1, so don’t farm for scrolls you can’t scribe yet.' },
+    ],
+    fixes: [
+      'Trash parses no longer double-count damage: Finishing Blow AA hits are dropped from the totals.',
+      'The spells page opens fast from links now (was a 3-second stall that looked like a hang), with a loading skeleton.',
+      'The site header shows your Wolf Pack server name again instead of your raw Discord handle.',
+      'Release announcements in #mimic-releases now say what changed instead of installer boilerplate.',
+    ],
+  },
+  {
     key: 'raid-night-hardening',
     title: '\u{1F6E1}️ Raid-night hardening',
     version: 'Bot 3.0.167 · Web 1.0.212 · Agent 3.3.28 (beta)',

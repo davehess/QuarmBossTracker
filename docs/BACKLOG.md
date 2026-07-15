@@ -166,6 +166,20 @@ class filter + "only gaps" + "hide logged-off" toggles, accuracy caveat banner.
   (heartbeat log, ~60MB/177k rows) to ~30–60 days; later `who_observations`. Keeps
   us comfortably on the free tier.
 
+## Needs local session (exact data wanted)
+
+- **Verify the first-person OUTGOING heal line on Quarm** (2026-07-14, healer
+  attribution v1). Agent 3.3.35 added a DEFENSIVE pattern
+  `You have healed <target> for <N> points` — plausible eqmac wording, but our
+  only reference log (Manamana, 70MB) has no healer POV so it's unconfirmed.
+  Wanted: grep a CLERIC/DRUID/SHAMAN player's `eqlog_*_pq.proj.txt` for
+  `have healed` / `You heal` / `healed .* for [0-9]+` and paste the exact
+  line(s) into this doc. If the wording differs, fix the pattern in
+  `parseEvent` (packages/wolfpack-logsync/index.js, "First-person OUTGOING
+  heal") — it currently fires never rather than wrongly if the line doesn't
+  exist. If the line DOES exist, healers' own uploads carry full amounts and
+  the cross-client join becomes a fallback instead of the primary source.
+
 ## In-flight findings (not yet acted on)
 - **Supabase size (checked 2026-06-04): 280 MB / 500 MB free tier = 56%.** Growers:
   `chat_messages` 79MB, `agent_uploads` 60MB, `who_observations` 44MB. Fixed:

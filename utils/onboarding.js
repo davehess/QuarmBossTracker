@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.0.174': [
+    '**Parse cards now show real healer numbers.** The 🩺 Healers table used to list each parser\'s own *received* heals as "→ You" — useless. Now every heal is attributed by marrying two things Mimic already knows: the **healer\'s** Mimic reports what they cast and on whom (from their Zeal target), and the **recipient\'s** Mimic reports how much actually landed. The card shows each healer\'s **Healed total, cast count, and top recipients** — and healers whose targets don\'t run Mimic still appear with their cast count. The more of us run Mimic, the more complete it gets (needs the healer on agent 3.3.35+/next Mimic update).',
+  ],
   '3.0.157': [
     '**AA lists cleaned up + honest faction flags.** The in-game Quarmy export writes junk AA rows for some slots (a monk "with" Jewelcraft Mastery rank 255 or Elemental Form) — those are now rejected at upload and **285 bad rows across 112 characters were purged**, so the Gear page shows only AAs your class can actually train. The faction page also stops showing "at max cap · at min cap" together: the Position column now shows the most recent signal ("raise capped" / "at floor"), and the consider table finally shows each conned mob\'s **faction** with a PQDI link.',
   ],
