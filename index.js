@@ -7302,11 +7302,22 @@ async function _announceMimicReleases() {
     return '[Download](' + (exe ? exe.browser_download_url : rel.html_url) + ') · [all releases](' + REL + ')';
   };
   // STABLE — a new tag gets a fresh post (the announcement of record).
+  // Title carries the release's NAME when the body leads with the bold
+  // commit subject ("**mimic v1.9.0 — the healing release (stable)**" →
+  // "✅ Mimic v1.9.0 — the healing release"), so the notice reads like a
+  // release, not a tag (Uilnayar 2026-07-15). Falls back to the tag-only
+  // title for bodies without one.
   const rel = rels.find(r => r && !r.prerelease && !r.draft) || null;
   if (rel && rel.tag_name && rel.tag_name !== st.lastTag) {
+    let stableTitle = '✅ Release — Mimic ' + rel.tag_name;
+    const mTitle = String(rel.body || '').match(/^\*\*(.+?)\*\*/);
+    if (mTitle) {
+      const nm = mTitle[1].replace(/\s*\(stable\)\s*$/i, '').replace(/^mimic\s+/i, '').trim();
+      if (nm) stableTitle = ('✅ Mimic ' + nm).slice(0, 250);
+    }
     const emb = new EmbedBuilder()
       .setColor(0x56d364)
-      .setTitle('✅ Release — Mimic ' + rel.tag_name)
+      .setTitle(stableTitle)
       .setDescription((_summaryOf(rel) || rel.name || '') + '\n' + _dlLink(rel));
     const sent = await ch.send({ embeds: [emb], allowedMentions: { parse: [] } }).catch(() => null);
     if (sent) { st.lastTag = rel.tag_name; await _mimicAnnSave(st); console.log('[mimic-announce] announced', rel.tag_name); }
