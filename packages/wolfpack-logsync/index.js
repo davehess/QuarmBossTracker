@@ -539,7 +539,31 @@ const CHARM_SPELLS = new Map([
   ['cajole undead',     { cls: 'enchanter', dur: 720 }],
   ['thrall of bones',   { cls: 'enchanter', dur: 720 }],
   ['dominate undead',   { cls: 'enchanter', dur: 720 }],
+  // Druid Velious animal charm — spell 1556, formula 3 (level×30 ticks, cap
+  // 1950): 1800 ticks = 3h at L60, which is what the pet-buff row already
+  // computes. Missing from this table entirely until 2026-07-15 (Canopy's
+  // dire wolf showed the estimated "tick N/10~"). catalogDur: stage-time
+  // level-aware duration from the spell catalog (_charmDurationSec); the
+  // static dur is the L60 fallback. Both possessive spellings — EQ logs
+  // backticks.
+  ["tunare's request",  { cls: 'enchanter', dur: 10800, catalogDur: true }],
+  ["tunare`s request",  { cls: 'enchanter', dur: 10800, catalogDur: true }],
 ]);
+// Level-aware charm duration from the spell catalog, for CHARM_SPELLS entries
+// flagged catalogDur (curated durations stay authoritative for the rest —
+// e.g. Boltran's has a duplicate catalog row with the wrong formula, so a
+// blanket catalog-first would regress it). Falls back to the entry's static
+// dur when the catalog can't resolve.
+function _charmDurationSec(spellName, mapDur, owner) {
+  const key = String(spellName || '').toLowerCase();
+  const e = _spellByNameLower.get(key) || _spellByNameLower.get(key.replace(/`/g, "'"));
+  if (e && Number(e.dur) > 0) {
+    const lvl = (whoData.get(String(owner || '').toLowerCase()) || {}).level || _assumedCasterLevel();
+    const t = _durTicksForLevel(e.durf, e.dur, lvl);
+    if (t > 0 && t < 72000) return t * 6;
+  }
+  return mapDur;
+}
 
 // ── EQ class-title → base class ───────────────────────────────────────────────
 // A /who line shows the LEVEL TITLE for the character's class (e.g. a level-55
@@ -2518,7 +2542,7 @@ function noteSelfCast(line, character) {
   // ("tick N/10~"). Doing it here covers the gap with no extra cost: same
   // regex match we just did, same character context.
   const ci = CHARM_SPELLS.get(spellLower);
-  if (ci) _pendingCharmSpell = { cls: ci.cls, dur: ci.dur, name: m[1].trim(), owner: String(character), ts: atMs };
+  if (ci) _pendingCharmSpell = { cls: ci.cls, dur: ci.catalogDur ? _charmDurationSec(m[1].trim(), ci.dur, character) : ci.dur, name: m[1].trim(), owner: String(character), ts: atMs };
   return { name: m[1].trim(), atMs };
 }
 // Cross-client casting relay: when WE begin a cast with a target, tell the bot
@@ -5430,7 +5454,7 @@ class EncounterBuilder {
         // The `name` field on _pendingCharmSpell lets the charm overlay show
         // which spell opened the session (Allure / Boltran's / …) in its
         // "pending charm staged?" diagnostic line.
-        if (ci) _pendingCharmSpell = { cls: ci.cls, dur: ci.dur, name: spell, owner: this.character || null, ts: Date.now() };
+        if (ci) _pendingCharmSpell = { cls: ci.cls, dur: ci.catalogDur ? _charmDurationSec(spell, ci.dur, this.character) : ci.dur, name: spell, owner: this.character || null, ts: Date.now() };
         // Direct-hate AAs / spells — Voice of Thule, Disruptive Persecution,
         // Hate's Attraction, etc. — never produce a damage line, so they're
         // invisible to the rest of the threat math. Bump the caster's spell
@@ -21175,6 +21199,14 @@ function flushLiveStateToBot(opts) {
       zone_id:     st.zone != null ? st.zone : null,
       zone_name:   _zoneName(st.zone),
       self_hp_pct: st.self_hp_pct != null ? st.self_hp_pct : null,
+      // Exact self HP (Zeal labels 17/18) — powers the cross-client Tank
+      // overlay's "cur / max · pct%" label for a Mimic-running MT. These
+      // never left the machine before (only the pipeverbose raid-sample path
+      // carried exact numbers), so the MT bar showed % only
+      // (Uilnayar 2026-07-15). NOT in the change signature — refreshes ride
+      // the heartbeat + existing sig triggers.
+      self_hp_cur: st.self_hp_cur != null ? st.self_hp_cur : null,
+      self_hp_max: st.self_hp_max != null ? st.self_hp_max : null,
       // Self mana — feeds the web /raid mana list + Twitch Queue. pct from
       // cur/max (labels 124/125) so it's exact when the pipe supplies them.
       self_mana_pct: (st.self_mana_cur != null && st.self_mana_max != null && st.self_mana_max > 0)
