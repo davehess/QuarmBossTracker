@@ -50,7 +50,8 @@ export const releases: Release[] = [
     channel: 'beta',
     headline: 'Restarting Mimic no longer freezes your overlays for minutes — the parser now remembers what it already uploaded, and overlays reconnect to the engine on their own after any restart.',
     features: [
-      { name: 'No more re-upload marathon after a restart', blurb: 'The parser used to re-read and re-send every character’s gear and spellbook after every restart or update — minutes of frozen overlays on big multi-character setups. It now remembers what it already sent, so restarts come back in seconds.' },
+      { name: 'No more re-upload marathon after a restart', blurb: 'The parser used to re-read and re-send every character’s gear and spellbook after every restart or update — minutes of frozen overlays on big multi-character setups. It now remembers what it already sent AND skips re-reading files that haven’t changed at all, so restarts come back in seconds.' },
+      { name: '🛟 Settings backups with one-click restore', blurb: 'Mimic now quietly keeps the last 10 versions of your eqclient.ini and zeal.ini for every EQ folder it knows. Patch day wiped your settings? A crash ate them? Open the dashboard’s Info tab → Settings backups and restore any version with one click (close EQ first — it’s safe, the current file is saved before every restore).' },
       { name: 'Overlays find the engine by themselves', blurb: 'If the parser engine comes back on a different connection after a restart, every overlay now re-points itself automatically — no more CH chain stuck on "OVERLAY BLIND" or a blank Command Center until you restarted Mimic.' },
     ],
     fixes: [
