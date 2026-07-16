@@ -17465,7 +17465,11 @@ function runOptinBackfill(files, opts = {}) {
               if (chatMsg) {
                 chatBatch.push({ ...chatMsg, uploadedBy: f.character });
                 status.chatCount++;
-                noteLootFromChat(chatMsg);   // officer Loot panel — live only
+                // NOTE: no loot capture here — this is runOptinBackfill (a
+                // --since replay of OLD logs). Loot capture is LIVE-only and
+                // hooks the two main() tail loops instead (see noteLootFromChat
+                // call sites), so a backfill never floods the panel with
+                // week-old drop lists.
                 if (chatBatch.length >= 500) flushChat(true).catch(() => {});
                 return;
               }
@@ -18143,6 +18147,7 @@ function noteLootFromChat(chatMsg) {
       items,
     });
     while (_lootCaptures.length > LOOT_CAPTURE_MAX) _lootCaptures.pop();
+    console.log(`[loot] captured ${items.length} item(s) from ${chatMsg.speaker} (${chatMsg.channel}) — officer Loot panel`);
   } catch (e) { void e; }
 }
 function _lootCaptureSnapshot() {
@@ -23345,6 +23350,7 @@ async function main() {
         const chatMsg = parseChatLine(line, b.character);
         if (chatMsg) {
           chatBatch.push({ ...chatMsg, uploadedBy: b.character });
+          noteLootFromChat(chatMsg);   // officer Loot panel — LIVE tail
           if (chatBatch.length >= 500) flushChat(true).catch(() => {});
           return;
         }
@@ -23712,6 +23718,10 @@ async function main() {
           // add to the whitelist so their incoming damage / deaths show up on
           // the Tank dashboard (NPCs never use /gu or /rs).
           confirmPlayer(chatMsg.speaker);
+          // Officer Loot panel — LIVE tail (speaker fully resolved by now).
+          // Dedupes against the other live loop within 10 min, so being hooked
+          // in both places is safe (this one is the primary relay path).
+          noteLootFromChat(chatMsg);
           // Cross-log arbitration: same channel + normalized text within 90s =
           // the same message captured from this person's main + alt logs
           // (self-form in one, bystander-form in the others). The speaker is
