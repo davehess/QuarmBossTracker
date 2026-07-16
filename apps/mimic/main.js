@@ -1510,6 +1510,7 @@ async function startMimicLink() {
           // spawn time). Kill → the exit handler auto-relaunches; if it's not
           // running, start it directly. This is what makes the just-completed
           // sign-in actually start uploading without a manual restart.
+          appendAgentLog('[mimic] sign-in completed — restarting agent to pick up the new token\n');
           if (agentProc) { try { agentProc.kill(); } catch (e) { void e; } }
           else { launchAgent(); }
           return;
@@ -1547,6 +1548,7 @@ async function signOutMimic() {
   pushMimicSession();
   pushStatus();
   // Drop the agent back to local-only by relaunching without a token.
+  appendAgentLog('[mimic] sign-out — restarting agent without a token\n');
   if (agentProc) { try { agentProc.kill(); } catch (e) { void e; } }
   if (token) {
     try { await _httpsJsonPost(_botBaseUrl(cfg), '/api/mimic-link/revoke', {}, { 'X-Wolfpack-Mimic-Session': token }); } catch (e) { void e; }
@@ -2045,13 +2047,18 @@ async function launchAgent() {
   });
   agentProc.stdout.on('data', d => { const s = `[agent] ${d}`; process.stdout.write(s); appendAgentLog(s); });
   agentProc.stderr.on('data', d => { const s = `[agent] ${d}`; process.stderr.write(s); appendAgentLog(s); });
-  agentProc.on('exit', (code) => {
+  agentProc.on('exit', (code, signal) => {
     agentProc = null;
     pushStatus();
     if (quitting) return;
     const marker = path.join(AGENT_DIR(), '.force-update-on-restart');
     if (fs.existsSync(marker)) { try { fs.unlinkSync(marker); } catch {} restartBackoff = 1000; return launchAgent(); }
-    appendAgentLog(`[mimic] agent exited (${code}); restarting in ${restartBackoff}ms\n`);
+    // code=null + a signal = something called kill() on the child. Every
+    // shell-side kill path now logs its reason first — an exit here with NO
+    // preceding [mimic] reason line is external (AV, OS, or the agent dying
+    // to a raised signal). Raid night 2026-07-15 had five such orphan exits;
+    // this line is the instrumentation to name the killer next time.
+    appendAgentLog(`[mimic] agent exited (code=${code} signal=${signal || 'none'}); restarting in ${restartBackoff}ms\n`);
     setTimeout(launchAgent, restartBackoff);
     restartBackoff = Math.min(restartBackoff * 2, 60000);
   });
@@ -2080,6 +2087,20 @@ async function launchAgent() {
       // (First launch shows loading.html on file://, so this is skipped there.)
       if (/^https?:\/\/127\.0\.0\.1:\d+\//.test(cur)) {
         navigateToDashboard('agent-restart');
+      }
+    }
+  } catch (e) { /* non-fatal */ }
+  // Re-point EVERY overlay window at the (possibly new) agent port. Each
+  // overlay subscribes via onAgentPort, but 'agent-port' was only ever sent
+  // once, in each window's ready-to-show — so an agent restart that moved
+  // ports left every open overlay polling the dead old port forever (CH
+  // chain red "OVERLAY BLIND", blank Command Center — 2026-07-15 raid).
+  // Broadcasting to all windows is safe: pages without an onAgentPort
+  // subscription simply never registered the listener.
+  try {
+    if (up) {
+      for (const w of BrowserWindow.getAllWindows()) {
+        try { if (!w.isDestroyed()) w.webContents.send('agent-port', agentPort); } catch (e) { void e; }
       }
     }
   } catch (e) { /* non-fatal */ }
@@ -4760,6 +4781,7 @@ function buildTrayMenu() {
     // Quit as the two safe bottom actions.
     { label: 'Overlays', submenu: overlaysSubmenu },
     { label: 'Restart agent', click: async () => {
+        appendAgentLog('[mimic] tray "Restart agent" clicked\n');
         if (agentProc) { try { agentProc.kill(); } catch {} } else { await launchAgent(); }
       } },
     updateItem,
@@ -5839,6 +5861,7 @@ ipcMain.handle('save-config', async (_e, incoming) => {
   pushStatus();
   if (tokenChanged) {
     pushMimicSession();
+    appendAgentLog('[mimic] token pasted in Settings — restarting agent to apply it\n');
     if (agentProc) { try { agentProc.kill(); } catch (e) { void e; } }
     else { await launchAgent(); }
   }
@@ -5852,7 +5875,11 @@ ipcMain.handle('set-overlays-locked', (_e, locked) => {
   return currentStatus();
 });
 ipcMain.handle('get-agent-port', () => agentPort);
-ipcMain.handle('relaunch-agent', async () => { if (agentProc) { try { agentProc.kill(); } catch {} } else { await launchAgent(); } return true; });
+ipcMain.handle('relaunch-agent', async () => {
+  appendAgentLog('[mimic] relaunch-agent requested by a renderer (Settings/Setup save)\n');
+  if (agentProc) { try { agentProc.kill(); } catch {} } else { await launchAgent(); }
+  return true;
+});
 ipcMain.handle('get-status', () => currentStatus());
 ipcMain.handle('set-quiet-mode', (_e, on) => {
   const cfg = loadConfig(); cfg.quietMode = !!on; saveConfig(cfg);
