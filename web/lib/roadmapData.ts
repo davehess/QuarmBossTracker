@@ -43,6 +43,19 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'officer-loot-and-revert-195',
+    title: '💰 Loot capture + ↩ revert to stable · Mimic 1.9.5 (beta)',
+    version: 'Mimic 1.9.5-beta · Agent 3.3.60',
+    date: '2026-07-16',
+    channel: 'beta',
+    headline: 'Officers can now review drop lists straight from the dashboard, and any beta tester can drop back to the stable release in one click.',
+    features: [
+      { name: '💰 Loot capture (officers)', blurb: 'When someone posts a drop list in guild or raid chat — comma OR pipe separated, however your Zeal is set — it collects on the dashboard’s Info tab. Check the items you want, and "Copy for /loot" gives you the exact paste, cleaned of chatter. Only officers see it. (One-click posting to bidding and DKP ticks are landing next.)' },
+      { name: '↩ Revert to stable', blurb: 'On a beta build and need the stable release back? There’s now a one-click "Revert to stable" in the tray, on the "you’re up to date" dialog, and next to the BETA badge on the dashboard. It downloads stable and installs on your next restart — no reinstall, and you can rejoin the beta any time.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'no-more-boot-burst-193',
     title: '🔌 Restarts without the freeze · Mimic 1.9.3 (beta)',
     version: 'Mimic 1.9.3-beta · Agent 3.3.56',
