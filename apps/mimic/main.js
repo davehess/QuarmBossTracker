@@ -1510,6 +1510,7 @@ async function startMimicLink() {
           // spawn time). Kill → the exit handler auto-relaunches; if it's not
           // running, start it directly. This is what makes the just-completed
           // sign-in actually start uploading without a manual restart.
+          appendAgentLog('[mimic] sign-in completed — restarting agent to pick up the new token\n');
           if (agentProc) { try { agentProc.kill(); } catch (e) { void e; } }
           else { launchAgent(); }
           return;
@@ -1547,6 +1548,7 @@ async function signOutMimic() {
   pushMimicSession();
   pushStatus();
   // Drop the agent back to local-only by relaunching without a token.
+  appendAgentLog('[mimic] sign-out — restarting agent without a token\n');
   if (agentProc) { try { agentProc.kill(); } catch (e) { void e; } }
   if (token) {
     try { await _httpsJsonPost(_botBaseUrl(cfg), '/api/mimic-link/revoke', {}, { 'X-Wolfpack-Mimic-Session': token }); } catch (e) { void e; }
@@ -2045,13 +2047,18 @@ async function launchAgent() {
   });
   agentProc.stdout.on('data', d => { const s = `[agent] ${d}`; process.stdout.write(s); appendAgentLog(s); });
   agentProc.stderr.on('data', d => { const s = `[agent] ${d}`; process.stderr.write(s); appendAgentLog(s); });
-  agentProc.on('exit', (code) => {
+  agentProc.on('exit', (code, signal) => {
     agentProc = null;
     pushStatus();
     if (quitting) return;
     const marker = path.join(AGENT_DIR(), '.force-update-on-restart');
     if (fs.existsSync(marker)) { try { fs.unlinkSync(marker); } catch {} restartBackoff = 1000; return launchAgent(); }
-    appendAgentLog(`[mimic] agent exited (${code}); restarting in ${restartBackoff}ms\n`);
+    // code=null + a signal = something called kill() on the child. Every
+    // shell-side kill path now logs its reason first — an exit here with NO
+    // preceding [mimic] reason line is external (AV, OS, or the agent dying
+    // to a raised signal). Raid night 2026-07-15 had five such orphan exits;
+    // this line is the instrumentation to name the killer next time.
+    appendAgentLog(`[mimic] agent exited (code=${code} signal=${signal || 'none'}); restarting in ${restartBackoff}ms\n`);
     setTimeout(launchAgent, restartBackoff);
     restartBackoff = Math.min(restartBackoff * 2, 60000);
   });
@@ -2080,6 +2087,20 @@ async function launchAgent() {
       // (First launch shows loading.html on file://, so this is skipped there.)
       if (/^https?:\/\/127\.0\.0\.1:\d+\//.test(cur)) {
         navigateToDashboard('agent-restart');
+      }
+    }
+  } catch (e) { /* non-fatal */ }
+  // Re-point EVERY overlay window at the (possibly new) agent port. Each
+  // overlay subscribes via onAgentPort, but 'agent-port' was only ever sent
+  // once, in each window's ready-to-show — so an agent restart that moved
+  // ports left every open overlay polling the dead old port forever (CH
+  // chain red "OVERLAY BLIND", blank Command Center — 2026-07-15 raid).
+  // Broadcasting to all windows is safe: pages without an onAgentPort
+  // subscription simply never registered the listener.
+  try {
+    if (up) {
+      for (const w of BrowserWindow.getAllWindows()) {
+        try { if (!w.isDestroyed()) w.webContents.send('agent-port', agentPort); } catch (e) { void e; }
       }
     }
   } catch (e) { /* non-fatal */ }
@@ -4657,7 +4678,14 @@ function buildTrayMenu() {
 
   const updateItem = updatePending
     ? { label: `Restart to install update v${updatePending.version}`, click: () => { try { autoUpdater && autoUpdater.quitAndInstall(true, true); } catch (e) { console.warn('[updater] quitAndInstall failed', e); } } }
-    : { label: 'Check for updates…', click: () => safeCheckForUpdates(true), enabled: !!autoUpdater };
+    : { label: 'Check for updates…',
+        // Manual check covers BOTH update channels — the Electron shell AND
+        // the agent hot-swap (Hitya 2026-07-16: "check for updates also
+        // check for newer agents rather than waiting for 30 minutes"). The
+        // dashboard header's update button already did both via the
+        // check-for-updates IPC; the tray item was shell-only.
+        click: () => { safeCheckForUpdates(true); checkAgentUpdate({ manual: true }); },
+        enabled: !!autoUpdater };
   // When unchecked (default), a ready update shows only as a dashboard banner +
   // the tray item above and applies on next quit — no pop-up. Check it to get
   // the "Restart now?" dialog back.
@@ -4760,6 +4788,7 @@ function buildTrayMenu() {
     // Quit as the two safe bottom actions.
     { label: 'Overlays', submenu: overlaysSubmenu },
     { label: 'Restart agent', click: async () => {
+        appendAgentLog('[mimic] tray "Restart agent" clicked\n');
         if (agentProc) { try { agentProc.kill(); } catch {} } else { await launchAgent(); }
       } },
     updateItem,
@@ -4852,15 +4881,19 @@ function _httpsGetBuffer(url) {
   });
 }
 
-async function checkAgentUpdate() {
+async function checkAgentUpdate(opts) {
+  const manual = !!(opts && opts.manual);
   if (_agentUpdateInFlight) return;
   // Beta Mimic builds ship their own agent and should NOT hot-swap from
   // main — main's `/api/agent/latest-version` could be on an older agent
   // than the one bundled in this beta build, or worse, on a stable release
   // that's missing beta-only changes. Detect prerelease via the build's own
   // version (presence of `-` per semver) and skip the swap entirely.
-  // Stable Mimic installs keep their existing 30-min hot-swap cadence.
-  if (/-/.test(String(app.getVersion() || ''))) return;
+  // Stable Mimic installs keep the background hot-swap cadence.
+  if (/-/.test(String(app.getVersion() || ''))) {
+    if (manual) appendAgentLog('[mimic] manual agent check: beta build — agent updates arrive bundled in new beta builds, not via hot-swap\n');
+    return;
+  }
   _agentUpdateInFlight = true;
   try {
     const cfg = loadConfig();
@@ -4877,7 +4910,10 @@ async function checkAgentUpdate() {
     if (!latest || !url) return;
 
     const current = _readAgentVersion();
-    if (!_agentVersionNewer(latest, current)) return;  // already current/ahead
+    if (!_agentVersionNewer(latest, current)) {
+      if (manual) appendAgentLog(`[mimic] manual agent check: current (installed ${current}, latest ${latest})\n`);
+      return;  // already current/ahead
+    }
 
     // Respect the agent's OWN update gate — don't bounce it mid-fight, mid
     // opt-in-backfill, or with a non-empty upload queue. /api/state exposes
@@ -5024,11 +5060,13 @@ function wireAutoUpdater() {
 
 // Agent hot-swap poll — independent of the Electron-shell updater above.
 // First check 45s after boot (let the agent come up + settle), then every
-// 30 min. The agent self-update gate (updateBlocked) keeps it from bouncing
-// mid-fight; checkAgentUpdate is also a no-op when already current.
+// 15 min (was 30 — the 2026-07-15 raid-night hotfix took most of an hour to
+// reach the fleet; the fight-live/queue-pending gate already protects raids,
+// so a tighter poll only speeds up the calm-moment swaps). checkAgentUpdate
+// is a no-op when already current.
 function scheduleAgentUpdates() {
   setTimeout(() => { checkAgentUpdate(); }, 45 * 1000);
-  setInterval(() => { checkAgentUpdate(); }, 30 * 60 * 1000);
+  setInterval(() => { checkAgentUpdate(); }, 15 * 60 * 1000);
 }
 
 // ── IPC ─────────────────────────────────────────────────────────────────────
@@ -5839,6 +5877,7 @@ ipcMain.handle('save-config', async (_e, incoming) => {
   pushStatus();
   if (tokenChanged) {
     pushMimicSession();
+    appendAgentLog('[mimic] token pasted in Settings — restarting agent to apply it\n');
     if (agentProc) { try { agentProc.kill(); } catch (e) { void e; } }
     else { await launchAgent(); }
   }
@@ -5852,7 +5891,11 @@ ipcMain.handle('set-overlays-locked', (_e, locked) => {
   return currentStatus();
 });
 ipcMain.handle('get-agent-port', () => agentPort);
-ipcMain.handle('relaunch-agent', async () => { if (agentProc) { try { agentProc.kill(); } catch {} } else { await launchAgent(); } return true; });
+ipcMain.handle('relaunch-agent', async () => {
+  appendAgentLog('[mimic] relaunch-agent requested by a renderer (Settings/Setup save)\n');
+  if (agentProc) { try { agentProc.kill(); } catch {} } else { await launchAgent(); }
+  return true;
+});
 ipcMain.handle('get-status', () => currentStatus());
 ipcMain.handle('set-quiet-mode', (_e, on) => {
   const cfg = loadConfig(); cfg.quietMode = !!on; saveConfig(cfg);
@@ -5994,7 +6037,7 @@ ipcMain.handle('open-zeal-capture', () => {
 ipcMain.handle('mimic-link-start',   async () => await startMimicLink());
 ipcMain.handle('mimic-link-cancel',  () => { cancelMimicLink(); return true; });
 ipcMain.handle('mimic-link-signout', async () => { await signOutMimic(); return true; });
-ipcMain.handle('check-for-updates', () => { safeCheckForUpdates(true); checkAgentUpdate(); return true; });
+ipcMain.handle('check-for-updates', () => { safeCheckForUpdates(true); checkAgentUpdate({ manual: true }); return true; });
 // Dashboard "update ready" banner button → apply the downloaded update now.
 ipcMain.handle('restart-to-update', () => {
   try { autoUpdater && autoUpdater.quitAndInstall(true, true); } catch (e) { console.warn('[updater] quitAndInstall failed', e); }
