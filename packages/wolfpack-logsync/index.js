@@ -8528,6 +8528,10 @@ function _serializeForDashboard() {
     // signal flips to true within a few seconds of a successful sign-in.
     mimicSignedIn:      !!(_mimicSessionToken && _mimicIdentity),
     mimicIdentity:      _mimicIdentity,
+    // Officer-only DKP loot capture — item lists seen in /gu + /rs, ready to
+    // review + post. Gated on the signed-in officer flag so a non-officer's
+    // dashboard never even receives it. null when not an officer.
+    dkpLoot:            (_mimicIdentity && _mimicIdentity.is_officer) ? _lootCaptureSnapshot() : null,
     // Zeal's "Export data on /camp" toggle, read straight from zeal.ini in
     // each known EQ folder (60s cache). true = every found zeal.ini has
     // ExportOnCamp=TRUE; false = at least one has it off; null = no zeal.ini
@@ -11634,6 +11638,47 @@ function renderBackupsCard(s) {
   if (el._wpBkHtml !== h) { el._wpBkHtml = h; el.innerHTML = h; }
 }
 
+// 💰 Officer Loot capture card. Fills #wpDkpLoot from s.dkpLoot (null for
+// non-officers → card stays hidden). Byte-stable: innerHTML is only
+// reassigned when the built string changes, so checkbox state survives the
+// 2s poll while nothing new arrives (a fresh capture repaints and its rows
+// default to checked, which is what an officer wants for a new drop).
+function renderDkpLootCard(s) {
+  var el = document.getElementById('wpDkpLoot');
+  if (!el) return;
+  var caps = s && s.dkpLoot;
+  if (!Array.isArray(caps)) { el.style.display = 'none'; return; }   // not an officer
+  el.style.display = '';
+  var h = '<h2>💰 Loot capture <span class="dim" style="font-size:11px;font-weight:normal">— item lists seen in /gu + /rs (officer only)</span></h2>';
+  if (caps.length === 0) {
+    h += '<div class="dim" style="font-size:12px">Nothing captured yet. When someone posts a drop list in guild or raid chat (comma or pipe separated), it shows here to review and copy for <code>/loot</code>.</div>';
+    if (el._wpDkpHtml !== h) { el._wpDkpHtml = h; el.innerHTML = h; }
+    return;
+  }
+  h += '<div style="margin-bottom:8px"><button class="wpDkpClearAll" style="background:#30363d;color:#e6edf3;border:1px solid #484f58;border-radius:5px;padding:3px 10px;cursor:pointer;font-family:inherit;font-size:11px">Dismiss all</button></div>';
+  for (var i = 0; i < caps.length; i++) {
+    var c = caps[i];
+    var chan = c.channel === 'gu' ? '/gu' : '/rs';
+    h += '<div class="wpDkpCap" data-id="' + esc(c.id) + '" style="border:1px solid #30363d;border-radius:6px;padding:8px 10px;margin:6px 0">'
+      + '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">'
+      +   '<b>' + esc(c.speaker) + '</b>'
+      +   '<span class="dim" style="font-size:11px">' + chan + ' · ' + fmtAgo((Date.now() - Date.parse(c.ts)) / 1000) + ' ago · ' + c.items.length + ' item' + (c.items.length === 1 ? '' : 's') + '</span>'
+      +   '<span style="flex:1"></span>'
+      +   '<button class="wpDkpCopy" data-id="' + esc(c.id) + '" style="background:#1f6feb;color:#fff;border:0;border-radius:5px;padding:2px 10px;cursor:pointer;font-family:inherit;font-size:11px">Copy for /loot</button>'
+      +   '<button class="wpDkpDismiss" data-id="' + esc(c.id) + '" title="Dismiss this list" style="background:none;color:#8b949e;border:1px solid #30363d;border-radius:5px;padding:2px 8px;cursor:pointer;font-family:inherit;font-size:11px">✕</button>'
+      + '</div>';
+    for (var j = 0; j < c.items.length; j++) {
+      var it = c.items[j];
+      h += '<label style="display:flex;align-items:center;gap:8px;padding:2px 0;cursor:pointer;font-size:13px">'
+        + '<input type="checkbox" class="wpDkpItem" data-name="' + esc(it.name) + '" data-qty="' + (it.quantity || 1) + '" checked>'
+        + '<span>' + esc(it.name) + (it.quantity > 1 ? ' <span class="dim">×' + it.quantity + '</span>' : '') + '</span>'
+        + '</label>';
+    }
+    h += '</div>';
+  }
+  if (el._wpDkpHtml !== h) { el._wpDkpHtml = h; el.innerHTML = h; }
+}
+
 function renderInfo(s) {
   const sessionMin = Math.max(1, Math.round((Date.now() - s.startedAt) / 60000));
   // totalMinutes now accumulates the live session incrementally (saveStatsSoon),
@@ -11650,6 +11695,9 @@ function renderInfo(s) {
   // each group expandable. Volatile (live gauges/labels), so it fills its own
   // placeholder via renderZealExplorer to keep the rest of #info byte-stable.
   h += '<div id="wpZealExplorer" class="card wide" style="display:none"></div>';
+  // 💰 Loot capture (officers only) — filled by renderDkpLootCard. Own
+  // placeholder so its checkboxes/buttons survive #info repaints.
+  h += '<div id="wpDkpLoot" class="card wide" style="display:none"></div>';
   // 🛟 Settings backups — filled by renderBackupsCard (own placeholder so the
   // restore controls survive #info repaints).
   h += '<div id="wpBackupsCard" class="card wide" style="display:none"></div>';
@@ -12643,6 +12691,7 @@ async function refresh() {
                      // After info: fill the placeholders renderInfo just
                      // (re)painted, so they show same-tick.
                      ['zealexplorer', renderZealExplorer],
+                     ['dkploot', renderDkpLootCard],
                      ['backupscard', renderBackupsCard]];
     for (var _si = 0; _si < _sections.length; _si++) {
       var _sid = _sections[_si][0], _sfn = _sections[_si][1];
@@ -12752,6 +12801,41 @@ refresh(); setInterval(refresh, 2000);
     }).catch(function () { rb.disabled = false; });
   };
 })();
+// 💰 Loot capture controls — delegated (capture) so repaints never lose them.
+document.addEventListener('click', function (ev) {
+  var t = ev.target;
+  if (!t || !t.closest) return;
+  // Copy the checked items of one capture as a pipe-delimited /loot paste.
+  var copyBtn = t.closest('.wpDkpCopy');
+  if (copyBtn) {
+    var cap = copyBtn.closest('.wpDkpCap');
+    if (!cap) return;
+    var boxes = cap.querySelectorAll('.wpDkpItem');
+    var names = [];
+    for (var i = 0; i < boxes.length; i++) {
+      if (!boxes[i].checked) continue;
+      var nm = boxes[i].getAttribute('data-name') || '';
+      var q = parseInt(boxes[i].getAttribute('data-qty') || '1', 10) || 1;
+      names.push(q > 1 ? nm + ' (' + q + ')' : nm);
+    }
+    if (names.length === 0) { copyBtn.textContent = 'nothing checked'; setTimeout(function () { copyBtn.textContent = 'Copy for /loot'; }, 1500); return; }
+    var paste = names.join(' | ');
+    var done = function () { copyBtn.textContent = '✓ copied ' + names.length; setTimeout(function () { copyBtn.textContent = 'Copy for /loot'; }, 2000); };
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) { navigator.clipboard.writeText(paste).then(done, done); }
+      else { var ta = document.createElement('textarea'); ta.value = paste; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); done(); }
+    } catch (e) { done(); }
+    return;
+  }
+  var dis = t.closest('.wpDkpDismiss');
+  var clr = t.closest('.wpDkpClearAll');
+  if (dis || clr) {
+    var id = clr ? '*' : (dis.getAttribute('data-id') || '');
+    fetch('/api/dkp/dismiss', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: id }) })
+      .then(function () { refresh(); }).catch(function () {});
+    return;
+  }
+}, true);
 // Restore buttons on the 🛟 Settings backups card — delegated (capture) so
 // repaints never lose the handler. Two-step arm/confirm instead of confirm():
 // first click arms for 8s, second click fires the restore.
@@ -14814,6 +14898,18 @@ function startWebDashboard(port) {
         catch { res.writeHead(400); return res.end('{"error":"bad json"}'); }
         const result = restoreSettingsBackup(rp.dir, rp.file, rp.stamp);
         res.writeHead(result.ok ? 200 : 409, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify(result));
+      }
+      // Officer Loot panel — dismiss a captured item list (or all). Officer-
+      // gated at the UI (the panel only renders for officers) and here (the
+      // capture list is only ever served to officers). Local-only mutation.
+      if (req.url === '/api/dkp/dismiss' && req.method === 'POST') {
+        if (!(_mimicIdentity && _mimicIdentity.is_officer)) { res.writeHead(403); return res.end('{"error":"officers only"}'); }
+        let _db = '';
+        for await (const c of req) { _db += c; if (_db.length > 2 * 1024) { res.writeHead(413); return res.end(); } }
+        let dp; try { dp = JSON.parse(_db || '{}'); } catch { res.writeHead(400); return res.end('{"error":"bad json"}'); }
+        const result = dismissLootCapture(String(dp.id || ''));
+        res.writeHead(result.ok ? 200 : 404, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify(result));
       }
       if (req.url === '/api/triggers/feedback' && req.method === 'POST') {
@@ -17369,6 +17465,7 @@ function runOptinBackfill(files, opts = {}) {
               if (chatMsg) {
                 chatBatch.push({ ...chatMsg, uploadedBy: f.character });
                 status.chatCount++;
+                noteLootFromChat(chatMsg);   // officer Loot panel — live only
                 if (chatBatch.length >= 500) flushChat(true).catch(() => {});
                 return;
               }
@@ -17979,6 +18076,89 @@ const CHAT_LINE_PATTERNS = [
   //                    — accept both verbs to cover client variations.
   { rx: /^\[.+?\]\s+You (?:tell|say to) your raid,\s*['"](.+?)['"]\s*$/, channel: 'raid', self: true },
 ];
+
+// ── DKP loot capture (officer dashboard) ───────────────────────────────────
+// Officers post drops in /gu or /rs as a delimited item list (comma OR pipe —
+// a per-user Zeal option). The dashboard's officer-only Loot panel collects
+// these live so an officer can review + clean them and copy the exact /loot
+// paste (or, next step, post straight to bidding) without hunting back
+// through chat. Item names legitimately contain colons ("Ancient: Greater
+// Concussion", "Spell: Hammer of Souls"), apostrophes ("Palladius'"), and
+// leading articles ("A Glowing Orb…"); pipe and comma are the ONLY safe split
+// chars (EQ item names contain neither). The bot re-validates every name
+// against eqemu_items at post time — this capture only keeps the list tidy.
+function parseLootChatBody(body) {
+  if (!body) return [];
+  let s = String(body).trim().replace(/^'+|'+$/g, '').trim();
+  const delim = s.includes('|') ? '|' : ',';
+  const parts = s.split(delim);
+  const multi = parts.length > 1;
+  const out = [];
+  for (let raw of parts) {
+    let name = raw.trim();
+    if (!name) continue;
+    let qty = 1;
+    const qm = name.match(/\s*\((\d{1,3})\)\s*$/);
+    if (qm) { qty = parseInt(qm[1], 10) || 1; name = name.slice(0, qm.index).trim(); }
+    if (!name || !/[A-Za-z]/.test(name)) continue;
+    // Single-item bodies are the chatter risk ("grats!", "inc", "oom") — require
+    // an item shape. A real delimited list (multi) is trusted as-is.
+    if (!multi) {
+      const knownPrefix = /^(Spell|Song|Ancient|Rune|Glyph|Tome|Words|Page|Formula):/i.test(name);
+      const multiWordTitle = /\s/.test(name) && /^[A-Z]/.test(name);
+      const looksSentence = /[!?]$/.test(name) || /\b(grats|gratz|inc|oom|fd|rez|res|pull|clear|wtb|wts|lfg)\b/i.test(name);
+      if (looksSentence || (!knownPrefix && !multiWordTitle)) continue;
+    }
+    const prev = out.find(i => i.name.toLowerCase() === name.toLowerCase());
+    if (prev) { prev.quantity += qty; continue; }
+    out.push({ name, quantity: qty });
+  }
+  return out;
+}
+const _lootCaptures = [];          // {id, speaker, channel, ts, items:[{name,quantity}]}, newest first
+const LOOT_CAPTURE_MAX    = 40;
+const LOOT_CAPTURE_TTL_MS = 3 * 60 * 60 * 1000;   // drop after 3h
+let _lootCaptureSeq = 0;
+function noteLootFromChat(chatMsg) {
+  try {
+    if (!chatMsg || (chatMsg.channel !== 'guild' && chatMsg.channel !== 'raid')) return;
+    const items = parseLootChatBody(chatMsg.text);
+    // Require ≥2 items OR a category-prefixed single item — the parser's guard
+    // already enforces item-shape, but a 1-item chatter that slips through
+    // shouldn't spam the panel. (Multi-item = definitely a loot dump.)
+    if (items.length === 0) return;
+    // Dedup: same speaker + identical item-name set within 10 min is a re-link
+    // (people re-post the list). Refresh the timestamp instead of adding a row.
+    const sig = chatMsg.speaker.toLowerCase() + '|' + items.map(i => i.name.toLowerCase()).sort().join('~');
+    const now = Date.now();
+    const dup = _lootCaptures.find(c => c._sig === sig && (now - c._at) < 10 * 60 * 1000);
+    if (dup) { dup._at = now; dup.ts = chatMsg.ts; return; }
+    _lootCaptures.unshift({
+      id: 'lc' + (++_lootCaptureSeq),
+      _sig: sig,
+      _at: now,
+      speaker: chatMsg.speaker,
+      channel: chatMsg.channel === 'guild' ? 'gu' : 'rs',
+      ts: chatMsg.ts,
+      items,
+    });
+    while (_lootCaptures.length > LOOT_CAPTURE_MAX) _lootCaptures.pop();
+  } catch (e) { void e; }
+}
+function _lootCaptureSnapshot() {
+  const cutoff = Date.now() - LOOT_CAPTURE_TTL_MS;
+  for (let i = _lootCaptures.length - 1; i >= 0; i--) {
+    if (_lootCaptures[i]._at < cutoff) _lootCaptures.splice(i, 1);
+  }
+  return _lootCaptures.map(c => ({ id: c.id, speaker: c.speaker, channel: c.channel, ts: c.ts, items: c.items }));
+}
+function dismissLootCapture(id) {
+  if (id === '*' || id === 'all') { _lootCaptures.length = 0; return { ok: true, cleared: 'all' }; }
+  const i = _lootCaptures.findIndex(c => c.id === id);
+  if (i === -1) return { ok: false, reason: 'not found' };
+  _lootCaptures.splice(i, 1);
+  return { ok: true, cleared: id };
+}
 
 // ── Druzzil Ro instance-kill announcements ─────────────────────────────────
 // Server god broadcasts guild kills: "Druzzil Ro tells the guild, 'Emma of <Wolf Pack> has killed Boss in Zone!'"
