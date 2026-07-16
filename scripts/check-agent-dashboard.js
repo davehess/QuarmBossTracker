@@ -82,6 +82,32 @@ function main() {
     process.exit(1);
   }
 
+  // RULE (2026-07-15/16, agent v3.1.59 regression found on raid night): the
+  // SERVED script must never reference the Node-only `process` global — a
+  // bare `process.env.X` inside the template (instead of a server-side
+  // ${...} interpolation) throws "process is not defined" in the browser and
+  // kills every top-level statement after it in the page's single script
+  // block. Server-side interpolations are already resolved by the time
+  // WEB_HTML is a string, so ANY `process.` surviving into a script body is
+  // a leak by definition.
+  let procLeaks = 0;
+  scripts.forEach((body, i) => {
+    const lines = body.split('\n');
+    for (let ln = 0; ln < lines.length; ln++) {
+      const t = lines[ln].trim();
+      if (t.startsWith('//') || t.startsWith('*')) continue;   // prose mentions
+      if (/\bprocess\s*\.\s*\w/.test(lines[ln])) {
+        procLeaks++;
+        console.error(`✗ Node-only \`process.\` reference in served <script> #${i}, line ${ln + 1}:`);
+        console.error(`    ${t.slice(0, 160)}`);
+      }
+    }
+  });
+  if (procLeaks > 0) {
+    console.error(`\n${procLeaks} browser-side \`process.\` leak(s) — bake the value server-side with \${...} instead.`);
+    process.exit(1);
+  }
+
   // RULE (Uilnayar 2026-07-08, after the 1.7.0-beta.2 Zeal-pipe collapse):
   // every <details> the dashboard emits MUST persist its open state through
   // the wpKeep store — section repaints (and PARENT-section repaints, which

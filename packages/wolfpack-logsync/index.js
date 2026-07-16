@@ -8292,6 +8292,9 @@ function _applyEqSetup() {
   return { ok: true, folders };
 }
 
+// One serialized /api/state snapshot shared by every poller for 400ms —
+// see the /api/state handler for the raid-load rationale.
+let _stateJsonCache = { at: 0, body: null };
 function _serializeForDashboard() {
   const healersOut = {};
   for (const [name, s] of Object.entries(stats.sessionHealers || {})) {
@@ -12435,8 +12438,13 @@ async function refresh() {
   // night, each re-serving the whole page and deepening the stall).
   if (_refreshInFlight) return;
   _refreshInFlight = true;
+  // 12s cap, not 5s: on a raid-loaded box /api/state can legitimately take
+  // longer than 5s (2026-07-15: the static page served instantly while state
+  // polls timed out — every poll aborted, so the banner never cleared even
+  // though the engine was healthy). The in-flight guard above already
+  // prevents stacking, so a generous cap costs nothing.
   var _ctl = (typeof AbortController === 'undefined') ? null : new AbortController();
-  var _tmo = _ctl ? setTimeout(function () { try { _ctl.abort(); } catch (e) {} }, 5000) : null;
+  var _tmo = _ctl ? setTimeout(function () { try { _ctl.abort(); } catch (e) {} }, 12000) : null;
   try {
     const s = await (await fetch('/api/state', _ctl ? { cache: 'no-store', signal: _ctl.signal } : { cache: 'no-store' })).json();
     _refreshFailures = 0;
@@ -13882,7 +13890,13 @@ async function dismissTopDamage(key) {
   // is plenty responsive while cutting wishlist+auction reads ~3x.
   // 2026-06-21: cranked default 15s → 7s after the Supabase Pro upgrade —
   // bids feel near-real-time again. Override via WP_AUCTION_POLL_MS.
-  setInterval(fetchAll, parseInt(process.env.WP_AUCTION_POLL_MS, 10) || 7000);
+  // Baked server-side (\${}) at template build — a bare process.env here ran
+  // in the BROWSER and threw "process is not defined" on every page load
+  // since v3.1.59, killing every top-level statement after this IIFE in the
+  // page's single script block (uploader banner, triggers editor mount,
+  // suggested triggers, My Crits). Found 2026-07-15 via the console-error
+  // relay in agent.log.
+  setInterval(fetchAll, ${Number(process.env.WP_AUCTION_POLL_MS) || 7000});
 })();
 
 // ── Read-only uploader banner ──────────────────────────────────────────────
@@ -14540,8 +14554,19 @@ function startWebDashboard(port) {
         return res.end(WEB_HTML);
       }
       if (req.url === '/api/state') {
+        // Serve every poller the SAME serialized snapshot for 400ms. The
+        // dashboard (2s) + CH chain (600ms) + tank/command/who/mobinfo
+        // overlays all hit this endpoint — on a raid-loaded box that was
+        // 5-10 full JSON.stringify passes of a multi-MB object per second,
+        // and the serialize work itself starved the event loop (2026-07-15:
+        // /api/state slower than the 5s page timeout while the static page
+        // served instantly). 400ms staleness is invisible at those cadences.
+        const _now = Date.now();
+        if (!_stateJsonCache.body || (_now - _stateJsonCache.at) > 400) {
+          _stateJsonCache = { at: _now, body: JSON.stringify(_serializeForDashboard()) };
+        }
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify(_serializeForDashboard()));
+        return res.end(_stateJsonCache.body);
       }
       // Tank overlay snapshot (Uilnayar 2026-06-25). Aggregates everything the
       // tank.html overlay needs from the active character's live state:
@@ -16576,6 +16601,41 @@ function refreshInventories() {
 const QUARMY_FILENAME_RX = /^([A-Za-z]+)[-_ ]?Quarmy\.txt$/i;
 const _quarmyUploaded = {};   // char(lower) → export checksum already enqueued
 
+// ── Persisted upload-dedup checksums (2026-07-16, raid-night lesson) ────────
+// _quarmyUploaded + _spellbookUploaded used to live only in memory, so EVERY
+// agent restart re-parsed and re-enqueued gear + full spellbooks for every
+// character (17 chars × 200+ spells on the reference box) — the "boot burst"
+// that stalled the engine for minutes right when a raid-night restart landed,
+// and a fleet-wide upload storm on every update wave. The bot dedups by the
+// same checksums server-side, so the re-uploads were pure waste. Persist both
+// maps beside the queue (.tmp + rename, async — gameplay first). Delete
+// logsync.uploaded.json to force a full re-upload on next start.
+const UPLOADED_STATE_FILE = path.join(__dirname, 'logsync.uploaded.json');
+function _loadUploadedState() {
+  try {
+    const j = JSON.parse(fs.readFileSync(UPLOADED_STATE_FILE, 'utf8'));
+    if (j && typeof j === 'object') {
+      Object.assign(_quarmyUploaded,    j.quarmy    || {});
+      Object.assign(_spellbookUploaded, j.spellbook || {});
+    }
+  } catch { /* first run or corrupt file — start empty, re-uploads dedup server-side */ }
+}
+let _uploadedSaveTimer = null;
+function _saveUploadedStateSoon() {
+  if (_uploadedSaveTimer) return;
+  _uploadedSaveTimer = setTimeout(() => {
+    _uploadedSaveTimer = null;
+    let body;
+    try { body = JSON.stringify({ quarmy: _quarmyUploaded, spellbook: _spellbookUploaded }); }
+    catch { return; }
+    const tmp = UPLOADED_STATE_FILE + '.tmp';
+    fs.writeFile(tmp, body, (err) => {
+      if (err) return;
+      fs.rename(tmp, UPLOADED_STATE_FILE, () => {});
+    });
+  }, 2000);
+}
+
 function parseQuarmyExport(text) {
   const out = { profile: null, equipped: [], bags: [], aas: [], checksum: null };
   const slotSeen = {};
@@ -16677,6 +16737,7 @@ function scanQuarmyExports() {
         continue;
       }
       _quarmyUploaded[lower] = checksum;
+      _saveUploadedStateSoon();
       enqueueUpload('quarmy', {
         agent_version: AGENT_VERSION,
         character,
@@ -16704,6 +16765,7 @@ function scanQuarmyExports() {
 // web/app/me/spellbook-actions.ts parseSpellbook (same columns).
 const SPELLBOOK_FILENAME_RX = /^([A-Za-z]+)[-_ ]?Spellbook\.txt$/i;
 const _spellbookUploaded = {};   // char(lower) → content checksum already enqueued
+_loadUploadedState();   // both maps declared — safe to hydrate from disk now
 
 function parseSpellbookFile(text) {
   const out = [];
@@ -16763,6 +16825,7 @@ function scanSpellbookFiles() {
         continue;
       }
       _spellbookUploaded[lower] = checksum;
+      _saveUploadedStateSoon();
       enqueueUpload('spellbook', { agent_version: AGENT_VERSION, character, checksum, spells });
       console.log(`[spellbook] queued ${spells.length} spells for ${character}`);
     } catch { /* unreadable / malformed — skip, retry next scan */ }
