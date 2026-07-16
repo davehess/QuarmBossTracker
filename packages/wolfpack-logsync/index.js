@@ -18350,21 +18350,34 @@ function dismissLootCapture(id) {
 // right this second; (2) any RaidTick*.txt the TAKP client exported to the EQ
 // folder — an official attendance dump with its own timestamp. Both feed the
 // same officer-gated "Submit tick" → bot /api/agent/dkp-tick.
-const RAIDTICK_FILENAME_RX = /^RaidTick.*\.txt$/i;
-// TSV: header, then rows "name \t ? \t ? \t ts \t pts". Mirrors commands/tick.js
-// parseTickFile so the two agree on players/timestamp/points.
+// Both the TAKP RaidTick export AND EQ's own `/outputfile raidlist` dump
+// (Hitya 2026-07-16: "the command for raid tick generation is /outputfile
+// raidlist"). RaidRoster* covered too.
+const RAIDTICK_FILENAME_RX = /^Raid(Tick|List|Roster).*\.txt$/i;
+// Two on-disk layouts, auto-detected per line:
+//   • RaidTick:  "name \t ? \t ? \t ts \t pts"          (name in col 0, ts/pts present)
+//   • RaidList:  "<group#> \t name \t level \t class …"  (leading group number, name in col 1)
+// The header row (Name/Player/Group…) and any non-name column are skipped.
 function parseRaidTickText(text) {
-  const lines = String(text || '').split('\n').map(l => l.trim()).filter(Boolean);
-  if (lines.length < 2) return null;
-  const players = []; let rawTs = null; let points = 1;
-  for (const line of lines.slice(1)) {
+  const lines = String(text || '').split(/\r?\n/).map(l => l.replace(/\s+$/, '')).filter(l => l.trim());
+  if (lines.length < 1) return null;
+  const players = []; const seen = new Set(); let rawTs = null; let points = 1;
+  for (const line of lines) {
     const cols = line.split('\t');
-    if (cols.length < 5) continue;
-    const name = (cols[0] || '').trim();
-    if (!rawTs && cols[3]) rawTs = cols[3];
-    const p = parseInt(cols[4], 10);
-    if (!isNaN(p)) points = p;
-    if (name) players.push(name);
+    if (cols.length < 2) continue;
+    const c0 = (cols[0] || '').trim();
+    let name, tsCol, ptsCol;
+    if (/^\d{1,2}$/.test(c0)) {          // RaidList: leading group number → name in col 1
+      name = (cols[1] || '').trim();
+    } else {                             // RaidTick: name in col 0, ts/pts in cols 3/4
+      name = c0; tsCol = cols[3]; ptsCol = cols[4];
+    }
+    if (!name || !/^[A-Za-z]{2,}$/.test(name)) continue;   // real char names only (skips header/level/blank)
+    if (/^(name|player|character|group)$/i.test(name)) continue;
+    if (!rawTs && tsCol && /\d{4}-\d{2}-\d{2}/.test(tsCol)) rawTs = tsCol;
+    const p = parseInt(ptsCol, 10); if (!isNaN(p)) points = p;
+    const k = name.toLowerCase(); if (seen.has(k)) continue; seen.add(k);
+    players.push(name);
   }
   if (!players.length) return null;
   const isoTimestamp = rawTs
