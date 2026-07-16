@@ -11595,7 +11595,7 @@ function renderZealExplorer(s) {
         + '<td class="dim">' + esc(String(rm.rank || '')) + '</td>'
         + '<td class="num">' + esc(rhp) + '</td></tr>';
     }
-    h += grp('zx|raid', '5 - raid (last sample ' + fmtAgo((Date.now() - rp.at) / 1000) + ' ago)', rp.members.length,
+    h += grp('zx|raid', '5 - raid (last sample ' + fmtAgo(rp.at) + ')', rp.members.length,
       tbl(rpRows, ['Grp', 'Name', 'Class', 'Lvl', 'Rank', 'HP']));
   }
   morphInto(el, h);
