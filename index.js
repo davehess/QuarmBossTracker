@@ -5304,6 +5304,88 @@ async function _handleAgentDkpTick(req, res) {
   }
 }
 
+// Item name → GameItemId via eqemu_items (case-insensitive exact match).
+// EQ item links carry the display name only; auctions need the id. Handles
+// the backtick↔apostrophe divergence (EQ logs "Nature`s", the catalog stores
+// "Nature's"). Returns { matched:[{name,gameItemId,quantity}], unmatched:[{name,quantity}] }.
+async function _resolveItemIds(items) {
+  const supabase = require('./utils/supabase');
+  const matched = [], unmatched = [];
+  for (const it of items) {
+    const raw = String(it.name || '').trim();
+    if (!raw) continue;
+    const variants = [raw];
+    if (raw.includes('`')) variants.push(raw.replace(/`/g, "'"));
+    if (raw.includes("'")) variants.push(raw.replace(/'/g, '`'));
+    let found = null;
+    for (const v of variants) {
+      let rows = null;
+      try { rows = await supabase.select('eqemu_items', `name=ilike.${encodeURIComponent(v)}&select=id,name&limit=1`); }
+      catch { rows = null; }
+      if (Array.isArray(rows) && rows[0] && rows[0].id) { found = rows[0]; break; }
+    }
+    if (found) matched.push({ name: found.name, gameItemId: found.id, quantity: it.quantity || 1 });
+    else unmatched.push({ name: raw, quantity: it.quantity || 1 });
+  }
+  return { matched, unmatched };
+}
+
+// POST /api/agent/loot-post — OFFICER-ONLY. Create CLOSED OpenDKP auctions for
+// the selected loot straight from the Mimic dashboard (Hitya 2026-07-16: "i
+// want a button to post from dashboard"). Body: { items:[{name,quantity}],
+// duration? (minutes), boss? }. Resolves names → GameItemId, builds the exact
+// captured auction shape, PUTs them (createAuctions), announces to the loot
+// thread. Auctions open immediately for `duration` minutes (closed bids on
+// OpenDKP), which is what the officer asked for.
+async function _handleAgentLootPost(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  if (!identity.is_officer) { res.writeHead(403, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: 'officers only' })); }
+  const chunks = []; let total = 0;
+  for await (const chunk of req) { total += chunk.length; if (total > 256 * 1024) { res.writeHead(413); return res.end(); } chunks.push(chunk); }
+  let payload;
+  try { payload = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+  catch { res.writeHead(400); return res.end(JSON.stringify({ error: 'invalid JSON' })); }
+  const items = Array.isArray(payload?.items) ? payload.items.filter(i => i && i.name) : [];
+  if (items.length === 0) { res.writeHead(400); return res.end(JSON.stringify({ ok: false, reason: 'no items' })); }
+  const duration = Number.isFinite(payload?.duration) ? payload.duration : parseInt(process.env.LOOT_DEFAULT_BID_MINUTES || '3', 10) || 3;
+  try {
+    const { matched, unmatched } = await _resolveItemIds(items);
+    if (payload?.dry_run) {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ ok: true, dryRun: true, matched: matched.map(m => ({ name: m.name, quantity: m.quantity })), unmatched: unmatched.map(u => u.name), duration }));
+    }
+    if (matched.length === 0) { res.writeHead(409, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ ok: false, reason: 'No items matched the item catalog — nothing posted.', unmatched: unmatched.map(u => u.name) })); }
+    const { createAuctions } = require('./utils/opendkp');
+    const auctions = matched.map(m => ({
+      BidType: 'Closed', ItemQuantity: m.quantity || 1, Duration: duration, Bids: [],
+      Item: { Name: m.name, GameItemId: m.gameItemId },
+      AllowDeletes: true, Auctioneer: identity.display_name || 'Mimic', AutoAdjustBids: 0,
+      MaximumBid: 100000, MinimumBid: 1, ItemId: m.gameItemId,
+    }));
+    await createAuctions(auctions);
+    console.log(`[loot-post] ${identity.display_name || identity.discord_id} opened ${auctions.length} closed auction(s), ${duration}m`);
+
+    // Announce to the loot thread (best-effort — the auctions are already live).
+    const threadId = process.env.LOOT_CHANNEL_ID || '1527421284747706551';
+    try {
+      const ch = await client.channels.fetch(threadId);
+      if (ch && ch.send) {
+        const lines = matched.map(m => `• **${m.name}**${m.quantity > 1 ? ` ×${m.quantity}` : ''}`).join('\n');
+        const foot = unmatched.length ? `\n\n⚠ Not found in the item catalog (not auctioned): ${unmatched.map(u => u.name).join(', ')}` : '';
+        await ch.send({ content: `💰 **Bidding open (closed bids · ${duration}m)** — posted by ${identity.display_name || 'an officer'}\n${lines}\nBid on OpenDKP.${foot}` });
+      }
+    } catch (e) { console.warn('[loot-post] thread announce failed:', e?.message); }
+
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ ok: true, posted: matched.map(m => m.name), count: matched.length, unmatched: unmatched.map(u => u.name), duration }));
+  } catch (err) {
+    console.error('[loot-post] failed:', err);
+    res.writeHead(502, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ ok: false, reason: 'OpenDKP auction create failed: ' + (err?.message || 'unknown') }));
+  }
+}
+
 // POST /api/agent/place-bid
 // Body: { character: "Hitya", auction_id: 993920, value: 50, priority?: 1 }
 // ── UI Studio — encrypted snapshots of a player's EQ ini files ─────────────
@@ -12774,6 +12856,15 @@ http.createServer(async (req, res) => {
     try { return await _handleAgentDkpTick(req, res); }
     catch (err) {
       console.error('[dkp-tick] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  if (req.method === 'POST' && req.url === '/api/agent/loot-post') {
+    try { return await _handleAgentLootPost(req, res); }
+    catch (err) {
+      console.error('[loot-post] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
     }
