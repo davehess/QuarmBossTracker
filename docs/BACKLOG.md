@@ -166,6 +166,45 @@ class filter + "only gaps" + "hide logged-off" toggles, accuracy caveat banner.
   (heartbeat log, ~60MB/177k rows) to ~30–60 days; later `who_observations`. Keeps
   us comfortably on the free tier.
 
+## Hot-servable overlays (Hitya 2026-07-16 — pre-2.0 architecture, APPROVED direction)
+
+"Separate the working version of overlays into a separately updateable format
+so we can correct components on the fly for all users without requiring a
+reinstallation or new agent deployment." Verdict: worthwhile — the dashboard
+already IS this pattern (mainWindow loads `http://127.0.0.1:<port>/` from the
+agent with the preload bridge attached; updates ride the agent hot-swap).
+
+Design (tasks #65–67 in the session tracker):
+- Embed each RAID overlay as a template literal in the agent, served at
+  `GET /overlay/<name>`. Single-file agent keeps the existing hot-swap
+  pipeline (one sha, one manifest) untouched. ~8k lines migrate
+  (hud/tank/chchain/command/buffqueue/extarget/mobinfo/charm/pets/who/
+  melody/threat/triggers/zealhealth/popraid); settings/loading/ui-studio
+  stay bundled (shell chrome).
+- Mimic per overlay: agent serves it → `loadURL`; else `loadFile` the
+  bundled copy. Incremental, no flag day. Preload/IPC/overlay-checklist
+  unchanged — only delivery changes.
+- `check-agent-dashboard.js` extends to parse every served overlay template
+  (escape hazard ×N, process.-leak rule, wpKeep where applicable).
+- Version skew IMPROVES (overlay JS + agent API ship in one file). Risk of
+  a bad push reaching the fleet in 15 min is mitigated by the extended
+  build checks, the beta channel, and raid_hold (no swaps during raids).
+- Pilot: `command.html` (small, and the raid-feedback fixes below give it
+  an immediate reason to exist as served).
+
+Raid feedback driving it (2026-07-15 night, all currently shell-build-bound):
+1. Stale curse rows: non-Mimic curers produce no "Your target has been
+   cured" signal (curer-only log line), so cured raiders sat in the Command
+   Center all night; buff-queue dismissals did not reflect there (different
+   stores). Fix: per-line ✕ + dismiss-all on Command Center, ONE shared
+   agent-side dismissal store (bot-relayable later so one dismissal clears
+   fleet-wide), stale-decay TTL as backstop — the data ceiling is permanent.
+2. Buff-queue dismiss collapses + redraws the whole overlay (transient
+   empty render → auto-height snap). Optimistic removal, suppress auto-
+   height right after a dismissal, keyed rows.
+3. DI section costs too much vertical space on Command Center → compact
+   per-cleric chips inline next to the HEALER MANA header.
+
 ## Needs local session (exact data wanted)
 
 - **Zeal exit-crash bundles (2026-07-16, post-raid).** Several raiders hit
