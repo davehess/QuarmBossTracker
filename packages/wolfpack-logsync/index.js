@@ -8226,7 +8226,7 @@ function _eqSetupDirs() {
   return [...dirs];
 }
 
-// ── Settings-file safety net (Uilnayar 2026-07-16) ──────────────────────────
+// ── Settings-file safety net (Hitya 2026-07-16) ──────────────────────────
 // EQ rewrites eqclient.ini on every clean exit and a crash/patch/reinstall can
 // wipe it (tonight's Zeal exit-crashes made that risk very real). Keep the
 // last N distinct versions of each settings file per EQ folder under the
@@ -9230,6 +9230,9 @@ function _staleBackfillsSummary() {
 // enough): pending uploads in the queue, an opt-in backfill running, or
 // an active live fight currently accumulating events.
 function _updateBlockedReason() {
+  if (_raidHold) {
+    return 'raid hold — the bot reports an active raid';
+  }
   if (_uploadQueue.length > 0) {
     return `${_uploadQueue.length} pending upload${_uploadQueue.length === 1 ? '' : 's'}`;
   }
@@ -16828,7 +16831,7 @@ const UPLOADED_STATE_FILE = path.join(__dirname, 'logsync.uploaded.json');
 // path → 'mtimeMs-size' recorded after a file was fully PROCESSED (uploaded,
 // or deliberately skipped on content). Lets the 10-min scans stat() instead
 // of read+parse — on a 17-character box the parse itself was the remaining
-// boot cost after 3.3.56 stopped the re-uploads (Uilnayar 2026-07-16:
+// boot cost after 3.3.56 stopped the re-uploads (Hitya 2026-07-16:
 // "doesn't rescan when they haven't changed").
 const _scannedFiles = {};
 function _fileFingerprint(st) { return Math.round(st.mtimeMs) + '-' + st.size; }
@@ -16920,6 +16923,7 @@ function _quarmyPrefsBlock(lowerName) {
 }
 
 function scanQuarmyExports() {
+  if (_raidHold) return;   // raid hold — files wait on disk, scanned when it lifts
   // Hard gate: prefs must have loaded at least once this session so
   // exclude_inventory is KNOWN before any gear leaves the box. (No botUrl →
   // no prefs poll → no uploads, which is also correct.)
@@ -17031,6 +17035,7 @@ function _spellbookChecksum(spells) {
 }
 
 function scanSpellbookFiles() {
+  if (_raidHold) return;   // raid hold — files wait on disk, scanned when it lifts
   if (!stats.characterPrefsCheckedAt) return;   // exclude_inventory must be known first
   const firstLog = stats.watchedLogs[0]?.logPath;
   if (!firstLog) return;
@@ -19901,6 +19906,15 @@ function _escapeForLiteralMatch(s) {
 // catalog — nothing else. Numbers only, by design (no strings/regex from the
 // network reach parsing code).
 let _overlayTuning = {};
+// Raid hold — the bot tells every agent "a raid is active: hold your files
+// for later" (Hitya 2026-07-16). While true, the gear/spellbook/crash scans
+// early-return (the files sit on disk untouched and get scanned when the
+// hold lifts — nothing is lost), and _updateBlockedReason() reports the hold
+// so agent hot-swaps + self-updates defer for the WHOLE raid, not just
+// mid-fight. Rides the overlay-tuning poll (90s), so holds propagate fleet-
+// wide within ~2 minutes. Bot side: automatic on the raid schedule, with a
+// flag_raid_hold=1/0 officer override in /admin/overlays.
+let _raidHold = false;
 // Guild notices ("Mimic Mail") — officer broadcasts from /admin/notices, served
 // by the bot alongside overlay tuning (same poll, zero extra timers). Shown as
 // a pulsing ✉ in the dashboard header; critical ones ALSO post to Discord
@@ -19939,6 +19953,12 @@ function pollOverlayTuning({ botUrl, token }) {
             if (resp && Array.isArray(resp.notices)) _guildNotices = resp.notices;
             if (resp && resp.class_sets && typeof resp.class_sets === 'object' && !Array.isArray(resp.class_sets)) {
               _classOverlaySets = resp.class_sets;
+            }
+            if (resp && typeof resp.raid_hold === 'boolean' && resp.raid_hold !== _raidHold) {
+              _raidHold = resp.raid_hold;
+              console.log(_raidHold
+                ? '[raid-hold] ON — bot reports an active raid; deferring gear/spellbook/crash scans and agent updates until it lifts'
+                : '[raid-hold] lifted — deferred scans resume on the next pass');
             }
           } catch { /* non-fatal — keep last good values */ }
           resolve();
@@ -21704,6 +21724,7 @@ function _crashZipTime(name) {
 }
 
 function scanCrashDirs() {
+  if (_raidHold) return;   // raid hold — crash bundles wait, scanned when it lifts
   if (!CRASH_REPORTS_ENABLED || !_isUploaderInstance) return;
   const state = _loadCrashState();
   const firstRun = Object.keys(state.reported).length === 0;

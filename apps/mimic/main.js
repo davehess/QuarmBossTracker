@@ -4680,7 +4680,7 @@ function buildTrayMenu() {
     ? { label: `Restart to install update v${updatePending.version}`, click: () => { try { autoUpdater && autoUpdater.quitAndInstall(true, true); } catch (e) { console.warn('[updater] quitAndInstall failed', e); } } }
     : { label: 'Check for updates…',
         // Manual check covers BOTH update channels — the Electron shell AND
-        // the agent hot-swap (Uilnayar 2026-07-16: "check for updates also
+        // the agent hot-swap (Hitya 2026-07-16: "check for updates also
         // check for newer agents rather than waiting for 30 minutes"). The
         // dashboard header's update button already did both via the
         // check-for-updates IPC; the tray item was shell-only.
