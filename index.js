@@ -7500,16 +7500,41 @@ setInterval(async () => {
   }
 }, 60_000);
 
+// Raid hold — tells every agent to hold its background file work for later
+// while a raid is active ("gracefully tell mimic to hold onto its files",
+// Hitya 2026-07-16). Agents 3.3.58+ defer gear/spellbook/crash scans AND
+// report the hold from their update gate, so agent hot-swaps wait out the
+// whole raid instead of firing between pulls. Automatic on the standing
+// schedule (Sun/Wed/Thu, 19:00 ET → 00:30 ET — 30 min of pre-raid buffer);
+// officers can force it either way from the /admin/overlays tuning editor:
+// flag_raid_hold = 1 forces ON (off-schedule raid), 0 forces OFF, unset =
+// automatic. Same 60s tuning cache as every other knob.
+function _raidHoldNow(tuning) {
+  const flag = tuning && tuning.flag_raid_hold;
+  if (flag === 1 || flag === '1') return true;
+  if (flag === 0 || flag === '0') return false;
+  try {
+    const { nowPartsInTz } = require('./utils/timezone');
+    const p = nowPartsInTz('America/New_York');
+    const mins = p.hour * 60 + p.minute;
+    if (['sunday', 'wednesday', 'thursday'].includes(p.dayOfWeek) && mins >= 19 * 60) return true;
+    // Post-midnight spillover of the previous raid night (raids run to 00:30).
+    if (['monday', 'thursday', 'friday'].includes(p.dayOfWeek) && mins <= 30) return true;
+    return false;
+  } catch { return false; }
+}
+
 // GET /api/agent/overlay-tuning — bearer-auth'd override object for agents,
 // with active guild notices riding along (Mimic Mail; agents 3.2.0+ read
 // `notices`, older ones ignore the extra field). `class_sets` (agents 3.3.17+)
 // carries the per-class default overlay sets for first-boot seeding.
+// `raid_hold` (agents 3.3.58+) is the background-work hold above.
 async function _handleAgentOverlayTuning(req, res) {
   const identity = await mimicLink.requireAgentAuth(req, res);
   if (!identity) return;
   const [tuning, notices, classSets] = await Promise.all([_overlayTuningMap(), _activeNotices(), _overlayClassSets()]);
   res.writeHead(200, { 'Content-Type': 'application/json' });
-  return res.end(JSON.stringify({ tuning, notices, class_sets: classSets }));
+  return res.end(JSON.stringify({ tuning, notices, class_sets: classSets, raid_hold: _raidHoldNow(tuning) }));
 }
 
 // POST /api/agent/crash_report — opt-in EQ client crash telemetry (agent
