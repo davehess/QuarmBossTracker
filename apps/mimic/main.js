@@ -4678,7 +4678,14 @@ function buildTrayMenu() {
 
   const updateItem = updatePending
     ? { label: `Restart to install update v${updatePending.version}`, click: () => { try { autoUpdater && autoUpdater.quitAndInstall(true, true); } catch (e) { console.warn('[updater] quitAndInstall failed', e); } } }
-    : { label: 'Check for updates…', click: () => safeCheckForUpdates(true), enabled: !!autoUpdater };
+    : { label: 'Check for updates…',
+        // Manual check covers BOTH update channels — the Electron shell AND
+        // the agent hot-swap (Uilnayar 2026-07-16: "check for updates also
+        // check for newer agents rather than waiting for 30 minutes"). The
+        // dashboard header's update button already did both via the
+        // check-for-updates IPC; the tray item was shell-only.
+        click: () => { safeCheckForUpdates(true); checkAgentUpdate({ manual: true }); },
+        enabled: !!autoUpdater };
   // When unchecked (default), a ready update shows only as a dashboard banner +
   // the tray item above and applies on next quit — no pop-up. Check it to get
   // the "Restart now?" dialog back.
@@ -4874,15 +4881,19 @@ function _httpsGetBuffer(url) {
   });
 }
 
-async function checkAgentUpdate() {
+async function checkAgentUpdate(opts) {
+  const manual = !!(opts && opts.manual);
   if (_agentUpdateInFlight) return;
   // Beta Mimic builds ship their own agent and should NOT hot-swap from
   // main — main's `/api/agent/latest-version` could be on an older agent
   // than the one bundled in this beta build, or worse, on a stable release
   // that's missing beta-only changes. Detect prerelease via the build's own
   // version (presence of `-` per semver) and skip the swap entirely.
-  // Stable Mimic installs keep their existing 30-min hot-swap cadence.
-  if (/-/.test(String(app.getVersion() || ''))) return;
+  // Stable Mimic installs keep the background hot-swap cadence.
+  if (/-/.test(String(app.getVersion() || ''))) {
+    if (manual) appendAgentLog('[mimic] manual agent check: beta build — agent updates arrive bundled in new beta builds, not via hot-swap\n');
+    return;
+  }
   _agentUpdateInFlight = true;
   try {
     const cfg = loadConfig();
@@ -4899,7 +4910,10 @@ async function checkAgentUpdate() {
     if (!latest || !url) return;
 
     const current = _readAgentVersion();
-    if (!_agentVersionNewer(latest, current)) return;  // already current/ahead
+    if (!_agentVersionNewer(latest, current)) {
+      if (manual) appendAgentLog(`[mimic] manual agent check: current (installed ${current}, latest ${latest})\n`);
+      return;  // already current/ahead
+    }
 
     // Respect the agent's OWN update gate — don't bounce it mid-fight, mid
     // opt-in-backfill, or with a non-empty upload queue. /api/state exposes
@@ -5046,11 +5060,13 @@ function wireAutoUpdater() {
 
 // Agent hot-swap poll — independent of the Electron-shell updater above.
 // First check 45s after boot (let the agent come up + settle), then every
-// 30 min. The agent self-update gate (updateBlocked) keeps it from bouncing
-// mid-fight; checkAgentUpdate is also a no-op when already current.
+// 15 min (was 30 — the 2026-07-15 raid-night hotfix took most of an hour to
+// reach the fleet; the fight-live/queue-pending gate already protects raids,
+// so a tighter poll only speeds up the calm-moment swaps). checkAgentUpdate
+// is a no-op when already current.
 function scheduleAgentUpdates() {
   setTimeout(() => { checkAgentUpdate(); }, 45 * 1000);
-  setInterval(() => { checkAgentUpdate(); }, 30 * 60 * 1000);
+  setInterval(() => { checkAgentUpdate(); }, 15 * 60 * 1000);
 }
 
 // ── IPC ─────────────────────────────────────────────────────────────────────
@@ -6021,7 +6037,7 @@ ipcMain.handle('open-zeal-capture', () => {
 ipcMain.handle('mimic-link-start',   async () => await startMimicLink());
 ipcMain.handle('mimic-link-cancel',  () => { cancelMimicLink(); return true; });
 ipcMain.handle('mimic-link-signout', async () => { await signOutMimic(); return true; });
-ipcMain.handle('check-for-updates', () => { safeCheckForUpdates(true); checkAgentUpdate(); return true; });
+ipcMain.handle('check-for-updates', () => { safeCheckForUpdates(true); checkAgentUpdate({ manual: true }); return true; });
 // Dashboard "update ready" banner button → apply the downloaded update now.
 ipcMain.handle('restart-to-update', () => {
   try { autoUpdater && autoUpdater.quitAndInstall(true, true); } catch (e) { console.warn('[updater] quitAndInstall failed', e); }
