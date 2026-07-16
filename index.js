@@ -5246,6 +5246,56 @@ async function _handleAgentThreatSnapshot(req, res) {
   return res.end(JSON.stringify({ ok: true, written: 1 }));
 }
 
+// POST /api/agent/dkp-tick — OFFICER-ONLY DKP tick from the Mimic dashboard
+// (Hitya 2026-07-16: "do ticks from here"). Reuses the shared submitRaidTick
+// util so the OpenDKP write is byte-identical to the Discord /tick command.
+// body: { slot:'1'..'4'|'bonus'|'ot', players:[names], points?, description?,
+//         raid_name?, dry_run }. dry_run resolves the target raid + attendee
+// count WITHOUT writing, so the dashboard shows a preview before the real
+// second-click submit. Auto-creates today's raid only on Sun/Wed/Thu.
+async function _handleAgentDkpTick(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  if (!identity.is_officer) {
+    res.writeHead(403, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'officers only' }));
+  }
+  const chunks = []; let total = 0;
+  for await (const chunk of req) {
+    total += chunk.length;
+    if (total > 256 * 1024) { res.writeHead(413); return res.end(); }
+    chunks.push(chunk);
+  }
+  let payload;
+  try { payload = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+  catch { res.writeHead(400); return res.end(JSON.stringify({ error: 'invalid JSON' })); }
+  if (!process.env.OPENDKP_RAIDS_URL) {
+    res.writeHead(503, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ ok: false, reason: 'OpenDKP not configured on the bot.' }));
+  }
+  try {
+    const { submitRaidTick } = require('./utils/dkpTick');
+    const result = await submitRaidTick({
+      slot:        payload?.slot,
+      players:     Array.isArray(payload?.players) ? payload.players : [],
+      points:      Number.isFinite(payload?.points) ? payload.points : 1,
+      description: payload?.description || null,
+      raidName:    payload?.raid_name || null,
+      updatedBy:   identity.display_name || identity.discord_id || 'Mimic officer',
+      dryRun:      !!payload?.dry_run,
+    });
+    if (result.ok && !result.dryRun) {
+      console.log(`[dkp-tick] ${identity.display_name || identity.discord_id} ${result.action} ${result.slot} — raid ${result.raidId} (${result.count} attendees)`);
+    }
+    res.writeHead(result.ok ? 200 : 409, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify(result));
+  } catch (err) {
+    console.error('[dkp-tick] submit failed:', err);
+    res.writeHead(502, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ ok: false, reason: 'OpenDKP submit failed: ' + (err?.message || 'unknown') }));
+  }
+}
+
 // POST /api/agent/place-bid
 // Body: { character: "Hitya", auction_id: 993920, value: 50, priority?: 1 }
 // ── UI Studio — encrypted snapshots of a player's EQ ini files ─────────────
@@ -12707,6 +12757,15 @@ http.createServer(async (req, res) => {
     try { return await _handleAgentSpellbook(req, res); }
     catch (err) {
       console.error('[spellbook] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  if (req.method === 'POST' && req.url === '/api/agent/dkp-tick') {
+    try { return await _handleAgentDkpTick(req, res); }
+    catch (err) {
+      console.error('[dkp-tick] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
     }
