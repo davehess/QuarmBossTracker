@@ -5269,12 +5269,12 @@ async function _handleAgentDkpTick(req, res) {
   let payload;
   try { payload = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
   catch { res.writeHead(400); return res.end(JSON.stringify({ error: 'invalid JSON' })); }
-  if (!process.env.OPENDKP_RAIDS_URL) {
-    res.writeHead(503, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ ok: false, reason: 'OpenDKP not configured on the bot.' }));
-  }
   try {
     const { submitRaidTick } = require('./utils/dkpTick');
+    // A dry-run only READS raids (Cognito bearer path — no OPENDKP_RAIDS_URL
+    // needed), so the preview works even before the write env is set. The
+    // real submit surfaces the SPECIFIC missing-config error below (e.g.
+    // "OPENDKP_RAIDS_URL not set") instead of a blanket "not configured".
     const result = await submitRaidTick({
       slot:        payload?.slot,
       players:     Array.isArray(payload?.players) ? payload.players : [],
@@ -5290,9 +5290,17 @@ async function _handleAgentDkpTick(req, res) {
     res.writeHead(result.ok ? 200 : 409, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify(result));
   } catch (err) {
+    const msg = err?.message || 'unknown';
+    // Name the config gap so the officer (Hitya) knows exactly what to set on
+    // Railway rather than seeing a generic failure.
+    const hint = /OPENDKP_RAIDS_URL/.test(msg)
+      ? 'The bot needs OPENDKP_RAIDS_URL set on Railway (the raids API Gateway URL — see .env.example) to WRITE ticks. Reads/preview work without it.'
+      : /COGNITO|USERNAME|PASSWORD/.test(msg)
+        ? 'The bot needs its OpenDKP login (OPENDKP_COGNITO_CLIENT_ID / OPENDKP_USERNAME / OPENDKP_PASSWORD) set on Railway.'
+        : null;
     console.error('[dkp-tick] submit failed:', err);
     res.writeHead(502, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ ok: false, reason: 'OpenDKP submit failed: ' + (err?.message || 'unknown') }));
+    return res.end(JSON.stringify({ ok: false, reason: hint || ('OpenDKP submit failed: ' + msg) }));
   }
 }
 
