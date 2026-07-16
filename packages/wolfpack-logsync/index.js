@@ -11725,7 +11725,8 @@ function renderDkpLootCard(s) {
       +   '<b>' + esc(c.speaker) + '</b>'
       +   '<span class="dim" style="font-size:11px">' + chan + ' · ' + esc(_clockOf(Date.parse(c.ts))) + ' · ' + c.items.length + ' item' + (c.items.length === 1 ? '' : 's') + '</span>'
       +   '<span style="flex:1"></span>'
-      +   '<button class="wpDkpCopy" data-id="' + esc(c.id) + '" style="background:#1f6feb;color:#fff;border:0;border-radius:5px;padding:2px 10px;cursor:pointer;font-family:inherit;font-size:11px">Copy for /loot</button>'
+      +   '<button class="wpDkpPost" data-id="' + esc(c.id) + '" title="Create closed OpenDKP auctions for the checked items and announce to the loot thread" style="background:#238636;color:#fff;border:0;border-radius:5px;padding:2px 10px;cursor:pointer;font-family:inherit;font-size:11px">💰 Post for bidding</button>'
+      +   '<button class="wpDkpCopy" data-id="' + esc(c.id) + '" style="background:#30363d;color:#e6edf3;border:1px solid #484f58;border-radius:5px;padding:2px 10px;cursor:pointer;font-family:inherit;font-size:11px">Copy</button>'
       +   '<button class="wpDkpDismiss" data-id="' + esc(c.id) + '" title="Dismiss this list" style="background:none;color:#8b949e;border:1px solid #30363d;border-radius:5px;padding:2px 8px;cursor:pointer;font-family:inherit;font-size:11px">✕</button>'
       + '</div>';
     for (var j = 0; j < c.items.length; j++) {
@@ -12933,25 +12934,56 @@ document.addEventListener('click', function (ev) {
   }
 }, true);
 // 💰 Loot capture controls — delegated (capture) so repaints never lose them.
+function _dkpCheckedItems(cap) {
+  var boxes = cap.querySelectorAll('.wpDkpItem');
+  var items = [];
+  for (var i = 0; i < boxes.length; i++) {
+    if (!boxes[i].checked) continue;
+    items.push({ name: boxes[i].getAttribute('data-name') || '', quantity: parseInt(boxes[i].getAttribute('data-qty') || '1', 10) || 1 });
+  }
+  return items;
+}
 document.addEventListener('click', function (ev) {
   var t = ev.target;
   if (!t || !t.closest) return;
+  // 💰 Post for bidding — create closed OpenDKP auctions for the checked items.
+  // Two-click arm (it opens real auctions), then POST to the bot via the agent.
+  var postBtn = t.closest('.wpDkpPost');
+  if (postBtn) {
+    var pcap = postBtn.closest('.wpDkpCap');
+    if (!pcap) return;
+    var pitems = _dkpCheckedItems(pcap);
+    if (pitems.length === 0) { postBtn.textContent = 'nothing checked'; setTimeout(function () { postBtn.textContent = '💰 Post for bidding'; }, 1500); return; }
+    if (postBtn.getAttribute('data-armed') !== '1') {
+      postBtn.setAttribute('data-armed', '1');
+      postBtn.textContent = 'Click again — opens ' + pitems.length + ' bid(s)';
+      setTimeout(function () { try { postBtn.removeAttribute('data-armed'); postBtn.textContent = '💰 Post for bidding'; } catch (e) {} }, 6000);
+      return;
+    }
+    postBtn.disabled = true; postBtn.textContent = 'Posting…';
+    fetch('/api/dkp/loot-post', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: pitems }) })
+      .then(function (r) { return r.json(); }).then(function (j) {
+        postBtn.disabled = false; postBtn.removeAttribute('data-armed');
+        if (j && j.ok) {
+          postBtn.textContent = '✓ ' + (j.count || pitems.length) + ' up for bid';
+          if (Array.isArray(j.unmatched) && j.unmatched.length) postBtn.title = 'Not in catalog (skipped): ' + j.unmatched.join(', ');
+          setTimeout(function () { try { postBtn.textContent = '💰 Post for bidding'; } catch (e) {} }, 5000);
+        } else {
+          postBtn.textContent = '✕ ' + ((j && j.reason) || 'failed').slice(0, 40);
+          setTimeout(function () { try { postBtn.textContent = '💰 Post for bidding'; } catch (e) {} }, 6000);
+        }
+      }).catch(function () { postBtn.disabled = false; postBtn.removeAttribute('data-armed'); postBtn.textContent = '✕ engine unreachable'; });
+    return;
+  }
   // Copy the checked items of one capture as a pipe-delimited /loot paste.
   var copyBtn = t.closest('.wpDkpCopy');
   if (copyBtn) {
     var cap = copyBtn.closest('.wpDkpCap');
     if (!cap) return;
-    var boxes = cap.querySelectorAll('.wpDkpItem');
-    var names = [];
-    for (var i = 0; i < boxes.length; i++) {
-      if (!boxes[i].checked) continue;
-      var nm = boxes[i].getAttribute('data-name') || '';
-      var q = parseInt(boxes[i].getAttribute('data-qty') || '1', 10) || 1;
-      names.push(q > 1 ? nm + ' (' + q + ')' : nm);
-    }
-    if (names.length === 0) { copyBtn.textContent = 'nothing checked'; setTimeout(function () { copyBtn.textContent = 'Copy for /loot'; }, 1500); return; }
+    var names = _dkpCheckedItems(cap).map(function (it) { return it.quantity > 1 ? it.name + ' (' + it.quantity + ')' : it.name; });
+    if (names.length === 0) { copyBtn.textContent = 'nothing'; setTimeout(function () { copyBtn.textContent = 'Copy'; }, 1500); return; }
     var paste = names.join(' | ');
-    var done = function () { copyBtn.textContent = '✓ copied ' + names.length; setTimeout(function () { copyBtn.textContent = 'Copy for /loot'; }, 2000); };
+    var done = function () { copyBtn.textContent = '✓ ' + names.length; setTimeout(function () { copyBtn.textContent = 'Copy'; }, 2000); };
     try {
       if (navigator.clipboard && navigator.clipboard.writeText) { navigator.clipboard.writeText(paste).then(done, done); }
       else { var ta = document.createElement('textarea'); ta.value = paste; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); done(); }
@@ -15069,6 +15101,41 @@ function startWebDashboard(port) {
                 'Authorization': 'Bearer ' + opts.token,
                 'User-Agent': `wolfpack-logsync/${AGENT_VERSION}`,
               }, timeout: 15000,
+            }, (r) => { let d = ''; r.on('data', c => d += c); r.on('end', () => resolve({ status: r.statusCode, body: d })); });
+            rq.on('error',   () => resolve({ status: 502, body: '{"ok":false,"reason":"bot unreachable"}' }));
+            rq.on('timeout', () => { rq.destroy(); resolve({ status: 504, body: '{"ok":false,"reason":"bot timed out"}' }); });
+            rq.end(body);
+          });
+          res.writeHead(proxied.status || 502, { 'Content-Type': 'application/json' });
+          return res.end(proxied.body || '{"ok":false}');
+        } catch (e) {
+          res.writeHead(502); return res.end(JSON.stringify({ ok: false, reason: String((e && e.message) || e) }));
+        }
+      }
+      // Officer loot post — forward the dashboard's selected items to the
+      // bot's /api/agent/loot-post (creates closed OpenDKP auctions + loot-
+      // thread announce). Officer-gated end to end (bot re-checks is_officer).
+      if (req.url === '/api/dkp/loot-post' && req.method === 'POST') {
+        if (!(_mimicIdentity && _mimicIdentity.is_officer)) { res.writeHead(403); return res.end('{"error":"officers only"}'); }
+        let _lb = '';
+        for await (const c of req) { _lb += c; if (_lb.length > 64 * 1024) { res.writeHead(413); return res.end(); } }
+        let lp; try { lp = JSON.parse(_lb || '{}'); } catch { res.writeHead(400); return res.end('{"error":"bad json"}'); }
+        const opts = _uploadOpts;
+        if (!opts || !opts.botUrl || !opts.token) { res.writeHead(503); return res.end('{"ok":false,"reason":"not connected to the bot"}'); }
+        const url = opts.botUrl.replace(/\/encounter(\?.*)?$/, '/loot-post');
+        try {
+          const u = new URL(url);
+          const mod = u.protocol === 'https:' ? https : http;
+          const body = JSON.stringify(lp);
+          const proxied = await new Promise((resolve) => {
+            const rq = mod.request({
+              method: 'POST', hostname: u.hostname, port: u.port, path: u.pathname + u.search,
+              headers: {
+                'Content-Type': 'application/json',
+                'Content-Length': Buffer.byteLength(body),
+                'Authorization': 'Bearer ' + opts.token,
+                'User-Agent': `wolfpack-logsync/${AGENT_VERSION}`,
+              }, timeout: 20000,
             }, (r) => { let d = ''; r.on('data', c => d += c); r.on('end', () => resolve({ status: r.statusCode, body: d })); });
             rq.on('error',   () => resolve({ status: 502, body: '{"ok":false,"reason":"bot unreachable"}' }));
             rq.on('timeout', () => { rq.destroy(); resolve({ status: 504, body: '{"ok":false,"reason":"bot timed out"}' }); });
