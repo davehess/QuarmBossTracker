@@ -5356,12 +5356,18 @@ async function _handleAgentLootPost(req, res) {
       return res.end(JSON.stringify({ ok: true, dryRun: true, matched: matched.map(m => ({ name: m.name, quantity: m.quantity })), unmatched: unmatched.map(u => u.name), duration }));
     }
     if (matched.length === 0) { res.writeHead(409, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ ok: false, reason: 'No items matched the item catalog — nothing posted.', unmatched: unmatched.map(u => u.name) })); }
-    const { createAuctions } = require('./utils/opendkp');
+    const { createAuctions, getMostRecentRaid } = require('./utils/opendkp');
+    // Link the auctions to the current raid so DKP charges attach correctly
+    // (captured: the site passes RaidId on the auction). Best-effort — if the
+    // lookup fails the auction still posts, just unlinked.
+    let linkRaidId = 0;
+    try { const raid = await getMostRecentRaid(); if (raid && raid.RaidId) linkRaidId = raid.RaidId; }
+    catch (e) { console.warn('[loot-post] raid link lookup failed:', e?.message); }
     const auctions = matched.map(m => ({
       BidType: 'Closed', ItemQuantity: m.quantity || 1, Duration: duration, Bids: [],
       Item: { Name: m.name, GameItemId: m.gameItemId },
       AllowDeletes: true, Auctioneer: identity.display_name || 'Mimic', AutoAdjustBids: 0,
-      MaximumBid: 100000, MinimumBid: 1, ItemId: m.gameItemId,
+      MaximumBid: 100000, MinimumBid: 1, RaidId: linkRaidId, ItemId: m.gameItemId,
     }));
     await createAuctions(auctions);
     console.log(`[loot-post] ${identity.display_name || identity.discord_id} opened ${auctions.length} closed auction(s), ${duration}m`);
