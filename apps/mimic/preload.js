@@ -419,6 +419,7 @@ contextBridge.exposeInMainWorld('mimic', {
 
   // Updates.
   checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
+  revertToStable:  () => ipcRenderer.invoke('revert-to-stable'),
 
   // Diagnostics.
   getAgentLogTail: (lines) => ipcRenderer.invoke('get-agent-log-tail', lines),
