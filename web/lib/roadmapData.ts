@@ -43,6 +43,38 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'no-more-boot-burst-193',
+    title: '🔌 Restarts without the freeze · Mimic 1.9.3 (beta)',
+    version: 'Mimic 1.9.3-beta · Agent 3.3.56',
+    date: '2026-07-16',
+    channel: 'beta',
+    headline: 'Restarting Mimic no longer freezes your overlays for minutes — the parser now remembers what it already uploaded, and overlays reconnect to the engine on their own after any restart.',
+    features: [
+      { name: 'No more re-upload marathon after a restart', blurb: 'The parser used to re-read and re-send every character’s gear and spellbook after every restart or update — minutes of frozen overlays on big multi-character setups. It now remembers what it already sent, so restarts come back in seconds.' },
+      { name: 'Overlays find the engine by themselves', blurb: 'If the parser engine comes back on a different connection after a restart, every overlay now re-points itself automatically — no more CH chain stuck on "OVERLAY BLIND" or a blank Command Center until you restarted Mimic.' },
+    ],
+    fixes: [
+      'Every engine restart now records exactly what asked for it, so "the parser randomly restarted" reports can finally be traced.',
+    ],
+  },
+  {
+    key: 'calm-connection-192',
+    title: '🧘 The calm-connection release · Mimic 1.9.2',
+    version: 'Mimic 1.9.2 · Agent 3.3.55 · Web 1.0.225',
+    date: '2026-07-16',
+    headline: 'Raid-night fixes, live from the trenches: the blue "Reload to the live engine" banner stops crying wolf, the engine stays responsive under raid load, and the healing release is now stable for everyone.',
+    features: [
+      { name: 'The banner stops crying wolf', blurb: 'The "can’t reach the parser engine" banner now only appears after ~10 seconds of real silence, explains that the engine usually recovers on its own, and clears itself the moment it does. It also stopped hammering a busy engine with page reloads — that was making things worse.' },
+      { name: 'Engine stays responsive during raids', blurb: 'All the overlays share one snapshot of the engine’s state instead of each demanding their own copy several times a second — the engine spends its time parsing your fight, not photocopying itself.' },
+      { name: 'The 1.9 healing release goes stable', blurb: 'Inbound heals on the Tank overlay, heal attribution on parse cards, the Divine Intervention tracker, and the Command Center healer-mana board — everything from the 1.9 beta line, now on the stable channel for the whole raid.' },
+    ],
+    fixes: [
+      'Setup-help banner no longer crashes the dashboard header for installs that aren’t reading any logs yet.',
+      '/me loads in seconds instead of a minute (a heavy stat lookup ran on every page view — now indexed and cached).',
+      'Release announcements no longer cut off mid-sentence.',
+    ],
+  },
+  {
     key: 'tank-sees-heals-mimic-19',
     title: '\u{1FA7A} Tanks see heals coming · Mimic 1.9 (beta)',
     version: 'Bot 3.0.176 · Mimic 1.9.0 · Agent 3.3.37 (beta)',

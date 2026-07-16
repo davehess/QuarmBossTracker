@@ -168,6 +168,21 @@ class filter + "only gaps" + "hide logged-off" toggles, accuracy caveat banner.
 
 ## Needs local session (exact data wanted)
 
+- **Zeal exit-crash bundles (2026-07-16, post-raid).** Several raiders hit
+  Zeal 1.4.2 (c6b903b) crash dialogs while camping/quitting after the
+  2026-07-15 raid: `Exception 0x6ef @ KERNELBASE.dll`, `Game state: ff`,
+  `Zone ID: ffffffff`, `Self: 0x0`, `Callbacks: ExecuteCmd : Exit` — plus a
+  "Fatal crash loop. Unable to create a crash zip" variant. `crash_reports`
+  is empty (opt-in never enabled; the zip failure means nothing to scan).
+  Wanted from `A:\EQ`: any `crashes/` bundles + `uierrors.txt` from
+  2026-07-15 evening, and whether the owner's own client crashed at camp.
+  Open question for the fleet: does the crash correlate with Mimic's pipe
+  client being attached at exit (Zeal is the pipe server inside eqgame;
+  teardown with a connected reader is the plausible trip point — our reader
+  is read-only and can't crash the client on its own). If correlation
+  holds, draft the upstream report to CoastalRedwood/Zeal (pattern:
+  `docs/zeal-spawn-id-request.md`).
+
 - ~~Verify the first-person OUTGOING heal line~~ **RESOLVED (Uilnayar
   2026-07-14): it does not exist.** Heal amounts are private to the healed;
   bystanders only see the spell's `cast_on_other` landing message with the
