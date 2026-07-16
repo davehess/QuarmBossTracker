@@ -9578,8 +9578,10 @@ function renderHeader(s) {
     // WOLFPACK_EQ_DIR is set by Mimic when the user has resolved at least one
     // EQ folder (cfg.eqPaths or auto-detect). Absent = user hasn't picked a
     // folder yet — show the "select a folder" banner instead of the generic
-    // "no logs" one.
-    const hasFolders = !!process.env.WOLFPACK_EQ_DIR;
+    // "no logs" one. Baked server-side at boot (\${}) — process is Node-only;
+    // a bare reference here crashed renderHeader for exactly the users this
+    // banner exists to help (0 logs watched → this branch → throw).
+    const hasFolders = ${process.env.WOLFPACK_EQ_DIR ? 'true' : 'false'};
     if (isMimicHosted && !hasFolders) {
       h += '<div class="banner" style="background:#3a2a0a;color:#f6c365;border:1px solid #6b5320">'
          + '📁 <b>No EQ folder selected.</b> Mimic doesn&rsquo;t know where your EverQuest install is. '
@@ -12424,9 +12426,19 @@ async function refreshOptin() {
 }
 
 var _refreshFailures = 0;
+var _refreshInFlight = false;
 async function refresh() {
+  // One poll at a time, capped at 5s. setInterval kept stacking overlapping
+  // fetches against a stalled engine (boot burst over a big log set), so the
+  // failure count inflated in seconds and the rescue below fired against an
+  // engine that was merely busy (2026-07-15 raid: 34 rescue reloads in one
+  // night, each re-serving the whole page and deepening the stall).
+  if (_refreshInFlight) return;
+  _refreshInFlight = true;
+  var _ctl = (typeof AbortController === 'undefined') ? null : new AbortController();
+  var _tmo = _ctl ? setTimeout(function () { try { _ctl.abort(); } catch (e) {} }, 5000) : null;
   try {
-    const s = await (await fetch('/api/state', { cache: 'no-store' })).json();
+    const s = await (await fetch('/api/state', _ctl ? { cache: 'no-store', signal: _ctl.signal } : { cache: 'no-store' })).json();
     _refreshFailures = 0;
     var _eb = document.getElementById('wpConnError'); if (_eb) _eb.remove();
     // Preserve scroll across the render batch. Change-detection means most
@@ -12488,26 +12500,36 @@ async function refresh() {
     // problem is obvious, plus a one-click reload to the live engine.
     _refreshFailures++;
     // SELF-HEAL (Uilnayar 2026-07-15: banner sat for minutes — "ITS A PROBLEM
-    // FOR ME"): after ~30s of continuous failure, invoke the same reload the
-    // button does — openDashboard() navigates this window to whatever port
-    // the agent is on NOW, no human required. Once per 60s (sessionStorage
-    // so the throttle survives the reload itself); the banner still shows
-    // during the gap so a truly-dead agent stays visible.
+    // FOR ME"), refined the same night: reload ONLY when the shell says the
+    // engine actually moved ports — that is the one failure a reload fixes.
+    // A same-port engine that is busy or rebooting recovers on its own once
+    // its boot burst finishes; reloading the whole page at it just deepens
+    // the stall. Once per 60s (sessionStorage so the throttle survives the
+    // reload itself); the banner still shows so a truly-dead agent stays
+    // visible.
     if (_refreshFailures >= 15) {
       var _lastAuto = 0;
       try { _lastAuto = parseInt(sessionStorage.getItem('wpAutoRescueAt') || '0', 10) || 0; } catch (e) {}
       if (Date.now() - _lastAuto > 60000) {
         try { sessionStorage.setItem('wpAutoRescueAt', String(Date.now())); } catch (e) {}
-        try { if (window.mimic && window.mimic.openDashboard) { window.mimic.openDashboard(); } else { location.reload(); } } catch (e) {}
+        try {
+          if (window.mimic && window.mimic.getAgentPort) {
+            window.mimic.getAgentPort().then(function (p) {
+              if (p && String(p) !== String(location.port) && window.mimic.openDashboard) { window.mimic.openDashboard(); }
+            }).catch(function (e) {});
+          } else {
+            location.reload();  // plain-browser tab — no shell bridge to ask
+          }
+        } catch (e) {}
       }
     }
-    if (_refreshFailures >= 2 && !document.getElementById('wpConnError')) {
+    if (_refreshFailures >= 5 && !document.getElementById('wpConnError')) {
       var d = document.createElement('div');
       d.id = 'wpConnError';
       d.setAttribute('style', 'margin:16px;padding:14px 16px;border:1px solid #a3260a;background:#2a1212;color:#ffd2c2;border-radius:8px;font-size:13px;line-height:1.5');
       d.innerHTML =
         '⚠ <b>Can’t reach the parser engine</b> at <code>' + (location.origin || '?') + '</code>.<br>' +
-        'The agent likely restarted on a different port and this window is still on the old one.' +
+        'The engine is busy or restarting (updates and big log rescans can take a minute) — this usually clears on its own. If it moved ports, Mimic reconnects automatically.' +
         '<div style="margin-top:8px"><button id="wpConnReload" style="background:#1f6feb;color:#fff;border:0;border-radius:5px;padding:6px 14px;cursor:pointer;font-family:inherit;font-size:12px">🔄 Reload to the live engine</button> <span style="color:#c98">— or fully restart Mimic.</span></div>';
       var host = document.querySelector('.section.active') || document.body;
       host.insertBefore(d, host.firstChild);
@@ -12517,6 +12539,9 @@ async function refresh() {
         location.reload();
       };
     }
+  } finally {
+    if (_tmo) clearTimeout(_tmo);
+    _refreshInFlight = false;
   }
 }
 
