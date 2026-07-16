@@ -18241,12 +18241,34 @@ const CHAT_LINE_PATTERNS = [
 // leading articles ("A Glowing Orb…"); pipe and comma are the ONLY safe split
 // chars (EQ item names contain neither). The bot re-validates every name
 // against eqemu_items at post time — this capture only keeps the list tidy.
+// Connectors that may be lowercase mid-item ("Rod OF Fury" → "Rod of Fury").
+const _LOOT_CONNECTORS = { of: 1, the: 1, a: 1, an: 1, and: 1, to: 1, de: 1, du: 1, von: 1, la: 1, le: 1, in: 1, on: 1, "d'": 1 };
+// Does a candidate look like a real EQ item name? The decisive signal is
+// Title Case — every SIGNIFICANT word (not a connector) is capitalized —
+// because chatter carries lowercase words ("just Dinged", "i need the full
+// lvl", "me 2", "I love starburst"). Category-prefixed items (Spell:, Ancient:)
+// are always accepted. Single bare words are rejected (too ambiguous —
+// "Grats", "ME", "DSP"): real items are multi-word or category-prefixed.
+function _looksLikeItemName(name) {
+  if (/^(Spell|Song|Ancient|Rune|Glyph|Tome|Words|Page|Formula):/i.test(name)) return true;
+  if (/[!?]$/.test(name)) return false;   // ends like a sentence
+  const words = name.split(/\s+/).filter(Boolean);
+  if (words.length < 2) return false;     // single word — not enough signal
+  let significant = 0, capped = 0;
+  for (const w of words) {
+    const lw = w.toLowerCase().replace(/[^a-z']/g, '');
+    if (_LOOT_CONNECTORS[lw]) continue;   // connectors may be lowercase
+    significant++;
+    if (/^["'`]*[A-Z0-9]/.test(w)) capped++;   // starts uppercase (allow leading quote/backtick) or a numeral
+  }
+  // EVERY significant word must be capitalized — real item names are Title Case.
+  return significant > 0 && capped === significant;
+}
 function parseLootChatBody(body) {
   if (!body) return [];
   let s = String(body).trim().replace(/^'+|'+$/g, '').trim();
   const delim = s.includes('|') ? '|' : ',';
   const parts = s.split(delim);
-  const multi = parts.length > 1;
   const out = [];
   for (let raw of parts) {
     let name = raw.trim();
@@ -18255,14 +18277,11 @@ function parseLootChatBody(body) {
     const qm = name.match(/\s*\((\d{1,3})\)\s*$/);
     if (qm) { qty = parseInt(qm[1], 10) || 1; name = name.slice(0, qm.index).trim(); }
     if (!name || !/[A-Za-z]/.test(name)) continue;
-    // Single-item bodies are the chatter risk ("grats!", "inc", "oom") — require
-    // an item shape. A real delimited list (multi) is trusted as-is.
-    if (!multi) {
-      const knownPrefix = /^(Spell|Song|Ancient|Rune|Glyph|Tome|Words|Page|Formula):/i.test(name);
-      const multiWordTitle = /\s/.test(name) && /^[A-Z]/.test(name);
-      const looksSentence = /[!?]$/.test(name) || /\b(grats|gratz|inc|oom|fd|rez|res|pull|clear|wtb|wts|lfg)\b/i.test(name);
-      if (looksSentence || (!knownPrefix && !multiWordTitle)) continue;
-    }
+    // EVERY element of a real loot list is an item name. If ANY split element
+    // fails the item-name check, the message is chatter that happened to have
+    // commas ("just Dinged, i need the full lvl, …") — reject the whole thing.
+    // (The bot re-validates surviving names against eqemu_items at post time.)
+    if (!_looksLikeItemName(name)) return [];
     const prev = out.find(i => i.name.toLowerCase() === name.toLowerCase());
     if (prev) { prev.quantity += qty; continue; }
     out.push({ name, quantity: qty });
