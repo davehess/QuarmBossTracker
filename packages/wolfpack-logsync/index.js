@@ -12899,10 +12899,15 @@ document.addEventListener('click', function (ev) {
       .then(function (r) { return r.json(); }).then(function (j) {
         if (!msg) return;
         if (!j.ok) { _dkpTickPending = null; msg.innerHTML = '<span style="color:#f85149">✕ ' + esc(j.reason || 'cannot submit') + '</span>'; return; }
-        var verb = j.action === 'would-create' ? 'CREATE today\\'s raid and add' : (j.action === 'would-overwrite' ? 'OVERWRITE' : (j.action === 'create-separate' ? 'create a separate raid for' : 'add'));
+        var verb = j.action === 'would-overwrite' ? 'OVERWRITE' : (j.action === 'create-separate' ? 'create a separate raid for' : 'add');
+        // Prefer the OpenDKP-matched count when present (only matched raiders
+        // get credited); fall back to the raw attendee count.
+        var credited = (typeof j.matched_count === 'number') ? j.matched_count : j.count;
+        var unm = Array.isArray(j.unmatched) ? j.unmatched : [];
         msg.innerHTML = '<div style="border:1px solid #1f6feb;border-radius:6px;padding:8px 10px;background:#0d1b2e">'
-          + 'Will <b>' + verb + ' ' + esc(_slotLabel(slot)) + '</b> — <b>' + j.count + '</b> attendees · ' + j.points + ' DKP each'
+          + 'Will <b>' + verb + ' ' + esc(_slotLabel(slot)) + '</b> — <b>' + credited + '</b> credited · ' + j.points + ' DKP each'
           + '<br><span class="dim">Raid: ' + esc(j.raidName || ('#' + j.raidId)) + (j.raidId ? ' (#' + j.raidId + ')' : '') + '</span>'
+          + (unm.length ? '<br><span style="color:#f6c365;font-size:11px">⚠ ' + unm.length + ' not on OpenDKP (won\\'t be credited): ' + esc(unm.slice(0, 12).join(', ')) + (unm.length > 12 ? '…' : '') + '</span>' : '')
           + '<div style="margin-top:6px"><button id="wpTickConfirm" style="background:#238636;color:#fff;border:0;border-radius:5px;padding:3px 12px;cursor:pointer;font-family:inherit;font-size:11px">✓ Submit tick</button> '
           + '<button id="wpTickCancel" style="background:#30363d;color:#e6edf3;border:1px solid #484f58;border-radius:5px;padding:3px 12px;cursor:pointer;font-family:inherit;font-size:11px">Cancel</button></div></div>';
       }).catch(function () { _dkpTickPending = null; if (msg) msg.innerHTML = '<span style="color:#f85149">✕ engine unreachable</span>'; });
@@ -12918,8 +12923,11 @@ document.addEventListener('click', function (ev) {
       .then(function (r) { return r.json(); }).then(function (j) {
         _dkpTickPending = null;
         if (!msg2) return;
-        if (j.ok) msg2.innerHTML = '<span style="color:#3fb950">✓ ' + esc(_slotLabel(p.slot)) + ' submitted — ' + j.count + ' attendees to ' + esc(j.raidName || ('#' + j.raidId)) + '</span>';
-        else      msg2.innerHTML = '<span style="color:#f85149">✕ ' + esc(j.reason || 'submit failed') + '</span>';
+        if (j.ok) {
+          var unm2 = Array.isArray(j.unmatched) ? j.unmatched : [];
+          msg2.innerHTML = '<span style="color:#3fb950">✓ ' + esc(_slotLabel(p.slot)) + ' submitted — ' + j.count + ' credited to ' + esc(j.raidName || ('#' + j.raidId)) + '</span>'
+            + (unm2.length ? '<br><span style="color:#f6c365;font-size:11px">⚠ not on OpenDKP: ' + esc(unm2.slice(0, 12).join(', ')) + (unm2.length > 12 ? '…' : '') + '</span>' : '');
+        } else msg2.innerHTML = '<span style="color:#f85149">✕ ' + esc(j.reason || 'submit failed') + '</span>';
       }).catch(function () { _dkpTickPending = null; if (msg2) msg2.innerHTML = '<span style="color:#f85149">✕ submit failed</span>'; });
     return;
   }
