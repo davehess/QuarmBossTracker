@@ -11604,6 +11604,16 @@ function renderZealExplorer(s) {
 // Byte-stable: innerHTML only reassigned when the built string changes, so
 // armed restore buttons and open <details> survive polls. Stamps render as
 // fixed strings (never fmtAgo) for the same reason.
+// Stable clock time ("5:24 PM") for capture cards. Relative "X ago" strings
+// change every poll, which defeats the byte-stable innerHTML compare and makes
+// the card repaint (scroll jump / flicker) — an absolute time is stable across
+// polls, so the card only repaints when the DATA changes. (Hitya 2026-07-16.)
+function _clockOf(ms) {
+  var n = Number(ms);
+  if (!isFinite(n) || n <= 0) return '?';
+  try { return new Date(n).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); }
+  catch (e) { return '?'; }
+}
 function _bkStampPretty(st) {
   var s = String(st || '');
   if (s.length < 15) return s;
@@ -11670,7 +11680,7 @@ function renderDkpTickCard(s) {
   // Live roster
   if (roster && roster.count > 0) {
     h += '<div style="border:1px solid #238636;border-radius:6px;padding:8px 10px;margin:6px 0">'
-      + '<div><b>🟢 Live raid roster</b> <span class="dim">— ' + roster.count + ' in your raid now (' + fmtAgo((Date.now() - roster.at) / 1000) + ' ago)</span></div>'
+      + '<div><b>🟢 Live raid roster</b> <span class="dim">— ' + roster.count + ' in your raid (as of ' + esc(_clockOf(roster.at)) + ')</span></div>'
       + _dkpSlotButtons('roster') + '</div>';
   } else {
     h += '<div class="dim" style="font-size:12px;border:1px dashed #30363d;border-radius:6px;padding:8px 10px;margin:6px 0">🟢 Live raid roster — <i>not in a raid right now</i> (join a raid and Zeal will populate this).</div>';
@@ -11713,7 +11723,7 @@ function renderDkpLootCard(s) {
     h += '<div class="wpDkpCap" data-id="' + esc(c.id) + '" style="border:1px solid #30363d;border-radius:6px;padding:8px 10px;margin:6px 0">'
       + '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">'
       +   '<b>' + esc(c.speaker) + '</b>'
-      +   '<span class="dim" style="font-size:11px">' + chan + ' · ' + fmtAgo((Date.now() - Date.parse(c.ts)) / 1000) + ' ago · ' + c.items.length + ' item' + (c.items.length === 1 ? '' : 's') + '</span>'
+      +   '<span class="dim" style="font-size:11px">' + chan + ' · ' + esc(_clockOf(Date.parse(c.ts))) + ' · ' + c.items.length + ' item' + (c.items.length === 1 ? '' : 's') + '</span>'
       +   '<span style="flex:1"></span>'
       +   '<button class="wpDkpCopy" data-id="' + esc(c.id) + '" style="background:#1f6feb;color:#fff;border:0;border-radius:5px;padding:2px 10px;cursor:pointer;font-family:inherit;font-size:11px">Copy for /loot</button>'
       +   '<button class="wpDkpDismiss" data-id="' + esc(c.id) + '" title="Dismiss this list" style="background:none;color:#8b949e;border:1px solid #30363d;border-radius:5px;padding:2px 8px;cursor:pointer;font-family:inherit;font-size:11px">✕</button>'
