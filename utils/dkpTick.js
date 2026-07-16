@@ -9,8 +9,36 @@
 // is always a deliberate second click.
 
 const {
-  getRaids, getRaid, createRaid, updateRaid, getMostRecentRaid,
+  getRaids, getRaid, createRaid, updateRaid, updateRaidById, getMostRecentRaid, getCharacters,
 } = require('./opendkp');
+
+// Resolve player names → OpenDKP CharacterIds via the roster (bearer path —
+// the same auth our reads already use; no OPENDKP_CLIENT_ID / OPENDKP_RAIDS_URL
+// needed, which is why the modern /clients write path works where the legacy
+// /beta/raids path is dead). Walks pages defensively (guild rosters exceed one
+// page). Returns { idByName: Map, matched:[{name,id}], unmatched:[name] }.
+async function _resolveCharacterIds(names) {
+  const idByName = new Map();
+  for (let page = 1; page <= 12; page++) {
+    let resp;
+    try { resp = await getCharacters({ page }); } catch { break; }
+    const chars = Array.isArray(resp) ? resp : (Array.isArray(resp?.Characters) ? resp.Characters : []);
+    if (chars.length === 0) break;
+    for (const c of chars) {
+      const nm = c && (c.Name || c.name);
+      const id = c && (c.CharacterId ?? c.characterId ?? c.Id ?? c.id);
+      if (nm && id != null) idByName.set(String(nm).toLowerCase(), id);
+    }
+    if (chars.length < 50) break;   // last page (page size ~50)
+  }
+  const matched = [], unmatched = [];
+  for (const n of names) {
+    const id = idByName.get(String(n).toLowerCase());
+    if (id != null) matched.push({ name: n, id });
+    else unmatched.push(n);
+  }
+  return { idByName, matched, unmatched };
+}
 const { getRaidNight, saveRaidNight } = require('./state');
 const { getDefaultTz } = require('./timezone');
 
@@ -122,49 +150,62 @@ async function submitRaidTick(opts) {
     return { ok: false, reason: `No raid exists for today and it isn't a raid night (Sun/Wed/Thu) — create the raid on OpenDKP first.` };
   }
 
-  let existingTicks = [];
-  if (raidId) {
-    const full = await getRaid(raidId);
-    existingTicks = full.Ticks || [];
-    if (!raidName) raidName = full.Name;
+  // Auto-create today's raid isn't supported on the bearer path (no
+  // create-by-id endpoint) — since the guild creates the raid on OpenDKP
+  // first, this only matters for the Sun/Wed/Thu auto-create, which we
+  // surface as an actionable message rather than falling back to the dead
+  // legacy path.
+  if (willCreate) {
+    return { ok: false, reason: `No raid exists for today on OpenDKP — create it there first (the dashboard can't create raids yet), then submit the tick.` };
   }
+
+  // Resolve attendees → OpenDKP CharacterIds (needed by the /clients write).
+  const { matched, unmatched } = await _resolveCharacterIds(players);
 
   if (dryRun) {
     return {
       ok: true, dryRun: true,
-      action: willCreate ? 'would-create' : (overwriteTickId ? 'would-overwrite' : 'would-append'),
-      raidId: raidId || null, raidName: raidName || `${today} Raid`,
-      slot, description, count: players.length, points, players,
+      action: overwriteTickId ? 'would-overwrite' : 'would-append',
+      raidId, raidName: raidName || `${today} Raid`,
+      slot, description, count: players.length,
+      matched_count: matched.length, unmatched,
+      points,
     };
   }
-
-  const ticksPayload = buildTicksPayload(existingTicks, description, points, players, overwriteTickId);
-  let result;
-  if (!raidId) {
-    raidName = opts.raidName || `${today} Raid`;
-    result = await createRaid({
-      Name: raidName, Timestamp: isoTimestamp, UpdatedBy: updatedBy,
-      Pool: { IdPool: poolId }, Ticks: ticksPayload, Items: [],
-    });
-    raidId = result.RaidId;
-  } else {
-    result = await updateRaid({
-      RaidId: raidId, Name: raidName, Timestamp: isoTimestamp, UpdatedBy: updatedBy,
-      Pool: { IdPool: poolId }, Ticks: ticksPayload, Items: [],
-    });
+  if (matched.length === 0) {
+    return { ok: false, reason: `None of the ${players.length} attendees matched an OpenDKP character — nothing submitted.` };
   }
+
+  // ── Bearer write (modern /clients/{name}/raids/{id}) ─────────────────────
+  // Fetch the FULL raid and append (or overwrite) exactly ONE tick, preserving
+  // every existing tick + item verbatim — so a shape surprise can't corrupt
+  // prior attendance. Attendees go in as Characters:[id] (the /clients shape).
+  const full = await getRaid(raidId);
+  const characterIds = matched.map(m => m.id);
+  const ticks = Array.isArray(full.Ticks) ? full.Ticks.slice() : [];
+  if (overwriteTickId != null) {
+    const idx = ticks.findIndex(t => t.TickId === overwriteTickId);
+    const t = { TickId: overwriteTickId, Value: points, Description: description, Characters: characterIds };
+    if (idx !== -1) ticks[idx] = { ...ticks[idx], ...t };
+    else ticks.push({ TickId: null, Value: points, Description: description, Characters: characterIds });
+  } else {
+    ticks.push({ TickId: null, Value: points, Description: description, Characters: characterIds });
+  }
+  const raidObject = { ...full, Ticks: ticks, UpdatedBy: updatedBy };
+  const result = await updateRaidById(raidId, raidObject);
 
   // Resolve the new tickId + persist raid-night state (mirrors /tick).
   const prevTickIds = new Set(Object.values(night?.ticks || {}).map(t => t.tickId).filter(Boolean));
-  const newTick = (result.Ticks || []).find(t => !prevTickIds.has(t.TickId));
+  const newTick = ((result && result.Ticks) || []).find(t => !prevTickIds.has(t.TickId) && !(Array.isArray(full.Ticks) && full.Ticks.some(o => o.TickId === t.TickId)));
   const resolvedTickId = overwriteTickId ?? newTick?.TickId ?? null;
   const updatedNight = { date: today, raidId, name: raidName, poolId, ticks: { ...(night?.ticks || {}) } };
-  updatedNight.ticks[slotNum] = { tickId: resolvedTickId, description, postedAt: Date.now(), count: players.length };
+  updatedNight.ticks[slotNum] = { tickId: resolvedTickId, description, postedAt: Date.now(), count: matched.length };
   saveRaidNight(updatedNight);
 
   return {
-    ok: true, action: overwriteTickId ? 'overwritten' : (willCreate ? 'created' : 'appended'),
-    raidId, raidName, slot, description, count: players.length, points,
+    ok: true, action: overwriteTickId ? 'overwritten' : 'appended',
+    raidId, raidName, slot, description,
+    count: matched.length, unmatched, points,
     slotsUsed: Object.keys(updatedNight.ticks).filter(k => !isNaN(Number(k))).length,
   };
 }
