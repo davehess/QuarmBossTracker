@@ -8292,6 +8292,9 @@ function _applyEqSetup() {
   return { ok: true, folders };
 }
 
+// One serialized /api/state snapshot shared by every poller for 400ms —
+// see the /api/state handler for the raid-load rationale.
+let _stateJsonCache = { at: 0, body: null };
 function _serializeForDashboard() {
   const healersOut = {};
   for (const [name, s] of Object.entries(stats.sessionHealers || {})) {
@@ -12435,8 +12438,13 @@ async function refresh() {
   // night, each re-serving the whole page and deepening the stall).
   if (_refreshInFlight) return;
   _refreshInFlight = true;
+  // 12s cap, not 5s: on a raid-loaded box /api/state can legitimately take
+  // longer than 5s (2026-07-15: the static page served instantly while state
+  // polls timed out — every poll aborted, so the banner never cleared even
+  // though the engine was healthy). The in-flight guard above already
+  // prevents stacking, so a generous cap costs nothing.
   var _ctl = (typeof AbortController === 'undefined') ? null : new AbortController();
-  var _tmo = _ctl ? setTimeout(function () { try { _ctl.abort(); } catch (e) {} }, 5000) : null;
+  var _tmo = _ctl ? setTimeout(function () { try { _ctl.abort(); } catch (e) {} }, 12000) : null;
   try {
     const s = await (await fetch('/api/state', _ctl ? { cache: 'no-store', signal: _ctl.signal } : { cache: 'no-store' })).json();
     _refreshFailures = 0;
@@ -14540,8 +14548,19 @@ function startWebDashboard(port) {
         return res.end(WEB_HTML);
       }
       if (req.url === '/api/state') {
+        // Serve every poller the SAME serialized snapshot for 400ms. The
+        // dashboard (2s) + CH chain (600ms) + tank/command/who/mobinfo
+        // overlays all hit this endpoint — on a raid-loaded box that was
+        // 5-10 full JSON.stringify passes of a multi-MB object per second,
+        // and the serialize work itself starved the event loop (2026-07-15:
+        // /api/state slower than the 5s page timeout while the static page
+        // served instantly). 400ms staleness is invisible at those cadences.
+        const _now = Date.now();
+        if (!_stateJsonCache.body || (_now - _stateJsonCache.at) > 400) {
+          _stateJsonCache = { at: _now, body: JSON.stringify(_serializeForDashboard()) };
+        }
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify(_serializeForDashboard()));
+        return res.end(_stateJsonCache.body);
       }
       // Tank overlay snapshot (Uilnayar 2026-06-25). Aggregates everything the
       // tank.html overlay needs from the active character's live state:
