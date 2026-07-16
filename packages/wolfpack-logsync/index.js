@@ -8226,6 +8226,125 @@ function _eqSetupDirs() {
   return [...dirs];
 }
 
+// ── Settings-file safety net (Uilnayar 2026-07-16) ──────────────────────────
+// EQ rewrites eqclient.ini on every clean exit and a crash/patch/reinstall can
+// wipe it (tonight's Zeal exit-crashes made that risk very real). Keep the
+// last N distinct versions of each settings file per EQ folder under the
+// agent dir (survives Mimic updates AND an EQ-folder catastrophe), and offer
+// a one-click restore ("rebuild") from the dashboard Info tab. Restores are
+// reversible — the current live file is snapshotted first — and refused while
+// EQ looks like it is running, because EQ would overwrite the restore on exit.
+const BACKUP_TARGETS = ['eqclient.ini', 'zeal.ini'];
+const BACKUP_KEEP    = 10;
+const BACKUP_DIR     = path.join(__dirname, 'backups');
+const _backupIndexFile = path.join(BACKUP_DIR, 'index.json');
+let _backupIndex = null;      // key = slug(dir)|file → { dir, file, sha1, stamps: [oldest..newest] }
+let _backupLastError = null;
+
+function _backupSlug(dir) {
+  const tail = String(dir).replace(/[^A-Za-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(-48);
+  return tail + '-' + crypto.createHash('sha1').update(String(dir).toLowerCase()).digest('hex').slice(0, 8);
+}
+function _loadBackupIndex() {
+  if (_backupIndex) return _backupIndex;
+  try { _backupIndex = JSON.parse(fs.readFileSync(_backupIndexFile, 'utf8')) || {}; }
+  catch { _backupIndex = {}; }
+  return _backupIndex;
+}
+function _saveBackupIndex() {
+  try {
+    fs.mkdirSync(BACKUP_DIR, { recursive: true });
+    const tmp = _backupIndexFile + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(_backupIndex, null, 2));
+    fs.renameSync(tmp, _backupIndexFile);
+  } catch (e) { _backupLastError = String((e && e.message) || e); }
+}
+function _backupStampNow() {
+  const d = new Date(); const p = (n) => String(n).padStart(2, '0');
+  return '' + d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + '-' + p(d.getHours()) + p(d.getMinutes()) + p(d.getSeconds());
+}
+
+// Snapshot every target file whose content differs from its newest backup.
+// Cheap when nothing changed (one small read + sha per file). Runs 60s after
+// boot + every 6h + immediately before any restore.
+function backupSettingsFiles() {
+  const idx = _loadBackupIndex();
+  let wrote = false;
+  for (const dir of _eqSetupDirs()) {
+    for (const file of BACKUP_TARGETS) {
+      const live = path.join(dir, file);
+      let buf; try { buf = fs.readFileSync(live); } catch { continue; }   // file absent — fine
+      const sha = crypto.createHash('sha1').update(buf).digest('hex');
+      const key = _backupSlug(dir) + '|' + file.toLowerCase();
+      const ent = idx[key] || (idx[key] = { dir, file, sha1: null, stamps: [] });
+      ent.dir = dir; ent.file = file;   // refresh in case the folder moved drives
+      if (ent.sha1 === sha && ent.stamps.length > 0) continue;
+      const stamp = _backupStampNow();
+      if (ent.stamps.includes(stamp)) continue;   // two writes in the same second — next pass gets it
+      const destDir = path.join(BACKUP_DIR, _backupSlug(dir));
+      try {
+        fs.mkdirSync(destDir, { recursive: true });
+        fs.writeFileSync(path.join(destDir, file + '.' + stamp), buf);
+        ent.sha1 = sha;
+        ent.stamps.push(stamp);
+        while (ent.stamps.length > BACKUP_KEEP) {
+          const old = ent.stamps.shift();
+          try { fs.unlinkSync(path.join(destDir, file + '.' + old)); } catch { /* already gone */ }
+        }
+        wrote = true;
+        _backupLastError = null;
+        console.log(`[backup] saved ${file} from ${dir} (${buf.length} bytes)`);
+      } catch (e) { _backupLastError = String((e && e.message) || e); }
+    }
+  }
+  if (wrote) _saveBackupIndex();
+}
+
+// Dashboard snapshot — newest stamp first per target.
+function _backupsSnapshot() {
+  const idx = _loadBackupIndex();
+  return {
+    targets: Object.values(idx)
+      .map(e => ({ dir: e.dir, file: e.file, stamps: e.stamps.slice().reverse() }))
+      .sort((a, b) => (a.dir + a.file).localeCompare(b.dir + b.file)),
+    last_error: _backupLastError,
+  };
+}
+
+function _eqLooksRunning() {
+  const now = Date.now();
+  for (const ch of Object.keys(_zealState || {})) {
+    if ((now - ((_zealState[ch] || {}).updatedAt || 0)) < 60_000) return true;
+  }
+  return false;
+}
+
+// Restore a specific backup into the live EQ folder. Validated strictly
+// against the index (never arbitrary paths). The current live file is
+// snapshotted first so a restore can itself be undone.
+function restoreSettingsBackup(dirWanted, fileWanted, stampWanted) {
+  const idx = _loadBackupIndex();
+  const ent = Object.values(idx).find(e =>
+    e.dir === String(dirWanted) && e.file.toLowerCase() === String(fileWanted).toLowerCase());
+  if (!ent) return { ok: false, reason: 'unknown backup target' };
+  const stamp = String(stampWanted);
+  if (!ent.stamps.includes(stamp)) return { ok: false, reason: 'unknown backup version' };
+  if (_eqLooksRunning()) {
+    return { ok: false, reason: 'EverQuest looks like it is running — close it first (EQ rewrites settings on exit and would overwrite the restore).' };
+  }
+  const src  = path.join(BACKUP_DIR, _backupSlug(ent.dir), ent.file + '.' + stamp);
+  const live = path.join(ent.dir, ent.file);
+  try {
+    backupSettingsFiles();   // snapshot the current live file first — reversible
+    const buf = fs.readFileSync(src);
+    const tmp = live + '.tmp-restore';
+    fs.writeFileSync(tmp, buf);
+    fs.renameSync(tmp, live);
+    console.log(`[backup] restored ${ent.file} (${stamp}) into ${ent.dir}`);
+    return { ok: true, restored: ent.file, stamp };
+  } catch (e) { return { ok: false, reason: String((e && e.message) || e) }; }
+}
+
 // Set-or-insert `key=value` under [section] in a Windows INI, preserving every
 // other line + the file's newline style. Creates the section if absent. Atomic
 // write (.tmp + rename). Returns { changed, existed } or null if unreadable.
@@ -8434,6 +8553,9 @@ function _serializeForDashboard() {
     // "raid (type 5)" section. null until the client fires one (you must be
     // in a raid; Zeal re-sends on composition change).
     raidPipe: _lastRaidPipe,
+    // Settings-file safety net — Info tab "🛟 Settings backups" card
+    // (targets + newest-first stamps; restore via POST /api/backups/restore).
+    backups: _backupsSnapshot(),
     // /random roll sets (EQ Log Parser-style) — dashboard "🎲 Rolls" card.
     rollSets: rollSetsSnapshot(),
     // Officer knob overrides currently in effect (see pollOverlayTuning) —
@@ -11468,6 +11590,47 @@ function renderZealExplorer(s) {
   }
   morphInto(el, h);
 }
+// 🛟 Settings backups card (Info tab). Fills #wpBackupsCard from s.backups.
+// Byte-stable: innerHTML only reassigned when the built string changes, so
+// armed restore buttons and open <details> survive polls. Stamps render as
+// fixed strings (never fmtAgo) for the same reason.
+function _bkStampPretty(st) {
+  var s = String(st || '');
+  if (s.length < 15) return s;
+  return s.slice(0, 4) + '-' + s.slice(4, 6) + '-' + s.slice(6, 8) + ' ' + s.slice(9, 11) + ':' + s.slice(11, 13);
+}
+function renderBackupsCard(s) {
+  var el = document.getElementById('wpBackupsCard');
+  if (!el) return;
+  var b = (s && s.backups) || {};
+  var targets = b.targets || [];
+  if (targets.length === 0 && !b.last_error) { el.style.display = 'none'; return; }
+  el.style.display = '';
+  var h = '<h2>🛟 Settings backups</h2>'
+    + '<div class="dim" style="font-size:11px;margin-bottom:8px">The engine keeps the last ${BACKUP_KEEP} distinct versions of each settings file per EQ folder (checked hourly-ish, saved only when the file changed). Restore writes the chosen version back into the EQ folder — close EverQuest first, and the current file is snapshotted before every restore so a restore can be undone.</div>';
+  if (b.last_error) {
+    h += '<div style="color:#f6c365;font-size:11px;margin-bottom:6px">⚠ last backup error: ' + esc(String(b.last_error)) + '</div>';
+  }
+  for (var i = 0; i < targets.length; i++) {
+    var t = targets[i];
+    var newest = t.stamps && t.stamps.length ? _bkStampPretty(t.stamps[0]) : 'none yet';
+    h += '<details ' + wpKeep('backups|' + t.dir + '|' + t.file) + ' style="margin:4px 0">'
+      + '<summary style="cursor:pointer"><b>' + esc(t.file) + '</b> <span class="dim">in ' + esc(t.dir) + '</span> — '
+      + (t.stamps ? t.stamps.length : 0) + ' version' + (t.stamps && t.stamps.length === 1 ? '' : 's')
+      + '<span class="dim"> · newest ' + newest + '</span></summary>';
+    for (var j = 0; j < (t.stamps || []).length; j++) {
+      var st = t.stamps[j];
+      h += '<div style="display:flex;align-items:center;gap:10px;padding:3px 0 3px 16px">'
+        + '<span style="min-width:130px">' + _bkStampPretty(st) + (j === 0 ? ' <span class="dim">(newest)</span>' : '') + '</span>'
+        + '<button class="wpBkRestore" data-dir="' + encodeURIComponent(t.dir) + '" data-file="' + esc(t.file) + '" data-stamp="' + esc(st) + '"'
+        + ' style="background:#30363d;color:#e6edf3;border:1px solid #484f58;border-radius:5px;padding:2px 10px;cursor:pointer;font-family:inherit;font-size:11px">Restore</button>'
+        + '</div>';
+    }
+    h += '</details>';
+  }
+  if (el._wpBkHtml !== h) { el._wpBkHtml = h; el.innerHTML = h; }
+}
+
 function renderInfo(s) {
   const sessionMin = Math.max(1, Math.round((Date.now() - s.startedAt) / 60000));
   // totalMinutes now accumulates the live session incrementally (saveStatsSoon),
@@ -11484,6 +11647,9 @@ function renderInfo(s) {
   // each group expandable. Volatile (live gauges/labels), so it fills its own
   // placeholder via renderZealExplorer to keep the rest of #info byte-stable.
   h += '<div id="wpZealExplorer" class="card wide" style="display:none"></div>';
+  // 🛟 Settings backups — filled by renderBackupsCard (own placeholder so the
+  // restore controls survive #info repaints).
+  h += '<div id="wpBackupsCard" class="card wide" style="display:none"></div>';
   h += '<div class="grid">';
   // 🥋 Monk Mending — only if attempts > 0
   const m = s.sessionMends || {};
@@ -12471,9 +12637,10 @@ async function refresh() {
                      ['triggers', renderTriggers], ['zealcard', renderZealCard],
                      ['charmdiag', renderCharmDiag],
                      ['overlays', renderOverlays], ['info', renderInfo],
-                     // After info: fills the #wpZealExplorer placeholder that
-                     // renderInfo just (re)painted, so it shows same-tick.
-                     ['zealexplorer', renderZealExplorer]];
+                     // After info: fill the placeholders renderInfo just
+                     // (re)painted, so they show same-tick.
+                     ['zealexplorer', renderZealExplorer],
+                     ['backupscard', renderBackupsCard]];
     for (var _si = 0; _si < _sections.length; _si++) {
       var _sid = _sections[_si][0], _sfn = _sections[_si][1];
       try { _sfn(s); }
@@ -12567,6 +12734,38 @@ document.querySelectorAll('.nav button[data-tab]').forEach(b => b.addEventListen
   if (b.dataset.tab === 'raid') refreshRaidTab();
 }));
 refresh(); setInterval(refresh, 2000);
+// Restore buttons on the 🛟 Settings backups card — delegated (capture) so
+// repaints never lose the handler. Two-step arm/confirm instead of confirm():
+// first click arms for 8s, second click fires the restore.
+document.addEventListener('click', function (ev) {
+  var b = ev.target && ev.target.closest ? ev.target.closest('.wpBkRestore') : null;
+  if (!b) return;
+  if (b.getAttribute('data-armed') !== '1') {
+    b.setAttribute('data-armed', '1');
+    b.textContent = 'Click again to restore (close EQ first)';
+    setTimeout(function () { try { b.removeAttribute('data-armed'); b.textContent = 'Restore'; } catch (e) {} }, 8000);
+    return;
+  }
+  b.disabled = true; b.textContent = 'Restoring…';
+  fetch('/api/backups/restore', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      dir:   decodeURIComponent(b.getAttribute('data-dir') || ''),
+      file:  b.getAttribute('data-file')  || '',
+      stamp: b.getAttribute('data-stamp') || '',
+    }),
+  }).then(function (r) { return r.json(); }).then(function (j) {
+    b.disabled = false;
+    b.removeAttribute('data-armed');
+    b.textContent = (j && j.ok) ? '✓ Restored' : ('✕ ' + ((j && j.reason) || 'failed'));
+    if (j && j.ok) setTimeout(function () { try { b.textContent = 'Restore'; } catch (e) {} }, 5000);
+  }).catch(function () {
+    b.disabled = false;
+    b.removeAttribute('data-armed');
+    b.textContent = '✕ engine unreachable';
+  });
+}, true);
 // Refresh opt-in every 3s while its tab is active (for live backfill progress)
 setInterval(() => { if (document.getElementById('optin').classList.contains('active')) refreshOptin(); }, 3000);
 setInterval(() => { var r = document.getElementById('raid'); if (r && r.classList.contains('active')) refreshRaidTab(); }, 3000);
@@ -14584,6 +14783,21 @@ function startWebDashboard(port) {
       // durable upload queue so a brief network blip doesn't lose votes;
       // forwards to the bot's /api/agent/trigger_feedback which writes to
       // trigger_timing_feedback. (Uilnayar 2026-06-26 — v1.1.2.)
+      // Settings-file restore ("rebuild") — dashboard Info tab card. Strictly
+      // validated against the backup index; refused while EQ looks running.
+      if (req.url === '/api/backups/restore' && req.method === 'POST') {
+        let _rbody = '';
+        for await (const c of req) {
+          _rbody += c;
+          if (_rbody.length > 4 * 1024) { res.writeHead(413); return res.end(); }
+        }
+        let rp;
+        try { rp = JSON.parse(_rbody || '{}'); }
+        catch { res.writeHead(400); return res.end('{"error":"bad json"}'); }
+        const result = restoreSettingsBackup(rp.dir, rp.file, rp.stamp);
+        res.writeHead(result.ok ? 200 : 409, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify(result));
+      }
       if (req.url === '/api/triggers/feedback' && req.method === 'POST') {
         let _body = '';
         for await (const c of req) {
@@ -16611,12 +16825,20 @@ const _quarmyUploaded = {};   // char(lower) → export checksum already enqueue
 // maps beside the queue (.tmp + rename, async — gameplay first). Delete
 // logsync.uploaded.json to force a full re-upload on next start.
 const UPLOADED_STATE_FILE = path.join(__dirname, 'logsync.uploaded.json');
+// path → 'mtimeMs-size' recorded after a file was fully PROCESSED (uploaded,
+// or deliberately skipped on content). Lets the 10-min scans stat() instead
+// of read+parse — on a 17-character box the parse itself was the remaining
+// boot cost after 3.3.56 stopped the re-uploads (Uilnayar 2026-07-16:
+// "doesn't rescan when they haven't changed").
+const _scannedFiles = {};
+function _fileFingerprint(st) { return Math.round(st.mtimeMs) + '-' + st.size; }
 function _loadUploadedState() {
   try {
     const j = JSON.parse(fs.readFileSync(UPLOADED_STATE_FILE, 'utf8'));
     if (j && typeof j === 'object') {
       Object.assign(_quarmyUploaded,    j.quarmy    || {});
       Object.assign(_spellbookUploaded, j.spellbook || {});
+      Object.assign(_scannedFiles,      j.files     || {});
     }
   } catch { /* first run or corrupt file — start empty, re-uploads dedup server-side */ }
 }
@@ -16626,7 +16848,7 @@ function _saveUploadedStateSoon() {
   _uploadedSaveTimer = setTimeout(() => {
     _uploadedSaveTimer = null;
     let body;
-    try { body = JSON.stringify({ quarmy: _quarmyUploaded, spellbook: _spellbookUploaded }); }
+    try { body = JSON.stringify({ quarmy: _quarmyUploaded, spellbook: _spellbookUploaded, files: _scannedFiles }); }
     catch { return; }
     const tmp = UPLOADED_STATE_FILE + '.tmp';
     fs.writeFile(tmp, body, (err) => {
@@ -16720,6 +16942,12 @@ function scanQuarmyExports() {
     if (envExcluded.has(fileChar) || _quarmyPrefsBlock(fileChar)) continue;
     const fullPath = path.join(dir, name);
     try {
+      // stat-only skip: unchanged file = same decision as last time, no
+      // read/parse. Recorded only after a full non-dry processing pass, and
+      // AFTER the exclusion checks above so a pref flip always rescans.
+      const _st = fs.statSync(fullPath);
+      const _fp = _fileFingerprint(_st);
+      if (_scannedFiles[fullPath] === _fp) continue;
       const parsed = parseQuarmyExport(fs.readFileSync(fullPath, 'utf8'));
       // The Character row inside the file is authoritative over the filename
       // (renamed copies happen) — re-check prefs under the real name too.
@@ -16728,15 +16956,20 @@ function scanQuarmyExports() {
         ? profName
         : m[1].charAt(0).toUpperCase() + m[1].slice(1).toLowerCase();
       const lower = character.toLowerCase();
-      if (envExcluded.has(lower) || _quarmyPrefsBlock(lower)) continue;
-      if (parsed.equipped.length === 0 && parsed.bags.length === 0 && parsed.aas.length === 0) continue;
+      if (envExcluded.has(lower) || _quarmyPrefsBlock(lower)) continue;   // prefs can flip — never fingerprint
+      if (parsed.equipped.length === 0 && parsed.bags.length === 0 && parsed.aas.length === 0) {
+        _scannedFiles[fullPath] = _fp; _saveUploadedStateSoon(); continue;
+      }
       const checksum = parsed.checksum || ('mtime-' + fs.statSync(fullPath).mtime.getTime());
-      if (_quarmyUploaded[lower] === checksum) continue;
+      if (_quarmyUploaded[lower] === checksum) {
+        _scannedFiles[fullPath] = _fp; _saveUploadedStateSoon(); continue;
+      }
       if (dryRun) {
         console.log(`[quarmy] DRY RUN — would upload ${character}: ${parsed.equipped.length} equipped, ${parsed.bags.length} bagged, ${parsed.aas.length} AAs (checksum ${checksum})`);
         continue;
       }
       _quarmyUploaded[lower] = checksum;
+      _scannedFiles[fullPath] = _fp;
       _saveUploadedStateSoon();
       enqueueUpload('quarmy', {
         agent_version: AGENT_VERSION,
@@ -16816,15 +17049,24 @@ function scanSpellbookFiles() {
     if (envExcluded.has(lower) || _quarmyPrefsBlock(lower)) continue;
     const fullPath = path.join(dir, name);
     try {
+      // stat-only skip — same contract as the quarmy scan above.
+      const _st = fs.statSync(fullPath);
+      const _fp = _fileFingerprint(_st);
+      if (_scannedFiles[fullPath] === _fp) continue;
       const spells = parseSpellbookFile(fs.readFileSync(fullPath, 'utf8'));
-      if (spells.length === 0) continue;
+      if (spells.length === 0) {
+        _scannedFiles[fullPath] = _fp; _saveUploadedStateSoon(); continue;
+      }
       const checksum = _spellbookChecksum(spells);
-      if (_spellbookUploaded[lower] === checksum) continue;
+      if (_spellbookUploaded[lower] === checksum) {
+        _scannedFiles[fullPath] = _fp; _saveUploadedStateSoon(); continue;
+      }
       if (dryRun) {
         console.log(`[spellbook] DRY RUN — would upload ${character}: ${spells.length} spells (checksum ${checksum})`);
         continue;
       }
       _spellbookUploaded[lower] = checksum;
+      _scannedFiles[fullPath] = _fp;
       _saveUploadedStateSoon();
       enqueueUpload('spellbook', { agent_version: AGENT_VERSION, character, checksum, spells });
       console.log(`[spellbook] queued ${spells.length} spells for ${character}`);
@@ -22638,6 +22880,11 @@ async function main() {
   // be known, not assumed), so the first useful pass is the 30s one.
   setTimeout(scanQuarmyExports, 30_000);
   setInterval(scanQuarmyExports, 10 * 60_000);
+  // Settings-file safety net — 60s after boot (watched logs resolved by then,
+  // and off the boot hot path) + every 6h. Content-hash gated, so quiet when
+  // nothing changed.
+  setTimeout(backupSettingsFiles, 60_000);
+  setInterval(backupSettingsFiles, 6 * 3600_000);
 
   // Spellbook export ingest — <Char>-Spellbook.txt from EQ's /outputfile
   // spellbook, same dir + same prefs gate as Quarmy. Keeps the /character
