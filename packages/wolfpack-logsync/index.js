@@ -8532,6 +8532,9 @@ function _serializeForDashboard() {
     // review + post. Gated on the signed-in officer flag so a non-officer's
     // dashboard never even receives it. null when not an officer.
     dkpLoot:            (_mimicIdentity && _mimicIdentity.is_officer) ? _lootCaptureSnapshot() : null,
+    // Officer-only DKP tick sources — live raid roster + detected RaidTick
+    // files. null when not an officer. Submitted via POST /api/dkp/tick.
+    dkpTick:            (_mimicIdentity && _mimicIdentity.is_officer) ? _dkpTickSnapshot() : null,
     // Zeal's "Export data on /camp" toggle, read straight from zeal.ini in
     // each known EQ folder (60s cache). true = every found zeal.ini has
     // ExportOnCamp=TRUE; false = at least one has it off; null = no zeal.ini
@@ -11638,6 +11641,54 @@ function renderBackupsCard(s) {
   if (el._wpBkHtml !== h) { el._wpBkHtml = h; el.innerHTML = h; }
 }
 
+// 🎫 Officer DKP tick card. Two attendance sources, difference highlighted
+// (Hitya 2026-07-16): the LIVE raid roster (who Zeal sees right now) and any
+// exported RaidTick*.txt. Slot buttons run a dry-run PREVIEW first; a pending
+// confirm freezes the card (window._dkpTickPending) so the 2s poll can't wipe
+// the confirm UI.
+var _dkpTickPending = null;
+function _slotLabel(sl) { return ({ '1':'Tick 1','2':'Tick 2','3':'Tick 3','4':'Tick 4', bonus:'Bonus', ot:'Overtime' })[sl] || sl; }
+function _dkpSlotButtons(sourceKey) {
+  var slots = ['1','2','3','4','bonus','ot'];
+  var h = '<div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px">';
+  for (var i = 0; i < slots.length; i++) {
+    h += '<button class="wpTickSlot" data-source="' + esc(sourceKey) + '" data-slot="' + slots[i] + '"'
+      + ' style="background:#21262d;color:#e6edf3;border:1px solid #30363d;border-radius:5px;padding:2px 9px;cursor:pointer;font-family:inherit;font-size:11px">' + _slotLabel(slots[i]) + '</button>';
+  }
+  return h + '</div>';
+}
+function renderDkpTickCard(s) {
+  var el = document.getElementById('wpDkpTick');
+  if (!el) return;
+  var t = s && s.dkpTick;
+  if (!t) { el.style.display = 'none'; return; }         // not an officer
+  if (_dkpTickPending) return;                            // confirm open — freeze
+  el.style.display = '';
+  var roster = t.liveRoster, files = t.files || [];
+  var h = '<h2>🎫 DKP ticks <span class="dim" style="font-size:11px;font-weight:normal">— submit attendance to OpenDKP (officer only)</span></h2>';
+  h += '<div class="dim" style="font-size:11px;margin-bottom:8px">Two sources — <b>Live roster</b> is who Zeal sees in your raid <i>right now</i>; a <b>RaidTick file</b> is the timestamped dump the client exported. Pick a slot; you\\'ll get a preview before anything is written.</div>';
+  // Live roster
+  if (roster && roster.count > 0) {
+    h += '<div style="border:1px solid #238636;border-radius:6px;padding:8px 10px;margin:6px 0">'
+      + '<div><b>🟢 Live raid roster</b> <span class="dim">— ' + roster.count + ' in your raid now (' + fmtAgo((Date.now() - roster.at) / 1000) + ' ago)</span></div>'
+      + _dkpSlotButtons('roster') + '</div>';
+  } else {
+    h += '<div class="dim" style="font-size:12px;border:1px dashed #30363d;border-radius:6px;padding:8px 10px;margin:6px 0">🟢 Live raid roster — <i>not in a raid right now</i> (join a raid and Zeal will populate this).</div>';
+  }
+  // RaidTick files
+  for (var i = 0; i < files.length; i++) {
+    var f = files[i];
+    h += '<div style="border:1px solid #30363d;border-radius:6px;padding:8px 10px;margin:6px 0">'
+      + '<div><b>📄 ' + esc(f.name) + '</b> <span class="dim">— ' + f.count + ' players · ' + esc(String(f.ts).replace('T', ' ')) + ' · ' + f.points + ' DKP</span></div>'
+      + _dkpSlotButtons('file:' + i) + '</div>';
+  }
+  if (!roster && files.length === 0) {
+    h += '<div class="dim" style="font-size:12px">No attendance source yet — join a raid, or export a RaidTick file from the client.</div>';
+  }
+  h += '<div id="wpTickMsg" style="margin-top:6px"></div>';
+  if (el._wpTickHtml !== h) { el._wpTickHtml = h; el.innerHTML = h; }
+}
+
 // 💰 Officer Loot capture card. Fills #wpDkpLoot from s.dkpLoot (null for
 // non-officers → card stays hidden). Byte-stable: innerHTML is only
 // reassigned when the built string changes, so checkbox state survives the
@@ -11695,6 +11746,8 @@ function renderInfo(s) {
   // each group expandable. Volatile (live gauges/labels), so it fills its own
   // placeholder via renderZealExplorer to keep the rest of #info byte-stable.
   h += '<div id="wpZealExplorer" class="card wide" style="display:none"></div>';
+  // 🎫 DKP ticks (officers only) — filled by renderDkpTickCard.
+  h += '<div id="wpDkpTick" class="card wide" style="display:none"></div>';
   // 💰 Loot capture (officers only) — filled by renderDkpLootCard. Own
   // placeholder so its checkboxes/buttons survive #info repaints.
   h += '<div id="wpDkpLoot" class="card wide" style="display:none"></div>';
@@ -12665,6 +12718,7 @@ async function refresh() {
   try {
     const s = await (await fetch('/api/state', _ctl ? { cache: 'no-store', signal: _ctl.signal } : { cache: 'no-store' })).json();
     _refreshFailures = 0;
+    window.__wpLastState = s;   // stash for delegated handlers (DKP tick player lists, etc.)
     var _eb = document.getElementById('wpConnError'); if (_eb) _eb.remove();
     // Preserve scroll across the render batch. Change-detection means most
     // polls rewrite nothing (no shift); when the ACTIVE section does rewrite
@@ -12691,6 +12745,7 @@ async function refresh() {
                      // After info: fill the placeholders renderInfo just
                      // (re)painted, so they show same-tick.
                      ['zealexplorer', renderZealExplorer],
+                     ['dkptick', renderDkpTickCard],
                      ['dkploot', renderDkpLootCard],
                      ['backupscard', renderBackupsCard]];
     for (var _si = 0; _si < _sections.length; _si++) {
@@ -12801,6 +12856,64 @@ refresh(); setInterval(refresh, 2000);
     }).catch(function () { rb.disabled = false; });
   };
 })();
+// 🎫 DKP tick controls — slot click runs a dry-run preview; Confirm submits.
+function _dkpTickPlayers(source) {
+  var s = window.__wpLastState || {};
+  var t = s.dkpTick || {};
+  if (source === 'roster') return (t.liveRoster && t.liveRoster.players) || [];
+  var m = /^file:(\d+)$/.exec(source);
+  if (m && t.files && t.files[+m[1]]) return t.files[+m[1]].players || [];
+  return [];
+}
+function _dkpTickPoints(source) {
+  var s = window.__wpLastState || {};
+  var t = s.dkpTick || {};
+  var m = /^file:(\d+)$/.exec(source);
+  if (m && t.files && t.files[+m[1]]) return t.files[+m[1]].points || 1;
+  return 1;   // live roster ticks default to 1 DKP
+}
+document.addEventListener('click', function (ev) {
+  var t0 = ev.target; if (!t0 || !t0.closest) return;
+  var slotBtn = t0.closest('.wpTickSlot');
+  if (slotBtn) {
+    var source = slotBtn.getAttribute('data-source');
+    var slot = slotBtn.getAttribute('data-slot');
+    var players = _dkpTickPlayers(source);
+    var points = _dkpTickPoints(source);
+    var msg = document.getElementById('wpTickMsg');
+    if (!players.length) { if (msg) msg.innerHTML = '<span style="color:#f6c365">No attendees in that source.</span>'; return; }
+    _dkpTickPending = { source: source, slot: slot, players: players, points: points };
+    if (msg) msg.innerHTML = '<span class="dim">Checking OpenDKP…</span>';
+    fetch('/api/dkp/tick', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ slot: slot, players: players, points: points, dry_run: true }) })
+      .then(function (r) { return r.json(); }).then(function (j) {
+        if (!msg) return;
+        if (!j.ok) { _dkpTickPending = null; msg.innerHTML = '<span style="color:#f85149">✕ ' + esc(j.reason || 'cannot submit') + '</span>'; return; }
+        var verb = j.action === 'would-create' ? 'CREATE today\\'s raid and add' : (j.action === 'would-overwrite' ? 'OVERWRITE' : (j.action === 'create-separate' ? 'create a separate raid for' : 'add'));
+        msg.innerHTML = '<div style="border:1px solid #1f6feb;border-radius:6px;padding:8px 10px;background:#0d1b2e">'
+          + 'Will <b>' + verb + ' ' + esc(_slotLabel(slot)) + '</b> — <b>' + j.count + '</b> attendees · ' + j.points + ' DKP each'
+          + '<br><span class="dim">Raid: ' + esc(j.raidName || ('#' + j.raidId)) + (j.raidId ? ' (#' + j.raidId + ')' : '') + '</span>'
+          + '<div style="margin-top:6px"><button id="wpTickConfirm" style="background:#238636;color:#fff;border:0;border-radius:5px;padding:3px 12px;cursor:pointer;font-family:inherit;font-size:11px">✓ Submit tick</button> '
+          + '<button id="wpTickCancel" style="background:#30363d;color:#e6edf3;border:1px solid #484f58;border-radius:5px;padding:3px 12px;cursor:pointer;font-family:inherit;font-size:11px">Cancel</button></div></div>';
+      }).catch(function () { _dkpTickPending = null; if (msg) msg.innerHTML = '<span style="color:#f85149">✕ engine unreachable</span>'; });
+    return;
+  }
+  if (t0.id === 'wpTickCancel') { _dkpTickPending = null; var mc = document.getElementById('wpTickMsg'); if (mc) mc.innerHTML = ''; return; }
+  if (t0.id === 'wpTickConfirm') {
+    var p = _dkpTickPending; var msg2 = document.getElementById('wpTickMsg');
+    if (!p) return;
+    t0.disabled = true; t0.textContent = 'Submitting…';
+    fetch('/api/dkp/tick', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ slot: p.slot, players: p.players, points: p.points, dry_run: false }) })
+      .then(function (r) { return r.json(); }).then(function (j) {
+        _dkpTickPending = null;
+        if (!msg2) return;
+        if (j.ok) msg2.innerHTML = '<span style="color:#3fb950">✓ ' + esc(_slotLabel(p.slot)) + ' submitted — ' + j.count + ' attendees to ' + esc(j.raidName || ('#' + j.raidId)) + '</span>';
+        else      msg2.innerHTML = '<span style="color:#f85149">✕ ' + esc(j.reason || 'submit failed') + '</span>';
+      }).catch(function () { _dkpTickPending = null; if (msg2) msg2.innerHTML = '<span style="color:#f85149">✕ submit failed</span>'; });
+    return;
+  }
+}, true);
 // 💰 Loot capture controls — delegated (capture) so repaints never lose them.
 document.addEventListener('click', function (ev) {
   var t = ev.target;
@@ -14911,6 +15024,43 @@ function startWebDashboard(port) {
         const result = dismissLootCapture(String(dp.id || ''));
         res.writeHead(result.ok ? 200 : 404, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify(result));
+      }
+      // Officer DKP tick — forward the dashboard's submit to the bot's
+      // /api/agent/dkp-tick (which reuses the shared submitRaidTick util). The
+      // bot re-checks officer identity from opts.token (the per-user wpms_
+      // session), so this is officer-gated end to end. dry_run passes through
+      // for the preview → confirm flow.
+      if (req.url === '/api/dkp/tick' && req.method === 'POST') {
+        if (!(_mimicIdentity && _mimicIdentity.is_officer)) { res.writeHead(403); return res.end('{"error":"officers only"}'); }
+        let _tb = '';
+        for await (const c of req) { _tb += c; if (_tb.length > 64 * 1024) { res.writeHead(413); return res.end(); } }
+        let tp; try { tp = JSON.parse(_tb || '{}'); } catch { res.writeHead(400); return res.end('{"error":"bad json"}'); }
+        const opts = _uploadOpts;
+        if (!opts || !opts.botUrl || !opts.token) { res.writeHead(503); return res.end('{"ok":false,"reason":"not connected to the bot"}'); }
+        const url = opts.botUrl.replace(/\/encounter(\?.*)?$/, '/dkp-tick');
+        try {
+          const u = new URL(url);
+          const mod = u.protocol === 'https:' ? https : http;
+          const body = JSON.stringify(tp);
+          const proxied = await new Promise((resolve) => {
+            const rq = mod.request({
+              method: 'POST', hostname: u.hostname, port: u.port, path: u.pathname + u.search,
+              headers: {
+                'Content-Type': 'application/json',
+                'Content-Length': Buffer.byteLength(body),
+                'Authorization': 'Bearer ' + opts.token,
+                'User-Agent': `wolfpack-logsync/${AGENT_VERSION}`,
+              }, timeout: 15000,
+            }, (r) => { let d = ''; r.on('data', c => d += c); r.on('end', () => resolve({ status: r.statusCode, body: d })); });
+            rq.on('error',   () => resolve({ status: 502, body: '{"ok":false,"reason":"bot unreachable"}' }));
+            rq.on('timeout', () => { rq.destroy(); resolve({ status: 504, body: '{"ok":false,"reason":"bot timed out"}' }); });
+            rq.end(body);
+          });
+          res.writeHead(proxied.status || 502, { 'Content-Type': 'application/json' });
+          return res.end(proxied.body || '{"ok":false}');
+        } catch (e) {
+          res.writeHead(502); return res.end(JSON.stringify({ ok: false, reason: String((e && e.message) || e) }));
+        }
       }
       if (req.url === '/api/triggers/feedback' && req.method === 'POST') {
         let _body = '';
@@ -18163,6 +18313,72 @@ function dismissLootCapture(id) {
   if (i === -1) return { ok: false, reason: 'not found' };
   _lootCaptures.splice(i, 1);
   return { ok: true, cleared: id };
+}
+
+// ── DKP ticks (officer dashboard) ───────────────────────────────────────────
+// Two attendance sources, and the dashboard highlights the difference
+// (Hitya 2026-07-16): (1) the LIVE raid roster — who Zeal reports in your raid
+// right this second; (2) any RaidTick*.txt the TAKP client exported to the EQ
+// folder — an official attendance dump with its own timestamp. Both feed the
+// same officer-gated "Submit tick" → bot /api/agent/dkp-tick.
+const RAIDTICK_FILENAME_RX = /^RaidTick.*\.txt$/i;
+// TSV: header, then rows "name \t ? \t ? \t ts \t pts". Mirrors commands/tick.js
+// parseTickFile so the two agree on players/timestamp/points.
+function parseRaidTickText(text) {
+  const lines = String(text || '').split('\n').map(l => l.trim()).filter(Boolean);
+  if (lines.length < 2) return null;
+  const players = []; let rawTs = null; let points = 1;
+  for (const line of lines.slice(1)) {
+    const cols = line.split('\t');
+    if (cols.length < 5) continue;
+    const name = (cols[0] || '').trim();
+    if (!rawTs && cols[3]) rawTs = cols[3];
+    const p = parseInt(cols[4], 10);
+    if (!isNaN(p)) points = p;
+    if (name) players.push(name);
+  }
+  if (!players.length) return null;
+  const isoTimestamp = rawTs
+    ? rawTs.replace(/^(\d{4}-\d{2}-\d{2})_(\d{2})-(\d{2})-(\d{2})$/, '$1T$2:$3:$4')
+    : new Date().toISOString().slice(0, 19);
+  return { players, isoTimestamp, points };
+}
+function _scanRaidTickFiles() {
+  const firstLog = stats.watchedLogs && stats.watchedLogs[0] && stats.watchedLogs[0].logPath;
+  if (!firstLog) return [];
+  const dir = path.dirname(firstLog);
+  let entries; try { entries = fs.readdirSync(dir); } catch { return []; }
+  const out = [];
+  for (const name of entries) {
+    if (!RAIDTICK_FILENAME_RX.test(name)) continue;
+    const full = path.join(dir, name);
+    try {
+      const st = fs.statSync(full);
+      const parsed = parseRaidTickText(fs.readFileSync(full, 'utf8'));
+      if (!parsed) continue;
+      out.push({ name, mtime: st.mtimeMs, count: parsed.players.length, players: parsed.players, ts: parsed.isoTimestamp, points: parsed.points });
+    } catch { /* unreadable — skip */ }
+  }
+  out.sort((a, b) => b.mtime - a.mtime);
+  return out.slice(0, 5);
+}
+// Live raid roster attendee names (unique, non-empty). Fresh only — a stale
+// pipe (no raid) yields null so the dashboard doesn't offer a phantom tick.
+function _liveRosterForTick() {
+  if (!_lastRaidPipe || !Array.isArray(_lastRaidPipe.members)) return null;
+  if ((Date.now() - (_lastRaidPipe.at || 0)) > 5 * 60 * 1000) return null;   // >5min stale
+  const seen = new Set(); const players = [];
+  for (const m of _lastRaidPipe.members) {
+    const nm = m && m.name ? String(m.name).trim() : '';
+    if (!nm) continue;
+    const k = nm.toLowerCase();
+    if (seen.has(k)) continue;
+    seen.add(k); players.push(nm);
+  }
+  return players.length ? { count: players.length, players, at: _lastRaidPipe.at } : null;
+}
+function _dkpTickSnapshot() {
+  return { liveRoster: _liveRosterForTick(), files: _scanRaidTickFiles() };
 }
 
 // ── Druzzil Ro instance-kill announcements ─────────────────────────────────
