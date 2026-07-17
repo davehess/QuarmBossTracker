@@ -215,11 +215,41 @@ Together with the backtick fix these four explain essentially the whole
   None change the wave order; several are answerable from Supabase
   `_trackUpload` data when we want them.
 
+## Rules-mechanization thread (added 2026-07-17 pm — after ingesting #rules/#raid-rules/#loot-rules)
+
+The Discord rulebook is mostly arithmetic over data we already collect. This is
+a **cross-cutting thread**, not a single wave — its keystone (#92) is a
+prerequisite the earlier waves don't need, so it runs in parallel and lands its
+pieces as they're ready. Ordering *within* the thread:
+
+| Order | Item | Why | Blocks |
+|---|---|---|---|
+| R.1 | [#94] Ingest rules → structured guild-rules store | One source of eligibility/loot facts so R.3/R.4/R.5 don't each hard-code (and drift from) the rulebook. Small, pure data. | — |
+| R.2 | [#92] Attendance & tick metrics engine (60/90/lifetime RA% + tick counts) | **The number half the rules depend on**: seating priority (60 core slots when raid >72), Active-roster (30-day drop-off), every tiebreak. Nothing below computes without it. | #96, seating, review cards |
+| R.3 | [#95] Raid Kit readiness checker (rule 12) | 100 MR floor from gear + EB/Lev/self-port/self-invis + Necro coffin. MR-floor alone is a shippable v1 off the gear snapshot we already have. Pure "helping not watching." | — (v1 independent) |
+| R.4 | [#93] Raid composition template + planned-vs-actual matcher | RaidHelper-fed archetype groups → readiness + role-gap deltas at pull time. | — |
+| R.5 | [#91] Off-night NBG roll capture (Fri/alt-raid) | Write-only parse of `/random` + `/rs` awards, link REUSED roll sessions. The one piece gated on a **Friday go/no-go**. | — |
+
+**Epic resolver [#96] is OUT of the priority set.** Hitya confirmed epics are
+trivial in this era (early-game, anyone who fills the Google-Sheet tracker gets
+one), so the loot-rule epic tiebreak ladder is vestigial. The logic is captured
+in the task for the day a genuinely-contested epic drop appears; until then it
+does not consume a slot.
+
+Where the thread's outputs plug into the main waves: R.2's numbers feed the
+Raid Night Review [#80] (Wave 5) and any seating/attendance surface; R.3/R.4
+are the concrete first payloads of "big brother **helping**" [#77]; R.5 seeds
+the Monday alt-raid review [#90].
+
 ## Decision points for Hitya
-1. Friday: go/no-go on the Sunday write-only roll+loot capture (0.3).
+1. Friday: go/no-go on the Sunday write-only roll+loot capture (0.3) **and** the
+   off-night NBG roll capture (R.5 / [#91]) — same capture machinery, same call.
 2. Saturday: confirm the stable graduation after beta soak (0.2).
 3. Wave 2 scheduling: before PoP launch is the hard deadline; sooner if
   attendance grows past ~45.
 4. Whether the hotfix trio (0.1) ships this week or rides Saturday's
   graduation (bot parts can go anytime — they're redeploy-decoupled from the
   agent now).
+5. Rules thread: R.2 [#92] is the unlock for the whole loot/seating half — slot
+   it as soon as Wave 1 frees hands; R.1/R.3-v1 can run alongside Wave 1 (no
+   raid-night risk, mostly read-only web + data).
