@@ -30,6 +30,31 @@ const VERIFICATION_URL_DEFAULT = 'https://wolfpack.quest/auth/mimic-link';
 const _sessionCache = new Map();   // token → { resolvedAt, value }
 const SESSION_CACHE_TTL_MS = 5 * 60 * 1000;
 
+// Per-IP rate limit on the UNAUTHENTICATED /start — it does a Supabase INSERT
+// per call, so an open loop could spam mimic_link_codes (audit: unauthenticated
+// write vector). Legit use is a handful of links per person; 10 / 10min / IP is
+// generous. In-memory sliding window (single bot replica — see CLAUDE.md).
+const START_RATE_WINDOW_MS = 10 * 60 * 1000;
+const START_RATE_MAX       = 10;
+const _startRate = new Map();   // ip → [tsMs, ...]
+function _startRateLimited(req) {
+  const xff = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
+  const ip  = xff || req.socket?.remoteAddress || 'unknown';
+  const now = Date.now();
+  const arr = (_startRate.get(ip) || []).filter(t => now - t < START_RATE_WINDOW_MS);
+  if (arr.length >= START_RATE_MAX) { _startRate.set(ip, arr); return true; }
+  arr.push(now);
+  _startRate.set(ip, arr);
+  // Bound the map so a distributed probe can't grow it unboundedly.
+  if (_startRate.size > 5000) {
+    for (const [k, v] of _startRate) {
+      if (!v.length || now - Math.max(...v) > START_RATE_WINDOW_MS) _startRate.delete(k);
+      if (_startRate.size <= 4000) break;
+    }
+  }
+  return false;
+}
+
 // User-facing code is 6 chars from an unambiguous alphabet (no 0/O/1/I/L). The
 // space is ~2.18B values; combined with the 10-min TTL and rate-limiting that's
 // already plenty for a private guild tool. The DEVICE code is the real secret
@@ -66,6 +91,10 @@ async function handleStart(req, res) {
   const payload = await _readJsonBody(req).catch(() => null);
   if (payload === null) { res.writeHead(400, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: 'invalid json' })); }
   if (!supabase.isEnabled()) { res.writeHead(503, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: 'service unavailable' })); }
+  if (_startRateLimited(req)) {
+    res.writeHead(429, { 'Content-Type': 'application/json', 'Retry-After': '60' });
+    return res.end(JSON.stringify({ error: 'too many link attempts, wait a minute and retry' }));
+  }
 
   // We may collide on a user_code in theory (1 in 2B). Retry once; the second
   // collision is implausible enough to surface as a 500 the user can retry.
