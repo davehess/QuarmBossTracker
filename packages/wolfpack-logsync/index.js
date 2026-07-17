@@ -8591,6 +8591,10 @@ function _serializeForDashboard() {
         ? { client: _uploaderLockHolder.client || null, webPort: _uploaderLockHolder.webPort || null }
         : null,
     },
+    // #72 designated-reporter election — which shared streams THIS machine is
+    // currently elected to upload. All-true = fail-open (election off / old bot
+    // / no answer yet). electionOn=true means the bot is actively assigning.
+    reporter: { roles: _reporterRoles, electionOn: _reporterElectionOn },
     // Charm-pet tick tracker — array form so the dashboard can render
     // a 6s countdown to next mob tick / next charm check. Sorted most-
     // recently-updated first; capped to 12 to keep the payload small.
@@ -19166,6 +19170,83 @@ function _chatCrossLogArbitrate(fp, chatMsg) {
 }
 // _lockoutBuffer is declared above near parseSllLine (module-level _lockoutBuffer)
 let _uploadOpts    = null;      // set in main() once botUrl/token are known
+
+// ── #72 designated-reporter election (agent side) ───────────────────────────
+// The bot's /api/agent/reporter-poll tells us which shared streams THIS machine
+// should upload, so at scale one agent owns each stream instead of all N.
+// FAIL-OPEN: every role defaults TRUE and RESETS to true on any poll failure
+// (old bot 404, network blip, non-200, the first ~20s before the first answer)
+// — losing contact with the elector means we upload exactly as before, never
+// go silent. P2 gates chat only; buffs/roster ride P1b/P1c.
+let _reporterRoles       = { chat: true, buffs: true, roster: true };
+let _reporterElectionOn  = false;   // true only while the bot answers election:'on'
+let _reporterHeartbeatOn = false;
+const REPORTER_HEARTBEAT_MS = 20_000;
+function _reporterFailOpen() { _reporterRoles = { chat: true, buffs: true, roster: true }; _reporterElectionOn = false; }
+function _reporterHeartbeatOnce() {
+  const opts = _uploadOpts;
+  if (!opts || !opts.botUrl || !opts.token || opts.dryRun) return;
+  if (!_isUploaderInstance) return;   // one heartbeat per machine (the uploader instance)
+  let primary = null;
+  try { primary = _primaryCharacter(); } catch { /* */ }
+  // Best-effort context the bot uses for the zone/group-aware election (P1b/c).
+  let zone = null, group_num = null, has_zeal = false;
+  try {
+    const st = primary ? _zealState[primary] : null;
+    if (st) zone = _zoneName(st.zone) || null;
+    has_zeal = !!(_lastRaidPipe && Date.now() - _lastRaidPipe.at < 60_000)
+            || Object.keys(_zealState || {}).length > 0;
+    if (_lastRaidPipe && primary) {
+      const me = _lastRaidPipe.members.find(m => m && m.name && m.name.toLowerCase() === primary.toLowerCase());
+      if (me && Number.isFinite(me.group)) group_num = me.group;
+    }
+  } catch { /* best-effort */ }
+  try {
+    const url = opts.botUrl.replace(/\/encounter(\?.*)?$/, '/reporter-poll');
+    const u   = new URL(url);
+    const mod = u.protocol === 'https:' ? https : http;
+    const body = JSON.stringify({ primary_character: primary, zone, group_num, has_zeal, agent_version: AGENT_VERSION });
+    const req = mod.request({
+      method: 'POST', hostname: u.hostname, port: u.port, path: u.pathname,
+      headers: {
+        'Authorization': 'Bearer ' + opts.token,
+        'Content-Type':  'application/json',
+        'Content-Length': Buffer.byteLength(body),
+        'User-Agent':    `wolfpack-logsync/${AGENT_VERSION}`,
+      },
+      timeout: 5000,
+    }, (res) => {
+      if (res.statusCode !== 200) { res.resume(); _reporterFailOpen(); return; }  // old/erroring bot → fail-open
+      let buf = '';
+      res.on('data', (d) => { buf += d; if (buf.length > 8192) req.destroy(); });
+      res.on('end', () => {
+        try {
+          const j = JSON.parse(buf);
+          if (j && j.roles && typeof j.roles === 'object') {
+            const prev = _reporterRoles.chat;
+            _reporterRoles = {
+              chat:   j.roles.chat   !== false,   // any missing key defaults TRUE (fail-open)
+              buffs:  j.roles.buffs  !== false,
+              roster: j.roles.roster !== false,
+            };
+            _reporterElectionOn = j.election === 'on';
+            if (prev !== _reporterRoles.chat)
+              console.log(`[reporter] chat role → ${_reporterRoles.chat ? 'REPORTER (uploading /gu·/rs)' : 'stand down'} (election ${j.election})`);
+          } else { _reporterFailOpen(); }
+        } catch { _reporterFailOpen(); }   // unparseable → fail-open
+      });
+    });
+    req.on('error',   () => _reporterFailOpen());
+    req.on('timeout', () => { req.destroy(); _reporterFailOpen(); });
+    req.write(body); req.end();
+  } catch { _reporterFailOpen(); }
+}
+function startReporterHeartbeat() {
+  if (_reporterHeartbeatOn) return;
+  _reporterHeartbeatOn = true;
+  _reporterHeartbeatOnce();                                     // poll immediately on boot
+  setInterval(_reporterHeartbeatOnce, REPORTER_HEARTBEAT_MS).unref();
+}
 let _chatRelayOn   = false;     // true once the 5s relay interval is running
 
 function startChatRelay() {
@@ -19709,6 +19790,11 @@ function uploadChat(messages, { botUrl, token, dryRun }) {
     }
     return Promise.resolve();
   }
+  // #72: chat (/gu·/rs) is guild/raid-global — identical for every agent — so
+  // only the elected chat reporter uploads. Non-reporters drop it (the reporter
+  // sees the same lines). Fail-open default keeps every agent uploading until
+  // the bot says otherwise, so this can never make chat go dark.
+  if (!_reporterRoles.chat) return Promise.resolve();
   enqueueUpload('chat', { agent_version: AGENT_VERSION, messages });
   return Promise.resolve();
 }
@@ -23446,6 +23532,7 @@ async function main() {
   if (!dryRun && token) {
     fetchSpellCatalog({ botUrl, token }).catch(() => {});
     fetchItemClickies({ botUrl, token }).catch(() => {});
+    startReporterHeartbeat();   // #72 — poll the bot for our upload roles (fail-open)
     // Re-fetch daily — the catalog only changes on the weekly upstream sync,
     // but a daily check is cheap (the bot serves a 304 if nothing changed)
     // and stops a long-running agent from drifting indefinitely.
