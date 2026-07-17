@@ -3766,6 +3766,25 @@ const ROLL_SET_KEEP_MS = 2 * 60 * 60 * 1000;
 const _pendingDieByChar = new Map();   // watched-log charLower → { name, atMs } (pair lines per log)
 const _rollSets = [];                  // oldest-first [{ from, to, item, qty, rolls, startMs, lastMs }]
 const _rollItemByNumber = new Map();   // roll number (the range TO) → { item, qty, atMs }
+// #91 off-night roll capture: upload grouped /random SETS so off-night loot
+// rolls aren't lost. Only newly-changed sets go up each tick; the bot upserts
+// per (uploader, range, start) so a growing set updates in place. Write-only.
+let _rollUploadHW = 0;
+function uploadRollSets() {
+  if (!_uploadOpts || _uploadOpts.dryRun || !_isUploaderInstance) return;
+  const now = Date.now();
+  const changed = _rollSets.filter(s => s.rolls.length > 0
+    && (now - s.lastMs) < 30 * 60 * 1000 && s.lastMs > _rollUploadHW);
+  if (changed.length === 0) return;
+  _rollUploadHW = Math.max(_rollUploadHW, ...changed.map(s => s.lastMs));
+  const sets = changed.map(s => ({
+    roll_from: s.from, roll_to: s.to, item: s.item || null, qty: s.qty || null,
+    started_at: new Date(s.startMs).toISOString(),
+    last_at:    new Date(s.lastMs).toISOString(),
+    rolls: s.rolls.map(r => ({ name: r.name, value: r.value, at: new Date(r.atMs).toISOString(), reroll: !!r.reroll })),
+  }));
+  enqueueUpload('rolls', { agent_version: AGENT_VERSION, sets });
+}
 
 function trackRollLine(line, character) {
   if (!line || !character) return;
@@ -6596,6 +6615,7 @@ function _endpointForKind(kind, botUrl) {
     case 'tells':           return base + '/tells';
     case 'threat_snapshot': return base + '/threat-snapshot';
     case 'raid_roster':     return base + '/raid-roster';
+    case 'rolls':           return base + '/rolls';
     case 'trigger':         return base + '/trigger';
     case 'trigger_relay':   return base + '/trigger-relay';
     case 'quake':           return base + '/quake';
@@ -23626,6 +23646,7 @@ async function main() {
     fetchSpellCatalog({ botUrl, token }).catch(() => {});
     fetchItemClickies({ botUrl, token }).catch(() => {});
     startReporterHeartbeat();   // #72 — poll the bot for our upload roles (fail-open)
+    setInterval(() => { try { uploadRollSets(); } catch {} }, 60_000).unref();   // #91 off-night roll capture
     // Re-fetch daily — the catalog only changes on the weekly upstream sync,
     // but a daily check is cheap (the bot serves a 304 if nothing changed)
     // and stops a long-running agent from drifting indefinitely.
