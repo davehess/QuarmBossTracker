@@ -8,48 +8,113 @@ const {
 const fs   = require('fs');
 const path = require('path');
 
-// Auto-derive the canonical agent version from the agent's own package.json
-// so deploys don't need a manual LATEST_AGENT_VERSION env var bump. The env
-// var still wins when set (canary rollouts / pinning an older version).
-let _cachedAgentVersion = null;
-function _currentAgentVersion() {
-  if (process.env.LATEST_AGENT_VERSION) return process.env.LATEST_AGENT_VERSION;
-  if (_cachedAgentVersion) return _cachedAgentVersion;
+// ── Agent update manifest — DECOUPLED from bot redeploys ────────────────────
+// The manifest (version + url + sha256) is derived from the SAME git ref as the
+// download, FETCHED from GitHub raw and cached — never from the bot's bundled
+// image. Two problems this kills:
+//   1. Railway skips packages/-only commits, so an agent push to `main` used to
+//      update the raw URL while the bot kept serving the OLD bundled sha → sha
+//      mismatch → the shell aborted the hot-swap. You had to force-redeploy the
+//      bot (a mid-raid bounce) for an agent-only fix to reach anyone. Now the
+//      bot fetches the live file, so a `main` push propagates on its own within
+//      one refresh interval — NO redeploy.
+//   2. LATEST_AGENT_VERSION pinned a version STRING while `url` served whatever
+//      `main` held, so advertised-version and served-file could disagree — the
+//      "phantom-newer" hot-swap that stamped 3.3.58 code as a higher version and
+//      churned the whole raid (2026-07-16). Retired: version + url + sha now all
+//      come from one ref, and the sha is the hash of the exact bytes at `url`,
+//      so they physically cannot disagree.
+// Pin/canary by pointing AGENT_RELEASE_REF at a tag or branch; the manifest
+// stays internally consistent because everything is fetched from that one ref.
+const AGENT_RELEASE_REF = process.env.AGENT_RELEASE_REF || 'main';
+const _AGENT_RAW_BASE   = `https://raw.githubusercontent.com/davehess/QuarmBossTracker/${AGENT_RELEASE_REF}/packages/wolfpack-logsync`;
+const _AGENT_INDEX_URL  = `${_AGENT_RAW_BASE}/index.js`;
+const AGENT_MANIFEST_REFRESH_MS = 3 * 60 * 1000;
+
+// Bundled fallback — used only until the first successful fetch, or whenever
+// GitHub is unreachable, so updates keep working (from whatever THIS deploy
+// shipped) rather than breaking.
+function _bundledAgentVersion() {
+  try { return require('./packages/wolfpack-logsync/package.json').version || null; } catch { return null; }
+}
+function _bundledAgentSha256() {
   try {
-    _cachedAgentVersion = require('./packages/wolfpack-logsync/package.json').version || null;
-  } catch { _cachedAgentVersion = null; }
-  return _cachedAgentVersion;
+    const buf = require('fs').readFileSync(require('path').join(__dirname, 'packages/wolfpack-logsync/index.js'));
+    return require('crypto').createHash('sha256').update(buf).digest('hex');
+  } catch { return null; }
 }
 
-// Update manifest for the self-updating supervisor (see experiments/mimic-agent
-// + docs/MIMIC_AGENT.md). The agent is a single file shipped in the bot's own
-// image, so we can publish a stable SHA-256 of exactly what `main` holds and a
-// raw URL to fetch it. The supervisor verifies the hash before swapping, so a
-// CDN hiccup or truncated download never replaces a working agent.
-//
-// AGENT_RAW_URL defaults to the raw file on the default branch; override via env
-// if the repo/branch differs. Hash is computed once and cached (file is
-// immutable within a deploy).
-let _cachedAgentSha = undefined;
-function _currentAgentSha256() {
-  if (_cachedAgentSha !== undefined) return _cachedAgentSha;
-  try {
-    const crypto = require('crypto');
-    const fs = require('fs');
-    const buf = fs.readFileSync(require('path').join(__dirname, 'packages/wolfpack-logsync/index.js'));
-    _cachedAgentSha = crypto.createHash('sha256').update(buf).digest('hex');
-  } catch { _cachedAgentSha = null; }
-  return _cachedAgentSha;
+let _agentManifestCache = null;      // { version, url, sha256, at } — last good fetch
+let _agentManifestFetching = false;
+
+function _fetchBufferRaw(url) {
+  return new Promise((resolve, reject) => {
+    const req = require('https').get(url, { headers: { 'User-Agent': 'wolfpack-bot' }, timeout: 8000 }, (res) => {
+      if (res.statusCode !== 200) { res.resume(); return reject(new Error(`HTTP ${res.statusCode} for ${url}`)); }
+      const chunks = [];
+      res.on('data', c => chunks.push(c));
+      res.on('end', () => resolve(Buffer.concat(chunks)));
+    });
+    req.on('error', reject);
+    req.on('timeout', () => req.destroy(new Error('timeout')));
+  });
 }
+
+async function _refreshAgentManifest() {
+  if (_agentManifestFetching) return;
+  _agentManifestFetching = true;
+  try {
+    const [pkgBuf, idxBuf] = await Promise.all([
+      _fetchBufferRaw(`${_AGENT_RAW_BASE}/package.json`),
+      _fetchBufferRaw(_AGENT_INDEX_URL),
+    ]);
+    const version = JSON.parse(pkgBuf.toString('utf8')).version || null;
+    // Hash the exact bytes at `url` — matches the shell's own buffer hash so the
+    // shell's pre-swap verification always passes for an unmodified fetch.
+    const sha256  = require('crypto').createHash('sha256').update(idxBuf).digest('hex');
+    // Sanity: the agent is ~1MB. Refuse to publish a manifest for a truncated
+    // fetch or a GitHub error page — that would advertise a bad sha and abort
+    // every client's swap.
+    if (version && sha256 && idxBuf.length > 100_000) {
+      _agentManifestCache = { version, url: _AGENT_INDEX_URL, sha256, at: Date.now() };
+    } else {
+      console.warn(`[agent-manifest] fetch looked wrong (ver=${version} bytes=${idxBuf.length}); keeping last-good`);
+    }
+  } catch (e) {
+    console.warn('[agent-manifest] refresh failed, keeping last-good:', e && e.message);
+  } finally {
+    _agentManifestFetching = false;
+  }
+}
+
 function _agentManifest() {
+  if (_agentManifestCache) {
+    return {
+      latest_agent_version: _agentManifestCache.version,
+      url:                  _agentManifestCache.url,
+      sha256:               _agentManifestCache.sha256,
+    };
+  }
+  // Cold start / GitHub unreachable — bundled image so updates still work.
   return {
-    latest_agent_version: _currentAgentVersion(),
-    // Raw single-file URL. Override AGENT_RAW_URL if the default branch/repo moves.
-    url: process.env.AGENT_RAW_URL ||
-      'https://raw.githubusercontent.com/davehess/QuarmBossTracker/main/packages/wolfpack-logsync/index.js',
-    sha256: _currentAgentSha256(),
+    latest_agent_version: _bundledAgentVersion(),
+    url:                  _AGENT_INDEX_URL,
+    sha256:               _bundledAgentSha256(),
   };
 }
+function _currentAgentVersion() {
+  return (_agentManifestCache && _agentManifestCache.version) || _bundledAgentVersion();
+}
+// Back-compat shim in case any other call site references it.
+function _currentAgentSha256() {
+  return (_agentManifestCache && _agentManifestCache.sha256) || _bundledAgentSha256();
+}
+
+// Kick an immediate fetch at boot + refresh on an interval so the manifest
+// tracks the release ref without a redeploy. Fire-and-forget: the bundled
+// fallback covers the window before the first fetch lands.
+_refreshAgentManifest();
+try { setInterval(_refreshAgentManifest, AGENT_MANIFEST_REFRESH_MS).unref(); } catch (_) { /* non-fatal */ }
 
 const {
   getAllState, recordKill, clearKill,
