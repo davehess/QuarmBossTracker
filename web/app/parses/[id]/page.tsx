@@ -15,6 +15,7 @@ import { fmtDmg, fmtDuration, fmtTime, dayKey, dayLabel, cleanBossName } from '@
 import { userTz } from '@/lib/timezone';
 import LootBlock, { type LootRow } from '@/components/LootBlock';
 import { ClassificationChip } from '@/components/KillCard';
+import { FightTimeline } from '@/components/FightTimeline';
 import { classifyEncounter, clearClassification } from '../actions';
 
 export const dynamic = 'force-dynamic';
@@ -646,6 +647,19 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
         </table>
         </div>
       </section>
+
+      {/* Fight timeline — deaths across the fight (#98 P1). The substrate for
+          the callout replay: raid-wide events + which triggers fired overlay
+          onto this same axis once P2 capture ships. Shown only when there were
+          deaths (the review case the user asked for). */}
+      {deaths.length > 0 && (
+        <FightTimeline
+          startedAt={enc.started_at}
+          endedAt={null}
+          durationSec={enc.duration_sec}
+          deaths={deaths}
+        />
+      )}
 
       {/* Deaths */}
       {deaths.length > 0 && (
