@@ -3235,6 +3235,56 @@ const TRIGGER_RATE_WINDOW_MS = 60_000;
 const TRIGGER_RATE_MAX       = 30;  // posts per uploader per window
 const _triggerRate = new Map();    // discordId → [timestamps]
 
+// ── Designated-reporter election (#72) ──────────────────────────────────────
+// The agent's per-machine uploader lock dedups uploads within ONE PC but not
+// across raiders — so every raider's agent independently POSTs the shared
+// streams (chat /gu·/rs, buff landings, raid roster). At 60 raiders that is the
+// N× amplification the audit flagged. This registry lets the bot elect ONE (or
+// a few) agents to own each shared stream and tell the rest to stand down.
+//
+// FAIL-OPEN by construction: an agent that never hears back (old bot, election
+// disabled, first poll, bot brownout) uploads everything, exactly as today.
+// Election only ever REMOVES redundant uploads — it can never produce zero
+// uploaders (the live set is non-empty whenever anyone is posting, and old
+// non-polling agents keep uploading regardless).
+//
+// The streams have hidden spatial structure, so they elect differently:
+//   • chat  — guild/raid-global text, identical for everyone → ONE reporter.
+//   • buffs — landing messages are ZONE-scoped (only same-zone clients see a
+//             landing) → elect per occupied zone, not globally (P1b).
+//   • roster— HP per member is GROUP-scoped (a snapshot only carries HP for the
+//             uploader's own group) → group-level reporter (P1c).
+// P1a gates chat only; buffs/roster stay fail-open (roles=true) until their
+// zone/group-aware election lands. Kill switch: flag_disable_reporter_election
+// in the /admin/overlays tuning editor → everyone uploads (today's behavior).
+const REPORTER_TTL_MS     = 60_000;   // an agent silent this long drops out → re-elect
+const REPORTER_CHAT_COUNT = 1;        // single chat reporter (global stream)
+const _reporterRegistry   = new Map(); // guild_id → Map(discord_id → {last_seen, primary, zone, group_num, has_zeal, ver})
+function _reporterGuildBook(guildId) {
+  let book = _reporterRegistry.get(guildId);
+  if (!book) { book = new Map(); _reporterRegistry.set(guildId, book); }
+  return book;
+}
+// Deterministic order so the winner is stable across re-elections (and so an
+// agent could compute the same result itself — the bot just adds liveness).
+function _reporterRank(a, b) {
+  const pa = (a.primary || '').toLowerCase(), pb = (b.primary || '').toLowerCase();
+  if (pa !== pb) return pa < pb ? -1 : 1;
+  return a.id < b.id ? -1 : (a.id > b.id ? 1 : 0);
+}
+function _electReporters(guildId) {
+  const book = _reporterGuildBook(guildId);
+  const now = Date.now();
+  const live = [];
+  for (const [id, e] of book) {
+    if (now - e.last_seen > REPORTER_TTL_MS) { book.delete(id); continue; }
+    live.push({ id, ...e });
+  }
+  live.sort(_reporterRank);
+  const chat = new Set(live.slice(0, REPORTER_CHAT_COUNT).map(e => e.id));
+  return { chat, live };
+}
+
 // ── Cross-Mimic trigger relay (fan-out) ─────────────────────────────────────
 // When one raider's Mimic detects a guild trigger but ANOTHER raider's log
 // missed it (zoning, partial log capture, player-targeted line like a
@@ -3265,6 +3315,10 @@ setInterval(() => {
   for (const [k, v] of _chatDedup)      if (v < now - CHAT_DEDUP_WINDOW_MS)       _chatDedup.delete(k);
   for (const [k, v] of _chatRelayDedup) if (((v && v.at) || 0) < now - CHAT_RELAY_DEDUP_WINDOW_MS) _chatRelayDedup.delete(k);
   for (const [k, v] of _triggerDedup)   if (v < now - TRIGGER_DEDUP_WINDOW_MS)    _triggerDedup.delete(k);
+  for (const [gid, book] of _reporterRegistry) {
+    for (const [id, e] of book) if (!e || e.last_seen < now - REPORTER_TTL_MS) book.delete(id);
+    if (book.size === 0) _reporterRegistry.delete(gid);
+  }
   for (const [k, arr] of _triggerRate) {
     const kept = arr.filter(t => now - t < TRIGGER_RATE_WINDOW_MS);
     if (kept.length) _triggerRate.set(k, kept); else _triggerRate.delete(k);
@@ -10492,6 +10546,62 @@ async function _handleAgentRaidRoster(req, res) {
   }
 }
 
+// POST /api/agent/reporter-poll  (#72 designated-reporter election)
+// A lightweight heartbeat: each agent registers itself (~every 20s) and gets
+// back which shared streams it should upload. Non-reporters stand down; the
+// elected reporter(s) keep uploading. See the _reporterRegistry block above for
+// the fail-open contract and per-stream election rationale.
+async function _handleAgentReporterPoll(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+
+  const chunks = []; let total = 0;
+  for await (const chunk of req) {
+    total += chunk.length;
+    if (total > 16 * 1024) { res.writeHead(413); return res.end(); }
+    chunks.push(chunk);
+  }
+  let payload = {};
+  try { if (total) payload = JSON.parse(Buffer.concat(chunks).toString('utf8')) || {}; } catch { payload = {}; }
+
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+  const id = identity.discord_id;
+
+  // Kill switch (composes with the #74 control plane): officers can disable
+  // election live in /admin/overlays → every agent uploads, exactly as today.
+  let disabled = false;
+  try {
+    const tune = await _overlayTuningMap();
+    disabled = Number(tune.flag_disable_reporter_election) >= 1;
+  } catch { /* fail-open: tuning read failed → run election normally */ }
+
+  // Always record the heartbeat so liveness/failover works even while disabled.
+  _reporterGuildBook(guildId).set(id, {
+    last_seen: Date.now(),
+    primary:   payload.primary_character ? String(payload.primary_character).slice(0, 32) : '',
+    zone:      payload.zone ? String(payload.zone).slice(0, 64) : null,
+    group_num: Number.isFinite(payload.group_num) ? payload.group_num : null,
+    has_zeal:  !!payload.has_zeal,
+    ver:       payload.agent_version ? String(payload.agent_version).slice(0, 16) : null,
+  });
+
+  if (disabled) {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ ok: true, election: 'disabled', ttl_ms: REPORTER_TTL_MS, roles: { chat: true, buffs: true, roster: true } }));
+  }
+
+  const { chat } = _electReporters(guildId);
+  // P1a gates chat only. buffs (zone-aware) and roster (group-aware) still
+  // upload from every agent until P1b/P1c — fail-open, never a regression.
+  const roles = {
+    chat:   chat.has(id),
+    buffs:  true,
+    roster: true,
+  };
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ ok: true, election: 'on', ttl_ms: REPORTER_TTL_MS, roles }));
+}
+
 // POST /api/agent/trigger
 //
 // "Pipe my triggers into Discord." An agent posts one or more trigger fires:
@@ -12666,6 +12776,15 @@ http.createServer(async (req, res) => {
     try { return await _handleAgentRaidRoster(req, res); }
     catch (err) {
       console.error('[raid-roster] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  if (req.method === 'POST' && req.url === '/api/agent/reporter-poll') {
+    try { return await _handleAgentReporterPoll(req, res); }
+    catch (err) {
+      console.error('[reporter-poll] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
     }
