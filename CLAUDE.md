@@ -103,12 +103,14 @@ conversation — they share **the repo, Supabase, and these docs** instead:
   a restrictive egress proxy (eqemulator.org and PQDI are blocked there).
 
 Rules that keep them married:
-1. **Durable state lives in committed docs, never chat.** Queue + in-flight
-   notes: `docs/BACKLOG.md`. Cross-session handoffs: write a handoff doc and
-   commit it (the `*HANDOFF.md` pattern).
+1. **Durable state lives in committed docs, never chat.** Status + durable
+   queue: `docs/STATUS.md` (the single index/ledger; ordered plan in
+   `docs/DESIGN-platform-queue.md`). Cross-session handoffs: write a handoff doc
+   and commit it (the `*HANDOFF.md` pattern).
 2. **Cloud sessions blocked on local-only data**: don't guess — add a
-   "needs local session" item to `docs/BACKLOG.md` with the exact query or
-   file wanted. A local (or phone-Dispatched) session picks it up.
+   "needs local session" item to `docs/STATUS.md` (⚠ Needs a local session)
+   with the exact query or file wanted. A local (or phone-Dispatched) session
+   picks it up.
 3. **Local sessions mirror local-only facts into Supabase** so cloud
    sessions can use them. Precedents: `spell_level_seed` (PQDI scrape ran
    locally because the server 403s cloud IPs), the `eqemu_items`
@@ -461,8 +463,10 @@ any "should have been there" computation.
 
 ## Roadmap
 
-Live queue + in-flight notes: `docs/BACKLOG.md`. Deeper designs:
-`docs/raid-hub-roadmap.md`, `docs/trigger-system-roadmap.md`,
+**Status + durable queue: `docs/STATUS.md`** (single index/ledger — what's done,
+TODO, abandoned, folly; retired queues live in `docs/archive/`). Ordered plan:
+`docs/DESIGN-platform-queue.md`. Deeper designs:
+`docs/raid-hub-roadmap.md`,
 `docs/DESIGN-buff-debuff-queue.md`, `docs/DESIGN-ch-chain.md`,
 `docs/MIMIC.md` / `docs/MIMIC_AGENT.md`, `docs/opendkp-capture-playbook.md`,
 `docs/code-signing.md` (CLOSED 2026-07-14 — SignPath declined: user base too small; installers stay unsigned unless another provider appears), `docs/PRIVACY.md`.
