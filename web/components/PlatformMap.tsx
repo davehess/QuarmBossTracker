@@ -34,7 +34,7 @@ export const BRANCHES = [
     tint: 'green',
     tag: '~24k lines · zero deps',
     summary:
-      'A single-file engine on each raider&apos;s machine: tails EQ logs, bridges the Zeal pipe, and filters privately before anything leaves.',
+      'A single-file engine on each raider\'s machine: tails EQ logs, bridges the Zeal pipe, and filters privately before anything leaves.',
     leaves: ['Privacy-first filter', 'Multi-char tailing', 'Zeal pipe bridge', 'Durable queue'],
     details: [
       ['Privacy filter', 'officer chat, tells, group, and private channels are dropped at byte level BEFORE parsing — they never leave the machine'],

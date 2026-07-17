@@ -70,28 +70,13 @@ export default function PlatformPage() {
               <div className="text-[11px] text-dim mb-2">{b.tag}</div>
               <p className="text-sm leading-6 mb-3">{b.summary}</p>
               <ul className="text-xs space-y-1.5">
-                {b.details.slice(0, 4).map(([name, desc]) => (
+                {b.details.map(([name, desc]) => (
                   <li key={name} className="leading-5">
                     <span className={`font-bold ${t.text}`}>{name}</span>
                     <span className="text-dim"> — {desc}</span>
                   </li>
                 ))}
               </ul>
-              {b.details.length > 4 && (
-                <details className="mt-2 text-xs">
-                  <summary className="cursor-pointer text-blue hover:underline">
-                    the minutiae ({b.details.length - 4} more)
-                  </summary>
-                  <ul className="mt-2 space-y-1.5">
-                    {b.details.slice(4).map(([name, desc]) => (
-                      <li key={name} className="leading-5">
-                        <span className={`font-bold ${t.text}`}>{name}</span>
-                        <span className="text-dim"> — {desc}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </details>
-              )}
             </div>
           );
         })}
