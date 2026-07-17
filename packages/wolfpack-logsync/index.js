@@ -7614,7 +7614,7 @@ function _resolveBuffsForName(name, active, buffsOut) {
 // (12s vs 5s) so it's a param, not a constant.
 function _findDA(buffsList, greenSecs) {
   for (const b of (buffsList || [])) {
-    if (b.fell_off) continue;
+    if (!b || !b.name || b.fell_off) continue;   // a nameless/null entry must not throw DA_SPELL_RX.test(undefined)
     if (DA_SPELL_RX.test(b.name)) {
       return { name: b.name, seconds: b.seconds, ticks: b.ticks, critical: typeof b.seconds === 'number' && b.seconds <= greenSecs };
     }
@@ -8418,6 +8418,13 @@ function _applyEqSetup() {
 // One serialized /api/state snapshot shared by every poller for 400ms —
 // see the /api/state handler for the raid-load rationale.
 let _stateJsonCache = { at: 0, body: null };
+// Last-good bodies for the standalone overlay endpoints (tank + command
+// center). Same rationale as the /api/state catch: those overlays poll their
+// OWN endpoints and parse the response with .json() WITHOUT checking status, so
+// a 500 reads as an empty-but-successful state and BLANKS the whole overlay.
+// Serve the last good body on a serialize throw instead of ever 500-ing.
+let _tankStateLastGood = null;
+let _commandCenterLastGood = null;
 function _serializeForDashboard() {
   const healersOut = {};
   for (const [name, s] of Object.entries(stats.sessionHealers || {})) {
@@ -15217,13 +15224,19 @@ function startWebDashboard(port) {
       }
 
       if (req.url === '/api/tank-state') {
+        let _b;
+        try { _b = JSON.stringify(_serializeTankState()); _tankStateLastGood = _b; }
+        catch (e) { console.error('[api/tank-state] serialize failed, serving last-good:', e && (e.stack || e.message || e)); _b = _tankStateLastGood; }
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify(_serializeTankState()));
+        return res.end(_b || 'null');
       }
       // Command Center overlay (command.html) — the "one window" board.
       if (req.url === '/api/command-center') {
+        let _b;
+        try { _b = JSON.stringify(_serializeCommandCenterState()); _commandCenterLastGood = _b; }
+        catch (e) { console.error('[api/command-center] serialize failed, serving last-good:', e && (e.stack || e.message || e)); _b = _commandCenterLastGood; }
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify(_serializeCommandCenterState()));
+        return res.end(_b || 'null');
       }
       // Mimic's buff-queue overlay polls this — we proxy the bot's
       // /api/agent/raid-buff-queue with a 3s cache so a room of Mimics doesn't
@@ -21669,7 +21682,24 @@ function diStatusSnapshot() {
       seconds: di.readyAt > now ? Math.ceil((di.readyAt - now) / 1000) : 0,
     });
   }
-  const list = [...byName.values()].sort((a, b) => (a.up === b.up ? a.name.localeCompare(b.name) : a.up ? -1 : 1));
+  // Drop assumed-ready clerics who aren't actually in the raid. The default-
+  // ready rule (a cleric who hasn't cast DI shows "up") over-includes a parked
+  // / boxed cleric alt that doesn't even have DI scribed (Hitya's Manamana,
+  // 2026-07-16). Keep anyone who has genuinely cast DI recently (seconds > 0 =
+  // on cooldown = definitely has the spell) and anyone present in the live raid
+  // roster; only prune when we actually have a fresh, populated roster to judge
+  // against (else fall back to showing everyone — better than hiding a real DI).
+  let list = [...byName.values()];
+  const _raidFresh = _lastRaidPipe && Array.isArray(_lastRaidPipe.members) &&
+                     (Date.now() - (_lastRaidPipe.at || 0)) < 10 * 60 * 1000;
+  if (_raidFresh) {
+    const raidNames = new Set(_lastRaidPipe.members
+      .map(m => (m && m.name) ? String(m.name).toLowerCase() : null).filter(Boolean));
+    if (raidNames.size >= 8) {
+      list = list.filter(c => c.seconds > 0 || raidNames.has(String(c.name).toLowerCase()));
+    }
+  }
+  list.sort((a, b) => (a.up === b.up ? a.name.localeCompare(b.name) : a.up ? -1 : 1));
   return { clerics: list, up_count: list.filter(c => c.up).length };
 }
 // 8s felt sluggish once cross-client tank HP shipped (a non-local MT's bar only
