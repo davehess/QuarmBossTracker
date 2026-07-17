@@ -161,6 +161,60 @@ No component ships on its own update track until it has:
 - Playbook [#78] seeds from Sunday's captured ordering [#90] and later from
   script learning [#85].
 
+## Post-verification addendum (2026-07-17, resumed run — 13/13 agents)
+
+*The synthesis + the bot-guardrails adversarial pass completed after this doc
+first shipped. Both Wave-0.1 data-loss P0s are **CONFIRMED** (auth-blip →
+permanent queue loss; buff_casts batch-409 destroying batch passengers). The
+run also surfaced findings this doc did not have — deltas below, explicitly
+flagged rather than silently merged.*
+
+### The callout trifecta (NEW — this is why "TTS never triggers")
+1. **P0: trigger evaluation runs AFTER the combat-line privacy whitelist** —
+   **9 of the 17 shipped suggested trigger templates** (mob_enraged,
+   self_snared, self_mezzed, cast_fizzle, …) can *never* fire because
+   `shouldKeep` drops those log lines before the trigger engine sees them.
+   Fix: evaluate triggers before the drop (locally — the dropped lines still
+   never upload, privacy unchanged). → joins Wave 1.2, first item.
+2. **P0: the trigger overlay's ✕ silently sets `enableTriggerTts=false`
+   persistently** — one mid-fight misclick permanently mutes every future
+   callout, countdown, and warning until manually re-enabled. Decouple hide
+   from mute (S — can ride the Saturday graduation).
+3. **P1: every bot deploy makes the fleet relay-deaf for hours-to-days** —
+   the relay's in-memory `nextId` resets to 1 on deploy while agent cursors
+   only ratchet upward, so agents skip everything until the counter passes
+   their old cursor. Fix: cursor-reset detection (S). → "deploy-safety trio"
+   in Wave 1.4, with a 404 catch-all and intra-batch upsert dedup.
+
+Together with the backtick fix these four explain essentially the whole
+"callouts are unreliable" experience — none of them are TTS-engine problems.
+
+### Other additions/corrections
+- **Figure correction**: "79% of log lines were 409s" → measured **86.8% in
+  the peak 5-min window, ~67% over 10 min, 0 in quiet windows** (night-wide
+  number unrecoverable — Railway log cap + the 02:30 redeploy split history).
+- **Deadline**: quantifying how many *new* rows died inside 409'd batches is
+  possible via one agent's `--since` backfill diff, but **buff_casts retention
+  is 7 days** — do it this week or lose the evidence.
+- **Wave 2 additions** (fold into #73): Supabase fetch has **no timeout** →
+  brownout zombie chains (600–1,200 held handlers per 60s brownout at 60);
+  poison-payload hardening (a garbage `cast_at` → handler 500 → agent re-posts
+  the same 256KB batch forever); encounter-burst flattening (~90MB offered per
+  boss kill at 60); GET-side collapse (cache target-buffs, batch live-state,
+  long-poll recent-fires).
+- **Wave 1 addition**: release-announce DM fanout — err.code logging first
+  (50007 "DMs off" is the prior); the 15-failure cohort repeats every release
+  until diagnosed.
+- **Control-plane keys** (#74): add `flag_agent_kill` (fleet dormancy) and
+  `min_agent_ver_num` (floor version) to the tuning channel — policy semantics
+  need officer sign-off.
+- **Honesty ledger**: the run's remaining unknowns are recorded in the audit
+  output (adoption rates behind the at-60 GET range, Zeal's native type-5
+  emission rate, the observed-20s roster cadence matching no shipped code
+  path, fielded-agent 429 handling, SAPI voice availability per machine).
+  None change the wave order; several are answerable from Supabase
+  `_trackUpload` data when we want them.
+
 ## Decision points for Hitya
 1. Friday: go/no-go on the Sunday write-only roll+loot capture (0.3).
 2. Saturday: confirm the stable graduation after beta soak (0.2).
