@@ -10611,6 +10611,66 @@ async function _handleAgentReporterPoll(req, res) {
   res.end(JSON.stringify({ ok: true, election: 'on', ttl_ms: REPORTER_TTL_MS, roles }));
 }
 
+// POST /api/agent/rolls  (#91 off-night NBG roll capture)
+// Store the agent's grouped /random SETS. Upsert per (uploader, range, start)
+// so a growing set updates in place as more rolls arrive; the site merges
+// across uploaders at read (each observer saw a subset). Write-only for now.
+async function _handleAgentRolls(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const chunks = []; let total = 0;
+  for await (const chunk of req) {
+    total += chunk.length;
+    if (total > 256 * 1024) { res.writeHead(413); return res.end(); }
+    chunks.push(chunk);
+  }
+  let payload;
+  try { payload = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+  catch { res.writeHead(400); return res.end(JSON.stringify({ error: 'invalid JSON' })); }
+
+  const sets = Array.isArray(payload?.sets) ? payload.sets : [];
+  if (sets.length === 0) { res.writeHead(200); return res.end(JSON.stringify({ ok: true, stored: 0 })); }
+
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) { res.writeHead(200); return res.end(JSON.stringify({ ok: true, stored: 0, note: 'supabase disabled' })); }
+
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+  const nowIso  = new Date().toISOString();
+  const rows = [];
+  for (const s of sets.slice(0, 100)) {
+    const from = Number.parseInt(s?.roll_from, 10);
+    const to   = Number.parseInt(s?.roll_to, 10);
+    const startedAt = s?.started_at ? new Date(s.started_at) : null;
+    if (!Number.isFinite(from) || !Number.isFinite(to) || !startedAt || isNaN(startedAt.getTime())) continue;
+    const rolls = (Array.isArray(s?.rolls) ? s.rolls : []).slice(0, 200).map(r => ({
+      name:   r?.name ? String(r.name).slice(0, 32) : null,
+      value:  Number.isFinite(r?.value) ? Math.trunc(r.value) : null,
+      at:     r?.at ? String(r.at).slice(0, 40) : null,
+      reroll: !!r?.reroll,
+    })).filter(r => r.name && r.value != null);
+    rows.push({
+      guild_id:               guildId,
+      uploaded_by_discord_id: identity.discord_id,
+      roll_from:              from,
+      roll_to:                to,
+      item:                   s?.item ? String(s.item).slice(0, 64) : null,
+      qty:                    Number.isFinite(s?.qty) ? Math.trunc(s.qty) : null,
+      zone:                   s?.zone ? String(s.zone).slice(0, 64) : null,
+      rolls,
+      started_at:             startedAt.toISOString(),
+      last_at:                s?.last_at ? new Date(s.last_at).toISOString() : startedAt.toISOString(),
+      updated_at:             nowIso,
+    });
+  }
+  if (rows.length === 0) { res.writeHead(200); return res.end(JSON.stringify({ ok: true, stored: 0 })); }
+  try {
+    await supabase.upsert('roll_sets', rows, 'guild_id,uploaded_by_discord_id,roll_from,roll_to,started_at');
+    res.writeHead(200); return res.end(JSON.stringify({ ok: true, stored: rows.length }));
+  } catch (err) {
+    res.writeHead(500); return res.end(JSON.stringify({ error: 'upsert failed', detail: err && err.message ? err.message : String(err) }));
+  }
+}
+
 // POST /api/agent/trigger
 //
 // "Pipe my triggers into Discord." An agent posts one or more trigger fires:
@@ -12798,6 +12858,15 @@ http.createServer(async (req, res) => {
     try { return await _handleAgentReporterPoll(req, res); }
     catch (err) {
       console.error('[reporter-poll] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  if (req.method === 'POST' && req.url === '/api/agent/rolls') {
+    try { return await _handleAgentRolls(req, res); }
+    catch (err) {
+      console.error('[rolls] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
     }
