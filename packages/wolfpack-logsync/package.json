@@ -1,6 +1,6 @@
 {
   "name": "wolfpack-logsync",
-  "version": "3.3.72",
+  "version": "3.3.73",
   "description": "Local EQ log filter + upload agent for the Quarm Raid Timer Bot. Strips officer chat / tells / private channels BEFORE upload. Tail-mode default — never reads full log files.",
   "license": "BSD-3-Clause",
   "main": "index.js",

@@ -21707,6 +21707,16 @@ function diStatusSnapshot() {
 // live; reads dedup through the bot's own relay cache so a roomful of Mimics
 // doesn't multiply Supabase load. Tunable via WP_MT_LIVE_STATE_TTL_MS.
 const MT_LIVE_STATE_TTL_MS = parseInt(process.env.WP_MT_LIVE_STATE_TTL_MS, 10) || 2500;
+// Cross-client live-state cache + in-flight de-dupe. These back EVERY cross-
+// client HP/buff lookup (_resolveHpValuesForName, _resolveBuffsForName,
+// buildMobInfo) but their declarations had gone missing, so every non-self
+// target lookup threw "ReferenceError: _mtLiveStateByName is not defined". That
+// silently killed cross-client tank HP (tank stuck on "[local]"), and — once
+// the 3.3.71 buff-filter fix stopped masking it — hard-blanked the Tank +
+// Command Center overlays and stopped Mob Info switching to players/pets
+// (raid-night 2026-07-16). Restore them here, next to the fetch that fills them.
+const _mtLiveStateByName   = new Map();   // nameLower → { at, state } (bot-relayed Zeal snapshot)
+const _mtLiveStateInflight = new Set();   // nameLower currently being fetched
 function fetchCharacterLiveState(name) {
   const opts = _uploadOpts;
   if (!opts || !opts.botUrl || !opts.token) return;
