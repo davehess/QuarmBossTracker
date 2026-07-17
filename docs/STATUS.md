@@ -80,6 +80,11 @@ folly** — it's here.*
 - **Efficiency pass (2026-07-07/09)**: hot-handler memos, agent pre-filters,
   retention trims (buff_casts 7d, threat 30d, who prune), web single-RPC /who,
   VACUUM FULL reclaim.
+- **Scale safeguards, in progress (2026-07-17)**: reporter-election chat pilot
+  (bot 3.0.196 + agent 3.3.74 beta, #72) — see `BETA-TESTING.md`. Chunk-0
+  hotfixes: auth 503-not-401 data-loss fix (bot 3.0.197); `{s}` triggers match
+  backtick names (agent 3.3.75 beta). *Note:* the buff_casts 409-storm P0 the
+  audit flagged was already fixed in prod (`insertIgnoreDuplicates`).
 
 ### ⏳ Open TODO — carried forward from the retired docs
 *(These are durable items; the active wave order is in `DESIGN-platform-queue.md`.)*

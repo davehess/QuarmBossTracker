@@ -61,3 +61,38 @@ Also `agent.log` prints `[reporter] chat role → REPORTER (uploading /gu·/rs)`
 - Raid-roster de-duplication (group-aware) — `roles.roster` is always `true` today.
 
 **Status:** ⏳ awaiting solo + multi-person verification.
+
+---
+
+## Chunk 0 hotfix — `{s}` triggers now fire on backtick names
+
+**Needs:** agent **3.3.75** (beta Mimic).
+
+**What it does:** name-captured guild triggers (`{s} has become ENRAGED.`,
+`{s} slows down.`, etc.) compiled to a pattern that excluded the backtick
+character, so Luclin mobs whose names carry one — **Rhag\`Zhezum, Aten\`Ha\`Ra,
+Yar\`Lir** and friends — could *never* match. Those triggers silently never
+fired. Fixed; multi-word and apostrophe names still match.
+
+### ✅ Solo (near a backtick-named mob)
+1. Enable a guild `{s}` trigger that a backtick mob will produce — e.g. an
+   Enrage (`{s} has become ENRAGED.`) or Slow (`{s} is slowed.`) trigger.
+2. Engage a backtick-named Luclin mob (Ssraeshza Temple has several). When the
+   line fires in your log, the trigger overlay/TTS should now **fire with the
+   mob's name filled in** (previously: nothing).
+3. Regression: confirm a **space-named** mob (e.g. "an ancient croaker") and an
+   ordinary single-word name still fire as before.
+
+### 👥 Multi-person
+- Not required — trigger matching is per-client. One person near the mob proves it.
+
+**Status:** ⏳ awaiting verification on a backtick-named pull (Luclin raid).
+
+---
+
+## Not in beta (shipped straight to main — noted here for completeness)
+- **Auth 503-not-401 data-loss fix** (bot **3.0.197**, live): a Supabase blip
+  during a fight no longer turns valid uploads into permanent loss. **Not
+  user-testable** without inducing a Supabase outage — verified by unit test
+  (null→503, []→401) and code review. Watch for: fewer "my parse vanished"
+  reports after a Railway/Supabase wobble.

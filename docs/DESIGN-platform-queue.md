@@ -107,7 +107,7 @@ fix to something already broken, or write-only capture.*
 
 | Order | Item | Why now | Size |
 |---|---|---|---|
-| 0.1 | Hotfix trio: auth 503-not-401 (P0 #1) · buff_casts per-row upsert (P0 #2) · `{s}` backtick fix (P0 #3) | Two silent data-loss bugs + the trigger bug killing current-era callouts. Bot parts deploy anytime; agent part rides the graduation. | S |
+| 0.1 | ✅ SHIPPED (2026-07-17) Hotfix **duo**: auth 503-not-401 (P0 #1, bot 3.0.197) · `{s}` backtick fix (P0 #3, agent 3.3.75 beta). **P0 #2 (buff_casts upsert) was already fixed in prod** (`insertIgnoreDuplicates`) — dropped from the list. | Silent data-loss + the trigger bug killing current-era callouts. Test cases in `BETA-TESTING.md`. | S |
 | 0.2 | [#89] Graduate agent → stable Saturday after beta soak | Fixes the fleet-wide tank/command blanking (stable has the undeclared-variable bug too). Maiden run of the redeploy-free pipeline. | S |
 | 0.3 | [#90] Sunday capture: write-only roll+loot upload (go/no-go Friday) + hand-built Monday review | Roll loot is the point of the alt raid; outcomes currently never leave the machine. Worst failure = no data. | S/M |
 
