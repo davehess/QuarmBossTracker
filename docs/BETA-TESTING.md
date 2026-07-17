@@ -36,10 +36,11 @@ Also `agent.log` prints `[reporter] chat role → REPORTER (uploading /gu·/rs)`
 2. **Chat still relays.** Type in `/gu` or `/rs` in game → the message still
    posts to the Discord relay as before. (You're the reporter, so nothing
    changed for you.)
-3. **Kill switch works.** Admin sets `flag_disable_reporter_election = 1` in
-   `/admin/overlays`. Within ~60–80s your `/status` shows `electionOn: false`
-   and `roles` all `true` (election disabled → everyone uploads). Chat still
-   relays. Set it back to `0`/delete → `electionOn: true` returns.
+3. **Kill switch works.** On `/admin/overlays`, tick **"Disable reporter
+   election (#72)"** under 🛑 Kill switches and Save. Within ~60–80s your
+   `/status` shows `electionOn: false` and `roles` all `true` (election disabled
+   → everyone uploads). Chat still relays. Untick + Save → `electionOn: true`
+   returns.
 4. **Fail-open on bot loss.** (Optional) Point the agent at a bad bot URL or kill
    connectivity briefly → roles reset to all-`true`, chat keeps uploading. No
    silent failure.

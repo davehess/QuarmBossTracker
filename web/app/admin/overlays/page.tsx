@@ -77,6 +77,28 @@ const GROUPS: KnobGroup[] = [
 ];
 
 const ALL_KNOBS: Knob[] = GROUPS.flatMap(g => g.knobs);
+const ALL_KNOB_KEYS = new Set(ALL_KNOBS.map(k => k.key));
+
+// ── Kill switches ────────────────────────────────────────────────────────────
+// Boolean flags stored as 1/0 in the SAME tuning jsonb the bot re-reads (~60s).
+// Checked = 1 (on); unchecked = the key is omitted (the bot treats missing as
+// off). Kept separate from the numeric knobs so the Save merges them without a
+// range. These used to be settable only by hand-editing Supabase — and the old
+// wholesale-rebuild Save silently wiped them. Now they're first-class + preserved.
+type Flag = { key: string; label: string; desc: string; danger?: boolean };
+const FLAGS: Flag[] = [
+  { key: 'flag_disable_reporter_election', label: 'Disable reporter election (#72)',
+    desc: 'Turns OFF the designated-reporter de-duplication — every agent uploads chat/buffs/roster again, exactly like before the feature. It is fail-open regardless; flip this only if the election ever misbehaves.' },
+  { key: 'flag_shed_live_state', label: 'Shed: live-state stream', danger: true,
+    desc: 'Mid-raid load-shed — the bot 200-acks and DROPS the character live-state stream (buffs/zone). Overlays needing it go stale until cleared. Emergency use only.' },
+  { key: 'flag_shed_raid_roster', label: 'Shed: raid-roster stream', danger: true,
+    desc: 'Drops the Zeal raid-roster stream — the /raid board + cross-client HP go stale. Emergency use only.' },
+  { key: 'flag_shed_casting', label: 'Shed: casting relay', danger: true,
+    desc: 'Drops the cross-client cast relay — Mob Info "who is casting" goes stale. Emergency use only.' },
+  { key: 'flag_shed_threat_snapshot', label: 'Shed: threat snapshot', danger: true,
+    desc: 'Drops the threat-snapshot stream. Emergency use only.' },
+];
+const FLAG_KEYS = new Set(FLAGS.map(f => f.key));
 
 // ── Per-class default overlay sets (pretty-place phase 2) ────────────────────
 // Which overlays a FRESH Mimic install turns on for each class. Stored in
@@ -117,10 +139,20 @@ async function saveOverlayTuning(formData: FormData) {
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user || !(await isOfficer(user.id))) redirect('/?error=admin_required');
 
+  const sb = supabaseAdmin();
+  // Preserve any keys this form doesn't manage (out-of-band overrides, future
+  // flags) so a Save never silently wipes them — the old wholesale rebuild did.
+  const { data: existingRow } = await sb
+    .from('overlay_tuning').select('tuning').eq('guild_id', 'wolfpack').maybeSingle();
+  const existing = (existingRow?.tuning as Record<string, number>) ?? {};
+
   // Only non-empty, in-range numbers become overrides; everything else is
   // omitted so the compiled default applies. Clamp instead of reject — an
   // officer nudging a slider mid-raid should never lose the save to a typo.
   const tuning: Record<string, number> = {};
+  for (const [k, v] of Object.entries(existing)) {
+    if (!ALL_KNOB_KEYS.has(k) && !FLAG_KEYS.has(k)) tuning[k] = v;   // passthrough unknown keys
+  }
   for (const k of ALL_KNOBS) {
     const raw = String(formData.get(k.key) ?? '').trim();
     if (!raw) continue;
@@ -128,11 +160,15 @@ async function saveOverlayTuning(formData: FormData) {
     if (!Number.isFinite(n)) continue;
     tuning[k.key] = Math.max(k.min, Math.min(k.max, n));
   }
+  // Kill switches: checked → 1 (on); unchecked → key omitted (bot reads as off).
+  for (const f of FLAGS) {
+    if (formData.get(f.key) != null) tuning[f.key] = 1;
+  }
 
   const meta = (user.user_metadata ?? {}) as Record<string, unknown>;
   const display = String(meta.full_name || meta.name || meta.preferred_username || meta.email || 'officer');
 
-  await supabaseAdmin()
+  await sb
     .from('overlay_tuning')
     .upsert({
       guild_id: 'wolfpack',
@@ -251,6 +287,37 @@ export default async function OverlayTuningPage() {
             </div>
           </section>
         ))}
+
+        <section className="bg-panel border border-red/40 rounded-lg p-5">
+          <div className="text-base font-semibold text-text mb-1">🛑 Kill switches</div>
+          <p className="text-xs text-dim mb-4 leading-5">
+            Emergency toggles the bot re-reads within <b>~60s</b> — no redeploy. Leave everything
+            off in normal operation. Saving here preserves the numeric knobs above (and vice-versa).
+          </p>
+          <div className="space-y-3">
+            {FLAGS.map(f => {
+              const on = Number(tuning[f.key]) >= 1;
+              return (
+                <label key={f.key} className="block cursor-pointer">
+                  <div className="flex items-center gap-2 mb-1">
+                    <input
+                      type="checkbox"
+                      name={f.key}
+                      defaultChecked={on}
+                      className={f.danger ? 'accent-red' : 'accent-orange'}
+                    />
+                    <span className="text-sm font-semibold text-text">{f.label}</span>
+                    <code className="text-[10px] text-dim">{f.key}</code>
+                    {on && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-red/20 text-red border border-red/40">ON</span>
+                    )}
+                  </div>
+                  <p className="text-xs text-dim leading-5 ml-6">{f.desc}</p>
+                </label>
+              );
+            })}
+          </div>
+        </section>
 
         <div className="flex items-center justify-between gap-3">
           <div className="text-xs text-dim">
