@@ -189,7 +189,15 @@ function _hasOfficerRole(roleNames) {
   return Array.isArray(roleNames) && roleNames.some(n => set.has(n));
 }
 
-// Core lookup: token string → identity (or null). Shared by both the
+// Sentinel: the auth-store lookup itself FAILED (Supabase 5xx/network blip),
+// which is NOT the same as "token not found". Callers must treat this as
+// RETRYABLE (503), never as an invalid token (401) — a 4xx makes the agent's
+// durable queue drop the payload as permanent, so a transient blip would become
+// fleet-wide data loss (audit P0 #1). Never cached, so the next request retries.
+const LOOKUP_ERROR = Symbol('session_lookup_error');
+
+// Core lookup: token string → identity, or null (unknown/revoked), or
+// LOOKUP_ERROR (transient store failure — retryable). Shared by both the
 // X-Wolfpack-Mimic-Session resolver (UI flows) and requireAgentAuth (agent
 // uploads). Single cache means a session token used by both surfaces only
 // hits Supabase once per 5 min.
@@ -198,10 +206,16 @@ async function _resolveSessionToken(token) {
   const cached = _sessionCache.get(token);
   if (cached && (Date.now() - cached.resolvedAt) < SESSION_CACHE_TTL_MS) return cached.value;
   if (!supabase.isEnabled()) return null;
+  // Distinguish a FAILED lookup from an empty result. supabase.select (see
+  // utils/supabase.js _request) resolves to `null` on any request failure
+  // (5xx / network — it never rejects) and to an array (possibly []) on
+  // success. So: null = the store is down (retryable), [] = token genuinely not
+  // found. The extra .catch is belt-and-suspenders in case _request ever throws.
   const rows = await supabase.select(
     'mimic_sessions',
     `session_token=eq.${encodeURIComponent(token)}&select=user_id,discord_id,revoked_at&limit=1`,
   ).catch(() => null);
+  if (rows === null) return LOOKUP_ERROR;   // store down — do NOT cache, do NOT 401
   const row = Array.isArray(rows) ? rows[0] : null;
   if (!row || row.revoked_at) {
     _sessionCache.set(token, { resolvedAt: Date.now(), value: null });
@@ -232,7 +246,10 @@ async function _resolveSessionToken(token) {
 
 async function resolveMimicSession(req) {
   const token = String(req.headers?.['x-wolfpack-mimic-session'] || '').trim();
-  return _resolveSessionToken(token);
+  const r = await _resolveSessionToken(token);
+  // UI flows expect null-or-identity; a transient lookup blip fails closed to
+  // null (unauthenticated), same as before — never leak the truthy sentinel.
+  return r === LOOKUP_ERROR ? null : r;
 }
 
 // requireAgentAuth(req, res) — gate for every /api/agent/* endpoint after the
@@ -265,6 +282,15 @@ async function requireAgentAuth(req, res) {
   }
 
   const identity = await _resolveSessionToken(bearer);
+  if (identity === LOOKUP_ERROR) {
+    // Auth-store blip (Supabase 5xx/network). MUST be retryable: a 401 here
+    // would make the agent's durable queue drop the payload as permanent (4xx),
+    // turning a transient outage into fleet-wide data loss (audit P0 #1). 503 →
+    // the queue backs off and re-sends when the store recovers.
+    res.writeHead(503, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'auth store temporarily unavailable, retry' }));
+    return null;
+  }
   if (!identity) {
     res.writeHead(401, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
