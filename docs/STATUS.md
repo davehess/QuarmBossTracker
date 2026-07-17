@@ -85,6 +85,12 @@ folly** — it's here.*
   hotfixes: auth 503-not-401 data-loss fix (bot 3.0.197); `{s}` triggers match
   backtick names (agent 3.3.75 beta). *Note:* the buff_casts 409-storm P0 the
   audit flagged was already fixed in prod (`insertIgnoreDuplicates`).
+- **Callout trifecta, in progress (2026-07-17, #76)** — the "why TTS never
+  fires" fixes: triggers evaluate before the privacy/combat filter so
+  ENRAGED/snare/mez/fizzle templates fire (agent 3.3.76 beta, 9/17 dead
+  templates); trigger relay seeds a monotonic id base so a bot deploy no longer
+  makes the fleet relay-deaf for hours (bot 3.0.198). Deferred: ✕-mutes-TTS
+  overlay decouple (#97).
 
 ### ⏳ Open TODO — carried forward from the retired docs
 *(These are durable items; the active wave order is in `DESIGN-platform-queue.md`.)*

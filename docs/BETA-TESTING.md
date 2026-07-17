@@ -91,7 +91,39 @@ fired. Fixed; multi-word and apostrophe names still match.
 
 ---
 
+## Callout trifecta — "why TTS never fires" (#76)
+
+### Triggers now fire on ENRAGED / snared / mez / fizzle lines
+**Needs:** agent **3.3.76** (beta Mimic).
+
+**What it does:** the trigger engine only ever saw lines the combat filter
+positively *kept*, so a whole class of templates — mob **ENRAGED**, self
+**snared / mesmerized**, spell **fizzles**, cure/emote lines — matched lines
+that were dropped before a trigger could run. 9 of the 17 shipped suggested
+templates could never fire. Now triggers evaluate on those lines too. Privacy is
+unchanged: tells / officer / group / custom-channel lines still never reach a
+trigger, and only the trigger name + captures relay, never the raw line.
+
+#### ✅ Solo
+1. Enable a trigger on one of the newly-visible lines, e.g. `{s} has become
+   ENRAGED.` or `You are snared.` (personal trigger is fine).
+2. Produce the line in-game — get snared by a mob, or tank one to enrage. The
+   trigger overlay/TTS should now **fire** (previously: silence).
+3. Privacy regression: a trigger on `{s} tells you` must **not** fire on an
+   actual `/tell` — private lines stay invisible to triggers.
+
+#### 👥 Multi-person — not required (per-client matching).
+
+**Status:** ⏳ awaiting verification.
+
+---
+
 ## Not in beta (shipped straight to main — noted here for completeness)
+- **Trigger relay: no more post-deploy deafness** (bot **3.0.198**, live): the
+  relay id counter now seeds from a monotonic boot base, so after a bot deploy
+  agents no longer skip every relayed callout for hours. **Not directly
+  user-testable** — the symptom (cross-client callouts silent for hours after a
+  deploy) simply won't recur.
 - **Auth 503-not-401 data-loss fix** (bot **3.0.197**, live): a Supabase blip
   during a fight no longer turns valid uploads into permanent loss. **Not
   user-testable** without inducing a Supabase outage — verified by unit test
