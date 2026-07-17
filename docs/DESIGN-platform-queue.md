@@ -88,7 +88,18 @@ feel. This is the narrative for Discord posts, not just engineering order:
 
 ---
 
-## The queue
+## Agreed execution order (2026-07-17, Hitya's call)
+
+**Chunk 2 → 0 → 1 → R → 3 → 4 → 5.** Survive-success safeguards lead; the
+weekend keystones (0.2 Saturday graduation, 0.3 Sunday capture) are
+calendar-pinned and interleave on their dates rather than blocking the Chunk-2
+build thread. Rationale: the audit's P0 blast-radius risk (no cross-machine
+election, single load-bearing replica) is the thing that turns a good night
+into an outage, and it must be installed *before* the next big raid, not after.
+
+Active build thread starts at **[#72] designated-reporter election** (Wave 2.1).
+
+### The queue
 
 ### Wave 0 — this week (pre-Sunday, freeze-friendly)
 *Rule: nothing risky ships before an officer-light raid. Everything here is a
