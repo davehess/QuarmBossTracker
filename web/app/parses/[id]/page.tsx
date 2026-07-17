@@ -32,6 +32,8 @@ type PlayerRow  = {
 };
 type RawPlayer    = { name: string; damage: number; dps: number; duration: number; hasPets?: boolean; rank?: number };
 type RawDeath     = { name: string; ts: string; class?: string | null; riposteDeath?: boolean };
+// #98 encounter_events row — raid-wide events + trigger fires for the timeline.
+type TimelineEventRow = { at: string; kind: string; subtype: string | null; actor: string | null; label: string | null };
 // Per-defender tanking stats from the agent's EncounterBuilder — what the
 // tank's log saw incoming on themselves (and any other defenders in range).
 // Matched to the contributor by name to render the "took 47 hits for 12.4k,
@@ -178,6 +180,15 @@ async function load(id: string) {
       .eq('encounter_id', id)
       .order('created_at', { ascending: true });
 
+    // Per-fight timeline events (#98) — raid-wide events (rampage/enrage) +
+    // trigger fires (incl. Death Touch). Uploaded by every observer; deduped
+    // at read below (same as deaths).
+    const { data: rawEvents } = await sb
+      .from('encounter_events')
+      .select('at, kind, subtype, actor, label')
+      .eq('encounter_id', id)
+      .order('at', { ascending: true });
+
     // "Current at the time" baseline — the highest agent_version seen across
     // ANY contribution uploaded within ±7 days of this encounter's started_at.
     // Anyone uploading on an older version while peers were on a newer one
@@ -289,6 +300,7 @@ async function load(id: string) {
       petSet,
       date,
       latestAtTime,
+      timelineEvents: (rawEvents ?? []) as TimelineEventRow[],
       error: null as string | null,
     };
   } catch (err: unknown) {
@@ -312,7 +324,7 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
   }
   const officer = await isOfficer(user.id);
   const tz = await userTz();
-  const { enc, contribs, zones, loot, whoMap, bossLocalZone, petSet, date, latestAtTime } = data;
+  const { enc, contribs, zones, loot, whoMap, bossLocalZone, petSet, date, latestAtTime, timelineEvents } = data;
   // `date` (from load) is the ET raid-day bucket — keep it for the loot query
   // join. For DISPLAY, re-bucket the kill time in the viewer's chosen zone.
   const dispDate = dayKey(enc.started_at, tz);
@@ -392,6 +404,30 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
   const deaths = deathsDeduped.sort(
     (a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime(),
   );
+
+  // #98 timeline events: dedup across uploaders (same enrage/fire seen by all →
+  // collapse by kind+subtype+actor within a 3s window, like deaths), then split
+  // into the raid-event and trigger-fire lanes the FightTimeline draws.
+  const TL_DEDUP_MS = 3000;
+  const tlSorted = [...(timelineEvents ?? [])]
+    .map(e => ({ ...e, t: new Date(e.at).getTime() }))
+    .filter(e => Number.isFinite(e.t))
+    .sort((a, b) => a.t - b.t);
+  const tlKept: TimelineEventRow[] = [];
+  const tlLast = new Map<string, number>();
+  for (const e of tlSorted) {
+    const k = `${e.kind}|${e.subtype || ''}|${(e.actor || '').toLowerCase()}`;
+    const prev = tlLast.get(k);
+    if (prev != null && Math.abs(e.t - prev) <= TL_DEDUP_MS) continue;
+    tlLast.set(k, e.t);
+    tlKept.push(e);
+  }
+  const raidEvents = tlKept
+    .filter(e => e.kind === 'raid_event')
+    .map(e => ({ at: e.at, label: e.label || e.subtype || 'event', kind: 'raid_event' as const }));
+  const fireEvents = tlKept
+    .filter(e => e.kind === 'fire')
+    .map(e => ({ at: e.at, label: e.label || e.subtype || 'callout', kind: 'fire' as const }));
 
   // Tank perspective: find contributions whose contributor is a tank class.
   const tanks = contribs.filter(c => {
@@ -648,16 +684,17 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
         </div>
       </section>
 
-      {/* Fight timeline — deaths across the fight (#98 P1). The substrate for
-          the callout replay: raid-wide events + which triggers fired overlay
-          onto this same axis once P2 capture ships. Shown only when there were
-          deaths (the review case the user asked for). */}
-      {deaths.length > 0 && (
+      {/* Fight timeline (#98) — deaths + raid-wide events (rampage/enrage) +
+          which callouts fired, on one axis. Shown whenever there's anything to
+          review (a death, a raid-wide event, or a callout). */}
+      {(deaths.length > 0 || raidEvents.length > 0 || fireEvents.length > 0) && (
         <FightTimeline
           startedAt={enc.started_at}
           endedAt={null}
           durationSec={enc.duration_sec}
           deaths={deaths}
+          events={raidEvents}
+          fires={fireEvents}
         />
       )}
 
