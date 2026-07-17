@@ -3,6 +3,7 @@
 // rest of the site's gate. Cards link to gated pages, which redirect
 // unauthenticated visitors to /auth/signin?next=...
 import Link from 'next/link';
+import { PlatformMap, PlatformStats } from '@/components/PlatformMap';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
 import { fmtDmg, fmtTime, dayKey, dayLabel, cleanBossName } from '@/lib/format';
@@ -57,6 +58,26 @@ export default async function HomePage() {
           </Link>
         </p>
       </section>
+
+      {/* Signed-out visitors get the platform map right here on the front page —
+          the "what IS all of this?" answer without needing to find /platform.
+          Node clicks land on the full page's drill-down cards. Members skip it
+          (their homepage is the daily dashboard; the link above suffices). */}
+      {!user && (
+        <section className="bg-panel border border-border rounded-lg p-2 md:p-6 overflow-x-auto">
+          <div className="min-w-[760px]">
+            <PlatformMap anchorBase="/platform" />
+          </div>
+          <div className="px-4 pb-3">
+            <PlatformStats />
+            <p className="text-center text-xs mt-4">
+              <Link href="/platform" className="text-blue hover:underline">
+                explore every branch, the evolution, and the privacy story →
+              </Link>
+            </p>
+          </div>
+        </section>
+      )}
 
       {recent.length > 0 && (
         <section className="bg-panel border border-border rounded-lg p-4">
