@@ -220,6 +220,10 @@ async function recordParse({
   // trace. Stamps both contributions.uploaded_by_discord_id and (on first
   // creation only) encounters.uploaded_by_discord_id.
   uploadedByDiscordId = null,
+  // Per-fight timeline events for the callout replay (#98): raid-wide events
+  // (enrage/DT/rampage/AoE), trigger fires, tank switches. [{at,kind,subtype,
+  // actor,label,meta}]. Stored in encounter_events, deduped at read like deaths.
+  timelineEvents = null,
 }) {
   if (!isEnabled()) return null;
 
@@ -315,7 +319,41 @@ async function recordParse({
     }
   }
 
+  // Per-fight timeline events (#98) — raid-wide events, trigger fires, tank
+  // switches for the callout replay. Non-fatal; the parse itself already landed.
+  if (Array.isArray(timelineEvents) && timelineEvents.length) {
+    try { await recordEncounterEvents(encounterId, timelineEvents, uploadedByDiscordId); }
+    catch (err) { console.warn('[supabase] encounter_events insert failed:', err?.message); }
+  }
+
   return { encounterId, contributionId, npcId };
+}
+
+// Persist per-fight timeline events for the callout replay (#98). Idempotent
+// per uploader via the encounter_events_dedup unique index (backfill re-runs
+// don't duplicate); cross-uploader duplicates collapse at read. Capped so a
+// runaway agent can't flood the table.
+async function recordEncounterEvents(encounterId, events, uploadedByDiscordId) {
+  if (!isEnabled() || !encounterId || !Array.isArray(events) || events.length === 0) return;
+  const rows = [];
+  for (const e of events) {
+    if (!e || !e.at || !e.kind) continue;
+    const at = new Date(e.at);
+    if (isNaN(at.getTime())) continue;
+    rows.push({
+      guild_id:               _guildId(),
+      encounter_id:           encounterId,
+      uploaded_by_discord_id: uploadedByDiscordId || null,
+      at:                     at.toISOString(),
+      kind:                   String(e.kind).slice(0, 24),
+      subtype:                e.subtype ? String(e.subtype).slice(0, 48) : null,
+      actor:                  e.actor  ? String(e.actor).slice(0, 64)  : null,
+      label:                  e.label  ? String(e.label).slice(0, 160) : null,
+      meta:                   (e.meta && typeof e.meta === 'object') ? e.meta : null,
+    });
+  }
+  if (rows.length === 0) return;
+  await insertIgnoreDuplicates('encounter_events', rows.slice(0, 500));
 }
 
 // Upsert per-character ability rollups for one encounter.

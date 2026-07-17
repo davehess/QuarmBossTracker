@@ -12337,6 +12337,10 @@ async function _handleAgentUpload(req, res) {
           rollupByChar: encounter.rollup?.by_char || null,
           npcHealedTotal: encounter.npc_healed_total || 0,
           uploadedByDiscordId: identity.discord_id,
+          // Per-fight timeline events for the callout replay (#98) — raid-wide
+          // events, trigger fires, tank switches. Older agents omit the field;
+          // recordParse no-ops on null. Backward-compatible.
+          timelineEvents: Array.isArray(encounter.timeline_events) ? encounter.timeline_events : null,
         }).catch(err => { console.warn('[agent] recordParse failed:', err?.message); return null; });
 
         // Register the kill the moment ANY contributor's agent confirms the
