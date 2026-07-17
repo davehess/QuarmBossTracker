@@ -20506,8 +20506,10 @@ function _translateDotNetRegex(pattern) {
   // {s} / {S} / {S2} / {c} → permissive name-like capture. The earlier form
   // ([^\s]+) refused ANY whitespace, so multi-word mob names ("Zov Va Dyn",
   // "Aten Ha Ra", "Lord Nagafen") never matched and triggers like Enrage
-  // silently never fired. Allow word chars + space + apostrophe + hyphen,
-  // lazy so the surrounding anchored context (^...$) still constrains the
+  // silently never fired. Allow word chars + space + apostrophe + hyphen +
+  // BACKTICK — Luclin names like Rhag`Zhezum / Aten`Ha`Ra carry a backtick, and
+  // without it a {s} trigger could never fire on those mobs (audit fix). Lazy so
+  // the surrounding anchored context (^...$) still constrains the
   // match. The capture is NAMED — first occurrence as `s`, second as `s1`,
   // etc. — so (a) action templates like "ENRAGE - {s}" interpolate the
   // captured mob name and (b) the live evaluator can audit the match against
@@ -20516,7 +20518,7 @@ function _translateDotNetRegex(pattern) {
   p = p.replace(/\{[sScC]\d*\}/g, () => {
     const name = sIdx === 0 ? 's' : `s${sIdx}`;
     sIdx++;
-    return `(?<${name}>[\\w' -]+?)`;
+    return `(?<${name}>[\\w'\` -]+?)`;
   });
   return p;
 }
