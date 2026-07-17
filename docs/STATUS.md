@@ -28,6 +28,7 @@ folly** — it's here.*
 | File | What it is | Why it stays |
 |---|---|---|
 | `DESIGN-platform-queue.md` | The post-audit wave plan + agreed execution order | **The live queue.** |
+| `BETA-TESTING.md` | Test plan for features in the beta channel (versions + ✅ solo / 👥 multi-person cases) | **Where to verify beta work.** |
 | `DESIGN-buff-debuff-queue.md` | Design spec for the raid buff/debuff/cure queue overlay | CLAUDE.md roadmap ref; feature is live but spec still guides changes |
 | `DESIGN-ch-chain.md` | Design spec for the CH-rotation overlay | CLAUDE.md roadmap ref |
 | `DESIGN-quarmy-gear.md` | Build spec for Quarmy gear/AA/spell import to character pages | Unbuilt — still the spec |
