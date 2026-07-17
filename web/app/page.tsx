@@ -51,6 +51,11 @@ export default async function HomePage() {
           runs your in-raid HUD; this site is where you compare against the rest
           of the pack between fights.
         </p>
+        <p className="text-sm mt-3">
+          <Link href="/platform" className="text-blue hover:underline">
+            🗺 New here? See the whole platform on one page →
+          </Link>
+        </p>
       </section>
 
       {recent.length > 0 && (

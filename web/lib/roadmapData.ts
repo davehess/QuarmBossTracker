@@ -43,6 +43,17 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'platform-map-228',
+    title: '🗺 The platform, on one page',
+    version: 'Web 1.0.228',
+    date: '2026-07-17',
+    headline: 'Ever tried to explain what all of this actually is? Now you just send one link.',
+    features: [
+      { name: 'wolfpack.quest/platform', blurb: 'A single public page that maps the whole platform — the desktop overlays, the parser engine, the Discord bot, the website, the data behind it, and how updates ship — mindmap style. Click any branch to drill into the details, scroll for the story of how a respawn timer became all of this. Share it with anyone curious about what we built.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'officer-loot-and-revert-195',
     title: '💰 Loot capture + ↩ revert to stable · Mimic 1.9.5 (beta)',
     version: 'Mimic 1.9.5-beta · Agent 3.3.60',
