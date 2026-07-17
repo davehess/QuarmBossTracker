@@ -7586,11 +7586,15 @@ function _resolveBuffsForName(name, active, buffsOut) {
   try { fetchCharacterLiveState(name); } catch {}
   const live = _mtLiveStateByName.get(nameLower);
   if (live && live.state && Array.isArray(live.state.buffs)) {
-    return { buffs: live.state.buffs.map(b => ({ name: b.name, seconds: b.seconds, fell_off: false })), source: 'mimic' };
+    // filter(b && b.name): a malformed buff in a targeted PLAYER's cross-client
+    // live-state (the tank has 30+ raid buffs) must not throw downstream and
+    // 500 the whole /api/state — that blinds every overlay (raid-night 2026-07-16).
+    return { buffs: live.state.buffs.filter(b => b && b.name).map(b => ({ name: b.name, seconds: b.seconds, fell_off: false })), source: 'mimic' };
   }
   try { fetchTargetBuffs(name); } catch {}
   const seen = new Map();
   for (const b of targetBuffsFor(nameLower)) {
+    if (!b || !b.name) continue;   // same guard as the relay loop below — a nameless entry must not throw
     seen.set(b.name.toLowerCase(), { name: b.name, seconds: b.fell_off ? 0 : b.remaining_secs, fell_off: !!b.fell_off });
   }
   const relay = _targetBuffsByName.get(nameLower);
@@ -15027,7 +15031,21 @@ function startWebDashboard(port) {
         // served instantly). 400ms staleness is invisible at those cadences.
         const _now = Date.now();
         if (!_stateJsonCache.body || (_now - _stateJsonCache.at) > 400) {
-          _stateJsonCache = { at: _now, body: JSON.stringify(_serializeForDashboard()) };
+          try {
+            _stateJsonCache = { at: _now, body: JSON.stringify(_serializeForDashboard()) };
+          } catch (_serErr) {
+            // A serialize helper threw. NEVER 500 here: the dashboard AND every
+            // overlay parse the response with .json() WITHOUT checking status, so
+            // a 500's error body reads as a successful-but-empty state and blinds
+            // them (CH chain "OVERLAY BLIND", empty dashboard — raid-night
+            // 2026-07-16, triggered by targeting a heavily-buffed player). Serve
+            // the last good snapshot instead (stale but valid); retries next poll,
+            // so it self-heals the instant the offending state clears.
+            console.error('[api/state] serialize failed, serving last-good:', _serErr && (_serErr.stack || _serErr.message || _serErr));
+            if (!_stateJsonCache.body) {
+              _stateJsonCache = { at: _now, body: '{"watchedLogs":[],"sessionEvents":0,"uploadCount":0,"_serializeError":true}' };
+            }
+          }
         }
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(_stateJsonCache.body);
