@@ -467,6 +467,24 @@ function shouldKeep(line, drops = DEFAULT_DROP_PATTERNS, keeps = KEEP_PATTERNS, 
   return false;
 }
 
+// Should the LOCAL trigger engine see this line? shouldKeep() gates the
+// UPLOAD/parse path and only keeps positively-identified combat lines — but a
+// whole class of trigger templates (mob ENRAGED, self snared/mesmerized, spell
+// fizzles, cure/emote lines) match lines the keep-list never enumerates, so
+// they were silently dropped before the trigger engine ever ran (audit
+// callout-trifecta P0: 9 of 17 shipped templates could never fire). This is
+// shouldKeep with the final verdict flipped: honor priority-keeps, drop the
+// EXPLICIT drop list (the privacy channels — officer/tells/group — plus public
+// chat, system spam, and self-damage), and let every remaining line through —
+// including keep-list MISSES. Privacy is unchanged: private lines match the
+// drop list and never reach a trigger, and only trigger name + captures relay,
+// never the raw line.
+function triggerVisibleLine(line, drops = DEFAULT_DROP_PATTERNS, priorityKeeps = PRIORITY_KEEP_PATTERNS) {
+  for (const rx of priorityKeeps) if (rx.test(line)) return true;
+  for (const rx of drops)         if (rx.test(line)) return false;
+  return true;
+}
+
 // A spaceless, lowercase token ("to", "a", "the", "and", "of", "by"…) is never
 // a real combat attacker. Real player names + single-word NPC/boss names are
 // capitalized; multi-word NPCs ("a sentinel") legitimately start lowercase but
@@ -24214,12 +24232,18 @@ async function main() {
           return;
         }
 
-        // ── Normal combat filter ───────────────────────────────────────────
-        if (!shouldKeep(line, dropPatterns, keepPatterns)) return;
         const ts = parseEqTimestamp(line);
-        // Officer-tuned + personal triggers — evaluate each kept line.
-        // Cheap: precompiled regex set; usually < 50 entries, < 50µs each.
-        try { evaluateTriggersAgainstLine(line, ts ? ts.getTime() : Date.now()); } catch {}
+        // Officer-tuned + personal triggers — evaluate BEFORE the combat filter
+        // so keep-list MISSES (ENRAGED, snared, mesmerized, fizzles, cures…)
+        // still fire; triggerVisibleLine() drops only the privacy/public-chat/
+        // system lines so nothing private ever reaches a trigger. Cheap:
+        // precompiled regex set; usually < 50 entries, < 50µs each.
+        if (triggerVisibleLine(line, dropPatterns)) {
+          try { evaluateTriggersAgainstLine(line, ts ? ts.getTime() : Date.now()); } catch {}
+        }
+
+        // ── Normal combat filter (gates parse + upload only) ────────────────
+        if (!shouldKeep(line, dropPatterns, keepPatterns)) return;
         const ev = parseEvent(line, ts);
         if (ev) {
           // Pet combat observation — if the attacker is one of our pets (Zeal
