@@ -4281,7 +4281,59 @@ class EncounterBuilder {
     this._activeCharms     = new Map();
     this.charmSessions     = [];
     this._pendingDireCharm = null;
+    // Callout-replay timeline (#98) — raid-wide events (rampage/enrage/…) for
+    // this fight. Deduped via _tlSeen. Trigger fires are merged in at flush.
+    this.timelineEvents    = [];
+    this._tlSeen           = new Set();
     // petLeaders and lastDirgeCast intentionally NOT reset — persists for the agent's runtime
+  }
+  // ── Callout-replay timeline (#98) ──────────────────────────────────────────
+  // Record a notable raid-wide event, deduped within this builder (repeated
+  // ENRAGE lines / multi-log echoes collapse — the ts is bucketed to 2s).
+  noteTimelineEvent(ev) {
+    if (!ev || !ev.at || !ev.kind || this.timelineEvents.length >= 400) return;
+    const k = ev.kind + '|' + (ev.subtype || '') + '|' + (ev.actor || '') + '|' + Math.round((Date.parse(ev.at) || 0) / 2000);
+    if (this._tlSeen.has(k)) return;
+    this._tlSeen.add(k);
+    this.timelineEvents.push({
+      at: ev.at, kind: ev.kind,
+      subtype: ev.subtype || null, actor: ev.actor || null, label: ev.label || null,
+    });
+  }
+  // Raid-wide events that are NOT combat events (dropped before parseEvent) —
+  // detect from the raw log line. ENRAGE here; Death Touch rides the trigger-
+  // fire lane (EQ never names a mob's cast in the log, so it's a trigger).
+  noteRaidLine(line, tsMs) {
+    const m = /\]\s+(.+?)\s+has become ENRAGED/i.exec(line);
+    if (m) {
+      const mob = (m[1] || '').trim().slice(0, 64);
+      this.noteTimelineEvent({
+        at: new Date(tsMs || Date.now()).toISOString(),
+        kind: 'raid_event', subtype: 'enrage', actor: mob || null,
+        label: (mob || 'The mob') + ' ENRAGED',
+      });
+    }
+  }
+  // Merge this fight's raid events with the trigger FIRES that fell inside its
+  // window (the "did the callout fire?" half — covers Death Touch + every
+  // trigger). Backfill replays get raid events but no fires (nothing fired
+  // during a silent replay), which is correct. Returns undefined when empty.
+  _buildTimelineEvents() {
+    const out = [...this.timelineEvents];
+    const startMs = Date.parse(this.startedAt) || 0;
+    if (startMs) {
+      const endMs = Date.parse(this.lastEvent || this.startedAt) || (startMs + 1);
+      for (const f of _fireLog) {
+        if (f.at >= startMs - 2000 && f.at <= endMs + 2000) {
+          out.push({
+            at: new Date(f.at).toISOString(), kind: 'fire',
+            subtype: f.name ? String(f.name).slice(0, 48) : null,
+            actor: null, label: f.name || 'callout',
+          });
+        }
+      }
+    }
+    return out.length ? out.slice(0, 500) : undefined;
   }
   _bumpDefender(name, key, amount, tsMs) {
     if (!name) return;
@@ -5043,6 +5095,13 @@ class EncounterBuilder {
       }
       this._rampageTs = Date.parse(event.ts) || Date.now();
       this._rampageTarget = event.defender || null;
+      // Callout-replay timeline (#98).
+      this.noteTimelineEvent({
+        at: event.ts, kind: 'raid_event', subtype: 'rampage',
+        actor: event.attacker || null,
+        label: (event.attacker || 'Boss') + ' RAMPAGE'
+             + (event.defender ? ' → ' + (/^you$/i.test(event.defender) ? (this.character || 'You') : event.defender) : ''),
+      });
       // Publish the current rampage target to stats so the Tank overlay can
       // surface it without poking builder internals. Cleared by the damage-tag
       // path below or by the 8s freshness check on the /api/tank-state side.
@@ -6060,6 +6119,9 @@ class EncounterBuilder {
         // within 3s before they died — used to flag Knights (Paladin/SK) who
         // die from boss counter-attacks.
         deaths:      this.deaths.length > 0 ? [...this.deaths] : undefined,
+        // Callout-replay timeline (#98): raid-wide events (rampage/enrage) +
+        // trigger fires (incl. Death Touch) that fell in this fight's window.
+        timeline_events: this._buildTimelineEvents(),
         // Heal chain gap analysis — longest stretches without a heal on the primary tank.
         // { tank: name, count: N, maxGapMs: N }
         // null/undefined when no healer data was observed or gaps < 8s.
@@ -21325,6 +21387,10 @@ function _announceRampage(target, tsMs) {
 // the same logical event doesn't double-play on a Mimic that detected
 // AND received it.
 const _localFireKeys = new Map();   // key → [tsMs, ...]
+// Callout-replay (#98): a rolling log of trigger FIRES so a per-fight upload
+// can report which callouts actually went off (covers Death Touch + every
+// trigger). Windowed into encounters at flush time; capped so it can't grow.
+const _fireLog = [];                // [{ at: tsMs, name }]
 const FIRE_DEDUP_WINDOW_MS = 8_000;
 
 function _markFireSeen(key, tsMs) {
@@ -22970,6 +23036,13 @@ function _fireTriggerActions(t, captures, tsMs, test, isRelay) {
       }
     }
   }
+  // Callout-replay (#98): record the fire so the per-fight timeline can show
+  // which callouts went off. Skip test/rehearsal fires. Windowed into the
+  // encounter at flush time; hard-capped so it can't grow unbounded.
+  if (!test) {
+    _fireLog.push({ at: tsMs || Date.now(), name: t.name || t.key || 'trigger' });
+    if (_fireLog.length > 600) _fireLog.splice(0, _fireLog.length - 600);
+  }
   for (const a of (t.actions || [])) {
     if (!a || !a.type) continue;
     if (a.type === 'text_overlay') {
@@ -24241,6 +24314,9 @@ async function main() {
         if (triggerVisibleLine(line, dropPatterns)) {
           try { evaluateTriggersAgainstLine(line, ts ? ts.getTime() : Date.now()); } catch {}
         }
+        // Callout-replay (#98): capture raid-wide events that aren't combat
+        // events (ENRAGE) — dropped before parseEvent — onto the fight timeline.
+        try { b.builder.noteRaidLine(line, ts ? ts.getTime() : Date.now()); } catch {}
 
         // ── Normal combat filter (gates parse + upload only) ────────────────
         if (!shouldKeep(line, dropPatterns, keepPatterns)) return;
