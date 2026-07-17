@@ -3302,7 +3302,16 @@ const TRIGGER_RELAY_TTL_MS         = 60_000;
 const TRIGGER_RELAY_MAX_ENTRIES    = 200;
 const TRIGGER_RELAY_DEDUP_WINDOW_MS = 8_000;
 const _triggerRelay = {
-  nextId:  1,
+  // Seed from a monotonic boot base (ms clock) instead of 1. Agent cursors
+  // (since_id) only ever ratchet UP, but this counter used to reset to 1 on
+  // every bot deploy — so post-deploy fires got ids BELOW every agent's stored
+  // cursor and were skipped (`e.id > sinceId` false) until the counter slowly
+  // climbed past the old high-water mark: the fleet went relay-DEAF for hours
+  // after each deploy (audit callout-trifecta P1). Date.now() at boot is always
+  // greater than any prior boot's max id (restarts are minutes/hours = millions
+  // of ms apart, far more than the fires-per-session count), so ids stay
+  // monotonic across deploys and agents never skip. No agent update needed.
+  nextId:  Date.now(),
   entries: [],   // { id, name, key, captures, actions, timer_duration_sec, fired_at_ms, posted_at_ms, uploaded_by }
 };
 setInterval(() => {
