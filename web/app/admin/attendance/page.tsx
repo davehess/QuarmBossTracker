@@ -116,6 +116,34 @@ async function loadTargetsFromDb(raidSize: string): Promise<Record<string, numbe
   return out;
 }
 
+// #92 — family-aware 60d / 90d / lifetime RA% + tick counts, read straight from
+// the member_attendance_metrics view (SQL does the family rollup + windows the
+// per-character JS above deliberately doesn't). This supplements the 30d grid:
+// the grid answers "who's active right now"; this table answers the rules'
+// seating/tiebreak questions (60/90/lifetime).
+type MetricRow = {
+  main_name: string;
+  main_class: string | null;
+  main_rank: string | null;
+  att_ticks_60d: number | string; ticks_60d: number | string; ra_60d: number | string | null;
+  att_ticks_90d: number | string; ticks_90d: number | string; ra_90d: number | string | null;
+  att_ticks_lifetime: number | string; ticks_lifetime: number | string; ra_lifetime: number | string | null;
+  raids_att_lifetime: number | string;
+};
+
+async function loadFamilyMetrics(): Promise<MetricRow[]> {
+  const admin = supabaseAdmin();
+  const { data } = await admin
+    .from('member_attendance_metrics')
+    .select('main_name, main_class, main_rank, att_ticks_60d, ticks_60d, ra_60d, att_ticks_90d, ticks_90d, ra_90d, att_ticks_lifetime, ticks_lifetime, ra_lifetime, raids_att_lifetime')
+    .not('main_class', 'is', null)
+    .order('ra_90d', { ascending: false, nullsFirst: false });
+  const rows = (data ?? []) as MetricRow[];
+  // Only real roster ranks — mirrors the class-summary filter (Raid Alts are
+  // DKP-tracker placeholders, not people in a slot).
+  return rows.filter(r => r.main_rank != null && ROSTER_RANKS.has(r.main_rank));
+}
+
 async function actionAssertOfficer() {
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) return null;
@@ -321,6 +349,25 @@ function pct(x: number): string {
   return `${Math.round(x * 100)}%`;
 }
 
+// The view's RA% columns are SQL numeric → PostgREST returns them as strings;
+// coerce defensively (accepts number, string, or null).
+function raNum(v: number | string | null): number | null {
+  if (v == null) return null;
+  const n = typeof v === 'number' ? v : parseFloat(v);
+  return Number.isFinite(n) ? n : null;
+}
+function raPct(v: number | string | null): string {
+  const n = raNum(v);
+  return n == null ? '—' : `${Math.round(n * 100)}%`;
+}
+function raColor(v: number | string | null, threshold: number): string {
+  const n = raNum(v);
+  if (n == null) return 'text-dim';
+  if (n >= threshold) return 'text-green';
+  if (n >= threshold * 0.7) return 'text-text';
+  return 'text-orange';
+}
+
 export default async function AdminAttendancePage({
   searchParams,
 }: {
@@ -358,6 +405,9 @@ export default async function AdminAttendancePage({
     oldTicks: data.oldTicks!, raids365: data.raids365!,
     since30: data.since30, since60: data.since60,
   });
+
+  // #92 family-aware 60/90/lifetime RA% (from the SQL view).
+  const familyMetrics = await loadFamilyMetrics();
 
   // Roster-by-class headcount — pulled from characters.rank (Raid Pack /
   // Officer / Pack Leader / Recruit), NOT from attendance. Attendance
@@ -498,6 +548,62 @@ export default async function AdminAttendancePage({
             </div>
           )}
         </form>
+      </section>
+
+      {/* #92 Family-aware attendance metrics — 60d / 90d / lifetime RA% + tick
+          counts, rolled up main+alts. This is the number the rules half of the
+          queue (seating priority, tiebreaks, review cards) reads. */}
+      <section className="bg-panel border border-border rounded-lg">
+        <h3 className="text-sm text-orange px-4 py-3 border-b border-border flex items-center justify-between flex-wrap gap-2">
+          <span>Family RA% — 60d / 90d / lifetime (main + alts rolled up)</span>
+          <span className="text-[10px] text-dim">
+            tick-based · {familyMetrics[0]?.ticks_90d ?? 0} ticks held (90d) · source for #80 review cards
+          </span>
+        </h3>
+        <div className="px-4 py-2 text-[10px] text-dim">
+          RA% is tick-based (matches OpenDKP&apos;s &quot;30 Day (52/52)&quot;).
+          Attendance counts once per family — a main and its alts collapse into
+          one row (<code>member_attendance_metrics</code> view). Sorted by 90d RA%.
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead className="text-dim">
+              <tr className="border-b border-border">
+                <th className="text-left  px-3 py-2 font-normal">Main</th>
+                <th className="text-left  px-3 py-2 font-normal">Class</th>
+                <th className="text-right px-3 py-2 font-normal">60d RA%</th>
+                <th className="text-right px-3 py-2 font-normal">90d RA%</th>
+                <th className="text-right px-3 py-2 font-normal">Lifetime RA%</th>
+                <th className="text-right px-3 py-2 font-normal">Ticks (life)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {familyMetrics.map(m => (
+                <tr key={m.main_name} className="border-b border-border/40 hover:bg-[#1a212c]">
+                  <td className="px-3 py-1">
+                    <Link href={`/character/${encodeURIComponent(m.main_name)}`} className="text-text hover:underline">
+                      {maybeFake(demoMode, m.main_name, m.main_class || '')}
+                    </Link>
+                  </td>
+                  <td className="px-3 py-1 text-dim">{m.main_class}</td>
+                  <td className={`px-3 py-1 text-right ${raColor(m.ra_60d, threshold)}`} title={`${m.att_ticks_60d}/${m.ticks_60d} ticks`}>
+                    {raPct(m.ra_60d)}
+                  </td>
+                  <td className={`px-3 py-1 text-right ${raColor(m.ra_90d, threshold)}`} title={`${m.att_ticks_90d}/${m.ticks_90d} ticks`}>
+                    {raPct(m.ra_90d)}
+                  </td>
+                  <td className={`px-3 py-1 text-right ${raColor(m.ra_lifetime, threshold)}`} title={`${m.att_ticks_lifetime}/${m.ticks_lifetime} ticks`}>
+                    {raPct(m.ra_lifetime)}
+                  </td>
+                  <td className="px-3 py-1 text-right text-dim">{Number(m.att_ticks_lifetime).toLocaleString()}</td>
+                </tr>
+              ))}
+              {familyMetrics.length === 0 && (
+                <tr><td colSpan={6} className="px-3 py-3 text-dim">No family metrics yet — the view needs OpenDKP ticks + characters mapped.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       </section>
 
       {/* Class roster grid — color-coded per spreadsheet conventions */}

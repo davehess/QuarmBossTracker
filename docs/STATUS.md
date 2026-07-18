@@ -65,6 +65,49 @@ folly** — it's here.*
 ## The work ledger
 
 ### ✅ Done — major shipped features (not exhaustive; see git + roadmapData.ts)
+- **Rules-mechanization thread R.1+R.2 — DONE (2026-07-19, bot 3.0.213 + web
+  1.0.244 on main).** First bundle of the queue's rules thread (#94 ingest + #92
+  attendance audit).
+  - **#94 guild-rules store + `/ingestrules` + admin view.** New `guild_rules`
+    table (migration `20260719120000`; RLS authenticated-read, service-role
+    write — the roll_sets Tier-2 idiom). Officer slash command `/ingestrules`
+    (`commands/ingestrules.js`, officer-gated via `hasOfficerRole`) reads the
+    three rules channels (`RULES_CHANNEL_ID` / `RAID_RULES_CHANNEL_ID` /
+    `LOOT_RULES_CHANNEL_ID`, added to `.env.example`), shapes every message into
+    a rule via the zero-dep pure parser `utils/rulesParser.js` (numbered-item +
+    heading/bold detection; **every message lands at least as a raw-body row
+    with rule_number null — nothing dropped**; embed-only messages fall back to
+    embed title/description), and **upserts by (guild, channel_key,
+    source_message_id)** so re-runs update edited messages in place and flip
+    vanished messages `active=false`. Reply summarizes per channel
+    (rows · numbered · raw · deactivated · scanned). Read surface: read-only
+    `/admin/rules` (server component + supabaseAdmin, officer gate via the admin
+    layout), grouped by channel in rule order, parsed-vs-raw + deactivated
+    flags. **We do NOT interpret rule semantics** — `category` is a reserved
+    NULL column for #95/#93 to fill. Tests: `test/rules-ingest.test.js` (18 —
+    numbered shapes, heading/bold, raw fallback, title clip, and the
+    build-row edit-upsert idempotency mapping). *Officer/infra — no CHANGELOGS
+    or roadmap entry.*
+  - **#92 attendance gap-check (RESCOPED to an audit + small fill).** **What
+    OpenDKP + existing surfaces already cover:** `opendkp_attendance_recent`
+    (view) gives per-CHARACTER raid COUNTS for 30d/90d/lifetime + first/last
+    seen; `/admin/attendance` computes TICK-level RA% for 30d + prior-30d per
+    character with denominators; targets/roster-headcount + new/downturn cohorts
+    are already there. **Genuine gaps filled:** no 60d window, no RA% beyond 30d,
+    no tick counts exposed reusably, and **nothing was family-aware** (main+alts
+    counted separately). Fix = ONE SQL view, no engine: `member_attendance_metrics`
+    (migration `20260719121000`, `security_invoker=on`) rolls up main+alts via the
+    established `lower(coalesce(nullif(main_name,''),name))` family idiom (same as
+    `character_data_floor`), and emits **60/90/lifetime (and 30d) tick-based RA%
+    + attended tick counts + denominators + raid-attended counts + first/last**.
+    RA% is tick-based to match OpenDKP's "30 Day (52/52)" and the page's math
+    (empty-attendee ticks excluded as sync gaps; a tick counts once per family).
+    Attendee names not in `characters` become singleton families so no attendance
+    is dropped. Small addition to `/admin/attendance`: a "Family RA%" table
+    reading the view (sorted by 90d RA%). **Verified live:** family rollup
+    matched an independent DISTINCT-union cross-check exactly (Peopleslayer family
+    `raids_att_lifetime=229`). **Consumers (seating, #80 review cards) should read
+    RA% + tick counts from `member_attendance_metrics`.**
 - **Overlays**: DPS/Tank HUD, Extended Target (+ glide animation), Command
   Center, Charm & Pet trackers, Mob Info, Buff/Debuff queue, CH-chain,
   per-character overlay position + opacity (B-2), auto-arrange, theme picker.

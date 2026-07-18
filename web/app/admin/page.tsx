@@ -86,8 +86,13 @@ export default function AdminPage() {
         />
         <Card
           title="📊 Attendance roster"
-          body="Class-by-class active roster ≥50% RA in last 30 days vs 60-man target. Color-coded for new attendees and downturn. Replaces the leader's spreadsheet."
+          body="Class-by-class active roster ≥50% RA in last 30 days vs 60-man target. Color-coded for new attendees and downturn. Replaces the leader's spreadsheet. Now also shows family-aware 60d/90d/lifetime RA% + tick counts."
           href="/admin/attendance"
+        />
+        <Card
+          title="📖 Guild rules store"
+          body="The Discord rulebook (#rules / #raid-rules / #loot-rules) ingested into one queryable table by /ingestrules. Read-only view grouped by channel; the single source later eligibility/loot features read instead of hard-coding rules."
+          href="/admin/rules"
         />
         <Card
           title="⚡ Raid triggers"

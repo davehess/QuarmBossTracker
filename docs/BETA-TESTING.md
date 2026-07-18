@@ -20,6 +20,40 @@ raid; move it to STATUS.md's "Done" once graduated to stable.*
 
 ---
 
+## #94 / #92 — guild-rules ingest + family-aware attendance metrics
+
+**Needs:** bot **3.0.213** (live on Railway) + web **1.0.244** (Vercel). No
+Mimic/agent change. **Post-merge setup required:** (1) run `node deploy-commands.js`
+(or the usual command-deploy) so `/ingestrules` registers with Discord; (2) set
+`RULES_CHANNEL_ID`, `RAID_RULES_CHANNEL_ID`, `LOOT_RULES_CHANNEL_ID` in the bot's
+Railway env (any left unset are skipped and reported).
+
+**What it does (#94):** `/ingestrules` (officers only) reads the three rules
+channels and stores each message as a row in the new `guild_rules` table.
+Numbered rules ("12. Raid Kit …") get a rule number + title; anything else is
+kept verbatim as a raw row so nothing is dropped. Re-running updates edited
+messages in place and marks deleted ones inactive. The result is browsable at
+`wolfpack.quest/admin/rules`. **(#92):** `/admin/attendance` now also shows a
+family-aware **60d / 90d / lifetime RA% + tick counts** table (main+alts rolled
+up), read from the `member_attendance_metrics` SQL view.
+
+### ✅ Officer (one person)
+1. **Ingest + view.** Run `/ingestrules`. The ephemeral reply should summarize
+   each configured channel: `N rows · X numbered · Y raw · (Z deactivated) ·
+   scanned M`. Open `wolfpack.quest/admin/rules` → the rules appear grouped by
+   channel, numbered rules with a `#N` + title, non-numbered ones tagged **raw**,
+   full body shown verbatim.
+2. **Re-run is idempotent + tracks edits/deletes.** Edit a rule message in
+   Discord (fix a typo), then delete a throwaway test message you posted. Run
+   `/ingestrules` again: the edited rule's body updates on `/admin/rules` (no
+   duplicate row), and the deleted message flips to **deactivated** (dimmed).
+   Counts on the reply reflect the deactivation.
+3. **Attendance metrics.** Open `wolfpack.quest/admin/attendance` → the new
+   "Family RA%" table lists mains with 60d/90d/lifetime RA% (hover a cell for the
+   `attended/held` tick counts). A known main and its alts appear as **one** row.
+
+---
+
 ## #110 — OpenDKP audit-trail reconciliation (deletions propagate to the mirror)
 
 **Needs:** bot **3.0.212** (live on Railway). No Mimic/agent change.
