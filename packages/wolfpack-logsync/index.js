@@ -2934,8 +2934,20 @@ function resolveSelfCastLanding(line, observer) {
     const name = body.slice(0, nameEnd).trim();
     if (!name) continue;
     // Attribute only to the target we were casting at (when known) so we
-    // don't mis-name a bystander's same-message buff.
-    if (rc.target && String(rc.target).toLowerCase() !== name.toLowerCase()) continue;
+    // don't mis-name a bystander's same-message buff — EXCEPT when the land
+    // names one of OUR OWN pets (Zeal slot 16 / charm tracker). Pet buffs are
+    // routinely cast without the pet as the live Zeal target: you buff yourself
+    // or keep the mob targeted, or the target has already moved on by the time
+    // the buff lands. Worse, many pet-castable buffs (Girdle of Karana, #117)
+    // aren't in _TRACKED_BUFF_KEYWORDS, so parseBuffLanding can NEVER index
+    // their landing message — this self-cast path is their only attribution and
+    // the strict target gate silently dropped every one. We already know we
+    // cast this exact spell (matched by its cast_on_other suffix) and the land
+    // names our pet, so attributing it is safe regardless of the stale target.
+    if (rc.target && String(rc.target).toLowerCase() !== name.toLowerCase()) {
+      const _po = _petOwnerByName(String(name).toLowerCase());
+      if (!_po || _po !== String(observer).toLowerCase()) continue;
+    }
     return {
       target:      name,
       spell_id:    e.id || 0,
@@ -24233,6 +24245,13 @@ function flushLiveStateToBot(opts) {
       // everyone regardless of party size (Uilnayar 2026-06-29).
       target_name:    st.target_name || null,
       target_hp_pct:  st.target_hp_pct != null ? st.target_hp_pct : null,
+      // Position (Zeal loc {x,y,z}) → character_live_state.loc_* → the bot's
+      // raid-buff-queue "likely out of range" flag (#117). NOT in the change
+      // signature (it churns on every step) — it rides the heartbeat floor
+      // resend, so range is advisory (stale up to the heartbeat cadence).
+      loc_x:          (st.loc && Number.isFinite(Number(st.loc.x))) ? Number(st.loc.x) : null,
+      loc_y:          (st.loc && Number.isFinite(Number(st.loc.y))) ? Number(st.loc.y) : null,
+      loc_z:          (st.loc && Number.isFinite(Number(st.loc.z))) ? Number(st.loc.z) : null,
       incoming_mob:       incomingMob,
       incoming_mob_since: incomingMobSinceMs ? new Date(incomingMobSinceMs).toISOString() : null,
       buffs,

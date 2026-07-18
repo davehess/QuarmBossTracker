@@ -62,6 +62,10 @@
   .row .chip.avatar  {background:rgba(240,180,41,0.18);border-color:rgba(240,180,41,0.5);color:#f0b429}
   .row .chip.ct      {background:rgba(126,231,135,0.15);border-color:rgba(126,231,135,0.4);color:#7ee787}
   .row .chip.rec     {background:rgba(248,113,113,0.18);border-color:rgba(248,113,113,0.5);color:#fca5a5}
+  .row .chip.oor     {background:rgba(158,164,173,0.14);border-color:rgba(158,164,173,0.4);color:#9aa4ad}
+  /* "Likely out of range" (#117): same-zone raider >~200u from the buffer.
+     Dimmed, never removed — position is advisory (stale up to heartbeat). */
+  .row.oor{opacity:0.5}
   /* "✓ cured" — manual raid-wide clear for INFERRED debuff chips (neither
      party on Mimic → nothing can observe the cure; the button is the human
      fallback). Subtle until hover so the chip stays readable. */
@@ -358,6 +362,7 @@
   function stateChips(r){
     var bits = '';
     if (r.inferred)               bits += '<span class="chip inferred" title="Buffs inferred from observed casts — this raider isn\'t running Mimic">🔍</span>';
+    if (r.out_of_range)           bits += '<span class="chip oor" title="Likely out of range — same zone but >~200 units away. Advisory only: position updates at heartbeat cadence, so move closer before relying on it.">📍</span>';
     if (r.avatar_buff)            bits += '<span class="chip avatar" title="'+esc(r.avatar_buff)+' is active">🪶</span>';
     if (r.celestial_tranquility)  bits += '<span class="chip ct" title="Celestial Tranquility (+40 ATK) is active — stacks with Avatar (not overwritten)">🦅</span>';
     if (r.sk_recourse)            bits += '<span class="chip rec" title="'+esc(r.sk_recourse)+' active — Savagery will overwrite">⚠</span>';
@@ -409,6 +414,7 @@
     var groupLbl = r.group != null ? ('G' + r.group) : '';
     var cls = kind === 'd' ? 'd' : kind === 'burst' ? 'burst' : tierClass(r.tier);
     if (r.inferred) cls += ' inferred';
+    if (r.out_of_range) cls += ' oor';
     var line = '<div class="row '+cls+'">'
              +    '<span class="nm">'+esc(r.name)+'</span>'
              +    (groupLbl ? '<span class="grp">'+esc(groupLbl)+'</span>' : '')
