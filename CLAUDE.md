@@ -225,13 +225,33 @@ raiders only, same-zone first, tank-HP priority, curse-counter sort),
 Payload limits: chat 256KB, encounter 10MB. Returns 503 if
 `WOLFPACK_AGENT_TOKEN` unset.
 
-**Mid-raid load-shed:** the ephemeral streams (`casting`, `live-state`,
-`threat-snapshot`, `raid-roster`) can be shed live — set `flag_shed_<kind>`
-(snake_case, e.g. `flag_shed_live_state`) to `1` in the `/admin/overlays`
-tuning editor; the bot 200-acks-and-drops that stream within its 60s tuning
-cache, no deploy or agent update. `0`/delete restores. Discord posting is
-deferred post-ack in the `encounter`/`chat`/`trigger` handlers (v3.0.166) —
-agents never wait on Discord.
+**Mid-raid load-shed:** set `flag_shed_<kind>` (snake_case, e.g.
+`flag_shed_live_state`) to `1` in the `/admin/overlays` tuning editor; the bot
+200-acks-and-drops that stream within its 60s tuning cache, no deploy or agent
+update. `0`/delete restores. Sheddable kinds (`#74`, bot 3.0.209): the four
+ephemeral streams `live_state`/`raid_roster`/`casting`/`threat_snapshot` PLUS the
+redundant/re-derivable `buff_casts`, `pvp`, `pvp_assists` (the /who-harvest rides
+`pvp`/`pvp_assists`), `fun_event`, `trigger_relay`, `ui_layout`, `tells`.
+**Deliberate exceptions — NEVER sheddable** (`_SHED_NEVER` in `index.js`):
+`encounter`, `chat`, `bosskill`, `lockout`, `historical_chat` — the durable
+streams; `_isShedded` refuses them even if the flag is set so nobody fat-fingers
+the raid's parse collection off. Discord posting is deferred post-ack in the
+`encounter`/`chat`/`trigger` handlers (v3.0.166) — agents never wait on Discord.
+
+**Control plane (#74, bot 3.0.209):** two officer-facing policy keys ride the
+same tuning map, served on BOTH the reporter-poll (20s) and guild-trigger (2min
+backup) responses so agents honor them fail-open (missing/unparseable → no
+effect; bot down → agents run normally): `flag_agent_kill=1` puts the whole fleet
+dormant (agents stop all uploads + non-control polls, hold the durable queue, keep
+their heartbeat, banner "⏸ Agent paused by guild control plane"; overlays keep
+working on local data; clearing resumes within one heartbeat); `min_agent_ver_num=<n>`
+is a version floor — agents whose numeric version (`major*10000+minor*100+patch`,
+3.3.85 → 30385) is below it stand down like dormancy + show an update nudge. Both
+are set in the `/admin/overlays` 🛑 Kill switches section. *Conservative v1 —
+Hitya to sign off.* Per-channel manifest: `GET /api/agent/latest-version?channel=beta`
+serves the beta-line agent (`AGENT_RELEASE_REF_BETA` env / `agent_release_ref_beta`
+tuning) so beta Mimic hot-swaps along the beta ref; safe only because the kill
+switch + Mimic LKG crash-loop rollback are the gates.
 
 **Admission-control budgets (#73, bot 3.0.208):** per-uploader × per-kind
 windowed budgets on the ingest surface via the SAME 60s tuning map —

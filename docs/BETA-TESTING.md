@@ -20,6 +20,62 @@ raid; move it to STATUS.md's "Done" once graduated to stable.*
 
 ---
 
+## #74 — Guild control plane: agent kill switch + version floor + beta hot-swap
+
+**Needs:** bot **3.0.209** (live on main) · agent **3.3.86** (beta Mimic 1.9.6) ·
+Mimic beta build (LKG rollback + beta-channel hot-swap).
+
+**What it does:** officers get a fleet-wide **kill switch** and a **version
+floor** on `/admin/overlays` → 🛑 Kill switches, served over the agent's 20s
+reporter-poll (and the 2-min guild-trigger backup). Beta Mimic installs now
+**hot-swap along the beta agent line** via the per-channel manifest, guarded by
+crash-loop **auto-rollback to last-known-good**. **⚠ Policy semantics are
+conservative v1 — Hitya to sign off before relying on kill/floor in a real raid.**
+
+### ✅ Solo (one machine)
+1. **Kill switch pauses the fleet, cleanly.** On `/admin/overlays`, check
+   **☠ AGENT KILL** and Save. Within ~20s the agent dashboard shows the banner
+   **"⏸ Agent paused by guild control plane"**, the upload queue **stops
+   draining** (watch the queue chip: pending count holds, doesn't climb-then-
+   drain), and the agent log prints `[control] flag_agent_kill → DORMANT`. Confirm
+   your **overlays keep working on local data** (HUD/threat still update in a
+   fight — nothing blanks). Uncheck + Save → within one heartbeat the banner
+   clears, `[control] flag_agent_kill → resumed` logs, and the held queue drains.
+   **Nothing should be lost.**
+2. **Version floor stands down an old agent + nudges update.** Set
+   **`min_agent_ver_num`** to a number just ABOVE your running agent (its numeric
+   form is `major*10000+minor*100+patch`, e.g. running 3.3.86 → set `30387`).
+   Save. The dashboard shows **"Your agent is below the guild minimum — update via
+   [U]"**, uploads stand down exactly like the kill switch, and the log prints
+   `[control] min_agent_ver_num → 30387 … BELOW floor`. Clear the field + Save →
+   resumes. Set the floor at/below your version (e.g. `30386` on 3.3.86) → **no**
+   stand-down (at-floor is fine).
+3. **Fail-open regression:** stop the bot (or point Mimic at a bad URL) while a
+   kill was NOT set — the agent keeps running normally (never goes dormant on a
+   bot outage).
+4. **LKG rollback (harder to force safely):** if a bad agent ever ships to beta
+   and crash-loops right after a hot-swap, Mimic auto-reverts to `index.lkg.js`,
+   the tray/dashboard shows **"reverted to last-known-good"**, and it won't
+   re-offer that version until a newer one ships. Observe via the agent log
+   (`[mimic] CRASH-LOOP after hot-swap … reverted to last-known-good vX`). No safe
+   way to force in normal play — verified by unit test + code review.
+
+### 👥 Multi-person
+- **Beta hot-swap via the channel manifest.** With ≥2 beta Mimic testers on the
+  beta channel: bump the agent on `beta` (this round → **3.3.86**). Each beta
+  Mimic, on its next `latest-version?channel=beta` poll, hot-swaps the agent in
+  place (window stays up, no installer) to the new beta agent — confirm the agent
+  dashboard footer version ticks up without anyone reinstalling. Previously beta
+  builds only got a new agent bundled inside a full beta installer.
+- **Kill switch across the raid:** one officer flips ☠ AGENT KILL; every tester's
+  dashboard should show the pause banner + stop uploading within ~20s, and all
+  resume within a heartbeat when cleared.
+
+**Status:** ⏳ awaiting verification (solo kill/floor is quick; the multi-person
+beta hot-swap needs a beta bump + 2 testers).
+
+---
+
 ## #73 — Admission-control 429/Retry-After honored by the durable queue
 
 **Needs:** agent **3.3.85** (beta Mimic 1.9.6) · bot **3.0.208** (live on main).

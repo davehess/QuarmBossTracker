@@ -124,8 +124,8 @@ fix to something already broken, or write-only capture.*
 |---|---|---|---|
 | 2.1 | [#72] Designated-reporter election (roster → 1 reporter + hash-verify failover; buffs/chat → caster-authoritative or 2–3 observers; cover the two stray endpoints) | Kills the 98.3%-duplicate future. Roster also drops DELETE+upsert for plain upsert + staleness filter. | M/L |
 | 2.2 | [#73] Admission control: per-token budgets + 429/Retry-After, Supabase circuit breaker + request timeout (the wrapper has none), bot cache for target-buffs, consolidate the six GET loops into one multiplexed poll (or SSE), rate-limit mimic-link/start | The durable queue already honors backoff — the bot just never asks. | M/L |
-| 2.3 | [#74] Control plane: extend flag_shed to every kind + per-component kill switch/min-version, crash-loop auto-rollback + LKG agent file, per-channel manifest (`?channel=beta`) → **beta hot-swaps too** | Independent deployment requires independent disablement. Prereq for [#65]. | M |
-| 2.4 | [#58] Railway healthcheck / zero-downtime deploys | Old debt; matters more as deploys get rarer but bigger. | S |
+| 2.3 | ✅ DONE (2026-07-18, bot 3.0.209 + agent 3.3.86 beta) [#74] Control plane: extend flag_shed to every kind + per-component kill switch/min-version, crash-loop auto-rollback + LKG agent file, per-channel manifest (`?channel=beta`) → **beta hot-swaps too**. See STATUS.md. | Independent deployment requires independent disablement. Prereq for [#65]. | M |
+| 2.4 | ✅ DONE (2026-07-18, bot 3.0.209) [#58] Railway healthcheck / zero-downtime deploys — `/health` readiness gate + graceful SIGTERM drain (config half; full overlap needs the Railway plan feature). | Old debt; matters more as deploys get rarer but bigger. | S |
 
 ### Wave 3 — fight smarter (the conversion wins)
 [#78] Boss playbook + approach briefs (Sunday v1 seeds it; Discord pipe is the

@@ -146,6 +146,60 @@ folly** — it's here.*
   - **DEFERRED (a later agent — explicitly NOT in this run):** the six-GET-loop
     consolidation / long-poll, and encounter-burst flattening (~90MB/kill at 60).
     See DESIGN-platform-queue.md #73 (Wave-2 addendum).
+- **#74 control plane COMPLETE + #58 zero-downtime deploys DONE (2026-07-18, bot
+  3.0.209 + web 1.0.240 on main; agent 3.3.86 + Mimic LKG on beta 1.9.6).** Built
+  on the reporter election + budgets + breaker + `GET /health` already shipped:
+  1. **Full `flag_shed_<kind>` coverage (#74 Part 1, bot).** The 200-ack-and-drop
+     load-shed now covers every sheddable ingest kind — the original four
+     (`live_state`/`raid_roster`/`casting`/`threat_snapshot`) PLUS `buff_casts`,
+     `pvp`, `pvp_assists` (the /who-harvest rides these two — no separate who
+     endpoint), `fun_event`, `trigger_relay`, `ui_layout`, `tells`. **Deliberate
+     exceptions, NEVER sheddable** (`_SHED_NEVER`): `encounter`, `chat`,
+     `bosskill`, `lockout`, `historical_chat` — `_isShedded` refuses them even if
+     the flag is set (documented at the shed map; enforced by
+     `test/shed-exceptions.test.js`). Web toggles added for every new shed kind.
+  2. **`flag_agent_kill` + `min_agent_ver_num` (#74 Part 2, bot main + agent
+     beta).** Served on BOTH the reporter-poll (20s primary) and guild-trigger
+     (2min backup) responses. `flag_agent_kill=1` → fleet dormancy: agents stop
+     all uploads + non-control polls, HOLD the durable queue (nothing dropped),
+     keep only the heartbeat, banner "⏸ Agent paused by guild control plane";
+     overlays keep working on local data; clearing resumes within one heartbeat.
+     `min_agent_ver_num=<n>` → agents whose numeric version (`major*10000+minor*100
+     +patch`, 3.3.85 → 30385) is below the floor stand down + show an update nudge.
+     Both are labeled controls in the `/admin/overlays` 🛑 Kill switches section
+     (kill = scary checkbox, floor = number input, empty = unset; merge-preserving
+     save intact). **Fail-open everywhere** (missing/unparseable = no effect; the
+     agent only stands down on a FRESH reading — bot down = runs normally after a
+     5-min TTL). **⚠ These are POLICY semantics — conservative v1, Hitya to sign
+     off.**
+  3. **LKG crash-loop auto-rollback (#74 Part 3, Mimic beta).** Before any agent
+     hot-swap Mimic snapshots the working agent to `index.lkg.js` + `package.lkg.json`
+     in the userData agent dir. If the swapped-in child exits ≥3× within 2 min
+     (crash-loop right after a swap), Mimic restores LKG, relaunches from it, sets
+     a tray/dashboard "reverted to last-known-good" notice, and BLACKLISTS the bad
+     version (won't re-offer it until a strictly newer build ships). Crash-loop
+     with no recent swap keeps the existing exponential backoff + surfaces a
+     diagnostic notice (no infinite tight restart). One log line per transition;
+     blacklist decision covered by `test/lkg-blacklist.test.js`.
+  4. **Per-channel manifest → beta hot-swaps (#74 Part 4, bot main + Mimic beta).**
+     `GET /api/agent/latest-version?channel=beta` resolves a per-channel ref
+     (`AGENT_RELEASE_REF_BETA` env, default the `beta` branch, live-overridable via
+     the `agent_release_ref_beta` tuning key) and serves that file+sha. Beta Mimic
+     builds (detected by the `-` prerelease suffix) now hot-swap along the beta
+     line instead of waiting for a full electron-updater installer. Safe ONLY
+     because the kill switch (Part 2) + LKG rollback (Part 3) are the four-gate
+     safeguards for an auto-hot-swappable beta.
+  5. **#58 Railway zero-downtime (main).** `railway.toml` healthcheck moved from
+     `/` to the readiness-gated `/health`, which returns 503 until the Discord
+     client is ready + state loaded (`_botReady`, set in ClientReady) and 503
+     again once a graceful shutdown begins. Graceful SIGTERM/SIGINT drain: stop
+     accepting new HTTP work (503, `Connection: close`), `server.close()`, give
+     in-flight handlers ~10s (`SHUTDOWN_DRAIN_MS`) to finish, `client.destroy()`,
+     exit. **Config + drain is our half; full overlap/zero-downtime also needs the
+     Railway plan's overlap feature.** Watch-paths unchanged (bot deploys stay
+     decoupled from web pushes). Tests: version-floor comparator + shed exception
+     list + LKG blacklist (`test/version-floor.test.js` mirror,
+     `test/shed-exceptions.test.js` source-slice, `test/lkg-blacklist.test.js`).
 - **Callout trifecta, in progress (2026-07-17, #76)** — the "why TTS never
   fires" fixes: triggers evaluate before the privacy/combat filter so
   ENRAGED/snare/mez/fizzle templates fire (agent 3.3.76 beta, 9/17 dead

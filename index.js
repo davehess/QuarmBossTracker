@@ -47,6 +47,13 @@ function _bundledAgentSha256() {
 let _agentManifestCache = null;      // { version, url, sha256, at } — last good fetch
 let _agentManifestFetching = false;
 
+// #58 zero-downtime deploy signals. `_botReady` flips true once the Discord
+// client is connected + state is loaded (set in ClientReady) — `GET /health`
+// returns 503 until then so Railway keeps the old container serving. `_shuttingDown`
+// flips true on SIGTERM so we refuse NEW HTTP work and drain in-flight handlers.
+let _botReady = false;
+let _shuttingDown = false;
+
 function _fetchBufferRaw(url) {
   return new Promise((resolve, reject) => {
     const req = require('https').get(url, { headers: { 'User-Agent': 'wolfpack-bot' }, timeout: 8000 }, (res) => {
@@ -115,6 +122,68 @@ function _currentAgentSha256() {
 // fallback covers the window before the first fetch lands.
 _refreshAgentManifest();
 try { setInterval(_refreshAgentManifest, AGENT_MANIFEST_REFRESH_MS).unref(); } catch (_) { /* non-fatal */ }
+
+// ── Per-channel manifest (#74 Part 4) — `?channel=beta` hot-swaps ────────────
+// The stable manifest above serves the `main`-line agent to every caller. A
+// BETA Mimic build asks for `?channel=beta`; the bot resolves a per-channel ref
+// (env AGENT_RELEASE_REF_BETA, default the `beta` branch, overridable live via
+// the tuning key `agent_release_ref_beta`) and serves that file + its sha, so
+// beta installs hot-swap along the beta line between full installer releases
+// instead of waiting for electron-updater. This is only SAFE because the kill
+// switch (#74 Part 2) + Mimic's LKG crash-loop rollback (#74 Part 3) are the
+// gates that catch a bad beta agent — see docs/DESIGN-platform-queue.md #74.
+const AGENT_RELEASE_REF_BETA = process.env.AGENT_RELEASE_REF_BETA || 'beta';
+let _agentManifestCacheBeta = null;      // { version, url, sha256, ref, at }
+let _agentManifestFetchingBeta = false;
+async function _betaReleaseRef() {
+  // Tuning override wins (retarget the beta line with no redeploy); else env; else
+  // the `beta` branch. Any tuning error → fall through to env/'beta' (fail-safe).
+  try {
+    const tune = await _overlayTuningMap();
+    const ref = tune && typeof tune.agent_release_ref_beta === 'string' ? tune.agent_release_ref_beta.trim() : '';
+    if (ref) return ref;
+  } catch { /* fall through */ }
+  return AGENT_RELEASE_REF_BETA;
+}
+async function _refreshAgentManifestBeta() {
+  if (_agentManifestFetchingBeta) return;
+  _agentManifestFetchingBeta = true;
+  try {
+    const ref    = await _betaReleaseRef();
+    const base   = `https://raw.githubusercontent.com/davehess/QuarmBossTracker/${ref}/packages/wolfpack-logsync`;
+    const idxUrl = `${base}/index.js`;
+    const [pkgBuf, idxBuf] = await Promise.all([
+      _fetchBufferRaw(`${base}/package.json`),
+      _fetchBufferRaw(idxUrl),
+    ]);
+    const version = JSON.parse(pkgBuf.toString('utf8')).version || null;
+    const sha256  = require('crypto').createHash('sha256').update(idxBuf).digest('hex');
+    if (version && sha256 && idxBuf.length > 100_000) {
+      _agentManifestCacheBeta = { version, url: idxUrl, sha256, ref, at: Date.now() };
+    } else {
+      console.warn(`[agent-manifest:beta] fetch looked wrong (ver=${version} bytes=${idxBuf.length}); keeping last-good`);
+    }
+  } catch (e) {
+    console.warn('[agent-manifest:beta] refresh failed, keeping last-good:', e && e.message);
+  } finally {
+    _agentManifestFetchingBeta = false;
+  }
+}
+function _agentManifestBeta() {
+  if (_agentManifestCacheBeta) {
+    return {
+      latest_agent_version: _agentManifestCacheBeta.version,
+      url:                  _agentManifestCacheBeta.url,
+      sha256:               _agentManifestCacheBeta.sha256,
+      channel:              'beta',
+    };
+  }
+  // Cold beta cache → serve the stable manifest (consistent url+sha, never a
+  // phantom-newer swap). A beta caller picks up the beta line once it warms.
+  return { ..._agentManifest(), channel: 'beta' };
+}
+// NOTE: the beta refresh interval is kicked from ClientReady (not here) — it
+// awaits the tuning map, which must not run during the module's top-level load.
 
 const {
   getAllState, recordKill, clearKill,
@@ -214,6 +283,16 @@ fs.readdirSync(commandsPath).filter((f) => f.endsWith('.js')).forEach((file) => 
 // ── Ready ──────────────────────────────────────────────────────────────────
 client.once(Events.ClientReady, async (readyClient) => {
   console.log(`✅ ${readyClient.user.tag} | ${getBosses().length} bosses`);
+  // #58 health-gated deploys: the HTTP server listens at module load (before the
+  // Discord client connects), so `GET /health` returns 503 until THIS point.
+  // Railway holds traffic on the old container until the new one reports ready,
+  // giving zero-downtime handoff. State is loaded synchronously at require time,
+  // so ClientReady (Discord connected) is the boot-complete signal.
+  _botReady = true;
+  // #74 Part 4: warm the per-channel beta manifest now that the module is fully
+  // loaded (the beta ref resolver awaits the tuning map — unsafe at module top).
+  _refreshAgentManifestBeta().catch(() => {});
+  try { setInterval(_refreshAgentManifestBeta, AGENT_MANIFEST_REFRESH_MS).unref(); } catch (_) { /* non-fatal */ }
   await registerCommands();
   startSpawnChecker(readyClient);
   scheduleMidnightSummary(readyClient);
@@ -7686,18 +7765,41 @@ async function _overlayClassSets() {
   await _refreshOverlayTuningCache();
   return _overlayTuningCache.classSets;
 }
-// ── Mid-raid load-shed kill switches (Uilnayar 2026-07-13) ──────────────────
+// ── Mid-raid load-shed kill switches (Uilnayar 2026-07-13; #74 full coverage 2026-07-18) ──
 // Officers can shed a misbehaving/flooding ingest stream DURING a raid with
 // no deploy and no agent update: set `flag_shed_<kind>` to 1 in the tuning
 // editor (/admin/overlays — same numbers-only jsonb the overlay knobs use;
 // 0 or delete to restore, live within the 60s tuning cache). A shedded kind
 // is 200-acked and dropped BEFORE auth/body work — the cheapest possible
 // path, so shedding actually relieves pressure instead of moving it.
-// Ephemeral, latest-wins streams only (casting, live-state, threat-snapshot,
-// raid-roster): dropping them mid-raid costs a stale overlay panel, never
-// durable data. The 200 (not 4xx/5xx) matters: agents treat it as delivered
-// and move on — no retries, no queue growth, no parked entries.
+// The 200 (not 4xx/5xx) matters: agents treat it as delivered and move on —
+// no retries, no queue growth, no parked entries.
+//
+// _SHED_KINDS — the ingest kinds an officer CAN shed: ephemeral/latest-wins
+// overlay streams (casting/live_state/threat_snapshot/raid_roster) PLUS the
+// redundant or re-derivable side-records — buff_casts (already (N-1)/N duplicate
+// and election-deduped), pvp + pvp_assists (the /who-harvest rides these two —
+// there is no separate who-ingest endpoint), fun_event, tells, ui_layout, and
+// the trigger_relay fan-out. Dropping any of these costs a stale panel or a
+// re-derivable record, never the raid's durable record.
+//
+// _SHED_NEVER — the DELIBERATE exceptions (#74): the raid's load-bearing durable
+// streams. encounter/chat/bosskill/lockout/historical_chat can NEVER be shed,
+// even if `flag_shed_<kind>` is somehow set (fat-finger or a stale tuning row) —
+// shedding one 200-acks-and-DROPS real parse/kill/timer/chat data the raid can't
+// reconstruct. The guard below refuses to shed them regardless of the flag so
+// nobody can fat-finger the raid's parse collection off. Keep this set in lock-
+// step with the durable ingest handlers; test/shed-exceptions.test.js enforces it.
+const _SHED_KINDS = new Set([
+  'live_state', 'raid_roster', 'casting', 'threat_snapshot',   // original four (ephemeral)
+  'buff_casts', 'pvp', 'pvp_assists', 'fun_event',             // redundant / re-derivable
+  'trigger_relay', 'ui_layout', 'tells',                       // fan-out / backup / side-record
+]);
+const _SHED_NEVER = new Set(['encounter', 'chat', 'bosskill', 'lockout', 'historical_chat']);
 async function _isShedded(kind, res) {
+  // Durable exception OR an unrecognized kind → never sheddable (defense in depth:
+  // a typo'd flag_shed_encounter can't take the parse pipe down).
+  if (_SHED_NEVER.has(kind) || !_SHED_KINDS.has(kind)) return false;
   let tune = {};
   try { tune = await _overlayTuningMap(); } catch { /* fail-open: never shed on error */ }
   if (Number(tune[`flag_shed_${kind}`]) >= 1) {
@@ -10967,6 +11069,26 @@ function _dedupFlags(tune) {
   };
 }
 
+// Control-plane policy (#74) — fleet-wide dormancy + a version floor, read live
+// from the same 60s tuning map and served on BOTH the reporter-poll (20s primary
+// control channel) AND the guild-trigger (2-min backup) responses so an agent
+// honors it via whichever channel it has. These are OFFICER-FACING POLICY
+// semantics — conservative v1, Hitya to sign off (STATUS + BETA-TESTING).
+// FAIL-OPEN by construction: a missing/0 key = no effect (kill=false, floor=0),
+// and the agent only stands down while it has a FRESH reading — bot down = agents
+// run normally.
+//   flag_agent_kill   = 1  → agents go dormant: stop uploads + non-control polls,
+//                            hold the durable queue, keep the heartbeat, banner.
+//   min_agent_ver_num = N  → agents whose numeric version (major*10000+minor*100
+//                            +patch, e.g. 3.3.85 → 30385) is BELOW N stand down
+//                            and show an "update" nudge.
+function _controlPlanePolicy(tune) {
+  const kill = Number(tune && tune.flag_agent_kill) >= 1;
+  const rawFloor = Number(tune && tune.min_agent_ver_num);
+  const minVerNum = Number.isFinite(rawFloor) && rawFloor > 0 ? Math.floor(rawFloor) : 0;
+  return { agent_kill: kill, min_agent_ver_num: minVerNum };
+}
+
 // POST /api/agent/reporter-poll  (#72 designated-reporter election)
 // A lightweight heartbeat: each agent registers itself (~every 20s) and gets
 // back which shared streams it should upload. Non-reporters stand down; the
@@ -11052,6 +11174,8 @@ async function _handleAgentReporterPoll(req, res) {
       camping:   !!(me && me.camping),
     };
   }
+  // Control plane (#74) — fleet dormancy + version floor. Same `tune` read above.
+  const control = _controlPlanePolicy(tune);
   res.writeHead(200, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify({
     ok:           true,
@@ -11062,6 +11186,8 @@ async function _handleAgentReporterPoll(req, res) {
     streams:      STREAM_CLASS, // classification guardrail (per_observer = never deduped)
     buffs_zone:   buffsZone,   // P1b per-zone election detail for this agent (null when off)
     roster_group: rosterGroup, // P1c per-group election detail for this agent (null when off)
+    agent_kill:        control.agent_kill,        // #74 fleet dormancy (fail-open when absent)
+    min_agent_ver_num: control.min_agent_ver_num, // #74 version floor (0 = unset)
   }));
 }
 
@@ -11795,8 +11921,20 @@ async function _handleAgentGuildTriggers(req, res) {
     ? filtered.map(t => t.updated_at || '').sort().pop()
     : '0';
 
+  // Control plane (#74) BACKUP channel — same kill/floor keys the reporter-poll
+  // carries, so an agent that only polls guild-triggers still honors them (2-min
+  // cadence). Fail-open on a tuning read error.
+  let cpTune = {};
+  try { cpTune = await _overlayTuningMap(); } catch { /* fail-open */ }
+  const control = _controlPlanePolicy(cpTune);
+
   res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
-  return res.end(JSON.stringify({ version, triggers: filtered }));
+  return res.end(JSON.stringify({
+    version,
+    triggers: filtered,
+    agent_kill:        control.agent_kill,
+    min_agent_ver_num: control.min_agent_ver_num,
+  }));
 }
 
 async function _handleAgentUpload(req, res) {
@@ -12937,7 +13075,15 @@ async function _handleAgentUpload(req, res) {
   _postParseCardsDeferred().catch(err => console.warn('[agent] deferred card work failed:', err?.message));
 }
 
-http.createServer(async (req, res) => {
+const httpServer = http.createServer(async (req, res) => {
+  // #58 graceful shutdown: once SIGTERM has landed, refuse NEW HTTP work with a
+  // 503 (agents treat 503 as retryable — the durable queue backs off, nothing is
+  // lost) and let in-flight handlers drain. Health checks fall through so Railway
+  // sees the container going away (the /health branch returns 503 too).
+  if (_shuttingDown && req.url !== '/health' && req.url !== '/healthz') {
+    res.writeHead(503, { 'Content-Type': 'application/json', 'Connection': 'close' });
+    return res.end(JSON.stringify({ error: 'shutting_down' }));
+  }
   // Agent upload endpoint
   // Auto-derive the current agent version from the agent's package.json so we
   // don't have to bump a LATEST_AGENT_VERSION env var every release. The env
@@ -12947,16 +13093,26 @@ http.createServer(async (req, res) => {
 
   // Lightweight version probe — agents poll this every ~10 minutes to learn
   // about new releases without needing to upload an encounter first.
-  if (req.method === 'GET' && req.url === '/api/agent/latest-version') {
+  if (req.method === 'GET' && req.url.startsWith('/api/agent/latest-version')) {
     // Now returns the full update manifest { latest_agent_version, url, sha256 }
     // for the self-updating supervisor. Older agents read only
     // latest_agent_version and ignore the extra fields, so this is additive.
+    //
+    // Per-channel (#74 Part 4): `?channel=beta` serves the beta-line agent so
+    // beta Mimic installs hot-swap along the beta ref. Stable/omitted = the
+    // `main`-line manifest, unchanged.
     //
     // ADDITIVELY surface signed-in Mimic identity when the agent forwards the
     // X-Wolfpack-Mimic-Session header. That lets the dashboard show "Signed in
     // as <name>" + officer affordances without a separate round-trip. When the
     // header is absent or unknown, the response is unchanged.
-    const manifest = _agentManifest();
+    const isBeta = /[?&]channel=beta(?:&|$)/.test(req.url);
+    const manifest = isBeta ? _agentManifestBeta() : _agentManifest();
+    // Warm/refresh the beta cache lazily for the first beta caller so a fresh
+    // deploy serves the beta line within one poll (fire-and-forget).
+    if (isBeta && (!_agentManifestCacheBeta || Date.now() - _agentManifestCacheBeta.at > AGENT_MANIFEST_REFRESH_MS)) {
+      _refreshAgentManifestBeta().catch(() => {});
+    }
     let session = null;
     try { session = await mimicLink.resolveMimicSession(req); } catch (e) { void e; }
     if (session) manifest.mimic_session = session;
@@ -13281,6 +13437,7 @@ http.createServer(async (req, res) => {
   }
 
   if (req.method === 'POST' && req.url === '/api/agent/tells') {
+    if (await _isShedded('tells', res)) return;
     try { return await _handleAgentTells(req, res); }
     catch (err) {
       console.error('[tells] handler error:', err);
@@ -13399,6 +13556,7 @@ http.createServer(async (req, res) => {
   // missed the source line can replay it. Stored in _triggerRelay ring
   // buffer; receivers fetch via GET /api/agent/recent-fires below.
   if (req.method === 'POST' && req.url === '/api/agent/trigger-relay') {
+    if (await _isShedded('trigger_relay', res)) return;
     try { return await _handleTriggerRelayPost(req, res); }
     catch (err) {
       console.error('[trigger-relay] post error:', err);
@@ -13441,6 +13599,7 @@ http.createServer(async (req, res) => {
 
   // PVP broadcast relay — posts PvP kills/deaths to PVP_CHANNEL_ID
   if (req.method === 'POST' && req.url === '/api/agent/pvp_assists') {
+    if (await _isShedded('pvp_assists', res)) return;
     try { return await _handleAgentPvpAssists(req, res); }
     catch (err) {
       console.error('[pvp-assists] handler error:', err);
@@ -13448,6 +13607,7 @@ http.createServer(async (req, res) => {
     }
   }
   if (req.method === 'POST' && req.url === '/api/agent/pvp') {
+    if (await _isShedded('pvp', res)) return;
     try { return await _handleAgentPvp(req, res); }
     catch (err) {
       console.error('[pvp-relay] handler error:', err);
@@ -13505,6 +13665,7 @@ http.createServer(async (req, res) => {
   // Each event upserts into the fun_events table; the unique constraint on
   // (guild_id, event_type, caster, event_ts) silently dedups replays.
   if (req.method === 'POST' && req.url === '/api/agent/fun_event') {
+    if (await _isShedded('fun_event', res)) return;
     try { return await _handleAgentFunEvent(req, res); }
     catch (err) {
       console.error('[fun-event] handler error:', err);
@@ -13527,6 +13688,7 @@ http.createServer(async (req, res) => {
   }
 
   if (req.method === 'POST' && req.url === '/api/agent/buff_casts') {
+    if (await _isShedded('buff_casts', res)) return;
     if (await _overBudget('buff_casts', req, res)) return;
     try { return await _handleAgentBuffCasts(req, res); }
     catch (err) {
@@ -13630,6 +13792,7 @@ http.createServer(async (req, res) => {
 
   // UI Studio — encrypted EQ ini-file snapshots for new-machine restore.
   if (req.method === 'POST' && req.url === '/api/agent/ui_layout') {
+    if (await _isShedded('ui_layout', res)) return;
     try { return await _handleAgentUiLayoutUpload(req, res); }
     catch (err) {
       console.error('[ui_layout upload] handler error:', err);
@@ -13676,8 +13839,11 @@ http.createServer(async (req, res) => {
     }
   }
 
-  // JSON health with resilience state (#73) — Supabase circuit-breaker snapshot
-  // + a compact per-kind budget-tripped view for at-a-glance ops.
+  // JSON health with resilience state (#73/#58) — Supabase circuit-breaker
+  // snapshot + a compact per-kind budget-tripped view for at-a-glance ops.
+  // READINESS-GATED (#58): 503 until the Discord client is ready + state loaded
+  // (`_botReady`), and 503 once a graceful shutdown has begun (`_shuttingDown`),
+  // so Railway's healthcheck only routes traffic to a container that can serve it.
   if (req.method === 'GET' && (req.url === '/health' || req.url === '/healthz')) {
     let breaker = null;
     try { breaker = require('./utils/supabase').breakerState(); } catch { /* */ }
@@ -13688,16 +13854,41 @@ http.createServer(async (req, res) => {
       for (const [, b] of book) if (b.count > perMin) tripped++;
       if (tripped) budgets[kind] = { uploaders_over_budget: tripped };
     }
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ ok: true, supabase_breaker: breaker, budgets }));
+    const ready = _botReady && !_shuttingDown;
+    res.writeHead(ready ? 200 : 503, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({
+      ok: ready, ready, shutting_down: _shuttingDown,
+      supabase_breaker: breaker, budgets,
+    }));
   }
 
   // Default: health check
   res.writeHead(200, { 'Content-Type': 'text/plain' });
   res.end('OK');
-})
-  .listen(process.env.PORT || 3000, () =>
-    console.log(`[health] HTTP check + agent endpoint on :${process.env.PORT || 3000}`)
-  );
+});
+httpServer.listen(process.env.PORT || 3000, () =>
+  console.log(`[health] HTTP check + agent endpoint on :${process.env.PORT || 3000}`)
+);
+
+// #58 graceful shutdown — Railway sends SIGTERM before replacing a container.
+// Stop accepting new connections, give in-flight handlers ~10s to drain, then
+// destroy the Discord client and exit so the overlap window hands off cleanly.
+// Idempotent; a hard-exit failsafe guarantees we don't hang past the drain window.
+function _gracefulShutdown(signal) {
+  if (_shuttingDown) return;
+  _shuttingDown = true;   // /health → 503 and new HTTP work → 503 from here on
+  const drainMs = Number(process.env.SHUTDOWN_DRAIN_MS) || 10_000;
+  console.log(`[shutdown] ${signal} received — health now 503, refusing new HTTP; draining in-flight for up to ${drainMs}ms`);
+  try { httpServer.close(() => console.log('[shutdown] HTTP server closed (connections drained)')); } catch (e) { console.warn('[shutdown] server.close failed:', e && e.message); }
+  const done = () => {
+    console.log('[shutdown] destroying Discord client + exiting');
+    try { client.destroy(); } catch (e) { void e; }
+    process.exit(0);
+  };
+  // Exit when the drain window elapses (whether or not every socket closed).
+  setTimeout(done, drainMs).unref?.();
+}
+process.on('SIGTERM', () => _gracefulShutdown('SIGTERM'));
+process.on('SIGINT',  () => _gracefulShutdown('SIGINT'));
 
 client.login(process.env.DISCORD_TOKEN);

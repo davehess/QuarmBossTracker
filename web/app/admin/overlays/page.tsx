@@ -93,6 +93,8 @@ const FLAGS: Flag[] = [
     desc: 'Turns ON the P1b buff-landing de-duplication (#72). When checked, only the ~3 best-coverage agents per zone upload ordinary observed buff landings; the rest stand down. Charm timers (synthesized per-observer) always upload regardless. Fail-open — an agent that loses contact with the bot uploads everything, and re-election hands off within ~60s if a reporter leaves the zone. Leave OFF to keep today’s every-agent-uploads behavior. Overridden by the disable switch above.' },
   { key: 'dedup_roster', label: 'Roster dedup — 1 reporter per group (default off)',
     desc: 'Turns ON the P1c raid-roster de-duplication (#72). Roster composition is identical from every raider’s view, but per-member HP arrives only for the uploader’s own group — so when checked, exactly ONE agent per raid group uploads the Zeal roster snapshot; the rest stand down (an agent not in a raid, or with no Zeal, is its own group and always uploads). Fail-open — an agent that loses contact with the bot uploads everything, a camping raider hands off ~30s early, and re-election covers a group within ~60s if its reporter leaves. Leave OFF to keep today’s every-agent-uploads behavior. Overridden by the disable switch above.' },
+  { key: 'flag_agent_kill', label: '☠ AGENT KILL — pause the ENTIRE fleet', danger: true,
+    desc: 'Fleet-wide dormancy (#74). Every agent stops ALL uploads and non-control polls and goes quiet, keeping only its 20s heartbeat so recovery is instant when you clear this. The durable queue HOLDS (nothing dropped) and overlays keep working on each user\'s LOCAL data — nobody\'s HUD blanks. Clearing this resumes the fleet within one heartbeat. Conservative v1 — coordinate with Hitya before flipping. Fail-open: if the bot is unreachable, agents run normally.' },
   { key: 'flag_shed_live_state', label: 'Shed: live-state stream', danger: true,
     desc: 'Mid-raid load-shed — the bot 200-acks and DROPS the character live-state stream (buffs/zone). Overlays needing it go stale until cleared. Emergency use only.' },
   { key: 'flag_shed_raid_roster', label: 'Shed: raid-roster stream', danger: true,
@@ -101,8 +103,26 @@ const FLAGS: Flag[] = [
     desc: 'Drops the cross-client cast relay — Mob Info "who is casting" goes stale. Emergency use only.' },
   { key: 'flag_shed_threat_snapshot', label: 'Shed: threat snapshot', danger: true,
     desc: 'Drops the threat-snapshot stream. Emergency use only.' },
+  { key: 'flag_shed_buff_casts', label: 'Shed: buff_casts stream', danger: true,
+    desc: 'Drops observed buff landings (already (N-1)/N duplicate + election-deduped). Mob Info "buffs on target" + charm/pet trackers go stale. Emergency use only.' },
+  { key: 'flag_shed_pvp', label: 'Shed: PvP broadcasts + /who harvest', danger: true,
+    desc: 'Drops the PvP kill/death relay AND the /who-harvest that rides it (there is no separate who-ingest endpoint). PvP board + who directory stop refreshing. Emergency use only.' },
+  { key: 'flag_shed_pvp_assists', label: 'Shed: PvP assist credit', danger: true,
+    desc: 'Drops the PvP assist stream — assist credit stops accruing. Emergency use only.' },
+  { key: 'flag_shed_fun_event', label: 'Shed: fun events', danger: true,
+    desc: 'Drops fun-event counters (LD/CoH/DI…). Cosmetic — emergency use only.' },
+  { key: 'flag_shed_trigger_relay', label: 'Shed: trigger relay fan-out', danger: true,
+    desc: 'Drops the cross-client trigger-fire fan-out (recent-fires replay). Local callouts still fire; only the "replay a fire another Mimic saw" path stops. Emergency use only.' },
+  { key: 'flag_shed_ui_layout', label: 'Shed: UI Studio backups', danger: true,
+    desc: 'Drops encrypted EQ ini-file snapshot uploads. Backups pause; nothing live is affected. Emergency use only.' },
+  { key: 'flag_shed_tells', label: 'Shed: tell relay', danger: true,
+    desc: 'Drops the opt-in tell-history relay. Emergency use only.' },
 ];
 const FLAG_KEYS = new Set(FLAGS.map(f => f.key));
+
+// Version floor is a NUMBER control (not a 0/1 flag) that lives in the same
+// Kill-switches section. Empty = unset. Handled specially in save/render.
+const VERSION_FLOOR_KEY = 'min_agent_ver_num';
 
 // ── Per-class default overlay sets (pretty-place phase 2) ────────────────────
 // Which overlays a FRESH Mimic install turns on for each class. Stored in
@@ -155,7 +175,8 @@ async function saveOverlayTuning(formData: FormData) {
   // officer nudging a slider mid-raid should never lose the save to a typo.
   const tuning: Record<string, number> = {};
   for (const [k, v] of Object.entries(existing)) {
-    if (!ALL_KNOB_KEYS.has(k) && !FLAG_KEYS.has(k)) tuning[k] = v;   // passthrough unknown keys
+    // passthrough unknown keys, but the version floor is managed below (not a knob/flag)
+    if (!ALL_KNOB_KEYS.has(k) && !FLAG_KEYS.has(k) && k !== VERSION_FLOOR_KEY) tuning[k] = v;
   }
   for (const k of ALL_KNOBS) {
     const raw = String(formData.get(k.key) ?? '').trim();
@@ -167,6 +188,13 @@ async function saveOverlayTuning(formData: FormData) {
   // Kill switches: checked → 1 (on); unchecked → key omitted (bot reads as off).
   for (const f of FLAGS) {
     if (formData.get(f.key) != null) tuning[f.key] = 1;
+  }
+  // Version floor (#74): a bare integer. Empty/0/non-numeric → omitted (unset =
+  // no floor). The bot stands down any agent whose numeric version is below it.
+  {
+    const raw = String(formData.get(VERSION_FLOOR_KEY) ?? '').trim();
+    const n = Number(raw);
+    if (raw && Number.isFinite(n) && n > 0) tuning[VERSION_FLOOR_KEY] = Math.floor(n);
   }
 
   const meta = (user.user_metadata ?? {}) as Record<string, unknown>;
@@ -320,6 +348,34 @@ export default async function OverlayTuningPage() {
                 </label>
               );
             })}
+
+            {/* Version floor (#74) — a number, not a toggle. Empty = unset. */}
+            <label className="block pt-2 border-t border-border/60">
+              <div className="flex items-center gap-2 mb-1">
+                <span className="text-sm font-semibold text-text">Minimum agent version</span>
+                <code className="text-[10px] text-dim">{VERSION_FLOOR_KEY}</code>
+                {typeof tuning[VERSION_FLOOR_KEY] === 'number' && tuning[VERSION_FLOOR_KEY] > 0 && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-red/20 text-red border border-red/40">
+                    floor {tuning[VERSION_FLOOR_KEY]}
+                  </span>
+                )}
+              </div>
+              <input
+                type="number"
+                name={VERSION_FLOOR_KEY}
+                min={0}
+                step={1}
+                defaultValue={typeof tuning[VERSION_FLOOR_KEY] === 'number' && tuning[VERSION_FLOOR_KEY] > 0 ? tuning[VERSION_FLOOR_KEY] : ''}
+                placeholder="unset"
+                className="w-32 bg-bg border border-border rounded px-3 py-1.5 text-sm text-text font-mono"
+              />
+              <p className="text-xs text-dim leading-5 mt-1">
+                Fleet version floor (#74). Enter the numeric form of a version — <b>major×10000 + minor×100 + patch</b>,
+                e.g. agent <b>3.3.85 → 30385</b>. Any agent below the floor pauses uploads exactly like the kill switch
+                and shows an <b>update</b> nudge on its dashboard (Mimic auto-updates handle the rest). Leave <b>empty</b> to
+                impose no floor. Conservative v1 — coordinate with Hitya. Fail-open: an agent that can’t reach the bot runs normally.
+              </p>
+            </label>
           </div>
         </section>
 

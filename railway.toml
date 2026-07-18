@@ -31,5 +31,13 @@ watchPatterns = [
 startCommand = "node index.js"
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 10
-healthcheckPath = "/"
+# #58 zero-downtime: healthcheck the readiness-gated /health, NOT "/". `/` returns
+# 200 the instant the HTTP server binds (before the Discord client connects or
+# state loads), so Railway used to cut over to a not-yet-ready container. /health
+# returns 503 until _botReady (Discord ready + state loaded) and 503 again once a
+# SIGTERM graceful drain begins, so Railway only routes traffic to a container
+# that can actually serve it and drains the old one cleanly on the overlap window.
+# (Full overlap/zero-downtime also needs the Railway plan's overlap feature; this
+# config + the bot's graceful SIGTERM drain is our half.)
+healthcheckPath = "/health"
 healthcheckTimeout = 120
