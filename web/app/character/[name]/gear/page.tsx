@@ -297,9 +297,15 @@ export default async function CharacterGearPage({ params }: { params: Promise<{ 
   const atkOverCap = Math.max(0, atkSum - WORN_ATK_CAP);
 
   const wornEffects = [...new Set(
-    equipped
-      .map(g => fx(items[g.item_id]?.worneffect, spellNames))
-      .filter((x): x is string => !!x),
+    [
+      ...equipped.map(g => fx(items[g.item_id]?.worneffect, spellNames)),
+      // vision effects earn a listing even when they ride a click/proc (Truesight
+      // procs on Gauntlets of View — the 👁 panel must not hide them)
+      ...equipped.flatMap(g => [
+        fx(items[g.item_id]?.clickeffect, spellNames),
+        fx(items[g.item_id]?.proc_effect, spellNames),
+      ].filter(e => !!e && VISION_RX.test(e))),
+    ].filter((x): x is string => !!x),
   )];
   // Focus list keyed by item so the description ("Increased spell damage up
   // to 35% — cold spells up to L65") sits next to what grants it.
@@ -316,7 +322,8 @@ export default async function CharacterGearPage({ params }: { params: Promise<{ 
     const it = items[g.item_id];
     const worn = fx(it?.worneffect, spellNames) || '';
     const click = fx(it?.clickeffect, spellNames) || '';
-    return VISION_RX.test(worn) || VISION_RX.test(click) || VISION_RX.test(g.item_name);
+    const proc = fx(it?.proc_effect, spellNames) || '';
+    return VISION_RX.test(worn) || VISION_RX.test(click) || VISION_RX.test(proc) || VISION_RX.test(g.item_name);
   });
 
   const clickies = [...bagged, ...equipped]

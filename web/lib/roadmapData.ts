@@ -43,6 +43,17 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'web-gear-vision-235',
+    title: '👁 Gear page sees proc-granted vision',
+    version: 'Web 1.0.235',
+    date: '2026-07-18',
+    headline: 'The gear page now counts every way an item can grant sight — worn, clicked, or proc.',
+    features: [],
+    fixes: [
+      'No more false "no vision item detected" warning when your sight rides a weapon or armor proc — Truesight on Gauntlets of View now counts as a vision source and shows up in the 👁 Vision & worn effects list.',
+    ],
+  },
+  {
     key: 'mimic-19-line-stable-195',
     title: '🐺 The whole 1.9 line goes stable · Mimic 1.9.5',
     version: 'Mimic 1.9.5 · Agent 3.3.80',
