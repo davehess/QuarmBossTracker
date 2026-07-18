@@ -4088,8 +4088,11 @@ function _noteWhoRunName(name) {
   if (_whoRun && !_whoRun.complete && name) _whoRun.names.add(String(name).toLowerCase());
 }
 
-// Anon de-anon cache: lower → { at, data|null }. data = { class, level, guild,
-// is_zek, last_seen } from the bot's merged who history.
+// Who-lookup cache: lower → { at, data|null }. data = { class, level, guild,
+// is_zek, last_seen } from the bot's merged who history (the de-anon fields),
+// plus the #111 guild-member enrichments { main, mimic } — main-in-parens and
+// Mimic presence, resolved server-side (mimic from the live reporter registry,
+// main honoring the officer hide list).
 const _whoLookupCache = new Map();
 const _whoLookupInflight = new Set();
 const WHO_LOOKUP_TTL_MS = 5 * 60 * 1000;
@@ -4188,16 +4191,26 @@ function buildWhoSnapshot() {
   }
   if (!currentNames || !currentNames.size) return null;
   const RECENT_GONE_MS = 30 * 60 * 1000;
-  const current = [], gone = [], anonNeeded = [];
-  // De-anon an anon row from the lookup cache, or queue a fetch. Applied to
-  // BOTH current and recently-gone rows — the gone list used to skip this
-  // entirely, so a raider who just /anon'd and walked off still showed a bare
-  // "anon" with no class even though we had it (Uilnayar 2026-07-14, Camping).
-  const deanon = (entry, v, k) => {
-    if (!v.anonymous) return;
-    const known = _whoLookupCache.get(k);
-    if (known && (now - known.at) < WHO_LOOKUP_TTL_MS) entry.known = known.data || null;
-    else anonNeeded.push(v.name);
+  const current = [], gone = [], lookupNeeded = [];
+  // Enrich a row from the bot's who-lookup cache. Anon rows get de-anon'd
+  // (class/level/guild/Zek → entry.known); the gone list is included too, so a
+  // raider who just /anon'd and walked off still shows the class we had
+  // (Uilnayar 2026-07-14, Camping). PLUS (#111) EVERY row can pick up two
+  // guild-member enrichments — the main-in-parens (entry.main) and Mimic
+  // presence (entry.mimic) — so a member showing normally still gets their 🐺
+  // and (Main). We now queue a lookup for ANY row without a fresh cache hit
+  // (previously only anon rows), batched into one request by fetchWhoLookup.
+  // Fail-open: a bot miss/outage just renders the row exactly as before.
+  const enrich = (entry, v, k) => {
+    const cached = _whoLookupCache.get(k);
+    const fresh = cached && (now - cached.at) < WHO_LOOKUP_TTL_MS;
+    const data = fresh ? (cached.data || null) : null;
+    if (v.anonymous) entry.known = data;              // de-anon fallback
+    if (data) {
+      if (data.main)  entry.main  = data.main;        // #111 main-in-parens
+      if (data.mimic) entry.mimic = true;             // #111 wolf icon
+    }
+    if (!fresh) lookupNeeded.push(v.name);            // resolve enrichment for every row
   };
   for (const [k, v] of whoData) {
     const entry = {
@@ -4205,14 +4218,14 @@ function buildWhoSnapshot() {
       guild: v.guild || null, anonymous: !!v.anonymous, gm: !!v.gm, observedAt: v.observedAt || null,
     };
     if (currentNames.has(k)) {
-      deanon(entry, v, k);
+      enrich(entry, v, k);
       current.push(entry);
     } else {
       const tt = Date.parse(v.observedAt || 0) || 0;
-      if (tt && (now - tt) <= RECENT_GONE_MS) { deanon(entry, v, k); gone.push(entry); }
+      if (tt && (now - tt) <= RECENT_GONE_MS) { enrich(entry, v, k); gone.push(entry); }
     }
   }
-  if (anonNeeded.length) fetchWhoLookup(anonNeeded);
+  if (lookupNeeded.length) fetchWhoLookup(lookupNeeded);
   current.sort(_threatSort);
   gone.sort((a, b) => (Date.parse(b.observedAt || 0) || 0) - (Date.parse(a.observedAt || 0) || 0));
   return {
