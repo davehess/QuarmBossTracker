@@ -1,47 +1,45 @@
-// MIRROR: _translateDotNetRegex `{s}`-placeholder compile
-//   Source: packages/wolfpack-logsync/index.js  (function _translateDotNetRegex, ~line 19852)
-//   Tier:   MIRROR (last resort) — see drift note below.
+// _translateDotNetRegex `{s}`-placeholder compile — SOURCE-SLICE fidelity tier.
+//   Source: packages/wolfpack-logsync/index.js (function _translateDotNetRegex,
+//     ~line 20614). Internal/unexported in a single-file zero-dep agent, so we
+//     slice the real block out of the shipped source and eval it (see
+//     test/_source-slice.js). Edit the function and this suite exercises the new
+//     behavior; rename/delete it and the slice throws loudly.
 //
 // _translateDotNetRegex turns an EQLogParser/GINA `.NET` trigger pattern into a
 // JS RegExp source: `(?>...)` atomic groups become `(?:...)`, and each
 // `{s}`/`{S}`/`{c}` placeholder becomes a NAMED capture (`s`, `s1`, …) with a
-// permissive name char class so multi-word and punctuated EQ mob names still
-// match anchored patterns like `{s} has become ENRAGED.`.
+// permissive name char class `[\w'` -]+?` (word char + apostrophe + BACKTICK +
+// space + hyphen) so multi-word AND backtick-bearing EQ mob names still match
+// anchored patterns like `{s} has become ENRAGED.`.
 //
-// ⚠ DRIFT: the SHIPPED char class as of this port (main @ 243888e) is
-//   `[\\w' -]+?`  — it does NOT include the backtick. Real Quarm boss names use
-//   a backtick ("Rhag`Zhezum", "Aten`Ha`Ra", "Yar`Lir"), so those `{s}` triggers
-//   silently never fire under the shipped code. This suite mirrors the INTENDED
-//   fix — char class `[\\w'` -]+?` (backtick added) — which the scratchpad
-//   characterization test asserts. It cannot be source-sliced today because the
-//   sliced real function would fail these cases. WHEN the backtick lands in
-//   _translateDotNetRegex, delete this mirror and source-slice the real function
-//   instead (test/_source-slice.js). If the shipped char class changes shape,
-//   this copy will drift from it undetected — that is the cost of the mirror.
-//
-// Ported from the session's scratchpad backtick_test.js (5 cases).
+// UPGRADED from MIRROR → SOURCE-SLICE (2026-07-18): the `{s}` backtick fix
+// (agent 3.3.75) landed on main with the 1.9 beta graduation, so the real
+// function now includes the backtick in its char class and can be sliced
+// directly. Cases unchanged from the mirror they replaced.
 
 import { describe, it, expect } from 'vitest';
+import { readSource, sliceBlock, evalBlock, AGENT_INDEX } from './_source-slice.js';
 
-// Mirror of the {s}/{S}/{c} compile with the intended backtick-inclusive class.
-function translate(pattern) {
-  let p = String(pattern || '');
-  p = p.replace(/\(\?>/g, '(?:');        // atomic group → non-capturing
-  let sIdx = 0;
-  p = p.replace(/\{[sScC]\d*\}/g, () => {
-    const name = sIdx === 0 ? 's' : `s${sIdx}`;
-    sIdx++;
-    return `(?<${name}>[\\w'\` -]+?)`;    // word char + apostrophe + BACKTICK + space + hyphen
-  });
-  return p;
-}
+// Slice the real _translateDotNetRegex (self-contained: only String + replace).
+const block = sliceBlock(
+  readSource(AGENT_INDEX),
+  'function _translateDotNetRegex(pattern) {',
+  '  return p;\n}',
+);
+const { _translateDotNetRegex } = evalBlock(block, ['_translateDotNetRegex']);
 
+// The real function returns an UNANCHORED JS regex source; the live evaluator
+// anchors with ^...$, so mirror that here.
 function fires(pat, line) {
-  const rx = new RegExp('^' + translate(pat) + '$', 'i');
+  const rx = new RegExp('^' + _translateDotNetRegex(pat) + '$', 'i');
   return rx.exec(line);
 }
 
-describe('trigger {s} placeholder → named capture (backtick-inclusive class)', () => {
+describe('trigger {s} placeholder → named capture (source-sliced from agent)', () => {
+  it('sliced the real function', () => {
+    expect(typeof _translateDotNetRegex).toBe('function');
+  });
+
   it('captures a single-backtick boss name', () => {
     const m = fires('{s} has become ENRAGED.', 'Rhag`Zhezum has become ENRAGED.');
     expect(m && m.groups.s).toBe('Rhag`Zhezum');

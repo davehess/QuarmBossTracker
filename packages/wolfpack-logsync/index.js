@@ -467,6 +467,24 @@ function shouldKeep(line, drops = DEFAULT_DROP_PATTERNS, keeps = KEEP_PATTERNS, 
   return false;
 }
 
+// Should the LOCAL trigger engine see this line? shouldKeep() gates the
+// UPLOAD/parse path and only keeps positively-identified combat lines — but a
+// whole class of trigger templates (mob ENRAGED, self snared/mesmerized, spell
+// fizzles, cure/emote lines) match lines the keep-list never enumerates, so
+// they were silently dropped before the trigger engine ever ran (audit
+// callout-trifecta P0: 9 of 17 shipped templates could never fire). This is
+// shouldKeep with the final verdict flipped: honor priority-keeps, drop the
+// EXPLICIT drop list (the privacy channels — officer/tells/group — plus public
+// chat, system spam, and self-damage), and let every remaining line through —
+// including keep-list MISSES. Privacy is unchanged: private lines match the
+// drop list and never reach a trigger, and only trigger name + captures relay,
+// never the raw line.
+function triggerVisibleLine(line, drops = DEFAULT_DROP_PATTERNS, priorityKeeps = PRIORITY_KEEP_PATTERNS) {
+  for (const rx of priorityKeeps) if (rx.test(line)) return true;
+  for (const rx of drops)         if (rx.test(line)) return false;
+  return true;
+}
+
 // A spaceless, lowercase token ("to", "a", "the", "and", "of", "by"…) is never
 // a real combat attacker. Real player names + single-word NPC/boss names are
 // capitalized; multi-word NPCs ("a sentinel") legitimately start lowercase but
@@ -3748,6 +3766,25 @@ const ROLL_SET_KEEP_MS = 2 * 60 * 60 * 1000;
 const _pendingDieByChar = new Map();   // watched-log charLower → { name, atMs } (pair lines per log)
 const _rollSets = [];                  // oldest-first [{ from, to, item, qty, rolls, startMs, lastMs }]
 const _rollItemByNumber = new Map();   // roll number (the range TO) → { item, qty, atMs }
+// #91 off-night roll capture: upload grouped /random SETS so off-night loot
+// rolls aren't lost. Only newly-changed sets go up each tick; the bot upserts
+// per (uploader, range, start) so a growing set updates in place. Write-only.
+let _rollUploadHW = 0;
+function uploadRollSets() {
+  if (!_uploadOpts || _uploadOpts.dryRun || !_isUploaderInstance) return;
+  const now = Date.now();
+  const changed = _rollSets.filter(s => s.rolls.length > 0
+    && (now - s.lastMs) < 30 * 60 * 1000 && s.lastMs > _rollUploadHW);
+  if (changed.length === 0) return;
+  _rollUploadHW = Math.max(_rollUploadHW, ...changed.map(s => s.lastMs));
+  const sets = changed.map(s => ({
+    roll_from: s.from, roll_to: s.to, item: s.item || null, qty: s.qty || null,
+    started_at: new Date(s.startMs).toISOString(),
+    last_at:    new Date(s.lastMs).toISOString(),
+    rolls: s.rolls.map(r => ({ name: r.name, value: r.value, at: new Date(r.atMs).toISOString(), reroll: !!r.reroll })),
+  }));
+  enqueueUpload('rolls', { agent_version: AGENT_VERSION, sets });
+}
 
 function trackRollLine(line, character) {
   if (!line || !character) return;
@@ -3793,6 +3830,18 @@ function trackRollLine(line, character) {
   if (!set.item) {
     const linked = _rollItemByNumber.get(to);
     if (linked) { set.item = linked.item; set.qty = linked.qty; }
+  }
+  // 🎲🔥 HOT DICE — a PERFECT roll (hit the very top of the range). Emits a
+  // fun_event (deduped server-side across the multi-box logs). Fires on any
+  // perfect roll — even a reroll perfect is a lucky moment worth marking. The
+  // >20%-of-the-night Hot Dice award is computed later from the stored roll sets.
+  if (value === to && to > 1) {
+    funEventBuffer.push({
+      type:     'hot_dice',
+      caster:   pending.name,
+      ts:       new Date(atMs).toISOString(),
+      raw_text: `${pending.name} rolled a PERFECT ${value} (0-${to})${set.item ? ' — ' + set.item : ''}`,
+    });
   }
 }
 
@@ -4263,7 +4312,59 @@ class EncounterBuilder {
     this._activeCharms     = new Map();
     this.charmSessions     = [];
     this._pendingDireCharm = null;
+    // Callout-replay timeline (#98) — raid-wide events (rampage/enrage/…) for
+    // this fight. Deduped via _tlSeen. Trigger fires are merged in at flush.
+    this.timelineEvents    = [];
+    this._tlSeen           = new Set();
     // petLeaders and lastDirgeCast intentionally NOT reset — persists for the agent's runtime
+  }
+  // ── Callout-replay timeline (#98) ──────────────────────────────────────────
+  // Record a notable raid-wide event, deduped within this builder (repeated
+  // ENRAGE lines / multi-log echoes collapse — the ts is bucketed to 2s).
+  noteTimelineEvent(ev) {
+    if (!ev || !ev.at || !ev.kind || this.timelineEvents.length >= 400) return;
+    const k = ev.kind + '|' + (ev.subtype || '') + '|' + (ev.actor || '') + '|' + Math.round((Date.parse(ev.at) || 0) / 2000);
+    if (this._tlSeen.has(k)) return;
+    this._tlSeen.add(k);
+    this.timelineEvents.push({
+      at: ev.at, kind: ev.kind,
+      subtype: ev.subtype || null, actor: ev.actor || null, label: ev.label || null,
+    });
+  }
+  // Raid-wide events that are NOT combat events (dropped before parseEvent) —
+  // detect from the raw log line. ENRAGE here; Death Touch rides the trigger-
+  // fire lane (EQ never names a mob's cast in the log, so it's a trigger).
+  noteRaidLine(line, tsMs) {
+    const m = /\]\s+(.+?)\s+has become ENRAGED/i.exec(line);
+    if (m) {
+      const mob = (m[1] || '').trim().slice(0, 64);
+      this.noteTimelineEvent({
+        at: new Date(tsMs || Date.now()).toISOString(),
+        kind: 'raid_event', subtype: 'enrage', actor: mob || null,
+        label: (mob || 'The mob') + ' ENRAGED',
+      });
+    }
+  }
+  // Merge this fight's raid events with the trigger FIRES that fell inside its
+  // window (the "did the callout fire?" half — covers Death Touch + every
+  // trigger). Backfill replays get raid events but no fires (nothing fired
+  // during a silent replay), which is correct. Returns undefined when empty.
+  _buildTimelineEvents() {
+    const out = [...this.timelineEvents];
+    const startMs = Date.parse(this.startedAt) || 0;
+    if (startMs) {
+      const endMs = Date.parse(this.lastEvent || this.startedAt) || (startMs + 1);
+      for (const f of _fireLog) {
+        if (f.at >= startMs - 2000 && f.at <= endMs + 2000) {
+          out.push({
+            at: new Date(f.at).toISOString(), kind: 'fire',
+            subtype: f.name ? String(f.name).slice(0, 48) : null,
+            actor: null, label: f.name || 'callout',
+          });
+        }
+      }
+    }
+    return out.length ? out.slice(0, 500) : undefined;
   }
   _bumpDefender(name, key, amount, tsMs) {
     if (!name) return;
@@ -5025,6 +5126,13 @@ class EncounterBuilder {
       }
       this._rampageTs = Date.parse(event.ts) || Date.now();
       this._rampageTarget = event.defender || null;
+      // Callout-replay timeline (#98).
+      this.noteTimelineEvent({
+        at: event.ts, kind: 'raid_event', subtype: 'rampage',
+        actor: event.attacker || null,
+        label: (event.attacker || 'Boss') + ' RAMPAGE'
+             + (event.defender ? ' → ' + (/^you$/i.test(event.defender) ? (this.character || 'You') : event.defender) : ''),
+      });
       // Publish the current rampage target to stats so the Tank overlay can
       // surface it without poking builder internals. Cleared by the damage-tag
       // path below or by the 8s freshness check on the /api/tank-state side.
@@ -6042,6 +6150,9 @@ class EncounterBuilder {
         // within 3s before they died — used to flag Knights (Paladin/SK) who
         // die from boss counter-attacks.
         deaths:      this.deaths.length > 0 ? [...this.deaths] : undefined,
+        // Callout-replay timeline (#98): raid-wide events (rampage/enrage) +
+        // trigger fires (incl. Death Touch) that fell in this fight's window.
+        timeline_events: this._buildTimelineEvents(),
         // Heal chain gap analysis — longest stretches without a heal on the primary tank.
         // { tank: name, count: N, maxGapMs: N }
         // null/undefined when no healer data was observed or gaps < 8s.
@@ -6516,6 +6627,7 @@ function _endpointForKind(kind, botUrl) {
     case 'tells':           return base + '/tells';
     case 'threat_snapshot': return base + '/threat-snapshot';
     case 'raid_roster':     return base + '/raid-roster';
+    case 'rolls':           return base + '/rolls';
     case 'trigger':         return base + '/trigger';
     case 'trigger_relay':   return base + '/trigger-relay';
     case 'quake':           return base + '/quake';
@@ -7586,11 +7698,15 @@ function _resolveBuffsForName(name, active, buffsOut) {
   try { fetchCharacterLiveState(name); } catch {}
   const live = _mtLiveStateByName.get(nameLower);
   if (live && live.state && Array.isArray(live.state.buffs)) {
-    return { buffs: live.state.buffs.map(b => ({ name: b.name, seconds: b.seconds, fell_off: false })), source: 'mimic' };
+    // filter(b && b.name): a malformed buff in a targeted PLAYER's cross-client
+    // live-state (the tank has 30+ raid buffs) must not throw downstream and
+    // 500 the whole /api/state — that blinds every overlay (raid-night 2026-07-16).
+    return { buffs: live.state.buffs.filter(b => b && b.name).map(b => ({ name: b.name, seconds: b.seconds, fell_off: false })), source: 'mimic' };
   }
   try { fetchTargetBuffs(name); } catch {}
   const seen = new Map();
   for (const b of targetBuffsFor(nameLower)) {
+    if (!b || !b.name) continue;   // same guard as the relay loop below — a nameless entry must not throw
     seen.set(b.name.toLowerCase(), { name: b.name, seconds: b.fell_off ? 0 : b.remaining_secs, fell_off: !!b.fell_off });
   }
   const relay = _targetBuffsByName.get(nameLower);
@@ -7610,7 +7726,7 @@ function _resolveBuffsForName(name, active, buffsOut) {
 // (12s vs 5s) so it's a param, not a constant.
 function _findDA(buffsList, greenSecs) {
   for (const b of (buffsList || [])) {
-    if (b.fell_off) continue;
+    if (!b || !b.name || b.fell_off) continue;   // a nameless/null entry must not throw DA_SPELL_RX.test(undefined)
     if (DA_SPELL_RX.test(b.name)) {
       return { name: b.name, seconds: b.seconds, ticks: b.ticks, critical: typeof b.seconds === 'number' && b.seconds <= greenSecs };
     }
@@ -8414,6 +8530,13 @@ function _applyEqSetup() {
 // One serialized /api/state snapshot shared by every poller for 400ms —
 // see the /api/state handler for the raid-load rationale.
 let _stateJsonCache = { at: 0, body: null };
+// Last-good bodies for the standalone overlay endpoints (tank + command
+// center). Same rationale as the /api/state catch: those overlays poll their
+// OWN endpoints and parse the response with .json() WITHOUT checking status, so
+// a 500 reads as an empty-but-successful state and BLANKS the whole overlay.
+// Serve the last good body on a serialize throw instead of ever 500-ing.
+let _tankStateLastGood = null;
+let _commandCenterLastGood = null;
 function _serializeForDashboard() {
   const healersOut = {};
   for (const [name, s] of Object.entries(stats.sessionHealers || {})) {
@@ -8528,6 +8651,13 @@ function _serializeForDashboard() {
     // signal flips to true within a few seconds of a successful sign-in.
     mimicSignedIn:      !!(_mimicSessionToken && _mimicIdentity),
     mimicIdentity:      _mimicIdentity,
+    // Officer-only DKP loot capture — item lists seen in /gu + /rs, ready to
+    // review + post. Gated on the signed-in officer flag so a non-officer's
+    // dashboard never even receives it. null when not an officer.
+    dkpLoot:            (_mimicIdentity && _mimicIdentity.is_officer) ? _lootCaptureSnapshot() : null,
+    // Officer-only DKP tick sources — live raid roster + detected RaidTick
+    // files. null when not an officer. Submitted via POST /api/dkp/tick.
+    dkpTick:            (_mimicIdentity && _mimicIdentity.is_officer) ? _dkpTickSnapshot() : null,
     // Zeal's "Export data on /camp" toggle, read straight from zeal.ini in
     // each known EQ folder (60s cache). true = every found zeal.ini has
     // ExportOnCamp=TRUE; false = at least one has it off; null = no zeal.ini
@@ -8573,6 +8703,10 @@ function _serializeForDashboard() {
         ? { client: _uploaderLockHolder.client || null, webPort: _uploaderLockHolder.webPort || null }
         : null,
     },
+    // #72 designated-reporter election — which shared streams THIS machine is
+    // currently elected to upload. All-true = fail-open (election off / old bot
+    // / no answer yet). electionOn=true means the bot is actively assigning.
+    reporter: { roles: _reporterRoles, electionOn: _reporterElectionOn },
     // Charm-pet tick tracker — array form so the dashboard can render
     // a 6s countdown to next mob tick / next charm check. Sorted most-
     // recently-updated first; capped to 12 to keep the payload small.
@@ -9423,7 +9557,7 @@ body.wp-overlay-mode .wp-overlay-target table td {
 body.wp-overlay-mode .wp-overlay-target table td:nth-child(2),
 body.wp-overlay-mode .wp-overlay-target table th:nth-child(2) { text-align:right !important; }
 </style></head><body>
-<h1 style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;row-gap:2px"><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAAYF0lEQVR42sWaeZRdVZ3vP3ufc+481FypSk1JJZWkQhIghBCGkMjgc4iAmBJERbAZhOfwsFtb7e5KtQvFfoK2UwtPjKAIVoVBRJExBBAICSSQpDJWpea56t5bdz7D3u+PSmTSfmv1eu951rrrnnXWOfd+f8P+7d/v+z3wnkOLP5/pt87/1kd7e7t8Cxd/FZcAGNr7fIsw5i50dnYaf0vgc06cc2T/nheWv/nmY6V/0bm6XUuAh7776/afXfsr995vbX1E6zdL56zfbv4totHe3m4CIOGhn93zDz+9/h593zfu26317pDWWmithTgZno6ODtXb+1hj562Hj86UW5bfsYjpzL6Lr2m5ftWqS145GY22tjbv/0u6dEAHHUrrqdgvvtv1vd7DuWuzpaYbTnrmmrPKrv3IZz+zdXv7dvNkXkmAVx8ZvajoE1bFkhI3tKzEG7GtFV0/6N6x7e6tt2p9JNbW1uZ1bv5/m1KdnZ1GR0eH6jA71LO/7/z4d75w784jvfa1JasbvOqWEtKmq4Z60lcLA57reE6ZAN3dyzXA5ET2oqLP0k3RCv706uvGaRtXqvRwxvfqzrGv9+977GPP/e7Bf9yw6fKHQQutBUKg/2+Db2tr847P/nHpsz86/m9Pdh3bpCtLqVtV73Xv32esOX25lkuFGDs8eKpy91YJceqEBERXV5untTZSGfsUI2yJ1iULZOuyFl59+XVpxExdcWa9O235WrY/1PtQ50+23mZYUm8R7eI/WxcnclTq9nbZ2dlpvL2K/Gfgn3/y/gs6v3Hghb5xsal63RKvaXWD2rt7t2HbRRY1N4tYeVQ7SsRf2zm4BMDUWiOEAPqimVShvGFFE6Zfirq6eRzs6WPXzj1iyeLFZnxRqSqWB/UbO6e/+ovbfhr79D/ccFPtDaPW9vPb9XMnQHTv6NYArXRpIYSC90RIbmazANgMHDi/VQAsr0K2tbXZT2y7d9PT9/Zsy5REfHUry13XLppHDvYhhObcs9fiOA6RkohWjhTjB1JxAHPLli0C0GNjA6VYMh6OR8kXHNCK01Ys4fVdexnq7yccCsvS6phuuGiZM7x77HMP/fL+/suuuvI77ynCYm5FpZ101Stbn2zMzKRVMBwymta1TC4987TjXW4XaOjSwI63Hh2YeWnFw//zwP0lq1t94Uje6z181BSGSXJ2mrPWriEaDYPyiEejyrQsmcvYVQDmyR+YmSmayvMMw2fieZpcOkchU6S6poaDBw9RUlVKf89RMXhwjynSqLEu99af/nN7s5zyZ1xHW07Ok9rw4mg3aITs4C+u+qczyFGZc4tEAz56n34pe8cnbnlF2P6ERDqm37KlEBlDm66KaufH/33rJROzKly7qsobP5gwKpqWcfTQYRrqa7ELOZKJBEHLwgoGkKZBsWD73mFAOKxdKfAMISy76JDJ5Fi7dgXHe/uwApLupx8l3bePllWNQtoZkeidwLNOu85nRPAZElC4joPWCl/CZkKkueaOT4GXJxDx6c4fPRWefnn0gvr5tWjPwHQkUgsc2yOTcJjt78aIpHU0vcwYOnSc/ft3s+i897N40WIaGuqZzWXIZnPEI0GkJZAB0waQW7Zs0QCNjctnpavTmZkMpmWglUPYb7Bh/RqCmUHUyF7+44F/5ru3X01dSLDujAa9aJl2Kxel3MrmhFvZPOPOX5R0GxbPevH5Cc+s8uuYOYYvsYtgoU+UzvPritq017Q4481bOO2WN064pfXjbsXCKbe5Ne1e1bZMnd1UKq746GrufPTbtNT5mHhjJ+vPOZOWlkXkMmkMQ1AsFIVEEI2bswDm3AIGmJ8yLTGTmSlUZnIZrRxPDAxN0nOwmwd/fie/efhr1C+SPHDLD9ETM4Qb54venkHTNASmBGkYGIaJJSGXtZHRIPbYAZzRPly3QDwcECPZvDE+PE22UEADQoJhSECQSifxBYL8ov3n3Pw9ze2/+gJXXbiFB+/8AZs+exPp2TQl0SjpRFoW01kq5teNARgAmzd3GmzupvhU4X2OsJaalVLV1tTKZc11fOfvP8/nrlvHulMdnrv3KV5+9jhNC2tJZvIUXUXBURRtje1B0VYUXcVkMosM+zj77CocxyMQDDI47rDnlX78AT9FW6E8gesq7IIiX1AkU3mUEBQck6EjR1mxLM+6jWdx5/e30bp6DaevO5fhkQk9NZ4Ss8eHs5dce+a3AoGatATo6mpTbaLNi7SqfUMTA1ja0kXX4dH77qWlzuDyzU1Mv3mUh7ftw4yVYSuN3zKI+E0iQYtgyMIyDdAaRykkgmDARAYsDNPCkC5usUjaFZiWQJoSw29i+PwI08QyDCLBAD4hqJwXZf+bkxx+oZe6hgxXXLWOh+76DyaGhsjbtj56qB9Z7kzNb1o70NHRoSQgXnzkkchT93R+vnf/zDXDqQSJZMFws2m6fnkPV31yJSQH6D1UxLAtogGD0Zk80xmHgitwPcF0apbBqSRp28VnGUgBAVOj3SwOLlp4BAMgtIdyBQofidkio9MpZm0XJS3ytks276Jsj7JoCbt2JikODnDpBXEmRo7wx0cfwQr4ZbqQ1GOp3Py7v3vXfX/a9uhSA+DLl37urJ4ddmePyMWaTm1gNpMTA92vUR0Y51OXVTDbP8LDD/aihY9AyMS2HTBM9h6b4Lm9x0h7IQaSmiO9g8RM8PtDhGKSlSsCFGwXnz9AMqEY6J7GBf7wp4P0pDwmCj72HhlhcmKaunllaK1QnkYELA4eHmdJY5zaBZC3Q3TvG2d+cyvKMIQtw2R3qpX1sdJFsr29XUY/bu0qVI8/6GRS+sjhPmUYBq+9sINLP7AEw3IZGMixc/8ok5k0qUyWeDjIwMAoxzOC//GDe7l7+24e3XOQ2x98klH/fP7wcg8ahSkMTNPCQyCRDI2n2b5/iMu/citdL+/n/ud38ZPfPkP56o08/sphCp5gLJlhYibF8EyBN96cBiXY9KEl5GcG6T3czdj4uJ7oPy6Czbmh8Kl8SwI0iLPz137zss+U1dpjlvKJTHpKhUSO5YtDqJRNX49HPBilPB7H1QajYykGEoJ7fv8EbVd8gnA4yMHu/SxqXc7/evwFwk0toFzwLOyMwMnZ+A3BnsEUf/+jX3HDF7/E8NAAEs2pp6/mrvsfZt7q83nxjR5C4TB+v4/6eTHGhvIUEy6V/llqqi0O7dtHMBz2Kist1t4Yv/WsCze9IJcvXy4Adj7+4in+0bJ5sUhEdL/6qmxp9FMms+RG0/T2TROKBlBao7B49ego5155Nc0trYyM9PPA/b/h9tu+w7LGJn7zy1/wr//+fY6M2eRzmkK2gJtTHDg0yPs2f4LT157JT378I/7xi1/gvNNO43cPdwLwlfYtpByTQqGIVJpI0E//SJ7RngwqleKsVeUkB/vwm5YRnCkXg/fJU9vb2+VbHeK0z1ocacoG8wnXLMzoU+qjZDMpJhMe+49OU3RsbNdDCLACPtaeuxbPdbn7rrtYfcYarvm7z6ITKb5+03Wk8g6BkkYmx5JoB7Rj0D9mc/5/ez8/+eEPueFzN7B+w/kM9PTxza99mcnJQZa1trKweSnFTA7tSZRyGZuYZXAggWM7tC6tpirskRvpyzaLqmKFW+Hv6OhQ5skJ66xPbXrhjTceXPbhlR+uvm3zwO/qytI1xaKnnWBcNK9cTH/fNFOZPCqZx3Y8qqpKMEyT3gN7uPm3D1LMZSmtCJPJ59m793Xqa+uZnXqTcDyOXbDxqwCxaJxnH32I7Y89ysxIPy1NJUxNTzEy0kdl5XmEw2GO75vCKoVoJMDSlQspbV5AOpPCyCRUc6xerv1g8+fXn7niuZ7cYIJvvq0Xam9vl6tWXT60u6cnXZ6JBMr8M+QTRSQe13xsGRktmUllmJ4s8NSLfex8eTeu8lNMzNC3/zAlpT4aaytIpnxU+qa48OIKnFQzrilQpuT88yNU1U4T92n6Du3FCEWwfEFKA/DGK7vwXA0iz1U3X0BZbYCquI+SkA8vkyU74xA2taqWpXL4aS1LL1nXd5KAeItCaW+XbNmid9z/9Kn773no9fXv71VlJUIWizau4+IpjTQhWhnj2FiUV3f1E4ho8DSelkwnkvQdnWL5qYs47aIzeGbXIKliGMOy8LSH8NKsX1VJ0Fbcc+dvqa+NU18dpjwWp+AKZrJFSqIhPvrBanRmkkK2iON4WJj4TD9Wmc957tFqMx9f/a3+8sl/qR2tNW646wbnHRyQEILdL7xQf+SuP73Rc+yJknykTy9oiokF1WHKoiaxoDHXdSoI+SRaC7SWKCkpIihgkA5X8rWtfdQ1tdJQV4vP8lFwHaZmE+zb2811H4hzXnURZ2KaeMxCILGEAO2RKzhoT2H5/DhKULA1g+MZ9h6b0olBS6xccDkNF6y5cuNNlz6gOzsN0dbm/TmFhBD6hBEDL+58YuP4XanbX3txeOOTew7qklBQ1JQHqAxblEX9NFQHaagKEw1LAj4DwxDkiy7VC0uZSk0zNp4mW9zHoe7X8QeCOLaN1i6zRYOhoSILTi/nUH+egvZQQNHR2K4gm/c4dHya/f050kVFsVBkMpnXUgY5Z+2Hh0ouWvy1jTdf+sAJnN475oGTRmzfvt08d+3GvQ89ftedy0cWvi/kn1H9yawwKxZy9uUf5vVX9vLS8Ci/23WMaMhHxC+IhWHBvBLOLQ+woirCh1YFuPuZXkrKSqiPREilcvQeH2TdkhquWNtAOlVgNC1587URxqfzJPMST7soz2TxylNZ8/EVDA+N8Mi9v6a5JqoWVdQZTevrd11y42d+1bm50zgJ/s90ytvXwcaNG91DPc+vPPy9N39a5U7qRdVhYSjB8d7jnLJ6ObduvYMFSxqZzGk2f+mLrL/q05StuoDf70nxencSN1Hk8xeV8q8fbaAu4DI9NopVyHHN2bXccUUd5TrB+ECGe54+xkx8IadfdiWf3fJVqluXMzRb5JM3tnHtLdeRnBhBakXINI2ldaje+/Zd1nn73V9q62rz3k4QGO+YaHdsEM/pB0L33LjtEaOwd+Hi06T6/c4JmVYGqZkEExNJYpFSfvRv32c6keXiTe/jI9dcSy41yRN/eIaJyQwRKQloj9Yqi41L4qTHJ7j2nBquXBNH55P09mf47Y5h9vZO0dK6mFs6vkBFVRW//ul9HOoeJFwSYvD4AA/9/JeEozEGZiVVNTFOaUZPHlAXf+OOf3rx09ff2NvZudno6urW5ttoDdnW1uatu3vFRcHCzOr3fW6h6zc889vrTmFgOMt373iU/S+9xIFXXkUKk/JyP11bt7H+g5dx36/+wOhIiosu3MRrs2me2d9LPCDJFR1Gpgo8u+s4ew75yRU1WRXktPMuYN7UEzzc9QSf+fzNvLHzNY4e7mFxSxmPP/gIjjawi/CpT57DhosW4yRnxLymgPfkVts89Nujn0XwLF1/IYUA8ukijp3UqX1viqldr5F5/RUWFHu57kMrUEqSyRb5yrf/iUs/cSW7X3qNr/7dTfTt348hIJHO8q2tP2bdRy5hx75hXjmWZjhRZFdfmsd39TNrhPjhtp+xYNkSRgenqAmG+fev38adt/2Yyvl1fP/+rSxeuhQ7k2P9mhYuqLPhwMu4xw8ytOM1kc1M6YJhMzfDvMuAzQc2a4DSBaX9OVuTyzhGMOrD0RaDw1kqgzk+vG4pFeWltK5cxJqzTyUcNNn11HPMm1fJVTdezTN/3M6fnnqJnp4hPMfD7zMQGnyepqWiBiOV4+Wde3js14+wIBCh7cw1nBUJs6GlmfmRGD5lU1PfwJqWRVxyTiNH+0Y5NuYhpEFZPKb9riF8UX8fGlrbW9+1kc2VJp3Wo1Xf29hxcNXyPWWrz4rqbQ8Pi8O9SWRA0txQTXV1JY+/eoxFa1ZzYMeLFNKzbLl3K7VNTXzynA3EY1GKriaTTeMzDSplhNaa+ZzeWIuHx2NHurliw0YyeYcj3YfZcMoSapoaGLQdfrbtYZRPs2bZfI4e6sEzLbKZHNdvXkAobHrbn240qjZcdF3bLZ/52fb2dnNjR4cr31ZCAYgwb5qQf8xVIYIRU4dLLErLS1hQX0s2VySZmGTjqnom9+0lb+coqa2hPGZQVao5a8OZTE+kcAsepvBRIcNcuLiFdY3zkZkC1abFl9avZ4HfYk3LAjZedAG7j/UzMTLKivoavnL11YRdQd/AMLGyUipLwiypL6GmoYx0UcrJpCZeGzkCMLl8js+V76AzQUi/9CJl4XGUhS8kdUmZgdIuQcsjHPaRKbikZ2e4+MyFXHXxWVSH/Xzt+i/zzS/9C8WCg/bP3V/i83NG40IqI3HGUikOJqfZOzrO7GwODAONpqk8QmvrUoYSKdLTU1THo3zgwvdTzBQx/YLRRBpbSkrKgzrgj4tgMGTPX71gBODAgQPvMYCuzZ1S25pIONKDDmGFpS6viuHYHoaQoBUBw0BoiyM9QyQTk5yxtIpN61ooLSYosTOsaamjtjJKKGxwdHaCR3v2sWN0gAOZKZ7v7+W1gXESySx2JstsMsGixvkIDelcgdTUJCsb6olHqvFLQSQaBUvgCyidSgtkKDC+fNHpYwBbtnTo9+zEla0HBIC/JNQz3eNHGyb1jQGC/hGKnovtKaTWIBRCmszmXGZyY/gtk9JYhHlllYR8Bi4K1wPHdVGIE6EVjEykOXpwlOaqMmJlcUx8KLtIY2Mjji0wlItPZagrn8/gTDdBv8nyxSVYcb9OTGUpqsCoFbYyJzL+vQacZJlDpdHe6UIQW9qirNakKE0yRYUhJFpINAKURmmN0Ca5nEdyNkk6NYhpSsKxEH6fRcA0saREComrFGMzWSYKORKZLDrvoE0/ds4mZJoox8W1i0i7QFgIZjIulusxrz4KsYBWnkcwFDrm5l02s1l20fXeXmjLFlRHB1S2Vh4//KzQM8NFo7ZG4WibgZEUFbEgUkg0Eg8NQmJKiSkFAVPiL43RPznL4dEJfIYg5DcxjDmNznE90raNKkgUJp7r4hWzuEWNYVho5eDkc6hAAFMoUrNp7KxBIODDyzjknSDltZE+NNzU3iq6Ov7CRrZly9z3KZtOG/U8MzfTbyNtdEO1n5DfhyMNMo4iVfDIFjS2o7E9h6LnkXE90o5HeVmYJXWl1JRG8FkmBWfuurJ8VFVWUFISJlnMMpvO4uWKuK7DbHKGxMwMxVweCYxPTlIRD1EeDxEJmSQnsmJiXBEsDx97e6a8JwIdHXMLo5y6iVAsPDQz6i5RnqFrq8JieKCAp3wooTAtScAwMKQGXDwNSkm01qA14YCPgC9IyIMSpUBq/OYc4TXgFDgyNsqKefMwUlnKGuvIBHLkZnOE8RidmOTQyAix+RGqI5qSkMnMRFYk02Gaa6uGAZafKKHvMQDQ7bRLYQr7jsu+cTQ1aSyxs2ktDB99w7PEKlxAIYUgwxyVqNBzwIUCOTfkoDVKaUwhMA0DA01OKfKOR8p2KdgOuwdGOGdZC1Pj44R8fkKWj7HkLL/btYfhYp6xEYfWRTEsQ+n0pJLS8uvqM2om5rjcA3/VADgfyQ5UpCrcU0z5GRua0HXVfm7+yvsJhsw50Uh7KOWh0WgpMIQxRzULgdIKpefadVMbCDlXLpRSaK1JZYsUsy4D+0d55JWXmRcrA6VI5QtkyXLex5ZyWVM5dsFGZmaZHEwyOSKIRINTS5evGDyR7Bo6/rIBGzZAxw4Ixcv7U8ekdpRW5UFbWcaE1rZAaoFAo7WH1voEbgnCEAKhxZxZeEqDRmittJRgSIk0JcWoFAk7T/lSg6ESi3RiEkMKYkGLhQ0V1FR72lCTmAEoeAVhCumNDdpSF6MjMWIzJwevd7xa8C51UQoh1NP3/fHM4W3P77T8u5FWfk7tF6DlnBAmEAihQZwEK0DPVQV5gm46aYw+ofUpDQoQWuAoDyE1SIllGfgNA6/oUXBcNAIpJKYPhAZ7fCnWytXfu+K262/p3NxptHW9JbaLvyaRCin0Mz/u/FT/rv6bpjPjfkMLG41wxdz4bEip5ZyyhKOUEEjDUygphBBoTxpaYiC1h9JKCOWCVkpLA0OaQghLoJXGcbTWas4vpmloaWk8T6EKGoI6EDHDsrqm4fnzbzv/q+UsTv8fI/Cetz8CAtMw8VwPxJzvT3r0zyKqECeaQX3SAXNREmIuzd72T39WhN4lwOqT3djbkLk5V8w9ItR/TTmfe61AvEtE/Wsf/sK973aS+K/i+Gui+v8GlRj1P1QhM0QAAAAASUVORK5CYII=" alt="" style="height:48px;width:48px;flex:none"><span style="white-space:nowrap">Wolf Pack ${process.env.WOLFPACK_CLIENT === 'mimic' ? 'mi<span style="letter-spacing:0.5px">MIC</span>' : 'EQ — Parser'}</span><span style="font-size:13px;font-weight:normal;color:#8b949e;vertical-align:middle">${process.env.WOLFPACK_APP_VERSION ? '(v' + process.env.WOLFPACK_APP_VERSION + ') ' : ''}(agent ${AGENT_VERSION})</span><span id="wpUpdSlot"></span>${/-/.test(String(process.env.WOLFPACK_APP_VERSION || '')) ? ' <span title="Running a beta (pre-release) build" style="font-size:10px;font-weight:600;color:#1f1300;background:#f0b429;border-radius:3px;padding:2px 5px;margin-left:6px;vertical-align:middle;letter-spacing:0.5px">BETA</span>' : ''}</h1>
+<h1 style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;row-gap:2px"><img src="data:image/png;base64,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" alt="" style="height:48px;width:48px;flex:none"><span style="white-space:nowrap">Wolf Pack ${process.env.WOLFPACK_CLIENT === 'mimic' ? 'mi<span style="letter-spacing:0.5px">MIC</span>' : 'EQ — Parser'}</span><span style="font-size:13px;font-weight:normal;color:#8b949e;vertical-align:middle">${process.env.WOLFPACK_APP_VERSION ? '(v' + process.env.WOLFPACK_APP_VERSION + ') ' : ''}(agent ${AGENT_VERSION})</span><span id="wpUpdSlot"></span>${/-/.test(String(process.env.WOLFPACK_APP_VERSION || '')) ? ' <span title="Running a beta (pre-release) build" style="font-size:10px;font-weight:600;color:#1f1300;background:#f0b429;border-radius:3px;padding:2px 5px;margin-left:6px;vertical-align:middle;letter-spacing:0.5px">BETA</span> <button id="wpRevertStable" title="Switch back to the stable release — Mimic confirms before doing anything" style="font-size:10px;color:#8b949e;background:none;border:1px solid #30363d;border-radius:3px;padding:1px 6px;margin-left:4px;vertical-align:middle;cursor:pointer;font-family:inherit">↩ stable</button>' : ''}</h1>
 <div class="subtle" id="header"></div>
 <div class="wp-quicklinks" id="wpQuickLinks" style="display:flex;align-items:center;flex-wrap:wrap;gap:6px">
   <a id="wolfpackQuestLink" href="https://wolfpack.quest" target="_blank" rel="noreferrer"
@@ -11588,7 +11722,7 @@ function renderZealExplorer(s) {
         + '<td class="dim">' + esc(String(rm.rank || '')) + '</td>'
         + '<td class="num">' + esc(rhp) + '</td></tr>';
     }
-    h += grp('zx|raid', '5 - raid (last sample ' + fmtAgo((Date.now() - rp.at) / 1000) + ' ago)', rp.members.length,
+    h += grp('zx|raid', '5 - raid (last sample ' + fmtAgo(rp.at) + ')', rp.members.length,
       tbl(rpRows, ['Grp', 'Name', 'Class', 'Lvl', 'Rank', 'HP']));
   }
   morphInto(el, h);
@@ -11597,6 +11731,16 @@ function renderZealExplorer(s) {
 // Byte-stable: innerHTML only reassigned when the built string changes, so
 // armed restore buttons and open <details> survive polls. Stamps render as
 // fixed strings (never fmtAgo) for the same reason.
+// Stable clock time ("5:24 PM") for capture cards. Relative "X ago" strings
+// change every poll, which defeats the byte-stable innerHTML compare and makes
+// the card repaint (scroll jump / flicker) — an absolute time is stable across
+// polls, so the card only repaints when the DATA changes. (Hitya 2026-07-16.)
+function _clockOf(ms) {
+  var n = Number(ms);
+  if (!isFinite(n) || n <= 0) return '?';
+  try { return new Date(n).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); }
+  catch (e) { return '?'; }
+}
 function _bkStampPretty(st) {
   var s = String(st || '');
   if (s.length < 15) return s;
@@ -11634,6 +11778,96 @@ function renderBackupsCard(s) {
   if (el._wpBkHtml !== h) { el._wpBkHtml = h; el.innerHTML = h; }
 }
 
+// 🎫 Officer DKP tick card. Two attendance sources, difference highlighted
+// (Hitya 2026-07-16): the LIVE raid roster (who Zeal sees right now) and any
+// exported RaidTick*.txt. Slot buttons run a dry-run PREVIEW first; a pending
+// confirm freezes the card (window._dkpTickPending) so the 2s poll can't wipe
+// the confirm UI.
+var _dkpTickPending = null;
+function _slotLabel(sl) { return ({ '1':'Tick 1','2':'Tick 2','3':'Tick 3','4':'Tick 4', bonus:'Bonus', ot:'Overtime' })[sl] || sl; }
+function _dkpSlotButtons(sourceKey) {
+  var slots = ['1','2','3','4','bonus','ot'];
+  var h = '<div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px">';
+  for (var i = 0; i < slots.length; i++) {
+    h += '<button class="wpTickSlot" data-source="' + esc(sourceKey) + '" data-slot="' + slots[i] + '"'
+      + ' style="background:#21262d;color:#e6edf3;border:1px solid #30363d;border-radius:5px;padding:2px 9px;cursor:pointer;font-family:inherit;font-size:11px">' + _slotLabel(slots[i]) + '</button>';
+  }
+  return h + '</div>';
+}
+function renderDkpTickCard(s) {
+  var el = document.getElementById('wpDkpTick');
+  if (!el) return;
+  var t = s && s.dkpTick;
+  if (!t) { el.style.display = 'none'; return; }         // not an officer
+  if (_dkpTickPending) return;                            // confirm open — freeze
+  el.style.display = '';
+  var roster = t.liveRoster, files = t.files || [];
+  var h = '<h2>🎫 DKP ticks <span class="dim" style="font-size:11px;font-weight:normal">— submit attendance to OpenDKP (officer only)</span></h2>';
+  h += '<div class="dim" style="font-size:11px;margin-bottom:8px">Two sources — <b>Live roster</b> is who Zeal sees in your raid <i>right now</i>; a <b>RaidTick file</b> is the timestamped dump the client exported. Pick a slot; you\\'ll get a preview before anything is written.</div>';
+  // Live roster
+  if (roster && roster.count > 0) {
+    h += '<div style="border:1px solid #238636;border-radius:6px;padding:8px 10px;margin:6px 0">'
+      + '<div><b>🟢 Live raid roster</b> <span class="dim">— ' + roster.count + ' in your raid (as of ' + esc(_clockOf(roster.at)) + ')</span></div>'
+      + _dkpSlotButtons('roster') + '</div>';
+  } else {
+    h += '<div class="dim" style="font-size:12px;border:1px dashed #30363d;border-radius:6px;padding:8px 10px;margin:6px 0">🟢 Live raid roster — <i>not in a raid right now</i> (join a raid and Zeal will populate this).</div>';
+  }
+  // RaidTick files
+  for (var i = 0; i < files.length; i++) {
+    var f = files[i];
+    h += '<div style="border:1px solid #30363d;border-radius:6px;padding:8px 10px;margin:6px 0">'
+      + '<div><b>📄 ' + esc(f.name) + '</b> <span class="dim">— ' + f.count + ' players · ' + esc(String(f.ts).replace('T', ' ')) + ' · ' + f.points + ' DKP</span></div>'
+      + _dkpSlotButtons('file:' + i) + '</div>';
+  }
+  if (!roster && files.length === 0) {
+    h += '<div class="dim" style="font-size:12px">No attendance source yet — join a raid, or export a RaidTick file from the client.</div>';
+  }
+  h += '<div id="wpTickMsg" style="margin-top:6px"></div>';
+  if (el._wpTickHtml !== h) { el._wpTickHtml = h; el.innerHTML = h; }
+}
+
+// 💰 Officer Loot capture card. Fills #wpDkpLoot from s.dkpLoot (null for
+// non-officers → card stays hidden). Byte-stable: innerHTML is only
+// reassigned when the built string changes, so checkbox state survives the
+// 2s poll while nothing new arrives (a fresh capture repaints and its rows
+// default to checked, which is what an officer wants for a new drop).
+function renderDkpLootCard(s) {
+  var el = document.getElementById('wpDkpLoot');
+  if (!el) return;
+  var caps = s && s.dkpLoot;
+  if (!Array.isArray(caps)) { el.style.display = 'none'; return; }   // not an officer
+  el.style.display = '';
+  var h = '<h2>💰 Loot capture <span class="dim" style="font-size:11px;font-weight:normal">— item lists seen in /gu + /rs (officer only)</span></h2>';
+  if (caps.length === 0) {
+    h += '<div class="dim" style="font-size:12px">Nothing captured yet. When someone posts a drop list in guild or raid chat (comma or pipe separated), it shows here to review and copy for <code>/loot</code>.</div>';
+    if (el._wpDkpHtml !== h) { el._wpDkpHtml = h; el.innerHTML = h; }
+    return;
+  }
+  h += '<div style="margin-bottom:8px"><button class="wpDkpClearAll" style="background:#30363d;color:#e6edf3;border:1px solid #484f58;border-radius:5px;padding:3px 10px;cursor:pointer;font-family:inherit;font-size:11px">Dismiss all</button></div>';
+  for (var i = 0; i < caps.length; i++) {
+    var c = caps[i];
+    var chan = c.channel === 'gu' ? '/gu' : '/rs';
+    h += '<div class="wpDkpCap" data-id="' + esc(c.id) + '" style="border:1px solid #30363d;border-radius:6px;padding:8px 10px;margin:6px 0">'
+      + '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">'
+      +   '<b>' + esc(c.speaker) + '</b>'
+      +   '<span class="dim" style="font-size:11px">' + chan + ' · ' + esc(_clockOf(Date.parse(c.ts))) + ' · ' + c.items.length + ' item' + (c.items.length === 1 ? '' : 's') + '</span>'
+      +   '<span style="flex:1"></span>'
+      +   '<button class="wpDkpPost" data-id="' + esc(c.id) + '" title="Create closed OpenDKP auctions for the checked items and announce to the loot thread" style="background:#238636;color:#fff;border:0;border-radius:5px;padding:2px 10px;cursor:pointer;font-family:inherit;font-size:11px">💰 Post for bidding</button>'
+      +   '<button class="wpDkpCopy" data-id="' + esc(c.id) + '" style="background:#30363d;color:#e6edf3;border:1px solid #484f58;border-radius:5px;padding:2px 10px;cursor:pointer;font-family:inherit;font-size:11px">Copy</button>'
+      +   '<button class="wpDkpDismiss" data-id="' + esc(c.id) + '" title="Dismiss this list" style="background:none;color:#8b949e;border:1px solid #30363d;border-radius:5px;padding:2px 8px;cursor:pointer;font-family:inherit;font-size:11px">✕</button>'
+      + '</div>';
+    for (var j = 0; j < c.items.length; j++) {
+      var it = c.items[j];
+      h += '<label style="display:flex;align-items:center;gap:8px;padding:2px 0;cursor:pointer;font-size:13px">'
+        + '<input type="checkbox" class="wpDkpItem" data-name="' + esc(it.name) + '" data-qty="' + (it.quantity || 1) + '" checked>'
+        + '<span>' + esc(it.name) + (it.quantity > 1 ? ' <span class="dim">×' + it.quantity + '</span>' : '') + '</span>'
+        + '</label>';
+    }
+    h += '</div>';
+  }
+  if (el._wpDkpHtml !== h) { el._wpDkpHtml = h; el.innerHTML = h; }
+}
+
 function renderInfo(s) {
   const sessionMin = Math.max(1, Math.round((Date.now() - s.startedAt) / 60000));
   // totalMinutes now accumulates the live session incrementally (saveStatsSoon),
@@ -11650,6 +11884,11 @@ function renderInfo(s) {
   // each group expandable. Volatile (live gauges/labels), so it fills its own
   // placeholder via renderZealExplorer to keep the rest of #info byte-stable.
   h += '<div id="wpZealExplorer" class="card wide" style="display:none"></div>';
+  // 🎫 DKP ticks (officers only) — filled by renderDkpTickCard.
+  h += '<div id="wpDkpTick" class="card wide" style="display:none"></div>';
+  // 💰 Loot capture (officers only) — filled by renderDkpLootCard. Own
+  // placeholder so its checkboxes/buttons survive #info repaints.
+  h += '<div id="wpDkpLoot" class="card wide" style="display:none"></div>';
   // 🛟 Settings backups — filled by renderBackupsCard (own placeholder so the
   // restore controls survive #info repaints).
   h += '<div id="wpBackupsCard" class="card wide" style="display:none"></div>';
@@ -12617,6 +12856,7 @@ async function refresh() {
   try {
     const s = await (await fetch('/api/state', _ctl ? { cache: 'no-store', signal: _ctl.signal } : { cache: 'no-store' })).json();
     _refreshFailures = 0;
+    window.__wpLastState = s;   // stash for delegated handlers (DKP tick player lists, etc.)
     var _eb = document.getElementById('wpConnError'); if (_eb) _eb.remove();
     // Preserve scroll across the render batch. Change-detection means most
     // polls rewrite nothing (no shift); when the ACTIVE section does rewrite
@@ -12643,6 +12883,8 @@ async function refresh() {
                      // After info: fill the placeholders renderInfo just
                      // (re)painted, so they show same-tick.
                      ['zealexplorer', renderZealExplorer],
+                     ['dkptick', renderDkpTickCard],
+                     ['dkploot', renderDkpLootCard],
                      ['backupscard', renderBackupsCard]];
     for (var _si = 0; _si < _sections.length; _si++) {
       var _sid = _sections[_si][0], _sfn = _sections[_si][1];
@@ -12737,6 +12979,153 @@ document.querySelectorAll('.nav button[data-tab]').forEach(b => b.addEventListen
   if (b.dataset.tab === 'raid') refreshRaidTab();
 }));
 refresh(); setInterval(refresh, 2000);
+// ↩ stable link next to the BETA badge (static header — wired once). The
+// shell shows a native confirmation before doing anything, so a stray click
+// costs nothing. Hidden outside Mimic (no bridge to ask).
+(function () {
+  var rb = document.getElementById('wpRevertStable');
+  if (!rb) return;
+  if (!(window.mimic && window.mimic.revertToStable)) { rb.style.display = 'none'; return; }
+  rb.onclick = function () {
+    rb.disabled = true;
+    window.mimic.revertToStable().then(function (accepted) {
+      rb.disabled = false;
+      if (accepted) { rb.textContent = '✓ stable on next restart'; rb.style.color = '#3fb950'; }
+    }).catch(function () { rb.disabled = false; });
+  };
+})();
+// 🎫 DKP tick controls — slot click runs a dry-run preview; Confirm submits.
+function _dkpTickPlayers(source) {
+  var s = window.__wpLastState || {};
+  var t = s.dkpTick || {};
+  if (source === 'roster') return (t.liveRoster && t.liveRoster.players) || [];
+  var m = /^file:(\d+)$/.exec(source);
+  if (m && t.files && t.files[+m[1]]) return t.files[+m[1]].players || [];
+  return [];
+}
+function _dkpTickPoints(source) {
+  var s = window.__wpLastState || {};
+  var t = s.dkpTick || {};
+  var m = /^file:(\d+)$/.exec(source);
+  if (m && t.files && t.files[+m[1]]) return t.files[+m[1]].points || 1;
+  return 1;   // live roster ticks default to 1 DKP
+}
+document.addEventListener('click', function (ev) {
+  var t0 = ev.target; if (!t0 || !t0.closest) return;
+  var slotBtn = t0.closest('.wpTickSlot');
+  if (slotBtn) {
+    var source = slotBtn.getAttribute('data-source');
+    var slot = slotBtn.getAttribute('data-slot');
+    var players = _dkpTickPlayers(source);
+    var points = _dkpTickPoints(source);
+    var msg = document.getElementById('wpTickMsg');
+    if (!players.length) { if (msg) msg.innerHTML = '<span style="color:#f6c365">No attendees in that source.</span>'; return; }
+    _dkpTickPending = { source: source, slot: slot, players: players, points: points };
+    if (msg) msg.innerHTML = '<span class="dim">Checking OpenDKP…</span>';
+    fetch('/api/dkp/tick', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ slot: slot, players: players, points: points, dry_run: true }) })
+      .then(function (r) { return r.json(); }).then(function (j) {
+        if (!msg) return;
+        if (!j.ok) { _dkpTickPending = null; msg.innerHTML = '<span style="color:#f85149">✕ ' + esc(j.reason || 'cannot submit') + '</span>'; return; }
+        var verb = j.action === 'would-overwrite' ? 'OVERWRITE' : (j.action === 'create-separate' ? 'create a separate raid for' : 'add');
+        // Prefer the OpenDKP-matched count when present (only matched raiders
+        // get credited); fall back to the raw attendee count.
+        var credited = (typeof j.matched_count === 'number') ? j.matched_count : j.count;
+        var unm = Array.isArray(j.unmatched) ? j.unmatched : [];
+        msg.innerHTML = '<div style="border:1px solid #1f6feb;border-radius:6px;padding:8px 10px;background:#0d1b2e">'
+          + 'Will <b>' + verb + ' ' + esc(_slotLabel(slot)) + '</b> — <b>' + credited + '</b> credited · ' + j.points + ' DKP each'
+          + '<br><span class="dim">Raid: ' + esc(j.raidName || ('#' + j.raidId)) + (j.raidId ? ' (#' + j.raidId + ')' : '') + '</span>'
+          + (unm.length ? '<br><span style="color:#f6c365;font-size:11px">⚠ ' + unm.length + ' not on OpenDKP (won\\'t be credited): ' + esc(unm.slice(0, 12).join(', ')) + (unm.length > 12 ? '…' : '') + '</span>' : '')
+          + '<div style="margin-top:6px"><button id="wpTickConfirm" style="background:#238636;color:#fff;border:0;border-radius:5px;padding:3px 12px;cursor:pointer;font-family:inherit;font-size:11px">✓ Submit tick</button> '
+          + '<button id="wpTickCancel" style="background:#30363d;color:#e6edf3;border:1px solid #484f58;border-radius:5px;padding:3px 12px;cursor:pointer;font-family:inherit;font-size:11px">Cancel</button></div></div>';
+      }).catch(function () { _dkpTickPending = null; if (msg) msg.innerHTML = '<span style="color:#f85149">✕ engine unreachable</span>'; });
+    return;
+  }
+  if (t0.id === 'wpTickCancel') { _dkpTickPending = null; var mc = document.getElementById('wpTickMsg'); if (mc) mc.innerHTML = ''; return; }
+  if (t0.id === 'wpTickConfirm') {
+    var p = _dkpTickPending; var msg2 = document.getElementById('wpTickMsg');
+    if (!p) return;
+    t0.disabled = true; t0.textContent = 'Submitting…';
+    fetch('/api/dkp/tick', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ slot: p.slot, players: p.players, points: p.points, dry_run: false }) })
+      .then(function (r) { return r.json(); }).then(function (j) {
+        _dkpTickPending = null;
+        if (!msg2) return;
+        if (j.ok) {
+          var unm2 = Array.isArray(j.unmatched) ? j.unmatched : [];
+          msg2.innerHTML = '<span style="color:#3fb950">✓ ' + esc(_slotLabel(p.slot)) + ' submitted — ' + j.count + ' credited to ' + esc(j.raidName || ('#' + j.raidId)) + '</span>'
+            + (unm2.length ? '<br><span style="color:#f6c365;font-size:11px">⚠ not on OpenDKP: ' + esc(unm2.slice(0, 12).join(', ')) + (unm2.length > 12 ? '…' : '') + '</span>' : '');
+        } else msg2.innerHTML = '<span style="color:#f85149">✕ ' + esc(j.reason || 'submit failed') + '</span>';
+      }).catch(function () { _dkpTickPending = null; if (msg2) msg2.innerHTML = '<span style="color:#f85149">✕ submit failed</span>'; });
+    return;
+  }
+}, true);
+// 💰 Loot capture controls — delegated (capture) so repaints never lose them.
+function _dkpCheckedItems(cap) {
+  var boxes = cap.querySelectorAll('.wpDkpItem');
+  var items = [];
+  for (var i = 0; i < boxes.length; i++) {
+    if (!boxes[i].checked) continue;
+    items.push({ name: boxes[i].getAttribute('data-name') || '', quantity: parseInt(boxes[i].getAttribute('data-qty') || '1', 10) || 1 });
+  }
+  return items;
+}
+document.addEventListener('click', function (ev) {
+  var t = ev.target;
+  if (!t || !t.closest) return;
+  // 💰 Post for bidding — create closed OpenDKP auctions for the checked items.
+  // Two-click arm (it opens real auctions), then POST to the bot via the agent.
+  var postBtn = t.closest('.wpDkpPost');
+  if (postBtn) {
+    var pcap = postBtn.closest('.wpDkpCap');
+    if (!pcap) return;
+    var pitems = _dkpCheckedItems(pcap);
+    if (pitems.length === 0) { postBtn.textContent = 'nothing checked'; setTimeout(function () { postBtn.textContent = '💰 Post for bidding'; }, 1500); return; }
+    if (postBtn.getAttribute('data-armed') !== '1') {
+      postBtn.setAttribute('data-armed', '1');
+      postBtn.textContent = 'Click again — opens ' + pitems.length + ' bid(s)';
+      setTimeout(function () { try { postBtn.removeAttribute('data-armed'); postBtn.textContent = '💰 Post for bidding'; } catch (e) {} }, 6000);
+      return;
+    }
+    postBtn.disabled = true; postBtn.textContent = 'Posting…';
+    fetch('/api/dkp/loot-post', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: pitems }) })
+      .then(function (r) { return r.json(); }).then(function (j) {
+        postBtn.disabled = false; postBtn.removeAttribute('data-armed');
+        if (j && j.ok) {
+          postBtn.textContent = '✓ ' + (j.count || pitems.length) + ' up for bid';
+          if (Array.isArray(j.unmatched) && j.unmatched.length) postBtn.title = 'Not in catalog (skipped): ' + j.unmatched.join(', ');
+          setTimeout(function () { try { postBtn.textContent = '💰 Post for bidding'; } catch (e) {} }, 5000);
+        } else {
+          postBtn.textContent = '✕ ' + ((j && j.reason) || 'failed').slice(0, 40);
+          setTimeout(function () { try { postBtn.textContent = '💰 Post for bidding'; } catch (e) {} }, 6000);
+        }
+      }).catch(function () { postBtn.disabled = false; postBtn.removeAttribute('data-armed'); postBtn.textContent = '✕ engine unreachable'; });
+    return;
+  }
+  // Copy the checked items of one capture as a pipe-delimited /loot paste.
+  var copyBtn = t.closest('.wpDkpCopy');
+  if (copyBtn) {
+    var cap = copyBtn.closest('.wpDkpCap');
+    if (!cap) return;
+    var names = _dkpCheckedItems(cap).map(function (it) { return it.quantity > 1 ? it.name + ' (' + it.quantity + ')' : it.name; });
+    if (names.length === 0) { copyBtn.textContent = 'nothing'; setTimeout(function () { copyBtn.textContent = 'Copy'; }, 1500); return; }
+    var paste = names.join(' | ');
+    var done = function () { copyBtn.textContent = '✓ ' + names.length; setTimeout(function () { copyBtn.textContent = 'Copy'; }, 2000); };
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) { navigator.clipboard.writeText(paste).then(done, done); }
+      else { var ta = document.createElement('textarea'); ta.value = paste; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); done(); }
+    } catch (e) { done(); }
+    return;
+  }
+  var dis = t.closest('.wpDkpDismiss');
+  var clr = t.closest('.wpDkpClearAll');
+  if (dis || clr) {
+    var id = clr ? '*' : (dis.getAttribute('data-id') || '');
+    fetch('/api/dkp/dismiss', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: id }) })
+      .then(function () { refresh(); }).catch(function () {});
+    return;
+  }
+}, true);
 // Restore buttons on the 🛟 Settings backups card — delegated (capture) so
 // repaints never lose the handler. Two-step arm/confirm instead of confirm():
 // first click arms for 8s, second click fires the restore.
@@ -14765,7 +15154,21 @@ function startWebDashboard(port) {
         // served instantly). 400ms staleness is invisible at those cadences.
         const _now = Date.now();
         if (!_stateJsonCache.body || (_now - _stateJsonCache.at) > 400) {
-          _stateJsonCache = { at: _now, body: JSON.stringify(_serializeForDashboard()) };
+          try {
+            _stateJsonCache = { at: _now, body: JSON.stringify(_serializeForDashboard()) };
+          } catch (_serErr) {
+            // A serialize helper threw. NEVER 500 here: the dashboard AND every
+            // overlay parse the response with .json() WITHOUT checking status, so
+            // a 500's error body reads as a successful-but-empty state and blinds
+            // them (CH chain "OVERLAY BLIND", empty dashboard — raid-night
+            // 2026-07-16, triggered by targeting a heavily-buffed player). Serve
+            // the last good snapshot instead (stale but valid); retries next poll,
+            // so it self-heals the instant the offending state clears.
+            console.error('[api/state] serialize failed, serving last-good:', _serErr && (_serErr.stack || _serErr.message || _serErr));
+            if (!_stateJsonCache.body) {
+              _stateJsonCache = { at: _now, body: '{"watchedLogs":[],"sessionEvents":0,"uploadCount":0,"_serializeError":true}' };
+            }
+          }
         }
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(_stateJsonCache.body);
@@ -14800,6 +15203,90 @@ function startWebDashboard(port) {
         const result = restoreSettingsBackup(rp.dir, rp.file, rp.stamp);
         res.writeHead(result.ok ? 200 : 409, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify(result));
+      }
+      // Officer Loot panel — dismiss a captured item list (or all). Officer-
+      // gated at the UI (the panel only renders for officers) and here (the
+      // capture list is only ever served to officers). Local-only mutation.
+      if (req.url === '/api/dkp/dismiss' && req.method === 'POST') {
+        if (!(_mimicIdentity && _mimicIdentity.is_officer)) { res.writeHead(403); return res.end('{"error":"officers only"}'); }
+        let _db = '';
+        for await (const c of req) { _db += c; if (_db.length > 2 * 1024) { res.writeHead(413); return res.end(); } }
+        let dp; try { dp = JSON.parse(_db || '{}'); } catch { res.writeHead(400); return res.end('{"error":"bad json"}'); }
+        const result = dismissLootCapture(String(dp.id || ''));
+        res.writeHead(result.ok ? 200 : 404, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify(result));
+      }
+      // Officer DKP tick — forward the dashboard's submit to the bot's
+      // /api/agent/dkp-tick (which reuses the shared submitRaidTick util). The
+      // bot re-checks officer identity from opts.token (the per-user wpms_
+      // session), so this is officer-gated end to end. dry_run passes through
+      // for the preview → confirm flow.
+      if (req.url === '/api/dkp/tick' && req.method === 'POST') {
+        if (!(_mimicIdentity && _mimicIdentity.is_officer)) { res.writeHead(403); return res.end('{"error":"officers only"}'); }
+        let _tb = '';
+        for await (const c of req) { _tb += c; if (_tb.length > 64 * 1024) { res.writeHead(413); return res.end(); } }
+        let tp; try { tp = JSON.parse(_tb || '{}'); } catch { res.writeHead(400); return res.end('{"error":"bad json"}'); }
+        const opts = _uploadOpts;
+        if (!opts || !opts.botUrl || !opts.token) { res.writeHead(503); return res.end('{"ok":false,"reason":"not connected to the bot"}'); }
+        const url = opts.botUrl.replace(/\/encounter(\?.*)?$/, '/dkp-tick');
+        try {
+          const u = new URL(url);
+          const mod = u.protocol === 'https:' ? https : http;
+          const body = JSON.stringify(tp);
+          const proxied = await new Promise((resolve) => {
+            const rq = mod.request({
+              method: 'POST', hostname: u.hostname, port: u.port, path: u.pathname + u.search,
+              headers: {
+                'Content-Type': 'application/json',
+                'Content-Length': Buffer.byteLength(body),
+                'Authorization': 'Bearer ' + opts.token,
+                'User-Agent': `wolfpack-logsync/${AGENT_VERSION}`,
+              }, timeout: 15000,
+            }, (r) => { let d = ''; r.on('data', c => d += c); r.on('end', () => resolve({ status: r.statusCode, body: d })); });
+            rq.on('error',   () => resolve({ status: 502, body: '{"ok":false,"reason":"bot unreachable"}' }));
+            rq.on('timeout', () => { rq.destroy(); resolve({ status: 504, body: '{"ok":false,"reason":"bot timed out"}' }); });
+            rq.end(body);
+          });
+          res.writeHead(proxied.status || 502, { 'Content-Type': 'application/json' });
+          return res.end(proxied.body || '{"ok":false}');
+        } catch (e) {
+          res.writeHead(502); return res.end(JSON.stringify({ ok: false, reason: String((e && e.message) || e) }));
+        }
+      }
+      // Officer loot post — forward the dashboard's selected items to the
+      // bot's /api/agent/loot-post (creates closed OpenDKP auctions + loot-
+      // thread announce). Officer-gated end to end (bot re-checks is_officer).
+      if (req.url === '/api/dkp/loot-post' && req.method === 'POST') {
+        if (!(_mimicIdentity && _mimicIdentity.is_officer)) { res.writeHead(403); return res.end('{"error":"officers only"}'); }
+        let _lb = '';
+        for await (const c of req) { _lb += c; if (_lb.length > 64 * 1024) { res.writeHead(413); return res.end(); } }
+        let lp; try { lp = JSON.parse(_lb || '{}'); } catch { res.writeHead(400); return res.end('{"error":"bad json"}'); }
+        const opts = _uploadOpts;
+        if (!opts || !opts.botUrl || !opts.token) { res.writeHead(503); return res.end('{"ok":false,"reason":"not connected to the bot"}'); }
+        const url = opts.botUrl.replace(/\/encounter(\?.*)?$/, '/loot-post');
+        try {
+          const u = new URL(url);
+          const mod = u.protocol === 'https:' ? https : http;
+          const body = JSON.stringify(lp);
+          const proxied = await new Promise((resolve) => {
+            const rq = mod.request({
+              method: 'POST', hostname: u.hostname, port: u.port, path: u.pathname + u.search,
+              headers: {
+                'Content-Type': 'application/json',
+                'Content-Length': Buffer.byteLength(body),
+                'Authorization': 'Bearer ' + opts.token,
+                'User-Agent': `wolfpack-logsync/${AGENT_VERSION}`,
+              }, timeout: 20000,
+            }, (r) => { let d = ''; r.on('data', c => d += c); r.on('end', () => resolve({ status: r.statusCode, body: d })); });
+            rq.on('error',   () => resolve({ status: 502, body: '{"ok":false,"reason":"bot unreachable"}' }));
+            rq.on('timeout', () => { rq.destroy(); resolve({ status: 504, body: '{"ok":false,"reason":"bot timed out"}' }); });
+            rq.end(body);
+          });
+          res.writeHead(proxied.status || 502, { 'Content-Type': 'application/json' });
+          return res.end(proxied.body || '{"ok":false}');
+        } catch (e) {
+          res.writeHead(502); return res.end(JSON.stringify({ ok: false, reason: String((e && e.message) || e) }));
+        }
       }
       if (req.url === '/api/triggers/feedback' && req.method === 'POST') {
         let _body = '';
@@ -14853,13 +15340,19 @@ function startWebDashboard(port) {
       }
 
       if (req.url === '/api/tank-state') {
+        let _b;
+        try { _b = JSON.stringify(_serializeTankState()); _tankStateLastGood = _b; }
+        catch (e) { console.error('[api/tank-state] serialize failed, serving last-good:', e && (e.stack || e.message || e)); _b = _tankStateLastGood; }
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify(_serializeTankState()));
+        return res.end(_b || 'null');
       }
       // Command Center overlay (command.html) — the "one window" board.
       if (req.url === '/api/command-center') {
+        let _b;
+        try { _b = JSON.stringify(_serializeCommandCenterState()); _commandCenterLastGood = _b; }
+        catch (e) { console.error('[api/command-center] serialize failed, serving last-good:', e && (e.stack || e.message || e)); _b = _commandCenterLastGood; }
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify(_serializeCommandCenterState()));
+        return res.end(_b || 'null');
       }
       // Mimic's buff-queue overlay polls this — we proxy the bot's
       // /api/agent/raid-buff-queue with a 3s cache so a room of Mimics doesn't
@@ -17354,6 +17847,11 @@ function runOptinBackfill(files, opts = {}) {
               if (chatMsg) {
                 chatBatch.push({ ...chatMsg, uploadedBy: f.character });
                 status.chatCount++;
+                // NOTE: no loot capture here — this is runOptinBackfill (a
+                // --since replay of OLD logs). Loot capture is LIVE-only and
+                // hooks the two main() tail loops instead (see noteLootFromChat
+                // call sites), so a backfill never floods the panel with
+                // week-old drop lists.
                 if (chatBatch.length >= 500) flushChat(true).catch(() => {});
                 return;
               }
@@ -17964,6 +18462,188 @@ const CHAT_LINE_PATTERNS = [
   //                    — accept both verbs to cover client variations.
   { rx: /^\[.+?\]\s+You (?:tell|say to) your raid,\s*['"](.+?)['"]\s*$/, channel: 'raid', self: true },
 ];
+
+// ── DKP loot capture (officer dashboard) ───────────────────────────────────
+// Officers post drops in /gu or /rs as a delimited item list (comma OR pipe —
+// a per-user Zeal option). The dashboard's officer-only Loot panel collects
+// these live so an officer can review + clean them and copy the exact /loot
+// paste (or, next step, post straight to bidding) without hunting back
+// through chat. Item names legitimately contain colons ("Ancient: Greater
+// Concussion", "Spell: Hammer of Souls"), apostrophes ("Palladius'"), and
+// leading articles ("A Glowing Orb…"); pipe and comma are the ONLY safe split
+// chars (EQ item names contain neither). The bot re-validates every name
+// against eqemu_items at post time — this capture only keeps the list tidy.
+// Connectors that may be lowercase mid-item ("Rod OF Fury" → "Rod of Fury").
+const _LOOT_CONNECTORS = { of: 1, the: 1, a: 1, an: 1, and: 1, to: 1, de: 1, du: 1, von: 1, la: 1, le: 1, in: 1, on: 1, "d'": 1 };
+// Does a candidate look like a real EQ item name? The decisive signal is
+// Title Case — every SIGNIFICANT word (not a connector) is capitalized —
+// because chatter carries lowercase words ("just Dinged", "i need the full
+// lvl", "me 2", "I love starburst"). Category-prefixed items (Spell:, Ancient:)
+// are always accepted. Single bare words are rejected (too ambiguous —
+// "Grats", "ME", "DSP"): real items are multi-word or category-prefixed.
+function _looksLikeItemName(name) {
+  if (/^(Spell|Song|Ancient|Rune|Glyph|Tome|Words|Page|Formula):/i.test(name)) return true;
+  if (/[!?]$/.test(name)) return false;   // ends like a sentence
+  const words = name.split(/\s+/).filter(Boolean);
+  if (words.length < 2) return false;     // single word — not enough signal
+  let significant = 0, capped = 0;
+  for (const w of words) {
+    const lw = w.toLowerCase().replace(/[^a-z']/g, '');
+    if (_LOOT_CONNECTORS[lw]) continue;   // connectors may be lowercase
+    significant++;
+    if (/^["'`]*[A-Z0-9]/.test(w)) capped++;   // starts uppercase (allow leading quote/backtick) or a numeral
+  }
+  // EVERY significant word must be capitalized — real item names are Title Case.
+  return significant > 0 && capped === significant;
+}
+function parseLootChatBody(body) {
+  if (!body) return [];
+  let s = String(body).trim().replace(/^'+|'+$/g, '').trim();
+  const delim = s.includes('|') ? '|' : ',';
+  const parts = s.split(delim);
+  const out = [];
+  for (let raw of parts) {
+    let name = raw.trim();
+    if (!name) continue;
+    let qty = 1;
+    const qm = name.match(/\s*\((\d{1,3})\)\s*$/);
+    if (qm) { qty = parseInt(qm[1], 10) || 1; name = name.slice(0, qm.index).trim(); }
+    if (!name || !/[A-Za-z]/.test(name)) continue;
+    // EVERY element of a real loot list is an item name. If ANY split element
+    // fails the item-name check, the message is chatter that happened to have
+    // commas ("just Dinged, i need the full lvl, …") — reject the whole thing.
+    // (The bot re-validates surviving names against eqemu_items at post time.)
+    if (!_looksLikeItemName(name)) return [];
+    const prev = out.find(i => i.name.toLowerCase() === name.toLowerCase());
+    if (prev) { prev.quantity += qty; continue; }
+    out.push({ name, quantity: qty });
+  }
+  return out;
+}
+const _lootCaptures = [];          // {id, speaker, channel, ts, items:[{name,quantity}]}, newest first
+const LOOT_CAPTURE_MAX    = 40;
+const LOOT_CAPTURE_TTL_MS = 3 * 60 * 60 * 1000;   // drop after 3h
+let _lootCaptureSeq = 0;
+function noteLootFromChat(chatMsg) {
+  try {
+    if (!chatMsg || (chatMsg.channel !== 'guild' && chatMsg.channel !== 'raid')) return;
+    const items = parseLootChatBody(chatMsg.text);
+    // Require ≥2 items OR a category-prefixed single item — the parser's guard
+    // already enforces item-shape, but a 1-item chatter that slips through
+    // shouldn't spam the panel. (Multi-item = definitely a loot dump.)
+    if (items.length === 0) return;
+    // Dedup: same speaker + identical item-name set within 10 min is a re-link
+    // (people re-post the list). Refresh the timestamp instead of adding a row.
+    const sig = chatMsg.speaker.toLowerCase() + '|' + items.map(i => i.name.toLowerCase()).sort().join('~');
+    const now = Date.now();
+    const dup = _lootCaptures.find(c => c._sig === sig && (now - c._at) < 10 * 60 * 1000);
+    if (dup) { dup._at = now; dup.ts = chatMsg.ts; return; }
+    _lootCaptures.unshift({
+      id: 'lc' + (++_lootCaptureSeq),
+      _sig: sig,
+      _at: now,
+      speaker: chatMsg.speaker,
+      channel: chatMsg.channel === 'guild' ? 'gu' : 'rs',
+      ts: chatMsg.ts,
+      items,
+    });
+    while (_lootCaptures.length > LOOT_CAPTURE_MAX) _lootCaptures.pop();
+    console.log(`[loot] captured ${items.length} item(s) from ${chatMsg.speaker} (${chatMsg.channel}) — officer Loot panel`);
+  } catch (e) { void e; }
+}
+function _lootCaptureSnapshot() {
+  const cutoff = Date.now() - LOOT_CAPTURE_TTL_MS;
+  for (let i = _lootCaptures.length - 1; i >= 0; i--) {
+    if (_lootCaptures[i]._at < cutoff) _lootCaptures.splice(i, 1);
+  }
+  return _lootCaptures.map(c => ({ id: c.id, speaker: c.speaker, channel: c.channel, ts: c.ts, items: c.items }));
+}
+function dismissLootCapture(id) {
+  if (id === '*' || id === 'all') { _lootCaptures.length = 0; return { ok: true, cleared: 'all' }; }
+  const i = _lootCaptures.findIndex(c => c.id === id);
+  if (i === -1) return { ok: false, reason: 'not found' };
+  _lootCaptures.splice(i, 1);
+  return { ok: true, cleared: id };
+}
+
+// ── DKP ticks (officer dashboard) ───────────────────────────────────────────
+// Two attendance sources, and the dashboard highlights the difference
+// (Hitya 2026-07-16): (1) the LIVE raid roster — who Zeal reports in your raid
+// right this second; (2) any RaidTick*.txt the TAKP client exported to the EQ
+// folder — an official attendance dump with its own timestamp. Both feed the
+// same officer-gated "Submit tick" → bot /api/agent/dkp-tick.
+// Both the TAKP RaidTick export AND EQ's own `/outputfile raidlist` dump
+// (Hitya 2026-07-16: "the command for raid tick generation is /outputfile
+// raidlist"). RaidRoster* covered too.
+const RAIDTICK_FILENAME_RX = /^Raid(Tick|List|Roster).*\.txt$/i;
+// Two on-disk layouts, auto-detected per line:
+//   • RaidTick:  "name \t ? \t ? \t ts \t pts"          (name in col 0, ts/pts present)
+//   • RaidList:  "<group#> \t name \t level \t class …"  (leading group number, name in col 1)
+// The header row (Name/Player/Group…) and any non-name column are skipped.
+function parseRaidTickText(text) {
+  const lines = String(text || '').split(/\r?\n/).map(l => l.replace(/\s+$/, '')).filter(l => l.trim());
+  if (lines.length < 1) return null;
+  const players = []; const seen = new Set(); let rawTs = null; let points = 1;
+  for (const line of lines) {
+    const cols = line.split('\t');
+    if (cols.length < 2) continue;
+    const c0 = (cols[0] || '').trim();
+    let name, tsCol, ptsCol;
+    if (/^\d{1,2}$/.test(c0)) {          // RaidList: leading group number → name in col 1
+      name = (cols[1] || '').trim();
+    } else {                             // RaidTick: name in col 0, ts/pts in cols 3/4
+      name = c0; tsCol = cols[3]; ptsCol = cols[4];
+    }
+    if (!name || !/^[A-Za-z]{2,}$/.test(name)) continue;   // real char names only (skips header/level/blank)
+    if (/^(name|player|character|group)$/i.test(name)) continue;
+    if (!rawTs && tsCol && /\d{4}-\d{2}-\d{2}/.test(tsCol)) rawTs = tsCol;
+    const p = parseInt(ptsCol, 10); if (!isNaN(p)) points = p;
+    const k = name.toLowerCase(); if (seen.has(k)) continue; seen.add(k);
+    players.push(name);
+  }
+  if (!players.length) return null;
+  const isoTimestamp = rawTs
+    ? rawTs.replace(/^(\d{4}-\d{2}-\d{2})_(\d{2})-(\d{2})-(\d{2})$/, '$1T$2:$3:$4')
+    : new Date().toISOString().slice(0, 19);
+  return { players, isoTimestamp, points };
+}
+function _scanRaidTickFiles() {
+  const firstLog = stats.watchedLogs && stats.watchedLogs[0] && stats.watchedLogs[0].logPath;
+  if (!firstLog) return [];
+  const dir = path.dirname(firstLog);
+  let entries; try { entries = fs.readdirSync(dir); } catch { return []; }
+  const out = [];
+  for (const name of entries) {
+    if (!RAIDTICK_FILENAME_RX.test(name)) continue;
+    const full = path.join(dir, name);
+    try {
+      const st = fs.statSync(full);
+      const parsed = parseRaidTickText(fs.readFileSync(full, 'utf8'));
+      if (!parsed) continue;
+      out.push({ name, mtime: st.mtimeMs, count: parsed.players.length, players: parsed.players, ts: parsed.isoTimestamp, points: parsed.points });
+    } catch { /* unreadable — skip */ }
+  }
+  out.sort((a, b) => b.mtime - a.mtime);
+  return out.slice(0, 5);
+}
+// Live raid roster attendee names (unique, non-empty). Fresh only — a stale
+// pipe (no raid) yields null so the dashboard doesn't offer a phantom tick.
+function _liveRosterForTick() {
+  if (!_lastRaidPipe || !Array.isArray(_lastRaidPipe.members)) return null;
+  if ((Date.now() - (_lastRaidPipe.at || 0)) > 5 * 60 * 1000) return null;   // >5min stale
+  const seen = new Set(); const players = [];
+  for (const m of _lastRaidPipe.members) {
+    const nm = m && m.name ? String(m.name).trim() : '';
+    if (!nm) continue;
+    const k = nm.toLowerCase();
+    if (seen.has(k)) continue;
+    seen.add(k); players.push(nm);
+  }
+  return players.length ? { count: players.length, players, at: _lastRaidPipe.at } : null;
+}
+function _dkpTickSnapshot() {
+  return { liveRoster: _liveRosterForTick(), files: _scanRaidTickFiles() };
+}
 
 // ── Druzzil Ro instance-kill announcements ─────────────────────────────────
 // Server god broadcasts guild kills: "Druzzil Ro tells the guild, 'Emma of <Wolf Pack> has killed Boss in Zone!'"
@@ -18602,6 +19282,83 @@ function _chatCrossLogArbitrate(fp, chatMsg) {
 }
 // _lockoutBuffer is declared above near parseSllLine (module-level _lockoutBuffer)
 let _uploadOpts    = null;      // set in main() once botUrl/token are known
+
+// ── #72 designated-reporter election (agent side) ───────────────────────────
+// The bot's /api/agent/reporter-poll tells us which shared streams THIS machine
+// should upload, so at scale one agent owns each stream instead of all N.
+// FAIL-OPEN: every role defaults TRUE and RESETS to true on any poll failure
+// (old bot 404, network blip, non-200, the first ~20s before the first answer)
+// — losing contact with the elector means we upload exactly as before, never
+// go silent. P2 gates chat only; buffs/roster ride P1b/P1c.
+let _reporterRoles       = { chat: true, buffs: true, roster: true };
+let _reporterElectionOn  = false;   // true only while the bot answers election:'on'
+let _reporterHeartbeatOn = false;
+const REPORTER_HEARTBEAT_MS = 20_000;
+function _reporterFailOpen() { _reporterRoles = { chat: true, buffs: true, roster: true }; _reporterElectionOn = false; }
+function _reporterHeartbeatOnce() {
+  const opts = _uploadOpts;
+  if (!opts || !opts.botUrl || !opts.token || opts.dryRun) return;
+  if (!_isUploaderInstance) return;   // one heartbeat per machine (the uploader instance)
+  let primary = null;
+  try { primary = _primaryCharacter(); } catch { /* */ }
+  // Best-effort context the bot uses for the zone/group-aware election (P1b/c).
+  let zone = null, group_num = null, has_zeal = false;
+  try {
+    const st = primary ? _zealState[primary] : null;
+    if (st) zone = _zoneName(st.zone) || null;
+    has_zeal = !!(_lastRaidPipe && Date.now() - _lastRaidPipe.at < 60_000)
+            || Object.keys(_zealState || {}).length > 0;
+    if (_lastRaidPipe && primary) {
+      const me = _lastRaidPipe.members.find(m => m && m.name && m.name.toLowerCase() === primary.toLowerCase());
+      if (me && Number.isFinite(me.group)) group_num = me.group;
+    }
+  } catch { /* best-effort */ }
+  try {
+    const url = opts.botUrl.replace(/\/encounter(\?.*)?$/, '/reporter-poll');
+    const u   = new URL(url);
+    const mod = u.protocol === 'https:' ? https : http;
+    const body = JSON.stringify({ primary_character: primary, zone, group_num, has_zeal, agent_version: AGENT_VERSION });
+    const req = mod.request({
+      method: 'POST', hostname: u.hostname, port: u.port, path: u.pathname,
+      headers: {
+        'Authorization': 'Bearer ' + opts.token,
+        'Content-Type':  'application/json',
+        'Content-Length': Buffer.byteLength(body),
+        'User-Agent':    `wolfpack-logsync/${AGENT_VERSION}`,
+      },
+      timeout: 5000,
+    }, (res) => {
+      if (res.statusCode !== 200) { res.resume(); _reporterFailOpen(); return; }  // old/erroring bot → fail-open
+      let buf = '';
+      res.on('data', (d) => { buf += d; if (buf.length > 8192) req.destroy(); });
+      res.on('end', () => {
+        try {
+          const j = JSON.parse(buf);
+          if (j && j.roles && typeof j.roles === 'object') {
+            const prev = _reporterRoles.chat;
+            _reporterRoles = {
+              chat:   j.roles.chat   !== false,   // any missing key defaults TRUE (fail-open)
+              buffs:  j.roles.buffs  !== false,
+              roster: j.roles.roster !== false,
+            };
+            _reporterElectionOn = j.election === 'on';
+            if (prev !== _reporterRoles.chat)
+              console.log(`[reporter] chat role → ${_reporterRoles.chat ? 'REPORTER (uploading /gu·/rs)' : 'stand down'} (election ${j.election})`);
+          } else { _reporterFailOpen(); }
+        } catch { _reporterFailOpen(); }   // unparseable → fail-open
+      });
+    });
+    req.on('error',   () => _reporterFailOpen());
+    req.on('timeout', () => { req.destroy(); _reporterFailOpen(); });
+    req.write(body); req.end();
+  } catch { _reporterFailOpen(); }
+}
+function startReporterHeartbeat() {
+  if (_reporterHeartbeatOn) return;
+  _reporterHeartbeatOn = true;
+  _reporterHeartbeatOnce();                                     // poll immediately on boot
+  setInterval(_reporterHeartbeatOnce, REPORTER_HEARTBEAT_MS).unref();
+}
 let _chatRelayOn   = false;     // true once the 5s relay interval is running
 
 function startChatRelay() {
@@ -19145,6 +19902,11 @@ function uploadChat(messages, { botUrl, token, dryRun }) {
     }
     return Promise.resolve();
   }
+  // #72: chat (/gu·/rs) is guild/raid-global — identical for every agent — so
+  // only the elected chat reporter uploads. Non-reporters drop it (the reporter
+  // sees the same lines). Fail-open default keeps every agent uploading until
+  // the bot says otherwise, so this can never make chat go dark.
+  if (!_reporterRoles.chat) return Promise.resolve();
   enqueueUpload('chat', { agent_version: AGENT_VERSION, messages });
   return Promise.resolve();
 }
@@ -19856,8 +20618,10 @@ function _translateDotNetRegex(pattern) {
   // {s} / {S} / {S2} / {c} → permissive name-like capture. The earlier form
   // ([^\s]+) refused ANY whitespace, so multi-word mob names ("Zov Va Dyn",
   // "Aten Ha Ra", "Lord Nagafen") never matched and triggers like Enrage
-  // silently never fired. Allow word chars + space + apostrophe + hyphen,
-  // lazy so the surrounding anchored context (^...$) still constrains the
+  // silently never fired. Allow word chars + space + apostrophe + hyphen +
+  // BACKTICK — Luclin names like Rhag`Zhezum / Aten`Ha`Ra carry a backtick, and
+  // without it a {s} trigger could never fire on those mobs (audit fix). Lazy so
+  // the surrounding anchored context (^...$) still constrains the
   // match. The capture is NAMED — first occurrence as `s`, second as `s1`,
   // etc. — so (a) action templates like "ENRAGE - {s}" interpolate the
   // captured mob name and (b) the live evaluator can audit the match against
@@ -19866,7 +20630,7 @@ function _translateDotNetRegex(pattern) {
   p = p.replace(/\{[sScC]\d*\}/g, () => {
     const name = sIdx === 0 ? 's' : `s${sIdx}`;
     sIdx++;
-    return `(?<${name}>[\\w' -]+?)`;
+    return `(?<${name}>[\\w'\` -]+?)`;
   });
   return p;
 }
@@ -20144,6 +20908,14 @@ function pollGuildTriggers({ botUrl, token }) {
         res.on('end', () => {
           try {
             const resp = JSON.parse(data);
+            // Version-gate: if the guild set hasn't changed, skip the recompile
+            // entirely so a faster poll (see the 2-min interval) stays cheap.
+            // Only when the bot actually sent a version (older bots send none →
+            // recompile as before, never falsely "unchanged").
+            if (resp.version && resp.version === stats.guildTriggersVersion) {
+              stats.guildTriggersCheckedAt = Date.now();
+              resolve(); return;
+            }
             if (Array.isArray(resp.triggers)) {
               // Compile once; eval per-line is hot path.
               const compiled = [];
@@ -20655,6 +21427,10 @@ function _announceRampage(target, tsMs) {
 // the same logical event doesn't double-play on a Mimic that detected
 // AND received it.
 const _localFireKeys = new Map();   // key → [tsMs, ...]
+// Callout-replay (#98): a rolling log of trigger FIRES so a per-fight upload
+// can report which callouts actually went off (covers Death Touch + every
+// trigger). Windowed into encounters at flush time; capped so it can't grow.
+const _fireLog = [];                // [{ at: tsMs, name }]
 const FIRE_DEDUP_WINDOW_MS = 8_000;
 
 function _markFireSeen(key, tsMs) {
@@ -21118,7 +21894,24 @@ function diStatusSnapshot() {
       seconds: di.readyAt > now ? Math.ceil((di.readyAt - now) / 1000) : 0,
     });
   }
-  const list = [...byName.values()].sort((a, b) => (a.up === b.up ? a.name.localeCompare(b.name) : a.up ? -1 : 1));
+  // Drop assumed-ready clerics who aren't actually in the raid. The default-
+  // ready rule (a cleric who hasn't cast DI shows "up") over-includes a parked
+  // / boxed cleric alt that doesn't even have DI scribed (Hitya's Manamana,
+  // 2026-07-16). Keep anyone who has genuinely cast DI recently (seconds > 0 =
+  // on cooldown = definitely has the spell) and anyone present in the live raid
+  // roster; only prune when we actually have a fresh, populated roster to judge
+  // against (else fall back to showing everyone — better than hiding a real DI).
+  let list = [...byName.values()];
+  const _raidFresh = _lastRaidPipe && Array.isArray(_lastRaidPipe.members) &&
+                     (Date.now() - (_lastRaidPipe.at || 0)) < 10 * 60 * 1000;
+  if (_raidFresh) {
+    const raidNames = new Set(_lastRaidPipe.members
+      .map(m => (m && m.name) ? String(m.name).toLowerCase() : null).filter(Boolean));
+    if (raidNames.size >= 8) {
+      list = list.filter(c => c.seconds > 0 || raidNames.has(String(c.name).toLowerCase()));
+    }
+  }
+  list.sort((a, b) => (a.up === b.up ? a.name.localeCompare(b.name) : a.up ? -1 : 1));
   return { clerics: list, up_count: list.filter(c => c.up).length };
 }
 // 8s felt sluggish once cross-client tank HP shipped (a non-local MT's bar only
@@ -21126,10 +21919,14 @@ function diStatusSnapshot() {
 // live; reads dedup through the bot's own relay cache so a roomful of Mimics
 // doesn't multiply Supabase load. Tunable via WP_MT_LIVE_STATE_TTL_MS.
 const MT_LIVE_STATE_TTL_MS = parseInt(process.env.WP_MT_LIVE_STATE_TTL_MS, 10) || 2500;
-// Restore the two caches these Mob-info lookups depend on — their declarations
-// had gone missing on main, so every non-self target lookup threw
-// "ReferenceError: _mtLiveStateByName is not defined" (fixed on beta after the
-// raid-night 2026-07-16 outage; ported here). Declared next to the fetch that fills them.
+// Cross-client live-state cache + in-flight de-dupe. These back EVERY cross-
+// client HP/buff lookup (_resolveHpValuesForName, _resolveBuffsForName,
+// buildMobInfo) but their declarations had gone missing, so every non-self
+// target lookup threw "ReferenceError: _mtLiveStateByName is not defined". That
+// silently killed cross-client tank HP (tank stuck on "[local]"), and — once
+// the 3.3.71 buff-filter fix stopped masking it — hard-blanked the Tank +
+// Command Center overlays and stopped Mob Info switching to players/pets
+// (raid-night 2026-07-16). Restore them here, next to the fetch that fills them.
 const _mtLiveStateByName   = new Map();   // nameLower → { at, state } (bot-relayed Zeal snapshot)
 const _mtLiveStateInflight = new Set();   // nameLower currently being fetched
 function fetchCharacterLiveState(name) {
@@ -22279,6 +23076,13 @@ function _fireTriggerActions(t, captures, tsMs, test, isRelay) {
       }
     }
   }
+  // Callout-replay (#98): record the fire so the per-fight timeline can show
+  // which callouts went off. Skip test/rehearsal fires. Windowed into the
+  // encounter at flush time; hard-capped so it can't grow unbounded.
+  if (!test) {
+    _fireLog.push({ at: tsMs || Date.now(), name: t.name || t.key || 'trigger' });
+    if (_fireLog.length > 600) _fireLog.splice(0, _fireLog.length - 600);
+  }
   for (const a of (t.actions || [])) {
     if (!a || !a.type) continue;
     if (a.type === 'text_overlay') {
@@ -22861,6 +23665,8 @@ async function main() {
   if (!dryRun && token) {
     fetchSpellCatalog({ botUrl, token }).catch(() => {});
     fetchItemClickies({ botUrl, token }).catch(() => {});
+    startReporterHeartbeat();   // #72 — poll the bot for our upload roles (fail-open)
+    setInterval(() => { try { uploadRollSets(); } catch {} }, 60_000).unref();   // #91 off-night roll capture
     // Re-fetch daily — the catalog only changes on the weekly upstream sync,
     // but a daily check is cheap (the bot serves a 304 if nothing changed)
     // and stops a long-running agent from drifting indefinitely.
@@ -22935,7 +23741,10 @@ async function main() {
     // refresh every 10 min. Personal triggers load once from local disk.
     loadPersonalTriggers();
     setTimeout(() => pollGuildTriggers({ botUrl, token }), 12_000);
-    setInterval(() => pollGuildTriggers({ botUrl, token }), 10 * 60_000);
+    // Poll every 2 min so a newly added/edited guild trigger reaches raiders in
+    // ~2 min instead of 10. Cheap: the version-gate above skips the recompile
+    // when nothing changed, and the set is small (a few KB).
+    setInterval(() => pollGuildTriggers({ botUrl, token }), 2 * 60_000);
     // Per-character data prefs (exclude_from_stats / exclude_inventory).
     // Polled so the owner's choice on /me takes effect within ~10 min on every
     // machine they run the agent on — no agent restart required.
@@ -23156,6 +23965,7 @@ async function main() {
         const chatMsg = parseChatLine(line, b.character);
         if (chatMsg) {
           chatBatch.push({ ...chatMsg, uploadedBy: b.character });
+          noteLootFromChat(chatMsg);   // officer Loot panel — LIVE tail
           if (chatBatch.length >= 500) flushChat(true).catch(() => {});
           return;
         }
@@ -23523,6 +24333,10 @@ async function main() {
           // add to the whitelist so their incoming damage / deaths show up on
           // the Tank dashboard (NPCs never use /gu or /rs).
           confirmPlayer(chatMsg.speaker);
+          // Officer Loot panel — LIVE tail (speaker fully resolved by now).
+          // Dedupes against the other live loop within 10 min, so being hooked
+          // in both places is safe (this one is the primary relay path).
+          noteLootFromChat(chatMsg);
           // Cross-log arbitration: same channel + normalized text within 90s =
           // the same message captured from this person's main + alt logs
           // (self-form in one, bystander-form in the others). The speaker is
@@ -23535,12 +24349,21 @@ async function main() {
           return;
         }
 
-        // ── Normal combat filter ───────────────────────────────────────────
-        if (!shouldKeep(line, dropPatterns, keepPatterns)) return;
         const ts = parseEqTimestamp(line);
-        // Officer-tuned + personal triggers — evaluate each kept line.
-        // Cheap: precompiled regex set; usually < 50 entries, < 50µs each.
-        try { evaluateTriggersAgainstLine(line, ts ? ts.getTime() : Date.now()); } catch {}
+        // Officer-tuned + personal triggers — evaluate BEFORE the combat filter
+        // so keep-list MISSES (ENRAGED, snared, mesmerized, fizzles, cures…)
+        // still fire; triggerVisibleLine() drops only the privacy/public-chat/
+        // system lines so nothing private ever reaches a trigger. Cheap:
+        // precompiled regex set; usually < 50 entries, < 50µs each.
+        if (triggerVisibleLine(line, dropPatterns)) {
+          try { evaluateTriggersAgainstLine(line, ts ? ts.getTime() : Date.now()); } catch {}
+        }
+        // Callout-replay (#98): capture raid-wide events that aren't combat
+        // events (ENRAGE) — dropped before parseEvent — onto the fight timeline.
+        try { b.builder.noteRaidLine(line, ts ? ts.getTime() : Date.now()); } catch {}
+
+        // ── Normal combat filter (gates parse + upload only) ────────────────
+        if (!shouldKeep(line, dropPatterns, keepPatterns)) return;
         const ev = parseEvent(line, ts);
         if (ev) {
           // Pet combat observation — if the attacker is one of our pets (Zeal

@@ -135,10 +135,15 @@ function defaultConfig() {
     // installs keep whatever they had: loadConfig does Object.assign over the
     // saved config, and onboarded users have these persisted already.)
     showHud: false,          // DPS HUD overlay user pref
-    enableTriggerTts: true,  // Trigger TTS overlay user pref — default ON
+    enableTriggerTts: true,  // Trigger TTS/callouts MASTER switch — default ON
                              // so fresh installs see countdown timer rows
                              // during a raid without an extra opt-in.
                              // Existing installs keep whatever they saved.
+    showTriggerOverlay: true, // Whether the trigger overlay is VISIBLE (#97).
+                             // Decoupled from enableTriggerTts: the overlay ✕
+                             // sets this false (hides the visual) but TTS keeps
+                             // firing from the hidden window. Re-shown when the
+                             // user turns triggers on via tray/dashboard.
     quietMode: false,        // master "I use EQLogParser" — hides all local UI
     // Quiet updates (default ON): a downloaded update applies silently on the
     // next quit (autoInstallOnAppQuit), so the "Restart now?" pop-up is just
@@ -2875,7 +2880,10 @@ function createTriggerOverlay() {
     alwaysOnTop: true, skipTaskbar: true,
     focusable: true,
     show: false,
-    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true },
+    // backgroundThrottling:false so a HIDDEN trigger overlay keeps running its
+    // TTS + countdowns full-speed — the ✕ hides the visual only (#97), it must
+    // never throttle or silence callouts.
+    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, backgroundThrottling: false },
   });
   triggerWindow.setAlwaysOnTop(true, 'screen-saver');
   triggerWindow.setVisibleOnAllWorkspaces(true);
@@ -3734,7 +3742,7 @@ function applyTriggerVisibility() {
   if (!triggerWindow) return;
   const cfg = loadConfig();
   const unlocked  = cfg.overlaysLocked === false;
-  const shouldShow = unlocked || _blindForceOpen('triggers') || (cfg.enableTriggerTts && !cfg.quietMode && _eqGateOk(cfg));
+  const shouldShow = unlocked || _blindForceOpen('triggers') || (cfg.enableTriggerTts && cfg.showTriggerOverlay !== false && !cfg.quietMode && _eqGateOk(cfg));
   if (shouldShow) triggerWindow.showInactive(); else triggerWindow.hide();
 }
 function createCharmOverlay() {
@@ -4533,7 +4541,9 @@ function buildTrayMenu() {
         pushStatus();
       } },
     { label: 'Trigger alerts (TTS)', type: 'checkbox', checked: s.enableTriggerTts, enabled: !s.quietMode, click: (mi) => {
-        const cfg = loadConfig(); cfg.enableTriggerTts = mi.checked; saveConfig(cfg);
+        const cfg = loadConfig(); cfg.enableTriggerTts = mi.checked;
+        if (mi.checked) cfg.showTriggerOverlay = true;   // turning on → show the visual too (#97)
+        saveConfig(cfg);
         if (mi.checked && !triggerWindow) createTriggerOverlay(); else applyTriggerVisibility();
         pushStatus();
       } },
@@ -4708,6 +4718,7 @@ function buildTrayMenu() {
     click: (mi) => {
       const cfg = loadConfig();
       cfg.betaChannel = !!mi.checked;
+      if (cfg.betaChannel) delete cfg.forceStable;   // re-opting into betas lifts a stable pin
       saveConfig(cfg);
       if (autoUpdater) {
         _applyUpdaterChannel();
@@ -4715,6 +4726,27 @@ function buildTrayMenu() {
         safeCheckForUpdates(true);
       }
       pushStatus();
+    },
+  };
+  // Revert-to-stable — only offered while the beta track is actually in
+  // effect (beta build or opt-in, and not already pinned to stable).
+  const _revertEligible = !!autoUpdater
+    && loadConfig().forceStable !== true
+    && (/-/.test(String(app.getVersion() || '')) || loadConfig().betaChannel === true);
+  const revertStableItem = {
+    label: '↩ Revert to stable…',
+    visible: _revertEligible,
+    click: async () => {
+      const res = await dialog.showMessageBox({
+        type: 'question',
+        buttons: ['Revert to stable', 'Cancel'],
+        defaultId: 0,
+        cancelId: 1,
+        title: 'Wolf Pack miMIC — revert to stable',
+        message: 'Switch back to the stable release?',
+        detail: 'Mimic will download the current stable build and install it on your next restart. Your settings, overlays, and login are untouched. You can rejoin the beta any time from this menu.',
+      });
+      if (res.response === 0) revertToStable('tray');
     },
   };
   // Crash-report sharing — OPT-IN, default off. When on, the agent watches
@@ -4776,6 +4808,7 @@ function buildTrayMenu() {
     { label: 'UI Studio — rescale EQ UI for a new resolution', click: () => openUiStudio() },
     updatePopupItem,
     betaChannelItem,
+    revertStableItem,
     crashReportsItem,
     // Uninstall lives in the maintenance block — deliberately NOT next to Quit.
     // The tray menu opens upward with the cursor resting at the BOTTOM, so a
@@ -4981,16 +5014,52 @@ async function checkAgentUpdate(opts) {
 // betas; the user keeps whatever they have until stable catches up.
 function _applyUpdaterChannel() {
   if (!autoUpdater) return false;
+  const cfg = loadConfig();
   const _buildIsBeta = /-/.test(String(app.getVersion() || ''));
-  const userOptedIn  = !!loadConfig().betaChannel;
-  const wantBeta     = _buildIsBeta || userOptedIn;
+  // forceStable (Hitya 2026-07-16: raid-night testers stuck on beta could
+  // not get back to the stable release everyone else was fixed by): an
+  // explicit "revert to stable" overrides even the installed-a-beta-build
+  // input, and allowDowngrade lets electron-updater install a stable whose
+  // semver is BELOW the running prerelease (its default refuses that, which
+  // is exactly the trap). Cleared automatically once a stable build is
+  // running, or when the user re-opts into betas.
+  const forceStable  = cfg.forceStable === true;
+  const userOptedIn  = !!cfg.betaChannel;
+  const wantBeta     = !forceStable && (_buildIsBeta || userOptedIn);
   autoUpdater.allowPrerelease = wantBeta;
   autoUpdater.channel         = wantBeta ? 'beta' : 'latest';
+  autoUpdater.allowDowngrade  = forceStable && _buildIsBeta;
   return wantBeta;
+}
+
+// Revert to stable — one action that pins the channel to stable, permits the
+// semver downgrade, and checks immediately. The downloaded stable installs
+// exactly like any update (quietly on next quit, or "Restart now" from the
+// tray). Reachable from the tray, the manual-check dialog, and the dashboard
+// header's link next to the BETA badge.
+async function revertToStable(source) {
+  const cfg = loadConfig();
+  cfg.forceStable = true;
+  cfg.betaChannel = false;
+  saveConfig(cfg);
+  appendAgentLog(`[updater] revert to stable requested (${source || 'unknown'}) — pinning channel to stable and checking…\n`);
+  _applyUpdaterChannel();
+  safeCheckForUpdates(true);
+  pushStatus();
 }
 
 function wireAutoUpdater() {
   if (!autoUpdater) return;
+  // A forceStable pin has done its job once a stable build is running —
+  // clear it so future channel choices start from a clean slate.
+  try {
+    if (!/-/.test(String(app.getVersion() || '')) && loadConfig().forceStable === true) {
+      const cfg = loadConfig();
+      delete cfg.forceStable;
+      saveConfig(cfg);
+      appendAgentLog('[updater] stable build running — revert-to-stable pin cleared\n');
+    }
+  } catch (e) { void e; }
   _applyUpdaterChannel();
   autoUpdater.autoDownload    = true;
   // Apply a downloaded shell update SILENTLY on the next normal quit (no NSIS
@@ -5012,7 +5081,23 @@ function wireAutoUpdater() {
     // for updates…" click when already current produced zero feedback.
     if (_manualCheckPending) {
       _manualCheckPending = false;
-      dialog.showMessageBox({ type: 'info', message: `You're up to date (v${app.getVersion()}).` });
+      // On the beta track, "up to date" is exactly where a tester lands when
+      // they actually want the STABLE build (Hitya 2026-07-16: beta users
+      // needed last night's stable release and had no way back) — offer the
+      // way back right here.
+      const _onBetaTrack = /-/.test(String(app.getVersion() || '')) || loadConfig().betaChannel === true;
+      if (_onBetaTrack && loadConfig().forceStable !== true) {
+        dialog.showMessageBox({
+          type: 'info',
+          buttons: ['OK', '↩ Revert to stable'],
+          defaultId: 0,
+          cancelId: 0,
+          message: `You're up to date (v${app.getVersion()}).`,
+          detail: 'You are on the beta track. If you need the stable release instead, revert below — it installs on your next restart and you can rejoin the beta any time.',
+        }).then(({ response }) => { if (response === 1) revertToStable('up-to-date dialog'); });
+      } else {
+        dialog.showMessageBox({ type: 'info', message: `You're up to date (v${app.getVersion()}).` });
+      }
     }
   });
   autoUpdater.on('download-progress', (p) => {
@@ -5252,7 +5337,9 @@ ipcMain.handle('toggle-overlay', (_e, name) => {
       if (cfg.showHud && !overlayWindow) createOverlayWindow(); else applyOverlayVisibility();
       break;
     case 'trigger':
-      cfg.enableTriggerTts = !cfg.enableTriggerTts; saveConfig(cfg);
+      cfg.enableTriggerTts = !cfg.enableTriggerTts;
+      if (cfg.enableTriggerTts) cfg.showTriggerOverlay = true;   // turning on → show the visual too (#97)
+      saveConfig(cfg);
       if (cfg.enableTriggerTts && !triggerWindow) createTriggerOverlay(); else applyTriggerVisibility();
       break;
     case 'charm':
@@ -5438,8 +5525,11 @@ ipcMain.handle('hide-overlay', (e) => {
       cfg.showHud = false; saveConfig(cfg);
       try { overlayWindow.hide(); } catch {}
     } else if (win === triggerWindow) {
-      cfg.enableTriggerTts = false; saveConfig(cfg);
+      // #97: hide the VISUAL only — TTS/callouts keep firing from the hidden
+      // window (enableTriggerTts untouched). Re-show via tray → Overlays.
+      cfg.showTriggerOverlay = false; saveConfig(cfg);
       try { triggerWindow.hide(); } catch {}
+      try { buildTrayMenu(); } catch {}
     } else if (win === charmWindow) {
       cfg.showCharm = false; saveConfig(cfg);
       try { charmWindow.hide(); } catch {}
@@ -6038,6 +6128,22 @@ ipcMain.handle('mimic-link-start',   async () => await startMimicLink());
 ipcMain.handle('mimic-link-cancel',  () => { cancelMimicLink(); return true; });
 ipcMain.handle('mimic-link-signout', async () => { await signOutMimic(); return true; });
 ipcMain.handle('check-for-updates', () => { safeCheckForUpdates(true); checkAgentUpdate({ manual: true }); return true; });
+// Revert to stable from the dashboard header's link (next to the BETA badge).
+// The native confirm lives HERE so the page-side control is a plain link and
+// every entry point shares one confirmation.
+ipcMain.handle('revert-to-stable', async () => {
+  const res = await dialog.showMessageBox({
+    type: 'question',
+    buttons: ['Revert to stable', 'Cancel'],
+    defaultId: 0,
+    cancelId: 1,
+    title: 'Wolf Pack miMIC — revert to stable',
+    message: 'Switch back to the stable release?',
+    detail: 'Mimic will download the current stable build and install it on your next restart. Your settings, overlays, and login are untouched. You can rejoin the beta any time from the tray menu.',
+  });
+  if (res.response === 0) { await revertToStable('dashboard'); return true; }
+  return false;
+});
 // Dashboard "update ready" banner button → apply the downloaded update now.
 ipcMain.handle('restart-to-update', () => {
   try { autoUpdater && autoUpdater.quitAndInstall(true, true); } catch (e) { console.warn('[updater] quitAndInstall failed', e); }

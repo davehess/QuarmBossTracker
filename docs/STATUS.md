@@ -91,6 +91,17 @@ folly** — it's here.*
   templates); trigger relay seeds a monotonic id base so a bot deploy no longer
   makes the fleet relay-deaf for hours (bot 3.0.198). Deferred: ✕-mutes-TTS
   overlay decouple (#97).
+- **1.9 beta line → stable (2026-07-18, #89)**: graduated Mimic **1.9.5** /
+  agent **3.3.80** to the stable channel by file-checkout of `apps/mimic` +
+  `packages/wolfpack-logsync` onto `main` (never a whole-branch merge); beta
+  re-parked at **1.9.6** above stable. Maiden run of the redeploy-free
+  pipeline. Carries the healing overlays, seconds-fast restarts + 🛟 settings
+  backups, officer loot capture + DKP ticks, ↩ revert-to-stable, faster
+  (10→2min) + backtick-safe `{s}` triggers, ✕-decoupled-from-TTS (#97), and the
+  fleet tank/Command-Center blanking fix (`_mtLiveStateByName`, on beta since
+  3.3.73). The #72 / #76 / `{s}` beta items in `BETA-TESTING.md` graduate with
+  it. Also upgraded the two MIRROR vitest suites (`trigger-class`,
+  `timeline-events`) to source-slices now that the real functions ship on main.
 
 - **Supabase RPC lockdown (2026-07-18)**: closed the advisor's SECURITY DEFINER
   hole — 10 SEC-DEFINER RPCs (11 signatures incl. `bump_agent_upload_stat` ×2)

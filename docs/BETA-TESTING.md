@@ -11,6 +11,13 @@ raid; move it to STATUS.md's "Done" once graduated to stable.*
 > on the beta channel and have updated Mimic so the agent version below is what's
 > running (check the agent dashboard footer / `/status`).
 
+> **Graduated 2026-07-18 (#89):** the 1.9 beta line — Mimic **1.9.5** / agent
+> **3.3.80** — is now the **stable** build. Everything below (reporter election
+> #72, `{s}` backtick triggers, callout trifecta #76) rides in it, so these are
+> live for the whole raid on **stable**, not just beta testers. Verify-in-raid
+> is still welcome; the ledger entries move to STATUS.md's Done as each is
+> confirmed. Beta re-parked at **1.9.6**.
+
 ---
 
 ## #72 — Designated-reporter election (chat pilot)

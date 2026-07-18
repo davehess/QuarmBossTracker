@@ -1,82 +1,60 @@
-// MIRROR: EncounterBuilder per-fight timeline capture (#98)
-//   Intended source: packages/wolfpack-logsync/index.js (EncounterBuilder —
-//     noteRaidLine / noteTimelineEvent / _buildTimelineEvents) feeding
-//     supabase.recordEncounterEvents → encounter_events (utils/supabase.js
-//     recordParse `timelineEvents` param, present in shipped code).
-//   Tier: MIRROR (last resort) — see drift note below.
+// EncounterBuilder per-fight timeline capture (#98) — SOURCE-SLICE fidelity tier.
+//   Source: packages/wolfpack-logsync/index.js (EncounterBuilder methods
+//     noteTimelineEvent / noteRaidLine / _buildTimelineEvents, ~line 4324).
+//     These are class methods on the single-file agent's EncounterBuilder;
+//     require()-ing the agent isn't viable (single-file, side-effectful), so we
+//     slice the real, contiguous method block out of the shipped source and
+//     rehydrate it into a minimal test class (see test/_source-slice.js). The
+//     three methods are verbatim shipped code; only the constructor stub and the
+//     injected module-level `_fireLog` are test-local.
 //
-// ⚠ DRIFT: as of this port (main @ 243888e) the AGENT side of #98 is NOT
-//   shipped — the EncounterBuilder in packages/wolfpack-logsync/index.js has no
-//   noteTimelineEvent/_buildTimelineEvents/_tlSeen members (grep confirms), even
-//   though the bot/DB sink (recordEncounterEvents, the encounter_events table)
-//   exists. So there is no real function to require or source-slice yet. This
-//   mirrors the intended capture logic the scratchpad test characterized:
-//     • enrage lines → a raid_event timeline entry stamped with the mob name;
-//     • dedup within a 2s bucket (kind|subtype|actor|round(ts/2000));
-//     • non-enrage lines ignored;
-//     • trigger fires merged in only within [start-2s, end+2s] of the fight;
-//     • no events → undefined (field omitted from the upload payload).
-//   WHEN the agent-side methods land, replace this mirror with real
-//   EncounterBuilder instances via the agent's test exports.
+// Under test: enrage lines → a raid_event timeline entry stamped with the mob
+// name; dedup within a 2s bucket (kind|subtype|actor|round(ts/2000)); non-enrage
+// lines ignored; trigger fires merged in only within [start-2s, end+2s] of the
+// fight; no events → undefined (field omitted from the upload payload).
 //
-// Ported from the session's scratchpad tl_test.js (6 scenarios, split for granularity).
+// UPGRADED from MIRROR → SOURCE-SLICE (2026-07-18): the agent-side #98 timeline
+// capture (agent 3.3.77) landed on main with the 1.9 beta graduation, so the
+// real EncounterBuilder methods now exist and can be sliced. Cases unchanged
+// from the mirror they replaced.
 
 import { describe, it, expect } from 'vitest';
+import { readSource, sliceBlock, AGENT_INDEX } from './_source-slice.js';
 
-// Module-level fire log the mirror's _buildTimelineEvents reads from.
+// The real _buildTimelineEvents reads a module-level `_fireLog`; inject a
+// test-local one so the suite can push/clear fires.
 const _fireLog = [];
 
-class TimelineBuilder {
-  constructor() {
-    this.timelineEvents = [];
-    this._tlSeen = new Set();
-    this.startedAt = null;
-    this.lastEvent = null;
-  }
-  noteTimelineEvent(ev) {
-    if (!ev || !ev.at || !ev.kind || this.timelineEvents.length >= 400) return;
-    const k = ev.kind + '|' + (ev.subtype || '') + '|' + (ev.actor || '') +
-      '|' + Math.round((Date.parse(ev.at) || 0) / 2000);
-    if (this._tlSeen.has(k)) return;
-    this._tlSeen.add(k);
-    this.timelineEvents.push({
-      at: ev.at, kind: ev.kind, subtype: ev.subtype || null,
-      actor: ev.actor || null, label: ev.label || null,
-    });
-  }
-  noteRaidLine(line, tsMs) {
-    const m = /\]\s+(.+?)\s+has become ENRAGED/i.exec(line);
-    if (m) {
-      const mob = (m[1] || '').trim().slice(0, 64);
-      this.noteTimelineEvent({
-        at: new Date(tsMs || Date.now()).toISOString(),
-        kind: 'raid_event', subtype: 'enrage', actor: mob || null,
-        label: (mob || 'The mob') + ' ENRAGED',
-      });
+// Slice the three contiguous methods (comments between them are valid class-body
+// content) and rehydrate into a minimal class with the fields they touch.
+const methodsBlock = sliceBlock(
+  readSource(AGENT_INDEX),
+  '  noteTimelineEvent(ev) {',
+  '    return out.length ? out.slice(0, 500) : undefined;\n  }',
+);
+// eslint-disable-next-line no-new-func
+const TimelineBuilder = new Function('_fireLog', `
+  return class {
+    constructor() {
+      this.timelineEvents = [];
+      this._tlSeen        = new Set();
+      this.startedAt      = null;
+      this.lastEvent      = null;
     }
-  }
-  _buildTimelineEvents() {
-    const out = [...this.timelineEvents];
-    const startMs = Date.parse(this.startedAt) || 0;
-    if (startMs) {
-      const endMs = Date.parse(this.lastEvent || this.startedAt) || (startMs + 1);
-      for (const f of _fireLog) {
-        if (f.at >= startMs - 2000 && f.at <= endMs + 2000) {
-          out.push({
-            at: new Date(f.at).toISOString(), kind: 'fire',
-            subtype: f.name ? String(f.name).slice(0, 48) : null,
-            actor: null, label: f.name || 'callout',
-          });
-        }
-      }
-    }
-    return out.length ? out.slice(0, 500) : undefined;
-  }
-}
+${methodsBlock}
+  };
+`)(_fireLog);
 
 const S = Date.parse('2026-07-17T20:00:00Z');
 
-describe('EncounterBuilder timeline capture (#98 mirror)', () => {
+describe('EncounterBuilder timeline capture (#98, source-sliced from agent)', () => {
+  it('sliced the real methods', () => {
+    const b = new TimelineBuilder();
+    expect(typeof b.noteTimelineEvent).toBe('function');
+    expect(typeof b.noteRaidLine).toBe('function');
+    expect(typeof b._buildTimelineEvents).toBe('function');
+  });
+
   it('captures an enrage line as a raid_event stamped with the mob name', () => {
     const b = new TimelineBuilder();
     b.startedAt = new Date(S).toISOString();

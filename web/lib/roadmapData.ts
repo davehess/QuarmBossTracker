@@ -43,6 +43,25 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'mimic-19-line-stable-195',
+    title: '🐺 The whole 1.9 line goes stable · Mimic 1.9.5',
+    version: 'Mimic 1.9.5 · Agent 3.3.80',
+    date: '2026-07-18',
+    headline: 'Everything the 1.9 beta round has been running on for weeks — the healing overlays, seconds-fast restarts, officer loot + DKP tools, and quicker, more reliable triggers — is now the stable build for the whole raid, delivered as a normal auto-update.',
+    features: [
+      { name: '\u{1FA7A} Tanks see heals coming', blurb: 'The Tank overlay draws every heal in flight — a countdown bar to each landing, colored to its healer, plus a striped “ghost” segment showing where the tank’s HP lands once it connects. And every heal (not just Complete Heal) now gets credited on parse cards, even for tanks who aren’t running Mimic — so the 🩺 healer table shows real healed totals.' },
+      { name: 'Restarts come back in seconds', blurb: 'The parser now remembers what it already uploaded and skips re-reading files that haven’t changed, so restarts and updates no longer freeze your overlays for minutes. Overlays also re-find the engine on their own after any restart — no more CH chain stuck on “OVERLAY BLIND” or a blank Command Center.' },
+      { name: '🛟 Settings backups with one-click restore', blurb: 'Mimic quietly keeps the last 10 versions of your eqclient.ini and zeal.ini for every EQ folder it knows. Patch day wiped your settings or a crash ate them? Open the dashboard’s Info tab → Settings backups and restore any version with one click.' },
+      { name: '💰 Officer loot capture + DKP ticks', blurb: 'Drop lists posted in guild or raid chat (comma or pipe separated) collect on the dashboard for officers — check the items you want for a clean “Copy for /loot” paste, post a list for bidding, and run DKP ticks straight from the dashboard’s live roster. Only officers see any of it.' },
+      { name: '↩ Revert to stable, any time', blurb: 'On a beta build and want the stable release back? One click in the tray, the “you’re up to date” dialog, or next to the BETA badge downloads stable and installs on your next restart — no reinstall, and you can rejoin the beta whenever you like.' },
+      { name: 'Faster, more reliable triggers', blurb: 'New or edited guild triggers now reach raiders in about 2 minutes instead of 10, and {s}-style triggers finally fire on backtick boss names like Rhag`Zhezum and Aten`Ha`Ra — so Enrage and other callouts stop silently missing on Luclin mobs.' },
+    ],
+    fixes: [
+      'Closing the trigger overlay with its ✕ no longer silences your callouts — it hides the visual only; text-to-speech keeps firing from the hidden window.',
+      'Overlays can no longer go blank mid-raid from a single bad target or buff lookup — the Mob Info and Command Center feeds are hardened against it.',
+    ],
+  },
+  {
     key: 'platform-map-228',
     title: '🗺 The platform, on one page',
     version: 'Web 1.0.228',
