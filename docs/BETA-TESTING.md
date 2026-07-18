@@ -46,6 +46,51 @@ one line per removed ghost.
 
 ---
 
+## #109 — Mimic dashboard restructure (Me card + officer Admin menu)
+
+**Needs:** agent **3.3.90** (beta Mimic) · NO bot change.
+
+**What it does:** two changes to the Mimic dashboard. (1) The Dashboard tab now
+opens on a **🐺 Me** card instead of the logsync/status wall — your current
+character + zone, a compact line of your buffs, the characters Mimic is watching,
+your last few tells (local — they never leave your PC), and your last few fights
+(with a jump to the parse), plus a big **Open /me ↗** button to wolfpack.quest/me.
+The engine/sync details (files being read, upload queue, session counts, reporter)
+didn't go away — they're tucked into a collapsed **⚙ Engine** section right below
+the Me card. (2) Officers get a new **🛡 Admin** tab that gathers the officer
+tools — DKP ticks, loot capture, "Post for bidding" — into one place with quick
+links to the wolfpack.quest admin pages. Non-officers don't see the tab at all.
+
+**Where to look:** the top of the **Dashboard** tab (🐺 Me card + ⚙ Engine), and
+— officers only — the **🛡 Admin** tab in the nav row.
+
+### ✅ Solo (one machine)
+1. **Me card shows your character.** With a character logged in (Zeal running),
+   the 🐺 Me card names your character, your zone, and a compact buffs line. Your
+   watched characters, recent tells, and last fights all populate. **Open /me ↗**
+   opens your wolfpack.quest/me page.
+2. **Engine section persists open/closed across polls.** The ⚙ Engine section is
+   collapsed by default. Expand it — it should show the setup checklist, files
+   tailed, upload queue, and session counts — then leave it open and watch a few
+   2-second refreshes go by: it must **stay open** (the wpKeep rule; a plain
+   `<details>` would snap shut every poll). Collapse it again and confirm it stays
+   collapsed across refreshes too.
+3. **Non-officer sees no Admin tab.** On a non-officer account (or not signed in),
+   there is **no 🛡 Admin tab** in the nav row at all — not just hidden, absent.
+
+### 👥 Multi-person / officer
+1. **Officer sees the Admin tab collecting the officer tools.** On an officer
+   account, a **🛡 Admin** tab appears. Open it: it collects the **🎫 DKP ticks**
+   and **💰 Loot capture** cards (these moved here from the Info tab) plus quick
+   links to /admin/overlays, /admin/triggers, /admin/encounters. Run a DKP tick /
+   review a captured loot list from here exactly as before — same controls, new
+   home. Confirm a **non-officer** partner still has no Admin tab.
+
+**Status:** ⏳ awaiting verification (solo is quick; officer case needs an officer
+account signed into Mimic).
+
+---
+
 ## #108 — Loot bidding dashboard element (Mimic)
 
 **Needs:** agent **3.3.89** (beta Mimic) · bot **3.0.211** (live on Railway).

@@ -147,6 +147,35 @@ folly** — it's here.*
     see the #106 entry below; the six-GET-loop consolidation + encounter-burst
     flattening close #73 entirely. **Wave 2 is now fully closed** (#72 election,
     #73 admission control incl. tail, #74 control plane, #58 zero-downtime).
+- **#109 Mimic dashboard restructure — DONE (2026-07-19, agent 3.3.90 beta;
+  web 1.0.243 roadmap on main; BETA).** Guild-lead ask, two halves. **(1) 🐺 Me
+  card replaces the logsync region.** The Dashboard tab opens on a new `#wpMeCard`
+  (renderMeCard, all-LOCAL: own Zeal client → character + zone + compact
+  buff-NAMES line; watched-log characters; last ~5 local tells; last few uploads
+  as name + duration + a /parses jump) with a prominent wolfpack.quest/me link.
+  Buff names (no ticking counts) keep it byte-stable mid-combat; fmtAgo lives
+  inside this dedicated placeholder per the rendering rules. The engine/sync guts
+  moved into a collapsed **⚙ Engine** `<details>` (`#wpEngine`/renderEngine,
+  wpKeep('engine')) that now houses `#wpSetupChecks` (moved from #dash),
+  `#wpEngineStats` (new — files tailed, queue depth, upload counts, reporter
+  line), and `#wpWatchedLogs` (moved from #info). Every existing id/render fn is
+  preserved — placement change, not plumbing. **(2) 🛡 Admin menu.** A new
+  officer-only nav tab + `#admin` section (renderAdmin) that collects the officer
+  widgets that were scattered: `#wpDkpTick` + `#wpDkpLoot` (with "Post for
+  bidding") MOVED here from #info, plus quick links to /admin/overlays,
+  /admin/triggers, /admin/encounters, /admin. **Gate is agent-side, not CSS:**
+  the sensitive card DATA (`dkpTick`/`dkpLoot`) is only serialized into
+  /api/state for officers (null otherwise), and renderAdmin reveals the nav tab
+  + fills the section ONLY when `mimicIdentity.is_officer` (the bot's
+  authenticated reply). A non-officer never receives the tab or the data.
+  **Quick-flip:** raid_hold/flag_shed are polled READ-ONLY by the agent and set
+  on web /admin/overlays — no officer-authed agent write endpoint exists, so the
+  Admin tab ships LINKS to it (a local one-click flip is a noted follow-up; no
+  new write endpoint built this task). Verify: agent `node --check` +
+  `check:dashboard` green (WEB_HTML restructure); scratchpad smoke 18/18 (Me card
+  populated from synthetic state; Engine details present + collapsed by default;
+  Admin tab absent for non-officer, present + collecting DKP/loot for officer).
+  See BETA-TESTING #109.
 - **#110 OpenDKP audit-trail reconciliation — DONE (2026-07-19, bot 3.0.212 on
   main).** Path shipped: **BOTH** — audit feed as TRIGGER + WATERMARK, scoped
   reconcile as the precise removal. Motivated by the 2026-07-19 "Backpack"
