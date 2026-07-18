@@ -43,6 +43,22 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'callout-trust-and-ch-go-196',
+    title: '📣 Callouts you can trust — and the CH chain speaks your GO · Mimic 1.9.6 (beta)',
+    version: 'Mimic 1.9.6 beta · Agent 3.3.83',
+    date: '2026-07-18',
+    channel: 'beta',
+    headline: 'This beta round makes the callouts you rely on impossible to miss — and impossible to silently lose — plus one thing clerics asked for: the CH chain says your number out loud when it’s your turn.',
+    features: [
+      { name: '⛑ The CH chain calls your “04 GO”', blurb: 'When the chain reaches your slot, Mimic speaks your number — “04 GO” — out loud, so you can react without staring at the overlay counting rows. It’s a 📣 button right on the CH chain overlay: on by default, one click to silence. It only speaks for the character you’re actually playing, and only once per rotation pass.' },
+      { name: 'A “Rehearse” button that really rehearses', blurb: 'The trigger Test button used to just play the alert — it never checked whether your pattern actually matches anything, so a broken trigger looked fine until raid night. Now it feeds a real matching line through the whole engine (pattern, cooldown, suppression) and speaks the real callout, so a trigger that won’t fire tells you BEFORE it matters.' },
+      { name: 'Callouts can’t silently die', blurb: 'A new “why didn’t my trigger fire?” panel on the dashboard shows exactly how far each callout got — matched, cooled down, suppressed by your charm pet, or spoken — so a trigger that goes quiet is no longer a mystery. And a relayed callout that arrives late after a network backlog is dropped instead of shouted minutes after the moment passed.' },
+      { name: '📌 Pin the life-or-death calls', blurb: 'Officers can flag a trigger “sticky” — Death Touch target, tank swap, whatever can’t be missed — and it stays pinned on screen until you click it away, instead of fading after a few seconds.' },
+      { name: 'Smoother reporter handoff on camp-out', blurb: 'When a raider camps out, the raid’s data reporting now hands off to someone still online a few seconds early, so buff and roster tracking never blinks during the swap. (Carried over from the last beta build.)' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'web-gear-vision-235',
     title: '👁 Gear page sees proc-granted vision',
     version: 'Web 1.0.235',

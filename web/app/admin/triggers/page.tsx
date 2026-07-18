@@ -61,13 +61,20 @@ async function createOrUpdate(formData: FormData) {
   const notes        = String(formData.get('notes') || '').slice(0, 1000) || null;
   const classesRaw   = String(formData.get('classes') || '').trim();
   const classes      = classesRaw ? classesRaw.split(',').map(s => s.trim()).filter(Boolean) : null;
+  // Sticky critical callouts (#76): pins the overlay until dismissed instead of
+  // fading. Stored on the text_overlay action so it rides the cross-Mimic relay
+  // for free (the relay passes action objects through verbatim) — no bot change,
+  // no schema change (actions is jsonb). Old agents ignore the field.
+  const sticky = formData.get('sticky') === 'on';
   if (!name || !pattern || !overlayText) return;
 
   const admin = supabaseAdmin();
+  const overlayAction: Record<string, unknown> = { type: 'text_overlay', text: overlayText, color: overlayColor, duration_ms: overlayMs };
+  if (sticky) overlayAction.sticky = true;
   const row = {
     name, category, pattern,
     pattern_flags: 'i',
-    actions: [{ type: 'text_overlay', text: overlayText, color: overlayColor, duration_ms: overlayMs }],
+    actions: [overlayAction],
     cooldown_seconds: cooldown,
     applies_to_classes: classes,
     notes,
@@ -325,6 +332,15 @@ export default async function AdminTriggersPage({
               defaultValue={editTarget?.cooldown_seconds ?? (p.cooldown ? parseInt(p.cooldown, 10) : 0)}
               className="w-full bg-bg border border-border rounded px-2 py-1.5" />
           </label>
+          <label className="flex items-start gap-2 sm:col-span-2 cursor-pointer">
+            <input name="sticky" type="checkbox" defaultChecked={!!overlayDefault.sticky} className="mt-0.5" />
+            <span className="text-dim leading-5">
+              <span className="text-text">📌 Sticky (critical callout)</span> — pins the alert on the trigger overlay
+              until the raider clicks it away (or a ~5&nbsp;min timeout), instead of fading after a few seconds. Use for
+              life-or-death calls (Death Touch target, tank swap). Needs Mimic 1.9.6&nbsp;beta / agent 3.3.83+; older
+              agents ignore it.
+            </span>
+          </label>
           <label className="space-y-1">
             <span className="text-dim block">Classes (comma-sep, blank = everyone)</span>
             <input name="classes" defaultValue={editTarget ? (editTarget.applies_to_classes ?? []).join(', ') : (p.classes ?? '')}
@@ -366,6 +382,7 @@ export default async function AdminTriggersPage({
                         <span className={t.enabled ? 'text-text' : 'text-dim line-through'}>{t.name}</span>
                         <span className="text-dim text-[10px] px-1.5 py-0.5 rounded border border-border">{t.category}</span>
                         {t.cooldown_seconds > 0 && <span className="text-dim text-[10px]">cd {t.cooldown_seconds}s</span>}
+                        {ov?.sticky && <span className="text-orange text-[10px] px-1.5 py-0.5 rounded border border-orange/50">📌 sticky</span>}
                         {t.applies_to_classes && t.applies_to_classes.length > 0 && (
                           <span className="text-dim text-[10px]">[{t.applies_to_classes.join(', ')}]</span>
                         )}

@@ -113,7 +113,33 @@ folly** — it's here.*
   ENRAGED/snare/mez/fizzle templates fire (agent 3.3.76 beta, 9/17 dead
   templates); trigger relay seeds a monotonic id base so a bot deploy no longer
   makes the fleet relay-deaf for hours (bot 3.0.198). Deferred: ✕-mutes-TTS
-  overlay decouple (#97).
+  overlay decouple (#97, since shipped in the 1.9 line).
+- **#76 remainder (callout trust infra) DONE + #103 CH GO (2026-07-18, agent
+  3.3.83 beta + web 1.0.238)** — the trifecta closed the fire-path bugs; this
+  closes the trust gap. (1) **Trigger checkpoint journal** — in-memory ring
+  buffer (cap 250, no disk/upload) records how far each candidate evaluation got
+  (line seen → matched → gates → actions → dispatched → relayed) + why it
+  stopped; dashboard Triggers-tab card (`renderTriggerJournal`, own
+  `#wpTriggerJournal` placeholder, no `<details>`). (2) **Real REHEARSE** — the
+  ▶ Test button now `_rehearseTrigger`: synthesizes a matching line
+  (`_synthesizeMatchingLine`, verified against the real regex) and drives the
+  ACTUAL pipeline (pattern/cooldown/charm-suppression EVALUATED + reported but
+  NOT enforced/consumed), speaks real TTS, `test=true` so no relay/upload/Discord
+  and no `_fireLog` pollution; gauge triggers rehearse the action tail, journal
+  "pattern not exercised (gauge condition)". (3) **Sticky callouts** — optional
+  per-trigger/per-action `sticky` pins the trigger overlay until click/~5min;
+  portable, backward-compatible, rides the relay via the action object (no bot
+  change); officer checkbox on `/admin/triggers`. (4) **Ghost-callout TTL** — a
+  relayed fire >15s old at consumption is journalled `stale-skipped`, never
+  spoken (fail-open on missing ts); bot relay already carried `fired_at_ms`
+  end-to-end, so NO bot change was needed. (5) **#103 CH chain "0X GO"**
+  (guild-lead ask) — when the chain reaches a watched character's slot the agent
+  speaks "0N GO" via `_pushOverlay` (the trigger pipeline — master
+  `enableTriggerTts` still gates it); dedicated 📣 toggle on the CH chain overlay
+  (default ON, localStorage + `POST /api/chchain/go-tts`, self-heals via the
+  snapshot's echoed `go_tts`), debounced once per rotation pass. Verified:
+  `node --check` + `check:dashboard` + 18/18 runtime smoke assertions. See
+  `BETA-TESTING.md` for the raid-verify plan.
 - **1.9 beta line → stable (2026-07-18, #89)**: graduated Mimic **1.9.5** /
   agent **3.3.80** to the stable channel by file-checkout of `apps/mimic` +
   `packages/wolfpack-logsync` onto `main` (never a whole-branch merge); beta

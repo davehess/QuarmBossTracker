@@ -20,6 +20,79 @@ raid; move it to STATUS.md's "Done" once graduated to stable.*
 
 ---
 
+## #76 remainder + #103 — Callout trust infrastructure + CH chain "0X GO"
+
+**Needs:** agent **3.3.83** (beta Mimic 1.9.6) · web **1.0.238** (live on main,
+for the officer sticky checkbox). No bot change — the relay already carried the
+original fire timestamp end-to-end.
+
+**What it does (five parts):**
+1. **Trigger checkpoint journal** — a "why didn't my trigger fire?" panel on the
+   dashboard Triggers tab (🧭 *Trigger checkpoint journal*). Each candidate
+   evaluation records how far it got — *line seen → pattern matched → gates
+   passed → actions built → dispatched → relayed* — and, when it stopped short,
+   why (cooldown remaining, suppressed by your charm pet, roster-suppressed,
+   stale-skipped). In-memory only, never uploaded.
+2. **Real REHEARSE** — the per-row **▶ Rehearse** button (was "Test") no longer
+   fakes it: it synthesizes a matching log line and drives it through the ACTUAL
+   pipeline (pattern exec, cooldown, charm-pet suppression), then speaks the real
+   TTS. Cooldown/suppression are *evaluated and reported* but never enforced or
+   consumed; nothing relays/uploads and the fight timeline is untouched. A
+   gauge-condition trigger rehearses the action tail and is journalled
+   "pattern not exercised (gauge condition)".
+3. **Sticky critical callouts** — an officer can tick **📌 Sticky** on a guild
+   trigger (`/admin/triggers`); the alert then pins on the trigger overlay until
+   the raider clicks it away (or ~5 min), instead of the 3.5s fade. Backward-
+   compatible — older agents ignore the field.
+4. **Ghost-callout TTL** — a relayed fire that arrives >15s after it originally
+   fired (queue backlog replayed late) is dropped and journalled "stale-skipped"
+   instead of being spoken minutes out of date. Fail-open on a missing timestamp.
+5. **CH chain "0X GO" (#103)** — when the chain reaches a slot owned by the
+   character you're playing, the agent speaks "0N GO" (e.g. "04 GO") through the
+   trigger pipeline (so the master **Trigger alerts (TTS)** switch still gates
+   it). A dedicated **📣** button on the CH chain overlay toggles just this
+   callout (default ON, persists per machine). Once per rotation pass.
+
+**Where to look:** dashboard `http://localhost:7777` → **Triggers** tab (the 🧭
+journal card + the ▶ Rehearse buttons). The CH chain overlay's 📣 button sits
+left of ⚙/🔊/✕. Officer sticky checkbox: `wolfpack.quest/admin/triggers`.
+
+### ✅ Solo (one machine)
+1. **Journal shows checkpoints.** Add a personal trigger with a real pattern +
+   a cooldown, then paste/emit two matching lines quickly. The journal shows the
+   first as **5/6 dispatched** and the second as **3/6 gates passed —
+   cooldown … remaining**. A charm-suppressed `{s}` call shows **2/6 pattern
+   matched — suppressed (capture is your charm pet)**.
+2. **REHEARSE really rehearses.** With **Trigger alerts (TTS)** ON, click
+   **▶ Rehearse** on a saved trigger → you HEAR the real callout, a 🧪-badged
+   flash appears, and the journal adds a **REHEARSAL** row ("pattern matched
+   synthesized line; cooldown/suppression not consumed"). Confirm NO Discord
+   post and no new parse-timeline fire. Break the trigger's pattern (make it
+   match nothing) and Rehearse again → journal says "pattern not exercised
+   (could not synthesize a matching line)" — the tell that a live line would
+   never fire it.
+3. **Stale fire is skipped.** Take the agent offline briefly while a guild
+   trigger fires on another machine (or let a backlog build), then reconnect. A
+   relayed fire older than 15s at arrival is NOT spoken — it appears in the
+   journal as **stale-skipped — fire was Ns old**.
+4. **CH GO speaks on your slot.** Get into a CH chain slot for the character you
+   play (roster call names you, or you shout your number). With 📣 ON and
+   Trigger TTS on, when the chain reaches your slot you hear "0N GO" once per
+   pass. Click 📣 off → silent; the button state survives a Mimic restart, and
+   re-syncs the agent after an agent restart.
+
+### 👥 Multi-person (2+ machines on beta) — **needs a raid partner**
+1. **Sticky stays pinned during a fight.** Officer ticks 📌 Sticky on a critical
+   guild trigger (e.g. Death Touch). When it fires mid-fight, the callout stays
+   on screen on every raider's overlay until each clicks it away — it does NOT
+   fade after a few seconds like a normal alert.
+2. **Relay fresh, not late.** With two raiders, a guild trigger one raider's log
+   sees relays to the other and speaks within ~1–2s (fresh). Now induce a
+   backlog on the receiver (brief offline), and confirm the delayed relay is
+   dropped (journal: stale-skipped) rather than spoken well after the event.
+
+---
+
 ## #72 — Designated-reporter election (chat pilot)
 
 **Needs:** bot **3.0.196** (live on main) · agent **3.3.74** (beta Mimic) · a
