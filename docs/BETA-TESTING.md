@@ -20,6 +20,45 @@ raid; move it to STATUS.md's "Done" once graduated to stable.*
 
 ---
 
+## #105 — Richer per-fight timeline: slow on/off · mob self-heal · disc usage
+
+**Needs:** agent **3.3.84** (beta Mimic 1.9.6) · web **1.0.239** (live on main,
+for the colored ticks + legend). No bot change — `encounter_events` ingest is
+generic over kind/subtype.
+
+**What it does:** three new event types join the existing `/parses/[id]` fight
+timeline (#98), each a distinctly-colored tick with a legend:
+- **Slow on / off** (gold / amber) — a known slow (shaman Turgur's/Togor's/…,
+  enchanter Forlorn/Tepid Deeds/…) landing on the fight target marks a **slow
+  on**; when its estimated duration runs out mid-fight it marks a **slow fell
+  off** warning. Slows still up at the kill emit nothing.
+- **Mob healed** (green) — the boss's HP bar rising for the same target (a heal
+  add or a self-heal) marks a **Mob healed (+N%)** tick. Guardrailed against
+  target-swap false positives (same name required, ≥5% rise, ≥10s debounce).
+- **Disc** (purple) — a defensive/evasive/precision/aggressive discipline emote
+  marks who dropped a disc and when (third-person **and** self attributed).
+
+**Where to look:** `wolfpack.quest/parses/<id>` → the **🕒 Fight timeline** card.
+
+### ✅ Solo (one machine)
+1. **Self-disc shows.** Drop a discipline (e.g. Defensive) during any fight you
+   parse → your next parse's timeline shows a purple **Disc** tick attributed to
+   you at that moment.
+2. **Slow on/off (if you can slow).** On a shaman/enchanter (main or alt), slow
+   the mob → a gold **Slow on** tick appears; if the mob outlives the slow, an
+   amber **Slow off** tick appears at the estimated expiry. A slow that's still
+   up at the kill leaves no off-tick.
+
+### 👥 Multi-person (2+ machines on beta) — **needs a raid partner**
+1. **Mob heal on a real boss.** On a boss that self-heals or has a healer add,
+   watch for a green **Mob healed (+N%)** tick on the parse timeline at the heal
+   moment.
+2. **Cross-uploader dedup holds.** With several raiders uploading the same
+   fight, each new event type collapses to ONE tick per moment (the read-side
+   3s dedup keys on kind+subtype+actor) — no doubled slow/disc/heal ticks.
+
+---
+
 ## #76 remainder + #103 — Callout trust infrastructure + CH chain "0X GO"
 
 **Needs:** agent **3.3.83** (beta Mimic 1.9.6) · web **1.0.238** (live on main,

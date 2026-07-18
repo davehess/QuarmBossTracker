@@ -140,6 +140,37 @@ folly** — it's here.*
   snapshot's echoed `go_tts`), debounced once per rotation pass. Verified:
   `node --check` + `check:dashboard` + 18/18 runtime smoke assertions. See
   `BETA-TESTING.md` for the raid-verify plan.
+- **#105 richer fight timeline DONE (2026-07-18, agent 3.3.84 beta + web
+  1.0.239)** — three new event types on the #98 `/parses/[id]` timeline, guild-
+  lead ask. All ride the existing `noteTimelineEvent` → `timeline_events` →
+  `encounter_events` path (bot ingest is generic over kind/subtype — NO bot
+  change). (1) **slow_on / slow_off** — a known slow (data-driven `SLOW_SPELLS`
+  named list: shaman Drowsy/Walking Sleep/Tagar's/Togor's/Turgur's/Cripple,
+  enchanter Languid Pace/Shiftless/Tepid/Forlorn Deeds; the agent spell catalog
+  carries no SPA-11 attack-speed marker so a list is the data-driven path)
+  landing on the CURRENT fight target emits `slow_on` (hooked at the two
+  `recordTargetBuffLanding` call sites via `EncounterBuilder.noteSlowLanding`,
+  self-cast attributes the caster, bystander leaves it null); the estimated
+  expiry (era-cap caster level, `_durTicksForLevel`) emits `slow_off` at flush
+  IFF it fell inside the fight window — a slow still up at the kill emits
+  nothing; a re-slow refreshes the window. (2) **mob_heal** — the Zeal target-
+  gauge HP% rising for the SAME target name across two `/api/zeal-state` frames
+  (`_noteMobHealFromState` → the observing char's live builder's `noteMobHeal`);
+  guardrails: identical gauge name required, prior HP > 0 (a rise off 0% is a
+  new same-name spawn), ≥5pp rise, ≥10s per-target debounce, target must match
+  the fight (`_fightTargetMatches`). Same-name babysit fights can false-positive
+  — accepted + documented at the source. (3) **disc** — discipline emotes via
+  a data-driven `DISC_LINES` table hooked in `noteRaidLine`; the four grounded
+  "fighting style" stance discs shipped (Defensive verified in-repo, Evasive/
+  Precision/Aggressive share the server grammar), third-person + self both
+  attributed; non-stance discs (Fortitude/Furious/Mighty Strike/Weapon Shield/
+  Holyforge/Sanctification/Whirlwind) are a one-row addition once exact emote
+  text is confirmed. Web: `FightTimeline.tsx` colors ticks by subtype (gold/
+  amber slow pair, green heal, purple disc; enrage/rampage stay orange) + a
+  present-only legend; `parses/[id]/page.tsx` now passes `subtype` through
+  (read-side 3s dedup already keys on it). Verified: agent `node --check` +
+  `check:dashboard` + a 12/12 runtime smoke script; main `lint` + `test` +
+  `check:dashboard` + web `tsc --noEmit` green. See `BETA-TESTING.md`.
 - **1.9 beta line → stable (2026-07-18, #89)**: graduated Mimic **1.9.5** /
   agent **3.3.80** to the stable channel by file-checkout of `apps/mimic` +
   `packages/wolfpack-logsync` onto `main` (never a whole-branch merge); beta

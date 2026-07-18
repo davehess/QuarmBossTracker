@@ -424,7 +424,8 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
   }
   const raidEvents = tlKept
     .filter(e => e.kind === 'raid_event')
-    .map(e => ({ at: e.at, label: e.label || e.subtype || 'event', kind: 'raid_event' as const }));
+    // Pass subtype through so FightTimeline can color slow/mob-heal/disc ticks (#105).
+    .map(e => ({ at: e.at, label: e.label || e.subtype || 'event', kind: 'raid_event' as const, subtype: e.subtype }));
   const fireEvents = tlKept
     .filter(e => e.kind === 'fire')
     .map(e => ({ at: e.at, label: e.label || e.subtype || 'callout', kind: 'fire' as const }));

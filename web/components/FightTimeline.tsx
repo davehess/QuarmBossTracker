@@ -14,18 +14,30 @@
 // Colors mirror the site's tailwind tokens (web/tailwind.config.ts).
 
 type TLDeath = { name: string; ts: string; class?: string | null; riposteDeath?: boolean };
-// Reserved for P2/P3 — a raid-wide boss event or a trigger fire on the same axis.
-export type TLEvent = { at: string; label: string; kind?: 'raid_event' | 'fire' };
+// A raid-wide boss event or a trigger fire on the same axis. `subtype` colors
+// the raid-event ticks by kind (#105: slow_on/off, mob_heal, disc).
+export type TLEvent = { at: string; label: string; kind?: 'raid_event' | 'fire'; subtype?: string | null };
 
 const C = {
   axis:   '#6e7681',  // dim
   base:   '#30363d',  // border
   death:  '#f85149',  // red (critical / death)
-  event:  '#ffa657',  // orange (raid-wide event)
+  event:  '#ffa657',  // orange (raid-wide event — enrage/rampage/DT/…)
   fire:   '#58a6ff',  // blue (trigger fired)
   ink:    '#c9d1d9',  // text
   panel:  '#161b22',
 };
+
+// #105 — per-subtype colors for raid-event ticks. Slow is a yellow/amber pair
+// (fell-off reads as a warning), mob-heal green, disc purple; everything else
+// keeps the default orange. Hues mirror the site's tailwind tokens.
+const EVENT_C: Record<string, string> = {
+  slow_on:  '#d29922', // gold — slow landed
+  slow_off: '#f0883e', // amber warning — slow fell off (re-slow)
+  mob_heal: '#56d364', // green — mob healed itself
+  disc:     '#a371f7', // purple — discipline used
+};
+const eventColor = (subtype?: string | null) => (subtype && EVENT_C[subtype]) || C.event;
 
 function mmss(totalSec: number): string {
   const s = Math.max(0, Math.round(totalSec));
@@ -110,6 +122,17 @@ export function FightTimeline({
   // not per-pixel — a wipe that spans a few px must still count as one cluster.
   const worstCluster = placed.length ? Math.max(...placed.map(p => p.level)) + 1 : 0;
 
+  // #105 — compact legend showing only the marker kinds actually present.
+  const presentSubs = new Set(events.map(e => e.subtype || ''));
+  const legendItems: { c: string; label: string }[] = [];
+  if (deaths.length) legendItems.push({ c: C.death, label: 'Death' });
+  if (presentSubs.has('slow_on'))  legendItems.push({ c: EVENT_C.slow_on,  label: 'Slow on' });
+  if (presentSubs.has('slow_off')) legendItems.push({ c: EVENT_C.slow_off, label: 'Slow off' });
+  if (presentSubs.has('mob_heal')) legendItems.push({ c: EVENT_C.mob_heal, label: 'Mob heal' });
+  if (presentSubs.has('disc'))     legendItems.push({ c: EVENT_C.disc,     label: 'Disc' });
+  if (events.some(e => !e.subtype || !EVENT_C[e.subtype])) legendItems.push({ c: C.event, label: 'Raid event' });
+  if (fires.length) legendItems.push({ c: C.fire, label: 'Callout' });
+
   return (
     <section className="bg-panel border border-border rounded-lg p-4 md:p-5">
       <div className="flex items-baseline justify-between gap-2 mb-1 flex-wrap">
@@ -127,6 +150,17 @@ export function FightTimeline({
           <span className="text-dim/80"> Raid-wide events + which callouts fired land here next.</span>
         )}
       </p>
+
+      {legendItems.length > 0 && (
+        <div className="flex flex-wrap gap-x-3 gap-y-1 mb-3 text-[11px] text-dim">
+          {legendItems.map((it, i) => (
+            <span key={i} className="inline-flex items-center gap-1">
+              <span className="inline-block w-2.5 h-2.5 rounded-full" style={{ backgroundColor: it.c }} />
+              {it.label}
+            </span>
+          ))}
+        </div>
+      )}
 
       <div className="overflow-x-auto">
         <svg
@@ -150,12 +184,17 @@ export function FightTimeline({
             );
           })}
 
-          {/* raid-wide event ticks above the axis (P2) */}
+          {/* raid-wide event ticks above the axis, colored by subtype (#105).
+              Near-simultaneous distinct events (e.g. ~10 discs at once) overlap
+              into one tick — each still carries its own hover title, and the
+              cross-uploader dedup collapses same-subtype+actor repeats upstream;
+              re-using the death lane's stacking here isn't trivial (events grow
+              upward), so this is an accepted, graceful degradation. */}
           {eventMarks.map((e, i) => {
             const x = xFor(e.t);
             return (
               <g key={`ev${i}`}>
-                <line x1={x} y1={AXIS_Y - 4} x2={x} y2={12} stroke={C.event} strokeWidth={2} />
+                <line x1={x} y1={AXIS_Y - 4} x2={x} y2={12} stroke={eventColor(e.subtype)} strokeWidth={2} />
                 <title>{e.label} · {mmss((e.t - start) / 1000)}</title>
               </g>
             );
