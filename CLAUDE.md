@@ -21,6 +21,12 @@ files are the source of truth.)
 Other fixed facts: Node 20, discord.js v14, Supabase project
 `zhtoekwakucbckvatfky`, guild `DISCORD_GUILD_ID=1168893924329402420`.
 
+### Working rule — minimal diff
+Touch only the code the task requires. If a change appears to need edits to
+adjacent or unrelated code, stop and flag it before proceeding. (The
+13k-line `index.js` monolith makes "small line count" a poor proxy for "small
+blast radius" — reaching into unrelated behavior is a structural hazard here.)
+
 ---
 
 ## Release playbook

@@ -1,0 +1,11 @@
+{
+  "enabledPlugins": {
+    "superpowers@claude-plugins-official": true,
+    "playwright@claude-plugins-official": true
+  },
+  "extraKnownMarketplaces": {
+    "trailofbits": {
+      "source": { "source": "github", "repo": "trailofbits/skills" }
+    }
+  }
+}
