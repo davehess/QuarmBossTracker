@@ -399,4 +399,7 @@ module.exports = {
   mintSessionForUser,
   revokeSessionForUser,
   listSessionsForUser,
+  // Exposed for the characterization test suite (test/rate-limit.test.js) — the
+  // per-IP sliding-window limiter on the unauthenticated /start endpoint.
+  _startRateLimited,
 };
