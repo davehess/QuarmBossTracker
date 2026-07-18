@@ -7102,12 +7102,25 @@ function _doOneUpload(entry) {
       res.on('data', c => data += c);
       res.on('end', () => {
         const sc = res.statusCode || 0;
+        // Retry-After (seconds or HTTP-date) — the bot sends this with a 429
+        // (admission-control backpressure, bot 3.0.208+). Parse it here while
+        // the response headers are in scope so the drain can wait exactly as
+        // long as asked instead of walking the blind exponential ladder.
+        let retryAfterMs = null;
+        const ra = res.headers && res.headers['retry-after'];
+        if (ra != null) {
+          const secs = Number(ra);
+          if (Number.isFinite(secs)) retryAfterMs = Math.max(0, secs * 1000);
+          else { const t = Date.parse(ra); if (Number.isFinite(t)) retryAfterMs = Math.max(0, t - Date.now()); }
+        }
         if (sc >= 200 && sc < 300) {
           resolve({ ok: true,  permanent: false, statusCode: sc, body: data });
         } else if (QUEUE_PERMANENT_CODES.has(sc)) {
           resolve({ ok: false, permanent: true,  statusCode: sc, body: data });
         } else {
-          resolve({ ok: false, permanent: false, statusCode: sc, body: data });
+          // 429 is NOT a permanent code, so a rate-limited upload is retried,
+          // never dropped — Retry-After just makes the wait precise.
+          resolve({ ok: false, permanent: false, statusCode: sc, body: data, retryAfterMs });
         }
       });
     });
@@ -7231,18 +7244,28 @@ async function _drainUploadQueue(opts = {}) {
         // parked entry still retries (rarely), and "drain now" un-parks all.
         // Gated on a recent success so a genuine outage (nothing succeeding)
         // walks the normal backoff ladder and resumes at full speed on recovery.
+        // 429 is backpressure (admission control), NOT a payload the bot
+        // rejects — never park a rate-limited upload to the slow lane, or a
+        // busy raid window would strand durable data for 30m at a time.
         if (!entry.parked
+            && result.statusCode !== 429
             && entry.attempts >= QUEUE_PARK_AFTER_ATTEMPTS
             && _lastUploadSuccessAt > 0
             && (Date.now() - _lastUploadSuccessAt) < QUEUE_PARK_HEALTHY_WINDOW_MS) {
           entry.parked = true;
           console.warn(`[upload-queue] PARKING ${entry.kind} after ${entry.attempts} failures (pipe healthy — likely a payload the bot rejects): ${entry.last_error}`);
         }
-        const backoffMs = entry.parked
+        let backoffMs = entry.parked
           ? QUEUE_PARK_RETRY_MS
           : isTransport
             ? 30_000
             : QUEUE_BACKOFF_MS[Math.min(entry.attempts - 1, QUEUE_BACKOFF_MS.length - 1)];
+        // Honor a 429's Retry-After when the bot supplied one: wait exactly as
+        // long as asked (min 1s), still capped at the existing 10-min ceiling so
+        // a bogus header can't strand the queue.
+        if (result.statusCode === 429 && Number.isFinite(result.retryAfterMs)) {
+          backoffMs = Math.min(Math.max(result.retryAfterMs, 1000), QUEUE_BACKOFF_MS[QUEUE_BACKOFF_MS.length - 1]);
+        }
         entry.next_try_at = Date.now() + backoffMs;
         stats.uploadErrors++;
         if (entry.attempts === 1 || entry.attempts === 5 || entry.attempts === 20) {
