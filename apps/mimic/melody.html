@@ -252,6 +252,12 @@
   // cast fires OR this much time elapses without a new cast — at which point
   // the row freezes as ⏹ so the user can see where to resume.
   var STOP_AFTER_MS = 5000;
+  // Hard age-out for a character we still see after the agent SHOULD have
+  // dropped it (the agent's melody idle window is 30s). Anything idle past
+  // this is a stale cache / leaked state — clear it so no frozen
+  // "stopped N ago" card (with the buff-duration chip masquerading in the
+  // cast view) lingers on screen. Live rows never reach this threshold. (#116)
+  var STALE_DROP_MS = 45000;
 
   var listEl = document.getElementById('list');
   var emptyEl = document.getElementById('empty');
@@ -264,13 +270,22 @@
       // heaviest endpoint the agent serves.
       var _nowMs = Date.now();
       if (!window.__wpMelState || _nowMs - (window.__wpMelAt || 0) >= 600) {
-        const r = await fetch('http://127.0.0.1:'+PORT+'/api/state',{cache:'no-store'});
-        window.__wpMelState = await r.json();
-        window.__wpMelAt = _nowMs;
+        // Fetch isolated from paint (#116): a transient agent/EQ hiccup must
+        // NOT freeze the overlay. On failure we keep the last state and still
+        // run the render below, so the stale-entry age-out can clear a frozen
+        // card (and its runaway "stopped N ago" counter) instead of leaving it
+        // — and its lone red stopped-row frame — on screen indefinitely.
+        try {
+          const r = await fetch('http://127.0.0.1:'+PORT+'/api/state',{cache:'no-store'});
+          window.__wpMelState = await r.json();
+          window.__wpMelAt = _nowMs;
+          var _cOk = document.getElementById('conn'); _cOk.className = 'conn ok'; _cOk.textContent = '●';
+        } catch (fe) {
+          var _cBad = document.getElementById('conn'); _cBad.className = 'conn bad'; _cBad.textContent = '○';
+        }
       }
       const s = window.__wpMelState;
-      document.getElementById('conn').className = 'conn ok';
-      document.getElementById('conn').textContent = '●';
+      if (!s) { emptyEl.style.display = 'block'; return; }
       const now = Date.now();
       const melodyByChar = s.bardMelody || {};
       // Show only the active EQ window's character so switching windows
@@ -315,6 +330,14 @@
         var k = keys[ki];
         var st = melodyByChar[k];
         if (!st) continue;
+        // Age-out (#116): the agent drops a melody after ~30s idle, so a
+        // character we still see idle well past that is a stale leftover
+        // (frozen cache after an agent/EQ hiccup, or a leaked state). Skip it
+        // instead of rendering a frozen "stopped N ago" card. A live row —
+        // casting, just-cast, or a bard mid-melody — always carries a fresh
+        // lastChangeAt and never trips this.
+        var _lastChange = st.lastChangeAt || st.castStartedAt || now;
+        if ((now - _lastChange) > STALE_DROP_MS) continue;
         var hasOrder = Array.isArray(st.order) && st.order.length > 0;
         // "Playing melody…" placeholder: when /melody started but Zeal hasn't
         // delivered a per-song name yet, render an active-state placeholder

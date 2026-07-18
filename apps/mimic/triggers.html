@@ -261,9 +261,12 @@
 
   // Setup-mode wiring — see overlay.html for the explainer.
   var _overlayKey = null;
+  var _setupScope = null;
   if (window.mimic && window.mimic.onSetupMode) {
     window.mimic.onSetupMode(function(p) {
       _overlayKey = p && p.overlayKey;
+      if (p && p.scope) _setupScope = p.scope;
+      else if (p && p.active) _setupScope = 'all';
       document.body.classList.toggle('setup', !!(p && p.active));
     });
   }
@@ -287,7 +290,12 @@
   var doneBtn = document.getElementById('exitSetupBtn');
   if (doneBtn) doneBtn.addEventListener('click', function() {
     try { document.body.classList.remove('setup'); } catch (e) {}
-    try { window.mimic.setSetupMode(false); } catch (e) {}
+    // Exit via the SAME scope we entered. A "Setup THIS" window lives in the
+    // single-overlay registry and only set-setup-mode-this(false) tears it
+    // down — the global set-setup-mode(false) skips it, leaving the blue setup
+    // outline + "⚡ trigger alert box" placeholder stuck on screen (#116).
+    try { if (_setupScope === 'this') window.mimic.setSetupModeThis(false); else window.mimic.setSetupMode(false); } catch (e) {}
+    _setupScope = null;
   });
 
   let lastTs = 0;            // newest fire ts we've already handled

@@ -5648,6 +5648,7 @@ ipcMain.handle('hide-overlay', (e) => {
   try {
     const win = BrowserWindow.fromWebContents(e.sender);
     if (!win || win.isDestroyed()) return false;
+    _exitSingleSetup(win);   // (#116) never leave setup chrome on a hidden overlay
     const cfg = loadConfig();
     if (win === overlayWindow) {
       cfg.showHud = false; saveConfig(cfg);
@@ -6104,6 +6105,11 @@ ipcMain.handle('save-config', async (_e, incoming) => {
 // Lock / unlock overlays — pure window op, NEVER restarts the agent.
 ipcMain.handle('set-overlays-locked', (_e, locked) => {
   const cfg = loadConfig(); cfg.overlaysLocked = !!locked; saveConfig(cfg);
+  // An explicit lock means "done positioning" — clear any single-overlay setup
+  // so the 🔒 button tears its setup chrome down too (#116). Without this,
+  // applyOverlayInteractivity() skips single-setup windows and their unlocked
+  // chrome stays on screen.
+  if (locked) _exitAllSingleSetup();
   applyOverlayInteractivity();
   pushStatus();
   return currentStatus();
@@ -6179,6 +6185,41 @@ const _singleSetupWins = new Set();
 function _inSingleSetup(win) {
   try { return !!win && !win.isDestroyed() && _singleSetupWins.has(win.webContents.id); }
   catch { return false; }
+}
+// Tear down single-overlay ("Setup THIS") mode for ONE window: drop it from
+// the registry and restore the persisted lock + hide its setup strip — the
+// same teardown set-setup-mode-this(false) does. Used by the explicit lock
+// (🔒) and hide (✕) paths so setup chrome never survives a user action that
+// means "I'm done here" (#116). applyOverlayInteractivity() deliberately SKIPS
+// single-setup windows, so without this those paths leave the unlocked chrome
+// (blue outline + placeholder) stuck on screen.
+function _exitSingleSetup(win) {
+  try {
+    if (!win || win.isDestroyed() || !_singleSetupWins.has(win.webContents.id)) return false;
+    _singleSetupWins.delete(win.webContents.id);
+    const cfg = loadConfig();
+    const locked = cfg.overlaysLocked !== false;
+    const key = _boundsKeyForWindow(win).replace(/Bounds$/, '');
+    try { win.setIgnoreMouseEvents(locked, { forward: true }); } catch {}
+    try { win.setResizable(!locked); } catch {}
+    try {
+      win.webContents.send('overlay-locked', locked);
+      win.webContents.send('setup-mode', { active: false, overlayKey: key, scope: 'this' });
+    } catch {}
+    return true;
+  } catch { return false; }
+}
+// Exit single-overlay setup for EVERY window still in it (used on an explicit
+// global lock — "done positioning"). Resolves webContents ids back to windows
+// via the live window list so a closed window just gets dropped.
+function _exitAllSingleSetup() {
+  if (_singleSetupWins.size === 0) return;
+  const byId = new Map();
+  for (const w of BrowserWindow.getAllWindows()) { try { byId.set(w.webContents.id, w); } catch {} }
+  for (const wcId of Array.from(_singleSetupWins)) {
+    const win = byId.get(wcId);
+    if (win) _exitSingleSetup(win); else _singleSetupWins.delete(wcId);
+  }
 }
 ipcMain.handle('set-setup-mode-this', (e, on) => {
   try {
