@@ -3831,6 +3831,18 @@ function trackRollLine(line, character) {
     const linked = _rollItemByNumber.get(to);
     if (linked) { set.item = linked.item; set.qty = linked.qty; }
   }
+  // 🎲🔥 HOT DICE — a PERFECT roll (hit the very top of the range). Emits a
+  // fun_event (deduped server-side across the multi-box logs). Fires on any
+  // perfect roll — even a reroll perfect is a lucky moment worth marking. The
+  // >20%-of-the-night Hot Dice award is computed later from the stored roll sets.
+  if (value === to && to > 1) {
+    funEventBuffer.push({
+      type:     'hot_dice',
+      caster:   pending.name,
+      ts:       new Date(atMs).toISOString(),
+      raw_text: `${pending.name} rolled a PERFECT ${value} (0-${to})${set.item ? ' — ' + set.item : ''}`,
+    });
+  }
 }
 
 // Loot-link lines in raid/guild chat: `Blue Resistance Stone 111| Boots of the
