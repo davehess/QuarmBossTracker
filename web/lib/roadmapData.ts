@@ -45,7 +45,7 @@ export const releases: Release[] = [
   {
     key: 'callout-trust-and-ch-go-196',
     title: '📣 Callouts you can trust — and the CH chain speaks your GO · Mimic 1.9.6 (beta)',
-    version: 'Mimic 1.9.6 beta · Agent 3.3.90',
+    version: 'Mimic 1.9.6 beta · Agent 3.3.92',
     date: '2026-07-19',
     channel: 'beta',
     headline: 'This beta round makes the callouts you rely on impossible to miss — and impossible to silently lose — plus one thing clerics asked for: the CH chain says your number out loud when it’s your turn. And you can now place your loot bids right from Mimic. The dashboard also got a facelift: your character is front and center, and officers get a dedicated quick menu.',
@@ -62,7 +62,10 @@ export const releases: Release[] = [
       { name: 'Smoother reporter handoff on camp-out', blurb: 'When a raider camps out, the raid’s data reporting now hands off to someone still online a few seconds early, so buff and roster tracking never blinks during the swap. (Carried over from the last beta build.)' },
       { name: '🕒 A richer fight timeline', blurb: 'The per-fight timeline (on each parse) now marks more of what actually happened during a boss fight: when a slow landed on the mob — and the warning moment it fell off — when the mob healed itself back up, and when someone dropped into a defensive discipline. Each gets its own colored tick with a small legend, so a wipe post-mortem reads the “slow fell off here, then it healed” story at a glance.' },
     ],
-    fixes: [],
+    fixes: [
+      'The Spell Casting card no longer freezes a long-gone cast on screen — a stopped caster now clears within a minute instead of lingering as a stale “stopped N ago” entry with a doubled border.',
+      'Running Setup on the trigger alert box (or any overlay via “Setup THIS”) now actually puts the frame away when you finish — the blue setup outline used to stay stuck on screen until a restart.',
+    ],
   },
   {
     key: 'raid-kit-and-comp-245',

@@ -20,6 +20,23 @@ raid; move it to STATUS.md's "Done" once graduated to stable.*
 
 ---
 
+## #116 — Overlay bug round: stale Spell Casting card + stuck setup chrome
+
+**Needs:** agent **3.3.92** (beta Mimic). No bot change.
+
+**✅ Solo**
+- **Stale casting card**: cast anything, then camp that character (or kill EQ).
+  The Spell Casting card's entry must clear within ~a minute — no frozen
+  "stopped N ago" card, no doubled border. Previously it lingered until restart.
+- **Setup chrome teardown**: right-click the trigger alert box → Setup THIS →
+  move it → Done. The blue outline + placeholder chrome must disappear
+  immediately. Repeat exiting via 🔒 (lock) and via ✕ — chrome must tear down on
+  all three paths, and the same applies to any overlay's Setup THIS.
+- **#35 regression sweep** (was already functional, confirm): CH overlay drags
+  by its ✥; the opacity slider changes the overlay backdrop live.
+
+---
+
 ## #112 — Chat-election liveness + zone-spread (the 2026-07-19 chat-blackout fix)
 
 **Needs:** bot **3.0.214** (live on Railway) + agent **3.3.91** (beta Mimic).

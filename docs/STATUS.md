@@ -65,6 +65,23 @@ folly** — it's here.*
 ## The work ledger
 
 ### ✅ Done — major shipped features (not exhaustive; see git + roadmapData.ts)
+- **#116 overlay bug round — DONE (2026-07-19, agent 3.3.92 beta + web 1.0.246
+  docs/roadmap).** Repro-first fixture round; also closes long-open #35.
+  - **Spell Casting (melody overlay) stale card**: a stopped caster could
+    linger forever as a frozen "stopped N ago" card with the buff-duration chip
+    and a doubled frame (lone red stopped-row nested inside the wrap border).
+    `melody.html` now decouples the /api/state fetch from paint (a disconnect
+    can't freeze the view) and ages out characters idle >45s (agent drops
+    melodies at 30s). Fixture: fail-before/pass-after under a DOM mock.
+  - **Setup chrome never dismissed**: `overlay.html` + `triggers.html` Done
+    always called the GLOBAL set-setup-mode(false), which
+    `applyOverlayInteractivity()` skips for windows in the single-overlay
+    ("Setup THIS") registry — chrome stayed up. Both are now scope-aware like
+    the 13 panel overlays, and `main.js` also tears down single-setup on 🔒 and
+    ✕. Fixture drove the real overlay script + a faithful single-setup registry
+    model.
+  - **#35 CLOSED**: CH-chain drag wiring + opacity slider verified functional
+    on current beta — the remaining Spell-Casting backdrop item was this bug.
 - **Rules-mechanization thread R.1+R.2 — DONE (2026-07-19, bot 3.0.213 + web
   1.0.244 on main).** First bundle of the queue's rules thread (#94 ingest + #92
   attendance audit).
