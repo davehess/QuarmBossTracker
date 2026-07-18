@@ -20,6 +20,37 @@ raid; move it to STATUS.md's "Done" once graduated to stable.*
 
 ---
 
+## #73 — Admission-control 429/Retry-After honored by the durable queue
+
+**Needs:** agent **3.3.85** (beta Mimic 1.9.6) · bot **3.0.208** (live on main).
+
+**What it does:** the bot can now rate-limit a runaway/crash-looping uploader
+per-endpoint (per-uploader budgets, off by default for durable data). When it
+does return a **429 + `Retry-After`**, the agent's durable upload queue treats
+it as backpressure: it backs off for exactly the time asked (capped at the
+existing 10-min ceiling) and **re-sends — nothing is dropped**. (429 was already
+retryable pre-3.3.85; this makes the wait precise and stops a rate-limited durable
+upload from being shunted to the 30-min poison-park lane.)
+
+### ✅ Solo (one machine)
+1. **Force a tiny budget on a durable kind and watch the queue back off, then
+   drain — nothing lost.** On `/admin/overlays`, set `budget_rolls_per_min = 1`
+   **and** `budget_enforce_rolls = 1` (rolls is a low-volume durable kind, safe
+   to squeeze). Trigger 2–3 `/random` roll uploads within a minute. Expected: the
+   first lands; the next get a **429** and sit in the agent's queue (dashboard
+   shows "⏳ N queued"); within a minute they **drain on their own** with no
+   permanent-drop. Confirm the roll rows all eventually appear — **zero data
+   loss**. Then clear both keys (or set to 0) to restore.
+2. **Kill switch works.** With the budget keys still set, add
+   `flag_disable_budgets = 1` → uploads stop 429ing immediately (within the 60s
+   tuning cache). Remove it to re-enable.
+
+> Do NOT set `budget_enforce_<kind>=1` on a busy raid night until the fleet is on
+> agent ≥3.3.85 — older agents still retry a 429 (no data loss) but on the blunt
+> exponential ladder rather than the honored Retry-After.
+
+---
+
 ## #105 — Richer per-fight timeline: slow on/off · mob self-heal · disc usage
 
 **Needs:** agent **3.3.84** (beta Mimic 1.9.6) · web **1.0.239** (live on main,
