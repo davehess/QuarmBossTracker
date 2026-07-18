@@ -65,6 +65,59 @@ folly** — it's here.*
 ## The work ledger
 
 ### ✅ Done — major shipped features (not exhaustive; see git + roadmapData.ts)
+- **#117 pet buffs on the Pet tracker (proven-cause fix) + advisory range awareness
+  — DONE (2026-07-19, agent 3.3.94 beta + Mimic 1.9.6 beta; bot 3.0.216 + web
+  1.0.248 on main).** Two halves.
+  - **Half 1 — pet buffs weren't showing (PROVEN cause, two prior guesses were
+    wrong).** Repro: Canopy (druid) casts **Girdle of Karana** on her summoned
+    pet Kabn; the in-game pet window + Zeal show the buff, but the Mimic Pet
+    tracker shows only Kabn's HP. The earlier clicky-path and charm-pet-
+    misclassification theories were both wrong. **Real cause (fixture-proven,
+    `test/pet-buff-landing.test.js`, source-sliced from the agent): Girdle of
+    Karana is a single-target buff (`eqemu_spells` id 1557, `targettype 5`,
+    `cast_on_other "looks stronger."`, `good_effect 1`, dur 720/formula 3) that
+    matches NONE of the agent's `_TRACKED_BUFF_KEYWORDS`.** So `parseBuffLanding`
+    can never index its landing message — the ONLY attribution path is
+    `resolveSelfCastLanding`, and that path's `rc.target` guard **rejected the
+    "Kabn looks stronger." land whenever the pet wasn't the caster's live Zeal
+    target at cast time** (you buff yourself / keep the mob targeted, or the
+    target moves on during the cast). Land dropped → `_petBuffLandings` empty →
+    Pet tracker (which reads `petBuffsForOwner`) empty, even though the land is
+    right there in the log and Kabn is provably our pet (Zeal slot 16). The
+    fixture reproduces both: the WORKING path (pet targeted → buff shows) and the
+    BUG (pet not the live target → empty). It also explains **#116's phantom
+    "Girdle of Karana ×1 · 71:48" melody card** — 71:48 ≈ the 720-tick catalog
+    max, i.e. the buff riding Canopy's OWN Zeal buff list into the bard melody
+    overlay (already fixed separately in #116). **Fix (log-path, evidence-
+    supported — NOT pipe-side, since the land IS in the log and resolves
+    correctly): in `resolveSelfCastLanding`, when the resolved land names one of
+    OUR OWN pets (`_petOwnerByName` → an owner == the observer), attribute it
+    regardless of the stale live target.** We already know we cast that exact
+    spell (matched by its `cast_on_other`); the strict guard stays for non-pet
+    (bystander) targets, and `recordPetBuffLanding`'s own `_petOwnerByName` gate
+    still blocks any non-pet leak. Residual gap (noted, not built): a buff cast
+    on your pet by SOMEONE ELSE, or an untracked self-only cast with no pet land
+    line, still relies on the /pet report path (`applyPetHealthLine`) — the
+    honest pipe-side source when it's typed.
+  - **Half 2 — position-based buff-range awareness (advisory, v1).** The Zeal
+    pipe already surfaces each client's Position (`loc {x,y,z}` + heading) and
+    `_zealState` carries it; it just never rode the live-state upload.
+    **Plumbing:** agent now sends `loc_x/loc_y/loc_z` on `/api/agent/live-state`
+    (rides the heartbeat, NOT the change signature — position churns on every
+    step), the bot ingests them, and migration
+    `20260718000000_add_position_to_character_live_state.sql` adds the three
+    `real` columns (applied via MCP + committed identical). **Consumer:** the
+    raid-buff-queue now flags a **SAME-ZONE** target beyond a named
+    `BUFF_RANGE_UNITS = 200` heuristic from the requesting buffer as
+    `out_of_range` — the buffqueue overlay dims the row + shows a 📍 chip, it is
+    NOT removed. Pure helper `utils/range.js` (distance + threshold + fail-open),
+    unit-tested (`test/range.test.js`). **Advisory everywhere:** positions are
+    stale up to the heartbeat cadence and unknown position on either side FAILS
+    OPEN (treated in range), so the wording is "likely out of range", never
+    authoritative. **Follow-up (not built, needs new event plumbing):** the
+    cross-client "likely missed (out of range) at land time" cue — `buff_casts`
+    rows carry no positions, so a landing-time range comparison needs positions
+    on the land event; filed rather than half-built. See BETA-TESTING #117.
 - **#111 /who overlay enrichment — DONE (2026-07-19, bot 3.0.215 + web 1.0.247
   on main; agent 3.3.93 beta + who overlay in Mimic 1.9.6 beta).** The in-game
   /who overlay now (1) drops a 🐺 next to any raider running Mimic, (2) lines

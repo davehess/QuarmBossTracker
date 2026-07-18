@@ -20,6 +20,47 @@ raid; move it to STATUS.md's "Done" once graduated to stable.*
 
 ---
 
+## #117 — Pet buffs on the Pet tracker + advisory buff-range hints
+
+**Needs:** agent **3.3.94** (beta Mimic) + the `buffqueue.html` overlay in Mimic
+**1.9.6** beta + bot **3.0.216** (live on Railway).
+
+**What changed:** two things. (1) **Pet buffs now show on the Pet tracker.** A
+single-target buff you cast on your *summoned* pet (Girdle of Karana, Aegolism,
+Strength, etc.) used to vanish from the Pet tracker unless the pet happened to be
+your live target the instant you cast — because those buffs aren't in the tracked-
+buff list, the only way to attribute them is "we cast it and it named our pet,"
+and the old code threw the landing away when your target had moved on. Now, when a
+buff lands on a name we can prove is *your* pet, it's attributed no matter what you
+had targeted. (2) **The buff queue now hints who's out of range.** Every raider's
+position now rides the live feed, and a same-zone raider more than ~200 units from
+you gets dimmed with a 📍 chip on the buff-queue overlay — a hint, never a removal.
+Position updates at the live-state heartbeat, so treat range as advisory.
+
+**✅ Solo (one machine)**
+- Summon a pet (mage/necro/beastlord/druid warder). **Buff it with a single-
+  target buff while targeting something else** (yourself, the mob, nothing) — cast
+  e.g. Girdle of Karana / Strength / Aegolism on the pet. The **Pet tracker must
+  now show that buff** with a countdown, not just the pet's HP.
+- Repeat with the pet *targeted* when you cast — it must still show (regression
+  check; that path always worked).
+- Sanity: cast a single-target buff on **yourself or a groupmate** (not the pet) —
+  it must NOT appear as a phantom pet buff on the Pet tracker.
+- If you type **/pet report** in game, any buff the report lists should also appear
+  (that path is the belt-and-suspenders source).
+
+**👥 Multi-person (2+ machines) — needs a raid partner**
+- Open the **Buff queue** overlay and pick your class. Have a same-zone raider who's
+  missing one of your buffs **run well away from you (>~200 units)**: their row
+  should **dim and grow a 📍 "likely out of range" chip** — but still be listed.
+  When they run back into range, the chip clears within a heartbeat or two.
+- **Fail-open check:** a raider whose position we don't have yet (just logged in,
+  no fresh live-state) must show **normally** (never flagged out of range). A raider
+  in a **different zone** is handled by the existing "same zone first" sort, not the
+  range chip.
+
+---
+
 ## #111 — /who overlay enrichment: 🐺 Mimic presence, aligned columns, anon levels, mains
 
 **Needs:** bot **3.0.215** (live on Railway) + agent **3.3.93** (beta Mimic) +

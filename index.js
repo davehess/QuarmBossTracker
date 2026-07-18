@@ -9436,6 +9436,7 @@ async function _handleAgentRaidBuffQueue(req, res) {
     return res.end(JSON.stringify({ buff_queue: [], debuff_queue: [], note: 'supabase disabled' }));
   }
   const rb = require('./utils/raidBuffs');
+  const rng = require('./utils/range');
 
   const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
   const ROSTER_FRESH_MS = 15 * 60 * 1000;
@@ -9461,7 +9462,7 @@ async function _handleAgentRaidBuffQueue(req, res) {
     } else {
     [liveRows, rosterRows, charRows, buffCastRows] = await Promise.all([
       supabase.select('character_live_state',
-        `guild_id=eq.${encodeURIComponent(guildId)}&updated_at=gte.${encodeURIComponent(liveSince)}&select=character,buffs,buff_count,zone_name,self_hp_pct,updated_at`),
+        `guild_id=eq.${encodeURIComponent(guildId)}&updated_at=gte.${encodeURIComponent(liveSince)}&select=character,buffs,buff_count,zone_name,self_hp_pct,loc_x,loc_y,loc_z,updated_at`),
       supabase.select('raid_roster',
         `guild_id=eq.${encodeURIComponent(guildId)}&captured_at=gte.${encodeURIComponent(rosterSince)}&select=name,class,group_num,rank,level,hp_pct,uploaded_by_discord_id,captured_at`),
       supabase.select('characters',
@@ -9651,6 +9652,13 @@ async function _handleAgentRaidBuffQueue(req, res) {
       if (lv && lv.zone_name) return String(lv.zone_name);
       return null;
     })();
+    // Buffer's live position → advisory "likely out of range" range flag (#117).
+    // Null (unknown buffer / no position) fails open: nobody gets flagged.
+    const bufferLoc = (() => {
+      const lv = bufferKey ? liveByName.get(bufferKey) : null;
+      if (lv && (lv.loc_x != null || lv.loc_y != null)) return { x: lv.loc_x, y: lv.loc_y, z: lv.loc_z };
+      return null;
+    })();
     // Bard buffs are GROUP-ranged (GroupV2, 100 range) — Nature's Melody
     // haste, levitate songs, Dance of the Blade all hit only their own
     // group. A Bard's buff queue therefore scopes to their group; gaps in
@@ -9695,6 +9703,14 @@ async function _handleAgentRaidBuffQueue(req, res) {
       // to false (treated equal) when we don't know the buffer's zone.
       const rowZone   = live && live.zone_name ? String(live.zone_name) : null;
       const sameZone  = !!(bufferZone && rowZone && bufferZone === rowZone);
+      // Advisory range flag (#117): a SAME-ZONE target beyond ~200 units from
+      // the buffer is "likely out of range" — dimmed, NOT removed (fail-open).
+      // Only meaningful in-zone (cross-zone is already deprioritized by
+      // same_zone). Unknown position on either side ⇒ not flagged (rng helper
+      // fails open). Positions are stale up to the heartbeat cadence, so the
+      // overlay wording owns the imprecision ("likely out of range").
+      const rowLoc    = (live && (live.loc_x != null || live.loc_y != null)) ? { x: live.loc_x, y: live.loc_y, z: live.loc_z } : null;
+      const outOfRange = sameZone && rng.isLikelyOutOfRange(bufferLoc, rowLoc);
 
       // Cureables → debuff queue. Catalog-driven: ANY detrimental carrying
       // cure counters is listed — SPA 116 curse (Remove Curse), SPA 36
@@ -9772,6 +9788,7 @@ async function _handleAgentRaidBuffQueue(req, res) {
           // sinks it below un-handled rows in the cross-raider sort.
           all_being_cured:       activeCurses.every(c => c.being_cured) || undefined,
           same_zone:             sameZone,
+          out_of_range:          outOfRange || undefined,
           inferred: isInferred,
           casting: _castingOnTarget(name),
         });
@@ -9846,6 +9863,7 @@ async function _handleAgentRaidBuffQueue(req, res) {
         // warrior needs Symbol before a naked wizard does.
         needs_tank_hp:         (role === 'tank' && missingHp.length > 0),
         same_zone:             sameZone,
+        out_of_range:          outOfRange || undefined,
         inferred: isInferred,
         casting: _castingOnTarget(name),
       });
@@ -10916,6 +10934,11 @@ async function _handleAgentLiveState(req, res) {
     // same-name mobs collapse to one name (the overlay asterisks non-unique).
     const targetName = st?.target_name ? String(st.target_name).slice(0, 80) : null;
     const targetHp   = (st?.target_hp_pct != null && Number.isFinite(Number(st.target_hp_pct))) ? Number(st.target_hp_pct) : null;
+    // Position (agent v3.3.94+, Zeal loc {x,y,z}) — powers the raid-buff-queue's
+    // advisory "likely out of range" flag (#117). Nullable; fail-open downstream.
+    const locX = (st?.loc_x != null && Number.isFinite(Number(st.loc_x))) ? Number(st.loc_x) : null;
+    const locY = (st?.loc_y != null && Number.isFinite(Number(st.loc_y))) ? Number(st.loc_y) : null;
+    const locZ = (st?.loc_z != null && Number.isFinite(Number(st.loc_z))) ? Number(st.loc_z) : null;
     rows.push({
       guild_id:    guildId,
       character,
@@ -10930,6 +10953,9 @@ async function _handleAgentLiveState(req, res) {
       self_mana_max: selfManaMax,
       target_name: targetName,
       target_hp_pct: targetHp,
+      loc_x:       locX,
+      loc_y:       locY,
+      loc_z:       locZ,
       buffs,
       buff_count:  Number.isFinite(Number(st?.buff_count)) ? Math.trunc(Number(st.buff_count)) : buffs.length,
       pet_name:    petName,
