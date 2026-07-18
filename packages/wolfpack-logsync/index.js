@@ -6978,6 +6978,11 @@ function enqueueUpload(kind, payload) {
   // drops outbound uploads so the same line isn't posted twice. Its local
   // dashboard still works — local stats come from parseEvent, not the queue.
   if (!_isUploaderInstance) return null;
+  // #74 dormancy: durable events still enqueue (the paused drain HOLDS them —
+  // nothing lost); ephemeral latest-wins streams (casting/raid_roster/
+  // threat_snapshot) are dropped so a long dormancy can't pile them up behind
+  // the hold. A stale ephemeral snapshot is worthless anyway.
+  if (_EPHEMERAL_KINDS.has(kind) && _controlStandDown().down) return null;
   // Collapse/shed ephemeral latest-wins streams BEFORE the cap check so a
   // stalled drain can't let them accumulate (and so collapsing might bring us
   // back under the cap, sparing a durable entry from eviction). raid_roster is
@@ -7161,6 +7166,11 @@ async function _drainUploadQueue(opts = {}) {
   const force = opts.force === true;
   if (_queueDraining) return;
   if (!_queueUploadOpts) return;
+  // #74 guild control plane: while dormant (fleet kill) or below the version
+  // floor, HOLD the durable queue — pause the drain, never drop. force ("drain
+  // now" from the dashboard) still bypasses. The held queue resumes on the next
+  // pass once the flag clears (within one heartbeat).
+  if (!force && _controlStandDown().down) return;
   // Read-only instance: don't replay the persisted queue either (it may hold
   // entries from a prior run, and the active uploader is covering live data).
   // Draining resumes automatically if this instance takes over the lock — or
@@ -7701,6 +7711,18 @@ function isNewerVersion(a, b) {
     if ((pa[i] || 0) < (pb[i] || 0)) return false;
   }
   return false;
+}
+
+// Collapse a semver-ish version to ONE comparable integer for the guild version
+// floor (#74): major*10000 + minor*100 + patch, so 3.3.85 → 30385. The officer
+// types the same numeric form into min_agent_ver_num on /admin/overlays. Assumes
+// minor/patch < 100 (true for this project's cadence — patch resets per minor
+// line). Non-numeric / missing → 0 (fail-open: a 0 floor never stands anyone
+// down). Mirrored by test/version-floor.test.js (upgrade to a source-slice when
+// the beta agent graduates to stable).
+function _verNum(v) {
+  const p = String(v || '').split('.').map(n => parseInt(n, 10) || 0);
+  return (p[0] || 0) * 10000 + (p[1] || 0) * 100 + (p[2] || 0);
 }
 
 function openDashboardInBrowser(port) {
@@ -8942,6 +8964,13 @@ function _serializeForDashboard() {
     // / no answer yet). electionOn=true means the bot is actively assigning.
     // camping=true while a /camp is in progress (demoted from candidacy early).
     reporter: { roles: _reporterRoles, electionOn: _reporterElectionOn, camping: _camping },
+    // #74 guild control plane — dormancy / version-floor stand-down. Drives the
+    // dashboard banner. Fail-open: down=false when the bot hasn't spoken or is
+    // unheard past the TTL. reason: 'kill' | 'floor' | null.
+    controlPlane: (() => {
+      const sd = _controlStandDown();
+      return { down: sd.down, reason: sd.reason, minVerNum: _controlPlane.minVerNum, myVerNum: _verNum(AGENT_VERSION) };
+    })(),
     // Charm-pet tick tracker — array form so the dashboard can render
     // a 6s countdown to next mob tick / next charm check. Sorted most-
     // recently-updated first; capped to 12 to keep the payload small.
@@ -10033,6 +10062,16 @@ function renderHeader(s) {
                 && s.latestAgentVersion !== s.version
                 && _isNewerVersion(s.latestAgentVersion, s.version);
   let h = '';
+  // #74 guild control-plane banner — fleet dormancy or version floor. Rides at
+  // the very TOP so it is visible on every tab. Uploads are paused (nothing
+  // lost); overlays keep working on each user LOCAL data so no HUD blanks. Static
+  // text → byte-stable across polls (no morph flicker), no details/wpKeep needed.
+  const cp = s.controlPlane || {};
+  if (cp.down && cp.reason === 'kill') {
+    h += '<div class="banner" style="background:#3b0a0a;color:#ffd0d0;border:1px solid #f85149">⏸ <b>Agent paused by guild control plane.</b> Uploads are held (nothing lost) and resume automatically when the guild clears the pause. Your overlays keep working on local data.</div>';
+  } else if (cp.down && cp.reason === 'floor') {
+    h += '<div class="banner" style="background:#3a2a0a;color:#f6c365;border:1px solid #6b5320">⚠ <b>Your agent is below the guild minimum</b> (v' + esc(s.version) + '). Uploads are paused until you update — press <b>[U]</b> or the ↻ Update button. Your overlays keep working on local data.</div>';
+  }
   if (hasNewer) h += '<div class="banner update">★ Update available — <button id="updateBtn" style="margin-left:8px;background:#fff;color:#000;border:0;padding:4px 12px;border-radius:4px;cursor:pointer;font-weight:bold">Install now</button></div>';
   if (s.sessionResumed)  h += '<div class="banner resumed">↻ Session resumed from previous run</div>';
   // Stale-backfill nudge. Lives in the header (always visible across tabs)
@@ -19607,6 +19646,40 @@ let _reporterHeartbeatOn = false;
 let _camping             = false;
 const REPORTER_HEARTBEAT_MS = 20_000;
 function _reporterFailOpen() { _reporterRoles = { chat: true, buffs: true, roster: true }; _reporterElectionOn = false; }
+
+// ── Guild control plane (#74) — fleet dormancy + version floor ───────────────
+// The bot serves flag_agent_kill + min_agent_ver_num on BOTH the reporter-poll
+// (20s primary control channel) AND the guild-trigger (2min backup) responses.
+// We honor whichever we hear. Conservative v1 — Hitya to sign off (BETA-TESTING).
+// FAIL-OPEN by construction: we only ADOPT a reading from a SUCCESSFUL parse that
+// actually carried the keys (an older bot omits them → we neither adopt nor clear);
+// a poll FAILURE leaves the last good reading; and if no fresh reading has landed
+// within the TTL (bot down / unheard) we fail-open to "run normally".
+let _controlPlane = { kill: false, minVerNum: 0, at: 0 };
+const CONTROL_PLANE_TTL_MS = 5 * 60_000;   // both channels silent this long → fail-open
+function _applyControlPlane(obj, source) {
+  if (!obj || typeof obj !== 'object') return;
+  // Only treat this as a control reading if the bot actually spoke the keys.
+  if (!('agent_kill' in obj) && !('min_agent_ver_num' in obj)) return;
+  const kill = obj.agent_kill === true || Number(obj.agent_kill) >= 1;
+  const rawFloor = Number(obj.min_agent_ver_num);
+  const minVerNum = Number.isFinite(rawFloor) && rawFloor > 0 ? Math.floor(rawFloor) : 0;
+  const prevKill = _controlPlane.kill, prevFloor = _controlPlane.minVerNum;
+  _controlPlane = { kill, minVerNum, at: Date.now() };
+  if (kill !== prevKill)
+    console.log(`[control] flag_agent_kill → ${kill ? 'DORMANT (paused by guild control plane)' : 'resumed'} (${source})`);
+  if (minVerNum !== prevFloor)
+    console.log(`[control] min_agent_ver_num → ${minVerNum || 'unset'} (mine=${_verNum(AGENT_VERSION)}${minVerNum && _verNum(AGENT_VERSION) < minVerNum ? ', BELOW floor' : ''}, ${source})`);
+}
+// The active stand-down decision — { down, reason }. down=true means stop all
+// uploads + non-control polls (hold the durable queue). Fail-open when there is
+// no fresh reading.
+function _controlStandDown() {
+  if (!_controlPlane.at || (Date.now() - _controlPlane.at) > CONTROL_PLANE_TTL_MS) return { down: false, reason: null };
+  if (_controlPlane.kill) return { down: true, reason: 'kill' };
+  if (_controlPlane.minVerNum > 0 && _verNum(AGENT_VERSION) < _controlPlane.minVerNum) return { down: true, reason: 'floor' };
+  return { down: false, reason: null };
+}
 function _reporterHeartbeatOnce() {
   const opts = _uploadOpts;
   if (!opts || !opts.botUrl || !opts.token || opts.dryRun) return;
@@ -19649,6 +19722,7 @@ function _reporterHeartbeatOnce() {
       res.on('end', () => {
         try {
           const j = JSON.parse(buf);
+          _applyControlPlane(j, 'reporter-poll');   // #74 — fleet kill + version floor
           if (j && j.roles && typeof j.roles === 'object') {
             const prevChat   = _reporterRoles.chat;
             const prevBuffs  = _reporterRoles.buffs;
@@ -21229,6 +21303,10 @@ function pollGuildTriggers({ botUrl, token }) {
         res.on('end', () => {
           try {
             const resp = JSON.parse(data);
+            // #74 control plane BACKUP channel — kill/floor keys ride the trigger
+            // poll too, so an agent honors them even without the reporter poll.
+            // Applied BEFORE the version-gate early return so it always lands.
+            _applyControlPlane(resp, 'guild-triggers');
             // Version-gate: if the guild set hasn't changed, skip the recompile
             // entirely so a faster poll (see the 2-min interval) stays cheap.
             // Only when the bot actually sent a version (older bots send none →
@@ -21847,6 +21925,7 @@ let _relayPollerActive = false;
 const RELAY_STALE_MS = 15_000;
 async function _pollRelayFires() {
   if (_relayPollerActive) return;
+  if (_controlStandDown().down) return;   // #74 dormant/below-floor → stop the recent-fires poll (local callouts unaffected)
   const base = _getApiBase();
   const token = _getAgentToken();
   if (!base || !token) return;
@@ -22945,6 +23024,7 @@ function scanCrashDirs() {
 
 function flushLiveStateToBot(opts) {
   if (!_isUploaderInstance) return;          // only the elected uploader sends
+  if (_controlStandDown().down) return;      // #74 dormant/below-floor → stop the direct live-state push
   if (!opts || !opts.botUrl) return;
   const base = opts.botUrl.replace(/\/encounter(\?.*)?$/, '');
   const url  = base + '/live-state';
