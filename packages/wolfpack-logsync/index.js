@@ -12450,6 +12450,9 @@ function renderAdmin(s) {
   // Officer widget placeholders (filled same-tick by their existing render fns).
   h += '<div id="wpDkpTick" class="card wide" style="display:none"></div>';
   h += '<div id="wpDkpLoot" class="card wide" style="display:none"></div>';
+  // 📡 Reporters (#115) — filled by renderReporters (its own placeholder so the
+  // swap/include controls survive #admin repaints; officer-gated on the data).
+  h += '<div id="wpReporters" class="card wide" style="display:none"></div>';
   // Quick links to the web admin surfaces.
   h += '<div class="card wide"><h2>🔗 Web admin <span class="dim" style="font-size:11px;font-weight:normal">— opens on wolfpack.quest (officer-gated there too)</span></h2>'
     + '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px">'
@@ -12462,6 +12465,153 @@ function renderAdmin(s) {
     + '</div>';
   morphInto(sec, h);
 }
+
+// 📡 Reporters (#115) — officer-only live reporter registry + swap/include
+// controls. Data comes from the bot's officer-gated GET /api/server/reporters
+// (proxied through the agent's /api/server passthrough), fetched on its own
+// ~8s cadence and cached so the 2s dashboard poll renders byte-stably from the
+// cache (no flicker, and a focused input is never wiped mid-type). Writes go to
+// POST /api/server/reporter-override → the bot's officer-authed
+// /api/agent/reporter-override, which sets the reporter_pin_/reporter_extra_
+// tuning keys. Non-officers get no data and no panel (the DATA gate is the bot,
+// not CSS — the same is_officer reply the DKP widgets use).
+var _wpReporters = { data: null, at: 0, inflight: false, err: null };
+function _wpReporterPanelHasFocus() {
+  var ae = document.activeElement;
+  var p = document.getElementById('wpReporters');
+  return !!(p && ae && p.contains(ae));
+}
+function _wpFetchReporters() {
+  if (_wpReporters.inflight) return;
+  _wpReporters.inflight = true;
+  fetch('/api/server/reporters').then(function (r) { return r.json(); }).then(function (j) {
+    _wpReporters.inflight = false; _wpReporters.at = Date.now();
+    if (j && j.error) { _wpReporters.err = j.error; _wpReporters.data = null; }
+    else { _wpReporters.err = null; _wpReporters.data = j; }
+  }).catch(function () { _wpReporters.inflight = false; _wpReporters.at = Date.now(); _wpReporters.err = 'engine unreachable'; });
+}
+// Format a raw duration (ms) — the registry sends AGES, not timestamps, so a
+// fixed formatter keeps the render byte-stable between fetches.
+function _wpDur(ms) {
+  if (ms == null) return '—';
+  var d = Number(ms) || 0;
+  if (d < 1000) return '0s';
+  if (d < 60000) return Math.floor(d / 1000) + 's';
+  if (d < 3600000) return Math.floor(d / 60000) + 'm';
+  return Math.floor(d / 3600000) + 'h';
+}
+function renderReporters(s) {
+  var sec = document.getElementById('wpReporters');
+  if (!sec) return;
+  var isOfficer = !!(s.mimicIdentity && s.mimicIdentity.is_officer);
+  if (!isOfficer) { if (sec.style.display !== 'none') sec.style.display = 'none'; morphInto(sec, ''); return; }
+  if (sec.style.display === 'none') sec.style.display = '';
+  // Refresh the cache on its own cadence, but NEVER while the officer is typing
+  // in this panel (a repaint would wipe the input) — the focus guard + morph
+  // change-detection together keep typed text and open dropdowns intact.
+  if (!_wpReporterPanelHasFocus() && (Date.now() - _wpReporters.at > 8000)) _wpFetchReporters();
+  var j = _wpReporters.data;
+  var h = '<h2>📡 Reporters <span class="dim" style="font-size:11px;font-weight:normal">— live election registry · swap / include (officer)</span></h2>';
+  if (!j) {
+    h += '<div class="dim" style="font-size:12px">' + (_wpReporters.err ? esc(_wpReporters.err) : 'loading…') + '</div>';
+    morphInto(sec, h); return;
+  }
+  var reps = j.reporters || [];
+  var elected = j.elected || {};
+  var overrides = j.overrides || {};
+  var dedup = j.dedup || {};
+  h += '<div class="dim" style="font-size:11px;margin-bottom:6px">Election <b>' + esc(j.election || '?') + '</b> · liveness threshold ' + _wpDur(j.liveness_max_ms) + ' · ' + reps.length + ' live agent(s)</div>';
+  // Per-service control rows.
+  var svcs = [['chat', 'Chat (/gu·/rs)'], ['buffs', 'Buff landings'], ['roster', 'Raid roster']];
+  var liveOpts = '';
+  for (var i = 0; i < reps.length; i++) {
+    var nm = reps[i].character || '';
+    if (nm) liveOpts += '<option value="' + esc(nm) + '">' + esc(nm) + '</option>';
+  }
+  for (var si = 0; si < svcs.length; si++) {
+    var key = svcs[si][0], label = svcs[si][1];
+    var el = elected[key] || [];
+    var ov = overrides[key] || {};
+    var on = dedup[key] !== false;
+    var electedTxt = el.length ? esc(el.join(', ')) : '(none)';
+    if (!on) electedTxt = '<span class="dim">dedup OFF — everyone uploads</span>';
+    h += '<div style="border:1px solid var(--border);border-radius:6px;padding:8px 10px;margin-bottom:6px">';
+    h += '<div><b>' + esc(label) + '</b> <span class="dim" style="font-size:10px">' + (on ? 'deduped' : 'off') + '</span></div>';
+    h += '<div style="font-size:12px;margin:3px 0">Elected: ' + electedTxt + '</div>';
+    if (ov.pin || (ov.extra && ov.extra.length)) {
+      h += '<div class="dim" style="font-size:11px">Override — pin: <b>' + (ov.pin ? esc(ov.pin) : '—') + '</b> · include: <b>' + ((ov.extra && ov.extra.length) ? esc(ov.extra.join(', ')) : '—') + '</b></div>';
+    }
+    h += '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:5px">';
+    h += '<select class="wpRepSwap" data-service="' + key + '" style="font-size:11px;padding:2px 4px;background:#161b22;color:var(--text);border:1px solid var(--border);border-radius:4px"><option value="">swap reporter →</option>' + liveOpts + '</select>';
+    h += '<input class="wpRepExtra" data-service="' + key + '" placeholder="add include (name)" style="font-size:11px;padding:3px 6px;background:#161b22;color:var(--text);border:1px solid var(--border);border-radius:4px;width:150px">';
+    h += '<button type="button" class="wpRepExtraBtn" data-service="' + key + '" style="font-size:11px;padding:3px 9px;cursor:pointer;border:1px solid var(--border);border-radius:4px;background:#21262d;color:var(--text)">+ include</button>';
+    h += '<button type="button" class="wpRepClear" data-service="' + key + '" style="font-size:11px;padding:3px 9px;cursor:pointer;border:1px solid var(--border);border-radius:4px;background:#21262d;color:var(--red)">clear</button>';
+    h += '</div></div>';
+  }
+  h += '<div id="wpRepMsg" class="dim" style="font-size:11px;min-height:14px"></div>';
+  // Fleet table — collapsed by default (wpKeep persists open-state across repaints).
+  h += '<details ' + wpKeep('wpRepFleet') + ' style="margin-top:4px">';
+  h += '<summary style="cursor:pointer;font-size:12px">Live fleet (' + reps.length + ')</summary>';
+  h += '<table style="margin-top:4px"><tr><th>Character</th><th>Zone</th><th>Grp</th><th>Ver</th><th>Log</th><th>Seen</th></tr>';
+  for (var ri = 0; ri < reps.length; ri++) {
+    var r = reps[ri];
+    var freshDot = r.fresh ? '<span style="color:var(--green)">●</span>' : '<span style="color:var(--red)">○</span>';
+    var camp = r.camping ? ' <span class="dim" title="camping">⛺</span>' : '';
+    h += '<tr><td>' + freshDot + ' <span class="name">' + esc(r.character || '?') + '</span>' + camp + '</td>'
+      + '<td class="dim">' + esc(r.zone || '—') + '</td>'
+      + '<td class="dim">' + (r.group_num == null ? '—' : r.group_num) + '</td>'
+      + '<td class="dim">' + esc(r.agent_version || '—') + '</td>'
+      + '<td class="dim">' + _wpDur(r.last_line_age_ms) + '</td>'
+      + '<td class="dim">' + _wpDur(r.last_seen_age_ms) + '</td></tr>';
+  }
+  h += '</table></details>';
+  morphInto(sec, h);
+}
+// 📡 Reporters override controls — delegated (capture) so #admin repaints never
+// lose the handlers. Swap sets the pin; + include appends to the extra list;
+// clear removes both override keys for the service.
+function _wpReporterOverride(service, patch) {
+  var msg = document.getElementById('wpRepMsg');
+  if (msg) msg.textContent = 'saving…';
+  var body = { service: service };
+  for (var k in patch) body[k] = patch[k];
+  fetch('/api/server/reporter-override', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+    .then(function (r) { return r.json(); }).then(function (j) {
+      if (msg) msg.textContent = (j && j.ok) ? '✓ saved — takes effect within ~60s' : ('✕ ' + ((j && (j.reason || j.error)) || 'failed'));
+      _wpReporters.at = 0; _wpFetchReporters();   // reflect the change promptly
+    }).catch(function () { if (msg) msg.textContent = '✕ engine unreachable'; });
+}
+document.addEventListener('change', function (ev) {
+  var t = ev.target;
+  if (!t || !t.classList || !t.classList.contains('wpRepSwap')) return;
+  var svc = t.getAttribute('data-service');
+  var name = t.value;
+  if (!svc || !name) return;
+  _wpReporterOverride(svc, { pin: name });
+  t.value = '';
+}, true);
+document.addEventListener('click', function (ev) {
+  var t = ev.target;
+  if (!t || !t.closest) return;
+  var addBtn = t.closest('.wpRepExtraBtn');
+  if (addBtn) {
+    var svc = addBtn.getAttribute('data-service');
+    var inp = document.querySelector('.wpRepExtra[data-service="' + svc + '"]');
+    var cur = (_wpReporters.data && _wpReporters.data.overrides && _wpReporters.data.overrides[svc] && _wpReporters.data.overrides[svc].extra) || [];
+    var add = (inp && inp.value ? inp.value : '').split(',').map(function (x) { return x.trim(); }).filter(Boolean);
+    if (!add.length) { var m0 = document.getElementById('wpRepMsg'); if (m0) m0.textContent = 'type a name first'; return; }
+    var merged = cur.concat(add).join(',');
+    if (inp) inp.value = '';
+    _wpReporterOverride(svc, { extra: merged });
+    return;
+  }
+  var clrBtn = t.closest('.wpRepClear');
+  if (clrBtn) {
+    var svc2 = clrBtn.getAttribute('data-service');
+    _wpReporterOverride(svc2, { pin: '', extra: '' });
+    return;
+  }
+}, true);
 
 function renderInfo(s) {
   const sessionMin = Math.max(1, Math.round((Date.now() - s.startedAt) / 60000));
@@ -13484,6 +13634,7 @@ async function refresh() {
                      ['admin', renderAdmin],
                      ['dkptick', renderDkpTickCard],
                      ['dkploot', renderDkpLootCard],
+                     ['reporters', renderReporters],
                      ['backupscard', renderBackupsCard]];
     for (var _si = 0; _si < _sections.length; _si++) {
       var _sid = _sections[_si][0], _sfn = _sections[_si][1];
@@ -16484,7 +16635,10 @@ function startWebDashboard(port) {
         }
         try {
           const action = req.url.substring('/api/server/'.length);
-          const map = { 'place-bid': '/api/agent/place-bid' };
+          const map = {
+            'place-bid':         '/api/agent/place-bid',
+            'reporter-override': '/api/agent/reporter-override',   // #115 officer election override (bot re-checks is_officer)
+          };
           const remotePath = map[action];
           if (!remotePath) {
             res.writeHead(404, { 'Content-Type': 'application/json' });
@@ -20476,6 +20630,25 @@ function _reporterHeartbeatOnce() {
   if (!_isUploaderInstance) return;   // one heartbeat per machine (the uploader instance)
   let primary = null;
   try { primary = _primaryCharacter(); } catch { /* */ }
+  // #112 liveness signal: ms since this machine last processed a LIVE log line
+  // from its primary character's tail (tailFile stamps watched.lastSeen on every
+  // line). A logged-out character tails nothing, so this climbs within seconds of
+  // logout even though the agent keeps heartbeating — which is exactly the
+  // 2026-07-19 chat-blackout the bot's chat election now guards against. null
+  // when we can't determine it (no primary / no watched log) → the bot treats
+  // that as FRESH (fail-open), so this can never silence the fleet.
+  let last_line_ms = null;
+  try {
+    const wls = (stats && stats.watchedLogs) || [];
+    const pl = primary ? primary.toLowerCase() : null;
+    let best = 0;
+    for (const w of wls) {
+      if (!w || !w.lastSeen) continue;
+      if (pl && (w.character || '').toLowerCase() !== pl) continue;
+      if (w.lastSeen > best) best = w.lastSeen;
+    }
+    if (best) last_line_ms = Math.max(0, Date.now() - best);
+  } catch { /* best-effort — null falls open to fresh */ }
   // Best-effort context the bot uses for the zone/group-aware election (P1b/c).
   let zone = null, group_num = null, has_zeal = false;
   try {
@@ -20495,7 +20668,7 @@ function _reporterHeartbeatOnce() {
     const url = opts.botUrl.replace(/\/encounter(\?.*)?$/, '/reporter-poll');
     const u   = new URL(url);
     const mod = u.protocol === 'https:' ? https : http;
-    const body = JSON.stringify({ primary_character: primary, zone, group_num, camping: _camping, has_zeal, agent_version: AGENT_VERSION });
+    const body = JSON.stringify({ primary_character: primary, zone, group_num, camping: _camping, has_zeal, agent_version: AGENT_VERSION, last_line_ms });
     const req = mod.request({
       method: 'POST', hostname: u.hostname, port: u.port, path: u.pathname,
       headers: {
