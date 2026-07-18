@@ -9869,6 +9869,11 @@ body.wp-overlay-mode .wp-overlay-target table th:nth-child(2) { text-align:right
   <button data-tab="info">Info</button>
   <button data-tab="triggers">⚡ Triggers</button>
   <button data-tab="optin">Logsync</button>
+  <!-- 🛡 Admin — officer-only. Hidden by default; renderAdmin flips it visible
+       ONLY when s.mimicIdentity.is_officer (the bot's authenticated reply). The
+       officer-gated card DATA is served only to officers, so this is a real
+       gate, not a CSS hide. -->
+  <button data-tab="admin" id="wpAdminTab" style="display:none" title="Officer quick menu — DKP ticks, loot capture, admin links">🛡 Admin</button>
   <button id="wpGear" class="wp-gear" style="margin-left:auto" title="Customize panels — show or hide sections (per page)">⚙ Panels</button>
 </div>
 <div id="wpPanelMenu" class="wp-menu" style="display:none"></div>
@@ -9886,6 +9891,7 @@ body.wp-overlay-mode .wp-overlay-target table th:nth-child(2) { text-align:right
 <div id="info" class="section"></div>
 <div id="triggers" class="section"></div>
 <div id="optin" class="section"></div>
+<div id="admin" class="section"></div>
 <script>
 function _isNewerVersion(a, b) {
   if (!a || !b) return false;
@@ -10368,10 +10374,20 @@ function renderHeader(s) {
 function renderDash(s) {
   let h = '';
 
-  // Setup checklist — the first thing on the Dashboard: is the engine actually
-  // wired to feed the raid tools? Each row is a known signal from /api/state.
-  // Self-updating #wpSetupChecks so its live ✓/✗ doesn't repaint the section.
-  h += '<div id="wpSetupChecks" class="card wide" style="display:none"></div>';
+  // 🐺 Me — the member's own snapshot, front and center (this REPLACES the old
+  // prominent logsync/status region). Own #wpMeCard placeholder filled by
+  // renderMeCard via morphInto so the card is byte-stable between polls and
+  // never drags the #dash section into a repaint. Everything it shows is LOCAL
+  // (own Zeal state, watched logs, local tells, recent uploads) — no bot call.
+  h += '<div id="wpMeCard" class="card wide" style="display:none"></div>';
+
+  // ⚙ Engine — the logsync/sync guts (setup checklist, files tailed, queue
+  // depth, upload stats, reporter), collapsed by default. Lives in its own
+  // #wpEngine placeholder; renderEngine fills it with the <details> so a toggle
+  // repaints ONLY this card, not the whole dashboard. Child ids (#wpSetupChecks
+  // #wpEngineStats #wpWatchedLogs) are preserved so their existing render fns
+  // still fill them — a placement change, not a plumbing change.
+  h += '<div id="wpEngine"></div>';
 
   // Per-character "buffs & zone" card — what each watched character is carrying
   // and where they are right now, OR what they logged out with (the last Zeal
@@ -10416,8 +10432,8 @@ function renderDash(s) {
   // 💚 Healing — this fight. Isolated (live during combat). renderHealingCard.
   h += '<div id="wpHealingCard" class="card" style="display:none"></div>';
 
-  // (Watched Logs moved to the Info / Stats tab — it's reference data, not a
-  // raid-night card. renderInfo emits the #wpWatchedLogs placeholder now.)
+  // (Watched Logs = "files tailed" — now lives in the ⚙ Engine <details> at the
+  // top of this section; renderEngine emits the #wpWatchedLogs placeholder.)
 
   // Recent Tells — isolated (its "When" column ticks every poll). renderRecentTellsCard.
   h += '<div id="wpRecentTells" class="card wide" style="display:none"></div>';
@@ -10435,6 +10451,183 @@ function renderDash(s) {
   // setSectionHTML short-circuits → no whole-section repaint (the stutter). The
   // volatile cards fill their own placeholders via the render fns below.
   setSectionHTML('dash', h);
+}
+
+// 🐺 Me — the member's own snapshot at the top of the Dashboard (in place of the
+// old logsync region). Pulls ENTIRELY from local state — the own Zeal client
+// (character + zone + buffs), watched logs (characters), local tells, and recent
+// uploads (last fights) — plus a prominent jump to wolfpack.quest/me. Own
+// #wpMeCard placeholder filled via morphInto: the string is byte-identical
+// between polls unless its content actually changes, so it does NOT repaint the
+// #dash section every 2s. fmtAgo timestamps live INSIDE this dedicated card per
+// the dashboard rendering rules. Buff NAMES only (no ticking tick-counts) so the
+// card stays stable mid-combat; the Buffs & Zone card below carries live ticks.
+function renderMeCard(s) {
+  const el = document.getElementById('wpMeCard');
+  if (!el) return;
+  if (!_isPanelHidden(el) && el.style.display === 'none') el.style.display = '';
+
+  const clients = Array.isArray(s.zealClients) ? s.zealClients : [];
+  // Own character: prefer a live Zeal client, else the most recently updated.
+  let me = clients.find(c => c && c.live);
+  if (!me) me = clients.slice().sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))[0] || null;
+  const wls = Array.isArray(s.watchedLogs) ? s.watchedLogs : [];
+  const _byChar = new Map();
+  for (const w of wls) {
+    const k = w.character || '?';
+    const cur = _byChar.get(k);
+    if (!cur || (w.lastSeen || 0) > (cur.lastSeen || 0)) _byChar.set(k, w);
+  }
+  const chars = [..._byChar.values()].sort((a, b) => (b.lastSeen || 0) - (a.lastSeen || 0));
+  const meName = (me && me.character) || (chars[0] && chars[0].character) || null;
+
+  let h = '<h2 style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">🐺 Me'
+    + (meName
+        ? ' <span class="name" style="font-size:15px">' + esc(meName) + '</span>'
+        : ' <span class="dim" style="font-size:12px;font-weight:normal">— log a character in to populate</span>')
+    + '<span style="flex:1"></span>'
+    + '<a href="https://wolfpack.quest/me" target="_blank" rel="noreferrer" style="font-size:12px;color:var(--blue);border:1px solid var(--blue);border-radius:5px;padding:2px 10px;text-decoration:none;font-weight:600" title="Your full /me dashboard — stats, settings, characters, tells, buffs">Open /me ↗</a>'
+    + '</h2>';
+
+  // Zone + compact buffs line (own Zeal state).
+  if (me) {
+    const dot = me.live ? '<span style="color:var(--green)">●</span>' : '<span style="color:var(--dim)">○</span>';
+    const where = me.zone_name ? esc(me.zone_name) : (me.zone != null ? 'zone ' + esc(String(me.zone)) : 'unknown zone');
+    h += '<div style="font-size:12px;margin-top:2px">' + dot + ' <span class="dim">' + where + '</span>'
+       + (me.casting ? ' <span style="color:#58a6ff">· ✦ casting ' + esc(me.casting) + '</span>' : '')
+       + (me.live && me.pet_name ? ' <span style="color:#f0883e">· 🐾 ' + esc(me.pet_name) + '</span>' : '')
+       + (!me.live && me.updatedAt ? ' <span class="dim">· last seen ' + fmtAgo(me.updatedAt) + '</span>' : '')
+       + '</div>';
+    const buffs = Array.isArray(me.buffs) ? me.buffs : [];
+    if (buffs.length) {
+      const bstr = buffs.slice(0, 12).map(b => esc(b.name)).join(' · ');
+      h += '<div style="margin-top:3px;color:#a371f7;font-size:11px">🧪 ' + bstr
+         + (buffs.length > 12 ? ' <span class="dim">+' + (buffs.length - 12) + ' more</span>' : '') + '</div>';
+    }
+  } else {
+    h += '<div class="dim" style="font-size:12px;margin-top:2px">No live Zeal character — buffs &amp; zone appear once a character is logged in with Zeal.</div>';
+  }
+
+  // Two-column body: watched characters + recent tells.
+  h += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:10px">';
+  h += '<div><div class="dim" style="font-size:11px;margin-bottom:3px">👥 Watched characters (' + chars.length + ')</div>';
+  if (chars.length === 0) h += '<div class="dim" style="font-size:11px">none yet</div>';
+  else {
+    h += '<div style="font-size:12px;line-height:1.6">';
+    for (const c of chars.slice(0, 8)) {
+      const hot = c.lastSeen && (Date.now() - c.lastSeen) < 3600000;
+      h += (hot ? '<span style="color:var(--green)">●</span> ' : '<span class="dim">○</span> ')
+         + '<span class="name">' + esc(c.character) + '</span> <span class="dim" style="font-size:10px">' + fmtAgo(c.lastSeen) + '</span><br>';
+    }
+    h += '</div>';
+  }
+  h += '</div>';
+
+  // Recent tells (local only — they never leave the machine).
+  const tells = (s.recentTells || []).slice(-5).reverse();
+  h += '<div><div class="dim" style="font-size:11px;margin-bottom:3px">📬 Recent tells <span style="font-size:10px">(local, this machine)</span></div>';
+  if (tells.length === 0) h += '<div class="dim" style="font-size:11px">none yet</div>';
+  else {
+    h += '<div style="font-size:11px;line-height:1.5">';
+    for (const t of tells) {
+      const arrow = t.direction === 'outgoing' ? '→' : '←';
+      const tsMs = t.capturedAt || (t.ts ? new Date(t.ts).getTime() : 0);
+      // NOTE: t.other is not always a player — keep it a plain span (no
+      // class="name") so the /character click-delegation can't misfire on it.
+      h += '<div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'
+         + '<span class="dim">' + arrow + '</span> <span style="color:var(--blue)">' + esc(t.other) + '</span>: '
+         + esc(String(t.text || '').slice(0, 48))
+         + (tsMs ? ' <span class="dim" style="font-size:10px">' + fmtAgo(tsMs) + '</span>' : '')
+         + '</div>';
+    }
+    h += '</div>';
+  }
+  h += '</div>';
+  h += '</div>';   // grid
+
+  // Last few fights — name + duration + a jump to the wolfpack.quest parse list.
+  // (Boss names are NPCs — plain span, never class="name", so the /character
+  // click-delegation doesn't 404 on them.)
+  const fights = (s.recentParses || [])
+    .filter(p => p && p.bossName && p.bossName !== '?' && (p.eventCount > 0 || p.totalDamage > 0))
+    .slice(0, 4);
+  h += '<div style="margin-top:10px"><div class="dim" style="font-size:11px;margin-bottom:3px">⚔️ Last fights'
+     + ' <a href="https://wolfpack.quest/parses" target="_blank" rel="noreferrer" style="color:var(--blue);font-size:10px;margin-left:4px">all parses ↗</a></div>';
+  if (fights.length === 0) h += '<div class="dim" style="font-size:11px">no uploads yet</div>';
+  else {
+    h += '<div style="font-size:12px;line-height:1.6">';
+    for (const p of fights) {
+      const dsec = (p.durationSec != null) ? Math.round(p.durationSec) : null;
+      const dur = (dsec && dsec > 0)
+        ? ' <span class="dim">· ' + (dsec < 60 ? dsec + 's' : Math.floor(dsec / 60) + 'm' + (dsec % 60 ? ' ' + (dsec % 60) + 's' : '')) + '</span>'
+        : '';
+      h += '<a href="https://wolfpack.quest/parses" target="_blank" rel="noreferrer" style="color:var(--text);text-decoration:none" title="Open recent parses on wolfpack.quest">'
+         + '<span style="color:var(--text)">' + esc(p.bossName) + '</span></a>'
+         + dur + ' <span class="dim">· ' + fmtK(p.totalDamage) + '</span><br>';
+    }
+    h += '</div>';
+  }
+  h += '</div>';
+
+  morphInto(el, h);
+}
+
+// ⚙ Engine card — fills #wpEngine with the collapsed <details> that houses the
+// logsync/sync guts. Open-state persists via wpKeep (a plain <details> snaps
+// shut on every repaint — the 1.7.0-beta.2 bug). The content is byte-stable
+// (summary + child placeholders only) so morphInto rewrites this card ONLY on a
+// user toggle — never the whole #dash section — and the nested #wpSetupChecks /
+// #wpEngineStats / #wpWatchedLogs survive between polls to be filled by their
+// own render fns (unchanged plumbing, only relocated).
+function renderEngine(s) {
+  const el = document.getElementById('wpEngine');
+  if (!el) return;
+  const h = '<details ' + wpKeep('engine') + ' class="card wide" style="margin-top:0">'
+    + '<summary style="cursor:pointer;font-weight:600;color:var(--text)">⚙ Engine'
+    + ' <span class="dim" style="font-weight:normal;font-size:11px">— logsync status: files tailed, queue, uploads, reporter</span></summary>'
+    + '<div id="wpSetupChecks" style="display:none;margin-top:8px"></div>'
+    + '<div id="wpEngineStats" style="display:none;margin-top:8px"></div>'
+    + '<div id="wpWatchedLogs" style="display:none;margin-top:8px"></div>'
+    + '</details>';
+  morphInto(el, h);
+}
+
+// ⚙ Engine stats — the sync/plumbing numbers (files tailed, queue depth, upload
+// counters, reporter role). Volatile, so isolated in its own #wpEngineStats
+// placeholder inside the Engine <details>; byte-stable via morphInto.
+function renderEngineStats(s) {
+  const el = document.getElementById('wpEngineStats');
+  if (!el) return;
+  if (!_isPanelHidden(el) && el.style.display === 'none') el.style.display = '';
+  const sessionMin = Math.max(1, Math.round((Date.now() - s.startedAt) / 60000));
+  const wls = Array.isArray(s.watchedLogs) ? s.watchedLogs : [];
+  const q = s.uploadQueue || {};
+  let queueStr;
+  if (q.pending > 0) {
+    const kinds = Object.entries(q.byKind || {}).map(([k, n]) => k + ':' + n).join(' · ');
+    queueStr = '<span style="color:#ffd07a">⏳ ' + q.pending + ' queued</span>'
+      + (q.parked > 0 ? ' <span class="dim">(' + q.parked + ' parked)</span>' : '')
+      + (kinds ? ' <span class="dim">' + esc(kinds) + '</span>' : '');
+  } else if ((q.permanentDropped || 0) + (q.capEvicted || 0) > 0) {
+    queueStr = '<span style="color:#ff9c9c">✕ ' + ((q.permanentDropped || 0) + (q.capEvicted || 0)) + ' dropped</span>';
+  } else {
+    queueStr = '<span style="color:var(--green)">idle</span>';
+  }
+  let h = '<table style="font-size:12px">'
+    + '<tr><td class="dim">Agent</td><td>v' + esc(s.version) + (s.localOnly ? ' <span class="dim">(local-only)</span>' : '') + '</td></tr>'
+    + '<tr><td class="dim">Files tailed</td><td>' + wls.length + '</td></tr>'
+    + '<tr><td class="dim">Upload queue</td><td>' + queueStr + '</td></tr>'
+    + '<tr><td class="dim">This session</td><td>' + (s.uploadCount || 0) + ' upload(s) · ' + s.sessionEvents + ' events / ' + sessionMin + ' min</td></tr>';
+  const rep = s.reporter || {};
+  if (rep.electionOn) {
+    const roles = rep.roles || {};
+    const on = Object.keys(roles).filter(k => roles[k]);
+    h += '<tr><td class="dim">Reporter</td><td>'
+       + (on.length ? esc(on.join(' · ')) : '<span class="dim">standing by</span>')
+       + (rep.camping ? ' <span class="dim">· camping</span>' : '') + '</td></tr>';
+  }
+  h += '</table>';
+  morphInto(el, h);
 }
 
 // ── Dashboard volatile cards, isolated into self-updating wp* placeholders ───
@@ -12216,6 +12409,60 @@ function renderDkpLootCard(s) {
   if (el._wpDkpHtml !== h) { el._wpDkpHtml = h; el.innerHTML = h; }
 }
 
+// 🛡 Admin — officer-only quick menu for raid night. Collects the officer
+// widgets that were scattered across the dashboard (DKP ticks, loot capture +
+// "Post for bidding") into one tab, plus quick links to the wolfpack.quest
+// admin surfaces. The GATE is agent-side: the sensitive card DATA (s.dkpTick /
+// s.dkpLoot) is only serialized into /api/state for officers (see the state
+// builder — null otherwise), and this fn only reveals the nav tab + fills the
+// section when s.mimicIdentity.is_officer (the bot's authenticated reply, not a
+// client claim). A non-officer never receives the tab OR the data — not CSS
+// hiding. The officer widget placeholders (#wpDkpTick / #wpDkpLoot) MOVED here
+// from the Info tab; their render fns (renderDkpTickCard / renderDkpLootCard)
+// fill them and were already officer-gated on the data. morphInto keeps this
+// section byte-stable so those persistent children survive between polls.
+function renderAdmin(s) {
+  const tabBtn = document.getElementById('wpAdminTab');
+  const sec = document.getElementById('admin');
+  const isOfficer = !!(s.mimicIdentity && s.mimicIdentity.is_officer);
+  if (!isOfficer) {
+    // Lost/never-had officer status — hide the tab, empty the section, and if
+    // it was somehow the active tab, fall back to the Dashboard.
+    if (sec && sec.classList.contains('active')) {
+      sec.classList.remove('active');
+      const dash = document.getElementById('dash'); if (dash) dash.classList.add('active');
+      document.querySelectorAll('.nav button[data-tab]').forEach(x => x.classList.remove('active'));
+      const dashBtn = document.querySelector('.nav button[data-tab="dash"]'); if (dashBtn) dashBtn.classList.add('active');
+    }
+    if (tabBtn && tabBtn.style.display !== 'none') tabBtn.style.display = 'none';
+    if (sec) morphInto(sec, '');
+    return;
+  }
+  if (tabBtn && tabBtn.style.display === 'none') tabBtn.style.display = '';
+  if (!sec) return;
+  function lk(path, label, tip) {
+    return '<a href="https://wolfpack.quest' + path + '" target="_blank" rel="noreferrer" title="' + esc(tip) + '"'
+      + ' style="color:var(--text);border:1px solid var(--border);border-radius:5px;padding:5px 11px;text-decoration:none;font-size:12px">' + label + '</a>';
+  }
+  const who = (s.mimicIdentity && s.mimicIdentity.display_name) || 'officer';
+  let h = '<div class="card wide"><h2>🛡 Officer — raid quick menu</h2>'
+    + '<div class="dim" style="font-size:11px">Signed in as <b>' + esc(who) + '</b>. Visible to officers only — these mirror the officer tools that used to be spread across the dashboard.</div></div>';
+  // Officer widget placeholders (filled same-tick by their existing render fns).
+  h += '<div id="wpDkpTick" class="card wide" style="display:none"></div>';
+  h += '<div id="wpDkpLoot" class="card wide" style="display:none"></div>';
+  // Quick links to the web admin surfaces.
+  h += '<div class="card wide"><h2>🔗 Web admin <span class="dim" style="font-size:11px;font-weight:normal">— opens on wolfpack.quest (officer-gated there too)</span></h2>'
+    + '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px">'
+    + lk('/admin/overlays', '🎚 Overlays / kill switches', 'raid_hold + flag_shed toggles, overlay tuning knobs')
+    + lk('/admin/triggers', '⚡ Triggers', 'promote / edit guild triggers')
+    + lk('/admin/encounters', '📊 Encounters', 'review + merge parses')
+    + lk('/admin', '🛡 Admin home', 'links, agents, members, audit')
+    + '</div>'
+    + '<div class="dim" style="font-size:10px;margin-top:10px">Raid-night flags (<b>raid_hold</b>, <b>flag_shed</b>) are set on <b>/admin/overlays</b> and polled fleet-wide within ~90s. A local one-click quick-flip needs an officer-authed agent write endpoint that does not exist yet — tracked as a follow-up.</div>'
+    + '</div>';
+  morphInto(sec, h);
+}
+
 function renderInfo(s) {
   const sessionMin = Math.max(1, Math.round((Date.now() - s.startedAt) / 60000));
   // totalMinutes now accumulates the live session incrementally (saveStatsSoon),
@@ -12224,19 +12471,14 @@ function renderInfo(s) {
   // the session that's already running.
   const lifetimeMin = Math.max(s.lifetime?.totalMinutes||0, sessionMin);
   let h = '';
-  // Watched Logs — moved here from the Dashboard (reference data, not a
-  // raid-night card). Self-updating #wpWatchedLogs filled by
-  // renderWatchedLogsCard; placeholder hidden until logs are seen.
-  h += '<div id="wpWatchedLogs" class="card wide" style="display:none"></div>';
+  // NOTE: Watched Logs (#wpWatchedLogs) moved to the Dashboard's ⚙ Engine card,
+  // and the officer DKP tick / loot capture cards (#wpDkpTick / #wpDkpLoot)
+  // moved to the 🛡 Admin tab (#109). Their render fns are unchanged — only the
+  // placeholder location moved — so they are NOT re-declared here.
   // Zeal Pipe explorer — every data element the pipe carries, per character,
   // each group expandable. Volatile (live gauges/labels), so it fills its own
   // placeholder via renderZealExplorer to keep the rest of #info byte-stable.
   h += '<div id="wpZealExplorer" class="card wide" style="display:none"></div>';
-  // 🎫 DKP ticks (officers only) — filled by renderDkpTickCard.
-  h += '<div id="wpDkpTick" class="card wide" style="display:none"></div>';
-  // 💰 Loot capture (officers only) — filled by renderDkpLootCard. Own
-  // placeholder so its checkboxes/buttons survive #info repaints.
-  h += '<div id="wpDkpLoot" class="card wide" style="display:none"></div>';
   // 🛟 Settings backups — filled by renderBackupsCard (own placeholder so the
   // restore controls survive #info repaints).
   h += '<div id="wpBackupsCard" class="card wide" style="display:none"></div>';
@@ -13216,7 +13458,13 @@ async function refresh() {
     // catch below — leaving the body blank with no error anywhere. Now a
     // failing section shows its own error card (visible on-screen, not just the
     // log) and the other sections still render.
-    var _sections = [['header', renderHeader], ['dash', renderDash], ['zealclients', renderZealClients],
+    var _sections = [['header', renderHeader], ['dash', renderDash],
+                     // 🐺 Me card + ⚙ Engine (must run right after renderDash so the
+                     // #wpMeCard / #wpEngine placeholders exist; renderEngine builds the
+                     // nested #wpSetupChecks/#wpEngineStats/#wpWatchedLogs children BEFORE
+                     // their own fillers run later in this list).
+                     ['mecard', renderMeCard], ['engine', renderEngine], ['enginestats', renderEngineStats],
+                     ['zealclients', renderZealClients],
                      ['critscard', renderCritsCard],
                      // Isolated dashboard volatile cards (fill their own wp* placeholders
                      // so #dash stops repainting every poll — the stutter fix).
@@ -13231,6 +13479,9 @@ async function refresh() {
                      // After info: fill the placeholders renderInfo just
                      // (re)painted, so they show same-tick.
                      ['zealexplorer', renderZealExplorer],
+                     // 🛡 Admin (officer-only) builds #wpDkpTick / #wpDkpLoot — must run
+                     // BEFORE their fillers below so the placeholders exist same-tick.
+                     ['admin', renderAdmin],
                      ['dkptick', renderDkpTickCard],
                      ['dkploot', renderDkpLootCard],
                      ['backupscard', renderBackupsCard]];
@@ -17372,6 +17623,10 @@ function recordUploadForDashboard(payload, character) {
     eventCount:      e.events.length,
     totalDamage:     totalDmg,
     spellDotDamage:  spellDotDmg,
+    // Fight length for the 🐺 Me card's "last fights" list. Prefer the
+    // gap-trimmed active duration; fall back to wall-clock span.
+    durationSec:     (e.active_duration_s != null) ? e.active_duration_s
+                   : (e.started_at && e.ended_at ? Math.max(0, (e.ended_at - e.started_at) / 1000) : null),
     when:            Date.now(),
   });
   if (stats.recentParses.length > 8) stats.recentParses.length = 8;
