@@ -135,10 +135,15 @@ function defaultConfig() {
     // installs keep whatever they had: loadConfig does Object.assign over the
     // saved config, and onboarded users have these persisted already.)
     showHud: false,          // DPS HUD overlay user pref
-    enableTriggerTts: true,  // Trigger TTS overlay user pref — default ON
+    enableTriggerTts: true,  // Trigger TTS/callouts MASTER switch — default ON
                              // so fresh installs see countdown timer rows
                              // during a raid without an extra opt-in.
                              // Existing installs keep whatever they saved.
+    showTriggerOverlay: true, // Whether the trigger overlay is VISIBLE (#97).
+                             // Decoupled from enableTriggerTts: the overlay ✕
+                             // sets this false (hides the visual) but TTS keeps
+                             // firing from the hidden window. Re-shown when the
+                             // user turns triggers on via tray/dashboard.
     quietMode: false,        // master "I use EQLogParser" — hides all local UI
     // Quiet updates (default ON): a downloaded update applies silently on the
     // next quit (autoInstallOnAppQuit), so the "Restart now?" pop-up is just
@@ -2875,7 +2880,10 @@ function createTriggerOverlay() {
     alwaysOnTop: true, skipTaskbar: true,
     focusable: true,
     show: false,
-    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true },
+    // backgroundThrottling:false so a HIDDEN trigger overlay keeps running its
+    // TTS + countdowns full-speed — the ✕ hides the visual only (#97), it must
+    // never throttle or silence callouts.
+    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, backgroundThrottling: false },
   });
   triggerWindow.setAlwaysOnTop(true, 'screen-saver');
   triggerWindow.setVisibleOnAllWorkspaces(true);
@@ -3734,7 +3742,7 @@ function applyTriggerVisibility() {
   if (!triggerWindow) return;
   const cfg = loadConfig();
   const unlocked  = cfg.overlaysLocked === false;
-  const shouldShow = unlocked || _blindForceOpen('triggers') || (cfg.enableTriggerTts && !cfg.quietMode && _eqGateOk(cfg));
+  const shouldShow = unlocked || _blindForceOpen('triggers') || (cfg.enableTriggerTts && cfg.showTriggerOverlay !== false && !cfg.quietMode && _eqGateOk(cfg));
   if (shouldShow) triggerWindow.showInactive(); else triggerWindow.hide();
 }
 function createCharmOverlay() {
@@ -4533,7 +4541,9 @@ function buildTrayMenu() {
         pushStatus();
       } },
     { label: 'Trigger alerts (TTS)', type: 'checkbox', checked: s.enableTriggerTts, enabled: !s.quietMode, click: (mi) => {
-        const cfg = loadConfig(); cfg.enableTriggerTts = mi.checked; saveConfig(cfg);
+        const cfg = loadConfig(); cfg.enableTriggerTts = mi.checked;
+        if (mi.checked) cfg.showTriggerOverlay = true;   // turning on → show the visual too (#97)
+        saveConfig(cfg);
         if (mi.checked && !triggerWindow) createTriggerOverlay(); else applyTriggerVisibility();
         pushStatus();
       } },
@@ -5327,7 +5337,9 @@ ipcMain.handle('toggle-overlay', (_e, name) => {
       if (cfg.showHud && !overlayWindow) createOverlayWindow(); else applyOverlayVisibility();
       break;
     case 'trigger':
-      cfg.enableTriggerTts = !cfg.enableTriggerTts; saveConfig(cfg);
+      cfg.enableTriggerTts = !cfg.enableTriggerTts;
+      if (cfg.enableTriggerTts) cfg.showTriggerOverlay = true;   // turning on → show the visual too (#97)
+      saveConfig(cfg);
       if (cfg.enableTriggerTts && !triggerWindow) createTriggerOverlay(); else applyTriggerVisibility();
       break;
     case 'charm':
@@ -5513,8 +5525,11 @@ ipcMain.handle('hide-overlay', (e) => {
       cfg.showHud = false; saveConfig(cfg);
       try { overlayWindow.hide(); } catch {}
     } else if (win === triggerWindow) {
-      cfg.enableTriggerTts = false; saveConfig(cfg);
+      // #97: hide the VISUAL only — TTS/callouts keep firing from the hidden
+      // window (enableTriggerTts untouched). Re-show via tray → Overlays.
+      cfg.showTriggerOverlay = false; saveConfig(cfg);
       try { triggerWindow.hide(); } catch {}
+      try { buildTrayMenu(); } catch {}
     } else if (win === charmWindow) {
       cfg.showCharm = false; saveConfig(cfg);
       try { charmWindow.hide(); } catch {}
