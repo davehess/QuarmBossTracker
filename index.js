@@ -3703,6 +3703,13 @@ async function _handleAgentChat(req, res) {
   for (const msg of messages) {
     const { channel, speaker, text, ts: msgTs, who: uploadedWho } = msg || {};
     if (!channel || !speaker || !text) continue;
+    // POISON GUARD (#73): `msgTs` is a raw payload string that flows straight
+    // into timestamptz columns (chat_messages.ts, fun_events.event_ts,
+    // mana_reports.reported_at). A non-empty GARBAGE string is truthy, so it
+    // would pass through and make PostgREST 400 the WHOLE batch — losing every
+    // good row batched with it. Keep it only when it actually parses; each use
+    // site already falls back to now().
+    const msgTsSafe = (typeof msgTs === 'string' && Number.isFinite(Date.parse(msgTs))) ? msgTs : null;
     // Attribution provenance from the agent (3.2.2+): 'line' = the name was in
     // the log line itself (server-authoritative third-person form); 'log_name'
     // = guessed from the log FILENAME (self-form line — wrong whenever the EQ
@@ -3805,7 +3812,7 @@ async function _handleAgentChat(req, res) {
     if (!isVariant && _looksCensored(text)) {
       funEventRows.push({
         guild_id:   process.env.SUPABASE_GUILD_ID || 'wolfpack',
-        event_ts:   msgTs || new Date().toISOString(),
+        event_ts:   msgTsSafe || new Date().toISOString(),
         event_type: 'pottymouth',
         caster:     effectiveSpeaker,
         raw_text:   String(text).slice(0, 200),
@@ -3822,7 +3829,7 @@ async function _handleAgentChat(req, res) {
     // the table has one canonical row format regardless of ingestion route.
     supabaseChatRows.push({
       guild_id:    process.env.SUPABASE_GUILD_ID || 'wolfpack',
-      ts:          msgTs || new Date().toISOString(),
+      ts:          msgTsSafe || new Date().toISOString(),
       channel,
       speaker:     effectiveSpeaker,
       text:        String(text).slice(0, 2000),
@@ -3848,7 +3855,7 @@ async function _handleAgentChat(req, res) {
             character:   effectiveSpeaker,
             pct,
             source:      'macro',
-            reported_at: msgTs || new Date().toISOString(),
+            reported_at: msgTsSafe || new Date().toISOString(),
           });
         }
       }
@@ -6696,6 +6703,7 @@ async function _handleAgentBuffCasts(req, res) {
   // on_conflict target — mixing them in one call would violate one index.
   const resolved = [];
   const ambiguous = [];
+  let _skippedBadCast = 0;   // poison guard: rows with an unparseable cast_at
   for (const c of casts) {
     if (!c || !c.target || !c.cast_at) continue;
     // Nameless landings are UNREADABLE downstream — every consumer
@@ -6706,6 +6714,14 @@ async function _handleAgentBuffCasts(req, res) {
     // sending them at all — this guard covers every older agent.
     if (!c.spell_name) continue;
     if (_isJunkSpellName(c.spell_name)) continue;   // drop EQEmu "Kneel Test" phantom
+    // POISON GUARD (#73): `new Date(c.cast_at).toISOString()` THROWS RangeError
+    // on an unparseable cast_at (a malformed field the `!c.cast_at` check above
+    // can't catch — any non-empty garbage string passes it). That throw escaped
+    // to the router as a 500, and a 5xx is RETRYABLE, so one bad row made the
+    // agent re-post the same 256KB batch forever (audit poison payload). Skip
+    // the bad row instead of failing the batch; the good rows still land.
+    const castDate = new Date(c.cast_at);
+    if (Number.isNaN(castDate.getTime())) { _skippedBadCast++; continue; }
     const sid = Number.isFinite(c.spell_id) ? Math.trunc(c.spell_id) : 0;
     const row = {
       guild_id:     guildId,
@@ -6715,12 +6731,15 @@ async function _handleAgentBuffCasts(req, res) {
       landing_text: c.landing_text ? String(c.landing_text).slice(0, 256) : null,
       dur_ticks:    Number.isFinite(c.dur_ticks) ? Math.trunc(c.dur_ticks) : null,
       dur_formula:  Number.isFinite(c.dur_formula) ? Math.trunc(c.dur_formula) : null,
-      cast_at:      new Date(c.cast_at).toISOString(),
+      cast_at:      castDate.toISOString(),
       observer:     c.observer ? String(c.observer).slice(0, 64) : null,
       is_charm_spell: !!c.is_charm_spell,
       uploaded_by_discord_id: identity.discord_id,
     };
     (sid !== 0 ? resolved : ambiguous).push(row);
+  }
+  if (_skippedBadCast > 0) {
+    console.warn(`[buff-casts] skipped ${_skippedBadCast} row(s) with an unparseable cast_at from ${identity.discord_id} (agent v${payload?.agent_version || '?'})`);
   }
 
   let written = 0;
@@ -7555,6 +7574,15 @@ const _CURE_RANK = { curse: 0, blind: 1, poison: 2, disease: 3 };
 // Filtered to entries not yet past their catalog duration. Each row carries
 // `owner` (the caster — observer field on the original landing) so Mob Info
 // can render "Allure (Hopeya)".
+// Short-TTL per-target cache (#73) — target-buffs was the only hot-path GET
+// that hit Supabase on EVERY request (audit); at 60 raiders a shared boss is
+// polled by everyone at once. Mirror the character-live-state relay cache: 2s
+// TTL keyed by target-lower collapses N simultaneous polls into one Supabase
+// read per window while staying live enough for a charm/debuff timer.
+// (target-casts needs no cache — it reads the in-memory _castingByTarget relay,
+// never Supabase.)
+const TARGET_BUFFS_CACHE_MS = 2_000;
+const _targetBuffsRelayCache = new Map();   // nameLower → { at, payload }
 async function _handleAgentTargetBuffs(req, res) {
   const identity = await mimicLink.requireAgentAuth(req, res);
   if (!identity) return;
@@ -7563,6 +7591,12 @@ async function _handleAgentTargetBuffs(req, res) {
   if (!name) {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({ buffs: [] }));
+  }
+  const cacheKey = name.trim().toLowerCase();
+  const cached = _targetBuffsRelayCache.get(cacheKey);
+  if (cached && Date.now() - cached.at < TARGET_BUFFS_CACHE_MS) {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(cached.payload);
   }
   const supabase = require('./utils/supabase');
   if (!supabase.isEnabled()) {
@@ -7607,8 +7641,11 @@ async function _handleAgentTargetBuffs(req, res) {
         owner:          v.row.observer || null,
       });
     }
+    const payload = JSON.stringify({ buffs });
+    if (_targetBuffsRelayCache.size > 200) _targetBuffsRelayCache.clear();
+    _targetBuffsRelayCache.set(cacheKey, { at: Date.now(), payload });
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ buffs }));
+    return res.end(payload);
   } catch (err) {
     console.error('[target-buffs] fetch failed:', err && err.message);
     res.writeHead(500, { 'Content-Type': 'application/json' });
@@ -7670,6 +7707,138 @@ async function _isShedded(kind, res) {
   }
   return false;
 }
+
+// ── Per-uploader admission-control budgets (#73) ─────────────────────────────
+// In-memory, per-uploader × per-endpoint-kind windowed budgets on the ingest
+// surface. A healthy agent never trips these — they exist to stop ONE
+// crash-looping or runaway client from consuming the single load-bearing
+// replica. Defaults are sized generously from the audit's measured rates
+// (chat/buffs/encounter ~a few/min sustained; live-state/casting are 1–2/s
+// streams).
+//
+// FLEET SAFETY (see docs/DESIGN-platform-queue.md #73, Part 0): fielded agents
+// treat 429 as RETRYABLE (429 is not in the agent's QUEUE_PERMANENT_CODES), so a
+// 429 is never dropped — it backs off and re-sends. But belt-and-suspenders:
+//   • DURABLE kinds (encounter, chat, historical_chat, bosskill, lockout, rolls,
+//     buff_casts…) default to LOG-ONLY. Over-budget just logs; a real 429 is
+//     emitted only when an officer flips `budget_enforce_<kind>=1` (do this
+//     AFTER the fleet is on an agent that honors Retry-After — agent ≥3.3.85).
+//   • EPHEMERAL/redundant kinds (live_state, casting, threat_snapshot,
+//     raid_roster) default to 200-ACK-AND-DROP over budget — the exact shed
+//     pattern already in production, so it's safe for every fielded agent and
+//     never breaks an overlay for a healthy client. recent_fires (a GET poll)
+//     gets a 429 over budget (a redundant re-poll backs off harmlessly).
+//
+// Tuning keys (overlay_tuning jsonb, same 60s cache as flag_shed_*):
+//   budget_<kind>_per_min = N   → override the default; 0 = UNLIMITED (per-kind off)
+//   budget_enforce_<kind> = 1   → actually 429 a durable kind (else log-only)
+//   flag_disable_budgets  = 1   → kill switch for the WHOLE feature
+const _BUDGET_WINDOW_MS = 60_000;
+// { perMin, durable }. durable=false ⇒ redundant/ephemeral stream (safe to drop).
+const _BUDGET_DEFAULTS = {
+  // durable — carry real data; default log-only
+  encounter:       { perMin: 120, durable: true },
+  chat:            { perMin: 120, durable: true },
+  historical_chat: { perMin: 120, durable: true },
+  buff_casts:      { perMin: 240, durable: true },
+  bosskill:        { perMin: 30,  durable: true },
+  lockout:         { perMin: 30,  durable: true },
+  rolls:           { perMin: 60,  durable: true },
+  // ephemeral / redundant — latest-wins; default 200-ack-and-drop over budget
+  live_state:      { perMin: 240, durable: false },
+  casting:         { perMin: 240, durable: false },
+  threat_snapshot: { perMin: 120, durable: false },
+  raid_roster:     { perMin: 90,  durable: false },
+  recent_fires:    { perMin: 240, durable: false, get: true },
+};
+// kind → Map(uploaderKey → { windowStart, count, logged })
+const _budgetBuckets = new Map();
+
+// Cheap, stable per-uploader key WITHOUT resolving identity (the gate runs
+// BEFORE requireAgentAuth). The bearer session token is 1:1 with a discord_id
+// (the same identity the reporter registry keys on) — we hash it so no raw
+// token lives in a long-lived map, and a runaway session is caught at
+// per-session granularity (finer than per-discord_id, which is what we want for
+// a crash-loop). Fall back to the client IP when no bearer is present.
+function _budgetKey(req) {
+  const auth = String(req.headers?.['authorization'] || '');
+  const bearer = auth.replace(/^Bearer\s+/i, '').trim();
+  if (bearer) {
+    let h = 5381;
+    for (let i = 0; i < bearer.length; i++) h = (((h << 5) + h) ^ bearer.charCodeAt(i)) >>> 0;
+    return 't' + h.toString(36);
+  }
+  const xff = String(req.headers?.['x-forwarded-for'] || '').split(',')[0].trim();
+  return 'ip' + (xff || req.socket?.remoteAddress || 'unknown');
+}
+
+// Admission gate. Returns true when it has ALREADY written a response (429 or
+// 200-ack-drop) and the router should `return`; false to let the handler run.
+async function _overBudget(kind, req, res) {
+  const cfg = _BUDGET_DEFAULTS[kind];
+  if (!cfg) return false;   // unbudgeted kind — always allow
+  let tune = {};
+  try { tune = await _overlayTuningMap(); } catch { /* fail-open: never block on a tuning read error */ }
+  if (Number(tune.flag_disable_budgets) >= 1) return false;   // whole feature off
+
+  const overridden = tune[`budget_${kind}_per_min`];
+  const perMin = (overridden === undefined || overridden === null || overridden === '')
+    ? cfg.perMin
+    : Number(overridden);
+  if (!Number.isFinite(perMin) || perMin <= 0) return false;  // 0 / bad = unlimited
+
+  let book = _budgetBuckets.get(kind);
+  if (!book) { book = new Map(); _budgetBuckets.set(kind, book); }
+  const now = Date.now();
+  const key = _budgetKey(req);
+  let b = book.get(key);
+  if (!b || (now - b.windowStart) >= _BUDGET_WINDOW_MS) {
+    b = { windowStart: now, count: 0, logged: false };
+    book.set(key, b);
+  }
+  b.count++;
+  if (b.count <= perMin) return false;   // under budget — allow
+
+  // Over budget. Log ONCE per uploader per window (not per request).
+  if (!b.logged) {
+    b.logged = true;
+    console.warn(`[budget] ${kind}: uploader ${key} over budget (${b.count}>${perMin}/min) — ${cfg.durable ? (Number(tune[`budget_enforce_${kind}`]) >= 1 ? '429' : 'log-only, allowing') : (cfg.get ? '429' : '200-ack-drop')}`);
+  }
+
+  const retryAfterSec = Math.max(1, Math.ceil((b.windowStart + _BUDGET_WINDOW_MS - now) / 1000));
+
+  if (cfg.durable) {
+    // Durable data: only 429 when explicitly enabled per-kind; otherwise the
+    // upload proceeds (log-only) so no fielded agent ever loses/parks data.
+    if (Number(tune[`budget_enforce_${kind}`]) >= 1) {
+      res.writeHead(429, { 'Content-Type': 'application/json', 'Retry-After': String(retryAfterSec) });
+      res.end(JSON.stringify({ error: 'rate_limited', kind, retry_after: retryAfterSec }));
+      return true;
+    }
+    return false;   // log-only mode — let the durable upload through
+  }
+
+  // Ephemeral/redundant stream. A GET poll (recent_fires) backs off via 429;
+  // a POST stream is 200-ack-and-dropped (the shed pattern) so the agent treats
+  // it as delivered — no retry, no queue growth, no broken overlay.
+  if (cfg.get) {
+    res.writeHead(429, { 'Content-Type': 'application/json', 'Retry-After': String(retryAfterSec) });
+    res.end(JSON.stringify({ error: 'rate_limited', kind, retry_after: retryAfterSec }));
+  } else {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true, budget_dropped: kind }));
+  }
+  return true;
+}
+
+// GC stale budget buckets (an uploader idle > 2 windows). Cheap; keeps the map
+// from growing unbounded across a long uptime with churning session tokens.
+setInterval(() => {
+  const cutoff = Date.now() - 2 * _BUDGET_WINDOW_MS;
+  for (const [, book] of _budgetBuckets) {
+    for (const [k, b] of book) if (b.windowStart < cutoff) book.delete(k);
+  }
+}, 5 * 60_000).unref?.();
 // ── Mimic Mail — guild notices (Uilnayar 2026-07-07) ────────────────────────
 // Officer broadcasts from /admin/notices (mimic_notices table). Served to
 // every agent alongside the overlay tuning (same poll, zero new timers) →
@@ -13122,6 +13291,7 @@ http.createServer(async (req, res) => {
 
   if (req.method === 'POST' && req.url === '/api/agent/live-state') {
     if (await _isShedded('live_state', res)) return;
+    if (await _overBudget('live_state', req, res)) return;
     try { return await _handleAgentLiveState(req, res); }
     catch (err) {
       console.error('[live-state] handler error:', err);
@@ -13132,6 +13302,7 @@ http.createServer(async (req, res) => {
 
   if (req.method === 'POST' && req.url === '/api/agent/raid-roster') {
     if (await _isShedded('raid_roster', res)) return;
+    if (await _overBudget('raid_roster', req, res)) return;
     try { return await _handleAgentRaidRoster(req, res); }
     catch (err) {
       console.error('[raid-roster] handler error:', err);
@@ -13150,6 +13321,7 @@ http.createServer(async (req, res) => {
   }
 
   if (req.method === 'POST' && req.url === '/api/agent/rolls') {
+    if (await _overBudget('rolls', req, res)) return;
     try { return await _handleAgentRolls(req, res); }
     catch (err) {
       console.error('[rolls] handler error:', err);
@@ -13214,6 +13386,7 @@ http.createServer(async (req, res) => {
 
   if (req.method === 'POST' && req.url === '/api/agent/casting') {
     if (await _isShedded('casting', res)) return;
+    if (await _overBudget('casting', req, res)) return;
     try { return await _handleAgentCasting(req, res); }
     catch (err) {
       console.error('[casting] handler error:', err);
@@ -13237,6 +13410,7 @@ http.createServer(async (req, res) => {
   // posted by OTHER agents since the caller's since_id, suppressing the
   // caller's own fires so a relay doesn't echo back to its origin.
   if (req.method === 'GET' && req.url.startsWith('/api/agent/recent-fires')) {
+    if (await _overBudget('recent_fires', req, res)) return;
     try { return await _handleRecentFiresGet(req, res); }
     catch (err) {
       console.error('[trigger-relay] get error:', err);
@@ -13245,6 +13419,7 @@ http.createServer(async (req, res) => {
   }
 
   if (req.method === 'POST' && req.url === '/api/agent/encounter') {
+    if (await _overBudget('encounter', req, res)) return;
     try { return await _handleAgentUpload(req, res); }
     catch (err) {
       console.error('[agent] handler error:', err);
@@ -13255,6 +13430,7 @@ http.createServer(async (req, res) => {
 
   // Guild/raid chat relay endpoint — forwards in-game chat to Discord channels
   if (req.method === 'POST' && req.url === '/api/agent/chat') {
+    if (await _overBudget('chat', req, res)) return;
     try { return await _handleAgentChat(req, res); }
     catch (err) {
       console.error('[chat-relay] handler error:', err);
@@ -13282,6 +13458,7 @@ http.createServer(async (req, res) => {
 
   // Druzzil Ro boss-kill relay — auto-sets spawn timers from instance kill announcements
   if (req.method === 'POST' && req.url === '/api/agent/bosskill') {
+    if (await _overBudget('bosskill', req, res)) return;
     try { return await _handleAgentBossKill(req, res); }
     catch (err) {
       console.error('[bosskill] handler error:', err);
@@ -13304,6 +13481,7 @@ http.createServer(async (req, res) => {
 
   // /sll lockout relay — sets timers from active personal lockouts (never clears on "Available")
   if (req.method === 'POST' && req.url === '/api/agent/lockout') {
+    if (await _overBudget('lockout', req, res)) return;
     try { return await _handleAgentLockout(req, res); }
     catch (err) {
       console.error('[lockout] handler error:', err);
@@ -13314,6 +13492,7 @@ http.createServer(async (req, res) => {
 
   // Historical chat ingestion — backfill writes to data/historical_chat.jsonl + Supabase
   if (req.method === 'POST' && req.url === '/api/agent/historical_chat') {
+    if (await _overBudget('historical_chat', req, res)) return;
     try { return await _handleAgentHistoricalChat(req, res); }
     catch (err) {
       console.error('[historical-chat] handler error:', err);
@@ -13348,6 +13527,7 @@ http.createServer(async (req, res) => {
   }
 
   if (req.method === 'POST' && req.url === '/api/agent/buff_casts') {
+    if (await _overBudget('buff_casts', req, res)) return;
     try { return await _handleAgentBuffCasts(req, res); }
     catch (err) {
       console.error('[buff-casts] handler error:', err);
@@ -13430,6 +13610,7 @@ http.createServer(async (req, res) => {
 
   if (req.method === 'POST' && req.url === '/api/agent/threat-snapshot') {
     if (await _isShedded('threat_snapshot', res)) return;
+    if (await _overBudget('threat_snapshot', req, res)) return;
     try { return await _handleAgentThreatSnapshot(req, res); }
     catch (err) {
       console.error('[threat-snap] handler error:', err);
@@ -13493,6 +13674,22 @@ http.createServer(async (req, res) => {
         return;
       }
     }
+  }
+
+  // JSON health with resilience state (#73) — Supabase circuit-breaker snapshot
+  // + a compact per-kind budget-tripped view for at-a-glance ops.
+  if (req.method === 'GET' && (req.url === '/health' || req.url === '/healthz')) {
+    let breaker = null;
+    try { breaker = require('./utils/supabase').breakerState(); } catch { /* */ }
+    const budgets = {};
+    for (const [kind, book] of _budgetBuckets) {
+      const perMin = _BUDGET_DEFAULTS[kind]?.perMin;
+      let tripped = 0;
+      for (const [, b] of book) if (b.count > perMin) tripped++;
+      if (tripped) budgets[kind] = { uploaders_over_budget: tripped };
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ ok: true, supabase_breaker: breaker, budgets }));
   }
 
   // Default: health check

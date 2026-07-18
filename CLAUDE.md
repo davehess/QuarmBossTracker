@@ -233,6 +233,19 @@ cache, no deploy or agent update. `0`/delete restores. Discord posting is
 deferred post-ack in the `encounter`/`chat`/`trigger` handlers (v3.0.166) —
 agents never wait on Discord.
 
+**Admission-control budgets (#73, bot 3.0.208):** per-uploader × per-kind
+windowed budgets on the ingest surface via the SAME 60s tuning map —
+`budget_<kind>_per_min` overrides the built-in default (`0` = unlimited),
+`budget_enforce_<kind>=1` turns a durable kind's over-budget from log-only into
+a real 429 + `Retry-After` (leave off until the fleet is on agent ≥3.3.85, which
+honors Retry-After), `flag_disable_budgets=1` kills the whole feature. Durable
+kinds default to log-only; ephemeral kinds default to 200-ack-and-drop over
+budget (the shed pattern) — a healthy agent never trips them. Supabase calls
+carry a ~10s AbortController timeout + a consecutive-failure circuit breaker
+(env `SUPABASE_REQUEST_TIMEOUT_MS` / `SUPABASE_BREAKER_THRESHOLD` /
+`SUPABASE_BREAKER_COOLDOWN_MS`; state on `GET /health`). `target-buffs` GET is
+now 2s-cached like `character-live-state`.
+
 ### Background jobs
 Spawn checker (5 min; also PvP/live/quake checks, stale-alert suppression
 post-redeploy), TZ-aware midnight chain (daily summary → archives → parse

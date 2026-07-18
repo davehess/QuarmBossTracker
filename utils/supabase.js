@@ -18,8 +18,94 @@ function _guildId() {
   return process.env.SUPABASE_GUILD_ID || 'wolfpack';
 }
 
+// ── Request timeout + circuit breaker (#73 admission control) ─────────────────
+// `_request` had NO timeout: a Supabase brownout (a 522/520 window like the one
+// at boot on 2026-07-13) left every in-flight handler awaiting a socket that
+// never resolved. At 60 raiders the audit measured 600–1,200 zombie handlers
+// held per 60s brownout — the single bot replica's event loop drowns in stuck
+// awaits. Two fuses, both env-tunable (they guard the overlay_tuning store the
+// rest of the control plane lives in, so they can't be tuning-driven themselves):
+//   1. AbortController timeout — a hung fetch resolves to null in ~10s, exactly
+//      like today's network-failure path. Callers already treat null as
+//      "lookup failed" (→ LOOKUP_ERROR/503/[] semantics); the null/[] contract
+//      is UNCHANGED (see test/mimic-auth.test.js, test/supabase-resilience.test.js).
+//   2. Circuit breaker — after N consecutive failures/timeouts the origin is
+//      declared down and `_request` fails fast (null, no fetch) for a cooldown,
+//      then lets ONE half-open probe through. A single success closes it. This
+//      is a fuse, not Hystrix: no metrics, no rolling windows.
+// A 4xx from PostgREST means the origin IS reachable (it answered) — that's a
+// bad query, not an outage — so it counts as a success for the breaker and
+// still returns null to the caller (contract unchanged). Only 5xx, network
+// errors, and timeouts trip the breaker.
+// Read at call time (not load time) so env overrides apply after import and the
+// suite can drive them. Cheap; parse cost is negligible next to a network hop.
+function _timeoutMs()        { return Math.max(1000, parseInt(process.env.SUPABASE_REQUEST_TIMEOUT_MS, 10) || 10_000); }
+function _breakerThreshold() { return Math.max(1, parseInt(process.env.SUPABASE_BREAKER_THRESHOLD, 10) || 5); }
+function _breakerCooldownMs(){ return Math.max(1000, parseInt(process.env.SUPABASE_BREAKER_COOLDOWN_MS, 10) || 30_000); }
+
+const _breaker = { fails: 0, openUntil: 0, probing: false };
+// Test-only reset (the suite drives the breaker through failure/recovery). Not
+// used in production; mirrors the pattern of other test-only exports here.
+function _resetBreaker() { _breaker.fails = 0; _breaker.openUntil = 0; _breaker.probing = false; }
+
+// Gate the fetch. Returns false when the breaker is open and cooling down (or a
+// half-open probe is already in flight); true when the request may proceed.
+function _breakerAllow() {
+  const now = Date.now();
+  if (_breaker.openUntil > now) return false;      // open — cooling down, fail fast
+  if (_breaker.openUntil !== 0) {
+    // Cooldown elapsed → allow exactly one probe; later callers fail fast until
+    // it resolves (probing latch cleared by success/failure below).
+    if (_breaker.probing) return false;
+    _breaker.probing = true;
+    console.warn('[supabase] circuit breaker HALF-OPEN — probing origin');
+    return true;
+  }
+  return true;                                      // closed — normal operation
+}
+function _breakerOnSuccess() {
+  if (_breaker.openUntil !== 0 || _breaker.probing || _breaker.fails > 0) {
+    if (_breaker.openUntil !== 0 || _breaker.probing) {
+      console.warn('[supabase] circuit breaker CLOSED — origin recovered');
+    }
+    _breaker.fails = 0; _breaker.openUntil = 0; _breaker.probing = false;
+  }
+}
+function _breakerOnFailure() {
+  _breaker.fails++;
+  const now = Date.now();
+  if (_breaker.probing) {
+    // Half-open probe failed → reopen for another cooldown.
+    _breaker.openUntil = now + _breakerCooldownMs();
+    _breaker.probing = false;
+    console.warn(`[supabase] circuit breaker RE-OPENED (probe failed) — failing fast for ${Math.round(_breakerCooldownMs() / 1000)}s`);
+    return;
+  }
+  if (_breaker.fails >= _breakerThreshold() && _breaker.openUntil <= now) {
+    _breaker.openUntil = now + _breakerCooldownMs();
+    console.warn(`[supabase] circuit breaker OPEN after ${_breaker.fails} consecutive failures — failing fast for ${Math.round(_breakerCooldownMs() / 1000)}s`);
+  }
+}
+// Snapshot for the log line + /health. `open` reflects the live gate state.
+function breakerState() {
+  const now = Date.now();
+  return {
+    open:               _breaker.openUntil > now,
+    probing:            _breaker.probing,
+    consecutiveFailures: _breaker.fails,
+    cooldownRemainingMs: Math.max(0, _breaker.openUntil - now),
+    threshold:          _breakerThreshold(),
+    timeoutMs:          _timeoutMs(),
+  };
+}
+
 async function _request(path, opts = {}) {
   if (!isEnabled()) return null;
+
+  // Circuit breaker: origin declared down → fail fast, exactly like a network
+  // failure (null). No fetch is issued, so a brownout can't accumulate zombie
+  // awaits on the single replica.
+  if (!_breakerAllow()) return null;
 
   const url = `${process.env.SUPABASE_URL}/rest/v1${path}`;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -32,11 +118,18 @@ async function _request(path, opts = {}) {
     ...(opts.headers || {}),
   };
 
+  // Per-request timeout via AbortController. opts.timeoutMs overrides the
+  // default when a caller needs a tighter/looser bound.
+  const timeoutMs = Math.max(1000, opts.timeoutMs || _timeoutMs());
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
   try {
     const res = await fetch(url, {
       method:  opts.method || 'GET',
       headers,
       body:    opts.body ? JSON.stringify(opts.body) : undefined,
+      signal:  controller.signal,
     });
 
     const text = await res.text();
@@ -44,6 +137,11 @@ async function _request(path, opts = {}) {
     try { parsed = text ? JSON.parse(text) : null; } catch { parsed = text; }
 
     if (!res.ok) {
+      // 5xx = origin trouble → trip the breaker; 4xx = origin reachable but the
+      // request was rejected (bad query) → count as reachable so a run of bad
+      // queries can't wedge the breaker. Either way the caller still gets null
+      // (contract unchanged).
+      if (res.status >= 500) _breakerOnFailure(); else _breakerOnSuccess();
       // Stringify the parsed body so Node's util.inspect doesn't truncate it
       // to "{" when an object spans multiple keys. PostgREST 4xx bodies carry
       // {code, details, hint, message} and you NEED the full hint to debug
@@ -56,10 +154,17 @@ async function _request(path, opts = {}) {
       console.warn(`[supabase] ${opts.method || 'GET'} ${path} → ${res.status}: ${bodyStr}`);
       return null;
     }
+    _breakerOnSuccess();
     return parsed;
   } catch (err) {
-    console.warn(`[supabase] request failed:`, err?.message);
+    // AbortError (timeout) and network errors both land here → null, same as
+    // the pre-#73 network-failure path. Both trip the breaker.
+    _breakerOnFailure();
+    const aborted = err && (err.name === 'AbortError');
+    console.warn(`[supabase] request failed${aborted ? ` (timeout ${timeoutMs}ms)` : ''}:`, err?.message);
     return null;
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -500,6 +605,8 @@ async function upsertWhoOverride({ character, klass, isZek, setBy, setByName, no
 
 module.exports = {
   isEnabled,
+  breakerState,
+  _resetBreaker,   // test-only
   select, insert, insertIgnoreDuplicates, update, upsert, del, rpc,
   getWhoOverrides, upsertWhoOverride,
   applyQuakeToPvpBoardMirror,

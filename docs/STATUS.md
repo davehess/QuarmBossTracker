@@ -108,6 +108,44 @@ folly** — it's here.*
     demotes camping agents from every election unless they're the sole live
     candidate in scope (`_dropCampers`, fail-open), starting handoff ~30s before
     the TTL. Fail-open throughout; per-observer streams untouched (no roles).
+- **#73 admission control + Supabase resilience — CORE done (2026-07-18, bot
+  3.0.208 + agent 3.3.85 beta).** Four pieces landed:
+  1. **Per-uploader × per-kind ingest budgets** (`_overBudget`, index.js) on the
+     hot `/api/agent/*` surface, keyed by session-token hash (IP fallback),
+     60s windows. Defaults sized generously from the audit (a healthy agent
+     never trips). Tunable via the SAME 60s overlay-tuning map as `flag_shed_*`:
+     `budget_<kind>_per_min` (default per kind; `0`=unlimited),
+     `budget_enforce_<kind>=1` (durable kinds: log-only → real 429+Retry-After),
+     `flag_disable_budgets=1` (kill switch). **Fleet-safe defaults:** durable
+     kinds (encounter/chat/historical_chat/buff_casts/bosskill/lockout/rolls) →
+     **log-only** (no 429 until an officer opts in); ephemeral/redundant kinds
+     (live_state/casting/threat_snapshot/raid_roster) → **200-ack-and-drop**
+     over budget (the shed pattern); `recent_fires` GET → 429. One log line per
+     uploader per window. Defaults per kind (per-min): encounter 120, chat 120,
+     historical_chat 120, buff_casts 240, bosskill 30, lockout 30, rolls 60,
+     live_state 240, casting 240, threat_snapshot 120, raid_roster 90,
+     recent_fires 240.
+  2. **Supabase timeout + circuit breaker** (`utils/supabase.js`): `_request`
+     now carries a ~10s AbortController timeout (a brownout resolves null, not a
+     zombie await) + a consecutive-failure breaker (open after N, cooldown,
+     single half-open probe). Timeout/network/5xx trip it; 4xx counts as
+     reachable. null/[] contract unchanged. Knobs are ENV (not tuning — they
+     guard the tuning store): `SUPABASE_REQUEST_TIMEOUT_MS` (10000),
+     `SUPABASE_BREAKER_THRESHOLD` (5), `SUPABASE_BREAKER_COOLDOWN_MS` (30000).
+     State on `GET /health`.
+  3. **`target-buffs` GET cache** — 2s per-target in-memory cache, mirroring
+     `character-live-state`; it was the only hot GET hitting Supabase per
+     request. (`target-casts` needs none — it reads the in-memory relay.)
+  4. **Poison hardening** — buff_casts `cast_at` and chat `ts` now
+     sanitize-and-skip an unparseable date instead of throwing a 500 (which a
+     5xx-retrying agent re-posted forever). encounter/live-state/casting were
+     already defended. **Agent 3.3.85 beta**: honor 429 `Retry-After` in the
+     durable queue (429 was already retryable — not in `QUEUE_PERMANENT_CODES` —
+     so no data was ever lost; the fix makes backoff precise and excludes 429
+     from poison-parking).
+  - **DEFERRED (a later agent — explicitly NOT in this run):** the six-GET-loop
+    consolidation / long-poll, and encounter-burst flattening (~90MB/kill at 60).
+    See DESIGN-platform-queue.md #73 (Wave-2 addendum).
 - **Callout trifecta, in progress (2026-07-17, #76)** — the "why TTS never
   fires" fixes: triggers evaluate before the privacy/combat filter so
   ENRAGED/snare/mez/fizzle templates fire (agent 3.3.76 beta, 9/17 dead
