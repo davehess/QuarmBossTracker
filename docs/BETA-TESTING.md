@@ -20,6 +20,32 @@ raid; move it to STATUS.md's "Done" once graduated to stable.*
 
 ---
 
+## #110 — OpenDKP audit-trail reconciliation (deletions propagate to the mirror)
+
+**Needs:** bot **3.0.212** (live on Railway). No Mimic/agent change.
+
+**What it does:** when an officer **deletes or edits loot in OpenDKP**, that
+change now propagates to our Supabase mirror (`opendkp_loot`) instead of
+lingering as a ghost on wolfpack.quest's parses/loot surfaces. Each OpenDKP →
+Supabase sync (every 30 min, or on-demand via `/syncopendkp`) re-pulls only
+**recent raids'** loot and removes any mirrored award that no longer exists
+upstream. Driven by the OpenDKP audit trail as a trigger; the sync log prints
+one line per removed ghost.
+
+### ✅ Officer (one person, needs OpenDKP officer access)
+1. **A deleted award disappears within one sync cycle.** In OpenDKP, open a
+   recent raid (within the last 14 days), award a throwaway test item to a
+   character (e.g. "Backpack" → your alt for 1 DKP), and let the next sync mirror
+   it (or run `/syncopendkp` — you'll see loot rows written). Confirm the item
+   shows on `wolfpack.quest` (the raid's loot / a character's wins). Now **delete
+   that award in OpenDKP**, then run `/syncopendkp`. The reply's **Reconcile
+   (#110)** line should read `1 ghost loot removed`, and the item should be **gone
+   from wolfpack.quest** — no manual mirror edit needed. Re-running `/syncopendkp`
+   a second time reports `0 ghost loot removed` (idempotent). *(Railway logs show
+   the `[opendkp-reconcile] removed ghost loot: …` line for the audit trail.)*
+
+---
+
 ## #108 — Loot bidding dashboard element (Mimic)
 
 **Needs:** agent **3.3.89** (beta Mimic) · bot **3.0.211** (live on Railway).

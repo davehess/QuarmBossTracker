@@ -36,7 +36,10 @@ module.exports = {
       `• Characters: ${res.characters_upserted}${res.characters_error ? ` (error: ${res.characters_error})` : ''}`,
       `• Auctions: **${res.auctions_upserted}** upserted across ${res.auctions_pages} page(s)${res.auctions_error ? ` — error: ${res.auctions_error}` : ''}`,
       `• Bid detail: **${res.auction_bids_written}** bids written across ${res.auctions_detailed} auction(s)${res.auction_bid_errors ? ` — ${res.auction_bid_errors} errored` : ''}`,
-      full ? '• Mode: full re-sync (every raid + every page + every auction\'s bids)' : '• Mode: incremental (newest 50 auctions + new bids only)',
+      `• Reconcile (#110): ${res.reconcile_skipped
+        ? `skipped (${res.reconcile_skipped})`
+        : `**${res.reconcile_removed ?? 0}** ghost loot removed, ${res.reconcile_upserted ?? 0} refreshed across ${res.reconcile_scanned ?? 0} raid(s)${res.reconcile_aborted ? ' — ⚠️ ABORTED by safety cap (see logs)' : ''}`}${res.reconcile_error ? ` — error: ${res.reconcile_error}` : ''}`,
+      full ? '• Mode: full re-sync (every raid + every page + every auction\'s bids + full reconcile)' : '• Mode: incremental (newest 50 auctions + new bids only + recent-raid reconcile)',
     ].join('\n'));
   },
 };

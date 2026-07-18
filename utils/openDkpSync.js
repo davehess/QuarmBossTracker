@@ -581,6 +581,12 @@ async function runSync(opts = {}) {
   const adjustmentsResult = await syncAdjustments().catch(err =>
     ({ error: err?.message || String(err), upserted: 0, pages: 0 }));
 
+  // Reconcile (#110): AFTER syncAudits so the audit trigger sees this cycle's
+  // fresh "Raid Updated"/"Raid Deleted" rows. Scoped re-pull of recent raids'
+  // loot + diff → removes ghosts left by upstream deletions/edits. Fail-open.
+  const reconcileResult = await reconcileRecentLoot({ full: !!opts.full, dryRun: !!opts.dryRun }).catch(err =>
+    ({ error: err?.message || String(err) }));
+
   return {
     phase: 'done',
     raids_fetched:     listResult.fetched,
@@ -601,6 +607,12 @@ async function runSync(opts = {}) {
     adjustments_upserted:   adjustmentsResult?.upserted ?? 0,
     adjustments_pages:      adjustmentsResult?.pages ?? 0,
     adjustments_error:      adjustmentsResult?.error || null,
+    reconcile_scanned:  reconcileResult?.raids_scanned ?? 0,
+    reconcile_removed:  reconcileResult?.loot_removed ?? 0,
+    reconcile_upserted: reconcileResult?.loot_upserted ?? 0,
+    reconcile_aborted:  reconcileResult?.aborted ?? false,
+    reconcile_skipped:  reconcileResult?.skipped || null,
+    reconcile_error:    reconcileResult?.error || null,
     characters_upserted: charResult?.upserted ?? 0,
     characters_error:    charResult?.error || null,
   };
@@ -729,6 +741,242 @@ async function syncAdjustments() {
   });
   _loggedAdjustShape = flag.value;
   return res;
+}
+
+// ── Mirror reconciliation (#110) ──────────────────────────────────────────────
+// OpenDKP is the source of truth; opendkp_loot is a PURE mirror sourced from
+// each raid's Items[]. syncRaidDetail only UPSERTS, and _raidNeedsDetail stops
+// re-fetching a raid once its ticks are populated — so a loot row DELETED or
+// EDITED in OpenDKP after that point lingers forever as a ghost (the 2026-07-19
+// "Backpack" incident: 3 test awards deleted upstream but still showing on
+// wolfpack.quest's parses/loot surfaces).
+//
+// The audit trail can't fix this precisely. opendkp_audits.raw carries only
+// { AuditId, CognitoUser, ClientId, Timestamp, Action } — Action is a bare label
+// ("Raid Updated", "Raid Deleted", …) with NO entity ids and NO per-item "Loot
+// Deleted" event (verified against 46k live rows: a loot removal shows up only
+// as a raid-level "Raid Updated"). So we CANNOT map an audit entry to the loot
+// row(s) it changed.
+//
+// Path shipped = BOTH, each in the role its data can actually fill: the audit
+// feed is the TRIGGER (a new "Raid Updated"/"Raid Deleted" since our watermark
+// means some raid's loot may have changed) + the WATERMARK; the precise removal
+// is the guild-lead-blessed SCOPED RECONCILE — re-pull ONLY recent raids' loot
+// and diff against the mirror, deleting rows present locally but absent
+// upstream. Never a full won-items re-pull.
+//
+// Safety: a reconcile only ever deletes for a raid whose upstream detail fetched
+// cleanly (valid RaidId), and the whole pass ABORTS its deletes if the removal
+// set is implausibly large (guards an upstream glitch that returns empty Items[]
+// for many raids at once). It fails SAFE — keeping data over guessing.
+
+const RECONCILE_KV_KEY = 'opendkp_reconcile';
+
+function _envNum(name, dflt) {
+  const n = Number(process.env[name]);
+  return Number.isFinite(n) && n > 0 ? n : dflt;
+}
+
+// Map an OpenDKP audit Action string → the mirror it can invalidate. Loot lives
+// in opendkp_loot, sourced from a raid's Items[]; the only Actions that can
+// remove/alter mirrored loot are a raid edit ("Raid Updated") or a full "Raid
+// Deleted". Everything else (auction lifecycle, bids, character/association,
+// dkp-admin, adjustments) either has its own sync path or can't orphan loot.
+// The returned category is a coarse SIGNAL only — the audit carries no ids, so
+// it can't point at a specific row. Pure + exported for tests.
+function classifyAuditAction(action) {
+  const a = String(action == null ? '' : action).trim();
+  if (a === 'Raid Updated' || a === 'Raid Deleted') return 'loot';
+  if (a === 'Adjustment Deleted' || a === 'Adjustment Updated') return 'adjustment';
+  return 'ignore';
+}
+
+// Dedup key matching the opendkp_loot_dedup_plain unique index
+// (raid_id, game_item_id, character_name, dkp) NULLS NOT DISTINCT — a NULL
+// game_item_id collapses to a stable empty token, exactly like the index does.
+function _lootKey(r) {
+  const gid = (r.game_item_id === null || r.game_item_id === undefined) ? '' : r.game_item_id;
+  return `${r.raid_id}|${gid}|${r.character_name}|${r.dkp}`;
+}
+
+// Ghost set = local rows whose key is absent from the upstream set. An EDIT
+// (winner/dkp/item changed) changes the key, so it surfaces here as (stale row
+// removed) + (fresh row upserted from upstream) — the net effect is the edit
+// propagating. Pure + exported for tests.
+function lootDiffRemovals(localRows, upstreamRows) {
+  const up = new Set((Array.isArray(upstreamRows) ? upstreamRows : []).map(_lootKey));
+  return (Array.isArray(localRows) ? localRows : []).filter(r => !up.has(_lootKey(r)));
+}
+
+// Map a getRaid() detail payload to its loot rows, reusing the same _lootRow
+// mapping the sync upsert uses. Returns null when the payload isn't a valid
+// raid object (malformed/partial fetch) — the caller MUST skip reconciling that
+// raid so a bad fetch can never be misread as "all loot deleted".
+function _extractLootRows(full) {
+  if (!full || !full.RaidId) return null;
+  let itemsArray = [];
+  for (const key of ['Items', 'items', 'Loot', 'loot', 'Awards', 'awards', 'RaidItems']) {
+    if (Array.isArray(full[key])) { itemsArray = full[key]; break; }
+  }
+  return itemsArray.map(i => _lootRow(full.RaidId, i)).filter(Boolean);
+}
+
+async function _readReconcileWm(db) {
+  try {
+    const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+    const rows = await db.select('bot_kv',
+      `guild_id=eq.${encodeURIComponent(guildId)}&key=eq.${RECONCILE_KV_KEY}&select=value&limit=1`);
+    const v = Array.isArray(rows) && rows[0] && rows[0].value;
+    if (v && typeof v === 'object') return v;
+  } catch { /* fall through to empty watermark */ }
+  return {};
+}
+async function _writeReconcileWm(db, value) {
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+  await db.upsert('bot_kv',
+    [{ guild_id: guildId, key: RECONCILE_KV_KEY, value, updated_at: new Date().toISOString() }],
+    'guild_id,key');
+}
+
+// Scoped mirror reconcile. See the block header. Idempotent (re-running with no
+// upstream change removes nothing and leaves the watermark put), watermarked
+// (last-seen audit_id in bot_kv), logged (one line per applied removal). Deps
+// (db, fetchRaid, log, now) are injectable for tests; defaults are the real
+// Supabase + OpenDKP clients.
+async function reconcileRecentLoot(opts = {}) {
+  const db        = opts.db || supabase;
+  const fetchRaid = opts.fetchRaid || getRaid;
+  const log       = opts.log || ((m) => console.log(m));
+  const now       = opts.now || Date.now();
+  const full      = !!opts.full;
+  const dryRun    = !!opts.dryRun;
+
+  if (process.env.OPENDKP_RECONCILE_DISABLE === '1') return { skipped: 'disabled' };
+  if (!db.isEnabled || !db.isEnabled()) return { skipped: 'supabase disabled' };
+
+  const windowDays      = opts.windowDays      != null ? opts.windowDays      : _envNum('OPENDKP_RECONCILE_WINDOW_DAYS', 14);
+  const floorHours      = opts.floorHours      != null ? opts.floorHours      : _envNum('OPENDKP_RECONCILE_FLOOR_HOURS', 6);
+  const maxRemovalPct   = opts.maxRemovalPct   != null ? opts.maxRemovalPct   : (Number(process.env.OPENDKP_RECONCILE_MAX_REMOVAL_PCT) || 0.25);
+  const maxRemovalFloor = opts.maxRemovalFloor != null ? opts.maxRemovalFloor : _envNum('OPENDKP_RECONCILE_MAX_REMOVAL_FLOOR', 20);
+
+  // 1. Watermark + audit trigger. Read new audits since our last-seen id; a
+  //    loot-signal audit means a raid's loot MAY have changed.
+  const wm = await _readReconcileWm(db);
+  const lastAuditId     = Number(wm.lastAuditId) || 0;
+  const lastReconcileAt = Number(wm.lastReconcileAt) || 0;
+
+  let newAudits = [];
+  try {
+    newAudits = await db.select('opendkp_audits',
+      `audit_id=gt.${lastAuditId}&select=audit_id,raw&order=audit_id.desc&limit=200`) || [];
+  } catch { newAudits = []; }
+  const lootSignals   = newAudits.filter(a => classifyAuditAction(a && a.raw && a.raw.Action) === 'loot');
+  const newMaxAuditId = newAudits.reduce((m, a) => Math.max(m, Number(a.audit_id) || 0), lastAuditId);
+
+  const floorElapsed = (now - lastReconcileAt) >= floorHours * 3600 * 1000;
+  const warranted    = full || lootSignals.length > 0 || floorElapsed;
+
+  if (!warranted) {
+    // Nothing loot-relevant since last pass and the periodic floor hasn't
+    // elapsed — advance the watermark past the ignorable audits and stop.
+    if (!dryRun && newMaxAuditId > lastAuditId) {
+      await _writeReconcileWm(db, { lastAuditId: newMaxAuditId, lastReconcileAt, lastRemoved: wm.lastRemoved || 0 });
+    }
+    return { skipped: 'not warranted', last_audit_id: newMaxAuditId, audit_signals: 0 };
+  }
+
+  if (lootSignals.length > 0) {
+    const s = lootSignals[0].raw || {};
+    log(`[opendkp-reconcile] pass warranted by ${lootSignals.length} loot-signal audit(s) since #${lastAuditId} (latest: "${s.Action}" by ${s.CognitoUser} @ ${s.Timestamp})`);
+  } else {
+    log(`[opendkp-reconcile] periodic pass (floor ${floorHours}h elapsed, no new loot-signal audits)`);
+  }
+
+  // 2. Scope: recent raids by date (or every raid on a full reconcile).
+  const sinceIso = new Date(now - windowDays * 86400000).toISOString();
+  const scopeQuery = full
+    ? 'select=raid_id,name,ts&order=ts.desc'
+    : `ts=gte.${encodeURIComponent(sinceIso)}&select=raid_id,name,ts&order=ts.desc`;
+  let raids = [];
+  try { raids = await db.select('opendkp_raids', scopeQuery) || []; } catch { raids = []; }
+
+  let raidsScanned = 0, raidsSkipped = 0, upserted = 0, scannedLoot = 0;
+  const removals = [];   // { id, raid_id, raid_name, item_name, character_name, dkp }
+
+  for (const raid of raids) {
+    const raidId = raid.raid_id;
+    let detail;
+    try { detail = await fetchRaid(raidId); }
+    catch (err) { raidsSkipped++; console.warn(`[opendkp-reconcile] raid ${raidId}: fetch failed (${err && err.message}) — skipped`); continue; }
+
+    const upstream = _extractLootRows(detail);
+    if (upstream === null) { raidsSkipped++; console.warn(`[opendkp-reconcile] raid ${raidId}: invalid detail payload — skipped (no delete)`); continue; }
+    raidsScanned++;
+
+    // Propagate edits/additions first — upsert is always safe (it only writes
+    // upstream-confirmed rows). Deletes are computed against the mirror after.
+    if (upstream.length > 0 && !dryRun) {
+      await db.upsert('opendkp_loot', upstream, 'raid_id,game_item_id,character_name,dkp', { minimal: true });
+      upserted += upstream.length;
+    }
+
+    let local = [];
+    try {
+      local = await db.select('opendkp_loot',
+        `raid_id=eq.${raidId}&select=id,raid_id,game_item_id,item_id,item_name,character_name,dkp`) || [];
+    } catch { local = []; }
+    scannedLoot += local.length;
+
+    for (const r of lootDiffRemovals(local, upstream)) {
+      removals.push({ id: r.id, raid_id: raidId, raid_name: raid.name, item_name: r.item_name, character_name: r.character_name, dkp: r.dkp });
+    }
+  }
+
+  // 3. Safety fuse: an implausibly large removal set means an upstream anomaly
+  //    (e.g. empty Items[] returned for many raids), not a real mass cleanup.
+  //    Abort the deletes and keep the data — reconcile fails SAFE.
+  const cap = Math.max(maxRemovalFloor, Math.ceil(maxRemovalPct * scannedLoot));
+  const aborted = removals.length > cap;
+  if (aborted) {
+    console.warn(`[opendkp-reconcile] ABORT deletes — removal set ${removals.length} exceeds safety cap ${cap} (${scannedLoot} loot scanned). Likely an upstream fetch anomaly; keeping mirror intact. Run /syncopendkp full to force after verifying.`);
+  }
+
+  let removed = 0;
+  if (!aborted) {
+    for (const r of removals) {
+      log(`[opendkp-reconcile] ${dryRun ? 'WOULD remove' : 'removed'} ghost loot: raid ${r.raid_id} "${r.raid_name}" — "${r.item_name}" → ${r.character_name} (${r.dkp} DKP), absent upstream`);
+    }
+    if (!dryRun && removals.length > 0) {
+      const ids = removals.map(r => r.id).filter(v => v != null);
+      // Delete in bounded batches so the PostgREST in.() URL stays sane.
+      for (let i = 0; i < ids.length; i += 100) {
+        const slice = ids.slice(i, i + 100);
+        await db.del('opendkp_loot', `id=in.(${slice.join(',')})`);
+      }
+      removed = ids.length;
+    }
+  }
+
+  // 4. Advance the watermark (skip on dry run — a dry run changes nothing).
+  if (!dryRun) {
+    await _writeReconcileWm(db, {
+      lastAuditId:     newMaxAuditId,
+      lastReconcileAt: now,
+      lastRemoved:     aborted ? (wm.lastRemoved || 0) : removed,
+    });
+  }
+
+  return {
+    raids_scanned: raidsScanned,
+    raids_skipped: raidsSkipped,
+    loot_upserted: upserted,
+    loot_removed:  removed,
+    would_remove:  dryRun ? removals.length : undefined,
+    aborted,
+    audit_signals: lootSignals.length,
+    last_audit_id: newMaxAuditId,
+    dry_run:       dryRun,
+  };
 }
 
 // Pull the full OpenDKP character list and mirror into the characters table.
@@ -901,4 +1149,7 @@ async function syncCharacters() {
   return { upserted, pages: pagesWalked, dropped_dupes: droppedDupes, failed_rows: failedRows };
 }
 
-module.exports = { runSync, syncRaidsList, syncRaidDetail, syncCharacters, syncAuctions, syncAudits, syncAdjustments };
+module.exports = {
+  runSync, syncRaidsList, syncRaidDetail, syncCharacters, syncAuctions, syncAudits, syncAdjustments,
+  reconcileRecentLoot, classifyAuditAction, lootDiffRemovals,
+};

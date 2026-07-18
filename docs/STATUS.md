@@ -147,6 +147,44 @@ folly** — it's here.*
     see the #106 entry below; the six-GET-loop consolidation + encounter-burst
     flattening close #73 entirely. **Wave 2 is now fully closed** (#72 election,
     #73 admission control incl. tail, #74 control plane, #58 zero-downtime).
+- **#110 OpenDKP audit-trail reconciliation — DONE (2026-07-19, bot 3.0.212 on
+  main).** Path shipped: **BOTH** — audit feed as TRIGGER + WATERMARK, scoped
+  reconcile as the precise removal. Motivated by the 2026-07-19 "Backpack"
+  incident (3 test awards deleted in OpenDKP but still on wolfpack.quest's
+  parses/loot surfaces; `opendkp_loot` is append-only via upsert and
+  `_raidNeedsDetail` stops re-fetching a settled raid, so the deletion never
+  propagated).
+  - **Evidence the audit path can't stand alone:** `opendkp_audits.raw` carries
+    only `{AuditId, CognitoUser, ClientId, Timestamp, Action}` across all 46k
+    rows — `Action` is a bare label ("Raid Updated", "Raid Deleted", …) with **no
+    entity ids** and **no per-item "Loot Deleted" event**. A loot removal shows
+    up only as a raid-level "Raid Updated". So an audit entry can't be mapped to
+    the loot row it changed — precise reconciliation from audits alone is
+    impossible.
+  - **What shipped (`utils/openDkpSync.js` `reconcileRecentLoot`, wired into
+    `runSync` after `syncAudits`):** each sync reads new audits since a watermark
+    (`bot_kv` key `opendkp_reconcile`, `{lastAuditId, lastReconcileAt}` — no new
+    schema); a new "Raid Updated"/"Raid Deleted" (or a 6h floor) warrants a pass.
+    The pass re-pulls ONLY recent raids' loot (default 14d, `OPENDKP_RECONCILE_
+    WINDOW_DAYS`), upserts upstream (edits/adds propagate), and deletes local
+    rows absent upstream (ghosts). Idempotent (empty diff on a clean mirror),
+    watermarked, one log line per removal. **Fails SAFE:** never deletes for a
+    raid whose detail fetch errored/was malformed, and the whole pass aborts its
+    deletes if the removal set exceeds `max(20, 25% of scanned)` (guards an
+    upstream empty-`Items[]` glitch). `/syncopendkp` reports reconcile stats;
+    `full:true` reconciles every raid.
+  - **Scope:** deletions apply ONLY to the `opendkp_loot` mirror (pure mirror —
+    no bot-owned rows; verified). Whole-raid deletes (a `getRaid` 404 leaves the
+    `opendkp_raids`+cascade row) and auction/adjustment ghosts are a documented
+    same-class follow-up, out of this incident's scope.
+  - **Verify:** `lint` + `test` (142, incl. new `test/opendkp-reconcile.test.js`,
+    14: classify mapping, scoped-diff removal set, watermark advance, idempotency,
+    dry-run, fail-safe cap, bad-fetch guard) + `check:dashboard` green ON MAIN. A
+    true live dry-run couldn't run here (OpenDKP Cognito secrets are Railway-only,
+    and the reconcile needs upstream `getRaid`); prod SQL confirms the first real
+    pass is near-zero + safe — recent 14d window: 171 loot / 6 raids, **0** NULL
+    `game_item_id` (no key churn), **0** duplicate dedup-keys, backpacks already
+    gone, safety cap 43. See BETA-TESTING #110.
 - **#108 loot bidding dashboard element (Mimic) — DONE (2026-07-19, agent
   3.3.89 beta + bot 3.0.211 on main; BETA).** Guild-lead ask. A "💰 Loot
   bidding" card (BETA-tagged) in the agent dashboard:
