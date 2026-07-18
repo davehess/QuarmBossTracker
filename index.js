@@ -5347,6 +5347,74 @@ async function _handleAgentUiEditResult(req, res) {
 //   - "parses"  → caller's last 10 encounters (boss, ts, dps, total)
 // Threat is intentionally NOT here — it's a live-only stat with no server
 // counterpart (see CONTINUATION_QUEUE: increment 2f notes).
+//
+// #108 loot bidding adds three read-only keys consumed by Mimic's Loot bidding
+// panel: "opendkp-auth-config" (PUBLIC Cognito app-client id so the agent can
+// drive the login gate locally), "item-history" (per-item last winner +
+// runner-up), and "bid-history" (the caller's own wins + wishlist). The last
+// two are cached (60s) since a room of Mimics polls them — same spirit as the
+// target-buffs cache.
+
+// ── #108 pure helpers (source-sliced by test/loot-bidding.test.js) ──────────
+// Derive an item's { winner, winning_bid, runner_up } from its settled OpenDKP
+// auctions (most-recent first) + that auction's mirrored bids. Runner-up is the
+// highest LOSING bid; sealed auctions discard losing bids on settle, so it's
+// usually null (the panel then falls back to last-win + 1).
+function _lootItemSummary(auctionsDesc, bidsByAuction) {
+  const auc = (auctionsDesc || []).find(a => a && a.winner != null && a.bid_amount != null);
+  if (!auc) {
+    const any = (auctionsDesc || [])[0] || null;
+    return any ? { winner: any.winner || null, winning_bid: any.bid_amount != null ? any.bid_amount : null, runner_up: null, item_name: any.item_name || null } : null;
+  }
+  const winningBid = auc.bid_amount;
+  const bids = (bidsByAuction && bidsByAuction[auc.auction_id]) || [];
+  const vals = bids.map(b => Number(b.value)).filter(v => Number.isFinite(v));
+  // Remove ONE instance of the winning value (the winner), max of the rest.
+  let removed = false;
+  const losing = [];
+  for (const v of vals) {
+    if (!removed && v === winningBid) { removed = true; continue; }
+    losing.push(v);
+  }
+  const runnerUp = losing.length ? Math.max(...losing) : null;
+  return { winner: auc.winner || null, winning_bid: winningBid, runner_up: runnerUp, item_name: auc.item_name || null };
+}
+
+// Merge explicit prereg wishlist rows with items inferred from bid history into
+// ONE wishlist list. Prereg wins when an item appears in both. Prereg items
+// sort first (by ascending priority), then bid-history items.
+function _mergeWishlist(preregRows, bidItemRows) {
+  const byId = new Map();
+  for (const r of (preregRows || [])) {
+    if (r == null || r.item_id == null) continue;
+    byId.set(r.item_id, { item_id: r.item_id, item_name: r.item_name || null, source: 'prereg', priority: (r.priority == null ? null : r.priority) });
+  }
+  for (const r of (bidItemRows || [])) {
+    if (r == null || r.item_id == null || byId.has(r.item_id)) continue;
+    byId.set(r.item_id, { item_id: r.item_id, item_name: r.item_name || null, source: 'bid_history', priority: null });
+  }
+  return [...byId.values()].sort((a, b) => {
+    if (a.source !== b.source) return a.source === 'prereg' ? -1 : 1;
+    if (a.source === 'prereg') return (a.priority ?? 999) - (b.priority ?? 999);
+    return (a.item_name || '').localeCompare(b.item_name || '');
+  });
+}
+
+// Tiny TTL cache for the two read-heavy #108 keys (60s).
+const _lootPanelCache = new Map();
+function _lootCacheGet(k) { const e = _lootPanelCache.get(k); return (e && Date.now() < e.exp) ? e.val : null; }
+function _lootCacheSet(k, val, ttlMs = 60_000) { _lootPanelCache.set(k, { val, exp: Date.now() + ttlMs }); if (_lootPanelCache.size > 200) { const first = _lootPanelCache.keys().next().value; _lootPanelCache.delete(first); } }
+
+// Build the PostgREST `or=(col.ilike.a,col.ilike.b,…)` clause for a name list —
+// case-insensitive multi-name match. Names are [A-Za-z], so no comma/wildcard
+// escaping hazards; still cap the list.
+function _ilikeAnyClause(col, names) {
+  const list = (names || []).filter(n => /^[A-Za-z]{2,20}$/.test(n)).slice(0, 25);
+  if (!list.length) return null;
+  return `or=(${list.map(n => `${col}.ilike.${encodeURIComponent(n)}`).join(',')})`;
+}
+// ── end #108 pure helpers ──
+
 async function _handleAgentServerPanel(req, res) {
   const identity = await mimicLink.requireAgentAuth(req, res);
   if (!identity) return;
@@ -5620,6 +5688,130 @@ async function _handleAgentServerPanel(req, res) {
         res.writeHead(502, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ error: 'opendkp fetch failed' }));
       }
+    }
+    if (key === 'opendkp-auth-config') {
+      // PUBLIC values only (the Cognito app-client id ships in OpenDKP's own
+      // site JS). Lets Mimic's Loot bidding panel drive USER_PASSWORD_AUTH
+      // locally without the agent carrying any OpenDKP secret. Never returns
+      // the officer username/password — those stay in the bot's env.
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({
+        key,
+        cognito_client_id: process.env.OPENDKP_COGNITO_CLIENT_ID || null,
+        region:            process.env.OPENDKP_COGNITO_REGION || 'us-east-2',
+        client_name:       process.env.OPENDKP_CLIENT_NAME || 'wolfpack',
+      }));
+    }
+    if (key === 'item-history') {
+      // Per item_id: the most recent settled OpenDKP auction's winner + winning
+      // bid + runner-up (highest losing bid). Chain: opendkp_auctions (13k rows,
+      // reliably carries winner+bid_amount) + opendkp_auction_bids for the
+      // runner-up when the pre-settle bids were mirrored. loot_drops is empty in
+      // prod, so it is intentionally NOT used here.
+      const itemsRaw = (url.searchParams.get('items') || '').trim();
+      const ids = itemsRaw.split(',').map(s => parseInt(s, 10)).filter(n => Number.isFinite(n) && n > 0).slice(0, 60);
+      if (!ids.length) { res.writeHead(400); return res.end(JSON.stringify({ error: 'items required (comma-separated item_ids)' })); }
+      const ck = 'item-history:' + ids.slice().sort((a, b) => a - b).join(',');
+      const cached = _lootCacheGet(ck);
+      if (cached) { res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(cached); }
+      const aucRows = await supabase.select(
+        'opendkp_auctions',
+        `select=auction_id,item_id,item_name,winner,bid_amount,end_at&item_id=in.(${ids.join(',')})&winner=not.is.null&order=end_at.desc&limit=400`
+      ) || [];
+      // Most-recent-first auctions per item; collect the winning auction ids for
+      // a single runner-up bid lookup.
+      const byItem = new Map();
+      for (const a of aucRows) {
+        if (!byItem.has(a.item_id)) byItem.set(a.item_id, []);
+        byItem.get(a.item_id).push(a);
+      }
+      const winAuctionIds = [];
+      for (const list of byItem.values()) { const top = list.find(x => x.winner != null && x.bid_amount != null); if (top) winAuctionIds.push(top.auction_id); }
+      let bidsByAuction = {};
+      if (winAuctionIds.length) {
+        const bidRows = await supabase.select(
+          'opendkp_auction_bids',
+          `select=auction_id,value&auction_id=in.(${winAuctionIds.slice(0, 60).join(',')})&limit=1000`
+        ) || [];
+        for (const b of bidRows) { (bidsByAuction[b.auction_id] = bidsByAuction[b.auction_id] || []).push(b); }
+      }
+      const items = [];
+      for (const id of ids) {
+        const list = byItem.get(id);
+        if (!list) continue;
+        const summary = _lootItemSummary(list, bidsByAuction);
+        if (summary) items.push({ item_id: id, ...summary });
+      }
+      const out = JSON.stringify({ key, scope: 'most recent settled auction per item', updated_at: new Date().toISOString(), items });
+      _lootCacheSet(ck, out);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(out);
+    }
+    if (key === 'bid-history') {
+      // The caller's own loot: wins (opendkp_loot) + wishlist (explicit prereg
+      // from `wishlists` MERGED with items inferred from OpenDKP bid history via
+      // opendkp_auction_bids). ?characters=<family csv> scopes wins/prereg;
+      // ?login=<opendkp username> additionally scopes bid-history items (that
+      // mirror records the account that placed each bid).
+      const famRaw = (url.searchParams.get('characters') || character || '').trim();
+      const login  = (url.searchParams.get('login') || '').trim();
+      const family = famRaw.split(',').map(s => s.trim()).filter(Boolean);
+      if (!family.length && !login) { res.writeHead(400); return res.end(JSON.stringify({ error: 'characters or login required' })); }
+      const ck = 'bid-history:' + login.toLowerCase() + '|' + family.map(s => s.toLowerCase()).sort().join(',');
+      const cached = _lootCacheGet(ck);
+      if (cached) { res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(cached); }
+      const famClause = _ilikeAnyClause('character_name', family);
+      // Wins.
+      let wins = [];
+      if (famClause) {
+        const winRows = await supabase.select(
+          'opendkp_loot',
+          `select=character_name,item_id,item_name,dkp,raid_id,fetched_at&${famClause}&order=fetched_at.desc&limit=100`
+        ) || [];
+        wins = winRows.map(r => ({ character: r.character_name, item_id: r.item_id, item_name: r.item_name, dkp: r.dkp, raid_id: r.raid_id, when: r.fetched_at }));
+      }
+      // Explicit prereg wishlist (+ resolve item names from eqemu_items).
+      let preregRows = [];
+      if (famClause) {
+        preregRows = await supabase.select(
+          'wishlists',
+          `select=item_id,priority&${famClause}&order=priority.asc&limit=200`
+        ) || [];
+      }
+      // Items inferred from bid history: bids by this login/family → auction_ids
+      // → the auctions' item_id/item_name.
+      let bidItemRows = [];
+      const bidClauses = [];
+      if (login) bidClauses.push(`user_login.ilike.${encodeURIComponent(login)}`);
+      for (const n of family) if (/^[A-Za-z]{2,20}$/.test(n)) bidClauses.push(`character_name.ilike.${encodeURIComponent(n)}`);
+      if (bidClauses.length) {
+        const bidRows = await supabase.select(
+          'opendkp_auction_bids',
+          `select=auction_id&or=(${bidClauses.slice(0, 26).join(',')})&limit=500`
+        ) || [];
+        const aids = [...new Set(bidRows.map(b => b.auction_id).filter(Boolean))].slice(0, 200);
+        if (aids.length) {
+          const aRows = await supabase.select(
+            'opendkp_auctions',
+            `select=item_id,item_name&auction_id=in.(${aids.join(',')})&item_id=not.is.null&limit=500`
+          ) || [];
+          const seen = new Set();
+          for (const a of aRows) { if (a.item_id != null && !seen.has(a.item_id)) { seen.add(a.item_id); bidItemRows.push({ item_id: a.item_id, item_name: a.item_name }); } }
+        }
+      }
+      // Resolve prereg item names.
+      const preregIds = [...new Set(preregRows.map(r => r.item_id).filter(n => Number.isFinite(n)))].slice(0, 200);
+      const nameById = new Map();
+      if (preregIds.length) {
+        const itemRows = await supabase.select('eqemu_items', `select=id,name&id=in.(${preregIds.join(',')})&limit=200`) || [];
+        for (const r of itemRows) nameById.set(r.id, r.name);
+      }
+      const preregForMerge = preregRows.map(r => ({ item_id: r.item_id, item_name: nameById.get(r.item_id) || null, priority: r.priority }));
+      const wishlist = _mergeWishlist(preregForMerge, bidItemRows).slice(0, 60);
+      const out = JSON.stringify({ key, characters: family, login: login || null, scope: 'your loot history', updated_at: new Date().toISOString(), wins, wishlist });
+      _lootCacheSet(ck, out);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(out);
     }
     res.writeHead(404, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({ error: 'unknown panel key', key }));

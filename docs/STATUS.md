@@ -147,6 +147,43 @@ folly** — it's here.*
     see the #106 entry below; the six-GET-loop consolidation + encounter-burst
     flattening close #73 entirely. **Wave 2 is now fully closed** (#72 election,
     #73 admission control incl. tail, #74 control plane, #58 zero-downtime).
+- **#108 loot bidding dashboard element (Mimic) — DONE (2026-07-19, agent
+  3.3.89 beta + bot 3.0.211 on main; BETA).** Guild-lead ask. A "💰 Loot
+  bidding" card (BETA-tagged) in the agent dashboard:
+  1. **Hard OpenDKP login gate (agent).** Every bid control is disabled until
+     the user signs into their OpenDKP account. The agent drives AWS Cognito
+     `USER_PASSWORD_AUTH` directly (built-in `https`, zero deps — same flow as
+     `utils/opendkp.js`); the token lives ONLY in `logsync.opendkp.json` and is
+     never uploaded. The PUBLIC Cognito app-client id + region come from the
+     bot's `server-panel/opendkp-auth-config` (one source of truth, zero secrets
+     in the agent). Bids still ride the existing officer-mediated, sealed
+     `/api/agent/place-bid` — the login is the GATE + bid-history unlock, not a
+     new bid path.
+  2. **Live auctions (agent).** Surfaces the v3.3.88 `_lootAuctions` detection
+     via `GET /api/loot/auctions` (one source of truth — no re-parse) MERGED
+     with the bot's live OpenDKP auctions. Per item: wishlist ★, last winner +
+     runner-up, a bid box, and a "+1" prefill (runner-up + 1, fallback last-win
+     + 1 — never auto-submits; the Bid button submits).
+  3. **Local main+alt family (agent).** `logsync.bidfamily.json` + a small
+     editor (add/remove/mark-main) + a per-bid character picker.
+  4. **Bid history + wishlist (bot).** Once authed, `server-panel/bid-history`
+     serves the caller's wins (`opendkp_loot`) + wishlist — explicit prereg
+     (`wishlists`) MERGED with items inferred from OpenDKP bid history
+     (`opendkp_auction_bids.user_login`/`character_name`), each tagged
+     `prereg` vs `from bid history`. `server-panel/item-history` serves the
+     last winner + runner-up per item.
+  - **Data-chain reality:** `loot_drops` is empty in prod and sealed auctions
+    DISCARD losing bids on settle, so the RUNNER-UP is often unavailable — the
+    winner + winning bid come reliably from `opendkp_auctions` (13k rows), the
+    runner-up from `opendkp_auction_bids` when the pre-settle bids were mirrored,
+    else null (panel falls back to last-win + 1). OUT of scope (later board):
+    officer auction management (#70), posting auctions (#68) — read-only +
+    place-bid only.
+  - Verify: agent `node --check` + `check:dashboard` green; scratchpad smoke
+    20/20 (gate, family persistence across restart, auth transitions, local-
+    auction surfacing, prefill math); bot `lint` + `test` (128, incl. new
+    `test/loot-bidding.test.js` source-slice, 10) + `check:dashboard` green ON
+    MAIN. See BETA-TESTING #108.
 - **#107 loot-post TTS + auction countdown chips + trigger overlay auto-grow —
   DONE (2026-07-19, agent 3.3.88 beta; web 1.0.241 roadmap on main — NO bot
   change).** Guild-lead ask, two halves, all agent + Mimic-overlay:

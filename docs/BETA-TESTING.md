@@ -20,6 +20,60 @@ raid; move it to STATUS.md's "Done" once graduated to stable.*
 
 ---
 
+## #108 — Loot bidding dashboard element (Mimic)
+
+**Needs:** agent **3.3.89** (beta Mimic) · bot **3.0.211** (live on Railway).
+
+**What it does:** the agent dashboard now has a **💰 Loot bidding** card (with a
+**BETA** tag) where you can place your sealed OpenDKP bids without leaving the
+game. It's gated: you have to log into your OpenDKP account in Mimic first —
+until you do, every bid box is locked and you'll see "Log into OpenDKP to enable
+bidding." Your login stays on your PC and is never uploaded. Once you're in, open
+auctions show up (both what an officer just called in chat AND the real OpenDKP
+auctions), each with the item's last winner + runner-up, a bid box, and a **+1**
+button that pre-fills the previous runner-up + 1 (you still click Bid — it never
+bids for you). You set your main + alts once in the little ✎ characters editor,
+then pick who you're bidding as per bid. When you're logged in it also shows your
+own recent wins and your wishlist, tagging each item as a real prereg or one it
+learned from your past bids.
+
+**Where to look:** the **💰 Loot bidding** card near the top of the agent
+dashboard. If you're not connected to the bot (no token in Mimic Settings) the
+login won't work — set your token first.
+
+### ✅ Solo (one machine)
+1. **The gate blocks until you log in.** Fresh install / logged out: the card
+   shows "🔒 Log into OpenDKP to enable bidding" and any auction row shows
+   `🔒 locked` instead of a bid box. Click **Log in to OpenDKP**, enter a WRONG
+   password → you should see "incorrect username or password" and stay locked.
+   Enter your REAL OpenDKP username + password → the banner flips to a green
+   `● OpenDKP <you>` line and bid boxes appear.
+2. **Family editor persists across restart.** Click **✎ characters**, set your
+   main and add an alt or two, **save**. Close Mimic completely and reopen it →
+   your main + alts are still there and the "bidding as" picker lists them.
+3. **+1 prefill shows runner-up + 1.** With an item that has bid history, click
+   its **+1** button → the bid box fills with the previous runner-up + 1 (or, if
+   the runner-up wasn't recorded, the last winning bid + 1 — hover the button to
+   see which). It should NOT submit — you have to click **Bid**.
+4. **A called drop lights the panel up.** In `/rs` post a drop list (as in the
+   #107 test). Within a few seconds the item appears in the Loot bidding card
+   marked `(called)` with a countdown, even before an OpenDKP auction exists.
+5. **Log out re-locks.** Click **log out** → the gate returns and bid boxes lock
+   again.
+
+### 👥 Multi-person (2+ machines on beta) — **needs a raid partner**
+1. **Two users see the same live auction.** With an OpenDKP auction open, both
+   logged-in raiders see the same item(s), the same last-winner/runner-up, and
+   can each place a bid from their own Mimic.
+2. **Sealed bids stay sealed.** Neither raider can see the other's bid amount in
+   the panel — only their own bids appear under "your open bids" (the values ride
+   the encrypted place-bid path; nobody sees a competitor's number).
+
+**Status:** ⏳ awaiting verification (solo is quick; multi-person needs a real
+open auction + 2 testers).
+
+---
+
 ## #107 — Loot-post TTS + auction countdown chips + trigger overlay auto-grow
 
 **Needs:** agent **3.3.88** (beta Mimic) · NO bot change (web **1.0.241** is
