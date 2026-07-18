@@ -3756,6 +3756,49 @@ function trackDefensiveDiscLine(line, character) {
   _recordProt(key, name, 'Defensive', atMs, up, up ? DEFENSIVE_DISC_SECS : null);
 }
 
+// ── #105 timeline signals: slows + disciplines ──────────────────────────────
+// SLOW identification is a small NAMED list, not a catalog attribute: the
+// agent's spell catalog (id/name/dur/durf/good/ds/heal) carries no attack-speed
+// (SPA 11) marker, so there's nothing catalog-side to key on. These are the
+// well-attested Luclin-era single-target slows (shaman + enchanter lines); EQ
+// logs write possessives with a backtick, so we normalize `→' before matching.
+// Adding a slow is a one-line addition here.
+const SLOW_SPELLS = new Set([
+  // Shaman
+  'drowsy', 'walking sleep', "tagar's insects", "togor's insects", "turgur's insects", 'cripple',
+  // Enchanter
+  'languid pace', 'shiftless deeds', 'tepid deeds', 'forlorn deeds',
+]);
+function _isSlowSpell(name) {
+  if (!name) return false;
+  return SLOW_SPELLS.has(String(name).toLowerCase().replace(/`/g, "'").trim());
+}
+
+// DISCIPLINE activations surface as bystander-visible emote lines. Data-driven:
+// each row is { name, self, other } where `other` captures the actor in group 1.
+// The four "fighting style" stance discs are grounded — Defensive's exact text
+// is verified in-repo (trackDefensiveDiscLine above); Evasive / Precision /
+// Aggressive share the identical server grammar. Non-stance discs (Fortitude,
+// Furious, Mighty Strike, Weapon Shield, Holyforge, Sanctification, Whirlwind,
+// …) had no reliable bystander emote in this era; add each as one row here once
+// its exact emote text is confirmed (and widen the cheap gate in _matchDiscLine
+// if the new text doesn't contain "fighting style").
+const DISC_LINES = [
+  { name: 'Defensive',  self: /\bYou assume a defensive fighting style\b/i,   other: /\b(\w+) assumes a defensive fighting style\b/i },
+  { name: 'Evasive',    self: /\bYou assume an evasive fighting style\b/i,    other: /\b(\w+) assumes an evasive fighting style\b/i },
+  { name: 'Precision',  self: /\bYou assume a precise fighting style\b/i,     other: /\b(\w+) assumes a precise fighting style\b/i },
+  { name: 'Aggressive', self: /\bYou assume an aggressive fighting style\b/i, other: /\b(\w+) assumes an aggressive fighting style\b/i },
+];
+function _matchDiscLine(line, selfName) {
+  if (!line || line.indexOf('fighting style') === -1) return null;   // cheap gate — all current rows are stance discs
+  for (const d of DISC_LINES) {
+    if (d.self.test(line)) return { name: d.name, actor: selfName || 'You' };
+    const mm = d.other.exec(line);
+    if (mm) return { name: d.name, actor: mm[1] };
+  }
+  return null;
+}
+
 // ── Raid-wide healer/caster mana roster ─────────────────────────────────────
 // Self-reported "N% mana" status tickers many healers run on a macro —
 // actual examples from guild raid chat: "Druid -- current mana 45%.",
@@ -4385,6 +4428,12 @@ class EncounterBuilder {
     // this fight. Deduped via _tlSeen. Trigger fires are merged in at flush.
     this.timelineEvents    = [];
     this._tlSeen           = new Set();
+    // #105 — slow debuffs tracked on THIS fight's target (spellLower →
+    // {name,landedAtMs,expiresAtMs}); slow_on is emitted on land, slow_off at
+    // flush when the estimated expiry fell inside the fight window. Plus a
+    // per-target debounce for mob self-heal ticks (Zeal-gauge sourced).
+    this._slowsOnTarget    = new Map();
+    this._mobHealDebounce  = new Map();
     // petLeaders and lastDirgeCast intentionally NOT reset — persists for the agent's runtime
   }
   // ── Callout-replay timeline (#98) ──────────────────────────────────────────
@@ -4413,6 +4462,17 @@ class EncounterBuilder {
         label: (mob || 'The mob') + ' ENRAGED',
       });
     }
+    // #105 — discipline activation emotes (third-person + self forms). Both
+    // attribute to the right actor (self → this builder's character). Data-
+    // driven via DISC_LINES so a new disc is a one-line addition.
+    const disc = _matchDiscLine(line, this.character);
+    if (disc) {
+      this.noteTimelineEvent({
+        at: new Date(tsMs || Date.now()).toISOString(),
+        kind: 'raid_event', subtype: 'disc', actor: disc.actor || null,
+        label: disc.name + ' — ' + (disc.actor || 'Someone'),
+      });
+    }
   }
   // Merge this fight's raid events with the trigger FIRES that fell inside its
   // window (the "did the callout fire?" half — covers Death Touch + every
@@ -4432,8 +4492,81 @@ class EncounterBuilder {
           });
         }
       }
+      // #105 — slow_off: a slow whose estimated expiry fell INSIDE the fight
+      // (mob outlived the slow) reads as a "re-slow needed" cue. Slows still up
+      // at the kill (expiry after the fight end) emit nothing. Estimated off the
+      // era-cap caster level, so the tick is approximate — a timeline cue, not a
+      // precise timer.
+      if (this._slowsOnTarget) {
+        for (const s of this._slowsOnTarget.values()) {
+          if (s && s.expiresAtMs > 0 && s.expiresAtMs >= startMs && s.expiresAtMs <= endMs) {
+            out.push({
+              at: new Date(s.expiresAtMs).toISOString(), kind: 'raid_event',
+              subtype: 'slow_off', actor: null,
+              label: 'Slow fell off — ' + s.name,
+            });
+          }
+        }
+      }
     }
     return out.length ? out.slice(0, 500) : undefined;
+  }
+  // #105 — Does this fight's target match `name`? True when it equals the
+  // catalog-matched boss OR any name we've dealt damage to this fight. Used to
+  // gate slow + mob-heal events so trash/off-target chatter never lands on the
+  // board.
+  _fightTargetMatches(name) {
+    if (!name) return false;
+    const nl = String(name).toLowerCase();
+    if (this.bossName && String(this.bossName).toLowerCase() === nl) return true;
+    for (const t of this.targets.keys()) {
+      if (String(t).toLowerCase() === nl) return true;
+    }
+    return false;
+  }
+  // #105 — A slow debuff landing on the CURRENT fight target → a slow_on tick,
+  // and its estimated expiry is tracked for a later slow_off (computed at flush).
+  // `caster` is known only for our own casts (self-cast path); a bystander-
+  // observed slow passes null and the label omits the caster.
+  noteSlowLanding(evt, caster) {
+    if (!evt || !evt.spell_name || !evt.target) return;
+    if (!_isSlowSpell(evt.spell_name)) return;
+    if (!this._fightTargetMatches(evt.target)) return;
+    const atMs = evt.cast_at ? (Date.parse(evt.cast_at) || Date.now()) : Date.now();
+    // Slows are detrimental — the caster's level is unknown at land time, so
+    // estimate duration off the era cap (the same floor the buff tracker uses).
+    const durTicks = _durTicksForLevel(evt.dur_formula, evt.dur_ticks, _assumedCasterLevel());
+    const expiresAtMs = durTicks > 0 ? atMs + durTicks * 6000 : 0;
+    const key = String(evt.spell_name).toLowerCase();
+    const existing = this._slowsOnTarget.get(key);
+    // A re-slow before expiry just refreshes the window — no duplicate slow_on.
+    if (existing && existing.expiresAtMs > atMs) {
+      if (expiresAtMs) existing.expiresAtMs = expiresAtMs;
+      existing.landedAtMs = atMs;
+      return;
+    }
+    this._slowsOnTarget.set(key, { name: evt.spell_name, landedAtMs: atMs, expiresAtMs });
+    this.noteTimelineEvent({
+      at: new Date(atMs).toISOString(),
+      kind: 'raid_event', subtype: 'slow_on', actor: caster || null,
+      label: 'Slow landed — ' + evt.spell_name + (caster ? ' (' + caster + ')' : ''),
+    });
+  }
+  // #105 — Mob self/assisted heal observed from the Zeal target gauge (rise
+  // detection + guardrails live in _noteMobHealFromState). Debounced per target
+  // so one heal doesn't emit a burst of ticks.
+  noteMobHeal(name, rise, atMs) {
+    if (!name || !(rise > 0)) return;
+    const key = String(name).toLowerCase();
+    const now = atMs || Date.now();
+    const last = this._mobHealDebounce.get(key) || 0;
+    if (now - last < MOB_HEAL_DEBOUNCE_MS) return;
+    this._mobHealDebounce.set(key, now);
+    this.noteTimelineEvent({
+      at: new Date(now).toISOString(),
+      kind: 'raid_event', subtype: 'mob_heal', actor: null,
+      label: 'Mob healed (+' + Math.round(rise) + '%)',
+    });
   }
   _bumpDefender(name, key, amount, tsMs) {
     if (!name) return;
@@ -16035,6 +16168,9 @@ function startWebDashboard(port) {
           const prevCasting = (prevState.casting || '').trim();
           const newCasting  = (st.casting || '').trim();
           _zealState[character] = { ...st, updatedAt: Date.now() };
+          // #105 — mob self-heal: the Zeal target gauge HP% rising for the same
+          // target across frames → a mob_heal timeline tick on the live fight.
+          try { _noteMobHealFromState(character, prevState, st); } catch (e) { void e; }
           if (newCasting && newCasting !== prevCasting) {
             // Heuristic: anything > 4 chars + has at least one letter is a
             // real spell/song name. Filters out one-off junk labels.
@@ -21595,6 +21731,36 @@ const _localFireKeys = new Map();   // key → [tsMs, ...]
 const _fireLog = [];                // [{ at: tsMs, name }]
 const FIRE_DEDUP_WINDOW_MS = 8_000;
 
+// #105 — Mob self-heal detection from the throttled Zeal target-gauge snapshot.
+// Primary signal: the target gauge HP% RISING for the SAME target name across
+// two consecutive frames. The serialization doc (docs/DESIGN-dedup-and-mob-
+// serialization.md) warns a big HP jump can also mean the TARGET CHANGED, not a
+// heal — so we require the gauge NAME to be identical across the jump and the
+// prior HP to be > 0 (a rise off 0% is a new same-name spawn, not a heal). A
+// same-name "babysit" pull (two identically named mobs alive at once) can still
+// false-positive; that's accepted for a boss-timeline cue and documented here.
+// The heal is attributed to the OBSERVING character's live builder (matched by
+// name + current fight target) and debounced ≥10s per target inside noteMobHeal;
+// cross-uploader duplicates collapse at the web read layer.
+const MOB_HEAL_MIN_RISE = 5;          // percentage points
+const MOB_HEAL_DEBOUNCE_MS = 10_000;
+function _noteMobHealFromState(character, prev, next) {
+  if (!character || !prev || !next) return;
+  const pn = prev.target_name, nn = next.target_name;
+  const ph = prev.target_hp_pct, nh = next.target_hp_pct;
+  if (!pn || !nn || typeof ph !== 'number' || typeof nh !== 'number') return;
+  if (String(pn).toLowerCase() !== String(nn).toLowerCase()) return;   // name changed → target swap, not a heal
+  if (ph <= 0) return;                                                 // 0% = dead → a rise is a fresh same-name spawn
+  const rise = Math.round(nh - ph);
+  if (rise < MOB_HEAL_MIN_RISE) return;
+  const cl = String(character).toLowerCase();
+  for (const b of _liveBuilders) {
+    if (String(b.character || '').toLowerCase() !== cl) continue;
+    if (!b._fightTargetMatches(nn)) continue;
+    b.noteMobHeal(nn, rise, Date.now());
+  }
+}
+
 function _markFireSeen(key, tsMs) {
   if (!key) return;
   const arr = _localFireKeys.get(key) || [];
@@ -24641,6 +24807,9 @@ async function main() {
           // Also stamp it under the target name so Mob Info can show buffs on
           // whatever we're targeting (mob or player).
           recordTargetBuffLanding(bcEvt);
+          // #105 — a slow landing on the current fight target → slow_on timeline
+          // tick. Self-cast path: the caster is this log's character.
+          try { b.builder.noteSlowLanding(bcEvt, b.character); } catch (e) { void e; }
         }
         // Detrimental debuff landed by SOMEONE ELSE (bystander view) — Tash/Malo
         // on the boss, a slow/poison on a raider. Our OWN debuffs are already
@@ -24655,6 +24824,9 @@ async function main() {
             // path does, and that breaks on instanced mob names like
             // "#Diabo_Xi_Va_Temariel" vs the emote's "Diabo Xi Va Temariel").
             recordTargetBuffLanding(dbEvt);
+            // #105 — bystander-observed slow on the fight target → slow_on tick
+            // (the caster is unknown from a landing line, so it's unattributed).
+            try { b.builder.noteSlowLanding(dbEvt, null); } catch (e) { void e; }
             // Upload BOTH mob and player debuffs so the bot's target-buffs relay
             // shows them cross-client — everyone targeting the boss sees
             // Tash/Malo/Turgur's even if they didn't personally witness the land
