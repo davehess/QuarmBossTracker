@@ -21126,6 +21126,12 @@ function diStatusSnapshot() {
 // live; reads dedup through the bot's own relay cache so a roomful of Mimics
 // doesn't multiply Supabase load. Tunable via WP_MT_LIVE_STATE_TTL_MS.
 const MT_LIVE_STATE_TTL_MS = parseInt(process.env.WP_MT_LIVE_STATE_TTL_MS, 10) || 2500;
+// Restore the two caches these Mob-info lookups depend on — their declarations
+// had gone missing on main, so every non-self target lookup threw
+// "ReferenceError: _mtLiveStateByName is not defined" (fixed on beta after the
+// raid-night 2026-07-16 outage; ported here). Declared next to the fetch that fills them.
+const _mtLiveStateByName   = new Map();   // nameLower → { at, state } (bot-relayed Zeal snapshot)
+const _mtLiveStateInflight = new Set();   // nameLower currently being fetched
 function fetchCharacterLiveState(name) {
   const opts = _uploadOpts;
   if (!opts || !opts.botUrl || !opts.token) return;

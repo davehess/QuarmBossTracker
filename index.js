@@ -12667,6 +12667,7 @@ http.createServer(async (req, res) => {
       // case the other columns land at their defaults (active=true, the rest
       // null) and the next OpenDKP sync (every few minutes) fills them in.
       try {
+        const supabase = require('./utils/supabase');
         const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
         await supabase.upsert('characters', [{
           guild_id:                          guildId,
