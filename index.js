@@ -10571,6 +10571,42 @@ async function _handleAgentRaidRoster(req, res) {
   }
 }
 
+// ── Stream classification — the dedup/load-shed guardrail (#72/#74) ──────────
+// The rule the Rathe-Council fight makes concrete: you can only safely dedup a
+// stream that is IDENTICAL across observers. A stream where each observer's view
+// is UNIQUE — a different mob being babysat, a different target, a different
+// vantage — must take EVERY observer, or splinter groups vanish from the data.
+// This registry is the hard guardrail: the election NEVER gates a per_observer
+// stream, so no feature flag can ever dedup mob/target/encounter data away.
+//   redundant      — byte-identical everywhere (chat). One reporter suffices.
+//   redundant_zone — identical within a zone (buff landings). 1+ per zone.
+//   per_group      — composition redundant, but HP is per-group (raid roster).
+//   per_observer   — UNIQUE per client (live-state, target/threat, casting,
+//                    encounter). NEVER deduped; always merged across all agents.
+const STREAM_CLASS = {
+  chat:            'redundant',
+  buff_casts:      'redundant_zone',
+  raid_roster:     'per_group',
+  live_state:      'per_observer',
+  threat_snapshot: 'per_observer',
+  casting:         'per_observer',
+  target_casts:    'per_observer',
+  encounter:       'per_observer',
+};
+// Per-stream dedup feature flags (the #74 control plane), read live from the
+// tuning map. A stream is deduped ONLY when its flag is on — so an officer can
+// turn buff dedup on WITHOUT touching mob/encounter data, and roll it back
+// instantly. Defaults: chat ON (pilot shipped), buffs/roster OFF (P1b/P1c
+// unbuilt). Only `redundant*`/`per_group` streams are eligible; per_observer
+// has no flag — it can never be deduped.
+function _dedupFlags(tune) {
+  return {
+    chat:   Number(tune.dedup_chat)   !== 0,   // default ON
+    buffs:  Number(tune.dedup_buffs)  >= 1,    // default OFF (needs P1b election)
+    roster: Number(tune.dedup_roster) >= 1,    // default OFF (needs P1c election)
+  };
+}
+
 // POST /api/agent/reporter-poll  (#72 designated-reporter election)
 // A lightweight heartbeat: each agent registers itself (~every 20s) and gets
 // back which shared streams it should upload. Non-reporters stand down; the
@@ -10592,13 +10628,14 @@ async function _handleAgentReporterPoll(req, res) {
   const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
   const id = identity.discord_id;
 
-  // Kill switch (composes with the #74 control plane): officers can disable
-  // election live in /admin/overlays → every agent uploads, exactly as today.
-  let disabled = false;
-  try {
-    const tune = await _overlayTuningMap();
-    disabled = Number(tune.flag_disable_reporter_election) >= 1;
-  } catch { /* fail-open: tuning read failed → run election normally */ }
+  // Control plane (#74): one tuning read → the global kill switch + per-stream
+  // dedup flags. A stream is deduped ONLY when its flag is on; off = everyone
+  // uploads (fail-open). per_observer streams are never in `roles`, so the agent
+  // never gates them — dedup can't drop a splinter group's unique view.
+  let tune = {};
+  try { tune = await _overlayTuningMap(); } catch { /* fail-open: run fail-open */ }
+  const disabled = Number(tune.flag_disable_reporter_election) >= 1;
+  const flags = disabled ? { chat: false, buffs: false, roster: false } : _dedupFlags(tune);
 
   // Always record the heartbeat so liveness/failover works even while disabled.
   _reporterGuildBook(guildId).set(id, {
@@ -10610,21 +10647,24 @@ async function _handleAgentReporterPoll(req, res) {
     ver:       payload.agent_version ? String(payload.agent_version).slice(0, 16) : null,
   });
 
-  if (disabled) {
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ ok: true, election: 'disabled', ttl_ms: REPORTER_TTL_MS, roles: { chat: true, buffs: true, roster: true } }));
-  }
-
   const { chat } = _electReporters(guildId);
-  // P1a gates chat only. buffs (zone-aware) and roster (group-aware) still
-  // upload from every agent until P1b/P1c — fail-open, never a regression.
+  // chat is the only election built today. buffs (zone/coverage) + roster
+  // (per-group) stay fail-open until P1b/P1c — their flags are served for
+  // transparency but not yet enforced (turning them on is a no-op for now).
   const roles = {
-    chat:   chat.has(id),
+    chat:   flags.chat ? chat.has(id) : true,
     buffs:  true,
     roster: true,
   };
   res.writeHead(200, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify({ ok: true, election: 'on', ttl_ms: REPORTER_TTL_MS, roles }));
+  res.end(JSON.stringify({
+    ok:       true,
+    election: disabled ? 'disabled' : 'on',
+    ttl_ms:   REPORTER_TTL_MS,
+    roles,
+    flags,                // which redundant streams are actively deduped
+    streams:  STREAM_CLASS, // classification guardrail (per_observer = never deduped)
+  }));
 }
 
 // POST /api/agent/rolls  (#91 off-night NBG roll capture)
