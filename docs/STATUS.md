@@ -101,8 +101,20 @@ folly** — it's here.*
   service_role), adds `ALTER DEFAULT PRIVILEGES … REVOKE EXECUTE … FROM PUBLIC`
   so new functions don't reopen it, and flips the 2 SEC-DEFINER views
   (`who_directory`, `opendkp_loot_recent`) to `security_invoker = on`. Advisor
-  now clean on all 19 fn warnings + both view ERRORs. **Deferred (out of scope):**
-  mutable-search_path WARN ×23, leaked-password protection, RLS-no-policy INFOs.
+  now clean on all 19 fn warnings + both view ERRORs. **Follow-ups (next entry):**
+  mutable-search_path WARN ×23 (done) + leaked-password protection (dashboard);
+  RLS-no-policy INFOs still deferred (out of scope).
+- **Supabase search_path pin (2026-07-18)**: pinned `SET search_path = public` on
+  all 23 `function_search_path_mutable` WARN functions (migration `20260718043553`).
+  Bodies reference only public tables (mostly unqualified) + pg_catalog built-ins,
+  none hit the `extensions` schema, so `public` is the safe pin (NOT `''`, which
+  would break unqualified refs). Advisor re-run now clean of every fn WARN;
+  smoke-tested `eq_class_bit`/`character_missing_spells`/`turnins_by_id`/
+  `item_card_info`/`who_directory_json` still resolve their tables (write RPCs
+  verified by static body inspection — not executed against prod).
+  **⚠ Pending dashboard action (Hitya):** enable Auth leaked-password protection
+  (HaveIBeenPwned check) — Dashboard → Authentication → password settings. No
+  MCP/SQL toggle exists; it's an Auth config flip.
 
 ### ⏳ Open TODO — carried forward from the retired docs
 *(These are durable items; the active wave order is in `DESIGN-platform-queue.md`.)*
