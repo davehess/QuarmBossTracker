@@ -92,6 +92,18 @@ folly** — it's here.*
   makes the fleet relay-deaf for hours (bot 3.0.198). Deferred: ✕-mutes-TTS
   overlay decouple (#97).
 
+- **Supabase RPC lockdown (2026-07-18)**: closed the advisor's SECURITY DEFINER
+  hole — 10 SEC-DEFINER RPCs (11 signatures incl. `bump_agent_upload_stat` ×2)
+  were EXECUTE-able by `anon`/`authenticated` via `/rest/v1/rpc/*`, worst being
+  `prune_who_observations` (an anon-callable *data-deletion* vector). Migration
+  `20260718040000` revokes EXECUTE from PUBLIC + anon + authenticated on all,
+  grants `service_role` explicitly (bot + web already call these only as
+  service_role), adds `ALTER DEFAULT PRIVILEGES … REVOKE EXECUTE … FROM PUBLIC`
+  so new functions don't reopen it, and flips the 2 SEC-DEFINER views
+  (`who_directory`, `opendkp_loot_recent`) to `security_invoker = on`. Advisor
+  now clean on all 19 fn warnings + both view ERRORs. **Deferred (out of scope):**
+  mutable-search_path WARN ×23, leaked-password protection, RLS-no-policy INFOs.
+
 ### ⏳ Open TODO — carried forward from the retired docs
 *(These are durable items; the active wave order is in `DESIGN-platform-queue.md`.)*
 - **Mimic beta queue** (`mimic-1.4-roadmap.md`, still live): sync overlay
