@@ -20896,6 +20896,14 @@ function pollGuildTriggers({ botUrl, token }) {
         res.on('end', () => {
           try {
             const resp = JSON.parse(data);
+            // Version-gate: if the guild set hasn't changed, skip the recompile
+            // entirely so a faster poll (see the 2-min interval) stays cheap.
+            // Only when the bot actually sent a version (older bots send none →
+            // recompile as before, never falsely "unchanged").
+            if (resp.version && resp.version === stats.guildTriggersVersion) {
+              stats.guildTriggersCheckedAt = Date.now();
+              resolve(); return;
+            }
             if (Array.isArray(resp.triggers)) {
               // Compile once; eval per-line is hot path.
               const compiled = [];
@@ -23721,7 +23729,10 @@ async function main() {
     // refresh every 10 min. Personal triggers load once from local disk.
     loadPersonalTriggers();
     setTimeout(() => pollGuildTriggers({ botUrl, token }), 12_000);
-    setInterval(() => pollGuildTriggers({ botUrl, token }), 10 * 60_000);
+    // Poll every 2 min so a newly added/edited guild trigger reaches raiders in
+    // ~2 min instead of 10. Cheap: the version-gate above skips the recompile
+    // when nothing changed, and the set is small (a few KB).
+    setInterval(() => pollGuildTriggers({ botUrl, token }), 2 * 60_000);
     // Per-character data prefs (exclude_from_stats / exclude_inventory).
     // Polled so the owner's choice on /me takes effect within ~10 min on every
     // machine they run the agent on — no agent restart required.
