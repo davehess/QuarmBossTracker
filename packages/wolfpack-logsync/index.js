@@ -3156,6 +3156,17 @@ function parseEarthquake(line) {
 // (median gap between CH calls) for the "next cast due" countdown.
 let _chChain = null;
 const CH_CHAIN_IDLE_RESET_MS = 5 * 60 * 1000;
+// CH chain "0X GO" TTS (#103, guild-lead ask: '"04 GO" would be enough. Give
+// it a button to toggle that on or off'). When the chain reaches a slot owned
+// by one of THIS machine's watched characters, we speak "0N GO" through the
+// trigger pipeline (a _pushOverlay fire the trigger overlay speaks — reuses
+// the existing TTS surface, so the master enableTriggerTts flag still gates
+// it). This flag is the dedicated per-feature toggle (default ON), flipped by
+// the button on the CH chain overlay via POST /api/chchain/go-tts; the overlay
+// persists the choice in localStorage and re-POSTs on load + on any drift so
+// the setting survives an agent restart.
+let _chGoTtsEnabled = true;
+let _lastChGoNum    = null;   // debounce: the slot we last announced "GO" for
 // Speaker + quoted body from public-channel lines (shout/say/raid/guild,
 // incoming and outgoing — outgoing resolves "You" to the watched character).
 const _CH_SPEAKER_RX = /^\[[^\]]+\]\s+(\S+)\s+(?:shouts?|says?(?:\s+out of character)?|tells?\s+(?:the|your)\s+(?:raid|guild|group|party))[^,']*,\s*'(.+)'\s*$/i;
@@ -3273,6 +3284,7 @@ function trackChChainLine(line, character) {
     const nums = Object.keys(c.slots).map(Number);
     c.nextNum = num >= Math.max.apply(null, nums) ? Math.min.apply(null, nums) : num + 1;
     c.updatedAt = atMs;
+    _maybeAnnounceChGo(c, atMs);
     return;
   }
   // Personal heal-cast broadcast — no slot number in the raw line at all.
@@ -3308,6 +3320,7 @@ function trackChChainLine(line, character) {
       const nums = Object.keys(c.slots).map(Number);
       c.nextNum = num >= Math.max.apply(null, nums) ? Math.min.apply(null, nums) : num + 1;
       c.updatedAt = atMs;
+      _maybeAnnounceChGo(c, atMs);
     } else if (_chChain) {
       // Not a CH-equivalent — a one-off spot heal riding alongside an
       // ALREADY-running chain. Never conjures a chain of its own (mirrors
@@ -3330,6 +3343,7 @@ function trackChChainLine(line, character) {
       // message happens it should show up on that healer's CH bubble").
       _chChain.lastGo = { num, atMs, by: speaker };
       _chChain.updatedAt = atMs;
+      _maybeAnnounceChGo(_chChain, atMs);
     }
   }
 }
@@ -3402,6 +3416,13 @@ function chChainSnapshot() {
     const casedSinceGo = slot && slot.lastAtMs && slot.lastAtMs > g.atMs;
     if (!casedSinceGo && (Date.now() - g.atMs) < tuneNum('ch_go_display_sec', CH_GO_DISPLAY_MS / 1000) * 1000) lastGo = g;
   }
+  // Slot numbers owned by one of THIS machine's watched characters — lets the
+  // overlay mark "your" row and lets the GO-toggle button show/hide sensibly.
+  const youNums = [];
+  for (const nStr of Object.keys(_chChain.slots)) {
+    const s = _chChain.slots[nStr];
+    if (s && _isOwnCharacterName(s.name)) youNums.push(Number(nStr));
+  }
   return {
     target:     _chChain.target,
     slots:      _chChain.slots,
@@ -3413,7 +3434,55 @@ function chChainSnapshot() {
     slipped,
     spot_heal:  spotHeal,
     last_go:    lastGo,
+    you_nums:   youNums,
+    // Current state of the dedicated "0X GO" TTS toggle, echoed so the overlay
+    // button can reconcile its localStorage choice after an agent restart.
+    go_tts:     _chGoTtsEnabled,
   };
+}
+
+// True when `name` matches one of the characters this agent is tailing (the
+// uploader + any boxed windows). Case-insensitive exact match — deliberately
+// NOT prefix, so a nickname collision can't mis-attribute a slot.
+function _isOwnCharacterName(name) {
+  if (!name) return false;
+  const lc = String(name).toLowerCase();
+  return (stats.watchedLogs || []).some(w => w && w.character && String(w.character).toLowerCase() === lc);
+}
+
+// CH chain "0N GO" callout (#103). Called after every point that advances
+// _chChain.nextNum. When the on-deck slot (nextNum) is owned by one of our
+// watched characters — i.e. the chain has reached YOUR beat — speak "0N GO"
+// through the trigger pipeline. Debounced on the slot number so a slot only
+// announces once per rotation pass (nextNum cycles 1..N; each transition INTO
+// a new number can announce, re-entry to the same number can't back-to-back).
+// The master enableTriggerTts flag is honored downstream by the trigger
+// overlay (it speaks recentTriggerFires only when TTS is on); this dedicated
+// toggle (_chGoTtsEnabled, default ON) is the per-feature gate.
+function _maybeAnnounceChGo(c, atMs) {
+  if (!c || c.nextNum == null) return;
+  const num = c.nextNum;
+  if (_lastChGoNum === num) return;   // same on-deck slot — nothing new
+  _lastChGoNum = num;                 // advance the debounce cursor for ALL slots
+  if (!_chGoTtsEnabled) return;
+  const slot = c.slots && c.slots[num];
+  if (!slot || !_isOwnCharacterName(slot.name)) return;
+  const label = String(num).padStart(3, '0') + ' GO';
+  // A text_overlay-shaped fire on the trigger overlay's ring buffer: the
+  // trigger overlay window flashes `text` and speaks `tts` (gated on
+  // enableTriggerTts). No new SpeechSynthesis path — this IS the trigger TTS.
+  _pushOverlay({
+    text:        label,
+    tts:         label,
+    color:       'green',
+    duration_ms: 4000,
+    shownAt:     atMs || Date.now(),
+    firedAt:     Date.now(),
+    trigger:     'CH GO',
+    scope:       'guild',
+    test:        false,
+  });
+  scheduleRender();
 }
 
 // Off-heal candidates — raiders taking repeated single-target damage right
@@ -9312,6 +9381,9 @@ function _serializeForDashboard() {
       return rest;
     }),
     personalTriggerCount: (_personalTriggers || []).length,
+    // Trigger checkpoint journal (#76) — newest first, capped, for the Triggers
+    // tab diagnostic card. Pure in-memory; never persisted or uploaded.
+    triggerJournal:      _triggerJournal.slice(-60).reverse(),
     activeOverlays:      _activeOverlays,
     // Trigger fires for the Mimic trigger-alert overlay (triggers.html). It
     // dedupes on `ts` and speaks `tts || text`, so map the overlay ring buffer
@@ -9326,6 +9398,8 @@ function _serializeForDashboard() {
         scope:   o.scope,
         test:    !!o.test,
         sound:   o.sound || null,
+        sticky:  !!o.sticky,
+        rehearsal: !!o.rehearsal,
       };
     }),
     activeTimers:        _activeTimersSnapshot(),
@@ -11104,6 +11178,45 @@ function renderCharmDiag(s) {
 
   morphInto(el, h);
 }
+// Trigger checkpoint journal (#76) — answers "why did my trigger not fire?"
+// from the dashboard. Renders the recent candidate evaluations with the
+// checkpoint each reached (1 line seen → 2 pattern matched → 3 gates passed →
+// 4 actions built → 5 dispatched → 6 relayed) and, when one stopped short,
+// the reason (cooldown remaining, suppressed by charm pet, stale-skipped,
+// rehearsal note). Its OWN #wpTriggerJournal placeholder, filled every poll
+// like renderCharmDiag; hidden until there is at least one entry.
+function renderTriggerJournal(s) {
+  var el = document.getElementById('wpTriggerJournal');
+  if (!el) return;   // Triggers tab not painted yet
+  var rows = (s && s.triggerJournal) || [];
+  if (!rows.length) {
+    if (el.style.display !== 'none') el.style.display = 'none';
+    morphInto(el, '');
+    return;
+  }
+  if (el.style.display === 'none') el.style.display = '';
+  var h = '<h2>🧭 Trigger checkpoint journal <span class="dim" style="font-size:11px;font-weight:normal">(how far each fire got — why it stopped)</span></h2>';
+  h += '<div class="dim" style="font-size:10px;margin-bottom:6px">Checkpoints: 1 line seen · 2 pattern matched · 3 gates passed · 4 actions built · 5 dispatched (TTS/overlay) · 6 relayed. A fire that stops before 5 never spoke — the Note says why.</div>';
+  h += '<table style="font-size:11px;width:100%"><tr><th>When</th><th>Trigger</th><th>Scope</th><th>Reached</th><th>Note</th></tr>';
+  var shown = rows.slice(0, 40);
+  for (var i = 0; i < shown.length; i++) {
+    var r = shown[i];
+    var cp = r.checkpoint || 0;
+    var full = cp >= 5 && !r.stopped;
+    var dot = full ? '<span style="color:var(--green)">●</span>'
+                   : (r.stopped ? '<span style="color:var(--orange)">◌</span>' : '<span style="color:var(--blue)">●</span>');
+    var reh = r.rehearsal ? ' <span style="color:var(--gold);font-size:9px;font-weight:600">REHEARSAL</span>' : '';
+    h += '<tr>'
+       + '<td class="dim">' + esc(fmtAgo(r.at || 0)) + '</td>'
+       + '<td>' + esc(r.trigger || '?') + reh + '</td>'
+       + '<td class="dim" style="font-size:10px">' + esc(r.scope || '') + '</td>'
+       + '<td>' + dot + ' ' + esc(cp + '/6') + ' <span class="dim">' + esc(r.label || '') + '</span></td>'
+       + '<td class="dim">' + esc(r.reason || (full ? 'spoke + displayed' : '')) + '</td>'
+       + '</tr>';
+  }
+  h += '</table>';
+  morphInto(el, h);
+}
 function renderTriggers(s) {
   let h = '';
   h += '<div class="grid">';
@@ -11126,6 +11239,9 @@ function renderTriggers(s) {
   // Charm-tracking diagnostic card — filled by renderCharmDiag(). Hidden
   // until there's data to show (no watched character casting charms, etc.).
   h += '<div id="wpCharmDiag" class="card wide" style="display:none"></div>';
+  // Trigger checkpoint journal (#76) — filled by renderTriggerJournal(). Own
+  // wp* placeholder so its volatile rows don't force this section to repaint.
+  h += '<div id="wpTriggerJournal" class="card wide" style="display:none"></div>';
 
   // Active overlays (recent matches) — top of the page so the user can see
   // their triggers actually firing as they tune them. The "Clear" buttons
@@ -11139,7 +11255,7 @@ function renderTriggers(s) {
   h += '<button id="trigClearAllBtn" type="button" style="background:#21262d;color:var(--text);border:1px solid var(--border);padding:3px 10px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:11px" title="Remove ALL active overlays (in-memory only — no DB writes)">🗑 Clear all</button>';
   h += '</span></h2>';
   if (overlays.length === 0) {
-    h += '<div class="dim" style="font-size:12px">No triggers have fired this session yet. Tune a pattern below and try again on the next log line — or click <b>Test</b> on a row to preview without waiting for a real match.</div>';
+    h += '<div class="dim" style="font-size:12px">No triggers have fired this session yet. Tune a pattern below and try again on the next log line — or click <b>Rehearse</b> on a row to drive a synthesized line through the real pipeline (pattern + cooldown + suppression) and hear the actual TTS.</div>';
   } else {
     h += '<table style="font-size:12px"><tr><th>When</th><th>Trigger</th><th>Scope</th><th>Text</th></tr>';
     for (const o of overlays) {
@@ -12888,7 +13004,7 @@ async function refresh() {
                      ['recenttells', renderRecentTellsCard], ['topdamage', renderTopDamageCard],
                      ['tanks', renderTanks], ['deeps', renderDeeps],
                      ['triggers', renderTriggers], ['zealcard', renderZealCard],
-                     ['charmdiag', renderCharmDiag],
+                     ['charmdiag', renderCharmDiag], ['triggerjournal', renderTriggerJournal],
                      ['overlays', renderOverlays], ['info', renderInfo],
                      // After info: fill the placeholders renderInfo just
                      // (re)painted, so they show same-tick.
@@ -14618,7 +14734,7 @@ async function dismissTopDamage(key) {
         + '<td class="dim">' + ((t.cooldown_seconds || 0) > 0 ? t.cooldown_seconds + 's' : '—') + '</td>'
         + '<td style="color:' + esc(actionColor) + '">' + esc(actionText) + '</td>'
         + '<td style="white-space:nowrap">'
-        + '<button type="button" data-trig-fire="' + esc(t.id || '') + '" style="background:#21262d;color:var(--green);border:1px solid var(--border);cursor:pointer;font-size:11px;padding:2px 8px;border-radius:3px;margin-right:4px" title="Fire this trigger now (local only, no DB)">▶ Test</button>'
+        + '<button type="button" data-trig-fire="' + esc(t.id || '') + '" style="background:#21262d;color:var(--green);border:1px solid var(--border);cursor:pointer;font-size:11px;padding:2px 8px;border-radius:3px;margin-right:4px" title="Rehearse: drive a synthesized matching line through the REAL pipeline (pattern, cooldown, suppression) and speak the real TTS — local only, no DB, no relay. See the checkpoint journal below for what it exercised.">▶ Rehearse</button>'
         + '<button type="button" data-trig-promote="' + esc(t.id || '') + '" style="background:#21262d;color:var(--blue);border:1px solid var(--border);cursor:pointer;font-size:11px;padding:2px 8px;border-radius:3px;margin-right:4px" title="Open wolfpack.quest/admin/triggers prefilled with this trigger so an officer can promote it to the guild set">↑ Promote</button>'
         + '<button type="button" data-trig-delete="' + esc(t.id || '') + '" style="background:transparent;border:0;color:var(--red);cursor:pointer;font-size:13px" title="Delete">✕</button>'
         + '</td>'
@@ -16012,6 +16128,19 @@ function startWebDashboard(port) {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ ok: true, removed: !!removed }));
       }
+      // CH chain "0X GO" TTS toggle (#103). The button on the CH chain overlay
+      // POSTs { enabled: bool } here (and re-POSTs on load to re-sync after an
+      // agent restart, since the overlay persists the choice in localStorage).
+      // Controls whether _maybeAnnounceChGo pushes the spoken callout.
+      if (req.url === '/api/chchain/go-tts' && req.method === 'POST') {
+        const body = await _readBody(req);
+        let payload;
+        try { payload = JSON.parse(body); }
+        catch { res.writeHead(400); return res.end('invalid json'); }
+        _chGoTtsEnabled = !!(payload && payload.enabled);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ ok: true, enabled: _chGoTtsEnabled }));
+      }
       // ✕ from a pet tracker card — drops the per-owner /pet health snapshot
       // + observed buff landings + stats so the row stops rendering. Useful
       // when switching toons leaves stale pet state (the freshness gate now
@@ -16185,8 +16314,15 @@ function startWebDashboard(port) {
       // literal so the user sees what the template looks like. Returns the
       // overlay that was pushed (or an error).
       //
-      // SAFE BY CONSTRUCTION: _fireTriggerActions only pushes to the in-memory
-      // _activeOverlays ring buffer. No DB, no upload queue, no Discord.
+      // REAL REHEARSE (#76): for a SAVED trigger this drives a synthesized
+      // matching line through the actual pipeline — pattern exec, cooldown +
+      // charm-pet suppression (EVALUATED + reported, never enforced or
+      // consumed), then the action tail — so a broken pattern is revealed
+      // instead of masked by firing the action directly. The ad-hoc preview
+      // shape (a raw {name, actions}) has no pattern, so it rehearses the
+      // action tail only. Either way it is SAFE BY CONSTRUCTION: rehearsal is
+      // test=true → in-memory _activeOverlays only, no DB / upload / Discord /
+      // relay, no _fireLog pollution.
       if (req.url === '/api/triggers/fire' && req.method === 'POST') {
         const body = await _readBody(req);
         let payload;
@@ -16195,23 +16331,26 @@ function startWebDashboard(port) {
         let trig = null;
         if (payload?.trigger && Array.isArray(payload.trigger.actions)) {
           trig = { name: String(payload.trigger.name || 'preview').slice(0, 100),
-                   actions: payload.trigger.actions, _scope: 'test' };
+                   actions: payload.trigger.actions };
         } else if (payload?.id) {
           const scope = payload?.scope === 'guild' ? 'guild' : 'personal';
           const list  = scope === 'guild' ? (stats.guildTriggers || []) : _personalTriggers;
           trig = list.find(t => t.id === payload.id || t.name === payload.id) || null;
-          if (trig) trig = { ...trig, _scope: scope };
         }
         if (!trig) {
           res.writeHead(404, { 'Content-Type': 'application/json' });
           return res.end(JSON.stringify({ error: 'trigger not found (expected `id`+`scope` or `trigger`)' }));
         }
         const captures = (payload && payload.captures && typeof payload.captures === 'object') ? payload.captures : {};
+        const line = (payload && typeof payload.line === 'string' && payload.line) ? payload.line : null;
         const before = _activeOverlays.length;
-        _fireTriggerActions(trig, captures, Date.now(), true);
+        const outcome = _rehearseTrigger(trig, { captures, line });
         const fired = _activeOverlays.length - before;
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ ok: true, fired, overlay: _activeOverlays[0] || null }));
+        return res.end(JSON.stringify({ ok: true, rehearsal: true, fired,
+          pattern_exercised: !!outcome.patternExercised,
+          synthesized_line: outcome.line || null,
+          overlay: _activeOverlays[0] || null }));
       }
 
       // Clear active overlays. Body { trigger: 'name' } removes only overlays
@@ -21487,14 +21626,14 @@ function _hasRecentFire(key, tsMs) {
 // stay on the source machine — there's no value in fanning out a private
 // alert). Test fires also skip relay.
 function _relayLocalFire(t, actions, captures, tsMs, key) {
-  if (!_isUploaderInstance) return;
-  if (!t || t._scope === 'personal') return;
+  if (!_isUploaderInstance) return false;
+  if (!t || t._scope === 'personal') return false;
   // Strip discord/relay-only actions so receiving Mimics only run the
   // local-effect ones (text_overlay, voice marks, etc.). Discord-channel
   // posts are already handled by the originating agent via the existing
   // /api/agent/trigger endpoint.
   const localActions = (actions || []).filter(a => a && a.type !== 'discord');
-  if (localActions.length === 0 && !(t.timer_duration_sec > 0)) return;
+  if (localActions.length === 0 && !(t.timer_duration_sec > 0)) return false;
   enqueueUpload('trigger_relay', {
     agent_version: AGENT_VERSION,
     fires: [{
@@ -21506,6 +21645,7 @@ function _relayLocalFire(t, actions, captures, tsMs, key) {
       fired_at_ms:         tsMs || Date.now(),
     }],
   });
+  return true;
 }
 
 // Polling loop — pulls fires posted by OTHER agents, runs them locally as
@@ -21513,6 +21653,9 @@ function _relayLocalFire(t, actions, captures, tsMs, key) {
 // is unset (no bot wired) or when no token is configured.
 let _lastRelayFireId = 0;
 let _relayPollerActive = false;
+// A relayed fire older than this at consumption time is a ghost callout (queue
+// backlog replayed it late) — journalled, never spoken. See _pollRelayFires.
+const RELAY_STALE_MS = 15_000;
 async function _pollRelayFires() {
   if (_relayPollerActive) return;
   const base = _getApiBase();
@@ -21552,6 +21695,18 @@ async function _pollRelayFires() {
       const fireKey = fire.key || fire.name || '';
       if (_hasRecentFire(fireKey, fire.fired_at_ms)) continue;
       _markFireSeen(fireKey, fire.fired_at_ms);
+      // Ghost-callout TTL (#76): after a queue backlog, a relayed fire can
+      // arrive minutes late (posted_at is fresh, but the ORIGINAL fired_at is
+      // stale) and speak as if live. Drop anything older than RELAY_STALE_MS at
+      // consumption — journal it instead of speaking. Fail OPEN: a missing or
+      // unparseable timestamp is treated as live so a real callout is never
+      // eaten by a bad clock.
+      const firedAt = Number(fire.fired_at_ms);
+      if (Number.isFinite(firedAt) && (Date.now() - firedAt) > RELAY_STALE_MS) {
+        _journalTrigger({ trigger: fire.name || 'relayed', scope: 'guild_relay', checkpoint: TJ.MATCHED,
+                          stopped: true, reason: 'stale-skipped — fire was ' + Math.round((Date.now() - firedAt) / 1000) + 's old at consumption' });
+        continue;
+      }
       _runRelayedFire(fire);
     }
   } catch (err) {
@@ -22998,6 +23153,141 @@ function _expandTemplate(template, captures) {
   });
 }
 
+// ── Trigger checkpoint journal (#76) ────────────────────────────────────────
+// "Why didn't my trigger fire?" answered from the dashboard. A small in-memory
+// ring buffer (NO disk, NO upload) records, per candidate evaluation, how far
+// it got through the pipeline and — when it stopped short — why. A candidate is
+// any evaluation whose pattern MATCHED a line (live) or a REHEARSE run (which
+// records checkpoint 1 even when the pattern is never exercised). Recording
+// every trigger against every line would flood the buffer, so live entries
+// begin at "pattern matched"; the rehearse path is what surfaces a pattern
+// that never matches at all.
+const TRIGGER_JOURNAL_MAX = 250;
+const _triggerJournal = [];   // append newest at end; capped at TRIGGER_JOURNAL_MAX
+// Checkpoint ladder — higher = further through the pipeline.
+const TJ = { SEEN: 1, MATCHED: 2, GATES: 3, ACTIONS: 4, DISPATCHED: 5, RELAYED: 6 };
+const TJ_LABEL = { 1: 'line seen', 2: 'pattern matched', 3: 'gates passed',
+                   4: 'actions built', 5: 'dispatched', 6: 'relayed' };
+function _journalTrigger(e) {
+  const cp = e.checkpoint || 0;
+  _triggerJournal.push({
+    at:         e.at || Date.now(),
+    trigger:    String(e.trigger || '?').slice(0, 80),
+    scope:      e.scope || '?',
+    checkpoint: cp,
+    label:      TJ_LABEL[cp] || '?',
+    reason:     e.reason ? String(e.reason).slice(0, 160) : null,
+    rehearsal:  !!e.rehearsal,
+    // Stopped short = didn't reach dispatch. Drives the ✓/✗ column colour.
+    stopped:    e.stopped != null ? !!e.stopped : (cp < TJ.DISPATCHED),
+  });
+  if (_triggerJournal.length > TRIGGER_JOURNAL_MAX) {
+    _triggerJournal.splice(0, _triggerJournal.length - TRIGGER_JOURNAL_MAX);
+  }
+}
+
+// Best-effort synthesizer: build a literal log line that the trigger's compiled
+// _regex accepts, so REHEARSE can drive the pattern through the REAL evaluator
+// instead of firing the action directly (false confidence). Strips regex
+// scaffolding to a plausible EQ line, substitutes any provided captures for
+// named groups, then VERIFIES with the real regex — returns null if it can't
+// produce a match (caller then rehearses the action tail only and journals
+// "pattern not exercised"). Handles the common EQ trigger shapes; exotic
+// patterns simply fall through to the null path.
+function _synthesizeMatchingLine(t, captures) {
+  if (!t || !t._regex) return null;
+  let src = String(t.pattern || '');
+  if (!src.trim()) return null;
+  // Literal-match triggers: the pattern IS the substring to match.
+  if (t.use_regex === false) {
+    return src;
+  }
+  const caps = captures || {};
+  // Named group → the provided capture, else a neutral placeholder token.
+  src = src.replace(/\(\?<([A-Za-z_][\w]*)>[^)]*\)/g, (_, name) =>
+    (caps[name] != null ? String(caps[name]) : 'Testmob'));
+  // Remaining groups (non-capturing / plain) → first alternative, parens gone.
+  src = src.replace(/\(\?:([^)|]*)(?:\|[^)]*)?\)/g, '$1');
+  src = src.replace(/\(([^)|]*)(?:\|[^)]*)?\)/g, '$1');
+  // Character classes / metaclasses → representative literals.
+  src = src.replace(/\\d(?:\{[\d,]+\})?|\[0-9\][+*?]?/g, '42');
+  src = src.replace(/\[[^\]]*\][+*?]?/g, 'x');
+  src = src.replace(/\\w[+*?]?/g, 'word');
+  src = src.replace(/\\s[+*?]?/g, ' ');
+  src = src.replace(/\.[+*?]/g, 'something');
+  // Drop anchors, quantifiers on literals, and unescape escaped punctuation.
+  src = src.replace(/[?*+]/g, '');
+  src = src.replace(/[\^$]/g, '');
+  src = src.replace(/\\([.\-+*?()\[\]{}|^$/])/g, '$1');
+  src = src.replace(/\s{2,}/g, ' ').trim();
+  try { return t._regex.test(src) ? src : null; }
+  catch { return null; }
+}
+
+// Real REHEARSE (#76): drive a trigger through the actual evaluation pipeline —
+// pattern exec, cooldown check, charm-pet suppression, then the action tail —
+// flagged as a rehearsal so it (a) never relays/uploads, (b) never touches
+// _fireLog/timeline capture, and (c) is labelled as a rehearsal in the journal
+// + overlay. Cooldown + suppression verdicts are EVALUATED and journalled but
+// NOT enforced (a rehearsal always reaches dispatch so the user hears the real
+// TTS) and NEVER consume the real cooldown (_triggerLastFire untouched).
+function _rehearseTrigger(t, opts) {
+  opts = opts || {};
+  const name = t.name || 'trigger';
+  const scope = 'rehearsal';
+  const notes = [];
+  let captures = (opts.captures && typeof opts.captures === 'object') ? opts.captures : {};
+  // Checkpoint 1 — the engine "sees" a line (synthesized unless the caller
+  // supplied one via the pattern-test panel).
+  let line = opts.line || null;
+  let patternExercised = false;
+  if (!t._regex) {
+    // No log pattern to satisfy — either a pure-Zeal gauge-condition trigger
+    // or an ad-hoc action-only preview.
+    notes.push(t.zeal_condition ? 'pattern not exercised (gauge condition)'
+                                : 'pattern not exercised (no log pattern)');
+  } else {
+    if (!line) line = _synthesizeMatchingLine(t, captures);
+    if (line) {
+      let m = null;
+      try { m = t._regex.exec(line); } catch { m = null; }
+      if (m) {
+        patternExercised = true;
+        captures = Object.assign({}, m.groups || {}, captures);
+        notes.push('pattern matched synthesized line');
+      } else {
+        notes.push('pattern not exercised (could not synthesize a matching line)');
+      }
+    } else {
+      notes.push('pattern not exercised (could not synthesize a matching line)');
+    }
+  }
+  // Checkpoint 3 — evaluate the gates for REPORTING only.
+  if (patternExercised && _captureMatchesCharmPet(captures)) {
+    notes.push('would be suppressed live (capture is your charm pet)');
+  }
+  if (t.cooldown_seconds && t.cooldown_seconds > 0) {
+    const last = _triggerLastFire.get(t.id || t.name) || 0;
+    const remain = (t.cooldown_seconds * 1000) - (Date.now() - last);
+    if (remain > 0) notes.push('would be on cooldown live (' + Math.ceil(remain / 1000) + 's left)');
+  }
+  // Dispatch the action tail through the SAME handler as a live fire, marked
+  // as a rehearsal: test=true skips _fireLog + relay + Discord, _rehearsal
+  // labels the overlay + suppresses the handler's own journal row (we write a
+  // single comprehensive one below).
+  const rehearseTrig = Object.assign({}, t, { _scope: scope, _rehearsal: true, _noJournal: true });
+  _fireTriggerActions(rehearseTrig, captures, Date.now(), true);
+  _journalTrigger({
+    trigger:   name,
+    scope,
+    rehearsal: true,
+    checkpoint: TJ.DISPATCHED,
+    stopped:   false,
+    reason:    'rehearsal — ' + notes.join('; ') + '; cooldown/suppression not consumed',
+  });
+  return { patternExercised, line: line || null, captures };
+}
+
 // Hot-path: called for every kept log line in the tail loop.
 function evaluateTriggersAgainstLine(line, tsMs) {
   const all = [..._personalTriggers, ...(stats.guildTriggers || [])];
@@ -23048,11 +23338,19 @@ function evaluateTriggersAgainstLine(line, tsMs) {
     // mob, our pet enrages at low HP, etc.) and the call would be wrong.
     // Don't apply to Zeal-condition triggers (no log-match captures there).
     const captures = m.groups || {};
-    if (_captureMatchesCharmPet(captures)) continue;
+    if (_captureMatchesCharmPet(captures)) {
+      _journalTrigger({ trigger: t.name, scope: t._scope || 'personal', checkpoint: TJ.MATCHED,
+                        stopped: true, reason: 'suppressed — capture is your charm pet' });
+      continue;
+    }
     // Cooldown gate
     if (t.cooldown_seconds && t.cooldown_seconds > 0) {
       const last = _triggerLastFire.get(t.id || t.name) || 0;
-      if (tsMs - last < t.cooldown_seconds * 1000) continue;
+      if (tsMs - last < t.cooldown_seconds * 1000) {
+        _journalTrigger({ trigger: t.name, scope: t._scope || 'personal', checkpoint: TJ.GATES,
+                          stopped: true, reason: 'cooldown — ' + Math.ceil((t.cooldown_seconds * 1000 - (tsMs - last)) / 1000) + 's remaining' });
+        continue;
+      }
     }
     _triggerLastFire.set(t.id || t.name, tsMs);
     _fireTriggerActions(t, captures, tsMs, false);
@@ -23102,10 +23400,18 @@ function _fireTriggerActions(t, captures, tsMs, test, isRelay) {
       const val = captures && captures[String(a.require_raid_member)];
       if (!val || !_raidRosterHas(val)) {
         if (!test) console.log('[trigger] ' + (t.name || 'trigger') + ' suppressed — ' + a.require_raid_member + '=' + val + ' not a raid member');
+        if (!t._noJournal) {
+          _journalTrigger({ trigger: t.name, scope: t._scope || (test ? 'test' : 'personal'), checkpoint: TJ.GATES,
+                            stopped: true, rehearsal: !!t._rehearsal,
+                            reason: 'suppressed — ' + a.require_raid_member + '=' + (val || '?') + ' not a raid member' });
+        }
         return;
       }
     }
   }
+  // Checkpoint bookkeeping for the journal (#76): how far this fire actually got.
+  let _dispatched = false;
+  let _actionsBuilt = 0;
   // Callout-replay (#98): record the fire so the per-fight timeline can show
   // which callouts went off. Skip test/rehearsal fires. Windowed into the
   // encounter at flush time; hard-capped so it can't grow unbounded.
@@ -23115,6 +23421,7 @@ function _fireTriggerActions(t, captures, tsMs, test, isRelay) {
   }
   for (const a of (t.actions || [])) {
     if (!a || !a.type) continue;
+    _actionsBuilt++;
     if (a.type === 'text_overlay') {
       const text = _expandTemplate(a.text || '', captures || {});
       // Spoken text: an explicit per-action `tts` wins (lets a trigger say
@@ -23137,8 +23444,15 @@ function _fireTriggerActions(t, captures, tsMs, test, isRelay) {
       };
       if (ttsText) overlay.tts = ttsText;
       if (a.sound) overlay.sound = a.sound;
+      // Sticky critical callouts (#76): a trigger-level OR action-level `sticky`
+      // flag pins the alert on the trigger overlay until the user dismisses it
+      // (or a generous timeout), instead of fading on the normal schedule.
+      // Optional + backward-compatible: old agents ignore the field entirely.
+      if (t.sticky || a.sticky) overlay.sticky = true;
+      if (t._rehearsal) overlay.rehearsal = true;
       _pushOverlay(overlay);
-      console.log(`[trigger${test ? ':test' : ':' + (t._scope || '?')}] ${t.name} → ${text}`);
+      _dispatched = true;
+      console.log(`[trigger${test ? (t._rehearsal ? ':rehearsal' : ':test') : ':' + (t._scope || '?')}] ${t.name} → ${text}`);
       scheduleRender();
     } else if (a.type === 'discord' && !test) {
       // Broadcast this fire to a text Discord channel via the bot. Test fires
@@ -23220,8 +23534,10 @@ function _fireTriggerActions(t, captures, tsMs, test, isRelay) {
       };
       if (Array.isArray(a.marks) && a.marks.length > 0) {
         for (const m of a.marks) speakAt(m && (m.text || m.message), m && m.at_ms);
+        _dispatched = true;
       } else if (a.message || a.text) {
         speakAt(a.message || a.text, 0);
+        _dispatched = true;
       }
     }
     // sound / emit_event beyond the overlay's own audio remain no-ops in v1.
@@ -23239,12 +23555,26 @@ function _fireTriggerActions(t, captures, tsMs, test, isRelay) {
   // fires (debug-only, no bot side effects). Captures are part of the
   // dedup key so two simultaneously-detected DIFFERENT events
   // ("RIP Hitya" and "RIP Sweenie" within the same second) both land.
+  let _relayed = false;
   if (!test) {
     const fireKey = (t.name || 'trigger') + ':' + JSON.stringify(captures || {});
     _markFireSeen(fireKey, tsMs || Date.now());
     if (!isRelay && t._scope !== 'personal') {
-      _relayLocalFire(t, t.actions || [], captures || {}, tsMs || Date.now(), fireKey);
+      _relayed = !!_relayLocalFire(t, t.actions || [], captures || {}, tsMs || Date.now(), fireKey);
     }
+  }
+  // Journal how far this fire got (#76) — one summary row per fire, unless the
+  // caller (e.g. REHEARSE) writes its own comprehensive entry.
+  if (!t._noJournal) {
+    const cp = _relayed ? TJ.RELAYED : (_dispatched ? TJ.DISPATCHED : (_actionsBuilt > 0 ? TJ.ACTIONS : TJ.GATES));
+    _journalTrigger({
+      trigger:   t.name,
+      scope:     t._scope || (test ? 'test' : 'personal'),
+      rehearsal: !!t._rehearsal,
+      checkpoint: cp,
+      stopped:   cp < TJ.DISPATCHED,
+      reason:    _actionsBuilt === 0 ? 'no actions on trigger' : null,
+    });
   }
 }
 

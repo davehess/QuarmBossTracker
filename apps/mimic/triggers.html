@@ -51,6 +51,24 @@
   .fb-btn.late:hover{    background:rgba(248,113,113,0.55); border-color:#f87171 }
   #fbThanks{display:none; font-size:11px; color:#8b949e; text-shadow:0 1px 2px #000; margin-left:6px}
   #fbThanks.show{display:inline}
+  /* Sticky critical callouts (#76). A trigger flagged `sticky` pins here and
+     stays until the user clicks it away (or a generous ~5min timeout) instead
+     of fading with the normal 3.5s flash. Loud red so a life-or-death callout
+     (Death Touch target, etc.) can't be missed after it scrolls past. Each row
+     is click-to-dismiss; the ✕ + row use the hover-interact handshake so the
+     click lands even while the overlay is locked (click-through). */
+  #sticky{display:flex; flex-direction:column; gap:6px; align-items:center; pointer-events:auto}
+  .sticky-row{display:flex; align-items:center; gap:10px; max-width:80vw;
+    background:rgba(90,20,20,0.92); border:1px solid #f87171; border-radius:6px;
+    padding:6px 8px 6px 12px; color:#fff; font-size:22px; font-weight:bold;
+    text-shadow:0 0 8px #000; box-shadow:0 0 14px rgba(248,113,113,0.5);
+    animation:pop .4s ease-out, blindpulse 1.4s ease-in-out infinite}
+  .sticky-row .sk-text{flex:1; min-width:0; word-break:break-word}
+  .sticky-row .sk-x{flex-shrink:0; width:22px; height:22px; display:flex;
+    align-items:center; justify-content:center; border-radius:4px;
+    background:rgba(0,0,0,0.35); color:#fca5a5; border:1px solid rgba(248,113,113,0.5);
+    font-size:13px; font-weight:normal; cursor:pointer}
+  .sticky-row .sk-x:hover{color:#fff; background:rgba(248,113,113,0.6); border-color:#fff}
   /* Move-handle ✥ button + lock — visible only when UNLOCKED. Manual drag,
      no CSS -webkit-app-region (same Chromium bug fix as overlay.html). */
   #drag-controls{display:none;position:fixed;top:4px;left:4px;gap:4px;z-index:60}
@@ -167,6 +185,7 @@
       <button class="fb-btn late" data-dir="too_early" title="The trigger fired BEFORE the actual event — delay the trigger next time.">» Too early</button>
       <span id="fbThanks">thanks — recorded.</span>
     </div>
+    <div id="sticky"></div>
   </div>
   <div id="timers"></div>
 <script>
@@ -350,16 +369,64 @@
     b.addEventListener('click', function(){ castVote(b.getAttribute('data-dir')); });
   });
 
+  // Sticky critical callouts (#76). A fire flagged `sticky` pins a row that
+  // stays until dismissed (click) or a generous timeout, rather than fading on
+  // the normal 3.5s schedule. Keyed on trigger+text so a repeat refreshes the
+  // same row instead of stacking duplicates.
+  const STICKY_MAX_MS = 5 * 60 * 1000;
+  const stickyEl = document.getElementById('sticky');
+  const stickyRows = new Map();   // key → { row, timer }
+  function _stickyKey(t){ return String(t.trigger || '') + '|' + String(t.text || t.tts || ''); }
+  function dismissSticky(key){
+    const e = stickyRows.get(key);
+    if (!e) return;
+    clearTimeout(e.timer);
+    if (e.row && e.row.parentNode) e.row.parentNode.removeChild(e.row);
+    stickyRows.delete(key);
+    try { window.mimic.overlayHoverInteractive(false); } catch (err) {}
+  }
+  function pinSticky(t){
+    const key = _stickyKey(t);
+    let e = stickyRows.get(key);
+    if (e) { clearTimeout(e.timer); }
+    else {
+      const row = document.createElement('div');
+      row.className = 'sticky-row';
+      const span = document.createElement('span');
+      span.className = 'sk-text';
+      span.textContent = (t.rehearsal ? '🧪 ' : '📌 ') + (t.text || t.tts || 'Alert');
+      const x = document.createElement('span');
+      x.className = 'sk-x';
+      x.textContent = '✕';
+      x.title = 'Dismiss this pinned callout';
+      row.appendChild(span);
+      row.appendChild(x);
+      // Hover-interact handshake — locked overlays are click-through, so the
+      // row must announce itself on hover or the click falls through to EQ.
+      row.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch (err) {} });
+      row.addEventListener('mouseleave', function(){ try { window.mimic.overlayHoverInteractive(false); } catch (err) {} });
+      x.addEventListener('click', function(){ dismissSticky(key); });
+      row.addEventListener('click', function(){ dismissSticky(key); });
+      stickyEl.appendChild(row);
+      e = { row: row };
+      stickyRows.set(key, e);
+    }
+    e.timer = setTimeout(function(){ dismissSticky(key); }, STICKY_MAX_MS);
+  }
+
   function fire(t){
     // Gate the whole alert (flash + speak + sound) on the user's preference —
     // when alerts/TTS are off or Quiet mode is on, this hidden window must stay
     // silent rather than narrate fires nobody can see.
     if (!alertsEnabled) return;
     const spoken = t.tts || t.text || t.label || 'Trigger';
-    flash(t.text || t.label || spoken);
+    // Rehearsal fires (real REHEARSE, #76) speak the true callout but carry a
+    // 🧪 badge on the flash so the user knows it was a test drive.
+    flash((t.rehearsal ? '🧪 ' : '') + (t.text || t.label || spoken));
     speak(spoken);
     playSound(t.sound);
     showFeedback(t);
+    if (t.sticky) pinSticky(t);
   }
 
   // Blind-mode callouts (v1.1.9). Separate from fire(): these fire even when
