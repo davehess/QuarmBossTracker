@@ -3254,11 +3254,14 @@ const _triggerRate = new Map();    // discordId → [timestamps]
 //             landing) → elect per occupied zone, not globally (P1b).
 //   • roster— HP per member is GROUP-scoped (a snapshot only carries HP for the
 //             uploader's own group) → group-level reporter (P1c).
-// P1a gates chat only; buffs/roster stay fail-open (roles=true) until their
-// zone/group-aware election lands. Kill switch: flag_disable_reporter_election
-// in the /admin/overlays tuning editor → everyone uploads (today's behavior).
-const REPORTER_TTL_MS     = 60_000;   // an agent silent this long drops out → re-elect
-const REPORTER_CHAT_COUNT = 1;        // single chat reporter (global stream)
+// P1a gates chat (global). P1b gates buffs (coverage-ranked, 3 per zone — the
+// _electBuffReporters block below). Roster stays fail-open (roles=true) until
+// P1c's per-group election lands. Each stream is gated ONLY when its dedup_*
+// flag is on; kill switch flag_disable_reporter_election in the /admin/overlays
+// tuning editor forces everyone back to uploading (today's behavior).
+const REPORTER_TTL_MS       = 60_000; // an agent silent this long drops out → re-elect
+const REPORTER_CHAT_COUNT   = 1;      // single chat reporter (global stream)
+const REPORTER_BUFF_PER_ZONE = 3;     // buff landings dedup to 3 reporters per occupied zone (P1b)
 const _reporterRegistry   = new Map(); // guild_id → Map(discord_id → {last_seen, primary, zone, group_num, has_zeal, ver})
 function _reporterGuildBook(guildId) {
   let book = _reporterRegistry.get(guildId);
@@ -3283,6 +3286,97 @@ function _electReporters(guildId) {
   live.sort(_reporterRank);
   const chat = new Set(live.slice(0, REPORTER_CHAT_COUNT).map(e => e.id));
   return { chat, live };
+}
+
+// ── Buff-landing coverage counter (P1b) ─────────────────────────────────────
+// Buff landings are `redundant_zone`: every same-zone client sees the identical
+// land, so N uploads are pure waste. To pick the FEW best reporters per zone we
+// rank uploaders by COVERAGE — how many DISTINCT landings they actually saw over
+// a rolling window. A ranger idling in a corner sees fewer landings and self-
+// selects out; the raiders in the thick of it self-select in. Latency is NOT a
+// criterion (a fast-but-blind client is a worse reporter than a slower one that
+// sees everything).
+//
+// The counter is in-memory only, keyed guild → uploader(discord_id) → Map(key →
+// lastSeenMs) where key = "spell_name|target" (lowercased) — the identical fact
+// every observer of one cast reports. No Supabase writes. Bounded two ways:
+// keys older than the window are GC'd (the 10s sweep below), and each uploader's
+// key map is hard-capped so a misbehaving sender can't grow it without limit.
+const BUFF_COVERAGE_WINDOW_MS = 10 * 60_000;   // rolling 10-min coverage window
+const BUFF_COVERAGE_MAX_KEYS  = 600;           // per-uploader hard cap (safety vs GC gaps)
+const _buffCoverage = new Map();   // guild_id → Map(discord_id → Map("spell|target" → lastMs))
+// Record the distinct landings one uploader just reported. Called from the
+// buff_casts ingest UNCONDITIONALLY (even while dedup_buffs is off) so coverage
+// is already warm the instant an officer flips the flag — no 10-min cold spell.
+function _recordBuffCoverage(guildId, uploaderId, casts) {
+  if (!guildId || !uploaderId || !Array.isArray(casts) || casts.length === 0) return;
+  let book = _buffCoverage.get(guildId);
+  if (!book) { book = new Map(); _buffCoverage.set(guildId, book); }
+  let keys = book.get(uploaderId);
+  if (!keys) { keys = new Map(); book.set(uploaderId, keys); }
+  const now = Date.now();
+  for (const c of casts) {
+    if (!c || !c.spell_name || !c.target) continue;
+    const k = String(c.spell_name).toLowerCase() + '|' + String(c.target).toLowerCase();
+    keys.set(k, now);   // Map re-set moves the key to newest — natural LRU order
+  }
+  // Hard cap: drop oldest keys (Map preserves insertion order; re-set above
+  // re-orders touched keys to the tail, so the head is the least-recently seen).
+  while (keys.size > BUFF_COVERAGE_MAX_KEYS) {
+    const oldest = keys.keys().next().value;
+    if (oldest === undefined) break;
+    keys.delete(oldest);
+  }
+}
+// Distinct landings this uploader has seen within the rolling window.
+function _buffCoverageCount(guildId, uploaderId, now = Date.now()) {
+  const book = _buffCoverage.get(guildId);
+  const keys = book && book.get(uploaderId);
+  if (!keys) return 0;
+  const cutoff = now - BUFF_COVERAGE_WINDOW_MS;
+  let n = 0;
+  for (const t of keys.values()) if (t >= cutoff) n++;
+  return n;
+}
+// Elect up to REPORTER_BUFF_PER_ZONE reporters PER OCCUPIED ZONE. A landing is
+// only visible to same-zone clients, so election is zone-partitioned: an agent
+// with a missing/unknown zone is its own singleton group (fail-open — it always
+// reports its own "zone"). Within a zone, rank by coverage desc, then by the
+// stable _reporterRank (name/id) so the winner is deterministic across polls.
+// Cold start (no uploader in the zone has any coverage yet) → elect EVERYONE in
+// the zone until data accrues. Returns { elected:Set(id), byZone:{key:[ids]} }.
+function _electBuffReporters(guildId) {
+  const book = _reporterGuildBook(guildId);
+  const now = Date.now();
+  const zones = new Map();   // zoneKey → [{ id, ...entry }]
+  for (const [id, e] of book) {
+    if (now - e.last_seen > REPORTER_TTL_MS) { book.delete(id); continue; }
+    const z = e.zone && String(e.zone).trim();
+    const zoneKey = z ? z.toLowerCase() : `__solo__${id}`;   // unknown zone → own group
+    let arr = zones.get(zoneKey);
+    if (!arr) { arr = []; zones.set(zoneKey, arr); }
+    arr.push({ id, ...e });
+  }
+  const elected = new Set();
+  const byZone = {};
+  for (const [zoneKey, arr] of zones) {
+    const anyCoverage = arr.some(a => _buffCoverageCount(guildId, a.id, now) > 0);
+    if (anyCoverage) {
+      arr.sort((a, b) => {
+        const ca = _buffCoverageCount(guildId, a.id, now);
+        const cb = _buffCoverageCount(guildId, b.id, now);
+        if (ca !== cb) return cb - ca;   // higher coverage first
+        return _reporterRank(a, b);      // stable tiebreak
+      });
+    } else {
+      arr.sort(_reporterRank);           // cold start: deterministic order, elect all
+    }
+    const chosen = anyCoverage ? arr.slice(0, REPORTER_BUFF_PER_ZONE) : arr;
+    const ids = chosen.map(a => a.id);
+    for (const id of ids) elected.add(id);
+    byZone[zoneKey] = ids;
+  }
+  return { elected, byZone };
 }
 
 // ── Cross-Mimic trigger relay (fan-out) ─────────────────────────────────────
@@ -3327,6 +3421,15 @@ setInterval(() => {
   for (const [gid, book] of _reporterRegistry) {
     for (const [id, e] of book) if (!e || e.last_seen < now - REPORTER_TTL_MS) book.delete(id);
     if (book.size === 0) _reporterRegistry.delete(gid);
+  }
+  // Buff coverage window GC (P1b): drop landings older than the rolling window
+  // and prune empty uploader/guild maps so the counter stays small.
+  for (const [gid, book] of _buffCoverage) {
+    for (const [uid, keys] of book) {
+      for (const [k, t] of keys) if (t < now - BUFF_COVERAGE_WINDOW_MS) keys.delete(k);
+      if (keys.size === 0) book.delete(uid);
+    }
+    if (book.size === 0) _buffCoverage.delete(gid);
   }
   for (const [k, arr] of _triggerRate) {
     const kept = arr.filter(t => now - t < TRIGGER_RATE_WINDOW_MS);
@@ -6562,6 +6665,13 @@ async function _handleAgentBuffCasts(req, res) {
       .catch(err => { console.warn('[buff-casts] ambiguous insert failed:', err?.message); return null; });
     if (Array.isArray(r)) written += r.length; else if (r !== null) written += ambiguous.length;
   }
+  // P1b: feed the coverage counter that ranks buff-reporter candidates per zone.
+  // Recorded for ALL uploads (both index passes) regardless of the dedup flag so
+  // the election has warm data the instant an officer flips dedup_buffs on. Only
+  // the ordinary observed landings count toward zone coverage — charm rows are
+  // agent-synthesized per-observer facts, not the shared zone stream we dedup.
+  _recordBuffCoverage(guildId, identity.discord_id,
+    [...resolved, ...ambiguous].filter(r => !r.is_charm_spell));
   _trackUpload({ endpoint: 'buff_cast', character: payload?.character, agentVersion: payload?.agent_version, payloadBytes: total, agentState: payload?.agent_state || null, uploadedBy: identity.discord_id });
   res.writeHead(200);
   res.end(JSON.stringify({ ok: true, written }));
@@ -10648,22 +10758,41 @@ async function _handleAgentReporterPoll(req, res) {
   });
 
   const { chat } = _electReporters(guildId);
-  // chat is the only election built today. buffs (zone/coverage) + roster
-  // (per-group) stay fail-open until P1b/P1c — their flags are served for
-  // transparency but not yet enforced (turning them on is a no-op for now).
+  // Buffs (P1b): coverage-ranked, 3 reporters per OCCUPIED zone. `elected.has(id)`
+  // already answers "elected for MY zone" — each agent belongs to exactly one
+  // zone group, so its presence in the global elected set means it won its zone.
+  // Roster (per-group) stays fail-open until P1c — served for transparency but
+  // not yet enforced (turning dedup_roster on is a no-op for now).
+  const buffElection = flags.buffs ? _electBuffReporters(guildId) : null;
   const roles = {
-    chat:   flags.chat ? chat.has(id) : true,
-    buffs:  true,
+    chat:   flags.chat  ? chat.has(id) : true,
+    buffs:  buffElection ? buffElection.elected.has(id) : true,
     roster: true,
   };
+  // Per-zone election debug for THIS agent's zone (the `election` field itself is
+  // a bare string, so the zone detail rides alongside it). Only present when buff
+  // dedup is live; null otherwise so the shape stays quiet in normal operation.
+  let buffsZone = null;
+  if (buffElection) {
+    const me = _reporterGuildBook(guildId).get(id);
+    const z = me && me.zone && String(me.zone).trim();
+    const zoneKey = z ? z.toLowerCase() : `__solo__${id}`;
+    buffsZone = {
+      zone:      z || null,
+      reporters: (buffElection.byZone[zoneKey] || []).length,
+      mine:      buffElection.elected.has(id),
+      coverage:  _buffCoverageCount(guildId, id),
+    };
+  }
   res.writeHead(200, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify({
-    ok:       true,
-    election: disabled ? 'disabled' : 'on',
-    ttl_ms:   REPORTER_TTL_MS,
+    ok:         true,
+    election:   disabled ? 'disabled' : 'on',
+    ttl_ms:     REPORTER_TTL_MS,
     roles,
-    flags,                // which redundant streams are actively deduped
-    streams:  STREAM_CLASS, // classification guardrail (per_observer = never deduped)
+    flags,                  // which redundant streams are actively deduped
+    streams:    STREAM_CLASS, // classification guardrail (per_observer = never deduped)
+    buffs_zone: buffsZone,  // P1b per-zone election detail for this agent (null when off)
   }));
 }
 

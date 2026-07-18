@@ -64,9 +64,59 @@ Also `agent.log` prints `[reporter] chat role → REPORTER (uploading /gu·/rs)`
    raider's `/status` flips to `roles.chat: true` and takes over. Confirm `/gu`
    still relays after the handoff — **no chat lost** during the switch.
 
-### Not yet in this build (coming in P1b/P1c, still fail-open = everyone uploads)
-- Buff-landing de-duplication (zone-aware) — `roles.buffs` is always `true` today.
+### Not yet in this build (coming in P1c, still fail-open = everyone uploads)
 - Raid-roster de-duplication (group-aware) — `roles.roster` is always `true` today.
+
+**Status:** ⏳ awaiting solo + multi-person verification.
+
+---
+
+## #72 P1b — Buff-landing election (coverage-per-zone)
+
+**Needs:** bot **3.0.206** (live on main) · agent **3.3.81** (beta Mimic) · a
+guild admin to tick **`dedup_buffs`** in `/admin/overlays` 🛑 Kill switches.
+
+**What it does:** buff landings are the same for every same-zone client, so at
+scale N raiders upload N copies of each land. Now the bot ranks agents by
+**coverage** (how many distinct landings each actually saw over a rolling 10-min
+window) and elects the **top 3 per zone**; the rest stand down. Charm timers
+(`is_charm_spell` — synthesized per observer, no log line for other clients) are
+**exempt and always upload**. Everything is **fail-open** (bot down / flag off /
+zone unknown / no coverage yet → everyone uploads) and gated behind the
+`dedup_buffs` flag, default OFF, so production is unchanged until it's flipped.
+
+**Where to look:** `/status` `roles.buffs` (true = you upload ordinary landings;
+false = you stand down) and the new `buffs_zone: { zone, reporters, mine,
+coverage }` block. `agent.log` prints `[reporter] buffs role → REPORTER … / →
+stand down` when it flips.
+
+### ✅ Solo (one machine)
+1. **Flag off = no change.** With `dedup_buffs` unchecked, `roles.buffs` stays
+   `true` and buff landings upload exactly as before. Nothing to see — that's the
+   point (production default).
+2. **Flag on, sole candidate.** Tick `dedup_buffs` + Save. Running only your
+   machine, within ~60s `/status` still shows `roles.buffs: true` — you're the
+   only (top) candidate in your zone, so you stay elected and keep uploading.
+   `buffs_zone.mine: true`, `reporters: 1`.
+3. **Charm rows upload regardless.** With the flag on, charm a mob (Allure /
+   Beguile / Charm). The charm timer still reaches cross-client Mob Info — charm
+   rows never gate on the buffs role, so even a stood-down agent keeps sending
+   them.
+
+### 👥 Multi-person (2+ machines on beta) — **needs raid partners**
+1. **Only the elected 3 upload.** 4+ raiders in the SAME zone, flag on. After a
+   few minutes of buffs flying, exactly **3** show `roles.buffs: true`
+   (`buffs_zone.reporters: 3`); the rest show `false` ("stand down" in the log).
+   The 3 are the highest-coverage agents — a raider off in a corner self-selects
+   out. Ordinary landings still reach Mob Info / the buff queue (the 3 cover the
+   zone); no landing goes dark.
+2. **Failover within ~60s.** One elected buff reporter closes Mimic (or zones
+   out). Within ~60s a previously-stood-down agent in that zone flips to
+   `roles.buffs: true` and takes over — coverage stays complete across the swap.
+3. **Zone-split raiders elect independently.** Split the raid across two zones
+   (e.g. a pull group ahead). Each zone runs its own election — up to 3 reporters
+   per zone, and an agent in zone A is never gated by zone B's reporters. Confirm
+   both zones' landings keep flowing.
 
 **Status:** ⏳ awaiting solo + multi-person verification.
 

@@ -85,6 +85,13 @@ folly** — it's here.*
   hotfixes: auth 503-not-401 data-loss fix (bot 3.0.197); `{s}` triggers match
   backtick names (agent 3.3.75 beta). *Note:* the buff_casts 409-storm P0 the
   audit flagged was already fixed in prod (`insertIgnoreDuplicates`).
+  - **P1b done (2026-07-18, bot 3.0.206 + agent 3.3.81 beta)**: buff-landing
+    election — coverage-ranked, 3 reporters/zone. Bot tallies distinct
+    (spell,target) landings per uploader over a 10-min window and elects the top
+    3 per heartbeat-zone; agent honors `roles.buffs` in the buff_casts path,
+    `is_charm_spell` rows exempt (always upload). Gated behind `dedup_buffs`
+    (default OFF) on `/admin/overlays`; fail-open everywhere. **P1c (roster,
+    per-group dedup) still queued.**
 - **Callout trifecta, in progress (2026-07-17, #76)** — the "why TTS never
   fires" fixes: triggers evaluate before the privacy/combat filter so
   ENRAGED/snare/mez/fizzle templates fire (agent 3.3.76 beta, 9/17 dead

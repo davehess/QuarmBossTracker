@@ -89,6 +89,8 @@ type Flag = { key: string; label: string; desc: string; danger?: boolean };
 const FLAGS: Flag[] = [
   { key: 'flag_disable_reporter_election', label: 'Disable reporter election (#72)',
     desc: 'Turns OFF the designated-reporter de-duplication — every agent uploads chat/buffs/roster again, exactly like before the feature. It is fail-open regardless; flip this only if the election ever misbehaves.' },
+  { key: 'dedup_buffs', label: 'Buff dedup — thin buff_casts to 3 reporters/zone (default off)',
+    desc: 'Turns ON the P1b buff-landing de-duplication (#72). When checked, only the ~3 best-coverage agents per zone upload ordinary observed buff landings; the rest stand down. Charm timers (synthesized per-observer) always upload regardless. Fail-open — an agent that loses contact with the bot uploads everything, and re-election hands off within ~60s if a reporter leaves the zone. Leave OFF to keep today’s every-agent-uploads behavior. Overridden by the disable switch above.' },
   { key: 'flag_shed_live_state', label: 'Shed: live-state stream', danger: true,
     desc: 'Mid-raid load-shed — the bot 200-acks and DROPS the character live-state stream (buffs/zone). Overlays needing it go stale until cleared. Emergency use only.' },
   { key: 'flag_shed_raid_roster', label: 'Shed: raid-roster stream', danger: true,

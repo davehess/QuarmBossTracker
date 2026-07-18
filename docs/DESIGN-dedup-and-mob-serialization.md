@@ -120,6 +120,16 @@ kill switch. Per-observer streams appear in `streams` as `per_observer` and have
 no flag — the guarantee that mob/target/encounter data is never deduped is
 structural, not a setting someone can fat-finger.
 
-**Next:** P1b buff election (coverage-per-zone), P1c roster (per-group), and the
-observer-anchored target tracks (#56) so Rathe-Council babysit groups render as
-distinct mobs.
+**P1b (built 2026-07-18):** buff-landing election is live. The bot counts each
+uploader's DISTINCT (spell, target) landings over a rolling 10-min window
+(in-memory, GC'd — no Supabase writes), groups live agents by their heartbeat
+zone, and elects the top **3 per zone** by coverage (tiebreak = the stable
+name/id rank; latency is not a criterion). `reporter-poll` returns
+`roles.buffs = dedup_buffs ? electedForMyZone : true`. The agent honors it in the
+buff_casts path — EXCEPT `is_charm_spell` rows (agent-synthesized per-observer
+charm timers, no log line for other clients), which always upload. Fail-open
+throughout: bot down / flag off / zone unknown / cold coverage → everyone
+uploads. Gated behind `dedup_buffs` (default OFF) on `/admin/overlays`.
+
+**Next:** P1c roster (per-group), and the observer-anchored target tracks (#56)
+so Rathe-Council babysit groups render as distinct mobs.
