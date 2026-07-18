@@ -65,6 +65,42 @@ folly** — it's here.*
 ## The work ledger
 
 ### ✅ Done — major shipped features (not exhaustive; see git + roadmapData.ts)
+- **#111 /who overlay enrichment — DONE (2026-07-19, bot 3.0.215 + web 1.0.247
+  on main; agent 3.3.93 beta + who overlay in Mimic 1.9.6 beta).** The in-game
+  /who overlay now (1) drops a 🐺 next to any raider running Mimic, (2) lines
+  class and level into their own left-aligned columns instead of drifting ragged
+  after the guild tag, (3) shows the level we know for a guildmate who's /anon
+  (dimmed/italic, marking it as our-data not the game's), and (4) appends the
+  main in parentheses for Wolf Pack alts, from `characters.main_name`.
+  - **Enrichment surface (bot).** Extended the existing `GET
+    /api/agent/who-lookup` idiom (not a new endpoint): the same de-anon response
+    now also carries `{ main, mimic }` per name. `main` from a 60s-cached
+    name→`main_name` map; `mimic` from the in-memory reporter registry
+    (`_freshMimicPrimaries` — primaries whose heartbeat is within `REPORTER_TTL_MS`).
+    Registered a `who_lookup` admission-control budget kind (120/min, GET,
+    non-durable) and gated the route. The main/mimic merge is a pure, unit-tested
+    helper `_assembleWhoEnrichment` (test/who-enrichment.test.js, source-slice tier).
+  - **Hide-main mechanism = the `hide_main_names` tuning key** (comma-separated,
+    case-insensitive) in `overlay_tuning.tuning` — the SAME string-tuning-key idiom
+    #115 uses for `reporter_pin_*`/`reporter_extra_*` (same jsonb, same 60s cache,
+    survives deploys, preserved by the /admin/overlays save passthrough). Chosen
+    over a `characters.hide_main` column because it is **zero-migration** (rode
+    tonight's beta with no schema change) and edited with no code release. Enforced
+    SERVER-side: a hidden name never has a main emitted (matched by its own name OR
+    its main's name, so listing either the alt or the main hides the link).
+    **Seeded `hide_main_names = "Tildias,Serreth"`** via the Supabase MCP (both are
+    alts — Tildias→Stupidrichard, Serreth→Peopleslayer — the explicit privacy
+    exception). Editing the list today is an MCP/SQL update to that row (like the
+    #115 pins before they got their Mimic panel); a dedicated officer input is the
+    natural fast-follow.
+  - **Mimic-detection limit (honest).** The reporter registry keys on
+    `discord_id → { primary, … }`, where `primary` is the agent's reported
+    `primary_character` (the `--character` box, else the first watched log). So the
+    🐺 lands on a raider's **reported primary**, not necessarily the exact toon on
+    screen: a member running Mimic while playing an ALT gets the wolf only when that
+    alt IS the reported primary/watched character. N≥2 identities per agent aren't
+    tracked. Fail-open throughout: bot unreachable → the overlay renders exactly as
+    before (de-anon still served from the agent's local cache). See BETA-TESTING #111.
 - **#116 overlay bug round — DONE (2026-07-19, agent 3.3.92 beta + web 1.0.246
   docs/roadmap).** Repro-first fixture round; also closes long-open #35.
   - **Spell Casting (melody overlay) stale card**: a stopped caster could

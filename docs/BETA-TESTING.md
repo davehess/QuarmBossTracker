@@ -20,6 +20,52 @@ raid; move it to STATUS.md's "Done" once graduated to stable.*
 
 ---
 
+## #111 — /who overlay enrichment: 🐺 Mimic presence, aligned columns, anon levels, mains
+
+**Needs:** bot **3.0.215** (live on Railway) + agent **3.3.93** (beta Mimic) +
+the `who.html` overlay in Mimic **1.9.6** beta.
+
+**What changed:** the in-game /who overlay's rows now carry four things. (1) A
+🐺 next to any guildmate whose Mimic is running right now (their agent is a fresh
+primary in the reporter registry). (2) Class and level are each in their own
+left-aligned column that lines up down the list, instead of floating ragged after
+the guild tag. (3) A guildmate who's /anon shows the level we know from our own
+who history, rendered dimmed/italic so you can tell it didn't come from the game.
+(4) Wolf Pack alts show their main in parentheses after the character name, from
+`characters.main_name` — with a server-enforced privacy exception (`hide_main_names`
+tuning key; seeded with **Tildias** and **Serreth**, who never show a main). The
+bot supplies all four via the existing `who-lookup` endpoint; if the bot is
+unreachable the overlay renders exactly as it did before.
+
+**✅ Solo (one machine)**
+- Run **/who** in a busy zone. The overlay's rows must line up in columns —
+  every class in one column, every level left-aligned in the next — not drifting
+  after the `<Guild>` tag.
+- Your OWN row must show a **🐺** (your Mimic is running). If you're grouped with
+  another Mimic user, theirs gets one too.
+- Log an **/anon** alt whose level we've seen before and /who yourself: the level
+  must appear **dimmed/italic** (our data), even though EQ printed no level.
+- A Wolf Pack alt (with a `main_name`) shows **(Main)** after its name; a pure-PUG
+  stranger shows neither a 🐺 nor a main.
+- **Fail-open check:** quit Mimic's connection to the bot (or go offline) and /who
+  again — rows still render (de-anon from local cache), just without the new 🐺 /
+  main enrichment. Nothing should blank out.
+
+**👥 Multi-person / officer**
+- Two raiders on separate machines both running Mimic: each sees the OTHER's 🐺
+  on their /who within ~a minute of both being live.
+- **Hide list (officer):** add a name to `hide_main_names` in the `overlay_tuning`
+  row (MCP/SQL update — comma-separated, e.g. `Tildias,Serreth,Newname`). Within
+  ~60s (bot tuning cache) + the agent's who-lookup refresh, that character's **(Main)
+  disappears** from everyone's /who while its 🐺 (if running Mimic) stays. Removing
+  the name brings the main back.
+- **Known limit:** the 🐺 tracks each agent's REPORTED PRIMARY character, so a raider
+  running Mimic while playing an alt only lights up on the alt's row if that alt is
+  their `--character`/first-watched log. Playing an unwatched alt → the 🐺 rides
+  their primary's row instead. This is a registry-identity limit, not a bug.
+
+---
+
 ## #116 — Overlay bug round: stale Spell Casting card + stuck setup chrome
 
 **Needs:** agent **3.3.92** (beta Mimic). No bot change.

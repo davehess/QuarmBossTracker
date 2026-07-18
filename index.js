@@ -8227,6 +8227,10 @@ const _BUDGET_DEFAULTS = {
   threat_snapshot: { perMin: 120, durable: false },
   raid_roster:     { perMin: 90,  durable: false },
   recent_fires:    { perMin: 240, durable: false, get: true },
+  // #111 /who overlay enrichment query (de-anon + mains + Mimic presence). GET,
+  // cached at the agent (5m) and bot (60s) so a healthy client barely calls it;
+  // the generous cap only trips a runaway client, which backs off on the 429.
+  who_lookup:      { perMin: 120, durable: false, get: true },
   // #106 multiplexed GET poll — one request carries recent_fires + tuning +
   // (at their own cadence) triggers/prefs/backfill/ui_edits. A healthy agent
   // polls ~40/min active, far slower idle/dormant; the generous cap only trips a
@@ -10554,6 +10558,90 @@ async function _handleAgentWhoOverride(req, res) {
   res.end(JSON.stringify({ ok: true, character, class: klass }));
 }
 
+// ── #111 /who overlay enrichment (mains + Mimic presence) ────────────────────
+// Alongside the de-anon above, the /who overlay gets two guild-member enrichments:
+//   • main  — characters.main_name (the family root), rendered "(Main)" after an
+//             alt's name. A SERVER-side hide list (`hide_main_names` tuning key,
+//             comma-separated, case-insensitive — same jsonb + 60s cache as the
+//             #115 reporter pins) suppresses it: a hidden name NEVER emits a main,
+//             so the privacy exception is enforced HERE, never client-side.
+//   • mimic — true when the character is the live PRIMARY of a fresh agent in the
+//             reporter registry (someone running Mimic right now). Only the
+//             agent's reported primary_character is known, so an alt played while
+//             Mimic runs earns the 🐺 only when that alt IS the reported primary.
+// main is a fully-cached name→main_name map (the guild is bounded); mimic reads
+// the in-memory registry (free). Both fail-open — a miss just omits the field.
+let _mainNameCache = { at: 0, map: new Map() };
+const MAIN_NAME_TTL_MS = 60_000;
+async function _freshMainNames() {
+  if (Date.now() - _mainNameCache.at < MAIN_NAME_TTL_MS) return _mainNameCache.map;
+  try {
+    const sb = require('./utils/supabase');
+    if (sb.isEnabled()) {
+      const rows = await sb.select('characters', 'select=name,main_name&main_name=not.is.null&limit=5000');
+      if (Array.isArray(rows)) {
+        const map = new Map();
+        for (const r of rows) if (r && r.name && r.main_name) map.set(String(r.name).toLowerCase(), String(r.main_name));
+        _mainNameCache = { at: Date.now(), map };
+      } else { _mainNameCache.at = Date.now(); }   // don't hammer on a failed fetch
+    } else { _mainNameCache.at = Date.now(); }
+  } catch { _mainNameCache.at = Date.now(); }
+  return _mainNameCache.map;
+}
+// Lowercased set of names whose main is suppressed — the officer-curated privacy
+// exception, read from the `hide_main_names` tuning key (string, comma-sep).
+async function _hideMainNamesSet() {
+  let tune = {};
+  try { tune = await _overlayTuningMap(); } catch { /* fail-open: no hide list on a tuning read error */ }
+  const raw = tune && tune.hide_main_names;
+  const set = new Set();
+  if (typeof raw === 'string') for (const n of raw.split(',')) { const t = n.trim().toLowerCase(); if (t) set.add(t); }
+  return set;
+}
+// Fresh Mimic primaries — characters that are the PRIMARY of an agent whose last
+// heartbeat is within the registry TTL (i.e. running Mimic right now).
+function _freshMimicPrimaries(guildId) {
+  const set = new Set();
+  const book = _reporterRegistry.get(guildId);
+  if (!book) return set;
+  const now = Date.now();
+  for (const e of book.values()) {
+    if (!e || !e.primary) continue;
+    if (now - (e.last_seen || 0) > REPORTER_TTL_MS) continue;   // stale agent → not "currently running"
+    set.add(String(e.primary).toLowerCase());
+  }
+  return set;
+}
+// ── #111 /who overlay enrichment assembly ───────────────────────────────────
+// Pure + input-driven so the assembly is unit-testable without the HTTP handler.
+// Merges main-in-parens + Mimic-presence onto `base` (the de-anon results),
+// enforcing the hide list SERVER-side: a name in `hideSet` — matched by its OWN
+// name OR by its main's name — NEVER emits a main. A name with neither a shown
+// main nor Mimic presence is left untouched (unknown names pass through empty),
+// and an existing de-anon level/class already on `base` is never clobbered (an
+// anon member's looked-up level survives the enrichment).
+function _assembleWhoEnrichment({ names, mainMap, mimicSet, hideSet, base }) {
+  const results = base || {};
+  for (const nm of names) {
+    const key = String(nm).toLowerCase();
+    const mimic = mimicSet.has(key);
+    let main = null;
+    const rawMain = mainMap.get(key);
+    if (rawMain && String(rawMain).toLowerCase() !== key) {           // never annotate a main with itself
+      const mainKey = String(rawMain).toLowerCase();
+      if (!hideSet.has(key) && !hideSet.has(mainKey)) main = rawMain;  // hide-list enforcement (both directions)
+    }
+    if (!mimic && !main) continue;                                     // nothing to add → leave as-is
+    const cur = results[key] || (results[key] = {
+      class: null, level: null, guild: null, guild_rank: null, is_zek: false, last_seen: null, source: 'enrich',
+    });
+    if (mimic) cur.mimic = true;
+    if (main)  cur.main = main;
+  }
+  return results;
+}
+// ── end #111 enrichment assembly ────────────────────────────────────────────
+
 async function _handleAgentWhoLookup(req, res) {
   const identity = await mimicLink.requireAgentAuth(req, res);
   if (!identity) return;
@@ -10650,6 +10738,21 @@ async function _handleAgentWhoLookup(req, res) {
       }
     } catch (err) { console.warn('[who-lookup] characters backfill failed:', err?.message); }
   }
+
+  // Pass 4 (#111): main-in-parens + Mimic presence for guild members. Runs for
+  // EVERY requested name (not just anon) — a member showing normally in /who
+  // still earns their 🐺 and (Main). The hide list is enforced inside
+  // _assembleWhoEnrichment (server-side); a lookup miss simply omits the field.
+  try {
+    const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+    _assembleWhoEnrichment({
+      names,
+      mainMap:  await _freshMainNames(),
+      mimicSet: _freshMimicPrimaries(guildId),
+      hideSet:  await _hideMainNamesSet(),
+      base:     results,
+    });
+  } catch (err) { console.warn('[who-lookup] enrichment failed:', err?.message); }
 
   res.writeHead(200, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify({ ok: true, results }));
@@ -13919,6 +14022,7 @@ const httpServer = http.createServer(async (req, res) => {
   }
 
   if (req.method === 'GET' && req.url.startsWith('/api/agent/who-lookup')) {
+    if (await _overBudget('who_lookup', req, res)) return;
     try { return await _handleAgentWhoLookup(req, res); }
     catch (err) {
       console.error('[who-lookup] handler error:', err);
