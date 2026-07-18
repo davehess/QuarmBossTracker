@@ -43,6 +43,28 @@ const {
   '_reporterGuildBook', 'REPORTER_BUFF_PER_ZONE',
 ]);
 
+// P1c roster election (per-group, 1 reporter/group) + camp-out early handoff.
+// The WIDEST slice — it must close over _electRosterReporters AND the shared
+// _dropCampers helper AND _electReporters/_electBuffReporters so the camping
+// demotion can be exercised against all three elections through one closure
+// (its own registry/coverage Maps, independent of the slices above).
+const rosterBlock = sliceBlock(
+  readSource(BOT_INDEX),
+  'const REPORTER_TTL_MS',
+  'return { elected, byGroup };\n}',
+);
+const {
+  _electRosterReporters, REPORTER_ROSTER_PER_GROUP,
+  _reporterGuildBook: _rosterBook,
+  _electReporters: _electReportersC,
+  _electBuffReporters: _electBuffReportersC,
+  _recordBuffCoverage: _recordBuffCoverageC,
+} = evalBlock(rosterBlock, [
+  '_electRosterReporters', 'REPORTER_ROSTER_PER_GROUP',
+  '_reporterGuildBook', '_electReporters',
+  '_electBuffReporters', '_recordBuffCoverage',
+]);
+
 const G = 'wolfpack';
 
 // The slice closes over its own module-level `_reporterRegistry` Map. It has no
@@ -200,5 +222,111 @@ describe('buff-reporter election — coverage-ranked, 3 per zone (P1b)', () => {
     expect(r.elected.has('a')).toBe(false);
     expect(r.elected.has('d')).toBe(true);       // 'd' promoted into the top 3
     expect(r.elected.size).toBe(3);
+  });
+});
+
+describe('roster-reporter election — per-group, 1 reporter/group (P1c)', () => {
+  it('slice compiled the real per-group count', () => {
+    expect(REPORTER_ROSTER_PER_GROUP).toBe(1);
+    expect(typeof _electRosterReporters).toBe('function');
+  });
+
+  it('elects exactly ONE reporter per raid group, partitioned by group_num', () => {
+    const g = freshGuild();
+    const now = Date.now();
+    // Group 1: three agents. Group 2: two agents. Each group elects its own 1.
+    for (const id of ['a1', 'a2', 'a3'])
+      _rosterBook(g).set(id, { last_seen: now, primary: id, group_num: 1 });
+    for (const id of ['b1', 'b2'])
+      _rosterBook(g).set(id, { last_seen: now, primary: id, group_num: 2 });
+    const r = _electRosterReporters(g);
+    expect(r.byGroup['g1'].length).toBe(1);
+    expect(r.byGroup['g2'].length).toBe(1);
+    expect(r.elected.size).toBe(2);              // one per occupied group
+    expect(r.byGroup['g1']).toEqual(['a1']);     // lowest _reporterRank wins its group
+    expect(r.byGroup['g2']).toEqual(['b1']);
+    // Group 2's reporter is NEVER gated by group 1's election.
+    expect(r.elected.has('b1')).toBe(true);
+  });
+
+  it('an agent with unknown/missing group is its own singleton and is always elected', () => {
+    const g = freshGuild();
+    const now = Date.now();
+    _rosterBook(g).set('nogrp', { last_seen: now, primary: 'NoGrp', group_num: null });
+    // A busy group alongside it must not swallow the group-less agent.
+    for (const id of ['a1', 'a2', 'a3'])
+      _rosterBook(g).set(id, { last_seen: now, primary: id, group_num: 1 });
+    const r = _electRosterReporters(g);
+    expect(r.elected.has('nogrp')).toBe(true);   // singleton → self-elects (fail-open)
+    expect(r.byGroup['g1'].length).toBe(1);      // the real group still dedups to 1
+  });
+
+  it('fails over within a group when the elected reporter goes silent past the TTL', () => {
+    const g = freshGuild();
+    const now = Date.now();
+    _rosterBook(g).set('a1', { last_seen: now - 70_000, primary: 'Aaa', group_num: 1 }); // stale
+    _rosterBook(g).set('a2', { last_seen: now,          primary: 'Bbb', group_num: 1 });
+    const r = _electRosterReporters(g);
+    expect(_rosterBook(g).has('a1')).toBe(false); // evicted from the book
+    expect(r.byGroup['g1']).toEqual(['a2']);      // next live groupmate takes over
+  });
+});
+
+describe('camp-out early handoff — camping agents demoted before the TTL (#72 P3)', () => {
+  it('CHAT: a camping top-rank agent steps aside for an awake agent', () => {
+    const g = freshGuild();
+    const now = Date.now();
+    _rosterBook(g).set('d1', { last_seen: now, primary: 'Abby', camping: true });  // would win, but camping
+    _rosterBook(g).set('d2', { last_seen: now, primary: 'Mira', camping: false });
+    const r = _electReportersC(g);
+    expect(r.chat.has('d1')).toBe(false);   // camper demoted early
+    expect(r.chat.has('d2')).toBe(true);    // awake agent takes chat
+  });
+
+  it('CHAT: a SOLE camper stays elected (fail-open — reports until the TTL evicts it)', () => {
+    const g = freshGuild();
+    _rosterBook(g).set('solo', { last_seen: Date.now(), primary: 'Solo', camping: true });
+    const r = _electReportersC(g);
+    expect(r.chat.has('solo')).toBe(true);  // never zero uploaders
+  });
+
+  it('BUFFS: a camping agent is dropped from its zone while an awake peer remains', () => {
+    const g = freshGuild();
+    const now = Date.now();
+    _rosterBook(g).set('a', { last_seen: now, primary: 'A', zone: 'guk', camping: true });
+    _rosterBook(g).set('b', { last_seen: now, primary: 'B', zone: 'guk', camping: false });
+    // 'a' has HIGHER coverage but is camping → 'b' wins the seat anyway.
+    _recordBuffCoverageC(g, 'a', [{ spell_name: 's1', target: 'm' }, { spell_name: 's2', target: 'm' }]);
+    _recordBuffCoverageC(g, 'b', [{ spell_name: 's1', target: 'm' }]);
+    const r = _electBuffReportersC(g);
+    expect(r.elected.has('a')).toBe(false);
+    expect(r.elected.has('b')).toBe(true);
+  });
+
+  it('BUFFS: an all-camping zone keeps everyone (fail-open — no landing goes dark)', () => {
+    const g = freshGuild();
+    const now = Date.now();
+    for (const id of ['a', 'b'])
+      _rosterBook(g).set(id, { last_seen: now, primary: id, zone: 'guk', camping: true });
+    const r = _electBuffReportersC(g);
+    expect(r.elected.has('a')).toBe(true);
+    expect(r.elected.has('b')).toBe(true);
+  });
+
+  it('ROSTER: a camping group-reporter hands off to an awake groupmate', () => {
+    const g = freshGuild();
+    const now = Date.now();
+    _rosterBook(g).set('a1', { last_seen: now, primary: 'Aaa', group_num: 1, camping: true });  // would win
+    _rosterBook(g).set('a2', { last_seen: now, primary: 'Bbb', group_num: 1, camping: false });
+    const r = _electRosterReporters(g);
+    expect(r.byGroup['g1']).toEqual(['a2']);   // awake groupmate reports instead
+  });
+
+  it('ROSTER: a solo camper in its group keeps reporting (fail-open)', () => {
+    const g = freshGuild();
+    _rosterBook(g).set('a1', { last_seen: Date.now(), primary: 'Aaa', group_num: 1, camping: true });
+    const r = _electRosterReporters(g);
+    expect(r.byGroup['g1']).toEqual(['a1']);
+    expect(r.elected.has('a1')).toBe(true);
   });
 });

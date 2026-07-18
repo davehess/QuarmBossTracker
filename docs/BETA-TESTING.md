@@ -64,8 +64,9 @@ Also `agent.log` prints `[reporter] chat role → REPORTER (uploading /gu·/rs)`
    raider's `/status` flips to `roles.chat: true` and takes over. Confirm `/gu`
    still relays after the handoff — **no chat lost** during the switch.
 
-### Not yet in this build (coming in P1c, still fail-open = everyone uploads)
-- Raid-roster de-duplication (group-aware) — `roles.roster` is always `true` today.
+### Now built (P1c, 2026-07-18)
+- Raid-roster de-duplication (group-aware) — see the **#72 P1c** section below.
+  This completes the #72 election work (chat + buffs + roster all elect).
 
 **Status:** ⏳ awaiting solo + multi-person verification.
 
@@ -117,6 +118,69 @@ stand down` when it flips.
    (e.g. a pull group ahead). Each zone runs its own election — up to 3 reporters
    per zone, and an agent in zone A is never gated by zone B's reporters. Confirm
    both zones' landings keep flowing.
+
+**Status:** ⏳ awaiting solo + multi-person verification.
+
+---
+
+## #72 P1c — Roster election (per-group) + stray-endpoint gates + camp-out handoff
+
+**Needs:** bot **3.0.207** (live on main) · agent **3.3.82** (beta Mimic) · a
+guild admin to tick **`dedup_roster`** in `/admin/overlays` 🛑 Kill switches (for
+the roster cases). This completes the **#72** election work — chat, buffs, and
+roster all elect now.
+
+**What it does:**
+- **Roster election (per-group).** The Zeal raid roster is identical from every
+  raider's view, but per-member HP arrives only for the uploader's OWN group. So
+  with `dedup_roster` on, exactly **one agent per raid group** uploads the roster
+  snapshot; the rest stand down. An agent not in a raid (or without Zeal) is its
+  own group and always uploads. Composition + every group's HP stay fully
+  covered. Fail-open everywhere (bot down / flag off / unknown group → upload).
+- **Stray-endpoint gates.** The "buffs feel laggy" report now rides the buffs
+  role (a stood-down agent stops sending the diagnostic — but its own local
+  snappy-mode still engages, so nothing changes for the clicker). The "✓ cured"
+  debuff-clear is a manual raid-wide action and is **intentionally NOT gated** —
+  any raider's click still clears the chip for everyone.
+- **Camp-out early handoff.** When you type `/camp`, your agent flags itself
+  `camping` and tells the bot immediately (no 20s wait). The bot stops electing
+  you as a reporter ~30s before your logout would trip the TTL, so a groupmate
+  takes over the roster/buffs/chat handoff *before* you vanish. If you're the
+  ONLY candidate in your scope you keep reporting until you're actually gone.
+
+**Where to look:** the agent `/status` `reporter.roles.roster` (true = you upload
+the roster; false = you stand down) and the reporter status line, which now shows
+**camping** while a camp is in progress. `agent.log` prints
+`[reporter] roster role → REPORTER / → stand down` and a camp start/abandon line.
+
+### ✅ Solo (one machine)
+1. **Flag off = no change.** With `dedup_roster` unchecked, `roles.roster` stays
+   `true` and the roster uploads exactly as before (production default).
+2. **Flag on, sole candidate.** Tick `dedup_roster` + Save. Running only your
+   machine, within ~60s `/status` still shows `roles.roster: true` — you're the
+   only candidate in your group, so you keep uploading. The /raid board is
+   unchanged.
+3. **`/camp` shows camping + hands off.** In game, type `/camp`. Immediately (not
+   after 20s) the dashboard reporter line shows **camping**, and `agent.log` notes
+   the camp start. Type a move key to **abandon** the camp (`You abandon your
+   preparations to camp.`) → the camping flag clears and the line returns to
+   normal. (Solo, you stay elected the whole time — sole candidate, fail-open.)
+
+### 👥 Multi-person (2+ machines on beta) — **needs raid partners**
+1. **Two Mimics, same group → one uploads.** Two raiders in the SAME raid group,
+   both on beta Mimic, `dedup_roster` on. After ~60s exactly **one** shows
+   `roles.roster: true` (the lower primary-name rank); the other stands down. The
+   /raid board still shows the whole group's HP (the elected one covers it).
+2. **Different groups elect independently.** Put the two raiders in DIFFERENT
+   groups → BOTH upload (`roles.roster: true` for each), because each group elects
+   its own reporter. No group's HP goes dark.
+3. **Camper hands off within ~20s of camp-start.** The elected roster (or buffs,
+   or chat) reporter types `/camp`. Within ~20s — well before the 60s TTL — a
+   groupmate/zone-peer flips to `roles.*: true` and takes over. Confirm the board
+   / buff queue / chat never stalls during the swap.
+4. **Kill the reporter → TTL failover.** Instead of camping, the elected reporter
+   hard-closes Mimic (no `/camp`). Within ~60s (the TTL) a peer takes over. This
+   is the backstop the camp handoff front-runs.
 
 **Status:** ⏳ awaiting solo + multi-person verification.
 

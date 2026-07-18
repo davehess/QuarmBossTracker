@@ -2750,6 +2750,28 @@ function scheduleMidnightSummary(readyClient) {
         console.warn('[midnight] buff_casts retention skipped:', err?.message);
       }
 
+      // ── Retention sweep: raid_roster ──────────────────────────────────────
+      // The raid-roster ingest is a plain per-uploader upsert now (#72 2.1) — it
+      // no longer DELETEs the uploader's prior rows, so members who left a raid
+      // linger as stale rows until pruned. Every reader already filters
+      // `captured_at >= now-15min` (ROSTER_FRESH_MS), so those stale rows are
+      // invisible the moment they age out; this prune only bounds table SIZE.
+      // A generous 1h cutoff sits well past the 15-min read window, so no live
+      // view is ever affected. The table is a tiny live snapshot, so daily is
+      // ample. RAID_ROSTER_RETENTION_HOURS overrides (0 disables).
+      try {
+        const supabase = require('./utils/supabase');
+        const retainHrs = parseInt(process.env.RAID_ROSTER_RETENTION_HOURS, 10);
+        const keepHrs = Number.isFinite(retainHrs) ? retainHrs : 1;
+        if (supabase.isEnabled() && keepHrs > 0) {
+          const cutoff = new Date(Date.now() - keepHrs * 60 * 60 * 1000).toISOString();
+          await supabase.del('raid_roster', `captured_at=lt.${encodeURIComponent(cutoff)}`);
+          console.log(`[midnight] swept raid_roster older than ${keepHrs}h`);
+        }
+      } catch (err) {
+        console.warn('[midnight] raid_roster retention skipped:', err?.message);
+      }
+
       // ── Retention sweep: who_observations ─────────────────────────────────
       // Keep the who INFORMATION but not every instance (Uilnayar 2026-07-07):
       // everything from the last N days stays raw (feeds the ±3-min Zek
@@ -3255,14 +3277,16 @@ const _triggerRate = new Map();    // discordId → [timestamps]
 //   • roster— HP per member is GROUP-scoped (a snapshot only carries HP for the
 //             uploader's own group) → group-level reporter (P1c).
 // P1a gates chat (global). P1b gates buffs (coverage-ranked, 3 per zone — the
-// _electBuffReporters block below). Roster stays fail-open (roles=true) until
-// P1c's per-group election lands. Each stream is gated ONLY when its dedup_*
+// _electBuffReporters block below). P1c gates roster (1 per group — the
+// _electRosterReporters block below). Each stream is gated ONLY when its dedup_*
 // flag is on; kill switch flag_disable_reporter_election in the /admin/overlays
-// tuning editor forces everyone back to uploading (today's behavior).
+// tuning editor forces everyone back to uploading (today's behavior). A camping
+// agent (typed /camp) is demoted from every election ~30s early via _dropCampers.
 const REPORTER_TTL_MS       = 60_000; // an agent silent this long drops out → re-elect
 const REPORTER_CHAT_COUNT   = 1;      // single chat reporter (global stream)
 const REPORTER_BUFF_PER_ZONE = 3;     // buff landings dedup to 3 reporters per occupied zone (P1b)
-const _reporterRegistry   = new Map(); // guild_id → Map(discord_id → {last_seen, primary, zone, group_num, has_zeal, ver})
+const REPORTER_ROSTER_PER_GROUP = 1;  // raid roster dedup to 1 reporter per raid group (P1c)
+const _reporterRegistry   = new Map(); // guild_id → Map(discord_id → {last_seen, primary, zone, group_num, camping, has_zeal, ver})
 function _reporterGuildBook(guildId) {
   let book = _reporterRegistry.get(guildId);
   if (!book) { book = new Map(); _reporterRegistry.set(guildId, book); }
@@ -3275,6 +3299,18 @@ function _reporterRank(a, b) {
   if (pa !== pb) return pa < pb ? -1 : 1;
   return a.id < b.id ? -1 : (a.id > b.id ? 1 : 0);
 }
+// Camp-out early handoff (#72, guild-lead request 2026-07-18): a raider who
+// typed /camp sets `camping` in its heartbeat and is ~30s from vanishing. Drop
+// campers from candidacy so the handoff to a live agent starts BEFORE the 60s
+// TTL notices the logout — but ONLY while an awake candidate remains in the same
+// scope. If EVERY candidate in a scope is camping, keep them all (fail-open: a
+// solo camper keeps reporting until the TTL actually evicts it → never zero
+// uploaders). Applied per-scope (global for chat, per-zone for buffs, per-group
+// for roster) so a camper in one group never silences another group.
+function _dropCampers(arr) {
+  const awake = arr.filter(a => !a.camping);
+  return awake.length ? awake : arr;
+}
 function _electReporters(guildId) {
   const book = _reporterGuildBook(guildId);
   const now = Date.now();
@@ -3284,7 +3320,10 @@ function _electReporters(guildId) {
     live.push({ id, ...e });
   }
   live.sort(_reporterRank);
-  const chat = new Set(live.slice(0, REPORTER_CHAT_COUNT).map(e => e.id));
+  // Camp-out early handoff: chat is a single global scope, so campers step aside
+  // for any awake agent (fail-open if everyone is camping — see _dropCampers).
+  const pool = _dropCampers(live);
+  const chat = new Set(pool.slice(0, REPORTER_CHAT_COUNT).map(e => e.id));
   return { chat, live };
 }
 
@@ -3360,23 +3399,61 @@ function _electBuffReporters(guildId) {
   const elected = new Set();
   const byZone = {};
   for (const [zoneKey, arr] of zones) {
-    const anyCoverage = arr.some(a => _buffCoverageCount(guildId, a.id, now) > 0);
+    // Camp-out early handoff: campers step aside within their zone while any
+    // awake same-zone agent remains (fail-open if all are camping).
+    const pool = _dropCampers(arr);
+    const anyCoverage = pool.some(a => _buffCoverageCount(guildId, a.id, now) > 0);
     if (anyCoverage) {
-      arr.sort((a, b) => {
+      pool.sort((a, b) => {
         const ca = _buffCoverageCount(guildId, a.id, now);
         const cb = _buffCoverageCount(guildId, b.id, now);
         if (ca !== cb) return cb - ca;   // higher coverage first
         return _reporterRank(a, b);      // stable tiebreak
       });
     } else {
-      arr.sort(_reporterRank);           // cold start: deterministic order, elect all
+      pool.sort(_reporterRank);          // cold start: deterministic order, elect all
     }
-    const chosen = anyCoverage ? arr.slice(0, REPORTER_BUFF_PER_ZONE) : arr;
+    const chosen = anyCoverage ? pool.slice(0, REPORTER_BUFF_PER_ZONE) : pool;
     const ids = chosen.map(a => a.id);
     for (const id of ids) elected.add(id);
     byZone[zoneKey] = ids;
   }
   return { elected, byZone };
+}
+
+// Elect ONE reporter PER RAID GROUP (P1c). Roster COMPOSITION is identical from
+// every member's view, but per-member HP arrives only for the uploader's OWN
+// group's Zeal gauges — so the correct dedup unit is one reporter per group, not
+// one for the whole raid (which would leave 11 groups' HP dark). Group each live
+// agent by its self-reported `group_num` (sent in the reporter-poll heartbeat,
+// derived agent-side from the Zeal raid pipe for its primary character); an
+// agent with an unknown/missing group is its own singleton (fail-open — always
+// elected, so a non-raid or pipe-less agent still uploads). Within a group drop
+// campers (unless all camping) then take the top 1 by the stable _reporterRank.
+// No coverage ranking needed: composition is redundant and any live member of a
+// group sees that group's HP. Returns { elected:Set(id), byGroup:{key:[ids]} }.
+function _electRosterReporters(guildId) {
+  const book = _reporterGuildBook(guildId);
+  const now = Date.now();
+  const groups = new Map();   // groupKey → [{ id, ...entry }]
+  for (const [id, e] of book) {
+    if (now - e.last_seen > REPORTER_TTL_MS) { book.delete(id); continue; }
+    const g = Number.isFinite(e.group_num) ? e.group_num : null;
+    const groupKey = g != null ? `g${g}` : `__solo__${id}`;   // unknown group → own group
+    let arr = groups.get(groupKey);
+    if (!arr) { arr = []; groups.set(groupKey, arr); }
+    arr.push({ id, ...e });
+  }
+  const elected = new Set();
+  const byGroup = {};
+  for (const [groupKey, arr] of groups) {
+    const pool = _dropCampers(arr);      // camp-out early handoff
+    pool.sort(_reporterRank);            // stable winner across polls
+    const ids = pool.slice(0, REPORTER_ROSTER_PER_GROUP).map(a => a.id);
+    for (const id of ids) elected.add(id);
+    byGroup[groupKey] = ids;
+  }
+  return { elected, byGroup };
 }
 
 // ── Cross-Mimic trigger relay (fan-out) ─────────────────────────────────────
@@ -10666,12 +10743,16 @@ async function _handleAgentRaidRoster(req, res) {
     return res.end(JSON.stringify({ ok: true, stored: 0 }));
   }
   try {
-    // SNAPSHOT semantics per uploader (pk guild,uploader,name): replace this
-    // uploader's whole view so members who left their raid don't linger as
-    // phantom rows. Readers cluster overlapping snapshots into distinct
-    // raids — two concurrent raids stay separate instead of merging.
-    await supabase.del('raid_roster',
-      `guild_id=eq.${encodeURIComponent(guildId)}&uploaded_by_discord_id=eq.${encodeURIComponent(identity.discord_id)}`);
+    // Plain upsert per (guild, uploader, name) — merge-duplicates (#72 item 2.1).
+    // This replaced the old DELETE-then-upsert: one round trip instead of two
+    // (halves egress on a ~3s-heartbeat path) and no window where a concurrent
+    // reader sees this uploader's rows vanish mid-refresh. Members who LEAVE the
+    // uploader's group/raid stop being refreshed, so their captured_at goes
+    // stale and every reader (bot /raid + web /raid + /buffs) already filters
+    // `captured_at >= now-15min`, so departed rows age out of the view exactly
+    // as before — the read-side staleness window is the age-out mechanism, not
+    // the delete. A cheap once-a-day prune (midnight chain) drops long-stale
+    // rows so the table stays small; correctness never depends on it.
     await supabase.upsert('raid_roster', rows, 'guild_id,uploaded_by_discord_id,name');
     res.writeHead(200, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({ ok: true, stored: rows.length }));
@@ -10748,11 +10829,14 @@ async function _handleAgentReporterPoll(req, res) {
   const flags = disabled ? { chat: false, buffs: false, roster: false } : _dedupFlags(tune);
 
   // Always record the heartbeat so liveness/failover works even while disabled.
+  // `camping` (agent typed /camp) demotes this agent from every election ~30s
+  // before its logout would trip the TTL — see _dropCampers.
   _reporterGuildBook(guildId).set(id, {
     last_seen: Date.now(),
     primary:   payload.primary_character ? String(payload.primary_character).slice(0, 32) : '',
     zone:      payload.zone ? String(payload.zone).slice(0, 64) : null,
     group_num: Number.isFinite(payload.group_num) ? payload.group_num : null,
+    camping:   !!payload.camping,
     has_zeal:  !!payload.has_zeal,
     ver:       payload.agent_version ? String(payload.agent_version).slice(0, 16) : null,
   });
@@ -10761,20 +10845,22 @@ async function _handleAgentReporterPoll(req, res) {
   // Buffs (P1b): coverage-ranked, 3 reporters per OCCUPIED zone. `elected.has(id)`
   // already answers "elected for MY zone" — each agent belongs to exactly one
   // zone group, so its presence in the global elected set means it won its zone.
-  // Roster (per-group) stays fail-open until P1c — served for transparency but
-  // not yet enforced (turning dedup_roster on is a no-op for now).
-  const buffElection = flags.buffs ? _electBuffReporters(guildId) : null;
+  // Roster (P1c): one reporter per RAID GROUP (HP is group-scoped) — same idea,
+  // partitioned by group_num instead of zone. Both fail-open when their flag is
+  // off (roles=true → everyone uploads).
+  const buffElection   = flags.buffs  ? _electBuffReporters(guildId)   : null;
+  const rosterElection = flags.roster ? _electRosterReporters(guildId) : null;
   const roles = {
-    chat:   flags.chat  ? chat.has(id) : true,
+    chat:   flags.chat   ? chat.has(id)                 : true,
     buffs:  buffElection ? buffElection.elected.has(id) : true,
-    roster: true,
+    roster: rosterElection ? rosterElection.elected.has(id) : true,
   };
+  const me = _reporterGuildBook(guildId).get(id);
   // Per-zone election debug for THIS agent's zone (the `election` field itself is
   // a bare string, so the zone detail rides alongside it). Only present when buff
   // dedup is live; null otherwise so the shape stays quiet in normal operation.
   let buffsZone = null;
   if (buffElection) {
-    const me = _reporterGuildBook(guildId).get(id);
     const z = me && me.zone && String(me.zone).trim();
     const zoneKey = z ? z.toLowerCase() : `__solo__${id}`;
     buffsZone = {
@@ -10784,15 +10870,29 @@ async function _handleAgentReporterPoll(req, res) {
       coverage:  _buffCoverageCount(guildId, id),
     };
   }
+  // Per-group election debug for THIS agent's group (P1c). Only present when
+  // roster dedup is live; carries the camping flag so the dashboard can show it.
+  let rosterGroup = null;
+  if (rosterElection) {
+    const g = me && Number.isFinite(me.group_num) ? me.group_num : null;
+    const groupKey = g != null ? `g${g}` : `__solo__${id}`;
+    rosterGroup = {
+      group:     g,
+      reporters: (rosterElection.byGroup[groupKey] || []).length,
+      mine:      rosterElection.elected.has(id),
+      camping:   !!(me && me.camping),
+    };
+  }
   res.writeHead(200, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify({
-    ok:         true,
-    election:   disabled ? 'disabled' : 'on',
-    ttl_ms:     REPORTER_TTL_MS,
+    ok:           true,
+    election:     disabled ? 'disabled' : 'on',
+    ttl_ms:       REPORTER_TTL_MS,
     roles,
-    flags,                  // which redundant streams are actively deduped
-    streams:    STREAM_CLASS, // classification guardrail (per_observer = never deduped)
-    buffs_zone: buffsZone,  // P1b per-zone election detail for this agent (null when off)
+    flags,                    // which redundant streams are actively deduped
+    streams:      STREAM_CLASS, // classification guardrail (per_observer = never deduped)
+    buffs_zone:   buffsZone,   // P1b per-zone election detail for this agent (null when off)
+    roster_group: rosterGroup, // P1c per-group election detail for this agent (null when off)
   }));
 }
 

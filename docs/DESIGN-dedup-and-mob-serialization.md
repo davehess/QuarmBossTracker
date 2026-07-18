@@ -30,9 +30,15 @@ the guardrail is: **the reporter election never touches a per-observer stream.**
 | raid roster | **per_group** | composition redundant, but HP comes per-group |
 | live-state, threat, casting, target-casts | **per_observer** | each client's own vantage |
 | encounter (the parse) | **per_observer** | merged max-per-player across everyone |
+| buff-lag-report | **redundant_zone** (rides the buffs role) | diagnostic "buffs feel laggy" click — N raiders in one zone feeling lag report the same fact; gate agent-side on `roles.buffs`. Local snappy-mode is set *before* the upload so a stood-down agent's own UX is unaffected. No new class/flag. |
+| debuff-clear | **per_observer / control action — NOT deduped** | a manual "✓ cured" click that suppresses an *inferred* debuff chip RAID-WIDE, from *any* clicker. Gating it would silently drop a non-elected raider's click — breaking both its local cache-clear feedback and the raid-wide suppression the feature promises from anyone. It's a rare, idempotent, deliberate action (no streaming amplification to dedup), so it stays ungated. |
 
 `per_observer` streams have **no dedup flag** — no feature flag can ever thin
-them. The control plane can only dedup the redundant classes.
+them. The control plane can only dedup the redundant classes. Two click-driven
+endpoints were audited (2026-07-18) for bypassing election: **buff-lag-report**
+is a redundant diagnostic and now rides `roles.buffs` (smallest correct gate,
+fail-open); **debuff-clear** is a per-actor control action and is deliberately
+left ungated (see the table).
 
 ## Why the parse is already robust (and roles don't matter there)
 
@@ -113,7 +119,7 @@ mobs off the current data — it can't be trusted. Do build:
 
 `reporter-poll` now serves, per agent: `roles` (which redundant streams to
 upload), `flags` (which redundant streams are *actively* deduped — `dedup_chat`
-ON, `dedup_buffs`/`dedup_roster` OFF until P1b/P1c), and `streams` (the
+ON by default, `dedup_buffs`/`dedup_roster` OFF), and `streams` (the
 classification above, so the fleet and dashboards can see the guardrail). Flags
 read live from the tuning map; `flag_disable_reporter_election` is the global
 kill switch. Per-observer streams appear in `streams` as `per_observer` and have
@@ -131,5 +137,34 @@ charm timers, no log line for other clients), which always upload. Fail-open
 throughout: bot down / flag off / zone unknown / cold coverage → everyone
 uploads. Gated behind `dedup_buffs` (default OFF) on `/admin/overlays`.
 
-**Next:** P1c roster (per-group), and the observer-anchored target tracks (#56)
-so Rathe-Council babysit groups render as distinct mobs.
+**P1c (built 2026-07-18):** roster election is live — **one reporter per raid
+group**. Roster composition is identical from every raider's view, but per-member
+HP arrives only for the uploader's OWN group's Zeal gauges, so the dedup unit is
+the group, not the whole raid. The bot partitions live agents by the `group_num`
+each sends in its reporter-poll heartbeat (derived agent-side from the Zeal raid
+pipe for its primary character — the mechanism already wired end-to-end, so no
+new plumbing) and elects the top 1 per group by the stable name/id rank. An agent
+with an unknown/missing group is its own singleton (fail-open — always elected).
+`reporter-poll` returns `roles.roster = dedup_roster ? electedForMyGroup : true`;
+the agent honors it in the raid-roster upload path with the same fail-open
+staleness rule as chat/buffs. Gated behind `dedup_roster` (default OFF) on
+`/admin/overlays`. **Write-path (item 2.1):** the ingest is now a plain
+per-uploader upsert (merge-duplicates) instead of DELETE-then-upsert — one round
+trip, no mid-refresh vanish window; departed members age out via the readers'
+existing `captured_at >= now-15min` window (unchanged), and a daily midnight
+prune bounds table size.
+
+**Camp-out early handoff (built 2026-07-18, guild-lead request):** a raider who
+types `/camp` is ~30s from vanishing. The agent detects the camp-start log line
+(`/prepare your camp/i`), sets a `camping` flag, and fires an IMMEDIATE
+reporter-poll with `camping: true` (the abandon line `/abandon your preparations
+to camp/i` clears it, also immediate). The bot stores `camping` per registry
+entry and **every** election (chat, buffs, roster) drops camping agents from
+candidacy — UNLESS a camper is the only live candidate in its scope, in which
+case it keeps reporting (fail-open, `_dropCampers`). This starts the handoff to
+a live agent ~30s before the 60s TTL would notice the logout; actual logout is
+still the TTL's job. Per-observer streams have no roles, so camping can never
+touch them — the structural guarantee holds.
+
+**Next:** the observer-anchored target tracks (#56) so Rathe-Council babysit
+groups render as distinct mobs.

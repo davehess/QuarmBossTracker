@@ -90,8 +90,24 @@ folly** — it's here.*
     (spell,target) landings per uploader over a 10-min window and elects the top
     3 per heartbeat-zone; agent honors `roles.buffs` in the buff_casts path,
     `is_charm_spell` rows exempt (always upload). Gated behind `dedup_buffs`
-    (default OFF) on `/admin/overlays`; fail-open everywhere. **P1c (roster,
-    per-group dedup) still queued.**
+    (default OFF) on `/admin/overlays`; fail-open everywhere.
+  - **P1c + strays + camp-out done (2026-07-18, bot 3.0.207 + agent 3.3.82
+    beta)**: **#72 election work complete.** (1) **Roster election** — 1 reporter
+    per RAID GROUP (`_electRosterReporters`), partitioned by the `group_num` the
+    agent already sends in its heartbeat (derived from the Zeal raid pipe for its
+    primary); unknown group → own singleton (always elected). Agent honors
+    `roles.roster` in the raid-roster upload path. Gated behind `dedup_roster`
+    (default OFF). **Write-path (2.1):** ingest is now a plain per-uploader upsert
+    (was DELETE+upsert) — one round trip, departed rows age out via the readers'
+    existing 15-min `captured_at` window + a daily midnight prune. (2) **Stray
+    endpoints:** `buff-lag-report` (diagnostic) now rides `roles.buffs`
+    agent-side (local snappy-mode unaffected); `debuff-clear` deliberately LEFT
+    UNGATED (per-actor control action — gating would drop a non-elected clicker's
+    "✓ cured" feedback). (3) **Camp-out early handoff** — agent detects `/camp`
+    (`/prepare your camp/i`), sets `camping`, fires an immediate heartbeat; bot
+    demotes camping agents from every election unless they're the sole live
+    candidate in scope (`_dropCampers`, fail-open), starting handoff ~30s before
+    the TTL. Fail-open throughout; per-observer streams untouched (no roles).
 - **Callout trifecta, in progress (2026-07-17, #76)** — the "why TTS never
   fires" fixes: triggers evaluate before the privacy/combat filter so
   ENRAGED/snare/mez/fizzle templates fire (agent 3.3.76 beta, 9/17 dead
