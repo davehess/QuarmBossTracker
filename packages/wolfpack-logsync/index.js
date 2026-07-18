@@ -19335,15 +19335,18 @@ function _reporterHeartbeatOnce() {
         try {
           const j = JSON.parse(buf);
           if (j && j.roles && typeof j.roles === 'object') {
-            const prev = _reporterRoles.chat;
+            const prevChat  = _reporterRoles.chat;
+            const prevBuffs = _reporterRoles.buffs;
             _reporterRoles = {
               chat:   j.roles.chat   !== false,   // any missing key defaults TRUE (fail-open)
               buffs:  j.roles.buffs  !== false,
               roster: j.roles.roster !== false,
             };
             _reporterElectionOn = j.election === 'on';
-            if (prev !== _reporterRoles.chat)
+            if (prevChat !== _reporterRoles.chat)
               console.log(`[reporter] chat role → ${_reporterRoles.chat ? 'REPORTER (uploading /gu·/rs)' : 'stand down'} (election ${j.election})`);
+            if (prevBuffs !== _reporterRoles.buffs)   // #72 P1b — buff-landing reporter role
+              console.log(`[reporter] buffs role → ${_reporterRoles.buffs ? 'REPORTER (uploading buff landings)' : 'stand down — charm rows still upload'} (election ${j.election})`);
           } else { _reporterFailOpen(); }
         } catch { _reporterFailOpen(); }   // unparseable → fail-open
       });
@@ -23341,6 +23344,18 @@ function uploadBuffCasts(casts, { dryRun } = {}) {
   if (dryRun) {
     for (const c of casts) console.log(`[buff-cast] ${c.target} ← ${c.spell_name || '(ambiguous: ' + c.landing_text + ')'} @ ${c.cast_at}`);
     return Promise.resolve();
+  }
+  // #72 P1b: ordinary observed landings are ZONE-redundant — every same-zone
+  // agent sees the identical land — so only the elected buff reporter(s) upload
+  // them; non-reporters drop them (a reporter in the zone still sends them).
+  // CRITICAL exception: is_charm_spell rows are agent-SYNTHESIZED per-observer
+  // facts (charm timers — no cast_on_other log line exists for other clients),
+  // so they are NEVER gated and always ship. Fail-open: buffs role defaults TRUE
+  // and RESETS to true on any poll failure, so a lost elector = upload everything
+  // (same staleness rule the chat gate uses). Split the batch accordingly.
+  if (!_reporterRoles.buffs) {
+    casts = casts.filter(c => c.is_charm_spell);
+    if (casts.length === 0) return Promise.resolve();
   }
   enqueueUpload('buff_cast', { agent_version: AGENT_VERSION, casts });
   return Promise.resolve();
