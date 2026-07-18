@@ -105,6 +105,10 @@
      to-expire is on top (the agent sorts that way).                      */
   #timers{position:fixed;top:34px;left:8px;right:8px;display:flex;flex-direction:column;
     gap:3px;z-index:40;min-width:180px;pointer-events:none;
+    /* Safety valve: if the auto-grow clamp (~60% of the work area) is reached,
+       the stack scrolls internally instead of running off-screen. Soonest-to-
+       expire chips are sorted to the top so the important ones stay visible. */
+    max-height:calc(100vh - 42px);overflow-y:auto;overflow-x:hidden;
     font-family:ui-monospace,Menlo,Consolas,monospace}
   .timer-row{position:relative;display:flex;align-items:baseline;gap:8px;
     padding:3px 8px 5px;background:rgb(0 0 0 / var(--bg-alpha));border-radius:4px;
@@ -142,6 +146,15 @@
     0%,100%{box-shadow:0 0 0 0 rgba(255,138,101,0)}
     50%    {box-shadow:0 0 0 2px rgba(255,138,101,0.7), 0 0 12px rgba(255,82,82,0.6)}
   }
+  /* #107 per-chip ✕ dismiss (loot auction chips). #timers is click-through
+     (pointer-events:none) so the row stays out of the way; the ✕ re-enables
+     pointer-events AND uses the hover-interact handshake so the click lands
+     even while the whole overlay is locked. */
+  .timer-row .timer-x{flex-shrink:0;width:16px;height:16px;display:flex;
+    align-items:center;justify-content:center;border-radius:3px;margin-left:2px;
+    background:rgba(0,0,0,0.35);color:#c9d1d9;border:1px solid rgba(255,255,255,0.18);
+    font-size:11px;line-height:1;cursor:pointer;pointer-events:auto}
+  .timer-row .timer-x:hover{color:#fff;background:rgba(248,113,113,0.6);border-color:#f87171}
   /* Setup mode pushes the timer stack down so the orange status bar at
      top doesn't sit on top of it. */
   body.setup #timers{top:58px}
@@ -473,9 +486,35 @@
       .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
       .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
   }
+  // #107 chips the user just dismissed — skip re-adding them for a few seconds
+  // so an in-flight /api/state poll (started before the cancel POST landed)
+  // can't flicker the chip back. Pruned on read.
+  const _dismissedIds = new Map();   // id → expiry ms
+  function _isDismissed(id){
+    const exp = _dismissedIds.get(id);
+    if (exp == null) return false;
+    if (Date.now() > exp){ _dismissedIds.delete(id); return false; }
+    return true;
+  }
+  function dismissTimer(id){
+    if (!id) return;
+    _dismissedIds.set(id, Date.now() + 4000);
+    const n = timerNodes.get(id);
+    if (n){ n.row.remove(); timerNodes.delete(id); }
+    try { window.mimic.overlayHoverInteractive(false); } catch(e){}
+    try {
+      fetch('http://127.0.0.1:'+PORT+'/api/timers/cancel', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ id: id }),
+      }).catch(function(){});
+    } catch(e){}
+    // Shrink the window back now that a chip is gone.
+    try { requestAutoHeight(); } catch(e){}
+  }
   function renderTimers(serverTimers){
     const seen = new Set();
     for (const t of (serverTimers || [])){
+      if (_isDismissed(t.id)) continue;   // just dismissed — don't re-add
       seen.add(t.id);
       let n = timerNodes.get(t.id);
       const target = t.target || '';
@@ -494,6 +533,17 @@
           + '<span class="timer-effect">' + _esc(effect) + '</span>'
           + '</span>'
           + '<div class="timer-bar"></div>';
+        // #107 dismissible chips (loot auctions) carry a per-chip ✕.
+        if (t.dismissible){
+          const x = document.createElement('span');
+          x.className = 'timer-x';
+          x.textContent = '✕';
+          x.title = 'Dismiss this timer';
+          x.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch(e){} });
+          x.addEventListener('mouseleave', function(){ try { window.mimic.overlayHoverInteractive(false); } catch(e){} });
+          x.addEventListener('click', function(){ dismissTimer(t.id); });
+          row.appendChild(x);
+        }
         timersEl.appendChild(row);
         n = {
           row,
@@ -556,20 +606,81 @@
       else              n.row.classList.remove('warn');
       painted++;
     }
-    // Resize the window to fit the timer stack so we never crop a row off
-    // the bottom — and shrink it back when the stack is empty (the overlay
-    // is invisible while idle, then grows just enough to hold what's live).
-    try {
-      if (window.mimic && window.mimic.autoFitOverlay) {
-        const el = document.getElementById('timers');
-        // 50 px baseline keeps room for the centered alert flash when no
-        // timers are active; otherwise pin to the timer stack height + the
-        // 34 px top inset + a small bottom buffer.
-        const wanted = painted > 0 ? (el.offsetTop + el.scrollHeight + 8) : 50;
-        window.mimic.overlayAutoHeight && window.mimic.overlayAutoHeight(wanted);
-      }
-    } catch (e) {}
+    // Keep the window sized to ALL of its live content (timer + loot chips,
+    // sticky callouts, feedback buttons). A backstop for the ResizeObserver
+    // below — cheap, and it also catches the warn-class churn.
+    requestAutoHeight();
   }
+
+  // ── Auto-grow (#107) ────────────────────────────────────────────────────
+  // The window must grow to fit whatever is live so bottom buttons (feedback
+  // votes, sticky ✕, loot-chip ✕) never clip. Earlier this measured ONLY the
+  // #timers stack and shrank the window to 50 px whenever no timer was active
+  // — which cropped the sticky stack + feedback buttons that live in the
+  // centered #alertcol. We now measure BOTH regions and take the max.
+  //
+  // measureWanted → window.mimic.overlayAutoHeight → main.js applies setBounds,
+  // honoring the per-overlay grow-up/grow-down option (grow-down keeps the top
+  // edge fixed; grow-up keeps the bottom fixed and moves y up) and clamping to
+  // the work area. Height is fully auto-managed here; the right-click resize
+  // presets only change WIDTH, so manual sizing and auto-grow never fight —
+  // the 50 px baseline is the floor, ~60% of the work area is the ceiling.
+  const _alertColEl = document.getElementById('alertcol');
+  function measureWanted(){
+    var baseline = 50;
+    var timersBottom = 0;
+    if (timersEl && timersEl.children.length){
+      // #timers is position:fixed at top:34px and grows downward.
+      timersBottom = timersEl.offsetTop + timersEl.scrollHeight + 8;
+    }
+    var colNeeded = 0;
+    if (_alertColEl){
+      // #alertcol is vertically centered in the body, so a column of natural
+      // height H needs the window to be >= H or it clips top AND bottom (the
+      // cut-off sticky ✕ / feedback buttons bug). scrollHeight is unaffected
+      // by the centering, so it is the honest content height.
+      var ch = _alertColEl.scrollHeight;
+      if (ch > 0) colNeeded = ch + 24;
+    }
+    var wanted = Math.max(baseline, timersBottom, colNeeded);
+    // Sane clamp — ~60% of the work area; beyond that #timers scrolls.
+    var avail = (window.screen && window.screen.availHeight) ? window.screen.availHeight : 1000;
+    var cap = Math.max(baseline, Math.round(avail * 0.6));
+    return Math.min(wanted, cap);
+  }
+  var _lastWanted = 0;
+  var _shrinkTimer = null;
+  function _sendHeight(h){
+    _lastWanted = h;
+    try { if (window.mimic && window.mimic.overlayAutoHeight) window.mimic.overlayAutoHeight(h); } catch(e){}
+  }
+  function requestAutoHeight(){
+    var wanted = measureWanted();
+    if (wanted >= _lastWanted - 1){
+      // Grow (or unchanged) — apply immediately; cancel any pending shrink so a
+      // brief content bump doesn't get overridden by a stale shrink.
+      if (_shrinkTimer){ clearTimeout(_shrinkTimer); _shrinkTimer = null; }
+      if (wanted !== _lastWanted) _sendHeight(wanted);
+    } else {
+      // Shrink — debounce ~250 ms so rapid fire churn (chips popping in/out
+      // during a hectic pull) doesn't jitter the window edge.
+      if (_shrinkTimer) clearTimeout(_shrinkTimer);
+      _shrinkTimer = setTimeout(function(){
+        _shrinkTimer = null;
+        _sendHeight(measureWanted());
+      }, 250);
+    }
+  }
+  // ResizeObserver on both growing regions — the primary, event-driven driver
+  // (chip added/removed, sticky row pinned, alert flash) so growth is instant
+  // and not tied to the 100 ms paint tick.
+  try {
+    if (window.ResizeObserver){
+      var _ro = new ResizeObserver(function(){ requestAutoHeight(); });
+      if (_alertColEl) _ro.observe(_alertColEl);
+      if (timersEl)    _ro.observe(timersEl);
+    }
+  } catch(e){}
 
   async function tick(){
     try{

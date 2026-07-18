@@ -9598,6 +9598,9 @@ function _serializeForDashboard() {
       };
     }),
     activeTimers:        _activeTimersSnapshot(),
+    // #107 loot-post announce prefs (dashboard Triggers-tab toggle + knob).
+    lootAuctionTts:        _optinState.lootAuctionTts !== false,
+    lootAuctionDefaultSec: _lootAuctionDefaultSec(),
     ..._serializeZealForWeb(),
 
     lifetime:           stats.lifetime,
@@ -11474,6 +11477,20 @@ function renderTriggers(s) {
     }
     h += '</table>';
   }
+  h += '</div>';
+
+  // #107 Loot auction announce — dashboard toggle + default-duration knob for
+  // the local TTS callout that fires when a drop list is posted in /gu or /rs.
+  // No <details> here, so no wpKeep needed; the checked/value bits track server
+  // state and only change on user action, keeping this HTML byte-stable.
+  h += '<div class="card wide"><h2>💰 Loot auction announce <span class="dim" style="font-size:11px;font-weight:normal">(local — speaks when a drop list is posted in /gu or /rs)</span></h2>';
+  h += '<label style="display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer">';
+  h += '<input type="checkbox" id="lootAucTts"' + (s.lootAuctionTts !== false ? ' checked' : '') + '>';
+  h += '<span>Announce loot posts by voice + show a countdown chip on the trigger overlay</span></label>';
+  h += '<div class="dim" style="font-size:11px;margin-top:5px">Speaks the item count and the auction window (e.g. &ldquo;Loot posted &mdash; 3 items, bids open 2 minutes&rdquo;) through the same voice as your triggers, so it also needs <b>Trigger alerts (TTS)</b> on. The chip counts down like a Death Touch timer and can be dismissed with its &times;.</div>';
+  h += '<label style="display:flex;align-items:center;gap:8px;font-size:12px;margin-top:8px">Default auction length when none is stated:';
+  h += '<input type="number" id="lootAucDur" min="15" max="1800" step="5" value="' + (s.lootAuctionDefaultSec || 120) + '" style="width:70px;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:3px 6px;border-radius:4px;font-family:inherit;font-size:12px"> seconds</label>';
+  h += '<span id="lootAucMsg" class="dim" style="font-size:11px;margin-left:8px"></span>';
   h += '</div>';
 
   // Suggested triggers — one-click catalog of pre-tested alerts grouped by
@@ -15027,6 +15044,21 @@ async function dismissTopDamage(key) {
       body: JSON.stringify({ testOnly: true }),
     });
   }
+  // #107 loot auction announce prefs — persist the toggle / default-duration
+  // knob. Partial body: only the changed field is sent.
+  async function saveLootPref(body) {
+    var msg = document.getElementById('lootAucMsg');
+    try {
+      await fetch('/api/loot-prefs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (msg) { msg.textContent = 'Saved.'; msg.style.color = 'var(--green)'; }
+    } catch (e) {
+      if (msg) { msg.textContent = 'Save failed.'; msg.style.color = 'var(--red)'; }
+    }
+  }
   async function onDelete(id) {
     if (!id) return;
     if (!confirm('Delete this trigger?')) return;
@@ -15258,6 +15290,23 @@ async function dismissTopDamage(key) {
         else if (t.id === 'trigClearTestBtn') onClearTests();
       });
       section._wpTrigClickBound = true;
+    }
+    // Delegated change handler (survives the 2s section morph) for the loot
+    // auction announce toggle + default-duration knob (#107).
+    if (!section._wpTrigChangeBound) {
+      section.addEventListener('change', function(e){
+        var t = e.target;
+        if (!t || !t.id) return;
+        if (t.id === 'lootAucTts') {
+          saveLootPref({ lootAuctionTts: !!t.checked });
+        } else if (t.id === 'lootAucDur') {
+          var v = parseInt(t.value, 10);
+          if (!isFinite(v)) return;
+          v = Math.max(15, Math.min(1800, v));
+          saveLootPref({ lootAuctionDefaultSec: v });
+        }
+      });
+      section._wpTrigChangeBound = true;
     }
     fetchAndRenderList();
     mounted = true;
@@ -16600,6 +16649,48 @@ function startWebDashboard(port) {
         return res.end(JSON.stringify({ ok: true, cleared, cleared_timers: clearedTimers }));
       }
 
+      // POST /api/timers/cancel — dismiss a single active timer by id. Powers
+      // the per-chip ✕ on the trigger overlay (loot auction chips, #107). A
+      // loot chip's id is `loot|<sig>`; when dismissed we also drop the auction
+      // correlation entry so a stray repeat post opens a fresh chip rather than
+      // silently resetting a chip the user just closed.
+      if (req.url === '/api/timers/cancel' && req.method === 'POST') {
+        const body = await _readBody(req).catch(() => '');
+        let payload = {};
+        try { payload = body ? JSON.parse(body) : {}; } catch { payload = {}; }
+        const id = String(payload?.id || '');
+        const ok = id ? _cancelTimer(id) : false;
+        if (ok && id.startsWith('loot|')) {
+          const sig = id.slice('loot|'.length);
+          _lootAuctions.delete(sig);
+          if (_lastLootSig === sig) _lastLootSig = null;
+        }
+        scheduleRender();
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ ok }));
+      }
+
+      // POST /api/loot-prefs — dashboard Triggers-tab toggle + default-duration
+      // knob for the #107 loot-post announce. Partial body: any field omitted
+      // keeps its current value. Persists to logsync.optin.json.
+      if (req.url === '/api/loot-prefs' && req.method === 'POST') {
+        const body = await _readBody(req).catch(() => '');
+        let payload = {};
+        try { payload = body ? JSON.parse(body) : {}; } catch { payload = {}; }
+        if (typeof payload.lootAuctionTts === 'boolean') _optinState.lootAuctionTts = payload.lootAuctionTts;
+        if (Number.isFinite(payload.lootAuctionDefaultSec)) {
+          _optinState.lootAuctionDefaultSec = Math.max(15, Math.min(1800, Math.round(payload.lootAuctionDefaultSec)));
+        }
+        _saveOptInState();
+        scheduleRender();
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({
+          ok: true,
+          lootAuctionTts:        _optinState.lootAuctionTts !== false,
+          lootAuctionDefaultSec: _lootAuctionDefaultSec(),
+        }));
+      }
+
       // POST /api/personal-triggers/import — accepts a GINA / EQLogParser
       // XML blob (both export the same SharedTriggers shape) and APPENDS
       // parsed entries to the personal triggers list. Existing personal
@@ -17462,6 +17553,13 @@ const _optinState = {
   ignoredPaths: new Set(),
   // Character names hidden from the Tank/Weapon Loadouts view
   hiddenLoadoutChars: new Set(),
+  // #107 loot-post announce. lootAuctionTts gates the local TTS callout +
+  // countdown chip when a drop list is posted in /gu or /rs (default ON);
+  // lootAuctionDefaultSec is the auction window used when the bid call doesn't
+  // state a duration. Both live here so they persist across runs like the
+  // other dashboard-set flags.
+  lootAuctionTts: true,
+  lootAuctionDefaultSec: 120,
 };
 
 function _optinSortFn() {
@@ -17489,6 +17587,10 @@ function _loadOptInState() {
     _optinState.progress             = raw.progress             || {};
     _optinState.ignoredPaths         = new Set(raw.ignoredPaths || []);
     _optinState.hiddenLoadoutChars   = new Set((raw.hiddenLoadoutChars || []).map(s => s.toLowerCase()));
+    if (typeof raw.lootAuctionTts === 'boolean') _optinState.lootAuctionTts = raw.lootAuctionTts;
+    if (Number.isFinite(raw.lootAuctionDefaultSec)) {
+      _optinState.lootAuctionDefaultSec = Math.max(15, Math.min(1800, Math.round(raw.lootAuctionDefaultSec)));
+    }
   } catch { /* missing or unreadable — fresh state */ }
 }
 function _saveOptInState() {
@@ -17497,6 +17599,8 @@ function _saveOptInState() {
       progress:           _optinState.progress,
       ignoredPaths:       [..._optinState.ignoredPaths],
       hiddenLoadoutChars: [...(_optinState.hiddenLoadoutChars || [])],
+      lootAuctionTts:        _optinState.lootAuctionTts !== false,
+      lootAuctionDefaultSec: _optinState.lootAuctionDefaultSec || 120,
     }, null, 2));
   } catch { /* non-fatal */ }
 }
@@ -23615,12 +23719,173 @@ function _activeTimersSnapshot() {
       warning_ms:   t.warn_ms || 0,
       warn_text:    t.warn_text || null,
       scope:        t.scope,
+      // #107 loot chips carry kind:'loot' + dismissible so the trigger overlay
+      // draws a per-chip ✕ (deathtouch timers stay non-dismissible as before).
+      kind:         t.kind || null,
+      dismissible:  !!t.dismissible,
       test:         t.test,
     });
   }
   // Soonest-to-expire first — that's the most useful default for a stack of bars.
   out.sort((a, b) => a.remaining_ms - b.remaining_ms);
   return out;
+}
+
+// ── #107 Loot-post announce + auction countdown chip ────────────────────────
+// When an officer posts a drop list in /gu or /rs (the same delimited item
+// list the officer Loot capture panel already parses), that IS the universal
+// bid-opening signal — EVERY raider's agent tails the line locally, so the
+// callout is a per-client LOCAL TTS + a countdown chip on the trigger overlay.
+// No relay, no dedup-across-clients problem. The TTS rides the SAME overlay
+// fire pipeline as triggers (_pushOverlay → recentTriggerFires → triggers.html
+// speaks it only when the master `enableTriggerTts` flag is on), and the chip
+// reuses the trigger _activeTimers machinery so it looks/behaves exactly like
+// a Death Touch countdown.
+//
+// Detection is deliberately high-precision, leaning on parseLootChatBody's
+// strict Title-Case item-name guard (rejects ordinary chatter). A single-item
+// link needs extra bid context to fire; a multi-item drop list is a loot post
+// on its own. A stated duration ("2 min", "90s") is parsed when present, else
+// lootAuctionDefaultSec (120s) is used, and a later bid call that DOES state a
+// duration re-anchors the most-recent auction's timer.
+const _lootAuctions = new Map();   // sig → { items, openedAtMs, channel }
+let _lastLootSig     = null;
+let _lastLootBidCall = { atMs: 0, durSec: null };
+// Words that mark a bid call. Kept broad but anchored on \b so it doesn't fire
+// on substrings ("forbidden", "auctioneer" etc. still match "bid"/"auction" as
+// whole words only where intended).
+const LOOT_BID_CALL_RX = /\b(bids?|bidding|dkp|auctions?|going once|going twice|min bid|starting bid)\b/i;
+
+function _lootAuctionDefaultSec() {
+  const v = _optinState.lootAuctionDefaultSec;
+  return Number.isFinite(v) ? Math.max(15, Math.min(1800, Math.round(v))) : 120;
+}
+
+// Tolerant duration parse: "2 min", "2 minutes", "2m", "90 sec", "90s",
+// "90 seconds". Minutes win when both a bare number+unit appear. Clamped so a
+// stray "600 minutes" can't pin a chip on-screen forever.
+function _parseAuctionDuration(text) {
+  if (!text) return null;
+  const s = String(text);
+  let m = s.match(/(\d{1,3})\s*(?:min(?:ute)?s?|m)\b/i);
+  if (m) { const v = parseInt(m[1], 10); if (v >= 1 && v <= 30) return v * 60; }
+  m = s.match(/(\d{1,4})\s*(?:sec(?:ond)?s?|s)\b/i);
+  if (m) { const v = parseInt(m[1], 10); if (v >= 10 && v <= 1800) return v; }
+  return null;
+}
+
+// Spoken form of a duration for the TTS callout.
+function _spokenDuration(sec) {
+  sec = Math.round(sec);
+  if (sec % 60 === 0) { const mm = sec / 60; return mm + (mm === 1 ? ' minute' : ' minutes'); }
+  if (sec < 60) return sec + ' seconds';
+  const mm = Math.floor(sec / 60), ss = sec % 60;
+  return mm + (mm === 1 ? ' minute ' : ' minutes ') + ss + ' seconds';
+}
+
+// Chip label — a single item names it; multiple items count.
+function _lootChipLabel(items) {
+  if (items.length === 1) {
+    const it = items[0];
+    return '💰 Bids — ' + it.name + (it.quantity > 1 ? ' (x' + it.quantity + ')' : '');
+  }
+  return '💰 Loot bids (' + items.length + ')';
+}
+
+function _announceLootPost(items, durSec) {
+  const distinct = items.length;
+  const itemWord = distinct === 1 ? 'item' : 'items';
+  const durPhrase = _spokenDuration(durSec);
+  const spoken = 'Loot posted — ' + distinct + ' ' + itemWord + ', bids open ' + durPhrase;
+  _pushOverlay({
+    text:        '💰 Loot posted — ' + distinct + ' ' + itemWord + ' · bids ' + durPhrase,
+    tts:         spoken,
+    color:       'gold',
+    duration_ms: 6000,
+    shownAt:     Date.now(),
+    firedAt:     Date.now(),
+    trigger:     'Loot auction',
+    scope:       'loot',
+    test:        false,
+  });
+}
+
+// Open (or restart) an auction chip for this item set. Same signature =
+// restart in place (repeat post RESETS, never stacks a duplicate); a distinct
+// item set = a new independent chip (concurrent auctions are real). The TTS
+// callout fires only on the FIRST open of a set — multibox second-log copies
+// and repeat posts reset silently.
+function _openOrResetLootAuction(sig, items, durSec, nowMs, channel, silent) {
+  const id = 'loot|' + sig;
+  const existed = _activeTimers.has(id);
+  const label = _lootChipLabel(items);
+  const warnMs = durSec > 25 ? 15000 : 0;
+  _activeTimers.set(id, {
+    id,
+    name:          label,
+    target:        null,
+    effect:        label,
+    started_at_ms: nowMs,
+    ends_at_ms:    nowMs + durSec * 1000,
+    duration_sec:  durSec,
+    color:         'gold',
+    end_text:      null,
+    warn_ms:       warnMs,
+    warn_text:     warnMs ? ('15 seconds left — ' + (items.length === 1 ? items[0].name : items.length + ' item bids')) : null,
+    trigger_name:  null,
+    captures:      null,
+    scope:         'loot',
+    kind:          'loot',
+    dismissible:   true,
+    test:          false,
+  });
+  _lootAuctions.set(sig, { items, openedAtMs: nowMs, channel });
+  _lastLootSig = sig;
+  if (!existed && !silent) _announceLootPost(items, durSec);
+  scheduleRender();
+}
+
+// Universal entry point — called for every live /gu + /rs line (NOT the
+// --since backfill, which replays history and must not narrate old loot).
+function noteLootAuction(chatMsg) {
+  try {
+    if (!chatMsg || (chatMsg.channel !== 'guild' && chatMsg.channel !== 'raid')) return;
+    if (_optinState.lootAuctionTts === false) return;   // feature off
+    const text  = String(chatMsg.text || '');
+    const nowMs = Date.parse(chatMsg.ts) || Date.now();
+    const items = parseLootChatBody(text);           // strict Title-Case guard
+    const statedDur = _parseAuctionDuration(text);
+    const hasBidWord = LOOT_BID_CALL_RX.test(text);
+
+    if (items.length >= 1) {
+      // False-positive guard: a lone single-item link needs bid context (a bid
+      // word or duration in THIS line, or a bid call heard in the last 30s).
+      // Multi-item drop lists stand on their own — that's a loot post.
+      const recentBidCall = (nowMs - _lastLootBidCall.atMs) < 30_000 && _lastLootBidCall.atMs > 0;
+      if (items.length < 2 && !hasBidWord && statedDur == null && !recentBidCall) return;
+      const sig = items.map(i => i.name.toLowerCase()).sort().join('~');
+      // Duration precedence: this line's stated value → a recent bid call's
+      // stated value → the configured default.
+      const durSec = statedDur
+        || (recentBidCall ? _lastLootBidCall.durSec : null)
+        || _lootAuctionDefaultSec();
+      _openOrResetLootAuction(sig, items, durSec, nowMs, chatMsg.channel, false);
+      return;
+    }
+
+    // No item list. A standalone bid call ("bids open, 2 minutes") re-anchors
+    // the most-recent open auction's window when it states a duration — this is
+    // the drop-list-then-bid-call two-line workflow.
+    if (hasBidWord) {
+      _lastLootBidCall = { atMs: nowMs, durSec: statedDur || null };
+      if (statedDur != null && _lastLootSig && _lootAuctions.has(_lastLootSig)) {
+        const a = _lootAuctions.get(_lastLootSig);
+        if ((nowMs - a.openedAtMs) < 120_000) {
+          _openOrResetLootAuction(_lastLootSig, a.items, statedDur, nowMs, a.channel, true);
+        }
+      }
+    }
+  } catch (e) { void e; }
 }
 
 function _expandTemplate(template, captures) {
@@ -25217,6 +25482,10 @@ async function main() {
           // Dedupes against the other live loop within 10 min, so being hooked
           // in both places is safe (this one is the primary relay path).
           noteLootFromChat(chatMsg);
+          // #107 loot-post TTS + auction countdown chip. LIVE tail only — the
+          // --since backfill path deliberately does NOT call this, so replaying
+          // an old log never narrates stale loot or spawns phantom chips.
+          noteLootAuction(chatMsg);
           // Cross-log arbitration: same channel + normalized text within 90s =
           // the same message captured from this person's main + alt logs
           // (self-form in one, bystander-form in the others). The speaker is
@@ -25290,6 +25559,9 @@ module.exports = {
   EncounterBuilder, characterFromFilename,
   trackChChainLine, chChainSnapshot,
   _readZipEntry, _parseCrashReason, _crashZipTime,
+  // #107 loot-post announce — exported for the scratchpad smoke test.
+  parseLootChatBody, noteLootAuction, _parseAuctionDuration, _spokenDuration,
+  _lootChipLabel, _activeTimers, _activeOverlays, _optinState,
 };
 
 if (require.main === module) {
