@@ -8971,6 +8971,16 @@ function _serializeForDashboard() {
       const sd = _controlStandDown();
       return { down: sd.down, reason: sd.reason, minVerNum: _controlPlane.minVerNum, myVerNum: _verNum(AGENT_VERSION) };
     })(),
+    // #106 multiplexed poll — one GET replacing the six per-client poll loops.
+    // mode 'multiplexed' normally; 'fallback' after a 404/old-bot detection (this
+    // process runs the individual loops instead). lastJitterMs is the most recent
+    // encounter-upload burst jitter applied (0 = none / small solo parse).
+    poll: {
+      mode:         _pollSupported === false ? 'fallback' : 'multiplexed',
+      supported:    _pollSupported,
+      lastOkAt:     _pollOkAt || null,
+      lastJitterMs: stats._lastEncounterJitterMs || 0,
+    },
     // Charm-pet tick tracker — array form so the dashboard can render
     // a 6s countdown to next mob tick / next charm check. Sorted most-
     // recently-updated first; capped to 12 to keep the payload small.
@@ -18764,6 +18774,32 @@ function showHealers() {
 // All uploads route through enqueueUpload() so a DNS / network / 5xx failure
 // doesn't drop data. The queue persists to logsync.queue.json and retries on
 // exponential backoff via the drain loop started in main().
+
+// #106 encounter-burst flattening. At 60 raiders a boss kill offers ~90MB of
+// encounter payloads at the SAME instant (everyone flushes on the death line).
+// Delay a real encounter's network enqueue by a DETERMINISTIC hash(uploader) %
+// 15s so the fleet spreads across a 15s window instead of colliding — the
+// ±30min find_or_create_encounter dedup makes a few seconds immaterial, and the
+// durable queue already honors 429/Retry-After if the bot still needs to push
+// back. Deterministic per client so re-runs never re-randomize. Local overlay/UX
+// is untouched (it updates from parseEvent, not the upload); only the enqueue-
+// to-network moment moves. Backfill replays skip it (idempotent, not a burst).
+const ENCOUNTER_JITTER_MAX_MS    = 15_000;
+const ENCOUNTER_JITTER_MIN_BYTES = 256 * 1024;
+function _encounterUploadJitterMs(uploader) {
+  const s = String(uploader || '');
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = (((h << 5) + h) ^ s.charCodeAt(i)) >>> 0;
+  return h % ENCOUNTER_JITTER_MAX_MS;
+}
+function _shouldJitterEncounterUpload(queueLen, bytes) {
+  // Skip the jitter only for a small payload with an otherwise-empty queue
+  // (solo/duo parse) — the dashboard card should feel instant. Anything larger,
+  // or any time we're already draining others' data, rides the jitter.
+  if (queueLen === 0 && bytes < ENCOUNTER_JITTER_MIN_BYTES) return false;
+  return true;
+}
+
 function uploadEncounter(payload, { botUrl, token, dryRun }) {
   const isBackfill = payload?.backfill === true;
   // Honor the owner's exclude_from_stats setting for the parser character.
@@ -18783,6 +18819,19 @@ function uploadEncounter(payload, { botUrl, token, dryRun }) {
     if (!isBackfill) recordUploadForDashboard(payload, payload.character);
     scheduleRender();
     return Promise.resolve();
+  }
+  // #106 burst jitter — defer only the network enqueue, never local UX.
+  if (!isBackfill) {
+    let bytes = 0;
+    try { bytes = Buffer.byteLength(JSON.stringify(payload)); } catch { bytes = 0; }
+    if (_shouldJitterEncounterUpload(_uploadQueue.length, bytes)) {
+      const jitter = _encounterUploadJitterMs(payload?.character || _primaryCharacter());
+      if (jitter > 0) {
+        stats._lastEncounterJitterMs = jitter;
+        setTimeout(() => { try { enqueueUpload('encounter', payload); } catch { /* */ } }, jitter).unref?.();
+        return Promise.resolve();
+      }
+    }
   }
   enqueueUpload('encounter', payload);
   return Promise.resolve();
@@ -20870,8 +20919,18 @@ function parseDebuffLanding(line, observer) {
 // this agent is watching. Server returns pending|acked|running rows. We
 // store them on stats.backfillRequests so the dashboard can render an
 // "Officer requested backfill" banner with Accept / Dismiss buttons.
+// Apply a backfill-requests response ({ requests }). Shared by the standalone
+// pollBackfillRequests loop and the #106 multiplexed poll's `backfill` stream.
+function _applyBackfillResponse(resp) {
+  if (resp && Array.isArray(resp.requests)) {
+    stats.backfillRequests          = resp.requests;
+    stats.backfillRequestsCheckedAt = Date.now();
+    scheduleRender();
+  }
+}
 function pollBackfillRequests({ botUrl, token }) {
   if (!botUrl || !token) return Promise.resolve();
+  if (_multiplexActive()) return Promise.resolve();   // #106 — the multiplexed /poll carries backfill-requests
   const chars = (stats.watchedLogs || [])
     .map(w => w && w.character)
     .filter(Boolean);
@@ -20899,14 +20958,8 @@ function pollBackfillRequests({ botUrl, token }) {
         let data = '';
         res.on('data', c => data += c);
         res.on('end', () => {
-          try {
-            const resp = JSON.parse(data);
-            if (Array.isArray(resp.requests)) {
-              stats.backfillRequests          = resp.requests;
-              stats.backfillRequestsCheckedAt = Date.now();
-              scheduleRender();
-            }
-          } catch { /* non-fatal */ }
+          try { _applyBackfillResponse(JSON.parse(data)); }
+          catch { /* non-fatal */ }
           resolve();
         });
       });
@@ -20926,8 +20979,29 @@ function pollBackfillRequests({ botUrl, token }) {
 // Default (no entry, request failed, etc.): participate as today. Privacy
 // only ratchets one way — we don't accidentally start uploading because a
 // poll fell through.
+// Apply a character-prefs response ({ prefs }). Shared by the standalone
+// pollCharacterPrefs loop and the #106 multiplexed poll's `prefs` stream.
+function _applyCharacterPrefsResponse(resp) {
+  const prefs = (resp && resp.prefs) || {};
+  const norm = {};
+  for (const [name, p] of Object.entries(prefs)) {
+    norm[String(name).toLowerCase()] = {
+      exclude_from_stats: !!(p && p.exclude_from_stats),
+      exclude_inventory:  !!(p && p.exclude_inventory),
+      // tell_relay MUST be carried through — the tail loop gates tell capture on
+      // stats.characterPrefs[char].tell_relay. Dropping it here (as the original
+      // normalization did) left the gate permanently falsy, so NO tells were ever
+      // captured even with the web toggle on and the bot endpoint returning it.
+      tell_relay:         !!(p && p.tell_relay),
+    };
+  }
+  stats.characterPrefs          = norm;
+  stats.characterPrefsCheckedAt = Date.now();
+  scheduleRender();
+}
 function pollCharacterPrefs({ botUrl, token }) {
   if (!botUrl || !token) return Promise.resolve();
+  if (_multiplexActive()) return Promise.resolve();   // #106 — the multiplexed /poll carries character-prefs
   const chars = (stats.watchedLogs || []).map(w => w && w.character).filter(Boolean);
   if (chars.length === 0) return Promise.resolve();
 
@@ -20952,26 +21026,8 @@ function pollCharacterPrefs({ botUrl, token }) {
         let data = '';
         res.on('data', c => data += c);
         res.on('end', () => {
-          try {
-            const resp = JSON.parse(data);
-            const prefs = (resp && resp.prefs) || {};
-            const norm = {};
-            for (const [name, p] of Object.entries(prefs)) {
-              norm[String(name).toLowerCase()] = {
-                exclude_from_stats: !!(p && p.exclude_from_stats),
-                exclude_inventory:  !!(p && p.exclude_inventory),
-                // tell_relay MUST be carried through — the tail loop gates tell
-                // capture on stats.characterPrefs[char].tell_relay. Dropping it
-                // here (as the original normalization did) left the gate
-                // permanently falsy, so NO tells were ever captured even with
-                // the web toggle on and the bot endpoint returning it.
-                tell_relay:         !!(p && p.tell_relay),
-              };
-            }
-            stats.characterPrefs          = norm;
-            stats.characterPrefsCheckedAt = Date.now();
-            scheduleRender();
-          } catch { /* non-fatal — keep previous prefs */ }
+          try { _applyCharacterPrefsResponse(JSON.parse(data)); }
+          catch { /* non-fatal — keep previous prefs */ }
           resolve();
         });
       });
@@ -21089,8 +21145,28 @@ function tuneNum(key, dflt) {
   const v = _overlayTuning[key];
   return (typeof v === 'number' && isFinite(v)) ? v : dflt;
 }
+// Apply an overlay-tuning response (tuning + notices + class_sets + raid_hold).
+// Shared by the standalone pollOverlayTuning loop and the #106 multiplexed poll's
+// `tuning` stream so both stay in lock-step.
+function _applyTuningResponse(resp) {
+  if (!resp || typeof resp !== 'object') return;
+  if (resp.tuning && typeof resp.tuning === 'object' && !Array.isArray(resp.tuning)) {
+    _overlayTuning = resp.tuning;
+  }
+  if (Array.isArray(resp.notices)) _guildNotices = resp.notices;
+  if (resp.class_sets && typeof resp.class_sets === 'object' && !Array.isArray(resp.class_sets)) {
+    _classOverlaySets = resp.class_sets;
+  }
+  if (typeof resp.raid_hold === 'boolean' && resp.raid_hold !== _raidHold) {
+    _raidHold = resp.raid_hold;
+    console.log(_raidHold
+      ? '[raid-hold] ON — bot reports an active raid; deferring gear/spellbook/crash scans and agent updates until it lifts'
+      : '[raid-hold] lifted — deferred scans resume on the next pass');
+  }
+}
 function pollOverlayTuning({ botUrl, token }) {
   if (!botUrl || !token) return Promise.resolve();
+  if (_multiplexActive()) return Promise.resolve();   // #106 — the multiplexed /poll carries tuning
   const url = botUrl.replace(/\/encounter(\?.*)?$/, '/overlay-tuning');
   return new Promise((resolve) => {
     try {
@@ -21104,22 +21180,8 @@ function pollOverlayTuning({ botUrl, token }) {
         let data = '';
         res.on('data', c => data += c);
         res.on('end', () => {
-          try {
-            const resp = JSON.parse(data);
-            if (resp && resp.tuning && typeof resp.tuning === 'object' && !Array.isArray(resp.tuning)) {
-              _overlayTuning = resp.tuning;
-            }
-            if (resp && Array.isArray(resp.notices)) _guildNotices = resp.notices;
-            if (resp && resp.class_sets && typeof resp.class_sets === 'object' && !Array.isArray(resp.class_sets)) {
-              _classOverlaySets = resp.class_sets;
-            }
-            if (resp && typeof resp.raid_hold === 'boolean' && resp.raid_hold !== _raidHold) {
-              _raidHold = resp.raid_hold;
-              console.log(_raidHold
-                ? '[raid-hold] ON — bot reports an active raid; deferring gear/spellbook/crash scans and agent updates until it lifts'
-                : '[raid-hold] lifted — deferred scans resume on the next pass');
-            }
-          } catch { /* non-fatal — keep last good values */ }
+          try { _applyTuningResponse(JSON.parse(data)); }
+          catch { /* non-fatal — keep last good values */ }
           resolve();
         });
       });
@@ -21240,8 +21302,19 @@ function _maybeApplyWebEdit(row, watched, opts) {
     _postUiEditResult(opts, row.id, false, (err && err.message) || 'apply failed');
   }
 }
+// Apply a ui-pending-edits response ({ edits }) — apply each web-staged macro
+// edit (logged-out gate + section allowlist enforced in _maybeApplyWebEdit).
+// Shared by the standalone pollUiPendingEdits loop and the #106 multiplexed
+// poll's `ui_edits` stream. `opts` must carry the /encounter botUrl so the
+// per-row result POST can reach /ui-edit-result.
+function _applyUiEditsResponse(resp, watched, opts) {
+  for (const row of (resp && Array.isArray(resp.edits) ? resp.edits : [])) {
+    _maybeApplyWebEdit(row, watched, opts);
+  }
+}
 function pollUiPendingEdits({ botUrl, token }) {
   if (!botUrl || !token) return;
+  if (_multiplexActive()) return;   // #106 — the multiplexed /poll carries ui-pending-edits
   const watched = (stats.watchedLogs || []).filter(w => w && w.character && w.logPath);
   if (!watched.length) return;
   const qs = '?characters=' + encodeURIComponent(watched.map(w => w.character).join(','));
@@ -21257,12 +21330,8 @@ function pollUiPendingEdits({ botUrl, token }) {
       let data = '';
       res.on('data', c => data += c);
       res.on('end', () => {
-        try {
-          const resp = JSON.parse(data);
-          for (const row of (Array.isArray(resp.edits) ? resp.edits : [])) {
-            _maybeApplyWebEdit(row, watched, { botUrl, token });
-          }
-        } catch { /* non-fatal */ }
+        try { _applyUiEditsResponse(JSON.parse(data), watched, { botUrl, token }); }
+        catch { /* non-fatal */ }
       });
     });
     req.on('error', () => {});
@@ -21271,8 +21340,41 @@ function pollUiPendingEdits({ botUrl, token }) {
   } catch { /* */ }
 }
 
+// Apply a guild-triggers response ({ version, triggers }). Shared by the
+// standalone pollGuildTriggers loop and the #106 multiplexed poll's `triggers`
+// stream. Version-gate: if the guild set hasn't changed, skip the recompile
+// entirely (a multiplexed `unchanged` reply carries the matching version, so it
+// short-circuits here too). Older bots send no version → recompile as before.
+// NOTE: control-plane keys are applied by the CALLER (the standalone loop's
+// backup channel / the multiplexed poll's top-level read), not here.
+function _applyGuildTriggersResponse(resp) {
+  if (!resp || typeof resp !== 'object') return;
+  if (resp.version && resp.version === stats.guildTriggersVersion) {
+    stats.guildTriggersCheckedAt = Date.now();
+    return;
+  }
+  if (Array.isArray(resp.triggers)) {
+    // Compile once; eval per-line is hot path.
+    const compiled = [];
+    for (const t of resp.triggers) {
+      try {
+        const flags = t.pattern_flags || 'i';
+        const pat = t.use_regex === false
+          ? _escapeForLiteralMatch(t.pattern)
+          : _translateDotNetRegex(t.pattern);
+        compiled.push({ ...t, _regex: new RegExp(pat, flags), _endRegex: _compileEndEarlyRegex(t), _scope: 'guild' });
+      } catch (err) {
+        console.warn(`[guild-triggers] bad pattern "${t.name}":`, err.message);
+      }
+    }
+    stats.guildTriggers          = compiled;
+    stats.guildTriggersVersion   = resp.version || '';
+    stats.guildTriggersCheckedAt = Date.now();
+  }
+}
 function pollGuildTriggers({ botUrl, token }) {
   if (!botUrl || !token) return Promise.resolve();
+  if (_multiplexActive()) return Promise.resolve();   // #106 — the multiplexed /poll carries guild-triggers
   // Pass our characters so server-side targeting can pre-filter
   const chars = (stats.watchedLogs || []).map(w => w && w.character).filter(Boolean);
   const classes = [];
@@ -21305,34 +21407,8 @@ function pollGuildTriggers({ botUrl, token }) {
             const resp = JSON.parse(data);
             // #74 control plane BACKUP channel — kill/floor keys ride the trigger
             // poll too, so an agent honors them even without the reporter poll.
-            // Applied BEFORE the version-gate early return so it always lands.
             _applyControlPlane(resp, 'guild-triggers');
-            // Version-gate: if the guild set hasn't changed, skip the recompile
-            // entirely so a faster poll (see the 2-min interval) stays cheap.
-            // Only when the bot actually sent a version (older bots send none →
-            // recompile as before, never falsely "unchanged").
-            if (resp.version && resp.version === stats.guildTriggersVersion) {
-              stats.guildTriggersCheckedAt = Date.now();
-              resolve(); return;
-            }
-            if (Array.isArray(resp.triggers)) {
-              // Compile once; eval per-line is hot path.
-              const compiled = [];
-              for (const t of resp.triggers) {
-                try {
-                  const flags = t.pattern_flags || 'i';
-                  const pat = t.use_regex === false
-                    ? _escapeForLiteralMatch(t.pattern)
-                    : _translateDotNetRegex(t.pattern);
-                  compiled.push({ ...t, _regex: new RegExp(pat, flags), _endRegex: _compileEndEarlyRegex(t), _scope: 'guild' });
-                } catch (err) {
-                  console.warn(`[guild-triggers] bad pattern "${t.name}":`, err.message);
-                }
-              }
-              stats.guildTriggers          = compiled;
-              stats.guildTriggersVersion   = resp.version || '';
-              stats.guildTriggersCheckedAt = Date.now();
-            }
+            _applyGuildTriggersResponse(resp);
           } catch { /* non-fatal */ }
           resolve();
         });
@@ -21923,31 +21999,59 @@ let _relayPollerActive = false;
 // A relayed fire older than this at consumption time is a ghost callout (queue
 // backlog replayed it late) — journalled, never spoken. See _pollRelayFires.
 const RELAY_STALE_MS = 15_000;
+// Idle gate (2026-07-07 review): the trigger relay only matters while someone is
+// actually PLAYING. True when a Zeal client has sampled or a watched log has been
+// written in the last 10 min. Shared by the standalone recent-fires poll AND the
+// #106 multiplexed poll (which drops recent_fires from the bundle when idle).
+function _recentFiresActive() {
+  const idleCutoff = Date.now() - 10 * 60 * 1000;
+  try {
+    for (const ch of Object.keys(_zealState || {})) {
+      if (((_zealState[ch] && _zealState[ch].updatedAt) || 0) > idleCutoff) return true;
+    }
+    for (const w of (stats.watchedLogs || [])) {
+      if (w && w.logPath && fs.statSync(w.logPath).mtimeMs > idleCutoff) return true;
+    }
+  } catch { return true; }   // can't tell → keep polling (fail open)
+  return false;
+}
+
+// Consume a recent-fires payload ({ next_id, fires }) — advance the cursor and
+// run each not-yet-seen, non-stale relayed fire. Shared by the standalone
+// /recent-fires poll and the #106 multiplexed poll so the ghost-TTL + dedup
+// logic stays identical between the two paths.
+function _consumeRelayFires(data) {
+  if (!data) return;
+  if (typeof data.next_id === 'number') {
+    _lastRelayFireId = Math.max(_lastRelayFireId, data.next_id);
+  }
+  for (const fire of (data.fires || [])) {
+    const fireKey = fire.key || fire.name || '';
+    if (_hasRecentFire(fireKey, fire.fired_at_ms)) continue;
+    _markFireSeen(fireKey, fire.fired_at_ms);
+    // Ghost-callout TTL (#76): after a queue backlog, a relayed fire can arrive
+    // minutes late (posted_at is fresh, but the ORIGINAL fired_at is stale) and
+    // speak as if live. Drop anything older than RELAY_STALE_MS at consumption —
+    // journal it instead of speaking. Fail OPEN: a missing/unparseable timestamp
+    // is treated as live so a real callout is never eaten by a bad clock.
+    const firedAt = Number(fire.fired_at_ms);
+    if (Number.isFinite(firedAt) && (Date.now() - firedAt) > RELAY_STALE_MS) {
+      _journalTrigger({ trigger: fire.name || 'relayed', scope: 'guild_relay', checkpoint: TJ.MATCHED,
+                        stopped: true, reason: 'stale-skipped — fire was ' + Math.round((Date.now() - firedAt) / 1000) + 's old at consumption' });
+      continue;
+    }
+    _runRelayedFire(fire);
+  }
+}
+
 async function _pollRelayFires() {
   if (_relayPollerActive) return;
+  if (_multiplexActive()) return;   // #106 — the multiplexed /poll carries recent_fires while it's live
   if (_controlStandDown().down) return;   // #74 dormant/below-floor → stop the recent-fires poll (local callouts unaffected)
   const base = _getApiBase();
   const token = _getAgentToken();
   if (!base || !token) return;
-  // Idle gate (2026-07-07 review): the trigger relay only matters while
-  // someone is actually PLAYING. Skip the fetch when no Zeal client has
-  // sampled and no watched log has been written for 10+ minutes — this was
-  // the agent's largest standing network cost (a poll every 1.5s, 24/7).
-  {
-    const idleCutoff = Date.now() - 10 * 60 * 1000;
-    let active = false;
-    try {
-      for (const ch of Object.keys(_zealState || {})) {
-        if (((_zealState[ch] && _zealState[ch].updatedAt) || 0) > idleCutoff) { active = true; break; }
-      }
-      if (!active) {
-        for (const w of (stats.watchedLogs || [])) {
-          if (w && w.logPath && fs.statSync(w.logPath).mtimeMs > idleCutoff) { active = true; break; }
-        }
-      }
-    } catch { active = true; }   // can't tell → keep polling (fail open)
-    if (!active) return;
-  }
+  if (!_recentFiresActive()) return;
   _relayPollerActive = true;
   try {
     const url = base.replace(/\/+$/, '') + '/recent-fires?since_id=' + _lastRelayFireId;
@@ -21955,28 +22059,7 @@ async function _pollRelayFires() {
       headers: { 'Authorization': 'Bearer ' + token, 'Accept': 'application/json' },
     });
     if (!res.ok) return;
-    const data = await res.json();
-    if (typeof data?.next_id === 'number') {
-      _lastRelayFireId = Math.max(_lastRelayFireId, data.next_id);
-    }
-    for (const fire of (data?.fires || [])) {
-      const fireKey = fire.key || fire.name || '';
-      if (_hasRecentFire(fireKey, fire.fired_at_ms)) continue;
-      _markFireSeen(fireKey, fire.fired_at_ms);
-      // Ghost-callout TTL (#76): after a queue backlog, a relayed fire can
-      // arrive minutes late (posted_at is fresh, but the ORIGINAL fired_at is
-      // stale) and speak as if live. Drop anything older than RELAY_STALE_MS at
-      // consumption — journal it instead of speaking. Fail OPEN: a missing or
-      // unparseable timestamp is treated as live so a real callout is never
-      // eaten by a bad clock.
-      const firedAt = Number(fire.fired_at_ms);
-      if (Number.isFinite(firedAt) && (Date.now() - firedAt) > RELAY_STALE_MS) {
-        _journalTrigger({ trigger: fire.name || 'relayed', scope: 'guild_relay', checkpoint: TJ.MATCHED,
-                          stopped: true, reason: 'stale-skipped — fire was ' + Math.round((Date.now() - firedAt) / 1000) + 's old at consumption' });
-        continue;
-      }
-      _runRelayedFire(fire);
-    }
+    _consumeRelayFires(await res.json());
   } catch (err) {
     // Silent — relay is best-effort and the poller retries next tick.
   } finally {
@@ -21990,6 +22073,132 @@ async function _pollRelayFires() {
 // .unref() so test harnesses (scripts/check-agent-dashboard.js) can
 // exit cleanly — the live agent has its own foreground keep-alives.
 setInterval(_pollRelayFires, 1500).unref();
+
+// ── Multiplexed poll (#106) ─────────────────────────────────────────────────
+// One loop that replaces the six per-client GET loops (recent-fires 1.5s,
+// overlay-tuning 90s, guild-triggers 2min, backfill 5min, ui-edits 5min,
+// character-prefs 10min) with a single GET /api/agent/poll bundle. It asks for
+// recent_fires + tuning every tick and the slow streams only when their own
+// cadence is due — same per-stream request rate as before, six streams → one.
+// The bot assembles the bundle from the SAME in-memory/60s-cached stores, so a
+// fast poll never adds a Supabase hit; the Supabase-backed streams ride only
+// their slow scheduled polls.
+//
+// Feature-detect / fleet-compat: a 404 (old bot without the route) or a 200 that
+// isn't poll-shaped (old bot's catch-all "OK") flips _pollSupported=false ONCE
+// and the agent falls back to the individual loops for the rest of this process
+// (they no-op behind _multiplexActive() until then). A transient failure
+// (429/5xx/network) is NOT a fallback — it just retries next tick.
+//
+// Dormancy (#74): while paused/below-floor the loop asks for the tuning/kill
+// stream ONLY (nothing else), throttled to the control cadence, so it still
+// learns when the pause lifts but sends no other traffic.
+let _pollSupported = null;     // null=unknown (assume supported), true=multiplexed, false=fell back
+let _pollInflight  = false;
+let _pollOkAt      = 0;        // last successful multiplexed poll (dashboard)
+let _pollTuningVer = '';       // last tuning-bundle version we hold (unchanged-gate cursor)
+const POLL_FAST_MS       = 1500;
+const POLL_TRIG_MS       = 2 * 60_000;
+const POLL_PREFS_MS      = 10 * 60_000;
+const POLL_BACKFILL_MS   = 5 * 60_000;
+const POLL_UI_MS         = 5 * 60_000;
+const POLL_TUNING_IDLE_MS = 20_000;   // idle: still refresh tuning/control this often
+const POLL_DORMANT_MS     = 15_000;   // dormant: poll the tuning/kill channel this often
+const _pollLast = { tuning: 0, triggers: 0, prefs: 0, backfill: 0, ui_edits: 0 };
+function _multiplexActive() { return _pollSupported !== false; }
+function _pollFellBack(reason) {
+  if (_pollSupported === false) return;
+  _pollSupported = false;
+  console.log(`[poll] multiplexed /api/agent/poll unavailable (${reason}) — falling back to the individual poll loops for this session`);
+}
+async function _pollMultiplexed() {
+  if (_pollInflight) return;
+  if (_pollSupported === false) return;   // fell back → the individual loops run instead
+  const opts = _uploadOpts;
+  if (opts && opts.dryRun) return;        // dry-run/backfill CLI never polls
+  const base  = _getApiBase();
+  const token = _getAgentToken();
+  if (!base || !token) return;
+
+  const now      = Date.now();
+  const dormant  = _controlStandDown().down;
+  const active   = _recentFiresActive();
+  const chars    = (stats.watchedLogs || []).map(w => w && w.character).filter(Boolean);
+
+  // Decide which streams to ask for THIS tick (reuse each stream's own cadence).
+  // The character-scoped streams (prefs/backfill/ui_edits) are gated on having a
+  // watched character, mirroring the individual loops' own early-return.
+  const want = [];
+  if (dormant) {
+    if (now - _pollLast.tuning < POLL_DORMANT_MS) return;   // #74 — only the control channel, throttled
+    want.push('tuning');
+  } else {
+    if (active) want.push('recent_fires');
+    if (active || (now - _pollLast.tuning >= POLL_TUNING_IDLE_MS)) want.push('tuning');
+    if (now - _pollLast.triggers >= POLL_TRIG_MS) want.push('triggers');
+    if (chars.length) {
+      if (now - _pollLast.prefs    >= POLL_PREFS_MS)    want.push('prefs');
+      if (now - _pollLast.backfill >= POLL_BACKFILL_MS) want.push('backfill');
+      if (now - _pollLast.ui_edits >= POLL_UI_MS)       want.push('ui_edits');
+    }
+  }
+  if (want.length === 0) return;   // nothing due this tick (idle, between cadences)
+  const qs = new URLSearchParams();
+  qs.set('streams', want.join(','));
+  if (want.includes('recent_fires')) qs.set('since_id', String(_lastRelayFireId));
+  if (want.includes('tuning'))       qs.set('tuning_ver', _pollTuningVer || '');
+  if (want.includes('triggers')) {
+    qs.set('trig_ver', stats.guildTriggersVersion || '');
+    const classes = [];
+    for (const c of chars) { const cls = stats.characterClasses && stats.characterClasses[c.toLowerCase()]; if (cls) classes.push(cls); }
+    if (classes.length) qs.set('classes', classes.join(','));
+  }
+  if (chars.length && (want.includes('prefs') || want.includes('backfill') || want.includes('ui_edits'))) {
+    qs.set('characters', chars.join(','));
+  }
+
+  _pollInflight = true;
+  try {
+    const res = await fetch(base.replace(/\/+$/, '') + '/poll?' + qs.toString(), {
+      headers: { 'Authorization': 'Bearer ' + token, 'Accept': 'application/json' },
+    });
+    if (res.status === 404) { _pollFellBack('404'); return; }
+    if (!res.ok) return;   // transient (429/5xx) → retry next tick; do NOT fall back
+    let data;
+    try { data = await res.json(); } catch { _pollFellBack('non-JSON reply (old bot?)'); return; }
+    if (!data || typeof data.streams !== 'object') { _pollFellBack('unrecognized reply (old bot?)'); return; }
+    _pollSupported = true;
+
+    // Control plane rides every poll — dormancy/floor freshness (#74).
+    _applyControlPlane(data, 'poll');
+
+    const s = data.streams;
+    // recent_fires — same consumer as the standalone poll (ghost-TTL + dedup).
+    if (s.recent_fires) _consumeRelayFires(s.recent_fires);
+    // A requested stream can be OMITTED (shed) — advance its cadence anyway so we
+    // don't hot-loop it; the client just goes without until the shed clears.
+    if (want.includes('tuning')) {
+      if (s.tuning) { if (s.tuning.version) _pollTuningVer = s.tuning.version; if (!s.tuning.unchanged) _applyTuningResponse(s.tuning); }
+      _pollLast.tuning = now;
+    }
+    if (want.includes('triggers')) { if (s.triggers) _applyGuildTriggersResponse(s.triggers); _pollLast.triggers = now; }
+    if (want.includes('prefs'))    { if (s.prefs)    _applyCharacterPrefsResponse(s.prefs);   _pollLast.prefs = now; }
+    if (want.includes('backfill')) { if (s.backfill) _applyBackfillResponse(s.backfill);      _pollLast.backfill = now; }
+    if (want.includes('ui_edits')) {
+      if (s.ui_edits) {
+        const watched = (stats.watchedLogs || []).filter(w => w && w.character && w.logPath);
+        _applyUiEditsResponse(s.ui_edits, watched, { botUrl: opts && opts.botUrl, token });
+      }
+      _pollLast.ui_edits = now;
+    }
+    _pollOkAt = now;
+  } catch (err) {
+    // network error → transient, retry next tick (do NOT fall back)
+  } finally {
+    _pollInflight = false;
+  }
+}
+setInterval(_pollMultiplexed, POLL_FAST_MS).unref();
 
 // Execute a relayed fire — runs the same shape as a local detection,
 // but with _isRelay=true so the receiving Mimic doesn't re-relay it.
