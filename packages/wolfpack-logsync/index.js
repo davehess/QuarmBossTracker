@@ -14634,208 +14634,372 @@ async function dismissTopDamage(key) {
   setInterval(refresh, 3000);
 })();
 
-// ── 💸 Live Bidding panel ──────────────────────────────────────────────────
-// Pulls active OpenDKP auctions via /api/server/auctions (bot passthrough),
-// renders a list with bid input + Place Bid button per row, and shows the
-// caller's currently-placed bids underneath. Wishlisted items get a star.
-// The character dropdown is populated from watchedLogs (your uploader +
-// any alts whose logs you are tailing — those are the chars you can bid on
-// because OpenDKP needs their CharacterId).
+// ── 💰 Loot bidding panel (#108 · BETA) ─────────────────────────────────────
+// One card that: surfaces the agent's live loot-auction detection
+// (/api/loot/auctions — the v3.3.88 _lootAuctions state, one source of truth,
+// no re-parse) merged with the bot's live OpenDKP auctions
+// (/api/server/auctions); gates EVERY bid control behind a real OpenDKP login
+// (/api/loot/login → Cognito, token kept local, never uploaded); shows per-item
+// last winner + runner-up and a "+1" prefill (runner-up+1, never auto-submits);
+// carries a local main+alt family editor + per-bid picker (/api/loot/family);
+// and once authed shows the caller's own bid history + wishlist (prereg vs from
+// bid history) via /api/server/bid-history. Bids ride the sealed
+// /api/server/place-bid path unchanged.
 (function(){
-  var lastChar = null;        // last character used (sticks across refreshes)
+  var cfg          = { authed:false, opendkp_username:null, expires_at:null, family:{ main:null, alts:[] } };
+  var localAucs    = [];    // /api/loot/auctions (agent-detected)
+  var srvAucs      = [];    // /api/server/auctions (biddable OpenDKP)
+  var myBids       = [];    // /api/server/my-bids
+  var itemHist     = {};    // item_id -> { item_name, winner, winning_bid, runner_up }
+  var bidHist      = null;  // { wins:[], wishlist:[] }
+  var drafts       = {};    // rowKey -> in-progress bid string (survives repaints)
+  var ticks        = {};    // spanId -> ends-at ms (1s countdown ticker)
+  var lastChar     = null;
+  var showLogin    = false;
+  var showFamily   = false;
+  var loginErr     = "";
+  var lastHistKey  = "";
+  var lastBidHistAt = 0;
+
+  function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g, function(c){ return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]; }); }
+  function fmt(n){ n=Number(n); if(!isFinite(n)) return "—"; return n.toLocaleString(); }
+  function isChar(s){ return /^[A-Za-z]{2,20}$/.test(String(s||"").trim()); }
+  function famList(){ return (cfg.family&&cfg.family.main) ? [cfg.family.main].concat(cfg.family.alts||[]) : ((cfg.family&&cfg.family.alts)||[]); }
+
   function makeCard(){
     var c = document.createElement("div");
     c.id = "wpBiddingCard";
     c.className = "card";
-    c.style.display = "none";
-    c.innerHTML = "<h2>💸 Live Bidding <span class=dim style=font-size:11px;text-transform:none;letter-spacing:0> · OpenDKP auctions</span></h2><div class=card-body><div class=dim style=padding:6px>loading…</div></div>";
+    c.innerHTML = "<h2>💰 Loot bidding <span style='background:var(--gold,#d4af37);color:#000;font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;vertical-align:middle;letter-spacing:.08em'>BETA</span> <span class=dim style='font-size:11px;text-transform:none;letter-spacing:0'>· sealed bids via OpenDKP</span></h2><div class=card-body><div class=dim style=padding:6px>loading…</div></div>";
     return c;
   }
   var card = makeCard();
   function ensure(){
-    if (document.getElementById("wpBiddingCard")) return;
+    var found = document.getElementById("wpBiddingCard");
+    if (found){ card = found; return; }
     var dash = document.getElementById("dash"); if (!dash) return;
     var grid = dash.querySelector(".grid"); var host = grid || dash;
     host.insertBefore(card, host.firstChild);
   }
-  function fmt(n){ n=Number(n); if(!isFinite(n)) return "—"; return n.toLocaleString(); }
-  function looksLikeCharacter(name){
-    if (!name) return false;
-    return /^[A-Z][a-z]+$/.test(String(name).trim());
+
+  function pickChar(){
+    var fam = famList();
+    if (lastChar){ for (var i=0;i<fam.length;i++){ if (fam[i]===lastChar) return lastChar; } }
+    return fam.length ? fam[0] : null;
   }
-  function pickDefaultChar(wls){
-    if (lastChar) return lastChar;
-    for (var i = 0; i < (wls || []).length; i++){
-      var c = (wls[i] && wls[i].character) || "";
-      if (looksLikeCharacter(c)) return c;
+  function endLabel(ms){
+    if (!ms) return "";
+    var d = ms - Date.now();
+    if (d <= 0) return "ended";
+    var s = Math.round(d/1000);
+    if (s < 60) return s + "s";
+    return Math.floor(s/60) + "m " + (s%60) + "s";
+  }
+
+  // Merge server (biddable) + local (detected) auctions, keyed by item name.
+  function mergedRows(){
+    var byName = {}; var rows = [];
+    for (var i=0;i<srvAucs.length;i++){
+      var a = srvAucs[i];
+      var nm = (a.item_name||"").toLowerCase();
+      var row = { key:"a"+a.auction_id, name:a.item_name||"?", item_id:a.item_id||null,
+        auction_id:a.auction_id, wishlisted:!!a.wishlisted, top_bid:a.top_bid,
+        ends:a.ends_at?Date.parse(a.ends_at):null, biddable:true, pending:false };
+      byName[nm] = row; rows.push(row);
     }
+    for (var j=0;j<localAucs.length;j++){
+      var la = localAucs[j]; var items = la.items||[];
+      for (var k=0;k<items.length;k++){
+        var name = items[k].name||""; var lk = name.toLowerCase();
+        if (byName[lk]){ if (!byName[lk].ends && la.ends_at) byName[lk].ends = Date.parse(la.ends_at); continue; }
+        var lrow = { key:"l"+la.sig+"_"+k, name:name, item_id:null, auction_id:null,
+          wishlisted:false, top_bid:null, ends:la.ends_at?Date.parse(la.ends_at):null,
+          biddable:false, pending:true };
+        byName[lk] = lrow; rows.push(lrow);
+      }
+    }
+    return rows;
+  }
+  function prefillFor(item_id){
+    var h = item_id!=null ? itemHist[item_id] : null;
+    if (!h) return null;
+    if (h.runner_up!=null) return { v:h.runner_up+1, basis:"runner-up" };
+    if (h.winning_bid!=null) return { v:h.winning_bid+1, basis:"last winning bid" };
     return null;
   }
-  function renderEmpty(label){
-    var body = card.querySelector(".card-body");
-    if (!body) return;
-    body.innerHTML = "<div class=dim style=padding:6px>" + label + "</div>";
-  }
-  function endsInLabel(ts){
-    if (!ts) return "";
-    var t = Date.parse(ts);
-    if (!isFinite(t)) return "";
-    var ms = t - Date.now();
-    if (ms <= 0) return "<span style=color:var(--orange)>ended</span>";
-    var s = Math.round(ms / 1000);
-    if (s < 60) return "ends in " + s + "s";
-    var m = Math.floor(s / 60);
-    return "ends in " + m + "m " + (s % 60) + "s";
-  }
-  function placeBid(auctionId, character, value, btn){
-    var body = JSON.stringify({ character: character, auction_id: auctionId, value: value });
-    if (btn) { btn.disabled = true; btn.textContent = "…"; }
-    fetch("/api/server/place-bid", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: body,
-    }).then(function(r){ return r.json().then(function(j){ return { ok: r.ok, body: j }; }); })
-      .then(function(out){
-        if (btn) {
-          btn.disabled = false;
-          btn.textContent = out.ok ? "✓ bid" : "✗";
-          btn.title = out.ok ? "bid placed" : (out.body && out.body.error) || "failed";
-          setTimeout(function(){ if (btn) btn.textContent = "Bid"; btn.title = ""; }, 2500);
-        }
-        if (out.ok) fetchAll();
-      })
-      .catch(function(){ if (btn) { btn.disabled = false; btn.textContent = "✗"; } });
-  }
-  function render(state){
-    var body = card.querySelector(".card-body");
-    if (!body) return;
-    var wls = (state && state.watchedLogs) || [];
-    var chars = [];
-    for (var i = 0; i < wls.length; i++){
-      var c = (wls[i] && wls[i].character) || "";
-      if (looksLikeCharacter(c)) chars.push(c);
-    }
-    if (chars.length === 0){
-      card.style.display = "none";
-      return;
-    }
-    var current = pickDefaultChar(wls);
-    if (!current) { card.style.display = "none"; return; }
-    var auctions = (window.__wpAuctions && window.__wpAuctions.auctions) || [];
-    var myBids   = (window.__wpMyBids   && window.__wpMyBids.bids)        || [];
-    if (auctions.length === 0 && myBids.length === 0){
-      // Hide entirely when nothing is up for bid AND no live bids — keeps
-      // the dashboard quiet outside of loot calls.
-      card.style.display = "none";
-      return;
-    }
-    card.style.display = "block";
-    var html = "";
-    html += "<div style='display:flex;gap:8px;align-items:center;margin-bottom:8px;font-size:12px'>";
-    html += "<span class=dim>bidding as</span>";
-    html += "<select id=wpBidChar style='background:#0e1116;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 6px;font-family:inherit'>";
-    for (var j = 0; j < chars.length; j++){
-      var sel = (chars[j] === current) ? " selected" : "";
-      html += "<option value='" + chars[j] + "'" + sel + ">" + chars[j] + "</option>";
-    }
-    html += "</select>";
-    html += "</div>";
-    if (auctions.length === 0){
-      html += "<div class=dim style='padding:4px 0 8px'>no auctions open right now</div>";
-    } else {
-      html += "<table><tr><th>Item</th><th class=num>Top</th><th>Ends</th><th>Bid</th></tr>";
-      for (var k = 0; k < auctions.length; k++){
-        var a = auctions[k];
-        var star = a.wishlisted ? " <span title='on your wishlist' style=color:var(--gold)>★</span>" : "";
-        var top = a.top_bid != null ? fmt(a.top_bid) : "—";
-        var ends = endsInLabel(a.ends_at);
-        var aid = a.auction_id;
-        html += "<tr>";
-        html += "<td class=name>" + (a.item_name || "?") + star + "</td>";
-        html += "<td class=num>" + top + "</td>";
-        html += "<td style=font-size:11px>" + ends + "</td>";
-        html += "<td><input id=wpBidVal_" + aid + " type=number min=1 placeholder='dkp' style='width:60px;background:#0e1116;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 4px;font-family:inherit'>";
-        html += " <button id=wpBidBtn_" + aid + " data-aid='" + aid + "' style='background:#21262d;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 8px;font-size:11px;cursor:pointer;font-family:inherit'>Bid</button></td>";
-        html += "</tr>";
-      }
-      html += "</table>";
-    }
-    if (myBids.length > 0){
-      html += "<div class=wp-bid-block><div style='font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px'>your bids</div>";
-      html += "<table><tr><th>Item</th><th>Character</th><th class=num>Value</th><th class=num>Rank</th></tr>";
-      for (var m = 0; m < myBids.length; m++){
-        var b = myBids[m];
-        html += "<tr><td class=name>" + (b.item_name || "?") + "</td><td class=name>" + (b.character || "?") + "</td><td class=num>" + fmt(b.value) + "</td><td class=num>" + (b.rank || "—") + "</td></tr>";
-      }
-      html += "</table></div>";
-    }
-    morphInto(body, html);
-    // Wire char dropdown
-    var charSel = document.getElementById("wpBidChar");
-    if (charSel){
-      charSel.addEventListener("change", function(){
-        lastChar = charSel.value;
-        fetchAll();
-      });
-    }
-    // Wire bid buttons
-    var btns = card.querySelectorAll("button[data-aid]");
-    for (var n = 0; n < btns.length; n++){
-      (function(btn){
-        btn.addEventListener("click", function(){
-          var aid = btn.getAttribute("data-aid");
-          var input = document.getElementById("wpBidVal_" + aid);
-          var val = input ? parseInt(input.value, 10) : 0;
-          if (!val || val <= 0){ btn.textContent = "?"; setTimeout(function(){ btn.textContent = "Bid"; }, 1500); return; }
-          var who = (document.getElementById("wpBidChar") || {}).value || lastChar;
-          if (!who) return;
-          placeBid(aid, who, val, btn);
-        });
-      })(btns[n]);
-    }
-  }
-  var lastState = null;
-  function fetchState(){
-    return fetch("/api/state").then(function(r){ return r.json(); }).then(function(s){
-      lastState = s; return s;
-    }).catch(function(){ return null; });
-  }
-  function fetchAll(){
+
+  function render(){
     ensure();
-    fetchState().then(function(s){
-      if (!s) return;
-      var wls = s.watchedLogs || [];
-      var who = pickDefaultChar(wls);
-      if (!who){ card.style.display = "none"; return; }
-      var qs = "?character=" + encodeURIComponent(who);
-      Promise.all([
-        fetch("/api/server/auctions" + qs).then(function(r){ return r.ok ? r.json() : { auctions: [] }; }).catch(function(){ return { auctions: [] }; }),
-        fetch("/api/server/my-bids" + qs).then(function(r){ return r.ok ? r.json() : { bids: [] }; }).catch(function(){ return { bids: [] }; }),
-      ]).then(function(both){
-        window.__wpAuctions = both[0];
-        window.__wpMyBids   = both[1];
-        render(s);
-      });
-    });
+    var body = card.querySelector(".card-body");
+    if (!body) return;
+    ticks = {};
+    var char = pickChar();
+    var fam = famList();
+    var h = "";
+
+    // Login gate
+    if (cfg.authed){
+      h += "<div style='display:flex;gap:8px;align-items:center;font-size:12px;margin-bottom:6px'>";
+      h += "<span style='color:var(--green,#3fb950)'>●</span> <span class=dim>OpenDKP</span> <b>"+esc(cfg.opendkp_username||"")+"</b>";
+      h += " <button id=wpLootLogout style='margin-left:auto;background:#21262d;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 8px;font-size:11px;cursor:pointer;font-family:inherit'>log out</button>";
+      h += "</div>";
+    } else {
+      h += "<div style='background:rgba(212,175,55,.08);border:1px solid var(--border);border-radius:6px;padding:8px;margin-bottom:8px;font-size:12px'>";
+      h += "<div style='margin-bottom:6px'>🔒 <b>Log into OpenDKP to enable bidding.</b> <span class=dim>All bid controls stay locked until you sign in.</span></div>";
+      if (showLogin){
+        h += "<div style='display:flex;gap:6px;flex-wrap:wrap;align-items:center'>";
+        h += "<input id=wpLootUser placeholder='OpenDKP username' autocomplete=off style='background:#0e1116;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:3px 6px;font-family:inherit;font-size:12px;width:150px'>";
+        h += "<input id=wpLootPass type=password placeholder='password' style='background:#0e1116;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:3px 6px;font-family:inherit;font-size:12px;width:130px'>";
+        h += "<button id=wpLootLoginGo style='background:var(--gold,#d4af37);color:#000;border:none;border-radius:4px;padding:3px 10px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit'>Sign in</button>";
+        h += "<button id=wpLootLoginCancel style='background:#21262d;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:3px 8px;font-size:11px;cursor:pointer;font-family:inherit'>cancel</button>";
+        h += "</div>";
+        if (loginErr) h += "<div style='color:var(--orange,#d29922);margin-top:5px;font-size:11px'>"+esc(loginErr)+"</div>";
+        h += "<div class=dim style='margin-top:5px;font-size:10px'>Your OpenDKP login stays on this PC and is never uploaded.</div>";
+      } else {
+        h += "<button id=wpLootLoginOpen style='background:var(--gold,#d4af37);color:#000;border:none;border-radius:4px;padding:3px 12px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit'>Log in to OpenDKP</button>";
+      }
+      h += "</div>";
+    }
+
+    // Character picker + family editor toggle
+    h += "<div style='display:flex;gap:8px;align-items:center;font-size:12px;margin-bottom:6px;flex-wrap:wrap'>";
+    h += "<span class=dim>bidding as</span>";
+    if (fam.length){
+      h += "<select id=wpBidChar style='background:#0e1116;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 6px;font-family:inherit'>";
+      for (var fi=0;fi<fam.length;fi++){
+        var seld = (fam[fi]===char) ? " selected" : "";
+        var tag = (cfg.family.main===fam[fi]) ? " (main)" : "";
+        h += "<option value='"+esc(fam[fi])+"'"+seld+">"+esc(fam[fi])+esc(tag)+"</option>";
+      }
+      h += "</select>";
+    } else {
+      h += "<span style='color:var(--orange,#d29922)'>no characters set</span>";
+    }
+    h += "<button id=wpFamToggle style='margin-left:auto;background:#21262d;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 8px;font-size:11px;cursor:pointer;font-family:inherit'>✎ characters</button>";
+    h += "</div>";
+    if (showFamily){
+      h += "<div style='background:#0d1117;border:1px solid var(--border);border-radius:6px;padding:8px;margin-bottom:8px;font-size:12px'>";
+      h += "<div style='margin-bottom:6px'><span class=dim>main</span> <input id=wpFamMain value='"+esc(cfg.family.main||"")+"' placeholder='Mainname' style='background:#0e1116;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:3px 6px;font-family:inherit;font-size:12px;width:130px'></div>";
+      h += "<div style='margin-bottom:6px'><span class=dim>alts</span> ";
+      var alts = (cfg.family.alts||[]);
+      for (var aai=0;aai<alts.length;aai++){
+        h += "<span style='display:inline-block;background:#21262d;border:1px solid var(--border);border-radius:10px;padding:1px 6px;margin:2px;font-size:11px'>"+esc(alts[aai])+" <span class=wpFamDel data-alt='"+esc(alts[aai])+"' style='cursor:pointer;color:var(--orange,#d29922)'>✕</span></span>";
+      }
+      h += "</div>";
+      h += "<div style='display:flex;gap:6px;align-items:center'>";
+      h += "<input id=wpFamAdd placeholder='add alt' style='background:#0e1116;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:3px 6px;font-family:inherit;font-size:12px;width:110px'>";
+      h += "<button id=wpFamAddGo style='background:#21262d;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 8px;font-size:11px;cursor:pointer;font-family:inherit'>+ add</button>";
+      h += "<button id=wpFamSave style='margin-left:auto;background:var(--gold,#d4af37);color:#000;border:none;border-radius:4px;padding:2px 10px;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit'>save</button>";
+      h += "</div>";
+      h += "</div>";
+    }
+
+    // Auctions
+    var rows = mergedRows();
+    if (!rows.length){
+      h += "<div class=dim style='padding:4px 0 6px'>no loot up for bid right now</div>";
+    } else {
+      h += "<table><tr><th>Item</th><th>Ends</th><th>Last win</th><th>Bid</th></tr>";
+      for (var r=0;r<rows.length;r++){
+        var row = rows[r];
+        var hist = row.item_id!=null ? itemHist[row.item_id] : null;
+        var star = row.wishlisted ? " <span title='on your wishlist' style='color:var(--gold,#d4af37)'>★</span>" : "";
+        var lastWin = (hist && hist.winning_bid!=null) ? (fmt(hist.winning_bid)+(hist.winner?(" · "+esc(hist.winner)):"")) : "—";
+        var ru = (hist && hist.runner_up!=null) ? ("<div class=dim style='font-size:10px'>runner-up "+fmt(hist.runner_up)+"</div>") : "";
+        var endSpanId = "wpEnd_"+row.key;
+        if (row.ends) ticks[endSpanId] = row.ends;
+        h += "<tr>";
+        h += "<td class=name>"+esc(row.name)+star+(row.pending?" <span class=dim style='font-size:10px'>(called)</span>":"")+"</td>";
+        h += "<td style='font-size:11px'><span id="+endSpanId+">"+(row.ends?endLabel(row.ends):"")+"</span></td>";
+        h += "<td style='font-size:11px'>"+lastWin+ru+"</td>";
+        h += "<td style='white-space:nowrap'>";
+        if (row.biddable && cfg.authed && char){
+          var pf = prefillFor(row.item_id);
+          h += "<input id=wpBidVal_"+row.key+" type=number min=1 placeholder='dkp' style='width:56px;background:#0e1116;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 4px;font-family:inherit'>";
+          h += " <button class=wpBidGo data-key='"+row.key+"' data-aid='"+row.auction_id+"' style='background:#21262d;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 8px;font-size:11px;cursor:pointer;font-family:inherit'>Bid</button>";
+          if (pf) h += " <button class=wpBidPlus data-key='"+row.key+"' data-v='"+pf.v+"' title='prefill "+esc(pf.basis)+" + 1' style='background:#161b22;color:var(--dim,#8b949e);border:1px solid var(--border);border-radius:4px;padding:2px 6px;font-size:11px;cursor:pointer;font-family:inherit'>+1</button>";
+        } else if (!cfg.authed){
+          h += "<span class=dim style='font-size:10px' title='Log into OpenDKP to bid'>🔒 locked</span>";
+        } else if (!char){
+          h += "<span class=dim style='font-size:10px'>set a character</span>";
+        } else {
+          h += "<span class=dim style='font-size:10px'>awaiting auction</span>";
+        }
+        h += "</td></tr>";
+      }
+      h += "</table>";
+    }
+
+    // Your open bids
+    if (myBids.length){
+      h += "<div style='font-size:11px;color:var(--dim,#8b949e);text-transform:uppercase;letter-spacing:.05em;margin:8px 0 4px'>your open bids</div>";
+      h += "<table><tr><th>Item</th><th>Char</th><th class=num>Value</th><th class=num>Rank</th></tr>";
+      for (var mb=0;mb<myBids.length;mb++){
+        var b = myBids[mb];
+        h += "<tr><td class=name>"+esc(b.item_name||"?")+"</td><td class=name>"+esc(b.character||"?")+"</td><td class=num>"+fmt(b.value)+"</td><td class=num>"+esc(b.rank||"—")+"</td></tr>";
+      }
+      h += "</table>";
+    }
+
+    // History + wishlist (authed only)
+    if (cfg.authed && bidHist){
+      var wins = bidHist.wins||[]; var wl = bidHist.wishlist||[];
+      if (wl.length){
+        h += "<div style='font-size:11px;color:var(--dim,#8b949e);text-transform:uppercase;letter-spacing:.05em;margin:8px 0 4px'>your wishlist</div>";
+        h += "<div style='font-size:11px'>";
+        for (var w=0;w<wl.length && w<25;w++){
+          var it = wl[w];
+          var srcTag = it.source==="prereg"
+            ? "<span title='preregistered' style='color:var(--gold,#d4af37)'>★ prereg</span>"
+            : "<span class=dim title='inferred from your bid history'>↺ from bid history</span>";
+          h += "<div style='display:flex;gap:6px;padding:1px 0'><span class=name>"+esc(it.item_name||("item "+it.item_id))+"</span><span style='margin-left:auto'>"+srcTag+"</span></div>";
+        }
+        h += "</div>";
+      }
+      if (wins.length){
+        h += "<div style='font-size:11px;color:var(--dim,#8b949e);text-transform:uppercase;letter-spacing:.05em;margin:8px 0 4px'>recent wins</div>";
+        h += "<table><tr><th>Item</th><th>Char</th><th class=num>DKP</th></tr>";
+        for (var wn=0;wn<wins.length && wn<12;wn++){
+          var win = wins[wn];
+          h += "<tr><td class=name>"+esc(win.item_name||"?")+"</td><td class=name>"+esc(win.character||"?")+"</td><td class=num>"+fmt(win.dkp)+"</td></tr>";
+        }
+        h += "</table>";
+      }
+    }
+
+    morphInto(body, h);
+    wire();
+    restoreDrafts();
+    runTicks();
   }
+
+  function wire(){
+    var el;
+    el = document.getElementById("wpLootLoginOpen"); if (el) el.onclick = function(){ showLogin=true; loginErr=""; render(); var u=document.getElementById("wpLootUser"); if(u)u.focus(); };
+    el = document.getElementById("wpLootLoginCancel"); if (el) el.onclick = function(){ showLogin=false; loginErr=""; render(); };
+    el = document.getElementById("wpLootLoginGo"); if (el) el.onclick = doLogin;
+    el = document.getElementById("wpLootPass"); if (el) el.onkeydown = function(e){ if(e.key==="Enter") doLogin(); };
+    el = document.getElementById("wpLootLogout"); if (el) el.onclick = function(){ fetch("/api/loot/logout",{method:"POST"}).then(function(){ cfg.authed=false; bidHist=null; render(); }); };
+    el = document.getElementById("wpFamToggle"); if (el) el.onclick = function(){ showFamily=!showFamily; render(); };
+    el = document.getElementById("wpFamAddGo"); if (el) el.onclick = addAlt;
+    el = document.getElementById("wpFamAdd"); if (el) el.onkeydown = function(e){ if(e.key==="Enter") addAlt(); };
+    el = document.getElementById("wpFamSave"); if (el) el.onclick = saveFamily;
+    el = document.getElementById("wpBidChar"); if (el) el.onchange = function(){ lastChar=el.value; fetchServer(); };
+    var dels = card.querySelectorAll(".wpFamDel");
+    for (var i=0;i<dels.length;i++){ (function(d){ d.onclick=function(){ var a=d.getAttribute("data-alt"); cfg.family.alts=(cfg.family.alts||[]).filter(function(x){return x!==a;}); render(); }; })(dels[i]); }
+    var gos = card.querySelectorAll(".wpBidGo");
+    for (var g=0;g<gos.length;g++){ (function(btn){ btn.onclick=function(){ submitBid(btn); }; })(gos[g]); }
+    var plus = card.querySelectorAll(".wpBidPlus");
+    for (var p=0;p<plus.length;p++){ (function(btn){ btn.onclick=function(){ var key=btn.getAttribute("data-key"); var v=btn.getAttribute("data-v"); drafts[key]=v; var inp=document.getElementById("wpBidVal_"+key); if(inp){ inp.value=v; inp.focus(); } }; })(plus[p]); }
+    var vals = card.querySelectorAll("input[id^=wpBidVal_]");
+    for (var v2=0;v2<vals.length;v2++){ (function(inp){ inp.oninput=function(){ drafts[inp.id.substring("wpBidVal_".length)]=inp.value; }; })(vals[v2]); }
+  }
+
+  function restoreDrafts(){
+    for (var k in drafts){ if(!drafts.hasOwnProperty(k)) continue; var inp=document.getElementById("wpBidVal_"+k); if(inp && drafts[k]!=null && drafts[k]!=="") inp.value=drafts[k]; }
+  }
+  function runTicks(){
+    for (var id in ticks){ if(!ticks.hasOwnProperty(id)) continue; var sp=document.getElementById(id); if(sp) sp.textContent=endLabel(ticks[id]); }
+  }
+
+  function doLogin(){
+    var u=((document.getElementById("wpLootUser")||{}).value||"").trim();
+    var p=(document.getElementById("wpLootPass")||{}).value||"";
+    if(!u||!p){ loginErr="enter username and password"; render(); return; }
+    var go=document.getElementById("wpLootLoginGo"); if(go){ go.disabled=true; go.textContent="…"; }
+    fetch("/api/loot/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({username:u,password:p})})
+      .then(function(r){return r.json();})
+      .then(function(j){
+        if(j&&j.ok){ cfg.authed=true; cfg.opendkp_username=j.opendkp_username; showLogin=false; loginErr=""; lastBidHistAt=0; bidHist=null; fetchAll(); }
+        else { loginErr=(j&&j.error)||"login failed"; render(); }
+      })
+      .catch(function(){ loginErr="could not reach OpenDKP"; render(); });
+  }
+
+  function addAlt(){
+    var inp=document.getElementById("wpFamAdd"); if(!inp) return;
+    var v=inp.value.trim();
+    if(!isChar(v)){ inp.style.borderColor="var(--orange,#d29922)"; return; }
+    cfg.family.alts=cfg.family.alts||[];
+    var low=v.toLowerCase();
+    if(low===String(cfg.family.main||"").toLowerCase()){ inp.value=""; return; }
+    for (var i=0;i<cfg.family.alts.length;i++){ if(cfg.family.alts[i].toLowerCase()===low){ inp.value=""; return; } }
+    cfg.family.alts.push(v); inp.value=""; render();
+  }
+  function saveFamily(){
+    var mv=((document.getElementById("wpFamMain")||{}).value||"").trim();
+    var payload={ main: mv, alts: cfg.family.alts||[] };
+    fetch("/api/loot/family",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)})
+      .then(function(r){return r.json();})
+      .then(function(j){ if(j&&j.family){ cfg.family={ main:j.family.main||null, alts:j.family.alts||[] }; } showFamily=false; if(!lastChar) lastChar=pickChar(); lastBidHistAt=0; fetchServer(); })
+      .catch(function(){});
+  }
+
+  function submitBid(btn){
+    var key=btn.getAttribute("data-key");
+    var aid=btn.getAttribute("data-aid");
+    var inp=document.getElementById("wpBidVal_"+key);
+    var val=inp?parseInt(inp.value,10):0;
+    if(!val||val<=0){ btn.textContent="?"; setTimeout(function(){btn.textContent="Bid";},1200); return; }
+    var who=(document.getElementById("wpBidChar")||{}).value||pickChar();
+    if(!who) return;
+    btn.disabled=true; btn.textContent="…";
+    fetch("/api/server/place-bid",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({character:who,auction_id:parseInt(aid,10),value:val})})
+      .then(function(r){return r.json().then(function(j){return {ok:r.ok&&(!j||j.ok!==false),body:j};});})
+      .then(function(out){
+        btn.disabled=false;
+        btn.textContent=out.ok?"✓":"✗";
+        btn.title=out.ok?"bid placed":((out.body&&out.body.error)||"failed");
+        if(out.ok){ delete drafts[key]; }
+        setTimeout(function(){ btn.textContent="Bid"; btn.title=""; if(out.ok) fetchServer(); },1800);
+      })
+      .catch(function(){ btn.disabled=false; btn.textContent="✗"; setTimeout(function(){btn.textContent="Bid";},1500); });
+  }
+
+  function fetchConfig(){
+    return fetch("/api/loot/config").then(function(r){return r.json();}).then(function(j){
+      if(j){ cfg.authed=!!j.authed; cfg.opendkp_username=j.opendkp_username; cfg.expires_at=j.expires_at;
+        if(j.family) cfg.family={ main:j.family.main||null, alts:j.family.alts||[] }; }
+    }).catch(function(){});
+  }
+  function fetchLocal(){
+    return fetch("/api/loot/auctions").then(function(r){return r.json();}).then(function(j){ localAucs=(j&&j.auctions)||[]; }).catch(function(){ localAucs=[]; });
+  }
+  function fetchItemHist(){
+    var ids=[]; var seen={};
+    for (var i=0;i<srvAucs.length;i++){ var id=srvAucs[i].item_id; if(id!=null && !seen[id]){ seen[id]=1; ids.push(id); } }
+    if (!ids.length){ itemHist={}; lastHistKey=""; return Promise.resolve(); }
+    var sig=ids.slice().sort().join(",");
+    if (sig===lastHistKey) return Promise.resolve();
+    return fetch("/api/server/item-history?items="+ids.join(",")).then(function(r){return r.ok?r.json():{items:[]};}).then(function(j){
+      var m={}; var arr=(j&&j.items)||[];
+      for (var k=0;k<arr.length;k++){ m[arr[k].item_id]=arr[k]; }
+      itemHist=m; lastHistKey=sig;
+    }).catch(function(){});
+  }
+  function fetchBidHist(){
+    if (!cfg.authed){ bidHist=null; return Promise.resolve(); }
+    var fam=famList();
+    if (!fam.length && !cfg.opendkp_username){ bidHist=null; return Promise.resolve(); }
+    if (bidHist && (Date.now()-lastBidHistAt) < 45000) return Promise.resolve();
+    var q="?login="+encodeURIComponent(cfg.opendkp_username||"")+"&characters="+encodeURIComponent(fam.join(","));
+    return fetch("/api/server/bid-history"+q).then(function(r){return r.ok?r.json():null;}).then(function(j){
+      if(j){ bidHist={ wins:j.wins||[], wishlist:j.wishlist||[] }; lastBidHistAt=Date.now(); }
+    }).catch(function(){});
+  }
+  function fetchServer(){
+    var who=pickChar();
+    var q = who ? ("?character="+encodeURIComponent(who)) : "";
+    var jobs=[ fetch("/api/server/auctions"+q).then(function(r){return r.ok?r.json():{auctions:[]};}).then(function(j){ srvAucs=(j&&j.auctions)||[]; }).catch(function(){ srvAucs=[]; }) ];
+    if (who) jobs.push(fetch("/api/server/my-bids"+q).then(function(r){return r.ok?r.json():{bids:[]};}).then(function(j){ myBids=(j&&j.bids)||[]; }).catch(function(){ myBids=[]; }));
+    else myBids=[];
+    return Promise.all(jobs).then(fetchItemHist).then(fetchBidHist).then(render);
+  }
+  function fetchAll(){ ensure(); Promise.all([fetchConfig(), fetchLocal()]).then(fetchServer); }
+
   fetchAll();
-  // 5s → 15s (2026-06-21): the auction panel fires the bot's
-  // /api/agent/server-panel/auctions handler, which fans out into 3
-  // PostgREST reads — opendkp_auctions, opendkp_audits, AND a
-  // per-character wishlists ilike. Each active agent was hitting this
-  // every 5s and the wishlists row alone was the heaviest single egress
-  // pattern in the live API log (~10 req/sec across all agents). Bids
-  // typically arrive at multi-second cadence inside an auction, so 15s
-  // is plenty responsive while cutting wishlist+auction reads ~3x.
-  // 2026-06-21: cranked default 15s → 7s after the Supabase Pro upgrade —
-  // bids feel near-real-time again. Override via WP_AUCTION_POLL_MS.
-  // Baked server-side (\${}) at template build — a bare process.env here ran
-  // in the BROWSER and threw "process is not defined" on every page load
-  // since v3.1.59, killing every top-level statement after this IIFE in the
-  // page's single script block (uploader banner, triggers editor mount,
-  // suggested triggers, My Crits). Found 2026-07-15 via the console-error
-  // relay in agent.log.
   setInterval(fetchAll, ${Number(process.env.WP_AUCTION_POLL_MS) || 7000});
+  setInterval(runTicks, 1000);
 })();
 
 // ── Read-only uploader banner ──────────────────────────────────────────────
@@ -15962,6 +16126,66 @@ function startWebDashboard(port) {
           'Cache-Control': 'max-age=86400',  // 1 day; dashboard refetches across full reloads
         });
         return res.end(JSON.stringify(map));
+      }
+      // ── #108 Loot bidding — local login gate + bid-character family ────────
+      // GET  /api/loot/config    → { authed, opendkp_username, expires_at, family }
+      // POST /api/loot/login     → { username, password } → drives Cognito locally
+      // POST /api/loot/logout    → clears the stored token
+      // POST /api/loot/family    → { main, alts } saves the local bid family
+      // GET  /api/loot/auctions  → the agent's live loot-auction detection
+      //                            (_lootAuctions, v3.3.88 — one source of truth)
+      // The OpenDKP token lives ONLY on this machine (logsync.opendkp.json) and
+      // is never uploaded; the gate is what unlocks the panel's bid controls.
+      if (req.url === '/api/loot/config' && req.method === 'GET') {
+        if (_opendkpAuth && !_opendkpAuthed()) { try { await _opendkpEnsureFresh(); } catch { /* */ } }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({
+          authed:           _opendkpAuthed(),
+          opendkp_username: (_opendkpAuth && _opendkpAuth.username) || null,
+          expires_at:       (_opendkpAuth && _opendkpAuth.expires_at) || null,
+          family:           { main: _bidFamily.main, alts: _bidFamily.alts || [] },
+        }));
+      }
+      if (req.url === '/api/loot/login' && req.method === 'POST') {
+        let p; try { p = JSON.parse(await _readBody(req, 8 * 1024) || '{}'); }
+        catch { res.writeHead(400); return res.end('{"error":"bad json"}'); }
+        const username = String(p.username || '').trim();
+        const password = String(p.password || '');
+        if (!username || !password) { res.writeHead(400); return res.end('{"error":"username and password required"}'); }
+        try {
+          const a = await _opendkpLogin(username, password);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ ok: true, opendkp_username: a.username, expires_at: a.expires_at }));
+        } catch (e) {
+          // 200 + ok:false so the panel can show the reason inline (bad password
+          // etc.) rather than the browser swallowing a non-2xx as a hard error.
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ ok: false, error: String((e && e.message) || e) }));
+        }
+      }
+      if (req.url === '/api/loot/logout' && req.method === 'POST') {
+        _opendkpAuth = null; _saveOpendkpAuth();
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end('{"ok":true}');
+      }
+      if (req.url === '/api/loot/family' && req.method === 'POST') {
+        let p; try { p = JSON.parse(await _readBody(req, 8 * 1024) || '{}'); }
+        catch { res.writeHead(400); return res.end('{"error":"bad json"}'); }
+        const isName = (s) => /^[A-Za-z]{2,20}$/.test(String(s || '').trim());
+        const main = isName(p.main) ? String(p.main).trim() : null;
+        const seen = new Set(main ? [main.toLowerCase()] : []);
+        const alts = (Array.isArray(p.alts) ? p.alts : [])
+          .map(s => String(s || '').trim())
+          .filter(a => isName(a) && !seen.has(a.toLowerCase()) && (seen.add(a.toLowerCase()) || true))
+          .slice(0, 20);
+        _bidFamily = { main, alts };
+        _saveBidFamily();
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ ok: true, family: _bidFamily }));
+      }
+      if (req.url === '/api/loot/auctions' && req.method === 'GET') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ auctions: _lootAuctionsSnapshot(), updated_at: new Date().toISOString() }));
       }
       // Increment 2f passthrough: GET /api/server/<key>?character=... proxies
       // to the bot's /api/agent/server-panel/<key> with our stored bearer
@@ -17604,6 +17828,164 @@ function _saveOptInState() {
     }, null, 2));
   } catch { /* non-fatal */ }
 }
+
+// ── #108 Loot bidding — local OpenDKP login gate + bid-character family ─────
+// The Loot bidding dashboard panel gates every bid control behind a REAL
+// OpenDKP login. We drive AWS Cognito USER_PASSWORD_AUTH directly (built-in
+// https, zero deps — same flow the bot's utils/opendkp.js uses) and store the
+// resulting token LOCALLY ONLY (logsync.opendkp.json — never uploaded). A live
+// (non-expired) token = "authed". The Cognito app-client id + region are PUBLIC
+// values fetched from the bot's server-panel/opendkp-auth-config (one source of
+// truth), so the agent keeps ZERO OpenDKP secrets. Bids themselves still ride
+// the bot's officer-mediated /api/agent/place-bid (sealed) — the login is the
+// GATE plus the unlock for pulling the user's own bid history.
+//
+// The bid-character family (main + alts) is stored locally too
+// (logsync.bidfamily.json), same durable pattern as the opt-in prefs above.
+const OPENDKP_STATE_FILE = path.join(__dirname, 'logsync.opendkp.json');
+const BIDFAMILY_FILE     = path.join(__dirname, 'logsync.bidfamily.json');
+
+let _opendkpAuth = null;   // { username, id_token, refresh_token, expires_at }
+let _bidFamily   = { main: null, alts: [] };
+let _opendkpCfgCache = null;   // { cognito_client_id, region, _exp }
+
+function _loadOpendkpAuth() {
+  try { _opendkpAuth = JSON.parse(fs.readFileSync(OPENDKP_STATE_FILE, 'utf8')) || null; }
+  catch { _opendkpAuth = null; }
+}
+function _saveOpendkpAuth() {
+  try {
+    if (!_opendkpAuth) { try { fs.unlinkSync(OPENDKP_STATE_FILE); } catch { /* */ } return; }
+    fs.writeFileSync(OPENDKP_STATE_FILE + '.tmp', JSON.stringify(_opendkpAuth));
+    fs.renameSync(OPENDKP_STATE_FILE + '.tmp', OPENDKP_STATE_FILE);
+  } catch { /* non-fatal */ }
+}
+function _opendkpAuthed() {
+  return !!(_opendkpAuth && _opendkpAuth.id_token && _opendkpAuth.expires_at &&
+            Date.parse(_opendkpAuth.expires_at) > Date.now());
+}
+
+function _loadBidFamily() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(BIDFAMILY_FILE, 'utf8'));
+    const main = (typeof raw.main === 'string' && raw.main.trim()) ? raw.main.trim() : null;
+    const alts = Array.isArray(raw.alts) ? raw.alts.map(s => String(s).trim()).filter(Boolean) : [];
+    const seen = new Set(main ? [main.toLowerCase()] : []);
+    _bidFamily = { main, alts: alts.filter(a => { const k = a.toLowerCase(); if (seen.has(k)) return false; seen.add(k); return true; }) };
+  } catch { _bidFamily = { main: null, alts: [] }; }
+}
+function _saveBidFamily() {
+  try {
+    fs.writeFileSync(BIDFAMILY_FILE + '.tmp', JSON.stringify(_bidFamily));
+    fs.renameSync(BIDFAMILY_FILE + '.tmp', BIDFAMILY_FILE);
+  } catch { /* non-fatal */ }
+}
+function _bidFamilyNames() {
+  const out = [];
+  if (_bidFamily.main) out.push(_bidFamily.main);
+  for (const a of (_bidFamily.alts || [])) if (a) out.push(a);
+  return out;
+}
+
+// Fetch (and cache ~1h) the PUBLIC Cognito app-client id + region from the bot.
+// Requires a bot connection (per-user bearer token). Throws a friendly message
+// when the bot is unreachable or OpenDKP login isn't configured server-side.
+async function _fetchOpendkpAuthConfig() {
+  if (_opendkpCfgCache && Date.now() < _opendkpCfgCache._exp) return _opendkpCfgCache;
+  const opts = _uploadOpts;
+  if (!opts || !opts.botUrl || !opts.token) throw new Error('not connected to the bot — set a token in Mimic Settings');
+  const base = opts.botUrl.replace(/\/encounter(\?.*)?$/, '/server-panel/');
+  const u = new URL(base + 'opendkp-auth-config');
+  const mod = u.protocol === 'https:' ? https : http;
+  const cfg = await new Promise((resolve, reject) => {
+    const rq = mod.request({
+      method: 'GET', hostname: u.hostname, port: u.port || (u.protocol === 'https:' ? 443 : 80),
+      path: u.pathname + (u.search || ''),
+      headers: { 'Authorization': 'Bearer ' + opts.token, 'Accept': 'application/json' }, timeout: 10000,
+    }, (r) => { let d = ''; r.on('data', c => d += c); r.on('end', () => { try { resolve(JSON.parse(d || '{}')); } catch { reject(new Error('bad config response')); } }); });
+    rq.on('error', reject);
+    rq.on('timeout', () => { rq.destroy(); reject(new Error('config request timed out')); });
+    rq.end();
+  });
+  if (!cfg || !cfg.cognito_client_id) throw new Error('OpenDKP login is not configured on the bot');
+  _opendkpCfgCache = { cognito_client_id: cfg.cognito_client_id, region: cfg.region || 'us-east-2', _exp: Date.now() + 3600_000 };
+  return _opendkpCfgCache;
+}
+
+function _cognitoPost(cfg, target, body) {
+  return new Promise((resolve, reject) => {
+    const rq = https.request({
+      hostname: 'cognito-idp.' + cfg.region + '.amazonaws.com', path: '/', method: 'POST',
+      headers: {
+        'X-Amz-Target': 'AWSCognitoIdentityProviderService.' + target,
+        'Content-Type': 'application/x-amz-json-1.1',
+        'Content-Length': Buffer.byteLength(body),
+      }, timeout: 15000,
+    }, (r) => {
+      let d = ''; r.on('data', c => d += c);
+      r.on('end', () => {
+        let j; try { j = JSON.parse(d || '{}'); } catch { j = {}; }
+        if ((r.statusCode || 500) >= 400) {
+          // Cognito errors: { __type: 'NotAuthorizedException', message: '...' }
+          const t = (j && j.__type) || '';
+          let msg = (j && j.message) || ('HTTP ' + r.statusCode);
+          if (/NotAuthorized/i.test(t)) msg = 'incorrect username or password';
+          else if (/UserNotFound/i.test(t)) msg = 'no such OpenDKP user';
+          return reject(new Error(msg));
+        }
+        resolve(j);
+      });
+    });
+    rq.on('error', reject);
+    rq.on('timeout', () => { rq.destroy(); reject(new Error('OpenDKP login timed out')); });
+    rq.end(body);
+  });
+}
+
+async function _opendkpLogin(username, password) {
+  const cfg = await _fetchOpendkpAuthConfig();
+  const body = JSON.stringify({ AuthFlow: 'USER_PASSWORD_AUTH', AuthParameters: { USERNAME: username, PASSWORD: password }, ClientId: cfg.cognito_client_id });
+  const res = await _cognitoPost(cfg, 'InitiateAuth', body);
+  const ar = res && res.AuthenticationResult;
+  if (!ar || !ar.IdToken) {
+    throw new Error(res && res.ChallengeName
+      ? ('OpenDKP wants ' + res.ChallengeName + ' — finish that on opendkp.com first')
+      : 'login failed');
+  }
+  const expMs = Date.now() + ((ar.ExpiresIn || 3600) - 120) * 1000;
+  _opendkpAuth = {
+    username,
+    id_token: ar.IdToken,
+    refresh_token: ar.RefreshToken || (_opendkpAuth && _opendkpAuth.refresh_token) || null,
+    expires_at: new Date(expMs).toISOString(),
+  };
+  _saveOpendkpAuth();
+  return _opendkpAuth;
+}
+
+// Silent refresh via the stored RefreshToken. Returns true if we now hold a
+// live token. Never throws.
+async function _opendkpEnsureFresh() {
+  if (_opendkpAuthed()) return true;
+  if (!(_opendkpAuth && _opendkpAuth.refresh_token)) return false;
+  try {
+    const cfg = await _fetchOpendkpAuthConfig();
+    const body = JSON.stringify({ AuthFlow: 'REFRESH_TOKEN_AUTH', AuthParameters: { REFRESH_TOKEN: _opendkpAuth.refresh_token }, ClientId: cfg.cognito_client_id });
+    const res = await _cognitoPost(cfg, 'InitiateAuth', body);
+    const ar = res && res.AuthenticationResult;
+    if (ar && ar.IdToken) {
+      _opendkpAuth.id_token = ar.IdToken;
+      _opendkpAuth.expires_at = new Date(Date.now() + ((ar.ExpiresIn || 3600) - 120) * 1000).toISOString();
+      _saveOpendkpAuth();
+      return true;
+    }
+  } catch { /* re-login required */ }
+  return false;
+}
+
+// Hydrate both from disk at startup (defaults on missing/unreadable files).
+_loadOpendkpAuth();
+_loadBidFamily();
 
 // ── Inventory file ingestion ──────────────────────────────────────────────
 // EQ's /output inventory command writes <Character>-Inventory.txt to the EQ
@@ -23761,6 +24143,27 @@ function _lootAuctionDefaultSec() {
   return Number.isFinite(v) ? Math.max(15, Math.min(1800, Math.round(v))) : 120;
 }
 
+// Snapshot the live loot-auction detection for the #108 Loot bidding panel
+// (GET /api/loot/auctions). ONE source of truth — reads _lootAuctions +
+// their countdown chips in _activeTimers; no re-parse. Elapsed windows drop.
+function _lootAuctionsSnapshot(nowMs) {
+  const now = Number.isFinite(nowMs) ? nowMs : Date.now();
+  const out = [];
+  for (const [sig, a] of _lootAuctions) {
+    const timer = _activeTimers.get('loot|' + sig);
+    const endsMs = timer ? timer.ends_at_ms : null;
+    if (endsMs && endsMs < now) continue;   // window elapsed — drop
+    out.push({
+      sig,
+      items:     (a.items || []).map(it => ({ name: it.name, quantity: it.quantity || 1 })),
+      opened_at: a.openedAtMs ? new Date(a.openedAtMs).toISOString() : null,
+      ends_at:   endsMs ? new Date(endsMs).toISOString() : null,
+      channel:   a.channel || null,
+    });
+  }
+  return out;
+}
+
 // Tolerant duration parse: "2 min", "2 minutes", "2m", "90 sec", "90s",
 // "90 seconds". Minutes win when both a bare number+unit appear. Clamped so a
 // stray "600 minutes" can't pin a chip on-screen forever.
@@ -25561,7 +25964,14 @@ module.exports = {
   _readZipEntry, _parseCrashReason, _crashZipTime,
   // #107 loot-post announce — exported for the scratchpad smoke test.
   parseLootChatBody, noteLootAuction, _parseAuctionDuration, _spokenDuration,
-  _lootChipLabel, _activeTimers, _activeOverlays, _optinState,
+  _lootChipLabel, _activeTimers, _activeOverlays, _optinState, _lootAuctions,
+  _lootAuctionsSnapshot,
+  // #108 loot bidding — exported for the scratchpad smoke test / harness.
+  startWebDashboard,
+  _loadBidFamily, _saveBidFamily, _bidFamilyNames, _opendkpAuthed,
+  _setBidFamilyForTest: (f) => { _bidFamily = f; },
+  _setOpendkpAuthForTest: (a) => { _opendkpAuth = a; },
+  _getBidFamilyForTest: () => _bidFamily,
 };
 
 if (require.main === module) {
