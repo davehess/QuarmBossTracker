@@ -219,6 +219,54 @@ folly** — it's here.*
   populated from synthetic state; Engine details present + collapsed by default;
   Admin tab absent for non-officer, present + collecting DKP/loot for officer).
   See BETA-TESTING #109.
+- **#112 chat-election liveness + zone-spread — DONE (2026-07-19, bot 3.0.214 on
+  main + agent 3.3.91 beta).** *Incident (2026-07-19, real):* guild chat → Discord
+  went dark ~6:43am–3:16pm. The single elected chat reporter's AGENT kept
+  heartbeating while its CHARACTER was logged out — it stayed elected and saw no
+  chat. The election TTL never noticed (the agent was alive), and the PvP death
+  feed (not election-gated) posted all day, proving the fleet was healthy — only
+  the one elected stream died. Mitigation IN PLACE since the incident: `dedup_chat=0`
+  in `overlay_tuning` (everyone uploads chat). **Fix, two defenses:**
+  (1) **Liveness** — the agent heartbeat now carries `last_line_ms` (ms since it
+  last processed a live log line from its PRIMARY's tail; a logged-out char tails
+  nothing, so it climbs past the threshold within ~a minute). Chat candidacy
+  requires `last_line_age < reporter_liveness_max_ms` (default 90000); a stale
+  candidate is demoted exactly like a camper. Older agents that omit the field are
+  treated FRESH (fail-open for the whole fleet during rollout); if NO candidate
+  anywhere is fresh, all live agents stay eligible (never zero uploaders).
+  (2) **Zone-spread** — chat now elects one reporter PER OCCUPIED ZONE (reusing
+  the buff election's zone grouping); /gu is global so one live reporter suffices,
+  but the per-zone spread is deliberate redundancy and the bot's existing 10s chat
+  dedup collapses the duplicate posts. Unknown zone → own singleton (fail-open).
+  Failover: a reporter whose log goes quiet is demoted on the next poll after its
+  age crosses the threshold (~90s + one 20s cycle), bounding an outage to ~a minute
+  instead of hours; another zone's reporter (or the freshest same-zone candidate)
+  takes over. **Re-enable:** once the fleet is on agent ≥3.3.91, flip `dedup_chat`
+  back on (delete the key / set 1) in `/admin/overlays`. Verify: `lint` + `test`
+  (election slice extended: liveness demotion, missing-signal fail-open, zone-spread
+  two-zones, no-fresh fail-open) + `check:dashboard` green ON MAIN. See BETA-TESTING #112.
+- **#115 officer reporter control panel — DONE (2026-07-19, bot 3.0.214 on main +
+  agent 3.3.91 beta).** Companion to #112: officers can SEE and STEER the reporter
+  election from Mimic. **Read** — `GET server-panel/reporters` (officer-gated, same
+  `is_officer` gate the DKP/loot widgets use) returns the live registry (per
+  uploader: character, zone, group, agent_version, camping, last_line_age, fresh)
+  + per-service elected sets + active pins/extras. **Write** — `POST
+  /api/agent/reporter-override` (officer-authed, proxied through the agent's
+  generic `/api/server/` passthrough) sets the override TUNING KEYS
+  `reporter_pin_<svc>` (a character name) / `reporter_extra_<svc>` (comma names),
+  so they ride the 60s control-plane cache and survive deploys (string-tuning
+  precedent: `agent_release_ref_beta`); read-modify-write preserves other knobs.
+  **Election honors overrides:** a pin that is LIVE+FRESH replaces the computed
+  pick for its scope; a dead/stale pin is IGNORED (one log line, fail-open); extras
+  are additive. Pins exist ONLY for chat/buffs/roster — per-observer streams are
+  never passed to the override path, so mob/encounter data can never be pinned.
+  **Panel (agent, #109's 🛡 Admin tab):** a 📡 Reporters card (officer-gated by the
+  same data gate) — table of live uploaders + elected badges per service, a swap
+  dropdown (sets the pin), an add-include input (sets extras), and a clear button.
+  Byte-stable render into its own `wp*` placeholder; non-officers get no data and
+  no panel. Verify: election-slice tests (pin honored/ignored, extras additive) +
+  scratchpad smoke (panel renders from synthetic registry; swap POST shape; empty
+  for non-officer). See BETA-TESTING #115.
 - **#110 OpenDKP audit-trail reconciliation — DONE (2026-07-19, bot 3.0.212 on
   main).** Path shipped: **BOTH** — audit feed as TRIGGER + WATERMARK, scoped
   reconcile as the precise removal. Motivated by the 2026-07-19 "Backpack"

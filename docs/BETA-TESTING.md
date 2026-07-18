@@ -20,6 +20,86 @@ raid; move it to STATUS.md's "Done" once graduated to stable.*
 
 ---
 
+## #112 — Chat-election liveness + zone-spread (the 2026-07-19 chat-blackout fix)
+
+**Needs:** bot **3.0.214** (live on Railway) + agent **3.3.91** (beta Mimic).
+
+**The incident this fixes (real, 2026-07-19):** guild chat → Discord went dark
+~6:43am–3:16pm. The single elected chat reporter's AGENT kept heartbeating while
+its CHARACTER was logged out — so it stayed elected and saw no chat, and the 60s
+TTL never noticed (the agent was alive). The PvP death feed (every agent uploads
+it, no election) posted all day — the fleet was fine; only the one elected stream
+died. **Mitigation currently in place:** `dedup_chat = 0` in the `overlay_tuning`
+editor (everyone uploads chat, so nothing can go dark). This work makes
+re-enabling `dedup_chat` safe.
+
+**What changed:** (1) the agent heartbeat now sends `last_line_ms` — how long
+since it last processed a live log line from its PRIMARY character's tail (a
+logged-out char tails nothing → it climbs). (2) Chat candidacy now requires that
+to be **fresh** (< `reporter_liveness_max_ms`, default 90000); a stale reporter is
+demoted like a camper. (3) Chat now elects one reporter **per zone** (redundancy;
+the bot's 10s chat dedup collapses the duplicate posts) so one reporter logging
+out never darkens chat. Fail-open throughout: older agents (no `last_line_ms`) are
+treated fresh; if nobody anywhere is fresh, everyone stays eligible.
+
+### Re-enable procedure (officer, do this once the fleet is on agent ≥3.3.91)
+1. Confirm the raid's Mimics are updated (agent dashboard footer shows **3.3.91+**;
+   the 📡 Reporters panel — see #115 — lists them with a **fresh** column).
+2. On `/admin/overlays`, **delete the `dedup_chat` key** (or set it to `1`). Chat
+   election resumes; only LIVE reporters are eligible, spread across zones.
+3. If anything looks off, set `dedup_chat = 0` again — instant fail-open, everyone
+   uploads (the current safe state).
+
+### ✅ Solo (one machine) — *needs `dedup_chat` re-enabled to observe*
+1. Log in, sit in a zone; on the agent dashboard the reporter line shows your
+   chat role active and your log **fresh**.
+2. **Log the character out** (leave Mimic running). Within ~20s the dashboard
+   reporter line flips to **stale**, and within ~90s + one poll your chat role
+   drops (you're demoted — no live log flow). Log back in → fresh again, role
+   returns.
+
+### 👥 Multi-person (2+ machines) — **needs a raid partner in another zone**
+1. Two testers in **different zones**, `dedup_chat` on. Both should show as chat
+   reporters (one per zone) — the bot's dedup means Discord still sees each `/gu`
+   once.
+2. One tester logs their character out. Their role drops within ~90s; the other
+   zone's reporter keeps chat flowing the whole time — **no gap in #guild-chat**.
+
+## #115 — Officer reporter control panel (📡 Reporters: swap / include)
+
+**Needs:** bot **3.0.214** (live on Railway) + agent **3.3.91** (beta Mimic).
+Officer OpenDKP/Discord identity linked in Mimic (same sign-in as the DKP tick
+widget).
+
+**What it is:** a 📡 Reporters card on the agent dashboard's **🛡 Admin** tab
+(officer-only, same data gate as the DKP/loot widgets). It shows the live reporter
+fleet (character · zone · group · agent version · camping · last-line age · fresh),
+the elected reporter set per service (chat/buffs/roster), and any active pins. Per
+service you can **swap** (pin a specific live character as the reporter) and **add
+an include** (extra always-on reporter), or **clear** the override. Overrides are
+tuning keys (`reporter_pin_<svc>` / `reporter_extra_<svc>`) so they survive
+deploys and take effect within ~60s. A pinned name that is dead/stale is ignored
+(fail-open — election proceeds normally); per-observer streams (mob/encounter)
+can never be pinned.
+
+### ✅ Officer (one person)
+1. Open Mimic → **🛡 Admin** tab → **📡 Reporters**. You should see yourself (and
+   any other live agents) with zone / fresh / elected badges. A NON-officer opening
+   the same tab sees no Reporters panel at all.
+2. **Swap:** pick another live character in the chat **swap** dropdown. Within ~60s
+   the elected-chat badge moves to them (the pin is honored because they're
+   live+fresh). Clear the override → it reverts to the computed pick.
+3. **Include:** type a live character into the chat **add-include** box. They join
+   the elected chat set on top of the computed pick (both report; dedup collapses).
+4. **Dead pin is safe:** pin a character who is offline. The panel keeps the
+   computed pick and the bot logs `pin … ignored — not live+fresh`; nothing breaks.
+
+### 👥 Multi-person
+1. With 2+ live agents, swap the chat reporter to a specific teammate and confirm
+   in `#guild-chat` that relay is unbroken through the swap (dedup + fail-open).
+
+---
+
 ## #94 / #92 — guild-rules ingest + family-aware attendance metrics
 
 **Needs:** bot **3.0.213** (live on Railway) + web **1.0.244** (Vercel). No

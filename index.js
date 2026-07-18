@@ -3362,10 +3362,11 @@ const _triggerRate = new Map();    // discordId → [timestamps]
 // tuning editor forces everyone back to uploading (today's behavior). A camping
 // agent (typed /camp) is demoted from every election ~30s early via _dropCampers.
 const REPORTER_TTL_MS       = 60_000; // an agent silent this long drops out → re-elect
-const REPORTER_CHAT_COUNT   = 1;      // single chat reporter (global stream)
+const REPORTER_CHAT_PER_ZONE = 1;     // one chat reporter PER OCCUPIED ZONE (#112 zone-spread redundancy; the 10s chat dedup collapses the copies)
 const REPORTER_BUFF_PER_ZONE = 3;     // buff landings dedup to 3 reporters per occupied zone (P1b)
 const REPORTER_ROSTER_PER_GROUP = 1;  // raid roster dedup to 1 reporter per raid group (P1c)
-const _reporterRegistry   = new Map(); // guild_id → Map(discord_id → {last_seen, primary, zone, group_num, camping, has_zeal, ver})
+const REPORTER_LIVENESS_MAX_MS_DEFAULT = 90_000; // #112: chat candidacy requires a live log line newer than this (tunable key reporter_liveness_max_ms)
+const _reporterRegistry   = new Map(); // guild_id → Map(discord_id → {last_seen, primary, zone, group_num, camping, has_zeal, ver, last_line_ms})
 function _reporterGuildBook(guildId) {
   let book = _reporterRegistry.get(guildId);
   if (!book) { book = new Map(); _reporterRegistry.set(guildId, book); }
@@ -3377,6 +3378,90 @@ function _reporterRank(a, b) {
   const pa = (a.primary || '').toLowerCase(), pb = (b.primary || '').toLowerCase();
   if (pa !== pb) return pa < pb ? -1 : 1;
   return a.id < b.id ? -1 : (a.id > b.id ? 1 : 0);
+}
+// Scope keys — the spatial partition each redundant stream elects within. Chat
+// and buffs partition by ZONE (a landing / a zone-scoped read is only visible to
+// same-zone clients; an unknown zone is its own singleton so it always reports —
+// fail-open); roster partitions by raid GROUP (HP is group-scoped). Kept as
+// shared helpers so the #115 override path derives the SAME scope key the
+// election used.
+function _reporterZoneKey(e)  { const z = e.zone && String(e.zone).trim(); return z ? z.toLowerCase() : `__solo__${e.id}`; }
+function _reporterGroupKey(e) { return Number.isFinite(e.group_num) ? `g${e.group_num}` : `__solo__${e.id}`; }
+// Liveness (#112): is this agent's PRIMARY log still flowing? The agent reports
+// `last_line_ms` — ms since it last processed a live log line from its primary's
+// tail — in the heartbeat. A logged-out character tails nothing, so that value
+// climbs past the threshold within ~a minute of logout even though the AGENT
+// keeps heartbeating (the exact incident: elected reporter's char was logged out
+// for hours while its agent stayed elected and saw no chat). We add the elapsed
+// time since the heartbeat so the age is current at election time. FAIL-OPEN:
+// an older agent that never sends last_line_ms (null) is treated FRESH, so the
+// gate can never silence the fleet during the rollout.
+function _reporterIsFresh(e, now, maxMs) {
+  if (e == null || e.last_line_ms == null) return true;   // signal absent → fail-open fresh
+  const age = e.last_line_ms + Math.max(0, now - e.last_seen);
+  return age < maxMs;
+}
+function _reporterLivenessMaxMs(tune) {
+  const n = Number(tune && tune.reporter_liveness_max_ms);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : REPORTER_LIVENESS_MAX_MS_DEFAULT;
+}
+// #115 override tuning-key readers. Pins/extras are STRING tuning values
+// (precedent: agent_release_ref_beta) so they ride the 60s control-plane cache
+// and survive deploys. `reporter_pin_<svc>` = one character name; `reporter_extra_<svc>`
+// = comma-separated names.
+function _reporterTuneStr(tune, key) {
+  const v = tune && tune[key];
+  return (typeof v === 'string' && v.trim()) ? v.trim() : null;
+}
+function _reporterTuneList(tune, key) {
+  const v = tune && tune[key];
+  if (typeof v !== 'string') return [];
+  return v.split(',').map(s => s.trim()).filter(Boolean).slice(0, 20);
+}
+// Resolve a character NAME (what an officer pins) to the freshest live registry
+// entry — the registry is keyed by discord_id with `primary` = the character.
+// `requireFresh` additionally demands a live log line (used for pins; extras are
+// added if merely alive). Returns { id, ...entry } or null (→ caller ignores it).
+function _reporterResolveByName(guildId, name, now, opts = {}) {
+  const want = String(name || '').trim().toLowerCase();
+  if (!want) return null;
+  const book = _reporterGuildBook(guildId);
+  let best = null;
+  for (const [id, e] of book) {
+    if (now - e.last_seen > REPORTER_TTL_MS) continue;                 // dead
+    if ((e.primary || '').toLowerCase() !== want) continue;
+    if (opts.requireFresh && !_reporterIsFresh(e, now, opts.maxMs)) continue; // stale
+    const cand = { id, ...e };
+    if (!best || _reporterRank(cand, best) < 0) best = cand;
+  }
+  return best;
+}
+// #115: apply officer election overrides to a computed election. A LIVE+FRESH
+// pin REPLACES the computed pick for its scope (drops the weakest auto-pick in
+// that scope, guarantees the pin) so a per-scope reporter count is preserved; a
+// dead/stale/unknown pin is IGNORED (logged once — fail-open, election proceeds
+// normally). Extras are ADDITIVE (any live groupmate). Per-observer streams are
+// never passed here, so pins can never touch mob/encounter data. Returns a NEW Set.
+function _applyReporterOverrides({ guildId, service, elected, byScope, scopeKeyOf, tune, now, maxMs, log }) {
+  const out = new Set(elected);
+  const pinName = _reporterTuneStr(tune, `reporter_pin_${service}`);
+  if (pinName) {
+    const hit = _reporterResolveByName(guildId, pinName, now, { requireFresh: true, maxMs });
+    if (!hit) {
+      if (log) log(`[reporter] ${service} pin "${pinName}" ignored — not live+fresh (fail-open; election proceeds)`);
+    } else if (!out.has(hit.id)) {
+      const scopeKey = scopeKeyOf(hit);
+      const inScope = (byScope && byScope[scopeKey]) || [];
+      const weakest = inScope[inScope.length - 1];   // last-ranked auto-pick in the pin's scope
+      if (weakest != null && weakest !== hit.id) out.delete(weakest);
+      out.add(hit.id);
+    }
+  }
+  for (const nm of _reporterTuneList(tune, `reporter_extra_${service}`)) {
+    const hit = _reporterResolveByName(guildId, nm, now, {});   // alive is enough; dead extras skip (fail-open)
+    if (hit) out.add(hit.id);
+  }
+  return out;
 }
 // Camp-out early handoff (#72, guild-lead request 2026-07-18): a raider who
 // typed /camp sets `camping` in its heartbeat and is ~30s from vanishing. Drop
@@ -3390,7 +3475,19 @@ function _dropCampers(arr) {
   const awake = arr.filter(a => !a.camping);
   return awake.length ? awake : arr;
 }
-function _electReporters(guildId) {
+// Chat election (#112): liveness-gated + zone-spread. Chat (/gu·/rs) is
+// byte-identical everywhere, so ONE live reporter would suffice — but a single
+// elected reporter whose CHARACTER logs out while its AGENT keeps heartbeating
+// took guild chat dark for hours (2026-07-19 incident). Two defenses:
+//   1. LIVENESS — a candidate must have FRESH log flow (_reporterIsFresh). A
+//      logged-out primary tails nothing, so it is demoted exactly like a camper.
+//      If NO live agent anywhere is fresh, fall open to ALL live agents (an
+//      idle-but-connected fleet still relays, and we never elect zero uploaders).
+//   2. ZONE-SPREAD — elect one reporter PER OCCUPIED ZONE (deliberate redundancy;
+//      the bot's 10s in-memory chat dedup collapses the duplicate posts). One
+//      zone's reporter logging out no longer darkens chat — another zone's
+//      reporter is already posting. Unknown zone → own singleton (fail-open).
+function _electReporters(guildId, maxLivenessMs = REPORTER_LIVENESS_MAX_MS_DEFAULT) {
   const book = _reporterGuildBook(guildId);
   const now = Date.now();
   const live = [];
@@ -3398,12 +3495,28 @@ function _electReporters(guildId) {
     if (now - e.last_seen > REPORTER_TTL_MS) { book.delete(id); continue; }
     live.push({ id, ...e });
   }
-  live.sort(_reporterRank);
-  // Camp-out early handoff: chat is a single global scope, so campers step aside
-  // for any awake agent (fail-open if everyone is camping — see _dropCampers).
-  const pool = _dropCampers(live);
-  const chat = new Set(pool.slice(0, REPORTER_CHAT_COUNT).map(e => e.id));
-  return { chat, live };
+  // Liveness gate — fail-open to all live agents if nobody is fresh anywhere.
+  const fresh = live.filter(e => _reporterIsFresh(e, now, maxLivenessMs));
+  const base  = fresh.length ? fresh : live;
+  // Zone-spread — one reporter per occupied zone, campers stepping aside within
+  // their own zone (fail-open per-zone if all are camping — see _dropCampers).
+  const zones = new Map();
+  for (const e of base) {
+    const zoneKey = _reporterZoneKey(e);
+    let arr = zones.get(zoneKey);
+    if (!arr) { arr = []; zones.set(zoneKey, arr); }
+    arr.push(e);
+  }
+  const chat = new Set();
+  const byZone = {};
+  for (const [zoneKey, arr] of zones) {
+    const pool = _dropCampers(arr);
+    pool.sort(_reporterRank);
+    const ids = pool.slice(0, REPORTER_CHAT_PER_ZONE).map(e => e.id);
+    for (const id of ids) chat.add(id);
+    byZone[zoneKey] = ids;
+  }
+  return { chat, byZone, live };
 }
 
 // ── Buff-landing coverage counter (P1b) ─────────────────────────────────────
@@ -5812,6 +5925,64 @@ async function _handleAgentServerPanel(req, res) {
       _lootCacheSet(ck, out);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       return res.end(out);
+    }
+    if (key === 'reporters') {
+      // #115 officer registry surface — the live reporter fleet + per-service
+      // elected sets + active pins/extras. OFFICER-ONLY (the same is_officer gate
+      // the DKP/loot officer widgets use). In-memory registry, so it needs no
+      // Supabase beyond the tuning read already done at the top.
+      if (!identity.is_officer) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ error: 'officers only' }));
+      }
+      let tune = {};
+      try { tune = await _overlayTuningMap(); } catch { /* fail-open */ }
+      const nowR   = Date.now();
+      const maxMs  = _reporterLivenessMaxMs(tune);
+      const flags  = _dedupFlags(tune);
+      const elDisabled = Number(tune.flag_disable_reporter_election) >= 1;
+      const book   = _reporterGuildBook(guildId);
+      const rows = [];
+      for (const [rid, e] of book) {
+        if (nowR - e.last_seen > REPORTER_TTL_MS) { book.delete(rid); continue; }   // prune dead
+        rows.push({
+          discord_id:       rid,
+          character:        e.primary || null,
+          zone:             e.zone || null,
+          group_num:        Number.isFinite(e.group_num) ? e.group_num : null,
+          agent_version:    e.ver || null,
+          camping:          !!e.camping,
+          has_zeal:         !!e.has_zeal,
+          last_seen_age_ms: nowR - e.last_seen,
+          last_line_age_ms: e.last_line_ms == null ? null : e.last_line_ms + Math.max(0, nowR - e.last_seen),
+          fresh:            _reporterIsFresh(e, nowR, maxMs),
+        });
+      }
+      rows.sort((a, b) => (a.character || '').toLowerCase() < (b.character || '').toLowerCase() ? -1 : 1);
+      // Elected sets, override-applied (what the fleet is actually told), mapped
+      // to character names for the officer panel.
+      const chatEl   = _electReporters(guildId, maxMs);
+      const buffEl   = _electBuffReporters(guildId);
+      const rosterEl = _electRosterReporters(guildId);
+      const nameOf = (rid) => { const e = book.get(rid); return (e && e.primary) || rid; };
+      const setNames = (s) => [...s].map(nameOf).sort((a, b) => a.toLowerCase() < b.toLowerCase() ? -1 : 1);
+      const elected = {
+        chat:   setNames(_applyReporterOverrides({ guildId, service: 'chat',   elected: chatEl.chat,     byScope: chatEl.byZone,   scopeKeyOf: _reporterZoneKey,  tune, now: nowR, maxMs })),
+        buffs:  setNames(_applyReporterOverrides({ guildId, service: 'buffs',  elected: buffEl.elected,  byScope: buffEl.byZone,   scopeKeyOf: _reporterZoneKey,  tune, now: nowR, maxMs })),
+        roster: setNames(_applyReporterOverrides({ guildId, service: 'roster', elected: rosterEl.elected, byScope: rosterEl.byGroup, scopeKeyOf: _reporterGroupKey, tune, now: nowR, maxMs })),
+      };
+      const overrides = {
+        chat:   { pin: _reporterTuneStr(tune, 'reporter_pin_chat'),   extra: _reporterTuneList(tune, 'reporter_extra_chat') },
+        buffs:  { pin: _reporterTuneStr(tune, 'reporter_pin_buffs'),  extra: _reporterTuneList(tune, 'reporter_extra_buffs') },
+        roster: { pin: _reporterTuneStr(tune, 'reporter_pin_roster'), extra: _reporterTuneList(tune, 'reporter_extra_roster') },
+      };
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({
+        key, updated_at: new Date().toISOString(),
+        election: elDisabled ? 'disabled' : 'on',
+        dedup: flags, liveness_max_ms: maxMs,
+        reporters: rows, elected, overrides,
+      }));
     }
     res.writeHead(404, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({ error: 'unknown panel key', key }));
@@ -11325,7 +11496,9 @@ async function _handleAgentReporterPoll(req, res) {
 
   // Always record the heartbeat so liveness/failover works even while disabled.
   // `camping` (agent typed /camp) demotes this agent from every election ~30s
-  // before its logout would trip the TTL — see _dropCampers.
+  // before its logout would trip the TTL — see _dropCampers. `last_line_ms`
+  // (#112) is the agent's ms-since-last-live-log-line from its primary's tail —
+  // the liveness signal that catches a logged-out-but-heartbeating reporter.
   _reporterGuildBook(guildId).set(id, {
     last_seen: Date.now(),
     primary:   payload.primary_character ? String(payload.primary_character).slice(0, 32) : '',
@@ -11334,9 +11507,12 @@ async function _handleAgentReporterPoll(req, res) {
     camping:   !!payload.camping,
     has_zeal:  !!payload.has_zeal,
     ver:       payload.agent_version ? String(payload.agent_version).slice(0, 16) : null,
+    last_line_ms: Number.isFinite(payload.last_line_ms) ? Math.max(0, Math.floor(payload.last_line_ms)) : null,
   });
 
-  const { chat } = _electReporters(guildId);
+  const now = Date.now();
+  const maxLivenessMs = _reporterLivenessMaxMs(tune);
+  const chatElection   = _electReporters(guildId, maxLivenessMs);   // #112 liveness + zone-spread
   // Buffs (P1b): coverage-ranked, 3 reporters per OCCUPIED zone. `elected.has(id)`
   // already answers "elected for MY zone" — each agent belongs to exactly one
   // zone group, so its presence in the global elected set means it won its zone.
@@ -11345,10 +11521,21 @@ async function _handleAgentReporterPoll(req, res) {
   // off (roles=true → everyone uploads).
   const buffElection   = flags.buffs  ? _electBuffReporters(guildId)   : null;
   const rosterElection = flags.roster ? _electRosterReporters(guildId) : null;
+  // #115 officer overrides — pins/extras are tuning keys, applied only when the
+  // stream is actually being deduped (flag off = everyone uploads, pins moot).
+  const chatSet   = flags.chat
+    ? _applyReporterOverrides({ guildId, service: 'chat', elected: chatElection.chat, byScope: chatElection.byZone, scopeKeyOf: _reporterZoneKey, tune, now, maxMs: maxLivenessMs, log: console.warn })
+    : null;
+  const buffSet   = buffElection
+    ? _applyReporterOverrides({ guildId, service: 'buffs', elected: buffElection.elected, byScope: buffElection.byZone, scopeKeyOf: _reporterZoneKey, tune, now, maxMs: maxLivenessMs, log: console.warn })
+    : null;
+  const rosterSet = rosterElection
+    ? _applyReporterOverrides({ guildId, service: 'roster', elected: rosterElection.elected, byScope: rosterElection.byGroup, scopeKeyOf: _reporterGroupKey, tune, now, maxMs: maxLivenessMs, log: console.warn })
+    : null;
   const roles = {
-    chat:   flags.chat   ? chat.has(id)                 : true,
-    buffs:  buffElection ? buffElection.elected.has(id) : true,
-    roster: rosterElection ? rosterElection.elected.has(id) : true,
+    chat:   chatSet   ? chatSet.has(id)   : true,
+    buffs:  buffSet   ? buffSet.has(id)   : true,
+    roster: rosterSet ? rosterSet.has(id) : true,
   };
   const me = _reporterGuildBook(guildId).get(id);
   // Per-zone election debug for THIS agent's zone (the `election` field itself is
@@ -11361,7 +11548,7 @@ async function _handleAgentReporterPoll(req, res) {
     buffsZone = {
       zone:      z || null,
       reporters: (buffElection.byZone[zoneKey] || []).length,
-      mine:      buffElection.elected.has(id),
+      mine:      buffSet.has(id),   // post-override truth
       coverage:  _buffCoverageCount(guildId, id),
     };
   }
@@ -11374,7 +11561,7 @@ async function _handleAgentReporterPoll(req, res) {
     rosterGroup = {
       group:     g,
       reporters: (rosterElection.byGroup[groupKey] || []).length,
-      mine:      rosterElection.elected.has(id),
+      mine:      rosterSet.has(id),   // post-override truth
       camping:   !!(me && me.camping),
     };
   }
@@ -11393,6 +11580,77 @@ async function _handleAgentReporterPoll(req, res) {
     agent_kill:        control.agent_kill,        // #74 fleet dormancy (fail-open when absent)
     min_agent_ver_num: control.min_agent_ver_num, // #74 version floor (0 = unset)
   }));
+}
+
+// POST /api/agent/reporter-override — OFFICER-ONLY (#115). Set/clear the reporter
+// election override tuning keys from the Mimic 📡 Reporters panel. Reuses the
+// exact is_officer gate the DKP-tick / loot-post officer widgets use. Overrides
+// are TUNING KEYS (reporter_pin_<svc> = a character name; reporter_extra_<svc> =
+// comma-separated names) so they ride the 60s control-plane cache and survive
+// deploys. Read-modify-write on overlay_tuning.tuning preserves every other knob;
+// we bust the local tuning cache so the change lands on the very next election.
+// body: { service:'chat'|'buffs'|'roster', pin?:string|''|null, extra?:string|''|null }
+//   — pin/extra present ⇒ set (a valid EQ name) or clear (empty/invalid).
+async function _handleAgentReporterOverride(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  if (!identity.is_officer) {
+    res.writeHead(403, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'officers only' }));
+  }
+  const chunks = []; let total = 0;
+  for await (const chunk of req) {
+    total += chunk.length;
+    if (total > 16 * 1024) { res.writeHead(413); return res.end(); }
+    chunks.push(chunk);
+  }
+  let payload;
+  try { payload = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+  catch { res.writeHead(400); return res.end(JSON.stringify({ error: 'invalid JSON' })); }
+  const service = String(payload?.service || '').toLowerCase();
+  if (!['chat', 'buffs', 'roster'].includes(service)) {
+    res.writeHead(400); return res.end(JSON.stringify({ error: 'service must be chat|buffs|roster' }));
+  }
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) { res.writeHead(503); return res.end(JSON.stringify({ error: 'supabase disabled' })); }
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+  const cleanName = (v) => { const s = String(v == null ? '' : v).trim(); return /^[A-Za-z]{2,20}$/.test(s) ? s : null; };
+  const cleanList = (v) => String(v == null ? '' : v).split(',').map(cleanName).filter(Boolean).slice(0, 20);
+  try {
+    // Read CURRENT tuning fresh (not the 60s cache) so a concurrent web edit is
+    // not clobbered by this merge.
+    const rowsCur = await supabase.select('overlay_tuning',
+      `guild_id=eq.${encodeURIComponent(guildId)}&select=tuning&limit=1`);
+    const cur = (Array.isArray(rowsCur) && rowsCur[0] && rowsCur[0].tuning && typeof rowsCur[0].tuning === 'object')
+      ? { ...rowsCur[0].tuning } : {};
+    const pinKey = `reporter_pin_${service}`, extraKey = `reporter_extra_${service}`;
+    if ('pin' in payload) {
+      const nm = cleanName(payload.pin);
+      if (nm) cur[pinKey] = nm; else delete cur[pinKey];   // empty/invalid → clear
+    }
+    if ('extra' in payload) {
+      const list = cleanList(payload.extra);
+      if (list.length) cur[extraKey] = list.join(','); else delete cur[extraKey];
+    }
+    await supabase.upsert('overlay_tuning', [{
+      guild_id:        guildId,
+      tuning:          cur,
+      updated_by_name: identity.display_name || identity.discord_id || 'Mimic officer',
+      updated_at:      new Date().toISOString(),
+    }], 'guild_id', { minimal: true });
+    try { _overlayTuningCache.at = 0; } catch { /* bust cache so the change lands immediately */ }
+    console.log(`[reporter-override] ${identity.display_name || identity.discord_id} → ${service}: pin=${cur[pinKey] || '—'} extra=${cur[extraKey] || '—'}`);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({
+      ok: true, service,
+      pin:   cur[pinKey] || null,
+      extra: cur[extraKey] ? cur[extraKey].split(',') : [],
+    }));
+  } catch (err) {
+    console.error('[reporter-override] write failed:', err?.message);
+    res.writeHead(502, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ ok: false, reason: err?.message || 'write failed' }));
+  }
 }
 
 // POST /api/agent/rolls  (#91 off-night NBG roll capture)
@@ -13800,6 +14058,15 @@ const httpServer = http.createServer(async (req, res) => {
     try { return await _handleAgentReporterPoll(req, res); }
     catch (err) {
       console.error('[reporter-poll] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  if (req.method === 'POST' && req.url === '/api/agent/reporter-override') {
+    try { return await _handleAgentReporterOverride(req, res); }
+    catch (err) {
+      console.error('[reporter-override] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
     }

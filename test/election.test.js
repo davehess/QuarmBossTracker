@@ -1,29 +1,34 @@
 // Reporter-election logic — SOURCE-SLICE fidelity tier.
 //
-// Under test: `_electReporters` / `_reporterRank` / `_reporterGuildBook` in the
-// bot monolith `index.js` (~line 3260). These are internal (unexported) and
-// require()-ing index.js boots the Discord client, so we slice the real block
-// out of the shipped source and eval it (see test/_source-slice.js). The
-// election picks the single chat reporter as the lowest primary-character name,
-// discord_id as tiebreak, drops agents silent past a 60s TTL, and never elects
-// zero reporters when someone is live (fail-open uploads).
+// Under test: `_electReporters` / `_reporterRank` / `_reporterGuildBook` +
+// the #112 liveness/zone-spread and #115 pin/extra helpers in the bot monolith
+// `index.js` (~line 3260). These are internal (unexported) and require()-ing
+// index.js boots the Discord client, so we slice the real block out of the
+// shipped source and eval it (see test/_source-slice.js). Since #112 the chat
+// election elects one reporter PER ZONE (deliberate redundancy; the bot's 10s
+// chat dedup collapses copies), gates candidacy on FRESH log flow (a logged-out
+// primary tails nothing → demoted), and honors officer pins/extras (#115).
 //
-// Ported from the session's scratchpad elect_test.js (7 cases).
+// Ported from the session's scratchpad elect_test.js, extended for #112/#115.
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { readSource, sliceBlock, evalBlock, BOT_INDEX } from './_source-slice.js';
 
 const block = sliceBlock(
   readSource(BOT_INDEX),
   'const REPORTER_TTL_MS',
-  'return { chat, live };\n}',
+  'return { chat, byZone, live };\n}',
 );
 const {
   _electReporters, _reporterGuildBook, _reporterRank,
-  REPORTER_TTL_MS, REPORTER_CHAT_COUNT,
+  _reporterIsFresh, _applyReporterOverrides, _reporterResolveByName,
+  _reporterZoneKey,
+  REPORTER_TTL_MS, REPORTER_CHAT_PER_ZONE, REPORTER_LIVENESS_MAX_MS_DEFAULT,
 } = evalBlock(block, [
   '_electReporters', '_reporterGuildBook', '_reporterRank',
-  'REPORTER_TTL_MS', 'REPORTER_CHAT_COUNT',
+  '_reporterIsFresh', '_applyReporterOverrides', '_reporterResolveByName',
+  '_reporterZoneKey',
+  'REPORTER_TTL_MS', 'REPORTER_CHAT_PER_ZONE', 'REPORTER_LIVENESS_MAX_MS_DEFAULT',
 ]);
 
 // P1b buff election (coverage-ranked, 3 per zone). A WIDER slice of the same
@@ -75,27 +80,44 @@ function freshGuild() { return `${G}-${guildSeq++}`; }
 describe('reporter election (source-sliced from index.js)', () => {
   it('slice compiled the real constants', () => {
     expect(REPORTER_TTL_MS).toBe(60_000);
-    expect(REPORTER_CHAT_COUNT).toBe(1);
+    expect(REPORTER_CHAT_PER_ZONE).toBe(1);
+    expect(REPORTER_LIVENESS_MAX_MS_DEFAULT).toBe(90_000);
     expect(typeof _electReporters).toBe('function');
     expect(typeof _reporterRank).toBe('function');
+    expect(typeof _applyReporterOverrides).toBe('function');
   });
 
-  it('elects exactly one chat reporter — the lowest primary name, not insertion order', () => {
+  it('elects one chat reporter PER ZONE — lowest primary name, not insertion order', () => {
     const g = freshGuild();
     const now = Date.now();
-    _reporterGuildBook(g).set('d3', { last_seen: now, primary: 'Zarl' });
-    _reporterGuildBook(g).set('d1', { last_seen: now, primary: 'Abby' });
-    _reporterGuildBook(g).set('d2', { last_seen: now, primary: 'Mira' });
+    // All in one zone → one reporter (the lowest primary name).
+    _reporterGuildBook(g).set('d3', { last_seen: now, primary: 'Zarl', zone: 'guk' });
+    _reporterGuildBook(g).set('d1', { last_seen: now, primary: 'Abby', zone: 'guk' });
+    _reporterGuildBook(g).set('d2', { last_seen: now, primary: 'Mira', zone: 'guk' });
     const r = _electReporters(g);
     expect(r.chat.size).toBe(1);
-    expect(r.chat.has('d1')).toBe(true); // Abby wins regardless of insert order
+    expect(r.chat.has('d1')).toBe(true);          // Abby wins regardless of insert order
+    expect(r.byZone['guk']).toEqual(['d1']);
   });
 
-  it('breaks a primary-name tie by the lower discord_id', () => {
+  it('ZONE-SPREAD: two occupied zones elect two reporters (redundancy — dedup collapses copies)', () => {
     const g = freshGuild();
     const now = Date.now();
-    _reporterGuildBook(g).set('dB', { last_seen: now, primary: 'Same' });
-    _reporterGuildBook(g).set('dA', { last_seen: now, primary: 'Same' });
+    _reporterGuildBook(g).set('a1', { last_seen: now, primary: 'Aaa', zone: 'guk' });
+    _reporterGuildBook(g).set('a2', { last_seen: now, primary: 'Bbb', zone: 'guk' });
+    _reporterGuildBook(g).set('b1', { last_seen: now, primary: 'Ccc', zone: 'oot' });
+    const r = _electReporters(g);
+    expect(r.chat.size).toBe(2);
+    expect(r.byZone['guk']).toEqual(['a1']);       // lowest name in guk
+    expect(r.byZone['oot']).toEqual(['b1']);
+    expect(r.chat.has('a1') && r.chat.has('b1')).toBe(true);
+  });
+
+  it('breaks a primary-name tie by the lower discord_id (within a zone)', () => {
+    const g = freshGuild();
+    const now = Date.now();
+    _reporterGuildBook(g).set('dB', { last_seen: now, primary: 'Same', zone: 'guk' });
+    _reporterGuildBook(g).set('dA', { last_seen: now, primary: 'Same', zone: 'guk' });
     const r = _electReporters(g);
     expect(r.chat.has('dA')).toBe(true);
   });
@@ -103,12 +125,23 @@ describe('reporter election (source-sliced from index.js)', () => {
   it('evicts a reporter silent past the 60s TTL and fails over to the next live agent', () => {
     const g = freshGuild();
     const now = Date.now();
-    _reporterGuildBook(g).set('d1', { last_seen: now - 70_000, primary: 'Abby' }); // stale > TTL
-    _reporterGuildBook(g).set('d2', { last_seen: now, primary: 'Mira' });
+    _reporterGuildBook(g).set('d1', { last_seen: now - 70_000, primary: 'Abby', zone: 'guk' }); // stale > TTL
+    _reporterGuildBook(g).set('d2', { last_seen: now, primary: 'Mira', zone: 'guk' });
     const r = _electReporters(g);
     expect(_reporterGuildBook(g).has('d1')).toBe(false); // stale evicted from the book
     expect(r.chat.size).toBe(1);
     expect(r.chat.has('d2')).toBe(true); // next-lowest LIVE agent elected
+  });
+
+  it('an agent with unknown/missing zone is its own singleton and is always elected (fail-open)', () => {
+    const g = freshGuild();
+    const now = Date.now();
+    _reporterGuildBook(g).set('nz', { last_seen: now, primary: 'NoZone', zone: null });
+    _reporterGuildBook(g).set('a1', { last_seen: now, primary: 'Aaa', zone: 'guk' });
+    _reporterGuildBook(g).set('a2', { last_seen: now, primary: 'Bbb', zone: 'guk' });
+    const r = _electReporters(g);
+    expect(r.chat.has('nz')).toBe(true);           // zoneless self-elects
+    expect(r.byZone['guk']).toEqual(['a1']);       // real zone still dedups to 1
   });
 
   it('empty guild yields zero reporters without throwing', () => {
@@ -120,9 +153,132 @@ describe('reporter election (source-sliced from index.js)', () => {
 
   it('a single live agent is always the reporter (never zero uploaders)', () => {
     const g = freshGuild();
-    _reporterGuildBook(g).set('solo', { last_seen: Date.now(), primary: 'Solo' });
+    _reporterGuildBook(g).set('solo', { last_seen: Date.now(), primary: 'Solo', zone: 'guk' });
     const r = _electReporters(g);
     expect(r.chat.has('solo')).toBe(true);
+  });
+});
+
+describe('chat liveness gate (#112) — logged-out reporters demoted by stale log flow', () => {
+  it('_reporterIsFresh: absent last_line_ms is treated FRESH (fail-open for old agents)', () => {
+    const now = Date.now();
+    expect(_reporterIsFresh({ last_seen: now }, now, 90_000)).toBe(true);
+    expect(_reporterIsFresh({ last_seen: now, last_line_ms: 3_000 }, now, 90_000)).toBe(true);
+    expect(_reporterIsFresh({ last_seen: now, last_line_ms: 120_000 }, now, 90_000)).toBe(false);
+    // elapsed time since the heartbeat is added to the reported age
+    expect(_reporterIsFresh({ last_seen: now - 30_000, last_line_ms: 70_000 }, now, 90_000)).toBe(false);
+  });
+
+  it('LIVENESS DEMOTION: a stale-log candidate steps aside for a fresh peer in the same zone', () => {
+    const g = freshGuild();
+    const now = Date.now();
+    // Abby sorts first by name but her log went quiet (logged out); Mira is live.
+    _reporterGuildBook(g).set('d1', { last_seen: now, primary: 'Abby', zone: 'guk', last_line_ms: 120_000 });
+    _reporterGuildBook(g).set('d2', { last_seen: now, primary: 'Mira', zone: 'guk', last_line_ms: 4_000 });
+    const r = _electReporters(g);
+    expect(r.chat.has('d1')).toBe(false);          // stale → demoted like a camper
+    expect(r.chat.has('d2')).toBe(true);           // fresh peer takes over
+    expect(r.byZone['guk']).toEqual(['d2']);
+  });
+
+  it('FLEET FAIL-OPEN: a missing-signal candidate is never demoted (old agent stays eligible)', () => {
+    const g = freshGuild();
+    const now = Date.now();
+    _reporterGuildBook(g).set('d1', { last_seen: now, primary: 'Abby', zone: 'guk' });        // no signal → fresh
+    _reporterGuildBook(g).set('d2', { last_seen: now, primary: 'Mira', zone: 'guk', last_line_ms: 5_000 });
+    const r = _electReporters(g);
+    expect(r.chat.has('d1')).toBe(true);           // missing last_line_ms never demotes
+  });
+
+  it('NO-FRESH-CANDIDATES FAIL-OPEN: if nobody anywhere is fresh, all live agents stay eligible', () => {
+    const g = freshGuild();
+    const now = Date.now();
+    _reporterGuildBook(g).set('d1', { last_seen: now, primary: 'Abby', zone: 'guk', last_line_ms: 300_000 });
+    _reporterGuildBook(g).set('d2', { last_seen: now, primary: 'Mira', zone: 'guk', last_line_ms: 250_000 });
+    const r = _electReporters(g);
+    expect(r.chat.size).toBe(1);                   // never zero uploaders
+    expect(r.chat.has('d1')).toBe(true);           // stale-but-only → still elected (fail-open)
+  });
+});
+
+describe('officer election overrides (#115) — pins replace, extras add', () => {
+  function seedZone(g, now) {
+    // Abe auto-wins the guk chat seat; Zed is the runner-up in the same zone.
+    _reporterGuildBook(g).set('x', { last_seen: now, primary: 'Abe', zone: 'guk' });
+    _reporterGuildBook(g).set('y', { last_seen: now, primary: 'Zed', zone: 'guk' });
+  }
+
+  it('PIN honored when live+fresh: replaces the computed pick for its scope', () => {
+    const g = freshGuild();
+    const now = Date.now();
+    seedZone(g, now);
+    const el = _electReporters(g);
+    expect(el.chat.has('x')).toBe(true);           // Abe is the auto-pick
+    const out = _applyReporterOverrides({
+      guildId: g, service: 'chat', elected: el.chat, byScope: el.byZone,
+      scopeKeyOf: _reporterZoneKey, tune: { reporter_pin_chat: 'Zed' }, now, maxMs: 90_000,
+    });
+    expect(out.has('y')).toBe(true);               // pinned Zed elected
+    expect(out.has('x')).toBe(false);              // ...replacing Abe in its zone
+    expect(out.size).toBe(1);
+  });
+
+  it('DEAD/STALE PIN ignored: election proceeds with the computed pick (fail-open)', () => {
+    const g = freshGuild();
+    const now = Date.now();
+    seedZone(g, now);
+    // Make Zed present-but-stale so the freshness gate rejects the pin.
+    _reporterGuildBook(g).set('y', { last_seen: now, primary: 'Zed', zone: 'guk', last_line_ms: 300_000 });
+    const el = _electReporters(g);
+    const out = _applyReporterOverrides({
+      guildId: g, service: 'chat', elected: el.chat, byScope: el.byZone,
+      scopeKeyOf: _reporterZoneKey, tune: { reporter_pin_chat: 'Zed' }, now, maxMs: 90_000,
+    });
+    expect(out.has('x')).toBe(true);               // Abe retained (pin ignored)
+    expect(out.has('y')).toBe(false);
+    // An entirely unknown pin name is likewise a no-op.
+    const out2 = _applyReporterOverrides({
+      guildId: g, service: 'chat', elected: el.chat, byScope: el.byZone,
+      scopeKeyOf: _reporterZoneKey, tune: { reporter_pin_chat: 'Ghost' }, now, maxMs: 90_000,
+    });
+    expect(out2.has('x')).toBe(true);
+    expect(out2.size).toBe(1);
+  });
+
+  it('EXTRAS additive: a live extra is added on top of the computed pick', () => {
+    const g = freshGuild();
+    const now = Date.now();
+    seedZone(g, now);
+    const el = _electReporters(g);
+    const out = _applyReporterOverrides({
+      guildId: g, service: 'chat', elected: el.chat, byScope: el.byZone,
+      scopeKeyOf: _reporterZoneKey, tune: { reporter_extra_chat: 'Zed' }, now, maxMs: 90_000,
+    });
+    expect(out.has('x')).toBe(true);               // auto-pick kept
+    expect(out.has('y')).toBe(true);               // extra added
+    expect(out.size).toBe(2);
+  });
+
+  it('EXTRAS skip a name that is not in the live registry (fail-open, no throw)', () => {
+    const g = freshGuild();
+    const now = Date.now();
+    seedZone(g, now);
+    const el = _electReporters(g);
+    const out = _applyReporterOverrides({
+      guildId: g, service: 'chat', elected: el.chat, byScope: el.byZone,
+      scopeKeyOf: _reporterZoneKey, tune: { reporter_extra_chat: 'Nobody, Ghost' }, now, maxMs: 90_000,
+    });
+    expect(out.size).toBe(1);
+    expect(out.has('x')).toBe(true);
+  });
+
+  it('_reporterResolveByName finds the freshest live entry, or null when dead/stale', () => {
+    const g = freshGuild();
+    const now = Date.now();
+    _reporterGuildBook(g).set('y', { last_seen: now, primary: 'Zed', zone: 'guk' });
+    expect(_reporterResolveByName(g, 'Zed', now, { requireFresh: true, maxMs: 90_000 }).id).toBe('y');
+    expect(_reporterResolveByName(g, 'zed', now, {})?.id).toBe('y'); // case-insensitive
+    expect(_reporterResolveByName(g, 'Nobody', now, {})).toBe(null);
   });
 });
 
@@ -273,11 +429,11 @@ describe('roster-reporter election — per-group, 1 reporter/group (P1c)', () =>
 });
 
 describe('camp-out early handoff — camping agents demoted before the TTL (#72 P3)', () => {
-  it('CHAT: a camping top-rank agent steps aside for an awake agent', () => {
+  it('CHAT: a camping top-rank agent steps aside for an awake agent in its zone', () => {
     const g = freshGuild();
     const now = Date.now();
-    _rosterBook(g).set('d1', { last_seen: now, primary: 'Abby', camping: true });  // would win, but camping
-    _rosterBook(g).set('d2', { last_seen: now, primary: 'Mira', camping: false });
+    _rosterBook(g).set('d1', { last_seen: now, primary: 'Abby', zone: 'guk', camping: true });  // would win, but camping
+    _rosterBook(g).set('d2', { last_seen: now, primary: 'Mira', zone: 'guk', camping: false });
     const r = _electReportersC(g);
     expect(r.chat.has('d1')).toBe(false);   // camper demoted early
     expect(r.chat.has('d2')).toBe(true);    // awake agent takes chat
@@ -285,7 +441,7 @@ describe('camp-out early handoff — camping agents demoted before the TTL (#72 
 
   it('CHAT: a SOLE camper stays elected (fail-open — reports until the TTL evicts it)', () => {
     const g = freshGuild();
-    _rosterBook(g).set('solo', { last_seen: Date.now(), primary: 'Solo', camping: true });
+    _rosterBook(g).set('solo', { last_seen: Date.now(), primary: 'Solo', zone: 'guk', camping: true });
     const r = _electReportersC(g);
     expect(r.chat.has('solo')).toBe(true);  // never zero uploaders
   });
