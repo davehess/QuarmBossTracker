@@ -3908,6 +3908,12 @@ async function _handleAgentPvp(req, res) {
   // other-guild noise is not. Pet attribution: if the killer is a known pet
   // (state petOwners map), credit the owner and flag via_pet.
   const pvpKillRows = [];
+  // DEFERRED Discord sends (task #44, same pattern as bosskill/encounter): the
+  // #pvp posts + kill-card embeds used to await inside the loop, holding the
+  // agent's connection open behind Discord rate limits. The ledger, fun events,
+  // pvp_boss_kills mirror, and respawn-timer recording all stay SYNC (they're
+  // the record); only the presentational sends move after the 200.
+  const discordJobs = [];
   // Fun-counter rows emitted alongside the kill ledger — currently just Lord
   // of Ire kills by Wolf Pack members. Upserted to fun_events at the end so a
   // failure here can never lose a PvP post or ledger row.
@@ -4146,9 +4152,12 @@ async function _handleAgentPvp(req, res) {
                           inline: false },
                       )
                       .setTimestamp();
-                    const thread = await client.channels.fetch(killsThreadId);
-                    const msg = await thread.send({ embeds: [embed] });
-                    setPvpKillThreadMessageId(boss.id, msg.id);
+                    const _bossId = boss.id;
+                    discordJobs.push(async () => {
+                      const thread = await client.channels.fetch(killsThreadId);
+                      const msg = await thread.send({ embeds: [embed] });
+                      setPvpKillThreadMessageId(_bossId, msg.id);
+                    });
                   } catch (err) {
                     console.warn('[pvp-auto] could not post kill card:', err?.message);
                   }
@@ -4192,14 +4201,14 @@ async function _handleAgentPvp(req, res) {
       // if they all just happened (Uilnayar 2026-07-01: a backfill flooded
       // #pvp with dozens of old Zek/Eclipse/Nocturnal kill notices at once).
       if (!b?.backfill) {
-        const sent = await ch.send({ content });
-
-        // Attach Howl button only when Wolf Pack is involved (either side).
-        // PvP kills between two non-WP guilds are visible to us via /pvp
-        // channel chatter but there's nothing to celebrate or rally to.
-        if (isWpKill || isWpDeath) {
-          await sent.edit({ content, components: [buildHowlRow(sent.id)] });
-        }
+        // Deferred post-ack (task #44). Capture this iteration's channel +
+        // content + Howl flag; the send runs off the agent's clock below.
+        const _ch = ch, _content = content, _howl = isWpKill || isWpDeath;
+        discordJobs.push(async () => {
+          const sent = await _ch.send({ content: _content });
+          // Attach Howl button only when Wolf Pack is involved (either side).
+          if (_howl) await sent.edit({ content: _content, components: [buildHowlRow(sent.id)] });
+        });
         posted++;
       }
     } catch (err) {
@@ -4239,6 +4248,13 @@ async function _handleAgentPvp(req, res) {
   _trackUpload({ endpoint: 'pvp', character: payload?.character, agentVersion: payload?.agent_version, payloadBytes: total, agentState: payload?.agent_state || null, uploadedBy: identity.discord_id });
   res.writeHead(200);
   res.end(JSON.stringify({ ok: true, posted, deduped, kills_recorded: pvpKillRows.length }));
+  // Discord is presentation, not the record — run the sends off the agent's
+  // clock, sequentially (post order matters on a multi-kill payload). #44.
+  (async () => {
+    for (const job of discordJobs) {
+      try { await job(); } catch (err) { console.warn('[pvp-relay] deferred post error:', err?.message); }
+    }
+  })();
 }
 
 // POST /api/agent/pvp_assists — receive correlated assist events from the
