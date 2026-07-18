@@ -20,6 +20,66 @@ raid; move it to STATUS.md's "Done" once graduated to stable.*
 
 ---
 
+## #107 — Loot-post TTS + auction countdown chips + trigger overlay auto-grow
+
+**Needs:** agent **3.3.88** (beta Mimic) · NO bot change (web **1.0.241** is
+roadmap copy only).
+
+**What it does:** when an officer posts a drop list in guild or raid chat, every
+raider's Mimic now speaks it locally — "Loot posted, 3 items, bids open 2
+minutes" (item count, not the list) — and drops a gold countdown chip on the
+trigger overlay that ticks down the auction like a Death Touch timer (with a 15s
+warning). The window length comes from the bid call ("2 min", "90s") or a
+default you set. Re-posting the same items resets the clock instead of stacking a
+duplicate; each separate drop gets its own chip; any chip can be dismissed with
+its ✕. Separately, the trigger overlay now grows on its own to fit its content
+(timers + pinned callouts + loot chips), so the buttons along the bottom stop
+getting cut off.
+
+**Where to look:** the agent dashboard Triggers tab has a new **💰 Loot auction
+announce** card (toggle `lootAuctionTts`, default ON + a default-duration knob).
+The callout also needs **Trigger alerts (TTS)** on (it shares that voice). The
+chip appears on the trigger-alert overlay alongside any Death Touch / debuff
+timers.
+
+### ✅ Solo (one machine)
+1. **Hear the announce + see the chip.** With Trigger alerts (TTS) ON and the
+   loot toggle ON, in `/rs` (to yourself is fine) post a fake drop list, e.g.
+   `Cloak of Flames, Ring of the Ancients, Short Sword of the Ykesha`, then a
+   separate line `bids open 90 seconds`. You should HEAR "Loot posted, 3 items,
+   bids open 1 minute 30 seconds" and SEE a gold `💰 Loot bids (3)` chip counting
+   down from 1:30 on the trigger overlay, warning at 15s.
+2. **Default duration when none is stated.** Post just a drop list with no bid
+   call (`Fungus Covered Scale Tunic, Reaper of the Dead`). The chip should use
+   your configured default (120s out of the box) and the voice should say "bids
+   open 2 minutes".
+3. **Repeat post RESETS, doesn't stack.** Re-post the SAME item list ~30s later.
+   The existing chip's clock should jump back up (reset) — you should still see
+   exactly ONE chip for that set, and NOT hear a second announce.
+4. **Distinct posts stack.** Post a different drop list while the first chip is
+   still live → a SECOND chip appears (concurrent auctions are real).
+5. **Dismiss with ✕.** Hover a loot chip (overlay can be locked/click-through)
+   and click its ✕ — the chip goes away immediately and does not come back on
+   the next poll.
+6. **Toggle OFF = silent.** Turn the dashboard 💰 Loot auction announce toggle
+   OFF, post a drop list → no voice, no chip. Turn it back ON.
+7. **Overlay grows / shrinks + honors grow direction.** With several timers +/or
+   loot chips live, confirm the trigger window grows tall enough that its bottom
+   controls (feedback vote buttons, sticky ✕, loot-chip ✕) are never clipped, and
+   shrinks back when they clear. Right-click the ✥ move icon → toggle **⬆ Grow
+   upward** and repeat: grow-down should keep the top edge fixed, grow-up should
+   keep the bottom edge fixed and move the top up. The ✕ hide + ✥ move buttons
+   stay reachable at every size.
+
+### 👥 Multi-person (2+ machines on beta) — **needs a raid partner**
+1. **Both clients announce locally, exactly once.** One raider posts a drop list
+   in `/rs`. BOTH raiders (each running beta Mimic with the toggle on) should
+   hear the announce and see the chip on their own overlay — driven off their own
+   local log tail, no relay. Neither should hear it twice (multibox second-log
+   copies reset silently).
+
+**Status:** ⏳ awaiting verification (solo is quick; multi-person needs 2 testers).
+
 ## #106 — Multiplexed agent poll (six GET loops → one) + encounter-burst jitter
 
 **Needs:** bot **3.0.210** (live on main) · agent **3.3.87** (beta Mimic).

@@ -45,11 +45,13 @@ export const releases: Release[] = [
   {
     key: 'callout-trust-and-ch-go-196',
     title: '📣 Callouts you can trust — and the CH chain speaks your GO · Mimic 1.9.6 (beta)',
-    version: 'Mimic 1.9.6 beta · Agent 3.3.84',
-    date: '2026-07-18',
+    version: 'Mimic 1.9.6 beta · Agent 3.3.88',
+    date: '2026-07-19',
     channel: 'beta',
     headline: 'This beta round makes the callouts you rely on impossible to miss — and impossible to silently lose — plus one thing clerics asked for: the CH chain says your number out loud when it’s your turn.',
     features: [
+      { name: '💰 Loot posts get called out — with a bid clock', blurb: 'When an officer drops a loot list in guild or raid chat, Mimic now says it out loud — “Loot posted, 3 items, bids open 2 minutes” — and starts a gold countdown chip on your trigger overlay that ticks down the auction, exactly like a Death Touch timer (it even warns you at 15 seconds). It reads the time from the bid call, or falls back to a default you can set. Re-posting the same items just resets the clock instead of stacking a duplicate, every separate drop gets its own chip, and you can dismiss any chip with its ✕. On by default; one toggle in the dashboard’s Triggers tab silences it.' },
+      { name: 'The trigger overlay stops cutting off its own buttons', blurb: 'The trigger/timer window now grows on its own to fit whatever’s on it — stacked timers, pinned callouts, the new loot chips — so the buttons along the bottom never get clipped again. It shrinks back down when things clear, and grows the right direction whether you have it set to grow up or grow down.' },
       { name: '⛑ The CH chain calls your “04 GO”', blurb: 'When the chain reaches your slot, Mimic speaks your number — “04 GO” — out loud, so you can react without staring at the overlay counting rows. It’s a 📣 button right on the CH chain overlay: on by default, one click to silence. It only speaks for the character you’re actually playing, and only once per rotation pass.' },
       { name: 'A “Rehearse” button that really rehearses', blurb: 'The trigger Test button used to just play the alert — it never checked whether your pattern actually matches anything, so a broken trigger looked fine until raid night. Now it feeds a real matching line through the whole engine (pattern, cooldown, suppression) and speaks the real callout, so a trigger that won’t fire tells you BEFORE it matters.' },
       { name: 'Callouts can’t silently die', blurb: 'A new “why didn’t my trigger fire?” panel on the dashboard shows exactly how far each callout got — matched, cooled down, suppressed by your charm pet, or spoken — so a trigger that goes quiet is no longer a mystery. And a relayed callout that arrives late after a network backlog is dropped instead of shouted minutes after the moment passed.' },

@@ -147,6 +147,44 @@ folly** — it's here.*
     see the #106 entry below; the six-GET-loop consolidation + encounter-burst
     flattening close #73 entirely. **Wave 2 is now fully closed** (#72 election,
     #73 admission control incl. tail, #74 control plane, #58 zero-downtime).
+- **#107 loot-post TTS + auction countdown chips + trigger overlay auto-grow —
+  DONE (2026-07-19, agent 3.3.88 beta; web 1.0.241 roadmap on main — NO bot
+  change).** Guild-lead ask, two halves, all agent + Mimic-overlay:
+  1. **Loot-post announce (agent).** `noteLootAuction()` hooks the LIVE /gu+/rs
+     tail (never the `--since` backfill) and reuses `parseLootChatBody`'s strict
+     Title-Case guard: a multi-item drop list is a loot post on its own; a lone
+     single item needs bid context (a bid word inline, or a bid call heard in the
+     last 30s). The chat line is the universal signal — every raider's agent sees
+     it locally — so the callout is per-client LOCAL TTS + a chip, no relay/dedup.
+     Duration parsed from the bid call ("2 min", "90s"), else the configurable
+     `lootAuctionDefaultSec` (120s); a later bid call that states a duration
+     re-anchors the most-recent auction. TTS rides the existing overlay-fire
+     pipeline (`_pushOverlay` → `recentTriggerFires`), so it respects the master
+     `enableTriggerTts` flag for free: "Loot posted — N items, bids open X"
+     (item COUNT, not the list).
+  2. **Auction countdown chip (agent + triggers.html).** Reuses the trigger
+     `_activeTimers` machinery so it looks/behaves like a Death Touch timer (gold,
+     15s warning). Same item set = reset in place (multibox + repeat posts stay
+     silent — the announce fires only on first open); distinct sets stack.
+     Per-chip ✕ dismiss (`kind:'loot'`/`dismissible` in the snapshot → overlay
+     draws a ✕ with the hover-interact handshake → `POST /api/timers/cancel`).
+     Dashboard Triggers-tab toggle (`lootAuctionTts`, default ON) + default-
+     duration knob (`POST /api/loot-prefs`), persisted in `logsync.optin.json`.
+  3. **Trigger overlay auto-grow (triggers.html).** The renderer measured ONLY
+     the `#timers` stack and shrank the window to 50px when no timer was live —
+     cropping the sticky stack (#76) + feedback buttons in the centered
+     `#alertcol` (the "bottom buttons cut off" bug). Now a `ResizeObserver` on
+     BOTH `#alertcol` and `#timers` drives `measureWanted()` → the existing
+     `overlayAutoHeight` IPC (grow-up/down + work-area clamp already handled
+     there). Grow immediate, shrink debounced 250ms, clamp ~60% work area with
+     `#timers` internal scroll beyond. **Interaction rule shipped:** height is
+     fully auto-managed; the right-click resize presets only change WIDTH, so
+     manual sizing and auto-grow never fight — 50px baseline floor, ~60% ceiling.
+     `main.js` untouched.
+  - Verify: scratchpad smoke over the parser (announce text + duration incl.
+     default path, chip payload, reset-vs-stack, false-positive guards) 38/38;
+     agent `node --check` + `check:dashboard` green; triggers.html `<script>`
+     parses. See BETA-TESTING #107.
 - **#106 multiplexed agent poll + encounter-burst jitter — DONE (2026-07-18, bot
   3.0.210 on main + agent 3.3.87 beta).** The deferred #73 tail, built on the
   budgets/breaker/shed/kill-switch already shipped:
