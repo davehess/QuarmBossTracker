@@ -220,7 +220,10 @@ cross-client Mob Info), `raid-buff-queue` (buff/debuff/cure queues: online
 raiders only, same-zone first, tank-HP priority, curse-counter sort),
 `guild-triggers` (10-min poll), `backfill-requests`, `character-prefs`
 (opt-out flags), `recent-fires`, `threat-snapshot`, `incomplete-encounters`,
-`server-panel`.
+`server-panel`, `poll` (#106 multiplexed bundle — one GET carrying
+`recent_fires`+`tuning`+`triggers`+`prefs`+`backfill`+`ui_edits` at each
+stream's own cadence with per-stream cursors + shed-omission; agent 3.3.87+
+runs one loop and falls back to the individual routes on a 404).
 
 Payload limits: chat 256KB, encounter 10MB. Returns 503 if
 `WOLFPACK_AGENT_TOKEN` unset.

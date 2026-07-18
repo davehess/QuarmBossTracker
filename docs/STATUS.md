@@ -143,9 +143,50 @@ folly** — it's here.*
      durable queue (429 was already retryable — not in `QUEUE_PERMANENT_CODES` —
      so no data was ever lost; the fix makes backoff precise and excludes 429
      from poison-parking).
-  - **DEFERRED (a later agent — explicitly NOT in this run):** the six-GET-loop
-    consolidation / long-poll, and encounter-burst flattening (~90MB/kill at 60).
-    See DESIGN-platform-queue.md #73 (Wave-2 addendum).
+  - ✅ **#73 tail DONE as #106 (2026-07-18, bot 3.0.210 + agent 3.3.87 beta)** —
+    see the #106 entry below; the six-GET-loop consolidation + encounter-burst
+    flattening close #73 entirely. **Wave 2 is now fully closed** (#72 election,
+    #73 admission control incl. tail, #74 control plane, #58 zero-downtime).
+- **#106 multiplexed agent poll + encounter-burst jitter — DONE (2026-07-18, bot
+  3.0.210 on main + agent 3.3.87 beta).** The deferred #73 tail, built on the
+  budgets/breaker/shed/kill-switch already shipped:
+  1. **`GET /api/agent/poll` (bot).** One bundle endpoint assembled from the SAME
+     in-memory/cached stores the individual routes read — no new Supabase hit per
+     poll. Request carries `streams=<csv>` + per-stream cursors reusing each
+     stream's existing semantics (`since_id` recent_fires · `tuning_ver` hash ·
+     `trig_ver` max-updated_at · `classes`/`characters`). Response
+     `{streams:{<key>:{data}|{unchanged:true}}, agent_kill, min_agent_ver_num}`;
+     a stream shed via `flag_shed_<key>` is OMITTED (client fails open). Control
+     plane rides every poll (the dormancy/floor channel). The six individual
+     routes stay live (extracted to shared `_*For` helpers so bundle + standalone
+     never drift). Gated by a new `poll` admission budget (240/min, 429 over).
+  2. **Single agent poll loop (agent, fallback-safe).** One 1.5s loop asks for
+     `recent_fires`+`tuning` every tick and the slow streams (triggers 2min,
+     prefs 10min, backfill/ui_edits 5min) only when due — same per-stream rate as
+     before, six request streams → one. **Feature-detect:** a 404 or a non-poll-
+     shaped 200 (old bot's catch-all `OK`) flips to permanent per-process
+     fallback to the individual loops (they no-op behind an `_multiplexActive()`
+     gate until then). **Dormancy preserved:** while paused/below-floor the loop
+     asks for `tuning` ONLY (nothing else), throttled to the control cadence.
+  3. **Deterministic encounter-upload jitter (agent).** On fight end a real
+     encounter's network enqueue is delayed `hash(uploader) % 15s` (deterministic
+     per client — re-runs don't re-randomize), flattening the ~90MB-at-60
+     simultaneous offer; the ±30min find_or_create dedup makes a few seconds
+     immaterial and the durable queue already honors 429/Retry-After. **Bypass:**
+     an empty queue AND a payload < 256KB (solo/duo parse) enqueues immediately so
+     the dashboard card feels instant. Local overlay/UX is never delayed — only
+     the enqueue-to-network moment; backfill replays skip the jitter.
+  - **Req-rate math (steady-state GET polling, per bot):** at 15 clients the
+     recent-fires loop alone was ~10 req/s and the 5 slower loops added a light
+     tail; after #106 it's ~10 req/s TOTAL (one loop, the slow streams absorbed).
+     At 60 clients recent-fires was ~40 req/s + 5 more loops → after #106 ~40
+     req/s total, the other five collapsed into it (Supabase read rate for the
+     slow streams unchanged — they ride only their own cadence).
+  - Tests: `test/poll-bundle.test.js` (source-slice of the bundle's per-stream
+     decision — shed-omission + cursor/unchanged), `test/encounter-jitter.test.js`
+     (mirror of the pure jitter helpers — determinism, 0..15s bounds, bypass;
+     upgrade to source-slice at the next agent→main graduation). Full main gate
+     (lint/test/check:dashboard) green; agent `node --check` + check:dashboard.
 - **#74 control plane COMPLETE + #58 zero-downtime deploys DONE (2026-07-18, bot
   3.0.209 + web 1.0.240 on main; agent 3.3.86 + Mimic LKG on beta 1.9.6).** Built
   on the reporter election + budgets + breaker + `GET /health` already shipped:

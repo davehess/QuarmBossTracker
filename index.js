@@ -5221,18 +5221,16 @@ setTimeout(() => { _backfillSocialsIndex().catch(() => {}); }, 90_000);
 // edits for the agent's watched characters. Section allowlist enforced here
 // AND at insert time (web server action): only Socials/HotButtons keys ever
 // reach an agent, so a compromised row can't touch arbitrary ini sections.
-async function _handleAgentUiPendingEdits(req, res) {
-  const identity = await mimicLink.requireAgentAuth(req, res);
-  if (!identity) return;
+// Assemble pending web-staged UI (socials/hotbutton) edits for a character list.
+// Shared by the standalone GET /ui-pending-edits and the multiplexed GET /poll
+// (#106). Returns { edits } — the section allowlist is enforced here (and again
+// agent-side) so web rows can never touch arbitrary ini keys.
+async function _uiPendingEditsFor(characters) {
   const supabase = require('./utils/supabase');
-  if (!supabase.isEnabled()) { res.writeHead(503); return res.end(JSON.stringify({ error: 'supabase disabled' })); }
+  if (!supabase.isEnabled()) return { edits: [], note: 'supabase disabled' };
+  const chars = (Array.isArray(characters) ? characters : []).slice(0, 20);
+  if (!chars.length) return { edits: [] };
   const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
-  let chars = [];
-  try {
-    chars = (new URL(req.url, 'http://x').searchParams.get('characters') || '')
-      .split(',').map(s => s.trim()).filter(Boolean).slice(0, 20);
-  } catch { /* */ }
-  if (!chars.length) { res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ edits: [] })); }
   const inList = chars.map(c => `"${c.replace(/"/g, '')}"`).join(',');
   const rows = await supabase.select('ui_pending_edits',
     `guild_id=eq.${encodeURIComponent(guildId)}&status=eq.pending&character=in.(${encodeURIComponent(inList)})` +
@@ -5242,8 +5240,22 @@ async function _handleAgentUiPendingEdits(req, res) {
     edits: (Array.isArray(r.edits) ? r.edits : []).filter(e =>
       e && /^(Socials|HotButtons)$/.test(String(e.section)) && /^Page\d+Button\d+/.test(String(e.key))),
   }));
+  return { edits: safe };
+}
+
+async function _handleAgentUiPendingEdits(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) { res.writeHead(503); return res.end(JSON.stringify({ error: 'supabase disabled' })); }
+  let chars = [];
+  try {
+    chars = (new URL(req.url, 'http://x').searchParams.get('characters') || '')
+      .split(',').map(s => s.trim()).filter(Boolean).slice(0, 20);
+  } catch { /* */ }
+  const data = await _uiPendingEditsFor(chars);
   res.writeHead(200, { 'Content-Type': 'application/json' });
-  return res.end(JSON.stringify({ edits: safe }));
+  return res.end(JSON.stringify(data));
 }
 
 // POST /api/agent/ui-edit-result { id, ok, error? } — agent reports an apply.
@@ -7852,6 +7864,11 @@ const _BUDGET_DEFAULTS = {
   threat_snapshot: { perMin: 120, durable: false },
   raid_roster:     { perMin: 90,  durable: false },
   recent_fires:    { perMin: 240, durable: false, get: true },
+  // #106 multiplexed GET poll — one request carries recent_fires + tuning +
+  // (at their own cadence) triggers/prefs/backfill/ui_edits. A healthy agent
+  // polls ~40/min active, far slower idle/dormant; the generous cap only trips a
+  // runaway client, which backs off harmlessly on the 429 (redundant re-poll).
+  poll:            { perMin: 240, durable: false, get: true },
 };
 // kind → Map(uploaderKey → { windowStart, count, logged })
 const _budgetBuckets = new Map();
@@ -10293,33 +10310,19 @@ async function _handleAgentWhoLookup(req, res) {
 // exclude_inventory is returned but not yet acted on (no inventory upload
 // path exists yet — slated for the Mimic timeline); surfacing it now lets the
 // agent display the setting and refuse to send when the path lands.
-async function _handleAgentCharacterPrefs(req, res) {
-  const identity = await mimicLink.requireAgentAuth(req, res);
-  if (!identity) return;
-
-  const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
-  const raw = url.searchParams.get('characters') || url.searchParams.get('character') || '';
-  const characters = raw.split(',').map(s => s.trim()).filter(Boolean);
-  if (characters.length === 0) {
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ prefs: {} }));
-  }
-
+// Assemble per-character data-handling prefs. Shared by the standalone GET
+// /character-prefs and the multiplexed GET /poll (#106).
+async function _characterPrefsFor(characters) {
+  if (!Array.isArray(characters) || characters.length === 0) return { prefs: {} };
   const supabase = require('./utils/supabase');
-  if (!supabase.isEnabled()) {
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ prefs: {}, note: 'supabase disabled' }));
-  }
-
+  if (!supabase.isEnabled()) return { prefs: {}, note: 'supabase disabled' };
   // PostgREST in.() is case-sensitive. The agent uploads canonical EQ names,
   // which match characters.name as stored — a plain in() handles 99% of cases.
-  // We also accept a comma list to make the round-trip cheap.
   const inList = '(' + characters.map(c => `"${c.replace(/"/g, '')}"`).join(',') + ')';
   const rows = await supabase.select(
     'characters',
     `name=in.${encodeURIComponent(inList)}&select=name,exclude_from_stats,exclude_inventory,tell_relay&guild_id=eq.wolfpack`,
   ).catch(() => []);
-
   const prefs = {};
   for (const r of (Array.isArray(rows) ? rows : [])) {
     if (!r?.name) continue;
@@ -10329,10 +10332,19 @@ async function _handleAgentCharacterPrefs(req, res) {
       tell_relay:         !!r.tell_relay,
     };
   }
-  // Any character not in characters table → default (participate). Agents key
-  // on lowercased character so include both forms for case-insensitive lookup.
+  return { prefs };
+}
+
+async function _handleAgentCharacterPrefs(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+
+  const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+  const raw = url.searchParams.get('characters') || url.searchParams.get('character') || '';
+  const characters = raw.split(',').map(s => s.trim()).filter(Boolean);
+  const data = await _characterPrefsFor(characters);
   res.writeHead(200, { 'Content-Type': 'application/json' });
-  return res.end(JSON.stringify({ prefs }));
+  return res.end(JSON.stringify(data));
 }
 
 // POST /api/agent/live-state
@@ -11453,15 +11465,12 @@ async function _handleTriggerRelayPost(req, res) {
   return res.end(JSON.stringify({ ok: true, accepted, next_id: _triggerRelay.nextId }));
 }
 
-async function _handleRecentFiresGet(req, res) {
-  const identity = await mimicLink.requireAgentAuth(req, res);
-  if (!identity) return;
-  const url = new URL(req.url, 'http://x');
-  const sinceId = parseInt(url.searchParams.get('since_id') || '0', 10) || 0;
-
-  // Suppress the caller's own fires — they already played locally and
-  // would just dedup-loop. Other agents' fires (within the 60s TTL)
-  // pass through.
+// Assemble the recent-fires payload from the in-memory relay ring buffer.
+// Shared by the standalone GET /recent-fires and the multiplexed GET /poll
+// (#106) so both stay byte-identical. Suppresses the caller's own fires — they
+// already played locally and would just dedup-loop. Other agents' fires (within
+// the 60s TTL) pass through.
+function _recentFiresFor(identity, sinceId) {
   const fires = _triggerRelay.entries
     .filter(e => e.id > sinceId && e.uploaded_by !== identity.discord_id)
     .map(e => ({
@@ -11473,12 +11482,131 @@ async function _handleRecentFiresGet(req, res) {
       timer_duration_sec:  e.timer_duration_sec,
       fired_at_ms:         e.fired_at_ms,
     }));
+  return { next_id: _triggerRelay.nextId, fires };
+}
 
+async function _handleRecentFiresGet(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const url = new URL(req.url, 'http://x');
+  const sinceId = parseInt(url.searchParams.get('since_id') || '0', 10) || 0;
   res.writeHead(200, { 'Content-Type': 'application/json' });
-  return res.end(JSON.stringify({
-    next_id: _triggerRelay.nextId,
-    fires,
-  }));
+  return res.end(JSON.stringify(_recentFiresFor(identity, sinceId)));
+}
+
+// ── Multiplexed agent poll (#106) ────────────────────────────────────────────
+// One GET that bundles the agent's periodic GET loops — recent_fires (1.5s),
+// tuning (90s + the control plane), guild-triggers (2min), character-prefs
+// (10min), backfill-requests (5min), ui-pending-edits (5min). The agent runs a
+// single fast loop and asks for each stream at its OWN cadence (recent_fires +
+// tuning every tick; the rest only when due), so this collapses six per-client
+// request streams into one WITHOUT adding a Supabase hit per fast poll: the
+// per-tick streams are in-memory (recent_fires) or 60s-cached (tuning); the
+// Supabase-backed streams ride only their slow scheduled polls, same rate as the
+// individual endpoints they replace. Older agents keep hitting the individual
+// endpoints; older bots 404 this route and the agent falls back permanently.
+//
+// Protocol — request (query): streams=<csv of keys the client wants THIS tick>,
+// plus per-stream cursors reusing each stream's existing semantics:
+//   since_id=<n>      recent_fires cursor (id ring)
+//   tuning_ver=<hash> tuning bundle version (unchanged-gate)
+//   trig_ver=<ts>     guild-triggers version (max updated_at; unchanged-gate)
+//   classes=<csv>     guild-triggers class targeting
+//   characters=<csv>  prefs / backfill / ui_edits key list
+// Response: { ok, streams: { <key>: {data…} | { unchanged:true } }, agent_kill,
+//   min_agent_ver_num }. A stream that wasn't requested is absent; a stream shed
+// via flag_shed_<key> is OMITTED (the client fails open to its own fallback for
+// that stream only). Control keys ride EVERY poll (the tuning/kill channel) so a
+// dormant agent asking for streams=tuning still learns when the pause lifts.
+//
+// Pure per-stream decision (source-sliced by test/poll-bundle.test.js):
+//   'skip'      — not requested this tick
+//   'omit'      — requested but shed (flag_shed_<key>=1) → leave out; client fails open
+//   'unchanged' — requested, fresh, and the client's cursor matches the fresh version
+//   'send'      — requested; include the data
+// Streams with no version (recent_fires/prefs/backfill/ui_edits) pass null cursors
+// and never resolve 'unchanged' (they always 'send' when wanted + not shed).
+function _pollStreamDecision(key, want, tune, clientVer, freshVer) {
+  if (!want.has(key)) return 'skip';
+  if (Number(tune && tune[`flag_shed_${key}`]) >= 1) return 'omit';
+  if (clientVer != null && freshVer != null && String(clientVer) === String(freshVer)) return 'unchanged';
+  return 'send';
+}
+
+// Cheap stable version of the served tuning bundle so the poll can answer
+// `unchanged` and skip re-sending the (small) blob every fast tick.
+function _pollTuningVersion(payload) {
+  let s;
+  try { s = JSON.stringify(payload); } catch { s = String(Date.now()); }
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = (((h << 5) + h) ^ s.charCodeAt(i)) >>> 0;
+  return h.toString(36);
+}
+
+// Assemble the tuning stream (tuning + notices + class_sets + raid_hold) plus a
+// version. `tune` is passed in (already read once for the control plane + shed
+// checks); notices/class_sets are their own 60s caches.
+async function _tuningBundleFor(tune) {
+  const [notices, classSets] = await Promise.all([_activeNotices(), _overlayClassSets()]);
+  const payload = { tuning: tune, notices, class_sets: classSets, raid_hold: _raidHoldNow(tune) };
+  return { version: _pollTuningVersion(payload), ...payload };
+}
+
+async function _handleAgentPoll(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const url = new URL(req.url, 'http://x');
+  const want = new Set((url.searchParams.get('streams') || '').split(',').map(s => s.trim()).filter(Boolean));
+
+  // One tuning read powers the control plane, the shed checks, and the tuning
+  // stream. 60s-cached — cheap on every fast poll. Fail-open to defaults.
+  let tune = {};
+  try { tune = await _overlayTuningMap(); } catch { /* fail-open */ }
+  const control = _controlPlanePolicy(tune);
+  const out = { ok: true, streams: {} };
+
+  // recent_fires — in-memory ring, always fresh (no version).
+  if (_pollStreamDecision('recent_fires', want, tune, null, null) === 'send') {
+    const sinceId = parseInt(url.searchParams.get('since_id') || '0', 10) || 0;
+    out.streams.recent_fires = _recentFiresFor(identity, sinceId);
+  }
+
+  // tuning — 60s cache; version-gated so an unchanged blob costs a few bytes.
+  if (_pollStreamDecision('tuning', want, tune, null, null) === 'send') {
+    const bundle = await _tuningBundleFor(tune);
+    const dec = _pollStreamDecision('tuning', want, tune, url.searchParams.get('tuning_ver'), bundle.version);
+    out.streams.tuning = dec === 'unchanged' ? { version: bundle.version, unchanged: true } : bundle;
+  }
+
+  // guild-triggers — same Supabase read as the standalone endpoint, done ONLY
+  // when the agent asks (its own 2-min cadence). Server-side version-gate.
+  if (_pollStreamDecision('triggers', want, tune, null, null) === 'send') {
+    const classes = (url.searchParams.get('classes') || '').split(',').map(s => s.trim()).filter(Boolean);
+    const category = url.searchParams.get('category');
+    const bundle = await _guildTriggersFor({ classes, category });
+    const dec = _pollStreamDecision('triggers', want, tune, url.searchParams.get('trig_ver'), bundle.version);
+    out.streams.triggers = dec === 'unchanged' ? { version: bundle.version, unchanged: true } : bundle;
+  }
+
+  // Character-scoped slow streams (prefs 10min / backfill 5min / ui_edits 5min).
+  const chars = (url.searchParams.get('characters') || '').split(',').map(s => s.trim()).filter(Boolean);
+  if (_pollStreamDecision('prefs', want, tune, null, null) === 'send') {
+    out.streams.prefs = await _characterPrefsFor(chars);
+  }
+  if (_pollStreamDecision('backfill', want, tune, null, null) === 'send') {
+    out.streams.backfill = await _backfillRequestsFor(chars);
+  }
+  if (_pollStreamDecision('ui_edits', want, tune, null, null) === 'send') {
+    out.streams.ui_edits = await _uiPendingEditsFor(chars);
+  }
+
+  // Control plane (#74) rides every poll — the dormancy/floor channel, fresh even
+  // when the agent asked for nothing but tuning.
+  out.agent_kill        = control.agent_kill;
+  out.min_agent_ver_num = control.min_agent_ver_num;
+
+  res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+  return res.end(JSON.stringify(out));
 }
 
 // Voice playback path. Hands off to utils/voice.js, which queues + speaks
@@ -11803,6 +11931,21 @@ async function _relayTellsToDM(discordUserId, ownerCharacter, tellRows) {
   } catch { /* non-fatal */ }
 }
 
+// Assemble pending backfill requests for a character list. Shared by the
+// standalone GET /backfill-requests and the multiplexed GET /poll (#106).
+async function _backfillRequestsFor(characters) {
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) return { requests: [], note: 'supabase disabled' };
+  if (!Array.isArray(characters) || characters.length === 0) return { requests: [] };
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+  const inList = '(' + characters.map(c => `"${c.replace(/"/g, '')}"`).join(',') + ')';
+  const rows = await supabase.select(
+    'agent_backfill_requests',
+    `guild_id=eq.${encodeURIComponent(guildId)}&character=in.${encodeURIComponent(inList)}&status=in.(pending,acked,running)&order=requested_at.desc&limit=50`,
+  );
+  return { requests: rows || [] };
+}
+
 // POST /api/agent/backfill-requests/:id/:action      — ack | dismiss | complete | error
 //   POST body: { reason?, summary?, error_message? } (optional, by action)
 async function _handleAgentBackfillRequests(req, res) {
@@ -11821,17 +11964,9 @@ async function _handleAgentBackfillRequests(req, res) {
     const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
     const raw = url.searchParams.get('character') || url.searchParams.get('characters') || '';
     const chars = raw.split(',').map(s => s.trim()).filter(Boolean);
-    if (chars.length === 0) {
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      return res.end(JSON.stringify({ requests: [] }));
-    }
-    const inList = '(' + chars.map(c => `"${c.replace(/"/g, '')}"`).join(',') + ')';
-    const rows = await supabase.select(
-      'agent_backfill_requests',
-      `guild_id=eq.${encodeURIComponent(guildId)}&character=in.${encodeURIComponent(inList)}&status=in.(pending,acked,running)&order=requested_at.desc&limit=50`,
-    );
+    const data = await _backfillRequestsFor(chars);
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ requests: rows || [] }));
+    return res.end(JSON.stringify(data));
   }
 
   // POST /:id/:action
@@ -11883,22 +12018,13 @@ async function _handleAgentBackfillRequests(req, res) {
 // Agents poll this every 10 min for the enabled trigger set. We return a
 // version hash so agents can short-circuit on no-change (HTTP 304 would
 // be cleaner but the agent isn't set up to handle ETag yet).
-async function _handleAgentGuildTriggers(req, res) {
-  const identity = await mimicLink.requireAgentAuth(req, res);
-  if (!identity) return;
-
+// Assemble the enabled guild-trigger set + its version. Shared by the standalone
+// GET /guild-triggers and the multiplexed GET /poll (#106). `version` is the max
+// updated_at across the filtered set — cheap, sufficient for a no-change gate.
+async function _guildTriggersFor({ classes = [], category = null } = {}) {
   const supabase = require('./utils/supabase');
-  if (!supabase.isEnabled()) {
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ triggers: [], note: 'supabase disabled' }));
-  }
+  if (!supabase.isEnabled()) return { version: '0', triggers: [], note: 'supabase disabled' };
   const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
-
-  // Filter optional: ?category=rampage  ?classes=Warrior,Paladin
-  const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
-  const category = url.searchParams.get('category');
-  const classesRaw = url.searchParams.get('classes') || '';
-  const classes = classesRaw.split(',').map(s => s.trim()).filter(Boolean);
 
   let q = `guild_id=eq.${encodeURIComponent(guildId)}&enabled=eq.true&order=category.asc,name.asc`;
   if (category) q += `&category=eq.${encodeURIComponent(category)}`;
@@ -11914,12 +12040,21 @@ async function _handleAgentGuildTriggers(req, res) {
     if (classes.length === 0) return true;
     return classes.some(c => arr.includes(c));
   });
-
-  // Version hash so the agent can detect no-change quickly. Use the max
-  // updated_at across the filtered set — cheap, sufficient for our cadence.
   const version = filtered.length
     ? filtered.map(t => t.updated_at || '').sort().pop()
     : '0';
+  return { version, triggers: filtered };
+}
+
+async function _handleAgentGuildTriggers(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+
+  // Filter optional: ?category=rampage  ?classes=Warrior,Paladin
+  const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+  const category = url.searchParams.get('category');
+  const classes = (url.searchParams.get('classes') || '').split(',').map(s => s.trim()).filter(Boolean);
+  const { version, triggers, note } = await _guildTriggersFor({ classes, category });
 
   // Control plane (#74) BACKUP channel — same kill/floor keys the reporter-poll
   // carries, so an agent that only polls guild-triggers still honors them (2-min
@@ -11931,7 +12066,8 @@ async function _handleAgentGuildTriggers(req, res) {
   res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
   return res.end(JSON.stringify({
     version,
-    triggers: filtered,
+    triggers,
+    ...(note ? { note } : {}),
     agent_kill:        control.agent_kill,
     min_agent_ver_num: control.min_agent_ver_num,
   }));
@@ -13573,6 +13709,20 @@ const httpServer = http.createServer(async (req, res) => {
     catch (err) {
       console.error('[trigger-relay] get error:', err);
       res.writeHead(500); return res.end();
+    }
+  }
+
+  // Multiplexed poll (#106) — one GET that bundles recent_fires + tuning +
+  // (at their own cadence) guild-triggers/prefs/backfill/ui-edits. Collapses six
+  // per-client GET loops into one. Older agents keep using the individual routes
+  // above; older bots lack this route (404) and the agent falls back permanently.
+  if (req.method === 'GET' && req.url.startsWith('/api/agent/poll')) {
+    if (await _overBudget('poll', req, res)) return;
+    try { return await _handleAgentPoll(req, res); }
+    catch (err) {
+      console.error('[agent-poll] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
     }
   }
 

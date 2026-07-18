@@ -20,6 +20,56 @@ raid; move it to STATUS.md's "Done" once graduated to stable.*
 
 ---
 
+## #106 — Multiplexed agent poll (six GET loops → one) + encounter-burst jitter
+
+**Needs:** bot **3.0.210** (live on main) · agent **3.3.87** (beta Mimic).
+
+**What it does:** the agent used to run six independent GET loops against the bot
+(recent-fires 1.5s, overlay-tuning 90s, guild-triggers 2min, backfill 5min,
+ui-edits 5min, character-prefs 10min). It now runs ONE loop hitting a single
+`GET /api/agent/poll` bundle — recent-fires + tuning every tick, the slow streams
+folded in only when due — so a 60-raider room drops from ~six per-client request
+streams to one. On fight end a real encounter's upload is delayed by a
+deterministic `hash(uploader) % 15s` to flatten the ~90MB-at-60 simultaneous
+offer (solo/duo small parses skip the delay so the dashboard card stays instant).
+It's **fully fail-safe**: an older bot 404s the new route and the agent falls back
+permanently to the individual loops, and dormancy/kill-switch semantics are
+preserved (while paused the loop asks for the tuning/kill stream ONLY).
+
+**Where to look:** the agent dashboard at `http://localhost:7777` — Triggers tab
+(journal + fires) must keep working exactly as before; `/api/state` now carries a
+`poll: { mode, streams, lastOkAt }` block (mode `multiplexed` normally,
+`fallback` against an old bot).
+
+### ✅ Solo (one machine)
+1. **Dashboard still shows triggers + fires (new bot + new agent).** With bot
+   3.0.210 and agent 3.3.87, open the dashboard and confirm the Triggers tab
+   journal populates, guild triggers load, and a self-fired trigger still shows —
+   i.e. the streams that used to be six loops all still arrive over the one poll.
+   `/api/state` `poll.mode` reads `multiplexed`.
+2. **Tuning/notices/raid-hold still land.** Change an officer knob or post a Mimic
+   Mail notice on `/admin` → it reaches the agent within ~1.5–90s as before (now
+   via the poll's `tuning` stream).
+3. **Solo/duo parse feels instant.** Parse a short solo fight → the dashboard's
+   recent-parse card appears immediately (small payload + empty queue → jitter
+   bypassed). A big raid fight may take up to ~15s to card (the jitter) — expected.
+4. **Kill switch still works over the poll.** Flip ☠ AGENT KILL (`/admin/overlays`)
+   → the agent goes dormant within ~20s and, while dormant, the poll asks for the
+   tuning/kill stream only; clearing it resumes within a heartbeat (as in #74).
+5. **Forced-404 fallback** — *code-review-only note* (no safe way to force in
+   normal play): pointing the agent at a bot without `/api/agent/poll` makes the
+   first poll 404 (or return the catch-all `OK`), the agent logs the permanent
+   fallback once, and the individual loops resume for the rest of the process.
+
+### 👥 Multi-person (2+ machines on beta) — **needs a raid partner**
+1. **Cross-client fires still arrive <2s during a fight.** One raider fires a
+   guild trigger; the other hears/sees the relayed callout within ~1–2s — the
+   multiplexed poll preserves recent-fires latency (still a 1.5s cadence).
+
+**Status:** ⏳ awaiting verification (solo is quick; multi-person needs 2 testers).
+
+---
+
 ## #74 — Guild control plane: agent kill switch + version floor + beta hot-swap
 
 **Needs:** bot **3.0.209** (live on main) · agent **3.3.86** (beta Mimic 1.9.6) ·
