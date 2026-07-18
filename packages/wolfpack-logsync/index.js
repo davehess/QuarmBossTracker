@@ -6734,6 +6734,15 @@ function _maybeUploadRaidRoster(sample) {
       _raidRosterMembers.add(lower);
       if (m.class) _raidClassByName.set(lower, String(m.class));
     }
+    // #72 P1c: the raid ROSTER snapshot is redundant across a group (composition
+    // is identical from every raider's view; HP is per-group and any group
+    // member's Zeal gauges carry it), so only the elected per-group reporter
+    // uploads it. Non-reporters keep their LOCAL state fresh above (triggers +
+    // dashboard) but skip the upload — and skip the debounce below, so on
+    // re-election the next pipe fire uploads immediately. Fail-open: roles.roster
+    // defaults TRUE and resets TRUE on any poll failure (same staleness rule as
+    // the chat/buffs gates), so a lost elector = everyone uploads.
+    if (!_reporterRoles.roster) return;
     // Hash composition only — NOT HP. HP changes constantly in combat and we
     // don't want every 1% drop to fire an upload. The heartbeat refreshes HP on
     // a fixed cadence (RAID_ROSTER_HP_HEARTBEAT_MS) so the /raid page + Tank
@@ -8706,7 +8715,8 @@ function _serializeForDashboard() {
     // #72 designated-reporter election — which shared streams THIS machine is
     // currently elected to upload. All-true = fail-open (election off / old bot
     // / no answer yet). electionOn=true means the bot is actively assigning.
-    reporter: { roles: _reporterRoles, electionOn: _reporterElectionOn },
+    // camping=true while a /camp is in progress (demoted from candidacy early).
+    reporter: { roles: _reporterRoles, electionOn: _reporterElectionOn, camping: _camping },
     // Charm-pet tick tracker — array form so the dashboard can render
     // a 6s countdown to next mob tick / next charm check. Sorted most-
     // recently-updated first; capped to 12 to keep the payload small.
@@ -19293,6 +19303,10 @@ let _uploadOpts    = null;      // set in main() once botUrl/token are known
 let _reporterRoles       = { chat: true, buffs: true, roster: true };
 let _reporterElectionOn  = false;   // true only while the bot answers election:'on'
 let _reporterHeartbeatOn = false;
+// Camp-out early handoff (#72 P3): set true on the camp-start log line and sent
+// in the heartbeat so the bot demotes us from every election ~30s before our
+// logout would trip the 60s TTL. Cleared on the abandon line. Machine-level.
+let _camping             = false;
 const REPORTER_HEARTBEAT_MS = 20_000;
 function _reporterFailOpen() { _reporterRoles = { chat: true, buffs: true, roster: true }; _reporterElectionOn = false; }
 function _reporterHeartbeatOnce() {
@@ -19310,14 +19324,17 @@ function _reporterHeartbeatOnce() {
             || Object.keys(_zealState || {}).length > 0;
     if (_lastRaidPipe && primary) {
       const me = _lastRaidPipe.members.find(m => m && m.name && m.name.toLowerCase() === primary.toLowerCase());
-      if (me && Number.isFinite(me.group)) group_num = me.group;
+      // compact.group is a STRING ("1") — parse it, or the per-group roster
+      // election (P1c) would never see a real group and everyone self-elects.
+      const g = me ? Number.parseInt(me.group, 10) : NaN;
+      if (Number.isFinite(g)) group_num = g;
     }
   } catch { /* best-effort */ }
   try {
     const url = opts.botUrl.replace(/\/encounter(\?.*)?$/, '/reporter-poll');
     const u   = new URL(url);
     const mod = u.protocol === 'https:' ? https : http;
-    const body = JSON.stringify({ primary_character: primary, zone, group_num, has_zeal, agent_version: AGENT_VERSION });
+    const body = JSON.stringify({ primary_character: primary, zone, group_num, camping: _camping, has_zeal, agent_version: AGENT_VERSION });
     const req = mod.request({
       method: 'POST', hostname: u.hostname, port: u.port, path: u.pathname,
       headers: {
@@ -19335,8 +19352,9 @@ function _reporterHeartbeatOnce() {
         try {
           const j = JSON.parse(buf);
           if (j && j.roles && typeof j.roles === 'object') {
-            const prevChat  = _reporterRoles.chat;
-            const prevBuffs = _reporterRoles.buffs;
+            const prevChat   = _reporterRoles.chat;
+            const prevBuffs  = _reporterRoles.buffs;
+            const prevRoster = _reporterRoles.roster;
             _reporterRoles = {
               chat:   j.roles.chat   !== false,   // any missing key defaults TRUE (fail-open)
               buffs:  j.roles.buffs  !== false,
@@ -19347,6 +19365,8 @@ function _reporterHeartbeatOnce() {
               console.log(`[reporter] chat role → ${_reporterRoles.chat ? 'REPORTER (uploading /gu·/rs)' : 'stand down'} (election ${j.election})`);
             if (prevBuffs !== _reporterRoles.buffs)   // #72 P1b — buff-landing reporter role
               console.log(`[reporter] buffs role → ${_reporterRoles.buffs ? 'REPORTER (uploading buff landings)' : 'stand down — charm rows still upload'} (election ${j.election})`);
+            if (prevRoster !== _reporterRoles.roster) // #72 P1c — raid-roster reporter role (per group)
+              console.log(`[reporter] roster role → ${_reporterRoles.roster ? 'REPORTER (uploading raid roster)' : 'stand down'} (election ${j.election})`);
           } else { _reporterFailOpen(); }
         } catch { _reporterFailOpen(); }   // unparseable → fail-open
       });
@@ -22142,9 +22162,16 @@ function reportDebuffClear(target, spellName) {
 }
 
 function reportBuffLag(character) {
+  // Local snappy-mode engages FIRST and unconditionally — it's a per-machine UX
+  // knob, never gated. Only the bot-side diagnostic forward is deduped.
   _buffQueueSnappyUntil = Date.now() + SNAPPY_WINDOW;
   const opts = _uploadOpts;
   if (!opts || !opts.botUrl || !opts.token) return;
+  // #72: buff-lag reports are a zone-redundant diagnostic (N same-zone raiders
+  // feeling lag report the same fact), so the bot-forward rides the buffs role —
+  // a stood-down agent stops sending it. Fail-open (roles.buffs defaults TRUE +
+  // resets TRUE on poll failure), and the local snappy-mode above is unaffected.
+  if (!_reporterRoles.buffs) return;
   try {
     const url = opts.botUrl.replace(/\/encounter(\?.*)?$/, '/buff-lag-report');
     const u   = new URL(url);
@@ -24103,6 +24130,30 @@ async function main() {
               _pendingClickies.set(b.character.toLowerCase(),
                 { itemName, castMs, atMs: Date.now() });
             }
+          }
+        }
+
+        // ── Camp-out early handoff (#72 P3) ────────────────────────────────
+        // "It will take you about 30 seconds to prepare your camp." — this
+        // raider is ~30s from vanishing. Flag `_camping` and fire an IMMEDIATE
+        // reporter heartbeat (camping:true, no 20s wait) so the bot demotes us
+        // from EVERY election ~30s before the 60s TTL would notice the logout,
+        // handing chat/buffs/roster to a live groupmate while we're still here.
+        // "You abandon your preparations to camp." (moved/cancelled) clears it.
+        // Machine-level (one client = one camp) and NOT gated on exclusion — the
+        // handoff is about liveness, not data. Patterns kept loose to survive
+        // the guild-hall / "5 seconds" variants.
+        if (/prepare your camp/i.test(line)) {
+          if (!_camping) {
+            _camping = true;
+            console.log('[reporter] /camp detected → camping (early handoff started)');
+            try { _reporterHeartbeatOnce(); } catch { /* best-effort — next 20s cycle catches it */ }
+          }
+        } else if (/abandon your preparations to camp/i.test(line)) {
+          if (_camping) {
+            _camping = false;
+            console.log('[reporter] camp abandoned → resuming as election candidate');
+            try { _reporterHeartbeatOnce(); } catch { /* best-effort */ }
           }
         }
 
