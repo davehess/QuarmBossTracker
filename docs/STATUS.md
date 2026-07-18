@@ -108,6 +108,53 @@ folly** — it's here.*
     matched an independent DISTINCT-union cross-check exactly (Peopleslayer family
     `raids_att_lifetime=229`). **Consumers (seating, #80 review cards) should read
     RA% + tick counts from `member_attendance_metrics`.**
+- **Rules-mechanization thread R.3 (#95) + R.4 (#93) v1 — DONE (2026-07-18, web
+  1.0.245 on main).** Both are pure-lib + web surfaces off gear/signup data we
+  already collect; no bot, agent, or Mimic change.
+  - **#95 Raid Kit readiness (rule 12).** Pure compute in `web/lib/raidKit.ts`
+    (`computeRaidKit`): 100-MR floor summed from **worn gear only** (same
+    resist-sum idiom as the gear page) + a best-effort utility checklist
+    (Enduring Breath / Levitate / self-invis / self-port + the Necro coffin).
+    **"Helping not watching"**: MR is the ONLY hard pass/fail and only when a
+    gear snapshot exists; utilities read *covered / not-detected* (amber, never
+    red) because a source can sit in the privacy-stripped bank or an un-uploaded
+    spellbook. Detection under-claims on purpose — a class-innate self-buff is
+    credited only for the certain Luclin cases (Druid/Wizard/Enchanter/Necro/
+    Shaman), otherwise it needs a real item click/worn effect or a scribed spell
+    (`character_spellbook`). Honors `exclude_from_stats`/`exclude_inventory`.
+    Member surface: compact 🎒 card on `/character/[name]/gear` (`RaidKitCard`).
+    Officer surface: **`/admin/readiness`** — whole-roster table (membership =
+    the attendance page's roster-rank predicate), MR + checklist columns, MR-fail
+    rows floated to top, links `/admin/rules`. Tests: `test/raid-kit.test.js`
+    (13 — MR edge cases, no-snapshot, opt-out, See-Invisible≠invis, scribed/item
+    ladder, necro coffin + poison-bottle false positive + level-title fold).
+    **Live-verified:** 16 roster chars have snapshots, all meet the 100 floor
+    (lowest Squeekie 108; Hitya 158). *Member-facing — roadmap entry added.*
+  - **#93 comp template + planned-vs-actual matcher.** Pure lib `web/lib/comp.ts`
+    — the ONE class→archetype map (tank/healer/support/melee/ranged), template
+    validation, and gap math (`computeCompGaps`: archetype + per-class deltas,
+    minimums as floors, unmapped count, human summary). Store: new
+    `comp_templates` table (migration `20260719140000`, overlay_tuning pattern —
+    one jsonb-array row per guild, RLS authenticated-read + service-role write;
+    applied via MCP + committed). Officer editor **`/admin/comp`** (client
+    `CompEditor` = validated JSON textarea + live rendered demand preview,
+    server action re-validates, `/admin/overlays` precedent). Matcher **extends**
+    `/admin/signups` detail view: template picker → planned gaps from the Going
+    signups' classes, plus an **actual overlay** from the best-coverage
+    `raid_roster` snapshot in the event window (cheap; reuses existing capture,
+    no new stream — omitted with a note when no snapshot falls in the window).
+    Tests: `test/comp-matcher.test.js` (14 — archetype map + title fold, validate
+    accept/reject, demand expansion + minimum floor, gap shortfall/surplus/
+    per-class, met-clean). *Officer-facing — roadmap entry added.*
+  - **Follow-ups (not v1):** MR is worn-gear-only (no base/buff/self-resist
+    layer — the naked-stat-snapshot follow-up that the gear page's attribute box
+    also waits on would let it show true in-play MR); utility detection can't see
+    bank items or un-uploaded spellbooks (structural — privacy by design);
+    the comp matcher's "actual" only appears for events whose window overlapped a
+    live raid (raid_roster is live-capture, not per-event); RaidHelper `rh_signups`
+    is empty until the RH API/scan runs, so the planned side has no data to match
+    yet (matcher renders cleanly on zero). Rule-12 semantics are still hard-coded
+    in the lib rather than read from `guild_rules.category` (R.1's reserved column).
 - **Overlays**: DPS/Tank HUD, Extended Target (+ glide animation), Command
   Center, Charm & Pet trackers, Mob Info, Buff/Debuff queue, CH-chain,
   per-character overlay position + opacity (B-2), auto-arrange, theme picker.

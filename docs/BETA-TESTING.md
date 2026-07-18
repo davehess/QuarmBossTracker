@@ -134,6 +134,53 @@ up), read from the `member_attendance_metrics` SQL view.
 
 ---
 
+## #95 / #93 — Raid Kit readiness (rule 12) + comp templates & sign-up gap matcher
+
+**Needs:** web **1.0.245** (Vercel). No bot/Mimic/agent change. Migration
+`20260719140000_comp_templates` auto-applies on merge (already applied to prod
+via MCP). Data prerequisites: Raid Kit reads the Quarmy **gear** snapshot the
+agent already uploads (so a character needs a `…Quarmy.txt` export on file); the
+comp matcher's *planned* side reads RaidHelper `rh_signups` (run `/scanraidhelper`
+or the RH API sync first — the table is otherwise empty and the matcher renders
+with nothing to match).
+
+**What it does (#95):** a 🎒 **Raid Kit** card on `/character/[name]/gear` and an
+officer roster board at `/admin/readiness` check raid **rule 12** — a 100
+magic-resist floor from worn gear plus a utility checklist (Enduring Breath,
+Levitate, self-invis, self-port, and the Necro coffin). MR is the only hard check
+and only when a gear snapshot exists; utilities are *covered / not-detected*,
+never a red fail. **(#93):** officers author named target compositions at
+`/admin/comp` (validated JSON + live preview), and `/admin/signups` gains a
+🧩 **Comp vs template** panel that diffs a template against an event's "Going"
+signups — role/archetype gap deltas — plus a live-roster "actual" column when a
+raid ran during the event window.
+
+### ✅ Member (one person)
+1. **Your Raid Kit card.** Open `wolfpack.quest/character/<yourname>/gear`. If you
+   have a gear snapshot, the 🎒 card shows your worn **MR** (green ≥100 / red
+   below) and the four utilities as ✓ covered (with the source item/spell) or
+   ○ not-detected. A blank utility must read as "not detected", never a red fail.
+2. **No-snapshot honesty.** Open a character with no Quarmy export → the card says
+   "no gear snapshot", **not** a failing MR. Confirm a class self-buff shows
+   (e.g. a Druid reads self-covered for all four) even with sparse gear.
+
+### ✅ Officer (one person)
+3. **Readiness board.** Open `wolfpack.quest/admin/readiness`. One row per roster
+   raider; anyone actually below the 100 MR floor sorts to the top; raiders with
+   no export read "no gear snapshot"; opted-out characters show "opted out". The
+   header links `/admin/rules`.
+4. **Author a template.** At `wolfpack.quest/admin/comp`, edit the starter JSON
+   (or write your own), watch the live preview update the per-archetype demand,
+   and Save. Break the JSON (delete a brace, use archetype `"dps"`) → Save is
+   disabled and the errors list what's wrong.
+5. **Match a raid.** On `wolfpack.quest/admin/signups`, open an event with signups,
+   pick your template in the 🧩 panel → confirm the gap chips ("Need N more
+   healer", "M over on melee DPS") and the archetype table (Need / Signed / Δ).
+   If a raid ran during the event window, a **Live** column appears from the
+   raid_roster snapshot; otherwise the panel notes there's no snapshot in window.
+
+---
+
 ## #110 — OpenDKP audit-trail reconciliation (deletions propagate to the mirror)
 
 **Needs:** bot **3.0.212** (live on Railway). No Mimic/agent change.

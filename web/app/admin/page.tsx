@@ -90,6 +90,16 @@ export default function AdminPage() {
           href="/admin/attendance"
         />
         <Card
+          title="🎒 Raid Kit readiness"
+          body="Rule 12 at a glance: every roster raider's 100-MR floor + utility kit (Enduring Breath / Levitate / self-invis / self-port, Necro coffin) from their Quarmy gear snapshot. Red only where a snapshot exists and falls short — 'helping not watching'."
+          href="/admin/readiness"
+        />
+        <Card
+          title="🧩 Raid comp templates"
+          body="Author named target compositions (archetype groups + class slots + minimum floors). Feeds the sign-ups matcher — role/archetype gap deltas at pull time. Validated JSON editor with live preview."
+          href="/admin/comp"
+        />
+        <Card
           title="📖 Guild rules store"
           body="The Discord rulebook (#rules / #raid-rules / #loot-rules) ingested into one queryable table by /ingestrules. Read-only view grouped by channel; the single source later eligibility/loot features read instead of hard-coding rules."
           href="/admin/rules"

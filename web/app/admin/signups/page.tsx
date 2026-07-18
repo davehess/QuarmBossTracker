@@ -23,6 +23,9 @@
 
 import Link from 'next/link';
 import { supabaseAdmin } from '@/lib/supabase';
+import {
+  computeCompGaps, ARCHETYPE_LABEL, type CompTemplate, type CompGaps,
+} from '@/lib/comp';
 
 export const dynamic = 'force-dynamic';
 
@@ -90,7 +93,7 @@ function relDay(iso: string | null): string {
 export default async function AdminSignupsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ event?: string; days?: string }>;
+  searchParams: Promise<{ event?: string; days?: string; template?: string }>;
 }) {
   const params = await searchParams;
   const lookbackDays = Math.max(1, Math.min(60, parseInt(params.days || '14', 10) || 14));
@@ -106,6 +109,11 @@ export default async function AdminSignupsPage({
     .limit(60);
 
   const events = (eventRows ?? []) as RhEvent[];
+
+  // #93 comp templates — the officer-authored target compositions (/admin/comp).
+  const { data: tplRow } = await admin
+    .from('comp_templates').select('templates').eq('guild_id', 'wolfpack').maybeSingle();
+  const templates: CompTemplate[] = Array.isArray(tplRow?.templates) ? (tplRow!.templates as CompTemplate[]) : [];
 
   // Stats header
   let totalSignups = 0, totalGoing = 0, totalTentative = 0;
@@ -234,6 +242,59 @@ export default async function AdminSignupsPage({
 
       detail = { event, signups: sList, showed, tickedSlot1, showedNoSignup };
     }
+  }
+
+  // #93 comp matcher — diff a chosen template against this event's Going signups
+  // (planned), plus an ACTUAL overlay from the best raid_roster snapshot that
+  // landed in the event window (cheap, reuses existing capture — no new stream).
+  let compMatch: {
+    templates: string[];
+    selectedName: string | null;
+    planned: CompGaps | null;
+    actual: CompGaps | null;
+    actualAsOf: string | null;
+  } | null = null;
+  if (detail && templates.length > 0) {
+    const selectedName = (params.template && templates.some(t => t.name === params.template))
+      ? params.template : templates[0].name;
+    const selected = templates.find(t => t.name === selectedName) ?? null;
+    let planned: CompGaps | null = null;
+    let actual: CompGaps | null = null;
+    let actualAsOf: string | null = null;
+    if (selected) {
+      const going = detail.signups
+        .filter(s => bucketStatus(s.status) === 'going')
+        .map(s => ({ className: s.class_name }));
+      planned = computeCompGaps(selected, going);
+
+      const start = detail.event.start_time ? new Date(detail.event.start_time) : null;
+      if (start) {
+        const lo = new Date(start.getTime() - 1 * 60 * 60 * 1000).toISOString();
+        const hi = new Date(start.getTime() + 5 * 60 * 60 * 1000).toISOString();
+        const { data: rr } = await admin
+          .from('raid_roster')
+          .select('name, class, captured_at')
+          .eq('guild_id', 'wolfpack')
+          .gte('captured_at', lo).lt('captured_at', hi);
+        const rows = (rr ?? []) as { name: string; class: string | null; captured_at: string }[];
+        if (rows.length > 0) {
+          // A raid_roster snapshot is the full raid composition from one uploader's
+          // view; pick the snapshot with the BEST coverage (most rows; ties → latest)
+          // so a partial/one-group upload can't understate the actual comp.
+          const byCap = new Map<string, { name: string; class: string | null }[]>();
+          for (const r of rows) (byCap.get(r.captured_at) ?? byCap.set(r.captured_at, []).get(r.captured_at)!).push(r);
+          let bestCap = '';
+          let bestLen = -1;
+          for (const [cap, list] of byCap) {
+            if (list.length > bestLen || (list.length === bestLen && cap > bestCap)) { bestCap = cap; bestLen = list.length; }
+          }
+          const snap = byCap.get(bestCap) ?? [];
+          actualAsOf = bestCap;
+          actual = computeCompGaps(selected, snap.map(r => ({ className: r.class })));
+        }
+      }
+    }
+    compMatch = { templates: templates.map(t => t.name), selectedName, planned, actual, actualAsOf };
   }
 
   // Member lookup for displaying nicknames in detail
@@ -367,14 +428,14 @@ export default async function AdminSignupsPage({
           </table>
         </section>
       ) : (
-        <DetailView detail={detail} memberByDiscord={memberByDiscord} backHref={`/admin/signups?days=${lookbackDays}`} />
+        <DetailView detail={detail} memberByDiscord={memberByDiscord} backHref={`/admin/signups?days=${lookbackDays}`} compMatch={compMatch} lookbackDays={lookbackDays} />
       )}
     </div>
   );
 }
 
 function DetailView({
-  detail, memberByDiscord, backHref,
+  detail, memberByDiscord, backHref, compMatch, lookbackDays,
 }: {
   detail: {
     event: RhEvent;
@@ -385,6 +446,14 @@ function DetailView({
   };
   memberByDiscord: Map<string, Member>;
   backHref: string;
+  compMatch: {
+    templates: string[];
+    selectedName: string | null;
+    planned: CompGaps | null;
+    actual: CompGaps | null;
+    actualAsOf: string | null;
+  } | null;
+  lookbackDays: number;
 }) {
   const { event, signups, showed, tickedSlot1, showedNoSignup } = detail;
 
@@ -440,6 +509,10 @@ function DetailView({
         </div>
       </section>
 
+      {compMatch && (
+        <CompMatchPanel compMatch={compMatch} eventId={event.id} lookbackDays={lookbackDays} goingCount={buckets.goingOnTime.length + buckets.goingLate.length + buckets.goingNoshow.length} />
+      )}
+
       {/* The interesting cohorts first */}
       <Cohort title="🔴 Signed Going · did NOT show" rows={buckets.goingNoshow} label={label} cls="text-red-400" />
       <Cohort title="🕐 Signed Going · ticked LATE (slot 2+)" rows={buckets.goingLate} label={label} cls="text-orange" />
@@ -491,6 +564,116 @@ function Cohort({
           ))}
         </ul>
       </details>
+    </section>
+  );
+}
+
+// #93 — planned-vs-actual comp match for one event. Planned = the Going
+// signups' classes vs the selected template; actual = the best raid_roster
+// snapshot in the event window (when one exists). Pure math from web/lib/comp.
+function CompMatchPanel({
+  compMatch, eventId, lookbackDays, goingCount,
+}: {
+  compMatch: {
+    templates: string[];
+    selectedName: string | null;
+    planned: CompGaps | null;
+    actual: CompGaps | null;
+    actualAsOf: string | null;
+  };
+  eventId: string;
+  lookbackDays: number;
+  goingCount: number;
+}) {
+  const { templates, selectedName, planned, actual, actualAsOf } = compMatch;
+  const hasActual = !!actual;
+
+  return (
+    <section className="bg-panel border border-blue/50 rounded-lg p-4">
+      <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
+        <h3 className="text-base text-blue">🧩 Comp vs template</h3>
+        {templates.length > 0 && (
+          <form method="GET" className="flex items-center gap-2 text-xs">
+            <input type="hidden" name="event" value={eventId} />
+            <input type="hidden" name="days" value={lookbackDays} />
+            <span className="text-dim">Template</span>
+            <select name="template" defaultValue={selectedName ?? templates[0]}
+              className="bg-bg border border-border rounded px-2 py-1 text-sm">
+              {templates.map(t => <option key={t} value={t}>{t}</option>)}
+            </select>
+            <button className="px-3 py-1 rounded border border-blue bg-[#1f6feb] text-white text-xs">Apply</button>
+          </form>
+        )}
+      </div>
+
+      {templates.length === 0 ? (
+        <p className="text-xs text-dim">
+          No comp templates yet — create one in <Link href="/admin/comp" className="text-blue hover:underline">🧩 Raid comp templates</Link>,
+          then the gap check appears here.
+        </p>
+      ) : !planned ? (
+        <p className="text-xs text-dim">Select a template.</p>
+      ) : (
+        <>
+          <div className="flex flex-wrap gap-2 mb-3 text-xs">
+            {planned.summary.map((s, i) => {
+              const cls = s.startsWith('Need') ? 'bg-red/15 border-red/50 text-red'
+                : s.startsWith('Composition meets') ? 'bg-green/15 border-green/50 text-green'
+                : 'bg-orange/15 border-orange/50 text-orange';
+              return <span key={i} className={`px-2 py-0.5 rounded border ${cls}`}>{s}</span>;
+            })}
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead className="text-dim uppercase">
+                <tr className="border-b border-border">
+                  <th className="text-left px-2 py-1.5 font-normal">Archetype</th>
+                  <th className="text-right px-2 py-1.5 font-normal">Need</th>
+                  <th className="text-right px-2 py-1.5 font-normal">Signed</th>
+                  <th className="text-right px-2 py-1.5 font-normal">Δ</th>
+                  {hasActual && <th className="text-right px-2 py-1.5 font-normal">Live</th>}
+                  {hasActual && <th className="text-right px-2 py-1.5 font-normal">Δ</th>}
+                </tr>
+              </thead>
+              <tbody>
+                {planned.archetypes.filter(a => a.required > 0 || a.have > 0).map(a => {
+                  const act = actual?.archetypes.find(x => x.archetype === a.archetype);
+                  return (
+                    <tr key={a.archetype} className="border-b border-border/40">
+                      <td className="px-2 py-1.5 text-text">{ARCHETYPE_LABEL[a.archetype]}</td>
+                      <td className="px-2 py-1.5 text-right text-dim">{a.required}</td>
+                      <td className="px-2 py-1.5 text-right text-text">{a.have}</td>
+                      <td className={`px-2 py-1.5 text-right font-mono ${a.delta < 0 ? 'text-red' : a.delta > 0 ? 'text-orange' : 'text-green'}`}>
+                        {a.delta > 0 ? `+${a.delta}` : a.delta}
+                      </td>
+                      {hasActual && <td className="px-2 py-1.5 text-right text-text">{act?.have ?? 0}</td>}
+                      {hasActual && (
+                        <td className={`px-2 py-1.5 text-right font-mono ${(act?.delta ?? 0) < 0 ? 'text-red' : (act?.delta ?? 0) > 0 ? 'text-orange' : 'text-green'}`}>
+                          {(act?.delta ?? 0) > 0 ? `+${act?.delta}` : (act?.delta ?? 0)}
+                        </td>
+                      )}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          {planned.classes.some(c => c.required > 0) && (
+            <div className="text-[11px] text-dim mt-2">
+              Named-class needs: {planned.classes.filter(c => c.required > 0).map(c => `${c.class} ${c.have}/${c.required}`).join(' · ')}
+            </div>
+          )}
+
+          <p className="text-[11px] text-dim mt-2 leading-5">
+            <b>Signed</b> = {goingCount} &quot;Going&quot; signup{goingCount === 1 ? '' : 's'} ({planned.unmapped} unmapped/blank class).
+            {hasActual
+              ? <> <b>Live</b> = the raid_roster snapshot at {actualAsOf ? new Date(actualAsOf).toLocaleString() : '—'} ({actual!.totalHave} in raid). </>
+              : <> No raid_roster snapshot landed in this event&apos;s window, so there is no live-actual column (no new capture is added for it — it appears automatically once a raid runs during the window). </>}
+          </p>
+        </>
+      )}
     </section>
   );
 }

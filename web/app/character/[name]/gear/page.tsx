@@ -17,6 +17,7 @@ import { redirect, notFound } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
 import { isMustEquipClicky, usableByClass, pickSlot, buildClickyMacro } from '@/lib/clicky-macros';
+import { computeRaidKit, MR_FLOOR, UTILITY_KEYS, UTILITY_LABEL, type RaidKitResult } from '@/lib/raidKit';
 
 export const dynamic = 'force-dynamic';
 
@@ -126,7 +127,7 @@ const VISION_RX = /infravision|ultravision|see invisible|deadeye|eyes of the cat
 
 async function load(decoded: string) {
   const sb = supabaseAdmin();
-  const [charRes, gearRes, aaRes] = await Promise.all([
+  const [charRes, gearRes, aaRes, bookRes] = await Promise.all([
     sb.from('characters')
       .select('name, race, class, exclude_inventory, deity_id, quarmy_synced_at')
       .ilike('name', decoded)
@@ -140,10 +141,19 @@ async function load(decoded: string) {
       .ilike('character', decoded)
       .order('aa_index')
       .limit(300),
+    // #95 raid-kit — scribed spells are the "class self-spell" path for the
+    // utility checklist (EB/Lev/Invis/Port).
+    sb.from('character_spellbook')
+      .select('spell_name')
+      .eq('guild_id', 'wolfpack')
+      .ilike('character_name', decoded)
+      .limit(1000),
   ]);
   const gear = (gearRes.data ?? []) as GearRow[];
   const aas = (aaRes.data ?? []) as AaRow[];
   const char = (charRes.data && charRes.data[0]) || null;
+  const scribedSpells = ((bookRes.data ?? []) as { spell_name: string | null }[])
+    .map(r => r.spell_name).filter((x): x is string => !!x);
 
   const itemIds = [...new Set(gear.map(g => g.item_id))];
   let items: Record<number, ItemRow> = {};
@@ -178,11 +188,88 @@ async function load(decoded: string) {
     .from('eqemu_altadv_vars')
     .select('eqmacid, name, max_level, classes, cost, aa_expansion');
   const aaCatalog = (aaRows ?? []) as AaCat[];
-  return { char, gear, aas, items, spellNames, spellFx, aaCatalog };
+  return { char, gear, aas, items, spellNames, spellFx, aaCatalog, scribedSpells };
 }
 
 const fx = (id: number | null | undefined, spellNames: Record<number, string>) =>
   id && id > 0 ? (spellNames[id] || `#${id}`) : null;
+
+// ── #95 Raid Kit readiness card (rule 12) ────────────────────────────────────
+// Compact "helping not watching" summary: the 100-MR floor (the one HARD
+// pass/fail, and only when a gear snapshot exists) + a best-effort utility
+// checklist that reads covered / not-detected — NEVER a red "fail", because a
+// source can sit in the privacy-stripped bank or an un-uploaded spellbook. The
+// officer roll-up lives at /admin/readiness; this is the member's own view.
+function RaidKitCard({ kit, name }: { kit: RaidKitResult; name: string }) {
+  if (!kit.hasSnapshot) {
+    return (
+      <section className="bg-panel border border-border rounded-lg p-4">
+        <h3 className="text-sm text-orange mb-1 flex items-center gap-2">
+          <span>🎒 Raid Kit readiness</span>
+          <span className="text-[10px] tracking-widest font-bold px-2 py-0.5 rounded bg-blue/20 border border-blue/60 text-blue uppercase">Rule 12</span>
+        </h3>
+        <p className="text-xs text-dim leading-5">
+          No gear snapshot yet — we can&apos;t check {name}&apos;s magic resist or utility kit
+          until a Quarmy export lands. Generate <code>{name}Quarmy.txt</code> in game and leave
+          Mimic running; it uploads within ~10 minutes.
+        </p>
+      </section>
+    );
+  }
+  const mr = kit.mr;
+  return (
+    <section className="bg-panel border border-border rounded-lg p-4">
+      <h3 className="text-sm text-orange mb-3 flex items-center gap-2">
+        <span>🎒 Raid Kit readiness</span>
+        <span className="text-[10px] tracking-widest font-bold px-2 py-0.5 rounded bg-blue/20 border border-blue/60 text-blue uppercase">Rule 12</span>
+      </h3>
+      <div className="grid grid-cols-1 sm:grid-cols-[auto_1fr] gap-4">
+        {/* MR floor — the only hard check */}
+        <div className={`rounded p-3 text-center min-w-[120px] border ${mr.met ? 'bg-green/10 border-green/50' : 'bg-red/10 border-red/50'}`}>
+          <div className={`text-2xl font-semibold ${mr.met ? 'text-green' : 'text-red'}`}>{mr.value}</div>
+          <div className="text-[10px] uppercase tracking-wide text-dim">Magic Resist (worn)</div>
+          <div className={`text-[11px] mt-1 ${mr.met ? 'text-green' : 'text-red'}`}>
+            {mr.met ? `✓ meets ${mr.floor} floor` : `${mr.floor - mr.value} below the ${mr.floor} floor`}
+          </div>
+        </div>
+
+        {/* Utility checklist — covered / not-detected, never a hard fail */}
+        <div>
+          <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
+            {UTILITY_KEYS.map(k => {
+              const u = kit.utilities[k];
+              return (
+                <div key={k} className="flex items-baseline gap-1.5">
+                  <span className={u.covered ? 'text-green' : 'text-dim'}>{u.covered ? '✓' : '○'}</span>
+                  <span className="text-text">{UTILITY_LABEL[k]}</span>
+                  {u.covered
+                    ? <span className="text-dim truncate" title={u.source ?? undefined}>— {u.source}</span>
+                    : <span className="text-orange">— not detected</span>}
+                </div>
+              );
+            })}
+            {kit.coffin.applicable && (
+              <div className="flex items-baseline gap-1.5">
+                <span className={kit.coffin.covered ? 'text-green' : 'text-dim'}>{kit.coffin.covered ? '✓' : '○'}</span>
+                <span className="text-text">Summon-corpse coffin</span>
+                {kit.coffin.covered
+                  ? <span className="text-dim truncate" title={kit.coffin.source ?? undefined}>— {kit.coffin.source}</span>
+                  : <span className="text-orange">— not in visible bags</span>}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+      <p className="text-[11px] text-dim mt-3 leading-5">
+        Raid rule 12 wants a <b>{MR_FLOOR} MR floor</b> plus Enduring Breath, Levitate, self-invis and a
+        self-port covered. MR is summed from <b>worn gear only</b>. A blank utility means
+        <b> we can&apos;t see the source</b>, not that you lack it — items in the bank are stripped before
+        upload, and class self-buffs only show once your spellbook uploads.
+        {kit.coffin.applicable && kit.coffin.note && <> {kit.coffin.note}</>}
+      </p>
+    </section>
+  );
+}
 
 export default async function CharacterGearPage({ params }: { params: Promise<{ name: string }> }) {
   const { name } = await params;
@@ -192,7 +279,7 @@ export default async function CharacterGearPage({ params }: { params: Promise<{ 
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect(`/auth/signin?next=/character/${encodeURIComponent(name)}/gear`);
 
-  const { char, gear, aas, items, spellNames, spellFx, aaCatalog } = await load(decoded);
+  const { char, gear, aas, items, spellNames, spellFx, aaCatalog, scribedSpells } = await load(decoded);
 
   if (char?.exclude_inventory) {
     return (
@@ -213,6 +300,19 @@ export default async function CharacterGearPage({ params }: { params: Promise<{ 
 
   const equipped = gear.filter(g => g.loc === 'equipped').sort((a, b) => slotRank(a.slot) - slotRank(b.slot));
   const bagged = gear.filter(g => g.loc === 'bag' && /-Slot\d+$/.test(g.slot));
+
+  // ── #95 Raid Kit readiness (rule 12) ───────────────────────────────────────
+  // MR floor from worn gear + a best-effort utility checklist. Bag items (all
+  // of them, not just clicky-slot ones) feed the coffin + port-stone checks.
+  const raidKit = computeRaidKit({
+    className: char?.class ?? null,
+    hasSnapshot: equipped.length > 0,
+    equipped: equipped.map(g => ({ slot: g.slot, item_id: g.item_id, item_name: g.item_name })),
+    bagged: gear.filter(g => g.loc === 'bag').map(g => ({ item_id: g.item_id, item_name: g.item_name })),
+    items,
+    spellNames,
+    scribedSpells,
+  });
 
   // ── Suggested clicky-swap macros ───────────────────────────────────────────
   // Must-equip clickies (clicktype 4) sitting in bags get a generated swap
@@ -389,6 +489,8 @@ export default async function CharacterGearPage({ params }: { params: Promise<{ 
           {synced && <> Last sync: {synced.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}.</>}
         </p>
       </section>
+
+      <RaidKitCard kit={raidKit} name={decoded} />
 
       {clickyMacros.length > 0 && (
         <section className="bg-panel border border-border rounded-lg p-4">

@@ -65,6 +65,19 @@ export const releases: Release[] = [
     fixes: [],
   },
   {
+    key: 'raid-kit-and-comp-245',
+    title: '🎒 Raid Kit readiness + 🧩 raid comp templates',
+    version: 'Web 1.0.245',
+    date: '2026-07-18',
+    headline: 'Two helpers built straight off raid rule 12 and your sign-ups: a Raid Kit card that checks your magic resist and utility spells at a glance, and a comp tool that shows officers the role gaps in a raid before it pulls.',
+    features: [
+      { name: '🎒 A Raid Kit card on your gear page', blurb: 'Your character’s gear page now has a Raid Kit card that checks the things raid rule 12 asks for: a 100 magic-resist floor from your worn gear, plus whether you’re covered for Enduring Breath, Levitate, self-invis and a self-port (and, for necromancers, a Summon-corpse coffin). It’s a helper, not a scold — magic resist is the only hard pass/fail, and only when we actually have your gear export. A blank utility just means we can’t see the source (bank items are stripped before upload, and class self-buffs show up once your spellbook uploads), never that you’re missing it.' },
+      { name: 'An officer readiness board', blurb: 'Officers get the whole-roster version at the admin Raid Kit readiness page — one row per raider with their MR and utility checklist, sorted so anyone actually below the floor floats to the top. Raiders who haven’t run a Quarmy export yet simply read “no snapshot” instead of a red X.' },
+      { name: '🧩 Raid comp templates + a sign-up gap check', blurb: 'Officers can save named raid compositions — how many tanks, healers, support, melee and casters, down to specific classes — and the sign-ups page now diffs a chosen template against everyone who signed up “Going”: “need 1 more cleric-archetype healer, 3 over on melee.” When a raid actually ran during the event window, it shows the live roster right next to the plan.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'web-gear-vision-235',
     title: '👁 Gear page sees proc-granted vision',
     version: 'Web 1.0.235',
