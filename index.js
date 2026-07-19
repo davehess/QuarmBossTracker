@@ -8935,7 +8935,15 @@ async function _handleAgentExtendedTarget(req, res) {
   const identity = await mimicLink.requireAgentAuth(req, res);
   if (!identity) return;
   let selfChar = '';
-  try { selfChar = (new URL(req.url, 'http://x').searchParams.get('character') || '').trim(); } catch { /* */ }
+  // #113: same-zone-only is a per-user Mimic toggle (default on). The agent
+  // sends same_zone=0 only when the user turns it OFF; an absent param (old
+  // agents, or the default-on case) keeps the same-zone scoping below.
+  let sameZoneOnly = true;
+  try {
+    const sp = new URL(req.url, 'http://x').searchParams;
+    selfChar = (sp.get('character') || '').trim();
+    sameZoneOnly = sp.get('same_zone') !== '0';
+  } catch { /* */ }
 
   const supabase = require('./utils/supabase');
   if (!supabase.isEnabled()) {
@@ -8986,7 +8994,14 @@ async function _handleAgentExtendedTarget(req, res) {
       const me = live.find(r => r.character.toLowerCase() === selfChar.toLowerCase());
       if (me && me.zone_name) scopeZone = me.zone_name;
     }
-    const inScope = scopeZone ? live.filter(r => r.zone_name === scopeZone) : live;
+    // #113 same-zone-only toggle OFF → don't scope by zone (show every online
+    // raider's target, splinter groups included).
+    if (!sameZoneOnly) scopeZone = null;
+    // Fail-open, per-row: with the toggle ON we drop OTHER-zone rows, but a
+    // raider whose zone we can't resolve (null zone_name) rides along rather
+    // than vanishing — never hide data on missing info. My-zone-unknown is
+    // handled by scopeZone staying null above (→ every online raider).
+    const inScope = scopeZone ? live.filter(r => !r.zone_name || r.zone_name === scopeZone) : live;
 
     const raiderNames = new Set(inScope.map(r => r.character.toLowerCase()));
     const petNames = new Set(inScope.filter(r => r.pet_name).map(r => r.pet_name.toLowerCase()));

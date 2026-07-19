@@ -65,6 +65,30 @@ folly** — it's here.*
 ## The work ledger
 
 ### ✅ Done — major shipped features (not exhaustive; see git + roadmapData.ts)
+- **#113 Extended Target same-zone-only option — DONE (2026-07-19, bot 3.0.218 on
+  main + agent 3.3.96 beta; Mimic parked 1.9.6; web 1.0.249 docs).** Guild-lead
+  ask: "we don't need to include other Mimics' targets when they're not in the
+  same zone." **Layer chosen: bot-side** (`_handleAgentExtendedTarget` in
+  `index.js`). Recon showed zone already lives on the bot (`character_live_state.
+  zone_name`) and the endpoint *already* scoped every target to the requester's
+  zone via `inScope` — but unconditionally, with a non-fail-open predicate
+  (`=== scopeZone` dropped unknown-zone rows) and no toggle. The payload rows
+  carry only the requester's `scopeZone`, never a per-uploader zone, so
+  agent-side filtering would have needed the bot to attach per-row zones (NEW
+  plumbing) — bot-side was the only layer where zone is already present. Change:
+  the endpoint now reads a `same_zone` query param (absent/`1` → on = default;
+  only `same_zone=0` disables), and the same-zone predicate is fail-open per row
+  (a raider whose `zone_name` we can't resolve rides along instead of vanishing;
+  my-zone-unknown → no scoping). Old agents send no param → unchanged
+  (default-on) behavior. **Agent (beta):** a per-user pref `extSameZoneOnly`
+  (default true) persisted in `logsync.optin.json`, a labeled checkbox in the
+  dashboard Overlays tab ("Same-zone targets only (default on)"), and a
+  `GET/POST /api/ext-pref` pair; `fetchExtendedTarget` appends `same_zone=0`
+  only when the user turns it OFF, so the toggle takes effect within one proxy
+  TTL, no restart. The overlay (`extarget.html`) needed no change — the bot
+  serves the already-filtered list. Decision covered by
+  `test/extended-target-zone.test.js` (source-sliced param parse + `inScope`
+  predicate). See BETA-TESTING #113.
 - **#118 in-console officer kill switches + Mimic version in the fleet table —
   DONE (2026-07-19, bot 3.0.217 on main + agent 3.3.95 beta; Mimic parked 1.9.6).**
   Guild-lead ask off live 📡 Reporters-panel screenshots: put the `/admin/overlays`

@@ -20,6 +20,40 @@ raid; move it to STATUS.md's "Done" once graduated to stable.*
 
 ---
 
+## #113 — Extended Target: same-zone-targets-only option
+
+**Needs:** agent **3.3.96** (beta Mimic) + bot **3.0.218** (live on Railway).
+
+**What changed:** the Extended Target overlay can now hide targets reported by
+Mimics that are in a *different zone* from you, so a splinter group off in
+another zone stops cluttering your raid's target list. It's a per-user toggle —
+a **Same-zone targets only (default on)** checkbox in the dashboard's **Overlays**
+tab — and it takes effect within a couple of seconds, no restart. The filter
+runs on the bot (it already scopes the aggregation by zone); the agent just
+tells the bot whether to. **Fail-open:** if we can't resolve your zone, or a
+particular raider's zone is unknown, that data is shown, never hidden.
+
+**✅ Solo (one machine)**
+- Open Mimic → **Overlays** tab. The 🎯 **Extended Target options** card shows a
+  **Same-zone targets only** checkbox, **checked** by default. Uncheck it, then
+  reopen the dashboard (or switch tabs and back) — it stays unchecked. Re-check
+  it — persists again. (Persisted in `logsync.optin.json`, so it survives a Mimic
+  restart too.)
+- With the box checked, the Extended Target overlay shows your current-zone
+  targets as before — no regression to the count, HP, debuffs, off-tank/players
+  toggles, or the ✕ per-row hide.
+
+**👥 Multi-person (2 raiders, separate machines)**
+- Two Mimic users in **different zones**. With **Same-zone targets only ON**
+  (default) on each, neither sees the other's target in their Extended Target
+  list (each list stays scoped to their own zone).
+- Now both zone into the **same** zone and target different mobs — each raider
+  sees the other's target appear in the list. Move one raider back to a different
+  zone: their target drops off the other's list within a couple of seconds.
+- Turn the toggle **OFF** on one raider while they're in a different zone from the
+  other — they should now see the other raider's target again (all zones), while
+  the raider who left it ON still sees only their own zone.
+
 ## #118 — In-console officer kill switches + Mimic version in the fleet table
 
 **Needs:** agent **3.3.95** (beta Mimic) + bot **3.0.217** (live on Railway).
