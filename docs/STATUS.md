@@ -65,6 +65,53 @@ folly** — it's here.*
 ## The work ledger
 
 ### ✅ Done — major shipped features (not exhaustive; see git + roadmapData.ts)
+- **#121 Loot Bidding v2 + buff-queue class-picker defaults — DONE (2026-07-19,
+  agent 3.3.100 beta + bot 3.0.221 on main + web 1.0.252 roadmap/docs; Mimic
+  parked 1.9.6). No DB change (mirror reads only).** Field feedback from the
+  guild lead (OpenDKP user `vaporjesus`, family main `Hitya`).
+  1. **404 bug fixed:** wishlist/win item names carried `class=name`, so the
+     dashboard's /character click-delegation opened `/character/<first-word>`
+     ("Timestone Adorned Ring" → `/character/Timestone` → 404). Item names now
+     link to the associated **OpenDKP raid page** (`{client}.opendkp.com/#/raids/<raid_id>`)
+     when known, else a plain non-clickable span — no dead links.
+  2. **Wishlist = bid-on-but-NOT-won:** the bot prunes any item the family has
+     won (via `opendkp_loot` names ∪ `opendkp_auctions.winner_character_id`);
+     explicit preregs stay ★.
+  3–4. **RECENT MISSES, full-width:** items bid on and lost, with columns
+     *character · that char's last bid · last winning bid · last second-place
+     bid · planned next bid (editable, persisted locally in
+     `logsync.plannedbids.json`) · DKP*. Winning/second figures are from the
+     item's MOST-RECENT auction (`_lootItemSummary`), not the specific loss.
+     The 6-column shape (incl. current-DKP) is the proposed-but-unconfirmed
+     layout — **adjustable**.
+  5. **Bid/item rows deep-link** to the OpenDKP raid that carries the auction.
+     **Grounding:** OpenDKP has no per-auction URL; the confirmed member-facing
+     route is `#/raids/<id>` (roster.js/register.js/admin-queue.ts +
+     `.env.example`), and every auction carries `raid_id` (FK → `opendkp_raids`).
+  6. **DKP source shipped = mirror-computed, FAMILY-POOLED** (`ticks.value` where
+     name ∈ `attendees[]` + `adjustments.raw.Value` − `loot.dkp`), labelled with
+     freshness (`max(fetched_at)`). **Grounding:** there is NO characters-balance
+     mirror; and OpenDKP links alts to a shared pool — per-character is
+     misleading (main `Hitya` computes to −125 while the family nets +860), so we
+     ship the family sum (the balance you actually bid against). **Adjustable**;
+     officers verify vs the OpenDKP UI in BETA.
+  7. **Family auto-prefill after login:** `suggested_family` (main = most auction
+     wins) prefills main + raid alts ONLY when the local family is empty; the
+     manual editor stays. **Grounding:** the mirror stores the account login
+     (`vaporjesus`) as `winner`/`character_name` and `character_id_to_name` is
+     EMPTY, so names resolve by MODE over the won-auction↔loot join
+     (`108064→Hitya`, `100899→Melting`, `94318→Canopy`, …).
+  8. **Expansion filter + full-width panel:** item→zone is too weak
+     (`eqemu_npc_types.zone_short` is NULL), so era comes from the OpenDKP DKP
+     **pool** (`opendkp_raids.pool_name` → Classic/Kunark/Velious(SoV)/Luclin(SoL)),
+     mapped per item from its most-recent auction. Panel is now `card wide`.
+  - **Buff-queue class picker:** now lists ALL casters (added Necromancer,
+    Wizard, Shadow Knight — CLR DRU SHM ENC MAG NEC WIZ BST BRD PAL RNG SK) and
+    defaults to the user's own class (`/api/state.activeCharacterClass`,
+    falls to "(any class)" when unknown; an explicit pick always wins).
+  - Bot pure helpers (`_resolveCharIdNames`/`_suggestFamily`/`_pruneWonWishlist`/
+    `_eraFromPool`/`_buildMisses`/`_familyDkpTotals`) are source-sliced +
+    vitest-covered in `test/loot-bidding.test.js` (20 tests). See BETA-TESTING #121.
 - **#119 pet buffs STILL missing (post-#117 field report) + liveness/identity
   across watched logs — DONE (2026-07-19, agent 3.3.99 beta + bot 3.0.220 on
   main). No DB change.**

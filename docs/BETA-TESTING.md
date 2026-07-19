@@ -20,6 +20,53 @@ raid; move it to STATUS.md's "Done" once graduated to stable.*
 
 ---
 
+## #121 — Loot Bidding v2 + buff-queue class-picker defaults
+
+**Needs:** agent **3.3.100** (beta Mimic) + bot **3.0.221** (live on Railway) +
+web **1.0.252**. No DB change — bot reads the OpenDKP mirrors only. The Loot
+bidding card needs you logged into OpenDKP (the token stays on your PC).
+
+**What changed (guild-lead field feedback — OpenDKP `vaporjesus`, main `Hitya`):**
+1. Item names no longer 404 — they link to the OpenDKP raid page (or aren't
+   links). 2. Wishlist hides anything the family already won (preregs keep ★).
+   3–4. New full-width **Recent misses** table (bid & lost) with *character ·
+   your last bid · last winning bid · last second-place bid · planned next bid
+   (editable, saved locally) · DKP*. 5. Rows deep-link to the OpenDKP raid.
+   6. **Family-pooled DKP** computed from the mirror (ticks + adjustments −
+   loot), labelled by freshness. 7. Family (main + raid alts) auto-prefills the
+   first time you log in (only when empty). 8. Expansion filter
+   (Classic/Kunark/Velious/Luclin) + the panel is now full-width. Plus the
+   buff-queue class picker lists ALL casters and defaults to your own class.
+
+**✅ Solo (one machine)**
+- **No dead item links.** Log into OpenDKP; on the 💰 Loot bidding card, click a
+  wishlist / miss / win item name — it opens the OpenDKP raid page (or does
+  nothing if it's a plain span), never a wolfpack.quest `/character/<word>` 404.
+- **Wishlist prune.** An item you've WON on any family character does NOT appear
+  in "your wishlist"; a prereg you set still shows with ★ even if won.
+- **Misses table.** "Recent misses" spans full width with all six columns; the
+  winning/second-place figures match the item's most-recent auction (not the
+  auction you personally lost).
+- **Planned bid persists.** Type a number in a miss row's **Planned** field,
+  restart Mimic, reopen the card — the value is still there (stored in
+  `logsync.plannedbids.json`).
+- **Family prefill only-when-empty.** With NO family set, log in → your main +
+  raid alts fill in automatically (main = your most-won character). Clear/edit
+  it by hand and it stays edited — it never re-prefills over your changes.
+- **Class picker.** The buff-queue "Buffing as" dropdown lists every casting
+  class incl. **Necromancer, Wizard, Shadow Knight**, and defaults to YOUR
+  class the first time (falls to "(any class)" until /who or Zeal has seen you);
+  an explicit pick sticks.
+
+**👥 Multi-person / officer**
+- **DKP figures match OpenDKP.** Compare the card's family DKP (and a couple of
+  raiders' via their families) against the OpenDKP standings page. It's a
+  mirror-derived, family-pooled figure "as of the last sync" — if a number is
+  off by more than a stale-sync's worth, flag it (the pooled-vs-per-character
+  and the char_id→name MODE resolution are the two things to sanity-check).
+
+---
+
 ## #119 — Pet-buff diagnostic card + liveness across watched logs + live-character identity
 
 **Needs:** agent **3.3.99** (beta Mimic) + bot **3.0.220** (live on Railway). No
