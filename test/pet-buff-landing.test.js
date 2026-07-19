@@ -59,7 +59,7 @@ const BLOCKS = [
   fn('function _spellGood(name) {',
      '  return (e && e.good != null) ? (Number(e.good) ? 1 : 0) : null;\n}'),
   fn('function recordPetBuffLanding(bcEvt) {',
-     '    landed_at: bcEvt.cast_at ? Date.parse(bcEvt.cast_at) : Date.now(),\n  });\n  _savePetStateSoon();\n}'),
+     '  _savePetStateSoon();\n}'),
   fn('function petBuffsForOwner(ownerLower) {',
      '  return Array.from(byName.values());\n}'),
   fn('function _zealTargetForChar(charLower) {',
@@ -115,6 +115,14 @@ const PRELUDE = `
   function _savePetStateSoon() {}
   function _noteDiCast() {}
   function _charmDurationSec(_n, d) { return d; }
+  // #119 pet-buff diagnostic ring — the REAL implementation (not a stub) so the
+  // fixture can assert recordPetBuffLanding records attribution outcomes.
+  const _petBuffDiagRing = [];
+  const _PET_BUFF_DIAG_MAX = 12;
+  function _pushPetBuffDiag(entry) {
+    _petBuffDiagRing.push(entry);
+    if (_petBuffDiagRing.length > _PET_BUFF_DIAG_MAX) _petBuffDiagRing.splice(0, _petBuffDiagRing.length - _PET_BUFF_DIAG_MAX);
+  }
 `;
 
 const EXPORTS = [
@@ -122,7 +130,7 @@ const EXPORTS = [
   'recordPetBuffLanding', 'petBuffsForOwner', '_rebuildBuffMatchers',
   '_petOwnerByName', '_isTrackedBuffName',
   '_zealState', '_spellByNameLower', '_petBuffLandings', '_petHealthByOwner',
-  '_recentSelfCast',
+  '_recentSelfCast', '_petBuffDiagRing',
 ];
 
 function buildAgent() {
@@ -138,6 +146,14 @@ const CATALOG = [
   { id: 1557, name: 'Girdle of Karana', you: 'You feel the strength of Karana infuse you.', other: 'looks stronger.', dur: 720, durf: 3, good: 1 },
   { id: 159,  name: 'Strength',         you: 'You feel strong.', other: 'looks strong.', dur: 630, durf: 3, good: 1 },
   { id: 278,  name: 'Spirit of Wolf',   you: 'You feel the spirit of wolf enter you.', other: 'is surrounded by a brief lupine aura.', dur: 360, durf: 3, good: 1 },
+  // #119 second observed pet-buff line. eqemu_spells id 2517 verbatim: the
+  // OTHER emote is possessive ("'s body pulses ..."), duration 600 (60min @ L60,
+  // formula 3), targettype 5 (single-target — the druid pet cast). Storm
+  // Strength (id 430) shares Girdle's "looks stronger." emote — it is here to
+  // prove the resolver disambiguates by the CAST spell name, not the shared
+  // landing text.
+  { id: 2517, name: 'Spirit of Eagle',  you: 'Your body pulses with an avian spirit.', other: "'s body pulses with an avian spirit.", dur: 600, durf: 3, good: 1 },
+  { id: 430,  name: 'Storm Strength',   you: 'You feel strong.', other: 'looks stronger.', dur: 540, durf: 3, good: 1 },
 ];
 
 // EQ-format timestamp for a wall-clock moment, so the sliced expiry math in
@@ -215,5 +231,71 @@ describe('#117 pet-buff attribution (source-sliced from agent)', () => {
     feedCastThenLand('Spirit of Wolf', 'Randomguy is surrounded by a brief lupine aura.');
     const buffs = A.petBuffsForOwner('canopy');
     expect(buffs.map(b => b.name)).not.toContain('Spirit of Wolf');
+  });
+
+  // ── #119 field-report extension ────────────────────────────────────────────
+  // The 2026-07-19 raid-night report showed "Kabn looks stronger." twice and
+  // "Kabn's body pulses with an avian spirit." (Spirit of Eagle), with NO buffs
+  // on the Pet tracker. The user's fleet row was agent 3.3.91 — BELOW the 3.3.94
+  // #117 fix — which is exactly why nothing attributed. These cases prove the
+  // CURRENT beta agent handles the reported spells and accumulates them.
+
+  // MULTI-BUFF ACCUMULATION: two different-category pet buffs cast while NOT
+  // targeting the pet must BOTH land on the pet (nothing overwrites the other).
+  it('accumulates Girdle of Karana AND Spirit of Eagle on the same pet (neither overwrites)', () => {
+    seed({ castTarget: 'Canopy' });                 // buffs self-targeted; #117 relaxation attributes to the pet
+    feedCastThenLand('Girdle of Karana', 'Kabn looks stronger.');
+    feedCastThenLand('Spirit of Eagle', "Kabn's body pulses with an avian spirit.");
+    const names = A.petBuffsForOwner('canopy').map(b => b.name);
+    expect(names).toContain('Girdle of Karana');
+    expect(names).toContain('Spirit of Eagle');
+  });
+
+  // Spirit of Eagle's OTHER emote is possessive — resolveSelfCastLanding's
+  // "'s ..."-prefix branch must slice the pet name off correctly.
+  it("resolves the possessive \"<pet>'s body pulses ...\" landing to the pet", () => {
+    seed({ castTarget: 'Canopy' });
+    const bcEvt = feedCastThenLand('Spirit of Eagle', "Kabn's body pulses with an avian spirit.");
+    expect(bcEvt && bcEvt.target).toBe('Kabn');
+    expect(bcEvt && bcEvt.spell_name).toBe('Spirit of Eagle');
+    expect(A.petBuffsForOwner('canopy').map(b => b.name)).toContain('Spirit of Eagle');
+  });
+
+  // DISAMBIGUATION: "looks stronger." is shared by 15 catalog spells (Girdle of
+  // Karana dur 720, Storm Strength dur 540, …). The resolver keys on the CAST
+  // spell name (rc.spellLower), NOT the shared landing text — so the chosen
+  // spell + duration must be the one actually cast, not the first catalog row
+  // that shares the emote.
+  it('disambiguates a shared "looks stronger." landing by the cast spell (Storm Strength, not Girdle)', () => {
+    seed({ castTarget: 'Kabn' });
+    feedCastThenLand('Storm Strength', 'Kabn looks stronger.');
+    const rec = A._petBuffLandings.get('canopy');
+    expect(rec && rec.has('storm strength')).toBe(true);
+    expect(rec && rec.has('girdle of karana')).toBe(false);
+    // Storm Strength cap 540 (formula 3 → lvl*30=1800, capped at 540 @ L60);
+    // Girdle would be 720. The right duration proves the right spell was chosen.
+    expect(rec.get('storm strength').dur_ticks).toBe(540);
+  });
+
+  // #119 diagnostic ring — recordPetBuffLanding records every pet-relevant
+  // outcome so the 🐾 Pet-buff diagnostic card can explain the next field report.
+  it('diag ring records an attributed (ok) outcome on a successful pet buff', () => {
+    seed({ castTarget: 'Canopy' });
+    feedCastThenLand('Girdle of Karana', 'Kabn looks stronger.');
+    const ok = A._petBuffDiagRing.find(e => e.ok && e.spell === 'Girdle of Karana');
+    expect(ok).toBeTruthy();
+    expect(ok.owner).toBe('canopy');
+    expect(ok.resolver).toBe('resolveSelfCastLanding');
+  });
+
+  it('diag ring records a dropped outcome when a self-cast buff lands on a non-pet target', () => {
+    seed({ castTarget: 'Groupie' });                // buffed a groupmate by name, not the pet
+    feedCastThenLand('Girdle of Karana', 'Groupie looks stronger.');
+    // Not attributed to the pet…
+    expect(A.petBuffsForOwner('canopy').map(b => b.name)).not.toContain('Girdle of Karana');
+    // …and the ring says WHY (target wasn't a watched pet).
+    const drop = A._petBuffDiagRing.find(e => !e.ok && e.target === 'Groupie');
+    expect(drop).toBeTruthy();
+    expect(drop.reason).toMatch(/not a watched pet/i);
   });
 });
