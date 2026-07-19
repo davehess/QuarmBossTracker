@@ -8860,6 +8860,7 @@ async function _announceHarmonicHowlOnce() {
   if (Array.isArray(rows) && rows[0]) return;   // already announced
   const ch = await client.channels.fetch(chId).catch(() => null);
   if (!ch) { console.warn('[howl-announce] channel fetch failed:', chId); return; }
+  const { EmbedBuilder } = require('discord.js');
   const emb = new EmbedBuilder()
     .setColor(0xd29922)
     .setTitle('🐺 Mimic 2.0.0 — "Harmonic Howl" is live')
