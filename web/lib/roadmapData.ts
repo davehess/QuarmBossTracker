@@ -43,6 +43,18 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'mimic-201-setup-replay',
+    title: '🐺 Mimic 2.0.1 — one-click EQ setup + fight replay',
+    version: 'Mimic 2.0.1 · Agent 3.4.1',
+    date: '2026-07-20',
+    headline: 'A small stable follow-up to Harmonic Howl: get a new machine logging and Zeal-ready in one click, and replay a past fight through your triggers to test them without waiting for the boss.',
+    features: [
+      { name: '🔧 “Set up EQ for me” now on the Settings page', blurb: 'The one-click configurator that turns on logging (eqclient.ini) and Zeal export/verbose (zeal.ini) across every EQ folder is now on the Mimic Settings page too, not just the dashboard — close EQ, click once, done. Perfect for getting a brand-new raider ready in seconds.' },
+      { name: '⏪ Replay a fight through your triggers', blurb: 'A new Replay card (Triggers tab) walks any slice of your logs back through the real trigger engine — you hear the actual callouts, marked as a replay, with nothing uploaded and cooldowns left alone. It won’t run during a live fight. Every parse page also gets a “Replay this fight locally” link that pre-fills the time window. Great for proving a trigger works before it matters.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'quartermaster-v1',
     title: '🧰 Quartermaster — who has the gear that keeps a raid moving',
     version: 'Web 1.0.260 · Agent 3.4.1',

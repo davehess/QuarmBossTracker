@@ -6135,6 +6135,28 @@ ipcMain.handle('set-overlays-locked', (_e, locked) => {
   return currentStatus();
 });
 ipcMain.handle('get-agent-port', () => agentPort);
+// "Set up for me" from Settings — bridge to the agent's single writer
+// (POST /api/eq-setup → _applyEqSetup). Routed through main (Node, no CORS) so
+// Settings can READ the full result (incl. the "EQ is running" warning); a raw
+// file:// fetch can't read the cross-origin body. Same writer the dashboard
+// button uses — one source of truth for the eqclient.ini/zeal.ini changes.
+ipcMain.handle('eq-setup-for-me', () => new Promise((resolve) => {
+  if (!agentPort) return resolve({ ok: false, message: 'The parser engine is not running yet — open the dashboard once, then try again.' });
+  const req = http.request({
+    host: '127.0.0.1', port: agentPort, path: '/api/eq-setup', method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Content-Length': 0 }, timeout: 8000,
+  }, (res) => {
+    let buf = '';
+    res.on('data', (c) => { buf += c; });
+    res.on('end', () => {
+      try { resolve(JSON.parse(buf)); }
+      catch { resolve({ ok: false, message: 'Unexpected response from the engine.' }); }
+    });
+  });
+  req.on('error', (e) => resolve({ ok: false, message: 'Could not reach the engine: ' + (e && e.message || e) }));
+  req.on('timeout', () => { req.destroy(); resolve({ ok: false, message: 'The engine did not respond in time.' }); });
+  req.end();
+}));
 ipcMain.handle('relaunch-agent', async () => {
   appendAgentLog('[mimic] relaunch-agent requested by a renderer (Settings/Setup save)\n');
   if (agentProc) { try { agentProc.kill(); } catch {} } else { await launchAgent(); }
