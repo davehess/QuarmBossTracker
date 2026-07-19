@@ -5,7 +5,8 @@
 // GitHub-level detail.
 
 import RoadmapFeatureCard from '@/components/RoadmapFeatureCard';
-import { retroSummary, retroItems, releases, nearTermItems } from '@/lib/roadmapData';
+import SprintBoard from '@/components/SprintBoard';
+import { retroSummary, retroItems, releases, nearTermItems, sprintMeta } from '@/lib/roadmapData';
 
 export const dynamic = 'force-static';
 
@@ -58,6 +59,31 @@ export default function RoadmapPage() {
             </li>
           ))}
         </ul>
+      </section>
+
+      <section className="space-y-4">
+        <h2 className="text-lg text-orange">The July sprint, by the numbers</h2>
+        <p className="text-sm text-dim">
+          Four days ({sprintMeta.window}), every numbered item below shipped and verified.
+          Sort by phase, complexity, or number — the colored dots say which part of the{' '}
+          <a href="/platform" className="text-blue hover:underline">platform</a> each change
+          focused on (same colors as the platform map). {sprintMeta.versions}.
+        </p>
+        <SprintBoard />
+        <div className="bg-panel border border-border rounded-lg p-4 space-y-2">
+          <div className="text-[11px] uppercase tracking-wide text-red">What the new safety gates already caught</div>
+          {sprintMeta.lintFinds.map((f, i) => (
+            <p key={i} className="text-xs text-dim leading-5">{f}</p>
+          ))}
+        </div>
+        <div className="bg-panel border border-border rounded-lg p-4 space-y-2">
+          <div className="text-[11px] uppercase tracking-wide text-green">On beta? Here&apos;s what to watch for (and report in #feedback)</div>
+          <ul className="space-y-1 list-disc list-inside">
+            {sprintMeta.watchList.map((w, i) => (
+              <li key={i} className="text-xs text-dim leading-5">{w}</li>
+            ))}
+          </ul>
+        </div>
       </section>
 
       <section className="space-y-4">

@@ -774,3 +774,87 @@ export const nearTermItems: RoadmapFeature[] = [
       "UI Studio already has a polished visual editor for your in-game UI. We're looking at borrowing that same drag-and-drop feel for laying out Mimic's own overlays.",
   },
 ];
+
+// ── The July sprint board (2026-07-16 → 07-20) ───────────────────────────────
+// The numbered work ledger behind the release log above — sortable on /roadmap.
+// `aspects` use the SAME six ids + colors as the /platform map so the two pages
+// read as one system. Complexity is honest scope, not effort bragging:
+// S = contained change · M = one subsystem · L = several subsystems touched ·
+// XL = platform-wide behavior · design = decided on paper, build pending.
+
+export type SprintAspect = 'mimic' | 'agent' | 'bot' | 'web' | 'data' | 'liveops';
+export type SprintComplexity = 'S' | 'M' | 'L' | 'XL' | 'design';
+export type SprintItem = {
+  num: string;          // the board number raiders saw in updates ("#72")
+  title: string;
+  phase: string;        // grouping — matches the queue's waves/threads
+  cx: SprintComplexity;
+  aspects: SprintAspect[];
+  note: string;         // one plain-language line
+};
+
+export const sprintPhases = [
+  'Safety & release gates',
+  'Wave 2 — survive success',
+  'Callout trust',
+  'Election field round',
+  'Loot & DKP',
+  'Rules thread',
+  'Member surfaces',
+  'Designs — build pending',
+] as const;
+
+export const sprintItems: SprintItem[] = [
+  { num: 'SEC', title: 'Database RPC lockdown + view hardening', phase: 'Safety & release gates', cx: 'L', aspects: ['data'], note: 'Closed an anonymous data-deletion vector and 21 over-permissive functions; the security advisor now reads clean.' },
+  { num: 'LINT', title: 'ESLint no-undef wall + CI gates', phase: 'Safety & release gates', cx: 'M', aspects: ['liveops'], note: 'Caught 2 latent production defects the day it turned on — including the exact bug class behind the Jul 16 raid outage.' },
+  { num: 'TEST', title: 'Blocking test suite, 0 → 275 in four days', phase: 'Safety & release gates', cx: 'M', aspects: ['liveops'], note: 'Elections, auth, budgets, parsers, timelines — every push now has to prove itself.' },
+  { num: '#72', title: 'Designated-reporter elections (chat · buffs · roster)', phase: 'Wave 2 — survive success', cx: 'XL', aspects: ['bot', 'agent'], note: 'At 60 raiders, 98% of buff uploads were duplicates. Now the bot elects reporters — with camp-out and logout handoff.' },
+  { num: '#73', title: 'Admission control + database circuit breaker', phase: 'Wave 2 — survive success', cx: 'L', aspects: ['bot'], note: 'Per-client rate budgets, a fuse on the database, and poison-payload hardening — one bad client can no longer hurt the raid.' },
+  { num: '#106', title: 'Six polling loops → one', phase: 'Wave 2 — survive success', cx: 'L', aspects: ['bot', 'agent'], note: 'Every Mimic now asks the server once instead of six times, and boss-kill upload bursts spread themselves out.' },
+  { num: '#74', title: 'Control plane: kill switches + version floor + auto-rollback', phase: 'Wave 2 — survive success', cx: 'L', aspects: ['bot', 'agent', 'mimic', 'liveops'], note: 'Officers can pause the fleet, floor old versions, and a crash-looping update rolls itself back.' },
+  { num: '#58', title: 'Health-gated zero-downtime deploys', phase: 'Wave 2 — survive success', cx: 'M', aspects: ['bot', 'liveops'], note: 'The server only takes traffic when it is actually ready, and drains cleanly when it restarts.' },
+  { num: '#89', title: 'Mimic 1.9.5 graduated to stable', phase: 'Wave 2 — survive success', cx: 'M', aspects: ['liveops'], note: 'The whole 1.9 beta line — heal overlays, fast restarts, officer tools — reached every raider as a normal auto-update.' },
+  { num: '#76', title: 'Callout trust: journal, real Rehearse, sticky calls', phase: 'Callout trust', cx: 'L', aspects: ['agent', 'mimic'], note: '"Why didn\'t my trigger fire" is now answerable on the dashboard, and Rehearse drives the REAL pipeline out loud.' },
+  { num: '#103', title: 'The CH chain speaks your GO', phase: 'Callout trust', cx: 'S', aspects: ['mimic', 'agent'], note: '"04 GO" in your ear when it\'s your slot — one 📣 button to silence.' },
+  { num: '#107', title: 'Loot posts announced + bid-clock chips + self-growing overlay', phase: 'Callout trust', cx: 'M', aspects: ['agent', 'mimic'], note: 'Loot called in chat gets spoken with a countdown like a Death Touch timer; the overlay stopped cutting off its buttons.' },
+  { num: '#120', title: 'The silent-TTS root cause', phase: 'Callout trust', cx: 'L', aspects: ['mimic', 'agent'], note: 'Found why some machines never spoke at all (a browser audio gate) — and made Rehearse prove audio end-to-end.' },
+  { num: '#116', title: 'Overlay bug round: stale cards + stuck setup frames', phase: 'Callout trust', cx: 'M', aspects: ['mimic', 'agent'], note: 'The frozen "stopped 8m ago" casting card and the setup outline that never went away — both fixture-proven fixes.' },
+  { num: '#112', title: 'The chat-blackout fix', phase: 'Election field round', cx: 'M', aspects: ['bot', 'agent'], note: 'Guild chat went dark for 8 hours when a logged-out reporter stayed elected. Reporters now must prove they SEE chat.' },
+  { num: '#115', title: 'Officer reporter panel: see, swap, include', phase: 'Election field round', cx: 'M', aspects: ['agent', 'bot'], note: 'The live fleet, who is elected for what, and one-click overrides — in Mimic\'s Admin tab.' },
+  { num: '#118', title: 'Kill switches inside Mimic + fleet versions', phase: 'Election field round', cx: 'M', aspects: ['agent', 'bot'], note: 'Every emergency toggle one click away mid-raid, with a typed confirm on the big red one.' },
+  { num: '#119', title: 'Liveness across all your characters', phase: 'Election field round', cx: 'M', aspects: ['agent', 'bot'], note: 'Playing an alt counts — the fleet shows "Canopy (Hitya)" and the wolf follows whoever is actually online.' },
+  { num: '#108', title: 'Loot bidding from Mimic (BETA)', phase: 'Loot & DKP', cx: 'L', aspects: ['agent', 'bot', 'data'], note: 'Log into OpenDKP once, see open auctions with last-winner context, and place sealed bids without alt-tabbing.' },
+  { num: '#121', title: 'Bidding v2: misses table, DKP, auction links', phase: 'Loot & DKP', cx: 'L', aspects: ['agent', 'bot', 'web'], note: 'What you lost, what it went for, what you\'d bid next time, and whether you can afford it — one full-width table.' },
+  { num: '#110', title: 'OpenDKP deletions now propagate', phase: 'Loot & DKP', cx: 'M', aspects: ['bot', 'data'], note: 'Deleted a test award in OpenDKP? It leaves wolfpack.quest within one sync instead of haunting the loot page.' },
+  { num: '#91', title: 'Roll nights: /rolls page, who-looted, Hot Dice crown', phase: 'Loot & DKP', cx: 'M', aspects: ['agent', 'bot', 'web', 'data'], note: 'Off-night NBG raids get a review page — rolls, who actually looted, and a crown for whoever out-rolled everyone.' },
+  { num: '#94', title: 'The rulebook became data', phase: 'Rules thread', cx: 'M', aspects: ['bot', 'web', 'data'], note: '/ingestrules reads the Discord rules channels into a store the platform can consult — one source, no drift.' },
+  { num: '#92', title: 'Attendance audit (OpenDKP already had it)', phase: 'Rules thread', cx: 'S', aspects: ['data', 'web'], note: 'One SQL view filled the real gaps: 60-day windows, family rollups, lifetime RA%.' },
+  { num: '#95', title: 'Raid Kit readiness (rule 12)', phase: 'Rules thread', cx: 'M', aspects: ['web'], note: 'Your gear page checks the 100 MR floor + utility coverage; officers get the whole-roster board.' },
+  { num: '#93', title: 'Comp templates + sign-up gap check', phase: 'Rules thread', cx: 'M', aspects: ['web'], note: '"Need 1 more cleric-archetype healer" — before the raid pulls, from the sign-ups.' },
+  { num: '#109', title: 'Mimic dashboard: you first, engine second', phase: 'Member surfaces', cx: 'M', aspects: ['agent'], note: 'A 🐺 Me card replaces the plumbing wall; officers get a dedicated Admin tab.' },
+  { num: '#111', title: 'A smarter /who', phase: 'Member surfaces', cx: 'M', aspects: ['agent', 'mimic', 'bot'], note: 'Clean columns, a 🐺 on Mimic runners, mains in parentheses, and levels we know even when someone is anon.' },
+  { num: '#113', title: 'Extended Target: same-zone only', phase: 'Member surfaces', cx: 'S', aspects: ['bot', 'agent'], note: 'Splinter groups elsewhere stop polluting your target list — with a toggle if you want them back.' },
+  { num: '#117', title: 'Pet buffs + range awareness', phase: 'Member surfaces', cx: 'M', aspects: ['agent', 'bot'], note: 'Pet buffs attribute correctly, and the buff queue flags who was likely out of range.' },
+  { num: '#105', title: 'Richer fight timelines', phase: 'Member surfaces', cx: 'M', aspects: ['agent', 'web'], note: 'Slow landed / slow fell off / mob healed itself / discipline used — the wipe post-mortem reads itself.' },
+  { num: '#114', title: 'Multi-raid awareness', phase: 'Designs — build pending', cx: 'design', aspects: ['bot', 'agent', 'web'], note: 'Two raids at once, identified by their raid leaders — designed so the normal one-raid night cannot be touched.' },
+  { num: '#56', title: 'Same-name mob serial tracks', phase: 'Designs — build pending', cx: 'design', aspects: ['agent', 'bot', 'mimic'], note: 'Telling twelve Rathe Council members apart without spawn IDs — split-only evidence, never a risky merge.' },
+];
+
+export const sprintMeta = {
+  window: 'Thu Jul 16 → Sun Jul 20, 2026',
+  versions: 'Bot 3.0.203 → 3.0.221 · Agent 3.3.73 → 3.3.100 · Web 1.0.231 → 1.0.252 · Mimic 1.9.5 stable / 1.9.6 beta',
+  lintFinds: [
+    'Turned on the no-undef lint wall and it immediately flagged 2 latent production defects: an admin endpoint that would have crashed on first use (undeclared variable), and 13 undeclared references in the stable agent — the EXACT bug class that caused the July 16 raid-night outage.',
+    'The dashboard-escape check (the blank-localhost-page bug we shipped twice in the past) and 275 blocking tests now run on every single push — that whole class of "worked on my machine" defect can no longer reach a raid.',
+  ],
+  watchList: [
+    'Rehearse any trigger: you should HEAR it, and "Mimic" should appear in your Windows volume mixer. Silent? The dashboard\'s trigger journal names exactly why — screenshot it to #feedback.',
+    'Buff your pet: the Pet tracker should show it (update Mimic first — the fix needs the latest beta). If not, screenshot the 🐾 diagnostic card.',
+    'CH chain: listen for your "0X GO" when your slot comes up. The 📣 button on the overlay toggles it.',
+    'Post loot in /gu or /rs: expect the spoken announce + a gold countdown chip you can dismiss with ✕.',
+    '/who: columns should line up, Mimic runners get a 🐺, members show (Main) after their name.',
+    'Loot bidding card: log into OpenDKP and check the DKP number against the OpenDKP site — report any mismatch (it pools your whole alt family on purpose).',
+    'Officers: the 🛡 Admin tab now has the Reporters panel + kill switches — flip something and confirm /admin/overlays agrees within a minute.',
+    'Anything weird → #feedback or wolfpack.quest/feedback. Screenshots beat descriptions.',
+  ],
+};
