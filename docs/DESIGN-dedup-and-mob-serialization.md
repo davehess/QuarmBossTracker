@@ -167,4 +167,97 @@ still the TTL's job. Per-observer streams have no roles, so camping can never
 touch them — the structural guarantee holds.
 
 **Next:** the observer-anchored target tracks (#56) so Rathe-Council babysit
-groups render as distinct mobs.
+groups render as distinct mobs — designed below (2026-07-19), implementation
+pending.
+
+---
+
+## Serial tracks on Extended Target / Target Info (#56 design, 2026-07-19)
+
+*From Hitya's risk framing: in-game mob HP is the same for every observer — the
+variance is OURS (sampling moments + sink latency). A mob we recorded at 86–88%
+may truly be at 84%, and a DIFFERENT same-name mob passing through that window
+must never capture the first one's debuff timers. False positives are the
+failure mode that matters; both-mobs-on-one-tank is the case where the obvious
+discriminator (victim) goes blind.*
+
+### The asymmetry that decides the architecture
+
+Every trustworthy signal is a **separator** (proves two tracks are DIFFERENT
+mobs). No signal we have is a trustworthy **joiner**:
+
+| Signal | As separator | As joiner |
+|---|---|---|
+| Simultaneous distinct melee victims | ~certain (one melee target per mob) | same victim proves nothing (two mobs, one tank) |
+| HP divergence at overlapping ts (> sampling tolerance, or opposite trends) | strong | HP proximity proves nothing (the 84%-vs-86–88% trap) |
+| Victim positions far apart (victim XYZ ≈ mob XYZ while meleeing; we have raider loc, never mob loc) | strong (beyond melee reach + noise, same-zone) | proximity proves nothing (camps overlap) |
+| Death line | closes exactly one track | — |
+
+Therefore: **tracks never auto-merge. Ever.** The engine only ever SPLITS
+(on separator evidence) and EXPIRES (death/staleness). Where two tracks might
+be the same physical mob, the UI says "possibly same as #2" — honest ambiguity
+— instead of destructively merging and risking timer capture. Double-counting
+is handled by the marker, not by a join.
+
+### The K-invariant (same pattern as multi-raid's activation rule)
+
+Per mob name, `K` = the number of simultaneous distinct tracks PROVEN by
+separators. **While K=1, everything renders exactly as today** — the single
+merged row, name-keyed debuffs, no badges. Partition display activates only at
+K≥2, only for that name, and a control-plane flag collapses it back instantly.
+The common case is structurally untouchable, and a quiet fight can never flip
+into serial mode by accident.
+
+### Track semantics (the false-capture rules, stated as law)
+
+1. A track is anchored to observer-continuity: one observer's target gauge
+   between target changes = one track. The existing HP-jump rule marks a
+   RETARGET (new track), never a heal — and a rise from 0/death always starts
+   a new track (respawn), never continues the old one.
+2. **Debuff/timer attribution is per-landing, per-track**: a landing observed
+   by caster C binds to the track of C's current target at cast time. A track
+   NEVER inherits timers from another track — not on HP proximity, not on
+   victim overlap, not on anything. Timers die with their track.
+3. Cross-observer: two observers' tracks for the same name stay separate rows
+   unless K=1 (then the name-merge is provably safe and we keep today's
+   behavior). At K≥2 with weak same-mob evidence (same victim + HP within
+   tolerance ±2pts over ≥3 overlapping samples + no separator), rows show a
+   link marker ("≈ #2"), each keeping its own timers.
+4. Parse aggregation is UNCHANGED — damage totals stay name-keyed with
+   death-boundary segmentation (#47/#51). Serial tracks are a LIVE-DISPLAY
+   layer; they never split encounters.
+
+### Components to build (each dark behind the flag)
+
+- **C1 — Track engine (agent-side)**: per-name track store (anchor observers,
+  HP series, victim series, landings, first/last seen) + the separator rules
+  producing K. Victim extraction: ground in what the threat tracker already
+  parses ("<mob> hits <victim>" lines) before adding anything new — the threat
+  machinery likely carries this already (implementation must verify, not
+  assume).
+- **C2 — Extended Target serial rows**: at K≥2, one row per track — ordinal
+  badge (`Rathe Council #2`), victim tag (`→ Xarl`, from #3's pending
+  mob's-target feature — these compose), freshest HP with staleness dimming,
+  and ONLY that track's debuff chips. At K=1: byte-identical to today (CI
+  fixture, the #120 byte-compare pattern — the "don't break the primary path"
+  guarantee, enforced).
+- **C3 — Target Info disambiguation strip**: when MY target's name has K≥2:
+  "2 distinct <name> tracked · this one: #2 · → you · slowed 0:42", debuff
+  panel showing my track's chips, with other tracks' chips dimmed as
+  informational ("on #1: tash") — visible but never conflated.
+- **C4 — Cross-client assembly (bot)**: the ext-target proxy already carries
+  every uploader's target+HP; add per-row track ids + K verdicts server-side
+  so all clients agree on ordinals (ordinals are per-zone, per-name,
+  first-seen ordered, stable until death).
+- **C5 — Flags**: master tuning flag (default OFF for the beta soak; officer
+  flips via /admin/overlays or the Mimic kill-switch card; instant name-merge
+  restore) + a per-user overlay toggle. Both honored at render AND at the
+  engine (flag off = engine idles, zero cost).
+
+### Rollout
+
+P0: C1+C5 dark (engine runs, logs K verdicts, renders nothing) — soak on real
+raid nights and compare K against reality. P1: C2+C3 display at K≥2. P2: C4
+cross-client ordinal agreement. If it gets messy at any phase, the flag
+restores today's behavior with no deploy — and the K=1 fixture guarantees the
+primary path never noticed any of it.
