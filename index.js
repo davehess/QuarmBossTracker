@@ -8844,6 +8844,49 @@ if (process.env.MIMIC_RELEASE_ANNOUNCE !== '0') {
   setInterval(() => { _announceMimicReleases().catch(() => {}); }, 15 * 60_000);
 }
 
+// ── Mimic 2.0 "Harmonic Howl" one-shot raid-chat announcement (2026-07-20) ──
+// Hitya: post the release card to #raid-chat with the expected release channel.
+// One post ever — the latch lives in bot_kv (survives restarts, the announcer's
+// re-homed pattern). Needs RAID_CHAT_CHANNEL_ID set (skips with a log if not,
+// so setting the env on Railway later still fires it on that restart).
+const _HOWL_KV_KEY = 'announce_v2_harmonic_howl';
+async function _announceHarmonicHowlOnce() {
+  const chId = process.env.RAID_CHAT_CHANNEL_ID;
+  if (!chId) { console.log('[howl-announce] RAID_CHAT_CHANNEL_ID unset — skipping (set it on Railway to fire on next restart)'); return; }
+  const supabase = require('./utils/supabase');
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+  const rows = await supabase.select('bot_kv',
+    `guild_id=eq.${encodeURIComponent(guildId)}&key=eq.${_HOWL_KV_KEY}&select=value&limit=1`);
+  if (Array.isArray(rows) && rows[0]) return;   // already announced
+  const ch = await client.channels.fetch(chId).catch(() => null);
+  if (!ch) { console.warn('[howl-announce] channel fetch failed:', chId); return; }
+  const emb = new EmbedBuilder()
+    .setColor(0xd29922)
+    .setTitle('🐺 Mimic 2.0.0 — "Harmonic Howl" is live')
+    .setDescription([
+      'The whole pack, in voice and in tune — the biggest release we\'ve ever cut.',
+      '',
+      '**Release channel: STABLE — everyone gets it.** Just accept the Mimic update prompt (or it installs on your next restart). Beta testers stay ahead on the beta channel (2.0.1-beta, agent 3.4.x).',
+      '',
+      '📣 Callouts that prove they played · ⛑ the CH chain speaks your GO · 💰 loot announced with a bid clock + in-Mimic sealed bidding · 🎲 roll nights remembered · 👁 a smarter /who · 💬 guild chat that can\'t go dark.',
+      '',
+      'Full story: https://wolfpack.quest/roadmap — and the "try these tonight" list is on the card below. Anything weird → #feedback.',
+    ].join('\n'))
+    .setImage('https://wolfpack.quest/roadmap/mimic-20-harmonic-howl.png')
+    .setFooter({ text: 'Mimic 2.0.0 stable · agent 3.4.0 · one-time announcement' });
+  const posted = await ch.send({ embeds: [emb], allowedMentions: { parse: [] } }).catch(err => {
+    console.warn('[howl-announce] post failed:', err?.message);
+    return null;
+  });
+  if (posted) {
+    await supabase.upsert('bot_kv',
+      [{ guild_id: guildId, key: _HOWL_KV_KEY, value: { posted_at: new Date().toISOString(), message_id: posted.id }, updated_at: new Date().toISOString() }],
+      'guild_id,key');
+    console.log('[howl-announce] posted to #raid-chat:', posted.id);
+  }
+}
+setTimeout(() => { _announceHarmonicHowlOnce().catch(err => console.warn('[howl-announce]', err?.message)); }, 90_000);
+
 // ── PoP-lock timer sweep (Uilnayar 2026-07-13) ──────────────────────────────
 // One-shot at startup: clear any active timer on a PoP-locked boss. The
 // automated ingest relays (bosskill + /sll lockout) historically had no lock
