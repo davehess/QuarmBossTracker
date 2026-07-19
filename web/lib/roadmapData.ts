@@ -45,7 +45,7 @@ export const releases: Release[] = [
   {
     key: 'callout-trust-and-ch-go-196',
     title: '📣 Callouts you can trust — and the CH chain speaks your GO · Mimic 1.9.6 (beta)',
-    version: 'Mimic 1.9.6 beta · Agent 3.3.96',
+    version: 'Mimic 1.9.6 beta · Agent 3.3.97',
     date: '2026-07-19',
     channel: 'beta',
     headline: 'This beta round makes the callouts you rely on impossible to miss — and impossible to silently lose — plus one thing clerics asked for: the CH chain says your number out loud when it’s your turn. And you can now place your loot bids right from Mimic. The dashboard also got a facelift: your character is front and center, and officers get a dedicated quick menu.',
@@ -65,6 +65,7 @@ export const releases: Release[] = [
       { name: '👁 A smarter /who overlay', blurb: 'The in-game /who overlay now lines everyone up in clean columns — class in one column, level in its own, instead of drifting ragged after the guild tag — and drops a 🐺 next to any raider who’s running Mimic right now. Wolf Pack members show their main in parentheses after the character name (a couple of folks are on a privacy exception and never do), and when a guildmate is /anon we fill in the level we know from our own history, shown dimmed so you can tell it didn’t come from the game.' },
       { name: '🕒 A richer fight timeline', blurb: 'The per-fight timeline (on each parse) now marks more of what actually happened during a boss fight: when a slow landed on the mob — and the warning moment it fell off — when the mob healed itself back up, and when someone dropped into a defensive discipline. Each gets its own colored tick with a small legend, so a wipe post-mortem reads the “slow fell off here, then it healed” story at a glance.' },
       { name: '🎯 Extended Target sticks to your zone', blurb: 'The Extended Target overlay can now hide targets coming from raiders in a different zone, so a splinter group off in another zone stops cluttering your target list. It’s on by default, as a “Same-zone targets only” checkbox in the dashboard’s Overlays tab — turn it off any time to see every online raider’s target again. Anyone we can’t place (zone unknown) is always shown, never hidden.' },
+      { name: '🎲 Roll nights — and who actually looted', blurb: 'Off-night loot rolls now have a home. Mimic quietly records the “You have looted” line from your own log — the real answer to who ended up with a no-drop drop, since a re-roll or a pass means the roll winner often isn’t the looter. The new 🎲 Rolls page on wolfpack.quest lays out each roll night: every session with its range, who rolled, the winning roll, and the person who actually looted it shown right beside the winner when they differ. Plus 🎲🔥 Hot Dice — a perfect roll gets called out live, and whoever out-rolls the room on more than 20% of the night’s contested rolls takes the night’s Hot Dice crown (also on the Fun page).' },
     ],
     fixes: [
       'The Spell Casting card no longer freezes a long-gone cast on screen — a stopped caster now clears within a minute instead of lingering as a stale “stopped N ago” entry with a doubled border.',

@@ -15,6 +15,7 @@ const links = [
   { href: '/pvp',           label: 'PvP' },
   { href: '/pop',           label: '🌀 PoP Flags (Preview)' },
   { href: '/leaderboards',  label: 'Ranks' },
+  { href: '/rolls',         label: '🎲 Rolls' },
   { href: '/fun',           label: '🎉 Fun' },
   { href: '/roadmap',       label: '🗺️ Roadmap' },
 ];

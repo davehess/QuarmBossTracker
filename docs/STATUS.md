@@ -65,6 +65,43 @@ folly** — it's here.*
 ## The work ledger
 
 ### ✅ Done — major shipped features (not exhaustive; see git + roadmapData.ts)
+- **#91 roll-loot review surface (remainder) — DONE end-to-end (2026-07-19,
+  agent 3.3.97 beta + bot 3.0.219 + web 1.0.250 on main).** The capture half
+  shipped a week ago (roll_sets since 3.3.78, Hot Dice PERFECT events since
+  3.3.80). This completes the three original guild-lead asks:
+  1. **Who-looted attribution.** The agent captures the character's OWN
+     `--You have looted <item>.--` lines on the live tail (`trackLootedLine`,
+     self-only in EQ so the looter is the log's character; the a/an article is
+     stripped so the name lines up with the loot-link roll convention). Upload
+     rides the durable queue as a new `looted` kind → `POST /api/agent/looted`,
+     with the **same recency+high-water discipline as roll sets** (only events
+     `< 30 min` old and past the HW mark upload) so `--since` backfill never
+     re-posts old loots. Stored in a **NEW narrow `looted_items` table**
+     (migration `20260719010000`, applied) rather than `loot_observations` —
+     that table requires `item_id` AND `npc_name_lower` NOT NULL, and a looted
+     line carries neither, so reuse would have meant faking columns. Upsert
+     dedups on `(guild, looter_lower, item_name, looted_at)`.
+  2. **Hot Dice NIGHT award.** The per-roll PERFECT event already fires; this
+     adds the sibling `hot_dice_night` fun_event, computed on the midnight chain
+     (`computeHotDiceNightAward` in `index.js`) over the ET-day-window's
+     `roll_sets`. Pure decision in `utils/hotDiceNight.js`: merge multi-uploader
+     rows → per-set winner (highest first-roll) → award the top winner iff their
+     share of **contested** (≥2-roller) sets is **>20%** with a **≥5-set floor**.
+     Idempotent: `event_ts` pinned to the night start so a re-run upserts the
+     same fun_events row (unique `guild,event_type,caster,event_ts`).
+  3. **Roll-night summary.** New member-gated **`/rolls`** page: per raid night,
+     each roll session (item, range, rollers, winning roll), the LOOTED-BY name
+     beside the winner when they differ, and Hot Dice callouts (perfects + the
+     night crown). Merge/attribution logic is the pure `web/lib/rolls.ts`
+     (tolerant item matcher: normalize + article-strip + substring + ≥2-token
+     overlap; window join `[last−2min, last+10min]`). A 🎲 Hot Dice card also
+     lands on `/fun` linking through. Tests: `test/roll-attribution.test.js`
+     (matcher/merge/window join, real-imports `web/lib/rolls.ts`) +
+     `test/hot-dice-night.test.js` (award math: >20%, floor, dedup,
+     determinism/idempotency) — 20 assertions, all green. `roll_sets`/
+     `looted_items` are **empty in prod** (no captured off-night raid yet), so
+     the render was grounded against a representative fixture through the real
+     lib. See BETA-TESTING #91.
 - **#113 Extended Target same-zone-only option — DONE (2026-07-19, bot 3.0.218 on
   main + agent 3.3.96 beta; Mimic parked 1.9.6; web 1.0.249 docs).** Guild-lead
   ask: "we don't need to include other Mimics' targets when they're not in the

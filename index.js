@@ -212,7 +212,8 @@ const {
   setLiveKillTimerUnknown, setPvpKillTimerUnknown,
   getHateBoardMessageId, setHateBoardMessageId,
 } = require('./utils/state');
-const { getDefaultTz, msUntilMidnightInTz, isPvpQuietHours } = require('./utils/timezone');
+const { getDefaultTz, msUntilMidnightInTz, isPvpQuietHours, nowPartsInTz, localToUTC } = require('./utils/timezone');
+const { computeHotDiceNight } = require('./utils/hotDiceNight');
 
 // During PvP quiet hours, automated @PVP pings go to the opt-in list only
 // (see commands/pvpnightpings.js). Returns the user-mention string for everyone
@@ -2653,6 +2654,57 @@ async function checkLiveSpawns(readyClient, now) {
   }
 }
 
+// 🎲🔥 Hot Dice NIGHT award (#91). Runs from the midnight chain: read the
+// roll_sets from the ET calendar day that just ended and, if one character
+// out-rolled everyone on >20% of the contested sets, write a single
+// hot_dice_night fun_events row. Pure decision lives in utils/hotDiceNight.js;
+// this just windows the query and persists the result idempotently.
+async function computeHotDiceNightAward() {
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) return;
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+  const tz = getDefaultTz();
+  // The chain fires at ~00:00 local, so "the night that just ended" is the
+  // PREVIOUS calendar day in tz. Compute [prevMidnight, todayMidnight) in UTC.
+  const p = nowPartsInTz(tz);
+  const todayStart = localToUTC(p.year, p.month, p.day, 0, 0, tz);
+  // Land safely inside yesterday (noon) then read yesterday's Y/M/D so the
+  // window is DST-exact rather than a naive −24h subtraction.
+  const y = new Date(todayStart.getTime() - 12 * 60 * 60 * 1000);
+  const yp = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' })
+    .formatToParts(y).reduce((a, { type, value }) => { a[type] = value; return a; }, {});
+  const prevStart = localToUTC(parseInt(yp.year), parseInt(yp.month), parseInt(yp.day), 0, 0, tz);
+  const startIso = prevStart.toISOString();
+  const endIso   = todayStart.toISOString();
+
+  let rows = [];
+  try {
+    rows = await supabase.select('roll_sets',
+      `guild_id=eq.${encodeURIComponent(guildId)}&started_at=gte.${encodeURIComponent(startIso)}&started_at=lt.${encodeURIComponent(endIso)}` +
+      `&select=roll_from,roll_to,started_at,rolls&limit=2000`);
+  } catch (err) { console.warn('[hot-dice-night] roll_sets fetch failed:', err?.message); return; }
+  if (!Array.isArray(rows) || rows.length === 0) return;
+
+  const award = computeHotDiceNight(rows);
+  if (!award) return;
+
+  const pctStr = Math.round(award.pct * 100);
+  const funRow = {
+    guild_id:   guildId,
+    event_type: 'hot_dice_night',
+    caster:     award.winner,
+    target:     null,
+    // Pin to the night's start so a re-run upserts the SAME row (the unique
+    // key is guild_id,event_type,caster,event_ts).
+    event_ts:   startIso,
+    raw_text:   `${award.winner} was Hot Dice — won ${award.wins} of ${award.contested} contested rolls (${pctStr}%)`,
+  };
+  try {
+    await supabase.upsert('fun_events', [funRow], 'guild_id,event_type,caster,event_ts');
+    console.log(`[hot-dice-night] ${award.winner}: ${award.wins}/${award.contested} (${pctStr}%)`);
+  } catch (err) { console.warn('[hot-dice-night] fun_events upsert failed:', err?.message); }
+}
+
 // ── Midnight tasks ─────────────────────────────────────────────────────────
 function scheduleMidnightSummary(readyClient) {
   const historyThreadId = process.env.HISTORIC_KILLS_THREAD_ID;
@@ -2750,6 +2802,14 @@ function scheduleMidnightSummary(readyClient) {
 
       // ── Consolidate nightly parses ───────────────────────────────────────
       await consolidateNightlyParses(readyClient).catch(console.error);
+
+      // ── 🎲🔥 Hot Dice NIGHT award (#91) ──────────────────────────────────
+      // Over the roll_sets from the night that just ended, if one character
+      // out-rolled everyone on >20% of the contested sets (≥2 rollers), mark
+      // them the night's Hot Dice. Idempotent: the fun_events upsert key is
+      // (guild, event_type, caster, event_ts) and event_ts is pinned to the
+      // night's start, so a re-run replaces rather than duplicates.
+      await computeHotDiceNightAward().catch(err => console.warn('[hot-dice-night] skipped:', err?.message));
 
       // ── Compact Supabase contributions (null out raw_parse blobs > 7 days) ─
       // encounter_players already holds the merged per-player totals permanently.
@@ -8222,6 +8282,7 @@ const _BUDGET_DEFAULTS = {
   bosskill:        { perMin: 30,  durable: true },
   lockout:         { perMin: 30,  durable: true },
   rolls:           { perMin: 60,  durable: true },
+  looted:          { perMin: 60,  durable: true },
   // ephemeral / redundant — latest-wins; default 200-ack-and-drop over budget
   live_state:      { perMin: 240, durable: false },
   casting:         { perMin: 240, durable: false },
@@ -11942,6 +12003,67 @@ async function _handleAgentRolls(req, res) {
   }
 }
 
+// POST /api/agent/looted  (#91 — who ACTUALLY loots)
+// The agent's own "--You have looted <item>.--" lines. Self-only in EQ, so the
+// looter is the character owning that log. Stored in looted_items (a narrow
+// table — a looted line carries neither item_id nor a corpse name, so it can't
+// honestly reuse loot_observations). Upsert by (guild, looter, item, looted_at)
+// so a restart re-read collapses. The site links a looted item to its roll
+// session at read; nothing here needs the roll data.
+async function _handleAgentLooted(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const chunks = []; let total = 0;
+  for await (const chunk of req) {
+    total += chunk.length;
+    if (total > 256 * 1024) { res.writeHead(413); return res.end(); }
+    chunks.push(chunk);
+  }
+  let payload;
+  try { payload = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+  catch { res.writeHead(400); return res.end(JSON.stringify({ error: 'invalid JSON' })); }
+
+  const events = Array.isArray(payload?.events) ? payload.events : [];
+  if (events.length === 0) { res.writeHead(200); return res.end(JSON.stringify({ ok: true, stored: 0 })); }
+
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) { res.writeHead(200); return res.end(JSON.stringify({ ok: true, stored: 0, note: 'supabase disabled' })); }
+
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+  const nowIso  = new Date().toISOString();
+  const rows = [];
+  const seen = new Set();   // in-batch de-dup on the same conflict key
+  for (const e of events.slice(0, 500)) {
+    const item   = e?.item ? String(e.item).trim().slice(0, 64) : '';
+    const looter = e?.looter ? String(e.looter).trim().slice(0, 32) : '';
+    const at     = e?.at ? new Date(e.at) : null;
+    if (!item || !looter || !at || isNaN(at.getTime())) continue;
+    const looterLower = looter.toLowerCase();
+    const atIso = at.toISOString();
+    const key = `${looterLower}|${item}|${atIso}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    rows.push({
+      guild_id:               guildId,
+      looter_character:       looter,
+      looter_lower:           looterLower,
+      item_name:              item,
+      zone:                   e?.zone ? String(e.zone).slice(0, 64) : null,
+      looted_at:              atIso,
+      uploaded_by_discord_id: identity.discord_id,
+      source:                 'local_agent_v1',
+      created_at:             nowIso,
+    });
+  }
+  if (rows.length === 0) { res.writeHead(200); return res.end(JSON.stringify({ ok: true, stored: 0 })); }
+  try {
+    await supabase.upsert('looted_items', rows, 'guild_id,looter_lower,item_name,looted_at');
+    res.writeHead(200); return res.end(JSON.stringify({ ok: true, stored: rows.length }));
+  } catch (err) {
+    res.writeHead(500); return res.end(JSON.stringify({ error: 'upsert failed', detail: err && err.message ? err.message : String(err) }));
+  }
+}
+
 // POST /api/agent/trigger
 //
 // "Pipe my triggers into Discord." An agent posts one or more trigger fires:
@@ -14316,6 +14438,16 @@ const httpServer = http.createServer(async (req, res) => {
     try { return await _handleAgentRolls(req, res); }
     catch (err) {
       console.error('[rolls] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  if (req.method === 'POST' && req.url === '/api/agent/looted') {
+    if (await _overBudget('looted', req, res)) return;
+    try { return await _handleAgentLooted(req, res); }
+    catch (err) {
+      console.error('[looted] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
     }

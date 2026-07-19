@@ -20,6 +20,45 @@ raid; move it to STATUS.md's "Done" once graduated to stable.*
 
 ---
 
+## #91 — Roll-loot review: who actually loots + Hot Dice night + /rolls
+
+**Needs:** agent **3.3.97** (beta Mimic) + bot **3.0.219** + web **1.0.250**
+(both live on Railway/Vercel).
+
+**What changed:** Mimic now records the **"You have looted" line from your own
+log** — the real answer to who ended up with a no-drop drop, since a re-roll or
+a pass means the roll winner often isn't the looter. The site's new 🎲 **Rolls**
+page (in the nav) lays out each roll night: every /random session with its
+range, who rolled, the winning roll, and the person who actually **looted** it
+shown beside the winner when they differ. 🎲🔥 **Hot Dice**: a perfect roll is
+already called out live per-roll; now whoever out-rolls the room on **>20% of
+the night's contested rolls** (≥5 contested, ≥2 rollers each) takes the night's
+**Hot Dice crown**, computed at midnight and shown on `/rolls` and `/fun`.
+**Nothing sensitive leaves your PC** beyond item name + your character + zone +
+time — the same privacy posture as rolls.
+
+**✅ Solo (one machine)**
+- Loot anything from any corpse (`--You have looted a <item>.--` in your log).
+  Within ~a minute the agent uploads it (durable queue → `POST /api/agent/looted`).
+  It won't appear as its own card, but it becomes the attribution source below.
+  Backfill check: run the agent with `--since` over an old log — old loots must
+  **NOT** upload (the 30-min recency gate), so no stale loot floods in.
+- Roll + loot in one sitting: `/random 0 100`, then loot the item you rolled on.
+  On `/rolls`, that night's session shows your winning roll, and if you (or
+  anyone) looted a matching item within ~10 min, the **Looted by** column fills
+  in — showing a **different** name when the winner passed and someone else took
+  it, or "winner" when the roll winner looted it themselves.
+- `/rolls` gates behind sign-in (member scope) and shows an empty-state until a
+  roll night is captured; `/fun` shows a 🎲 Hot Dice card linking through.
+
+**👥 Multi-person (2+ raiders, separate machines)**
+- Run an off-night loot raid with **≥2 up-to-date agents**. After midnight ET,
+  check `/rolls`: the night should list every roll session (rolls merged across
+  everyone who saw them, deduped), winners, and who looted what. If one person
+  out-rolled the room on >20% of the contested sets, they wear the **Hot Dice
+  crown** for that night (also surfaced on `/fun`). Re-running the night's math
+  must not create a second crown (idempotent upsert).
+
 ## #113 — Extended Target: same-zone-targets-only option
 
 **Needs:** agent **3.3.96** (beta Mimic) + bot **3.0.218** (live on Railway).

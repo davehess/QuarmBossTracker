@@ -663,6 +663,31 @@ SECTIONS.push(async (sb, counters) => {
   } catch (err) { void err; }
 });
 
+// ── 🎲🔥 Hot Dice — the night crown (#91) ───────────────────────────────────
+// The most recent night one character out-rolled everyone on >20% of the
+// contested loot rolls. The midnight chain writes a hot_dice_night fun_events
+// row; the full per-night breakdown lives on /rolls. Card links there.
+SECTIONS.push(async (sb, counters) => {
+  try {
+    const { data } = await sb
+      .from('fun_events')
+      .select('caster, event_ts, raw_text')
+      .eq('event_type', 'hot_dice_night')
+      .order('event_ts', { ascending: false })
+      .limit(1);
+    const row = (data ?? [])[0] as { caster: string | null; event_ts: string; raw_text: string | null } | undefined;
+    counters.push({
+      label: '🎲🔥 Hot Dice — latest night crown',
+      emoji: '🎲',
+      value: row?.caster || '—',
+      href: '/rolls',
+      sub: row
+        ? (row.raw_text || 'out-rolled the room')
+        : 'nobody has run away with a roll night yet — needs an off-night loot raid with an up-to-date agent',
+    });
+  } catch (err) { void err; }
+});
+
 async function loadCounters() {
   const sb = supabaseAdmin();
   const kyinenP = loadKyinen(sb);
