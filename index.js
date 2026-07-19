@@ -246,7 +246,47 @@ function getBosses() {
 // voiceAdapterCreator never receives VOICE_STATE_UPDATE / VOICE_SERVER_UPDATE
 // from Discord and joinVoiceChannel hangs in "Connecting" forever. Symptom
 // was /voicetest queueing fine but the bot never appearing in the channel.
-const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers, GatewayIntentBits.GuildMessages, GatewayIntentBits.GuildVoiceStates] });
+// MessageContent is a PRIVILEGED intent: it must be toggled in the Discord
+// Developer Portal BEFORE the env flag is set, or the gateway rejects the
+// connection ("disallowed intents") and the bot won't boot. Env-gated so the
+// SUNO-mover ships inert until both switches are flipped.
+const _intents = [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers, GatewayIntentBits.GuildMessages, GatewayIntentBits.GuildVoiceStates];
+if (process.env.MESSAGE_CONTENT_INTENT === '1') _intents.push(GatewayIntentBits.MessageContent);
+const client = new Client({ intents: _intents });
+
+// ── SUNO-link mover (Hitya 2026-07-19) ──────────────────────────────────────
+// Suno links from configured members belong in #the-slop: repost there with
+// attribution, delete the original, leave a short self-deleting pointer.
+// Requires MESSAGE_CONTENT_INTENT=1 (see above) — without it content is empty
+// and this listener no-ops. Users matched by Discord username (unique).
+const _SLOP_CHANNEL_ID = process.env.SLOP_CHANNEL_ID || '1525569593702224092';
+const _SUNO_USERS = String(process.env.SUNO_MOVER_USERS || 'workoutbro').toLowerCase().split(',').map(s => s.trim()).filter(Boolean);
+const _SUNO_RX = /https?:\/\/(?:www\.)?(?:app\.)?suno\.(?:com|ai)\/\S+/i;
+client.on(Events.MessageCreate, async (msg) => {
+  try {
+    if (!msg.guildId || msg.author?.bot) return;
+    if (msg.channelId === _SLOP_CHANNEL_ID) return;
+    if (!_SUNO_USERS.includes(String(msg.author?.username || '').toLowerCase())) return;
+    if (!_SUNO_RX.test(msg.content || '')) return;
+    const slop = await client.channels.fetch(_SLOP_CHANNEL_ID).catch(() => null);
+    if (!slop) { console.warn('[suno-mover] slop channel unreachable:', _SLOP_CHANNEL_ID); return; }
+    await slop.send({
+      content: `🎵 **${msg.member?.displayName || msg.author.username}** posted in <#${msg.channelId}> — moved here:\n${msg.content}`,
+      allowedMentions: { parse: [] },
+    });
+    const deleted = await msg.delete().then(() => true).catch(err => {
+      console.warn('[suno-mover] delete failed (Manage Messages perm?):', err?.message);
+      return false;
+    });
+    if (deleted) {
+      const note = await msg.channel.send({ content: `🎵 moved a Suno link to <#${_SLOP_CHANNEL_ID}>`, allowedMentions: { parse: [] } }).catch(() => null);
+      if (note) setTimeout(() => { note.delete().catch(() => {}); }, 20_000);
+    }
+    console.log('[suno-mover] moved a link from', msg.author.username, 'in', msg.channelId);
+  } catch (err) {
+    console.warn('[suno-mover] error:', err?.message);
+  }
+});
 
 // Voice gateway diagnostic. discord.js emits `[VOICE]` debug lines whenever
 // Discord pushes VOICE_STATE_UPDATE or VOICE_SERVER_UPDATE for our bot.
@@ -8804,10 +8844,14 @@ async function _announceMimicReleases() {
       const nm = mTitle[1].replace(/\s*\(stable\)\s*$/i, '').replace(/^mimic\s+/i, '').trim();
       if (nm) stableTitle = ('✅ Mimic ' + nm).slice(0, 250);
     }
+    // v2.0.0's release name changed AFTER the tag was cut (Full Cry → Harmonic
+    // Howl, Hitya 2026-07-19); release bodies are immutable via our tooling,
+    // so rename at render time.
+    stableTitle = stableTitle.replace(/Full Cry/g, 'Harmonic Howl');
     const emb = new EmbedBuilder()
       .setColor(0x56d364)
       .setTitle(stableTitle)
-      .setDescription((_summaryOf(rel) || rel.name || '') + '\n' + _dlLink(rel));
+      .setDescription(String((_summaryOf(rel) || rel.name || '')).replace(/Full Cry/g, 'Harmonic Howl') + '\n' + _dlLink(rel));
     const sent = await ch.send({ embeds: [emb], allowedMentions: { parse: [] } }).catch(() => null);
     if (sent) { st.lastTag = rel.tag_name; await _mimicAnnSave(st); console.log('[mimic-announce] announced', rel.tag_name); }
   }
@@ -8851,15 +8895,22 @@ if (process.env.MIMIC_RELEASE_ANNOUNCE !== '0') {
 // so setting the env on Railway later still fires it on that restart).
 const _HOWL_KV_KEY = 'announce_v2_harmonic_howl';
 async function _announceHarmonicHowlOnce() {
-  const chId = process.env.RAID_CHAT_CHANNEL_ID;
-  if (!chId) { console.log('[howl-announce] RAID_CHAT_CHANNEL_ID unset — skipping (set it on Railway to fire on next restart)'); return; }
   const supabase = require('./utils/supabase');
   const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
   const rows = await supabase.select('bot_kv',
     `guild_id=eq.${encodeURIComponent(guildId)}&key=eq.${_HOWL_KV_KEY}&select=value&limit=1`);
   if (Array.isArray(rows) && rows[0]) return;   // already announced
-  const ch = await client.channels.fetch(chId).catch(() => null);
-  if (!ch) { console.warn('[howl-announce] channel fetch failed:', chId); return; }
+  // Channel: env wins; else resolve #raid-chat by NAME (Hitya 2026-07-19:
+  // "deploy that image to raid chat" — the id was never captured as an env).
+  let ch = process.env.RAID_CHAT_CHANNEL_ID
+    ? await client.channels.fetch(process.env.RAID_CHAT_CHANNEL_ID).catch(() => null)
+    : null;
+  if (!ch) {
+    const g = client.guilds.cache.get(process.env.DISCORD_GUILD_ID) || client.guilds.cache.first();
+    ch = g?.channels?.cache?.find(c => c?.name === 'raid-chat' && typeof c.send === 'function') || null;
+    if (ch) console.log('[howl-announce] resolved #raid-chat by name →', ch.id);
+  }
+  if (!ch) { console.log('[howl-announce] no RAID_CHAT_CHANNEL_ID and no #raid-chat channel found — skipping'); return; }
   const { EmbedBuilder } = require('discord.js');
   const emb = new EmbedBuilder()
     .setColor(0xd29922)
@@ -8887,6 +8938,44 @@ async function _announceHarmonicHowlOnce() {
   }
 }
 setTimeout(() => { _announceHarmonicHowlOnce().catch(err => console.warn('[howl-announce]', err?.message)); }, 90_000);
+
+// One-shot: rename the ALREADY-POSTED v2.0.0 stable release card (it went out
+// reading "Full Cry" before the rename; the stable announcer stores no message
+// id, so find-and-edit). Latches in bot_kv once the card is edited — or once a
+// v2.0.0 card is confirmed clean (announcer re-posts now render the new name).
+const _HOWL_CARD_KV_KEY = 'fix_v200_card_name';
+async function _fixV200CardNameOnce() {
+  const supabase = require('./utils/supabase');
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+  const rows = await supabase.select('bot_kv',
+    `guild_id=eq.${encodeURIComponent(guildId)}&key=eq.${_HOWL_CARD_KV_KEY}&select=value&limit=1`);
+  if (Array.isArray(rows) && rows[0]) return;
+  const ch = await client.channels.fetch(process.env.MIMIC_RELEASE_CHANNEL_ID || '1525569949551300729').catch(() => null);
+  if (!ch) return;
+  const msgs = await ch.messages.fetch({ limit: 30 }).catch(() => null);
+  if (!msgs) return;
+  const latch = async (note) => supabase.upsert('bot_kv',
+    [{ guild_id: guildId, key: _HOWL_CARD_KV_KEY, value: { done_at: new Date().toISOString(), note }, updated_at: new Date().toISOString() }],
+    'guild_id,key');
+  for (const m of msgs.values()) {
+    if (m.author?.id !== client.user?.id || !m.embeds?.length) continue;
+    const e = m.embeds[0];
+    const blob = `${e.title || ''}\n${e.description || ''}`;
+    if (!/2\.0\.0/.test(blob)) continue;
+    if (!/Full Cry/.test(blob)) { await latch('card already clean'); console.log('[howl-card] v2.0.0 card already clean'); return; }
+    const { EmbedBuilder } = require('discord.js');
+    const fixed = EmbedBuilder.from(e);
+    if (e.title) fixed.setTitle(e.title.replace(/Full Cry/g, 'Harmonic Howl'));
+    if (e.description) fixed.setDescription(e.description.replace(/Full Cry/g, 'Harmonic Howl'));
+    const ok = await m.edit({ embeds: [fixed] }).then(() => true).catch(err => {
+      console.warn('[howl-card] edit failed:', err?.message); return false;
+    });
+    if (ok) { await latch('renamed on message ' + m.id); console.log('[howl-card] renamed Full Cry → Harmonic Howl on', m.id); }
+    return;
+  }
+  console.log('[howl-card] no v2.0.0 card found in the last 30 messages — will retry next boot');
+}
+setTimeout(() => { _fixV200CardNameOnce().catch(err => console.warn('[howl-card]', err?.message)); }, 120_000);
 
 // ── PoP-lock timer sweep (Uilnayar 2026-07-13) ──────────────────────────────
 // One-shot at startup: clear any active timer on a PoP-locked boss. The
