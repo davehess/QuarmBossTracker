@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.0.221': [
+    '**Loot bidding, rebuilt (Mimic).** The 💰 Loot bidding panel now shows a full-width **Recent misses** table — every item you bid on and *lost*, with who bid, your last bid, the item\'s last winning + second-place bids, an editable **planned next bid** (saved on your PC), and your **family DKP**. Your **wishlist auto-prunes anything you\'ve already won** (preregs stay ★), item names link to the right OpenDKP page instead of dead-ending, and **your family (main + raid alts) prefills automatically** the first time you log in. A new **expansion filter** narrows the lists to Classic / Kunark / Velious / Luclin. Needs the next Mimic beta.',
+  ],
   '3.0.183': [
     '**Divine Intervention tracker — who has DI up, right now.** The CH-chain and Command Center overlays now show a 🛡 chip per cleric: green ✓ = DI ready, amber countdown = recast ticking (Mimic reads your own cast — 6s cast + 90s recast, and an interrupted cast refunds instantly). When **only one cleric has DI up**, the section rings gold and the CH-chain overlay calls out *"only <name> has DI — save it for the tank."* Fills in automatically as clerics run the next Mimic beta; a cleric who hasn\'t cast DI yet shows as ready.',
   ],

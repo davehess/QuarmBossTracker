@@ -11,8 +11,13 @@ import { readSource, BOT_INDEX, sliceBlock, evalBlock } from './_source-slice.js
 
 const src = readSource(BOT_INDEX);
 const block = sliceBlock(src, 'function _lootItemSummary(auctionsDesc, bidsByAuction) {', '// ── end #108 pure helpers ──');
-const { _lootItemSummary, _mergeWishlist, _ilikeAnyClause } =
-  evalBlock(block, ['_lootItemSummary', '_mergeWishlist', '_ilikeAnyClause']);
+const {
+  _lootItemSummary, _mergeWishlist, _ilikeAnyClause,
+  _resolveCharIdNames, _suggestFamily, _pruneWonWishlist, _eraFromPool, _buildMisses, _familyDkpTotals,
+} = evalBlock(block, [
+  '_lootItemSummary', '_mergeWishlist', '_ilikeAnyClause',
+  '_resolveCharIdNames', '_suggestFamily', '_pruneWonWishlist', '_eraFromPool', '_buildMisses', '_familyDkpTotals',
+]);
 
 describe('_lootItemSummary — last winner + runner-up (real index.js)', () => {
   it('picks the most-recent settled auction with a winner', () => {
@@ -75,5 +80,105 @@ describe('_ilikeAnyClause — case-insensitive multi-name PostgREST filter', () 
   });
   it('returns null for an empty/all-invalid list', () => {
     expect(_ilikeAnyClause('character_name', ['', '1'])).toBe(null);
+  });
+});
+
+// ── #121 loot bidding v2 (real index.js) ────────────────────────────────────
+describe('_resolveCharIdNames — char_id → real name via MODE over loot join', () => {
+  it('takes the most-frequent loot name per char_id (2x-drop noise dropped)', () => {
+    // char 108064 won item 1 in raid 100 (loot → Hitya) and item 2 in raid 101
+    // (Hitya again); a 2x-drop in raid 100 also awarded item 1 to Bippo → noise.
+    const wonAuctions = [
+      { winner_character_id: 108064, raid_id: 100, item_id: 1 },
+      { winner_character_id: 108064, raid_id: 101, item_id: 2 },
+    ];
+    const lootRows = [
+      { raid_id: 100, item_id: 1, character_name: 'Hitya' },
+      { raid_id: 100, item_id: 1, character_name: 'Bippo' },  // 2x-drop noise
+      { raid_id: 101, item_id: 2, character_name: 'Hitya' },
+    ];
+    expect(_resolveCharIdNames(wonAuctions, lootRows)[108064]).toBe('Hitya');
+  });
+  it('omits char_ids with no matching loot', () => {
+    expect(_resolveCharIdNames([{ winner_character_id: 5, raid_id: 9, item_id: 9 }], [])).toEqual({});
+  });
+});
+
+describe('_suggestFamily — main = most wins, alts de-duped', () => {
+  it('picks the most-won char as main', () => {
+    const s = _suggestFamily([
+      { char_id: 1, name: 'Melting', wins: 46 },
+      { char_id: 2, name: 'Hitya', wins: 91 },
+      { char_id: 3, name: 'Canopy', wins: 42 },
+      { char_id: 4, name: null, wins: 5 },   // unresolved → dropped
+    ]);
+    expect(s.main).toBe('Hitya');
+    expect(s.alts).toEqual(['Melting', 'Canopy']);
+  });
+  it('handles no resolvable names', () => {
+    expect(_suggestFamily([{ char_id: 1, name: null, wins: 3 }])).toEqual({ main: null, alts: [] });
+  });
+});
+
+describe('_pruneWonWishlist — drop won items but keep preregs', () => {
+  it('removes bid-history items already won, keeps prereg even if won', () => {
+    const wl = [
+      { item_id: 1, source: 'prereg' },
+      { item_id: 2, source: 'bid_history' },
+      { item_id: 3, source: 'bid_history' },
+    ];
+    expect(_pruneWonWishlist(wl, [1, 2]).map(w => w.item_id)).toEqual([1, 3]);
+  });
+});
+
+describe('_eraFromPool — OpenDKP pool → expansion label', () => {
+  it('maps the four live pools', () => {
+    expect(_eraFromPool('SoL')).toBe('Luclin');
+    expect(_eraFromPool('SoV')).toBe('Velious');
+    expect(_eraFromPool('Kunark')).toBe('Kunark');
+    expect(_eraFromPool('Classic')).toBe('Classic');
+  });
+  it('passes unknown pools through and tolerates null', () => {
+    expect(_eraFromPool('Weird')).toBe('Weird');
+    expect(_eraFromPool(null)).toBe(null);
+  });
+});
+
+describe('_buildMisses — bid-and-lost, grouped per item', () => {
+  const nameByCharId = { 108064: 'Hitya', 100899: 'Melting' };
+  it('keeps only lost items and the top-bidding family char', () => {
+    const bidRows = [
+      // Robe: family char 108064 bid 126 but auction won by a stranger (500) → miss
+      { auction_id: 10, character_id: 108064, value: 126, item_id: 1, item_name: 'Robe', winner_character_id: 500, end_at: '2026-07-02', raid_id: 60463 },
+      // Katana: 100899 lost
+      { auction_id: 11, character_id: 100899, value: 46, item_id: 2, item_name: 'Katana', winner_character_id: 999, end_at: '2026-07-05', raid_id: 60900 },
+      // Cloak: family WON this auction → not a miss
+      { auction_id: 12, character_id: 108064, value: 40, item_id: 3, item_name: 'Cloak', winner_character_id: 108064, end_at: '2026-07-06', raid_id: 61000 },
+    ];
+    const rows = _buildMisses({ bidRows, famCharIds: [108064, 100899], nameByCharId, wonItemIds: [] });
+    expect(rows.map(r => r.item_name)).toEqual(['Katana', 'Robe']);  // most-recent end first
+    const robe = rows.find(r => r.item_id === 1);
+    expect(robe.character).toBe('Hitya');
+    expect(robe.my_last_bid).toBe(126);
+    expect(robe.raid_id).toBe(60463);
+  });
+  it('excludes items the family won in ANY auction (wonItemIds)', () => {
+    const bidRows = [{ auction_id: 10, character_id: 108064, value: 126, item_id: 1, item_name: 'Robe', winner_character_id: 500, end_at: 'x', raid_id: 1 }];
+    expect(_buildMisses({ bidRows, famCharIds: [108064], nameByCharId, wonItemIds: [1] })).toEqual([]);
+  });
+});
+
+describe('_familyDkpTotals — family-pooled balance', () => {
+  it('sums earned + adjustments − spent across the family', () => {
+    // vaporjesus-shaped: main negative per-char, family nets positive.
+    const t = _familyDkpTotals([
+      { name: 'Hitya', earned: 3182, adjustments: -25, spent: 3282 },   // −125 solo
+      { name: 'Melting', earned: 1710, adjustments: 0, spent: 1170 },   // +540
+      { name: 'Canopy', earned: 830, adjustments: 10, spent: 314 },     // +526
+    ]);
+    expect(t.per_character.Hitya.net).toBe(-125);
+    expect(t.per_character.Melting.net).toBe(540);
+    expect(t.per_character.Canopy.net).toBe(526);
+    expect(t.family_total).toBe(941);   // −125 + 540 + 526
   });
 });

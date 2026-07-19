@@ -5607,6 +5607,125 @@ function _ilikeAnyClause(col, names) {
   if (!list.length) return null;
   return `or=(${list.map(n => `${col}.ilike.${encodeURIComponent(n)}`).join(',')})`;
 }
+
+// ── #121 loot bidding v2 pure helpers (source-sliced by test/loot-bidding.test.js) ──
+// Resolve an OpenDKP character_id → real in-game name. The mirror stores the
+// ACCOUNT LOGIN (e.g. "vaporjesus") in opendkp_auctions.winner AND
+// opendkp_auction_bids.character_name, and opendkp_character_id_to_name is
+// empty in prod — so the only ground truth for a char_id's real name is the
+// LOOT it won: a won auction (winner_character_id) joins opendkp_loot on
+// (raid_id,item_id) → loot.character_name. The same raid can award one item to
+// two chars (2× drop), so take the MODE (most-frequent) name per char_id.
+// Confirmed 2026-07-19 vs vaporjesus: 108064→Hitya, 100899→Melting, 94318→Canopy.
+function _resolveCharIdNames(wonAuctions, lootRows) {
+  const lootIdx = new Map(); // "raid|item" → [name,…]
+  for (const l of (lootRows || [])) {
+    if (l == null || l.raid_id == null || l.item_id == null || !l.character_name) continue;
+    const kk = l.raid_id + '|' + l.item_id;
+    if (!lootIdx.has(kk)) lootIdx.set(kk, []);
+    lootIdx.get(kk).push(l.character_name);
+  }
+  const tally = new Map(); // char_id → Map(name→count)
+  for (const a of (wonAuctions || [])) {
+    if (a == null || a.winner_character_id == null || a.raid_id == null || a.item_id == null) continue;
+    const names = lootIdx.get(a.raid_id + '|' + a.item_id);
+    if (!names) continue;
+    let t = tally.get(a.winner_character_id);
+    if (!t) { t = new Map(); tally.set(a.winner_character_id, t); }
+    for (const n of names) t.set(n, (t.get(n) || 0) + 1);
+  }
+  const out = {};
+  for (const [cid, t] of tally) {
+    let best = null, bestN = -1;
+    for (const [n, c] of t) if (c > bestN) { bestN = c; best = n; }
+    if (best) out[cid] = best;
+  }
+  return out;
+}
+
+// Suggested bid family (auto-prefill after login). main = the char_id with the
+// most auction wins (field-confirmed: vaporjesus → main Hitya), alts = the
+// rest, name-resolved + de-duped. Never invents names it can't resolve.
+function _suggestFamily(charWins) {
+  const named = (charWins || []).filter(c => c && c.name);
+  if (!named.length) return { main: null, alts: [] };
+  const sorted = [...named].sort((a, b) => (b.wins || 0) - (a.wins || 0));
+  const main = sorted[0].name;
+  const seen = new Set([main.toLowerCase()]);
+  const alts = [];
+  for (let i = 1; i < sorted.length; i++) {
+    const n = sorted[i].name;
+    if (n && !seen.has(n.toLowerCase())) { seen.add(n.toLowerCase()); alts.push(n); }
+  }
+  return { main, alts };
+}
+
+// Drop items the family has already WON from the wishlist (ask #2) — but keep
+// explicit preregs regardless (they stay ★ prereg even after a win).
+function _pruneWonWishlist(wishlist, wonItemIds) {
+  const won = new Set((wonItemIds || []).filter(n => Number.isFinite(n)));
+  return (wishlist || []).filter(w => w && (w.source === 'prereg' || !won.has(w.item_id)));
+}
+
+// OpenDKP DKP pool → friendly era label (drives the panel's expansion filter).
+// Grounded: opendkp_raids.pool_name ∈ {Classic, Kunark, SoV, SoL}.
+function _eraFromPool(poolName) {
+  const p = String(poolName || '').toLowerCase();
+  if (p === 'sol' || p.includes('luclin')) return 'Luclin';
+  if (p === 'sov' || p.includes('velious')) return 'Velious';
+  if (p === 'kunark') return 'Kunark';
+  if (p === 'classic') return 'Classic';
+  if (p === 'pop' || p.includes('planes')) return 'Planes of Power';
+  return poolName || null;
+}
+
+// RECENT MISSES (ask #3/#4): items the family bid on and LOST. A miss =
+// a bid on an auction the family did NOT win, on an item the family hasn't won
+// in ANY auction. Group by item; keep the family char who bid highest (that
+// char's best bid), and the most-recent auction end (ordering + raid deep-link).
+// last_winning_bid / last_second_bid are attached by the caller from the item's
+// MOST-RECENT auction (via _lootItemSummary) — not from the specific loss.
+function _buildMisses({ bidRows, famCharIds, nameByCharId, wonItemIds }) {
+  const famSet = new Set((famCharIds || []).map(Number));
+  const won = new Set((wonItemIds || []).filter(n => Number.isFinite(n)));
+  const byItem = new Map();
+  for (const b of (bidRows || [])) {
+    if (b == null || b.item_id == null) continue;
+    if (won.has(b.item_id)) continue;                                            // already won → not a miss
+    if (b.winner_character_id != null && famSet.has(Number(b.winner_character_id))) continue; // family won this auction
+    let cur = byItem.get(b.item_id);
+    if (!cur) { cur = { item_id: b.item_id, item_name: b.item_name || null, char_id: null, my_last_bid: null, last_end: null, raid_id: null, auction_id: null, _t: -1 }; byItem.set(b.item_id, cur); }
+    if ((b.value || 0) > (cur.my_last_bid || 0)) { cur.my_last_bid = b.value || 0; if (b.character_id != null) cur.char_id = Number(b.character_id); }
+    const t = b.end_at ? (Date.parse(b.end_at) || 0) : 0;
+    if (t >= cur._t) { cur._t = t; cur.last_end = b.end_at || cur.last_end; if (b.raid_id != null) cur.raid_id = b.raid_id; if (b.auction_id != null) cur.auction_id = b.auction_id; }
+    if (!cur.item_name && b.item_name) cur.item_name = b.item_name;
+  }
+  const rows = [...byItem.values()].map(r => ({
+    item_id: r.item_id, item_name: r.item_name,
+    character: (r.char_id != null && nameByCharId && nameByCharId[r.char_id]) || null,
+    char_id: r.char_id, my_last_bid: r.my_last_bid,
+    raid_id: r.raid_id, auction_id: r.auction_id, last_end: r.last_end,
+  }));
+  rows.sort((a, b) => (Date.parse(b.last_end || 0) || 0) - (Date.parse(a.last_end || 0) || 0));
+  return rows;
+}
+
+// Family-pooled current DKP from mirror parts (ask #6). OpenDKP links alts to a
+// SHARED pool, so per-character is misleading (the main runs deep negative — it
+// spends the pool the alts fill); the real bidding balance is the family SUM.
+// Confirmed 2026-07-19: vaporjesus family nets +860 while main Hitya alone
+// computes to −125. perName: [{ name, earned, adjustments, spent }].
+function _familyDkpTotals(perName) {
+  let earned = 0, adj = 0, spent = 0;
+  const per = {};
+  for (const r of (perName || [])) {
+    const e = Number(r.earned) || 0, a = Number(r.adjustments) || 0, s = Number(r.spent) || 0;
+    earned += e; adj += a; spent += s;
+    per[r.name] = { earned: e, adjustments: a, spent: s, net: e + a - s };
+  }
+  return { family_total: earned + adj - spent, earned, adjustments: adj, spent, per_character: per };
+}
+// ── end #121 loot bidding v2 pure helpers ──
 // ── end #108 pure helpers ──
 
 async function _handleAgentServerPanel(req, res) {
@@ -5972,26 +6091,67 @@ async function _handleAgentServerPanel(req, res) {
           `select=item_id,priority&${famClause}&order=priority.asc&limit=200`
         ) || [];
       }
-      // Items inferred from bid history: bids by this login/family → auction_ids
-      // → the auctions' item_id/item_name.
+      // #121 — bids by this login/family, enriched with their auction (proven
+      // 2-step in.() join, no PostgREST embed). Powers the bid-inferred wishlist
+      // items, the RECENT MISSES table, and the login→char_id family discovery.
       let bidItemRows = [];
+      let bidRows = [];   // [{ auction_id, character_id, value, item_id, item_name, winner_character_id, end_at, raid_id }]
       const bidClauses = [];
       if (login) bidClauses.push(`user_login.ilike.${encodeURIComponent(login)}`);
       for (const n of family) if (/^[A-Za-z]{2,20}$/.test(n)) bidClauses.push(`character_name.ilike.${encodeURIComponent(n)}`);
       if (bidClauses.length) {
-        const bidRows = await supabase.select(
+        const rawBids = await supabase.select(
           'opendkp_auction_bids',
-          `select=auction_id&or=(${bidClauses.slice(0, 26).join(',')})&limit=500`
+          `select=auction_id,character_id,value&or=(${bidClauses.slice(0, 26).join(',')})&limit=3000`
         ) || [];
-        const aids = [...new Set(bidRows.map(b => b.auction_id).filter(Boolean))].slice(0, 200);
+        const aids = [...new Set(rawBids.map(b => b.auction_id).filter(Boolean))].slice(0, 1000);
+        const aucById = new Map();
         if (aids.length) {
-          const aRows = await supabase.select(
-            'opendkp_auctions',
-            `select=item_id,item_name&auction_id=in.(${aids.join(',')})&item_id=not.is.null&limit=500`
-          ) || [];
-          const seen = new Set();
-          for (const a of aRows) { if (a.item_id != null && !seen.has(a.item_id)) { seen.add(a.item_id); bidItemRows.push({ item_id: a.item_id, item_name: a.item_name }); } }
+          // in.() is capped per request to keep URLs sane; chunk the auction fetch.
+          for (let i = 0; i < aids.length; i += 200) {
+            const chunk = aids.slice(i, i + 200);
+            const aRows = await supabase.select(
+              'opendkp_auctions',
+              `select=auction_id,item_id,item_name,winner_character_id,end_at,raid_id&auction_id=in.(${chunk.join(',')})&limit=500`
+            ) || [];
+            for (const a of aRows) aucById.set(a.auction_id, a);
+          }
         }
+        const seen = new Set();
+        for (const b of rawBids) {
+          const a = aucById.get(b.auction_id);
+          if (!a) continue;
+          bidRows.push({ auction_id: b.auction_id, character_id: b.character_id, value: b.value,
+            item_id: a.item_id, item_name: a.item_name, winner_character_id: a.winner_character_id,
+            end_at: a.end_at, raid_id: a.raid_id });
+          if (a.item_id != null && !seen.has(a.item_id)) { seen.add(a.item_id); bidItemRows.push({ item_id: a.item_id, item_name: a.item_name }); }
+        }
+      }
+      // Family OpenDKP char_ids come from the login's own bids (the mirror stores
+      // the account login as winner/character_name — char_id is the only per-char
+      // key). Won auctions by those char_ids resolve char_id→real name via loot.
+      const famCharIds = [...new Set(bidRows.map(b => b.character_id).filter(n => Number.isFinite(n)))];
+      let wonAuctions = [];
+      if (famCharIds.length) {
+        wonAuctions = await supabase.select(
+          'opendkp_auctions',
+          `select=auction_id,item_id,raid_id,winner_character_id&winner_character_id=in.(${famCharIds.join(',')})&limit=2000`
+        ) || [];
+      }
+      const wonItemIds = new Set();
+      for (const a of wonAuctions) if (a.item_id != null) wonItemIds.add(a.item_id);
+      for (const w of wins) if (w.item_id != null) wonItemIds.add(w.item_id);
+      // char_id → real name (MODE over the won-auction ↔ loot join).
+      let nameByCharId = {};
+      if (wonAuctions.length) {
+        const raidIds = [...new Set(wonAuctions.map(a => a.raid_id).filter(Boolean))].slice(0, 400);
+        let lootRows = [];
+        for (let i = 0; i < raidIds.length; i += 200) {
+          const chunk = raidIds.slice(i, i + 200);
+          const lr = await supabase.select('opendkp_loot', `select=raid_id,item_id,character_name&raid_id=in.(${chunk.join(',')})&limit=5000`) || [];
+          lootRows = lootRows.concat(lr);
+        }
+        nameByCharId = _resolveCharIdNames(wonAuctions, lootRows);
       }
       // Resolve prereg item names.
       const preregIds = [...new Set(preregRows.map(r => r.item_id).filter(n => Number.isFinite(n)))].slice(0, 200);
@@ -6001,8 +6161,103 @@ async function _handleAgentServerPanel(req, res) {
         for (const r of itemRows) nameById.set(r.id, r.name);
       }
       const preregForMerge = preregRows.map(r => ({ item_id: r.item_id, item_name: nameById.get(r.item_id) || null, priority: r.priority }));
-      const wishlist = _mergeWishlist(preregForMerge, bidItemRows).slice(0, 60);
-      const out = JSON.stringify({ key, characters: family, login: login || null, scope: 'your loot history', updated_at: new Date().toISOString(), wins, wishlist });
+      // Wishlist = merge, then DROP items the family already WON (preregs stay).
+      const wishlist = _pruneWonWishlist(_mergeWishlist(preregForMerge, bidItemRows), [...wonItemIds]).slice(0, 60);
+      // RECENT MISSES + per-item last winning / second-place figures.
+      let misses = _buildMisses({ bidRows, famCharIds, nameByCharId, wonItemIds: [...wonItemIds] }).slice(0, 40);
+      if (misses.length) {
+        const missIds = misses.map(m => m.item_id);
+        const mAuc = await supabase.select(
+          'opendkp_auctions',
+          `select=auction_id,item_id,item_name,winner,bid_amount,end_at&item_id=in.(${missIds.slice(0, 60).join(',')})&winner=not.is.null&order=end_at.desc&limit=600`
+        ) || [];
+        const mByItem = new Map();
+        for (const a of mAuc) { if (!mByItem.has(a.item_id)) mByItem.set(a.item_id, []); mByItem.get(a.item_id).push(a); }
+        const mWinAids = [];
+        for (const list of mByItem.values()) { const top = list.find(x => x.winner != null && x.bid_amount != null); if (top) mWinAids.push(top.auction_id); }
+        let mBidsByAuc = {};
+        if (mWinAids.length) {
+          const mBids = await supabase.select('opendkp_auction_bids', `select=auction_id,value&auction_id=in.(${mWinAids.slice(0, 60).join(',')})&limit=1500`) || [];
+          for (const b of mBids) { (mBidsByAuc[b.auction_id] = mBidsByAuc[b.auction_id] || []).push(b); }
+        }
+        misses = misses.map(m => {
+          const s = _lootItemSummary(mByItem.get(m.item_id) || [], mBidsByAuc);
+          return { ...m, last_winning_bid: s ? s.winning_bid : null, last_second_bid: s ? s.runner_up : null };
+        });
+      }
+      // item → era (+ most-recent auction raid for the wishlist deep-link).
+      const listedIds = [...new Set([
+        ...wishlist.map(w => w.item_id),
+        ...misses.map(m => m.item_id),
+        ...wins.map(w => w.item_id),
+      ].filter(n => Number.isFinite(n)))].slice(0, 150);
+      const itemEra = {}, itemRaid = {};
+      if (listedIds.length) {
+        let eAuc = [];
+        for (let i = 0; i < listedIds.length; i += 150) {
+          const chunk = listedIds.slice(i, i + 150);
+          const r = await supabase.select('opendkp_auctions', `select=item_id,raid_id,end_at&item_id=in.(${chunk.join(',')})&order=end_at.desc&limit=2000`) || [];
+          eAuc = eAuc.concat(r);
+        }
+        const raidIds = [...new Set(eAuc.map(a => a.raid_id).filter(Boolean))].slice(0, 400);
+        const poolByRaid = new Map();
+        for (let i = 0; i < raidIds.length; i += 200) {
+          const chunk = raidIds.slice(i, i + 200);
+          const rr = await supabase.select('opendkp_raids', `select=raid_id,pool_name&raid_id=in.(${chunk.join(',')})&limit=500`) || [];
+          for (const r of rr) poolByRaid.set(r.raid_id, r.pool_name);
+        }
+        for (const a of eAuc) {   // eAuc is end_at-desc → first per item is most recent
+          if (a.item_id == null) continue;
+          if (!(a.item_id in itemRaid) && a.raid_id != null) itemRaid[a.item_id] = a.raid_id;
+          if (!(a.item_id in itemEra)) { const era = _eraFromPool(poolByRaid.get(a.raid_id)); if (era) itemEra[a.item_id] = era; }
+        }
+      }
+      wins    = wins.map(w => ({ ...w, era: itemEra[w.item_id] || null }));
+      const wishlistOut = wishlist.map(w => ({ ...w, era: itemEra[w.item_id] || null, raid_id: itemRaid[w.item_id] || null }));
+      misses  = misses.map(m => ({ ...m, era: itemEra[m.item_id] || null, raid_id: m.raid_id || itemRaid[m.item_id] || null }));
+      // Family-pooled current DKP (mirror-derived). earned = ticks the family
+      // attended; adj = adjustment rows for family names; spent = loot dkp.
+      let dkp = null;
+      if (family.length) {
+        try {
+          const [tickRows, adjRows, spentRows] = await Promise.all([
+            supabase.select('opendkp_ticks', `select=value,attendees,fetched_at&attendees=ov.{${family.join(',')}}&limit=3000`),
+            supabase.select('opendkp_adjustments', `select=raw,fetched_at&limit=1000`),
+            supabase.select('opendkp_loot', `select=character_name,dkp,fetched_at&${famClause || 'character_name=eq.__none__'}&limit=3000`),
+          ]);
+          const famLc = new Set(family.map(f => f.toLowerCase()));
+          const per = new Map(family.map(f => [f.toLowerCase(), { name: f, earned: 0, adjustments: 0, spent: 0 }]));
+          let fresh = 0;
+          for (const t of (tickRows || [])) {
+            const att = Array.isArray(t.attendees) ? t.attendees : [];
+            for (const nm of att) { const k = String(nm).toLowerCase(); if (per.has(k)) per.get(k).earned += (t.value || 0); }
+            if (t.fetched_at) fresh = Math.max(fresh, Date.parse(t.fetched_at) || 0);
+          }
+          for (const a of (adjRows || [])) {
+            const nm = a.raw && a.raw.Character && a.raw.Character.Name;
+            const k = nm ? String(nm).toLowerCase() : '';
+            if (k && per.has(k)) per.get(k).adjustments += Number(a.raw.Value) || 0;
+            if (a.fetched_at) fresh = Math.max(fresh, Date.parse(a.fetched_at) || 0);
+          }
+          for (const l of (spentRows || [])) {
+            const k = String(l.character_name || '').toLowerCase();
+            if (famLc.has(k) && per.has(k)) per.get(k).spent += (l.dkp || 0);
+            if (l.fetched_at) fresh = Math.max(fresh, Date.parse(l.fetched_at) || 0);
+          }
+          dkp = { ..._familyDkpTotals([...per.values()]), source: 'mirror', pooled: true, fetched_at: fresh ? new Date(fresh).toISOString() : null };
+        } catch (e) { console.warn('[server-panel:bid-history] dkp failed:', e?.message); }
+      }
+      // Suggested family (auto-prefill) — main = most auction wins.
+      const suggested_family = _suggestFamily(famCharIds.map(cid => ({
+        char_id: cid, name: nameByCharId[cid] || null,
+        wins: wonAuctions.filter(a => Number(a.winner_character_id) === Number(cid)).length,
+      })));
+      const opendkp_base = `https://${process.env.OPENDKP_CLIENT_NAME || 'wolfpack'}.opendkp.com`;
+      const out = JSON.stringify({
+        key, characters: family, login: login || null, scope: 'your loot history',
+        updated_at: new Date().toISOString(),
+        opendkp_base, wins, wishlist: wishlistOut, misses, dkp, suggested_family,
+      });
       _lootCacheSet(ck, out);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       return res.end(out);
