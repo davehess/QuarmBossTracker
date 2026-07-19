@@ -65,13 +65,21 @@ folly** — it's here.*
 ## The work ledger
 
 ### ✅ Done — major shipped features (not exhaustive; see git + roadmapData.ts)
-- **Mimic 2.0.0 "Full Cry" — stable graduation (2026-07-20).** The whole 1.9.6
+- **Mimic 2.0.0 "Harmonic Howl" — stable graduation (2026-07-20).** The whole 1.9.6
   beta line (agents 3.3.81→3.3.100: callout trust + TTS root cause, loot
   bidding v1+v2, elections field round, Me card/Admin tab, /who enrichment,
   roll nights, timeline enrichment) cut to stable; beta re-parked at 2.0.1.
   Timeline slice test upgraded to also run the real `_matchDiscLine` (the
   graduation gate caught the sandbox gap — 275/275 after). Fleet safety nets
   for the shakedown: LKG crash-loop rollback, revert-to-stable, kill switches.
+  Agent graduated to the **3.4.0** minor as the line marker (fleet hot-swaps
+  via the manifest; installer carries 3.3.100-identical code). ⚠ DKP SEMANTIC
+  (Hitya 2026-07-20, verbatim intent): OpenDKP keeps **ONE pooled DKP total
+  per person, shared across all their characters** — "if Hitya and Canopy both
+  show 100 next to their name, that means 100 total available for them to bid,
+  NOT 200." The bidding panel must display ONE shared figure (never sum
+  per-character displays), labeled as account-wide; verify the shipped
+  mirror-derived family computation matches the OpenDKP UI number (board #124).
 - **#121 Loot Bidding v2 + buff-queue class-picker defaults — DONE (2026-07-19,
   agent 3.3.100 beta + bot 3.0.221 on main + web 1.0.252 roadmap/docs; Mimic
   parked 1.9.6). No DB change (mirror reads only).** Field feedback from the

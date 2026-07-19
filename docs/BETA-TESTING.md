@@ -11,7 +11,7 @@ raid; move it to STATUS.md's "Done" once graduated to stable.*
 > on the beta channel and have updated Mimic so the agent version below is what's
 > running (check the agent dashboard footer / `/status`).
 
-> **Graduated 2026-07-20: Mimic 2.0.0 "Full Cry"** (agent **3.3.100**) — the
+> **Graduated 2026-07-20: Mimic 2.0.0 "Harmonic Howl"** (agent **3.4.0**) — the
 > entire 1.9.6 beta line is now the **stable** build for the whole fleet.
 > Every entry below (#91–#121) is live on stable; the ✅/👥 cases remain the
 > verification checklist — tonight's raid is the 2.0 shakedown, so the

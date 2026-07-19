@@ -43,11 +43,11 @@ export type Release = {
 
 export const releases: Release[] = [
   {
-    key: 'mimic-20-full-cry',
-    title: '🐺 Mimic 2.0 — "Full Cry" · the whole pack, in voice',
-    version: 'Mimic 2.0.0 · Agent 3.3.100',
+    key: 'mimic-20-harmonic-howl',
+    title: '🐺 Mimic 2.0 — "Harmonic Howl" · the whole pack, in voice and in tune',
+    version: 'Mimic 2.0.0 · Agent 3.4.0',
     date: '2026-07-20',
-    headline: 'The biggest release we\'ve ever cut, now stable for everyone as a normal auto-update. Named for the moment the whole pack gives voice at once: Mimic learned to SPEAK — callouts that prove they played, the CH chain calling your GO, loot announced with a bid clock — and the pack learned to act as one: reporter elections, officer kill switches, and a fleet that hands off cleanly when someone camps. Everything below in the 1.9.6 beta entry is what\'s inside; if you were on beta, you\'ve been living it all week.',
+    headline: 'The biggest release we\'ve ever cut, now stable for everyone as a normal auto-update. The name says it: the HOWL is Mimic learning to speak — callouts that prove they played, the CH chain calling your GO, loot announced with a bid clock — and the HARMONY is the pack acting as one: reporter elections, clean handoffs when someone camps, and officer kill switches keeping it all in tune. Everything below in the 1.9.6 beta entry is what\'s inside; if you were on beta, you\'ve been living it all week.',
     features: [
       { name: 'Why "2.0"', blurb: 'One number for one idea: this line crossed from "overlays that show you things" to a platform that talks, listens, and protects itself. Full feature detail is in the beta entry just below — wins, fixes, and all.' },
       { name: 'If you\'re on stable', blurb: 'Just accept the update. Everything arrives configured with sane defaults; anything spoken has an obvious toggle right where you\'d look for it.' },
