@@ -25,9 +25,14 @@
   .r .nm{font-weight:bold;color:#e6edf3;flex-shrink:0}
   .r.zek .nm{color:#ff7b72}
   .r .guild{color:#6e9bd6;font-size:10px;flex-shrink:0}
-  /* spacer pushes everything after it to the right edge — anon/gm/zek
-     flags, then class, then level (rightmost). */
-  .r .sp{flex:1;min-width:4px}
+  /* Left group grows to fill, pushing the fixed class + level columns to a
+     consistent x so they line up down the list (name + 🐺 + main + guild +
+     flags all live here). #111. */
+  .r .left{flex:1;min-width:0;display:flex;align-items:baseline;gap:5px;overflow:hidden}
+  /* Main-in-parens for Wolf Pack alts (characters.main_name) — dim + small. */
+  .r .main{color:#8b949e;font-size:10px;flex-shrink:0}
+  /* 🐺 — this guildmate is running Mimic right now. */
+  .r .wolf{font-size:11px;flex-shrink:0;line-height:1}
   .r .flag{font-size:9px;padding:0 4px;border-radius:3px;flex-shrink:0}
   .r .flag.anon{background:#2d2150;color:#c9a0ff}
   /* Copy-name button on unknown-identity rows — dim until hovered so it
@@ -43,10 +48,12 @@
   .r .clspick:hover{border-color:#58a6ff}
   .r .flag.gm{background:#3d3416;color:#f0d264}
   .r .flag.zek{background:#3d1d1d;color:#ff7b72}
-  /* Class + level columns: dim, right-side. Italic on de-anon'd values
-     (sourced from who history, not the live row) so the user can tell. */
-  .r .klass{font-size:10px;color:#9aa4ad;flex-shrink:0}
-  .r .lvl{font-size:10px;color:#9aa4ad;font-variant-numeric:tabular-nums;flex-shrink:0;min-width:28px;text-align:right}
+  /* Class + level columns: fixed-width, LEFT-aligned so every class stacks in
+     one column and every level in its own (always emitted, even empty, to hold
+     the column). Italic on de-anon'd values (from who history, not the live
+     row) so the user can tell our-data from the game's. #111. */
+  .r .klass{font-size:10px;color:#9aa4ad;flex-shrink:0;width:96px;text-align:left;white-space:nowrap;overflow:hidden}
+  .r .lvl{font-size:10px;color:#9aa4ad;font-variant-numeric:tabular-nums;flex-shrink:0;width:34px;text-align:left}
   .r .klass.deanon,.r .lvl.deanon{font-style:italic;color:#6e7681}
   .r .goneAt{font-size:10px;color:#9aa4ad;flex-shrink:0}
   .gone .r .nm{color:#9aa4ad;font-weight:normal}
@@ -183,8 +190,8 @@
     var zek = !!(p.known && p.known.is_zek);
     var cls = 'r' + (zek ? ' zek' : '');
     // De-anon fallback: when the LIVE row is anon (class/level/guild null),
-    // fill in from who history so the right-side columns still render. Mark
-    // those values italic so the user can tell live vs known at a glance.
+    // fill in from who history so the columns still render. Mark those values
+    // italic (via .deanon) so the user can tell our-data from the game's.
     var liveLvl   = p.level;
     var liveKlass = p.class;
     var liveGuild = p.guild;
@@ -198,21 +205,29 @@
     var nkey = (p.name || '').toLowerCase();
     var recentPick = _pendingClass[nkey] && (Date.now() - _pendingClass[nkey].at) < CLASS_GRACE_MS;
     var showPicker = !!p.name && (!klass || recentPick);
-    var parts = ['<span class="nm">' + esc(p.name || '?') + '</span>'];
+    // Left group (grows): name, 🐺 Mimic presence, (main-in-parens for Wolf Pack
+    // alts — server-side hide list already omits any suppressed main), the class
+    // picker/copy, guild, then flags. Growing it lines up the fixed columns.
+    var left = '<span class="nm">' + esc(p.name || '?') + '</span>';
+    if (p.mimic) left += '<span class="wolf" title="Running Mimic">🐺</span>';
+    if (p.main)  left += '<span class="main">(' + esc(p.main) + ')</span>';
     if (showPicker) {
-      parts.push(classPickerHtml(p.name));
+      left += classPickerHtml(p.name);
       // Copy-name stays for the Quarm-Discord lookup path.
-      parts.push('<button class="copybtn" data-name="' + esc(p.name) + '" title="Copy name — search Quarm Discord for their public posts">⧉</button>');
+      left += '<button class="copybtn" data-name="' + esc(p.name) + '" title="Copy name — search Quarm Discord for their public posts">⧉</button>';
     }
-    if (guild) parts.push('<span class="guild">&lt;' + esc(guild) + '&gt;</span>');
-    parts.push('<span class="sp"></span>');
-    if (p.anonymous) parts.push('<span class="flag anon">anon</span>');
-    if (p.gm)        parts.push('<span class="flag gm">GM</span>');
-    if (zek)         parts.push('<span class="flag zek">ZEK</span>');
-    if (klass && !showPicker) parts.push('<span class="klass' + (klassIsDeanon ? ' deanon' : '') + '">' + esc(klass) + '</span>');
-    if (lvl)   parts.push('<span class="lvl'   + (lvlIsDeanon   ? ' deanon' : '') + '">L' + lvl + '</span>');
-    if (gone)  parts.push('<span class="goneAt">· ' + ago(p.observedAt) + ' ago</span>');
-    return '<div class="' + cls + '">' + parts.join('') + '</div>';
+    if (guild) left += '<span class="guild">&lt;' + esc(guild) + '&gt;</span>';
+    if (p.anonymous) left += '<span class="flag anon">anon</span>';
+    if (p.gm)        left += '<span class="flag gm">GM</span>';
+    if (zek)         left += '<span class="flag zek">ZEK</span>';
+    // Fixed columns — ALWAYS emitted (even empty) so class stacks in one column
+    // and level in its own, aligned down the list regardless of which fields a
+    // given row has.
+    var klassTxt = (klass && !showPicker) ? esc(klass) : '';
+    var col = '<span class="klass' + (klassIsDeanon ? ' deanon' : '') + '">' + klassTxt + '</span>';
+    col    += '<span class="lvl'   + (lvlIsDeanon   ? ' deanon' : '') + '">' + (lvl ? 'L' + lvl : '') + '</span>';
+    if (gone)  col += '<span class="goneAt">· ' + ago(p.observedAt) + ' ago</span>';
+    return '<div class="' + cls + '"><span class="left">' + left + '</span>' + col + '</div>';
   }
 
   var bodyEl = document.getElementById('body');

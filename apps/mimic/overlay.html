@@ -225,9 +225,12 @@
   // Done button to flip setup mode back off (without locking) so the user
   // can still nudge things post-setup.
   var _overlayKey = null;
+  var _setupScope = null;
   if (window.mimic && window.mimic.onSetupMode) {
     window.mimic.onSetupMode(function(p) {
       _overlayKey = p && p.overlayKey;
+      if (p && p.scope) _setupScope = p.scope;
+      else if (p && p.active) _setupScope = 'all';
       document.body.classList.toggle('setup', !!(p && p.active));
     });
   }
@@ -251,7 +254,12 @@
   var doneBtn = document.getElementById('exitSetupBtn');
   if (doneBtn) doneBtn.addEventListener('click', function() {
     try { document.body.classList.remove('setup'); } catch (e) {}
-    try { window.mimic.setSetupMode(false); } catch (e) {}
+    // Exit via the SAME scope we entered. A "Setup THIS" window lives in the
+    // single-overlay registry and only set-setup-mode-this(false) tears it
+    // down — the global set-setup-mode(false) skips it, leaving the unlocked
+    // setup chrome stuck on screen (#116). Matches the panel overlays.
+    try { if (_setupScope === 'this') window.mimic.setSetupModeThis(false); else window.mimic.setSetupMode(false); } catch (e) {}
+    _setupScope = null;
   });
 
   function fmt(n){ n=Number(n)||0; return n>=1e6?(n/1e6).toFixed(2)+'M':n>=1e3?(n/1e3).toFixed(2)+'K':String(Math.round(n)); }

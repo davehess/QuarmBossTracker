@@ -25,21 +25,34 @@ import { readSource, sliceBlock, AGENT_INDEX } from './_source-slice.js';
 // test-local one so the suite can push/clear fires.
 const _fireLog = [];
 
+// Since agent 3.3.84 (#105, graduated to main with Mimic 2.0) noteRaidLine also
+// calls the module-level disc matcher — slice the REAL DISC_LINES + _matchDiscLine
+// and evaluate them in the same scope so the sliced methods run shipped code
+// end-to-end.
+const src = readSource(AGENT_INDEX);
+const discBlock = sliceBlock(
+  src,
+  'const DISC_LINES = [',
+  '  return null;\n}',
+);
+
 // Slice the three contiguous methods (comments between them are valid class-body
 // content) and rehydrate into a minimal class with the fields they touch.
 const methodsBlock = sliceBlock(
-  readSource(AGENT_INDEX),
+  src,
   '  noteTimelineEvent(ev) {',
   '    return out.length ? out.slice(0, 500) : undefined;\n  }',
 );
 // eslint-disable-next-line no-new-func
 const TimelineBuilder = new Function('_fireLog', `
+${discBlock}
   return class {
     constructor() {
       this.timelineEvents = [];
       this._tlSeen        = new Set();
       this.startedAt      = null;
       this.lastEvent      = null;
+      this.character      = 'Testchar';
     }
 ${methodsBlock}
   };

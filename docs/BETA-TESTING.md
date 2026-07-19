@@ -11,12 +11,12 @@ raid; move it to STATUS.md's "Done" once graduated to stable.*
 > on the beta channel and have updated Mimic so the agent version below is what's
 > running (check the agent dashboard footer / `/status`).
 
-> **Graduated 2026-07-18 (#89):** the 1.9 beta line — Mimic **1.9.5** / agent
-> **3.3.80** — is now the **stable** build. Everything below (reporter election
-> #72, `{s}` backtick triggers, callout trifecta #76) rides in it, so these are
-> live for the whole raid on **stable**, not just beta testers. Verify-in-raid
-> is still welcome; the ledger entries move to STATUS.md's Done as each is
-> confirmed. Beta re-parked at **1.9.6**.
+> **Graduated 2026-07-20: Mimic 2.0.0 "Full Cry"** (agent **3.3.100**) — the
+> entire 1.9.6 beta line is now the **stable** build for the whole fleet.
+> Every entry below (#91–#121) is live on stable; the ✅/👥 cases remain the
+> verification checklist — tonight's raid is the 2.0 shakedown, so the
+> watch-list on wolfpack.quest/roadmap is the priority pass. Beta re-parked at
+> **2.0.1**. (Prior graduation 2026-07-18: 1.9.5 / agent 3.3.80.)
 
 ---
 

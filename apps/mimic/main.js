@@ -33,6 +33,18 @@ const { startZealWatch } = require('./zealPipe');
 // creation so it applies to all BrowserWindows.
 Menu.setApplicationMenu(null);
 
+// ── Audio: allow overlays to speak/beep without a click (#120) ──────────────
+// Field report: suggested-trigger TTS was silent AND Windows' volume mixer had
+// NO Mimic audio session at all — i.e. Chromium never opened an output stream.
+// Cause: the trigger overlay is a passive, click-through, never-focused window,
+// so its document never gets a user gesture, and Chromium gates BOTH
+// speechSynthesis.speak() and HTMLMediaElement.play() behind user activation —
+// silently dropping them. Relaxing the autoplay policy process-wide lets every
+// overlay produce audio without a click. Must run before app.whenReady(). Paired
+// with a per-document synthetic gesture on the trigger window (below) as a
+// belt-and-suspenders for the speechSynthesis activation check specifically.
+app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
+
 // ── Single-instance lock ────────────────────────────────────────────────────
 // Mimic bundles + runs its own parser engine on a fixed port. Launching a
 // SECOND copy (e.g. clicking the taskbar/Start-menu shortcut while one is
@@ -114,6 +126,21 @@ let agentPort = BASE_PORT;
 let restartBackoff = 1000;
 let quitting = false;
 let updatePending = null; // { version } once an update is downloaded and ready
+
+// ── Last-known-good agent + crash-loop auto-rollback (#74 Part 3, four-gate rule) ──
+// Before any hot-swap we snapshot the working agent to index.lkg.js/package.lkg.json.
+// If the swapped-in child crash-loops (≥3 exits in 2 min right after a swap) we
+// restore LKG, blacklist the bad version (don't re-offer until a NEWER build
+// ships), and surface a tray/dashboard notice. One log line per state transition.
+let _agentSwapAt = 0;               // when the last hot-swap landed (0 = none on trial)
+let _agentSwapToVersion = null;     // the version we swapped TO (on trial)
+let _recentExits = [];              // exit timestamps (pruned to the crash-loop window)
+let _blacklistedAgentVersion = null;// a version that crash-looped post-swap
+let _crashNoticeShown = false;      // one diagnostic notice per no-swap crash-loop burst
+let _lkgReverted = null;            // { from, to, at } once a revert has happened
+const LKG_CRASHLOOP_WINDOW_MS = 2 * 60_000;
+const LKG_CRASHLOOP_EXITS = 3;
+const LKG_SWAP_TRIAL_MS = 10 * 60_000;  // "right after a swap" bound
 let _agentZeroLogs = false;     // agent launched with no logs (waiting for some)
 let _zeroLogsRecheckTimer = null;
 // Setup mode — when true, every overlay is shown + unlocked and gets an
@@ -2058,6 +2085,38 @@ async function launchAgent() {
     if (quitting) return;
     const marker = path.join(AGENT_DIR(), '.force-update-on-restart');
     if (fs.existsSync(marker)) { try { fs.unlinkSync(marker); } catch {} restartBackoff = 1000; return launchAgent(); }
+
+    // #74 Part 3 — crash-loop detection. Track exits within the crash-loop window.
+    const now = Date.now();
+    _recentExits = _recentExits.filter(t => now - t < LKG_CRASHLOOP_WINDOW_MS);
+    _recentExits.push(now);
+    const swapOnTrial = _agentSwapAt && (now - _agentSwapAt) < LKG_SWAP_TRIAL_MS;
+
+    if (swapOnTrial && _recentExits.length >= LKG_CRASHLOOP_EXITS) {
+      // The just-swapped agent is crash-looping → auto-revert to last-known-good,
+      // blacklist the bad version, and relaunch from LKG.
+      const bad = _agentSwapToVersion;
+      const lkgVer = _restoreAgentLkg();
+      _agentSwapAt = 0; _agentSwapToVersion = null; _recentExits = [];
+      if (lkgVer) {
+        _blacklistedAgentVersion = bad;
+        _lkgReverted = { from: bad, to: lkgVer, at: now };
+        appendAgentLog(`[mimic] CRASH-LOOP after hot-swap to v${bad || '?'} (${LKG_CRASHLOOP_EXITS} exits in ${Math.round(LKG_CRASHLOOP_WINDOW_MS / 1000)}s) — reverted to last-known-good v${lkgVer}; won't re-offer v${bad || '?'} until a newer build ships\n`);
+        try { _notifyLkgRevert(bad, lkgVer); } catch { /* best-effort */ }
+        pushStatus();
+        restartBackoff = 1000;
+        return launchAgent();
+      }
+      appendAgentLog(`[mimic] crash-loop after hot-swap to v${bad || '?'} but no last-known-good to restore — backing off\n`);
+    } else if (!swapOnTrial && _recentExits.length >= LKG_CRASHLOOP_EXITS && !_crashNoticeShown) {
+      // Crash-loop with NO recent swap (LKG == current): the current agent is
+      // failing on its own. Keep the existing exponential backoff (below) — never
+      // a tight restart loop — but surface a diagnostic notice once.
+      _crashNoticeShown = true;
+      appendAgentLog(`[mimic] agent crash-looping (${_recentExits.length} exits in ${Math.round(LKG_CRASHLOOP_WINDOW_MS / 1000)}s) with no recent update — see Zeal health / diagnostics. Backing off restarts.\n`);
+      try { _notifyAgentCrashLoop(); } catch { /* best-effort */ }
+    }
+
     // code=null + a signal = something called kill() on the child. Every
     // shell-side kill path now logs its reason first — an exit here with NO
     // preceding [mimic] reason line is external (AV, OS, or the agent dying
@@ -2067,7 +2126,18 @@ async function launchAgent() {
     setTimeout(launchAgent, restartBackoff);
     restartBackoff = Math.min(restartBackoff * 2, 60000);
   });
-  setTimeout(() => { if (agentProc) restartBackoff = 1000; }, 30000);
+  setTimeout(() => {
+    if (agentProc) {
+      restartBackoff = 1000;
+      _recentExits = [];
+      _crashNoticeShown = false;
+      // The swapped-in version has run stable for 30s → accept it as good.
+      if (_agentSwapAt) {
+        _agentSwapAt = 0; _agentSwapToVersion = null;
+        appendAgentLog('[mimic] hot-swapped agent stable for 30s — accepted\n');
+      }
+    }
+  }, 30000);
 
   const up = await waitForAgent(agentPort);
   // loading.html (renderer) drives the FIRST navigation to the dashboard once
@@ -2892,6 +2962,14 @@ function createTriggerOverlay() {
   triggerWindow.on('resize', () => _persistBounds('triggerBounds', triggerWindow));
   triggerWindow.once('ready-to-show', () => {
     triggerWindow.webContents.send('agent-port', agentPort);
+    // #120 — the trigger overlay is never clicked, so its document never earns
+    // the user activation Chromium requires before speechSynthesis will make
+    // sound. executeJavaScript with userGesture=true flips that activation bit
+    // once, for the document's lifetime, so trigger/blind TTS is audible. Cheap,
+    // idempotent, no visible effect; ignore failures (page mid-load, etc.).
+    try {
+      triggerWindow.webContents.executeJavaScript('void 0', true).catch(() => {});
+    } catch (e) { /* non-fatal */ }
     applyTriggerVisibility();
     applyOverlayInteractivity();
     applyOverlayOpacity(triggerWindow, 'trigger');
@@ -4411,6 +4489,9 @@ function currentStatus() {
     setupMode: !!setupMode,
     onboarded: !!cfg.onboarded,
     updatePending: updatePending ? updatePending.version : null,
+    // #74 Part 3 — "reverted to last-known-good" notice (shown ~30 min after a
+    // crash-loop auto-rollback so the dashboard/settings can surface it).
+    lkgReverted: _lkgReverted && (Date.now() - _lkgReverted.at < 30 * 60_000) ? _lkgReverted : null,
     botUrl: cfg.botUrl,
     // Mimic Discord login (v1). `mimicSession` is the cached identity if
     // we've completed the device-code dance; `mimicLinking` is the in-flight
@@ -4914,33 +4995,91 @@ function _httpsGetBuffer(url) {
   });
 }
 
+// Snapshot the CURRENT working agent as last-known-good (before we overwrite it
+// in a hot-swap). Best-effort — a copy failure just means no LKG this round.
+function _saveAgentLkg() {
+  try {
+    const dir = AGENT_DIR();
+    const idx = path.join(dir, 'index.js');
+    const pkg = path.join(dir, 'package.json');
+    if (fs.existsSync(idx)) fs.copyFileSync(idx, path.join(dir, 'index.lkg.js'));
+    if (fs.existsSync(pkg)) fs.copyFileSync(pkg, path.join(dir, 'package.lkg.json'));
+    return true;
+  } catch (e) { appendAgentLog(`[mimic] warn: could not snapshot LKG agent: ${e && e.message}\n`); return false; }
+}
+// Restore the last-known-good agent over the (crash-looping) current one.
+// Returns the LKG version on success, or null when there is no LKG / restore failed.
+function _restoreAgentLkg() {
+  const dir = AGENT_DIR();
+  const lkgIdx = path.join(dir, 'index.lkg.js');
+  const lkgPkg = path.join(dir, 'package.lkg.json');
+  if (!fs.existsSync(lkgIdx)) return null;
+  let lkgVer = null;
+  try { lkgVer = JSON.parse(fs.readFileSync(lkgPkg, 'utf8')).version || null; } catch { /* keep null */ }
+  try {
+    fs.copyFileSync(lkgIdx, path.join(dir, 'index.js'));
+    if (fs.existsSync(lkgPkg)) fs.copyFileSync(lkgPkg, path.join(dir, 'package.json'));
+    return lkgVer || 'unknown';
+  } catch (e) { appendAgentLog(`[mimic] ERROR: LKG restore failed: ${e && e.message}\n`); return null; }
+}
+function _notifyLkgRevert(badVer, lkgVer) {
+  try {
+    if (tray && typeof tray.displayBalloon === 'function') {
+      tray.displayBalloon({
+        title: 'Wolf Pack Mimic — agent reverted',
+        content: `The v${badVer || '?'} agent crash-looped; reverted to last-known-good v${lkgVer}. It won't be re-offered until a newer build ships.`,
+      });
+    }
+  } catch { /* balloons are best-effort (Windows-only) */ }
+}
+function _notifyAgentCrashLoop() {
+  try {
+    if (tray && typeof tray.displayBalloon === 'function') {
+      tray.displayBalloon({
+        title: 'Wolf Pack Mimic — agent unstable',
+        content: 'The agent is restarting repeatedly. Open the dashboard → Zeal health / diagnostics. Restarts are backing off automatically.',
+      });
+    }
+  } catch { /* best-effort */ }
+}
+
 async function checkAgentUpdate(opts) {
   const manual = !!(opts && opts.manual);
   if (_agentUpdateInFlight) return;
-  // Beta Mimic builds ship their own agent and should NOT hot-swap from
-  // main — main's `/api/agent/latest-version` could be on an older agent
-  // than the one bundled in this beta build, or worse, on a stable release
-  // that's missing beta-only changes. Detect prerelease via the build's own
-  // version (presence of `-` per semver) and skip the swap entirely.
-  // Stable Mimic installs keep the background hot-swap cadence.
-  if (/-/.test(String(app.getVersion() || ''))) {
-    if (manual) appendAgentLog('[mimic] manual agent check: beta build — agent updates arrive bundled in new beta builds, not via hot-swap\n');
-    return;
-  }
+  // #74 Part 4 — per-channel hot-swap. Beta builds (prerelease `-` in the build
+  // version) now hot-swap along the BETA agent line via `?channel=beta` instead
+  // of waiting for a full electron-updater beta installer; stable builds keep the
+  // main-line manifest. This is safe ONLY because the fleet kill switch (#74 Part
+  // 2) + the LKG crash-loop rollback below are the gates that catch a bad beta
+  // agent (the four-gate rule). Was: beta builds skipped the hot-swap entirely.
+  const isBetaBuild = /-/.test(String(app.getVersion() || ''));
   _agentUpdateInFlight = true;
   try {
     const cfg = loadConfig();
     const base = _botBaseUrl(cfg);
     let manifest;
     const _authToken = resolveUploadToken(cfg);
+    const manifestUrl = `${base}/api/agent/latest-version${isBetaBuild ? '?channel=beta' : ''}`;
     try {
-      manifest = await _httpsJson(`${base}/api/agent/latest-version`,
+      manifest = await _httpsJson(manifestUrl,
         _authToken ? { headers: { 'Authorization': 'Bearer ' + _authToken } } : {});
     } catch (e) { return; }  // bot unreachable — try again next cycle
     const latest = manifest && manifest.latest_agent_version;
     const url    = manifest && manifest.url;
     const sha    = manifest && manifest.sha256;
     if (!latest || !url) return;
+
+    // #74 Part 3 — don't re-offer a version that just crash-looped and was
+    // reverted, until a strictly NEWER build appears (which clears the block).
+    if (_blacklistedAgentVersion) {
+      if (_agentVersionNewer(latest, _blacklistedAgentVersion)) {
+        appendAgentLog(`[mimic] agent update: newer build v${latest} supersedes blacklisted v${_blacklistedAgentVersion}; clearing blacklist\n`);
+        _blacklistedAgentVersion = null;
+      } else {
+        if (manual) appendAgentLog(`[mimic] manual agent check: v${latest} is blacklisted (crash-looped) — not re-offering until a newer build ships\n`);
+        return;
+      }
+    }
 
     const current = _readAgentVersion();
     if (!_agentVersionNewer(latest, current)) {
@@ -4972,6 +5111,9 @@ async function checkAgentUpdate(opts) {
         return;
       }
     }
+    // #74 Part 3 — snapshot the CURRENT working agent as last-known-good BEFORE
+    // we overwrite it, so a crash-loop on the new version can auto-revert.
+    _saveAgentLkg();
     // Atomic write of index.js, then bump package.json version so the new code
     // (which reads ./package.json.version) reports the new version and we don't
     // re-trigger on the next poll.
@@ -4988,7 +5130,13 @@ async function checkAgentUpdate(opts) {
       appendAgentLog(`[mimic] warn: could not bump agent package.json: ${e && e.message}\n`);
     }
 
-    appendAgentLog(`[mimic] agent updated to ${latest}; restarting child (window stays up)\n`);
+    // #74 Part 3 — the swapped-in version is now ON TRIAL: mark the swap so the
+    // exit handler can auto-revert to LKG if it crash-loops. Cleared once it runs
+    // stable for 30s (the 30s-post-launch timer), or on a revert.
+    _agentSwapAt = Date.now();
+    _agentSwapToVersion = latest;
+    _recentExits = [];
+    appendAgentLog(`[mimic] agent updated to ${latest}; restarting child (window stays up) — on trial, auto-reverts to LKG if it crash-loops\n`);
     // Restart ONLY the agent child. The exit handler relaunches via
     // launchAgent(), which re-reads the freshly-written AGENT_DIR/index.js.
     restartBackoff = 1000;
@@ -5520,6 +5668,7 @@ ipcMain.handle('hide-overlay', (e) => {
   try {
     const win = BrowserWindow.fromWebContents(e.sender);
     if (!win || win.isDestroyed()) return false;
+    _exitSingleSetup(win);   // (#116) never leave setup chrome on a hidden overlay
     const cfg = loadConfig();
     if (win === overlayWindow) {
       cfg.showHud = false; saveConfig(cfg);
@@ -5976,6 +6125,11 @@ ipcMain.handle('save-config', async (_e, incoming) => {
 // Lock / unlock overlays — pure window op, NEVER restarts the agent.
 ipcMain.handle('set-overlays-locked', (_e, locked) => {
   const cfg = loadConfig(); cfg.overlaysLocked = !!locked; saveConfig(cfg);
+  // An explicit lock means "done positioning" — clear any single-overlay setup
+  // so the 🔒 button tears its setup chrome down too (#116). Without this,
+  // applyOverlayInteractivity() skips single-setup windows and their unlocked
+  // chrome stays on screen.
+  if (locked) _exitAllSingleSetup();
   applyOverlayInteractivity();
   pushStatus();
   return currentStatus();
@@ -6051,6 +6205,41 @@ const _singleSetupWins = new Set();
 function _inSingleSetup(win) {
   try { return !!win && !win.isDestroyed() && _singleSetupWins.has(win.webContents.id); }
   catch { return false; }
+}
+// Tear down single-overlay ("Setup THIS") mode for ONE window: drop it from
+// the registry and restore the persisted lock + hide its setup strip — the
+// same teardown set-setup-mode-this(false) does. Used by the explicit lock
+// (🔒) and hide (✕) paths so setup chrome never survives a user action that
+// means "I'm done here" (#116). applyOverlayInteractivity() deliberately SKIPS
+// single-setup windows, so without this those paths leave the unlocked chrome
+// (blue outline + placeholder) stuck on screen.
+function _exitSingleSetup(win) {
+  try {
+    if (!win || win.isDestroyed() || !_singleSetupWins.has(win.webContents.id)) return false;
+    _singleSetupWins.delete(win.webContents.id);
+    const cfg = loadConfig();
+    const locked = cfg.overlaysLocked !== false;
+    const key = _boundsKeyForWindow(win).replace(/Bounds$/, '');
+    try { win.setIgnoreMouseEvents(locked, { forward: true }); } catch {}
+    try { win.setResizable(!locked); } catch {}
+    try {
+      win.webContents.send('overlay-locked', locked);
+      win.webContents.send('setup-mode', { active: false, overlayKey: key, scope: 'this' });
+    } catch {}
+    return true;
+  } catch { return false; }
+}
+// Exit single-overlay setup for EVERY window still in it (used on an explicit
+// global lock — "done positioning"). Resolves webContents ids back to windows
+// via the live window list so a closed window just gets dropped.
+function _exitAllSingleSetup() {
+  if (_singleSetupWins.size === 0) return;
+  const byId = new Map();
+  for (const w of BrowserWindow.getAllWindows()) { try { byId.set(w.webContents.id, w); } catch {} }
+  for (const wcId of Array.from(_singleSetupWins)) {
+    const win = byId.get(wcId);
+    if (win) _exitSingleSetup(win); else _singleSetupWins.delete(wcId);
+  }
 }
 ipcMain.handle('set-setup-mode-this', (e, on) => {
   try {

@@ -168,6 +168,18 @@
     font-size:10px;line-height:1;cursor:pointer;opacity:0.6;transition:opacity .12s}
   #cfg-btn:hover{opacity:1;color:#79c0ff;border-color:#79c0ff}
   body.setup #cfg-btn{top:30px}
+  /* "0X GO" TTS toggle (#103). Speaks YOUR number + GO through the trigger
+     pipeline when the chain reaches your slot. Sits at right:66px — clear of
+     the ✕ (right:6) + its ~30px gutter, and left of cfg/mute/hide. Persists in
+     localStorage; POSTs the choice to the agent, which owns the callout. */
+  #go-btn{position:fixed;top:6px;right:66px;z-index:65;width:18px;height:18px;
+    display:flex;align-items:center;justify-content:center;border-radius:4px;
+    background:rgba(14,17,22,0.6);color:#8b949e;border:1px solid rgba(110,118,129,0.3);
+    font-size:10px;line-height:1;cursor:pointer;opacity:0.6;transition:opacity .12s}
+  #go-btn:hover{opacity:1;color:#7ee787;border-color:#7ee787}
+  #go-btn.on{color:#7ee787;border-color:rgba(126,231,135,0.6);opacity:0.9}
+  #go-btn.off{color:#6e7681}
+  body.setup #go-btn{top:30px}
   /* Inline settings panel — appears when the ⚙ button is clicked. Currently
      just the lead-time slider; room to grow for future knobs. Sits at the
      top of #wrap so it pushes the rotation down instead of overlapping. */
@@ -238,6 +250,7 @@
 </style></head>
 <body>
   <button id="move-btn" title="Drag from this icon to move the overlay (right-click for resize + Setup)">✥</button>
+  <button id="go-btn"   title="Speak &quot;0X GO&quot; when the chain reaches your slot (on/off)">📣</button>
   <button id="cfg-btn"  title="Settings — alert lead time">⚙</button>
   <button id="mute-btn" title="Mute audible gap callouts">🔊</button>
   <button id="hide-btn" title="Hide the CH chain overlay (turn back on from the tray → Overlays)">✕</button>
@@ -362,6 +375,47 @@
       try { localStorage.setItem('chchain_mute', _muted ? '1' : '0'); } catch (e) {}
       paintMute();
       if (_muted) { try { window.speechSynthesis.cancel(); } catch (e) {} }
+    });
+  }
+
+  // "0X GO" TTS toggle (#103). Default ON. The AGENT owns the callout (it
+  // speaks "0N GO" through the trigger pipeline when the chain reaches a slot
+  // owned by a watched character), so this button just tells the agent whether
+  // to. We persist the choice locally and POST it on every change AND on load,
+  // and re-sync if the agent's echoed go_tts ever drifts (e.g. after an agent
+  // restart, which resets it to the ON default). Absent stored value = ON.
+  var _goTts = true;
+  try {
+    var _goStored = localStorage.getItem('chchain_go_tts');
+    if (_goStored === '0') _goTts = false;
+    else if (_goStored === '1') _goTts = true;
+  } catch (e) {}
+  var goBtn = document.getElementById('go-btn');
+  function paintGo(){
+    if (!goBtn) return;
+    goBtn.classList.toggle('on', _goTts);
+    goBtn.classList.toggle('off', !_goTts);
+    goBtn.title = (_goTts ? 'Speaking' : 'Silent') + ' "0X GO" when the chain reaches your slot — click to turn ' + (_goTts ? 'off' : 'on');
+  }
+  function postGo(){
+    try {
+      fetch('http://127.0.0.1:' + PORT + '/api/chchain/go-tts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: _goTts }),
+      }).catch(function(){});
+    } catch (e) {}
+  }
+  paintGo();
+  postGo();   // sync the agent to our persisted choice on load
+  if (goBtn) {
+    goBtn.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch (e) {} });
+    goBtn.addEventListener('mouseleave', function(){ try { window.mimic.overlayHoverInteractive(false); } catch (e) {} });
+    goBtn.addEventListener('click', function(){
+      _goTts = !_goTts;
+      try { localStorage.setItem('chchain_go_tts', _goTts ? '1' : '0'); } catch (e) {}
+      paintGo();
+      postGo();
     });
   }
 
@@ -844,6 +898,10 @@
       document.getElementById('conn').className = 'conn ok';
       document.getElementById('conn').textContent = '●';
       _last = s && s.chChain;
+      // Self-heal the GO-TTS toggle: if the agent's echoed state drifts from
+      // our persisted choice (e.g. the agent restarted to its ON default),
+      // push our choice back so the button stays authoritative.
+      if (_last && typeof _last.go_tts === 'boolean' && _last.go_tts !== _goTts) postGo();
       _lastOffHeal = (s && s.offHealCandidates) || [];
       _lastDi = (s && s.diStatus) || null;
       // Integrity signals — every link in the chain-data path (see the

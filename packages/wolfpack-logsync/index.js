@@ -1857,6 +1857,21 @@ function checkCharmPetDeath(line, character) {
 // counts if it matches that owner's live pet name.
 const _petHealthByOwner = new Map();   // ownerLower → { hp_pct, buffs: Map<spellLower,{name,dur_ticks,dur_formula}>, last_line_at, last_seen_at }
 const _petBuffLandings  = new Map();   // ownerLower → Map<spellLower,{name,dur_ticks,dur_formula,landed_at}>
+// #119 — pet-buff attribution diagnostic ring. recordPetBuffLanding pushes the
+// LAST outcome of every buff we resolved that names a would-be pet: attributed
+// (green) when the target resolves to a watched owner, or dropped (red) with the
+// reason when _petOwnerByName can't tie the target to us. Feeds the 🐾 Pet-buff
+// diagnostic card so a "no buffs on the Pet tracker" field report is self-evident
+// (was the land seen? did it resolve? which resolver? why not?). Capped, newest
+// last; only written when a buff actually lands (zero per-line cost).
+const _petBuffDiagRing  = [];          // [{ ts, ok, resolver, spell, target, owner, dur_ticks, reason }]
+const _PET_BUFF_DIAG_MAX = 12;
+function _pushPetBuffDiag(entry) {
+  try {
+    _petBuffDiagRing.push(entry);
+    if (_petBuffDiagRing.length > _PET_BUFF_DIAG_MAX) _petBuffDiagRing.splice(0, _petBuffDiagRing.length - _PET_BUFF_DIAG_MAX);
+  } catch { /* diagnostic only — never throw into the landing path */ }
+}
 // Pet TARGET — what each owner's pet is currently attacking. Populated by the
 // "Attacking X Master." command ack (only visible to the controlling player).
 // TTL'd so a pet that hasn't re-ack'd recently doesn't show a stale target.
@@ -2153,7 +2168,25 @@ function _durTicksForLevel(formula, capTicks, level) {
 function recordPetBuffLanding(bcEvt) {
   if (!bcEvt || !bcEvt.spell_name || !bcEvt.target) return;
   const owner = _petOwnerByName(String(bcEvt.target).toLowerCase());
-  if (!owner) return;
+  if (!owner) {
+    // #119 diagnostic — a buff WE cast landed on a specific OTHER name that
+    // isn't one of our pets. This is the real "no buffs on the Pet tracker"
+    // failure: the pet isn't in Zeal slot 16 / the charm tracker yet, so
+    // _petOwnerByName can't tie the land to us. Scoped to self-cast landings
+    // aimed at a non-self target so the ring stays pet-relevant (self-buffs and
+    // bystander-witnessed buffs on raiders are expected non-pets — not noise
+    // worth ringing).
+    const _tgt = String(bcEvt.target).toLowerCase();
+    const _obs = String(bcEvt.observer || '').toLowerCase();
+    if (bcEvt._selfCast && _tgt !== _obs) {
+      _pushPetBuffDiag({
+        ts: Date.now(), ok: false, resolver: 'resolveSelfCastLanding',
+        spell: bcEvt.spell_name, target: bcEvt.target, owner: null,
+        reason: 'target not a watched pet (not in Zeal slot 16 / charm tracker yet, or not ours)',
+      });
+    }
+    return;
+  }
   let mp = _petBuffLandings.get(owner);
   if (!mp) { mp = new Map(); _petBuffLandings.set(owner, mp); }
   // Caster level for duration scaling: prefer the owner's real /who level,
@@ -2187,6 +2220,13 @@ function recordPetBuffLanding(bcEvt) {
     dur_ticks: durTicks,
     dur_formula: bcEvt.dur_formula,
     landed_at: bcEvt.cast_at ? Date.parse(bcEvt.cast_at) : Date.now(),
+  });
+  // #119 diagnostic — the happy path: attributed to a watched owner's pet.
+  _pushPetBuffDiag({
+    ts: Date.now(), ok: true,
+    resolver: bcEvt._selfCast ? 'resolveSelfCastLanding' : 'parseBuffLanding',
+    spell: bcEvt.spell_name, target: bcEvt.target, owner, dur_ticks: durTicks,
+    reason: null,
   });
   _savePetStateSoon();
 }
@@ -2934,8 +2974,20 @@ function resolveSelfCastLanding(line, observer) {
     const name = body.slice(0, nameEnd).trim();
     if (!name) continue;
     // Attribute only to the target we were casting at (when known) so we
-    // don't mis-name a bystander's same-message buff.
-    if (rc.target && String(rc.target).toLowerCase() !== name.toLowerCase()) continue;
+    // don't mis-name a bystander's same-message buff — EXCEPT when the land
+    // names one of OUR OWN pets (Zeal slot 16 / charm tracker). Pet buffs are
+    // routinely cast without the pet as the live Zeal target: you buff yourself
+    // or keep the mob targeted, or the target has already moved on by the time
+    // the buff lands. Worse, many pet-castable buffs (Girdle of Karana, #117)
+    // aren't in _TRACKED_BUFF_KEYWORDS, so parseBuffLanding can NEVER index
+    // their landing message — this self-cast path is their only attribution and
+    // the strict target gate silently dropped every one. We already know we
+    // cast this exact spell (matched by its cast_on_other suffix) and the land
+    // names our pet, so attributing it is safe regardless of the stale target.
+    if (rc.target && String(rc.target).toLowerCase() !== name.toLowerCase()) {
+      const _po = _petOwnerByName(String(name).toLowerCase());
+      if (!_po || _po !== String(observer).toLowerCase()) continue;
+    }
     return {
       target:      name,
       spell_id:    e.id || 0,
@@ -3156,6 +3208,17 @@ function parseEarthquake(line) {
 // (median gap between CH calls) for the "next cast due" countdown.
 let _chChain = null;
 const CH_CHAIN_IDLE_RESET_MS = 5 * 60 * 1000;
+// CH chain "0X GO" TTS (#103, guild-lead ask: '"04 GO" would be enough. Give
+// it a button to toggle that on or off'). When the chain reaches a slot owned
+// by one of THIS machine's watched characters, we speak "0N GO" through the
+// trigger pipeline (a _pushOverlay fire the trigger overlay speaks — reuses
+// the existing TTS surface, so the master enableTriggerTts flag still gates
+// it). This flag is the dedicated per-feature toggle (default ON), flipped by
+// the button on the CH chain overlay via POST /api/chchain/go-tts; the overlay
+// persists the choice in localStorage and re-POSTs on load + on any drift so
+// the setting survives an agent restart.
+let _chGoTtsEnabled = true;
+let _lastChGoNum    = null;   // debounce: the slot we last announced "GO" for
 // Speaker + quoted body from public-channel lines (shout/say/raid/guild,
 // incoming and outgoing — outgoing resolves "You" to the watched character).
 const _CH_SPEAKER_RX = /^\[[^\]]+\]\s+(\S+)\s+(?:shouts?|says?(?:\s+out of character)?|tells?\s+(?:the|your)\s+(?:raid|guild|group|party))[^,']*,\s*'(.+)'\s*$/i;
@@ -3273,6 +3336,7 @@ function trackChChainLine(line, character) {
     const nums = Object.keys(c.slots).map(Number);
     c.nextNum = num >= Math.max.apply(null, nums) ? Math.min.apply(null, nums) : num + 1;
     c.updatedAt = atMs;
+    _maybeAnnounceChGo(c, atMs);
     return;
   }
   // Personal heal-cast broadcast — no slot number in the raw line at all.
@@ -3308,6 +3372,7 @@ function trackChChainLine(line, character) {
       const nums = Object.keys(c.slots).map(Number);
       c.nextNum = num >= Math.max.apply(null, nums) ? Math.min.apply(null, nums) : num + 1;
       c.updatedAt = atMs;
+      _maybeAnnounceChGo(c, atMs);
     } else if (_chChain) {
       // Not a CH-equivalent — a one-off spot heal riding alongside an
       // ALREADY-running chain. Never conjures a chain of its own (mirrors
@@ -3330,6 +3395,7 @@ function trackChChainLine(line, character) {
       // message happens it should show up on that healer's CH bubble").
       _chChain.lastGo = { num, atMs, by: speaker };
       _chChain.updatedAt = atMs;
+      _maybeAnnounceChGo(_chChain, atMs);
     }
   }
 }
@@ -3402,6 +3468,13 @@ function chChainSnapshot() {
     const casedSinceGo = slot && slot.lastAtMs && slot.lastAtMs > g.atMs;
     if (!casedSinceGo && (Date.now() - g.atMs) < tuneNum('ch_go_display_sec', CH_GO_DISPLAY_MS / 1000) * 1000) lastGo = g;
   }
+  // Slot numbers owned by one of THIS machine's watched characters — lets the
+  // overlay mark "your" row and lets the GO-toggle button show/hide sensibly.
+  const youNums = [];
+  for (const nStr of Object.keys(_chChain.slots)) {
+    const s = _chChain.slots[nStr];
+    if (s && _isOwnCharacterName(s.name)) youNums.push(Number(nStr));
+  }
   return {
     target:     _chChain.target,
     slots:      _chChain.slots,
@@ -3413,7 +3486,55 @@ function chChainSnapshot() {
     slipped,
     spot_heal:  spotHeal,
     last_go:    lastGo,
+    you_nums:   youNums,
+    // Current state of the dedicated "0X GO" TTS toggle, echoed so the overlay
+    // button can reconcile its localStorage choice after an agent restart.
+    go_tts:     _chGoTtsEnabled,
   };
+}
+
+// True when `name` matches one of the characters this agent is tailing (the
+// uploader + any boxed windows). Case-insensitive exact match — deliberately
+// NOT prefix, so a nickname collision can't mis-attribute a slot.
+function _isOwnCharacterName(name) {
+  if (!name) return false;
+  const lc = String(name).toLowerCase();
+  return (stats.watchedLogs || []).some(w => w && w.character && String(w.character).toLowerCase() === lc);
+}
+
+// CH chain "0N GO" callout (#103). Called after every point that advances
+// _chChain.nextNum. When the on-deck slot (nextNum) is owned by one of our
+// watched characters — i.e. the chain has reached YOUR beat — speak "0N GO"
+// through the trigger pipeline. Debounced on the slot number so a slot only
+// announces once per rotation pass (nextNum cycles 1..N; each transition INTO
+// a new number can announce, re-entry to the same number can't back-to-back).
+// The master enableTriggerTts flag is honored downstream by the trigger
+// overlay (it speaks recentTriggerFires only when TTS is on); this dedicated
+// toggle (_chGoTtsEnabled, default ON) is the per-feature gate.
+function _maybeAnnounceChGo(c, atMs) {
+  if (!c || c.nextNum == null) return;
+  const num = c.nextNum;
+  if (_lastChGoNum === num) return;   // same on-deck slot — nothing new
+  _lastChGoNum = num;                 // advance the debounce cursor for ALL slots
+  if (!_chGoTtsEnabled) return;
+  const slot = c.slots && c.slots[num];
+  if (!slot || !_isOwnCharacterName(slot.name)) return;
+  const label = String(num).padStart(3, '0') + ' GO';
+  // A text_overlay-shaped fire on the trigger overlay's ring buffer: the
+  // trigger overlay window flashes `text` and speaks `tts` (gated on
+  // enableTriggerTts). No new SpeechSynthesis path — this IS the trigger TTS.
+  _pushOverlay({
+    text:        label,
+    tts:         label,
+    color:       'green',
+    duration_ms: 4000,
+    shownAt:     atMs || Date.now(),
+    firedAt:     Date.now(),
+    trigger:     'CH GO',
+    scope:       'guild',
+    test:        false,
+  });
+  scheduleRender();
 }
 
 // Off-heal candidates — raiders taking repeated single-target damage right
@@ -3687,6 +3808,49 @@ function trackDefensiveDiscLine(line, character) {
   _recordProt(key, name, 'Defensive', atMs, up, up ? DEFENSIVE_DISC_SECS : null);
 }
 
+// ── #105 timeline signals: slows + disciplines ──────────────────────────────
+// SLOW identification is a small NAMED list, not a catalog attribute: the
+// agent's spell catalog (id/name/dur/durf/good/ds/heal) carries no attack-speed
+// (SPA 11) marker, so there's nothing catalog-side to key on. These are the
+// well-attested Luclin-era single-target slows (shaman + enchanter lines); EQ
+// logs write possessives with a backtick, so we normalize `→' before matching.
+// Adding a slow is a one-line addition here.
+const SLOW_SPELLS = new Set([
+  // Shaman
+  'drowsy', 'walking sleep', "tagar's insects", "togor's insects", "turgur's insects", 'cripple',
+  // Enchanter
+  'languid pace', 'shiftless deeds', 'tepid deeds', 'forlorn deeds',
+]);
+function _isSlowSpell(name) {
+  if (!name) return false;
+  return SLOW_SPELLS.has(String(name).toLowerCase().replace(/`/g, "'").trim());
+}
+
+// DISCIPLINE activations surface as bystander-visible emote lines. Data-driven:
+// each row is { name, self, other } where `other` captures the actor in group 1.
+// The four "fighting style" stance discs are grounded — Defensive's exact text
+// is verified in-repo (trackDefensiveDiscLine above); Evasive / Precision /
+// Aggressive share the identical server grammar. Non-stance discs (Fortitude,
+// Furious, Mighty Strike, Weapon Shield, Holyforge, Sanctification, Whirlwind,
+// …) had no reliable bystander emote in this era; add each as one row here once
+// its exact emote text is confirmed (and widen the cheap gate in _matchDiscLine
+// if the new text doesn't contain "fighting style").
+const DISC_LINES = [
+  { name: 'Defensive',  self: /\bYou assume a defensive fighting style\b/i,   other: /\b(\w+) assumes a defensive fighting style\b/i },
+  { name: 'Evasive',    self: /\bYou assume an evasive fighting style\b/i,    other: /\b(\w+) assumes an evasive fighting style\b/i },
+  { name: 'Precision',  self: /\bYou assume a precise fighting style\b/i,     other: /\b(\w+) assumes a precise fighting style\b/i },
+  { name: 'Aggressive', self: /\bYou assume an aggressive fighting style\b/i, other: /\b(\w+) assumes an aggressive fighting style\b/i },
+];
+function _matchDiscLine(line, selfName) {
+  if (!line || line.indexOf('fighting style') === -1) return null;   // cheap gate — all current rows are stance discs
+  for (const d of DISC_LINES) {
+    if (d.self.test(line)) return { name: d.name, actor: selfName || 'You' };
+    const mm = d.other.exec(line);
+    if (mm) return { name: d.name, actor: mm[1] };
+  }
+  return null;
+}
+
 // ── Raid-wide healer/caster mana roster ─────────────────────────────────────
 // Self-reported "N% mana" status tickers many healers run on a macro —
 // actual examples from guild raid chat: "Druid -- current mana 45%.",
@@ -3845,6 +4009,74 @@ function trackRollLine(line, character) {
   }
 }
 
+// #91 — "You have looted" capture (who ACTUALLY loots). All raid loot is
+// no-drop, so on a re-roll or a pass the winner of the ROLL isn't always who
+// ends up with the item — the looter's OWN log is the only truth. The classic
+// EQ line is self-only (`--You have looted a <Item>.--`); no other player's
+// loot echoes into this log, so the looter is always this log's character. We
+// strip the leading "a "/"an " article so the item name lines up with the
+// loot-link roll convention for read-time attribution on the site.
+const _LOOTED_RX = /--You have looted (.+?)\.--/;
+const lootedBuffer   = [];         // pending { item, looter, zone, atMs }
+let   _lootedUploadHW = 0;         // high-water: last uploaded looted atMs
+const _lootedRecentFp = new Map(); // fp → atMs; drop the same loot re-seen quickly
+
+function trackLootedLine(line, character) {
+  if (!line || !character || line.indexOf('You have looted') === -1) return;   // cheap gate
+  const m = line.match(_LOOTED_RX);
+  if (!m) return;
+  const item = m[1].replace(/^an?\s+/i, '').trim();   // drop the "a "/"an " article
+  if (!item || item.length < 2) return;
+  const ts = parseEqTimestamp(line);
+  const atMs = ts ? ts.getTime() : Date.now();
+  const cl = String(character).toLowerCase();
+  // Restart/re-read dedup: the same character looting the same item within a few
+  // seconds is one loot re-seen (a tail re-read), not two distinct loots.
+  const fp = cl + '|' + item.toLowerCase() + '|' + Math.round(atMs / 1000);
+  const seen = _lootedRecentFp.get(fp);
+  if (seen && Math.abs(seen - atMs) < 10000) return;
+  _lootedRecentFp.set(fp, atMs);
+  if (_lootedRecentFp.size > 200) {
+    const cutoff = Date.now() - 60000;
+    for (const [k, v] of _lootedRecentFp) if (v < cutoff) _lootedRecentFp.delete(k);
+  }
+  let zone = null;
+  for (const ch of Object.keys(_zealState || {})) {
+    if (String(ch).toLowerCase() === cl) { zone = _zealState[ch].zone || null; break; }
+  }
+  lootedBuffer.push({
+    item:   item.slice(0, 64),
+    looter: String(character).slice(0, 32),
+    zone:   zone ? String(zone).slice(0, 64) : null,
+    atMs,
+  });
+  if (lootedBuffer.length > 200) lootedBuffer.splice(0, lootedBuffer.length - 200);
+}
+
+// Upload recently-looted items. Mirrors uploadRollSets' recency discipline:
+// only events newer than the high-water mark AND within the last 30 min go up,
+// so a `--since` backfill (which replays OLD-timestamped loot lines through the
+// same tail dispatch) never uploads — its atMs is far older than 30 min. The
+// bot upserts by (guild, looter, item, looted_at) so a restart re-read collapses.
+function uploadLooted() {
+  if (!_uploadOpts || _uploadOpts.dryRun || !_isUploaderInstance) return;
+  const now = Date.now();
+  const fresh = lootedBuffer.filter(e => e.atMs > _lootedUploadHW && (now - e.atMs) < 30 * 60 * 1000);
+  if (fresh.length > 0) {
+    _lootedUploadHW = Math.max(_lootedUploadHW, ...fresh.map(e => e.atMs));
+    enqueueUpload('looted', {
+      agent_version: AGENT_VERSION,
+      events: fresh.map(e => ({ item: e.item, looter: e.looter, zone: e.zone, at: new Date(e.atMs).toISOString() })),
+    });
+  }
+  // Bound the buffer — drop anything already uploaded or past the 30-min window
+  // (the HW mark prevents re-upload regardless of what stays).
+  for (let i = lootedBuffer.length - 1; i >= 0; i--) {
+    const e = lootedBuffer[i];
+    if (e.atMs <= _lootedUploadHW || (now - e.atMs) >= 30 * 60 * 1000) lootedBuffer.splice(i, 1);
+  }
+}
+
 // Loot-link lines in raid/guild chat: `Blue Resistance Stone 111| Boots of the
 // Ancients 222 | Primal Velium Battlehammer (3)333 | ...` — each |-separated
 // segment ends with that item's roll number, optionally preceded by (qty).
@@ -3976,8 +4208,11 @@ function _noteWhoRunName(name) {
   if (_whoRun && !_whoRun.complete && name) _whoRun.names.add(String(name).toLowerCase());
 }
 
-// Anon de-anon cache: lower → { at, data|null }. data = { class, level, guild,
-// is_zek, last_seen } from the bot's merged who history.
+// Who-lookup cache: lower → { at, data|null }. data = { class, level, guild,
+// is_zek, last_seen } from the bot's merged who history (the de-anon fields),
+// plus the #111 guild-member enrichments { main, mimic } — main-in-parens and
+// Mimic presence, resolved server-side (mimic from the live reporter registry,
+// main honoring the officer hide list).
 const _whoLookupCache = new Map();
 const _whoLookupInflight = new Set();
 const WHO_LOOKUP_TTL_MS = 5 * 60 * 1000;
@@ -4076,16 +4311,26 @@ function buildWhoSnapshot() {
   }
   if (!currentNames || !currentNames.size) return null;
   const RECENT_GONE_MS = 30 * 60 * 1000;
-  const current = [], gone = [], anonNeeded = [];
-  // De-anon an anon row from the lookup cache, or queue a fetch. Applied to
-  // BOTH current and recently-gone rows — the gone list used to skip this
-  // entirely, so a raider who just /anon'd and walked off still showed a bare
-  // "anon" with no class even though we had it (Uilnayar 2026-07-14, Camping).
-  const deanon = (entry, v, k) => {
-    if (!v.anonymous) return;
-    const known = _whoLookupCache.get(k);
-    if (known && (now - known.at) < WHO_LOOKUP_TTL_MS) entry.known = known.data || null;
-    else anonNeeded.push(v.name);
+  const current = [], gone = [], lookupNeeded = [];
+  // Enrich a row from the bot's who-lookup cache. Anon rows get de-anon'd
+  // (class/level/guild/Zek → entry.known); the gone list is included too, so a
+  // raider who just /anon'd and walked off still shows the class we had
+  // (Uilnayar 2026-07-14, Camping). PLUS (#111) EVERY row can pick up two
+  // guild-member enrichments — the main-in-parens (entry.main) and Mimic
+  // presence (entry.mimic) — so a member showing normally still gets their 🐺
+  // and (Main). We now queue a lookup for ANY row without a fresh cache hit
+  // (previously only anon rows), batched into one request by fetchWhoLookup.
+  // Fail-open: a bot miss/outage just renders the row exactly as before.
+  const enrich = (entry, v, k) => {
+    const cached = _whoLookupCache.get(k);
+    const fresh = cached && (now - cached.at) < WHO_LOOKUP_TTL_MS;
+    const data = fresh ? (cached.data || null) : null;
+    if (v.anonymous) entry.known = data;              // de-anon fallback
+    if (data) {
+      if (data.main)  entry.main  = data.main;        // #111 main-in-parens
+      if (data.mimic) entry.mimic = true;             // #111 wolf icon
+    }
+    if (!fresh) lookupNeeded.push(v.name);            // resolve enrichment for every row
   };
   for (const [k, v] of whoData) {
     const entry = {
@@ -4093,14 +4338,14 @@ function buildWhoSnapshot() {
       guild: v.guild || null, anonymous: !!v.anonymous, gm: !!v.gm, observedAt: v.observedAt || null,
     };
     if (currentNames.has(k)) {
-      deanon(entry, v, k);
+      enrich(entry, v, k);
       current.push(entry);
     } else {
       const tt = Date.parse(v.observedAt || 0) || 0;
-      if (tt && (now - tt) <= RECENT_GONE_MS) { deanon(entry, v, k); gone.push(entry); }
+      if (tt && (now - tt) <= RECENT_GONE_MS) { enrich(entry, v, k); gone.push(entry); }
     }
   }
-  if (anonNeeded.length) fetchWhoLookup(anonNeeded);
+  if (lookupNeeded.length) fetchWhoLookup(lookupNeeded);
   current.sort(_threatSort);
   gone.sort((a, b) => (Date.parse(b.observedAt || 0) || 0) - (Date.parse(a.observedAt || 0) || 0));
   return {
@@ -4316,6 +4561,12 @@ class EncounterBuilder {
     // this fight. Deduped via _tlSeen. Trigger fires are merged in at flush.
     this.timelineEvents    = [];
     this._tlSeen           = new Set();
+    // #105 — slow debuffs tracked on THIS fight's target (spellLower →
+    // {name,landedAtMs,expiresAtMs}); slow_on is emitted on land, slow_off at
+    // flush when the estimated expiry fell inside the fight window. Plus a
+    // per-target debounce for mob self-heal ticks (Zeal-gauge sourced).
+    this._slowsOnTarget    = new Map();
+    this._mobHealDebounce  = new Map();
     // petLeaders and lastDirgeCast intentionally NOT reset — persists for the agent's runtime
   }
   // ── Callout-replay timeline (#98) ──────────────────────────────────────────
@@ -4344,6 +4595,17 @@ class EncounterBuilder {
         label: (mob || 'The mob') + ' ENRAGED',
       });
     }
+    // #105 — discipline activation emotes (third-person + self forms). Both
+    // attribute to the right actor (self → this builder's character). Data-
+    // driven via DISC_LINES so a new disc is a one-line addition.
+    const disc = _matchDiscLine(line, this.character);
+    if (disc) {
+      this.noteTimelineEvent({
+        at: new Date(tsMs || Date.now()).toISOString(),
+        kind: 'raid_event', subtype: 'disc', actor: disc.actor || null,
+        label: disc.name + ' — ' + (disc.actor || 'Someone'),
+      });
+    }
   }
   // Merge this fight's raid events with the trigger FIRES that fell inside its
   // window (the "did the callout fire?" half — covers Death Touch + every
@@ -4363,8 +4625,81 @@ class EncounterBuilder {
           });
         }
       }
+      // #105 — slow_off: a slow whose estimated expiry fell INSIDE the fight
+      // (mob outlived the slow) reads as a "re-slow needed" cue. Slows still up
+      // at the kill (expiry after the fight end) emit nothing. Estimated off the
+      // era-cap caster level, so the tick is approximate — a timeline cue, not a
+      // precise timer.
+      if (this._slowsOnTarget) {
+        for (const s of this._slowsOnTarget.values()) {
+          if (s && s.expiresAtMs > 0 && s.expiresAtMs >= startMs && s.expiresAtMs <= endMs) {
+            out.push({
+              at: new Date(s.expiresAtMs).toISOString(), kind: 'raid_event',
+              subtype: 'slow_off', actor: null,
+              label: 'Slow fell off — ' + s.name,
+            });
+          }
+        }
+      }
     }
     return out.length ? out.slice(0, 500) : undefined;
+  }
+  // #105 — Does this fight's target match `name`? True when it equals the
+  // catalog-matched boss OR any name we've dealt damage to this fight. Used to
+  // gate slow + mob-heal events so trash/off-target chatter never lands on the
+  // board.
+  _fightTargetMatches(name) {
+    if (!name) return false;
+    const nl = String(name).toLowerCase();
+    if (this.bossName && String(this.bossName).toLowerCase() === nl) return true;
+    for (const t of this.targets.keys()) {
+      if (String(t).toLowerCase() === nl) return true;
+    }
+    return false;
+  }
+  // #105 — A slow debuff landing on the CURRENT fight target → a slow_on tick,
+  // and its estimated expiry is tracked for a later slow_off (computed at flush).
+  // `caster` is known only for our own casts (self-cast path); a bystander-
+  // observed slow passes null and the label omits the caster.
+  noteSlowLanding(evt, caster) {
+    if (!evt || !evt.spell_name || !evt.target) return;
+    if (!_isSlowSpell(evt.spell_name)) return;
+    if (!this._fightTargetMatches(evt.target)) return;
+    const atMs = evt.cast_at ? (Date.parse(evt.cast_at) || Date.now()) : Date.now();
+    // Slows are detrimental — the caster's level is unknown at land time, so
+    // estimate duration off the era cap (the same floor the buff tracker uses).
+    const durTicks = _durTicksForLevel(evt.dur_formula, evt.dur_ticks, _assumedCasterLevel());
+    const expiresAtMs = durTicks > 0 ? atMs + durTicks * 6000 : 0;
+    const key = String(evt.spell_name).toLowerCase();
+    const existing = this._slowsOnTarget.get(key);
+    // A re-slow before expiry just refreshes the window — no duplicate slow_on.
+    if (existing && existing.expiresAtMs > atMs) {
+      if (expiresAtMs) existing.expiresAtMs = expiresAtMs;
+      existing.landedAtMs = atMs;
+      return;
+    }
+    this._slowsOnTarget.set(key, { name: evt.spell_name, landedAtMs: atMs, expiresAtMs });
+    this.noteTimelineEvent({
+      at: new Date(atMs).toISOString(),
+      kind: 'raid_event', subtype: 'slow_on', actor: caster || null,
+      label: 'Slow landed — ' + evt.spell_name + (caster ? ' (' + caster + ')' : ''),
+    });
+  }
+  // #105 — Mob self/assisted heal observed from the Zeal target gauge (rise
+  // detection + guardrails live in _noteMobHealFromState). Debounced per target
+  // so one heal doesn't emit a burst of ticks.
+  noteMobHeal(name, rise, atMs) {
+    if (!name || !(rise > 0)) return;
+    const key = String(name).toLowerCase();
+    const now = atMs || Date.now();
+    const last = this._mobHealDebounce.get(key) || 0;
+    if (now - last < MOB_HEAL_DEBOUNCE_MS) return;
+    this._mobHealDebounce.set(key, now);
+    this.noteTimelineEvent({
+      at: new Date(now).toISOString(),
+      kind: 'raid_event', subtype: 'mob_heal', actor: null,
+      label: 'Mob healed (+' + Math.round(rise) + '%)',
+    });
   }
   _bumpDefender(name, key, amount, tsMs) {
     if (!name) return;
@@ -6628,6 +6963,7 @@ function _endpointForKind(kind, botUrl) {
     case 'threat_snapshot': return base + '/threat-snapshot';
     case 'raid_roster':     return base + '/raid-roster';
     case 'rolls':           return base + '/rolls';
+    case 'looted':          return base + '/looted';
     case 'trigger':         return base + '/trigger';
     case 'trigger_relay':   return base + '/trigger-relay';
     case 'quake':           return base + '/quake';
@@ -6734,6 +7070,15 @@ function _maybeUploadRaidRoster(sample) {
       _raidRosterMembers.add(lower);
       if (m.class) _raidClassByName.set(lower, String(m.class));
     }
+    // #72 P1c: the raid ROSTER snapshot is redundant across a group (composition
+    // is identical from every raider's view; HP is per-group and any group
+    // member's Zeal gauges carry it), so only the elected per-group reporter
+    // uploads it. Non-reporters keep their LOCAL state fresh above (triggers +
+    // dashboard) but skip the upload — and skip the debounce below, so on
+    // re-election the next pipe fire uploads immediately. Fail-open: roles.roster
+    // defaults TRUE and resets TRUE on any poll failure (same staleness rule as
+    // the chat/buffs gates), so a lost elector = everyone uploads.
+    if (!_reporterRoles.roster) return;
     // Hash composition only — NOT HP. HP changes constantly in combat and we
     // don't want every 1% drop to fire an upload. The heartbeat refreshes HP on
     // a fixed cadence (RAID_ROSTER_HP_HEARTBEAT_MS) so the /raid page + Tank
@@ -6767,6 +7112,11 @@ function enqueueUpload(kind, payload) {
   // drops outbound uploads so the same line isn't posted twice. Its local
   // dashboard still works — local stats come from parseEvent, not the queue.
   if (!_isUploaderInstance) return null;
+  // #74 dormancy: durable events still enqueue (the paused drain HOLDS them —
+  // nothing lost); ephemeral latest-wins streams (casting/raid_roster/
+  // threat_snapshot) are dropped so a long dormancy can't pile them up behind
+  // the hold. A stale ephemeral snapshot is worthless anyway.
+  if (_EPHEMERAL_KINDS.has(kind) && _controlStandDown().down) return null;
   // Collapse/shed ephemeral latest-wins streams BEFORE the cap check so a
   // stalled drain can't let them accumulate (and so collapsing might bring us
   // back under the cap, sparing a durable entry from eviction). raid_roster is
@@ -6891,12 +7241,25 @@ function _doOneUpload(entry) {
       res.on('data', c => data += c);
       res.on('end', () => {
         const sc = res.statusCode || 0;
+        // Retry-After (seconds or HTTP-date) — the bot sends this with a 429
+        // (admission-control backpressure, bot 3.0.208+). Parse it here while
+        // the response headers are in scope so the drain can wait exactly as
+        // long as asked instead of walking the blind exponential ladder.
+        let retryAfterMs = null;
+        const ra = res.headers && res.headers['retry-after'];
+        if (ra != null) {
+          const secs = Number(ra);
+          if (Number.isFinite(secs)) retryAfterMs = Math.max(0, secs * 1000);
+          else { const t = Date.parse(ra); if (Number.isFinite(t)) retryAfterMs = Math.max(0, t - Date.now()); }
+        }
         if (sc >= 200 && sc < 300) {
           resolve({ ok: true,  permanent: false, statusCode: sc, body: data });
         } else if (QUEUE_PERMANENT_CODES.has(sc)) {
           resolve({ ok: false, permanent: true,  statusCode: sc, body: data });
         } else {
-          resolve({ ok: false, permanent: false, statusCode: sc, body: data });
+          // 429 is NOT a permanent code, so a rate-limited upload is retried,
+          // never dropped — Retry-After just makes the wait precise.
+          resolve({ ok: false, permanent: false, statusCode: sc, body: data, retryAfterMs });
         }
       });
     });
@@ -6937,6 +7300,11 @@ async function _drainUploadQueue(opts = {}) {
   const force = opts.force === true;
   if (_queueDraining) return;
   if (!_queueUploadOpts) return;
+  // #74 guild control plane: while dormant (fleet kill) or below the version
+  // floor, HOLD the durable queue — pause the drain, never drop. force ("drain
+  // now" from the dashboard) still bypasses. The held queue resumes on the next
+  // pass once the flag clears (within one heartbeat).
+  if (!force && _controlStandDown().down) return;
   // Read-only instance: don't replay the persisted queue either (it may hold
   // entries from a prior run, and the active uploader is covering live data).
   // Draining resumes automatically if this instance takes over the lock — or
@@ -7020,18 +7388,28 @@ async function _drainUploadQueue(opts = {}) {
         // parked entry still retries (rarely), and "drain now" un-parks all.
         // Gated on a recent success so a genuine outage (nothing succeeding)
         // walks the normal backoff ladder and resumes at full speed on recovery.
+        // 429 is backpressure (admission control), NOT a payload the bot
+        // rejects — never park a rate-limited upload to the slow lane, or a
+        // busy raid window would strand durable data for 30m at a time.
         if (!entry.parked
+            && result.statusCode !== 429
             && entry.attempts >= QUEUE_PARK_AFTER_ATTEMPTS
             && _lastUploadSuccessAt > 0
             && (Date.now() - _lastUploadSuccessAt) < QUEUE_PARK_HEALTHY_WINDOW_MS) {
           entry.parked = true;
           console.warn(`[upload-queue] PARKING ${entry.kind} after ${entry.attempts} failures (pipe healthy — likely a payload the bot rejects): ${entry.last_error}`);
         }
-        const backoffMs = entry.parked
+        let backoffMs = entry.parked
           ? QUEUE_PARK_RETRY_MS
           : isTransport
             ? 30_000
             : QUEUE_BACKOFF_MS[Math.min(entry.attempts - 1, QUEUE_BACKOFF_MS.length - 1)];
+        // Honor a 429's Retry-After when the bot supplied one: wait exactly as
+        // long as asked (min 1s), still capped at the existing 10-min ceiling so
+        // a bogus header can't strand the queue.
+        if (result.statusCode === 429 && Number.isFinite(result.retryAfterMs)) {
+          backoffMs = Math.min(Math.max(result.retryAfterMs, 1000), QUEUE_BACKOFF_MS[QUEUE_BACKOFF_MS.length - 1]);
+        }
         entry.next_try_at = Date.now() + backoffMs;
         stats.uploadErrors++;
         if (entry.attempts === 1 || entry.attempts === 5 || entry.attempts === 20) {
@@ -7467,6 +7845,18 @@ function isNewerVersion(a, b) {
     if ((pa[i] || 0) < (pb[i] || 0)) return false;
   }
   return false;
+}
+
+// Collapse a semver-ish version to ONE comparable integer for the guild version
+// floor (#74): major*10000 + minor*100 + patch, so 3.3.85 → 30385. The officer
+// types the same numeric form into min_agent_ver_num on /admin/overlays. Assumes
+// minor/patch < 100 (true for this project's cadence — patch resets per minor
+// line). Non-numeric / missing → 0 (fail-open: a 0 floor never stands anyone
+// down). Mirrored by test/version-floor.test.js (upgrade to a source-slice when
+// the beta agent graduates to stable).
+function _verNum(v) {
+  const p = String(v || '').split('.').map(n => parseInt(n, 10) || 0);
+  return (p[0] || 0) * 10000 + (p[1] || 0) * 100 + (p[2] || 0);
 }
 
 function openDashboardInBrowser(port) {
@@ -8650,6 +9040,14 @@ function _serializeForDashboard() {
     // session token, refreshed on every latest-version poll, so the
     // signal flips to true within a few seconds of a successful sign-in.
     mimicSignedIn:      !!(_mimicSessionToken && _mimicIdentity),
+    // #120 — token present (signed in) but identity may not be confirmed yet.
+    // Lets the header show a soft "verifying" state instead of the hard "not
+    // signed in" banner, and gate the scary banner on the no-token case only.
+    mimicHasToken:      !!_mimicSessionToken,
+    // How long we've had NO session token (ms). 0 while a token is present.
+    // The dashboard holds the "Not signed in" banner until this exceeds a grace
+    // window, so an agent restart / pre-push gap never flashes it (#120).
+    mimicSignedOutMs:   _mimicSessionToken ? 0 : Math.max(0, Date.now() - (_mimicNoTokenSince || Date.now())),
     mimicIdentity:      _mimicIdentity,
     // Officer-only DKP loot capture — item lists seen in /gu + /rs, ready to
     // review + post. Gated on the signed-in officer flag so a non-officer's
@@ -8706,7 +9104,25 @@ function _serializeForDashboard() {
     // #72 designated-reporter election — which shared streams THIS machine is
     // currently elected to upload. All-true = fail-open (election off / old bot
     // / no answer yet). electionOn=true means the bot is actively assigning.
-    reporter: { roles: _reporterRoles, electionOn: _reporterElectionOn },
+    // camping=true while a /camp is in progress (demoted from candidacy early).
+    reporter: { roles: _reporterRoles, electionOn: _reporterElectionOn, camping: _camping },
+    // #74 guild control plane — dormancy / version-floor stand-down. Drives the
+    // dashboard banner. Fail-open: down=false when the bot hasn't spoken or is
+    // unheard past the TTL. reason: 'kill' | 'floor' | null.
+    controlPlane: (() => {
+      const sd = _controlStandDown();
+      return { down: sd.down, reason: sd.reason, minVerNum: _controlPlane.minVerNum, myVerNum: _verNum(AGENT_VERSION) };
+    })(),
+    // #106 multiplexed poll — one GET replacing the six per-client poll loops.
+    // mode 'multiplexed' normally; 'fallback' after a 404/old-bot detection (this
+    // process runs the individual loops instead). lastJitterMs is the most recent
+    // encounter-upload burst jitter applied (0 = none / small solo parse).
+    poll: {
+      mode:         _pollSupported === false ? 'fallback' : 'multiplexed',
+      supported:    _pollSupported,
+      lastOkAt:     _pollOkAt || null,
+      lastJitterMs: stats._lastEncounterJitterMs || 0,
+    },
     // Charm-pet tick tracker — array form so the dashboard can render
     // a 6s countdown to next mob tick / next charm check. Sorted most-
     // recently-updated first; capped to 12 to keep the payload small.
@@ -8855,6 +9271,83 @@ function _serializeForDashboard() {
           broke_at:      info.broke_at,
         });
       }
+      return out;
+    })(),
+    // Pet-buff diagnostic (#119) — the pet-tracker analogue of charmDiag.
+    // Walks the same pipeline a pet buff must traverse (pet identified →
+    // cast seen → landing resolved → attributed → overlay fetch) so a "no
+    // buffs on the Pet tracker" field report is self-evident. Renders on the
+    // Triggers tab as a "🐾 Pet-buff diagnostic" card, hidden until there's
+    // a pet or a recent buff cast to explain.
+    petBuffDiag: (() => {
+      const now = Date.now();
+      const out = { now, pets: [], recent_casts: [], attributed: [], overlay: [], ring: [] };
+      const ownersSeen = new Set();
+      // 1) Pet identified? — the exact sources _petOwnerByName consults:
+      //    the charm tracker (authoritative for charm pets) and Zeal slot 16
+      //    (summoned + charm). petLeaders is the COMBAT/DPS-meter attribution
+      //    source and is deliberately NOT consulted for buffs, so it is not
+      //    shown here (a buff never keys off petLeaders).
+      for (const ch of Object.keys(_zealState)) {
+        const st = _zealState[ch];
+        if (!st || !Array.isArray(st.gauges)) continue;
+        const petG = st.gauges.find(g => g && g.slot === 16 && g.text);
+        if (!petG) continue;
+        const petName = String(petG.text);
+        const articled = /^(?:an?|the)\s+/i.test(petName);
+        out.pets.push({
+          owner: String(ch).toLowerCase(), pet: petName, source: 'zeal-slot-16',
+          kind: articled ? 'charm (articled)' : 'summoned',
+          resolves: _petOwnerByName(petName.toLowerCase()) || null,
+        });
+        ownersSeen.add(String(ch).toLowerCase());
+      }
+      for (const [petLower, ct] of _charmTickTracker.entries()) {
+        if (!ct || !ct.is_active || !ct.owner) continue;
+        out.pets.push({ owner: String(ct.owner).toLowerCase(), pet: ct.pet || petLower, source: 'charm-tracker', kind: 'charm', resolves: String(ct.owner).toLowerCase() });
+        ownersSeen.add(String(ct.owner).toLowerCase());
+      }
+      // 2) Cast seen? — recent self-casts (30s) that are catalog buffs. This
+      //    is the self-cast path's ONLY input: empty means nothing to
+      //    attribute (an INSTANT clicky logs no "You begin casting" line, or
+      //    the buff was cast by another box/player). expected_suffix is the
+      //    exact cast_on_other text EQ prints — what to eyeball for in the log.
+      for (const [chLower, arr] of _recentSelfCast.entries()) {
+        for (const rc of (arr || [])) {
+          if (!rc || !rc.spellLower) continue;
+          if (now - rc.atMs > 30_000) continue;
+          const e = _spellByNameLower.get(rc.spellLower);
+          out.recent_casts.push({
+            character: chLower, spell: rc.name, ago_secs: Math.round((now - rc.atMs) / 1000),
+            target: rc.target || null, in_catalog: !!e,
+            expected_suffix: (e && e.other) ? String(e.other) : null,
+            tracked: _isTrackedBuffName(rc.name),
+          });
+        }
+      }
+      out.recent_casts.sort((a, b) => a.ago_secs - b.ago_secs);
+      out.recent_casts = out.recent_casts.slice(0, 8);
+      // 3) Attributed? — the _petBuffLandings store keyed by owner.
+      for (const [ownerLower, mp] of _petBuffLandings.entries()) {
+        ownersSeen.add(ownerLower);
+        const buffs = [];
+        for (const [, b] of mp) buffs.push({ name: b.name, dur_ticks: b.dur_ticks, landed_ago_secs: Math.round((now - (b.landed_at || now)) / 1000) });
+        out.attributed.push({ owner: ownerLower, buffs });
+      }
+      // 4) Overlay fetch? — petBuffsForOwner, the EXACT source the Pet tracker
+      //    HUD reads. If steps 1-3 are green but this is empty, the overlay
+      //    fetch/render is the culprit, not attribution.
+      for (const ownerLower of ownersSeen) {
+        let buffs = [];
+        try { buffs = petBuffsForOwner(ownerLower) || []; } catch { buffs = []; }
+        out.overlay.push({ owner: ownerLower, buffs: buffs.map(b => ({ name: b.name, remaining_secs: b.remaining_secs, good: b.good, fell_off: !!b.fell_off })) });
+      }
+      // 5) Resolution ring — the last dozen landing outcomes (which resolver,
+      //    attributed or dropped + why). Newest first.
+      for (const r of _petBuffDiagRing) {
+        out.ring.push({ ago_secs: Math.round((now - r.ts) / 1000), ok: r.ok, resolver: r.resolver, spell: r.spell, target: r.target, owner: r.owner, reason: r.reason });
+      }
+      out.ring.reverse();
       return out;
     })(),
     // Bard melody — per watched character, the songs in /melody slot order
@@ -9302,6 +9795,9 @@ function _serializeForDashboard() {
       return rest;
     }),
     personalTriggerCount: (_personalTriggers || []).length,
+    // Trigger checkpoint journal (#76) — newest first, capped, for the Triggers
+    // tab diagnostic card. Pure in-memory; never persisted or uploaded.
+    triggerJournal:      _triggerJournal.slice(-60).reverse(),
     activeOverlays:      _activeOverlays,
     // Trigger fires for the Mimic trigger-alert overlay (triggers.html). It
     // dedupes on `ts` and speaks `tts || text`, so map the overlay ring buffer
@@ -9316,9 +9812,14 @@ function _serializeForDashboard() {
         scope:   o.scope,
         test:    !!o.test,
         sound:   o.sound || null,
+        sticky:  !!o.sticky,
+        rehearsal: !!o.rehearsal,
       };
     }),
     activeTimers:        _activeTimersSnapshot(),
+    // #107 loot-post announce prefs (dashboard Triggers-tab toggle + knob).
+    lootAuctionTts:        _optinState.lootAuctionTts !== false,
+    lootAuctionDefaultSec: _lootAuctionDefaultSec(),
     ..._serializeZealForWeb(),
 
     lifetime:           stats.lifetime,
@@ -9587,6 +10088,11 @@ body.wp-overlay-mode .wp-overlay-target table th:nth-child(2) { text-align:right
   <button data-tab="info">Info</button>
   <button data-tab="triggers">⚡ Triggers</button>
   <button data-tab="optin">Logsync</button>
+  <!-- 🛡 Admin — officer-only. Hidden by default; renderAdmin flips it visible
+       ONLY when s.mimicIdentity.is_officer (the bot's authenticated reply). The
+       officer-gated card DATA is served only to officers, so this is a real
+       gate, not a CSS hide. -->
+  <button data-tab="admin" id="wpAdminTab" style="display:none" title="Officer quick menu — DKP ticks, loot capture, admin links">🛡 Admin</button>
   <button id="wpGear" class="wp-gear" style="margin-left:auto" title="Customize panels — show or hide sections (per page)">⚙ Panels</button>
 </div>
 <div id="wpPanelMenu" class="wp-menu" style="display:none"></div>
@@ -9604,6 +10110,7 @@ body.wp-overlay-mode .wp-overlay-target table th:nth-child(2) { text-align:right
 <div id="info" class="section"></div>
 <div id="triggers" class="section"></div>
 <div id="optin" class="section"></div>
+<div id="admin" class="section"></div>
 <script>
 function _isNewerVersion(a, b) {
   if (!a || !b) return false;
@@ -9793,6 +10300,16 @@ function renderHeader(s) {
                 && s.latestAgentVersion !== s.version
                 && _isNewerVersion(s.latestAgentVersion, s.version);
   let h = '';
+  // #74 guild control-plane banner — fleet dormancy or version floor. Rides at
+  // the very TOP so it is visible on every tab. Uploads are paused (nothing
+  // lost); overlays keep working on each user LOCAL data so no HUD blanks. Static
+  // text → byte-stable across polls (no morph flicker), no details/wpKeep needed.
+  const cp = s.controlPlane || {};
+  if (cp.down && cp.reason === 'kill') {
+    h += '<div class="banner" style="background:#3b0a0a;color:#ffd0d0;border:1px solid #f85149">⏸ <b>Agent paused by guild control plane.</b> Uploads are held (nothing lost) and resume automatically when the guild clears the pause. Your overlays keep working on local data.</div>';
+  } else if (cp.down && cp.reason === 'floor') {
+    h += '<div class="banner" style="background:#3a2a0a;color:#f6c365;border:1px solid #6b5320">⚠ <b>Your agent is below the guild minimum</b> (v' + esc(s.version) + '). Uploads are paused until you update — press <b>[U]</b> or the ↻ Update button. Your overlays keep working on local data.</div>';
+  }
   if (hasNewer) h += '<div class="banner update">★ Update available — <button id="updateBtn" style="margin-left:8px;background:#fff;color:#000;border:0;padding:4px 12px;border-radius:4px;cursor:pointer;font-weight:bold">Install now</button></div>';
   if (s.sessionResumed)  h += '<div class="banner resumed">↻ Session resumed from previous run</div>';
   // Stale-backfill nudge. Lives in the header (always visible across tabs)
@@ -9825,12 +10342,31 @@ function renderHeader(s) {
   // probe other tabs use (process.env is Node-only — this code path runs in
   // the browser and crashed renderHeader as "process is not defined").
   const isMimicHosted = !!(window.mimic && window.mimic.openSettings);
+  // #120 sign-in banner. Three states, so a transient blip never flashes the
+  // scary red banner at a signed-in user:
+  //   • token + identity     → fully signed in, no banner (handled elsewhere).
+  //   • token, no identity   → "verifying" — uploads still land under the user;
+  //                            soft blue note, NOT "not signed in".
+  //   • no token, sustained  → genuinely signed out → red banner, but only
+  //                            AFTER a grace window (mimicSignedOutMs) so the
+  //                            agent-restart / pre-push startup gap (the agent
+  //                            boots token-less until Mimic re-pushes a second
+  //                            later) doesn't flash it every restart.
+  const SIGNIN_GRACE_MS = 8000;
   if (isMimicHosted && !s.mimicSignedIn) {
-    h += '<div class="banner" style="background:#3b0a0a;color:#ffb3b3;border:1px solid #f85149">'
-       + '⛓ <b>Not signed in to Discord.</b> Your parses won&rsquo;t upload and the guild can&rsquo;t see your stats. '
-       + 'Open Mimic Settings → <b>Wolf Pack account</b> to sign in with Discord. '
-       + '<button id="bannerOpenSettings" style="margin-left:8px;background:#fff;color:#000;border:0;padding:3px 10px;border-radius:4px;cursor:pointer;font-weight:bold;font-size:11px">Open Settings</button>'
-       + '</div>';
+    if (s.mimicHasToken) {
+      h += '<div class="banner" style="background:#10233b;color:#9fc7ff;border:1px solid #1f6feb">'
+         + '⛓ <b>Verifying your Discord sign-in…</b> Your uploads are still landing under your account; the guild view fills in as soon as the check completes. (If this never clears, open Mimic Settings → <b>Wolf Pack account</b>.)'
+         + '</div>';
+    } else if ((s.mimicSignedOutMs || 0) >= SIGNIN_GRACE_MS) {
+      h += '<div class="banner" style="background:#3b0a0a;color:#ffb3b3;border:1px solid #f85149">'
+         + '⛓ <b>Not signed in to Discord.</b> Your parses won&rsquo;t upload and the guild can&rsquo;t see your stats. '
+         + 'Open Mimic Settings → <b>Wolf Pack account</b> to sign in with Discord. '
+         + '<button id="bannerOpenSettings" style="margin-left:8px;background:#fff;color:#000;border:0;padding:3px 10px;border-radius:4px;cursor:pointer;font-weight:bold;font-size:11px">Open Settings</button>'
+         + '</div>';
+    }
+    // else: no token but still inside the grace window — hold; Mimic's session
+    // push almost always arrives within a second or two of the agent starting.
   }
   // No EQ logs to tail — the #1 "why is nothing happening" cause. We split it
   // into two sub-states so the fix is exact: (a) no EQ folder configured at all
@@ -9923,7 +10459,10 @@ function renderHeader(s) {
     if (s.mimicIdentity.is_officer) {
       identityChip += ' <a href="https://wolfpack.quest/admin" target="_blank" rel="noreferrer" style="color:var(--red);border:1px solid var(--red);border-radius:3px;font-size:11px;padding:2px 6px;text-decoration:none" title="Officer admin — links, agents, triggers, audits">🛡 Admin ↗</a>';
     }
-  } else if (s.mimicSignedIn) {
+  } else if (s.mimicHasToken) {
+    // Token present but the bot hasn't confirmed identity yet. This branch used
+    // to test s.mimicSignedIn, which REQUIRES identity — so it was unreachable
+    // and the "verifying" pill never showed (#120). Key it on the token.
     identityChip = ' · <span style="background:#1f6feb33;color:#58a6ff;border:1px solid #1f6feb;border-radius:3px;font-size:11px;padding:2px 6px;margin-left:4px" title="Linked but identity not yet refreshed — next bot poll will fill it in">⛓ signed in</span>';
   }
   h += '<div>' + (versionStr ? versionStr + ' · ' : '') + (s.uploadCount||0) + ' upload(s) this session · ' + s.sessionEvents + ' events in ' + sessionMin + ' min' + queueChip + identityChip + '</div>';
@@ -10076,10 +10615,20 @@ function renderHeader(s) {
 function renderDash(s) {
   let h = '';
 
-  // Setup checklist — the first thing on the Dashboard: is the engine actually
-  // wired to feed the raid tools? Each row is a known signal from /api/state.
-  // Self-updating #wpSetupChecks so its live ✓/✗ doesn't repaint the section.
-  h += '<div id="wpSetupChecks" class="card wide" style="display:none"></div>';
+  // 🐺 Me — the member's own snapshot, front and center (this REPLACES the old
+  // prominent logsync/status region). Own #wpMeCard placeholder filled by
+  // renderMeCard via morphInto so the card is byte-stable between polls and
+  // never drags the #dash section into a repaint. Everything it shows is LOCAL
+  // (own Zeal state, watched logs, local tells, recent uploads) — no bot call.
+  h += '<div id="wpMeCard" class="card wide" style="display:none"></div>';
+
+  // ⚙ Engine — the logsync/sync guts (setup checklist, files tailed, queue
+  // depth, upload stats, reporter), collapsed by default. Lives in its own
+  // #wpEngine placeholder; renderEngine fills it with the <details> so a toggle
+  // repaints ONLY this card, not the whole dashboard. Child ids (#wpSetupChecks
+  // #wpEngineStats #wpWatchedLogs) are preserved so their existing render fns
+  // still fill them — a placement change, not a plumbing change.
+  h += '<div id="wpEngine"></div>';
 
   // Per-character "buffs & zone" card — what each watched character is carrying
   // and where they are right now, OR what they logged out with (the last Zeal
@@ -10124,8 +10673,8 @@ function renderDash(s) {
   // 💚 Healing — this fight. Isolated (live during combat). renderHealingCard.
   h += '<div id="wpHealingCard" class="card" style="display:none"></div>';
 
-  // (Watched Logs moved to the Info / Stats tab — it's reference data, not a
-  // raid-night card. renderInfo emits the #wpWatchedLogs placeholder now.)
+  // (Watched Logs = "files tailed" — now lives in the ⚙ Engine <details> at the
+  // top of this section; renderEngine emits the #wpWatchedLogs placeholder.)
 
   // Recent Tells — isolated (its "When" column ticks every poll). renderRecentTellsCard.
   h += '<div id="wpRecentTells" class="card wide" style="display:none"></div>';
@@ -10143,6 +10692,183 @@ function renderDash(s) {
   // setSectionHTML short-circuits → no whole-section repaint (the stutter). The
   // volatile cards fill their own placeholders via the render fns below.
   setSectionHTML('dash', h);
+}
+
+// 🐺 Me — the member's own snapshot at the top of the Dashboard (in place of the
+// old logsync region). Pulls ENTIRELY from local state — the own Zeal client
+// (character + zone + buffs), watched logs (characters), local tells, and recent
+// uploads (last fights) — plus a prominent jump to wolfpack.quest/me. Own
+// #wpMeCard placeholder filled via morphInto: the string is byte-identical
+// between polls unless its content actually changes, so it does NOT repaint the
+// #dash section every 2s. fmtAgo timestamps live INSIDE this dedicated card per
+// the dashboard rendering rules. Buff NAMES only (no ticking tick-counts) so the
+// card stays stable mid-combat; the Buffs & Zone card below carries live ticks.
+function renderMeCard(s) {
+  const el = document.getElementById('wpMeCard');
+  if (!el) return;
+  if (!_isPanelHidden(el) && el.style.display === 'none') el.style.display = '';
+
+  const clients = Array.isArray(s.zealClients) ? s.zealClients : [];
+  // Own character: prefer a live Zeal client, else the most recently updated.
+  let me = clients.find(c => c && c.live);
+  if (!me) me = clients.slice().sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))[0] || null;
+  const wls = Array.isArray(s.watchedLogs) ? s.watchedLogs : [];
+  const _byChar = new Map();
+  for (const w of wls) {
+    const k = w.character || '?';
+    const cur = _byChar.get(k);
+    if (!cur || (w.lastSeen || 0) > (cur.lastSeen || 0)) _byChar.set(k, w);
+  }
+  const chars = [..._byChar.values()].sort((a, b) => (b.lastSeen || 0) - (a.lastSeen || 0));
+  const meName = (me && me.character) || (chars[0] && chars[0].character) || null;
+
+  let h = '<h2 style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">🐺 Me'
+    + (meName
+        ? ' <span class="name" style="font-size:15px">' + esc(meName) + '</span>'
+        : ' <span class="dim" style="font-size:12px;font-weight:normal">— log a character in to populate</span>')
+    + '<span style="flex:1"></span>'
+    + '<a href="https://wolfpack.quest/me" target="_blank" rel="noreferrer" style="font-size:12px;color:var(--blue);border:1px solid var(--blue);border-radius:5px;padding:2px 10px;text-decoration:none;font-weight:600" title="Your full /me dashboard — stats, settings, characters, tells, buffs">Open /me ↗</a>'
+    + '</h2>';
+
+  // Zone + compact buffs line (own Zeal state).
+  if (me) {
+    const dot = me.live ? '<span style="color:var(--green)">●</span>' : '<span style="color:var(--dim)">○</span>';
+    const where = me.zone_name ? esc(me.zone_name) : (me.zone != null ? 'zone ' + esc(String(me.zone)) : 'unknown zone');
+    h += '<div style="font-size:12px;margin-top:2px">' + dot + ' <span class="dim">' + where + '</span>'
+       + (me.casting ? ' <span style="color:#58a6ff">· ✦ casting ' + esc(me.casting) + '</span>' : '')
+       + (me.live && me.pet_name ? ' <span style="color:#f0883e">· 🐾 ' + esc(me.pet_name) + '</span>' : '')
+       + (!me.live && me.updatedAt ? ' <span class="dim">· last seen ' + fmtAgo(me.updatedAt) + '</span>' : '')
+       + '</div>';
+    const buffs = Array.isArray(me.buffs) ? me.buffs : [];
+    if (buffs.length) {
+      const bstr = buffs.slice(0, 12).map(b => esc(b.name)).join(' · ');
+      h += '<div style="margin-top:3px;color:#a371f7;font-size:11px">🧪 ' + bstr
+         + (buffs.length > 12 ? ' <span class="dim">+' + (buffs.length - 12) + ' more</span>' : '') + '</div>';
+    }
+  } else {
+    h += '<div class="dim" style="font-size:12px;margin-top:2px">No live Zeal character — buffs &amp; zone appear once a character is logged in with Zeal.</div>';
+  }
+
+  // Two-column body: watched characters + recent tells.
+  h += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:10px">';
+  h += '<div><div class="dim" style="font-size:11px;margin-bottom:3px">👥 Watched characters (' + chars.length + ')</div>';
+  if (chars.length === 0) h += '<div class="dim" style="font-size:11px">none yet</div>';
+  else {
+    h += '<div style="font-size:12px;line-height:1.6">';
+    for (const c of chars.slice(0, 8)) {
+      const hot = c.lastSeen && (Date.now() - c.lastSeen) < 3600000;
+      h += (hot ? '<span style="color:var(--green)">●</span> ' : '<span class="dim">○</span> ')
+         + '<span class="name">' + esc(c.character) + '</span> <span class="dim" style="font-size:10px">' + fmtAgo(c.lastSeen) + '</span><br>';
+    }
+    h += '</div>';
+  }
+  h += '</div>';
+
+  // Recent tells (local only — they never leave the machine).
+  const tells = (s.recentTells || []).slice(-5).reverse();
+  h += '<div><div class="dim" style="font-size:11px;margin-bottom:3px">📬 Recent tells <span style="font-size:10px">(local, this machine)</span></div>';
+  if (tells.length === 0) h += '<div class="dim" style="font-size:11px">none yet</div>';
+  else {
+    h += '<div style="font-size:11px;line-height:1.5">';
+    for (const t of tells) {
+      const arrow = t.direction === 'outgoing' ? '→' : '←';
+      const tsMs = t.capturedAt || (t.ts ? new Date(t.ts).getTime() : 0);
+      // NOTE: t.other is not always a player — keep it a plain span (no
+      // class="name") so the /character click-delegation can't misfire on it.
+      h += '<div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'
+         + '<span class="dim">' + arrow + '</span> <span style="color:var(--blue)">' + esc(t.other) + '</span>: '
+         + esc(String(t.text || '').slice(0, 48))
+         + (tsMs ? ' <span class="dim" style="font-size:10px">' + fmtAgo(tsMs) + '</span>' : '')
+         + '</div>';
+    }
+    h += '</div>';
+  }
+  h += '</div>';
+  h += '</div>';   // grid
+
+  // Last few fights — name + duration + a jump to the wolfpack.quest parse list.
+  // (Boss names are NPCs — plain span, never class="name", so the /character
+  // click-delegation doesn't 404 on them.)
+  const fights = (s.recentParses || [])
+    .filter(p => p && p.bossName && p.bossName !== '?' && (p.eventCount > 0 || p.totalDamage > 0))
+    .slice(0, 4);
+  h += '<div style="margin-top:10px"><div class="dim" style="font-size:11px;margin-bottom:3px">⚔️ Last fights'
+     + ' <a href="https://wolfpack.quest/parses" target="_blank" rel="noreferrer" style="color:var(--blue);font-size:10px;margin-left:4px">all parses ↗</a></div>';
+  if (fights.length === 0) h += '<div class="dim" style="font-size:11px">no uploads yet</div>';
+  else {
+    h += '<div style="font-size:12px;line-height:1.6">';
+    for (const p of fights) {
+      const dsec = (p.durationSec != null) ? Math.round(p.durationSec) : null;
+      const dur = (dsec && dsec > 0)
+        ? ' <span class="dim">· ' + (dsec < 60 ? dsec + 's' : Math.floor(dsec / 60) + 'm' + (dsec % 60 ? ' ' + (dsec % 60) + 's' : '')) + '</span>'
+        : '';
+      h += '<a href="https://wolfpack.quest/parses" target="_blank" rel="noreferrer" style="color:var(--text);text-decoration:none" title="Open recent parses on wolfpack.quest">'
+         + '<span style="color:var(--text)">' + esc(p.bossName) + '</span></a>'
+         + dur + ' <span class="dim">· ' + fmtK(p.totalDamage) + '</span><br>';
+    }
+    h += '</div>';
+  }
+  h += '</div>';
+
+  morphInto(el, h);
+}
+
+// ⚙ Engine card — fills #wpEngine with the collapsed <details> that houses the
+// logsync/sync guts. Open-state persists via wpKeep (a plain <details> snaps
+// shut on every repaint — the 1.7.0-beta.2 bug). The content is byte-stable
+// (summary + child placeholders only) so morphInto rewrites this card ONLY on a
+// user toggle — never the whole #dash section — and the nested #wpSetupChecks /
+// #wpEngineStats / #wpWatchedLogs survive between polls to be filled by their
+// own render fns (unchanged plumbing, only relocated).
+function renderEngine(s) {
+  const el = document.getElementById('wpEngine');
+  if (!el) return;
+  const h = '<details ' + wpKeep('engine') + ' class="card wide" style="margin-top:0">'
+    + '<summary style="cursor:pointer;font-weight:600;color:var(--text)">⚙ Engine'
+    + ' <span class="dim" style="font-weight:normal;font-size:11px">— logsync status: files tailed, queue, uploads, reporter</span></summary>'
+    + '<div id="wpSetupChecks" style="display:none;margin-top:8px"></div>'
+    + '<div id="wpEngineStats" style="display:none;margin-top:8px"></div>'
+    + '<div id="wpWatchedLogs" style="display:none;margin-top:8px"></div>'
+    + '</details>';
+  morphInto(el, h);
+}
+
+// ⚙ Engine stats — the sync/plumbing numbers (files tailed, queue depth, upload
+// counters, reporter role). Volatile, so isolated in its own #wpEngineStats
+// placeholder inside the Engine <details>; byte-stable via morphInto.
+function renderEngineStats(s) {
+  const el = document.getElementById('wpEngineStats');
+  if (!el) return;
+  if (!_isPanelHidden(el) && el.style.display === 'none') el.style.display = '';
+  const sessionMin = Math.max(1, Math.round((Date.now() - s.startedAt) / 60000));
+  const wls = Array.isArray(s.watchedLogs) ? s.watchedLogs : [];
+  const q = s.uploadQueue || {};
+  let queueStr;
+  if (q.pending > 0) {
+    const kinds = Object.entries(q.byKind || {}).map(([k, n]) => k + ':' + n).join(' · ');
+    queueStr = '<span style="color:#ffd07a">⏳ ' + q.pending + ' queued</span>'
+      + (q.parked > 0 ? ' <span class="dim">(' + q.parked + ' parked)</span>' : '')
+      + (kinds ? ' <span class="dim">' + esc(kinds) + '</span>' : '');
+  } else if ((q.permanentDropped || 0) + (q.capEvicted || 0) > 0) {
+    queueStr = '<span style="color:#ff9c9c">✕ ' + ((q.permanentDropped || 0) + (q.capEvicted || 0)) + ' dropped</span>';
+  } else {
+    queueStr = '<span style="color:var(--green)">idle</span>';
+  }
+  let h = '<table style="font-size:12px">'
+    + '<tr><td class="dim">Agent</td><td>v' + esc(s.version) + (s.localOnly ? ' <span class="dim">(local-only)</span>' : '') + '</td></tr>'
+    + '<tr><td class="dim">Files tailed</td><td>' + wls.length + '</td></tr>'
+    + '<tr><td class="dim">Upload queue</td><td>' + queueStr + '</td></tr>'
+    + '<tr><td class="dim">This session</td><td>' + (s.uploadCount || 0) + ' upload(s) · ' + s.sessionEvents + ' events / ' + sessionMin + ' min</td></tr>';
+  const rep = s.reporter || {};
+  if (rep.electionOn) {
+    const roles = rep.roles || {};
+    const on = Object.keys(roles).filter(k => roles[k]);
+    h += '<tr><td class="dim">Reporter</td><td>'
+       + (on.length ? esc(on.join(' · ')) : '<span class="dim">standing by</span>')
+       + (rep.camping ? ' <span class="dim">· camping</span>' : '') + '</td></tr>';
+  }
+  h += '</table>';
+  morphInto(el, h);
 }
 
 // ── Dashboard volatile cards, isolated into self-updating wp* placeholders ───
@@ -11094,6 +11820,191 @@ function renderCharmDiag(s) {
 
   morphInto(el, h);
 }
+// Pet-buff diagnostic (#119) — the pet-tracker analogue of renderCharmDiag.
+// Answers "why are there no buffs on my Pet tracker?" by walking the five
+// checkpoints a pet buff must pass (pet identified → cast seen → landing
+// resolved → attributed → overlay fetch). Its OWN #wpPetBuffDiag placeholder,
+// filled every poll; hidden (empty, byte-stable) until there is a pet or a
+// recent buff cast to explain. No <details> — same flat card as the charm one.
+function renderPetBuffDiag(s) {
+  const el = document.getElementById('wpPetBuffDiag');
+  if (!el) return;   // Triggers tab not painted yet
+  const d = s && s.petBuffDiag;
+  if (!d) { if (el.style.display !== 'none') el.style.display = 'none'; morphInto(el, ''); return; }
+  const hasData = (d.pets && d.pets.length) || (d.recent_casts && d.recent_casts.length)
+               || (d.attributed && d.attributed.some(function (a) { return a.buffs && a.buffs.length; }))
+               || (d.ring && d.ring.length);
+  if (!hasData) { if (el.style.display !== 'none') el.style.display = 'none'; morphInto(el, ''); return; }
+  if (el.style.display === 'none') el.style.display = '';
+  const chk = function (ok) { return ok ? '<span style="color:var(--green)">✓</span>' : '<span style="color:var(--red)">✗</span>'; };
+  let h = '<h2>🐾 Pet-buff diagnostic <span class="dim" style="font-size:11px;font-weight:normal">(why isn\\'t my pet showing buffs?)</span></h2>';
+
+  // 1. Pet identified? — the exact sources _petOwnerByName consults.
+  h += '<div style="font-size:11px;margin-bottom:8px"><b>1. Pet identified?</b> ';
+  if (!d.pets || d.pets.length === 0) {
+    h += chk(false) + ' <span class="dim">No pet in Zeal slot 16 or the charm tracker. A buff can only attach to a pet the agent can name — without this, _petOwnerByName returns null and the land is dropped.</span>';
+  } else {
+    h += chk(true);
+    h += '<table style="font-size:11px;width:100%;margin-top:4px"><tr><th>Owner</th><th>Pet</th><th>Kind</th><th>Source</th><th>_petOwnerByName</th></tr>';
+    for (const p of d.pets) {
+      h += '<tr><td>' + esc(p.owner) + '</td>'
+         +   '<td>' + esc(p.pet) + '</td>'
+         +   '<td class="dim">' + esc(p.kind || '?') + '</td>'
+         +   '<td class="dim">' + esc(p.source) + '</td>'
+         +   '<td>' + (p.resolves ? '<span style="color:var(--green)">→ ' + esc(p.resolves) + '</span>' : '<span style="color:var(--red)">unresolved</span>') + '</td></tr>';
+    }
+    h += '</table>';
+  }
+  h += '</div>';
+
+  // 2. Buff cast seen? — the self-cast path\\'s only input.
+  h += '<div style="font-size:11px;margin-bottom:8px"><b>2. Buff cast seen (last 30s)?</b> ';
+  if (!d.recent_casts || d.recent_casts.length === 0) {
+    h += chk(false) + ' <span class="dim">No "You begin casting" line on any watched character. INSTANT clicky items log no cast line, and a buff cast by another box/player is invisible to this machine — the self-cast path has nothing to match either way.</span>';
+  } else {
+    h += chk(true);
+    h += '<table style="font-size:11px;width:100%;margin-top:4px"><tr><th>When</th><th>Caster</th><th>Spell</th><th>Target @cast</th><th>Catalog</th><th>Landing suffix (cast_on_other)</th></tr>';
+    for (const c of d.recent_casts) {
+      h += '<tr><td class="dim">' + c.ago_secs + 's ago</td>'
+         +   '<td>' + esc(c.character) + '</td>'
+         +   '<td style="color:var(--blue)">' + esc(c.spell) + (c.tracked ? ' <span class="dim" title="tracked-buff keyword — parseBuffLanding can index it too">[tracked]</span>' : '') + '</td>'
+         +   '<td class="dim">' + esc(c.target || '—') + '</td>'
+         +   '<td>' + (c.in_catalog ? '<span style="color:var(--green)">✓</span>' : '<span style="color:var(--red)">missing</span>') + '</td>'
+         +   '<td class="dim"><code style="background:#161b22;padding:1px 4px;border-radius:3px">' + esc(c.expected_suffix || '?') + '</code></td></tr>';
+    }
+    h += '</table>';
+    h += '<div class="dim" style="font-size:10px;margin-top:2px">EQ prints <b>&lt;pet&gt;</b> + that suffix; resolveSelfCastLanding matches by the suffix and (since #117) attributes to our pet even when the pet was not the live target at cast.</div>';
+  }
+  h += '</div>';
+
+  // 3. Landing resolved + attributed? — the _petBuffLandings store.
+  h += '<div style="font-size:11px;margin-bottom:8px"><b>3. Landing resolved &amp; attributed?</b> ';
+  const anyAttr = d.attributed && d.attributed.some(function (a) { return a.buffs && a.buffs.length; });
+  if (!anyAttr) {
+    h += chk(false) + ' <span class="dim">_petBuffLandings is empty for every owner. If 1-2 are ✓ but this is ✗, the resolution ring below says why (target not a pet / no matching cast).</span>';
+  } else {
+    h += chk(true);
+    h += '<table style="font-size:11px;width:100%;margin-top:4px"><tr><th>Owner</th><th>Spell</th><th>Ticks</th><th>Landed</th></tr>';
+    for (const a of d.attributed) {
+      for (const b of (a.buffs || [])) {
+        h += '<tr><td>' + esc(a.owner) + '</td><td style="color:var(--green)">' + esc(b.name) + '</td><td class="dim">' + (b.dur_ticks || 0) + '</td><td class="dim">' + b.landed_ago_secs + 's ago</td></tr>';
+      }
+    }
+    h += '</table>';
+  }
+  h += '</div>';
+
+  // 4. Overlay fetch? — petBuffsForOwner, the EXACT HUD data source.
+  h += '<div style="font-size:11px;margin-bottom:8px"><b>4. Overlay fetch (petBuffsForOwner)?</b> ';
+  const overlayRows = (d.overlay || []).filter(function (o) { return o.buffs && o.buffs.length; });
+  if (overlayRows.length === 0) {
+    h += chk(false) + ' <span class="dim">petBuffsForOwner returned nothing — the exact data the Pet tracker HUD renders. If 3 is ✓ but this is ✗, the fetch/render path is the culprit, not attribution.</span>';
+  } else {
+    h += chk(true);
+    h += '<table style="font-size:11px;width:100%;margin-top:4px"><tr><th>Owner</th><th>Buff</th><th>Remaining</th><th>State</th></tr>';
+    for (const o of overlayRows) {
+      for (const b of o.buffs) {
+        h += '<tr><td>' + esc(o.owner) + '</td><td>' + esc(b.name) + '</td>'
+           + '<td class="dim">' + (b.remaining_secs == null ? '—' : b.remaining_secs + 's') + '</td>'
+           + '<td>' + (b.fell_off ? '<span style="color:#b18cf2">fell off</span>' : '<span style="color:var(--green)">up</span>') + '</td></tr>';
+      }
+    }
+    h += '</table>';
+  }
+  h += '</div>';
+
+  // Resolution ring — the last dozen landing outcomes (which resolver, why-not).
+  if (d.ring && d.ring.length) {
+    h += '<div style="font-size:11px"><b>Resolution ring</b> <span class="dim" style="font-size:10px">— last ' + d.ring.length + ' buff land(s) naming a would-be pet</span>';
+    h += '<table style="font-size:11px;width:100%;margin-top:4px"><tr><th>When</th><th>Result</th><th>Spell</th><th>Target</th><th>Resolver / reason</th></tr>';
+    for (const r of d.ring) {
+      h += '<tr><td class="dim">' + r.ago_secs + 's ago</td>'
+         +   '<td>' + (r.ok ? '<span style="color:var(--green)">attributed</span>' : '<span style="color:var(--red)">dropped</span>') + '</td>'
+         +   '<td>' + esc(r.spell || '?') + '</td>'
+         +   '<td class="dim">' + esc(r.target || '?') + (r.owner ? ' <span class="dim">→ ' + esc(r.owner) + '</span>' : '') + '</td>'
+         +   '<td class="dim">' + esc(r.resolver || '') + (r.reason ? ' — ' + esc(r.reason) : '') + '</td></tr>';
+    }
+    h += '</table></div>';
+  }
+
+  morphInto(el, h);
+}
+// Trigger checkpoint journal (#76) — answers "why did my trigger not fire?"
+// from the dashboard. Renders the recent candidate evaluations with the
+// checkpoint each reached (1 line seen → 2 pattern matched → 3 gates passed →
+// 4 actions built → 5 dispatched → 6 relayed) and, when one stopped short,
+// the reason (cooldown remaining, suppressed by charm pet, stale-skipped,
+// rehearsal note). Its OWN #wpTriggerJournal placeholder, filled every poll
+// like renderCharmDiag; hidden until there is at least one entry.
+function renderTriggerJournal(s) {
+  var el = document.getElementById('wpTriggerJournal');
+  if (!el) return;   // Triggers tab not painted yet
+  var rows = (s && s.triggerJournal) || [];
+  if (!rows.length) {
+    if (el.style.display !== 'none') el.style.display = 'none';
+    morphInto(el, '');
+    return;
+  }
+  if (el.style.display === 'none') el.style.display = '';
+  var h = '<h2>🧭 Trigger checkpoint journal <span class="dim" style="font-size:11px;font-weight:normal">(how far each fire got — why it stopped)</span></h2>';
+  h += '<div class="dim" style="font-size:10px;margin-bottom:6px">Checkpoints: 1 line seen · 2 pattern matched · 3 gates passed · 4 actions built · 5 dispatched (TTS/overlay queued) · 5b playback (audio actually came out) · 6 relayed. A fire that stops before 5 never spoke; a <b>playback FAILED</b> at 5b means it was dispatched but the OS/Chromium produced no sound — the Note says why. Rehearse a trigger to force a 5b row.</div>';
+  h += '<table style="font-size:11px;width:100%"><tr><th>When</th><th>Trigger</th><th>Scope</th><th>Reached</th><th>Note</th></tr>';
+  var shown = rows.slice(0, 40);
+  for (var i = 0; i < shown.length; i++) {
+    var r = shown[i];
+    var cp = r.checkpoint || 0;
+    var full = cp >= 5 && !r.stopped;
+    var dot = full ? '<span style="color:var(--green)">●</span>'
+                   : (r.stopped ? '<span style="color:var(--orange)">◌</span>' : '<span style="color:var(--blue)">●</span>');
+    var reh = r.rehearsal ? ' <span style="color:var(--gold);font-size:9px;font-weight:600">REHEARSAL</span>' : '';
+    h += '<tr>'
+       + '<td class="dim">' + esc(fmtAgo(r.at || 0)) + '</td>'
+       + '<td>' + esc(r.trigger || '?') + reh + '</td>'
+       + '<td class="dim" style="font-size:10px">' + esc(r.scope || '') + '</td>'
+       + '<td>' + dot + ' ' + esc(cp + '/6') + ' <span class="dim">' + esc(r.label || '') + '</span></td>'
+       + '<td class="dim">' + esc(r.reason || (full ? 'spoke + displayed' : '')) + '</td>'
+       + '</tr>';
+  }
+  h += '</table>';
+  morphInto(el, h);
+}
+// ⚡ Recent fires (#120) — the volatile counterpart to renderTriggers, filling
+// its own #wpRecentFires placeholder every poll (fmtAgo ticks) so the parent
+// Triggers section stays byte-stable and never flashes. Same isolation pattern
+// as renderTriggerJournal / renderZealCard. The Clear buttons keep their ids so
+// the section-root click delegation (installed once in the editor mount) routes
+// them even though this card repaints under them.
+function renderRecentFires(s) {
+  var el = document.getElementById('wpRecentFires');
+  if (!el) return;   // Triggers tab not painted yet
+  var overlays = (s.activeOverlays || []).slice(0, 6);
+  var h = '<h2>⚡ Recent fires';
+  h += '<span style="float:right;font-size:11px;font-weight:normal">';
+  h += '<button id="trigClearTestBtn" type="button" style="background:#21262d;color:var(--text);border:1px solid var(--border);padding:3px 10px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:11px;margin-right:6px" title="Remove only TEST-flagged overlays">🧪 Clear test fires</button>';
+  h += '<button id="trigClearAllBtn" type="button" style="background:#21262d;color:var(--text);border:1px solid var(--border);padding:3px 10px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:11px" title="Remove ALL active overlays (in-memory only — no DB writes)">🗑 Clear all</button>';
+  h += '</span></h2>';
+  if (overlays.length === 0) {
+    h += '<div class="dim" style="font-size:12px">No triggers have fired this session yet. Tune a pattern below and try again on the next log line — or click <b>Rehearse</b> on a row to drive a synthesized line through the real pipeline (pattern + cooldown + suppression) and hear the actual TTS.</div>';
+  } else {
+    h += '<table style="font-size:12px"><tr><th>When</th><th>Trigger</th><th>Scope</th><th>Text</th></tr>';
+    for (var i = 0; i < overlays.length; i++) {
+      var o = overlays[i];
+      var ago = fmtAgo(o.shownAt || 0);
+      var sc  = o.test ? 'TEST' : (o.scope === 'personal' ? 'personal' : 'guild');
+      var scColor = o.test ? 'color:var(--gold)' : '';
+      // NOTE: deliberately NOT class="name" on the trigger cell — the wolfpack
+      // character-link delegation slices a .name cell to its first word and
+      // opens /character/<token> (404 for a trigger name). Same trap the guild
+      // table avoids; it used to bite here (#120).
+      h += '<tr><td class="dim">' + esc(ago) + '</td>' +
+           '<td style="color:var(--text)">' + esc(o.trigger || '?') + '</td>' +
+           '<td class="dim" style="' + scColor + '">' + esc(sc) + '</td>' +
+           '<td>' + esc(o.text || '') + '</td></tr>';
+    }
+    h += '</table>';
+  }
+  morphInto(el, h);
+}
 function renderTriggers(s) {
   let h = '';
   h += '<div class="grid">';
@@ -11116,33 +12027,37 @@ function renderTriggers(s) {
   // Charm-tracking diagnostic card — filled by renderCharmDiag(). Hidden
   // until there's data to show (no watched character casting charms, etc.).
   h += '<div id="wpCharmDiag" class="card wide" style="display:none"></div>';
+  // Pet-buff diagnostic card (#119) — filled by renderPetBuffDiag(). Hidden
+  // until there is a pet or a recent buff cast to explain (byte-stable/empty
+  // otherwise, so idle polls don't repaint the Triggers section).
+  h += '<div id="wpPetBuffDiag" class="card wide" style="display:none"></div>';
+  // Trigger checkpoint journal (#76) — filled by renderTriggerJournal(). Own
+  // wp* placeholder so its volatile rows don't force this section to repaint.
+  h += '<div id="wpTriggerJournal" class="card wide" style="display:none"></div>';
 
-  // Active overlays (recent matches) — top of the page so the user can see
-  // their triggers actually firing as they tune them. The "Clear" buttons
-  // remove overlays from the in-memory ring buffer; no DB writes either way
-  // so this is safe to mash without consequence.
-  const overlays = (s.activeOverlays || []).slice(0, 6);
-  h += '<div class="card wide">';
-  h += '<h2>⚡ Recent fires';
-  h += '<span style="float:right;font-size:11px;font-weight:normal">';
-  h += '<button id="trigClearTestBtn" type="button" style="background:#21262d;color:var(--text);border:1px solid var(--border);padding:3px 10px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:11px;margin-right:6px" title="Remove only TEST-flagged overlays">🧪 Clear test fires</button>';
-  h += '<button id="trigClearAllBtn" type="button" style="background:#21262d;color:var(--text);border:1px solid var(--border);padding:3px 10px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:11px" title="Remove ALL active overlays (in-memory only — no DB writes)">🗑 Clear all</button>';
-  h += '</span></h2>';
-  if (overlays.length === 0) {
-    h += '<div class="dim" style="font-size:12px">No triggers have fired this session yet. Tune a pattern below and try again on the next log line — or click <b>Test</b> on a row to preview without waiting for a real match.</div>';
-  } else {
-    h += '<table style="font-size:12px"><tr><th>When</th><th>Trigger</th><th>Scope</th><th>Text</th></tr>';
-    for (const o of overlays) {
-      const ago = fmtAgo(o.shownAt || 0);
-      const sc  = o.test ? 'TEST' : (o.scope === 'personal' ? 'personal' : 'guild');
-      const scColor = o.test ? 'color:var(--gold)' : '';
-      h += '<tr><td class="dim">' + esc(ago) + '</td>' +
-           '<td class="name">' + esc(o.trigger || '?') + '</td>' +
-           '<td class="dim" style="' + scColor + '">' + esc(sc) + '</td>' +
-           '<td>' + esc(o.text || '') + '</td></tr>';
-    }
-    h += '</table>';
-  }
+  // ⚡ Recent fires (recent trigger matches) — its rows carry fmtAgo timestamps
+  // that tick every poll, so it MUST live in its own wp* placeholder filled by
+  // renderRecentFires() each poll. Rendered inline it made this whole section's
+  // HTML differ every 2s, forcing setSectionHTML to rewrite the guild-trigger
+  // table + remount the trigger editor and suggested list on every poll — the
+  // Triggers-tab "flash" the guild lead reported (#120). Isolating it keeps the
+  // section byte-stable when triggers don't change, so only this small card
+  // repaints (same pattern as wpZealCard / wpTriggerJournal). Clear buttons keep
+  // their ids; the section-root click delegation still routes them.
+  h += '<div id="wpRecentFires" class="card wide"></div>';
+
+  // #107 Loot auction announce — dashboard toggle + default-duration knob for
+  // the local TTS callout that fires when a drop list is posted in /gu or /rs.
+  // No <details> here, so no wpKeep needed; the checked/value bits track server
+  // state and only change on user action, keeping this HTML byte-stable.
+  h += '<div class="card wide"><h2>💰 Loot auction announce <span class="dim" style="font-size:11px;font-weight:normal">(local — speaks when a drop list is posted in /gu or /rs)</span></h2>';
+  h += '<label style="display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer">';
+  h += '<input type="checkbox" id="lootAucTts"' + (s.lootAuctionTts !== false ? ' checked' : '') + '>';
+  h += '<span>Announce loot posts by voice + show a countdown chip on the trigger overlay</span></label>';
+  h += '<div class="dim" style="font-size:11px;margin-top:5px">Speaks the item count and the auction window (e.g. &ldquo;Loot posted &mdash; 3 items, bids open 2 minutes&rdquo;) through the same voice as your triggers, so it also needs <b>Trigger alerts (TTS)</b> on. The chip counts down like a Death Touch timer and can be dismissed with its &times;.</div>';
+  h += '<label style="display:flex;align-items:center;gap:8px;font-size:12px;margin-top:8px">Default auction length when none is stated:';
+  h += '<input type="number" id="lootAucDur" min="15" max="1800" step="5" value="' + (s.lootAuctionDefaultSec || 120) + '" style="width:70px;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:3px 6px;border-radius:4px;font-family:inherit;font-size:12px"> seconds</label>';
+  h += '<span id="lootAucMsg" class="dim" style="font-size:11px;margin-left:8px"></span>';
   h += '</div>';
 
   // Suggested triggers — one-click catalog of pre-tested alerts grouped by
@@ -11321,10 +12236,51 @@ function renderOverlays(s) {
   h += '<div class="dim" style="font-size:11px;margin-top:8px">Lock/Setup placement live in the tray.</div>';
   h += '</div>';
 
+  // #113 Extended Target options — a per-user filter that changes what we ASK
+  // the bot for, so it lives on the AGENT as a dashboard checkbox (not a Mimic
+  // window flag). HTML is byte-stable; the checked state is applied post-render
+  // by wpWireExtPref so morphInto never rewrites the section just to flip it.
+  h += '<div class="card wide"><h2>🎯 Extended Target options</h2>';
+  h += '<label style="display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer">'
+    +  '<input type="checkbox" id="wpExtSameZone" style="cursor:pointer" />'
+    +  '<span><b>Same-zone targets only</b> <span class="dim">(default on)</span></span>'
+    +  '</label>';
+  h += '<div class="dim" style="font-size:11px;margin-top:6px">When on, the Extended Target list hides targets reported by Mimics in a different zone, so a splinter group elsewhere does not clutter your list. Turn off to include every online raider regardless of zone.</div>';
+  h += '</div>';
+
   h += '</div>';
   setSectionHTML('overlays', h);
   wpRefreshOverlayToggles();
   wpWireHideHotkey();
+  wpWireExtPref();
+}
+
+// #113 Extended Target "same-zone targets only" checkbox wiring. The pref lives
+// on the agent (POST /api/ext-pref), not in overlay localStorage, because it
+// changes what the agent requests from the bot. Cache the value JS-side so a
+// section re-morph (e.g. a theme change repainting the Overlays tab) reapplies
+// it instead of resetting the box to unchecked; fetch once until we have it.
+var _wpExtSameZoneVal = null;
+function wpWireExtPref() {
+  var cb = document.getElementById('wpExtSameZone');
+  if (!cb) return;
+  if (_wpExtSameZoneVal !== null) cb.checked = _wpExtSameZoneVal;
+  _bindOnce(cb, 'change', function(){
+    _wpExtSameZoneVal = !!cb.checked;
+    fetch('/api/ext-pref', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ same_zone_only: _wpExtSameZoneVal }),
+    }).catch(function(){});
+  });
+  if (_wpExtSameZoneVal === null) {
+    fetch('/api/ext-pref').then(function(r){ return r.json(); }).then(function(j){
+      if (j && typeof j.same_zone_only === 'boolean') {
+        _wpExtSameZoneVal = j.same_zone_only;
+        var c2 = document.getElementById('wpExtSameZone');
+        if (c2) c2.checked = j.same_zone_only;
+      }
+    }).catch(function(){});
+  }
 }
 
 // Hotkey row wiring — read the current accelerator from config, and capture a
@@ -11868,6 +12824,423 @@ function renderDkpLootCard(s) {
   if (el._wpDkpHtml !== h) { el._wpDkpHtml = h; el.innerHTML = h; }
 }
 
+// 🛡 Admin — officer-only quick menu for raid night. Collects the officer
+// widgets that were scattered across the dashboard (DKP ticks, loot capture +
+// "Post for bidding") into one tab, plus quick links to the wolfpack.quest
+// admin surfaces. The GATE is agent-side: the sensitive card DATA (s.dkpTick /
+// s.dkpLoot) is only serialized into /api/state for officers (see the state
+// builder — null otherwise), and this fn only reveals the nav tab + fills the
+// section when s.mimicIdentity.is_officer (the bot's authenticated reply, not a
+// client claim). A non-officer never receives the tab OR the data — not CSS
+// hiding. The officer widget placeholders (#wpDkpTick / #wpDkpLoot) MOVED here
+// from the Info tab; their render fns (renderDkpTickCard / renderDkpLootCard)
+// fill them and were already officer-gated on the data. morphInto keeps this
+// section byte-stable so those persistent children survive between polls.
+function renderAdmin(s) {
+  const tabBtn = document.getElementById('wpAdminTab');
+  const sec = document.getElementById('admin');
+  const isOfficer = !!(s.mimicIdentity && s.mimicIdentity.is_officer);
+  if (!isOfficer) {
+    // Lost/never-had officer status — hide the tab, empty the section, and if
+    // it was somehow the active tab, fall back to the Dashboard.
+    if (sec && sec.classList.contains('active')) {
+      sec.classList.remove('active');
+      const dash = document.getElementById('dash'); if (dash) dash.classList.add('active');
+      document.querySelectorAll('.nav button[data-tab]').forEach(x => x.classList.remove('active'));
+      const dashBtn = document.querySelector('.nav button[data-tab="dash"]'); if (dashBtn) dashBtn.classList.add('active');
+    }
+    if (tabBtn && tabBtn.style.display !== 'none') tabBtn.style.display = 'none';
+    if (sec) morphInto(sec, '');
+    return;
+  }
+  if (tabBtn && tabBtn.style.display === 'none') tabBtn.style.display = '';
+  if (!sec) return;
+  function lk(path, label, tip) {
+    return '<a href="https://wolfpack.quest' + path + '" target="_blank" rel="noreferrer" title="' + esc(tip) + '"'
+      + ' style="color:var(--text);border:1px solid var(--border);border-radius:5px;padding:5px 11px;text-decoration:none;font-size:12px">' + label + '</a>';
+  }
+  const who = (s.mimicIdentity && s.mimicIdentity.display_name) || 'officer';
+  let h = '<div class="card wide"><h2>🛡 Officer — raid quick menu</h2>'
+    + '<div class="dim" style="font-size:11px">Signed in as <b>' + esc(who) + '</b>. Visible to officers only — these mirror the officer tools that used to be spread across the dashboard.</div></div>';
+  // Officer widget placeholders (filled same-tick by their existing render fns).
+  h += '<div id="wpDkpTick" class="card wide" style="display:none"></div>';
+  h += '<div id="wpDkpLoot" class="card wide" style="display:none"></div>';
+  // 📡 Reporters (#115) — filled by renderReporters (its own placeholder so the
+  // swap/include controls survive #admin repaints; officer-gated on the data).
+  h += '<div id="wpReporters" class="card wide" style="display:none"></div>';
+  // 🛑 Kill switches (#118) — filled by renderKillSwitches (own placeholder so the
+  // toggles + arm-confirm survive #admin repaints; officer-gated on the data).
+  h += '<div id="wpKillSwitches" class="card wide" style="display:none"></div>';
+  // Quick links to the web admin surfaces.
+  h += '<div class="card wide"><h2>🔗 Web admin <span class="dim" style="font-size:11px;font-weight:normal">— opens on wolfpack.quest (officer-gated there too)</span></h2>'
+    + '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px">'
+    + lk('/admin/overlays', '🎚 Overlay tuning knobs', 'the free-form numeric knobs (ext/off-heal/CH) — kill switches are now in the card above')
+    + lk('/admin/triggers', '⚡ Triggers', 'promote / edit guild triggers')
+    + lk('/admin/encounters', '📊 Encounters', 'review + merge parses')
+    + lk('/admin', '🛡 Admin home', 'links, agents, members, audit')
+    + '</div>'
+    + '<div class="dim" style="font-size:10px;margin-top:10px">The <b>🛑 Kill switches</b> card above flips the whitelisted control-plane flags right here (officer-authed, ~60s fleet-wide). The free-form numeric knobs (Extended Target / off-heal / CH) stay on <b>/admin/overlays</b>.</div>'
+    + '</div>';
+  morphInto(sec, h);
+}
+
+// 📡 Reporters (#115) — officer-only live reporter registry + swap/include
+// controls. Data comes from the bot's officer-gated GET /api/server/reporters
+// (proxied through the agent's /api/server passthrough), fetched on its own
+// ~8s cadence and cached so the 2s dashboard poll renders byte-stably from the
+// cache (no flicker, and a focused input is never wiped mid-type). Writes go to
+// POST /api/server/reporter-override → the bot's officer-authed
+// /api/agent/reporter-override, which sets the reporter_pin_/reporter_extra_
+// tuning keys. Non-officers get no data and no panel (the DATA gate is the bot,
+// not CSS — the same is_officer reply the DKP widgets use).
+var _wpReporters = { data: null, at: 0, inflight: false, err: null };
+function _wpReporterPanelHasFocus() {
+  var ae = document.activeElement;
+  var p = document.getElementById('wpReporters');
+  return !!(p && ae && p.contains(ae));
+}
+function _wpFetchReporters() {
+  if (_wpReporters.inflight) return;
+  _wpReporters.inflight = true;
+  fetch('/api/server/reporters').then(function (r) { return r.json(); }).then(function (j) {
+    _wpReporters.inflight = false; _wpReporters.at = Date.now();
+    if (j && j.error) { _wpReporters.err = j.error; _wpReporters.data = null; }
+    else { _wpReporters.err = null; _wpReporters.data = j; }
+  }).catch(function () { _wpReporters.inflight = false; _wpReporters.at = Date.now(); _wpReporters.err = 'engine unreachable'; });
+}
+// Format a raw duration (ms) — the registry sends AGES, not timestamps, so a
+// fixed formatter keeps the render byte-stable between fetches.
+function _wpDur(ms) {
+  if (ms == null) return '—';
+  var d = Number(ms) || 0;
+  if (d < 1000) return '0s';
+  if (d < 60000) return Math.floor(d / 1000) + 's';
+  if (d < 3600000) return Math.floor(d / 60000) + 'm';
+  return Math.floor(d / 3600000) + 'h';
+}
+function renderReporters(s) {
+  var sec = document.getElementById('wpReporters');
+  if (!sec) return;
+  var isOfficer = !!(s.mimicIdentity && s.mimicIdentity.is_officer);
+  if (!isOfficer) { if (sec.style.display !== 'none') sec.style.display = 'none'; morphInto(sec, ''); return; }
+  if (sec.style.display === 'none') sec.style.display = '';
+  // Refresh the cache on its own cadence, but NEVER while the officer is typing
+  // in this panel (a repaint would wipe the input) — the focus guard + morph
+  // change-detection together keep typed text and open dropdowns intact.
+  if (!_wpReporterPanelHasFocus() && (Date.now() - _wpReporters.at > 8000)) _wpFetchReporters();
+  var j = _wpReporters.data;
+  var h = '<h2>📡 Reporters <span class="dim" style="font-size:11px;font-weight:normal">— live election registry · swap / include (officer)</span></h2>';
+  if (!j) {
+    h += '<div class="dim" style="font-size:12px">' + (_wpReporters.err ? esc(_wpReporters.err) : 'loading…') + '</div>';
+    morphInto(sec, h); return;
+  }
+  var reps = j.reporters || [];
+  var elected = j.elected || {};
+  var overrides = j.overrides || {};
+  var dedup = j.dedup || {};
+  h += '<div class="dim" style="font-size:11px;margin-bottom:6px">Election <b>' + esc(j.election || '?') + '</b> · liveness threshold ' + _wpDur(j.liveness_max_ms) + ' · ' + reps.length + ' live agent(s)</div>';
+  // Per-service control rows.
+  var svcs = [['chat', 'Chat (/gu·/rs)'], ['buffs', 'Buff landings'], ['roster', 'Raid roster']];
+  var liveOpts = '';
+  for (var i = 0; i < reps.length; i++) {
+    var nm = reps[i].character || '';
+    if (nm) liveOpts += '<option value="' + esc(nm) + '">' + esc(nm) + '</option>';
+  }
+  for (var si = 0; si < svcs.length; si++) {
+    var key = svcs[si][0], label = svcs[si][1];
+    var el = elected[key] || [];
+    var ov = overrides[key] || {};
+    var on = dedup[key] !== false;
+    var electedTxt = el.length ? esc(el.join(', ')) : '(none)';
+    if (!on) electedTxt = '<span class="dim">dedup OFF — everyone uploads</span>';
+    h += '<div style="border:1px solid var(--border);border-radius:6px;padding:8px 10px;margin-bottom:6px">';
+    h += '<div><b>' + esc(label) + '</b> <span class="dim" style="font-size:10px">' + (on ? 'deduped' : 'off') + '</span></div>';
+    h += '<div style="font-size:12px;margin:3px 0">Elected: ' + electedTxt + '</div>';
+    if (ov.pin || (ov.extra && ov.extra.length)) {
+      h += '<div class="dim" style="font-size:11px">Override — pin: <b>' + (ov.pin ? esc(ov.pin) : '—') + '</b> · include: <b>' + ((ov.extra && ov.extra.length) ? esc(ov.extra.join(', ')) : '—') + '</b></div>';
+    }
+    h += '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:5px">';
+    h += '<select class="wpRepSwap" data-service="' + key + '" style="font-size:11px;padding:2px 4px;background:#161b22;color:var(--text);border:1px solid var(--border);border-radius:4px"><option value="">swap reporter →</option>' + liveOpts + '</select>';
+    h += '<input class="wpRepExtra" data-service="' + key + '" placeholder="add include (name)" style="font-size:11px;padding:3px 6px;background:#161b22;color:var(--text);border:1px solid var(--border);border-radius:4px;width:150px">';
+    h += '<button type="button" class="wpRepExtraBtn" data-service="' + key + '" style="font-size:11px;padding:3px 9px;cursor:pointer;border:1px solid var(--border);border-radius:4px;background:#21262d;color:var(--text)">+ include</button>';
+    h += '<button type="button" class="wpRepClear" data-service="' + key + '" style="font-size:11px;padding:3px 9px;cursor:pointer;border:1px solid var(--border);border-radius:4px;background:#21262d;color:var(--red)">clear</button>';
+    h += '</div></div>';
+  }
+  h += '<div id="wpRepMsg" class="dim" style="font-size:11px;min-height:14px"></div>';
+  // Fleet table — collapsed by default (wpKeep persists open-state across repaints).
+  h += '<details ' + wpKeep('wpRepFleet') + ' style="margin-top:4px">';
+  h += '<summary style="cursor:pointer;font-size:12px">Live fleet (' + reps.length + ')</summary>';
+  // Column legend (#118) — explains the fresh/stale dot, the agent/Mimic VER
+  // pairing, and the last-log-line staleness signal the election demotes on.
+  h += '<div class="dim" style="font-size:10px;margin:4px 0 2px;line-height:1.5">'
+    + '<span style="color:var(--green)">●</span> fresh · <span style="color:var(--red)">○</span> stale '
+    + '(last log line older than the liveness threshold — demoted from elections). '
+    + '<b>Ver</b> = agent/Mimic (<b>—</b> = standalone Parser.bat, no shell). '
+    + '<b>Log</b> = time since this agent last saw a live log line. '
+    + '<b>Seen</b> = since its last heartbeat.</div>';
+  h += '<table style="margin-top:2px"><tr><th>Character</th><th>Zone</th><th>Grp</th>'
+    + '<th title="agent version / Mimic shell version">Ver</th>'
+    + '<th title="time since this agent last saw a live log line — stale agents are demoted from elections">Log</th>'
+    + '<th title="time since this agent last heartbeated">Seen</th></tr>';
+  for (var ri = 0; ri < reps.length; ri++) {
+    var r = reps[ri];
+    var freshDot = r.fresh ? '<span style="color:var(--green)">●</span>' : '<span style="color:var(--red)">○</span>';
+    var camp = r.camping ? ' <span class="dim" title="camping">⛺</span>' : '';
+    // #119: show the LIVE character with the primary/main in parens ("Canopy
+    // (Hitya)") when the bot resolves one, else the primary alone. The label is
+    // computed bot-side (character_label) so the hide_main_names rule stays
+    // server-side; class="name" click-delegation slices to the first word, which
+    // is the live character — the right /character page to open. Older bots that
+    // don't send character_label fall back to the plain primary.
+    var charCell = r.character_label || r.character || '?';
+    h += '<tr><td>' + freshDot + ' <span class="name">' + esc(charCell) + '</span>' + camp + '</td>'
+      + '<td class="dim">' + esc(r.zone || '—') + '</td>'
+      + '<td class="dim">' + (r.group_num == null ? '—' : r.group_num) + '</td>'
+      + '<td class="dim">' + esc(r.agent_version || '—') + '/' + esc(r.mimic_version || '—') + '</td>'
+      + '<td class="dim">' + _wpDur(r.last_line_age_ms) + '</td>'
+      + '<td class="dim">' + _wpDur(r.last_seen_age_ms) + '</td></tr>';
+  }
+  h += '</table></details>';
+  morphInto(sec, h);
+}
+// 📡 Reporters override controls — delegated (capture) so #admin repaints never
+// lose the handlers. Swap sets the pin; + include appends to the extra list;
+// clear removes both override keys for the service.
+function _wpReporterOverride(service, patch) {
+  var msg = document.getElementById('wpRepMsg');
+  if (msg) msg.textContent = 'saving…';
+  var body = { service: service };
+  for (var k in patch) body[k] = patch[k];
+  fetch('/api/server/reporter-override', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+    .then(function (r) { return r.json(); }).then(function (j) {
+      if (msg) msg.textContent = (j && j.ok) ? '✓ saved — takes effect within ~60s' : ('✕ ' + ((j && (j.reason || j.error)) || 'failed'));
+      _wpReporters.at = 0; _wpFetchReporters();   // reflect the change promptly
+    }).catch(function () { if (msg) msg.textContent = '✕ engine unreachable'; });
+}
+document.addEventListener('change', function (ev) {
+  var t = ev.target;
+  if (!t || !t.classList || !t.classList.contains('wpRepSwap')) return;
+  var svc = t.getAttribute('data-service');
+  var name = t.value;
+  if (!svc || !name) return;
+  _wpReporterOverride(svc, { pin: name });
+  t.value = '';
+}, true);
+document.addEventListener('click', function (ev) {
+  var t = ev.target;
+  if (!t || !t.closest) return;
+  var addBtn = t.closest('.wpRepExtraBtn');
+  if (addBtn) {
+    var svc = addBtn.getAttribute('data-service');
+    var inp = document.querySelector('.wpRepExtra[data-service="' + svc + '"]');
+    var cur = (_wpReporters.data && _wpReporters.data.overrides && _wpReporters.data.overrides[svc] && _wpReporters.data.overrides[svc].extra) || [];
+    var add = (inp && inp.value ? inp.value : '').split(',').map(function (x) { return x.trim(); }).filter(Boolean);
+    if (!add.length) { var m0 = document.getElementById('wpRepMsg'); if (m0) m0.textContent = 'type a name first'; return; }
+    var merged = cur.concat(add).join(',');
+    if (inp) inp.value = '';
+    _wpReporterOverride(svc, { extra: merged });
+    return;
+  }
+  var clrBtn = t.closest('.wpRepClear');
+  if (clrBtn) {
+    var svc2 = clrBtn.getAttribute('data-service');
+    _wpReporterOverride(svc2, { pin: '', extra: '' });
+    return;
+  }
+}, true);
+
+// ── 🛑 Kill switches (#118) — officer-only control-plane flag toggles ─────────
+// Mirrors the /admin/overlays 🛑 kill-switches section INSIDE Mimic so an officer
+// can flip a whitelisted control-plane flag mid-raid without opening the web admin.
+// Each flag&rsquo;s LIVE value is read from s.overlayTuning (the tuning the agent
+// already polls, ~90s); writes go to POST /api/server/flag-override → the bot&rsquo;s
+// officer-authed + WHITELISTED /api/agent/flag-override. Optimistic: a confirmed
+// write pins the returned value locally until the next poll reconciles. Officer-
+// gated on the DATA (the bot is_officer reply, same gate the DKP/Reporters cards
+// use) — a non-officer never sees the card. flag_agent_kill needs a typed inline
+// confirm before it writes (it pauses the ENTIRE fleet).
+// VALUE SEMANTICS MUST MATCH THE BOT: dedup_chat defaults ON (Number(v)!==0);
+// every other flag is Number(v)>=1. Writes send explicit 0|1 (never delete) so a
+// dedup_chat-off state persists.
+var WP_KILL_FLAGS = [
+  { key: 'flag_disable_reporter_election', label: 'Disable reporter election (#72)',
+    desc: 'Turns OFF designated-reporter de-duplication — every agent uploads chat/buffs/roster again, exactly like before the feature. Fail-open regardless; flip only if the election ever misbehaves.' },
+  { key: 'dedup_chat', label: 'Chat dedup — one reporter/zone uploads /gu·/rs (default on)', defaultOn: true,
+    desc: 'When on, one live reporter per occupied zone uploads guild + raidsay; the rest stand down. Fail-open (any agent that loses the bot uploads everything).',
+    hint: 'Currently held OFF (0) since the 2026-07-19 chat blackout — re-enable only once the whole fleet is on agent ≥3.3.91 (BETA-TESTING #112).' },
+  { key: 'dedup_buffs', label: 'Buff dedup — thin buff_casts to 3 reporters/zone (default off)',
+    desc: 'When on, only the ~3 best-coverage agents per zone upload ordinary observed buff landings; the rest stand down. Charm timers always upload. Fail-open.' },
+  { key: 'dedup_roster', label: 'Roster dedup — 1 reporter per group (default off)',
+    desc: 'When on, exactly ONE agent per raid group uploads the Zeal roster snapshot; the rest stand down (an agent with no raid/Zeal is its own group and always uploads). Fail-open.' },
+  { key: 'flag_raid_hold', label: 'Raid hold — defer agent file work during raids',
+    desc: 'ON forces raid-hold on (off-schedule raid) — agents defer gear/spellbook/crash scans AND hot-swaps until it lifts. OFF forces it off. To return to the automatic Sun/Wed/Thu schedule (unset), clear it on /admin/overlays.' },
+  { key: 'flag_shed_live_state', label: 'Shed: live-state stream', danger: true,
+    desc: 'Mid-raid load-shed — the bot 200-acks and DROPS the character live-state stream (buffs/zone). Overlays needing it go stale until cleared. Emergency use only.' },
+  { key: 'flag_shed_raid_roster', label: 'Shed: raid-roster stream', danger: true,
+    desc: 'Drops the Zeal raid-roster stream — the /raid board + cross-client HP go stale. Emergency use only.' },
+  { key: 'flag_shed_casting', label: 'Shed: casting relay', danger: true,
+    desc: 'Drops the cross-client cast relay — Mob Info who-is-casting goes stale. Emergency use only.' },
+  { key: 'flag_shed_threat_snapshot', label: 'Shed: threat snapshot', danger: true,
+    desc: 'Drops the threat-snapshot stream. Emergency use only.' },
+  { key: 'flag_shed_buff_casts', label: 'Shed: buff_casts stream', danger: true,
+    desc: 'Drops observed buff landings (already (N-1)/N duplicate + election-deduped). Mob Info buffs-on-target + charm/pet trackers go stale. Emergency use only.' },
+  { key: 'flag_shed_pvp', label: 'Shed: PvP broadcasts + /who harvest', danger: true,
+    desc: 'Drops the PvP kill/death relay AND the /who-harvest that rides it. PvP board + who directory stop refreshing. Emergency use only.' },
+  { key: 'flag_shed_pvp_assists', label: 'Shed: PvP assist credit', danger: true,
+    desc: 'Drops the PvP assist stream — assist credit stops accruing. Emergency use only.' },
+  { key: 'flag_shed_fun_event', label: 'Shed: fun events', danger: true,
+    desc: 'Drops fun-event counters (LD/CoH/DI…). Cosmetic — emergency use only.' },
+  { key: 'flag_shed_trigger_relay', label: 'Shed: trigger relay fan-out', danger: true,
+    desc: 'Drops the cross-client trigger-fire fan-out (recent-fires replay). Local callouts still fire; only the replay path stops. Emergency use only.' },
+  { key: 'flag_shed_ui_layout', label: 'Shed: UI Studio backups', danger: true,
+    desc: 'Drops encrypted EQ ini-file snapshot uploads. Backups pause; nothing live is affected. Emergency use only.' },
+  { key: 'flag_shed_tells', label: 'Shed: tell relay', danger: true,
+    desc: 'Drops the opt-in tell-history relay. Emergency use only.' },
+  { key: 'flag_disable_budgets', label: 'Disable admission-control budgets (#73)', danger: true,
+    desc: 'Kill switch for the per-uploader ingest budgets — uploads stop being 429-throttled fleet-wide. Emergency use only.' },
+  { key: 'flag_agent_kill', label: '☠ AGENT KILL — pause the ENTIRE fleet', danger: true,
+    desc: 'Fleet-wide dormancy (#74). Every agent stops ALL uploads + non-control polls and goes quiet, keeping only its 20s heartbeat so recovery is instant. The durable queue HOLDS (nothing dropped) and overlays keep working on each machine&rsquo;s LOCAL data. Clearing resumes the fleet within one heartbeat.' },
+];
+// Optimistic write cache: key → { v, at }. A confirmed flag-override response pins
+// its value here so the toggle reflects the change before the ~90s tuning poll
+// catches up; reconciled/expired in renderKillSwitches.
+var _wpKill = { local: {}, arm: false };
+function _wpKillFlagFor(key) { for (var i = 0; i < WP_KILL_FLAGS.length; i++) if (WP_KILL_FLAGS[i].key === key) return WP_KILL_FLAGS[i]; return null; }
+function _wpKillRawVal(key, tuning) { return (key in _wpKill.local) ? _wpKill.local[key].v : (tuning ? tuning[key] : undefined); }
+function _wpFlagIsOn(flag, tuning) {
+  var v = _wpKillRawVal(flag.key, tuning);
+  return flag.defaultOn ? (Number(v) !== 0) : (Number(v) >= 1);   // matches the bot&rsquo;s coercion
+}
+function _wpFlagOverride(key, value, okMsg) {
+  var msg = document.getElementById('wpKillMsg');
+  if (msg) msg.textContent = 'saving…';
+  fetch('/api/server/flag-override', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key: key, value: value }) })
+    .then(function (r) { return r.json(); }).then(function (j) {
+      if (j && j.ok) {
+        _wpKill.local[key] = { v: j.value, at: Date.now() };   // pin the bot-confirmed value
+        if (msg) msg.textContent = okMsg || ('✓ saved — ' + key + ' = ' + (j.value == null ? 'unset' : j.value) + ' · fleet honors within ~60s');
+      } else if (msg) { msg.textContent = '✕ ' + ((j && (j.reason || j.error)) || 'failed'); }
+    }).catch(function () { if (msg) msg.textContent = '✕ engine unreachable'; });
+}
+function renderKillSwitches(s) {
+  var sec = document.getElementById('wpKillSwitches');
+  if (!sec) return;
+  var isOfficer = !!(s.mimicIdentity && s.mimicIdentity.is_officer);
+  if (!isOfficer) { if (sec.style.display !== 'none') sec.style.display = 'none'; morphInto(sec, ''); return; }
+  if (sec.style.display === 'none') sec.style.display = '';
+  var tuning = s.overlayTuning || {};
+  // Reconcile optimistic locals: drop each once the polled tuning agrees, or after
+  // 150s as a safety (keeps the card honest without a per-write refresh endpoint).
+  var nowT = Date.now();
+  for (var lkk in _wpKill.local) {
+    var loc = _wpKill.local[lkk];
+    if (!loc || nowT - loc.at > 150000) { delete _wpKill.local[lkk]; continue; }
+    if (lkk === 'min_agent_ver_num') {
+      var tf = Number(tuning[lkk]); tf = (isFinite(tf) && tf > 0) ? Math.floor(tf) : null;
+      if (tf === (loc.v == null ? null : Number(loc.v))) delete _wpKill.local[lkk];
+    } else {
+      var flr = _wpKillFlagFor(lkk);
+      var onLoc = (flr && flr.defaultOn) ? (Number(loc.v) !== 0) : (Number(loc.v) >= 1);
+      var onTun = (flr && flr.defaultOn) ? (Number(tuning[lkk]) !== 0) : (Number(tuning[lkk]) >= 1);
+      if (onLoc === onTun) delete _wpKill.local[lkk];
+    }
+  }
+  var h = '<h2>🛑 Kill switches <span class="dim" style="font-size:11px;font-weight:normal">— control-plane flags · officer · ~60s fleet-wide</span></h2>';
+  h += '<div class="dim" style="font-size:11px;margin-bottom:7px">Live values from the tuning this agent polls. One click writes to the bot immediately (officer-authed + whitelisted); the fleet honors it within ~60s. Leave everything off in normal operation. The free-form numeric knobs stay on /admin/overlays.</div>';
+  for (var i = 0; i < WP_KILL_FLAGS.length; i++) {
+    var fl = WP_KILL_FLAGS[i];
+    if (fl.key === 'flag_agent_kill') { h += _wpKillAgentKillRow(fl, tuning); continue; }
+    var on = _wpFlagIsOn(fl, tuning);
+    var pend = (fl.key in _wpKill.local);
+    var border = fl.danger ? 'rgba(248,81,73,0.35)' : 'var(--border)';
+    h += '<div style="border:1px solid ' + border + ';border-radius:6px;padding:7px 10px;margin-bottom:6px">';
+    h += '<div style="display:flex;gap:8px;align-items:center;justify-content:space-between">';
+    h += '<div style="min-width:0"><b style="font-size:12px' + (fl.danger ? ';color:var(--red)' : '') + '">' + esc(fl.label) + '</b> <code class="dim" style="font-size:10px">' + esc(fl.key) + '</code>'
+       + (on ? ' <span style="font-size:10px;padding:1px 5px;border-radius:3px;background:rgba(248,81,73,0.18);color:var(--red);border:1px solid rgba(248,81,73,0.4)">ON</span>' : '')
+       + (pend ? ' <span class="dim" style="font-size:10px">(saving…)</span>' : '') + '</div>';
+    h += '<button type="button" class="wpKillToggle" data-key="' + esc(fl.key) + '" data-next="' + (on ? '0' : '1') + '" style="flex:none;font-size:11px;padding:3px 11px;cursor:pointer;border:1px solid var(--border);border-radius:4px;background:' + (on ? '#3d1414' : '#21262d') + ';color:' + (on ? 'var(--red)' : 'var(--text)') + '">' + (on ? 'Turn OFF' : 'Turn ON') + '</button>';
+    h += '</div>';
+    h += '<div class="dim" style="font-size:11px;line-height:1.45;margin-top:3px">' + esc(fl.desc) + (fl.hint ? ' <span style="color:var(--gold)">' + esc(fl.hint) + '</span>' : '') + '</div>';
+    h += '</div>';
+  }
+  h += _wpKillVersionFloorRow(tuning);
+  h += '<div id="wpKillMsg" class="dim" style="font-size:11px;min-height:14px;margin-top:2px"></div>';
+  morphInto(sec, h);
+}
+function _wpKillAgentKillRow(fl, tuning) {
+  var on = Number(_wpKillRawVal('flag_agent_kill', tuning)) >= 1;
+  var pend = ('flag_agent_kill' in _wpKill.local);
+  var h = '<div style="border:1px solid rgba(248,81,73,0.55);border-radius:6px;padding:8px 10px;margin-bottom:6px;background:rgba(248,81,73,0.06)">';
+  h += '<div style="display:flex;gap:8px;align-items:center;justify-content:space-between">';
+  h += '<div style="min-width:0"><b style="font-size:12px;color:var(--red)">' + esc(fl.label) + '</b> <code class="dim" style="font-size:10px">flag_agent_kill</code>'
+     + (on ? ' <span style="font-size:10px;padding:1px 5px;border-radius:3px;background:rgba(248,81,73,0.25);color:var(--red);border:1px solid rgba(248,81,73,0.5)">FLEET DORMANT</span>' : '')
+     + (pend ? ' <span class="dim" style="font-size:10px">(saving…)</span>' : '') + '</div>';
+  if (on) {
+    h += '<button type="button" class="wpKillResume" style="flex:none;font-size:11px;padding:3px 11px;cursor:pointer;border:1px solid var(--green);border-radius:4px;background:#0f2a16;color:var(--green)">Resume fleet</button>';
+  } else if (_wpKill.arm) {
+    h += '<span class="dim" style="flex:none;font-size:10px">confirm below ↓</span>';
+  } else {
+    h += '<button type="button" class="wpKillArm" style="flex:none;font-size:11px;padding:3px 11px;cursor:pointer;border:1px solid var(--red);border-radius:4px;background:#3d1414;color:var(--red)">Arm fleet kill…</button>';
+  }
+  h += '</div>';
+  h += '<div class="dim" style="font-size:11px;line-height:1.45;margin-top:3px">' + esc(fl.desc) + '</div>';
+  if (!on && _wpKill.arm) {
+    h += '<div style="margin-top:6px;padding:7px;border:1px dashed var(--red);border-radius:5px">';
+    h += '<div style="font-size:11px;color:var(--red);margin-bottom:5px">⚠ This pauses EVERY agent&rsquo;s uploads fleet-wide. Type <b>KILL</b> to confirm.</div>';
+    h += '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">';
+    h += '<input id="wpKillConfirmInput" placeholder="KILL" style="font-size:11px;padding:3px 6px;background:#161b22;color:var(--text);border:1px solid var(--red);border-radius:4px;width:90px">';
+    h += '<button type="button" class="wpKillConfirm" style="font-size:11px;padding:3px 11px;cursor:pointer;border:1px solid var(--red);border-radius:4px;background:#3d1414;color:var(--red)">Confirm kill</button>';
+    h += '<button type="button" class="wpKillCancel" style="font-size:11px;padding:3px 9px;cursor:pointer;border:1px solid var(--border);border-radius:4px;background:#21262d;color:var(--text)">Cancel</button>';
+    h += '</div></div>';
+  }
+  h += '</div>';
+  return h;
+}
+function _wpKillVersionFloorRow(tuning) {
+  var raw = _wpKillRawVal('min_agent_ver_num', tuning);
+  var cur = Number(raw); cur = (isFinite(cur) && cur > 0) ? Math.floor(cur) : null;
+  var pend = ('min_agent_ver_num' in _wpKill.local);
+  var h = '<div style="border:1px solid var(--border);border-radius:6px;padding:7px 10px;margin-bottom:6px">';
+  h += '<div><b style="font-size:12px">Minimum agent version</b> <code class="dim" style="font-size:10px">min_agent_ver_num</code>'
+     + (cur != null ? ' <span style="font-size:10px;padding:1px 5px;border-radius:3px;background:rgba(248,81,73,0.18);color:var(--red);border:1px solid rgba(248,81,73,0.4)">floor ' + cur + '</span>' : ' <span class="dim" style="font-size:10px">unset</span>')
+     + (pend ? ' <span class="dim" style="font-size:10px">(saving…)</span>' : '') + '</div>';
+  h += '<div class="dim" style="font-size:11px;line-height:1.45;margin-top:3px">Numeric version form (major×10000 + minor×100 + patch), e.g. agent 3.3.95 → 30395. Agents below the floor pause uploads like the kill switch and show an update nudge. Set 0 (or blank) to clear the floor. Conservative — coordinate with Hitya.</div>';
+  h += '<div style="display:flex;gap:6px;align-items:center;margin-top:5px">';
+  h += '<input id="wpKillVerInput" type="number" min="0" step="1" placeholder="' + (cur != null ? cur : 'unset') + '" style="font-size:11px;padding:3px 6px;background:#161b22;color:var(--text);border:1px solid var(--border);border-radius:4px;width:120px">';
+  h += '<button type="button" class="wpKillVerSet" style="font-size:11px;padding:3px 11px;cursor:pointer;border:1px solid var(--border);border-radius:4px;background:#21262d;color:var(--text)">Set floor</button>';
+  h += '</div></div>';
+  return h;
+}
+// 🛑 Kill-switch controls — delegated (capture) so #admin repaints never lose the
+// handlers. A toggle writes 0|1; agent-kill is arm → typed-KILL → confirm.
+document.addEventListener('click', function (ev) {
+  var t = ev.target; if (!t || !t.closest) return;
+  var tog = t.closest('.wpKillToggle');
+  if (tog) { _wpFlagOverride(tog.getAttribute('data-key'), (Number(tog.getAttribute('data-next')) >= 1 ? 1 : 0)); return; }
+  if (t.closest('.wpKillArm'))    { _wpKill.arm = true;  var mA = document.getElementById('wpKillMsg'); if (mA) mA.textContent = ''; return; }
+  if (t.closest('.wpKillCancel')) { _wpKill.arm = false; return; }
+  if (t.closest('.wpKillConfirm')) {
+    var inp = document.getElementById('wpKillConfirmInput');
+    var typed = (inp && inp.value ? inp.value : '').trim().toUpperCase();
+    var m = document.getElementById('wpKillMsg');
+    if (typed !== 'KILL') { if (m) m.textContent = 'type KILL to confirm the fleet-wide kill'; return; }
+    _wpKill.arm = false;
+    _wpFlagOverride('flag_agent_kill', 1, '☠ FLEET KILL SENT — every agent pauses uploads within one heartbeat. Clear it to resume.');
+    return;
+  }
+  if (t.closest('.wpKillResume')) { _wpFlagOverride('flag_agent_kill', 0, '✓ resume sent — the fleet resumes uploads within one heartbeat'); return; }
+  if (t.closest('.wpKillVerSet')) {
+    var vinp = document.getElementById('wpKillVerInput');
+    var rawv = (vinp && vinp.value ? vinp.value : '').trim();
+    var n = rawv === '' ? 0 : Number(rawv);
+    var mv = document.getElementById('wpKillMsg');
+    if (!isFinite(n) || n < 0) { if (mv) mv.textContent = 'enter a whole number (or 0 to clear the floor)'; return; }
+    _wpFlagOverride('min_agent_ver_num', Math.floor(n), (n > 0 ? '✓ version floor set to ' + Math.floor(n) : '✓ version floor cleared'));
+    if (vinp) vinp.value = '';
+    return;
+  }
+}, true);
+
 function renderInfo(s) {
   const sessionMin = Math.max(1, Math.round((Date.now() - s.startedAt) / 60000));
   // totalMinutes now accumulates the live session incrementally (saveStatsSoon),
@@ -11876,19 +13249,14 @@ function renderInfo(s) {
   // the session that's already running.
   const lifetimeMin = Math.max(s.lifetime?.totalMinutes||0, sessionMin);
   let h = '';
-  // Watched Logs — moved here from the Dashboard (reference data, not a
-  // raid-night card). Self-updating #wpWatchedLogs filled by
-  // renderWatchedLogsCard; placeholder hidden until logs are seen.
-  h += '<div id="wpWatchedLogs" class="card wide" style="display:none"></div>';
+  // NOTE: Watched Logs (#wpWatchedLogs) moved to the Dashboard's ⚙ Engine card,
+  // and the officer DKP tick / loot capture cards (#wpDkpTick / #wpDkpLoot)
+  // moved to the 🛡 Admin tab (#109). Their render fns are unchanged — only the
+  // placeholder location moved — so they are NOT re-declared here.
   // Zeal Pipe explorer — every data element the pipe carries, per character,
   // each group expandable. Volatile (live gauges/labels), so it fills its own
   // placeholder via renderZealExplorer to keep the rest of #info byte-stable.
   h += '<div id="wpZealExplorer" class="card wide" style="display:none"></div>';
-  // 🎫 DKP ticks (officers only) — filled by renderDkpTickCard.
-  h += '<div id="wpDkpTick" class="card wide" style="display:none"></div>';
-  // 💰 Loot capture (officers only) — filled by renderDkpLootCard. Own
-  // placeholder so its checkboxes/buttons survive #info repaints.
-  h += '<div id="wpDkpLoot" class="card wide" style="display:none"></div>';
   // 🛟 Settings backups — filled by renderBackupsCard (own placeholder so the
   // restore controls survive #info repaints).
   h += '<div id="wpBackupsCard" class="card wide" style="display:none"></div>';
@@ -12173,7 +13541,11 @@ function wpWireZealCapture() {
 // on the agent's 3s cache instead of the website's 15s refresh — "review this
 // outside the main site, faster". Class picker persists with the overlay's key.
 var _raidTabCls = '';
-try { _raidTabCls = localStorage.getItem('wp:bufferClass') || ''; } catch (e) {}
+// Distinguish "never chose" (null) from an explicit "(any class)" (''), so we
+// only default the picker to the user's OWN class when they haven't picked.
+var _raidClsExplicit = false;
+try { var _rcStored = localStorage.getItem('wp:bufferClass'); if (_rcStored !== null) { _raidTabCls = _rcStored; _raidClsExplicit = true; } } catch (e) {}
+var _raidClsDefaulted = false;
 function _raidTierColor(t) {
   if (t === 'red') return 'var(--red)';
   if (t === 'orange') return 'var(--orange)';
@@ -12415,7 +13787,7 @@ function renderRaidTab(q) {
     + '<span class="dim">Buffing as</span>'
     + '<select id="wpRaidCls" style="background:#0d1117;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:3px 8px;font:inherit">'
     + '<option value="">(any class)</option>'
-    + ['Cleric','Druid','Shaman','Enchanter','Bard','Paladin','Ranger','Beastlord','Magician'].map(function(c){
+    + ['Cleric','Druid','Shaman','Enchanter','Magician','Necromancer','Wizard','Beastlord','Bard','Paladin','Ranger','Shadow Knight'].map(function(c){
         return '<option' + (c === _raidTabCls ? ' selected' : '') + '>' + c + '</option>';
       }).join('')
     + '</select>'
@@ -12522,6 +13894,7 @@ function renderRaidTab(q) {
   var sel2 = document.getElementById('wpRaidCls');
   if (sel2) _bindOnce(sel2, 'change', function(){
     _raidTabCls = sel2.value || '';
+    _raidClsExplicit = true;   // an explicit pick (incl. "(any class)") wins over the own-class default
     try { localStorage.setItem('wp:bufferClass', _raidTabCls); } catch (e) {}
     refreshRaidTab();
   });
@@ -12539,6 +13912,17 @@ function renderRaidTab(q) {
 }
 async function refreshRaidTab() {
   try {
+    // Default the picker to the user's OWN class the first time (only if they
+    // haven't explicitly chosen). activeCharacterClass is null until /who or
+    // Zeal has seen the toon — retry each poll until known, then fall back to
+    // "(any class)" and stop trying.
+    if (!_raidClsExplicit && !_raidTabCls && !_raidClsDefaulted) {
+      try {
+        var st = await fetch('/api/state', { cache: 'no-store' }).then(function(r){ return r.json(); });
+        var own = st && st.activeCharacterClass;
+        if (own) { _raidTabCls = String(own); _raidClsDefaulted = true; }
+      } catch (e2) { /* keep trying next poll */ }
+    }
     var qs = _raidTabCls ? ('?class=' + encodeURIComponent(_raidTabCls)) : '';
     var r = await fetch('/api/buff-queue' + qs, { cache: 'no-store' });
     renderRaidTab(await r.json());
@@ -12868,7 +14252,13 @@ async function refresh() {
     // catch below — leaving the body blank with no error anywhere. Now a
     // failing section shows its own error card (visible on-screen, not just the
     // log) and the other sections still render.
-    var _sections = [['header', renderHeader], ['dash', renderDash], ['zealclients', renderZealClients],
+    var _sections = [['header', renderHeader], ['dash', renderDash],
+                     // 🐺 Me card + ⚙ Engine (must run right after renderDash so the
+                     // #wpMeCard / #wpEngine placeholders exist; renderEngine builds the
+                     // nested #wpSetupChecks/#wpEngineStats/#wpWatchedLogs children BEFORE
+                     // their own fillers run later in this list).
+                     ['mecard', renderMeCard], ['engine', renderEngine], ['enginestats', renderEngineStats],
+                     ['zealclients', renderZealClients],
                      ['critscard', renderCritsCard],
                      // Isolated dashboard volatile cards (fill their own wp* placeholders
                      // so #dash stops repainting every poll — the stutter fix).
@@ -12878,13 +14268,19 @@ async function refresh() {
                      ['recenttells', renderRecentTellsCard], ['topdamage', renderTopDamageCard],
                      ['tanks', renderTanks], ['deeps', renderDeeps],
                      ['triggers', renderTriggers], ['zealcard', renderZealCard],
-                     ['charmdiag', renderCharmDiag],
+                     ['recentfires', renderRecentFires],
+                     ['charmdiag', renderCharmDiag], ['petbuffdiag', renderPetBuffDiag], ['triggerjournal', renderTriggerJournal],
                      ['overlays', renderOverlays], ['info', renderInfo],
                      // After info: fill the placeholders renderInfo just
                      // (re)painted, so they show same-tick.
                      ['zealexplorer', renderZealExplorer],
+                     // 🛡 Admin (officer-only) builds #wpDkpTick / #wpDkpLoot — must run
+                     // BEFORE their fillers below so the placeholders exist same-tick.
+                     ['admin', renderAdmin],
                      ['dkptick', renderDkpTickCard],
                      ['dkploot', renderDkpLootCard],
+                     ['reporters', renderReporters],
+                     ['killswitches', renderKillSwitches],
                      ['backupscard', renderBackupsCard]];
     for (var _si = 0; _si < _sections.length; _si++) {
       var _sid = _sections[_si][0], _sfn = _sections[_si][1];
@@ -14286,208 +15682,462 @@ async function dismissTopDamage(key) {
   setInterval(refresh, 3000);
 })();
 
-// ── 💸 Live Bidding panel ──────────────────────────────────────────────────
-// Pulls active OpenDKP auctions via /api/server/auctions (bot passthrough),
-// renders a list with bid input + Place Bid button per row, and shows the
-// caller's currently-placed bids underneath. Wishlisted items get a star.
-// The character dropdown is populated from watchedLogs (your uploader +
-// any alts whose logs you are tailing — those are the chars you can bid on
-// because OpenDKP needs their CharacterId).
+// ── 💰 Loot bidding panel (#108 · BETA) ─────────────────────────────────────
+// One card that: surfaces the agent's live loot-auction detection
+// (/api/loot/auctions — the v3.3.88 _lootAuctions state, one source of truth,
+// no re-parse) merged with the bot's live OpenDKP auctions
+// (/api/server/auctions); gates EVERY bid control behind a real OpenDKP login
+// (/api/loot/login → Cognito, token kept local, never uploaded); shows per-item
+// last winner + runner-up and a "+1" prefill (runner-up+1, never auto-submits);
+// carries a local main+alt family editor + per-bid picker (/api/loot/family);
+// and once authed shows the caller's own bid history + wishlist (prereg vs from
+// bid history) via /api/server/bid-history. Bids ride the sealed
+// /api/server/place-bid path unchanged.
 (function(){
-  var lastChar = null;        // last character used (sticks across refreshes)
+  var cfg          = { authed:false, opendkp_username:null, expires_at:null, family:{ main:null, alts:[] } };
+  var localAucs    = [];    // /api/loot/auctions (agent-detected)
+  var srvAucs      = [];    // /api/server/auctions (biddable OpenDKP)
+  var myBids       = [];    // /api/server/my-bids
+  var itemHist     = {};    // item_id -> { item_name, winner, winning_bid, runner_up }
+  var bidHist      = null;  // { wins:[], wishlist:[], misses:[], dkp:{}, suggested_family:{} }
+  var drafts       = {};    // rowKey -> in-progress bid string (survives repaints)
+  var planned      = {};    // item_id -> planned next bid (mirrors the agent's local store)
+  var ticks        = {};    // spanId -> ends-at ms (1s countdown ticker)
+  var lastChar     = null;
+  var showLogin    = false;
+  var showFamily   = false;
+  var loginErr     = "";
+  var lastHistKey  = "";
+  var lastBidHistAt = 0;
+  var opendkpBase  = "";    // https://<client>.opendkp.com — from the bot (bid-history)
+  var eraFilter    = "";    // "" = all; else "Classic"/"Kunark"/"Velious"/"Luclin"
+  var famPrefilled = false; // one-shot auto-prefill of the family from OpenDKP
+
+  function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g, function(c){ return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]; }); }
+  function fmt(n){ n=Number(n); if(!isFinite(n)) return "—"; return n.toLocaleString(); }
+  function isChar(s){ return /^[A-Za-z]{2,20}$/.test(String(s||"").trim()); }
+  function famList(){ return (cfg.family&&cfg.family.main) ? [cfg.family.main].concat(cfg.family.alts||[]) : ((cfg.family&&cfg.family.alts)||[]); }
+  // Link an item to its OpenDKP raid page (the auction/award lives there —
+  // OpenDKP has no per-auction URL). NO class=name (that would misfire the
+  // dashboard's /character click-delegation → 404). Falls back to a plain,
+  // non-clickable span when we have no raid id.
+  function itemLink(name, raidId){
+    var t = esc(name || "?");
+    if (raidId && opendkpBase) return "<a href='" + esc(opendkpBase) + "/#/raids/" + encodeURIComponent(raidId) + "' target='_blank' rel='noreferrer' style='color:var(--blue);text-decoration:none'>" + t + "</a>";
+    return "<span>" + t + "</span>";
+  }
+  function eraTag(era){ return era ? " <span class=dim style='font-size:10px'>· " + esc(era) + "</span>" : ""; }
+  function passEra(era){ return !eraFilter || era === eraFilter; }
+
   function makeCard(){
     var c = document.createElement("div");
     c.id = "wpBiddingCard";
-    c.className = "card";
-    c.style.display = "none";
-    c.innerHTML = "<h2>💸 Live Bidding <span class=dim style=font-size:11px;text-transform:none;letter-spacing:0> · OpenDKP auctions</span></h2><div class=card-body><div class=dim style=padding:6px>loading…</div></div>";
+    c.className = "card wide";   // full-width — fits the misses table's 6 columns
+    c.innerHTML = "<h2>💰 Loot bidding <span style='background:var(--gold,#d4af37);color:#000;font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;vertical-align:middle;letter-spacing:.08em'>BETA</span> <span class=dim style='font-size:11px;text-transform:none;letter-spacing:0'>· sealed bids via OpenDKP</span></h2><div class=card-body><div class=dim style=padding:6px>loading…</div></div>";
     return c;
   }
   var card = makeCard();
   function ensure(){
-    if (document.getElementById("wpBiddingCard")) return;
+    var found = document.getElementById("wpBiddingCard");
+    if (found){ card = found; return; }
     var dash = document.getElementById("dash"); if (!dash) return;
     var grid = dash.querySelector(".grid"); var host = grid || dash;
     host.insertBefore(card, host.firstChild);
   }
-  function fmt(n){ n=Number(n); if(!isFinite(n)) return "—"; return n.toLocaleString(); }
-  function looksLikeCharacter(name){
-    if (!name) return false;
-    return /^[A-Z][a-z]+$/.test(String(name).trim());
+
+  function pickChar(){
+    var fam = famList();
+    if (lastChar){ for (var i=0;i<fam.length;i++){ if (fam[i]===lastChar) return lastChar; } }
+    return fam.length ? fam[0] : null;
   }
-  function pickDefaultChar(wls){
-    if (lastChar) return lastChar;
-    for (var i = 0; i < (wls || []).length; i++){
-      var c = (wls[i] && wls[i].character) || "";
-      if (looksLikeCharacter(c)) return c;
+  function endLabel(ms){
+    if (!ms) return "";
+    var d = ms - Date.now();
+    if (d <= 0) return "ended";
+    var s = Math.round(d/1000);
+    if (s < 60) return s + "s";
+    return Math.floor(s/60) + "m " + (s%60) + "s";
+  }
+
+  // Merge server (biddable) + local (detected) auctions, keyed by item name.
+  function mergedRows(){
+    var byName = {}; var rows = [];
+    for (var i=0;i<srvAucs.length;i++){
+      var a = srvAucs[i];
+      var nm = (a.item_name||"").toLowerCase();
+      var row = { key:"a"+a.auction_id, name:a.item_name||"?", item_id:a.item_id||null,
+        auction_id:a.auction_id, wishlisted:!!a.wishlisted, top_bid:a.top_bid,
+        ends:a.ends_at?Date.parse(a.ends_at):null, biddable:true, pending:false };
+      byName[nm] = row; rows.push(row);
     }
+    for (var j=0;j<localAucs.length;j++){
+      var la = localAucs[j]; var items = la.items||[];
+      for (var k=0;k<items.length;k++){
+        var name = items[k].name||""; var lk = name.toLowerCase();
+        if (byName[lk]){ if (!byName[lk].ends && la.ends_at) byName[lk].ends = Date.parse(la.ends_at); continue; }
+        var lrow = { key:"l"+la.sig+"_"+k, name:name, item_id:null, auction_id:null,
+          wishlisted:false, top_bid:null, ends:la.ends_at?Date.parse(la.ends_at):null,
+          biddable:false, pending:true };
+        byName[lk] = lrow; rows.push(lrow);
+      }
+    }
+    return rows;
+  }
+  function prefillFor(item_id){
+    var h = item_id!=null ? itemHist[item_id] : null;
+    if (!h) return null;
+    if (h.runner_up!=null) return { v:h.runner_up+1, basis:"runner-up" };
+    if (h.winning_bid!=null) return { v:h.winning_bid+1, basis:"last winning bid" };
     return null;
   }
-  function renderEmpty(label){
-    var body = card.querySelector(".card-body");
-    if (!body) return;
-    body.innerHTML = "<div class=dim style=padding:6px>" + label + "</div>";
-  }
-  function endsInLabel(ts){
-    if (!ts) return "";
-    var t = Date.parse(ts);
-    if (!isFinite(t)) return "";
-    var ms = t - Date.now();
-    if (ms <= 0) return "<span style=color:var(--orange)>ended</span>";
-    var s = Math.round(ms / 1000);
-    if (s < 60) return "ends in " + s + "s";
-    var m = Math.floor(s / 60);
-    return "ends in " + m + "m " + (s % 60) + "s";
-  }
-  function placeBid(auctionId, character, value, btn){
-    var body = JSON.stringify({ character: character, auction_id: auctionId, value: value });
-    if (btn) { btn.disabled = true; btn.textContent = "…"; }
-    fetch("/api/server/place-bid", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: body,
-    }).then(function(r){ return r.json().then(function(j){ return { ok: r.ok, body: j }; }); })
-      .then(function(out){
-        if (btn) {
-          btn.disabled = false;
-          btn.textContent = out.ok ? "✓ bid" : "✗";
-          btn.title = out.ok ? "bid placed" : (out.body && out.body.error) || "failed";
-          setTimeout(function(){ if (btn) btn.textContent = "Bid"; btn.title = ""; }, 2500);
-        }
-        if (out.ok) fetchAll();
-      })
-      .catch(function(){ if (btn) { btn.disabled = false; btn.textContent = "✗"; } });
-  }
-  function render(state){
-    var body = card.querySelector(".card-body");
-    if (!body) return;
-    var wls = (state && state.watchedLogs) || [];
-    var chars = [];
-    for (var i = 0; i < wls.length; i++){
-      var c = (wls[i] && wls[i].character) || "";
-      if (looksLikeCharacter(c)) chars.push(c);
-    }
-    if (chars.length === 0){
-      card.style.display = "none";
-      return;
-    }
-    var current = pickDefaultChar(wls);
-    if (!current) { card.style.display = "none"; return; }
-    var auctions = (window.__wpAuctions && window.__wpAuctions.auctions) || [];
-    var myBids   = (window.__wpMyBids   && window.__wpMyBids.bids)        || [];
-    if (auctions.length === 0 && myBids.length === 0){
-      // Hide entirely when nothing is up for bid AND no live bids — keeps
-      // the dashboard quiet outside of loot calls.
-      card.style.display = "none";
-      return;
-    }
-    card.style.display = "block";
-    var html = "";
-    html += "<div style='display:flex;gap:8px;align-items:center;margin-bottom:8px;font-size:12px'>";
-    html += "<span class=dim>bidding as</span>";
-    html += "<select id=wpBidChar style='background:#0e1116;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 6px;font-family:inherit'>";
-    for (var j = 0; j < chars.length; j++){
-      var sel = (chars[j] === current) ? " selected" : "";
-      html += "<option value='" + chars[j] + "'" + sel + ">" + chars[j] + "</option>";
-    }
-    html += "</select>";
-    html += "</div>";
-    if (auctions.length === 0){
-      html += "<div class=dim style='padding:4px 0 8px'>no auctions open right now</div>";
-    } else {
-      html += "<table><tr><th>Item</th><th class=num>Top</th><th>Ends</th><th>Bid</th></tr>";
-      for (var k = 0; k < auctions.length; k++){
-        var a = auctions[k];
-        var star = a.wishlisted ? " <span title='on your wishlist' style=color:var(--gold)>★</span>" : "";
-        var top = a.top_bid != null ? fmt(a.top_bid) : "—";
-        var ends = endsInLabel(a.ends_at);
-        var aid = a.auction_id;
-        html += "<tr>";
-        html += "<td class=name>" + (a.item_name || "?") + star + "</td>";
-        html += "<td class=num>" + top + "</td>";
-        html += "<td style=font-size:11px>" + ends + "</td>";
-        html += "<td><input id=wpBidVal_" + aid + " type=number min=1 placeholder='dkp' style='width:60px;background:#0e1116;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 4px;font-family:inherit'>";
-        html += " <button id=wpBidBtn_" + aid + " data-aid='" + aid + "' style='background:#21262d;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 8px;font-size:11px;cursor:pointer;font-family:inherit'>Bid</button></td>";
-        html += "</tr>";
-      }
-      html += "</table>";
-    }
-    if (myBids.length > 0){
-      html += "<div class=wp-bid-block><div style='font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px'>your bids</div>";
-      html += "<table><tr><th>Item</th><th>Character</th><th class=num>Value</th><th class=num>Rank</th></tr>";
-      for (var m = 0; m < myBids.length; m++){
-        var b = myBids[m];
-        html += "<tr><td class=name>" + (b.item_name || "?") + "</td><td class=name>" + (b.character || "?") + "</td><td class=num>" + fmt(b.value) + "</td><td class=num>" + (b.rank || "—") + "</td></tr>";
-      }
-      html += "</table></div>";
-    }
-    morphInto(body, html);
-    // Wire char dropdown
-    var charSel = document.getElementById("wpBidChar");
-    if (charSel){
-      charSel.addEventListener("change", function(){
-        lastChar = charSel.value;
-        fetchAll();
-      });
-    }
-    // Wire bid buttons
-    var btns = card.querySelectorAll("button[data-aid]");
-    for (var n = 0; n < btns.length; n++){
-      (function(btn){
-        btn.addEventListener("click", function(){
-          var aid = btn.getAttribute("data-aid");
-          var input = document.getElementById("wpBidVal_" + aid);
-          var val = input ? parseInt(input.value, 10) : 0;
-          if (!val || val <= 0){ btn.textContent = "?"; setTimeout(function(){ btn.textContent = "Bid"; }, 1500); return; }
-          var who = (document.getElementById("wpBidChar") || {}).value || lastChar;
-          if (!who) return;
-          placeBid(aid, who, val, btn);
-        });
-      })(btns[n]);
-    }
-  }
-  var lastState = null;
-  function fetchState(){
-    return fetch("/api/state").then(function(r){ return r.json(); }).then(function(s){
-      lastState = s; return s;
-    }).catch(function(){ return null; });
-  }
-  function fetchAll(){
+
+  function render(){
     ensure();
-    fetchState().then(function(s){
-      if (!s) return;
-      var wls = s.watchedLogs || [];
-      var who = pickDefaultChar(wls);
-      if (!who){ card.style.display = "none"; return; }
-      var qs = "?character=" + encodeURIComponent(who);
-      Promise.all([
-        fetch("/api/server/auctions" + qs).then(function(r){ return r.ok ? r.json() : { auctions: [] }; }).catch(function(){ return { auctions: [] }; }),
-        fetch("/api/server/my-bids" + qs).then(function(r){ return r.ok ? r.json() : { bids: [] }; }).catch(function(){ return { bids: [] }; }),
-      ]).then(function(both){
-        window.__wpAuctions = both[0];
-        window.__wpMyBids   = both[1];
-        render(s);
-      });
-    });
+    var body = card.querySelector(".card-body");
+    if (!body) return;
+    ticks = {};
+    var char = pickChar();
+    var fam = famList();
+    var h = "";
+
+    // Login gate
+    if (cfg.authed){
+      h += "<div style='display:flex;gap:8px;align-items:center;font-size:12px;margin-bottom:6px'>";
+      h += "<span style='color:var(--green,#3fb950)'>●</span> <span class=dim>OpenDKP</span> <b>"+esc(cfg.opendkp_username||"")+"</b>";
+      h += " <button id=wpLootLogout style='margin-left:auto;background:#21262d;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 8px;font-size:11px;cursor:pointer;font-family:inherit'>log out</button>";
+      h += "</div>";
+    } else {
+      h += "<div style='background:rgba(212,175,55,.08);border:1px solid var(--border);border-radius:6px;padding:8px;margin-bottom:8px;font-size:12px'>";
+      h += "<div style='margin-bottom:6px'>🔒 <b>Log into OpenDKP to enable bidding.</b> <span class=dim>All bid controls stay locked until you sign in.</span></div>";
+      if (showLogin){
+        h += "<div style='display:flex;gap:6px;flex-wrap:wrap;align-items:center'>";
+        h += "<input id=wpLootUser placeholder='OpenDKP username' autocomplete=off style='background:#0e1116;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:3px 6px;font-family:inherit;font-size:12px;width:150px'>";
+        h += "<input id=wpLootPass type=password placeholder='password' style='background:#0e1116;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:3px 6px;font-family:inherit;font-size:12px;width:130px'>";
+        h += "<button id=wpLootLoginGo style='background:var(--gold,#d4af37);color:#000;border:none;border-radius:4px;padding:3px 10px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit'>Sign in</button>";
+        h += "<button id=wpLootLoginCancel style='background:#21262d;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:3px 8px;font-size:11px;cursor:pointer;font-family:inherit'>cancel</button>";
+        h += "</div>";
+        if (loginErr) h += "<div style='color:var(--orange,#d29922);margin-top:5px;font-size:11px'>"+esc(loginErr)+"</div>";
+        h += "<div class=dim style='margin-top:5px;font-size:10px'>Your OpenDKP login stays on this PC and is never uploaded.</div>";
+      } else {
+        h += "<button id=wpLootLoginOpen style='background:var(--gold,#d4af37);color:#000;border:none;border-radius:4px;padding:3px 12px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit'>Log in to OpenDKP</button>";
+      }
+      h += "</div>";
+    }
+
+    // Character picker + family editor toggle
+    h += "<div style='display:flex;gap:8px;align-items:center;font-size:12px;margin-bottom:6px;flex-wrap:wrap'>";
+    h += "<span class=dim>bidding as</span>";
+    if (fam.length){
+      h += "<select id=wpBidChar style='background:#0e1116;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 6px;font-family:inherit'>";
+      for (var fi=0;fi<fam.length;fi++){
+        var seld = (fam[fi]===char) ? " selected" : "";
+        var tag = (cfg.family.main===fam[fi]) ? " (main)" : "";
+        h += "<option value='"+esc(fam[fi])+"'"+seld+">"+esc(fam[fi])+esc(tag)+"</option>";
+      }
+      h += "</select>";
+    } else {
+      h += "<span style='color:var(--orange,#d29922)'>no characters set</span>";
+    }
+    h += "<button id=wpFamToggle style='margin-left:auto;background:#21262d;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 8px;font-size:11px;cursor:pointer;font-family:inherit'>✎ characters</button>";
+    h += "</div>";
+    if (showFamily){
+      h += "<div style='background:#0d1117;border:1px solid var(--border);border-radius:6px;padding:8px;margin-bottom:8px;font-size:12px'>";
+      h += "<div style='margin-bottom:6px'><span class=dim>main</span> <input id=wpFamMain value='"+esc(cfg.family.main||"")+"' placeholder='Mainname' style='background:#0e1116;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:3px 6px;font-family:inherit;font-size:12px;width:130px'></div>";
+      h += "<div style='margin-bottom:6px'><span class=dim>alts</span> ";
+      var alts = (cfg.family.alts||[]);
+      for (var aai=0;aai<alts.length;aai++){
+        h += "<span style='display:inline-block;background:#21262d;border:1px solid var(--border);border-radius:10px;padding:1px 6px;margin:2px;font-size:11px'>"+esc(alts[aai])+" <span class=wpFamDel data-alt='"+esc(alts[aai])+"' style='cursor:pointer;color:var(--orange,#d29922)'>✕</span></span>";
+      }
+      h += "</div>";
+      h += "<div style='display:flex;gap:6px;align-items:center'>";
+      h += "<input id=wpFamAdd placeholder='add alt' style='background:#0e1116;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:3px 6px;font-family:inherit;font-size:12px;width:110px'>";
+      h += "<button id=wpFamAddGo style='background:#21262d;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 8px;font-size:11px;cursor:pointer;font-family:inherit'>+ add</button>";
+      h += "<button id=wpFamSave style='margin-left:auto;background:var(--gold,#d4af37);color:#000;border:none;border-radius:4px;padding:2px 10px;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit'>save</button>";
+      h += "</div>";
+      h += "</div>";
+    }
+
+    // Auctions
+    var rows = mergedRows();
+    if (!rows.length){
+      h += "<div class=dim style='padding:4px 0 6px'>no loot up for bid right now</div>";
+    } else {
+      h += "<table><tr><th>Item</th><th>Ends</th><th>Last win</th><th>Bid</th></tr>";
+      for (var r=0;r<rows.length;r++){
+        var row = rows[r];
+        var hist = row.item_id!=null ? itemHist[row.item_id] : null;
+        var star = row.wishlisted ? " <span title='on your wishlist' style='color:var(--gold,#d4af37)'>★</span>" : "";
+        var lastWin = (hist && hist.winning_bid!=null) ? (fmt(hist.winning_bid)+(hist.winner?(" · "+esc(hist.winner)):"")) : "—";
+        var ru = (hist && hist.runner_up!=null) ? ("<div class=dim style='font-size:10px'>runner-up "+fmt(hist.runner_up)+"</div>") : "";
+        var endSpanId = "wpEnd_"+row.key;
+        if (row.ends) ticks[endSpanId] = row.ends;
+        h += "<tr>";
+        h += "<td class=name>"+esc(row.name)+star+(row.pending?" <span class=dim style='font-size:10px'>(called)</span>":"")+"</td>";
+        h += "<td style='font-size:11px'><span id="+endSpanId+">"+(row.ends?endLabel(row.ends):"")+"</span></td>";
+        h += "<td style='font-size:11px'>"+lastWin+ru+"</td>";
+        h += "<td style='white-space:nowrap'>";
+        if (row.biddable && cfg.authed && char){
+          var pf = prefillFor(row.item_id);
+          h += "<input id=wpBidVal_"+row.key+" type=number min=1 placeholder='dkp' style='width:56px;background:#0e1116;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 4px;font-family:inherit'>";
+          h += " <button class=wpBidGo data-key='"+row.key+"' data-aid='"+row.auction_id+"' style='background:#21262d;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 8px;font-size:11px;cursor:pointer;font-family:inherit'>Bid</button>";
+          if (pf) h += " <button class=wpBidPlus data-key='"+row.key+"' data-v='"+pf.v+"' title='prefill "+esc(pf.basis)+" + 1' style='background:#161b22;color:var(--dim,#8b949e);border:1px solid var(--border);border-radius:4px;padding:2px 6px;font-size:11px;cursor:pointer;font-family:inherit'>+1</button>";
+        } else if (!cfg.authed){
+          h += "<span class=dim style='font-size:10px' title='Log into OpenDKP to bid'>🔒 locked</span>";
+        } else if (!char){
+          h += "<span class=dim style='font-size:10px'>set a character</span>";
+        } else {
+          h += "<span class=dim style='font-size:10px'>awaiting auction</span>";
+        }
+        h += "</td></tr>";
+      }
+      h += "</table>";
+    }
+
+    // Your open bids
+    if (myBids.length){
+      h += "<div style='font-size:11px;color:var(--dim,#8b949e);text-transform:uppercase;letter-spacing:.05em;margin:8px 0 4px'>your open bids</div>";
+      h += "<table><tr><th>Item</th><th>Char</th><th class=num>Value</th><th class=num>Rank</th></tr>";
+      for (var mb=0;mb<myBids.length;mb++){
+        var b = myBids[mb];
+        h += "<tr><td class=name>"+esc(b.item_name||"?")+"</td><td class=name>"+esc(b.character||"?")+"</td><td class=num>"+fmt(b.value)+"</td><td class=num>"+esc(b.rank||"—")+"</td></tr>";
+      }
+      h += "</table>";
+    }
+
+    // History + wishlist + misses (authed only)
+    if (cfg.authed && bidHist){
+      var wins = bidHist.wins||[]; var wl = bidHist.wishlist||[]; var misses = bidHist.misses||[]; var dkp = bidHist.dkp||null;
+
+      // Family DKP pill + expansion filter row.
+      h += "<div style='display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:12px 0 4px;font-size:11px'>";
+      if (dkp){
+        var fa = String(dkp.fetched_at||"").replace("T"," "); var dotIx = fa.indexOf("."); if (dotIx>=0) fa = fa.substring(0,dotIx);
+        var freshTitle = dkp.fetched_at ? ("mirror-derived (OpenDKP pools alts) · as of "+fa+" UTC") : "mirror-derived";
+        h += "<span style='background:rgba(212,175,55,.10);border:1px solid var(--border);border-radius:5px;padding:2px 9px' title='"+esc(freshTitle)+"'>💰 <b>"+fmt(dkp.family_total)+"</b> <span class=dim>DKP · family pool</span></span>";
+      }
+      var eraSet = {};
+      for (var ei=0;ei<wl.length;ei++) if(wl[ei].era) eraSet[wl[ei].era]=1;
+      for (var ei2=0;ei2<misses.length;ei2++) if(misses[ei2].era) eraSet[misses[ei2].era]=1;
+      for (var ei3=0;ei3<wins.length;ei3++) if(wins[ei3].era) eraSet[wins[ei3].era]=1;
+      var eraOrder = ["Classic","Kunark","Velious","Luclin","Planes of Power"]; var eraOpts = [];
+      for (var eo=0;eo<eraOrder.length;eo++) if(eraSet[eraOrder[eo]]){ eraOpts.push(eraOrder[eo]); delete eraSet[eraOrder[eo]]; }
+      for (var ek in eraSet){ if(eraSet.hasOwnProperty(ek)) eraOpts.push(ek); }
+      if (eraOpts.length){
+        h += "<span class=dim>expansion</span><select id=wpLootEra style='background:#0e1116;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 6px;font-family:inherit;font-size:11px'>";
+        h += "<option value=''"+(eraFilter===""?" selected":"")+">all</option>";
+        for (var eq=0;eq<eraOpts.length;eq++){ h += "<option"+(eraFilter===eraOpts[eq]?" selected":"")+">"+esc(eraOpts[eq])+"</option>"; }
+        h += "</select>";
+      }
+      h += "</div>";
+
+      var wlF = wl.filter(function(x){ return passEra(x.era); });
+      if (wlF.length){
+        h += "<div style='font-size:11px;color:var(--dim,#8b949e);text-transform:uppercase;letter-spacing:.05em;margin:8px 0 4px'>your wishlist <span style='text-transform:none;letter-spacing:0'>· bid on but not yet won</span></div>";
+        h += "<div style='font-size:11px'>";
+        for (var w=0;w<wlF.length && w<25;w++){
+          var it = wlF[w];
+          var srcTag = it.source==="prereg"
+            ? "<span title='preregistered' style='color:var(--gold,#d4af37)'>★ prereg</span>"
+            : "<span class=dim title='inferred from your bid history'>↺ from bid history</span>";
+          h += "<div style='display:flex;gap:6px;padding:1px 0'>"+itemLink(it.item_name||("item "+it.item_id), it.raid_id)+eraTag(it.era)+"<span style='margin-left:auto'>"+srcTag+"</span></div>";
+        }
+        h += "</div>";
+      }
+
+      // RECENT MISSES — bid on and lost. Full width; per-item columns.
+      var misF = misses.filter(function(x){ return passEra(x.era); });
+      if (misF.length){
+        h += "<div style='font-size:11px;color:var(--dim,#8b949e);text-transform:uppercase;letter-spacing:.05em;margin:12px 0 4px'>recent misses <span style='text-transform:none;letter-spacing:0'>· you bid and lost — figures are from each item's most recent auction</span></div>";
+        h += "<table><tr><th>Item</th><th>Char</th><th class=num>Your last</th><th class=num>Last win</th><th class=num>2nd place</th><th class=num>Planned</th><th class=num>DKP</th></tr>";
+        for (var mi=0;mi<misF.length;mi++){
+          var m = misF[mi];
+          var pv = (planned[m.item_id]!=null) ? planned[m.item_id] : "";
+          h += "<tr>";
+          h += "<td>"+itemLink(m.item_name||("item "+m.item_id), m.raid_id)+eraTag(m.era)+"</td>";
+          h += "<td"+(m.character?" class=name":"")+">"+esc(m.character||"—")+"</td>";
+          h += "<td class=num>"+(m.my_last_bid!=null?fmt(m.my_last_bid):"—")+"</td>";
+          h += "<td class=num>"+(m.last_winning_bid!=null?fmt(m.last_winning_bid):"—")+"</td>";
+          h += "<td class=num>"+(m.last_second_bid!=null?fmt(m.last_second_bid):"—")+"</td>";
+          h += "<td class=num><input id=wpPlan_"+m.item_id+" type=number min=1 value='"+esc(pv)+"' placeholder='—' style='width:52px;background:#0e1116;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:1px 4px;font-family:inherit;text-align:right'></td>";
+          h += "<td class=num>"+(dkp?fmt(dkp.family_total):"—")+"</td>";
+          h += "</tr>";
+        }
+        h += "</table>";
+      }
+
+      var winsF = wins.filter(function(x){ return passEra(x.era); });
+      if (winsF.length){
+        h += "<div style='font-size:11px;color:var(--dim,#8b949e);text-transform:uppercase;letter-spacing:.05em;margin:12px 0 4px'>recent wins</div>";
+        h += "<table><tr><th>Item</th><th>Char</th><th class=num>DKP</th></tr>";
+        for (var wn=0;wn<winsF.length && wn<12;wn++){
+          var win = winsF[wn];
+          h += "<tr><td>"+itemLink(win.item_name||"?", win.raid_id)+eraTag(win.era)+"</td><td"+(win.character?" class=name":"")+">"+esc(win.character||"?")+"</td><td class=num>"+fmt(win.dkp)+"</td></tr>";
+        }
+        h += "</table>";
+      }
+    }
+
+    morphInto(body, h);
+    wire();
+    restoreDrafts();
+    runTicks();
   }
+
+  function wire(){
+    var el;
+    el = document.getElementById("wpLootLoginOpen"); if (el) el.onclick = function(){ showLogin=true; loginErr=""; render(); var u=document.getElementById("wpLootUser"); if(u)u.focus(); };
+    el = document.getElementById("wpLootLoginCancel"); if (el) el.onclick = function(){ showLogin=false; loginErr=""; render(); };
+    el = document.getElementById("wpLootLoginGo"); if (el) el.onclick = doLogin;
+    el = document.getElementById("wpLootPass"); if (el) el.onkeydown = function(e){ if(e.key==="Enter") doLogin(); };
+    el = document.getElementById("wpLootLogout"); if (el) el.onclick = function(){ fetch("/api/loot/logout",{method:"POST"}).then(function(){ cfg.authed=false; bidHist=null; render(); }); };
+    el = document.getElementById("wpFamToggle"); if (el) el.onclick = function(){ showFamily=!showFamily; render(); };
+    el = document.getElementById("wpFamAddGo"); if (el) el.onclick = addAlt;
+    el = document.getElementById("wpFamAdd"); if (el) el.onkeydown = function(e){ if(e.key==="Enter") addAlt(); };
+    el = document.getElementById("wpFamSave"); if (el) el.onclick = saveFamily;
+    el = document.getElementById("wpBidChar"); if (el) el.onchange = function(){ lastChar=el.value; fetchServer(); };
+    var dels = card.querySelectorAll(".wpFamDel");
+    for (var i=0;i<dels.length;i++){ (function(d){ d.onclick=function(){ var a=d.getAttribute("data-alt"); cfg.family.alts=(cfg.family.alts||[]).filter(function(x){return x!==a;}); render(); }; })(dels[i]); }
+    var gos = card.querySelectorAll(".wpBidGo");
+    for (var g=0;g<gos.length;g++){ (function(btn){ btn.onclick=function(){ submitBid(btn); }; })(gos[g]); }
+    var plus = card.querySelectorAll(".wpBidPlus");
+    for (var p=0;p<plus.length;p++){ (function(btn){ btn.onclick=function(){ var key=btn.getAttribute("data-key"); var v=btn.getAttribute("data-v"); drafts[key]=v; var inp=document.getElementById("wpBidVal_"+key); if(inp){ inp.value=v; inp.focus(); } }; })(plus[p]); }
+    var vals = card.querySelectorAll("input[id^=wpBidVal_]");
+    for (var v2=0;v2<vals.length;v2++){ (function(inp){ inp.oninput=function(){ drafts[inp.id.substring("wpBidVal_".length)]=inp.value; }; })(vals[v2]); }
+    el = document.getElementById("wpLootEra"); if (el) el.onchange = function(){ eraFilter = el.value || ""; render(); };
+    // Planned-bid inputs — keep the client mirror current on every keystroke
+    // (so a repaint never drops mid-typed text) and persist locally on commit.
+    var plans = card.querySelectorAll("input[id^=wpPlan_]");
+    for (var pp=0;pp<plans.length;pp++){ (function(inp){
+      var id = inp.id.substring("wpPlan_".length);
+      inp.oninput = function(){ if(inp.value==="") delete planned[id]; else planned[id]=parseInt(inp.value,10)||0; };
+      inp.onchange = function(){ savePlanned(id, inp.value); };
+    })(plans[pp]); }
+  }
+  function savePlanned(itemId, value){
+    fetch("/api/loot/planned",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({item_id:parseInt(itemId,10),value:parseInt(value,10)||0})})
+      .then(function(r){return r.json();}).then(function(j){ if(j&&j.planned) planned=j.planned; }).catch(function(){});
+  }
+
+  function restoreDrafts(){
+    for (var k in drafts){ if(!drafts.hasOwnProperty(k)) continue; var inp=document.getElementById("wpBidVal_"+k); if(inp && drafts[k]!=null && drafts[k]!=="") inp.value=drafts[k]; }
+  }
+  function runTicks(){
+    for (var id in ticks){ if(!ticks.hasOwnProperty(id)) continue; var sp=document.getElementById(id); if(sp) sp.textContent=endLabel(ticks[id]); }
+  }
+
+  function doLogin(){
+    var u=((document.getElementById("wpLootUser")||{}).value||"").trim();
+    var p=(document.getElementById("wpLootPass")||{}).value||"";
+    if(!u||!p){ loginErr="enter username and password"; render(); return; }
+    var go=document.getElementById("wpLootLoginGo"); if(go){ go.disabled=true; go.textContent="…"; }
+    fetch("/api/loot/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({username:u,password:p})})
+      .then(function(r){return r.json();})
+      .then(function(j){
+        if(j&&j.ok){ cfg.authed=true; cfg.opendkp_username=j.opendkp_username; showLogin=false; loginErr=""; lastBidHistAt=0; bidHist=null; fetchAll(); }
+        else { loginErr=(j&&j.error)||"login failed"; render(); }
+      })
+      .catch(function(){ loginErr="could not reach OpenDKP"; render(); });
+  }
+
+  function addAlt(){
+    var inp=document.getElementById("wpFamAdd"); if(!inp) return;
+    var v=inp.value.trim();
+    if(!isChar(v)){ inp.style.borderColor="var(--orange,#d29922)"; return; }
+    cfg.family.alts=cfg.family.alts||[];
+    var low=v.toLowerCase();
+    if(low===String(cfg.family.main||"").toLowerCase()){ inp.value=""; return; }
+    for (var i=0;i<cfg.family.alts.length;i++){ if(cfg.family.alts[i].toLowerCase()===low){ inp.value=""; return; } }
+    cfg.family.alts.push(v); inp.value=""; render();
+  }
+  function saveFamily(){
+    var mv=((document.getElementById("wpFamMain")||{}).value||"").trim();
+    var payload={ main: mv, alts: cfg.family.alts||[] };
+    fetch("/api/loot/family",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)})
+      .then(function(r){return r.json();})
+      .then(function(j){ if(j&&j.family){ cfg.family={ main:j.family.main||null, alts:j.family.alts||[] }; } showFamily=false; if(!lastChar) lastChar=pickChar(); lastBidHistAt=0; fetchServer(); })
+      .catch(function(){});
+  }
+
+  function submitBid(btn){
+    var key=btn.getAttribute("data-key");
+    var aid=btn.getAttribute("data-aid");
+    var inp=document.getElementById("wpBidVal_"+key);
+    var val=inp?parseInt(inp.value,10):0;
+    if(!val||val<=0){ btn.textContent="?"; setTimeout(function(){btn.textContent="Bid";},1200); return; }
+    var who=(document.getElementById("wpBidChar")||{}).value||pickChar();
+    if(!who) return;
+    btn.disabled=true; btn.textContent="…";
+    fetch("/api/server/place-bid",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({character:who,auction_id:parseInt(aid,10),value:val})})
+      .then(function(r){return r.json().then(function(j){return {ok:r.ok&&(!j||j.ok!==false),body:j};});})
+      .then(function(out){
+        btn.disabled=false;
+        btn.textContent=out.ok?"✓":"✗";
+        btn.title=out.ok?"bid placed":((out.body&&out.body.error)||"failed");
+        if(out.ok){ delete drafts[key]; }
+        setTimeout(function(){ btn.textContent="Bid"; btn.title=""; if(out.ok) fetchServer(); },1800);
+      })
+      .catch(function(){ btn.disabled=false; btn.textContent="✗"; setTimeout(function(){btn.textContent="Bid";},1500); });
+  }
+
+  function fetchConfig(){
+    return fetch("/api/loot/config").then(function(r){return r.json();}).then(function(j){
+      if(j){ cfg.authed=!!j.authed; cfg.opendkp_username=j.opendkp_username; cfg.expires_at=j.expires_at;
+        if(j.family) cfg.family={ main:j.family.main||null, alts:j.family.alts||[] };
+        if(j.planned) planned=j.planned; }
+    }).catch(function(){});
+  }
+  function fetchLocal(){
+    return fetch("/api/loot/auctions").then(function(r){return r.json();}).then(function(j){ localAucs=(j&&j.auctions)||[]; }).catch(function(){ localAucs=[]; });
+  }
+  function fetchItemHist(){
+    var ids=[]; var seen={};
+    for (var i=0;i<srvAucs.length;i++){ var id=srvAucs[i].item_id; if(id!=null && !seen[id]){ seen[id]=1; ids.push(id); } }
+    if (!ids.length){ itemHist={}; lastHistKey=""; return Promise.resolve(); }
+    var sig=ids.slice().sort().join(",");
+    if (sig===lastHistKey) return Promise.resolve();
+    return fetch("/api/server/item-history?items="+ids.join(",")).then(function(r){return r.ok?r.json():{items:[]};}).then(function(j){
+      var m={}; var arr=(j&&j.items)||[];
+      for (var k=0;k<arr.length;k++){ m[arr[k].item_id]=arr[k]; }
+      itemHist=m; lastHistKey=sig;
+    }).catch(function(){});
+  }
+  function fetchBidHist(){
+    if (!cfg.authed){ bidHist=null; return Promise.resolve(); }
+    var fam=famList();
+    if (!fam.length && !cfg.opendkp_username){ bidHist=null; return Promise.resolve(); }
+    if (bidHist && (Date.now()-lastBidHistAt) < 45000) return Promise.resolve();
+    var q="?login="+encodeURIComponent(cfg.opendkp_username||"")+"&characters="+encodeURIComponent(fam.join(","));
+    return fetch("/api/server/bid-history"+q).then(function(r){return r.ok?r.json():null;}).then(function(j){
+      if(j){
+        bidHist={ wins:j.wins||[], wishlist:j.wishlist||[], misses:j.misses||[], dkp:j.dkp||null, suggested_family:j.suggested_family||null };
+        if(j.opendkp_base) opendkpBase=j.opendkp_base;
+        lastBidHistAt=Date.now();
+        // Auto-prefill the family (main + raid alts) from OpenDKP — ONLY when the
+        // local family is still empty, and only once. The manual editor stays.
+        if(!famPrefilled && !famList().length && j.suggested_family && j.suggested_family.main){
+          famPrefilled=true;
+          var sf={ main:j.suggested_family.main, alts:j.suggested_family.alts||[] };
+          fetch("/api/loot/family",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(sf)})
+            .then(function(r){return r.json();})
+            .then(function(res){ if(res&&res.family){ cfg.family={ main:res.family.main||null, alts:res.family.alts||[] }; if(!lastChar) lastChar=pickChar(); lastBidHistAt=0; fetchServer(); } })
+            .catch(function(){});
+        }
+      }
+    }).catch(function(){});
+  }
+  function fetchServer(){
+    var who=pickChar();
+    var q = who ? ("?character="+encodeURIComponent(who)) : "";
+    var jobs=[ fetch("/api/server/auctions"+q).then(function(r){return r.ok?r.json():{auctions:[]};}).then(function(j){ srvAucs=(j&&j.auctions)||[]; }).catch(function(){ srvAucs=[]; }) ];
+    if (who) jobs.push(fetch("/api/server/my-bids"+q).then(function(r){return r.ok?r.json():{bids:[]};}).then(function(j){ myBids=(j&&j.bids)||[]; }).catch(function(){ myBids=[]; }));
+    else myBids=[];
+    return Promise.all(jobs).then(fetchItemHist).then(fetchBidHist).then(render);
+  }
+  function fetchAll(){ ensure(); Promise.all([fetchConfig(), fetchLocal()]).then(fetchServer); }
+
   fetchAll();
-  // 5s → 15s (2026-06-21): the auction panel fires the bot's
-  // /api/agent/server-panel/auctions handler, which fans out into 3
-  // PostgREST reads — opendkp_auctions, opendkp_audits, AND a
-  // per-character wishlists ilike. Each active agent was hitting this
-  // every 5s and the wishlists row alone was the heaviest single egress
-  // pattern in the live API log (~10 req/sec across all agents). Bids
-  // typically arrive at multi-second cadence inside an auction, so 15s
-  // is plenty responsive while cutting wishlist+auction reads ~3x.
-  // 2026-06-21: cranked default 15s → 7s after the Supabase Pro upgrade —
-  // bids feel near-real-time again. Override via WP_AUCTION_POLL_MS.
-  // Baked server-side (\${}) at template build — a bare process.env here ran
-  // in the BROWSER and threw "process is not defined" on every page load
-  // since v3.1.59, killing every top-level statement after this IIFE in the
-  // page's single script block (uploader banner, triggers editor mount,
-  // suggested triggers, My Crits). Found 2026-07-15 via the console-error
-  // relay in agent.log.
   setInterval(fetchAll, ${Number(process.env.WP_AUCTION_POLL_MS) || 7000});
+  setInterval(runTicks, 1000);
 })();
 
 // ── Read-only uploader banner ──────────────────────────────────────────────
@@ -14608,7 +16258,7 @@ async function dismissTopDamage(key) {
         + '<td class="dim">' + ((t.cooldown_seconds || 0) > 0 ? t.cooldown_seconds + 's' : '—') + '</td>'
         + '<td style="color:' + esc(actionColor) + '">' + esc(actionText) + '</td>'
         + '<td style="white-space:nowrap">'
-        + '<button type="button" data-trig-fire="' + esc(t.id || '') + '" style="background:#21262d;color:var(--green);border:1px solid var(--border);cursor:pointer;font-size:11px;padding:2px 8px;border-radius:3px;margin-right:4px" title="Fire this trigger now (local only, no DB)">▶ Test</button>'
+        + '<button type="button" data-trig-fire="' + esc(t.id || '') + '" style="background:#21262d;color:var(--green);border:1px solid var(--border);cursor:pointer;font-size:11px;padding:2px 8px;border-radius:3px;margin-right:4px" title="Rehearse: drive a synthesized matching line through the REAL pipeline (pattern, cooldown, suppression) and speak the real TTS — local only, no DB, no relay. See the checkpoint journal below for what it exercised.">▶ Rehearse</button>'
         + '<button type="button" data-trig-promote="' + esc(t.id || '') + '" style="background:#21262d;color:var(--blue);border:1px solid var(--border);cursor:pointer;font-size:11px;padding:2px 8px;border-radius:3px;margin-right:4px" title="Open wolfpack.quest/admin/triggers prefilled with this trigger so an officer can promote it to the guild set">↑ Promote</button>'
         + '<button type="button" data-trig-delete="' + esc(t.id || '') + '" style="background:transparent;border:0;color:var(--red);cursor:pointer;font-size:13px" title="Delete">✕</button>'
         + '</td>'
@@ -14695,6 +16345,21 @@ async function dismissTopDamage(key) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ testOnly: true }),
     });
+  }
+  // #107 loot auction announce prefs — persist the toggle / default-duration
+  // knob. Partial body: only the changed field is sent.
+  async function saveLootPref(body) {
+    var msg = document.getElementById('lootAucMsg');
+    try {
+      await fetch('/api/loot-prefs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (msg) { msg.textContent = 'Saved.'; msg.style.color = 'var(--green)'; }
+    } catch (e) {
+      if (msg) { msg.textContent = 'Save failed.'; msg.style.color = 'var(--red)'; }
+    }
   }
   async function onDelete(id) {
     if (!id) return;
@@ -14927,6 +16592,23 @@ async function dismissTopDamage(key) {
         else if (t.id === 'trigClearTestBtn') onClearTests();
       });
       section._wpTrigClickBound = true;
+    }
+    // Delegated change handler (survives the 2s section morph) for the loot
+    // auction announce toggle + default-duration knob (#107).
+    if (!section._wpTrigChangeBound) {
+      section.addEventListener('change', function(e){
+        var t = e.target;
+        if (!t || !t.id) return;
+        if (t.id === 'lootAucTts') {
+          saveLootPref({ lootAuctionTts: !!t.checked });
+        } else if (t.id === 'lootAucDur') {
+          var v = parseInt(t.value, 10);
+          if (!isFinite(v)) return;
+          v = Math.max(15, Math.min(1800, v));
+          saveLootPref({ lootAuctionDefaultSec: v });
+        }
+      });
+      section._wpTrigChangeBound = true;
     }
     fetchAndRenderList();
     mounted = true;
@@ -15322,6 +17004,40 @@ function startWebDashboard(port) {
         return res.end('{"ok":true}');
       }
 
+      // Trigger PLAYBACK report (#120, checkpoint 5b). The trigger overlay
+      // (triggers.html) calls this after each speechSynthesis.speak() with the
+      // real audio outcome — 'started' (onstart fired → audio is playing),
+      // 'error' (onerror, e.g. 'not-allowed' when Chromium's user-activation
+      // gate blocks speech), or 'silent' (neither event within 2s → the engine
+      // swallowed it). This is what distinguishes "we asked it to speak" from
+      // "sound actually came out", so a silent machine self-diagnoses in the
+      // checkpoint journal instead of during a raid. To keep the ring buffer
+      // focused the overlay only reports rehearsals + failures (successful live
+      // fires are not journalled), so every row here is either proof-of-audio
+      // from a Rehearse or a genuine failure worth seeing.
+      if (req.url === '/api/triggers/playback' && req.method === 'POST') {
+        const _pbody = await _readBody(req, 4 * 1024);
+        let pb; try { pb = JSON.parse(_pbody || '{}'); } catch { pb = {}; }
+        const pbStatus = String(pb && pb.status || '').toLowerCase();
+        const pbOk     = pbStatus === 'started';
+        const pbDetail = pb && pb.detail ? String(pb.detail).slice(0, 120) : null;
+        _journalTrigger({
+          trigger:    pb && pb.trigger ? String(pb.trigger) : 'audio',
+          scope:      'playback',
+          rehearsal:  !!(pb && pb.rehearsal),
+          checkpoint: TJ.PLAYBACK,
+          stopped:    !pbOk,
+          label:      pbOk ? 'playback started' : 'playback FAILED',
+          reason:     pbOk
+            ? 'audio engine is producing sound (Windows mixer should now list Mimic)'
+            : ('no audio produced — ' + (pbStatus || 'unknown') + (pbDetail ? ' (' + pbDetail + ')' : '')
+               + '. not-allowed/silent = the OS/Chromium blocked speech; update Mimic (it grants the overlay a user gesture) and check Windows sound output.'),
+        });
+        scheduleRender();
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end('{"ok":true}');
+      }
+
       // Local trigger scanner (v1.1.1). Finds GINA + EQLP trigger files on the
       // local machine and returns paths + sizes + pack-fingerprint guess.
       // Discovery only — no parsing, no upload, never leaves the dashboard.
@@ -15453,6 +17169,33 @@ function startWebDashboard(port) {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ notices: _guildNotices }));
       }
+      // #113 Extended Target "same-zone targets only" per-user pref. GET returns
+      // the current value (dashboard Overlays checkbox reads it); POST sets it
+      // and persists to logsync.optin.json. fetchExtendedTarget reads the live
+      // value each poll, so the toggle takes effect within one proxy TTL — no
+      // restart. Clearing the cache makes the switch snappier still.
+      if (req.url === '/api/ext-pref' && req.method === 'GET') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ same_zone_only: _optinState.extSameZoneOnly !== false }));
+      }
+      if (req.url === '/api/ext-pref' && req.method === 'POST') {
+        let epBody = '';
+        req.on('data', c => { epBody += c; if (epBody.length > 4096) req.destroy(); });
+        req.on('end', () => {
+          try {
+            const p = JSON.parse(epBody || '{}');
+            _optinState.extSameZoneOnly = (p.same_zone_only !== false);
+            _saveOptInState();
+            try { _extTargetCache.clear(); } catch { /* */ }
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: true, same_zone_only: _optinState.extSameZoneOnly }));
+          } catch {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: false }));
+          }
+        });
+        return;
+      }
       // "✓ cured" from the buff-queue overlay → raid-wide manual clear mark.
       if (req.url === '/api/debuff-clear' && req.method === 'POST') {
         let dcBody = '';
@@ -15583,6 +17326,76 @@ function startWebDashboard(port) {
         });
         return res.end(JSON.stringify(map));
       }
+      // ── #108 Loot bidding — local login gate + bid-character family ────────
+      // GET  /api/loot/config    → { authed, opendkp_username, expires_at, family }
+      // POST /api/loot/login     → { username, password } → drives Cognito locally
+      // POST /api/loot/logout    → clears the stored token
+      // POST /api/loot/family    → { main, alts } saves the local bid family
+      // GET  /api/loot/auctions  → the agent's live loot-auction detection
+      //                            (_lootAuctions, v3.3.88 — one source of truth)
+      // The OpenDKP token lives ONLY on this machine (logsync.opendkp.json) and
+      // is never uploaded; the gate is what unlocks the panel's bid controls.
+      if (req.url === '/api/loot/config' && req.method === 'GET') {
+        if (_opendkpAuth && !_opendkpAuthed()) { try { await _opendkpEnsureFresh(); } catch { /* */ } }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({
+          authed:           _opendkpAuthed(),
+          opendkp_username: (_opendkpAuth && _opendkpAuth.username) || null,
+          expires_at:       (_opendkpAuth && _opendkpAuth.expires_at) || null,
+          family:           { main: _bidFamily.main, alts: _bidFamily.alts || [] },
+          planned:          _plannedBids,
+        }));
+      }
+      if (req.url === '/api/loot/login' && req.method === 'POST') {
+        let p; try { p = JSON.parse(await _readBody(req, 8 * 1024) || '{}'); }
+        catch { res.writeHead(400); return res.end('{"error":"bad json"}'); }
+        const username = String(p.username || '').trim();
+        const password = String(p.password || '');
+        if (!username || !password) { res.writeHead(400); return res.end('{"error":"username and password required"}'); }
+        try {
+          const a = await _opendkpLogin(username, password);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ ok: true, opendkp_username: a.username, expires_at: a.expires_at }));
+        } catch (e) {
+          // 200 + ok:false so the panel can show the reason inline (bad password
+          // etc.) rather than the browser swallowing a non-2xx as a hard error.
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ ok: false, error: String((e && e.message) || e) }));
+        }
+      }
+      if (req.url === '/api/loot/logout' && req.method === 'POST') {
+        _opendkpAuth = null; _saveOpendkpAuth();
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end('{"ok":true}');
+      }
+      if (req.url === '/api/loot/family' && req.method === 'POST') {
+        let p; try { p = JSON.parse(await _readBody(req, 8 * 1024) || '{}'); }
+        catch { res.writeHead(400); return res.end('{"error":"bad json"}'); }
+        const isName = (s) => /^[A-Za-z]{2,20}$/.test(String(s || '').trim());
+        const main = isName(p.main) ? String(p.main).trim() : null;
+        const seen = new Set(main ? [main.toLowerCase()] : []);
+        const alts = (Array.isArray(p.alts) ? p.alts : [])
+          .map(s => String(s || '').trim())
+          .filter(a => isName(a) && !seen.has(a.toLowerCase()) && (seen.add(a.toLowerCase()) || true))
+          .slice(0, 20);
+        _bidFamily = { main, alts };
+        _saveBidFamily();
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ ok: true, family: _bidFamily }));
+      }
+      if (req.url === '/api/loot/planned' && req.method === 'POST') {
+        // #121 — persist a per-item PLANNED next bid (RECENT MISSES table).
+        // { item_id, value } — value 0/empty clears it. Local file only.
+        let p; try { p = JSON.parse(await _readBody(req, 8 * 1024) || '{}'); }
+        catch { res.writeHead(400); return res.end('{"error":"bad json"}'); }
+        if (!_setPlannedBid(p.item_id, p.value)) { res.writeHead(400); return res.end('{"error":"item_id required"}'); }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ ok: true, planned: _plannedBids }));
+      }
+      if (req.url === '/api/loot/auctions' && req.method === 'GET') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ auctions: _lootAuctionsSnapshot(), updated_at: new Date().toISOString() }));
+      }
       // Increment 2f passthrough: GET /api/server/<key>?character=... proxies
       // to the bot's /api/agent/server-panel/<key> with our stored bearer
       // token so the dashboard can render wolfpack.quest aggregates next to
@@ -15629,7 +17442,11 @@ function startWebDashboard(port) {
         }
         try {
           const action = req.url.substring('/api/server/'.length);
-          const map = { 'place-bid': '/api/agent/place-bid' };
+          const map = {
+            'place-bid':         '/api/agent/place-bid',
+            'reporter-override': '/api/agent/reporter-override',   // #115 officer election override (bot re-checks is_officer)
+            'flag-override':     '/api/agent/flag-override',       // #118 officer kill-switch flag flip (bot re-checks is_officer + whitelist)
+          };
           const remotePath = map[action];
           if (!remotePath) {
             res.writeHead(404, { 'Content-Type': 'application/json' });
@@ -15909,6 +17726,9 @@ function startWebDashboard(port) {
           const prevCasting = (prevState.casting || '').trim();
           const newCasting  = (st.casting || '').trim();
           _zealState[character] = { ...st, updatedAt: Date.now() };
+          // #105 — mob self-heal: the Zeal target gauge HP% rising for the same
+          // target across frames → a mob_heal timeline tick on the live fight.
+          try { _noteMobHealFromState(character, prevState, st); } catch (e) { void e; }
           if (newCasting && newCasting !== prevCasting) {
             // Heuristic: anything > 4 chars + has at least one letter is a
             // real spell/song name. Filters out one-off junk labels.
@@ -15953,6 +17773,9 @@ function startWebDashboard(port) {
         catch { res.writeHead(400); return res.end(JSON.stringify({ error: 'invalid json' })); }
         const token = String(payload?.token || '').trim();
         _mimicSessionToken = token || '';
+        // Track the signed-out grace window (#120): clear it the instant a token
+        // arrives, start it the instant one goes away.
+        _mimicNoTokenSince = _mimicSessionToken ? 0 : Date.now();
         _mimicIdentity     = (token && payload?.identity && typeof payload.identity === 'object') ? payload.identity : null;
         console.log(_mimicSessionToken
           ? `[mimic-session] linked as ${_mimicIdentity?.display_name || _mimicIdentity?.discord_id || '(unknown)'}`
@@ -16001,6 +17824,19 @@ function startWebDashboard(port) {
         const removed = k && _charmTickTracker.delete(k);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ ok: true, removed: !!removed }));
+      }
+      // CH chain "0X GO" TTS toggle (#103). The button on the CH chain overlay
+      // POSTs { enabled: bool } here (and re-POSTs on load to re-sync after an
+      // agent restart, since the overlay persists the choice in localStorage).
+      // Controls whether _maybeAnnounceChGo pushes the spoken callout.
+      if (req.url === '/api/chchain/go-tts' && req.method === 'POST') {
+        const body = await _readBody(req);
+        let payload;
+        try { payload = JSON.parse(body); }
+        catch { res.writeHead(400); return res.end('invalid json'); }
+        _chGoTtsEnabled = !!(payload && payload.enabled);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ ok: true, enabled: _chGoTtsEnabled }));
       }
       // ✕ from a pet tracker card — drops the per-owner /pet health snapshot
       // + observed buff landings + stats so the row stops rendering. Useful
@@ -16175,8 +18011,15 @@ function startWebDashboard(port) {
       // literal so the user sees what the template looks like. Returns the
       // overlay that was pushed (or an error).
       //
-      // SAFE BY CONSTRUCTION: _fireTriggerActions only pushes to the in-memory
-      // _activeOverlays ring buffer. No DB, no upload queue, no Discord.
+      // REAL REHEARSE (#76): for a SAVED trigger this drives a synthesized
+      // matching line through the actual pipeline — pattern exec, cooldown +
+      // charm-pet suppression (EVALUATED + reported, never enforced or
+      // consumed), then the action tail — so a broken pattern is revealed
+      // instead of masked by firing the action directly. The ad-hoc preview
+      // shape (a raw {name, actions}) has no pattern, so it rehearses the
+      // action tail only. Either way it is SAFE BY CONSTRUCTION: rehearsal is
+      // test=true → in-memory _activeOverlays only, no DB / upload / Discord /
+      // relay, no _fireLog pollution.
       if (req.url === '/api/triggers/fire' && req.method === 'POST') {
         const body = await _readBody(req);
         let payload;
@@ -16185,23 +18028,26 @@ function startWebDashboard(port) {
         let trig = null;
         if (payload?.trigger && Array.isArray(payload.trigger.actions)) {
           trig = { name: String(payload.trigger.name || 'preview').slice(0, 100),
-                   actions: payload.trigger.actions, _scope: 'test' };
+                   actions: payload.trigger.actions };
         } else if (payload?.id) {
           const scope = payload?.scope === 'guild' ? 'guild' : 'personal';
           const list  = scope === 'guild' ? (stats.guildTriggers || []) : _personalTriggers;
           trig = list.find(t => t.id === payload.id || t.name === payload.id) || null;
-          if (trig) trig = { ...trig, _scope: scope };
         }
         if (!trig) {
           res.writeHead(404, { 'Content-Type': 'application/json' });
           return res.end(JSON.stringify({ error: 'trigger not found (expected `id`+`scope` or `trigger`)' }));
         }
         const captures = (payload && payload.captures && typeof payload.captures === 'object') ? payload.captures : {};
+        const line = (payload && typeof payload.line === 'string' && payload.line) ? payload.line : null;
         const before = _activeOverlays.length;
-        _fireTriggerActions(trig, captures, Date.now(), true);
+        const outcome = _rehearseTrigger(trig, { captures, line });
         const fired = _activeOverlays.length - before;
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ ok: true, fired, overlay: _activeOverlays[0] || null }));
+        return res.end(JSON.stringify({ ok: true, rehearsal: true, fired,
+          pattern_exercised: !!outcome.patternExercised,
+          synthesized_line: outcome.line || null,
+          overlay: _activeOverlays[0] || null }));
       }
 
       // Clear active overlays. Body { trigger: 'name' } removes only overlays
@@ -16241,6 +18087,48 @@ function startWebDashboard(port) {
         scheduleRender();
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ ok: true, cleared, cleared_timers: clearedTimers }));
+      }
+
+      // POST /api/timers/cancel — dismiss a single active timer by id. Powers
+      // the per-chip ✕ on the trigger overlay (loot auction chips, #107). A
+      // loot chip's id is `loot|<sig>`; when dismissed we also drop the auction
+      // correlation entry so a stray repeat post opens a fresh chip rather than
+      // silently resetting a chip the user just closed.
+      if (req.url === '/api/timers/cancel' && req.method === 'POST') {
+        const body = await _readBody(req).catch(() => '');
+        let payload = {};
+        try { payload = body ? JSON.parse(body) : {}; } catch { payload = {}; }
+        const id = String(payload?.id || '');
+        const ok = id ? _cancelTimer(id) : false;
+        if (ok && id.startsWith('loot|')) {
+          const sig = id.slice('loot|'.length);
+          _lootAuctions.delete(sig);
+          if (_lastLootSig === sig) _lastLootSig = null;
+        }
+        scheduleRender();
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ ok }));
+      }
+
+      // POST /api/loot-prefs — dashboard Triggers-tab toggle + default-duration
+      // knob for the #107 loot-post announce. Partial body: any field omitted
+      // keeps its current value. Persists to logsync.optin.json.
+      if (req.url === '/api/loot-prefs' && req.method === 'POST') {
+        const body = await _readBody(req).catch(() => '');
+        let payload = {};
+        try { payload = body ? JSON.parse(body) : {}; } catch { payload = {}; }
+        if (typeof payload.lootAuctionTts === 'boolean') _optinState.lootAuctionTts = payload.lootAuctionTts;
+        if (Number.isFinite(payload.lootAuctionDefaultSec)) {
+          _optinState.lootAuctionDefaultSec = Math.max(15, Math.min(1800, Math.round(payload.lootAuctionDefaultSec)));
+        }
+        _saveOptInState();
+        scheduleRender();
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({
+          ok: true,
+          lootAuctionTts:        _optinState.lootAuctionTts !== false,
+          lootAuctionDefaultSec: _lootAuctionDefaultSec(),
+        }));
       }
 
       // POST /api/personal-triggers/import — accepts a GINA / EQLogParser
@@ -16700,6 +18588,10 @@ function recordUploadForDashboard(payload, character) {
     eventCount:      e.events.length,
     totalDamage:     totalDmg,
     spellDotDamage:  spellDotDmg,
+    // Fight length for the 🐺 Me card's "last fights" list. Prefer the
+    // gap-trimmed active duration; fall back to wall-clock span.
+    durationSec:     (e.active_duration_s != null) ? e.active_duration_s
+                   : (e.started_at && e.ended_at ? Math.max(0, (e.ended_at - e.started_at) / 1000) : null),
     when:            Date.now(),
   });
   if (stats.recentParses.length > 8) stats.recentParses.length = 8;
@@ -17105,6 +18997,18 @@ const _optinState = {
   ignoredPaths: new Set(),
   // Character names hidden from the Tank/Weapon Loadouts view
   hiddenLoadoutChars: new Set(),
+  // #113 per-user Extended Target pref: exclude other Mimics' targets when the
+  // uploader isn't in my zone. Default ON (splinter groups elsewhere stop
+  // polluting the list). Read by fetchExtendedTarget → passed to the bot as
+  // same_zone=0 only when the user turns it OFF.
+  extSameZoneOnly: true,
+  // #107 loot-post announce. lootAuctionTts gates the local TTS callout +
+  // countdown chip when a drop list is posted in /gu or /rs (default ON);
+  // lootAuctionDefaultSec is the auction window used when the bid call doesn't
+  // state a duration. Both live here so they persist across runs like the
+  // other dashboard-set flags.
+  lootAuctionTts: true,
+  lootAuctionDefaultSec: 120,
 };
 
 function _optinSortFn() {
@@ -17132,6 +19036,12 @@ function _loadOptInState() {
     _optinState.progress             = raw.progress             || {};
     _optinState.ignoredPaths         = new Set(raw.ignoredPaths || []);
     _optinState.hiddenLoadoutChars   = new Set((raw.hiddenLoadoutChars || []).map(s => s.toLowerCase()));
+    // #113 default ON: absent (old files) → true; only an explicit false disables.
+    _optinState.extSameZoneOnly      = (raw.extSameZoneOnly !== false);
+    if (typeof raw.lootAuctionTts === 'boolean') _optinState.lootAuctionTts = raw.lootAuctionTts;
+    if (Number.isFinite(raw.lootAuctionDefaultSec)) {
+      _optinState.lootAuctionDefaultSec = Math.max(15, Math.min(1800, Math.round(raw.lootAuctionDefaultSec)));
+    }
   } catch { /* missing or unreadable — fresh state */ }
 }
 function _saveOptInState() {
@@ -17140,9 +19050,203 @@ function _saveOptInState() {
       progress:           _optinState.progress,
       ignoredPaths:       [..._optinState.ignoredPaths],
       hiddenLoadoutChars: [...(_optinState.hiddenLoadoutChars || [])],
+      extSameZoneOnly:    _optinState.extSameZoneOnly !== false,
+      lootAuctionTts:        _optinState.lootAuctionTts !== false,
+      lootAuctionDefaultSec: _optinState.lootAuctionDefaultSec || 120,
     }, null, 2));
   } catch { /* non-fatal */ }
 }
+
+// ── #108 Loot bidding — local OpenDKP login gate + bid-character family ─────
+// The Loot bidding dashboard panel gates every bid control behind a REAL
+// OpenDKP login. We drive AWS Cognito USER_PASSWORD_AUTH directly (built-in
+// https, zero deps — same flow the bot's utils/opendkp.js uses) and store the
+// resulting token LOCALLY ONLY (logsync.opendkp.json — never uploaded). A live
+// (non-expired) token = "authed". The Cognito app-client id + region are PUBLIC
+// values fetched from the bot's server-panel/opendkp-auth-config (one source of
+// truth), so the agent keeps ZERO OpenDKP secrets. Bids themselves still ride
+// the bot's officer-mediated /api/agent/place-bid (sealed) — the login is the
+// GATE plus the unlock for pulling the user's own bid history.
+//
+// The bid-character family (main + alts) is stored locally too
+// (logsync.bidfamily.json), same durable pattern as the opt-in prefs above.
+const OPENDKP_STATE_FILE = path.join(__dirname, 'logsync.opendkp.json');
+const BIDFAMILY_FILE     = path.join(__dirname, 'logsync.bidfamily.json');
+
+let _opendkpAuth = null;   // { username, id_token, refresh_token, expires_at }
+let _bidFamily   = { main: null, alts: [] };
+let _opendkpCfgCache = null;   // { cognito_client_id, region, _exp }
+
+function _loadOpendkpAuth() {
+  try { _opendkpAuth = JSON.parse(fs.readFileSync(OPENDKP_STATE_FILE, 'utf8')) || null; }
+  catch { _opendkpAuth = null; }
+}
+function _saveOpendkpAuth() {
+  try {
+    if (!_opendkpAuth) { try { fs.unlinkSync(OPENDKP_STATE_FILE); } catch { /* */ } return; }
+    fs.writeFileSync(OPENDKP_STATE_FILE + '.tmp', JSON.stringify(_opendkpAuth));
+    fs.renameSync(OPENDKP_STATE_FILE + '.tmp', OPENDKP_STATE_FILE);
+  } catch { /* non-fatal */ }
+}
+function _opendkpAuthed() {
+  return !!(_opendkpAuth && _opendkpAuth.id_token && _opendkpAuth.expires_at &&
+            Date.parse(_opendkpAuth.expires_at) > Date.now());
+}
+
+function _loadBidFamily() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(BIDFAMILY_FILE, 'utf8'));
+    const main = (typeof raw.main === 'string' && raw.main.trim()) ? raw.main.trim() : null;
+    const alts = Array.isArray(raw.alts) ? raw.alts.map(s => String(s).trim()).filter(Boolean) : [];
+    const seen = new Set(main ? [main.toLowerCase()] : []);
+    _bidFamily = { main, alts: alts.filter(a => { const k = a.toLowerCase(); if (seen.has(k)) return false; seen.add(k); return true; }) };
+  } catch { _bidFamily = { main: null, alts: [] }; }
+}
+function _saveBidFamily() {
+  try {
+    fs.writeFileSync(BIDFAMILY_FILE + '.tmp', JSON.stringify(_bidFamily));
+    fs.renameSync(BIDFAMILY_FILE + '.tmp', BIDFAMILY_FILE);
+  } catch { /* non-fatal */ }
+}
+function _bidFamilyNames() {
+  const out = [];
+  if (_bidFamily.main) out.push(_bidFamily.main);
+  for (const a of (_bidFamily.alts || [])) if (a) out.push(a);
+  return out;
+}
+
+// #121 — per-item PLANNED next bid (RECENT MISSES table). Stored LOCALLY only
+// (logsync.plannedbids.json), same durable pattern as the bid family. Keyed by
+// OpenDKP item_id → integer DKP; a value of 0/empty deletes the entry.
+const PLANNEDBIDS_FILE = path.join(__dirname, 'logsync.plannedbids.json');
+let _plannedBids = {};   // { item_id(str): value(int) }
+function _loadPlannedBids() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(PLANNEDBIDS_FILE, 'utf8'));
+    const out = {};
+    for (const k of Object.keys(raw || {})) {
+      const id = parseInt(k, 10); const v = parseInt(raw[k], 10);
+      if (Number.isFinite(id) && id > 0 && Number.isFinite(v) && v > 0) out[id] = v;
+    }
+    _plannedBids = out;
+  } catch { _plannedBids = {}; }
+}
+function _savePlannedBids() {
+  try {
+    fs.writeFileSync(PLANNEDBIDS_FILE + '.tmp', JSON.stringify(_plannedBids));
+    fs.renameSync(PLANNEDBIDS_FILE + '.tmp', PLANNEDBIDS_FILE);
+  } catch { /* non-fatal */ }
+}
+function _setPlannedBid(itemId, value) {
+  const id = parseInt(itemId, 10);
+  if (!Number.isFinite(id) || id <= 0) return false;
+  const v = parseInt(value, 10);
+  if (Number.isFinite(v) && v > 0) _plannedBids[id] = v;
+  else delete _plannedBids[id];
+  _savePlannedBids();
+  return true;
+}
+
+// Fetch (and cache ~1h) the PUBLIC Cognito app-client id + region from the bot.
+// Requires a bot connection (per-user bearer token). Throws a friendly message
+// when the bot is unreachable or OpenDKP login isn't configured server-side.
+async function _fetchOpendkpAuthConfig() {
+  if (_opendkpCfgCache && Date.now() < _opendkpCfgCache._exp) return _opendkpCfgCache;
+  const opts = _uploadOpts;
+  if (!opts || !opts.botUrl || !opts.token) throw new Error('not connected to the bot — set a token in Mimic Settings');
+  const base = opts.botUrl.replace(/\/encounter(\?.*)?$/, '/server-panel/');
+  const u = new URL(base + 'opendkp-auth-config');
+  const mod = u.protocol === 'https:' ? https : http;
+  const cfg = await new Promise((resolve, reject) => {
+    const rq = mod.request({
+      method: 'GET', hostname: u.hostname, port: u.port || (u.protocol === 'https:' ? 443 : 80),
+      path: u.pathname + (u.search || ''),
+      headers: { 'Authorization': 'Bearer ' + opts.token, 'Accept': 'application/json' }, timeout: 10000,
+    }, (r) => { let d = ''; r.on('data', c => d += c); r.on('end', () => { try { resolve(JSON.parse(d || '{}')); } catch { reject(new Error('bad config response')); } }); });
+    rq.on('error', reject);
+    rq.on('timeout', () => { rq.destroy(); reject(new Error('config request timed out')); });
+    rq.end();
+  });
+  if (!cfg || !cfg.cognito_client_id) throw new Error('OpenDKP login is not configured on the bot');
+  _opendkpCfgCache = { cognito_client_id: cfg.cognito_client_id, region: cfg.region || 'us-east-2', _exp: Date.now() + 3600_000 };
+  return _opendkpCfgCache;
+}
+
+function _cognitoPost(cfg, target, body) {
+  return new Promise((resolve, reject) => {
+    const rq = https.request({
+      hostname: 'cognito-idp.' + cfg.region + '.amazonaws.com', path: '/', method: 'POST',
+      headers: {
+        'X-Amz-Target': 'AWSCognitoIdentityProviderService.' + target,
+        'Content-Type': 'application/x-amz-json-1.1',
+        'Content-Length': Buffer.byteLength(body),
+      }, timeout: 15000,
+    }, (r) => {
+      let d = ''; r.on('data', c => d += c);
+      r.on('end', () => {
+        let j; try { j = JSON.parse(d || '{}'); } catch { j = {}; }
+        if ((r.statusCode || 500) >= 400) {
+          // Cognito errors: { __type: 'NotAuthorizedException', message: '...' }
+          const t = (j && j.__type) || '';
+          let msg = (j && j.message) || ('HTTP ' + r.statusCode);
+          if (/NotAuthorized/i.test(t)) msg = 'incorrect username or password';
+          else if (/UserNotFound/i.test(t)) msg = 'no such OpenDKP user';
+          return reject(new Error(msg));
+        }
+        resolve(j);
+      });
+    });
+    rq.on('error', reject);
+    rq.on('timeout', () => { rq.destroy(); reject(new Error('OpenDKP login timed out')); });
+    rq.end(body);
+  });
+}
+
+async function _opendkpLogin(username, password) {
+  const cfg = await _fetchOpendkpAuthConfig();
+  const body = JSON.stringify({ AuthFlow: 'USER_PASSWORD_AUTH', AuthParameters: { USERNAME: username, PASSWORD: password }, ClientId: cfg.cognito_client_id });
+  const res = await _cognitoPost(cfg, 'InitiateAuth', body);
+  const ar = res && res.AuthenticationResult;
+  if (!ar || !ar.IdToken) {
+    throw new Error(res && res.ChallengeName
+      ? ('OpenDKP wants ' + res.ChallengeName + ' — finish that on opendkp.com first')
+      : 'login failed');
+  }
+  const expMs = Date.now() + ((ar.ExpiresIn || 3600) - 120) * 1000;
+  _opendkpAuth = {
+    username,
+    id_token: ar.IdToken,
+    refresh_token: ar.RefreshToken || (_opendkpAuth && _opendkpAuth.refresh_token) || null,
+    expires_at: new Date(expMs).toISOString(),
+  };
+  _saveOpendkpAuth();
+  return _opendkpAuth;
+}
+
+// Silent refresh via the stored RefreshToken. Returns true if we now hold a
+// live token. Never throws.
+async function _opendkpEnsureFresh() {
+  if (_opendkpAuthed()) return true;
+  if (!(_opendkpAuth && _opendkpAuth.refresh_token)) return false;
+  try {
+    const cfg = await _fetchOpendkpAuthConfig();
+    const body = JSON.stringify({ AuthFlow: 'REFRESH_TOKEN_AUTH', AuthParameters: { REFRESH_TOKEN: _opendkpAuth.refresh_token }, ClientId: cfg.cognito_client_id });
+    const res = await _cognitoPost(cfg, 'InitiateAuth', body);
+    const ar = res && res.AuthenticationResult;
+    if (ar && ar.IdToken) {
+      _opendkpAuth.id_token = ar.IdToken;
+      _opendkpAuth.expires_at = new Date(Date.now() + ((ar.ExpiresIn || 3600) - 120) * 1000).toISOString();
+      _saveOpendkpAuth();
+      return true;
+    }
+  } catch { /* re-login required */ }
+  return false;
+}
+
+// Hydrate both from disk at startup (defaults on missing/unreadable files).
+_loadOpendkpAuth();
+_loadBidFamily();
+_loadPlannedBids();
 
 // ── Inventory file ingestion ──────────────────────────────────────────────
 // EQ's /output inventory command writes <Character>-Inventory.txt to the EQ
@@ -18417,6 +20521,32 @@ function showHealers() {
 // All uploads route through enqueueUpload() so a DNS / network / 5xx failure
 // doesn't drop data. The queue persists to logsync.queue.json and retries on
 // exponential backoff via the drain loop started in main().
+
+// #106 encounter-burst flattening. At 60 raiders a boss kill offers ~90MB of
+// encounter payloads at the SAME instant (everyone flushes on the death line).
+// Delay a real encounter's network enqueue by a DETERMINISTIC hash(uploader) %
+// 15s so the fleet spreads across a 15s window instead of colliding — the
+// ±30min find_or_create_encounter dedup makes a few seconds immaterial, and the
+// durable queue already honors 429/Retry-After if the bot still needs to push
+// back. Deterministic per client so re-runs never re-randomize. Local overlay/UX
+// is untouched (it updates from parseEvent, not the upload); only the enqueue-
+// to-network moment moves. Backfill replays skip it (idempotent, not a burst).
+const ENCOUNTER_JITTER_MAX_MS    = 15_000;
+const ENCOUNTER_JITTER_MIN_BYTES = 256 * 1024;
+function _encounterUploadJitterMs(uploader) {
+  const s = String(uploader || '');
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = (((h << 5) + h) ^ s.charCodeAt(i)) >>> 0;
+  return h % ENCOUNTER_JITTER_MAX_MS;
+}
+function _shouldJitterEncounterUpload(queueLen, bytes) {
+  // Skip the jitter only for a small payload with an otherwise-empty queue
+  // (solo/duo parse) — the dashboard card should feel instant. Anything larger,
+  // or any time we're already draining others' data, rides the jitter.
+  if (queueLen === 0 && bytes < ENCOUNTER_JITTER_MIN_BYTES) return false;
+  return true;
+}
+
 function uploadEncounter(payload, { botUrl, token, dryRun }) {
   const isBackfill = payload?.backfill === true;
   // Honor the owner's exclude_from_stats setting for the parser character.
@@ -18436,6 +20566,19 @@ function uploadEncounter(payload, { botUrl, token, dryRun }) {
     if (!isBackfill) recordUploadForDashboard(payload, payload.character);
     scheduleRender();
     return Promise.resolve();
+  }
+  // #106 burst jitter — defer only the network enqueue, never local UX.
+  if (!isBackfill) {
+    let bytes = 0;
+    try { bytes = Buffer.byteLength(JSON.stringify(payload)); } catch { bytes = 0; }
+    if (_shouldJitterEncounterUpload(_uploadQueue.length, bytes)) {
+      const jitter = _encounterUploadJitterMs(payload?.character || _primaryCharacter());
+      if (jitter > 0) {
+        stats._lastEncounterJitterMs = jitter;
+        setTimeout(() => { try { enqueueUpload('encounter', payload); } catch { /* */ } }, jitter).unref?.();
+        return Promise.resolve();
+      }
+    }
   }
   enqueueUpload('encounter', payload);
   return Promise.resolve();
@@ -19293,14 +21436,87 @@ let _uploadOpts    = null;      // set in main() once botUrl/token are known
 let _reporterRoles       = { chat: true, buffs: true, roster: true };
 let _reporterElectionOn  = false;   // true only while the bot answers election:'on'
 let _reporterHeartbeatOn = false;
+// Camp-out early handoff (#72 P3): set true on the camp-start log line and sent
+// in the heartbeat so the bot demotes us from every election ~30s before our
+// logout would trip the 60s TTL. Cleared on the abandon line. Machine-level.
+let _camping             = false;
 const REPORTER_HEARTBEAT_MS = 20_000;
 function _reporterFailOpen() { _reporterRoles = { chat: true, buffs: true, roster: true }; _reporterElectionOn = false; }
+
+// ── Guild control plane (#74) — fleet dormancy + version floor ───────────────
+// The bot serves flag_agent_kill + min_agent_ver_num on BOTH the reporter-poll
+// (20s primary control channel) AND the guild-trigger (2min backup) responses.
+// We honor whichever we hear. Conservative v1 — Hitya to sign off (BETA-TESTING).
+// FAIL-OPEN by construction: we only ADOPT a reading from a SUCCESSFUL parse that
+// actually carried the keys (an older bot omits them → we neither adopt nor clear);
+// a poll FAILURE leaves the last good reading; and if no fresh reading has landed
+// within the TTL (bot down / unheard) we fail-open to "run normally".
+let _controlPlane = { kill: false, minVerNum: 0, at: 0 };
+const CONTROL_PLANE_TTL_MS = 5 * 60_000;   // both channels silent this long → fail-open
+function _applyControlPlane(obj, source) {
+  if (!obj || typeof obj !== 'object') return;
+  // Only treat this as a control reading if the bot actually spoke the keys.
+  if (!('agent_kill' in obj) && !('min_agent_ver_num' in obj)) return;
+  const kill = obj.agent_kill === true || Number(obj.agent_kill) >= 1;
+  const rawFloor = Number(obj.min_agent_ver_num);
+  const minVerNum = Number.isFinite(rawFloor) && rawFloor > 0 ? Math.floor(rawFloor) : 0;
+  const prevKill = _controlPlane.kill, prevFloor = _controlPlane.minVerNum;
+  _controlPlane = { kill, minVerNum, at: Date.now() };
+  if (kill !== prevKill)
+    console.log(`[control] flag_agent_kill → ${kill ? 'DORMANT (paused by guild control plane)' : 'resumed'} (${source})`);
+  if (minVerNum !== prevFloor)
+    console.log(`[control] min_agent_ver_num → ${minVerNum || 'unset'} (mine=${_verNum(AGENT_VERSION)}${minVerNum && _verNum(AGENT_VERSION) < minVerNum ? ', BELOW floor' : ''}, ${source})`);
+}
+// The active stand-down decision — { down, reason }. down=true means stop all
+// uploads + non-control polls (hold the durable queue). Fail-open when there is
+// no fresh reading.
+function _controlStandDown() {
+  if (!_controlPlane.at || (Date.now() - _controlPlane.at) > CONTROL_PLANE_TTL_MS) return { down: false, reason: null };
+  if (_controlPlane.kill) return { down: true, reason: 'kill' };
+  if (_controlPlane.minVerNum > 0 && _verNum(AGENT_VERSION) < _controlPlane.minVerNum) return { down: true, reason: 'floor' };
+  return { down: false, reason: null };
+}
+// #119 — a watched log with nothing newer than this is "idle": its character
+// is not reported as the live_character (the fleet table / who wolf then fall
+// back to the primary). Mirrors the bot's REPORTER_LIVENESS_MAX_MS_DEFAULT so
+// "live" here means the same thing the bot's chat-election freshness gate means.
+const LIVE_CHARACTER_IDLE_MS = 90_000;
+// #119 — liveness across ALL watched logs. last_line_ms is the MIN age across
+// every watched character's tail (any live log = a live agent — a boxer whose
+// primary is logged out but who's actively playing an alt still tails a flowing
+// log, so the #112 chat election + fleet staleness dot treat them as fresh; an
+// agent with NO active log anywhere still yields a large age → stale, so the
+// logged-out-reporter protection is unchanged). live_character is the
+// most-recently-active watched char, reported only while genuinely live (age
+// ≥ idleMs → null) so consumers fall back to the primary. Pure over
+// (watchedLogs, now, idleMs) so it's unit-testable; a null last_line_ms (no
+// watched log has any activity) falls open to FRESH at the bot.
+function _computeLiveness(watchedLogs, now, idleMs) {
+  let best = 0, bestChar = null;
+  for (const w of (watchedLogs || [])) {
+    if (!w || !w.lastSeen) continue;
+    if (w.lastSeen > best) { best = w.lastSeen; bestChar = w.character || null; }
+  }
+  if (!best) return { last_line_ms: null, live_character: null };
+  const last_line_ms = Math.max(0, now - best);
+  const live_character = last_line_ms < idleMs ? bestChar : null;
+  return { last_line_ms, live_character };
+}
 function _reporterHeartbeatOnce() {
   const opts = _uploadOpts;
   if (!opts || !opts.botUrl || !opts.token || opts.dryRun) return;
   if (!_isUploaderInstance) return;   // one heartbeat per machine (the uploader instance)
   let primary = null;
   try { primary = _primaryCharacter(); } catch { /* */ }
+  // #112/#119 liveness — MIN age across ALL watched logs + the live character
+  // the player is actively on. See _computeLiveness. Failure falls open to null
+  // (→ the bot treats a missing last_line_ms as FRESH, so this never silences
+  // the fleet).
+  let last_line_ms = null, live_character = null;
+  try {
+    const lv = _computeLiveness((stats && stats.watchedLogs) || [], Date.now(), LIVE_CHARACTER_IDLE_MS);
+    last_line_ms = lv.last_line_ms; live_character = lv.live_character;
+  } catch { /* best-effort — null falls open to fresh */ }
   // Best-effort context the bot uses for the zone/group-aware election (P1b/c).
   let zone = null, group_num = null, has_zeal = false;
   try {
@@ -19310,14 +21526,21 @@ function _reporterHeartbeatOnce() {
             || Object.keys(_zealState || {}).length > 0;
     if (_lastRaidPipe && primary) {
       const me = _lastRaidPipe.members.find(m => m && m.name && m.name.toLowerCase() === primary.toLowerCase());
-      if (me && Number.isFinite(me.group)) group_num = me.group;
+      // compact.group is a STRING ("1") — parse it, or the per-group roster
+      // election (P1c) would never see a real group and everyone self-elects.
+      const g = me ? Number.parseInt(me.group, 10) : NaN;
+      if (Number.isFinite(g)) group_num = g;
     }
   } catch { /* best-effort */ }
   try {
     const url = opts.botUrl.replace(/\/encounter(\?.*)?$/, '/reporter-poll');
     const u   = new URL(url);
     const mod = u.protocol === 'https:' ? https : http;
-    const body = JSON.stringify({ primary_character: primary, zone, group_num, has_zeal, agent_version: AGENT_VERSION });
+    // #118: the Mimic shell version, so the officer fleet table can show
+    // agent/mimic. Mimic stamps WOLFPACK_APP_VERSION at spawn (main.js);
+    // standalone Parser.bat installs have no such env → null.
+    const mimic_version = process.env.WOLFPACK_APP_VERSION || null;
+    const body = JSON.stringify({ primary_character: primary, zone, group_num, camping: _camping, has_zeal, agent_version: AGENT_VERSION, mimic_version, last_line_ms, live_character });
     const req = mod.request({
       method: 'POST', hostname: u.hostname, port: u.port, path: u.pathname,
       headers: {
@@ -19334,16 +21557,23 @@ function _reporterHeartbeatOnce() {
       res.on('end', () => {
         try {
           const j = JSON.parse(buf);
+          _applyControlPlane(j, 'reporter-poll');   // #74 — fleet kill + version floor
           if (j && j.roles && typeof j.roles === 'object') {
-            const prev = _reporterRoles.chat;
+            const prevChat   = _reporterRoles.chat;
+            const prevBuffs  = _reporterRoles.buffs;
+            const prevRoster = _reporterRoles.roster;
             _reporterRoles = {
               chat:   j.roles.chat   !== false,   // any missing key defaults TRUE (fail-open)
               buffs:  j.roles.buffs  !== false,
               roster: j.roles.roster !== false,
             };
             _reporterElectionOn = j.election === 'on';
-            if (prev !== _reporterRoles.chat)
+            if (prevChat !== _reporterRoles.chat)
               console.log(`[reporter] chat role → ${_reporterRoles.chat ? 'REPORTER (uploading /gu·/rs)' : 'stand down'} (election ${j.election})`);
+            if (prevBuffs !== _reporterRoles.buffs)   // #72 P1b — buff-landing reporter role
+              console.log(`[reporter] buffs role → ${_reporterRoles.buffs ? 'REPORTER (uploading buff landings)' : 'stand down — charm rows still upload'} (election ${j.election})`);
+            if (prevRoster !== _reporterRoles.roster) // #72 P1c — raid-roster reporter role (per group)
+              console.log(`[reporter] roster role → ${_reporterRoles.roster ? 'REPORTER (uploading raid roster)' : 'stand down'} (election ${j.election})`);
           } else { _reporterFailOpen(); }
         } catch { _reporterFailOpen(); }   // unparseable → fail-open
       });
@@ -20475,8 +22705,18 @@ function parseDebuffLanding(line, observer) {
 // this agent is watching. Server returns pending|acked|running rows. We
 // store them on stats.backfillRequests so the dashboard can render an
 // "Officer requested backfill" banner with Accept / Dismiss buttons.
+// Apply a backfill-requests response ({ requests }). Shared by the standalone
+// pollBackfillRequests loop and the #106 multiplexed poll's `backfill` stream.
+function _applyBackfillResponse(resp) {
+  if (resp && Array.isArray(resp.requests)) {
+    stats.backfillRequests          = resp.requests;
+    stats.backfillRequestsCheckedAt = Date.now();
+    scheduleRender();
+  }
+}
 function pollBackfillRequests({ botUrl, token }) {
   if (!botUrl || !token) return Promise.resolve();
+  if (_multiplexActive()) return Promise.resolve();   // #106 — the multiplexed /poll carries backfill-requests
   const chars = (stats.watchedLogs || [])
     .map(w => w && w.character)
     .filter(Boolean);
@@ -20504,14 +22744,8 @@ function pollBackfillRequests({ botUrl, token }) {
         let data = '';
         res.on('data', c => data += c);
         res.on('end', () => {
-          try {
-            const resp = JSON.parse(data);
-            if (Array.isArray(resp.requests)) {
-              stats.backfillRequests          = resp.requests;
-              stats.backfillRequestsCheckedAt = Date.now();
-              scheduleRender();
-            }
-          } catch { /* non-fatal */ }
+          try { _applyBackfillResponse(JSON.parse(data)); }
+          catch { /* non-fatal */ }
           resolve();
         });
       });
@@ -20531,8 +22765,29 @@ function pollBackfillRequests({ botUrl, token }) {
 // Default (no entry, request failed, etc.): participate as today. Privacy
 // only ratchets one way — we don't accidentally start uploading because a
 // poll fell through.
+// Apply a character-prefs response ({ prefs }). Shared by the standalone
+// pollCharacterPrefs loop and the #106 multiplexed poll's `prefs` stream.
+function _applyCharacterPrefsResponse(resp) {
+  const prefs = (resp && resp.prefs) || {};
+  const norm = {};
+  for (const [name, p] of Object.entries(prefs)) {
+    norm[String(name).toLowerCase()] = {
+      exclude_from_stats: !!(p && p.exclude_from_stats),
+      exclude_inventory:  !!(p && p.exclude_inventory),
+      // tell_relay MUST be carried through — the tail loop gates tell capture on
+      // stats.characterPrefs[char].tell_relay. Dropping it here (as the original
+      // normalization did) left the gate permanently falsy, so NO tells were ever
+      // captured even with the web toggle on and the bot endpoint returning it.
+      tell_relay:         !!(p && p.tell_relay),
+    };
+  }
+  stats.characterPrefs          = norm;
+  stats.characterPrefsCheckedAt = Date.now();
+  scheduleRender();
+}
 function pollCharacterPrefs({ botUrl, token }) {
   if (!botUrl || !token) return Promise.resolve();
+  if (_multiplexActive()) return Promise.resolve();   // #106 — the multiplexed /poll carries character-prefs
   const chars = (stats.watchedLogs || []).map(w => w && w.character).filter(Boolean);
   if (chars.length === 0) return Promise.resolve();
 
@@ -20557,26 +22812,8 @@ function pollCharacterPrefs({ botUrl, token }) {
         let data = '';
         res.on('data', c => data += c);
         res.on('end', () => {
-          try {
-            const resp = JSON.parse(data);
-            const prefs = (resp && resp.prefs) || {};
-            const norm = {};
-            for (const [name, p] of Object.entries(prefs)) {
-              norm[String(name).toLowerCase()] = {
-                exclude_from_stats: !!(p && p.exclude_from_stats),
-                exclude_inventory:  !!(p && p.exclude_inventory),
-                // tell_relay MUST be carried through — the tail loop gates tell
-                // capture on stats.characterPrefs[char].tell_relay. Dropping it
-                // here (as the original normalization did) left the gate
-                // permanently falsy, so NO tells were ever captured even with
-                // the web toggle on and the bot endpoint returning it.
-                tell_relay:         !!(p && p.tell_relay),
-              };
-            }
-            stats.characterPrefs          = norm;
-            stats.characterPrefsCheckedAt = Date.now();
-            scheduleRender();
-          } catch { /* non-fatal — keep previous prefs */ }
+          try { _applyCharacterPrefsResponse(JSON.parse(data)); }
+          catch { /* non-fatal — keep previous prefs */ }
           resolve();
         });
       });
@@ -20694,8 +22931,28 @@ function tuneNum(key, dflt) {
   const v = _overlayTuning[key];
   return (typeof v === 'number' && isFinite(v)) ? v : dflt;
 }
+// Apply an overlay-tuning response (tuning + notices + class_sets + raid_hold).
+// Shared by the standalone pollOverlayTuning loop and the #106 multiplexed poll's
+// `tuning` stream so both stay in lock-step.
+function _applyTuningResponse(resp) {
+  if (!resp || typeof resp !== 'object') return;
+  if (resp.tuning && typeof resp.tuning === 'object' && !Array.isArray(resp.tuning)) {
+    _overlayTuning = resp.tuning;
+  }
+  if (Array.isArray(resp.notices)) _guildNotices = resp.notices;
+  if (resp.class_sets && typeof resp.class_sets === 'object' && !Array.isArray(resp.class_sets)) {
+    _classOverlaySets = resp.class_sets;
+  }
+  if (typeof resp.raid_hold === 'boolean' && resp.raid_hold !== _raidHold) {
+    _raidHold = resp.raid_hold;
+    console.log(_raidHold
+      ? '[raid-hold] ON — bot reports an active raid; deferring gear/spellbook/crash scans and agent updates until it lifts'
+      : '[raid-hold] lifted — deferred scans resume on the next pass');
+  }
+}
 function pollOverlayTuning({ botUrl, token }) {
   if (!botUrl || !token) return Promise.resolve();
+  if (_multiplexActive()) return Promise.resolve();   // #106 — the multiplexed /poll carries tuning
   const url = botUrl.replace(/\/encounter(\?.*)?$/, '/overlay-tuning');
   return new Promise((resolve) => {
     try {
@@ -20709,22 +22966,8 @@ function pollOverlayTuning({ botUrl, token }) {
         let data = '';
         res.on('data', c => data += c);
         res.on('end', () => {
-          try {
-            const resp = JSON.parse(data);
-            if (resp && resp.tuning && typeof resp.tuning === 'object' && !Array.isArray(resp.tuning)) {
-              _overlayTuning = resp.tuning;
-            }
-            if (resp && Array.isArray(resp.notices)) _guildNotices = resp.notices;
-            if (resp && resp.class_sets && typeof resp.class_sets === 'object' && !Array.isArray(resp.class_sets)) {
-              _classOverlaySets = resp.class_sets;
-            }
-            if (resp && typeof resp.raid_hold === 'boolean' && resp.raid_hold !== _raidHold) {
-              _raidHold = resp.raid_hold;
-              console.log(_raidHold
-                ? '[raid-hold] ON — bot reports an active raid; deferring gear/spellbook/crash scans and agent updates until it lifts'
-                : '[raid-hold] lifted — deferred scans resume on the next pass');
-            }
-          } catch { /* non-fatal — keep last good values */ }
+          try { _applyTuningResponse(JSON.parse(data)); }
+          catch { /* non-fatal — keep last good values */ }
           resolve();
         });
       });
@@ -20845,8 +23088,19 @@ function _maybeApplyWebEdit(row, watched, opts) {
     _postUiEditResult(opts, row.id, false, (err && err.message) || 'apply failed');
   }
 }
+// Apply a ui-pending-edits response ({ edits }) — apply each web-staged macro
+// edit (logged-out gate + section allowlist enforced in _maybeApplyWebEdit).
+// Shared by the standalone pollUiPendingEdits loop and the #106 multiplexed
+// poll's `ui_edits` stream. `opts` must carry the /encounter botUrl so the
+// per-row result POST can reach /ui-edit-result.
+function _applyUiEditsResponse(resp, watched, opts) {
+  for (const row of (resp && Array.isArray(resp.edits) ? resp.edits : [])) {
+    _maybeApplyWebEdit(row, watched, opts);
+  }
+}
 function pollUiPendingEdits({ botUrl, token }) {
   if (!botUrl || !token) return;
+  if (_multiplexActive()) return;   // #106 — the multiplexed /poll carries ui-pending-edits
   const watched = (stats.watchedLogs || []).filter(w => w && w.character && w.logPath);
   if (!watched.length) return;
   const qs = '?characters=' + encodeURIComponent(watched.map(w => w.character).join(','));
@@ -20862,12 +23116,8 @@ function pollUiPendingEdits({ botUrl, token }) {
       let data = '';
       res.on('data', c => data += c);
       res.on('end', () => {
-        try {
-          const resp = JSON.parse(data);
-          for (const row of (Array.isArray(resp.edits) ? resp.edits : [])) {
-            _maybeApplyWebEdit(row, watched, { botUrl, token });
-          }
-        } catch { /* non-fatal */ }
+        try { _applyUiEditsResponse(JSON.parse(data), watched, { botUrl, token }); }
+        catch { /* non-fatal */ }
       });
     });
     req.on('error', () => {});
@@ -20876,8 +23126,41 @@ function pollUiPendingEdits({ botUrl, token }) {
   } catch { /* */ }
 }
 
+// Apply a guild-triggers response ({ version, triggers }). Shared by the
+// standalone pollGuildTriggers loop and the #106 multiplexed poll's `triggers`
+// stream. Version-gate: if the guild set hasn't changed, skip the recompile
+// entirely (a multiplexed `unchanged` reply carries the matching version, so it
+// short-circuits here too). Older bots send no version → recompile as before.
+// NOTE: control-plane keys are applied by the CALLER (the standalone loop's
+// backup channel / the multiplexed poll's top-level read), not here.
+function _applyGuildTriggersResponse(resp) {
+  if (!resp || typeof resp !== 'object') return;
+  if (resp.version && resp.version === stats.guildTriggersVersion) {
+    stats.guildTriggersCheckedAt = Date.now();
+    return;
+  }
+  if (Array.isArray(resp.triggers)) {
+    // Compile once; eval per-line is hot path.
+    const compiled = [];
+    for (const t of resp.triggers) {
+      try {
+        const flags = t.pattern_flags || 'i';
+        const pat = t.use_regex === false
+          ? _escapeForLiteralMatch(t.pattern)
+          : _translateDotNetRegex(t.pattern);
+        compiled.push({ ...t, _regex: new RegExp(pat, flags), _endRegex: _compileEndEarlyRegex(t), _scope: 'guild' });
+      } catch (err) {
+        console.warn(`[guild-triggers] bad pattern "${t.name}":`, err.message);
+      }
+    }
+    stats.guildTriggers          = compiled;
+    stats.guildTriggersVersion   = resp.version || '';
+    stats.guildTriggersCheckedAt = Date.now();
+  }
+}
 function pollGuildTriggers({ botUrl, token }) {
   if (!botUrl || !token) return Promise.resolve();
+  if (_multiplexActive()) return Promise.resolve();   // #106 — the multiplexed /poll carries guild-triggers
   // Pass our characters so server-side targeting can pre-filter
   const chars = (stats.watchedLogs || []).map(w => w && w.character).filter(Boolean);
   const classes = [];
@@ -20908,32 +23191,10 @@ function pollGuildTriggers({ botUrl, token }) {
         res.on('end', () => {
           try {
             const resp = JSON.parse(data);
-            // Version-gate: if the guild set hasn't changed, skip the recompile
-            // entirely so a faster poll (see the 2-min interval) stays cheap.
-            // Only when the bot actually sent a version (older bots send none →
-            // recompile as before, never falsely "unchanged").
-            if (resp.version && resp.version === stats.guildTriggersVersion) {
-              stats.guildTriggersCheckedAt = Date.now();
-              resolve(); return;
-            }
-            if (Array.isArray(resp.triggers)) {
-              // Compile once; eval per-line is hot path.
-              const compiled = [];
-              for (const t of resp.triggers) {
-                try {
-                  const flags = t.pattern_flags || 'i';
-                  const pat = t.use_regex === false
-                    ? _escapeForLiteralMatch(t.pattern)
-                    : _translateDotNetRegex(t.pattern);
-                  compiled.push({ ...t, _regex: new RegExp(pat, flags), _endRegex: _compileEndEarlyRegex(t), _scope: 'guild' });
-                } catch (err) {
-                  console.warn(`[guild-triggers] bad pattern "${t.name}":`, err.message);
-                }
-              }
-              stats.guildTriggers          = compiled;
-              stats.guildTriggersVersion   = resp.version || '';
-              stats.guildTriggersCheckedAt = Date.now();
-            }
+            // #74 control plane BACKUP channel — kill/floor keys ride the trigger
+            // poll too, so an agent honors them even without the reporter poll.
+            _applyControlPlane(resp, 'guild-triggers');
+            _applyGuildTriggersResponse(resp);
           } catch { /* non-fatal */ }
           resolve();
         });
@@ -21433,6 +23694,36 @@ const _localFireKeys = new Map();   // key → [tsMs, ...]
 const _fireLog = [];                // [{ at: tsMs, name }]
 const FIRE_DEDUP_WINDOW_MS = 8_000;
 
+// #105 — Mob self-heal detection from the throttled Zeal target-gauge snapshot.
+// Primary signal: the target gauge HP% RISING for the SAME target name across
+// two consecutive frames. The serialization doc (docs/DESIGN-dedup-and-mob-
+// serialization.md) warns a big HP jump can also mean the TARGET CHANGED, not a
+// heal — so we require the gauge NAME to be identical across the jump and the
+// prior HP to be > 0 (a rise off 0% is a new same-name spawn, not a heal). A
+// same-name "babysit" pull (two identically named mobs alive at once) can still
+// false-positive; that's accepted for a boss-timeline cue and documented here.
+// The heal is attributed to the OBSERVING character's live builder (matched by
+// name + current fight target) and debounced ≥10s per target inside noteMobHeal;
+// cross-uploader duplicates collapse at the web read layer.
+const MOB_HEAL_MIN_RISE = 5;          // percentage points
+const MOB_HEAL_DEBOUNCE_MS = 10_000;
+function _noteMobHealFromState(character, prev, next) {
+  if (!character || !prev || !next) return;
+  const pn = prev.target_name, nn = next.target_name;
+  const ph = prev.target_hp_pct, nh = next.target_hp_pct;
+  if (!pn || !nn || typeof ph !== 'number' || typeof nh !== 'number') return;
+  if (String(pn).toLowerCase() !== String(nn).toLowerCase()) return;   // name changed → target swap, not a heal
+  if (ph <= 0) return;                                                 // 0% = dead → a rise is a fresh same-name spawn
+  const rise = Math.round(nh - ph);
+  if (rise < MOB_HEAL_MIN_RISE) return;
+  const cl = String(character).toLowerCase();
+  for (const b of _liveBuilders) {
+    if (String(b.character || '').toLowerCase() !== cl) continue;
+    if (!b._fightTargetMatches(nn)) continue;
+    b.noteMobHeal(nn, rise, Date.now());
+  }
+}
+
 function _markFireSeen(key, tsMs) {
   if (!key) return;
   const arr = _localFireKeys.get(key) || [];
@@ -21464,14 +23755,14 @@ function _hasRecentFire(key, tsMs) {
 // stay on the source machine — there's no value in fanning out a private
 // alert). Test fires also skip relay.
 function _relayLocalFire(t, actions, captures, tsMs, key) {
-  if (!_isUploaderInstance) return;
-  if (!t || t._scope === 'personal') return;
+  if (!_isUploaderInstance) return false;
+  if (!t || t._scope === 'personal') return false;
   // Strip discord/relay-only actions so receiving Mimics only run the
   // local-effect ones (text_overlay, voice marks, etc.). Discord-channel
   // posts are already handled by the originating agent via the existing
   // /api/agent/trigger endpoint.
   const localActions = (actions || []).filter(a => a && a.type !== 'discord');
-  if (localActions.length === 0 && !(t.timer_duration_sec > 0)) return;
+  if (localActions.length === 0 && !(t.timer_duration_sec > 0)) return false;
   enqueueUpload('trigger_relay', {
     agent_version: AGENT_VERSION,
     fires: [{
@@ -21483,6 +23774,7 @@ function _relayLocalFire(t, actions, captures, tsMs, key) {
       fired_at_ms:         tsMs || Date.now(),
     }],
   });
+  return true;
 }
 
 // Polling loop — pulls fires posted by OTHER agents, runs them locally as
@@ -21490,30 +23782,62 @@ function _relayLocalFire(t, actions, captures, tsMs, key) {
 // is unset (no bot wired) or when no token is configured.
 let _lastRelayFireId = 0;
 let _relayPollerActive = false;
+// A relayed fire older than this at consumption time is a ghost callout (queue
+// backlog replayed it late) — journalled, never spoken. See _pollRelayFires.
+const RELAY_STALE_MS = 15_000;
+// Idle gate (2026-07-07 review): the trigger relay only matters while someone is
+// actually PLAYING. True when a Zeal client has sampled or a watched log has been
+// written in the last 10 min. Shared by the standalone recent-fires poll AND the
+// #106 multiplexed poll (which drops recent_fires from the bundle when idle).
+function _recentFiresActive() {
+  const idleCutoff = Date.now() - 10 * 60 * 1000;
+  try {
+    for (const ch of Object.keys(_zealState || {})) {
+      if (((_zealState[ch] && _zealState[ch].updatedAt) || 0) > idleCutoff) return true;
+    }
+    for (const w of (stats.watchedLogs || [])) {
+      if (w && w.logPath && fs.statSync(w.logPath).mtimeMs > idleCutoff) return true;
+    }
+  } catch { return true; }   // can't tell → keep polling (fail open)
+  return false;
+}
+
+// Consume a recent-fires payload ({ next_id, fires }) — advance the cursor and
+// run each not-yet-seen, non-stale relayed fire. Shared by the standalone
+// /recent-fires poll and the #106 multiplexed poll so the ghost-TTL + dedup
+// logic stays identical between the two paths.
+function _consumeRelayFires(data) {
+  if (!data) return;
+  if (typeof data.next_id === 'number') {
+    _lastRelayFireId = Math.max(_lastRelayFireId, data.next_id);
+  }
+  for (const fire of (data.fires || [])) {
+    const fireKey = fire.key || fire.name || '';
+    if (_hasRecentFire(fireKey, fire.fired_at_ms)) continue;
+    _markFireSeen(fireKey, fire.fired_at_ms);
+    // Ghost-callout TTL (#76): after a queue backlog, a relayed fire can arrive
+    // minutes late (posted_at is fresh, but the ORIGINAL fired_at is stale) and
+    // speak as if live. Drop anything older than RELAY_STALE_MS at consumption —
+    // journal it instead of speaking. Fail OPEN: a missing/unparseable timestamp
+    // is treated as live so a real callout is never eaten by a bad clock.
+    const firedAt = Number(fire.fired_at_ms);
+    if (Number.isFinite(firedAt) && (Date.now() - firedAt) > RELAY_STALE_MS) {
+      _journalTrigger({ trigger: fire.name || 'relayed', scope: 'guild_relay', checkpoint: TJ.MATCHED,
+                        stopped: true, reason: 'stale-skipped — fire was ' + Math.round((Date.now() - firedAt) / 1000) + 's old at consumption' });
+      continue;
+    }
+    _runRelayedFire(fire);
+  }
+}
+
 async function _pollRelayFires() {
   if (_relayPollerActive) return;
+  if (_multiplexActive()) return;   // #106 — the multiplexed /poll carries recent_fires while it's live
+  if (_controlStandDown().down) return;   // #74 dormant/below-floor → stop the recent-fires poll (local callouts unaffected)
   const base = _getApiBase();
   const token = _getAgentToken();
   if (!base || !token) return;
-  // Idle gate (2026-07-07 review): the trigger relay only matters while
-  // someone is actually PLAYING. Skip the fetch when no Zeal client has
-  // sampled and no watched log has been written for 10+ minutes — this was
-  // the agent's largest standing network cost (a poll every 1.5s, 24/7).
-  {
-    const idleCutoff = Date.now() - 10 * 60 * 1000;
-    let active = false;
-    try {
-      for (const ch of Object.keys(_zealState || {})) {
-        if (((_zealState[ch] && _zealState[ch].updatedAt) || 0) > idleCutoff) { active = true; break; }
-      }
-      if (!active) {
-        for (const w of (stats.watchedLogs || [])) {
-          if (w && w.logPath && fs.statSync(w.logPath).mtimeMs > idleCutoff) { active = true; break; }
-        }
-      }
-    } catch { active = true; }   // can't tell → keep polling (fail open)
-    if (!active) return;
-  }
+  if (!_recentFiresActive()) return;
   _relayPollerActive = true;
   try {
     const url = base.replace(/\/+$/, '') + '/recent-fires?since_id=' + _lastRelayFireId;
@@ -21521,16 +23845,7 @@ async function _pollRelayFires() {
       headers: { 'Authorization': 'Bearer ' + token, 'Accept': 'application/json' },
     });
     if (!res.ok) return;
-    const data = await res.json();
-    if (typeof data?.next_id === 'number') {
-      _lastRelayFireId = Math.max(_lastRelayFireId, data.next_id);
-    }
-    for (const fire of (data?.fires || [])) {
-      const fireKey = fire.key || fire.name || '';
-      if (_hasRecentFire(fireKey, fire.fired_at_ms)) continue;
-      _markFireSeen(fireKey, fire.fired_at_ms);
-      _runRelayedFire(fire);
-    }
+    _consumeRelayFires(await res.json());
   } catch (err) {
     // Silent — relay is best-effort and the poller retries next tick.
   } finally {
@@ -21544,6 +23859,132 @@ async function _pollRelayFires() {
 // .unref() so test harnesses (scripts/check-agent-dashboard.js) can
 // exit cleanly — the live agent has its own foreground keep-alives.
 setInterval(_pollRelayFires, 1500).unref();
+
+// ── Multiplexed poll (#106) ─────────────────────────────────────────────────
+// One loop that replaces the six per-client GET loops (recent-fires 1.5s,
+// overlay-tuning 90s, guild-triggers 2min, backfill 5min, ui-edits 5min,
+// character-prefs 10min) with a single GET /api/agent/poll bundle. It asks for
+// recent_fires + tuning every tick and the slow streams only when their own
+// cadence is due — same per-stream request rate as before, six streams → one.
+// The bot assembles the bundle from the SAME in-memory/60s-cached stores, so a
+// fast poll never adds a Supabase hit; the Supabase-backed streams ride only
+// their slow scheduled polls.
+//
+// Feature-detect / fleet-compat: a 404 (old bot without the route) or a 200 that
+// isn't poll-shaped (old bot's catch-all "OK") flips _pollSupported=false ONCE
+// and the agent falls back to the individual loops for the rest of this process
+// (they no-op behind _multiplexActive() until then). A transient failure
+// (429/5xx/network) is NOT a fallback — it just retries next tick.
+//
+// Dormancy (#74): while paused/below-floor the loop asks for the tuning/kill
+// stream ONLY (nothing else), throttled to the control cadence, so it still
+// learns when the pause lifts but sends no other traffic.
+let _pollSupported = null;     // null=unknown (assume supported), true=multiplexed, false=fell back
+let _pollInflight  = false;
+let _pollOkAt      = 0;        // last successful multiplexed poll (dashboard)
+let _pollTuningVer = '';       // last tuning-bundle version we hold (unchanged-gate cursor)
+const POLL_FAST_MS       = 1500;
+const POLL_TRIG_MS       = 2 * 60_000;
+const POLL_PREFS_MS      = 10 * 60_000;
+const POLL_BACKFILL_MS   = 5 * 60_000;
+const POLL_UI_MS         = 5 * 60_000;
+const POLL_TUNING_IDLE_MS = 20_000;   // idle: still refresh tuning/control this often
+const POLL_DORMANT_MS     = 15_000;   // dormant: poll the tuning/kill channel this often
+const _pollLast = { tuning: 0, triggers: 0, prefs: 0, backfill: 0, ui_edits: 0 };
+function _multiplexActive() { return _pollSupported !== false; }
+function _pollFellBack(reason) {
+  if (_pollSupported === false) return;
+  _pollSupported = false;
+  console.log(`[poll] multiplexed /api/agent/poll unavailable (${reason}) — falling back to the individual poll loops for this session`);
+}
+async function _pollMultiplexed() {
+  if (_pollInflight) return;
+  if (_pollSupported === false) return;   // fell back → the individual loops run instead
+  const opts = _uploadOpts;
+  if (opts && opts.dryRun) return;        // dry-run/backfill CLI never polls
+  const base  = _getApiBase();
+  const token = _getAgentToken();
+  if (!base || !token) return;
+
+  const now      = Date.now();
+  const dormant  = _controlStandDown().down;
+  const active   = _recentFiresActive();
+  const chars    = (stats.watchedLogs || []).map(w => w && w.character).filter(Boolean);
+
+  // Decide which streams to ask for THIS tick (reuse each stream's own cadence).
+  // The character-scoped streams (prefs/backfill/ui_edits) are gated on having a
+  // watched character, mirroring the individual loops' own early-return.
+  const want = [];
+  if (dormant) {
+    if (now - _pollLast.tuning < POLL_DORMANT_MS) return;   // #74 — only the control channel, throttled
+    want.push('tuning');
+  } else {
+    if (active) want.push('recent_fires');
+    if (active || (now - _pollLast.tuning >= POLL_TUNING_IDLE_MS)) want.push('tuning');
+    if (now - _pollLast.triggers >= POLL_TRIG_MS) want.push('triggers');
+    if (chars.length) {
+      if (now - _pollLast.prefs    >= POLL_PREFS_MS)    want.push('prefs');
+      if (now - _pollLast.backfill >= POLL_BACKFILL_MS) want.push('backfill');
+      if (now - _pollLast.ui_edits >= POLL_UI_MS)       want.push('ui_edits');
+    }
+  }
+  if (want.length === 0) return;   // nothing due this tick (idle, between cadences)
+  const qs = new URLSearchParams();
+  qs.set('streams', want.join(','));
+  if (want.includes('recent_fires')) qs.set('since_id', String(_lastRelayFireId));
+  if (want.includes('tuning'))       qs.set('tuning_ver', _pollTuningVer || '');
+  if (want.includes('triggers')) {
+    qs.set('trig_ver', stats.guildTriggersVersion || '');
+    const classes = [];
+    for (const c of chars) { const cls = stats.characterClasses && stats.characterClasses[c.toLowerCase()]; if (cls) classes.push(cls); }
+    if (classes.length) qs.set('classes', classes.join(','));
+  }
+  if (chars.length && (want.includes('prefs') || want.includes('backfill') || want.includes('ui_edits'))) {
+    qs.set('characters', chars.join(','));
+  }
+
+  _pollInflight = true;
+  try {
+    const res = await fetch(base.replace(/\/+$/, '') + '/poll?' + qs.toString(), {
+      headers: { 'Authorization': 'Bearer ' + token, 'Accept': 'application/json' },
+    });
+    if (res.status === 404) { _pollFellBack('404'); return; }
+    if (!res.ok) return;   // transient (429/5xx) → retry next tick; do NOT fall back
+    let data;
+    try { data = await res.json(); } catch { _pollFellBack('non-JSON reply (old bot?)'); return; }
+    if (!data || typeof data.streams !== 'object') { _pollFellBack('unrecognized reply (old bot?)'); return; }
+    _pollSupported = true;
+
+    // Control plane rides every poll — dormancy/floor freshness (#74).
+    _applyControlPlane(data, 'poll');
+
+    const s = data.streams;
+    // recent_fires — same consumer as the standalone poll (ghost-TTL + dedup).
+    if (s.recent_fires) _consumeRelayFires(s.recent_fires);
+    // A requested stream can be OMITTED (shed) — advance its cadence anyway so we
+    // don't hot-loop it; the client just goes without until the shed clears.
+    if (want.includes('tuning')) {
+      if (s.tuning) { if (s.tuning.version) _pollTuningVer = s.tuning.version; if (!s.tuning.unchanged) _applyTuningResponse(s.tuning); }
+      _pollLast.tuning = now;
+    }
+    if (want.includes('triggers')) { if (s.triggers) _applyGuildTriggersResponse(s.triggers); _pollLast.triggers = now; }
+    if (want.includes('prefs'))    { if (s.prefs)    _applyCharacterPrefsResponse(s.prefs);   _pollLast.prefs = now; }
+    if (want.includes('backfill')) { if (s.backfill) _applyBackfillResponse(s.backfill);      _pollLast.backfill = now; }
+    if (want.includes('ui_edits')) {
+      if (s.ui_edits) {
+        const watched = (stats.watchedLogs || []).filter(w => w && w.character && w.logPath);
+        _applyUiEditsResponse(s.ui_edits, watched, { botUrl: opts && opts.botUrl, token });
+      }
+      _pollLast.ui_edits = now;
+    }
+    _pollOkAt = now;
+  } catch (err) {
+    // network error → transient, retry next tick (do NOT fall back)
+  } finally {
+    _pollInflight = false;
+  }
+}
+setInterval(_pollMultiplexed, POLL_FAST_MS).unref();
 
 // Execute a relayed fire — runs the same shape as a local detection,
 // but with _isRelay=true so the receiving Mimic doesn't re-relay it.
@@ -21630,6 +24071,13 @@ let _tellsDmPauseUntil = 0;
 // dashboard can render "Signed in as <name>" without a separate round-trip.
 let _mimicSessionToken = '';
 let _mimicIdentity     = null;     // { user_id, discord_id, display_name, is_officer, role_names }
+// #120 — when did we last have NO session token? Seeded at boot because the
+// agent starts token-less and Mimic re-pushes the session a beat later; that
+// startup gap (and any transient identity blip) must NOT flash the scary "Not
+// signed in to Discord" banner at a user who IS signed in. The dashboard holds
+// that banner until this "no token" state is sustained past a grace window.
+// 0 = a token is currently present.
+let _mimicNoTokenSince = Date.now();
 // Live Zeal state per running client (keyed by the pipe's `character`). Fed by
 // Mimic via POST /api/zeal-state at a throttled cadence — a small snapshot, not
 // the 225/sec raw event stream. Drives gauge-condition triggers (target HP %,
@@ -22076,7 +24524,12 @@ function fetchExtendedTarget(character) {
   const cached = _extTargetCache.get(key);
   if (cached && (Date.now() - cached.at) < EXT_TARGET_TTL_MS) return;
   _extTargetInflight.add(key);
-  const qs = character ? '?character=' + encodeURIComponent(character) : '';
+  // #113 same-zone-only pref (default on). Only send same_zone=0 when the user
+  // has turned it OFF — an absent param keeps the bot's default same-zone scope.
+  const params = [];
+  if (character) params.push('character=' + encodeURIComponent(character));
+  if (_optinState.extSameZoneOnly === false) params.push('same_zone=0');
+  const qs = params.length ? '?' + params.join('&') : '';
   const url = opts.botUrl.replace(/\/encounter(\?.*)?$/, '/extended-target') + qs;
   try {
     const u = new URL(url);
@@ -22139,9 +24592,16 @@ function reportDebuffClear(target, spellName) {
 }
 
 function reportBuffLag(character) {
+  // Local snappy-mode engages FIRST and unconditionally — it's a per-machine UX
+  // knob, never gated. Only the bot-side diagnostic forward is deduped.
   _buffQueueSnappyUntil = Date.now() + SNAPPY_WINDOW;
   const opts = _uploadOpts;
   if (!opts || !opts.botUrl || !opts.token) return;
+  // #72: buff-lag reports are a zone-redundant diagnostic (N same-zone raiders
+  // feeling lag report the same fact), so the bot-forward rides the buffs role —
+  // a stood-down agent stops sending it. Fail-open (roles.buffs defaults TRUE +
+  // resets TRUE on poll failure), and the local snappy-mode above is unaffected.
+  if (!_reporterRoles.buffs) return;
   try {
     const url = opts.botUrl.replace(/\/encounter(\?.*)?$/, '/buff-lag-report');
     const u   = new URL(url);
@@ -22571,6 +25031,7 @@ function scanCrashDirs() {
 
 function flushLiveStateToBot(opts) {
   if (!_isUploaderInstance) return;          // only the elected uploader sends
+  if (_controlStandDown().down) return;      // #74 dormant/below-floor → stop the direct live-state push
   if (!opts || !opts.botUrl) return;
   const base = opts.botUrl.replace(/\/encounter(\?.*)?$/, '');
   const url  = base + '/live-state';
@@ -22643,6 +25104,13 @@ function flushLiveStateToBot(opts) {
       // everyone regardless of party size (Uilnayar 2026-06-29).
       target_name:    st.target_name || null,
       target_hp_pct:  st.target_hp_pct != null ? st.target_hp_pct : null,
+      // Position (Zeal loc {x,y,z}) → character_live_state.loc_* → the bot's
+      // raid-buff-queue "likely out of range" flag (#117). NOT in the change
+      // signature (it churns on every step) — it rides the heartbeat floor
+      // resend, so range is advisory (stale up to the heartbeat cadence).
+      loc_x:          (st.loc && Number.isFinite(Number(st.loc.x))) ? Number(st.loc.x) : null,
+      loc_y:          (st.loc && Number.isFinite(Number(st.loc.y))) ? Number(st.loc.y) : null,
+      loc_z:          (st.loc && Number.isFinite(Number(st.loc.z))) ? Number(st.loc.z) : null,
       incoming_mob:       incomingMob,
       incoming_mob_since: incomingMobSinceMs ? new Date(incomingMobSinceMs).toISOString() : null,
       buffs,
@@ -22952,6 +25420,10 @@ function _activeTimersSnapshot() {
       warning_ms:   t.warn_ms || 0,
       warn_text:    t.warn_text || null,
       scope:        t.scope,
+      // #107 loot chips carry kind:'loot' + dismissible so the trigger overlay
+      // draws a per-chip ✕ (deathtouch timers stay non-dismissible as before).
+      kind:         t.kind || null,
+      dismissible:  !!t.dismissible,
       test:         t.test,
     });
   }
@@ -22960,12 +25432,332 @@ function _activeTimersSnapshot() {
   return out;
 }
 
+// ── #107 Loot-post announce + auction countdown chip ────────────────────────
+// When an officer posts a drop list in /gu or /rs (the same delimited item
+// list the officer Loot capture panel already parses), that IS the universal
+// bid-opening signal — EVERY raider's agent tails the line locally, so the
+// callout is a per-client LOCAL TTS + a countdown chip on the trigger overlay.
+// No relay, no dedup-across-clients problem. The TTS rides the SAME overlay
+// fire pipeline as triggers (_pushOverlay → recentTriggerFires → triggers.html
+// speaks it only when the master `enableTriggerTts` flag is on), and the chip
+// reuses the trigger _activeTimers machinery so it looks/behaves exactly like
+// a Death Touch countdown.
+//
+// Detection is deliberately high-precision, leaning on parseLootChatBody's
+// strict Title-Case item-name guard (rejects ordinary chatter). A single-item
+// link needs extra bid context to fire; a multi-item drop list is a loot post
+// on its own. A stated duration ("2 min", "90s") is parsed when present, else
+// lootAuctionDefaultSec (120s) is used, and a later bid call that DOES state a
+// duration re-anchors the most-recent auction's timer.
+const _lootAuctions = new Map();   // sig → { items, openedAtMs, channel }
+let _lastLootSig     = null;
+let _lastLootBidCall = { atMs: 0, durSec: null };
+// Words that mark a bid call. Kept broad but anchored on \b so it doesn't fire
+// on substrings ("forbidden", "auctioneer" etc. still match "bid"/"auction" as
+// whole words only where intended).
+const LOOT_BID_CALL_RX = /\b(bids?|bidding|dkp|auctions?|going once|going twice|min bid|starting bid)\b/i;
+
+function _lootAuctionDefaultSec() {
+  const v = _optinState.lootAuctionDefaultSec;
+  return Number.isFinite(v) ? Math.max(15, Math.min(1800, Math.round(v))) : 120;
+}
+
+// Snapshot the live loot-auction detection for the #108 Loot bidding panel
+// (GET /api/loot/auctions). ONE source of truth — reads _lootAuctions +
+// their countdown chips in _activeTimers; no re-parse. Elapsed windows drop.
+function _lootAuctionsSnapshot(nowMs) {
+  const now = Number.isFinite(nowMs) ? nowMs : Date.now();
+  const out = [];
+  for (const [sig, a] of _lootAuctions) {
+    const timer = _activeTimers.get('loot|' + sig);
+    const endsMs = timer ? timer.ends_at_ms : null;
+    if (endsMs && endsMs < now) continue;   // window elapsed — drop
+    out.push({
+      sig,
+      items:     (a.items || []).map(it => ({ name: it.name, quantity: it.quantity || 1 })),
+      opened_at: a.openedAtMs ? new Date(a.openedAtMs).toISOString() : null,
+      ends_at:   endsMs ? new Date(endsMs).toISOString() : null,
+      channel:   a.channel || null,
+    });
+  }
+  return out;
+}
+
+// Tolerant duration parse: "2 min", "2 minutes", "2m", "90 sec", "90s",
+// "90 seconds". Minutes win when both a bare number+unit appear. Clamped so a
+// stray "600 minutes" can't pin a chip on-screen forever.
+function _parseAuctionDuration(text) {
+  if (!text) return null;
+  const s = String(text);
+  let m = s.match(/(\d{1,3})\s*(?:min(?:ute)?s?|m)\b/i);
+  if (m) { const v = parseInt(m[1], 10); if (v >= 1 && v <= 30) return v * 60; }
+  m = s.match(/(\d{1,4})\s*(?:sec(?:ond)?s?|s)\b/i);
+  if (m) { const v = parseInt(m[1], 10); if (v >= 10 && v <= 1800) return v; }
+  return null;
+}
+
+// Spoken form of a duration for the TTS callout.
+function _spokenDuration(sec) {
+  sec = Math.round(sec);
+  if (sec % 60 === 0) { const mm = sec / 60; return mm + (mm === 1 ? ' minute' : ' minutes'); }
+  if (sec < 60) return sec + ' seconds';
+  const mm = Math.floor(sec / 60), ss = sec % 60;
+  return mm + (mm === 1 ? ' minute ' : ' minutes ') + ss + ' seconds';
+}
+
+// Chip label — a single item names it; multiple items count.
+function _lootChipLabel(items) {
+  if (items.length === 1) {
+    const it = items[0];
+    return '💰 Bids — ' + it.name + (it.quantity > 1 ? ' (x' + it.quantity + ')' : '');
+  }
+  return '💰 Loot bids (' + items.length + ')';
+}
+
+function _announceLootPost(items, durSec) {
+  const distinct = items.length;
+  const itemWord = distinct === 1 ? 'item' : 'items';
+  const durPhrase = _spokenDuration(durSec);
+  const spoken = 'Loot posted — ' + distinct + ' ' + itemWord + ', bids open ' + durPhrase;
+  _pushOverlay({
+    text:        '💰 Loot posted — ' + distinct + ' ' + itemWord + ' · bids ' + durPhrase,
+    tts:         spoken,
+    color:       'gold',
+    duration_ms: 6000,
+    shownAt:     Date.now(),
+    firedAt:     Date.now(),
+    trigger:     'Loot auction',
+    scope:       'loot',
+    test:        false,
+  });
+}
+
+// Open (or restart) an auction chip for this item set. Same signature =
+// restart in place (repeat post RESETS, never stacks a duplicate); a distinct
+// item set = a new independent chip (concurrent auctions are real). The TTS
+// callout fires only on the FIRST open of a set — multibox second-log copies
+// and repeat posts reset silently.
+function _openOrResetLootAuction(sig, items, durSec, nowMs, channel, silent) {
+  const id = 'loot|' + sig;
+  const existed = _activeTimers.has(id);
+  const label = _lootChipLabel(items);
+  const warnMs = durSec > 25 ? 15000 : 0;
+  _activeTimers.set(id, {
+    id,
+    name:          label,
+    target:        null,
+    effect:        label,
+    started_at_ms: nowMs,
+    ends_at_ms:    nowMs + durSec * 1000,
+    duration_sec:  durSec,
+    color:         'gold',
+    end_text:      null,
+    warn_ms:       warnMs,
+    warn_text:     warnMs ? ('15 seconds left — ' + (items.length === 1 ? items[0].name : items.length + ' item bids')) : null,
+    trigger_name:  null,
+    captures:      null,
+    scope:         'loot',
+    kind:          'loot',
+    dismissible:   true,
+    test:          false,
+  });
+  _lootAuctions.set(sig, { items, openedAtMs: nowMs, channel });
+  _lastLootSig = sig;
+  if (!existed && !silent) _announceLootPost(items, durSec);
+  scheduleRender();
+}
+
+// Universal entry point — called for every live /gu + /rs line (NOT the
+// --since backfill, which replays history and must not narrate old loot).
+function noteLootAuction(chatMsg) {
+  try {
+    if (!chatMsg || (chatMsg.channel !== 'guild' && chatMsg.channel !== 'raid')) return;
+    if (_optinState.lootAuctionTts === false) return;   // feature off
+    const text  = String(chatMsg.text || '');
+    const nowMs = Date.parse(chatMsg.ts) || Date.now();
+    const items = parseLootChatBody(text);           // strict Title-Case guard
+    const statedDur = _parseAuctionDuration(text);
+    const hasBidWord = LOOT_BID_CALL_RX.test(text);
+
+    if (items.length >= 1) {
+      // False-positive guard: a lone single-item link needs bid context (a bid
+      // word or duration in THIS line, or a bid call heard in the last 30s).
+      // Multi-item drop lists stand on their own — that's a loot post.
+      const recentBidCall = (nowMs - _lastLootBidCall.atMs) < 30_000 && _lastLootBidCall.atMs > 0;
+      if (items.length < 2 && !hasBidWord && statedDur == null && !recentBidCall) return;
+      const sig = items.map(i => i.name.toLowerCase()).sort().join('~');
+      // Duration precedence: this line's stated value → a recent bid call's
+      // stated value → the configured default.
+      const durSec = statedDur
+        || (recentBidCall ? _lastLootBidCall.durSec : null)
+        || _lootAuctionDefaultSec();
+      _openOrResetLootAuction(sig, items, durSec, nowMs, chatMsg.channel, false);
+      return;
+    }
+
+    // No item list. A standalone bid call ("bids open, 2 minutes") re-anchors
+    // the most-recent open auction's window when it states a duration — this is
+    // the drop-list-then-bid-call two-line workflow.
+    if (hasBidWord) {
+      _lastLootBidCall = { atMs: nowMs, durSec: statedDur || null };
+      if (statedDur != null && _lastLootSig && _lootAuctions.has(_lastLootSig)) {
+        const a = _lootAuctions.get(_lastLootSig);
+        if ((nowMs - a.openedAtMs) < 120_000) {
+          _openOrResetLootAuction(_lastLootSig, a.items, statedDur, nowMs, a.channel, true);
+        }
+      }
+    }
+  } catch (e) { void e; }
+}
+
 function _expandTemplate(template, captures) {
   if (!template) return '';
   return template.replace(/\{(\w+)\}/g, (_, k) => {
     if (captures && captures[k] != null) return String(captures[k]);
     return `{${k}}`;
   });
+}
+
+// ── Trigger checkpoint journal (#76) ────────────────────────────────────────
+// "Why didn't my trigger fire?" answered from the dashboard. A small in-memory
+// ring buffer (NO disk, NO upload) records, per candidate evaluation, how far
+// it got through the pipeline and — when it stopped short — why. A candidate is
+// any evaluation whose pattern MATCHED a line (live) or a REHEARSE run (which
+// records checkpoint 1 even when the pattern is never exercised). Recording
+// every trigger against every line would flood the buffer, so live entries
+// begin at "pattern matched"; the rehearse path is what surfaces a pattern
+// that never matches at all.
+const TRIGGER_JOURNAL_MAX = 250;
+const _triggerJournal = [];   // append newest at end; capped at TRIGGER_JOURNAL_MAX
+// Checkpoint ladder — higher = further through the pipeline.
+// PLAYBACK (5b, #120) sits between DISPATCHED and RELAYED: "dispatched" only
+// means the overlay pushed a fire + called speechSynthesis.speak() — it does
+// NOT prove any audio came out. The trigger overlay reports the real playback
+// outcome (onstart / onerror / silent-timeout) to /api/triggers/playback so a
+// machine where Chromium's user-activation gate silently swallows speech (the
+// "no Mimic entry in the Windows volume mixer" field bug) lights up here
+// instead of looking like a clean checkpoint-5 dispatch.
+const TJ = { SEEN: 1, MATCHED: 2, GATES: 3, ACTIONS: 4, DISPATCHED: 5, PLAYBACK: 5.5, RELAYED: 6 };
+const TJ_LABEL = { 1: 'line seen', 2: 'pattern matched', 3: 'gates passed',
+                   4: 'actions built', 5: 'dispatched', 5.5: 'playback', 6: 'relayed' };
+function _journalTrigger(e) {
+  const cp = e.checkpoint || 0;
+  _triggerJournal.push({
+    at:         e.at || Date.now(),
+    trigger:    String(e.trigger || '?').slice(0, 80),
+    scope:      e.scope || '?',
+    checkpoint: cp,
+    label:      e.label || TJ_LABEL[cp] || '?',
+    reason:     e.reason ? String(e.reason).slice(0, 160) : null,
+    rehearsal:  !!e.rehearsal,
+    // Stopped short = didn't reach dispatch. Drives the ✓/✗ column colour.
+    stopped:    e.stopped != null ? !!e.stopped : (cp < TJ.DISPATCHED),
+  });
+  if (_triggerJournal.length > TRIGGER_JOURNAL_MAX) {
+    _triggerJournal.splice(0, _triggerJournal.length - TRIGGER_JOURNAL_MAX);
+  }
+}
+
+// Best-effort synthesizer: build a literal log line that the trigger's compiled
+// _regex accepts, so REHEARSE can drive the pattern through the REAL evaluator
+// instead of firing the action directly (false confidence). Strips regex
+// scaffolding to a plausible EQ line, substitutes any provided captures for
+// named groups, then VERIFIES with the real regex — returns null if it can't
+// produce a match (caller then rehearses the action tail only and journals
+// "pattern not exercised"). Handles the common EQ trigger shapes; exotic
+// patterns simply fall through to the null path.
+function _synthesizeMatchingLine(t, captures) {
+  if (!t || !t._regex) return null;
+  let src = String(t.pattern || '');
+  if (!src.trim()) return null;
+  // Literal-match triggers: the pattern IS the substring to match.
+  if (t.use_regex === false) {
+    return src;
+  }
+  const caps = captures || {};
+  // Named group → the provided capture, else a neutral placeholder token.
+  src = src.replace(/\(\?<([A-Za-z_][\w]*)>[^)]*\)/g, (_, name) =>
+    (caps[name] != null ? String(caps[name]) : 'Testmob'));
+  // Remaining groups (non-capturing / plain) → first alternative, parens gone.
+  src = src.replace(/\(\?:([^)|]*)(?:\|[^)]*)?\)/g, '$1');
+  src = src.replace(/\(([^)|]*)(?:\|[^)]*)?\)/g, '$1');
+  // Character classes / metaclasses → representative literals.
+  src = src.replace(/\\d(?:\{[\d,]+\})?|\[0-9\][+*?]?/g, '42');
+  src = src.replace(/\[[^\]]*\][+*?]?/g, 'x');
+  src = src.replace(/\\w[+*?]?/g, 'word');
+  src = src.replace(/\\s[+*?]?/g, ' ');
+  src = src.replace(/\.[+*?]/g, 'something');
+  // Drop anchors, quantifiers on literals, and unescape escaped punctuation.
+  src = src.replace(/[?*+]/g, '');
+  src = src.replace(/[\^$]/g, '');
+  src = src.replace(/\\([.\-+*?()\[\]{}|^$/])/g, '$1');
+  src = src.replace(/\s{2,}/g, ' ').trim();
+  try { return t._regex.test(src) ? src : null; }
+  catch { return null; }
+}
+
+// Real REHEARSE (#76): drive a trigger through the actual evaluation pipeline —
+// pattern exec, cooldown check, charm-pet suppression, then the action tail —
+// flagged as a rehearsal so it (a) never relays/uploads, (b) never touches
+// _fireLog/timeline capture, and (c) is labelled as a rehearsal in the journal
+// + overlay. Cooldown + suppression verdicts are EVALUATED and journalled but
+// NOT enforced (a rehearsal always reaches dispatch so the user hears the real
+// TTS) and NEVER consume the real cooldown (_triggerLastFire untouched).
+function _rehearseTrigger(t, opts) {
+  opts = opts || {};
+  const name = t.name || 'trigger';
+  const scope = 'rehearsal';
+  const notes = [];
+  let captures = (opts.captures && typeof opts.captures === 'object') ? opts.captures : {};
+  // Checkpoint 1 — the engine "sees" a line (synthesized unless the caller
+  // supplied one via the pattern-test panel).
+  let line = opts.line || null;
+  let patternExercised = false;
+  if (!t._regex) {
+    // No log pattern to satisfy — either a pure-Zeal gauge-condition trigger
+    // or an ad-hoc action-only preview.
+    notes.push(t.zeal_condition ? 'pattern not exercised (gauge condition)'
+                                : 'pattern not exercised (no log pattern)');
+  } else {
+    if (!line) line = _synthesizeMatchingLine(t, captures);
+    if (line) {
+      let m = null;
+      try { m = t._regex.exec(line); } catch { m = null; }
+      if (m) {
+        patternExercised = true;
+        captures = Object.assign({}, m.groups || {}, captures);
+        notes.push('pattern matched synthesized line');
+      } else {
+        notes.push('pattern not exercised (could not synthesize a matching line)');
+      }
+    } else {
+      notes.push('pattern not exercised (could not synthesize a matching line)');
+    }
+  }
+  // Checkpoint 3 — evaluate the gates for REPORTING only.
+  if (patternExercised && _captureMatchesCharmPet(captures)) {
+    notes.push('would be suppressed live (capture is your charm pet)');
+  }
+  if (t.cooldown_seconds && t.cooldown_seconds > 0) {
+    const last = _triggerLastFire.get(t.id || t.name) || 0;
+    const remain = (t.cooldown_seconds * 1000) - (Date.now() - last);
+    if (remain > 0) notes.push('would be on cooldown live (' + Math.ceil(remain / 1000) + 's left)');
+  }
+  // Dispatch the action tail through the SAME handler as a live fire, marked
+  // as a rehearsal: test=true skips _fireLog + relay + Discord, _rehearsal
+  // labels the overlay + suppresses the handler's own journal row (we write a
+  // single comprehensive one below).
+  const rehearseTrig = Object.assign({}, t, { _scope: scope, _rehearsal: true, _noJournal: true });
+  _fireTriggerActions(rehearseTrig, captures, Date.now(), true);
+  _journalTrigger({
+    trigger:   name,
+    scope,
+    rehearsal: true,
+    checkpoint: TJ.DISPATCHED,
+    stopped:   false,
+    reason:    'rehearsal — ' + notes.join('; ') + '; cooldown/suppression not consumed',
+  });
+  return { patternExercised, line: line || null, captures };
 }
 
 // Hot-path: called for every kept log line in the tail loop.
@@ -23018,11 +25810,19 @@ function evaluateTriggersAgainstLine(line, tsMs) {
     // mob, our pet enrages at low HP, etc.) and the call would be wrong.
     // Don't apply to Zeal-condition triggers (no log-match captures there).
     const captures = m.groups || {};
-    if (_captureMatchesCharmPet(captures)) continue;
+    if (_captureMatchesCharmPet(captures)) {
+      _journalTrigger({ trigger: t.name, scope: t._scope || 'personal', checkpoint: TJ.MATCHED,
+                        stopped: true, reason: 'suppressed — capture is your charm pet' });
+      continue;
+    }
     // Cooldown gate
     if (t.cooldown_seconds && t.cooldown_seconds > 0) {
       const last = _triggerLastFire.get(t.id || t.name) || 0;
-      if (tsMs - last < t.cooldown_seconds * 1000) continue;
+      if (tsMs - last < t.cooldown_seconds * 1000) {
+        _journalTrigger({ trigger: t.name, scope: t._scope || 'personal', checkpoint: TJ.GATES,
+                          stopped: true, reason: 'cooldown — ' + Math.ceil((t.cooldown_seconds * 1000 - (tsMs - last)) / 1000) + 's remaining' });
+        continue;
+      }
     }
     _triggerLastFire.set(t.id || t.name, tsMs);
     _fireTriggerActions(t, captures, tsMs, false);
@@ -23072,10 +25872,18 @@ function _fireTriggerActions(t, captures, tsMs, test, isRelay) {
       const val = captures && captures[String(a.require_raid_member)];
       if (!val || !_raidRosterHas(val)) {
         if (!test) console.log('[trigger] ' + (t.name || 'trigger') + ' suppressed — ' + a.require_raid_member + '=' + val + ' not a raid member');
+        if (!t._noJournal) {
+          _journalTrigger({ trigger: t.name, scope: t._scope || (test ? 'test' : 'personal'), checkpoint: TJ.GATES,
+                            stopped: true, rehearsal: !!t._rehearsal,
+                            reason: 'suppressed — ' + a.require_raid_member + '=' + (val || '?') + ' not a raid member' });
+        }
         return;
       }
     }
   }
+  // Checkpoint bookkeeping for the journal (#76): how far this fire actually got.
+  let _dispatched = false;
+  let _actionsBuilt = 0;
   // Callout-replay (#98): record the fire so the per-fight timeline can show
   // which callouts went off. Skip test/rehearsal fires. Windowed into the
   // encounter at flush time; hard-capped so it can't grow unbounded.
@@ -23085,6 +25893,7 @@ function _fireTriggerActions(t, captures, tsMs, test, isRelay) {
   }
   for (const a of (t.actions || [])) {
     if (!a || !a.type) continue;
+    _actionsBuilt++;
     if (a.type === 'text_overlay') {
       const text = _expandTemplate(a.text || '', captures || {});
       // Spoken text: an explicit per-action `tts` wins (lets a trigger say
@@ -23107,8 +25916,15 @@ function _fireTriggerActions(t, captures, tsMs, test, isRelay) {
       };
       if (ttsText) overlay.tts = ttsText;
       if (a.sound) overlay.sound = a.sound;
+      // Sticky critical callouts (#76): a trigger-level OR action-level `sticky`
+      // flag pins the alert on the trigger overlay until the user dismisses it
+      // (or a generous timeout), instead of fading on the normal schedule.
+      // Optional + backward-compatible: old agents ignore the field entirely.
+      if (t.sticky || a.sticky) overlay.sticky = true;
+      if (t._rehearsal) overlay.rehearsal = true;
       _pushOverlay(overlay);
-      console.log(`[trigger${test ? ':test' : ':' + (t._scope || '?')}] ${t.name} → ${text}`);
+      _dispatched = true;
+      console.log(`[trigger${test ? (t._rehearsal ? ':rehearsal' : ':test') : ':' + (t._scope || '?')}] ${t.name} → ${text}`);
       scheduleRender();
     } else if (a.type === 'discord' && !test) {
       // Broadcast this fire to a text Discord channel via the bot. Test fires
@@ -23190,8 +26006,10 @@ function _fireTriggerActions(t, captures, tsMs, test, isRelay) {
       };
       if (Array.isArray(a.marks) && a.marks.length > 0) {
         for (const m of a.marks) speakAt(m && (m.text || m.message), m && m.at_ms);
+        _dispatched = true;
       } else if (a.message || a.text) {
         speakAt(a.message || a.text, 0);
+        _dispatched = true;
       }
     }
     // sound / emit_event beyond the overlay's own audio remain no-ops in v1.
@@ -23209,12 +26027,26 @@ function _fireTriggerActions(t, captures, tsMs, test, isRelay) {
   // fires (debug-only, no bot side effects). Captures are part of the
   // dedup key so two simultaneously-detected DIFFERENT events
   // ("RIP Hitya" and "RIP Sweenie" within the same second) both land.
+  let _relayed = false;
   if (!test) {
     const fireKey = (t.name || 'trigger') + ':' + JSON.stringify(captures || {});
     _markFireSeen(fireKey, tsMs || Date.now());
     if (!isRelay && t._scope !== 'personal') {
-      _relayLocalFire(t, t.actions || [], captures || {}, tsMs || Date.now(), fireKey);
+      _relayed = !!_relayLocalFire(t, t.actions || [], captures || {}, tsMs || Date.now(), fireKey);
     }
+  }
+  // Journal how far this fire got (#76) — one summary row per fire, unless the
+  // caller (e.g. REHEARSE) writes its own comprehensive entry.
+  if (!t._noJournal) {
+    const cp = _relayed ? TJ.RELAYED : (_dispatched ? TJ.DISPATCHED : (_actionsBuilt > 0 ? TJ.ACTIONS : TJ.GATES));
+    _journalTrigger({
+      trigger:   t.name,
+      scope:     t._scope || (test ? 'test' : 'personal'),
+      rehearsal: !!t._rehearsal,
+      checkpoint: cp,
+      stopped:   cp < TJ.DISPATCHED,
+      reason:    _actionsBuilt === 0 ? 'no actions on trigger' : null,
+    });
   }
 }
 
@@ -23341,6 +26173,18 @@ function uploadBuffCasts(casts, { dryRun } = {}) {
   if (dryRun) {
     for (const c of casts) console.log(`[buff-cast] ${c.target} ← ${c.spell_name || '(ambiguous: ' + c.landing_text + ')'} @ ${c.cast_at}`);
     return Promise.resolve();
+  }
+  // #72 P1b: ordinary observed landings are ZONE-redundant — every same-zone
+  // agent sees the identical land — so only the elected buff reporter(s) upload
+  // them; non-reporters drop them (a reporter in the zone still sends them).
+  // CRITICAL exception: is_charm_spell rows are agent-SYNTHESIZED per-observer
+  // facts (charm timers — no cast_on_other log line exists for other clients),
+  // so they are NEVER gated and always ship. Fail-open: buffs role defaults TRUE
+  // and RESETS to true on any poll failure, so a lost elector = upload everything
+  // (same staleness rule the chat gate uses). Split the batch accordingly.
+  if (!_reporterRoles.buffs) {
+    casts = casts.filter(c => c.is_charm_spell);
+    if (casts.length === 0) return Promise.resolve();
   }
   enqueueUpload('buff_cast', { agent_version: AGENT_VERSION, casts });
   return Promise.resolve();
@@ -23667,6 +26511,7 @@ async function main() {
     fetchItemClickies({ botUrl, token }).catch(() => {});
     startReporterHeartbeat();   // #72 — poll the bot for our upload roles (fail-open)
     setInterval(() => { try { uploadRollSets(); } catch {} }, 60_000).unref();   // #91 off-night roll capture
+    setInterval(() => { try { uploadLooted(); } catch {} }, 60_000).unref();     // #91 looted-line capture
     // Re-fetch daily — the catalog only changes on the weekly upstream sync,
     // but a daily check is cheap (the bot serves a 304 if nothing changed)
     // and stops a long-running agent from drifting indefinitely.
@@ -24091,6 +26936,30 @@ async function main() {
           }
         }
 
+        // ── Camp-out early handoff (#72 P3) ────────────────────────────────
+        // "It will take you about 30 seconds to prepare your camp." — this
+        // raider is ~30s from vanishing. Flag `_camping` and fire an IMMEDIATE
+        // reporter heartbeat (camping:true, no 20s wait) so the bot demotes us
+        // from EVERY election ~30s before the 60s TTL would notice the logout,
+        // handing chat/buffs/roster to a live groupmate while we're still here.
+        // "You abandon your preparations to camp." (moved/cancelled) clears it.
+        // Machine-level (one client = one camp) and NOT gated on exclusion — the
+        // handoff is about liveness, not data. Patterns kept loose to survive
+        // the guild-hall / "5 seconds" variants.
+        if (/prepare your camp/i.test(line)) {
+          if (!_camping) {
+            _camping = true;
+            console.log('[reporter] /camp detected → camping (early handoff started)');
+            try { _reporterHeartbeatOnce(); } catch { /* best-effort — next 20s cycle catches it */ }
+          }
+        } else if (/abandon your preparations to camp/i.test(line)) {
+          if (_camping) {
+            _camping = false;
+            console.log('[reporter] camp abandoned → resuming as election candidate');
+            try { _reporterHeartbeatOnce(); } catch { /* best-effort */ }
+          }
+        }
+
         // ── Special relay lines: checked BEFORE the combat filter ──────────
         // These are NOT combat events and won't pass shouldKeep(), but we
         // still want to capture and relay them to Discord — UNLESS the owner
@@ -24245,6 +27114,9 @@ async function main() {
           // Also stamp it under the target name so Mob Info can show buffs on
           // whatever we're targeting (mob or player).
           recordTargetBuffLanding(bcEvt);
+          // #105 — a slow landing on the current fight target → slow_on timeline
+          // tick. Self-cast path: the caster is this log's character.
+          try { b.builder.noteSlowLanding(bcEvt, b.character); } catch (e) { void e; }
         }
         // Detrimental debuff landed by SOMEONE ELSE (bystander view) — Tash/Malo
         // on the boss, a slow/poison on a raider. Our OWN debuffs are already
@@ -24259,6 +27131,9 @@ async function main() {
             // path does, and that breaks on instanced mob names like
             // "#Diabo_Xi_Va_Temariel" vs the emote's "Diabo Xi Va Temariel").
             recordTargetBuffLanding(dbEvt);
+            // #105 — bystander-observed slow on the fight target → slow_on tick
+            // (the caster is unknown from a landing line, so it's unattributed).
+            try { b.builder.noteSlowLanding(dbEvt, null); } catch (e) { void e; }
             // Upload BOTH mob and player debuffs so the bot's target-buffs relay
             // shows them cross-client — everyone targeting the boss sees
             // Tash/Malo/Turgur's even if they didn't personally witness the land
@@ -24293,6 +27168,10 @@ async function main() {
         // /random rolls + the loot-link roll-number convention — feeds the
         // Command Center Rolls card + the dashboard roll table. Local-only.
         if (!_sourceExcluded) { try { trackRollLine(line, b.character); trackRollItemLine(line); } catch {} }
+        // #91 "You have looted" — the looter's own log is the only truth for
+        // who ends up with no-drop loot. Live tail only (the 30-min upload gate
+        // in uploadLooted keeps --since backfill from re-posting old loots).
+        if (!_sourceExcluded) { try { trackLootedLine(line, b.character); } catch {} }
         // Auto-Raid Invite lead — raid-leader + ARI-enabled self-lines → the
         // bot auto-sets /autoraidinvite to this character. Live tail only.
         if (!_sourceExcluded) { try { trackAriLeadLine(line, b.character); } catch {} }
@@ -24337,6 +27216,10 @@ async function main() {
           // Dedupes against the other live loop within 10 min, so being hooked
           // in both places is safe (this one is the primary relay path).
           noteLootFromChat(chatMsg);
+          // #107 loot-post TTS + auction countdown chip. LIVE tail only — the
+          // --since backfill path deliberately does NOT call this, so replaying
+          // an old log never narrates stale loot or spawns phantom chips.
+          noteLootAuction(chatMsg);
           // Cross-log arbitration: same channel + normalized text within 90s =
           // the same message captured from this person's main + alt logs
           // (self-form in one, bystander-form in the others). The speaker is
@@ -24410,6 +27293,18 @@ module.exports = {
   EncounterBuilder, characterFromFilename,
   trackChChainLine, chChainSnapshot,
   _readZipEntry, _parseCrashReason, _crashZipTime,
+  // #107 loot-post announce — exported for the scratchpad smoke test.
+  parseLootChatBody, noteLootAuction, _parseAuctionDuration, _spokenDuration,
+  _lootChipLabel, _activeTimers, _activeOverlays, _optinState, _lootAuctions,
+  _lootAuctionsSnapshot,
+  // #108 loot bidding — exported for the scratchpad smoke test / harness.
+  startWebDashboard,
+  _loadBidFamily, _saveBidFamily, _bidFamilyNames, _opendkpAuthed,
+  _loadPlannedBids, _savePlannedBids, _setPlannedBid,
+  _setBidFamilyForTest: (f) => { _bidFamily = f; },
+  _setOpendkpAuthForTest: (a) => { _opendkpAuth = a; },
+  _getBidFamilyForTest: () => _bidFamily,
+  _getPlannedBidsForTest: () => _plannedBids,
 };
 
 if (require.main === module) {
