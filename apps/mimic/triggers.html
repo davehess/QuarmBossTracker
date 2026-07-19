@@ -322,14 +322,45 @@
   if (window.mimic && window.mimic.getStatus) window.mimic.getStatus().then(applyTtsStatus).catch(function(){});
   if (window.mimic && window.mimic.onStatus)  window.mimic.onStatus(applyTtsStatus);
 
-  function speak(text){
+  // #120 — report whether the speech engine actually PRODUCED audio, not just
+  // that we asked it to. On a machine where Chromium's user-activation gate is
+  // swallowing speechSynthesis (the "no Mimic entry in the Windows volume mixer"
+  // field bug), speak() runs but nothing plays: onstart never fires and onerror
+  // reports 'not-allowed'. We POST the outcome to the agent so it lands in the
+  // checkpoint journal as checkpoint 5b (playback started / FAILED). To keep the
+  // wire quiet + the journal focused we only report REHEARSALS (Rehearse exists
+  // to prove the audio path) and FAILURES — a successful live fire is silent on
+  // the wire. That means a silent machine lights up at rehearsal, not mid-raid.
+  function reportPlayback(status, detail, meta){
+    if (status === 'started' && !(meta && meta.rehearsal)) return;   // don't flood on live successes
     try{
-      if (!window.speechSynthesis) return;
+      const PORT_LOCAL = (typeof PORT !== 'undefined' ? PORT : 7779);
+      fetch('http://127.0.0.1:' + PORT_LOCAL + '/api/triggers/playback', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          status: status,
+          detail: detail || null,
+          trigger: (meta && meta.trigger) || null,
+          rehearsal: !!(meta && meta.rehearsal),
+        }),
+      }).catch(function(){});
+    }catch(e){}
+  }
+  function speak(text, meta){
+    try{
+      if (!window.speechSynthesis){ reportPlayback('error', 'no speechSynthesis API', meta); return; }
       const u = new SpeechSynthesisUtterance(text);
       u.rate = 1.05; u.volume = 1;
+      var settled = false;
+      u.onstart = function(){ if (settled) return; settled = true; reportPlayback('started', null, meta); };
+      u.onerror = function(e){ if (settled) return; settled = true; reportPlayback('error', (e && e.error) || 'speech error', meta); };
+      // If neither start nor error fires within 2s the engine silently swallowed
+      // it (the classic user-activation block) — report so the journal still
+      // shows something went wrong instead of a phantom clean dispatch.
+      setTimeout(function(){ if (!settled){ settled = true; reportPlayback('silent', 'no start/error within 2s', meta); } }, 2000);
       window.speechSynthesis.cancel();
       window.speechSynthesis.speak(u);
-    }catch(e){}
+    }catch(e){ reportPlayback('error', String((e && e.message) || e), meta); }
   }
   function playSound(url){
     if(!url) return;
@@ -444,7 +475,7 @@
     // Rehearsal fires (real REHEARSE, #76) speak the true callout but carry a
     // 🧪 badge on the flash so the user knows it was a test drive.
     flash((t.rehearsal ? '🧪 ' : '') + (t.text || t.label || spoken));
-    speak(spoken);
+    speak(spoken, { trigger: t.trigger || t.text || t.label || spoken, rehearsal: !!t.rehearsal });
     playSound(t.sound);
     showFeedback(t);
     if (t.sticky) pinSticky(t);
@@ -459,7 +490,7 @@
     const danger = e.kind === 'blind_selfhit';
     el.classList.toggle('blindwarn', danger);
     flash(e.text || e.tts || 'Blind');
-    speak(e.tts || e.text || 'Blind');
+    speak(e.tts || e.text || 'Blind', { trigger: 'blind:' + (e.kind || 'alert'), rehearsal: false });
     // Clear the danger styling after the flash window so the next normal flash
     // isn't tinted red.
     clearTimeout(fireBlind._t);

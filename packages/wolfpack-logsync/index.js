@@ -9000,6 +9000,14 @@ function _serializeForDashboard() {
     // session token, refreshed on every latest-version poll, so the
     // signal flips to true within a few seconds of a successful sign-in.
     mimicSignedIn:      !!(_mimicSessionToken && _mimicIdentity),
+    // #120 — token present (signed in) but identity may not be confirmed yet.
+    // Lets the header show a soft "verifying" state instead of the hard "not
+    // signed in" banner, and gate the scary banner on the no-token case only.
+    mimicHasToken:      !!_mimicSessionToken,
+    // How long we've had NO session token (ms). 0 while a token is present.
+    // The dashboard holds the "Not signed in" banner until this exceeds a grace
+    // window, so an agent restart / pre-push gap never flashes it (#120).
+    mimicSignedOutMs:   _mimicSessionToken ? 0 : Math.max(0, Date.now() - (_mimicNoTokenSince || Date.now())),
     mimicIdentity:      _mimicIdentity,
     // Officer-only DKP loot capture — item lists seen in /gu + /rs, ready to
     // review + post. Gated on the signed-in officer flag so a non-officer's
@@ -10217,12 +10225,31 @@ function renderHeader(s) {
   // probe other tabs use (process.env is Node-only — this code path runs in
   // the browser and crashed renderHeader as "process is not defined").
   const isMimicHosted = !!(window.mimic && window.mimic.openSettings);
+  // #120 sign-in banner. Three states, so a transient blip never flashes the
+  // scary red banner at a signed-in user:
+  //   • token + identity     → fully signed in, no banner (handled elsewhere).
+  //   • token, no identity   → "verifying" — uploads still land under the user;
+  //                            soft blue note, NOT "not signed in".
+  //   • no token, sustained  → genuinely signed out → red banner, but only
+  //                            AFTER a grace window (mimicSignedOutMs) so the
+  //                            agent-restart / pre-push startup gap (the agent
+  //                            boots token-less until Mimic re-pushes a second
+  //                            later) doesn't flash it every restart.
+  const SIGNIN_GRACE_MS = 8000;
   if (isMimicHosted && !s.mimicSignedIn) {
-    h += '<div class="banner" style="background:#3b0a0a;color:#ffb3b3;border:1px solid #f85149">'
-       + '⛓ <b>Not signed in to Discord.</b> Your parses won&rsquo;t upload and the guild can&rsquo;t see your stats. '
-       + 'Open Mimic Settings → <b>Wolf Pack account</b> to sign in with Discord. '
-       + '<button id="bannerOpenSettings" style="margin-left:8px;background:#fff;color:#000;border:0;padding:3px 10px;border-radius:4px;cursor:pointer;font-weight:bold;font-size:11px">Open Settings</button>'
-       + '</div>';
+    if (s.mimicHasToken) {
+      h += '<div class="banner" style="background:#10233b;color:#9fc7ff;border:1px solid #1f6feb">'
+         + '⛓ <b>Verifying your Discord sign-in…</b> Your uploads are still landing under your account; the guild view fills in as soon as the check completes. (If this never clears, open Mimic Settings → <b>Wolf Pack account</b>.)'
+         + '</div>';
+    } else if ((s.mimicSignedOutMs || 0) >= SIGNIN_GRACE_MS) {
+      h += '<div class="banner" style="background:#3b0a0a;color:#ffb3b3;border:1px solid #f85149">'
+         + '⛓ <b>Not signed in to Discord.</b> Your parses won&rsquo;t upload and the guild can&rsquo;t see your stats. '
+         + 'Open Mimic Settings → <b>Wolf Pack account</b> to sign in with Discord. '
+         + '<button id="bannerOpenSettings" style="margin-left:8px;background:#fff;color:#000;border:0;padding:3px 10px;border-radius:4px;cursor:pointer;font-weight:bold;font-size:11px">Open Settings</button>'
+         + '</div>';
+    }
+    // else: no token but still inside the grace window — hold; Mimic's session
+    // push almost always arrives within a second or two of the agent starting.
   }
   // No EQ logs to tail — the #1 "why is nothing happening" cause. We split it
   // into two sub-states so the fix is exact: (a) no EQ folder configured at all
@@ -10315,7 +10342,10 @@ function renderHeader(s) {
     if (s.mimicIdentity.is_officer) {
       identityChip += ' <a href="https://wolfpack.quest/admin" target="_blank" rel="noreferrer" style="color:var(--red);border:1px solid var(--red);border-radius:3px;font-size:11px;padding:2px 6px;text-decoration:none" title="Officer admin — links, agents, triggers, audits">🛡 Admin ↗</a>';
     }
-  } else if (s.mimicSignedIn) {
+  } else if (s.mimicHasToken) {
+    // Token present but the bot hasn't confirmed identity yet. This branch used
+    // to test s.mimicSignedIn, which REQUIRES identity — so it was unreachable
+    // and the "verifying" pill never showed (#120). Key it on the token.
     identityChip = ' · <span style="background:#1f6feb33;color:#58a6ff;border:1px solid #1f6feb;border-radius:3px;font-size:11px;padding:2px 6px;margin-left:4px" title="Linked but identity not yet refreshed — next bot poll will fill it in">⛓ signed in</span>';
   }
   h += '<div>' + (versionStr ? versionStr + ' · ' : '') + (s.uploadCount||0) + ' upload(s) this session · ' + s.sessionEvents + ' events in ' + sessionMin + ' min' + queueChip + identityChip + '</div>';
@@ -11691,7 +11721,7 @@ function renderTriggerJournal(s) {
   }
   if (el.style.display === 'none') el.style.display = '';
   var h = '<h2>🧭 Trigger checkpoint journal <span class="dim" style="font-size:11px;font-weight:normal">(how far each fire got — why it stopped)</span></h2>';
-  h += '<div class="dim" style="font-size:10px;margin-bottom:6px">Checkpoints: 1 line seen · 2 pattern matched · 3 gates passed · 4 actions built · 5 dispatched (TTS/overlay) · 6 relayed. A fire that stops before 5 never spoke — the Note says why.</div>';
+  h += '<div class="dim" style="font-size:10px;margin-bottom:6px">Checkpoints: 1 line seen · 2 pattern matched · 3 gates passed · 4 actions built · 5 dispatched (TTS/overlay queued) · 5b playback (audio actually came out) · 6 relayed. A fire that stops before 5 never spoke; a <b>playback FAILED</b> at 5b means it was dispatched but the OS/Chromium produced no sound — the Note says why. Rehearse a trigger to force a 5b row.</div>';
   h += '<table style="font-size:11px;width:100%"><tr><th>When</th><th>Trigger</th><th>Scope</th><th>Reached</th><th>Note</th></tr>';
   var shown = rows.slice(0, 40);
   for (var i = 0; i < shown.length; i++) {
@@ -11710,6 +11740,43 @@ function renderTriggerJournal(s) {
        + '</tr>';
   }
   h += '</table>';
+  morphInto(el, h);
+}
+// ⚡ Recent fires (#120) — the volatile counterpart to renderTriggers, filling
+// its own #wpRecentFires placeholder every poll (fmtAgo ticks) so the parent
+// Triggers section stays byte-stable and never flashes. Same isolation pattern
+// as renderTriggerJournal / renderZealCard. The Clear buttons keep their ids so
+// the section-root click delegation (installed once in the editor mount) routes
+// them even though this card repaints under them.
+function renderRecentFires(s) {
+  var el = document.getElementById('wpRecentFires');
+  if (!el) return;   // Triggers tab not painted yet
+  var overlays = (s.activeOverlays || []).slice(0, 6);
+  var h = '<h2>⚡ Recent fires';
+  h += '<span style="float:right;font-size:11px;font-weight:normal">';
+  h += '<button id="trigClearTestBtn" type="button" style="background:#21262d;color:var(--text);border:1px solid var(--border);padding:3px 10px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:11px;margin-right:6px" title="Remove only TEST-flagged overlays">🧪 Clear test fires</button>';
+  h += '<button id="trigClearAllBtn" type="button" style="background:#21262d;color:var(--text);border:1px solid var(--border);padding:3px 10px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:11px" title="Remove ALL active overlays (in-memory only — no DB writes)">🗑 Clear all</button>';
+  h += '</span></h2>';
+  if (overlays.length === 0) {
+    h += '<div class="dim" style="font-size:12px">No triggers have fired this session yet. Tune a pattern below and try again on the next log line — or click <b>Rehearse</b> on a row to drive a synthesized line through the real pipeline (pattern + cooldown + suppression) and hear the actual TTS.</div>';
+  } else {
+    h += '<table style="font-size:12px"><tr><th>When</th><th>Trigger</th><th>Scope</th><th>Text</th></tr>';
+    for (var i = 0; i < overlays.length; i++) {
+      var o = overlays[i];
+      var ago = fmtAgo(o.shownAt || 0);
+      var sc  = o.test ? 'TEST' : (o.scope === 'personal' ? 'personal' : 'guild');
+      var scColor = o.test ? 'color:var(--gold)' : '';
+      // NOTE: deliberately NOT class="name" on the trigger cell — the wolfpack
+      // character-link delegation slices a .name cell to its first word and
+      // opens /character/<token> (404 for a trigger name). Same trap the guild
+      // table avoids; it used to bite here (#120).
+      h += '<tr><td class="dim">' + esc(ago) + '</td>' +
+           '<td style="color:var(--text)">' + esc(o.trigger || '?') + '</td>' +
+           '<td class="dim" style="' + scColor + '">' + esc(sc) + '</td>' +
+           '<td>' + esc(o.text || '') + '</td></tr>';
+    }
+    h += '</table>';
+  }
   morphInto(el, h);
 }
 function renderTriggers(s) {
@@ -11738,33 +11805,16 @@ function renderTriggers(s) {
   // wp* placeholder so its volatile rows don't force this section to repaint.
   h += '<div id="wpTriggerJournal" class="card wide" style="display:none"></div>';
 
-  // Active overlays (recent matches) — top of the page so the user can see
-  // their triggers actually firing as they tune them. The "Clear" buttons
-  // remove overlays from the in-memory ring buffer; no DB writes either way
-  // so this is safe to mash without consequence.
-  const overlays = (s.activeOverlays || []).slice(0, 6);
-  h += '<div class="card wide">';
-  h += '<h2>⚡ Recent fires';
-  h += '<span style="float:right;font-size:11px;font-weight:normal">';
-  h += '<button id="trigClearTestBtn" type="button" style="background:#21262d;color:var(--text);border:1px solid var(--border);padding:3px 10px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:11px;margin-right:6px" title="Remove only TEST-flagged overlays">🧪 Clear test fires</button>';
-  h += '<button id="trigClearAllBtn" type="button" style="background:#21262d;color:var(--text);border:1px solid var(--border);padding:3px 10px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:11px" title="Remove ALL active overlays (in-memory only — no DB writes)">🗑 Clear all</button>';
-  h += '</span></h2>';
-  if (overlays.length === 0) {
-    h += '<div class="dim" style="font-size:12px">No triggers have fired this session yet. Tune a pattern below and try again on the next log line — or click <b>Rehearse</b> on a row to drive a synthesized line through the real pipeline (pattern + cooldown + suppression) and hear the actual TTS.</div>';
-  } else {
-    h += '<table style="font-size:12px"><tr><th>When</th><th>Trigger</th><th>Scope</th><th>Text</th></tr>';
-    for (const o of overlays) {
-      const ago = fmtAgo(o.shownAt || 0);
-      const sc  = o.test ? 'TEST' : (o.scope === 'personal' ? 'personal' : 'guild');
-      const scColor = o.test ? 'color:var(--gold)' : '';
-      h += '<tr><td class="dim">' + esc(ago) + '</td>' +
-           '<td class="name">' + esc(o.trigger || '?') + '</td>' +
-           '<td class="dim" style="' + scColor + '">' + esc(sc) + '</td>' +
-           '<td>' + esc(o.text || '') + '</td></tr>';
-    }
-    h += '</table>';
-  }
-  h += '</div>';
+  // ⚡ Recent fires (recent trigger matches) — its rows carry fmtAgo timestamps
+  // that tick every poll, so it MUST live in its own wp* placeholder filled by
+  // renderRecentFires() each poll. Rendered inline it made this whole section's
+  // HTML differ every 2s, forcing setSectionHTML to rewrite the guild-trigger
+  // table + remount the trigger editor and suggested list on every poll — the
+  // Triggers-tab "flash" the guild lead reported (#120). Isolating it keeps the
+  // section byte-stable when triggers don't change, so only this small card
+  // repaints (same pattern as wpZealCard / wpTriggerJournal). Clear buttons keep
+  // their ids; the section-root click delegation still routes them.
+  h += '<div id="wpRecentFires" class="card wide"></div>';
 
   // #107 Loot auction announce — dashboard toggle + default-duration knob for
   // the local TTS callout that fires when a drop list is posted in /gu or /rs.
@@ -13965,6 +14015,7 @@ async function refresh() {
                      ['recenttells', renderRecentTellsCard], ['topdamage', renderTopDamageCard],
                      ['tanks', renderTanks], ['deeps', renderDeeps],
                      ['triggers', renderTriggers], ['zealcard', renderZealCard],
+                     ['recentfires', renderRecentFires],
                      ['charmdiag', renderCharmDiag], ['triggerjournal', renderTriggerJournal],
                      ['overlays', renderOverlays], ['info', renderInfo],
                      // After info: fill the placeholders renderInfo just
@@ -16610,6 +16661,40 @@ function startWebDashboard(port) {
         return res.end('{"ok":true}');
       }
 
+      // Trigger PLAYBACK report (#120, checkpoint 5b). The trigger overlay
+      // (triggers.html) calls this after each speechSynthesis.speak() with the
+      // real audio outcome — 'started' (onstart fired → audio is playing),
+      // 'error' (onerror, e.g. 'not-allowed' when Chromium's user-activation
+      // gate blocks speech), or 'silent' (neither event within 2s → the engine
+      // swallowed it). This is what distinguishes "we asked it to speak" from
+      // "sound actually came out", so a silent machine self-diagnoses in the
+      // checkpoint journal instead of during a raid. To keep the ring buffer
+      // focused the overlay only reports rehearsals + failures (successful live
+      // fires are not journalled), so every row here is either proof-of-audio
+      // from a Rehearse or a genuine failure worth seeing.
+      if (req.url === '/api/triggers/playback' && req.method === 'POST') {
+        const _pbody = await _readBody(req, 4 * 1024);
+        let pb; try { pb = JSON.parse(_pbody || '{}'); } catch { pb = {}; }
+        const pbStatus = String(pb && pb.status || '').toLowerCase();
+        const pbOk     = pbStatus === 'started';
+        const pbDetail = pb && pb.detail ? String(pb.detail).slice(0, 120) : null;
+        _journalTrigger({
+          trigger:    pb && pb.trigger ? String(pb.trigger) : 'audio',
+          scope:      'playback',
+          rehearsal:  !!(pb && pb.rehearsal),
+          checkpoint: TJ.PLAYBACK,
+          stopped:    !pbOk,
+          label:      pbOk ? 'playback started' : 'playback FAILED',
+          reason:     pbOk
+            ? 'audio engine is producing sound (Windows mixer should now list Mimic)'
+            : ('no audio produced — ' + (pbStatus || 'unknown') + (pbDetail ? ' (' + pbDetail + ')' : '')
+               + '. not-allowed/silent = the OS/Chromium blocked speech; update Mimic (it grants the overlay a user gesture) and check Windows sound output.'),
+        });
+        scheduleRender();
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end('{"ok":true}');
+      }
+
       // Local trigger scanner (v1.1.1). Finds GINA + EQLP trigger files on the
       // local machine and returns paths + sizes + pack-fingerprint guess.
       // Discovery only — no parsing, no upload, never leaves the dashboard.
@@ -17335,6 +17420,9 @@ function startWebDashboard(port) {
         catch { res.writeHead(400); return res.end(JSON.stringify({ error: 'invalid json' })); }
         const token = String(payload?.token || '').trim();
         _mimicSessionToken = token || '';
+        // Track the signed-out grace window (#120): clear it the instant a token
+        // arrives, start it the instant one goes away.
+        _mimicNoTokenSince = _mimicSessionToken ? 0 : Date.now();
         _mimicIdentity     = (token && payload?.identity && typeof payload.identity === 'object') ? payload.identity : null;
         console.log(_mimicSessionToken
           ? `[mimic-session] linked as ${_mimicIdentity?.display_name || _mimicIdentity?.discord_id || '(unknown)'}`
@@ -23581,6 +23669,13 @@ let _tellsDmPauseUntil = 0;
 // dashboard can render "Signed in as <name>" without a separate round-trip.
 let _mimicSessionToken = '';
 let _mimicIdentity     = null;     // { user_id, discord_id, display_name, is_officer, role_names }
+// #120 — when did we last have NO session token? Seeded at boot because the
+// agent starts token-less and Mimic re-pushes the session a beat later; that
+// startup gap (and any transient identity blip) must NOT flash the scary "Not
+// signed in to Discord" banner at a user who IS signed in. The dashboard holds
+// that banner until this "no token" state is sustained past a grace window.
+// 0 = a token is currently present.
+let _mimicNoTokenSince = Date.now();
 // Live Zeal state per running client (keyed by the pipe's `character`). Fed by
 // Mimic via POST /api/zeal-state at a throttled cadence — a small snapshot, not
 // the 225/sec raw event stream. Drives gauge-condition triggers (target HP %,
@@ -25133,9 +25228,16 @@ function _expandTemplate(template, captures) {
 const TRIGGER_JOURNAL_MAX = 250;
 const _triggerJournal = [];   // append newest at end; capped at TRIGGER_JOURNAL_MAX
 // Checkpoint ladder — higher = further through the pipeline.
-const TJ = { SEEN: 1, MATCHED: 2, GATES: 3, ACTIONS: 4, DISPATCHED: 5, RELAYED: 6 };
+// PLAYBACK (5b, #120) sits between DISPATCHED and RELAYED: "dispatched" only
+// means the overlay pushed a fire + called speechSynthesis.speak() — it does
+// NOT prove any audio came out. The trigger overlay reports the real playback
+// outcome (onstart / onerror / silent-timeout) to /api/triggers/playback so a
+// machine where Chromium's user-activation gate silently swallows speech (the
+// "no Mimic entry in the Windows volume mixer" field bug) lights up here
+// instead of looking like a clean checkpoint-5 dispatch.
+const TJ = { SEEN: 1, MATCHED: 2, GATES: 3, ACTIONS: 4, DISPATCHED: 5, PLAYBACK: 5.5, RELAYED: 6 };
 const TJ_LABEL = { 1: 'line seen', 2: 'pattern matched', 3: 'gates passed',
-                   4: 'actions built', 5: 'dispatched', 6: 'relayed' };
+                   4: 'actions built', 5: 'dispatched', 5.5: 'playback', 6: 'relayed' };
 function _journalTrigger(e) {
   const cp = e.checkpoint || 0;
   _triggerJournal.push({
@@ -25143,7 +25245,7 @@ function _journalTrigger(e) {
     trigger:    String(e.trigger || '?').slice(0, 80),
     scope:      e.scope || '?',
     checkpoint: cp,
-    label:      TJ_LABEL[cp] || '?',
+    label:      e.label || TJ_LABEL[cp] || '?',
     reason:     e.reason ? String(e.reason).slice(0, 160) : null,
     rehearsal:  !!e.rehearsal,
     // Stopped short = didn't reach dispatch. Drives the ✓/✗ column colour.

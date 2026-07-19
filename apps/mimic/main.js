@@ -33,6 +33,18 @@ const { startZealWatch } = require('./zealPipe');
 // creation so it applies to all BrowserWindows.
 Menu.setApplicationMenu(null);
 
+// ── Audio: allow overlays to speak/beep without a click (#120) ──────────────
+// Field report: suggested-trigger TTS was silent AND Windows' volume mixer had
+// NO Mimic audio session at all — i.e. Chromium never opened an output stream.
+// Cause: the trigger overlay is a passive, click-through, never-focused window,
+// so its document never gets a user gesture, and Chromium gates BOTH
+// speechSynthesis.speak() and HTMLMediaElement.play() behind user activation —
+// silently dropping them. Relaxing the autoplay policy process-wide lets every
+// overlay produce audio without a click. Must run before app.whenReady(). Paired
+// with a per-document synthetic gesture on the trigger window (below) as a
+// belt-and-suspenders for the speechSynthesis activation check specifically.
+app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
+
 // ── Single-instance lock ────────────────────────────────────────────────────
 // Mimic bundles + runs its own parser engine on a fixed port. Launching a
 // SECOND copy (e.g. clicking the taskbar/Start-menu shortcut while one is
@@ -2950,6 +2962,14 @@ function createTriggerOverlay() {
   triggerWindow.on('resize', () => _persistBounds('triggerBounds', triggerWindow));
   triggerWindow.once('ready-to-show', () => {
     triggerWindow.webContents.send('agent-port', agentPort);
+    // #120 — the trigger overlay is never clicked, so its document never earns
+    // the user activation Chromium requires before speechSynthesis will make
+    // sound. executeJavaScript with userGesture=true flips that activation bit
+    // once, for the document's lifetime, so trigger/blind TTS is audible. Cheap,
+    // idempotent, no visible effect; ignore failures (page mid-load, etc.).
+    try {
+      triggerWindow.webContents.executeJavaScript('void 0', true).catch(() => {});
+    } catch (e) { /* non-fatal */ }
     applyTriggerVisibility();
     applyOverlayInteractivity();
     applyOverlayOpacity(triggerWindow, 'trigger');
