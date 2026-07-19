@@ -20,6 +20,43 @@ raid; move it to STATUS.md's "Done" once graduated to stable.*
 
 ---
 
+## #118 — In-console officer kill switches + Mimic version in the fleet table
+
+**Needs:** agent **3.3.95** (beta Mimic) + bot **3.0.217** (live on Railway).
+Officer-only — you must be signed into Mimic as an officer to see any of this.
+
+**What changed:** the `/admin/overlays` 🛑 **Kill switches** now live inside Mimic,
+in the 🛡 **Admin** tab, so an officer can flip them mid-raid without opening the
+web admin. Each whitelisted flag is a one-click toggle showing its current LIVE
+value; `☠ AGENT KILL` asks you to type a confirm first ("this pauses EVERY
+agent's uploads"); `min_agent_ver_num` is a small number field. The bot only
+accepts the whitelisted control-plane keys — the free-form numeric knobs stay
+web-only. Separately, the 📡 **Reporters** fleet table's **VER** column now shows
+`agent/mimic` (e.g. `3.3.95/1.9.6`; standalone Parser.bat shows `3.3.95/—`), and
+the **LOG** column gained a legend explaining the last-log-line staleness signal
+and the fresh/stale dot.
+
+**✅ Solo (one machine, officer)**
+- Open Mimic → 🛡 Admin tab. The 🛑 Kill switches card renders with every flag at
+  its real live value (a non-officer, or a signed-out agent, must see **no card
+  and no data**). `dedup_chat` shows **OFF (0)** with the re-enable hint.
+- Flip a **shed** flag (e.g. *Shed: fun events*) ON. Within ~60s, load
+  `wolfpack.quest/admin/overlays` — the same flag shows checked. Flip it OFF in
+  **either** place and confirm it clears in the other within ~60s. (Round-trips
+  the same `overlay_tuning.tuning` row both ways.)
+- Click `☠ AGENT KILL`. It must demand a typed confirm BEFORE writing. Confirm it,
+  verify `/admin/overlays` shows it ON — then clear it and confirm the fleet
+  **RESUMES cleanly** (uploads resume within one ~20s heartbeat; nothing dropped,
+  the durable queue held).
+- Set `min_agent_ver_num` to a value, Save — `/admin/overlays` shows the floor;
+  clear it (0/empty) and confirm it unsets.
+- 📡 Reporters table: your own row's **VER** shows `agent/mimic` with both
+  versions when running under Mimic. The **LOG** column shows its legend line.
+
+**👥 Multi-person (optional)**
+- A second officer on beta Mimic appears in the fleet table with their own
+  `agent/mimic`; a standalone Parser.bat agent (no Mimic) shows `<agent>/—`.
+
 ## #117 — Pet buffs on the Pet tracker + advisory buff-range hints
 
 **Needs:** agent **3.3.94** (beta Mimic) + the `buffqueue.html` overlay in Mimic

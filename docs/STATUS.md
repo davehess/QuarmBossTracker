@@ -65,6 +65,40 @@ folly** — it's here.*
 ## The work ledger
 
 ### ✅ Done — major shipped features (not exhaustive; see git + roadmapData.ts)
+- **#118 in-console officer kill switches + Mimic version in the fleet table —
+  DONE (2026-07-19, bot 3.0.217 on main + agent 3.3.95 beta; Mimic parked 1.9.6).**
+  Guild-lead ask off live 📡 Reporters-panel screenshots: put the `/admin/overlays`
+  🛑 kill switches inside Mimic (officers rarely have the web admin open mid-raid),
+  and show the Mimic shell version next to the agent version in the fleet table.
+  - **Bot (`flag-override` endpoint).** New `POST /api/agent/flag-override`
+    (officer-gated, same `is_officer` gate as reporter-override #115) does the
+    identical read-modify-write on `overlay_tuning.tuning` + local cache-bust, but
+    accepts ONLY a WHITELISTED set of control-plane keys — `_FLAG_OVERRIDE_KEYS`:
+    `flag_disable_reporter_election`, `dedup_chat`/`dedup_buffs`/`dedup_roster`,
+    every `flag_shed_<kind>` enumerated live from `_SHED_KINDS`, `flag_raid_hold`
+    (the "raid hold" toggle), `flag_agent_kill`, `flag_disable_budgets`, and
+    `min_agent_ver_num`. Anything else (the free-form `ext_*`/`offheal_*`/`ch_*`
+    knobs, and the `reporter_pin_*` strings) is rejected 400 — those stay web-only.
+    Boolean flags are written LITERALLY (explicit `0`, never an omitted key, so
+    `dedup_chat`-off persists); `min_agent_ver_num` is a floored int and `<=0`
+    clears it. Whitelist + gate + value-semantics covered by
+    `test/flag-override.test.js` (source-sliced from the real handler).
+  - **Mimic 🛡 Admin tab (agent).** A byte-stable 🛑 Kill switches card renders
+    every whitelisted flag as a labeled toggle showing its LIVE value (read from
+    the tuning the agent already polls, `_overlayTuning`), mirroring the
+    `/admin/overlays` copy. `flag_agent_kill` requires a typed confirm before the
+    write ("pauses EVERY agent's uploads"); `min_agent_ver_num` is a number input.
+    The whole card + its data are gated on `is_officer` (the #109/#115 gate) — a
+    non-officer sees nothing. `dedup_chat` carries the incident hint (currently
+    **0**; re-enable only once the fleet is on agent ≥3.3.91).
+  - **Mimic version in the heartbeat + fleet table.** The reporter-poll heartbeat
+    now carries `mimic_version` — sourced from `process.env.WOLFPACK_APP_VERSION`,
+    which `apps/mimic/main.js` ALREADY passes at spawn (line 2028), so no Mimic
+    change was needed; standalone Parser.bat agents report null. The bot stores it
+    on the registry entry and includes it in `server-panel/reporters`; the fleet
+    table's VER column now reads `agent/mimic` (e.g. `3.3.95/1.9.6`, or
+    `3.3.95/—` for standalone). The LOG column also gained a legend explaining the
+    last-log-line staleness signal + the fresh/stale dot. See BETA-TESTING #118.
 - **#117 pet buffs on the Pet tracker (proven-cause fix) + advisory range awareness
   — DONE (2026-07-19, agent 3.3.94 beta + Mimic 1.9.6 beta; bot 3.0.216 + web
   1.0.248 on main).** Two halves.

@@ -3366,7 +3366,7 @@ const REPORTER_CHAT_PER_ZONE = 1;     // one chat reporter PER OCCUPIED ZONE (#1
 const REPORTER_BUFF_PER_ZONE = 3;     // buff landings dedup to 3 reporters per occupied zone (P1b)
 const REPORTER_ROSTER_PER_GROUP = 1;  // raid roster dedup to 1 reporter per raid group (P1c)
 const REPORTER_LIVENESS_MAX_MS_DEFAULT = 90_000; // #112: chat candidacy requires a live log line newer than this (tunable key reporter_liveness_max_ms)
-const _reporterRegistry   = new Map(); // guild_id → Map(discord_id → {last_seen, primary, zone, group_num, camping, has_zeal, ver, last_line_ms})
+const _reporterRegistry   = new Map(); // guild_id → Map(discord_id → {last_seen, primary, zone, group_num, camping, has_zeal, ver, mimic_ver, last_line_ms})
 function _reporterGuildBook(guildId) {
   let book = _reporterRegistry.get(guildId);
   if (!book) { book = new Map(); _reporterRegistry.set(guildId, book); }
@@ -5951,6 +5951,7 @@ async function _handleAgentServerPanel(req, res) {
           zone:             e.zone || null,
           group_num:        Number.isFinite(e.group_num) ? e.group_num : null,
           agent_version:    e.ver || null,
+          mimic_version:    e.mimic_ver || null,   // #118 — null for standalone Parser.bat agents
           camping:          !!e.camping,
           has_zeal:         !!e.has_zeal,
           last_seen_age_ms: nowR - e.last_seen,
@@ -11636,6 +11637,9 @@ async function _handleAgentReporterPoll(req, res) {
     camping:   !!payload.camping,
     has_zeal:  !!payload.has_zeal,
     ver:       payload.agent_version ? String(payload.agent_version).slice(0, 16) : null,
+    // #118: the Mimic shell version, carried by WOLFPACK_APP_VERSION at spawn.
+    // Standalone (Parser.bat) agents don't run under Mimic → null.
+    mimic_ver: payload.mimic_version ? String(payload.mimic_version).slice(0, 24) : null,
     last_line_ms: Number.isFinite(payload.last_line_ms) ? Math.max(0, Math.floor(payload.last_line_ms)) : null,
   });
 
@@ -11777,6 +11781,87 @@ async function _handleAgentReporterOverride(req, res) {
     }));
   } catch (err) {
     console.error('[reporter-override] write failed:', err?.message);
+    res.writeHead(502, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ ok: false, reason: err?.message || 'write failed' }));
+  }
+}
+
+// POST /api/agent/flag-override — OFFICER-ONLY (#118). Flip ONE whitelisted
+// kill-switch / control-plane flag from the Mimic 🛡 Admin tab's 🛑 Kill switches
+// card. SAME mechanism as reporter-override (#115) — officer gate + read-modify-
+// write on overlay_tuning.tuning + local cache-bust so the change lands on the
+// next control-plane read (60s cache, busted here → effectively immediate).
+// ONLY _FLAG_OVERRIDE_KEYS are writable; the free-form numeric knobs stay web-
+// only (/admin/overlays). Everything else is rejected 400.
+// body: { key:<whitelisted>, value:<number> }
+//   • boolean flags — value coerced to 0|1 and written LITERALLY. Explicit 0
+//     matters: dedup_chat defaults ON (Number(x)!==0), so its OFF state must
+//     persist a 0, not an omitted key. Explicit 0 is a harmless no-op for the
+//     default-off flags (all read `Number(x) >= 1`).
+//   • min_agent_ver_num — floored integer; <=0 clears the key (unset = no floor).
+const _FLAG_OVERRIDE_KEYS = new Set([
+  'flag_disable_reporter_election',
+  'dedup_chat', 'dedup_buffs', 'dedup_roster',
+  ...[..._SHED_KINDS].map(k => `flag_shed_${k}`),  // the sheddable-stream kill switches
+  'flag_raid_hold',           // "raid hold" — 1 forces ON, 0 forces OFF (unset = auto schedule)
+  'flag_agent_kill',          // ☠ fleet dormancy
+  'flag_disable_budgets',     // admission-control kill switch
+  'min_agent_ver_num',        // version floor (number, not a toggle)
+]);
+async function _handleAgentFlagOverride(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  if (!identity.is_officer) {
+    res.writeHead(403, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'officers only' }));
+  }
+  const chunks = []; let total = 0;
+  for await (const chunk of req) {
+    total += chunk.length;
+    if (total > 16 * 1024) { res.writeHead(413); return res.end(); }
+    chunks.push(chunk);
+  }
+  let payload;
+  try { payload = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+  catch { res.writeHead(400); return res.end(JSON.stringify({ error: 'invalid JSON' })); }
+  const key = String(payload?.key || '');
+  if (!_FLAG_OVERRIDE_KEYS.has(key)) {
+    res.writeHead(400); return res.end(JSON.stringify({ error: 'key not in whitelist', key }));
+  }
+  const rawVal = Number(payload?.value);
+  if (!Number.isFinite(rawVal)) {
+    res.writeHead(400); return res.end(JSON.stringify({ error: 'value must be a finite number' }));
+  }
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) { res.writeHead(503); return res.end(JSON.stringify({ error: 'supabase disabled' })); }
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+  try {
+    // Read CURRENT tuning fresh (not the 60s cache) so a concurrent web edit is
+    // preserved by this merge — identical read-modify-write to reporter-override.
+    const rowsCur = await supabase.select('overlay_tuning',
+      `guild_id=eq.${encodeURIComponent(guildId)}&select=tuning&limit=1`);
+    const cur = (Array.isArray(rowsCur) && rowsCur[0] && rowsCur[0].tuning && typeof rowsCur[0].tuning === 'object')
+      ? { ...rowsCur[0].tuning } : {};
+    let stored;
+    if (key === 'min_agent_ver_num') {
+      const n = Math.floor(rawVal);
+      if (n > 0) { cur[key] = n; stored = n; } else { delete cur[key]; stored = null; }
+    } else {
+      stored = rawVal >= 1 ? 1 : 0;
+      cur[key] = stored;   // literal write — explicit 0 preserved (dedup_chat defaults ON)
+    }
+    await supabase.upsert('overlay_tuning', [{
+      guild_id:        guildId,
+      tuning:          cur,
+      updated_by_name: identity.display_name || identity.discord_id || 'Mimic officer',
+      updated_at:      new Date().toISOString(),
+    }], 'guild_id', { minimal: true });
+    try { _overlayTuningCache.at = 0; } catch { /* bust cache so the change lands immediately */ }
+    console.log(`[flag-override] ${identity.display_name || identity.discord_id} → ${key} = ${stored == null ? '—' : stored}`);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ ok: true, key, value: stored }));
+  } catch (err) {
+    console.error('[flag-override] write failed:', err?.message);
     res.writeHead(502, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({ ok: false, reason: err?.message || 'write failed' }));
   }
@@ -14197,6 +14282,15 @@ const httpServer = http.createServer(async (req, res) => {
     try { return await _handleAgentReporterOverride(req, res); }
     catch (err) {
       console.error('[reporter-override] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  if (req.method === 'POST' && req.url === '/api/agent/flag-override') {
+    try { return await _handleAgentFlagOverride(req, res); }
+    catch (err) {
+      console.error('[flag-override] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
     }
