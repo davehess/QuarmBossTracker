@@ -188,10 +188,42 @@ mobs). No signal we have is a trustworthy **joiner**:
 
 | Signal | As separator | As joiner |
 |---|---|---|
-| Simultaneous distinct melee victims | ~certain (one melee target per mob) | same victim proves nothing (two mobs, one tank) |
-| HP divergence at overlapping ts (> sampling tolerance, or opposite trends) | strong | HP proximity proves nothing (the 84%-vs-86–88% trap) |
-| Victim positions far apart (victim XYZ ≈ mob XYZ while meleeing; we have raider loc, never mob loc) | strong (beyond melee reach + noise, same-zone) | proximity proves nothing (camps overlap) |
+| Sustained distinct PRIMARY victims (filtered — see the rampage correction below) | strong only in filtered form; NEVER ~certain | same victim proves nothing (two mobs, one tank) |
+| HP divergence at overlapping ts (> sampling tolerance, or opposite trends) | strong (rampage-safe — HP is HP) | HP proximity proves nothing (the 84%-vs-86–88% trap) |
+| Victim positions far apart (victim XYZ ≈ mob XYZ while meleeing; we have raider loc, never mob loc) | strong (beyond melee reach + noise, same-zone; rampage-safe — rampage victims are also in melee range, so they cluster, no false split) | proximity proves nothing (camps overlap) |
 | Death line | closes exactly one track | — |
+
+### The rampage/riposte correction (Hitya, 2026-07-19 — the naive victim rule is WRONG)
+
+A mob does NOT melee only one target:
+- **Rampage** hits the main tank AND whoever holds the rampage slot — typically
+  the first or second entry on the creature's early aggro table, and that slot
+  is LOCKED (it doesn't move up). Bard nuance: if the first-aggro player has
+  bard songs on them, the bard lands in slot 2 almost always; an initially
+  empty slot is filled by the next newly-aggroed player. Consequence: a
+  rampaging mob can show a CONSTANT second victim all fight — sustained,
+  not noise — so even "stable distinct majority victims" can false-split one
+  rampaging mob into two tracks.
+- **Riposte**: front-attackers eat counter-hits, adding more victim names that
+  say nothing about the mob's target.
+
+Victim-separator rules, corrected:
+1. Build victim evidence from the mob's PRIMARY victim stream: majority
+   recipient of hits over a sustained window (≥10s), with riposte-marked
+   lines excluded from attribution entirely.
+2. **If rampage is active for that name** (the #98 event capture already
+   detects rampage per fight — reuse it, don't re-derive), the victim
+   separator is DEMOTED to weak: it can no longer raise K on its own.
+   Raising K for a rampage-active name requires corroboration — HP divergence
+   OR victim-position separation — before a second track is declared.
+3. A victim who receives hits ONLY in rampage windows (or only riposte lines)
+   is classified as the rampage-slot holder / riposte noise, not a second
+   primary — displayable as a useful fact in its own right ("rampage: Puvlin")
+   but never identity evidence.
+4. Net effect on the failure modes: false-JOIN was already excluded by
+   never-merge; this correction closes false-SPLIT (K inflation) — the two
+   errors the display must never make, in order of harm: wrong timer capture
+   (join) > phantom duplicate rows (split) > honest ambiguity (accepted).
 
 Therefore: **tracks never auto-merge. Ever.** The engine only ever SPLITS
 (on separator evidence) and EXPIRES (death/staleness). Where two tracks might
