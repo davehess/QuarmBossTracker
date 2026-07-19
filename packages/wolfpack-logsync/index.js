@@ -1857,6 +1857,21 @@ function checkCharmPetDeath(line, character) {
 // counts if it matches that owner's live pet name.
 const _petHealthByOwner = new Map();   // ownerLower → { hp_pct, buffs: Map<spellLower,{name,dur_ticks,dur_formula}>, last_line_at, last_seen_at }
 const _petBuffLandings  = new Map();   // ownerLower → Map<spellLower,{name,dur_ticks,dur_formula,landed_at}>
+// #119 — pet-buff attribution diagnostic ring. recordPetBuffLanding pushes the
+// LAST outcome of every buff we resolved that names a would-be pet: attributed
+// (green) when the target resolves to a watched owner, or dropped (red) with the
+// reason when _petOwnerByName can't tie the target to us. Feeds the 🐾 Pet-buff
+// diagnostic card so a "no buffs on the Pet tracker" field report is self-evident
+// (was the land seen? did it resolve? which resolver? why not?). Capped, newest
+// last; only written when a buff actually lands (zero per-line cost).
+const _petBuffDiagRing  = [];          // [{ ts, ok, resolver, spell, target, owner, dur_ticks, reason }]
+const _PET_BUFF_DIAG_MAX = 12;
+function _pushPetBuffDiag(entry) {
+  try {
+    _petBuffDiagRing.push(entry);
+    if (_petBuffDiagRing.length > _PET_BUFF_DIAG_MAX) _petBuffDiagRing.splice(0, _petBuffDiagRing.length - _PET_BUFF_DIAG_MAX);
+  } catch { /* diagnostic only — never throw into the landing path */ }
+}
 // Pet TARGET — what each owner's pet is currently attacking. Populated by the
 // "Attacking X Master." command ack (only visible to the controlling player).
 // TTL'd so a pet that hasn't re-ack'd recently doesn't show a stale target.
@@ -2153,7 +2168,25 @@ function _durTicksForLevel(formula, capTicks, level) {
 function recordPetBuffLanding(bcEvt) {
   if (!bcEvt || !bcEvt.spell_name || !bcEvt.target) return;
   const owner = _petOwnerByName(String(bcEvt.target).toLowerCase());
-  if (!owner) return;
+  if (!owner) {
+    // #119 diagnostic — a buff WE cast landed on a specific OTHER name that
+    // isn't one of our pets. This is the real "no buffs on the Pet tracker"
+    // failure: the pet isn't in Zeal slot 16 / the charm tracker yet, so
+    // _petOwnerByName can't tie the land to us. Scoped to self-cast landings
+    // aimed at a non-self target so the ring stays pet-relevant (self-buffs and
+    // bystander-witnessed buffs on raiders are expected non-pets — not noise
+    // worth ringing).
+    const _tgt = String(bcEvt.target).toLowerCase();
+    const _obs = String(bcEvt.observer || '').toLowerCase();
+    if (bcEvt._selfCast && _tgt !== _obs) {
+      _pushPetBuffDiag({
+        ts: Date.now(), ok: false, resolver: 'resolveSelfCastLanding',
+        spell: bcEvt.spell_name, target: bcEvt.target, owner: null,
+        reason: 'target not a watched pet (not in Zeal slot 16 / charm tracker yet, or not ours)',
+      });
+    }
+    return;
+  }
   let mp = _petBuffLandings.get(owner);
   if (!mp) { mp = new Map(); _petBuffLandings.set(owner, mp); }
   // Caster level for duration scaling: prefer the owner's real /who level,
@@ -2187,6 +2220,13 @@ function recordPetBuffLanding(bcEvt) {
     dur_ticks: durTicks,
     dur_formula: bcEvt.dur_formula,
     landed_at: bcEvt.cast_at ? Date.parse(bcEvt.cast_at) : Date.now(),
+  });
+  // #119 diagnostic — the happy path: attributed to a watched owner's pet.
+  _pushPetBuffDiag({
+    ts: Date.now(), ok: true,
+    resolver: bcEvt._selfCast ? 'resolveSelfCastLanding' : 'parseBuffLanding',
+    spell: bcEvt.spell_name, target: bcEvt.target, owner, dur_ticks: durTicks,
+    reason: null,
   });
   _savePetStateSoon();
 }
@@ -9233,6 +9273,83 @@ function _serializeForDashboard() {
       }
       return out;
     })(),
+    // Pet-buff diagnostic (#119) — the pet-tracker analogue of charmDiag.
+    // Walks the same pipeline a pet buff must traverse (pet identified →
+    // cast seen → landing resolved → attributed → overlay fetch) so a "no
+    // buffs on the Pet tracker" field report is self-evident. Renders on the
+    // Triggers tab as a "🐾 Pet-buff diagnostic" card, hidden until there's
+    // a pet or a recent buff cast to explain.
+    petBuffDiag: (() => {
+      const now = Date.now();
+      const out = { now, pets: [], recent_casts: [], attributed: [], overlay: [], ring: [] };
+      const ownersSeen = new Set();
+      // 1) Pet identified? — the exact sources _petOwnerByName consults:
+      //    the charm tracker (authoritative for charm pets) and Zeal slot 16
+      //    (summoned + charm). petLeaders is the COMBAT/DPS-meter attribution
+      //    source and is deliberately NOT consulted for buffs, so it is not
+      //    shown here (a buff never keys off petLeaders).
+      for (const ch of Object.keys(_zealState)) {
+        const st = _zealState[ch];
+        if (!st || !Array.isArray(st.gauges)) continue;
+        const petG = st.gauges.find(g => g && g.slot === 16 && g.text);
+        if (!petG) continue;
+        const petName = String(petG.text);
+        const articled = /^(?:an?|the)\s+/i.test(petName);
+        out.pets.push({
+          owner: String(ch).toLowerCase(), pet: petName, source: 'zeal-slot-16',
+          kind: articled ? 'charm (articled)' : 'summoned',
+          resolves: _petOwnerByName(petName.toLowerCase()) || null,
+        });
+        ownersSeen.add(String(ch).toLowerCase());
+      }
+      for (const [petLower, ct] of _charmTickTracker.entries()) {
+        if (!ct || !ct.is_active || !ct.owner) continue;
+        out.pets.push({ owner: String(ct.owner).toLowerCase(), pet: ct.pet || petLower, source: 'charm-tracker', kind: 'charm', resolves: String(ct.owner).toLowerCase() });
+        ownersSeen.add(String(ct.owner).toLowerCase());
+      }
+      // 2) Cast seen? — recent self-casts (30s) that are catalog buffs. This
+      //    is the self-cast path's ONLY input: empty means nothing to
+      //    attribute (an INSTANT clicky logs no "You begin casting" line, or
+      //    the buff was cast by another box/player). expected_suffix is the
+      //    exact cast_on_other text EQ prints — what to eyeball for in the log.
+      for (const [chLower, arr] of _recentSelfCast.entries()) {
+        for (const rc of (arr || [])) {
+          if (!rc || !rc.spellLower) continue;
+          if (now - rc.atMs > 30_000) continue;
+          const e = _spellByNameLower.get(rc.spellLower);
+          out.recent_casts.push({
+            character: chLower, spell: rc.name, ago_secs: Math.round((now - rc.atMs) / 1000),
+            target: rc.target || null, in_catalog: !!e,
+            expected_suffix: (e && e.other) ? String(e.other) : null,
+            tracked: _isTrackedBuffName(rc.name),
+          });
+        }
+      }
+      out.recent_casts.sort((a, b) => a.ago_secs - b.ago_secs);
+      out.recent_casts = out.recent_casts.slice(0, 8);
+      // 3) Attributed? — the _petBuffLandings store keyed by owner.
+      for (const [ownerLower, mp] of _petBuffLandings.entries()) {
+        ownersSeen.add(ownerLower);
+        const buffs = [];
+        for (const [, b] of mp) buffs.push({ name: b.name, dur_ticks: b.dur_ticks, landed_ago_secs: Math.round((now - (b.landed_at || now)) / 1000) });
+        out.attributed.push({ owner: ownerLower, buffs });
+      }
+      // 4) Overlay fetch? — petBuffsForOwner, the EXACT source the Pet tracker
+      //    HUD reads. If steps 1-3 are green but this is empty, the overlay
+      //    fetch/render is the culprit, not attribution.
+      for (const ownerLower of ownersSeen) {
+        let buffs = [];
+        try { buffs = petBuffsForOwner(ownerLower) || []; } catch { buffs = []; }
+        out.overlay.push({ owner: ownerLower, buffs: buffs.map(b => ({ name: b.name, remaining_secs: b.remaining_secs, good: b.good, fell_off: !!b.fell_off })) });
+      }
+      // 5) Resolution ring — the last dozen landing outcomes (which resolver,
+      //    attributed or dropped + why). Newest first.
+      for (const r of _petBuffDiagRing) {
+        out.ring.push({ ago_secs: Math.round((now - r.ts) / 1000), ok: r.ok, resolver: r.resolver, spell: r.spell, target: r.target, owner: r.owner, reason: r.reason });
+      }
+      out.ring.reverse();
+      return out;
+    })(),
     // Bard melody — per watched character, the songs in /melody slot order
     // + the current cast position. Powers the melody overlay's vertical
     // list with ▶ play icon, casting bar, and the "stopped here" marker
@@ -11703,6 +11820,115 @@ function renderCharmDiag(s) {
 
   morphInto(el, h);
 }
+// Pet-buff diagnostic (#119) — the pet-tracker analogue of renderCharmDiag.
+// Answers "why are there no buffs on my Pet tracker?" by walking the five
+// checkpoints a pet buff must pass (pet identified → cast seen → landing
+// resolved → attributed → overlay fetch). Its OWN #wpPetBuffDiag placeholder,
+// filled every poll; hidden (empty, byte-stable) until there is a pet or a
+// recent buff cast to explain. No <details> — same flat card as the charm one.
+function renderPetBuffDiag(s) {
+  const el = document.getElementById('wpPetBuffDiag');
+  if (!el) return;   // Triggers tab not painted yet
+  const d = s && s.petBuffDiag;
+  if (!d) { if (el.style.display !== 'none') el.style.display = 'none'; morphInto(el, ''); return; }
+  const hasData = (d.pets && d.pets.length) || (d.recent_casts && d.recent_casts.length)
+               || (d.attributed && d.attributed.some(function (a) { return a.buffs && a.buffs.length; }))
+               || (d.ring && d.ring.length);
+  if (!hasData) { if (el.style.display !== 'none') el.style.display = 'none'; morphInto(el, ''); return; }
+  if (el.style.display === 'none') el.style.display = '';
+  const chk = function (ok) { return ok ? '<span style="color:var(--green)">✓</span>' : '<span style="color:var(--red)">✗</span>'; };
+  let h = '<h2>🐾 Pet-buff diagnostic <span class="dim" style="font-size:11px;font-weight:normal">(why isn\\'t my pet showing buffs?)</span></h2>';
+
+  // 1. Pet identified? — the exact sources _petOwnerByName consults.
+  h += '<div style="font-size:11px;margin-bottom:8px"><b>1. Pet identified?</b> ';
+  if (!d.pets || d.pets.length === 0) {
+    h += chk(false) + ' <span class="dim">No pet in Zeal slot 16 or the charm tracker. A buff can only attach to a pet the agent can name — without this, _petOwnerByName returns null and the land is dropped.</span>';
+  } else {
+    h += chk(true);
+    h += '<table style="font-size:11px;width:100%;margin-top:4px"><tr><th>Owner</th><th>Pet</th><th>Kind</th><th>Source</th><th>_petOwnerByName</th></tr>';
+    for (const p of d.pets) {
+      h += '<tr><td>' + esc(p.owner) + '</td>'
+         +   '<td>' + esc(p.pet) + '</td>'
+         +   '<td class="dim">' + esc(p.kind || '?') + '</td>'
+         +   '<td class="dim">' + esc(p.source) + '</td>'
+         +   '<td>' + (p.resolves ? '<span style="color:var(--green)">→ ' + esc(p.resolves) + '</span>' : '<span style="color:var(--red)">unresolved</span>') + '</td></tr>';
+    }
+    h += '</table>';
+  }
+  h += '</div>';
+
+  // 2. Buff cast seen? — the self-cast path\\'s only input.
+  h += '<div style="font-size:11px;margin-bottom:8px"><b>2. Buff cast seen (last 30s)?</b> ';
+  if (!d.recent_casts || d.recent_casts.length === 0) {
+    h += chk(false) + ' <span class="dim">No "You begin casting" line on any watched character. INSTANT clicky items log no cast line, and a buff cast by another box/player is invisible to this machine — the self-cast path has nothing to match either way.</span>';
+  } else {
+    h += chk(true);
+    h += '<table style="font-size:11px;width:100%;margin-top:4px"><tr><th>When</th><th>Caster</th><th>Spell</th><th>Target @cast</th><th>Catalog</th><th>Landing suffix (cast_on_other)</th></tr>';
+    for (const c of d.recent_casts) {
+      h += '<tr><td class="dim">' + c.ago_secs + 's ago</td>'
+         +   '<td>' + esc(c.character) + '</td>'
+         +   '<td style="color:var(--blue)">' + esc(c.spell) + (c.tracked ? ' <span class="dim" title="tracked-buff keyword — parseBuffLanding can index it too">[tracked]</span>' : '') + '</td>'
+         +   '<td class="dim">' + esc(c.target || '—') + '</td>'
+         +   '<td>' + (c.in_catalog ? '<span style="color:var(--green)">✓</span>' : '<span style="color:var(--red)">missing</span>') + '</td>'
+         +   '<td class="dim"><code style="background:#161b22;padding:1px 4px;border-radius:3px">' + esc(c.expected_suffix || '?') + '</code></td></tr>';
+    }
+    h += '</table>';
+    h += '<div class="dim" style="font-size:10px;margin-top:2px">EQ prints <b>&lt;pet&gt;</b> + that suffix; resolveSelfCastLanding matches by the suffix and (since #117) attributes to our pet even when the pet was not the live target at cast.</div>';
+  }
+  h += '</div>';
+
+  // 3. Landing resolved + attributed? — the _petBuffLandings store.
+  h += '<div style="font-size:11px;margin-bottom:8px"><b>3. Landing resolved &amp; attributed?</b> ';
+  const anyAttr = d.attributed && d.attributed.some(function (a) { return a.buffs && a.buffs.length; });
+  if (!anyAttr) {
+    h += chk(false) + ' <span class="dim">_petBuffLandings is empty for every owner. If 1-2 are ✓ but this is ✗, the resolution ring below says why (target not a pet / no matching cast).</span>';
+  } else {
+    h += chk(true);
+    h += '<table style="font-size:11px;width:100%;margin-top:4px"><tr><th>Owner</th><th>Spell</th><th>Ticks</th><th>Landed</th></tr>';
+    for (const a of d.attributed) {
+      for (const b of (a.buffs || [])) {
+        h += '<tr><td>' + esc(a.owner) + '</td><td style="color:var(--green)">' + esc(b.name) + '</td><td class="dim">' + (b.dur_ticks || 0) + '</td><td class="dim">' + b.landed_ago_secs + 's ago</td></tr>';
+      }
+    }
+    h += '</table>';
+  }
+  h += '</div>';
+
+  // 4. Overlay fetch? — petBuffsForOwner, the EXACT HUD data source.
+  h += '<div style="font-size:11px;margin-bottom:8px"><b>4. Overlay fetch (petBuffsForOwner)?</b> ';
+  const overlayRows = (d.overlay || []).filter(function (o) { return o.buffs && o.buffs.length; });
+  if (overlayRows.length === 0) {
+    h += chk(false) + ' <span class="dim">petBuffsForOwner returned nothing — the exact data the Pet tracker HUD renders. If 3 is ✓ but this is ✗, the fetch/render path is the culprit, not attribution.</span>';
+  } else {
+    h += chk(true);
+    h += '<table style="font-size:11px;width:100%;margin-top:4px"><tr><th>Owner</th><th>Buff</th><th>Remaining</th><th>State</th></tr>';
+    for (const o of overlayRows) {
+      for (const b of o.buffs) {
+        h += '<tr><td>' + esc(o.owner) + '</td><td>' + esc(b.name) + '</td>'
+           + '<td class="dim">' + (b.remaining_secs == null ? '—' : b.remaining_secs + 's') + '</td>'
+           + '<td>' + (b.fell_off ? '<span style="color:#b18cf2">fell off</span>' : '<span style="color:var(--green)">up</span>') + '</td></tr>';
+      }
+    }
+    h += '</table>';
+  }
+  h += '</div>';
+
+  // Resolution ring — the last dozen landing outcomes (which resolver, why-not).
+  if (d.ring && d.ring.length) {
+    h += '<div style="font-size:11px"><b>Resolution ring</b> <span class="dim" style="font-size:10px">— last ' + d.ring.length + ' buff land(s) naming a would-be pet</span>';
+    h += '<table style="font-size:11px;width:100%;margin-top:4px"><tr><th>When</th><th>Result</th><th>Spell</th><th>Target</th><th>Resolver / reason</th></tr>';
+    for (const r of d.ring) {
+      h += '<tr><td class="dim">' + r.ago_secs + 's ago</td>'
+         +   '<td>' + (r.ok ? '<span style="color:var(--green)">attributed</span>' : '<span style="color:var(--red)">dropped</span>') + '</td>'
+         +   '<td>' + esc(r.spell || '?') + '</td>'
+         +   '<td class="dim">' + esc(r.target || '?') + (r.owner ? ' <span class="dim">→ ' + esc(r.owner) + '</span>' : '') + '</td>'
+         +   '<td class="dim">' + esc(r.resolver || '') + (r.reason ? ' — ' + esc(r.reason) : '') + '</td></tr>';
+    }
+    h += '</table></div>';
+  }
+
+  morphInto(el, h);
+}
 // Trigger checkpoint journal (#76) — answers "why did my trigger not fire?"
 // from the dashboard. Renders the recent candidate evaluations with the
 // checkpoint each reached (1 line seen → 2 pattern matched → 3 gates passed →
@@ -11801,6 +12027,10 @@ function renderTriggers(s) {
   // Charm-tracking diagnostic card — filled by renderCharmDiag(). Hidden
   // until there's data to show (no watched character casting charms, etc.).
   h += '<div id="wpCharmDiag" class="card wide" style="display:none"></div>';
+  // Pet-buff diagnostic card (#119) — filled by renderPetBuffDiag(). Hidden
+  // until there is a pet or a recent buff cast to explain (byte-stable/empty
+  // otherwise, so idle polls don't repaint the Triggers section).
+  h += '<div id="wpPetBuffDiag" class="card wide" style="display:none"></div>';
   // Trigger checkpoint journal (#76) — filled by renderTriggerJournal(). Own
   // wp* placeholder so its volatile rows don't force this section to repaint.
   h += '<div id="wpTriggerJournal" class="card wide" style="display:none"></div>';
@@ -12756,7 +12986,14 @@ function renderReporters(s) {
     var r = reps[ri];
     var freshDot = r.fresh ? '<span style="color:var(--green)">●</span>' : '<span style="color:var(--red)">○</span>';
     var camp = r.camping ? ' <span class="dim" title="camping">⛺</span>' : '';
-    h += '<tr><td>' + freshDot + ' <span class="name">' + esc(r.character || '?') + '</span>' + camp + '</td>'
+    // #119: show the LIVE character with the primary/main in parens ("Canopy
+    // (Hitya)") when the bot resolves one, else the primary alone. The label is
+    // computed bot-side (character_label) so the hide_main_names rule stays
+    // server-side; class="name" click-delegation slices to the first word, which
+    // is the live character — the right /character page to open. Older bots that
+    // don't send character_label fall back to the plain primary.
+    var charCell = r.character_label || r.character || '?';
+    h += '<tr><td>' + freshDot + ' <span class="name">' + esc(charCell) + '</span>' + camp + '</td>'
       + '<td class="dim">' + esc(r.zone || '—') + '</td>'
       + '<td class="dim">' + (r.group_num == null ? '—' : r.group_num) + '</td>'
       + '<td class="dim">' + esc(r.agent_version || '—') + '/' + esc(r.mimic_version || '—') + '</td>'
@@ -14016,7 +14253,7 @@ async function refresh() {
                      ['tanks', renderTanks], ['deeps', renderDeeps],
                      ['triggers', renderTriggers], ['zealcard', renderZealCard],
                      ['recentfires', renderRecentFires],
-                     ['charmdiag', renderCharmDiag], ['triggerjournal', renderTriggerJournal],
+                     ['charmdiag', renderCharmDiag], ['petbuffdiag', renderPetBuffDiag], ['triggerjournal', renderTriggerJournal],
                      ['overlays', renderOverlays], ['info', renderInfo],
                      // After info: fill the placeholders renderInfo just
                      // (re)painted, so they show same-tick.
@@ -21090,6 +21327,11 @@ function _controlStandDown() {
   if (_controlPlane.minVerNum > 0 && _verNum(AGENT_VERSION) < _controlPlane.minVerNum) return { down: true, reason: 'floor' };
   return { down: false, reason: null };
 }
+// #119 — a watched log with nothing newer than this is "idle": its character
+// is not reported as the live_character (the fleet table / who wolf then fall
+// back to the primary). Mirrors the bot's REPORTER_LIVENESS_MAX_MS_DEFAULT so
+// "live" here means the same thing the bot's chat-election freshness gate means.
+const LIVE_CHARACTER_IDLE_MS = 90_000;
 function _reporterHeartbeatOnce() {
   const opts = _uploadOpts;
   if (!opts || !opts.botUrl || !opts.token || opts.dryRun) return;
@@ -21104,16 +21346,32 @@ function _reporterHeartbeatOnce() {
   // when we can't determine it (no primary / no watched log) → the bot treats
   // that as FRESH (fail-open), so this can never silence the fleet.
   let last_line_ms = null;
+  let live_character = null;
   try {
     const wls = (stats && stats.watchedLogs) || [];
-    const pl = primary ? primary.toLowerCase() : null;
-    let best = 0;
+    // #119 — liveness spans ALL watched logs, not just the primary's tail.
+    // last_line_ms is the MIN age across every watched character's tail (any
+    // live log = a live agent): a boxer whose primary is logged out but who is
+    // actively playing an alt still tails a flowing log, so the #112 chat
+    // election + fleet staleness dot must treat them as fresh. The incident
+    // protection is unchanged — an agent with NO active log anywhere still has
+    // a large age → stale → demoted, so a logged-out-but-heartbeating reporter
+    // is still caught.
+    let best = 0, bestChar = null;
     for (const w of wls) {
       if (!w || !w.lastSeen) continue;
-      if (pl && (w.character || '').toLowerCase() !== pl) continue;
-      if (w.lastSeen > best) best = w.lastSeen;
+      if (w.lastSeen > best) { best = w.lastSeen; bestChar = w.character || null; }
     }
-    if (best) last_line_ms = Math.max(0, Date.now() - best);
+    if (best) {
+      last_line_ms = Math.max(0, Date.now() - best);
+      // live_character (#119): the watched character with the most recent log
+      // activity, reported ONLY while genuinely live so the fleet table / who
+      // wolf never pin a logged-out alt. Idle (nothing newer than the liveness
+      // window) → null, and consumers fall back to the primary. The window
+      // mirrors the bot's REPORTER_LIVENESS_MAX_MS_DEFAULT (90s); the bot still
+      // owns the authoritative freshness gate via last_line_ms.
+      if (last_line_ms < LIVE_CHARACTER_IDLE_MS) live_character = bestChar;
+    }
   } catch { /* best-effort — null falls open to fresh */ }
   // Best-effort context the bot uses for the zone/group-aware election (P1b/c).
   let zone = null, group_num = null, has_zeal = false;
@@ -21138,7 +21396,7 @@ function _reporterHeartbeatOnce() {
     // agent/mimic. Mimic stamps WOLFPACK_APP_VERSION at spawn (main.js);
     // standalone Parser.bat installs have no such env → null.
     const mimic_version = process.env.WOLFPACK_APP_VERSION || null;
-    const body = JSON.stringify({ primary_character: primary, zone, group_num, camping: _camping, has_zeal, agent_version: AGENT_VERSION, mimic_version, last_line_ms });
+    const body = JSON.stringify({ primary_character: primary, zone, group_num, camping: _camping, has_zeal, agent_version: AGENT_VERSION, mimic_version, last_line_ms, live_character });
     const req = mod.request({
       method: 'POST', hostname: u.hostname, port: u.port, path: u.pathname,
       headers: {
