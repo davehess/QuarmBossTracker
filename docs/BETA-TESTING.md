@@ -20,6 +20,39 @@ raid; move it to STATUS.md's "Done" once graduated to stable.*
 
 ---
 
+## #82 — Quartermaster v1 (utility-kit coverage + quest checklist)
+
+**Needs:** web **1.0.259** (live on Vercel) + SQL seed migration
+`20260719160000` (applied). No bot / agent / Mimic change — reads
+`character_gear`, `eqemu_items`, and the existing quest tracker
+(`quest_catalog` / `quest_required_item` / `character_inventory`).
+
+**What it is:** a member-visible **`/quartermaster`** page. Board 1 = utility-kit
+coverage (who owns the raid movers, with gaps). Board 2 = common-quest checklist
+(your characters' progress + an officer "who's missing what" rollup), seeded with
+the Emperor Ssraeshza key chain.
+
+**✅ Solo**
+- Open `/quartermaster` while signed in. Board 1 shows kit cards grouped by
+  category; each has a real owner count (JBoots ~71, Shield of the Immaculate
+  ~13, Puppet Strings ~11) and lists owners as `character (main)` links.
+- A thin slot shows a coverage-gap line (e.g. a class-scoped `No Cleric owns …`
+  or `Nobody owns …`) both inline and in the top "Coverage gaps" box.
+- Board 2 "Your characters" matrix renders a row per active quest and a column
+  per your linked character, with ✓ / `have/total` / — cells. A character with
+  no inventory upload shows "no inv yet".
+- The Emperor Ssraeshza key quest appears; with no Diaku pieces in visible bags
+  it reads not-complete for everyone (honest — visible bags only).
+
+**👥 / Officer**
+- As an officer, the "🛡 Officer rollup — who's missing what" section appears
+  under Board 2: per quest, `complete / assessed have it` (e.g. Storm Giant Toes
+  6/18) and a capped "Missing (N): …" list. Non-officers never see it.
+- Excluded characters (`exclude_inventory` / `exclude_from_stats`) appear on
+  NEITHER board — pick a known opted-out character and confirm absence.
+
+---
+
 ## #121 — Loot Bidding v2 + buff-queue class-picker defaults
 
 **Needs:** agent **3.3.100** (beta Mimic) + bot **3.0.221** (live on Railway) +

@@ -65,6 +65,11 @@ export default function AdminPage() {
           href="/admin/quests"
         />
         <Card
+          title="🧰 Quartermaster"
+          body="Guild logistics (member-visible): utility-kit coverage — who owns the charm / cure / resist / survival / mana / travel clickies that keep a raid moving — plus a common-quest checklist. This page also carries the officer 'who's missing what' quest rollup."
+          href="/quartermaster"
+        />
+        <Card
           title="📖 Spell exchange"
           body="Every spell scroll sitting in a member's inventory matched to who can use it and hasn't scribed it — the distribution side of raid spell drops. Backed by /me spellbook + inventory uploads."
           href="/admin/spells"

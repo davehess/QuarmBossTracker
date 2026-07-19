@@ -204,6 +204,42 @@ folly** — it's here.*
      no-token state is sustained ≥8s, a calm blue **"Verifying…"** note when a
      token is present but identity is unconfirmed, and the chip branch now keys on
      `mimicHasToken`. See BETA-TESTING #120.
+- **#82 Quartermaster v1 (utility-kit coverage + quest checklist) — DONE
+  (2026-07-19, web 1.0.259 on main).** Web + one SQL seed, no bot/agent/Mimic
+  change. New member-visible **`/quartermaster`** page, two boards, both off
+  data we already collect; opt-outs (`exclude_inventory`/`exclude_from_stats`)
+  honored everywhere, visible-ownership-only caveat stated on the page.
+  - **Board 1 — utility-kit coverage.** Pure lib `web/lib/quartermaster.ts`
+    (`KIT_CATALOG` + `computeKitCoverage`): a data-driven catalog of **13
+    grounded** raid-mover items (adding one is a one-line push), each verified
+    against the live catalog with a real owner count — JBoots 71, Peg cloak 41,
+    Manastone/Manarock 28, Regal Band of Bathezid 18, Divine Aura clickies 18,
+    Eyepatch of Plunder 16, Shield of the Immaculate 13, Larrikan's Mask 13,
+    Puppet Strings 11, Dain IV 9, Velium Vapors 9, Rod of Mystical
+    Transvergance 5, Water Sprinkler 5. Reads `character_gear` (equipped+bag) ×
+    `eqemu_items` by id; per entry: distinct-owner dedup (family main resolved
+    via `main_name_override`→`main_name`→name), owner list, and a plain gap line
+    (`Nobody owns X` / class-scoped `No Cleric owns X`, level-title folded).
+  - **Board 2 — common-quest checklist.** **REUSES the existing quest tracker**
+    (`quest_catalog` + `quest_required_item` + `character_inventory`, officer-
+    edited at `/admin/quests`) — a new `quartermaster_quests` table would have
+    duplicated it, so instead the page adds two NEW views over that store:
+    a member "your characters × quests" matrix and an officer "who's missing
+    what" rollup (roster-rank predicate; 18 raiders have inventory). Step match
+    is pure (`computeQuestProgress`): item-id preferred, name+qty fallback,
+    label-only → unknown (—). **Honesty boundary:** detection is VISIBLE bags
+    only — a turned-in / banked piece reads "not seen", not "never had". Seed:
+    migration `20260719160000` inserts the **Emperor Ssraeshza key (Diaku
+    Emblem)** chain (4× `Quarter of a Diaku Emblem` 29216–29219 → `Completed
+    Diaku Emblem` 29215, all verified real) as an officer-editable starting
+    point. Tests: `test/quartermaster.test.js` (14 — kit dedup/gaps/class-fold,
+    step id/name/qty/unknown, completion rollup). **Follow-ups:** no manual
+    check-off UI for un-seeable steps; could wire `inferred_keys_for_character`
+    so a completed-but-consumed key reads ✓ instead of "not seen".
+  - **⚠ Flagged, not fixed (out of scope):** `npm run lint` is pre-existing-RED
+    on main — `index.js:8863` uses `new EmbedBuilder()` with no local/top-level
+    require (Harmonic Howl announce fn, bot 3.0.222). Genuine runtime
+    ReferenceError on next bot restart; needs a bot hotfix, untouched here.
 - **#91 roll-loot review surface (remainder) — DONE end-to-end (2026-07-19,
   agent 3.3.97 beta + bot 3.0.219 + web 1.0.250 on main).** The capture half
   shipped a week ago (roll_sets since 3.3.78, Hot Dice PERFECT events since
