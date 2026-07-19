@@ -45,12 +45,13 @@ export const releases: Release[] = [
   {
     key: 'quartermaster-v1',
     title: '🧰 Quartermaster — who has the gear that keeps a raid moving',
-    version: 'Web 1.0.259',
+    version: 'Web 1.0.260 · Agent 3.4.1',
     date: '2026-07-20',
-    headline: 'A new member-visible /quartermaster page answers the two logistics questions that always turn into a /gu spam: "does anyone have X?" and "how far along is everyone on the key quests?" — at a glance, for the whole guild.',
+    headline: 'A new member-visible /quartermaster page answers the two logistics questions that always turn into a /gu spam: "does anyone have X?" and "how far along is everyone on the key quests?" — at a glance, for the whole guild. Plus: replay a past fight through your own trigger callouts to hear how they would have sounded.',
     features: [
       { name: 'Utility-kit coverage', blurb: 'One board shows who owns the raid movers — Puppet Strings, a Cleric disease-cure shield, resist-buff rings, a Divine Aura panic button, mana batteries, JBoots, lev cloaks and more — with an owner count, the owners, and a plain-English gap line when a slot is thin ("No Cleric owns Shield of the Immaculate"). It reads your worn + bag gear only; the bank is stripped before upload, so a blank means "not seen", not "nobody has it".' },
       { name: 'Common-quest checklist', blurb: 'The other board tracks the guild\'s recurring chains (keys, VT shards, Coldain shawl, giant turn-ins, and a seeded Emperor Ssraeshza key) as a per-character checklist off the officer quest catalog — your own characters up top, and for officers a "who\'s missing what" rollup. Steps we can\'t see (already turned in, or a hail/flag) show as — rather than a false red. Opted-out characters never appear.' },
+      { name: '⏪ Replay a fight through your triggers (Mimic)', blurb: 'Every parse page now has a "⏪ Replay this fight locally" link, and Mimic\'s Triggers tab has a matching ⏪ Replay card. Point it at one of your logs and a time window (the parse link prefills the fight for you) and Mimic walks those lines back through your real trigger engine — pattern, cooldown, suppression and all — and speaks the actual callouts, at real-time pace or a quick fast audit. It is a rehearsal end to end: every fire is tagged ⏪, nothing uploads or relays, and your live cooldowns are never touched, so it is safe to run any time except mid-fight (it politely refuses then). Perfect for testing that a new TTS callout sounds right before raid night. Needs the Mimic agent 3.4.1 update; the whole thing runs on your machine, against your logs.' },
     ],
     fixes: [],
   },

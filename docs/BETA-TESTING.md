@@ -20,6 +20,45 @@ raid; move it to STATUS.md's "Done" once graduated to stable.*
 
 ---
 
+## #101 — Local log replay through the real trigger pipeline
+
+**Needs:** agent **3.4.1** (beta Mimic) + web **1.0.260** (live on Vercel).
+No DB change; no bot change. The replay tool + ⏪ overlay tag are the agent
+side (beta Mimic); the parse-page link is web/main (works for everyone, but
+the localhost URL only lands when you are running Mimic 3.4.1+).
+
+**What it is:** Mimic's Triggers tab gains a **⏪ Replay** card — pick a watched
+log + a time window and Mimic walks those lines back through your REAL trigger
+engine (pattern, cooldown, suppression) and speaks the actual callouts, at
+real-time or fast pace. Every fire is a rehearsal: tagged ⏪, nothing uploads
+or relays, live cooldowns untouched. Each parse page links to it, prefilled
+with that fight's window.
+
+**✅ Solo (one machine)**
+- **Replay a slice of last night's log → hear real TTS.** Open the Triggers tab,
+  ⏪ Replay card. Pick your character's log, set From/To across a stretch that
+  had callouts (a boss fight), leave pace on **real-time**, click **Start**. You
+  should HEAR the real callouts fire in order, and see them flash with a **⏪**
+  tag (rehearsal), never as plain live callouts.
+- **Fast pace** for a quick audit: switch pace to **fast**, Start — fires come
+  back-to-back with a short pause on each so you can hear every one quickly.
+- **Journal shows replay rows.** After a run, the 🧭 checkpoint journal shows the
+  fires with a gold **⏪ REPLAY** badge (click "see checkpoint journal ↓").
+- **Nothing uploaded.** Note the upload-queue depth (⚙ Engine section) before and
+  after a replay — it does NOT grow. A replay never posts a parse, chat, or
+  timeline event; it does not move your live DPS/session numbers.
+- **Parse-page link prefills the form.** On wolfpack.quest, open any parse and
+  click **"⏪ Replay this fight locally"** — Mimic's dashboard opens on the
+  Triggers tab with the log window prefilled (±30s pad). You still click Start.
+- **Refused during a live fight.** Start a replay while a fight is actively being
+  parsed — it refuses with a clear message (so a replay can't be mistaken for a
+  live callout mid-raid). Also: start one replay, try to start a second while it
+  runs — the second is refused ("already running — stop it first").
+- **Stop works.** Start a long real-time replay, click **Stop** — it halts
+  promptly and the card shows "⏪ Replay stopped".
+
+---
+
 ## #82 — Quartermaster v1 (utility-kit coverage + quest checklist)
 
 **Needs:** web **1.0.259** (live on Vercel) + SQL seed migration

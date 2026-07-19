@@ -354,6 +354,18 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
     .sort((a, b) => (b.total_damage || 0) - (a.total_damage || 0));
   const maxDamage = players[0]?.total_damage || 0;
 
+  // #101 — deep-link into the local Mimic dashboard's ⏪ Replay tool, prefilled
+  // with this fight's real window (±30s pad). The agent default port is 7777,
+  // but Mimic — the build that has the trigger overlays + TTS this replays —
+  // serves the dashboard on 7779, so that's the target. The link just prefills
+  // the form; the user clicks Start. If the fight predates their local logs,
+  // that's their machine's reality, not something we detect here.
+  const replayStartMs = Date.parse(enc.started_at);
+  const replayEndMs   = replayStartMs + (enc.duration_sec ? enc.duration_sec * 1000 : 0);
+  const replayHref = Number.isFinite(replayStartMs)
+    ? `http://localhost:7779/#replay&from=${encodeURIComponent(new Date(replayStartMs - 30_000).toISOString())}&to=${encodeURIComponent(new Date(replayEndMs + 30_000).toISOString())}`
+    : null;
+
   // Merge deaths across all contributions, dedup on name+ts. Then suppress
   // names that any SINGLE contributor reported dying 2+ times — a real player
   // can only die once per encounter (corpses don't respawn mid-fight), so a
@@ -538,6 +550,16 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
             {contribs.length} contribution{contribs.length === 1 ? '' : 's'}
           </span>
         </div>
+
+        {/* #101 — replay this fight through the local Mimic trigger pipeline. */}
+        {replayHref && (
+          <div className="mt-2 text-xs text-dim">
+            <a href={replayHref} target="_blank" rel="noreferrer" className="text-blue hover:underline" title="Opens the ⏪ Replay tool in your local Mimic dashboard, prefilled with this fight's window">
+              ⏪ Replay this fight locally
+            </a>
+            <span className="ml-2">— runs on YOUR machine against YOUR Mimic logs; hear the real callouts, nothing uploads.</span>
+          </div>
+        )}
 
         {officer && (
           <div className="mt-4 pt-3 border-t border-border flex flex-wrap items-center gap-2">

@@ -65,6 +65,41 @@ folly** — it's here.*
 ## The work ledger
 
 ### ✅ Done — major shipped features (not exhaustive; see git + roadmapData.ts)
+- **#101 local log replay through the real trigger pipeline — DONE (2026-07-20,
+  agent 3.4.1 beta + web 1.0.260 on main; root untouched).** Guild-lead ask:
+  "a local walk of log files given a timeframe or a specific fight — TTS testing
+  with that timeline; a link back from the main site." Ships:
+  1. **Replay engine** (`packages/wolfpack-logsync/index.js`): `startReplay` /
+     `stopReplay` / `_replayEvaluateLine` / `_replayWorker`. Reuses the `--since`
+     file walker (`readFromBytePos` from byte 0, early-stop past the window) +
+     `parseEqTimestamp` + `triggerVisibleLine` (the live tail's trigger gate).
+     Each matched line drives the REAL pipeline as a **rehearsal** — the #76
+     `test=true` contract is the law: `_fireTriggerActions(..., test=true)` so
+     **nothing** uploads / relays / touches `_fireLog`/timeline; the real
+     cooldown map (`_triggerLastFire`) is **never** written (replay keeps its
+     own ephemeral cooldown map so the walk still sounds faithful); charm-pet
+     suppression enforced like live. Every fire journalled with a **`replay`**
+     marker (⏪ REPLAY badge) + `overlay.replay`/`overlay.rehearsal` so the
+     Mimic overlay tags it ⏪ and never mistakes it for a live callout.
+  2. **Two paces:** `real` (timestamp-faithful, gaps capped at 6s so lulls
+     compress) and `fast` (fixed ~550ms pause after each fire for a quick audit).
+     **Single-instance** (second start refused), and **refused during a live
+     fight** (reuses the update-gate fight signal, `_liveFightActive`).
+  3. **Dashboard** (Triggers tab): byte-stable ⏪ Replay card (log picker from
+     watched logs, from/to datetime inputs, pace toggle, Start) + isolated
+     `#wpReplayStatus` volatile placeholder (progress + Stop + results/journal
+     link). Routes `POST /api/replay/{start,stop}`; status on `/api/state`.
+  4. **Deep-link:** `#replay&from=<iso>&to=<iso>` opens the Triggers tab and
+     prefills the form (no auto-start).
+  5. **Site link-back** (`web/app/parses/[id]/page.tsx`): subtle "⏪ Replay this
+     fight locally" link building the dashboard URL from the encounter's real
+     start/end (±30s pad). **Port truth:** agent default is **7777**, but Mimic
+     (the build with the overlays + TTS replay targets) serves on **7779** —
+     the web link uses 7779.
+  Verified: node --check + check:dashboard + a scratchpad fixture (2 matching
+  lines fire as rehearsal, journal rows carry the replay marker, `_fireLog`
+  unchanged, no upload enqueued, real cooldown map untouched, 2nd replay
+  refused while one runs). Main gate green (lint/test/check:dashboard + web tsc).
 - **Mimic 2.0.0 "Harmonic Howl" — stable graduation (2026-07-20).** The whole 1.9.6
   beta line (agents 3.3.81→3.3.100: callout trust + TTS root cause, loot
   bidding v1+v2, elections field round, Me card/Admin tab, /who enrichment,
