@@ -102,6 +102,14 @@
     ⚠ No EQ folders configured. Mimic won't tail any log files until you add at least one.
   </div>
 
+  <div style="margin-top:16px;padding-top:14px;border-top:1px solid #21262d">
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <button id="eqSetupBtn" type="button" style="background:#1f6feb;color:#fff;border:0;border-radius:5px;padding:6px 14px;cursor:pointer;font-weight:600">🔧 Set up EQ for me</button>
+      <span id="eqSetupMsg" style="font-size:11px;color:#8b949e"></span>
+    </div>
+    <div class="sub" style="margin-top:8px">Writes <b>Log=TRUE</b> (<code>eqclient.ini</code>) + <b>ExportOnCamp</b> / <b>PipeDelay</b> / <b>PipeVerbose</b> (<code>zeal.ini</code>) across every folder above — the settings that make logging and raid/HP data flow. <b>Close EverQuest first</b> (it overwrites <code>eqclient.ini</code> on exit). Already in-game? Type <code>/log on</code> to start logging this session; the Zeal settings apply on next EQ launch.</div>
+  </div>
+
   <h2>UI Studio <span style="background:#7c4a06;color:#ffd07a;border:1px solid #d18a2d;border-radius:3px;font-size:9px;padding:1px 5px;margin-left:6px;vertical-align:middle;letter-spacing:1px">BETA</span></h2>
   <div class="sub">Back up your EQ window layout, hotkeys, chat tabs, bandolier, socials, and <code>eqclient.ini</code> to wolfpack.quest. Restore on any computer so you don't have to drag every window again. Files are encrypted before they leave this machine.</div>
 
@@ -642,6 +650,32 @@
           return fetch('http://127.0.0.1:' + port + '/api/reset-session', { method: 'POST' });
         }).then(function(){ done(true); }).catch(function(){ done(false); });
       } catch (e) { done(false); }
+    });
+  })();
+
+  // "Set up EQ for me" — same writer the dashboard button uses, bridged through
+  // main.js (eqSetupForMe IPC → agent POST /api/eq-setup) so we can read the
+  // full result (incl. the "EQ is running" warning). One source of truth.
+  (function(){
+    var btn = document.getElementById('eqSetupBtn');
+    var msg = document.getElementById('eqSetupMsg');
+    if (!btn) return;
+    btn.addEventListener('click', async function(){
+      var orig = btn.textContent; btn.disabled = true; btn.textContent = 'Setting up…';
+      if (msg) { msg.style.color = '#8b949e'; msg.textContent = ''; }
+      try {
+        var j = await window.mimic.eqSetupForMe();
+        if (j && j.eqRunning) {
+          if (msg) { msg.style.color = '#f6c365'; msg.textContent = '⚠ ' + (j.message || 'Close EverQuest first, then try again.'); }
+        } else if (!j || !j.ok) {
+          if (msg) { msg.style.color = '#ff9b9b'; msg.textContent = '✕ ' + ((j && j.message) || 'unknown error'); }
+        } else {
+          var folders = (j.folders || []).length;
+          if (msg) { msg.style.color = '#7ee787'; msg.textContent = '✓ Done — configured ' + folders + ' folder' + (folders === 1 ? '' : 's') + '. Restart EQ (or /log on now) to apply.'; }
+        }
+      } catch (err) {
+        if (msg) { msg.style.color = '#ff9b9b'; msg.textContent = '✕ ' + ((err && err.message) || err); }
+      } finally { btn.disabled = false; btn.textContent = orig; }
     });
   })();
 </script>
