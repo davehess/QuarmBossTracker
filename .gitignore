@@ -28,3 +28,7 @@ packages/wolfpack-logsync/logsync.pid.json
 packages/wolfpack-logsync/.last-update-check
 packages/wolfpack-logsync/.force-update-on-restart
 packages/wolfpack-logsync/.update-token-on-restart
+
+# Gemini research helper (local dev aid) — keys + generated images, never commit
+.env.research.local
+gemini-image-*.png
