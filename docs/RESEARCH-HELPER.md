@@ -50,18 +50,30 @@ programmatic access, free-tier eligible).
 - Never commit them. `.gitignore` already excludes `.env.research.local` and
   generated `gemini-image-*.png` so an accidental `git add .` can't leak them.
 
+## Subscription vs API (READ THIS — the common trap)
+
+A **Gemini Pro / Google AI Pro subscription is the Gemini *app*** (the UI at
+gemini.google.com — Pro models, Imagen, Veo, higher app limits). This helper
+calls the **Gemini *API***, whose quota + billing come from a **Google Cloud
+project**, NOT the consumer subscription. Having Pro does **not** fund or unlock
+the API. They are separate tracks. (Same distinction as "ChatGPT Plus ≠ OpenAI
+API.") Plan bundles shift over time, but the reliable rule: the API key bills via
+Cloud unless a specific plan explicitly says it includes API access.
+
 ## What works, and what costs money
 
-- **Grounded research + fact-checks** — free tier, works immediately. This is
-  the high-value case.
-- **Image generation** (`--image`) — depends on the account: some image models
-  need **billing enabled** on the Google Cloud project even though text is free.
-  If `--image` returns "No image in the response," that's the usual cause; enable
-  billing or adjust `GEMINI_IMAGE_MODEL`.
-- **Video (Veo)** — real but **paid, per-clip, and async** (long-running
-  operation polling). Not wired into this v1 on purpose — it spends real money
-  each call. Ask Claude to add a `--video` mode once billing is on and you're
-  ready for the cost.
+- **Grounded research + fact-checks** — the API **free tier** covers this; works
+  the moment a key is exported. A Pro subscription changes nothing here. The
+  high-value case.
+- **Image generation** (`--image`) — needs **Cloud billing enabled on the API
+  project** (pay-per-use, a few cents/image), independent of any Pro sub. If
+  `--image` returns "No image in the response," that billing isn't on (or
+  `GEMINI_IMAGE_MODEL` needs adjusting). Alternative with zero API cost: generate
+  images by hand in the Gemini app using the Pro sub — but the helper can't drive
+  the app (that'd be UI-scraping), so app-generation is manual-only.
+- **Video (Veo)** — real but **paid, per-clip, async**, and pricier than images.
+  Not wired into this v1 on purpose. Ask Claude to add a `--video` mode once Cloud
+  billing is on and the per-clip cost is acceptable.
 
 ## Usage
 
