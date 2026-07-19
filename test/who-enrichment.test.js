@@ -20,7 +20,7 @@ const block = sliceBlock(
   '// ── #111 /who overlay enrichment assembly',
   '// ── end #111 enrichment assembly',
 );
-const { _assembleWhoEnrichment } = evalBlock(block, ['_assembleWhoEnrichment']);
+const { _assembleWhoEnrichment, _mimicCharacterSet } = evalBlock(block, ['_assembleWhoEnrichment', '_mimicCharacterSet']);
 
 const lower = (arr) => new Set(arr.map(s => s.toLowerCase()));
 const mapOf = (obj) => new Map(Object.entries(obj).map(([k, v]) => [k.toLowerCase(), v]));
@@ -112,5 +112,48 @@ describe('_assembleWhoEnrichment (real index.js)', () => {
     });
     expect(r.randompug).toBeUndefined();
     expect(Object.keys(r)).toHaveLength(0);
+  });
+});
+
+// #119 — the mimicSet (which characters earn the 🐺) now keys on BOTH the
+// reported primary AND the live_character, so a boxer on an alt shows the wolf
+// on the character actually online. Fed into _assembleWhoEnrichment above.
+describe('_mimicCharacterSet (#119) — wolf keys on live_character AND primary', () => {
+  const now = Date.now();
+  const TTL = 60_000;
+
+  it('includes BOTH the primary and the live_character of a fresh agent', () => {
+    const set = _mimicCharacterSet([
+      { last_seen: now, primary: 'Hitya', live_character: 'Canopy' },
+    ], now, TTL);
+    expect(set.has('hitya')).toBe(true);    // primary still lights the wolf
+    expect(set.has('canopy')).toBe(true);   // the alt actually online lights it too
+  });
+
+  it('includes the primary alone when the agent is idle (live_character null)', () => {
+    const set = _mimicCharacterSet([
+      { last_seen: now, primary: 'Hitya', live_character: null },
+    ], now, TTL);
+    expect(set.has('hitya')).toBe(true);
+    expect(set.size).toBe(1);
+  });
+
+  it('excludes a stale agent entirely (heartbeat older than the TTL → not running now)', () => {
+    const set = _mimicCharacterSet([
+      { last_seen: now - 70_000, primary: 'Hitya', live_character: 'Canopy' },
+    ], now, TTL);
+    expect(set.size).toBe(0);
+  });
+
+  it('feeds _assembleWhoEnrichment so the alt online earns the 🐺', () => {
+    const mimicSet = _mimicCharacterSet([
+      { last_seen: now, primary: 'Hitya', live_character: 'Canopy' },
+    ], now, TTL);
+    const r = _assembleWhoEnrichment({
+      names: ['Canopy'], mainMap: new Map([['canopy', 'Hitya']]),
+      mimicSet, hideSet: new Set(), base: {},
+    });
+    expect(r.canopy.mimic).toBe(true);      // wolf on the alt that's online
+    expect(r.canopy.main).toBe('Hitya');    // + (Main) in parens
   });
 });

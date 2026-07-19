@@ -22,12 +22,12 @@ const block = sliceBlock(
 const {
   _electReporters, _reporterGuildBook, _reporterRank,
   _reporterIsFresh, _applyReporterOverrides, _reporterResolveByName,
-  _reporterZoneKey,
+  _reporterZoneKey, _reporterCharacterLabel,
   REPORTER_TTL_MS, REPORTER_CHAT_PER_ZONE, REPORTER_LIVENESS_MAX_MS_DEFAULT,
 } = evalBlock(block, [
   '_electReporters', '_reporterGuildBook', '_reporterRank',
   '_reporterIsFresh', '_applyReporterOverrides', '_reporterResolveByName',
-  '_reporterZoneKey',
+  '_reporterZoneKey', '_reporterCharacterLabel',
   'REPORTER_TTL_MS', 'REPORTER_CHAT_PER_ZONE', 'REPORTER_LIVENESS_MAX_MS_DEFAULT',
 ]);
 
@@ -425,6 +425,52 @@ describe('roster-reporter election — per-group, 1 reporter/group (P1c)', () =>
     const r = _electRosterReporters(g);
     expect(_rosterBook(g).has('a1')).toBe(false); // evicted from the book
     expect(r.byGroup['g1']).toEqual(['a2']);      // next live groupmate takes over
+  });
+});
+
+// #119 — live-character identity on the fleet table. The election ROLE stays
+// keyed to the agent (discord_id) exactly as before; this is display only.
+describe('fleet CHARACTER label (#119) — live character + main in parens', () => {
+  const mainOf = (obj) => new Map(Object.entries(obj).map(([k, v]) => [k.toLowerCase(), v]));
+
+  it('shows "Alt (Main)" when the live character differs from the family main', () => {
+    // Agent's primary IS the main Hitya; the player is on the alt Canopy.
+    const label = _reporterCharacterLabel(
+      { primary: 'Hitya', live_character: 'Canopy' },
+      mainOf({ Canopy: 'Hitya' }), new Set());
+    expect(label).toBe('Canopy (Hitya)');
+  });
+
+  it('falls back to the main lookup, else the primary, for the parenthetical', () => {
+    // No main mapping for the alt → the registry primary is the family identity.
+    const label = _reporterCharacterLabel(
+      { primary: 'Hitya', live_character: 'Canopy' }, new Map(), new Set());
+    expect(label).toBe('Canopy (Hitya)');
+  });
+
+  it('shows the primary ALONE when the agent is idle (live_character null)', () => {
+    const label = _reporterCharacterLabel(
+      { primary: 'Hitya', live_character: null }, mainOf({ Hitya: 'Hitya' }), new Set());
+    expect(label).toBe('Hitya');
+  });
+
+  it('shows the live character alone when it IS their main (no redundant parens)', () => {
+    const label = _reporterCharacterLabel(
+      { primary: 'Hitya', live_character: 'Hitya' }, mainOf({ Hitya: 'Hitya' }), new Set());
+    expect(label).toBe('Hitya');
+  });
+
+  it('HIDE LIST respected in the parenthetical — a hidden main is suppressed', () => {
+    // Same server-side rule as #111: hiding the main (or the live name) drops
+    // the parens, leaving just the live character.
+    const byMain = _reporterCharacterLabel(
+      { primary: 'Hitya', live_character: 'Canopy' },
+      mainOf({ Canopy: 'Hitya' }), new Set(['hitya']));
+    expect(byMain).toBe('Canopy');
+    const byLive = _reporterCharacterLabel(
+      { primary: 'Hitya', live_character: 'Canopy' },
+      mainOf({ Canopy: 'Hitya' }), new Set(['canopy']));
+    expect(byLive).toBe('Canopy');
   });
 });
 

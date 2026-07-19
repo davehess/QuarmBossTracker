@@ -20,6 +20,59 @@ raid; move it to STATUS.md's "Done" once graduated to stable.*
 
 ---
 
+## #119 — Pet-buff diagnostic card + liveness across watched logs + live-character identity
+
+**Needs:** agent **3.3.99** (beta Mimic) + bot **3.0.220** (live on Railway). No
+DB change. The fleet-table "Alt (Main)" label lights up once BOTH are deployed;
+the diagnostic card and the /who 🐺-on-alt work with agent 3.3.99 alone.
+
+**What changed (post-#117 field report + guild-lead identity ask):**
+1. **Pet buffs STILL missing — it was a version gap, not a code bug.** The
+   reporter's fleet row was agent **3.3.91**, below the **3.3.94** #117 fix, so a
+   pre-fix runtime showed exactly the symptom (the pet's HP, no buffs). The
+   resolver is fine: it disambiguates the 15 spells that share "looks stronger."
+   by the **cast spell name**, and it handles Spirit of Eagle's possessive line
+   ("Kabn's body pulses with an avian spirit."). To make the *next* report
+   self-evident, there's a new **🐾 Pet-buff diagnostic card** on the dashboard
+   **Triggers** tab (same idea as the 🐺 Charm diagnostic): it walks pet
+   identified → cast seen → landing resolved → attributed → overlay fetch, with a
+   resolution ring saying which resolver fired and why a land was dropped.
+2. **Liveness now spans every watched log.** A boxer whose *primary* is logged
+   out but who's actively playing an alt is now correctly treated as a **live**
+   agent (any flowing log keeps the agent fresh) — the chat-reporter election and
+   the fleet staleness dot follow. An agent with *no* active log anywhere still
+   goes stale (unchanged).
+3. **The fleet table + /who 🐺 name the character you're actually on.** The
+   heartbeat reports the live character; the 📡 Reporters CHARACTER column shows
+   "**Canopy (Hitya)**" (alt with the main in parens) while you're on the alt and
+   the plain primary when idle, and the /who wolf lights on the alt you're online
+   as, not just your primary. The main-in-parens honors the same officer
+   `hide_main_names` list as #111.
+
+**✅ Solo (one machine)**
+- **Pet-buff diagnostic walks a live cast.** Charm or summon a pet, target
+  something *other* than the pet, then cast a pet buff on it (e.g. Spirit of
+  Eagle / a Strength line / Girdle of Karana clicky). On the dashboard **Triggers**
+  tab the **🐾 Pet-buff diagnostic** card should show: **1. Pet identified ✓**
+  (owner → pet, resolves), **2. Buff cast seen ✓** (your cast + the exact landing
+  suffix EQ prints), **3. attributed ✓**, **4. overlay fetch ✓** (the buff the
+  Pet tracker renders). The resolution ring shows the land as **attributed**. If
+  any step is ✗, that's the checkpoint to report.
+- **Play an alt → fleet shows "Alt (Main)" and stays fresh.** With Mimic tailing
+  your main + an alt, log the main OUT and play the alt. Within a minute the 📡
+  Reporters fleet row's CHARACTER cell should read "**Alt (Main)**", the fresh dot
+  should stay **green** (the alt's live log keeps the agent fresh), and the **Log**
+  age should track the alt's activity, not the logged-out main.
+
+**👥 Multi-person (2+ raiders, separate machines)**
+- **/who wolf on the alt actually online.** While you're playing an alt with
+  Mimic running, have another raider `/who` your zone: the 🐺 should appear next
+  to the **alt** you're on (not only your main), with "(Main)" in parens unless
+  you're on the hide list. Fully idle (no recent log line) → the wolf falls back
+  to your primary.
+
+---
+
 ## #120 — Trigger TTS actually makes sound + byte-stable Triggers tab + no false "not signed in" flash
 
 **Needs:** agent **3.3.98** (beta Mimic) + web **1.0.251** (roadmap/docs; live on

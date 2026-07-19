@@ -65,6 +65,40 @@ folly** — it's here.*
 ## The work ledger
 
 ### ✅ Done — major shipped features (not exhaustive; see git + roadmapData.ts)
+- **#119 pet buffs STILL missing (post-#117 field report) + liveness/identity
+  across watched logs — DONE (2026-07-19, agent 3.3.99 beta + bot 3.0.220 on
+  main). No DB change.**
+  1. **Version truth (Half 1):** the reporter's fleet row was agent **3.3.91**,
+     BELOW the **3.3.94** #117 fix — a 3.3.91 runtime shows EXACTLY the reported
+     symptom (a summoned pet's HP, no buffs), so the user was **pre-fix**. The
+     resolver is NOT broken. Catalog truth: "Kabn's body pulses with an avian
+     spirit." = **Spirit of Eagle** (`eqemu_spells` 2517, dur 600, formula 3,
+     targettype 5 — single-target; the group Flight of Eagles 3185 is targettype
+     41). "looks stronger." is shared by **15** catalog spells (Girdle of Karana
+     720 … Storm Strength 540 …), but `resolveSelfCastLanding` disambiguates by
+     the **cast spell name** (`rc.spellLower`), NOT the shared landing text, so
+     the chosen spell + duration are right (Storm Strength → 540 ticks, not
+     Girdle's 720). Girdle + Spirit of Eagle accumulate without overwriting.
+     **No resolver fix was needed** — the extended #117 fixture proves the
+     current beta handles both lines. Deliverable is verification tooling: a
+     **🐾 Pet-buff diagnostic card** (Triggers tab, the `wpCharmDiag` pattern)
+     walking the five checkpoints (pet identified → cast seen → landing resolved
+     → attributed → overlay fetch) plus a resolution ring (which resolver,
+     attributed/dropped + why), so the next field report is self-evident.
+  2. **Liveness across watched logs + live-character identity (Half 2):** the
+     agent heartbeat's `last_line_ms` is now the **MIN age across EVERY watched
+     log** (any live log = a live agent — a boxer on a live alt whose primary is
+     logged out stays fresh; an agent with NO active log anywhere still goes
+     stale, so the #112 logged-out-reporter protection is unchanged), and it
+     reports **`live_character`** (the most-recently-active watched char, null
+     when idle). The bot stores it and: the 📡 Reporters fleet CHARACTER column
+     shows "**Alt (Main)**" ("Canopy (Hitya)") when the live char differs from
+     the main, the primary alone when idle; the /who **🐺** keys on
+     `live_character` AND primary, so playing an alt lights the wolf on the toon
+     actually online. The parenthetical obeys the SAME server-side
+     `hide_main_names` rule as #111. Election ROLE ownership stays keyed to the
+     agent (`discord_id`) — this is display/liveness only, not an election
+     re-key. See BETA-TESTING #119.
 - **#120 three raid-night field reports — DONE (2026-07-19, agent 3.3.98 beta;
   Mimic parked 1.9.6; web 1.0.251 roadmap/docs). No bot/DB change.**
   1. **CRITICAL — trigger TTS silent, NO Mimic entry in the Windows volume

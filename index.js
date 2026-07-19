@@ -3426,7 +3426,7 @@ const REPORTER_CHAT_PER_ZONE = 1;     // one chat reporter PER OCCUPIED ZONE (#1
 const REPORTER_BUFF_PER_ZONE = 3;     // buff landings dedup to 3 reporters per occupied zone (P1b)
 const REPORTER_ROSTER_PER_GROUP = 1;  // raid roster dedup to 1 reporter per raid group (P1c)
 const REPORTER_LIVENESS_MAX_MS_DEFAULT = 90_000; // #112: chat candidacy requires a live log line newer than this (tunable key reporter_liveness_max_ms)
-const _reporterRegistry   = new Map(); // guild_id → Map(discord_id → {last_seen, primary, zone, group_num, camping, has_zeal, ver, mimic_ver, last_line_ms})
+const _reporterRegistry   = new Map(); // guild_id → Map(discord_id → {last_seen, primary, zone, group_num, camping, has_zeal, ver, mimic_ver, last_line_ms, live_character})
 function _reporterGuildBook(guildId) {
   let book = _reporterRegistry.get(guildId);
   if (!book) { book = new Map(); _reporterRegistry.set(guildId, book); }
@@ -3447,6 +3447,27 @@ function _reporterRank(a, b) {
 // election used.
 function _reporterZoneKey(e)  { const z = e.zone && String(e.zone).trim(); return z ? z.toLowerCase() : `__solo__${e.id}`; }
 function _reporterGroupKey(e) { return Number.isFinite(e.group_num) ? `g${e.group_num}` : `__solo__${e.id}`; }
+// #119 — the fleet table's CHARACTER cell. Show the LIVE character the agent is
+// actively playing with the family MAIN in parens ("Canopy (Hitya)") when they
+// differ; fall back to the primary alone when the agent is idle (live_character
+// null) or on their main. The parenthetical is a main name, so it obeys the
+// SAME server-side hide_main_names rule as the #111 /who enrichment — a hidden
+// main (or a hidden live name) suppresses the parens. The fleet panel is
+// officer-only, but computing the label here (not client-side) keeps the
+// privacy rule in ONE place so the surface can widen without leaking. Pure over
+// (entry, mainMap, hideSet) so it's unit-testable.
+function _reporterCharacterLabel(entry, mainMap, hideSet) {
+  const primary = entry && entry.primary ? String(entry.primary) : null;
+  const live    = entry && entry.live_character ? String(entry.live_character) : null;
+  if (!live) return primary;                               // idle → primary alone
+  const liveLower = live.toLowerCase();
+  const paren = (mainMap && mainMap.get(liveLower)) || primary || null;   // live char's family main, else the primary
+  if (paren && paren.toLowerCase() !== liveLower
+      && !(hideSet && (hideSet.has(liveLower) || hideSet.has(paren.toLowerCase())))) {
+    return `${live} (${paren})`;
+  }
+  return live;                                             // no distinct/allowed main → live alone
+}
 // Liveness (#112): is this agent's PRIMARY log still flowing? The agent reports
 // `last_line_ms` — ms since it last processed a live log line from its primary's
 // tail — in the heartbeat. A logged-out character tails nothing, so that value
@@ -6002,12 +6023,20 @@ async function _handleAgentServerPanel(req, res) {
       const flags  = _dedupFlags(tune);
       const elDisabled = Number(tune.flag_disable_reporter_election) >= 1;
       const book   = _reporterGuildBook(guildId);
+      // #119 — the "Alt (Main)" label is computed server-side (character_label)
+      // so the hide_main_names rule stays server-side, same as #111. Both reads
+      // are 60s-cached; a failure just omits the parens (fail-open).
+      let mainMap = new Map(), hideSet = new Set();
+      try { mainMap = await _freshMainNames(); } catch { /* */ }
+      try { hideSet = await _hideMainNamesSet(); } catch { /* */ }
       const rows = [];
       for (const [rid, e] of book) {
         if (nowR - e.last_seen > REPORTER_TTL_MS) { book.delete(rid); continue; }   // prune dead
         rows.push({
           discord_id:       rid,
-          character:        e.primary || null,
+          character:        e.primary || null,   // primary is the election identity — swap/pin resolve by it
+          live_character:   e.live_character || null,
+          character_label:  _reporterCharacterLabel(e, mainMap, hideSet),   // "Canopy (Hitya)" / primary when idle
           zone:             e.zone || null,
           group_num:        Number.isFinite(e.group_num) ? e.group_num : null,
           agent_version:    e.ver || null,
@@ -10693,19 +10722,15 @@ async function _hideMainNamesSet() {
   if (typeof raw === 'string') for (const n of raw.split(',')) { const t = n.trim().toLowerCase(); if (t) set.add(t); }
   return set;
 }
-// Fresh Mimic primaries — characters that are the PRIMARY of an agent whose last
-// heartbeat is within the registry TTL (i.e. running Mimic right now).
+// Fresh Mimic characters — every character running Mimic right now. Since #119
+// this keys on BOTH the reported primary AND the live_character (the alt the
+// player is actively on), so a boxer playing an alt earns the 🐺 on the toon
+// actually online, not only their primary. Delegates to the pure
+// _mimicCharacterSet (in the #111 assembly block) so it's unit-testable.
 function _freshMimicPrimaries(guildId) {
-  const set = new Set();
   const book = _reporterRegistry.get(guildId);
-  if (!book) return set;
-  const now = Date.now();
-  for (const e of book.values()) {
-    if (!e || !e.primary) continue;
-    if (now - (e.last_seen || 0) > REPORTER_TTL_MS) continue;   // stale agent → not "currently running"
-    set.add(String(e.primary).toLowerCase());
-  }
-  return set;
+  if (!book) return new Set();
+  return _mimicCharacterSet(book.values(), Date.now(), REPORTER_TTL_MS);
 }
 // ── #111 /who overlay enrichment assembly ───────────────────────────────────
 // Pure + input-driven so the assembly is unit-testable without the HTTP handler.
@@ -10734,6 +10759,21 @@ function _assembleWhoEnrichment({ names, mainMap, mimicSet, hideSet, base }) {
     if (main)  cur.main = main;
   }
   return results;
+}
+// #119 — the set of characters that light the /who 🐺. For every FRESH agent
+// (heartbeat within `ttlMs`), BOTH its reported primary AND its live_character
+// (the alt it's actively playing, when present) qualify — so a boxer on an alt
+// shows the wolf on the character actually online. Pure over an entries iterable
+// so it's unit-testable without the registry.
+function _mimicCharacterSet(entries, now, ttlMs) {
+  const set = new Set();
+  for (const e of entries) {
+    if (!e) continue;
+    if (now - (e.last_seen || 0) > ttlMs) continue;   // stale agent → not running now
+    if (e.primary)        set.add(String(e.primary).toLowerCase());
+    if (e.live_character) set.add(String(e.live_character).toLowerCase());
+  }
+  return set;
 }
 // ── end #111 enrichment assembly ────────────────────────────────────────────
 
@@ -11717,6 +11757,11 @@ async function _handleAgentReporterPoll(req, res) {
     // Standalone (Parser.bat) agents don't run under Mimic → null.
     mimic_ver: payload.mimic_version ? String(payload.mimic_version).slice(0, 24) : null,
     last_line_ms: Number.isFinite(payload.last_line_ms) ? Math.max(0, Math.floor(payload.last_line_ms)) : null,
+    // #119 — the watched character the agent is ACTIVELY playing (most-recent
+    // log activity across all its logs; null when idle). Drives the fleet
+    // table's "Alt (Main)" label and lets the /who 🐺 key on the alt actually
+    // online, not just the reported primary. Older agents omit it → null.
+    live_character: payload.live_character ? String(payload.live_character).slice(0, 32) : null,
   });
 
   const now = Date.now();
