@@ -9814,9 +9814,13 @@ function _serializeForDashboard() {
         sound:   o.sound || null,
         sticky:  !!o.sticky,
         rehearsal: !!o.rehearsal,
+        replay:  !!o.replay,
       };
     }),
     activeTimers:        _activeTimersSnapshot(),
+    // #101 log-replay status — running/idle + progress for the Triggers-tab
+    // ⏪ Replay card. Pure in-memory; never persisted or uploaded.
+    replay:              _replayStateForWeb(),
     // #107 loot-post announce prefs (dashboard Triggers-tab toggle + knob).
     lootAuctionTts:        _optinState.lootAuctionTts !== false,
     lootAuctionDefaultSec: _lootAuctionDefaultSec(),
@@ -11956,7 +11960,8 @@ function renderTriggerJournal(s) {
     var full = cp >= 5 && !r.stopped;
     var dot = full ? '<span style="color:var(--green)">●</span>'
                    : (r.stopped ? '<span style="color:var(--orange)">◌</span>' : '<span style="color:var(--blue)">●</span>');
-    var reh = r.rehearsal ? ' <span style="color:var(--gold);font-size:9px;font-weight:600">REHEARSAL</span>' : '';
+    var reh = r.replay ? ' <span style="color:var(--gold);font-size:9px;font-weight:600">⏪ REPLAY</span>'
+                       : (r.rehearsal ? ' <span style="color:var(--gold);font-size:9px;font-weight:600">REHEARSAL</span>' : '');
     h += '<tr>'
        + '<td class="dim">' + esc(fmtAgo(r.at || 0)) + '</td>'
        + '<td>' + esc(r.trigger || '?') + reh + '</td>'
@@ -12005,6 +12010,40 @@ function renderRecentFires(s) {
   }
   morphInto(el, h);
 }
+// ⏪ Replay status (#101) — the volatile counterpart to the byte-stable Replay
+// FORM. Fills its own #wpReplayStatus placeholder every poll: progress + a STOP
+// button while running, or a compact results line + journal jump when done.
+// Byte-stable when idle (empty + hidden) so it never flickers the section.
+function renderReplayStatus(s) {
+  var el = document.getElementById('wpReplayStatus');
+  if (!el) return;   // Triggers tab not painted yet
+  var r = (s && s.replay) || {};
+  if (!r.running && !r.done) {
+    if (el.style.display !== 'none') el.style.display = 'none';
+    morphInto(el, '');
+    return;
+  }
+  if (el.style.display === 'none') el.style.display = '';
+  var h = '<div style="margin-top:8px;padding:8px;background:#161b22;border:1px solid var(--border);border-radius:5px;font-size:12px">';
+  if (r.running) {
+    var pct = r.total > 0 ? Math.round((r.played / r.total) * 100) : 0;
+    h += '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px">';
+    h += '<span style="color:var(--gold)">⏪ Replaying ' + esc(r.logLabel || 'log') + ' <span class="dim">· ' + esc(r.pace === 'fast' ? 'fast' : 'real-time') + '</span></span>';
+    h += '<button type="button" id="replayStopBtn" style="background:#3d1418;color:#ff7b72;border:1px solid #6e2a2f;padding:3px 10px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:11px">■ Stop</button>';
+    h += '</div>';
+    h += '<div style="margin-top:5px">' + (r.played || 0) + ' / ' + (r.total || 0) + ' lines · ' + (r.fired || 0) + ' fired</div>';
+    h += '<div style="width:100%;background:var(--bg);border-radius:3px;height:6px;overflow:hidden;margin-top:4px"><div style="background:var(--gold);height:100%;width:' + pct + '%"></div></div>';
+  } else {
+    var label, color;
+    if (r.error)        { label = '⏪ Replay error: ' + esc(r.error); color = 'var(--orange)'; }
+    else if (r.stopped) { label = '⏪ Replay stopped'; color = 'var(--text)'; }
+    else                { label = '⏪ Replay complete'; color = 'var(--green)'; }
+    h += '<div style="color:' + color + '">' + label + '</div>';
+    h += '<div class="dim" style="margin-top:3px">' + (r.scanned || 0) + ' lines walked · ' + (r.total || 0) + ' trigger-visible · ' + (r.fired || 0) + ' fired · <a href="#" id="replayJournalLink" style="color:var(--blue)">see checkpoint journal ↓</a></div>';
+  }
+  h += '</div>';
+  morphInto(el, h);
+}
 function renderTriggers(s) {
   let h = '';
   h += '<div class="grid">';
@@ -12045,6 +12084,38 @@ function renderTriggers(s) {
   // repaints (same pattern as wpZealCard / wpTriggerJournal). Clear buttons keep
   // their ids; the section-root click delegation still routes them.
   h += '<div id="wpRecentFires" class="card wide"></div>';
+
+  // ⏪ Replay (#101) — walk a slice of a watched log back through the real
+  // trigger pipeline (rehearsal-flagged; nothing uploads/relays). The FORM is
+  // byte-stable — its picker uses only stable watchedLog fields (character +
+  // logPath), so idle polls don't rewrite it and the user's from/to typing +
+  // datetime focus survive. The volatile progress/results live in the nested
+  // #wpReplayStatus placeholder filled by renderReplayStatus() every poll.
+  h += '<div class="card wide"><h2>⏪ Replay <span class="dim" style="font-size:11px;font-weight:normal">· walk part of a log back through the real trigger pipeline — hear the TTS, nothing uploads</span></h2>';
+  var _rls = (s.watchedLogs || []).filter(function(w){ return w && w.logPath; });
+  if (_rls.length === 0) {
+    h += '<div class="dim" style="font-size:12px">No watched log files yet — point Mimic at your EverQuest folder first.</div>';
+  } else {
+    var _inStyle = 'background:#0d1117;color:var(--text);border:1px solid var(--border);padding:3px 6px;border-radius:4px;font-family:inherit;font-size:12px';
+    h += '<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;font-size:12px">';
+    h += '<label style="display:flex;flex-direction:column;gap:2px"><span class="dim">Log</span><select id="replayLog" style="' + _inStyle + '">';
+    for (var _ri = 0; _ri < _rls.length; _ri++) {
+      var _rw = _rls[_ri];
+      h += '<option value="' + esc(_rw.logPath) + '">' + esc(_rw.character || _rw.logPath) + '</option>';
+    }
+    h += '</select></label>';
+    h += '<label style="display:flex;flex-direction:column;gap:2px"><span class="dim">From</span><input type="datetime-local" step="1" id="replayFrom" style="' + _inStyle + '"></label>';
+    h += '<label style="display:flex;flex-direction:column;gap:2px"><span class="dim">To</span><input type="datetime-local" step="1" id="replayTo" style="' + _inStyle + '"></label>';
+    h += '<label style="display:flex;flex-direction:column;gap:2px"><span class="dim">Pace</span><span style="display:flex;gap:10px;padding-top:4px">'
+       + '<label style="cursor:pointer"><input type="radio" name="replayPace" value="real" checked> real-time</label>'
+       + '<label style="cursor:pointer"><input type="radio" name="replayPace" value="fast"> fast</label></span></label>';
+    h += '<button type="button" id="replayStartBtn" style="background:#1c2733;color:var(--gold);border:1px solid var(--border);padding:5px 14px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:12px">▶ Start</button>';
+    h += '</div>';
+    h += '<div id="replayMsg" class="dim" style="font-size:11px;margin-top:6px;min-height:14px"></div>';
+    h += '<div id="wpReplayStatus"></div>';
+    h += '<div class="dim" style="font-size:11px;margin-top:6px">Replay fires are rehearsals — they speak + flash with a ⏪ tag but never upload, relay, or touch your live cooldowns. One replay at a time; blocked during a live fight. Real-time hears the fight as it happened; fast pauses briefly on each fire for a quick audit.</div>';
+  }
+  h += '</div>';
 
   // #107 Loot auction announce — dashboard toggle + default-duration knob for
   // the local TTS callout that fires when a drop list is posted in /gu or /rs.
@@ -14268,7 +14339,7 @@ async function refresh() {
                      ['recenttells', renderRecentTellsCard], ['topdamage', renderTopDamageCard],
                      ['tanks', renderTanks], ['deeps', renderDeeps],
                      ['triggers', renderTriggers], ['zealcard', renderZealCard],
-                     ['recentfires', renderRecentFires],
+                     ['recentfires', renderRecentFires], ['replaystatus', renderReplayStatus],
                      ['charmdiag', renderCharmDiag], ['petbuffdiag', renderPetBuffDiag], ['triggerjournal', renderTriggerJournal],
                      ['overlays', renderOverlays], ['info', renderInfo],
                      // After info: fill the placeholders renderInfo just
@@ -14374,6 +14445,43 @@ document.querySelectorAll('.nav button[data-tab]').forEach(b => b.addEventListen
   if (b.dataset.tab === 'optin') refreshOptin();
   if (b.dataset.tab === 'raid') refreshRaidTab();
 }));
+// ⏪ Replay deep-link (#101) — a link like #replay&from=<iso>&to=<iso> (built
+// by wolfpack.quest/parses on the "Replay this fight locally" link) opens the
+// Triggers tab with the Replay form prefilled. It never auto-starts — the user
+// still clicks Start. from/to arrive as ISO instants; we render them into the
+// datetime-local inputs as LOCAL wall-clock (the basis the agent parses EQ log
+// timestamps on this machine).
+function _wpToLocalInput(v) {
+  if (!v) return '';
+  var d = new Date(v);
+  if (isNaN(d.getTime())) return '';
+  function p(n) { return (n < 10 ? '0' : '') + n; }
+  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + 'T'
+       + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+}
+function _wpApplyReplayPrefill(attempt) {
+  var pf = window._wpReplayPrefill;
+  if (!pf) return;
+  var f = document.getElementById('replayFrom');
+  var t = document.getElementById('replayTo');
+  if (!f || !t) { if (attempt < 40) setTimeout(function () { _wpApplyReplayPrefill(attempt + 1); }, 150); return; }
+  if (pf.from) f.value = _wpToLocalInput(pf.from);
+  if (pf.to)   t.value = _wpToLocalInput(pf.to);
+  window._wpReplayPrefill = null;   // one-shot
+}
+(function () {
+  var hash = location.hash || '';
+  if (hash.indexOf('#replay') !== 0) return;
+  var params = {};
+  hash.slice(1).split('&').forEach(function (kv) {
+    var i = kv.indexOf('=');
+    if (i > 0) { try { params[kv.slice(0, i)] = decodeURIComponent(kv.slice(i + 1)); } catch (e) { void e; } }
+  });
+  window._wpReplayPrefill = { from: params.from || '', to: params.to || '' };
+  var btn = document.querySelector('.nav button[data-tab="triggers"]');
+  if (btn) btn.click();
+  _wpApplyReplayPrefill(0);
+})();
 refresh(); setInterval(refresh, 2000);
 // ↩ stable link next to the BETA badge (static header — wired once). The
 // shell shows a native confirmation before doing anything, so a stray click
@@ -16346,6 +16454,40 @@ async function dismissTopDamage(key) {
       body: JSON.stringify({ testOnly: true }),
     });
   }
+  // ⏪ Replay (#101) — read the form, POST /api/replay/start. Times are read
+  // from the datetime-local inputs as LOCAL wall-clock (same basis the agent
+  // parses EQ log timestamps on this machine), sent as epoch ms.
+  async function onReplayStart() {
+    var sel    = document.getElementById('replayLog');
+    var fromEl = document.getElementById('replayFrom');
+    var toEl   = document.getElementById('replayTo');
+    var paceEl = document.querySelector('input[name="replayPace"]:checked');
+    var msg    = document.getElementById('replayMsg');
+    function setMsg(txt, color) { if (msg) { msg.textContent = txt; msg.style.color = color || 'var(--orange)'; } }
+    var logPath = sel ? sel.value : '';
+    var fromV   = fromEl ? fromEl.value : '';
+    var toV     = toEl ? toEl.value : '';
+    var pace    = paceEl ? paceEl.value : 'real';
+    if (!logPath) { setMsg('Pick a log file.'); return; }
+    if (!fromV || !toV) { setMsg('Set a From and To time.'); return; }
+    var fromMs = new Date(fromV).getTime();
+    var toMs   = new Date(toV).getTime();
+    if (!(toMs > fromMs)) { setMsg('To must be after From.'); return; }
+    setMsg('Starting…', 'var(--dim)');
+    try {
+      var r = await fetch('/api/replay/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ logPath: logPath, fromMs: fromMs, toMs: toMs, pace: pace }),
+      });
+      var j = await r.json();
+      if (!j.ok) { setMsg(j.error || 'Could not start replay.'); return; }
+      setMsg('', 'var(--dim)');
+    } catch (e) { void e; setMsg('Request failed — is the engine running?'); }
+  }
+  async function onReplayStop() {
+    try { await fetch('/api/replay/stop', { method: 'POST' }); } catch (e) { void e; }
+  }
   // #107 loot auction announce prefs — persist the toggle / default-duration
   // knob. Partial body: only the changed field is sent.
   async function saveLootPref(body) {
@@ -16590,6 +16732,13 @@ async function dismissTopDamage(key) {
         if (!t.id) return;
         if (t.id === 'trigClearAllBtn')  onClearAll();
         else if (t.id === 'trigClearTestBtn') onClearTests();
+        else if (t.id === 'replayStartBtn')   onReplayStart();
+        else if (t.id === 'replayStopBtn')    onReplayStop();
+        else if (t.id === 'replayJournalLink') {
+          if (e && e.preventDefault) e.preventDefault();
+          var j = document.getElementById('wpTriggerJournal');
+          if (j) j.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
       });
       section._wpTrigClickBound = true;
     }
@@ -18087,6 +18236,30 @@ function startWebDashboard(port) {
         scheduleRender();
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ ok: true, cleared, cleared_timers: clearedTimers }));
+      }
+
+      // #101 Log replay — walk a slice of a watched log back through the real
+      // trigger pipeline (rehearsal-flagged; nothing uploads/relays). Body:
+      //   { logPath, fromMs, toMs, pace: 'real' | 'fast' }
+      // Returns { ok } or a refusal (another replay running / live fight /
+      // bad range). Progress is surfaced on /api/state (state.replay).
+      if (req.url === '/api/replay/start' && req.method === 'POST') {
+        const body = await _readBody(req).catch(() => '');
+        let payload = {};
+        try { payload = body ? JSON.parse(body) : {}; } catch { payload = {}; }
+        const out = startReplay({
+          logPath: payload.logPath,
+          fromMs:  payload.fromMs,
+          toMs:    payload.toMs,
+          pace:    payload.pace,
+        });
+        res.writeHead(out.ok ? 200 : 409, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify(out));
+      }
+      if (req.url === '/api/replay/stop' && req.method === 'POST') {
+        const out = stopReplay();
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify(out));
       }
 
       // POST /api/timers/cancel — dismiss a single active timer by id. Powers
@@ -25650,6 +25823,9 @@ function _journalTrigger(e) {
     label:      e.label || TJ_LABEL[cp] || '?',
     reason:     e.reason ? String(e.reason).slice(0, 160) : null,
     rehearsal:  !!e.rehearsal,
+    // #101 log-replay marker — a rehearsal fire produced by walking an old log
+    // through the real pipeline (distinct from an interactive Rehearse click).
+    replay:     !!e.replay,
     // Stopped short = didn't reach dispatch. Drives the ✓/✗ column colour.
     stopped:    e.stopped != null ? !!e.stopped : (cp < TJ.DISPATCHED),
   });
@@ -25922,6 +26098,11 @@ function _fireTriggerActions(t, captures, tsMs, test, isRelay) {
       // Optional + backward-compatible: old agents ignore the field entirely.
       if (t.sticky || a.sticky) overlay.sticky = true;
       if (t._rehearsal) overlay.rehearsal = true;
+      // #101 — mark overlays produced by a log replay so the UI can badge them
+      // with a ⏪ tag (a replay fire is ALSO a rehearsal, so `rehearsal` is set
+      // too — an overlay that only knows the older flag still shows it as a
+      // rehearsal, never as a live callout).
+      if (t._replay) overlay.replay = true;
       _pushOverlay(overlay);
       _dispatched = true;
       console.log(`[trigger${test ? (t._rehearsal ? ':rehearsal' : ':test') : ':' + (t._scope || '?')}] ${t.name} → ${text}`);
@@ -26048,6 +26229,210 @@ function _fireTriggerActions(t, captures, tsMs, test, isRelay) {
       reason:    _actionsBuilt === 0 ? 'no actions on trigger' : null,
     });
   }
+}
+
+// ── #101 Log replay ─────────────────────────────────────────────────────────
+// Walk a slice of an existing log file (a fight, or an arbitrary timeframe)
+// back through the REAL trigger pipeline — same regex exec, cooldown +
+// charm-pet suppression, the same _fireTriggerActions dispatch that speaks the
+// TTS and paints the overlay — but flagged as a rehearsal end to end. The #76
+// rehearsal contract is the law here:
+//   • every fire runs _fireTriggerActions(..., test=true) → NOTHING lands in
+//     _fireLog, no relay, no Discord, no upload queue, no timeline capture;
+//   • the REAL cooldown map (_triggerLastFire) is never touched — replay keeps
+//     its own ephemeral cooldown map so the walk still SOUNDS like the fight
+//     (a 30s-cooldown callout doesn't machine-gun) without consuming live
+//     state;
+//   • each fire is journalled with a `replay` marker + a ⏪ overlay tag so the
+//     run is reviewable and nobody mistakes a replay callout for a live one.
+// This is deliberately NOT a DVR: one replay at a time, refused while a live
+// fight is in progress (same signal the update gate uses), bounded line cap.
+const REPLAY_LINE_CAP    = 20000;   // most windowed trigger-visible lines we play
+const REPLAY_MAX_GAP_MS  = 6000;    // real-time pacing caps idle gaps so lulls don't stall
+const REPLAY_FAST_GAP_MS = 550;     // fast pacing: fixed pause AFTER a fire so each TTS is audible
+const _sleep = (ms) => new Promise((r) => setTimeout(r, Math.max(0, ms | 0)));
+
+// Live-fight signal — mirrors the fight branch of _updateBlockedReason() so a
+// replay can't fire ⏪ callouts on top of a real fight's live callouts.
+function _liveFightActive() {
+  const et = stats.currentEncounterThreat;
+  return !!(et && !et.flushedAt);
+}
+
+// Singleton replay status. `stop` is the cooperative-cancel flag the STOP
+// button flips; the worker checks it between lines.
+let _replayState = { running: false };
+
+function _replayStateForWeb() {
+  const st = _replayState;
+  if (!st || !st.running && !st.done) return { running: false };
+  return {
+    running:   !!st.running,
+    done:      !!st.done,
+    stopped:   !!st.stop,
+    pace:      st.pace || 'real',
+    logLabel:  st.logLabel || null,
+    scanned:   st.scanned || 0,
+    total:     st.total || 0,
+    played:    st.played || 0,
+    fired:     st.fired || 0,
+    error:     st.error || null,
+    startedAt: st.startedAt || 0,
+  };
+}
+
+// Per-line replay evaluator — a rehearsal-flavoured evaluateTriggersAgainstLine.
+// Drives EACH matching trigger through pattern exec → charm-pet suppression →
+// cooldown (against the local ctx map, NOT _triggerLastFire) → the real action
+// dispatch as a rehearsal. Returns true if any trigger fired on this line.
+function _replayEvaluateLine(line, tsMs, ctx) {
+  const all = [..._personalTriggers, ...(stats.guildTriggers || [])];
+  if (all.length === 0) return false;
+  let firedAny = false;
+  for (const t of all) {
+    if (!t._regex) continue;   // gauge-condition triggers have no log line to replay
+    let m;
+    try { m = t._regex.exec(line); } catch { continue; }
+    if (!m) continue;
+    const captures = m.groups || {};
+    // Suppression — mirror the live pipeline (evaluate AND enforce), journalled
+    // as a replay row so a swallowed callout is visible in the checkpoint log.
+    if (_captureMatchesCharmPet(captures)) {
+      _journalTrigger({ trigger: t.name, scope: 'replay', checkpoint: TJ.MATCHED,
+                        stopped: true, replay: true,
+                        reason: 'replay — suppressed (capture is your charm pet)' });
+      continue;
+    }
+    // Cooldown — evaluated against the ephemeral REPLAY map so the walk is
+    // faithful, but the real _triggerLastFire is never read or written.
+    if (t.cooldown_seconds && t.cooldown_seconds > 0) {
+      const key  = t.id || t.name;
+      const last = ctx.cooldowns.get(key) || 0;
+      if (tsMs - last < t.cooldown_seconds * 1000) {
+        _journalTrigger({ trigger: t.name, scope: 'replay', checkpoint: TJ.GATES,
+                          stopped: true, replay: true,
+                          reason: 'replay — on cooldown (' + Math.ceil((t.cooldown_seconds * 1000 - (tsMs - last)) / 1000) + 's left)' });
+        continue;
+      }
+      ctx.cooldowns.set(key, tsMs);
+    }
+    // Dispatch the action tail through the SAME handler a live fire uses, marked
+    // test=true (no _fireLog/relay/upload) + _rehearsal + _replay (⏪ overlay,
+    // spoken). _noJournal suppresses the handler's own row — we write one below.
+    const rt = Object.assign({}, t, { _scope: 'replay', _rehearsal: true, _replay: true, _noJournal: true });
+    _fireTriggerActions(rt, captures, tsMs, true);
+    _journalTrigger({ trigger: t.name, scope: 'replay', checkpoint: TJ.DISPATCHED,
+                      stopped: false, rehearsal: true, replay: true,
+                      reason: 'replay — fired (rehearsal; cooldown local, live state untouched)' });
+    firedAny = true;
+  }
+  return firedAny;
+}
+
+// Background worker: collect the windowed, trigger-visible lines, then play
+// them back at the requested pace. Updates _replayState as it goes; the
+// dashboard reads that via /api/state.
+async function _replayWorker(st) {
+  // 1. Collect. Read from byte 0, keep only lines whose parsed timestamp falls
+  //    in [fromMs, toMs] AND pass triggerVisibleLine() (exactly the live tail's
+  //    trigger gate). Stop early once we've walked past the window — logs are
+  //    chronological, so there's no reason to read the rest of a huge file.
+  const lines = [];
+  let past = false;
+  let lastTs = null;
+  let scanned = 0;
+  await readFromBytePos(st.logPath, 0,
+    (raw) => {
+      const d = parseEqTimestamp(raw);
+      if (d) lastTs = d.getTime();
+      const tsMs = d ? d.getTime() : lastTs;   // lines without their own stamp inherit the last one
+      if (tsMs == null) return;
+      if (tsMs < st.fromMs) return;
+      if (tsMs > st.toMs) { past = true; return; }
+      scanned++;
+      if (triggerVisibleLine(raw) && lines.length < REPLAY_LINE_CAP) {
+        lines.push({ raw, tsMs });
+      }
+    },
+    null,
+    () => past || st.stop || lines.length >= REPLAY_LINE_CAP,
+  );
+  st.scanned = scanned;
+  st.total   = lines.length;
+  scheduleRender();
+
+  // 2. Paced playback through the rehearsal evaluator.
+  const ctx = { cooldowns: new Map() };
+  let prevTs = null;
+  for (let i = 0; i < lines.length; i++) {
+    if (st.stop) break;
+    const { raw, tsMs } = lines[i];
+    // Real-time: wait the true gap since the previous PLAYED line (capped so a
+    // long lull compresses). Fast: no pre-gap — the pause rides AFTER a fire.
+    if (i > 0 && st.pace === 'real') {
+      const gap = Math.max(0, Math.min(REPLAY_MAX_GAP_MS, tsMs - (prevTs != null ? prevTs : tsMs)));
+      if (gap > 0) await _sleep(gap);
+      if (st.stop) break;
+    }
+    const fired = _replayEvaluateLine(raw, tsMs, ctx);
+    st.played = i + 1;
+    if (fired) {
+      st.fired++;
+      scheduleRender();
+      if (st.pace === 'fast') await _sleep(REPLAY_FAST_GAP_MS);
+    }
+    prevTs = tsMs;
+  }
+  st.done    = true;
+  st.running = false;
+  scheduleRender();
+}
+
+// Start a replay. Synchronous guards (single-instance + live-fight refusal +
+// path/time validation) run BEFORE any await so a second call races cleanly;
+// the actual walk runs detached. Returns { ok, ... } for the HTTP route; the
+// worker promise is stashed on st._done for the test fixture to await.
+function startReplay(opts) {
+  opts = opts || {};
+  if (_replayState.running) {
+    return { ok: false, error: 'A replay is already running — stop it first.' };
+  }
+  if (_liveFightActive()) {
+    return { ok: false, error: 'A live fight is in progress — replay is blocked so it can\'t be mistaken for a live callout. Try again after the fight.' };
+  }
+  const logPath = String(opts.logPath || '');
+  // Only replay a KNOWN log — the dashboard is localhost, but we still refuse
+  // arbitrary filesystem reads: the path must be one the agent already watches.
+  const known = (stats.watchedLogs || []).find((w) => w && w.logPath === logPath);
+  if (!known) {
+    return { ok: false, error: 'Unknown log file — pick one of the watched logs.' };
+  }
+  const fromMs = Number(opts.fromMs);
+  const toMs   = Number(opts.toMs);
+  if (!Number.isFinite(fromMs) || !Number.isFinite(toMs) || !(toMs > fromMs)) {
+    return { ok: false, error: 'Bad time range — "to" must be after "from".' };
+  }
+  const pace = opts.pace === 'fast' ? 'fast' : 'real';
+  const st = {
+    running: true, stop: false, done: false, error: null,
+    logPath, logLabel: known.character || logPath, fromMs, toMs, pace,
+    startedAt: Date.now(), scanned: 0, total: 0, played: 0, fired: 0,
+  };
+  _replayState = st;
+  st._done = _replayWorker(st).catch((err) => {
+    st.error = String((err && err.message) || err);
+    st.running = false;
+    st.done = true;
+    scheduleRender();
+  });
+  scheduleRender();
+  return { ok: true, started: true, pace };
+}
+
+function stopReplay() {
+  if (!_replayState || !_replayState.running) return { ok: true, stopped: false };
+  _replayState.stop = true;
+  return { ok: true, stopped: true };
 }
 
 // Transition a single backfill request via the bot's
@@ -27305,6 +27690,13 @@ module.exports = {
   _setOpendkpAuthForTest: (a) => { _opendkpAuth = a; },
   _getBidFamilyForTest: () => _bidFamily,
   _getPlannedBidsForTest: () => _plannedBids,
+  // #101 log-replay — exported for the scratchpad fixture.
+  startReplay, stopReplay, _replayEvaluateLine, _liveFightActive,
+  _fireLog, _triggerJournal, _triggerLastFire,
+  _getReplayStateForTest: () => _replayStateForWeb(),
+  _setPersonalTriggersForTest: (arr) => { _personalTriggers = arr; },
+  _setWatchedLogsForTest: (arr) => { stats.watchedLogs = arr; },
+  _uploadQueueLenForTest: () => _uploadQueue.length,
 };
 
 if (require.main === module) {
