@@ -12478,15 +12478,18 @@ function renderAdmin(s) {
   // 📡 Reporters (#115) — filled by renderReporters (its own placeholder so the
   // swap/include controls survive #admin repaints; officer-gated on the data).
   h += '<div id="wpReporters" class="card wide" style="display:none"></div>';
+  // 🛑 Kill switches (#118) — filled by renderKillSwitches (own placeholder so the
+  // toggles + arm-confirm survive #admin repaints; officer-gated on the data).
+  h += '<div id="wpKillSwitches" class="card wide" style="display:none"></div>';
   // Quick links to the web admin surfaces.
   h += '<div class="card wide"><h2>🔗 Web admin <span class="dim" style="font-size:11px;font-weight:normal">— opens on wolfpack.quest (officer-gated there too)</span></h2>'
     + '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px">'
-    + lk('/admin/overlays', '🎚 Overlays / kill switches', 'raid_hold + flag_shed toggles, overlay tuning knobs')
+    + lk('/admin/overlays', '🎚 Overlay tuning knobs', 'the free-form numeric knobs (ext/off-heal/CH) — kill switches are now in the card above')
     + lk('/admin/triggers', '⚡ Triggers', 'promote / edit guild triggers')
     + lk('/admin/encounters', '📊 Encounters', 'review + merge parses')
     + lk('/admin', '🛡 Admin home', 'links, agents, members, audit')
     + '</div>'
-    + '<div class="dim" style="font-size:10px;margin-top:10px">Raid-night flags (<b>raid_hold</b>, <b>flag_shed</b>) are set on <b>/admin/overlays</b> and polled fleet-wide within ~90s. A local one-click quick-flip needs an officer-authed agent write endpoint that does not exist yet — tracked as a follow-up.</div>'
+    + '<div class="dim" style="font-size:10px;margin-top:10px">The <b>🛑 Kill switches</b> card above flips the whitelisted control-plane flags right here (officer-authed, ~60s fleet-wide). The free-form numeric knobs (Extended Target / off-heal / CH) stay on <b>/admin/overlays</b>.</div>'
     + '</div>';
   morphInto(sec, h);
 }
@@ -12577,7 +12580,18 @@ function renderReporters(s) {
   // Fleet table — collapsed by default (wpKeep persists open-state across repaints).
   h += '<details ' + wpKeep('wpRepFleet') + ' style="margin-top:4px">';
   h += '<summary style="cursor:pointer;font-size:12px">Live fleet (' + reps.length + ')</summary>';
-  h += '<table style="margin-top:4px"><tr><th>Character</th><th>Zone</th><th>Grp</th><th>Ver</th><th>Log</th><th>Seen</th></tr>';
+  // Column legend (#118) — explains the fresh/stale dot, the agent/Mimic VER
+  // pairing, and the last-log-line staleness signal the election demotes on.
+  h += '<div class="dim" style="font-size:10px;margin:4px 0 2px;line-height:1.5">'
+    + '<span style="color:var(--green)">●</span> fresh · <span style="color:var(--red)">○</span> stale '
+    + '(last log line older than the liveness threshold — demoted from elections). '
+    + '<b>Ver</b> = agent/Mimic (<b>—</b> = standalone Parser.bat, no shell). '
+    + '<b>Log</b> = time since this agent last saw a live log line. '
+    + '<b>Seen</b> = since its last heartbeat.</div>';
+  h += '<table style="margin-top:2px"><tr><th>Character</th><th>Zone</th><th>Grp</th>'
+    + '<th title="agent version / Mimic shell version">Ver</th>'
+    + '<th title="time since this agent last saw a live log line — stale agents are demoted from elections">Log</th>'
+    + '<th title="time since this agent last heartbeated">Seen</th></tr>';
   for (var ri = 0; ri < reps.length; ri++) {
     var r = reps[ri];
     var freshDot = r.fresh ? '<span style="color:var(--green)">●</span>' : '<span style="color:var(--red)">○</span>';
@@ -12585,7 +12599,7 @@ function renderReporters(s) {
     h += '<tr><td>' + freshDot + ' <span class="name">' + esc(r.character || '?') + '</span>' + camp + '</td>'
       + '<td class="dim">' + esc(r.zone || '—') + '</td>'
       + '<td class="dim">' + (r.group_num == null ? '—' : r.group_num) + '</td>'
-      + '<td class="dim">' + esc(r.agent_version || '—') + '</td>'
+      + '<td class="dim">' + esc(r.agent_version || '—') + '/' + esc(r.mimic_version || '—') + '</td>'
       + '<td class="dim">' + _wpDur(r.last_line_age_ms) + '</td>'
       + '<td class="dim">' + _wpDur(r.last_seen_age_ms) + '</td></tr>';
   }
@@ -12634,6 +12648,198 @@ document.addEventListener('click', function (ev) {
   if (clrBtn) {
     var svc2 = clrBtn.getAttribute('data-service');
     _wpReporterOverride(svc2, { pin: '', extra: '' });
+    return;
+  }
+}, true);
+
+// ── 🛑 Kill switches (#118) — officer-only control-plane flag toggles ─────────
+// Mirrors the /admin/overlays 🛑 kill-switches section INSIDE Mimic so an officer
+// can flip a whitelisted control-plane flag mid-raid without opening the web admin.
+// Each flag&rsquo;s LIVE value is read from s.overlayTuning (the tuning the agent
+// already polls, ~90s); writes go to POST /api/server/flag-override → the bot&rsquo;s
+// officer-authed + WHITELISTED /api/agent/flag-override. Optimistic: a confirmed
+// write pins the returned value locally until the next poll reconciles. Officer-
+// gated on the DATA (the bot is_officer reply, same gate the DKP/Reporters cards
+// use) — a non-officer never sees the card. flag_agent_kill needs a typed inline
+// confirm before it writes (it pauses the ENTIRE fleet).
+// VALUE SEMANTICS MUST MATCH THE BOT: dedup_chat defaults ON (Number(v)!==0);
+// every other flag is Number(v)>=1. Writes send explicit 0|1 (never delete) so a
+// dedup_chat-off state persists.
+var WP_KILL_FLAGS = [
+  { key: 'flag_disable_reporter_election', label: 'Disable reporter election (#72)',
+    desc: 'Turns OFF designated-reporter de-duplication — every agent uploads chat/buffs/roster again, exactly like before the feature. Fail-open regardless; flip only if the election ever misbehaves.' },
+  { key: 'dedup_chat', label: 'Chat dedup — one reporter/zone uploads /gu·/rs (default on)', defaultOn: true,
+    desc: 'When on, one live reporter per occupied zone uploads guild + raidsay; the rest stand down. Fail-open (any agent that loses the bot uploads everything).',
+    hint: 'Currently held OFF (0) since the 2026-07-19 chat blackout — re-enable only once the whole fleet is on agent ≥3.3.91 (BETA-TESTING #112).' },
+  { key: 'dedup_buffs', label: 'Buff dedup — thin buff_casts to 3 reporters/zone (default off)',
+    desc: 'When on, only the ~3 best-coverage agents per zone upload ordinary observed buff landings; the rest stand down. Charm timers always upload. Fail-open.' },
+  { key: 'dedup_roster', label: 'Roster dedup — 1 reporter per group (default off)',
+    desc: 'When on, exactly ONE agent per raid group uploads the Zeal roster snapshot; the rest stand down (an agent with no raid/Zeal is its own group and always uploads). Fail-open.' },
+  { key: 'flag_raid_hold', label: 'Raid hold — defer agent file work during raids',
+    desc: 'ON forces raid-hold on (off-schedule raid) — agents defer gear/spellbook/crash scans AND hot-swaps until it lifts. OFF forces it off. To return to the automatic Sun/Wed/Thu schedule (unset), clear it on /admin/overlays.' },
+  { key: 'flag_shed_live_state', label: 'Shed: live-state stream', danger: true,
+    desc: 'Mid-raid load-shed — the bot 200-acks and DROPS the character live-state stream (buffs/zone). Overlays needing it go stale until cleared. Emergency use only.' },
+  { key: 'flag_shed_raid_roster', label: 'Shed: raid-roster stream', danger: true,
+    desc: 'Drops the Zeal raid-roster stream — the /raid board + cross-client HP go stale. Emergency use only.' },
+  { key: 'flag_shed_casting', label: 'Shed: casting relay', danger: true,
+    desc: 'Drops the cross-client cast relay — Mob Info who-is-casting goes stale. Emergency use only.' },
+  { key: 'flag_shed_threat_snapshot', label: 'Shed: threat snapshot', danger: true,
+    desc: 'Drops the threat-snapshot stream. Emergency use only.' },
+  { key: 'flag_shed_buff_casts', label: 'Shed: buff_casts stream', danger: true,
+    desc: 'Drops observed buff landings (already (N-1)/N duplicate + election-deduped). Mob Info buffs-on-target + charm/pet trackers go stale. Emergency use only.' },
+  { key: 'flag_shed_pvp', label: 'Shed: PvP broadcasts + /who harvest', danger: true,
+    desc: 'Drops the PvP kill/death relay AND the /who-harvest that rides it. PvP board + who directory stop refreshing. Emergency use only.' },
+  { key: 'flag_shed_pvp_assists', label: 'Shed: PvP assist credit', danger: true,
+    desc: 'Drops the PvP assist stream — assist credit stops accruing. Emergency use only.' },
+  { key: 'flag_shed_fun_event', label: 'Shed: fun events', danger: true,
+    desc: 'Drops fun-event counters (LD/CoH/DI…). Cosmetic — emergency use only.' },
+  { key: 'flag_shed_trigger_relay', label: 'Shed: trigger relay fan-out', danger: true,
+    desc: 'Drops the cross-client trigger-fire fan-out (recent-fires replay). Local callouts still fire; only the replay path stops. Emergency use only.' },
+  { key: 'flag_shed_ui_layout', label: 'Shed: UI Studio backups', danger: true,
+    desc: 'Drops encrypted EQ ini-file snapshot uploads. Backups pause; nothing live is affected. Emergency use only.' },
+  { key: 'flag_shed_tells', label: 'Shed: tell relay', danger: true,
+    desc: 'Drops the opt-in tell-history relay. Emergency use only.' },
+  { key: 'flag_disable_budgets', label: 'Disable admission-control budgets (#73)', danger: true,
+    desc: 'Kill switch for the per-uploader ingest budgets — uploads stop being 429-throttled fleet-wide. Emergency use only.' },
+  { key: 'flag_agent_kill', label: '☠ AGENT KILL — pause the ENTIRE fleet', danger: true,
+    desc: 'Fleet-wide dormancy (#74). Every agent stops ALL uploads + non-control polls and goes quiet, keeping only its 20s heartbeat so recovery is instant. The durable queue HOLDS (nothing dropped) and overlays keep working on each machine&rsquo;s LOCAL data. Clearing resumes the fleet within one heartbeat.' },
+];
+// Optimistic write cache: key → { v, at }. A confirmed flag-override response pins
+// its value here so the toggle reflects the change before the ~90s tuning poll
+// catches up; reconciled/expired in renderKillSwitches.
+var _wpKill = { local: {}, arm: false };
+function _wpKillFlagFor(key) { for (var i = 0; i < WP_KILL_FLAGS.length; i++) if (WP_KILL_FLAGS[i].key === key) return WP_KILL_FLAGS[i]; return null; }
+function _wpKillRawVal(key, tuning) { return (key in _wpKill.local) ? _wpKill.local[key].v : (tuning ? tuning[key] : undefined); }
+function _wpFlagIsOn(flag, tuning) {
+  var v = _wpKillRawVal(flag.key, tuning);
+  return flag.defaultOn ? (Number(v) !== 0) : (Number(v) >= 1);   // matches the bot&rsquo;s coercion
+}
+function _wpFlagOverride(key, value, okMsg) {
+  var msg = document.getElementById('wpKillMsg');
+  if (msg) msg.textContent = 'saving…';
+  fetch('/api/server/flag-override', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key: key, value: value }) })
+    .then(function (r) { return r.json(); }).then(function (j) {
+      if (j && j.ok) {
+        _wpKill.local[key] = { v: j.value, at: Date.now() };   // pin the bot-confirmed value
+        if (msg) msg.textContent = okMsg || ('✓ saved — ' + key + ' = ' + (j.value == null ? 'unset' : j.value) + ' · fleet honors within ~60s');
+      } else if (msg) { msg.textContent = '✕ ' + ((j && (j.reason || j.error)) || 'failed'); }
+    }).catch(function () { if (msg) msg.textContent = '✕ engine unreachable'; });
+}
+function renderKillSwitches(s) {
+  var sec = document.getElementById('wpKillSwitches');
+  if (!sec) return;
+  var isOfficer = !!(s.mimicIdentity && s.mimicIdentity.is_officer);
+  if (!isOfficer) { if (sec.style.display !== 'none') sec.style.display = 'none'; morphInto(sec, ''); return; }
+  if (sec.style.display === 'none') sec.style.display = '';
+  var tuning = s.overlayTuning || {};
+  // Reconcile optimistic locals: drop each once the polled tuning agrees, or after
+  // 150s as a safety (keeps the card honest without a per-write refresh endpoint).
+  var nowT = Date.now();
+  for (var lkk in _wpKill.local) {
+    var loc = _wpKill.local[lkk];
+    if (!loc || nowT - loc.at > 150000) { delete _wpKill.local[lkk]; continue; }
+    if (lkk === 'min_agent_ver_num') {
+      var tf = Number(tuning[lkk]); tf = (isFinite(tf) && tf > 0) ? Math.floor(tf) : null;
+      if (tf === (loc.v == null ? null : Number(loc.v))) delete _wpKill.local[lkk];
+    } else {
+      var flr = _wpKillFlagFor(lkk);
+      var onLoc = (flr && flr.defaultOn) ? (Number(loc.v) !== 0) : (Number(loc.v) >= 1);
+      var onTun = (flr && flr.defaultOn) ? (Number(tuning[lkk]) !== 0) : (Number(tuning[lkk]) >= 1);
+      if (onLoc === onTun) delete _wpKill.local[lkk];
+    }
+  }
+  var h = '<h2>🛑 Kill switches <span class="dim" style="font-size:11px;font-weight:normal">— control-plane flags · officer · ~60s fleet-wide</span></h2>';
+  h += '<div class="dim" style="font-size:11px;margin-bottom:7px">Live values from the tuning this agent polls. One click writes to the bot immediately (officer-authed + whitelisted); the fleet honors it within ~60s. Leave everything off in normal operation. The free-form numeric knobs stay on /admin/overlays.</div>';
+  for (var i = 0; i < WP_KILL_FLAGS.length; i++) {
+    var fl = WP_KILL_FLAGS[i];
+    if (fl.key === 'flag_agent_kill') { h += _wpKillAgentKillRow(fl, tuning); continue; }
+    var on = _wpFlagIsOn(fl, tuning);
+    var pend = (fl.key in _wpKill.local);
+    var border = fl.danger ? 'rgba(248,81,73,0.35)' : 'var(--border)';
+    h += '<div style="border:1px solid ' + border + ';border-radius:6px;padding:7px 10px;margin-bottom:6px">';
+    h += '<div style="display:flex;gap:8px;align-items:center;justify-content:space-between">';
+    h += '<div style="min-width:0"><b style="font-size:12px' + (fl.danger ? ';color:var(--red)' : '') + '">' + esc(fl.label) + '</b> <code class="dim" style="font-size:10px">' + esc(fl.key) + '</code>'
+       + (on ? ' <span style="font-size:10px;padding:1px 5px;border-radius:3px;background:rgba(248,81,73,0.18);color:var(--red);border:1px solid rgba(248,81,73,0.4)">ON</span>' : '')
+       + (pend ? ' <span class="dim" style="font-size:10px">(saving…)</span>' : '') + '</div>';
+    h += '<button type="button" class="wpKillToggle" data-key="' + esc(fl.key) + '" data-next="' + (on ? '0' : '1') + '" style="flex:none;font-size:11px;padding:3px 11px;cursor:pointer;border:1px solid var(--border);border-radius:4px;background:' + (on ? '#3d1414' : '#21262d') + ';color:' + (on ? 'var(--red)' : 'var(--text)') + '">' + (on ? 'Turn OFF' : 'Turn ON') + '</button>';
+    h += '</div>';
+    h += '<div class="dim" style="font-size:11px;line-height:1.45;margin-top:3px">' + esc(fl.desc) + (fl.hint ? ' <span style="color:var(--gold)">' + esc(fl.hint) + '</span>' : '') + '</div>';
+    h += '</div>';
+  }
+  h += _wpKillVersionFloorRow(tuning);
+  h += '<div id="wpKillMsg" class="dim" style="font-size:11px;min-height:14px;margin-top:2px"></div>';
+  morphInto(sec, h);
+}
+function _wpKillAgentKillRow(fl, tuning) {
+  var on = Number(_wpKillRawVal('flag_agent_kill', tuning)) >= 1;
+  var pend = ('flag_agent_kill' in _wpKill.local);
+  var h = '<div style="border:1px solid rgba(248,81,73,0.55);border-radius:6px;padding:8px 10px;margin-bottom:6px;background:rgba(248,81,73,0.06)">';
+  h += '<div style="display:flex;gap:8px;align-items:center;justify-content:space-between">';
+  h += '<div style="min-width:0"><b style="font-size:12px;color:var(--red)">' + esc(fl.label) + '</b> <code class="dim" style="font-size:10px">flag_agent_kill</code>'
+     + (on ? ' <span style="font-size:10px;padding:1px 5px;border-radius:3px;background:rgba(248,81,73,0.25);color:var(--red);border:1px solid rgba(248,81,73,0.5)">FLEET DORMANT</span>' : '')
+     + (pend ? ' <span class="dim" style="font-size:10px">(saving…)</span>' : '') + '</div>';
+  if (on) {
+    h += '<button type="button" class="wpKillResume" style="flex:none;font-size:11px;padding:3px 11px;cursor:pointer;border:1px solid var(--green);border-radius:4px;background:#0f2a16;color:var(--green)">Resume fleet</button>';
+  } else if (_wpKill.arm) {
+    h += '<span class="dim" style="flex:none;font-size:10px">confirm below ↓</span>';
+  } else {
+    h += '<button type="button" class="wpKillArm" style="flex:none;font-size:11px;padding:3px 11px;cursor:pointer;border:1px solid var(--red);border-radius:4px;background:#3d1414;color:var(--red)">Arm fleet kill…</button>';
+  }
+  h += '</div>';
+  h += '<div class="dim" style="font-size:11px;line-height:1.45;margin-top:3px">' + esc(fl.desc) + '</div>';
+  if (!on && _wpKill.arm) {
+    h += '<div style="margin-top:6px;padding:7px;border:1px dashed var(--red);border-radius:5px">';
+    h += '<div style="font-size:11px;color:var(--red);margin-bottom:5px">⚠ This pauses EVERY agent&rsquo;s uploads fleet-wide. Type <b>KILL</b> to confirm.</div>';
+    h += '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">';
+    h += '<input id="wpKillConfirmInput" placeholder="KILL" style="font-size:11px;padding:3px 6px;background:#161b22;color:var(--text);border:1px solid var(--red);border-radius:4px;width:90px">';
+    h += '<button type="button" class="wpKillConfirm" style="font-size:11px;padding:3px 11px;cursor:pointer;border:1px solid var(--red);border-radius:4px;background:#3d1414;color:var(--red)">Confirm kill</button>';
+    h += '<button type="button" class="wpKillCancel" style="font-size:11px;padding:3px 9px;cursor:pointer;border:1px solid var(--border);border-radius:4px;background:#21262d;color:var(--text)">Cancel</button>';
+    h += '</div></div>';
+  }
+  h += '</div>';
+  return h;
+}
+function _wpKillVersionFloorRow(tuning) {
+  var raw = _wpKillRawVal('min_agent_ver_num', tuning);
+  var cur = Number(raw); cur = (isFinite(cur) && cur > 0) ? Math.floor(cur) : null;
+  var pend = ('min_agent_ver_num' in _wpKill.local);
+  var h = '<div style="border:1px solid var(--border);border-radius:6px;padding:7px 10px;margin-bottom:6px">';
+  h += '<div><b style="font-size:12px">Minimum agent version</b> <code class="dim" style="font-size:10px">min_agent_ver_num</code>'
+     + (cur != null ? ' <span style="font-size:10px;padding:1px 5px;border-radius:3px;background:rgba(248,81,73,0.18);color:var(--red);border:1px solid rgba(248,81,73,0.4)">floor ' + cur + '</span>' : ' <span class="dim" style="font-size:10px">unset</span>')
+     + (pend ? ' <span class="dim" style="font-size:10px">(saving…)</span>' : '') + '</div>';
+  h += '<div class="dim" style="font-size:11px;line-height:1.45;margin-top:3px">Numeric version form (major×10000 + minor×100 + patch), e.g. agent 3.3.95 → 30395. Agents below the floor pause uploads like the kill switch and show an update nudge. Set 0 (or blank) to clear the floor. Conservative — coordinate with Hitya.</div>';
+  h += '<div style="display:flex;gap:6px;align-items:center;margin-top:5px">';
+  h += '<input id="wpKillVerInput" type="number" min="0" step="1" placeholder="' + (cur != null ? cur : 'unset') + '" style="font-size:11px;padding:3px 6px;background:#161b22;color:var(--text);border:1px solid var(--border);border-radius:4px;width:120px">';
+  h += '<button type="button" class="wpKillVerSet" style="font-size:11px;padding:3px 11px;cursor:pointer;border:1px solid var(--border);border-radius:4px;background:#21262d;color:var(--text)">Set floor</button>';
+  h += '</div></div>';
+  return h;
+}
+// 🛑 Kill-switch controls — delegated (capture) so #admin repaints never lose the
+// handlers. A toggle writes 0|1; agent-kill is arm → typed-KILL → confirm.
+document.addEventListener('click', function (ev) {
+  var t = ev.target; if (!t || !t.closest) return;
+  var tog = t.closest('.wpKillToggle');
+  if (tog) { _wpFlagOverride(tog.getAttribute('data-key'), (Number(tog.getAttribute('data-next')) >= 1 ? 1 : 0)); return; }
+  if (t.closest('.wpKillArm'))    { _wpKill.arm = true;  var mA = document.getElementById('wpKillMsg'); if (mA) mA.textContent = ''; return; }
+  if (t.closest('.wpKillCancel')) { _wpKill.arm = false; return; }
+  if (t.closest('.wpKillConfirm')) {
+    var inp = document.getElementById('wpKillConfirmInput');
+    var typed = (inp && inp.value ? inp.value : '').trim().toUpperCase();
+    var m = document.getElementById('wpKillMsg');
+    if (typed !== 'KILL') { if (m) m.textContent = 'type KILL to confirm the fleet-wide kill'; return; }
+    _wpKill.arm = false;
+    _wpFlagOverride('flag_agent_kill', 1, '☠ FLEET KILL SENT — every agent pauses uploads within one heartbeat. Clear it to resume.');
+    return;
+  }
+  if (t.closest('.wpKillResume')) { _wpFlagOverride('flag_agent_kill', 0, '✓ resume sent — the fleet resumes uploads within one heartbeat'); return; }
+  if (t.closest('.wpKillVerSet')) {
+    var vinp = document.getElementById('wpKillVerInput');
+    var rawv = (vinp && vinp.value ? vinp.value : '').trim();
+    var n = rawv === '' ? 0 : Number(rawv);
+    var mv = document.getElementById('wpKillMsg');
+    if (!isFinite(n) || n < 0) { if (mv) mv.textContent = 'enter a whole number (or 0 to clear the floor)'; return; }
+    _wpFlagOverride('min_agent_ver_num', Math.floor(n), (n > 0 ? '✓ version floor set to ' + Math.floor(n) : '✓ version floor cleared'));
+    if (vinp) vinp.value = '';
     return;
   }
 }, true);
@@ -13660,6 +13866,7 @@ async function refresh() {
                      ['dkptick', renderDkpTickCard],
                      ['dkploot', renderDkpLootCard],
                      ['reporters', renderReporters],
+                     ['killswitches', renderKillSwitches],
                      ['backupscard', renderBackupsCard]];
     for (var _si = 0; _si < _sections.length; _si++) {
       var _sid = _sections[_si][0], _sfn = _sections[_si][1];
@@ -16663,6 +16870,7 @@ function startWebDashboard(port) {
           const map = {
             'place-bid':         '/api/agent/place-bid',
             'reporter-override': '/api/agent/reporter-override',   // #115 officer election override (bot re-checks is_officer)
+            'flag-override':     '/api/agent/flag-override',       // #118 officer kill-switch flag flip (bot re-checks is_officer + whitelist)
           };
           const remotePath = map[action];
           if (!remotePath) {
@@ -20693,7 +20901,11 @@ function _reporterHeartbeatOnce() {
     const url = opts.botUrl.replace(/\/encounter(\?.*)?$/, '/reporter-poll');
     const u   = new URL(url);
     const mod = u.protocol === 'https:' ? https : http;
-    const body = JSON.stringify({ primary_character: primary, zone, group_num, camping: _camping, has_zeal, agent_version: AGENT_VERSION, last_line_ms });
+    // #118: the Mimic shell version, so the officer fleet table can show
+    // agent/mimic. Mimic stamps WOLFPACK_APP_VERSION at spawn (main.js);
+    // standalone Parser.bat installs have no such env → null.
+    const mimic_version = process.env.WOLFPACK_APP_VERSION || null;
+    const body = JSON.stringify({ primary_character: primary, zone, group_num, camping: _camping, has_zeal, agent_version: AGENT_VERSION, mimic_version, last_line_ms });
     const req = mod.request({
       method: 'POST', hostname: u.hostname, port: u.port, path: u.pathname,
       headers: {
