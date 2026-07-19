@@ -3969,6 +3969,74 @@ function trackRollLine(line, character) {
   }
 }
 
+// #91 — "You have looted" capture (who ACTUALLY loots). All raid loot is
+// no-drop, so on a re-roll or a pass the winner of the ROLL isn't always who
+// ends up with the item — the looter's OWN log is the only truth. The classic
+// EQ line is self-only (`--You have looted a <Item>.--`); no other player's
+// loot echoes into this log, so the looter is always this log's character. We
+// strip the leading "a "/"an " article so the item name lines up with the
+// loot-link roll convention for read-time attribution on the site.
+const _LOOTED_RX = /--You have looted (.+?)\.--/;
+const lootedBuffer   = [];         // pending { item, looter, zone, atMs }
+let   _lootedUploadHW = 0;         // high-water: last uploaded looted atMs
+const _lootedRecentFp = new Map(); // fp → atMs; drop the same loot re-seen quickly
+
+function trackLootedLine(line, character) {
+  if (!line || !character || line.indexOf('You have looted') === -1) return;   // cheap gate
+  const m = line.match(_LOOTED_RX);
+  if (!m) return;
+  const item = m[1].replace(/^an?\s+/i, '').trim();   // drop the "a "/"an " article
+  if (!item || item.length < 2) return;
+  const ts = parseEqTimestamp(line);
+  const atMs = ts ? ts.getTime() : Date.now();
+  const cl = String(character).toLowerCase();
+  // Restart/re-read dedup: the same character looting the same item within a few
+  // seconds is one loot re-seen (a tail re-read), not two distinct loots.
+  const fp = cl + '|' + item.toLowerCase() + '|' + Math.round(atMs / 1000);
+  const seen = _lootedRecentFp.get(fp);
+  if (seen && Math.abs(seen - atMs) < 10000) return;
+  _lootedRecentFp.set(fp, atMs);
+  if (_lootedRecentFp.size > 200) {
+    const cutoff = Date.now() - 60000;
+    for (const [k, v] of _lootedRecentFp) if (v < cutoff) _lootedRecentFp.delete(k);
+  }
+  let zone = null;
+  for (const ch of Object.keys(_zealState || {})) {
+    if (String(ch).toLowerCase() === cl) { zone = _zealState[ch].zone || null; break; }
+  }
+  lootedBuffer.push({
+    item:   item.slice(0, 64),
+    looter: String(character).slice(0, 32),
+    zone:   zone ? String(zone).slice(0, 64) : null,
+    atMs,
+  });
+  if (lootedBuffer.length > 200) lootedBuffer.splice(0, lootedBuffer.length - 200);
+}
+
+// Upload recently-looted items. Mirrors uploadRollSets' recency discipline:
+// only events newer than the high-water mark AND within the last 30 min go up,
+// so a `--since` backfill (which replays OLD-timestamped loot lines through the
+// same tail dispatch) never uploads — its atMs is far older than 30 min. The
+// bot upserts by (guild, looter, item, looted_at) so a restart re-read collapses.
+function uploadLooted() {
+  if (!_uploadOpts || _uploadOpts.dryRun || !_isUploaderInstance) return;
+  const now = Date.now();
+  const fresh = lootedBuffer.filter(e => e.atMs > _lootedUploadHW && (now - e.atMs) < 30 * 60 * 1000);
+  if (fresh.length > 0) {
+    _lootedUploadHW = Math.max(_lootedUploadHW, ...fresh.map(e => e.atMs));
+    enqueueUpload('looted', {
+      agent_version: AGENT_VERSION,
+      events: fresh.map(e => ({ item: e.item, looter: e.looter, zone: e.zone, at: new Date(e.atMs).toISOString() })),
+    });
+  }
+  // Bound the buffer — drop anything already uploaded or past the 30-min window
+  // (the HW mark prevents re-upload regardless of what stays).
+  for (let i = lootedBuffer.length - 1; i >= 0; i--) {
+    const e = lootedBuffer[i];
+    if (e.atMs <= _lootedUploadHW || (now - e.atMs) >= 30 * 60 * 1000) lootedBuffer.splice(i, 1);
+  }
+}
+
 // Loot-link lines in raid/guild chat: `Blue Resistance Stone 111| Boots of the
 // Ancients 222 | Primal Velium Battlehammer (3)333 | ...` — each |-separated
 // segment ends with that item's roll number, optionally preceded by (qty).
@@ -6855,6 +6923,7 @@ function _endpointForKind(kind, botUrl) {
     case 'threat_snapshot': return base + '/threat-snapshot';
     case 'raid_roster':     return base + '/raid-roster';
     case 'rolls':           return base + '/rolls';
+    case 'looted':          return base + '/looted';
     case 'trigger':         return base + '/trigger';
     case 'trigger_relay':   return base + '/trigger-relay';
     case 'quake':           return base + '/quake';
@@ -25938,6 +26007,7 @@ async function main() {
     fetchItemClickies({ botUrl, token }).catch(() => {});
     startReporterHeartbeat();   // #72 — poll the bot for our upload roles (fail-open)
     setInterval(() => { try { uploadRollSets(); } catch {} }, 60_000).unref();   // #91 off-night roll capture
+    setInterval(() => { try { uploadLooted(); } catch {} }, 60_000).unref();     // #91 looted-line capture
     // Re-fetch daily — the catalog only changes on the weekly upstream sync,
     // but a daily check is cheap (the bot serves a 304 if nothing changed)
     // and stops a long-running agent from drifting indefinitely.
@@ -26594,6 +26664,10 @@ async function main() {
         // /random rolls + the loot-link roll-number convention — feeds the
         // Command Center Rolls card + the dashboard roll table. Local-only.
         if (!_sourceExcluded) { try { trackRollLine(line, b.character); trackRollItemLine(line); } catch {} }
+        // #91 "You have looted" — the looter's own log is the only truth for
+        // who ends up with no-drop loot. Live tail only (the 30-min upload gate
+        // in uploadLooted keeps --since backfill from re-posting old loots).
+        if (!_sourceExcluded) { try { trackLootedLine(line, b.character); } catch {} }
         // Auto-Raid Invite lead — raid-leader + ARI-enabled self-lines → the
         // bot auto-sets /autoraidinvite to this character. Live tail only.
         if (!_sourceExcluded) { try { trackAriLeadLine(line, b.character); } catch {} }
