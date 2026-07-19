@@ -261,6 +261,21 @@ parity checklist in `CLAUDE.md` (✕ hide, ✥ move + context menu,
 hover-interact handshake, dashboard toggle row, visibility fn) — most beta
 bugs were a missing item from that list.
 
+### Setup & onboarding (EQ-config writer)
+First-run **gate** lives in `loading.html` (steps: sign-in-or-local-only → EQ
+folder configured → engine up; `cfg.onboarded` flips returning users straight
+to the dashboard). The **"Set up for me"** one-click EQ configurator is a
+SEPARATE thing from that gate: the writer is `_applyEqSetup()` in the AGENT
+(`packages/wolfpack-logsync/index.js`), exposed at **`POST /api/eq-setup`**, and
+it writes `Log=TRUE` (eqclient.ini) + `PipeVerbose`/`ExportOnCamp`/`PipeDelay`
+(zeal.ini) across every known EQ folder, guarded against EQ being open (it
+rewrites eqclient.ini on exit). Surfaced in TWO places, both calling that one
+writer: the **agent dashboard** (Zeal-health/Info card, same-origin fetch) and
+the **Mimic Settings page** (`settings.html` → `eqSetupForMe` IPC → `main.js`
+POSTs to the agent, so it can read the full result incl. the "EQ is running"
+warning — no CORS on the agent). Logging-off is also passively DETECTED +
+nudged (`/log on` hint) when a configured folder has no fresh logs.
+
 ### Zeal pipe bridge (`zealPipe.js`)
 tasklist → find eqgame PIDs → connect to Zeal's named pipe per PID → frames
 to the local agent. Types: log 0, label 1, gauge 2, player 3, custom 4,

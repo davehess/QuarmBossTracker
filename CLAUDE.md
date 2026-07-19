@@ -27,6 +27,19 @@ adjacent or unrelated code, stop and flag it before proceeding. (The
 13k-line `index.js` monolith makes "small line count" a poor proxy for "small
 blast radius" — reaching into unrelated behavior is a structural hazard here.)
 
+### Working rule — "do we already have X?" (answer from the index, not one grep)
+For any *does-this-exist / where-does-it-live* question, read
+**`docs/HOW-ITS-BUILT.md`** (the feature-by-feature index) FIRST — it maps every
+feature to its file + surface. A **"no, we don't have that" answer is the
+failure-prone direction**: never conclude it from a single file. A feature can
+live on any of FOUR surfaces and often spans several — the agent dashboard
+(`WEB_HTML` in `packages/wolfpack-logsync/index.js`), Mimic
+(`apps/mimic/*.html` + `main.js` + `preload.js`), the bot (`index.js` +
+`commands/` + `utils/`), and web (`web/`). Grep ALL of them (and the index)
+before saying "no." When a feature ships, add/refresh its `HOW-ITS-BUILT.md`
+entry so the index stays trustworthy — a stale index causes exactly the wrong
+"we don't have it" answer (the eqclient/zeal "Set up for me" miss, 2026-07-19).
+
 ---
 
 ## Release playbook
