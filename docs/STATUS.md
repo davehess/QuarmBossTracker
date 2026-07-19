@@ -65,6 +65,49 @@ folly** — it's here.*
 ## The work ledger
 
 ### ✅ Done — major shipped features (not exhaustive; see git + roadmapData.ts)
+- **#120 three raid-night field reports — DONE (2026-07-19, agent 3.3.98 beta;
+  Mimic parked 1.9.6; web 1.0.251 roadmap/docs). No bot/DB change.**
+  1. **CRITICAL — trigger TTS silent, NO Mimic entry in the Windows volume
+     mixer.** *Proven in-container:* dispatch is fully intact — suggested
+     templates materialize a `text_overlay` action that carries `tts` (or the
+     overlay falls back to `speak(text)`; `recentTriggerFires` maps
+     `tts:(o.tts||o.text)`), so "templates lack a tts action" is **ruled out**.
+     The whole path reaches `speechSynthesis.speak()` in `triggers.html`.
+     *Best-evidence root cause (Windows-only, NOT reproducible in the Linux
+     container — needs field confirmation):* the trigger overlay is a passive,
+     never-clicked window, so Chromium's **user-activation gate** silently drops
+     `speechSynthesis` (and `HTMLMediaElement.play()`) — exactly matching "no
+     audio stream ever opened → no mixer session." **Fix (two complementary,
+     both one-liners in `apps/mimic/main.js`):** (a) `app.commandLine.appendSwitch
+     ('autoplay-policy','no-user-gesture-required')` before `whenReady`; (b) grant
+     the trigger document a synthetic gesture via `webContents.executeJavaScript
+     ('void 0', true)` on `ready-to-show`. **Instrumentation (verifiable in
+     field):** the #76 journal only recorded checkpoint 5 "dispatched", which
+     could NOT distinguish dispatch from playback. Added **checkpoint 5b
+     (`TJ.PLAYBACK`)**: `triggers.html speak()` now attaches `onstart`/`onerror`
+     + a 2s silence timeout and POSTs the outcome to a new
+     `POST /api/triggers/playback`, journalled green "playback started" /
+     orange "playback FAILED (not-allowed/silent)". Rehearse (#76) runs the same
+     `speak()` path, so a silent machine fails loudly at rehearsal, not mid-raid.
+  2. **Triggers tab flashed every poll.** *Proven in-container* via a two-idle-
+     render byte-compare fixture: the inline "⚡ Recent fires" card carried
+     per-poll `fmtAgo`, so the section string differed every 2s → full rewrite
+     (guild table + editor remount). Moved to its own `#wpRecentFires`
+     placeholder + `renderRecentFires()` (same isolation pattern as
+     `wpTriggerJournal`/`wpZealCard`). Fixture now shows the `triggers` section
+     (and header/tanks/deeps/overlays/info) **byte-identical** across two 2s-apart
+     idle polls; only the isolated `wp*` cards repaint. Also dropped a stray
+     `class="name"` on the trigger-name cell (the character-link 404 trap).
+  3. **"Not signed in to Discord" banner flashed at signed-in users.** *Proven
+     in-container by tracing:* `mimicSignedIn` required token **AND** bot-confirmed
+     identity, so the agent-restart startup gap (token-less until Mimic re-pushes)
+     and any identity blip flashed the red banner; the intended "verifying" chip
+     branch was dead code (keyed on the identity-requiring flag). Added
+     `mimicHasToken` + `mimicSignedOutMs` (grace clock seeded at boot, reset on
+     `/api/mimic-session`); the header shows the red banner only after the
+     no-token state is sustained ≥8s, a calm blue **"Verifying…"** note when a
+     token is present but identity is unconfirmed, and the chip branch now keys on
+     `mimicHasToken`. See BETA-TESTING #120.
 - **#91 roll-loot review surface (remainder) — DONE end-to-end (2026-07-19,
   agent 3.3.97 beta + bot 3.0.219 + web 1.0.250 on main).** The capture half
   shipped a week ago (roll_sets since 3.3.78, Hot Dice PERFECT events since

@@ -20,6 +20,62 @@ raid; move it to STATUS.md's "Done" once graduated to stable.*
 
 ---
 
+## #120 — Trigger TTS actually makes sound + byte-stable Triggers tab + no false "not signed in" flash
+
+**Needs:** agent **3.3.98** (beta Mimic) + web **1.0.251** (roadmap/docs; live on
+Vercel). No bot change.
+
+**What changed (three raid-night field reports):**
+1. **Trigger voice callouts were silent on some machines** — the alert overlay
+   flashed but nothing spoke, and Windows' volume mixer never listed Mimic at
+   all (i.e. Chromium never opened an audio stream). Root cause: the trigger
+   overlay is a passive, never-clicked window, so Chromium's user-activation
+   gate silently blocked `speechSynthesis`. Mimic now relaxes that gate at
+   startup (`autoplay-policy` switch) **and** grants the overlay document a
+   synthetic user gesture, so speech + per-trigger sounds play. Dispatch was
+   never the problem (suggested templates DO carry a spoken action) — the break
+   was purely at playback. **Because this is a Windows-only Chromium condition
+   it could not be reproduced in the build container — it needs field
+   confirmation**, which the new instrumentation makes self-serve (below).
+2. **The dashboard Triggers tab flickered every ~2s** — the "⚡ Recent fires"
+   card was rendered inline with per-poll `fmtAgo` timestamps, so the whole
+   section (guild table + trigger editor + suggested list) rewrote every poll.
+   It now lives in its own `#wpRecentFires` placeholder card; the section HTML is
+   byte-stable when nothing changes (proven by a two-idle-render byte-compare
+   fixture).
+3. **A red "Not signed in to Discord" banner flashed at signed-in users** — the
+   signed-in flag required BOTH a session token AND a bot-confirmed identity, so
+   the startup gap (agent boots token-less until Mimic re-pushes the session) and
+   any identity blip flashed the banner. Now: a **grace window** holds the red
+   banner until the signed-out state is sustained (~8s), and a token-present-but-
+   unconfirmed state shows a calm blue **"Verifying your Discord sign-in…"** note
+   instead.
+
+**✅ Solo (one machine)**
+- **Hear a trigger + prove the audio path.** Turn on **Trigger alerts (TTS)**,
+  open the dashboard **Triggers** tab, enable a **Suggested trigger** (e.g.
+  "Rampage on you"), then click **▶ Rehearse** on it. You should (a) **hear** the
+  callout, (b) see **Mimic** appear in the Windows volume mixer (Sound settings →
+  Volume mixer) — it stays listed for the session once audio has ever played, and
+  (c) see a **green "5b playback started"** row in the **🧭 Trigger checkpoint
+  journal** card. If the machine is still silent, that same journal shows an
+  **orange "5b playback FAILED"** row with the reason (`not-allowed` / `silent`)
+  — that's the field-diagnosis hook; report it.
+- **Triggers tab doesn't flash.** Sit on the Triggers tab with at least one
+  recent fire on screen and watch for ~10s: the recent-fires timestamps tick, but
+  the tab must not visibly repaint/flash, and a half-typed personal-trigger edit
+  must not reset.
+- **No false sign-in banner.** While signed in, restart Mimic (or the agent) and
+  watch the dashboard header: you should see at most a brief blue **"Verifying…"**
+  note, **never** the red "Not signed in to Discord" banner. Sign out for real →
+  after a few seconds the red banner appears as expected.
+
+**👥 Multi-person (2+ raiders, separate machines)**
+- On a live pull, confirm a **guild** trigger callout speaks on every raider's
+  machine (it routes through the same overlay `speak()` path). Any machine that
+  stays silent will now show an orange **playback FAILED** row in its own journal
+  — collect those to spot audio-blocked installs.
+
 ## #91 — Roll-loot review: who actually loots + Hot Dice night + /rolls
 
 **Needs:** agent **3.3.97** (beta Mimic) + bot **3.0.219** + web **1.0.250**

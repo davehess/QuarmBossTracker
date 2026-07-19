@@ -45,7 +45,7 @@ export const releases: Release[] = [
   {
     key: 'callout-trust-and-ch-go-196',
     title: '📣 Callouts you can trust — and the CH chain speaks your GO · Mimic 1.9.6 (beta)',
-    version: 'Mimic 1.9.6 beta · Agent 3.3.97',
+    version: 'Mimic 1.9.6 beta · Agent 3.3.98',
     date: '2026-07-19',
     channel: 'beta',
     headline: 'This beta round makes the callouts you rely on impossible to miss — and impossible to silently lose — plus one thing clerics asked for: the CH chain says your number out loud when it’s your turn. And you can now place your loot bids right from Mimic. The dashboard also got a facelift: your character is front and center, and officers get a dedicated quick menu.',
@@ -68,6 +68,9 @@ export const releases: Release[] = [
       { name: '🎲 Roll nights — and who actually looted', blurb: 'Off-night loot rolls now have a home. Mimic quietly records the “You have looted” line from your own log — the real answer to who ended up with a no-drop drop, since a re-roll or a pass means the roll winner often isn’t the looter. The new 🎲 Rolls page on wolfpack.quest lays out each roll night: every session with its range, who rolled, the winning roll, and the person who actually looted it shown right beside the winner when they differ. Plus 🎲🔥 Hot Dice — a perfect roll gets called out live, and whoever out-rolls the room on more than 20% of the night’s contested rolls takes the night’s Hot Dice crown (also on the Fun page).' },
     ],
     fixes: [
+      'Trigger voice callouts actually make sound now. On some machines the alert overlay was speaking into the void — you’d see the flash but hear nothing, and Windows’ volume mixer never even listed Mimic. The overlay window is never clicked, and Windows was silently blocking its voice for that reason; Mimic now clears that block on startup so suggested triggers, guild callouts and blind alerts all speak. Rehearse a trigger to confirm — you should hear it, see “Mimic” appear in the volume mixer, and get a green “playback started” line in the new why-didn’t-it-fire panel. If a machine is still silent, that panel now says so out loud instead of pretending everything fired.',
+      'The dashboard Triggers tab no longer flickers every couple of seconds — the “recent fires” list was repainting the whole tab on every refresh, which reset the trigger editor mid-type. It updates in place now.',
+      'A stray “Not signed in to Discord” banner no longer flashes at people who ARE signed in. It used to blink on for a second every time Mimic restarted (before it re-checked your login); now it waits to be sure, and shows a calm “verifying…” note in the meantime instead of the scary red one.',
       'The Spell Casting card no longer freezes a long-gone cast on screen — a stopped caster now clears within a minute instead of lingering as a stale “stopped N ago” entry with a doubled border.',
       'Running Setup on the trigger alert box (or any overlay via “Setup THIS”) now actually puts the frame away when you finish — the blue setup outline used to stay stuck on screen until a restart.',
     ],
