@@ -25,6 +25,10 @@ packages/wolfpack-logsync/logsync.stats.json
 packages/wolfpack-logsync/logsync.optin.json
 packages/wolfpack-logsync/logsync.session.json
 packages/wolfpack-logsync/logsync.pid.json
+packages/wolfpack-logsync/logsync.opendkp.json
+packages/wolfpack-logsync/logsync.bidfamily.json
+packages/wolfpack-logsync/logsync.plannedbids.json
+packages/wolfpack-logsync/logsync.queue.json
 packages/wolfpack-logsync/.last-update-check
 packages/wolfpack-logsync/.force-update-on-restart
 packages/wolfpack-logsync/.update-token-on-restart

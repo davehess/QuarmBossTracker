@@ -13541,7 +13541,11 @@ function wpWireZealCapture() {
 // on the agent's 3s cache instead of the website's 15s refresh — "review this
 // outside the main site, faster". Class picker persists with the overlay's key.
 var _raidTabCls = '';
-try { _raidTabCls = localStorage.getItem('wp:bufferClass') || ''; } catch (e) {}
+// Distinguish "never chose" (null) from an explicit "(any class)" (''), so we
+// only default the picker to the user's OWN class when they haven't picked.
+var _raidClsExplicit = false;
+try { var _rcStored = localStorage.getItem('wp:bufferClass'); if (_rcStored !== null) { _raidTabCls = _rcStored; _raidClsExplicit = true; } } catch (e) {}
+var _raidClsDefaulted = false;
 function _raidTierColor(t) {
   if (t === 'red') return 'var(--red)';
   if (t === 'orange') return 'var(--orange)';
@@ -13783,7 +13787,7 @@ function renderRaidTab(q) {
     + '<span class="dim">Buffing as</span>'
     + '<select id="wpRaidCls" style="background:#0d1117;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:3px 8px;font:inherit">'
     + '<option value="">(any class)</option>'
-    + ['Cleric','Druid','Shaman','Enchanter','Bard','Paladin','Ranger','Beastlord','Magician'].map(function(c){
+    + ['Cleric','Druid','Shaman','Enchanter','Magician','Necromancer','Wizard','Beastlord','Bard','Paladin','Ranger','Shadow Knight'].map(function(c){
         return '<option' + (c === _raidTabCls ? ' selected' : '') + '>' + c + '</option>';
       }).join('')
     + '</select>'
@@ -13890,6 +13894,7 @@ function renderRaidTab(q) {
   var sel2 = document.getElementById('wpRaidCls');
   if (sel2) _bindOnce(sel2, 'change', function(){
     _raidTabCls = sel2.value || '';
+    _raidClsExplicit = true;   // an explicit pick (incl. "(any class)") wins over the own-class default
     try { localStorage.setItem('wp:bufferClass', _raidTabCls); } catch (e) {}
     refreshRaidTab();
   });
@@ -13907,6 +13912,17 @@ function renderRaidTab(q) {
 }
 async function refreshRaidTab() {
   try {
+    // Default the picker to the user's OWN class the first time (only if they
+    // haven't explicitly chosen). activeCharacterClass is null until /who or
+    // Zeal has seen the toon — retry each poll until known, then fall back to
+    // "(any class)" and stop trying.
+    if (!_raidClsExplicit && !_raidTabCls && !_raidClsDefaulted) {
+      try {
+        var st = await fetch('/api/state', { cache: 'no-store' }).then(function(r){ return r.json(); });
+        var own = st && st.activeCharacterClass;
+        if (own) { _raidTabCls = String(own); _raidClsDefaulted = true; }
+      } catch (e2) { /* keep trying next poll */ }
+    }
     var qs = _raidTabCls ? ('?class=' + encodeURIComponent(_raidTabCls)) : '';
     var r = await fetch('/api/buff-queue' + qs, { cache: 'no-store' });
     renderRaidTab(await r.json());
@@ -15683,8 +15699,9 @@ async function dismissTopDamage(key) {
   var srvAucs      = [];    // /api/server/auctions (biddable OpenDKP)
   var myBids       = [];    // /api/server/my-bids
   var itemHist     = {};    // item_id -> { item_name, winner, winning_bid, runner_up }
-  var bidHist      = null;  // { wins:[], wishlist:[] }
+  var bidHist      = null;  // { wins:[], wishlist:[], misses:[], dkp:{}, suggested_family:{} }
   var drafts       = {};    // rowKey -> in-progress bid string (survives repaints)
+  var planned      = {};    // item_id -> planned next bid (mirrors the agent's local store)
   var ticks        = {};    // spanId -> ends-at ms (1s countdown ticker)
   var lastChar     = null;
   var showLogin    = false;
@@ -15692,16 +15709,30 @@ async function dismissTopDamage(key) {
   var loginErr     = "";
   var lastHistKey  = "";
   var lastBidHistAt = 0;
+  var opendkpBase  = "";    // https://<client>.opendkp.com — from the bot (bid-history)
+  var eraFilter    = "";    // "" = all; else "Classic"/"Kunark"/"Velious"/"Luclin"
+  var famPrefilled = false; // one-shot auto-prefill of the family from OpenDKP
 
   function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g, function(c){ return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]; }); }
   function fmt(n){ n=Number(n); if(!isFinite(n)) return "—"; return n.toLocaleString(); }
   function isChar(s){ return /^[A-Za-z]{2,20}$/.test(String(s||"").trim()); }
   function famList(){ return (cfg.family&&cfg.family.main) ? [cfg.family.main].concat(cfg.family.alts||[]) : ((cfg.family&&cfg.family.alts)||[]); }
+  // Link an item to its OpenDKP raid page (the auction/award lives there —
+  // OpenDKP has no per-auction URL). NO class=name (that would misfire the
+  // dashboard's /character click-delegation → 404). Falls back to a plain,
+  // non-clickable span when we have no raid id.
+  function itemLink(name, raidId){
+    var t = esc(name || "?");
+    if (raidId && opendkpBase) return "<a href='" + esc(opendkpBase) + "/#/raids/" + encodeURIComponent(raidId) + "' target='_blank' rel='noreferrer' style='color:var(--blue);text-decoration:none'>" + t + "</a>";
+    return "<span>" + t + "</span>";
+  }
+  function eraTag(era){ return era ? " <span class=dim style='font-size:10px'>· " + esc(era) + "</span>" : ""; }
+  function passEra(era){ return !eraFilter || era === eraFilter; }
 
   function makeCard(){
     var c = document.createElement("div");
     c.id = "wpBiddingCard";
-    c.className = "card";
+    c.className = "card wide";   // full-width — fits the misses table's 6 columns
     c.innerHTML = "<h2>💰 Loot bidding <span style='background:var(--gold,#d4af37);color:#000;font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;vertical-align:middle;letter-spacing:.08em'>BETA</span> <span class=dim style='font-size:11px;text-transform:none;letter-spacing:0'>· sealed bids via OpenDKP</span></h2><div class=card-body><div class=dim style=padding:6px>loading…</div></div>";
     return c;
   }
@@ -15873,27 +15904,74 @@ async function dismissTopDamage(key) {
       h += "</table>";
     }
 
-    // History + wishlist (authed only)
+    // History + wishlist + misses (authed only)
     if (cfg.authed && bidHist){
-      var wins = bidHist.wins||[]; var wl = bidHist.wishlist||[];
-      if (wl.length){
-        h += "<div style='font-size:11px;color:var(--dim,#8b949e);text-transform:uppercase;letter-spacing:.05em;margin:8px 0 4px'>your wishlist</div>";
+      var wins = bidHist.wins||[]; var wl = bidHist.wishlist||[]; var misses = bidHist.misses||[]; var dkp = bidHist.dkp||null;
+
+      // Family DKP pill + expansion filter row.
+      h += "<div style='display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:12px 0 4px;font-size:11px'>";
+      if (dkp){
+        var fa = String(dkp.fetched_at||"").replace("T"," "); var dotIx = fa.indexOf("."); if (dotIx>=0) fa = fa.substring(0,dotIx);
+        var freshTitle = dkp.fetched_at ? ("mirror-derived (OpenDKP pools alts) · as of "+fa+" UTC") : "mirror-derived";
+        h += "<span style='background:rgba(212,175,55,.10);border:1px solid var(--border);border-radius:5px;padding:2px 9px' title='"+esc(freshTitle)+"'>💰 <b>"+fmt(dkp.family_total)+"</b> <span class=dim>DKP · family pool</span></span>";
+      }
+      var eraSet = {};
+      for (var ei=0;ei<wl.length;ei++) if(wl[ei].era) eraSet[wl[ei].era]=1;
+      for (var ei2=0;ei2<misses.length;ei2++) if(misses[ei2].era) eraSet[misses[ei2].era]=1;
+      for (var ei3=0;ei3<wins.length;ei3++) if(wins[ei3].era) eraSet[wins[ei3].era]=1;
+      var eraOrder = ["Classic","Kunark","Velious","Luclin","Planes of Power"]; var eraOpts = [];
+      for (var eo=0;eo<eraOrder.length;eo++) if(eraSet[eraOrder[eo]]){ eraOpts.push(eraOrder[eo]); delete eraSet[eraOrder[eo]]; }
+      for (var ek in eraSet){ if(eraSet.hasOwnProperty(ek)) eraOpts.push(ek); }
+      if (eraOpts.length){
+        h += "<span class=dim>expansion</span><select id=wpLootEra style='background:#0e1116;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 6px;font-family:inherit;font-size:11px'>";
+        h += "<option value=''"+(eraFilter===""?" selected":"")+">all</option>";
+        for (var eq=0;eq<eraOpts.length;eq++){ h += "<option"+(eraFilter===eraOpts[eq]?" selected":"")+">"+esc(eraOpts[eq])+"</option>"; }
+        h += "</select>";
+      }
+      h += "</div>";
+
+      var wlF = wl.filter(function(x){ return passEra(x.era); });
+      if (wlF.length){
+        h += "<div style='font-size:11px;color:var(--dim,#8b949e);text-transform:uppercase;letter-spacing:.05em;margin:8px 0 4px'>your wishlist <span style='text-transform:none;letter-spacing:0'>· bid on but not yet won</span></div>";
         h += "<div style='font-size:11px'>";
-        for (var w=0;w<wl.length && w<25;w++){
-          var it = wl[w];
+        for (var w=0;w<wlF.length && w<25;w++){
+          var it = wlF[w];
           var srcTag = it.source==="prereg"
             ? "<span title='preregistered' style='color:var(--gold,#d4af37)'>★ prereg</span>"
             : "<span class=dim title='inferred from your bid history'>↺ from bid history</span>";
-          h += "<div style='display:flex;gap:6px;padding:1px 0'><span class=name>"+esc(it.item_name||("item "+it.item_id))+"</span><span style='margin-left:auto'>"+srcTag+"</span></div>";
+          h += "<div style='display:flex;gap:6px;padding:1px 0'>"+itemLink(it.item_name||("item "+it.item_id), it.raid_id)+eraTag(it.era)+"<span style='margin-left:auto'>"+srcTag+"</span></div>";
         }
         h += "</div>";
       }
-      if (wins.length){
-        h += "<div style='font-size:11px;color:var(--dim,#8b949e);text-transform:uppercase;letter-spacing:.05em;margin:8px 0 4px'>recent wins</div>";
+
+      // RECENT MISSES — bid on and lost. Full width; per-item columns.
+      var misF = misses.filter(function(x){ return passEra(x.era); });
+      if (misF.length){
+        h += "<div style='font-size:11px;color:var(--dim,#8b949e);text-transform:uppercase;letter-spacing:.05em;margin:12px 0 4px'>recent misses <span style='text-transform:none;letter-spacing:0'>· you bid and lost — figures are from each item's most recent auction</span></div>";
+        h += "<table><tr><th>Item</th><th>Char</th><th class=num>Your last</th><th class=num>Last win</th><th class=num>2nd place</th><th class=num>Planned</th><th class=num>DKP</th></tr>";
+        for (var mi=0;mi<misF.length;mi++){
+          var m = misF[mi];
+          var pv = (planned[m.item_id]!=null) ? planned[m.item_id] : "";
+          h += "<tr>";
+          h += "<td>"+itemLink(m.item_name||("item "+m.item_id), m.raid_id)+eraTag(m.era)+"</td>";
+          h += "<td"+(m.character?" class=name":"")+">"+esc(m.character||"—")+"</td>";
+          h += "<td class=num>"+(m.my_last_bid!=null?fmt(m.my_last_bid):"—")+"</td>";
+          h += "<td class=num>"+(m.last_winning_bid!=null?fmt(m.last_winning_bid):"—")+"</td>";
+          h += "<td class=num>"+(m.last_second_bid!=null?fmt(m.last_second_bid):"—")+"</td>";
+          h += "<td class=num><input id=wpPlan_"+m.item_id+" type=number min=1 value='"+esc(pv)+"' placeholder='—' style='width:52px;background:#0e1116;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:1px 4px;font-family:inherit;text-align:right'></td>";
+          h += "<td class=num>"+(dkp?fmt(dkp.family_total):"—")+"</td>";
+          h += "</tr>";
+        }
+        h += "</table>";
+      }
+
+      var winsF = wins.filter(function(x){ return passEra(x.era); });
+      if (winsF.length){
+        h += "<div style='font-size:11px;color:var(--dim,#8b949e);text-transform:uppercase;letter-spacing:.05em;margin:12px 0 4px'>recent wins</div>";
         h += "<table><tr><th>Item</th><th>Char</th><th class=num>DKP</th></tr>";
-        for (var wn=0;wn<wins.length && wn<12;wn++){
-          var win = wins[wn];
-          h += "<tr><td class=name>"+esc(win.item_name||"?")+"</td><td class=name>"+esc(win.character||"?")+"</td><td class=num>"+fmt(win.dkp)+"</td></tr>";
+        for (var wn=0;wn<winsF.length && wn<12;wn++){
+          var win = winsF[wn];
+          h += "<tr><td>"+itemLink(win.item_name||"?", win.raid_id)+eraTag(win.era)+"</td><td"+(win.character?" class=name":"")+">"+esc(win.character||"?")+"</td><td class=num>"+fmt(win.dkp)+"</td></tr>";
         }
         h += "</table>";
       }
@@ -15925,6 +16003,19 @@ async function dismissTopDamage(key) {
     for (var p=0;p<plus.length;p++){ (function(btn){ btn.onclick=function(){ var key=btn.getAttribute("data-key"); var v=btn.getAttribute("data-v"); drafts[key]=v; var inp=document.getElementById("wpBidVal_"+key); if(inp){ inp.value=v; inp.focus(); } }; })(plus[p]); }
     var vals = card.querySelectorAll("input[id^=wpBidVal_]");
     for (var v2=0;v2<vals.length;v2++){ (function(inp){ inp.oninput=function(){ drafts[inp.id.substring("wpBidVal_".length)]=inp.value; }; })(vals[v2]); }
+    el = document.getElementById("wpLootEra"); if (el) el.onchange = function(){ eraFilter = el.value || ""; render(); };
+    // Planned-bid inputs — keep the client mirror current on every keystroke
+    // (so a repaint never drops mid-typed text) and persist locally on commit.
+    var plans = card.querySelectorAll("input[id^=wpPlan_]");
+    for (var pp=0;pp<plans.length;pp++){ (function(inp){
+      var id = inp.id.substring("wpPlan_".length);
+      inp.oninput = function(){ if(inp.value==="") delete planned[id]; else planned[id]=parseInt(inp.value,10)||0; };
+      inp.onchange = function(){ savePlanned(id, inp.value); };
+    })(plans[pp]); }
+  }
+  function savePlanned(itemId, value){
+    fetch("/api/loot/planned",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({item_id:parseInt(itemId,10),value:parseInt(value,10)||0})})
+      .then(function(r){return r.json();}).then(function(j){ if(j&&j.planned) planned=j.planned; }).catch(function(){});
   }
 
   function restoreDrafts(){
@@ -15991,7 +16082,8 @@ async function dismissTopDamage(key) {
   function fetchConfig(){
     return fetch("/api/loot/config").then(function(r){return r.json();}).then(function(j){
       if(j){ cfg.authed=!!j.authed; cfg.opendkp_username=j.opendkp_username; cfg.expires_at=j.expires_at;
-        if(j.family) cfg.family={ main:j.family.main||null, alts:j.family.alts||[] }; }
+        if(j.family) cfg.family={ main:j.family.main||null, alts:j.family.alts||[] };
+        if(j.planned) planned=j.planned; }
     }).catch(function(){});
   }
   function fetchLocal(){
@@ -16016,7 +16108,21 @@ async function dismissTopDamage(key) {
     if (bidHist && (Date.now()-lastBidHistAt) < 45000) return Promise.resolve();
     var q="?login="+encodeURIComponent(cfg.opendkp_username||"")+"&characters="+encodeURIComponent(fam.join(","));
     return fetch("/api/server/bid-history"+q).then(function(r){return r.ok?r.json():null;}).then(function(j){
-      if(j){ bidHist={ wins:j.wins||[], wishlist:j.wishlist||[] }; lastBidHistAt=Date.now(); }
+      if(j){
+        bidHist={ wins:j.wins||[], wishlist:j.wishlist||[], misses:j.misses||[], dkp:j.dkp||null, suggested_family:j.suggested_family||null };
+        if(j.opendkp_base) opendkpBase=j.opendkp_base;
+        lastBidHistAt=Date.now();
+        // Auto-prefill the family (main + raid alts) from OpenDKP — ONLY when the
+        // local family is still empty, and only once. The manual editor stays.
+        if(!famPrefilled && !famList().length && j.suggested_family && j.suggested_family.main){
+          famPrefilled=true;
+          var sf={ main:j.suggested_family.main, alts:j.suggested_family.alts||[] };
+          fetch("/api/loot/family",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(sf)})
+            .then(function(r){return r.json();})
+            .then(function(res){ if(res&&res.family){ cfg.family={ main:res.family.main||null, alts:res.family.alts||[] }; if(!lastChar) lastChar=pickChar(); lastBidHistAt=0; fetchServer(); } })
+            .catch(function(){});
+        }
+      }
     }).catch(function(){});
   }
   function fetchServer(){
@@ -17237,6 +17343,7 @@ function startWebDashboard(port) {
           opendkp_username: (_opendkpAuth && _opendkpAuth.username) || null,
           expires_at:       (_opendkpAuth && _opendkpAuth.expires_at) || null,
           family:           { main: _bidFamily.main, alts: _bidFamily.alts || [] },
+          planned:          _plannedBids,
         }));
       }
       if (req.url === '/api/loot/login' && req.method === 'POST') {
@@ -17275,6 +17382,15 @@ function startWebDashboard(port) {
         _saveBidFamily();
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ ok: true, family: _bidFamily }));
+      }
+      if (req.url === '/api/loot/planned' && req.method === 'POST') {
+        // #121 — persist a per-item PLANNED next bid (RECENT MISSES table).
+        // { item_id, value } — value 0/empty clears it. Local file only.
+        let p; try { p = JSON.parse(await _readBody(req, 8 * 1024) || '{}'); }
+        catch { res.writeHead(400); return res.end('{"error":"bad json"}'); }
+        if (!_setPlannedBid(p.item_id, p.value)) { res.writeHead(400); return res.end('{"error":"item_id required"}'); }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ ok: true, planned: _plannedBids }));
       }
       if (req.url === '/api/loot/auctions' && req.method === 'GET') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -18999,6 +19115,38 @@ function _bidFamilyNames() {
   return out;
 }
 
+// #121 — per-item PLANNED next bid (RECENT MISSES table). Stored LOCALLY only
+// (logsync.plannedbids.json), same durable pattern as the bid family. Keyed by
+// OpenDKP item_id → integer DKP; a value of 0/empty deletes the entry.
+const PLANNEDBIDS_FILE = path.join(__dirname, 'logsync.plannedbids.json');
+let _plannedBids = {};   // { item_id(str): value(int) }
+function _loadPlannedBids() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(PLANNEDBIDS_FILE, 'utf8'));
+    const out = {};
+    for (const k of Object.keys(raw || {})) {
+      const id = parseInt(k, 10); const v = parseInt(raw[k], 10);
+      if (Number.isFinite(id) && id > 0 && Number.isFinite(v) && v > 0) out[id] = v;
+    }
+    _plannedBids = out;
+  } catch { _plannedBids = {}; }
+}
+function _savePlannedBids() {
+  try {
+    fs.writeFileSync(PLANNEDBIDS_FILE + '.tmp', JSON.stringify(_plannedBids));
+    fs.renameSync(PLANNEDBIDS_FILE + '.tmp', PLANNEDBIDS_FILE);
+  } catch { /* non-fatal */ }
+}
+function _setPlannedBid(itemId, value) {
+  const id = parseInt(itemId, 10);
+  if (!Number.isFinite(id) || id <= 0) return false;
+  const v = parseInt(value, 10);
+  if (Number.isFinite(v) && v > 0) _plannedBids[id] = v;
+  else delete _plannedBids[id];
+  _savePlannedBids();
+  return true;
+}
+
 // Fetch (and cache ~1h) the PUBLIC Cognito app-client id + region from the bot.
 // Requires a bot connection (per-user bearer token). Throws a friendly message
 // when the bot is unreachable or OpenDKP login isn't configured server-side.
@@ -19098,6 +19246,7 @@ async function _opendkpEnsureFresh() {
 // Hydrate both from disk at startup (defaults on missing/unreadable files).
 _loadOpendkpAuth();
 _loadBidFamily();
+_loadPlannedBids();
 
 // ── Inventory file ingestion ──────────────────────────────────────────────
 // EQ's /output inventory command writes <Character>-Inventory.txt to the EQ
@@ -27151,9 +27300,11 @@ module.exports = {
   // #108 loot bidding — exported for the scratchpad smoke test / harness.
   startWebDashboard,
   _loadBidFamily, _saveBidFamily, _bidFamilyNames, _opendkpAuthed,
+  _loadPlannedBids, _savePlannedBids, _setPlannedBid,
   _setBidFamilyForTest: (f) => { _bidFamily = f; },
   _setOpendkpAuthForTest: (a) => { _opendkpAuth = a; },
   _getBidFamilyForTest: () => _bidFamily,
+  _getPlannedBidsForTest: () => _plannedBids,
 };
 
 if (require.main === module) {
