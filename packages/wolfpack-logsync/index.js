@@ -11887,10 +11887,51 @@ function renderOverlays(s) {
   h += '<div class="dim" style="font-size:11px;margin-top:8px">Lock/Setup placement live in the tray.</div>';
   h += '</div>';
 
+  // #113 Extended Target options — a per-user filter that changes what we ASK
+  // the bot for, so it lives on the AGENT as a dashboard checkbox (not a Mimic
+  // window flag). HTML is byte-stable; the checked state is applied post-render
+  // by wpWireExtPref so morphInto never rewrites the section just to flip it.
+  h += '<div class="card wide"><h2>🎯 Extended Target options</h2>';
+  h += '<label style="display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer">'
+    +  '<input type="checkbox" id="wpExtSameZone" style="cursor:pointer" />'
+    +  '<span><b>Same-zone targets only</b> <span class="dim">(default on)</span></span>'
+    +  '</label>';
+  h += '<div class="dim" style="font-size:11px;margin-top:6px">When on, the Extended Target list hides targets reported by Mimics in a different zone, so a splinter group elsewhere does not clutter your list. Turn off to include every online raider regardless of zone.</div>';
+  h += '</div>';
+
   h += '</div>';
   setSectionHTML('overlays', h);
   wpRefreshOverlayToggles();
   wpWireHideHotkey();
+  wpWireExtPref();
+}
+
+// #113 Extended Target "same-zone targets only" checkbox wiring. The pref lives
+// on the agent (POST /api/ext-pref), not in overlay localStorage, because it
+// changes what the agent requests from the bot. Cache the value JS-side so a
+// section re-morph (e.g. a theme change repainting the Overlays tab) reapplies
+// it instead of resetting the box to unchecked; fetch once until we have it.
+var _wpExtSameZoneVal = null;
+function wpWireExtPref() {
+  var cb = document.getElementById('wpExtSameZone');
+  if (!cb) return;
+  if (_wpExtSameZoneVal !== null) cb.checked = _wpExtSameZoneVal;
+  _bindOnce(cb, 'change', function(){
+    _wpExtSameZoneVal = !!cb.checked;
+    fetch('/api/ext-pref', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ same_zone_only: _wpExtSameZoneVal }),
+    }).catch(function(){});
+  });
+  if (_wpExtSameZoneVal === null) {
+    fetch('/api/ext-pref').then(function(r){ return r.json(); }).then(function(j){
+      if (j && typeof j.same_zone_only === 'boolean') {
+        _wpExtSameZoneVal = j.same_zone_only;
+        var c2 = document.getElementById('wpExtSameZone');
+        if (c2) c2.checked = j.same_zone_only;
+      }
+    }).catch(function(){});
+  }
 }
 
 // Hotkey row wiring — read the current accelerator from config, and capture a
@@ -16631,6 +16672,33 @@ function startWebDashboard(port) {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ notices: _guildNotices }));
       }
+      // #113 Extended Target "same-zone targets only" per-user pref. GET returns
+      // the current value (dashboard Overlays checkbox reads it); POST sets it
+      // and persists to logsync.optin.json. fetchExtendedTarget reads the live
+      // value each poll, so the toggle takes effect within one proxy TTL — no
+      // restart. Clearing the cache makes the switch snappier still.
+      if (req.url === '/api/ext-pref' && req.method === 'GET') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ same_zone_only: _optinState.extSameZoneOnly !== false }));
+      }
+      if (req.url === '/api/ext-pref' && req.method === 'POST') {
+        let epBody = '';
+        req.on('data', c => { epBody += c; if (epBody.length > 4096) req.destroy(); });
+        req.on('end', () => {
+          try {
+            const p = JSON.parse(epBody || '{}');
+            _optinState.extSameZoneOnly = (p.same_zone_only !== false);
+            _saveOptInState();
+            try { _extTargetCache.clear(); } catch { /* */ }
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: true, same_zone_only: _optinState.extSameZoneOnly }));
+          } catch {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: false }));
+          }
+        });
+        return;
+      }
       // "✓ cured" from the buff-queue overlay → raid-wide manual clear mark.
       if (req.url === '/api/debuff-clear' && req.method === 'POST') {
         let dcBody = '';
@@ -18419,6 +18487,11 @@ const _optinState = {
   ignoredPaths: new Set(),
   // Character names hidden from the Tank/Weapon Loadouts view
   hiddenLoadoutChars: new Set(),
+  // #113 per-user Extended Target pref: exclude other Mimics' targets when the
+  // uploader isn't in my zone. Default ON (splinter groups elsewhere stop
+  // polluting the list). Read by fetchExtendedTarget → passed to the bot as
+  // same_zone=0 only when the user turns it OFF.
+  extSameZoneOnly: true,
   // #107 loot-post announce. lootAuctionTts gates the local TTS callout +
   // countdown chip when a drop list is posted in /gu or /rs (default ON);
   // lootAuctionDefaultSec is the auction window used when the bid call doesn't
@@ -18453,6 +18526,8 @@ function _loadOptInState() {
     _optinState.progress             = raw.progress             || {};
     _optinState.ignoredPaths         = new Set(raw.ignoredPaths || []);
     _optinState.hiddenLoadoutChars   = new Set((raw.hiddenLoadoutChars || []).map(s => s.toLowerCase()));
+    // #113 default ON: absent (old files) → true; only an explicit false disables.
+    _optinState.extSameZoneOnly      = (raw.extSameZoneOnly !== false);
     if (typeof raw.lootAuctionTts === 'boolean') _optinState.lootAuctionTts = raw.lootAuctionTts;
     if (Number.isFinite(raw.lootAuctionDefaultSec)) {
       _optinState.lootAuctionDefaultSec = Math.max(15, Math.min(1800, Math.round(raw.lootAuctionDefaultSec)));
@@ -18465,6 +18540,7 @@ function _saveOptInState() {
       progress:           _optinState.progress,
       ignoredPaths:       [..._optinState.ignoredPaths],
       hiddenLoadoutChars: [...(_optinState.hiddenLoadoutChars || [])],
+      extSameZoneOnly:    _optinState.extSameZoneOnly !== false,
       lootAuctionTts:        _optinState.lootAuctionTts !== false,
       lootAuctionDefaultSec: _optinState.lootAuctionDefaultSec || 120,
     }, null, 2));
@@ -23882,7 +23958,12 @@ function fetchExtendedTarget(character) {
   const cached = _extTargetCache.get(key);
   if (cached && (Date.now() - cached.at) < EXT_TARGET_TTL_MS) return;
   _extTargetInflight.add(key);
-  const qs = character ? '?character=' + encodeURIComponent(character) : '';
+  // #113 same-zone-only pref (default on). Only send same_zone=0 when the user
+  // has turned it OFF — an absent param keeps the bot's default same-zone scope.
+  const params = [];
+  if (character) params.push('character=' + encodeURIComponent(character));
+  if (_optinState.extSameZoneOnly === false) params.push('same_zone=0');
+  const qs = params.length ? '?' + params.join('&') : '';
   const url = opts.botUrl.replace(/\/encounter(\?.*)?$/, '/extended-target') + qs;
   try {
     const u = new URL(url);
