@@ -52,11 +52,16 @@ Open work lives in three places — read them in this order:
 1. **`docs/STATUS.md`** — the ledger (what's done, what's TODO, what was
    abandoned). Start here.
 2. **`docs/DESIGN-platform-queue.md`** — the ordered wave plan with rationale.
-3. **`docs/HOW-ITS-BUILT.md`** — the feature-by-feature index. **Read this
-   before assuming a feature doesn't exist** — "we don't have X" is the
-   easy-to-be-wrong-about answer, and it wastes your tokens rebuilding
+3. **`docs/HOW-ITS-BUILT.md`** — the feature-by-feature index (its "Recent
+   additions" section catalogs everything shipped in the latest sprint).
+   **Read this before assuming a feature doesn't exist** — "we don't have X" is
+   the easy-to-be-wrong-about answer, and it wastes your tokens rebuilding
    something that's already there. A feature can live on any of four surfaces
    (bot, web, agent dashboard, Mimic overlays) — check the index first.
+4. **[wolfpack.quest/roadmap](https://wolfpack.quest/roadmap)** — the live,
+   member-facing view of what shipped (plain language) and what's next, plus a
+   sortable sprint board. Fastest way to see if your idea already exists without
+   reading code. (It's rendered from `web/lib/roadmapData.ts`.)
 
 **Good first items** (self-contained, no officer-only data or decisions):
 web-only features and fixes, agent parsing/trigger logic with a clear repro,
@@ -204,6 +209,7 @@ agent/Mimic changes → branch from beta,  PR into beta
 ```
 
 Read next: `CLAUDE.md` (architecture + rules) · `docs/STATUS.md` (the queue) ·
-`docs/HOW-ITS-BUILT.md` (what already exists) · `docs/PRIVACY.md` (privacy) ·
-`docs/DESIGN-platform-queue.md` (the plan). Questions on a specific item — ask
-an officer before you build.
+`docs/HOW-ITS-BUILT.md` (what already exists) ·
+[wolfpack.quest/roadmap](https://wolfpack.quest/roadmap) (shipped + next, in
+plain language) · `docs/PRIVACY.md` (privacy) · `docs/DESIGN-platform-queue.md`
+(the plan). Questions on a specific item — ask an officer before you build.

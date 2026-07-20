@@ -349,3 +349,91 @@ list, plus `overlay_tuning`, `ui_snapshots`, `ui_socials_index`,
 `bump_agent_upload_stat`. RLS: Tier 1 anon+authenticated read; guild tables
 authenticated-read unless private (socials index, pending edits, encrypted
 columns = service-role only); bot uses service_role.
+
+---
+
+## Recent additions — 2026-07 sprint (quick index)
+
+*Everything below shipped in the July 2026 sprint (Mimic 1.9 → 2.0.1 "Harmonic
+Howl", bot 3.0.203 → 3.0.222, web 1.0.231 → 1.0.262). Indexed here so
+"do we have X?" answers YES with a pointer. Fuller context: `docs/STATUS.md`
+(ledger), `docs/BETA-TESTING.md` (test cases), and the member-facing changelog
+on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
+
+### Bot (`index.js` + `utils/` + `commands/`)
+- **Reporter elections (#72)** — chat/buffs/roster get elected reporters so 60
+  raiders don't upload the same bytes N times. `_reporterRegistry`,
+  `_electReporters`/`_electBuffReporters`/`_electRosterReporters`, `STREAM_CLASS`
+  + `_dedupFlags`, `_handleAgentReporterPoll`. Flags `dedup_chat`/`dedup_buffs`/
+  `dedup_roster` (chat currently OFF post-2026-07-19 incident). Camp-out demotion
+  + log-flow liveness. **`per_observer` streams are never elected — structural.**
+- **Admission control (#73)** — per-uploader×kind budgets (`_overBudget`,
+  `budget_*` tuning), 429/Retry-After; Supabase request timeout + circuit breaker
+  (`utils/supabase.js`, env-tuned); `target-buffs` cache; poison-payload
+  hardening. `GET /health` readiness for zero-downtime deploys (#58,
+  `railway.toml`).
+- **Multiplexed poll (#106)** — `GET /api/agent/poll` bundles the six background
+  GET loops into one (per-stream cursors + shed-omission); agent falls back to
+  individual routes on 404.
+- **Control plane (#74)** — `flag_shed_<kind>` for every ingest kind
+  (`_SHED_KINDS`/`_SHED_NEVER`), `flag_agent_kill`, `min_agent_ver_num`,
+  per-channel manifest (`?channel=beta`); officer `flag-override` write path.
+- **OpenDKP reconcile (#110)** — `utils/openDkpSync.js` `reconcileRecentLoot`:
+  upstream deletions propagate to the `opendkp_loot` mirror within a sync.
+- **Guild rules (#94)** — `guild_rules` table + `/ingestrules`
+  (`commands/ingestrules.js`, `utils/rulesParser.js`) + `/admin/rules`.
+- **Loot bidding serving (#108/#121)** — `server-panel` keys `opendkp-auth-config`
+  / `item-history` / `bid-history`; `_lootItemSummary`/`_familyDkpTotals`.
+- **Roll nights (#91)** — `_handleAgentLooted` + `looted_items`,
+  `computeHotDiceNightAward` (`utils/hotDiceNight.js`) on the midnight chain.
+- **/who enrichment (#111)** — `who-lookup` now returns `{level, main, mimic}`;
+  `hide_main_names` tuning key (privacy exception).
+- **Mimic 2.0 announce (#raid-chat)** — one-shot bot_kv-latched release card.
+
+### Agent (`packages/wolfpack-logsync/index.js`, beta)
+- **Callout trust (#76)** — trigger checkpoint journal (`_triggerJournal`, incl.
+  5b playback), real REHEARSE (`_rehearseTrigger` drives the tail), sticky
+  callouts, stale-fire TTL. Reporter roles honored per stream (charm rows exempt).
+- **CH chain GO (#103)** — `_maybeAnnounceChGo` speaks "0X GO" on your slot.
+- **Loot announce (#107)** — `noteLootAuction` → TTS + auction countdown chips.
+- **Timeline enrichment (#105)** — `noteSlowLanding` (SLOW_SPELLS), `noteMobHeal`,
+  `DISC_LINES`/`_matchDiscLine` → `timeline_events`.
+- **Loot bidding panel (#108/#121)** — dashboard WEB_HTML card, OpenDKP Cognito
+  login (`logsync.opendkp.json`), alt-family (`logsync.bidfamily.json`).
+- **Replay (#101)** — `startReplay`/`_replayWorker`: walk a log slice through the
+  REAL trigger pipeline as a rehearsal (no uploads, refuses during a live fight).
+- **Pet buffs + range (#117/#119)** — own-pet landing attribution; buff-queue
+  out-of-range flag (`utils/range.js`); 🐾 pet-buff diag card; liveness across
+  all watched logs; `live_character` in the heartbeat.
+- **Ext-target same-zone filter (#113)** — `/api/ext-pref` per-user toggle.
+- **Roll capture (#91)** — `trackLootedLine`/`uploadLooted`, `uploadRollSets`,
+  Hot Dice perfect-roll fun events.
+
+### Mimic (`apps/mimic/`, beta)
+- **Me card + officer Admin tab (#109)** — dashboard opens on 🐺 Me; officer
+  tools + 📡 Reporters panel (#115, swap/include) + 🛑 kill switches (#118) under
+  🛡 Admin. LKG crash-loop rollback + beta-channel hot-swap in `main.js` (#74).
+- **"Set up EQ for me" on Settings** — `settings.html` mirrors the dashboard's
+  `/api/eq-setup` writer (see the Setup & onboarding entry above).
+- **Overlay fixes** — trigger-overlay auto-grow (#107), melody stale-card + setup
+  chrome teardown (#116), TTS user-activation fix (#120).
+
+### Web (`web/`)
+- **Roll nights (#91)** — `/rolls` (`web/lib/rolls.ts`).
+- **Quartermaster (#82)** — `/quartermaster` (`web/lib/quartermaster.ts`):
+  utility-kit coverage + quest checklist (reuses the `quest_catalog` store).
+- **Raid Kit (#95)** — `web/lib/raidKit.ts`, `/admin/readiness`, gear-page card.
+- **Comp matcher (#93)** — `web/lib/comp.ts`, `comp_templates`, `/admin/comp`,
+  signups gap panel.
+- **Attendance metrics (#92)** — `member_attendance_metrics` view + `/admin/attendance`.
+- **Per-fight timeline (#98)** — `encounter_events` → `FightTimeline.tsx` on
+  `/parses/[id]` (deaths, slows, mob heals, discs, fires); replay-this-fight link.
+- **Sprint board on `/roadmap`** — `SprintBoard.tsx` + `sprintItems` in
+  `roadmapData.ts` (sortable, platform-color aspects).
+
+### Designs written, build pending (read before touching)
+- **Multi-raid awareness (#114)** — `docs/DESIGN-multi-raid.md` (leader-anchored
+  identity; single-raid path is sacred).
+- **Same-name mob serial tracks (#56)** — the serialization design in
+  `docs/DESIGN-dedup-and-mob-serialization.md` (separator-only, K-invariant,
+  rampage/riposte correction).
