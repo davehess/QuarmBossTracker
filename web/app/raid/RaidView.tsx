@@ -163,13 +163,21 @@ function asBufferClass(s: string | null | undefined): BufferClass | '' {
   return '';
 }
 
-// Twitch Queue priority tier — who to feed mana first when several are low.
-// Wizards + Enchanters (0), then Clerics (1), then everyone else (2).
-function twitchTier(className: string | null): number {
-  const c = (className || '').trim().toLowerCase();
-  if (c === 'wizard' || c === 'enchanter') return 0;
-  if (c === 'cleric') return 1;
-  return 2;
+// Twitch Queue sort key — LOWEST MANA FIRST is the spine (Hitya 2026-07-19:
+// "it really should be lowest first"), with a class boost that floats the most
+// mana-critical raiders up at a given fill: clerics hardest (a dry cleric = a
+// wipe), then wizards/enchanters (pure-mana nukers/CC). Lower key = higher in
+// the queue, so the boost is subtracted from mana%.
+function twitchSortKey(r: { className: string | null; manaPct: number }): number {
+  const c = (r.className || '').trim().toLowerCase();
+  const boost = c === 'cleric' ? 20 : (c === 'wizard' || c === 'enchanter') ? 8 : 0;
+  return r.manaPct - boost;
+}
+// Bards can't be mana-fed by any external source (only meditate + Flowing
+// Thought), so twitching them is wasted — they never belong on the board
+// (Hitya 2026-07-19).
+function twitchEligible(className: string | null): boolean {
+  return (className || '').trim().toLowerCase() !== 'bard';
 }
 
 // Mana bar colour by fullness — mirrors the Command Center overlay's cue.
@@ -369,14 +377,15 @@ export default function RaidView({
     tabRows.filter(r => r.inRaid && typeof r.manaPct === 'number')
            .sort((a, b) => (b.manaPct! - a.manaPct!) || a.name.localeCompare(b.name)),
     [tabRows]);
-  // Twitch Queue — who to feed mana next: lowest mana up top, with Wizards +
-  // Enchanters prioritized, then Clerics, then everyone else (Uilnayar
-  // 2026-07-09). Same source list, re-sorted by twitch priority.
+  // Twitch Queue — who to feed mana next: LOWEST mana up top, clerics floated
+  // hardest, then wizards/enchanters (Hitya 2026-07-19). Bards excluded — they
+  // can't be twitched. Same source list, re-filtered + re-sorted.
   const twitchQueue = useMemo(() =>
-    manaList.slice().sort((a, b) =>
-      twitchTier(a.className) - twitchTier(b.className)
-      || (a.manaPct! - b.manaPct!)
-      || a.name.localeCompare(b.name)),
+    manaList.filter(r => twitchEligible(r.className))
+      .sort((a, b) =>
+        twitchSortKey({ className: a.className, manaPct: a.manaPct! })
+        - twitchSortKey({ className: b.className, manaPct: b.manaPct! })
+        || a.name.localeCompare(b.name)),
     [manaList]);
 
   const focused = bufferClass !== '';
