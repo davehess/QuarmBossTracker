@@ -20,6 +20,53 @@ raid; move it to STATUS.md's "Done" once graduated to stable.*
 
 ---
 
+## #142 / #143 — Emperor tank-buster countdown + ext-target MEZ/SLOW badges
+
+**Needs:** agent **3.4.3** (beta Mimic) + web **1.0.264** (roadmap/docs, live on
+Vercel). No bot change, no DB change. All agent/overlay side.
+
+**What it is:**
+- **#142 tank-buster countdown.** For the **Emperor Ssraeshza** fight the agent
+  now runs the tank-buster clock off the **combat log** (per-client, no Zeal / no
+  relay — works for everyone): **Blood of Ssraeshza dies → a 2:00 Emperor spawn
+  countdown** with a **"Paladin DA NOW"** call 10s out; the **~4000 non-melee
+  buster hit → "TANK BUSTER"** call + a re-armed **60s** countdown to the next; a
+  repeat hit **resets the same bar** (never stacks); the **Emperor's death clears
+  the countdown** so nothing lingers on the corpse. The re-arm + clear-on-death
+  are general (any boss timer with a `target` benefits; #36 builds on it).
+  *Detection note:* the imported `.*tank ?buster` guild trigger can't fire (Rage
+  of Ssraeshza, spell 2310, is a 0s cast with no chat text) — the ~4000-damage
+  line is the real signal; don't wait on that trigger's regex.
+- **#143 MEZ/SLOW badges.** The Extended Target overlay shows a bright pill next
+  to a mob's name when it's **mezzed (purple MEZ)** or **slowed (amber SLOW)**,
+  read from the debuffs already on that mob. Both show when both.
+
+**✅ Solo (one machine)**
+- **Arm a timer trigger twice → it RESETS, not stacks.** Make a personal trigger
+  with any pattern + a timer duration (e.g. 30s). Trip it twice a few seconds
+  apart (Rehearse/Test, or type the matching line). The trigger overlay must show
+  **ONE** countdown row that jumps back to full on the 2nd fire — never two rows.
+- **A matching death cancels the countdown.** Give that trigger a target it's
+  "about" (fire it while a mob whose name matches is your current fight, or use a
+  `{s}` capture that captures the mob). While its bar is ticking, kill that mob
+  (or type its slain line). The row must vanish immediately. An UNRELATED mob's
+  death must leave the bar ticking (natural expiry).
+- **Emperor dry-run (if you can pull it):** on Blood of Ssraeshza's death you get
+  a 2:00 "Emperor spawn + buster" bar + "Paladin DA NOW" at 1:50; the first
+  ~4000 hit says "TANK BUSTER" and starts a 60s bar; each subsequent buster
+  resets it; the Emperor's death clears it.
+- **Ext-target badges:** with a shaman/enchanter slow on a raid mob, its
+  Extended Target row shows **SLOW**; with a mez on an add, it shows **MEZ**; a
+  mob that's both shows both; the badge disappears the instant the debuff falls
+  off. A plain debuff (e.g. Malo/Pacify) shows neither.
+
+**👥 Multi-person (2+ machines)**
+- **Everyone hears the buster locally.** Two raiders in the Emperor fight should
+  BOTH get the "TANK BUSTER" call + countdown from their own logs (no relay
+  needed) — confirm neither depends on the other running Zeal.
+
+---
+
 ## #101 — Local log replay through the real trigger pipeline
 
 **Needs:** agent **3.4.1** (beta Mimic) + web **1.0.260** (live on Vercel).

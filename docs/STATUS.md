@@ -65,6 +65,64 @@ folly** — it's here.*
 ## The work ledger
 
 ### ✅ Done — major shipped features (not exhaustive; see git + roadmapData.ts)
+- **#142 Emperor tank-buster countdown (clear-on-death + re-arm + spawn pre-warn)
+  & #143 ext-target MEZ/SLOW badges — DONE (2026-07-22, agent 3.4.3 beta; Mimic
+  parked 2.0.2; web 1.0.264 roadmap/docs).**
+  - **#142 timer behavior (the part the task scoped).** Re-arm was ALREADY
+    correct — `_startTimer` keys `_activeTimers` by trigger-id (+ sorted-capture
+    suffix), so a repeat fire on the same captures `set()`s the SAME id and
+    RESETS the bar in place (never stacks a 2nd row); a no-capture-group regex
+    → `captures={}` → id = baseId. **New capability: clear-on-death.** A general,
+    ZERO-config `_cancelTimersOnMobDeath(line)` in
+    `packages/wolfpack-logsync/index.js` drops every active timer whose `target`
+    matches the mob a slain/death line names (grounded on parseEvent's own death
+    forms: "…has been slain by …!", "You have slain …!", "… died."). Every armed
+    timer already records the mob it's ABOUT in `target` (a capture, else the
+    fight's `bossName`), so this needs no per-trigger setup — the automatic
+    counterpart to a trigger's optional `end_early_pattern` (`_endRegex`, which
+    already existed for the per-trigger case). Fail-open: `target == null` →
+    natural expiry. Wired in the live tail next to `checkCharmPetDeath`. **#36
+    builds on the re-arm + clear-on-death.**
+  - **#142 DETECTION (folded in, high-value for tonight).** The imported guild
+    trigger's `.*tank ?buster` regex CANNOT fire — the buster is **Rage of
+    Ssraeshza (spell 2310)**: instant 0s cast, NO cast/land chat text (grounded
+    from `eqemu_spells`: SPA 11 base 10 = −90% attack speed + SPA 79 base −4000 =
+    a ~4000 non-melee hit; detrimental, single-target, mob spell). So detection
+    moved to a pure **log-line** signal (EQLogParser-style, per-client, no Zeal /
+    no relay): a data-driven `BOSS_SPAWN_CHAINS` table drives (1) **Blood of
+    Ssraeshza death → 2:00 Emperor spawn countdown** with a 10s-out "Paladin DA
+    NOW" pre-warn (the DA-the-spawn-buster window), (2) the **~4000 non-melee
+    damage line from Emperor Ssraeshza** → "TANK BUSTER" callout + (re)arm of the
+    60s cadence countdown (`_checkTankBuster` reuses `parseEvent`'s attacker/
+    amount; gated on the line's non-melee marker so a same-size melee swing can't
+    false-fire; accepts attacker=boss OR the passive unattributed non-melee form
+    while that boss is the active fight; 8s echo guard), (3) Emperor death clears
+    it via `_cancelTimersOnMobDeath`. Callouts ride `_pushOverlay`
+    (the `_announceRampage` precedent); timers ride `_startTimer` with
+    `target=boss`. Cadence is **60s** (guild-lead corrected the trigger's 55s
+    placeholder). Regex field-verify of the imported trigger is Hitya's live step
+    and is now moot for firing (the code detector is the signal); the imported
+    trigger's text/regex was NOT touched.
+  - **#143 MEZ/SLOW badges.** Pure DISPLAY classification in `apps/mimic/
+    extarget.html` over the debuff names each row already carries — no new upload,
+    no bot/agent proxy change. SLOW mirrors the agent's `SLOW_SPELLS` (#105) +
+    `Rage of Ssraeshza` (added to the agent list too, so both stay in sync);
+    MEZ is the **SPA-31 Mesmerize family grounded from `eqemu_spells`**
+    (Mesmerize/Mesmerization/Enthrall/Dazzle/Rapture/Fascination/Glamour of
+    Kintaz + the bard mez songs Kelin's Lucid Lullaby / Lullaby of Morell +
+    Ancient: Eternal Rapture / Lullaby of Shadow). The Lull/Pacify/Soothe/Calm
+    family is SPA 30 (aggro-reduction, `good_effect=1`) — deliberately NOT badged
+    as mez. Bright pill next to the name (MEZ purple, SLOW amber); both show when
+    both; clears the instant the debuff falls off (byte-stable HTML). **#130
+    (highest-slow override) is the follow-up** — v1 is just the badge. Note: the
+    buster debuff lands on the TANK (a player row, hidden by default), so it
+    badges the Emperor's tank when players are shown, not the Emperor.
+  - Fixtures (scratchpad, not committed) through the REAL code: Feature A 18/18
+    (attributed + passive arm, repeat resets not stacks, 8s echo guard, melee
+    ≠ buster, Emperor death clears, unknown death → survives, Blood→2:00 spawn
+    pre-warn, "You died." ignored); Feature B 12/12 (SLOW/MEZ/both/neither/empty,
+    backtick normalize, Rage of Ssraeshza=SLOW, Pacify=neither). See
+    BETA-TESTING #142/#143.
 - **Data-integrity bug round — DONE (2026-07-22, bot 3.0.225 on main).**
   - **#138 OpenDKP upsert 500s (silent bid/loot loss).** Every sync, the
     `opendkp_auction_bids` and `opendkp_loot` upserts 500'd with PG **21000**
