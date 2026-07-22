@@ -15820,6 +15820,9 @@ async function dismissTopDamage(key) {
   var opendkpBase  = "";    // https://<client>.opendkp.com — from the bot (bid-history)
   var eraFilter    = "";    // "" = all; else "Classic"/"Kunark"/"Velious"/"Luclin"
   var famPrefilled = false; // one-shot auto-prefill of the family from OpenDKP
+  var acctDkp      = null;  // #124 { ok, account_dkp, character } — REAL pooled balance from OpenDKP standings
+  var lastAcctKey  = "";    // family signature the acctDkp figure is for
+  var lastAcctAt   = 0;     // last /api/loot/dkp fetch (client-side 30s throttle)
 
   function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g, function(c){ return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]; }); }
   function fmt(n){ n=Number(n); if(!isFinite(n)) return "—"; return n.toLocaleString(); }
@@ -16016,12 +16019,17 @@ async function dismissTopDamage(key) {
     if (cfg.authed && bidHist){
       var wins = bidHist.wins||[]; var wl = bidHist.wishlist||[]; var misses = bidHist.misses||[]; var dkp = bidHist.dkp||null;
 
-      // Family DKP pill + expansion filter row.
+      // DKP pill + expansion filter row. Prefer the REAL pooled balance read
+      // straight from OpenDKP's standings (#124); the mirror-derived family total
+      // is only a labeled "~est." fallback so it's never mistaken for the truth.
       h += "<div style='display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:12px 0 4px;font-size:11px'>";
-      if (dkp){
+      if (acctDkp && acctDkp.account_dkp!=null){
+        var whoTxt = acctDkp.character ? (" · "+esc(acctDkp.character)) : "";
+        h += "<span style='background:rgba(63,185,80,.12);border:1px solid var(--border);border-radius:5px;padding:2px 9px' title='Live from OpenDKP standings — your account&#39;s Current DKP'>💰 <b>"+fmt(acctDkp.account_dkp)+"</b> <span class=dim>DKP · account (OpenDKP)"+whoTxt+"</span></span>";
+      } else if (dkp){
         var fa = String(dkp.fetched_at||"").replace("T"," "); var dotIx = fa.indexOf("."); if (dotIx>=0) fa = fa.substring(0,dotIx);
-        var freshTitle = dkp.fetched_at ? ("mirror-derived (OpenDKP pools alts) · as of "+fa+" UTC") : "mirror-derived";
-        h += "<span style='background:rgba(212,175,55,.10);border:1px solid var(--border);border-radius:5px;padding:2px 9px' title='"+esc(freshTitle)+"'>💰 <b>"+fmt(dkp.family_total)+"</b> <span class=dim>DKP · family pool</span></span>";
+        var freshTitle = "~estimate from the local mirror (OpenDKP pools alts) — the real balance appears once your OpenDKP standings load" + (dkp.fetched_at ? (" · as of "+fa+" UTC") : "");
+        h += "<span style='background:rgba(212,175,55,.10);border:1px solid var(--border);border-radius:5px;padding:2px 9px' title='"+esc(freshTitle)+"'>💰 <b>~"+fmt(dkp.family_total)+"</b> <span class=dim>DKP · ~est. (mirror)</span></span>";
       }
       var eraSet = {};
       for (var ei=0;ei<wl.length;ei++) if(wl[ei].era) eraSet[wl[ei].era]=1;
@@ -16067,7 +16075,8 @@ async function dismissTopDamage(key) {
           h += "<td class=num>"+(m.last_winning_bid!=null?fmt(m.last_winning_bid):"—")+"</td>";
           h += "<td class=num>"+(m.last_second_bid!=null?fmt(m.last_second_bid):"—")+"</td>";
           h += "<td class=num><input id=wpPlan_"+m.item_id+" type=number min=1 value='"+esc(pv)+"' placeholder='—' style='width:52px;background:#0e1116;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:1px 4px;font-family:inherit;text-align:right'></td>";
-          h += "<td class=num>"+(dkp?fmt(dkp.family_total):"—")+"</td>";
+          var dkpCell = (acctDkp&&acctDkp.account_dkp!=null) ? fmt(acctDkp.account_dkp) : (dkp?("~"+fmt(dkp.family_total)):"—");
+          h += "<td class=num>"+dkpCell+"</td>";
           h += "</tr>";
         }
         h += "</table>";
@@ -16097,7 +16106,7 @@ async function dismissTopDamage(key) {
     el = document.getElementById("wpLootLoginCancel"); if (el) el.onclick = function(){ showLogin=false; loginErr=""; render(); };
     el = document.getElementById("wpLootLoginGo"); if (el) el.onclick = doLogin;
     el = document.getElementById("wpLootPass"); if (el) el.onkeydown = function(e){ if(e.key==="Enter") doLogin(); };
-    el = document.getElementById("wpLootLogout"); if (el) el.onclick = function(){ fetch("/api/loot/logout",{method:"POST"}).then(function(){ cfg.authed=false; bidHist=null; render(); }); };
+    el = document.getElementById("wpLootLogout"); if (el) el.onclick = function(){ fetch("/api/loot/logout",{method:"POST"}).then(function(){ cfg.authed=false; bidHist=null; acctDkp=null; lastAcctKey=""; lastAcctAt=0; render(); }); };
     el = document.getElementById("wpFamToggle"); if (el) el.onclick = function(){ showFamily=!showFamily; render(); };
     el = document.getElementById("wpFamAddGo"); if (el) el.onclick = addAlt;
     el = document.getElementById("wpFamAdd"); if (el) el.onkeydown = function(e){ if(e.key==="Enter") addAlt(); };
@@ -16233,13 +16242,28 @@ async function dismissTopDamage(key) {
       }
     }).catch(function(){});
   }
+  // #124 — the REAL pooled account balance, read from OpenDKP's own standings
+  // via the agent's /api/loot/dkp (server-side, Bearer). Client-side 30s throttle
+  // keyed on the family signature; on failure acctDkp stays null and the pill
+  // falls back to the mirror "~est." figure.
+  function fetchLootDkp(){
+    if (!cfg.authed){ acctDkp=null; return Promise.resolve(); }
+    var main=(cfg.family&&cfg.family.main)||""; var fam=famList();
+    if (!main && !fam.length){ acctDkp=null; return Promise.resolve(); }
+    var key=main+"|"+fam.join(",");
+    if (acctDkp!==null && key===lastAcctKey && (Date.now()-lastAcctAt)<30000) return Promise.resolve();
+    var q="?main="+encodeURIComponent(main)+"&characters="+encodeURIComponent(fam.join(","));
+    return fetch("/api/loot/dkp"+q).then(function(r){return r.ok?r.json():null;}).then(function(j){
+      acctDkp=(j&&j.ok)?j:null; lastAcctKey=key; lastAcctAt=Date.now();
+    }).catch(function(){ acctDkp=null; lastAcctKey=key; lastAcctAt=Date.now(); });
+  }
   function fetchServer(){
     var who=pickChar();
     var q = who ? ("?character="+encodeURIComponent(who)) : "";
     var jobs=[ fetch("/api/server/auctions"+q).then(function(r){return r.ok?r.json():{auctions:[]};}).then(function(j){ srvAucs=(j&&j.auctions)||[]; }).catch(function(){ srvAucs=[]; }) ];
     if (who) jobs.push(fetch("/api/server/my-bids"+q).then(function(r){return r.ok?r.json():{bids:[]};}).then(function(j){ myBids=(j&&j.bids)||[]; }).catch(function(){ myBids=[]; }));
     else myBids=[];
-    return Promise.all(jobs).then(fetchItemHist).then(fetchBidHist).then(render);
+    return Promise.all(jobs).then(fetchItemHist).then(fetchBidHist).then(fetchLootDkp).then(render);
   }
   function fetchAll(){ ensure(); Promise.all([fetchConfig(), fetchLocal()]).then(fetchServer); }
 
@@ -17544,6 +17568,24 @@ function startWebDashboard(port) {
       if (req.url === '/api/loot/auctions' && req.method === 'GET') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ auctions: _lootAuctionsSnapshot(), updated_at: new Date().toISOString() }));
+      }
+      // #124 — the REAL pooled account DKP, read from OpenDKP's own standings
+      // (not the mirror recompute). ?main=<name>&characters=<csv>. Requires the
+      // #108 OpenDKP login (Bearer). { ok:false } → the panel shows the mirror
+      // figure labeled "est." instead. Never blocks: fail-open to ok:false.
+      if (req.url.startsWith('/api/loot/dkp') && req.method === 'GET') {
+        const u = new URL(req.url, 'http://localhost');
+        const main  = (u.searchParams.get('main') || '').trim();
+        const chars = (u.searchParams.get('characters') || '').split(',').map(s => s.trim()).filter(Boolean);
+        if (!_opendkpAuthed() && !(_opendkpAuth && _opendkpAuth.refresh_token)) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ ok: false, reason: 'not authed' }));
+        }
+        let out;
+        try { out = await _opendkpAccountDkp(main, chars.length ? chars : (main ? [main] : [])); }
+        catch { out = { ok: false }; }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify(out));
       }
       // Increment 2f passthrough: GET /api/server/<key>?character=... proxies
       // to the bot's /api/agent/server-panel/<key> with our stored bearer
@@ -19341,7 +19383,7 @@ async function _fetchOpendkpAuthConfig() {
     rq.end();
   });
   if (!cfg || !cfg.cognito_client_id) throw new Error('OpenDKP login is not configured on the bot');
-  _opendkpCfgCache = { cognito_client_id: cfg.cognito_client_id, region: cfg.region || 'us-east-2', _exp: Date.now() + 3600_000 };
+  _opendkpCfgCache = { cognito_client_id: cfg.cognito_client_id, region: cfg.region || 'us-east-2', client_name: cfg.client_name || null, _exp: Date.now() + 3600_000 };
   return _opendkpCfgCache;
 }
 
@@ -19414,6 +19456,119 @@ async function _opendkpEnsureFresh() {
     }
   } catch { /* re-login required */ }
   return false;
+}
+
+// ── #124 OpenDKP standings → the REAL pooled account balance ─────────────────
+// The mirror-derived family total (bot bid-history → _familyDkpTotals) can't
+// reach OpenDKP's canonical number (limit=3000 truncation, a per-attendee
+// double-count, MODE-guessed family grouping) — confirmed 2026-07-22: the mirror
+// puts Hitya's family at −125 (main-only) / +858 (family-sum) while the OpenDKP
+// standings show 171. OpenDKP already computes the canonical figure: the
+// standings/summary endpoint returns one row per ACTIVE character
+// { CharacterName, CurrentDKP } where CurrentDKP = own ticks − own items +
+// own adjustments over the COMPLETE database. OpenDKP's own standings page
+// renders those rows verbatim, so the number an officer reads for their account
+// IS the CurrentDKP on their MAIN's row (the guild pools DKP onto the main).
+//
+// We fetch it here with the same Cognito IdToken the #108 login already holds
+// (the bot itself reaches OpenDKP purely via Bearer — OPENDKP_CLIENT_ID is unset
+// in prod — so the agent has identical read capability and needs no extra
+// credential). Server-side call from Node, so there is no browser CORS.
+
+const OPENDKP_API_HOST = (process.env.OPENDKP_API_HOST || 'https://api.opendkp.com').replace(/\/+$/, '');
+let _opendkpStandingsCache = null;   // { at, models }
+
+function _opendkpClientName() {
+  return (_opendkpCfgCache && _opendkpCfgCache.client_name) || process.env.OPENDKP_CLIENT_NAME || 'wolfpack';
+}
+
+// Pick the pooled account balance out of the standings Models[]. The number an
+// officer reads for their account is the CurrentDKP on their MAIN's row; if the
+// main isn't in the standings (e.g. inactive → excluded), fall back to the
+// highest-balance family member present. Accepts a bare array OR a { Models:[] }
+// wrapper, and tolerates CurrentDKP field-name variants. Returns { dkp,
+// character, matched } or null. PURE + exported for tests.
+function _pickAccountDkp(models, main, familyNames) {
+  var rows = Array.isArray(models) ? models
+           : (models && Array.isArray(models.Models)) ? models.Models
+           : [];
+  var byName = {};
+  for (var i = 0; i < rows.length; i++) {
+    var r = rows[i]; if (!r) continue;
+    var nm = r.CharacterName || r.Name || r.character_name;
+    if (!nm) continue;
+    var dkpRaw = (r.CurrentDKP != null) ? r.CurrentDKP
+               : (r.CurrentDkp != null) ? r.CurrentDkp
+               : (r.currentDkp != null) ? r.currentDkp
+               : (r.Dkp != null) ? r.Dkp
+               : (r.DKP != null) ? r.DKP : null;
+    var dkp = Number(dkpRaw);
+    if (!isFinite(dkp)) continue;
+    var key = String(nm).toLowerCase();
+    if (!(key in byName)) byName[key] = { name: String(nm), dkp: dkp };   // one active row per name
+  }
+  var mainKey = main ? String(main).trim().toLowerCase() : "";
+  if (mainKey && byName[mainKey]) return { dkp: byName[mainKey].dkp, character: byName[mainKey].name, matched: "main" };
+  var fam = Array.isArray(familyNames) ? familyNames : [];
+  var best = null;
+  for (var f = 0; f < fam.length; f++) {
+    var fk = fam[f] ? String(fam[f]).trim().toLowerCase() : "";
+    if (fk && byName[fk] && (best === null || byName[fk].dkp > best.dkp)) best = byName[fk];
+  }
+  if (best) return { dkp: best.dkp, character: best.name, matched: "family" };
+  return null;
+}
+// ── end #124 pure helper ──
+
+function _opendkpGetJson(pathStr, token) {
+  return new Promise((resolve) => {
+    let u; try { u = new URL(OPENDKP_API_HOST + pathStr); } catch { return resolve(null); }
+    const rq = https.request({
+      method: 'GET', hostname: u.hostname, port: u.port || 443,
+      path: u.pathname + (u.search || ''),
+      headers: { 'Authorization': 'Bearer ' + token, 'Accept': 'application/json' }, timeout: 12000,
+    }, (r) => {
+      let d = ''; r.on('data', c => d += c);
+      r.on('end', () => {
+        if ((r.statusCode || 500) >= 400) return resolve(null);
+        try { resolve(JSON.parse(d || 'null')); } catch { resolve(null); }
+      });
+    });
+    rq.on('error', () => resolve(null));
+    rq.on('timeout', () => { rq.destroy(); resolve(null); });
+    rq.end();
+  });
+}
+
+// Fetch the standings Models[] (Bearer). The hosted multi-tenant API serves each
+// legacy /beta/<res> lambda under /clients/<name>/<res>; the DKP summary lambda's
+// legacy path is /beta/dkp, so its hosted path is /clients/<name>/dkp (we also
+// try /summary as a fallback). Cached ~60s. Returns the array or null. NEVER
+// throws — any failure just falls back to the mirror figure in the panel.
+async function _opendkpFetchStandings() {
+  if (_opendkpStandingsCache && (Date.now() - _opendkpStandingsCache.at) < 60000) return _opendkpStandingsCache.models;
+  if (!_opendkpAuthed()) { const ok = await _opendkpEnsureFresh(); if (!ok) return null; }
+  const token = _opendkpAuth && _opendkpAuth.id_token;
+  if (!token) return null;
+  try { await _fetchOpendkpAuthConfig(); } catch { /* client name defaults to wolfpack */ }
+  const name = encodeURIComponent(_opendkpClientName());
+  const routes = ['/clients/' + name + '/dkp', '/clients/' + name + '/summary'];
+  for (const route of routes) {
+    const j = await _opendkpGetJson(route, token);
+    const models = Array.isArray(j) ? j : (j && Array.isArray(j.Models)) ? j.Models : null;
+    if (models && models.length) { _opendkpStandingsCache = { at: Date.now(), models: models }; return models; }
+  }
+  return null;
+}
+
+// Resolve the pooled account balance for a family. Returns
+// { ok:true, source:'opendkp', account_dkp, character, matched } or { ok:false }.
+async function _opendkpAccountDkp(main, familyNames) {
+  const models = await _opendkpFetchStandings();
+  if (!models) return { ok: false };
+  const picked = _pickAccountDkp(models, main, familyNames);
+  if (!picked) return { ok: false };
+  return { ok: true, source: 'opendkp', account_dkp: Math.round(picked.dkp), character: picked.character, matched: picked.matched };
 }
 
 // Hydrate both from disk at startup (defaults on missing/unreadable files).
@@ -27686,6 +27841,7 @@ module.exports = {
   startWebDashboard,
   _loadBidFamily, _saveBidFamily, _bidFamilyNames, _opendkpAuthed,
   _loadPlannedBids, _savePlannedBids, _setPlannedBid,
+  _pickAccountDkp,   // #124 — standings → pooled account balance (pure)
   _setBidFamilyForTest: (f) => { _bidFamily = f; },
   _setOpendkpAuthForTest: (a) => { _opendkpAuth = a; },
   _getBidFamilyForTest: () => _bidFamily,
