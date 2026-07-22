@@ -25114,9 +25114,17 @@ function buildMobInfo() {
     const songs = zealBuffs.filter(b => b.song).length;
     slotCounts = { buffs: zealBuffs.length - songs, buff_max: 15, songs, song_max: 6 };
   }
+  // Exact cur/max for the target when it's a raider we have cross-client numbers
+  // for (their own uploaded live-state, or self). Mobs are never in raid_roster/
+  // live-state so this stays null and the overlay shows the plain gauge %. Same
+  // resolver + max>100 guard the Tank overlay uses (a ≤100 "pool" is a percent in
+  // disguise). Uploaded live-state was already fetched above for the PC buff path.
+  const targetVals = _resolveHpValuesForName(tnameLower, selfChar, st);
   return {
     target_name:    st.target_name,
     target_hp_pct:  st.target_hp_pct != null ? st.target_hp_pct : null,
+    target_hp_cur:  targetVals ? targetVals.cur : null,
+    target_hp_max:  targetVals ? targetVals.max : null,
     mob:            cached ? cached.mob : null,   // null until the lookup returns
     loading:        !cached,
     target_buffs:   buffs,

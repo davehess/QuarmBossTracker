@@ -410,7 +410,11 @@
       manaLine = '<div class="mana">' + fmtNum(mob.mana) + ' max mana</div>';
     }
     var sub = [];
-    if (mob && mob.hp != null) sub.push(fmtNum(mob.hp) + ' HP');
+    // Live cur/max for a targeted raider (their own uploaded live-state) — the
+    // agent only fills these for PCs with a real pool (>100), so mobs fall
+    // through to the catalog HP below. "4382 / 5100 HP" beside the % gauge.
+    if (mi.target_hp_cur != null && mi.target_hp_max != null) sub.push(fmtNum(mi.target_hp_cur) + ' / ' + fmtNum(mi.target_hp_max) + ' HP');
+    else if (mob && mob.hp != null) sub.push(fmtNum(mob.hp) + ' HP');
     if (mob && mob.mindmg != null && mob.maxdmg != null) sub.push(mob.mindmg + '–' + mob.maxdmg + ' dmg');
     // level pulled out of the sub line — surfaces in the top-right title bar
     // as its own badge below, so it stays visible regardless of which tab is
