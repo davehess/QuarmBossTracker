@@ -3820,6 +3820,10 @@ const SLOW_SPELLS = new Set([
   'drowsy', 'walking sleep', "tagar's insects", "togor's insects", "turgur's insects", 'cripple',
   // Enchanter
   'languid pace', 'shiftless deeds', 'tepid deeds', 'forlorn deeds',
+  // Boss tank-busters that are ALSO attack-speed slows (#142). Rage of
+  // Ssraeshza (spell 2310, SPA 11 base 10 = −90% attack speed + a 4000 hit)
+  // lands on the Emperor's tank; grounded from eqemu_spells.
+  'rage of ssraeshza',
 ]);
 function _isSlowSpell(name) {
   if (!name) return false;
@@ -25731,6 +25735,165 @@ function _cancelTimer(id) {
   if (!id) return false;
   return _activeTimers.delete(String(id));
 }
+// ── #142 boss-death → clear that mob's countdown timers ─────────────────────
+// A tank-buster / death-touch / any boss-cadence countdown (armed by a guild
+// trigger with timer_duration_sec) should vanish the instant the mob dies, so
+// no phantom "next buster in Xs" lingers on the corpse. General + ZERO-config:
+// every armed timer already records the mob it's ABOUT in `target` (a trigger
+// capture, else the current fight's bossName), so a slain/death line naming
+// that mob drops its timers. This is the automatic counterpart to a trigger's
+// optional end_early_pattern (_endRegex) — that one needs per-trigger setup;
+// this needs none, which is exactly what a boss-buster timer wants (#36 builds
+// on it, per-boss data-driven).
+//
+// Death-line forms are grounded on parseEvent's own death detection above:
+//   "<Mob> has been slain by <killer>!"   "You have slain <Mob>!"   "<Mob> died."
+// Fail-open by design: a timer whose target we never resolved (target == null,
+// e.g. a healer whose log carries no combat for the boss) is left to expire
+// naturally — today's behavior. EXACT case-insensitive name match so a
+// same-named add's death can't clear an unrelated boss's timer.
+const _DEATH_SLAIN_BY_RX = /\]\s+(.+?)\s+has been slain by\s+/i;
+const _DEATH_YOU_SLEW_RX = /\]\s+You have slain\s+(.+?)[!.]*\s*$/i;
+const _DEATH_DIED_RX     = /\]\s+(.+?)\s+die[ds]\.\s*$/i;
+function _deadMobNameFromLine(line) {
+  if (!line) return null;
+  const hasSlain = line.indexOf('slain') !== -1;
+  const hasDied  = /\bdie[ds]\./i.test(line);
+  if (!hasSlain && !hasDied) return null;
+  let m = hasSlain ? line.match(_DEATH_SLAIN_BY_RX) : null;
+  if (m) return m[1].trim().replace(/[!.]+$/, '');
+  m = hasSlain ? line.match(_DEATH_YOU_SLEW_RX) : null;
+  if (m) return m[1].trim().replace(/[!.]+$/, '');
+  m = hasDied ? line.match(_DEATH_DIED_RX) : null;
+  if (m) return m[1].trim().replace(/[!.]+$/, '');
+  return null;
+}
+function _cancelTimersOnMobDeath(line) {
+  const dead = _deadMobNameFromLine(line);
+  if (!dead) return 0;
+  const deadLower = dead.toLowerCase();
+  if (deadLower === 'you') return 0;   // "You died." — never a timer target
+  let cancelled = 0;
+  for (const [id, row] of _activeTimers) {
+    const tgt = row.target ? String(row.target).toLowerCase() : null;
+    if (tgt && tgt === deadLower) { _activeTimers.delete(id); cancelled++; }
+  }
+  if (cancelled) console.log('[timers] ' + dead + ' died — cleared ' + cancelled + ' countdown' + (cancelled === 1 ? '' : 's'));
+  return cancelled;
+}
+
+// ── #142 boss spawn-chain + tank-buster detection ───────────────────────────
+// Data-driven, per-boss, reusable (#36). A "chain" encodes: when the PRECURSOR
+// mob dies, the BOSS spawns spawn_delay_sec later and busts the tank at spawn,
+// then re-busts on its own cadence. ALL THREE signals are pure LOG lines every
+// raider parses locally — no Zeal, no cross-client relay (EQLogParser-style),
+// so it works for everyone regardless of who's running Zeal.
+//
+// Grounded facts (eqemu_spells + guild lead, #142):
+//   • Rage of Ssraeshza = spell 2310: SPA 11 base 10 (−90% attack speed) +
+//     SPA 79 base −4000 (a ~4000 non-melee HIT). 0s cast, NO cast/land chat —
+//     so it's undetectable by text regex; the 4000 non-melee DAMAGE line is the
+//     signal (EQLogParser attributes the amount to the spell; so do we).
+//   • Fight: "Blood of Ssraeshza" dies → Emperor Ssraeshza spawns exactly 2:00
+//     later → busts at spawn (a Paladin DAs it), then every ~60s.
+// The 2:00 spawn countdown is the pre-warn a Paladin needs to DA the spawn bust.
+const BOSS_SPAWN_CHAINS = [
+  {
+    precursor:         'Blood of Ssraeshza',       // its death arms the spawn pre-warn
+    boss:              'Emperor Ssraeshza',         // spawns spawn_delay_sec after that
+    spawn_delay_sec:   120,                         // 2:00 (guild lead)
+    spawn_label:       'Emperor spawn + buster',
+    spawn_warn_sec:    10,                          // warn ~10s before the spawn bust
+    spawn_warn_text:   'Paladin DA NOW',
+    spawn_fire_text:   'Emperor in 2:00 — Paladin ready to DA the spawn buster',
+    buster_damage:     4000,                        // Rage of Ssraeshza DD (spell 2310)
+    buster_damage_tol: 1200,                        // wide enough for partial mitigation
+    buster_cadence_sec: 60,                         // re-bust cadence (guild lead)
+    buster_label:      'Tank Buster',
+    buster_warn_sec:   10,
+    buster_warn_text:  'TANK BUSTER incoming',
+    buster_fire_text:  'TANK BUSTER',
+  },
+];
+// Per-boss last-buster wall-clock so a single cast (seen once per observer, but
+// possibly echoed across a box's logs) can't machine-gun the re-arm.
+const _busterLastFire = new Map();
+
+// Arm (or RE-ARM) a boss countdown and optionally fire a callout NOW. Local
+// only — every raider detects the driving log line independently, so no relay.
+// A re-fire of the same (boss,label) RESETS the same row in place because the
+// synthetic trigger id is stable (DnDOverlay convention, via _startTimer).
+// target=boss so _cancelTimersOnMobDeath clears it the instant the boss dies.
+function _armBossCountdown(opts) {
+  const now = opts.tsMs || Date.now();
+  if (opts.fireText) {
+    _pushOverlay({
+      text:    opts.fireText,
+      tts:     opts.fireText,
+      trigger: (opts.label || 'timer') + ' — ' + opts.boss,
+      scope:   'guild',
+      firedAt: now,
+      test:    false,
+    });
+  }
+  _startTimer({
+    id:                 'boss-chain|' + opts.boss + '|' + opts.label,
+    name:               opts.label,
+    timer_duration_sec: opts.durationSec,
+    warning_seconds:    opts.warnSec || 0,
+    warning_text:       opts.warnText || null,
+    actions:            [{ color: opts.color || 'red' }],
+    _scope:             'guild',
+  }, now, false, { target: opts.boss });
+}
+
+// Precursor death → arm the boss spawn pre-warn countdown. Runs off the same
+// slain/death lines _cancelTimersOnMobDeath reads.
+function _checkBossSpawnChain(line, tsMs) {
+  const dead = _deadMobNameFromLine(line);
+  if (!dead) return;
+  const deadLower = dead.toLowerCase();
+  for (const c of BOSS_SPAWN_CHAINS) {
+    if (deadLower !== c.precursor.toLowerCase()) continue;
+    _armBossCountdown({
+      boss: c.boss, label: c.spawn_label, durationSec: c.spawn_delay_sec,
+      warnSec: c.spawn_warn_sec, warnText: c.spawn_warn_text,
+      fireText: c.spawn_fire_text, color: 'gold', tsMs,
+    });
+    console.log('[boss-chain] ' + c.precursor + ' died — ' + c.boss + ' spawns in ' + c.spawn_delay_sec + 's');
+  }
+}
+
+// Tank-buster damage line → fire "TANK BUSTER" + (re)arm the cadence countdown.
+// Reuses parseEvent's attacker/amount (does NOT reinvent the line format); the
+// non-melee marker is read off the raw line so a same-size MELEE swing can't
+// false-fire. Attributed form (attacker=boss) OR the passive unattributed
+// non-melee form while THIS boss is the active fight (EQLogParser-style
+// inference) both count.
+function _checkTankBuster(ev, line, tsMs) {
+  if (!ev || ev.type !== 'damage' || !(ev.amount > 0)) return;
+  if (!/non-melee/i.test(line)) return;   // the buster is a spell hit, not melee
+  const attackerLower = ev.attacker ? String(ev.attacker).toLowerCase() : null;
+  const curBoss = (stats.currentEncounterThreat && stats.currentEncounterThreat.bossName)
+    ? String(stats.currentEncounterThreat.bossName).toLowerCase() : null;
+  for (const c of BOSS_SPAWN_CHAINS) {
+    if (Math.abs(ev.amount - c.buster_damage) > c.buster_damage_tol) continue;
+    const bossLower = c.boss.toLowerCase();
+    const attributed = attackerLower === bossLower;
+    const inferred   = !attackerLower && curBoss === bossLower;
+    if (!attributed && !inferred) continue;
+    const key = 'buster|' + bossLower;
+    if ((tsMs || Date.now()) - (_busterLastFire.get(key) || 0) < 8000) return;   // dupe/echo guard
+    _busterLastFire.set(key, tsMs || Date.now());
+    _armBossCountdown({
+      boss: c.boss, label: c.buster_label, durationSec: c.buster_cadence_sec,
+      warnSec: c.buster_warn_sec, warnText: c.buster_warn_text,
+      fireText: c.buster_fire_text, color: 'red', tsMs,
+    });
+    console.log('[boss-chain] tank buster landed on ' + c.boss + ' — re-armed ' + c.buster_cadence_sec + 's countdown');
+    return;
+  }
+}
 function _activeTimersSnapshot() {
   const now = Date.now();
   const out = [];
@@ -27727,6 +27890,14 @@ async function main() {
         // pet — same-named different mob).
         checkCharmPetDeath(line, b.character);
 
+        // #142 — a boss death clears that mob's countdown timers (tank-buster,
+        // deathtouch) so no phantom "next in Xs" lingers on the corpse; and a
+        // configured PRECURSOR death arms the boss spawn pre-warn (Blood of
+        // Ssraeshza dies → 2:00 → Emperor + "Paladin DA NOW"). Both key off the
+        // same slain/death line. Local-only, live tail.
+        try { _cancelTimersOnMobDeath(line); } catch { /* never let a bad line break the tail */ }
+        try { const _dts = parseEqTimestamp(line); _checkBossSpawnChain(line, _dts ? _dts.getTime() : Date.now()); } catch { void 0; }
+
         // /who block boundaries (header/footer) → demarcate the current /who run
         // for the /who overlay. Rows themselves are attributed in recordWhoEvent.
         applyWhoLine(line);
@@ -27789,6 +27960,11 @@ async function main() {
         if (!shouldKeep(line, dropPatterns, keepPatterns)) return;
         const ev = parseEvent(line, ts);
         if (ev) {
+          // #142 — tank-buster detection off the ~4000 non-melee damage line
+          // (Rage of Ssraeshza, spell 2310). Fires "TANK BUSTER" + (re)arms the
+          // 60s cadence countdown. Local-only, live tail; keyed off the boss +
+          // amount, so no dependency on the imported (non-firing) text trigger.
+          try { _checkTankBuster(ev, line, ts ? ts.getTime() : Date.now()); } catch { void 0; }
           // Pet combat observation — if the attacker is one of our pets (Zeal
           // slot 16), accumulate skill / max / total / hit-count stats for the
           // Pet tracker. Side-channel; doesn't touch the encounter builder.
@@ -27849,6 +28025,11 @@ module.exports = {
   // #101 log-replay — exported for the scratchpad fixture.
   startReplay, stopReplay, _replayEvaluateLine, _liveFightActive,
   _fireLog, _triggerJournal, _triggerLastFire,
+  // #142 buster/spawn-chain timers — exported for the scratchpad fixture.
+  _startTimer, _activeTimersSnapshot, _cancelTimersOnMobDeath, _deadMobNameFromLine,
+  _checkBossSpawnChain, _checkTankBuster, _armBossCountdown, BOSS_SPAWN_CHAINS,
+  evaluateTriggersAgainstLine, SLOW_SPELLS, _isSlowSpell,
+  _setCurrentBossForTest: (name) => { stats.currentEncounterThreat = name ? { bossName: name } : null; },
   _getReplayStateForTest: () => _replayStateForWeb(),
   _setPersonalTriggersForTest: (arr) => { _personalTriggers = arr; },
   _setWatchedLogsForTest: (arr) => { stats.watchedLogs = arr; },

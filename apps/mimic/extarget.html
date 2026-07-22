@@ -45,6 +45,19 @@
   /* Named/unique NPC — gold, with a ★ so it reads as "a real named mob". */
   .row.named .nm{color:#f6c365}
   .row .star{color:#f6c365;font-size:9px;margin-left:3px}
+  /* #143 MEZ / SLOW crowd-control badges — a bright pill right next to the mob
+     name so its CC state stands out at a glance. SLOW amber, MEZ purple (match
+     the overlay palette: amber = the .hp.mid / offtank amber, purple = the
+     debuff-chip purple). Classified in JS from the debuffs the row already
+     carries — no new upload. Both show when a mob is both. #130 (highest-slow
+     override) is the follow-up. */
+  .row .cc-badge{display:inline-block;font-size:8px;font-weight:800;letter-spacing:0.04em;
+    line-height:1.35;padding:0 5px;border-radius:3px;margin-left:5px;vertical-align:middle;
+    text-shadow:none;flex-shrink:0}
+  .row .cc-badge.mez{background:#a371f7;color:#160a2e;border:1px solid #d2a8ff;
+    box-shadow:0 0 6px rgba(163,113,247,0.55)}
+  .row .cc-badge.slow{background:#f0b429;color:#3a2405;border:1px solid #ffd566;
+    box-shadow:0 0 6px rgba(240,180,41,0.5)}
   /* The non-unique asterisk — amber, help cursor; tooltip explains the caveat. */
   .row .amb{color:#f0b429;font-weight:700;cursor:help;margin-left:2px}
   .row .dup{color:#9aa4ad;font-size:9px;margin-left:3px;font-variant-numeric:tabular-nums}
@@ -236,6 +249,41 @@
   function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]; }); }
   function hpTier(h){ if (h == null) return 'unk'; if (h >= 60) return 'hi'; if (h >= 30) return 'mid'; return 'lo'; }
 
+  // #143 MEZ / SLOW classification. Pure display over the debuff names each row
+  // already carries — no new upload. SLOW mirrors the agent's SLOW_SPELLS list
+  // (#105) + the Emperor tank-buster "Rage of Ssraeshza" (spell 2310 is a −90%
+  // attack-speed debuff). MEZ is the SPA-31 Mesmerize family, grounded from
+  // eqemu_spells (Mesmerize/Enthrall/Dazzle/Rapture/Fascination/Glamour of
+  // Kintaz + the bard mez songs). EQ writes possessives with a backtick, so
+  // normalise `→' before matching. Keep both lists small + data-driven.
+  var SLOW_DEBUFFS = new Set([
+    'drowsy','walking sleep',"tagar's insects","togor's insects","turgur's insects",'cripple',
+    'languid pace','shiftless deeds','tepid deeds','forlorn deeds',
+    'rage of ssraeshza'
+  ]);
+  var MEZ_DEBUFFS = new Set([
+    'mesmerize','mesmerization','enthrall','dazzle','rapture','fascination',
+    'glamour of kintaz',"kelin's lucid lullaby",'lullaby of morell',
+    'ancient: eternal rapture','ancient: lullaby of shadow'
+  ]);
+  function _normDebuff(n){ return String(n == null ? '' : n).toLowerCase().replace(/`/g, "'").trim(); }
+  // Return the MEZ + SLOW badge HTML for a row from its debuff array. Both pills
+  // show when a mob is both; clears the instant the debuff falls off (the row's
+  // debuff list stops carrying it → byte-stable HTML change → repaint once).
+  function ccBadges(debuffs){
+    if (!debuffs || !debuffs.length) return '';
+    var mez = false, slow = false;
+    for (var i = 0; i < debuffs.length; i++){
+      var k = _normDebuff(debuffs[i] && debuffs[i].name);
+      if (!mez  && MEZ_DEBUFFS.has(k))  mez  = true;
+      if (!slow && SLOW_DEBUFFS.has(k)) slow = true;
+    }
+    var s = '';
+    if (mez)  s += '<span class="cc-badge mez" title="Mesmerized — crowd-controlled. Don\'t break the mez.">MEZ</span>';
+    if (slow) s += '<span class="cc-badge slow" title="Slowed — attack speed debuffed.">SLOW</span>';
+    return s;
+  }
+
   // Render a debuff-chip block from a debuff array. `label` (optional) prefixes
   // the block — used for the pooled same-name group ("on one of these N").
   function debuffBlock(debuffs, label){
@@ -278,6 +326,9 @@
     // same-name mobs, owner for pets.
     var nm = esc(t.name);
     if (named) nm += '<span class="star">★</span>';
+    // #143 — MEZ / SLOW pills right next to the name (shown even for pooled
+    // same-name rows; classification is over this row's own debuffs).
+    nm += ccBadges(t.debuffs);
     if (t.ambiguous) nm += '<span class="amb" title="Non-unique name — same-name mobs share a name on the Zeal pipe, so buffs/debuffs here may be from a different mob of the same name. Split out below by HP when health differs.">*</span>';
     if (t.dup_index) nm += '<span class="dup">#' + t.dup_index + '/' + (t.same_name_count || '?') + '</span>';
     if (kind === 'pet' && t.owner) nm += '<span class="owner">(' + esc(t.owner) + ')</span>';
