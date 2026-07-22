@@ -25834,8 +25834,9 @@ const BOSS_SPAWN_CHAINS = [
     spawn_warn_sec:    10,                          // warn ~10s before the spawn bust
     spawn_warn_text:   'Paladin DA NOW',
     spawn_fire_text:   'Emperor in 2:00 — Paladin ready to DA the spawn buster',
-    buster_damage:     4000,                        // Rage of Ssraeshza DD (spell 2310)
-    buster_damage_tol: 1200,                        // wide enough for partial mitigation
+    buster_damage:     4000,                        // Rage of Ssraeshza DD (spell 2310), raw/unmitigated
+    buster_damage_tol: 1200,                        // size window — INFERRED (unattributed) path ONLY
+    buster_min_floor:  500,                         // ATTRIBUTED path: any Emperor non-melee ≥ this = buster (skips DoT/DS ticks; mitigation-proof)
     buster_cadence_sec: 60,                         // re-bust cadence (guild lead)
     buster_label:      'Tank Buster',
     buster_warn_sec:   10,
@@ -25895,9 +25896,20 @@ function _checkBossSpawnChain(line, tsMs) {
 // Tank-buster damage line → fire "TANK BUSTER" + (re)arm the cadence countdown.
 // Reuses parseEvent's attacker/amount (does NOT reinvent the line format); the
 // non-melee marker is read off the raw line so a same-size MELEE swing can't
-// false-fire. Attributed form (attacker=boss) OR the passive unattributed
-// non-melee form while THIS boss is the active fight (EQLogParser-style
-// inference) both count.
+// false-fire.
+//
+// Two detection paths with DIFFERENT amount gates. The live log is the
+// ATTRIBUTED form — "Emperor Ssraeshza hit <player> for N points of non-melee
+// damage" (screenshot, madman_003 2026-07-22):
+//   • ATTRIBUTED (attacker == boss): the buster is the Emperor's ONLY non-melee
+//     output, so a named non-melee hit from him IS Rage of Ssraeshza REGARDLESS
+//     of size. We deliberately DON'T gate on ~4000 here — rune + spell-shield
+//     mitigation on the MT drops the visible number well below the raw 4000, and
+//     a size gate would silence the callout exactly when the tank IS getting hit
+//     (Hitya, 2026-07-22). Only a small floor to skip DoT/DS ticks.
+//   • INFERRED (no attacker, this boss is the active fight, EQLogParser-style):
+//     can't attribute, so KEEP the ~4000±tol size signature to tell the buster
+//     from other anonymous non-melee (DS procs, dirges).
 function _checkTankBuster(ev, line, tsMs) {
   if (!ev || ev.type !== 'damage' || !(ev.amount > 0)) return;
   if (!/non-melee/i.test(line)) return;   // the buster is a spell hit, not melee
@@ -25905,11 +25917,17 @@ function _checkTankBuster(ev, line, tsMs) {
   const curBoss = (stats.currentEncounterThreat && stats.currentEncounterThreat.bossName)
     ? String(stats.currentEncounterThreat.bossName).toLowerCase() : null;
   for (const c of BOSS_SPAWN_CHAINS) {
-    if (Math.abs(ev.amount - c.buster_damage) > c.buster_damage_tol) continue;
     const bossLower = c.boss.toLowerCase();
     const attributed = attackerLower === bossLower;
     const inferred   = !attackerLower && curBoss === bossLower;
     if (!attributed && !inferred) continue;
+    // Amount gate depends on the path (see header comment): attributed fires at
+    // any size above a floor (mitigation-proof); inferred needs the size match.
+    if (attributed) {
+      if (ev.amount < (c.buster_min_floor || 500)) continue;
+    } else if (Math.abs(ev.amount - c.buster_damage) > c.buster_damage_tol) {
+      continue;
+    }
     const key = 'buster|' + bossLower;
     if ((tsMs || Date.now()) - (_busterLastFire.get(key) || 0) < 8000) return;   // dupe/echo guard
     _busterLastFire.set(key, tsMs || Date.now());
