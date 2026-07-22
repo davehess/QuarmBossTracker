@@ -28,6 +28,51 @@ let _loggedBidShape        = false;  // one-shot diagnostic — unknown bid resp
 let _loggedAuditShape      = false;  // one-shot diagnostic — unknown audit response shape
 let _loggedAdjustShape     = false;  // one-shot diagnostic — unknown adjustment response shape
 
+// ── #138: dedup an upsert batch by its exact on_conflict key ──────────────────
+// PostgREST/Postgres reject the ENTIRE upsert batch with SQLSTATE 21000 ("ON
+// CONFLICT DO UPDATE command cannot affect row a second time") the moment two
+// rows in one payload share the conflict-target key — so every row in that batch
+// silently fails to mirror (verified live against zhtoekwakucbckvatfky). OpenDKP
+// data produces such collisions on ~every sync: a bid history listing the same
+// character at the same DKP value twice (re-clicks / tie recordings), or the
+// same item awarded to the same character for the same DKP twice in one raid's
+// Items[]. This is why runner-up bid data was so sparse (#124) and why loot for
+// affected raids never mirrored (#138). Collapse a batch to one row per conflict
+// key BEFORE the upsert.
+//
+// `keyCols` MUST be the EXACT on_conflict columns. Set `nullsNotDistinct: true`
+// for an index declared NULLS NOT DISTINCT (opendkp_loot_dedup_plain) so NULLs
+// collapse together the way the DB's arbiter does; leave it false (default) for
+// a plain unique index (opendkp_auction_bids_dedup), where a NULL in any key
+// column makes the row un-collidable in Postgres and so it MUST be kept (never
+// over-collapse a row the DB would have accepted). On a collision
+// `preferNewer(candidate, incumbent)` picks the survivor (true → candidate
+// wins); default keeps the first row seen. Pure + exported for tests. Returns
+// { rows, dropped }.
+function dedupByConflictKey(rows, keyCols, opts = {}) {
+  const arr  = Array.isArray(rows) ? rows : [];
+  const cols = Array.isArray(keyCols) ? keyCols : [keyCols];
+  const preferNewer      = typeof opts.preferNewer === 'function' ? opts.preferNewer : null;
+  const nullsNotDistinct = !!opts.nullsNotDistinct;
+  const kept = new Map();
+  let nullSeq = 0;
+  for (const r of arr) {
+    let hasNull = false;
+    const parts = cols.map(c => {
+      const v = r == null ? undefined : r[c];
+      if (v === undefined || v === null) { hasNull = true; return '\u0000'; }
+      return String(v);
+    });
+    const key = (hasNull && !nullsNotDistinct)
+      ? '\u0000nulldistinct\u0000' + (nullSeq++)   // plain index: NULL ⇒ never collides
+      : parts.join('\u0001');
+    const cur = kept.get(key);
+    if (cur === undefined) { kept.set(key, r); continue; }
+    if (preferNewer && preferNewer(r, cur)) kept.set(key, r);
+  }
+  return { rows: [...kept.values()], dropped: arr.length - kept.size };
+}
+
 // Normalize the OpenDKP raid summary into the opendkp_raids row shape.
 function _raidSummaryRow(r) {
   if (!r || !r.RaidId || !r.Timestamp) return null;
@@ -337,15 +382,25 @@ async function syncAuctions(opts = {}) {
       return _bidsFromAuction(auctionId, a);
     });
     if (allBids.length > 0) {
+      // #138 — collapse rows sharing the (auction_id, character_name, value)
+      // conflict key or PostgREST rejects the WHOLE batch (21000) and no bids
+      // for this page mirror. The colliding pair carries the same `value` (it's
+      // in the key), so keep the later bid_at.
+      const { rows: bidRows, dropped } = dedupByConflictKey(
+        allBids,
+        ['auction_id', 'character_name', 'value'],
+        { preferNewer: (a, b) => String(a.bid_at || '') > String(b.bid_at || '') },
+      );
+      if (dropped > 0) console.log(`[opendkp-sync] auction bids: collapsed ${dropped} duplicate-key row(s) before upsert (#138)`);
       // Same minimal-return rationale — bid payloads on a full sync exceed
       // the 1000-row response cap.
       await supabase.upsert(
         'opendkp_auction_bids',
-        allBids,
+        bidRows,
         'auction_id,character_name,value',
         { minimal: true },
       );
-      bidsWritten += allBids.length;
+      bidsWritten += bidRows.length;
     }
 
     // Stop if the API said this is the last page.
@@ -486,12 +541,24 @@ async function syncRaidDetail(raidId) {
     tickWritten = Array.isArray(w) ? w.length : 0;
   }
   if (lootRows.length > 0) {
+    // #138 — collapse rows sharing the (raid_id, game_item_id, character_name,
+    // dkp) conflict key first. The arbiter PostgREST resolves for this
+    // on_conflict is opendkp_loot_dedup_plain, which is NULLS NOT DISTINCT — so
+    // a NULL game_item_id collapses too. Without this, one duplicate award pair
+    // (same item→same char→same dkp twice in Items[]) 21000s the whole batch and
+    // NO loot for this raid mirrors.
+    const { rows: dedupLoot, dropped } = dedupByConflictKey(
+      lootRows,
+      ['raid_id', 'game_item_id', 'character_name', 'dkp'],
+      { nullsNotDistinct: true, preferNewer: (a, b) => String(a.fetched_at || '') > String(b.fetched_at || '') },
+    );
+    if (dropped > 0) console.log(`[opendkp-sync] raid ${full.RaidId} loot: collapsed ${dropped} duplicate-key row(s) before upsert (#138)`);
     // Composite dedup index — pass the columns the index references. PostgREST
     // resolves on_conflict by column list; with our partial-coalesce index this
     // works because all referenced columns are present in the row.
     const w = await supabase.upsert(
       'opendkp_loot',
-      lootRows,
+      dedupLoot,
       'raid_id,game_item_id,character_name,dkp'
     );
     lootWritten = Array.isArray(w) ? w.length : 0;
@@ -915,9 +982,19 @@ async function reconcileRecentLoot(opts = {}) {
 
     // Propagate edits/additions first — upsert is always safe (it only writes
     // upstream-confirmed rows). Deletes are computed against the mirror after.
+    // #138 — dedup by the loot conflict key before upserting (same NULLS NOT
+    // DISTINCT arbiter as syncRaidDetail) so a duplicate award pair can't 21000
+    // the batch. The diff below still runs against the full `upstream` set (it
+    // builds a Set, so dupes are harmless there).
     if (upstream.length > 0 && !dryRun) {
-      await db.upsert('opendkp_loot', upstream, 'raid_id,game_item_id,character_name,dkp', { minimal: true });
-      upserted += upstream.length;
+      const { rows: dedupUp, dropped } = dedupByConflictKey(
+        upstream,
+        ['raid_id', 'game_item_id', 'character_name', 'dkp'],
+        { nullsNotDistinct: true, preferNewer: (a, b) => String(a.fetched_at || '') > String(b.fetched_at || '') },
+      );
+      if (dropped > 0) log(`[opendkp-reconcile] raid ${raidId} loot: collapsed ${dropped} duplicate-key row(s) before upsert (#138)`);
+      await db.upsert('opendkp_loot', dedupUp, 'raid_id,game_item_id,character_name,dkp', { minimal: true });
+      upserted += dedupUp.length;
     }
 
     let local = [];
@@ -1151,5 +1228,5 @@ async function syncCharacters() {
 
 module.exports = {
   runSync, syncRaidsList, syncRaidDetail, syncCharacters, syncAuctions, syncAudits, syncAdjustments,
-  reconcileRecentLoot, classifyAuditAction, lootDiffRemovals,
+  reconcileRecentLoot, classifyAuditAction, lootDiffRemovals, dedupByConflictKey,
 };

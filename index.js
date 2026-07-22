@@ -233,7 +233,8 @@ const {
 } = require('./utils/killops');
 const { hasAllowedRole, allowedRolesList, hasOfficerRole, officerRolesList } = require('./utils/roles');
 const mimicLink = require('./utils/mimicLink');
-const { EXPANSION_ORDER, getThreadId, getBossExpansion, isPopLocked } = require('./utils/config');
+const { EXPANSION_ORDER, getThreadId, getBossExpansion, isPopLocked, isPopEraLocked } = require('./utils/config');
+const { dedupParseDeaths } = require('./utils/parseDeaths');
 const { discordAbsoluteTime, discordRelativeTime } = require('./utils/timer');
 
 function getBosses() {
@@ -7961,7 +7962,13 @@ async function _handleAgentSpellCatalog(req, res) {
       // Era caster level for level-scaled effects — Luclin cap 60 now, 65 once
       // PoP unlocks. Raid DS buffs are self-cast on level-cap tanks, so this is
       // the right reference (the catalog is global; we can't scale per-tank).
-      const _dsLevel = isPopLocked() ? 60 : 65;
+      // #139 — GLOBAL era check (no boss in hand). This used to call
+      // isPopLocked() with no argument, which dereferenced boss.expansion on
+      // undefined and threw "Cannot read properties of undefined (reading
+      // 'expansion')" — the recurring [spell-catalog] fetch failed 500 that
+      // took the ENTIRE catalog endpoint down (the throw happens before the
+      // row loop below, so zero spells were served).
+      const _dsLevel = isPopEraLocked() ? 60 : 65;
       // Value of a DS effect at a level, from its EQEmu spell formula. Fixed
       // spells (formula 100 — Spikecoat, Thorny Shield, most thorn/fire lines)
       // are just |base|. The Illusion DS line scales: Illusion: Fire Elemental
@@ -13663,6 +13670,11 @@ async function _handleAgentUpload(req, res) {
 
         let mergedPlayers, mergedHealers, mergedDefenders, mergedDeaths, mergedHealGaps, perspectives, newDuration, newTotalDamage, newTotalDps;
         let mergedHealsReceived, mergedHealCasts, mergedHealLands;
+        // #134 — RAW per-contributor death sightings accumulated across the
+        // parsers merging into this card. mergedDeaths (the counted display
+        // rows) is DERIVED from this via dedupParseDeaths, so the card matches
+        // the website instead of SUMMING each parser's view of the same death.
+        let mergedDeathContribs;
 
         if (withinWindow) {
           // Two distinct merge semantics:
@@ -13758,27 +13770,21 @@ async function _handleAgentUpload(req, res) {
             mergedDefenders = [...dMap.values()].sort((a, b) => b.damageTaken - a.damageTaken);
           }
 
-          // ── Merge deaths ─────────────────────────────────────────────────
-          // Aggregate by player name: SUM death counts across parsers, OR the
-          // riposteDeath flag (any parser seeing the riposte is sufficient).
-          {
-            const dMap2 = new Map((existing.deaths || []).map(d => [d.name.toLowerCase(), { ...d }]));
-            for (const d of uploadedDeaths) {
-              const k = (d.name || '').toLowerCase();
-              const cur = dMap2.get(k);
-              if (cur) {
-                dMap2.set(k, {
-                  ...cur,
-                  count:        (cur.count || 1) + 1,
-                  riposteDeath: cur.riposteDeath || !!d.riposteDeath,
-                  class:        cur.class || d.class || null,
-                });
-              } else {
-                dMap2.set(k, { ...d, count: 1 });
-              }
-            }
-            mergedDeaths = [...dMap2.values()].sort((a, b) => (b.count || 1) - (a.count || 1));
-          }
+          // ── Merge deaths (#134) ───────────────────────────────────────────
+          // The old code SUMMED each parser's sighting of the same death — three
+          // parsers each seeing "Melting" die once rendered "Melting ×3". The
+          // website already does this right: dedup across uploaders on name+ts
+          // (~30s window) and suppress any name a SINGLE uploader reported dying
+          // 2+ times (an NPC namesake). Accumulate each parser's RAW sightings
+          // per-contributor and derive the counted display rows through the
+          // SAME logic (utils/parseDeaths.js ← web/app/parses/[id]/page.tsx).
+          // Cap the retained contributors so a long-lived card can't grow
+          // unbounded (real fights have a handful of parsers).
+          mergedDeathContribs = [
+            ...(Array.isArray(existing.deathContribs) ? existing.deathContribs : []),
+            uploadedDeaths,
+          ].slice(-40);
+          mergedDeaths = dedupParseDeaths(mergedDeathContribs);
           // Heal gaps: keep the most severe (highest count, or highest maxGapMs as tiebreak)
           mergedHealGaps = uploadedHealGaps && (
             !existing.healGaps ||
@@ -13826,7 +13832,11 @@ async function _handleAgentUpload(req, res) {
           mergedPlayers   = players;
           mergedHealers   = [...uploadedHealers];
           mergedDefenders = [...uploadedDefenders];
-          mergedDeaths    = uploadedDeaths.map(d => ({ ...d, count: 1 }));
+          // #134 — first parser for this card: seed the raw sightings and derive
+          // the display rows through the same dedup+suppress path (a single
+          // parser reporting a name 2+ times still gets suppressed as a phantom).
+          mergedDeathContribs = [uploadedDeaths];
+          mergedDeaths        = dedupParseDeaths(mergedDeathContribs);
           mergedHealGaps  = uploadedHealGaps;
           mergedHealsReceived = uploadedHealsReceived ? [uploadedHealsReceived] : [];
           mergedHealCasts     = uploadedHealCasts.map(c => ({ caster: c.caster, spell: c.spell, target: c.target, land_at: c.land_at, heal_amount: c.heal_amount, heal_fixed: c.heal_fixed }))
@@ -14054,6 +14064,9 @@ async function _handleAgentUpload(req, res) {
           healers:    mergedHealers.length   > 0 ? mergedHealers   : [],
           defenders:  mergedDefenders.length > 0 ? mergedDefenders : [],
           deaths:     mergedDeaths?.length   > 0 ? mergedDeaths    : [],
+          // #134 — raw per-contributor death sightings feed the next merge's
+          // dedup+suppress; `deaths` above is the derived display (name ×count).
+          deathContribs: Array.isArray(mergedDeathContribs) ? mergedDeathContribs : [],
           healGaps:   mergedHealGaps || null,
           // Heal-attribution inputs persist so a LATE perspective (the healer
           // uploading after the recipient, or vice versa) re-joins over the

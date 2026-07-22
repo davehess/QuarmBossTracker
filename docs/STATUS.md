@@ -65,6 +65,36 @@ folly** — it's here.*
 ## The work ledger
 
 ### ✅ Done — major shipped features (not exhaustive; see git + roadmapData.ts)
+- **Data-integrity bug round — DONE (2026-07-22, bot 3.0.225 on main).**
+  - **#138 OpenDKP upsert 500s (silent bid/loot loss).** Every sync, the
+    `opendkp_auction_bids` and `opendkp_loot` upserts 500'd with PG **21000**
+    ("ON CONFLICT DO UPDATE command cannot affect row a second time") whenever
+    OpenDKP's own batch carried ≥2 rows sharing the conflict key — so the WHOLE
+    batch silently never mirrored. New pure `dedupByConflictKey` in
+    `utils/openDkpSync.js` collapses each batch to one row per exact arbiter key
+    (bids `auction_id,character_name,value` plain/NULLS-DISTINCT; loot
+    `raid_id,game_item_id,character_name,dkp` NULLS-NOT-DISTINCT) before the
+    upsert, at all three sites (`syncAuctions` inline bids, `syncRaidDetail`
+    loot, `reconcileRecentLoot` loot); logs a dropped-dupe count when it fires.
+    Verified live vs `zhtoekwakucbckvatfky`: raw colliding batch → 21000,
+    deduped batch → OK. **Likely unblocks #124's sparse runner-up/2nd-place bid
+    data** (only 408/13183 auctions had ≥2 bids because colliding bid batches
+    were being dropped). Note: dead `syncAuctionBids` (unexported, uncalled)
+    already had its own dedup — left as-is.
+  - **#134 Discord auto-parse death over-count.** The card SUMMED each parser's
+    sighting of the same death ("Melting ×3" when 3 parsers each saw it once).
+    Ported the web page's dedup+suppress (`web/app/parses/[id]/page.tsx` ~369-418)
+    into a shared pure `utils/parseDeaths.js` (`dedupParseDeaths`): accumulate
+    raw per-contributor sightings on the card, derive counted display rows via
+    name+ts 30s-window dedup + phantom-name suppression. Discord now matches the
+    website.
+  - **#139 spell-catalog `undefined 'expansion'` 500.** Root cause was NOT a bad
+    data row — the handler called `isPopLocked()` with no boss, dereferencing
+    `boss.expansion` on undefined and throwing before the row loop, 500-ing the
+    ENTIRE catalog endpoint. Added `isPopEraLocked()` (global era check) in
+    `utils/config.js` for the level-cap call site, and made `isPopLocked` null-safe.
+  - Tests: `test/opendkp-upsert-dedup.test.js`, `test/parse-deaths-dedup.test.js`,
+    `test/pop-lock-guard.test.js` (real-import tier).
 - **#101 local log replay through the real trigger pipeline — DONE (2026-07-20,
   agent 3.4.1 beta + web 1.0.260 on main; root untouched).** Guild-lead ask:
   "a local walk of log files given a timeframe or a specific fight — TTS testing

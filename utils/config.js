@@ -5,9 +5,21 @@ const EXPANSION_ORDER = ['Classic', 'Kunark', 'Velious', 'Luclin', 'PoP'];
 // PoP bosses are locked until this date (hard-coded per product decision).
 const POP_UNLOCK_MS = new Date('2026-10-01T00:00:00').getTime();
 
-/** Returns true if the boss is a PoP boss and PoP has not yet unlocked. */
+/** Returns true if the boss is a PoP boss and PoP has not yet unlocked.
+ *  Null-safe (#139): a missing/invalid boss is simply "not a PoP boss" rather
+ *  than a thrown `Cannot read properties of undefined (reading 'expansion')`.
+ *  For a GLOBAL "are we in the pre-PoP era" question with no boss in hand, use
+ *  isPopEraLocked() — do NOT call isPopLocked() with no argument. */
 function isPopLocked(boss) {
-  return boss.expansion === 'PoP' && Date.now() < POP_UNLOCK_MS;
+  return !!(boss && boss.expansion === 'PoP') && Date.now() < POP_UNLOCK_MS;
+}
+
+/** True while the PoP era is locked platform-wide (before POP_UNLOCK_MS),
+ *  independent of any specific boss. Use for global era decisions — e.g. the
+ *  spell-catalog's level cap. Calling isPopLocked() with no boss for this used
+ *  to throw and 500 the whole spell-catalog endpoint (#139). */
+function isPopEraLocked() {
+  return Date.now() < POP_UNLOCK_MS;
 }
 
 const EXPANSION_META = {
@@ -39,4 +51,4 @@ function getBossExpansion(boss) {
   return boss.expansion || 'Luclin';
 }
 
-module.exports = { EXPANSION_ORDER, EXPANSION_META, getThreadId, getAllThreadIds, getBossExpansion, isPopLocked, POP_UNLOCK_MS };
+module.exports = { EXPANSION_ORDER, EXPANSION_META, getThreadId, getAllThreadIds, getBossExpansion, isPopLocked, isPopEraLocked, POP_UNLOCK_MS };
