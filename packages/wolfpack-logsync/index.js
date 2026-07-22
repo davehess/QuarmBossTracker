@@ -8103,7 +8103,7 @@ function _resolveBuffsForName(name, active, buffsOut) {
     if (!b || !b.name) continue;   // same guard as the relay loop below — a nameless entry must not throw
     seen.set(b.name.toLowerCase(), { name: b.name, seconds: b.fell_off ? 0 : b.remaining_secs, fell_off: !!b.fell_off });
   }
-  const relay = _targetBuffsByName.get(nameLower);
+  const relay = _targetBuffsByName.get(_relayCacheKey(name));   // #141 unscoped bucket
   for (const b of ((relay && relay.buffs) || [])) {
     if (!b || !b.name || seen.has(String(b.name).toLowerCase())) continue;
     seen.set(String(b.name).toLowerCase(), {
@@ -8435,7 +8435,7 @@ function _serializeTankState() {
       });
     }
     try { fetchTargetCasts(targetName); } catch { /* fire-and-forget, cached */ }
-    const ctc = _targetCastsByName.get(tl);
+    const ctc = _targetCastsByName.get(_relayCacheKey(targetName));   // #141 unscoped bucket
     if (ctc && Array.isArray(ctc.casts)) {
       const fetchedAt = ctc.at || now;
       for (const c of ctc.casts) {
@@ -17483,7 +17483,7 @@ function startWebDashboard(port) {
           return res.end(JSON.stringify({ error: 'name required' }));
         }
         fetchMobInfo(mobName);
-        const mobCached = _mobInfoByName.get(_normMobNameAgent(mobName));
+        const mobCached = _mobInfoByName.get(_mobInfoCacheKey(mobName));   // #141 zone-scoped key ('*' bucket)
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify(mobCached ? { mob: mobCached.mob } : { mob: null, loading: true }));
       }
@@ -24469,15 +24469,25 @@ function _normMobNameAgent(n) {
     .replace(/'s\s+corpse$/, '')
     .replace(/[\s`'’]+/g, '_').replace(/^#/, '');
 }
-function fetchMobInfo(name) {
+// #141 — cache key carries the requester's zone id so a same-name mob in
+// ANOTHER zone re-resolves instead of serving a stale cross-zone catalog row.
+function _mobInfoCacheKey(name, zoneId) {
+  return _normMobNameAgent(name) + '|' + (zoneId != null ? zoneId : '*');
+}
+function fetchMobInfo(name, selfChar, zoneId) {
   const opts = _uploadOpts;
   if (!opts || !opts.botUrl || !opts.token) return;          // local-only → no lookup
   const norm = _normMobNameAgent(name);
-  if (!norm || _mobInfoInflight.has(norm)) return;
-  const cached = _mobInfoByName.get(norm);
+  if (!norm) return;
+  const key = _mobInfoCacheKey(name, zoneId);
+  if (_mobInfoInflight.has(key)) return;
+  const cached = _mobInfoByName.get(key);
   if (cached && (Date.now() - cached.at) < MOB_INFO_TTL_MS) return;
-  _mobInfoInflight.add(norm);
-  const url = opts.botUrl.replace(/\/encounter(\?.*)?$/, '/mob-info') + '?name=' + encodeURIComponent(name);
+  _mobInfoInflight.add(key);
+  // #141 — send the requesting character so the bot zone-scopes the catalog row
+  // (id = zoneid*1000+n) to OUR zone; absent → bot falls back catalog-wide.
+  let url = opts.botUrl.replace(/\/encounter(\?.*)?$/, '/mob-info') + '?name=' + encodeURIComponent(name);
+  if (selfChar) url += '&character=' + encodeURIComponent(selfChar);
   try {
     const u = new URL(url);
     const mod = u.protocol === 'https:' ? https : http;
@@ -24489,15 +24499,15 @@ function fetchMobInfo(name) {
       let body = '';
       res.on('data', c => body += c);
       res.on('end', () => {
-        _mobInfoInflight.delete(norm);
-        try { const j = JSON.parse(body); _mobInfoByName.set(norm, { at: Date.now(), mob: (j && j.mob) ? j.mob : null }); }
-        catch { _mobInfoByName.set(norm, { at: Date.now(), mob: null }); }
+        _mobInfoInflight.delete(key);
+        try { const j = JSON.parse(body); _mobInfoByName.set(key, { at: Date.now(), mob: (j && j.mob) ? j.mob : null }); }
+        catch { _mobInfoByName.set(key, { at: Date.now(), mob: null }); }
       });
     });
-    req.on('error',   () => { _mobInfoInflight.delete(norm); });
-    req.on('timeout', () => { req.destroy(); _mobInfoInflight.delete(norm); });
+    req.on('error',   () => { _mobInfoInflight.delete(key); });
+    req.on('timeout', () => { req.destroy(); _mobInfoInflight.delete(key); });
     req.end();
-  } catch { _mobInfoInflight.delete(norm); }
+  } catch { _mobInfoInflight.delete(key); }
 }
 // Cast time (seconds) for a spell from the catalog (cast_ms). Default 4s when
 // the catalog doesn't carry it — a "You begin casting" line implies a real cast.
@@ -24509,18 +24519,26 @@ function _spellCastSecs(name) {
 // Cross-client casts on the current target — fetched from the bot's relay with a
 // short TTL so the Mob Info "Casting" section stays near-real-time without
 // hammering the endpoint. Cached per normalized target name.
-const _targetCastsByName  = new Map();   // nameLower → { at, casts }
+const _targetCastsByName  = new Map();   // relayKey → { at, casts }
 const _targetCastsInflight = new Set();
 const TARGET_CASTS_TTL_MS = 2000;
-function fetchTargetCasts(name) {
+// #141 — the cross-client relay cache is keyed by (target, requester) so the
+// zone-scoped Mob Info fetch (passes selfChar → bot filters to our zone) never
+// collides with an unscoped caller for the same target name.
+function _relayCacheKey(name, selfChar) {
+  return String(name || '').trim().toLowerCase() + '|' + String(selfChar || '').trim().toLowerCase();
+}
+function fetchTargetCasts(name, selfChar) {
   const opts = _uploadOpts;
   if (!opts || !opts.botUrl || !opts.token) return;
-  const key = String(name || '').trim().toLowerCase();
-  if (!key || _targetCastsInflight.has(key)) return;
+  if (!String(name || '').trim()) return;
+  const key = _relayCacheKey(name, selfChar);
+  if (_targetCastsInflight.has(key)) return;
   const cached = _targetCastsByName.get(key);
   if (cached && (Date.now() - cached.at) < TARGET_CASTS_TTL_MS) return;
   _targetCastsInflight.add(key);
-  const url = opts.botUrl.replace(/\/encounter(\?.*)?$/, '/target-casts') + '?name=' + encodeURIComponent(name);
+  let url = opts.botUrl.replace(/\/encounter(\?.*)?$/, '/target-casts') + '?name=' + encodeURIComponent(name);
+  if (selfChar) url += '&character=' + encodeURIComponent(selfChar);   // #141 zone scope
   try {
     const u = new URL(url);
     const mod = u.protocol === 'https:' ? https : http;
@@ -24562,15 +24580,17 @@ const _targetBuffsInflight = new Set();
 // Original was 5s; 6s splits the difference so Mob Info feels live again
 // without the full pre-squeeze churn. Override via WP_TARGET_BUFFS_TTL_MS.
 const TARGET_BUFFS_TTL_MS = parseInt(process.env.WP_TARGET_BUFFS_TTL_MS, 10) || 6000;
-function fetchTargetBuffs(name) {
+function fetchTargetBuffs(name, selfChar) {
   const opts = _uploadOpts;
   if (!opts || !opts.botUrl || !opts.token) return;
-  const key = String(name || '').trim().toLowerCase();
-  if (!key || _targetBuffsInflight.has(key)) return;
+  if (!String(name || '').trim()) return;
+  const key = _relayCacheKey(name, selfChar);   // #141 (target, requester) key
+  if (_targetBuffsInflight.has(key)) return;
   const cached = _targetBuffsByName.get(key);
   if (cached && (Date.now() - cached.at) < TARGET_BUFFS_TTL_MS) return;
   _targetBuffsInflight.add(key);
-  const url = opts.botUrl.replace(/\/encounter(\?.*)?$/, '/target-buffs') + '?name=' + encodeURIComponent(name);
+  let url = opts.botUrl.replace(/\/encounter(\?.*)?$/, '/target-buffs') + '?name=' + encodeURIComponent(name);
+  if (selfChar) url += '&character=' + encodeURIComponent(selfChar);   // #141 zone scope
   try {
     const u = new URL(url);
     const mod = u.protocol === 'https:' ? https : http;
@@ -25008,26 +25028,34 @@ function _zealBuffsForName(nameLower) {
 function buildMobInfo() {
   const st = _currentTargetState();
   if (!st || !st.target_name) return null;
-  const norm = _normMobNameAgent(st.target_name);
-  const cached = _mobInfoByName.get(norm);
-  if (!cached || (Date.now() - cached.at) >= MOB_INFO_TTL_MS) fetchMobInfo(st.target_name);
+  // #141 — the requesting character (+ its zone id) so the bot zone-scopes the
+  // cross-client merge to OUR zone: a same-name mob in ANOTHER zone (e.g. "a
+  // geonid" in Crystal Caverns vs The Wakening Land) must not leak its stats,
+  // debuffs, or casts into our Target Info.
+  let selfChar = '';
+  for (const ch of Object.keys(_zealState)) { if (_zealState[ch] === st) { selfChar = ch; break; } }
+  const myZoneId = (st.zone != null && Number.isFinite(Number(st.zone))) ? Number(st.zone) : null;
+  const mobKey = _mobInfoCacheKey(st.target_name, myZoneId);
+  const cached = _mobInfoByName.get(mobKey);
+  if (!cached || (Date.now() - cached.at) >= MOB_INFO_TTL_MS) fetchMobInfo(st.target_name, selfChar, myZoneId);
   // Prefer authoritative Zeal buffs when the target is one of our own
   // characters (covers self + group members running Mimic — Mask of the
   // Stalker, Spirit of Wolf, etc., with real remaining time). Otherwise show
   // the buffs we observed landing on the target (mobs, other players).
   const tnameLower = String(st.target_name).toLowerCase();
+  const relayKey = _relayCacheKey(st.target_name, selfChar);
   const zealBuffs = _zealBuffsForName(tnameLower);
   // Cross-client casting on this target (who's casting what on it, with a
   // countdown). Refresh on a short TTL; bystanders we can't name are absent.
-  const ctc = _targetCastsByName.get(tnameLower);
-  if (!ctc || (Date.now() - ctc.at) >= TARGET_CASTS_TTL_MS) fetchTargetCasts(st.target_name);
+  const ctc = _targetCastsByName.get(relayKey);
+  if (!ctc || (Date.now() - ctc.at) >= TARGET_CASTS_TTL_MS) fetchTargetCasts(st.target_name, selfChar);
   // Cross-client target_buffs — fetched from the bot's relay so charm
   // spells (Allure, etc.) and other buff landings cast by OTHER Mimic
   // users on the same target show up here too. Merged with locally-
   // observed buffs by spell name (local wins — most accurate timer
   // when we saw it ourselves; remote fills the gap when we didn't).
-  const ctb = _targetBuffsByName.get(tnameLower);
-  if (!ctb || (Date.now() - ctb.at) >= TARGET_BUFFS_TTL_MS) fetchTargetBuffs(st.target_name);
+  const ctb = _targetBuffsByName.get(relayKey);
+  if (!ctb || (Date.now() - ctb.at) >= TARGET_BUFFS_TTL_MS) fetchTargetBuffs(st.target_name, selfChar);
   let buffs;
   // Cross-client live buffs — the target is another Mimic-running raider:
   // use THEIR uploaded Zeal list (real remaining time — actual counters, not
