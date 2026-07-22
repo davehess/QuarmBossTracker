@@ -20,6 +20,42 @@ raid; move it to STATUS.md's "Done" once graduated to stable.*
 
 ---
 
+## #141 — Target Info / Mob Info no longer leaks a same-name mob from another zone
+
+**Needs:** bot **3.0.226** (main, live on Railway) + agent **3.4.4** (beta Mimic).
+No DB change. The bot fix is the enabler + fails open; the agent fix (sending
+`?character=`) is what activates zone-scoping for you.
+
+**What it is:** the Mimic **Mob Info / Target Info** overlay used to merge
+cross-client data by mob **name** across all zones, so a mob whose name also
+exists elsewhere pulled in the OTHER zone's stats/debuffs/casts. Confirmed live:
+a raider in **The Wakening Land** targeting "a geonid" saw a **Crystal Caverns**
+geonid's stats (L31-33, ~1k HP) and its debuffs (Enveloping Roots, Ensnare)
+landed by someone in a totally different zone. Now the bot scopes all three
+relays (target-buffs, target-casts, mob-info) to **your** zone: only
+observations from someone in the same zone as you are merged, and the mob's
+catalog stats resolve to the mob **in your zone** (a same-name mob elsewhere
+never appears). Unknown-zone requester → served as before (fail-open).
+
+**✅ Solo (one machine)**
+- **Target a mob whose name exists in more than one zone** (e.g. "a geonid" —
+  present in The Wakening Land AND Crystal Caverns). Mob Info's HP/level/zone
+  line must match the mob **in front of you** (Wakening Land geonid = L44-48,
+  ~9.8k HP), not a lower-level Crystal Caverns one, and the debuff/cast list must
+  not show spells nobody in your zone cast.
+- **Zone change re-resolves.** Target a same-name mob in zone A, then zone to B
+  and target the same-name mob there — Mob Info must switch to B's mob (no stale
+  A-zone stats lingering from the cache).
+
+**👥 Multi-person (2+ machines)**
+- **Two raiders in DIFFERENT zones, each near a same-name mob** (one in Wakening
+  Land, one in Crystal Caverns, both on "a geonid"): each raider's Target Info
+  shows **only their own zone's** mob — stats, debuffs, and casts. Neither sees
+  the other's debuffs bleed onto their target. (Same raid, same zone → they DO
+  still see each other's landings, as before.)
+
+---
+
 ## #142 / #143 — Emperor tank-buster countdown + ext-target MEZ/SLOW badges
 
 **Needs:** agent **3.4.3** (beta Mimic) + web **1.0.264** (roadmap/docs, live on

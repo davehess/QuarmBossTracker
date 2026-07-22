@@ -65,6 +65,46 @@ folly** — it's here.*
 ## The work ledger
 
 ### ✅ Done — major shipped features (not exhaustive; see git + roadmapData.ts)
+- **#141 zone-scope the cross-client Target Info / Mob Info merge — DONE
+  (2026-07-22, bot 3.0.226 on main + agent 3.4.4 beta; Mimic parked 2.0.2; web
+  1.0.265 roadmap/docs).** Field bug (live-verified): a raider in **The Wakening
+  Land** targeting "a geonid" saw a **Crystal Caverns** geonid's stats (L31-33,
+  1k HP — catalog row `121067`) plus debuffs (Enveloping Roots, Ensnare) that a
+  raider in **Tower of Frozen Shadow** had landed on a DIFFERENT same-name mob.
+  Cause: the three cross-client Mimic Mob Info relays merged observations by mob
+  **NAME globally** — the SAME zone-scoping gap #113 fixed for Extended Target.
+  **Layer: bot-side** (mirrors #113). The requester's zone is resolved from
+  `character_live_state.zone_name`/`zone_id` for the requesting character (the
+  agent now sends `?character=<self>`), via one 2s-cached shared zone map
+  (`_liveZoneMap`). The three handlers in `index.js`:
+  - **`target-buffs`** (the debuff leak): drops any `buff_casts` row whose
+    `observer` was NOT in the requester's zone; the 2s relay cache is now keyed
+    by `name|requesterZone`. *Live before/after (2026-07-22): a Wakening Land
+    requester on "a geonid" went from **45 merged debuff rows** (Ensnare +
+    Enveloping Roots, all observed in Tower of Frozen Shadow) → **0**.*
+  - **`target-casts`** (the cast leak): drops any cast whose `caster` was not in
+    the requester's zone.
+  - **`mob-info`** (the wrong catalog row): NPC id encodes the zone
+    (`id = zoneid*1000 + n`), so the catalog lookup now prefers the row in the
+    requester's zone id range and falls back catalog-wide when the zone is
+    unknown or has no same-name NPC; cache keyed by `name|zoneId`. *A Wakening
+    Land requester now deterministically resolves `a_geonid` → `119026`
+    (L44-48, 9790 HP — the real Wakening mob) instead of a Crystal Caverns row.*
+  Pure predicate `_zoneScopeKeep(requesterZone, observerZone)`:
+  requester-zone-unknown → **fail-open** (serve unfiltered, exactly as before);
+  observer-zone-unknown → **drop** (unverifiable cross-client row; the
+  requester's OWN observations are merged locally in the agent, so nothing real
+  is lost). **No per-user toggle** — unlike #113's splinter-group case, a
+  wrong-zone mob is NEVER useful for your own Target Info, so zone-scoping is the
+  unconditional safe default. **Agent (beta):** `buildMobInfo` passes the
+  requesting character to all three fetches and its own mob-info cache is now
+  zone-aware (`name|zoneId`) so a zone/target change re-resolves instead of
+  serving a stale cross-zone catalog row; the two relay caches are keyed by
+  `(target, requester)` so the scoped Mob Info fetch never collides with an
+  unscoped caller. Old/stable agents send no `character` → bot fails open
+  (unchanged behavior) until the fix graduates with the Mimic line. Decision
+  covered by `test/target-info-zone.test.js` (source-sliced `_zoneScopeKeep` +
+  the per-observation merge). See BETA-TESTING #141.
 - **#142 Emperor tank-buster countdown (clear-on-death + re-arm + spawn pre-warn)
   & #143 ext-target MEZ/SLOW badges — DONE (2026-07-22, agent 3.4.3 beta; Mimic
   parked 2.0.2; web 1.0.264 roadmap/docs).**

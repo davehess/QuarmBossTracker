@@ -8351,21 +8351,85 @@ async function _maybeRecordChatLoot(chatRow, uploadedByDiscordId) {
     .catch(err => console.warn('[chat-loot] insert failed:', err?.message));
 }
 
+// ── #141 Cross-client Target Info zone-scoping ──────────────────────────────
+// The Mob Info / Target Info relays (target-buffs, target-casts, mob-info)
+// merge observations by mob NAME. Two same-name mobs in DIFFERENT zones (e.g.
+// "a geonid" in The Wakening Land vs Crystal Caverns) are byte-identical by
+// name, so a requester used to receive another zone's mob's debuffs/casts/stats
+// — the exact gap #113 closed for Extended Target. We scope to the REQUESTER's
+// zone: only observations from an observer in the SAME zone survive the merge.
+//
+// Requester zone is resolved from character_live_state.zone_name for the
+// requesting character (the agent now sends ?character=<self>, mirroring #113).
+// One 2s-cached read of the live-state zone snapshot is shared by all three
+// handlers; Supabase disabled/failed → empty map → requester zone unresolved →
+// fail-open (served unfiltered, exactly as before).
+let _liveZoneCache = { at: 0, map: new Map() };
+const LIVE_ZONE_TTL_MS = 2_000;
+async function _liveZoneMap() {
+  if (_liveZoneCache.map && (Date.now() - _liveZoneCache.at) < LIVE_ZONE_TTL_MS) return _liveZoneCache.map;
+  const supabase = require('./utils/supabase');
+  const map = new Map();   // character(lower) → { zone_name, zone_id }
+  if (supabase.isEnabled()) {
+    const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+    const since = new Date(Date.now() - 10 * 60 * 1000).toISOString();   // 10-min freshness
+    try {
+      const rows = await supabase.select('character_live_state',
+        `guild_id=eq.${encodeURIComponent(guildId)}&updated_at=gte.${encodeURIComponent(since)}` +
+        `&select=character,zone_name,zone_id`);
+      for (const r of (rows || [])) {
+        if (r && r.character) {
+          map.set(String(r.character).toLowerCase(),
+            { zone_name: r.zone_name || null, zone_id: (r.zone_id != null ? Number(r.zone_id) : null) });
+        }
+      }
+    } catch (err) { console.warn('[live-zone-map] fetch failed:', err && err.message); }
+  }
+  _liveZoneCache = { at: Date.now(), map };
+  return map;
+}
+// Pure predicate: does a cross-client observation belong in the requester's
+// Target Info? (Source-sliced by test/target-info-zone.test.js — keep the
+// signature + body stable.)
+//   • requester zone unknown           → keep  (fail-open: serve as today)
+//   • observer zone === requester zone  → keep  (the useful same-zone case)
+//   • observer zone known but different → drop  (the wrong-zone leak)
+//   • observer zone unknown             → drop  (can't prove same-zone; a
+//       wrong-zone mob is never useful, and the requester's OWN observations
+//       are merged locally in the agent, so this only sheds unverifiable
+//       cross-client rows)
+function _zoneScopeKeep(requesterZone, observerZone) {
+  if (!requesterZone) return true;
+  if (!observerZone)  return false;
+  return String(observerZone) === String(requesterZone);
+}
+
 // GET /api/agent/target-casts?name=<npc|player> → active casts on that target,
 // from the cross-client casting relay (_castingByTarget). Each entry counts down
 // its remaining cast time. Bearer-auth like the other agent endpoints.
 async function _handleAgentTargetCasts(req, res) {
   const identity = await mimicLink.requireAgentAuth(req, res);
   if (!identity) return;
-  let name = '';
-  try { name = new URL(req.url, 'http://x').searchParams.get('name') || ''; } catch { /* */ }
+  let name = '', selfChar = '';
+  try {
+    const sp = new URL(req.url, 'http://x').searchParams;
+    name = sp.get('name') || '';
+    selfChar = (sp.get('character') || '').trim();   // #141 requester → zone scope
+  } catch { /* */ }
   const tk = String(name).trim().toLowerCase();
   const now = Date.now();
   _pruneCasts(now);
+  // #141 — scope casts to the requester's zone so a same-name mob in ANOTHER
+  // zone can't leak its casters in. Fail-open when we can't resolve the
+  // requester's zone (see _zoneScopeKeep).
+  const zoneMap = await _liveZoneMap();
+  const requesterZone = selfChar ? ((zoneMap.get(selfChar.toLowerCase()) || {}).zone_name || null) : null;
   const mp = tk ? _castingByTarget.get(tk) : null;
   const casts = [];
   if (mp) {
     for (const c of mp.values()) {
+      const casterZone = (zoneMap.get(String(c.caster || '').toLowerCase()) || {}).zone_name || null;
+      if (!_zoneScopeKeep(requesterZone, casterZone)) continue;
       casts.push({
         caster:         c.caster,
         spell:          c.spell,
@@ -8432,13 +8496,22 @@ const _targetBuffsRelayCache = new Map();   // nameLower → { at, payload }
 async function _handleAgentTargetBuffs(req, res) {
   const identity = await mimicLink.requireAgentAuth(req, res);
   if (!identity) return;
-  let name = '';
-  try { name = new URL(req.url, 'http://x').searchParams.get('name') || ''; } catch { /* */ }
+  let name = '', selfChar = '';
+  try {
+    const sp = new URL(req.url, 'http://x').searchParams;
+    name = sp.get('name') || '';
+    selfChar = (sp.get('character') || '').trim();   // #141 requester → zone scope
+  } catch { /* */ }
   if (!name) {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({ buffs: [] }));
   }
-  const cacheKey = name.trim().toLowerCase();
+  // #141 — resolve the requester's zone (fail-open to null → unfiltered) and
+  // key the relay cache by it, so two raiders on same-name mobs in DIFFERENT
+  // zones don't share (and cross-contaminate) one cached debuff list.
+  const zoneMap = await _liveZoneMap();
+  const requesterZone = selfChar ? ((zoneMap.get(selfChar.toLowerCase()) || {}).zone_name || null) : null;
+  const cacheKey = name.trim().toLowerCase() + '|' + (requesterZone || '*');
   const cached = _targetBuffsRelayCache.get(cacheKey);
   if (cached && Date.now() - cached.at < TARGET_BUFFS_CACHE_MS) {
     res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -8464,6 +8537,10 @@ async function _handleAgentTargetBuffs(req, res) {
     const bySpell = new Map();
     for (const r of (rows || [])) {
       if (!r || !r.spell_name) continue;
+      // #141 — only merge observations from an observer in the requester's zone
+      // (a same-name mob in another zone is never our target's data).
+      const observerZone = (zoneMap.get(String(r.observer || '').toLowerCase()) || {}).zone_name || null;
+      if (!_zoneScopeKeep(requesterZone, observerZone)) continue;
       if (_isJunkSpellName(r.spell_name)) continue;   // hide phantom "Kneel Test"
       const castMs  = Date.parse(r.cast_at) || 0;
       if (!castMs) continue;
@@ -10718,12 +10795,25 @@ async function _handleAgentMobInfo(req, res) {
   const identity = await mimicLink.requireAgentAuth(req, res);
   if (!identity) return;
 
-  let name = '';
-  try { name = new URL(req.url, 'http://x').searchParams.get('name') || ''; } catch { /* */ }
+  let name = '', selfChar = '';
+  try {
+    const sp = new URL(req.url, 'http://x').searchParams;
+    name = sp.get('name') || '';
+    selfChar = (sp.get('character') || '').trim();   // #141 requester → zone scope
+  } catch { /* */ }
   const norm = _normMobName(name);
   if (!norm) { res.writeHead(400); return res.end(JSON.stringify({ error: 'name required' })); }
 
-  const cached = _mobInfoCache.get(norm);
+  // #141 — a name like "a geonid" exists in multiple zones (Wakening Land vs
+  // Crystal Caverns). NPC id encodes the zone (id = zoneid*1000 + n), so we
+  // prefer the row in the REQUESTER's zone and fall back catalog-wide when the
+  // zone is unknown or has no same-name NPC. Cache key carries the zone so a
+  // same-name mob in another zone re-resolves instead of serving a stale row.
+  const zoneMap = await _liveZoneMap();
+  const reqZoneId = selfChar ? ((zoneMap.get(selfChar.toLowerCase()) || {}).zone_id ?? null) : null;
+  const cacheKey = norm + '|' + (reqZoneId != null ? reqZoneId : '*');
+
+  const cached = _mobInfoCache.get(cacheKey);
   if (cached && (Date.now() - cached.at) < _MOB_INFO_TTL_MS) {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({ ok: true, mob: cached.row }));
@@ -10741,8 +10831,20 @@ async function _handleAgentMobInfo(req, res) {
     // match those rows. PostgREST OR matches either case in a single round trip.
     const encPlain  = encodeURIComponent(norm);
     const encHashed = encodeURIComponent('#' + norm);
-    const rows = await supabase.select('eqemu_npc_types',
-      `or=(name.ilike.${encPlain},name.ilike.${encHashed})&select=id,name,class,level,maxlevel,hp,ac,mr,fr,cr,pr,dr,mindmg,maxdmg,npcspecialattks,special_abilities,raid_target,bodytype,npc_spells_id,see_invis,see_invis_undead,see_hide,see_improved_hide&limit=1`);
+    const _nameSel = `select=id,name,class,level,maxlevel,hp,ac,mr,fr,cr,pr,dr,mindmg,maxdmg,npcspecialattks,special_abilities,raid_target,bodytype,npc_spells_id,see_invis,see_invis_undead,see_hide,see_improved_hide&limit=1`;
+    // #141 zone-scoped first: constrain to the requester's zone id range
+    // [zoneid*1000, zoneid*1000+999]. Empty → fall back to the catalog-wide
+    // match below (fail-open: unknown zone, or a catalog gap for this zone).
+    let rows = null;
+    if (reqZoneId != null && Number.isFinite(reqZoneId)) {
+      const lo = reqZoneId * 1000, hi = reqZoneId * 1000 + 999;
+      rows = await supabase.select('eqemu_npc_types',
+        `or=(name.ilike.${encPlain},name.ilike.${encHashed})&id=gte.${lo}&id=lte.${hi}&${_nameSel}`);
+    }
+    if (!Array.isArray(rows) || rows.length === 0) {
+      rows = await supabase.select('eqemu_npc_types',
+        `or=(name.ilike.${encPlain},name.ilike.${encHashed})&${_nameSel}`);
+    }
     const r = Array.isArray(rows) && rows[0];
     if (r) {
       // Drop table from eqemu_npc_drops view (per-item effective_chance — the
@@ -10992,7 +11094,7 @@ async function _handleAgentMobInfo(req, res) {
     console.warn('[mob-info] lookup failed:', err?.message);
   }
   if (_mobInfoCache.size > 1000) _mobInfoCache.clear();   // cap set-only growth (efficiency review rule 4)
-  _mobInfoCache.set(norm, { at: Date.now(), row: mob });
+  _mobInfoCache.set(cacheKey, { at: Date.now(), row: mob });   // #141 zone-scoped key
   res.writeHead(200, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify({ ok: true, mob }));
 }
