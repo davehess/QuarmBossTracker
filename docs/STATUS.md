@@ -145,6 +145,32 @@ folly** — it's here.*
   NOT 200." The bidding panel must display ONE shared figure (never sum
   per-character displays), labeled as account-wide; verify the shipped
   mirror-derived family computation matches the OpenDKP UI number (board #124).
+- **#124 Loot bidding shows the REAL pooled DKP (read from OpenDKP standings, not
+  the mirror recompute) — DONE (2026-07-22, agent 3.4.2 beta; web 1.0.263 +
+  docs on main). No DB change.** The panel's DKP was mirror-derived
+  (`_familyDkpTotals` via bot `server-panel/bid-history`) and structurally can't
+  reach OpenDKP's number: a fully-computed mirror cross-check (no `limit=3000`
+  truncation) puts Hitya's family at **−125** (main-only, GetSummary-style) /
+  **+858** (family-sum) while the OpenDKP standings show **171** — none of the
+  mirror numbers can equal it. Fix: the agent reads OpenDKP's OWN standings
+  (`GET /clients/{name}/dkp` — the hosted route for the GetSummary lambda, legacy
+  `/beta/dkp`; falls back to `/summary`) with the Cognito IdToken the #108 login
+  already holds (the bot reaches OpenDKP purely via Bearer — `OPENDKP_CLIENT_ID`
+  is unset in prod — so the agent has identical read capability, no extra
+  credential, and no browser CORS since it's a server-side Node call).
+  `_pickAccountDkp` (pure, source-sliced test) returns the account figure = the
+  `CurrentDKP` on the **main's** standings row (OpenDKP shows ONE pooled total per
+  account — display it, never sum; matches the ⚠ DKP SEMANTIC above). New agent
+  route `GET /api/loot/dkp?main=&characters=`; panel renders
+  "💰 <n> DKP · account (OpenDKP)" and keeps the mirror figure only as a labeled
+  "~est. (mirror)" fallback when the authed number is unavailable. **171 match =
+  FIELD-VERIFY** — this cloud env can't egress to `api.opendkp.com` (403 CONNECT
+  tunnel); endpoint + response shape grounded against `Moncleared/OpenDKPLambdas`
+  GetSummary (`SummaryModel.Models[].CurrentDKP`) + `utils/opendkp.js` + the
+  Supabase mirror cross-check above. Secondary (noted, NOT fixed): the "bidding
+  as" family picker is still MODE-guessed (`opendkp_character_id_to_name` empty) —
+  reading DKP direct moots it for the balance, but the picker can still list wrong
+  bid-able characters.
 - **#121 Loot Bidding v2 + buff-queue class-picker defaults — DONE (2026-07-19,
   agent 3.3.100 beta + bot 3.0.221 on main + web 1.0.252 roadmap/docs; Mimic
   parked 1.9.6). No DB change (mirror reads only).** Field feedback from the

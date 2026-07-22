@@ -92,6 +92,34 @@ the Emperor Ssraeshza key chain.
 
 ---
 
+## #124 — Loot bidding shows your REAL OpenDKP balance
+
+**Needs:** agent **3.4.2** (beta Mimic). No bot or DB change — the agent reads
+OpenDKP's own standings directly with the OpenDKP login you already use on the
+Loot bidding card (the token stays on your PC). Log into OpenDKP on the card
+first.
+
+**What changed:** the DKP figure on the 💰 Loot bidding card used to be an
+estimate our server pieced together from the OpenDKP mirror (ticks + adjustments
+− loot), which could be well off — Hitya's family showed **−123** (and a
+recompute **711**) when the real OpenDKP balance was **171**. It now comes
+straight from OpenDKP's standings — your account's **Current DKP** — so it
+matches the OpenDKP site to the number. If OpenDKP can't be reached for a moment
+the card falls back to the old estimate, now clearly marked **"~est. (mirror)"**
+so it's never mistaken for your real balance.
+
+**✅ Officer / anyone with an OpenDKP login**
+- **The card's DKP matches the OpenDKP site's Current DKP for your account.** Log
+  into OpenDKP on the 💰 Loot bidding card, then compare the green
+  **"💰 <n> DKP · account (OpenDKP)"** pill against your account's Current DKP on
+  the OpenDKP standings page — they should be the SAME number (it's ONE pooled
+  total for your whole family, not a per-character sum). Check a second account
+  (e.g. another main) too.
+- **Mirror fallback is obvious.** If you're NOT logged into OpenDKP (or it's
+  briefly unreachable), the pill reads **"💰 ~<n> DKP · ~est. (mirror)"** with a
+  leading `~` — never a green "account (OpenDKP)" label. Flag it if a `~est.`
+  figure is ever shown as if it were real.
+
 ## #121 — Loot Bidding v2 + buff-queue class-picker defaults
 
 **Needs:** agent **3.3.100** (beta Mimic) + bot **3.0.221** (live on Railway) +
