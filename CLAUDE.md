@@ -73,6 +73,14 @@ file-checkout between branches rather than merging whole branches (the beta
 branch must never promote stale bot/web files to `main`). Graduating a Mimic
 beta to stable: merge the Mimic/agent state to `main` with a stable version.
 
+**Beta-first (Hitya, 2026-07-23): Mimic/agent changes ship to `beta` by
+default.** Cut a stable graduation only when something specifically warrants
+the whole fleet getting it (a raid-critical fix, a broken stable, or an
+accumulated batch the guild lead asks to promote) — not per-iteration.
+**Release names are the guild lead's call**: never name a release (roadmap
+titles, commit messages, announcements) without consulting Hitya first;
+propose, they pick. Unnamed = plain version string.
+
 **Every release updates the roadmap** (Uilnayar 2026-07-08). Add/extend a
 `releases[]` entry at the TOP of `web/lib/roadmapData.ts` (newest first) for
 any user-facing change — bot, web, agent, or Mimic. Each entry: the version
