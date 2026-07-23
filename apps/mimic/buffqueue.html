@@ -286,11 +286,48 @@
       var target = btn.getAttribute('data-target');
       var spell  = btn.getAttribute('data-spell');
       if (!target || !spell) return;
-      // Optimistic: strike the chip immediately; the bot-side mark makes it
-      // stick raid-wide on the next queue refresh.
-      var chip = btn.closest('.ch');
-      if (chip) { chip.style.opacity = '0.35'; chip.style.textDecoration = 'line-through'; }
+      // Suppress locally first (#67) so a poll landing before the bot processes
+      // the clear can't re-add this chip and flash it back out.
+      _dismissed.add(_dkey(target, spell));
       btn.disabled = true;
+      // Surgical removal: drop ONLY this chip — and the row if it was that row's
+      // last curse — instead of letting the next poll rewrite the whole #body
+      // (which resets scroll/hover and flashes). Everything else stays put.
+      var chip = btn.closest('.ch');
+      var row  = btn.closest('.row');
+      if (chip) chip.remove();
+      if (row) {
+        var left = row.querySelectorAll('.curse .ch');
+        if (!left.length) {
+          var nextEl = row.nextElementSibling;
+          if (nextEl && nextEl.classList && nextEl.classList.contains('casting')) nextEl.remove();
+          row.remove();
+          var sec = bodyEl.querySelector('.sec.debuffs');
+          if (sec) {
+            var rows = sec.querySelectorAll('.row.d');
+            if (!rows.length) sec.remove();
+            else { var ct = sec.querySelector('.hdr .ct'); if (ct) ct.textContent = String(rows.length); }
+          }
+        }
+      }
+      // Keep the byte-stability cache consistent with the now-suppressed payload
+      // so the next poll (same data minus this chip) matches and skips the
+      // wholesale innerHTML rewrite — no re-add-then-remove flash.
+      try {
+        if (_lastPayload) {
+          var h2 = buildHtml(_lastPayload);
+          bodyEl.__wpHtml = h2;
+          if (!h2) {
+            bodyEl.innerHTML = '';
+            var emptyEl = document.getElementById('empty');
+            if (emptyEl) emptyEl.style.display = '';
+          }
+        }
+      } catch (er) {}
+      // Smooth shrink to the reduced height — content was never emptied unless
+      // this was already the last row, so no collapse-to-zero frame.
+      _autoFit();
+      // Preserve existing semantics — clear it raid-wide via the bot.
       fetch('http://127.0.0.1:'+PORT+'/api/debuff-clear', {
         method: 'POST', cache: 'no-store',
         headers: { 'Content-Type': 'application/json' },
@@ -410,6 +447,31 @@
   try { _collapsed = JSON.parse(localStorage.getItem('wp:bq:collapsed') || '{}') || {}; } catch (e) {}
   function _saveCollapsed(){ try { localStorage.setItem('wp:bq:collapsed', JSON.stringify(_collapsed)); } catch (e) {} }
 
+  // Locally-dismissed debuff chips (#67) — keyed by "target|spell" (lowercased),
+  // matching the /api/debuff-clear identity. Session-scoped, this client only.
+  // Bridges the poll gap between the ✓ click and the bot processing the clear so
+  // intermediate polls don't re-add-then-remove the chip (flash). Reconciled
+  // against each payload: an id the server no longer reports is forgotten, so a
+  // genuine re-land re-shows.
+  var _dismissed = new Set();
+  function _dkey(target, spell){ return (String(target || '') + '|' + String(spell || '')).toLowerCase(); }
+  function reconcileDismissed(dq){
+    if (!_dismissed.size) return;
+    var present = new Set();
+    for (var i = 0; i < dq.length; i++) {
+      var cs = dq[i].curses || [];
+      for (var j = 0; j < cs.length; j++) present.add(_dkey(dq[i].name, cs[j].name));
+    }
+    _dismissed.forEach(function(k){ if (!present.has(k)) _dismissed.delete(k); });
+  }
+  // Shallow row clone with the curse list narrowed to non-dismissed chips, so
+  // renderRow stays untouched.
+  function _rowVisibleCurses(r){
+    var vis = (r.curses || []).filter(function(c){ return !_dismissed.has(_dkey(r.name, c.name)); });
+    if (vis.length === (r.curses || []).length) return r;
+    var o = {}; for (var k in r) o[k] = r[k]; o.curses = vis; return o;
+  }
+
   function renderRow(r, kind){
     var groupLbl = r.group != null ? ('G' + r.group) : '';
     var cls = kind === 'd' ? 'd' : kind === 'burst' ? 'burst' : tierClass(r.tier);
@@ -474,34 +536,30 @@
     line += castingRow(r.casting);
     return line;
   }
-  function render(payload){
+  // Build the queue sections HTML from a payload. Split out from render() so the
+  // surgical-dismiss handler (#67) can recompute the byte-stability cache without
+  // touching the DOM. Dismissed debuff chips are suppressed here.
+  function buildHtml(payload){
     var bq = (payload && payload.buff_queue) || [];
     var dq = (payload && payload.debuff_queue) || [];
     // Shaman → feral_queue, Beastlord → savagery_queue. burst_label drives the
     // section header so the bot can pick the right ability name.
     var burst = (payload && (payload.feral_queue || payload.savagery_queue)) || [];
     var burstLabel = (payload && payload.burst_label) || null;
-    // group_mode = no active raid roster → caption switches from "raid" to
-    // "group" and the empty-state hint changes.
-    var groupMode = !!(payload && payload.group_mode);
-    var body = document.getElementById('body');
-    var empty = document.getElementById('empty');
-    if (bq.length === 0 && dq.length === 0 && burst.length === 0) {
-      body.innerHTML = '';
-      empty.style.display = '';
-      var noun = groupMode ? 'group' : 'raid';
-      empty.textContent = bufferClass
-        ? ('no gaps a '+bufferClass+' can fix right now — every '+(groupMode ? 'tracked groupmate' : 'Mimic-running raider')+' is covered')
-        : ('no '+noun+' roster yet — start any Mimic in '+noun+' and the queue fills in within seconds');
-      return;
-    }
-    empty.style.display = 'none';
     var html = '';
     // Debuff / cure queue FIRST (per user) — cures are time-critical and the
-    // bot already orders them curse → blind → poison → disease.
-    if (dq.length) {
-      html += '<div class="sec debuffs"><div class="hdr"><span class="lab">🩸 Debuff queue</span><span class="ct">'+dq.length+'</span><span class="hint">cures needed · curse → blind → poison → disease</span></div>';
-      for (var di = 0; di < dq.length; di++) html += renderRow(dq[di], 'd');
+    // bot already orders them curse → blind → poison → disease. Locally
+    // dismissed chips (#67) drop out; a row whose every chip is dismissed drops
+    // entirely, and the count reflects only what's shown.
+    var dqVis = [];
+    for (var i0 = 0; i0 < dq.length; i0++) {
+      var rv = _rowVisibleCurses(dq[i0]);
+      if (!(rv.curses && rv.curses.length)) continue;
+      dqVis.push(rv);
+    }
+    if (dqVis.length) {
+      html += '<div class="sec debuffs"><div class="hdr"><span class="lab">🩸 Debuff queue</span><span class="ct">'+dqVis.length+'</span><span class="hint">cures needed · curse → blind → poison → disease</span></div>';
+      for (var di = 0; di < dqVis.length; di++) html += renderRow(dqVis[di], 'd');
       html += '</div>';
     }
     if (bq.length) {
@@ -546,13 +604,40 @@
       for (var i = 0; i < burst.length; i++) html += renderRow(burst[i], 'burst');
       html += '</div>';
     }
+    return html;
+  }
+  function _autoFit(){
+    try { window.mimic && window.mimic.autoFitOverlay && window.mimic.autoFitOverlay(document.getElementById('wrap')); } catch (e) {}
+  }
+  function render(payload){
+    var body = document.getElementById('body');
+    var empty = document.getElementById('empty');
+    var dq = (payload && payload.debuff_queue) || [];
+    // group_mode = no active raid roster → caption switches from "raid" to
+    // "group" and the empty-state hint changes.
+    var groupMode = !!(payload && payload.group_mode);
+    // Forget dismissed chips the server no longer reports (so a re-land re-shows)
+    // before deciding what's visible.
+    reconcileDismissed(dq);
+    var html = buildHtml(payload);
+    if (!html) {
+      // Nothing to show — either no roster or everything is covered/dismissed.
+      if (body.__wpHtml !== '') { body.innerHTML = ''; body.__wpHtml = ''; _autoFit(); }
+      empty.style.display = '';
+      var noun = groupMode ? 'group' : 'raid';
+      empty.textContent = bufferClass
+        ? ('no gaps a '+bufferClass+' can fix right now — every '+(groupMode ? 'tracked groupmate' : 'Mimic-running raider')+' is covered')
+        : ('no '+noun+' roster yet — start any Mimic in '+noun+' and the queue fills in within seconds');
+      return;
+    }
+    empty.style.display = 'none';
     // Byte-stability guard (2026-07-07 review): identical HTML -> skip the
     // innerHTML re-layout and the auto-fit (window height only changes when
     // the content does). Delegated listeners on #body survive either way.
     if (body.__wpHtml !== html) {
       body.innerHTML = html;
       body.__wpHtml = html;
-      try { window.mimic && window.mimic.autoFitOverlay && window.mimic.autoFitOverlay(document.getElementById('wrap')); } catch (e) {}
+      _autoFit();
     }
   }
   // Collapse/expand a category section. Delegated once (render replaces the

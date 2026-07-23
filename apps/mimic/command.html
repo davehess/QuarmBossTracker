@@ -69,6 +69,26 @@
   .cure-chip{font-size:9px;padding:0 4px;border-radius:2px;background:rgba(220,38,38,0.35);
     color:#fff;flex-shrink:0}
   .cure-chip.being-cured{background:rgba(86,211,100,0.3);color:#c8f0cc}
+  /* Divine Intervention (#50) compacted (#66) to chips beside the HEALER MANA
+     header — "DI: Uilnayar ✓ · Fargan 45s" — freeing the vertical block. */
+  .head.mana-head{display:flex;align-items:center;gap:6px}
+  .di-chips{margin-left:auto;font-size:9px;text-transform:none;letter-spacing:0.2px;
+    display:inline-flex;align-items:center;gap:4px;flex-wrap:wrap;justify-content:flex-end}
+  .di-chips .di-lab{color:#9aa4ad;font-weight:600}
+  .di-chips .up{color:#7ee787}
+  .di-chips .cd{color:#f0b429;font-variant-numeric:tabular-nums}
+  .di-chips .sep{color:#6e7681}
+  .di-chips.solo{outline:1px solid rgba(240,196,25,0.7);outline-offset:1px;border-radius:3px;padding:0 3px}
+  /* Curse/Cure per-line dismiss + clear-all (#66). Extra right padding on the
+     card keeps the ✕ / "clear all" clear of the fixed ✕-hide button gutter. */
+  .card.cure-card{padding-right:28px}
+  .head.cure-head{display:flex;align-items:center;gap:6px}
+  .cureClearAll{margin-left:auto;cursor:pointer;color:#9aa4ad;font-size:9px;text-transform:none;
+    letter-spacing:0;border:1px solid rgba(110,118,129,0.4);border-radius:3px;padding:0 4px;opacity:0.7}
+  .cureClearAll:hover{opacity:1;color:#f87171;border-color:#f87171}
+  .cure-row .cureDismiss{margin-left:6px;cursor:pointer;color:#8b949e;font-size:11px;line-height:1;
+    flex-shrink:0;opacity:0.6}
+  .cure-row .cureDismiss:hover{opacity:1;color:#f87171}
   #empty{color:rgba(255,255,255,0.5);font-size:11px;text-shadow:-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000,0 1px 2px #000;padding:3px 0;text-align:center}
   /* drag/lock/setup chrome — shared pattern. */
   #drag-controls{display:none;position:fixed;top:4px;left:4px;gap:4px;z-index:60}
@@ -179,6 +199,31 @@
   var contentEl = document.getElementById('content');
   var whoEl     = document.getElementById('who');
 
+  // Curse/Cure local dismiss (#66) — session-scoped, this client only. Keyed by
+  // the agent-provided stable row id (name + sorted debuff-spell set). Reconciled
+  // against each poll: an id that leaves the payload is forgotten so a genuine
+  // re-land re-shows, while a still-present (stale/moot) row stays dismissed.
+  var _dismissedCures = new Set();
+  var _lastState = null;
+  function _cureId(c){ return (c && c.id) ? c.id : (c && c.name ? String(c.name).toLowerCase() : null); }
+
+  // Divine Intervention (#50) as compact chips beside the HEALER MANA header
+  // (#66) — "DI: Uilnayar ✓ · Fargan 45s". Same data as the old DI card, only
+  // reshaped. Gold ring when exactly one cleric is up (save it for the tank).
+  function diChips(di){
+    if (!di || !di.clerics || !di.clerics.length) return '';
+    var solo = di.up_count === 1 && di.clerics.length > 1;
+    var parts = [];
+    for (var i = 0; i < di.clerics.length; i++) {
+      var dc = di.clerics[i];
+      parts.push(dc.up
+        ? '<span class="up">' + esc(dc.name) + ' ✓</span>'
+        : '<span class="cd">' + esc(dc.name) + ' ' + Math.max(1, dc.seconds || 1) + 's</span>');
+    }
+    return '<span class="di-chips' + (solo ? ' solo' : '') + '"><span class="di-lab">DI:</span>'
+         + parts.join('<span class="sep">·</span>') + '</span>';
+  }
+
   function hpClass(pct){ if (pct == null) return ''; if (pct <= 25) return 'crit'; if (pct <= 50) return 'low'; return ''; }
   function manaClass(pct){ if (pct == null) return ''; if (pct <= 15) return 'crit'; if (pct <= 35) return 'low'; return ''; }
   // HP bar label — raw "cur / max · pct%" when the local character's own Zeal
@@ -279,9 +324,13 @@
     }
 
     // Healer mana roster — self-reported "N% mana" call-outs, lowest first
-    // so the group needing a mana break is easy to spot at a glance.
+    // so the group needing a mana break is easy to spot at a glance. Divine
+    // Intervention readiness (#50) rides in the header as compact chips (#66);
+    // the CH-chain overlay owns the "only <X> has DI" voice callout so nobody
+    // hears it twice.
+    var diChipsHtml = diChips(s.di);
     if (s.healer_mana && s.healer_mana.length) {
-      html += '<div class="card"><div class="head">Healer mana</div><div class="list">';
+      html += '<div class="card"><div class="head mana-head">Healer mana' + diChipsHtml + '</div><div class="list">';
       for (var j = 0; j < s.healer_mana.length; j++) {
         var h = s.healer_mana[j];
         html += '<div class="row"><span class="nm">' + esc(h.name) + '</span>'
@@ -290,23 +339,10 @@
              +    '<span class="mana-pct">' + h.pct + '%</span></div>';
       }
       html += '</div></div>';
-    }
-
-    // Divine Intervention readiness — per-cleric up/cooldown chips (BACKLOG
-    // §1). Display only; the CH-chain overlay owns the "only <X> has DI"
-    // voice callout so nobody hears it twice. Gold ring when exactly one
-    // cleric is up = save it for the tank.
-    if (s.di && s.di.clerics && s.di.clerics.length) {
-      var diSolo = s.di.up_count === 1 && s.di.clerics.length > 1;
-      html += '<div class="card"' + (diSolo ? ' style="outline:1px solid #f0c419;outline-offset:1px"' : '') + '>'
-           +  '<div class="head">🛡 Divine Intervention</div><div class="list" style="display:flex;flex-wrap:wrap;gap:4px">';
-      for (var di_i = 0; di_i < s.di.clerics.length; di_i++) {
-        var dc = s.di.clerics[di_i];
-        html += dc.up
-          ? '<span style="display:inline-flex;align-items:center;gap:3px;font-size:10px;border:1px solid rgba(86,211,100,0.6);border-radius:3px;padding:1px 6px;color:#7ee787">✓ ' + esc(dc.name) + '</span>'
-          : '<span style="display:inline-flex;align-items:center;gap:3px;font-size:10px;border:1px solid rgba(240,180,41,0.6);border-radius:3px;padding:1px 6px;color:#f0b429">' + esc(dc.name) + ' ' + Math.max(1, dc.seconds || 1) + 's</span>';
-      }
-      html += '</div></div>';
+    } else if (diChipsHtml) {
+      // DI available but no mana call-outs yet — show the chips on their own
+      // compact line rather than losing them.
+      html += '<div class="card"><div class="head mana-head">Healer mana' + diChipsHtml + '</div></div>';
     }
 
     // /random roll sets (last 15 min) — "333 (Item name) — Winner names"
@@ -329,18 +365,35 @@
 
     // Curse/Cure alerts — reuses the buff queue's real observed-debuff
     // tracking (not chat parsing) so it stays accurate even when nobody's
-    // typed a "please cure" macro.
+    // typed a "please cure" macro. Per-line ✕ + "clear all" dismiss (#66) are
+    // LOCAL to this client: reconcile the dismissed set against the fresh
+    // payload (forget ids no longer present so a re-land re-shows), then filter.
     if (s.cures && s.cures.length) {
-      html += '<div class="card"><div class="head">Curse / Cure</div><div class="list">';
-      for (var k = 0; k < s.cures.length; k++) {
-        var c = s.cures[k];
-        var curses = c.curses || [];
-        var chips = curses.map(function(cc){
-          return '<span class="cure-chip' + (cc.being_cured ? ' being-cured' : '') + '">' + esc(cc.cure) + (cc.counters ? ' ×' + cc.counters : '') + (cc.being_cured ? ' (curing)' : '') + '</span>';
-        }).join(' ');
-        html += '<div class="row"><span class="nm">' + esc(c.name) + '</span>' + chips + '</div>';
+      var _curIds = new Set();
+      for (var ci0 = 0; ci0 < s.cures.length; ci0++) { var _id0 = _cureId(s.cures[ci0]); if (_id0) _curIds.add(_id0); }
+      _dismissedCures.forEach(function(id){ if (!_curIds.has(id)) _dismissedCures.delete(id); });
+      var visibleCures = [];
+      for (var vk = 0; vk < s.cures.length; vk++) {
+        var _idv = _cureId(s.cures[vk]);
+        if (_idv && _dismissedCures.has(_idv)) continue;
+        visibleCures.push(s.cures[vk]);
       }
-      html += '</div></div>';
+      if (visibleCures.length) {
+        html += '<div class="card cure-card"><div class="head cure-head">Curse / Cure'
+             +    '<span class="cureClearAll" title="Dismiss all cure/curse alerts (this client, until they change)">clear all</span>'
+             +  '</div><div class="list">';
+        for (var k = 0; k < visibleCures.length; k++) {
+          var c = visibleCures[k];
+          var cId = _cureId(c);
+          var curses = c.curses || [];
+          var chips = curses.map(function(cc){
+            return '<span class="cure-chip' + (cc.being_cured ? ' being-cured' : '') + '">' + esc(cc.cure) + (cc.counters ? ' ×' + cc.counters : '') + (cc.being_cured ? ' (curing)' : '') + '</span>';
+          }).join(' ');
+          html += '<div class="row cure-row"><span class="nm">' + esc(c.name) + '</span>' + chips
+               +    '<span class="cureDismiss" data-cure-id="' + esc(cId) + '" title="Dismiss this alert (this client)">✕</span></div>';
+        }
+        html += '</div></div>';
+      }
     }
 
     if (!html) html = '<div id="empty">Nothing to report — no active target, DA/mana call-outs, rolls, or curses seen yet.</div>';
@@ -352,10 +405,48 @@
     }
   }
 
+  // Curse/Cure dismiss — delegated on #content (rebuilt every poll, so bind
+  // once). Every clickable needs the hover-interact handshake: locked overlays
+  // are click-through, so without flipping interactive on hover the click falls
+  // through to EQ.
+  if (contentEl) {
+    contentEl.addEventListener('mouseover', function(e){
+      var t = e.target;
+      if (t && t.classList && (t.classList.contains('cureDismiss') || t.classList.contains('cureClearAll'))) {
+        try { window.mimic.overlayHoverInteractive(true); } catch (er) {}
+      }
+    });
+    contentEl.addEventListener('mouseout', function(e){
+      var t = e.target;
+      if (t && t.classList && (t.classList.contains('cureDismiss') || t.classList.contains('cureClearAll'))) {
+        try { window.mimic.overlayHoverInteractive(false); } catch (er) {}
+      }
+    });
+    contentEl.addEventListener('click', function(e){
+      var one = e.target && e.target.closest ? e.target.closest('.cureDismiss') : null;
+      if (one) {
+        e.preventDefault(); e.stopPropagation();
+        var id = one.getAttribute('data-cure-id');
+        if (id) { _dismissedCures.add(id); if (_lastState) render(_lastState); }
+        return;
+      }
+      var all = e.target && e.target.closest ? e.target.closest('.cureClearAll') : null;
+      if (all) {
+        e.preventDefault(); e.stopPropagation();
+        if (_lastState && _lastState.cures) {
+          for (var i = 0; i < _lastState.cures.length; i++) { var cid = _cureId(_lastState.cures[i]); if (cid) _dismissedCures.add(cid); }
+          render(_lastState);
+        }
+        return;
+      }
+    });
+  }
+
   async function tick(){
     try {
       const r = await fetch('http://127.0.0.1:'+PORT+'/api/command-center', { cache: 'no-store' });
       const s = await r.json();
+      _lastState = s;
       render(s);
     } catch (e) {
       // Quiet — agent might be restarting. Next tick will recover.

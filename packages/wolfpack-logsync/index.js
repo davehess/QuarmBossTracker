@@ -8881,10 +8881,20 @@ function _serializeCommandCenterState() {
   const bqCached = _buffQueueCache.get('|' + String(activeChar || '').toLowerCase());
   const debuffQueue = (bqCached && bqCached.payload && Array.isArray(bqCached.payload.debuff_queue))
     ? bqCached.payload.debuff_queue : [];
-  const cures = debuffQueue.map(d => ({
-    name: d.name, class: d.class, curses: d.curses,
-    all_being_cured: !!d.all_being_cured, same_zone: !!d.same_zone,
-  }));
+  const cures = debuffQueue.map(d => {
+    // Stable per-row id for the Command Center's local dismiss (#66): character
+    // name + the sorted set of debuff spell names on that row. Stays constant
+    // while the same debuffs persist (so a dismissed row does NOT resurrect on
+    // the next poll), but changes the moment the debuff set changes (a genuinely
+    // new curse re-shows). The overlay keys its client-side dismissed set on this.
+    const curseNames = (Array.isArray(d.curses) ? d.curses : [])
+      .map(c => (c && c.name) ? String(c.name) : '').filter(Boolean).sort();
+    return {
+      name: d.name, class: d.class, curses: d.curses,
+      all_being_cured: !!d.all_being_cured, same_zone: !!d.same_zone,
+      id: String(d.name || '?').toLowerCase() + '|' + curseNames.join(','),
+    };
+  });
 
   return {
     character:     activeChar,
