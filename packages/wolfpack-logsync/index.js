@@ -13140,6 +13140,26 @@ function renderDkpTickCard(s) {
   if (el._wpTickHtml !== h) { el._wpTickHtml = h; el.innerHTML = h; }
 }
 
+// #133 — collapse same-name loot items into one {name, quantity} row, summing
+// quantities. Case-insensitive match; first-seen casing wins; distinct names
+// are preserved untouched. Shared by the officer Loot capture panel AND the
+// #108 bidding panel so a drop that repeats an item ("Sword, Sword") always
+// renders "Sword ×2" instead of two identical lines. This is DISPLAY only — it
+// never merges distinct bid targets (those carry separate auction ids and are
+// handled with a "(k of N)" affix in the bidding table, not summed here).
+function wpCollapseLootItems(items) {
+  var out = []; var ix = {};
+  for (var i = 0; i < (items || []).length; i++) {
+    var it = items[i] || {};
+    var nm = String(it.name == null ? '' : it.name);
+    var qty = (it.quantity && it.quantity > 0) ? it.quantity : 1;
+    var key = nm.toLowerCase();
+    if (Object.prototype.hasOwnProperty.call(ix, key)) { out[ix[key]].quantity += qty; }
+    else { ix[key] = out.length; out.push({ name: nm, quantity: qty }); }
+  }
+  return out;
+}
+
 // 💰 Officer Loot capture card. Fills #wpDkpLoot from s.dkpLoot (null for
 // non-officers → card stays hidden). Byte-stable: innerHTML is only
 // reassigned when the built string changes, so checkbox state survives the
@@ -13161,17 +13181,21 @@ function renderDkpLootCard(s) {
   for (var i = 0; i < caps.length; i++) {
     var c = caps[i];
     var chan = c.channel === 'gu' ? '/gu' : '/rs';
+    // Defensive collapse: parseLootChatBody already sums same-name items into
+    // {name, quantity}, but fold again here so the panel ALWAYS shows "×N"
+    // even if a future capture path skips the parser's merge (#133).
+    var capItems = wpCollapseLootItems(c.items);
     h += '<div class="wpDkpCap" data-id="' + esc(c.id) + '" style="border:1px solid #30363d;border-radius:6px;padding:8px 10px;margin:6px 0">'
       + '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">'
       +   '<b>' + esc(c.speaker) + '</b>'
-      +   '<span class="dim" style="font-size:11px">' + chan + ' · ' + esc(_clockOf(Date.parse(c.ts))) + ' · ' + c.items.length + ' item' + (c.items.length === 1 ? '' : 's') + '</span>'
+      +   '<span class="dim" style="font-size:11px">' + chan + ' · ' + esc(_clockOf(Date.parse(c.ts))) + ' · ' + capItems.length + ' item' + (capItems.length === 1 ? '' : 's') + '</span>'
       +   '<span style="flex:1"></span>'
       +   '<button class="wpDkpPost" data-id="' + esc(c.id) + '" title="Create closed OpenDKP auctions for the checked items and announce to the loot thread" style="background:#238636;color:#fff;border:0;border-radius:5px;padding:2px 10px;cursor:pointer;font-family:inherit;font-size:11px">💰 Post for bidding</button>'
       +   '<button class="wpDkpCopy" data-id="' + esc(c.id) + '" style="background:#30363d;color:#e6edf3;border:1px solid #484f58;border-radius:5px;padding:2px 10px;cursor:pointer;font-family:inherit;font-size:11px">Copy</button>'
       +   '<button class="wpDkpDismiss" data-id="' + esc(c.id) + '" title="Dismiss this list" style="background:none;color:#8b949e;border:1px solid #30363d;border-radius:5px;padding:2px 8px;cursor:pointer;font-family:inherit;font-size:11px">✕</button>'
       + '</div>';
-    for (var j = 0; j < c.items.length; j++) {
-      var it = c.items[j];
+    for (var j = 0; j < capItems.length; j++) {
+      var it = capItems[j];
       h += '<label style="display:flex;align-items:center;gap:8px;padding:2px 0;cursor:pointer;font-size:13px">'
         + '<input type="checkbox" class="wpDkpItem" data-name="' + esc(it.name) + '" data-qty="' + (it.quantity || 1) + '" checked>'
         + '<span>' + esc(it.name) + (it.quantity > 1 ? ' <span class="dim">×' + it.quantity + '</span>' : '') + '</span>'
@@ -16158,24 +16182,36 @@ async function dismissTopDamage(key) {
   }
 
   // Merge server (biddable) + local (detected) auctions, keyed by item name.
+  // #133: when OpenDKP runs N separate auctions for N copies of ONE item they
+  // arrive as N srvAucs rows sharing a name but with distinct auction_ids —
+  // each is its own sealed-bid target, so we KEEP them all (never collapse a
+  // bid target) and tag them "(k of N)" so a bidder can tell the copies apart.
+  // Local "called" rows aren't biddable yet, so their repeated-item count folds
+  // into a single ×N row via the item's own quantity.
   function mergedRows(){
     var byName = {}; var rows = [];
+    var srvCount = {}; var srvSeen = {};
+    for (var s=0;s<srvAucs.length;s++){ var snm=(srvAucs[s].item_name||"").toLowerCase(); srvCount[snm]=(srvCount[snm]||0)+1; }
     for (var i=0;i<srvAucs.length;i++){
       var a = srvAucs[i];
       var nm = (a.item_name||"").toLowerCase();
+      var copyN = srvCount[nm]||1;
+      var copyIx = (srvSeen[nm] = (srvSeen[nm]||0)+1);   // 1-based appearance order
       var row = { key:"a"+a.auction_id, name:a.item_name||"?", item_id:a.item_id||null,
         auction_id:a.auction_id, wishlisted:!!a.wishlisted, top_bid:a.top_bid,
-        ends:a.ends_at?Date.parse(a.ends_at):null, biddable:true, pending:false };
+        ends:a.ends_at?Date.parse(a.ends_at):null, biddable:true, pending:false,
+        quantity:1, copyIx:(copyN>1?copyIx:0), copyN:(copyN>1?copyN:0) };
       byName[nm] = row; rows.push(row);
     }
     for (var j=0;j<localAucs.length;j++){
-      var la = localAucs[j]; var items = la.items||[];
+      var la = localAucs[j]; var items = wpCollapseLootItems(la.items||[]);
       for (var k=0;k<items.length;k++){
         var name = items[k].name||""; var lk = name.toLowerCase();
+        var qty = items[k].quantity||1;
         if (byName[lk]){ if (!byName[lk].ends && la.ends_at) byName[lk].ends = Date.parse(la.ends_at); continue; }
         var lrow = { key:"l"+la.sig+"_"+k, name:name, item_id:null, auction_id:null,
           wishlisted:false, top_bid:null, ends:la.ends_at?Date.parse(la.ends_at):null,
-          biddable:false, pending:true };
+          biddable:false, pending:true, quantity:qty, copyIx:0, copyN:0 };
         byName[lk] = lrow; rows.push(lrow);
       }
     }
@@ -16269,8 +16305,13 @@ async function dismissTopDamage(key) {
         var ru = (hist && hist.runner_up!=null) ? ("<div class=dim style='font-size:10px'>runner-up "+fmt(hist.runner_up)+"</div>") : "";
         var endSpanId = "wpEnd_"+row.key;
         if (row.ends) ticks[endSpanId] = row.ends;
+        // #133: "(k of N)" distinguishes N separate OpenDKP auctions for the
+        // same item (distinct bid targets, never collapsed); "×N" shows a called
+        // drop that includes multiple copies not yet split into auctions.
+        var copyAffix = (row.copyN>1) ? (" <span class=dim style='font-size:10px'>("+row.copyIx+" of "+row.copyN+")</span>") : "";
+        var qtyAffix  = (row.quantity>1) ? (" <span class=dim style='font-size:10px'>×"+row.quantity+"</span>") : "";
         h += "<tr>";
-        h += "<td class=name>"+esc(row.name)+star+(row.pending?" <span class=dim style='font-size:10px'>(called)</span>":"")+"</td>";
+        h += "<td class=name>"+esc(row.name)+copyAffix+qtyAffix+star+(row.pending?" <span class=dim style='font-size:10px'>(called)</span>":"")+"</td>";
         h += "<td style='font-size:11px'><span id="+endSpanId+">"+(row.ends?endLabel(row.ends):"")+"</span></td>";
         h += "<td style='font-size:11px'>"+lastWin+ru+"</td>";
         h += "<td style='white-space:nowrap'>";
