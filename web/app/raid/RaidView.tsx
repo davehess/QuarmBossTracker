@@ -404,6 +404,7 @@ export default function RaidView({
         </div>
         <div className="flex items-center gap-3 flex-wrap">
           <BuffLagButton source="web_raid" />
+          <a href="/raid/review" className="text-xs text-blue hover:underline">📓 Raid Night Review</a>
           <a href="/buffs" className="text-xs text-blue hover:underline">← classic /buffs view</a>
         </div>
       </div>

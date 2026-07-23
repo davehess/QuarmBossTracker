@@ -43,6 +43,18 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'raid-night-review',
+    title: '📓 Raid Night Review — the morning-after page',
+    version: 'Web 1.0.266',
+    date: '2026-07-23',
+    headline: 'The ask was simple: "let us review the raid at 9am, not 11:30pm." A new /raid/review page gives you exactly that — open it the morning after and one page shows what happened last night, no Discord scrolling.',
+    features: [
+      { name: 'One night, one page', blurb: 'From the live Raid view (or /raid/review) pick a night and see it laid out in the order it happened: the kills timeline (boss, time, duration, damage, with wipe/engaged markers), who died and on which boss, which slows landed and when, the callouts that fired (Death Touch included), and that night\'s loot with winners and DKP. Every section only shows up when there\'s something to show, so an empty night stays tidy instead of erroring.' },
+      { name: 'The same numbers as the parse page', blurb: 'Death counts use the exact cross-parser dedup the parse pages already use — no new, disagreeing count — and foreign (pugging-another-guild) raids are hidden the same way /parses hides them. It reads only; nothing here changes any record.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'mimic-201-setup-replay',
     title: '🐺 Mimic 2.0.1 — one-click EQ setup + fight replay',
     version: 'Mimic 2.0.1 · Agent 3.4.1',
