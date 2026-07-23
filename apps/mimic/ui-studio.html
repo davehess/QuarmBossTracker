@@ -569,6 +569,18 @@
     _renderLoadedBundle();
   }
 
+  // Resolution-mismatch warning for the apply UI (#146). When the snapshot was
+  // captured at a different resolution than the target we're applying to,
+  // positions get remapped but window SIZES are preserved verbatim (EQ sizes
+  // are absolute pixels) — say so plainly so an adapted layout reads as
+  // intended rather than looking broken. Returns '' when the resolutions match.
+  function _resMismatchWarning(srcW, srcH, tgtW, tgtH){
+    if (!srcW || !srcH || !tgtW || !tgtH) return '';
+    if (srcW === tgtW && srcH === tgtH) return '';
+    return '⚠ captured at ' + srcW + '×' + srcH + " — you're at " + tgtW + '×' + tgtH +
+      '; window positions will be adapted, sizes preserved';
+  }
+
   // Parse + rescale + render whatever is currently in STATE.bundle. Shared by
   // the local "Load + Rescale" path and the cloud "Restore from backup" path —
   // both end up with a { filename → text } bundle, so the only difference is
@@ -622,11 +634,17 @@
         var h = hasWH ? parseInt(rawH, 10) : 100;
         if (isNaN(w)) { w = 200; hasWH = false; }
         if (isNaN(h)) { h = 100; hasWH = false; }
-        // Rescale to target resolution.
+        // Remap POSITIONS to the target resolution — a window at 2000px on a
+        // 2560-wide screen belongs near 1500px on a 1920-wide one. SIZES are
+        // NOT rescaled: EQ window dimensions are absolute pixels (a 400px-wide
+        // window is 400px at every resolution), so multiplying Width/Height by
+        // the resolution ratio SHRINKS them wrongly. That was the field bug
+        // (#146, 2026-07): a 2560×1440 → 1920×1080 apply multiplied every
+        // window's Width/Height by 0.75, driving the non-resizable Merchant/
+        // Social/Loot/Trade windows into their minimum-size clamp with no way to
+        // drag them back. Positions adapt; sizes are copied verbatim.
         x = Math.round(x * fxX);
         y = Math.round(y * fxY);
-        w = Math.round(w * fxX);
-        h = Math.round(h * fxY);
         // Classify the window type + extract contents-of-interest for the
         // side panel. Most windows are self-describing by section name;
         // chat windows are the interesting one — they carry tab + channel
@@ -670,18 +688,15 @@
         // ChatWindow XML template only describes the design default, not a real
         // cap. Skip the XML logic for them; honor the INI sizes verbatim.
         var xmlMax = (classify.kind === 'chat') ? null : _xmlLookup(s.name);
-        if (xmlMax) {
-          // Scale the XML size with the same fx factors used elsewhere so it
-          // reads correctly in the target resolution canvas.
-          var xCx = Math.round(xmlMax.cx * fxX);
-          var xCy = Math.round(xmlMax.cy * fxY);
-          // Apply as a cap. If INI w/h reads bigger than the XML allows, the
-          // INI was wrong (or saved at a different scale) — clamp down so the
-          // visual matches what EQ will actually show.
-          if (xCx > 0 && w > xCx) w = xCx;
-          if (xCy > 0 && h > xCy) h = xCy;
-          // If hasWH was false (no size in INI), use XML as the actual size.
-          if (!hasWH && xCx > 0 && xCy > 0) { w = xCx; h = xCy; }
+        if (xmlMax && !hasWH && xmlMax.cx > 0 && xmlMax.cy > 0) {
+          // No size in the INI — fall back to the skin XML's design size purely
+          // so the window still renders. XML sizes are absolute pixels (NOT
+          // resolution-scaled), and this is render-only: _buildSaveBundle never
+          // writes a Width/Height for a window whose INI had none. Windows that
+          // DO carry an INI size keep it VERBATIM — we no longer clamp them to an
+          // fx-scaled XML cap (that clamp was the other half of the #146 shrink:
+          // a verbatim 125-wide MerchantWnd vs a 0.75×-scaled 94 cap → 94).
+          w = xmlMax.cx; h = xmlMax.cy;
         }
         STATE.windows.push({
           id:     'w' + (seq++),
@@ -736,6 +751,8 @@
           msg = 'file is saved at ' + STATE.srcW + '×' + STATE.srcH + ' — ' + msg;
         }
       }
+      var _warn = _resMismatchWarning(STATE.srcW, STATE.srcH, STATE.tgtW, STATE.tgtH);
+      if (_warn) msg += ' · ' + _warn;
       setStatus(msg, 'ok');
     }
     buildFilterPanel();
