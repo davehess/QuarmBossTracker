@@ -20950,50 +20950,82 @@ const CHAT_LINE_PATTERNS = [
 // against eqemu_items at post time — this capture only keeps the list tidy.
 // Connectors that may be lowercase mid-item ("Rod OF Fury" → "Rod of Fury").
 const _LOOT_CONNECTORS = { of: 1, the: 1, a: 1, an: 1, and: 1, to: 1, de: 1, du: 1, von: 1, la: 1, le: 1, in: 1, on: 1, "d'": 1 };
-// Does a candidate look like a real EQ item name? The decisive signal is
-// Title Case — every SIGNIFICANT word (not a connector) is capitalized —
-// because chatter carries lowercase words ("just Dinged", "i need the full
-// lvl", "me 2", "I love starburst"). Category-prefixed items (Spell:, Ancient:)
-// are always accepted. Single bare words are rejected (too ambiguous —
-// "Grats", "ME", "DSP"): real items are multi-word or category-prefixed.
-function _looksLikeItemName(name) {
-  if (/^(Spell|Song|Ancient|Rune|Glyph|Tome|Words|Page|Formula):/i.test(name)) return true;
-  if (/[!?]$/.test(name)) return false;   // ends like a sentence
+// ALL-CAPS callout tokens that never appear in real item names — their presence
+// marks the candidate as a raid callout (cure/heal INC, CH-chain roster tag,
+// /rsay), NOT loot. Matched CASE-SENSITIVELY as whole words, because item names
+// are Title Case, not ALL CAPS — so a lowercase "inc"/"go" inside a real name
+// can't false-trip (Hitya raid 2026-07-22: "CURE INC to Beantwist" leaked).
+const _LOOT_CALLOUT_TOKENS = new Set(['INC','COTH','OOM','FD','AE','DPS','DP','RA','MR','CH','DA','GO','GOGO','CURE','RUN','AFK','BRB','OOC','DING','GRATS','PST','WTS','WTB','TY','TYVM','RIP']);
+// Lead/verb chatter words — a candidate STARTING with one is an action or
+// callout ("Swapping to X", "Remedy on Y", "Celestial Elixir INC …"), not an
+// item name (Hitya raid 2026-07-22: "Swapping to ALondra" leaked).
+const _LOOT_LEAD_STOPWORDS = new Set(['swapping','casting','tanking','pulling','incoming','going','need','needs','want','wants','taking','moving','coming','heading','running','getting','bringing','sending','inviting','invite','grats','congrats','welcome','ready','popping','dropping','remedy','celestial','cure','heal','healing','slowed','mez','rooted','snared','dispelled','tunare','holy']);
+// Classify ONE delimited-list element:
+//   'strong' — definitely an item (category-prefixed, or ≥2 Title-Case words)
+//   'weak'   — a lone Capitalized word (Norge`tal, Smolder, Cease): a REAL item,
+//              but only trusted when it rides in a list with a strong item
+//   'fail'   — chatter/callout (mana %, roster NNN, cure INC, verb phrase)
+// Fixes both #132 halves: kills the roster/mana/callout OVER-captures AND lets
+// single-word items ('weak') survive so one lone item can't drop a whole list.
+function _classifyItemName(name) {
+  if (/^(Spell|Song|Ancient|Rune|Glyph|Tome|Words|Page|Formula):/i.test(name)) return 'strong';
+  if (/[!?]$/.test(name)) return 'fail';                 // ends like a sentence
+  if (/%/.test(name)) return 'fail';                     // no item name carries a % — mana callout
+  if (/\bmana\b/i.test(name) && /\d/.test(name)) return 'fail';   // "73% Mana Cleric"
   const words = name.split(/\s+/).filter(Boolean);
-  if (words.length < 2) return false;     // single word — not enough signal
+  for (const w of words) {
+    const bare = w.replace(/[^A-Za-z]/g, '');
+    if (bare.length >= 2 && bare === bare.toUpperCase() && _LOOT_CALLOUT_TOKENS.has(bare)) return 'fail';
+  }
+  const lead = words[0] ? words[0].toLowerCase().replace(/[^a-z']/g, '') : '';
+  if (_LOOT_LEAD_STOPWORDS.has(lead)) return 'fail';
   let significant = 0, capped = 0;
   for (const w of words) {
     const lw = w.toLowerCase().replace(/[^a-z']/g, '');
-    if (_LOOT_CONNECTORS[lw]) continue;   // connectors may be lowercase
+    if (_LOOT_CONNECTORS[lw]) continue;                  // connectors may be lowercase
     significant++;
-    if (/^["'`]*[A-Z0-9]/.test(w)) capped++;   // starts uppercase (allow leading quote/backtick) or a numeral
+    // Must start with an uppercase LETTER — a DIGIT-leading token ("001", "1",
+    // "73%") is a roster slot / mana %, NEVER an item word (the roster/mana leak
+    // that let "Fargan 001, Nota 002, …" parse as items).
+    if (/^["'`]*[A-Z]/.test(w)) capped++;
   }
-  // EVERY significant word must be capitalized — real item names are Title Case.
-  return significant > 0 && capped === significant;
+  if (significant === 0 || capped !== significant) return 'fail';
+  if (significant >= 2) return 'strong';
+  // Exactly one significant word — a real item (Norge`tal) but weak signal.
+  // ≥4 letters skips "ME"/"DSP"-style noise.
+  return (name.replace(/[^A-Za-z]/g, '').length >= 4) ? 'weak' : 'fail';
 }
+// Back-compat: a strict single-name check (a lone candidate must be 'strong').
+function _looksLikeItemName(name) { return _classifyItemName(name) === 'strong'; }
 function parseLootChatBody(body) {
   if (!body) return [];
   let s = String(body).trim().replace(/^'+|'+$/g, '').trim();
   const delim = s.includes('|') ? '|' : ',';
   const parts = s.split(delim);
-  const out = [];
+  const parsed = [];
+  let strong = 0;
   for (let raw of parts) {
     let name = raw.trim();
     if (!name) continue;
     let qty = 1;
     const qm = name.match(/\s*\((\d{1,3})\)\s*$/);
     if (qm) { qty = parseInt(qm[1], 10) || 1; name = name.slice(0, qm.index).trim(); }
-    if (!name || !/[A-Za-z]/.test(name)) continue;
-    // EVERY element of a real loot list is an item name. If ANY split element
-    // fails the item-name check, the message is chatter that happened to have
-    // commas ("just Dinged, i need the full lvl, …") — reject the whole thing.
-    // (The bot re-validates surviving names against eqemu_items at post time.)
-    if (!_looksLikeItemName(name)) return [];
-    const prev = out.find(i => i.name.toLowerCase() === name.toLowerCase());
+    if (!name || !/[A-Za-z]/.test(name)) return [];      // non-alpha element → chatter, reject line
+    const cls = _classifyItemName(name);
+    // A callout/mana/roster element proves the message is chatter — a REAL loot
+    // list has zero of them — so reject the whole line. The change from before:
+    // a lone single-word item ('weak', e.g. Norge`tal) survives instead of
+    // nuking the entire list (the #132 UNDER-capture bug).
+    if (cls === 'fail') return [];
+    if (cls === 'strong') strong++;
+    const prev = parsed.find(i => i.name.toLowerCase() === name.toLowerCase());
     if (prev) { prev.quantity += qty; continue; }
-    out.push({ name, quantity: qty });
+    parsed.push({ name, quantity: qty });
   }
-  return out;
+  // Trust 'weak' single-word items only alongside ≥1 strong item — a list that
+  // is ALL single-words ("Grats, Beantwist") or a lone weak word is chatter.
+  if (parsed.length === 0 || strong === 0) return [];
+  return parsed;
 }
 const _lootCaptures = [];          // {id, speaker, channel, ts, items:[{name,quantity}]}, newest first
 const LOOT_CAPTURE_MAX    = 40;
