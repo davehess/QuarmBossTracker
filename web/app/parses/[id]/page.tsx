@@ -143,6 +143,9 @@ type EncounterDetail = {
   classification: string | null;
   classification_reason: string | null;
   classification_by: string | null;
+  // #83 — Discord jump link of this fight's parse card in the Parses Log thread,
+  // stored by the bot. Null for encounters recorded before this shipped.
+  discord_msg_link: string | null;
   eqemu_npc_types: NpcRef | null;
   encounter_players: PlayerRow[];
 };
@@ -166,7 +169,7 @@ async function load(id: string) {
       .from('encounters')
       .select(`
         id, started_at, duration_sec, total_damage, total_dps, zone_short, npc_id,
-        classification, classification_reason, classification_by,
+        classification, classification_reason, classification_by, discord_msg_link,
         eqemu_npc_types ( id, name, zone_short ),
         encounter_players ( character_name, total_damage, dps, duration_sec, rank, has_pets )
       `)
@@ -549,6 +552,20 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
           >
             {contribs.length} contribution{contribs.length === 1 ? '' : 's'}
           </span>
+          {/* #83 — backlink to this fight's parse card in Discord (the card
+              links here in turn: Discord ↔ wolfpack.quest). Only when the bot
+              stored a link for this encounter. */}
+          {enc.discord_msg_link && (
+            <a
+              href={enc.discord_msg_link}
+              target="_blank"
+              rel="noreferrer"
+              className="text-blue hover:underline"
+              title="Jump to this fight's parse card in Discord"
+            >
+              View in Discord →
+            </a>
+          )}
         </div>
 
         {/* #101 — replay this fight through the local Mimic trigger pipeline. */}

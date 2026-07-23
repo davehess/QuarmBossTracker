@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.0.227': [
+    '**Parse cards now link to wolfpack.quest — and back.** Every auto-parse card in the Parses Log thread now carries a 🔗 link straight to that fight\'s full breakdown on wolfpack.quest/parses, and the website page links back to the Discord card with a "View in Discord →" button. Jump between the two in one click. Nothing to update.',
+  ],
   '3.0.225': [
     '**Parse-card death counts fixed.** When several people ran Mimic on the same fight, the Discord auto-parse card was multiplying deaths — one raider dying once could read "×3" because three parsers each saw it. The card now collapses everyone\'s view of the same death into one (and drops NPC namesakes that mimic a player\'s name), so it matches the deaths shown on wolfpack.quest. Also under the hood: **loot and runner-up bid history now mirror completely** — a duplicate row in an OpenDKP batch used to silently drop the whole batch, which is why some auctions showed no 2nd-place bid and some raids showed no loot. Nothing to update.',
   ],

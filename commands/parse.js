@@ -411,6 +411,48 @@ async function logParseToDiscord(client, bossId, parseEntry) {
   return msg;
 }
 
+// ── #83 parse deep links (Discord card ↔ wolfpack.quest) ──────────────────────
+// Once a Parse Log card is posted to PARSES_LOG_THREAD_ID AND its encounter id
+// is known, (1) surface the wolfpack.quest/parses/<id> link on the Discord card
+// and (2) store the card's Discord jump link on the encounter row, so the web
+// parse page can render a "View in Discord →" backlink. Both steps are STRICTLY
+// best-effort — a failure here must never break parse posting.
+//
+// The web link goes in the message CONTENT, never the embed description:
+// loadParsesFromDiscord parses that description as pure JSON on startup, so any
+// extra text there would corrupt parse recovery.
+const WOLFPACK_PARSE_BASE = 'https://wolfpack.quest/parses/';
+
+async function applyEncounterParseLink(msg, encounterId) {
+  if (!msg || !encounterId) return;
+  const webUrl = WOLFPACK_PARSE_BASE + encounterId;
+  // 1. Surface the website link on the Discord card (idempotent — skip if a
+  //    prior submitter for the same kill already linked it).
+  try {
+    const existing = msg.content || '';
+    if (!existing.includes('wolfpack.quest/parses/')) {
+      await msg.edit({ content: (existing ? existing + '\n' : '') + `🔗 View on the web: ${webUrl}` });
+    }
+  } catch (err) {
+    console.warn('[parse] deep-link card edit failed:', err?.message);
+  }
+  // 2. Store the Discord card's jump link on the encounter row. First writer
+  //    wins via the is.null guard, so later submitters for the same encounter
+  //    no-op instead of churning the link.
+  try {
+    const supabase = require('../utils/supabase');
+    if (supabase.isEnabled() && msg.url) {
+      await supabase.update(
+        'encounters',
+        `id=eq.${encodeURIComponent(encounterId)}&discord_msg_link=is.null`,
+        { discord_msg_link: msg.url },
+      );
+    }
+  } catch (err) {
+    console.warn('[parse] discord_msg_link store failed:', err?.message);
+  }
+}
+
 /**
  * Rebuild parses.json by fetching all '📊 Parse Log' embeds from PARSES_LOG_THREAD_ID.
  * Merges with whatever is already on the volume (union, dedup by timestamp).
@@ -585,6 +627,11 @@ async function finishParse(interaction, bossId, boss, parsed, parseType = 'insta
       if (p2[bossId]) {
         const idx = p2[bossId].findIndex(e => e.timestamp === parseEntry.timestamp && e.submittedBy === parseEntry.submittedBy);
         if (idx !== -1) { p2[bossId][idx].discordMsgId = msg.id; saveParses(p2); }
+      }
+      // #83 — deep link both directions once the card exists and we know the
+      // encounter id (best-effort; never blocks the parse flow).
+      if (supabaseResult?.encounterId) {
+        applyEncounterParseLink(msg, supabaseResult.encounterId).catch(() => {});
       }
     }
   }).catch(err => console.warn('[parse] Discord log failed:', err?.message));
@@ -783,6 +830,7 @@ module.exports = {
   saveParses,
   buildParseEmbed,
   logParseToDiscord,
+  applyEncounterParseLink,
   loadParsesFromDiscord,
   pendingParses,
   handleParseConfirm,

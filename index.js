@@ -14324,6 +14324,12 @@ async function _handleAgentUpload(req, res) {
   // mirror would balloon with weeks of history (Supabase is the durable store
   // for backfilled data; parses.json is just the live mirror).
   let matchedBoss = null;
+  // #83 — deferred parse deep-link inputs. The Parse Log card is posted here
+  // (matchedBoss block) but the encounter id only exists after the Supabase
+  // recordParse below, so we stash the posted-card promise + the encounter id
+  // and marry them AFTER the 200 (see the deferred deep-link call).
+  let _parseLogMsgP = null;
+  let _encIdForLink = null;
   try {
     if (encounter.boss_name && !isBackfill) {
       const { findBossFromName, loadParses, saveParses, logParseToDiscord } = require('./commands/parse');
@@ -14352,8 +14358,12 @@ async function _handleAgentUpload(req, res) {
         parses[matchedBoss.id].push(parseEntry);
         saveParses(parses);
 
-        // Persist to Discord thread for survival across restarts
-        logParseToDiscord(client, matchedBoss.id, parseEntry).then(msg => {
+        // Persist to Discord thread for survival across restarts. Capture the
+        // send promise (_parseLogMsgP) so the post-200 deep-link step can add
+        // the wolfpack.quest link + store the card's Discord link once the
+        // encounter id is known (#83).
+        _parseLogMsgP = logParseToDiscord(client, matchedBoss.id, parseEntry);
+        _parseLogMsgP.then(msg => {
           if (msg?.id) {
             const p2 = loadParses();
             if (p2[matchedBoss.id]) {
@@ -14480,6 +14490,9 @@ async function _handleAgentUpload(req, res) {
           timelineEvents: Array.isArray(encounter.timeline_events) ? encounter.timeline_events : null,
         }).catch(err => { console.warn('[agent] recordParse failed:', err?.message); return null; });
 
+        // #83 — remember the encounter id for the post-200 parse deep-link step.
+        if (recParseResult?.encounterId) _encIdForLink = recParseResult.encounterId;
+
         // Register the kill the moment ANY contributor's agent confirms the
         // boss's slain line (confirmed_kill). Sets encounters.ended_at — the
         // marker the /parses "Engaged now" section keys off — so a dead boss
@@ -14558,6 +14571,18 @@ async function _handleAgentUpload(req, res) {
   // catch is the backstop so an unexpected throw can't become an unhandled
   // rejection.
   _postParseCardsDeferred().catch(err => console.warn('[agent] deferred card work failed:', err?.message));
+
+  // #83 — parse deep link (Discord card ↔ wolfpack.quest). Once the Parse Log
+  // card is posted AND the encounter id is known, add the wolfpack.quest link
+  // to the card and store the card's Discord jump link on the encounter row.
+  // Post-ack + best-effort (applyEncounterParseLink swallows its own errors),
+  // so a slow Discord or a Supabase blip can never stall or fail the upload.
+  if (_parseLogMsgP && _encIdForLink) {
+    const { applyEncounterParseLink } = require('./commands/parse');
+    Promise.resolve(_parseLogMsgP)
+      .then(msg => applyEncounterParseLink(msg, _encIdForLink))
+      .catch(err => console.warn('[agent] parse deep-link failed:', err?.message));
+  }
 }
 
 const httpServer = http.createServer(async (req, res) => {
