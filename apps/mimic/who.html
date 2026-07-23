@@ -58,6 +58,11 @@
   .r .goneAt{font-size:10px;color:#9aa4ad;flex-shrink:0}
   .gone .r .nm{color:#9aa4ad;font-weight:normal}
   .gone .r{opacity:0.85}
+  /* #160 "recently gone" collapse — the +N more / show fewer toggle row. State
+     lives in a JS var (_goneExpanded) read by the 500ms render loop, not DOM. */
+  .gone .gone-toggle{font-size:10px;color:#7ee7c7;cursor:pointer;padding:2px 2px 0;
+    opacity:0.8;text-shadow:0 1px 2px #000;line-height:1.4}
+  .gone .gone-toggle:hover{opacity:1;text-decoration:underline}
   #empty{color:rgba(255,255,255,0.5);font-size:12px;text-shadow:0 1px 2px #000;padding:3px 0}
   /* drag/lock/setup chrome — same pattern as the other overlays. */
   #drag-controls{display:none;position:fixed;top:4px;left:4px;gap:4px;z-index:60}
@@ -314,6 +319,71 @@
     } catch (err) {}
   });
 
+  // #160 "recently gone" collapse — cap the faded departed list at GONE_CAP
+  // rows with a "+ N more" / "− show fewer" toggle. Default COLLAPSED. State is
+  // a plain JS var read by renderWho() (the 500ms loop), NEVER DOM open/closed —
+  // the #137 lesson lives in this exact file: an innerHTML repaint would wipe
+  // any DOM-held toggle state, so the store must be JS-side.
+  var GONE_CAP = 4;
+  var _goneExpanded = false;
+  var _lastWho = null;
+
+  // Build + paint the /who body from a whoSnapshot. Extracted from tick() so the
+  // collapse toggle can re-render immediately from _lastWho without waiting for
+  // the next poll. Keeps the byte-stability guard so unchanged HTML never
+  // repaints (no flicker / lost hover).
+  function renderWho(w){
+    _lastWho = w;
+    if (!w || !Array.isArray(w.current) || !w.current.length) {
+      bodyEl.innerHTML = ''; bodyEl.__wpHtml = ''; emptyEl.style.display = 'block'; _requestAutoHeight(); return;
+    }
+    emptyEl.style.display = 'none';
+    var h = '';
+    h += '<div class="sec"><div class="sec-h">Current <span class="n">' + w.current.length + '</span> · ' + ago(new Date(w.capturedAt).toISOString()) + ' ago</div><div class="rowlist">';
+    for (var i=0;i<w.current.length;i++) h += safeRow(w.current[i], false);
+    h += '</div></div>';
+    if (Array.isArray(w.recentGone) && w.recentGone.length) {
+      var gone = w.recentGone;
+      var total = gone.length;
+      var collapsed = !_goneExpanded && total > GONE_CAP;
+      var shown = collapsed ? GONE_CAP : total;
+      h += '<div class="sec gone"><div class="sec-h">Recently gone <span class="n">' + total + '</span></div><div class="rowlist">';
+      for (var j=0;j<shown;j++) h += safeRow(gone[j], true);
+      if (total > GONE_CAP) {
+        h += collapsed
+          ? '<div class="gone-toggle" data-gone-toggle="1" title="Show all recently-gone rows">+ ' + (total - GONE_CAP) + ' more</div>'
+          : '<div class="gone-toggle" data-gone-toggle="1" title="Collapse the recently-gone list">− show fewer</div>';
+      }
+      h += '</div></div>';
+    }
+    if (bodyEl.__wpHtml !== h) {   // byte-stability guard (2026-07-07)
+      bodyEl.innerHTML = h;
+      bodyEl.__wpHtml = h;
+      _requestAutoHeight();
+    }
+  }
+
+  // "recently gone" collapse toggle — delegated off bodyEl (rebuilt every poll).
+  // Hover-interact handshake is mandatory (locked overlay is click-through), and
+  // the click flips the JS var + re-renders from _lastWho.
+  bodyEl.addEventListener('mouseover', function(e){
+    if (e.target && e.target.classList && e.target.classList.contains('gone-toggle')) {
+      try { window.mimic.overlayHoverInteractive(true); } catch (err) {}
+    }
+  });
+  bodyEl.addEventListener('mouseout', function(e){
+    if (e.target && e.target.classList && e.target.classList.contains('gone-toggle')) {
+      try { window.mimic.overlayHoverInteractive(false); } catch (err) {}
+    }
+  });
+  bodyEl.addEventListener('click', function(e){
+    var tog = e.target && e.target.closest ? e.target.closest('[data-gone-toggle]') : null;
+    if (!tog) return;
+    e.preventDefault(); e.stopPropagation();
+    _goneExpanded = !_goneExpanded;
+    if (_lastWho) renderWho(_lastWho);
+  });
+
   async function tick(){
     if (Date.now() < _copyFlashUntil) return;   // let the ✓ copied flash survive a beat
     // Don't repaint the list while someone is mid-pick — an innerHTML swap would
@@ -334,22 +404,7 @@
       document.getElementById('conn').className = 'conn ok';
       document.getElementById('conn').textContent = '●';
       const w = s.whoSnapshot;
-      if (!w || !Array.isArray(w.current) || !w.current.length) { bodyEl.innerHTML = ''; emptyEl.style.display = 'block'; _requestAutoHeight(); return; }
-      emptyEl.style.display = 'none';
-      var h = '';
-      h += '<div class="sec"><div class="sec-h">Current <span class="n">' + w.current.length + '</span> · ' + ago(new Date(w.capturedAt).toISOString()) + ' ago</div><div class="rowlist">';
-      for (var i=0;i<w.current.length;i++) h += safeRow(w.current[i], false);
-      h += '</div></div>';
-      if (Array.isArray(w.recentGone) && w.recentGone.length) {
-        h += '<div class="sec gone"><div class="sec-h">Recently gone <span class="n">' + w.recentGone.length + '</span></div><div class="rowlist">';
-        for (var j=0;j<w.recentGone.length;j++) h += safeRow(w.recentGone[j], true);
-        h += '</div></div>';
-      }
-      if (bodyEl.__wpHtml !== h) {   // byte-stability guard (2026-07-07)
-        bodyEl.innerHTML = h;
-        bodyEl.__wpHtml = h;
-        _requestAutoHeight();
-      }
+      renderWho(w);
     } catch (e) {
       var c = document.getElementById('conn'); c.className = 'conn bad'; c.textContent = '○';
     }

@@ -66,6 +66,9 @@
   .row .owner{color:#8b949e;font-size:9px;margin-left:4px}
   .row .hp{font-variant-numeric:tabular-nums;font-weight:700;text-align:right;font-size:11px}
   .hp.hi{color:#56d364} .hp.mid{color:#f0b429} .hp.lo{color:#f87171} .hp.unk{color:#6e7681}
+  /* #145 (overlay half) absolute HP on player/needs-attention rows — dim
+     "cur/max" appended after the % when the bot aggregate carries hp_cur+hp_max. */
+  .row .hp .hpabs{color:#6e7681;font-weight:400;font-size:9px;margin-left:4px;font-variant-numeric:tabular-nums}
   /* HP bar under the row. */
   .bar{grid-column:1 / -1;height:4px;background:rgba(255,255,255,0.07);
     border-radius:2px;overflow:hidden;margin-top:3px}
@@ -410,6 +413,15 @@
     var ctHtml = pureOffTank ? '🛡' : String(ct);
     var ctCls = pureOffTank ? 'ct offtank-ct' : 'ct';
     var hpTxt = (t.hp_pct != null ? Math.round(t.hp_pct) + '%' : '—');
+    // #145 (overlay half) — absolute HP on player / needs-attention rows. The
+    // bot aggregate is gaining hp_cur+hp_max on those rows; when present (and
+    // hp_max > 100, guarding against a %-shaped or garbage value) append a dim
+    // "4382/5100" after the % display. FAIL-SOFT: the fields are ABSENT until
+    // the bot half deploys and forever on stale bots, in which case hpAbs stays
+    // '' and the emitted row HTML is byte-identical to today's.
+    var _hc = Number(t.hp_cur), _hm = Number(t.hp_max);
+    var hpAbs = (Number.isFinite(_hc) && Number.isFinite(_hm) && _hm > 100)
+      ? '<span class="hpabs">' + Math.round(_hc) + '/' + Math.round(_hm) + '</span>' : '';
     var bw = (t.hp_pct != null ? Math.max(0, Math.min(100, t.hp_pct)) : 0);
     // Debuff chips. Suppressed for members of a same-name group — the pipe
     // can't attribute a debuff to a SPECIFIC same-name mob, so showing them
@@ -439,7 +451,7 @@
       +    '<span class="' + ctCls + '">' + ctHtml + '</span>'
       +    '<span class="nm-wrap"><span class="nm">' + nm + '</span>'
       +      '<span class="rowhide" data-hk="' + esc(key) + '" title="Hide this entry (restore from the footer)">✕</span></span>'
-      +    '<span class="hp ' + tier + '">' + hpTxt + '</span>'
+      +    '<span class="hp ' + tier + '">' + hpTxt + hpAbs + '</span>'
       +    '<div class="bar"><div class="fill ' + tier + '" style="width:' + bw + '%"></div></div>'
       +    mobxLine(t)
       +    whoLine

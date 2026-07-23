@@ -17427,6 +17427,12 @@ const COMMAND_HTML = `<!doctype html>
   .cure-row .cureDismiss{margin-left:6px;cursor:pointer;color:#8b949e;font-size:11px;line-height:1;
     flex-shrink:0;opacity:0.6}
   .cure-row .cureDismiss:hover{opacity:1;color:#f87171}
+  /* #153 collapsible sections — the caret+label in a section header is the
+     click target that collapses/expands it. Collapse state lives in a JS store
+     consulted at render time (localStorage-backed), NOT DOM state, so repaints
+     never lose it. */
+  .sec-toggle{cursor:pointer;user-select:none}
+  .sec-toggle:hover{color:#e6edf3}
   #empty{color:rgba(255,255,255,0.5);font-size:11px;text-shadow:-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000,0 1px 2px #000;padding:3px 0;text-align:center}
   /* drag/lock/setup chrome — shared pattern. */
   #drag-controls{display:none;position:fixed;top:4px;left:4px;gap:4px;z-index:60}
@@ -17545,6 +17551,29 @@ const COMMAND_HTML = `<!doctype html>
   var _lastState = null;
   function _cureId(c){ return (c && c.id) ? c.id : (c && c.name ? String(c.name).toLowerCase() : null); }
 
+  // #153 Collapsible sections — per-section collapse state persisted across
+  // repaints AND restarts. It lives in this JS store (consulted by render()),
+  // NOT in DOM open/closed state, which every innerHTML repaint would wipe (the
+  // wpKeep lesson from the dashboard). localStorage carries it across agent /
+  // Mimic restarts.
+  var _collapsedSections = {};
+  try { _collapsedSections = JSON.parse(localStorage.getItem('wp_cmd_collapsed') || '{}') || {}; } catch (e) { _collapsedSections = {}; }
+  function _isCollapsed(key){ return !!_collapsedSections[key]; }
+  function _toggleCollapsed(key){
+    _collapsedSections[key] = !_collapsedSections[key];
+    try { localStorage.setItem('wp_cmd_collapsed', JSON.stringify(_collapsedSections)); } catch (e) {}
+  }
+  // Section header caret+label — the click target that collapses/expands the
+  // section. Collapsed it carries a compact count ("▸ Healer mana (3)");
+  // expanded it shows the caret + label and the section's rows render below.
+  function secToggle(key, label, count){
+    var col = _isCollapsed(key);
+    var cnt = (col && count != null) ? ' (' + count + ')' : '';
+    return '<span class="sec-toggle" data-collapse-key="' + esc(key) + '" title="'
+         + (col ? 'Expand' : 'Collapse') + ' this section">'
+         + (col ? '▸' : '▾') + ' ' + esc(label) + cnt + '</span>';
+  }
+
   // Divine Intervention (#50) as compact chips beside the HEALER MANA header
   // (#66) — "DI: Uilnayar ✓ · Fargan 45s". Same data as the old DI card, only
   // reshaped. Gold ring when exactly one cleric is up (save it for the tank).
@@ -17640,25 +17669,31 @@ const COMMAND_HTML = `<!doctype html>
     // via their own raid-chat macro (Naggato's ">> DA up << 18 secs" etc),
     // not just whoever's the current Rampage target above.
     if (s.da_broadcasts && s.da_broadcasts.length) {
-      html += '<div class="card"><div class="head">Defensives (active / recharging)</div><div class="list">';
-      for (var i = 0; i < s.da_broadcasts.length; i++) {
-        var d = s.da_broadcasts[i];
-        var chipCls, chipTxt;
-        if (d.state === 'cooldown') {
-          // Discipline used, now recharging — count DOWN until it's available.
-          chipCls = 'down';
-          chipTxt = 'DOWN · ' + fmtSec(d.cooldown_secs);
-        } else if (d.seconds == null) {
-          chipCls = 'up'; chipTxt = 'UP';                       // up, duration unknown
-        } else {
-          chipCls = d.seconds <= 5 ? 'soon' : 'up';
-          chipTxt = fmtSec(d.seconds);                          // remaining ACTIVE time
+      var defCollapsed = _isCollapsed('defensives');
+      html += '<div class="card"><div class="head">' + secToggle('defensives', 'Defensives', s.da_broadcasts.length)
+           +    (defCollapsed ? '' : ' (active / recharging)') + '</div>';
+      if (!defCollapsed) {
+        html += '<div class="list">';
+        for (var i = 0; i < s.da_broadcasts.length; i++) {
+          var d = s.da_broadcasts[i];
+          var chipCls, chipTxt;
+          if (d.state === 'cooldown') {
+            // Discipline used, now recharging — count DOWN until it's available.
+            chipCls = 'down';
+            chipTxt = 'DOWN · ' + fmtSec(d.cooldown_secs);
+          } else if (d.seconds == null) {
+            chipCls = 'up'; chipTxt = 'UP';                       // up, duration unknown
+          } else {
+            chipCls = d.seconds <= 5 ? 'soon' : 'up';
+            chipTxt = fmtSec(d.seconds);                          // remaining ACTIVE time
+          }
+          html += '<div class="row"><span class="nm">' + esc(d.name) + '</span>'
+               +    (d.kind ? '<span class="cls">' + esc(d.kind) + '</span>' : '')
+               +    '<span class="da-chip ' + chipCls + '">' + chipTxt + '</span></div>';
         }
-        html += '<div class="row"><span class="nm">' + esc(d.name) + '</span>'
-             +    (d.kind ? '<span class="cls">' + esc(d.kind) + '</span>' : '')
-             +    '<span class="da-chip ' + chipCls + '">' + chipTxt + '</span></div>';
+        html += '</div>';
       }
-      html += '</div></div>';
+      html += '</div>';
     }
 
     // Healer mana roster — self-reported "N% mana" call-outs, lowest first
@@ -17668,15 +17703,20 @@ const COMMAND_HTML = `<!doctype html>
     // hears it twice.
     var diChipsHtml = diChips(s.di);
     if (s.healer_mana && s.healer_mana.length) {
-      html += '<div class="card"><div class="head mana-head">Healer mana' + diChipsHtml + '</div><div class="list">';
-      for (var j = 0; j < s.healer_mana.length; j++) {
-        var h = s.healer_mana[j];
-        html += '<div class="row"><span class="nm">' + esc(h.name) + '</span>'
-             +    (h.class ? '<span class="cls">' + esc(h.class) + '</span>' : '')
-             +    '<div class="mana-bar"><div class="fill ' + manaClass(h.pct) + '" style="width:' + h.pct + '%"></div></div>'
-             +    '<span class="mana-pct">' + h.pct + '%</span></div>';
+      var manaCollapsed = _isCollapsed('mana');
+      html += '<div class="card"><div class="head mana-head">' + secToggle('mana', 'Healer mana', s.healer_mana.length) + diChipsHtml + '</div>';
+      if (!manaCollapsed) {
+        html += '<div class="list">';
+        for (var j = 0; j < s.healer_mana.length; j++) {
+          var h = s.healer_mana[j];
+          html += '<div class="row"><span class="nm">' + esc(h.name) + '</span>'
+               +    (h.class ? '<span class="cls">' + esc(h.class) + '</span>' : '')
+               +    '<div class="mana-bar"><div class="fill ' + manaClass(h.pct) + '" style="width:' + h.pct + '%"></div></div>'
+               +    '<span class="mana-pct">' + h.pct + '%</span></div>';
+        }
+        html += '</div>';
       }
-      html += '</div></div>';
+      html += '</div>';
     } else if (diChipsHtml) {
       // DI available but no mana call-outs yet — show the chips on their own
       // compact line rather than losing them.
@@ -17717,20 +17757,26 @@ const COMMAND_HTML = `<!doctype html>
         visibleCures.push(s.cures[vk]);
       }
       if (visibleCures.length) {
-        html += '<div class="card cure-card"><div class="head cure-head">Curse / Cure'
-             +    '<span class="cureClearAll" title="Dismiss all cure/curse alerts (this client, until they change)">clear all</span>'
-             +  '</div><div class="list">';
-        for (var k = 0; k < visibleCures.length; k++) {
-          var c = visibleCures[k];
-          var cId = _cureId(c);
-          var curses = c.curses || [];
-          var chips = curses.map(function(cc){
-            return '<span class="cure-chip' + (cc.being_cured ? ' being-cured' : '') + '">' + esc(cc.cure) + (cc.counters ? ' ×' + cc.counters : '') + (cc.being_cured ? ' (curing)' : '') + '</span>';
-          }).join(' ');
-          html += '<div class="row cure-row"><span class="nm">' + esc(c.name) + '</span>' + chips
-               +    '<span class="cureDismiss" data-cure-id="' + esc(cId) + '" title="Dismiss this alert (this client)">✕</span></div>';
+        var cureCollapsed = _isCollapsed('cures');
+        html += '<div class="card cure-card"><div class="head cure-head">'
+             +    secToggle('cures', 'Curse / Cure', visibleCures.length)
+             +    (cureCollapsed ? '' : '<span class="cureClearAll" title="Dismiss all cure/curse alerts (this client, until they change)">clear all</span>')
+             +  '</div>';
+        if (!cureCollapsed) {
+          html += '<div class="list">';
+          for (var k = 0; k < visibleCures.length; k++) {
+            var c = visibleCures[k];
+            var cId = _cureId(c);
+            var curses = c.curses || [];
+            var chips = curses.map(function(cc){
+              return '<span class="cure-chip' + (cc.being_cured ? ' being-cured' : '') + '">' + esc(cc.cure) + (cc.counters ? ' ×' + cc.counters : '') + (cc.being_cured ? ' (curing)' : '') + '</span>';
+            }).join(' ');
+            html += '<div class="row cure-row"><span class="nm">' + esc(c.name) + '</span>' + chips
+                 +    '<span class="cureDismiss" data-cure-id="' + esc(cId) + '" title="Dismiss this alert (this client)">✕</span></div>';
+          }
+          html += '</div>';
         }
-        html += '</div></div>';
+        html += '</div>';
       }
     }
 
@@ -17750,17 +17796,26 @@ const COMMAND_HTML = `<!doctype html>
   if (contentEl) {
     contentEl.addEventListener('mouseover', function(e){
       var t = e.target;
-      if (t && t.classList && (t.classList.contains('cureDismiss') || t.classList.contains('cureClearAll'))) {
+      if (t && t.closest && (t.closest('.cureDismiss') || t.closest('.cureClearAll') || t.closest('.sec-toggle'))) {
         try { window.mimic.overlayHoverInteractive(true); } catch (er) {}
       }
     });
     contentEl.addEventListener('mouseout', function(e){
       var t = e.target;
-      if (t && t.classList && (t.classList.contains('cureDismiss') || t.classList.contains('cureClearAll'))) {
+      if (t && t.closest && (t.closest('.cureDismiss') || t.closest('.cureClearAll') || t.closest('.sec-toggle'))) {
         try { window.mimic.overlayHoverInteractive(false); } catch (er) {}
       }
     });
     contentEl.addEventListener('click', function(e){
+      // #153 section collapse toggle — flip the JS store + persist, then
+      // re-render immediately from last state (next poll reads the same store).
+      var tog = e.target && e.target.closest ? e.target.closest('.sec-toggle') : null;
+      if (tog) {
+        e.preventDefault(); e.stopPropagation();
+        var key = tog.getAttribute('data-collapse-key');
+        if (key) { _toggleCollapsed(key); if (_lastState) render(_lastState); }
+        return;
+      }
       var one = e.target && e.target.closest ? e.target.closest('.cureDismiss') : null;
       if (one) {
         e.preventDefault(); e.stopPropagation();
