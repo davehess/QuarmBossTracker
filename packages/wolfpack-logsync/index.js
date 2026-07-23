@@ -2400,18 +2400,28 @@ function petBuffsForOwner(ownerLower) {
 // we know it (covers self-buffs / our pet, the common cases) and fall back to
 // the spell's max otherwise.
 const _buffLandingsByTarget = new Map();   // targetLower → Map<spellLower,{name,dur_ticks,landed_at}>
+// #154 — should this observed landing be kept OFF the target debuff list (and
+// off the buff_casts upload)? True for:
+//   • a CATALOGUED instant effect (nuke/stun/proc/dispel/gate: no timed duration
+//     formula and no positive base duration) — no lasting effect, must never
+//     linger as a timer-less "fell off" cue (Uilnayar 2026-07-13); and
+//   • an UNCATALOGUED self-cast landing — resolveSelfCastLanding matches ANY
+//     self-cast by landing text ungated on duration, so an uncatalogued one is
+//     overwhelmingly a nuke/proc. Real DoTs/curses (Bolt of Karana, Ignite
+//     Blood, Vexing Mordinia, Spirit Curse) ARE catalogued WITH durations and
+//     pass. Charm spells are exempt (cast_on_other NULL, synthesized as is_charm_spell).
+// Used both here (LOCAL display) and at the buff_casts UPLOAD site so an instant
+// nuke can't ride the cross-client target-buffs relay back onto every client's
+// Mob Info / Extended Target (the local drop alone can't stop that path — #154).
+function _shouldSuppressBuffLanding(bcEvt) {
+  if (!bcEvt || bcEvt.is_charm_spell || !bcEvt.spell_name) return false;
+  const _cat = _spellByNameLower.get(String(bcEvt.spell_name).toLowerCase());
+  if (_cat) return !_isTimedDurationFormula(_cat.durf) && !(Number(_cat.dur) > 0);
+  return !!bcEvt._selfCast;   // uncatalogued self-cast → nuke/proc
+}
 function recordTargetBuffLanding(bcEvt) {
   if (!bcEvt || !bcEvt.spell_name || !bcEvt.target) return;
-  // Instant spells — nukes, stuns, dispels (Abolish Enchantment), interrupts,
-  // gates — have NO lasting effect and must never linger on the target as a
-  // debuff / "fell off" cue (Uilnayar 2026-07-13). They leak in via
-  // resolveSelfCastLanding (matches ANY self-cast by landing text, ungated on
-  // duration). Catalog buffduration + formula both non-timed = instant → drop.
-  // Charm spells are exempt (cast_on_other NULL, synthesized with is_charm_spell).
-  if (!bcEvt.is_charm_spell) {
-    const _cat = _spellByNameLower.get(String(bcEvt.spell_name).toLowerCase());
-    if (_cat && !_isTimedDurationFormula(_cat.durf) && !(Number(_cat.dur) > 0)) return;
-  }
+  if (_shouldSuppressBuffLanding(bcEvt)) return;
   const k = String(bcEvt.target).toLowerCase();
   let mp = _buffLandingsByTarget.get(k);
   if (!mp) { mp = new Map(); _buffLandingsByTarget.set(k, mp); }
@@ -3224,7 +3234,11 @@ let _lastChGoNum    = null;   // debounce: the slot we last announced "GO" for
 const _CH_SPEAKER_RX = /^\[[^\]]+\]\s+(\S+)\s+(?:shouts?|says?(?:\s+out of character)?|tells?\s+(?:the|your)\s+(?:raid|guild|group|party))[^,']*,\s*'(.+)'\s*$/i;
 // "CH" is matched case-sensitively — lowercase "ch" inside normal chat is too
 // common, but nobody types their chain call in lowercase per the observed logs.
-const _CH_CALL_RX = /^0*(\d{1,3})\s*(?:-+>?|—+>?|:)?\s*CH\b[\s:\-]*(?:on\s+)?([A-Z][\w`]*)?/;
+// An optional "DRUID " (case-insensitive, via an explicit char class so the
+// case-sensitive CH token is untouched) may sit between the separator and CH —
+// our druids gap-fill the chain and shout "002 - DRUID CH - Currygoat" /
+// "004 - Druid CH - X" (#148). Plain "001 - CH - X" still matches.
+const _CH_CALL_RX = /^0*(\d{1,3})\s*(?:-+>?|—+>?|:)?\s*(?:[Dd][Rr][Uu][Ii][Dd]\s+)?CH\b[\s:\-]*(?:on\s+)?([A-Z][\w`]*)?/;
 const _CH_MANA_RX = /\bmana\b\D{0,6}(\d{1,3})\s*%/i;
 const _CH_GO_RX   = /^0*(\d{1,3})\s*[-—:.\s]*go\b[\s\-]*go/i;
 // Cheap gate so a chain-ROSTER announcement ("Fargan 001, Rapha 002, …")
@@ -3776,6 +3790,29 @@ function daBroadcastsSnapshot() {
     return av - bv || a.name.localeCompare(b.name);
   });
   return out;
+}
+// #152 — by-name DA lookup for the rampage-target gold bar. The DA highlight in
+// buildMobInfo reads _findDA over the rampage target's uploaded BUFF list, which
+// is null when the tank (e.g. Abrahms) doesn't run Mimic / upload buffs. But the
+// tank's DA /rsay macro IS captured in the _daBroadcasts tracker (keyed by
+// speaker) — the same source the Command Center DEFENSIVES reads correctly. This
+// returns the SAME shape _findDA does ({ name, seconds, critical }) for an ACTIVE
+// DA on `name`, so the rampage block can fall back to it. `greenSecs` preserves
+// the ≤5s→green rule (critical). Only kind 'DA' (true invuln) qualifies for the
+// gold bar — Defensive/Weapon Shield reduce damage but don't make the tank immune.
+function _daBroadcastForName(name, greenSecs) {
+  if (!name) return null;
+  const e = _daBroadcasts.get(String(name).toLowerCase() + '|DA');
+  if (!e) return null;
+  const now = Date.now();
+  if (e.activeEndsAtMs != null) {
+    if (now >= e.activeEndsAtMs) return null;   // no longer up
+    const seconds = Math.max(0, Math.round((e.activeEndsAtMs - now) / 1000));
+    return { name: e.name || 'DA', seconds, critical: seconds <= greenSecs };
+  }
+  // "Up" with unknown duration — still up until it goes stale (re-announced).
+  if (now - e.updatedAtMs > DA_BROADCAST_TTL_MS) return null;
+  return { name: e.name || 'DA', seconds: null, critical: false };
 }
 
 // ── Defensive Discipline via the COMBAT LOG (Uilnayar 2026-07-08) ────────────
@@ -5457,8 +5494,10 @@ class EncounterBuilder {
         this._bumpDefender(def, 'rampageHits', 1, Date.parse(event.ts) || Date.now());
         // Callout: announce who's taking the rampage (deduped per-target so a
         // multi-hit rampage / multi-box logs don't spam it). Silent builders
-        // (opt-in backfill replays) must NOT speak old rampages.
-        if (!this.silent) _announceRampage(def, Date.parse(event.ts) || Date.now());
+        // (opt-in backfill replays) must NOT speak old rampages. #155 — gate on
+        // the rampaging mob being the raid's main target so adds' rampages on a
+        // multi-mob pull don't spam the TTS.
+        if (!this.silent && _rampageOnMainTarget(event.attacker)) _announceRampage(def, Date.parse(event.ts) || Date.now());
         // We don't know the exact rampage damage from the announcement line alone —
         // the actual hit lines will follow and be counted in damageTaken normally.
         // rampageDmg is accumulated from tagged damage events below.
@@ -8320,7 +8359,10 @@ function _serializeTankState() {
       hp_pct: _resolveHpForName(rLower, active, st),
       hp_cur: rVals ? rVals.cur : null,
       hp_max: rVals ? rVals.max : null,
-      da: _findDA(rampBuffs, 5),
+      // Tank's buff list first; fall back to their DA /rsay broadcast when they
+      // don't upload buffs via Mimic (#152). Either lights the gold bar; the
+      // by-name lookup preserves the ≤5s→green (critical) rule.
+      da: _findDA(rampBuffs, 5) || _daBroadcastForName(r.target, 5),
     };
   }
 
@@ -20950,50 +20992,82 @@ const CHAT_LINE_PATTERNS = [
 // against eqemu_items at post time — this capture only keeps the list tidy.
 // Connectors that may be lowercase mid-item ("Rod OF Fury" → "Rod of Fury").
 const _LOOT_CONNECTORS = { of: 1, the: 1, a: 1, an: 1, and: 1, to: 1, de: 1, du: 1, von: 1, la: 1, le: 1, in: 1, on: 1, "d'": 1 };
-// Does a candidate look like a real EQ item name? The decisive signal is
-// Title Case — every SIGNIFICANT word (not a connector) is capitalized —
-// because chatter carries lowercase words ("just Dinged", "i need the full
-// lvl", "me 2", "I love starburst"). Category-prefixed items (Spell:, Ancient:)
-// are always accepted. Single bare words are rejected (too ambiguous —
-// "Grats", "ME", "DSP"): real items are multi-word or category-prefixed.
-function _looksLikeItemName(name) {
-  if (/^(Spell|Song|Ancient|Rune|Glyph|Tome|Words|Page|Formula):/i.test(name)) return true;
-  if (/[!?]$/.test(name)) return false;   // ends like a sentence
+// ALL-CAPS callout tokens that never appear in real item names — their presence
+// marks the candidate as a raid callout (cure/heal INC, CH-chain roster tag,
+// /rsay), NOT loot. Matched CASE-SENSITIVELY as whole words, because item names
+// are Title Case, not ALL CAPS — so a lowercase "inc"/"go" inside a real name
+// can't false-trip (Hitya raid 2026-07-22: "CURE INC to Beantwist" leaked).
+const _LOOT_CALLOUT_TOKENS = new Set(['INC','COTH','OOM','FD','AE','DPS','DP','RA','MR','CH','DA','GO','GOGO','CURE','RUN','AFK','BRB','OOC','DING','GRATS','PST','WTS','WTB','TY','TYVM','RIP']);
+// Lead/verb chatter words — a candidate STARTING with one is an action or
+// callout ("Swapping to X", "Remedy on Y", "Celestial Elixir INC …"), not an
+// item name (Hitya raid 2026-07-22: "Swapping to ALondra" leaked).
+const _LOOT_LEAD_STOPWORDS = new Set(['swapping','casting','tanking','pulling','incoming','going','need','needs','want','wants','taking','moving','coming','heading','running','getting','bringing','sending','inviting','invite','grats','congrats','welcome','ready','popping','dropping','remedy','celestial','cure','heal','healing','slowed','mez','rooted','snared','dispelled','tunare','holy']);
+// Classify ONE delimited-list element:
+//   'strong' — definitely an item (category-prefixed, or ≥2 Title-Case words)
+//   'weak'   — a lone Capitalized word (Norge`tal, Smolder, Cease): a REAL item,
+//              but only trusted when it rides in a list with a strong item
+//   'fail'   — chatter/callout (mana %, roster NNN, cure INC, verb phrase)
+// Fixes both #132 halves: kills the roster/mana/callout OVER-captures AND lets
+// single-word items ('weak') survive so one lone item can't drop a whole list.
+function _classifyItemName(name) {
+  if (/^(Spell|Song|Ancient|Rune|Glyph|Tome|Words|Page|Formula):/i.test(name)) return 'strong';
+  if (/[!?]$/.test(name)) return 'fail';                 // ends like a sentence
+  if (/%/.test(name)) return 'fail';                     // no item name carries a % — mana callout
+  if (/\bmana\b/i.test(name) && /\d/.test(name)) return 'fail';   // "73% Mana Cleric"
   const words = name.split(/\s+/).filter(Boolean);
-  if (words.length < 2) return false;     // single word — not enough signal
+  for (const w of words) {
+    const bare = w.replace(/[^A-Za-z]/g, '');
+    if (bare.length >= 2 && bare === bare.toUpperCase() && _LOOT_CALLOUT_TOKENS.has(bare)) return 'fail';
+  }
+  const lead = words[0] ? words[0].toLowerCase().replace(/[^a-z']/g, '') : '';
+  if (_LOOT_LEAD_STOPWORDS.has(lead)) return 'fail';
   let significant = 0, capped = 0;
   for (const w of words) {
     const lw = w.toLowerCase().replace(/[^a-z']/g, '');
-    if (_LOOT_CONNECTORS[lw]) continue;   // connectors may be lowercase
+    if (_LOOT_CONNECTORS[lw]) continue;                  // connectors may be lowercase
     significant++;
-    if (/^["'`]*[A-Z0-9]/.test(w)) capped++;   // starts uppercase (allow leading quote/backtick) or a numeral
+    // Must start with an uppercase LETTER — a DIGIT-leading token ("001", "1",
+    // "73%") is a roster slot / mana %, NEVER an item word (the roster/mana leak
+    // that let "Fargan 001, Nota 002, …" parse as items).
+    if (/^["'`]*[A-Z]/.test(w)) capped++;
   }
-  // EVERY significant word must be capitalized — real item names are Title Case.
-  return significant > 0 && capped === significant;
+  if (significant === 0 || capped !== significant) return 'fail';
+  if (significant >= 2) return 'strong';
+  // Exactly one significant word — a real item (Norge`tal) but weak signal.
+  // ≥4 letters skips "ME"/"DSP"-style noise.
+  return (name.replace(/[^A-Za-z]/g, '').length >= 4) ? 'weak' : 'fail';
 }
+// Back-compat: a strict single-name check (a lone candidate must be 'strong').
+function _looksLikeItemName(name) { return _classifyItemName(name) === 'strong'; }
 function parseLootChatBody(body) {
   if (!body) return [];
   let s = String(body).trim().replace(/^'+|'+$/g, '').trim();
   const delim = s.includes('|') ? '|' : ',';
   const parts = s.split(delim);
-  const out = [];
+  const parsed = [];
+  let strong = 0;
   for (let raw of parts) {
     let name = raw.trim();
     if (!name) continue;
     let qty = 1;
     const qm = name.match(/\s*\((\d{1,3})\)\s*$/);
     if (qm) { qty = parseInt(qm[1], 10) || 1; name = name.slice(0, qm.index).trim(); }
-    if (!name || !/[A-Za-z]/.test(name)) continue;
-    // EVERY element of a real loot list is an item name. If ANY split element
-    // fails the item-name check, the message is chatter that happened to have
-    // commas ("just Dinged, i need the full lvl, …") — reject the whole thing.
-    // (The bot re-validates surviving names against eqemu_items at post time.)
-    if (!_looksLikeItemName(name)) return [];
-    const prev = out.find(i => i.name.toLowerCase() === name.toLowerCase());
+    if (!name || !/[A-Za-z]/.test(name)) return [];      // non-alpha element → chatter, reject line
+    const cls = _classifyItemName(name);
+    // A callout/mana/roster element proves the message is chatter — a REAL loot
+    // list has zero of them — so reject the whole line. The change from before:
+    // a lone single-word item ('weak', e.g. Norge`tal) survives instead of
+    // nuking the entire list (the #132 UNDER-capture bug).
+    if (cls === 'fail') return [];
+    if (cls === 'strong') strong++;
+    const prev = parsed.find(i => i.name.toLowerCase() === name.toLowerCase());
     if (prev) { prev.quantity += qty; continue; }
-    out.push({ name, quantity: qty });
+    parsed.push({ name, quantity: qty });
   }
-  return out;
+  // Trust 'weak' single-word items only alongside ≥1 strong item — a list that
+  // is ALL single-words ("Grats, Beantwist") or a lone weak word is chatter.
+  if (parsed.length === 0 || strong === 0) return [];
+  return parsed;
 }
 const _lootCaptures = [];          // {id, speaker, channel, ts, items:[{name,quantity}]}, newest first
 const LOOT_CAPTURE_MAX    = 40;
@@ -23949,6 +24023,35 @@ function _pushOverlay(o) {
 let _rampageCurrentTarget = null;   // lowercased name of who's being rampaged
 let _rampageLastSeenMs    = 0;      // wall-clock of the most recent rampage line
 const RAMPAGE_IDLE_RESET_MS = 60000;
+// #155 — on a multi-mob pull, only the MAIN target's rampage should speak; an
+// add rampaging a second tank (Grziz the Tormentor while the raid burns Emperor
+// Ssraeshza) is noise. Match the rampaging mob against the resolved main target:
+// the Extended Target aggregate (the NPC the most raiders are on) first, then
+// the current encounter's live top-target/boss. Fail OPEN — if we can't resolve
+// a main target we still announce, so the boss's own rampage is never lost to a
+// cold cross-client cache. The Tank overlay's rampage CARD is unaffected (it
+// renders _currentRampageForDisplay regardless); this gates only the TTS/callout.
+function _rampageOnMainTarget(attacker) {
+  if (!attacker) return true;
+  const a = String(attacker).trim().toLowerCase();
+  // Active focused character (same recency heuristic the tank state uses) to
+  // prime + read the Extended Target aggregate.
+  let active = null, activeTs = 0;
+  const now = Date.now();
+  for (const ch of Object.keys(_zealState || {})) {
+    const zs = _zealState[ch];
+    const ts = (zs && zs.updatedAt) || 0;
+    if (ts > activeTs && (now - ts) < 60_000) { activeTs = ts; active = ch; }
+  }
+  let mainName = null;
+  try { const mt = _resolveMainTarget(active); if (mt && mt.name) mainName = mt.name; } catch { /* cold cache → fall through */ }
+  if (!mainName) {
+    const et = stats.currentEncounterThreat;
+    if (et && (et.targetName || et.bossName)) mainName = et.targetName || et.bossName;
+  }
+  if (!mainName) return true;   // unresolved → fail open (never lose the boss rampage)
+  return a === String(mainName).trim().toLowerCase();
+}
 function _announceRampage(target, tsMs) {
   if (!target) return;
   const key = target.toLowerCase();
@@ -26403,6 +26506,18 @@ function _raidRosterHas(name) {
   if (!name || _raidRosterMembers.size === 0) return false;
   return _raidRosterMembers.has(String(name).toLowerCase());
 }
+// #150 — a captured name that is one of OUR pets (charm or summoned). The
+// require_raid_member gate below must PASS for a Death-Touch-on-a-pet: a pet is
+// never in the Zeal raid roster, so the gate used to suppress the DT countdown
+// when the boss DT'd a charm/summoned pet. Covers all three ownership signals
+// the DPS meter uses: _charmTickTracker + Zeal slot-16 (via _petOwnerByName)
+// and the cross-builder declared pet-leaders registry (knownPetOwners, the
+// global equivalent of an EncounterBuilder's petLeaders / _activeCharms).
+// Genuinely-unknown non-pet non-members are unaffected — they still suppress.
+function _isOurPetName(nameLower) {
+  if (!nameLower) return false;
+  return !!_petOwnerByName(nameLower) || knownPetOwners.has(nameLower);
+}
 
 function _fireTriggerActions(t, captures, tsMs, test, isRelay) {
   // Trigger-level roster gate. The require_raid_member field lives on
@@ -26418,7 +26533,9 @@ function _fireTriggerActions(t, captures, tsMs, test, isRelay) {
     for (const a of (t.actions || [])) {
       if (!a || !a.require_raid_member) continue;
       const val = captures && captures[String(a.require_raid_member)];
-      if (!val || !_raidRosterHas(val)) {
+      // Pass when the captured name is a raid member OR one of our pets (#150);
+      // only a genuinely-unknown non-pet non-member suppresses.
+      if (!val || (!_raidRosterHas(val) && !_isOurPetName(String(val).toLowerCase()))) {
         if (!test) console.log('[trigger] ' + (t.name || 'trigger') + ' suppressed — ' + a.require_raid_member + '=' + val + ' not a raid member');
         if (!t._noJournal) {
           _journalTrigger({ trigger: t.name, scope: t._scope || (test ? 'test' : 'personal'), checkpoint: TJ.GATES,
@@ -27864,7 +27981,13 @@ async function main() {
                    || parseBuffLanding(line, b.character);
         if (bcEvt && !_sourceExcluded) {
           const _bcFp = `buffcast|${bcEvt.target}|${bcEvt.spell_id}|${bcEvt.landing_text}|${bcEvt.cast_at}`;
-          if (!_crossLogDupe(_bcFp)) buffCastBuffer.push(bcEvt);
+          // #154 — don't upload instant/uncatalogued self-cast nukes to
+          // buff_casts: they carry no debuff timer and the cross-client
+          // target-buffs relay would replay them onto every client's Mob Info +
+          // Extended Target as a timer-less "fell off" entry. Same predicate the
+          // LOCAL recordTargetBuffLanding drop uses, applied at the source so the
+          // relay path is closed too. Real catalogued DoTs/curses still upload.
+          if (!_shouldSuppressBuffLanding(bcEvt) && !_crossLogDupe(_bcFp)) buffCastBuffer.push(bcEvt);
           // If the buff landed on one of OUR pets, stamp it for the Pet tracker's
           // countdown (catalog duration anchored to this land). Local UI only.
           recordPetBuffLanding(bcEvt);
