@@ -92,6 +92,70 @@ export function dedupEncounterDeaths(contribDeaths: (RawDeath[] | null | undefin
     .map(({ _firstMs, ...r }) => r);
 }
 
+// ── Night-level death post-processing (field feedback, 2026-07-23) ──────────
+// dedupEncounterDeaths runs PER ENCOUNTER, but find_or_create_encounter's
+// ±30min window means adds + boss fights OVERLAP — the same death lands in two
+// encounters' contributions and shows twice ("Naggato 8:36 on a glyph covered
+// serpent" AND "on Vyzh`dra the Exiled"). Night rule from the guild lead:
+// "assume people can't die twice in the same minute" — collapse same-name
+// deaths within 60s ACROSS encounters, keeping the earliest row (and its boss
+// attribution).
+export const NIGHT_DEATH_DEDUP_MS = 60_000;
+
+export function dedupNightDeaths<T extends { name: string; ts: string | number }>(
+  rows: T[] | null | undefined, windowMs = NIGHT_DEATH_DEDUP_MS,
+): T[] {
+  const sorted = [...(Array.isArray(rows) ? rows : [])].sort((a, b) => _tsMs(a.ts) - _tsMs(b.ts));
+  const lastKept = new Map<string, number>();
+  const out: T[] = [];
+  for (const r of sorted) {
+    if (!r || !r.name) continue;
+    const k = String(r.name).toLowerCase();
+    const t = _tsMs(r.ts);
+    const prev = lastKept.get(k);
+    if (prev != null && Math.abs(t - prev) <= windowMs) continue;   // same death, other encounter's view
+    lastKept.set(k, t);
+    out.push(r);
+  }
+  return out;
+}
+
+// Pets vs players: a death row that resolves to NO class (not in the guild
+// characters table, no class in any contribution) is a pet or untracked
+// entity — Xasaner/Jarer/Zonekab-style pet names. The guild lead's call:
+// pet deaths are noise on the main list; keep them out of the timeline but
+// surface a muted summary (owner attribution is a future agent-side feature —
+// the death log line doesn't carry the owner).
+export function partitionDeaths<T extends { class: string | null }>(rows: T[] | null | undefined): { players: T[]; pets: T[] } {
+  const players: T[] = [], pets: T[] = [];
+  for (const r of (Array.isArray(rows) ? rows : [])) (r && r.class ? players : pets).push(r);
+  return { players, pets };
+}
+
+// ── Night activity span ──────────────────────────────────────────────────────
+// The slows/mechanics queries pull the whole Eastern DAY, but daytime grinding
+// (myconid slows at 2pm) isn't raid review material. Bound those sections to
+// the actual fight span: [first encounter start − pad, last kill + pad]. Null
+// when the night has no encounters (the sections then render nothing).
+export function activitySpan(
+  ranges: { startMs: number; endMs: number }[] | null | undefined,
+  padMs = 30 * 60_000,
+): { startMs: number; endMs: number } | null {
+  let s = Infinity, e = -Infinity;
+  for (const r of (Array.isArray(ranges) ? ranges : [])) {
+    if (r && Number.isFinite(r.startMs)) s = Math.min(s, r.startMs);
+    if (r && Number.isFinite(r.endMs)) e = Math.max(e, r.endMs);
+  }
+  if (!Number.isFinite(s) || !Number.isFinite(e) || e < s) return null;
+  return { startMs: s - padMs, endMs: e + padMs };
+}
+
+export function inSpan(ts: string | number, span: { startMs: number; endMs: number } | null): boolean {
+  if (!span) return false;
+  const t = _tsMs(ts);
+  return t >= span.startMs && t <= span.endMs;
+}
+
 // ── Slows ────────────────────────────────────────────────────────────────────
 // Known slow (attack-speed debuff) spell names, lowercased — ported from the
 // agent's SLOW_SPELLS (packages/wolfpack-logsync/index.js). Slows land as a

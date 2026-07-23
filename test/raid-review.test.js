@@ -126,3 +126,89 @@ describe('isValidDateKey', () => {
     expect(isValidDateKey(null)).toBe(false);
   });
 });
+
+// ── Field-feedback round (2026-07-23): cross-encounter dedup, pet split, span ─
+import {
+  dedupNightDeaths,
+  NIGHT_DEATH_DEDUP_MS,
+  partitionDeaths,
+  activitySpan,
+  inSpan,
+} from '../web/lib/raidReview.ts';
+
+describe('dedupNightDeaths — "can\'t die twice in the same minute" across encounters', () => {
+  it('collapses the same death claimed by two overlapping encounters (the Naggato 8:36 case)', () => {
+    const rows = [
+      { name: 'Naggato', ts: '2026-07-23T00:36:10Z', boss: 'a glyph covered serpent' },
+      { name: 'Naggato', ts: '2026-07-23T00:36:12Z', boss: 'Vyzh`dra the Exiled' },
+    ];
+    const out = dedupNightDeaths(rows);
+    expect(out).toHaveLength(1);
+    expect(out[0].boss).toBe('a glyph covered serpent');   // earliest row's attribution kept
+  });
+
+  it('keeps a genuine rez-and-die >60s apart', () => {
+    const rows = [
+      { name: 'Syko', ts: '2026-07-23T00:39:00Z', boss: 'a glyph covered serpent' },
+      { name: 'Syko', ts: '2026-07-23T00:46:30Z', boss: 'Vyzh`dra the Cursed' },
+    ];
+    expect(dedupNightDeaths(rows)).toHaveLength(2);
+  });
+
+  it('window boundary: exactly NIGHT_DEATH_DEDUP_MS apart collapses, +1ms survives', () => {
+    const t0 = Date.parse('2026-07-23T01:00:00Z');
+    const at = (ms) => new Date(t0 + ms).toISOString();
+    expect(dedupNightDeaths([
+      { name: 'A', ts: at(0) }, { name: 'A', ts: at(NIGHT_DEATH_DEDUP_MS) },
+    ])).toHaveLength(1);
+    expect(dedupNightDeaths([
+      { name: 'B', ts: at(0) }, { name: 'B', ts: at(NIGHT_DEATH_DEDUP_MS + 1) },
+    ])).toHaveLength(2);
+  });
+
+  it('different names in the same minute both survive', () => {
+    expect(dedupNightDeaths([
+      { name: 'Gonner', ts: '2026-07-23T00:56:00Z' },
+      { name: 'Jarer', ts: '2026-07-23T00:56:05Z' },
+    ])).toHaveLength(2);
+  });
+});
+
+describe('partitionDeaths — pets (class-less) off the main timeline', () => {
+  it('splits Xasaner-style class-less rows from classed players', () => {
+    const { players, pets } = partitionDeaths([
+      { name: 'Dongru', class: 'Shadow Knight' },
+      { name: 'Xasaner', class: null },
+      { name: 'Naggato', class: 'Paladin' },
+      { name: 'Jarer', class: null },
+      { name: 'Zonekab', class: null },
+    ]);
+    expect(players.map(p => p.name)).toEqual(['Dongru', 'Naggato']);
+    expect(pets.map(p => p.name)).toEqual(['Xasaner', 'Jarer', 'Zonekab']);
+  });
+
+  it('empty/null input → empty partitions', () => {
+    expect(partitionDeaths(null)).toEqual({ players: [], pets: [] });
+  });
+});
+
+describe('activitySpan / inSpan — bound day-wide streams to the fight span', () => {
+  const enc = (s, e) => ({ startMs: Date.parse(s), endMs: Date.parse(e) });
+
+  it('daytime myconid slows fall outside the padded night span', () => {
+    const span = activitySpan([
+      enc('2026-07-23T00:30:00Z', '2026-07-23T00:36:00Z'),   // 8:30pm ET fight
+      enc('2026-07-23T03:10:00Z', '2026-07-23T03:22:00Z'),   // 11:10pm ET fight
+    ]);
+    expect(span).not.toBeNull();
+    expect(inSpan('2026-07-22T18:40:00Z', span)).toBe(false);   // 2:40pm ET myconid grinding
+    expect(inSpan('2026-07-23T00:05:00Z', span)).toBe(true);    // 25min pre-first-kill (within 30m pad)
+    expect(inSpan('2026-07-23T03:30:00Z', span)).toBe(true);    // 8min after last kill
+    expect(inSpan('2026-07-23T05:00:00Z', span)).toBe(false);   // long after
+  });
+
+  it('no encounters → null span, and inSpan(null) is always false', () => {
+    expect(activitySpan([])).toBeNull();
+    expect(inSpan('2026-07-23T00:00:00Z', null)).toBe(false);
+  });
+});

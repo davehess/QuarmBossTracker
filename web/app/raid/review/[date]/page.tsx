@@ -23,7 +23,8 @@ import { fmtDmg, fmtDuration, fmtTime, dayLabel, cleanBossName, RAID_TZ } from '
 import { userTz } from '@/lib/timezone';
 import { guildShare, isAutoForeign } from '@/lib/anomalies';
 import {
-  dedupEncounterDeaths, dedupeSlows, isValidDateKey, zonedDayRangeUtc,
+  dedupEncounterDeaths, dedupNightDeaths, partitionDeaths, activitySpan, inSpan,
+  dedupeSlows, isValidDateKey, zonedDayRangeUtc,
   type RawDeath, type SlowCast,
 } from '@/lib/raidReview';
 import { ClassificationChip } from '@/components/KillCard';
@@ -197,9 +198,29 @@ export default async function RaidNightReview({ params }: { params: Promise<{ da
   }
   nightDeaths.sort((a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime());
 
-  // Slows — collapse multi-observer landings, then honor exclude on the target
-  // (rare — targets are usually the boss).
-  const slowRows = dedupeSlows(slows).filter(s => !excluded.has(s.target.toLowerCase()));
+  // Cross-encounter dedup (overlapping add/boss encounters both claim the same
+  // death — "can't die twice in the same minute"), then split pets (class-less
+  // rows) off the main timeline. Field feedback 2026-07-23.
+  const nightDeduped = dedupNightDeaths(nightDeaths);
+  const { players: playerDeaths, pets: petDeaths } = partitionDeaths(nightDeduped);
+  const petSummary = (() => {
+    const byName = new Map<string, number>();
+    for (const p of petDeaths) byName.set(p.name, (byName.get(p.name) || 0) + 1);
+    return [...byName.entries()].map(([n, c]) => (c > 1 ? `${n} ×${c}` : n)).join(', ');
+  })();
+
+  // Bound the day-wide streams (slows, mechanics fires) to the night's actual
+  // fight span ±30min — daytime grinding is not raid-review material.
+  const span = activitySpan(encs.map(e => ({
+    startMs: new Date(e.started_at).getTime(),
+    endMs: killAtMs(e),
+  })));
+
+  // Slows — collapse multi-observer landings, bound to the fight span, then
+  // honor exclude on the target (rare — targets are usually the boss).
+  const slowRows = dedupeSlows(slows)
+    .filter(s => inSpan(s.at, span))
+    .filter(s => !excluded.has(s.target.toLowerCase()));
 
   // Boss mechanics fired — encounter_events(kind='fire') is a broad stream:
   // most rows are personal cast/movement/line-of-sight notices ("Too Far",
@@ -218,6 +239,7 @@ export default async function RaidNightReview({ params }: { params: Promise<{ da
   const fireSorted = [...fires]
     .map(f => ({ ...f, t: new Date(f.at).getTime() }))
     .filter(f => Number.isFinite(f.t))
+    .filter(f => inSpan(f.t, span))
     .filter(f => !FIRE_NOISE.has(String(f.subtype || f.label || '').toLowerCase().trim()))
     .sort((a, b) => a.t - b.t);
   const fireMarks: FireMark[] = [];
@@ -252,7 +274,7 @@ export default async function RaidNightReview({ params }: { params: Promise<{ da
     total_duration_sec: totalDuration,
     top_player: topPlayer,
     longest_fight: longest,
-    deaths: nightDeaths.length,
+    deaths: playerDeaths.length,
   };
 
   const nothing = timeline.length === 0 && slowRows.length === 0 && fireMarks.length === 0 && loot.length === 0;
@@ -319,15 +341,16 @@ export default async function RaidNightReview({ params }: { params: Promise<{ da
             </section>
           )}
 
-          {/* 2. Deaths */}
-          {nightDeaths.length > 0 && (
+          {/* 2. Deaths — players only; pets (class-less rows) collapse to a
+                 muted summary line. Cross-encounter dupes collapsed per-minute. */}
+          {(playerDeaths.length > 0 || petDeaths.length > 0) && (
             <section className="bg-panel border border-border rounded-lg p-4">
               <h3 className="text-sm text-red mb-2 flex items-center gap-2">
                 <span aria-hidden>💀</span><span>Deaths</span>
-                <span className="text-dim text-xs">· {nightDeaths.length} across the night</span>
+                <span className="text-dim text-xs">· {playerDeaths.length} across the night</span>
               </h3>
               <ul className="text-xs space-y-0.5">
-                {nightDeaths.map((d, i) => (
+                {playerDeaths.map((d, i) => (
                   <li key={i} className="flex gap-3 flex-wrap">
                     <span className="text-dim tabular-nums w-14 shrink-0">{fmtTime(d.ts, tz)}</span>
                     <span className="text-text">{d.name}</span>
@@ -337,6 +360,12 @@ export default async function RaidNightReview({ params }: { params: Promise<{ da
                   </li>
                 ))}
               </ul>
+              {petDeaths.length > 0 && (
+                <p className="text-[10px] text-dim mt-2">
+                  🐾 {petDeaths.length} pet/untracked death{petDeaths.length === 1 ? '' : 's'} hidden: {petSummary}.
+                  Owner attribution for pet deaths is on the roadmap.
+                </p>
+              )}
             </section>
           )}
 
