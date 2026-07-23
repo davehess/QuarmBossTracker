@@ -12404,15 +12404,16 @@ function renderTriggers(s) {
   }
   h += '</div>';
 
-  // #107 Loot auction announce — dashboard toggle + default-duration knob for
-  // the local TTS callout that fires when a drop list is posted in /gu or /rs.
-  // No <details> here, so no wpKeep needed; the checked/value bits track server
-  // state and only change on user action, keeping this HTML byte-stable.
-  h += '<div class="card wide"><h2>💰 Loot auction announce <span class="dim" style="font-size:11px;font-weight:normal">(local — speaks when a drop list is posted in /gu or /rs)</span></h2>';
+  // #107/#149 Loot auction announce — dashboard toggle + default-duration knob.
+  // The countdown chip opens from the bot's loot-post broadcast regardless; this
+  // toggle gates ONLY the spoken callout (chip/voice are decoupled). No <details>
+  // here, so no wpKeep needed; the checked/value bits track server state and only
+  // change on user action, keeping this HTML byte-stable.
+  h += '<div class="card wide"><h2>💰 Loot auction announce <span class="dim" style="font-size:11px;font-weight:normal">(local — speaks when an officer posts loot)</span></h2>';
   h += '<label style="display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer">';
   h += '<input type="checkbox" id="lootAucTts"' + (s.lootAuctionTts !== false ? ' checked' : '') + '>';
-  h += '<span>Announce loot posts by voice + show a countdown chip on the trigger overlay</span></label>';
-  h += '<div class="dim" style="font-size:11px;margin-top:5px">Speaks the item count and the auction window (e.g. &ldquo;Loot posted &mdash; 3 items, bids open 2 minutes&rdquo;) through the same voice as your triggers, so it also needs <b>Trigger alerts (TTS)</b> on. The chip counts down like a Death Touch timer and can be dismissed with its &times;.</div>';
+  h += '<span>Speak loot posts by voice (the countdown chip on the trigger overlay always shows)</span></label>';
+  h += '<div class="dim" style="font-size:11px;margin-top:5px">Speaks the item count and the auction window (e.g. &ldquo;Loot posted &mdash; 3 items, bids open 2 minutes&rdquo;) through the same voice as your triggers, so it also needs <b>Trigger alerts (TTS)</b> on. The chip counts down like a Death Touch timer and can be dismissed with its &times; &mdash; it shows even with this box unchecked.</div>';
   h += '<label style="display:flex;align-items:center;gap:8px;font-size:12px;margin-top:8px">Default auction length when none is stated:';
   h += '<input type="number" id="lootAucDur" min="15" max="1800" step="5" value="' + (s.lootAuctionDefaultSec || 120) + '" style="width:70px;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:3px 6px;border-radius:4px;font-family:inherit;font-size:12px"> seconds</label>';
   h += '<span id="lootAucMsg" class="dim" style="font-size:11px;margin-left:8px"></span>';
@@ -13140,6 +13141,26 @@ function renderDkpTickCard(s) {
   if (el._wpTickHtml !== h) { el._wpTickHtml = h; el.innerHTML = h; }
 }
 
+// #133 — collapse same-name loot items into one {name, quantity} row, summing
+// quantities. Case-insensitive match; first-seen casing wins; distinct names
+// are preserved untouched. Shared by the officer Loot capture panel AND the
+// #108 bidding panel so a drop that repeats an item ("Sword, Sword") always
+// renders "Sword ×2" instead of two identical lines. This is DISPLAY only — it
+// never merges distinct bid targets (those carry separate auction ids and are
+// handled with a "(k of N)" affix in the bidding table, not summed here).
+function wpCollapseLootItems(items) {
+  var out = []; var ix = {};
+  for (var i = 0; i < (items || []).length; i++) {
+    var it = items[i] || {};
+    var nm = String(it.name == null ? '' : it.name);
+    var qty = (it.quantity && it.quantity > 0) ? it.quantity : 1;
+    var key = nm.toLowerCase();
+    if (Object.prototype.hasOwnProperty.call(ix, key)) { out[ix[key]].quantity += qty; }
+    else { ix[key] = out.length; out.push({ name: nm, quantity: qty }); }
+  }
+  return out;
+}
+
 // 💰 Officer Loot capture card. Fills #wpDkpLoot from s.dkpLoot (null for
 // non-officers → card stays hidden). Byte-stable: innerHTML is only
 // reassigned when the built string changes, so checkbox state survives the
@@ -13161,17 +13182,21 @@ function renderDkpLootCard(s) {
   for (var i = 0; i < caps.length; i++) {
     var c = caps[i];
     var chan = c.channel === 'gu' ? '/gu' : '/rs';
+    // Defensive collapse: parseLootChatBody already sums same-name items into
+    // {name, quantity}, but fold again here so the panel ALWAYS shows "×N"
+    // even if a future capture path skips the parser's merge (#133).
+    var capItems = wpCollapseLootItems(c.items);
     h += '<div class="wpDkpCap" data-id="' + esc(c.id) + '" style="border:1px solid #30363d;border-radius:6px;padding:8px 10px;margin:6px 0">'
       + '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">'
       +   '<b>' + esc(c.speaker) + '</b>'
-      +   '<span class="dim" style="font-size:11px">' + chan + ' · ' + esc(_clockOf(Date.parse(c.ts))) + ' · ' + c.items.length + ' item' + (c.items.length === 1 ? '' : 's') + '</span>'
+      +   '<span class="dim" style="font-size:11px">' + chan + ' · ' + esc(_clockOf(Date.parse(c.ts))) + ' · ' + capItems.length + ' item' + (capItems.length === 1 ? '' : 's') + '</span>'
       +   '<span style="flex:1"></span>'
       +   '<button class="wpDkpPost" data-id="' + esc(c.id) + '" title="Create closed OpenDKP auctions for the checked items and announce to the loot thread" style="background:#238636;color:#fff;border:0;border-radius:5px;padding:2px 10px;cursor:pointer;font-family:inherit;font-size:11px">💰 Post for bidding</button>'
       +   '<button class="wpDkpCopy" data-id="' + esc(c.id) + '" style="background:#30363d;color:#e6edf3;border:1px solid #484f58;border-radius:5px;padding:2px 10px;cursor:pointer;font-family:inherit;font-size:11px">Copy</button>'
       +   '<button class="wpDkpDismiss" data-id="' + esc(c.id) + '" title="Dismiss this list" style="background:none;color:#8b949e;border:1px solid #30363d;border-radius:5px;padding:2px 8px;cursor:pointer;font-family:inherit;font-size:11px">✕</button>'
       + '</div>';
-    for (var j = 0; j < c.items.length; j++) {
-      var it = c.items[j];
+    for (var j = 0; j < capItems.length; j++) {
+      var it = capItems[j];
       h += '<label style="display:flex;align-items:center;gap:8px;padding:2px 0;cursor:pointer;font-size:13px">'
         + '<input type="checkbox" class="wpDkpItem" data-name="' + esc(it.name) + '" data-qty="' + (it.quantity || 1) + '" checked>'
         + '<span>' + esc(it.name) + (it.quantity > 1 ? ' <span class="dim">×' + it.quantity + '</span>' : '') + '</span>'
@@ -16158,24 +16183,36 @@ async function dismissTopDamage(key) {
   }
 
   // Merge server (biddable) + local (detected) auctions, keyed by item name.
+  // #133: when OpenDKP runs N separate auctions for N copies of ONE item they
+  // arrive as N srvAucs rows sharing a name but with distinct auction_ids —
+  // each is its own sealed-bid target, so we KEEP them all (never collapse a
+  // bid target) and tag them "(k of N)" so a bidder can tell the copies apart.
+  // Local "called" rows aren't biddable yet, so their repeated-item count folds
+  // into a single ×N row via the item's own quantity.
   function mergedRows(){
     var byName = {}; var rows = [];
+    var srvCount = {}; var srvSeen = {};
+    for (var s=0;s<srvAucs.length;s++){ var snm=(srvAucs[s].item_name||"").toLowerCase(); srvCount[snm]=(srvCount[snm]||0)+1; }
     for (var i=0;i<srvAucs.length;i++){
       var a = srvAucs[i];
       var nm = (a.item_name||"").toLowerCase();
+      var copyN = srvCount[nm]||1;
+      var copyIx = (srvSeen[nm] = (srvSeen[nm]||0)+1);   // 1-based appearance order
       var row = { key:"a"+a.auction_id, name:a.item_name||"?", item_id:a.item_id||null,
         auction_id:a.auction_id, wishlisted:!!a.wishlisted, top_bid:a.top_bid,
-        ends:a.ends_at?Date.parse(a.ends_at):null, biddable:true, pending:false };
+        ends:a.ends_at?Date.parse(a.ends_at):null, biddable:true, pending:false,
+        quantity:1, copyIx:(copyN>1?copyIx:0), copyN:(copyN>1?copyN:0) };
       byName[nm] = row; rows.push(row);
     }
     for (var j=0;j<localAucs.length;j++){
-      var la = localAucs[j]; var items = la.items||[];
+      var la = localAucs[j]; var items = wpCollapseLootItems(la.items||[]);
       for (var k=0;k<items.length;k++){
         var name = items[k].name||""; var lk = name.toLowerCase();
+        var qty = items[k].quantity||1;
         if (byName[lk]){ if (!byName[lk].ends && la.ends_at) byName[lk].ends = Date.parse(la.ends_at); continue; }
         var lrow = { key:"l"+la.sig+"_"+k, name:name, item_id:null, auction_id:null,
           wishlisted:false, top_bid:null, ends:la.ends_at?Date.parse(la.ends_at):null,
-          biddable:false, pending:true };
+          biddable:false, pending:true, quantity:qty, copyIx:0, copyN:0 };
         byName[lk] = lrow; rows.push(lrow);
       }
     }
@@ -16269,8 +16306,13 @@ async function dismissTopDamage(key) {
         var ru = (hist && hist.runner_up!=null) ? ("<div class=dim style='font-size:10px'>runner-up "+fmt(hist.runner_up)+"</div>") : "";
         var endSpanId = "wpEnd_"+row.key;
         if (row.ends) ticks[endSpanId] = row.ends;
+        // #133: "(k of N)" distinguishes N separate OpenDKP auctions for the
+        // same item (distinct bid targets, never collapsed); "×N" shows a called
+        // drop that includes multiple copies not yet split into auctions.
+        var copyAffix = (row.copyN>1) ? (" <span class=dim style='font-size:10px'>("+row.copyIx+" of "+row.copyN+")</span>") : "";
+        var qtyAffix  = (row.quantity>1) ? (" <span class=dim style='font-size:10px'>×"+row.quantity+"</span>") : "";
         h += "<tr>";
-        h += "<td class=name>"+esc(row.name)+star+(row.pending?" <span class=dim style='font-size:10px'>(called)</span>":"")+"</td>";
+        h += "<td class=name>"+esc(row.name)+copyAffix+qtyAffix+star+(row.pending?" <span class=dim style='font-size:10px'>(called)</span>":"")+"</td>";
         h += "<td style='font-size:11px'><span id="+endSpanId+">"+(row.ends?endLabel(row.ends):"")+"</span></td>";
         h += "<td style='font-size:11px'>"+lastWin+ru+"</td>";
         h += "<td style='white-space:nowrap'>";
@@ -17276,6 +17318,540 @@ function _serializeOptinForWeb() {
   };
 }
 
+
+// ── #65 Hot-servable overlays (pilot: Command Center) ───────────────────
+// COMMAND_HTML is a VERBATIM embed of apps/mimic/command.html, served at
+// GET /overlay/command so the Command Center overlay rides the agent's [U]
+// hot-swap flow. The agent single-file ships as a Mimic extraResource
+// (staged-agent → resources/agent) — OUTSIDE app.asar, so plain Node can read
+// it AND the update flow replaces it in place; command.html itself lives
+// INSIDE app.asar where plain Node cannot read it, so embedding is the only
+// way the overlay updates without a full Mimic release.
+//
+// SINGLE SOURCE OF TRUTH: apps/mimic/command.html is authoritative. This
+// constant is a byte-exact copy of it, enforced by scripts/check-agent-
+// dashboard.js (npm run check:dashboard) which FAILS the build if COMMAND_HTML
+// drifts from the file. command.html contains no backtick / ${...} / backslash,
+// so it embeds with ZERO escaping — do NOT hand-edit the string below: edit
+// command.html, then re-run scripts/sync-command-embed.js (it reprints on
+// drift). main.js loads /overlay/command first and falls back to
+// loadFile('command.html') when the agent is unreachable, so the two copies
+// MUST stay identical.
+const COMMAND_HTML = `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>command center</title>
+<style>
+  /* Wolf Pack Command Center — the "one window" raid board (Uilnayar
+     2026-07-03: "put those into a tidy command center so if someone only
+     wanted to have one window they could do that"). Combines the Tank
+     overlay's boss/MT/rampage/enrage/Death Touch focus with two sections
+     that only exist because raiders already broadcast them in raid chat —
+     DA/invuln status and healer mana — plus Curse/Cure alerts pulled from
+     the existing buff-queue debuff tracking (real observed debuffs, not
+     re-parsed "please cure" macros). Deliberately compact — this is a
+     glance board, not a replacement for the Tank/Buff-queue overlays'
+     full detail. Reads /api/command-center.
+     --bg-alpha: card-surface alpha, driven by slider via main → preload
+     'bg-alpha' IPC. 1.0 = opaque (EQ hidden); text stays bright at every value. */
+  :root{ --bg-alpha:0.55; }
+  html,body{margin:0;height:100%;background:transparent;overflow:hidden;
+    font-family:ui-monospace,Menlo,Consolas,monospace;color:#fff;user-select:none;}
+  #wrap{padding:6px 8px;min-width:260px;}
+  .title{display:flex;align-items:center;gap:8px;
+    font-size:12px;color:#f8b87b;text-shadow:-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000,0 1px 2px #000;margin-bottom:5px;}
+  .title .who{font-size:11px;color:#9aa4ad;font-weight:normal}
+  .card{background:rgb(0 0 0 / var(--bg-alpha));border-radius:5px;padding:5px 7px;margin-bottom:4px}
+  .card .head{font-size:10px;color:#9aa4ad;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:2px;
+    text-shadow:-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000,0 1px 2px #000}
+  .hpwrap{position:relative;height:14px;background:#222;border-radius:3px;overflow:hidden;
+    border:1px solid rgba(255,255,255,0.06)}
+  .hpbar{position:absolute;left:0;top:0;bottom:0;background:linear-gradient(to right,#56d364,#56d364);
+    transition:width .25s ease, background .25s ease}
+  .hpbar.low {background:linear-gradient(to right,#f0d264,#f0a52d)}
+  .hpbar.crit{background:linear-gradient(to right,#f87171,#dc2626)}
+  .hpbar.gold{background:linear-gradient(to right,#f0c419,#d4a017)}
+  .hpbar.inv-soon{background:linear-gradient(to right,#56d364,#2ea043);box-shadow:0 0 8px rgba(86,211,100,0.9) inset}
+  .hpwrap .val{position:absolute;left:0;right:0;top:0;bottom:0;display:flex;align-items:center;justify-content:center;
+    font-size:10px;color:#fff;text-shadow:-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000,0 1px 2px #000;font-weight:600}
+  .hpwrap .inv-tag{position:absolute;top:0;bottom:0;display:flex;align-items:center;
+    font-size:9px;font-weight:800;letter-spacing:0.5px;color:#fff;text-shadow:-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000,0 1px 2px #000;z-index:2}
+  .hpwrap .inv-tag.l{left:4px}
+  .hpwrap .inv-tag.r{right:4px}
+  .enrage{display:flex;align-items:center;gap:6px;padding:4px 7px;background:rgba(140,72,31,0.45);
+    border:1px solid #f0a52d;border-radius:5px;margin-bottom:4px;font-size:11px}
+  .enrage.crit{background:rgba(220,38,38,0.45);border-color:#f87171;animation:flash 0.6s linear infinite alternate}
+  @keyframes flash{from{box-shadow:0 0 8px rgba(248,113,113,0.9)}to{box-shadow:0 0 16px rgba(248,113,113,0.4)}}
+  .dt{display:flex;align-items:center;gap:6px;padding:4px 7px;background:rgba(107,33,168,0.5);
+    border:1px solid #c084fc;border-radius:5px;margin-bottom:4px;font-size:11px}
+  .dt.crit{background:rgba(220,38,38,0.5);border-color:#f87171;animation:flash 0.6s linear infinite alternate}
+  .dt .sec{font-size:13px;font-weight:700;color:#fff;font-variant-numeric:tabular-nums}
+  .ramp{display:flex;flex-direction:column;gap:4px;padding:4px 7px;background:rgba(180,32,32,0.55);
+    border:1px solid #f87171;border-radius:5px;margin-bottom:4px;font-size:11px}
+  .ramp .row{display:flex;align-items:center;gap:6px}
+  .ramp .who{font-weight:700;color:#fff}
+  /* DA/invuln raid broadcast list — one row per tank currently reporting
+     status. Gold while up, green once ≤5s remain, red once fully down. */
+  .list{display:flex;flex-direction:column;gap:2px;font-size:10px;line-height:1.5}
+  .list .row{display:flex;align-items:center;gap:5px}
+  .list .row .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#e6edf3}
+  .list .row .cls{color:#6e7681;font-size:9px;flex-shrink:0}
+  .da-chip{font-weight:700;font-size:9px;padding:0 5px;border-radius:3px;flex-shrink:0;
+    font-variant-numeric:tabular-nums}
+  .da-chip.up   {color:#1a1200;background:#f0c419}
+  .da-chip.soon {color:#04270c;background:#56d364}
+  .da-chip.down {color:#fff;background:#8b2222}
+  .mana-bar{width:56px;height:8px;background:#222;border-radius:2px;overflow:hidden;flex-shrink:0;
+    border:1px solid rgba(255,255,255,0.06)}
+  .mana-bar .fill{height:100%;background:linear-gradient(to right,#5b8def,#3f6fd6)}
+  .mana-bar .fill.low{background:linear-gradient(to right,#f0d264,#f0a52d)}
+  .mana-bar .fill.crit{background:linear-gradient(to right,#f87171,#dc2626)}
+  .mana-pct{width:2.6em;text-align:right;color:#9aa4ad;font-variant-numeric:tabular-nums;flex-shrink:0}
+  .cure-chip{font-size:9px;padding:0 4px;border-radius:2px;background:rgba(220,38,38,0.35);
+    color:#fff;flex-shrink:0}
+  .cure-chip.being-cured{background:rgba(86,211,100,0.3);color:#c8f0cc}
+  /* Divine Intervention (#50) compacted (#66) to chips beside the HEALER MANA
+     header — "DI: Uilnayar ✓ · Fargan 45s" — freeing the vertical block. */
+  .head.mana-head{display:flex;align-items:center;gap:6px}
+  .di-chips{margin-left:auto;font-size:9px;text-transform:none;letter-spacing:0.2px;
+    display:inline-flex;align-items:center;gap:4px;flex-wrap:wrap;justify-content:flex-end}
+  .di-chips .di-lab{color:#9aa4ad;font-weight:600}
+  .di-chips .up{color:#7ee787}
+  .di-chips .cd{color:#f0b429;font-variant-numeric:tabular-nums}
+  .di-chips .sep{color:#6e7681}
+  .di-chips.solo{outline:1px solid rgba(240,196,25,0.7);outline-offset:1px;border-radius:3px;padding:0 3px}
+  /* Curse/Cure per-line dismiss + clear-all (#66). Extra right padding on the
+     card keeps the ✕ / "clear all" clear of the fixed ✕-hide button gutter. */
+  .card.cure-card{padding-right:28px}
+  .head.cure-head{display:flex;align-items:center;gap:6px}
+  .cureClearAll{margin-left:auto;cursor:pointer;color:#9aa4ad;font-size:9px;text-transform:none;
+    letter-spacing:0;border:1px solid rgba(110,118,129,0.4);border-radius:3px;padding:0 4px;opacity:0.7}
+  .cureClearAll:hover{opacity:1;color:#f87171;border-color:#f87171}
+  .cure-row .cureDismiss{margin-left:6px;cursor:pointer;color:#8b949e;font-size:11px;line-height:1;
+    flex-shrink:0;opacity:0.6}
+  .cure-row .cureDismiss:hover{opacity:1;color:#f87171}
+  /* #153 collapsible sections — the caret+label in a section header is the
+     click target that collapses/expands it. Collapse state lives in a JS store
+     consulted at render time (localStorage-backed), NOT DOM state, so repaints
+     never lose it. */
+  .sec-toggle{cursor:pointer;user-select:none}
+  .sec-toggle:hover{color:#e6edf3}
+  #empty{color:rgba(255,255,255,0.5);font-size:11px;text-shadow:-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000,0 1px 2px #000;padding:3px 0;text-align:center}
+  /* drag/lock/setup chrome — shared pattern. */
+  #drag-controls{display:none;position:fixed;top:4px;left:4px;gap:4px;z-index:60}
+  body.unlocked #drag-controls{display:flex}
+  body.unlocked{outline:2px solid rgba(248,184,123,0.7);outline-offset:-2px}
+  .drag-btn{width:24px;height:24px;display:flex;align-items:center;justify-content:center;
+    background:rgba(180,98,34,0.92);color:#fff;border:1px solid rgba(255,255,255,0.4);
+    border-radius:4px;font-size:13px;line-height:1;cursor:move;user-select:none}
+  #lock-btn{cursor:pointer;font-size:11px}
+  #setupbar{display:none;position:fixed;top:0;left:0;right:0;align-items:center;gap:8px;
+    padding:4px 8px;background:rgba(180,98,34,0.92);color:#fff;font-size:10px;font-weight:600;z-index:50}
+  body.setup #setupbar{display:flex}
+  body.setup #drag-controls{top:28px}
+  body.setup #wrap{margin-top:26px}
+  #setupbar input[type=range]{flex:1;cursor:pointer}
+  #hide-btn{position:fixed;top:6px;right:6px;z-index:65;width:18px;height:18px;
+    display:flex;align-items:center;justify-content:center;border-radius:4px;
+    background:rgba(14,17,22,0.6);color:#8b949e;border:1px solid rgba(110,118,129,0.3);
+    font-size:11px;line-height:1;cursor:pointer;opacity:0.45;transition:opacity .12s}
+  #hide-btn:hover{opacity:1;color:#f87171;border-color:#f87171}
+  body.setup #hide-btn{top:30px}
+  #move-btn{position:fixed;top:6px;left:6px;z-index:65;width:18px;height:18px;
+    display:flex;align-items:center;justify-content:center;border-radius:4px;
+    background:rgba(14,17,22,0.6);color:#8b949e;border:1px solid rgba(110,118,129,0.3);
+    font-size:11px;line-height:1;cursor:move;opacity:0.45;transition:opacity .12s}
+  #move-btn:hover{opacity:1;color:#f8b87b;border-color:#f8b87b}
+  body.setup #move-btn{top:30px}
+</style></head>
+<body>
+  <button id="move-btn" title="Drag from this icon to move the overlay">✥</button>
+  <button id="hide-btn" title="Hide the Command Center overlay (turn back on from the tray → Overlays)">✕</button>
+  <div id="drag-controls">
+    <div id="move-handle" class="drag-btn" title="Drag to move">✥</div>
+    <div id="lock-btn"   class="drag-btn" title="Lock in place">🔒</div>
+  </div>
+  <div id="setupbar">
+    <span>🎛 Command Center</span>
+    <span>opacity</span><input id="opacitySlider" type="range" min="0.15" max="1" step="0.05" value="1" /><span id="opacityVal">100%</span>
+    <button id="exitSetupBtn">Done</button>
+  </div>
+  <div id="wrap">
+    <div class="title"><span aria-hidden>🎛</span><span>Command Center</span><span class="who" id="who"></span></div>
+    <div id="content"></div>
+  </div>
+<script>
+  let PORT = 7779;
+  window.mimic && window.mimic.onAgentPort && window.mimic.onAgentPort(p => { PORT = p; });
+  window.mimic && window.mimic.getAgentPort && window.mimic.getAgentPort().then(p => { if (p) PORT = p; });
+
+  if (window.mimic && window.mimic.onOverlayLocked) {
+    window.mimic.onOverlayLocked(locked => { document.body.classList.toggle('unlocked', !locked); });
+  }
+  var lockBtn = document.getElementById('lock-btn');
+  if (lockBtn) lockBtn.addEventListener('click', function(){ try { window.mimic.setOverlaysLocked(true); } catch (e) {} });
+
+  var hideBtn = document.getElementById('hide-btn');
+  if (hideBtn) {
+    hideBtn.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch (e) {} });
+    hideBtn.addEventListener('mouseleave', function(){ try { window.mimic.overlayHoverInteractive(false); } catch (e) {} });
+    hideBtn.addEventListener('click', function(){ try { window.mimic.hideThisOverlay(); } catch (e) {} });
+  }
+
+  var moveHandle = document.getElementById('move-handle');
+  var moveBtn    = document.getElementById('move-btn');
+  var _dragging = false;
+  function _beginDrag(e){
+    if (e.button !== 0) return; e.preventDefault(); _dragging = true;
+    try { window.mimic.overlayDragStart(); } catch (err) {}
+  }
+  if (moveHandle) moveHandle.addEventListener('mousedown', _beginDrag);
+  if (moveBtn) {
+    moveBtn.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch (e) {} });
+    moveBtn.addEventListener('mouseleave', function(){ if (!_dragging) { try { window.mimic.overlayHoverInteractive(false); } catch (e) {} } });
+    moveBtn.addEventListener('mousedown', _beginDrag);
+    try { window.mimic.attachOverlayMenu(moveBtn); } catch (e) {}
+  }
+  document.addEventListener('mouseup', function(){ if (_dragging){ _dragging=false; try{window.mimic.overlayDragEnd();}catch(e){} try{window.mimic.overlayHoverInteractive(false);}catch(e){} } });
+  window.addEventListener('blur', function(){ if (_dragging){ _dragging=false; try{window.mimic.overlayDragEnd();}catch(e){} } });
+
+  var _overlayKey = null;
+  var _setupScope = null;
+  if (window.mimic && window.mimic.onSetupMode) {
+    window.mimic.onSetupMode(function(p){ _overlayKey = p && p.overlayKey; if (p && p.scope) _setupScope = p.scope; else if (p && p.active) _setupScope = 'all'; document.body.classList.toggle('setup', !!(p && p.active)); });
+  }
+  if (window.mimic && window.mimic.onBgAlpha) {
+    window.mimic.onBgAlpha(function(v){
+      var a = (typeof v === 'number' && v >= 0.15 && v <= 1.0) ? v : 0.55;
+      try { document.documentElement.style.setProperty('--bg-alpha', String(a)); } catch (e) {}
+    });
+  }
+  var slider = document.getElementById('opacitySlider'); var oVal = document.getElementById('opacityVal');
+  if (slider) slider.addEventListener('input', function(){
+    var v = parseFloat(slider.value || '1'); if (oVal) oVal.textContent = Math.round(v*100)+'%';
+    if (_overlayKey && window.mimic && window.mimic.setOverlayOpacity) { try { window.mimic.setOverlayOpacity(_overlayKey, v); } catch (e) {} }
+  });
+  var doneBtn = document.getElementById('exitSetupBtn');
+  if (doneBtn) doneBtn.addEventListener('click', function(){ try { document.body.classList.remove('setup'); } catch (e) {} try { if (_setupScope === 'this') window.mimic.setSetupModeThis(false); else window.mimic.setSetupMode(false); } catch (e) {} _setupScope = null; });
+
+  function esc(s){ return String(s == null ? '' : s).replace(/[&<>"]/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c]; }); }
+  function fmtSec(s){ if (s == null) return '--'; if (s < 60) return Math.round(s)+'s'; var m = Math.floor(s/60), r = Math.round(s%60); return m+':'+(r<10?'0':'')+r; }
+
+  function _requestAutoHeight(){
+    if (!(window.mimic && window.mimic.overlayAutoHeight)) return;
+    var w = document.getElementById('wrap'); if (!w) return;
+    try { window.mimic.overlayAutoHeight(w.scrollHeight + 8); } catch (e) {}
+  }
+
+  var contentEl = document.getElementById('content');
+  var whoEl     = document.getElementById('who');
+
+  // Curse/Cure local dismiss (#66) — session-scoped, this client only. Keyed by
+  // the agent-provided stable row id (name + sorted debuff-spell set). Reconciled
+  // against each poll: an id that leaves the payload is forgotten so a genuine
+  // re-land re-shows, while a still-present (stale/moot) row stays dismissed.
+  var _dismissedCures = new Set();
+  var _lastState = null;
+  function _cureId(c){ return (c && c.id) ? c.id : (c && c.name ? String(c.name).toLowerCase() : null); }
+
+  // #153 Collapsible sections — per-section collapse state persisted across
+  // repaints AND restarts. It lives in this JS store (consulted by render()),
+  // NOT in DOM open/closed state, which every innerHTML repaint would wipe (the
+  // wpKeep lesson from the dashboard). localStorage carries it across agent /
+  // Mimic restarts.
+  var _collapsedSections = {};
+  try { _collapsedSections = JSON.parse(localStorage.getItem('wp_cmd_collapsed') || '{}') || {}; } catch (e) { _collapsedSections = {}; }
+  function _isCollapsed(key){ return !!_collapsedSections[key]; }
+  function _toggleCollapsed(key){
+    _collapsedSections[key] = !_collapsedSections[key];
+    try { localStorage.setItem('wp_cmd_collapsed', JSON.stringify(_collapsedSections)); } catch (e) {}
+  }
+  // Section header caret+label — the click target that collapses/expands the
+  // section. Collapsed it carries a compact count ("▸ Healer mana (3)");
+  // expanded it shows the caret + label and the section's rows render below.
+  function secToggle(key, label, count){
+    var col = _isCollapsed(key);
+    var cnt = (col && count != null) ? ' (' + count + ')' : '';
+    return '<span class="sec-toggle" data-collapse-key="' + esc(key) + '" title="'
+         + (col ? 'Expand' : 'Collapse') + ' this section">'
+         + (col ? '▸' : '▾') + ' ' + esc(label) + cnt + '</span>';
+  }
+
+  // Divine Intervention (#50) as compact chips beside the HEALER MANA header
+  // (#66) — "DI: Uilnayar ✓ · Fargan 45s". Same data as the old DI card, only
+  // reshaped. Gold ring when exactly one cleric is up (save it for the tank).
+  function diChips(di){
+    if (!di || !di.clerics || !di.clerics.length) return '';
+    var solo = di.up_count === 1 && di.clerics.length > 1;
+    var parts = [];
+    for (var i = 0; i < di.clerics.length; i++) {
+      var dc = di.clerics[i];
+      parts.push(dc.up
+        ? '<span class="up">' + esc(dc.name) + ' ✓</span>'
+        : '<span class="cd">' + esc(dc.name) + ' ' + Math.max(1, dc.seconds || 1) + 's</span>');
+    }
+    return '<span class="di-chips' + (solo ? ' solo' : '') + '"><span class="di-lab">DI:</span>'
+         + parts.join('<span class="sep">·</span>') + '</span>';
+  }
+
+  function hpClass(pct){ if (pct == null) return ''; if (pct <= 25) return 'crit'; if (pct <= 50) return 'low'; return ''; }
+  function manaClass(pct){ if (pct == null) return ''; if (pct <= 15) return 'crit'; if (pct <= 35) return 'low'; return ''; }
+  // HP bar label — raw "cur / max · pct%" when the local character's own Zeal
+  // reported the numbers, else just the percentage.
+  function hpValText(pct, cur, max){
+    if (pct == null) return null;
+    if (cur != null && max != null) return cur + ' / ' + max + ' · ' + pct + '%';
+    return pct + '%';
+  }
+
+  function render(s){
+    if (!s || s.character == null) {
+      contentEl.innerHTML = '<div id="empty">No focused character yet — launch EQ + Zeal and target a mob.</div>';
+      whoEl.textContent = '';
+      return;
+    }
+    whoEl.textContent = '· ' + ((s.mt && s.mt.name) ? 'MT ' + s.mt.name : s.character);
+
+    var html = '';
+
+    // Target HP + boss enrage warning (same data the Tank overlay shows).
+    if (s.target && s.target.name) {
+      var thp = s.target.hp_pct == null ? null : Math.max(0, Math.min(100, Math.round(s.target.hp_pct)));
+      html += '<div class="card">'
+           +    '<div class="head">Target — ' + esc(s.target.name) + '</div>'
+           +    '<div class="hpwrap"><div class="hpbar ' + hpClass(100 - (thp || 0)) + '" style="width:' + (thp == null ? 0 : thp) + '%"></div>'
+           +      '<div class="val">' + (thp == null ? '—' : thp + '%') + '</div></div>'
+           +  '</div>';
+      if (s.enrage && s.enrage.enrages && thp != null && thp <= s.enrage.warn_pct) {
+        var critEnrage = thp <= (s.enrage.threshold_pct + 2);
+        html += '<div class="enrage ' + (critEnrage ? 'crit' : '') + '">'
+             +    '⚠️ Enrage near — watch for ≤' + s.enrage.threshold_pct + '% (currently ' + thp + '%)'
+             +  '</div>';
+      }
+    }
+
+    // Death Touch countdown — mirrors any active "Death Touch"-named guild
+    // trigger's timer, same as the Tank overlay.
+    if (s.deathtouch && s.deathtouch.seconds != null) {
+      var dtCrit = !!s.deathtouch.critical;
+      html += '<div class="dt ' + (dtCrit ? 'crit' : '') + '">'
+           +    '<span>☠️ Death Touch' + (s.deathtouch.target ? ' — ' + esc(s.deathtouch.target) : '') + '</span>'
+           +    '<span class="sec">' + fmtSec(s.deathtouch.seconds) + '</span>'
+           +  '</div>';
+    }
+
+    // Main Tank HP (compact — buffs/DS detail stays on the Tank overlay).
+    if (s.mt && s.mt.name) {
+      var mthp = s.mt.hp_pct == null ? null : Math.max(0, Math.min(100, Math.round(s.mt.hp_pct)));
+      var mtVal = hpValText(mthp, s.mt.hp_cur, s.mt.hp_max);
+      html += '<div class="card">'
+           +    '<div class="head">Main Tank — ' + esc(s.mt.name) + (s.mt.is_self ? ' (you)' : '') + '</div>'
+           +    '<div class="hpwrap"><div class="hpbar ' + hpClass(mthp) + '" style="width:' + (mthp == null ? 0 : mthp) + '%"></div>'
+           +      '<div class="val">' + (mtVal == null ? 'HP not visible' : mtVal) + '</div></div>'
+           +  '</div>';
+    }
+
+    // Rampage target + invuln (DA/Harmshield/etc) highlight — identical to
+    // the Tank overlay's card.
+    if (s.rampage && s.rampage.target) {
+      var rhp = s.rampage.hp_pct == null ? null : Math.max(0, Math.min(100, Math.round(s.rampage.hp_pct)));
+      var rda = s.rampage.da || null;
+      var barCls  = rda ? (rda.critical ? 'inv-soon' : 'gold') : hpClass(rhp);
+      var barW    = rda ? 100 : (rhp == null ? 0 : rhp);
+      var daTags  = rda ? '<span class="inv-tag l">INV</span><span class="inv-tag r">INV</span>' : '';
+      var valText = rda ? ('INV ' + fmtSec(rda.seconds)) : (rhp == null ? 'HP not visible' : rhp + '%');
+      html += '<div class="ramp">'
+           +    '<div class="row">💀 Rampage on <span class="who">' + esc(s.rampage.target) + '</span></div>'
+           +    '<div class="hpwrap"><div class="hpbar ' + barCls + '" style="width:' + barW + '%"></div>'
+           +      daTags
+           +      '<div class="val">' + valText + '</div></div>'
+           +  '</div>';
+    }
+
+    // Raid-wide DA/invuln broadcasts — every tank currently reporting status
+    // via their own raid-chat macro (Naggato's ">> DA up << 18 secs" etc),
+    // not just whoever's the current Rampage target above.
+    if (s.da_broadcasts && s.da_broadcasts.length) {
+      var defCollapsed = _isCollapsed('defensives');
+      html += '<div class="card"><div class="head">' + secToggle('defensives', 'Defensives', s.da_broadcasts.length)
+           +    (defCollapsed ? '' : ' (active / recharging)') + '</div>';
+      if (!defCollapsed) {
+        html += '<div class="list">';
+        for (var i = 0; i < s.da_broadcasts.length; i++) {
+          var d = s.da_broadcasts[i];
+          var chipCls, chipTxt;
+          if (d.state === 'cooldown') {
+            // Discipline used, now recharging — count DOWN until it's available.
+            chipCls = 'down';
+            chipTxt = 'DOWN · ' + fmtSec(d.cooldown_secs);
+          } else if (d.seconds == null) {
+            chipCls = 'up'; chipTxt = 'UP';                       // up, duration unknown
+          } else {
+            chipCls = d.seconds <= 5 ? 'soon' : 'up';
+            chipTxt = fmtSec(d.seconds);                          // remaining ACTIVE time
+          }
+          html += '<div class="row"><span class="nm">' + esc(d.name) + '</span>'
+               +    (d.kind ? '<span class="cls">' + esc(d.kind) + '</span>' : '')
+               +    '<span class="da-chip ' + chipCls + '">' + chipTxt + '</span></div>';
+        }
+        html += '</div>';
+      }
+      html += '</div>';
+    }
+
+    // Healer mana roster — self-reported "N% mana" call-outs, lowest first
+    // so the group needing a mana break is easy to spot at a glance. Divine
+    // Intervention readiness (#50) rides in the header as compact chips (#66);
+    // the CH-chain overlay owns the "only <X> has DI" voice callout so nobody
+    // hears it twice.
+    var diChipsHtml = diChips(s.di);
+    if (s.healer_mana && s.healer_mana.length) {
+      var manaCollapsed = _isCollapsed('mana');
+      html += '<div class="card"><div class="head mana-head">' + secToggle('mana', 'Healer mana', s.healer_mana.length) + diChipsHtml + '</div>';
+      if (!manaCollapsed) {
+        html += '<div class="list">';
+        for (var j = 0; j < s.healer_mana.length; j++) {
+          var h = s.healer_mana[j];
+          html += '<div class="row"><span class="nm">' + esc(h.name) + '</span>'
+               +    (h.class ? '<span class="cls">' + esc(h.class) + '</span>' : '')
+               +    '<div class="mana-bar"><div class="fill ' + manaClass(h.pct) + '" style="width:' + h.pct + '%"></div></div>'
+               +    '<span class="mana-pct">' + h.pct + '%</span></div>';
+        }
+        html += '</div>';
+      }
+      html += '</div>';
+    } else if (diChipsHtml) {
+      // DI available but no mana call-outs yet — show the chips on their own
+      // compact line rather than losing them.
+      html += '<div class="card"><div class="head mana-head">Healer mana' + diChipsHtml + '</div></div>';
+    }
+
+    // /random roll sets (last 15 min) — "333 (Item name) — Winner names"
+    // (Uilnayar 2026-07-10). Winners = top-(qty) first-rolls; the qty comes
+    // from the loot link "Item (3)333". Full per-roll detail lives on the
+    // agent dashboard's 🎲 Rolls card.
+    if (s.rolls && s.rolls.length) {
+      html += '<div class="card"><div class="head">🎲 Rolls</div><div class="list">';
+      var rMax = Math.min(s.rolls.length, 4);
+      for (var ri = 0; ri < rMax; ri++) {
+        var rs = s.rolls[ri];
+        var winners = (rs.winners || []).map(function(w){ return esc(w.name) + ' <b>' + w.value + '</b>'; }).join(', ');
+        html += '<div class="row"><span class="nm"><b>' + rs.to + '</b>'
+             +    (rs.item ? ' (' + esc(rs.item) + (rs.qty ? ' ×' + rs.qty : '') + ')' : '')
+             +    ' — <span style="color:#f0c419">' + (winners || '—') + '</span></span>'
+             +    '<span class="cls">' + rs.players + ' roll' + (rs.players === 1 ? '' : 's') + (rs.open ? ' · open' : '') + '</span></div>';
+      }
+      html += '</div></div>';
+    }
+
+    // Curse/Cure alerts — reuses the buff queue's real observed-debuff
+    // tracking (not chat parsing) so it stays accurate even when nobody's
+    // typed a "please cure" macro. Per-line ✕ + "clear all" dismiss (#66) are
+    // LOCAL to this client: reconcile the dismissed set against the fresh
+    // payload (forget ids no longer present so a re-land re-shows), then filter.
+    if (s.cures && s.cures.length) {
+      var _curIds = new Set();
+      for (var ci0 = 0; ci0 < s.cures.length; ci0++) { var _id0 = _cureId(s.cures[ci0]); if (_id0) _curIds.add(_id0); }
+      _dismissedCures.forEach(function(id){ if (!_curIds.has(id)) _dismissedCures.delete(id); });
+      var visibleCures = [];
+      for (var vk = 0; vk < s.cures.length; vk++) {
+        var _idv = _cureId(s.cures[vk]);
+        if (_idv && _dismissedCures.has(_idv)) continue;
+        visibleCures.push(s.cures[vk]);
+      }
+      if (visibleCures.length) {
+        var cureCollapsed = _isCollapsed('cures');
+        html += '<div class="card cure-card"><div class="head cure-head">'
+             +    secToggle('cures', 'Curse / Cure', visibleCures.length)
+             +    (cureCollapsed ? '' : '<span class="cureClearAll" title="Dismiss all cure/curse alerts (this client, until they change)">clear all</span>')
+             +  '</div>';
+        if (!cureCollapsed) {
+          html += '<div class="list">';
+          for (var k = 0; k < visibleCures.length; k++) {
+            var c = visibleCures[k];
+            var cId = _cureId(c);
+            var curses = c.curses || [];
+            var chips = curses.map(function(cc){
+              return '<span class="cure-chip' + (cc.being_cured ? ' being-cured' : '') + '">' + esc(cc.cure) + (cc.counters ? ' ×' + cc.counters : '') + (cc.being_cured ? ' (curing)' : '') + '</span>';
+            }).join(' ');
+            html += '<div class="row cure-row"><span class="nm">' + esc(c.name) + '</span>' + chips
+                 +    '<span class="cureDismiss" data-cure-id="' + esc(cId) + '" title="Dismiss this alert (this client)">✕</span></div>';
+          }
+          html += '</div>';
+        }
+        html += '</div>';
+      }
+    }
+
+    if (!html) html = '<div id="empty">Nothing to report — no active target, DA/mana call-outs, rolls, or curses seen yet.</div>';
+
+    if (contentEl.__wpHtml !== html) {   // byte-stability guard (2026-07-07)
+      contentEl.innerHTML = html;
+      contentEl.__wpHtml = html;
+      _requestAutoHeight();
+    }
+  }
+
+  // Curse/Cure dismiss — delegated on #content (rebuilt every poll, so bind
+  // once). Every clickable needs the hover-interact handshake: locked overlays
+  // are click-through, so without flipping interactive on hover the click falls
+  // through to EQ.
+  if (contentEl) {
+    contentEl.addEventListener('mouseover', function(e){
+      var t = e.target;
+      if (t && t.closest && (t.closest('.cureDismiss') || t.closest('.cureClearAll') || t.closest('.sec-toggle'))) {
+        try { window.mimic.overlayHoverInteractive(true); } catch (er) {}
+      }
+    });
+    contentEl.addEventListener('mouseout', function(e){
+      var t = e.target;
+      if (t && t.closest && (t.closest('.cureDismiss') || t.closest('.cureClearAll') || t.closest('.sec-toggle'))) {
+        try { window.mimic.overlayHoverInteractive(false); } catch (er) {}
+      }
+    });
+    contentEl.addEventListener('click', function(e){
+      // #153 section collapse toggle — flip the JS store + persist, then
+      // re-render immediately from last state (next poll reads the same store).
+      var tog = e.target && e.target.closest ? e.target.closest('.sec-toggle') : null;
+      if (tog) {
+        e.preventDefault(); e.stopPropagation();
+        var key = tog.getAttribute('data-collapse-key');
+        if (key) { _toggleCollapsed(key); if (_lastState) render(_lastState); }
+        return;
+      }
+      var one = e.target && e.target.closest ? e.target.closest('.cureDismiss') : null;
+      if (one) {
+        e.preventDefault(); e.stopPropagation();
+        var id = one.getAttribute('data-cure-id');
+        if (id) { _dismissedCures.add(id); if (_lastState) render(_lastState); }
+        return;
+      }
+      var all = e.target && e.target.closest ? e.target.closest('.cureClearAll') : null;
+      if (all) {
+        e.preventDefault(); e.stopPropagation();
+        if (_lastState && _lastState.cures) {
+          for (var i = 0; i < _lastState.cures.length; i++) { var cid = _cureId(_lastState.cures[i]); if (cid) _dismissedCures.add(cid); }
+          render(_lastState);
+        }
+        return;
+      }
+    });
+  }
+
+  async function tick(){
+    try {
+      const r = await fetch('http://127.0.0.1:'+PORT+'/api/command-center', { cache: 'no-store' });
+      const s = await r.json();
+      _lastState = s;
+      render(s);
+    } catch (e) {
+      // Quiet — agent might be restarting. Next tick will recover.
+    }
+  }
+  tick(); setInterval(tick, 1500);
+</script>
+</body></html>
+`;
+// ── end #65 hot-servable overlays ─────────────────────────────
+
 function startWebDashboard(port) {
   const server = http.createServer(async (req, res) => {
     try {
@@ -17285,6 +17861,25 @@ function startWebDashboard(port) {
         // suspect for the "blank in app, fine in browser" reports.
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store, must-revalidate' });
         return res.end(WEB_HTML);
+      }
+      // #65 Hot-servable overlays (pilot: Command Center). Serve embedded
+      // overlay HTML so Mimic can load /overlay/<name> and have the overlay
+      // ride agent hot-swaps ([U] flow) instead of a full Mimic release.
+      // Read-only GET; name allow-list = 'command' ONLY — anything else 404s
+      // (no fs, no path join, no traversal surface: the body is an in-memory
+      // constant). main.js prefers this URL and falls back to the bundled
+      // command.html when the agent is down/unreachable.
+      if (req.url && req.url.indexOf('/overlay/') === 0) {
+        const name = req.url.slice('/overlay/'.length).split('?')[0].split('/')[0];
+        const OVERLAYS = { command: COMMAND_HTML };
+        if (!Object.prototype.hasOwnProperty.call(OVERLAYS, name)) {
+          res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+          return res.end('unknown overlay');
+        }
+        // no-store so a hot-swap never leaves a stale overlay cached in the
+        // BrowserWindow (same rationale as the dashboard route above).
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store, must-revalidate' });
+        return res.end(OVERLAYS[name]);
       }
       if (req.url === '/api/state') {
         // Serve every poller the SAME serialized snapshot for 400ms. The
@@ -19533,11 +20128,11 @@ const _optinState = {
   // polluting the list). Read by fetchExtendedTarget → passed to the bot as
   // same_zone=0 only when the user turns it OFF.
   extSameZoneOnly: true,
-  // #107 loot-post announce. lootAuctionTts gates the local TTS callout +
-  // countdown chip when a drop list is posted in /gu or /rs (default ON);
-  // lootAuctionDefaultSec is the auction window used when the bid call doesn't
-  // state a duration. Both live here so they persist across runs like the
-  // other dashboard-set flags.
+  // #107/#149 loot-post announce. lootAuctionTts gates ONLY the local spoken
+  // callout (default ON) — the countdown chip opens from the bot's loot-posted
+  // broadcast regardless of this flag (chip/voice decoupled). lootAuctionDefaultSec
+  // is the fallback auction window used only when a post carries no window_sec.
+  // Both live here so they persist across runs like the other dashboard-set flags.
   lootAuctionTts: true,
   lootAuctionDefaultSec: 120,
 };
@@ -24487,6 +25082,20 @@ function _relayLocalFire(t, actions, captures, tsMs, key) {
 // is unset (no bot wired) or when no token is configured.
 let _lastRelayFireId = 0;
 let _relayPollerActive = false;
+// #149 loot-posted broadcast cursor — mirrors _lastRelayFireId. The bot rides
+// loot_posted[] + loot_next_id on the SAME recent-fires payload (the standalone
+// GET /recent-fires AND the #106 poll bundle's streams.recent_fires), advanced
+// by a loot_since_id request cursor. Auction chips + the "Loot posted" TTS now
+// come from THIS broadcast (an officer's bot /loot post), retiring the old
+// chat-sniffing auto-open in noteLootAuction.
+let _lastLootPostedId = 0;
+let _seenLootPostedIds = new Set();   // per-id dedup across the two poll paths + restart replay
+// Spoken-callout freshness gate — the loot analog of RELAY_STALE_MS. A post
+// older than this at consumption (an agent restart re-reading a still-open
+// auction from the bot's buffer) RESTORES the chip silently but does NOT
+// re-speak, so restarts don't re-announce. A touch wider than the relay's 15s
+// to cover the officer-post → broadcast → poll hop on a genuinely live post.
+const LOOT_ANNOUNCE_FRESH_MS = 20_000;
 // A relayed fire older than this at consumption time is a ghost callout (queue
 // backlog replayed it late) — journalled, never spoken. See _pollRelayFires.
 const RELAY_STALE_MS = 15_000;
@@ -24513,6 +25122,10 @@ function _recentFiresActive() {
 // logic stays identical between the two paths.
 function _consumeRelayFires(data) {
   if (!data) return;
+  // #149 — the loot-posted broadcast rides the SAME payload as the trigger
+  // relay fires; consume it here so BOTH the standalone /recent-fires poll and
+  // the #106 multiplexed poll pick it up through one code path.
+  _consumeLootPosted(data);
   if (typeof data.next_id === 'number') {
     _lastRelayFireId = Math.max(_lastRelayFireId, data.next_id);
   }
@@ -24535,6 +25148,57 @@ function _consumeRelayFires(data) {
   }
 }
 
+// #149 — consume the loot-posted broadcast carried on the recent-fires payload.
+// Each event is an officer bot /loot post: { id, at, item_count,
+// items:[{name,quantity}], posted_by, window_sec }. On a NEW event we open (or
+// reset) the SAME auction countdown chip the retired chat path used AND fire the
+// #107 "Loot posted" TTS. DECOUPLED gating (the false/real coupling fix): the
+// chip ALWAYS opens; only the SPOKEN callout is gated by lootAuctionTts. Dedup:
+// a per-id seen-set (so a repeat poll / restart replay never re-announces) plus
+// an elapsed-window drop (a post whose bid window already closed never spawns a
+// phantom chip). #129 timer source: the window comes straight from the post's
+// window_sec, falling back to lootAuctionDefaultSec only when it is absent.
+function _consumeLootPosted(data) {
+  if (!data) return;
+  if (typeof data.loot_next_id === 'number') {
+    _lastLootPostedId = Math.max(_lastLootPostedId, data.loot_next_id);
+  }
+  const events = data.loot_posted;
+  if (!Array.isArray(events) || events.length === 0) return;
+  for (const ev of events) {
+    if (!ev) continue;
+    const id = Number(ev.id);
+    if (Number.isFinite(id)) {
+      if (_seenLootPostedIds.has(id)) continue;   // already announced (dup poll / restart replay)
+      _seenLootPostedIds.add(id);
+      if (_seenLootPostedIds.size > 500) {
+        // ids are monotonic — keep the newest 250, drop the rest.
+        _seenLootPostedIds = new Set([..._seenLootPostedIds].sort((a, b) => b - a).slice(0, 250));
+      }
+    }
+    const items = Array.isArray(ev.items)
+      ? ev.items.map(it => ({ name: String((it && it.name) || '').trim(), quantity: (it && it.quantity) || 1 }))
+                .filter(it => it.name)
+      : [];
+    if (items.length === 0) continue;
+    const atMs = Date.parse(ev.at) || Date.now();
+    const winSec = (Number.isFinite(ev.window_sec) && ev.window_sec > 0)
+      ? Math.max(15, Math.min(1800, Math.round(ev.window_sec)))
+      : _lootAuctionDefaultSec();
+    // Elapsed-window drop — a post replayed after its window already closed
+    // (agent restart re-reading the buffer) must not spawn a stale chip.
+    if ((atMs + winSec * 1000) < Date.now()) continue;
+    const sig = items.map(i => i.name.toLowerCase()).sort().join('~');
+    // DECOUPLE: chip always; voice per toggle AND freshness. Passing silent=true
+    // suppresses ONLY _announceLootPost — _openOrResetLootAuction still opens the
+    // chip. Voice is muted when the toggle is OFF or the post is a stale restart
+    // replay (chip restored silently); on the live path it speaks on first open.
+    const stale    = (Date.now() - atMs) > LOOT_ANNOUNCE_FRESH_MS;
+    const voiceOff = _optinState.lootAuctionTts === false || stale;
+    _openOrResetLootAuction(sig, items, winSec, atMs, null, voiceOff);
+  }
+}
+
 async function _pollRelayFires() {
   if (_relayPollerActive) return;
   if (_multiplexActive()) return;   // #106 — the multiplexed /poll carries recent_fires while it's live
@@ -24545,7 +25209,8 @@ async function _pollRelayFires() {
   if (!_recentFiresActive()) return;
   _relayPollerActive = true;
   try {
-    const url = base.replace(/\/+$/, '') + '/recent-fires?since_id=' + _lastRelayFireId;
+    const url = base.replace(/\/+$/, '') + '/recent-fires?since_id=' + _lastRelayFireId
+              + '&loot_since_id=' + _lastLootPostedId;   // #149 loot-posted cursor rides the same poll
     const res = await fetch(url, {
       headers: { 'Authorization': 'Bearer ' + token, 'Accept': 'application/json' },
     });
@@ -24642,7 +25307,10 @@ async function _pollMultiplexed() {
   if (want.length === 0) return;   // nothing due this tick (idle, between cadences)
   const qs = new URLSearchParams();
   qs.set('streams', want.join(','));
-  if (want.includes('recent_fires')) qs.set('since_id', String(_lastRelayFireId));
+  if (want.includes('recent_fires')) {
+    qs.set('since_id', String(_lastRelayFireId));
+    qs.set('loot_since_id', String(_lastLootPostedId));   // #149 loot-posted cursor rides recent_fires
+  }
   if (want.includes('tuning'))       qs.set('tuning_ver', _pollTuningVer || '');
   if (want.includes('triggers')) {
     qs.set('trig_ver', stats.guildTriggersVersion || '');
@@ -26761,26 +27429,23 @@ function _activeTimersSnapshot() {
   return out;
 }
 
-// ── #107 Loot-post announce + auction countdown chip ────────────────────────
-// When an officer posts a drop list in /gu or /rs (the same delimited item
-// list the officer Loot capture panel already parses), that IS the universal
-// bid-opening signal — EVERY raider's agent tails the line locally, so the
-// callout is a per-client LOCAL TTS + a countdown chip on the trigger overlay.
-// No relay, no dedup-across-clients problem. The TTS rides the SAME overlay
-// fire pipeline as triggers (_pushOverlay → recentTriggerFires → triggers.html
-// speaks it only when the master `enableTriggerTts` flag is on), and the chip
-// reuses the trigger _activeTimers machinery so it looks/behaves exactly like
-// a Death Touch countdown.
+// ── #107/#149 Loot-post announce + auction countdown chip ───────────────────
+// The auction chip + the "Loot posted" TTS open from the bot's loot-posted
+// BROADCAST (an officer's /loot post → recent-fires payload → _consumeLootPosted
+// above), NOT from chat-sniffing. The broadcast carries the officer's chosen
+// window (window_sec), so the chip's countdown matches the real bid window (#129).
+// The TTS rides the SAME overlay fire pipeline as triggers (_pushOverlay →
+// recentTriggerFires → triggers.html speaks it only when the master
+// `enableTriggerTts` flag is on), and the chip reuses the trigger _activeTimers
+// machinery so it looks/behaves exactly like a Death Touch countdown.
 //
-// Detection is deliberately high-precision, leaning on parseLootChatBody's
-// strict Title-Case item-name guard (rejects ordinary chatter). A single-item
-// link needs extra bid context to fire; a multi-item drop list is a loot post
-// on its own. A stated duration ("2 min", "90s") is parsed when present, else
-// lootAuctionDefaultSec (120s) is used, and a later bid call that DOES state a
-// duration re-anchors the most-recent auction's timer.
+// noteLootAuction (chat) is now a NARROW helper: it never opens a chip and never
+// speaks — it only re-anchors an already-open (broadcast-opened) auction's
+// window when a bid call STATES a duration (the "drop list … then 'bids, 2
+// minutes'" two-line officer workflow). The passive Loot Capture panel
+// (noteLootFromChat) is a separate, untouched consumer of the same chat lines.
 const _lootAuctions = new Map();   // sig → { items, openedAtMs, channel }
 let _lastLootSig     = null;
-let _lastLootBidCall = { atMs: 0, durSec: null };
 // Words that mark a bid call. Kept broad but anchored on \b so it doesn't fire
 // on substrings ("forbidden", "auctioneer" etc. still match "bid"/"auction" as
 // whole words only where intended).
@@ -26896,45 +27561,29 @@ function _openOrResetLootAuction(sig, items, durSec, nowMs, channel, silent) {
   scheduleRender();
 }
 
-// Universal entry point — called for every live /gu + /rs line (NOT the
-// --since backfill, which replays history and must not narrate old loot).
+// Chat entry point — called for every live /gu + /rs line (NOT the --since
+// backfill, which replays history and must not touch live auctions).
+//
+// #149: chip-opening + the spoken callout were RETIRED from this path — they now
+// come from the bot's loot-posted broadcast (_consumeLootPosted). What remains
+// is duration RE-ANCHORING: a bid call that states a duration ("bids, 2 minutes")
+// resets the window of the most-recent already-open (broadcast-opened) auction.
+// It NEVER opens a new chip and NEVER speaks (the re-anchor is silent), so it is
+// not gated by lootAuctionTts — the chip/timer is decoupled from the voice
+// toggle. A drop-list line with no open auction is a NO-OP here (still captured
+// by the separate, untouched noteLootFromChat → Loot Capture panel).
 function noteLootAuction(chatMsg) {
   try {
     if (!chatMsg || (chatMsg.channel !== 'guild' && chatMsg.channel !== 'raid')) return;
-    if (_optinState.lootAuctionTts === false) return;   // feature off
     const text  = String(chatMsg.text || '');
-    const nowMs = Date.parse(chatMsg.ts) || Date.now();
-    const items = parseLootChatBody(text);           // strict Title-Case guard
+    if (!LOOT_BID_CALL_RX.test(text)) return;        // only bid calls re-anchor
     const statedDur = _parseAuctionDuration(text);
-    const hasBidWord = LOOT_BID_CALL_RX.test(text);
-
-    if (items.length >= 1) {
-      // False-positive guard: a lone single-item link needs bid context (a bid
-      // word or duration in THIS line, or a bid call heard in the last 30s).
-      // Multi-item drop lists stand on their own — that's a loot post.
-      const recentBidCall = (nowMs - _lastLootBidCall.atMs) < 30_000 && _lastLootBidCall.atMs > 0;
-      if (items.length < 2 && !hasBidWord && statedDur == null && !recentBidCall) return;
-      const sig = items.map(i => i.name.toLowerCase()).sort().join('~');
-      // Duration precedence: this line's stated value → a recent bid call's
-      // stated value → the configured default.
-      const durSec = statedDur
-        || (recentBidCall ? _lastLootBidCall.durSec : null)
-        || _lootAuctionDefaultSec();
-      _openOrResetLootAuction(sig, items, durSec, nowMs, chatMsg.channel, false);
-      return;
-    }
-
-    // No item list. A standalone bid call ("bids open, 2 minutes") re-anchors
-    // the most-recent open auction's window when it states a duration — this is
-    // the drop-list-then-bid-call two-line workflow.
-    if (hasBidWord) {
-      _lastLootBidCall = { atMs: nowMs, durSec: statedDur || null };
-      if (statedDur != null && _lastLootSig && _lootAuctions.has(_lastLootSig)) {
-        const a = _lootAuctions.get(_lastLootSig);
-        if ((nowMs - a.openedAtMs) < 120_000) {
-          _openOrResetLootAuction(_lastLootSig, a.items, statedDur, nowMs, a.channel, true);
-        }
-      }
+    if (statedDur == null) return;                   // no stated window → nothing to re-anchor
+    if (!_lastLootSig || !_lootAuctions.has(_lastLootSig)) return;   // no open auction to re-time
+    const nowMs = Date.parse(chatMsg.ts) || Date.now();
+    const a = _lootAuctions.get(_lastLootSig);
+    if ((nowMs - a.openedAtMs) < 120_000) {
+      _openOrResetLootAuction(_lastLootSig, a.items, statedDur, nowMs, a.channel, true);
     }
   } catch (e) { void e; }
 }
@@ -28885,10 +29534,15 @@ module.exports = {
   EncounterBuilder, characterFromFilename,
   trackChChainLine, chChainSnapshot,
   _readZipEntry, _parseCrashReason, _crashZipTime,
-  // #107 loot-post announce — exported for the scratchpad smoke test.
+  // #107/#149 loot-post announce — exported for the scratchpad smoke test.
   parseLootChatBody, noteLootAuction, _parseAuctionDuration, _spokenDuration,
   _lootChipLabel, _activeTimers, _activeOverlays, _optinState, _lootAuctions,
   _lootAuctionsSnapshot,
+  _consumeLootPosted,   // #149 loot-posted broadcast consumer
+  noteLootFromChat,     // passive Loot Capture panel (untouched by #149)
+  _getLootCursorForTest: () => _lastLootPostedId,
+  _resetLootCursorForTest: () => { _lastLootPostedId = 0; _seenLootPostedIds = new Set(); },
+  _lootCapturesForTest: () => _lootCaptures.slice(),
   // #108 loot bidding — exported for the scratchpad smoke test / harness.
   startWebDashboard,
   _loadBidFamily, _saveBidFamily, _bidFamilyNames, _opendkpAuthed,

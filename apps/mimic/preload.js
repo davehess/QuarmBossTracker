@@ -187,10 +187,21 @@ function _buildOverlayMenu(onClose, state) {
 // still open, clipping it to the first two items (Uilnayar 2026-07-11). The
 // deferred fit runs once on close so the window snaps back to content size.
 let _wpMenuOpen = false;
+let _wpMenuOpenAt = 0;             // #159: when suppression began — bounds the pause
 let _wpMenuCleanupFn = null;
 let _wpMenuSuppressedFit = null;   // wrap element from a suppressed fit
 let _wpMenuSuppressedRawH = null;  // raw height from a suppressed overlayAutoHeight
 let _wpPageUsesAutoFit = false;    // page opted into auto-height at least once
+let _wpLastFitEl = null;           // #159: last explicitly-measured element — the
+                                   // menu-close replay must never fall back to
+                                   // document.body (height:100% → measures the
+                                   // WINDOW itself and cements a menu-grown 420px)
+// #159 bounded suppression (the #137 lesson: no pause without a guaranteed
+// resume). A menu whose cleanup never ran must not freeze sizing forever.
+const MENU_FIT_PAUSE_MS = 30_000;
+function _menuFitPaused() {
+  return _wpMenuOpen && (Date.now() - _wpMenuOpenAt) < MENU_FIT_PAUSE_MS;
+}
 
 // Raw-height twin of _autoFitOverlay's gate. NINE overlays (who, charm,
 // command, melody, mobinfo, pets, tank, triggers, zealhealth) call
@@ -201,7 +212,7 @@ let _wpPageUsesAutoFit = false;    // page opted into auto-height at least once
 // open, replay it on close.
 function _overlayAutoHeightRaw(h) {
   try {
-    if (_wpMenuOpen) { _wpMenuSuppressedRawH = h; return Promise.resolve(true); }
+    if (_menuFitPaused()) { _wpMenuSuppressedRawH = h; return Promise.resolve(true); }
     return ipcRenderer.invoke('overlay-auto-height', h);
   } catch (e) { return Promise.resolve(false); }
 }
@@ -214,6 +225,7 @@ function _attachOverlayMenu(moveBtn) {
     // Block auto-fit BEFORE growing — a poll tick between grow and open was
     // the race that re-shrunk the window under the menu.
     _wpMenuOpen = true;
+    _wpMenuOpenAt = Date.now();
     // Grow window first so the menu doesn't clip on tiny overlays. Menu is
     // ~380 px tall (11 items + paddings + divider); 420 leaves a buffer.
     try { ipcRenderer.invoke('overlay-ensure-min-height', 420); } catch (e) {}
@@ -229,6 +241,7 @@ function _openOverlayMenu(state) {
   // Re-open while one is up: tear the old one down cleanly first.
   if (_wpMenuCleanupFn) { try { _wpMenuCleanupFn(); } catch (e) {} }
   _wpMenuOpen = true;
+  _wpMenuOpenAt = Date.now();
   let closed = false;
   let idleTimer = null;
   const IDLE_MS = 4000;   // click-through clicks land in EQ, not on us — the
@@ -280,9 +293,16 @@ function _openOverlayMenu(state) {
 function _autoFitOverlay(wrapEl) {
   try {
     _wpPageUsesAutoFit = true;
+    if (wrapEl) _wpLastFitEl = wrapEl;
     // Chrome menu open → defer; the menu's close handler replays the fit.
-    if (_wpMenuOpen) { _wpMenuSuppressedFit = wrapEl || null; return; }
-    const w = wrapEl || document.getElementById('wrap') || document.body;
+    // Bounded (#159): a stuck menu flag can pause fits at most MENU_FIT_PAUSE_MS.
+    if (_menuFitPaused()) { _wpMenuSuppressedFit = wrapEl || null; return; }
+    // #159: prefer the LAST explicitly-measured element over document.body.
+    // body is height:100% on every overlay — measuring it returns the current
+    // WINDOW height, so a body-fallback fit (e.g. the menu-close replay with no
+    // suppressed element) re-asserts a menu-grown 420px window instead of
+    // shrinking back to content (Hitya's full-height DPS-HUD backdrop).
+    const w = wrapEl || _wpLastFitEl || document.getElementById('wrap') || document.body;
     if (!w) return;
     const h = (w.scrollHeight || 0) + 12;
     if (h > 0) ipcRenderer.invoke('overlay-auto-height', h);

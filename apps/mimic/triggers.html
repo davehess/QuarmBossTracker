@@ -682,9 +682,16 @@
       if (ch > 0) colNeeded = ch + 24;
     }
     var wanted = Math.max(baseline, timersBottom, colNeeded);
-    // Sane clamp — ~60% of the work area; beyond that #timers scrolls.
     var avail = (window.screen && window.screen.availHeight) ? window.screen.availHeight : 1000;
-    var cap = Math.max(baseline, Math.round(avail * 0.6));
+    // #129: loot-auction (dismissible) chips are ACTIONABLE — a raider must see
+    // every open bid window to bid on it. #timers is click-through, so any chip
+    // past the ceiling can't be scrolled to and is effectively lost. Give the
+    // loot case a taller ceiling (main.js still hard-clamps to the work area, and
+    // the #159 bounded-pause on overlayAutoHeight still applies) so N simultaneous
+    // auctions all stay visible; transient trigger timers keep the conservative
+    // 60% so a burst of warnings can't eat the screen.
+    var hasLoot = !!(timersEl && timersEl.querySelector('.timer-x'));
+    var cap = Math.max(baseline, Math.round(avail * (hasLoot ? 0.9 : 0.6)));
     return Math.min(wanted, cap);
   }
   var _lastWanted = 0;

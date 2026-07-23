@@ -23,21 +23,68 @@ const fs   = require('fs');
 const path = require('path');
 
 const AGENT = path.join(__dirname, '..', 'packages', 'wolfpack-logsync', 'index.js');
+const COMMAND_FILE = path.join(__dirname, '..', 'apps', 'mimic', 'command.html');
 
-function loadWebHtml() {
+function loadEmbeds() {
   let code = fs.readFileSync(AGENT, 'utf8');
   // Prevent the agent from actually starting when we _compile() it.
   code = code.replace(/if \(require\.main === module\)[\s\S]*$/, '');
   const m = new module.constructor();
-  // Append an export so we can read the interpolated template literal.
-  m._compile(code + '\nmodule.exports = { WEB_HTML };', AGENT);
-  return m.exports.WEB_HTML;
+  // Append an export so we can read the interpolated template literals.
+  m._compile(code + '\nmodule.exports = { WEB_HTML, COMMAND_HTML };', AGENT);
+  return m.exports;
+}
+
+// Byte-offset of the first char where two strings differ, or -1 if identical.
+function firstDiff(a, b) {
+  const n = Math.min(a.length, b.length);
+  for (let i = 0; i < n; i++) if (a[i] !== b[i]) return i;
+  return a.length === b.length ? -1 : n;
+}
+
+// Parse every <script> body and any browser-side `process.` leak in an HTML
+// string. Returns the number of failures (0 = clean). Shared by WEB_HTML and
+// the embedded overlay(s) so the escape-hazard guard covers both.
+function checkScripts(html, label) {
+  const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(x => x[1]);
+  if (scripts.length === 0) {
+    console.error(`✗ No <script> blocks found in ${label} — unexpected.`);
+    return 1;
+  }
+  let failed = 0;
+  scripts.forEach((body, i) => {
+    try {
+      // eslint-disable-next-line no-new-func
+      new Function(body);
+      console.log(`✓ ${label} <script> #${i} parses (${body.length} chars)`);
+    } catch (err) {
+      failed++;
+      console.error(`✗ ${label} <script> #${i} FAILED to parse: ${err.message}`);
+      const lineMatch = String(err.stack || '').match(/<anonymous>:(\d+)/);
+      if (lineMatch) {
+        const lineNo = parseInt(lineMatch[1], 10);
+        const ctx = body.split('\n')[lineNo - 1];
+        if (ctx) console.error(`    at served script line ${lineNo}: ${ctx.trim().slice(0, 160)}`);
+      }
+    }
+    const lines = body.split('\n');
+    for (let ln = 0; ln < lines.length; ln++) {
+      const t = lines[ln].trim();
+      if (t.startsWith('//') || t.startsWith('*')) continue;
+      if (/\bprocess\s*\.\s*\w/.test(lines[ln])) {
+        failed++;
+        console.error(`✗ Node-only \`process.\` reference in ${label} <script> #${i}, line ${ln + 1}: ${t.slice(0, 160)}`);
+      }
+    }
+  });
+  return failed;
 }
 
 function main() {
-  let html;
+  let html, embeds;
   try {
-    html = loadWebHtml();
+    embeds = loadEmbeds();
+    html = embeds.WEB_HTML;
   } catch (err) {
     console.error('✗ Could not load WEB_HTML from the agent:', err.message);
     process.exit(1);
@@ -82,6 +129,32 @@ function main() {
     process.exit(1);
   }
 
+  // RULE (2026-07-15/16, agent v3.1.59 regression found on raid night): the
+  // SERVED script must never reference the Node-only `process` global — a
+  // bare `process.env.X` inside the template (instead of a server-side
+  // ${...} interpolation) throws "process is not defined" in the browser and
+  // kills every top-level statement after it in the page's single script
+  // block. Server-side interpolations are already resolved by the time
+  // WEB_HTML is a string, so ANY `process.` surviving into a script body is
+  // a leak by definition.
+  let procLeaks = 0;
+  scripts.forEach((body, i) => {
+    const lines = body.split('\n');
+    for (let ln = 0; ln < lines.length; ln++) {
+      const t = lines[ln].trim();
+      if (t.startsWith('//') || t.startsWith('*')) continue;   // prose mentions
+      if (/\bprocess\s*\.\s*\w/.test(lines[ln])) {
+        procLeaks++;
+        console.error(`✗ Node-only \`process.\` reference in served <script> #${i}, line ${ln + 1}:`);
+        console.error(`    ${t.slice(0, 160)}`);
+      }
+    }
+  });
+  if (procLeaks > 0) {
+    console.error(`\n${procLeaks} browser-side \`process.\` leak(s) — bake the value server-side with \${...} instead.`);
+    process.exit(1);
+  }
+
   // RULE (Uilnayar 2026-07-08, after the 1.7.0-beta.2 Zeal-pipe collapse):
   // every <details> the dashboard emits MUST persist its open state through
   // the wpKeep store — section repaints (and PARENT-section repaints, which
@@ -111,7 +184,45 @@ function main() {
     process.exit(1);
   }
 
-  console.log('\nAll dashboard script blocks parse cleanly; all <details> carry wpKeep. ✅');
+  // RULE (#65 hot-servable overlays, agent v3.4.18): the agent embeds
+  // apps/mimic/command.html as COMMAND_HTML and serves it at GET /overlay/
+  // command so the Command Center overlay rides agent hot-swaps. The .html
+  // file is the SINGLE SOURCE OF TRUTH; the embed MUST be byte-identical or
+  // Mimic's agent-served overlay and its file:// fallback diverge silently.
+  // Enforced here: any drift fails the build (fix with
+  // `node scripts/sync-command-embed.js`). The embed also carries browser JS,
+  // so it gets the same <script> escape-hazard + `process.` leak parse.
+  const embed = embeds.COMMAND_HTML;
+  if (typeof embed !== 'string' || !embed.includes('<!doctype html>')) {
+    console.error('✗ COMMAND_HTML did not resolve to the Command Center HTML string.');
+    process.exit(1);
+  }
+  let file;
+  try {
+    file = fs.readFileSync(COMMAND_FILE, 'utf8');
+  } catch (err) {
+    console.error('✗ Could not read apps/mimic/command.html:', err.message);
+    process.exit(1);
+  }
+  if (embed !== file) {
+    const at = firstDiff(embed, file);
+    console.error('✗ COMMAND_HTML has DRIFTED from apps/mimic/command.html.');
+    console.error(`    embed length ${embed.length}, file length ${file.length}, first diff at char ${at}.`);
+    const show = (s, i) => JSON.stringify(s.slice(Math.max(0, i - 20), i + 20));
+    console.error(`    embed …${show(embed, at)}…`);
+    console.error(`    file  …${show(file, at)}…`);
+    console.error('    → command.html is authoritative. Re-sync with: node scripts/sync-command-embed.js');
+    process.exit(1);
+  }
+  console.log(`✓ COMMAND_HTML byte-matches apps/mimic/command.html (${embed.length} chars)`);
+
+  const cmdFailed = checkScripts(embed, 'command-overlay');
+  if (cmdFailed > 0) {
+    console.error(`\n${cmdFailed} problem(s) in the embedded Command Center overlay — the /overlay/command page would break.`);
+    process.exit(1);
+  }
+
+  console.log('\nAll dashboard script blocks parse cleanly; all <details> carry wpKeep; COMMAND_HTML in sync. ✅');
 }
 
 main();
