@@ -175,6 +175,13 @@
   var WHO_CLASSES = ['Warrior','Cleric','Paladin','Ranger','Shadow Knight','Druid','Monk','Bard','Rogue','Shaman','Necromancer','Wizard','Magician','Enchanter','Beastlord'];
   var _pendingClass = {};        // nameLower → { cls, at }
   var CLASS_GRACE_MS = 12000;    // keep the dropdown editable this long after a pick
+  // Repaint-pause safety net (#137): tick() suspends repaints while a class
+  // <select> is the activeElement so an innerHTML swap can't slam an open
+  // dropdown shut. A <select> KEEPS focus after a pick (and window blur doesn't
+  // reset activeElement), so gating on that alone froze the overlay forever.
+  // Cap the pause at PICK_PAUSE_MS so the poll loop always resumes.
+  var _pickPauseSince = 0;
+  var PICK_PAUSE_MS = 8000;
   function classPickerHtml(name){
     var nk = (name || '').toLowerCase();
     var pend = (_pendingClass[nk] && _pendingClass[nk].cls) || '';
@@ -228,6 +235,13 @@
     col    += '<span class="lvl'   + (lvlIsDeanon   ? ' deanon' : '') + '">' + (lvl ? 'L' + lvl : '') + '</span>';
     if (gone)  col += '<span class="goneAt">· ' + ago(p.observedAt) + ' ago</span>';
     return '<div class="' + cls + '"><span class="left">' + left + '</span>' + col + '</div>';
+  }
+  // Fail-soft per row (#137 hardening): a single malformed/overridden row must
+  // never throw out of the render and blank every other row. The outer poll
+  // try/catch keeps setInterval alive; this keeps one bad row isolated.
+  function safeRow(p, gone){
+    try { return rowHtml(p, gone); }
+    catch (err) { return ''; }
   }
 
   var bodyEl = document.getElementById('body');
@@ -286,6 +300,12 @@
     var cls  = sel.value || '';
     if (!name || !cls) return;
     _pendingClass[name.toLowerCase()] = { cls: cls, at: Date.now() };   // shown + editable through the grace window
+    // #137: a <select> keeps focus after a pick, and tick()'s mid-pick guard
+    // suspends repaints while a .clspick is the activeElement — without this
+    // blur the overlay froze permanently after any class override. Blur now to
+    // release focus so the poll loop resumes; _pendingClass keeps the picker
+    // shown + pre-selected through the grace window so the pick stays correctable.
+    try { sel.blur(); } catch (err) {}
     try {
       fetch('http://127.0.0.1:'+PORT+'/api/who-class', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -297,9 +317,17 @@
   async function tick(){
     if (Date.now() < _copyFlashUntil) return;   // let the ✓ copied flash survive a beat
     // Don't repaint the list while someone is mid-pick — an innerHTML swap would
-    // slam the open dropdown shut (the "let me correct it" window).
+    // slam the open dropdown shut (the "let me correct it" window). But NEVER
+    // suspend forever: a <select> keeps focus after a pick, so gating on
+    // activeElement alone froze the overlay permanently (#137). Cap the pause at
+    // PICK_PAUSE_MS; the change handler also blur()s on pick so this rarely trips.
     var _ae = document.activeElement;
-    if (_ae && _ae.classList && _ae.classList.contains('clspick')) return;
+    if (_ae && _ae.classList && _ae.classList.contains('clspick')) {
+      if (!_pickPauseSince) _pickPauseSince = Date.now();
+      if (Date.now() - _pickPauseSince < PICK_PAUSE_MS) return;
+    } else {
+      _pickPauseSince = 0;
+    }
     try {
       const r = await fetch('http://127.0.0.1:'+PORT+'/api/state',{cache:'no-store'});
       const s = await r.json();
@@ -310,11 +338,11 @@
       emptyEl.style.display = 'none';
       var h = '';
       h += '<div class="sec"><div class="sec-h">Current <span class="n">' + w.current.length + '</span> · ' + ago(new Date(w.capturedAt).toISOString()) + ' ago</div><div class="rowlist">';
-      for (var i=0;i<w.current.length;i++) h += rowHtml(w.current[i], false);
+      for (var i=0;i<w.current.length;i++) h += safeRow(w.current[i], false);
       h += '</div></div>';
       if (Array.isArray(w.recentGone) && w.recentGone.length) {
         h += '<div class="sec gone"><div class="sec-h">Recently gone <span class="n">' + w.recentGone.length + '</span></div><div class="rowlist">';
-        for (var j=0;j<w.recentGone.length;j++) h += rowHtml(w.recentGone[j], true);
+        for (var j=0;j<w.recentGone.length;j++) h += safeRow(w.recentGone[j], true);
         h += '</div></div>';
       }
       if (bodyEl.__wpHtml !== h) {   // byte-stability guard (2026-07-07)

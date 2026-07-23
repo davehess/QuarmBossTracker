@@ -32,6 +32,17 @@
   .manabar{height:5px;background:rgba(255,255,255,0.13);border-radius:3px;overflow:hidden;margin-top:2px}
   .manabar > div{height:100%;background:#5a8af0;transition:width 250ms linear}
   .mob .mana{font-size:9px;color:#79c0ff;margin-top:2px;font-variant-numeric:tabular-nums}
+  /* #130 slow status — a distinct compact badge right under the HP header so
+     "is it slowed, with what, how long left" reads at a glance (a slow matters
+     more than a generic debuff row, so it is NOT buried in the debuff list). */
+  .slowbadge{display:flex;align-items:center;gap:5px;margin-top:5px;padding:2px 7px;border-radius:5px;
+    background:rgba(240,180,41,0.16);border:1px solid rgba(240,180,41,0.5);
+    font-size:11px;font-weight:600;color:#ffd566;text-shadow:0 1px 2px #000;
+    font-variant-numeric:tabular-nums;line-height:1.3}
+  .slowbadge .sn{color:#ffe08a}
+  .slowbadge .sm{color:#f0b429}
+  .slowbadge .by{color:#c9a227;font-weight:400;font-style:italic;font-size:10px}
+  .slowbadge .st2{color:#e6c34a;margin-left:auto}
   /* observed buffs on the current target (timed from the cast that landed) */
   .tbuffs{margin-top:6px;display:flex;flex-direction:column;gap:3px}
   .tbuffs .hdr{font-size:9px;color:#6b7280;letter-spacing:0.05em;text-transform:uppercase}
@@ -203,6 +214,9 @@
   function esc(s){ return String(s == null ? '' : s).replace(/[&<>"]/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c]; }); }
   function fmtNum(n){ if (n == null) return '?'; n = +n; if (n >= 1000000) return (n/1000000).toFixed(1)+'M'; if (n >= 1000) return Math.round(n/1000)+'k'; return String(n); }
   function fmtSecs(s){ s = Math.max(0, Math.round(s)); if (s >= 3600) return Math.floor(s/3600)+'h'+String(Math.floor((s%3600)/60)).padStart(2,'0'); var m=Math.floor(s/60); return m+':'+String(s-m*60).padStart(2,'0'); }
+  // Short slow name for the badge — "Turgur's Insects" → "Turgur's" (matches the
+  // agent's _slowShortName so the badge, the callout, and the debuff row agree).
+  function _slowShort(n){ return String(n||'').replace(/\s+(Insects|Deeds|Pace|Sleep)$/i,'').trim() || String(n||''); }
   // Buffs on the current target. For our own characters these are live Zeal
   // buffs (real remaining time, no original duration → full bar). For mobs /
   // other players they're observed cast-landings (proportional bar).
@@ -400,6 +414,21 @@
     var hp = (mi.target_hp_pct != null) ? Math.max(0, Math.min(100, mi.target_hp_pct)) : null;
     var hpColor = hp == null ? '#a371f7' : (hp > 50 ? '#56d364' : (hp > 20 ? '#f0883e' : '#f85149'));
     var hpBar = hp != null ? '<div class="hpbar"><div style="width:'+hp.toFixed(0)+'%;background:'+hpColor+'"></div></div>' : '';
+    // #130 — best ACTIVE slow badge (🐌 Turgur's 75% · 2:10). Self-casts name the
+    // caster; bystander landings can't (documented limitation). Distinct from the
+    // debuff list so a raid's slow status stands out next to the HP header.
+    var slowBadge = '';
+    if (mi.target_slow && mi.target_slow.name) {
+      var sl = mi.target_slow;
+      var slMag = sl.magnitude ? ' <span class="sm">'+sl.magnitude+'%</span>' : '';
+      var slBy  = sl.caster ? ' <span class="by">by '+esc(sl.caster)+'</span>' : '';
+      var slRem = (sl.remaining_secs != null) ? '<span class="st2">'+fmtSecs(sl.remaining_secs)+'</span>' : '';
+      var slTip = 'Slowed — '+esc(sl.name)+(sl.magnitude ? ' '+sl.magnitude+'% attack speed' : '')
+                + (sl.caster ? ' · cast by '+esc(sl.caster) : ' · caster unknown (bystander landing)')
+                + (sl.remaining_secs != null ? ' · '+fmtSecs(sl.remaining_secs)+' left' : '')
+                + ' · EQ slows do not stack — strongest shown';
+      slowBadge = '<div class="slowbadge" title="'+slTip+'">🐌 <span class="sn">'+esc(_slowShort(sl.name))+'</span>'+slMag+slBy+slRem+'</div>';
+    }
     // Mana — comes from eqemu_npc_types.mana via the bot. Render a bar +
     // numeric line for any NPC with non-zero mana. Live tracking (per-cast
     // subtraction + regen) is a follow-up — this is the catalog baseline.
@@ -582,6 +611,7 @@
       + (sub.length ? '<div class="sub">'+sub.join(' · ')+'</div>' : '')
       + slotLine
       + hpBar
+      + slowBadge
       + manaBar
       + manaLine
       + renderTargetCasting(mi)

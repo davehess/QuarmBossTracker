@@ -3867,6 +3867,212 @@ function _isSlowSpell(name) {
   return SLOW_SPELLS.has(String(name).toLowerCase().replace(/`/g, "'").trim());
 }
 
+// ── #130 slow status on the target: best-active-slow + timer + land/drop ─────
+// Shamans/enchanters asked for slow visibility ON THE MOB — is it slowed, with
+// what, by whom (when known), and how long is left — plus an audible cue when a
+// slow lands and when it drops so they know to reslow. Three pieces live here:
+//   1) SLOW_MAGNITUDES — the attack-speed reduction each slow applies, so the
+//      display + callouts keep the STRONGEST active slow (EQ slows don't stack —
+//      the strongest applies; a weaker cast under a stronger one is a no-op).
+//   2) _slowsByTarget — every active slow observed on each target, EACH timed
+//      from its own catalog duration; the DISPLAY (_bestSlowForTarget) derives
+//      the strongest still-live one, and falls back to a weaker slow whose timer
+//      is still live when the strongest expires (rather than showing nothing).
+//   3) land/drop callouts on the trigger overlay (TTS gated downstream by
+//      enableTriggerTts, same pipeline as the loot/rampage callouts), gated to
+//      the MAIN target (reuses _rampageOnMainTarget) to stay low-noise.
+//
+// GROUNDING — magnitudes are eqemu-derived, NOT guessed. The AGENT spell catalog
+// (id/name/dur/durf/good) carries NO SPA data, so — exactly as SLOW_SPELLS above
+// is a hardcoded named list — this is a hardcoded table grounded from
+// eqemu_spells.raw. Each classic slow is a level-scaling SPA-11 (SE_AttackSpeed)
+// effect: `base` at min level, formula-scaled, CAPPED by the `max` field — the
+// attack-speed % the target reaches at a max-level caster (every raid slower is
+// capped there). Slow % = 100 − max. VERIFIED 2026-07-23 against Supabase
+// project zhtoekwakucbckvatfky (raw->'eff' / raw->'max' for the SPA-11 slot):
+//   Turgur's Insects max 25 → 75%   Togor's Insects max 30 → 70%
+//   Forlorn Deeds    max 30 → 70%   Shiftless Deeds max 35 → 65%
+//   Tagar's Insects  max 50 → 50%   Tepid Deeds     max 50 → 50%
+//   Walking Sleep    max 65 → 35%   Languid Pace    max 70 → 30%
+//   Drowsy           max 75 → 25%   Rage of Ssraeshza (flat SPA-11 base 10) → 90%
+// (Rage matches the existing #142 comment: "SPA 11 base 10 = −90% attack speed".)
+// Cripple is in SLOW_SPELLS for the #105 timeline but has NO SPA-11 component on
+// Quarm (a STR/AC/ATK debuff — raw->'eff' = [5,6,4,1]): no magnitude here, so it
+// ranks below any real slow (treated as 0 / unknown).
+const SLOW_MAGNITUDES = new Map([
+  ['rage of ssraeshza', 90],
+  ["turgur's insects",  75],
+  ["togor's insects",   70],
+  ['forlorn deeds',     70],
+  ['shiftless deeds',   65],
+  ["tagar's insects",   50],
+  ['tepid deeds',       50],
+  ['walking sleep',     35],
+  ['languid pace',      30],
+  ['drowsy',            25],
+]);
+function _slowMagnitude(name) {
+  if (!name) return 0;
+  return SLOW_MAGNITUDES.get(String(name).toLowerCase().replace(/`/g, "'").trim()) || 0;
+}
+// A slow's SHORT spoken name — "Turgur's Insects" → "Turgur's" — for the TTS.
+function _slowShortName(name) {
+  return String(name || '').replace(/\s+(insects|deeds|pace|sleep)$/i, '').trim() || String(name || '');
+}
+// Active slows observed per target: targetLower → Map<spellLower,
+// { name, magnitude, caster, landedAtMs, expiresAtMs }>. `caster` is set only
+// when we KNOW it (our own self-cast); a bystander-observed land carries null
+// (the same limitation the raid-review slows section documents). expiresAtMs 0 =
+// unknown catalog duration (rare — the classic slows are all catalog-timed).
+const _slowsByTarget = new Map();
+const SLOW_TARGET_CAP     = 200;
+const SLOW_PRUNE_GRACE_MS = 3000;
+// Per-target last-ANNOUNCED best slow (targetLower → { name, magnitude }) — edge
+// detection for the land/drop callouts. Only main-target announcements land here.
+const _slowCalloutState = new Map();
+
+// Pure best-active-slow selection: the STRONGEST slow whose timer is still live
+// (expiresAtMs === 0 means unknown duration → treated as live), ties broken by
+// the later expiry. Returns the winning entry or null. Dependency-free so a
+// source-slice test can drive it directly.
+function _pickBestActiveSlow(entries, nowMs) {
+  let best = null;
+  for (const e of entries) {
+    if (!e || !e.name) continue;
+    if (e.expiresAtMs > 0 && e.expiresAtMs <= nowMs) continue;   // timer already expired
+    if (!best
+        || e.magnitude > best.magnitude
+        || (e.magnitude === best.magnitude && (e.expiresAtMs || 0) > (best.expiresAtMs || 0))) {
+      best = e;
+    }
+  }
+  return best;
+}
+// Best active slow on a target for DISPLAY — { name, magnitude, caster,
+// remaining_secs, total_secs } or null. Prunes long-expired entries as it reads.
+function _bestSlowForTarget(targetLower, nowMs) {
+  const mp = _slowsByTarget.get(targetLower);
+  if (!mp || mp.size === 0) return null;
+  const now = nowMs || Date.now();
+  const entries = [];
+  for (const [k, e] of mp) {
+    if (e && e.expiresAtMs > 0 && e.expiresAtMs <= now - SLOW_PRUNE_GRACE_MS) { mp.delete(k); continue; }
+    if (e) entries.push(e);
+  }
+  if (mp.size === 0) { _slowsByTarget.delete(targetLower); return null; }
+  const best = _pickBestActiveSlow(entries, now);
+  if (!best) return null;
+  const remaining = best.expiresAtMs > 0 ? Math.max(0, Math.round((best.expiresAtMs - now) / 1000)) : null;
+  const total     = best.expiresAtMs > 0 ? Math.max(0, Math.round((best.expiresAtMs - best.landedAtMs) / 1000)) : null;
+  return { name: best.name, magnitude: best.magnitude, caster: best.caster || null,
+           remaining_secs: remaining, total_secs: total };
+}
+// Record a slow landing on a target (both parse hook sites feed here). `caster`
+// is the self-cast caster or null. Refreshes an existing same-slow window and
+// keeps every distinct slow so best-active can fall back on expiry. Then fires
+// the LAND callout (main-target gated inside _maybeAnnounceSlowLand).
+function _noteSlowForTarget(evt, caster) {
+  if (!evt || !evt.spell_name || !evt.target) return;
+  if (!_isSlowSpell(evt.spell_name)) return;
+  const targetLower = String(evt.target).toLowerCase();
+  const spellLower  = String(evt.spell_name).toLowerCase().replace(/`/g, "'").trim();
+  const atMs = evt.cast_at ? (Date.parse(evt.cast_at) || Date.now()) : Date.now();
+  // Caster level is unknown at land time — estimate off the era cap, the same
+  // floor the buff/timeline trackers use (level-formula slows compute 0 ticks
+  // otherwise).
+  const durTicks    = _durTicksForLevel(evt.dur_formula, evt.dur_ticks, _assumedCasterLevel());
+  const expiresAtMs = durTicks > 0 ? atMs + durTicks * 6000 : 0;
+  const magnitude   = _slowMagnitude(evt.spell_name);
+  let mp = _slowsByTarget.get(targetLower);
+  if (!mp) { mp = new Map(); _slowsByTarget.set(targetLower, mp); }
+  const existing = mp.get(spellLower);
+  if (existing) {
+    existing.landedAtMs = atMs;
+    if (expiresAtMs) existing.expiresAtMs = expiresAtMs;
+    if (caster) existing.caster = caster;    // a later self-cast view names a bystander-first land
+    existing.magnitude = magnitude;
+  } else {
+    mp.set(spellLower, { name: evt.spell_name, magnitude, caster: caster || null, landedAtMs: atMs, expiresAtMs });
+  }
+  if (_slowsByTarget.size > SLOW_TARGET_CAP) {
+    const oldest = _slowsByTarget.keys().next().value;
+    if (oldest && oldest !== targetLower) _slowsByTarget.delete(oldest);
+  }
+  _maybeAnnounceSlowLand(targetLower, evt.target, atMs);
+}
+// LAND callout — main-target only, and only when the best active slow STRENGTHENS
+// (a fresh slow, or a stronger one taking over). A weaker slow under an active
+// stronger one, or a plain refresh, is silent (the best spell doesn't change).
+function _maybeAnnounceSlowLand(targetLower, targetName, nowMs) {
+  if (!_rampageOnMainTarget(targetName)) return;   // #155-style main-target gate
+  const best = _bestSlowForTarget(targetLower, nowMs);
+  if (!best) return;
+  const prev = _slowCalloutState.get(targetLower);
+  const changed = !prev || String(best.name).toLowerCase() !== String(prev.name || '').toLowerCase();
+  _slowCalloutState.set(targetLower, { name: best.name, magnitude: best.magnitude });
+  if (changed) _announceSlowLand(best);
+}
+function _announceSlowLand(best) {
+  const magTxt    = best.magnitude ? ' ' + best.magnitude + '%' : '';
+  const casterTxt = best.caster ? ' · ' + best.caster : '';
+  _pushOverlay({
+    text:        '🐌 Slowed — ' + best.name + magTxt + casterTxt,
+    tts:         'Slowed. ' + _slowShortName(best.name),
+    color:       'amber',
+    duration_ms: 5000,
+    shownAt:     Date.now(),
+    firedAt:     Date.now(),
+    trigger:     'Slow landed',
+    scope:       'slow',
+    test:        false,
+  });
+}
+function _announceSlowDrop(name) {
+  _pushOverlay({
+    text:        '🐌 Slow dropped — reslow' + (name ? ' (' + _slowShortName(name) + ')' : ''),
+    tts:         'Slow dropped. Reslow.',
+    color:       'red',
+    duration_ms: 6000,
+    shownAt:     Date.now(),
+    firedAt:     Date.now(),
+    trigger:     'Slow dropped',
+    scope:       'slow',
+    test:        false,
+  });
+}
+// Is `nameLower` a live Zeal target on any watched character right now? Guards
+// the DROP callout so a killed / de-targeted mob (its slow simply outliving on a
+// corpse) never nags a "reslow".
+function _isNameCurrentlyTargeted(nameLower) {
+  if (!nameLower) return false;
+  const now = Date.now();
+  for (const ch of Object.keys(_zealState)) {
+    const st = _zealState[ch];
+    if (!st || !st.target_name) continue;
+    if ((now - (st.updatedAt || 0)) > 60000) continue;
+    if (String(st.target_name).toLowerCase() === nameLower) return true;
+  }
+  return false;
+}
+// 1s tick — drives the fall-off (DROP) callout (catalog expiry has no log line)
+// and the SILENT downgrade when the strongest slow expires but a weaker one is
+// still live (display flips; no callout).
+function _tickSlowCallouts() {
+  const now = Date.now();
+  for (const [targetLower, prev] of _slowCalloutState) {
+    const best = _bestSlowForTarget(targetLower, now);
+    if (best) {
+      if (String(best.name).toLowerCase() !== String(prev.name || '').toLowerCase()) {
+        _slowCalloutState.set(targetLower, { name: best.name, magnitude: best.magnitude });   // downgrade — silent
+      }
+      continue;
+    }
+    _slowCalloutState.delete(targetLower);
+    if (_isNameCurrentlyTargeted(targetLower) && _rampageOnMainTarget(targetLower)) _announceSlowDrop(prev.name);
+  }
+}
+// ── end #130 slow status ─────────────────────────────────────────────────────
+
 // DISCIPLINE activations surface as bystander-visible emote lines. Data-driven:
 // each row is { name, self, other } where `other` captures the actor in group 1.
 // The four "fighting style" stance discs are grounded — Defensive's exact text
@@ -5591,6 +5797,17 @@ class EncounterBuilder {
       const attackerIsTarget = rawAtk0 && this.targets.has(rawAtk0);
       if (!isSelfHit && !attackerIsTarget) {
         this.targets.set(event.defender, (this.targets.get(event.defender) || 0) + (event.amount || 0));
+        // #3 Extended Target V2 — rolling per-mob damage-in for the DPS-on-mob
+        // readout. Same signal as this.targets, but TIMESTAMPED + windowed
+        // (this.targets is cumulative). Other raiders' hits appear in our log
+        // when they're in range, so this local sum ≈ the raid view. Local-only
+        // and gated off backfill builders (this.silent) so a --since replay
+        // can't inflate the live rate.
+        if (!this.silent && (event.amount || 0) > 0) {
+          const mobDmg = stats.recentMobDamage || (stats.recentMobDamage = []);
+          mobDmg.push({ mob: event.defender.toLowerCase(), amount: event.amount || 0, tsMs: Date.parse(event.ts) || Date.now() });
+          if (mobDmg.length > 600) mobDmg.splice(0, mobDmg.length - 600);
+        }
       }
     }
 
@@ -8174,25 +8391,9 @@ function _findDA(buffsList, greenSecs) {
 //      (stats.recentTankHits; rampage hits already excluded at record
 //      time so a rampage cycle can't flip the MT).
 // Returns { name, source } or null when neither fires (out of combat / solo).
-// Target-of-target for a mob: which raider it's meleeing, from recentTankHits
-// (the local combat log's "<mob> hits <player>"; Zeal's gauge stream has no ToT
-// slot). Cross-client mobs the local client isn't in range of won't have hits,
-// so tot is null for those. Uilnayar 2026-07-15 — Extended Target ToT column.
-function _totForMob(mobLower) {
-  if (!mobLower) return null;
-  const now = Date.now();
-  const tally = new Map();
-  for (const h of (stats.recentTankHits || [])) {
-    if (now - h.tsMs > 15_000) continue;
-    if (h.mob !== mobLower) continue;
-    const k = h.tank.toLowerCase();
-    const e = tally.get(k) || { name: h.tank, hits: 0 };
-    e.hits++; tally.set(k, e);
-  }
-  let best = null;
-  for (const e of tally.values()) if (!best || e.hits > best.hits) best = e;
-  return best ? best.name : null;
-}
+// (The mob's current melee victim is derived at the /api/extended-target proxy
+// via _victimForMob — most-recent connect within a 10s staleness window — as
+// part of the #3 Extended Target V2 enrichment, not here.)
 function _resolveMainTank(mainTargetName) {
   const chc = chChainSnapshot();
   if (chc && chc.target) return { name: String(chc.target), source: 'ch_chain' };
@@ -8276,8 +8477,24 @@ function _serializeTankState() {
   // cross-client feed hasn't warmed yet (Uilnayar 2026-07-06).
   const mainTarget   = _resolveMainTarget(active);
   const targetName   = mainTarget ? mainTarget.name   : localTargetName;
-  const targetHpPct  = mainTarget ? mainTarget.hp_pct : localTargetHpPct;
-  const targetSource = mainTarget ? 'extended' : (localTargetName ? 'local' : null);
+  // #128 — near-live local-target HP. When the raid's main target IS this
+  // client's OWN Zeal slot-6 target (name match, case-insensitive), read the
+  // headline HP straight from the live local gauge (localTargetHpPct, refreshed
+  // from _zealState every ~300ms) instead of mainTarget.hp_pct, which comes from
+  // the extended-target aggregate (_extTargetCache: a 3s proxy TTL stacked on the
+  // bot's cross-client live-state heartbeat — seconds stale). Field report #128:
+  // LOCAL targets lagged the MOST precisely because their HP was being routed
+  // through that bot round-trip even though the live value sat in the local pipe.
+  // Remote main targets (no local name match) keep the cross-client aggregate.
+  const localMatchesMain = !!(mainTarget && localTargetName &&
+    String(mainTarget.name).toLowerCase() === String(localTargetName).toLowerCase());
+  const preferLocalHp = localMatchesMain && localTargetHpPct != null;
+  const targetHpPct  = preferLocalHp
+                        ? localTargetHpPct
+                        : (mainTarget ? mainTarget.hp_pct : localTargetHpPct);
+  const targetSource = mainTarget
+                        ? (preferLocalHp ? 'local_live' : 'extended')
+                        : (localTargetName ? 'local' : null);
 
   // Buffs — passthrough with normalization. EQ buff durations come in 6s
   // ticks; convert to seconds remaining for the overlay.
@@ -8664,10 +8881,20 @@ function _serializeCommandCenterState() {
   const bqCached = _buffQueueCache.get('|' + String(activeChar || '').toLowerCase());
   const debuffQueue = (bqCached && bqCached.payload && Array.isArray(bqCached.payload.debuff_queue))
     ? bqCached.payload.debuff_queue : [];
-  const cures = debuffQueue.map(d => ({
-    name: d.name, class: d.class, curses: d.curses,
-    all_being_cured: !!d.all_being_cured, same_zone: !!d.same_zone,
-  }));
+  const cures = debuffQueue.map(d => {
+    // Stable per-row id for the Command Center's local dismiss (#66): character
+    // name + the sorted set of debuff spell names on that row. Stays constant
+    // while the same debuffs persist (so a dismissed row does NOT resurrect on
+    // the next poll), but changes the moment the debuff set changes (a genuinely
+    // new curse re-shows). The overlay keys its client-side dismissed set on this.
+    const curseNames = (Array.isArray(d.curses) ? d.curses : [])
+      .map(c => (c && c.name) ? String(c.name) : '').filter(Boolean).sort();
+    return {
+      name: d.name, class: d.class, curses: d.curses,
+      all_being_cured: !!d.all_being_cured, same_zone: !!d.same_zone,
+      id: String(d.name || '?').toLowerCase() + '|' + curseNames.join(','),
+    };
+  });
 
   return {
     character:     activeChar,
@@ -9739,16 +9966,30 @@ function _serializeForDashboard() {
           liveChars.add(String(ch).toLowerCase());
         }
       }
-      // Pet names that belong to an ACTIVE charm session → skip (charm tracker).
-      const activeCharmPets = new Set();
+      // Active charm sessions keyed by owner (ownerLower → pet name). #125:
+      // a charm pet IS a pet — it must show in the Pet tracker too, sourced
+      // from the SAME authoritative _charmTickTracker state the Charm tracker
+      // reads, so it's visible the instant a charm lands. Previously we SKIPPED
+      // active charm pets here ("it's in the charm tracker"), which made the
+      // charm pet's Pet-tracker row depend entirely on fall-through state —
+      // /pet-health reports (_petHealthByOwner, also disk-restored) and
+      // owner-keyed landings (_petBuffLandings). Veterans had that accumulated/
+      // persisted state so a row rendered; a fresh install's cold maps had
+      // nothing, so a charmer on a brand-new Mimic never saw their charm pet in
+      // the Pet tracker (Primas / Seaman / Ktpearie). Now an active charm
+      // session alone yields a row: owner from the session, HP from slot 16.
+      const activeCharmByOwner = new Map();
       for (const [, info] of _charmTickTracker) {
-        if (info && info.is_active && info.pet) activeCharmPets.add(String(info.pet).toLowerCase());
+        if (info && info.is_active && info.pet && info.owner) {
+          activeCharmByOwner.set(String(info.owner).toLowerCase(), info.pet);
+        }
       }
-      // Owners worth showing: anyone with a live pet, a /pet health report, or
-      // a recent landing on their pet — gated below by Zeal-freshness so a
-      // logged-off char's stale state doesn't render.
+      // Owners worth showing: anyone with a live pet, an active charm session,
+      // a /pet health report, or a recent landing on their pet — gated below by
+      // Zeal-freshness so a logged-off char's stale state doesn't render.
       const owners = new Set([
         ...livePet.keys(),
+        ...activeCharmByOwner.keys(),
         ..._petHealthByOwner.keys(),
         ..._petBuffLandings.keys(),
       ]);
@@ -9759,10 +10000,10 @@ function _serializeForDashboard() {
         // it's still in the maps because we persist across restarts.
         if (!liveChars.has(owner)) continue;
         const lp = livePet.get(owner);
-        const petName = lp ? lp.name : null;
-        // Charm pet (slot-16 name starts with a/an, tracked as active charm) →
-        // skip; it's in the charm tracker.
-        if (petName && activeCharmPets.has(String(petName).toLowerCase())) continue;
+        // Pet name: the live slot-16 gauge when present, else the active charm
+        // session's pet (the gauge can blip empty between mob ticks — the charm
+        // session keeps the row stable, matching the Charm tracker).
+        const petName = (lp && lp.name) || activeCharmByOwner.get(owner) || null;
         const rep = _petHealthByOwner.get(owner);
         const repFresh = rep && (now - (rep.last_seen_at || 0)) <= PET_HEALTH_TTL_MS;
         const buffs = petBuffsForOwner(owner);
@@ -17363,20 +17604,49 @@ function startWebDashboard(port) {
         fetchExtendedTarget(selfCharacter);
         const cached = _extTargetCache.get(String(selfCharacter || '').toLowerCase());
         const payload = (cached && cached.payload) || { targets: [], loading: true };
-        // Enrich mob rows with target-of-target (who the mob is meleeing) from
-        // the local combat log — the bot aggregation has no ToT (Zeal's gauge
-        // stream carries none). A player/pet name never matches a mob-hit
-        // record so its tot stays null; enrich all rows, keep only non-null.
         let outPayload = payload;
+        // #128 — near-live HP for the row that IS this client's own Zeal slot-6
+        // target. Every row's hp_pct arrives from the bot aggregate (slow: 3s
+        // proxy TTL + cross-client live-state heartbeat); when one row's name
+        // matches our live local target, overwrite ONLY that row's hp_pct with
+        // the local gauge value (updated every ~300ms). All OTHER rows (remote
+        // targets nobody local is on) are left exactly as the bot aggregated
+        // them — cross-client behaviour is untouched.
         try {
-          if (Array.isArray(payload.targets) && payload.targets.length && (stats.recentTankHits || []).length) {
-            outPayload = { ...payload, targets: payload.targets.map(t => {
-              if (!t || !t.name) return t;
-              const tot = _totForMob(String(t.name).toLowerCase());
-              return tot ? { ...t, tot } : t;
-            }) };
+          let selfSt = null;
+          if (selfCharacter) {
+            const scl = String(selfCharacter).toLowerCase();
+            for (const ch of Object.keys(_zealState || {})) {
+              if (String(ch).toLowerCase() === scl) { selfSt = _zealState[ch]; break; }
+            }
           }
-        } catch { outPayload = payload; }
+          if (selfSt && (Date.now() - (selfSt.updatedAt || 0)) < 60_000 && Array.isArray(selfSt.gauges)
+              && Array.isArray(outPayload.targets)) {
+            const g = selfSt.gauges.find(gg => gg && gg.slot === 6 && gg.text);
+            const locName = g && g.text ? String(g.text).toLowerCase() : null;
+            const locHp   = g && g.hp_pct != null ? g.hp_pct : null;
+            if (locName && locHp != null) {
+              outPayload = { ...outPayload, targets: outPayload.targets.map(t => {
+                if (t && t.name && !t.stale && String(t.name).toLowerCase() === locName) {
+                  return { ...t, hp_pct: locHp, hp_source: 'local_live' };
+                }
+                return t;
+              }) };
+            }
+          }
+        } catch { /* leave the aggregate HP as-is on any error */ }
+        // #3 Extended Target V2 — attach mob_victim / mob_dps / mob_ttl_secs per
+        // NPC row from the local combat log + HP trend. Runs AFTER #128 so TTL
+        // samples the freshest per-row HP. Fail-soft: any error leaves V1 rows
+        // exactly as aggregated.
+        try { outPayload = _enrichExtTargetV2(outPayload, Date.now()); }
+        catch { /* leave the rows as-is — never let V2 break V1 */ }
+        // #56 — serial-track engine observes each NPC row's HP (K computation +
+        // simultaneous same-name detection) and, when the display flag is on,
+        // adds the local K≥2 ambiguity marker. Runs after V2 so it sees the same
+        // rows the overlay will. Fail-soft: never breaks the proxy.
+        try { outPayload = _mobTracksObserveExtPayload(outPayload, Date.now()); }
+        catch { /* engine must never break the ext-target proxy */ }
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify(outPayload));
       }
@@ -24295,6 +24565,12 @@ async function _pollRelayFires() {
 // exit cleanly — the live agent has its own foreground keep-alives.
 setInterval(_pollRelayFires, 1500).unref();
 
+// #130 — 1s slow-callout tick. Drives the fall-off (DROP) callout, whose signal
+// is a catalog-timer expiry with NO log line, plus the silent best-slow downgrade
+// when a stronger slow expires over a still-live weaker one. .unref() so test
+// harnesses can exit cleanly (same rationale as the relay poll above).
+setInterval(_tickSlowCallouts, 1000).unref();
+
 // ── Multiplexed poll (#106) ─────────────────────────────────────────────────
 // One loop that replaces the six per-client GET loops (recent-fires 1.5s,
 // overlay-tuning 90s, guild-triggers 2min, backfill 5min, ui-edits 5min,
@@ -25008,6 +25284,317 @@ function fetchExtendedTarget(character) {
   } catch { _extTargetInflight.delete(key); }
 }
 
+// ── #56 Same-name mob serial tracks (death-boundary + HP-continuity) ─────────
+// Spec: docs/DESIGN-dedup-and-mob-serialization.md. The Zeal pipe carries NO
+// spawn id, so ≥2 identically-named mobs alive at once can't be told apart from
+// the raw data (four `an orc warrior` were byte-identical in a live capture).
+// This engine recovers exactly as much identity as the data SOUNDLY supports —
+// no more — with SEPARATOR-ONLY tracks:
+//   • A track opens when a name is first observed and CLOSES on an OBSERVED
+//     DEATH (the one trustworthy, joiner-free boundary — the doc's separator
+//     table). K = the number of tracks still OPEN for a name.
+//   • HP-continuity assigns each incoming HP sample to the open track it
+//     plausibly continues (monotonic-ish decline; a rise > MOBTRACK_CONT_UP is
+//     NOT continuous — it mirrors the shipped #3 EXT_HP_RESET_JUMP). Simultaneity
+//     is proven ONLY when two same-name rows coexist in ONE snapshot: the second
+//     sample opens a PARALLEL track and K rises. HP is the ONLY K-raiser used
+//     (rampage-safe per the doc: "HP is HP"); the victim separator is
+//     deliberately NOT used to raise K, so the doc's rampage/riposte
+//     victim-pollution correction (a rampaging mob shows a constant 2nd victim)
+//     holds STRUCTURALLY — victim can never inflate K here.
+//   • Tracks NEVER auto-merge — the engine only SPLITS and EXPIRES (death /
+//     staleness). Double-counting is handled by the ambiguity marker, not a join.
+// Consumer effect (the debuff over-merge fix, the SEQUENTIAL case CLAUDE.md says
+// is resolvable): when a death closes the LAST open track for a name (K→0) the
+// name's per-name observation buckets (buff landings, slows, ext HP history) are
+// cleared so the NEXT same-name mob starts clean — no debuff bleed-through. When
+// a death closes ONE of ≥2 open tracks (K stays ≥1) the buckets are LEFT: we
+// can't attribute which debuffs were the dead instance's, so the survivor keeps
+// its timers (the honest-ambiguity path — the doc forbids a destructive join).
+// While a name only ever has one instance (K≤1 — the 99% case) the engine is a
+// no-op SHADOW: no bucket is cleared while the mob is alive, the K≥2 marker never
+// shows, and every consumer renders byte-for-byte as before. Master kill switch:
+// WP_SERIAL_TRACKS=0 (agent-side, instant name-merge restore). The K≥2 display
+// marker is separately gated OFF for the beta soak (WP_SERIAL_TRACKS_DISPLAY=1
+// to enable) per the doc's P0/P1 rollout: engine runs, renders nothing.
+const _mobTracks = new Map();   // nameLower → { tracks:[Track], nextOrd, lastActivity, k2logged }
+                                // Track = { ord, open, openedAt, lastSeenAt, lastHp, closedAt }
+const MOBTRACK_STALE_MS = 90_000;   // an open track with no HP sample this long → expired (mob left / quiet)
+const MOBTRACK_CONT_UP  = 15;       // an HP sample > this ABOVE a track's last HP is a retarget/new instance, not continuity (mirrors EXT_HP_RESET_JUMP)
+const MOBTRACK_MAX_PER  = 24;       // bound tracks retained per name
+const MOBTRACK_CAP      = 300;      // bound the name map
+const _serialTracksOn = !(String(process.env.WP_SERIAL_TRACKS || '') === '0' || String(process.env.WP_SERIAL_TRACKS || '').toLowerCase() === 'false');
+const _serialTracksDisplay = String(process.env.WP_SERIAL_TRACKS_DISPLAY || '') === '1' || String(process.env.WP_SERIAL_TRACKS_DISPLAY || '').toLowerCase() === 'true';
+
+function _mobTrackState(nameLower) {
+  let st = _mobTracks.get(nameLower);
+  if (!st) { st = { tracks: [], nextOrd: 0, lastActivity: 0, k2logged: false }; _mobTracks.set(nameLower, st); }
+  return st;
+}
+function _mobTrackOpenCount(st) {
+  let n = 0;
+  for (const t of st.tracks) if (t.open) n++;
+  return n;
+}
+function _mobTrackExpireStale(st, nowMs) {
+  for (const t of st.tracks) {
+    if (t.open && (nowMs - t.lastSeenAt) > MOBTRACK_STALE_MS) { t.open = false; t.closedAt = nowMs; t.expired = true; }
+  }
+}
+// Assign a batch of same-name HP samples (all NPC rows for one name in ONE
+// snapshot) to distinct open tracks by best HP-continuity. Rows beyond the open
+// tracks they continue open PARALLEL tracks (proven simultaneity). A single row
+// that continues NO open track is a sequential SWAP (the prior representative is
+// gone) — retire the stale track, open a fresh one, K unchanged. Returns the
+// resulting open-track count (K).
+function _mobTrackObserveHpBatch(nameLower, hps, nowMs) {
+  if (!_serialTracksOn || !nameLower || !hps || !hps.length) return 0;
+  const st = _mobTrackState(nameLower);
+  _mobTrackExpireStale(st, nowMs);
+  st.lastActivity = nowMs;
+  const openTracks = st.tracks.filter(t => t.open);
+  const claimed = new Set();
+  const unmatched = [];
+  for (const hp of hps) {
+    if (hp == null) continue;
+    let best = null, bestScore = Infinity;
+    for (const t of openTracks) {
+      if (claimed.has(t)) continue;
+      if (hp - t.lastHp > MOBTRACK_CONT_UP) continue;   // rose too far → not this track
+      const score = Math.abs(t.lastHp - hp);
+      if (score < bestScore) { bestScore = score; best = t; }
+    }
+    if (best) { claimed.add(best); best.lastHp = hp; best.lastSeenAt = nowMs; }
+    else unmatched.push(hp);
+  }
+  const nSamples = hps.filter(h => h != null).length;
+  const stillOpenUnclaimed = openTracks.filter(t => !claimed.has(t));
+  // Sequential swap: no more samples than open tracks AND an unmatched sample AND
+  // a stale still-open track → the prior representative(s) are gone (a retarget /
+  // same-name swap), NOT a new simultaneous mob. Retire the stale open tracks so
+  // K does not inflate. (More samples than open tracks ⇒ genuine extra instance.)
+  if (unmatched.length && nSamples <= openTracks.length && stillOpenUnclaimed.length) {
+    for (const t of stillOpenUnclaimed) { t.open = false; t.closedAt = nowMs; }
+  }
+  for (const hp of unmatched) {
+    st.tracks.push({ ord: st.nextOrd++, open: true, openedAt: nowMs, lastSeenAt: nowMs, lastHp: hp, closedAt: null });
+  }
+  if (st.tracks.length > MOBTRACK_MAX_PER) st.tracks.splice(0, st.tracks.length - MOBTRACK_MAX_PER);
+  const k = _mobTrackOpenCount(st);
+  if (k >= 2 && !st.k2logged) { st.k2logged = true; try { console.log('[serial-tracks] K=' + k + ' for "' + nameLower + '" — ' + k + ' simultaneous same-name instances detected'); } catch { /* */ } }
+  else if (k < 2 && st.k2logged) { st.k2logged = false; }
+  return k;
+}
+// A death closes exactly ONE track (the oldest open — one instance died).
+// Returns { closed, remainingOpen } or null. Riposte/player-death safe: the
+// CALLER passes only the SLAIN entity's name (never a killer), so a player who
+// died to the mob's rampage/riposte can never close the mob's track.
+function _mobTrackOnDeath(nameLower, nowMs) {
+  if (!_serialTracksOn || !nameLower) return null;
+  const st = _mobTracks.get(nameLower);
+  if (!st) return { closed: false, remainingOpen: 0 };
+  _mobTrackExpireStale(st, nowMs);
+  let victim = null;
+  for (const t of st.tracks) { if (t.open) { victim = t; break; } }
+  if (victim) { victim.open = false; victim.closedAt = nowMs; }
+  st.lastActivity = nowMs;
+  const remainingOpen = _mobTrackOpenCount(st);
+  if (remainingOpen < 2) st.k2logged = false;
+  return { closed: !!victim, remainingOpen };
+}
+function _mobTrackK(nameLower, nowMs) {
+  const st = _mobTracks.get(nameLower);
+  if (!st) return 0;
+  _mobTrackExpireStale(st, nowMs || Date.now());
+  return _mobTrackOpenCount(st);
+}
+function _mobTrackGc(nowMs) {
+  if (_mobTracks.size <= MOBTRACK_CAP) return;
+  const entries = Array.from(_mobTracks.entries()).sort((a, b) => (a[1].lastActivity || 0) - (b[1].lastActivity || 0));
+  const drop = _mobTracks.size - MOBTRACK_CAP;
+  for (let i = 0; i < drop && i < entries.length; i++) _mobTracks.delete(entries[i][0]);
+  void nowMs;
+}
+// Clear a dead name's per-name observation buckets so the next same-name mob
+// starts clean. Called ONLY when a death drops K to 0 (sequential kill). For a
+// single-instance boss this is invisible: nothing targets a corpse's live NAME
+// (the corpse is keyed "<name>'s corpse"), so no reader ever sees the cleared
+// bucket — parity holds. Guarded per-store so a missing consumer never throws.
+function _clearNameObservations(nameLower) {
+  if (!nameLower) return;
+  try { _buffLandingsByTarget.delete(nameLower); } catch { /* */ }
+  try { _slowsByTarget.delete(nameLower); _slowCalloutState.delete(nameLower); } catch { /* */ }
+  try { _extMobHpHist.delete(nameLower); _extMobResetAt.delete(nameLower); } catch { /* */ }
+}
+// Tail-loop death hook. Closes the slain name's oldest open track; on K→0 (the
+// last/only instance died) clears its stale observation buckets (the sequential
+// debuff-bleed fix). Uses the same trusted death detection as the shipped timer
+// cancel (_deadMobNameFromLine → SLAIN entity only), so a player death by the
+// mob never closes the mob's track and never clears a live mob's buckets.
+function _mobTracksOnDeathLine(line, nowMs) {
+  if (!_serialTracksOn || !line) return;
+  const dead = _deadMobNameFromLine(line);
+  if (!dead) return;
+  const deadLower = String(dead).toLowerCase();
+  if (deadLower === 'you') return;
+  const res = _mobTrackOnDeath(deadLower, nowMs);
+  if (!res || !res.closed) return;
+  if (res.remainingOpen > 0) return;   // another same-name instance is still alive → don't attribute/clear
+  _clearNameObservations(deadLower);
+}
+// Ext-target proxy hook: observe each NPC row's HP (K computation + simultaneous
+// detection) and, when the display flag is on, surface a LOCAL ambiguity marker
+// for names the engine sees as K≥2 that the bot aggregate did not already flag
+// (additive — never removes the bot's marker). Fail-soft; returns the payload.
+function _mobTracksObserveExtPayload(payload, nowMs) {
+  if (!_serialTracksOn || !payload || !Array.isArray(payload.targets)) return payload;
+  const byName = new Map();
+  for (const t of payload.targets) {
+    if (!t || t.kind !== 'npc' || !t.name || t.hp_pct == null) continue;
+    const nl = String(t.name).toLowerCase();
+    let arr = byName.get(nl);
+    if (!arr) { arr = []; byName.set(nl, arr); }
+    arr.push(t.hp_pct);
+  }
+  for (const [nl, hps] of byName) _mobTrackObserveHpBatch(nl, hps, nowMs);
+  _mobTrackGc(nowMs);
+  if (!_serialTracksDisplay) return payload;   // P0: engine runs, renders nothing
+  let touched = false;
+  const targets = payload.targets.map(t => {
+    if (!t || t.kind !== 'npc' || !t.name || t.ambiguous) return t;
+    const k = _mobTrackK(String(t.name).toLowerCase(), nowMs);
+    if (k >= 2) { touched = true; return { ...t, ambiguous: true, mob_track_k: k }; }
+    return t;
+  });
+  return touched ? { ...payload, targets } : payload;
+}
+// ── end #56 serial tracks ────────────────────────────────────────────────────
+
+// ── Extended Target overlay V2 enrichment (#3) ──────────────────────────────
+// Three agent-side signals attached per NPC row at the /api/extended-target
+// proxy, computed from the LOCAL combat log / gauge stream (the bot aggregate
+// carries none of them). Everything is keyed by MOB NAME — same-name
+// simultaneous mobs are indistinguishable on the Zeal pipe (#56 owns that), so
+// a mob's per-name history is CLEARED when its row leaves the aggregate or its
+// HP jumps UP > 15 points (a re-pull, a heal, or a same-name swap). Every
+// signal is fail-soft: no data → field absent → the overlay omits it.
+const EXT_VICTIM_STALE_MS = 10_000;   // victim shown only if a connect landed this recently
+const EXT_DPS_WINDOW_MS   = 20_000;   // sliding window for raid DPS-on-mob
+const EXT_DPS_MIN_SPAN_S  = 3;        // floor on the DPS denominator — one big hit can't read as a full-window rate
+const EXT_HPHIST_MAX      = 8;        // HP samples retained per mob
+const EXT_TTL_MIN_SAMPLES = 3;        // TTL needs a real trend, not two points
+const EXT_TTL_MIN_SPAN_MS = 8_000;    // …spanning at least this long
+const EXT_HP_RESET_JUMP   = 15;       // an HP rise > this resets the mob's history + victim/dps window
+const _extMobHpHist  = new Map();     // mobLower → [{ t, hp }]  (ascending t)
+const _extMobResetAt = new Map();     // mobLower → ms; combat events before this are ignored (post-reset)
+
+// Most RECENT melee victim observed for a mob within the staleness window.
+// Stale (>10s) → null so the row drops the "→ X" the moment the connect ages
+// out. Events before the mob's reset marker are ignored (same-name swap).
+function _victimForMob(mobLower, nowMs) {
+  if (!mobLower) return null;
+  const resetAt = _extMobResetAt.get(mobLower) || 0;
+  let best = null;
+  for (const h of (stats.recentTankHits || [])) {
+    if (!h || h.mob !== mobLower) continue;
+    if (h.tsMs < resetAt) continue;
+    if (nowMs - h.tsMs > EXT_VICTIM_STALE_MS) continue;
+    if (!best || h.tsMs > best.tsMs) best = h;
+  }
+  return best ? best.tank : null;
+}
+
+// Raid-wide-as-observed damage/sec onto a mob over the sliding window. Divides
+// by the OBSERVED span (floored at EXT_DPS_MIN_SPAN_S) so a single big hit at
+// the start of a window can't read as a full-window rate.
+function _dpsOnMob(mobLower, nowMs) {
+  if (!mobLower) return null;
+  const resetAt = _extMobResetAt.get(mobLower) || 0;
+  let sum = 0, earliest = null;
+  for (const d of (stats.recentMobDamage || [])) {
+    if (!d || d.mob !== mobLower) continue;
+    if (d.tsMs < resetAt) continue;
+    if (nowMs - d.tsMs > EXT_DPS_WINDOW_MS) continue;
+    sum += d.amount || 0;
+    if (earliest == null || d.tsMs < earliest) earliest = d.tsMs;
+  }
+  if (sum <= 0 || earliest == null) return null;
+  const spanS = Math.max(EXT_DPS_MIN_SPAN_S, (nowMs - earliest) / 1000);
+  return sum / spanS;
+}
+
+// Time-to-live from the mob's HP% trend. Only emitted when the trend is
+// meaningfully negative AND stable: ≥3 samples spanning ≥8s, monotonic-ish
+// down (no sample rose > 2 points mid-window). Jumpy / healing / fresh mobs
+// return null — show nothing over a garbage estimate.
+function _ttlForMob(mobLower, curHp, nowMs) {
+  if (!mobLower || curHp == null) return null;
+  const hist = _extMobHpHist.get(mobLower);
+  if (!hist || hist.length < EXT_TTL_MIN_SAMPLES) return null;
+  const first = hist[0], last = hist[hist.length - 1];
+  const spanMs = last.t - first.t;
+  if (spanMs < EXT_TTL_MIN_SPAN_MS) return null;
+  for (let i = 1; i < hist.length; i++) if (hist[i].hp - hist[i - 1].hp > 2) return null;
+  const dropPct = first.hp - last.hp;
+  if (dropPct <= 0) return null;                      // flat or healing → no estimate
+  const ratePctPerMs = dropPct / spanMs;
+  if (!(ratePctPerMs > 0)) return null;
+  const secs = curHp / (ratePctPerMs * 1000);
+  if (!isFinite(secs) || secs <= 0) return null;
+  return Math.min(secs, 3600);                        // clamp to 1h
+}
+
+// Sample each NPC row's current HP% into per-mob history, handle the same-name
+// reset (HP jump UP > 15), and prune histories for mobs that left the
+// aggregate. Runs once per proxy response, AFTER the #128 local-live HP
+// override so TTL keys off the freshest HP available.
+function _sampleExtMobHp(payload, nowMs) {
+  const present = new Set();
+  if (payload && Array.isArray(payload.targets)) {
+    for (const t of payload.targets) {
+      if (!t || t.kind !== 'npc' || !t.name || t.hp_pct == null) continue;
+      const k = String(t.name).toLowerCase();
+      present.add(k);
+      let hist = _extMobHpHist.get(k);
+      if (!hist) { hist = []; _extMobHpHist.set(k, hist); }
+      const last = hist.length ? hist[hist.length - 1] : null;
+      if (last && (t.hp_pct - last.hp) > EXT_HP_RESET_JUMP) {
+        // Re-pull / heal / same-name swap — wipe history + gate the combat windows.
+        hist.length = 0;
+        _extMobResetAt.set(k, nowMs);
+      }
+      const prev = hist.length ? hist[hist.length - 1] : null;
+      if (!prev || prev.hp !== t.hp_pct || (nowMs - prev.t) >= 1000) {
+        hist.push({ t: nowMs, hp: t.hp_pct });
+        if (hist.length > EXT_HPHIST_MAX) hist.splice(0, hist.length - EXT_HPHIST_MAX);
+      }
+    }
+  }
+  for (const k of Array.from(_extMobHpHist.keys())) {
+    if (!present.has(k)) { _extMobHpHist.delete(k); _extMobResetAt.delete(k); }
+  }
+}
+
+// Attach mob_victim / mob_dps / mob_ttl_secs to each NPC row. Player/pet rows
+// (including "needs attention" hurt rows) are never enriched. Each field is
+// independently optional — a row carries only what's known.
+function _enrichExtTargetV2(payload, nowMs) {
+  if (!payload || !Array.isArray(payload.targets) || !payload.targets.length) return payload;
+  _sampleExtMobHp(payload, nowMs);
+  return { ...payload, targets: payload.targets.map(t => {
+    if (!t || t.kind !== 'npc' || !t.name) return t;
+    const k = String(t.name).toLowerCase();
+    const patch = {};
+    const victim = _victimForMob(k, nowMs);
+    if (victim) patch.mob_victim = victim;
+    const dps = _dpsOnMob(k, nowMs);
+    if (dps != null && dps > 0) patch.mob_dps = Math.round(dps);
+    const ttl = _ttlForMob(k, t.hp_pct, nowMs);
+    if (ttl != null) patch.mob_ttl_secs = Math.round(ttl);
+    return Object.keys(patch).length ? { ...t, ...patch } : t;
+  }) };
+}
+
 // "Buffs feel laggy" click from the buff-queue overlay. Two effects:
 //   1. Drop into snappy mode locally for 60s (fetchRaidBuffQueue picks up
 //      the lowered TTL on the next overlay tick — no flush needed).
@@ -25236,6 +25823,10 @@ function buildMobInfo() {
     target_is_pc:   zealBuffs !== null || liveBuffs !== null,
     target_slots:   slotCounts,
     target_casting: ctc ? ctc.casts : [],
+    // #130 — best ACTIVE slow on the current target (strongest still-live,
+    // observed-landing + catalog-duration derived; the only path for mobs, which
+    // have no authoritative buff readout on the Zeal pipe). null when unslowed.
+    target_slow:    _bestSlowForTarget(tnameLower, Date.now()),
   };
 }
 
@@ -26048,6 +26639,96 @@ function _checkTankBuster(ev, line, tsMs) {
       fireText: c.buster_fire_text, color: 'red', tsMs,
     });
     console.log('[boss-chain] tank buster landed on ' + c.boss + ' — re-armed ' + c.buster_cadence_sec + 's countdown');
+    return;
+  }
+}
+
+// ── #36 AoE-dance callouts (DPS OUT / DPS IN + countdown) ────────────────────
+// Data-driven melee-dance helper, REUSING the #142 countdown machinery
+// (_armBossCountdown → _startTimer, buster-style effect detection). For a boss
+// whose PBAE forces the melee off the mob ("run OUT before it hits, back IN
+// after it lands"), we give the raid the exact tank-buster UX with different
+// texts: (a) a pre-warn "DPS OUT" before the next AE, (b) a confirming "DPS IN"
+// the instant it lands, (c) an on-screen countdown to the next AE that re-syncs
+// on every observed cast.
+//
+// GROUNDED SIGNATURE — Caustic Mist, eqemu_spells id 2814, on Vyzh`dra the
+// Cursed (npc_types 162042, npc_spells_id 197, entry recast_delay -1 = "use the
+// spell's own recast"):
+//   • cast_time 0 → the spell prints NO cast message; the ONLY detectable log
+//     evidence is the per-victim LAND message. So — exactly like the #142
+//     buster (Rage of Ssraeshza) — we detect the EFFECT, never a cast.
+//   • land-on-other: "<Name>'s flesh begins to liquefy."  (text is SHARED with
+//     Putrefy Flesh 1956; the boss-active gate below scopes it to this fight)
+//   • land-on-self:  "Your skin begins to rot."           (unique to 2814)
+//   A PBAE hitting the melee pile prints a BURST of these lines across many
+//   victims within ~1s in every raider's OWN combat log (per-client, no relay),
+//   so a burst detector (>= burst_n victims within burst_window_ms) is the
+//   robust "the AE just fired" signal — a single stray land line is NOT.
+//   • cadence: spell recast_time = 24000ms and the npc entry defers to it
+//     (recast_delay -1). NPC spell AI does NOT cast strictly on cooldown, so
+//     24s is a grounded DEFAULT and is FIELD-TUNABLE — the guild confirms the
+//     real interval on the next Vyzh`dra kill. Like the buster, the countdown
+//     RE-SYNCS on every observed AE, so an approximate cadence is still useful.
+const AOE_DANCE = [
+  {
+    boss:            'Vyzh`dra the Cursed',
+    spell:           'Caustic Mist',                  // eqemu_spells 2814 — PBAE (targettype 4)
+    signature:       [/flesh begins to liquefy\./i,   // land-on-other (shared text; scoped by active-boss gate)
+                      /Your skin begins to rot\./i],  // land-on-self (unique to Caustic Mist)
+    burst_n:         3,                               // >= this many victims in the window = the AE fired
+    burst_window_ms: 2000,                            // PBAE lands across ~1s; 2s safely collects the burst
+    cadence_sec:     24,                              // FIELD-TUNABLE — spell recast_time 24000ms; confirm on next kill
+    out_warn_sec:    5,                               // speak "DPS OUT" this many seconds before the next AE
+    out_text:        'DPS OUT — Caustic Mist soon',   // countdown warning callout (the pre-warn)
+    in_text:         'DPS IN',                        // fired NOW when the AE lands (safe to re-engage)
+    color:           'gold',
+  },
+];
+// One burst = one fire. Keyed per boss so a whole burst of land lines (and any
+// cross-log echo) collapses to a single fire — the #36 analogue of _busterLastFire.
+const _aoeDanceLastFire = new Map();   // boss(lc) → wall-clock ms of the last fire
+const _aoeDanceBurst    = new Map();   // boss(lc) → { count, windowStartMs } rolling collector
+
+// A signature land line → count it toward the active burst; once >= burst_n
+// land within burst_window_ms, treat the AE as fired: push "DPS IN" NOW and
+// (re)arm the countdown to the NEXT AE (target = boss so death clears it, like
+// the buster) whose warning at out_warn_sec speaks the "DPS OUT" pre-warn.
+// GATED on the boss being the ACTIVE encounter (curBoss, same pattern as
+// _checkTankBuster) so an identically-worded land line on trash elsewhere can't
+// fire it. Local only — every raider's own log carries the land burst.
+function _checkAoeDance(line, tsMs) {
+  if (!line) return;
+  const curBoss = (stats.currentEncounterThreat && stats.currentEncounterThreat.bossName)
+    ? String(stats.currentEncounterThreat.bossName).toLowerCase() : null;
+  if (!curBoss) return;                                       // no active fight → never fire
+  const now = tsMs || Date.now();
+  for (const d of AOE_DANCE) {
+    if (curBoss !== d.boss.toLowerCase()) continue;           // only THIS dance boss, and only while it's active
+    if (!d.signature.some(rx => rx.test(line))) continue;     // not this AE's land text
+    const key = d.boss.toLowerCase();
+    // Post-fire quiet window: once we've fired for a burst, ignore the rest of
+    // the same burst's land lines (and cross-log echoes) for burst_window_ms —
+    // "one burst = one fire across the burst window" (echo guard).
+    if (now - (_aoeDanceLastFire.get(key) || 0) < d.burst_window_ms) return;
+    // Roll a fresh window if the previous collector is stale (>burst_window_ms
+    // old), else accumulate this victim into it.
+    let b = _aoeDanceBurst.get(key);
+    if (!b || (now - b.windowStartMs) > d.burst_window_ms) {
+      b = { count: 0, windowStartMs: now };
+      _aoeDanceBurst.set(key, b);
+    }
+    b.count++;
+    if (b.count < d.burst_n) return;                          // not a burst yet — a single stray line never fires
+    // Burst confirmed — the AE just went off.
+    _aoeDanceLastFire.set(key, now);
+    _aoeDanceBurst.delete(key);
+    _armBossCountdown({
+      boss: d.boss, label: d.spell, durationSec: d.cadence_sec,
+      warnSec: d.out_warn_sec, warnText: d.out_text,
+      fireText: d.in_text, color: d.color || 'gold', tsMs: now,
+    });
+    console.log('[aoe-dance] ' + d.spell + ' burst on ' + d.boss + ' — DPS IN + re-armed ' + d.cadence_sec + 's countdown');
     return;
   }
 }
@@ -27997,6 +28678,10 @@ async function main() {
           // #105 — a slow landing on the current fight target → slow_on timeline
           // tick. Self-cast path: the caster is this log's character.
           try { b.builder.noteSlowLanding(bcEvt, b.character); } catch (e) { void e; }
+          // #130 — module-level slow tracker (best-active-slow display + land
+          // callout). Caster is known only for a genuine self-cast; a witnessed
+          // beneficial-buff landing (parseBuffLanding) is not ours to attribute.
+          try { _noteSlowForTarget(bcEvt, bcEvt._selfCast ? b.character : null); } catch (e) { void e; }
         }
         // Detrimental debuff landed by SOMEONE ELSE (bystander view) — Tash/Malo
         // on the boss, a slow/poison on a raider. Our OWN debuffs are already
@@ -28014,6 +28699,8 @@ async function main() {
             // #105 — bystander-observed slow on the fight target → slow_on tick
             // (the caster is unknown from a landing line, so it's unattributed).
             try { b.builder.noteSlowLanding(dbEvt, null); } catch (e) { void e; }
+            // #130 — module-level slow tracker; bystander land, caster unknown.
+            try { _noteSlowForTarget(dbEvt, null); } catch (e) { void e; }
             // Upload BOTH mob and player debuffs so the bot's target-buffs relay
             // shows them cross-client — everyone targeting the boss sees
             // Tash/Malo/Turgur's even if they didn't personally witness the land
@@ -28074,6 +28761,11 @@ async function main() {
         // same slain/death line. Local-only, live tail.
         try { _cancelTimersOnMobDeath(line); } catch { /* never let a bad line break the tail */ }
         try { const _dts = parseEqTimestamp(line); _checkBossSpawnChain(line, _dts ? _dts.getTime() : Date.now()); } catch { void 0; }
+        // #56 — a mob death closes one same-name serial track; on K→0 (the last
+        // instance died) it clears that name's stale debuff/slow/HP buckets so the
+        // next same-name mob starts clean (the debuff-bleed fix). Same trusted
+        // death detection as the timer cancel above; engine never breaks the tail.
+        try { const _dts56 = parseEqTimestamp(line); _mobTracksOnDeathLine(line, _dts56 ? _dts56.getTime() : Date.now()); } catch { void 0; }
 
         // /who block boundaries (header/footer) → demarcate the current /who run
         // for the /who overlay. Rows themselves are attributed in recordWhoEvent.
@@ -28132,6 +28824,13 @@ async function main() {
         // Callout-replay (#98): capture raid-wide events that aren't combat
         // events (ENRAGE) — dropped before parseEvent — onto the fight timeline.
         try { b.builder.noteRaidLine(line, ts ? ts.getTime() : Date.now()); } catch {}
+
+        // #36 AoE-dance callouts (DPS OUT / DPS IN + countdown). Runs on the
+        // RAW line BEFORE shouldKeep — PBAE land messages ("flesh begins to
+        // liquefy", "skin begins to rot") match no keep pattern, so they'd be
+        // dropped before parseEvent ever sees them. Same watch-tail hook as
+        // _checkTankBuster, same try/catch isolation; gated on the active boss.
+        try { _checkAoeDance(line, ts ? ts.getTime() : Date.now()); } catch { void 0; }
 
         // ── Normal combat filter (gates parse + upload only) ────────────────
         if (!shouldKeep(line, dropPatterns, keepPatterns)) return;
@@ -28205,6 +28904,7 @@ module.exports = {
   // #142 buster/spawn-chain timers — exported for the scratchpad fixture.
   _startTimer, _activeTimersSnapshot, _cancelTimersOnMobDeath, _deadMobNameFromLine,
   _checkBossSpawnChain, _checkTankBuster, _armBossCountdown, BOSS_SPAWN_CHAINS,
+  _checkAoeDance, AOE_DANCE,   // #36 AoE-dance callouts — exported for the scratchpad fixture
   evaluateTriggersAgainstLine, SLOW_SPELLS, _isSlowSpell,
   _setCurrentBossForTest: (name) => { stats.currentEncounterThreat = name ? { bossName: name } : null; },
   _getReplayStateForTest: () => _replayStateForWeb(),

@@ -43,6 +43,27 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'mimic-204-raid-clarity',
+    title: '🐺 Mimic 2.0.4 — the raid-clarity release',
+    version: 'Mimic 2.0.4 · Agent 3.4.17 · Web 1.0.269',
+    date: '2026-07-23',
+    headline: 'Twelve items, one day, all from the field-report queue: everything the Wednesday raid surfaced plus the most-requested overlay upgrades — targeting info that keeps up with the fight, slow timers, AoE dance callouts, and a pile of quality-of-life fixes.',
+    features: [
+      { name: '🎯 Extended Target V2', blurb: 'Every mob row can now show who the mob is beating on (→ Hawkner), the raid\'s observed DPS into it, and a time-to-live estimate that only appears when the HP trend is real — never a garbage guess. Same-name mobs get honest bookkeeping under the hood (deaths + HP continuity), so a fresh "a temple guard" no longer inherits the last one\'s debuffs.' },
+      { name: '🐌 Slow status on the target', blurb: 'Target Info shows an amber badge when your target is slowed — spell, %, caster when known, and a countdown. Slows don\'t stack, so it always shows the STRONGEST active slow (a weaker cast can\'t hide a better one), with "Slowed" / "Slow dropped — reslow" callouts for your current target. Magnitudes are pulled from the server data, not guessed.' },
+      { name: '🏃 AoE dance callouts', blurb: 'First target: Vyzh`dra the Cursed\'s Caustic Mist. When the AE fires you hear "DPS IN" and a countdown arms to the next one, warning "DPS OUT" just before it — same machinery as the Emperor tank-buster timer, and it re-syncs on every observed AE.' },
+      { name: '⚡ Target HP that keeps up', blurb: 'Your own target\'s HP now reads straight from the Zeal gauge — about half a second from game to overlay, down from several seconds when it detoured through the server aggregate.' },
+      { name: '📋 One-click "Post to /rs"', blurb: 'A copy button on the DPS meter builds the parse line the guild recognizes (top 10 + total) — click, paste in /rs, done. The bot can re-ingest the pasted line, so posted parses still count.' },
+      { name: '🧭 Command Center & Buff queue QoL', blurb: 'Cure/curse alert lines get a per-line ✕ and a clear-all; DI availability compacts into chips beside HEALER MANA; and dismissing a buff-queue item now removes just that row instead of collapsing the whole overlay mid-raid.' },
+    ],
+    fixes: [
+      'The /who overlay no longer freezes after setting an anonymous player\'s class (the dropdown kept keyboard focus and quietly paused updates forever).',
+      'Charm pets now appear in the Pet tracker on a brand-new Mimic install — no history required.',
+      'Parse cards in Discord link to the wolfpack.quest parse page, and the parse page links back to Discord.',
+      'Raid Night Review: deaths no longer double-count across overlapping fights, pet deaths fold into a one-line summary, and slows/mechanics only show the actual raid window.',
+    ],
+  },
+  {
     key: 'raid-night-review',
     title: '📓 Raid Night Review — the morning-after page',
     version: 'Web 1.0.266',
