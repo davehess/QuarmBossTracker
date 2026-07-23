@@ -245,7 +245,7 @@
     return '<div class="hpghost" style="left:'+curPct.toFixed(1)+'%;width:'+w.toFixed(1)+'%"></div>';
   }
   // Inbound-heal rows — painted on a 100ms ticker so the countdown is smooth
-  // between the 1s state polls. Each heal keeps its color across polls (keyed
+  // between the 500ms state polls. Each heal keeps its color across polls (keyed
   // caster+spell+land-time) so a bar doesn't jump palette slots as others land.
   // In flight → a filling cast bar counting down to the land. Already landed
   // → a full green "+N healed" row that LINGERS a few seconds and fades. The
@@ -408,7 +408,17 @@
 
     // Target HP + boss enrage warning
     if (s.target && s.target.name) {
-      var thp = s.target.hp_pct == null ? null : Math.max(0, Math.min(100, Math.round(s.target.hp_pct)));
+      // #128 — prefer the near-live LOCAL Zeal gauge HP when the displayed target
+      // IS this client's own target (local_name matches, case-insensitive). The
+      // agent already collapses target.hp_pct to the local value in that case, so
+      // this is belt-and-suspenders: keep the bar real-time even if the payload's
+      // headline hp_pct ever regresses to the (seconds-slow) cross-client aggregate.
+      var thpRaw = s.target.hp_pct;
+      if (s.target.local_name && s.target.local_hp_pct != null &&
+          String(s.target.local_name).toLowerCase() === String(s.target.name).toLowerCase()) {
+        thpRaw = s.target.local_hp_pct;
+      }
+      var thp = thpRaw == null ? null : Math.max(0, Math.min(100, Math.round(thpRaw)));
       // Full cur/max when the target is a raider a verbose groupmate can see;
       // a mob only ever has a gauge %, so this stays "80%" for boss targets.
       var tval = hpValText(thp, s.target.hp_cur, s.target.hp_max);
@@ -564,7 +574,7 @@
       contentEl.__wpHtml = html;
       _requestAutoHeight();
     }
-    // The 1s poll may have rewritten (or left) the #inbound-heals placeholder;
+    // The 500ms poll may have rewritten (or left) the #inbound-heals placeholder;
     // refill it now so the cast bars don't blank between the poll and the next
     // 100ms ticker frame.
     paintInbound();
@@ -579,6 +589,12 @@
       // Quiet — agent might be restarting. Next tick will recover.
     }
   }
-  tick(); setInterval(tick, 1000);
+  // 500ms (was 1000ms) — #128: after the agent stopped routing the local
+  // target's HP through the bot aggregate, this localhost poll is the largest
+  // remaining hop for a LOCAL target, so halve it for a near-live bar. Safe for
+  // #73 admission control: /api/tank-state is served locally and every bot fetch
+  // it triggers (extended-target 3s, character-live-state 2.5s, …) is TTL-gated,
+  // so a faster overlay poll does NOT increase any bot-bound request cadence.
+  tick(); setInterval(tick, 500);
 </script>
 </body></html>

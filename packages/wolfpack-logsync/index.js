@@ -8276,8 +8276,24 @@ function _serializeTankState() {
   // cross-client feed hasn't warmed yet (Uilnayar 2026-07-06).
   const mainTarget   = _resolveMainTarget(active);
   const targetName   = mainTarget ? mainTarget.name   : localTargetName;
-  const targetHpPct  = mainTarget ? mainTarget.hp_pct : localTargetHpPct;
-  const targetSource = mainTarget ? 'extended' : (localTargetName ? 'local' : null);
+  // #128 — near-live local-target HP. When the raid's main target IS this
+  // client's OWN Zeal slot-6 target (name match, case-insensitive), read the
+  // headline HP straight from the live local gauge (localTargetHpPct, refreshed
+  // from _zealState every ~300ms) instead of mainTarget.hp_pct, which comes from
+  // the extended-target aggregate (_extTargetCache: a 3s proxy TTL stacked on the
+  // bot's cross-client live-state heartbeat — seconds stale). Field report #128:
+  // LOCAL targets lagged the MOST precisely because their HP was being routed
+  // through that bot round-trip even though the live value sat in the local pipe.
+  // Remote main targets (no local name match) keep the cross-client aggregate.
+  const localMatchesMain = !!(mainTarget && localTargetName &&
+    String(mainTarget.name).toLowerCase() === String(localTargetName).toLowerCase());
+  const preferLocalHp = localMatchesMain && localTargetHpPct != null;
+  const targetHpPct  = preferLocalHp
+                        ? localTargetHpPct
+                        : (mainTarget ? mainTarget.hp_pct : localTargetHpPct);
+  const targetSource = mainTarget
+                        ? (preferLocalHp ? 'local_live' : 'extended')
+                        : (localTargetName ? 'local' : null);
 
   // Buffs — passthrough with normalization. EQ buff durations come in 6s
   // ticks; convert to seconds remaining for the overlay.
@@ -17391,6 +17407,36 @@ function startWebDashboard(port) {
             }) };
           }
         } catch { outPayload = payload; }
+        // #128 — near-live HP for the row that IS this client's own Zeal slot-6
+        // target. Every row's hp_pct arrives from the bot aggregate (slow: 3s
+        // proxy TTL + cross-client live-state heartbeat); when one row's name
+        // matches our live local target, overwrite ONLY that row's hp_pct with
+        // the local gauge value (updated every ~300ms). All OTHER rows (remote
+        // targets nobody local is on) are left exactly as the bot aggregated
+        // them — cross-client behaviour is untouched.
+        try {
+          let selfSt = null;
+          if (selfCharacter) {
+            const scl = String(selfCharacter).toLowerCase();
+            for (const ch of Object.keys(_zealState || {})) {
+              if (String(ch).toLowerCase() === scl) { selfSt = _zealState[ch]; break; }
+            }
+          }
+          if (selfSt && (Date.now() - (selfSt.updatedAt || 0)) < 60_000 && Array.isArray(selfSt.gauges)
+              && Array.isArray(outPayload.targets)) {
+            const g = selfSt.gauges.find(gg => gg && gg.slot === 6 && gg.text);
+            const locName = g && g.text ? String(g.text).toLowerCase() : null;
+            const locHp   = g && g.hp_pct != null ? g.hp_pct : null;
+            if (locName && locHp != null) {
+              outPayload = { ...outPayload, targets: outPayload.targets.map(t => {
+                if (t && t.name && !t.stale && String(t.name).toLowerCase() === locName) {
+                  return { ...t, hp_pct: locHp, hp_source: 'local_live' };
+                }
+                return t;
+              }) };
+            }
+          }
+        } catch { /* leave the aggregate HP as-is on any error */ }
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify(outPayload));
       }
