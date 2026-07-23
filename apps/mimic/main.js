@@ -4195,10 +4195,56 @@ function applyExtTargetVisibility() {
   if (shouldShow) extTargetWindow.showInactive(); else extTargetWindow.hide();
 }
 
+// #65 Hot-servable overlays. Probe an agent-served overlay route on the local
+// agent port; resolves true only on a 200. Fast + non-throwing: a short
+// timeout / any error / a dead port all resolve false so the caller falls back
+// to the bundled file. 127.0.0.1 only (matches the agent's bind).
+function _probeAgentOverlay(pathname, timeoutMs = 900) {
+  return new Promise((resolve) => {
+    if (!agentPort) return resolve(false);
+    let done = false;
+    const finish = (ok) => { if (!done) { done = true; resolve(ok); } };
+    try {
+      const req = http.get({ host: '127.0.0.1', port: agentPort, path: pathname, timeout: timeoutMs }, (res) => {
+        const ok = res.statusCode === 200;
+        res.resume();   // drain so the socket frees
+        finish(ok);
+      });
+      req.on('error',   () => finish(false));
+      req.on('timeout', () => { try { req.destroy(); } catch (e) { void e; } finish(false); });
+    } catch (e) { void e; finish(false); }
+  });
+}
+
+// #65 Load an overlay preferring the agent-served copy (which rides the
+// agent's [U] hot-swap) and falling back to the bundled file when the agent is
+// down / unreachable / not answering 200 — an overlay must NEVER be blind
+// because the agent is restarting (the #59 lesson). The probe is fast so the
+// fallback is quick. Reload-on-recovery is intentionally OMITTED: a later
+// agent recovery does not force-reload an already-open overlay mid-raid (that
+// would reset scroll / local dismiss state); the file:// fallback is byte-
+// identical to the served copy (drift-checked), and the next OPEN gets served.
+// The window's preload applies to the http:// origin exactly as to file://, so
+// window.mimic is present either way.
+async function _loadOverlayPreferAgent(win, overlayPath, fallbackFile) {
+  if (!win || win.isDestroyed()) return;
+  let served = false;
+  try { served = await _probeAgentOverlay(overlayPath); } catch (e) { void e; served = false; }
+  if (win.isDestroyed()) return;
+  if (served) {
+    try { await win.loadURL(`http://127.0.0.1:${agentPort}${overlayPath}`); return; }
+    catch (e) { void e; /* probe passed but load failed — fall through to file */ }
+  }
+  if (win.isDestroyed()) return;
+  try { await win.loadFile(fallbackFile); } catch (e) { void e; /* last resort — nothing more to try */ }
+}
+
 // Command Center overlay — the "one window" raid board (Uilnayar 2026-07-03):
 // boss/MT/rampage/enrage/Death Touch (same data as the Tank overlay) plus
 // raid-wide DA/invuln status and healer mana parsed from raid-chat macros,
 // plus Curse/Cure alerts from the buff queue. Reads /api/command-center.
+// (#65) Served from the agent at /overlay/command so overlay updates ride
+// agent hot-swaps; falls back to the bundled command.html when the agent is down.
 function createCommandOverlay() {
   const b = _resolveBounds('commandBounds', 'commandBoundsSig', { x: 40, y: 40, width: 320, height: 360 });
   commandWindow = new BrowserWindow({
@@ -4211,7 +4257,6 @@ function createCommandOverlay() {
   });
   commandWindow.setAlwaysOnTop(true, 'screen-saver');
   commandWindow.setVisibleOnAllWorkspaces(true);
-  commandWindow.loadFile('command.html');
   commandWindow.on('moved',  () => _persistBounds('commandBounds', commandWindow));
   commandWindow.on('resize', () => _persistBounds('commandBounds', commandWindow));
   commandWindow.once('ready-to-show', () => {
@@ -4220,6 +4265,10 @@ function createCommandOverlay() {
     applyOverlayInteractivity();
     applyOverlayOpacity(commandWindow, 'command');
   });
+  // #65: prefer the agent-served /overlay/command (hot-swappable), fall back to
+  // the bundled command.html when the agent is unreachable. Handlers above are
+  // registered first so the async probe+load can't race ready-to-show.
+  _loadOverlayPreferAgent(commandWindow, '/overlay/command', 'command.html');
 }
 function applyCommandVisibility() {
   if (!commandWindow) return;

@@ -17276,6 +17276,485 @@ function _serializeOptinForWeb() {
   };
 }
 
+
+// ── #65 Hot-servable overlays (pilot: Command Center) ───────────────────
+// COMMAND_HTML is a VERBATIM embed of apps/mimic/command.html, served at
+// GET /overlay/command so the Command Center overlay rides the agent's [U]
+// hot-swap flow. The agent single-file ships as a Mimic extraResource
+// (staged-agent → resources/agent) — OUTSIDE app.asar, so plain Node can read
+// it AND the update flow replaces it in place; command.html itself lives
+// INSIDE app.asar where plain Node cannot read it, so embedding is the only
+// way the overlay updates without a full Mimic release.
+//
+// SINGLE SOURCE OF TRUTH: apps/mimic/command.html is authoritative. This
+// constant is a byte-exact copy of it, enforced by scripts/check-agent-
+// dashboard.js (npm run check:dashboard) which FAILS the build if COMMAND_HTML
+// drifts from the file. command.html contains no backtick / ${...} / backslash,
+// so it embeds with ZERO escaping — do NOT hand-edit the string below: edit
+// command.html, then re-run scripts/sync-command-embed.js (it reprints on
+// drift). main.js loads /overlay/command first and falls back to
+// loadFile('command.html') when the agent is unreachable, so the two copies
+// MUST stay identical.
+const COMMAND_HTML = `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>command center</title>
+<style>
+  /* Wolf Pack Command Center — the "one window" raid board (Uilnayar
+     2026-07-03: "put those into a tidy command center so if someone only
+     wanted to have one window they could do that"). Combines the Tank
+     overlay's boss/MT/rampage/enrage/Death Touch focus with two sections
+     that only exist because raiders already broadcast them in raid chat —
+     DA/invuln status and healer mana — plus Curse/Cure alerts pulled from
+     the existing buff-queue debuff tracking (real observed debuffs, not
+     re-parsed "please cure" macros). Deliberately compact — this is a
+     glance board, not a replacement for the Tank/Buff-queue overlays'
+     full detail. Reads /api/command-center.
+     --bg-alpha: card-surface alpha, driven by slider via main → preload
+     'bg-alpha' IPC. 1.0 = opaque (EQ hidden); text stays bright at every value. */
+  :root{ --bg-alpha:0.55; }
+  html,body{margin:0;height:100%;background:transparent;overflow:hidden;
+    font-family:ui-monospace,Menlo,Consolas,monospace;color:#fff;user-select:none;}
+  #wrap{padding:6px 8px;min-width:260px;}
+  .title{display:flex;align-items:center;gap:8px;
+    font-size:12px;color:#f8b87b;text-shadow:-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000,0 1px 2px #000;margin-bottom:5px;}
+  .title .who{font-size:11px;color:#9aa4ad;font-weight:normal}
+  .card{background:rgb(0 0 0 / var(--bg-alpha));border-radius:5px;padding:5px 7px;margin-bottom:4px}
+  .card .head{font-size:10px;color:#9aa4ad;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:2px;
+    text-shadow:-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000,0 1px 2px #000}
+  .hpwrap{position:relative;height:14px;background:#222;border-radius:3px;overflow:hidden;
+    border:1px solid rgba(255,255,255,0.06)}
+  .hpbar{position:absolute;left:0;top:0;bottom:0;background:linear-gradient(to right,#56d364,#56d364);
+    transition:width .25s ease, background .25s ease}
+  .hpbar.low {background:linear-gradient(to right,#f0d264,#f0a52d)}
+  .hpbar.crit{background:linear-gradient(to right,#f87171,#dc2626)}
+  .hpbar.gold{background:linear-gradient(to right,#f0c419,#d4a017)}
+  .hpbar.inv-soon{background:linear-gradient(to right,#56d364,#2ea043);box-shadow:0 0 8px rgba(86,211,100,0.9) inset}
+  .hpwrap .val{position:absolute;left:0;right:0;top:0;bottom:0;display:flex;align-items:center;justify-content:center;
+    font-size:10px;color:#fff;text-shadow:-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000,0 1px 2px #000;font-weight:600}
+  .hpwrap .inv-tag{position:absolute;top:0;bottom:0;display:flex;align-items:center;
+    font-size:9px;font-weight:800;letter-spacing:0.5px;color:#fff;text-shadow:-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000,0 1px 2px #000;z-index:2}
+  .hpwrap .inv-tag.l{left:4px}
+  .hpwrap .inv-tag.r{right:4px}
+  .enrage{display:flex;align-items:center;gap:6px;padding:4px 7px;background:rgba(140,72,31,0.45);
+    border:1px solid #f0a52d;border-radius:5px;margin-bottom:4px;font-size:11px}
+  .enrage.crit{background:rgba(220,38,38,0.45);border-color:#f87171;animation:flash 0.6s linear infinite alternate}
+  @keyframes flash{from{box-shadow:0 0 8px rgba(248,113,113,0.9)}to{box-shadow:0 0 16px rgba(248,113,113,0.4)}}
+  .dt{display:flex;align-items:center;gap:6px;padding:4px 7px;background:rgba(107,33,168,0.5);
+    border:1px solid #c084fc;border-radius:5px;margin-bottom:4px;font-size:11px}
+  .dt.crit{background:rgba(220,38,38,0.5);border-color:#f87171;animation:flash 0.6s linear infinite alternate}
+  .dt .sec{font-size:13px;font-weight:700;color:#fff;font-variant-numeric:tabular-nums}
+  .ramp{display:flex;flex-direction:column;gap:4px;padding:4px 7px;background:rgba(180,32,32,0.55);
+    border:1px solid #f87171;border-radius:5px;margin-bottom:4px;font-size:11px}
+  .ramp .row{display:flex;align-items:center;gap:6px}
+  .ramp .who{font-weight:700;color:#fff}
+  /* DA/invuln raid broadcast list — one row per tank currently reporting
+     status. Gold while up, green once ≤5s remain, red once fully down. */
+  .list{display:flex;flex-direction:column;gap:2px;font-size:10px;line-height:1.5}
+  .list .row{display:flex;align-items:center;gap:5px}
+  .list .row .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#e6edf3}
+  .list .row .cls{color:#6e7681;font-size:9px;flex-shrink:0}
+  .da-chip{font-weight:700;font-size:9px;padding:0 5px;border-radius:3px;flex-shrink:0;
+    font-variant-numeric:tabular-nums}
+  .da-chip.up   {color:#1a1200;background:#f0c419}
+  .da-chip.soon {color:#04270c;background:#56d364}
+  .da-chip.down {color:#fff;background:#8b2222}
+  .mana-bar{width:56px;height:8px;background:#222;border-radius:2px;overflow:hidden;flex-shrink:0;
+    border:1px solid rgba(255,255,255,0.06)}
+  .mana-bar .fill{height:100%;background:linear-gradient(to right,#5b8def,#3f6fd6)}
+  .mana-bar .fill.low{background:linear-gradient(to right,#f0d264,#f0a52d)}
+  .mana-bar .fill.crit{background:linear-gradient(to right,#f87171,#dc2626)}
+  .mana-pct{width:2.6em;text-align:right;color:#9aa4ad;font-variant-numeric:tabular-nums;flex-shrink:0}
+  .cure-chip{font-size:9px;padding:0 4px;border-radius:2px;background:rgba(220,38,38,0.35);
+    color:#fff;flex-shrink:0}
+  .cure-chip.being-cured{background:rgba(86,211,100,0.3);color:#c8f0cc}
+  /* Divine Intervention (#50) compacted (#66) to chips beside the HEALER MANA
+     header — "DI: Uilnayar ✓ · Fargan 45s" — freeing the vertical block. */
+  .head.mana-head{display:flex;align-items:center;gap:6px}
+  .di-chips{margin-left:auto;font-size:9px;text-transform:none;letter-spacing:0.2px;
+    display:inline-flex;align-items:center;gap:4px;flex-wrap:wrap;justify-content:flex-end}
+  .di-chips .di-lab{color:#9aa4ad;font-weight:600}
+  .di-chips .up{color:#7ee787}
+  .di-chips .cd{color:#f0b429;font-variant-numeric:tabular-nums}
+  .di-chips .sep{color:#6e7681}
+  .di-chips.solo{outline:1px solid rgba(240,196,25,0.7);outline-offset:1px;border-radius:3px;padding:0 3px}
+  /* Curse/Cure per-line dismiss + clear-all (#66). Extra right padding on the
+     card keeps the ✕ / "clear all" clear of the fixed ✕-hide button gutter. */
+  .card.cure-card{padding-right:28px}
+  .head.cure-head{display:flex;align-items:center;gap:6px}
+  .cureClearAll{margin-left:auto;cursor:pointer;color:#9aa4ad;font-size:9px;text-transform:none;
+    letter-spacing:0;border:1px solid rgba(110,118,129,0.4);border-radius:3px;padding:0 4px;opacity:0.7}
+  .cureClearAll:hover{opacity:1;color:#f87171;border-color:#f87171}
+  .cure-row .cureDismiss{margin-left:6px;cursor:pointer;color:#8b949e;font-size:11px;line-height:1;
+    flex-shrink:0;opacity:0.6}
+  .cure-row .cureDismiss:hover{opacity:1;color:#f87171}
+  #empty{color:rgba(255,255,255,0.5);font-size:11px;text-shadow:-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000,0 1px 2px #000;padding:3px 0;text-align:center}
+  /* drag/lock/setup chrome — shared pattern. */
+  #drag-controls{display:none;position:fixed;top:4px;left:4px;gap:4px;z-index:60}
+  body.unlocked #drag-controls{display:flex}
+  body.unlocked{outline:2px solid rgba(248,184,123,0.7);outline-offset:-2px}
+  .drag-btn{width:24px;height:24px;display:flex;align-items:center;justify-content:center;
+    background:rgba(180,98,34,0.92);color:#fff;border:1px solid rgba(255,255,255,0.4);
+    border-radius:4px;font-size:13px;line-height:1;cursor:move;user-select:none}
+  #lock-btn{cursor:pointer;font-size:11px}
+  #setupbar{display:none;position:fixed;top:0;left:0;right:0;align-items:center;gap:8px;
+    padding:4px 8px;background:rgba(180,98,34,0.92);color:#fff;font-size:10px;font-weight:600;z-index:50}
+  body.setup #setupbar{display:flex}
+  body.setup #drag-controls{top:28px}
+  body.setup #wrap{margin-top:26px}
+  #setupbar input[type=range]{flex:1;cursor:pointer}
+  #hide-btn{position:fixed;top:6px;right:6px;z-index:65;width:18px;height:18px;
+    display:flex;align-items:center;justify-content:center;border-radius:4px;
+    background:rgba(14,17,22,0.6);color:#8b949e;border:1px solid rgba(110,118,129,0.3);
+    font-size:11px;line-height:1;cursor:pointer;opacity:0.45;transition:opacity .12s}
+  #hide-btn:hover{opacity:1;color:#f87171;border-color:#f87171}
+  body.setup #hide-btn{top:30px}
+  #move-btn{position:fixed;top:6px;left:6px;z-index:65;width:18px;height:18px;
+    display:flex;align-items:center;justify-content:center;border-radius:4px;
+    background:rgba(14,17,22,0.6);color:#8b949e;border:1px solid rgba(110,118,129,0.3);
+    font-size:11px;line-height:1;cursor:move;opacity:0.45;transition:opacity .12s}
+  #move-btn:hover{opacity:1;color:#f8b87b;border-color:#f8b87b}
+  body.setup #move-btn{top:30px}
+</style></head>
+<body>
+  <button id="move-btn" title="Drag from this icon to move the overlay">✥</button>
+  <button id="hide-btn" title="Hide the Command Center overlay (turn back on from the tray → Overlays)">✕</button>
+  <div id="drag-controls">
+    <div id="move-handle" class="drag-btn" title="Drag to move">✥</div>
+    <div id="lock-btn"   class="drag-btn" title="Lock in place">🔒</div>
+  </div>
+  <div id="setupbar">
+    <span>🎛 Command Center</span>
+    <span>opacity</span><input id="opacitySlider" type="range" min="0.15" max="1" step="0.05" value="1" /><span id="opacityVal">100%</span>
+    <button id="exitSetupBtn">Done</button>
+  </div>
+  <div id="wrap">
+    <div class="title"><span aria-hidden>🎛</span><span>Command Center</span><span class="who" id="who"></span></div>
+    <div id="content"></div>
+  </div>
+<script>
+  let PORT = 7779;
+  window.mimic && window.mimic.onAgentPort && window.mimic.onAgentPort(p => { PORT = p; });
+  window.mimic && window.mimic.getAgentPort && window.mimic.getAgentPort().then(p => { if (p) PORT = p; });
+
+  if (window.mimic && window.mimic.onOverlayLocked) {
+    window.mimic.onOverlayLocked(locked => { document.body.classList.toggle('unlocked', !locked); });
+  }
+  var lockBtn = document.getElementById('lock-btn');
+  if (lockBtn) lockBtn.addEventListener('click', function(){ try { window.mimic.setOverlaysLocked(true); } catch (e) {} });
+
+  var hideBtn = document.getElementById('hide-btn');
+  if (hideBtn) {
+    hideBtn.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch (e) {} });
+    hideBtn.addEventListener('mouseleave', function(){ try { window.mimic.overlayHoverInteractive(false); } catch (e) {} });
+    hideBtn.addEventListener('click', function(){ try { window.mimic.hideThisOverlay(); } catch (e) {} });
+  }
+
+  var moveHandle = document.getElementById('move-handle');
+  var moveBtn    = document.getElementById('move-btn');
+  var _dragging = false;
+  function _beginDrag(e){
+    if (e.button !== 0) return; e.preventDefault(); _dragging = true;
+    try { window.mimic.overlayDragStart(); } catch (err) {}
+  }
+  if (moveHandle) moveHandle.addEventListener('mousedown', _beginDrag);
+  if (moveBtn) {
+    moveBtn.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch (e) {} });
+    moveBtn.addEventListener('mouseleave', function(){ if (!_dragging) { try { window.mimic.overlayHoverInteractive(false); } catch (e) {} } });
+    moveBtn.addEventListener('mousedown', _beginDrag);
+    try { window.mimic.attachOverlayMenu(moveBtn); } catch (e) {}
+  }
+  document.addEventListener('mouseup', function(){ if (_dragging){ _dragging=false; try{window.mimic.overlayDragEnd();}catch(e){} try{window.mimic.overlayHoverInteractive(false);}catch(e){} } });
+  window.addEventListener('blur', function(){ if (_dragging){ _dragging=false; try{window.mimic.overlayDragEnd();}catch(e){} } });
+
+  var _overlayKey = null;
+  var _setupScope = null;
+  if (window.mimic && window.mimic.onSetupMode) {
+    window.mimic.onSetupMode(function(p){ _overlayKey = p && p.overlayKey; if (p && p.scope) _setupScope = p.scope; else if (p && p.active) _setupScope = 'all'; document.body.classList.toggle('setup', !!(p && p.active)); });
+  }
+  if (window.mimic && window.mimic.onBgAlpha) {
+    window.mimic.onBgAlpha(function(v){
+      var a = (typeof v === 'number' && v >= 0.15 && v <= 1.0) ? v : 0.55;
+      try { document.documentElement.style.setProperty('--bg-alpha', String(a)); } catch (e) {}
+    });
+  }
+  var slider = document.getElementById('opacitySlider'); var oVal = document.getElementById('opacityVal');
+  if (slider) slider.addEventListener('input', function(){
+    var v = parseFloat(slider.value || '1'); if (oVal) oVal.textContent = Math.round(v*100)+'%';
+    if (_overlayKey && window.mimic && window.mimic.setOverlayOpacity) { try { window.mimic.setOverlayOpacity(_overlayKey, v); } catch (e) {} }
+  });
+  var doneBtn = document.getElementById('exitSetupBtn');
+  if (doneBtn) doneBtn.addEventListener('click', function(){ try { document.body.classList.remove('setup'); } catch (e) {} try { if (_setupScope === 'this') window.mimic.setSetupModeThis(false); else window.mimic.setSetupMode(false); } catch (e) {} _setupScope = null; });
+
+  function esc(s){ return String(s == null ? '' : s).replace(/[&<>"]/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c]; }); }
+  function fmtSec(s){ if (s == null) return '--'; if (s < 60) return Math.round(s)+'s'; var m = Math.floor(s/60), r = Math.round(s%60); return m+':'+(r<10?'0':'')+r; }
+
+  function _requestAutoHeight(){
+    if (!(window.mimic && window.mimic.overlayAutoHeight)) return;
+    var w = document.getElementById('wrap'); if (!w) return;
+    try { window.mimic.overlayAutoHeight(w.scrollHeight + 8); } catch (e) {}
+  }
+
+  var contentEl = document.getElementById('content');
+  var whoEl     = document.getElementById('who');
+
+  // Curse/Cure local dismiss (#66) — session-scoped, this client only. Keyed by
+  // the agent-provided stable row id (name + sorted debuff-spell set). Reconciled
+  // against each poll: an id that leaves the payload is forgotten so a genuine
+  // re-land re-shows, while a still-present (stale/moot) row stays dismissed.
+  var _dismissedCures = new Set();
+  var _lastState = null;
+  function _cureId(c){ return (c && c.id) ? c.id : (c && c.name ? String(c.name).toLowerCase() : null); }
+
+  // Divine Intervention (#50) as compact chips beside the HEALER MANA header
+  // (#66) — "DI: Uilnayar ✓ · Fargan 45s". Same data as the old DI card, only
+  // reshaped. Gold ring when exactly one cleric is up (save it for the tank).
+  function diChips(di){
+    if (!di || !di.clerics || !di.clerics.length) return '';
+    var solo = di.up_count === 1 && di.clerics.length > 1;
+    var parts = [];
+    for (var i = 0; i < di.clerics.length; i++) {
+      var dc = di.clerics[i];
+      parts.push(dc.up
+        ? '<span class="up">' + esc(dc.name) + ' ✓</span>'
+        : '<span class="cd">' + esc(dc.name) + ' ' + Math.max(1, dc.seconds || 1) + 's</span>');
+    }
+    return '<span class="di-chips' + (solo ? ' solo' : '') + '"><span class="di-lab">DI:</span>'
+         + parts.join('<span class="sep">·</span>') + '</span>';
+  }
+
+  function hpClass(pct){ if (pct == null) return ''; if (pct <= 25) return 'crit'; if (pct <= 50) return 'low'; return ''; }
+  function manaClass(pct){ if (pct == null) return ''; if (pct <= 15) return 'crit'; if (pct <= 35) return 'low'; return ''; }
+  // HP bar label — raw "cur / max · pct%" when the local character's own Zeal
+  // reported the numbers, else just the percentage.
+  function hpValText(pct, cur, max){
+    if (pct == null) return null;
+    if (cur != null && max != null) return cur + ' / ' + max + ' · ' + pct + '%';
+    return pct + '%';
+  }
+
+  function render(s){
+    if (!s || s.character == null) {
+      contentEl.innerHTML = '<div id="empty">No focused character yet — launch EQ + Zeal and target a mob.</div>';
+      whoEl.textContent = '';
+      return;
+    }
+    whoEl.textContent = '· ' + ((s.mt && s.mt.name) ? 'MT ' + s.mt.name : s.character);
+
+    var html = '';
+
+    // Target HP + boss enrage warning (same data the Tank overlay shows).
+    if (s.target && s.target.name) {
+      var thp = s.target.hp_pct == null ? null : Math.max(0, Math.min(100, Math.round(s.target.hp_pct)));
+      html += '<div class="card">'
+           +    '<div class="head">Target — ' + esc(s.target.name) + '</div>'
+           +    '<div class="hpwrap"><div class="hpbar ' + hpClass(100 - (thp || 0)) + '" style="width:' + (thp == null ? 0 : thp) + '%"></div>'
+           +      '<div class="val">' + (thp == null ? '—' : thp + '%') + '</div></div>'
+           +  '</div>';
+      if (s.enrage && s.enrage.enrages && thp != null && thp <= s.enrage.warn_pct) {
+        var critEnrage = thp <= (s.enrage.threshold_pct + 2);
+        html += '<div class="enrage ' + (critEnrage ? 'crit' : '') + '">'
+             +    '⚠️ Enrage near — watch for ≤' + s.enrage.threshold_pct + '% (currently ' + thp + '%)'
+             +  '</div>';
+      }
+    }
+
+    // Death Touch countdown — mirrors any active "Death Touch"-named guild
+    // trigger's timer, same as the Tank overlay.
+    if (s.deathtouch && s.deathtouch.seconds != null) {
+      var dtCrit = !!s.deathtouch.critical;
+      html += '<div class="dt ' + (dtCrit ? 'crit' : '') + '">'
+           +    '<span>☠️ Death Touch' + (s.deathtouch.target ? ' — ' + esc(s.deathtouch.target) : '') + '</span>'
+           +    '<span class="sec">' + fmtSec(s.deathtouch.seconds) + '</span>'
+           +  '</div>';
+    }
+
+    // Main Tank HP (compact — buffs/DS detail stays on the Tank overlay).
+    if (s.mt && s.mt.name) {
+      var mthp = s.mt.hp_pct == null ? null : Math.max(0, Math.min(100, Math.round(s.mt.hp_pct)));
+      var mtVal = hpValText(mthp, s.mt.hp_cur, s.mt.hp_max);
+      html += '<div class="card">'
+           +    '<div class="head">Main Tank — ' + esc(s.mt.name) + (s.mt.is_self ? ' (you)' : '') + '</div>'
+           +    '<div class="hpwrap"><div class="hpbar ' + hpClass(mthp) + '" style="width:' + (mthp == null ? 0 : mthp) + '%"></div>'
+           +      '<div class="val">' + (mtVal == null ? 'HP not visible' : mtVal) + '</div></div>'
+           +  '</div>';
+    }
+
+    // Rampage target + invuln (DA/Harmshield/etc) highlight — identical to
+    // the Tank overlay's card.
+    if (s.rampage && s.rampage.target) {
+      var rhp = s.rampage.hp_pct == null ? null : Math.max(0, Math.min(100, Math.round(s.rampage.hp_pct)));
+      var rda = s.rampage.da || null;
+      var barCls  = rda ? (rda.critical ? 'inv-soon' : 'gold') : hpClass(rhp);
+      var barW    = rda ? 100 : (rhp == null ? 0 : rhp);
+      var daTags  = rda ? '<span class="inv-tag l">INV</span><span class="inv-tag r">INV</span>' : '';
+      var valText = rda ? ('INV ' + fmtSec(rda.seconds)) : (rhp == null ? 'HP not visible' : rhp + '%');
+      html += '<div class="ramp">'
+           +    '<div class="row">💀 Rampage on <span class="who">' + esc(s.rampage.target) + '</span></div>'
+           +    '<div class="hpwrap"><div class="hpbar ' + barCls + '" style="width:' + barW + '%"></div>'
+           +      daTags
+           +      '<div class="val">' + valText + '</div></div>'
+           +  '</div>';
+    }
+
+    // Raid-wide DA/invuln broadcasts — every tank currently reporting status
+    // via their own raid-chat macro (Naggato's ">> DA up << 18 secs" etc),
+    // not just whoever's the current Rampage target above.
+    if (s.da_broadcasts && s.da_broadcasts.length) {
+      html += '<div class="card"><div class="head">Defensives (active / recharging)</div><div class="list">';
+      for (var i = 0; i < s.da_broadcasts.length; i++) {
+        var d = s.da_broadcasts[i];
+        var chipCls, chipTxt;
+        if (d.state === 'cooldown') {
+          // Discipline used, now recharging — count DOWN until it's available.
+          chipCls = 'down';
+          chipTxt = 'DOWN · ' + fmtSec(d.cooldown_secs);
+        } else if (d.seconds == null) {
+          chipCls = 'up'; chipTxt = 'UP';                       // up, duration unknown
+        } else {
+          chipCls = d.seconds <= 5 ? 'soon' : 'up';
+          chipTxt = fmtSec(d.seconds);                          // remaining ACTIVE time
+        }
+        html += '<div class="row"><span class="nm">' + esc(d.name) + '</span>'
+             +    (d.kind ? '<span class="cls">' + esc(d.kind) + '</span>' : '')
+             +    '<span class="da-chip ' + chipCls + '">' + chipTxt + '</span></div>';
+      }
+      html += '</div></div>';
+    }
+
+    // Healer mana roster — self-reported "N% mana" call-outs, lowest first
+    // so the group needing a mana break is easy to spot at a glance. Divine
+    // Intervention readiness (#50) rides in the header as compact chips (#66);
+    // the CH-chain overlay owns the "only <X> has DI" voice callout so nobody
+    // hears it twice.
+    var diChipsHtml = diChips(s.di);
+    if (s.healer_mana && s.healer_mana.length) {
+      html += '<div class="card"><div class="head mana-head">Healer mana' + diChipsHtml + '</div><div class="list">';
+      for (var j = 0; j < s.healer_mana.length; j++) {
+        var h = s.healer_mana[j];
+        html += '<div class="row"><span class="nm">' + esc(h.name) + '</span>'
+             +    (h.class ? '<span class="cls">' + esc(h.class) + '</span>' : '')
+             +    '<div class="mana-bar"><div class="fill ' + manaClass(h.pct) + '" style="width:' + h.pct + '%"></div></div>'
+             +    '<span class="mana-pct">' + h.pct + '%</span></div>';
+      }
+      html += '</div></div>';
+    } else if (diChipsHtml) {
+      // DI available but no mana call-outs yet — show the chips on their own
+      // compact line rather than losing them.
+      html += '<div class="card"><div class="head mana-head">Healer mana' + diChipsHtml + '</div></div>';
+    }
+
+    // /random roll sets (last 15 min) — "333 (Item name) — Winner names"
+    // (Uilnayar 2026-07-10). Winners = top-(qty) first-rolls; the qty comes
+    // from the loot link "Item (3)333". Full per-roll detail lives on the
+    // agent dashboard's 🎲 Rolls card.
+    if (s.rolls && s.rolls.length) {
+      html += '<div class="card"><div class="head">🎲 Rolls</div><div class="list">';
+      var rMax = Math.min(s.rolls.length, 4);
+      for (var ri = 0; ri < rMax; ri++) {
+        var rs = s.rolls[ri];
+        var winners = (rs.winners || []).map(function(w){ return esc(w.name) + ' <b>' + w.value + '</b>'; }).join(', ');
+        html += '<div class="row"><span class="nm"><b>' + rs.to + '</b>'
+             +    (rs.item ? ' (' + esc(rs.item) + (rs.qty ? ' ×' + rs.qty : '') + ')' : '')
+             +    ' — <span style="color:#f0c419">' + (winners || '—') + '</span></span>'
+             +    '<span class="cls">' + rs.players + ' roll' + (rs.players === 1 ? '' : 's') + (rs.open ? ' · open' : '') + '</span></div>';
+      }
+      html += '</div></div>';
+    }
+
+    // Curse/Cure alerts — reuses the buff queue's real observed-debuff
+    // tracking (not chat parsing) so it stays accurate even when nobody's
+    // typed a "please cure" macro. Per-line ✕ + "clear all" dismiss (#66) are
+    // LOCAL to this client: reconcile the dismissed set against the fresh
+    // payload (forget ids no longer present so a re-land re-shows), then filter.
+    if (s.cures && s.cures.length) {
+      var _curIds = new Set();
+      for (var ci0 = 0; ci0 < s.cures.length; ci0++) { var _id0 = _cureId(s.cures[ci0]); if (_id0) _curIds.add(_id0); }
+      _dismissedCures.forEach(function(id){ if (!_curIds.has(id)) _dismissedCures.delete(id); });
+      var visibleCures = [];
+      for (var vk = 0; vk < s.cures.length; vk++) {
+        var _idv = _cureId(s.cures[vk]);
+        if (_idv && _dismissedCures.has(_idv)) continue;
+        visibleCures.push(s.cures[vk]);
+      }
+      if (visibleCures.length) {
+        html += '<div class="card cure-card"><div class="head cure-head">Curse / Cure'
+             +    '<span class="cureClearAll" title="Dismiss all cure/curse alerts (this client, until they change)">clear all</span>'
+             +  '</div><div class="list">';
+        for (var k = 0; k < visibleCures.length; k++) {
+          var c = visibleCures[k];
+          var cId = _cureId(c);
+          var curses = c.curses || [];
+          var chips = curses.map(function(cc){
+            return '<span class="cure-chip' + (cc.being_cured ? ' being-cured' : '') + '">' + esc(cc.cure) + (cc.counters ? ' ×' + cc.counters : '') + (cc.being_cured ? ' (curing)' : '') + '</span>';
+          }).join(' ');
+          html += '<div class="row cure-row"><span class="nm">' + esc(c.name) + '</span>' + chips
+               +    '<span class="cureDismiss" data-cure-id="' + esc(cId) + '" title="Dismiss this alert (this client)">✕</span></div>';
+        }
+        html += '</div></div>';
+      }
+    }
+
+    if (!html) html = '<div id="empty">Nothing to report — no active target, DA/mana call-outs, rolls, or curses seen yet.</div>';
+
+    if (contentEl.__wpHtml !== html) {   // byte-stability guard (2026-07-07)
+      contentEl.innerHTML = html;
+      contentEl.__wpHtml = html;
+      _requestAutoHeight();
+    }
+  }
+
+  // Curse/Cure dismiss — delegated on #content (rebuilt every poll, so bind
+  // once). Every clickable needs the hover-interact handshake: locked overlays
+  // are click-through, so without flipping interactive on hover the click falls
+  // through to EQ.
+  if (contentEl) {
+    contentEl.addEventListener('mouseover', function(e){
+      var t = e.target;
+      if (t && t.classList && (t.classList.contains('cureDismiss') || t.classList.contains('cureClearAll'))) {
+        try { window.mimic.overlayHoverInteractive(true); } catch (er) {}
+      }
+    });
+    contentEl.addEventListener('mouseout', function(e){
+      var t = e.target;
+      if (t && t.classList && (t.classList.contains('cureDismiss') || t.classList.contains('cureClearAll'))) {
+        try { window.mimic.overlayHoverInteractive(false); } catch (er) {}
+      }
+    });
+    contentEl.addEventListener('click', function(e){
+      var one = e.target && e.target.closest ? e.target.closest('.cureDismiss') : null;
+      if (one) {
+        e.preventDefault(); e.stopPropagation();
+        var id = one.getAttribute('data-cure-id');
+        if (id) { _dismissedCures.add(id); if (_lastState) render(_lastState); }
+        return;
+      }
+      var all = e.target && e.target.closest ? e.target.closest('.cureClearAll') : null;
+      if (all) {
+        e.preventDefault(); e.stopPropagation();
+        if (_lastState && _lastState.cures) {
+          for (var i = 0; i < _lastState.cures.length; i++) { var cid = _cureId(_lastState.cures[i]); if (cid) _dismissedCures.add(cid); }
+          render(_lastState);
+        }
+        return;
+      }
+    });
+  }
+
+  async function tick(){
+    try {
+      const r = await fetch('http://127.0.0.1:'+PORT+'/api/command-center', { cache: 'no-store' });
+      const s = await r.json();
+      _lastState = s;
+      render(s);
+    } catch (e) {
+      // Quiet — agent might be restarting. Next tick will recover.
+    }
+  }
+  tick(); setInterval(tick, 1500);
+</script>
+</body></html>
+`;
+// ── end #65 hot-servable overlays ─────────────────────────────
+
 function startWebDashboard(port) {
   const server = http.createServer(async (req, res) => {
     try {
@@ -17285,6 +17764,25 @@ function startWebDashboard(port) {
         // suspect for the "blank in app, fine in browser" reports.
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store, must-revalidate' });
         return res.end(WEB_HTML);
+      }
+      // #65 Hot-servable overlays (pilot: Command Center). Serve embedded
+      // overlay HTML so Mimic can load /overlay/<name> and have the overlay
+      // ride agent hot-swaps ([U] flow) instead of a full Mimic release.
+      // Read-only GET; name allow-list = 'command' ONLY — anything else 404s
+      // (no fs, no path join, no traversal surface: the body is an in-memory
+      // constant). main.js prefers this URL and falls back to the bundled
+      // command.html when the agent is down/unreachable.
+      if (req.url && req.url.indexOf('/overlay/') === 0) {
+        const name = req.url.slice('/overlay/'.length).split('?')[0].split('/')[0];
+        const OVERLAYS = { command: COMMAND_HTML };
+        if (!Object.prototype.hasOwnProperty.call(OVERLAYS, name)) {
+          res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+          return res.end('unknown overlay');
+        }
+        // no-store so a hot-swap never leaves a stale overlay cached in the
+        // BrowserWindow (same rationale as the dashboard route above).
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store, must-revalidate' });
+        return res.end(OVERLAYS[name]);
       }
       if (req.url === '/api/state') {
         // Serve every poller the SAME serialized snapshot for 400ms. The
