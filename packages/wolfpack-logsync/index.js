@@ -9739,16 +9739,30 @@ function _serializeForDashboard() {
           liveChars.add(String(ch).toLowerCase());
         }
       }
-      // Pet names that belong to an ACTIVE charm session → skip (charm tracker).
-      const activeCharmPets = new Set();
+      // Active charm sessions keyed by owner (ownerLower → pet name). #125:
+      // a charm pet IS a pet — it must show in the Pet tracker too, sourced
+      // from the SAME authoritative _charmTickTracker state the Charm tracker
+      // reads, so it's visible the instant a charm lands. Previously we SKIPPED
+      // active charm pets here ("it's in the charm tracker"), which made the
+      // charm pet's Pet-tracker row depend entirely on fall-through state —
+      // /pet-health reports (_petHealthByOwner, also disk-restored) and
+      // owner-keyed landings (_petBuffLandings). Veterans had that accumulated/
+      // persisted state so a row rendered; a fresh install's cold maps had
+      // nothing, so a charmer on a brand-new Mimic never saw their charm pet in
+      // the Pet tracker (Primas / Seaman / Ktpearie). Now an active charm
+      // session alone yields a row: owner from the session, HP from slot 16.
+      const activeCharmByOwner = new Map();
       for (const [, info] of _charmTickTracker) {
-        if (info && info.is_active && info.pet) activeCharmPets.add(String(info.pet).toLowerCase());
+        if (info && info.is_active && info.pet && info.owner) {
+          activeCharmByOwner.set(String(info.owner).toLowerCase(), info.pet);
+        }
       }
-      // Owners worth showing: anyone with a live pet, a /pet health report, or
-      // a recent landing on their pet — gated below by Zeal-freshness so a
-      // logged-off char's stale state doesn't render.
+      // Owners worth showing: anyone with a live pet, an active charm session,
+      // a /pet health report, or a recent landing on their pet — gated below by
+      // Zeal-freshness so a logged-off char's stale state doesn't render.
       const owners = new Set([
         ...livePet.keys(),
+        ...activeCharmByOwner.keys(),
         ..._petHealthByOwner.keys(),
         ..._petBuffLandings.keys(),
       ]);
@@ -9759,10 +9773,10 @@ function _serializeForDashboard() {
         // it's still in the maps because we persist across restarts.
         if (!liveChars.has(owner)) continue;
         const lp = livePet.get(owner);
-        const petName = lp ? lp.name : null;
-        // Charm pet (slot-16 name starts with a/an, tracked as active charm) →
-        // skip; it's in the charm tracker.
-        if (petName && activeCharmPets.has(String(petName).toLowerCase())) continue;
+        // Pet name: the live slot-16 gauge when present, else the active charm
+        // session's pet (the gauge can blip empty between mob ticks — the charm
+        // session keeps the row stable, matching the Charm tracker).
+        const petName = (lp && lp.name) || activeCharmByOwner.get(owner) || null;
         const rep = _petHealthByOwner.get(owner);
         const repFresh = rep && (now - (rep.last_seen_at || 0)) <= PET_HEALTH_TTL_MS;
         const buffs = petBuffsForOwner(owner);
