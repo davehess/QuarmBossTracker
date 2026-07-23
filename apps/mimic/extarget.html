@@ -304,6 +304,15 @@
     'languid pace','shiftless deeds','tepid deeds','forlorn deeds',
     'rage of ssraeshza'
   ]);
+  // #130 — slow MAGNITUDE (attack-speed reduction %) so the SLOW badge tooltip
+  // can name the STRONGEST active slow + its remaining time (do NOT redesign the
+  // pill). Mirrors the agent's SLOW_MAGNITUDES, grounded from eqemu_spells.raw
+  // SPA-11 `max` (slow% = 100 − max). Cripple has no SPA-11 component → 0.
+  var SLOW_MAG = {
+    'rage of ssraeshza':90, "turgur's insects":75, "togor's insects":70, 'forlorn deeds':70,
+    'shiftless deeds':65, "tagar's insects":50, 'tepid deeds':50, 'walking sleep':35,
+    'languid pace':30, 'drowsy':25
+  };
   var MEZ_DEBUFFS = new Set([
     'mesmerize','mesmerization','enthrall','dazzle','rapture','fascination',
     'glamour of kintaz',"kelin's lucid lullaby",'lullaby of morell',
@@ -315,15 +324,28 @@
   // debuff list stops carrying it → byte-stable HTML change → repaint once).
   function ccBadges(debuffs){
     if (!debuffs || !debuffs.length) return '';
-    var mez = false, slow = false;
+    var mez = false, bestSlow = null;
     for (var i = 0; i < debuffs.length; i++){
-      var k = _normDebuff(debuffs[i] && debuffs[i].name);
-      if (!mez  && MEZ_DEBUFFS.has(k))  mez  = true;
-      if (!slow && SLOW_DEBUFFS.has(k)) slow = true;
+      var d = debuffs[i];
+      var k = _normDebuff(d && d.name);
+      if (!mez && MEZ_DEBUFFS.has(k)) mez = true;
+      // #130 — keep the STRONGEST slow (EQ slows don't stack) so the tooltip
+      // names it + its remaining time; the pill itself is unchanged.
+      if (SLOW_DEBUFFS.has(k)) {
+        var mag = SLOW_MAG[k] || 0;
+        if (!bestSlow || mag > bestSlow.mag) {
+          bestSlow = { name: (d && d.name) || k, mag: mag,
+                       rem: (d && d.remaining_secs != null) ? d.remaining_secs : null };
+        }
+      }
     }
     var s = '';
     if (mez)  s += '<span class="cc-badge mez" title="Mesmerized — crowd-controlled. Don\'t break the mez.">MEZ</span>';
-    if (slow) s += '<span class="cc-badge slow" title="Slowed — attack speed debuffed.">SLOW</span>';
+    if (bestSlow) {
+      var slowTip = 'Slowed — ' + esc(bestSlow.name) + (bestSlow.mag ? ' ' + bestSlow.mag + '% attack speed' : '')
+                  + (bestSlow.rem != null ? ' · ' + fmtDur(bestSlow.rem) + ' left' : '');
+      s += '<span class="cc-badge slow" title="' + slowTip + '">SLOW</span>';
+    }
     return s;
   }
 

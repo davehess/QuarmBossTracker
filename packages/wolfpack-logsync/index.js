@@ -3867,6 +3867,212 @@ function _isSlowSpell(name) {
   return SLOW_SPELLS.has(String(name).toLowerCase().replace(/`/g, "'").trim());
 }
 
+// ── #130 slow status on the target: best-active-slow + timer + land/drop ─────
+// Shamans/enchanters asked for slow visibility ON THE MOB — is it slowed, with
+// what, by whom (when known), and how long is left — plus an audible cue when a
+// slow lands and when it drops so they know to reslow. Three pieces live here:
+//   1) SLOW_MAGNITUDES — the attack-speed reduction each slow applies, so the
+//      display + callouts keep the STRONGEST active slow (EQ slows don't stack —
+//      the strongest applies; a weaker cast under a stronger one is a no-op).
+//   2) _slowsByTarget — every active slow observed on each target, EACH timed
+//      from its own catalog duration; the DISPLAY (_bestSlowForTarget) derives
+//      the strongest still-live one, and falls back to a weaker slow whose timer
+//      is still live when the strongest expires (rather than showing nothing).
+//   3) land/drop callouts on the trigger overlay (TTS gated downstream by
+//      enableTriggerTts, same pipeline as the loot/rampage callouts), gated to
+//      the MAIN target (reuses _rampageOnMainTarget) to stay low-noise.
+//
+// GROUNDING — magnitudes are eqemu-derived, NOT guessed. The AGENT spell catalog
+// (id/name/dur/durf/good) carries NO SPA data, so — exactly as SLOW_SPELLS above
+// is a hardcoded named list — this is a hardcoded table grounded from
+// eqemu_spells.raw. Each classic slow is a level-scaling SPA-11 (SE_AttackSpeed)
+// effect: `base` at min level, formula-scaled, CAPPED by the `max` field — the
+// attack-speed % the target reaches at a max-level caster (every raid slower is
+// capped there). Slow % = 100 − max. VERIFIED 2026-07-23 against Supabase
+// project zhtoekwakucbckvatfky (raw->'eff' / raw->'max' for the SPA-11 slot):
+//   Turgur's Insects max 25 → 75%   Togor's Insects max 30 → 70%
+//   Forlorn Deeds    max 30 → 70%   Shiftless Deeds max 35 → 65%
+//   Tagar's Insects  max 50 → 50%   Tepid Deeds     max 50 → 50%
+//   Walking Sleep    max 65 → 35%   Languid Pace    max 70 → 30%
+//   Drowsy           max 75 → 25%   Rage of Ssraeshza (flat SPA-11 base 10) → 90%
+// (Rage matches the existing #142 comment: "SPA 11 base 10 = −90% attack speed".)
+// Cripple is in SLOW_SPELLS for the #105 timeline but has NO SPA-11 component on
+// Quarm (a STR/AC/ATK debuff — raw->'eff' = [5,6,4,1]): no magnitude here, so it
+// ranks below any real slow (treated as 0 / unknown).
+const SLOW_MAGNITUDES = new Map([
+  ['rage of ssraeshza', 90],
+  ["turgur's insects",  75],
+  ["togor's insects",   70],
+  ['forlorn deeds',     70],
+  ['shiftless deeds',   65],
+  ["tagar's insects",   50],
+  ['tepid deeds',       50],
+  ['walking sleep',     35],
+  ['languid pace',      30],
+  ['drowsy',            25],
+]);
+function _slowMagnitude(name) {
+  if (!name) return 0;
+  return SLOW_MAGNITUDES.get(String(name).toLowerCase().replace(/`/g, "'").trim()) || 0;
+}
+// A slow's SHORT spoken name — "Turgur's Insects" → "Turgur's" — for the TTS.
+function _slowShortName(name) {
+  return String(name || '').replace(/\s+(insects|deeds|pace|sleep)$/i, '').trim() || String(name || '');
+}
+// Active slows observed per target: targetLower → Map<spellLower,
+// { name, magnitude, caster, landedAtMs, expiresAtMs }>. `caster` is set only
+// when we KNOW it (our own self-cast); a bystander-observed land carries null
+// (the same limitation the raid-review slows section documents). expiresAtMs 0 =
+// unknown catalog duration (rare — the classic slows are all catalog-timed).
+const _slowsByTarget = new Map();
+const SLOW_TARGET_CAP     = 200;
+const SLOW_PRUNE_GRACE_MS = 3000;
+// Per-target last-ANNOUNCED best slow (targetLower → { name, magnitude }) — edge
+// detection for the land/drop callouts. Only main-target announcements land here.
+const _slowCalloutState = new Map();
+
+// Pure best-active-slow selection: the STRONGEST slow whose timer is still live
+// (expiresAtMs === 0 means unknown duration → treated as live), ties broken by
+// the later expiry. Returns the winning entry or null. Dependency-free so a
+// source-slice test can drive it directly.
+function _pickBestActiveSlow(entries, nowMs) {
+  let best = null;
+  for (const e of entries) {
+    if (!e || !e.name) continue;
+    if (e.expiresAtMs > 0 && e.expiresAtMs <= nowMs) continue;   // timer already expired
+    if (!best
+        || e.magnitude > best.magnitude
+        || (e.magnitude === best.magnitude && (e.expiresAtMs || 0) > (best.expiresAtMs || 0))) {
+      best = e;
+    }
+  }
+  return best;
+}
+// Best active slow on a target for DISPLAY — { name, magnitude, caster,
+// remaining_secs, total_secs } or null. Prunes long-expired entries as it reads.
+function _bestSlowForTarget(targetLower, nowMs) {
+  const mp = _slowsByTarget.get(targetLower);
+  if (!mp || mp.size === 0) return null;
+  const now = nowMs || Date.now();
+  const entries = [];
+  for (const [k, e] of mp) {
+    if (e && e.expiresAtMs > 0 && e.expiresAtMs <= now - SLOW_PRUNE_GRACE_MS) { mp.delete(k); continue; }
+    if (e) entries.push(e);
+  }
+  if (mp.size === 0) { _slowsByTarget.delete(targetLower); return null; }
+  const best = _pickBestActiveSlow(entries, now);
+  if (!best) return null;
+  const remaining = best.expiresAtMs > 0 ? Math.max(0, Math.round((best.expiresAtMs - now) / 1000)) : null;
+  const total     = best.expiresAtMs > 0 ? Math.max(0, Math.round((best.expiresAtMs - best.landedAtMs) / 1000)) : null;
+  return { name: best.name, magnitude: best.magnitude, caster: best.caster || null,
+           remaining_secs: remaining, total_secs: total };
+}
+// Record a slow landing on a target (both parse hook sites feed here). `caster`
+// is the self-cast caster or null. Refreshes an existing same-slow window and
+// keeps every distinct slow so best-active can fall back on expiry. Then fires
+// the LAND callout (main-target gated inside _maybeAnnounceSlowLand).
+function _noteSlowForTarget(evt, caster) {
+  if (!evt || !evt.spell_name || !evt.target) return;
+  if (!_isSlowSpell(evt.spell_name)) return;
+  const targetLower = String(evt.target).toLowerCase();
+  const spellLower  = String(evt.spell_name).toLowerCase().replace(/`/g, "'").trim();
+  const atMs = evt.cast_at ? (Date.parse(evt.cast_at) || Date.now()) : Date.now();
+  // Caster level is unknown at land time — estimate off the era cap, the same
+  // floor the buff/timeline trackers use (level-formula slows compute 0 ticks
+  // otherwise).
+  const durTicks    = _durTicksForLevel(evt.dur_formula, evt.dur_ticks, _assumedCasterLevel());
+  const expiresAtMs = durTicks > 0 ? atMs + durTicks * 6000 : 0;
+  const magnitude   = _slowMagnitude(evt.spell_name);
+  let mp = _slowsByTarget.get(targetLower);
+  if (!mp) { mp = new Map(); _slowsByTarget.set(targetLower, mp); }
+  const existing = mp.get(spellLower);
+  if (existing) {
+    existing.landedAtMs = atMs;
+    if (expiresAtMs) existing.expiresAtMs = expiresAtMs;
+    if (caster) existing.caster = caster;    // a later self-cast view names a bystander-first land
+    existing.magnitude = magnitude;
+  } else {
+    mp.set(spellLower, { name: evt.spell_name, magnitude, caster: caster || null, landedAtMs: atMs, expiresAtMs });
+  }
+  if (_slowsByTarget.size > SLOW_TARGET_CAP) {
+    const oldest = _slowsByTarget.keys().next().value;
+    if (oldest && oldest !== targetLower) _slowsByTarget.delete(oldest);
+  }
+  _maybeAnnounceSlowLand(targetLower, evt.target, atMs);
+}
+// LAND callout — main-target only, and only when the best active slow STRENGTHENS
+// (a fresh slow, or a stronger one taking over). A weaker slow under an active
+// stronger one, or a plain refresh, is silent (the best spell doesn't change).
+function _maybeAnnounceSlowLand(targetLower, targetName, nowMs) {
+  if (!_rampageOnMainTarget(targetName)) return;   // #155-style main-target gate
+  const best = _bestSlowForTarget(targetLower, nowMs);
+  if (!best) return;
+  const prev = _slowCalloutState.get(targetLower);
+  const changed = !prev || String(best.name).toLowerCase() !== String(prev.name || '').toLowerCase();
+  _slowCalloutState.set(targetLower, { name: best.name, magnitude: best.magnitude });
+  if (changed) _announceSlowLand(best);
+}
+function _announceSlowLand(best) {
+  const magTxt    = best.magnitude ? ' ' + best.magnitude + '%' : '';
+  const casterTxt = best.caster ? ' · ' + best.caster : '';
+  _pushOverlay({
+    text:        '🐌 Slowed — ' + best.name + magTxt + casterTxt,
+    tts:         'Slowed. ' + _slowShortName(best.name),
+    color:       'amber',
+    duration_ms: 5000,
+    shownAt:     Date.now(),
+    firedAt:     Date.now(),
+    trigger:     'Slow landed',
+    scope:       'slow',
+    test:        false,
+  });
+}
+function _announceSlowDrop(name) {
+  _pushOverlay({
+    text:        '🐌 Slow dropped — reslow' + (name ? ' (' + _slowShortName(name) + ')' : ''),
+    tts:         'Slow dropped. Reslow.',
+    color:       'red',
+    duration_ms: 6000,
+    shownAt:     Date.now(),
+    firedAt:     Date.now(),
+    trigger:     'Slow dropped',
+    scope:       'slow',
+    test:        false,
+  });
+}
+// Is `nameLower` a live Zeal target on any watched character right now? Guards
+// the DROP callout so a killed / de-targeted mob (its slow simply outliving on a
+// corpse) never nags a "reslow".
+function _isNameCurrentlyTargeted(nameLower) {
+  if (!nameLower) return false;
+  const now = Date.now();
+  for (const ch of Object.keys(_zealState)) {
+    const st = _zealState[ch];
+    if (!st || !st.target_name) continue;
+    if ((now - (st.updatedAt || 0)) > 60000) continue;
+    if (String(st.target_name).toLowerCase() === nameLower) return true;
+  }
+  return false;
+}
+// 1s tick — drives the fall-off (DROP) callout (catalog expiry has no log line)
+// and the SILENT downgrade when the strongest slow expires but a weaker one is
+// still live (display flips; no callout).
+function _tickSlowCallouts() {
+  const now = Date.now();
+  for (const [targetLower, prev] of _slowCalloutState) {
+    const best = _bestSlowForTarget(targetLower, now);
+    if (best) {
+      if (String(best.name).toLowerCase() !== String(prev.name || '').toLowerCase()) {
+        _slowCalloutState.set(targetLower, { name: best.name, magnitude: best.magnitude });   // downgrade — silent
+      }
+      continue;
+    }
+    _slowCalloutState.delete(targetLower);
+    if (_isNameCurrentlyTargeted(targetLower) && _rampageOnMainTarget(targetLower)) _announceSlowDrop(prev.name);
+  }
+}
+// ── end #130 slow status ─────────────────────────────────────────────────────
+
 // DISCIPLINE activations surface as bystander-visible emote lines. Data-driven:
 // each row is { name, self, other } where `other` captures the actor in group 1.
 // The four "fighting style" stance discs are grounded — Defensive's exact text
@@ -24343,6 +24549,12 @@ async function _pollRelayFires() {
 // exit cleanly — the live agent has its own foreground keep-alives.
 setInterval(_pollRelayFires, 1500).unref();
 
+// #130 — 1s slow-callout tick. Drives the fall-off (DROP) callout, whose signal
+// is a catalog-timer expiry with NO log line, plus the silent best-slow downgrade
+// when a stronger slow expires over a still-live weaker one. .unref() so test
+// harnesses can exit cleanly (same rationale as the relay poll above).
+setInterval(_tickSlowCallouts, 1000).unref();
+
 // ── Multiplexed poll (#106) ─────────────────────────────────────────────────
 // One loop that replaces the six per-client GET loops (recent-fires 1.5s,
 // overlay-tuning 90s, guild-triggers 2min, backfill 5min, ui-edits 5min,
@@ -25409,6 +25621,10 @@ function buildMobInfo() {
     target_is_pc:   zealBuffs !== null || liveBuffs !== null,
     target_slots:   slotCounts,
     target_casting: ctc ? ctc.casts : [],
+    // #130 — best ACTIVE slow on the current target (strongest still-live,
+    // observed-landing + catalog-duration derived; the only path for mobs, which
+    // have no authoritative buff readout on the Zeal pipe). null when unslowed.
+    target_slow:    _bestSlowForTarget(tnameLower, Date.now()),
   };
 }
 
@@ -28170,6 +28386,10 @@ async function main() {
           // #105 — a slow landing on the current fight target → slow_on timeline
           // tick. Self-cast path: the caster is this log's character.
           try { b.builder.noteSlowLanding(bcEvt, b.character); } catch (e) { void e; }
+          // #130 — module-level slow tracker (best-active-slow display + land
+          // callout). Caster is known only for a genuine self-cast; a witnessed
+          // beneficial-buff landing (parseBuffLanding) is not ours to attribute.
+          try { _noteSlowForTarget(bcEvt, bcEvt._selfCast ? b.character : null); } catch (e) { void e; }
         }
         // Detrimental debuff landed by SOMEONE ELSE (bystander view) — Tash/Malo
         // on the boss, a slow/poison on a raider. Our OWN debuffs are already
@@ -28187,6 +28407,8 @@ async function main() {
             // #105 — bystander-observed slow on the fight target → slow_on tick
             // (the caster is unknown from a landing line, so it's unattributed).
             try { b.builder.noteSlowLanding(dbEvt, null); } catch (e) { void e; }
+            // #130 — module-level slow tracker; bystander land, caster unknown.
+            try { _noteSlowForTarget(dbEvt, null); } catch (e) { void e; }
             // Upload BOTH mob and player debuffs so the bot's target-buffs relay
             // shows them cross-client — everyone targeting the boss sees
             // Tash/Malo/Turgur's even if they didn't personally witness the land
