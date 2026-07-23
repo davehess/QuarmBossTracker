@@ -3804,9 +3804,81 @@ const _triggerRelay = {
   nextId:  Date.now(),
   entries: [],   // { id, name, key, captures, actions, timer_duration_sec, fired_at_ms, posted_at_ms, uploaded_by }
 };
+// ── Loot-posted broadcast (#149) ─────────────────────────────────────────────
+// When an officer posts loot "for bidding" from their Mimic (_handleAgentLootPost
+// → OpenDKP closed auctions actually created), we record the event in this ring
+// so EVERY agent's fast poll can fire the raid-wide "Loot posted — N items" TTS
+// off the REAL post action instead of sniffing guild chat. It rides the
+// recent-fires payload (see _recentFiresFor), watermarked by id exactly like the
+// trigger relay so a reconnect/redeploy never re-announces old posts. Item NAMES
+// only — bid amounts are NEVER carried. In-memory only; a bot restart drops
+// in-flight events (fine — the auctions are already live on OpenDKP). Additive:
+// the agent half consumes this on beta separately; until then the field is
+// ignored.
+const LOOT_POSTED_TTL_MS      = 10 * 60_000;   // 10 min
+const LOOT_POSTED_MAX_ENTRIES = 10;
+const _lootPostedEvents = {
+  // Seed from a monotonic boot base (ms clock) instead of 1 — SAME reason as
+  // _triggerRelay above: agent `loot_since_id` cursors only ratchet UP, so a
+  // counter that reset to 1 on each deploy would emit fresh events with ids
+  // BELOW every agent's stored cursor and be skipped (`e.id > sinceId` false)
+  // until it slowly climbed past the old high-water mark — the fleet would go
+  // loot-announce-deaf after each deploy. Date.now() at boot always exceeds any
+  // prior boot's max id, so ids stay monotonic across deploys.
+  nextId:  Date.now(),
+  entries: [],   // { id, at, item_count, items:[{name,quantity}], posted_by, window_sec, posted_at_ms }
+};
+
+// Record a successful officer loot-post. Names-only, quantity kept; NO bids.
+// Returns the stored entry (or null if nothing valid to record).
+function _recordLootPosted({ items, postedBy, windowSec }) {
+  const cleanItems = (Array.isArray(items) ? items : [])
+    .map(i => ({
+      name:     String((i && i.name) || '').slice(0, 120),
+      quantity: Math.max(1, parseInt(i && i.quantity, 10) || 1),
+    }))
+    .filter(i => i.name);
+  if (cleanItems.length === 0) return null;
+  const now = Date.now();
+  const entry = {
+    id:           _lootPostedEvents.nextId++,
+    at:           new Date(now).toISOString(),
+    item_count:   cleanItems.length,
+    items:        cleanItems,
+    posted_by:    String(postedBy || 'an officer').slice(0, 80),
+    window_sec:   Number.isFinite(windowSec) ? windowSec : null,
+    posted_at_ms: now,
+  };
+  _lootPostedEvents.entries.push(entry);
+  if (_lootPostedEvents.entries.length > LOOT_POSTED_MAX_ENTRIES) {
+    _lootPostedEvents.entries.splice(0, _lootPostedEvents.entries.length - LOOT_POSTED_MAX_ENTRIES);
+  }
+  return entry;
+}
+
+// Replay-guarded slice of the loot-posted ring, mirroring the recent-fires
+// cursor convention: return only entries newer than the client's `loot_since_id`
+// and the current high-water `loot_next_id` for the client to advance its cursor
+// to. Bids are never included — names/quantities only.
+function _lootPostedSince(sinceId) {
+  const loot_posted = _lootPostedEvents.entries
+    .filter(e => e.id > sinceId)
+    .map(e => ({
+      id:         e.id,
+      at:         e.at,
+      item_count: e.item_count,
+      items:      e.items,
+      posted_by:  e.posted_by,
+      window_sec: e.window_sec,
+    }));
+  return { loot_posted, loot_next_id: _lootPostedEvents.nextId };
+}
+// ── end #149 loot-posted ring ──
+
 setInterval(() => {
-  const cutoff = Date.now() - TRIGGER_RELAY_TTL_MS;
-  _triggerRelay.entries = _triggerRelay.entries.filter(e => e.posted_at_ms >= cutoff);
+  const now = Date.now();
+  _triggerRelay.entries     = _triggerRelay.entries.filter(e => e.posted_at_ms >= now - TRIGGER_RELAY_TTL_MS);
+  _lootPostedEvents.entries = _lootPostedEvents.entries.filter(e => e.posted_at_ms >= now - LOOT_POSTED_TTL_MS);
 }, 15_000);
 
 setInterval(() => {
@@ -6547,6 +6619,19 @@ async function _handleAgentLootPost(req, res) {
     }));
     await createAuctions(auctions);
     console.log(`[loot-post] ${identity.display_name || identity.discord_id} opened ${auctions.length} closed auction(s), ${duration}m`);
+
+    // Broadcast a loot-posted event to every agent (#149) so the raid-wide
+    // "Loot posted — N items" TTS can fire off this REAL post instead of chat
+    // sniffing. Names/quantities only — no bids. Best-effort; never blocks the
+    // response (the auctions are already live). Additive: the agent half
+    // consumes this on beta separately.
+    try {
+      _recordLootPosted({
+        items:     matched.map(m => ({ name: m.name, quantity: m.quantity })),
+        postedBy:  identity.display_name || identity.discord_id,
+        windowSec: duration * 60,
+      });
+    } catch (e) { console.warn('[loot-post] loot-posted broadcast failed:', e?.message); }
 
     // Announce to the loot thread (best-effort — the auctions are already live).
     const threadId = process.env.LOOT_CHANNEL_ID || '1527421284747706551';
@@ -12824,8 +12909,12 @@ async function _handleTriggerRelayPost(req, res) {
 // Shared by the standalone GET /recent-fires and the multiplexed GET /poll
 // (#106) so both stay byte-identical. Suppresses the caller's own fires — they
 // already played locally and would just dedup-loop. Other agents' fires (within
-// the 60s TTL) pass through.
-function _recentFiresFor(identity, sinceId) {
+// the 60s TTL) pass through. Additively carries the loot-posted ring (#149) on
+// the SAME fast payload so a loot post reaches every agent within one tick; its
+// own `loot_since_id`/`loot_next_id` cursor is independent of the fires cursor
+// (loot events are NOT suppressed by uploader — the officer's own Mimic should
+// announce too, since the post came from Discord/OpenDKP, not a fire it played).
+function _recentFiresFor(identity, sinceId, lootSinceId = 0) {
   const fires = _triggerRelay.entries
     .filter(e => e.id > sinceId && e.uploaded_by !== identity.discord_id)
     .map(e => ({
@@ -12837,16 +12926,18 @@ function _recentFiresFor(identity, sinceId) {
       timer_duration_sec:  e.timer_duration_sec,
       fired_at_ms:         e.fired_at_ms,
     }));
-  return { next_id: _triggerRelay.nextId, fires };
+  const loot = _lootPostedSince(lootSinceId);
+  return { next_id: _triggerRelay.nextId, fires, loot_posted: loot.loot_posted, loot_next_id: loot.loot_next_id };
 }
 
 async function _handleRecentFiresGet(req, res) {
   const identity = await mimicLink.requireAgentAuth(req, res);
   if (!identity) return;
   const url = new URL(req.url, 'http://x');
-  const sinceId = parseInt(url.searchParams.get('since_id') || '0', 10) || 0;
+  const sinceId     = parseInt(url.searchParams.get('since_id') || '0', 10) || 0;
+  const lootSinceId = parseInt(url.searchParams.get('loot_since_id') || '0', 10) || 0;
   res.writeHead(200, { 'Content-Type': 'application/json' });
-  return res.end(JSON.stringify(_recentFiresFor(identity, sinceId)));
+  return res.end(JSON.stringify(_recentFiresFor(identity, sinceId, lootSinceId)));
 }
 
 // ── Multiplexed agent poll (#106) ────────────────────────────────────────────
@@ -12920,10 +13011,13 @@ async function _handleAgentPoll(req, res) {
   const control = _controlPlanePolicy(tune);
   const out = { ok: true, streams: {} };
 
-  // recent_fires — in-memory ring, always fresh (no version).
+  // recent_fires — in-memory ring, always fresh (no version). Additively carries
+  // the loot-posted ring (#149) on this same fast stream (its own loot_since_id
+  // cursor), so a loot post rides the 1.5s tick to every agent.
   if (_pollStreamDecision('recent_fires', want, tune, null, null) === 'send') {
-    const sinceId = parseInt(url.searchParams.get('since_id') || '0', 10) || 0;
-    out.streams.recent_fires = _recentFiresFor(identity, sinceId);
+    const sinceId     = parseInt(url.searchParams.get('since_id') || '0', 10) || 0;
+    const lootSinceId = parseInt(url.searchParams.get('loot_since_id') || '0', 10) || 0;
+    out.streams.recent_fires = _recentFiresFor(identity, sinceId, lootSinceId);
   }
 
   // tuning — 60s cache; version-gated so an unchanged blob costs a few bytes.
