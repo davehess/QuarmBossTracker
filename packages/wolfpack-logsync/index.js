@@ -3820,6 +3820,10 @@ const SLOW_SPELLS = new Set([
   'drowsy', 'walking sleep', "tagar's insects", "togor's insects", "turgur's insects", 'cripple',
   // Enchanter
   'languid pace', 'shiftless deeds', 'tepid deeds', 'forlorn deeds',
+  // Boss tank-busters that are ALSO attack-speed slows (#142). Rage of
+  // Ssraeshza (spell 2310, SPA 11 base 10 = −90% attack speed + a 4000 hit)
+  // lands on the Emperor's tank; grounded from eqemu_spells.
+  'rage of ssraeshza',
 ]);
 function _isSlowSpell(name) {
   if (!name) return false;
@@ -8099,7 +8103,7 @@ function _resolveBuffsForName(name, active, buffsOut) {
     if (!b || !b.name) continue;   // same guard as the relay loop below — a nameless entry must not throw
     seen.set(b.name.toLowerCase(), { name: b.name, seconds: b.fell_off ? 0 : b.remaining_secs, fell_off: !!b.fell_off });
   }
-  const relay = _targetBuffsByName.get(nameLower);
+  const relay = _targetBuffsByName.get(_relayCacheKey(name));   // #141 unscoped bucket
   for (const b of ((relay && relay.buffs) || [])) {
     if (!b || !b.name || seen.has(String(b.name).toLowerCase())) continue;
     seen.set(String(b.name).toLowerCase(), {
@@ -8431,7 +8435,7 @@ function _serializeTankState() {
       });
     }
     try { fetchTargetCasts(targetName); } catch { /* fire-and-forget, cached */ }
-    const ctc = _targetCastsByName.get(tl);
+    const ctc = _targetCastsByName.get(_relayCacheKey(targetName));   // #141 unscoped bucket
     if (ctc && Array.isArray(ctc.casts)) {
       const fetchedAt = ctc.at || now;
       for (const c of ctc.casts) {
@@ -15820,6 +15824,9 @@ async function dismissTopDamage(key) {
   var opendkpBase  = "";    // https://<client>.opendkp.com — from the bot (bid-history)
   var eraFilter    = "";    // "" = all; else "Classic"/"Kunark"/"Velious"/"Luclin"
   var famPrefilled = false; // one-shot auto-prefill of the family from OpenDKP
+  var acctDkp      = null;  // #124 { ok, account_dkp, character } — REAL pooled balance from OpenDKP standings
+  var lastAcctKey  = "";    // family signature the acctDkp figure is for
+  var lastAcctAt   = 0;     // last /api/loot/dkp fetch (client-side 30s throttle)
 
   function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g, function(c){ return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]; }); }
   function fmt(n){ n=Number(n); if(!isFinite(n)) return "—"; return n.toLocaleString(); }
@@ -16016,12 +16023,17 @@ async function dismissTopDamage(key) {
     if (cfg.authed && bidHist){
       var wins = bidHist.wins||[]; var wl = bidHist.wishlist||[]; var misses = bidHist.misses||[]; var dkp = bidHist.dkp||null;
 
-      // Family DKP pill + expansion filter row.
+      // DKP pill + expansion filter row. Prefer the REAL pooled balance read
+      // straight from OpenDKP's standings (#124); the mirror-derived family total
+      // is only a labeled "~est." fallback so it's never mistaken for the truth.
       h += "<div style='display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:12px 0 4px;font-size:11px'>";
-      if (dkp){
+      if (acctDkp && acctDkp.account_dkp!=null){
+        var whoTxt = acctDkp.character ? (" · "+esc(acctDkp.character)) : "";
+        h += "<span style='background:rgba(63,185,80,.12);border:1px solid var(--border);border-radius:5px;padding:2px 9px' title='Live from OpenDKP standings — your account&#39;s Current DKP'>💰 <b>"+fmt(acctDkp.account_dkp)+"</b> <span class=dim>DKP · account (OpenDKP)"+whoTxt+"</span></span>";
+      } else if (dkp){
         var fa = String(dkp.fetched_at||"").replace("T"," "); var dotIx = fa.indexOf("."); if (dotIx>=0) fa = fa.substring(0,dotIx);
-        var freshTitle = dkp.fetched_at ? ("mirror-derived (OpenDKP pools alts) · as of "+fa+" UTC") : "mirror-derived";
-        h += "<span style='background:rgba(212,175,55,.10);border:1px solid var(--border);border-radius:5px;padding:2px 9px' title='"+esc(freshTitle)+"'>💰 <b>"+fmt(dkp.family_total)+"</b> <span class=dim>DKP · family pool</span></span>";
+        var freshTitle = "~estimate from the local mirror (OpenDKP pools alts) — the real balance appears once your OpenDKP standings load" + (dkp.fetched_at ? (" · as of "+fa+" UTC") : "");
+        h += "<span style='background:rgba(212,175,55,.10);border:1px solid var(--border);border-radius:5px;padding:2px 9px' title='"+esc(freshTitle)+"'>💰 <b>~"+fmt(dkp.family_total)+"</b> <span class=dim>DKP · ~est. (mirror)</span></span>";
       }
       var eraSet = {};
       for (var ei=0;ei<wl.length;ei++) if(wl[ei].era) eraSet[wl[ei].era]=1;
@@ -16067,7 +16079,8 @@ async function dismissTopDamage(key) {
           h += "<td class=num>"+(m.last_winning_bid!=null?fmt(m.last_winning_bid):"—")+"</td>";
           h += "<td class=num>"+(m.last_second_bid!=null?fmt(m.last_second_bid):"—")+"</td>";
           h += "<td class=num><input id=wpPlan_"+m.item_id+" type=number min=1 value='"+esc(pv)+"' placeholder='—' style='width:52px;background:#0e1116;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:1px 4px;font-family:inherit;text-align:right'></td>";
-          h += "<td class=num>"+(dkp?fmt(dkp.family_total):"—")+"</td>";
+          var dkpCell = (acctDkp&&acctDkp.account_dkp!=null) ? fmt(acctDkp.account_dkp) : (dkp?("~"+fmt(dkp.family_total)):"—");
+          h += "<td class=num>"+dkpCell+"</td>";
           h += "</tr>";
         }
         h += "</table>";
@@ -16097,7 +16110,7 @@ async function dismissTopDamage(key) {
     el = document.getElementById("wpLootLoginCancel"); if (el) el.onclick = function(){ showLogin=false; loginErr=""; render(); };
     el = document.getElementById("wpLootLoginGo"); if (el) el.onclick = doLogin;
     el = document.getElementById("wpLootPass"); if (el) el.onkeydown = function(e){ if(e.key==="Enter") doLogin(); };
-    el = document.getElementById("wpLootLogout"); if (el) el.onclick = function(){ fetch("/api/loot/logout",{method:"POST"}).then(function(){ cfg.authed=false; bidHist=null; render(); }); };
+    el = document.getElementById("wpLootLogout"); if (el) el.onclick = function(){ fetch("/api/loot/logout",{method:"POST"}).then(function(){ cfg.authed=false; bidHist=null; acctDkp=null; lastAcctKey=""; lastAcctAt=0; render(); }); };
     el = document.getElementById("wpFamToggle"); if (el) el.onclick = function(){ showFamily=!showFamily; render(); };
     el = document.getElementById("wpFamAddGo"); if (el) el.onclick = addAlt;
     el = document.getElementById("wpFamAdd"); if (el) el.onkeydown = function(e){ if(e.key==="Enter") addAlt(); };
@@ -16233,13 +16246,28 @@ async function dismissTopDamage(key) {
       }
     }).catch(function(){});
   }
+  // #124 — the REAL pooled account balance, read from OpenDKP's own standings
+  // via the agent's /api/loot/dkp (server-side, Bearer). Client-side 30s throttle
+  // keyed on the family signature; on failure acctDkp stays null and the pill
+  // falls back to the mirror "~est." figure.
+  function fetchLootDkp(){
+    if (!cfg.authed){ acctDkp=null; return Promise.resolve(); }
+    var main=(cfg.family&&cfg.family.main)||""; var fam=famList();
+    if (!main && !fam.length){ acctDkp=null; return Promise.resolve(); }
+    var key=main+"|"+fam.join(",");
+    if (acctDkp!==null && key===lastAcctKey && (Date.now()-lastAcctAt)<30000) return Promise.resolve();
+    var q="?main="+encodeURIComponent(main)+"&characters="+encodeURIComponent(fam.join(","));
+    return fetch("/api/loot/dkp"+q).then(function(r){return r.ok?r.json():null;}).then(function(j){
+      acctDkp=(j&&j.ok)?j:null; lastAcctKey=key; lastAcctAt=Date.now();
+    }).catch(function(){ acctDkp=null; lastAcctKey=key; lastAcctAt=Date.now(); });
+  }
   function fetchServer(){
     var who=pickChar();
     var q = who ? ("?character="+encodeURIComponent(who)) : "";
     var jobs=[ fetch("/api/server/auctions"+q).then(function(r){return r.ok?r.json():{auctions:[]};}).then(function(j){ srvAucs=(j&&j.auctions)||[]; }).catch(function(){ srvAucs=[]; }) ];
     if (who) jobs.push(fetch("/api/server/my-bids"+q).then(function(r){return r.ok?r.json():{bids:[]};}).then(function(j){ myBids=(j&&j.bids)||[]; }).catch(function(){ myBids=[]; }));
     else myBids=[];
-    return Promise.all(jobs).then(fetchItemHist).then(fetchBidHist).then(render);
+    return Promise.all(jobs).then(fetchItemHist).then(fetchBidHist).then(fetchLootDkp).then(render);
   }
   function fetchAll(){ ensure(); Promise.all([fetchConfig(), fetchLocal()]).then(fetchServer); }
 
@@ -17455,7 +17483,7 @@ function startWebDashboard(port) {
           return res.end(JSON.stringify({ error: 'name required' }));
         }
         fetchMobInfo(mobName);
-        const mobCached = _mobInfoByName.get(_normMobNameAgent(mobName));
+        const mobCached = _mobInfoByName.get(_mobInfoCacheKey(mobName));   // #141 zone-scoped key ('*' bucket)
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify(mobCached ? { mob: mobCached.mob } : { mob: null, loading: true }));
       }
@@ -17544,6 +17572,24 @@ function startWebDashboard(port) {
       if (req.url === '/api/loot/auctions' && req.method === 'GET') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ auctions: _lootAuctionsSnapshot(), updated_at: new Date().toISOString() }));
+      }
+      // #124 — the REAL pooled account DKP, read from OpenDKP's own standings
+      // (not the mirror recompute). ?main=<name>&characters=<csv>. Requires the
+      // #108 OpenDKP login (Bearer). { ok:false } → the panel shows the mirror
+      // figure labeled "est." instead. Never blocks: fail-open to ok:false.
+      if (req.url.startsWith('/api/loot/dkp') && req.method === 'GET') {
+        const u = new URL(req.url, 'http://localhost');
+        const main  = (u.searchParams.get('main') || '').trim();
+        const chars = (u.searchParams.get('characters') || '').split(',').map(s => s.trim()).filter(Boolean);
+        if (!_opendkpAuthed() && !(_opendkpAuth && _opendkpAuth.refresh_token)) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ ok: false, reason: 'not authed' }));
+        }
+        let out;
+        try { out = await _opendkpAccountDkp(main, chars.length ? chars : (main ? [main] : [])); }
+        catch { out = { ok: false }; }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify(out));
       }
       // Increment 2f passthrough: GET /api/server/<key>?character=... proxies
       // to the bot's /api/agent/server-panel/<key> with our stored bearer
@@ -19341,7 +19387,7 @@ async function _fetchOpendkpAuthConfig() {
     rq.end();
   });
   if (!cfg || !cfg.cognito_client_id) throw new Error('OpenDKP login is not configured on the bot');
-  _opendkpCfgCache = { cognito_client_id: cfg.cognito_client_id, region: cfg.region || 'us-east-2', _exp: Date.now() + 3600_000 };
+  _opendkpCfgCache = { cognito_client_id: cfg.cognito_client_id, region: cfg.region || 'us-east-2', client_name: cfg.client_name || null, _exp: Date.now() + 3600_000 };
   return _opendkpCfgCache;
 }
 
@@ -19414,6 +19460,119 @@ async function _opendkpEnsureFresh() {
     }
   } catch { /* re-login required */ }
   return false;
+}
+
+// ── #124 OpenDKP standings → the REAL pooled account balance ─────────────────
+// The mirror-derived family total (bot bid-history → _familyDkpTotals) can't
+// reach OpenDKP's canonical number (limit=3000 truncation, a per-attendee
+// double-count, MODE-guessed family grouping) — confirmed 2026-07-22: the mirror
+// puts Hitya's family at −125 (main-only) / +858 (family-sum) while the OpenDKP
+// standings show 171. OpenDKP already computes the canonical figure: the
+// standings/summary endpoint returns one row per ACTIVE character
+// { CharacterName, CurrentDKP } where CurrentDKP = own ticks − own items +
+// own adjustments over the COMPLETE database. OpenDKP's own standings page
+// renders those rows verbatim, so the number an officer reads for their account
+// IS the CurrentDKP on their MAIN's row (the guild pools DKP onto the main).
+//
+// We fetch it here with the same Cognito IdToken the #108 login already holds
+// (the bot itself reaches OpenDKP purely via Bearer — OPENDKP_CLIENT_ID is unset
+// in prod — so the agent has identical read capability and needs no extra
+// credential). Server-side call from Node, so there is no browser CORS.
+
+const OPENDKP_API_HOST = (process.env.OPENDKP_API_HOST || 'https://api.opendkp.com').replace(/\/+$/, '');
+let _opendkpStandingsCache = null;   // { at, models }
+
+function _opendkpClientName() {
+  return (_opendkpCfgCache && _opendkpCfgCache.client_name) || process.env.OPENDKP_CLIENT_NAME || 'wolfpack';
+}
+
+// Pick the pooled account balance out of the standings Models[]. The number an
+// officer reads for their account is the CurrentDKP on their MAIN's row; if the
+// main isn't in the standings (e.g. inactive → excluded), fall back to the
+// highest-balance family member present. Accepts a bare array OR a { Models:[] }
+// wrapper, and tolerates CurrentDKP field-name variants. Returns { dkp,
+// character, matched } or null. PURE + exported for tests.
+function _pickAccountDkp(models, main, familyNames) {
+  var rows = Array.isArray(models) ? models
+           : (models && Array.isArray(models.Models)) ? models.Models
+           : [];
+  var byName = {};
+  for (var i = 0; i < rows.length; i++) {
+    var r = rows[i]; if (!r) continue;
+    var nm = r.CharacterName || r.Name || r.character_name;
+    if (!nm) continue;
+    var dkpRaw = (r.CurrentDKP != null) ? r.CurrentDKP
+               : (r.CurrentDkp != null) ? r.CurrentDkp
+               : (r.currentDkp != null) ? r.currentDkp
+               : (r.Dkp != null) ? r.Dkp
+               : (r.DKP != null) ? r.DKP : null;
+    var dkp = Number(dkpRaw);
+    if (!isFinite(dkp)) continue;
+    var key = String(nm).toLowerCase();
+    if (!(key in byName)) byName[key] = { name: String(nm), dkp: dkp };   // one active row per name
+  }
+  var mainKey = main ? String(main).trim().toLowerCase() : "";
+  if (mainKey && byName[mainKey]) return { dkp: byName[mainKey].dkp, character: byName[mainKey].name, matched: "main" };
+  var fam = Array.isArray(familyNames) ? familyNames : [];
+  var best = null;
+  for (var f = 0; f < fam.length; f++) {
+    var fk = fam[f] ? String(fam[f]).trim().toLowerCase() : "";
+    if (fk && byName[fk] && (best === null || byName[fk].dkp > best.dkp)) best = byName[fk];
+  }
+  if (best) return { dkp: best.dkp, character: best.name, matched: "family" };
+  return null;
+}
+// ── end #124 pure helper ──
+
+function _opendkpGetJson(pathStr, token) {
+  return new Promise((resolve) => {
+    let u; try { u = new URL(OPENDKP_API_HOST + pathStr); } catch { return resolve(null); }
+    const rq = https.request({
+      method: 'GET', hostname: u.hostname, port: u.port || 443,
+      path: u.pathname + (u.search || ''),
+      headers: { 'Authorization': 'Bearer ' + token, 'Accept': 'application/json' }, timeout: 12000,
+    }, (r) => {
+      let d = ''; r.on('data', c => d += c);
+      r.on('end', () => {
+        if ((r.statusCode || 500) >= 400) return resolve(null);
+        try { resolve(JSON.parse(d || 'null')); } catch { resolve(null); }
+      });
+    });
+    rq.on('error', () => resolve(null));
+    rq.on('timeout', () => { rq.destroy(); resolve(null); });
+    rq.end();
+  });
+}
+
+// Fetch the standings Models[] (Bearer). The hosted multi-tenant API serves each
+// legacy /beta/<res> lambda under /clients/<name>/<res>; the DKP summary lambda's
+// legacy path is /beta/dkp, so its hosted path is /clients/<name>/dkp (we also
+// try /summary as a fallback). Cached ~60s. Returns the array or null. NEVER
+// throws — any failure just falls back to the mirror figure in the panel.
+async function _opendkpFetchStandings() {
+  if (_opendkpStandingsCache && (Date.now() - _opendkpStandingsCache.at) < 60000) return _opendkpStandingsCache.models;
+  if (!_opendkpAuthed()) { const ok = await _opendkpEnsureFresh(); if (!ok) return null; }
+  const token = _opendkpAuth && _opendkpAuth.id_token;
+  if (!token) return null;
+  try { await _fetchOpendkpAuthConfig(); } catch { /* client name defaults to wolfpack */ }
+  const name = encodeURIComponent(_opendkpClientName());
+  const routes = ['/clients/' + name + '/dkp', '/clients/' + name + '/summary'];
+  for (const route of routes) {
+    const j = await _opendkpGetJson(route, token);
+    const models = Array.isArray(j) ? j : (j && Array.isArray(j.Models)) ? j.Models : null;
+    if (models && models.length) { _opendkpStandingsCache = { at: Date.now(), models: models }; return models; }
+  }
+  return null;
+}
+
+// Resolve the pooled account balance for a family. Returns
+// { ok:true, source:'opendkp', account_dkp, character, matched } or { ok:false }.
+async function _opendkpAccountDkp(main, familyNames) {
+  const models = await _opendkpFetchStandings();
+  if (!models) return { ok: false };
+  const picked = _pickAccountDkp(models, main, familyNames);
+  if (!picked) return { ok: false };
+  return { ok: true, source: 'opendkp', account_dkp: Math.round(picked.dkp), character: picked.character, matched: picked.matched };
 }
 
 // Hydrate both from disk at startup (defaults on missing/unreadable files).
@@ -24310,15 +24469,25 @@ function _normMobNameAgent(n) {
     .replace(/'s\s+corpse$/, '')
     .replace(/[\s`'’]+/g, '_').replace(/^#/, '');
 }
-function fetchMobInfo(name) {
+// #141 — cache key carries the requester's zone id so a same-name mob in
+// ANOTHER zone re-resolves instead of serving a stale cross-zone catalog row.
+function _mobInfoCacheKey(name, zoneId) {
+  return _normMobNameAgent(name) + '|' + (zoneId != null ? zoneId : '*');
+}
+function fetchMobInfo(name, selfChar, zoneId) {
   const opts = _uploadOpts;
   if (!opts || !opts.botUrl || !opts.token) return;          // local-only → no lookup
   const norm = _normMobNameAgent(name);
-  if (!norm || _mobInfoInflight.has(norm)) return;
-  const cached = _mobInfoByName.get(norm);
+  if (!norm) return;
+  const key = _mobInfoCacheKey(name, zoneId);
+  if (_mobInfoInflight.has(key)) return;
+  const cached = _mobInfoByName.get(key);
   if (cached && (Date.now() - cached.at) < MOB_INFO_TTL_MS) return;
-  _mobInfoInflight.add(norm);
-  const url = opts.botUrl.replace(/\/encounter(\?.*)?$/, '/mob-info') + '?name=' + encodeURIComponent(name);
+  _mobInfoInflight.add(key);
+  // #141 — send the requesting character so the bot zone-scopes the catalog row
+  // (id = zoneid*1000+n) to OUR zone; absent → bot falls back catalog-wide.
+  let url = opts.botUrl.replace(/\/encounter(\?.*)?$/, '/mob-info') + '?name=' + encodeURIComponent(name);
+  if (selfChar) url += '&character=' + encodeURIComponent(selfChar);
   try {
     const u = new URL(url);
     const mod = u.protocol === 'https:' ? https : http;
@@ -24330,15 +24499,15 @@ function fetchMobInfo(name) {
       let body = '';
       res.on('data', c => body += c);
       res.on('end', () => {
-        _mobInfoInflight.delete(norm);
-        try { const j = JSON.parse(body); _mobInfoByName.set(norm, { at: Date.now(), mob: (j && j.mob) ? j.mob : null }); }
-        catch { _mobInfoByName.set(norm, { at: Date.now(), mob: null }); }
+        _mobInfoInflight.delete(key);
+        try { const j = JSON.parse(body); _mobInfoByName.set(key, { at: Date.now(), mob: (j && j.mob) ? j.mob : null }); }
+        catch { _mobInfoByName.set(key, { at: Date.now(), mob: null }); }
       });
     });
-    req.on('error',   () => { _mobInfoInflight.delete(norm); });
-    req.on('timeout', () => { req.destroy(); _mobInfoInflight.delete(norm); });
+    req.on('error',   () => { _mobInfoInflight.delete(key); });
+    req.on('timeout', () => { req.destroy(); _mobInfoInflight.delete(key); });
     req.end();
-  } catch { _mobInfoInflight.delete(norm); }
+  } catch { _mobInfoInflight.delete(key); }
 }
 // Cast time (seconds) for a spell from the catalog (cast_ms). Default 4s when
 // the catalog doesn't carry it — a "You begin casting" line implies a real cast.
@@ -24350,18 +24519,26 @@ function _spellCastSecs(name) {
 // Cross-client casts on the current target — fetched from the bot's relay with a
 // short TTL so the Mob Info "Casting" section stays near-real-time without
 // hammering the endpoint. Cached per normalized target name.
-const _targetCastsByName  = new Map();   // nameLower → { at, casts }
+const _targetCastsByName  = new Map();   // relayKey → { at, casts }
 const _targetCastsInflight = new Set();
 const TARGET_CASTS_TTL_MS = 2000;
-function fetchTargetCasts(name) {
+// #141 — the cross-client relay cache is keyed by (target, requester) so the
+// zone-scoped Mob Info fetch (passes selfChar → bot filters to our zone) never
+// collides with an unscoped caller for the same target name.
+function _relayCacheKey(name, selfChar) {
+  return String(name || '').trim().toLowerCase() + '|' + String(selfChar || '').trim().toLowerCase();
+}
+function fetchTargetCasts(name, selfChar) {
   const opts = _uploadOpts;
   if (!opts || !opts.botUrl || !opts.token) return;
-  const key = String(name || '').trim().toLowerCase();
-  if (!key || _targetCastsInflight.has(key)) return;
+  if (!String(name || '').trim()) return;
+  const key = _relayCacheKey(name, selfChar);
+  if (_targetCastsInflight.has(key)) return;
   const cached = _targetCastsByName.get(key);
   if (cached && (Date.now() - cached.at) < TARGET_CASTS_TTL_MS) return;
   _targetCastsInflight.add(key);
-  const url = opts.botUrl.replace(/\/encounter(\?.*)?$/, '/target-casts') + '?name=' + encodeURIComponent(name);
+  let url = opts.botUrl.replace(/\/encounter(\?.*)?$/, '/target-casts') + '?name=' + encodeURIComponent(name);
+  if (selfChar) url += '&character=' + encodeURIComponent(selfChar);   // #141 zone scope
   try {
     const u = new URL(url);
     const mod = u.protocol === 'https:' ? https : http;
@@ -24403,15 +24580,17 @@ const _targetBuffsInflight = new Set();
 // Original was 5s; 6s splits the difference so Mob Info feels live again
 // without the full pre-squeeze churn. Override via WP_TARGET_BUFFS_TTL_MS.
 const TARGET_BUFFS_TTL_MS = parseInt(process.env.WP_TARGET_BUFFS_TTL_MS, 10) || 6000;
-function fetchTargetBuffs(name) {
+function fetchTargetBuffs(name, selfChar) {
   const opts = _uploadOpts;
   if (!opts || !opts.botUrl || !opts.token) return;
-  const key = String(name || '').trim().toLowerCase();
-  if (!key || _targetBuffsInflight.has(key)) return;
+  if (!String(name || '').trim()) return;
+  const key = _relayCacheKey(name, selfChar);   // #141 (target, requester) key
+  if (_targetBuffsInflight.has(key)) return;
   const cached = _targetBuffsByName.get(key);
   if (cached && (Date.now() - cached.at) < TARGET_BUFFS_TTL_MS) return;
   _targetBuffsInflight.add(key);
-  const url = opts.botUrl.replace(/\/encounter(\?.*)?$/, '/target-buffs') + '?name=' + encodeURIComponent(name);
+  let url = opts.botUrl.replace(/\/encounter(\?.*)?$/, '/target-buffs') + '?name=' + encodeURIComponent(name);
+  if (selfChar) url += '&character=' + encodeURIComponent(selfChar);   // #141 zone scope
   try {
     const u = new URL(url);
     const mod = u.protocol === 'https:' ? https : http;
@@ -24849,26 +25028,34 @@ function _zealBuffsForName(nameLower) {
 function buildMobInfo() {
   const st = _currentTargetState();
   if (!st || !st.target_name) return null;
-  const norm = _normMobNameAgent(st.target_name);
-  const cached = _mobInfoByName.get(norm);
-  if (!cached || (Date.now() - cached.at) >= MOB_INFO_TTL_MS) fetchMobInfo(st.target_name);
+  // #141 — the requesting character (+ its zone id) so the bot zone-scopes the
+  // cross-client merge to OUR zone: a same-name mob in ANOTHER zone (e.g. "a
+  // geonid" in Crystal Caverns vs The Wakening Land) must not leak its stats,
+  // debuffs, or casts into our Target Info.
+  let selfChar = '';
+  for (const ch of Object.keys(_zealState)) { if (_zealState[ch] === st) { selfChar = ch; break; } }
+  const myZoneId = (st.zone != null && Number.isFinite(Number(st.zone))) ? Number(st.zone) : null;
+  const mobKey = _mobInfoCacheKey(st.target_name, myZoneId);
+  const cached = _mobInfoByName.get(mobKey);
+  if (!cached || (Date.now() - cached.at) >= MOB_INFO_TTL_MS) fetchMobInfo(st.target_name, selfChar, myZoneId);
   // Prefer authoritative Zeal buffs when the target is one of our own
   // characters (covers self + group members running Mimic — Mask of the
   // Stalker, Spirit of Wolf, etc., with real remaining time). Otherwise show
   // the buffs we observed landing on the target (mobs, other players).
   const tnameLower = String(st.target_name).toLowerCase();
+  const relayKey = _relayCacheKey(st.target_name, selfChar);
   const zealBuffs = _zealBuffsForName(tnameLower);
   // Cross-client casting on this target (who's casting what on it, with a
   // countdown). Refresh on a short TTL; bystanders we can't name are absent.
-  const ctc = _targetCastsByName.get(tnameLower);
-  if (!ctc || (Date.now() - ctc.at) >= TARGET_CASTS_TTL_MS) fetchTargetCasts(st.target_name);
+  const ctc = _targetCastsByName.get(relayKey);
+  if (!ctc || (Date.now() - ctc.at) >= TARGET_CASTS_TTL_MS) fetchTargetCasts(st.target_name, selfChar);
   // Cross-client target_buffs — fetched from the bot's relay so charm
   // spells (Allure, etc.) and other buff landings cast by OTHER Mimic
   // users on the same target show up here too. Merged with locally-
   // observed buffs by spell name (local wins — most accurate timer
   // when we saw it ourselves; remote fills the gap when we didn't).
-  const ctb = _targetBuffsByName.get(tnameLower);
-  if (!ctb || (Date.now() - ctb.at) >= TARGET_BUFFS_TTL_MS) fetchTargetBuffs(st.target_name);
+  const ctb = _targetBuffsByName.get(relayKey);
+  if (!ctb || (Date.now() - ctb.at) >= TARGET_BUFFS_TTL_MS) fetchTargetBuffs(st.target_name, selfChar);
   let buffs;
   // Cross-client live buffs — the target is another Mimic-running raider:
   // use THEIR uploaded Zeal list (real remaining time — actual counters, not
@@ -24927,9 +25114,17 @@ function buildMobInfo() {
     const songs = zealBuffs.filter(b => b.song).length;
     slotCounts = { buffs: zealBuffs.length - songs, buff_max: 15, songs, song_max: 6 };
   }
+  // Exact cur/max for the target when it's a raider we have cross-client numbers
+  // for (their own uploaded live-state, or self). Mobs are never in raid_roster/
+  // live-state so this stays null and the overlay shows the plain gauge %. Same
+  // resolver + max>100 guard the Tank overlay uses (a ≤100 "pool" is a percent in
+  // disguise). Uploaded live-state was already fetched above for the PC buff path.
+  const targetVals = _resolveHpValuesForName(tnameLower, selfChar, st);
   return {
     target_name:    st.target_name,
     target_hp_pct:  st.target_hp_pct != null ? st.target_hp_pct : null,
+    target_hp_cur:  targetVals ? targetVals.cur : null,
+    target_hp_max:  targetVals ? targetVals.max : null,
     mob:            cached ? cached.mob : null,   // null until the lookup returns
     loading:        !cached,
     target_buffs:   buffs,
@@ -25575,6 +25770,183 @@ function _startTimer(t, tsMs, isTest, captures) {
 function _cancelTimer(id) {
   if (!id) return false;
   return _activeTimers.delete(String(id));
+}
+// ── #142 boss-death → clear that mob's countdown timers ─────────────────────
+// A tank-buster / death-touch / any boss-cadence countdown (armed by a guild
+// trigger with timer_duration_sec) should vanish the instant the mob dies, so
+// no phantom "next buster in Xs" lingers on the corpse. General + ZERO-config:
+// every armed timer already records the mob it's ABOUT in `target` (a trigger
+// capture, else the current fight's bossName), so a slain/death line naming
+// that mob drops its timers. This is the automatic counterpart to a trigger's
+// optional end_early_pattern (_endRegex) — that one needs per-trigger setup;
+// this needs none, which is exactly what a boss-buster timer wants (#36 builds
+// on it, per-boss data-driven).
+//
+// Death-line forms are grounded on parseEvent's own death detection above:
+//   "<Mob> has been slain by <killer>!"   "You have slain <Mob>!"   "<Mob> died."
+// Fail-open by design: a timer whose target we never resolved (target == null,
+// e.g. a healer whose log carries no combat for the boss) is left to expire
+// naturally — today's behavior. EXACT case-insensitive name match so a
+// same-named add's death can't clear an unrelated boss's timer.
+const _DEATH_SLAIN_BY_RX = /\]\s+(.+?)\s+has been slain by\s+/i;
+const _DEATH_YOU_SLEW_RX = /\]\s+You have slain\s+(.+?)[!.]*\s*$/i;
+const _DEATH_DIED_RX     = /\]\s+(.+?)\s+die[ds]\.\s*$/i;
+function _deadMobNameFromLine(line) {
+  if (!line) return null;
+  const hasSlain = line.indexOf('slain') !== -1;
+  const hasDied  = /\bdie[ds]\./i.test(line);
+  if (!hasSlain && !hasDied) return null;
+  let m = hasSlain ? line.match(_DEATH_SLAIN_BY_RX) : null;
+  if (m) return m[1].trim().replace(/[!.]+$/, '');
+  m = hasSlain ? line.match(_DEATH_YOU_SLEW_RX) : null;
+  if (m) return m[1].trim().replace(/[!.]+$/, '');
+  m = hasDied ? line.match(_DEATH_DIED_RX) : null;
+  if (m) return m[1].trim().replace(/[!.]+$/, '');
+  return null;
+}
+function _cancelTimersOnMobDeath(line) {
+  const dead = _deadMobNameFromLine(line);
+  if (!dead) return 0;
+  const deadLower = dead.toLowerCase();
+  if (deadLower === 'you') return 0;   // "You died." — never a timer target
+  let cancelled = 0;
+  for (const [id, row] of _activeTimers) {
+    const tgt = row.target ? String(row.target).toLowerCase() : null;
+    if (tgt && tgt === deadLower) { _activeTimers.delete(id); cancelled++; }
+  }
+  if (cancelled) console.log('[timers] ' + dead + ' died — cleared ' + cancelled + ' countdown' + (cancelled === 1 ? '' : 's'));
+  return cancelled;
+}
+
+// ── #142 boss spawn-chain + tank-buster detection ───────────────────────────
+// Data-driven, per-boss, reusable (#36). A "chain" encodes: when the PRECURSOR
+// mob dies, the BOSS spawns spawn_delay_sec later and busts the tank at spawn,
+// then re-busts on its own cadence. ALL THREE signals are pure LOG lines every
+// raider parses locally — no Zeal, no cross-client relay (EQLogParser-style),
+// so it works for everyone regardless of who's running Zeal.
+//
+// Grounded facts (eqemu_spells + guild lead, #142):
+//   • Rage of Ssraeshza = spell 2310: SPA 11 base 10 (−90% attack speed) +
+//     SPA 79 base −4000 (a ~4000 non-melee HIT). 0s cast, NO cast/land chat —
+//     so it's undetectable by text regex; the 4000 non-melee DAMAGE line is the
+//     signal (EQLogParser attributes the amount to the spell; so do we).
+//   • Fight: "Blood of Ssraeshza" dies → Emperor Ssraeshza spawns exactly 2:00
+//     later → busts at spawn (a Paladin DAs it), then every ~60s.
+// The 2:00 spawn countdown is the pre-warn a Paladin needs to DA the spawn bust.
+const BOSS_SPAWN_CHAINS = [
+  {
+    precursor:         'Blood of Ssraeshza',       // its death arms the spawn pre-warn
+    boss:              'Emperor Ssraeshza',         // spawns spawn_delay_sec after that
+    spawn_delay_sec:   120,                         // 2:00 (guild lead)
+    spawn_label:       'Emperor spawn + buster',
+    spawn_warn_sec:    10,                          // warn ~10s before the spawn bust
+    spawn_warn_text:   'Paladin DA NOW',
+    spawn_fire_text:   'Emperor in 2:00 — Paladin ready to DA the spawn buster',
+    buster_damage:     4000,                        // Rage of Ssraeshza DD (spell 2310), raw/unmitigated
+    buster_damage_tol: 1200,                        // size window — INFERRED (unattributed) path ONLY
+    buster_min_floor:  500,                         // ATTRIBUTED path: any Emperor non-melee ≥ this = buster (skips DoT/DS ticks; mitigation-proof)
+    buster_cadence_sec: 60,                         // re-bust cadence (guild lead)
+    buster_label:      'Tank Buster',
+    buster_warn_sec:   10,
+    buster_warn_text:  'TANK BUSTER incoming',
+    buster_fire_text:  'TANK BUSTER',
+  },
+];
+// Per-boss last-buster wall-clock so a single cast (seen once per observer, but
+// possibly echoed across a box's logs) can't machine-gun the re-arm.
+const _busterLastFire = new Map();
+
+// Arm (or RE-ARM) a boss countdown and optionally fire a callout NOW. Local
+// only — every raider detects the driving log line independently, so no relay.
+// A re-fire of the same (boss,label) RESETS the same row in place because the
+// synthetic trigger id is stable (DnDOverlay convention, via _startTimer).
+// target=boss so _cancelTimersOnMobDeath clears it the instant the boss dies.
+function _armBossCountdown(opts) {
+  const now = opts.tsMs || Date.now();
+  if (opts.fireText) {
+    _pushOverlay({
+      text:    opts.fireText,
+      tts:     opts.fireText,
+      trigger: (opts.label || 'timer') + ' — ' + opts.boss,
+      scope:   'guild',
+      firedAt: now,
+      test:    false,
+    });
+  }
+  _startTimer({
+    id:                 'boss-chain|' + opts.boss + '|' + opts.label,
+    name:               opts.label,
+    timer_duration_sec: opts.durationSec,
+    warning_seconds:    opts.warnSec || 0,
+    warning_text:       opts.warnText || null,
+    actions:            [{ color: opts.color || 'red' }],
+    _scope:             'guild',
+  }, now, false, { target: opts.boss });
+}
+
+// Precursor death → arm the boss spawn pre-warn countdown. Runs off the same
+// slain/death lines _cancelTimersOnMobDeath reads.
+function _checkBossSpawnChain(line, tsMs) {
+  const dead = _deadMobNameFromLine(line);
+  if (!dead) return;
+  const deadLower = dead.toLowerCase();
+  for (const c of BOSS_SPAWN_CHAINS) {
+    if (deadLower !== c.precursor.toLowerCase()) continue;
+    _armBossCountdown({
+      boss: c.boss, label: c.spawn_label, durationSec: c.spawn_delay_sec,
+      warnSec: c.spawn_warn_sec, warnText: c.spawn_warn_text,
+      fireText: c.spawn_fire_text, color: 'gold', tsMs,
+    });
+    console.log('[boss-chain] ' + c.precursor + ' died — ' + c.boss + ' spawns in ' + c.spawn_delay_sec + 's');
+  }
+}
+
+// Tank-buster damage line → fire "TANK BUSTER" + (re)arm the cadence countdown.
+// Reuses parseEvent's attacker/amount (does NOT reinvent the line format); the
+// non-melee marker is read off the raw line so a same-size MELEE swing can't
+// false-fire.
+//
+// Two detection paths with DIFFERENT amount gates. The live log is the
+// ATTRIBUTED form — "Emperor Ssraeshza hit <player> for N points of non-melee
+// damage" (screenshot, madman_003 2026-07-22):
+//   • ATTRIBUTED (attacker == boss): the buster is the Emperor's ONLY non-melee
+//     output, so a named non-melee hit from him IS Rage of Ssraeshza REGARDLESS
+//     of size. We deliberately DON'T gate on ~4000 here — rune + spell-shield
+//     mitigation on the MT drops the visible number well below the raw 4000, and
+//     a size gate would silence the callout exactly when the tank IS getting hit
+//     (Hitya, 2026-07-22). Only a small floor to skip DoT/DS ticks.
+//   • INFERRED (no attacker, this boss is the active fight, EQLogParser-style):
+//     can't attribute, so KEEP the ~4000±tol size signature to tell the buster
+//     from other anonymous non-melee (DS procs, dirges).
+function _checkTankBuster(ev, line, tsMs) {
+  if (!ev || ev.type !== 'damage' || !(ev.amount > 0)) return;
+  if (!/non-melee/i.test(line)) return;   // the buster is a spell hit, not melee
+  const attackerLower = ev.attacker ? String(ev.attacker).toLowerCase() : null;
+  const curBoss = (stats.currentEncounterThreat && stats.currentEncounterThreat.bossName)
+    ? String(stats.currentEncounterThreat.bossName).toLowerCase() : null;
+  for (const c of BOSS_SPAWN_CHAINS) {
+    const bossLower = c.boss.toLowerCase();
+    const attributed = attackerLower === bossLower;
+    const inferred   = !attackerLower && curBoss === bossLower;
+    if (!attributed && !inferred) continue;
+    // Amount gate depends on the path (see header comment): attributed fires at
+    // any size above a floor (mitigation-proof); inferred needs the size match.
+    if (attributed) {
+      if (ev.amount < (c.buster_min_floor || 500)) continue;
+    } else if (Math.abs(ev.amount - c.buster_damage) > c.buster_damage_tol) {
+      continue;
+    }
+    const key = 'buster|' + bossLower;
+    if ((tsMs || Date.now()) - (_busterLastFire.get(key) || 0) < 8000) return;   // dupe/echo guard
+    _busterLastFire.set(key, tsMs || Date.now());
+    _armBossCountdown({
+      boss: c.boss, label: c.buster_label, durationSec: c.buster_cadence_sec,
+      warnSec: c.buster_warn_sec, warnText: c.buster_warn_text,
+      fireText: c.buster_fire_text, color: 'red', tsMs,
+    });
+    console.log('[boss-chain] tank buster landed on ' + c.boss + ' — re-armed ' + c.buster_cadence_sec + 's countdown');
+    return;
+  }
 }
 function _activeTimersSnapshot() {
   const now = Date.now();
@@ -27572,6 +27944,14 @@ async function main() {
         // pet — same-named different mob).
         checkCharmPetDeath(line, b.character);
 
+        // #142 — a boss death clears that mob's countdown timers (tank-buster,
+        // deathtouch) so no phantom "next in Xs" lingers on the corpse; and a
+        // configured PRECURSOR death arms the boss spawn pre-warn (Blood of
+        // Ssraeshza dies → 2:00 → Emperor + "Paladin DA NOW"). Both key off the
+        // same slain/death line. Local-only, live tail.
+        try { _cancelTimersOnMobDeath(line); } catch { /* never let a bad line break the tail */ }
+        try { const _dts = parseEqTimestamp(line); _checkBossSpawnChain(line, _dts ? _dts.getTime() : Date.now()); } catch { void 0; }
+
         // /who block boundaries (header/footer) → demarcate the current /who run
         // for the /who overlay. Rows themselves are attributed in recordWhoEvent.
         applyWhoLine(line);
@@ -27634,6 +28014,11 @@ async function main() {
         if (!shouldKeep(line, dropPatterns, keepPatterns)) return;
         const ev = parseEvent(line, ts);
         if (ev) {
+          // #142 — tank-buster detection off the ~4000 non-melee damage line
+          // (Rage of Ssraeshza, spell 2310). Fires "TANK BUSTER" + (re)arms the
+          // 60s cadence countdown. Local-only, live tail; keyed off the boss +
+          // amount, so no dependency on the imported (non-firing) text trigger.
+          try { _checkTankBuster(ev, line, ts ? ts.getTime() : Date.now()); } catch { void 0; }
           // Pet combat observation — if the attacker is one of our pets (Zeal
           // slot 16), accumulate skill / max / total / hit-count stats for the
           // Pet tracker. Side-channel; doesn't touch the encounter builder.
@@ -27686,6 +28071,7 @@ module.exports = {
   startWebDashboard,
   _loadBidFamily, _saveBidFamily, _bidFamilyNames, _opendkpAuthed,
   _loadPlannedBids, _savePlannedBids, _setPlannedBid,
+  _pickAccountDkp,   // #124 — standings → pooled account balance (pure)
   _setBidFamilyForTest: (f) => { _bidFamily = f; },
   _setOpendkpAuthForTest: (a) => { _opendkpAuth = a; },
   _getBidFamilyForTest: () => _bidFamily,
@@ -27693,6 +28079,11 @@ module.exports = {
   // #101 log-replay — exported for the scratchpad fixture.
   startReplay, stopReplay, _replayEvaluateLine, _liveFightActive,
   _fireLog, _triggerJournal, _triggerLastFire,
+  // #142 buster/spawn-chain timers — exported for the scratchpad fixture.
+  _startTimer, _activeTimersSnapshot, _cancelTimersOnMobDeath, _deadMobNameFromLine,
+  _checkBossSpawnChain, _checkTankBuster, _armBossCountdown, BOSS_SPAWN_CHAINS,
+  evaluateTriggersAgainstLine, SLOW_SPELLS, _isSlowSpell,
+  _setCurrentBossForTest: (name) => { stats.currentEncounterThreat = name ? { bossName: name } : null; },
   _getReplayStateForTest: () => _replayStateForWeb(),
   _setPersonalTriggersForTest: (arr) => { _personalTriggers = arr; },
   _setWatchedLogsForTest: (arr) => { stats.watchedLogs = arr; },
