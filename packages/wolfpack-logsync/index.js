@@ -17641,6 +17641,12 @@ function startWebDashboard(port) {
         // exactly as aggregated.
         try { outPayload = _enrichExtTargetV2(outPayload, Date.now()); }
         catch { /* leave the rows as-is — never let V2 break V1 */ }
+        // #56 — serial-track engine observes each NPC row's HP (K computation +
+        // simultaneous same-name detection) and, when the display flag is on,
+        // adds the local K≥2 ambiguity marker. Runs after V2 so it sees the same
+        // rows the overlay will. Fail-soft: never breaks the proxy.
+        try { outPayload = _mobTracksObserveExtPayload(outPayload, Date.now()); }
+        catch { /* engine must never break the ext-target proxy */ }
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify(outPayload));
       }
@@ -25278,6 +25284,192 @@ function fetchExtendedTarget(character) {
   } catch { _extTargetInflight.delete(key); }
 }
 
+// ── #56 Same-name mob serial tracks (death-boundary + HP-continuity) ─────────
+// Spec: docs/DESIGN-dedup-and-mob-serialization.md. The Zeal pipe carries NO
+// spawn id, so ≥2 identically-named mobs alive at once can't be told apart from
+// the raw data (four `an orc warrior` were byte-identical in a live capture).
+// This engine recovers exactly as much identity as the data SOUNDLY supports —
+// no more — with SEPARATOR-ONLY tracks:
+//   • A track opens when a name is first observed and CLOSES on an OBSERVED
+//     DEATH (the one trustworthy, joiner-free boundary — the doc's separator
+//     table). K = the number of tracks still OPEN for a name.
+//   • HP-continuity assigns each incoming HP sample to the open track it
+//     plausibly continues (monotonic-ish decline; a rise > MOBTRACK_CONT_UP is
+//     NOT continuous — it mirrors the shipped #3 EXT_HP_RESET_JUMP). Simultaneity
+//     is proven ONLY when two same-name rows coexist in ONE snapshot: the second
+//     sample opens a PARALLEL track and K rises. HP is the ONLY K-raiser used
+//     (rampage-safe per the doc: "HP is HP"); the victim separator is
+//     deliberately NOT used to raise K, so the doc's rampage/riposte
+//     victim-pollution correction (a rampaging mob shows a constant 2nd victim)
+//     holds STRUCTURALLY — victim can never inflate K here.
+//   • Tracks NEVER auto-merge — the engine only SPLITS and EXPIRES (death /
+//     staleness). Double-counting is handled by the ambiguity marker, not a join.
+// Consumer effect (the debuff over-merge fix, the SEQUENTIAL case CLAUDE.md says
+// is resolvable): when a death closes the LAST open track for a name (K→0) the
+// name's per-name observation buckets (buff landings, slows, ext HP history) are
+// cleared so the NEXT same-name mob starts clean — no debuff bleed-through. When
+// a death closes ONE of ≥2 open tracks (K stays ≥1) the buckets are LEFT: we
+// can't attribute which debuffs were the dead instance's, so the survivor keeps
+// its timers (the honest-ambiguity path — the doc forbids a destructive join).
+// While a name only ever has one instance (K≤1 — the 99% case) the engine is a
+// no-op SHADOW: no bucket is cleared while the mob is alive, the K≥2 marker never
+// shows, and every consumer renders byte-for-byte as before. Master kill switch:
+// WP_SERIAL_TRACKS=0 (agent-side, instant name-merge restore). The K≥2 display
+// marker is separately gated OFF for the beta soak (WP_SERIAL_TRACKS_DISPLAY=1
+// to enable) per the doc's P0/P1 rollout: engine runs, renders nothing.
+const _mobTracks = new Map();   // nameLower → { tracks:[Track], nextOrd, lastActivity, k2logged }
+                                // Track = { ord, open, openedAt, lastSeenAt, lastHp, closedAt }
+const MOBTRACK_STALE_MS = 90_000;   // an open track with no HP sample this long → expired (mob left / quiet)
+const MOBTRACK_CONT_UP  = 15;       // an HP sample > this ABOVE a track's last HP is a retarget/new instance, not continuity (mirrors EXT_HP_RESET_JUMP)
+const MOBTRACK_MAX_PER  = 24;       // bound tracks retained per name
+const MOBTRACK_CAP      = 300;      // bound the name map
+const _serialTracksOn = !(String(process.env.WP_SERIAL_TRACKS || '') === '0' || String(process.env.WP_SERIAL_TRACKS || '').toLowerCase() === 'false');
+const _serialTracksDisplay = String(process.env.WP_SERIAL_TRACKS_DISPLAY || '') === '1' || String(process.env.WP_SERIAL_TRACKS_DISPLAY || '').toLowerCase() === 'true';
+
+function _mobTrackState(nameLower) {
+  let st = _mobTracks.get(nameLower);
+  if (!st) { st = { tracks: [], nextOrd: 0, lastActivity: 0, k2logged: false }; _mobTracks.set(nameLower, st); }
+  return st;
+}
+function _mobTrackOpenCount(st) {
+  let n = 0;
+  for (const t of st.tracks) if (t.open) n++;
+  return n;
+}
+function _mobTrackExpireStale(st, nowMs) {
+  for (const t of st.tracks) {
+    if (t.open && (nowMs - t.lastSeenAt) > MOBTRACK_STALE_MS) { t.open = false; t.closedAt = nowMs; t.expired = true; }
+  }
+}
+// Assign a batch of same-name HP samples (all NPC rows for one name in ONE
+// snapshot) to distinct open tracks by best HP-continuity. Rows beyond the open
+// tracks they continue open PARALLEL tracks (proven simultaneity). A single row
+// that continues NO open track is a sequential SWAP (the prior representative is
+// gone) — retire the stale track, open a fresh one, K unchanged. Returns the
+// resulting open-track count (K).
+function _mobTrackObserveHpBatch(nameLower, hps, nowMs) {
+  if (!_serialTracksOn || !nameLower || !hps || !hps.length) return 0;
+  const st = _mobTrackState(nameLower);
+  _mobTrackExpireStale(st, nowMs);
+  st.lastActivity = nowMs;
+  const openTracks = st.tracks.filter(t => t.open);
+  const claimed = new Set();
+  const unmatched = [];
+  for (const hp of hps) {
+    if (hp == null) continue;
+    let best = null, bestScore = Infinity;
+    for (const t of openTracks) {
+      if (claimed.has(t)) continue;
+      if (hp - t.lastHp > MOBTRACK_CONT_UP) continue;   // rose too far → not this track
+      const score = Math.abs(t.lastHp - hp);
+      if (score < bestScore) { bestScore = score; best = t; }
+    }
+    if (best) { claimed.add(best); best.lastHp = hp; best.lastSeenAt = nowMs; }
+    else unmatched.push(hp);
+  }
+  const nSamples = hps.filter(h => h != null).length;
+  const stillOpenUnclaimed = openTracks.filter(t => !claimed.has(t));
+  // Sequential swap: no more samples than open tracks AND an unmatched sample AND
+  // a stale still-open track → the prior representative(s) are gone (a retarget /
+  // same-name swap), NOT a new simultaneous mob. Retire the stale open tracks so
+  // K does not inflate. (More samples than open tracks ⇒ genuine extra instance.)
+  if (unmatched.length && nSamples <= openTracks.length && stillOpenUnclaimed.length) {
+    for (const t of stillOpenUnclaimed) { t.open = false; t.closedAt = nowMs; }
+  }
+  for (const hp of unmatched) {
+    st.tracks.push({ ord: st.nextOrd++, open: true, openedAt: nowMs, lastSeenAt: nowMs, lastHp: hp, closedAt: null });
+  }
+  if (st.tracks.length > MOBTRACK_MAX_PER) st.tracks.splice(0, st.tracks.length - MOBTRACK_MAX_PER);
+  const k = _mobTrackOpenCount(st);
+  if (k >= 2 && !st.k2logged) { st.k2logged = true; try { console.log('[serial-tracks] K=' + k + ' for "' + nameLower + '" — ' + k + ' simultaneous same-name instances detected'); } catch { /* */ } }
+  else if (k < 2 && st.k2logged) { st.k2logged = false; }
+  return k;
+}
+// A death closes exactly ONE track (the oldest open — one instance died).
+// Returns { closed, remainingOpen } or null. Riposte/player-death safe: the
+// CALLER passes only the SLAIN entity's name (never a killer), so a player who
+// died to the mob's rampage/riposte can never close the mob's track.
+function _mobTrackOnDeath(nameLower, nowMs) {
+  if (!_serialTracksOn || !nameLower) return null;
+  const st = _mobTracks.get(nameLower);
+  if (!st) return { closed: false, remainingOpen: 0 };
+  _mobTrackExpireStale(st, nowMs);
+  let victim = null;
+  for (const t of st.tracks) { if (t.open) { victim = t; break; } }
+  if (victim) { victim.open = false; victim.closedAt = nowMs; }
+  st.lastActivity = nowMs;
+  const remainingOpen = _mobTrackOpenCount(st);
+  if (remainingOpen < 2) st.k2logged = false;
+  return { closed: !!victim, remainingOpen };
+}
+function _mobTrackK(nameLower, nowMs) {
+  const st = _mobTracks.get(nameLower);
+  if (!st) return 0;
+  _mobTrackExpireStale(st, nowMs || Date.now());
+  return _mobTrackOpenCount(st);
+}
+function _mobTrackGc(nowMs) {
+  if (_mobTracks.size <= MOBTRACK_CAP) return;
+  const entries = Array.from(_mobTracks.entries()).sort((a, b) => (a[1].lastActivity || 0) - (b[1].lastActivity || 0));
+  const drop = _mobTracks.size - MOBTRACK_CAP;
+  for (let i = 0; i < drop && i < entries.length; i++) _mobTracks.delete(entries[i][0]);
+  void nowMs;
+}
+// Clear a dead name's per-name observation buckets so the next same-name mob
+// starts clean. Called ONLY when a death drops K to 0 (sequential kill). For a
+// single-instance boss this is invisible: nothing targets a corpse's live NAME
+// (the corpse is keyed "<name>'s corpse"), so no reader ever sees the cleared
+// bucket — parity holds. Guarded per-store so a missing consumer never throws.
+function _clearNameObservations(nameLower) {
+  if (!nameLower) return;
+  try { _buffLandingsByTarget.delete(nameLower); } catch { /* */ }
+  try { _slowsByTarget.delete(nameLower); _slowCalloutState.delete(nameLower); } catch { /* */ }
+  try { _extMobHpHist.delete(nameLower); _extMobResetAt.delete(nameLower); } catch { /* */ }
+}
+// Tail-loop death hook. Closes the slain name's oldest open track; on K→0 (the
+// last/only instance died) clears its stale observation buckets (the sequential
+// debuff-bleed fix). Uses the same trusted death detection as the shipped timer
+// cancel (_deadMobNameFromLine → SLAIN entity only), so a player death by the
+// mob never closes the mob's track and never clears a live mob's buckets.
+function _mobTracksOnDeathLine(line, nowMs) {
+  if (!_serialTracksOn || !line) return;
+  const dead = _deadMobNameFromLine(line);
+  if (!dead) return;
+  const deadLower = String(dead).toLowerCase();
+  if (deadLower === 'you') return;
+  const res = _mobTrackOnDeath(deadLower, nowMs);
+  if (!res || !res.closed) return;
+  if (res.remainingOpen > 0) return;   // another same-name instance is still alive → don't attribute/clear
+  _clearNameObservations(deadLower);
+}
+// Ext-target proxy hook: observe each NPC row's HP (K computation + simultaneous
+// detection) and, when the display flag is on, surface a LOCAL ambiguity marker
+// for names the engine sees as K≥2 that the bot aggregate did not already flag
+// (additive — never removes the bot's marker). Fail-soft; returns the payload.
+function _mobTracksObserveExtPayload(payload, nowMs) {
+  if (!_serialTracksOn || !payload || !Array.isArray(payload.targets)) return payload;
+  const byName = new Map();
+  for (const t of payload.targets) {
+    if (!t || t.kind !== 'npc' || !t.name || t.hp_pct == null) continue;
+    const nl = String(t.name).toLowerCase();
+    let arr = byName.get(nl);
+    if (!arr) { arr = []; byName.set(nl, arr); }
+    arr.push(t.hp_pct);
+  }
+  for (const [nl, hps] of byName) _mobTrackObserveHpBatch(nl, hps, nowMs);
+  _mobTrackGc(nowMs);
+  if (!_serialTracksDisplay) return payload;   // P0: engine runs, renders nothing
+  let touched = false;
+  const targets = payload.targets.map(t => {
+    if (!t || t.kind !== 'npc' || !t.name || t.ambiguous) return t;
+    const k = _mobTrackK(String(t.name).toLowerCase(), nowMs);
+    if (k >= 2) { touched = true; return { ...t, ambiguous: true, mob_track_k: k }; }
+    return t;
+  });
+  return touched ? { ...payload, targets } : payload;
+}
+// ── end #56 serial tracks ────────────────────────────────────────────────────
+
 // ── Extended Target overlay V2 enrichment (#3) ──────────────────────────────
 // Three agent-side signals attached per NPC row at the /api/extended-target
 // proxy, computed from the LOCAL combat log / gauge stream (the bot aggregate
@@ -28569,6 +28761,11 @@ async function main() {
         // same slain/death line. Local-only, live tail.
         try { _cancelTimersOnMobDeath(line); } catch { /* never let a bad line break the tail */ }
         try { const _dts = parseEqTimestamp(line); _checkBossSpawnChain(line, _dts ? _dts.getTime() : Date.now()); } catch { void 0; }
+        // #56 — a mob death closes one same-name serial track; on K→0 (the last
+        // instance died) it clears that name's stale debuff/slow/HP buckets so the
+        // next same-name mob starts clean (the debuff-bleed fix). Same trusted
+        // death detection as the timer cancel above; engine never breaks the tail.
+        try { const _dts56 = parseEqTimestamp(line); _mobTracksOnDeathLine(line, _dts56 ? _dts56.getTime() : Date.now()); } catch { void 0; }
 
         // /who block boundaries (header/footer) → demarcate the current /who run
         // for the /who overlay. Rows themselves are attributed in recordWhoEvent.
