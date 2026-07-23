@@ -9543,7 +9543,7 @@ async function _handleAgentExtendedTarget(req, res) {
     [liveRows, buffRows] = await Promise.all([
       supabase.select('character_live_state',
         `guild_id=eq.${encodeURIComponent(guildId)}&updated_at=gte.${encodeURIComponent(onlineSince)}` +
-        `&select=character,zone_name,self_hp_pct,target_name,target_hp_pct,pet_name,pet_hp_pct,` +
+        `&select=character,zone_name,self_hp_pct,self_hp_cur,self_hp_max,target_name,target_hp_pct,pet_name,pet_hp_pct,` +
         `incoming_mob,incoming_mob_since,updated_at`),
       supabase.select('buff_casts',
         `guild_id=eq.${encodeURIComponent(guildId)}&cast_at=gte.${encodeURIComponent(debuffSince)}` +
@@ -9786,12 +9786,19 @@ async function _handleAgentExtendedTarget(req, res) {
     for (const r of inScope) {
       const ph = noteHurt('player', r.character, r.self_hp_pct);
       if (ph) {
+        // #145: attach absolute cur/max HP so the overlay can show "4382 / 5100"
+        // on player rows. Same >100 guard as the tank-state relay — a max ≤100 is
+        // a percent-as-pool artifact (88/100), not real HP → emit null.
+        const _hc = Number(r.self_hp_cur), _hm = Number(r.self_hp_max);
+        const _exact = Number.isFinite(_hc) && Number.isFinite(_hm) && _hm > 100;
+        const hpCur = _exact ? Math.max(0, Math.trunc(_hc)) : null;
+        const hpMax = _exact ? Math.trunc(_hm) : null;
         let ent = targets.find(t => t.kind === 'player' && t.name.toLowerCase() === r.character.toLowerCase());
         if (!ent) {
-          ent = { name: r.character, kind: 'player', raider_count: 0, raiders: [], hp_pct: r.self_hp_pct,
+          ent = { name: r.character, kind: 'player', raider_count: 0, raiders: [], hp_pct: r.self_hp_pct, hp_cur: hpCur, hp_max: hpMax,
             is_named: true, ambiguous: false, same_name_count: 1, dup_index: null, debuffs: [], hurt: true, hurt_secs: ph.secs, zone: scopeZone || null };
           targets.push(ent);
-        } else { ent.hurt = true; ent.hurt_secs = ph.secs; if (ent.hp_pct == null) ent.hp_pct = r.self_hp_pct; }
+        } else { ent.hurt = true; ent.hurt_secs = ph.secs; if (ent.hp_pct == null) ent.hp_pct = r.self_hp_pct; if (ent.hp_cur == null) { ent.hp_cur = hpCur; ent.hp_max = hpMax; } }
       }
       if (r.pet_name) {
         const peth = noteHurt('pet', r.pet_name, r.pet_hp_pct);
