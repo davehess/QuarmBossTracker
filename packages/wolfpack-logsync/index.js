@@ -12404,15 +12404,16 @@ function renderTriggers(s) {
   }
   h += '</div>';
 
-  // #107 Loot auction announce — dashboard toggle + default-duration knob for
-  // the local TTS callout that fires when a drop list is posted in /gu or /rs.
-  // No <details> here, so no wpKeep needed; the checked/value bits track server
-  // state and only change on user action, keeping this HTML byte-stable.
-  h += '<div class="card wide"><h2>💰 Loot auction announce <span class="dim" style="font-size:11px;font-weight:normal">(local — speaks when a drop list is posted in /gu or /rs)</span></h2>';
+  // #107/#149 Loot auction announce — dashboard toggle + default-duration knob.
+  // The countdown chip opens from the bot's loot-post broadcast regardless; this
+  // toggle gates ONLY the spoken callout (chip/voice are decoupled). No <details>
+  // here, so no wpKeep needed; the checked/value bits track server state and only
+  // change on user action, keeping this HTML byte-stable.
+  h += '<div class="card wide"><h2>💰 Loot auction announce <span class="dim" style="font-size:11px;font-weight:normal">(local — speaks when an officer posts loot)</span></h2>';
   h += '<label style="display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer">';
   h += '<input type="checkbox" id="lootAucTts"' + (s.lootAuctionTts !== false ? ' checked' : '') + '>';
-  h += '<span>Announce loot posts by voice + show a countdown chip on the trigger overlay</span></label>';
-  h += '<div class="dim" style="font-size:11px;margin-top:5px">Speaks the item count and the auction window (e.g. &ldquo;Loot posted &mdash; 3 items, bids open 2 minutes&rdquo;) through the same voice as your triggers, so it also needs <b>Trigger alerts (TTS)</b> on. The chip counts down like a Death Touch timer and can be dismissed with its &times;.</div>';
+  h += '<span>Speak loot posts by voice (the countdown chip on the trigger overlay always shows)</span></label>';
+  h += '<div class="dim" style="font-size:11px;margin-top:5px">Speaks the item count and the auction window (e.g. &ldquo;Loot posted &mdash; 3 items, bids open 2 minutes&rdquo;) through the same voice as your triggers, so it also needs <b>Trigger alerts (TTS)</b> on. The chip counts down like a Death Touch timer and can be dismissed with its &times; &mdash; it shows even with this box unchecked.</div>';
   h += '<label style="display:flex;align-items:center;gap:8px;font-size:12px;margin-top:8px">Default auction length when none is stated:';
   h += '<input type="number" id="lootAucDur" min="15" max="1800" step="5" value="' + (s.lootAuctionDefaultSec || 120) + '" style="width:70px;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:3px 6px;border-radius:4px;font-family:inherit;font-size:12px"> seconds</label>';
   h += '<span id="lootAucMsg" class="dim" style="font-size:11px;margin-left:8px"></span>';
@@ -20127,11 +20128,11 @@ const _optinState = {
   // polluting the list). Read by fetchExtendedTarget → passed to the bot as
   // same_zone=0 only when the user turns it OFF.
   extSameZoneOnly: true,
-  // #107 loot-post announce. lootAuctionTts gates the local TTS callout +
-  // countdown chip when a drop list is posted in /gu or /rs (default ON);
-  // lootAuctionDefaultSec is the auction window used when the bid call doesn't
-  // state a duration. Both live here so they persist across runs like the
-  // other dashboard-set flags.
+  // #107/#149 loot-post announce. lootAuctionTts gates ONLY the local spoken
+  // callout (default ON) — the countdown chip opens from the bot's loot-posted
+  // broadcast regardless of this flag (chip/voice decoupled). lootAuctionDefaultSec
+  // is the fallback auction window used only when a post carries no window_sec.
+  // Both live here so they persist across runs like the other dashboard-set flags.
   lootAuctionTts: true,
   lootAuctionDefaultSec: 120,
 };
@@ -25081,6 +25082,20 @@ function _relayLocalFire(t, actions, captures, tsMs, key) {
 // is unset (no bot wired) or when no token is configured.
 let _lastRelayFireId = 0;
 let _relayPollerActive = false;
+// #149 loot-posted broadcast cursor — mirrors _lastRelayFireId. The bot rides
+// loot_posted[] + loot_next_id on the SAME recent-fires payload (the standalone
+// GET /recent-fires AND the #106 poll bundle's streams.recent_fires), advanced
+// by a loot_since_id request cursor. Auction chips + the "Loot posted" TTS now
+// come from THIS broadcast (an officer's bot /loot post), retiring the old
+// chat-sniffing auto-open in noteLootAuction.
+let _lastLootPostedId = 0;
+let _seenLootPostedIds = new Set();   // per-id dedup across the two poll paths + restart replay
+// Spoken-callout freshness gate — the loot analog of RELAY_STALE_MS. A post
+// older than this at consumption (an agent restart re-reading a still-open
+// auction from the bot's buffer) RESTORES the chip silently but does NOT
+// re-speak, so restarts don't re-announce. A touch wider than the relay's 15s
+// to cover the officer-post → broadcast → poll hop on a genuinely live post.
+const LOOT_ANNOUNCE_FRESH_MS = 20_000;
 // A relayed fire older than this at consumption time is a ghost callout (queue
 // backlog replayed it late) — journalled, never spoken. See _pollRelayFires.
 const RELAY_STALE_MS = 15_000;
@@ -25107,6 +25122,10 @@ function _recentFiresActive() {
 // logic stays identical between the two paths.
 function _consumeRelayFires(data) {
   if (!data) return;
+  // #149 — the loot-posted broadcast rides the SAME payload as the trigger
+  // relay fires; consume it here so BOTH the standalone /recent-fires poll and
+  // the #106 multiplexed poll pick it up through one code path.
+  _consumeLootPosted(data);
   if (typeof data.next_id === 'number') {
     _lastRelayFireId = Math.max(_lastRelayFireId, data.next_id);
   }
@@ -25129,6 +25148,57 @@ function _consumeRelayFires(data) {
   }
 }
 
+// #149 — consume the loot-posted broadcast carried on the recent-fires payload.
+// Each event is an officer bot /loot post: { id, at, item_count,
+// items:[{name,quantity}], posted_by, window_sec }. On a NEW event we open (or
+// reset) the SAME auction countdown chip the retired chat path used AND fire the
+// #107 "Loot posted" TTS. DECOUPLED gating (the false/real coupling fix): the
+// chip ALWAYS opens; only the SPOKEN callout is gated by lootAuctionTts. Dedup:
+// a per-id seen-set (so a repeat poll / restart replay never re-announces) plus
+// an elapsed-window drop (a post whose bid window already closed never spawns a
+// phantom chip). #129 timer source: the window comes straight from the post's
+// window_sec, falling back to lootAuctionDefaultSec only when it is absent.
+function _consumeLootPosted(data) {
+  if (!data) return;
+  if (typeof data.loot_next_id === 'number') {
+    _lastLootPostedId = Math.max(_lastLootPostedId, data.loot_next_id);
+  }
+  const events = data.loot_posted;
+  if (!Array.isArray(events) || events.length === 0) return;
+  for (const ev of events) {
+    if (!ev) continue;
+    const id = Number(ev.id);
+    if (Number.isFinite(id)) {
+      if (_seenLootPostedIds.has(id)) continue;   // already announced (dup poll / restart replay)
+      _seenLootPostedIds.add(id);
+      if (_seenLootPostedIds.size > 500) {
+        // ids are monotonic — keep the newest 250, drop the rest.
+        _seenLootPostedIds = new Set([..._seenLootPostedIds].sort((a, b) => b - a).slice(0, 250));
+      }
+    }
+    const items = Array.isArray(ev.items)
+      ? ev.items.map(it => ({ name: String((it && it.name) || '').trim(), quantity: (it && it.quantity) || 1 }))
+                .filter(it => it.name)
+      : [];
+    if (items.length === 0) continue;
+    const atMs = Date.parse(ev.at) || Date.now();
+    const winSec = (Number.isFinite(ev.window_sec) && ev.window_sec > 0)
+      ? Math.max(15, Math.min(1800, Math.round(ev.window_sec)))
+      : _lootAuctionDefaultSec();
+    // Elapsed-window drop — a post replayed after its window already closed
+    // (agent restart re-reading the buffer) must not spawn a stale chip.
+    if ((atMs + winSec * 1000) < Date.now()) continue;
+    const sig = items.map(i => i.name.toLowerCase()).sort().join('~');
+    // DECOUPLE: chip always; voice per toggle AND freshness. Passing silent=true
+    // suppresses ONLY _announceLootPost — _openOrResetLootAuction still opens the
+    // chip. Voice is muted when the toggle is OFF or the post is a stale restart
+    // replay (chip restored silently); on the live path it speaks on first open.
+    const stale    = (Date.now() - atMs) > LOOT_ANNOUNCE_FRESH_MS;
+    const voiceOff = _optinState.lootAuctionTts === false || stale;
+    _openOrResetLootAuction(sig, items, winSec, atMs, null, voiceOff);
+  }
+}
+
 async function _pollRelayFires() {
   if (_relayPollerActive) return;
   if (_multiplexActive()) return;   // #106 — the multiplexed /poll carries recent_fires while it's live
@@ -25139,7 +25209,8 @@ async function _pollRelayFires() {
   if (!_recentFiresActive()) return;
   _relayPollerActive = true;
   try {
-    const url = base.replace(/\/+$/, '') + '/recent-fires?since_id=' + _lastRelayFireId;
+    const url = base.replace(/\/+$/, '') + '/recent-fires?since_id=' + _lastRelayFireId
+              + '&loot_since_id=' + _lastLootPostedId;   // #149 loot-posted cursor rides the same poll
     const res = await fetch(url, {
       headers: { 'Authorization': 'Bearer ' + token, 'Accept': 'application/json' },
     });
@@ -25236,7 +25307,10 @@ async function _pollMultiplexed() {
   if (want.length === 0) return;   // nothing due this tick (idle, between cadences)
   const qs = new URLSearchParams();
   qs.set('streams', want.join(','));
-  if (want.includes('recent_fires')) qs.set('since_id', String(_lastRelayFireId));
+  if (want.includes('recent_fires')) {
+    qs.set('since_id', String(_lastRelayFireId));
+    qs.set('loot_since_id', String(_lastLootPostedId));   // #149 loot-posted cursor rides recent_fires
+  }
   if (want.includes('tuning'))       qs.set('tuning_ver', _pollTuningVer || '');
   if (want.includes('triggers')) {
     qs.set('trig_ver', stats.guildTriggersVersion || '');
@@ -27355,26 +27429,23 @@ function _activeTimersSnapshot() {
   return out;
 }
 
-// ── #107 Loot-post announce + auction countdown chip ────────────────────────
-// When an officer posts a drop list in /gu or /rs (the same delimited item
-// list the officer Loot capture panel already parses), that IS the universal
-// bid-opening signal — EVERY raider's agent tails the line locally, so the
-// callout is a per-client LOCAL TTS + a countdown chip on the trigger overlay.
-// No relay, no dedup-across-clients problem. The TTS rides the SAME overlay
-// fire pipeline as triggers (_pushOverlay → recentTriggerFires → triggers.html
-// speaks it only when the master `enableTriggerTts` flag is on), and the chip
-// reuses the trigger _activeTimers machinery so it looks/behaves exactly like
-// a Death Touch countdown.
+// ── #107/#149 Loot-post announce + auction countdown chip ───────────────────
+// The auction chip + the "Loot posted" TTS open from the bot's loot-posted
+// BROADCAST (an officer's /loot post → recent-fires payload → _consumeLootPosted
+// above), NOT from chat-sniffing. The broadcast carries the officer's chosen
+// window (window_sec), so the chip's countdown matches the real bid window (#129).
+// The TTS rides the SAME overlay fire pipeline as triggers (_pushOverlay →
+// recentTriggerFires → triggers.html speaks it only when the master
+// `enableTriggerTts` flag is on), and the chip reuses the trigger _activeTimers
+// machinery so it looks/behaves exactly like a Death Touch countdown.
 //
-// Detection is deliberately high-precision, leaning on parseLootChatBody's
-// strict Title-Case item-name guard (rejects ordinary chatter). A single-item
-// link needs extra bid context to fire; a multi-item drop list is a loot post
-// on its own. A stated duration ("2 min", "90s") is parsed when present, else
-// lootAuctionDefaultSec (120s) is used, and a later bid call that DOES state a
-// duration re-anchors the most-recent auction's timer.
+// noteLootAuction (chat) is now a NARROW helper: it never opens a chip and never
+// speaks — it only re-anchors an already-open (broadcast-opened) auction's
+// window when a bid call STATES a duration (the "drop list … then 'bids, 2
+// minutes'" two-line officer workflow). The passive Loot Capture panel
+// (noteLootFromChat) is a separate, untouched consumer of the same chat lines.
 const _lootAuctions = new Map();   // sig → { items, openedAtMs, channel }
 let _lastLootSig     = null;
-let _lastLootBidCall = { atMs: 0, durSec: null };
 // Words that mark a bid call. Kept broad but anchored on \b so it doesn't fire
 // on substrings ("forbidden", "auctioneer" etc. still match "bid"/"auction" as
 // whole words only where intended).
@@ -27490,45 +27561,29 @@ function _openOrResetLootAuction(sig, items, durSec, nowMs, channel, silent) {
   scheduleRender();
 }
 
-// Universal entry point — called for every live /gu + /rs line (NOT the
-// --since backfill, which replays history and must not narrate old loot).
+// Chat entry point — called for every live /gu + /rs line (NOT the --since
+// backfill, which replays history and must not touch live auctions).
+//
+// #149: chip-opening + the spoken callout were RETIRED from this path — they now
+// come from the bot's loot-posted broadcast (_consumeLootPosted). What remains
+// is duration RE-ANCHORING: a bid call that states a duration ("bids, 2 minutes")
+// resets the window of the most-recent already-open (broadcast-opened) auction.
+// It NEVER opens a new chip and NEVER speaks (the re-anchor is silent), so it is
+// not gated by lootAuctionTts — the chip/timer is decoupled from the voice
+// toggle. A drop-list line with no open auction is a NO-OP here (still captured
+// by the separate, untouched noteLootFromChat → Loot Capture panel).
 function noteLootAuction(chatMsg) {
   try {
     if (!chatMsg || (chatMsg.channel !== 'guild' && chatMsg.channel !== 'raid')) return;
-    if (_optinState.lootAuctionTts === false) return;   // feature off
     const text  = String(chatMsg.text || '');
-    const nowMs = Date.parse(chatMsg.ts) || Date.now();
-    const items = parseLootChatBody(text);           // strict Title-Case guard
+    if (!LOOT_BID_CALL_RX.test(text)) return;        // only bid calls re-anchor
     const statedDur = _parseAuctionDuration(text);
-    const hasBidWord = LOOT_BID_CALL_RX.test(text);
-
-    if (items.length >= 1) {
-      // False-positive guard: a lone single-item link needs bid context (a bid
-      // word or duration in THIS line, or a bid call heard in the last 30s).
-      // Multi-item drop lists stand on their own — that's a loot post.
-      const recentBidCall = (nowMs - _lastLootBidCall.atMs) < 30_000 && _lastLootBidCall.atMs > 0;
-      if (items.length < 2 && !hasBidWord && statedDur == null && !recentBidCall) return;
-      const sig = items.map(i => i.name.toLowerCase()).sort().join('~');
-      // Duration precedence: this line's stated value → a recent bid call's
-      // stated value → the configured default.
-      const durSec = statedDur
-        || (recentBidCall ? _lastLootBidCall.durSec : null)
-        || _lootAuctionDefaultSec();
-      _openOrResetLootAuction(sig, items, durSec, nowMs, chatMsg.channel, false);
-      return;
-    }
-
-    // No item list. A standalone bid call ("bids open, 2 minutes") re-anchors
-    // the most-recent open auction's window when it states a duration — this is
-    // the drop-list-then-bid-call two-line workflow.
-    if (hasBidWord) {
-      _lastLootBidCall = { atMs: nowMs, durSec: statedDur || null };
-      if (statedDur != null && _lastLootSig && _lootAuctions.has(_lastLootSig)) {
-        const a = _lootAuctions.get(_lastLootSig);
-        if ((nowMs - a.openedAtMs) < 120_000) {
-          _openOrResetLootAuction(_lastLootSig, a.items, statedDur, nowMs, a.channel, true);
-        }
-      }
+    if (statedDur == null) return;                   // no stated window → nothing to re-anchor
+    if (!_lastLootSig || !_lootAuctions.has(_lastLootSig)) return;   // no open auction to re-time
+    const nowMs = Date.parse(chatMsg.ts) || Date.now();
+    const a = _lootAuctions.get(_lastLootSig);
+    if ((nowMs - a.openedAtMs) < 120_000) {
+      _openOrResetLootAuction(_lastLootSig, a.items, statedDur, nowMs, a.channel, true);
     }
   } catch (e) { void e; }
 }
@@ -29479,10 +29534,15 @@ module.exports = {
   EncounterBuilder, characterFromFilename,
   trackChChainLine, chChainSnapshot,
   _readZipEntry, _parseCrashReason, _crashZipTime,
-  // #107 loot-post announce — exported for the scratchpad smoke test.
+  // #107/#149 loot-post announce — exported for the scratchpad smoke test.
   parseLootChatBody, noteLootAuction, _parseAuctionDuration, _spokenDuration,
   _lootChipLabel, _activeTimers, _activeOverlays, _optinState, _lootAuctions,
   _lootAuctionsSnapshot,
+  _consumeLootPosted,   // #149 loot-posted broadcast consumer
+  noteLootFromChat,     // passive Loot Capture panel (untouched by #149)
+  _getLootCursorForTest: () => _lastLootPostedId,
+  _resetLootCursorForTest: () => { _lastLootPostedId = 0; _seenLootPostedIds = new Set(); },
+  _lootCapturesForTest: () => _lootCaptures.slice(),
   // #108 loot bidding — exported for the scratchpad smoke test / harness.
   startWebDashboard,
   _loadBidFamily, _saveBidFamily, _bidFamilyNames, _opendkpAuthed,
