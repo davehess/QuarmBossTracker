@@ -5591,6 +5591,17 @@ class EncounterBuilder {
       const attackerIsTarget = rawAtk0 && this.targets.has(rawAtk0);
       if (!isSelfHit && !attackerIsTarget) {
         this.targets.set(event.defender, (this.targets.get(event.defender) || 0) + (event.amount || 0));
+        // #3 Extended Target V2 — rolling per-mob damage-in for the DPS-on-mob
+        // readout. Same signal as this.targets, but TIMESTAMPED + windowed
+        // (this.targets is cumulative). Other raiders' hits appear in our log
+        // when they're in range, so this local sum ≈ the raid view. Local-only
+        // and gated off backfill builders (this.silent) so a --since replay
+        // can't inflate the live rate.
+        if (!this.silent && (event.amount || 0) > 0) {
+          const mobDmg = stats.recentMobDamage || (stats.recentMobDamage = []);
+          mobDmg.push({ mob: event.defender.toLowerCase(), amount: event.amount || 0, tsMs: Date.parse(event.ts) || Date.now() });
+          if (mobDmg.length > 600) mobDmg.splice(0, mobDmg.length - 600);
+        }
       }
     }
 
@@ -8174,25 +8185,9 @@ function _findDA(buffsList, greenSecs) {
 //      (stats.recentTankHits; rampage hits already excluded at record
 //      time so a rampage cycle can't flip the MT).
 // Returns { name, source } or null when neither fires (out of combat / solo).
-// Target-of-target for a mob: which raider it's meleeing, from recentTankHits
-// (the local combat log's "<mob> hits <player>"; Zeal's gauge stream has no ToT
-// slot). Cross-client mobs the local client isn't in range of won't have hits,
-// so tot is null for those. Uilnayar 2026-07-15 — Extended Target ToT column.
-function _totForMob(mobLower) {
-  if (!mobLower) return null;
-  const now = Date.now();
-  const tally = new Map();
-  for (const h of (stats.recentTankHits || [])) {
-    if (now - h.tsMs > 15_000) continue;
-    if (h.mob !== mobLower) continue;
-    const k = h.tank.toLowerCase();
-    const e = tally.get(k) || { name: h.tank, hits: 0 };
-    e.hits++; tally.set(k, e);
-  }
-  let best = null;
-  for (const e of tally.values()) if (!best || e.hits > best.hits) best = e;
-  return best ? best.name : null;
-}
+// (The mob's current melee victim is derived at the /api/extended-target proxy
+// via _victimForMob — most-recent connect within a 10s staleness window — as
+// part of the #3 Extended Target V2 enrichment, not here.)
 function _resolveMainTank(mainTargetName) {
   const chc = chChainSnapshot();
   if (chc && chc.target) return { name: String(chc.target), source: 'ch_chain' };
@@ -17393,20 +17388,7 @@ function startWebDashboard(port) {
         fetchExtendedTarget(selfCharacter);
         const cached = _extTargetCache.get(String(selfCharacter || '').toLowerCase());
         const payload = (cached && cached.payload) || { targets: [], loading: true };
-        // Enrich mob rows with target-of-target (who the mob is meleeing) from
-        // the local combat log — the bot aggregation has no ToT (Zeal's gauge
-        // stream carries none). A player/pet name never matches a mob-hit
-        // record so its tot stays null; enrich all rows, keep only non-null.
         let outPayload = payload;
-        try {
-          if (Array.isArray(payload.targets) && payload.targets.length && (stats.recentTankHits || []).length) {
-            outPayload = { ...payload, targets: payload.targets.map(t => {
-              if (!t || !t.name) return t;
-              const tot = _totForMob(String(t.name).toLowerCase());
-              return tot ? { ...t, tot } : t;
-            }) };
-          }
-        } catch { outPayload = payload; }
         // #128 — near-live HP for the row that IS this client's own Zeal slot-6
         // target. Every row's hp_pct arrives from the bot aggregate (slow: 3s
         // proxy TTL + cross-client live-state heartbeat); when one row's name
@@ -17437,6 +17419,12 @@ function startWebDashboard(port) {
             }
           }
         } catch { /* leave the aggregate HP as-is on any error */ }
+        // #3 Extended Target V2 — attach mob_victim / mob_dps / mob_ttl_secs per
+        // NPC row from the local combat log + HP trend. Runs AFTER #128 so TTL
+        // samples the freshest per-row HP. Fail-soft: any error leaves V1 rows
+        // exactly as aggregated.
+        try { outPayload = _enrichExtTargetV2(outPayload, Date.now()); }
+        catch { /* leave the rows as-is — never let V2 break V1 */ }
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify(outPayload));
       }
@@ -25066,6 +25054,131 @@ function fetchExtendedTarget(character) {
     req.on('timeout', () => { req.destroy(); _extTargetInflight.delete(key); });
     req.end();
   } catch { _extTargetInflight.delete(key); }
+}
+
+// ── Extended Target overlay V2 enrichment (#3) ──────────────────────────────
+// Three agent-side signals attached per NPC row at the /api/extended-target
+// proxy, computed from the LOCAL combat log / gauge stream (the bot aggregate
+// carries none of them). Everything is keyed by MOB NAME — same-name
+// simultaneous mobs are indistinguishable on the Zeal pipe (#56 owns that), so
+// a mob's per-name history is CLEARED when its row leaves the aggregate or its
+// HP jumps UP > 15 points (a re-pull, a heal, or a same-name swap). Every
+// signal is fail-soft: no data → field absent → the overlay omits it.
+const EXT_VICTIM_STALE_MS = 10_000;   // victim shown only if a connect landed this recently
+const EXT_DPS_WINDOW_MS   = 20_000;   // sliding window for raid DPS-on-mob
+const EXT_DPS_MIN_SPAN_S  = 3;        // floor on the DPS denominator — one big hit can't read as a full-window rate
+const EXT_HPHIST_MAX      = 8;        // HP samples retained per mob
+const EXT_TTL_MIN_SAMPLES = 3;        // TTL needs a real trend, not two points
+const EXT_TTL_MIN_SPAN_MS = 8_000;    // …spanning at least this long
+const EXT_HP_RESET_JUMP   = 15;       // an HP rise > this resets the mob's history + victim/dps window
+const _extMobHpHist  = new Map();     // mobLower → [{ t, hp }]  (ascending t)
+const _extMobResetAt = new Map();     // mobLower → ms; combat events before this are ignored (post-reset)
+
+// Most RECENT melee victim observed for a mob within the staleness window.
+// Stale (>10s) → null so the row drops the "→ X" the moment the connect ages
+// out. Events before the mob's reset marker are ignored (same-name swap).
+function _victimForMob(mobLower, nowMs) {
+  if (!mobLower) return null;
+  const resetAt = _extMobResetAt.get(mobLower) || 0;
+  let best = null;
+  for (const h of (stats.recentTankHits || [])) {
+    if (!h || h.mob !== mobLower) continue;
+    if (h.tsMs < resetAt) continue;
+    if (nowMs - h.tsMs > EXT_VICTIM_STALE_MS) continue;
+    if (!best || h.tsMs > best.tsMs) best = h;
+  }
+  return best ? best.tank : null;
+}
+
+// Raid-wide-as-observed damage/sec onto a mob over the sliding window. Divides
+// by the OBSERVED span (floored at EXT_DPS_MIN_SPAN_S) so a single big hit at
+// the start of a window can't read as a full-window rate.
+function _dpsOnMob(mobLower, nowMs) {
+  if (!mobLower) return null;
+  const resetAt = _extMobResetAt.get(mobLower) || 0;
+  let sum = 0, earliest = null;
+  for (const d of (stats.recentMobDamage || [])) {
+    if (!d || d.mob !== mobLower) continue;
+    if (d.tsMs < resetAt) continue;
+    if (nowMs - d.tsMs > EXT_DPS_WINDOW_MS) continue;
+    sum += d.amount || 0;
+    if (earliest == null || d.tsMs < earliest) earliest = d.tsMs;
+  }
+  if (sum <= 0 || earliest == null) return null;
+  const spanS = Math.max(EXT_DPS_MIN_SPAN_S, (nowMs - earliest) / 1000);
+  return sum / spanS;
+}
+
+// Time-to-live from the mob's HP% trend. Only emitted when the trend is
+// meaningfully negative AND stable: ≥3 samples spanning ≥8s, monotonic-ish
+// down (no sample rose > 2 points mid-window). Jumpy / healing / fresh mobs
+// return null — show nothing over a garbage estimate.
+function _ttlForMob(mobLower, curHp, nowMs) {
+  if (!mobLower || curHp == null) return null;
+  const hist = _extMobHpHist.get(mobLower);
+  if (!hist || hist.length < EXT_TTL_MIN_SAMPLES) return null;
+  const first = hist[0], last = hist[hist.length - 1];
+  const spanMs = last.t - first.t;
+  if (spanMs < EXT_TTL_MIN_SPAN_MS) return null;
+  for (let i = 1; i < hist.length; i++) if (hist[i].hp - hist[i - 1].hp > 2) return null;
+  const dropPct = first.hp - last.hp;
+  if (dropPct <= 0) return null;                      // flat or healing → no estimate
+  const ratePctPerMs = dropPct / spanMs;
+  if (!(ratePctPerMs > 0)) return null;
+  const secs = curHp / (ratePctPerMs * 1000);
+  if (!isFinite(secs) || secs <= 0) return null;
+  return Math.min(secs, 3600);                        // clamp to 1h
+}
+
+// Sample each NPC row's current HP% into per-mob history, handle the same-name
+// reset (HP jump UP > 15), and prune histories for mobs that left the
+// aggregate. Runs once per proxy response, AFTER the #128 local-live HP
+// override so TTL keys off the freshest HP available.
+function _sampleExtMobHp(payload, nowMs) {
+  const present = new Set();
+  if (payload && Array.isArray(payload.targets)) {
+    for (const t of payload.targets) {
+      if (!t || t.kind !== 'npc' || !t.name || t.hp_pct == null) continue;
+      const k = String(t.name).toLowerCase();
+      present.add(k);
+      let hist = _extMobHpHist.get(k);
+      if (!hist) { hist = []; _extMobHpHist.set(k, hist); }
+      const last = hist.length ? hist[hist.length - 1] : null;
+      if (last && (t.hp_pct - last.hp) > EXT_HP_RESET_JUMP) {
+        // Re-pull / heal / same-name swap — wipe history + gate the combat windows.
+        hist.length = 0;
+        _extMobResetAt.set(k, nowMs);
+      }
+      const prev = hist.length ? hist[hist.length - 1] : null;
+      if (!prev || prev.hp !== t.hp_pct || (nowMs - prev.t) >= 1000) {
+        hist.push({ t: nowMs, hp: t.hp_pct });
+        if (hist.length > EXT_HPHIST_MAX) hist.splice(0, hist.length - EXT_HPHIST_MAX);
+      }
+    }
+  }
+  for (const k of Array.from(_extMobHpHist.keys())) {
+    if (!present.has(k)) { _extMobHpHist.delete(k); _extMobResetAt.delete(k); }
+  }
+}
+
+// Attach mob_victim / mob_dps / mob_ttl_secs to each NPC row. Player/pet rows
+// (including "needs attention" hurt rows) are never enriched. Each field is
+// independently optional — a row carries only what's known.
+function _enrichExtTargetV2(payload, nowMs) {
+  if (!payload || !Array.isArray(payload.targets) || !payload.targets.length) return payload;
+  _sampleExtMobHp(payload, nowMs);
+  return { ...payload, targets: payload.targets.map(t => {
+    if (!t || t.kind !== 'npc' || !t.name) return t;
+    const k = String(t.name).toLowerCase();
+    const patch = {};
+    const victim = _victimForMob(k, nowMs);
+    if (victim) patch.mob_victim = victim;
+    const dps = _dpsOnMob(k, nowMs);
+    if (dps != null && dps > 0) patch.mob_dps = Math.round(dps);
+    const ttl = _ttlForMob(k, t.hp_pct, nowMs);
+    if (ttl != null) patch.mob_ttl_secs = Math.round(ttl);
+    return Object.keys(patch).length ? { ...t, ...patch } : t;
+  }) };
 }
 
 // "Buffs feel laggy" click from the buff-queue overlay. Two effects:

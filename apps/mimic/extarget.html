@@ -106,11 +106,19 @@
     background:rgba(95,208,201,0.12);border:1px solid rgba(95,208,201,0.35);color:#5fd0c9;
     flex-shrink:0}
   .head .offtank-btn.on{background:rgba(95,208,201,0.9);color:#08231f}
-  /* Target-of-target — who this mob is meleeing (from the local combat log's
-     "<mob> hits <player>"; Zeal's gauge stream has no ToT slot). */
-  .row .tot{color:#f0b429;font-size:9px;font-weight:600;margin-left:5px;white-space:nowrap;
-    text-shadow:0 1px 2px #000}
-  .row .tot .arrow{color:#9aa4ad;font-weight:400;margin-right:2px}
+  /* #3 Extended Target V2 — the mob-stats sub-line: → who the mob is meleeing
+     (from the local combat log's "<mob> hits <player>"; the pipe carries no
+     ToT), the raid DPS landing on it, and an HP-trend time-to-live. Dim,
+     compact, full-width under the row; each cell is independently optional
+     (fail-soft — a row shows only what the agent could compute). */
+  .row .mobx{grid-column:1 / -1;display:flex;flex-wrap:wrap;gap:1px 8px;
+    font-size:9px;line-height:1.35;padding-left:2px;min-width:0;
+    overflow:hidden;text-shadow:0 1px 2px #000}
+  .row .mobx>span{white-space:nowrap}
+  .row .mobx .vic{color:#c9b389;font-weight:600;overflow:hidden;text-overflow:ellipsis;min-width:0}
+  .row .mobx .vic .arrow{color:#6e7681;font-weight:400;margin-right:2px}
+  .row .mobx .mdps{color:#8fb7d6;font-variant-numeric:tabular-nums;flex-shrink:0}
+  .row .mobx .mttl{color:#d69a9a;font-variant-numeric:tabular-nums;flex-shrink:0}
   /* Per-row hide ✕ — sits right next to the target name and is ALWAYS
      visible (it was hover-only at the row's far edge, which on a locked
      click-through overlay meant effectively invisible — Uilnayar
@@ -249,6 +257,41 @@
   function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]; }); }
   function hpTier(h){ if (h == null) return 'unk'; if (h >= 60) return 'hi'; if (h >= 30) return 'mid'; return 'lo'; }
 
+  // #3 Extended Target V2 — the mob-stats sub-line. Compact "38k/s" number
+  // formatting (thousands → k, millions → m) and "1m40s" durations, chosen
+  // over the DPS HUD's "38.00K" style to stay narrow on these thin rows.
+  function fmtK(n){
+    n = Math.round(Number(n) || 0);
+    if (n >= 1e6) return (n / 1e6).toFixed(1).replace(/\.0$/, '') + 'm';
+    if (n >= 1e4) return Math.round(n / 1e3) + 'k';
+    if (n >= 1e3) return (n / 1e3).toFixed(1).replace(/\.0$/, '') + 'k';
+    return String(n);
+  }
+  function fmtDur(secs){
+    secs = Math.max(0, Math.round(Number(secs) || 0));
+    if (secs < 60) return secs + 's';
+    var m = Math.floor(secs / 60), s = secs % 60;
+    return m + 'm' + (s ? s + 's' : '');
+  }
+  // Build the mob-stats sub-line from the agent-attached V2 fields. NPC rows
+  // only; each field is independently optional, so player/pet "needs
+  // attention" rows and any row missing all three emit nothing (byte-stable).
+  function mobxLine(t){
+    if (!t || (t.kind || 'npc') !== 'npc') return '';
+    var parts = '';
+    if (t.mob_victim) {
+      parts += '<span class="vic" title="This mob is meleeing ' + esc(t.mob_victim) + ' (from the local combat log)">'
+             +   '<span class="arrow">→</span>' + esc(t.mob_victim) + '</span>';
+    }
+    if (t.mob_dps != null) {
+      parts += '<span class="mdps" title="Raid damage per second on this mob (as observed locally)">' + fmtK(t.mob_dps) + '/s</span>';
+    }
+    if (t.mob_ttl_secs != null) {
+      parts += '<span class="mttl" title="Estimated time to kill at the current HP trend">~' + fmtDur(t.mob_ttl_secs) + '</span>';
+    }
+    return parts ? '<div class="mobx">' + parts + '</div>' : '';
+  }
+
   // #143 MEZ / SLOW classification. Pure display over the debuff names each row
   // already carries — no new upload. SLOW mirrors the agent's SLOW_SPELLS list
   // (#105) + the Emperor tank-buster "Rage of Ssraeshza" (spell 2310 is a −90%
@@ -341,10 +384,6 @@
       var lastRaiders = (t.last_raiders || []).join(', ');
       nm += '<span class="stale-tag" title="Last targeted by: ' + esc(lastRaiders) + '">last seen ' + (t.stale_secs || 0) + 's ago</span>';
     }
-    // Target of target — who this mob is meleeing (usually the tank).
-    if (kind === 'npc' && t.tot) {
-      nm += '<span class="tot" title="This mob is meleeing ' + esc(t.tot) + ' (from combat log)"><span class="arrow">🎯</span>' + esc(t.tot) + '</span>';
-    }
     var ct = (t.raider_count != null ? t.raider_count : 0);
     var ctHtml = pureOffTank ? '🛡' : String(ct);
     var ctCls = pureOffTank ? 'ct offtank-ct' : 'ct';
@@ -380,6 +419,7 @@
       +      '<span class="rowhide" data-hk="' + esc(key) + '" title="Hide this entry (restore from the footer)">✕</span></span>'
       +    '<span class="hp ' + tier + '">' + hpTxt + '</span>'
       +    '<div class="bar"><div class="fill ' + tier + '" style="width:' + bw + '%"></div></div>'
+      +    mobxLine(t)
       +    whoLine
       +    deb
       +  '</div>';
