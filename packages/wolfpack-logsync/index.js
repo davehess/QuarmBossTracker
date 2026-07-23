@@ -26440,6 +26440,96 @@ function _checkTankBuster(ev, line, tsMs) {
     return;
   }
 }
+
+// ── #36 AoE-dance callouts (DPS OUT / DPS IN + countdown) ────────────────────
+// Data-driven melee-dance helper, REUSING the #142 countdown machinery
+// (_armBossCountdown → _startTimer, buster-style effect detection). For a boss
+// whose PBAE forces the melee off the mob ("run OUT before it hits, back IN
+// after it lands"), we give the raid the exact tank-buster UX with different
+// texts: (a) a pre-warn "DPS OUT" before the next AE, (b) a confirming "DPS IN"
+// the instant it lands, (c) an on-screen countdown to the next AE that re-syncs
+// on every observed cast.
+//
+// GROUNDED SIGNATURE — Caustic Mist, eqemu_spells id 2814, on Vyzh`dra the
+// Cursed (npc_types 162042, npc_spells_id 197, entry recast_delay -1 = "use the
+// spell's own recast"):
+//   • cast_time 0 → the spell prints NO cast message; the ONLY detectable log
+//     evidence is the per-victim LAND message. So — exactly like the #142
+//     buster (Rage of Ssraeshza) — we detect the EFFECT, never a cast.
+//   • land-on-other: "<Name>'s flesh begins to liquefy."  (text is SHARED with
+//     Putrefy Flesh 1956; the boss-active gate below scopes it to this fight)
+//   • land-on-self:  "Your skin begins to rot."           (unique to 2814)
+//   A PBAE hitting the melee pile prints a BURST of these lines across many
+//   victims within ~1s in every raider's OWN combat log (per-client, no relay),
+//   so a burst detector (>= burst_n victims within burst_window_ms) is the
+//   robust "the AE just fired" signal — a single stray land line is NOT.
+//   • cadence: spell recast_time = 24000ms and the npc entry defers to it
+//     (recast_delay -1). NPC spell AI does NOT cast strictly on cooldown, so
+//     24s is a grounded DEFAULT and is FIELD-TUNABLE — the guild confirms the
+//     real interval on the next Vyzh`dra kill. Like the buster, the countdown
+//     RE-SYNCS on every observed AE, so an approximate cadence is still useful.
+const AOE_DANCE = [
+  {
+    boss:            'Vyzh`dra the Cursed',
+    spell:           'Caustic Mist',                  // eqemu_spells 2814 — PBAE (targettype 4)
+    signature:       [/flesh begins to liquefy\./i,   // land-on-other (shared text; scoped by active-boss gate)
+                      /Your skin begins to rot\./i],  // land-on-self (unique to Caustic Mist)
+    burst_n:         3,                               // >= this many victims in the window = the AE fired
+    burst_window_ms: 2000,                            // PBAE lands across ~1s; 2s safely collects the burst
+    cadence_sec:     24,                              // FIELD-TUNABLE — spell recast_time 24000ms; confirm on next kill
+    out_warn_sec:    5,                               // speak "DPS OUT" this many seconds before the next AE
+    out_text:        'DPS OUT — Caustic Mist soon',   // countdown warning callout (the pre-warn)
+    in_text:         'DPS IN',                        // fired NOW when the AE lands (safe to re-engage)
+    color:           'gold',
+  },
+];
+// One burst = one fire. Keyed per boss so a whole burst of land lines (and any
+// cross-log echo) collapses to a single fire — the #36 analogue of _busterLastFire.
+const _aoeDanceLastFire = new Map();   // boss(lc) → wall-clock ms of the last fire
+const _aoeDanceBurst    = new Map();   // boss(lc) → { count, windowStartMs } rolling collector
+
+// A signature land line → count it toward the active burst; once >= burst_n
+// land within burst_window_ms, treat the AE as fired: push "DPS IN" NOW and
+// (re)arm the countdown to the NEXT AE (target = boss so death clears it, like
+// the buster) whose warning at out_warn_sec speaks the "DPS OUT" pre-warn.
+// GATED on the boss being the ACTIVE encounter (curBoss, same pattern as
+// _checkTankBuster) so an identically-worded land line on trash elsewhere can't
+// fire it. Local only — every raider's own log carries the land burst.
+function _checkAoeDance(line, tsMs) {
+  if (!line) return;
+  const curBoss = (stats.currentEncounterThreat && stats.currentEncounterThreat.bossName)
+    ? String(stats.currentEncounterThreat.bossName).toLowerCase() : null;
+  if (!curBoss) return;                                       // no active fight → never fire
+  const now = tsMs || Date.now();
+  for (const d of AOE_DANCE) {
+    if (curBoss !== d.boss.toLowerCase()) continue;           // only THIS dance boss, and only while it's active
+    if (!d.signature.some(rx => rx.test(line))) continue;     // not this AE's land text
+    const key = d.boss.toLowerCase();
+    // Post-fire quiet window: once we've fired for a burst, ignore the rest of
+    // the same burst's land lines (and cross-log echoes) for burst_window_ms —
+    // "one burst = one fire across the burst window" (echo guard).
+    if (now - (_aoeDanceLastFire.get(key) || 0) < d.burst_window_ms) return;
+    // Roll a fresh window if the previous collector is stale (>burst_window_ms
+    // old), else accumulate this victim into it.
+    let b = _aoeDanceBurst.get(key);
+    if (!b || (now - b.windowStartMs) > d.burst_window_ms) {
+      b = { count: 0, windowStartMs: now };
+      _aoeDanceBurst.set(key, b);
+    }
+    b.count++;
+    if (b.count < d.burst_n) return;                          // not a burst yet — a single stray line never fires
+    // Burst confirmed — the AE just went off.
+    _aoeDanceLastFire.set(key, now);
+    _aoeDanceBurst.delete(key);
+    _armBossCountdown({
+      boss: d.boss, label: d.spell, durationSec: d.cadence_sec,
+      warnSec: d.out_warn_sec, warnText: d.out_text,
+      fireText: d.in_text, color: d.color || 'gold', tsMs: now,
+    });
+    console.log('[aoe-dance] ' + d.spell + ' burst on ' + d.boss + ' — DPS IN + re-armed ' + d.cadence_sec + 's countdown');
+    return;
+  }
+}
 function _activeTimersSnapshot() {
   const now = Date.now();
   const out = [];
@@ -28528,6 +28618,13 @@ async function main() {
         // events (ENRAGE) — dropped before parseEvent — onto the fight timeline.
         try { b.builder.noteRaidLine(line, ts ? ts.getTime() : Date.now()); } catch {}
 
+        // #36 AoE-dance callouts (DPS OUT / DPS IN + countdown). Runs on the
+        // RAW line BEFORE shouldKeep — PBAE land messages ("flesh begins to
+        // liquefy", "skin begins to rot") match no keep pattern, so they'd be
+        // dropped before parseEvent ever sees them. Same watch-tail hook as
+        // _checkTankBuster, same try/catch isolation; gated on the active boss.
+        try { _checkAoeDance(line, ts ? ts.getTime() : Date.now()); } catch { void 0; }
+
         // ── Normal combat filter (gates parse + upload only) ────────────────
         if (!shouldKeep(line, dropPatterns, keepPatterns)) return;
         const ev = parseEvent(line, ts);
@@ -28600,6 +28697,7 @@ module.exports = {
   // #142 buster/spawn-chain timers — exported for the scratchpad fixture.
   _startTimer, _activeTimersSnapshot, _cancelTimersOnMobDeath, _deadMobNameFromLine,
   _checkBossSpawnChain, _checkTankBuster, _armBossCountdown, BOSS_SPAWN_CHAINS,
+  _checkAoeDance, AOE_DANCE,   // #36 AoE-dance callouts — exported for the scratchpad fixture
   evaluateTriggersAgainstLine, SLOW_SPELLS, _isSlowSpell,
   _setCurrentBossForTest: (name) => { stats.currentEncounterThreat = name ? { bossName: name } : null; },
   _getReplayStateForTest: () => _replayStateForWeb(),
