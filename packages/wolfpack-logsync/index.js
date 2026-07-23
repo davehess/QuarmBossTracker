@@ -10102,6 +10102,9 @@ function _serializeForDashboard() {
         sticky:  !!o.sticky,
         rehearsal: !!o.rehearsal,
         replay:  !!o.replay,
+        // #136 raid callout allow-list muted this fire — triggers.html flashes
+        // it but does not speak it.
+        mute:    !!o.mute,
       };
     }),
     activeTimers:        _activeTimersSnapshot(),
@@ -10111,6 +10114,8 @@ function _serializeForDashboard() {
     // #107 loot-post announce prefs (dashboard Triggers-tab toggle + knob).
     lootAuctionTts:        _optinState.lootAuctionTts !== false,
     lootAuctionDefaultSec: _lootAuctionDefaultSec(),
+    // #136 raid callout allow-list — dashboard Triggers-tab toggle (default ON).
+    calloutAllowlist:      _optinState.calloutAllowlist !== false,
     ..._serializeZealForWeb(),
 
     lifetime:           stats.lifetime,
@@ -12417,6 +12422,20 @@ function renderTriggers(s) {
   h += '<label style="display:flex;align-items:center;gap:8px;font-size:12px;margin-top:8px">Default auction length when none is stated:';
   h += '<input type="number" id="lootAucDur" min="15" max="1800" step="5" value="' + (s.lootAuctionDefaultSec || 120) + '" style="width:70px;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:3px 6px;border-radius:4px;font-family:inherit;font-size:12px"> seconds</label>';
   h += '<span id="lootAucMsg" class="dim" style="font-size:11px;margin-left:8px"></span>';
+  h += '</div>';
+
+  // #136 Raid callout allow-list — mutes guild-pushed + cross-client RELAYED
+  // voice fires outside the critical categories (slow, deaths, tank swaps,
+  // discs, deathtouches, charms + the curated boss-mechanic countdowns).
+  // Personal triggers the user made themselves always speak. No <details> here,
+  // so no wpKeep; the checked bit tracks server state and only flips on user
+  // action, keeping this HTML byte-stable across polls.
+  h += '<div class="card wide"><h2>&#128266; Raid callout allow-list <span class="dim" style="font-size:11px;font-weight:normal">(voice only the critical categories)</span></h2>';
+  h += '<label style="display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer">';
+  h += '<input type="checkbox" id="calloutAllow"' + (s.calloutAllowlist !== false ? ' checked' : '') + '>';
+  h += '<span>Speak only high-value guild callouts &mdash; slow, deaths, tank swaps, discs, deathtouches, charms (plus the boss-mechanic countdowns)</span></label>';
+  h += '<div class="dim" style="font-size:11px;margin-top:5px">Guild-pushed and cross-client <b>relayed</b> trigger fires are the raid-wide firehose &mdash; every raider hears every other raider. With this on, those fires only <b>speak</b> when they match a critical category; the rest still <b>flash</b> on the trigger overlay, just silently. <b>Personal triggers you created yourself always speak.</b> The curated built-ins (rampage, buster, AoE dance, slow land/drop, CH GO, loot) are always audible.</div>';
+  h += '<span id="calloutMsg" class="dim" style="font-size:11px"></span>';
   h += '</div>';
 
   // Suggested triggers — one-click catalog of pre-tested alerts grouped by
@@ -16856,6 +16875,20 @@ async function dismissTopDamage(key) {
       if (msg) { msg.textContent = 'Save failed.'; msg.style.color = 'var(--red)'; }
     }
   }
+  // #136 raid callout allow-list toggle — persist the on/off choice.
+  async function saveCalloutPref(body) {
+    var msg = document.getElementById('calloutMsg');
+    try {
+      await fetch('/api/callout-prefs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (msg) { msg.textContent = 'Saved.'; msg.style.color = 'var(--green)'; }
+    } catch (e) {
+      if (msg) { msg.textContent = 'Save failed.'; msg.style.color = 'var(--red)'; }
+    }
+  }
   async function onDelete(id) {
     if (!id) return;
     if (!confirm('Delete this trigger?')) return;
@@ -17108,6 +17141,8 @@ async function dismissTopDamage(key) {
           if (!isFinite(v)) return;
           v = Math.max(15, Math.min(1800, v));
           saveLootPref({ lootAuctionDefaultSec: v });
+        } else if (t.id === 'calloutAllow') {
+          saveCalloutPref({ calloutAllowlist: !!t.checked });
         }
       });
       section._wpTrigChangeBound = true;
@@ -19257,6 +19292,23 @@ function startWebDashboard(port) {
         }));
       }
 
+      // POST /api/callout-prefs — dashboard Triggers-tab toggle for the #136
+      // raid callout allow-list. Body: { calloutAllowlist: boolean }. Persists
+      // to logsync.optin.json alongside the other trigger prefs.
+      if (req.url === '/api/callout-prefs' && req.method === 'POST') {
+        const body = await _readBody(req).catch(() => '');
+        let payload = {};
+        try { payload = body ? JSON.parse(body) : {}; } catch { payload = {}; }
+        if (typeof payload.calloutAllowlist === 'boolean') _optinState.calloutAllowlist = payload.calloutAllowlist;
+        _saveOptInState();
+        scheduleRender();
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({
+          ok: true,
+          calloutAllowlist: _optinState.calloutAllowlist !== false,
+        }));
+      }
+
       // POST /api/personal-triggers/import — accepts a GINA / EQLogParser
       // XML blob (both export the same SharedTriggers shape) and APPENDS
       // parsed entries to the personal triggers list. Existing personal
@@ -20135,6 +20187,13 @@ const _optinState = {
   // Both live here so they persist across runs like the other dashboard-set flags.
   lootAuctionTts: true,
   lootAuctionDefaultSec: 120,
+  // #136 raid callout allow-list. When ON (default), guild-pushed + cross-client
+  // relayed trigger fires only SPEAK if they match a critical category (slow,
+  // death, tank swap, disc, deathtouch, charm + the curated boss-mechanic
+  // countdowns); everything else still renders on the overlay but stays silent.
+  // Personal triggers the user created themselves are never gated. Persisted
+  // here like the other dashboard-set flags.
+  calloutAllowlist: true,
 };
 
 function _optinSortFn() {
@@ -20168,6 +20227,8 @@ function _loadOptInState() {
     if (Number.isFinite(raw.lootAuctionDefaultSec)) {
       _optinState.lootAuctionDefaultSec = Math.max(15, Math.min(1800, Math.round(raw.lootAuctionDefaultSec)));
     }
+    // #136 default ON: absent (old files) → true; only an explicit false disables.
+    _optinState.calloutAllowlist     = (raw.calloutAllowlist !== false);
   } catch { /* missing or unreadable — fresh state */ }
 }
 function _saveOptInState() {
@@ -20179,6 +20240,7 @@ function _saveOptInState() {
       extSameZoneOnly:    _optinState.extSameZoneOnly !== false,
       lootAuctionTts:        _optinState.lootAuctionTts !== false,
       lootAuctionDefaultSec: _optinState.lootAuctionDefaultSec || 120,
+      calloutAllowlist:      _optinState.calloutAllowlist !== false,
     }, null, 2));
   } catch { /* non-fatal */ }
 }
@@ -27849,7 +27911,80 @@ function _isOurPetName(nameLower) {
   return !!_petOwnerByName(nameLower) || knownPetOwners.has(nameLower);
 }
 
+// ── #136 Raid callout allow-list ─────────────────────────────────────────────
+// The guild-wide voice path fans out EVERY raider's guild-trigger fire to
+// everyone (a local guild fire → _relayLocalFire → the bot's recent-fires →
+// _consumeRelayFires → _runRelayedFire → _fireTriggerActions on every other
+// Mimic). Field feedback: that firehose speaks per-raider noise — individual
+// heals, personal INCs, generic trigger chatter relayed from other clients —
+// on everyone's machine. This allow-list MUTES guild-pushed + cross-client
+// RELAYED fires that don't match one of the high-value categories the guild
+// lead asked to keep audible. Two hard rules:
+//   • LOCAL personal triggers (the user's own, _scope 'personal') are NEVER
+//     gated — the user opted in by creating them.
+//   • The curated built-in callouts (rampage, buster, AoE-dance, slow land/drop,
+//     CH GO, loot) reach the overlay through their OWN direct _pushOverlay path
+//     and never pass through this gate at all, so they always speak. The phrase
+//     matcher below ALSO keeps any guild trigger — or a relayed built-in like
+//     'New Rampage' — audible when its name/tags/text carry those words.
+// A muted fire still RENDERS (flash) on the trigger overlay; only speech is
+// suppressed (overlay.mute → triggers.html skips speak(), keeps flash()) —
+// visibility without noise.
+const _CALLOUT_ALLOW_CATEGORIES = [
+  { cat: 'slow',       rx: /\bslow(?:ed|s|ing)?\b|reslow|un-?slow/i },
+  { cat: 'death',      rx: /\bdeath\b|\bdead\b|\bdied\b|\bdies\b|\bslain\b|has been slain|\bR\.?I\.?P\.?\b|\brez\b|\bresurrect/i },
+  { cat: 'tank swap',  rx: /tank\s*swap|swap\s*tank|tankswap|\bpeel\b|off[-\s]?tank/i },
+  { cat: 'disc',       rx: /\bdiscs?\b|\bdiscipline/i },
+  { cat: 'deathtouch', rx: /death\s*touch|deathtouch|\bDT\b/i },
+  { cat: 'charm',      rx: /\bcharm(?:ed|s|ing)?\b|charm\s*(?:break|broke|broken)/i },
+  // Boss-mechanic countdowns already curated in the built-ins — keep audible
+  // even when a guild trigger drives them (e.g. a voice-mark sequence).
+  { cat: 'mechanic',   rx: /\bbuster\b|tank\s*buster|\baoe\b|\bdance\b|\brampage\b|\bch\s*go\b|\bloot\b/i },
+];
+// Is this trigger (or relayed fire) allowed to SPEAK under the allow-list? Scans
+// the trigger name, its tags (guild_triggers rows carry `tags`; array or CSV
+// string both handled), and every action's display/tts/message text (+ voice
+// marks). Any category hit → allowed. An empty haystack (no name, no tags, no
+// text) → NOT allowed: an unnamed, untagged, text-less fire is exactly the
+// noise the field asked us to mute.
+function _calloutAllowedToSpeak(t) {
+  if (!t) return false;
+  const parts = [];
+  if (t.name) parts.push(String(t.name));
+  const tags = t.tags;
+  if (Array.isArray(tags)) parts.push(tags.join(' '));
+  else if (typeof tags === 'string') parts.push(tags);
+  for (const a of (t.actions || [])) {
+    if (!a) continue;
+    if (a.text)    parts.push(String(a.text));
+    if (a.tts)     parts.push(String(a.tts));
+    if (a.message) parts.push(String(a.message));
+    if (Array.isArray(a.marks)) {
+      for (const m of a.marks) { if (m && (m.text || m.message)) parts.push(String(m.text || m.message)); }
+    }
+  }
+  const hay = parts.join('  ');
+  if (!hay.trim()) return false;
+  for (const c of _CALLOUT_ALLOW_CATEGORIES) { if (c.rx.test(hay)) return true; }
+  return false;
+}
+// A fire on this scope must pass the allow-list to speak — only the raid-wide
+// voice paths: locally-fired GUILD triggers and cross-client RELAYED fires.
+// Personal / built-in / test / replay fires bypass entirely.
+function _calloutScopeGated(scope) {
+  return scope === 'guild' || scope === 'guild_relay';
+}
+
 function _fireTriggerActions(t, captures, tsMs, test, isRelay) {
+  // #136 raid callout allow-list — decide ONCE per fire whether speech is muted.
+  // Applies only to the raid-wide voice scopes (guild + relayed), only when the
+  // allow-list is enabled, and only when the trigger matches no critical
+  // category. Personal + test/replay fires are never muted. The muted overlay
+  // still flashes; triggers.html reads overlay.mute and skips speak().
+  const _calloutMuted = !test
+    && _optinState.calloutAllowlist !== false
+    && _calloutScopeGated(t._scope)
+    && !_calloutAllowedToSpeak(t);
   // Trigger-level roster gate. The require_raid_member field lives on
   // individual actions (so a single trigger can have one filtered + one
   // unfiltered action), but the trigger-level countdown timer is a single
@@ -27910,6 +28045,9 @@ function _fireTriggerActions(t, captures, tsMs, test, isRelay) {
         test:        !!test,
       };
       if (ttsText) overlay.tts = ttsText;
+      // #136 — allow-list muted this guild/relay fire: it still flashes, but
+      // triggers.html skips speak() when overlay.mute is set.
+      if (_calloutMuted) overlay.mute = true;
       if (a.sound) overlay.sound = a.sound;
       // Sticky critical callouts (#76): a trigger-level OR action-level `sticky`
       // flag pins the alert on the trigger overlay until the user dismisses it
@@ -27981,7 +28119,8 @@ function _fireTriggerActions(t, captures, tsMs, test, isRelay) {
         const delay  = Math.max(0, fireMs - Date.now());
         const key    = baseKey + ':' + Math.round(offsetMs || 0);
         setTimeout(() => {
-          // Local overlay+TTS — Mimic shows the line AND speaks it.
+          // Local overlay+TTS — Mimic shows the line AND speaks it. #136: a
+          // muted guild/relay voice-mark still shows but stays silent.
           _pushOverlay({
             text:        msg,
             tts:         msg,
@@ -27992,6 +28131,7 @@ function _fireTriggerActions(t, captures, tsMs, test, isRelay) {
             trigger:     t.name,
             scope:       t._scope || 'personal',
             test:        false,
+            mute:        _calloutMuted,
           });
           scheduleRender();
           console.log('[trigger:voice:' + (t._scope || '?') + '] ' + t.name + ' → ' + msg);
@@ -29560,6 +29700,8 @@ module.exports = {
   _checkBossSpawnChain, _checkTankBuster, _armBossCountdown, BOSS_SPAWN_CHAINS,
   _checkAoeDance, AOE_DANCE,   // #36 AoE-dance callouts — exported for the scratchpad fixture
   evaluateTriggersAgainstLine, SLOW_SPELLS, _isSlowSpell,
+  // #136 raid callout allow-list — exported for the scratchpad fixture.
+  _fireTriggerActions, _calloutAllowedToSpeak, _calloutScopeGated, _CALLOUT_ALLOW_CATEGORIES,
   _setCurrentBossForTest: (name) => { stats.currentEncounterThreat = name ? { bossName: name } : null; },
   _getReplayStateForTest: () => _replayStateForWeb(),
   _setPersonalTriggersForTest: (arr) => { _personalTriggers = arr; },
