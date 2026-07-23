@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.0.228': [
+    '**/loot now posts sealed (closed) bids.** Clicking "📣 Post Auctions" on a `/loot` announcement was creating OPEN-outcry auctions on OpenDKP — everyone could see each other\'s bids as they came in — even though the rest of the loot flow (and the wishlist prompts) promise closed bids. It now posts **closed/sealed auctions**, matching the "Post for bidding" button in Mimic. Officer-only, nothing to update.',
+  ],
   '3.0.227': [
     '**Parse cards now link to wolfpack.quest — and back.** Every auto-parse card in the Parses Log thread now carries a 🔗 link straight to that fight\'s full breakdown on wolfpack.quest/parses, and the website page links back to the Discord card with a "View in Discord →" button. Jump between the two in one click. Nothing to update.',
   ],

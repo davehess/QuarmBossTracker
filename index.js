@@ -1162,8 +1162,13 @@ async function handleLootPost(interaction) {
 
   try {
     const { createAuctions } = require('./utils/opendkp');
+    // Wolf Pack runs SEALED (closed-bid) loot auctions — bidders never see each
+    // other's bids. This MUST match the agent "Post for bidding" path
+    // (_handleAgentLootPost, BidType: 'Closed') and the /loot wishlist ephemeral
+    // that already tells players "these are closed bids". Posting 'Open' here
+    // created public-outcry auctions instead (#131, 2026-07-19 raid).
     const auctions = entry.items.map(item => ({
-      BidType:        'Open',
+      BidType:        'Closed',
       ItemQuantity:   item.quantity || 1,
       Duration:       entry.bidMinutes,
       Bids:           [],
@@ -1189,7 +1194,7 @@ async function handleLootPost(interaction) {
         inline: false,
       });
     }
-    posted.setFooter({ text: `✅ Posted ${entry.items.length} auction(s) — bidding open ${entry.bidMinutes}m on OpenDKP` });
+    posted.setFooter({ text: `✅ Posted ${entry.items.length} auction(s) — closed bids · ${entry.bidMinutes}m on OpenDKP` });
     await interaction.editReply({ embeds: [posted], components: [] });
     clearPendingLoot(msgId);
 
