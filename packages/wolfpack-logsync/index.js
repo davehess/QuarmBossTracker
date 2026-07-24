@@ -29219,14 +29219,33 @@ async function main() {
       // Vox), but their hail responses to a player still include the
       // player's name in the captured group, so the rename is correct in
       // those cases too as long as the speaker isn't a friendly player.
-      const HAIL_RE = /\]\s+(?:a\s+[a-z][^\[\]]*?|an\s+[a-z][^\[\]]*?|the\s+[a-z][^\[\]]*?|[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\s+says,?\s*['"](?:Hail|Greetings|Welcome|Well met),?\s+([A-Z][a-z]+)[!,.\s]/i;
+      const HAIL_RE = /\]\s+(a\s+[a-z][^\[\]]*?|an\s+[a-z][^\[\]]*?|the\s+[a-z][^\[\]]*?|[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\s+says,?\s*['"](?:Hail|Greetings|Welcome|Well met),?\s+([A-Z][a-z]+)[!,.\s]/i;
+      // #176 — a hail RESPONSE is broadcast to every nearby player, so a bystander's
+      // log ALSO sees "<npc> says, 'Hail, Hitya!'". Pre-fix, that rebound the
+      // bystander's builder to "Hitya" and relayed THEIR tells/chat/parses under
+      // Hitya — a live cross-user privacy leak (2026-07-24, Sanctus Seru). Fix:
+      // accept the rename ONLY when this log actually initiated the hail — it
+      // emitted "You say, 'Hail, <npc>'" within the window AND the responding npc
+      // is the one we hailed. A bystander never says "You say, 'Hail'", so their
+      // log is no longer captured. (Speaker is now capture group 1, name group 2.)
+      const SELF_HAIL_RE = /\]\s+You say,?\s*['"]Hail,?\s+(.+?)['"]\s*$/i;
+      const _normHailNpc = (s) => String(s || '').toLowerCase().replace(/^(an?|the)\s+/, '').replace(/[!.,\s]+$/, '').trim();
+      const HAIL_SELF_WINDOW_MS = 8000;
       let _hailFound = false;
+      let _pendingSelfHail = null;   // #176 { target, atMs } — set on OUR own hail
       await tailFile(b.logPath, line => {
         if (watched) { watched.lastSeen = Date.now(); }
+        // #176 — record OUR outgoing hail so a matching npc response can be trusted
+        // as addressed to US (a bystander never emits "You say, 'Hail'").
+        if (!_hailFound && line.indexOf('You say') !== -1) {
+          const _sh = SELF_HAIL_RE.exec(line);
+          if (_sh && _sh[1]) _pendingSelfHail = { target: _normHailNpc(_sh[1]), atMs: Date.now() };
+        }
         if (!_hailFound) {
           const m = HAIL_RE.exec(line);
           if (m) {
-            const inLogName = m[1];
+            const speaker   = m[1];
+            const inLogName = m[2];
             // The whole regex carries /i (so "an old man" / "Welcome" match
             // regardless of case), which ALSO lets the name group [A-Z][a-z]+
             // match a lowercase English word — "the captain says, 'Welcome to
@@ -29235,10 +29254,17 @@ async function main() {
             // ("Hail, Dant!"), so re-validate the capture CASE-SENSITIVELY and
             // run it through the plausible-attacker guard. If it's junk we do
             // NOT latch _hailFound — keep listening for a later, valid hail.
-            const validHailName = inLogName && /^[A-Z][a-z]+$/.test(inLogName) && isPlausibleAttacker(inLogName);
-            if (validHailName) _hailFound = true;
+            // #176 — AND require a matching self-hail: we must have just hailed
+            // the very npc now responding. No self-hail (bystander) or a
+            // different npc → ignore, don't latch, keep listening.
+            const _now = Date.now();
+            const selfHailed = !!_pendingSelfHail
+              && (_now - _pendingSelfHail.atMs) <= HAIL_SELF_WINDOW_MS
+              && _normHailNpc(speaker) === _pendingSelfHail.target;
+            const validHailName = selfHailed && inLogName && /^[A-Z][a-z]+$/.test(inLogName) && isPlausibleAttacker(inLogName);
+            if (validHailName) { _hailFound = true; _pendingSelfHail = null; }
             if (validHailName && inLogName !== b.character) {
-              console.log(`[mimic] log "${path.basename(b.logPath)}" filename says ${b.character}, NPC hailed ${inLogName} — using ${inLogName}`);
+              console.log(`[mimic] log "${path.basename(b.logPath)}" filename says ${b.character}, self-hailed ${speaker} → ${inLogName} — using ${inLogName}`);
               const old = b.character;
               b.character = inLogName;
               b.builder.character = inLogName;
