@@ -13236,6 +13236,26 @@ async function _handleAgentTells(req, res) {
     return res.end(JSON.stringify({ error: 'character has no linked discord_id (and no family root to fall back to)' }));
   }
 
+  // ── #176 identity gate (PRIVACY — defense-in-depth) ──────────────────────────
+  // The authenticated uploader (identity.discord_id, from their Mimic session
+  // token) MUST own the character these tells are attributed to. When they don't,
+  // this upload is capturing SOMEONE ELSE'S private tells and would DM them to the
+  // wrong person. Root cause (2026-07-24): the agent's NPC-hail character rename
+  // fires on hail responses that bystanders also see, so a nearby raider's agent
+  // rebinds its identity to the hailer (e.g. "Hitya") and then relays that
+  // machine's tells under Hitya's opt-in — a real cross-user leak, seen live.
+  // The agent-side fix removes the flip at the source; THIS gate makes the leak
+  // structurally impossible from the server regardless of agent version: the
+  // owning discord must match the uploading discord. Shared/loaner alts are
+  // intentionally rejected too — a driver's private tells must not relay to the
+  // character's registered owner (see #177). Rows are dropped, not stored.
+  const uploaderDiscordId = identity && identity.discord_id ? String(identity.discord_id) : null;
+  if (!uploaderDiscordId || String(ownerDiscordId) !== uploaderDiscordId) {
+    console.warn(`[tells] REJECTED identity mismatch — character "${charRow.name}" owned by ${ownerDiscordId}, uploaded by ${uploaderDiscordId || 'unknown'} (${identity?.display_name || '?'}); ${tells.length} tell(s) dropped, no DM`);
+    res.writeHead(403, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'tell owner does not match the authenticated uploader — dropped', code: 'owner_mismatch' }));
+  }
+
   const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
   const rows = [];
   for (const t of tells) {
