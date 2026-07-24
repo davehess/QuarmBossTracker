@@ -29586,7 +29586,10 @@ async function main() {
           // re-slow. Refresh-only: never creates an entry.
           if (line.endsWith('yawns.') || line.endsWith('slows down.')) {
             const _sm = line.match(/\]\s+(.+?)\s+(?:yawns|slows down)\.\s*$/);
-            if (_sm && _sm[1]) { try { _refreshSlowFromAmbiguousLand(_sm[1], line, tsMs); } catch (e) { void e; } }
+            if (_sm && _sm[1]) {
+              const _slowTs = parseEqTimestamp(line);   // tsMs is not in this callback's scope — derive from the line
+              try { _refreshSlowFromAmbiguousLand(_sm[1], line, _slowTs ? _slowTs.getTime() : Date.now()); } catch (e) { void e; }
+            }
           }
           const dbEvt = parseDebuffLanding(line, b.character);
           if (dbEvt && dbEvt.spell_name) {
