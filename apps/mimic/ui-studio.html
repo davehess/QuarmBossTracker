@@ -50,6 +50,7 @@
   .win.kind-hotbar   {background:rgba(240,136,62,0.18);border-color:rgba(240,136,62,0.7)}
   .win.kind-pet      {background:rgba(192,154,255,0.15);border-color:rgba(192,154,255,0.6)}
   .win.kind-compass,.win.kind-map{background:rgba(110,155,214,0.15);border-color:rgba(110,155,214,0.6)}
+  .win.kind-zeal     {background:rgba(129,140,248,0.18);border-color:rgba(129,140,248,0.7)}
   .win:hover{filter:brightness(1.4);box-shadow:0 0 6px rgba(88,166,255,0.5)}
   .win.selected{border-color:#7ee7c7;background:rgba(126,231,199,0.32);
     box-shadow:0 0 10px rgba(126,231,199,0.8)}
@@ -396,7 +397,8 @@
       var kl = k.toLowerCase();
       return kl.indexOf('chat') >= 0 || kl.indexOf('channel') >= 0 || kl.indexOf('filter') >= 0;
     });
-    if (/chat|^cw/i.test(name) || hasChatHints) {
+    if (/^zeal/i.test(name)) { icon = '🐺'; kind = 'zeal'; }   // #122: Zeal overlays get their own kind/color, matching the Zeal filter section
+    else if (/chat|^cw/i.test(name) || hasChatHints) {
       icon = '💬'; kind = 'chat';
       // Extract tab metadata. Try TabCount + Tab<N>Name, or Tab.<N>=, or
       // ChatChannels.<N>=. Anything that looks like a tab name gets listed.
@@ -764,7 +766,7 @@
   // ── Category filter ──────────────────────────────────────────────────────
   // 130 windows at once is unreadable, so we bucket each into a broad group and
   // let the user toggle groups on/off on the left. First-match-wins order, so
-  // e.g. ZealMap groups under Zeal (not Map) and BagBank under Bags. Defaults
+  // e.g. ZealMap groups under Zeal (not Map) and BagBank under Bank. Defaults
   // hide the high-count clutter (the ~50 bag windows + transient popups) and
   // show the persistent HUD + chat. `on` is the default-visible flag.
   var FILTER_CATEGORIES = [
@@ -797,7 +799,10 @@
     { key:'buffs',   label:'✨ Buffs / Songs',  on:true,  test:function(n){ return /buff|song|melody|shortduration/i.test(n); } },
     { key:'nav',     label:'🧭 Map / Compass',  on:true,  test:function(n){ return /map|compass|tracking/i.test(n); } },
     { key:'spells',  label:'📖 Spells / Skills',on:false, test:function(n){ return /spellbook|^skills|aawindow/i.test(n); } },
-    { key:'bags',    label:'🎒 Bags / Inv',    on:false, test:function(n){ return /^bag|inventory|^bank/i.test(n); } },
+    // #122: bank containers/slots are their own toggle — MUST precede `bags` so
+    // first-match-wins routes BagBank<N>/BankWnd here instead of the Bags bucket.
+    { key:'bank',    label:'🏦 Bank',          on:false, test:function(n){ return /^bagbank|^bigbank|^bank/i.test(n); } },
+    { key:'bags',    label:'🎒 Bags / Inv',    on:false, test:function(n){ return /^bag|inventory/i.test(n); } },
     { key:'vendor',  label:'💰 Vendor / Trade', on:false, test:function(n){ return /merchant|bazaar|^trade|^give|loot/i.test(n); } },
     { key:'other',   label:'▢ Other',          on:false, test:function(){ return true; } },   // fallback (must be last)
   ];
@@ -1789,8 +1794,17 @@
       if (allPages.length === 0) {
         html += '<div style="color:#8b949e;font-size:10px;margin:4px 0">no [HotButtons] or [Socials] page data in this file.</div>';
       } else {
-        html += '<div style="margin:4px 0 6px;color:#7ee7c7;font-size:10px;font-family:sans-serif">' +
-          allPages.length + ' page' + (allPages.length === 1 ? '' : 's') + ' with data — Shift+' + (allPages[0]+1) + ' through Shift+' + (allPages[allPages.length-1]+1) + ' for the in-game shortcut</div>';
+        // #122: fold the per-page panels into ONE collapsed "🔥 Hotbar Pages"
+        // entry. On Quarm every hotbar lives inside the single HotButtonWnd, so
+        // the ini stores Page0..Page9 button data that rendered as N stacked
+        // top-level <details> — burying the chat/tell/raw sections below. Wrap
+        // them in a parent <details> (closed by default) so it reads as one row
+        // until opened. Plain <details> is safe: openSocialsInspector renders
+        // once per open (no poll), so no repaint resets the open-state.
+        html += '<details style="margin:4px 0 8px;background:#0d1117;border:1px solid #21262d;border-radius:4px;padding:6px 8px">' +
+          '<summary style="color:#f6c365;cursor:pointer;font-family:sans-serif;font-weight:600">🔥 Hotbar Pages ' +
+          '<span style="color:#8b949e;font-weight:400;font-size:10px">— ' + allPages.length + ' page' + (allPages.length === 1 ? '' : 's') +
+          ' with data, Shift+' + (allPages[0]+1) + ' through Shift+' + (allPages[allPages.length-1]+1) + ' in-game</span></summary>';
         for (var ap = 0; ap < allPages.length; ap++) {
           var P = allPages[ap];
           var hots = (pgs.hotbuttons || {})[P] || {};
@@ -1862,6 +1876,7 @@
           }
           html += '</details>';
         }
+        html += '</details>';   // #122: close the Hotbar Pages wrapper
       }
       // Raw section dump (for shapes we don't yet group). All keys now —
       // the old 8-key truncation hid Quarm's flat-key HotButtons / Socials
