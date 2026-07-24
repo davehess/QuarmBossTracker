@@ -3939,6 +3939,10 @@ function _pickBestActiveSlow(entries, nowMs) {
   let best = null;
   for (const e of entries) {
     if (!e || !e.name) continue;
+    // #181 — magnitude-0 rows (Cripple: a STR/AC/ATK debuff, NOT a Quarm slow)
+    // live in _slowsByTarget for the #105 timeline only; they must never be the
+    // slow badge, the fallback when a real slow expires, or a slow callout.
+    if (!(e.magnitude > 0)) continue;
     if (e.expiresAtMs > 0 && e.expiresAtMs <= nowMs) continue;   // timer already expired
     if (!best
         || e.magnitude > best.magnitude
@@ -3965,7 +3969,36 @@ function _bestSlowForTarget(targetLower, nowMs) {
   const remaining = best.expiresAtMs > 0 ? Math.max(0, Math.round((best.expiresAtMs - now) / 1000)) : null;
   const total     = best.expiresAtMs > 0 ? Math.max(0, Math.round((best.expiresAtMs - best.landedAtMs) / 1000)) : null;
   return { name: best.name, magnitude: best.magnitude, caster: best.caster || null,
-           remaining_secs: remaining, total_secs: total };
+           remaining_secs: remaining, total_secs: total, landedAtMs: best.landedAtMs || 0 };
+}
+// #181 — the bystander land text for the classic slows is a bare shared emote:
+// "<Target> yawns." (11 spells share it) / "<Target> slows down." (7). It can
+// NEVER name the spell, so a re-slow observed only as this emote could not
+// refresh the tracker — the original window expired mid-fight and we spoke a
+// false "Slow dropped" (Vulak`Aerr 2026-07-24, Turgur's re-slow with 3:41 left).
+// REFRESH-ONLY: an ambiguous line extends an EXISTING tracked entry of the same
+// text-family on that target; it never CREATES one (so the non-slow spells that
+// also share "slows down." can't fabricate a slow). Keys match _noteSlowForTarget
+// (lowercased, backtick→apostrophe).
+const SLOW_AMBIG_FAMILIES = [
+  { rx: /\byawns\.\s*$/i,      family: new Set(["turgur's insects", "togor's insects", "tagar's insects", "walking sleep", "drowsy"]) },
+  { rx: /\bslows down\.\s*$/i, family: new Set(["tepid deeds", "forlorn deeds", "shiftless deeds", "languid pace"]) },
+];
+function _refreshSlowFromAmbiguousLand(targetName, line, nowMs) {
+  const mp = _slowsByTarget.get(String(targetName || '').toLowerCase());
+  if (!mp || mp.size === 0) return false;
+  for (const fam of SLOW_AMBIG_FAMILIES) {
+    if (!fam.rx.test(line)) continue;
+    for (const [k, e] of mp) {
+      if (!fam.family.has(k)) continue;
+      const at = nowMs || Date.now();
+      const span = (e.expiresAtMs > 0 && e.landedAtMs) ? (e.expiresAtMs - e.landedAtMs) : 0;
+      e.landedAtMs = at;
+      if (span > 0) e.expiresAtMs = at + span;   // re-open the same catalog window
+      return true;
+    }
+  }
+  return false;
 }
 // Record a slow landing on a target (both parse hook sites feed here). `caster`
 // is the self-cast caster or null. Refreshes an existing same-slow window and
@@ -4062,8 +4095,26 @@ function _tickSlowCallouts() {
   for (const [targetLower, prev] of _slowCalloutState) {
     const best = _bestSlowForTarget(targetLower, now);
     if (best) {
-      if (String(best.name).toLowerCase() !== String(prev.name || '').toLowerCase()) {
-        _slowCalloutState.set(targetLower, { name: best.name, magnitude: best.magnitude });   // downgrade — silent
+      const nameChanged = String(best.name).toLowerCase() !== String(prev.name || '').toLowerCase();
+      // #181 — "re-slow soon" pre-warn: once per landing window, when the
+      // strongest active slow is within 30s of wearing, on the main target only.
+      // A refresh (new landedAtMs, incl. the ambiguous re-land above) re-arms it.
+      // The slow analogue of the Ancient Breath DPS-OUT pre-warn (Hitya
+      // 2026-07-24: "should see it for the slow as well").
+      const warnDue = best.remaining_secs != null && best.remaining_secs <= 30
+        && best.landedAtMs && prev.warnedForLandMs !== best.landedAtMs
+        && _isNameCurrentlyTargeted(targetLower) && _rampageOnMainTarget(targetLower);
+      if (nameChanged || warnDue) {
+        _slowCalloutState.set(targetLower, {
+          name: best.name, magnitude: best.magnitude,
+          warnedForLandMs: warnDue ? best.landedAtMs : prev.warnedForLandMs,
+        });   // name change is a silent downgrade; warn stamps the window
+      }
+      if (warnDue) {
+        _pushOverlay({ text: '🐌 Slow fading — re-slow soon (' + _slowShortName(best.name) + ')',
+                       tts: 'Re-slow soon.', color: 'amber', duration_ms: 5000,
+                       shownAt: Date.now(), firedAt: Date.now(),
+                       trigger: 'Slow fading', scope: 'slow', test: false });
       }
       continue;
     }
@@ -29528,6 +29579,15 @@ async function main() {
         // resolved above (resolveSelfCastLanding) and beneficial buffs by
         // parseBuffLanding, so this only fires when neither produced an event.
         if (!_sourceExcluded && !bcEvt) {
+          // #181 — ambiguous slow-family emote ("<mob> yawns." / "<mob> slows
+          // down.") names no spell, so parseDebuffLanding can't refresh the
+          // tracker. Refresh (only) an existing tracked slow of that family on
+          // the mob it names — kills the false "Slow dropped" under a live
+          // re-slow. Refresh-only: never creates an entry.
+          if (line.endsWith('yawns.') || line.endsWith('slows down.')) {
+            const _sm = line.match(/\]\s+(.+?)\s+(?:yawns|slows down)\.\s*$/);
+            if (_sm && _sm[1]) { try { _refreshSlowFromAmbiguousLand(_sm[1], line, tsMs); } catch (e) { void e; } }
+          }
           const dbEvt = parseDebuffLanding(line, b.character);
           if (dbEvt && dbEvt.spell_name) {
             // Local Target Info — show the debuff on whatever's targeted (mob or
