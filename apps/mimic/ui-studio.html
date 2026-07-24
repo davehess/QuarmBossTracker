@@ -50,6 +50,7 @@
   .win.kind-hotbar   {background:rgba(240,136,62,0.18);border-color:rgba(240,136,62,0.7)}
   .win.kind-pet      {background:rgba(192,154,255,0.15);border-color:rgba(192,154,255,0.6)}
   .win.kind-compass,.win.kind-map{background:rgba(110,155,214,0.15);border-color:rgba(110,155,214,0.6)}
+  .win.kind-zeal     {background:rgba(129,140,248,0.18);border-color:rgba(129,140,248,0.7)}
   .win:hover{filter:brightness(1.4);box-shadow:0 0 6px rgba(88,166,255,0.5)}
   .win.selected{border-color:#7ee7c7;background:rgba(126,231,199,0.32);
     box-shadow:0 0 10px rgba(126,231,199,0.8)}
@@ -396,7 +397,8 @@
       var kl = k.toLowerCase();
       return kl.indexOf('chat') >= 0 || kl.indexOf('channel') >= 0 || kl.indexOf('filter') >= 0;
     });
-    if (/chat|^cw/i.test(name) || hasChatHints) {
+    if (/^zeal/i.test(name)) { icon = '🐺'; kind = 'zeal'; }   // #122: Zeal overlays get their own kind/color, matching the Zeal filter section
+    else if (/chat|^cw/i.test(name) || hasChatHints) {
       icon = '💬'; kind = 'chat';
       // Extract tab metadata. Try TabCount + Tab<N>Name, or Tab.<N>=, or
       // ChatChannels.<N>=. Anything that looks like a tab name gets listed.
@@ -569,6 +571,18 @@
     _renderLoadedBundle();
   }
 
+  // Resolution-mismatch warning for the apply UI (#146). When the snapshot was
+  // captured at a different resolution than the target we're applying to,
+  // positions get remapped but window SIZES are preserved verbatim (EQ sizes
+  // are absolute pixels) — say so plainly so an adapted layout reads as
+  // intended rather than looking broken. Returns '' when the resolutions match.
+  function _resMismatchWarning(srcW, srcH, tgtW, tgtH){
+    if (!srcW || !srcH || !tgtW || !tgtH) return '';
+    if (srcW === tgtW && srcH === tgtH) return '';
+    return '⚠ captured at ' + srcW + '×' + srcH + " — you're at " + tgtW + '×' + tgtH +
+      '; window positions will be adapted, sizes preserved';
+  }
+
   // Parse + rescale + render whatever is currently in STATE.bundle. Shared by
   // the local "Load + Rescale" path and the cloud "Restore from backup" path —
   // both end up with a { filename → text } bundle, so the only difference is
@@ -622,11 +636,17 @@
         var h = hasWH ? parseInt(rawH, 10) : 100;
         if (isNaN(w)) { w = 200; hasWH = false; }
         if (isNaN(h)) { h = 100; hasWH = false; }
-        // Rescale to target resolution.
+        // Remap POSITIONS to the target resolution — a window at 2000px on a
+        // 2560-wide screen belongs near 1500px on a 1920-wide one. SIZES are
+        // NOT rescaled: EQ window dimensions are absolute pixels (a 400px-wide
+        // window is 400px at every resolution), so multiplying Width/Height by
+        // the resolution ratio SHRINKS them wrongly. That was the field bug
+        // (#146, 2026-07): a 2560×1440 → 1920×1080 apply multiplied every
+        // window's Width/Height by 0.75, driving the non-resizable Merchant/
+        // Social/Loot/Trade windows into their minimum-size clamp with no way to
+        // drag them back. Positions adapt; sizes are copied verbatim.
         x = Math.round(x * fxX);
         y = Math.round(y * fxY);
-        w = Math.round(w * fxX);
-        h = Math.round(h * fxY);
         // Classify the window type + extract contents-of-interest for the
         // side panel. Most windows are self-describing by section name;
         // chat windows are the interesting one — they carry tab + channel
@@ -670,18 +690,15 @@
         // ChatWindow XML template only describes the design default, not a real
         // cap. Skip the XML logic for them; honor the INI sizes verbatim.
         var xmlMax = (classify.kind === 'chat') ? null : _xmlLookup(s.name);
-        if (xmlMax) {
-          // Scale the XML size with the same fx factors used elsewhere so it
-          // reads correctly in the target resolution canvas.
-          var xCx = Math.round(xmlMax.cx * fxX);
-          var xCy = Math.round(xmlMax.cy * fxY);
-          // Apply as a cap. If INI w/h reads bigger than the XML allows, the
-          // INI was wrong (or saved at a different scale) — clamp down so the
-          // visual matches what EQ will actually show.
-          if (xCx > 0 && w > xCx) w = xCx;
-          if (xCy > 0 && h > xCy) h = xCy;
-          // If hasWH was false (no size in INI), use XML as the actual size.
-          if (!hasWH && xCx > 0 && xCy > 0) { w = xCx; h = xCy; }
+        if (xmlMax && !hasWH && xmlMax.cx > 0 && xmlMax.cy > 0) {
+          // No size in the INI — fall back to the skin XML's design size purely
+          // so the window still renders. XML sizes are absolute pixels (NOT
+          // resolution-scaled), and this is render-only: _buildSaveBundle never
+          // writes a Width/Height for a window whose INI had none. Windows that
+          // DO carry an INI size keep it VERBATIM — we no longer clamp them to an
+          // fx-scaled XML cap (that clamp was the other half of the #146 shrink:
+          // a verbatim 125-wide MerchantWnd vs a 0.75×-scaled 94 cap → 94).
+          w = xmlMax.cx; h = xmlMax.cy;
         }
         STATE.windows.push({
           id:     'w' + (seq++),
@@ -736,6 +753,8 @@
           msg = 'file is saved at ' + STATE.srcW + '×' + STATE.srcH + ' — ' + msg;
         }
       }
+      var _warn = _resMismatchWarning(STATE.srcW, STATE.srcH, STATE.tgtW, STATE.tgtH);
+      if (_warn) msg += ' · ' + _warn;
       setStatus(msg, 'ok');
     }
     buildFilterPanel();
@@ -747,7 +766,7 @@
   // ── Category filter ──────────────────────────────────────────────────────
   // 130 windows at once is unreadable, so we bucket each into a broad group and
   // let the user toggle groups on/off on the left. First-match-wins order, so
-  // e.g. ZealMap groups under Zeal (not Map) and BagBank under Bags. Defaults
+  // e.g. ZealMap groups under Zeal (not Map) and BagBank under Bank. Defaults
   // hide the high-count clutter (the ~50 bag windows + transient popups) and
   // show the persistent HUD + chat. `on` is the default-visible flag.
   var FILTER_CATEGORIES = [
@@ -780,7 +799,10 @@
     { key:'buffs',   label:'✨ Buffs / Songs',  on:true,  test:function(n){ return /buff|song|melody|shortduration/i.test(n); } },
     { key:'nav',     label:'🧭 Map / Compass',  on:true,  test:function(n){ return /map|compass|tracking/i.test(n); } },
     { key:'spells',  label:'📖 Spells / Skills',on:false, test:function(n){ return /spellbook|^skills|aawindow/i.test(n); } },
-    { key:'bags',    label:'🎒 Bags / Inv',    on:false, test:function(n){ return /^bag|inventory|^bank/i.test(n); } },
+    // #122: bank containers/slots are their own toggle — MUST precede `bags` so
+    // first-match-wins routes BagBank<N>/BankWnd here instead of the Bags bucket.
+    { key:'bank',    label:'🏦 Bank',          on:false, test:function(n){ return /^bagbank|^bigbank|^bank/i.test(n); } },
+    { key:'bags',    label:'🎒 Bags / Inv',    on:false, test:function(n){ return /^bag|inventory/i.test(n); } },
     { key:'vendor',  label:'💰 Vendor / Trade', on:false, test:function(n){ return /merchant|bazaar|^trade|^give|loot/i.test(n); } },
     { key:'other',   label:'▢ Other',          on:false, test:function(){ return true; } },   // fallback (must be last)
   ];
@@ -1772,8 +1794,17 @@
       if (allPages.length === 0) {
         html += '<div style="color:#8b949e;font-size:10px;margin:4px 0">no [HotButtons] or [Socials] page data in this file.</div>';
       } else {
-        html += '<div style="margin:4px 0 6px;color:#7ee7c7;font-size:10px;font-family:sans-serif">' +
-          allPages.length + ' page' + (allPages.length === 1 ? '' : 's') + ' with data — Shift+' + (allPages[0]+1) + ' through Shift+' + (allPages[allPages.length-1]+1) + ' for the in-game shortcut</div>';
+        // #122: fold the per-page panels into ONE collapsed "🔥 Hotbar Pages"
+        // entry. On Quarm every hotbar lives inside the single HotButtonWnd, so
+        // the ini stores Page0..Page9 button data that rendered as N stacked
+        // top-level <details> — burying the chat/tell/raw sections below. Wrap
+        // them in a parent <details> (closed by default) so it reads as one row
+        // until opened. Plain <details> is safe: openSocialsInspector renders
+        // once per open (no poll), so no repaint resets the open-state.
+        html += '<details style="margin:4px 0 8px;background:#0d1117;border:1px solid #21262d;border-radius:4px;padding:6px 8px">' +
+          '<summary style="color:#f6c365;cursor:pointer;font-family:sans-serif;font-weight:600">🔥 Hotbar Pages ' +
+          '<span style="color:#8b949e;font-weight:400;font-size:10px">— ' + allPages.length + ' page' + (allPages.length === 1 ? '' : 's') +
+          ' with data, Shift+' + (allPages[0]+1) + ' through Shift+' + (allPages[allPages.length-1]+1) + ' in-game</span></summary>';
         for (var ap = 0; ap < allPages.length; ap++) {
           var P = allPages[ap];
           var hots = (pgs.hotbuttons || {})[P] || {};
@@ -1845,6 +1876,7 @@
           }
           html += '</details>';
         }
+        html += '</details>';   // #122: close the Hotbar Pages wrapper
       }
       // Raw section dump (for shapes we don't yet group). All keys now —
       // the old 8-key truncation hid Quarm's flat-key HotButtons / Socials

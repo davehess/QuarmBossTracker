@@ -605,6 +605,11 @@
       slotLine = '<div class="sub">buffs <span style="color:'+bcol+'">'+ts.buffs+'/'+ts.buff_max+'</span>'
                + ' · songs <span style="color:'+scol+'">'+ts.songs+'/'+ts.song_max+'</span></div>';
     }
+    // #161-P0 — live target-state sections (what's casting on the target + its
+    // debuff/buff list) belong to the STATS tab only. They previously rendered
+    // on every tab, cluttering Loot (drop table) and Spells (the mob's own
+    // spell catalog). The name/HP/slow-badge header above stays on all tabs.
+    var targetState = (_tab === 'stats') ? (renderTargetCasting(mi) + renderTargetBuffs(mi)) : '';
     bodyEl.innerHTML = '<div class="mob">'
       + '<div><span class="nm">'+esc(nm)+'</span>'+cls+'</div>'
       + (mob && mob.zone ? '<div class="zone">@ '+esc(mob.zone)+'</div>' : '')
@@ -614,8 +619,7 @@
       + slowBadge
       + manaBar
       + manaLine
-      + renderTargetCasting(mi)
-      + renderTargetBuffs(mi)
+      + targetState
       + tabBody
       + lastFight
       + '</div>';

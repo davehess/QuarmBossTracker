@@ -3939,6 +3939,10 @@ function _pickBestActiveSlow(entries, nowMs) {
   let best = null;
   for (const e of entries) {
     if (!e || !e.name) continue;
+    // #181 — magnitude-0 rows (Cripple: a STR/AC/ATK debuff, NOT a Quarm slow)
+    // live in _slowsByTarget for the #105 timeline only; they must never be the
+    // slow badge, the fallback when a real slow expires, or a slow callout.
+    if (!(e.magnitude > 0)) continue;
     if (e.expiresAtMs > 0 && e.expiresAtMs <= nowMs) continue;   // timer already expired
     if (!best
         || e.magnitude > best.magnitude
@@ -3965,7 +3969,36 @@ function _bestSlowForTarget(targetLower, nowMs) {
   const remaining = best.expiresAtMs > 0 ? Math.max(0, Math.round((best.expiresAtMs - now) / 1000)) : null;
   const total     = best.expiresAtMs > 0 ? Math.max(0, Math.round((best.expiresAtMs - best.landedAtMs) / 1000)) : null;
   return { name: best.name, magnitude: best.magnitude, caster: best.caster || null,
-           remaining_secs: remaining, total_secs: total };
+           remaining_secs: remaining, total_secs: total, landedAtMs: best.landedAtMs || 0 };
+}
+// #181 — the bystander land text for the classic slows is a bare shared emote:
+// "<Target> yawns." (11 spells share it) / "<Target> slows down." (7). It can
+// NEVER name the spell, so a re-slow observed only as this emote could not
+// refresh the tracker — the original window expired mid-fight and we spoke a
+// false "Slow dropped" (Vulak`Aerr 2026-07-24, Turgur's re-slow with 3:41 left).
+// REFRESH-ONLY: an ambiguous line extends an EXISTING tracked entry of the same
+// text-family on that target; it never CREATES one (so the non-slow spells that
+// also share "slows down." can't fabricate a slow). Keys match _noteSlowForTarget
+// (lowercased, backtick→apostrophe).
+const SLOW_AMBIG_FAMILIES = [
+  { rx: /\byawns\.\s*$/i,      family: new Set(["turgur's insects", "togor's insects", "tagar's insects", "walking sleep", "drowsy"]) },
+  { rx: /\bslows down\.\s*$/i, family: new Set(["tepid deeds", "forlorn deeds", "shiftless deeds", "languid pace"]) },
+];
+function _refreshSlowFromAmbiguousLand(targetName, line, nowMs) {
+  const mp = _slowsByTarget.get(String(targetName || '').toLowerCase());
+  if (!mp || mp.size === 0) return false;
+  for (const fam of SLOW_AMBIG_FAMILIES) {
+    if (!fam.rx.test(line)) continue;
+    for (const [k, e] of mp) {
+      if (!fam.family.has(k)) continue;
+      const at = nowMs || Date.now();
+      const span = (e.expiresAtMs > 0 && e.landedAtMs) ? (e.expiresAtMs - e.landedAtMs) : 0;
+      e.landedAtMs = at;
+      if (span > 0) e.expiresAtMs = at + span;   // re-open the same catalog window
+      return true;
+    }
+  }
+  return false;
 }
 // Record a slow landing on a target (both parse hook sites feed here). `caster`
 // is the self-cast caster or null. Refreshes an existing same-slow window and
@@ -4062,8 +4095,26 @@ function _tickSlowCallouts() {
   for (const [targetLower, prev] of _slowCalloutState) {
     const best = _bestSlowForTarget(targetLower, now);
     if (best) {
-      if (String(best.name).toLowerCase() !== String(prev.name || '').toLowerCase()) {
-        _slowCalloutState.set(targetLower, { name: best.name, magnitude: best.magnitude });   // downgrade — silent
+      const nameChanged = String(best.name).toLowerCase() !== String(prev.name || '').toLowerCase();
+      // #181 — "re-slow soon" pre-warn: once per landing window, when the
+      // strongest active slow is within 30s of wearing, on the main target only.
+      // A refresh (new landedAtMs, incl. the ambiguous re-land above) re-arms it.
+      // The slow analogue of the Ancient Breath DPS-OUT pre-warn (Hitya
+      // 2026-07-24: "should see it for the slow as well").
+      const warnDue = best.remaining_secs != null && best.remaining_secs <= 30
+        && best.landedAtMs && prev.warnedForLandMs !== best.landedAtMs
+        && _isNameCurrentlyTargeted(targetLower) && _rampageOnMainTarget(targetLower);
+      if (nameChanged || warnDue) {
+        _slowCalloutState.set(targetLower, {
+          name: best.name, magnitude: best.magnitude,
+          warnedForLandMs: warnDue ? best.landedAtMs : prev.warnedForLandMs,
+        });   // name change is a silent downgrade; warn stamps the window
+      }
+      if (warnDue) {
+        _pushOverlay({ text: '🐌 Slow fading — re-slow soon (' + _slowShortName(best.name) + ')',
+                       tts: 'Re-slow soon.', color: 'amber', duration_ms: 5000,
+                       shownAt: Date.now(), firedAt: Date.now(),
+                       trigger: 'Slow fading', scope: 'slow', test: false });
       }
       continue;
     }
@@ -10102,6 +10153,9 @@ function _serializeForDashboard() {
         sticky:  !!o.sticky,
         rehearsal: !!o.rehearsal,
         replay:  !!o.replay,
+        // #136 raid callout allow-list muted this fire — triggers.html flashes
+        // it but does not speak it.
+        mute:    !!o.mute,
       };
     }),
     activeTimers:        _activeTimersSnapshot(),
@@ -10111,6 +10165,8 @@ function _serializeForDashboard() {
     // #107 loot-post announce prefs (dashboard Triggers-tab toggle + knob).
     lootAuctionTts:        _optinState.lootAuctionTts !== false,
     lootAuctionDefaultSec: _lootAuctionDefaultSec(),
+    // #136 raid callout allow-list — dashboard Triggers-tab toggle (default ON).
+    calloutAllowlist:      _optinState.calloutAllowlist !== false,
     ..._serializeZealForWeb(),
 
     lifetime:           stats.lifetime,
@@ -12417,6 +12473,20 @@ function renderTriggers(s) {
   h += '<label style="display:flex;align-items:center;gap:8px;font-size:12px;margin-top:8px">Default auction length when none is stated:';
   h += '<input type="number" id="lootAucDur" min="15" max="1800" step="5" value="' + (s.lootAuctionDefaultSec || 120) + '" style="width:70px;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:3px 6px;border-radius:4px;font-family:inherit;font-size:12px"> seconds</label>';
   h += '<span id="lootAucMsg" class="dim" style="font-size:11px;margin-left:8px"></span>';
+  h += '</div>';
+
+  // #136 Raid callout allow-list — mutes guild-pushed + cross-client RELAYED
+  // voice fires outside the critical categories (slow, deaths, tank swaps,
+  // discs, deathtouches, charms + the curated boss-mechanic countdowns).
+  // Personal triggers the user made themselves always speak. No <details> here,
+  // so no wpKeep; the checked bit tracks server state and only flips on user
+  // action, keeping this HTML byte-stable across polls.
+  h += '<div class="card wide"><h2>&#128266; Raid callout allow-list <span class="dim" style="font-size:11px;font-weight:normal">(voice only the critical categories)</span></h2>';
+  h += '<label style="display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer">';
+  h += '<input type="checkbox" id="calloutAllow"' + (s.calloutAllowlist !== false ? ' checked' : '') + '>';
+  h += '<span>Speak only high-value guild callouts &mdash; slow, deaths, tank swaps, discs, deathtouches, charms (plus the boss-mechanic countdowns)</span></label>';
+  h += '<div class="dim" style="font-size:11px;margin-top:5px">Guild-pushed and cross-client <b>relayed</b> trigger fires are the raid-wide firehose &mdash; every raider hears every other raider. With this on, those fires only <b>speak</b> when they match a critical category; the rest still <b>flash</b> on the trigger overlay, just silently. <b>Personal triggers you created yourself always speak.</b> The curated built-ins (rampage, buster, AoE dance, slow land/drop, CH GO, loot) are always audible.</div>';
+  h += '<span id="calloutMsg" class="dim" style="font-size:11px"></span>';
   h += '</div>';
 
   // Suggested triggers — one-click catalog of pre-tested alerts grouped by
@@ -16856,6 +16926,20 @@ async function dismissTopDamage(key) {
       if (msg) { msg.textContent = 'Save failed.'; msg.style.color = 'var(--red)'; }
     }
   }
+  // #136 raid callout allow-list toggle — persist the on/off choice.
+  async function saveCalloutPref(body) {
+    var msg = document.getElementById('calloutMsg');
+    try {
+      await fetch('/api/callout-prefs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (msg) { msg.textContent = 'Saved.'; msg.style.color = 'var(--green)'; }
+    } catch (e) {
+      if (msg) { msg.textContent = 'Save failed.'; msg.style.color = 'var(--red)'; }
+    }
+  }
   async function onDelete(id) {
     if (!id) return;
     if (!confirm('Delete this trigger?')) return;
@@ -17108,6 +17192,8 @@ async function dismissTopDamage(key) {
           if (!isFinite(v)) return;
           v = Math.max(15, Math.min(1800, v));
           saveLootPref({ lootAuctionDefaultSec: v });
+        } else if (t.id === 'calloutAllow') {
+          saveCalloutPref({ calloutAllowlist: !!t.checked });
         }
       });
       section._wpTrigChangeBound = true;
@@ -19257,6 +19343,23 @@ function startWebDashboard(port) {
         }));
       }
 
+      // POST /api/callout-prefs — dashboard Triggers-tab toggle for the #136
+      // raid callout allow-list. Body: { calloutAllowlist: boolean }. Persists
+      // to logsync.optin.json alongside the other trigger prefs.
+      if (req.url === '/api/callout-prefs' && req.method === 'POST') {
+        const body = await _readBody(req).catch(() => '');
+        let payload = {};
+        try { payload = body ? JSON.parse(body) : {}; } catch { payload = {}; }
+        if (typeof payload.calloutAllowlist === 'boolean') _optinState.calloutAllowlist = payload.calloutAllowlist;
+        _saveOptInState();
+        scheduleRender();
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({
+          ok: true,
+          calloutAllowlist: _optinState.calloutAllowlist !== false,
+        }));
+      }
+
       // POST /api/personal-triggers/import — accepts a GINA / EQLogParser
       // XML blob (both export the same SharedTriggers shape) and APPENDS
       // parsed entries to the personal triggers list. Existing personal
@@ -20135,6 +20238,13 @@ const _optinState = {
   // Both live here so they persist across runs like the other dashboard-set flags.
   lootAuctionTts: true,
   lootAuctionDefaultSec: 120,
+  // #136 raid callout allow-list. When ON (default), guild-pushed + cross-client
+  // relayed trigger fires only SPEAK if they match a critical category (slow,
+  // death, tank swap, disc, deathtouch, charm + the curated boss-mechanic
+  // countdowns); everything else still renders on the overlay but stays silent.
+  // Personal triggers the user created themselves are never gated. Persisted
+  // here like the other dashboard-set flags.
+  calloutAllowlist: true,
 };
 
 function _optinSortFn() {
@@ -20168,6 +20278,8 @@ function _loadOptInState() {
     if (Number.isFinite(raw.lootAuctionDefaultSec)) {
       _optinState.lootAuctionDefaultSec = Math.max(15, Math.min(1800, Math.round(raw.lootAuctionDefaultSec)));
     }
+    // #136 default ON: absent (old files) → true; only an explicit false disables.
+    _optinState.calloutAllowlist     = (raw.calloutAllowlist !== false);
   } catch { /* missing or unreadable — fresh state */ }
 }
 function _saveOptInState() {
@@ -20179,6 +20291,7 @@ function _saveOptInState() {
       extSameZoneOnly:    _optinState.extSameZoneOnly !== false,
       lootAuctionTts:        _optinState.lootAuctionTts !== false,
       lootAuctionDefaultSec: _optinState.lootAuctionDefaultSec || 120,
+      calloutAllowlist:      _optinState.calloutAllowlist !== false,
     }, null, 2));
   } catch { /* non-fatal */ }
 }
@@ -27352,6 +27465,31 @@ const AOE_DANCE = [
     in_text:         'DPS IN',                        // fired NOW when the AE lands (safe to re-engage)
     color:           'gold',
   },
+  {
+    // #182 — GROUNDED SIGNATURE — Ancient Breath, eqemu_spells 1486, on Vulak`Aerr
+    // (npc_types 124128 "#Vulak`Aerr", npc_spells_id 1204, entry recast_delay -1):
+    //   • cast_time 0 → no cast message; effect-detection only (like Caustic Mist).
+    //   • cast_on_other is NULL → bystanders see NOTHING. The ONLY evidence is your
+    //     own land line, so burst_n is 1 — one self-land = the AE fired (the
+    //     burst_window_ms quiet window still absorbs alt-log echoes).
+    //   • land-on-self: "Your life force drains away." (shared only with the Life
+    //     Curse / Dark Siphon lifetaps + unused placeholders — the active-boss gate
+    //     scopes it to this fight; a stray tap just re-syncs the countdown early).
+    //   • cadence: spell recast_time 60000ms, npc entry defers (-1) → 60s default,
+    //     FIELD-TUNABLE; re-syncs on every land you eat.
+    //   • out_warn_sec 4 per Hitya 2026-07-24: "calling DPS OUT at 4 seconds
+    //     beforehand".
+    boss:            'Vulak`Aerr',
+    spell:           'Ancient Breath',                // eqemu_spells 1486 — PBAE (targettype 4), disease -150
+    signature:       [/Your life force drains away\./i], // land-on-self ONLY (cast_on_other NULL)
+    burst_n:         1,                               // one self-land = the AE fired (see note above)
+    burst_window_ms: 2000,                            // echo/alt-log dupe absorber
+    cadence_sec:     60,                              // FIELD-TUNABLE — spell recast_time 60000ms
+    out_warn_sec:    4,                               // speak "DPS OUT" 4s before the predicted next AE
+    out_text:        'DPS OUT — Ancient Breath soon',
+    in_text:         'DPS IN',
+    color:           'gold',
+  },
 ];
 // One burst = one fire. Keyed per boss so a whole burst of land lines (and any
 // cross-log echo) collapses to a single fire — the #36 analogue of _busterLastFire.
@@ -27849,7 +27987,80 @@ function _isOurPetName(nameLower) {
   return !!_petOwnerByName(nameLower) || knownPetOwners.has(nameLower);
 }
 
+// ── #136 Raid callout allow-list ─────────────────────────────────────────────
+// The guild-wide voice path fans out EVERY raider's guild-trigger fire to
+// everyone (a local guild fire → _relayLocalFire → the bot's recent-fires →
+// _consumeRelayFires → _runRelayedFire → _fireTriggerActions on every other
+// Mimic). Field feedback: that firehose speaks per-raider noise — individual
+// heals, personal INCs, generic trigger chatter relayed from other clients —
+// on everyone's machine. This allow-list MUTES guild-pushed + cross-client
+// RELAYED fires that don't match one of the high-value categories the guild
+// lead asked to keep audible. Two hard rules:
+//   • LOCAL personal triggers (the user's own, _scope 'personal') are NEVER
+//     gated — the user opted in by creating them.
+//   • The curated built-in callouts (rampage, buster, AoE-dance, slow land/drop,
+//     CH GO, loot) reach the overlay through their OWN direct _pushOverlay path
+//     and never pass through this gate at all, so they always speak. The phrase
+//     matcher below ALSO keeps any guild trigger — or a relayed built-in like
+//     'New Rampage' — audible when its name/tags/text carry those words.
+// A muted fire still RENDERS (flash) on the trigger overlay; only speech is
+// suppressed (overlay.mute → triggers.html skips speak(), keeps flash()) —
+// visibility without noise.
+const _CALLOUT_ALLOW_CATEGORIES = [
+  { cat: 'slow',       rx: /\bslow(?:ed|s|ing)?\b|reslow|un-?slow/i },
+  { cat: 'death',      rx: /\bdeath\b|\bdead\b|\bdied\b|\bdies\b|\bslain\b|has been slain|\bR\.?I\.?P\.?\b|\brez\b|\bresurrect/i },
+  { cat: 'tank swap',  rx: /tank\s*swap|swap\s*tank|tankswap|\bpeel\b|off[-\s]?tank/i },
+  { cat: 'disc',       rx: /\bdiscs?\b|\bdiscipline/i },
+  { cat: 'deathtouch', rx: /death\s*touch|deathtouch|\bDT\b/i },
+  { cat: 'charm',      rx: /\bcharm(?:ed|s|ing)?\b|charm\s*(?:break|broke|broken)/i },
+  // Boss-mechanic countdowns already curated in the built-ins — keep audible
+  // even when a guild trigger drives them (e.g. a voice-mark sequence).
+  { cat: 'mechanic',   rx: /\bbuster\b|tank\s*buster|\baoe\b|\bdance\b|\brampage\b|\bch\s*go\b|\bloot\b/i },
+];
+// Is this trigger (or relayed fire) allowed to SPEAK under the allow-list? Scans
+// the trigger name, its tags (guild_triggers rows carry `tags`; array or CSV
+// string both handled), and every action's display/tts/message text (+ voice
+// marks). Any category hit → allowed. An empty haystack (no name, no tags, no
+// text) → NOT allowed: an unnamed, untagged, text-less fire is exactly the
+// noise the field asked us to mute.
+function _calloutAllowedToSpeak(t) {
+  if (!t) return false;
+  const parts = [];
+  if (t.name) parts.push(String(t.name));
+  const tags = t.tags;
+  if (Array.isArray(tags)) parts.push(tags.join(' '));
+  else if (typeof tags === 'string') parts.push(tags);
+  for (const a of (t.actions || [])) {
+    if (!a) continue;
+    if (a.text)    parts.push(String(a.text));
+    if (a.tts)     parts.push(String(a.tts));
+    if (a.message) parts.push(String(a.message));
+    if (Array.isArray(a.marks)) {
+      for (const m of a.marks) { if (m && (m.text || m.message)) parts.push(String(m.text || m.message)); }
+    }
+  }
+  const hay = parts.join('  ');
+  if (!hay.trim()) return false;
+  for (const c of _CALLOUT_ALLOW_CATEGORIES) { if (c.rx.test(hay)) return true; }
+  return false;
+}
+// A fire on this scope must pass the allow-list to speak — only the raid-wide
+// voice paths: locally-fired GUILD triggers and cross-client RELAYED fires.
+// Personal / built-in / test / replay fires bypass entirely.
+function _calloutScopeGated(scope) {
+  return scope === 'guild' || scope === 'guild_relay';
+}
+
 function _fireTriggerActions(t, captures, tsMs, test, isRelay) {
+  // #136 raid callout allow-list — decide ONCE per fire whether speech is muted.
+  // Applies only to the raid-wide voice scopes (guild + relayed), only when the
+  // allow-list is enabled, and only when the trigger matches no critical
+  // category. Personal + test/replay fires are never muted. The muted overlay
+  // still flashes; triggers.html reads overlay.mute and skips speak().
+  const _calloutMuted = !test
+    && _optinState.calloutAllowlist !== false
+    && _calloutScopeGated(t._scope)
+    && !_calloutAllowedToSpeak(t);
   // Trigger-level roster gate. The require_raid_member field lives on
   // individual actions (so a single trigger can have one filtered + one
   // unfiltered action), but the trigger-level countdown timer is a single
@@ -27910,6 +28121,9 @@ function _fireTriggerActions(t, captures, tsMs, test, isRelay) {
         test:        !!test,
       };
       if (ttsText) overlay.tts = ttsText;
+      // #136 — allow-list muted this guild/relay fire: it still flashes, but
+      // triggers.html skips speak() when overlay.mute is set.
+      if (_calloutMuted) overlay.mute = true;
       if (a.sound) overlay.sound = a.sound;
       // Sticky critical callouts (#76): a trigger-level OR action-level `sticky`
       // flag pins the alert on the trigger overlay until the user dismisses it
@@ -27981,7 +28195,8 @@ function _fireTriggerActions(t, captures, tsMs, test, isRelay) {
         const delay  = Math.max(0, fireMs - Date.now());
         const key    = baseKey + ':' + Math.round(offsetMs || 0);
         setTimeout(() => {
-          // Local overlay+TTS — Mimic shows the line AND speaks it.
+          // Local overlay+TTS — Mimic shows the line AND speaks it. #136: a
+          // muted guild/relay voice-mark still shows but stays silent.
           _pushOverlay({
             text:        msg,
             tts:         msg,
@@ -27992,6 +28207,7 @@ function _fireTriggerActions(t, captures, tsMs, test, isRelay) {
             trigger:     t.name,
             scope:       t._scope || 'personal',
             test:        false,
+            mute:        _calloutMuted,
           });
           scheduleRender();
           console.log('[trigger:voice:' + (t._scope || '?') + '] ' + t.name + ' → ' + msg);
@@ -29079,14 +29295,33 @@ async function main() {
       // Vox), but their hail responses to a player still include the
       // player's name in the captured group, so the rename is correct in
       // those cases too as long as the speaker isn't a friendly player.
-      const HAIL_RE = /\]\s+(?:a\s+[a-z][^\[\]]*?|an\s+[a-z][^\[\]]*?|the\s+[a-z][^\[\]]*?|[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\s+says,?\s*['"](?:Hail|Greetings|Welcome|Well met),?\s+([A-Z][a-z]+)[!,.\s]/i;
+      const HAIL_RE = /\]\s+(a\s+[a-z][^\[\]]*?|an\s+[a-z][^\[\]]*?|the\s+[a-z][^\[\]]*?|[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\s+says,?\s*['"](?:Hail|Greetings|Welcome|Well met),?\s+([A-Z][a-z]+)[!,.\s]/i;
+      // #176 — a hail RESPONSE is broadcast to every nearby player, so a bystander's
+      // log ALSO sees "<npc> says, 'Hail, Hitya!'". Pre-fix, that rebound the
+      // bystander's builder to "Hitya" and relayed THEIR tells/chat/parses under
+      // Hitya — a live cross-user privacy leak (2026-07-24, Sanctus Seru). Fix:
+      // accept the rename ONLY when this log actually initiated the hail — it
+      // emitted "You say, 'Hail, <npc>'" within the window AND the responding npc
+      // is the one we hailed. A bystander never says "You say, 'Hail'", so their
+      // log is no longer captured. (Speaker is now capture group 1, name group 2.)
+      const SELF_HAIL_RE = /\]\s+You say,?\s*['"]Hail,?\s+(.+?)['"]\s*$/i;
+      const _normHailNpc = (s) => String(s || '').toLowerCase().replace(/^(an?|the)\s+/, '').replace(/[!.,\s]+$/, '').trim();
+      const HAIL_SELF_WINDOW_MS = 8000;
       let _hailFound = false;
+      let _pendingSelfHail = null;   // #176 { target, atMs } — set on OUR own hail
       await tailFile(b.logPath, line => {
         if (watched) { watched.lastSeen = Date.now(); }
+        // #176 — record OUR outgoing hail so a matching npc response can be trusted
+        // as addressed to US (a bystander never emits "You say, 'Hail'").
+        if (!_hailFound && line.indexOf('You say') !== -1) {
+          const _sh = SELF_HAIL_RE.exec(line);
+          if (_sh && _sh[1]) _pendingSelfHail = { target: _normHailNpc(_sh[1]), atMs: Date.now() };
+        }
         if (!_hailFound) {
           const m = HAIL_RE.exec(line);
           if (m) {
-            const inLogName = m[1];
+            const speaker   = m[1];
+            const inLogName = m[2];
             // The whole regex carries /i (so "an old man" / "Welcome" match
             // regardless of case), which ALSO lets the name group [A-Z][a-z]+
             // match a lowercase English word — "the captain says, 'Welcome to
@@ -29095,10 +29330,17 @@ async function main() {
             // ("Hail, Dant!"), so re-validate the capture CASE-SENSITIVELY and
             // run it through the plausible-attacker guard. If it's junk we do
             // NOT latch _hailFound — keep listening for a later, valid hail.
-            const validHailName = inLogName && /^[A-Z][a-z]+$/.test(inLogName) && isPlausibleAttacker(inLogName);
-            if (validHailName) _hailFound = true;
+            // #176 — AND require a matching self-hail: we must have just hailed
+            // the very npc now responding. No self-hail (bystander) or a
+            // different npc → ignore, don't latch, keep listening.
+            const _now = Date.now();
+            const selfHailed = !!_pendingSelfHail
+              && (_now - _pendingSelfHail.atMs) <= HAIL_SELF_WINDOW_MS
+              && _normHailNpc(speaker) === _pendingSelfHail.target;
+            const validHailName = selfHailed && inLogName && /^[A-Z][a-z]+$/.test(inLogName) && isPlausibleAttacker(inLogName);
+            if (validHailName) { _hailFound = true; _pendingSelfHail = null; }
             if (validHailName && inLogName !== b.character) {
-              console.log(`[mimic] log "${path.basename(b.logPath)}" filename says ${b.character}, NPC hailed ${inLogName} — using ${inLogName}`);
+              console.log(`[mimic] log "${path.basename(b.logPath)}" filename says ${b.character}, self-hailed ${speaker} → ${inLogName} — using ${inLogName}`);
               const old = b.character;
               b.character = inLogName;
               b.builder.character = inLogName;
@@ -29337,6 +29579,18 @@ async function main() {
         // resolved above (resolveSelfCastLanding) and beneficial buffs by
         // parseBuffLanding, so this only fires when neither produced an event.
         if (!_sourceExcluded && !bcEvt) {
+          // #181 — ambiguous slow-family emote ("<mob> yawns." / "<mob> slows
+          // down.") names no spell, so parseDebuffLanding can't refresh the
+          // tracker. Refresh (only) an existing tracked slow of that family on
+          // the mob it names — kills the false "Slow dropped" under a live
+          // re-slow. Refresh-only: never creates an entry.
+          if (line.endsWith('yawns.') || line.endsWith('slows down.')) {
+            const _sm = line.match(/\]\s+(.+?)\s+(?:yawns|slows down)\.\s*$/);
+            if (_sm && _sm[1]) {
+              const _slowTs = parseEqTimestamp(line);   // tsMs is not in this callback's scope — derive from the line
+              try { _refreshSlowFromAmbiguousLand(_sm[1], line, _slowTs ? _slowTs.getTime() : Date.now()); } catch (e) { void e; }
+            }
+          }
           const dbEvt = parseDebuffLanding(line, b.character);
           if (dbEvt && dbEvt.spell_name) {
             // Local Target Info — show the debuff on whatever's targeted (mob or
@@ -29560,6 +29814,8 @@ module.exports = {
   _checkBossSpawnChain, _checkTankBuster, _armBossCountdown, BOSS_SPAWN_CHAINS,
   _checkAoeDance, AOE_DANCE,   // #36 AoE-dance callouts — exported for the scratchpad fixture
   evaluateTriggersAgainstLine, SLOW_SPELLS, _isSlowSpell,
+  // #136 raid callout allow-list — exported for the scratchpad fixture.
+  _fireTriggerActions, _calloutAllowedToSpeak, _calloutScopeGated, _CALLOUT_ALLOW_CATEGORIES,
   _setCurrentBossForTest: (name) => { stats.currentEncounterThreat = name ? { bossName: name } : null; },
   _getReplayStateForTest: () => _replayStateForWeb(),
   _setPersonalTriggersForTest: (arr) => { _personalTriggers = arr; },

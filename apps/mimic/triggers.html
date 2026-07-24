@@ -475,7 +475,10 @@
     // Rehearsal fires (real REHEARSE, #76) speak the true callout but carry a
     // 🧪 badge on the flash so the user knows it was a test drive.
     flash((t.rehearsal ? '🧪 ' : '') + (t.text || t.label || spoken));
-    speak(spoken, { trigger: t.trigger || t.text || t.label || spoken, rehearsal: !!t.rehearsal });
+    // #136 raid callout allow-list: the agent sets mute=true on a guild/relayed
+    // fire outside the critical categories — it still flashes (visibility), but
+    // stays silent so the raid-wide TTS only voices the high-value callouts.
+    if (!t.mute) speak(spoken, { trigger: t.trigger || t.text || t.label || spoken, rehearsal: !!t.rehearsal });
     playSound(t.sound);
     showFeedback(t);
     if (t.sticky) pinSticky(t);
