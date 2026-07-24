@@ -27414,6 +27414,31 @@ const AOE_DANCE = [
     in_text:         'DPS IN',                        // fired NOW when the AE lands (safe to re-engage)
     color:           'gold',
   },
+  {
+    // #182 — GROUNDED SIGNATURE — Ancient Breath, eqemu_spells 1486, on Vulak`Aerr
+    // (npc_types 124128 "#Vulak`Aerr", npc_spells_id 1204, entry recast_delay -1):
+    //   • cast_time 0 → no cast message; effect-detection only (like Caustic Mist).
+    //   • cast_on_other is NULL → bystanders see NOTHING. The ONLY evidence is your
+    //     own land line, so burst_n is 1 — one self-land = the AE fired (the
+    //     burst_window_ms quiet window still absorbs alt-log echoes).
+    //   • land-on-self: "Your life force drains away." (shared only with the Life
+    //     Curse / Dark Siphon lifetaps + unused placeholders — the active-boss gate
+    //     scopes it to this fight; a stray tap just re-syncs the countdown early).
+    //   • cadence: spell recast_time 60000ms, npc entry defers (-1) → 60s default,
+    //     FIELD-TUNABLE; re-syncs on every land you eat.
+    //   • out_warn_sec 4 per Hitya 2026-07-24: "calling DPS OUT at 4 seconds
+    //     beforehand".
+    boss:            'Vulak`Aerr',
+    spell:           'Ancient Breath',                // eqemu_spells 1486 — PBAE (targettype 4), disease -150
+    signature:       [/Your life force drains away\./i], // land-on-self ONLY (cast_on_other NULL)
+    burst_n:         1,                               // one self-land = the AE fired (see note above)
+    burst_window_ms: 2000,                            // echo/alt-log dupe absorber
+    cadence_sec:     60,                              // FIELD-TUNABLE — spell recast_time 60000ms
+    out_warn_sec:    4,                               // speak "DPS OUT" 4s before the predicted next AE
+    out_text:        'DPS OUT — Ancient Breath soon',
+    in_text:         'DPS IN',
+    color:           'gold',
+  },
 ];
 // One burst = one fire. Keyed per boss so a whole burst of land lines (and any
 // cross-log echo) collapses to a single fire — the #36 analogue of _busterLastFire.
