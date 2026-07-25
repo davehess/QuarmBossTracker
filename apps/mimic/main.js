@@ -837,6 +837,11 @@ function _readUiBundle(eqDir, character) {
   for (const f of entries) {
     const m = f.match(/^UI_([A-Za-z]+).*\.ini$/i);
     if (m && m[1].toLowerCase() === cLower) want.push(f);
+    // #187 — the character's spell-set gem file (<Char>_spellsets.ini and any
+    // server-suffixed variant) so UI Studio can bulk-swap a song/spell across
+    // every named set. Real-name resolved like the rest, written back with .bak.
+    const ms = f.match(/^([A-Za-z]+).*spellsets.*\.ini$/i);
+    if (ms && ms[1].toLowerCase() === cLower) want.push(f);
   }
 
   for (const wanted of want) {

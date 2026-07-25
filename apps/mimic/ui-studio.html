@@ -148,6 +148,7 @@
     <button id="saveBtn"  title="Write back to INI with .bak backup">Save</button>
     <span class="sep"></span>
     <button id="inspectSocialsBtn" class="secondary" title="Open the Hotbar/Socials inspector — see what's actually in your Sock_/Socials_ INI files">Hotbar Pages…</button>
+    <button id="spellSetsBtn" class="secondary" title="Bulk-swap a song/spell across ALL your spell sets — pick the old spell + the new one, replace everywhere, save (with a .bak backup)">🎵 Spell Sets…</button>
     <button id="captureBtn"        class="secondary" title="Heuristic-parse your Sock_/Socials_ INIs into a draft PvP template JSON in your EQ folder — review + share">Capture PvP draft</button>
     <button id="cloudBackupBtn"    class="secondary" title="Upload encrypted backup of your UI ini files to the bot (existing capture flow)">☁ Backup</button>
     <button id="cloudRestoreBtn"   class="secondary" title="Pull a cloud backup into the editor — rescale it to this machine's monitor, then Save. Use this to deploy your layout on a new computer.">📥 Restore</button>
@@ -173,6 +174,30 @@
     <button id="pvpImportBtn">Import to EQ folder</button>
     <button id="pvpDismissBtn"  class="secondary" style="margin-left:4px">Dismiss</button>
   </div>
+  <!-- #187 Spell Sets bulk-swap — replace one song/spell with another across
+       every named set in <Char>_spellsets.ini. Surgical id-value replace
+       (CRLF-preserving); Save writes with a .bak backup. -->
+  <div id="ssModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:80">
+    <div style="position:absolute;top:8%;left:50%;transform:translateX(-50%);width:440px;max-height:80%;overflow-y:auto;
+         background:#161b22;border:1px solid #30363d;border-radius:8px;padding:16px;color:#c9d1d9;font-size:12px">
+      <button id="ssClose" style="float:right;background:none;border:none;color:#8b949e;cursor:pointer;font-size:16px">✕</button>
+      <h3 style="margin:0 0 4px">🎵 Swap a song/spell across all spell sets</h3>
+      <p id="ssFileLine" style="margin:0 0 10px;color:#8b949e;font-size:10px"></p>
+      <label style="display:block;margin-bottom:8px">Replace this spell (currently in your sets):
+        <select id="ssOld" style="width:100%;margin-top:3px;background:#0d1117;color:#c9d1d9;border:1px solid #30363d;border-radius:4px;padding:4px"></select>
+      </label>
+      <label style="display:block;margin-bottom:8px">With this one (type a spell name, or a spell id):
+        <input id="ssNew" list="ssCatalog" placeholder="e.g. Chorus of Marr — or 1234" autocomplete="off" style="width:100%;margin-top:3px;background:#0d1117;color:#c9d1d9;border:1px solid #30363d;border-radius:4px;padding:4px">
+        <datalist id="ssCatalog"></datalist>
+      </label>
+      <div id="ssPreview" style="margin:8px 0;color:#7ee7c7;min-height:16px"></div>
+      <div style="margin-top:10px;text-align:right">
+        <button id="ssApply">Replace everywhere &amp; Save</button>
+      </div>
+      <div id="ssStatus" style="margin-top:8px;font-size:10px"></div>
+    </div>
+  </div>
+
   <!-- PvP-set preview panel — opened from the prompt's Preview button.
        Renders phases, spell sets, clickies, potions for the active
        template. Sits on top of the canvas as an overlay. -->
@@ -1333,6 +1358,113 @@
     }
   }
   setInterval(function(){ _showDeferBanner().catch(function(){}); }, 10000);
+
+  // ── #187 Spell Sets bulk-swap ────────────────────────────────────────────
+  // Replace one song/spell id with another across EVERY named set in the
+  // character's *_spellsets.ini (loaded into STATE.bundle via the main.js glob).
+  // Surgical, CRLF-preserving id-value replace — captures the trailing
+  // whitespace as $2 so \r\n line endings survive; Save writes with a .bak.
+  var _ssKey = null;      // the spellsets filename key in STATE.bundle
+  var _ssNames = null;    // { id → name } from the agent /api/spells.json
+  function _ssFindKey(){
+    if (!STATE.bundle) return null;
+    var ks = Object.keys(STATE.bundle);
+    for (var i=0;i<ks.length;i++){ if (/spellsets.*\.ini$/i.test(ks[i])) return ks[i]; }
+    return null;
+  }
+  async function _ssLoadNames(){
+    if (_ssNames) return _ssNames;
+    try { var r = await fetch('http://127.0.0.1:7779/api/spells.json', { cache:'no-store' });
+      var map = r.ok ? await r.json() : null; _ssNames = (map && typeof map==='object') ? map : {}; }
+    catch (e) { _ssNames = {}; }
+    return _ssNames;
+  }
+  function _ssName(id){ return (_ssNames && _ssNames[id]) ? _ssNames[id] : ('spell '+id); }
+  function _ssDistinctIds(text){
+    var out={}, m, rx=/^\s*\d+\s*=\s*(\d+)\s*$/gm;
+    while ((m=rx.exec(text))) out[m[1]] = (out[m[1]]||0)+1;
+    return out;
+  }
+  function _ssReplace(text, oldId, newId){
+    return text.replace(new RegExp('^(\\s*\\d+\\s*=\\s*)'+oldId+'(\\s*)$','gm'), '$1'+newId+'$2');
+  }
+  function _ssResolveNew(v){
+    v = String(v||'').trim();
+    if (/^\d+$/.test(v)) return v;
+    if (_ssNames){
+      var lo=v.toLowerCase(), exact=null, starts=null;
+      for (var id in _ssNames){ var n=String(_ssNames[id]).toLowerCase();
+        if (n===lo){ exact=id; break; } if (!starts && n.indexOf(lo)===0) starts=id; }
+      if (exact) return exact; if (starts) return starts;
+    }
+    return null;
+  }
+  function _ssAffected(text, oldId){
+    var lines=text.split(/\r?\n/), slots=0, sets={}, cur=null;
+    for (var i=0;i<lines.length;i++){
+      var sm=lines[i].match(/^\s*\[(.+?)\]\s*$/); if (sm){ cur=sm[1]; continue; }
+      var vm=lines[i].match(/^\s*\d+\s*=\s*(\d+)\s*$/);
+      if (vm && vm[1]===String(oldId)){ slots++; if (cur) sets[cur]=1; }
+    }
+    return { slots:slots, sets:Object.keys(sets).length };
+  }
+  function _ssRefreshPreview(){
+    var oldId=document.getElementById('ssOld').value;
+    var newId=_ssResolveNew(document.getElementById('ssNew').value);
+    var pv=document.getElementById('ssPreview');
+    if (!oldId){ pv.textContent=''; return; }
+    if (!newId){ pv.style.color='#f0883e'; pv.textContent='Type the new spell (name or id).'; return; }
+    if (oldId===newId){ pv.style.color='#f0883e'; pv.textContent='Old and new are the same spell.'; return; }
+    var a=_ssAffected(STATE.bundle[_ssKey], oldId);
+    pv.style.color='#7ee7c7';
+    pv.textContent='Replace '+_ssName(oldId)+' → '+_ssName(newId)+' in '+a.slots+' slot'+(a.slots===1?'':'s')+' across '+a.sets+' set'+(a.sets===1?'':'s')+'.';
+  }
+  async function _ssOpen(){
+    _ssKey=_ssFindKey();
+    if (!_ssKey){ setStatus('no *_spellsets.ini loaded for '+(STATE.character||'this character')+' — Load a character first', 'err'); return; }
+    await _ssLoadNames();
+    var text=STATE.bundle[_ssKey], ids=_ssDistinctIds(text);
+    var sel=document.getElementById('ssOld'); sel.innerHTML='';
+    Object.keys(ids).map(function(id){ return { id:id, name:_ssName(id), count:ids[id] }; })
+      .sort(function(a,b){ return a.name.localeCompare(b.name); })
+      .forEach(function(o){ var opt=document.createElement('option'); opt.value=o.id;
+        opt.textContent=o.name+'  (id '+o.id+', '+o.count+' slot'+(o.count===1?'':'s')+')'; sel.appendChild(opt); });
+    var dl=document.getElementById('ssCatalog'); dl.innerHTML='';
+    if (_ssNames){ var cnt=0; for (var id in _ssNames){ if (++cnt>4000) break; var o=document.createElement('option'); o.value=_ssNames[id]; dl.appendChild(o); } }
+    document.getElementById('ssFileLine').textContent='Editing '+_ssKey+' — '+Object.keys(ids).length+' distinct spells across the sets.';
+    document.getElementById('ssNew').value=''; document.getElementById('ssStatus').textContent='';
+    _ssRefreshPreview();
+    document.getElementById('ssModal').style.display='block';
+  }
+  async function _ssApply(){
+    var oldId=document.getElementById('ssOld').value;
+    var newId=_ssResolveNew(document.getElementById('ssNew').value);
+    var st=document.getElementById('ssStatus');
+    if (!oldId || !newId){ st.style.color='#f0883e'; st.textContent='Pick the old spell and a valid new spell.'; return; }
+    if (oldId===newId){ st.style.color='#f0883e'; st.textContent='Old and new are the same spell.'; return; }
+    var text=STATE.bundle[_ssKey], a=_ssAffected(text, oldId);
+    if (a.slots===0){ st.style.color='#f0883e'; st.textContent='That spell is not in any set.'; return; }
+    var out=_ssReplace(text, oldId, newId);
+    STATE.bundle[_ssKey]=out;
+    var one={}; one[_ssKey]=out;
+    var res=await window.mimic.uiStudioWriteBundle(STATE.eqDir, one, null).catch(function(e){ return { ok:false, error:String(e) }; });
+    if (res && res.ok){
+      st.style.color='#7ee7c7';
+      st.textContent='✅ '+_ssName(oldId)+' → '+_ssName(newId)+' in '+a.slots+' slot(s) across '+a.sets+' set(s). Saved '+_ssKey+' (.bak backup).';
+      setStatus('spell sets updated', 'ok');
+    } else {
+      STATE.bundle[_ssKey]=text;   // revert in-memory on save failure
+      st.style.color='#f85149'; st.textContent='Save failed: '+(res && res.error ? res.error : 'unknown');
+    }
+  }
+  (function(){
+    var b=document.getElementById('spellSetsBtn'); if (b) b.addEventListener('click', _ssOpen);
+    var c=document.getElementById('ssClose'); if (c) c.addEventListener('click', function(){ document.getElementById('ssModal').style.display='none'; });
+    var m=document.getElementById('ssModal'); if (m) m.addEventListener('click', function(ev){ if (ev.target===m) m.style.display='none'; });
+    var ap=document.getElementById('ssApply'); if (ap) ap.addEventListener('click', _ssApply);
+    var oo=document.getElementById('ssOld'); if (oo) oo.addEventListener('change', _ssRefreshPreview);
+    var nn=document.getElementById('ssNew'); if (nn) nn.addEventListener('input', _ssRefreshPreview);
+  })();
 
   document.getElementById('saveBtn').addEventListener('click', async function(){
     if (!STATE.character || !STATE.eqDir) { setStatus('nothing to save', 'err'); return; }
