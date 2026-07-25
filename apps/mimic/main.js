@@ -6366,7 +6366,7 @@ ipcMain.handle('set-overlay-opacity', (_e, key, value) => {
 // phase strategy videos on YouTube.
 ipcMain.handle('open-external', (_e, url) => {
   if (typeof url !== 'string') return false;
-  const ALLOW = /^https:\/\/(wolfpack\.quest|github\.com\/davehess\/QuarmBossTracker|(www\.)?eqprogression\.com\/|(www\.)?youtube\.com\/watch|youtu\.be\/)/i;
+  const ALLOW = /^https:\/\/(wolfpack\.quest|github\.com\/davehess\/QuarmBossTracker|(www\.)?eqprogression\.com\/|(www\.)?pqdi\.cc\/|(www\.)?youtube\.com\/watch|youtu\.be\/)/i;
   if (!ALLOW.test(url)) {
     appendAgentLog(`[mimic] refused open-external: ${url}\n`);
     return false;
