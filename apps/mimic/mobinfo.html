@@ -21,7 +21,14 @@
   .conn.ok{color:#56d364} .conn.bad{color:#8b949e}
   .mob{padding:5px 7px;background:rgb(8 5 16 / var(--bg-alpha));border-radius:6px;
     border-left:3px solid #a371f7;text-shadow:0 1px 2px #000;}
-  .mob .nm{font-size:12px;font-weight:bold;color:#e9d5ff}
+  .mob .nm{font-size:13px;font-weight:bold;color:#e9d5ff}
+  /* #186 PQDI link — clickable chip next to the mob name; opens pqdi.cc/npc/<id>.
+     Matches the overlay's purple theme (like the .spec chips); no glow (was
+     blurry) — small + tidy. */
+  .mob .pqdi{display:inline-block;margin-left:8px;font-size:9px;font-weight:600;color:#d2a8ff;
+    background:#2a1d3d;text-decoration:none;cursor:pointer;padding:1px 7px;border:1px solid #a371f7;
+    border-radius:4px;vertical-align:middle;white-space:nowrap;letter-spacing:.3px}
+  .mob .pqdi:hover{background:#3d2a57;border-color:#d2a8ff;color:#e9d5ff}
   .mob .cls{font-size:10px;color:#9b8bb5;margin-left:4px}
   .mob .zone{font-size:9px;color:#79c0ff;margin-top:1px}
   .mob .sub{font-size:9px;color:#8b949e;margin-top:1px;font-variant-numeric:tabular-nums}
@@ -323,6 +330,29 @@
   tabStatsBtn .addEventListener('click', function(){ _setTab('stats'); });
   tabLootBtn  .addEventListener('click', function(){ _setTab('loot'); });
   tabSpellsBtn.addEventListener('click', function(){ _setTab('spells'); });
+
+  // #186 — PQDI link (delegated: the header re-renders every poll). Opens the
+  // mob's pqdi.cc/npc page in the system browser via the open-external IPC
+  // (pqdi.cc is on main.js's allow-list). The hover-interact handshake is
+  // REQUIRED — a locked overlay is click-through, so without flipping
+  // interactive on hover the click falls straight through to EQ.
+  if (bodyEl) {
+    bodyEl.addEventListener('click', function(ev){
+      var a = (ev.target && ev.target.closest) ? ev.target.closest('.pqdi') : null;
+      if (!a) return;
+      ev.preventDefault();
+      var url = a.getAttribute('data-pqdi');
+      if (url) { try { window.mimic.openExternal(url); } catch (e) {} }
+    });
+    bodyEl.addEventListener('mouseover', function(ev){
+      var a = (ev.target && ev.target.closest) ? ev.target.closest('.pqdi') : null;
+      if (a) { try { window.mimic.overlayHoverInteractive(true); } catch (e) {} }
+    });
+    bodyEl.addEventListener('mouseout', function(ev){
+      var a = (ev.target && ev.target.closest) ? ev.target.closest('.pqdi') : null;
+      if (a) { try { window.mimic.overlayHoverInteractive(false); } catch (e) {} }
+    });
+  }
   // Hover-interact handshake — when the overlay is LOCKED (click-through),
   // mouse events normally pass through to EQ underneath. The handshake flips
   // the window briefly interactive while the cursor is over a tab button so
@@ -610,8 +640,12 @@
     // on every tab, cluttering Loot (drop table) and Spells (the mob's own
     // spell catalog). The name/HP/slow-badge header above stays on all tabs.
     var targetState = (_tab === 'stats') ? (renderTargetCasting(mi) + renderTargetBuffs(mi)) : '';
+    // #186 — PQDI link chip. pqdi.cc is id-based (pqdi.cc/npc/<eqemu npc id>);
+    // mob.id comes from the bot mob-info catalog row. Only render for real
+    // catalog mobs (mob.id present) — corpses / unknown targets get nothing.
+    var pqdiChip = (mob && mob.id) ? ' <a class="pqdi" data-pqdi="https://www.pqdi.cc/npc/'+mob.id+'" title="Open this mob on PQDI.cc (opens your browser)">🔗 PQDI</a>' : '';
     bodyEl.innerHTML = '<div class="mob">'
-      + '<div><span class="nm">'+esc(nm)+'</span>'+cls+'</div>'
+      + '<div><span class="nm">'+esc(nm)+'</span>'+cls+pqdiChip+'</div>'
       + (mob && mob.zone ? '<div class="zone">@ '+esc(mob.zone)+'</div>' : '')
       + (sub.length ? '<div class="sub">'+sub.join(' · ')+'</div>' : '')
       + slotLine

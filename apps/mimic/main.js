@@ -837,6 +837,11 @@ function _readUiBundle(eqDir, character) {
   for (const f of entries) {
     const m = f.match(/^UI_([A-Za-z]+).*\.ini$/i);
     if (m && m[1].toLowerCase() === cLower) want.push(f);
+    // #187 — the character's spell-set gem file (<Char>_spellsets.ini and any
+    // server-suffixed variant) so UI Studio can bulk-swap a song/spell across
+    // every named set. Real-name resolved like the rest, written back with .bak.
+    const ms = f.match(/^([A-Za-z]+).*spellsets.*\.ini$/i);
+    if (ms && ms[1].toLowerCase() === cLower) want.push(f);
   }
 
   for (const wanted of want) {
@@ -6317,7 +6322,7 @@ ipcMain.handle('set-overlay-opacity', (_e, key, value) => {
 // phase strategy videos on YouTube.
 ipcMain.handle('open-external', (_e, url) => {
   if (typeof url !== 'string') return false;
-  const ALLOW = /^https:\/\/(wolfpack\.quest|github\.com\/davehess\/QuarmBossTracker|(www\.)?eqprogression\.com\/|(www\.)?youtube\.com\/watch|youtu\.be\/)/i;
+  const ALLOW = /^https:\/\/(wolfpack\.quest|github\.com\/davehess\/QuarmBossTracker|(www\.)?eqprogression\.com\/|(www\.)?pqdi\.cc\/|(www\.)?youtube\.com\/watch|youtu\.be\/)/i;
   if (!ALLOW.test(url)) {
     appendAgentLog(`[mimic] refused open-external: ${url}\n`);
     return false;

@@ -18496,6 +18496,20 @@ function startWebDashboard(port) {
         });
         return res.end(JSON.stringify(map));
       }
+      // #187 — id → original-case NAME, for UI Studio's spell-set swap tool: it
+      // needs to SHOW the name for the ids already in a set (the name→id map
+      // above only serves the reverse). Same ~3.9k entries, ~150KB.
+      if (req.url === '/api/spell-names.json') {
+        const names = {};
+        if (_spellByNameLower && _spellByNameLower.size) {
+          for (const [, v] of _spellByNameLower) if (v && v.id && v.name) names[v.id] = v.name;
+        }
+        res.writeHead(200, {
+          'Content-Type': 'application/json',
+          'Cache-Control': 'max-age=86400',
+        });
+        return res.end(JSON.stringify(names));
+      }
       // ── #108 Loot bidding — local login gate + bid-character family ────────
       // GET  /api/loot/config    → { authed, opendkp_username, expires_at, family }
       // POST /api/loot/login     → { username, password } → drives Cognito locally
