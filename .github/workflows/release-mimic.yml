@@ -181,8 +181,23 @@ jobs:
         run: |
           set -euo pipefail
           subject=$(git log -1 --pretty=%s HEAD)
-          # Body minus git trailers (Co-Authored-By / Claude-Session / Signed-off-by).
-          body=$(git log -1 --pretty=%b HEAD | grep -viE '^(co-authored-by|claude-session|signed-off-by):' || true)
+          fullbody=$(git log -1 --pretty=%b HEAD)
+          # PLAYER-FACING NOTES FIRST. Raiders read these — they want gameplay
+          # impact, not engineering. If the version-bump commit provides a plain-
+          # language block between <!--player-notes--> and <!--/player-notes-->
+          # markers, use ONLY that as the release body. Otherwise fall back to the
+          # technical commit body (older/beta commits, or any that forget the
+          # block, still get notes). The #mimic-releases announcer shows the part
+          # above the --- either way.
+          notes=$(printf '%s\n' "$fullbody" | sed -n '/<!--[[:space:]]*player-notes[[:space:]]*-->/,/<!--[[:space:]]*\/player-notes[[:space:]]*-->/p' | sed '1d;$d')
+          if [ -n "$(printf '%s' "$notes" | tr -d '[:space:]')" ]; then
+            header=''
+            body="$notes"
+          else
+            # Body minus git trailers (Co-Authored-By / Claude-Session / Signed-off-by).
+            header="**$subject**"
+            body=$(printf '%s\n' "$fullbody" | grep -viE '^(co-authored-by|claude-session|signed-off-by):' || true)
+          fi
           # Trim leading + trailing blank lines (pure awk — no `tac`, which the
           # Windows runner's Git Bash may not ship).
           body=$(printf '%s\n' "$body" | awk '
@@ -193,9 +208,10 @@ jobs:
               for (i=s;i<=e;i++) print lines[i]
             }')
           {
-            printf '**%s**\n' "$subject"
+            if [ -n "$header" ]; then printf '%s\n' "$header"; fi
             if [ -n "$(printf '%s' "$body" | tr -d '[:space:]')" ]; then
-              printf '\n%s\n' "$body"
+              if [ -n "$header" ]; then printf '\n'; fi
+              printf '%s\n' "$body"
             fi
             printf '\n---\n'
             printf 'Windows installer — not code-signed (SmartScreen → More info → Run anyway). Bundles its own Node runtime; auto-updates in place via electron-updater, no re-download.\n'
