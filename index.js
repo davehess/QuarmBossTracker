@@ -11162,6 +11162,7 @@ async function _handleAgentMobInfo(req, res) {
       }
 
       mob = {
+        id:      r.id ?? null,   // #186 eqemu npc id → the overlay's PQDI link (pqdi.cc/npc/<id>)
         name:    String(r.name || name).replace(/_/g, ' '),
         class:   _MOB_CLASS_NAMES[r.class] || null,
         level:    r.level ?? null,
