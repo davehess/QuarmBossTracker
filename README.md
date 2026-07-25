@@ -1,4 +1,4 @@
-# Wolf Pack EQ — bot · wolfpack.quest · miMIC
+# Wolf Pack EQ — bot · wolfpack.quest · Mimic
 
 The guild platform for **Wolf Pack** on Project Quarm (EverQuest emu, Luclin era):
 
@@ -6,13 +6,13 @@ The guild platform for **Wolf Pack** on Project Quarm (EverQuest emu, Luclin era
 |---|---|---|
 | **Discord bot** | Raid timers, parse aggregation, DKP/loot, onboarding, the `/api/agent/*` ingest surface | Railway, ships from `main` |
 | **[wolfpack.quest](https://wolfpack.quest)** | Guild tracker site — `/raid` hub, parses, buffs, PvP, leaderboards, character pages, officer admin | Vercel, ships from `main` |
-| **Wolf Pack miMIC** | Desktop client for raid members — log parser + overlays + uploads | Member PCs, releases from this repo |
+| **Wolf Pack Mimic** | Desktop client for raid members — log parser + overlays + uploads, auto-updating | Member PCs, releases from this repo |
 
 Timer data sourced from [PQDI.cc](https://www.pqdi.cc/instances). Architecture map + release playbook: `CLAUDE.md`. Component versions live in each `package.json`; builds on the [Releases](https://github.com/davehess/QuarmBossTracker/releases) page.
 
 ---
 
-## Raid members — install miMIC
+## Raid members — install Mimic
 
 **One-click installer:** [**wolfpack.quest/mimic**](https://wolfpack.quest/mimic) (stable) · [beta channel](https://wolfpack.quest/mimic/beta)
 
@@ -266,8 +266,9 @@ git pull && docker-compose down && docker-compose up -d --build
 
 ### Local / Development (Windows)
 
-See [Local Installation](#local-installation-windows) at the top of this file.
-Double-click `RUN-FIRST-for-Node.js.bat` for Node.js, then `npm install && npm start`.
+Same flow as **Bot install** above: double-click `RUN-FIRST-for-Node.js.bat`
+once to install Node.js, then in the repo folder run `npm install`, copy
+`.env.example` to `.env` and fill it in, and `npm start`.
 
 ---
 
@@ -313,6 +314,25 @@ Paste links to any combination of Active Cooldowns cards and Daily Raid Summary 
 | `PARSES_LOG_THREAD_ID` | Parse Logs thread ID (parse data source of truth) |
 | `ONBOARDING_THREAD_ID` | Onboarding thread ID (quick-start instructions + opt-out registry) |
 | `ALLOWED_ROLE_NAMES` | Comma-delimited role names (e.g. `Pack Member,Officer,Guild Leader`) |
+
+The table above is the minimum for the raid-timer bot. The tables here cover the
+common cases; **`.env.example` documents every variable** (load-shed flags,
+overlay tuning, encryption keys, timeouts) — treat it as the authoritative list.
+
+### Platform integrations (parses, website, DKP, agent uploads)
+
+Required for the modern platform — parse aggregation, wolfpack.quest, DKP/loot,
+and the Mimic/agent ingest surface. Without these the bot still runs as a bare
+timer, but the analytics, character pages, and uploads are dark.
+
+| Variable | Description |
+|----------|-------------|
+| `SUPABASE_URL` | Supabase project URL — backs parses, characters, DKP, live state, and every wolfpack.quest surface |
+| `SUPABASE_SERVICE_ROLE_KEY` | Service-role key (bypasses RLS; server-side only — never ship to a client) |
+| `SUPABASE_GUILD_ID` | Guild tag written to all rows (default: `wolfpack`) |
+| `WOLFPACK_AGENT_TOKEN` | Bearer token the Mimic/Parser agents present to the `/api/agent/*` ingest surface. Unset → those endpoints return 503 |
+| `PORT` | HTTP port for the agent API + `/health` (Railway sets this automatically) |
+| `OPENDKP_*` | OpenDKP connection (raids URL, Cognito client, credentials) for DKP sync and loot auctions — see `.env.example` |
 
 ### Hardcoded Slot Anchors (recommended — paste once, survive any redeploy)
 
@@ -377,7 +397,7 @@ Run at midnight in `DEFAULT_TIMEZONE` (default: Eastern):
 
 ## Boss Data
 
-133 bosses across Classic (15), Kunark (16), Velious (35), Luclin (47), and PoP (20, locked until 2026-10-01).
+133 bosses across Classic (15), Kunark (17), Velious (35), Luclin (46), and PoP (20, locked until 2026-10-01).
 
 `bosses.json` schema:
 
