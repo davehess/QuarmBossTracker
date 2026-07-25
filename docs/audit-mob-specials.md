@@ -1,199 +1,132 @@
 # Mob-info audit: our catalog vs PQDI (#173)
 
 **Goal.** Make the Mob Info / Target Info overlay agree with pqdi.cc on the
-combat facts raiders act on, for every raid boss:
+combat facts raiders act on, for **every mob** (the overlay fires on any target
+— trash, named, boss), across:
 
 > can it **see invis** · can it be **pacified** · is it **rooted in place** or
 > does it **run when low** · does it **enrage / rampage / summon** · is it
 > **unslowable** · is it **unrootable / immune to movement-speed changes**
 
 Our overlay reads these from `eqemu_npc_types` (the weekly Quarm mirror). This
-audit diffs that against what PQDI displays and turns the disagreements into a
-punch list.
+audit does two things: a **full-catalog DB analysis** (all ~18k mobs — variant
+picks, placeholders, decoder gaps) and a **PQDI diff** on a raid-boss sample to
+confirm the semantics.
 
 ---
 
-## TL;DR — run it locally
+## Run it locally
 
 ```bash
-# from the repo root, on a machine that can reach pqdi.cc
-SUPABASE_URL=https://zhtoekwakucbckvatfky.supabase.co \
-SUPABASE_KEY="<anon or service-role key from your .env>" \
+# from the repo root
+export SUPABASE_URL=https://zhtoekwakucbckvatfky.supabase.co
+export SUPABASE_KEY="<anon or service-role key from your .env>"
+
+# 1) FULL-CATALOG DB analysis (no PQDI, covers all ~18k mobs)
+node scripts/audit-mob-specials.mjs --db-all
+#    → mob-specials-all.csv        every mob decoded (flags, placeholder, cluster)
+#    → mob-specials-clusters.md    same-name clusters that DISAGREE on danger flags
+#    → mob-specials-summary.md     counts + the codes our decoder drops
+
+# 2) PQDI diff for the 113 raid bosses (needs a machine that can reach pqdi.cc)
 node scripts/audit-mob-specials.mjs
+#    → audit-mob-specials-report.md
 ```
 
-Writes `audit-mob-specials-report.md`: one row per boss where DB and PQDI
-disagree, plus a list of special-ability codes present in the catalog that our
-decoder drops. It audits the **113 raid bosses** in `data/bosses.json` that
-carry a `pqdiUrl` (the 20 PoP-locked bosses have no URL yet — expected, they get
-one after the 2026-10-01 unlock + `/addboss`).
-
-**Why local and not here:** `pqdi.cc` returns **HTTP 403** to the Claude Code
-cloud proxy, so the PQDI side can't be scraped from the web environment. The DB
-side can (and this doc already reports what it found); the PQDI side needs your
-machine.
-
-If PQDI's markup has drifted, calibrate the phrase matchers once:
-
-```bash
-node scripts/audit-mob-specials.mjs --dump 179037   # The Itraer Vius
-# prints the plain-text flag block + writes pqdi-dump-179037.html
-```
-
-Smoke test with `--limit 5`. Be polite: default `--delay 1500` ms between PQDI
-hits (~3 min for the full run).
+**Why the PQDI half is local:** `pqdi.cc` returns **HTTP 403** to the Claude
+Code cloud proxy. Scraping all 18k mobs is also infeasible (~7.5h, rate-limited),
+so PQDI is a **validation sample** (bosses) while `--db-all` covers everything.
+If PQDI markup drifted, recalibrate once with `--dump 179037` (prints the page
+text + the flag block the matchers look for).
 
 ---
 
-## What the audit already established (DB side, no PQDI needed)
+## What the DB side already established (no PQDI needed)
 
-1. **PQDI ids == our eqemu ids.** Every `pqdiUrl` in `data/bosses.json`
-   (e.g. `…/npc/179037`) resolves 113/113 to a real `eqemu_npc_types.id`. That
-   means (a) the audit keys off those ids and **sidesteps the name-lookup
-   variant bug entirely**, and (b) the PQDI link shipped on the overlay in #186
-   points at the correct page. ✅
+Catalog = **18,033 mobs**, 16,992 with special-ability data, **14,511** distinct
+names, **1,457** same-name clusters (size > 1).
 
-2. **"Rooted in place" and "runs when low" are currently invisible.** The
-   mob-info endpoint never selects `runspeed`, and the decoder ignores flee
-   codes. So two of the six things you asked about **cannot be shown today**:
-   - `runspeed = 0` → stationary / rooted-in-place (e.g. The Itraer Vius, Lord
-     Yelinak, Vulak\`Aerr, Emperor Ssraeshza, most NToV dragons).
-   - special code `37,<pct>` → flees at that % HP ("runs when low"); code `21`
-     → will **not** flee. Neither is decoded.
+1. **PQDI ids == our eqemu ids.** Every `pqdiUrl` in `data/bosses.json` resolves
+   113/113 to a real `eqemu_npc_types.id`. Validates the #186 PQDI link, and
+   lets the boss audit key off ids (bypassing the name-lookup entirely). ✅
 
-3. **The decoder drops codes that ride on raid bosses.** Codes present in the
-   catalog but absent from `_MOB_SPECIAL_LABELS`:
+2. **The same-name variant problem is real and large:**
+   - **1,158 clusters contain a placeholder row** — a junk "immune to
+     everything" body (special code `19` Immune-Melee + `20` Immune-Magic,
+     usually level 1, e.g. `10^19^20^21^24^27^35`). This is the exact row the
+     current `&limit=1` can grab instead of the real boss (the Itraer Vius bug).
+   - **146 clusters DIVERGE on danger flags** among their *real* (non-placeholder)
+     rows — some variants enrage/rampage/flurry, others don't. Examples from the
+     catalog: **Maestro of Rancor** (L56 rampages, L53 doesn't), **Venril Sathir**
+     (one variant is unslowable + rampages, another isn't), the class-split
+     acolytes (Warrior variant enrages, Cleric variant doesn't). These are the
+     rows the warning must **merge**, not pick-one-and-hope.
 
-   | Code | Meaning (EQEmu enum) | # bosses | Show? |
-   |---|---|---|---|
-   | 22 | Immune Melee Except Bane | 1 | yes |
-   | 24 | Will Not Aggro | 1 | yes |
-   | 26 | Immune to Ranged Spells | 36 | yes |
-   | 37 | Flee at Percent ("runs when low") | 9 | yes |
-   | 39 | Disable Melee | 1 | yes |
-   | 44 | Immune to Ranged Attacks | 13 | yes |
-   | 46 | Immune to NPC/Pet Damage | 20 | yes (charm/pet strats) |
-   | 42 | Counter Avoid Damage (tuning) | 47 | no — internal |
-   | 43 | Prox Aggro (tuning) | 52 | no — internal |
-   | 49 | Modify Avoid Damage (tuning) | 5 | no — internal |
+3. **"Rooted in place" and "runs when low" are invisible today.** The endpoint
+   never selects `runspeed`, and the decoder ignores flee codes:
+   - `runspeed = 0` → stationary / rooted (2 dozen+ raid targets: Itraer Vius,
+     Yelinak, Vulak, Emperor Ssra, most NToV dragons).
+   - code `37,<pct>` → flees at that % ("runs when low"); code `21` → won't flee.
 
-   42 / 43 / 49 are EQEmu combat-tuning knobs, not player-facing flags — the
-   audit run confirms PQDI hides them (if it doesn't, we add them). 26 / 44 / 46
-   are real player-facing immunities on a **lot** of bosses and we show none of
-   them.
+4. **The decoder drops player-relevant codes present catalog-wide** (counts over
+   all 18k mobs): `26` Immune-Ranged-Spells (182), `37` Flee-% (54), `36`
+   Always-Flee (7), `44` Immune-Ranged-Attacks (192), `46` Immune-to-Pet/NPC-
+   Damage (1,312 — matters for charm strats), `22` Immune-Melee-Except-Bane (72),
+   `39` Disable-Melee (106). Codes `42`/`43`/`49` (1,768 / 258 / 235) are EQEmu
+   combat-tuning internals PQDI almost certainly hides — the diff confirms.
 
 ---
 
-## The eqemu → flag reference (authority for the fix)
+## The fix: pick-and-merge, not pick-one (the #161/#171/#173 core)
 
-`special_abilities` is a `^`-delimited list of `code,param[,param2…]`. A second
-field of `0` means *present-but-disabled* — skip it. Full map lives in
-`scripts/audit-mob-specials.mjs` (`CODE`); the raid-relevant subset:
+The overlay's live path normalizes a target name and looks it up. Today that's
+one row via `&limit=1` — which is why a placeholder or wrong variant wins. The
+correct rule, per Hitya (2026-07-25): *"display the higher-level version, the one
+with more variants, as the warning; the placeholders that had almost none were
+wrong and are not a good warning."*
 
-| Code | Flag | Notes |
-|---|---|---|
-| 1 | Summon | pulls you to it |
-| 2 | Enrage | |
-| 3 / 4 | Rampage / Area Rampage | |
-| 5 | Flurry | |
-| 12 | **Unslowable** | immune to slow |
-| 13 | Unmezzable | |
-| 14 | Uncharmable | |
-| 15 | Unstunnable | |
-| 16 | **Unsnareable** | immune to movement-speed debuffs (your "immune to movement-speed changes") |
-| 17 | Unfearable | |
-| 21 | **Immune Fleeing** | does *not* run at low HP |
-| 23 | Immune Non-Magical | needs a magic weapon |
-| 26 | Immune Ranged Spells | |
-| 31 | **Immune Pacify** | cannot be lulled |
-| 37 | **Flee at %** | *runs when low*; param = HP % |
-| 44 | Immune Ranged Attacks | |
-| 46 | Immune NPC/Pet Damage | |
+**Rule:**
+1. Fetch **all** rows matching the normalized name (not `limit=1`).
+2. Split into **real** rows vs **placeholder** rows (placeholder = immune to both
+   melee `19` and magic `20` — can't be killed normally, so never the mob you're
+   fighting).
+3. If the overlay knows the **current zone** (it does — #141), prefer rows in it.
+4. **Primary row** (drives name / level / HP): the **highest-level real** row.
+   Fall back to a placeholder only if there is *no* real row (script-immune
+   uniques like the Emperor — usually keyed by id anyway).
+5. **Warning flags = UNION** of the danger flags (summon / enrage / rampage /
+   flurry, and the immunities) across all **real** rows. Never union a
+   placeholder's flags — its "immune to everything" would fabricate false
+   Immune-Melee/Magic warnings.
 
-Not in `special_abilities` — separate columns:
-- `see_invis`, `see_invis_undead` → **see invis** (either true = sees invis).
-- `runspeed` → `0` means **rooted in place** (never chases).
+`mob-specials-clusters.md` (from `--db-all`) is the worklist: each block already
+shows the merged danger set and which rows are placeholders.
 
-> On "unrootable": EQ root and snare share the movement-debuff family; code 16
-> (Unsnareable) is the closest catalog signal and is what the overlay should
-> label as "immune to movement-speed changes / root." The audit's `unsnareable`
-> dimension matches PQDI's "Immune to Snare/Root" text so we can confirm the
-> semantics per boss.
+### Repo fix surface
 
----
+- **Row-picker / merge** — `index.js` mob-info lookup (~**6612**, the
+  `or=(name.ilike…)&…&limit=1`). Replace `limit=1` with an all-rows fetch +
+  the pick-and-merge above. This is where #161-P1 (staged) and #171 (comb)
+  converge — do it once, here. Zone scoping already exists from #141; reuse it.
+- **Surface `runspeed`** — add `runspeed` to that select (~**6613**) and derive
+  `rooted` / `flees` on the mob object (~**6850**); decode `37`/`21`/`36`.
+- **Extend the decoder** — `index.js` `_MOB_SPECIAL_LABELS` (~**5380**): add the
+  `show:true` codes the PQDI diff confirms (candidates 22/26/36/37/39/44/46).
+  Mirror additions into the audit's `CODE`/`DECODED_BY_BOT` so runs stay honest.
+  Folds into staged #55 (mob-immunity display + overlay badge).
 
-## Repo fix surface (what to change after the audit)
-
-Three independent fixes. #1 and #2 are correct regardless of what PQDI returns;
-#3 is gated on the audit report so we only add flags PQDI actually shows.
-
-### Fix 1 — stop picking placeholder/variant rows (the #173 core bug)
-
-`index.js` ~**6612**, the mob-info lookup:
-
-```js
-const rows = await supabase.select('eqemu_npc_types',
-  `or=(name.ilike.${encPlain},name.ilike.${encHashed})&select=…&limit=1`);
-const r = Array.isArray(rows) && rows[0];
-```
-
-`&limit=1` lets PostgREST hand back whichever row it likes — often the `#`-prefixed
-**L1 placeholder** (e.g. `#The_Itraer_Vius`, specials `10,1^19,1^20,1^21,1^24,1^27,1^35,1`)
-instead of the real **L63** `The_Itraer_Vius` (specials with Enrage/Rampage,
-`runspeed 0`). Fix: drop `&limit=1`, order to prefer the real row, and pick in JS:
-
-```js
-// …&select=…&order=level.desc.nullslast&limit=8   (no limit=1)
-const rows = await supabase.select('eqemu_npc_types', `…&order=level.desc.nullslast&limit=8`);
-const list = Array.isArray(rows) ? rows : [];
-// prefer the highest-level, non-`#`-placeholder, ability-bearing row
-const r = list.slice().sort((a, b) =>
-  (b.special_abilities ? 1 : 0) - (a.special_abilities ? 1 : 0) ||
-  (b.level || 0) - (a.level || 0) ||
-  (String(a.name).startsWith('#') ? 1 : 0) - (String(b.name).startsWith('#') ? 1 : 0)
-)[0];
-```
-
-(Same picking logic wants to live in the staged #161-P1 mob-variant work — reuse
-that if it lands first.)
-
-### Fix 2 — surface `runspeed` → rooted / flees
-
-`index.js` ~**6613**: add `runspeed` to the select. Then in the mob object
-(~**6850**) add derived fields:
-
-```js
-runspeed:    r.runspeed != null ? Number(r.runspeed) : null,
-rooted:      Number(r.runspeed) === 0,                 // stationary in place
-```
-
-Decode the flee flags in `_decodeMobSpecials` / a sibling so the overlay can
-say "Flees at 20%" (code 37 param) or "Does not flee" (code 21). The overlay
-(`apps/mimic/mobinfo.html`) then shows a Rooted / Flees badge next to the
-immunity row.
-
-### Fix 3 — extend `_decodeMobSpecials` label map (audit-gated)
-
-`index.js` ~**5380** `_MOB_SPECIAL_LABELS`. Add the `show:true` codes the audit
-confirms PQDI renders — candidates: 26 (Immune Ranged Spells), 37 (Flee %), 44
-(Immune Ranged Attacks), 46 (Immune NPC/Pet Damage), 22, 24, 39. Do **not** add
-42/43/49 unless the report shows PQDI displaying them. Mirror any additions into
-`_MOB_SPECIAL_LABELS` and the audit's `DECODED_BY_BOT` set so future runs stay
-honest.
-
-> Overlaps with staged work: `scratchpad/staged` #55 (mob immunities display)
-> already drafts `_MOB_SPECIAL_LABELS` extensions and the overlay badge — fold
-> Fix 3 into it rather than duplicating.
+The full code→flag map, the placeholder predicate, and the merge live in
+`scripts/audit-mob-specials.mjs` — the script and the bot fix should share the
+same table so they never drift.
 
 ---
 
 ## After the run
 
-1. Read `audit-mob-specials-report.md`.
-2. **Mismatches table** → each row is either the variant bug (Fix 1) or a
-   decode gap (Fix 3). Spot-check 2–3 against the live PQDI page.
-3. **Dropped-codes table** → decide show/hide per code from what PQDI actually
-   renders; apply Fix 3.
-4. Ship Fix 1 + Fix 2 to `main` (bot) with a `/mob-info` sanity check on a
-   known-rooted boss; ship the overlay badge on `beta`.
-5. Close #173 (and fold #171 enrage-comb into it).
+1. `mob-specials-summary.md` → the dropped-code list finalizes Fix 3's set.
+2. `mob-specials-clusters.md` → spot-check 3-4 divergent clusters against live
+   PQDI, confirm the merge (warn-if-any) is what PQDI shows.
+3. `audit-mob-specials-report.md` → each boss mismatch is either the variant bug
+   (row-picker) or a decode gap.
+4. Ship the row-picker + `runspeed` to `main` (bot), the badge to `beta`
+   (overlay). Close #173 (folds #171).
