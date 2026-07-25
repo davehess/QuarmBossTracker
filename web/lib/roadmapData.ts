@@ -43,6 +43,18 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'mimic-21-pqdi-spellsets',
+    title: '🐺 Mimic 2.1 — PQDI link + one-shot spell-set swap',
+    version: 'Mimic 2.1 · Agent 3.4.34',
+    date: '2026-07-25',
+    headline: 'Two raider-requested wins graduate to stable: pull up any mob\'s PQDI page straight from the Target Info overlay, and swap a song or spell across every one of your saved spell sets in a single step.',
+    features: [
+      { name: '🔗 PQDI link on Target Info', blurb: 'The Target Info overlay now carries a PQDI link. Tap it and that mob\'s full PQDI page — drops, spawn details, resists — opens in your browser, so you can check what it drops or how it resists without alt-tabbing out to search for it mid-fight.' },
+      { name: '🎵 Spell sets: swap once, done everywhere', blurb: 'UI Studio can now replace a song or spell across all of your saved spell sets at once. Got an upgrade that belongs in every set? Pick the old spell (shown by name and ID), pick the new one, and apply — the change lands in every named set, with a backup written first. No more opening and editing each set by hand.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'mimic-204-raid-clarity',
     title: '🐺 Mimic 2.0.4 — the raid-clarity release',
     version: 'Mimic 2.0.4 · Agent 3.4.17 · Web 1.0.269',
