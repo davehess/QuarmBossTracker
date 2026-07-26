@@ -84,6 +84,18 @@ export default async function RootLayout({ children }: { children: React.ReactNo
                     <span>Beta</span>
                     <span aria-hidden className="text-dim text-[10px]">↗</span>
                   </a>
+                  {/* Linux / SteamOS (Steam Deck) beta — the native AppImage
+                      (#156). Own update channel, experimental. Quiet styling. */}
+                  <a
+                    href="/mimic/linux?direct=1"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded border border-border bg-bg/40 text-dim text-xs hover:bg-bg/70 hover:text-fg transition-colors whitespace-nowrap no-underline"
+                    title="Wolf Pack Mimic — Linux / SteamOS (Steam Deck) BETA. Native AppImage: UI Studio, dashboard, log-based callouts. Auto-updates on its own channel. Experimental — grab this only if you're testing on Linux/Deck."
+                  >
+                    <span>Linux / SteamOS</span>
+                    <span aria-hidden className="text-dim text-[10px]">↗</span>
+                  </a>
                   {/* Site-wide search sits beside the download CTAs (Uilnayar
                       2026-06-23). Signed-in only — the search API is
                       members-only. Enter opens the full /search results page. */}
