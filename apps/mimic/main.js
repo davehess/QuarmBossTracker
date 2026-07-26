@@ -53,11 +53,17 @@ app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 // Windows. Must run before app.whenReady().
 if (process.platform === 'linux') {
   app.commandLine.appendSwitch('no-sandbox');
-  // Steam Deck / SteamOS (Mesa + gamescope/KWin): Electron's GPU-accelerated
-  // renderer crashes ("window unresponsive" → render-process-gone), leaving a
-  // blank/grey window (#156, field log 2026-07-25). Force software rendering —
-  // it's rock-solid and plenty fast for a dashboard/overlay UI, and window
-  // transparency (overlays) is a compositor property, unaffected by this.
+  // Steam Deck / SteamOS: Chromium can't allocate shared memory in /dev/shm
+  // (FATAL platform_shared_memory_region_posix — "/dev/shm … No such process"),
+  // so EVERY renderer process dies instantly and the window stays blank/grey
+  // (#156, field-confirmed 2026-07-26). --disable-dev-shm-usage makes Chromium
+  // put its shared memory in /tmp instead — the canonical fix for constrained
+  // Linux (Docker/CI/immutable distros). THIS is the real grey-window fix.
+  app.commandLine.appendSwitch('disable-dev-shm-usage');
+  // Also force software rendering: the Deck's GPU stack (Mesa + gamescope) is a
+  // known source of Electron renderer crashes, and software rendering is plenty
+  // fast for a dashboard. Overlay transparency is a compositor property, so it's
+  // unaffected. (Belt-and-suspenders alongside the /dev/shm fix above.)
   app.disableHardwareAcceleration();
 }
 
