@@ -118,6 +118,23 @@
     <div id="uiStudioCharList" style="margin-top:8px"></div>
   </div>
 
+  <h2>Zeal</h2>
+  <div class="sub">Keep the CoastalRedwood <b>Zeal</b> mod current without dragging files around. Mimic downloads the latest release and drops <code>Zeal.asi</code> + <code>uifiles/</code> into your EverQuest folder — backing up whatever's there first. Close EverQuest before installing (the game holds the file while it's running).</div>
+
+  <div id="zealPanel" style="margin-top:10px">
+    <div class="hint" id="zealStatusLine">Checking your Zeal install…</div>
+    <div style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <button id="zealCheckBtn" type="button" style="background:#21262d;border:1px solid #2a3140">🔄 Check for the latest Zeal</button>
+      <button id="zealInstallBtn" type="button" style="display:none;background:#1f6feb;color:#fff;border:0;border-radius:5px;padding:6px 14px;cursor:pointer;font-weight:600">⬇ Install</button>
+      <span id="zealMsg" style="font-size:11px;color:#8b949e"></span>
+    </div>
+  </div>
+  <div class="row" style="margin-top:10px">
+    <input id="zealAutoCheck" type="checkbox" />
+    <label for="zealAutoCheck">Notify me when a newer Zeal is released</label>
+  </div>
+  <div class="hint">Checks GitHub in the background every 12 hours and pops a notification — it never installs on its own. Uncheck to stop the reminders.</div>
+
   <h2>Local UI</h2>
   <div class="row">
     <input id="quietMode" type="checkbox" />
@@ -490,6 +507,8 @@
     document.getElementById('overlaysUnlocked').checked  = (c.overlaysLocked === false);
     document.getElementById('autoStart').checked         = (c.autoStart !== false);
     document.getElementById('hideOverlaysWhenEqDown').checked = (c.hideOverlaysWhenEqDown !== false);
+    document.getElementById('zealAutoCheck').checked = (c.zealAutoCheck !== false);
+    _renderZealStatus();
     const tm = c.tellsMode || 'off';
     document.querySelectorAll('input[name=tells]').forEach(r => { r.checked = (r.value === tm); });
     _loaded = { eqPaths: _collectEqPaths().slice(), botUrl: c.botUrl || '', token: null };
@@ -525,6 +544,7 @@
         overlaysLocked:   !document.getElementById('overlaysUnlocked').checked,
         autoStart:                document.getElementById('autoStart').checked,
         hideOverlaysWhenEqDown:   document.getElementById('hideOverlaysWhenEqDown').checked,
+        zealAutoCheck:            document.getElementById('zealAutoCheck').checked,
       };
       if (tokenInput) payload.token = tokenInput;
       await window.mimic.saveConfig(payload);
@@ -676,6 +696,74 @@
       } catch (err) {
         if (msg) { msg.style.color = '#ff9b9b'; msg.textContent = '✕ ' + ((err && err.message) || err); }
       } finally { btn.disabled = false; btn.textContent = orig; }
+    });
+  })();
+
+  // ── Zeal auto-updater card ────────────────────────────────────────────────
+  // Local status on open (no network); Check hits GitHub; Install downloads +
+  // drops Zeal.asi + uifiles/ into the EQ folder via main.js (backs up first,
+  // refuses while EQ is running). _latestRelease caches the last check so the
+  // Install click doesn't re-fetch the metadata.
+  var _zealLatestTag = null;
+  async function _renderZealStatus(){
+    var line = document.getElementById('zealStatusLine');
+    if (!line) return;
+    try {
+      var s = await window.mimic.zealStatus();
+      if (!s || !s.eqDir) {
+        line.innerHTML = 'No EverQuest folder set yet — add one above and Mimic can manage Zeal for you.';
+        return;
+      }
+      var installed = s.installedTag
+        ? 'Installed via Mimic: <b style="color:#7ee787">' + String(s.installedTag).replace(/</g,'&lt;') + '</b>'
+        : (s.hasZealAsi
+            ? '<b style="color:#f6c365">Zeal.asi present</b> (version unknown — install below to be sure you\'re current)'
+            : '<b style="color:#ff9b9b">Zeal not installed</b> in this folder');
+      line.innerHTML = installed;
+    } catch (e) {
+      line.textContent = 'Could not read your Zeal install.';
+    }
+  }
+  (function(){
+    var checkBtn   = document.getElementById('zealCheckBtn');
+    var installBtn = document.getElementById('zealInstallBtn');
+    var msg        = document.getElementById('zealMsg');
+    if (!checkBtn) return;
+    checkBtn.addEventListener('click', async function(){
+      var orig = checkBtn.textContent; checkBtn.disabled = true; checkBtn.textContent = 'Checking…';
+      installBtn.style.display = 'none';
+      msg.style.color = '#8b949e'; msg.textContent = '';
+      try {
+        var r = await window.mimic.zealCheckUpdate();
+        if (!r || !r.ok) { msg.style.color = '#ff9b9b'; msg.textContent = '✕ ' + ((r && r.error) || 'check failed'); return; }
+        _zealLatestTag = r.latestTag;
+        if (r.updateAvailable) {
+          msg.style.color = '#7ee787';
+          msg.textContent = 'Latest is ' + (r.latestTag || '?') + (r.installedTag ? ' (you have ' + r.installedTag + ')' : '') + '.';
+          installBtn.textContent = '⬇ Install ' + (r.latestTag || 'latest');
+          installBtn.style.display = 'inline-block';
+        } else {
+          msg.style.color = '#7ee787';
+          msg.textContent = '✓ You\'re on the latest Zeal (' + (r.latestTag || '?') + ').';
+        }
+      } catch (err) {
+        msg.style.color = '#ff9b9b'; msg.textContent = '✕ ' + ((err && err.message) || err);
+      } finally { checkBtn.disabled = false; checkBtn.textContent = orig; }
+    });
+    installBtn.addEventListener('click', async function(){
+      var orig = installBtn.textContent; installBtn.disabled = true; installBtn.textContent = 'Installing…';
+      msg.style.color = '#8b949e'; msg.textContent = '';
+      try {
+        var r = await window.mimic.zealInstallUpdate();
+        if (!r || !r.ok) { msg.style.color = '#f6c365'; msg.textContent = '⚠ ' + ((r && r.error) || 'install failed'); return; }
+        msg.style.color = '#7ee787';
+        msg.textContent = '✓ Installed ' + (r.tag || 'Zeal') + ' — ' + r.written + ' file' + (r.written === 1 ? '' : 's') + ' updated'
+                        + (r.backedUp ? ', ' + r.backedUp + ' backed up' : '') + '. Restart EverQuest to load it.';
+        installBtn.style.display = 'none';
+        _renderZealStatus();
+      } catch (err) {
+        msg.style.color = '#ff9b9b'; msg.textContent = '✕ ' + ((err && err.message) || err);
+      } finally { installBtn.disabled = false; installBtn.textContent = orig; }
     });
   })();
 </script>

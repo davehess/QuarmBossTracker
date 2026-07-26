@@ -44,8 +44,12 @@ Follow **quarm.guide/2025/04/23/linux-and-steam-deck-install-guide** (source:
 3. **Lutris → install EverQuest (Quarm)** from lutris.net; check **"Create steam
    shortcut."** Client lands at **`~/Games/everquest/client/`**, prefix under
    **`~/Games/everquest/`**.
-4. **Zeal**: extract into `~/Games/everquest/client/`, and move **`Zeal.asi`**
-   there too. (Zeal-compatible UI required or it crashes at char-select.)
+4. **Zeal**: **Mimic now installs and updates this for you** (Settings → Zeal →
+   *Install*) — it downloads the latest CoastalRedwood release and drops
+   `Zeal.asi` + `uifiles/` into the client folder, backing up what's there. So
+   the manual "extract into `client/`, move `Zeal.asi`" step is optional; if you'd
+   rather, Mimic handles it once the EQ folder is set. (Zeal-compatible UI required
+   or it crashes at char-select — Zeal's own `uifiles/` ship in the same install.)
 5. **Steam Deck launch option**: `ENABLE_GAMESCOPE_WSI=0` (may be needed).
 6. Right-click in Lutris → **Create Steam Shortcut** → gets Steam Input keybinds
    in Gaming Mode.
@@ -220,6 +224,42 @@ One gate before building it:
 
 If both clear, this becomes a genuine guild feature: "WolfPack Deck Setup — one
 script, you're raiding."
+
+## Zeal, handled by Mimic (built 2026-07-26)
+
+The "drag Zeal.asi + uifiles into `client/`" step is the single most annoying
+piece of the manual setup on a handheld — Desktop Mode file management with a
+trackpad, into a hidden Wine-prefix path. **Mimic now does it in one click**, and
+this is cross-platform (Windows users update Zeal by hand today too).
+
+- **Where:** `apps/mimic/zealUpdater.js` — self-contained, zero deps. Fetches
+  `api.github.com/repos/CoastalRedwood/Zeal/releases/latest`, picks the
+  `zeal_v*.zip` asset, and unpacks it with a tiny pure-JS zip reader over Node's
+  built-in `zlib` (no `unzip`/`bsdtar` on the box required — SteamOS ships
+  neither reliably). Installs **only** the top-level `Zeal.asi` and everything
+  under `uifiles/` — exactly the two things the Quarm.Guide tells you to drag —
+  and ignores any readme/license in the zip.
+- **Safety:** every replaced file is copied to `<file>.zealbak-<ts>` first
+  (binary-safe; main.js's `_backupAndWriteFile` is utf8-only, so the module has
+  its own). Install **refuses while EQ is running** (`_isEqRunning()` gate) — the
+  game holds `Zeal.asi` and the write would fail anyway. Path-traversal guarded.
+- **UI:** Settings → **Zeal** card. Shows what's installed (tag if we installed
+  it, "present, version unknown" for a pre-existing manual install), a *Check for
+  the latest* button, and a one-click *Install*. Records the installed tag in
+  `cfg.zealInstalledTag`.
+- **Staying current:** a **notify-only** background check (opt-out
+  `cfg.zealAutoCheck`, default on) runs ~25s after boot and every 12h — it pops a
+  native notification when CoastalRedwood ships a newer Zeal, but **never
+  auto-overwrites** `Zeal.asi` (silently replacing a game mod mid-session would be
+  surprising, and fails while EQ is up). The user clicks Install when ready. The
+  header "Check for updates" also triggers it.
+
+**What this does to the installer plan:** the `wolfpack-deck-setup.sh` no longer
+needs to ship or place Zeal — it can install the EQ client + the Mimic AppImage +
+the bridge, and let **Mimic pull Zeal on first run** once the EQ folder is set.
+That shrinks the guild-hosted "Deck Kit" (Zeal + Zeal UI drop out of it) and means
+Zeal stays current forever without re-cutting the kit. The bridge (`outflow`) is
+still the one unproven piece; Zeal delivery is now solved on every platform.
 
 ## Bottom line
 - **Re-home EQ from Bottles → Lutris + GE-Proton** (official Deck path). Fixes the
