@@ -12,6 +12,7 @@
   "scripts": {
     "start": "electron .",
     "dist": "electron-builder --win nsis --publish never",
+    "dist:linux": "electron-builder --linux AppImage --publish never",
     "dist:dir": "electron-builder --dir",
     "postinstall": "node scripts/stage-agent.js"
   },
@@ -68,6 +69,19 @@
         }
       ],
       "artifactName": "Wolf-Pack-Mimic-${version}.${ext}"
+    },
+    "linux": {
+      "icon": "build/icon.png",
+      "category": "Game",
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "Wolf-Pack-Mimic-${version}-linux-x86_64.${ext}"
     },
     "nsis": {
       "oneClick": false,
