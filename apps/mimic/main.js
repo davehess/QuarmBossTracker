@@ -27,6 +27,7 @@ const net   = require('net');
 const http  = require('http');
 const { spawn } = require('child_process');
 const { startZealWatch } = require('./zealPipe');
+const zealUpdater = require('./zealUpdater');
 
 // Hide the default File/Edit/View/Window/Help menubar — this is a focused
 // tray app, those entries just look unfinished. Must run before window
@@ -225,6 +226,13 @@ function defaultConfig() {
     // protocol work, not something a normal user needs running. Toggled from the
     // tray; capped + rotated so it can't fill the disk.
     zealRawCapture: false,
+    // Zeal auto-updater. zealInstalledTag records the CoastalRedwood/Zeal
+    // release tag we last installed (null = never installed via Mimic / manual
+    // install of unknown version). zealAutoCheck lets Mimic poll GitHub in the
+    // background and NOTIFY when a newer Zeal ships — it never auto-overwrites
+    // Zeal.asi (that stays a one-click user action; the game may have it loaded).
+    zealInstalledTag: null,
+    zealAutoCheck: true,
   };
 }
 function loadConfig() {
@@ -6388,11 +6396,105 @@ ipcMain.handle('open-zeal-capture', () => {
     return true;
   } catch { return false; }
 });
+
+// ── Zeal auto-updater (CoastalRedwood/Zeal) ─────────────────────────────────
+// Resolve the EQ client folder Zeal lives in — same folder as eqgame.exe +
+// the log files (where uifiles/ and Zeal.asi go). Reuses the UI-Studio path
+// logic: first configured folder that actually holds EQ logs, else auto-detect.
+function _zealEqDir() {
+  const cfg = loadConfig();
+  const userPaths = Array.isArray(cfg.eqPaths) && cfg.eqPaths.length > 0
+                  ? cfg.eqPaths
+                  : (cfg.eqPath ? [cfg.eqPath] : []);
+  for (const p of userPaths) { if (_dirHasEqLogs(p)) return p; }
+  return detectEqDir(null);
+}
+// Local status only — no network. Feeds the Settings "Zeal" card on open.
+ipcMain.handle('zeal-status', () => {
+  try {
+    const cfg = loadConfig();
+    return zealUpdater.localStatus(_zealEqDir(), cfg.zealInstalledTag);
+  } catch (e) { return { eqDir: null, hasZealAsi: false, installedTag: null }; }
+});
+// Check GitHub for the latest release (network). Returns the comparison the UI
+// needs; never writes anything.
+ipcMain.handle('zeal-check-update', async () => {
+  try {
+    const cfg = loadConfig();
+    const eqDir = _zealEqDir();
+    const local = zealUpdater.localStatus(eqDir, cfg.zealInstalledTag);
+    const latest = await zealUpdater.checkLatest();
+    return {
+      ok: true,
+      eqDir,
+      installedTag: local.installedTag,
+      hasZealAsi: local.hasZealAsi,
+      latestTag: latest.tag,
+      latestName: latest.name,
+      htmlUrl: latest.htmlUrl,
+      publishedAt: latest.publishedAt,
+      // "Update available" whenever the newest tag differs from what we last
+      // installed. If we've never installed via Mimic (installedTag null),
+      // offer the install so the user gets a known-current Zeal either way.
+      updateAvailable: latest.tag !== local.installedTag,
+    };
+  } catch (e) {
+    return { ok: false, error: e && e.message ? e.message : String(e) };
+  }
+});
+// Download + install the latest Zeal into the EQ folder. Refuses while EQ is
+// running (the game holds Zeal.asi; on Windows the write would fail outright).
+ipcMain.handle('zeal-install-update', async () => {
+  try {
+    const eqDir = _zealEqDir();
+    if (!eqDir) return { ok: false, error: 'No EverQuest folder is set. Add one in Settings first.' };
+    if (await _isEqRunning()) {
+      return { ok: false, error: 'Close EverQuest first — Zeal.asi is loaded by the running game and can\'t be replaced while it\'s open.' };
+    }
+    const res = await zealUpdater.install(eqDir);
+    const cfg = loadConfig();
+    cfg.zealInstalledTag = res.tag || cfg.zealInstalledTag;
+    saveConfig(cfg);
+    appendAgentLog(`[zeal-update] installed ${res.tag} into ${eqDir} — ${res.written.length} file(s), ${res.backedUp.length} backed up\n`);
+    return { ok: true, tag: res.tag, name: res.name, written: res.written.length, backedUp: res.backedUp.length };
+  } catch (e) {
+    appendAgentLog(`[zeal-update] install failed: ${e && e.message}\n`);
+    return { ok: false, error: e && e.message ? e.message : String(e) };
+  }
+});
+// Background NOTIFY-ONLY check. Never installs on its own — Zeal.asi is a game
+// mod and silently overwriting it mid-session would be surprising (and fails
+// while EQ is up anyway). Shows a native notification once per newly-seen tag;
+// the user does the one-click install from Settings when they're ready.
+let _zealNotifiedTag = null;
+async function checkZealUpdate({ manual = false } = {}) {
+  try {
+    const cfg = loadConfig();
+    if (!manual && cfg.zealAutoCheck === false) return;
+    const eqDir = _zealEqDir();
+    if (!eqDir) return;                              // no EQ folder yet — nothing to update
+    const latest = await zealUpdater.checkLatest();
+    if (!latest.tag) return;
+    if (latest.tag === cfg.zealInstalledTag) return; // already current
+    if (latest.tag === _zealNotifiedTag) return;     // already nudged for this tag
+    _zealNotifiedTag = latest.tag;
+    appendAgentLog(`[zeal-update] newer Zeal available: ${latest.tag} (installed: ${cfg.zealInstalledTag || 'unknown'})\n`);
+    if (Notification.isSupported()) {
+      const n = new Notification({
+        title: 'Zeal update available',
+        body: `Zeal ${latest.tag} is out. Open Mimic Settings → Zeal to install it in one click.`,
+        silent: true,
+      });
+      n.on('click', () => { try { openSettings(); } catch {} });
+      n.show();
+    }
+  } catch (e) { appendAgentLog(`[zeal-update] background check failed: ${e && e.message}\n`); }
+}
 // Mimic Discord login (device-code flow).
 ipcMain.handle('mimic-link-start',   async () => await startMimicLink());
 ipcMain.handle('mimic-link-cancel',  () => { cancelMimicLink(); return true; });
 ipcMain.handle('mimic-link-signout', async () => { await signOutMimic(); return true; });
-ipcMain.handle('check-for-updates', () => { safeCheckForUpdates(true); checkAgentUpdate({ manual: true }); return true; });
+ipcMain.handle('check-for-updates', () => { safeCheckForUpdates(true); checkAgentUpdate({ manual: true }); checkZealUpdate({ manual: true }); return true; });
 // Revert to stable from the dashboard header's link (next to the BETA badge).
 // The native confirm lives HERE so the page-side control is a plain link and
 // every entry point shares one confirmation.
@@ -6427,6 +6529,11 @@ ipcMain.handle('get-agent-log-tail', (_e, lines) => {
 app.whenReady().then(async () => {
   if (!_gotSingleInstanceLock) return;
   appendAgentLog(`[mimic] boot — Mimic v${app.getVersion()}, single-instance lock acquired, userData=${app.getPath('userData')}\n`);
+  // Zeal auto-updater: notify-only check ~25s after boot (let the EQ folder +
+  // agent settle), then every 12h. Install stays a one-click user action; this
+  // only nudges when CoastalRedwood ships a newer Zeal.
+  setTimeout(() => checkZealUpdate({ manual: false }), 25000);
+  setInterval(() => checkZealUpdate({ manual: false }), 12 * 60 * 60 * 1000);
   createMainWindow();
   makeTrayIcon();
   wireAutoUpdater();
