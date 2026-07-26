@@ -215,6 +215,11 @@ function defaultConfig() {
     // dashboard Overlays tab; pushed to the agent on every change + relaunch.
     damageAlert: false,
     quietMode: false,        // master "I use EQLogParser" — hides all local UI
+    // Background Mode (#156, Steam Deck) — run as an audio-callout + dashboard
+    // companion with NO visible overlay windows. 'auto' turns it on in Gaming
+    // Mode (gamescope can't host our floating windows) and off in Desktop Mode;
+    // 'on'/'off' force it. Callouts + parse upload keep running either way.
+    backgroundMode: 'auto',  // 'auto' | 'on' | 'off'
     // Quiet updates (default ON): a downloaded update applies silently on the
     // next quit (autoInstallOnAppQuit), so the "Restart now?" pop-up is just
     // nagging — especially when releases come in bursts. When true we skip the
@@ -4786,7 +4791,51 @@ function _stopEqPolling() {
 // hideOverlaysWhenEqDown gates show-state on EQ being detected as running —
 // also bypassed in unlock mode so the user can place overlays before launching
 // EverQuest.
+// ── Steam Deck session detection → Background Mode (#156) ────────────────────
+// Gaming Mode runs the gamescope compositor (which can't host our separate
+// always-on-top overlay windows); Desktop Mode runs KDE Plasma (which can).
+// Detect by which compositor is alive right now — process state beats env vars,
+// which can be stale if Mimic was launched outside the foreground session.
+// Cached + refreshed on a timer so a mode switch adapts without a restart.
+let _deckModeCached = 'unknown';   // 'gaming' | 'desktop' | 'unknown' | 'n/a'
+function _refreshDeckMode() {
+  if (process.platform !== 'linux') { _deckModeCached = 'n/a'; return; }
+  const { exec } = require('child_process');
+  exec('pgrep -x plasmashell', { timeout: 4000 }, (err, out) => {
+    if (!err && /\d/.test(out || '')) { _setDeckMode('desktop'); return; }
+    exec('pgrep -x gamescope', { timeout: 4000 }, (e2, o2) => {
+      const gsProc = !e2 && /\d/.test(o2 || '');
+      const env = process.env;
+      const gsEnv = !!env.GAMESCOPE_WAYLAND_DISPLAY
+        || /gamescope/i.test(env.XDG_CURRENT_DESKTOP || '')
+        || /gamescope/i.test(env.XDG_SESSION_DESKTOP || '');
+      _setDeckMode(gsProc || gsEnv ? 'gaming' : 'unknown');
+    });
+  });
+}
+function _setDeckMode(m) {
+  if (m === _deckModeCached) return;
+  _deckModeCached = m;
+  try { appendAgentLog(`[mimic] Steam Deck session: ${m}${_backgroundActive() ? ' → Background Mode (overlays hidden, callouts on)' : ''}\n`); } catch {}
+  try { applyAllVisibility(); } catch { /* windows may not exist yet */ }
+}
+// Background Mode active right now? 'on'/'off' force it; 'auto' follows the Deck
+// session (on in Gaming Mode). Never active off-Linux.
+function _backgroundActive() {
+  if (process.platform !== 'linux') return false;
+  const mode = (loadConfig().backgroundMode || 'auto');
+  if (mode === 'off') return false;
+  if (mode === 'on')  return true;
+  return _deckModeCached === 'gaming';
+}
+
 function _eqGateOk(cfg) {
+  // Background Mode suppresses ALL visual overlays (they can't composite over
+  // gamescope anyway). The trigger overlay's renderer keeps running while
+  // hidden, so audio callouts + the dashboard are unaffected — this only hides
+  // windows. `unlocked` still bypasses this in every caller, so overlay setup
+  // works. No-op off Linux.
+  if (_backgroundActive()) return false;
   if (cfg.hideOverlaysWhenEqDown === false) return true;
   return _eqRunning;
 }
@@ -9164,6 +9213,10 @@ app.whenReady().then(async () => {
   // only nudges when CoastalRedwood ships a newer Zeal.
   setTimeout(() => checkZealUpdate({ manual: false }), 25000);
   setInterval(() => checkZealUpdate({ manual: false }), 12 * 60 * 60 * 1000);
+
+  // #156 — Steam Deck session watch: detect Gaming vs Desktop for Background
+  // Mode, then re-check every 15s so a mode switch flips overlays on its own.
+  if (process.platform === 'linux') { _refreshDeckMode(); setInterval(_refreshDeckMode, 15000); }
   createMainWindow();
   makeTrayIcon();
   wireAutoUpdater();

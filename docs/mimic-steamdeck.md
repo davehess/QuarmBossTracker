@@ -120,6 +120,35 @@ If the DX hook survives, everything downstream is easy. If it doesn't, Phase 1
 
 ---
 
+## Background Mode (Gaming Mode vs Desktop Mode)
+
+Gaming Mode (gamescope) can't host our floating overlay windows, and Desktop
+Mode changes how the Deck's controller keybinds work — so Mimic detects the
+session and adapts:
+
+- **Detection:** `plasmashell` alive → Desktop Mode; gamescope session (no
+  plasmashell, `GAMESCOPE_WAYLAND_DISPLAY` / `XDG_CURRENT_DESKTOP=gamescope`) →
+  Gaming Mode. Process state beats env vars (env can be stale if Mimic launched
+  outside the session). Re-checked every 15s, so switching modes flips it live.
+- **`backgroundMode` setting** (`auto` default · `on` · `off`):
+  - **auto** — Background Mode ON in Gaming Mode, OFF in Desktop Mode.
+  - **on** — always background (audio-only anywhere).
+  - **off** — always try to show visual overlays.
+- **What Background Mode does:** hides the visual overlay windows only. The
+  trigger overlay's renderer keeps running while hidden, so **audio callouts,
+  parse/chat upload, and the dashboard are unaffected** — Mimic runs as a
+  behind-the-scenes callout companion. Unlocking overlays (setup) still shows
+  them, so you can reposition anytime.
+- The detected mode is written to the agent log (`[mimic] Steam Deck session:
+  gaming → Background Mode …`) so you can confirm detection on the Deck.
+
+> **TTS caveat:** callouts use Chromium's Web Speech API, which on Linux needs
+> speech-dispatcher + a voice (espeak-ng) — SteamOS may ship neither. First
+> thing to verify on the Deck; if it's silent, the fix is bundling a
+> self-contained voice (piper) or pre-rendered clips (both compositor- and
+> speech-dispatcher-independent). The `backgroundMode` UI toggle (Auto/On/Off in
+> Settings) is a follow-up; `auto` works out of the box.
+
 ## Build / delivery
 
 - `.github/workflows/build-mimic-linux.yml` — `workflow_dispatch` on any branch,
