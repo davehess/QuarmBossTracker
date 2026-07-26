@@ -1,12 +1,17 @@
 name: build-mimic-linux
 
-# Steam Deck / Linux AppImage of Mimic (#156). EXPERIMENTAL — does NOT publish
-# to the releases page and does NOT touch the Windows auto-update channel. It
-# only builds an AppImage and uploads it as a run Artifact you download by hand.
+# Steam Deck / Linux AppImage of Mimic (#156). EXPERIMENTAL, and fully isolated
+# from the Windows fleet: it publishes to its OWN `linux` update channel. The
+# version carries a `-linux.<run>` prerelease suffix, so electron-builder's
+# generateUpdatesFilesForAllChannels emits `linux.yml` (never latest.yml/beta.yml)
+# — Windows clients read latest/beta and can never see these builds. The Linux
+# client (autoUpdater.channel = 'linux') auto-updates off this channel.
 #
-# Triggers on push to a claude/* working branch (so experimental Linux work
-# never rides main/beta) or manual dispatch. Grab the AppImage from the run's
-# "Artifacts" section.
+# Each push bumps the version via github.run_number, so the Linux client always
+# sees a newer build → the rapid dev loop. The AppImage also uploads as a run
+# artifact as a belt-and-suspenders download.
+#
+# Triggers on push to a claude/* working branch or manual dispatch.
 
 on:
   push:
@@ -16,6 +21,9 @@ on:
       - 'packages/wolfpack-logsync/**'
       - '.github/workflows/build-mimic-linux.yml'
   workflow_dispatch:
+
+permissions:
+  contents: write            # publish the Linux prerelease + its linux.yml feed
 
 jobs:
   build:
@@ -28,17 +36,22 @@ jobs:
           node-version: 20
 
       # postinstall (scripts/stage-agent.js) stages the wolfpack-logsync agent
-      # into apps/mimic/staged-agent so electron-builder's extraResources bundles
-      # it — same as the Windows release build.
+      # into apps/mimic/staged-agent so electron-builder's extraResources bundles it.
       - name: Install (+ stage agent)
         working-directory: apps/mimic
         run: npm install
 
-      - name: Build Linux AppImage
+      # Version = 2.1.1-linux.<run_number>. The `-linux.N` prerelease suffix makes
+      # electron-builder generate linux.yml (the isolated channel) and mark the
+      # GitHub release as a prerelease. --publish always uploads the AppImage +
+      # linux.yml + blockmap to that release, which is the auto-update feed.
+      - name: Build + publish Linux AppImage (linux channel)
         working-directory: apps/mimic
-        run: npx --no-install electron-builder --linux AppImage --publish never
+        run: npx --no-install electron-builder --linux AppImage --publish always -c.extraMetadata.version=2.1.1-linux.${{ github.run_number }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Upload AppImage
+      - name: Upload AppImage artifact (fallback download)
         uses: actions/upload-artifact@v4
         with:
           name: wolf-pack-mimic-linux-appimage

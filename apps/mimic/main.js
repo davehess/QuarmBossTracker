@@ -6719,6 +6719,18 @@ async function checkAgentUpdate(opts) {
 // betas; the user keeps whatever they have until stable catches up.
 function _applyUpdaterChannel() {
   if (!autoUpdater) return false;
+  // Steam Deck / Linux (#156): the AppImage auto-updates off its OWN dedicated
+  // `linux` channel (build-mimic-linux.yml publishes prereleases carrying
+  // linux.yml). Fully isolated from the Windows stable/beta channels — Windows
+  // clients read latest.yml / beta.yml and never see linux.yml, so Linux dev
+  // builds can never reach the fleet. Always prerelease-eligible so the rapid
+  // dev-loop builds are picked up.
+  if (process.platform === 'linux') {
+    autoUpdater.allowPrerelease = true;
+    autoUpdater.channel         = 'linux';
+    autoUpdater.allowDowngrade  = false;
+    return true;
+  }
   const cfg = loadConfig();
   const _buildIsBeta = /-/.test(String(app.getVersion() || ''));
   // forceStable (Hitya 2026-07-16: raid-night testers stuck on beta could
@@ -6845,7 +6857,11 @@ function wireAutoUpdater() {
   });
   // Initial + hourly. Delay 8s so the agent boot doesn't compete for bandwidth.
   setTimeout(() => safeCheckForUpdates(false), 8000);
-  setInterval(() => safeCheckForUpdates(false), 60 * 60 * 1000);
+  // #156 TEMPORARY — while we iterate on the Steam Deck build, Linux checks
+  // every 3 min for a fast dev loop. REVERT to the hourly cadence (drop this
+  // branch) once the Deck client is stable.
+  const _updateEveryMs = (process.platform === 'linux') ? 3 * 60 * 1000 : 60 * 60 * 1000;
+  setInterval(() => safeCheckForUpdates(false), _updateEveryMs);
 }
 
 // Agent hot-swap poll — independent of the Electron-shell updater above.
