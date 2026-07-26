@@ -53,6 +53,12 @@ app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 // Windows. Must run before app.whenReady().
 if (process.platform === 'linux') {
   app.commandLine.appendSwitch('no-sandbox');
+  // Steam Deck / SteamOS (Mesa + gamescope/KWin): Electron's GPU-accelerated
+  // renderer crashes ("window unresponsive" → render-process-gone), leaving a
+  // blank/grey window (#156, field log 2026-07-25). Force software rendering —
+  // it's rock-solid and plenty fast for a dashboard/overlay UI, and window
+  // transparency (overlays) is a compositor property, unaffected by this.
+  app.disableHardwareAcceleration();
 }
 
 // ── Single-instance lock ────────────────────────────────────────────────────
@@ -3936,6 +3942,11 @@ function _refreshDeckMode() {
   });
 }
 function _setDeckMode(m) {
+  // A transient probe miss (pgrep timing out under load) yields 'unknown' —
+  // never let that clobber an already-determined desktop/gaming state, or the
+  // mode flaps every refresh (field log 2026-07-25). Only a definite opposite
+  // signal flips it.
+  if (m === 'unknown' && (_deckModeCached === 'desktop' || _deckModeCached === 'gaming')) return;
   if (m === _deckModeCached) return;
   _deckModeCached = m;
   try { appendAgentLog(`[mimic] Steam Deck session: ${m}${_backgroundActive() ? ' → Background Mode (overlays hidden, callouts on)' : ''}\n`); } catch {}
