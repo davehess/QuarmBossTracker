@@ -62,11 +62,11 @@ if (process.platform === 'linux') {
   // put its shared memory in /tmp instead — the canonical fix for constrained
   // Linux (Docker/CI/immutable distros). THIS is the real grey-window fix.
   app.commandLine.appendSwitch('disable-dev-shm-usage');
-  // Also force software rendering: the Deck's GPU stack (Mesa + gamescope) is a
-  // known source of Electron renderer crashes, and software rendering is plenty
-  // fast for a dashboard. Overlay transparency is a compositor property, so it's
-  // unaffected. (Belt-and-suspenders alongside the /dev/shm fix above.)
-  app.disableHardwareAcceleration();
+  // Hardware acceleration is INTENTIONALLY left ON. Earlier builds forced
+  // software rendering on the theory the grey window was a GPU crash — but the
+  // field log proved the crash was /dev/shm (fixed above), and with software
+  // rendering the renderer survived yet SwiftShader painted the window blank/grey
+  // on the Deck (#156, 2026-07-26). Real GPU rendering paints correctly.
 }
 
 // ── Single-instance lock ────────────────────────────────────────────────────
