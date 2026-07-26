@@ -171,6 +171,45 @@ under GE-Proton with the manual `outflow.exe` test above.
 
 ---
 
+## Automated one-click installer (the north star) — and why NOT a Mimic Flatpak
+
+The goal: a WolfPack member unboxes a Deck, runs ONE thing, and ends up with
+EQ + Zeal + the pipe bridge + Mimic + a Steam shortcut, configured.
+
+**Mimic as a Flatpak is the wrong tool for this.** A Flatpak's sandbox works
+*against* exactly what Mimic needs: reading arbitrary EQ folders anywhere on disk,
+spawning the Wine-side bridge, and driving always-on-top overlays. You'd have to
+punch `--filesystem=host` + process/socket holes until the sandbox is meaningless,
+and you'd lose the in-place auto-update that already works. **Keep Mimic as the
+AppImage.** The "one-click" win comes from an **installer**, not from repackaging
+Mimic.
+
+**A `wolfpack-deck-setup.sh` installer is very doable** and is the right shape:
+1. Ensure **Lutris + GE-Proton** (install via `flatpak` + a pinned GE-Proton
+   download if absent).
+2. Deploy a **guild-hosted, pre-baked EQ bundle** to `~/Games/everquest/` — this
+   is the "base TAKP folder somewhere accessible" idea: a ready `client/` (EQ +
+   current Quarm patch + Zeal.asi + Zeal UI + dgVoodoo) so members skip Steps 3–5
+   entirely.
+3. Write `eqclient.ini` (Log=TRUE, VideoMode) + `zeal.ini` (Pipe*, ExportOnCamp)
+   deterministically — no manual editing.
+4. Drop in **`outflow.exe`** + the **launcher script** (EQ → discover PID → bridge
+   → Mimic).
+5. Fetch the **Mimic AppImage** to `~/Applications/`.
+6. Create the **Steam shortcut** (via `steamtinkerlaunch`, or by editing
+   `shortcuts.vdf`) so it's in the library with Steam Input.
+
+Two gates before building it:
+- **The bridge must be proven** on a real Deck first (the one `outflow` test).
+  Automating an unproven bridge is premature.
+- **The EQ client is Hitya's call.** The TAKP/Quarm client is copyrighted and
+  account-gated; a guild-hosted bundle is common in EQ-emu circles but is a
+  deliberate decision, not a default. Alternative: the installer asks the member
+  to drop in their own TAKP client zip and automates everything else.
+
+If both clear, this becomes a genuine guild feature: "WolfPack Deck Setup — one
+script, you're raiding."
+
 ## Bottom line
 - **Re-home EQ from Bottles → Lutris + GE-Proton** (official Deck path). Fixes the
   flakiness, keeps keybinds, and is the only clean way to reach Zeal's pipe.
