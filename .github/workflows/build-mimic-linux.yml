@@ -1,0 +1,46 @@
+name: build-mimic-linux
+
+# Steam Deck / Linux AppImage of Mimic (#156). EXPERIMENTAL — does NOT publish
+# to the releases page and does NOT touch the Windows auto-update channel. It
+# only builds an AppImage and uploads it as a run Artifact you download by hand.
+#
+# Triggers on push to a claude/* working branch (so experimental Linux work
+# never rides main/beta) or manual dispatch. Grab the AppImage from the run's
+# "Artifacts" section.
+
+on:
+  push:
+    branches: ['claude/**']
+    paths:
+      - 'apps/mimic/**'
+      - 'packages/wolfpack-logsync/**'
+      - '.github/workflows/build-mimic-linux.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+
+      # postinstall (scripts/stage-agent.js) stages the wolfpack-logsync agent
+      # into apps/mimic/staged-agent so electron-builder's extraResources bundles
+      # it — same as the Windows release build.
+      - name: Install (+ stage agent)
+        working-directory: apps/mimic
+        run: npm install
+
+      - name: Build Linux AppImage
+        working-directory: apps/mimic
+        run: npx --no-install electron-builder --linux AppImage --publish never
+
+      - name: Upload AppImage
+        uses: actions/upload-artifact@v4
+        with:
+          name: wolf-pack-mimic-linux-appimage
+          path: apps/mimic/dist/*.AppImage
+          if-no-files-found: error

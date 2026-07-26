@@ -118,9 +118,9 @@ function startZealWatch({ onEvent, onStatus, log } = {}) {
     if (onStatus) onStatus({ connectedPids: [...sockets.keys()], lastError });
   }
 
-  function _connect(pid) {
+  function _connect(pid, pathOverride) {
     if (sockets.has(pid)) return;
-    const pipePath = PIPE_PREFIX + pid;
+    const pipePath = pathOverride || (PIPE_PREFIX + pid);
     let buf = '';
     const socket = net.connect({ path: pipePath }, () => {
       _log(`[zeal] connected to ${pipePath}\n`);
@@ -148,9 +148,10 @@ function startZealWatch({ onEvent, onStatus, log } = {}) {
       }
     };
     socket.on('error', (e) => {
-      // ENOENT = Zeal not running for this PID (no pipe). Quiet — it's the
-      // common case for an EQ client without Zeal, or before Zeal's pipe is up.
-      if (e && e.code !== 'ENOENT') { lastError = e.message; }
+      // ENOENT = Zeal not running for this PID (no pipe). ECONNREFUSED = the
+      // Linux bridge socket exists but nothing is listening yet. Both are the
+      // common "not up yet" case — stay quiet; the 25s poll retries.
+      if (e && e.code !== 'ENOENT' && e.code !== 'ECONNREFUSED') { lastError = e.message; }
       cleanup(e && e.code);
     });
     socket.on('close', () => cleanup());
@@ -159,6 +160,15 @@ function startZealWatch({ onEvent, onStatus, log } = {}) {
 
   async function _poll() {
     if (stopped) return;
+    // Linux / Steam Deck (#156): there is no Win32 named pipe to enumerate.
+    // Zeal's pipe is bridged out of Wine to a Unix socket (winestreamproxy);
+    // connect to it directly. Path comes from ZEAL_PIPE_SOCKET; the JSON frame
+    // format on the socket is byte-identical to the Windows pipe.
+    if (process.platform !== 'win32') {
+      const sock = process.env.ZEAL_PIPE_SOCKET;
+      if (sock) _connect('linux-bridge', sock);
+      return;
+    }
     try {
       const pids = await _findEqPids();
       for (const pid of pids) _connect(pid);

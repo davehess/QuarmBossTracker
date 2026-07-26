@@ -45,6 +45,16 @@ Menu.setApplicationMenu(null);
 // belt-and-suspenders for the speechSynthesis activation check specifically.
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 
+// Steam Deck / SteamOS (and most immutable / Flatpak-adjacent distros) ship no
+// setuid chrome-sandbox helper and no unprivileged user namespaces, so Electron
+// aborts at launch with "SUID sandbox helper binary was found, but is not
+// configured correctly". The AppImage is a local, user-run tool (no untrusted
+// web content), so disabling the sandbox on Linux is the accepted fix. No-op on
+// Windows. Must run before app.whenReady().
+if (process.platform === 'linux') {
+  app.commandLine.appendSwitch('no-sandbox');
+}
+
 // ── Single-instance lock ────────────────────────────────────────────────────
 // Mimic bundles + runs its own parser engine on a fixed port. Launching a
 // SECOND copy (e.g. clicking the taskbar/Start-menu shortcut while one is
@@ -534,6 +544,78 @@ function _dirHasEqLogs(dir) {
   } catch { return false; }
 }
 
+// ── Linux / Steam Deck EQ discovery (Wine-prefix scan) ──────────────────────
+// EQ on Linux lives inside a Wine/Proton prefix's drive_c. We enumerate the
+// common managers' prefixes (Bottles, Lutris, Proton, ~/.wine) plus SD-card
+// mounts and scan each drive_c shallowly for a folder holding eqgame.exe or an
+// EQ log. Best-effort only — the Settings folder-picker is the guaranteed path.
+function _linuxDriveCRoots() {
+  if (process.platform !== 'linux') return [];
+  const os = require('os');
+  const home = os.homedir();
+  const roots = [];
+  const addPrefixChildren = (base, sub) => {
+    // `base` holds one dir per bottle / game / appid; each + `sub` is a drive_c.
+    let names = [];
+    try { names = fs.readdirSync(base); } catch { return; }
+    for (const name of names) {
+      const dc = path.join(base, name, sub);
+      try { if (fs.statSync(dc).isDirectory()) roots.push(dc); } catch {}
+    }
+  };
+  const addDriveC = (dc) => { try { if (fs.statSync(dc).isDirectory()) roots.push(dc); } catch {} };
+
+  // Bottles (flatpak) — one dir per bottle
+  addPrefixChildren(path.join(home, '.var/app/com.usebottles.bottles/data/bottles/bottles'), 'drive_c');
+  // Lutris-style — ~/Games/<game>/drive_c
+  addPrefixChildren(path.join(home, 'Games'), 'drive_c');
+  // Proton — steamapps/compatdata/<appid>/pfx/drive_c (both Steam layouts)
+  addPrefixChildren(path.join(home, '.steam/steam/steamapps/compatdata'), 'pfx/drive_c');
+  addPrefixChildren(path.join(home, '.local/share/Steam/steamapps/compatdata'), 'pfx/drive_c');
+  // Plain wine prefixes
+  addDriveC(path.join(home, '.wine/drive_c'));
+  addDriveC(path.join(home, 'Games/drive_c'));
+  // SD card / external mounts (Steam Deck: /run/media/deck/<label>/…)
+  const user = (() => { try { return os.userInfo().username; } catch { return ''; } })();
+  for (const mediaBase of ['/run/media/deck', user && path.join('/run/media', user)].filter(Boolean)) {
+    let labels = [];
+    try { labels = fs.readdirSync(mediaBase); } catch { continue; }
+    for (const label of labels) {
+      const mnt = path.join(mediaBase, label);
+      addPrefixChildren(path.join(mnt, 'steamapps/compatdata'), 'pfx/drive_c');
+      addDriveC(path.join(mnt, 'drive_c'));
+    }
+  }
+  return roots;
+}
+// Shallow BFS under a drive_c for the folder that holds eqgame.exe or an EQ log.
+function _findEqUnderRoot(root, maxDepth) {
+  const SKIP = new Set(['windows', 'Windows', 'users', 'Users', 'ProgramData',
+    '$Recycle.Bin', 'windows.old', 'Program Files (x86)']);
+  const queue = [[root, 0]];
+  const found = [];
+  while (queue.length) {
+    const [dir, depth] = queue.shift();
+    let entries;
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { continue; }
+    if (entries.some(e => e.isFile() && (/^eqgame\.exe$/i.test(e.name) || EQ_LOG_CANONICAL_RX.test(e.name)))) {
+      found.push(dir);                 // hit — don't descend further here
+      continue;
+    }
+    if (depth < maxDepth) {
+      for (const e of entries) if (e.isDirectory() && !SKIP.has(e.name)) queue.push([path.join(dir, e.name), depth + 1]);
+    }
+  }
+  return found;
+}
+function _linuxEqCandidates() {
+  const out = [];
+  for (const dc of _linuxDriveCRoots()) {
+    for (const d of _findEqUnderRoot(dc, 3)) if (!out.includes(d)) out.push(d);
+  }
+  return out;
+}
+
 function detectEqDir(hint) {
   // 1. Honor an explicit hint (user-configured EQ path) first.
   if (hint && _dirHasEqLogs(hint)) return hint;
@@ -555,6 +637,15 @@ function detectEqDir(hint) {
   // 3. Fall back to scanning the common default install locations.
   for (const dir of EQ_DEFAULT_DIRS) {
     if (_dirHasEqLogs(dir)) return dir;
+  }
+
+  // 4. Linux / Steam Deck: scan Wine-prefix drive_c trees for the EQ folder.
+  //    Prefer a folder that already has logs; otherwise the first that holds
+  //    eqgame.exe (fresh install, never launched — still the right dir to pass).
+  if (process.platform === 'linux') {
+    const cands = _linuxEqCandidates();
+    for (const dir of cands) if (_dirHasEqLogs(dir)) return dir;
+    if (cands.length) return cands[0];
   }
 
   return null;
@@ -853,6 +944,18 @@ function _readUiBundle(eqDir, character) {
   return files;
 }
 async function _isEqRunning() {
+  // Linux (Steam Deck): EQ runs as an eqgame.exe process hosted by Wine/Proton;
+  // pgrep -f finds it by command line. Lets the EQ-running overlay gate work.
+  if (process.platform === 'linux') {
+    return new Promise((resolve) => {
+      try {
+        const { exec } = require('child_process');
+        exec('pgrep -f eqgame.exe', { timeout: 5000 }, (err, stdout) => {
+          resolve(!err && /\d/.test(stdout || ''));
+        });
+      } catch { resolve(false); }
+    });
+  }
   // Windows: tasklist returns rows when match found; an "INFO:" line when
   // no match. We just check whether the eqgame.exe substring is in the output.
   if (process.platform !== 'win32') return false;  // dev / Linux harness
