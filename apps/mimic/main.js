@@ -60,6 +60,13 @@ if (process.platform === 'linux') {
   // put its shared memory in /tmp instead — the canonical fix for constrained
   // Linux (Docker/CI/immutable distros). THIS is the real grey-window fix.
   app.commandLine.appendSwitch('disable-dev-shm-usage');
+  // Steam Deck AppImage: Chromium's zygote (a pre-forked process helper) runs in
+  // the AppImage's FUSE mount namespace, where child processes then FAIL to
+  // create shared memory ANYWHERE — /dev/shm AND /tmp both return ESRCH ("No such
+  // process") (#156, field log 2026-07-26). --no-zygote spawns each child fresh
+  // outside that broken namespace — the in-code equivalent of running the
+  // AppImage with --appimage-extract-and-run.
+  app.commandLine.appendSwitch('no-zygote');
   // Hardware acceleration is INTENTIONALLY left ON. Earlier builds forced
   // software rendering on the theory the grey window was a GPU crash — but the
   // field log proved the crash was /dev/shm (fixed above), and with software
