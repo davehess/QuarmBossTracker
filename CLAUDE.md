@@ -81,6 +81,38 @@ accumulated batch the guild lead asks to promote) — not per-iteration.
 titles, commit messages, announcements) without consulting Hitya first;
 propose, they pick. Unnamed = plain version string.
 
+### Mimic release channels — Linux (Deck) vs Windows (consult before routing a Mimic change)
+Mimic builds to THREE electron-updater channels, and they are deliberately
+isolated. Know which one a change targets before you push:
+
+| Channel | Ships from | Workflow | Version / feed | Audience |
+|---|---|---|---|---|
+| **Windows stable** | `main` | `release-mimic.yml` | plain `X.Y.Z` → `latest.yml` | whole Windows fleet |
+| **Windows beta** | `beta` | `release-mimic.yml` | auto `X.Y.Z-beta.N` → `beta.yml` | Windows beta testers |
+| **Linux / Steam Deck** (#156, EXPERIMENTAL) | `claude/**` working branch | `build-mimic-linux.yml` | `<parked>-linux.<run_number>` → `linux.yml` | Deck testers only |
+
+Load-bearing facts:
+- **The Linux/Deck build is fully isolated by design.** It publishes ONLY to
+  `linux.yml`; the Linux client pins `autoUpdater.channel = 'linux'`. Windows
+  clients read `latest`/`beta` and **can never see a `-linux.N` build** (it
+  semver-sorts as a prerelease of a channel they don't follow). So Deck
+  iteration on a `claude/*` branch never touches Windows users.
+- **Linux support code lives on the working branch + its own channel until
+  #156 graduates.** All of it is `process.platform === 'linux'`-guarded (inert
+  on Windows), but keep it isolated — don't let it ride to the Windows fleet or
+  to stable before the Deck work is blessed.
+- **To route a Mimic FEATURE that should reach Windows, cherry-pick the
+  specific feature commits onto `beta`** — never merge the whole Deck working
+  branch (that drags the experimental Linux plumbing onto the Windows fleet,
+  and onto stable at the next graduation). The feature code itself is
+  cross-platform (the split is build/channel routing, not source). Drop any
+  Deck-only docs from the cherry-pick (docs → `main`, and a Deck-bridge doc
+  doesn't belong on `beta`). Precedent (2026-07-26): the **Zeal + custom-UI-pack
+  auto-updater** (`ghDownload.js` / `zealUpdater.js` / `uiPacks.js` + Settings
+  cards) was built on the Deck branch, then cherry-picked to `beta` as the two
+  clean feature commits — resolving only the boot-timer hunk (its Linux anchor
+  line is absent on beta) and dropping the Deck doc.
+
 **Every release updates the roadmap** (Uilnayar 2026-07-08). Add/extend a
 `releases[]` entry at the TOP of `web/lib/roadmapData.ts` (newest first) for
 any user-facing change — bot, web, agent, or Mimic. Each entry: the version
