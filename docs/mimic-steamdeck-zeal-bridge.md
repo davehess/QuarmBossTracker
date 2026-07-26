@@ -187,10 +187,23 @@ Mimic.
 **A `wolfpack-deck-setup.sh` installer is very doable** and is the right shape:
 1. Ensure **Lutris + GE-Proton** (install via `flatpak` + a pinned GE-Proton
    download if absent).
-2. Deploy a **guild-hosted, pre-baked EQ bundle** to `~/Games/everquest/` — this
-   is the "base TAKP folder somewhere accessible" idea: a ready `client/` (EQ +
-   current Quarm patch + Zeal.asi + Zeal UI + dgVoodoo) so members skip Steps 3–5
-   entirely.
+2. Assemble the EQ install at **`~/Games/everquest/`** from two sources kept
+   strictly separate:
+   - **The copyrighted client — member-supplied, never guild-hosted.** They get
+     the TAKP client from the known locations themselves. The installer finds it
+     by **scanning `~/Downloads`** first (where a browser drops it with zero extra
+     steps), then falling back to a **KDialog/Zenity file-picker** so they can
+     point at a folder *or* a zip anywhere — internal drive, **SD card
+     (`/run/media/deck/<label>/…`)**, or USB. Accept both an already-extracted
+     folder and a `.zip`.
+   - **The "WolfPack Deck Kit" — guild-hosted, legal to share.** A single zip with
+     the current Quarm patch + Zeal + Zeal UI + dgVoodoo + `outflow.exe` +
+     pre-written `eqclient.ini`/`zeal.ini` + the launcher script. None of that is
+     the copyrighted client, so it's the same content already shared in the Quarm
+     Discord — fine to host on guild storage and auto-download.
+   - **Reference-in-place option:** EQ is several GB and Deck storage is tight — if
+     the member already has an extracted client (e.g. on the SD card), symlink it
+     into `client/` instead of copying, so we don't duplicate gigabytes.
 3. Write `eqclient.ini` (Log=TRUE, VideoMode) + `zeal.ini` (Pipe*, ExportOnCamp)
    deterministically — no manual editing.
 4. Drop in **`outflow.exe`** + the **launcher script** (EQ → discover PID → bridge
@@ -199,13 +212,11 @@ Mimic.
 6. Create the **Steam shortcut** (via `steamtinkerlaunch`, or by editing
    `shortcuts.vdf`) so it's in the library with Steam Input.
 
-Two gates before building it:
+One gate before building it:
 - **The bridge must be proven** on a real Deck first (the one `outflow` test).
-  Automating an unproven bridge is premature.
-- **The EQ client is Hitya's call.** The TAKP/Quarm client is copyrighted and
-  account-gated; a guild-hosted bundle is common in EQ-emu circles but is a
-  deliberate decision, not a default. Alternative: the installer asks the member
-  to drop in their own TAKP client zip and automates everything else.
+  Automating an unproven bridge is premature. (Client-hosting is settled: the
+  member always supplies their own client from the known locations; the guild
+  hosts only the legal kit.)
 
 If both clear, this becomes a genuine guild feature: "WolfPack Deck Setup — one
 script, you're raiding."
