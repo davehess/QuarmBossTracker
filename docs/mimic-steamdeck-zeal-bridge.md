@@ -57,6 +57,15 @@ Mimic Phase 1 works exactly the same here — point its EQ folder at
 `~/Games/everquest/client` (logs + `UI_*.ini` live there), and Background Mode /
 UI Studio / callouts behave as they already do on your Deck.
 
+Two guide specifics worth knowing:
+- The guide's **Bonus Step 7** sets `eqclient.ini` `[VideoMode]` to **1440×900**
+  as the Deck optimum — so **UI Studio's target should be 1440×900** (added as a
+  preset), matching the `XPos1440x900`/`YPos1440x900` keys EQ writes. (1280×800 is
+  the native panel; use it only if you set VideoMode to native.)
+- The guide's **Bonus Step 8** (manually copying `UI_[char]_pq.proj.ini` /
+  `[char]_pq.proj.ini` between machines via cloud) is exactly what **Mimic's UI
+  Studio backup/import replaces** — so that whole step goes away.
+
 ---
 
 ## The bridge: `outflow` (preferred) or `winestreamproxy`
@@ -84,8 +93,9 @@ to the Windows pipe, so every overlay works once bytes flow (built earlier, in
 `zealPipe.js`).
 
 ### Easiest first test (no scripting)
-Lutris → right-click EverQuest → **"Wine console"** / **"Run EXE inside prefix"**
-→ run `outflow.exe` with the args above. That uses EXACTLY EQ's wine + prefix, so
+Lutris → the game's launch button has a **second arrow → "Run EXE inside Wine
+prefix"** (and **"Wine console"** / **"Open bash terminal"**) — the same menu the
+guide uses in Bonus Step 10. Run `outflow.exe` with the args above from there. That uses EXACTLY EQ's wine + prefix, so
 if outflow connects, the pipe is reachable and Phase 2 is a go. If it can't find
 the pipe with EQ in-game, that's the Proton-DX-hook answer — and log-driven
 overlays (DPS HUD, trigger callouts) still stand.
