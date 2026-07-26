@@ -135,6 +135,12 @@
   </div>
   <div class="hint">Checks GitHub in the background every 12 hours and pops a notification — it never installs on its own. Uncheck to stop the reminders.</div>
 
+  <h2>Custom UI packs</h2>
+  <div class="sub">One-click install and update for popular Quarm UIs. Mimic downloads the latest release and drops it into <code>uifiles/</code>, backing up what's there. After installing, pick an alternate <b>layout</b> from the pack's Options and apply it. Type the <code>/load</code> command in-game to switch to the UI, then <code>/reloadskin</code> after applying a layout.</div>
+  <div id="uiPacksList" style="margin-top:10px">
+    <div class="hint">Loading UI packs…</div>
+  </div>
+
   <h2>Local UI</h2>
   <div class="row">
     <input id="quietMode" type="checkbox" />
@@ -509,6 +515,7 @@
     document.getElementById('hideOverlaysWhenEqDown').checked = (c.hideOverlaysWhenEqDown !== false);
     document.getElementById('zealAutoCheck').checked = (c.zealAutoCheck !== false);
     _renderZealStatus();
+    _renderUiPacks();
     const tm = c.tellsMode || 'off';
     document.querySelectorAll('input[name=tells]').forEach(r => { r.checked = (r.value === tm); });
     _loaded = { eqPaths: _collectEqPaths().slice(), botUrl: c.botUrl || '', token: null };
@@ -766,5 +773,104 @@
       } finally { installBtn.disabled = false; installBtn.textContent = orig; }
     });
   })();
+
+  // ── Custom UI packs (Nillipuss etc.) ──────────────────────────────────────
+  // Each pack renders a card: install/update button + (when installed) an
+  // Options layout picker. All actions bridge through main.js -> uiPacks.js.
+  function _esc(s){ return String(s == null ? '' : s).replace(/[&<>"]/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+  async function _renderUiPacks(){
+    var host = document.getElementById('uiPacksList');
+    if (!host) return;
+    var data;
+    try { data = await window.mimic.uiPacksList(); }
+    catch (e) { host.innerHTML = '<div class="hint">Could not load UI packs.</div>'; return; }
+    var packs = (data && data.packs) || [];
+    if (!data || !data.eqDir) {
+      host.innerHTML = '<div class="hint">Set your EverQuest folder above first — then Mimic can install UI packs for you.</div>';
+      return;
+    }
+    if (!packs.length) { host.innerHTML = '<div class="hint">No UI packs configured.</div>'; return; }
+    host.innerHTML = '';
+    packs.forEach(function(p){
+      var card = document.createElement('div');
+      card.style.cssText = 'margin:0 0 10px;padding:10px 12px;background:#0f1420;border:1px solid #223;border-radius:6px';
+      var badge = p.installed
+        ? '<span style="background:#0f2a1a;color:#56d364;border:1px solid #1a7f37;border-radius:3px;font-size:9px;padding:1px 6px;margin-left:8px;vertical-align:middle">INSTALLED' + (p.installedTag ? ' ' + _esc(p.installedTag) : '') + '</span>'
+        : '';
+      var options = (p.options || []);
+      var optHtml = '';
+      if (p.installed && options.length) {
+        optHtml =
+          '<div style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">' +
+            '<span style="font-size:11px;color:#8b949e">Layout option:</span>' +
+            '<select class="uiOptSel" style="background:#161b22;color:#c9d1d9;border:1px solid #2a3140;border-radius:4px;padding:4px 8px;font-size:11px;font-family:inherit">' +
+              options.map(function(o){ return '<option value="' + _esc(o) + '">' + _esc(o) + '</option>'; }).join('') +
+            '</select>' +
+            '<button type="button" class="uiOptApply" style="background:#21262d;border:1px solid #2a3140;color:#c9d1d9;padding:5px 10px;font-size:11px;margin:0;border-radius:4px;cursor:pointer">Apply layout</button>' +
+          '</div>';
+      } else if (p.installed) {
+        optHtml = '<div class="hint" style="margin-top:6px;font-style:italic">No alternate layouts in this pack.</div>';
+      }
+      card.innerHTML =
+        '<div style="font-size:13px;font-weight:600;color:#c9d1d9">' + _esc(p.name) + badge + '</div>' +
+        '<div class="hint" style="margin-top:2px">' + _esc(p.notes || '') + '</div>' +
+        '<div style="margin-top:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">' +
+          '<button type="button" class="uiPackBtn" style="background:' + (p.installed ? '#21262d' : '#1f6feb') + ';color:#fff;border:' + (p.installed ? '1px solid #2a3140' : '0') + ';border-radius:5px;padding:6px 12px;cursor:pointer;font-weight:600;font-size:12px">' +
+            (p.installed ? '🔄 Check for update' : '⬇ Install') + '</button>' +
+          '<span class="uiPackMsg" style="font-size:11px;color:#8b949e"></span>' +
+        '</div>' +
+        '<div class="hint" style="margin-top:6px">In-game: type <code>' + _esc(p.loadCmd) + '</code> to load this UI.</div>' +
+        optHtml;
+      host.appendChild(card);
+
+      var btn = card.querySelector('.uiPackBtn');
+      var msg = card.querySelector('.uiPackMsg');
+      btn.addEventListener('click', async function(){
+        var orig = btn.textContent; btn.disabled = true;
+        msg.style.color = '#8b949e';
+        try {
+          if (!p.installed) {
+            btn.textContent = 'Installing…'; msg.textContent = '';
+            var r = await window.mimic.uiPackInstall(p.id);
+            if (!r || !r.ok) { msg.style.color = '#ff9b9b'; msg.textContent = '✕ ' + ((r && r.error) || 'install failed'); return; }
+            msg.style.color = '#7ee787';
+            msg.textContent = '✓ Installed ' + (r.tag || '') + ' — ' + r.written + ' files' + (r.backedUp ? ', ' + r.backedUp + ' backed up' : '') + '.';
+            await _renderUiPacks();   // repaint → now shows INSTALLED + options
+          } else {
+            btn.textContent = 'Checking…'; msg.textContent = '';
+            var c = await window.mimic.uiPackCheck(p.id);
+            if (!c || !c.ok) { msg.style.color = '#ff9b9b'; msg.textContent = '✕ ' + ((c && c.error) || 'check failed'); return; }
+            if (!c.updateAvailable) { msg.style.color = '#7ee787'; msg.textContent = '✓ Up to date (' + (c.latestTag || '?') + ').'; return; }
+            btn.textContent = 'Updating…';
+            var u = await window.mimic.uiPackInstall(p.id);
+            if (!u || !u.ok) { msg.style.color = '#ff9b9b'; msg.textContent = '✕ ' + ((u && u.error) || 'update failed'); return; }
+            msg.style.color = '#7ee787';
+            msg.textContent = '✓ Updated to ' + (u.tag || c.latestTag || '') + '. /reloadskin in-game to see it.';
+            await _renderUiPacks();
+          }
+        } catch (err) {
+          msg.style.color = '#ff9b9b'; msg.textContent = '✕ ' + ((err && err.message) || err);
+        } finally { btn.disabled = false; btn.textContent = orig; }
+      });
+
+      var applyBtn = card.querySelector('.uiOptApply');
+      if (applyBtn) {
+        applyBtn.addEventListener('click', async function(){
+          var sel = card.querySelector('.uiOptSel');
+          var opt = sel ? sel.value : '';
+          var orig = applyBtn.textContent; applyBtn.disabled = true; applyBtn.textContent = 'Applying…';
+          msg.style.color = '#8b949e'; msg.textContent = '';
+          try {
+            var r = await window.mimic.uiPackApplyOption(p.id, opt);
+            if (!r || !r.ok) { msg.style.color = '#ff9b9b'; msg.textContent = '✕ ' + ((r && r.error) || 'apply failed'); return; }
+            msg.style.color = '#7ee787';
+            msg.textContent = '✓ Applied "' + opt + '" — ' + r.written + ' files' + (r.backedUp ? ', ' + r.backedUp + ' backed up' : '') + '. Type /reloadskin in-game.';
+          } catch (err) {
+            msg.style.color = '#ff9b9b'; msg.textContent = '✕ ' + ((err && err.message) || err);
+          } finally { applyBtn.disabled = false; applyBtn.textContent = orig; }
+        });
+      }
+    });
+  }
 </script>
 </body></html>

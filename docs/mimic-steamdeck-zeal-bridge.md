@@ -261,6 +261,40 @@ That shrinks the guild-hosted "Deck Kit" (Zeal + Zeal UI drop out of it) and mea
 Zeal stays current forever without re-cutting the kit. The bridge (`outflow`) is
 still the one unproven piece; Zeal delivery is now solved on every platform.
 
+## Custom UI packs, also handled by Mimic (built 2026-07-26)
+
+The exact same problem — miserable Desktop-Mode file dragging — applies to the
+popular Quarm UIs (Nillipuss et al.). Those are GitHub-released repos, so the
+Zeal machinery generalizes cleanly.
+
+- **Shared core:** `apps/mimic/ghDownload.js` (`httpsGet` + pure-JS `unzip` +
+  binary-safe `backupAndWriteBinary`), factored out of the Zeal updater so both
+  it and the UI-pack layer sit on one implementation.
+- **UI-pack layer:** `apps/mimic/uiPacks.js` — a curated registry of guild-blessed
+  UIs (Nillipuss 1080p / 1440p to start; `NilliP/NillipussUI_1080p` etc.). Each
+  entry is `{ repo, packDir, loadCmd }`. `install()` downloads the latest release
+  (custom `.zip` asset if present, else the source `zipball_url`), finds the
+  `<packDir>/` segment anywhere in the zip (handles the `<repo>-<tag>/` source
+  wrapper AND a folder-at-root custom asset), and re-roots that subtree under
+  `uifiles/<packDir>/` — backing up every replaced file, ignoring wrapper cruft
+  (README/.gitattributes), traversal-guarded.
+- **Options (alternate layouts):** these packs ship variants under
+  `uifiles/<packDir>/Options/<name>/` (Nillipuss 1080p has 10: QQ Layout,
+  Horizontal Buff Bar, Remove Mana Bar (Melee), Theme - Colors, …). `listOptions()`
+  enumerates them; `applyOption()` copies the chosen option's files up into the
+  pack folder (preserving any nested structure), backs up what it replaces, and
+  tells the user to `/reloadskin`. Option names are validated against the real
+  list, so there's no path-traversal surface.
+- **UI:** Settings → **Custom UI packs** — a card per pack (Install / Check for
+  update, then a layout picker + Apply once installed), plus the `/load` command
+  to type in-game. Installed tags live in `cfg.uiPackTags` (per pack). Unlike
+  Zeal.asi, a UI pack install does NOT require EQ closed — EQ only reads UI files
+  at `/loadskin`, never holds them open.
+
+Net: a Deck (or Windows) user goes from "download zip, unzip, drag a folder into a
+hidden Wine path, then dig through an Options subfolder and copy files up by hand"
+to two clicks. Adding another blessed UI later is one registry entry.
+
 ## Bottom line
 - **Re-home EQ from Bottles → Lutris + GE-Proton** (official Deck path). Fixes the
   flakiness, keeps keybinds, and is the only clean way to reach Zeal's pipe.

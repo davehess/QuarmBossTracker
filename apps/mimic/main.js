@@ -28,6 +28,7 @@ const http  = require('http');
 const { spawn } = require('child_process');
 const { startZealWatch } = require('./zealPipe');
 const zealUpdater = require('./zealUpdater');
+const uiPacks = require('./uiPacks');
 
 // Hide the default File/Edit/View/Window/Help menubar — this is a focused
 // tray app, those entries just look unfinished. Must run before window
@@ -267,6 +268,10 @@ function defaultConfig() {
     // Zeal.asi (that stays a one-click user action; the game may have it loaded).
     zealInstalledTag: null,
     zealAutoCheck: true,
+    // Custom UI packs (Nillipuss etc.) installed via the uiPacks updater —
+    // map of pack id → last-installed release tag. Same idea as zealInstalledTag
+    // but per-pack, since a user can install more than one.
+    uiPackTags: {},
   };
 }
 function loadConfig() {
@@ -6628,6 +6633,83 @@ async function checkZealUpdate({ manual = false } = {}) {
     }
   } catch (e) { appendAgentLog(`[zeal-update] background check failed: ${e && e.message}\n`); }
 }
+
+// ── Custom UI packs (Nillipuss etc.) ────────────────────────────────────────
+// List the curated packs with LOCAL status (installed? which tag? which option
+// layouts are available) — no network, so the Settings card renders instantly.
+ipcMain.handle('ui-packs-list', () => {
+  try {
+    const cfg = loadConfig();
+    const eqDir = _zealEqDir();                 // same EQ client folder as Zeal/UI Studio
+    const tags = cfg.uiPackTags || {};
+    return {
+      eqDir: eqDir || null,
+      packs: uiPacks.listPacks().map(p => {
+        const st = uiPacks.localStatus(eqDir, p, tags[p.id]);
+        return {
+          ...p,
+          installed: st.installed,
+          installedTag: st.installedTag,
+          options: st.installed ? uiPacks.listOptions(eqDir, p) : [],
+        };
+      }),
+    };
+  } catch (e) { return { eqDir: null, packs: [] }; }
+});
+// Check GitHub for a pack's latest release (network).
+ipcMain.handle('ui-pack-check', async (_e, id) => {
+  try {
+    const pack = uiPacks.getPack(id);
+    if (!pack) return { ok: false, error: 'unknown UI pack' };
+    const cfg = loadConfig();
+    const installedTag = (cfg.uiPackTags || {})[id] || null;
+    const latest = await uiPacks.checkLatest(pack);
+    return {
+      ok: true, id, latestTag: latest.tag, latestName: latest.name,
+      htmlUrl: latest.htmlUrl, publishedAt: latest.publishedAt,
+      installedTag, updateAvailable: latest.tag !== installedTag,
+    };
+  } catch (e) { return { ok: false, error: e && e.message ? e.message : String(e) }; }
+});
+// Download + install (or update) a pack into uifiles/<packDir>/. Unlike Zeal.asi
+// this doesn't require EQ closed — EQ only reads UI files at /loadskin, never
+// holds them open — so a user can install a UI mid-session and /loadskin.
+ipcMain.handle('ui-pack-install', async (_e, id) => {
+  try {
+    const pack = uiPacks.getPack(id);
+    if (!pack) return { ok: false, error: 'unknown UI pack' };
+    const eqDir = _zealEqDir();
+    if (!eqDir) return { ok: false, error: 'No EverQuest folder is set. Add one in Settings first.' };
+    const res = await uiPacks.install(eqDir, pack);
+    const cfg = loadConfig();
+    cfg.uiPackTags = cfg.uiPackTags || {};
+    cfg.uiPackTags[id] = res.tag || cfg.uiPackTags[id];
+    saveConfig(cfg);
+    appendAgentLog(`[ui-pack] installed ${pack.packDir} ${res.tag} — ${res.written.length} file(s), ${res.backedUp.length} backed up\n`);
+    return {
+      ok: true, id, tag: res.tag, written: res.written.length, backedUp: res.backedUp.length,
+      loadCmd: pack.loadCmd, options: uiPacks.listOptions(eqDir, pack),
+    };
+  } catch (e) {
+    appendAgentLog(`[ui-pack] install failed (${id}): ${e && e.message}\n`);
+    return { ok: false, error: e && e.message ? e.message : String(e) };
+  }
+});
+// Apply one of a pack's Options/ layouts (copy its files up into the pack
+// folder, backing up what's replaced). Local file op — no network.
+ipcMain.handle('ui-pack-apply-option', async (_e, id, option) => {
+  try {
+    const pack = uiPacks.getPack(id);
+    if (!pack) return { ok: false, error: 'unknown UI pack' };
+    const eqDir = _zealEqDir();
+    if (!eqDir) return { ok: false, error: 'No EverQuest folder is set.' };
+    const res = uiPacks.applyOption(eqDir, pack, String(option || ''));
+    appendAgentLog(`[ui-pack] applied option "${res.option}" to ${pack.packDir} — ${res.written} file(s), ${res.backedUp} backed up\n`);
+    return { ok: true, id, option: res.option, written: res.written, backedUp: res.backedUp, loadCmd: pack.loadCmd };
+  } catch (e) {
+    return { ok: false, error: e && e.message ? e.message : String(e) };
+  }
+});
 // Mimic Discord login (device-code flow).
 ipcMain.handle('mimic-link-start',   async () => await startMimicLink());
 ipcMain.handle('mimic-link-cancel',  () => { cancelMimicLink(); return true; });
