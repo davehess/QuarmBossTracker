@@ -12,6 +12,7 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { supabaseServer } from '@/lib/supabase-server';
 import { supabaseAdmin } from '@/lib/supabase';
+import WpDbLink from '@/components/WpDbLink';
 import { userTz, fmtAbs } from '@/lib/timezone';
 import { fmtDmg, fmtDuration, cleanBossName } from '@/lib/format';
 
@@ -213,10 +214,13 @@ export default async function SearchPage({ searchParams }: { searchParams: Promi
           <h2 className="text-sm text-orange mb-2">🗡️ Items ({items.length})</h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-1.5 text-sm">
             {items.map(i => (
-              <a key={i.id} href={`https://www.pqdi.cc/item/${i.id}`} target="_blank" rel="noreferrer" className="flex items-baseline justify-between gap-2 px-2 py-1 rounded hover:bg-[#1a212c]">
-                <span className="text-text truncate">{i.name}</span>
+              <div key={i.id} className="flex items-baseline justify-between gap-2 px-2 py-1 rounded hover:bg-[#1a212c]">
+                <span className="text-text truncate">
+                  <a href={`https://www.pqdi.cc/item/${i.id}`} target="_blank" rel="noreferrer" className="hover:text-blue hover:underline">{i.name}</a>
+                  <WpDbLink kind="item" id={i.id} />
+                </span>
                 <span className="text-dim text-[10px] shrink-0">#{i.id} ↗</span>
-              </a>
+              </div>
             ))}
           </div>
         </section>

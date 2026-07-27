@@ -7,6 +7,7 @@
 // set so counts always reflect the current filter.
 
 import { useMemo, useState } from 'react';
+import WpDbLink from '@/components/WpDbLink';
 
 export type LocGroup = 'equipped' | 'bags' | 'bank' | 'shared';
 export type Holding = { character: string; location: LocGroup; qty: number };
@@ -123,6 +124,7 @@ export default function InventoryExplorer(
                   {it.item_id
                     ? <a href={`https://pqdi.cc/item/${it.item_id}`} target="_blank" rel="noreferrer" className="text-text hover:text-blue hover:underline">{it.name}</a>
                     : <span className="text-text">{it.name}</span>}
+                  {it.item_id ? <WpDbLink kind="item" id={it.item_id} /> : null}
                   {hasShared && <span className="ml-1.5 text-[10px] text-purple" title="In your shared bank — any of your characters can pull it">🏦 shared</span>}
                   {it.tags.filter(t => t !== 'nodrop').slice(0, 1).map(t => (
                     <span key={t} className="ml-1.5 text-[9px] uppercase tracking-wide text-dim">{t}</span>

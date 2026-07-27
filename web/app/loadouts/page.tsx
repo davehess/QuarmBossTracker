@@ -12,6 +12,7 @@
 // page structure is reviewable end-to-end.
 import { redirect } from 'next/navigation';
 import { supabaseServer } from '@/lib/supabase-server';
+import WpDbLink from '@/components/WpDbLink';
 
 // Sample query to validate the table chain — once inventories are uploading
 // this becomes the real source. Filters to actual weapons (damage and delay
@@ -89,6 +90,7 @@ export default async function LoadoutsPage() {
                     <a href={`https://www.pqdi.cc/item/${s.item_id}`} target="_blank" rel="noreferrer">
                       {s.item_name}
                     </a>
+                    <WpDbLink kind="item" id={s.item_id} />
                   </td>
                   <td className="text-right">{s.damage ?? '—'}</td>
                   <td className="text-right">{s.delay ?? '—'}</td>
