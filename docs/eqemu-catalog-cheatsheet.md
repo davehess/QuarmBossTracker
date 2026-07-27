@@ -8,8 +8,8 @@ it, so nobody re-derives them from EXPLAIN plans again. If you're about to query
 
 - **Zone is encoded in the NPC id.** `eqemu_npc_types.id = zoneid * 1000 + n`.
   So `floor(npc_id / 1000)` = the zone's numeric id → join
-  `eqemu_zone.zone_id`. This is the ONLY reliable NPC→zone path because the
-  spawn tables are empty (below).
+  `eqemu_zone.zone_id`. Cheap NPC→zone path that needs no spawn join, and the
+  fallback for the ~10% of NPCs (1,846 of 18,033) with no spawn row (below).
 - **`eqemu_merchantlist.merchantid` is NPC-id-shaped** (range ~1008–210059), so
   `floor(merchantid / 1000)` = zoneid too. Use it to find which zone sells an
   item — no spawn join needed.
@@ -17,9 +17,14 @@ it, so nobody re-derives them from EXPLAIN plans again. If you're about to query
   `2` Velious · `3` Luclin · `4` **Planes of Power** · `-1`/`99` special/system.
   22 PoP zones (poknowledge, potimea, bothunder, …). This is how you tell an
   item/spell's expansion when there's no expansion column on the item itself.
-- **`spawn2` / `spawnentry` / `spawngroup` are EMPTY upstream**, and
-  `npc_types.zone_short` is NULL across the catalog. Do NOT design anything that
-  needs spawn locations — use the id-encoding trick above instead.
+- **`spawn2` / `spawnentry` / `spawngroup` ARE populated** (verified 2026-07-27:
+  43,654 spawn points — all with x/y/z + respawn — across 182 zones; 16,187 of
+  18,033 NPCs placed). Join `npc_id → eqemu_spawnentry.spawngroup_id →
+  eqemu_spawn2` for a mob's zone(s), coords, respawn timer, and per-entry spawn
+  `chance` (placeholder odds); read zone from `eqemu_spawn2.zone_short`. The
+  *denormalized* `eqemu_npc_types.zone_short` column is still NULL — don't read
+  that one. (This bullet used to say the spawn tables were empty; the weekly
+  `sync-quarm.yml` mirror now pulls them.)
 - **Item → source zone(s):**
   - *Sold:* `eqemu_merchantlist m ON m.item = item.id` →
     `eqemu_zone z ON z.zone_id = m.merchantid/1000` → `z.expansion`.

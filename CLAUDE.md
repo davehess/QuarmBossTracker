@@ -203,8 +203,9 @@ Rules that keep them married:
   timers onto the locked board (2026-07-13). A startup sweep clears any timer
   that leaks onto a locked boss. After unlock: run `/board`, refresh
   `pqdiUrl`s via `/addboss`.
-- **`encounters.zone_short`**: `eqemu_npc_types.zone_short` is NULL across the
-  catalog (sync doesn't pull spawn data). Historical rows were backfilled from
+- **`encounters.zone_short`**: the denormalized `eqemu_npc_types.zone_short` is
+  NULL across the catalog (though the `spawn2`/`spawnentry` tables ARE now
+  populated — see the catalog cheat-sheet). Historical rows were backfilled from
   `data/bosses.json`; `find_or_create_encounter` still doesn't set zone on
   insert — new encounters land NULL until the RPC/call-site passes it.
 - **Zeal pipe carries no spawn id — same-name mobs are NOT disambiguable.**
@@ -483,8 +484,10 @@ sessions fresh without re-rendering (and visually flashing) the whole list.
 ## Supabase
 
 Tier 1 `eqemu_*` mirrors (zone/items/npc_types/spells/loot tree/spawn —
-weekly sync via `sync-quarm.yml`; `spawn*` and `npc_types.zone_short` are
-still empty/NULL upstream). **Before querying `eqemu_*` or touching the
+weekly sync via `sync-quarm.yml`; the `spawn*` tables ARE populated as of
+2026-07-27 — ~43.6k placed spawn points w/ coords+respawn across 182 zones —
+only the *denormalized* `npc_types.zone_short` column stays NULL, so read a
+mob's zone from the `spawnentry → spawn2` join). **Before querying `eqemu_*` or touching the
 gear/spells/inventory pages, read `docs/eqemu-catalog-cheatsheet.md`** — the
 load-bearing conventions (NPC id encodes zone `id=zoneid*1000+n`,
 `eqemu_zone.expansion` era codes, spell scrolls = items `Spell: %` with no
