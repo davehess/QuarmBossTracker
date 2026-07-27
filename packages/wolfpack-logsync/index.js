@@ -3854,7 +3854,7 @@ function trackDefensiveDiscLine(line, character) {
 // Adding a slow is a one-line addition here.
 const SLOW_SPELLS = new Set([
   // Shaman
-  'drowsy', 'walking sleep', "tagar's insects", "togor's insects", "turgur's insects", 'cripple',
+  'drowsy', 'walking sleep', "tagar's insects", "togor's insects", "tigir's insects", "turgur's insects", 'cripple',
   // Enchanter
   'languid pace', 'shiftless deeds', 'tepid deeds', 'forlorn deeds',
   // Boss tank-busters that are ALSO attack-speed slows (#142). Rage of
@@ -23955,7 +23955,18 @@ function _rebuildBuffMatchers() {
     if (new Set(arr.map(h => h.name)).size > 8) { m.delete(suffix); junked++; }
   }
   for (const [suffix, arr] of [...dm]) {
-    if (new Set(arr.map(h => h.name)).size > 8) { dm.delete(suffix); junked++; }
+    if (new Set(arr.map(h => h.name)).size <= 8) continue;
+    // Rescue slow families before dropping (2026-07-27): every shaman slow
+    // shares the generic "yawns." emote — 11 detrimental timed spells, over the
+    // junk threshold — so the whole shaman slow line (Turgur's Insects et al.)
+    // was discarded here while enchanter slows ("slows down.", 5 spells) sailed
+    // through. Keep only the real slow members so parseDebuffLanding still
+    // crowns a slow (Turgur's, longest duration) and the #130 badge lights;
+    // genuine junk families (33-spell knockback texts) have no slow members and
+    // still drop.
+    const slows = arr.filter(h => _isSlowSpell(h.name));
+    if (slows.length) { dm.set(suffix, slows); continue; }
+    dm.delete(suffix); junked++;
   }
   _buffLandingBySuffix = m;
   _debuffLandingBySuffix = dm;
