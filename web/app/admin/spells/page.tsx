@@ -10,6 +10,7 @@
 // guild_held_spell_needs() RPC (migration 20260624020000_spell_exchange.sql).
 
 import Link from 'next/link';
+import WpDbLink from '@/components/WpDbLink';
 import { supabaseAdmin } from '@/lib/supabase';
 
 export const dynamic = 'force-dynamic';
@@ -105,6 +106,7 @@ function SpellTable({ rows, highlightNeeders }: { rows: HeldSpell[]; highlightNe
               {r.scroll_item_id
                 ? <a href={`https://pqdi.cc/item/${r.scroll_item_id}`} target="_blank" rel="noreferrer" className="text-text hover:text-blue hover:underline">{r.spell_name}</a>
                 : r.spell_name}
+              {r.scroll_item_id ? <WpDbLink kind="item" id={r.scroll_item_id} /> : null}
             </td>
             <td className="py-1.5 pr-3 text-dim text-xs tabular-nums">{classTags(r.class_bitmask)}</td>
             <td className="py-1.5 pr-3 text-dim text-xs">{r.holders.join(', ') || '—'}</td>

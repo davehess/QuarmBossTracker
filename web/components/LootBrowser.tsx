@@ -8,6 +8,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import WpDbLink from '@/components/WpDbLink';
 import { fmtDkp } from '@/lib/format';
 import type { EraName } from '@/lib/eras';
 
@@ -173,6 +174,7 @@ export default function LootBrowser({ loot }: { loot: LootEntry[] }) {
                   ) : (
                     <span className="text-text">{l.item_name}</span>
                   )}
+                  {l.game_item_id ? <WpDbLink kind="item" id={l.game_item_id} /> : null}
                   <span className="text-dim ml-2">{new Date(l.raid_date).toLocaleDateString()}</span>
                 </span>
                 {opendkpHref ? (

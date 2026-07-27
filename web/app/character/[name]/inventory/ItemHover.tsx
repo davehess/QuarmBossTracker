@@ -17,6 +17,7 @@
 
 import { useId, useRef, useState } from 'react';
 import ItemIcon from './ItemIcon';
+import WpDbLink from '@/components/WpDbLink';
 
 export type ItemCard = {
   item_id: number;
@@ -196,7 +197,10 @@ export default function ItemHover({ card, fallbackName, className, children }: {
             </div>
           )}
           <div className="mt-2 pt-1.5 border-t border-border/60 text-[10px] flex justify-between">
-            <a href={pqdiHref} target="_blank" rel="noreferrer" className="text-blue hover:underline">PQDI ↗</a>
+            <span>
+              <a href={pqdiHref} target="_blank" rel="noreferrer" className="text-blue hover:underline">PQDI ↗</a>
+              {card && <WpDbLink kind="item" id={card.item_id} />}
+            </span>
             <span className="text-dim/70">stats-only · v1</span>
           </div>
         </div>
