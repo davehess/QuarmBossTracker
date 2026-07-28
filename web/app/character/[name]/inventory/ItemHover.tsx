@@ -188,6 +188,7 @@ export default function ItemHover({ card, fallbackName, className, children }: {
                   <a href={`https://pqdi.cc/spell/${card.clickeffect}`} target="_blank" rel="noreferrer" className="text-blue hover:underline">
                     spell #{card.clickeffect}
                   </a>
+                  <WpDbLink kind="spell" id={card.clickeffect} />
                   {!!card.clicklevel && <span className="text-dim"> (L{card.clicklevel})</span>}
                 </Row>
               )}

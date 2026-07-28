@@ -8,6 +8,7 @@
 
 import { useMemo, useState } from 'react';
 import type { ConEnriched } from './page';
+import WpDbLink from '@/components/WpDbLink';
 
 const STANDING_COLORS: Record<string, string> = {
   ally: 'text-green', warmly: 'text-green', kindly: 'text-green', amiably: 'text-green',
@@ -65,10 +66,13 @@ export default function ConsTable({ rows, character }: { rows: ConEnriched[]; ch
           <tr key={c.mob}>
             <td className="py-1.5 pr-3 text-text">
               {c.npcId != null ? (
-                <a href={`https://www.pqdi.cc/npc/${c.npcId}`} target="_blank" rel="noreferrer"
-                   className="text-text hover:text-blue hover:underline" title="Open this NPC on PQDI">
-                  {c.mob} <span className="text-dim text-[10px]">↗</span>
-                </a>
+                <>
+                  <a href={`https://www.pqdi.cc/npc/${c.npcId}`} target="_blank" rel="noreferrer"
+                     className="text-text hover:text-blue hover:underline" title="Open this NPC on PQDI">
+                    {c.mob} <span className="text-dim text-[10px]">↗</span>
+                  </a>
+                  <WpDbLink kind="npc" id={c.npcId} />
+                </>
               ) : c.mob}
             </td>
             {haveFaction && (
