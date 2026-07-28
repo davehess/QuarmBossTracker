@@ -231,10 +231,13 @@ export default async function SearchPage({ searchParams }: { searchParams: Promi
           <h2 className="text-sm text-orange mb-2">✨ Spells ({spells.length})</h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-1.5 text-sm">
             {spells.map(s => (
-              <a key={s.id} href={`https://www.pqdi.cc/spell/${s.id}`} target="_blank" rel="noreferrer" className="flex items-baseline justify-between gap-2 px-2 py-1 rounded hover:bg-[#1a212c]">
-                <span className="text-text truncate">{s.name}</span>
+              <div key={s.id} className="flex items-baseline justify-between gap-2 px-2 py-1 rounded hover:bg-[#1a212c]">
+                <span className="text-text truncate">
+                  <a href={`https://www.pqdi.cc/spell/${s.id}`} target="_blank" rel="noreferrer" className="hover:text-blue hover:underline">{s.name}</a>
+                  <WpDbLink kind="spell" id={s.id} />
+                </span>
                 <span className="text-dim text-[10px] shrink-0">#{s.id} ↗</span>
-              </a>
+              </div>
             ))}
           </div>
         </section>

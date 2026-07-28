@@ -7,6 +7,7 @@
 // whole night here.
 
 import Link from 'next/link';
+import WpDbLink from '@/components/WpDbLink';
 import { notFound, redirect } from 'next/navigation';
 import { supabaseServer } from '@/lib/supabase-server';
 import { supabaseAdmin } from '@/lib/supabase';
@@ -513,15 +514,18 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
                 pqdiUrl field. Dave 2026-07-03: "a PQDI link... next to their
                 name as a '[PQDI]' link". */}
             {bossId && (
-              <a
-                href={`https://www.pqdi.cc/npc/${bossId}`}
-                target="_blank"
-                rel="noreferrer"
-                className="text-sm font-normal text-blue hover:underline shrink-0"
-                title="View this NPC on PQDI (pqdi.cc)"
-              >
-                [PQDI]
-              </a>
+              <span className="shrink-0 text-sm font-normal">
+                <a
+                  href={`https://www.pqdi.cc/npc/${bossId}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-blue hover:underline"
+                  title="View this NPC on PQDI (pqdi.cc)"
+                >
+                  [PQDI]
+                </a>
+                <WpDbLink kind="npc" id={bossId} />
+              </span>
             )}
             <ClassificationChip classification={enc.classification} />
           </h2>

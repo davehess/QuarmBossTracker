@@ -14,6 +14,7 @@ import Link from 'next/link';
 import { redirect, notFound } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
+import WpDbLink from '@/components/WpDbLink';
 import {
   type ItemCard, decodeMask, decodeSlots, fmtPrice,
   CLASS_TAGS, RACE_TAGS, ALL_CLASS_MASK, ALL_RACE_MASK, ERA_LABEL,
@@ -131,6 +132,7 @@ export default async function DbItemPage({ params }: { params: Promise<{ id: str
               <Stat k="Clicky">
                 <a href={`https://www.pqdi.cc/spell/${card.clickeffect}`} target="_blank" rel="noreferrer"
                    className="text-blue hover:underline">spell #{card.clickeffect}</a>
+                <WpDbLink kind="spell" id={card.clickeffect} />
                 {!!card.clicklevel && <span className="text-dim"> (L{card.clicklevel})</span>}
               </Stat>
             )}
