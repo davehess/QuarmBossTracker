@@ -5392,6 +5392,25 @@ class EncounterBuilder {
             if (String(sess?.owner || '').toLowerCase() === meLower) { petKey = k; break; }
           }
         }
+        // Fallback to the module-level tick tracker. _activeCharms only has an
+        // entry when the LOG-side land path opened a session — a charm that
+        // landed via the Zeal slot-16 gauge (the primary land signal), or one
+        // that survived an agent restart, has a _charmTickTracker entry and no
+        // session at all. Without this the `if (!petKey) return` below silently
+        // DISCARDED the break: the pet stayed is_active, the overlay never saw
+        // the transition, and no "charm break" callout fired even though "Your
+        // charm spell has worn off" was sitting in the log (Shavimo,
+        // 2026-07-30). Most-recently-anchored active charm wins if somehow
+        // more than one is open.
+        if (!petKey && meLower) {
+          let bestAt = -1;
+          for (const [k, t] of _charmTickTracker) {
+            if (!t || !t.is_active) continue;
+            if (String(t.owner || '').toLowerCase() !== meLower) continue;
+            const at = Number(t.started_at || t.last_tick_at || 0);
+            if (at > bestAt) { bestAt = at; petKey = k; }
+          }
+        }
       }
       if (!petKey) return;
       const open = this._activeCharms?.get(petKey);
