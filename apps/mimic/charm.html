@@ -365,7 +365,17 @@
       // Break' when it breaks... Recharm pet is for when it's coming up."
       // Split: this is the ACTUAL break, so it gets its own distinct phrase;
       // "recharm pet" stays exactly as-is below for the coming-up warning.
-      var charmedKeys = new Set(pets.filter(function(p){ return p && p.is_active; }).map(function(p){ return p.key; }));
+      // ⚠ Built from allPets, NOT the focus-filtered `pets`. The visible list is
+      // scoped to the active EQ window (above) so a boxer doesn't see every
+      // alt's pet at once — but scoping the ALERT that way broke boxers badly
+      // (Shavimo/Menttok, 2026-07-30: beastlord in front, enchanter charming
+      // behind). Two failures at once: tabbing away from the enchanter made its
+      // pet vanish from this set, which read as a break and fired a FALSE
+      // "charm break"; and because the pet then left prevActive and could never
+      // re-register while another window had focus, the REAL break later was
+      // silent. An audio alert is exactly the thing you need when you're NOT
+      // looking at that window, so break detection ignores focus entirely.
+      var charmedKeys = new Set(allPets.filter(function(p){ return p && p.is_active; }).map(function(p){ return p.key; }));
       // Currently-tracked keys (active OR lingering broken) — used to decide
       // whether a pending recharm got "intentionally killed" (vanishes from
       // tracker entirely) vs just broke (still in tracker as broken).
@@ -384,6 +394,20 @@
           prevActive.delete(key);
         }
       }
+      // Register EVERY currently-charmed pet for break detection, regardless of
+      // which window has focus. The render loop below also seeds prevActive, but
+      // only for pets it actually draws — so without this pass an unfocused
+      // character's charm would never be watched. Same entry shape the render
+      // loop uses, so its warn/durWarn bookkeeping carries on untouched.
+      for (const p of allPets) {
+        if (!p || !p.is_active || !p.key) continue;
+        const startedAt = p.started_at || p.last_tick_at || now;
+        const mem = prevActive.get(p.key);
+        if (!mem || mem.started_at !== startedAt) {
+          prevActive.set(p.key, { started_at: startedAt, warned: false, durWarned: false });
+        }
+      }
+
       // Snapshot for any pending recharm timers that fire after this poll —
       // they consult trackedKeysNow() (the LATEST poll's tracker), not the
       // stale set from this iteration.
