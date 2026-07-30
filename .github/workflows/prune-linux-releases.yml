@@ -59,35 +59,53 @@ jobs:
           echo "Repo: $REPO — keeping the newest $KEEP -linux.N release(s)"
 
           gh api --paginate "repos/$REPO/releases" \
-            --jq '.[] | [(.id|tostring), .tag_name, (.draft|tostring), .created_at] | @tsv' > all.tsv
+            --jq '.[] | [(.id|tostring), .tag_name, (.draft|tostring)] | @tsv' > all.tsv
           echo "Total releases: $(wc -l < all.tsv)"
 
           # Eligible ONLY when the tag ends in -linux.<digits>.
-          awk -F'\t' '$2 ~ /-linux\.[0-9]+$/' all.tsv | sort -t"$(printf '\t')" -k4,4r > linux.tsv
-          echo "--- -linux.N releases (newest first) ---"
-          cat linux.tsv || true
-          echo "Linux releases found: $(wc -l < linux.tsv)"
+          awk -F'\t' '$2 ~ /-linux\.[0-9]+$/' all.tsv > linux_all.tsv
+          echo "Linux releases found: $(wc -l < linux_all.tsv)"
 
-          tail -n +$((KEEP + 1)) linux.tsv > doomed.tsv || true
+          # Order by the numeric N in -linux.<N>, DESCENDING.
+          # NOT by created_at: electron-builder stamps every one of these with an
+          # identical created_at (they all inherit the same commit date), so a
+          # date sort is arbitrary. The 2026-07-30 run learned this the hard way —
+          # an undated draft sorted to the top, took the single KEEP slot, and the
+          # newest real build got deleted. The tag's own counter is the truth.
+          awk -F'\t' '$3 != "true" {
+            n = $2; sub(/^.*-linux\./, "", n);
+            printf "%d\t%s\n", n + 0, $0
+          }' linux_all.tsv | sort -k1,1nr | cut -f2- > published.tsv
+          echo "--- published -linux.N (newest first) ---"
+          cat published.tsv || true
+
+          # Drafts never appear in releases.atom and are always debris from a
+          # failed run — always delete them, and never let one occupy a KEEP slot.
+          awk -F'\t' '$3 == "true"' linux_all.tsv > doomed.tsv || true
+          tail -n +$((KEEP + 1)) published.tsv >> doomed.tsv || true
           if [ ! -s doomed.tsv ]; then
             echo "Nothing to prune."
             exit 0
           fi
 
           echo "--- deleting $(wc -l < doomed.tsv) release(s) ---"
-          while IFS="$(printf '\t')" read -r id tag draft created; do
+          while IFS="$(printf '\t')" read -r id tag draft; do
             # Hard guard — refuse anything that is not a -linux.<n> tag, so a
             # malformed line can never take out a beta or stable release.
             if ! printf '%s' "$tag" | grep -Eq -- '-linux\.[0-9]+$'; then
               echo "SKIP (guard tripped): '$tag'"
               continue
             fi
-            echo "Deleting release id=$id tag=$tag draft=$draft created=$created"
+            echo "Deleting release id=$id tag=$tag draft=$draft"
             gh api -X DELETE "repos/$REPO/releases/$id"
             # Drafts have no tag ref; tolerate a miss.
             gh api -X DELETE "repos/$REPO/git/refs/tags/$tag" 2>/dev/null \
               || echo "  (no tag ref for $tag — draft or already gone)"
           done < doomed.tsv
 
+          # `| head` makes gh die of SIGPIPE, which `pipefail` turns into a red
+          # job (exit 141) even though every deletion succeeded — the 2026-07-30
+          # run failed exactly here, after doing all its work. Buffer, then trim.
           echo "--- done. Remaining releases: ---"
-          gh api --paginate "repos/$REPO/releases" --jq '.[] | .tag_name' | head -15
+          gh api --paginate "repos/$REPO/releases" --jq '.[] | .tag_name' > remaining.txt || true
+          head -15 remaining.txt || true
