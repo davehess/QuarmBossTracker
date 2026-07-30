@@ -13,14 +13,18 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 
 type Hit = { label: string; sub?: string; href: string; external?: boolean };
-type Results = { characters: Hit[]; items: Hit[]; spells: Hit[]; npcs: Hit[] };
+type Results = { characters: Hit[]; items: Hit[]; npcs: Hit[]; spells: Hit[]; who: Hit[] };
 
-const EMPTY: Results = { characters: [], items: [], spells: [], npcs: [] };
+const EMPTY: Results = { characters: [], items: [], npcs: [], spells: [], who: [] };
+// Order matters and is the fix for /who noise: guild first, then the catalog,
+// and only then strangers. The API doesn't even query /who unless the tiers
+// above came back thin.
 const SECTIONS: { key: keyof Results; label: string; icon: string }[] = [
-  { key: 'characters', label: 'Characters', icon: '🧑' },
-  { key: 'items',      label: 'Items',      icon: '🗡️' },
-  { key: 'npcs',       label: 'Mobs',       icon: '🐲' },
-  { key: 'spells',     label: 'Spells',     icon: '✨' },
+  { key: 'characters', label: 'Guild',        icon: '🐺' },
+  { key: 'items',      label: 'Items',        icon: '🗡️' },
+  { key: 'npcs',       label: 'Mobs',         icon: '🐲' },
+  { key: 'spells',     label: 'Spells',       icon: '✨' },
+  { key: 'who',        label: 'Seen in /who', icon: '👁️' },
 ];
 
 export default function GlobalSearch() {
@@ -35,7 +39,7 @@ export default function GlobalSearch() {
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   // Flatten for keyboard nav, preserving section order.
-  const flat: Hit[] = [...results.characters, ...results.items, ...results.npcs, ...results.spells];
+  const flat: Hit[] = SECTIONS.flatMap(s => results[s.key] ?? []);
 
   // Debounced fetch.
   useEffect(() => {

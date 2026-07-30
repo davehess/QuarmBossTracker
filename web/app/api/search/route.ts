@@ -1,11 +1,23 @@
-// Global search API — fans out a single query across characters, /who
-// sightings, items, and spells, returning categorized results with deep
-// links. Powers the site-wide search box in the header (components/
-// GlobalSearch). Members-only: gated on a signed-in Supabase session.
+// Global search API — powers the site-wide search box in the header
+// (components/GlobalSearch). Members-only: gated on a signed-in Supabase
+// session. The categorized shape is built to extend (add a block here, add a
+// section in GlobalSearch).
 //
-// v1 scope (Uilnayar 2026-06-22 epic): characters (roster + everyone seen),
-// items, spells. Bosses/parses/loot are fast-follows — the categorized shape
-// here is built to extend (add a block, add a section in GlobalSearch).
+// TIERED + LAZY (2026-07-30). /who sightings used to be merged into the same
+// `characters` list as the guild roster, and there are ~107k who_observations
+// against ~470 roster characters — so any half-common substring buried the
+// people and things you actually wanted under a wall of strangers.
+//
+// Now:
+//   Tier 1 (always, in parallel) — guild roster, then the catalog
+//                                  (items / mobs / spells).
+//   Tier 2 (ONLY when tier 1 came back thin) — /who sightings, in their own
+//                                  trailing category.
+//
+// The laziness is the point: a search that already found a guildmate or an item
+// never touches the /who table at all, which keeps both the result list and the
+// query cost down. Searching for an actual stranger still works — tier 1 comes
+// back empty, so tier 2 fires.
 
 import { NextResponse } from 'next/server';
 import { supabaseServer } from '@/lib/supabase-server';
@@ -20,11 +32,14 @@ export type SearchHit = {
   external?: boolean;
 };
 export type SearchResults = {
-  characters: SearchHit[];
+  characters: SearchHit[];   // guild roster only
   items:      SearchHit[];
-  spells:     SearchHit[];
   npcs:       SearchHit[];
+  spells:     SearchHit[];
+  who:        SearchHit[];   // tier 2 — /who sightings, only when tier 1 is thin
 };
+
+const EMPTY_RESULTS: SearchResults = { characters: [], items: [], npcs: [], spells: [], who: [] };
 
 export async function GET(req: Request) {
   // Members-only — same gate as the rest of the site.
@@ -33,26 +48,24 @@ export async function GET(req: Request) {
 
   const q = (new URL(req.url).searchParams.get('q') || '').trim();
   if (q.length < 2) {
-    return NextResponse.json({ characters: [], items: [], spells: [], npcs: [] } as SearchResults);
+    return NextResponse.json(EMPTY_RESULTS);
   }
 
   const admin = supabaseAdmin();
   const like = `%${q.replace(/[%_]/g, '')}%`;
   const PER = 6;
+  // Below this many tier-1 hits we go looking in /who. At or above it the
+  // dropdown is already full of better answers and the stranger list would only
+  // push them off screen.
+  const WHO_THRESHOLD = PER;
 
-  const [chars, who, items, spells, npcs] = await Promise.all([
+  const [chars, items, spells, npcs] = await Promise.all([
     // Guild roster characters — the most authoritative "who is this".
     admin.from('characters')
       .select('name, class, main_name, opendkp_id')
       .eq('guild_id', 'wolfpack')
       .ilike('name', like)
       .limit(PER),
-    // Everyone ever /who'd (covers non-members + un-rostered alts).
-    admin.from('who_directory')
-      .select('character, observed_class, level, guild_name')
-      .ilike('character', like)
-      .order('obs_count', { ascending: false })
-      .limit(PER * 2),
     admin.from('eqemu_items')
       .select('id, name')
       .ilike('name', like)
@@ -70,7 +83,7 @@ export async function GET(req: Request) {
       .limit(PER),
   ]);
 
-  // Characters — roster first, then /who names not already in the roster.
+  // Tier 1a — guild roster. These are OUR people; they always come first.
   const seen = new Set<string>();
   const characters: SearchHit[] = [];
   for (const c of (chars.data ?? []) as { name: string; class: string | null; main_name: string | null }[]) {
@@ -82,17 +95,6 @@ export async function GET(req: Request) {
       sub: [c.class, c.main_name && c.main_name !== c.name ? `alt of ${c.main_name}` : 'Wolf Pack'].filter(Boolean).join(' · '),
       href: `/character/${encodeURIComponent(c.name)}`,
     });
-  }
-  for (const w of (who.data ?? []) as { character: string; observed_class: string | null; level: number | null; guild_name: string | null }[]) {
-    const k = (w.character || '').toLowerCase();
-    if (!k || seen.has(k)) continue;
-    seen.add(k);
-    characters.push({
-      label: w.character,
-      sub: [w.level ? `L${w.level}` : null, w.observed_class, w.guild_name].filter(Boolean).join(' · ') || 'seen in /who',
-      href: `/character/${encodeURIComponent(w.character)}`,
-    });
-    if (characters.length >= PER * 2) break;
   }
 
   // Catalog hits now resolve to OUR pages (wpqdi) instead of opening pqdi.cc in
@@ -121,5 +123,31 @@ export async function GET(req: Request) {
       href: `/db/npc/${n.id}`,
     }));
 
-  return NextResponse.json({ characters, items: itemsOut, spells: spellsOut, npcs: npcsOut } as SearchResults);
+  // ── Tier 2 (LAZY) — /who sightings ────────────────────────────────────────
+  // Only reached when tier 1 didn't already answer the question. Skipping this
+  // is the whole point: ~107k who_observations vs ~470 roster characters means
+  // an unconditional query drowns every real hit in strangers.
+  const tier1 = characters.length + itemsOut.length + npcsOut.length + spellsOut.length;
+  let whoOut: SearchHit[] = [];
+  if (tier1 < WHO_THRESHOLD) {
+    const { data: whoData } = await admin.from('who_directory')
+      .select('character, observed_class, level, guild_name')
+      .ilike('character', like)
+      .order('obs_count', { ascending: false })
+      .limit(PER);
+    for (const w of (whoData ?? []) as { character: string; observed_class: string | null; level: number | null; guild_name: string | null }[]) {
+      const k = (w.character || '').toLowerCase();
+      if (!k || seen.has(k)) continue;   // never repeat someone already on the roster
+      seen.add(k);
+      whoOut.push({
+        label: w.character,
+        sub: [w.level ? `L${w.level}` : null, w.observed_class, w.guild_name].filter(Boolean).join(' · ') || 'seen in /who',
+        href: `/character/${encodeURIComponent(w.character)}`,
+      });
+    }
+  }
+
+  return NextResponse.json({
+    characters, items: itemsOut, npcs: npcsOut, spells: spellsOut, who: whoOut,
+  } as SearchResults);
 }
