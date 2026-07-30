@@ -9251,6 +9251,24 @@ let _stateJsonCache = { at: 0, body: null };
 // Serve the last good body on a serialize throw instead of ever 500-ing.
 let _tankStateLastGood = null;
 let _commandCenterLastGood = null;
+// How long a finished fight's threat snapshot stays visible as a read-back.
+// Mirrors the window applied inside EncounterBuilder._publishLiveThreat().
+const ENCOUNTER_THREAT_STALE_MS = 120_000;
+// Read-time staleness filter for the live threat snapshot.
+//
+// The identical 2-min rule inside _publishLiveThreat() is NOT enough on its
+// own: add() is that method's only caller, so it only ever runs while combat
+// events are flowing. The moment the raid stops fighting, nothing clears the
+// last snapshot — so the DPS HUD kept showing a mob the group hadn't fought in
+// ages (Shavimo, 2026-07-30). Filtering here means the sweep happens on every
+// status poll, fight or no fight. A LIVE fight has no flushedAt, so it is
+// never affected.
+function _freshEncounterThreat(t) {
+  if (!t) return null;
+  if (t.flushedAt && (Date.now() - t.flushedAt) > ENCOUNTER_THREAT_STALE_MS) return null;
+  return t;
+}
+
 function _serializeForDashboard() {
   const healersOut = {};
   for (const [name, s] of Object.entries(stats.sessionHealers || {})) {
@@ -9391,10 +9409,17 @@ function _serializeForDashboard() {
     currentEncounterThreat: (() => {
       const map = stats.currentEncounterThreatByChar || {};
       const active = _activeCharacter;
-      if (active && map[active.toLowerCase()]) return map[active.toLowerCase()];
-      return stats.currentEncounterThreat;
+      const pick = (active && map[active.toLowerCase()]) || stats.currentEncounterThreat;
+      return _freshEncounterThreat(pick);
     })(),
-    currentEncounterThreatByChar: stats.currentEncounterThreatByChar || {},
+    currentEncounterThreatByChar: (() => {
+      const out = {};
+      for (const k of Object.keys(stats.currentEncounterThreatByChar || {})) {
+        const fresh = _freshEncounterThreat(stats.currentEncounterThreatByChar[k]);
+        if (fresh) out[k] = fresh;
+      }
+      return out;
+    })(),
     // CH chain rotation snapshot (cleric Complete Heal callouts) — null when
     // no chain has called in the last 5 minutes. Drives chchain.html.
     chChain: chChainSnapshot(),
