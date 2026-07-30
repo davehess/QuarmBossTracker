@@ -12182,7 +12182,7 @@ function renderCharmDiag(s) {
     }
     h += '</table>';
     if (slot16Rows.some(r => !r.passes_article_filter)) {
-      h += '<div class="dim" style="font-size:10px;margin-top:4px;color:var(--orange)">⚠ Reconciler accepts slot-16 text on TWO routes: (a) article prefix (a/an/the — covers generic mobs), OR (b) a pending charm spell from this owner within ~5s (the named-mob path, Uilnayar 2026-06-21 — Jareker etc). If both miss, the reconciler treats slot 16 as a non-charm pet (summoned pet swap or pet ambiguity).</div>';
+      h += '<div class="dim" style="font-size:10px;margin-top:4px;color:var(--orange)">⚠ Reconciler accepts slot-16 text on TWO routes: (a) article prefix (a/an/the — covers generic mobs), OR (b) a pending charm spell from this owner within ~5s (the named-mob path — covers proper-named mobs that carry no article). If both miss, the reconciler treats slot 16 as a non-charm pet (summoned pet swap or pet ambiguity).</div>';
     }
   }
   h += '</div>';
