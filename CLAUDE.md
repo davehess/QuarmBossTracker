@@ -81,6 +81,49 @@ accumulated batch the guild lead asks to promote) — not per-iteration.
 titles, commit messages, announcements) without consulting Hitya first;
 propose, they pick. Unnamed = plain version string.
 
+### Mimic release channels — Linux (Deck) vs Windows (consult before routing a Mimic change)
+Mimic builds to THREE electron-updater channels, and they are deliberately
+isolated. Know which one a change targets before you push:
+
+| Channel | Ships from | Workflow | Version / feed | Audience |
+|---|---|---|---|---|
+| **Windows stable** | `main` | `release-mimic.yml` | plain `X.Y.Z` → `latest.yml` | whole Windows fleet |
+| **Windows beta** | `beta` | `release-mimic.yml` | auto `X.Y.Z-beta.N` → `beta.yml` | Windows beta testers |
+| **Linux / Steam Deck** (#156, EXPERIMENTAL) | `claude/**` working branch | `build-mimic-linux.yml` | `<parked>-linux.<run_number>` → `linux.yml` | Deck testers only |
+
+Load-bearing facts:
+- **The Linux/Deck build is isolated for what a client INSTALLS — but NOT for
+  how it DISCOVERS releases.** It publishes ONLY to `linux.yml`; the Linux
+  client pins `autoUpdater.channel = 'linux'`, and Windows clients read
+  `latest`/`beta`, so a Windows box can never *install* a `-linux.N` build.
+  **Discovery is a different story and bit us (2026-07-30):** every release —
+  linux, beta, stable — lands in ONE `releases.atom` feed that GitHub caps at
+  **10 entries**. Fourteen Deck builds in two days pushed `v2.1.1-beta.2`,
+  `-beta.1` and `v2.1.0` out of that window, so beta clients (which walk the
+  atom entries for a tag whose prerelease id starts with `beta`) found only
+  `linux` tags and failed with *"Update check failed: No published versions on
+  GitHub"* — the whole Windows beta channel, unable to update. Stable was
+  spared only because it resolves via `/releases/latest` instead of the feed.
+  **Mitigation:** `prune-linux-releases.yml` keeps the newest N `-linux.N`
+  releases and runs at the end of every Linux build. Never let Deck iteration
+  fill the feed again — and remember the isolation guarantee covers installs,
+  not the release list.
+- **Linux support code lives on the working branch + its own channel until
+  #156 graduates.** All of it is `process.platform === 'linux'`-guarded (inert
+  on Windows), but keep it isolated — don't let it ride to the Windows fleet or
+  to stable before the Deck work is blessed.
+- **To route a Mimic FEATURE that should reach Windows, cherry-pick the
+  specific feature commits onto `beta`** — never merge the whole Deck working
+  branch (that drags the experimental Linux plumbing onto the Windows fleet,
+  and onto stable at the next graduation). The feature code itself is
+  cross-platform (the split is build/channel routing, not source). Drop any
+  Deck-only docs from the cherry-pick (docs → `main`, and a Deck-bridge doc
+  doesn't belong on `beta`). Precedent (2026-07-26): the **Zeal + custom-UI-pack
+  auto-updater** (`ghDownload.js` / `zealUpdater.js` / `uiPacks.js` + Settings
+  cards) was built on the Deck branch, then cherry-picked to `beta` as the two
+  clean feature commits — resolving only the boot-timer hunk (its Linux anchor
+  line is absent on beta) and dropping the Deck doc.
+
 **Every release updates the roadmap** (Uilnayar 2026-07-08). Add/extend a
 `releases[]` entry at the TOP of `web/lib/roadmapData.ts` (newest first) for
 any user-facing change — bot, web, agent, or Mimic. Each entry: the version
