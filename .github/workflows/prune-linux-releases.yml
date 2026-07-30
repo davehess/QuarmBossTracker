@@ -1,0 +1,93 @@
+name: prune-linux-releases
+
+# Keeps the Deck/Linux dev loop (#156) from starving the Windows update feed.
+#
+# THE INCIDENT (2026-07-30). build-mimic-linux.yml publishes a GitHub Release
+# per build (v2.1.1-linux.N). Those releases share ONE `releases.atom` feed with
+# the Windows stable/beta channels, and that feed is capped at **10 entries**.
+# Fourteen Deck builds in two days pushed v2.1.1-beta.2, -beta.1 AND v2.1.0
+# clean out of the window — every entry in the feed was a `-linux.N`. On the
+# beta channel electron-updater walks those entries looking for a tag whose
+# prerelease id starts with `beta`, finds none, and throws
+# **"Update check failed: No published versions on GitHub"** for every Windows
+# beta tester. (Stable is unaffected: it resolves through /releases/latest, not
+# the atom feed. Linux is unaffected: it matches `linux` and finds its build.)
+#
+# So the Linux channel is isolated for what a client will INSTALL, but NOT for
+# how a client DISCOVERS releases — discovery is a shared, capped feed.
+#
+# This prunes old `-linux.N` releases (and their tags) so the shared feed always
+# has room for the Windows channels. It also clears leftover DRAFT linux
+# releases from failed runs (deleting by release id handles untagged drafts,
+# which `gh release delete` cannot).
+#
+# SAFETY: only releases whose tag matches `-linux.<digits>` are ever eligible —
+# enforced by the awk filter AND a second per-release guard in the delete loop.
+# beta/stable releases can never match either test.
+#
+# Run manually (Actions → prune-linux-releases → Run workflow, set `keep`), or
+# it runs automatically at the end of every Linux build.
+
+on:
+  workflow_dispatch:
+    inputs:
+      keep:
+        description: 'How many of the newest -linux.N releases to keep'
+        required: false
+        default: '2'
+  workflow_call:
+    inputs:
+      keep:
+        type: string
+        required: false
+        default: '2'
+
+permissions:
+  contents: write
+
+jobs:
+  prune:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Prune old -linux.N releases
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          KEEP: ${{ inputs.keep || '2' }}
+        run: |
+          set -euo pipefail
+          echo "Repo: $REPO — keeping the newest $KEEP -linux.N release(s)"
+
+          gh api --paginate "repos/$REPO/releases" \
+            --jq '.[] | [(.id|tostring), .tag_name, (.draft|tostring), .created_at] | @tsv' > all.tsv
+          echo "Total releases: $(wc -l < all.tsv)"
+
+          # Eligible ONLY when the tag ends in -linux.<digits>.
+          awk -F'\t' '$2 ~ /-linux\.[0-9]+$/' all.tsv | sort -t"$(printf '\t')" -k4,4r > linux.tsv
+          echo "--- -linux.N releases (newest first) ---"
+          cat linux.tsv || true
+          echo "Linux releases found: $(wc -l < linux.tsv)"
+
+          tail -n +$((KEEP + 1)) linux.tsv > doomed.tsv || true
+          if [ ! -s doomed.tsv ]; then
+            echo "Nothing to prune."
+            exit 0
+          fi
+
+          echo "--- deleting $(wc -l < doomed.tsv) release(s) ---"
+          while IFS="$(printf '\t')" read -r id tag draft created; do
+            # Hard guard — refuse anything that is not a -linux.<n> tag, so a
+            # malformed line can never take out a beta or stable release.
+            if ! printf '%s' "$tag" | grep -Eq -- '-linux\.[0-9]+$'; then
+              echo "SKIP (guard tripped): '$tag'"
+              continue
+            fi
+            echo "Deleting release id=$id tag=$tag draft=$draft created=$created"
+            gh api -X DELETE "repos/$REPO/releases/$id"
+            # Drafts have no tag ref; tolerate a miss.
+            gh api -X DELETE "repos/$REPO/git/refs/tags/$tag" 2>/dev/null \
+              || echo "  (no tag ref for $tag — draft or already gone)"
+          done < doomed.tsv
+
+          echo "--- done. Remaining releases: ---"
+          gh api --paginate "repos/$REPO/releases" --jq '.[] | .tag_name' | head -15

@@ -92,11 +92,22 @@ isolated. Know which one a change targets before you push:
 | **Linux / Steam Deck** (#156, EXPERIMENTAL) | `claude/**` working branch | `build-mimic-linux.yml` | `<parked>-linux.<run_number>` → `linux.yml` | Deck testers only |
 
 Load-bearing facts:
-- **The Linux/Deck build is fully isolated by design.** It publishes ONLY to
-  `linux.yml`; the Linux client pins `autoUpdater.channel = 'linux'`. Windows
-  clients read `latest`/`beta` and **can never see a `-linux.N` build** (it
-  semver-sorts as a prerelease of a channel they don't follow). So Deck
-  iteration on a `claude/*` branch never touches Windows users.
+- **The Linux/Deck build is isolated for what a client INSTALLS — but NOT for
+  how it DISCOVERS releases.** It publishes ONLY to `linux.yml`; the Linux
+  client pins `autoUpdater.channel = 'linux'`, and Windows clients read
+  `latest`/`beta`, so a Windows box can never *install* a `-linux.N` build.
+  **Discovery is a different story and bit us (2026-07-30):** every release —
+  linux, beta, stable — lands in ONE `releases.atom` feed that GitHub caps at
+  **10 entries**. Fourteen Deck builds in two days pushed `v2.1.1-beta.2`,
+  `-beta.1` and `v2.1.0` out of that window, so beta clients (which walk the
+  atom entries for a tag whose prerelease id starts with `beta`) found only
+  `linux` tags and failed with *"Update check failed: No published versions on
+  GitHub"* — the whole Windows beta channel, unable to update. Stable was
+  spared only because it resolves via `/releases/latest` instead of the feed.
+  **Mitigation:** `prune-linux-releases.yml` keeps the newest N `-linux.N`
+  releases and runs at the end of every Linux build. Never let Deck iteration
+  fill the feed again — and remember the isolation guarantee covers installs,
+  not the release list.
 - **Linux support code lives on the working branch + its own channel until
   #156 graduates.** All of it is `process.platform === 'linux'`-guarded (inert
   on Windows), but keep it isolated — don't let it ride to the Windows fleet or
