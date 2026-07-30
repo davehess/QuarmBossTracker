@@ -11,6 +11,14 @@ name: build-mimic-linux
 # sees a newer build → the rapid dev loop. The AppImage also uploads as a run
 # artifact as a belt-and-suspenders download.
 #
+# ⚠ The isolation above covers what a client INSTALLS, not how it DISCOVERS
+# releases. Every release here — linux, beta, stable — shares ONE releases.atom
+# feed that GitHub caps at 10 entries. On 2026-07-30 fourteen Deck builds shoved
+# v2.1.1-beta.2/-beta.1/v2.1.0 out of that window and the entire Windows BETA
+# channel broke with "No published versions on GitHub". Hence the `prune` job
+# below: it runs after every build and keeps only the newest few -linux.N
+# releases, so this dev loop can never starve the Windows channels again.
+#
 # Triggers on push to a claude/* working branch or manual dispatch.
 
 on:
@@ -57,3 +65,14 @@ jobs:
           name: wolf-pack-mimic-linux-appimage
           path: apps/mimic/dist/*.AppImage
           if-no-files-found: error
+
+  # Keep the shared releases.atom feed from filling with Deck builds (see the
+  # header note). Keeps this build + the previous one so a Deck tester can still
+  # roll back one version; everything older goes.
+  prune:
+    needs: build
+    permissions:
+      contents: write
+    uses: ./.github/workflows/prune-linux-releases.yml
+    with:
+      keep: '2'
