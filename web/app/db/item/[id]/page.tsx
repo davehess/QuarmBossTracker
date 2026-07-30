@@ -22,6 +22,11 @@ import {
 export const dynamic = 'force-dynamic';
 
 type DropRow = { npc_id: number; npc_name: string | null; effective_chance: number | null };
+type TurninIO = { item_id: number; qty?: number; kind?: string } | null;
+type Turnin = {
+  id: number; npc_name: string | null; npc_id: number | null; zone_short: string | null;
+  inputs: TurninIO[] | null; outputs: TurninIO[] | null; cash: number | null; exp_award: number | null;
+};
 type ZoneRow = { zone_id: number; short_name: string; long_name: string | null; expansion: number | null };
 
 const zoneOf = (entityId: number) => Math.floor(entityId / 1000);
@@ -37,11 +42,21 @@ export default async function DbItemPage({ params }: { params: Promise<{ id: str
 
   const sb = supabaseAdmin();
 
-  const [cardRes, itemRes, dropRes, merchRes] = await Promise.all([
+  const [cardRes, itemRes, dropRes, merchRes, givesRes, getsRes] = await Promise.all([
     sb.rpc('item_card_info', { p_item_ids: [itemId] }),
     sb.from('eqemu_items').select('id, name, lore, lore_flag, casttime').eq('id', itemId).maybeSingle(),
     sb.from('eqemu_npc_drops').select('npc_id, npc_name, effective_chance').eq('item_id', itemId).limit(500),
     sb.from('eqemu_merchantlist').select('merchantid').eq('item', itemId).limit(500),
+    // Quest turn-ins, both directions: what this item is handed IN for, and
+    // what hands it OUT. jsonb containment against the arrays of {item_id,…}.
+    sb.from('scripted_npc_turnins')
+      .select('id, npc_name, npc_id, zone_short, inputs, outputs, cash, exp_award')
+      .filter('inputs', 'cs', JSON.stringify([{ item_id: itemId }]))
+      .eq('is_duplicate', false).limit(30),
+    sb.from('scripted_npc_turnins')
+      .select('id, npc_name, npc_id, zone_short, inputs, outputs, cash, exp_award')
+      .filter('outputs', 'cs', JSON.stringify([{ item_id: itemId }]))
+      .eq('is_duplicate', false).limit(30),
   ]);
 
   const card = ((cardRes.data ?? []) as ItemCard[])[0];
@@ -85,6 +100,28 @@ export default async function DbItemPage({ params }: { params: Promise<{ id: str
   };
   const soldZones = [...merchZoneIds].map(zid => zoneById.get(zid)).filter((z): z is ZoneRow => !!z)
     .sort((a, b) => (a.long_name || a.short_name).localeCompare(b.long_name || b.short_name));
+
+  // ── Quest turn-ins ─────────────────────────────────────────────────────────
+  const gives = (givesRes.data ?? []) as Turnin[];   // hand this item IN
+  const gets  = (getsRes.data  ?? []) as Turnin[];   // receive this item
+  // Resolve the names of every OTHER item referenced, so the rows read
+  // "Ring of Dain → Coldain Insignia Ring" instead of bare ids.
+  const refIds = new Set<number>();
+  for (const t of [...gives, ...gets]) {
+    for (const io of [...(t.inputs ?? []), ...(t.outputs ?? [])]) {
+      if (io?.item_id && io.item_id !== itemId) refIds.add(io.item_id);
+    }
+  }
+  const itemNameById = new Map<number, string>();
+  if (refIds.size) {
+    const { data: refs } = await sb.from('eqemu_items').select('id, name').in('id', [...refIds]);
+    for (const r of ((refs ?? []) as { id: number; name: string }[])) itemNameById.set(r.id, r.name);
+  }
+  const ioLabel = (io: TurninIO) => {
+    if (!io?.item_id) return null;
+    const nm = io.item_id === itemId ? name : (itemNameById.get(io.item_id) || `#${io.item_id}`);
+    return io.qty && io.qty > 1 ? `${nm} ×${io.qty}` : nm;
+  };
 
   return (
     <div className="space-y-4 max-w-3xl">
@@ -183,6 +220,30 @@ export default async function DbItemPage({ params }: { params: Promise<{ id: str
         ) : <p className="text-dim text-xs">No drop sources in the mirror.</p>}
       </section>
 
+      {/* Quest turn-ins — what this is FOR, and what hands it out. */}
+      {(gives.length > 0 || gets.length > 0) && (
+        <section className="bg-panel border border-border rounded-lg p-4">
+          <h2 className="text-sm text-orange mb-2">Quest turn-ins</h2>
+          {gives.length > 0 && (
+            <>
+              <h3 className="text-xs text-dim uppercase tracking-wide mb-1">Hand in to</h3>
+              <ul className="text-sm space-y-1 mb-3">
+                {gives.map(t => <TurninRow key={`g${t.id}`} t={t} ioLabel={ioLabel} />)}
+              </ul>
+            </>
+          )}
+          {gets.length > 0 && (
+            <>
+              <h3 className="text-xs text-dim uppercase tracking-wide mb-1">Received from</h3>
+              <ul className="text-sm space-y-1">
+                {gets.map(t => <TurninRow key={`r${t.id}`} t={t} ioLabel={ioLabel} />)}
+              </ul>
+            </>
+          )}
+          <p className="text-dim/60 text-[10px] mt-2">Read from the server&apos;s quest scripts — rewards can be conditional (faction, class, or a spoken keyword) in ways a script scrape can&apos;t always see.</p>
+        </section>
+      )}
+
       {/* Sold by */}
       {soldZones.length > 0 && (
         <section className="bg-panel border border-border rounded-lg p-4">
@@ -200,6 +261,28 @@ export default async function DbItemPage({ params }: { params: Promise<{ id: str
         </section>
       )}
     </div>
+  );
+}
+
+// "<NPC> (zone): give A, B → get C, D  +exp/coin"
+function TurninRow({ t, ioLabel }: { t: Turnin; ioLabel: (io: TurninIO) => string | null }) {
+  const give = (t.inputs  ?? []).map(ioLabel).filter(Boolean).join(', ');
+  const get  = (t.outputs ?? []).map(ioLabel).filter(Boolean).join(', ');
+  return (
+    <li className="border-b border-border/30 pb-1">
+      <span className="text-text">
+        {t.npc_id
+          ? <Link href={`/db/npc/${t.npc_id}`} className="hover:text-blue hover:underline">{deUnderscore(t.npc_name)}</Link>
+          : deUnderscore(t.npc_name)}
+      </span>
+      {t.zone_short && <span className="text-dim text-[11px]"> · {t.zone_short}</span>}
+      <div className="text-[11px] text-dim">
+        {give && <>give <span className="text-text/90">{give}</span></>}
+        {give && get ? ' → ' : ''}
+        {get && <>get <span className="text-green/90">{get}</span></>}
+        {!!t.exp_award && <span className="text-purple/80"> · {t.exp_award.toLocaleString()} exp</span>}
+      </div>
+    </li>
   );
 }
 

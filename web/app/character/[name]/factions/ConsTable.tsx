@@ -79,10 +79,13 @@ export default function ConsTable({ rows, character }: { rows: ConEnriched[]; ch
               <td className="py-1.5 pr-3 text-dim">
                 {c.factionName ? (
                   c.factionId != null ? (
-                    <a href={`https://www.pqdi.cc/faction/${c.factionId}`} target="_blank" rel="noreferrer"
-                       className="text-dim hover:text-blue hover:underline" title="Open this faction on PQDI">
-                      {c.factionName} <span className="text-dim text-[10px]">↗</span>
-                    </a>
+                    <>
+                      <a href={`https://www.pqdi.cc/faction/${c.factionId}`} target="_blank" rel="noreferrer"
+                         className="text-dim hover:text-blue hover:underline" title="Open this faction on PQDI">
+                        {c.factionName} <span className="text-dim text-[10px]">↗</span>
+                      </a>
+                      <WpDbLink kind="faction" id={c.factionId} />
+                    </>
                   ) : c.factionName
                 ) : <span className="text-dim/50">—</span>}
               </td>

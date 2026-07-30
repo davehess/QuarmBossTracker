@@ -53,12 +53,16 @@ export default async function DbNpcPage({ params }: { params: Promise<{ id: stri
   if (!npc) notFound();
 
   // Independent lookups in parallel.
-  const [spawnEntryRes, dropRes, npcFacRes] = await Promise.all([
+  const [spawnEntryRes, dropRes, npcFacRes, turninRes] = await Promise.all([
     sb.from('eqemu_spawnentry').select('spawngroup_id, chance').eq('npc_id', npcId).limit(200),
     sb.from('eqemu_npc_drops').select('item_id, item_name, effective_chance, lore_flag').eq('npc_id', npcId).limit(300),
     npc.npc_faction_id
       ? sb.from('eqemu_npc_faction').select('primaryfaction').eq('id', npc.npc_faction_id).maybeSingle()
       : Promise.resolve({ data: null }),
+    // Quest turn-ins this NPC accepts (from the server's quest scripts).
+    sb.from('scripted_npc_turnins')
+      .select('id, inputs, outputs, cash, exp_award')
+      .eq('npc_id', npcId).eq('is_duplicate', false).limit(40),
   ]);
 
   // ── Spawn locations: spawnentry (chance per group) → spawn2 (coords) ─────────
@@ -109,6 +113,23 @@ export default async function DbNpcPage({ params }: { params: Promise<{ id: stri
     const { data: fl } = await sb.from('eqemu_faction_list_full').select('name').eq('id', primaryFaction).maybeSingle();
     factionName = (fl as { name: string } | null)?.name ?? null;
   }
+
+  // ── Turn-ins this NPC accepts ─────────────────────────────────────────────
+  type TurninIO = { item_id: number; qty?: number } | null;
+  type Turnin = { id: number; inputs: TurninIO[] | null; outputs: TurninIO[] | null; cash: number | null; exp_award: number | null };
+  const turnins = (turninRes.data ?? []) as Turnin[];
+  const tiItemIds = new Set<number>();
+  for (const t of turnins) for (const io of [...(t.inputs ?? []), ...(t.outputs ?? [])]) if (io?.item_id) tiItemIds.add(io.item_id);
+  const tiNameById = new Map<number, string>();
+  if (tiItemIds.size) {
+    const { data: refs } = await sb.from('eqemu_items').select('id, name').in('id', [...tiItemIds]);
+    for (const r of ((refs ?? []) as { id: number; name: string }[])) tiNameById.set(r.id, r.name);
+  }
+  const tiLabel = (io: TurninIO) => {
+    if (!io?.item_id) return null;
+    const nm = tiNameById.get(io.item_id) || `#${io.item_id}`;
+    return io.qty && io.qty > 1 ? `${nm} ×${io.qty}` : nm;
+  };
 
   // ── Castable spells (parent_list inheritance walk, mirrors the bot) ───────────
   let spells: { id: number; name: string }[] = [];
@@ -181,7 +202,13 @@ export default async function DbNpcPage({ params }: { params: Promise<{ id: stri
           {resists && <Stat k="Resists">{resists}</Stat>}
           {npc.respawn_seconds != null && npc.respawn_seconds > 0 && <Stat k="Respawn">{fmtRespawn(npc.respawn_seconds)}</Stat>}
           {!!npc.see_invis && <Stat k="See Invis">yes</Stat>}
-          {factionName && <Stat k="Faction">{factionName}</Stat>}
+          {factionName && (
+            <Stat k="Faction">
+              {primaryFaction
+                ? <Link href={`/db/faction/${primaryFaction}`} className="text-blue hover:underline">{factionName}</Link>
+                : factionName}
+            </Stat>
+          )}
         </div>
         {specials.length > 0 && (
           <div className="mt-3 flex flex-wrap gap-1.5">
@@ -253,6 +280,28 @@ export default async function DbNpcPage({ params }: { params: Promise<{ id: stri
           </div>
         ) : <p className="text-dim text-xs">No loot table in the mirror.</p>}
       </section>
+
+      {/* Quest turn-ins this NPC accepts */}
+      {turnins.length > 0 && (
+        <section className="bg-panel border border-border rounded-lg p-4">
+          <h2 className="text-sm text-orange mb-2">Turn-ins ({turnins.length})</h2>
+          <ul className="text-sm space-y-1">
+            {turnins.map(t => {
+              const give = (t.inputs ?? []).map(tiLabel).filter(Boolean).join(', ');
+              const get  = (t.outputs ?? []).map(tiLabel).filter(Boolean).join(', ');
+              return (
+                <li key={t.id} className="border-b border-border/30 pb-1">
+                  {give && <>give <span className="text-text">{give}</span></>}
+                  {give && get ? <span className="text-dim"> → </span> : null}
+                  {get && <>get <span className="text-green/90">{get}</span></>}
+                  {!!t.exp_award && <span className="text-purple/80 text-[11px]"> · {t.exp_award.toLocaleString()} exp</span>}
+                </li>
+              );
+            })}
+          </ul>
+          <p className="text-dim/60 text-[10px] mt-2">Read from the server&apos;s quest scripts — rewards can be conditional (faction, class, or a spoken keyword) in ways a script scrape can&apos;t always see.</p>
+        </section>
+      )}
 
       {/* Castable spells */}
       {spells.length > 0 && (
