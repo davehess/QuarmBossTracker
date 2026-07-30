@@ -14,9 +14,8 @@ import Link from 'next/link';
 import { redirect, notFound } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
-import WpDbLink from '@/components/WpDbLink';
 import {
-  type ItemCard, decodeMask, decodeSlots, fmtPrice,
+  type ItemCard, decodeMask, decodeSlots, fmtPrice, fmtWeight,
   CLASS_TAGS, RACE_TAGS, ALL_CLASS_MASK, ALL_RACE_MASK, ERA_LABEL,
 } from '@/lib/itemDecode';
 
@@ -40,16 +39,25 @@ export default async function DbItemPage({ params }: { params: Promise<{ id: str
 
   const [cardRes, itemRes, dropRes, merchRes] = await Promise.all([
     sb.rpc('item_card_info', { p_item_ids: [itemId] }),
-    sb.from('eqemu_items').select('id, name').eq('id', itemId).maybeSingle(),
+    sb.from('eqemu_items').select('id, name, lore, lore_flag, casttime').eq('id', itemId).maybeSingle(),
     sb.from('eqemu_npc_drops').select('npc_id, npc_name, effective_chance').eq('item_id', itemId).limit(500),
     sb.from('eqemu_merchantlist').select('merchantid').eq('item', itemId).limit(500),
   ]);
 
   const card = ((cardRes.data ?? []) as ItemCard[])[0];
-  const itemRow = itemRes.data as { id: number; name: string } | null;
+  const itemRow = itemRes.data as
+    { id: number; name: string; lore: string | null; lore_flag: boolean | null; casttime: number | null } | null;
   if (!card && !itemRow) notFound();
 
   const name = card?.name ?? itemRow?.name ?? `Item #${itemId}`;
+
+  // Clicky effect: show the SPELL NAME the way the in-game item window does
+  // ("Effect: JourneymanBoots"), not a bare id.
+  let clickSpellName: string | null = null;
+  if (card?.clickeffect && card.clickeffect > 0) {
+    const { data: cs } = await sb.from('eqemu_spells').select('name').eq('id', card.clickeffect).maybeSingle();
+    clickSpellName = (cs as { name: string } | null)?.name ?? null;
+  }
 
   // Dropped-by: dedupe to one row per NPC (keep the best observed chance).
   const dropsByNpc = new Map<number, DropRow>();
@@ -86,59 +94,68 @@ export default async function DbItemPage({ params }: { params: Promise<{ id: str
         <span className="text-dim/70">wpqdi · item #{itemId}</span>
       </div>
 
-      {/* Header */}
-      <section className="bg-panel border border-border rounded-lg p-4">
-        <div className="flex items-baseline gap-2 flex-wrap">
-          <h1 className="text-xl text-gold">{name}</h1>
-          {card?.nodrop && <span className="text-[10px] text-gold uppercase tracking-wider">NO DROP</span>}
-          {card?.magic  && <span className="text-[10px] text-blue uppercase tracking-wider">MAGIC</span>}
-        </div>
-        {card?.lore && card.lore !== card.name && (
-          <div className="text-purple/90 text-xs mt-1">Lore: {card.lore}</div>
+      {/* Item window — laid out like the in-game card: a flags line, then one
+          labelled stat per row, in the order EQ prints them. */}
+      <section className="bg-panel border border-border rounded-lg p-4 font-mono">
+        <h1 className="text-lg text-gold text-center">{name}</h1>
+
+        {card && (
+          <div className="text-[11px] uppercase tracking-wider text-dim mt-1 mb-3">
+            {[card.magic ? 'MAGIC ITEM' : 'ITEM', card.nodrop ? 'NO DROP' : null,
+              itemRow?.lore_flag ? 'LORE ITEM' : null].filter(Boolean).join(' ')}
+          </div>
         )}
         {!card && (
           <p className="text-dim text-xs mt-2 italic">Stats aren&apos;t mirrored for this item — sources below (if any) still apply.</p>
         )}
-        <div className="mt-3 text-[11px]">
+
+        {card && (
+          <div className="text-sm space-y-0.5">
+            <Line k="Slot">{decodeSlots(card.slots)}</Line>
+            {!!card.ac     && <Line k="AC">{card.ac}</Line>}
+            {!!card.hp     && <Line k="HP">{card.hp > 0 ? `+${card.hp}` : card.hp}</Line>}
+            {!!card.mana   && <Line k="Mana">{card.mana > 0 ? `+${card.mana}` : card.mana}</Line>}
+            {!!card.damage && <Line k="DMG">{card.damage}{card.delay ? <span className="text-dim"> {' '}Dly: {card.delay}</span> : null}</Line>}
+            {!!card.attack && <Line k="Attack">+{card.attack}</Line>}
+            {!!card.haste  && <Line k="Haste">+{card.haste}%</Line>}
+            {(card.mr || card.cr || card.dr || card.fr || card.pr) ? (
+              <Line k="Resists">
+                {[card.mr && `MR +${card.mr}`, card.cr && `CR +${card.cr}`, card.dr && `DR +${card.dr}`,
+                  card.fr && `FR +${card.fr}`, card.pr && `PR +${card.pr}`].filter(Boolean).join('  ')}
+              </Line>
+            ) : null}
+            {card.clickeffect != null && card.clickeffect > 0 && (
+              <Line k="Effect">
+                <Link href={`/db/spell/${card.clickeffect}`} className="text-blue hover:underline">
+                  {clickSpellName || `spell #${card.clickeffect}`}
+                </Link>
+                <span className="text-dim">
+                  {' ('}
+                  {card.clicklevel ? `Level ${card.clicklevel}, ` : ''}
+                  Casting Time: {itemRow?.casttime ? `${(itemRow.casttime / 1000).toFixed(1)}s` : 'Instant'}
+                  {')'}
+                </span>
+              </Line>
+            )}
+            <Line k="WT">
+              {fmtWeight(card.weight)}
+              {!!card.price && <span className="text-dim">{'  '}Value: {fmtPrice(card.price)}</span>}
+            </Line>
+            <Line k="Class">{decodeMask(card.classes, CLASS_TAGS, ALL_CLASS_MASK)}</Line>
+            <Line k="Race">{decodeMask(card.races, RACE_TAGS, ALL_RACE_MASK)}</Line>
+            {!!card.required_level && <Line k="Required level">{card.required_level}</Line>}
+            {!!card.recommended_level && <Line k="Recommended level">{card.recommended_level}</Line>}
+          </div>
+        )}
+
+        {card?.lore && card.lore !== card.name && (
+          <div className="text-purple/90 text-xs mt-3">Lore: {card.lore}</div>
+        )}
+        <div className="mt-3 text-[11px] font-sans">
           <a href={`https://www.pqdi.cc/item/${itemId}`} target="_blank" rel="noreferrer"
              className="text-blue hover:underline">View on PQDI ↗</a>
         </div>
       </section>
-
-      {/* Stats */}
-      {card && (
-        <section className="bg-panel border border-border rounded-lg p-4">
-          <h2 className="text-sm text-orange mb-2">Stats</h2>
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-1 text-sm">
-            <Stat k="Slot">{decodeSlots(card.slots)}</Stat>
-            <Stat k="Class">{decodeMask(card.classes, CLASS_TAGS, ALL_CLASS_MASK)}</Stat>
-            <Stat k="Race">{decodeMask(card.races, RACE_TAGS, ALL_RACE_MASK)}</Stat>
-            {!!card.ac && <Stat k="AC">{card.ac}</Stat>}
-            {!!card.hp && <Stat k="HP" tone={card.hp > 0 ? 'good' : 'bad'}>{card.hp > 0 ? `+${card.hp}` : card.hp}</Stat>}
-            {!!card.mana && <Stat k="Mana" tone={card.mana > 0 ? 'good' : 'bad'}>{card.mana > 0 ? `+${card.mana}` : card.mana}</Stat>}
-            {!!card.damage && <Stat k="Dmg / Dly">{`${card.damage} / ${card.delay ?? '?'}`}</Stat>}
-            {!!card.attack && <Stat k="Atk" tone="good">+{card.attack}</Stat>}
-            {!!card.haste && <Stat k="Haste" tone="good">+{card.haste}%</Stat>}
-            {(card.mr || card.cr || card.dr || card.fr || card.pr) ? (
-              <Stat k="Resists">
-                {[card.mr && `MR ${card.mr}`, card.cr && `CR ${card.cr}`, card.dr && `DR ${card.dr}`,
-                  card.fr && `FR ${card.fr}`, card.pr && `PR ${card.pr}`].filter(Boolean).join(' · ')}
-              </Stat>
-            ) : null}
-            {!!card.required_level && <Stat k="Req Level">{card.required_level}</Stat>}
-            {!!card.recommended_level && <Stat k="Rec Level">{card.recommended_level}</Stat>}
-            {(!!card.weight || !!card.price) && <Stat k="Wt / Sell">{`${card.weight ?? '?'} st · ${fmtPrice(card.price)}`}</Stat>}
-            {card.clickeffect != null && card.clickeffect > 0 && (
-              <Stat k="Clicky">
-                <a href={`https://www.pqdi.cc/spell/${card.clickeffect}`} target="_blank" rel="noreferrer"
-                   className="text-blue hover:underline">spell #{card.clickeffect}</a>
-                <WpDbLink kind="spell" id={card.clickeffect} />
-                {!!card.clicklevel && <span className="text-dim"> (L{card.clicklevel})</span>}
-              </Stat>
-            )}
-          </div>
-        </section>
-      )}
 
       {/* Dropped by */}
       <section className="bg-panel border border-border rounded-lg p-4">
@@ -186,12 +203,11 @@ export default async function DbItemPage({ params }: { params: Promise<{ id: str
   );
 }
 
-function Stat({ k, children, tone }: { k: string; children: React.ReactNode; tone?: 'good' | 'bad' }) {
-  const v = tone === 'good' ? 'text-green' : tone === 'bad' ? 'text-red-400' : 'text-text';
+// One "Label: value" row, the way the in-game item window prints them.
+function Line({ k, children }: { k: string; children: React.ReactNode }) {
   return (
-    <div className="flex items-baseline justify-between gap-2">
-      <span className="text-dim text-[10px] uppercase tracking-wide">{k}</span>
-      <span className={`text-right ${v}`}>{children}</span>
+    <div className="text-text">
+      <span className="text-dim">{k}:</span> {children}
     </div>
   );
 }
