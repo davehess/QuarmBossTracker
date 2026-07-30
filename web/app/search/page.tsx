@@ -12,7 +12,6 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { supabaseServer } from '@/lib/supabase-server';
 import { supabaseAdmin } from '@/lib/supabase';
-import WpDbLink from '@/components/WpDbLink';
 import { userTz, fmtAbs } from '@/lib/timezone';
 import { fmtDmg, fmtDuration, cleanBossName } from '@/lib/format';
 
@@ -119,15 +118,22 @@ export default async function SearchPage({ searchParams }: { searchParams: Promi
 
   const sb = supabaseAdmin();
   const like = `%${q.replace(/[%_]/g, '')}%`;
-  const [encounters, charsRes, whoRes, itemsRes, spellsRes] = await Promise.all([
+  // Tiered exactly like /api/search: guild roster and the catalog first, /who
+  // only when those came back thin. ~107k who_observations vs ~470 roster
+  // characters, so an unconditional /who query buries every real hit.
+  const WHO_THRESHOLD = 10;
+  const [encounters, charsRes, itemsRes, spellsRes, npcsRes] = await Promise.all([
     loadEncountersForNpc(sb, q),
     sb.from('characters').select('name, class, main_name').eq('guild_id', 'wolfpack').ilike('name', like).limit(30),
-    sb.from('who_directory').select('character, observed_class, level, guild_name').ilike('character', like).order('obs_count', { ascending: false }).limit(40),
     sb.from('eqemu_items').select('id, name').ilike('name', like).limit(30),
     sb.from('eqemu_spells').select('id, name').ilike('name', like).limit(30),
+    // EQEmu underscores mob names — match that form too so "Lord Nagafen" hits.
+    sb.from('eqemu_npc_types').select('id, name, level, raid_target')
+      .or(`name.ilike.${like},name.ilike.${like.replace(/ /g, '_')}`)
+      .order('level', { ascending: false }).limit(30),
   ]);
 
-  // Characters — roster first, then unique /who names.
+  // Tier 1 — the guild roster. Ours always come first.
   const seen = new Set<string>();
   const characters: { name: string; sub: string }[] = [];
   for (const c of (charsRes.data ?? []) as { name: string; class: string | null; main_name: string | null }[]) {
@@ -135,15 +141,26 @@ export default async function SearchPage({ searchParams }: { searchParams: Promi
     if (seen.has(k)) continue; seen.add(k);
     characters.push({ name: c.name, sub: [c.class, c.main_name && c.main_name !== c.name ? `alt of ${c.main_name}` : 'Wolf Pack'].filter(Boolean).join(' · ') });
   }
-  for (const w of (whoRes.data ?? []) as { character: string; observed_class: string | null; level: number | null; guild_name: string | null }[]) {
-    const k = (w.character || '').toLowerCase();
-    if (!k || seen.has(k)) continue; seen.add(k);
-    characters.push({ name: w.character, sub: [w.level ? `L${w.level}` : null, w.observed_class, w.guild_name].filter(Boolean).join(' · ') || 'seen in /who' });
-  }
 
   const items  = (itemsRes.data  ?? []) as { id: number; name: string }[];
   const spells = (spellsRes.data ?? []) as { id: number; name: string }[];
-  const nothing = encounters.length === 0 && characters.length === 0 && items.length === 0 && spells.length === 0;
+  const npcs   = (npcsRes.data   ?? []) as { id: number; name: string | null; level: number | null; raid_target: boolean | null }[];
+
+  // Tier 2 (LAZY) — /who sightings, in their own trailing section.
+  const tier1 = characters.length + items.length + spells.length + npcs.length + encounters.length;
+  const whoOut: { name: string; sub: string }[] = [];
+  if (tier1 < WHO_THRESHOLD) {
+    const { data: whoData } = await sb.from('who_directory')
+      .select('character, observed_class, level, guild_name')
+      .ilike('character', like).order('obs_count', { ascending: false }).limit(30);
+    for (const w of (whoData ?? []) as { character: string; observed_class: string | null; level: number | null; guild_name: string | null }[]) {
+      const k = (w.character || '').toLowerCase();
+      if (!k || seen.has(k)) continue; seen.add(k);
+      whoOut.push({ name: w.character, sub: [w.level ? `L${w.level}` : null, w.observed_class, w.guild_name].filter(Boolean).join(' · ') || 'seen in /who' });
+    }
+  }
+
+  const nothing = tier1 === 0 && whoOut.length === 0;
 
   return (
     <div className="space-y-6">
@@ -197,12 +214,29 @@ export default async function SearchPage({ searchParams }: { searchParams: Promi
 
       {characters.length > 0 && (
         <section className="bg-panel border border-border rounded-lg p-4">
-          <h2 className="text-sm text-orange mb-2">🧑 Characters ({characters.length})</h2>
+          <h2 className="text-sm text-orange mb-2">🐺 Guild ({characters.length})</h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-1.5 text-sm">
             {characters.map(c => (
               <Link key={c.name} href={`/character/${encodeURIComponent(c.name)}`} className="flex items-baseline justify-between gap-2 px-2 py-1 rounded hover:bg-[#1a212c]">
                 <span className="text-text truncate">{c.name}</span>
                 <span className="text-dim text-[10px] shrink-0">{c.sub}</span>
+              </Link>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {npcs.length > 0 && (
+        <section className="bg-panel border border-border rounded-lg p-4">
+          <h2 className="text-sm text-orange mb-2">🐲 Mobs ({npcs.length})</h2>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-1.5 text-sm">
+            {npcs.map(n => (
+              <Link key={n.id} href={`/db/npc/${n.id}`} className="flex items-baseline justify-between gap-2 px-2 py-1 rounded hover:bg-[#1a212c]">
+                <span className="text-text truncate">{String(n.name || '').replace(/_/g, ' ').trim() || `NPC #${n.id}`}</span>
+                <span className="text-dim text-[10px] shrink-0">
+                  {n.raid_target ? <span className="text-red-400 uppercase mr-1">raid</span> : null}
+                  {n.level ? `L${n.level}` : ''}
+                </span>
               </Link>
             ))}
           </div>
@@ -215,11 +249,10 @@ export default async function SearchPage({ searchParams }: { searchParams: Promi
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-1.5 text-sm">
             {items.map(i => (
               <div key={i.id} className="flex items-baseline justify-between gap-2 px-2 py-1 rounded hover:bg-[#1a212c]">
-                <span className="text-text truncate">
-                  <a href={`https://www.pqdi.cc/item/${i.id}`} target="_blank" rel="noreferrer" className="hover:text-blue hover:underline">{i.name}</a>
-                  <WpDbLink kind="item" id={i.id} />
+                <Link href={`/db/item/${i.id}`} className="text-text truncate hover:text-blue hover:underline">{i.name}</Link>
+                <span className="text-dim text-[10px] shrink-0">
+                  <a href={`https://www.pqdi.cc/item/${i.id}`} target="_blank" rel="noreferrer" className="hover:text-blue hover:underline">PQDI ↗</a>
                 </span>
-                <span className="text-dim text-[10px] shrink-0">#{i.id} ↗</span>
               </div>
             ))}
           </div>
@@ -232,12 +265,26 @@ export default async function SearchPage({ searchParams }: { searchParams: Promi
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-1.5 text-sm">
             {spells.map(s => (
               <div key={s.id} className="flex items-baseline justify-between gap-2 px-2 py-1 rounded hover:bg-[#1a212c]">
-                <span className="text-text truncate">
-                  <a href={`https://www.pqdi.cc/spell/${s.id}`} target="_blank" rel="noreferrer" className="hover:text-blue hover:underline">{s.name}</a>
-                  <WpDbLink kind="spell" id={s.id} />
+                <Link href={`/db/spell/${s.id}`} className="text-text truncate hover:text-blue hover:underline">{s.name}</Link>
+                <span className="text-dim text-[10px] shrink-0">
+                  <a href={`https://www.pqdi.cc/spell/${s.id}`} target="_blank" rel="noreferrer" className="hover:text-blue hover:underline">PQDI ↗</a>
                 </span>
-                <span className="text-dim text-[10px] shrink-0">#{s.id} ↗</span>
               </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Tier 2 — strangers last, and only fetched when the tiers above were thin. */}
+      {whoOut.length > 0 && (
+        <section className="bg-panel border border-border rounded-lg p-4">
+          <h2 className="text-sm text-orange mb-2">👁️ Seen in /who ({whoOut.length})</h2>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-1.5 text-sm">
+            {whoOut.map(c => (
+              <Link key={c.name} href={`/character/${encodeURIComponent(c.name)}`} className="flex items-baseline justify-between gap-2 px-2 py-1 rounded hover:bg-[#1a212c]">
+                <span className="text-text truncate">{c.name}</span>
+                <span className="text-dim text-[10px] shrink-0">{c.sub}</span>
+              </Link>
             ))}
           </div>
         </section>
