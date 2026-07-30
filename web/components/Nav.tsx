@@ -15,6 +15,7 @@ const links = [
   { href: '/who',           label: '/who' },
   { href: '/pvp',           label: 'PvP' },
   { href: '/pop',           label: '🌀 PoP Flags (Preview)' },
+  { href: '/db',            label: '📚 Database' },
   { href: '/leaderboards',  label: 'Ranks' },
   { href: '/rolls',         label: '🎲 Rolls' },
   { href: '/fun',           label: '🎉 Fun' },

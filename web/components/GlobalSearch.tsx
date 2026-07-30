@@ -1,9 +1,10 @@
 'use client';
 
 // Site-wide search box in the header. Debounced query to /api/search; shows a
-// categorized dropdown (characters / items / spells) with deep links. Internal
-// hits navigate via the router; external hits (PQDI item/spell pages) open in
-// a new tab. Keyboard: ↑/↓ to move, Enter to open, Esc to close. Built to
+// categorized dropdown (characters / items / mobs / spells) with deep links.
+// Catalog hits now point at our own /db pages rather than opening pqdi.cc, so
+// everything navigates client-side; the `external` flag is still honoured for
+// any hit that opts into it. Keyboard: ↑/↓ to move, Enter to open, Esc to close. Built to
 // extend — add a category block here when the API grows (parses, loot, gear).
 // Uilnayar 2026-06-22 epic: "a search bar across all pages... any deep-linked
 // element should be accessible here."
@@ -12,12 +13,13 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 
 type Hit = { label: string; sub?: string; href: string; external?: boolean };
-type Results = { characters: Hit[]; items: Hit[]; spells: Hit[] };
+type Results = { characters: Hit[]; items: Hit[]; spells: Hit[]; npcs: Hit[] };
 
-const EMPTY: Results = { characters: [], items: [], spells: [] };
+const EMPTY: Results = { characters: [], items: [], spells: [], npcs: [] };
 const SECTIONS: { key: keyof Results; label: string; icon: string }[] = [
   { key: 'characters', label: 'Characters', icon: '🧑' },
   { key: 'items',      label: 'Items',      icon: '🗡️' },
+  { key: 'npcs',       label: 'Mobs',       icon: '🐲' },
   { key: 'spells',     label: 'Spells',     icon: '✨' },
 ];
 
@@ -33,7 +35,7 @@ export default function GlobalSearch() {
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   // Flatten for keyboard nav, preserving section order.
-  const flat: Hit[] = [...results.characters, ...results.items, ...results.spells];
+  const flat: Hit[] = [...results.characters, ...results.items, ...results.npcs, ...results.spells];
 
   // Debounced fetch.
   useEffect(() => {
@@ -107,7 +109,7 @@ export default function GlobalSearch() {
         onChange={e => { setQ(e.target.value); setOpen(true); }}
         onFocus={() => setOpen(true)}
         onKeyDown={onKeyDown}
-        placeholder="Search characters, items, spells…  (⌘K)"
+        placeholder="Search characters, items, mobs, spells…  (⌘K)"
         className="w-full bg-bg border border-border rounded px-2.5 py-1 text-xs text-text placeholder:text-dim focus:border-blue outline-none"
       />
       {open && q.trim().length >= 2 && (

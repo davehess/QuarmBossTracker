@@ -53,6 +53,7 @@ export const releases: Release[] = [
       { name: '🐉 Mob pages', blurb: 'Level, HP, AC, resists, damage range and special abilities (enrage, rampage, summon, unslowable, immunities), the full loot table, the spells it can cast — and where it spawns, with zone, coordinates, respawn timer and placeholder chance. There is also a link straight to our own kill history for that mob.' },
       { name: '✨ Spell pages', blurb: 'Effects, resist type, target, duration, cast and recast times, plus the exact log messages a spell writes — handy when you are building a trigger.' },
       { name: '🔗 A "(WP)" link next to every PQDI link', blurb: 'Anywhere the site used to send you off to pqdi.cc — search results, loot lists, your inventory and gear, the parse pages, faction standings — there is now a small (WP) link beside it that opens our copy instead. The PQDI link stays put, so nothing you are used to disappears.' },
+      { name: '🔎 Searchable, and in the nav', blurb: 'New 📚 Database tab with its own search — type an item, mob or spell name and go straight to it. The header search box (⌘K) now finds mobs too, and its item/spell results open our pages instead of bouncing you to pqdi.cc.' },
     ],
     fixes: [
       'Character pages load dramatically faster. Looking up a character was scanning the entire /who sighting history (over a hundred thousand rows) on every single page load just to read a level and guild tag — that alone was several seconds per visit, and it is now an indexed lookup.',
