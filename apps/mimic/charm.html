@@ -366,15 +366,19 @@
       // Split: this is the ACTUAL break, so it gets its own distinct phrase;
       // "recharm pet" stays exactly as-is below for the coming-up warning.
       // ⚠ Built from allPets, NOT the focus-filtered `pets`. The visible list is
-      // scoped to the active EQ window (above) so a boxer doesn't see every
-      // alt's pet at once — but scoping the ALERT that way broke boxers badly
-      // (Shavimo/Menttok, 2026-07-30: beastlord in front, enchanter charming
-      // behind). Two failures at once: tabbing away from the enchanter made its
-      // pet vanish from this set, which read as a break and fired a FALSE
-      // "charm break"; and because the pet then left prevActive and could never
-      // re-register while another window had focus, the REAL break later was
-      // silent. An audio alert is exactly the thing you need when you're NOT
-      // looking at that window, so break detection ignores focus entirely.
+      // scoped to the active EQ window (above) so someone running more than one
+      // client doesn't see every alt's pet at once — but an ALERT shouldn't
+      // depend on which window has focus, since not looking at that window is
+      // exactly when you need to hear it. If activeCharacter ever resolves to
+      // the wrong character (it's derived from the focused window, and the agent
+      // may be tailing several logs at once), a focus-scoped alert would both
+      // fire a spurious break — a pet leaving the filtered set looks identical
+      // to a break — and then go silent for the real one, because the pet can't
+      // re-register while another character is active.
+      //
+      // NOTE: this is defensive hardening, NOT a fix for a reported bug. It was
+      // written on a mistaken assumption that a specific report came from a
+      // two-client setup; it did not. Don't cite it as precedent for one.
       var charmedKeys = new Set(allPets.filter(function(p){ return p && p.is_active; }).map(function(p){ return p.key; }));
       // Currently-tracked keys (active OR lingering broken) — used to decide
       // whether a pending recharm got "intentionally killed" (vanishes from
