@@ -43,6 +43,22 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'agent-3435-field-fixes',
+    title: '🩹 Agent 3.4.35 — slows, the DPS meter, and charm breaks',
+    version: 'Agent 3.4.35',
+    date: '2026-07-30',
+    channel: 'beta',
+    headline: 'Three things the raid reported this week, all fixed: shaman slows finally show up on the target, the DPS meter stops clinging to a mob you killed ages ago, and charm breaks announce again.',
+    features: [
+      { name: '🐌 Shaman slows show on the target', blurb: 'Turgur\'s, Togor\'s, Tagar\'s, Tigir\'s, Drowsy, Walking Sleep — the whole shaman line now appears on Target Info and the slow badge, for everyone, not just the shaman who cast it. Enchanter slows were showing all along because they announce themselves plainly ("<mob> slows down"), while every shaman slow lands as a bare "<mob> yawns" — a line eleven different spells share. That ambiguity was getting the entire family discarded before it ever reached the overlay.' },
+    ],
+    fixes: [
+      'The DPS meter no longer sits on a mob you fought ages ago. A finished fight now clears itself whether or not you\'re still swinging at something — before, it only expired while you were actively in combat, so the last mob of the night could stay on screen indefinitely.',
+      'Charm breaks announce again when the charm was picked up from Zeal rather than from your log. In that case the "Your charm spell has worn off" line was being thrown away, so the tracker never noticed the break and never spoke.',
+      'The Charm diagnostic card no longer prints an internal note in the middle of its explanation.',
+    ],
+  },
+  {
     key: 'mimic-21-pqdi-spellsets',
     title: '🐺 Mimic 2.1 — PQDI link + one-shot spell-set swap',
     version: 'Mimic 2.1 · Agent 3.4.34',
