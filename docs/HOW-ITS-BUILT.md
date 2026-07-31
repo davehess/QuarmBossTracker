@@ -295,6 +295,15 @@ owns slot names authoritatively (short names resolve via the Zeal raid
 roster). Beat = median gap of last 10 calls → due-countdown, slip pivot
 banner. Off-heal candidates (hurt offtanks only, <90% tunable) hang off the
 same snapshot for the CH-chain + Tank overlays.
+Cast bar (agent 3.4.39): each numbered call starts a 10s countdown on that
+slot (`CH_CAST_MS` — eqemu Complete Heal id 13 cast time); interrupt lines
+(`trackChChainInterrupt`, EQMac string_ids 439/12478) paint a red ✕ — an ✕
+proves the interrupt, absence proves nothing (both strings are range-limited/
+filter-suppressible). DDR grading: `_chGradeCall` scores each call against
+`_chExpectedNextAt()` — ≤0.25s PERFECT (3 straight → MARVELOUS, per-slot
+streak), ≤0.5s GREAT, ≤1s GOOD — flashed as an arcade sticker atop the
+caster's bar in `apps/mimic/chchain.html` (`ddrSticker`). Visual only, never
+TTS, by design; 🎯 overlay toggle + `POST /api/chchain/ddr`.
 
 ### Main target & main tank
 `_resolveMainTarget` = the NPC most raiders target, from the bot's Extended
@@ -484,6 +493,13 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
 - **Ext-target same-zone filter (#113)** — `/api/ext-pref` per-user toggle.
 - **Roll capture (#91)** — `trackLootedLine`/`uploadLooted`, `uploadRollSets`,
   Hot Dice perfect-roll fun events.
+- **Damage-taken audio alert (3.4.39)** — `_maybeAnnounceDamageTaken` rides the
+  `defender:'YOU'` combat paths (the "you have taken" line family is dropped by
+  the byte filter — don't move detection there); `_setDamageAlert` +
+  `POST /api/damage-alert`. Structurally default-OFF.
+- **CH cast bar + DDR grading (3.4.39)** — see the CH chain tracker entry
+  above (`CH_CAST_MS`, `trackChChainInterrupt`, `_chGradeCall`,
+  `POST /api/chchain/ddr`).
 
 ### Mimic (`apps/mimic/`, beta)
 - **Me card + officer Admin tab (#109)** — dashboard opens on 🐺 Me; officer
@@ -493,6 +509,11 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   `/api/eq-setup` writer (see the Setup & onboarding entry above).
 - **Overlay fixes** — trigger-overlay auto-grow (#107), melody stale-card + setup
   chrome teardown (#116), TTS user-activation fix (#120).
+- **Damage-alert controls (3.4.39)** — `cfg.damageAlert` (default OFF) with a
+  top-level tray toggle in `main.js` and a rebindable hotkey (default
+  `Ctrl+Shift+D`) via `_wpWireHotkeyRow` on the dashboard Overlays tab.
+- **chchain.html (3.4.39)** — per-slot cast bar with remaining seconds, red ✕
+  on interrupt, DDR `ddrSticker` pop + 🎯 grading toggle (#103 button pattern).
 
 ### Web (`web/`)
 - **Roll nights (#91)** — `/rolls` (`web/lib/rolls.ts`).
