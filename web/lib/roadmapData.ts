@@ -43,6 +43,22 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'event-driven-night-threads',
+    title: '📅 Night threads follow the calendar',
+    version: 'Bot 3.0.235',
+    date: '2026-07-31',
+    headline: 'The per-night Discord thread now knows your schedule: raid nights land in #raid-chat, scheduled off-night events get their own thread in #event-chat with roll loot instead of DKP — driven by the server\'s Discord events, no setup required.',
+    features: [
+      { name: '🗓️ Event-driven windows', blurb: 'The thread opens for posting 30 minutes before an event\'s scheduled start and closes 15 minutes after its end. Your Discord events (the same ones /announce creates) drive it.' },
+      { name: '🎲 Off-night roll loot', blurb: 'Event threads show each dropped item with its assigned roll range and the winner — the /random flow the guild already uses — instead of DKP bidding posts.' },
+      { name: '🔇 Less trash spam', blurb: 'Named bosses always post to the thread; one-second trash skirmishes no longer flood it.' },
+    ],
+    fixes: [
+      '/onboarding works again for long-absent members — the "what\'s new" list overflowed Discord\'s message limit and errored for most people who ever used it.',
+      'The night thread now opens in #raid-chat as intended (it was falling back to #raid-mobs).',
+    ],
+  },
+  {
     key: 'raidnight-fleet-batch',
     title: '🐺 The raid-night batch — cures, night threads, and nine fixes in one evening',
     version: 'Bot 3.0.233 · Agent 3.4.38',
