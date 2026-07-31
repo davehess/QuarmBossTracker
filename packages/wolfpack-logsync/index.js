@@ -3360,6 +3360,133 @@ const CH_EQUIVALENT_SPELLS = new Map([
 ]);
 const SPOT_HEAL_DISPLAY_MS = 8000; // how long a one-off spot-heal stays on the overlay
 const CH_GO_DISPLAY_MS = 7000;     // how long a "NNN GO GO GO" cue flashes on its slot's row
+// ── CH cast bar + interrupt ✕ (Hitya 2026-07-31) ─────────────────────────────
+// Complete Heal cast time, GROUNDED not guessed: eqemu_spells row id 13
+// "Complete Healing" carries cast_time = 10000 ms (recast 2250). That is the
+// cleric chain spell — id 1292 "Complete Heal" (cast_time 1000) is the
+// instant NPC/AA variant and is NOT what a chain cleric casts. The overlay
+// has drawn a 10s bar from a hard-coded local constant since the chain
+// shipped; the agent now owns the number and echoes it on the snapshot so
+// the bar, the interrupt window and the DDR grade all read the same clock.
+const CH_CAST_MS = 10000;
+// Slack past the nominal cast when attributing an interrupt line to a slot.
+// Three real sources of skew, all one-directional-ish: EQ log timestamps are
+// second-resolution, the shout that starts our clock is macro'd onto the cast
+// (so it can trail the gem), and cast-time focus items shorten the real cast.
+// 2s covers all three and still stops well short of the next slot's window.
+const CH_INTERRUPT_SLACK_MS = 2000;
+// How long the frozen bar + red ✕ linger on an interrupted slot's row before
+// it falls back to the ordinary "Ns ago" display.
+const CH_INTERRUPT_LINGER_MS = 4000;
+// ── CH chain DDR grade (Hitya 2026-07-31) ────────────────────────────────────
+// A DDR-style timing grade on how close a cleric's cast start lands to the
+// chain's expected beat. Ladder is the guild lead's, verbatim:
+//   GOOD      |delta| ≤ 1.0s
+//   GREAT     |delta| ≤ 0.5s
+//   PERFECT   |delta| ≤ 0.25s
+//   MARVELOUS 3 PERFECTs in a row — a STREAK upgrade, not a tighter window
+// Deliberately NO failure grade: outside 1s the call is simply ungraded (never
+// a "Miss"). The chain already screams via GAP SOON / PIVOT when it slips.
+//
+// ⚠ VISUAL ONLY, BY DESIGN (Hitya 2026-07-31): this grade is never spoken and
+// must never grow a TTS path. It is an entertainment/timing sticker that
+// flashes on the cleric's own cast bar. The "0X GO" callout (#103) is the
+// chain's ONLY audio and is untouched by any of this — do not "helpfully"
+// wire _pushOverlay into the grading path.
+const CH_DDR_PERFECT_MS = 250;
+const CH_DDR_GREAT_MS   = 500;
+const CH_DDR_GOOD_MS    = 1000;
+const CH_DDR_MARVELOUS_STREAK = 3;   // consecutive PERFECTs that upgrade to MARVELOUS
+const CH_DDR_DISPLAY_MS = 1400;      // sticker lifetime on the row (~1-1.5s)
+// Streak scope. TRUE = per slot, which is per cleric in practice: a chain slot
+// is owned by one cleric for the fight and the roster call pins the name to the
+// number, so "3 in a row" reads as "that cleric nailed three of their own
+// beats". Flip this ONE line to false for a chain-wide streak (any three
+// consecutive on-beat calls, regardless of who made them).
+const CH_DDR_STREAK_PER_SLOT = true;
+// Don't grade until the chain's own cadence is actually measured — the
+// expected-fire model IS the measured beat (see _chExpectedNextAt), and a
+// median over one or two gaps is noise, not a cadence.
+const CH_DDR_MIN_BEATS  = 3;
+// Dedicated per-feature toggle, same shape as _chGoTtsEnabled (#103): the
+// button on the CH chain overlay POSTs /api/chchain/ddr, the overlay persists
+// the choice in localStorage and re-POSTs on load + on any drift. Governs the
+// on-row flash (there is nothing else for it to govern — see above).
+let _chDdrEnabled = true;
+
+// ── Expected-fire model (the DDR baseline) ───────────────────────────────────
+// There is no officer-configured cadence anywhere in this platform — the
+// DESIGN-ch-chain "shared start_at + interval" relay was never built, and the
+// chain we actually parse is callout-driven. So "expected" is derived exactly
+// the way the overlay's NEXT countdown has always derived it: the previous
+// slot's cast START (its shout — clerics macro the shout onto the cast, so the
+// shout IS the cast-start signal) plus this chain's OWN measured beat, the
+// median of the last 10 inter-slot gaps. Returns null until CH_DDR_MIN_BEATS
+// gaps exist, so an unwarmed chain grades nothing rather than grading noise.
+function _chExpectedNextAt(c) {
+  if (!c || !c.lastCh || !c.beats || c.beats.length < CH_DDR_MIN_BEATS) return null;
+  const sorted = c.beats.slice().sort((a, b) => a - b);
+  const beatMs = sorted[Math.floor(sorted.length / 2)];
+  if (!beatMs) return null;
+  return c.lastCh.atMs + beatMs;
+}
+// |delta| → base grade. Thresholds are the guild lead's, verbatim.
+// MARVELOUS is NOT decided here — it's a streak upgrade applied in
+// _chGradeCall once three PERFECTs land back to back.
+function _chGradeForDelta(deltaMs) {
+  const d = Math.abs(Number(deltaMs));
+  if (!isFinite(d)) return null;
+  if (d <= CH_DDR_PERFECT_MS) return 'PERFECT';
+  if (d <= CH_DDR_GREAT_MS)   return 'GREAT';
+  if (d <= CH_DDR_GOOD_MS)    return 'GOOD';
+  return null;                      // outside 1s → ungraded, never a "Miss"
+}
+function _chStreakKey(num) { return CH_DDR_STREAK_PER_SLOT ? String(num) : 'chain'; }
+// Grade a CH call the instant it lands. MUST be called BEFORE the new gap is
+// folded into c.beats and before c.lastCh is replaced — otherwise the gap we
+// are grading is itself in the median and every call looks perfect.
+function _chGradeCall(c, num, atMs) {
+  if (!_chDdrEnabled) return null;
+  if (!c || !c.lastCh || c.lastCh.num === num) return null;   // repeat call ≠ a beat
+  // The anchor cast never landed, so the chain is in recovery and the next
+  // cleric is *supposed* to jump in early rather than on cadence. Grading
+  // against a cadence the chain has abandoned would manufacture a bogus late
+  // call. This is what "treat the interrupted slot as missed" means for the
+  // expected-next math — the rotation pointer itself is untouched (nextNum
+  // already advanced at the interrupted slot's own call, and that stays).
+  if (c.lastCh.interruptedAt) return null;
+  const expectedAt = _chExpectedNextAt(c);
+  if (!expectedAt) return null;
+  const deltaMs = atMs - expectedAt;              // + late, − early
+  let grade = _chGradeForDelta(deltaMs);
+  c.ddrStreak = c.ddrStreak || {};
+  const key = _chStreakKey(num);
+  if (grade === 'PERFECT') {
+    const streak = (c.ddrStreak[key] || 0) + 1;
+    c.ddrStreak[key] = streak;
+    // At/above the threshold every further consecutive PERFECT keeps showing
+    // MARVELOUS — the streak is sustained, not consumed.
+    if (streak >= CH_DDR_MARVELOUS_STREAK) grade = 'MARVELOUS';
+  } else {
+    c.ddrStreak[key] = 0;   // GREAT/GOOD *and* ungraded both break the streak
+  }
+  if (!grade) return null;
+  return { num, grade, delta_ms: deltaMs, expected_at: expectedAt, at: atMs,
+           streak: c.ddrStreak[key] || 0 };
+}
+// Stamp a fresh grade onto its slot row. Called after the slot object has been
+// rebuilt (the literal drops any prior grade, which is what we want — a new
+// cast start is a new bar and a new grade). Purely a display stamp: nothing
+// here speaks, uploads, or fires a trigger.
+function _applyChGrade(c, num, ddr) {
+  if (!ddr) return;
+  const slot = c.slots[num];
+  if (!slot) return;
+  slot.grade = ddr.grade;
+  slot.gradeAtMs = ddr.at;
+  slot.gradeDeltaMs = ddr.delta_ms;
+  slot.gradeStreak = ddr.streak;
+}
 
 function trackChChainLine(line, character) {
   if (!line) return;
@@ -3422,6 +3549,10 @@ function trackChChainLine(line, character) {
     if (call[2]) c.target = call[2];
     const manaM = text.match(_CH_MANA_RX);
     const mana = manaM ? Math.min(100, parseInt(manaM[1], 10)) : null;
+    // DDR grade — computed BEFORE this call's gap joins the beat median (see
+    // _chGradeCall) so the expected time is the cadence the chain had going
+    // INTO this call, not one that already knows the answer.
+    const ddr = _chGradeCall(c, num, atMs);
     // Beat = gap between consecutive CH calls from DIFFERENT slots. Median of
     // the last 10 gaps absorbs one-off stutters (a late call, a duplicate).
     if (c.lastCh && atMs > c.lastCh.atMs && c.lastCh.num !== num) {
@@ -3438,6 +3569,7 @@ function trackChChainLine(line, character) {
     // collides with one the personal-macro path auto-assigned earlier.
     c.slots[num] = { name: slotName, mana: mana != null ? mana : (prev.mana ?? null), lastAtMs: atMs, count: (prev.count || 0) + 1, kind: null };
     c.lastCh = { num, name: slotName, mana, atMs };
+    _applyChGrade(c, num, ddr);
     // Default next = numeric successor, wrapping at the highest slot seen.
     // The explicit GO cue (below) overrides when it arrives.
     const nums = Object.keys(c.slots).map(Number);
@@ -3468,6 +3600,7 @@ function trackChChainLine(line, character) {
         num = existing.length ? Math.max.apply(null, existing) + 1 : 1;
         c.autoSlots[key] = num;
       }
+      const ddr = _chGradeCall(c, num, atMs);   // before the gap joins the median
       if (c.lastCh && atMs > c.lastCh.atMs && c.lastCh.num !== num) {
         const gap = atMs - c.lastCh.atMs;
         if (gap > 500 && gap < 30000) { c.beats.push(gap); if (c.beats.length > 10) c.beats.shift(); }
@@ -3476,6 +3609,7 @@ function trackChChainLine(line, character) {
       const slotName = (c.rosterNames && c.rosterNames[num]) || speaker;
       c.slots[num] = { name: slotName, mana, lastAtMs: atMs, count: (prev.count || 0) + 1, kind: CH_EQUIVALENT_SPELLS.get(spellKey) };
       c.lastCh = { num, name: slotName, mana, atMs };
+      _applyChGrade(c, num, ddr);
       const nums = Object.keys(c.slots).map(Number);
       c.nextNum = num >= Math.max.apply(null, nums) ? Math.min.apply(null, nums) : num + 1;
       c.updatedAt = atMs;
@@ -3505,6 +3639,69 @@ function trackChChainLine(line, character) {
       _maybeAnnounceChGo(_chChain, atMs);
     }
   }
+}
+// ── CH cast interrupted → freeze that slot's bar and put a ✕ on it ───────────
+// Bystander-visible interrupt lines, grounded in the server source Quarm runs
+// on (EQMacEmu/Server zone/string_ids.h, identical ids in EQEmu/Server):
+//   INTERRUPT_SPELL       439    "Your spell is interrupted."
+//   INTERRUPT_SPELL_OTHER 12478  "%1's casting is interrupted!"
+// The OTHER form is what puts a ✕ on somebody ELSE's bar. Caveat worth knowing
+// before trusting it as a chain signal: zone/spells.cpp InterruptSpell sends it
+// with entity_list.QueueCloseClients(..., RuleI(Range, SongMessages), ...,
+// FilterPCSpells) — range-limited and suppressible by the reader's own PC-spell
+// chat filter. So a ✕ is proof of an interrupt; the ABSENCE of one is never
+// proof the cast completed. We also accept the "'s spell is interrupted" phrasing
+// defensively (older/alternate eqstr wordings) — same cheap gate either way.
+const _CH_INTERRUPT_OTHER_RX = /\]\s+([A-Za-z][A-Za-z'`]*)'s (?:casting|spell) is interrupted[.!]\s*$/i;
+const _CH_INTERRUPT_SELF_RX  = /\]\s+Your spell is interrupted[.!]\s*$/i;
+function trackChChainInterrupt(line, character) {
+  if (!line || !_chChain) return;                      // never conjures a chain
+  if (line.indexOf('interrupted') === -1) return;      // cheap gate (tail hot path)
+  let who = null;
+  const om = line.match(_CH_INTERRUPT_OTHER_RX);
+  if (om) who = om[1];
+  else if (_CH_INTERRUPT_SELF_RX.test(line)) who = character;
+  if (!who) return;
+  const ts = parseEqTimestamp(line);
+  const atMs = ts ? ts.getTime() : Date.now();
+  const num = _chSlotCastingAs(who, atMs);
+  if (num == null) return;
+  const slot = _chChain.slots[num];
+  if (!slot || slot.interruptedAt) return;             // already marked
+  slot.interruptedAt = atMs;
+  slot.grade = null;                 // a frozen bar + ✕ replaces any grade sticker
+  // An interrupt breaks the MARVELOUS streak (Hitya: "resets on any
+  // non-PERFECT grade or an interrupt").
+  if (_chChain.ddrStreak) _chChain.ddrStreak[_chStreakKey(num)] = 0;
+  // Mark the chain anchor too when the interrupted slot is the current one —
+  // _chGradeCall reads this to skip grading the cleric who jumps in after.
+  if (_chChain.lastCh && _chChain.lastCh.num === num) _chChain.lastCh.interruptedAt = atMs;
+  _chChain.updatedAt = atMs;
+}
+// Which chain slot is `who` mid-cast on right now? Only slots inside their own
+// CH cast window are candidates, so an interrupt after the bar finished — or
+// from an unrelated spell later in the fight — attaches to nothing. Exact name
+// match first; a UNIQUE prefix match is the fallback for the roster-abbreviation
+// case (row says "Mana", the log says "Manamana"). Ambiguous prefix → no match,
+// same conservative rule _resolveChRosterName uses.
+function _chSlotCastingAs(who, atMs) {
+  if (!_chChain || !who) return null;
+  const lc = String(who).toLowerCase();
+  const win = CH_CAST_MS + CH_INTERRUPT_SLACK_MS;
+  let exact = null;
+  const prefix = [];
+  for (const nStr of Object.keys(_chChain.slots)) {
+    const s = _chChain.slots[nStr];
+    if (!s || !s.lastAtMs) continue;
+    const dt = atMs - s.lastAtMs;
+    if (dt < 0 || dt > win) continue;
+    const sn = String(s.name || '').toLowerCase();
+    if (!sn) continue;
+    if (sn === lc) { exact = Number(nStr); break; }
+    if (lc.startsWith(sn) || sn.startsWith(lc)) prefix.push(Number(nStr));
+  }
+  if (exact != null) return exact;
+  return prefix.length === 1 ? prefix[0] : null;
 }
 function _chChainEnsure(atMs) {
   if (_chChain && (atMs - _chChain.updatedAt) > CH_CHAIN_IDLE_RESET_MS) _chChain = null;
@@ -3597,6 +3794,26 @@ function chChainSnapshot() {
     // Current state of the dedicated "0X GO" TTS toggle, echoed so the overlay
     // button can reconcile its localStorage choice after an agent restart.
     go_tts:     _chGoTtsEnabled,
+    // Cast-bar clock + interrupt display window (the overlay keeps its own
+    // fallbacks, so an older overlay against a newer agent still renders).
+    ch_cast_ms:             CH_CAST_MS,
+    ch_interrupt_linger_ms: CH_INTERRUPT_LINGER_MS,
+    // The DDR baseline, exposed so the overlay's NEXT countdown and the grade
+    // are computed from ONE number instead of two lookalike expressions.
+    // Null until the beat is measured (CH_DDR_MIN_BEATS gaps).
+    next_expected_at: _chExpectedNextAt(_chChain),
+    // DDR grading state — `enabled` is echoed for the same button self-heal
+    // the GO toggle does; the thresholds ride along so the overlay can label
+    // its tooltip without duplicating the constants. VISUAL ONLY — no field
+    // here feeds any audio path (see the CH_DDR_* block).
+    ddr: {
+      enabled:         _chDdrEnabled,
+      display_ms:      CH_DDR_DISPLAY_MS,
+      perfect_ms:      CH_DDR_PERFECT_MS,
+      great_ms:        CH_DDR_GREAT_MS,
+      good_ms:         CH_DDR_GOOD_MS,
+      marvelous_streak: CH_DDR_MARVELOUS_STREAK,
+    },
   };
 }
 
@@ -19410,6 +19627,20 @@ function startWebDashboard(port) {
           cooldown_sec: _damageAlertCooldownMs / 1000,
         }));
       }
+      // CH chain DDR grading toggle (Hitya 2026-07-31) — same contract as the
+      // "0X GO" toggle above: the 🎯 button on the CH chain overlay POSTs
+      // { enabled: bool } here and re-POSTs on load to re-sync after an agent
+      // restart. Governs the on-bar GOOD/GREAT/PERFECT/MARVELOUS flash — and
+      // ONLY that. Grading is visual by design; this is not a TTS switch.
+      if (req.url === '/api/chchain/ddr' && req.method === 'POST') {
+        const body = await _readBody(req);
+        let payload;
+        try { payload = JSON.parse(body); }
+        catch { res.writeHead(400); return res.end('invalid json'); }
+        _chDdrEnabled = !!(payload && payload.enabled);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ ok: true, enabled: _chDdrEnabled }));
+      }
       // ✕ from a pet tracker card — drops the per-owner /pet health snapshot
       // + observed buff landings + stats so the row stops rendering. Useful
       // when switching toons leaves stale pet state (the freshness gate now
@@ -30170,6 +30401,10 @@ async function main() {
         // callouts in shout/raid chat. Local-only (zone-visible lines);
         // feeds the Mimic CH Chain overlay via /api/state.chChain.
         if (!_sourceExcluded) { try { trackChChainLine(line, b.character); } catch {} }
+        // "<Cleric>'s casting is interrupted!" / "Your spell is interrupted." →
+        // freeze that slot's cast bar and put a ✕ on it. No-ops unless a chain
+        // is already running and the name maps to a slot mid-cast.
+        if (!_sourceExcluded) { try { trackChChainInterrupt(line, b.character); } catch {} }
         // Raid-wide DA/invuln broadcast + healer mana roster — same
         // shout/raid/guild-chat macro pattern as CH chain, feeding the
         // Command Center overlay.
@@ -30333,6 +30568,13 @@ module.exports = {
   SOURCELESS_SPELLS, BARD_SONGS,
   EncounterBuilder, characterFromFilename,
   trackChChainLine, chChainSnapshot,
+  // CH cast bar / interrupt ✕ / DDR grade — exported for the scratchpad harness.
+  trackChChainInterrupt, _chGradeForDelta, _chExpectedNextAt,
+  CH_CAST_MS, CH_INTERRUPT_SLACK_MS, CH_INTERRUPT_LINGER_MS,
+  CH_DDR_PERFECT_MS, CH_DDR_GREAT_MS, CH_DDR_GOOD_MS,
+  CH_DDR_MARVELOUS_STREAK, CH_DDR_MIN_BEATS, CH_DDR_DISPLAY_MS,
+  _setChDdrEnabledForTest: (v) => { _chDdrEnabled = !!v; },
+  _resetChChainForTest: () => { _chChain = null; _lastChGoNum = null; },
   _readZipEntry, _parseCrashReason, _crashZipTime,
   // #107/#149 loot-post announce — exported for the scratchpad smoke test.
   parseLootChatBody, noteLootAuction, _parseAuctionDuration, _spokenDuration,
