@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.0.235': [
+    '**Night threads now follow the calendar.** The per-night thread opens in #raid-chat on raid nights and in #event-chat for scheduled off-night events (Discord events drive it — no setup needed), posting from 30 minutes before the event to 15 minutes after it ends. Off-night event threads show roll loot — each item with its roll range and winner — instead of DKP posts. Trash spam is filtered (named bosses always post; short tiny skirmishes don\'t).',
+  ],
   '3.0.234': [
     '**/onboarding works again for long-absent members.** If you hadn\'t checked in for a while, "what\'s new" tried to show you every update at once, overflowed Discord\'s message limit, and errored out — for most people who\'d ever used it. It now shows the newest updates that fit and links the full history on the roadmap. If /onboarding ever showed you "❌ An error occurred", try it again.',
   ],
