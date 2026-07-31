@@ -12753,6 +12753,83 @@ async function _handleAgentFlagOverride(req, res) {
   }
 }
 
+// ── Off-night event thread: the 🎲 rolled-loot card ──────────────────────────
+// Hitya 2026-07-31: a NON-raid guild event gets no DKP loot posts. Instead the
+// thread carries the items that dropped with their assigned roll ranges, the
+// night's parses (the autoparse cards already land there), and the rolled loot
+// with its winners.
+//
+// Data path — nothing new is collected. #91's `roll_sets` (grouped /random
+// sets, one row per uploader who saw them) and `looted_items` are joined by
+// utils/rollLoot.js and rendered into ONE card that is edited in place.
+//
+// Cadence: driven by the ingest that changes the data (rolls + looted), never a
+// timer, and debounced so a burst of uploads from six parsers refreshes once.
+// Always fired AFTER the handler's 200 — agents never wait on Discord.
+const _ROLL_CARD_DEBOUNCE_MS = 45_000;
+let _rollCardLastAt = 0;
+let _rollCardTimer  = null;
+
+async function _refreshEventRollCardNow() {
+  const rn = require('./utils/raidNight');
+  const target = await rn.getRaidNightTarget(client).catch(() => ({ thread: null, kind: null, event: null }));
+  if (!target.thread || target.kind !== 'event') return;   // raid nights keep the DKP flow
+
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) return;
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+  // Scope: the event's own window (opened early), so a Tuesday event never
+  // shows Monday's rolls. Without an event (can't happen here) fall back to 12h.
+  const sinceMs = target.event ? (target.event.window?.fromMs || target.event.startMs) : (Date.now() - 12 * 3600_000);
+  const sinceIso = new Date(sinceMs - 5 * 60_000).toISOString();
+
+  const [rollRows, lootedRows] = await Promise.all([
+    supabase.select('roll_sets',
+      `guild_id=eq.${encodeURIComponent(guildId)}&started_at=gte.${encodeURIComponent(sinceIso)}`
+      + `&select=roll_from,roll_to,item,qty,zone,rolls,started_at,last_at&order=started_at.asc&limit=300`).catch(() => []),
+    supabase.select('looted_items',
+      `guild_id=eq.${encodeURIComponent(guildId)}&looted_at=gte.${encodeURIComponent(sinceIso)}`
+      + `&select=looter_character,item_name,zone,looted_at&order=looted_at.asc&limit=500`).catch(() => []),
+  ]);
+  const { buildRollSessions, renderRollLootLines } = require('./utils/rollLoot');
+  const sessions = buildRollSessions(rollRows || [], lootedRows || []);
+  if (sessions.length === 0) return;
+
+  const { EmbedBuilder: _REB } = require('discord.js');
+  const lines = renderRollLootLines(sessions);
+  const shown = Math.min(sessions.length, lines.length);
+  const card = new _REB()
+    .setColor(0xa371f7)
+    .setTitle(`🎲 Rolled loot — ${target.event?.title || 'guild event'}`)
+    .setDescription(lines.join('\n\n').slice(0, 4000))
+    .setFooter({ text: `${sessions.length} roll${sessions.length === 1 ? '' : 's'} captured${shown < sessions.length ? ` · showing ${shown}` : ''} · no DKP on event nights · edits in place` })
+    .setTimestamp();
+
+  const { getEventRollCardId, setEventRollCardId } = require('./utils/state');
+  const existingId = getEventRollCardId(target.thread.id);
+  if (existingId) {
+    try {
+      const msg = await target.thread.messages.fetch(existingId);
+      await msg.edit({ embeds: [card] });
+      return;
+    } catch { /* message gone — post fresh */ }
+  }
+  const sent = await target.thread.send({ embeds: [card] });
+  setEventRollCardId(target.thread.id, sent.id);
+}
+
+/** Debounced, never-throwing trigger. Safe to call from any ingest handler. */
+function _scheduleEventRollCard() {
+  if (_rollCardTimer) return;
+  const wait = Math.max(0, _ROLL_CARD_DEBOUNCE_MS - (Date.now() - _rollCardLastAt));
+  _rollCardTimer = setTimeout(() => {
+    _rollCardTimer  = null;
+    _rollCardLastAt = Date.now();
+    _refreshEventRollCardNow().catch(err => console.warn('[roll-card] refresh failed:', err?.message));
+  }, wait);
+  if (typeof _rollCardTimer.unref === 'function') _rollCardTimer.unref();
+}
+
 // POST /api/agent/rolls  (#91 off-night NBG roll capture)
 // Store the agent's grouped /random SETS. Upsert per (uploader, range, start)
 // so a growing set updates in place as more rolls arrive; the site merges
@@ -12807,7 +12884,10 @@ async function _handleAgentRolls(req, res) {
   if (rows.length === 0) { res.writeHead(200); return res.end(JSON.stringify({ ok: true, stored: 0 })); }
   try {
     await supabase.upsert('roll_sets', rows, 'guild_id,uploaded_by_discord_id,roll_from,roll_to,started_at');
-    res.writeHead(200); return res.end(JSON.stringify({ ok: true, stored: rows.length }));
+    res.writeHead(200);
+    res.end(JSON.stringify({ ok: true, stored: rows.length }));
+    try { _scheduleEventRollCard(); } catch { /* presentation only */ }
+    return;
   } catch (err) {
     res.writeHead(500); return res.end(JSON.stringify({ error: 'upsert failed', detail: err && err.message ? err.message : String(err) }));
   }
@@ -12868,7 +12948,12 @@ async function _handleAgentLooted(req, res) {
   if (rows.length === 0) { res.writeHead(200); return res.end(JSON.stringify({ ok: true, stored: 0 })); }
   try {
     await supabase.upsert('looted_items', rows, 'guild_id,looter_lower,item_name,looted_at');
-    res.writeHead(200); return res.end(JSON.stringify({ ok: true, stored: rows.length }));
+    res.writeHead(200);
+    res.end(JSON.stringify({ ok: true, stored: rows.length }));
+    // A looted line resolves "who actually took it" on the event thread's roll
+    // card. Same debounce, same post-ack rule.
+    try { _scheduleEventRollCard(); } catch { /* presentation only */ }
+    return;
   } catch (err) {
     res.writeHead(500); return res.end(JSON.stringify({ error: 'upsert failed', detail: err && err.message ? err.message : String(err) }));
   }
