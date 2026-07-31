@@ -6500,6 +6500,80 @@ class EncounterBuilder {
       if (now - last > 120_000) this.flush();
     }
   }
+  // ── Proven-ours pets, for the UPLOAD payload ───────────────────────────────
+  // The DPS HUD admits a pet row when ANY of the ownership trackers can prove
+  // the mob is ours (_publishLiveThreat, ~line 5120: petLeaders / an open
+  // _activeCharms session / an active _charmTickTracker entry). The upload
+  // payload only ever consulted `this.petLeaders` — and a charm pet landed via
+  // the Zeal slot-16 gauge (the PRIMARY charm-land signal, `_bumpCharmTick` at
+  // ~line 1629) never touches petLeaders or _activeCharms. So charmed mobs
+  // showed on the local meter but were invisible to the bot: its aggregator
+  // drops any multi-word attacker it can't resolve through `pet_leaders` (root
+  // index.js ~8249 `if (/\s/.test(attacker)) continue;`), which is exactly the
+  // Ssra 2026-07-30 report — pets on the HUD, no pet damage and no owner
+  // attribution on the parse card / encounter_players.
+  //
+  // Two deliberate differences from the HUD's set, both about TIME:
+  //   • closed charm sessions (this.charmSessions) count too — a fight where an
+  //     enchanter/bard cycles three mobs leaves only the LAST one active, so a
+  //     "who is ours right now" set collapses three pets down to one;
+  //   • a broken-but-lingering _charmTickTracker entry counts when it broke
+  //     inside this fight's window (it lingers PET_LINGER_MS for the overlay).
+  //
+  // Keyed per PET NAME, never per owner — two pets belonging to one player stay
+  // two entries. Returns Map<petNameLower, { pet, owner }>.
+  _provenPets() {
+    const out = new Map();
+    const startMs = this.startedAt ? (Date.parse(this.startedAt) || 0) : 0;
+    const add = (pet, owner) => {
+      const name = pet ? String(pet).trim() : '';
+      if (!name) return;
+      // Vision eyes ("Eye of Kyrasha") are scout familiars, not damage pets.
+      // They must never enter the upload — the bot drops them from its damage
+      // aggregate too (root index.js ~8234), and admitting them here would
+      // silently re-attribute a scout's chip damage to a raider.
+      if (/^eye\s+of\s+/i.test(name)) return;
+      let own = owner === '__SELF__' ? this.character : owner;
+      own = own ? String(own).trim() : '';
+      // Owners are player characters. A multi-word "owner" is a mis-read; the
+      // bot discards those anyway (validOwners, root index.js ~8241).
+      if (!own || /\s/.test(own)) return;
+      const key = name.toLowerCase();
+      if (!out.has(key)) out.set(key, { pet: name, owner: own });
+    };
+    // Charm sources first — they carry the log's original casing, whereas
+    // petLeaders is keyed (and therefore cased) lowercase. _activeCharms and
+    // charmSessions are reset() per encounter and per builder, so they need no
+    // scoping; _charmTickTracker is MODULE-level (shared by every builder and
+    // every boxed character) and does need it — see below.
+    if (this._activeCharms) {
+      for (const [petLower, sess] of this._activeCharms) add(sess?.pet || petLower, sess?.owner);
+    }
+    for (const s of this.charmSessions) add(s?.pet, s?.owner);
+    if (_charmTickTracker.size > 0) {
+      // Only admit a globally-tracked charm pet that actually appears in THIS
+      // encounter. Without the scope check an alt's live charm (or a pet that
+      // lingered from an earlier pull — broken entries stay PET_LINGER_MS for
+      // the overlay) would be declared "ours" on an unrelated fight's upload,
+      // handing a same-named enemy's damage to whoever charmed one last time.
+      const seen = new Set();
+      for (const ev of this.events) {
+        if (ev.attacker) seen.add(String(ev.attacker).toLowerCase());
+        if (ev.defender) seen.add(String(ev.defender).toLowerCase());
+      }
+      for (const [petLower, t] of _charmTickTracker) {
+        if (!t || !seen.has(petLower)) continue;
+        // …and only while the charm is live or broke inside this fight, so a
+        // stale linger can't claim a respawned same-named mob.
+        const inFight = t.is_active
+          || (t.broke_at && (!startMs || t.broke_at >= startMs - 60_000));
+        if (!inFight) continue;
+        add(t.pet || petLower, t.owner);
+      }
+    }
+    for (const [petLower, owner] of Object.entries(this.petLeaders)) add(petLower, owner);
+    return out;
+  }
   flush() {
     // Commit any buffered DS attribution so a fight that ends with a damage
     // line but no flavor line still credits the tank (with ability='non-melee').
@@ -6712,10 +6786,19 @@ class EncounterBuilder {
     // reliable for the uploader and for melee/skill verbs across the board;
     // remote players' spell names are not.
     const _uploader = this.character || null;
+    // Every pet this agent can PROVE is ours, resolved ONCE and shared by the
+    // three payload consumers below (verb rollup, `pets`, `pet_leaders`) so
+    // they can never disagree about who owns what.
+    const _provenPetMap = this._provenPets();
     const _resolve = (name) => {
       if (!name) return _uploader;
-      const owner = this.petLeaders[String(name).toLowerCase()];
-      return owner || name;
+      // Vision eyes are scout familiars, not DPS. The bot excludes them from
+      // the damage aggregate (root index.js ~8234); returning null here drops
+      // them from the verb rollup too, so encounter_combat_rollup can't
+      // disagree with the parse card.
+      if (/^eye\s+of\s+/i.test(String(name))) return null;
+      const proven = _provenPetMap.get(String(name).toLowerCase());
+      return proven ? proven.owner : name;
     };
     const _rollupByChar = {};
     for (const ev of this.events) {
@@ -6753,6 +6836,39 @@ class EncounterBuilder {
     const _rollup = Object.keys(_rollupByChar).length
       ? { by_char: _rollupByChar }
       : undefined;
+
+    // ── Per-pet damage rows (#pets-payload) ────────────────────────────────
+    // One row PER PET — never per owner. The bot's aggregator folds all of a
+    // player's pet damage into that player's single `petDamage` bucket (root
+    // index.js ~8244), so three charmed mobs arrive as one number and the raid
+    // can't see which pet did what; and until the bot grows a pet-row path it
+    // has no per-pet damage at all. Ship the breakdown alongside pet_leaders:
+    // additive, ignored by older bot builds, and the exact shape a pet row
+    // needs ({ name, pet_owner, damage, hits }). `name` uses the log's own
+    // casing (that's the string the bot matches against pet_leaders).
+    // Same proof set as pet_leaders, so eyes are already excluded.
+    const _petRows = [];
+    if (_provenPetMap.size > 0) {
+      const _petAcc = new Map();
+      for (const ev of this.events) {
+        if (ev.type !== 'damage') continue;
+        if (!ev.attacker) continue;              // first-person = the uploader
+        const key = String(ev.attacker).toLowerCase();
+        const proven = _provenPetMap.get(key);
+        if (!proven) continue;
+        let r = _petAcc.get(key);
+        if (!r) {
+          r = { name: String(ev.attacker), pet_owner: proven.owner, damage: 0, hits: 0 };
+          _petAcc.set(key, r);
+        }
+        r.damage += Number(ev.amount) || 0;
+        r.hits   += 1;
+      }
+      for (const r of _petAcc.values()) {
+        if (r.damage > 0) { r.damage = Math.round(r.damage); _petRows.push(r); }
+      }
+      _petRows.sort((a, b) => b.damage - a.damage);
+    }
 
     // Resolve the killing blow to a credit. If the slayer is one of our charmed
     // pets, the kill belongs to the charm owner (the enchanter), not the
@@ -6796,8 +6912,21 @@ class EncounterBuilder {
         // entries for /parsestats raid_only filtering and future /guildreport.
         is_raid_window: isRaidWindow || undefined,
         // pet_leaders: { lowercasePetName: "OwnerName" } — used server-side to attribute
-        // pet damage to the player owner. Empty object when no pets were detected.
-        pet_leaders: Object.keys(this.petLeaders).length > 0 ? { ...this.petLeaders } : undefined,
+        // pet damage to the player owner. Undefined when no pets were detected.
+        // Built from _provenPets(), NOT from this.petLeaders alone: gauge-driven
+        // charm pets live only in _charmTickTracker, and sending just petLeaders
+        // is what made the bot drop charmed-mob damage entirely (multi-word
+        // attacker it couldn't resolve → `continue`, root index.js ~8249).
+        pet_leaders: (() => {
+          if (_provenPetMap.size === 0) return undefined;
+          const out = {};
+          for (const [petLower, v] of _provenPetMap) out[petLower] = v.owner;
+          return out;
+        })(),
+        // pets: per-PET damage rows — [{ name, pet_owner, damage, hits }].
+        // Keyed per pet name so two pets from one owner stay two rows (the bot
+        // collapses them into the owner's single petDamage bucket today).
+        pets: _petRows.length > 0 ? _petRows : undefined,
         // who_data: snapshot of every /who row this agent has observed since startup.
         // Server upserts into state.whoData so class/level/guild is available for
         // /parsestats embeds and /whois lookups even for non-guildies.
