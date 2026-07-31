@@ -9623,6 +9623,11 @@ function _serializeForDashboard() {
     // Blind-event ring buffer (start / end / self-hit / target-change). The
     // trigger overlay dedupes on `ts` and speaks `tts`, same as trigger fires.
     blindEvents:        _blindEvents.slice(-20),
+    // Damage-taken audio alert — echoed so the dashboard row (and any
+    // diagnostic) can show what the agent actually believes, independent of
+    // what Mimic has saved in cfg.
+    damageAlert:        _damageAlertEnabled,
+    damageAlertCooldownSec: _damageAlertCooldownMs / 1000,
     sessionEvents:      stats.sessionEvents,
     sessionTotalDamage: stats.sessionTotalDamage,
     sessionDamageBy:    stats.sessionDamageBy,
@@ -10459,6 +10464,10 @@ function _serializeForDashboard() {
         // #136 raid callout allow-list muted this fire — triggers.html flashes
         // it but does not speak it.
         mute:    !!o.mute,
+        // The inverse: speak it but do NOT flash it or ask for a timing vote.
+        // Set by the damage-taken alert, whose cadence would otherwise camp the
+        // shared centre flash and clobber other callouts on it.
+        audioOnly: !!o.audioOnly,
       };
     }),
     activeTimers:        _activeTimersSnapshot(),
@@ -12946,6 +12955,21 @@ function renderOverlays(s) {
     + '<button type="button" class="wp-ov-act" data-act="backdrops" style="background:#21262d;color:#c9d1d9;border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px">🌫 Toggle backgrounds now</button>'
     + '<span class="dim" style="font-size:11px">arranging only ever runs when you click it — never automatically</span>'
     + '</div>';
+  // 💥 Damage-taken audio alert (Hitya 2026-07-31). Not an overlay — an opt-in
+  // spoken cue — but its hotkey belongs with the other global hotkeys, so it
+  // shares this block. Default OFF; the ON/OFF button and the rebind row both
+  // write Mimic config, and main.js pushes the flag to the agent on save.
+  h += '<div style="font-size:12px;padding:8px 10px;background:#161b22;border:1px solid var(--border);border-radius:6px;margin-bottom:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">'
+    + '<b style="color:var(--gold)">💥 Damage-taken alert:</b>'
+    + '<button type="button" id="wpDmgAlertBtn" style="border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px;background:#21262d;color:#c9d1d9">…</button>'
+    + '<span class="dim" style="font-size:11px">speaks once every ~5s while something is hitting you</span>'
+    + '<span style="flex-basis:100%"></span>'
+    + '<span class="dim" style="font-size:11px">Hotkey:</span>'
+    + '<code id="wpDmgHotkeyCur" style="background:#0d1117;padding:2px 10px;border-radius:3px;border:1px solid var(--border)">…</code>'
+    + '<button type="button" id="wpDmgHotkeyBtn" style="background:#21262d;color:var(--blue);border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px">Change…</button>'
+    + '<button type="button" id="wpDmgHotkeyEn" style="background:#21262d;color:var(--red)"></button>'
+    + '<span id="wpDmgHotkeyHint" class="dim" style="font-size:11px"></span>'
+    + '</div>';
   h += '<div style="font-size:12px;padding:8px 10px;background:#161b22;border:1px solid var(--border);border-radius:6px;margin-bottom:8px">'
     + '<b style="color:var(--blue)">How to move an overlay:</b> hover the small <code style="background:#0d1117;padding:1px 5px;border-radius:3px">✥</code> icon in the <b>top-left corner</b> of any overlay and drag. Works whether the overlays are locked or unlocked &mdash; same in every overlay so the muscle memory carries. The <code style="background:#0d1117;padding:1px 5px;border-radius:3px">✕</code> in the <b>top-right</b> hides that overlay (turn it back on from this page or the tray).'
     + '</div>';
@@ -13032,6 +13056,29 @@ function wpWireHideHotkey() {
   }
   _wpWireHotkeyRow('wpHideHotkey', 'hideAllHotkey', 'hideAllHotkeyEnabled', 'CommandOrControl+Shift+H');
   _wpWireHotkeyRow('wpBdHotkey', 'backdropHotkey', 'backdropHotkeyEnabled', 'CommandOrControl+Shift+B');
+  _wpWireHotkeyRow('wpDmgHotkey', 'damageAlertHotkey', 'damageAlertHotkeyEnabled', 'CommandOrControl+Shift+D');
+  wpWireDamageAlert();
+}
+// 💥 Damage-taken alert ON/OFF button. Same contract as the hotkey rows: read
+// Mimic config, write a one-key patch, repaint. main.js's save-config handler
+// sees damageAlert in the patch and pushes the new state to the agent (which
+// speaks the confirmation), so nothing here has to talk to the agent directly.
+function wpWireDamageAlert() {
+  var btn = document.getElementById('wpDmgAlertBtn');
+  if (!btn || !window.mimic || !window.mimic.getConfig) return;
+  function paint(cfg) {
+    var on = !!(cfg && cfg.damageAlert);
+    btn.textContent = on ? 'ON' : 'OFF';
+    btn.style.cssText = 'border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px;background:#21262d;color:' + (on ? '#7ee787' : '#c9d1d9');
+  }
+  window.mimic.getConfig().then(paint).catch(function(){});
+  _bindOnce(btn, 'click', function(){
+    window.mimic.getConfig().then(function(cfg){
+      window.mimic.saveConfig({ damageAlert: !(cfg && cfg.damageAlert) }).then(function(){
+        window.mimic.getConfig().then(paint).catch(function(){});
+      }).catch(function(){});
+    }).catch(function(){});
+  });
 }
 // One hotkey row: chip + Change… capture + Enable/Disable kill switch. The
 // enable flag re-registers live via saveConfig (registerHideAllHotkey runs
@@ -19343,6 +19390,26 @@ function startWebDashboard(port) {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ ok: true, enabled: _chGoTtsEnabled }));
       }
+      // Damage-taken audio alert (Hitya 2026-07-31). Mimic owns the durable
+      // pref (cfg.damageAlert, default OFF) and POSTs { enabled, announce,
+      // cooldown_sec } here on every hotkey/tray/dashboard flip AND after each
+      // agent (re)launch — the agent keeps it in memory only, exactly like the
+      // tells-DM pause. `announce` speaks the new state back as confirmation.
+      if (req.url === '/api/damage-alert' && req.method === 'POST') {
+        const body = await _readBody(req);
+        let payload;
+        try { payload = JSON.parse(body); }
+        catch { res.writeHead(400); return res.end('invalid json'); }
+        const cd = Number(payload && payload.cooldown_sec);
+        if (cd > 0) _damageAlertCooldownMs = Math.round(cd * 1000);
+        _setDamageAlert(payload && payload.enabled, payload && payload.announce);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({
+          ok: true,
+          enabled: _damageAlertEnabled,
+          cooldown_sec: _damageAlertCooldownMs / 1000,
+        }));
+      }
       // ✕ from a pet tracker card — drops the per-owner /pet health snapshot
       // + observed buff landings + stats so the row stops rendering. Useful
       // when switching toons leaves stale pet state (the freshness gate now
@@ -25432,6 +25499,103 @@ function _announceRampage(target, tsMs) {
   );
 }
 
+// ── "You are taking damage" audio alert (Hitya 2026-07-31) ──────────────────
+// An opt-in, DEFAULT-OFF spoken cue for the moment incoming damage starts
+// landing on one of your own toons. Requested as "a trigger with a configurable
+// hotkey to enable/disable that begins disabled", so it IS a trigger-shaped
+// fire: _pushOverlay → recentTriggerFires → triggers.html flash + speak. No new
+// audio path, no new SpeechSynthesis call site, and it inherits the master
+// "Trigger alerts (TTS)" switch + Quiet mode exactly like every other callout.
+//
+// State lives in MIMIC's config (cfg.damageAlert, default false) and is pushed
+// here over POST /api/damage-alert — same shape as the tells-DM pause: Mimic
+// owns the durable pref, the agent holds it in memory and Mimic re-asserts it
+// after every (re)launch. A standalone CLI agent therefore just stays off,
+// which is the correct default for a feature with no UI to turn it back off.
+//
+// RATE LIMIT is the whole design constraint: a raid tank eats a swing roughly
+// every second, so an un-cooled alert is unusable noise. We fire on the FIRST
+// hit after a quiet period and then stay silent for the cooldown; the cooldown
+// is NOT re-armed by hits that arrive inside it (so continuous tanking speaks
+// once per DAMAGE_ALERT_COOLDOWN_MS, not never and not every swing).
+let _damageAlertEnabled   = false;      // pushed from Mimic; default OFF
+const DAMAGE_ALERT_COOLDOWN_MS = 5000;  // tunable — min gap between spoken cues
+let _damageAlertCooldownMs = DAMAGE_ALERT_COOLDOWN_MS;
+let _damageAlertLastMs     = 0;         // wall-clock of the last spoken cue
+
+// Does this parsed damage event land on the character whose log we're tailing?
+// Reuses parseEvent's existing defender shapes — no second parser:
+//   • "<Mob> hits YOU for N points of damage."     → defender 'YOU' / 'You'
+//   • "<Mob> hit Hitya for N points of non-melee." → defender = our name
+//   • "You were hit by <Spell> for N damage."      → defender null (parseEvent
+//     nulls the self form at the "was/were hit by" branch); among damage events
+//     that branch is the ONLY producer of a null defender, and it is always the
+//     uploader, so a null defender with no attacker means "it hit me".
+// NOTE the coverage limit: the generic first-person "You have taken N points of
+// damage" flavour is dropped at the byte filter (DEFAULT_DROP_PATTERNS, item
+// self-damage / DoT ticks) long before parseEvent, so this alert rides incoming
+// melee + attributed spell hits, which is what "taking damage" means in a raid.
+function _damageTakenBySelf(ev, character) {
+  if (!ev || ev.type !== 'damage' || !(ev.amount > 0)) return false;
+  if (ev.defender == null) return ev.attacker == null;
+  const def = String(ev.defender);
+  if (/^you$/i.test(def)) return true;
+  return !!character && def.toLowerCase() === String(character).toLowerCase();
+}
+
+// Speak the cue if the alert is on, this hit landed on us, and we're past the
+// cooldown. Returns true when it actually fired (the harness asserts on this).
+// `nowMs` is WALL CLOCK, not the log timestamp: EQ stamps only whole seconds and
+// a tail catch-up can replay several lines with an older stamp, which would both
+// coarsen the cooldown and push a `firedAt` below triggers.html's ts cursor —
+// the overlay dedupes on a strictly-increasing ts and would go silent.
+function _maybeAnnounceDamageTaken(ev, character, nowMs) {
+  if (!_damageAlertEnabled) return false;
+  if (!_damageTakenBySelf(ev, character)) return false;
+  const now = nowMs || Date.now();
+  if (now - _damageAlertLastMs < _damageAlertCooldownMs) return false;
+  _damageAlertLastMs = now;
+  _pushOverlay({
+    text:    '💥 TAKING DAMAGE',
+    tts:     'Taking damage',
+    trigger: 'damage taken',
+    scope:   'personal',
+    firedAt: now,
+    test:    false,
+    // AUDIO ONLY — the ask was an audio alert, and at a 5s cadence the shared
+    // centre-screen flash (3.5s per fire) would be up most of a fight AND
+    // overwrite whatever critical callout was on it, e.g. a Death Touch banner
+    // one second old. audioOnly also skips the 👍/👎 trigger-timing widget,
+    // which would otherwise be pinned open for the whole fight (fireBlind
+    // already sets the precedent: non-trigger callouts don't ask for a vote).
+    // The fire still appears in the dashboard's callout list.
+    audioOnly: true,
+  });
+  return true;
+}
+
+// Flip the alert on/off. `announce` (the hotkey + tray toggles) speaks the new
+// state back through the same overlay path so the user gets confirmation
+// without looking at the tray. Resets the cooldown so enabling mid-fight cues
+// on the very next hit instead of waiting out a stale window.
+function _setDamageAlert(enabled, announce) {
+  const next = !!enabled;
+  const changed = next !== _damageAlertEnabled;
+  _damageAlertEnabled = next;
+  _damageAlertLastMs  = 0;
+  if (announce) {
+    _pushOverlay({
+      text:    next ? '💥 Damage alert ON' : '🔕 Damage alert OFF',
+      tts:     next ? 'Damage alert on' : 'Damage alert off',
+      trigger: 'damage alert',
+      scope:   'personal',
+      firedAt: Date.now(),
+      test:    false,
+    });
+  }
+  return changed;
+}
+
 // ── Cross-Mimic trigger relay (fan-out) ────────────────────────────────────
 // Each local guild-trigger fire is sent up to the bot via POST
 // /api/agent/trigger-relay. Other Mimics poll GET /api/agent/recent-fires
@@ -30121,6 +30285,11 @@ async function main() {
           // 60s cadence countdown. Local-only, live tail; keyed off the boss +
           // amount, so no dependency on the imported (non-firing) text trigger.
           try { _checkTankBuster(ev, line, ts ? ts.getTime() : Date.now()); } catch { void 0; }
+          // Damage-taken audio alert — opt-in, default OFF, cooldown-limited.
+          // Live tail only (backfill/--once never reach this loop), and it
+          // takes WALL CLOCK rather than the log stamp: see the note on
+          // _maybeAnnounceDamageTaken.
+          try { _maybeAnnounceDamageTaken(ev, b.character, Date.now()); } catch { void 0; }
           // Pet combat observation — if the attacker is one of our pets (Zeal
           // slot 16), accumulate skill / max / total / hit-count stats for the
           // Pet tracker. Side-channel; doesn't touch the encounter builder.
@@ -30190,6 +30359,10 @@ module.exports = {
   _startTimer, _activeTimersSnapshot, _cancelTimersOnMobDeath, _deadMobNameFromLine,
   _checkBossSpawnChain, _checkTankBuster, _armBossCountdown, BOSS_SPAWN_CHAINS,
   _checkAoeDance, AOE_DANCE,   // #36 AoE-dance callouts — exported for the scratchpad fixture
+  // Damage-taken audio alert — exported for the cooldown / default-off harness.
+  _maybeAnnounceDamageTaken, _damageTakenBySelf, _setDamageAlert,
+  DAMAGE_ALERT_COOLDOWN_MS,
+  _damageAlertEnabledForTest: () => _damageAlertEnabled,
   evaluateTriggersAgainstLine, SLOW_SPELLS, _isSlowSpell,
   // #136 raid callout allow-list — exported for the scratchpad fixture.
   _fireTriggerActions, _calloutAllowedToSpeak, _calloutScopeGated, _CALLOUT_ALLOW_CATEGORIES,
