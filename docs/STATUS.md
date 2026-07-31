@@ -1220,6 +1220,31 @@ one concrete detail. Shipped that night: stable 2.1.2 / agent 3.4.36.**
   non-melee damage`) matched the countdown trigger. Added a self-hit exclusion
   (`hit (?!\k<boss>\b)`); a real DT is never self-inflicted. Trigger-table
   change only, propagates on the 10-min guild-trigger poll.
+- **Emperor Ssra Tank Buster trigger — FIXED 2026-07-31, server-side.** Missed
+  entirely on the pull because the pulling Paladin was Divine Aura'd, so the
+  damage line never happened. Root cause was worse than the DA case: the old
+  pattern demanded the literal words `tank buster`
+  (`... (?:begins to cast|fires|hits .* for) .*tank ?buster`), and EQ NEVER
+  names a mob's spell — it prints a bare "begins to cast a spell.". Tested
+  against 7 real lines, the old pattern matched ZERO of them, including plain
+  buster hits. Replaced with the EQLogParser-style two-alternative rule
+  (damage line OR generic cast line):
+  `^Emperor Ssraeshza\s+(?:hit \w+ for [1-3]\d{3} points of non-melee damage|begins to cast a spell)\.?\s*$`
+  — `\s+` rather than the literal double-space EQLogParser uses, since spacing
+  varies. Trigger-row change only; propagates on the 10-min poll.
+  ⚠ FOLLOW-UP: a Tank Buster countdown WAS observed on screen, which the old
+  pattern cannot explain — so a second path (likely the agent-side #142
+  tank-buster logic) is also driving it. Confirm the two don't now double-fire.
+- **"PALADIN D.A. NOW" should fire at 2:00, not later — Emperor spawn cycle is
+  2m10s.** Wants the DA callout 10s ahead of the spawn. Needs whichever
+  trigger/timer owns that callout re-timed to a 130s cycle with the warning at
+  120s.
+- **Rampage card showed no HP for the victim.** Rampage on Stupidrichard
+  rendered "130 / 180 · 72%" — those are not player HP numbers (raiders run
+  thousands; Hitya shows 6512/6512), so the card is displaying something other
+  than his real HP. Likely the same non-Mimic gap as the cure item: no client
+  reporting his live cur/max, leaving a placeholder or a mis-sourced value.
+  Related to #144 (targeted raider cur/max HP) and #179 (rampage card scoping).
 - **Register a CURE cast by a Mimic user, so non-Mimic raiders leave the debuff
   queue.** Observed 2026-07-30: the debuff queue held 11 players on
   "Curse of Rhag`Zadune" long after they'd actually been cured. VERIFIED: none
