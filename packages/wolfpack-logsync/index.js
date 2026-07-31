@@ -1303,6 +1303,31 @@ function confirmPlayer(name) {
 // petNameLower → Set<ownerName>  (one-to-many: charm pets can cycle through owners)
 const knownPetOwners = new Map();
 
+// ── Vision eyes are never damage-dealing pets ───────────────────────────────
+// EQ's Eye of Zomm summons a scout named "Eye of <Owner>". It is a VISION pet:
+// no attacks, no procs, zero damage, ever. But it IS a pet by every other
+// signal — it answers "My leader is <Owner>." and acks /pet commands — so the
+// pet_leader admission path registered it like a warder or a charm pet. That
+// registration is exactly what hands a name the pet BYPASS around the DPS /
+// threat meter's two anti-NPC filters (multi-word attacker, and "anything we're
+// damaging is a mob"), so an eye could take a damage row on the meter.
+// Field evidence 2026-07-30 (Syphon, raid): an indented pet row "Eye of Syphon"
+// under its owner carrying the owner's own numbers (110 dmg / 3 dps / 38s) — a
+// phantom pet duplicating owner damage, which then rolls BACK into the owner
+// everywhere pets roll up (threat `pet_threat_total`, the by_char rollup's
+// pet→owner `_resolve`, and the bot's pet-damage share), inflating pet
+// attribution rather than just looking odd.
+// The rest of the platform has excluded these for a long time and this is the
+// missing pet-side twin: the bot skips `/^Eye of /i` attackers when it
+// aggregates an upload, /parsestats + /raidstats exclude "eye of " mobs, and
+// EncounterBuilder.flush() already refuses an "eye of …" encounter BOSS name.
+// Cannot suppress anything legitimate: EQ character names are a single word
+// (no player is ever "Eye of …"), summoned pets are proper single-word names,
+// and charm pets keep their article-prefixed mob name ("a/an <thing>").
+function _isVisionEyePet(name) {
+  return /^eye\s+of\s+/i.test(String(name || '').trim());
+}
+
 // ── Charm-pet tick tracker (module-level, survives encounter resets) ───────
 // Knowledge from the owner (2026-06-02):
 //   - Each mob has its own 6-second "mob tick" anchored to its spawn time.
@@ -1327,6 +1352,14 @@ let _pendingCharmSpell = null;   // { cls, dur, owner, ts } | null
 const PENDING_CHARM_WINDOW_MS = 12_000;
 function _bumpCharmTick(pet, owner, eventKind, atMs, opts) {
   if (!pet) return;
+  // Second half of the vision-eye choke point (see _isVisionEyePet). Every
+  // write to _charmTickTracker goes through here, and the meter/threat path
+  // treats an ACTIVE tracker entry as proof of pet-ness — so an eye must never
+  // get one. Reachable without the pet_leader path: _reconcileGaugeCharms
+  // accepts ANY slot-16 name while a charm cast is pending, so a charmer whose
+  // Eye of Zomm sits in slot 16 when their charm lands/fails would otherwise
+  // register the eye as a charm pet.
+  if (_isVisionEyePet(pet)) return;
   const k = String(pet).toLowerCase();
   // Coerce the anchor to epoch-ms. Callers pass `this.lastEvent`, which is the
   // ISO string `event.ts` — NOT a number. Stored as-is, that made the charm
@@ -5443,6 +5476,18 @@ class EncounterBuilder {
     // The parser emits owner='__SELF__' for charm-pet "Attacking X Master."
     // lines (which EQ only shows to the charmer) — resolve to this.character.
     if (event.type === 'pet_leader') {
+      // CHOKE POINT for vision eyes (Eye of Zomm → "Eye of <Owner>", see
+      // _isVisionEyePet). Every pet-ness test the meter/threat path makes reads
+      // one of the four registries written below this line — petLeaders,
+      // knownPetOwners, _activeCharms, _charmTickTracker (via _bumpCharmTick) —
+      // and this handler is the ONLY LOG path an "Eye of …" name can take into
+      // any of them (the possessive self-owned shortcut above requires
+      // "<Owner>`s …", which an eye never matches; the Zeal slot-16 gauge path
+      // is closed by the twin guard in _bumpCharmTick). Refusing here keeps eyes off
+      // the DPS/threat meter, out of the PvP-assist window, out of kill credit,
+      // out of the ability rollup's pet→owner resolve, and out of the uploaded
+      // `pet_leaders` map (so the bot never learns the mapping either).
+      if (_isVisionEyePet(event.pet)) return;
       const owner = event.owner === '__SELF__' ? (this.character || null) : event.owner;
       if (!owner) return;  // can't attribute without a known character
       this.petLeaders[event.pet.toLowerCase()] = owner;
