@@ -5724,9 +5724,14 @@ async function _spellFxMap() {
           // DETRIMENTAL these are POSITIVE (counters applied); on a CURE they
           // are NEGATIVE (counters removed). Split the two so the same SPA
           // both flags a cureable debuff AND identifies the cure spell.
-          if (eff === 35) { if (base > 0 && base > (fx.dc || 0)) fx.dc = base; else if (base < 0) fx.cureDisease = true; }
-          if (eff === 36) { if (base > 0 && base > (fx.pc || 0)) fx.pc = base; else if (base < 0) fx.curePoison = true; }
-          if (eff === 116) { if (base > 0 && base > (fx.cc || 0)) fx.cc = base; else if (base < 0) fx.cureCurse = true; }
+          // The cure's MAGNITUDE matters, not just that it's a cure: Remove
+          // Greater Curse strips 9 curse counters, Remove Curse 4, Radiant
+          // Cure3 16, Purify Soul 36 — so one RGC clears Curse of Rhag`Zadune
+          // (9) but only dents Gravel Rain (72). Keep |base| so the debuff
+          // queue can DECREMENT instead of blanket-clearing.
+          if (eff === 35) { if (base > 0 && base > (fx.dc || 0)) fx.dc = base; else if (base < 0) { fx.cureDisease = true; if (-base > (fx.cureDiseaseAmt || 0)) fx.cureDiseaseAmt = -base; } }
+          if (eff === 36) { if (base > 0 && base > (fx.pc || 0)) fx.pc = base; else if (base < 0) { fx.curePoison = true; if (-base > (fx.curePoisonAmt || 0)) fx.curePoisonAmt = -base; } }
+          if (eff === 116) { if (base > 0 && base > (fx.cc || 0)) fx.cc = base; else if (base < 0) { fx.cureCurse = true; if (-base > (fx.cureCurseAmt || 0)) fx.cureCurseAmt = -base; } }
           // Blindness: the DEBUFF carries SPA 20 with base<0; the CURE (Cure
           // Blindness) carries SPA 20 base>0 on a beneficial spell.
           if (eff === 20) { if (base < 0) fx.blind = true; else if (base > 0) fx.cureBlindMaybe = true; }
@@ -6009,7 +6014,9 @@ async function _handleAgentRaidBuffQueue(req, res) {
         if ((inf.castMs || 0) <= liveAt) continue;
         const nl = String(inf.name).toLowerCase();
         if (have.has(nl)) continue;
-        merged.push({ name: inf.name, ticks: inf.ticks });
+        // castMs rides along so the cure ledger can retire an OBSERVED debuff
+        // on a Mimic-running raider too (their own live row hasn't caught up).
+        merged.push({ name: inf.name, ticks: inf.ticks, castMs: inf.castMs });
         have.add(nl);
       }
       return merged;
@@ -6108,7 +6115,6 @@ async function _handleAgentRaidBuffQueue(req, res) {
       // Counter count drives the "tippy-top" sort: high-counter afflictions
       // outrank low-counter ones within the debuff section.
       const curses = [];
-      let maxCounters = 0;
       for (const b of buffs) {
         if (!b || !b.name) continue;
         const fxB = spellFx.get(String(b.name).toLowerCase());
@@ -6124,7 +6130,6 @@ async function _handleAgentRaidBuffQueue(req, res) {
         }
         if (!cure && rb.isCurseBuff(b.name)) { cure = 'curse'; cnt = _CURSE_COUNTERS_FOR(b.name) || 0; }
         if (!cure) continue;
-        if (cnt > maxCounters) maxCounters = cnt;
         curses.push({
           name: b.name,
           cure,
@@ -6135,8 +6140,17 @@ async function _handleAgentRaidBuffQueue(req, res) {
           // can strip the debuff without clipping many real buffs.
           slot: (typeof b.slot === 'number' && b.slot >= 1) ? b.slot : null,
           low_slot: (typeof b.slot === 'number' && b.slot >= 1 && b.slot <= 4) || undefined,
+          // When this affliction landed — inferred (buff_casts) entries only.
+          // The cure ledger needs it to tell "cured after it landed" from a
+          // cure that fired before the mob re-applied. Stripped before emit.
+          _landed_ms: (typeof b.castMs === 'number' && b.castMs > 0) ? b.castMs : null,
         });
       }
+      // Cure register: spend the counters of every cure that LANDED on this
+      // raider (relayed by the curer's own Mimic — see _applyCuredCounters).
+      // This is what finally retires a non-Mimic raider's chip; without it the
+      // inferred debuff sat on the queue for its full catalog duration.
+      _applyCuredCounters(name, curses);
       // Optimistic cure removal: when a cure that clears this affliction just
       // LANDED on the target (cast completed within the suppress window),
       // drop that chip from the list immediately rather than waiting for the
@@ -6144,8 +6158,16 @@ async function _handleAgentRaidBuffQueue(req, res) {
       // instead marks the chip "being cured" so a second curer skips it.
       const activeCurses = [];
       for (const c of curses) {
+        const retired = c._retired === true;         // counters hit zero — cured
+        const partial = c._need != null;             // ledger spent counters on it
+        delete c._landed_ms; delete c._need; delete c._retired;
+        if (retired) continue;
         const cs = _cureStateFor(name, c.cure);
-        if (cs.state === 'done') continue;               // optimistically removed
+        // The 8s optimistic hide only applies when the ledger has NOT already
+        // ruled on this chip. A partially-cured chip (RGC on Gravel Rain) is
+        // still on the raider, so it must stay visible with its counters
+        // decremented rather than blinking off for 8 seconds.
+        if (cs.state === 'done' && !partial) continue;
         if (cs.state === 'casting') { c.being_cured = true; c.cured_by = cs.caster; c.cure_secs = cs.secs; }
         activeCurses.push(c);
       }
@@ -6159,7 +6181,9 @@ async function _handleAgentRaidBuffQueue(req, res) {
         debuffQueue.push({
           name, class: cls, role, group: rr ? rr.group_num : null,
           curses: activeCurses,
-          max_counters:          maxCounters,
+          // From the SURVIVING chips — a retired or partly-cured affliction
+          // must not keep inflating this raider's spot in the sort.
+          max_counters:          Math.max(0, ...activeCurses.map(c => c.counters || 0)),
           // Top cure rank on this raider — drives the cross-raider sort so the
           // section reads curse-afflicted first, then blind, poison, disease.
           cure_rank:             Math.min(...activeCurses.map(c => _CURE_RANK[c.cure])),
@@ -7229,19 +7253,26 @@ function _pruneCasts(now) {
     }
     if (mp.size === 0) _castingByTarget.delete(tk);
   }
-  // Cure casts linger past completion for the optimistic-removal window so the
-  // debuff drops the instant the cure lands rather than waiting for the
-  // target's next live-state flush.
+  // Cure casts linger long past completion — they are the CURE LEDGER, not
+  // just an 8s optimistic-removal window (see _applyCuredCounters). Retention
+  // matches the buff-queue's 3h buff_casts window, so a cure can still retire
+  // a long debuff (Curse of Rhag`Zadune is 600 ticks = 60 min) an hour later.
   for (const [tk, arr] of _cureCastByTarget) {
-    const kept = arr.filter(e => now < e.ends_at_ms + _CURE_SUPPRESS_MS);
-    if (kept.length) _cureCastByTarget.set(tk, kept);
+    const kept = arr.filter(e => now < e.ends_at_ms + _CURE_LEDGER_MS);
+    if (kept.length) _cureCastByTarget.set(tk, kept.length > 200 ? kept.slice(-200) : kept);
     else _cureCastByTarget.delete(tk);
   }
+  if (_cureCastByTarget.size > 300) {
+    const oldest = _cureCastByTarget.keys().next().value;
+    if (oldest) _cureCastByTarget.delete(oldest);
+  }
 }
-// targetLower → [{ cure, caster, ends_at_ms }] — cure spells observed in
-// flight on each target. Drives "being cured" marking + optimistic removal.
+// targetLower → [{ cure, counters, caster, spell, ends_at_ms }] — cure spells
+// observed in flight on each target. Drives "being cured" marking, the
+// optimistic removal, AND the durable counter decrement (_applyCuredCounters).
 const _cureCastByTarget = new Map();
 const _CURE_SUPPRESS_MS = 8000;   // hide a cured debuff this long after the cure lands
+const _CURE_LEDGER_MS = 3 * 3600 * 1000;   // how long a landed cure stays spendable
 // For a target + cure type: is a cure in flight (→ being_cured), or did one
 // just land (→ suppress the debuff)? Returns { state:'casting'|'done'|null,
 // caster, secs }.
@@ -7261,6 +7292,69 @@ function _cureStateFor(target, cure) {
   }
   return best;
 }
+// Durable, counter-aware cure retirement (the fix for "11 raiders sat on the
+// debuff queue for 54 minutes after they were cured", 2026-07-30).
+//
+// Root cause: a raider who runs no Mimic never reports their own buff array, so
+// their debuff chips are INFERRED from the buff_casts landing we observed and
+// survive for the debuff's full catalog duration (Curse of Rhag`Zadune = 600
+// ticks = 60 min). Nothing ever retired them: the only cure signal we had was
+// _cureStateFor's 8-second optimistic hide, after which the chip came straight
+// back. One Mimic-running cleric is enough to report the cure for the whole
+// raid — every cure spell in the catalog has cast_on_other = NULL (no landing
+// line exists, same shape as the charm spells), so the CAST relay is the only
+// evidence there is, and the agent already ships it to /api/agent/casting.
+//
+// Counters are load-bearing: a cure removes a FIXED number of counters
+// (Remove Curse 4 · Remove Greater Curse 9 · Radiant Cure1/2/3 9/12/16 ·
+// Purify Soul 36), and a debuff carries its own (Curse of Rhag`Zadune 9,
+// Gravel Rain 72). So we SPEND a cure's counters across the chips it could
+// have hit — oldest chip first, mirroring EQ's buff-slot order — and retire a
+// chip only when its counters reach zero. One RGC can never blanket-clear a
+// 72-counter Gravel Rain; it just decrements it to 63.
+//
+// Chips carry `_landed_ms` (inferred landings only). A chip with no landing
+// time came from the target's OWN live-state flush — their client is
+// authoritative there, so the ledger leaves it alone.
+// Sets `_retired` (fully cured) and `_need` (counters left) on the chips.
+function _applyCuredCounters(target, chips) {
+  const arr = _cureCastByTarget.get(String(target || '').toLowerCase());
+  if (!arr || !arr.length || !chips.length) return;
+  const now = Date.now();
+  const byType = new Map();       // cure type → landed cure events
+  for (const e of arr) {
+    if (e.cancelled) continue;              // fizzled/interrupted — never landed
+    if (now < e.ends_at_ms) continue;       // still in flight
+    if (!(e.counters > 0)) continue;        // unknown magnitude — can't spend it
+    if (!byType.has(e.cure)) byType.set(e.cure, []);
+    byType.get(e.cure).push(e);
+  }
+  if (!byType.size) return;
+  for (const [cure, events] of byType) {
+    const hits = chips.filter(c => c.cure === cure && c._landed_ms);
+    if (!hits.length) continue;
+    hits.sort((a, b) => a._landed_ms - b._landed_ms);
+    events.sort((a, b) => a.ends_at_ms - b.ends_at_ms);
+    for (const ev of events) {
+      let pool = ev.counters;
+      for (const c of hits) {
+        if (pool <= 0) break;
+        if (c._retired) continue;
+        if (c._landed_ms >= ev.ends_at_ms) continue;   // landed AFTER this cure
+        // Counters left on this chip. Catalog first, then the keyword table,
+        // then 1 — blindness carries no counters at all (SPA 20 is a flag),
+        // so Cure Blindness has to be able to retire it.
+        if (c._need == null) c._need = c.counters || _CURSE_COUNTERS_FOR(c.name) || 1;
+        const take = Math.min(pool, c._need);
+        c._need -= take;
+        pool    -= take;
+        if (c._need <= 0) c._retired = true;
+      }
+    }
+  }
+  // Partial cure → show what's actually left, so the counter sort stays honest.
+  for (const c of chips) if (!c._retired && c._need > 0) c.counters = c._need;
+}
 async function _handleAgentCasting(req, res) {
   const identity = await mimicLink.requireAgentAuth(req, res);
   if (!identity) return;
@@ -7273,6 +7367,11 @@ async function _handleAgentCasting(req, res) {
   const casts = Array.isArray(payload?.casts) ? payload.casts : [];
   const now = Date.now();
   let stored = 0;
+  // The cure ledger needs the spell-effects catalog to size a cure, and this
+  // handler is the only consumer that can run before the buff-queue endpoint
+  // has ever warmed it (a raid where nobody has opened the Buff queue overlay
+  // yet). One awaited warm-up; the map is cached for an hour after that.
+  if (!_spellFxByName && casts.length) { try { await _spellFxMap(); } catch { /* fail open */ } }
   for (const c of casts) {
     const caster = String(c?.caster || '').trim();
     const spell  = String(c?.spell  || '').trim();
@@ -7281,6 +7380,26 @@ async function _handleAgentCasting(req, res) {
     const startedMs = c.started_at ? Date.parse(c.started_at) : now;
     const castSecs  = Number.isFinite(Number(c.cast_secs)) ? Math.max(0, Math.min(60, Number(c.cast_secs))) : 6;
     const tk = target.toLowerCase();
+    // `cure_failed` — the caster's own log said the cast fizzled or was
+    // interrupted, so the cure never landed. Cancel the pending ledger entry
+    // (agent 3.4.38+); without this a fizzled Remove Greater Curse would
+    // durably retire a curse the raider is still carrying, which is worse than
+    // leaving them queued. Fail-open: an agent that never sends this just
+    // leaves the ledger as-is.
+    if (c && c.cure_failed) {
+      const endsAt = (Number.isFinite(startedMs) ? startedMs : now) + castSecs * 1000;
+      const cm = _cureCastByTarget.get(tk);
+      if (cm) {
+        for (const e of cm) {
+          if (e.caster !== caster || e.spell !== spell) continue;
+          if (Math.abs(e.ends_at_ms - endsAt) > 1500) continue;
+          e.cancelled = true;
+        }
+      }
+      const mpc = _castingByTarget.get(tk);
+      if (mpc) mpc.delete(caster.toLowerCase());
+      continue;
+    }
     let mp = _castingByTarget.get(tk);
     if (!mp) { mp = new Map(); _castingByTarget.set(tk, mp); }
     const startMs = Number.isFinite(startedMs) ? startedMs : now;
@@ -7289,24 +7408,27 @@ async function _handleAgentCasting(req, res) {
       started_at_ms: startMs,
       cast_secs: castSecs, received_at: now,
     });
-    // Cure-cast tracking → optimistic debuff removal. If this cast is a CURE
-    // (catalog SPA 35/36/116 negative or 20 beneficial), record which
-    // affliction it clears on this target + when the cast completes, so the
-    // debuff queue can mark the row "being cured" while in-flight and drop it
-    // promptly after the cast lands (instead of waiting ~5s for the target's
-    // next live-state flush to show the debuff gone).
+    // Cure-cast tracking → optimistic debuff removal + the durable cure ledger.
+    // If this cast is a CURE (catalog SPA 35/36/116 negative or 20 beneficial),
+    // record which affliction it clears on this target, HOW MANY counters it
+    // strips, and when the cast completes. The debuff queue marks the row
+    // "being cured" while in-flight, and _applyCuredCounters spends those
+    // counters afterwards so a cured raider actually leaves the queue — the
+    // only way a non-Mimic raider ever gets off it (they never report their own
+    // buff array, and cure spells have no landing line to observe).
     const fxC = _spellFxByName ? _spellFxByName.get(spell.toLowerCase()) : null;
     if (fxC) {
       const cures = [];
-      if (fxC.cureCurse)   cures.push('curse');
-      if (fxC.cureBlind)   cures.push('blind');
-      if (fxC.curePoison)  cures.push('poison');
-      if (fxC.cureDisease) cures.push('disease');
+      // Blindness carries no counters (SPA 20 is a flag), so it's worth 1.
+      if (fxC.cureCurse)   cures.push(['curse',   fxC.cureCurseAmt   || 0]);
+      if (fxC.cureBlind)   cures.push(['blind',   1]);
+      if (fxC.curePoison)  cures.push(['poison',  fxC.curePoisonAmt  || 0]);
+      if (fxC.cureDisease) cures.push(['disease', fxC.cureDiseaseAmt || 0]);
       if (cures.length) {
         let cm = _cureCastByTarget.get(tk);
         if (!cm) { cm = []; _cureCastByTarget.set(tk, cm); }
         const endsAt = startMs + castSecs * 1000;
-        for (const cure of cures) cm.push({ cure, caster, ends_at_ms: endsAt });
+        for (const [cure, counters] of cures) cm.push({ cure, counters, caster, spell, ends_at_ms: endsAt });
       }
     }
     stored++;
