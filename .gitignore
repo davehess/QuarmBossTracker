@@ -32,3 +32,6 @@ packages/wolfpack-logsync/.update-token-on-restart
 # Gemini research helper (local dev aid) — keys + generated images, never commit
 .env.research.local
 gemini-image-*.png
+
+# Agent-tool git worktrees (transient per-session workspaces for subagents)
+.claude/worktrees/
