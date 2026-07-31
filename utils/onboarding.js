@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.0.233': [
+    '**Cured raiders now leave the debuff queue — even if they don\'t run Mimic.** When a cleric on Mimic casts Remove Greater Curse (or any cure), the bot now registers it and spends the cure\'s counters against that raider\'s queue entry: a 9-counter curse clears on one RGC, a 72-counter Gravel Rain shows its remaining counters instead of sitting there for an hour. Before this, a raider who didn\'t run Mimic stayed "cursed" on everyone\'s Buff Queue for the debuff\'s full duration (54+ minutes on Curse of Rhag`Zadune) no matter how many cures landed. The manual ✓ button still works for when neither player runs Mimic. Nothing to update — works with every Mimic already out there.',
+  ],
   '3.0.228': [
     '**/loot now posts sealed (closed) bids.** Clicking "📣 Post Auctions" on a `/loot` announcement was creating OPEN-outcry auctions on OpenDKP — everyone could see each other\'s bids as they came in — even though the rest of the loot flow (and the wishlist prompts) promise closed bids. It now posts **closed/sealed auctions**, matching the "Post for bidding" button in Mimic. Officer-only, nothing to update.',
   ],
