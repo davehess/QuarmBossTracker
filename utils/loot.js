@@ -254,8 +254,14 @@ function enrichLootItems(items, dropHistory, dropTable) {
 // items:       enriched items from enrichLootItems()
 // bossName:    string or null (shown in embed title)
 // bidMinutes:  number (default 20) — auction duration hint shown in footer
+// Guild's OpenDKP base + the live-auctions page every loot post links to
+// (Hitya 2026-07-31 — raiders kept asking where to watch the clock).
+// Defaults to https://wolfpack.opendkp.com/#/auctions.
+function opendkpBaseUrl()     { return `https://${process.env.OPENDKP_CLIENT_NAME || 'wolfpack'}.opendkp.com`; }
+function opendkpAuctionsUrl() { return `${opendkpBaseUrl()}/#/auctions`; }
+
 function buildLootAnnounceEmbed(items, bossName, bidMinutes = 20) {
-  const opendkpBase = `https://${process.env.OPENDKP_CLIENT_NAME || 'wolfpack'}.opendkp.com`;
+  const opendkpBase = opendkpBaseUrl();
 
   const lines = items.map(item => {
     const pqdiLink = `[${item.name}](<https://www.pqdi.cc/item/${item.gameItemId}>)`;
@@ -284,6 +290,7 @@ function buildLootAnnounceEmbed(items, bossName, bidMinutes = 20) {
     .addFields({
       name: '💰 Bidding',
       value: `Bid at **[OpenDKP Bidding Tool](<${opendkpBase}/#/bidding>)**\n` +
+             `Live auctions: **[${opendkpAuctionsUrl()}](<${opendkpAuctionsUrl()}>)**\n` +
              `Tell bids accepted — officers settle before announcing winners.`,
       inline: false,
     })
@@ -366,5 +373,7 @@ module.exports = {
   enrichLootItems,
   buildLootAnnounceEmbed,
   buildLootComponents,
+  opendkpBaseUrl,
+  opendkpAuctionsUrl,
   parseQuarmyWishlist,
 };
