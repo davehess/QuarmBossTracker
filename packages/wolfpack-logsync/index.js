@@ -2724,8 +2724,10 @@ function relaySelfCastForCasting(line, character, pre) {
   const sig = cl + '|' + spell.toLowerCase() + '|' + String(target).toLowerCase();
   const prev = _lastCastRelay.get(cl);
   if (prev && prev.sig === sig && (atMs - prev.at) < 2000) return;
-  _lastCastRelay.set(cl, { sig, at: atMs });
   const castSecs = _spellCastSecs(spell);
+  // spell/target/castSecs ride along so noteCureCastFailed can cancel THIS
+  // cast on the bot if our own log says it fizzled or was interrupted.
+  _lastCastRelay.set(cl, { sig, at: atMs, spell, target, castSecs });
   // Catalog first (any SPA-0-positive/CH spell IS a heal, whatever it's
   // named), name regex as the fallback for heals the catalog can't size
   // (HoTs like Regrowth/Torpor still count as heals, just without an amount).
@@ -2742,6 +2744,57 @@ function relaySelfCastForCasting(line, character, pre) {
   // Heal casts also feed the attribution ring (local multibox join + the
   // encounter payload's heal_casts for the bot-side cross-client join).
   if (isHeal) _noteHealCast(character, spell, target, atMs, castSecs, he);
+}
+// ── Cure register (2026-07-30) ──────────────────────────────────────────────
+// A raider who runs no Mimic never reports their own buff array, so the bot's
+// debuff queue infers their curses from the buff_casts landing we observed and
+// keeps them queued for the debuff's full catalog duration (Curse of
+// Rhag`Zadune = 60 min — 11 raiders sat there for 54 minutes after they had
+// actually been cured). One Mimic-running cleric can be the reporter for the
+// whole raid: the CURER's own log names the spell and Zeal names the target, so
+// the `casting` relay above ALREADY carries every cure cast to the bot, which
+// now spends the cure's counters against that raider's queue entry.
+//
+// The one thing the bot can't see is whether the cast completed — cure spells
+// have cast_on_other = NULL in the catalog (no landing line exists at all, same
+// shape as the charm spells), so there is nothing to confirm the land with. A
+// fizzled Remove Greater Curse must NOT retire a curse the raider is still
+// carrying, so we cancel the pending cure from the caster's own failure line.
+//
+// The regex is a cheap GATE, not the classifier — the bot sizes the cure from
+// eqemu_spells (SPA 35/36/116 with a negative base). It just keeps us from
+// posting a cancel for every fizzled nuke in the raid. Families are grounded in
+// the catalog: Remove (Greater) Curse · Radiant Cure1-3 · Purify Soul · Word of
+// Replenishment/Restoration · Counteract/Abolish/Cure Poison|Disease|Blindness ·
+// Antidote · Purifying Tonic · Pure Blood · Cleanse · Purge · Aria of
+// Innocence/Asceticism · Crusader`s Touch · Balance of the Nameless.
+const CURE_SPELL_RX = /^(?:remove (?:greater )?curse|radiant cure|purif(?:y|ying)|counteract |abolish |cure (?:poison|disease|blindness)|antidote|pure blood|blood of nadox|word of (?:replenishment|restoration)|balance of the nameless|ocean's cleansing|aria of (?:innocence|asceticism)|crusader[`']s touch|disinfecting aura|planar renewal|cleanse|purge)/i;
+// "Your spell fizzles." / "Your spell is interrupted." / "You miss the gem." —
+// the caster-side failure lines. Same shape noteDiInterrupt uses.
+const _CAST_FAIL_RX = /\]\s+(?:Your spell (?:is interrupted|fizzles)|You miss the gem)[.!]\s*$/i;
+function noteCureCastFailed(line, character) {
+  if (!line || !character) return;
+  if (line.indexOf('interrupted') === -1 && line.indexOf('fizzles') === -1
+      && line.indexOf('miss the gem') === -1) return;      // cheap gate
+  if (!_CAST_FAIL_RX.test(line)) return;
+  const cl = String(character).toLowerCase();
+  const prev = _lastCastRelay.get(cl);
+  if (!prev || !prev.spell || !prev.target || prev.cancelled) return;
+  if (!CURE_SPELL_RX.test(prev.spell)) return;
+  const ts = parseEqTimestamp(line);
+  const atMs = ts ? ts.getTime() : Date.now();
+  // Only within this cast's own window (+1.5s slack) — a later unrelated
+  // fizzle is not this cure's.
+  if (atMs - prev.at > (prev.castSecs || 4) * 1000 + 1500) return;
+  prev.cancelled = true;
+  enqueueUpload('casting', { agent_version: AGENT_VERSION, casts: [{
+    caster: character, spell: prev.spell, target: prev.target,
+    started_at: new Date(prev.at).toISOString(),
+    cast_secs: prev.castSecs,
+    // Bot: void the pending ledger entry for this exact cast (bot 3.0.2xx+).
+    // Older bots ignore the unknown field and just store a duplicate cast.
+    cure_failed: true,
+  }] });
 }
 // Recipient-side heal attribution (Uilnayar 2026-07-15). EQ shows OTHER
 // players' cast starts as "<Caster> begins to cast a spell." (caster named,
@@ -29626,6 +29679,10 @@ async function main() {
           if (selfCast) relaySelfCastForCasting(line, b.character, selfCast);
           // A DI cast that gets interrupted/fizzles never consumed its recast.
           noteDiInterrupt(line, b.character);
+          // A CURE that fizzles/gets interrupted never landed — void the cure
+          // the relay above just registered, so the bot doesn't retire a
+          // debuff the raider is still carrying.
+          noteCureCastFailed(line, b.character);
         }
         // Blind landings / fades (Pitted Iron Ring + generic NPC blind) —
         // drives the Mimic Blind Mode auto-pop in v1.1.8. Cheap regex set,
