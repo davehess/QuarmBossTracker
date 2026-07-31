@@ -87,6 +87,30 @@ watermark (`has_ability_detail`). Parses Log Discord thread is the recovery
 source (`PARSES_LOG_THREAD_ID` reloaded on startup; `/recoverkills` from
 Supabase).
 
+### Raid-night threads (`utils/raidNight.js`)
+One Discord thread per raid night, created **lazily** on that night's first
+parse card or loot post and named exactly like `/raidnight` names its own
+(`🗡️ Raid Night — Thursday, July 31, 2026`; `todayLabel`/`todayDateKey` in
+`commands/raidnight.js` delegate to the shared formatters, so both surfaces
+build the same string and adopt each other's thread instead of creating
+twins). The **night key spans midnight** — a timestamp is pulled back over
+`RAID_NIGHT_ROLLOVER_HOUR` (default 6) before its date is taken, so a 23:50
+Thursday kill and a 00:20 Friday kill share one thread. Resolution order:
+`RAID_NIGHT_THREAD_ID` env pin → memory cache → `channelSlots.rn_<key>` →
+an open `/raidnight` session for the same night → an active thread with the
+same **name** (how it recovers from volume loss) → create. Single-flight, so
+concurrent agent uploads can't race two threads open; failures back off 60s
+and callers fall back. Parent: `RAID_NIGHT_THREAD_PARENT_ID` →
+`RAID_CHAT_CHANNEL_ID` → `TIMER_CHANNEL_ID`. `RAID_NIGHT_THREADS=0` disables.
+Consumers: the deferred autoparse card in `_handleAgentEncounter`
+(fallback `AUTOPARSE_TEST_THREAD_ID`; card state carries `channelId` so a
+destination change posts fresh instead of a cross-channel edit),
+`_handleAgentLootPost` (fallback `LOOT_CHANNEL_ID`) and `handleLootPost`.
+**The canonical parse record never moves** — `logParseToDiscord` still writes
+the `📊 Parse Log` JSON embed to `PARSES_LOG_THREAD_ID`, which is the only
+thread `loadParsesFromDiscord`, `/restore` and the midnight consolidation
+read. Night threads carry the presentation copy only.
+
 ### Extended Target aggregation (`_handleAgentExtendedTarget`)
 Aggregates every online raider's `character_live_state.target_name` (Zeal
 slot 6, freshness window) by name; classifies each name player/pet/NPC
@@ -158,7 +182,13 @@ AES-256-GCM (`utils/bidCrypto.js`, service-role-only columns, bot-only key);
 roster persisted as chunked JSON in Discord threads (`utils/roster.js`);
 onboarding state DB-backed with `CHANGELOGS` in `utils/onboarding.js`
 driving "what's new" DMs; audit trail thread with officer Undo buttons;
-member sync Discord→`wolfpack_members` every 6h.
+member sync Discord→`wolfpack_members` every 6h. Loot announcements (Mimic's
+"Post for bidding" → `_handleAgentLootPost`, and `/loot`'s 📣 Post Auctions →
+`handleLootPost`) post into that night's raid-night thread and carry the live
+auctions link (`opendkpAuctionsUrl()` in `utils/loot.js`, built from
+`OPENDKP_CLIENT_NAME` → `https://wolfpack.opendkp.com/#/auctions`). The
+`/loot` message itself stays in the officer's channel — it's the staging UI
+`interaction.editReply` owns — so the raid-facing copy is a second post.
 
 ---
 
