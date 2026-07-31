@@ -1198,6 +1198,24 @@ async function handleLootPost(interaction) {
     await interaction.editReply({ embeds: [posted], components: [] });
     clearPendingLoot(msgId);
 
+    // Raid-facing copy into tonight's raid-night thread (Hitya 2026-07-31).
+    // The /loot message itself is the officer's staging UI and has to stay in
+    // the channel it was invoked from (interaction.editReply owns it), so the
+    // announcement raiders read is a separate post. Best-effort — the auctions
+    // are already live, and a failure here must not look like a failed post.
+    try {
+      const nightThread = await require('./utils/raidNight').getRaidNightThread(interaction.client).catch(() => null);
+      if (nightThread && nightThread.id !== interaction.channelId) {
+        const { opendkpAuctionsUrl } = require('./utils/loot');
+        const announce = EmbedBuilder.from(posted)
+          .setFooter({ text: `Closed bids · ${entry.bidMinutes}m · posted by ${interaction.user.username}` });
+        await nightThread.send({
+          content: `💰 **Bidding open** — ${opendkpAuctionsUrl()}`,
+          embeds:  [announce],
+        });
+      }
+    } catch (e) { console.warn('[loot] raid-night thread announce failed:', e?.message); }
+
     // Invalidate cached drop history so next /loot recomputes rarity flags
     try { require('./utils/loot').invalidateDropHistory(); } catch {}
   } catch (err) {
@@ -6633,14 +6651,18 @@ async function _handleAgentLootPost(req, res) {
       });
     } catch (e) { console.warn('[loot-post] loot-posted broadcast failed:', e?.message); }
 
-    // Announce to the loot thread (best-effort — the auctions are already live).
+    // Announce to tonight's raid-night thread, falling back to the loot thread
+    // when night threads are off/unresolvable (best-effort — the auctions are
+    // already live either way).
     const threadId = process.env.LOOT_CHANNEL_ID || '1527421284747706551';
     try {
-      const ch = await client.channels.fetch(threadId);
+      const ch = await require('./utils/raidNight').getRaidNightThread(client).catch(() => null)
+                 || await client.channels.fetch(threadId);
       if (ch && ch.send) {
+        const { opendkpAuctionsUrl } = require('./utils/loot');
         const lines = matched.map(m => `• **${m.name}**${m.quantity > 1 ? ` ×${m.quantity}` : ''}`).join('\n');
         const foot = unmatched.length ? `\n\n⚠ Not found in the item catalog (not auctioned): ${unmatched.map(u => u.name).join(', ')}` : '';
-        await ch.send({ content: `💰 **Bidding open (closed bids · ${duration}m)** — posted by ${identity.display_name || 'an officer'}\n${lines}\nBid on OpenDKP.${foot}` });
+        await ch.send({ content: `💰 **Bidding open (closed bids · ${duration}m)** — posted by ${identity.display_name || 'an officer'}\n${lines}\nBid on OpenDKP → ${opendkpAuctionsUrl()}${foot}` });
       }
     } catch (e) { console.warn('[loot-post] thread announce failed:', e?.message); }
 
