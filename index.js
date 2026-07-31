@@ -2328,10 +2328,22 @@ client.on(Events.GuildMemberAdd, async (member) => {
   const isReturning = !!lastSeen && lastSeen !== version;
 
   // Diff-only DM for returning members; full welcome for first-timers.
-  const payload = isReturning
-    ? { embeds: [buildChangesEmbed(version, lastSeen, changesSince(lastSeen))],
-        components: buildChangesComponents(version) }
-    : { embeds: [buildWelcomeEmbed()], components: buildWelcomeComponents(version) };
+  // The diff build is guarded: it used to sit outside any try, so one oversized
+  // changelog (pre-truncation) threw here and killed the whole flow — no DM, no
+  // thread fallback, and setLastSeenVersion never ran (2026-07-31 audit: 81% of
+  // members who ever ran /onboarding hit this). Truncation fixed the cause;
+  // this guard makes the flow survive any future build failure by falling back
+  // to the bounded full welcome.
+  let payload;
+  try {
+    payload = isReturning
+      ? { embeds: [buildChangesEmbed(version, lastSeen, changesSince(lastSeen))],
+          components: buildChangesComponents(version) }
+      : { embeds: [buildWelcomeEmbed()], components: buildWelcomeComponents(version) };
+  } catch (err) {
+    console.warn('[onboarding] changes embed build failed — falling back to full welcome:', err?.message);
+    payload = { embeds: [buildWelcomeEmbed()], components: buildWelcomeComponents(version) };
+  }
 
   setLastSeenVersion(userId, version);
 

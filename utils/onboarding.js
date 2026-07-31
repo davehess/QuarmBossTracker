@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.0.234': [
+    '**/onboarding works again for long-absent members.** If you hadn\'t checked in for a while, "what\'s new" tried to show you every update at once, overflowed Discord\'s message limit, and errored out — for most people who\'d ever used it. It now shows the newest updates that fit and links the full history on the roadmap. If /onboarding ever showed you "❌ An error occurred", try it again.',
+  ],
   '3.0.233': [
     '**Raid-night threads.** Each raid night now gets its own Discord thread (named like `/raidnight`): the auto-parse cards and the night\'s loot posts land there instead of scattering across channels, and every loot post carries a link to the OpenDKP auctions page. The permanent Parse Log (what recovery and leaderboards read) is unchanged. Officers: `RAID_NIGHT_THREADS=0` turns it off.',
     '**Cured raiders now leave the debuff queue — even if they don\'t run Mimic.** When a cleric on Mimic casts Remove Greater Curse (or any cure), the bot now registers it and spends the cure\'s counters against that raider\'s queue entry: a 9-counter curse clears on one RGC, a 72-counter Gravel Rain shows its remaining counters instead of sitting there for an hour. Before this, a raider who didn\'t run Mimic stayed "cursed" on everyone\'s Buff Queue for the debuff\'s full duration (54+ minutes on Curse of Rhag`Zadune) no matter how many cures landed. The manual ✓ button still works for when neither player runs Mimic. Nothing to update — works with every Mimic already out there.',
@@ -680,14 +683,32 @@ function buildParseOverviewEmbed() {
 // is accessible via the [Show full welcome] button next to it.
 function buildChangesEmbed(currentVersion, lastSeenVersion, changes) {
   const since = lastSeenVersion ? `since v${lastSeenVersion}` : 'since you were last here';
+  // Discord caps embed descriptions at 4096 chars. changesSince() is
+  // oldest-first and unbounded — a member on 3.0.91 gets 25,873 chars, which
+  // made .setDescription THROW at build time, so 81% of everyone who ever ran
+  // /onboarding saw "❌ An error occurred" instead of the diff (and the
+  // GuildMemberAdd rejoin DM died the same way). Keep the NEWEST entries that
+  // fit and summarize the rest — the roadmap has the full history.
+  const BUDGET = 3800;   // headroom under 4096 for the omitted-line + safety
+  let body = '_Nothing new since you were last here._';
+  if (changes.length) {
+    const kept = [];
+    let used = 0;
+    for (let i = changes.length - 1; i >= 0; i--) {   // newest are at the END
+      const line = `• ${changes[i]}`;
+      if (used + line.length + 1 > BUDGET) break;
+      kept.unshift(line);                             // keep chronological order
+      used += line.length + 1;
+    }
+    const omitted = changes.length - kept.length;
+    body = (omitted > 0
+      ? `_…${omitted} earlier update${omitted === 1 ? '' : 's'} omitted — full history: https://wolfpack.quest/roadmap_\n`
+      : '') + kept.join('\n');
+  }
   return new EmbedBuilder()
     .setColor(0x5865f2)
     .setTitle(`📦 What's new ${since}`)
-    .setDescription(
-      changes.length
-        ? changes.map(c => `• ${c}`).join('\n')
-        : '_Nothing new since you were last here._'
-    )
+    .setDescription(body)
     .setFooter({ text: `Current: v${currentVersion} • Run /raidbosshelp for the full command reference` });
 }
 
