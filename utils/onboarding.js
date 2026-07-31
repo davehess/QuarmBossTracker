@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.0.240': [
+    '**Multiple same-named charm pets now share credit fairly.** When several raiders run same-named charms in one fight (three Revenants at once), the game\'s logs can\'t tell the mobs apart — so instead of one charmer collecting everything, the damage now splits equally among the raiders actively charming that mob name *in that fight*. True per-mob attribution arrives if/when Zeal ships spawn ids in its pipe (the upstream request is drafted).',
+  ],
   '3.0.239': [
     '**Charm-pet damage stops spraying across every past charmer.** Last night\'s Blood of Sraeshza parse credited huge "pet damage" to raiders who were mezzing, dead, or in another zone — same-named mobs get charm-cycled all night, and the parser was splitting a pet\'s damage among *everyone who had ever charmed that mob name*. A pet\'s damage now goes to exactly one owner: the charmer the uploading parser saw for *this* fight, falling back to the most recent charmer known. Also: the "View in Discord" button on wolfpack.quest parse pages now lands on the readable parse card (and tries to open your Discord app first) instead of the machine-format Parse Log.',
   ],

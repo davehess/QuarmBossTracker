@@ -205,7 +205,7 @@ const {
   getAgentSessionCardChannelId, setAgentSessionCardChannelId,
   getLastAnnouncedAgentVersion, setLastAnnouncedAgentVersion,
   recordAgentUpload, clearAgentActivity,
-  getPetOwners, addPetOwners, clearPetOwners,
+  getPetOwners, addPetOwners, clearPetOwners, petOwnerEntries,
   mergeWhoData, applyKnownZekTips,
   clearAllPendingLoot,
   getAllLiveKills, clearLiveKill,
@@ -4632,9 +4632,11 @@ async function _handleAgentPvp(req, res) {
 
       // Record the kill to the PvP ledger (player-vs-player, WP involved).
       if (killType === 'pvp' && (isWpKill || isWpDeath) && killer && victim) {
-        const owners = _petOwners[String(killer).toLowerCase()];
-        const viaPet = Array.isArray(owners) && owners.length > 0;
-        const creditedKiller = viaPet ? owners[0] : killer;
+        const owners = petOwnerEntries(_petOwners[String(killer).toLowerCase()]);
+        const viaPet = owners.length > 0;
+        // Newest declaration wins for kill credit (entries are {o, at},
+        // declaration-ordered — see utils/state.js petOwnerEntries).
+        const creditedKiller = viaPet ? owners[owners.length - 1].o : killer;
         const killedAt = b?.ts ? new Date(b.ts) : new Date();
         const secondIso = killedAt.toISOString().slice(0, 19);
         const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
@@ -13933,21 +13935,31 @@ async function _handleAgentUpload(req, res) {
   // from different characters. The persistent map is cleared at midnight.
   const uploadedPetLeaders = encounter.pet_leaders || {};
   try { addPetOwners(uploadedPetLeaders); } catch {}
-  // Normalise petLeaders to { petNameLower: [owner, …] } so every lookup returns an array.
-  // Build by starting from state (already-normalised arrays via addPetOwners) then layering
-  // in the upload's string values. Never spread the two maps together — that would overwrite
-  // state arrays with the upload string, silently dropping previously-accumulated owners.
-  const petLeaders = {};  // petNameLower → [owner, …]
+  // Normalise petLeaders to { petNameLower: [{o, at}, …] } — timestamped
+  // declarations (petOwnerEntries upgrades legacy string shapes with at:0).
+  // Build by starting from state then layering in the upload's claims stamped
+  // "now" (they're from THIS fight by construction). Never spread the two maps
+  // together — that would drop previously-accumulated declarations.
+  const petLeaders = {};  // petNameLower → [{o, at}, …]
   for (const [pet, val] of Object.entries(getPetOwners())) {
-    const owners = Array.isArray(val) ? [...val] : (val ? [val] : []);
+    const owners = petOwnerEntries(val);
     if (owners.length) petLeaders[pet.toLowerCase()] = owners;
   }
   for (const [pet, owner] of Object.entries(uploadedPetLeaders)) {
     if (!pet || !owner) continue;
     const key = pet.toLowerCase();
-    if (!petLeaders[key]) petLeaders[key] = [];
-    if (!petLeaders[key].includes(owner)) petLeaders[key].push(owner);
+    const list = petLeaders[key] || (petLeaders[key] = []);
+    const idx = list.findIndex(e => e.o === owner);
+    if (idx >= 0) list.splice(idx, 1);
+    list.push({ o: owner, at: Date.now() });
   }
+  // Fight start — the freshness anchor for charm-claim eligibility below.
+  const _fightStartMs = encounter.started_at ? new Date(encounter.started_at).getTime() : Date.now();
+  // A claim is CURRENT if declared within this window before fight start (or
+  // any time after it started). Charm cycles re-declare constantly; 15 min
+  // covers adds charmed during the pre-pull setup without reaching back into
+  // the previous fight hour.
+  const PET_CLAIM_FRESH_MS = 15 * 60 * 1000;
 
   // (who_data merge already happened above, before the noise filter.)
   // playerTotals: name → { direct, pet }
@@ -13999,23 +14011,34 @@ async function _handleAgentUpload(req, res) {
     const _atkKey = attacker.toLowerCase();
     const owners = petLeaders[_atkKey];
     if (owners) {
-      // Known pet — attribute to exactly ONE owner, never split across the
-      // accumulated list. The nightly petOwners map collects every "My leader
-      // is X" for a NAME, and charm cycling makes same-named mobs change
-      // hands all night — the old equal split sprayed one pet's damage across
-      // everyone who ever charmed that name (Blood of Sraeshza 2026-07-31:
-      // identical pet buckets on multiple enchanters, one credited from
-      // another zone, encounter total 70k past the boss's HP pool).
-      // Priority: the uploader's own pet_leaders claim for THIS fight, else
-      // the most recently declared owner (addPetOwners keeps the list in
-      // declaration order, newest last). NPC-ish owner names (spaces) are
-      // never eligible.
-      const _uploaderClaim = uploadedPetLeaders[_atkKey];
-      const _candidates = owners.filter(o => !/\s/.test(o));
-      const _owner = (_uploaderClaim && !/\s/.test(_uploaderClaim)) ? _uploaderClaim
-                   : (_candidates.length ? _candidates[_candidates.length - 1] : null);
-      if (_owner) _addDmg(_owner, amount, true);
-      // If no valid owner, treat as unattributed noise (same as unknown pet).
+      // Known pet — split equally among owners with a CURRENT claim on this
+      // name, never the whole night's history. Same-named charm pets are
+      // indistinguishable in the log (no spawn id until the Zeal upstream ask
+      // lands), and the charmer deliberately stands AWAY from their pet (a
+      // feared/charmed/FD'd charmer breaks the charm), so no single log —
+      // least of all the charmer's own — sees the whole picture. When several
+      // raiders legitimately run same-named charms in one fight (three
+      // Revenants, 2026-07-30), an equal split across the CURRENT claimants
+      // is the honest non-unique attribution (Hitya 2026-07-31). What we
+      // never do again is split across everyone who charmed that name all
+      // night — that's the Blood of Sraeshza corruption (damage credited to
+      // raiders who were mezzing, dead, or in another zone).
+      // NPC-ish owner names (spaces) are never eligible.
+      const eligible = owners.filter(e => e && e.o && !/\s/.test(e.o));
+      let claimants = eligible
+        .filter(e => e.at >= _fightStartMs - PET_CLAIM_FRESH_MS)
+        .map(e => e.o);
+      // No fresh claim (older agents that only relay stale maps, or a pet
+      // declared pre-restart with a legacy at:0 stamp) — fall back to the
+      // single most recent declaration rather than dropping the damage.
+      if (claimants.length === 0 && eligible.length > 0) {
+        claimants = [eligible[eligible.length - 1].o];
+      }
+      if (claimants.length > 0) {
+        const share = amount / claimants.length;
+        for (const o of claimants) _addDmg(o, share, true);
+      }
+      // If no valid owner at all, treat as unattributed noise (same as unknown pet).
     } else {
       // Direct player damage — skip if multi-word (NPC attacker noise).
       if (/\s/.test(attacker)) continue;

@@ -701,19 +701,31 @@ function getAllAgentTestCards()     { return loadState().agentTestCards || {}; }
 //
 // Migration: old entries stored a bare string; the helpers below normalise on
 // first read/write so the format converges to the array schema silently.
+// Entries are { o: ownerName, at: declaredMs }. Legacy shapes (bare string,
+// or array of strings from pre-3.0.240 state files) normalize with at:0 so
+// they read as "declared long ago" — never fresh, but still usable as the
+// newest-known fallback via list order.
 function _petNormalise(val) {
-  if (Array.isArray(val)) return val;
-  if (typeof val === 'string' && val) return [val];
+  if (Array.isArray(val)) {
+    return val
+      .map(e => (e && typeof e === 'object' && e.o) ? e
+              : (typeof e === 'string' && e ? { o: e, at: 0 } : null))
+      .filter(Boolean);
+  }
+  if (typeof val === 'string' && val) return [{ o: val, at: 0 }];
   return [];
 }
 function getPetOwners() { return loadState().petOwners || {}; }
-// Declaration order is meaningful: the LAST element is the most recently
-// declared owner, which the encounter fold uses as the current owner of a
-// charm-cycled name. A re-declaration moves the owner back to the tail.
-function _petDeclare(list, owner) {
-  const idx = list.indexOf(owner);
+// Declaration order is meaningful: the LAST entry is the most recently
+// declared owner. A re-declaration moves the owner to the tail with a fresh
+// timestamp — the encounter fold uses `at` to find owners with a CURRENT
+// claim on a charm-cycled name (Hitya 2026-07-31: same-named charm pets are
+// indistinguishable until Zeal ships spawn ids, so damage splits equally
+// among this-fight claimants, never the whole night's history).
+function _petDeclare(list, owner, at) {
+  const idx = list.findIndex(e => e.o === owner);
   if (idx >= 0) list.splice(idx, 1);
-  list.push(owner);
+  list.push({ o: owner, at: typeof at === 'number' ? at : Date.now() });
   return list;
 }
 function addPetOwners(petLeadersMap) {
@@ -1055,6 +1067,7 @@ getParseLeaderboardMsgId, setParseLeaderboardMsgId,
   getLastAnnouncedAgentVersion, setLastAnnouncedAgentVersion,
   recordAgentUpload, getAgentActivity, clearAgentActivity,
   getPetOwners, addPetOwners, setPetOwner, clearPetOwners,
+  petOwnerEntries: _petNormalise,
   getWhoData, getWhoEntry, mergeWhoData, setZekFlag, setGuildOverride, clearWhoData,
   applyKnownZekTips, applyWhoOverrides,
   getPendingLoot, getAllPendingLoot, setPendingLoot, removePendingLootItem,
