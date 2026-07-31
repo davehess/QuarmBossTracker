@@ -6585,7 +6585,7 @@ class EncounterBuilder {
       // They must never enter the upload — the bot drops them from its damage
       // aggregate too (root index.js ~8234), and admitting them here would
       // silently re-attribute a scout's chip damage to a raider.
-      if (/^eye\s+of\s+/i.test(name)) return;
+      if (_isVisionEyePet(name)) return;   // shared vision-eye choke point (rn-eye-filter)
       let own = owner === '__SELF__' ? this.character : owner;
       own = own ? String(own).trim() : '';
       // Owners are player characters. A multi-word "owner" is a mis-read; the
@@ -6849,7 +6849,7 @@ class EncounterBuilder {
       // the damage aggregate (root index.js ~8234); returning null here drops
       // them from the verb rollup too, so encounter_combat_rollup can't
       // disagree with the parse card.
-      if (/^eye\s+of\s+/i.test(String(name))) return null;
+      if (_isVisionEyePet(String(name))) return null;   // shared vision-eye choke point (rn-eye-filter)
       const proven = _provenPetMap.get(String(name).toLowerCase());
       return proven ? proven.owner : name;
     };
