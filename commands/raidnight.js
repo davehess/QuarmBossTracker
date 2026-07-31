@@ -4,6 +4,7 @@
 
 const { SlashCommandBuilder, EmbedBuilder, MessageFlags } = require('discord.js');
 const { nowPartsInTz, getDefaultTz, msUntilMidnightInTz } = require('../utils/timezone');
+const { labelForMs, dateKeyForMs } = require('../utils/raidNight');
 const { getRaidSession, saveRaidSession, getRaidSessionTargets, addRaidSessionTarget } = require('../utils/state');
 const { loadParses, findBossFromName }  = require('./parse');
 const { loadTonightsTargets }  = require('../utils/raidhelper');
@@ -16,17 +17,12 @@ function isRaidNight() {
   return hour * 60 + minute >= 20 * 60 + 30; // 8:30 PM+
 }
 
-function todayLabel() {
-  return new Date().toLocaleDateString('en-US', {
-    timeZone: getDefaultTz(), weekday: 'long', month: 'long', day: 'numeric', year: 'numeric',
-  });
-}
-
-function todayDateKey() {
-  return new Date().toLocaleDateString('en-US', {
-    timeZone: getDefaultTz(), year: 'numeric', month: '2-digit', day: '2-digit',
-  });
-}
+// Both formats now live in utils/raidNight.js so the auto-created per-night
+// thread and this command build the SAME name and adopt each other instead of
+// creating twins. Behaviour here is unchanged — these are still "now" in the
+// default tz, with no night rollover applied.
+function todayLabel()   { return labelForMs(Date.now()); }
+function todayDateKey() { return dateKeyForMs(Date.now()); }
 
 function sinceLastMidnightMs() {
   const msUntilMidnight = msUntilMidnightInTz(getDefaultTz());

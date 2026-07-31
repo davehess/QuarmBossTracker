@@ -23,20 +23,25 @@ function msUntilMidnightInTz(tz) {
   return midnight - tzDate;
 }
 
-/** Current date/time broken into parts within a timezone */
-function nowPartsInTz(tz) {
-  const now = new Date();
+/** Date/time of an arbitrary Unix-ms instant broken into parts within a timezone */
+function partsInTzAt(tsMs, tz) {
+  const at = new Date(tsMs);
   const p = new Intl.DateTimeFormat('en-US', {
     timeZone: tz, year: 'numeric', month: 'numeric', day: 'numeric',
     hour: 'numeric', minute: 'numeric', second: 'numeric',
     hour12: false, weekday: 'long',
-  }).formatToParts(now).reduce((a, { type, value }) => { a[type] = value; return a; }, {});
+  }).formatToParts(at).reduce((a, { type, value }) => { a[type] = value; return a; }, {});
   return {
     year: parseInt(p.year), month: parseInt(p.month), day: parseInt(p.day),
     // hour12: false gives "24" for midnight in some locales
     hour: parseInt(p.hour) % 24, minute: parseInt(p.minute),
     dayOfWeek: p.weekday?.toLowerCase() || '',
   };
+}
+
+/** Current date/time broken into parts within a timezone */
+function nowPartsInTz(tz) {
+  return partsInTzAt(Date.now(), tz);
 }
 
 /**
@@ -246,7 +251,7 @@ function nextPvpQuietEnd(tz) {
 }
 
 module.exports = {
-  getDefaultTz, msUntilMidnightInTz, nowPartsInTz, parseUserTime,
+  getDefaultTz, msUntilMidnightInTz, nowPartsInTz, partsInTzAt, parseUserTime,
   formatInDefaultTz, shortTimestampInTz, localToUTC,
   isInRaidWindow, RAID_DAYS, RAID_WINDOW_START, RAID_WINDOW_END,
   isPvpQuietHours, nextPvpQuietEnd,

@@ -242,6 +242,28 @@ function getAllSpawnAlertMessageIds() {
     .map(([k, v]) => ({ bossId: k.replace('alert_', ''), messageId: v }));
 }
 
+// ── Raid-night threads (one Discord thread per raid night) ────────────────────
+// Anchored the same way as every other slot: env override wins, then
+// channelSlots['rn_<nightKey>']. Losing the volume only costs the cache —
+// utils/raidNight.js re-adopts the thread by NAME from Discord, which stays
+// the real source of truth. Old keys are pruned so channelSlots can't grow
+// one entry per night forever.
+const _RAID_NIGHT_SLOT_KEEP = 10;
+function getRaidNightThreadId(nightKey) {
+  return process.env.RAID_NIGHT_THREAD_ID || loadState().channelSlots?.[`rn_${nightKey}`] || null;
+}
+function setRaidNightThreadId(nightKey, id) {
+  if (process.env.RAID_NIGHT_THREAD_ID) return;
+  const s = loadState();
+  if (!s.channelSlots) s.channelSlots = {};
+  s.channelSlots[`rn_${nightKey}`] = id;
+  const rnKeys = Object.keys(s.channelSlots).filter(k => k.startsWith('rn_'));
+  for (const stale of rnKeys.slice(0, Math.max(0, rnKeys.length - _RAID_NIGHT_SLOT_KEEP))) {
+    delete s.channelSlots[stale];
+  }
+  saveState(s);
+}
+
 // ── Announce events (full data) ───────────────────────────────────────────────────────────────
 function saveAnnounce(msgId, data) {
   const s = loadState();
@@ -976,6 +998,7 @@ module.exports = {
   getDailyKills, resetDailyKills,
   addAnnounceMessageId, getAnnounceMessageIds, removeAnnounceMessageId, clearAnnounceMessageIds,
   getSpawnAlertMessageId, setSpawnAlertMessageId, clearSpawnAlertMessageId, getAllSpawnAlertMessageIds,
+  getRaidNightThreadId, setRaidNightThreadId,
   getDailySummaryMessageId, setDailySummaryMessageId,
   getThreadLinksMessageId, setThreadLinksMessageId,
   getBoardMessages, saveBoardMessages,
