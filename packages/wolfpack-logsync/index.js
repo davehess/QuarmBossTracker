@@ -6924,6 +6924,14 @@ class EncounterBuilder {
     // charmSessions are reset() per encounter and per builder, so they need no
     // scoping; _charmTickTracker is MODULE-level (shared by every builder and
     // every boxed character) and does need it — see below.
+    // Names that actually appear in THIS encounter's events — the scope gate
+    // for every source that outlives a single fight (_charmTickTracker and
+    // petLeaders below).
+    const seen = new Set();
+    for (const ev of this.events) {
+      if (ev.attacker) seen.add(String(ev.attacker).toLowerCase());
+      if (ev.defender) seen.add(String(ev.defender).toLowerCase());
+    }
     if (this._activeCharms) {
       for (const [petLower, sess] of this._activeCharms) add(sess?.pet || petLower, sess?.owner);
     }
@@ -6934,11 +6942,6 @@ class EncounterBuilder {
       // lingered from an earlier pull — broken entries stay PET_LINGER_MS for
       // the overlay) would be declared "ours" on an unrelated fight's upload,
       // handing a same-named enemy's damage to whoever charmed one last time.
-      const seen = new Set();
-      for (const ev of this.events) {
-        if (ev.attacker) seen.add(String(ev.attacker).toLowerCase());
-        if (ev.defender) seen.add(String(ev.defender).toLowerCase());
-      }
       for (const [petLower, t] of _charmTickTracker) {
         if (!t || !seen.has(petLower)) continue;
         // …and only while the charm is live or broke inside this fight, so a
@@ -6949,7 +6952,21 @@ class EncounterBuilder {
         add(t.pet || petLower, t.owner);
       }
     }
-    for (const [petLower, owner] of Object.entries(this.petLeaders)) add(petLower, owner);
+    // petLeaders persists for the agent's whole runtime (summoned pets declare
+    // their leader once and keep it until repop) — but dumping it UNSCOPED
+    // poisoned uploads all night (Blood of Sraeshza 2026-07-31: charm-cycled
+    // mob names claimed hours after the charm broke, spraying that name's
+    // damage over every past charmer once the bot folded it). Two gates:
+    //   1. the pet name must appear in THIS fight's events;
+    //   2. article-prefixed names ("a stonegrabber") are charm-pet MOBS, not
+    //      summons — their ownership is temporal, and every LIVE charm was
+    //      already admitted by the three charm sources above (add() keeps the
+    //      first claim), so whatever's left here is stale residue. Skip it.
+    for (const [petLower, owner] of Object.entries(this.petLeaders)) {
+      if (!seen.has(petLower)) continue;
+      if (/^an?\s/i.test(petLower)) continue;
+      add(petLower, owner);
+    }
     return out;
   }
   flush() {
