@@ -27515,45 +27515,66 @@ function _checkTankBuster(ev, line, tsMs) {
   }
 }
 
-// ── #36 AoE-dance callouts (DPS OUT / DPS IN + countdown) ────────────────────
+// ── #36 AoE-dance callouts (OUT / IN + countdown) ────────────────────────────
 // Data-driven melee-dance helper, REUSING the #142 countdown machinery
 // (_armBossCountdown → _startTimer, buster-style effect detection). For a boss
 // whose PBAE forces the melee off the mob ("run OUT before it hits, back IN
 // after it lands"), we give the raid the exact tank-buster UX with different
-// texts: (a) a pre-warn "DPS OUT" before the next AE, (b) a confirming "DPS IN"
-// the instant it lands, (c) an on-screen countdown to the next AE that re-syncs
-// on every observed cast.
+// texts: (a) a pre-warn before the next AE, (b) a confirming IN callout the
+// instant it lands, (c) an on-screen countdown to the next AE that re-syncs on
+// every observed cast. The OUT/IN wording is PER ENTRY (out_text / in_text) —
+// "MELEE OUT/IN" for a true PBAE where only the melee pile has to move.
 //
-// GROUNDED SIGNATURE — Caustic Mist, eqemu_spells id 2814, on Vyzh`dra the
-// Cursed (npc_types 162042, npc_spells_id 197, entry recast_delay -1 = "use the
-// spell's own recast"):
-//   • cast_time 0 → the spell prints NO cast message; the ONLY detectable log
-//     evidence is the per-victim LAND message. So — exactly like the #142
-//     buster (Rage of Ssraeshza) — we detect the EFFECT, never a cast.
-//   • land-on-other: "<Name>'s flesh begins to liquefy."  (text is SHARED with
-//     Putrefy Flesh 1956; the boss-active gate below scopes it to this fight)
-//   • land-on-self:  "Your skin begins to rot."           (unique to 2814)
-//   A PBAE hitting the melee pile prints a BURST of these lines across many
-//   victims within ~1s in every raider's OWN combat log (per-client, no relay),
-//   so a burst detector (>= burst_n victims within burst_window_ms) is the
-//   robust "the AE just fired" signal — a single stray land line is NOT.
-//   • cadence: spell recast_time = 24000ms and the npc entry defers to it
-//     (recast_delay -1). NPC spell AI does NOT cast strictly on cooldown, so
-//     24s is a grounded DEFAULT and is FIELD-TUNABLE — the guild confirms the
-//     real interval on the next Vyzh`dra kill. Like the buster, the countdown
-//     RE-SYNCS on every observed AE, so an approximate cadence is still useful.
+// GROUNDED SIGNATURE — Dragon Roar, eqemu_spells 789 / 981 (identical rows),
+// the fear PBAE on Vyzh`dra the Cursed (npc_types 162042).
+// RE-SIGNATURED 2026-07-31. The original entry watched /flesh begins to
+// liquefy\./i with burst_n 3 and never once fired — two independent reasons:
+//   (1) wrong AE. That text is Caustic Mist 2814 / Putrefy Flesh 1956, and the
+//       guild already owns it with a plain "Putrefy Flesh" trigger.
+//   (2) burst_n 3 wanted three DISTINCT victims' land lines inside one log.
+//       A raider's own log is dominated by the self-form, so the threshold was
+//       effectively unreachable even on the right spell.
+// The AE that actually lands on the raid is Dragon Roar (field-observed
+// 2026-07-30/31). Two plain guild triggers already CALL the hit ("Dragon Roar"
+// on the land line, "Dragon Roar (Resist)" on the resist) but NEITHER carries a
+// timer_duration_sec — so raiders hear "it hit" and get no countdown to the
+// NEXT one. THIS entry is that countdown; the plain triggers stay as the hit
+// callout.
+//   • cast_time 0 → no cast message; effect-detection only, exactly like the
+//     #142 buster and the Vulak`Aerr entry below.
+//   • cast_on_other is NULL → bystanders see NOTHING. The only evidence is your
+//     OWN line, so burst_n is 1 — one self-line = the AE fired (burst_window_ms
+//     still absorbs alt-log echoes). Same reasoning as Ancient Breath below.
+//   • the two self-forms, and why BOTH are in the signature:
+//       land   — "You lose control of yourself!"      (the fear taking hold)
+//       resist — "You resist the Dragon Roar spell!"  (a resist still PROVES
+//                the AE fired, and it is the ONLY line a resister ever gets —
+//                without it, everyone who resisted would lose the countdown)
+//     Neither line is the spell's catalog cast_on_you ("You flee in terror.");
+//     both are the client/server fear + resist messages the guild's own live
+//     triggers already match, i.e. field truth beats the catalog string here.
+//   • cadence: spell recast_time 36000ms → 36s DEFAULT, FIELD-TUNABLE.
+//     ⚠ Not catalog-confirmable for THIS npc: npc_spells_id 197 lists only
+//     Mass Insanity 2813 + Caustic Mist 2814, and Dragon Roar appears in NO
+//     Ssraeshza Temple spell list — Quarm scripts it outside npc_spells, so
+//     there is no per-npc recast_delay override to read and 36s is the spell's
+//     own cooldown. NPC AI doesn't cast strictly on cooldown anyway; like the
+//     buster, the countdown RE-SYNCS on every AE observed, so an approximate
+//     cadence is still useful. Confirm the real interval on the next kill.
+//   • wording is the guild lead's call (Hitya, stated twice): MELEE OUT /
+//     MELEE IN — it's a PBAE, so casters at range never have to move.
 const AOE_DANCE = [
   {
     boss:            'Vyzh`dra the Cursed',
-    spell:           'Caustic Mist',                  // eqemu_spells 2814 — PBAE (targettype 4)
-    signature:       [/flesh begins to liquefy\./i,   // land-on-other (shared text; scoped by active-boss gate)
-                      /Your skin begins to rot\./i],  // land-on-self (unique to Caustic Mist)
-    burst_n:         3,                               // >= this many victims in the window = the AE fired
-    burst_window_ms: 2000,                            // PBAE lands across ~1s; 2s safely collects the burst
-    cadence_sec:     24,                              // FIELD-TUNABLE — spell recast_time 24000ms; confirm on next kill
-    out_warn_sec:    5,                               // speak "DPS OUT" this many seconds before the next AE
-    out_text:        'DPS OUT — Caustic Mist soon',   // countdown warning callout (the pre-warn)
-    in_text:         'DPS IN',                        // fired NOW when the AE lands (safe to re-engage)
+    spell:           'Dragon Roar',                   // eqemu_spells 789/981 — fear PBAE (targettype 4), MR-based
+    signature:       [/You lose control of yourself!/i,       // self-land (the fear)
+                      /You resist the Dragon Roar spell!/i],  // resist — still proves the AE fired
+    burst_n:         1,                               // self-only evidence (cast_on_other NULL) — see note above
+    burst_window_ms: 2000,                            // echo/alt-log dupe absorber
+    cadence_sec:     36,                              // FIELD-TUNABLE — spell recast_time 36000ms; confirm on next kill
+    out_warn_sec:    5,                               // speak "MELEE OUT" this many seconds before the next AE
+    out_text:        'MELEE OUT — Dragon Roar soon',  // countdown warning callout (the pre-warn)
+    in_text:         'MELEE IN',                      // fired NOW when the AE lands (safe to re-engage)
     color:           'gold',
   },
   {
@@ -27588,9 +27609,10 @@ const _aoeDanceLastFire = new Map();   // boss(lc) → wall-clock ms of the last
 const _aoeDanceBurst    = new Map();   // boss(lc) → { count, windowStartMs } rolling collector
 
 // A signature land line → count it toward the active burst; once >= burst_n
-// land within burst_window_ms, treat the AE as fired: push "DPS IN" NOW and
-// (re)arm the countdown to the NEXT AE (target = boss so death clears it, like
-// the buster) whose warning at out_warn_sec speaks the "DPS OUT" pre-warn.
+// land within burst_window_ms, treat the AE as fired: push the entry's in_text
+// ("MELEE IN"/"DPS IN") NOW and (re)arm the countdown to the NEXT AE (target =
+// boss so death clears it, like the buster) whose warning at out_warn_sec
+// speaks the entry's out_text pre-warn.
 // GATED on the boss being the ACTIVE encounter (curBoss, same pattern as
 // _checkTankBuster) so an identically-worded land line on trash elsewhere can't
 // fire it. Local only — every raider's own log carries the land burst.
@@ -27625,7 +27647,7 @@ function _checkAoeDance(line, tsMs) {
       warnSec: d.out_warn_sec, warnText: d.out_text,
       fireText: d.in_text, color: d.color || 'gold', tsMs: now,
     });
-    console.log('[aoe-dance] ' + d.spell + ' burst on ' + d.boss + ' — DPS IN + re-armed ' + d.cadence_sec + 's countdown');
+    console.log('[aoe-dance] ' + d.spell + ' on ' + d.boss + ' — ' + d.in_text + ' + re-armed ' + d.cadence_sec + 's countdown');
     return;
   }
 }
