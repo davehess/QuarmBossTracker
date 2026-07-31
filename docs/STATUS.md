@@ -1220,6 +1220,19 @@ one concrete detail. Shipped that night: stable 2.1.2 / agent 3.4.36.**
   non-melee damage`) matched the countdown trigger. Added a self-hit exclusion
   (`hit (?!\k<boss>\b)`); a real DT is never self-inflicted. Trigger-table
   change only, propagates on the 10-min guild-trigger poll.
+- **Register a CURE cast by a Mimic user, so non-Mimic raiders leave the debuff
+  queue.** Observed 2026-07-30: the debuff queue held 11 players on
+  "Curse of Rhag`Zadune" long after they'd actually been cured. VERIFIED: none
+  of those twelve names has uploaded a contribution in 14 days — they are all
+  non-Mimic, so nothing ever reports their state changing and the entry never
+  retires. The fix does NOT need the afflicted player to run Mimic: the CURER's
+  own log names both the spell and the target (`You begin casting Remove
+  Greater Curse` -> land), which is the self-cast path the agent already parses
+  for buffs. One cleric on Mimic can clear queue entries for the whole raid —
+  same one-directional trick the buff queue already leans on.
+  ⚠ Curses carry COUNTERS (bot `_CURSE_COUNTERS`: Gravel Rain 12 … "Word of" 1),
+  so a registered cure must DECREMENT rather than blanket-clear, or a single
+  Remove Greater Curse would wrongly retire a 12-counter curse still on them.
 - **"Eye of <player>" must never appear on the DPS meter.** Eye of Zomm is a
   VISION pet — it deals no damage at all. Observed on a `/rs` meter as an
   indented pet row "Eye of Syphon" carrying 110 dmg / 3 dps / 38s — byte-for-byte
