@@ -27396,18 +27396,26 @@ function _cancelTimersOnMobDeath(line) {
 //     SPA 79 base −4000 (a ~4000 non-melee HIT). 0s cast, NO cast/land chat —
 //     so it's undetectable by text regex; the 4000 non-melee DAMAGE line is the
 //     signal (EQLogParser attributes the amount to the spell; so do we).
-//   • Fight: "Blood of Ssraeshza" dies → Emperor Ssraeshza spawns exactly 2:00
-//     later → busts at spawn (a Paladin DAs it), then every ~60s.
-// The 2:00 spawn countdown is the pre-warn a Paladin needs to DA the spawn bust.
+//   • Fight: "Blood of Ssraeshza" dies → the Emperor's spawn buster lands 2:10
+//     later (a Paladin DAs it), then it re-busts every ~60s.
+// The spawn countdown is the pre-warn a Paladin needs to DA the spawn bust: it
+// runs the full cycle and its warning is the actual "DA NOW" cue.
+//
+// Hitya 2026-07-31: spawn cycle 2m10s, call DA at 2:00. So spawn_delay_sec is
+// the CYCLE (130s) and spawn_warn_sec the LEAD (10s) → "Paladin DA NOW" fires
+// at t+120s, 10s before the bust. Previously the cycle was modelled as 120s,
+// which put the callout at t+110s — a 20s lead that outran an 18s Divine Aura.
+// Do NOT "fix" this by shortening the cycle: the countdown row's zero must land
+// on the bust, and the warn offset is the only knob for the callout.
 const BOSS_SPAWN_CHAINS = [
   {
     precursor:         'Blood of Ssraeshza',       // its death arms the spawn pre-warn
-    boss:              'Emperor Ssraeshza',         // spawns spawn_delay_sec after that
-    spawn_delay_sec:   120,                         // 2:00 (guild lead)
+    boss:              'Emperor Ssraeshza',         // spawn buster lands spawn_delay_sec after that
+    spawn_delay_sec:   130,                         // 2:10 full cycle (Hitya 2026-07-31)
     spawn_label:       'Emperor spawn + buster',
-    spawn_warn_sec:    10,                          // warn ~10s before the spawn bust
+    spawn_warn_sec:    10,                          // → "DA NOW" at 2:00, 10s before the bust
     spawn_warn_text:   'Paladin DA NOW',
-    spawn_fire_text:   'Emperor in 2:00 — Paladin ready to DA the spawn buster',
+    spawn_fire_text:   'Emperor spawn buster in 2:10 — Paladin ready to DA',
     buster_damage:     4000,                        // Rage of Ssraeshza DD (spell 2310), raw/unmitigated
     buster_damage_tol: 1200,                        // size window — INFERRED (unattributed) path ONLY
     buster_min_floor:  500,                         // ATTRIBUTED path: any Emperor non-melee ≥ this = buster (skips DoT/DS ticks; mitigation-proof)
@@ -29751,7 +29759,7 @@ async function main() {
         // #142 — a boss death clears that mob's countdown timers (tank-buster,
         // deathtouch) so no phantom "next in Xs" lingers on the corpse; and a
         // configured PRECURSOR death arms the boss spawn pre-warn (Blood of
-        // Ssraeshza dies → 2:00 → Emperor + "Paladin DA NOW"). Both key off the
+        // Ssraeshza dies → 2:10 cycle, "Paladin DA NOW" at 2:00). Both key off the
         // same slain/death line. Local-only, live tail.
         try { _cancelTimersOnMobDeath(line); } catch { /* never let a bad line break the tail */ }
         try { const _dts = parseEqTimestamp(line); _checkBossSpawnChain(line, _dts ? _dts.getTime() : Date.now()); } catch { void 0; }
