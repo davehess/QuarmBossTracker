@@ -339,6 +339,19 @@ contextBridge.exposeInMainWorld('mimic', {
   openDashboard:   ()     => ipcRenderer.invoke('open-dashboard'),
   openExternal:    (url)  => ipcRenderer.invoke('open-external', url),
   openZealCapture: ()     => ipcRenderer.invoke('open-zeal-capture'),
+  // Zeal auto-updater (CoastalRedwood/Zeal). status is local-only; checkUpdate
+  // hits GitHub; installUpdate downloads + drops Zeal.asi + uifiles/ into the
+  // EQ folder (backs up what's there, refuses while EQ is running).
+  zealStatus:        ()   => ipcRenderer.invoke('zeal-status'),
+  zealCheckUpdate:   ()   => ipcRenderer.invoke('zeal-check-update'),
+  zealInstallUpdate: ()   => ipcRenderer.invoke('zeal-install-update'),
+  // Custom UI packs (Nillipuss etc.): list is local; check hits GitHub;
+  // install downloads the pack into uifiles/<name>/; applyOption copies an
+  // Options/ layout up into the pack folder.
+  uiPacksList:       ()          => ipcRenderer.invoke('ui-packs-list'),
+  uiPackCheck:       (id)        => ipcRenderer.invoke('ui-pack-check', id),
+  uiPackInstall:     (id)        => ipcRenderer.invoke('ui-pack-install', id),
+  uiPackApplyOption: (id, opt)   => ipcRenderer.invoke('ui-pack-apply-option', id, opt),
 
   // Overlay lock state — main pushes this to overlay renderers so they can
   // show/hide their drag handle.
