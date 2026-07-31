@@ -117,6 +117,32 @@ build a true zone/threat model rather than only the current target. We
 understand that's a bigger change; the `spawn_id`-on-gauges ask above is the
 minimal unblock and stands on its own.
 
+## Motivating use cases (the guild's own words)
+
+1. **Charm attribution.** Differentiate the mob we are *currently charming*
+   from same-named mobs in the fight, so damage attributes to the correct
+   `/pet` leader. Today a charmed `an orc warrior` and a hostile
+   `an orc warrior` are the same string on the pipe.
+2. **Debuff QoL for raiders.** Differentiate same-named mobs while debuffing —
+   "which of the four crypt guardians has the slow/tash on it" — instead of
+   the honest-but-unhelpful "on one of these 4" our overlay shows today.
+
+## Supporting observation: Zeal tags prove the identity exists
+
+Zeal's in-client tag feature targets exactly **one mob at a time** among
+same-named spawns — which demonstrates Zeal already tracks a per-spawn
+identity in memory. We verified by uniquely tagging several identically-named
+mobs while exporting the verbose pipe: **tag state does not serialize to the
+pipe** (consistent with the capture above). The ask is only to expose the id
+that tagging demonstrably already keys on.
+
+## Prior outreach
+
+Posted to the Zeal community forum on 2026-07-20 ("Zeal tags exposed in
+Pipes") — no responses. Filing on the GitHub repo instead, where the
+implementation context below is actionable by maintainers; the issue should
+link the forum post for continuity.
+
 ## Implementation sketch (from reading upstream `main`, 2026-07-31)
 
 Grounding for the "additive, low-risk" claim — the change is one loop in
