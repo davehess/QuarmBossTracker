@@ -118,6 +118,29 @@
     <div id="uiStudioCharList" style="margin-top:8px"></div>
   </div>
 
+  <h2>Zeal</h2>
+  <div class="sub">Keep the CoastalRedwood <b>Zeal</b> mod current without dragging files around. Mimic downloads the latest release and drops <code>Zeal.asi</code> + <code>uifiles/</code> into your EverQuest folder — backing up whatever's there first. Close EverQuest before installing (the game holds the file while it's running).</div>
+
+  <div id="zealPanel" style="margin-top:10px">
+    <div class="hint" id="zealStatusLine">Checking your Zeal install…</div>
+    <div style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <button id="zealCheckBtn" type="button" style="background:#21262d;border:1px solid #2a3140">🔄 Check for the latest Zeal</button>
+      <button id="zealInstallBtn" type="button" style="display:none;background:#1f6feb;color:#fff;border:0;border-radius:5px;padding:6px 14px;cursor:pointer;font-weight:600">⬇ Install</button>
+      <span id="zealMsg" style="font-size:11px;color:#8b949e"></span>
+    </div>
+  </div>
+  <div class="row" style="margin-top:10px">
+    <input id="zealAutoCheck" type="checkbox" />
+    <label for="zealAutoCheck">Notify me when a newer Zeal is released</label>
+  </div>
+  <div class="hint">Checks GitHub in the background every 12 hours and pops a notification — it never installs on its own. Uncheck to stop the reminders.</div>
+
+  <h2>Custom UI packs</h2>
+  <div class="sub">One-click install and update for popular Quarm UIs. Mimic downloads the latest release and drops it into <code>uifiles/</code>, backing up what's there. After installing, pick an alternate <b>layout</b> from the pack's Options and apply it. Type the <code>/load</code> command in-game to switch to the UI, then <code>/reloadskin</code> after applying a layout.</div>
+  <div id="uiPacksList" style="margin-top:10px">
+    <div class="hint">Loading UI packs…</div>
+  </div>
+
   <h2>Local UI</h2>
   <div class="row">
     <input id="quietMode" type="checkbox" />
@@ -490,6 +513,9 @@
     document.getElementById('overlaysUnlocked').checked  = (c.overlaysLocked === false);
     document.getElementById('autoStart').checked         = (c.autoStart !== false);
     document.getElementById('hideOverlaysWhenEqDown').checked = (c.hideOverlaysWhenEqDown !== false);
+    document.getElementById('zealAutoCheck').checked = (c.zealAutoCheck !== false);
+    _renderZealStatus();
+    _renderUiPacks();
     const tm = c.tellsMode || 'off';
     document.querySelectorAll('input[name=tells]').forEach(r => { r.checked = (r.value === tm); });
     _loaded = { eqPaths: _collectEqPaths().slice(), botUrl: c.botUrl || '', token: null };
@@ -525,6 +551,7 @@
         overlaysLocked:   !document.getElementById('overlaysUnlocked').checked,
         autoStart:                document.getElementById('autoStart').checked,
         hideOverlaysWhenEqDown:   document.getElementById('hideOverlaysWhenEqDown').checked,
+        zealAutoCheck:            document.getElementById('zealAutoCheck').checked,
       };
       if (tokenInput) payload.token = tokenInput;
       await window.mimic.saveConfig(payload);
@@ -678,5 +705,172 @@
       } finally { btn.disabled = false; btn.textContent = orig; }
     });
   })();
+
+  // ── Zeal auto-updater card ────────────────────────────────────────────────
+  // Local status on open (no network); Check hits GitHub; Install downloads +
+  // drops Zeal.asi + uifiles/ into the EQ folder via main.js (backs up first,
+  // refuses while EQ is running). _latestRelease caches the last check so the
+  // Install click doesn't re-fetch the metadata.
+  var _zealLatestTag = null;
+  async function _renderZealStatus(){
+    var line = document.getElementById('zealStatusLine');
+    if (!line) return;
+    try {
+      var s = await window.mimic.zealStatus();
+      if (!s || !s.eqDir) {
+        line.innerHTML = 'No EverQuest folder set yet — add one above and Mimic can manage Zeal for you.';
+        return;
+      }
+      var installed = s.installedTag
+        ? 'Installed via Mimic: <b style="color:#7ee787">' + String(s.installedTag).replace(/</g,'&lt;') + '</b>'
+        : (s.hasZealAsi
+            ? '<b style="color:#f6c365">Zeal.asi present</b> (version unknown — install below to be sure you\'re current)'
+            : '<b style="color:#ff9b9b">Zeal not installed</b> in this folder');
+      line.innerHTML = installed;
+    } catch (e) {
+      line.textContent = 'Could not read your Zeal install.';
+    }
+  }
+  (function(){
+    var checkBtn   = document.getElementById('zealCheckBtn');
+    var installBtn = document.getElementById('zealInstallBtn');
+    var msg        = document.getElementById('zealMsg');
+    if (!checkBtn) return;
+    checkBtn.addEventListener('click', async function(){
+      var orig = checkBtn.textContent; checkBtn.disabled = true; checkBtn.textContent = 'Checking…';
+      installBtn.style.display = 'none';
+      msg.style.color = '#8b949e'; msg.textContent = '';
+      try {
+        var r = await window.mimic.zealCheckUpdate();
+        if (!r || !r.ok) { msg.style.color = '#ff9b9b'; msg.textContent = '✕ ' + ((r && r.error) || 'check failed'); return; }
+        _zealLatestTag = r.latestTag;
+        if (r.updateAvailable) {
+          msg.style.color = '#7ee787';
+          msg.textContent = 'Latest is ' + (r.latestTag || '?') + (r.installedTag ? ' (you have ' + r.installedTag + ')' : '') + '.';
+          installBtn.textContent = '⬇ Install ' + (r.latestTag || 'latest');
+          installBtn.style.display = 'inline-block';
+        } else {
+          msg.style.color = '#7ee787';
+          msg.textContent = '✓ You\'re on the latest Zeal (' + (r.latestTag || '?') + ').';
+        }
+      } catch (err) {
+        msg.style.color = '#ff9b9b'; msg.textContent = '✕ ' + ((err && err.message) || err);
+      } finally { checkBtn.disabled = false; checkBtn.textContent = orig; }
+    });
+    installBtn.addEventListener('click', async function(){
+      var orig = installBtn.textContent; installBtn.disabled = true; installBtn.textContent = 'Installing…';
+      msg.style.color = '#8b949e'; msg.textContent = '';
+      try {
+        var r = await window.mimic.zealInstallUpdate();
+        if (!r || !r.ok) { msg.style.color = '#f6c365'; msg.textContent = '⚠ ' + ((r && r.error) || 'install failed'); return; }
+        msg.style.color = '#7ee787';
+        msg.textContent = '✓ Installed ' + (r.tag || 'Zeal') + ' — ' + r.written + ' file' + (r.written === 1 ? '' : 's') + ' updated'
+                        + (r.backedUp ? ', ' + r.backedUp + ' backed up' : '') + '. Restart EverQuest to load it.';
+        installBtn.style.display = 'none';
+        _renderZealStatus();
+      } catch (err) {
+        msg.style.color = '#ff9b9b'; msg.textContent = '✕ ' + ((err && err.message) || err);
+      } finally { installBtn.disabled = false; installBtn.textContent = orig; }
+    });
+  })();
+
+  // ── Custom UI packs (Nillipuss etc.) ──────────────────────────────────────
+  // Each pack renders a card: install/update button + (when installed) an
+  // Options layout picker. All actions bridge through main.js -> uiPacks.js.
+  function _esc(s){ return String(s == null ? '' : s).replace(/[&<>"]/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+  async function _renderUiPacks(){
+    var host = document.getElementById('uiPacksList');
+    if (!host) return;
+    var data;
+    try { data = await window.mimic.uiPacksList(); }
+    catch (e) { host.innerHTML = '<div class="hint">Could not load UI packs.</div>'; return; }
+    var packs = (data && data.packs) || [];
+    if (!data || !data.eqDir) {
+      host.innerHTML = '<div class="hint">Set your EverQuest folder above first — then Mimic can install UI packs for you.</div>';
+      return;
+    }
+    if (!packs.length) { host.innerHTML = '<div class="hint">No UI packs configured.</div>'; return; }
+    host.innerHTML = '';
+    packs.forEach(function(p){
+      var card = document.createElement('div');
+      card.style.cssText = 'margin:0 0 10px;padding:10px 12px;background:#0f1420;border:1px solid #223;border-radius:6px';
+      var badge = p.installed
+        ? '<span style="background:#0f2a1a;color:#56d364;border:1px solid #1a7f37;border-radius:3px;font-size:9px;padding:1px 6px;margin-left:8px;vertical-align:middle">INSTALLED' + (p.installedTag ? ' ' + _esc(p.installedTag) : '') + '</span>'
+        : '';
+      var options = (p.options || []);
+      var optHtml = '';
+      if (p.installed && options.length) {
+        optHtml =
+          '<div style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">' +
+            '<span style="font-size:11px;color:#8b949e">Layout option:</span>' +
+            '<select class="uiOptSel" style="background:#161b22;color:#c9d1d9;border:1px solid #2a3140;border-radius:4px;padding:4px 8px;font-size:11px;font-family:inherit">' +
+              options.map(function(o){ return '<option value="' + _esc(o) + '">' + _esc(o) + '</option>'; }).join('') +
+            '</select>' +
+            '<button type="button" class="uiOptApply" style="background:#21262d;border:1px solid #2a3140;color:#c9d1d9;padding:5px 10px;font-size:11px;margin:0;border-radius:4px;cursor:pointer">Apply layout</button>' +
+          '</div>';
+      } else if (p.installed) {
+        optHtml = '<div class="hint" style="margin-top:6px;font-style:italic">No alternate layouts in this pack.</div>';
+      }
+      card.innerHTML =
+        '<div style="font-size:13px;font-weight:600;color:#c9d1d9">' + _esc(p.name) + badge + '</div>' +
+        '<div class="hint" style="margin-top:2px">' + _esc(p.notes || '') + '</div>' +
+        '<div style="margin-top:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">' +
+          '<button type="button" class="uiPackBtn" style="background:' + (p.installed ? '#21262d' : '#1f6feb') + ';color:#fff;border:' + (p.installed ? '1px solid #2a3140' : '0') + ';border-radius:5px;padding:6px 12px;cursor:pointer;font-weight:600;font-size:12px">' +
+            (p.installed ? '🔄 Check for update' : '⬇ Install') + '</button>' +
+          '<span class="uiPackMsg" style="font-size:11px;color:#8b949e"></span>' +
+        '</div>' +
+        '<div class="hint" style="margin-top:6px">In-game: type <code>' + _esc(p.loadCmd) + '</code> to load this UI.</div>' +
+        optHtml;
+      host.appendChild(card);
+
+      var btn = card.querySelector('.uiPackBtn');
+      var msg = card.querySelector('.uiPackMsg');
+      btn.addEventListener('click', async function(){
+        var orig = btn.textContent; btn.disabled = true;
+        msg.style.color = '#8b949e';
+        try {
+          if (!p.installed) {
+            btn.textContent = 'Installing…'; msg.textContent = '';
+            var r = await window.mimic.uiPackInstall(p.id);
+            if (!r || !r.ok) { msg.style.color = '#ff9b9b'; msg.textContent = '✕ ' + ((r && r.error) || 'install failed'); return; }
+            msg.style.color = '#7ee787';
+            msg.textContent = '✓ Installed ' + (r.tag || '') + ' — ' + r.written + ' files' + (r.backedUp ? ', ' + r.backedUp + ' backed up' : '') + '.';
+            await _renderUiPacks();   // repaint → now shows INSTALLED + options
+          } else {
+            btn.textContent = 'Checking…'; msg.textContent = '';
+            var c = await window.mimic.uiPackCheck(p.id);
+            if (!c || !c.ok) { msg.style.color = '#ff9b9b'; msg.textContent = '✕ ' + ((c && c.error) || 'check failed'); return; }
+            if (!c.updateAvailable) { msg.style.color = '#7ee787'; msg.textContent = '✓ Up to date (' + (c.latestTag || '?') + ').'; return; }
+            btn.textContent = 'Updating…';
+            var u = await window.mimic.uiPackInstall(p.id);
+            if (!u || !u.ok) { msg.style.color = '#ff9b9b'; msg.textContent = '✕ ' + ((u && u.error) || 'update failed'); return; }
+            msg.style.color = '#7ee787';
+            msg.textContent = '✓ Updated to ' + (u.tag || c.latestTag || '') + '. /reloadskin in-game to see it.';
+            await _renderUiPacks();
+          }
+        } catch (err) {
+          msg.style.color = '#ff9b9b'; msg.textContent = '✕ ' + ((err && err.message) || err);
+        } finally { btn.disabled = false; btn.textContent = orig; }
+      });
+
+      var applyBtn = card.querySelector('.uiOptApply');
+      if (applyBtn) {
+        applyBtn.addEventListener('click', async function(){
+          var sel = card.querySelector('.uiOptSel');
+          var opt = sel ? sel.value : '';
+          var orig = applyBtn.textContent; applyBtn.disabled = true; applyBtn.textContent = 'Applying…';
+          msg.style.color = '#8b949e'; msg.textContent = '';
+          try {
+            var r = await window.mimic.uiPackApplyOption(p.id, opt);
+            if (!r || !r.ok) { msg.style.color = '#ff9b9b'; msg.textContent = '✕ ' + ((r && r.error) || 'apply failed'); return; }
+            msg.style.color = '#7ee787';
+            msg.textContent = '✓ Applied "' + opt + '" — ' + r.written + ' files' + (r.backedUp ? ', ' + r.backedUp + ' backed up' : '') + '. Type /reloadskin in-game.';
+          } catch (err) {
+            msg.style.color = '#ff9b9b'; msg.textContent = '✕ ' + ((err && err.message) || err);
+          } finally { applyBtn.disabled = false; applyBtn.textContent = orig; }
+        });
+      }
+    });
+  }
 </script>
 </body></html>

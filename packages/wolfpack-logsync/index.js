@@ -1652,13 +1652,20 @@ function _reconcileGaugeCharms() {
     const ol = String(info.owner).toLowerCase();
     if (!gaugeOwners.has(ol)) continue;                       // bystander → log-managed
     const set = gaugePets.get(ol);
-    // Grace 10s: an enchanter re-charming the SAME pet removes it from slot
-    // 16 for the duration of the charm spell (3.5-4s) plus reconciler lag —
-    // the previous 3s threshold fired a false 'break' during normal cycling,
-    // which made the overlay speak 'recharm pet' even though the same mob got
-    // re-charmed seconds later. 10s easily covers a normal re-cast while a
-    // real break (gauge never returns) still fires promptly.
-    if ((!set || !set.has(k)) && (now - (info.last_tick_at || 0)) > 10000) {
+    // Grace: a re-charm of the SAME pet removes it from slot 16 for the charm
+    // cast (3.5-4s) plus reconciler lag, so we can't call a break the instant
+    // the gauge empties — a 3s threshold used to fire false breaks during
+    // normal cycling.
+    //
+    // Was 10s, now 6s (2026-07-31). 10s was picked as "comfortably clear of a
+    // recast", but it is the dominant term in how long a REAL break takes to
+    // announce: 10s here + the overlay's speech defer meant ~13.5s of silence
+    // after the pet was visibly gone (Melting, bard — the game showed "No Pet"
+    // and the song falling off long before the overlay reacted). 6s still
+    // clears a 3.5-4s recast with ~2s of headroom, and halves the lag on the
+    // case that actually matters. If false "charm break" calls reappear during
+    // routine cycling, this is the number to raise.
+    if ((!set || !set.has(k)) && (now - (info.last_tick_at || 0)) > 6000) {
       _bumpCharmTick(info.pet, info.owner, 'break', now);     // gauge dropped → break (alert fires now)
     }
   }
@@ -3854,7 +3861,7 @@ function trackDefensiveDiscLine(line, character) {
 // Adding a slow is a one-line addition here.
 const SLOW_SPELLS = new Set([
   // Shaman
-  'drowsy', 'walking sleep', "tagar's insects", "togor's insects", "turgur's insects", 'cripple',
+  'drowsy', 'walking sleep', "tagar's insects", "togor's insects", "tigir's insects", "turgur's insects", 'cripple',
   // Enchanter
   'languid pace', 'shiftless deeds', 'tepid deeds', 'forlorn deeds',
   // Boss tank-busters that are ALSO attack-speed slows (#142). Rage of
@@ -5390,6 +5397,25 @@ class EncounterBuilder {
         if (meLower && this._activeCharms) {
           for (const [k, sess] of this._activeCharms) {
             if (String(sess?.owner || '').toLowerCase() === meLower) { petKey = k; break; }
+          }
+        }
+        // Fallback to the module-level tick tracker. _activeCharms only has an
+        // entry when the LOG-side land path opened a session — a charm that
+        // landed via the Zeal slot-16 gauge (the primary land signal), or one
+        // that survived an agent restart, has a _charmTickTracker entry and no
+        // session at all. Without this the `if (!petKey) return` below silently
+        // DISCARDED the break: the pet stayed is_active, the overlay never saw
+        // the transition, and no "charm break" callout fired even though "Your
+        // charm spell has worn off" was sitting in the log (Shavimo,
+        // 2026-07-30). Most-recently-anchored active charm wins if somehow
+        // more than one is open.
+        if (!petKey && meLower) {
+          let bestAt = -1;
+          for (const [k, t] of _charmTickTracker) {
+            if (!t || !t.is_active) continue;
+            if (String(t.owner || '').toLowerCase() !== meLower) continue;
+            const at = Number(t.started_at || t.last_tick_at || 0);
+            if (at > bestAt) { bestAt = at; petKey = k; }
           }
         }
       }
@@ -9251,6 +9277,24 @@ let _stateJsonCache = { at: 0, body: null };
 // Serve the last good body on a serialize throw instead of ever 500-ing.
 let _tankStateLastGood = null;
 let _commandCenterLastGood = null;
+// How long a finished fight's threat snapshot stays visible as a read-back.
+// Mirrors the window applied inside EncounterBuilder._publishLiveThreat().
+const ENCOUNTER_THREAT_STALE_MS = 120_000;
+// Read-time staleness filter for the live threat snapshot.
+//
+// The identical 2-min rule inside _publishLiveThreat() is NOT enough on its
+// own: add() is that method's only caller, so it only ever runs while combat
+// events are flowing. The moment the raid stops fighting, nothing clears the
+// last snapshot — so the DPS HUD kept showing a mob the group hadn't fought in
+// ages (Shavimo, 2026-07-30). Filtering here means the sweep happens on every
+// status poll, fight or no fight. A LIVE fight has no flushedAt, so it is
+// never affected.
+function _freshEncounterThreat(t) {
+  if (!t) return null;
+  if (t.flushedAt && (Date.now() - t.flushedAt) > ENCOUNTER_THREAT_STALE_MS) return null;
+  return t;
+}
+
 function _serializeForDashboard() {
   const healersOut = {};
   for (const [name, s] of Object.entries(stats.sessionHealers || {})) {
@@ -9391,10 +9435,17 @@ function _serializeForDashboard() {
     currentEncounterThreat: (() => {
       const map = stats.currentEncounterThreatByChar || {};
       const active = _activeCharacter;
-      if (active && map[active.toLowerCase()]) return map[active.toLowerCase()];
-      return stats.currentEncounterThreat;
+      const pick = (active && map[active.toLowerCase()]) || stats.currentEncounterThreat;
+      return _freshEncounterThreat(pick);
     })(),
-    currentEncounterThreatByChar: stats.currentEncounterThreatByChar || {},
+    currentEncounterThreatByChar: (() => {
+      const out = {};
+      for (const k of Object.keys(stats.currentEncounterThreatByChar || {})) {
+        const fresh = _freshEncounterThreat(stats.currentEncounterThreatByChar[k]);
+        if (fresh) out[k] = fresh;
+      }
+      return out;
+    })(),
     // CH chain rotation snapshot (cleric Complete Heal callouts) — null when
     // no chain has called in the last 5 minutes. Drives chchain.html.
     chChain: chChainSnapshot(),
@@ -12138,7 +12189,7 @@ function renderCharmDiag(s) {
     }
     h += '</table>';
     if (slot16Rows.some(r => !r.passes_article_filter)) {
-      h += '<div class="dim" style="font-size:10px;margin-top:4px;color:var(--orange)">⚠ Reconciler accepts slot-16 text on TWO routes: (a) article prefix (a/an/the — covers generic mobs), OR (b) a pending charm spell from this owner within ~5s (the named-mob path, Uilnayar 2026-06-21 — Jareker etc). If both miss, the reconciler treats slot 16 as a non-charm pet (summoned pet swap or pet ambiguity).</div>';
+      h += '<div class="dim" style="font-size:10px;margin-top:4px;color:var(--orange)">⚠ Reconciler accepts slot-16 text on TWO routes: (a) article prefix (a/an/the — covers generic mobs), OR (b) a pending charm spell from this owner within ~5s (the named-mob path — covers proper-named mobs that carry no article). If both miss, the reconciler treats slot 16 as a non-charm pet (summoned pet swap or pet ambiguity).</div>';
     }
   }
   h += '</div>';
@@ -23955,7 +24006,18 @@ function _rebuildBuffMatchers() {
     if (new Set(arr.map(h => h.name)).size > 8) { m.delete(suffix); junked++; }
   }
   for (const [suffix, arr] of [...dm]) {
-    if (new Set(arr.map(h => h.name)).size > 8) { dm.delete(suffix); junked++; }
+    if (new Set(arr.map(h => h.name)).size <= 8) continue;
+    // Rescue slow families before dropping (2026-07-27): every shaman slow
+    // shares the generic "yawns." emote — 11 detrimental timed spells, over the
+    // junk threshold — so the whole shaman slow line (Turgur's Insects et al.)
+    // was discarded here while enchanter slows ("slows down.", 5 spells) sailed
+    // through. Keep only the real slow members so parseDebuffLanding still
+    // crowns a slow (Turgur's, longest duration) and the #130 badge lights;
+    // genuine junk families (33-spell knockback texts) have no slow members and
+    // still drop.
+    const slows = arr.filter(h => _isSlowSpell(h.name));
+    if (slows.length) { dm.set(suffix, slows); continue; }
+    dm.delete(suffix); junked++;
   }
   _buffLandingBySuffix = m;
   _debuffLandingBySuffix = dm;

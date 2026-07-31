@@ -27,6 +27,8 @@ const net   = require('net');
 const http  = require('http');
 const { spawn } = require('child_process');
 const { startZealWatch } = require('./zealPipe');
+const zealUpdater = require('./zealUpdater');
+const uiPacks = require('./uiPacks');
 
 // Hide the default File/Edit/View/Window/Help menubar — this is a focused
 // tray app, those entries just look unfinished. Must run before window
@@ -225,6 +227,17 @@ function defaultConfig() {
     // protocol work, not something a normal user needs running. Toggled from the
     // tray; capped + rotated so it can't fill the disk.
     zealRawCapture: false,
+    // Zeal auto-updater. zealInstalledTag records the CoastalRedwood/Zeal
+    // release tag we last installed (null = never installed via Mimic / manual
+    // install of unknown version). zealAutoCheck lets Mimic poll GitHub in the
+    // background and NOTIFY when a newer Zeal ships — it never auto-overwrites
+    // Zeal.asi (that stays a one-click user action; the game may have it loaded).
+    zealInstalledTag: null,
+    zealAutoCheck: true,
+    // Custom UI packs (Nillipuss etc.) installed via the uiPacks updater —
+    // map of pack id → last-installed release tag. Same idea as zealInstalledTag
+    // but per-pack, since a user can install more than one.
+    uiPackTags: {},
   };
 }
 function loadConfig() {
@@ -4200,10 +4213,56 @@ function applyExtTargetVisibility() {
   if (shouldShow) extTargetWindow.showInactive(); else extTargetWindow.hide();
 }
 
+// #65 Hot-servable overlays. Probe an agent-served overlay route on the local
+// agent port; resolves true only on a 200. Fast + non-throwing: a short
+// timeout / any error / a dead port all resolve false so the caller falls back
+// to the bundled file. 127.0.0.1 only (matches the agent's bind).
+function _probeAgentOverlay(pathname, timeoutMs = 900) {
+  return new Promise((resolve) => {
+    if (!agentPort) return resolve(false);
+    let done = false;
+    const finish = (ok) => { if (!done) { done = true; resolve(ok); } };
+    try {
+      const req = http.get({ host: '127.0.0.1', port: agentPort, path: pathname, timeout: timeoutMs }, (res) => {
+        const ok = res.statusCode === 200;
+        res.resume();   // drain so the socket frees
+        finish(ok);
+      });
+      req.on('error',   () => finish(false));
+      req.on('timeout', () => { try { req.destroy(); } catch (e) { void e; } finish(false); });
+    } catch (e) { void e; finish(false); }
+  });
+}
+
+// #65 Load an overlay preferring the agent-served copy (which rides the
+// agent's [U] hot-swap) and falling back to the bundled file when the agent is
+// down / unreachable / not answering 200 — an overlay must NEVER be blind
+// because the agent is restarting (the #59 lesson). The probe is fast so the
+// fallback is quick. Reload-on-recovery is intentionally OMITTED: a later
+// agent recovery does not force-reload an already-open overlay mid-raid (that
+// would reset scroll / local dismiss state); the file:// fallback is byte-
+// identical to the served copy (drift-checked), and the next OPEN gets served.
+// The window's preload applies to the http:// origin exactly as to file://, so
+// window.mimic is present either way.
+async function _loadOverlayPreferAgent(win, overlayPath, fallbackFile) {
+  if (!win || win.isDestroyed()) return;
+  let served = false;
+  try { served = await _probeAgentOverlay(overlayPath); } catch (e) { void e; served = false; }
+  if (win.isDestroyed()) return;
+  if (served) {
+    try { await win.loadURL(`http://127.0.0.1:${agentPort}${overlayPath}`); return; }
+    catch (e) { void e; /* probe passed but load failed — fall through to file */ }
+  }
+  if (win.isDestroyed()) return;
+  try { await win.loadFile(fallbackFile); } catch (e) { void e; /* last resort — nothing more to try */ }
+}
+
 // Command Center overlay — the "one window" raid board (Uilnayar 2026-07-03):
 // boss/MT/rampage/enrage/Death Touch (same data as the Tank overlay) plus
 // raid-wide DA/invuln status and healer mana parsed from raid-chat macros,
 // plus Curse/Cure alerts from the buff queue. Reads /api/command-center.
+// (#65) Served from the agent at /overlay/command so overlay updates ride
+// agent hot-swaps; falls back to the bundled command.html when the agent is down.
 function createCommandOverlay() {
   const b = _resolveBounds('commandBounds', 'commandBoundsSig', { x: 40, y: 40, width: 320, height: 360 });
   commandWindow = new BrowserWindow({
@@ -4216,7 +4275,6 @@ function createCommandOverlay() {
   });
   commandWindow.setAlwaysOnTop(true, 'screen-saver');
   commandWindow.setVisibleOnAllWorkspaces(true);
-  commandWindow.loadFile('command.html');
   commandWindow.on('moved',  () => _persistBounds('commandBounds', commandWindow));
   commandWindow.on('resize', () => _persistBounds('commandBounds', commandWindow));
   commandWindow.once('ready-to-show', () => {
@@ -4225,6 +4283,10 @@ function createCommandOverlay() {
     applyOverlayInteractivity();
     applyOverlayOpacity(commandWindow, 'command');
   });
+  // #65: prefer the agent-served /overlay/command (hot-swappable), fall back to
+  // the bundled command.html when the agent is unreachable. Handlers above are
+  // registered first so the async probe+load can't race ready-to-show.
+  _loadOverlayPreferAgent(commandWindow, '/overlay/command', 'command.html');
 }
 function applyCommandVisibility() {
   if (!commandWindow) return;
@@ -6339,11 +6401,182 @@ ipcMain.handle('open-zeal-capture', () => {
     return true;
   } catch { return false; }
 });
+
+// ── Zeal auto-updater (CoastalRedwood/Zeal) ─────────────────────────────────
+// Resolve the EQ client folder Zeal lives in — same folder as eqgame.exe +
+// the log files (where uifiles/ and Zeal.asi go). Reuses the UI-Studio path
+// logic: first configured folder that actually holds EQ logs, else auto-detect.
+function _zealEqDir() {
+  const cfg = loadConfig();
+  const userPaths = Array.isArray(cfg.eqPaths) && cfg.eqPaths.length > 0
+                  ? cfg.eqPaths
+                  : (cfg.eqPath ? [cfg.eqPath] : []);
+  for (const p of userPaths) { if (_dirHasEqLogs(p)) return p; }
+  return detectEqDir(null);
+}
+// Local status only — no network. Feeds the Settings "Zeal" card on open.
+ipcMain.handle('zeal-status', () => {
+  try {
+    const cfg = loadConfig();
+    return zealUpdater.localStatus(_zealEqDir(), cfg.zealInstalledTag);
+  } catch (e) { return { eqDir: null, hasZealAsi: false, installedTag: null }; }
+});
+// Check GitHub for the latest release (network). Returns the comparison the UI
+// needs; never writes anything.
+ipcMain.handle('zeal-check-update', async () => {
+  try {
+    const cfg = loadConfig();
+    const eqDir = _zealEqDir();
+    const local = zealUpdater.localStatus(eqDir, cfg.zealInstalledTag);
+    const latest = await zealUpdater.checkLatest();
+    return {
+      ok: true,
+      eqDir,
+      installedTag: local.installedTag,
+      hasZealAsi: local.hasZealAsi,
+      latestTag: latest.tag,
+      latestName: latest.name,
+      htmlUrl: latest.htmlUrl,
+      publishedAt: latest.publishedAt,
+      // "Update available" whenever the newest tag differs from what we last
+      // installed. If we've never installed via Mimic (installedTag null),
+      // offer the install so the user gets a known-current Zeal either way.
+      updateAvailable: latest.tag !== local.installedTag,
+    };
+  } catch (e) {
+    return { ok: false, error: e && e.message ? e.message : String(e) };
+  }
+});
+// Download + install the latest Zeal into the EQ folder. Refuses while EQ is
+// running (the game holds Zeal.asi; on Windows the write would fail outright).
+ipcMain.handle('zeal-install-update', async () => {
+  try {
+    const eqDir = _zealEqDir();
+    if (!eqDir) return { ok: false, error: 'No EverQuest folder is set. Add one in Settings first.' };
+    if (await _isEqRunning()) {
+      return { ok: false, error: 'Close EverQuest first — Zeal.asi is loaded by the running game and can\'t be replaced while it\'s open.' };
+    }
+    const res = await zealUpdater.install(eqDir);
+    const cfg = loadConfig();
+    cfg.zealInstalledTag = res.tag || cfg.zealInstalledTag;
+    saveConfig(cfg);
+    appendAgentLog(`[zeal-update] installed ${res.tag} into ${eqDir} — ${res.written.length} file(s), ${res.backedUp.length} backed up\n`);
+    return { ok: true, tag: res.tag, name: res.name, written: res.written.length, backedUp: res.backedUp.length };
+  } catch (e) {
+    appendAgentLog(`[zeal-update] install failed: ${e && e.message}\n`);
+    return { ok: false, error: e && e.message ? e.message : String(e) };
+  }
+});
+// Background NOTIFY-ONLY check. Never installs on its own — Zeal.asi is a game
+// mod and silently overwriting it mid-session would be surprising (and fails
+// while EQ is up anyway). Shows a native notification once per newly-seen tag;
+// the user does the one-click install from Settings when they're ready.
+let _zealNotifiedTag = null;
+async function checkZealUpdate({ manual = false } = {}) {
+  try {
+    const cfg = loadConfig();
+    if (!manual && cfg.zealAutoCheck === false) return;
+    const eqDir = _zealEqDir();
+    if (!eqDir) return;                              // no EQ folder yet — nothing to update
+    const latest = await zealUpdater.checkLatest();
+    if (!latest.tag) return;
+    if (latest.tag === cfg.zealInstalledTag) return; // already current
+    if (latest.tag === _zealNotifiedTag) return;     // already nudged for this tag
+    _zealNotifiedTag = latest.tag;
+    appendAgentLog(`[zeal-update] newer Zeal available: ${latest.tag} (installed: ${cfg.zealInstalledTag || 'unknown'})\n`);
+    if (Notification.isSupported()) {
+      const n = new Notification({
+        title: 'Zeal update available',
+        body: `Zeal ${latest.tag} is out. Open Mimic Settings → Zeal to install it in one click.`,
+        silent: true,
+      });
+      n.on('click', () => { try { openSettings(); } catch {} });
+      n.show();
+    }
+  } catch (e) { appendAgentLog(`[zeal-update] background check failed: ${e && e.message}\n`); }
+}
+
+// ── Custom UI packs (Nillipuss etc.) ────────────────────────────────────────
+// List the curated packs with LOCAL status (installed? which tag? which option
+// layouts are available) — no network, so the Settings card renders instantly.
+ipcMain.handle('ui-packs-list', () => {
+  try {
+    const cfg = loadConfig();
+    const eqDir = _zealEqDir();                 // same EQ client folder as Zeal/UI Studio
+    const tags = cfg.uiPackTags || {};
+    return {
+      eqDir: eqDir || null,
+      packs: uiPacks.listPacks().map(p => {
+        const st = uiPacks.localStatus(eqDir, p, tags[p.id]);
+        return {
+          ...p,
+          installed: st.installed,
+          installedTag: st.installedTag,
+          options: st.installed ? uiPacks.listOptions(eqDir, p) : [],
+        };
+      }),
+    };
+  } catch (e) { return { eqDir: null, packs: [] }; }
+});
+// Check GitHub for a pack's latest release (network).
+ipcMain.handle('ui-pack-check', async (_e, id) => {
+  try {
+    const pack = uiPacks.getPack(id);
+    if (!pack) return { ok: false, error: 'unknown UI pack' };
+    const cfg = loadConfig();
+    const installedTag = (cfg.uiPackTags || {})[id] || null;
+    const latest = await uiPacks.checkLatest(pack);
+    return {
+      ok: true, id, latestTag: latest.tag, latestName: latest.name,
+      htmlUrl: latest.htmlUrl, publishedAt: latest.publishedAt,
+      installedTag, updateAvailable: latest.tag !== installedTag,
+    };
+  } catch (e) { return { ok: false, error: e && e.message ? e.message : String(e) }; }
+});
+// Download + install (or update) a pack into uifiles/<packDir>/. Unlike Zeal.asi
+// this doesn't require EQ closed — EQ only reads UI files at /loadskin, never
+// holds them open — so a user can install a UI mid-session and /loadskin.
+ipcMain.handle('ui-pack-install', async (_e, id) => {
+  try {
+    const pack = uiPacks.getPack(id);
+    if (!pack) return { ok: false, error: 'unknown UI pack' };
+    const eqDir = _zealEqDir();
+    if (!eqDir) return { ok: false, error: 'No EverQuest folder is set. Add one in Settings first.' };
+    const res = await uiPacks.install(eqDir, pack);
+    const cfg = loadConfig();
+    cfg.uiPackTags = cfg.uiPackTags || {};
+    cfg.uiPackTags[id] = res.tag || cfg.uiPackTags[id];
+    saveConfig(cfg);
+    appendAgentLog(`[ui-pack] installed ${pack.packDir} ${res.tag} — ${res.written.length} file(s), ${res.backedUp.length} backed up\n`);
+    return {
+      ok: true, id, tag: res.tag, written: res.written.length, backedUp: res.backedUp.length,
+      loadCmd: pack.loadCmd, options: uiPacks.listOptions(eqDir, pack),
+    };
+  } catch (e) {
+    appendAgentLog(`[ui-pack] install failed (${id}): ${e && e.message}\n`);
+    return { ok: false, error: e && e.message ? e.message : String(e) };
+  }
+});
+// Apply one of a pack's Options/ layouts (copy its files up into the pack
+// folder, backing up what's replaced). Local file op — no network.
+ipcMain.handle('ui-pack-apply-option', async (_e, id, option) => {
+  try {
+    const pack = uiPacks.getPack(id);
+    if (!pack) return { ok: false, error: 'unknown UI pack' };
+    const eqDir = _zealEqDir();
+    if (!eqDir) return { ok: false, error: 'No EverQuest folder is set.' };
+    const res = uiPacks.applyOption(eqDir, pack, String(option || ''));
+    appendAgentLog(`[ui-pack] applied option "${res.option}" to ${pack.packDir} — ${res.written} file(s), ${res.backedUp} backed up\n`);
+    return { ok: true, id, option: res.option, written: res.written, backedUp: res.backedUp, loadCmd: pack.loadCmd };
+  } catch (e) {
+    return { ok: false, error: e && e.message ? e.message : String(e) };
+  }
+});
 // Mimic Discord login (device-code flow).
 ipcMain.handle('mimic-link-start',   async () => await startMimicLink());
 ipcMain.handle('mimic-link-cancel',  () => { cancelMimicLink(); return true; });
 ipcMain.handle('mimic-link-signout', async () => { await signOutMimic(); return true; });
-ipcMain.handle('check-for-updates', () => { safeCheckForUpdates(true); checkAgentUpdate({ manual: true }); return true; });
+ipcMain.handle('check-for-updates', () => { safeCheckForUpdates(true); checkAgentUpdate({ manual: true }); checkZealUpdate({ manual: true }); return true; });
 // Revert to stable from the dashboard header's link (next to the BETA badge).
 // The native confirm lives HERE so the page-side control is a plain link and
 // every entry point shares one confirmation.
@@ -6378,6 +6611,11 @@ ipcMain.handle('get-agent-log-tail', (_e, lines) => {
 app.whenReady().then(async () => {
   if (!_gotSingleInstanceLock) return;
   appendAgentLog(`[mimic] boot — Mimic v${app.getVersion()}, single-instance lock acquired, userData=${app.getPath('userData')}\n`);
+  // Zeal auto-updater: notify-only check ~25s after boot (let the EQ folder +
+  // agent settle), then every 12h. Install stays a one-click user action; this
+  // only nudges when CoastalRedwood ships a newer Zeal.
+  setTimeout(() => checkZealUpdate({ manual: false }), 25000);
+  setInterval(() => checkZealUpdate({ manual: false }), 12 * 60 * 60 * 1000);
   createMainWindow();
   makeTrayIcon();
   wireAutoUpdater();

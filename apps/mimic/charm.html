@@ -353,7 +353,11 @@
       });
 
       // "Charm Break" alert fires when a pet stops being charmed — but
-      // DEFERRED 3.5s so a charm-cycler who promptly kills the now-broken mob
+      // DEFERRED so a charm-cycler who promptly kills the now-broken mob
+      // (1.5s as of 2026-07-31 — was 3.5s, which stacked on top of the agent's
+      // gauge grace to put ~13.5s between a visibly-broken charm and the
+      // callout. A bard recasting Solon's on a ~3s timer had already missed
+      // the window by then. Raise it again if false calls come back.)
       // doesn't get a false-alarm call: if the pet vanishes from the tracker
       // within the defer window (death detection's killer-guard removes it on
       // a player kill) we cancel the pending speech. Unexpected breaks still
@@ -365,7 +369,21 @@
       // Break' when it breaks... Recharm pet is for when it's coming up."
       // Split: this is the ACTUAL break, so it gets its own distinct phrase;
       // "recharm pet" stays exactly as-is below for the coming-up warning.
-      var charmedKeys = new Set(pets.filter(function(p){ return p && p.is_active; }).map(function(p){ return p.key; }));
+      // ⚠ Built from allPets, NOT the focus-filtered `pets`. The visible list is
+      // scoped to the active EQ window (above) so someone running more than one
+      // client doesn't see every alt's pet at once — but an ALERT shouldn't
+      // depend on which window has focus, since not looking at that window is
+      // exactly when you need to hear it. If activeCharacter ever resolves to
+      // the wrong character (it's derived from the focused window, and the agent
+      // may be tailing several logs at once), a focus-scoped alert would both
+      // fire a spurious break — a pet leaving the filtered set looks identical
+      // to a break — and then go silent for the real one, because the pet can't
+      // re-register while another character is active.
+      //
+      // NOTE: this is defensive hardening, NOT a fix for a reported bug. It was
+      // written on a mistaken assumption that a specific report came from a
+      // two-client setup; it did not. Don't cite it as precedent for one.
+      var charmedKeys = new Set(allPets.filter(function(p){ return p && p.is_active; }).map(function(p){ return p.key; }));
       // Currently-tracked keys (active OR lingering broken) — used to decide
       // whether a pending recharm got "intentionally killed" (vanishes from
       // tracker entirely) vs just broke (still in tracker as broken).
@@ -379,11 +397,25 @@
             // stay silent. Otherwise → real unexpected break, speak.
             if (trackedKeysNow().has(key)) speak('charm break');
             pendingRecharm.delete(key);
-          }, 3500);
+          }, 1500);
           pendingRecharm.set(key, t);
           prevActive.delete(key);
         }
       }
+      // Register EVERY currently-charmed pet for break detection, regardless of
+      // which window has focus. The render loop below also seeds prevActive, but
+      // only for pets it actually draws — so without this pass an unfocused
+      // character's charm would never be watched. Same entry shape the render
+      // loop uses, so its warn/durWarn bookkeeping carries on untouched.
+      for (const p of allPets) {
+        if (!p || !p.is_active || !p.key) continue;
+        const startedAt = p.started_at || p.last_tick_at || now;
+        const mem = prevActive.get(p.key);
+        if (!mem || mem.started_at !== startedAt) {
+          prevActive.set(p.key, { started_at: startedAt, warned: false, durWarned: false });
+        }
+      }
+
       // Snapshot for any pending recharm timers that fire after this poll —
       // they consult trackedKeysNow() (the LATEST poll's tracker), not the
       // stale set from this iteration.
