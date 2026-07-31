@@ -500,6 +500,14 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
 - **CH cast bar + DDR grading (3.4.39)** — see the CH chain tracker entry
   above (`CH_CAST_MS`, `trackChChainInterrupt`, `_chGradeCall`,
   `POST /api/chchain/ddr`).
+- **PBAOE song mob counter (3.4.40)** — `noteSongAoeLine` (watch-loop hook,
+  display-only) counts AE landing rows per song per 2.5s burst, scoped to the
+  melody order's catalog `cast_on_other` suffixes (detrimental only — a
+  beneficial song's landing names groupmates); damage joins from
+  "has taken N damage from your <song>" lines. Surfaced per order row as
+  `aoe_hits`/`aoe_dmg`; `melody.html` renders an ⚔ hits/12 chip beside the
+  song name (12 = Quarm AE cap, green at a full swarm; per-mob min–max in
+  the tooltip). Badge goes stale-silent 30s after the last pulse.
 
 ### Mimic (`apps/mimic/`, beta)
 - **Me card + officer Admin tab (#109)** — dashboard opens on 🐺 Me; officer
