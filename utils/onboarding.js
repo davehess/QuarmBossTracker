@@ -30,6 +30,7 @@ let _supabaseEnabled    = false;
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
   '3.0.233': [
+    '**Raid-night threads.** Each raid night now gets its own Discord thread (named like `/raidnight`): the auto-parse cards and the night\'s loot posts land there instead of scattering across channels, and every loot post carries a link to the OpenDKP auctions page. The permanent Parse Log (what recovery and leaderboards read) is unchanged. Officers: `RAID_NIGHT_THREADS=0` turns it off.',
     '**Cured raiders now leave the debuff queue — even if they don\'t run Mimic.** When a cleric on Mimic casts Remove Greater Curse (or any cure), the bot now registers it and spends the cure\'s counters against that raider\'s queue entry: a 9-counter curse clears on one RGC, a 72-counter Gravel Rain shows its remaining counters instead of sitting there for an hour. Before this, a raider who didn\'t run Mimic stayed "cursed" on everyone\'s Buff Queue for the debuff\'s full duration (54+ minutes on Curse of Rhag`Zadune) no matter how many cures landed. The manual ✓ button still works for when neither player runs Mimic. Nothing to update — works with every Mimic already out there.',
   ],
   '3.0.228': [
