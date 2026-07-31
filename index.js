@@ -9467,9 +9467,14 @@ async function _handleAgentCharacterLiveState(req, res) {
         state.hp_source = 'raid_roster';   // cross-client — a groupmate's Zeal gauge
       }
       // Exact cur/max let the Tank/Target overlays show real numbers, not %.
-      // > 100 gate: rows written before the hp_max sanity guard carry the
-      // percent-as-pool artifact (88/100) — never relay those as "exact".
-      if (Number.isFinite(rrRow.hp_current) && Number.isFinite(rrRow.hp_max) && rrRow.hp_max > 100) {
+      // >= 500 plausibility floor (2026-07-31, mirrors the agent's
+      // MIN_PLAUSIBLE_HP_POOL): the old > 100 gate was written for the
+      // percent-as-pool artifact (88/100) but waved through a Zeal WEIGHT pair
+      // (130/180) that then rendered as a raider's HP on the Rampage card. No
+      // raid-relevant character has a max HP pool under 500; below it we relay
+      // % only, never a fabricated-looking exact pair.
+      if (Number.isFinite(rrRow.hp_current) && Number.isFinite(rrRow.hp_max) && rrRow.hp_max >= 500
+          && rrRow.hp_current >= 0 && rrRow.hp_current <= rrRow.hp_max) {
         state.self_hp_cur = Math.max(0, Math.trunc(rrRow.hp_current));
         state.self_hp_max = Math.trunc(rrRow.hp_max);
       }
@@ -11694,6 +11699,13 @@ async function _handleAgentLiveState(req, res) {
       self_mana_max: selfManaMax,
       target_name: targetName,
       target_hp_pct: targetHp,
+      // Off-tank surfacing (#rn-serialization audit 2026-07-31): the agent has
+      // sent these since 2026-07-04 and _handleAgentExtendedTarget selects +
+      // consumes them — but this row never wrote them, so the column sat 100%
+      // NULL (555 rows, 0 non-null) and the off-tank feature read nothing.
+      incoming_mob: st?.incoming_mob ? String(st.incoming_mob).slice(0, 80) : null,
+      incoming_mob_since: (st?.incoming_mob_since && Number.isFinite(Date.parse(st.incoming_mob_since)))
+        ? new Date(Date.parse(st.incoming_mob_since)).toISOString() : null,
       loc_x:       locX,
       loc_y:       locY,
       loc_z:       locZ,
