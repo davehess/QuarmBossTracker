@@ -6,21 +6,25 @@
 // future sign-up-vs-reality reconciliation.
 //
 // Sync flow:
-//   1) listServerEvents()  GET /api/v3/servers/{serverId}/events  with Authorization
+//   1) listServerEvents()  GET /api/v4/servers/{serverId}/events  with Authorization
+//                          (falls back to the retired v3 path if v4 404s)
 //   2) getEvent(eventId)   GET /api/v2/events/{eventId}  (no auth needed)
 //   3) upsert mirror rows into rh_events + rh_signups via utils/supabase
 //
 // RH has shipped multiple API versions and reorganized field names; we
 // read defensively (several possible keys per field) and store the full
-// raw payload so future fields don't require code changes.
+// raw payload so future fields don't require code changes. The service also
+// moved domains (.dev → .xyz): the old raid-helper.dev host still answers but
+// its Javalin router no longer has the server-events route (observed 404
+// "Endpoint not found", 2026-07-31), so the default base is raid-helper.xyz.
 //
 // Required env vars:
 //   RH_API_KEY     — generated via /apikey refresh && /apikey show in Discord
 //   RH_SERVER_ID   — Discord server id (defaults to DISCORD_GUILD_ID)
 // Optional:
-//   RH_BASE_URL    — override (default: https://raid-helper.dev)
+//   RH_BASE_URL    — override (default: https://raid-helper.xyz)
 
-const RH_DEFAULT_BASE = 'https://raid-helper.dev';
+const RH_DEFAULT_BASE = 'https://raid-helper.xyz';
 
 function _baseUrl() {
   return (process.env.RH_BASE_URL || RH_DEFAULT_BASE).replace(/\/+$/, '');
@@ -35,10 +39,10 @@ function isEnabled() {
   return !!(_apiKey() && _serverId());
 }
 
-async function _request(path, { authorize = true } = {}) {
+async function _request(path, { authorize = true, headers: extraHeaders } = {}) {
   if (authorize && !_apiKey()) return null;
   const url = `${_baseUrl()}${path}`;
-  const headers = { 'Accept': 'application/json', 'User-Agent': 'quarm-raid-timer-bot' };
+  const headers = { 'Accept': 'application/json', 'User-Agent': 'quarm-raid-timer-bot', ...(extraHeaders || {}) };
   if (authorize) headers['Authorization'] = _apiKey();
   try {
     const res = await fetch(url, { headers });
@@ -56,13 +60,24 @@ async function _request(path, { authorize = true } = {}) {
   }
 }
 
+// Current docs say v4; v3 kept as a fallback in case the deployment we hit
+// is older. Pagination is sent both ways (query param + Page header) because
+// the docs have flipped between them across versions. IncludeSignUps asks v4
+// to inline signups so a dead v2 detail route doesn't cost us the signup data.
+const RH_LIST_VERSIONS = ['v4', 'v3'];
+
 async function listServerEvents({ pageLimit = 4 } = {}) {
   const serverId = _serverId();
   if (!serverId) return [];
   const out = [];
+  let version = null;   // locked to whichever version answers page 1
   for (let page = 1; page <= pageLimit; page++) {
-    const path = `/api/v3/servers/${encodeURIComponent(serverId)}/events?page=${page}`;
-    const data = await _request(path);
+    let data = null;
+    for (const v of version ? [version] : RH_LIST_VERSIONS) {
+      const path = `/api/${v}/servers/${encodeURIComponent(serverId)}/events?page=${page}`;
+      data = await _request(path, { headers: { 'Page': String(page), 'IncludeSignUps': 'true' } });
+      if (data) { version = v; break; }
+    }
     if (!data) break;
     const events = Array.isArray(data) ? data
                   : Array.isArray(data.postedEvents) ? data.postedEvents
