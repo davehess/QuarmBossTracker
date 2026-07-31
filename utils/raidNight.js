@@ -304,10 +304,17 @@ async function _resolve(client, plan) {
  * Returns `{ key, name, kind, nightKey, why, event }` or null when nothing
  * should be posted to a night/event thread at all.
  */
+// Resolved once and injectable, so a test can seed events without reaching
+// through require() (vitest's ESM import and this require() are different
+// module instances otherwise).
+let _eventsMod = null;
+function _events() { return _eventsMod || (_eventsMod = require('./raidEvents')); }
+function _setEventsModule(m) { _eventsMod = m; }
+
 async function planFor(client, ts) {
   const at = Number.isFinite(ts) ? ts : Date.now();
   let ev = null;
-  try { ev = await require('./raidEvents').activeEventAt(client, at); } catch { ev = null; }
+  try { ev = await _events().activeEventAt(client, at); } catch { ev = null; }
 
   if (ev) {
     if (ev.kind === 'event') {
@@ -397,5 +404,6 @@ module.exports = {
   rolloverHour, nightAnchorMs, dateKeyForMs, labelForMs,
   nightKey, nightLabel, isRaidNightAt, nightThreadName, eventThreadName,
   fallbackMode, parseCardPassesFilter, planFor,
-  raidNightThreadsEnabled, getRaidNightThread, getRaidNightTarget, _resetCache,
+  raidNightThreadsEnabled, getRaidNightThread, getRaidNightTarget,
+  _resetCache, _setEventsModule,
 };

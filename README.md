@@ -360,7 +360,8 @@ timer, but the analytics, character pages, and uploads are dark.
 | `DEFAULT_TIMEZONE` | `America/New_York` | IANA timezone for time parsing and midnight tasks |
 | `ARCHIVE_CHANNEL_ID` | — | Channel to receive archived raid event summaries |
 | `BOSS_OUTPUT_CHANNEL_ID` | — | Channel where `bosses.json` is posted after `/addboss` or `/removeboss` |
-| `RAID_CHAT_CHANNEL_ID` | — | Channel for `/raidnight` threads on raid nights (falls back to `TIMER_CHANNEL_ID`) |
+| `RAID_CHAT_CHANNEL_ID` | `#raid-chat` | Channel for `/raidnight` + auto raid-night threads (known-id default, then `TIMER_CHANNEL_ID`) |
+| `EVENT_CHAT_CHANNEL_ID` | `#event-chat` | Channel for off-night guild-event threads (roll loot, no DKP) |
 | `PVP_KILLS_THREAD_ID` | — | Thread where `/pvpkill` posts kill cards and timers are tracked |
 | `PVP_CHANNEL_ID` | — | Channel for PVP alerts, quake alerts, and spawn notifications |
 | `PVP_THREAD_ID` | — | Thread for PVP alerts (takes priority over `PVP_CHANNEL_ID`) |
