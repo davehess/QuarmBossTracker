@@ -43,6 +43,20 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'ch-ddr-damage-alert',
+    title: '🎯 The CH chain gets a cast bar (and grades your timing)',
+    version: 'Agent 3.4.39',
+    date: '2026-07-31',
+    channel: 'beta',
+    headline: 'Two raider requests: the CH Chain overlay now shows each cleric\'s 10-second cast as it happens — with a red ✕ if they get interrupted — and grades your chain timing DDR-style. Plus an opt-in audio alert the moment you start taking hits.',
+    features: [
+      { name: '⏳ CH cast bar', blurb: 'When a chain number is called, that cleric\'s bar starts a 10-second cast countdown so everyone can see the heal in flight. If the cast gets interrupted, a red ✕ appears on the bar. (No ✕ doesn\'t always mean safe — interrupt messages only carry so far in-game.)' },
+      { name: '🕺 DDR timing grades', blurb: 'Call your number within a quarter second of the beat and PERFECT flashes on your bar — three in a row earns MARVELOUS. Half a second is GREAT, inside a second is GOOD. Purely visual fun on the overlay (nothing spoken), with a 🎯 button to turn it off.' },
+      { name: '🔔 Damage-taken alert', blurb: 'An optional audio ping the moment something starts hitting you — for when you\'re watching chat, not your health bar. Off by default; flip it from the Mimic tray menu or its hotkey (Ctrl+Shift+D, rebindable in the dashboard).' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'event-driven-night-threads',
     title: '📅 Night threads follow the calendar',
     version: 'Bot 3.0.235',
