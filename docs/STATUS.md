@@ -1245,6 +1245,33 @@ one concrete detail. Shipped that night: stable 2.1.2 / agent 3.4.36.**
   than his real HP. Likely the same non-Mimic gap as the cure item: no client
   reporting his live cur/max, leaving a placeholder or a mis-sourced value.
   Related to #144 (targeted raider cur/max HP) and #179 (rampage card scoping).
+- **⚠ 30 of 102 enabled guild triggers are structurally DEAD — `^`-anchored
+  patterns can never match.** (rn-buster-audit, 2026-07-31.) The agent tests
+  guild-trigger regexes against the RAW log line including the
+  `[Thu Jul 31 …] ` timestamp prefix, so any `^`-anchored pattern (Enrage, the
+  Slow-landed rows, "Death touch — RIP", + 27 more) matches nothing, ever. It
+  went unnoticed because BOTH test surfaces validate a timestamp-free string —
+  `_synthesizeMatchingLine` literally strips anchors, so Rehearse always
+  passes. Fix is per-row (replace `^` with `\]\s+` or unanchor) BUT a bulk
+  un-mute of 30 callouts mid-raid-week is its own risk: fix in a reviewed
+  batch, confirm each against a real log line, and fix the Rehearse
+  synthesizer to stop stripping anchors so this can't hide again. May also
+  moot the "DT missed pet victims" item — Death touch — RIP is one of the dead.
+- **`state.petOwners` night-accumulation risk** (rn-pets-payload): uploaded
+  pet_leaders merge into a server-persistent map, so a mob charmed once
+  credits its charmer for the rest of the night even after an UNcharmed
+  same-name mob replaces it. Ssra-trash-heavy nights will misattribute.
+- **`_detectSelfHp` admits Zeal WEIGHT pairs as HP** (rn-rampage-hp): mimic
+  main.js:1327 two-point-agreement test passes at the boundary (gap exactly
+  3.0), which is how 130/180 (charInfo 24/25 = cur/max WEIGHT) reached
+  character_live_state. Display side is now gated everywhere (agent
+  MIN_PLAUSIBLE_HP_POOL + bot relay floor), but garbage keeps landing in
+  Supabase until the generator is fixed: `> 3` + a >= 500 candidate-max
+  filter. Touches what every Mimic uploads — own task, not a drive-by.
+- **Bot `_CURSE_COUNTERS` table says Gravel Rain = 12; catalog says 72**
+  (rn-cure-register, grounded via SPA 116). The name-matched catalog value
+  wins at runtime so nothing breaks, but the keyword table is misleading —
+  reconcile or annotate it.
 - **Register a CURE cast by a Mimic user, so non-Mimic raiders leave the debuff
   queue.** Observed 2026-07-30: the debuff queue held 11 players on
   "Curse of Rhag`Zadune" long after they'd actually been cured. VERIFIED: none
