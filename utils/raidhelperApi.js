@@ -159,11 +159,16 @@ async function syncRecent({ pageLimit = 4 } = {}) {
   const list = await listServerEvents({ pageLimit });
   if (list.length === 0) return { events: 0, signups: 0 };
 
-  let evCount = 0, sgCount = 0;
+  // The v2 per-event detail route died in the .dev→.xyz move; the v4 listing's
+  // IncludeSignUps carries everything we need, so after 3 consecutive detail
+  // failures stop asking — otherwise every 30-min sync burns one request + one
+  // 404 warn line PER EVENT (284 events = ~13.6k log lines/day of pure noise).
+  let evCount = 0, sgCount = 0, detailFails = 0;
   for (const stub of list) {
     const id = String(stub.id || stub.eventId || stub.event_id || '');
     if (!id) continue;
-    const detail = await getEvent(id);
+    const detail = detailFails >= 3 ? null : await getEvent(id);
+    if (detailFails < 3) detailFails = detail ? 0 : detailFails + 1;
     const merged = { ...stub, ...(detail || {}) };
     const eventRow = _projectEvent(merged);
     if (!eventRow) continue;
