@@ -149,7 +149,10 @@ async function handlePoll(req, res) {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({ status: 'expired' }));
   }
-  if (!row.authorized_at || !row.authorized_user_id) {
+  // Linked when a web OAuth confirm stamped authorized_user_id, OR (since
+  // 2026-07-31) when a discord-only authorization stamped just the discord id
+  // (members Discord blocks from OAuth have no auth.users row to stamp).
+  if (!row.authorized_at || (!row.authorized_user_id && !row.authorized_discord_id)) {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({ status: 'pending' }));
   }
@@ -158,7 +161,7 @@ async function handlePoll(req, res) {
   const sessionToken = _generateSessionToken();
   const insertSession = await supabase.insert('mimic_sessions', [{
     session_token: sessionToken,
-    user_id:       row.authorized_user_id,
+    user_id:       row.authorized_user_id || null,
     discord_id:    row.authorized_discord_id,
     agent_version: row.agent_version || null,
   }]).catch(() => null);
@@ -170,10 +173,14 @@ async function handlePoll(req, res) {
   await supabase.del('mimic_link_codes', `device_code=eq.${encodeURIComponent(deviceCode)}`).catch(() => null);
 
   // Look up display name + roles so Mimic can show "Signed in as <name>" right
-  // away without a second round-trip.
+  // away without a second round-trip. discord_id fallback for sessions with
+  // no web-account link (same as _resolveSessionToken).
+  const pollMemberFilter = row.authorized_user_id
+    ? `user_id=eq.${encodeURIComponent(row.authorized_user_id)}`
+    : `discord_id=eq.${encodeURIComponent(row.authorized_discord_id)}`;
   const memberRows = await supabase.select(
     'wolfpack_members',
-    `user_id=eq.${encodeURIComponent(row.authorized_user_id)}&select=nickname,global_name,role_names&limit=1`,
+    `${pollMemberFilter}&select=nickname,global_name,role_names&limit=1`,
   ).catch(() => null);
   const member = Array.isArray(memberRows) ? memberRows[0] : null;
   // Display preference: guild nickname → Discord display name → raw discord_id.
@@ -250,14 +257,19 @@ async function _resolveSessionToken(token) {
     _sessionCache.set(token, { resolvedAt: Date.now(), value: null });
     return null;
   }
+  // Sessions minted for OAuth-blocked members carry no user_id — fall back
+  // to the discord_id key (wolfpack_members' PK) so display + roles resolve.
+  const memberFilter = row.user_id
+    ? `user_id=eq.${encodeURIComponent(row.user_id)}`
+    : `discord_id=eq.${encodeURIComponent(row.discord_id)}`;
   const memberRows = await supabase.select(
     'wolfpack_members',
-    `user_id=eq.${encodeURIComponent(row.user_id)}&select=nickname,global_name,role_names&limit=1`,
+    `${memberFilter}&select=nickname,global_name,role_names&limit=1`,
   ).catch(() => null);
   const member = Array.isArray(memberRows) ? memberRows[0] : null;
   const roleNames = Array.isArray(member?.role_names) ? member.role_names : [];
   const value = {
-    user_id:       row.user_id,
+    user_id:       row.user_id || null,
     discord_id:    row.discord_id,
     display_name:  member?.nickname || member?.global_name || row.discord_id,
     role_names:    roleNames,
@@ -342,13 +354,17 @@ function invalidateSessionCache(token) {
 // Mint a new mimic_session for a Discord user — bypasses the OAuth device
 // flow. Used by /token in Discord so users (especially standalone-agent
 // users without Mimic) can get a per-user token without a web round-trip.
+// userId (the wolfpack.quest auth.users link) is OPTIONAL since 2026-07-31:
+// a member whose Discord account can't complete OAuth (phone/email
+// verification wall) never gets one, and every session consumer keys on
+// discord_id anyway — user_id is only the web-account join.
 // Returns { sessionToken, sessionId } or null on failure.
 async function mintSessionForUser({ userId, discordId, agentVersion = null, machineLabel = null }) {
-  if (!supabase.isEnabled() || !userId || !discordId) return null;
+  if (!supabase.isEnabled() || !discordId) return null;
   const sessionToken = _generateSessionToken();
   const inserted = await supabase.insert('mimic_sessions', [{
     session_token: sessionToken,
-    user_id:       userId,
+    user_id:       userId || null,
     discord_id:    discordId,
     agent_version: agentVersion,
     machine_label: machineLabel,

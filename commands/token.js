@@ -13,17 +13,23 @@
 //     secret). Tokens are pasted into Mimic's settings or the standalone
 //     agent's config.
 //
-// Identity gate: the user must have a wolfpack_members row with a non-null
-// user_id (i.e. they've signed in at wolfpack.quest at least once, which
-// links Discord → auth.users). If they haven't, we redirect them to sign in
-// first — the user_id column is the FK we attach to every session.
+// Identity gate: the user needs a wolfpack_members row (the 6h Discord→
+// Supabase member sync). The wolfpack.quest sign-in link (user_id) is
+// attached when present but is NO LONGER required — Discord blocks some
+// accounts from completing OAuth (phone/email verification wall), and every
+// session consumer keys on discord_id anyway (2026-07-31).
+//
+// Officer path: `/token for:@member` mints on a member's behalf — for the
+// worse lockout where they can't run /token themselves. The token is shown
+// once to the officer to hand over out-of-band; the session's machine_label
+// records who minted it for whom, and the member can revoke it any time with
+// their own /token.
 
 const { SlashCommandBuilder, MessageFlags, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
-const { hasAllowedRole, allowedRolesList } = require('../utils/roles');
+const { hasAllowedRole, allowedRolesList, hasOfficerRole, officerRolesList } = require('../utils/roles');
 const mimicLink = require('../utils/mimicLink');
 const supabase  = require('../utils/supabase');
 
-const SIGN_IN_URL = 'https://wolfpack.quest/auth/signin';
 
 async function _lookupWolfpackMember(discordId) {
   if (!supabase.isEnabled()) return null;
@@ -108,15 +114,15 @@ async function handleTokenMint(interaction) {
     });
   }
   const member = await _lookupWolfpackMember(interaction.user.id);
-  if (!member || !member.user_id) {
+  if (!member) {
     return interaction.reply({
       flags: MessageFlags.Ephemeral,
-      content: `🔗 Sign in to wolfpack.quest first to link your Discord account, then run \`/token\` again.\n\n${SIGN_IN_URL}`,
+      content: '⏳ You\'re not in the member sync yet (it refreshes every 6 hours after you join). Try again later, or ask an officer to mint you a token with `/token for:@you`.',
     });
   }
 
   const minted = await mimicLink.mintSessionForUser({
-    userId:    member.user_id,
+    userId:    member.user_id || null,
     discordId: interaction.user.id,
     // No Mimic install context here — Mimic-minted sessions go through the
     // OAuth device-link flow and stamp their own agent_version/machine_label.
@@ -171,10 +177,63 @@ async function handleTokenRevoke(interaction) {
   return interaction.update(message);
 }
 
+// Officer mint-on-behalf: /token for:@member. For members whose Discord
+// account can't complete OAuth (or can't run /token at all) — the officer
+// generates the per-user token and hands it over out-of-band. The session is
+// the member's own (their discord_id): their uploads attribute normally and
+// THEY can list/revoke it with /token. machine_label records the provenance.
+async function _handleOfficerMintFor(interaction, target) {
+  if (!hasOfficerRole(interaction.member)) {
+    return interaction.reply({
+      flags: MessageFlags.Ephemeral,
+      content: `❌ Minting for another member is officer-only. Required roles: ${officerRolesList()}`,
+    });
+  }
+  if (target.bot) {
+    return interaction.reply({ flags: MessageFlags.Ephemeral, content: '❌ Bots don\'t get Parser tokens.' });
+  }
+  const member = await _lookupWolfpackMember(target.id);
+  if (!member) {
+    return interaction.reply({
+      flags: MessageFlags.Ephemeral,
+      content: `❌ <@${target.id}> isn't in the member sync yet (refreshes every 6h after they join the server). Try again later.`,
+    });
+  }
+  const display = member.nickname || member.global_name || target.username || target.id;
+  const minted = await mimicLink.mintSessionForUser({
+    userId:       member.user_id || null,
+    discordId:    target.id,
+    machineLabel: `officer-minted for ${display} by ${interaction.user.username}`.slice(0, 80),
+  });
+  if (!minted) {
+    return interaction.reply({
+      flags: MessageFlags.Ephemeral,
+      content: '❌ Could not mint — Supabase write failed. Try again.',
+    });
+  }
+  console.log(`[token] officer ${interaction.user.username} (${interaction.user.id}) minted a session for ${display} (${target.id})`);
+  return interaction.reply({
+    flags: MessageFlags.Ephemeral,
+    content: [
+      `🔑 **Parser token for ${display}** — copy it NOW, it can't be viewed again.`,
+      '',
+      `\`\`\`${minted.sessionToken}\`\`\``,
+      '',
+      '**Hand it over privately** (in person / DM outside Discord if they can\'t receive DMs) — treat it like a password.',
+      'They paste it into Mimic\'s sign-in screen under **Advanced → token**, or run the standalone agent with `--token`.',
+      `They can revoke it any time with \`/token\`; you minted it, so it's labeled "${`officer-minted for ${display}`.slice(0, 60)}…" in their session list.`,
+    ].join('\n'),
+  });
+}
+
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('token')
-    .setDescription('Manage your Wolf Pack Parser tokens (list / mint / revoke). Ephemeral.'),
+    .setDescription('Manage your Wolf Pack Parser tokens (list / mint / revoke). Ephemeral.')
+    .addUserOption(opt =>
+      opt.setName('for')
+        .setDescription('(Officer) Mint a token for this member — for accounts Discord blocks from signing in')
+        .setRequired(false)),
 
   async execute(interaction) {
     if (!hasAllowedRole(interaction.member)) {
@@ -184,11 +243,16 @@ module.exports = {
       });
     }
 
+    const target = interaction.options.getUser('for');
+    if (target && target.id !== interaction.user.id) {
+      return _handleOfficerMintFor(interaction, target);
+    }
+
     const member = await _lookupWolfpackMember(interaction.user.id);
-    if (!member || !member.user_id) {
+    if (!member) {
       return interaction.reply({
         flags: MessageFlags.Ephemeral,
-        content: `🔗 Sign in to wolfpack.quest first to link your Discord account, then come back and run \`/token\`.\n\n${SIGN_IN_URL}`,
+        content: '⏳ You\'re not in the member sync yet (it refreshes every 6 hours after you join). Try again later, or ask an officer to mint you a token with `/token for:@you`.',
       });
     }
 

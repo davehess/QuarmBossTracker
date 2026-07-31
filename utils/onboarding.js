@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.0.238': [
+    '**`/token` works without a wolfpack.quest sign-in now.** Discord blocks some accounts from the sign-in flow until they add a phone number or verified email — if that\'s you, you can now run `/token` in Discord and paste the minted token into Mimic (sign-in screen → Advanced → token) to get uploads and overlays under your own name. Officers can also mint a token *for* a locked-out member with `/token for:@member` and hand it over privately. Tokens are revocable any time with `/token`. (The wolfpack.quest website itself still needs the Discord sign-in.)',
+  ],
   '3.0.235': [
     '**Night threads now follow the calendar.** The per-night thread opens in #raid-chat on raid nights and in #event-chat for scheduled off-night events (Discord events drive it — no setup needed), posting from 30 minutes before the event to 15 minutes after it ends. Off-night event threads show roll loot — each item with its roll range and winner — instead of DKP posts. Trash spam is filtered (named bosses always post; short tiny skirmishes don\'t).',
   ],

@@ -12017,11 +12017,14 @@ async function _handleAgentPopAnomaly(req, res) {
   const note     = String(payload.note || payload.observed || '').trim();
   if (!note) { res.writeHead(400); return res.end(JSON.stringify({ error: 'note or observed required' })); }
   // Anti-spam: one flag per user per 30s (a stuck hover-click double-fires).
-  const lastAt = _popAnomalyLastByUser.get(identity.user_id) || 0;
+  // discord_id fallback: OAuth-less sessions carry no user_id, and a shared
+  // null key would rate-limit every such user as one person.
+  const _popRateKey = identity.user_id || identity.discord_id;
+  const lastAt = _popAnomalyLastByUser.get(_popRateKey) || 0;
   if (Date.now() - lastAt < 30 * 1000) {
     res.writeHead(429); return res.end(JSON.stringify({ error: 'slow down — one flag per 30s' }));
   }
-  _popAnomalyLastByUser.set(identity.user_id, Date.now());
+  _popAnomalyLastByUser.set(_popRateKey, Date.now());
 
   const threadId = process.env.QOL_THREAD_ID || process.env.FEEDBACK_THREAD_ID;
   if (!threadId) {
