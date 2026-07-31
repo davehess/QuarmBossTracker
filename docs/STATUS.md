@@ -1220,6 +1220,34 @@ one concrete detail. Shipped that night: stable 2.1.2 / agent 3.4.36.**
   non-melee damage`) matched the countdown trigger. Added a self-hit exclusion
   (`hit (?!\k<boss>\b)`); a real DT is never self-inflicted. Trigger-table
   change only, propagates on the 10-min guild-trigger poll.
+- **"Eye of <player>" must never appear on the DPS meter.** Eye of Zomm is a
+  VISION pet — it deals no damage at all. Observed on a `/rs` meter as an
+  indented pet row "Eye of Syphon" carrying 110 dmg / 3 dps / 38s — byte-for-byte
+  the owner's own numbers, so it isn't merely cosmetic: the owner's damage is
+  being duplicated into a phantom pet row, which inflates the pet-attribution
+  side of the parse. Fix is a name filter (`/^Eye of /i`) wherever pets are
+  admitted to the meter — the same `petLeaders` / pet-whitelist path that the
+  charm-pet bypass uses. Cheap and unambiguous; do it with the pet-attribution
+  work above, since both live in that rollup.
+- **Same-name mob serialization — position clustering + HP continuity (NEW
+  IDEA, 2026-07-30, Hitya).** Four `a crypt guardian` pulled at once collapse
+  into one NPC in the parse. Triangulating the MOB is impossible — the pipe's
+  mob surface is name + HP per-mille, with no distance or bearing to solve
+  against. But we don't need the mob's position: we need to know which players
+  are on which instance, and we DO have self `loc {x,y,z}` + heading and
+  group-pipe member loc, plus per-player combat attribution. So cluster the
+  ENGAGED PLAYERS spatially — mobs pulled to separate spots produce separate
+  clusters, each with its own tank/HP/debuffs. Pair it with HP continuity and
+  the two cover each other: position separates mobs at equal HP, HP separates
+  mobs at one spot. Caveats: mobs piled on a single spot defeat the clustering,
+  and group-pipe loc only covers the local group, so raid-wide coverage scales
+  with how many raiders run Mimic. Does NOT depend on the upstream `spawn_id`
+  ask (`docs/zeal-spawn-id-request.md`, still an unsent draft) — that stays the
+  clean long-term fix, this is what's buildable today.
+  (NB: an earlier read of the screenshots claimed all four mobs sat at the same
+  HP, making variance useless. That was wrong — they were two separate pulls,
+  44% actively being killed vs 90% largely untouched. HP variance is a real
+  signal most of the time; it only degrades under even AE damage.)
 - **Watch:** charm-break timings were cut that night (gauge grace 10s→6s,
   speech defer 3.5s→1.5s) to take the callout from ~13.5s to ~2.5s. Both are
   tuning. If false "charm break" calls reappear during routine cycling, those
