@@ -22074,7 +22074,22 @@ function _classifyItemName(name) {
     // that let "Fargan 001, Nota 002, …" parse as items).
     if (/^["'`]*[A-Z]/.test(w)) capped++;
   }
-  if (significant === 0 || capped !== significant) return 'fail';
+  if (significant === 0) return 'fail';
+  // #172 — SENTENCE-CASE items are real. Requiring every word to be capitalised
+  // assumed Title Case, but the catalog genuinely ships names like "Undead
+  // shissar scales" (eqemu_items 32526). That returned 'fail', and one 'fail'
+  // discards the ENTIRE pipe list — a whole /rs loot post from Dant vanished on
+  // 2026-07-30 because of that single item.
+  //
+  // Classed 'weak', not 'strong': it only survives alongside a strong sibling,
+  // which is exactly the existing guard against chatter. A lone sentence-case
+  // phrase ("Remedy on Starrburst") still can't self-promote into a capture —
+  // and the stopword/callout/%/mana rules above have already run.
+  if (capped !== significant) {
+    const firstCapped = /^["'`]*[A-Z]/.test(words[0] || '');
+    const restPlainWords = words.slice(1).every(w => /^[a-z'`-]+$/.test(w.replace(/[^A-Za-z'`-]/g, '')) || _LOOT_CONNECTORS[w.toLowerCase().replace(/[^a-z']/g, '')]);
+    return (firstCapped && restPlainWords && significant >= 2) ? 'weak' : 'fail';
+  }
   if (significant >= 2) return 'strong';
   // Exactly one significant word — a real item (Norge`tal) but weak signal.
   // ≥4 letters skips "ME"/"DSP"-style noise.
