@@ -1203,8 +1203,13 @@ async function handleLootPost(interaction) {
     // the channel it was invoked from (interaction.editReply owns it), so the
     // announcement raiders read is a separate post. Best-effort — the auctions
     // are already live, and a failure here must not look like a failed post.
+    // NOTE (Hitya 2026-07-31): DKP/bidding posts belong to the RAID flow only.
+    // A non-raid guild event threads in #event-chat and gets roll loot instead
+    // (utils/rollLoot.js), so an 'event' target is skipped here entirely.
     try {
-      const nightThread = await require('./utils/raidNight').getRaidNightThread(interaction.client).catch(() => null);
+      const _t = await require('./utils/raidNight').getRaidNightTarget(interaction.client)
+        .catch(() => ({ thread: null, kind: null }));
+      const nightThread = _t.kind === 'raid' ? _t.thread : null;
       if (nightThread && nightThread.id !== interaction.channelId) {
         const { opendkpAuctionsUrl } = require('./utils/loot');
         const announce = EmbedBuilder.from(posted)
@@ -6654,9 +6659,13 @@ async function _handleAgentLootPost(req, res) {
     // Announce to tonight's raid-night thread, falling back to the loot thread
     // when night threads are off/unresolvable (best-effort — the auctions are
     // already live either way).
+    // Raid flow only — an off-night event thread never carries DKP bidding
+    // (Hitya 2026-07-31); it falls back to the loot thread instead.
     const threadId = process.env.LOOT_CHANNEL_ID || '1527421284747706551';
     try {
-      const ch = await require('./utils/raidNight').getRaidNightThread(client).catch(() => null)
+      const _t = await require('./utils/raidNight').getRaidNightTarget(client)
+                   .catch(() => ({ thread: null, kind: null }));
+      const ch = (_t.kind === 'raid' ? _t.thread : null)
                  || await client.channels.fetch(threadId);
       if (ch && ch.send) {
         const { opendkpAuctionsUrl } = require('./utils/loot');
@@ -14017,13 +14026,40 @@ async function _handleAgentUpload(req, res) {
   const _postParseCardsDeferred = async () => {
   if (players.length > 0 && !isBackfill) {
     try {
-      // Night thread first (keyed on the ENCOUNTER's start, so a pull that
-      // finishes at 00:05 still lands in the night it began in), then the
+      // Night/event thread first (keyed on the ENCOUNTER's start, so a pull
+      // that finishes at 00:05 still lands in the night it began in), then the
       // original QA thread. Resolution is cached per night — not per card.
-      const nightThread = await require('./utils/raidNight')
-        .getRaidNightThread(client, startedMs).catch(() => null);
-      const testThread = nightThread
-        || (testThreadId ? await client.channels.fetch(testThreadId).catch(() => null) : null);
+      const _rn = require('./utils/raidNight');
+      const _target = await _rn.getRaidNightTarget(client, startedMs)
+        .catch(() => ({ thread: null, kind: null, event: null }));
+      // Volume knob (Hitya 2026-07-31) — 1-player/1-second trash cards flooded
+      // night one's thread. Known bosses always pass; everything else has to
+      // clear the floors. The canonical '📊 Parse Log' record below is NOT
+      // filtered, and neither is Supabase — this only gates what raiders read.
+      const _isBossCard = (() => {
+        try {
+          if (!encounter.boss_name) return false;
+          return !!require('./commands/parse').findBossFromName(encounter.boss_name, getBosses());
+        } catch { return false; }
+      })();
+      const _passesVolume = _rn.parseCardPassesFilter({
+        durationSec: duration, playerCount: players.length, isBoss: _isBossCard,
+      });
+      const nightThread = (_target.thread && _passesVolume) ? _target.thread : null;
+      // QA copy (Hitya: "can still get a copy if need be") —
+      //   AUTOPARSE_QA_COPY=off       never post to the QA thread
+      //   AUTOPARSE_QA_COPY=fallback  (default) only when the night thread
+      //                               didn't take the card — the safety net
+      //                               that keeps cards from vanishing
+      //   AUTOPARSE_QA_COPY=always|1  ALSO mirror every card there
+      const _qaMode = String(process.env.AUTOPARSE_QA_COPY || 'fallback').toLowerCase();
+      const _qaOn   = _qaMode !== 'off' && _qaMode !== '0';
+      const _qaWant = _qaOn && testThreadId && (!nightThread || _qaMode === 'always' || _qaMode === '1');
+      const _qaThread = _qaWant ? await client.channels.fetch(testThreadId).catch(() => null) : null;
+      const testThread = nightThread || _qaThread;
+      // An extra plain copy only when the primary destination isn't the QA
+      // thread itself (no edit-in-place bookkeeping — it's a diagnostic mirror).
+      const _qaCopyThread = (_qaThread && testThread && _qaThread.id !== testThread.id) ? _qaThread : null;
       if (testThread) {
         const { buildParseEmbed } = require('./commands/parse');
         const { EmbedBuilder: _TEB } = require('discord.js');
@@ -14518,6 +14554,13 @@ async function _handleAgentUpload(req, res) {
           _liveCards.set(bossKey, _cardState('pending', Date.now(), startedMs, endedMs));
           const sent = await testThread.send({ embeds: [card] });
           _saveCard(_cardState(sent.id, Date.now(), startedMs, endedMs));
+        }
+
+        // AUTOPARSE_QA_COPY=always — plain mirror into the officers' QA thread.
+        // Deliberately un-deduped: the QA thread is a diagnostic firehose, and
+        // the card state above belongs to the raid-facing thread.
+        if (_qaCopyThread) {
+          await _qaCopyThread.send({ embeds: [card] }).catch(() => {});
         }
 
         // ── If contaminated, also retroactively warn on the prior card ────
