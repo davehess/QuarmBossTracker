@@ -8433,15 +8433,34 @@ function _resolveHpForName(nameLower, active, st) {
   if (live && live.state && typeof live.state.self_hp_pct === 'number') return live.state.self_hp_pct;
   return null;
 }
+// Is this number pair believable as an EQ character's HP pool? Every hop in the
+// exact-HP chain (Zeal label learner → raid_roster → the bot's live-state relay
+// → here) gated on `max > 100` and nothing else. That gate was written for ONE
+// artifact — the percent-as-pool "88 / 100 · 88%" (2026-07-09) — so it rejects a
+// percent wearing a pool's clothes but happily passes a pair that is neither a
+// percent NOR HP. Raid-night 2026-07-30: the Tank overlay's Rampage card read
+// "Rampage on Stupidrichard — 130 / 180 · 72%". Raiders run thousands
+// (6512/6512), so 130/180 was some OTHER number pair entirely — the self-HP
+// learner scans the same charInfo band that carries static pairs like
+// current/max weight (labels 24/25, docs/zeal-pipe-protocol.md), and 130/180 =
+// 72.2% sits close enough to the gauge to look self-consistent, which is exactly
+// why the displayed % agreed with it. A raid-level pool is never three digits:
+// below the floor we return NOTHING, so the card degrades to the plain % it
+// already has rather than painting numbers we can't stand behind.
+const MIN_PLAUSIBLE_HP_POOL = 500;
+function _isPlausibleHpPool(cur, max) {
+  return typeof cur === 'number' && typeof max === 'number'
+    && Number.isFinite(cur) && Number.isFinite(max)
+    && max >= MIN_PLAUSIBLE_HP_POOL && cur >= 0 && cur <= max;
+}
 // EXACT cur/max HP for a name, when available — {cur, max} or null. Only three
 // sources carry raw numbers (gauges are per-mille only): the viewer's own Zeal
 // labels 17/18 (self), another watched box on this machine, or the bot's relay
 // (which now backfills cur/max from a /pipeverbose groupmate's raid_roster row).
+// Shared by the Target-Info raider HP, the Main-Tank card and the Rampage card —
+// one gate, so a bad pair can't reach any of them.
 function _resolveHpValuesForName(nameLower, active, st) {
-  // max > 100: a ≤100 "pool" is a percent in disguise (the verbose raid sample
-  // reports non-self members as pct/100) — showing it as "88 / 100" is worse
-  // than showing the plain %. Real raiders' pools are always in the thousands.
-  const ok = (o) => o && typeof o.self_hp_cur === 'number' && typeof o.self_hp_max === 'number' && o.self_hp_max > 100;
+  const ok = (o) => o && _isPlausibleHpPool(o.self_hp_cur, o.self_hp_max);
   if (active && nameLower === String(active).toLowerCase() && ok(st)) {
     return { cur: st.self_hp_cur, max: st.self_hp_max };
   }
@@ -8689,6 +8708,12 @@ function _serializeTankState() {
     // ramp in green instead" — that's the cue healers should be ready to land
     // the next heal the moment DA drops).
     const rampBuffs = _resolveBuffsForName(r.target, active, buffsOut).buffs;
+    // Exact cur/max — SAME resolution the Target-Info raider HP and the MT card
+    // use, and it is allowed to come back null. Raid-night 2026-07-30 the card
+    // read "Rampage on Stupidrichard — 130 / 180 · 72%" for a raider who runs
+    // 6512/6512; _isPlausibleHpPool now drops any pair that can't be an HP pool,
+    // so the overlay falls back to the bare % (or "HP not visible") instead of
+    // showing a number that isn't the victim's health.
     const rVals = _resolveHpValuesForName(rLower, active, st);
     rampage = {
       target: r.target, attacker: r.attacker || null, ageMs: now - r.at,
