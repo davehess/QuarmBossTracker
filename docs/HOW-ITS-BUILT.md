@@ -100,16 +100,62 @@ Thursday kill and a 00:20 Friday kill share one thread. Resolution order:
 an open `/raidnight` session for the same night → an active thread with the
 same **name** (how it recovers from volume loss) → create. Single-flight, so
 concurrent agent uploads can't race two threads open; failures back off 60s
-and callers fall back. Parent: `RAID_NIGHT_THREAD_PARENT_ID` →
-`RAID_CHAT_CHANNEL_ID` → `TIMER_CHANNEL_ID`. `RAID_NIGHT_THREADS=0` disables.
+and callers fall back. Parent (v2): `RAID_NIGHT_THREAD_PARENT_ID` →
+`RAID_CHAT_CHANNEL_ID` → the **known #raid-chat id `1193692008812920863`** →
+`TIMER_CHANNEL_ID`, each candidate permission-checked and every rejection
+logged (`[raid-night] parent …`). v1 stopped at `RAID_CHAT_CHANNEL_ID`, which
+is unset on Railway, so night one's threads all landed in #raid-mobs.
+`RAID_NIGHT_THREADS=0` disables.
 Consumers: the deferred autoparse card in `_handleAgentEncounter`
-(fallback `AUTOPARSE_TEST_THREAD_ID`; card state carries `channelId` so a
-destination change posts fresh instead of a cross-channel edit),
-`_handleAgentLootPost` (fallback `LOOT_CHANNEL_ID`) and `handleLootPost`.
+(fallback `AUTOPARSE_TEST_THREAD_ID` per `AUTOPARSE_QA_COPY`; card state
+carries `channelId` so a destination change posts fresh instead of a
+cross-channel edit), `_handleAgentLootPost` (fallback `LOOT_CHANNEL_ID`) and
+`handleLootPost` — the last two **raid-flow only**.
 **The canonical parse record never moves** — `logParseToDiscord` still writes
 the `📊 Parse Log` JSON embed to `PARSES_LOG_THREAD_ID`, which is the only
 thread `loadParsesFromDiscord`, `/restore` and the midnight consolidation
 read. Night threads carry the presentation copy only.
+
+### Event-driven posting windows (`utils/raidEvents.js`) — v2, 2026-07-31
+Which thread a timestamp wants is decided by the guild's **Discord scheduled
+events**, not a weekday table. `guild.scheduledEvents.fetch()` is a REST call,
+so no new gateway intent and no new credential; results are cached
+(`RAID_EVENT_CACHE_MS`, default 5 min), single-flight, and held in a sticky map
+so an event Discord stops listing (status → COMPLETED) still resolves through
+its own tail. **Window = start − `RAID_EVENT_PRE_MIN` (30) … end +
+`RAID_EVENT_POST_MIN` (15)**; an event with no end time is assumed
+`RAID_EVENT_DEFAULT_HOURS` (4) long. Overlapping windows resolve to the event
+whose *start* is nearest the timestamp. **Raid-Helper is enrichment only** —
+read from the `rh_events` mirror `utils/raidhelperApi.js` already syncs (needs
+the existing `RH_API_KEY`; the mirror is empty as of 2026-07-31, so this path
+is unverified in prod) and it can only fill an end time or add an event Discord
+never got. Everything fails open to "no event scheduled".
+**Classification** (`classifyEvent`): the raids themselves are Discord events,
+so the NIGHT decides — `RAID_EVENT_RAID_DAYS` (default Sun/Wed/Thu) at/after
+`RAID_EVENT_RAID_FROM_HOUR` (17) is the raid flow, everything else the event
+flow; `RAID_EVENT_RAID_PATTERN` / `_SOCIAL_PATTERN` are optional title
+overrides. Outside every window, `RAID_NIGHT_FALLBACK` (`schedule` default /
+`always` / `off`) decides whether the v1 weekday behaviour still applies.
+
+### Off-night event threads + roll loot (`utils/rollLoot.js`)
+A non-raid guild event threads in **#event-chat** (`EVENT_CHAT_CHANNEL_ID` →
+known id `1194336972785848380`) as `🎲 <title> — <date>` and gets **no DKP
+posts**. Its loot content is #91's roll capture: `roll_sets` (multi-uploader
+`/random` sets: item, assigned range, qty, rolls) joined to `looted_items`,
+merged with `utils/hotDiceNight.js`'s `mergeRollSetRows`/`sessionWinner` (the
+same math as the Hot Dice award and `web/lib/rolls.ts`) into one card —
+item · roll range · winners · "looted by X" when the looter isn't a winner —
+edited in place (`state.channelSlots.rollcard_<threadId>`). Refresh is driven
+by the `rolls`/`looted` ingest handlers post-ack and debounced 45s, never a
+timer. Parses reach the same thread as ordinary autoparse cards.
+
+### Parse-card volume filter
+`raidNight.parseCardPassesFilter` gates what reaches a night/event thread:
+known bosses always pass, everything else needs
+`RAID_NIGHT_THREAD_MIN_SECONDS` (15) **and** `RAID_NIGHT_THREAD_MIN_PLAYERS`
+(3); `RAID_NIGHT_THREAD_BOSS_ONLY=1` is the strict setting and zeroing both
+floors restores v1 "post everything". Filtering is presentation only — the
+Parse Log embed and Supabase always get every encounter.
 
 ### Extended Target aggregation (`_handleAgentExtendedTarget`)
 Aggregates every online raider's `character_live_state.target_name` (Zeal

@@ -264,6 +264,25 @@ function setRaidNightThreadId(nightKey, id) {
   saveState(s);
 }
 
+// ── Off-night event thread: the 🎲 rolled-loot card, edited in place ──────────
+// One card per event thread, keyed by that thread's id so a restart mid-event
+// keeps editing the same message instead of posting a second card. Same
+// channelSlots anchor + prune pattern as the night-thread ids above.
+const _ROLL_CARD_SLOT_KEEP = 10;
+function getEventRollCardId(threadId) {
+  return loadState().channelSlots?.[`rollcard_${threadId}`] || null;
+}
+function setEventRollCardId(threadId, messageId) {
+  const s = loadState();
+  if (!s.channelSlots) s.channelSlots = {};
+  s.channelSlots[`rollcard_${threadId}`] = messageId;
+  const keys = Object.keys(s.channelSlots).filter(k => k.startsWith('rollcard_'));
+  for (const stale of keys.slice(0, Math.max(0, keys.length - _ROLL_CARD_SLOT_KEEP))) {
+    delete s.channelSlots[stale];
+  }
+  saveState(s);
+}
+
 // ── Announce events (full data) ───────────────────────────────────────────────────────────────
 function saveAnnounce(msgId, data) {
   const s = loadState();
@@ -999,6 +1018,7 @@ module.exports = {
   addAnnounceMessageId, getAnnounceMessageIds, removeAnnounceMessageId, clearAnnounceMessageIds,
   getSpawnAlertMessageId, setSpawnAlertMessageId, clearSpawnAlertMessageId, getAllSpawnAlertMessageIds,
   getRaidNightThreadId, setRaidNightThreadId,
+  getEventRollCardId, setEventRollCardId,
   getDailySummaryMessageId, setDailySummaryMessageId,
   getThreadLinksMessageId, setThreadLinksMessageId,
   getBoardMessages, saveBoardMessages,
