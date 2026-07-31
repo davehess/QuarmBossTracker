@@ -353,7 +353,11 @@
       });
 
       // "Charm Break" alert fires when a pet stops being charmed — but
-      // DEFERRED 3.5s so a charm-cycler who promptly kills the now-broken mob
+      // DEFERRED so a charm-cycler who promptly kills the now-broken mob
+      // (1.5s as of 2026-07-31 — was 3.5s, which stacked on top of the agent's
+      // gauge grace to put ~13.5s between a visibly-broken charm and the
+      // callout. A bard recasting Solon's on a ~3s timer had already missed
+      // the window by then. Raise it again if false calls come back.)
       // doesn't get a false-alarm call: if the pet vanishes from the tracker
       // within the defer window (death detection's killer-guard removes it on
       // a player kill) we cancel the pending speech. Unexpected breaks still
@@ -393,7 +397,7 @@
             // stay silent. Otherwise → real unexpected break, speak.
             if (trackedKeysNow().has(key)) speak('charm break');
             pendingRecharm.delete(key);
-          }, 3500);
+          }, 1500);
           pendingRecharm.set(key, t);
           prevActive.delete(key);
         }

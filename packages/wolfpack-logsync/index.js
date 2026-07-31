@@ -1652,13 +1652,20 @@ function _reconcileGaugeCharms() {
     const ol = String(info.owner).toLowerCase();
     if (!gaugeOwners.has(ol)) continue;                       // bystander → log-managed
     const set = gaugePets.get(ol);
-    // Grace 10s: an enchanter re-charming the SAME pet removes it from slot
-    // 16 for the duration of the charm spell (3.5-4s) plus reconciler lag —
-    // the previous 3s threshold fired a false 'break' during normal cycling,
-    // which made the overlay speak 'recharm pet' even though the same mob got
-    // re-charmed seconds later. 10s easily covers a normal re-cast while a
-    // real break (gauge never returns) still fires promptly.
-    if ((!set || !set.has(k)) && (now - (info.last_tick_at || 0)) > 10000) {
+    // Grace: a re-charm of the SAME pet removes it from slot 16 for the charm
+    // cast (3.5-4s) plus reconciler lag, so we can't call a break the instant
+    // the gauge empties — a 3s threshold used to fire false breaks during
+    // normal cycling.
+    //
+    // Was 10s, now 6s (2026-07-31). 10s was picked as "comfortably clear of a
+    // recast", but it is the dominant term in how long a REAL break takes to
+    // announce: 10s here + the overlay's speech defer meant ~13.5s of silence
+    // after the pet was visibly gone (Melting, bard — the game showed "No Pet"
+    // and the song falling off long before the overlay reacted). 6s still
+    // clears a 3.5-4s recast with ~2s of headroom, and halves the lag on the
+    // case that actually matters. If false "charm break" calls reappear during
+    // routine cycling, this is the number to raise.
+    if ((!set || !set.has(k)) && (now - (info.last_tick_at || 0)) > 6000) {
       _bumpCharmTick(info.pet, info.owner, 'break', now);     // gauge dropped → break (alert fires now)
     }
   }
