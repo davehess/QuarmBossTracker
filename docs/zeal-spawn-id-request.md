@@ -117,6 +117,41 @@ build a true zone/threat model rather than only the current target. We
 understand that's a bigger change; the `spawn_id`-on-gauges ask above is the
 minimal unblock and stands on its own.
 
+## Implementation sketch (from reading upstream `main`, 2026-07-31)
+
+Grounding for the "additive, low-risk" claim — the change is one loop in
+`Zeal/named_pipe.cpp`, `NamedPipe::main_loop()`:
+
+```cpp
+nlohmann::json gauge_array = nlohmann::json::array();
+for (auto &[id, name] : GaugeNames) {
+  nlohmann::json gauge_data = nlohmann::json::object();
+  std::string text;
+  int val = ZealService::get_instance()->labels_hook->GetGauge(id, text);
+  gauge_data["type"] = id;
+  gauge_data["text"] = text;
+  gauge_data["value"] = val;
+  gauge_array.push_back(gauge_data);
+}
+```
+
+For `id == 6` (target) and `id == 16` (pet), the entity is already resolved a
+call away (that's how `GetGauge` computes the HP text/value) — so the addition
+is conditionally attaching `gauge_data["spawn_id"]` from the same `Spawn` the
+gauge already reads, however the maintainers prefer to source it (directly in
+the loop, or by widening `GetGauge`'s signature). No new walk, no per-frame
+cost, no existing key changes shape.
+
+## How we intend to route this (etiquette)
+
+**Issue first, PR second.** This is a pipe-protocol surface — the maintainers
+may prefer a different key name, a protocol version bump, or a config toggle,
+and a cold PR would pre-decide all three. The issue carries this document's
+summary + the capture evidence + the implementation sketch, and explicitly
+offers: (a) to submit the PR ourselves if the approach is blessed, and (b) to
+test any build against the four-same-name-mob repro. Filed by the guild lead
+from their own account; this repo's tooling only prepares the material.
+
 ## Contact
 
 Filed on behalf of the Wolf Pack guild tooling for Project Quarm (a Mimic/agent
