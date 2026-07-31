@@ -13996,16 +13996,26 @@ async function _handleAgentUpload(req, res) {
     if (/^Eye of /i.test(attacker)) continue;                                                    // skip Eye of X wizard/mage scout pets
     if (ev.ability && /cannibali[sz]e/i.test(ev.ability) && rawAttacker === null) continue;     // skip self-cannibalizes (canni: first-person + ability name)
     const amount = ev.amount || 0;
-    const owners = petLeaders[attacker.toLowerCase()];
+    const _atkKey = attacker.toLowerCase();
+    const owners = petLeaders[_atkKey];
     if (owners) {
-      // Known pet — divide its damage equally among all declared owners.
-      // Filter out any NPC owner names (have spaces) just in case.
-      const validOwners = owners.filter(o => !/\s/.test(o));
-      if (validOwners.length > 0) {
-        const share = amount / validOwners.length;
-        for (const owner of validOwners) _addDmg(owner, share, true);
-      }
-      // If no valid owners, treat as unattributed noise (same as unknown pet).
+      // Known pet — attribute to exactly ONE owner, never split across the
+      // accumulated list. The nightly petOwners map collects every "My leader
+      // is X" for a NAME, and charm cycling makes same-named mobs change
+      // hands all night — the old equal split sprayed one pet's damage across
+      // everyone who ever charmed that name (Blood of Sraeshza 2026-07-31:
+      // identical pet buckets on multiple enchanters, one credited from
+      // another zone, encounter total 70k past the boss's HP pool).
+      // Priority: the uploader's own pet_leaders claim for THIS fight, else
+      // the most recently declared owner (addPetOwners keeps the list in
+      // declaration order, newest last). NPC-ish owner names (spaces) are
+      // never eligible.
+      const _uploaderClaim = uploadedPetLeaders[_atkKey];
+      const _candidates = owners.filter(o => !/\s/.test(o));
+      const _owner = (_uploaderClaim && !/\s/.test(_uploaderClaim)) ? _uploaderClaim
+                   : (_candidates.length ? _candidates[_candidates.length - 1] : null);
+      if (_owner) _addDmg(_owner, amount, true);
+      // If no valid owner, treat as unattributed noise (same as unknown pet).
     } else {
       // Direct player damage — skip if multi-word (NPC attacker noise).
       if (/\s/.test(attacker)) continue;
@@ -14655,6 +14665,23 @@ async function _handleAgentUpload(req, res) {
           const sent = await testThread.send({ embeds: [card] });
           _saveCard(_cardState(sent.id, Date.now(), startedMs, endedMs));
         }
+
+        // #83b — point the web parse page's "View in Discord" at THIS
+        // human-readable card, not the Parse Log JSON embed (Hitya
+        // 2026-07-31: the button landed on the machine-format thread).
+        // Unconditional write so the card wins over the JSON-embed stitch
+        // (applyEncounterParseLink), whose is.null guard keeps it as the
+        // fallback for encounters that never get a card.
+        try {
+          const _cardNow = _liveCards.get(bossKey);
+          if (_encIdForLink && _cardNow?.messageId && _cardNow.messageId !== 'pending' && _cardNow.channelId) {
+            const _sb = require('./utils/supabase');
+            if (_sb.isEnabled() && process.env.DISCORD_GUILD_ID) {
+              const link = `https://discord.com/channels/${process.env.DISCORD_GUILD_ID}/${_cardNow.channelId}/${_cardNow.messageId}`;
+              await _sb.update('encounters', `id=eq.${encodeURIComponent(_encIdForLink)}`, { discord_msg_link: link });
+            }
+          }
+        } catch (err) { console.warn('[agent] card deep-link store failed:', err?.message); }
 
         // AUTOPARSE_QA_COPY=always — plain mirror into the officers' QA thread.
         // Deliberately un-deduped: the QA thread is a diagnostic firehose, and

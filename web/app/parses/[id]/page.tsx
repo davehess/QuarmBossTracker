@@ -558,17 +558,29 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
           </span>
           {/* #83 — backlink to this fight's parse card in Discord (the card
               links here in turn: Discord ↔ wolfpack.quest). Only when the bot
-              stored a link for this encounter. */}
+              stored a link for this encounter. Two flavors: the discord://
+              deep link opens the installed desktop app directly (browsers
+              no-op silently when the protocol isn't registered, hence the
+              plain https fallback beside it). */}
           {enc.discord_msg_link && (
-            <a
-              href={enc.discord_msg_link}
-              target="_blank"
-              rel="noreferrer"
-              className="text-blue hover:underline"
-              title="Jump to this fight's parse card in Discord"
-            >
-              View in Discord →
-            </a>
+            <>
+              <a
+                href={enc.discord_msg_link.replace(/^https:\/\/(?:\w+\.)?discord\.com\//, 'discord://-/')}
+                className="text-blue hover:underline"
+                title="Open this fight's parse card in the Discord app"
+              >
+                View in Discord →
+              </a>
+              <a
+                href={enc.discord_msg_link}
+                target="_blank"
+                rel="noreferrer"
+                className="text-dim hover:text-blue hover:underline"
+                title="Open in Discord's web client instead"
+              >
+                (web)
+              </a>
+            </>
           )}
         </div>
 

@@ -707,6 +707,15 @@ function _petNormalise(val) {
   return [];
 }
 function getPetOwners() { return loadState().petOwners || {}; }
+// Declaration order is meaningful: the LAST element is the most recently
+// declared owner, which the encounter fold uses as the current owner of a
+// charm-cycled name. A re-declaration moves the owner back to the tail.
+function _petDeclare(list, owner) {
+  const idx = list.indexOf(owner);
+  if (idx >= 0) list.splice(idx, 1);
+  list.push(owner);
+  return list;
+}
 function addPetOwners(petLeadersMap) {
   if (!petLeadersMap || Object.keys(petLeadersMap).length === 0) return;
   const s = loadState();
@@ -714,9 +723,7 @@ function addPetOwners(petLeadersMap) {
   for (const [pet, owner] of Object.entries(petLeadersMap)) {
     if (!pet || !owner) continue;
     const key  = pet.toLowerCase();
-    const list = _petNormalise(s.petOwners[key]);
-    if (!list.includes(owner)) list.push(owner);
-    s.petOwners[key] = list;
+    s.petOwners[key] = _petDeclare(_petNormalise(s.petOwners[key]), owner);
   }
   saveState(s);
 }
@@ -724,9 +731,7 @@ function setPetOwner(pet, owner) {
   const s = loadState();
   if (!s.petOwners) s.petOwners = {};
   const key  = pet.toLowerCase();
-  const list = _petNormalise(s.petOwners[key]);
-  if (!list.includes(owner)) list.push(owner);
-  s.petOwners[key] = list;
+  s.petOwners[key] = _petDeclare(_petNormalise(s.petOwners[key]), owner);
   saveState(s);
 }
 function clearPetOwners() { const s = loadState(); s.petOwners = {}; saveState(s); }

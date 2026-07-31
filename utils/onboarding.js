@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.0.239': [
+    '**Charm-pet damage stops spraying across every past charmer.** Last night\'s Blood of Sraeshza parse credited huge "pet damage" to raiders who were mezzing, dead, or in another zone — same-named mobs get charm-cycled all night, and the parser was splitting a pet\'s damage among *everyone who had ever charmed that mob name*. A pet\'s damage now goes to exactly one owner: the charmer the uploading parser saw for *this* fight, falling back to the most recent charmer known. Also: the "View in Discord" button on wolfpack.quest parse pages now lands on the readable parse card (and tries to open your Discord app first) instead of the machine-format Parse Log.',
+  ],
   '3.0.238': [
     '**`/token` works without a wolfpack.quest sign-in now.** Discord blocks some accounts from the sign-in flow until they add a phone number or verified email — if that\'s you, you can now run `/token` in Discord and paste the minted token into Mimic (sign-in screen → Advanced → token) to get uploads and overlays under your own name. Officers can also mint a token *for* a locked-out member with `/token for:@member` and hand it over privately. Tokens are revocable any time with `/token`. (The wolfpack.quest website itself still needs the Discord sign-in.)',
   ],
