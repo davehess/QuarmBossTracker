@@ -1761,6 +1761,114 @@ function _findSongBuff(songName, zealBuffs) {
   }
   return null;
 }
+// ── PBAOE song mob counter (swarm QoL) ─────────────────────────────────────
+// Each pulse of an AE song prints one landing line per entity hit — e.g.
+// "A Shik`nar Forager is bound by chords of music." ×11 at one timestamp.
+// Quarm caps AE at 12 targets (the 13th+ mob warps to the bard / "reverse
+// summons"), so a swarm bard wants to see exactly 12 hit per pulse. We count
+// the landing rows per song per burst and pair them with the song's DoT
+// damage lines ("X has taken N damage from your <song>.") so the melody
+// overlay can badge each song row with hits + damage.
+//
+// Matching is scoped to the songs in the character's CURRENT melody order
+// (suffix set rebuilt only when the order or catalog changes), so the
+// per-line cost for non-bards is one Map get. Only detrimental catalog
+// entries (good === 0) count — a beneficial song's landing text names your
+// GROUPMATES, and those aren't "mobs affected". If two melody songs share a
+// landing text the first match wins (never seen in a real twist). Damage
+// lines carry the song name themselves so they need no suffix table.
+const SONG_AOE_CAP      = 12;      // Quarm AE target cap — 12 hit = full swarm
+const SONG_AOE_BURST_MS = 2500;    // landing rows within 2.5s = one pulse
+const SONG_AOE_STALE_MS = 30_000;  // badge drops when the song stops pulsing
+
+// Punctuation-insensitive song key: "Selo`s" / "Selo's" / curly-apostrophe
+// variants all reduce to the same slug (same normalization the melody payload
+// uses for Zeal label matching).
+function _songSlug(s) { return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ''); }
+
+// (Re)build the landing-suffix matcher for a melody state. Cached on the
+// state keyed by order + catalog signature so it costs nothing per line.
+function _ensureSongAoeMatchers(state) {
+  const catCount = _spellCatalogMeta ? (_spellCatalogMeta.count || 0) : 0;
+  const sig = state.order.map(o => (o && o.name) || o || '').join('|') + '#' + catCount;
+  if (state._aoeSig === sig) return;
+  state._aoeSig = sig;
+  state._aoeSuffixes = [];
+  state._aoeSongSlugs = new Set();
+  for (const entry of state.order) {
+    const name = (entry && entry.name) || (typeof entry === 'string' ? entry : '');
+    if (!name) continue;
+    const slug = _songSlug(name);
+    if (!slug) continue;
+    state._aoeSongSlugs.add(slug);
+    // Catalog lookup: exact name first, then slug scan (Zeal labels use
+    // backticks where the catalog has apostrophes). Scan only runs on
+    // melody-order change, never per line.
+    let e = _spellByNameLower.get(String(name).toLowerCase());
+    if (!e) { for (const c of _spellByNameLower.values()) { if (c && c.name && _songSlug(c.name) === slug) { e = c; break; } } }
+    if (!e || !e.other || e.good !== 0) continue;
+    const suffix = String(e.other).trim().toLowerCase();
+    if (suffix.length < 5) continue;    // too short → false positives
+    state._aoeSuffixes.push({ suffix, slug, song: e.name });
+  }
+}
+
+// Per-line hook (watch mode, display-only — no upload, no exclusion gate).
+// Cheap: exits on the _bardMelody miss for everyone who isn't mid-melody.
+function noteSongAoeLine(line, character) {
+  if (!character) return;
+  const state = _bardMelody.get(String(character).toLowerCase());
+  if (!state || !Array.isArray(state.order) || state.order.length === 0) return;
+  const m = line.match(/^\[[^\]]+\]\s+(.+?)\s*$/);
+  if (!m) return;
+  const body = m[1];
+  // Chat lines can quote anything ("... winces.") — the ", '" of a chat
+  // message never appears in landing/damage lines, so skip those outright.
+  if (body.indexOf(", '") !== -1) return;
+  const now = Date.now();
+  state.aoeBySong = state.aoeBySong || {};
+
+  // Damage: "X has taken N (points of) damage from your <song>."
+  const dm = body.match(/^(.+?) has taken (\d+)(?: points? of)? damage from your (.+?)\.$/i);
+  if (dm) {
+    const slug = _songSlug(dm[3]);
+    _ensureSongAoeMatchers(state);
+    if (!state._aoeSongSlugs.has(slug)) return;
+    const amount = parseInt(dm[2], 10) || 0;
+    const b = state.aoeBySong[slug] = state.aoeBySong[slug] || { song: dm[3].trim() };
+    if (!b.dmg || (now - b.dmg.at) > SONG_AOE_BURST_MS) {
+      b.dmg = { n: 1, total: amount, min: amount, max: amount, at: now };
+    } else {
+      b.dmg.n++; b.dmg.total += amount; b.dmg.at = now;
+      if (amount < b.dmg.min) b.dmg.min = amount;
+      if (amount > b.dmg.max) b.dmg.max = amount;
+    }
+    return;
+  }
+
+  // Landing rows: "<entity> <cast_on_other suffix>"
+  _ensureSongAoeMatchers(state);
+  if (!state._aoeSuffixes || state._aoeSuffixes.length === 0) return;
+  const bodyLower = body.toLowerCase();
+  for (const s of state._aoeSuffixes) {
+    if (!bodyLower.endsWith(s.suffix)) continue;
+    const cut = body.length - s.suffix.length;
+    // Require a space boundary before the suffix (possessive suffixes that
+    // start with "'" carry their own separator) so "Foo winces." never
+    // matches inside a longer word.
+    if (s.suffix[0] !== "'" && (cut === 0 || body[cut - 1] !== ' ')) continue;
+    const name = body.slice(0, s.suffix[0] === "'" ? cut : cut - 1).trim();
+    if (!name || name === 'You' || name === 'Your') continue;
+    const b = state.aoeBySong[s.slug] = state.aoeBySong[s.slug] || { song: s.song };
+    if (!b.hitAt || (now - b.hitAt) > SONG_AOE_BURST_MS) {
+      b.hits = 1; b.hitAt = now;
+    } else {
+      b.hits++; b.hitAt = now;
+    }
+    return;
+  }
+}
+
 // Detect a bard song by name pattern. Bard songs almost always start with a
 // possessive of one of the canonical author-NPCs ("Selo`s", "Solon`s",
 // "Tarew`s", etc.) or with one of the named song lines ("Anthem de Arms",
@@ -10259,6 +10367,20 @@ function _serializeForDashboard() {
               const cat = _spellByNameLower.get(String(e.name).toLowerCase());
               if (cat && typeof cat.cast_ms === 'number' && cat.cast_ms > 0) {
                 out.cast_ms = cat.cast_ms;
+              }
+            }
+            // PBAOE mob counter — how many entities the last pulse of THIS
+            // song hit (landing-row count) + its damage burst. Stale badges
+            // (song stopped pulsing >30s ago) are omitted so the overlay
+            // never shows a count from three pulls ago.
+            const aoe = state.aoeBySong && state.aoeBySong[_songSlug(e.name)];
+            if (aoe) {
+              if (aoe.hits > 0 && (now - aoe.hitAt) <= SONG_AOE_STALE_MS) {
+                out.aoe_hits = aoe.hits;
+                out.aoe_at   = aoe.hitAt;
+              }
+              if (aoe.dmg && aoe.dmg.n > 0 && (now - aoe.dmg.at) <= SONG_AOE_STALE_MS) {
+                out.aoe_dmg = { n: aoe.dmg.n, total: aoe.dmg.total, min: aoe.dmg.min, max: aoe.dmg.max };
               }
             }
             return out;
@@ -30313,6 +30435,9 @@ async function main() {
         // always runs (no _sourceExcluded gate — blindness is a UI thing,
         // not stat data we'd ever want suppressed).
         noteBlindLine(line, b.character);
+        // PBAOE song mob counter (melody overlay swarm badge) — same UI-only
+        // reasoning as blindness; exits on a Map miss for non-melody chars.
+        noteSongAoeLine(line, b.character);
         // Public CH landings ("X is completely healed.") → heal-attribution ring.
         if (!_sourceExcluded) noteHealLandLine(line);
         // Other players' cast-starts → recipient-side heal attribution ring.

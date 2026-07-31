@@ -64,6 +64,13 @@
     border-radius:3px;border:1px solid rgba(126,231,135,0.22)}
   .row .cnt{font-size:9px;color:#8b949e;font-variant-numeric:tabular-nums;
     margin-right:4px;letter-spacing:0.02em}
+  /* PBAOE mob-counter chip — sits right after the song name. hits/12 (the
+     Quarm AE cap); .full = a perfect 12-mob swarm pulse, lit green. Damage
+     for the pulse rides the same chip when the song is a damaging one. */
+  .row .name .aoe{display:inline-block;margin-left:6px;font-size:10px;
+    font-variant-numeric:tabular-nums;color:#d2a8ff;background:rgba(163,113,247,0.12);
+    padding:0 5px;border-radius:3px;border:1px solid rgba(163,113,247,0.28);vertical-align:middle}
+  .row .name .aoe.full{color:#7ee787;background:rgba(126,231,135,0.12);border-color:rgba(126,231,135,0.35);font-weight:600}
   .row .timer.low{color:#f0883e;background:rgba(240,136,62,0.10);border-color:rgba(240,136,62,0.30)}
   .row .timer.crit{color:#f85149;background:rgba(248,81,73,0.10);border-color:rgba(248,81,73,0.30)}
   .row .icon{display:flex;align-items:center;justify-content:center;
@@ -454,9 +461,34 @@
           var countHtml = castN > 0
             ? '<span class="cnt" title="Cast ' + castN + ' time(s) this session">×' + castN + '</span>'
             : '';
+          // PBAOE mob-counter chip — how many entities the last pulse of this
+          // song hit, out of Quarm's 12-target AE cap. 12/12 = full swarm
+          // (anything beyond the cap warps to the bard instead of being hit),
+          // lit green. When the song deals damage the pulse total rides the
+          // chip; per-mob detail lives in the tooltip. Songs without a fresh
+          // pulse (or whose landing text the agent can't count) show nothing.
+          var AOE_CAP = 12;
+          var aoeHits = (typeof entry.aoe_hits === 'number' && entry.aoe_hits > 0) ? entry.aoe_hits
+                      : (entry.aoe_dmg && entry.aoe_dmg.n > 0 ? entry.aoe_dmg.n : 0);
+          var aoeHtml = '';
+          if (aoeHits > 0) {
+            var full = aoeHits >= AOE_CAP;
+            var d = entry.aoe_dmg;
+            var dmgChip = '';
+            var dmgTip  = '';
+            if (d && d.total > 0) {
+              dmgChip = ' · ' + d.total;
+              dmgTip = '\nDamage: ' + d.total + ' total — ' + d.n + ' mob(s)'
+                     + (d.min === d.max ? ' × ' + d.max + ' each' : ' at ' + d.min + '–' + d.max + ' each');
+            }
+            var tip = 'Last pulse hit ' + aoeHits + ' of the ' + AOE_CAP + '-target AE cap'
+                    + (full ? ' — FULL SWARM (extra mobs are warping to you)' : '')
+                    + dmgTip;
+            aoeHtml = '<span class="aoe' + (full ? ' full' : '') + '" title="' + esc(tip) + '">⚔' + aoeHits + '/' + AOE_CAP + dmgChip + '</span>';
+          }
           rowsHtml += '<div class="' + rowClass + '"' + styleAttr + ' title="' + esc(name) + '">'
                     +   '<span class="icon">' + icon + '</span>'
-                    +   '<span class="name">' + esc(shortSongName(name)) + '</span>'
+                    +   '<span class="name">' + esc(shortSongName(name)) + aoeHtml + '</span>'
                     +   countHtml
                     +   timerHtml
                     + '</div>';
