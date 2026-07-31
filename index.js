@@ -1198,6 +1198,24 @@ async function handleLootPost(interaction) {
     await interaction.editReply({ embeds: [posted], components: [] });
     clearPendingLoot(msgId);
 
+    // Raid-facing copy into tonight's raid-night thread (Hitya 2026-07-31).
+    // The /loot message itself is the officer's staging UI and has to stay in
+    // the channel it was invoked from (interaction.editReply owns it), so the
+    // announcement raiders read is a separate post. Best-effort — the auctions
+    // are already live, and a failure here must not look like a failed post.
+    try {
+      const nightThread = await require('./utils/raidNight').getRaidNightThread(interaction.client).catch(() => null);
+      if (nightThread && nightThread.id !== interaction.channelId) {
+        const { opendkpAuctionsUrl } = require('./utils/loot');
+        const announce = EmbedBuilder.from(posted)
+          .setFooter({ text: `Closed bids · ${entry.bidMinutes}m · posted by ${interaction.user.username}` });
+        await nightThread.send({
+          content: `💰 **Bidding open** — ${opendkpAuctionsUrl()}`,
+          embeds:  [announce],
+        });
+      }
+    } catch (e) { console.warn('[loot] raid-night thread announce failed:', e?.message); }
+
     // Invalidate cached drop history so next /loot recomputes rarity flags
     try { require('./utils/loot').invalidateDropHistory(); } catch {}
   } catch (err) {
@@ -6633,14 +6651,18 @@ async function _handleAgentLootPost(req, res) {
       });
     } catch (e) { console.warn('[loot-post] loot-posted broadcast failed:', e?.message); }
 
-    // Announce to the loot thread (best-effort — the auctions are already live).
+    // Announce to tonight's raid-night thread, falling back to the loot thread
+    // when night threads are off/unresolvable (best-effort — the auctions are
+    // already live either way).
     const threadId = process.env.LOOT_CHANNEL_ID || '1527421284747706551';
     try {
-      const ch = await client.channels.fetch(threadId);
+      const ch = await require('./utils/raidNight').getRaidNightThread(client).catch(() => null)
+                 || await client.channels.fetch(threadId);
       if (ch && ch.send) {
+        const { opendkpAuctionsUrl } = require('./utils/loot');
         const lines = matched.map(m => `• **${m.name}**${m.quantity > 1 ? ` ×${m.quantity}` : ''}`).join('\n');
         const foot = unmatched.length ? `\n\n⚠ Not found in the item catalog (not auctioned): ${unmatched.map(u => u.name).join(', ')}` : '';
-        await ch.send({ content: `💰 **Bidding open (closed bids · ${duration}m)** — posted by ${identity.display_name || 'an officer'}\n${lines}\nBid on OpenDKP.${foot}` });
+        await ch.send({ content: `💰 **Bidding open (closed bids · ${duration}m)** — posted by ${identity.display_name || 'an officer'}\n${lines}\nBid on OpenDKP → ${opendkpAuctionsUrl()}${foot}` });
       }
     } catch (e) { console.warn('[loot-post] thread announce failed:', e?.message); }
 
@@ -13963,9 +13985,18 @@ async function _handleAgentUpload(req, res) {
     try { accumulateSessionDamage(players, duration); } catch (e) { /* non-fatal */ }
   }
 
-  // ── Post human-readable parse card to AUTOPARSE_TEST_THREAD_ID ─────────────────
+  // ── Post human-readable parse card to tonight's raid-night thread ─────────────
   // Shows every encounter as it arrives — boss and trash — so officers can verify
   // data quality in real-time without touching the live raid boards.
+  //
+  // ROUTING (Hitya 2026-07-31): the card goes to the per-night thread
+  // (utils/raidNight.js, created lazily on the night's first card) and falls
+  // back to AUTOPARSE_TEST_THREAD_ID when night threads are off/unresolvable.
+  // The CANONICAL parse record does NOT move: logParseToDiscord still writes
+  // the '📊 Parse Log' JSON embed to PARSES_LOG_THREAD_ID, which is what
+  // loadParsesFromDiscord() rebuilds parses.json from on startup and what
+  // /restore + the /raidnight "view" deep links read. This card is presentation
+  // only — nothing reads it back — so moving it can't jeopardise recovery.
   //
   // Edit-in-place dedup: if the same mob is uploaded within 10 minutes (multiple
   // parsers watching the same fight), we MERGE the player data (max damage per
@@ -13984,9 +14015,15 @@ async function _handleAgentUpload(req, res) {
   // agents must never wait on it. Body unchanged from the inline version —
   // verified free of return/res/req so deferral can't change handler flow.
   const _postParseCardsDeferred = async () => {
-  if (testThreadId && players.length > 0 && !isBackfill) {
+  if (players.length > 0 && !isBackfill) {
     try {
-      const testThread = await client.channels.fetch(testThreadId).catch(() => null);
+      // Night thread first (keyed on the ENCOUNTER's start, so a pull that
+      // finishes at 00:05 still lands in the night it began in), then the
+      // original QA thread. Resolution is cached per night — not per card.
+      const nightThread = await require('./utils/raidNight')
+        .getRaidNightThread(client, startedMs).catch(() => null);
+      const testThread = nightThread
+        || (testThreadId ? await client.channels.fetch(testThreadId).catch(() => null) : null);
       if (testThread) {
         const { buildParseEmbed } = require('./commands/parse');
         const { EmbedBuilder: _TEB } = require('discord.js');
@@ -14420,6 +14457,12 @@ async function _handleAgentUpload(req, res) {
         // Shared card state object (avoids duplication in the 3 setAgentTestCard paths)
         const _cardState = (msgId, ts, sAt, eAt) => ({
           messageId:          msgId,
+          // Which thread messageId lives in. The destination can change between
+          // two uploads (night rollover, or the night thread coming/going), and
+          // a cross-channel messages.fetch would 404 — so we compare before we
+          // try to edit. Legacy cards have no channelId; treat those as a match
+          // and let the existing try/catch handle a miss.
+          channelId:          testThread.id,
           timestamp:          ts,
           encounterStartedAt: sAt,
           encounterEndedAt:   eAt,
@@ -14451,7 +14494,8 @@ async function _handleAgentUpload(req, res) {
           setAgentTestCard(bossKey, state);
         };
 
-        if (withinWindow && existing.messageId && existing.messageId !== 'pending') {
+        const sameChannel = !existing?.channelId || existing.channelId === testThread.id;
+        if (withinWindow && sameChannel && existing.messageId && existing.messageId !== 'pending') {
           // Reserve the slot before the async send to prevent races
           const mergedState = _cardState(
             existing.messageId,
