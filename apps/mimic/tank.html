@@ -229,12 +229,18 @@
 
   function hpClass(pct){ if (pct == null) return ''; if (pct <= 25) return 'crit'; if (pct <= 50) return 'low'; return ''; }
   function fmtK(n){ n = Number(n)||0; if (n >= 1000) return (n/1000).toFixed(n>=10000?0:1)+'k'; return String(Math.round(n)); }
+  // Smallest cur/max pair we will treat as a real EQ HP pool — see hpValText
+  // below for the 2026-07-30 "130 / 180 · 72%" Rampage card this guards against.
+  var MIN_HP_POOL = 500;
   // Projected-HP ghost segment: from current HP% to (current + sum of inbound
   // non-CH heals STILL IN FLIGHT)%. Landed heals are excluded — the HP bar
   // already reflects them, so counting them would leave a permanent overhang.
-  // Only drawable when we have the tank's real cur/max HP.
+  // Only drawable when we have the tank's real cur/max HP — same believability
+  // floor hpValText uses, so the label and the ghost never disagree about
+  // whether the numbers are trustworthy.
   function ghostSeg(hp_cur, hp_max, inb){
     if (hp_cur == null || hp_max == null || !hp_max || !inb || !inb.length) return '';
+    if (hp_max < MIN_HP_POOL || hp_cur < 0 || hp_cur > hp_max) return '';
     var now = Date.now();
     var sum = 0; for (var i=0;i<inb.length;i++){ if ((inb[i].landsAt - now) > 150) sum += (inb[i].amount||0); }
     if (sum <= 0) return '';
@@ -340,9 +346,18 @@
   }
   // HP bar label — raw "cur / max · pct%" when we have the real numbers (only
   // the local character's own Zeal reports them), else just the percentage.
+  // The pair must be believable as an EQ HP pool before it is drawn: raid-night
+  // 2026-07-30 the Rampage card rendered "Rampage on Stupidrichard — 130 / 180 ·
+  // 72%" for a raider who runs 6512/6512, i.e. a non-HP number pair that had
+  // ridden the exact-HP chain (its only sanity gate was "max > 100"). The agent
+  // now gates the same way (_isPlausibleHpPool); this mirrors the floor so an
+  // older/stale relay can never paint invented numbers on the bar either — we
+  // fall back to the plain %, never a made-up cur/max. (MIN_HP_POOL above.)
   function hpValText(pct, cur, max){
     if (pct == null) return null;
-    if (cur != null && max != null) return cur + ' / ' + max + ' · ' + pct + '%';
+    if (cur != null && max != null && max >= MIN_HP_POOL && cur >= 0 && cur <= max) {
+      return cur + ' / ' + max + ' · ' + pct + '%';
+    }
     return pct + '%';
   }
 
