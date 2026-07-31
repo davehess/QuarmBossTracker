@@ -1187,6 +1187,43 @@ folly** — it's here.*
 
 ### ⏳ Open TODO — carried forward from the retired docs
 *(These are durable items; the active wave order is in `DESIGN-platform-queue.md`.)*
+
+**Raid-night 2026-07-30 field reports (Hitya) — all still OPEN, each blocked on
+one concrete detail. Shipped that night: stable 2.1.2 / agent 3.4.36.**
+- **Charm pets missing from the /rs parse + Discord autoparse, and owner
+  attribution collapsing.** They DO render on the local DPS HUD, so the
+  `petLeaders` / `_activeCharms` / `_charmTickTracker` bypass is working on the
+  threat side — it's the ENCOUNTER PAYLOAD path that drops them, so the parse
+  card and `encounter_players` never see them. Separately, three distinct pets
+  all displayed as one "Bardtholemu's pet", i.e. the label collapses by OWNER
+  rather than per-pet. Start at the encounter-builder player rollup vs the
+  threat rows that carry `pet_owner`; the HUD and the upload disagree.
+- **Death Touch not captured when the victim is a PET.** The guild trigger's
+  victim group is `(?<target>[A-Z][\w'`]+)` — capital-initial, no spaces — so a
+  player (Currygoat) matches and a pet (`a glyph covered serpent`, or a
+  possessive `X\`s warder`) cannot. This is task #169. NEEDS: the verbatim log
+  line for a pet DT before widening the pattern — loosening it blind risks
+  eating real Death Touches.
+- **AoE dance never fires on Vyzh\`dra the Cursed — the AOE_DANCE entry is
+  mis-signatured.** It watches `/flesh begins to liquefy\./i` for Caustic Mist,
+  but that text belongs to the **Putrefy Flesh** trigger AND is the `Your ...`
+  SELF-land line; with `burst_n: 3` it wants three separate victims, which a
+  self-only line can never produce. Meanwhile the AE actually landing is
+  **Dragon Roar** (`You lose control of yourself!`), which has its own plain
+  trigger with no `timer_duration_sec` — hence a callout on the hit but no
+  countdown to the next one. NEEDS a decision: point the dance at Dragon Roar
+  (clean, unambiguous signature, `burst_n: 1`) or at the real Caustic Mist
+  text, and confirm the wording — Hitya asked for "MELEE OUT / MELEE IN", which
+  is more accurate than the current "DPS OUT/IN" since casters needn't move.
+- **Death Touch false positive — FIXED 2026-07-30, server-side.** A Cleric
+  hammer pet self-destructing (`Vobeker hit Vobeker for 20000 points of
+  non-melee damage`) matched the countdown trigger. Added a self-hit exclusion
+  (`hit (?!\k<boss>\b)`); a real DT is never self-inflicted. Trigger-table
+  change only, propagates on the 10-min guild-trigger poll.
+- **Watch:** charm-break timings were cut that night (gauge grace 10s→6s,
+  speech defer 3.5s→1.5s) to take the callout from ~13.5s to ~2.5s. Both are
+  tuning. If false "charm break" calls reappear during routine cycling, those
+  are the numbers to raise.
 - **Mimic beta queue** (`mimic-1.4-roadmap.md`, still live): sync overlay
   layout to `/me` (#5, now unblocked since B-2 shipped); Trigger-Alerts↔Triggers
   onboarding (#2); UI-Studio overlay-positioning UX (#3); UI-Studio per-char
