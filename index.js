@@ -14701,6 +14701,15 @@ async function _handleAgentUpload(req, res) {
         if (session?.threadId) {
           sessionTargetChannel = await client.channels.fetch(session.threadId).catch(() => null);
         }
+        // The night/event thread IS the landing spot (Hitya 2026-07-31). On a
+        // normal raid night the /raidnight session thread above already IS it;
+        // this covers the nights nobody ran /raidnight — without it the card
+        // fell through to the officers' QA thread, because RAID_CHAT_CHANNEL_ID
+        // is unset in prod.
+        if (!sessionTargetChannel) {
+          sessionTargetChannel = await require('./utils/raidNight')
+            .getRaidNightThread(client).catch(() => null);
+        }
         if (!sessionTargetChannel && process.env.RAID_CHAT_CHANNEL_ID) {
           sessionTargetChannel = await client.channels.fetch(process.env.RAID_CHAT_CHANNEL_ID).catch(() => null);
         }
