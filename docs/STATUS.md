@@ -32,6 +32,7 @@ folly** — it's here.*
 | `DESIGN-buff-debuff-queue.md` | Design spec for the raid buff/debuff/cure queue overlay | CLAUDE.md roadmap ref; feature is live but spec still guides changes |
 | `DESIGN-ch-chain.md` | Design spec for the CH-rotation overlay | CLAUDE.md roadmap ref |
 | `DESIGN-quarmy-gear.md` | Build spec for Quarmy gear/AA/spell import to character pages | Unbuilt — still the spec |
+| `DESIGN-onboarding-overhaul.md` | "New Here?" walkthrough on web (`/start`) + Discord, shared screenshot set, auto-checkoff from existing signals | Unbuilt — the spec (2026-07-31); also documents the live `/onboarding` embed-overflow break |
 | `mimic-1.4-roadmap.md` | **Active Mimic beta queue** (overlay layout sync, UI-Studio UX, trigger onboarding) | Real open work; see ledger |
 | `raid-hub-roadmap.md` | `/raid` hub design; Stages 1-2 shipped, Stages 3-5 open | CLAUDE.md roadmap ref; open TODOs in ledger |
 | `beta-releases.md` | Beta-channel mechanics (electron-updater, cutting beta/stable) | Evergreen process reference (dated "current state" block is stale, harmless) |
@@ -1353,6 +1354,27 @@ one concrete detail. Shipped that night: stable 2.1.2 / agent 3.4.36.**
   2026-10-01); guided walkthrough tours (overlaps board #86-88); `/me` loot
   per-expansion grouping (needs item→expansion map — UNCERTAIN); local log-browser
   tab in Mimic.
+- **Onboarding overhaul — "New Here?" walkthrough on web + Discord.** Design:
+  **`DESIGN-onboarding-overhaul.md`** (proposal, awaiting Hitya sign-off; asked
+  for 2026-07-31). Slims the Discord welcome card to a hook + link + the four
+  persona buttons, adds a `/start` web walkthrough that **auto-checks off** steps
+  from signals we already store (`wolfpack_members.role_names`, `mimic_sessions`,
+  `agent_upload_stats`, `characters.discord_id`, `character_link_requests`), and
+  hosts one screenshot set in `web/public/onboarding/` that BOTH surfaces use
+  (precedent: `index.js:9123` already `setImage`s a `wolfpack.quest/roadmap/*.png`;
+  `commands/parsehelp.js:58` `STEP_IMAGES` is a built-and-empty slot). Supersedes
+  the one-line "guided walkthrough tours" item above; cross-refs #53 / #86
+  (Mimic first-run) without absorbing them.
+  **⚠ Ships-first sub-item, independent of the design:** `/onboarding` currently
+  **throws for 29 of the 36 members who have ever used it (81%)** —
+  `buildChangesEmbed` (`utils/onboarding.js:681`) feeds the whole `changesSince`
+  diff to `.setDescription()` with no truncation, and 103 `CHANGELOGS` entries put
+  every pre-3.0.224 member over Discord's 4096-char cap (measured: `3.0.91` →
+  25,873 chars). Member sees "❌ An error occurred."; the `GuildMemberAdd` rejoin
+  DM also dies because the build call sits OUTSIDE its `try` (`index.js:2332` vs
+  `:2338`), so there's no DM and no thread fallback. ~20-line bot fix (truncate +
+  "…NN older → /roadmap" tail + move the call inside the `try`); also delete the
+  dead `handleWelcome*` trio (`index.js:1669`/`:1690`/`:1704`). Routes to `main`.
 
 **⚠ Needs a local (desktop) session** — cloud sessions can't reach the local
 `peq`/PQDI/EQ machine. Exact queries/files live in `archive/BACKLOG.md`; the asks:
