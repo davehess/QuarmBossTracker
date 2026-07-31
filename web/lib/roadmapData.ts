@@ -43,6 +43,24 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'raidnight-fleet-batch',
+    title: '🐺 The raid-night batch — cures, night threads, and nine fixes in one evening',
+    version: 'Bot 3.0.233 · Agent 3.4.38',
+    date: '2026-07-31',
+    headline: 'Everything Thursday\'s raid surfaced, fixed the same night: cured raiders finally leave the debuff queue, each raid night gets its own Discord thread with the parses and loot in it, charm pets show up on parses, and the callouts that were firing late or never now fire on time.',
+    features: [
+      { name: '🧪 Cures count now', blurb: 'When a cleric running Mimic cures someone, the whole raid\'s Buff Queue knows — even if the cured player doesn\'t run Mimic. Cures spend their real counter values, so one Remove Greater Curse clears a 9-counter curse but only dents a 72-counter Gravel Rain, which now shows what\'s left instead of lying.' },
+      { name: '🧵 Raid-night threads', blurb: 'Each raid night gets its own Discord thread, named the way /raidnight names things. The auto-parse cards and the night\'s loot posts land there — and every loot post links straight to the OpenDKP auctions page.' },
+      { name: '🐾 Charm pets on parses', blurb: 'Charmed pets\' damage now reaches the uploaded parse and credits the charmer — it was rendering on the local meter and then being thrown away on upload. Distinct pets stay distinct instead of collapsing into one "so-and-so\'s pet".' },
+      { name: '📣 Callouts on time', blurb: 'Vyzh\`dra\'s melee dance now actually calls MELEE OUT / MELEE IN off the AE that really lands (Dragon Roar). The Emperor\'s "Paladin DA NOW" fires at 2:00 on the true 2:10 cycle. And the phantom "Eye of so-and-so" rows are gone from the DPS meter.' },
+    ],
+    fixes: [
+      'The Rampage card can no longer show a bogus HP pair for the victim — a Zeal weight reading (130/180) was slipping through as health. Real numbers when we have them, a plain % when we don\'t.',
+      'Off-tank surfacing on Extended Target had been silently reading empty data since early July — the agent was sending it, the server was dropping it. Reconnected.',
+      'A false "Death touch" callout from a Cleric hammer pet self-destructing is fixed, and the Emperor tank-buster countdown no longer risks double-firing.',
+    ],
+  },
+  {
     key: 'wpqdi-item-npc-spell',
     title: '📚 Our own item/mob/spell database — on wolfpack.quest',
     version: 'Web 1.0.273',
