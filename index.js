@@ -14042,10 +14042,22 @@ async function _handleAgentUpload(req, res) {
       if (claimants.length > 0) {
         const share = amount / claimants.length;
         for (const o of claimants) _addDmg(o, share, true);
-        const cs = _charmedPets.get(attacker) || { damage: 0, claimants: new Set() };
-        cs.damage += amount;
-        for (const o of claimants) cs.claimants.add(o);
-        _charmedPets.set(attacker, cs);
+        // The 🐾 Charmed card section is for CHARM pets only — mobs bent to a
+        // raider's will, where attribution is the interesting part. Regular
+        // summons ride the same pet_leaders path but are NOT charmed:
+        //   • possessive names ("Purrina`s warder") — warders/summons named
+        //     after their master (Hitya 2026-07-31: "regular pets just named
+        //     after their Master");
+        //   • single-word names ("Gobn") — mage/necro summons.
+        // Their damage still folds into the owner exactly as before; they
+        // just don't get listed as charmed.
+        const _isCharmName = /\s/.test(attacker) && !/^[^\s]+[`']s\s/i.test(attacker);
+        if (_isCharmName) {
+          const cs = _charmedPets.get(attacker) || { damage: 0, claimants: new Set() };
+          cs.damage += amount;
+          for (const o of claimants) cs.claimants.add(o);
+          _charmedPets.set(attacker, cs);
+        }
       }
       // If no valid owner at all, treat as unattributed noise (same as unknown pet).
     } else {
