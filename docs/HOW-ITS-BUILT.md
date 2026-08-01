@@ -534,6 +534,15 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   on interrupt, DDR `ddrSticker` pop + 🎯 grading toggle (#103 button pattern).
 
 ### Web (`web/`)
+- **✨ New-member walkthrough (web 1.0.286 · agent 3.4.43)** — cross-page
+  guided tour over the member's own data. Web: `components/GuidedTour.tsx`
+  (no-dep engine: localStorage state survives its own navigations, spotlight
+  clamps oversized targets, off-route → Resume pill, missing target →
+  centered card) + `lib/tourSteps.ts` (steps; PvP is an opt-in branch on the
+  final step, never core) + `TourLauncher` in the header + `data-tour`
+  anchors on `/me`. Mimic dashboard: `wpTourStart`/`WP_TOUR_STEPS` in
+  WEB_HTML — six stops switching tabs via the real nav buttons, ✨ Tour nav
+  button + one-time offer toast. Both Playwright-verified live.
 - **Roll nights (#91)** — `/rolls` (`web/lib/rolls.ts`).
 - **Quartermaster (#82)** — `/quartermaster` (`web/lib/quartermaster.ts`):
   utility-kit coverage + quest checklist (reuses the `quest_catalog` store).
