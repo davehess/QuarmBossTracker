@@ -43,6 +43,19 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'new-member-walkthrough',
+    title: '✨ The guided tour — your data, page by page',
+    version: 'Web 1.0.286 · Agent 3.4.43',
+    date: '2026-08-01',
+    headline: 'New (or just curious)? Hit ✨ Tour in the site header or on the Mimic dashboard for a guided clickthrough — one stop per page, spotlighting your own real data: your characters, your parses, your standing. Re-run it any time.',
+    features: [
+      { name: '🌐 Website walkthrough', blurb: 'Ten stops from Me to the Roadmap — each page spotlit with a plain-language card about what it does for you. Wander off mid-tour and a quiet Resume button waits in the corner; nothing is mocked, every number is yours.' },
+      { name: '🐺 Mimic dashboard tour (beta)', blurb: 'Six stops across the dashboard tabs — the Me card, overlays, buffs, fights, triggers, and the privacy controls — on your own live parser data. ✨ Tour button in the nav, offered once automatically on first load.' },
+      { name: '🏆 Accomplishment-first', blurb: 'The tour leads with what you\'ve done: your characters, The Scrap standing, the boards your name climbs. (PvP stays out of the way unless you ask to see it.)' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'charm-attribution-fix',
     title: '🐾 Charm pets stop lying on the parse',
     version: 'Bot 3.0.241 · Agent 3.4.42',
