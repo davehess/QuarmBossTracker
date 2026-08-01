@@ -1258,10 +1258,27 @@ one concrete detail. Shipped that night: stable 2.1.2 / agent 3.4.36.**
   batch, confirm each against a real log line, and fix the Rehearse
   synthesizer to stop stripping anchors so this can't hide again. May also
   moot the "DT missed pet victims" item — Death touch — RIP is one of the dead.
-- **`state.petOwners` night-accumulation risk** (rn-pets-payload): uploaded
-  pet_leaders merge into a server-persistent map, so a mob charmed once
-  credits its charmer for the rest of the night even after an UNcharmed
-  same-name mob replaces it. Ssra-trash-heavy nights will misattribute.
+- ~~**`state.petOwners` night-accumulation risk** (rn-pets-payload)~~ **HIT
+  LIVE 2026-07-30 (Blood of Ssraeshza) and FIXED across four releases.** The
+  predicted misattribution landed exactly as written: Jankzer top DPS while
+  mezzing (41.7k phantom "pet damage" from his early-evening Revenant/Lich
+  charm cycling), byte-identical pet buckets on Rorschach + Dabamf (one mob's
+  bucket split between two stale claimants — Dabamf was in Haven), encounter
+  total 70k past the boss HP pool. One corrupted uploader per fight (whoever's
+  stale residue matched that fight's mob names): Hawkner on Blood, Bardtholemu
+  3.05M on the 02:42 fight, Uilnayar at 01:05. Fixes: **bot 3.0.239** (never
+  split across the accumulated list), **bot 3.0.240** (timestamped
+  declarations; equal split among CURRENT claimants — declared within 15 min
+  of fight start — per Hitya's interim call for simultaneous same-named
+  charms; single-newest fallback), **agent 3.4.41** (scope the petLeaders
+  dump out of uploads: in-fight names only, article-prefixed charm residue
+  dropped), **agent 3.4.42** (HUD/threat meter: live charm proofs outrank the
+  runtime map; unproven charm mobs labeled "(charmed)", never credited to a
+  raider), **bot 3.0.241** (🐾 Charmed card section listing the charm pets +
+  who their damage split across). Corrupted rows repaired in Supabase
+  2026-07-31 (originals under `players_pre_petfix`; Blood 271k→219k). True
+  per-mob attribution still needs the Zeal spawn-id ask
+  (`docs/zeal-spawn-id-request.md`).
 - **`_detectSelfHp` admits Zeal WEIGHT pairs as HP** (rn-rampage-hp): mimic
   main.js:1327 two-point-agreement test passes at the boundary (gap exactly
   3.0), which is how 130/180 (charInfo 24/25 = cur/max WEIGHT) reached

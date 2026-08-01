@@ -86,6 +86,16 @@ across submitters. Session-blob guard drops "encounters" >30 min.
 watermark (`has_ability_detail`). Parses Log Discord thread is the recovery
 source (`PARSES_LOG_THREAD_ID` reloaded on startup; `/recoverkills` from
 Supabase).
+**Charm-pet attribution** (bot 3.0.239–241, the Blood-of-Ssraeshza fixes):
+`state.petOwners` holds TIMESTAMPED declarations (`[{o, at}]`,
+`petOwnerEntries` normalizes legacy shapes; cleared at midnight). The
+per-upload fold splits a pet name's damage equally among owners with a
+CURRENT claim (declared ≤15 min before fight start or during —
+`PET_CLAIM_FRESH_MS`), falling back to the single newest declaration; it
+NEVER splits across the night's accumulated list. The parse card lists the
+pets in a 🐾 Charmed field with their split. Same-named simultaneous charms
+stay one bucket until Zeal ships spawn ids
+(`docs/zeal-spawn-id-request.md`).
 
 ### Raid-night threads (`utils/raidNight.js`)
 One Discord thread per raid night, created **lazily** on that night's first

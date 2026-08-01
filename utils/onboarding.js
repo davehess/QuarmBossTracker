@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.0.241': [
+    '**Parse cards show the charm pets.** A new 🐾 Charmed section lists each charmed mob\'s damage and who it split across, so pet credit is visible instead of silently folded into someone\'s total. Last night\'s corrupted parses (Blood of Ssraeshza and two others) have been repaired in the database.',
+  ],
   '3.0.240': [
     '**Multiple same-named charm pets now share credit fairly.** When several raiders run same-named charms in one fight (three Revenants at once), the game\'s logs can\'t tell the mobs apart — so instead of one charmer collecting everything, the damage now splits equally among the raiders actively charming that mob name *in that fight*. True per-mob attribution arrives if/when Zeal ships spawn ids in its pipe (the upstream request is drafted).',
   ],

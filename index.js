@@ -13990,6 +13990,11 @@ async function _handleAgentUpload(req, res) {
     const e = playerTotals.get(name);
     if (isPet) e.pet += amount; else e.direct += amount;
   };
+  // 🐾 Charmed summary for the parse card ("list the charmed mobs together",
+  // Hitya 2026-07-31): per pet NAME, the damage bucket + the claimants it
+  // split across, from THIS upload's fold (latest perspective, like the
+  // events count in the card footer).
+  const _charmedPets = new Map();   // display name → { damage, claimants:Set }
   for (const ev of encounter.events) {
     if (ev.type !== 'damage') continue;
     const rawAttacker = ev.attacker;
@@ -14037,6 +14042,10 @@ async function _handleAgentUpload(req, res) {
       if (claimants.length > 0) {
         const share = amount / claimants.length;
         for (const o of claimants) _addDmg(o, share, true);
+        const cs = _charmedPets.get(attacker) || { damage: 0, claimants: new Set() };
+        cs.damage += amount;
+        for (const o of claimants) cs.claimants.add(o);
+        _charmedPets.set(attacker, cs);
       }
       // If no valid owner at all, treat as unattributed noise (same as unknown pet).
     } else {
@@ -14603,6 +14612,22 @@ async function _handleAgentUpload(req, res) {
         card.setTitle(`${origTitle}  ·  ${startTimeStr}`);
 
         card.setFooter({ text: `${perspLabel}${stagingTag} · ${perspNames} · ${encounter.events.length} events (latest)` });
+
+        // 🐾 Charmed — the charm pets listed together with who their damage
+        // split across ("A Shissar Revenant — 12,480 (Jankzer / Rorschach)").
+        // Latest-perspective like the footer's event count; same-named pets
+        // stay one line because the log can't tell them apart (no spawn id).
+        if (_charmedPets.size > 0) {
+          const _petLines = [..._charmedPets.entries()]
+            .sort((a, b) => b[1].damage - a[1].damage)
+            .slice(0, 6)
+            .map(([pname, v]) => {
+              const who = [...v.claimants];
+              const whoTxt = who.length > 1 ? ` (split: ${who.join(' / ')})` : (who.length === 1 ? ` (${who[0]})` : '');
+              return `${pname} — ${Math.round(v.damage).toLocaleString('en-US')}${whoTxt}`;
+            });
+          card.addFields({ name: '🐾 Charmed', value: _petLines.join('\n').slice(0, 1024), inline: false });
+        }
 
         // ── Cross-contamination detection ────────────────────────────────────
         // If we're posting a NEW (non-merged) card and there was a prior

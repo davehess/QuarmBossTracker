@@ -9,7 +9,7 @@
 //
 // Real-imports the bot utils. No Discord, no network.
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as events from '../utils/raidEvents.js';
 import * as raidNight from '../utils/raidNight.js';
 import { buildRollSessions, itemsMatch, renderRollLootLines } from '../utils/rollLoot.js';
@@ -34,11 +34,18 @@ beforeEach(() => {
   saved = {};
   for (const k of ENV_KEYS) { saved[k] = process.env[k]; delete process.env[k]; }
   process.env.TZ_DEFAULT = TZ;
+  // Freeze the clock mid-raid-night. The fixtures use ABSOLUTE dates, and the
+  // sticky event map prunes entries >24h past their end against Date.now() —
+  // so without this, the whole suite started failing exactly 24h after the
+  // fixture raid ended (first seen 2026-08-01, the night after it was
+  // written). Only Date is faked; timers stay real so async code can't hang.
+  vi.useFakeTimers({ now: et('2026-07-30T21:00:00-04:00'), toFake: ['Date'] });
   events._resetCache();
   raidNight._resetCache();
   raidNight._setEventsModule(events);   // same instance the test seeds
 });
 afterEach(() => {
+  vi.useRealTimers();
   for (const k of ENV_KEYS) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; }
 });
 

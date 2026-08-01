@@ -43,6 +43,22 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'charm-attribution-fix',
+    title: '🐾 Charm pets stop lying on the parse',
+    version: 'Bot 3.0.241 · Agent 3.4.42',
+    date: '2026-07-31',
+    headline: 'Thursday\'s Blood of Ssraeshza parse credited huge pet damage to raiders who were mezzing, dead, or in another zone — charm-cycled same-named mobs were spraying damage across everyone who ever charmed that name. Fixed end to end, and the bad parses are repaired.',
+    features: [
+      { name: '⚖️ Fair charm credit', blurb: 'A charm pet\'s damage now goes to the raiders actively charming that mob name in that fight — split equally when several run same-named pets at once — never to the whole night\'s history of past charmers. (Same-named mobs still can\'t be told apart individually; that needs a Zeal update we\'ve drafted the request for.)' },
+      { name: '🐾 Charmed on parse cards', blurb: 'Parse cards list each charmed mob\'s damage and who it split across, so pet credit is visible instead of hidden inside someone\'s total.' },
+      { name: '🖥️ Honest DPS meter (beta)', blurb: 'The live meter labels a charm pet with its proven current charmer — or just "(charmed)" when it can\'t prove one — instead of pinning every same-named pet on one person.' },
+    ],
+    fixes: [
+      'Thursday\'s corrupted parses (Blood of Ssraeshza and two more) were repaired: phantom players removed, totals back under the boss\'s actual HP.',
+      'The "View in Discord" button on parse pages now opens the readable parse card (and tries your Discord app first) instead of the machine-format log.',
+    ],
+  },
+  {
     key: 'ch-ddr-damage-alert',
     title: '🎯 The CH chain gets a cast bar (and grades your timing)',
     version: 'Agent 3.4.40',
