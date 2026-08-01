@@ -6,6 +6,7 @@ import AuthBadge from '@/components/AuthBadge';
 import TimezonePicker from '@/components/TimezonePicker';
 import LocalDashboardLink from '@/components/LocalDashboardLink';
 import GlobalSearch from '@/components/GlobalSearch';
+import GuidedTour, { TourLauncher } from '@/components/GuidedTour';
 import { getSessionUser } from '@/lib/session';
 import { isOfficer } from '@/lib/officer';
 
@@ -104,6 +105,9 @@ export default async function RootLayout({ children }: { children: React.ReactNo
               </div>
               <div className="flex flex-col items-end gap-2 shrink-0">
                 <div className="flex items-center gap-2">
+                  {/* ✨ new-member walkthrough — re-runnable any time; the
+                      engine itself is mounted at the end of <body>. */}
+                  {showMe && <TourLauncher />}
                   <Link
                     href="/feedback"
                     className="px-2.5 py-1 rounded border border-border bg-panel text-xs sm:text-sm text-text hover:bg-[#21262d] transition-colors whitespace-nowrap no-underline"
@@ -162,6 +166,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             </div>
           </footer>
         </div>
+        <GuidedTour signedIn={showMe} />
       </body>
     </html>
   );

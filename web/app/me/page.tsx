@@ -937,7 +937,7 @@ export default async function MePage() {
           )}
         </section>
       )}
-      <section className="bg-panel border border-border rounded-lg p-6">
+      <section data-tour="me-characters" className="bg-panel border border-border rounded-lg p-6">
         <div className="flex items-start justify-between gap-3 flex-wrap">
           <div>
             <h2 className="text-xl text-gold mb-1">👤 My Characters</h2>
@@ -995,7 +995,7 @@ export default async function MePage() {
           `(${fmtDmg(me!.total_damage)}, best parse ${me!.best_dps.toLocaleString()}/s). ` +
           `Top Dog: ${top.character_name} (${fmtDmg(top.total_damage)}). wolfpack.quest`;
         return (
-          <section className="bg-panel border border-gold/40 rounded-lg p-6">
+          <section data-tour="me-scrap" className="bg-panel border border-gold/40 rounded-lg p-6">
             <div className="flex items-start justify-between gap-3 flex-wrap">
               <div>
                 <h2 className="text-xl text-gold mb-1">🐺 The Scrap</h2>
