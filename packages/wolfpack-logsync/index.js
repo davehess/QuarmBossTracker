@@ -11123,7 +11123,8 @@ body.wp-overlay-mode .wp-overlay-target table th:nth-child(2) { text-align:right
        officer-gated card DATA is served only to officers, so this is a real
        gate, not a CSS hide. -->
   <button data-tab="admin" id="wpAdminTab" style="display:none" title="Officer quick menu — DKP ticks, loot capture, admin links">🛡 Admin</button>
-  <button id="wpGear" class="wp-gear" style="margin-left:auto" title="Customize panels — show or hide sections (per page)">⚙ Panels</button>
+  <button id="wpTourBtn" class="wp-gear" style="margin-left:auto" title="Take the guided walkthrough of the dashboard — every stop is your own live data. Re-run any time." onclick="wpTourStart()">✨ Tour</button>
+  <button id="wpGear" class="wp-gear" title="Customize panels — show or hide sections (per page)">⚙ Panels</button>
 </div>
 <div id="wpPanelMenu" class="wp-menu" style="display:none"></div>
 <div id="wpMailPanel" style="display:none;margin:8px 0;border:1px solid var(--border);border-radius:8px;padding:10px 12px;background:rgba(88,166,255,0.04)"></div>
@@ -15534,6 +15535,115 @@ async function refresh() {
     _refreshInFlight = false;
   }
 }
+
+// ── ✨ Dashboard walkthrough (new-member tour) ─────────────────────────────
+// A clickthrough across the dashboard tabs, spotlighting one section per
+// step over the user's OWN live data. Started from the ✨ Tour nav button
+// (re-runnable any time) and offered once automatically on first load.
+// Mirrors the wolfpack.quest walkthrough. Steps carry a tab (switched via
+// the real nav button, so refresh hooks fire) + selector list — the first
+// selector with a visible rect wins; none visible = centered card.
+var WP_TOUR_STEPS = [
+  { tab: 'dash', sel: '#wpMeCard, #dash .card', title: '🐺 This is you',
+    body: 'The Me card - your character, this session\\'s damage, and what your parser has seen tonight. Everything on this dashboard is your own machine\\'s live data; nothing here is mocked.' },
+  { tab: 'overlays', sel: '#overlays', title: '🪟 Your in-game overlays',
+    body: 'Every overlay flips on and off here - DPS meter, triggers, charm and pet trackers, Mob Info, CH chain. In game: ✥ (top-left) moves one, ✕ hides it, right-click resizes. Your layout is yours; Setup mode arranges them all at once.' },
+  { tab: 'raid', sel: '#raid', title: '⚔ Buffs and the raid',
+    body: 'The raid\\'s live buff coverage plus your personal queue - who needs your buff next, sorted so the tank comes first. When someone cures you mid-raid, this is the machinery that noticed.' },
+  { tab: 'fights', sel: '#fights', title: '⚔️ Your fights',
+    body: 'Every pull your parser recorded - damage, healing, threat. These are the same numbers that become the guild parse cards in Discord, with your name on the rows you earned.' },
+  { tab: 'triggers', sel: '#triggers', title: '⚡ Callouts that save raids',
+    body: 'Guild triggers arrive here automatically - rampage warnings, tank-buster countdowns, charm breaks. Rehearse any of them out loud before the raid, and add personal ones only you hear.' },
+  { tab: 'optin', sel: '#optin', title: '🔒 Your data, your call',
+    body: 'What uploads and what never leaves this machine, stream by stream. Officer chat, tells, and group chat are filtered out before parsing even happens. That\\'s the whole tour - raid well. 🐺' },
+];
+var _wpTourIdx = -1;
+function _wpTourEls() {
+  var shade = document.getElementById('wpTourShade');
+  var card  = document.getElementById('wpTourCard');
+  if (!shade) {
+    shade = document.createElement('div');
+    shade.id = 'wpTourShade';
+    shade.style.cssText = 'position:fixed;z-index:9998;pointer-events:none;border:2px solid var(--blue,#58a6ff);border-radius:8px;box-shadow:0 0 0 9999px rgba(0,0,0,0.68);display:none';
+    document.body.appendChild(shade);
+    card = document.createElement('div');
+    card.id = 'wpTourCard';
+    card.style.cssText = 'position:fixed;z-index:9999;max-width:380px;background:var(--card,#161b22);border:1px solid var(--border,#30363d);border-radius:8px;padding:14px;font-size:12px;box-shadow:0 8px 30px rgba(0,0,0,0.6);display:none';
+    document.body.appendChild(card);
+  }
+  return { shade: shade, card: document.getElementById('wpTourCard') };
+}
+function wpTourStop(done) {
+  _wpTourIdx = -1;
+  var els = _wpTourEls();
+  els.shade.style.display = 'none';
+  els.card.style.display = 'none';
+  try { localStorage.setItem('wp.dash.tour.done', done ? 'done' : 'dismissed'); } catch (e) {}
+}
+function wpTourShow(i) {
+  if (i < 0) return wpTourStop(false);
+  if (i >= WP_TOUR_STEPS.length) return wpTourStop(true);
+  _wpTourIdx = i;
+  var st = WP_TOUR_STEPS[i];
+  var tabBtn = document.querySelector('.nav button[data-tab="' + st.tab + '"]');
+  if (tabBtn && !tabBtn.classList.contains('active')) tabBtn.click();
+  // Let the tab render (some tabs fetch on activate), then measure.
+  setTimeout(function () {
+    var els = _wpTourEls();
+    var target = null;
+    var sels = st.sel.split(',');
+    for (var s = 0; s < sels.length; s++) {
+      var el = document.querySelector(sels[s].trim());
+      if (el) { var r0 = el.getBoundingClientRect(); if (r0.width > 0 && r0.height > 0) { target = el; break; } }
+    }
+    var vh = window.innerHeight;
+    if (target) {
+      target.scrollIntoView({ block: 'start' });
+      var r = target.getBoundingClientRect();
+      var h = Math.min(r.height, vh * 0.45);   // clamp whole-page sections to a top slice
+      els.shade.style.display = 'block';
+      els.shade.style.top = (r.top - 6) + 'px';
+      els.shade.style.left = (r.left - 6) + 'px';
+      els.shade.style.width = (r.width + 12) + 'px';
+      els.shade.style.height = (h + 12) + 'px';
+      var below = r.top + h + 18;
+      els.card.style.top = (below + 200 < vh ? below : Math.max(12, vh - 230)) + 'px';
+      els.card.style.left = Math.max(12, Math.min(r.left, window.innerWidth - 400)) + 'px';
+      els.card.style.transform = '';
+    } else {
+      els.shade.style.display = 'none';
+      els.card.style.top = '50%';
+      els.card.style.left = '50%';
+      els.card.style.transform = 'translate(-50%,-50%)';
+    }
+    var h2 = '<div class="dim" style="font-size:10px;margin-bottom:4px">' + (i + 1) + ' / ' + WP_TOUR_STEPS.length + '</div>'
+      + '<div style="color:var(--gold,#f6c365);margin-bottom:5px">' + st.title + '</div>'
+      + '<div style="line-height:1.5;margin-bottom:10px">' + st.body + '</div>'
+      + '<div style="display:flex;gap:8px;align-items:center">'
+      + (i > 0 ? '<button onclick="wpTourShow(' + (i - 1) + ')" style="font:inherit;background:transparent;border:1px solid var(--border,#30363d);color:var(--dim,#8b949e);border-radius:5px;padding:3px 9px;cursor:pointer">← Back</button>' : '')
+      + '<button onclick="wpTourShow(' + (i + 1) + ')" style="font:inherit;background:var(--blue,#1f6feb);border:1px solid var(--blue,#1f6feb);color:#fff;border-radius:5px;padding:3px 12px;cursor:pointer">' + (i === WP_TOUR_STEPS.length - 1 ? 'Finish' : 'Next →') + '</button>'
+      + '<button onclick="wpTourStop(false)" style="font:inherit;background:transparent;border:none;color:var(--dim,#8b949e);text-decoration:underline;cursor:pointer;margin-left:auto">Skip tour</button>'
+      + '</div>';
+    els.card.innerHTML = h2;
+    els.card.style.display = 'block';
+  }, 220);
+}
+function wpTourStart() { wpTourShow(0); }
+// One-time auto-offer: a quiet corner toast on first load, never again after
+// a start or a dismissal. localStorage failures (rare) just skip the offer.
+setTimeout(function () {
+  try {
+    if (localStorage.getItem('wp.dash.tour.done')) return;
+    var t = document.createElement('div');
+    t.id = 'wpTourOffer';
+    t.style.cssText = 'position:fixed;right:14px;bottom:14px;z-index:9999;background:var(--card,#161b22);border:1px solid var(--blue,#1f6feb);border-radius:8px;padding:12px 14px;font-size:12px;max-width:290px;box-shadow:0 8px 30px rgba(0,0,0,0.6)';
+    t.innerHTML = '<div style="margin-bottom:4px">✨ New here?</div>'
+      + '<div class="dim" style="font-size:11px;margin-bottom:8px">Take the one-minute tour of the dashboard - every stop is your own live data.</div>'
+      + '<button onclick="document.getElementById(\\'wpTourOffer\\').remove();wpTourStart()" style="font:inherit;background:var(--blue,#1f6feb);border:1px solid var(--blue,#1f6feb);color:#fff;border-radius:5px;padding:3px 12px;cursor:pointer">Start the tour</button> '
+      + '<button onclick="document.getElementById(\\'wpTourOffer\\').remove();try{localStorage.setItem(\\'wp.dash.tour.done\\',\\'dismissed\\')}catch(e){}" style="font:inherit;background:transparent;border:1px solid var(--border,#30363d);color:var(--dim,#8b949e);border-radius:5px;padding:3px 9px;cursor:pointer">Not now</button>';
+    document.body.appendChild(t);
+  } catch (e) {}
+}, 2500);
 
 // Tab switcher — scoped to .nav buttons that have a data-tab attribute.
 // The selector USED to be just '.nav button' which also matched the
