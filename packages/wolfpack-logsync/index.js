@@ -5528,11 +5528,22 @@ class EncounterBuilder {
       // rows need. Same-named trash ambiguity is accepted (mobs rarely
       // hit our targets unless charmed).
       const nl = String(name).toLowerCase();
-      const petOwner = this.petLeaders[nl]
-        || (this._activeCharms?.get(nl)?.owner)
+      // Live charm proofs FIRST — a stale petLeaders claim must never outrank
+      // the charm this agent can prove is running right now (the runtime map
+      // once labeled every revenant "Bardtholemu's" for the whole raid,
+      // 2026-07-31). Article-prefixed names are charm-pet MOBS with temporal
+      // ownership: without a live proof they get NO owner credit — the row
+      // stays on the meter flagged pet_charm so the overlay renders
+      // "(charmed)" instead of crediting one past charmer, and the pet-threat
+      // fold-back below skips them (no pet_owner). Summoned pets (single-word
+      // names) keep their runtime-long petLeaders ownership.
+      let petOwner = (this._activeCharms?.get(nl)?.owner)
         || (_charmTickTracker.get(nl)?.is_active ? _charmTickTracker.get(nl).owner : null)
+        || (!/^an?\s/i.test(nl) ? (this.petLeaders[nl] || null) : null)
         || null;
-      if (this.targets.has(name) && !petOwner) continue;
+      if (petOwner === '__SELF__') petOwner = this.character || null;
+      const petCharm = !petOwner && /^an?\s/i.test(nl) && !!this.petLeaders[nl];
+      if (this.targets.has(name) && !petOwner && !petCharm) continue;
       perPlayer[name] = {
         swing:      Math.round(t.swing),
         proc:       Math.round(t.proc),
@@ -5550,6 +5561,10 @@ class EncounterBuilder {
         // the multi-word name past its anti-NPC filter and label the row
         // "A Fungoid Sporeling (Hopeya)".
         pet_owner:  petOwner,
+        // Charm mob with NO live local proof of who runs it right now —
+        // whitelisted on the meter but rendered "(charmed)", never credited
+        // to a specific raider (undefined when not applicable, keeps payload flat).
+        pet_charm:  petCharm || undefined,
         procDetail: t.procDetail || {},
       };
     }
