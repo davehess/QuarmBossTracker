@@ -427,6 +427,30 @@ Zeal health, Settings, loading. Overlays poll the local agent
   chat, anomalies. Pattern: client component with optimistic
   `useState`+`useTransition`, server actions in `actions.ts`, no
   `router.refresh()` (revalidatePath only).
+- **/admin/console (#87)** — the officer console. Three parts on one page:
+  (1) a **health board** built by the pure `web/lib/consoleHealth.ts` (ingest
+  heartbeat, agents-uploading-now, chat relay, parses landing, live state,
+  upload errors, fleet versions, control-plane drift, `^`-anchored dead
+  triggers, backfill/queue backlog, `/api/health`) — **raid-window aware**, so
+  outside Sun/Wed/Thu 19:30→00:30 ET every freshness amber/red downgrades to
+  grey "quiet"; (2) a **drift panel** listing every `overlay_tuning` CONTROL key
+  currently set, with its age and a one-click Clear (the console stamps
+  `flag_set_at_<key>` when it sets one — zero-migration, string values already
+  ride that jsonb); (3) the **runbooks** from `web/lib/runbooks.ts`, deep-linkable
+  (`#rb-01`), each carrying its dated incident, and auto-opened when one of its
+  signals is red. Writes use the SAME `overlay_tuning.tuning` read-modify-write
+  as `/admin/overlays` and the bot's `POST /api/agent/flag-override`, so all
+  three surfaces agree — the console **mirrors** the control plane, it never
+  owns it, and nothing moved out of its existing home. Officer gate is inherited
+  from `web/app/admin/layout.tsx`. Safety classes: clearing an override is one
+  click, *setting* a fleet-scale lever needs a typed phrase (`PAUSE FLEET` for
+  `flag_agent_kill`), and bulk trigger edits / data repair / deploys are
+  deliberately not buttons. **Anti-rot:** `test/runbooks-catalog.test.js` asserts
+  every runbook's structured lever refs still resolve — flags against the bot's
+  `_FLAG_OVERRIDE_KEYS` + `_SHED_KINDS` and the overlays catalog, routes against
+  real `page.tsx` files, commands against `commands/*.js`, docs against disk —
+  so renaming a flag fails CI instead of silently making a runbook lie. Design +
+  the full runbook prose: `docs/DESIGN-87-officer-console.md`.
 - **Encryption boundary**: the web has the service-role key but NOT
   `WISHLIST_BID_KEY` — anything encrypted (bids, UI snapshots) is bot-only;
   the bot must extract/serve plaintext derivatives the web needs.

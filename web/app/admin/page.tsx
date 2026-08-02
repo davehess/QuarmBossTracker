@@ -15,6 +15,11 @@ export default function AdminPage() {
 
       <section className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <Card
+          title="🎛 Officer console"
+          body="Is something wrong, and what do I do about it? One page: the health board (ingest, chat relay, parses, fleet versions, dead triggers, site), every control-plane override that is currently set with a one-click Clear, the emergency shed/pause levers, and the runbooks — each grounded in an incident that actually happened."
+          href="/admin/console"
+        />
+        <Card
           title="🛠 Review queue"
           body="Cross-checks roster + /who + chat for officer-action items: chat speakers missing from OpenDKP (no DKP credit), anon-only names that render without class info in chat, and any future category we add to web/lib/admin-queue."
           href="/admin/queue"
