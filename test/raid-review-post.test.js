@@ -14,6 +14,15 @@
 //       anchors on the night's FIRST ENCOUNTER, not on "now", and never calls
 //       threads.create when the thread already exists.
 //
+// The LIVE half (docs/DESIGN-live-raid-review.md) adds three more:
+//
+//   (d) the live card EDITS one message — a burst of uploads collapses into a
+//       single debounced edit, and the 00:45 final still owns the last word;
+//   (e) the trash tally dedups the same kill across ~20 uploaders;
+//   (f) the ingest path itself is untouched — the hook sits AFTER the 200, is
+//       never awaited, is try/caught, and every pre-existing step of
+//       _handleAgentUpload is still there in the same order.
+//
 // Real-imports the bot utils. No Discord, no network.
 
 import fs from 'node:fs';
@@ -78,6 +87,7 @@ const ENV_KEYS = [
   'TZ_DEFAULT', 'RAID_REVIEW', 'RAID_REVIEW_DELAY_MIN', 'RAID_REVIEW_CATCHUP_HOURS',
   'RAID_REVIEW_MIN_KILLS', 'RAID_NIGHT_ROLLOVER_HOUR', 'RAID_NIGHT_THREAD_PARENT_ID',
   'RAID_NIGHT_THREAD_ID', 'RAID_NIGHT_FALLBACK', 'WEB_BASE_URL', 'DISCORD_GUILD_ID',
+  'RAID_REVIEW_LIVE', 'RAID_REVIEW_LIVE_DEBOUNCE_SEC', 'RAID_REVIEW_LIVE_MIN_SEC',
 ];
 let saved;
 // utils/state.js writes data/state.json from a hard-coded path, and
@@ -105,6 +115,7 @@ beforeEach(() => {
   raidNight._resetCache();
   raidNight._setEventsModule(events);
   raidReview._clearTimer();
+  raidReview._clearLiveCaches();
   // raidReview require()s utils/raidNight; this file imports it as ESM. Those
   // are DIFFERENT module instances under vitest, so the seeded events would not
   // reach the copy the review uses — inject the instance this test drives.
@@ -112,6 +123,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   raidReview._clearTimer();
+  raidReview._clearLiveCaches();
   raidReview._setDeps({});
   vi.useRealTimers();
   if (hadState) fs.writeFileSync(STATE_FILE, savedState);
@@ -535,5 +547,350 @@ describe('composition', () => {
     process.env.WEB_BASE_URL = 'https://wolfpack.quest';
     const sum = raidReview.summarizeNight(nightData());
     expect(raidReview.renderReviewEmbeds(sum)[0].toJSON().url).toBe('https://wolfpack.quest/raid/review/2026-07-30');
+  });
+});
+
+// ── Content additions: the timeline strip + trash (Hitya 2026-08-02) ─────────
+
+const iso = (ms) => new Date(ms).toISOString();
+
+describe('the Discord fight timeline (the FightTimeline analogue)', () => {
+  it('places deaths where they fell inside the fight', () => {
+    // 12 cells over a 120s fight = 10s per cell. Deaths at 5s and 115s.
+    expect(raidReview.deathStrip([5_000, 115_000], 0, 120_000)).toBe('▂▁▁▁▁▁▁▁▁▁▁▂');
+    // A wipe is one tall bar, not twelve short ones.
+    expect(raidReview.deathStrip([61_000, 62_000, 63_000, 64_000, 65_000], 0, 120_000)).toBe('▁▁▁▁▁▁█▁▁▁▁▁');
+    // Degenerate inputs never throw or produce a ragged strip.
+    expect(raidReview.deathStrip([], 0, 0)).toHaveLength(raidReview.TIMELINE_CELLS);
+    expect(raidReview.deathStrip([-5_000, 999_999], 0, 1000)).toBe('▂▁▁▁▁▁▁▁▁▁▁▂');
+  });
+
+  it('builds one row per fight that had a death, linked to the web timeline', () => {
+    const t = FIRST_PULL + 10_000;
+    const sum = raidReview.summarizeNight(nightData({
+      deathContribs: [{ encounter_id: 'e1', deaths: [
+        { name: 'Hitya', ts: iso(t), class: 'Monk' },
+        { name: 'Shavimo', ts: iso(t + 2000), class: 'Shaman' },
+        { name: 'Jankzer', ts: iso(t + 3000), class: 'Necromancer' },
+      ] }],
+    }));
+    expect(sum.timelines).toHaveLength(1);
+    expect(sum.timelines[0]).toMatchObject({ id: 'e1', boss: 'a glyph covered serpent', deaths: 3 });
+    expect(sum.timelines[0].worstCluster).toBe(3);        // died together → the wipe signal
+    expect(sum.timelines[0].strip).toHaveLength(raidReview.TIMELINE_CELLS);
+
+    process.env.WEB_BASE_URL = 'https://wolfpack.quest';
+    const j = raidReview.renderReviewEmbeds(sum)[0].toJSON();
+    const field = j.fields.find(f => f.name.startsWith('🕒'));
+    expect(field.value).toMatch(/\(https:\/\/wolfpack\.quest\/parses\/e1\)/);
+    expect(field.value).toMatch(/3 together/);
+  });
+
+  it('uses the SAME deaths the rest of the review counts — a fight with none is absent', () => {
+    const quiet = enc({ id: 'e2', npc_id: 162039, eqemu_npc_types: { name: '#Vyzh`dra_the_Exiled', zone_short: null } });
+    const sum = raidReview.summarizeNight(nightData({
+      encounters: [enc(), quiet],
+      // Two parsers see ONE Hitya death — the shared dedup keeps one, so the
+      // timeline must show one, not two.
+      deathContribs: [
+        { encounter_id: 'e1', deaths: [{ name: 'Hitya', ts: iso(FIRST_PULL + 5000), class: 'Monk' }] },
+        { encounter_id: 'e1', deaths: [{ name: 'Hitya', ts: iso(FIRST_PULL + 7000), class: 'Monk' }] },
+      ],
+    }));
+    expect(sum.timelines.map(t => t.id)).toEqual(['e1']);
+    expect(sum.timelines[0].deaths).toBe(1);
+    expect(sum.deaths).toHaveLength(1);
+  });
+
+  it('drops out entirely when nothing died', () => {
+    const sum = raidReview.summarizeNight(nightData());
+    expect(sum.timelines).toEqual([]);
+    expect(raidReview.renderReviewEmbeds(sum)[0].toJSON().fields.some(f => f.name.startsWith('🕒'))).toBe(false);
+  });
+});
+
+// ── (e) trash tally ──────────────────────────────────────────────────────────
+
+describe('(e) trash totals — the one thing Supabase has no row for', () => {
+  const KEY = () => raidNight.nightKey(FIRST_PULL);
+
+  it('collapses the same kill reported by twenty uploaders into one', () => {
+    // Every agent in the raid uploads the same "a glyph covered serpent" with
+    // its own slightly different start time and its own partial damage total.
+    for (let i = 0; i < 20; i++) {
+      raidReview.noteTrashKill({ atMs: FIRST_PULL + i * 700, name: 'a glyph covered serpent', damage: 1000 + i * 10, durationSec: 12 });
+    }
+    const sum = raidReview.trashSummary(KEY());
+    expect(sum.kills).toBe(1);
+    expect(sum.damage).toBe(1190);          // max-keep, like merge_encounter_players
+    expect(sum.mobs).toEqual([{ name: 'a glyph covered serpent', kills: 1, damage: 1190 }]);
+  });
+
+  it('still separates two genuine kills of the same mob', () => {
+    raidReview.noteTrashKill({ atMs: FIRST_PULL, name: 'an ancient guardian', damage: 5000, durationSec: 20 });
+    raidReview.noteTrashKill({ atMs: FIRST_PULL + 5 * 60_000, name: 'an ancient guardian', damage: 4000, durationSec: 18 });
+    expect(raidReview.trashSummary(KEY()).kills).toBe(2);
+  });
+
+  it('does not double-count a kill that straddles a dedup bucket boundary', () => {
+    // 30s buckets — these two land in adjacent buckets, but are one kill.
+    const onBoundary = Math.ceil(FIRST_PULL / 30_000) * 30_000;
+    raidReview.noteTrashKill({ atMs: onBoundary - 1, name: 'a temple guard', damage: 100 });
+    raidReview.noteTrashKill({ atMs: onBoundary + 1, name: 'a temple guard', damage: 100 });
+    expect(raidReview.trashSummary(KEY()).kills).toBe(1);
+  });
+
+  it('counts only unconfirmed-free NON-boss kills, and never during backfill', () => {
+    const base = { atMs: FIRST_PULL, damage: 100, durationSec: 10, players: 4 };
+    raidReview.noteEncounterUpload({ ...base, bossName: 'Emperor Ssraeshza', isBoss: true,  confirmed: true });
+    raidReview.noteEncounterUpload({ ...base, bossName: 'a temple guard',    isBoss: false, confirmed: false });  // pull, not a kill
+    raidReview.noteEncounterUpload({ ...base, bossName: 'a temple guard',    isBoss: false, confirmed: true, players: 0 });
+    expect(raidReview.trashSummary(KEY())).toBe(null);
+    raidReview.noteEncounterUpload({ ...base, bossName: 'a temple guard', isBoss: false, confirmed: true });
+    expect(raidReview.trashSummary(KEY()).kills).toBe(1);
+  });
+
+  it('renders totals plus the top mobs, labelled as observed', () => {
+    const sum = raidReview.summarizeNight(nightData({
+      trash: { kills: 143, damage: 2_450_000, seconds: 1830, observed: true,
+        mobs: [{ name: 'a glyph covered serpent', kills: 51, damage: 900_000 },
+               { name: 'a temple guard', kills: 40, damage: 700_000 }] },
+    }));
+    expect(sum.trash.kills).toBe(143);
+    const field = raidReview.renderReviewEmbeds(sum)[0].toJSON().fields.find(f => f.name.startsWith('🐜'));
+    expect(field.value).toMatch(/\*\*143\*\* mobs cleared/);
+    expect(field.value).toMatch(/2\.45M/);
+    expect(field.value).toMatch(/a glyph covered serpent/);
+    expect(field.value).toMatch(/agents saw die/);
+  });
+
+  it('drops out when nothing was tallied — never a "0 trash" line', () => {
+    const sum = raidReview.summarizeNight(nightData({ trash: { kills: 0, damage: 0, seconds: 0, mobs: [] } }));
+    expect(sum.trash).toBe(null);
+    expect(raidReview.renderReviewEmbeds(sum)[0].toJSON().fields.some(f => f.name.startsWith('🐜'))).toBe(false);
+  });
+
+  it('a hostile call cannot throw into the upload handler', () => {
+    expect(() => raidReview.noteTrashKill()).not.toThrow();
+    expect(() => raidReview.noteTrashKill({ atMs: NaN, name: null })).not.toThrow();
+    expect(() => raidReview.noteEncounterUpload()).not.toThrow();
+    const hostile = new Proxy({}, { get() { throw new Error('boom'); } });
+    expect(() => raidReview.noteEncounterUpload({ atMs: FIRST_PULL, bossName: 'x', confirmed: true, players: 1, client: hostile })).not.toThrow();
+  });
+});
+
+// ── (d) the live card ────────────────────────────────────────────────────────
+
+function liveData(over = {}) {
+  return nightData({
+    encounters: [
+      enc(),
+      // A pull that has NOT been confirmed down — the fight in progress.
+      enc({ id: 'e2', npc_id: 162039, ended_at: null,
+        started_at: new Date(et('2026-07-30T20:56:00-04:00')).toISOString(),
+        eqemu_npc_types: { name: '#Vyzh`dra_the_Exiled', zone_short: null } }),
+    ],
+    ...over,
+  });
+}
+
+describe('(d) the live card is the SAME message, refreshed', () => {
+  const NOW = et('2026-07-30T21:00:00-04:00');
+
+  it('shows what the final cannot: the fight in progress, and our own pace', () => {
+    // Six prior raid nights, five kills each, all inside the first 20 minutes.
+    const paceHistory = [];
+    for (let n = 0; n < 6; n++) {
+      const nightStart = et('2026-07-30T20:40:00-04:00') - (n + 1) * 7 * 86_400_000;
+      for (let k = 0; k < 5; k++) paceHistory.push({ started_at: iso(nightStart + k * 4 * 60_000) });
+    }
+    const sum = raidReview.summarizeNight(liveData({ paceHistory }), { requireKills: false, nowMs: NOW });
+    expect(sum.live.inProgress).toEqual([{ boss: 'Vyzh`dra the Exiled', sinceMs: et('2026-07-30T20:56:00-04:00') }]);
+    expect(sum.live.pace).toMatchObject({ kills: 1, usual: 5, nights: 6 });
+
+    const j = raidReview.renderReviewEmbeds(sum)[0].toJSON();
+    expect(j.title).toBe('🔴 Raid Night — Thursday, July 30, 2026');
+    expect(j.description).toMatch(/🔴 \*\*LIVE\*\*/);
+    expect(j.description).toMatch(/⚔️ Fighting \*\*Vyzh`dra the Exiled\*\*/);
+    expect(j.description).toMatch(/<t:\d+:R>/);              // self-ticking, no edit needed
+    expect(j.description).toMatch(/4 behind our usual 5 \(last 6 raids\)/);
+    expect(j.footer.text).toMatch(/final writeup after midnight/);
+  });
+
+  it('makes no pace claim without a real baseline', () => {
+    const thin = [{ started_at: iso(FIRST_PULL - 7 * 86_400_000) }];
+    const sum = raidReview.summarizeNight(liveData({ paceHistory: thin }), { requireKills: false, nowMs: NOW });
+    expect(sum.live.pace).toBe(null);
+    expect(raidReview.renderReviewEmbeds(sum)[0].toJSON().description).not.toMatch(/📈/);
+  });
+
+  it('the FINAL review for the same night carries none of it', () => {
+    const sum = raidReview.summarizeNight(liveData());
+    expect(sum.live).toBe(null);
+    const j = raidReview.renderReviewEmbeds(sum)[0].toJSON();
+    expect(j.title).toBe('📓 Raid Night Review — Thursday, July 30, 2026');
+    expect(j.color).toBe(0xe67e22);
+    expect(j.description).not.toMatch(/LIVE|Fighting|<t:/);
+    expect(j.footer.text).toMatch(/\/raidreview to refresh/);
+  });
+
+  it('renders a card for a raid that has pulled but not yet killed anything', () => {
+    const onlyEngaged = nightData({ encounters: [enc({ ended_at: null })] });
+    expect(raidReview.summarizeNight(onlyEngaged)).toBe(null);                       // the final: nothing to review
+    const live = raidReview.summarizeNight(onlyEngaged, { requireKills: false, nowMs: NOW });
+    expect(live.kills).toHaveLength(0);
+    expect(live.live.inProgress).toHaveLength(1);
+    expect(raidReview.renderReviewEmbeds(live)[0].toJSON().fields.some(f => f.name.startsWith('🏆'))).toBe(false);
+  });
+
+  it('a live refresh EDITS the card it already posted — one message, ever', async () => {
+    process.env.RAID_NIGHT_THREAD_PARENT_ID = 'PARENT';
+    events._seed([{ ...RAID_EVENT, source: 'discord' }], FIRST_PULL);
+    const { client, parent, sent, edited } = fakeDiscord();
+    const slots = new Map();
+    raidReview._setDeps({
+      raidNight, collect: async () => liveData(),
+      state: { getRaidReviewMessageId: (k) => slots.get(k) || null, setRaidReviewMessageId: (k, v) => slots.set(k, v) },
+    });
+
+    const first = await raidReview.postRaidNightReview(client, { atMs: FIRST_PULL, live: true, nowMs: NOW });
+    expect(first.reason).toBe('posted');
+    for (let i = 0; i < 5; i++) {
+      const again = await raidReview.postRaidNightReview(client, { atMs: FIRST_PULL, live: true, nowMs: NOW });
+      expect(again.reason).toBe('edited');
+    }
+    expect(sent).toHaveLength(1);
+    expect(edited).toHaveLength(5);
+    expect(parent.threads.create).not.toHaveBeenCalled();
+  });
+
+  it('the 00:45 final edits the live card, and no later live refresh can undo it', async () => {
+    process.env.RAID_NIGHT_THREAD_PARENT_ID = 'PARENT';
+    events._seed([{ ...RAID_EVENT, source: 'discord' }], FIRST_PULL);
+    const { client, sent, edited } = fakeDiscord();
+    const slots = new Map();
+    raidReview._setDeps({
+      raidNight, collect: async () => liveData(),
+      state: { getRaidReviewMessageId: (k) => slots.get(k) || null, setRaidReviewMessageId: (k, v) => slots.set(k, v) },
+    });
+
+    await raidReview.postRaidNightReview(client, { atMs: FIRST_PULL, live: true, nowMs: NOW });
+    const final = await raidReview.postRaidNightReview(client, { atMs: FIRST_PULL });
+    expect(final.reason).toBe('edited');
+    expect(JSON.stringify(edited[0].embeds[0].toJSON())).not.toMatch(/LIVE/);
+
+    const late = await raidReview.postRaidNightReview(client, { atMs: FIRST_PULL, live: true, nowMs: NOW });
+    expect(late.ok).toBe(false);
+    expect(late.reason).toBe('final-posted');
+    expect(sent).toHaveLength(1);
+    expect(edited).toHaveLength(1);
+  });
+
+  it('RAID_REVIEW_LIVE=0 stops the live card without touching the morning review', async () => {
+    process.env.RAID_REVIEW_LIVE = '0';
+    raidReview._setDeps({ raidNight, collect: async () => liveData() });
+    const res = await raidReview.postRaidNightReview({ user: {} }, { atMs: FIRST_PULL, live: true, dryRun: true });
+    expect(res.reason).toBe('live-disabled');
+    expect(raidReview.touchLiveRaidReview({ user: {} }, { atMs: FIRST_PULL }).armed).toBe(false);
+    // …and the final still builds.
+    expect((await raidReview.postRaidNightReview({ user: {} }, { atMs: FIRST_PULL, dryRun: true })).ok).toBe(true);
+  });
+
+  it('a burst of uploads collapses into ONE refresh', async () => {
+    process.env.RAID_NIGHT_THREAD_PARENT_ID = 'PARENT';
+    process.env.RAID_REVIEW_LIVE_DEBOUNCE_SEC = '5';
+    process.env.RAID_REVIEW_LIVE_MIN_SEC = '30';
+    events._seed([{ ...RAID_EVENT, source: 'discord' }], FIRST_PULL);
+    // Fake the TIMERS too for this one so the debounce can be driven forward.
+    vi.useFakeTimers({ now: NOW, toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+    try {
+      const { client, sent } = fakeDiscord();
+      const slots = new Map();
+      let collects = 0;
+      raidReview._setDeps({
+        raidNight, collect: async () => { collects++; return liveData(); },
+        state: { getRaidReviewMessageId: (k) => slots.get(k) || null, setRaidReviewMessageId: (k, v) => slots.set(k, v) },
+      });
+
+      // Twenty agents upload the same kill inside four seconds.
+      for (let i = 0; i < 20; i++) {
+        expect(raidReview.touchLiveRaidReview(client, { atMs: FIRST_PULL }).armed).toBe(true);
+        await vi.advanceTimersByTimeAsync(200);
+      }
+      expect(collects).toBe(0);                       // still inside the debounce
+      await vi.advanceTimersByTimeAsync(6_000);
+      expect(collects).toBe(1);
+      expect(sent).toHaveLength(1);
+
+      // A later upload waits out the min-interval floor rather than editing again.
+      raidReview.touchLiveRaidReview(client, { atMs: FIRST_PULL });
+      await vi.advanceTimersByTimeAsync(6_000);
+      expect(collects).toBe(1);
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(collects).toBe(2);
+    } finally {
+      raidReview._clearTimer();
+      vi.useFakeTimers({ now: NOW, toFake: ['Date'] });
+    }
+  });
+
+  it('touchLiveRaidReview never throws, and never fires off a raid night', () => {
+    expect(() => raidReview.touchLiveRaidReview(null)).not.toThrow();
+    const hostile = new Proxy({}, { get() { throw new Error('boom'); } });
+    expect(() => raidReview.touchLiveRaidReview(hostile, { atMs: NaN })).not.toThrow();
+    // Tuesday lunchtime is not a raid — no card, no work.
+    expect(raidReview.touchLiveRaidReview({ user: {} }, { atMs: et('2026-07-28T13:00:00-04:00') }))
+      .toMatchObject({ armed: false, reason: 'not-raid-night' });
+    expect(raidReview.touchLiveRaidReview({ user: {} }, { atMs: FIRST_PULL }).armed).toBe(true);
+  });
+});
+
+// ── (f) the ingest path is exactly what it was ───────────────────────────────
+
+describe('(f) _handleAgentUpload is unchanged by the live hook', () => {
+  const src = readSource(BOT_INDEX);
+  const handler = sliceBlock(src, 'async function _handleAgentUpload(req, res) {', '\nconst httpServer = http.createServer(');
+
+  it('keeps every pre-existing step, in order, with the ack in the same place', () => {
+    const STEPS = [
+      'const identity = await mimicLink.requireAgentAuth(req, res);',
+      'mergeWhoData(uploadedWhoData)',
+      'accumulateSessionDamage(players, duration)',
+      'const _postParseCardsDeferred = async () => {',
+      '_parseLogMsgP = logParseToDiscord(client, matchedBoss.id, parseEntry);',
+      'const recParseResult = await supabase.recordParse({',
+      'latest_agent_version:  _currentAgentVersion(),',           // ← the 200 ack
+      '_postParseCardsDeferred().catch(',
+      '.then(msg => applyEncounterParseLink(msg, _encIdForLink))',
+    ];
+    let at = -1;
+    for (const step of STEPS) {
+      const i = handler.indexOf(step);
+      expect(i, `upload step missing or reordered: ${step}`).toBeGreaterThan(at);
+      at = i;
+    }
+  });
+
+  it('the durability boundary still sits BEFORE the ack and Discord AFTER it', () => {
+    const ack      = handler.indexOf('latest_agent_version:  _currentAgentVersion(),');
+    expect(handler.indexOf('const recParseResult = await supabase.recordParse({')).toBeLessThan(ack);
+    expect(handler.indexOf('_postParseCardsDeferred().catch(')).toBeGreaterThan(ack);
+  });
+
+  it('the live hook is post-ack, backfill-gated, try/caught and NEVER awaited', () => {
+    const i = handler.indexOf('noteEncounterUpload({');
+    expect(i, 'the live review hook is not wired into the upload handler').toBeGreaterThan(-1);
+    expect(i).toBeGreaterThan(handler.indexOf('latest_agent_version:  _currentAgentVersion(),'));
+    // Its own try — the nearest `try {` above it must not already have closed
+    // (the same non-vacuous check the midnight-chain assertion uses).
+    const tryAt = handler.lastIndexOf('try {', i);
+    expect(tryAt).toBeGreaterThan(-1);
+    expect(handler.slice(tryAt, i), 'the live hook is not inside its own try').not.toMatch(/catch\s*\(/);
+    expect(handler.slice(i, i + 400)).toMatch(/catch\s*\(/);
+    // Backfill must not touch tonight's card.
+    expect(handler.slice(Math.max(0, i - 900), i)).toMatch(/if \(!isBackfill\) \{/);
+    // Never awaited, and never returned — it cannot alter handler flow.
+    expect(handler).not.toMatch(/await\s+[^\n]*noteEncounterUpload/);
+    expect(handler).not.toMatch(/return\s+[^\n]*noteEncounterUpload/);
   });
 });

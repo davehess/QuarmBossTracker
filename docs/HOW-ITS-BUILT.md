@@ -161,6 +161,43 @@ Load-bearing details:
 - `RAID_REVIEW=0` kills the automatic post; `/raidreview [date] [preview]` is the
   officer escape hatch. Regression: `test/raid-review-post.test.js`.
 
+**LIVE during the raid (2026-08-02, `docs/DESIGN-live-raid-review.md`).** The
+card is written from the first pull and *grows into* the morning-after review —
+**same message, same `rreview_<nightKey>` slot**, so the 00:45 post edits the
+live card rather than adding one. Load-bearing:
+- **Hook**: ONE post-ack block in `_handleAgentUpload` calling
+  `raidReview.noteEncounterUpload({...})` — synchronous, try/caught, never
+  awaited, skipped on backfill. It passes a **signal, not combat data**: every
+  number still comes from Supabase via `summarizeNight`, so the live card can
+  never disagree with the parse card. `test/raid-review-post.test.js` §(f)
+  source-slices `_handleAgentUpload` to pin that (mutation-verified).
+- **Cadence**: `RAID_REVIEW_LIVE_DEBOUNCE_SEC` (60) after the last upload,
+  floored by `RAID_REVIEW_LIVE_MIN_SEC` (300) between edits — ~20 agents
+  uploading one kill produce ONE edit. `RAID_REVIEW_LIVE=0` is the mid-raid kill
+  switch (the 00:45 review survives it). `_finalDone` stops any late live timer
+  overwriting the finished writeup.
+- **Cost**: `collectNightData(win,{live:true})` caches the cold slices (roster,
+  zones, 90-day history, pace baseline 6h; OpenDKP + fun events 10min) so steady
+  state is **2 queries per refresh**. Caching is live-only — the 00:45 review and
+  `/raidreview` issue the identical queries they always did.
+- **Live-only content**: in-progress fight, last-kill time, and pace vs our own
+  trailing raid nights. Times use Discord `<t:…:R>` so they keep ticking with no
+  edit. Pace requires ≥3 prior nights with ≥5 kills **that were scheduled raid
+  nights** — without that filter weeknight six-mans drag the median to 2.
+- **🕒 Timelines**: web renders the REAL `FightTimeline` (#98) per fight (deaths
+  + `encounter_events` raid events/fires, scoped to the night's encounter ids);
+  Discord renders a 12-cell death sparkline linking to `/parses/<id>`. Both plot
+  only deaths INSIDE `[start−30s, end+30s]` — the ±30min encounter-dedup window
+  lets a fight carry an earlier add's deaths, which `FightTimeline` clamps onto
+  t=0 and reads as a wipe that never happened (2026-07-30 Xerkizh).
+- **🐜 Trash**: **`encounters` is boss-only** — `recordParse` no-ops without a
+  `bosses_local` row (verified: 1521/1521 encounter rows have one; `bosses_local`
+  holds 128 bosses). So trash exists ONLY in the upload stream. The bot tallies
+  it in memory (dedup key `<mob>|<30s bucket>` ± neighbours, max-kept damage) and
+  persists to **`bot_kv` → `raid_trash_<YYYY-MM-DD>`** on the refresh cadence;
+  the web review reads the same key. No migration; a durable
+  `raid_night_trash` table is proposed (not applied) in the design doc.
+
 ### Event-driven posting windows (`utils/raidEvents.js`) — v2, 2026-07-31
 Which thread a timestamp wants is decided by the guild's **Discord scheduled
 events**, not a weekday table. `guild.scheduledEvents.fetch()` is a REST call,

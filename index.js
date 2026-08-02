@@ -15143,6 +15143,29 @@ async function _handleAgentUpload(req, res) {
   // rejection.
   _postParseCardsDeferred().catch(err => console.warn('[agent] deferred card work failed:', err?.message));
 
+  // [#80-live] Live Raid Night Review — post-ack, synchronous, fully swallowed.
+  // Two jobs, neither of which may ever reach this handler's control flow:
+  //   • tally the kill when it was NOT a tracked boss (`encounters` is
+  //     boss-only, so the trash totals Hitya asked for have no other source);
+  //   • mark the night dirty so the live card refreshes on its own debounce.
+  // It is handed a SIGNAL, never combat data — every number on the card still
+  // comes from Supabase, so the live card can't disagree with the parse card.
+  // Backfill is excluded: replaying old logs must not touch tonight's card.
+  if (!isBackfill) {
+    try {
+      require('./utils/raidReview').noteEncounterUpload({
+        client,
+        atMs:        startedMs,
+        bossName:    encounter.boss_name || null,
+        isBoss:      !!matchedBoss,
+        confirmed:   encounter.confirmed_kill === true,
+        damage:      totalDamage,
+        durationSec: duration,
+        players:     players.length,
+      });
+    } catch (err) { console.warn('[agent] live review hook failed:', err?.message); }
+  }
+
   // #83 — parse deep link (Discord card ↔ wolfpack.quest). Once the Parse Log
   // card is posted AND the encounter id is known, add the wolfpack.quest link
   // to the card and store the card's Discord jump link on the encounter row.
