@@ -1192,7 +1192,7 @@ voting + blocked-on-evidence submissions) shows a canonical `#` per item.
 Items that already had ledger numbers keep them (#56, #68–70, #75, #80, #81,
 #84, #86, #87, #114, #142, #144, #156, #169). These were UNNUMBERED and got
 minted here — the numbering is now owned by this ledger, next free is
-**#199**:
+**#200**:
 - **#190** dead ^-anchored guild triggers batch (rn-buster-audit follow-up)
 - **#191** Parse Log duplicate embeds (near-identical archive entries seconds apart)
 - **#192** onboarding overhaul v1 (`DESIGN-onboarding-overhaul.md`)
@@ -1202,6 +1202,9 @@ minted here — the numbering is now owned by this ledger, next free is
 - **#196** /me advisors (spells / tradeskill / faction)
 - **#197** long-haul storage partitioning
 - **#198** EQLegends support (`DESIGN-eql-support.md`)
+- **#199** fight pages, EQL-Meter style (presentation only — DoT chart, damage
+  mix, per-ability breakdown; phase 1 web-only from encounter_combat_rollup,
+  phase 2 agent adds time-bucket damage series + outgoing crit/miss counts)
 Member votes land in `roadmap_votes` (RLS service-role-only; migration
 `20260802031500_roadmap_votes.sql`); evidence submissions ride the existing
 `feedback` pipeline prefixed `[roadmap #N — title]`, so they surface in the

@@ -1076,6 +1076,15 @@ export const queueItems: QueueItem[] = [
     effort: 'medium',
     components: ['Mimic'],
   },
+  {
+    key: 'fight-page-v2',
+    num: '#199',
+    title: 'Fight pages, EQL-Meter style',
+    summary: 'Adopt the presentation Hitya flagged from eqlmeter.com for our own fight pages: a damage-over-time chart, melee/DoT/spell mix bars, and the per-ability breakdown per player. Phase one renders from data we already store (the per-verb rollups); phase two adds a small time-bucket series and crit/miss counts to agent uploads for the chart and accuracy stats. The look is theirs; the data and cross-client pipeline stay ours.',
+    effort: 'medium',
+    components: ['Web', 'Agent', 'Bot'],
+    status: 'scoped 2026-08-02 — phase one is web-only',
+  },
   // ── Big rocks ──────────────────────────────────────────────────────────
   {
     key: 'zeal-spawn-id',
