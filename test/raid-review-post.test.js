@@ -157,9 +157,19 @@ describe('(a) the midnight chain keeps its existing steps, in order', () => {
     expect(i, 'the review is not wired into the midnight chain').toBeGreaterThan(-1);
     // After every pre-existing step…
     expect(i).toBeGreaterThan(chain.indexOf("supabase.rpc('prune_who_observations'"));
-    // …inside a try/catch…
-    const block = chain.slice(chain.lastIndexOf('try {', i), i + 200);
-    expect(block).toMatch(/catch\s*\(/);
+    // …inside its OWN try/catch. Checking "some try above, some catch below"
+    // passes vacuously: with the review's guard deleted, lastIndexOf finds the
+    // PRECEDING step's `try {` and that block's own `catch` satisfies the
+    // match (verified by mutation 2026-08-02 — the guard could be removed with
+    // the suite still green). So assert the nearest `try {` above the call has
+    // not already closed: no `catch (` may appear BETWEEN it and the call.
+    const tryAt = chain.lastIndexOf('try {', i);
+    expect(tryAt, 'no try above the review call at all').toBeGreaterThan(-1);
+    expect(
+      chain.slice(tryAt, i),
+      'the review call is not inside its own try — the nearest try above it closes first',
+    ).not.toMatch(/catch\s*\(/);
+    expect(chain.slice(i, i + 200), 'no catch follows the review call').toMatch(/catch\s*\(/);
     // …and NOT awaited: the chain must never block on the review.
     expect(chain).not.toMatch(/await\s+[^\n]*scheduleRaidNightReview/);
     expect(chain).not.toMatch(/await\s+[^\n]*postRaidNightReview/);
