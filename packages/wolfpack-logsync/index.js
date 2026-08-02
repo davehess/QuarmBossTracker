@@ -380,7 +380,18 @@ const KEEP_PATTERNS = [
   /\bfor \d+ \(\d+\) points? of damage/i,
   /\bfor \d+ damage\b/i,                          // "non-melee for 27 damage" (no "points of")
   /\bfor \d+ points? of non-melee damage/i,       // "for 148 points of non-melee damage"
+  // Damage-shield FLAVOR line — the SECOND half of Quarm's two-line DS pair:
+  //   "Lord of Ire was hit by non-melee for 14 points of damage."  ← kept above
+  //   "Lord of Ire was pierced by thorns."                         ← THIS
+  // It carries no number, so none of the damage patterns above match it and it
+  // was dropped before parseEvent could emit ds_flavor — leaving every DS hit
+  // permanently tagged 'non-melee' in the live tail (#75 known gap 1). Verb
+  // list mirrors the parseEvent matcher; "was" only, so the numbered
+  // "X is burned by YOUR Shield of Lava for N points" form stays with the
+  // damage patterns.
+  /\bwas\s+(?:pierced|burned|tormented|frozen|chilled|shocked|stricken|scratched|impaled|bitten|stung|electrocuted|seared|lacerated|paralyzed|cut)\s+by\b/i,
   /\bScores? a critical hit!/i,                   // crit announcement, attaches to prior damage
+  /\bdelivers? a critical blast!/i,               // SPELL crit — the caster-side twin of the line above
   /\bhas been slain by/i,
   /\byou have slain /i,
   /^\[.+\]\s+You died\./i,                        // /death of self
@@ -394,6 +405,7 @@ const KEEP_PATTERNS = [
   /\bhas taken \d+(?:\s+points?\s+of)?\s+damage/i,
   /\bfor \d+ points? of (mana|stamina|hit points|endurance)/i,
   /\bhas been healed/i,
+  /\bperforms an exceptional heal!/i,             // bystander-visible crit heal — healer name + amount
   /\byou begin casting/i,
   /\byou begin singing/i,                         // bard songs (incl. charm) — for the charm-tracker duration
   /\byou begin playing a melody/i,                // /melody start (no per-song names — see Zeal label 134)
@@ -5144,6 +5156,28 @@ function inferClassFromAbility(character, ability) {
 // state mid-replay.
 const _liveBuilders = new Set();
 
+// Epoch-ms coercion for the builder's timestamp fields. `event.ts` is an ISO
+// STRING (parseEvent stamps `ts.toISOString()`), so `this.lastEvent` and every
+// charm-session field derived from it — started_at / ended_at / last_damage_at —
+// are strings, while the `|| Date.now()` fallbacks are numbers. Subtracting two
+// of them yielded NaN, and `JSON.stringify` turns NaN into `null`, so every
+// uploaded charm session recorded "no duration" (#75 known gap 4). The fields
+// themselves stay as-is on the wire (the bot does `new Date(s.started_at)`,
+// which accepts both) — only the arithmetic is coerced.
+function _epochMs(v) {
+  if (v == null) return NaN;
+  if (typeof v === 'number') return v;
+  return Date.parse(v);
+}
+// Elapsed seconds between two such fields. Returns null (not NaN) when either
+// end is unusable, so an unparseable timestamp uploads as a legitimately-absent
+// duration instead of a NaN that stringifies to the same `null` by accident.
+function _elapsedSec(fromTs, toTs) {
+  const a = _epochMs(fromTs), b = _epochMs(toTs);
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return null;
+  return Math.max(0, (b - a) / 1000);
+}
+
 class EncounterBuilder {
   constructor({ character, onFlush, silent = false }) {
     this.character  = character;
@@ -5851,7 +5885,7 @@ class EncounterBuilder {
       if (open) {
         open.ended_at = this.lastEvent || open.started_at;
         open.end_reason = 'charm_break';
-        open.duration_sec = Math.max(0, (open.ended_at - open.started_at) / 1000);
+        open.duration_sec = _elapsedSec(open.started_at, open.ended_at);
         this.charmSessions.push(open);
         this._activeCharms.delete(petKey);
       }
@@ -5928,7 +5962,7 @@ class EncounterBuilder {
         if (existing) {
           existing.ended_at = startTs;
           existing.end_reason = 'charm_break';
-          existing.duration_sec = Math.max(0, (startTs - existing.started_at) / 1000);
+          existing.duration_sec = _elapsedSec(existing.started_at, startTs);
           this.charmSessions.push(existing);
         }
         // Was this Dire-Charmed? Match the pending DC flag within 10s by
@@ -7443,7 +7477,7 @@ class EncounterBuilder {
           for (const open of this._activeCharms.values()) {
             open.ended_at     = open.last_damage_at || this.lastEvent || open.started_at;
             open.end_reason   = open.end_reason || 'encounter_flush';
-            open.duration_sec = Math.max(0, (open.ended_at - open.started_at) / 1000);
+            open.duration_sec = _elapsedSec(open.started_at, open.ended_at);
             all.push(open);
           }
           return all.length > 0 ? all : undefined;
