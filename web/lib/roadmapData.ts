@@ -37,6 +37,26 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'live-raid-review',
+    title: '📡 The raid review writes itself while you raid',
+    version: 'Bot 3.0.248 · Web 1.0.291 · Agent 3.4.44',
+    date: '2026-08-02',
+    headline: 'The Raid Night Review no longer waits for the morning after — the card appears on the night\'s first pull and grows all raid, then becomes the final writeup at 00:45. It also counts trash now, and shows a timeline of each fight.',
+    features: [
+      { name: '📡 Live during the raid', blurb: 'One card in the night\'s thread, updated as kills land (edits, so it never pings you). Shows what is in progress, how long since the last kill, and whether the night is running ahead of or behind a typical raid.' },
+      { name: '🧟 Trash counts too', blurb: 'Non-boss kills are now tallied — how many, how much damage, and where. Heads up: nothing outside our tracked boss list has ever been stored, so these totals start from the first raid this ships for; there is no history to backfill.' },
+      { name: '📈 Fight timelines', blurb: 'The per-fight timeline from the parse pages now appears on the review — deaths, slows, mob heals and disc usage laid out along each kill, with a compact version in Discord that links to the full one.' },
+      { name: '🔎 Bad-parse detection', blurb: 'When one person\'s upload claims more damage than the mob actually has, officers can run /backfillscan — it finds the fights whose numbers are wrong and names the two or three raiders whose logs would settle it (people who were in melee all fight and did not die).' },
+    ],
+    fixes: [
+      'Damage shields were permanently labelled "non-melee" instead of naming the spell — the log line that names them was being discarded before it was read.',
+      'Charm sessions have always uploaded with a blank duration; they now record real time.',
+      'Critical heals from other players and critical spell damage were both being discarded before parsing.',
+      'Mob Info could show a boss as a level-1 dummy immune to everything; it now merges the real variants of a same-named mob.',
+      'The night pace comparison counted weeknight six-mans as raids, so an ordinary night looked far ahead of pace.',
+    ],
+  },
+  {
     key: 'overnight-fleet-batch',
     title: '📓 Raid Night Review, a raid guide, and an officer console',
     version: 'Bot 3.0.245 · Web 1.0.290',

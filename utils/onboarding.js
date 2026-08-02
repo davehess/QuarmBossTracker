@@ -29,6 +29,10 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.0.248': [
+    '**The Raid Night Review is now live during the raid.** The card shows up in the night\'s thread on the first pull and grows all night — kills as they land, what\'s in progress, how long since the last one, and whether we\'re ahead of a typical raid\'s pace. It edits one message rather than posting new ones, so it never pings you. At 00:45 that same card becomes the finished writeup. It now counts **trash kills** too (nothing outside the tracked boss list was ever stored before, so these totals start fresh tonight), and each fight carries the timeline view from the parse pages.',
+    '**Officers: `/backfillscan`.** When someone\'s upload claims more damage than the mob actually has, this finds those fights and names the two or three raiders whose logs would settle it — people who were in melee the whole fight and didn\'t die. Preview by default; nothing is filed or sent without you.',
+  ],
   '3.0.245': [
     '**The night after a raid now writes itself.** A Raid Night Review posts into that night\'s thread — kills with times, standouts measured against our own past fights ("Xerkizh went down 37% faster than our median"), loot + DKP, attendance including who left early, and deaths by fight. Officers can run `/raidreview` for any night; re-running edits the same post rather than adding a second.',
     '**Mob Info stopped warning you about the wrong mob.** For same-named mobs it was picking a database row essentially at random — which is how a real boss could display as a level-1 placeholder that is "Immune to Melee and Magic". It now merges the real variants (and never lets a placeholder\'s fake immunities become a warning), plus shows whether a mob is rooted or flees.',
