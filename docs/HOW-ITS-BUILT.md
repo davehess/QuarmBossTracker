@@ -126,6 +126,37 @@ the `📊 Parse Log` JSON embed to `PARSES_LOG_THREAD_ID`, which is the only
 thread `loadParsesFromDiscord`, `/restore` and the midnight consolidation
 read. Night threads carry the presentation copy only.
 
+### Raid Night Review (`utils/raidReview.js` + `commands/raidreview.js`) — #80
+The morning-after writeup, generated instead of hand-built. **Two surfaces, ONE
+generator each — do not add a third.** Web: `/raid/review` (index) +
+`/raid/review/[date]`, shipped 2026-07-23, pure helpers in `web/lib/raidReview.ts`.
+Discord: `utils/raidReview.js` builds an embed (kills timeline · standouts ·
+OpenDKP loot · tick attendance · "what to work on" · one fun line) and posts it
+into **that night's raid thread** via `getRaidNightTarget`, linking out to the
+web page. Design + the content cuts: `docs/DESIGN-80-raid-night-review.md`.
+Load-bearing details:
+- **Anchored on the night's FIRST ENCOUNTER**, never `Date.now()` — by the time
+  the review runs the scheduled-event window has closed, so "now" can plan a
+  different key and mint a SECOND thread. `planFor` runs first so an off-night
+  event bails before `getRaidNightTarget` would open a 🎲 thread.
+- **Scheduled, not posted, by the midnight chain.** `scheduleRaidNightReview` is
+  the chain's LAST link: synchronous, try/caught, no network — it arms a timer
+  for `RAID_REVIEW_DELAY_MIN` (45) so the 00:30 raid tail is included and a
+  failed review can never stop archives/consolidation/resets.
+  `catchUpRaidNightReview` re-posts on boot (a deploy right after the 00:30
+  freeze lift kills the timer).
+- **Idempotent**: message id in `state.channelSlots['rreview_<nightKey>']` (same
+  anchor+prune shape as `rn_`/`rollcard_`) — a re-run EDITS.
+- Death counts come from `contributions.raw_parse->deaths` through the shared
+  `utils/parseDeaths.js` dedup (#134) plus a 60s cross-encounter collapse, so
+  the review, the parse card and the web page never disagree. The midnight
+  compaction nulls `raw_parse` after 7 days — older nights render without deaths.
+- Night window = rollover→rollover (spans midnight, matches the thread). The
+  shipped web page still buckets by plain ET calendar day — known, documented
+  divergence for post-midnight kills.
+- `RAID_REVIEW=0` kills the automatic post; `/raidreview [date] [preview]` is the
+  officer escape hatch. Regression: `test/raid-review-post.test.js`.
+
 ### Event-driven posting windows (`utils/raidEvents.js`) — v2, 2026-07-31
 Which thread a timestamp wants is decided by the guild's **Discord scheduled
 events**, not a weekday table. `guild.scheduledEvents.fetch()` is a REST call,

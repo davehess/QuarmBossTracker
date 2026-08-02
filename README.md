@@ -163,6 +163,7 @@ The tables below cover the core raid-timer / parse / PvP set. The bot has ~80 sl
 | `/parseaoe <data>` | Submit an AoE parse combining damage within a 5-minute window (max damage per player) |
 | `/parsenight [public]` | Full-night DPS summary across every kill tonight |
 | `/raidnight` | Open tonight's raid parse thread with a live rolling scoreboard |
+| `/raidreview [date] [preview]` | Post or refresh a night's Raid Night Review in that night's thread (officer only; posts itself ~45 min after midnight) |
 | `/mystats <character>` | Per-character DPS stats — kills, avg DPS, peak DPS, per-boss breakdown (ephemeral) |
 | `/mystatsall <character>` | Same as `/mystats` but aggregates across the full main + alt family |
 | `/parseleaderboard` | Post/update a pinned leaderboard in the parse log thread (officer only) |
