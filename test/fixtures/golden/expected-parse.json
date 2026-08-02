@@ -295,7 +295,7 @@
     {
       "i": 23,
       "line": "[Sun Aug 02 20:41:03 2026] Lord of Ire was pierced by thorns.",
-      "keep": false,
+      "keep": true,
       "trigger_visible": true,
       "event": {
         "ts": "2026-08-03T00:41:03.000Z",
@@ -404,7 +404,7 @@
     {
       "i": 31,
       "line": "[Sun Aug 02 20:41:09 2026] Draggomir delivers a critical blast!(1840)",
-      "keep": false,
+      "keep": true,
       "trigger_visible": true,
       "event": {
         "ts": "2026-08-03T00:41:09.000Z",
@@ -444,7 +444,7 @@
     {
       "i": 34,
       "line": "[Sun Aug 02 20:41:12 2026] Kaelthorne performs an exceptional heal! (2455)",
-      "keep": false,
+      "keep": true,
       "trigger_visible": true,
       "event": {
         "ts": "2026-08-03T00:41:12.000Z",
@@ -1267,7 +1267,7 @@
     {
       "i": 31,
       "line": "[Sun Aug 02 21:10:30 2026] Lord Nagafen was burned by brambles.",
-      "keep": false,
+      "keep": true,
       "trigger_visible": true,
       "event": {
         "ts": "2026-08-03T01:10:30.000Z",

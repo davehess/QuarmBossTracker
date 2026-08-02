@@ -234,41 +234,71 @@ describe('#75 golden log — encounter replay', () => {
   });
 });
 
-// ── KNOWN GAPS ──────────────────────────────────────────────────────────────
-// Behaviors the golden PINS AS BROKEN. parseEvent handles each of these, but the
-// shipped pipeline never delivers the line — so the handler is dead code in the
-// live tail. They are not fixed here (#75 adds a net, it does not change
-// behavior); they are pinned so that fixing one shows up as a deliberate, named
-// red test rather than a mystery diff in a 1300-line JSON.
+// ── FIXED GAPS (were pinned broken by #75, fixed by #75-followup) ───────────
+// These four were shipped as `KNOWN GAP:` pins by #75: parseEvent handled each
+// line, but the shipped pipeline never delivered it, so the handler was dead
+// code in the live tail. The agent fix (three KEEP_PATTERNS entries + one
+// timestamp coercion) turned them on; the pins are flipped to assert the
+// CORRECT behavior so a regression re-breaks a named test.
+//
+// The digest assertions deliberately read the LIVE replay, not
+// EXPECTED_ENCOUNTER — same reasoning as the privacy floor above: reading the
+// blessed file would let `npm run golden:update` quietly re-bless the defect.
 // Full write-up: docs/DESIGN-75-golden-log.md § "Known gaps this pins".
-describe('#75 golden log — KNOWN GAPS (pinned, not endorsed)', () => {
+describe('#75 golden log — FIXED GAPS (assert the fix, not the defect)', () => {
   const keep = (line) => R.agent.shouldKeep(line);
   const T = '[Sun Aug 02 20:41:03 2026] ';
+  const live = () => R.digestEncounter(R.replayEncounter('raid-pull.log')[0]);
 
-  it('KNOWN GAP: the Quarm two-line DS flavor line is filtered before parse', () => {
-    // parseEvent emits ds_flavor, which retags the buffered DS hit with the real
-    // spell name — but KEEP_PATTERNS never matches the line, so DS damage stays
-    // tagged 'non-melee' forever in the live tail. Visible in the golden digest:
-    // ds_reflects has a 'non-melee' bucket the flavor line should have renamed.
+  it('FIXED: the Quarm two-line DS flavor line reaches the parser and retags the hit', () => {
+    // parseEvent emits ds_flavor, which retags the buffered DS hit with the
+    // real spell name. KEEP_PATTERNS now matches the flavor line, so the retag
+    // actually happens in the live tail: the DS bucket is named for the spell
+    // and the 'non-melee' catch-all is gone.
     const line = T + 'Lord of Ire was pierced by thorns.';
     expect(R.agent.parseEvent(line, new Date()).type).toBe('ds_flavor');
-    expect(keep(line)).toBe(false);
-    expect(Object.keys(EXPECTED_ENCOUNTER.ds_reflects)).toContain('non-melee');
+    expect(keep(line)).toBe(true);
+    const ds = live().ds_reflects;
+    expect(Object.keys(ds)).toContain('thorns');
+    expect(Object.keys(ds)).not.toContain('non-melee');
+    expect(ds.thorns).toMatchObject({ count: 1, total: 14 });
   });
 
-  it('KNOWN GAP: bystander exceptional heals are filtered before parse', () => {
+  it('FIXED: bystander exceptional heals reach the parser (the crit-heal leaderboard input)', () => {
     const line = T + 'Kaelthorne performs an exceptional heal! (2455)';
     expect(R.agent.parseEvent(line, new Date()).type).toBe('crit_heal');
-    expect(keep(line)).toBe(false);
+    expect(keep(line)).toBe(true);
+    expect(live().events_by_type.crit_heal).toBe(1);
   });
 
-  it('KNOWN GAP: spell crits are filtered while melee crits are kept', () => {
+  it('FIXED: spell crits are kept alongside melee crits', () => {
     const spell = T + 'Draggomir delivers a critical blast!(1840)';
     const melee = T + 'Torvahk scores a critical hit!(412)';
+    const self  = T + 'You deliver a critical blast!(1840)';
     expect(R.agent.parseEvent(spell, new Date()).kind).toBe('spell');
-    expect(keep(spell)).toBe(false);
+    expect(keep(spell)).toBe(true);
     expect(keep(melee)).toBe(true);
+    expect(keep(self)).toBe(true);
+    expect(live().events_by_type.critical).toBe(2);   // one melee + one spell
   });
+
+  it('FIXED: charm-session duration_sec is a real number of seconds', () => {
+    // Was NaN — EncounterBuilder subtracted two ISO STRINGS, and
+    // JSON.stringify turns NaN into `null`, so the bot recorded "no duration"
+    // for every charm session. Both golden sessions now carry a duration.
+    const sessions = live().charm_sessions;
+    expect(sessions).toHaveLength(2);
+    expect(sessions.every((s) => typeof s.duration_sec === 'number')).toBe(true);
+    expect(sessions.every((s) => Number.isFinite(s.duration_sec) && s.duration_sec > 0)).toBe(true);
+  });
+});
+
+// ── KNOWN GAPS ──────────────────────────────────────────────────────────────
+// Still pinned as broken, deliberately: a behavior the golden records so that
+// fixing it shows up as a named red test rather than a mystery diff in a
+// 1300-line JSON. Full write-up: docs/DESIGN-75-golden-log.md § "Known gaps".
+describe('#75 golden log — KNOWN GAPS (pinned, not endorsed)', () => {
+  const T = '[Sun Aug 02 20:41:03 2026] ';
 
   it('KNOWN GAP: two of three Dire Charm cast forms are shadowed by the cast matcher', () => {
     const ts = new Date();
@@ -278,14 +308,5 @@ describe('#75 golden log — KNOWN GAPS (pinned, not endorsed)', () => {
     expect(R.agent.parseEvent(T + 'Nyxaria begins casting Dire Charm.', ts).type).toBe('dire_charm_cast');
     expect(R.agent.parseEvent(T + 'You begin casting Dire Charm.', ts).type).toBe('cast');
     expect(R.agent.parseEvent(T + 'Nyxaria begins to cast Dire Charm.', ts).type).toBe('cast');
-  });
-
-  it('KNOWN GAP: charm-session duration_sec is NaN (ISO-string subtraction)', () => {
-    // EncounterBuilder computes (ended_at - started_at) on two ISO STRINGS, so
-    // duration_sec is NaN — and JSON.stringify turns that into `null` on the
-    // wire, so the bot records "no duration" for every charm session. Both
-    // golden sessions show it (the digest renders NaN as the string "NaN" so
-    // it is visible rather than silently null).
-    expect(EXPECTED_ENCOUNTER.charm_sessions.every((s) => s.duration_sec === 'NaN')).toBe(true);
   });
 });

@@ -312,9 +312,14 @@ expectations (per-line parse + both filter gates; plus an encounter digest:
 damage by attacker, charm sessions, kill credit, rollups). Enforces coverage of
 all 25 `parseEvent` families. Accept a deliberate parser change with
 `npm run golden:update` and READ THE DIFF. Gated by `.github/workflows/golden-log.yml`
-on `main` + `beta`. Design + the six defects it pins (DS flavor line filtered
-before parse, crit heals filtered, spell crits filtered, charm `duration_sec`
-NaN, shadowed Dire Charm forms): `docs/DESIGN-75-golden-log.md`.
+on `main` + `beta`. Design: `docs/DESIGN-75-golden-log.md`. Four of the six
+defects it originally pinned are now FIXED and the pins assert the fix (DS
+flavor line reaches the parser and retags the hit, bystander crit heals kept,
+spell crits kept, charm `duration_sec` a real number) — the agent change is
+three `KEEP_PATTERNS` entries + the `_elapsedSec()` coercion in
+`packages/wolfpack-logsync/index.js`. Still pinned broken: two of three Dire
+Charm cast forms shadowed by the generic `cast` matcher, and `"X misses Y."`
+parsing to nothing.
 
 **Pre-raid drill** — two halves. Infra: `_preRaidHealthCheck()` in `index.js`
 (~9260) auto-posts one green/red Discord line at 19:30 ET on raid nights
