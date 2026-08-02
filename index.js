@@ -3036,6 +3036,17 @@ function scheduleMidnightSummary(readyClient) {
         console.warn('[midnight] ARI staleness sweep skipped:', err?.message);
       }
 
+      // ── 📓 Raid Night Review (#80) ────────────────────────────────────────
+      // LAST link in the chain, and deliberately fire-and-forget: this SCHEDULES
+      // the review (default +45 min) rather than posting it, because raids run
+      // to 00:30 and a review built at 00:00 would miss the last half hour of
+      // pulls. The call is synchronous, swallows its own errors, and touches no
+      // network — a broken review can never stop the archives, the parse
+      // consolidation, or the resets above it.
+      // See docs/DESIGN-80-raid-night-review.md.
+      try { require('./utils/raidReview').scheduleRaidNightReview(readyClient); }
+      catch (err) { console.warn('[midnight] raid review scheduling skipped:', err?.message); }
+
       console.log('✅ Midnight tasks complete');
     } catch (err) { console.error('Midnight task error:', err); }
     setTimeout(runMidnightTasks, msUntilMidnightEST());
@@ -3044,6 +3055,14 @@ function scheduleMidnightSummary(readyClient) {
   const delay = msUntilMidnightEST();
   console.log(`🕛 Midnight scheduled in ${Math.round(delay / 1000 / 60)} min`);
   setTimeout(runMidnightTasks, delay);
+
+  // Boot catch-up for the review (#80). The deferred timer above dies with the
+  // process, and ~00:45 ET is exactly when a deploy is most likely — the
+  // raid-night freeze lifts at 00:30 and everything staged during the raid
+  // lands right after. This re-posts the most recent COMPLETED night's review
+  // only when one isn't already stored, so it can never duplicate.
+  try { require('./utils/raidReview').catchUpRaidNightReview(readyClient); }
+  catch (err) { console.warn('[raid-review] boot catch-up skipped:', err?.message); }
 }
 
 // ── Archive passed announce threads at midnight ────────────────────────────

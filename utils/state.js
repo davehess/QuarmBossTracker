@@ -264,6 +264,26 @@ function setRaidNightThreadId(nightKey, id) {
   saveState(s);
 }
 
+// ── Raid Night Review card (#80), edited in place ─────────────────────────────
+// One review message per night, keyed by the SAME nightKey the thread uses, so
+// a re-run (the boot catch-up, or an officer's /raidreview after a late upload)
+// EDITS the morning-after writeup instead of posting a second one. Same
+// channelSlots anchor + prune shape as rn_ / rollcard_ above.
+const _RAID_REVIEW_SLOT_KEEP = 10;
+function getRaidReviewMessageId(nightKey) {
+  return loadState().channelSlots?.[`rreview_${nightKey}`] || null;
+}
+function setRaidReviewMessageId(nightKey, messageId) {
+  const s = loadState();
+  if (!s.channelSlots) s.channelSlots = {};
+  s.channelSlots[`rreview_${nightKey}`] = messageId;
+  const keys = Object.keys(s.channelSlots).filter(k => k.startsWith('rreview_'));
+  for (const stale of keys.slice(0, Math.max(0, keys.length - _RAID_REVIEW_SLOT_KEEP))) {
+    delete s.channelSlots[stale];
+  }
+  saveState(s);
+}
+
 // ── Off-night event thread: the 🎲 rolled-loot card, edited in place ──────────
 // One card per event thread, keyed by that thread's id so a restart mid-event
 // keeps editing the same message instead of posting a second card. Same
@@ -1035,6 +1055,7 @@ module.exports = {
   addAnnounceMessageId, getAnnounceMessageIds, removeAnnounceMessageId, clearAnnounceMessageIds,
   getSpawnAlertMessageId, setSpawnAlertMessageId, clearSpawnAlertMessageId, getAllSpawnAlertMessageIds,
   getRaidNightThreadId, setRaidNightThreadId,
+  getRaidReviewMessageId, setRaidReviewMessageId,
   getEventRollCardId, setEventRollCardId,
   getDailySummaryMessageId, setDailySummaryMessageId,
   getThreadLinksMessageId, setThreadLinksMessageId,
