@@ -8329,37 +8329,17 @@ async function _handleAgentItemClickies(req, res) {
 // stats (HP, AC, the five resists, melee range, decoded special attacks). NPC
 // catalog names use underscores ("Aten_Ha_Ra"); the Zeal target name may use
 // spaces or backticks, so we normalize both to underscores for the match.
-const _MOB_SPECIAL_LABELS = {
-  1:'Summon', 2:'Enrage', 3:'Rampage', 4:'Area Rampage', 5:'Flurry',
-  6:'Triple Attack', 7:'Quad Attack', 9:'Bane', 10:'Magical', 11:'Ranged',
-  12:'Unslowable', 13:'Unmezzable', 14:'Uncharmable', 15:'Unstunnable',
-  16:'Unsnareable', 17:'Unfearable', 18:'Undispellable', 19:'Immune Melee',
-  20:'Immune Magic', 21:'Immune Fleeing', 23:'Immune Non-Magical',
-  27:'Immune Feign Death', 28:'Immune Taunt', 31:'Immune Pacify',
-};
+//
+// #171 — the code→label table, the placeholder predicate and the row
+// pick-and-merge all live in utils/mobSpecials.js so the bot and the audit
+// script (scripts/audit-mob-specials.mjs) can never disagree about what a
+// special-ability code means. See docs/audit-mob-specials.md.
+const mobSpecials = require('./utils/mobSpecials');
 const _MOB_CLASS_NAMES = {
   1:'Warrior', 2:'Cleric', 3:'Paladin', 4:'Ranger', 5:'Shadow Knight', 6:'Druid',
   7:'Monk', 8:'Bard', 9:'Rogue', 10:'Shaman', 11:'Necromancer', 12:'Wizard',
   13:'Magician', 14:'Enchanter', 15:'Beastlord', 16:'Berserker',
 };
-function _decodeMobSpecials(special_abilities, npcspecialattks) {
-  const out = [];
-  if (special_abilities) {
-    for (const part of String(special_abilities).split('^')) {
-      const bits = part.split(',');
-      const id = parseInt(bits[0], 10);
-      if (!Number.isFinite(id)) continue;
-      if (bits[1] != null && String(bits[1]).trim() === '0') continue;   // disabled
-      const label = _MOB_SPECIAL_LABELS[id];
-      if (label && !out.includes(label)) out.push(label);
-    }
-  } else if (npcspecialattks) {
-    const FLAG = { E:'Enrage', F:'Flurry', R:'Rampage', r:'Area Rampage', S:'Summon',
-      T:'Triple Attack', Q:'Quad Attack', b:'Bane', m:'Magical', a:'Ranged' };
-    for (const ch of String(npcspecialattks)) if (FLAG[ch] && !out.includes(FLAG[ch])) out.push(FLAG[ch]);
-  }
-  return out;
-}
 function _normMobName(n) {
   // Strip the "'s corpse" suffix BEFORE normalizing punctuation so a target
   // like "Vyzh`dra the Exiled's corpse" still resolves to the live NPC row
@@ -11007,21 +10987,23 @@ async function _handleAgentMobInfo(req, res) {
     // match those rows. PostgREST OR matches either case in a single round trip.
     const encPlain  = encodeURIComponent(norm);
     const encHashed = encodeURIComponent('#' + norm);
-    const _nameSel = `select=id,name,class,level,maxlevel,hp,ac,mr,fr,cr,pr,dr,mindmg,maxdmg,npcspecialattks,special_abilities,raid_target,bodytype,npc_spells_id,see_invis,see_invis_undead,see_hide,see_improved_hide&limit=1`;
-    // #141 zone-scoped first: constrain to the requester's zone id range
-    // [zoneid*1000, zoneid*1000+999]. Empty → fall back to the catalog-wide
-    // match below (fail-open: unknown zone, or a catalog gap for this zone).
-    let rows = null;
-    if (reqZoneId != null && Number.isFinite(reqZoneId)) {
-      const lo = reqZoneId * 1000, hi = reqZoneId * 1000 + 999;
-      rows = await supabase.select('eqemu_npc_types',
-        `or=(name.ilike.${encPlain},name.ilike.${encHashed})&id=gte.${lo}&id=lte.${hi}&${_nameSel}`);
-    }
-    if (!Array.isArray(rows) || rows.length === 0) {
-      rows = await supabase.select('eqemu_npc_types',
-        `or=(name.ilike.${encPlain},name.ilike.${encHashed})&${_nameSel}`);
-    }
-    const r = Array.isArray(rows) && rows[0];
+    // #171 — fetch ALL matching rows, never `limit=1`. A name resolves to many
+    // eqemu_npc_types bodies (real variants + level-1 placeholder/controller
+    // rows), and with no ORDER BY the old single-row fetch let PostgREST's
+    // arbitrary row order decide which one a raider saw — that's how The Itraer
+    // Vius showed as L1/16k HP "Immune Melee + Immune Magic". 200 is a hard
+    // ceiling over the catalog's largest real-name cluster (34 rows; only the
+    // junk "_" names go higher) so the payload stays bounded.
+    const _nameSel = `select=id,name,class,level,maxlevel,hp,ac,mr,fr,cr,pr,dr,mindmg,maxdmg,runspeed,npcspecialattks,special_abilities,raid_target,bodytype,npc_spells_id,see_invis,see_invis_undead,see_hide,see_improved_hide&limit=200`;
+    const rows = await supabase.select('eqemu_npc_types',
+      `or=(name.ilike.${encPlain},name.ilike.${encHashed})&${_nameSel}`);
+    // Pick-and-merge (docs/audit-mob-specials.md §"The fix"). The requester's
+    // zone still wins when we know it — #141's rule, now applied in JS against
+    // the full row set (an NPC id encodes its zone: id = zoneid*1000 + n) so a
+    // zone that holds ONLY the placeholder body can fall through to the real
+    // row instead of serving the un-killable one.
+    const picked = mobSpecials.pickAndMergeMobRows(rows, { zoneId: reqZoneId });
+    const r = picked.row;
     if (r) {
       // Drop table from eqemu_npc_drops view (per-item effective_chance — the
       // real published drop rate accounting for table_probability + lootdrop
@@ -11240,6 +11222,10 @@ async function _handleAgentMobInfo(req, res) {
         } catch (err) { console.warn('[mob-info] spells fetch failed:', err?.message); }
       }
 
+      // #171 — movement facts, read off the PRIMARY row (never merged: "this
+      // body is rooted, that one isn't" is two different mobs, not a warning).
+      const move = mobSpecials.deriveMovement(r);
+
       mob = {
         id:      r.id ?? null,   // #186 eqemu npc id → the overlay's PQDI link (pqdi.cc/npc/<id>)
         name:    String(r.name || name).replace(/_/g, ' '),
@@ -11262,7 +11248,24 @@ async function _handleAgentMobInfo(req, res) {
         see_invis_undead:    !!r.see_invis_undead,
         see_hide:            !!r.see_hide,
         see_improved_hide:   !!r.see_improved_hide,
-        specials: _decodeMobSpecials(r.special_abilities, r.npcspecialattks),
+        // #171 movement — `rooted` is runspeed 0 (stationary: Itraer Vius,
+        // Yelinak, most NToV dragons); `flees` is true/false/null where null
+        // means the catalog doesn't say, and `flee_pct` is the HP% of code 37.
+        runspeed: move.runspeed,
+        rooted:   move.rooted,
+        flees:    move.flees,
+        flee_pct: move.flee_pct,
+        // #171 warning flags = UNION across the real same-name variants (the
+        // L56 Maestro rampages, the L53 doesn't — the raider needs the merged
+        // set). Placeholder rows are excluded whenever a real row exists, so
+        // their "immune to everything" can't fabricate a false warning.
+        specials: picked.specials,
+        // Provenance for the overlay/diagnostics: how many bodies were merged,
+        // which preference tier won, and whether we had to fall back to a
+        // placeholder because the name has no real row at all.
+        variants:    picked.variants,
+        variant_scope: picked.scope,
+        placeholder: picked.placeholder,
         spells,
         loot,
       };
