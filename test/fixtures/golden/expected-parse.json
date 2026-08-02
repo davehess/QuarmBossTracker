@@ -1,0 +1,1466 @@
+{
+  "raid-pull.log": [
+    {
+      "i": 0,
+      "line": "[Sun Aug 02 20:40:41 2026] Players on EverQuest:",
+      "keep": false,
+      "trigger_visible": true,
+      "event": null
+    },
+    {
+      "i": 1,
+      "line": "[Sun Aug 02 20:40:41 2026] ---------------------------",
+      "keep": false,
+      "trigger_visible": true,
+      "event": null
+    },
+    {
+      "i": 2,
+      "line": "[Sun Aug 02 20:40:41 2026] [60 Minstrel] Sylvarra (Half Elf) <Wolf Pack>",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T00:40:41.000Z",
+        "type": "who",
+        "name": "Sylvarra",
+        "level": 60,
+        "class": "Bard",
+        "anonymous": false,
+        "gm": false,
+        "race": "Half Elf",
+        "guild": "Wolf Pack",
+        "zone": null
+      }
+    },
+    {
+      "i": 3,
+      "line": "[Sun Aug 02 20:40:41 2026] [60 Warlord] Torvahk (Barbarian) <Wolf Pack>",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T00:40:41.000Z",
+        "type": "who",
+        "name": "Torvahk",
+        "level": 60,
+        "class": "Warrior",
+        "anonymous": false,
+        "gm": false,
+        "race": "Barbarian",
+        "guild": "Wolf Pack",
+        "zone": null
+      }
+    },
+    {
+      "i": 4,
+      "line": "[Sun Aug 02 20:40:41 2026] [60 Templar] Kaelthorne (High Elf) <Wolf Pack>",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T00:40:41.000Z",
+        "type": "who",
+        "name": "Kaelthorne",
+        "level": 60,
+        "class": "Cleric",
+        "anonymous": false,
+        "gm": false,
+        "race": "High Elf",
+        "guild": "Wolf Pack",
+        "zone": null
+      }
+    },
+    {
+      "i": 5,
+      "line": "[Sun Aug 02 20:40:41 2026] AFK [60 Storm Warden] Brambleth (Wood Elf) <Wolf Pack>",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T00:40:41.000Z",
+        "type": "who",
+        "name": "Brambleth",
+        "level": 60,
+        "class": "Druid",
+        "anonymous": false,
+        "gm": false,
+        "race": "Wood Elf",
+        "guild": "Wolf Pack",
+        "zone": null
+      }
+    },
+    {
+      "i": 6,
+      "line": "[Sun Aug 02 20:40:41 2026] [60 Arch Mage] Draggomir (Erudite) <Wolf Pack>",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T00:40:41.000Z",
+        "type": "who",
+        "name": "Draggomir",
+        "level": 60,
+        "class": "Magician",
+        "anonymous": false,
+        "gm": false,
+        "race": "Erudite",
+        "guild": "Wolf Pack",
+        "zone": null
+      }
+    },
+    {
+      "i": 7,
+      "line": "[Sun Aug 02 20:40:41 2026] [60 Outrider] Fenrisk (Half Elf) <Wolf Pack>",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T00:40:41.000Z",
+        "type": "who",
+        "name": "Fenrisk",
+        "level": 60,
+        "class": "Ranger",
+        "anonymous": false,
+        "gm": false,
+        "race": "Half Elf",
+        "guild": "Wolf Pack",
+        "zone": null
+      }
+    },
+    {
+      "i": 8,
+      "line": "[Sun Aug 02 20:40:41 2026] [60 Illusionist (Officer)] Nyxaria (Gnome) <Wolf Pack>",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T00:40:41.000Z",
+        "type": "who",
+        "name": "Nyxaria",
+        "level": 60,
+        "class": "Enchanter",
+        "anonymous": false,
+        "gm": false,
+        "race": "Gnome",
+        "guild": "Wolf Pack",
+        "zone": null
+      }
+    },
+    {
+      "i": 9,
+      "line": "[Sun Aug 02 20:40:41 2026] [ANONYMOUS] Orvo <Wolf Pack>",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T00:40:41.000Z",
+        "type": "who",
+        "name": "Orvo",
+        "level": null,
+        "class": null,
+        "anonymous": true,
+        "gm": false,
+        "race": null,
+        "guild": "Wolf Pack",
+        "zone": null
+      }
+    },
+    {
+      "i": 10,
+      "line": "[Sun Aug 02 20:40:41 2026] There are 8 players in the plane of fear.",
+      "keep": false,
+      "trigger_visible": true,
+      "event": null
+    },
+    {
+      "i": 11,
+      "line": "[Sun Aug 02 20:40:47 2026] Torvahk tells the guild, 'inc Lord of Ire, CH chain on me'",
+      "keep": false,
+      "trigger_visible": true,
+      "event": null
+    },
+    {
+      "i": 12,
+      "line": "[Sun Aug 02 20:40:49 2026] Nyxaria tells you, 'i have the adds, dont break my mez'",
+      "keep": false,
+      "trigger_visible": false,
+      "event": null
+    },
+    {
+      "i": 13,
+      "line": "[Sun Aug 02 20:40:50 2026] You told Torvahk, 'selos up, pulling in 5'",
+      "keep": false,
+      "trigger_visible": false,
+      "event": null
+    },
+    {
+      "i": 14,
+      "line": "[Sun Aug 02 20:40:51 2026] Kaelthorne tells the group, 'ch chain starting'",
+      "keep": false,
+      "trigger_visible": false,
+      "event": null
+    },
+    {
+      "i": 15,
+      "line": "[Sun Aug 02 20:40:52 2026] You tells Wolfpackofficer:1, 'watch the drolvarg adds'",
+      "keep": false,
+      "trigger_visible": false,
+      "event": null
+    },
+    {
+      "i": 16,
+      "line": "[Sun Aug 02 20:40:55 2026] Gobn says, 'My leader is Orvo.'",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T00:40:55.000Z",
+        "type": "pet_leader",
+        "pet": "Gobn",
+        "owner": "Orvo"
+      }
+    },
+    {
+      "i": 17,
+      "line": "[Sun Aug 02 20:40:58 2026] You begin playing a melody.",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T00:40:58.000Z",
+        "type": "melody_start"
+      }
+    },
+    {
+      "i": 18,
+      "line": "[Sun Aug 02 20:41:00 2026] You begin singing Tuyen`s Chant of Flame.",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T00:41:00.000Z",
+        "type": "cast",
+        "attacker": null,
+        "ability": "Tuyen`s Chant of Flame",
+        "singing": true
+      }
+    },
+    {
+      "i": 19,
+      "line": "[Sun Aug 02 20:41:02 2026] Torvahk hits Lord of Ire for 214 points of damage.",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T00:41:02.000Z",
+        "type": "damage",
+        "attacker": "Torvahk",
+        "defender": "Lord of Ire",
+        "ability": "hit",
+        "amount": 214
+      }
+    },
+    {
+      "i": 20,
+      "line": "[Sun Aug 02 20:41:02 2026] Lord of Ire hits Torvahk for 398 points of damage.",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T00:41:02.000Z",
+        "type": "damage",
+        "attacker": "Lord of Ire",
+        "defender": "Torvahk",
+        "ability": "hit",
+        "amount": 398
+      }
+    },
+    {
+      "i": 21,
+      "line": "[Sun Aug 02 20:41:03 2026] You slash Lord of Ire for 96 points of damage.",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T00:41:03.000Z",
+        "type": "damage",
+        "attacker": null,
+        "defender": "Lord of Ire",
+        "ability": "slash",
+        "amount": 96
+      }
+    },
+    {
+      "i": 22,
+      "line": "[Sun Aug 02 20:41:03 2026] Lord of Ire was hit by non-melee for 14 points of damage.",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T00:41:03.000Z",
+        "type": "damage",
+        "attacker": null,
+        "defender": "Lord of Ire",
+        "ability": "non-melee",
+        "amount": 14,
+        "spellName": "non-melee"
+      }
+    },
+    {
+      "i": 23,
+      "line": "[Sun Aug 02 20:41:03 2026] Lord of Ire was pierced by thorns.",
+      "keep": false,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T00:41:03.000Z",
+        "type": "ds_flavor",
+        "defender": "Lord of Ire",
+        "ability": "thorns"
+      }
+    },
+    {
+      "i": 24,
+      "line": "[Sun Aug 02 20:41:04 2026] Lord of Ire is pierced by Brambleth's Legacy of Spike for 24 points of non-melee damage.",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T00:41:04.000Z",
+        "type": "damage",
+        "attacker": "Brambleth",
+        "defender": "Lord of Ire",
+        "ability": "legacy of spike",
+        "amount": 24,
+        "ds": true
+      }
+    },
+    {
+      "i": 25,
+      "line": "[Sun Aug 02 20:41:05 2026] Torvahk crushes Lord of Ire for 187 points of damage.",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T00:41:05.000Z",
+        "type": "damage",
+        "attacker": "Torvahk",
+        "defender": "Lord of Ire",
+        "ability": "crush",
+        "amount": 187
+      }
+    },
+    {
+      "i": 26,
+      "line": "[Sun Aug 02 20:41:05 2026] Torvahk scores a critical hit!(412)",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T00:41:05.000Z",
+        "type": "critical",
+        "kind": "melee",
+        "attacker": "Torvahk",
+        "amount": 412
+      }
+    },
+    {
+      "i": 27,
+      "line": "[Sun Aug 02 20:41:06 2026] Lord of Ire tries to hit Torvahk, but Torvahk parries!",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T00:41:06.000Z",
+        "type": "avoid",
+        "attacker": "Lord of Ire",
+        "defender": "Torvahk",
+        "kind": "parry"
+      }
+    },
+    {
+      "i": 28,
+      "line": "[Sun Aug 02 20:41:07 2026] You try to slash Lord of Ire, but Lord of Ire dodges!",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T00:41:07.000Z",
+        "type": "avoid",
+        "attacker": null,
+        "defender": "Lord of Ire",
+        "kind": "dodge"
+      }
+    },
+    {
+      "i": 29,
+      "line": "[Sun Aug 02 20:41:08 2026] Lord of Ire has taken 80 points of damage from your Tuyen`s Chant of Flame.",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T00:41:08.000Z",
+        "type": "damage",
+        "attacker": null,
+        "defender": "Lord of Ire",
+        "ability": "Tuyen`s Chant of Flame",
+        "amount": 80
+      }
+    },
+    {
+      "i": 30,
+      "line": "[Sun Aug 02 20:41:09 2026] Draggomir's Ice Comet hits Lord of Ire for 1104 points of non-melee damage.",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T00:41:09.000Z",
+        "type": "damage",
+        "attacker": "Draggomir",
+        "defender": "Lord of Ire",
+        "ability": "Ice Comet",
+        "amount": 1104,
+        "spellName": "Ice Comet"
+      }
+    },
+    {
+      "i": 31,
+      "line": "[Sun Aug 02 20:41:09 2026] Draggomir delivers a critical blast!(1840)",
+      "keep": false,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T00:41:09.000Z",
+        "type": "critical",
+        "kind": "spell",
+        "attacker": "Draggomir",
+        "amount": 1840
+      }
+    },
+    {
+      "i": 32,
+      "line": "[Sun Aug 02 20:41:10 2026] Fenrisk shoots Lord of Ire for 245 points of damage.",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T00:41:10.000Z",
+        "type": "damage",
+        "attacker": "Fenrisk",
+        "defender": "Lord of Ire",
+        "ability": "shoot",
+        "amount": 245
+      }
+    },
+    {
+      "i": 33,
+      "line": "[Sun Aug 02 20:41:11 2026] Torvahk has been healed by Kaelthorne for 1601 points.",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T00:41:11.000Z",
+        "type": "heal",
+        "defender": "Torvahk",
+        "attacker": "Kaelthorne",
+        "amount": 1601
+      }
+    },
+    {
+      "i": 34,
+      "line": "[Sun Aug 02 20:41:12 2026] Kaelthorne performs an exceptional heal! (2455)",
+      "keep": false,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T00:41:12.000Z",
+        "type": "crit_heal",
+        "attacker": "Kaelthorne",
+        "amount": 2455
+      }
+    },
+    {
+      "i": 35,
+      "line": "[Sun Aug 02 20:41:13 2026] You throw your head back and moan a desperate dirge.",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T00:41:13.000Z",
+        "type": "dirge_cast",
+        "attacker": null,
+        "ability": "Denon`s Desperate Dirge",
+        "tickMs": 7000
+      }
+    },
+    {
+      "i": 36,
+      "line": "[Sun Aug 02 20:41:14 2026] Lord of Ire was hit by non-melee for 177 points of damage.",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T00:41:14.000Z",
+        "type": "damage",
+        "attacker": null,
+        "defender": "Lord of Ire",
+        "ability": "non-melee",
+        "amount": 177,
+        "spellName": "non-melee"
+      }
+    },
+    {
+      "i": 37,
+      "line": "[Sun Aug 02 20:41:15 2026] Lord of Ire hits Torvahk for 412 points of damage.",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T00:41:15.000Z",
+        "type": "damage",
+        "attacker": "Lord of Ire",
+        "defender": "Torvahk",
+        "ability": "hit",
+        "amount": 412
+      }
+    },
+    {
+      "i": 38,
+      "line": "[Sun Aug 02 20:41:16 2026] Lord of Ire tries to crush Torvahk, but Torvahk ripostes!",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T00:41:16.000Z",
+        "type": "avoid",
+        "attacker": "Lord of Ire",
+        "defender": "Torvahk",
+        "kind": "riposte"
+      }
+    },
+    {
+      "i": 39,
+      "line": "[Sun Aug 02 20:41:17 2026] Torvahk crushes Lord of Ire for 158 points of damage.",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T00:41:17.000Z",
+        "type": "damage",
+        "attacker": "Torvahk",
+        "defender": "Lord of Ire",
+        "ability": "crush",
+        "amount": 158
+      }
+    },
+    {
+      "i": 40,
+      "line": "[Sun Aug 02 20:41:18 2026] Lord of Ire goes on a RAMPAGE against Fenrisk!",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T00:41:18.000Z",
+        "type": "rampage",
+        "attacker": "Lord of Ire",
+        "defender": "Fenrisk"
+      }
+    },
+    {
+      "i": 41,
+      "line": "[Sun Aug 02 20:41:19 2026] Lord of Ire hits Fenrisk for 903 points of damage.",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T00:41:19.000Z",
+        "type": "damage",
+        "attacker": "Lord of Ire",
+        "defender": "Fenrisk",
+        "ability": "hit",
+        "amount": 903
+      }
+    },
+    {
+      "i": 42,
+      "line": "[Sun Aug 02 20:41:20 2026] Fenrisk has been slain by Lord of Ire!",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T00:41:20.000Z",
+        "type": "death",
+        "defender": "Fenrisk",
+        "attacker": "Lord of Ire"
+      }
+    },
+    {
+      "i": 43,
+      "line": "[Sun Aug 02 20:41:21 2026] You resist the Fearful Aura spell!",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T00:41:21.000Z",
+        "type": "resist",
+        "spell": "Fearful Aura"
+      }
+    },
+    {
+      "i": 44,
+      "line": "[Sun Aug 02 20:41:22 2026] Lord of Ire resisted your Selo's Consonant Chain spell.",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T00:41:22.000Z",
+        "type": "spell_resisted",
+        "ability": "Selo's Consonant Chain",
+        "defender": "Lord of Ire"
+      }
+    },
+    {
+      "i": 45,
+      "line": "[Sun Aug 02 20:41:23 2026] You have been healed for 402 points of damage.",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T00:41:23.000Z",
+        "type": "heal",
+        "defender": "You",
+        "attacker": null,
+        "amount": 402
+      }
+    },
+    {
+      "i": 46,
+      "line": "[Sun Aug 02 20:41:24 2026] You begin singing Solon`s Bewitching Bravura.",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T00:41:24.000Z",
+        "type": "cast",
+        "attacker": null,
+        "ability": "Solon`s Bewitching Bravura",
+        "singing": true
+      }
+    },
+    {
+      "i": 47,
+      "line": "[Sun Aug 02 20:41:26 2026] a fear touched drolvarg tells you, 'Attacking Lord of Ire Master.'",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T00:41:26.000Z",
+        "type": "pet_leader",
+        "pet": "a fear touched drolvarg",
+        "owner": "__SELF__",
+        "source": "charm_land"
+      }
+    },
+    {
+      "i": 48,
+      "line": "[Sun Aug 02 20:41:28 2026] a fear touched drolvarg slashes Lord of Ire for 148 points of damage.",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T00:41:28.000Z",
+        "type": "damage",
+        "attacker": "a fear touched drolvarg",
+        "defender": "Lord of Ire",
+        "ability": "slash",
+        "amount": 148
+      }
+    },
+    {
+      "i": 49,
+      "line": "[Sun Aug 02 20:41:30 2026] Lord of Ire has taken 412 points of damage from Draggomir's Ancient: Strike of Chaos.",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T00:41:30.000Z",
+        "type": "damage",
+        "attacker": "Draggomir",
+        "defender": "Lord of Ire",
+        "ability": "Ancient: Strike of Chaos",
+        "amount": 412,
+        "spellName": "Ancient: Strike of Chaos"
+      }
+    },
+    {
+      "i": 50,
+      "line": "[Sun Aug 02 20:41:31 2026] a fear touched drolvarg slashes Lord of Ire for 161 points of damage.",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T00:41:31.000Z",
+        "type": "damage",
+        "attacker": "a fear touched drolvarg",
+        "defender": "Lord of Ire",
+        "ability": "slash",
+        "amount": 161
+      }
+    },
+    {
+      "i": 51,
+      "line": "[Sun Aug 02 20:41:32 2026] Lord of Ire has taken 88 points of damage.",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T00:41:32.000Z",
+        "type": "damage",
+        "attacker": null,
+        "defender": "Lord of Ire",
+        "ability": "dot",
+        "amount": 88
+      }
+    },
+    {
+      "i": 52,
+      "line": "[Sun Aug 02 20:41:33 2026] Torvahk crushes Lord of Ire for 203 points of damage.",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T00:41:33.000Z",
+        "type": "damage",
+        "attacker": "Torvahk",
+        "defender": "Lord of Ire",
+        "ability": "crush",
+        "amount": 203
+      }
+    },
+    {
+      "i": 53,
+      "line": "[Sun Aug 02 20:41:34 2026] Lord of Ire hits Torvahk for 377 points of damage.",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T00:41:34.000Z",
+        "type": "damage",
+        "attacker": "Lord of Ire",
+        "defender": "Torvahk",
+        "ability": "hit",
+        "amount": 377
+      }
+    },
+    {
+      "i": 54,
+      "line": "[Sun Aug 02 20:41:35 2026] Lord of Ire tries to hit Torvahk, but Torvahk dodges!",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T00:41:35.000Z",
+        "type": "avoid",
+        "attacker": "Lord of Ire",
+        "defender": "Torvahk",
+        "kind": "dodge"
+      }
+    },
+    {
+      "i": 55,
+      "line": "[Sun Aug 02 20:41:36 2026] Your target resisted the Song of Highsun spell.",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T00:41:36.000Z",
+        "type": "spell_resisted",
+        "ability": "Song of Highsun",
+        "defender": null
+      }
+    },
+    {
+      "i": 56,
+      "line": "[Sun Aug 02 20:41:38 2026] Your charm spell has worn off.",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T00:41:38.000Z",
+        "type": "charm_break",
+        "pet": "__SELF__"
+      }
+    },
+    {
+      "i": 57,
+      "line": "[Sun Aug 02 20:41:40 2026] You begin singing Solon`s Bewitching Bravura.",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T00:41:40.000Z",
+        "type": "cast",
+        "attacker": null,
+        "ability": "Solon`s Bewitching Bravura",
+        "singing": true
+      }
+    },
+    {
+      "i": 58,
+      "line": "[Sun Aug 02 20:41:42 2026] a fear touched drolvarg tells you, 'Attacking Lord of Ire Master.'",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T00:41:42.000Z",
+        "type": "pet_leader",
+        "pet": "a fear touched drolvarg",
+        "owner": "__SELF__",
+        "source": "charm_land"
+      }
+    },
+    {
+      "i": 59,
+      "line": "[Sun Aug 02 20:41:44 2026] a fear touched drolvarg slashes Lord of Ire for 173 points of damage.",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T00:41:44.000Z",
+        "type": "damage",
+        "attacker": "a fear touched drolvarg",
+        "defender": "Lord of Ire",
+        "ability": "slash",
+        "amount": 173
+      }
+    },
+    {
+      "i": 60,
+      "line": "[Sun Aug 02 20:41:45 2026] You slash Lord of Ire for 104 points of damage.",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T00:41:45.000Z",
+        "type": "damage",
+        "attacker": null,
+        "defender": "Lord of Ire",
+        "ability": "slash",
+        "amount": 104
+      }
+    },
+    {
+      "i": 61,
+      "line": "[Sun Aug 02 20:41:46 2026] Lord of Ire has taken 80 points of damage from your Tuyen`s Chant of Flame.",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T00:41:46.000Z",
+        "type": "damage",
+        "attacker": null,
+        "defender": "Lord of Ire",
+        "ability": "Tuyen`s Chant of Flame",
+        "amount": 80
+      }
+    },
+    {
+      "i": 62,
+      "line": "[Sun Aug 02 20:41:47 2026] Torvahk hits Lord of Ire for 221 points of damage.",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T00:41:47.000Z",
+        "type": "damage",
+        "attacker": "Torvahk",
+        "defender": "Lord of Ire",
+        "ability": "hit",
+        "amount": 221
+      }
+    },
+    {
+      "i": 63,
+      "line": "[Sun Aug 02 20:41:48 2026] Lord of Ire tries to hit Torvahk, but Torvahk blocks with his shield!",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T00:41:48.000Z",
+        "type": "avoid",
+        "attacker": "Lord of Ire",
+        "defender": "Torvahk",
+        "kind": "block"
+      }
+    },
+    {
+      "i": 64,
+      "line": "[Sun Aug 02 20:41:49 2026] a fear touched drolvarg slashes Lord of Ire for 166 points of damage.",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T00:41:49.000Z",
+        "type": "damage",
+        "attacker": "a fear touched drolvarg",
+        "defender": "Lord of Ire",
+        "ability": "slash",
+        "amount": 166
+      }
+    },
+    {
+      "i": 65,
+      "line": "[Sun Aug 02 20:41:50 2026] Lord of Ire has been slain by a fear touched drolvarg!",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T00:41:50.000Z",
+        "type": "death",
+        "defender": "Lord of Ire",
+        "attacker": "a fear touched drolvarg"
+      }
+    },
+    {
+      "i": 66,
+      "line": "[Sun Aug 02 20:41:51 2026] Your melody has ended.",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T00:41:51.000Z",
+        "type": "melody_stop"
+      }
+    },
+    {
+      "i": 67,
+      "line": "[Sun Aug 02 20:41:53 2026] Kaelthorne tells the guild, 'gratz, res inc on Fenrisk'",
+      "keep": false,
+      "trigger_visible": true,
+      "event": null
+    }
+  ],
+  "line-families.log": [
+    {
+      "i": 0,
+      "line": "[Sun Aug 02 21:10:00 2026] You attempt to taunt Lord Nagafen.",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T01:10:00.000Z",
+        "type": "taunt",
+        "attacker": null,
+        "target": "Lord Nagafen",
+        "success": false
+      }
+    },
+    {
+      "i": 1,
+      "line": "[Sun Aug 02 21:10:01 2026] You have taunted Lord Nagafen.",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T01:10:01.000Z",
+        "type": "taunt",
+        "attacker": null,
+        "target": "Lord Nagafen",
+        "success": true
+      }
+    },
+    {
+      "i": 2,
+      "line": "[Sun Aug 02 21:10:02 2026] You have stunned Lord Nagafen.",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T01:10:02.000Z",
+        "type": "stun",
+        "attacker": null,
+        "target": "Lord Nagafen"
+      }
+    },
+    {
+      "i": 3,
+      "line": "[Sun Aug 02 21:10:03 2026] You stun Lord Nagafen.",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T01:10:03.000Z",
+        "type": "stun",
+        "attacker": null,
+        "target": "Lord Nagafen"
+      }
+    },
+    {
+      "i": 4,
+      "line": "[Sun Aug 02 21:10:04 2026] You mend your wounds and heal considerable damage.",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T01:10:04.000Z",
+        "type": "mend",
+        "outcome": "crit"
+      }
+    },
+    {
+      "i": 5,
+      "line": "[Sun Aug 02 21:10:05 2026] You mend your wounds and heal some damage.",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T01:10:05.000Z",
+        "type": "mend",
+        "outcome": "regular"
+      }
+    },
+    {
+      "i": 6,
+      "line": "[Sun Aug 02 21:10:06 2026] You fail to mend your wounds.",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T01:10:06.000Z",
+        "type": "mend",
+        "outcome": "fail"
+      }
+    },
+    {
+      "i": 7,
+      "line": "[Sun Aug 02 21:10:07 2026] You have fallen to the ground.",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T01:10:07.000Z",
+        "type": "feign_death",
+        "attacker": null,
+        "success": false
+      }
+    },
+    {
+      "i": 8,
+      "line": "[Sun Aug 02 21:10:08 2026] Torvahk has fallen to the ground.",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T01:10:08.000Z",
+        "type": "feign_death",
+        "attacker": "Torvahk",
+        "success": false
+      }
+    },
+    {
+      "i": 9,
+      "line": "[Sun Aug 02 21:10:09 2026] You have momentarily ducked away from the main combat.",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T01:10:09.000Z",
+        "type": "evade",
+        "attacker": null,
+        "success": true
+      }
+    },
+    {
+      "i": 10,
+      "line": "[Sun Aug 02 21:10:10 2026] Your attempts at ducking clear of combat fail.",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T01:10:10.000Z",
+        "type": "evade",
+        "attacker": null,
+        "success": false
+      }
+    },
+    {
+      "i": 11,
+      "line": "[Sun Aug 02 21:10:11 2026] Loading bandolier set [emp]",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T01:10:11.000Z",
+        "type": "bandolier",
+        "action": "loading",
+        "setName": "emp"
+      }
+    },
+    {
+      "i": 12,
+      "line": "[Sun Aug 02 21:10:12 2026] Bandolier set [1] is already equipped",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T01:10:12.000Z",
+        "type": "bandolier",
+        "action": "already_equipped",
+        "setName": "1"
+      }
+    },
+    {
+      "i": 13,
+      "line": "[Sun Aug 02 21:10:13 2026] Item with ID [21809] not found in inventory for bandolier set [caen], canceling set load.",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T01:10:13.000Z",
+        "type": "bandolier",
+        "action": "missing_item",
+        "itemId": 21809,
+        "setName": "caen"
+      }
+    },
+    {
+      "i": 14,
+      "line": "[Sun Aug 02 21:10:14 2026] No empty inventory slot to unequip Nature Walker's Scimitar, canceling set load.",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T01:10:14.000Z",
+        "type": "bandolier",
+        "action": "no_slot",
+        "item": "Nature Walker's Scimitar"
+      }
+    },
+    {
+      "i": 15,
+      "line": "[Sun Aug 02 21:10:15 2026] You are too busy to equip bandolier set!",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T01:10:15.000Z",
+        "type": "bandolier",
+        "action": "too_busy"
+      }
+    },
+    {
+      "i": 16,
+      "line": "[Sun Aug 02 21:10:16 2026] Sylvarra is an Officer of Wolf Pack.",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T01:10:16.000Z",
+        "type": "guildstatus",
+        "character": "Sylvarra",
+        "guildRank": "Officer",
+        "guild": "Wolf Pack"
+      }
+    },
+    {
+      "i": 17,
+      "line": "[Sun Aug 02 21:10:17 2026] You have healed Torvahk for 1601 points.",
+      "keep": false,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T01:10:17.000Z",
+        "type": "heal",
+        "defender": "Torvahk",
+        "attacker": null,
+        "amount": 1601
+      }
+    },
+    {
+      "i": 18,
+      "line": "[Sun Aug 02 21:10:18 2026] Gobn tells you, 'Attacking Lord Nagafen Master.'",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T01:10:18.000Z",
+        "type": "pet_leader",
+        "pet": "Gobn",
+        "owner": "__SELF__",
+        "target": "Lord Nagafen"
+      }
+    },
+    {
+      "i": 19,
+      "line": "[Sun Aug 02 21:10:19 2026] Nyxaria begins to cast Allure.",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T01:10:19.000Z",
+        "type": "cast",
+        "attacker": "Nyxaria",
+        "ability": "Allure"
+      }
+    },
+    {
+      "i": 20,
+      "line": "[Sun Aug 02 21:10:20 2026] You begin casting Dire Charm.",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T01:10:20.000Z",
+        "type": "cast",
+        "attacker": null,
+        "ability": "Dire Charm",
+        "singing": false
+      }
+    },
+    {
+      "i": 21,
+      "line": "[Sun Aug 02 21:10:20 2026] Nyxaria begins casting Dire Charm.",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T01:10:20.000Z",
+        "type": "dire_charm_cast",
+        "caster": "Nyxaria"
+      }
+    },
+    {
+      "i": 22,
+      "line": "[Sun Aug 02 21:10:21 2026] a glyphed familiar regards Nyxaria as an ally.",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T01:10:21.000Z",
+        "type": "pet_leader",
+        "pet": "a glyphed familiar",
+        "owner": "Nyxaria",
+        "source": "charm_land"
+      }
+    },
+    {
+      "i": 23,
+      "line": "[Sun Aug 02 21:10:22 2026] a glyphed familiar snaps out of the charm.",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T01:10:22.000Z",
+        "type": "charm_break",
+        "pet": "a glyphed familiar"
+      }
+    },
+    {
+      "i": 24,
+      "line": "[Sun Aug 02 21:10:23 2026] a fear touched drolvarg is no longer charmed.",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T01:10:23.000Z",
+        "type": "charm_break",
+        "pet": "a fear touched drolvarg"
+      }
+    },
+    {
+      "i": 25,
+      "line": "[Sun Aug 02 21:10:24 2026] You have slain a fear touched drolvarg!",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T01:10:24.000Z",
+        "type": "death",
+        "defender": "a fear touched drolvarg",
+        "attacker": null
+      }
+    },
+    {
+      "i": 26,
+      "line": "[Sun Aug 02 21:10:25 2026] a fear touched drolvarg died.",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T01:10:25.000Z",
+        "type": "death",
+        "defender": "a fear touched drolvarg",
+        "attacker": null
+      }
+    },
+    {
+      "i": 27,
+      "line": "[Sun Aug 02 21:10:26 2026] You died.",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T01:10:26.000Z",
+        "type": "death",
+        "defender": "You",
+        "attacker": null
+      }
+    },
+    {
+      "i": 28,
+      "line": "[Sun Aug 02 21:10:27 2026] Your Chant of Battle hits a fear touched drolvarg for 62 points of non-melee damage.",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T01:10:27.000Z",
+        "type": "damage",
+        "attacker": null,
+        "defender": "a fear touched drolvarg",
+        "ability": "Chant of Battle",
+        "amount": 62
+      }
+    },
+    {
+      "i": 29,
+      "line": "[Sun Aug 02 21:10:28 2026] Lord Nagafen was hit by Ancient: Scourge of Nife for 1240 points of damage.",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T01:10:28.000Z",
+        "type": "damage",
+        "attacker": null,
+        "defender": "Lord Nagafen",
+        "ability": "Ancient: Scourge of Nife",
+        "amount": 1240,
+        "spellName": "Ancient: Scourge of Nife"
+      }
+    },
+    {
+      "i": 30,
+      "line": "[Sun Aug 02 21:10:29 2026] Lord Nagafen is burned by YOUR Shield of Lava for 32 points of non-melee damage.",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T01:10:29.000Z",
+        "type": "damage",
+        "attacker": null,
+        "defender": "Lord Nagafen",
+        "ability": "shield of lava",
+        "amount": 32,
+        "ds": true
+      }
+    },
+    {
+      "i": 31,
+      "line": "[Sun Aug 02 21:10:30 2026] Lord Nagafen was burned by brambles.",
+      "keep": false,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T01:10:30.000Z",
+        "type": "ds_flavor",
+        "defender": "Lord Nagafen",
+        "ability": "brambles"
+      }
+    },
+    {
+      "i": 32,
+      "line": "[Sun Aug 02 21:10:31 2026] a fear touched drolvarg hit Torvahk for 91 points of non-melee damage.",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T01:10:31.000Z",
+        "type": "damage",
+        "attacker": "a fear touched drolvarg",
+        "defender": "Torvahk",
+        "ability": "hit",
+        "amount": 91
+      }
+    },
+    {
+      "i": 33,
+      "line": "[Sun Aug 02 21:10:32 2026] You throw your head back and let loose a piercing blast.",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T01:10:32.000Z",
+        "type": "dirge_cast",
+        "attacker": null,
+        "ability": "Dirge (piercing blast)",
+        "tickMs": 7000
+      }
+    },
+    {
+      "i": 34,
+      "line": "[Sun Aug 02 21:10:33 2026] You begin casting Complete Heal.",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T01:10:33.000Z",
+        "type": "cast",
+        "attacker": null,
+        "ability": "Complete Heal",
+        "singing": false
+      }
+    },
+    {
+      "i": 35,
+      "line": "[Sun Aug 02 21:10:34 2026] Torvahk tries to bash Lord Nagafen, but Lord Nagafen is INVULNERABLE!",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T01:10:34.000Z",
+        "type": "avoid",
+        "attacker": "Torvahk",
+        "defender": "Lord Nagafen",
+        "kind": "invulnerable"
+      }
+    },
+    {
+      "i": 36,
+      "line": "[Sun Aug 02 21:10:35 2026] You try to kick Lord Nagafen, but miss!",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T01:10:35.000Z",
+        "type": "avoid",
+        "attacker": null,
+        "defender": "Lord Nagafen",
+        "kind": "miss"
+      }
+    },
+    {
+      "i": 37,
+      "line": "[Sun Aug 02 21:10:36 2026] Lord Nagafen misses Torvahk.",
+      "keep": false,
+      "trigger_visible": true,
+      "event": null
+    },
+    {
+      "i": 38,
+      "line": "[Sun Aug 02 21:10:37 2026] [ANONYMOUS] Ghostwalker",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T01:10:37.000Z",
+        "type": "who",
+        "name": "Ghostwalker",
+        "level": null,
+        "class": null,
+        "anonymous": true,
+        "gm": false,
+        "race": null,
+        "guild": null,
+        "zone": null
+      }
+    },
+    {
+      "i": 39,
+      "line": "[Sun Aug 02 21:10:38 2026] [GM] Sysop",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T01:10:38.000Z",
+        "type": "who",
+        "name": "Sysop",
+        "level": null,
+        "class": null,
+        "anonymous": false,
+        "gm": true,
+        "race": null,
+        "guild": null,
+        "zone": null
+      }
+    },
+    {
+      "i": 40,
+      "line": "[Sun Aug 02 21:10:39 2026] [60 Storm Warden] Brambleth (Wood Elf) <Wolf Pack> ZONE: fearplane",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T01:10:39.000Z",
+        "type": "who",
+        "name": "Brambleth",
+        "level": 60,
+        "class": "Druid",
+        "anonymous": false,
+        "gm": false,
+        "race": "Wood Elf",
+        "guild": "Wolf Pack",
+        "zone": "fearplane"
+      }
+    },
+    {
+      "i": 41,
+      "line": "[Sun Aug 02 21:10:40 2026] Your song ends.",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T01:10:40.000Z",
+        "type": "melody_stop"
+      }
+    },
+    {
+      "i": 42,
+      "line": "[Sun Aug 02 21:10:41 2026] Torvahk auctions, 'WTS Cloak of Flames 20k'",
+      "keep": false,
+      "trigger_visible": false,
+      "event": null
+    },
+    {
+      "i": 43,
+      "line": "[Sun Aug 02 21:10:42 2026] Vox shouts, 'You dare challenge me?'",
+      "keep": false,
+      "trigger_visible": false,
+      "event": null
+    },
+    {
+      "i": 44,
+      "line": "[Sun Aug 02 21:10:43 2026] You say to your group, 'inc'",
+      "keep": false,
+      "trigger_visible": false,
+      "event": null
+    },
+    {
+      "i": 45,
+      "line": "[Sun Aug 02 21:10:44 2026] Brambleth tells General:2, 'anyone need a port'",
+      "keep": false,
+      "trigger_visible": false,
+      "event": null
+    },
+    {
+      "i": 46,
+      "line": "[Sun Aug 02 21:10:45 2026] Torvahk has become ENRAGED.",
+      "keep": false,
+      "trigger_visible": true,
+      "event": null
+    },
+    {
+      "i": 47,
+      "line": "[Sun Aug 02 21:10:46 2026] You are snared.",
+      "keep": false,
+      "trigger_visible": true,
+      "event": null
+    },
+    {
+      "i": 48,
+      "line": "[Sun Aug 02 21:10:47 2026] Your Tuyen`s Chant of Flame spell fizzles.",
+      "keep": false,
+      "trigger_visible": true,
+      "event": null
+    }
+  ]
+}

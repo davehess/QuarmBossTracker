@@ -36,6 +36,7 @@ folly** — it's here.*
 | `mimic-1.4-roadmap.md` | **Active Mimic beta queue** (overlay layout sync, UI-Studio UX, trigger onboarding) | Real open work; see ledger |
 | `raid-hub-roadmap.md` | `/raid` hub design; Stages 1-2 shipped, Stages 3-5 open | CLAUDE.md roadmap ref; open TODOs in ledger |
 | `beta-releases.md` | Beta-channel mechanics (electron-updater, cutting beta/stable) | Evergreen process reference (dated "current state" block is stale, harmless) |
+| `DESIGN-75-golden-log.md` | [#75] The agent-parser golden-log regression net + the pre-raid drill: what the fixtures contain, why the expectations are shaped the way they are, and the six parser defects the golden PINS | Shipped 2026-08-02; read before changing `parseEvent`/`EncounterBuilder` or regenerating the golden |
 | `HOW-ITS-BUILT.md` | Long-form "how each feature actually works" companion to CLAUDE.md | Living companion doc |
 | `MIMIC.md` / `MIMIC_AGENT.md` | Mimic vision + the Electron/self-updating-agent rearchitecture assessment | CLAUDE.md roadmap refs |
 | `PRIVACY.md` | Source-of-truth privacy statement, mirrored to the web page | Load-bearing (CLAUDE.md) |
@@ -1185,6 +1186,35 @@ folly** — it's here.*
   **⚠ Pending dashboard action (Hitya):** enable Auth leaked-password protection
   (HaveIBeenPwned check) — Dashboard → Authentication → password settings. No
   MCP/SQL toggle exists; it's an Auth config flip.
+
+- **[#75] Golden-log CI + pre-raid drill (2026-08-02)**: the agent parser now
+  has a regression net. `test/fixtures/golden/*.log` are two committed SYNTHETIC
+  EQ logs (invented names — never a real log, `PRIVACY.md`) replayed through the
+  real `shouldKeep` → `parseEvent` → `EncounterBuilder` → `flush` pipeline by
+  `test/golden-log.test.js` (147 tests; suite 32 files/375 → 33/522). Two tiers:
+  per-line filter+parse snapshot (`toMatchObject`, so additive fields don't churn
+  it) recording BOTH gates — `shouldKeep` (default DROP) and the sliced
+  `triggerVisibleLine` (default KEEP, the actual privacy surface) — and an
+  encounter DIGEST (a projection we own, so `toEqual` is safe). Coverage of all
+  25 `parseEvent` families is enforced by slicing the shipped source. Accept a
+  deliberate change with `npm run golden:update` (never to make a test pass);
+  `npm run golden:check` fails if the expectations went stale. CI:
+  `.github/workflows/golden-log.yml` on PRs + `main` + `beta`. **The privacy
+  assertions read the LIVE parser, not the golden — regenerating can never
+  launder a privacy hole.** Drill: `npm run drill`
+  (`scripts/preraid-drill.js`) — read-only, safe mid-raid; parser self-test +
+  bot `/health` + `latest-version` (both channels) + bearer ingest-auth +
+  wolfpack.quest. Zero agent edits (agent file byte-identical). Design + the six
+  defects it PINS: `docs/DESIGN-75-golden-log.md`.
+  **⚠ Needs Hitya's call:** (a) do we want a *write-path* drill (POSTs a
+  synthetic encounter end-to-end → puts drill rows in `encounters`)? (b) the
+  three `KEEP_PATTERNS` gaps it found are real data loss today — Quarm two-line
+  DS flavor lines, bystander exceptional heals, and spell crits all parse fine
+  but are filtered before `parseEvent` ever sees them, so DS damage is
+  permanently tagged `non-melee` and the crit-heal leaderboard cannot exist.
+  Plus `charm_sessions[].duration_sec` is NaN on every upload (ISO-string
+  subtraction) — every charm session reaches the bot with no duration. All four
+  are one-to-two-line agent fixes on `beta`, deliberately NOT made here.
 
 ### Task-number registry — minted 2026-08-02 for the public roadmap queue
 The wolfpack.quest/roadmap "What's next" queue (web 1.0.288: numbers + member

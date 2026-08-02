@@ -1,0 +1,61 @@
+name: Golden log
+
+# The parser regression net (#75). `packages/wolfpack-logsync/index.js` turns EQ
+# log lines into every number the raid sees — parse cards, DPS/tank meters, charm
+# sessions, kill credit. This replays a committed synthetic log through the
+# shipped parse pipeline and asserts the committed known-good result, so a
+# regression is a red check here instead of forty raiders with wrong numbers on
+# a Sunday night.
+#
+# Deliberately a SEPARATE workflow from Test, even though `npm test` also runs
+# the golden spec: this one is named for what it protects, runs in about a
+# second, and is the check to look at when an agent change is up for review.
+#
+# Red here means one of two things:
+#   • you broke the parser — fix it; or
+#   • you changed it on purpose — `npm run golden:update`, READ THE DIFF (every
+#     changed number is a change in what the raid's parses will say), and commit
+#     the expectation update alongside the code change.
+#
+# Note the two failure modes are distinguishable: `golden:check` fails when the
+# committed expectations no longer describe the parser (i.e. you forgot to
+# regenerate); the vitest spec fails when a named invariant broke. The privacy
+# assertions in the spec read the LIVE parser rather than the expectation file
+# on purpose — regenerating the golden can never launder a privacy hole.
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - beta
+
+jobs:
+  golden:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Fails if the committed expectations no longer match what the parser
+      # produces — i.e. the parser moved and nobody regenerated. Runs first so
+      # the "you forgot to run golden:update" case reports as itself.
+      - name: Golden expectations are current
+        run: npm run golden:check
+
+      - name: Golden log replay (vitest)
+        run: npx vitest run test/golden-log.test.js
+
+      # Offline half of the pre-raid drill: replays the golden log through the
+      # agent in this checkout. Network probes are skipped by design here (no
+      # bot/site reachability from CI matters for a merge gate); this asserts
+      # the parser self-test the drill leads with.
+      - name: Pre-raid drill — parser self-test
+        run: node -e "const R=require('./test/fixtures/golden/_replay.js');const fs=require('fs');const want=JSON.parse(fs.readFileSync('test/fixtures/golden/expected-encounter.json','utf8'));const got=R.digestEncounter(R.replayEncounter('raid-pull.log')[0]);if(JSON.stringify(got)!==JSON.stringify(want)){console.error('drill: golden digest mismatch');process.exit(1);}console.log('drill: parser self-test OK — agent',R.agent.AGENT_VERSION);"

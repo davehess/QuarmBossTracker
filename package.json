@@ -9,6 +9,9 @@
     "deploy-commands": "node deploy-commands.js",
     "test:sync": "node scripts/test-sync-parser.js",
     "check:dashboard": "node scripts/check-agent-dashboard.js",
+    "golden:update": "node scripts/update-golden.js",
+    "golden:check": "node scripts/update-golden.js --check",
+    "drill": "node scripts/preraid-drill.js",
     "lint": "eslint index.js commands utils packages/wolfpack-logsync/index.js",
     "test": "vitest run"
   },

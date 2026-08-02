@@ -58,6 +58,10 @@ writes.
   auto-applied on merge to main; apply via Supabase MCP `apply_migration`
   with the same name when prod needs it immediately, and commit the identical
   file.
+- **CI gates**: `test.yml` (lint no-undef + `check:dashboard` + full vitest)
+  and **`golden-log.yml`** (#75 — the agent parser regression net, see below).
+  Both run on PRs and on pushes to `main` + `beta`. `raid-freeze.yml` is the
+  advisory red X for a main push inside a raid window.
 
 ---
 
@@ -269,6 +273,26 @@ OURS (`petLeaders`/`_activeCharms`/charm tracker) and carry `pet_owner`.
 Threat tracker (`recentTankHits`) records mob→player connects (player-name
 shape = letters only — backtick names are NPC/pets) — feeds MT resolution,
 off-tank surfacing, off-heal candidates, and `incoming_mob` on live-state.
+
+**Golden-log regression net (#75)** — `test/golden-log.test.js` +
+`test/fixtures/golden/` replay a committed SYNTHETIC EQ log through the real
+`shouldKeep` → `parseEvent` → `EncounterBuilder` pipeline and assert committed
+expectations (per-line parse + both filter gates; plus an encounter digest:
+damage by attacker, charm sessions, kill credit, rollups). Enforces coverage of
+all 25 `parseEvent` families. Accept a deliberate parser change with
+`npm run golden:update` and READ THE DIFF. Gated by `.github/workflows/golden-log.yml`
+on `main` + `beta`. Design + the six defects it pins (DS flavor line filtered
+before parse, crit heals filtered, spell crits filtered, charm `duration_sec`
+NaN, shadowed Dire Charm forms): `docs/DESIGN-75-golden-log.md`.
+
+**Pre-raid drill** — two halves. Infra: `_preRaidHealthCheck()` in `index.js`
+(~9260) auto-posts one green/red Discord line at 19:30 ET on raid nights
+(Discord gateway / Supabase REST / GoTrue / wolfpack.quest), `bot_kv`-latched
+once per day. Parse chain: `npm run drill` (`scripts/preraid-drill.js`) —
+READ-ONLY, safe mid-raid; golden-log parser self-test + bot `/health` +
+`latest-version` for both channels + bearer ingest-auth probe + site health.
+A write-path drill (POST a synthetic encounter end to end) is designed but NOT
+enabled — needs Hitya's sign-off, see the design doc.
 
 ### Zeal live state
 Mimic bridges the pipe (below); the agent keys `_zealState` per character:
