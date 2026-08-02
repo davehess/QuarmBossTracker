@@ -9,11 +9,12 @@
   "started_at": "2026-08-03T00:41:02.000Z",
   "ended_at": "2026-08-03T00:41:50.000Z",
   "boss_max_melee": 903,
-  "event_count": 39,
+  "event_count": 41,
   "events_by_type": {
     "avoid": 5,
     "cast": 3,
-    "critical": 1,
+    "crit_heal": 1,
+    "critical": 2,
     "damage": 24,
     "death": 2,
     "heal": 2,
@@ -100,7 +101,7 @@
       "min": 24,
       "max": 24
     },
-    "non-melee": {
+    "thorns": {
       "count": 1,
       "total": 14,
       "min": 14,
@@ -112,14 +113,14 @@
       "pet": "a fear touched drolvarg",
       "owner": "Sylvarra",
       "end_reason": "charm_break",
-      "duration_sec": "NaN",
+      "duration_sec": 12,
       "damage": null
     },
     {
       "pet": "a fear touched drolvarg",
       "owner": "Sylvarra",
       "end_reason": "encounter_flush",
-      "duration_sec": "NaN",
+      "duration_sec": 9,
       "damage": null
     }
   ],
@@ -204,7 +205,7 @@
           "hits": 3,
           "dmg": 548
         },
-        "ds:non-melee": {
+        "ds:thorns": {
           "hits": 1,
           "dmg": 14
         },

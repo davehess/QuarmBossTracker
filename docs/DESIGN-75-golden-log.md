@@ -207,11 +207,12 @@ is byte-identical — `git diff` is empty):
 ## Known gaps this pins
 
 The golden is a **characterization** fixture: it records what the code does
-today so a change is visible. Four of those recorded behaviors are defects. They
-are **pinned, not endorsed** — each has a named `KNOWN GAP` test so that fixing
+today so a change is visible. Six of those recorded behaviors were defects. They
+were **pinned, not endorsed** — each had a named `KNOWN GAP` test so that fixing
 one shows up as a deliberate red test with a sentence attached instead of a
-mystery diff in a 1300-line JSON. None is fixed here: #75 adds a net, it does not
-change behavior.
+mystery diff in a 1300-line JSON. #75 itself added the net without changing
+behavior; the follow-on change described in "Gaps 1–4: fixed" below then used
+that net to fix the first four.
 
 1. **The Quarm two-line damage-shield flavor line never reaches the parser.**
    `parseEvent` emits `ds_flavor` for `"Lord of Ire was pierced by thorns."`,
@@ -245,9 +246,52 @@ Two more, lower stakes:
    `"X tries to <verb> Y, but …"`. Recorded as a documented null, not a target —
    the plain form may not occur on Quarm at all.
 
-Fixes for 1–3 are one `KEEP_PATTERNS` entry each and belong in an agent change on
-`beta`; #4 is a two-line date coercion. All four are behavior changes and need a
-golden update, which is exactly the workflow this net exists to provide.
+### Gaps 1–4: fixed (agent, follow-on to #75)
+
+The net did its job: all four were fixed as one agent change, the golden went
+red in exactly the places the pins predicted, `npm run golden:update` produced a
+reviewable 21-line diff, and the five `KNOWN GAP` tests became four `FIXED`
+tests asserting the correct behavior plus one still-pinned gap (#5).
+
+| Gap | Fix | Site |
+|---|---|---|
+| 1 DS flavor filtered | keep pattern `/\bwas\s+(?:pierced\|burned\|…)\s+by\b/i` — the flavor line carries no number, so no damage pattern matched it. `was` only, so the numbered `"X is burned by YOUR Shield of Lava for N points"` form stays with the damage patterns | `KEEP_PATTERNS` |
+| 2 crit heals filtered | keep pattern `/\bperforms an exceptional heal!/i` | `KEEP_PATTERNS` |
+| 3 spell crits filtered | keep pattern `/\bdelivers? a critical blast!/i` — the caster-side twin of the existing `/\bScores? a critical hit!/i` | `KEEP_PATTERNS` |
+| 4 charm `duration_sec` NaN | `_elapsedSec(from, to)` helper (module scope, above `EncounterBuilder`) coerces via `Date.parse` and returns **null**, not NaN, when either end is unusable. Applied at the three sites that subtracted `started_at`/`ended_at`/`last_damage_at` | `EncounterBuilder` charm-break, owner-change, and flush paths |
+
+Privacy is unchanged. `shouldKeep` checks **priority-keeps → drops → keeps**, so
+every drop pattern (officer channel, tells both directions, group chat, custom
+numbered channels, public say/shout/auction) still wins over all three new keep
+patterns. The one widening is that a `/gu` or `/rs` line whose *text* contains
+e.g. "was burned by" is now kept — guild and raid chat are deliberately not
+private (they are the `/gu` relay), and the same exposure already existed for
+every damage keep pattern. The privacy-floor test reads the live parser, so it
+would have gone red if any of this touched a private line; it did not.
+
+What moved in the golden (all four expected, none incidental):
+
+- 4 lines flipped `keep: false → true` (three in `raid-pull.log`, one in
+  `line-families.log`).
+- `ds_reflects` `non-melee` → `thorns`, and the rollup skill `ds:non-melee` →
+  `ds:thorns` — the retag the `ds_flavor` handler was written for, now reaching
+  it for the first time.
+- `event_count` 39 → 41, `critical` 1 → 2, new `crit_heal: 1` — the spell crit
+  and the bystander crit heal now reach `EncounterBuilder`.
+- Both `charm_sessions[].duration_sec` `"NaN"` → `12` and `9`.
+
+**Left unfixed, deliberately.** Gap 5 (Dire Charm cast forms) keeps its
+`KNOWN GAP` pin — the fix is a reordering inside `parseEvent`, not a filter
+entry, and reordering the cast matchers has a blast radius (`cast` feeds the
+melody overlay, `_pendingCharmSpell`, and the cross-client casting relay) that
+does not belong in a filter-table change. Gap 6 (`"X misses Y."`) stays a
+documented null.
+
+**Adjacent, NOT fixed (flagged):** `stats.recentParses[].durationSec` in the
+agent dashboard has the identical ISO-string subtraction
+(`(e.ended_at - e.started_at) / 1000`, ~line 19900), but only on the fallback
+branch taken when `active_duration_s` is null. Different object, dashboard-only,
+and outside the golden's reach — left alone under the minimal-diff rule.
 
 ---
 
