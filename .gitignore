@@ -32,3 +32,6 @@ packages/wolfpack-logsync/logsync.queue.json
 packages/wolfpack-logsync/.last-update-check
 packages/wolfpack-logsync/.force-update-on-restart
 packages/wolfpack-logsync/.update-token-on-restart
+
+# Transient git worktrees for parallel subagents — full checkouts, never committed.
+.claude/worktrees/
