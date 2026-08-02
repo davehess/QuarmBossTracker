@@ -18,12 +18,6 @@ export type RoadmapFeature = {
   media?: RoadmapMedia[];
 };
 
-export type RetroItem = {
-  title: string;
-  hit: 'shipped' | 'reworked' | 'open';
-  note: string;
-};
-
 // ── Release log — the member-facing changelog. NEWEST FIRST. ─────────────────
 // RULE (Uilnayar 2026-07-08): EVERY release updates this list. Call out the
 // version, give a SIMPLIFIED plain-language line per headline feature, and put
@@ -789,87 +783,6 @@ export const releases: Release[] = [
   },
 ];
 
-export const retroSummary = {
-  headline: '9 of 13 tracked initiatives shipped',
-  blurb:
-    "Before starting the next push, we checked the last backlog against what's " +
-    'actually live rather than trusting old checkmarks. Most of it landed — a ' +
-    'couple of things were solved differently than originally planned, and a ' +
-    "few are still open (mostly things blocked on outside factors, not us dragging feet).",
-};
-
-export const retroItems: RetroItem[] = [
-  {
-    title: 'Charm-pet HP on the Charm/Pet overlays',
-    hit: 'shipped',
-    note: 'Live pet HP shows directly instead of only inferring it from combat lines.',
-  },
-  {
-    title: 'Resisted-spell breakdown',
-    hit: 'shipped',
-    note: 'The local dashboard shows which mobs cast a resisted spell, and how often.',
-  },
-  {
-    title: 'More overlay toggles in the tray',
-    hit: 'shipped',
-    note: 'DPS panels (Healing, Tanking, Threat, Top damage) each get their own on/off switch.',
-  },
-  {
-    title: 'Live character state syncing to the website',
-    hit: 'shipped',
-    note: "Your buffs and zone show on your /me page — this became the backbone for a lot of what's shipped since.",
-  },
-  {
-    title: 'Mimic setup overhaul',
-    hit: 'shipped',
-    note: 'Guided first-run setup, auto-detected EQ folder, opt-in overlays, a ✕ to hide any overlay.',
-  },
-  {
-    title: 'Buff & Debuff coordination queue',
-    hit: 'shipped',
-    note: 'Grew well past the original pitch — curse/cure tracking, HP-slot awareness, severity sorting, and a whole speed pass this round.',
-  },
-  {
-    title: 'CH Chain tracking',
-    hit: 'shipped',
-    note: "Not the arcade-game version we first sketched, but rotation order, live cast bar, and a beat countdown are a real, well-used feature now.",
-  },
-  {
-    title: '/who directory on the website',
-    hit: 'shipped',
-    note: 'Searchable history of everyone ever seen in a /who.',
-  },
-  {
-    title: 'Keeping Supabase storage under control',
-    hit: 'reworked',
-    note: "Instead of periodically deleting old rows, we stopped generating most of them in the first place — a counter table replaced a row-per-upload log that was growing ~30k rows a day.",
-  },
-  {
-    title: 'PvP debuff assist credit',
-    hit: 'open',
-    note: "Blocked on real combat-log samples of a landed debuff on an enemy player — we don't want to guess at this one.",
-  },
-  {
-    title: 'Named-mob kill counts on /me',
-    hit: 'open',
-    note: "Still queued — straightforward to build, just hasn't come up yet.",
-  },
-  {
-    title: 'Unified /raid operational view',
-    hit: 'open',
-    note: "Most of the data it needs is already flowing (roster, live-state, buffs); the dedicated view itself is still a work in progress.",
-  },
-  {
-    title: 'Windows code-signing for Mimic',
-    hit: 'open',
-    note: "Everything is staged and ready — waiting on SignPath Foundation's free open-source signing approval.",
-  },
-];
-
-// Retired 2026-07-08 — the flat feature grid was replaced by the release log
-// (`releases` above). Kept (exported to avoid an unused-symbol lint) as archive
-// context for older shipped work that predates the release log; NOT rendered.
-// Add new work to `releases`, not here.
 export const archivedFeatures: RoadmapFeature[] = [
   {
     key: 'family-links',
@@ -935,51 +848,6 @@ export const archivedFeatures: RoadmapFeature[] = [
       "New overlay combining boss/tank focus with two sections built straight from what raiders already say in raid chat: a raid-wide 'who has Divine Aura up' tracker and a healer mana roster, plus curse/cure alerts. We mined 60 days of real guild raid chat to find the recurring patterns before building it, rather than guessing.",
   },
 ];
-
-export const nearTermItems: RoadmapFeature[] = [
-  {
-    key: 'pull-tracker-glide',
-    title: 'Extended Target: watch mobs climb the list',
-    tag: 'up next',
-    summary:
-      "We looked into showing exactly how far away an incoming add is and when it'll reach camp — turns out the game data we have access to doesn't include position information for mobs or players, so a real countdown isn't possible yet (that needs an upstream change from the Zeal team). What we can do without that: animate the target list so a mob visibly climbs up as more raiders engage it, and drops back down if it gets abandoned.",
-  },
-  {
-    key: 'per-char-layout',
-    title: 'Overlay layouts remember your character',
-    tag: 'up next',
-    summary:
-      "Overlay visibility already switches automatically when you swap characters. Position and size will too — so your monk's layout and your enchanter's layout can both be exactly right without you moving anything by hand.",
-  },
-  {
-    key: 'me-layout-sync',
-    title: 'Your overlay layout on /me',
-    tag: 'planned',
-    summary:
-      "Once layouts remember your character locally, we'll sync a read-only view of them to your /me page — most of what's there already lives on your machine first.",
-  },
-  {
-    key: 'trigger-onboarding',
-    title: 'Smarter first impression for new Mimic installs',
-    tag: 'planned',
-    summary:
-      'Trigger alerts linked directly to the Triggers tab, with starter suggestions based on your class and role — so a fresh install feels tailored from the first raid, not a blank slate.',
-  },
-  {
-    key: 'ui-studio-positioning',
-    title: 'Visual overlay layout tool',
-    tag: 'exploring',
-    summary:
-      "UI Studio already has a polished visual editor for your in-game UI. We're looking at borrowing that same drag-and-drop feel for laying out Mimic's own overlays.",
-  },
-];
-
-// ── The July sprint board (2026-07-16 → 07-20) ───────────────────────────────
-// The numbered work ledger behind the release log above — sortable on /roadmap.
-// `aspects` use the SAME six ids + colors as the /platform map so the two pages
-// read as one system. Complexity is honest scope, not effort bragging:
-// S = contained change · M = one subsystem · L = several subsystems touched ·
-// XL = platform-wide behavior · design = decided on paper, build pending.
 
 export type SprintAspect = 'mimic' | 'agent' | 'bot' | 'web' | 'data' | 'liveops';
 export type SprintComplexity = 'S' | 'M' | 'L' | 'XL' | 'design';
@@ -1057,3 +925,189 @@ export const sprintMeta = {
     'Anything weird → #feedback or wolfpack.quest/feedback. Screenshots beat descriptions.',
   ],
 };
+
+// ── What's next — the open queue, quick → complex ────────────────────────────
+// Sourced from the committed design/continuation docs (docs/STATUS.md ledger,
+// DESIGN-platform-queue.md waves, and the DESIGN-*.md files) — this is the
+// member-readable mirror of what's actually still open, ordered by how much
+// work each one is. `components` names the parts of the platform a change
+// touches; `status` carries the one fact worth knowing (design ready /
+// blocked on X / awaiting sign-off). Keep it honest: when something ships it
+// moves to `releases`, and when it dies it just comes off this list.
+export type QueueComponent = 'Bot' | 'Web' | 'Agent' | 'Mimic' | 'Database' | 'Upstream';
+export type QueueItem = {
+  key: string;
+  title: string;
+  summary: string;
+  effort: 'quick' | 'medium' | 'large';
+  components: QueueComponent[];
+  status?: string;
+};
+
+export const queueItems: QueueItem[] = [
+  // ── Quick wins ─────────────────────────────────────────────────────────
+  {
+    key: 'dead-triggers',
+    title: '30 silent callouts wake up',
+    summary: 'An audit found 30 of our 102 guild triggers can never fire — a pattern-anchoring bug that the rehearsal tool accidentally hid. Each gets fixed against a real log line in one reviewed batch (waking 30 callouts mid-raid-week unreviewed is its own hazard), and the rehearsal tool gets fixed so this can\'t hide again.',
+    effort: 'quick',
+    components: ['Bot', 'Database'],
+    status: 'audited — the list is in hand',
+  },
+  {
+    key: 'rampage-hp-source',
+    title: 'Real HP on the Rampage card, always',
+    summary: 'A Zeal weight reading (130/180) was sneaking into the data as if it were health. The displays are already guarded; this fixes the source so garbage never lands in the database at all, and rampage victims not running Mimic show what the raid collectively knows about their HP.',
+    effort: 'quick',
+    components: ['Mimic', 'Agent'],
+  },
+  {
+    key: 'parse-log-dedup',
+    title: 'One archive entry per fight',
+    summary: 'The parse archive sometimes gets near-identical entries posted seconds apart by different uploaders. Collapse them — carefully, because this archive is also what the bot rebuilds its history from after a restart.',
+    effort: 'quick',
+    components: ['Bot'],
+  },
+  {
+    key: 'dt-pet-victims',
+    title: 'Death Touch on a pet gets captured',
+    summary: 'The Death Touch trigger recognizes player victims but not pets. Blocked on one thing: a verbatim log line of a pet eating a DT (send it if you have one!). May resolve itself when the silent-callouts batch lands.',
+    effort: 'quick',
+    components: ['Database'],
+    status: 'blocked — needs one real log line',
+  },
+  {
+    key: 'buster-double-fire',
+    title: 'Tank-buster countdown: one voice, not two',
+    summary: 'The Emperor tank-buster now has two working detection paths (the rebuilt guild trigger and the built-in countdown). Verify they don\'t both fire on the same cast.',
+    effort: 'quick',
+    components: ['Agent', 'Database'],
+  },
+  // ── Medium builds ──────────────────────────────────────────────────────
+  {
+    key: 'onboarding-v1',
+    title: 'New Here? — the start-to-raiding checklist',
+    summary: 'A slimmer Discord welcome card plus a /start page that checks off the steps it can already prove — signed in, Mimic uploading, first parse recorded. The guided tours that just shipped are step one of this design.',
+    effort: 'medium',
+    components: ['Bot', 'Web'],
+    status: 'design ready',
+  },
+  {
+    key: 'serialization-p1',
+    title: 'Two same-named mobs, two cards',
+    summary: 'When two "a crypt guardian" die back to back, their damage currently knits into one card. Phase one separates two instances using the HP tracks we already record — no client update needed.',
+    effort: 'medium',
+    components: ['Bot'],
+    status: 'design ready',
+  },
+  {
+    key: 'aoe-burn-windows',
+    title: 'AoE burn windows, automatically',
+    summary: 'Detect the raid\'s AoE burn phases from the data instead of the manual /parseaoe ritual, and put the results on the fight page.',
+    effort: 'medium',
+    components: ['Bot', 'Web'],
+  },
+  {
+    key: 'golden-log-ci',
+    title: 'The golden log — a replayable raid for testing',
+    summary: 'A recorded raid night that every parser change replays before it ships, so "did this break charm tracking?" gets answered by a machine instead of a raid. Doubles as the pre-raid drill.',
+    effort: 'medium',
+    components: ['Agent'],
+  },
+  {
+    key: 'first-raid-mode',
+    title: 'First-raid mode',
+    summary: 'A role-aware Mimic preset for someone\'s first night: the two overlays their class actually needs, the callouts that matter, nothing else. Builds on the first-run setup flow.',
+    effort: 'medium',
+    components: ['Mimic'],
+  },
+  {
+    key: 'officer-console',
+    title: 'Officer runbooks + one console',
+    summary: 'The "how do I fix X mid-raid" knowledge, written down and wired to buttons — one officer surface instead of knowledge living in three heads.',
+    effort: 'medium',
+    components: ['Web', 'Bot'],
+  },
+  {
+    key: 'opendkp-auctions',
+    title: 'Finish the OpenDKP wiring',
+    summary: 'Auction creation is already captured; bids and awards still happen on the OpenDKP site. Wire the rest so loot night never leaves Discord.',
+    effort: 'medium',
+    components: ['Bot'],
+  },
+  {
+    key: 'deck-graduation',
+    title: 'Steam Deck / Linux Mimic graduates',
+    summary: 'The native Linux build works on its own experimental update channel today. Graduation means it stops being a science project: supported, documented, on by default for Deck testers.',
+    effort: 'medium',
+    components: ['Mimic'],
+  },
+  // ── Big rocks ──────────────────────────────────────────────────────────
+  {
+    key: 'zeal-spawn-id',
+    title: 'The spawn-id ask — exact mob identity',
+    summary: 'One additive field in Zeal\'s data pipe would give every mob a unique id — ending same-name ambiguity forever: charm credit to the right charmer, debuff timers per mob, multi-pull cards that never merge. The upstream request is drafted with implementation sketch; once it lands, a chain of workarounds on this list simply gets deleted.',
+    effort: 'large',
+    components: ['Upstream', 'Agent', 'Mimic', 'Bot'],
+    status: 'request drafted — the unlock for everything below it',
+  },
+  {
+    key: 'serialization-p2',
+    title: 'Many same-named mobs, all separate',
+    summary: 'Beyond two instances: cluster the raiders fighting each copy by position ("a tanked mob is a mob standing on a tank") to keep three-plus same-named mobs apart. Honest caveat: spawn-id upstream makes most of this unnecessary.',
+    effort: 'large',
+    components: ['Agent', 'Bot'],
+    status: 'design ready',
+  },
+  {
+    key: 'raid-night-review',
+    title: 'Raid Night Review, automatic',
+    summary: 'The morning-after writeup — kills, wipes, standout parses, loot, attendance — generated from the night\'s data and posted to that night\'s thread.',
+    effort: 'large',
+    components: ['Bot', 'Web'],
+  },
+  {
+    key: 'raid-guide',
+    title: 'The living Wolf Pack Raid Guide',
+    summary: 'Per-boss pages seeded from our own playbooks, real parses, and what the callouts already know — a guide that updates itself because the raids feed it.',
+    effort: 'large',
+    components: ['Web'],
+  },
+  {
+    key: 'ui-studio-web',
+    title: 'UI Studio on the website + cloud backups',
+    summary: 'View and edit your EQ interface layouts from the browser, with automatic cloud backups of your UI and settings files — restore a blown-up layout from any machine.',
+    effort: 'large',
+    components: ['Web', 'Agent'],
+  },
+  {
+    key: 'me-advisors',
+    title: 'Advisors on /me',
+    summary: 'Spells you\'re missing at your level, tradeskill next-steps, faction runs worth doing — computed from your own uploads against the game data we already mirror.',
+    effort: 'large',
+    components: ['Web', 'Database'],
+  },
+  {
+    key: 'multi-raid',
+    title: 'Two raids at once',
+    summary: 'A split night (two targets, two raid groups) currently risks the data streams colliding. Leader-anchored identity keeps each raid\'s parses, threads, and callouts separate.',
+    effort: 'large',
+    components: ['Agent', 'Bot'],
+    status: 'design ready',
+  },
+  {
+    key: 'storage-partitioning',
+    title: 'Years of raids, still fast',
+    summary: 'Partition the long-haul storage so three years of parses and sightings stay as quick as three weeks. Invisible when done right — that\'s the point.',
+    effort: 'large',
+    components: ['Database'],
+  },
+  {
+    key: 'eql-support',
+    title: 'EQLegends support',
+    summary: 'When the pack plays EQLegends, the parser and overlays should come along. The groundwork study is done; the port waits until we\'re actually raiding there.',
+    effort: 'large',
+    components: ['Agent', 'Mimic'],
+    status: 'parked until we play',
+  },
+];

@@ -4,9 +4,8 @@
 // version numbers) lives in docs/roadmap.md for anyone who does want the
 // GitHub-level detail.
 
-import RoadmapFeatureCard from '@/components/RoadmapFeatureCard';
 import SprintBoard from '@/components/SprintBoard';
-import { retroSummary, retroItems, releases, nearTermItems, sprintMeta } from '@/lib/roadmapData';
+import { releases, queueItems, sprintMeta, type QueueItem } from '@/lib/roadmapData';
 
 export const dynamic = 'force-static';
 
@@ -15,15 +14,28 @@ export const metadata = {
   description: 'What shipped recently and what\'s next for the Wolf Pack tracker + Mimic.',
 };
 
-const HIT_STYLES: Record<string, string> = {
-  shipped:  'bg-green/20 text-green border-green/40',
-  reworked: 'bg-blue/20 text-blue border-blue/40',
-  open:     'bg-orange/20 text-orange border-orange/40',
+// Effort tiers for the What's-next queue — ordered quick → complex on the
+// page, per Hitya 2026-08-02.
+const EFFORT_ORDER = ['quick', 'medium', 'large'] as const;
+const EFFORT_LABELS: Record<QueueItem['effort'], string> = {
+  quick:  '⚡ Quick wins',
+  medium: '🔨 Medium builds',
+  large:  '⛰️ Big rocks',
 };
-const HIT_LABELS: Record<string, string> = {
-  shipped:  'Shipped',
-  reworked: 'Solved differently',
-  open:     'Still open',
+const EFFORT_BLURBS: Record<QueueItem['effort'], string> = {
+  quick:  'Small, contained changes — each is an evening, not a project.',
+  medium: 'Real features with a design behind them — a focused week each.',
+  large:  'The shape-of-the-platform work — multi-week, staged, worth it.',
+};
+// Component chips reuse the platform-map palette so "what does this touch"
+// reads the same here as on /platform.
+const COMPONENT_STYLES: Record<string, string> = {
+  Bot:      'bg-blue/15 text-blue border-blue/40',
+  Web:      'bg-green/15 text-green border-green/40',
+  Agent:    'bg-orange/15 text-orange border-orange/40',
+  Mimic:    'bg-purple/15 text-purple border-purple/40',
+  Database: 'bg-gold/15 text-gold border-gold/40',
+  Upstream: 'bg-red/15 text-red border-red/40',
 };
 
 export default function RoadmapPage() {
@@ -37,28 +49,39 @@ export default function RoadmapPage() {
         </p>
       </header>
 
-      <section className="space-y-4">
-        <h2 className="text-lg text-orange">Did we hit the last roadmap?</h2>
-        <div className="bg-panel border border-border rounded-lg p-5 space-y-2">
-          <p className="text-text font-semibold">{retroSummary.headline}</p>
-          <p className="text-sm text-dim">{retroSummary.blurb}</p>
-        </div>
-        <ul className="space-y-2">
-          {retroItems.map((item) => (
-            <li
-              key={item.title}
-              className="flex items-start gap-3 bg-panel/60 border border-border/60 rounded-lg p-3"
-            >
-              <span className={`text-[10px] px-1.5 py-0.5 rounded border font-mono mt-0.5 shrink-0 ${HIT_STYLES[item.hit]}`}>
-                {HIT_LABELS[item.hit]}
-              </span>
-              <div className="min-w-0">
-                <div className="text-sm text-text font-semibold">{item.title}</div>
-                <div className="text-xs text-dim mt-0.5">{item.note}</div>
-              </div>
-            </li>
-          ))}
-        </ul>
+      <section className="space-y-6">
+        <h2 className="text-lg text-orange">What&apos;s next — quick to complex</h2>
+        <p className="text-sm text-dim">
+          The open queue, straight from the design docs — smallest first. The chips
+          say which parts of the platform each one touches; a note underneath carries
+          the one fact worth knowing (design ready, blocked on something, parked).
+        </p>
+        {EFFORT_ORDER.map((tier) => (
+          <div key={tier} className="space-y-3">
+            <div>
+              <h3 className="text-base text-text font-semibold">{EFFORT_LABELS[tier]}</h3>
+              <p className="text-xs text-dim">{EFFORT_BLURBS[tier]}</p>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {queueItems.filter((q) => q.effort === tier).map((q) => (
+                <article key={q.key} className="bg-panel border border-border rounded-lg p-4 space-y-2">
+                  <header className="flex flex-wrap items-center gap-1.5">
+                    <h4 className="text-sm text-gold font-semibold mr-auto">{q.title}</h4>
+                    {q.components.map((c) => (
+                      <span key={c} className={`text-[10px] px-1.5 py-0.5 rounded border font-mono ${COMPONENT_STYLES[c] || 'bg-panel text-dim border-border'}`}>
+                        {c}
+                      </span>
+                    ))}
+                  </header>
+                  <p className="text-xs text-dim leading-5">{q.summary}</p>
+                  {q.status && (
+                    <p className="text-[11px] text-blue italic">{q.status}</p>
+                  )}
+                </article>
+              ))}
+            </div>
+          </div>
+        ))}
       </section>
 
       <section className="space-y-4">
@@ -125,19 +148,6 @@ export default function RoadmapPage() {
                 </div>
               )}
             </article>
-          ))}
-        </div>
-      </section>
-
-      <section className="space-y-4">
-        <h2 className="text-lg text-orange">What's next</h2>
-        <p className="text-sm text-dim">
-          The near-term queue — some of these are scoped and about to start, others are
-          still being figured out. Tags below reflect how close each one is.
-        </p>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {nearTermItems.map((f) => (
-            <RoadmapFeatureCard key={f.key} feature={f} />
           ))}
         </div>
       </section>
