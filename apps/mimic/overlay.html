@@ -436,9 +436,12 @@
         // The no-spaces filter drops NPC noise — but OUR pets have multi-word
         // names ("A Fungoid Sporeling"). The agent stamps pet rows with
         // pet_owner, which both whitelists them here and labels the row.
+        // Index 6 = pet_charm: a charm mob with no live owner proof — kept on
+        // the meter (someone's charm is doing that damage) but labeled
+        // "(charmed)" instead of crediting a possibly-stale owner.
         allRows = Object.entries(pp)
-          .map(([name, t]) => [name, (t && t[field]) || 0, (t && t.tookMax) || 0, (t && t.pet_owner) || null])
-          .filter(x => x[0] && (!/\s/.test(x[0]) || x[3]) && x[1] > 0)
+          .map(([name, t]) => [name, (t && t[field]) || 0, (t && t.tookMax) || 0, (t && t.pet_owner) || null, 0, 0, (t && t.pet_charm) || false])
+          .filter(x => x[0] && (!/\s/.test(x[0]) || x[3] || x[6]) && x[1] > 0)
           .sort((a,b)=>(b[1]||0)-(a[1]||0));
       }
       // % is scored against the FULL fight total (every witnessed player), so
@@ -473,8 +476,8 @@
       try {
         if (et && et.perPlayer && boss && secs > 0) {
           var dmgAll = Object.entries(et.perPlayer)
-            .map(function(e){ var t = e[1]; return [e[0], (t && t.dmg) || 0, (t && t.pet_owner) || null]; })
-            .filter(function(x){ return x[0] && (!/\s/.test(x[0]) || x[2]) && x[1] > 0; });
+            .map(function(e){ var t = e[1]; return [e[0], (t && t.dmg) || 0, (t && t.pet_owner) || null, (t && t.pet_charm) || false]; })
+            .filter(function(x){ return x[0] && (!/\s/.test(x[0]) || x[2] || x[3]) && x[1] > 0; });
           if (dmgAll.length) {
             var fullTotal = dmgAll.reduce(function(a, x){ return a + x[1]; }, 0);
             var realp = dmgAll
@@ -496,15 +499,19 @@
 
       const ul = document.getElementById('deeps');
       var bodyHtml = rows.map(function(row){
-        var n = row[0], d = row[1], mx = row[2], petOwner = row[3], rank = row[4], extra = row[5];
+        var n = row[0], d = row[1], mx = row[2], petOwner = row[3], rank = row[4], extra = row[5], petCharm = row[6];
         var pct = totalDmg > 0 ? (d / totalDmg) * 100 : 0;
         var dps = secs > 0 ? Math.round(d / secs) : 0;
         var isMe = me && n.toLowerCase() === me.toLowerCase();
         // Pet rows carry their owner in dim parens — same convention as the
-        // Mob Info "Allure (Hopeya)" charm label.
+        // Mob Info "Allure (Hopeya)" charm label. Charm mobs with no live
+        // owner proof say "(charmed)" — same-name charm pets can't be told
+        // apart (no spawn id), so the meter never guesses a specific raider.
         var ownerHtml = petOwner
           ? ' <span style="color:#8b949e;font-size:9px;font-style:italic">(' + esc(petOwner) + ')</span>'
-          : '';
+          : (petCharm
+            ? ' <span style="color:#8b949e;font-size:9px;font-style:italic" title="Someone\'s charm pet — same-named mobs can\'t be told apart, so no single raider gets the credit">(charmed)</span>'
+            : '');
         // In Tank mode, show the biggest single hit absorbed under the
         // row name as a small subscript — "max 4.1K" makes spike-tank
         // damage stand out vs the running total. Suppressed in DPS mode

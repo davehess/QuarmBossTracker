@@ -194,7 +194,22 @@ describe('#75 golden log — encounter replay', () => {
 
   it('attributes charm-pet damage to the owner in pet_leaders', () => {
     expect(d().pet_leaders['a fear touched drolvarg']).toBe('Sylvarra');
-    expect(d().pet_leaders.gobn).toBe('Orvo');   // "Gobn says, 'My leader is Orvo.'"
+  });
+
+  // Agent 3.4.41 narrowed _provenPets: a pet only reaches an encounter's
+  // pet_leaders if its name appears in THAT encounter's events. Gobn declares
+  // "My leader is Orvo." in this fixture and then does nothing — no swing, no
+  // hit taken — so it is correctly absent. Before 3.4.41 the runtime-persistent
+  // map was dumped wholesale into every upload, which is exactly how hours-old
+  // charm claims polluted the Blood of Ssraeshza parse (STATUS.md,
+  // state.petOwners night-accumulation). Blessed at the 3.4.41 graduation
+  // 2026-08-02: the declaration alone must NOT create attribution.
+  it('omits a pet that declared a leader but never acted in the fight', () => {
+    const decl = fs.readFileSync(
+      path.join(ROOT, 'test/fixtures/golden/raid-pull.log'), 'utf8',
+    ).includes("Gobn says, 'My leader is Orvo.'");
+    expect(decl, 'fixture no longer contains the Gobn declaration').toBe(true);
+    expect(d().pet_leaders.gobn).toBeUndefined();
   });
 
   it('opens a second charm session after the charm breaks', () => {

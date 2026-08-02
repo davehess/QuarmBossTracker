@@ -173,6 +173,14 @@ function defaultConfig() {
                              // sets this false (hides the visual) but TTS keeps
                              // firing from the hidden window. Re-shown when the
                              // user turns triggers on via tray/dashboard.
+    // 💥 Damage-taken audio alert (Hitya 2026-07-31) — speaks "taking damage"
+    // the first time something lands on you after a quiet period, then holds a
+    // ~5s cooldown so a tank eating a swing a second isn't narrated to death.
+    // DEFAULT OFF, deliberately: it's an opt-in cue, and a fresh install (or a
+    // user who never touched it) must come up silent. Toggled from the tray,
+    // the global hotkey (damageAlertHotkey, Ctrl+Shift+D by default), or the
+    // dashboard Overlays tab; pushed to the agent on every change + relaunch.
+    damageAlert: false,
     quietMode: false,        // master "I use EQLogParser" — hides all local UI
     // Quiet updates (default ON): a downloaded update applies silently on the
     // next quit (autoInstallOnAppQuit), so the "Restart now?" pop-up is just
@@ -2203,6 +2211,10 @@ async function launchAgent() {
     const paused = Number(loadConfig().tellsDmPausedUntil) || 0;
     if (paused > Date.now()) pushTellsDmPause(paused);
   } catch (e) { /* non-fatal */ }
+  // Same rationale for the damage-taken alert: the agent's copy is in-memory
+  // and defaults OFF, so an enabled alert has to be re-asserted after every
+  // (re)launch. No `announce` — a relaunch isn't a user toggle.
+  try { if (up) pushDamageAlert(false); } catch (e) { /* non-fatal */ }
   // Re-assert the Mimic Discord-login session — same rationale: the agent
   // keeps the token + identity in memory only, so a relaunch would otherwise
   // de-identify the dashboard until the next latest-version poll. Re-pushing
@@ -4419,6 +4431,65 @@ function toggleHideAllOverlays() {
 }
 let _registeredBackdropAccel = null;
 const _DEFAULT_BACKDROP_HOTKEY = 'CommandOrControl+Shift+B';
+
+// ── 💥 Damage-taken audio alert ────────────────────────────────────────────
+// Mimic owns the durable pref (cfg.damageAlert, default false — see
+// defaultConfig) and the agent owns the detection + the spoken cue. Same split
+// (and the same re-assert-after-relaunch rule) as the tells-DM pause: the agent
+// keeps the flag in memory only, so pushDamageAlert() runs on every flip AND
+// after each (re)launch or the alert would silently revert to off.
+const _DEFAULT_DAMAGE_HOTKEY = 'CommandOrControl+Shift+D';
+let _registeredDamageAccel = null;
+function _damageAlertAccelerator() {
+  const cfg = loadConfig();
+  return (cfg && typeof cfg.damageAlertHotkey === 'string' && cfg.damageAlertHotkey.trim())
+    ? cfg.damageAlertHotkey.trim()
+    : _DEFAULT_DAMAGE_HOTKEY;
+}
+function _damageAlertHotkeyLabelNow() { const a = _damageAlertAccelerator(); return a ? _fmtAccel(a) : ''; }
+// Push the current pref to the local agent. `announce` asks the agent to speak
+// the new state back through the trigger overlay — set for the hotkey + tray
+// flips (the user isn't looking at a window) and cleared for the boot re-assert.
+function pushDamageAlert(announce) {
+  if (!agentPort) return;
+  const cfg = loadConfig();
+  const body = JSON.stringify({ enabled: !!cfg.damageAlert, announce: !!announce });
+  const req = http.request({
+    host: '127.0.0.1', port: agentPort, path: '/api/damage-alert', method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+    timeout: 3000,
+  }, (res) => { res.resume(); });
+  req.on('error', () => {}); req.on('timeout', () => req.destroy());
+  req.write(body); req.end();
+}
+// Single writer for the pref — hotkey, tray, and the dashboard Overlays-tab
+// button all land here so the dead-toggle guard below can't be bypassed.
+function _applyDamageAlert(next, announce) {
+  const cfg = loadConfig();
+  cfg.damageAlert = !!next;
+  // Dead-toggle guard. The cue rides the trigger overlay's speech path, whose
+  // fire() returns early when the master "Trigger alerts (TTS)" switch is off —
+  // and with that switch off the window may not even exist, so enabling the
+  // damage alert would do literally nothing. Turning ON a spoken alert means
+  // "speak to me", so switch the master on with it (same "turn on what it
+  // needs" move the tray's own Trigger-alerts item makes). We deliberately do
+  // NOT touch showTriggerOverlay: #97 decoupled the ✕ (visual) from TTS, and a
+  // user who hid the visual keeps it hidden — TTS fires from the hidden window.
+  // Never reverted on disable; that's the user's switch to own.
+  if (cfg.damageAlert && !cfg.enableTriggerTts) {
+    cfg.enableTriggerTts = true;
+    appendAgentLog('[mimic] damage-taken alert on — turning on Trigger alerts (TTS), which is the path it speaks through\n');
+  }
+  saveConfig(cfg);
+  try { if (cfg.enableTriggerTts && !triggerWindow) createTriggerOverlay(); } catch (e) { void e; }
+  appendAgentLog(`[mimic] damage-taken alert ${cfg.damageAlert ? 'ENABLED' : 'disabled'}\n`);
+  pushDamageAlert(announce);
+  pushStatus();
+}
+// The hotkey + tray toggle both land here: flip, persist, push (with spoken
+// confirmation), refresh the tray checkbox.
+function toggleDamageAlert() { _applyDamageAlert(!loadConfig().damageAlert, true); }
+
 function registerHideAllHotkey() {
   try {
     const { globalShortcut } = require('electron');
@@ -4444,6 +4515,16 @@ function registerHideAllHotkey() {
       const ok2 = globalShortcut.register(bAccel, toggleAllBackdrops);
       if (ok2) _registeredBackdropAccel = bAccel;
       else appendAgentLog(`[mimic] failed to register backdrop hotkey "${bAccel}" (in use by another app?)\n`);
+    }
+    // 💥 Damage-taken alert hotkey — same shape as the two above: configurable
+    // accelerator (cfg.damageAlertHotkey), per-hotkey kill switch, and a log
+    // line when the OS refuses the binding because another app owns it.
+    if (_registeredDamageAccel) { try { globalShortcut.unregister(_registeredDamageAccel); } catch {} _registeredDamageAccel = null; }
+    const dAccel = _damageAlertAccelerator();
+    if (dAccel && cfg.damageAlertHotkeyEnabled !== false) {
+      const ok3 = globalShortcut.register(dAccel, toggleDamageAlert);
+      if (ok3) _registeredDamageAccel = dAccel;
+      else appendAgentLog(`[mimic] failed to register damage-alert hotkey "${dAccel}" (in use by another app?)\n`);
     }
   } catch (e) { appendAgentLog('[mimic] hide-all hotkey error: ' + e.message + '\n'); }
 }
@@ -4551,6 +4632,9 @@ function currentStatus() {
     showExtTarget: !!cfg.showExtTarget,
     showCommand: !!cfg.showCommand,
     showPopRaid: !!cfg.showPopRaid,
+    // 💥 Damage-taken audio alert — drives the tray checkbox (and is available
+    // to any renderer that wants to show the state). Default off.
+    damageAlert: !!cfg.damageAlert,
     overlayTheme: cfg.overlayTheme || 'default',
     overlaysLocked: cfg.overlaysLocked !== false,
     setupMode: !!setupMode,
@@ -4935,6 +5019,14 @@ function buildTrayMenu() {
         applyAllVisibility();
         pushStatus();
       } },
+    // 💥 Damage-taken audio alert — top level (not the Overlays submenu): it's
+    // an audio cue, not an overlay, and "toggleable from the taskbar" (Hitya)
+    // means one click from the tray. Label carries the live hotkey so the
+    // binding is discoverable without opening the dashboard. Disabled under
+    // Quiet mode because the trigger overlay stays silent there anyway.
+    { label: '💥 Damage-taken alert (' + (_damageAlertHotkeyLabelNow() || 'no hotkey') + ')',
+      type: 'checkbox', checked: !!s.damageAlert, enabled: !s.quietMode,
+      click: () => { toggleDamageAlert(); } },
     ...(process.platform === 'win32' ? [
       { label: 'Start with Windows', type: 'checkbox', checked: !!s.autoStart, click: (mi) => {
           const cfg = loadConfig(); cfg.autoStart = !!mi.checked; saveConfig(cfg);
@@ -6146,9 +6238,16 @@ ipcMain.handle('save-config', async (_e, incoming) => {
   // Re-bind the global hotkeys if the user changed any binding OR enable
   // flag (2026-07-12: backdropHotkey saves were ignored until restart —
   // only hideAllHotkey was in this condition).
-  const HOTKEY_KEYS = ['hideAllHotkey', 'backdropHotkey', 'hideAllHotkeyEnabled', 'backdropHotkeyEnabled'];
+  const HOTKEY_KEYS = ['hideAllHotkey', 'backdropHotkey', 'hideAllHotkeyEnabled', 'backdropHotkeyEnabled',
+    'damageAlertHotkey', 'damageAlertHotkeyEnabled'];
   if (incoming && HOTKEY_KEYS.some(k => Object.prototype.hasOwnProperty.call(incoming, k))) {
     try { registerHideAllHotkey(); } catch {}
+  }
+  // 💥 Damage-taken alert flipped from the dashboard Overlays tab — route it
+  // through the same single writer the hotkey/tray use so the dead-toggle
+  // guard runs and the agent gets the push + spoken confirmation.
+  if (incoming && Object.prototype.hasOwnProperty.call(incoming, 'damageAlert')) {
+    try { _applyDamageAlert(!!merged.damageAlert, true); } catch {}
   }
   // Apply a raw-Zeal-capture toggle live (Info tab control) without a restart.
   if (incoming && Object.prototype.hasOwnProperty.call(incoming, 'zealRawCapture')) {

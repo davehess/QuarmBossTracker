@@ -37,6 +37,29 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'raid-review-2-ddr-boogaloo',
+    title: '🎉 Raid Review 2: Plus CH Chain DDR Boogaloo',
+    version: 'Bot 3.1.0 · Web 1.1.0 · Mimic 2.2.0 · Agent 3.5.0',
+    date: '2026-08-02',
+    headline: 'The big one. The raid review now writes itself while you raid, every boss has a guide page built from our own kills, and the CH Chain grades your timing DDR-style — that last one finally graduating from beta to everybody.',
+    features: [
+      { name: '📡 Live Raid Night Review', blurb: 'A card appears in the night\'s thread on the first pull and grows all raid — kills as they land, what\'s in progress, how long since the last one, and whether we\'re ahead of a typical night. At 00:45 it becomes the finished writeup: standouts measured against our own history, loot, attendance including who left early, and deaths by fight.' },
+      { name: '🕺 CH Chain DDR — now for everyone', blurb: 'Call your number within a quarter second of the beat and PERFECT flashes on your bar; three in a row is MARVELOUS. Half a second GREAT, inside a second GOOD. Plus the 10-second cast bar with a red ✕ when someone gets interrupted. Beta-tested, now stable.' },
+      { name: '📖 The Raid Guide', blurb: 'Every boss we have parses for — 99 of them — has a page built from our own kills: typical duration, raid size, what has killed us there, and which callouts fire on that fight. Nobody wrote a word of it.' },
+      { name: '🧟 Trash counts + fight timelines', blurb: 'Non-boss kills are tallied now, and each fight carries the timeline view from the parse pages. Heads up: trash has never been stored before, so those totals start from tonight.' },
+      { name: '🛡️ Officer console + smart backfill', blurb: 'One screen that says whether anything is wrong, with twelve runbooks next to it. And when someone\'s upload claims more damage than the mob actually has, /backfillscan names the two or three raiders whose logs would settle it.' },
+      { name: '⚔ Swarm mob counter', blurb: 'The Melody overlay shows how many mobs your last song pulse hit, out of Quarm\'s 12-target cap — green at a perfect swarm.' },
+    ],
+    fixes: [
+      'Damage shields were permanently labelled "non-melee" instead of naming the spell — the log line that names them was discarded before it was ever read.',
+      'Charm sessions have always uploaded with a blank duration; they now record real time.',
+      'Critical heals from other players, and critical spell damage, were both discarded before parsing.',
+      'Mob Info could show a boss as a level-1 dummy immune to everything; it now merges the real variants of a same-named mob and shows whether it roots or flees.',
+      'Charm-pet damage no longer sprays across everyone who ever charmed that mob name — it goes to whoever is actually charming it in that fight.',
+      'The pace comparison counted weeknight six-mans as raids, so an ordinary night read as far ahead of pace.',
+    ],
+  },
+  {
     key: 'live-raid-review',
     title: '📡 The raid review writes itself while you raid',
     version: 'Bot 3.0.248 · Web 1.0.291 · Agent 3.4.44',

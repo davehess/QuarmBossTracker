@@ -223,7 +223,8 @@
     var spVis = Math.max(0, sp);
     var denom = Math.max(1, sw + pr + spVis + hl);
     function w(cat){ return ((cat / denom) * bw).toFixed(2) + '%'; }
-    var petTag    = t.pet_owner ? '<span class="pet-tag">' + esc(t.pet_owner) + '\'s pet</span>' : '';
+    var petTag    = t.pet_owner ? '<span class="pet-tag">' + esc(t.pet_owner) + '\'s pet</span>'
+                  : (t.pet_charm ? '<span class="pet-tag" title="Someone\'s charm pet — same-named mobs can\'t be told apart">charmed</span>' : '');
     var withPet   = t.pet_threat_total ? '<span class="with-pet">+pet ' + fmtK(t.pet_threat_total) + '</span>' : '';
     var rowClass  = 'row' + (meName && name.toLowerCase() === meName ? ' me' : '')
                           + (rank === 1 ? ' leader' : '');

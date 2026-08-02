@@ -1315,6 +1315,31 @@ function confirmPlayer(name) {
 // petNameLower → Set<ownerName>  (one-to-many: charm pets can cycle through owners)
 const knownPetOwners = new Map();
 
+// ── Vision eyes are never damage-dealing pets ───────────────────────────────
+// EQ's Eye of Zomm summons a scout named "Eye of <Owner>". It is a VISION pet:
+// no attacks, no procs, zero damage, ever. But it IS a pet by every other
+// signal — it answers "My leader is <Owner>." and acks /pet commands — so the
+// pet_leader admission path registered it like a warder or a charm pet. That
+// registration is exactly what hands a name the pet BYPASS around the DPS /
+// threat meter's two anti-NPC filters (multi-word attacker, and "anything we're
+// damaging is a mob"), so an eye could take a damage row on the meter.
+// Field evidence 2026-07-30 (Syphon, raid): an indented pet row "Eye of Syphon"
+// under its owner carrying the owner's own numbers (110 dmg / 3 dps / 38s) — a
+// phantom pet duplicating owner damage, which then rolls BACK into the owner
+// everywhere pets roll up (threat `pet_threat_total`, the by_char rollup's
+// pet→owner `_resolve`, and the bot's pet-damage share), inflating pet
+// attribution rather than just looking odd.
+// The rest of the platform has excluded these for a long time and this is the
+// missing pet-side twin: the bot skips `/^Eye of /i` attackers when it
+// aggregates an upload, /parsestats + /raidstats exclude "eye of " mobs, and
+// EncounterBuilder.flush() already refuses an "eye of …" encounter BOSS name.
+// Cannot suppress anything legitimate: EQ character names are a single word
+// (no player is ever "Eye of …"), summoned pets are proper single-word names,
+// and charm pets keep their article-prefixed mob name ("a/an <thing>").
+function _isVisionEyePet(name) {
+  return /^eye\s+of\s+/i.test(String(name || '').trim());
+}
+
 // ── Charm-pet tick tracker (module-level, survives encounter resets) ───────
 // Knowledge from the owner (2026-06-02):
 //   - Each mob has its own 6-second "mob tick" anchored to its spawn time.
@@ -1339,6 +1364,14 @@ let _pendingCharmSpell = null;   // { cls, dur, owner, ts } | null
 const PENDING_CHARM_WINDOW_MS = 12_000;
 function _bumpCharmTick(pet, owner, eventKind, atMs, opts) {
   if (!pet) return;
+  // Second half of the vision-eye choke point (see _isVisionEyePet). Every
+  // write to _charmTickTracker goes through here, and the meter/threat path
+  // treats an ACTIVE tracker entry as proof of pet-ness — so an eye must never
+  // get one. Reachable without the pet_leader path: _reconcileGaugeCharms
+  // accepts ANY slot-16 name while a charm cast is pending, so a charmer whose
+  // Eye of Zomm sits in slot 16 when their charm lands/fails would otherwise
+  // register the eye as a charm pet.
+  if (_isVisionEyePet(pet)) return;
   const k = String(pet).toLowerCase();
   // Coerce the anchor to epoch-ms. Callers pass `this.lastEvent`, which is the
   // ISO string `event.ts` — NOT a number. Stored as-is, that made the charm
@@ -1740,6 +1773,114 @@ function _findSongBuff(songName, zealBuffs) {
   }
   return null;
 }
+// ── PBAOE song mob counter (swarm QoL) ─────────────────────────────────────
+// Each pulse of an AE song prints one landing line per entity hit — e.g.
+// "A Shik`nar Forager is bound by chords of music." ×11 at one timestamp.
+// Quarm caps AE at 12 targets (the 13th+ mob warps to the bard / "reverse
+// summons"), so a swarm bard wants to see exactly 12 hit per pulse. We count
+// the landing rows per song per burst and pair them with the song's DoT
+// damage lines ("X has taken N damage from your <song>.") so the melody
+// overlay can badge each song row with hits + damage.
+//
+// Matching is scoped to the songs in the character's CURRENT melody order
+// (suffix set rebuilt only when the order or catalog changes), so the
+// per-line cost for non-bards is one Map get. Only detrimental catalog
+// entries (good === 0) count — a beneficial song's landing text names your
+// GROUPMATES, and those aren't "mobs affected". If two melody songs share a
+// landing text the first match wins (never seen in a real twist). Damage
+// lines carry the song name themselves so they need no suffix table.
+const SONG_AOE_CAP      = 12;      // Quarm AE target cap — 12 hit = full swarm
+const SONG_AOE_BURST_MS = 2500;    // landing rows within 2.5s = one pulse
+const SONG_AOE_STALE_MS = 30_000;  // badge drops when the song stops pulsing
+
+// Punctuation-insensitive song key: "Selo`s" / "Selo's" / curly-apostrophe
+// variants all reduce to the same slug (same normalization the melody payload
+// uses for Zeal label matching).
+function _songSlug(s) { return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ''); }
+
+// (Re)build the landing-suffix matcher for a melody state. Cached on the
+// state keyed by order + catalog signature so it costs nothing per line.
+function _ensureSongAoeMatchers(state) {
+  const catCount = _spellCatalogMeta ? (_spellCatalogMeta.count || 0) : 0;
+  const sig = state.order.map(o => (o && o.name) || o || '').join('|') + '#' + catCount;
+  if (state._aoeSig === sig) return;
+  state._aoeSig = sig;
+  state._aoeSuffixes = [];
+  state._aoeSongSlugs = new Set();
+  for (const entry of state.order) {
+    const name = (entry && entry.name) || (typeof entry === 'string' ? entry : '');
+    if (!name) continue;
+    const slug = _songSlug(name);
+    if (!slug) continue;
+    state._aoeSongSlugs.add(slug);
+    // Catalog lookup: exact name first, then slug scan (Zeal labels use
+    // backticks where the catalog has apostrophes). Scan only runs on
+    // melody-order change, never per line.
+    let e = _spellByNameLower.get(String(name).toLowerCase());
+    if (!e) { for (const c of _spellByNameLower.values()) { if (c && c.name && _songSlug(c.name) === slug) { e = c; break; } } }
+    if (!e || !e.other || e.good !== 0) continue;
+    const suffix = String(e.other).trim().toLowerCase();
+    if (suffix.length < 5) continue;    // too short → false positives
+    state._aoeSuffixes.push({ suffix, slug, song: e.name });
+  }
+}
+
+// Per-line hook (watch mode, display-only — no upload, no exclusion gate).
+// Cheap: exits on the _bardMelody miss for everyone who isn't mid-melody.
+function noteSongAoeLine(line, character) {
+  if (!character) return;
+  const state = _bardMelody.get(String(character).toLowerCase());
+  if (!state || !Array.isArray(state.order) || state.order.length === 0) return;
+  const m = line.match(/^\[[^\]]+\]\s+(.+?)\s*$/);
+  if (!m) return;
+  const body = m[1];
+  // Chat lines can quote anything ("... winces.") — the ", '" of a chat
+  // message never appears in landing/damage lines, so skip those outright.
+  if (body.indexOf(", '") !== -1) return;
+  const now = Date.now();
+  state.aoeBySong = state.aoeBySong || {};
+
+  // Damage: "X has taken N (points of) damage from your <song>."
+  const dm = body.match(/^(.+?) has taken (\d+)(?: points? of)? damage from your (.+?)\.$/i);
+  if (dm) {
+    const slug = _songSlug(dm[3]);
+    _ensureSongAoeMatchers(state);
+    if (!state._aoeSongSlugs.has(slug)) return;
+    const amount = parseInt(dm[2], 10) || 0;
+    const b = state.aoeBySong[slug] = state.aoeBySong[slug] || { song: dm[3].trim() };
+    if (!b.dmg || (now - b.dmg.at) > SONG_AOE_BURST_MS) {
+      b.dmg = { n: 1, total: amount, min: amount, max: amount, at: now };
+    } else {
+      b.dmg.n++; b.dmg.total += amount; b.dmg.at = now;
+      if (amount < b.dmg.min) b.dmg.min = amount;
+      if (amount > b.dmg.max) b.dmg.max = amount;
+    }
+    return;
+  }
+
+  // Landing rows: "<entity> <cast_on_other suffix>"
+  _ensureSongAoeMatchers(state);
+  if (!state._aoeSuffixes || state._aoeSuffixes.length === 0) return;
+  const bodyLower = body.toLowerCase();
+  for (const s of state._aoeSuffixes) {
+    if (!bodyLower.endsWith(s.suffix)) continue;
+    const cut = body.length - s.suffix.length;
+    // Require a space boundary before the suffix (possessive suffixes that
+    // start with "'" carry their own separator) so "Foo winces." never
+    // matches inside a longer word.
+    if (s.suffix[0] !== "'" && (cut === 0 || body[cut - 1] !== ' ')) continue;
+    const name = body.slice(0, s.suffix[0] === "'" ? cut : cut - 1).trim();
+    if (!name || name === 'You' || name === 'Your') continue;
+    const b = state.aoeBySong[s.slug] = state.aoeBySong[s.slug] || { song: s.song };
+    if (!b.hitAt || (now - b.hitAt) > SONG_AOE_BURST_MS) {
+      b.hits = 1; b.hitAt = now;
+    } else {
+      b.hits++; b.hitAt = now;
+    }
+    return;
+  }
+}
+
 // Detect a bard song by name pattern. Bard songs almost always start with a
 // possessive of one of the canonical author-NPCs ("Selo`s", "Solon`s",
 // "Tarew`s", etc.) or with one of the named song lines ("Anthem de Arms",
@@ -2736,8 +2877,10 @@ function relaySelfCastForCasting(line, character, pre) {
   const sig = cl + '|' + spell.toLowerCase() + '|' + String(target).toLowerCase();
   const prev = _lastCastRelay.get(cl);
   if (prev && prev.sig === sig && (atMs - prev.at) < 2000) return;
-  _lastCastRelay.set(cl, { sig, at: atMs });
   const castSecs = _spellCastSecs(spell);
+  // spell/target/castSecs ride along so noteCureCastFailed can cancel THIS
+  // cast on the bot if our own log says it fizzled or was interrupted.
+  _lastCastRelay.set(cl, { sig, at: atMs, spell, target, castSecs });
   // Catalog first (any SPA-0-positive/CH spell IS a heal, whatever it's
   // named), name regex as the fallback for heals the catalog can't size
   // (HoTs like Regrowth/Torpor still count as heals, just without an amount).
@@ -2754,6 +2897,57 @@ function relaySelfCastForCasting(line, character, pre) {
   // Heal casts also feed the attribution ring (local multibox join + the
   // encounter payload's heal_casts for the bot-side cross-client join).
   if (isHeal) _noteHealCast(character, spell, target, atMs, castSecs, he);
+}
+// ── Cure register (2026-07-30) ──────────────────────────────────────────────
+// A raider who runs no Mimic never reports their own buff array, so the bot's
+// debuff queue infers their curses from the buff_casts landing we observed and
+// keeps them queued for the debuff's full catalog duration (Curse of
+// Rhag`Zadune = 60 min — 11 raiders sat there for 54 minutes after they had
+// actually been cured). One Mimic-running cleric can be the reporter for the
+// whole raid: the CURER's own log names the spell and Zeal names the target, so
+// the `casting` relay above ALREADY carries every cure cast to the bot, which
+// now spends the cure's counters against that raider's queue entry.
+//
+// The one thing the bot can't see is whether the cast completed — cure spells
+// have cast_on_other = NULL in the catalog (no landing line exists at all, same
+// shape as the charm spells), so there is nothing to confirm the land with. A
+// fizzled Remove Greater Curse must NOT retire a curse the raider is still
+// carrying, so we cancel the pending cure from the caster's own failure line.
+//
+// The regex is a cheap GATE, not the classifier — the bot sizes the cure from
+// eqemu_spells (SPA 35/36/116 with a negative base). It just keeps us from
+// posting a cancel for every fizzled nuke in the raid. Families are grounded in
+// the catalog: Remove (Greater) Curse · Radiant Cure1-3 · Purify Soul · Word of
+// Replenishment/Restoration · Counteract/Abolish/Cure Poison|Disease|Blindness ·
+// Antidote · Purifying Tonic · Pure Blood · Cleanse · Purge · Aria of
+// Innocence/Asceticism · Crusader`s Touch · Balance of the Nameless.
+const CURE_SPELL_RX = /^(?:remove (?:greater )?curse|radiant cure|purif(?:y|ying)|counteract |abolish |cure (?:poison|disease|blindness)|antidote|pure blood|blood of nadox|word of (?:replenishment|restoration)|balance of the nameless|ocean's cleansing|aria of (?:innocence|asceticism)|crusader[`']s touch|disinfecting aura|planar renewal|cleanse|purge)/i;
+// "Your spell fizzles." / "Your spell is interrupted." / "You miss the gem." —
+// the caster-side failure lines. Same shape noteDiInterrupt uses.
+const _CAST_FAIL_RX = /\]\s+(?:Your spell (?:is interrupted|fizzles)|You miss the gem)[.!]\s*$/i;
+function noteCureCastFailed(line, character) {
+  if (!line || !character) return;
+  if (line.indexOf('interrupted') === -1 && line.indexOf('fizzles') === -1
+      && line.indexOf('miss the gem') === -1) return;      // cheap gate
+  if (!_CAST_FAIL_RX.test(line)) return;
+  const cl = String(character).toLowerCase();
+  const prev = _lastCastRelay.get(cl);
+  if (!prev || !prev.spell || !prev.target || prev.cancelled) return;
+  if (!CURE_SPELL_RX.test(prev.spell)) return;
+  const ts = parseEqTimestamp(line);
+  const atMs = ts ? ts.getTime() : Date.now();
+  // Only within this cast's own window (+1.5s slack) — a later unrelated
+  // fizzle is not this cure's.
+  if (atMs - prev.at > (prev.castSecs || 4) * 1000 + 1500) return;
+  prev.cancelled = true;
+  enqueueUpload('casting', { agent_version: AGENT_VERSION, casts: [{
+    caster: character, spell: prev.spell, target: prev.target,
+    started_at: new Date(prev.at).toISOString(),
+    cast_secs: prev.castSecs,
+    // Bot: void the pending ledger entry for this exact cast (bot 3.0.2xx+).
+    // Older bots ignore the unknown field and just store a duplicate cast.
+    cure_failed: true,
+  }] });
 }
 // Recipient-side heal attribution (Uilnayar 2026-07-15). EQ shows OTHER
 // players' cast starts as "<Caster> begins to cast a spell." (caster named,
@@ -3286,6 +3480,133 @@ const CH_EQUIVALENT_SPELLS = new Map([
 ]);
 const SPOT_HEAL_DISPLAY_MS = 8000; // how long a one-off spot-heal stays on the overlay
 const CH_GO_DISPLAY_MS = 7000;     // how long a "NNN GO GO GO" cue flashes on its slot's row
+// ── CH cast bar + interrupt ✕ (Hitya 2026-07-31) ─────────────────────────────
+// Complete Heal cast time, GROUNDED not guessed: eqemu_spells row id 13
+// "Complete Healing" carries cast_time = 10000 ms (recast 2250). That is the
+// cleric chain spell — id 1292 "Complete Heal" (cast_time 1000) is the
+// instant NPC/AA variant and is NOT what a chain cleric casts. The overlay
+// has drawn a 10s bar from a hard-coded local constant since the chain
+// shipped; the agent now owns the number and echoes it on the snapshot so
+// the bar, the interrupt window and the DDR grade all read the same clock.
+const CH_CAST_MS = 10000;
+// Slack past the nominal cast when attributing an interrupt line to a slot.
+// Three real sources of skew, all one-directional-ish: EQ log timestamps are
+// second-resolution, the shout that starts our clock is macro'd onto the cast
+// (so it can trail the gem), and cast-time focus items shorten the real cast.
+// 2s covers all three and still stops well short of the next slot's window.
+const CH_INTERRUPT_SLACK_MS = 2000;
+// How long the frozen bar + red ✕ linger on an interrupted slot's row before
+// it falls back to the ordinary "Ns ago" display.
+const CH_INTERRUPT_LINGER_MS = 4000;
+// ── CH chain DDR grade (Hitya 2026-07-31) ────────────────────────────────────
+// A DDR-style timing grade on how close a cleric's cast start lands to the
+// chain's expected beat. Ladder is the guild lead's, verbatim:
+//   GOOD      |delta| ≤ 1.0s
+//   GREAT     |delta| ≤ 0.5s
+//   PERFECT   |delta| ≤ 0.25s
+//   MARVELOUS 3 PERFECTs in a row — a STREAK upgrade, not a tighter window
+// Deliberately NO failure grade: outside 1s the call is simply ungraded (never
+// a "Miss"). The chain already screams via GAP SOON / PIVOT when it slips.
+//
+// ⚠ VISUAL ONLY, BY DESIGN (Hitya 2026-07-31): this grade is never spoken and
+// must never grow a TTS path. It is an entertainment/timing sticker that
+// flashes on the cleric's own cast bar. The "0X GO" callout (#103) is the
+// chain's ONLY audio and is untouched by any of this — do not "helpfully"
+// wire _pushOverlay into the grading path.
+const CH_DDR_PERFECT_MS = 250;
+const CH_DDR_GREAT_MS   = 500;
+const CH_DDR_GOOD_MS    = 1000;
+const CH_DDR_MARVELOUS_STREAK = 3;   // consecutive PERFECTs that upgrade to MARVELOUS
+const CH_DDR_DISPLAY_MS = 1400;      // sticker lifetime on the row (~1-1.5s)
+// Streak scope. TRUE = per slot, which is per cleric in practice: a chain slot
+// is owned by one cleric for the fight and the roster call pins the name to the
+// number, so "3 in a row" reads as "that cleric nailed three of their own
+// beats". Flip this ONE line to false for a chain-wide streak (any three
+// consecutive on-beat calls, regardless of who made them).
+const CH_DDR_STREAK_PER_SLOT = true;
+// Don't grade until the chain's own cadence is actually measured — the
+// expected-fire model IS the measured beat (see _chExpectedNextAt), and a
+// median over one or two gaps is noise, not a cadence.
+const CH_DDR_MIN_BEATS  = 3;
+// Dedicated per-feature toggle, same shape as _chGoTtsEnabled (#103): the
+// button on the CH chain overlay POSTs /api/chchain/ddr, the overlay persists
+// the choice in localStorage and re-POSTs on load + on any drift. Governs the
+// on-row flash (there is nothing else for it to govern — see above).
+let _chDdrEnabled = true;
+
+// ── Expected-fire model (the DDR baseline) ───────────────────────────────────
+// There is no officer-configured cadence anywhere in this platform — the
+// DESIGN-ch-chain "shared start_at + interval" relay was never built, and the
+// chain we actually parse is callout-driven. So "expected" is derived exactly
+// the way the overlay's NEXT countdown has always derived it: the previous
+// slot's cast START (its shout — clerics macro the shout onto the cast, so the
+// shout IS the cast-start signal) plus this chain's OWN measured beat, the
+// median of the last 10 inter-slot gaps. Returns null until CH_DDR_MIN_BEATS
+// gaps exist, so an unwarmed chain grades nothing rather than grading noise.
+function _chExpectedNextAt(c) {
+  if (!c || !c.lastCh || !c.beats || c.beats.length < CH_DDR_MIN_BEATS) return null;
+  const sorted = c.beats.slice().sort((a, b) => a - b);
+  const beatMs = sorted[Math.floor(sorted.length / 2)];
+  if (!beatMs) return null;
+  return c.lastCh.atMs + beatMs;
+}
+// |delta| → base grade. Thresholds are the guild lead's, verbatim.
+// MARVELOUS is NOT decided here — it's a streak upgrade applied in
+// _chGradeCall once three PERFECTs land back to back.
+function _chGradeForDelta(deltaMs) {
+  const d = Math.abs(Number(deltaMs));
+  if (!isFinite(d)) return null;
+  if (d <= CH_DDR_PERFECT_MS) return 'PERFECT';
+  if (d <= CH_DDR_GREAT_MS)   return 'GREAT';
+  if (d <= CH_DDR_GOOD_MS)    return 'GOOD';
+  return null;                      // outside 1s → ungraded, never a "Miss"
+}
+function _chStreakKey(num) { return CH_DDR_STREAK_PER_SLOT ? String(num) : 'chain'; }
+// Grade a CH call the instant it lands. MUST be called BEFORE the new gap is
+// folded into c.beats and before c.lastCh is replaced — otherwise the gap we
+// are grading is itself in the median and every call looks perfect.
+function _chGradeCall(c, num, atMs) {
+  if (!_chDdrEnabled) return null;
+  if (!c || !c.lastCh || c.lastCh.num === num) return null;   // repeat call ≠ a beat
+  // The anchor cast never landed, so the chain is in recovery and the next
+  // cleric is *supposed* to jump in early rather than on cadence. Grading
+  // against a cadence the chain has abandoned would manufacture a bogus late
+  // call. This is what "treat the interrupted slot as missed" means for the
+  // expected-next math — the rotation pointer itself is untouched (nextNum
+  // already advanced at the interrupted slot's own call, and that stays).
+  if (c.lastCh.interruptedAt) return null;
+  const expectedAt = _chExpectedNextAt(c);
+  if (!expectedAt) return null;
+  const deltaMs = atMs - expectedAt;              // + late, − early
+  let grade = _chGradeForDelta(deltaMs);
+  c.ddrStreak = c.ddrStreak || {};
+  const key = _chStreakKey(num);
+  if (grade === 'PERFECT') {
+    const streak = (c.ddrStreak[key] || 0) + 1;
+    c.ddrStreak[key] = streak;
+    // At/above the threshold every further consecutive PERFECT keeps showing
+    // MARVELOUS — the streak is sustained, not consumed.
+    if (streak >= CH_DDR_MARVELOUS_STREAK) grade = 'MARVELOUS';
+  } else {
+    c.ddrStreak[key] = 0;   // GREAT/GOOD *and* ungraded both break the streak
+  }
+  if (!grade) return null;
+  return { num, grade, delta_ms: deltaMs, expected_at: expectedAt, at: atMs,
+           streak: c.ddrStreak[key] || 0 };
+}
+// Stamp a fresh grade onto its slot row. Called after the slot object has been
+// rebuilt (the literal drops any prior grade, which is what we want — a new
+// cast start is a new bar and a new grade). Purely a display stamp: nothing
+// here speaks, uploads, or fires a trigger.
+function _applyChGrade(c, num, ddr) {
+  if (!ddr) return;
+  const slot = c.slots[num];
+  if (!slot) return;
+  slot.grade = ddr.grade;
+  slot.gradeAtMs = ddr.at;
+  slot.gradeDeltaMs = ddr.delta_ms;
+  slot.gradeStreak = ddr.streak;
+}
 
 function trackChChainLine(line, character) {
   if (!line) return;
@@ -3348,6 +3669,10 @@ function trackChChainLine(line, character) {
     if (call[2]) c.target = call[2];
     const manaM = text.match(_CH_MANA_RX);
     const mana = manaM ? Math.min(100, parseInt(manaM[1], 10)) : null;
+    // DDR grade — computed BEFORE this call's gap joins the beat median (see
+    // _chGradeCall) so the expected time is the cadence the chain had going
+    // INTO this call, not one that already knows the answer.
+    const ddr = _chGradeCall(c, num, atMs);
     // Beat = gap between consecutive CH calls from DIFFERENT slots. Median of
     // the last 10 gaps absorbs one-off stutters (a late call, a duplicate).
     if (c.lastCh && atMs > c.lastCh.atMs && c.lastCh.num !== num) {
@@ -3364,6 +3689,7 @@ function trackChChainLine(line, character) {
     // collides with one the personal-macro path auto-assigned earlier.
     c.slots[num] = { name: slotName, mana: mana != null ? mana : (prev.mana ?? null), lastAtMs: atMs, count: (prev.count || 0) + 1, kind: null };
     c.lastCh = { num, name: slotName, mana, atMs };
+    _applyChGrade(c, num, ddr);
     // Default next = numeric successor, wrapping at the highest slot seen.
     // The explicit GO cue (below) overrides when it arrives.
     const nums = Object.keys(c.slots).map(Number);
@@ -3394,6 +3720,7 @@ function trackChChainLine(line, character) {
         num = existing.length ? Math.max.apply(null, existing) + 1 : 1;
         c.autoSlots[key] = num;
       }
+      const ddr = _chGradeCall(c, num, atMs);   // before the gap joins the median
       if (c.lastCh && atMs > c.lastCh.atMs && c.lastCh.num !== num) {
         const gap = atMs - c.lastCh.atMs;
         if (gap > 500 && gap < 30000) { c.beats.push(gap); if (c.beats.length > 10) c.beats.shift(); }
@@ -3402,6 +3729,7 @@ function trackChChainLine(line, character) {
       const slotName = (c.rosterNames && c.rosterNames[num]) || speaker;
       c.slots[num] = { name: slotName, mana, lastAtMs: atMs, count: (prev.count || 0) + 1, kind: CH_EQUIVALENT_SPELLS.get(spellKey) };
       c.lastCh = { num, name: slotName, mana, atMs };
+      _applyChGrade(c, num, ddr);
       const nums = Object.keys(c.slots).map(Number);
       c.nextNum = num >= Math.max.apply(null, nums) ? Math.min.apply(null, nums) : num + 1;
       c.updatedAt = atMs;
@@ -3431,6 +3759,69 @@ function trackChChainLine(line, character) {
       _maybeAnnounceChGo(_chChain, atMs);
     }
   }
+}
+// ── CH cast interrupted → freeze that slot's bar and put a ✕ on it ───────────
+// Bystander-visible interrupt lines, grounded in the server source Quarm runs
+// on (EQMacEmu/Server zone/string_ids.h, identical ids in EQEmu/Server):
+//   INTERRUPT_SPELL       439    "Your spell is interrupted."
+//   INTERRUPT_SPELL_OTHER 12478  "%1's casting is interrupted!"
+// The OTHER form is what puts a ✕ on somebody ELSE's bar. Caveat worth knowing
+// before trusting it as a chain signal: zone/spells.cpp InterruptSpell sends it
+// with entity_list.QueueCloseClients(..., RuleI(Range, SongMessages), ...,
+// FilterPCSpells) — range-limited and suppressible by the reader's own PC-spell
+// chat filter. So a ✕ is proof of an interrupt; the ABSENCE of one is never
+// proof the cast completed. We also accept the "'s spell is interrupted" phrasing
+// defensively (older/alternate eqstr wordings) — same cheap gate either way.
+const _CH_INTERRUPT_OTHER_RX = /\]\s+([A-Za-z][A-Za-z'`]*)'s (?:casting|spell) is interrupted[.!]\s*$/i;
+const _CH_INTERRUPT_SELF_RX  = /\]\s+Your spell is interrupted[.!]\s*$/i;
+function trackChChainInterrupt(line, character) {
+  if (!line || !_chChain) return;                      // never conjures a chain
+  if (line.indexOf('interrupted') === -1) return;      // cheap gate (tail hot path)
+  let who = null;
+  const om = line.match(_CH_INTERRUPT_OTHER_RX);
+  if (om) who = om[1];
+  else if (_CH_INTERRUPT_SELF_RX.test(line)) who = character;
+  if (!who) return;
+  const ts = parseEqTimestamp(line);
+  const atMs = ts ? ts.getTime() : Date.now();
+  const num = _chSlotCastingAs(who, atMs);
+  if (num == null) return;
+  const slot = _chChain.slots[num];
+  if (!slot || slot.interruptedAt) return;             // already marked
+  slot.interruptedAt = atMs;
+  slot.grade = null;                 // a frozen bar + ✕ replaces any grade sticker
+  // An interrupt breaks the MARVELOUS streak (Hitya: "resets on any
+  // non-PERFECT grade or an interrupt").
+  if (_chChain.ddrStreak) _chChain.ddrStreak[_chStreakKey(num)] = 0;
+  // Mark the chain anchor too when the interrupted slot is the current one —
+  // _chGradeCall reads this to skip grading the cleric who jumps in after.
+  if (_chChain.lastCh && _chChain.lastCh.num === num) _chChain.lastCh.interruptedAt = atMs;
+  _chChain.updatedAt = atMs;
+}
+// Which chain slot is `who` mid-cast on right now? Only slots inside their own
+// CH cast window are candidates, so an interrupt after the bar finished — or
+// from an unrelated spell later in the fight — attaches to nothing. Exact name
+// match first; a UNIQUE prefix match is the fallback for the roster-abbreviation
+// case (row says "Mana", the log says "Manamana"). Ambiguous prefix → no match,
+// same conservative rule _resolveChRosterName uses.
+function _chSlotCastingAs(who, atMs) {
+  if (!_chChain || !who) return null;
+  const lc = String(who).toLowerCase();
+  const win = CH_CAST_MS + CH_INTERRUPT_SLACK_MS;
+  let exact = null;
+  const prefix = [];
+  for (const nStr of Object.keys(_chChain.slots)) {
+    const s = _chChain.slots[nStr];
+    if (!s || !s.lastAtMs) continue;
+    const dt = atMs - s.lastAtMs;
+    if (dt < 0 || dt > win) continue;
+    const sn = String(s.name || '').toLowerCase();
+    if (!sn) continue;
+    if (sn === lc) { exact = Number(nStr); break; }
+    if (lc.startsWith(sn) || sn.startsWith(lc)) prefix.push(Number(nStr));
+  }
+  if (exact != null) return exact;
+  return prefix.length === 1 ? prefix[0] : null;
 }
 function _chChainEnsure(atMs) {
   if (_chChain && (atMs - _chChain.updatedAt) > CH_CHAIN_IDLE_RESET_MS) _chChain = null;
@@ -3523,6 +3914,26 @@ function chChainSnapshot() {
     // Current state of the dedicated "0X GO" TTS toggle, echoed so the overlay
     // button can reconcile its localStorage choice after an agent restart.
     go_tts:     _chGoTtsEnabled,
+    // Cast-bar clock + interrupt display window (the overlay keeps its own
+    // fallbacks, so an older overlay against a newer agent still renders).
+    ch_cast_ms:             CH_CAST_MS,
+    ch_interrupt_linger_ms: CH_INTERRUPT_LINGER_MS,
+    // The DDR baseline, exposed so the overlay's NEXT countdown and the grade
+    // are computed from ONE number instead of two lookalike expressions.
+    // Null until the beat is measured (CH_DDR_MIN_BEATS gaps).
+    next_expected_at: _chExpectedNextAt(_chChain),
+    // DDR grading state — `enabled` is echoed for the same button self-heal
+    // the GO toggle does; the thresholds ride along so the overlay can label
+    // its tooltip without duplicating the constants. VISUAL ONLY — no field
+    // here feeds any audio path (see the CH_DDR_* block).
+    ddr: {
+      enabled:         _chDdrEnabled,
+      display_ms:      CH_DDR_DISPLAY_MS,
+      perfect_ms:      CH_DDR_PERFECT_MS,
+      great_ms:        CH_DDR_GREAT_MS,
+      good_ms:         CH_DDR_GOOD_MS,
+      marvelous_streak: CH_DDR_MARVELOUS_STREAK,
+    },
   };
 }
 
@@ -5151,11 +5562,22 @@ class EncounterBuilder {
       // rows need. Same-named trash ambiguity is accepted (mobs rarely
       // hit our targets unless charmed).
       const nl = String(name).toLowerCase();
-      const petOwner = this.petLeaders[nl]
-        || (this._activeCharms?.get(nl)?.owner)
+      // Live charm proofs FIRST — a stale petLeaders claim must never outrank
+      // the charm this agent can prove is running right now (the runtime map
+      // once labeled every revenant "Bardtholemu's" for the whole raid,
+      // 2026-07-31). Article-prefixed names are charm-pet MOBS with temporal
+      // ownership: without a live proof they get NO owner credit — the row
+      // stays on the meter flagged pet_charm so the overlay renders
+      // "(charmed)" instead of crediting one past charmer, and the pet-threat
+      // fold-back below skips them (no pet_owner). Summoned pets (single-word
+      // names) keep their runtime-long petLeaders ownership.
+      let petOwner = (this._activeCharms?.get(nl)?.owner)
         || (_charmTickTracker.get(nl)?.is_active ? _charmTickTracker.get(nl).owner : null)
+        || (!/^an?\s/i.test(nl) ? (this.petLeaders[nl] || null) : null)
         || null;
-      if (this.targets.has(name) && !petOwner) continue;
+      if (petOwner === '__SELF__') petOwner = this.character || null;
+      const petCharm = !petOwner && /^an?\s/i.test(nl) && !!this.petLeaders[nl];
+      if (this.targets.has(name) && !petOwner && !petCharm) continue;
       perPlayer[name] = {
         swing:      Math.round(t.swing),
         proc:       Math.round(t.proc),
@@ -5173,6 +5595,10 @@ class EncounterBuilder {
         // the multi-word name past its anti-NPC filter and label the row
         // "A Fungoid Sporeling (Hopeya)".
         pet_owner:  petOwner,
+        // Charm mob with NO live local proof of who runs it right now —
+        // whitelisted on the meter but rendered "(charmed)", never credited
+        // to a specific raider (undefined when not applicable, keeps payload flat).
+        pet_charm:  petCharm || undefined,
         procDetail: t.procDetail || {},
       };
     }
@@ -5477,6 +5903,18 @@ class EncounterBuilder {
     // The parser emits owner='__SELF__' for charm-pet "Attacking X Master."
     // lines (which EQ only shows to the charmer) — resolve to this.character.
     if (event.type === 'pet_leader') {
+      // CHOKE POINT for vision eyes (Eye of Zomm → "Eye of <Owner>", see
+      // _isVisionEyePet). Every pet-ness test the meter/threat path makes reads
+      // one of the four registries written below this line — petLeaders,
+      // knownPetOwners, _activeCharms, _charmTickTracker (via _bumpCharmTick) —
+      // and this handler is the ONLY LOG path an "Eye of …" name can take into
+      // any of them (the possessive self-owned shortcut above requires
+      // "<Owner>`s …", which an eye never matches; the Zeal slot-16 gauge path
+      // is closed by the twin guard in _bumpCharmTick). Refusing here keeps eyes off
+      // the DPS/threat meter, out of the PvP-assist window, out of kill credit,
+      // out of the ability rollup's pet→owner resolve, and out of the uploaded
+      // `pet_leaders` map (so the bot never learns the mapping either).
+      if (_isVisionEyePet(event.pet)) return;
       const owner = event.owner === '__SELF__' ? (this.character || null) : event.owner;
       if (!owner) return;  // can't attribute without a known character
       this.petLeaders[event.pet.toLowerCase()] = owner;
@@ -6489,6 +6927,97 @@ class EncounterBuilder {
       if (now - last > 120_000) this.flush();
     }
   }
+  // ── Proven-ours pets, for the UPLOAD payload ───────────────────────────────
+  // The DPS HUD admits a pet row when ANY of the ownership trackers can prove
+  // the mob is ours (_publishLiveThreat, ~line 5120: petLeaders / an open
+  // _activeCharms session / an active _charmTickTracker entry). The upload
+  // payload only ever consulted `this.petLeaders` — and a charm pet landed via
+  // the Zeal slot-16 gauge (the PRIMARY charm-land signal, `_bumpCharmTick` at
+  // ~line 1629) never touches petLeaders or _activeCharms. So charmed mobs
+  // showed on the local meter but were invisible to the bot: its aggregator
+  // drops any multi-word attacker it can't resolve through `pet_leaders` (root
+  // index.js ~8249 `if (/\s/.test(attacker)) continue;`), which is exactly the
+  // Ssra 2026-07-30 report — pets on the HUD, no pet damage and no owner
+  // attribution on the parse card / encounter_players.
+  //
+  // Two deliberate differences from the HUD's set, both about TIME:
+  //   • closed charm sessions (this.charmSessions) count too — a fight where an
+  //     enchanter/bard cycles three mobs leaves only the LAST one active, so a
+  //     "who is ours right now" set collapses three pets down to one;
+  //   • a broken-but-lingering _charmTickTracker entry counts when it broke
+  //     inside this fight's window (it lingers PET_LINGER_MS for the overlay).
+  //
+  // Keyed per PET NAME, never per owner — two pets belonging to one player stay
+  // two entries. Returns Map<petNameLower, { pet, owner }>.
+  _provenPets() {
+    const out = new Map();
+    const startMs = this.startedAt ? (Date.parse(this.startedAt) || 0) : 0;
+    const add = (pet, owner) => {
+      const name = pet ? String(pet).trim() : '';
+      if (!name) return;
+      // Vision eyes ("Eye of Kyrasha") are scout familiars, not damage pets.
+      // They must never enter the upload — the bot drops them from its damage
+      // aggregate too (root index.js ~8234), and admitting them here would
+      // silently re-attribute a scout's chip damage to a raider.
+      if (_isVisionEyePet(name)) return;   // shared vision-eye choke point (rn-eye-filter)
+      let own = owner === '__SELF__' ? this.character : owner;
+      own = own ? String(own).trim() : '';
+      // Owners are player characters. A multi-word "owner" is a mis-read; the
+      // bot discards those anyway (validOwners, root index.js ~8241).
+      if (!own || /\s/.test(own)) return;
+      const key = name.toLowerCase();
+      if (!out.has(key)) out.set(key, { pet: name, owner: own });
+    };
+    // Charm sources first — they carry the log's original casing, whereas
+    // petLeaders is keyed (and therefore cased) lowercase. _activeCharms and
+    // charmSessions are reset() per encounter and per builder, so they need no
+    // scoping; _charmTickTracker is MODULE-level (shared by every builder and
+    // every boxed character) and does need it — see below.
+    // Names that actually appear in THIS encounter's events — the scope gate
+    // for every source that outlives a single fight (_charmTickTracker and
+    // petLeaders below).
+    const seen = new Set();
+    for (const ev of this.events) {
+      if (ev.attacker) seen.add(String(ev.attacker).toLowerCase());
+      if (ev.defender) seen.add(String(ev.defender).toLowerCase());
+    }
+    if (this._activeCharms) {
+      for (const [petLower, sess] of this._activeCharms) add(sess?.pet || petLower, sess?.owner);
+    }
+    for (const s of this.charmSessions) add(s?.pet, s?.owner);
+    if (_charmTickTracker.size > 0) {
+      // Only admit a globally-tracked charm pet that actually appears in THIS
+      // encounter. Without the scope check an alt's live charm (or a pet that
+      // lingered from an earlier pull — broken entries stay PET_LINGER_MS for
+      // the overlay) would be declared "ours" on an unrelated fight's upload,
+      // handing a same-named enemy's damage to whoever charmed one last time.
+      for (const [petLower, t] of _charmTickTracker) {
+        if (!t || !seen.has(petLower)) continue;
+        // …and only while the charm is live or broke inside this fight, so a
+        // stale linger can't claim a respawned same-named mob.
+        const inFight = t.is_active
+          || (t.broke_at && (!startMs || t.broke_at >= startMs - 60_000));
+        if (!inFight) continue;
+        add(t.pet || petLower, t.owner);
+      }
+    }
+    // petLeaders persists for the agent's whole runtime (summoned pets declare
+    // their leader once and keep it until repop) — but dumping it UNSCOPED
+    // poisoned uploads all night (Blood of Sraeshza 2026-07-31: charm-cycled
+    // mob names claimed hours after the charm broke, spraying that name's
+    // damage over every past charmer once the bot folded it). Two gates:
+    //   1. the pet name must appear in THIS fight's events;
+    //   2. article-prefixed names ("a stonegrabber") are charm-pet MOBS, not
+    //      summons — their ownership is temporal, and every LIVE charm was
+    //      already admitted by the three charm sources above (add() keeps the
+    //      first claim), so whatever's left here is stale residue. Skip it.
+    for (const [petLower, owner] of Object.entries(this.petLeaders)) {
+      if (!seen.has(petLower)) continue;
+      if (/^an?\s/i.test(petLower)) continue;
+      add(petLower, owner);
+    }
+    return out;
+  }
   flush() {
     // Commit any buffered DS attribution so a fight that ends with a damage
     // line but no flavor line still credits the tank (with ability='non-melee').
@@ -6701,10 +7230,19 @@ class EncounterBuilder {
     // reliable for the uploader and for melee/skill verbs across the board;
     // remote players' spell names are not.
     const _uploader = this.character || null;
+    // Every pet this agent can PROVE is ours, resolved ONCE and shared by the
+    // three payload consumers below (verb rollup, `pets`, `pet_leaders`) so
+    // they can never disagree about who owns what.
+    const _provenPetMap = this._provenPets();
     const _resolve = (name) => {
       if (!name) return _uploader;
-      const owner = this.petLeaders[String(name).toLowerCase()];
-      return owner || name;
+      // Vision eyes are scout familiars, not DPS. The bot excludes them from
+      // the damage aggregate (root index.js ~8234); returning null here drops
+      // them from the verb rollup too, so encounter_combat_rollup can't
+      // disagree with the parse card.
+      if (_isVisionEyePet(String(name))) return null;   // shared vision-eye choke point (rn-eye-filter)
+      const proven = _provenPetMap.get(String(name).toLowerCase());
+      return proven ? proven.owner : name;
     };
     const _rollupByChar = {};
     for (const ev of this.events) {
@@ -6742,6 +7280,39 @@ class EncounterBuilder {
     const _rollup = Object.keys(_rollupByChar).length
       ? { by_char: _rollupByChar }
       : undefined;
+
+    // ── Per-pet damage rows (#pets-payload) ────────────────────────────────
+    // One row PER PET — never per owner. The bot's aggregator folds all of a
+    // player's pet damage into that player's single `petDamage` bucket (root
+    // index.js ~8244), so three charmed mobs arrive as one number and the raid
+    // can't see which pet did what; and until the bot grows a pet-row path it
+    // has no per-pet damage at all. Ship the breakdown alongside pet_leaders:
+    // additive, ignored by older bot builds, and the exact shape a pet row
+    // needs ({ name, pet_owner, damage, hits }). `name` uses the log's own
+    // casing (that's the string the bot matches against pet_leaders).
+    // Same proof set as pet_leaders, so eyes are already excluded.
+    const _petRows = [];
+    if (_provenPetMap.size > 0) {
+      const _petAcc = new Map();
+      for (const ev of this.events) {
+        if (ev.type !== 'damage') continue;
+        if (!ev.attacker) continue;              // first-person = the uploader
+        const key = String(ev.attacker).toLowerCase();
+        const proven = _provenPetMap.get(key);
+        if (!proven) continue;
+        let r = _petAcc.get(key);
+        if (!r) {
+          r = { name: String(ev.attacker), pet_owner: proven.owner, damage: 0, hits: 0 };
+          _petAcc.set(key, r);
+        }
+        r.damage += Number(ev.amount) || 0;
+        r.hits   += 1;
+      }
+      for (const r of _petAcc.values()) {
+        if (r.damage > 0) { r.damage = Math.round(r.damage); _petRows.push(r); }
+      }
+      _petRows.sort((a, b) => b.damage - a.damage);
+    }
 
     // Resolve the killing blow to a credit. If the slayer is one of our charmed
     // pets, the kill belongs to the charm owner (the enchanter), not the
@@ -6785,8 +7356,21 @@ class EncounterBuilder {
         // entries for /parsestats raid_only filtering and future /guildreport.
         is_raid_window: isRaidWindow || undefined,
         // pet_leaders: { lowercasePetName: "OwnerName" } — used server-side to attribute
-        // pet damage to the player owner. Empty object when no pets were detected.
-        pet_leaders: Object.keys(this.petLeaders).length > 0 ? { ...this.petLeaders } : undefined,
+        // pet damage to the player owner. Undefined when no pets were detected.
+        // Built from _provenPets(), NOT from this.petLeaders alone: gauge-driven
+        // charm pets live only in _charmTickTracker, and sending just petLeaders
+        // is what made the bot drop charmed-mob damage entirely (multi-word
+        // attacker it couldn't resolve → `continue`, root index.js ~8249).
+        pet_leaders: (() => {
+          if (_provenPetMap.size === 0) return undefined;
+          const out = {};
+          for (const [petLower, v] of _provenPetMap) out[petLower] = v.owner;
+          return out;
+        })(),
+        // pets: per-PET damage rows — [{ name, pet_owner, damage, hits }].
+        // Keyed per pet name so two pets from one owner stay two rows (the bot
+        // collapses them into the owner's single petDamage bucket today).
+        pets: _petRows.length > 0 ? _petRows : undefined,
         // who_data: snapshot of every /who row this agent has observed since startup.
         // Server upserts into state.whoData so class/level/guild is available for
         // /parsestats embeds and /whois lookups even for non-guildies.
@@ -8422,15 +9006,34 @@ function _resolveHpForName(nameLower, active, st) {
   if (live && live.state && typeof live.state.self_hp_pct === 'number') return live.state.self_hp_pct;
   return null;
 }
+// Is this number pair believable as an EQ character's HP pool? Every hop in the
+// exact-HP chain (Zeal label learner → raid_roster → the bot's live-state relay
+// → here) gated on `max > 100` and nothing else. That gate was written for ONE
+// artifact — the percent-as-pool "88 / 100 · 88%" (2026-07-09) — so it rejects a
+// percent wearing a pool's clothes but happily passes a pair that is neither a
+// percent NOR HP. Raid-night 2026-07-30: the Tank overlay's Rampage card read
+// "Rampage on Stupidrichard — 130 / 180 · 72%". Raiders run thousands
+// (6512/6512), so 130/180 was some OTHER number pair entirely — the self-HP
+// learner scans the same charInfo band that carries static pairs like
+// current/max weight (labels 24/25, docs/zeal-pipe-protocol.md), and 130/180 =
+// 72.2% sits close enough to the gauge to look self-consistent, which is exactly
+// why the displayed % agreed with it. A raid-level pool is never three digits:
+// below the floor we return NOTHING, so the card degrades to the plain % it
+// already has rather than painting numbers we can't stand behind.
+const MIN_PLAUSIBLE_HP_POOL = 500;
+function _isPlausibleHpPool(cur, max) {
+  return typeof cur === 'number' && typeof max === 'number'
+    && Number.isFinite(cur) && Number.isFinite(max)
+    && max >= MIN_PLAUSIBLE_HP_POOL && cur >= 0 && cur <= max;
+}
 // EXACT cur/max HP for a name, when available — {cur, max} or null. Only three
 // sources carry raw numbers (gauges are per-mille only): the viewer's own Zeal
 // labels 17/18 (self), another watched box on this machine, or the bot's relay
 // (which now backfills cur/max from a /pipeverbose groupmate's raid_roster row).
+// Shared by the Target-Info raider HP, the Main-Tank card and the Rampage card —
+// one gate, so a bad pair can't reach any of them.
 function _resolveHpValuesForName(nameLower, active, st) {
-  // max > 100: a ≤100 "pool" is a percent in disguise (the verbose raid sample
-  // reports non-self members as pct/100) — showing it as "88 / 100" is worse
-  // than showing the plain %. Real raiders' pools are always in the thousands.
-  const ok = (o) => o && typeof o.self_hp_cur === 'number' && typeof o.self_hp_max === 'number' && o.self_hp_max > 100;
+  const ok = (o) => o && _isPlausibleHpPool(o.self_hp_cur, o.self_hp_max);
   if (active && nameLower === String(active).toLowerCase() && ok(st)) {
     return { cur: st.self_hp_cur, max: st.self_hp_max };
   }
@@ -8678,6 +9281,12 @@ function _serializeTankState() {
     // ramp in green instead" — that's the cue healers should be ready to land
     // the next heal the moment DA drops).
     const rampBuffs = _resolveBuffsForName(r.target, active, buffsOut).buffs;
+    // Exact cur/max — SAME resolution the Target-Info raider HP and the MT card
+    // use, and it is allowed to come back null. Raid-night 2026-07-30 the card
+    // read "Rampage on Stupidrichard — 130 / 180 · 72%" for a raider who runs
+    // 6512/6512; _isPlausibleHpPool now drops any pair that can't be an HP pool,
+    // so the overlay falls back to the bare % (or "HP not visible") instead of
+    // showing a number that isn't the victim's health.
     const rVals = _resolveHpValuesForName(rLower, active, st);
     rampage = {
       target: r.target, attacker: r.attacker || null, ageMs: now - r.at,
@@ -9405,6 +10014,11 @@ function _serializeForDashboard() {
     // Blind-event ring buffer (start / end / self-hit / target-change). The
     // trigger overlay dedupes on `ts` and speaks `tts`, same as trigger fires.
     blindEvents:        _blindEvents.slice(-20),
+    // Damage-taken audio alert — echoed so the dashboard row (and any
+    // diagnostic) can show what the agent actually believes, independent of
+    // what Mimic has saved in cfg.
+    damageAlert:        _damageAlertEnabled,
+    damageAlertCooldownSec: _damageAlertCooldownMs / 1000,
     sessionEvents:      stats.sessionEvents,
     sessionTotalDamage: stats.sessionTotalDamage,
     sessionDamageBy:    stats.sessionDamageBy,
@@ -9819,6 +10433,20 @@ function _serializeForDashboard() {
               const cat = _spellByNameLower.get(String(e.name).toLowerCase());
               if (cat && typeof cat.cast_ms === 'number' && cat.cast_ms > 0) {
                 out.cast_ms = cat.cast_ms;
+              }
+            }
+            // PBAOE mob counter — how many entities the last pulse of THIS
+            // song hit (landing-row count) + its damage burst. Stale badges
+            // (song stopped pulsing >30s ago) are omitted so the overlay
+            // never shows a count from three pulls ago.
+            const aoe = state.aoeBySong && state.aoeBySong[_songSlug(e.name)];
+            if (aoe) {
+              if (aoe.hits > 0 && (now - aoe.hitAt) <= SONG_AOE_STALE_MS) {
+                out.aoe_hits = aoe.hits;
+                out.aoe_at   = aoe.hitAt;
+              }
+              if (aoe.dmg && aoe.dmg.n > 0 && (now - aoe.dmg.at) <= SONG_AOE_STALE_MS) {
+                out.aoe_dmg = { n: aoe.dmg.n, total: aoe.dmg.total, min: aoe.dmg.min, max: aoe.dmg.max };
               }
             }
             return out;
@@ -10241,6 +10869,10 @@ function _serializeForDashboard() {
         // #136 raid callout allow-list muted this fire — triggers.html flashes
         // it but does not speak it.
         mute:    !!o.mute,
+        // The inverse: speak it but do NOT flash it or ask for a timing vote.
+        // Set by the damage-taken alert, whose cadence would otherwise camp the
+        // shared centre flash and clobber other callouts on it.
+        audioOnly: !!o.audioOnly,
       };
     }),
     activeTimers:        _activeTimersSnapshot(),
@@ -10525,7 +11157,8 @@ body.wp-overlay-mode .wp-overlay-target table th:nth-child(2) { text-align:right
        officer-gated card DATA is served only to officers, so this is a real
        gate, not a CSS hide. -->
   <button data-tab="admin" id="wpAdminTab" style="display:none" title="Officer quick menu — DKP ticks, loot capture, admin links">🛡 Admin</button>
-  <button id="wpGear" class="wp-gear" style="margin-left:auto" title="Customize panels — show or hide sections (per page)">⚙ Panels</button>
+  <button id="wpTourBtn" class="wp-gear" style="margin-left:auto" title="Take the guided walkthrough of the dashboard — every stop is your own live data. Re-run any time." onclick="wpTourStart()">✨ Tour</button>
+  <button id="wpGear" class="wp-gear" title="Customize panels — show or hide sections (per page)">⚙ Panels</button>
 </div>
 <div id="wpPanelMenu" class="wp-menu" style="display:none"></div>
 <div id="wpMailPanel" style="display:none;margin:8px 0;border:1px solid var(--border);border-radius:8px;padding:10px 12px;background:rgba(88,166,255,0.04)"></div>
@@ -12728,6 +13361,21 @@ function renderOverlays(s) {
     + '<button type="button" class="wp-ov-act" data-act="backdrops" style="background:#21262d;color:#c9d1d9;border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px">🌫 Toggle backgrounds now</button>'
     + '<span class="dim" style="font-size:11px">arranging only ever runs when you click it — never automatically</span>'
     + '</div>';
+  // 💥 Damage-taken audio alert (Hitya 2026-07-31). Not an overlay — an opt-in
+  // spoken cue — but its hotkey belongs with the other global hotkeys, so it
+  // shares this block. Default OFF; the ON/OFF button and the rebind row both
+  // write Mimic config, and main.js pushes the flag to the agent on save.
+  h += '<div style="font-size:12px;padding:8px 10px;background:#161b22;border:1px solid var(--border);border-radius:6px;margin-bottom:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">'
+    + '<b style="color:var(--gold)">💥 Damage-taken alert:</b>'
+    + '<button type="button" id="wpDmgAlertBtn" style="border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px;background:#21262d;color:#c9d1d9">…</button>'
+    + '<span class="dim" style="font-size:11px">speaks once every ~5s while something is hitting you</span>'
+    + '<span style="flex-basis:100%"></span>'
+    + '<span class="dim" style="font-size:11px">Hotkey:</span>'
+    + '<code id="wpDmgHotkeyCur" style="background:#0d1117;padding:2px 10px;border-radius:3px;border:1px solid var(--border)">…</code>'
+    + '<button type="button" id="wpDmgHotkeyBtn" style="background:#21262d;color:var(--blue);border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px">Change…</button>'
+    + '<button type="button" id="wpDmgHotkeyEn" style="background:#21262d;color:var(--red)"></button>'
+    + '<span id="wpDmgHotkeyHint" class="dim" style="font-size:11px"></span>'
+    + '</div>';
   h += '<div style="font-size:12px;padding:8px 10px;background:#161b22;border:1px solid var(--border);border-radius:6px;margin-bottom:8px">'
     + '<b style="color:var(--blue)">How to move an overlay:</b> hover the small <code style="background:#0d1117;padding:1px 5px;border-radius:3px">✥</code> icon in the <b>top-left corner</b> of any overlay and drag. Works whether the overlays are locked or unlocked &mdash; same in every overlay so the muscle memory carries. The <code style="background:#0d1117;padding:1px 5px;border-radius:3px">✕</code> in the <b>top-right</b> hides that overlay (turn it back on from this page or the tray).'
     + '</div>';
@@ -12814,6 +13462,29 @@ function wpWireHideHotkey() {
   }
   _wpWireHotkeyRow('wpHideHotkey', 'hideAllHotkey', 'hideAllHotkeyEnabled', 'CommandOrControl+Shift+H');
   _wpWireHotkeyRow('wpBdHotkey', 'backdropHotkey', 'backdropHotkeyEnabled', 'CommandOrControl+Shift+B');
+  _wpWireHotkeyRow('wpDmgHotkey', 'damageAlertHotkey', 'damageAlertHotkeyEnabled', 'CommandOrControl+Shift+D');
+  wpWireDamageAlert();
+}
+// 💥 Damage-taken alert ON/OFF button. Same contract as the hotkey rows: read
+// Mimic config, write a one-key patch, repaint. main.js's save-config handler
+// sees damageAlert in the patch and pushes the new state to the agent (which
+// speaks the confirmation), so nothing here has to talk to the agent directly.
+function wpWireDamageAlert() {
+  var btn = document.getElementById('wpDmgAlertBtn');
+  if (!btn || !window.mimic || !window.mimic.getConfig) return;
+  function paint(cfg) {
+    var on = !!(cfg && cfg.damageAlert);
+    btn.textContent = on ? 'ON' : 'OFF';
+    btn.style.cssText = 'border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px;background:#21262d;color:' + (on ? '#7ee787' : '#c9d1d9');
+  }
+  window.mimic.getConfig().then(paint).catch(function(){});
+  _bindOnce(btn, 'click', function(){
+    window.mimic.getConfig().then(function(cfg){
+      window.mimic.saveConfig({ damageAlert: !(cfg && cfg.damageAlert) }).then(function(){
+        window.mimic.getConfig().then(paint).catch(function(){});
+      }).catch(function(){});
+    }).catch(function(){});
+  });
 }
 // One hotkey row: chip + Change… capture + Enable/Disable kill switch. The
 // enable flag re-registers live via saveConfig (registerHideAllHotkey runs
@@ -14898,6 +15569,115 @@ async function refresh() {
     _refreshInFlight = false;
   }
 }
+
+// ── ✨ Dashboard walkthrough (new-member tour) ─────────────────────────────
+// A clickthrough across the dashboard tabs, spotlighting one section per
+// step over the user's OWN live data. Started from the ✨ Tour nav button
+// (re-runnable any time) and offered once automatically on first load.
+// Mirrors the wolfpack.quest walkthrough. Steps carry a tab (switched via
+// the real nav button, so refresh hooks fire) + selector list — the first
+// selector with a visible rect wins; none visible = centered card.
+var WP_TOUR_STEPS = [
+  { tab: 'dash', sel: '#wpMeCard, #dash .card', title: '🐺 This is you',
+    body: 'The Me card - your character, this session\\'s damage, and what your parser has seen tonight. Everything on this dashboard is your own machine\\'s live data; nothing here is mocked.' },
+  { tab: 'overlays', sel: '#overlays', title: '🪟 Your in-game overlays',
+    body: 'Every overlay flips on and off here - DPS meter, triggers, charm and pet trackers, Mob Info, CH chain. In game: ✥ (top-left) moves one, ✕ hides it, right-click resizes. Your layout is yours; Setup mode arranges them all at once.' },
+  { tab: 'raid', sel: '#raid', title: '⚔ Buffs and the raid',
+    body: 'The raid\\'s live buff coverage plus your personal queue - who needs your buff next, sorted so the tank comes first. When someone cures you mid-raid, this is the machinery that noticed.' },
+  { tab: 'fights', sel: '#fights', title: '⚔️ Your fights',
+    body: 'Every pull your parser recorded - damage, healing, threat. These are the same numbers that become the guild parse cards in Discord, with your name on the rows you earned.' },
+  { tab: 'triggers', sel: '#triggers', title: '⚡ Callouts that save raids',
+    body: 'Guild triggers arrive here automatically - rampage warnings, tank-buster countdowns, charm breaks. Rehearse any of them out loud before the raid, and add personal ones only you hear.' },
+  { tab: 'optin', sel: '#optin', title: '🔒 Your data, your call',
+    body: 'What uploads and what never leaves this machine, stream by stream. Officer chat, tells, and group chat are filtered out before parsing even happens. That\\'s the whole tour - raid well. 🐺' },
+];
+var _wpTourIdx = -1;
+function _wpTourEls() {
+  var shade = document.getElementById('wpTourShade');
+  var card  = document.getElementById('wpTourCard');
+  if (!shade) {
+    shade = document.createElement('div');
+    shade.id = 'wpTourShade';
+    shade.style.cssText = 'position:fixed;z-index:9998;pointer-events:none;border:2px solid var(--blue,#58a6ff);border-radius:8px;box-shadow:0 0 0 9999px rgba(0,0,0,0.68);display:none';
+    document.body.appendChild(shade);
+    card = document.createElement('div');
+    card.id = 'wpTourCard';
+    card.style.cssText = 'position:fixed;z-index:9999;max-width:380px;background:var(--card,#161b22);border:1px solid var(--border,#30363d);border-radius:8px;padding:14px;font-size:12px;box-shadow:0 8px 30px rgba(0,0,0,0.6);display:none';
+    document.body.appendChild(card);
+  }
+  return { shade: shade, card: document.getElementById('wpTourCard') };
+}
+function wpTourStop(done) {
+  _wpTourIdx = -1;
+  var els = _wpTourEls();
+  els.shade.style.display = 'none';
+  els.card.style.display = 'none';
+  try { localStorage.setItem('wp.dash.tour.done', done ? 'done' : 'dismissed'); } catch (e) {}
+}
+function wpTourShow(i) {
+  if (i < 0) return wpTourStop(false);
+  if (i >= WP_TOUR_STEPS.length) return wpTourStop(true);
+  _wpTourIdx = i;
+  var st = WP_TOUR_STEPS[i];
+  var tabBtn = document.querySelector('.nav button[data-tab="' + st.tab + '"]');
+  if (tabBtn && !tabBtn.classList.contains('active')) tabBtn.click();
+  // Let the tab render (some tabs fetch on activate), then measure.
+  setTimeout(function () {
+    var els = _wpTourEls();
+    var target = null;
+    var sels = st.sel.split(',');
+    for (var s = 0; s < sels.length; s++) {
+      var el = document.querySelector(sels[s].trim());
+      if (el) { var r0 = el.getBoundingClientRect(); if (r0.width > 0 && r0.height > 0) { target = el; break; } }
+    }
+    var vh = window.innerHeight;
+    if (target) {
+      target.scrollIntoView({ block: 'start' });
+      var r = target.getBoundingClientRect();
+      var h = Math.min(r.height, vh * 0.45);   // clamp whole-page sections to a top slice
+      els.shade.style.display = 'block';
+      els.shade.style.top = (r.top - 6) + 'px';
+      els.shade.style.left = (r.left - 6) + 'px';
+      els.shade.style.width = (r.width + 12) + 'px';
+      els.shade.style.height = (h + 12) + 'px';
+      var below = r.top + h + 18;
+      els.card.style.top = (below + 200 < vh ? below : Math.max(12, vh - 230)) + 'px';
+      els.card.style.left = Math.max(12, Math.min(r.left, window.innerWidth - 400)) + 'px';
+      els.card.style.transform = '';
+    } else {
+      els.shade.style.display = 'none';
+      els.card.style.top = '50%';
+      els.card.style.left = '50%';
+      els.card.style.transform = 'translate(-50%,-50%)';
+    }
+    var h2 = '<div class="dim" style="font-size:10px;margin-bottom:4px">' + (i + 1) + ' / ' + WP_TOUR_STEPS.length + '</div>'
+      + '<div style="color:var(--gold,#f6c365);margin-bottom:5px">' + st.title + '</div>'
+      + '<div style="line-height:1.5;margin-bottom:10px">' + st.body + '</div>'
+      + '<div style="display:flex;gap:8px;align-items:center">'
+      + (i > 0 ? '<button onclick="wpTourShow(' + (i - 1) + ')" style="font:inherit;background:transparent;border:1px solid var(--border,#30363d);color:var(--dim,#8b949e);border-radius:5px;padding:3px 9px;cursor:pointer">← Back</button>' : '')
+      + '<button onclick="wpTourShow(' + (i + 1) + ')" style="font:inherit;background:var(--blue,#1f6feb);border:1px solid var(--blue,#1f6feb);color:#fff;border-radius:5px;padding:3px 12px;cursor:pointer">' + (i === WP_TOUR_STEPS.length - 1 ? 'Finish' : 'Next →') + '</button>'
+      + '<button onclick="wpTourStop(false)" style="font:inherit;background:transparent;border:none;color:var(--dim,#8b949e);text-decoration:underline;cursor:pointer;margin-left:auto">Skip tour</button>'
+      + '</div>';
+    els.card.innerHTML = h2;
+    els.card.style.display = 'block';
+  }, 220);
+}
+function wpTourStart() { wpTourShow(0); }
+// One-time auto-offer: a quiet corner toast on first load, never again after
+// a start or a dismissal. localStorage failures (rare) just skip the offer.
+setTimeout(function () {
+  try {
+    if (localStorage.getItem('wp.dash.tour.done')) return;
+    var t = document.createElement('div');
+    t.id = 'wpTourOffer';
+    t.style.cssText = 'position:fixed;right:14px;bottom:14px;z-index:9999;background:var(--card,#161b22);border:1px solid var(--blue,#1f6feb);border-radius:8px;padding:12px 14px;font-size:12px;max-width:290px;box-shadow:0 8px 30px rgba(0,0,0,0.6)';
+    t.innerHTML = '<div style="margin-bottom:4px">✨ New here?</div>'
+      + '<div class="dim" style="font-size:11px;margin-bottom:8px">Take the one-minute tour of the dashboard - every stop is your own live data.</div>'
+      + '<button onclick="document.getElementById(\\'wpTourOffer\\').remove();wpTourStart()" style="font:inherit;background:var(--blue,#1f6feb);border:1px solid var(--blue,#1f6feb);color:#fff;border-radius:5px;padding:3px 12px;cursor:pointer">Start the tour</button> '
+      + '<button onclick="document.getElementById(\\'wpTourOffer\\').remove();try{localStorage.setItem(\\'wp.dash.tour.done\\',\\'dismissed\\')}catch(e){}" style="font:inherit;background:transparent;border:1px solid var(--border,#30363d);color:var(--dim,#8b949e);border-radius:5px;padding:3px 9px;cursor:pointer">Not now</button>';
+    document.body.appendChild(t);
+  } catch (e) {}
+}, 2500);
 
 // Tab switcher — scoped to .nav buttons that have a data-tab attribute.
 // The selector USED to be just '.nav button' which also matched the
@@ -19125,6 +19905,40 @@ function startWebDashboard(port) {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ ok: true, enabled: _chGoTtsEnabled }));
       }
+      // Damage-taken audio alert (Hitya 2026-07-31). Mimic owns the durable
+      // pref (cfg.damageAlert, default OFF) and POSTs { enabled, announce,
+      // cooldown_sec } here on every hotkey/tray/dashboard flip AND after each
+      // agent (re)launch — the agent keeps it in memory only, exactly like the
+      // tells-DM pause. `announce` speaks the new state back as confirmation.
+      if (req.url === '/api/damage-alert' && req.method === 'POST') {
+        const body = await _readBody(req);
+        let payload;
+        try { payload = JSON.parse(body); }
+        catch { res.writeHead(400); return res.end('invalid json'); }
+        const cd = Number(payload && payload.cooldown_sec);
+        if (cd > 0) _damageAlertCooldownMs = Math.round(cd * 1000);
+        _setDamageAlert(payload && payload.enabled, payload && payload.announce);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({
+          ok: true,
+          enabled: _damageAlertEnabled,
+          cooldown_sec: _damageAlertCooldownMs / 1000,
+        }));
+      }
+      // CH chain DDR grading toggle (Hitya 2026-07-31) — same contract as the
+      // "0X GO" toggle above: the 🎯 button on the CH chain overlay POSTs
+      // { enabled: bool } here and re-POSTs on load to re-sync after an agent
+      // restart. Governs the on-bar GOOD/GREAT/PERFECT/MARVELOUS flash — and
+      // ONLY that. Grading is visual by design; this is not a TTS switch.
+      if (req.url === '/api/chchain/ddr' && req.method === 'POST') {
+        const body = await _readBody(req);
+        let payload;
+        try { payload = JSON.parse(body); }
+        catch { res.writeHead(400); return res.end('invalid json'); }
+        _chDdrEnabled = !!(payload && payload.enabled);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ ok: true, enabled: _chDdrEnabled }));
+      }
       // ✕ from a pet tracker card — drops the per-owner /pet health snapshot
       // + observed buff landings + stats so the row stops rendering. Useful
       // when switching toons leaves stale pet state (the freshness gate now
@@ -22108,7 +22922,22 @@ function _classifyItemName(name) {
     // that let "Fargan 001, Nota 002, …" parse as items).
     if (/^["'`]*[A-Z]/.test(w)) capped++;
   }
-  if (significant === 0 || capped !== significant) return 'fail';
+  if (significant === 0) return 'fail';
+  // #172 — SENTENCE-CASE items are real. Requiring every word to be capitalised
+  // assumed Title Case, but the catalog genuinely ships names like "Undead
+  // shissar scales" (eqemu_items 32526). That returned 'fail', and one 'fail'
+  // discards the ENTIRE pipe list — a whole /rs loot post from Dant vanished on
+  // 2026-07-30 because of that single item.
+  //
+  // Classed 'weak', not 'strong': it only survives alongside a strong sibling,
+  // which is exactly the existing guard against chatter. A lone sentence-case
+  // phrase ("Remedy on Starrburst") still can't self-promote into a capture —
+  // and the stopword/callout/%/mana rules above have already run.
+  if (capped !== significant) {
+    const firstCapped = /^["'`]*[A-Z]/.test(words[0] || '');
+    const restPlainWords = words.slice(1).every(w => /^[a-z'`-]+$/.test(w.replace(/[^A-Za-z'`-]/g, '')) || _LOOT_CONNECTORS[w.toLowerCase().replace(/[^a-z']/g, '')]);
+    return (firstCapped && restPlainWords && significant >= 2) ? 'weak' : 'fail';
+  }
   if (significant >= 2) return 'strong';
   // Exactly one significant word — a real item (Norge`tal) but weak signal.
   // ≥4 letters skips "ME"/"DSP"-style noise.
@@ -25199,6 +26028,103 @@ function _announceRampage(target, tsMs) {
   );
 }
 
+// ── "You are taking damage" audio alert (Hitya 2026-07-31) ──────────────────
+// An opt-in, DEFAULT-OFF spoken cue for the moment incoming damage starts
+// landing on one of your own toons. Requested as "a trigger with a configurable
+// hotkey to enable/disable that begins disabled", so it IS a trigger-shaped
+// fire: _pushOverlay → recentTriggerFires → triggers.html flash + speak. No new
+// audio path, no new SpeechSynthesis call site, and it inherits the master
+// "Trigger alerts (TTS)" switch + Quiet mode exactly like every other callout.
+//
+// State lives in MIMIC's config (cfg.damageAlert, default false) and is pushed
+// here over POST /api/damage-alert — same shape as the tells-DM pause: Mimic
+// owns the durable pref, the agent holds it in memory and Mimic re-asserts it
+// after every (re)launch. A standalone CLI agent therefore just stays off,
+// which is the correct default for a feature with no UI to turn it back off.
+//
+// RATE LIMIT is the whole design constraint: a raid tank eats a swing roughly
+// every second, so an un-cooled alert is unusable noise. We fire on the FIRST
+// hit after a quiet period and then stay silent for the cooldown; the cooldown
+// is NOT re-armed by hits that arrive inside it (so continuous tanking speaks
+// once per DAMAGE_ALERT_COOLDOWN_MS, not never and not every swing).
+let _damageAlertEnabled   = false;      // pushed from Mimic; default OFF
+const DAMAGE_ALERT_COOLDOWN_MS = 5000;  // tunable — min gap between spoken cues
+let _damageAlertCooldownMs = DAMAGE_ALERT_COOLDOWN_MS;
+let _damageAlertLastMs     = 0;         // wall-clock of the last spoken cue
+
+// Does this parsed damage event land on the character whose log we're tailing?
+// Reuses parseEvent's existing defender shapes — no second parser:
+//   • "<Mob> hits YOU for N points of damage."     → defender 'YOU' / 'You'
+//   • "<Mob> hit Hitya for N points of non-melee." → defender = our name
+//   • "You were hit by <Spell> for N damage."      → defender null (parseEvent
+//     nulls the self form at the "was/were hit by" branch); among damage events
+//     that branch is the ONLY producer of a null defender, and it is always the
+//     uploader, so a null defender with no attacker means "it hit me".
+// NOTE the coverage limit: the generic first-person "You have taken N points of
+// damage" flavour is dropped at the byte filter (DEFAULT_DROP_PATTERNS, item
+// self-damage / DoT ticks) long before parseEvent, so this alert rides incoming
+// melee + attributed spell hits, which is what "taking damage" means in a raid.
+function _damageTakenBySelf(ev, character) {
+  if (!ev || ev.type !== 'damage' || !(ev.amount > 0)) return false;
+  if (ev.defender == null) return ev.attacker == null;
+  const def = String(ev.defender);
+  if (/^you$/i.test(def)) return true;
+  return !!character && def.toLowerCase() === String(character).toLowerCase();
+}
+
+// Speak the cue if the alert is on, this hit landed on us, and we're past the
+// cooldown. Returns true when it actually fired (the harness asserts on this).
+// `nowMs` is WALL CLOCK, not the log timestamp: EQ stamps only whole seconds and
+// a tail catch-up can replay several lines with an older stamp, which would both
+// coarsen the cooldown and push a `firedAt` below triggers.html's ts cursor —
+// the overlay dedupes on a strictly-increasing ts and would go silent.
+function _maybeAnnounceDamageTaken(ev, character, nowMs) {
+  if (!_damageAlertEnabled) return false;
+  if (!_damageTakenBySelf(ev, character)) return false;
+  const now = nowMs || Date.now();
+  if (now - _damageAlertLastMs < _damageAlertCooldownMs) return false;
+  _damageAlertLastMs = now;
+  _pushOverlay({
+    text:    '💥 TAKING DAMAGE',
+    tts:     'Taking damage',
+    trigger: 'damage taken',
+    scope:   'personal',
+    firedAt: now,
+    test:    false,
+    // AUDIO ONLY — the ask was an audio alert, and at a 5s cadence the shared
+    // centre-screen flash (3.5s per fire) would be up most of a fight AND
+    // overwrite whatever critical callout was on it, e.g. a Death Touch banner
+    // one second old. audioOnly also skips the 👍/👎 trigger-timing widget,
+    // which would otherwise be pinned open for the whole fight (fireBlind
+    // already sets the precedent: non-trigger callouts don't ask for a vote).
+    // The fire still appears in the dashboard's callout list.
+    audioOnly: true,
+  });
+  return true;
+}
+
+// Flip the alert on/off. `announce` (the hotkey + tray toggles) speaks the new
+// state back through the same overlay path so the user gets confirmation
+// without looking at the tray. Resets the cooldown so enabling mid-fight cues
+// on the very next hit instead of waiting out a stale window.
+function _setDamageAlert(enabled, announce) {
+  const next = !!enabled;
+  const changed = next !== _damageAlertEnabled;
+  _damageAlertEnabled = next;
+  _damageAlertLastMs  = 0;
+  if (announce) {
+    _pushOverlay({
+      text:    next ? '💥 Damage alert ON' : '🔕 Damage alert OFF',
+      tts:     next ? 'Damage alert on' : 'Damage alert off',
+      trigger: 'damage alert',
+      scope:   'personal',
+      firedAt: Date.now(),
+      test:    false,
+    });
+  }
+  return changed;
+}
+
 // ── Cross-Mimic trigger relay (fan-out) ────────────────────────────────────
 // Each local guild-trigger fire is sent up to the bot via POST
 // /api/agent/trigger-relay. Other Mimics poll GET /api/agent/recent-fires
@@ -27415,18 +28341,26 @@ function _cancelTimersOnMobDeath(line) {
 //     SPA 79 base −4000 (a ~4000 non-melee HIT). 0s cast, NO cast/land chat —
 //     so it's undetectable by text regex; the 4000 non-melee DAMAGE line is the
 //     signal (EQLogParser attributes the amount to the spell; so do we).
-//   • Fight: "Blood of Ssraeshza" dies → Emperor Ssraeshza spawns exactly 2:00
-//     later → busts at spawn (a Paladin DAs it), then every ~60s.
-// The 2:00 spawn countdown is the pre-warn a Paladin needs to DA the spawn bust.
+//   • Fight: "Blood of Ssraeshza" dies → the Emperor's spawn buster lands 2:10
+//     later (a Paladin DAs it), then it re-busts every ~60s.
+// The spawn countdown is the pre-warn a Paladin needs to DA the spawn bust: it
+// runs the full cycle and its warning is the actual "DA NOW" cue.
+//
+// Hitya 2026-07-31: spawn cycle 2m10s, call DA at 2:00. So spawn_delay_sec is
+// the CYCLE (130s) and spawn_warn_sec the LEAD (10s) → "Paladin DA NOW" fires
+// at t+120s, 10s before the bust. Previously the cycle was modelled as 120s,
+// which put the callout at t+110s — a 20s lead that outran an 18s Divine Aura.
+// Do NOT "fix" this by shortening the cycle: the countdown row's zero must land
+// on the bust, and the warn offset is the only knob for the callout.
 const BOSS_SPAWN_CHAINS = [
   {
     precursor:         'Blood of Ssraeshza',       // its death arms the spawn pre-warn
-    boss:              'Emperor Ssraeshza',         // spawns spawn_delay_sec after that
-    spawn_delay_sec:   120,                         // 2:00 (guild lead)
+    boss:              'Emperor Ssraeshza',         // spawn buster lands spawn_delay_sec after that
+    spawn_delay_sec:   130,                         // 2:10 full cycle (Hitya 2026-07-31)
     spawn_label:       'Emperor spawn + buster',
-    spawn_warn_sec:    10,                          // warn ~10s before the spawn bust
+    spawn_warn_sec:    10,                          // → "DA NOW" at 2:00, 10s before the bust
     spawn_warn_text:   'Paladin DA NOW',
-    spawn_fire_text:   'Emperor in 2:00 — Paladin ready to DA the spawn buster',
+    spawn_fire_text:   'Emperor spawn buster in 2:10 — Paladin ready to DA',
     buster_damage:     4000,                        // Rage of Ssraeshza DD (spell 2310), raw/unmitigated
     buster_damage_tol: 1200,                        // size window — INFERRED (unattributed) path ONLY
     buster_min_floor:  500,                         // ATTRIBUTED path: any Emperor non-melee ≥ this = buster (skips DoT/DS ticks; mitigation-proof)
@@ -27534,45 +28468,66 @@ function _checkTankBuster(ev, line, tsMs) {
   }
 }
 
-// ── #36 AoE-dance callouts (DPS OUT / DPS IN + countdown) ────────────────────
+// ── #36 AoE-dance callouts (OUT / IN + countdown) ────────────────────────────
 // Data-driven melee-dance helper, REUSING the #142 countdown machinery
 // (_armBossCountdown → _startTimer, buster-style effect detection). For a boss
 // whose PBAE forces the melee off the mob ("run OUT before it hits, back IN
 // after it lands"), we give the raid the exact tank-buster UX with different
-// texts: (a) a pre-warn "DPS OUT" before the next AE, (b) a confirming "DPS IN"
-// the instant it lands, (c) an on-screen countdown to the next AE that re-syncs
-// on every observed cast.
+// texts: (a) a pre-warn before the next AE, (b) a confirming IN callout the
+// instant it lands, (c) an on-screen countdown to the next AE that re-syncs on
+// every observed cast. The OUT/IN wording is PER ENTRY (out_text / in_text) —
+// "MELEE OUT/IN" for a true PBAE where only the melee pile has to move.
 //
-// GROUNDED SIGNATURE — Caustic Mist, eqemu_spells id 2814, on Vyzh`dra the
-// Cursed (npc_types 162042, npc_spells_id 197, entry recast_delay -1 = "use the
-// spell's own recast"):
-//   • cast_time 0 → the spell prints NO cast message; the ONLY detectable log
-//     evidence is the per-victim LAND message. So — exactly like the #142
-//     buster (Rage of Ssraeshza) — we detect the EFFECT, never a cast.
-//   • land-on-other: "<Name>'s flesh begins to liquefy."  (text is SHARED with
-//     Putrefy Flesh 1956; the boss-active gate below scopes it to this fight)
-//   • land-on-self:  "Your skin begins to rot."           (unique to 2814)
-//   A PBAE hitting the melee pile prints a BURST of these lines across many
-//   victims within ~1s in every raider's OWN combat log (per-client, no relay),
-//   so a burst detector (>= burst_n victims within burst_window_ms) is the
-//   robust "the AE just fired" signal — a single stray land line is NOT.
-//   • cadence: spell recast_time = 24000ms and the npc entry defers to it
-//     (recast_delay -1). NPC spell AI does NOT cast strictly on cooldown, so
-//     24s is a grounded DEFAULT and is FIELD-TUNABLE — the guild confirms the
-//     real interval on the next Vyzh`dra kill. Like the buster, the countdown
-//     RE-SYNCS on every observed AE, so an approximate cadence is still useful.
+// GROUNDED SIGNATURE — Dragon Roar, eqemu_spells 789 / 981 (identical rows),
+// the fear PBAE on Vyzh`dra the Cursed (npc_types 162042).
+// RE-SIGNATURED 2026-07-31. The original entry watched /flesh begins to
+// liquefy\./i with burst_n 3 and never once fired — two independent reasons:
+//   (1) wrong AE. That text is Caustic Mist 2814 / Putrefy Flesh 1956, and the
+//       guild already owns it with a plain "Putrefy Flesh" trigger.
+//   (2) burst_n 3 wanted three DISTINCT victims' land lines inside one log.
+//       A raider's own log is dominated by the self-form, so the threshold was
+//       effectively unreachable even on the right spell.
+// The AE that actually lands on the raid is Dragon Roar (field-observed
+// 2026-07-30/31). Two plain guild triggers already CALL the hit ("Dragon Roar"
+// on the land line, "Dragon Roar (Resist)" on the resist) but NEITHER carries a
+// timer_duration_sec — so raiders hear "it hit" and get no countdown to the
+// NEXT one. THIS entry is that countdown; the plain triggers stay as the hit
+// callout.
+//   • cast_time 0 → no cast message; effect-detection only, exactly like the
+//     #142 buster and the Vulak`Aerr entry below.
+//   • cast_on_other is NULL → bystanders see NOTHING. The only evidence is your
+//     OWN line, so burst_n is 1 — one self-line = the AE fired (burst_window_ms
+//     still absorbs alt-log echoes). Same reasoning as Ancient Breath below.
+//   • the two self-forms, and why BOTH are in the signature:
+//       land   — "You lose control of yourself!"      (the fear taking hold)
+//       resist — "You resist the Dragon Roar spell!"  (a resist still PROVES
+//                the AE fired, and it is the ONLY line a resister ever gets —
+//                without it, everyone who resisted would lose the countdown)
+//     Neither line is the spell's catalog cast_on_you ("You flee in terror.");
+//     both are the client/server fear + resist messages the guild's own live
+//     triggers already match, i.e. field truth beats the catalog string here.
+//   • cadence: spell recast_time 36000ms → 36s DEFAULT, FIELD-TUNABLE.
+//     ⚠ Not catalog-confirmable for THIS npc: npc_spells_id 197 lists only
+//     Mass Insanity 2813 + Caustic Mist 2814, and Dragon Roar appears in NO
+//     Ssraeshza Temple spell list — Quarm scripts it outside npc_spells, so
+//     there is no per-npc recast_delay override to read and 36s is the spell's
+//     own cooldown. NPC AI doesn't cast strictly on cooldown anyway; like the
+//     buster, the countdown RE-SYNCS on every AE observed, so an approximate
+//     cadence is still useful. Confirm the real interval on the next kill.
+//   • wording is the guild lead's call (Hitya, stated twice): MELEE OUT /
+//     MELEE IN — it's a PBAE, so casters at range never have to move.
 const AOE_DANCE = [
   {
     boss:            'Vyzh`dra the Cursed',
-    spell:           'Caustic Mist',                  // eqemu_spells 2814 — PBAE (targettype 4)
-    signature:       [/flesh begins to liquefy\./i,   // land-on-other (shared text; scoped by active-boss gate)
-                      /Your skin begins to rot\./i],  // land-on-self (unique to Caustic Mist)
-    burst_n:         3,                               // >= this many victims in the window = the AE fired
-    burst_window_ms: 2000,                            // PBAE lands across ~1s; 2s safely collects the burst
-    cadence_sec:     24,                              // FIELD-TUNABLE — spell recast_time 24000ms; confirm on next kill
-    out_warn_sec:    5,                               // speak "DPS OUT" this many seconds before the next AE
-    out_text:        'DPS OUT — Caustic Mist soon',   // countdown warning callout (the pre-warn)
-    in_text:         'DPS IN',                        // fired NOW when the AE lands (safe to re-engage)
+    spell:           'Dragon Roar',                   // eqemu_spells 789/981 — fear PBAE (targettype 4), MR-based
+    signature:       [/You lose control of yourself!/i,       // self-land (the fear)
+                      /You resist the Dragon Roar spell!/i],  // resist — still proves the AE fired
+    burst_n:         1,                               // self-only evidence (cast_on_other NULL) — see note above
+    burst_window_ms: 2000,                            // echo/alt-log dupe absorber
+    cadence_sec:     36,                              // FIELD-TUNABLE — spell recast_time 36000ms; confirm on next kill
+    out_warn_sec:    5,                               // speak "MELEE OUT" this many seconds before the next AE
+    out_text:        'MELEE OUT — Dragon Roar soon',  // countdown warning callout (the pre-warn)
+    in_text:         'MELEE IN',                      // fired NOW when the AE lands (safe to re-engage)
     color:           'gold',
   },
   {
@@ -27607,9 +28562,10 @@ const _aoeDanceLastFire = new Map();   // boss(lc) → wall-clock ms of the last
 const _aoeDanceBurst    = new Map();   // boss(lc) → { count, windowStartMs } rolling collector
 
 // A signature land line → count it toward the active burst; once >= burst_n
-// land within burst_window_ms, treat the AE as fired: push "DPS IN" NOW and
-// (re)arm the countdown to the NEXT AE (target = boss so death clears it, like
-// the buster) whose warning at out_warn_sec speaks the "DPS OUT" pre-warn.
+// land within burst_window_ms, treat the AE as fired: push the entry's in_text
+// ("MELEE IN"/"DPS IN") NOW and (re)arm the countdown to the NEXT AE (target =
+// boss so death clears it, like the buster) whose warning at out_warn_sec
+// speaks the entry's out_text pre-warn.
 // GATED on the boss being the ACTIVE encounter (curBoss, same pattern as
 // _checkTankBuster) so an identically-worded land line on trash elsewhere can't
 // fire it. Local only — every raider's own log carries the land burst.
@@ -27644,7 +28600,7 @@ function _checkAoeDance(line, tsMs) {
       warnSec: d.out_warn_sec, warnText: d.out_text,
       fireText: d.in_text, color: d.color || 'gold', tsMs: now,
     });
-    console.log('[aoe-dance] ' + d.spell + ' burst on ' + d.boss + ' — DPS IN + re-armed ' + d.cadence_sec + 's countdown');
+    console.log('[aoe-dance] ' + d.spell + ' on ' + d.boss + ' — ' + d.in_text + ' + re-armed ' + d.cadence_sec + 's countdown');
     return;
   }
 }
@@ -29645,12 +30601,19 @@ async function main() {
           if (selfCast) relaySelfCastForCasting(line, b.character, selfCast);
           // A DI cast that gets interrupted/fizzles never consumed its recast.
           noteDiInterrupt(line, b.character);
+          // A CURE that fizzles/gets interrupted never landed — void the cure
+          // the relay above just registered, so the bot doesn't retire a
+          // debuff the raider is still carrying.
+          noteCureCastFailed(line, b.character);
         }
         // Blind landings / fades (Pitted Iron Ring + generic NPC blind) —
         // drives the Mimic Blind Mode auto-pop in v1.1.8. Cheap regex set,
         // always runs (no _sourceExcluded gate — blindness is a UI thing,
         // not stat data we'd ever want suppressed).
         noteBlindLine(line, b.character);
+        // PBAOE song mob counter (melody overlay swarm badge) — same UI-only
+        // reasoning as blindness; exits on a Map miss for non-melody chars.
+        noteSongAoeLine(line, b.character);
         // Public CH landings ("X is completely healed.") → heal-attribution ring.
         if (!_sourceExcluded) noteHealLandLine(line);
         // Other players' cast-starts → recipient-side heal attribution ring.
@@ -29739,6 +30702,10 @@ async function main() {
         // callouts in shout/raid chat. Local-only (zone-visible lines);
         // feeds the Mimic CH Chain overlay via /api/state.chChain.
         if (!_sourceExcluded) { try { trackChChainLine(line, b.character); } catch {} }
+        // "<Cleric>'s casting is interrupted!" / "Your spell is interrupted." →
+        // freeze that slot's cast bar and put a ✕ on it. No-ops unless a chain
+        // is already running and the name maps to a slot mid-cast.
+        if (!_sourceExcluded) { try { trackChChainInterrupt(line, b.character); } catch {} }
         // Raid-wide DA/invuln broadcast + healer mana roster — same
         // shout/raid/guild-chat macro pattern as CH chain, feeding the
         // Command Center overlay.
@@ -29770,7 +30737,7 @@ async function main() {
         // #142 — a boss death clears that mob's countdown timers (tank-buster,
         // deathtouch) so no phantom "next in Xs" lingers on the corpse; and a
         // configured PRECURSOR death arms the boss spawn pre-warn (Blood of
-        // Ssraeshza dies → 2:00 → Emperor + "Paladin DA NOW"). Both key off the
+        // Ssraeshza dies → 2:10 cycle, "Paladin DA NOW" at 2:00). Both key off the
         // same slain/death line. Local-only, live tail.
         try { _cancelTimersOnMobDeath(line); } catch { /* never let a bad line break the tail */ }
         try { const _dts = parseEqTimestamp(line); _checkBossSpawnChain(line, _dts ? _dts.getTime() : Date.now()); } catch { void 0; }
@@ -29854,6 +30821,11 @@ async function main() {
           // 60s cadence countdown. Local-only, live tail; keyed off the boss +
           // amount, so no dependency on the imported (non-firing) text trigger.
           try { _checkTankBuster(ev, line, ts ? ts.getTime() : Date.now()); } catch { void 0; }
+          // Damage-taken audio alert — opt-in, default OFF, cooldown-limited.
+          // Live tail only (backfill/--once never reach this loop), and it
+          // takes WALL CLOCK rather than the log stamp: see the note on
+          // _maybeAnnounceDamageTaken.
+          try { _maybeAnnounceDamageTaken(ev, b.character, Date.now()); } catch { void 0; }
           // Pet combat observation — if the attacker is one of our pets (Zeal
           // slot 16), accumulate skill / max / total / hit-count stats for the
           // Pet tracker. Side-channel; doesn't touch the encounter builder.
@@ -29897,6 +30869,13 @@ module.exports = {
   SOURCELESS_SPELLS, BARD_SONGS,
   EncounterBuilder, characterFromFilename,
   trackChChainLine, chChainSnapshot,
+  // CH cast bar / interrupt ✕ / DDR grade — exported for the scratchpad harness.
+  trackChChainInterrupt, _chGradeForDelta, _chExpectedNextAt,
+  CH_CAST_MS, CH_INTERRUPT_SLACK_MS, CH_INTERRUPT_LINGER_MS,
+  CH_DDR_PERFECT_MS, CH_DDR_GREAT_MS, CH_DDR_GOOD_MS,
+  CH_DDR_MARVELOUS_STREAK, CH_DDR_MIN_BEATS, CH_DDR_DISPLAY_MS,
+  _setChDdrEnabledForTest: (v) => { _chDdrEnabled = !!v; },
+  _resetChChainForTest: () => { _chChain = null; _lastChGoNum = null; },
   _readZipEntry, _parseCrashReason, _crashZipTime,
   // #107/#149 loot-post announce — exported for the scratchpad smoke test.
   parseLootChatBody, noteLootAuction, _parseAuctionDuration, _spokenDuration,
@@ -29923,6 +30902,10 @@ module.exports = {
   _startTimer, _activeTimersSnapshot, _cancelTimersOnMobDeath, _deadMobNameFromLine,
   _checkBossSpawnChain, _checkTankBuster, _armBossCountdown, BOSS_SPAWN_CHAINS,
   _checkAoeDance, AOE_DANCE,   // #36 AoE-dance callouts — exported for the scratchpad fixture
+  // Damage-taken audio alert — exported for the cooldown / default-off harness.
+  _maybeAnnounceDamageTaken, _damageTakenBySelf, _setDamageAlert,
+  DAMAGE_ALERT_COOLDOWN_MS,
+  _damageAlertEnabledForTest: () => _damageAlertEnabled,
   evaluateTriggersAgainstLine, SLOW_SPELLS, _isSlowSpell,
   // #136 raid callout allow-list — exported for the scratchpad fixture.
   _fireTriggerActions, _calloutAllowedToSpeak, _calloutScopeGated, _CALLOUT_ALLOW_CATEGORIES,
