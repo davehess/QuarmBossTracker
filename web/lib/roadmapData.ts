@@ -37,6 +37,22 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'overnight-fleet-batch',
+    title: '📓 Raid Night Review, a raid guide, and an officer console',
+    version: 'Bot 3.0.245 · Web 1.0.290',
+    date: '2026-08-02',
+    headline: 'Four things built overnight: the morning-after raid writeup now posts itself, every boss we fight got a guide page built from our own kills, officers got one screen that says what is wrong, and mob warnings stopped lying about which mob you are looking at.',
+    features: [
+      { name: '📓 Raid Night Review', blurb: 'The night after a raid, a writeup lands in that night\'s thread automatically — kills with times, standout parses measured against our own history, loot and DKP, attendance including who left early, and deaths by fight. Officers can also run /raidreview for any date; re-running edits the post instead of spamming a second one.' },
+      { name: '📖 The Raid Guide', blurb: 'Every boss we have parses for — 99 of them — now has a page built from our own kills: how long it usually takes, how big a raid we bring, what has killed us there, and which callouts actually fire on that fight. No one had to write a word of it.' },
+      { name: '🛡️ Officer console', blurb: 'One screen showing whether anything is wrong right now — with the answer written down next to it. Twelve runbooks for the things that actually go wrong, and the console knows it is 3am on a Tuesday so it does not cry wolf.' },
+      { name: '🎯 Mob warnings tell the truth', blurb: 'Mob Info was picking one database row at random for same-named mobs, which is how a boss could show up as a level-1 dummy that is "immune to everything". It now merges the real variants and never warns you off a mob using a placeholder\'s stats.' },
+    ],
+    fixes: [
+      'Charm-pet damage on parses, the Rampage card HP, and the "View in Discord" button all landed earlier this weekend — see the entries below.',
+    ],
+  },
+  {
     key: 'roadmap-votes',
     title: '🗳️ The roadmap is yours now — vote, sort, unblock',
     version: 'Web 1.0.288',

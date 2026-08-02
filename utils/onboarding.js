@@ -29,6 +29,10 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.0.245': [
+    '**The night after a raid now writes itself.** A Raid Night Review posts into that night\'s thread — kills with times, standouts measured against our own past fights ("Xerkizh went down 37% faster than our median"), loot + DKP, attendance including who left early, and deaths by fight. Officers can run `/raidreview` for any night; re-running edits the same post rather than adding a second.',
+    '**Mob Info stopped warning you about the wrong mob.** For same-named mobs it was picking a database row essentially at random — which is how a real boss could display as a level-1 placeholder that is "Immune to Melee and Magic". It now merges the real variants (and never lets a placeholder\'s fake immunities become a warning), plus shows whether a mob is rooted or flees.',
+  ],
   '3.0.241': [
     '**Parse cards show the charm pets.** A new 🐾 Charmed section lists each charmed mob\'s damage and who it split across, so pet credit is visible instead of silently folded into someone\'s total. Last night\'s corrupted parses (Blood of Ssraeshza and two others) have been repaired in the database.',
   ],
