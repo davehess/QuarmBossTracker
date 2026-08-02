@@ -27,6 +27,32 @@
 //            renderReviewEmbeds
 //     fetch  collectNightData        (bounded, best-effort Supabase selects)
 //     post   postRaidNightReview / scheduleRaidNightReview / catchUpRaidNightReview
+//     live   noteEncounterUpload / touchLiveRaidReview   (the ingest-side hooks)
+//
+// ── LIVE (docs/DESIGN-live-raid-review.md) ──────────────────────────────────
+// The same card is written DURING the raid and grows into the morning-after
+// review. Three rules keep that safe:
+//
+//  3. THE LIVE CARD IS THE SAME MESSAGE. It uses the same `rreview_<nightKey>`
+//     slot, so the 00:45 post EDITS the live card into the final one. There is
+//     never a second message, and never a notification (Discord edits are
+//     silent).
+//  4. THE INGEST PATH CONTRIBUTES A SIGNAL, NEVER DATA. `touchLiveRaidReview`
+//     only marks the night dirty; every number still comes from the same
+//     bounded reads + summarizeNight. Re-deriving kills/deaths from the raw
+//     upload would invent a SECOND count that disagrees with the parse card
+//     and the web page — the exact failure the death-dedup rules exist to
+//     prevent. The one exception is the trash tally, which has no durable
+//     source at all (see below).
+//  5. IT CANNOT REACH THE UPLOAD. Both ingest hooks are synchronous,
+//     try/caught, and never awaited; the refresh itself runs on a timer.
+//
+// TRASH: `encounters` is boss-only by construction — supabase.recordParse
+// no-ops unless the mob has a `bosses_local` row (verified 2026-08-02: all
+// 1521 encounter rows have one, and bosses_local holds only the 128 tracked
+// bosses). So trash kills exist ONLY in the upload stream. We tally them here,
+// dedup'd across uploaders, and persist to `bot_kv` (durable across restarts,
+// and readable by the web review) on the same throttled cadence as the card.
 //
 // Env:
 //   RAID_REVIEW=0             disable the automatic post (the /raidreview
@@ -36,6 +62,12 @@
 //   RAID_REVIEW_CATCHUP_HOURS how stale a night the boot catch-up still posts
 //                             (default 36)
 //   RAID_REVIEW_MIN_KILLS     below this many confirmed kills, no review (1)
+//   RAID_REVIEW_LIVE=0        disable the LIVE card only (the 00:45 review and
+//                             /raidreview keep working) — the mid-raid kill switch
+//   RAID_REVIEW_LIVE_DEBOUNCE_SEC  quiet period after the last upload before a
+//                             refresh runs; default 60 (one kill arrives from
+//                             ~20 agents over ~30s — they collapse into one edit)
+//   RAID_REVIEW_LIVE_MIN_SEC  floor between two live edits; default 300
 
 const { EmbedBuilder } = require('discord.js');
 const { getDefaultTz, partsInTzAt, localToUTC } = require('./timezone');
@@ -62,6 +94,17 @@ function reviewEnabled()   { return String(process.env.RAID_REVIEW ?? '1') !== '
 function reviewDelayMin()  { return _int('RAID_REVIEW_DELAY_MIN', 45); }
 function catchupHours()    { return _int('RAID_REVIEW_CATCHUP_HOURS', 36); }
 function minKills()        { return _int('RAID_REVIEW_MIN_KILLS', 1, 0); }
+// Live card: enabled independently of the automatic 00:45 post, so the mid-raid
+// half can be switched off without losing the morning-after writeup.
+function liveEnabled()     { return reviewEnabled() && String(process.env.RAID_REVIEW_LIVE ?? '1') !== '0'; }
+function liveDebounceMs()  { return _int('RAID_REVIEW_LIVE_DEBOUNCE_SEC', 60, 5) * 1000; }
+function liveMinIntervalMs(){ return _int('RAID_REVIEW_LIVE_MIN_SEC', 300, 30) * 1000; }
+
+// A fight counts as "in progress" while it is unconfirmed AND started inside
+// this window. Longer than the agent's 120s idle flush plus a slow Emperor
+// (17.8 min on 2026-07-30), short enough that an abandoned pull stops claiming
+// the raid is mid-fight.
+const LIVE_ENGAGED_WINDOW_MS = 25 * 60_000;
 
 // ── Pure: the night window ───────────────────────────────────────────────────
 
@@ -135,6 +178,12 @@ function fmtDur(sec) {
   const m = Math.floor(s / 60);
   return m > 0 ? `${m}:${String(s % 60).padStart(2, '0')}` : `${s}s`;
 }
+/** A long span in plain words — "44m", "1h 12m". fmtDur's mm:ss reads as a
+ *  fight length; anything measured in tens of minutes needs this instead. */
+function fmtSpan(sec) {
+  const m = Math.max(0, Math.round((Number(sec) || 0) / 60));
+  return m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m}m`;
+}
 function fmtClock(ms) {
   const p = partsInTzAt(ms, getDefaultTz());
   const h12 = p.hour % 12 === 0 ? 12 : p.hour % 12;
@@ -150,6 +199,165 @@ function clampLines(lines, max = 1024, moreLabel = 'more') {
   }
   if (dropped) out.push(`_…and ${dropped} ${moreLabel}_`);
   return out.join('\n');
+}
+
+/** Discord relative timestamp — renders as "3 minutes ago" and keeps ticking on
+ *  every client with NO further edits. That is what lets the live card show
+ *  "last kill 6m ago" at a 5-minute refresh cadence without lying. */
+function relTime(ms) { return `<t:${Math.floor(ms / 1000)}:R>`; }
+
+// ── Pure: the Discord fight timeline (#98's shape, in a code span) ───────────
+// FightTimeline.tsx can't be rendered in Discord, so the strip is its honest
+// one-line analogue: the SAME substrate (deaths over the fight's duration),
+// binned into fixed cells with the bar height as the death count. The web
+// review renders the real component; this is the pointer to it.
+const TIMELINE_CELLS = 12;
+const _STRIP = ['▁', '▂', '▅', '█'];      // 0 · 1 · 2–3 · 4+
+// Slack either side of a fight for "did this death happen in this fight" —
+// covers pull-time deaths and clock skew between uploaders without admitting
+// the ±30min encounter-dedup spill.
+const TIMELINE_GRACE_MS = 30_000;
+
+function deathStrip(deathTimesMs, startMs, durationMs, cells = TIMELINE_CELLS) {
+  const span = Math.max(1, durationMs);
+  const bins = new Array(cells).fill(0);
+  for (const t of (deathTimesMs || [])) {
+    const frac = (t - startMs) / span;
+    if (!Number.isFinite(frac)) continue;
+    const i = Math.min(cells - 1, Math.max(0, Math.floor(frac * cells)));
+    bins[i] += 1;
+  }
+  return bins.map(n => _STRIP[n === 0 ? 0 : n === 1 ? 1 : n <= 3 ? 2 : 3]).join('');
+}
+
+// ── Trash tally (in memory + bot_kv) ─────────────────────────────────────────
+// See the header: `encounters` never holds a trash mob, so the ONLY source is
+// the upload stream. Keyed per night; each entry is one deduped kill.
+//
+// Dedup: ~20 agents upload the same trash kill within a few seconds of each
+// other with slightly different start times, so the key is
+// `<lowercased name>|<30s bucket>` and the neighbouring buckets are probed too
+// (a kill at a bucket boundary must not count twice). Damage is MAX-kept per
+// kill, mirroring merge_encounter_players — a thin observer never lowers a
+// total a better-placed one already reported.
+const TRASH_BUCKET_MS = 30_000;
+const TRASH_MAX_ENTRIES = 5000;        // hard cap: a runaway agent can't grow this forever
+const TRASH_PERSIST_ENTRIES = 2000;    // cap on what we round-trip through bot_kv
+
+const _trash = new Map();   // nightKey → { entries: Map<key,{name,damage,sec,atMs}>, loaded, dirty }
+
+function _trashBucket(nightKey) {
+  let t = _trash.get(nightKey);
+  if (!t) { t = { entries: new Map(), loaded: false, dirty: false }; _trash.set(nightKey, t); }
+  return t;
+}
+function _trashKey(name, atMs, bucketOffset = 0) {
+  return `${String(name).toLowerCase()}|${Math.round(atMs / TRASH_BUCKET_MS) + bucketOffset}`;
+}
+
+/**
+ * Record ONE observed non-boss kill. Synchronous, never throws — it is called
+ * from the agent-upload handler after the 200 has gone back.
+ * Returns 'added' | 'merged' | 'skipped'.
+ */
+function noteTrashKill({ atMs, name, damage = 0, durationSec = 0 } = {}) {
+  try {
+    const at = Number(atMs);
+    const nm = String(name || '').trim();
+    if (!nm || !Number.isFinite(at)) return 'skipped';
+    const key = raidNight.nightKey(at);
+    const t = _trashBucket(key);
+    for (const off of [0, -1, 1]) {
+      const k = _trashKey(nm, at, off);
+      const hit = t.entries.get(k);
+      if (hit) {
+        if (damage > hit.damage) { hit.damage = damage; t.dirty = true; }
+        if (durationSec > hit.sec) { hit.sec = durationSec; t.dirty = true; }
+        return 'merged';
+      }
+    }
+    if (t.entries.size >= TRASH_MAX_ENTRIES) return 'skipped';
+    t.entries.set(_trashKey(nm, at), { name: nm, damage: Number(damage) || 0, sec: Number(durationSec) || 0, atMs: at });
+    t.dirty = true;
+    return 'added';
+  } catch { return 'skipped'; }
+}
+
+/** Aggregate the tally for a night. Pure over the in-memory map. */
+function trashSummary(nightKey) {
+  const t = _trash.get(nightKey);
+  if (!t || t.entries.size === 0) return null;
+  const byName = new Map();
+  let kills = 0, damage = 0, seconds = 0, firstMs = Infinity, lastMs = -Infinity;
+  for (const e of t.entries.values()) {
+    kills += 1; damage += e.damage; seconds += e.sec;
+    firstMs = Math.min(firstMs, e.atMs); lastMs = Math.max(lastMs, e.atMs);
+    const k = e.name.toLowerCase();
+    const cur = byName.get(k) || { name: e.name, kills: 0, damage: 0 };
+    cur.kills += 1; cur.damage += e.damage;
+    byName.set(k, cur);
+  }
+  return {
+    kills, damage, seconds,
+    firstMs: Number.isFinite(firstMs) ? firstMs : null,
+    lastMs:  Number.isFinite(lastMs)  ? lastMs  : null,
+    mobs: [...byName.values()].sort((a, b) => b.kills - a.kills || b.damage - a.damage),
+    // Observed, not authoritative: uploads that never reached us aren't here,
+    // and a bot restart before the first persist loses that slice.
+    observed: true,
+  };
+}
+
+function _kvKey(win) { return `raid_trash_${win.dateKey}`; }
+
+/** Merge the persisted tally for a night back into memory (after a restart). */
+async function loadTrash(win) {
+  const t = _trashBucket(win.nightKey);
+  if (t.loaded) return trashSummary(win.nightKey);
+  t.loaded = true;                                   // one attempt per process/night
+  try {
+    const supabase = require('./supabase');
+    if (!supabase.isEnabled()) return trashSummary(win.nightKey);
+    const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+    const rows = await supabase.select('bot_kv',
+      `guild_id=eq.${encodeURIComponent(guildId)}&key=eq.${encodeURIComponent(_kvKey(win))}&select=value&limit=1`);
+    const val = Array.isArray(rows) && rows[0]?.value;
+    for (const e of (val?.entries || [])) {
+      if (!Array.isArray(e) || e.length < 4) continue;
+      const [name, damage, sec, atMs] = e;
+      const k = _trashKey(name, atMs);
+      const hit = t.entries.get(k);
+      if (hit) { hit.damage = Math.max(hit.damage, damage || 0); hit.sec = Math.max(hit.sec, sec || 0); }
+      else if (t.entries.size < TRASH_MAX_ENTRIES) t.entries.set(k, { name, damage: damage || 0, sec: sec || 0, atMs });
+    }
+  } catch (err) { console.warn('[raid-review] trash load failed:', err?.message); }
+  return trashSummary(win.nightKey);
+}
+
+/** Persist the tally. Called on the throttled refresh cadence, never per upload. */
+async function saveTrash(win) {
+  const t = _trash.get(win.nightKey);
+  if (!t || !t.dirty || t.entries.size === 0) return false;
+  try {
+    const supabase = require('./supabase');
+    if (!supabase.isEnabled()) return false;
+    const sum = trashSummary(win.nightKey);
+    const entries = [...t.entries.values()]
+      .sort((a, b) => b.atMs - a.atMs).slice(0, TRASH_PERSIST_ENTRIES)
+      .map(e => [e.name, e.damage, e.sec, e.atMs]);
+    await supabase.upsert('bot_kv', [{
+      guild_id: process.env.SUPABASE_GUILD_ID || 'wolfpack',
+      key: _kvKey(win),
+      value: {
+        night: win.dateKey, updated_at: new Date().toISOString(),
+        kills: sum.kills, damage: sum.damage, seconds: sum.seconds,
+        mobs: sum.mobs.slice(0, 40), entries,
+      },
+      updated_at: new Date().toISOString(),
+    }], 'guild_id,key');
+    t.dirty = false;
+    return true;
+  } catch (err) { console.warn('[raid-review] trash save failed:', err?.message); return false; }
 }
 
 // ── Pure: composition ────────────────────────────────────────────────────────
@@ -171,14 +379,66 @@ function _isForeign(enc, roster) {
 
 function _ms(v) { const n = typeof v === 'number' ? v : Date.parse(v); return Number.isFinite(n) ? n : 0; }
 
+// Minimum comparable nights before we make a pace claim at all. Below this the
+// "usual" number is one or two nights' noise, and the live card says nothing —
+// the same discipline as the ≥4-sample floor on the slow/fast medians.
+const PACE_MIN_NIGHTS = 3;
+// A GUILD RAID, not "a night somebody killed things". Without this floor the
+// baseline fills up with weeknight six-man clears — 30 "nights" with a median
+// of 2 kills, which turns a perfectly ordinary Thursday into "7 ahead of our
+// usual pace" (caught on the 2026-07-30 render, 2026-08-02).
+const PACE_MIN_KILLS_PER_NIGHT = 5;
+
+/**
+ * "Are we ahead of our usual pace?" — measured against OUR OWN trailing raid
+ * nights, never an invented target. For each prior night we count the kills
+ * that had landed by the same elapsed time from that night's first pull, and
+ * take the median. Pure; returns null unless the baseline is real.
+ *
+ * rows: [{ started_at, duration_sec }] — prior confirmed kills.
+ */
+function _computePace(rows, startMs, nowMs, killsSoFar) {
+  if (!Array.isArray(rows) || rows.length === 0) return null;
+  const elapsedMs = nowMs - startMs;
+  if (!(elapsedMs > 0)) return null;
+  const byNight = new Map();
+  for (const r of rows) {
+    const t = _ms(r?.started_at);
+    if (!t) continue;
+    const k = raidNight.nightKey(t);
+    const arr = byNight.get(k) || [];
+    arr.push(t);
+    byNight.set(k, arr);
+  }
+  const counts = [];
+  for (const times of byNight.values()) {
+    if (times.length < PACE_MIN_KILLS_PER_NIGHT) continue;
+    const first = Math.min(...times);
+    // …and it has to have been a scheduled raid night, by the same predicate
+    // that decides whether a timestamp gets a raid thread at all.
+    if (!raidNight.isRaidNightAt(first)) continue;
+    counts.push(times.filter(t => (t - first) <= elapsedMs).length);
+  }
+  if (counts.length < PACE_MIN_NIGHTS) return null;
+  counts.sort((a, b) => a - b);
+  const usual = counts[Math.floor(counts.length / 2)];
+  return { kills: killsSoFar, usual, nights: counts.length, elapsedMin: Math.round(elapsedMs / 60_000) };
+}
+
 /**
  * Everything the review says, derived from plain rows. No I/O, no Discord.
  *
  * data = { window, encounters, deathContribs, characters, loot, ticks,
- *          funEvents, history, uploaders }
+ *          funEvents, history, uploaders, trash?, paceHistory? }
  * Returns null when the night has nothing worth posting.
+ *
+ * `opts.requireKills = false` is the LIVE path: a raid that has pulled but not
+ * yet killed anything still gets a card ("Fighting X"). The default (true) is
+ * the shipped behaviour — no confirmed kill, no review.
+ * `opts.nowMs` (live only) builds the `live` block; absent → no live block, so
+ * the final review is byte-identical to before.
  */
-function summarizeNight(data) {
+function summarizeNight(data, opts = {}) {
   const win     = data?.window || nightWindowFor(Date.now());
   const chars   = Array.isArray(data?.characters) ? data.characters : [];
   const roster  = new Set(chars.map(c => String(c.name || '').toLowerCase()).filter(Boolean));
@@ -203,7 +463,8 @@ function summarizeNight(data) {
   const kills   = all.filter(e => e.ended_at != null).sort((a, b) => killAt(a) - killAt(b));
   const engaged = all.filter(e => e.ended_at == null);
 
-  if (kills.length === 0) return null;
+  const requireKills = opts.requireKills !== false;
+  if (kills.length === 0 && (requireKills || all.length === 0)) return null;
 
   // ── Deaths: the SAME algorithm as the parse card and the web page (#134),
   // per-encounter, then the 60s cross-encounter collapse. Never a 4th count.
@@ -337,14 +598,88 @@ function summarizeNight(data) {
   const fun = [...funBy.entries()].sort((a, b) => b[1] - a[1]).slice(0, 2)
     .map(([type, n]) => ({ type, n }));
 
-  const zones = [...new Set(kills.map(zoneOf).filter(Boolean))];
-  const startMs = Math.min(...kills.map(e => _ms(e.started_at)));
-  const endMs   = Math.max(...kills.map(killAt));
+  // Span rows: the kills, or — on a live card before the first kill — whatever
+  // has been pulled. Identical to the shipped behaviour whenever kills exist.
+  const spanRows = kills.length ? kills : all;
+  const zones = [...new Set(spanRows.map(zoneOf).filter(Boolean))];
+  const startMs = Math.min(...spanRows.map(e => _ms(e.started_at)));
+  const endMs   = Math.max(...spanRows.map(killAt));
+
+  // ── 🕒 Per-fight timelines — the Discord analogue of FightTimeline.tsx (#98).
+  // Death positions inside each fight, from the deaths we ALREADY computed. No
+  // extra query, and by construction the same death set the rest of the review
+  // (and the web page) counts.
+  const deathsByEnc = new Map();
+  for (const d of playerDeaths) {
+    const arr = deathsByEnc.get(d.encId) || [];
+    arr.push(d.ts);
+    deathsByEnc.set(d.encId, arr);
+  }
+  const timelines = kills
+    .map(e => {
+      const durMs = Math.max(1000, (e.duration_sec || 0) * 1000);
+      const st = _ms(e.started_at);
+      // Only deaths that happened INSIDE this fight go on this fight's axis.
+      // find_or_create_encounter's ±30min window means an add pulled 15 minutes
+      // earlier is the same encounter row, so a fight can carry deaths from
+      // before it started — plotting those clamps them all onto t=0 and reads
+      // as "the raid wiped on the pull" (2026-07-30 Xerkizh). The night's death
+      // COUNT is unaffected; this only decides what the axis can honestly draw.
+      const ts = (deathsByEnc.get(e.id) || []).filter(t => t >= st - TIMELINE_GRACE_MS && t <= st + durMs + TIMELINE_GRACE_MS);
+      if (ts.length === 0) return null;
+      return {
+        id: e.id, boss: nameOf(e), atMs: killAt(e), duration_sec: e.duration_sec || 0,
+        deaths: ts.length,
+        // The biggest simultaneous cluster — the "N died together" wipe signal
+        // FightTimeline surfaces in its header. 8% of the fight ≈ its cell width.
+        worstCluster: (() => {
+          const s = [...ts].sort((a, b) => a - b);
+          let best = 0, i = 0;
+          for (let j = 0; j < s.length; j++) {
+            while (s[j] - s[i] > Math.max(6000, durMs * 0.08)) i++;
+            best = Math.max(best, j - i + 1);
+          }
+          return best;
+        })(),
+        strip: deathStrip(ts, _ms(e.started_at), durMs),
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => b.deaths - a.deaths || a.atMs - b.atMs);
+
+  // ── 🐜 Trash. Supplied by the caller (in-memory tally / bot_kv) because no
+  // durable table holds it — see the module header.
+  const trash = (data?.trash && data.trash.kills > 0) ? {
+    kills:   data.trash.kills,
+    damage:  data.trash.damage || 0,
+    seconds: data.trash.seconds || 0,
+    mobs:    Array.isArray(data.trash.mobs) ? data.trash.mobs : [],
+    observed: data.trash.observed !== false,
+  } : null;
+
+  // ── 🔴 Live-only block. Absent unless nowMs was passed, so the final review
+  // renders exactly as it did before.
+  let live = null;
+  if (Number.isFinite(opts.nowMs)) {
+    const nowMs = opts.nowMs;
+    const inProgress = engaged
+      .filter(e => (nowMs - _ms(e.started_at)) <= LIVE_ENGAGED_WINDOW_MS && _ms(e.started_at) <= nowMs)
+      .sort((a, b) => _ms(b.started_at) - _ms(a.started_at))
+      .slice(0, 3)
+      .map(e => ({ boss: nameOf(e), sinceMs: _ms(e.started_at) }));
+    live = {
+      nowMs,
+      inProgress,
+      lastKillMs: kills.length ? endMs : null,
+      pace: _computePace(data?.paceHistory, startMs, nowMs, kills.length),
+    };
+  }
 
   return {
     window: win,
     startMs, endMs,
     zones,
+    timelines, trash, live,
     kills: kills.map(e => ({
       id: e.id, boss: nameOf(e), zone: zoneOf(e),
       atMs: killAt(e), duration_sec: e.duration_sec || 0, damage: e.total_damage || 0,
@@ -390,24 +725,57 @@ function renderReviewEmbeds(sum, { webBase } = {}) {
   if (!sum) return [];
   const base = webBase || process.env.WEB_BASE_URL || 'https://wolfpack.quest';
   const url  = `${base}/raid/review/${sum.window.dateKey}`;
+  const live = sum.live || null;
 
-  const elapsedMin = Math.max(1, Math.round((sum.endMs - sum.startMs) / 60_000));
+  const spanEnd    = live ? Math.max(sum.endMs, live.nowMs) : sum.endMs;
+  const elapsedMin = Math.max(1, Math.round((spanEnd - sum.startMs) / 60_000));
   const elapsed    = `${Math.floor(elapsedMin / 60)}h ${elapsedMin % 60}m`;
 
-  const head = [
-    `**${sum.zones.length ? sum.zones.join(' · ') : 'Norrath'}** — ${fmtClock(sum.startMs)} → ${fmtClock(sum.endMs)} (${elapsed})`,
+  const head = [];
+  if (live) {
+    // Relative timestamps keep ticking client-side, so "updated 4 minutes ago"
+    // stays true between the 5-minute edits.
+    head.push(`🔴 **LIVE** · updated ${relTime(live.nowMs)}`);
+  }
+  head.push(
+    `**${sum.zones.length ? sum.zones.join(' · ') : 'Norrath'}** — ${fmtClock(sum.startMs)} → ${live ? 'now' : fmtClock(sum.endMs)} (${elapsed})`,
     `**${sum.kills.length}** down · **${fmtDmg(sum.totalDamage)}** damage · **${sum.raiders}** on the parse` +
       (sum.deathsAvailable ? ` · **${sum.deaths.length}** deaths` : ''),
-  ];
+  );
+  if (live) {
+    for (const p of live.inProgress) head.push(`⚔️ Fighting **${p.boss}** — pulled ${relTime(p.sinceMs)}`);
+    if (!live.inProgress.length && live.lastKillMs) head.push(`🕐 Last kill ${relTime(live.lastKillMs)}`);
+    if (live.pace) {
+      const d = live.pace.kills - live.pace.usual;
+      const verdict = d > 0 ? `**${d} ahead of** our usual ${live.pace.usual}`
+                    : d < 0 ? `${-d} behind our usual ${live.pace.usual}`
+                            : `right on our usual ${live.pace.usual}`;
+      head.push(`📈 ${live.pace.kills} down ${elapsed} in — ${verdict} (last ${live.pace.nights} raids)`);
+    }
+  }
 
   const embed = new EmbedBuilder()
-    .setColor(0xe67e22)
-    .setTitle(`📓 Raid Night Review — ${sum.window.label}`)
+    .setColor(live ? 0x2ecc71 : 0xe67e22)
+    .setTitle(live ? `🔴 Raid Night — ${sum.window.label}` : `📓 Raid Night Review — ${sum.window.label}`)
     .setURL(url)
     .setDescription(head.join('\n'));
 
+  // Optional sections are added through this so the embed can never blow
+  // Discord's 6000-char whole-embed ceiling: the ones that carry the night
+  // (kills, standouts, loot, attendance, fixes) are added directly; the
+  // additive ones declare a priority and are skipped when the budget is spent.
+  let used = JSON.stringify(embed.toJSON()).length;
+  const EMBED_BUDGET = 5800;
+  const addField = (name, value, { optional = false } = {}) => {
+    if (!value) return;
+    const cost = name.length + value.length + 32;
+    if (optional && used + cost > EMBED_BUDGET) return;
+    embed.addFields({ name, value, inline: false });
+    used += cost;
+  };
+
   // 🏆 Kills — in kill order, zone-headed when the night moved zones.
-  {
+  if (sum.kills.length) {
     const lines = [];
     let lastZone = null, anyThin = false;
     const multiZone = sum.zones.length > 1;
@@ -417,7 +785,7 @@ function renderReviewEmbeds(sum, { webBase } = {}) {
       lines.push(`\`${fmtClock(k.atMs).padStart(6)}\` **${k.boss}** · ${fmtDur(k.duration_sec)} · ${fmtDmg(k.damage)}${k.thin ? ' \\*' : ''}`);
     }
     if (anyThin) lines.push('_\\* only a partial parse reached us for this one_');
-    embed.addFields({ name: `🏆 Kills (${sum.kills.length})`, value: clampLines(lines, 1024, 'more kills'), inline: false });
+    addField(`🏆 Kills (${sum.kills.length})`, clampLines(lines, 1024, 'more kills'));
   }
 
   // ⭐ Standouts — three named lines. The reason people read a review.
@@ -428,17 +796,42 @@ function renderReviewEmbeds(sum, { webBase } = {}) {
     if (sum.hardest && sum.hardest.duration_sec > 0) lines.push(`💪 Hardest pull — **${sum.hardest.boss}**, ${fmtDur(sum.hardest.duration_sec)} and ${fmtDmg(sum.hardest.damage)}`);
     const pb = sum.fastFights?.[0];
     if (pb) lines.push(`⏱️ **${pb.boss}** went down in ${fmtDur(pb.duration_sec)} — ${pb.pct}% faster than our own median (${fmtDur(pb.median_sec)})`);
-    if (lines.length) embed.addFields({ name: '⭐ Standouts', value: clampLines(lines), inline: false });
+    if (lines.length) addField('⭐ Standouts', clampLines(lines));
+  }
+
+  // 🕒 Fight timelines — where the deaths fell inside each fight. Discord can't
+  // draw FightTimeline.tsx, so each row is a 12-cell death sparkline that LINKS
+  // to the real component on /parses/<id>. Deaths-only, deliberately: that is
+  // the substrate the web timeline itself started from, and it costs no extra
+  // query (raid events + callout ticks are on the web page).
+  if (sum.timelines?.length) {
+    const lines = sum.timelines.slice(0, 6).map(t =>
+      `\`${t.strip}\` [${t.boss}](${base}/parses/${t.id}) · ${fmtDur(t.duration_sec)} · 💀${t.deaths}` +
+      (t.worstCluster >= 3 ? ` · **${t.worstCluster} together**` : ''));
+    lines.push('_start → end of each fight · bar height = deaths in that slice_');
+    addField(`🕒 Fight timelines (${sum.timelines.length})`, clampLines(lines, 1024, 'more fights'), { optional: true });
+  }
+
+  // 🐜 Trash — what the raid cleared getting to the bosses (Hitya, 2026-08-02).
+  // Observed from the agents' uploads, not from `encounters` (which is
+  // boss-only) — so it is labelled as observed, never presented as a census.
+  if (sum.trash) {
+    const lines = [
+      `**${sum.trash.kills}** mobs cleared · **${fmtDmg(sum.trash.damage)}** damage · ${fmtSpan(sum.trash.seconds)} in combat`,
+    ];
+    for (const m of sum.trash.mobs.slice(0, 5)) {
+      lines.push(`\`×${String(m.kills).padStart(3)}\` ${m.name} · ${fmtDmg(m.damage)}`);
+    }
+    if (sum.trash.mobs.length > 5) lines.push(`_…and ${sum.trash.mobs.length - 5} other mob types_`);
+    if (sum.trash.observed) lines.push('_counted from what the raid\'s agents saw die_');
+    addField('🐜 Trash cleared', clampLines(lines, 1024, 'more mobs'), { optional: true });
   }
 
   // 💰 Loot — top 8 by price, plus the total.
   if (sum.loot.length) {
     const lines = sum.loot.slice(0, 8).map(l => `**${l.item}** → ${l.winner} · ${l.dkp} DKP`);
     if (sum.loot.length > 8) lines.push(`_…and ${sum.loot.length - 8} more_`);
-    embed.addFields({
-      name: `💰 Loot (${sum.loot.length} · ${sum.dkpSpent} DKP spent)`,
-      value: clampLines(lines, 1024, 'more items'), inline: false,
-    });
+    addField(`💰 Loot (${sum.loot.length} · ${sum.dkpSpent} DKP spent)`, clampLines(lines, 1024, 'more items'));
   }
 
   // 🫂 Attendance — from the DKP ticks, which is the record that pays people.
@@ -448,7 +841,7 @@ function renderReviewEmbeds(sum, { webBase } = {}) {
       const names = sum.attendance.leftEarly.slice(0, 8).join(', ');
       lines.push(`On the first tick but not the last: ${names}${sum.attendance.leftEarly.length > 8 ? ` +${sum.attendance.leftEarly.length - 8}` : ''}`);
     }
-    embed.addFields({ name: `🫂 Attendance (${sum.attendance.total})`, value: clampLines(lines), inline: false });
+    addField(`🫂 Attendance (${sum.attendance.total})`, clampLines(lines));
   }
 
   // 🩹 What to work on — grounded: our deaths, our own history, our resets.
@@ -462,18 +855,18 @@ function renderReviewEmbeds(sum, { webBase } = {}) {
       const names = [...new Set(sum.engaged.map(e => e.boss))].slice(0, 4).join(', ');
       lines.push(`↩️ Engaged but never confirmed down: ${names}`);
     }
-    if (lines.length) embed.addFields({ name: '🩹 What to work on', value: clampLines(lines, 1024, 'more notes'), inline: false });
+    if (lines.length) addField('🩹 What to work on', clampLines(lines, 1024, 'more notes'));
   }
 
   // 🎪 One fun line. Drops out entirely on a quiet night.
   if (sum.fun.length) {
     const parts = sum.fun.map(f => `${f.n} ${FUN_LABELS[f.type] || String(f.type).replace(/_/g, ' ')}`);
-    embed.addFields({ name: '🎪 Around the campfire', value: parts.join(' · '), inline: false });
+    addField('🎪 Around the campfire', parts.join(' · '), { optional: true });
   }
 
   const foot = [`${sum.uploaders || 0} agent upload${sum.uploaders === 1 ? '' : 's'} built this`];
   if (!sum.deathsAvailable) foot.push('death detail expires after 7 days');
-  foot.push('/raidreview to refresh');
+  foot.push(live ? 'updates as the raid goes · final writeup after midnight' : '/raidreview to refresh');
   embed.setFooter({ text: foot.join(' · ') });
 
   return [embed];
@@ -481,14 +874,44 @@ function renderReviewEmbeds(sum, { webBase } = {}) {
 
 // ── Fetch: the night's rows ──────────────────────────────────────────────────
 
+// ── Live read cache ─────────────────────────────────────────────────────────
+// The live card re-collects every ~5 min for four-plus hours, during the
+// busiest Supabase hour of the week. Only TWO of the reads actually move
+// minute to minute (the night's encounters, and the deaths on them); the rest
+// are a roster, a zone lookup, a 90-day duration history and the OpenDKP rows,
+// which either never change or change slowly. Cache those per night, per slice.
+//
+// Cached ONLY when `live` is set, so the 00:45 review and /raidreview issue the
+// exact same queries they always did.
+const _COLD_TTL_MS = 6 * 3_600_000;    // roster / zones / 90-day history / pace baseline
+const _WARM_TTL_MS = 10 * 60_000;      // OpenDKP loot + ticks, fun events
+let _readCache = null;                 // { nightKey, slices: Map<name,{at,val}> }
+
+function _cacheFor(win) {
+  if (!_readCache || _readCache.nightKey !== win.nightKey) _readCache = { nightKey: win.nightKey, slices: new Map() };
+  return _readCache;
+}
+function _cached(win, live, name, ttlMs, fn) {
+  if (!live) return fn();
+  const c = _cacheFor(win);
+  const hit = c.slices.get(name);
+  if (hit && (Date.now() - hit.at) < ttlMs) return Promise.resolve(hit.val);
+  return Promise.resolve(fn()).then(val => { c.slices.set(name, { at: Date.now(), val }); return val; });
+}
+/** Test seam — drops the live read cache and the trash tally. */
+function _clearLiveCaches() { _readCache = null; _trash.clear(); }
+
 /**
  * Every read the review needs, bounded to one night. Best-effort throughout:
  * utils/supabase already returns null on failure/timeout/breaker-open, so a
  * review missing loot still ships the kills.
+ *
+ * `opts.live` turns on the slice cache above and adds the pace baseline.
  */
-async function collectNightData(win) {
+async function collectNightData(win, opts = {}) {
   const supabase = require('./supabase');
   if (!supabase.isEnabled()) return null;
+  const live = !!opts.live;
 
   const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
   const fromIso = new Date(win.fromMs).toISOString();
@@ -511,34 +934,43 @@ async function collectNightData(win) {
   // whitelist keeps them quote-free (a quoted list would need its separating
   // commas percent-encoded) and makes injection structurally impossible.
   const inList = arr => `(${arr.map(v => String(v).replace(/[^A-Za-z0-9_-]/g, '')).join(',')})`;
-  const [deathContribs, characters, zones, loot, raids, funEvents, history] = await Promise.all([
+  const [deathContribs, characters, zones, loot, raids, funEvents, history, paceHistory, trash] = await Promise.all([
     ids.length ? supabase.select('contributions',
       `select=encounter_id,contributor_character,deaths:raw_parse->deaths&encounter_id=in.${inList(ids)}&limit=4000`) : [],
-    supabase.select('characters',
-      `select=name,class,exclude_from_stats&guild_id=eq.${encodeURIComponent(guildId)}&limit=3000`),
-    shorts.length ? supabase.select('eqemu_zone',
-      `select=short_name,long_name&short_name=in.${inList(shorts)}`) : [],
-    supabase.select('opendkp_loot_recent',
-      `select=item_name,character_name,dkp&raid_date=eq.${win.dateKey}&order=dkp.desc&limit=200`),
-    supabase.select('opendkp_raids',
+    _cached(win, live, 'characters', _COLD_TTL_MS, () => supabase.select('characters',
+      `select=name,class,exclude_from_stats&guild_id=eq.${encodeURIComponent(guildId)}&limit=3000`)),
+    _cached(win, live, `zones:${shorts.join(',')}`, _COLD_TTL_MS, () => (shorts.length ? supabase.select('eqemu_zone',
+      `select=short_name,long_name&short_name=in.${inList(shorts)}`) : [])),
+    _cached(win, live, 'loot', _WARM_TTL_MS, () => supabase.select('opendkp_loot_recent',
+      `select=item_name,character_name,dkp&raid_date=eq.${win.dateKey}&order=dkp.desc&limit=200`)),
+    _cached(win, live, 'raids', _WARM_TTL_MS, () => supabase.select('opendkp_raids',
       // opendkp_raids.ts is midday UTC on the raid's own date, and the
       // opendkp_loot_recent view keys `raid_date` off that same ts::date — so
       // both join on the night's ET dateKey without a timezone dance.
-      `select=raid_id,name&ts=gte.${win.dateKey}T00%3A00%3A00Z&ts=lt.${win.dateKey}T23%3A59%3A59Z&limit=10`),
-    supabase.select('fun_events',
+      `select=raid_id,name&ts=gte.${win.dateKey}T00%3A00%3A00Z&ts=lt.${win.dateKey}T23%3A59%3A59Z&limit=10`)),
+    _cached(win, live, 'fun', _WARM_TTL_MS, () => supabase.select('fun_events',
       `select=event_type&guild_id=eq.${encodeURIComponent(guildId)}` +
-      `&event_ts=gte.${encodeURIComponent(fromIso)}&event_ts=lt.${encodeURIComponent(toIso)}&limit=3000`),
-    npcIds.length ? supabase.select('encounters',
+      `&event_ts=gte.${encodeURIComponent(fromIso)}&event_ts=lt.${encodeURIComponent(toIso)}&limit=3000`)),
+    _cached(win, live, `history:${npcIds.join(',')}`, _COLD_TTL_MS, () => (npcIds.length ? supabase.select('encounters',
       `select=npc_id,duration_sec&guild_id=eq.${encodeURIComponent(guildId)}` +
       `&npc_id=in.(${npcIds.join(',')})&ended_at=not.is.null` +
       `&started_at=gte.${encodeURIComponent(new Date(win.fromMs - 90 * 86_400_000).toISOString())}` +
-      `&started_at=lt.${encodeURIComponent(fromIso)}&limit=3000`) : [],
+      `&started_at=lt.${encodeURIComponent(fromIso)}&limit=3000`) : [])),
+    // Pace baseline — LIVE ONLY, and cold-cached, so the final review's query
+    // set is unchanged and the live card pays for it once a night.
+    live ? _cached(win, live, 'pace', _COLD_TTL_MS, () => supabase.select('encounters',
+      `select=started_at&guild_id=eq.${encodeURIComponent(guildId)}&ended_at=not.is.null` +
+      `&started_at=gte.${encodeURIComponent(new Date(win.fromMs - 45 * 86_400_000).toISOString())}` +
+      `&started_at=lt.${encodeURIComponent(fromIso)}&order=started_at.asc&limit=1500`)) : null,
+    // Trash: in-memory when the raid is live, otherwise merged back from bot_kv
+    // (the morning-after review runs in a process that may have restarted).
+    loadTrash(win).catch(() => null),
   ]);
 
   const raidIds = (raids || []).map(r => r.raid_id).filter(n => Number.isFinite(n));
   const ticks = raidIds.length
-    ? (await supabase.select('opendkp_ticks',
-        `select=tick_id,description,value,attendees,raid_id&raid_id=in.(${raidIds.join(',')})&order=tick_id.asc&limit=50`)) || []
+    ? (await _cached(win, live, `ticks:${raidIds.join(',')}`, _WARM_TTL_MS, () => supabase.select('opendkp_ticks',
+        `select=tick_id,description,value,attendees,raid_id&raid_id=in.(${raidIds.join(',')})&order=tick_id.asc&limit=50`))) || []
     : [];
 
   const uploaders = new Set((deathContribs || []).map(c => c.contributor_character).filter(Boolean)).size;
@@ -553,6 +985,8 @@ async function collectNightData(win) {
     ticks,
     funEvents: funEvents || [],
     history: history || [],
+    paceHistory: paceHistory || [],
+    trash: trash || null,
     uploaders,
   };
 }
@@ -571,9 +1005,14 @@ function _setDeps({ collect, state, raidNight: rn } = {}) {
   _stateMod  = state   || null;
   _nightMod  = rn      || null;
 }
-function _collect(win) { return (_collector || collectNightData)(win); }
+function _collect(win, opts) { return (_collector || collectNightData)(win, opts); }
 function _state()      { return _stateMod || require('./state'); }
 function _night()      { return _nightMod || raidNight; }
+
+// Nights whose FINAL review has already been written. The live refresher
+// refuses to touch those, so a timer that survived past 00:45 can never
+// overwrite the finished writeup with a "🔴 LIVE" one.
+const _finalDone = new Set();
 
 /**
  * Build and post (or edit) the review for the night containing `atMs`.
@@ -581,16 +1020,25 @@ function _night()      { return _nightMod || raidNight; }
  *
  * `dryRun` builds everything and returns the embeds without touching Discord;
  * that's what /raidreview preview and the test suite use.
+ *
+ * `live` is the mid-raid card: same message, same thread, same composition —
+ * it just also renders the in-progress block and tolerates a night that has
+ * pulled but not yet killed anything.
  */
-async function postRaidNightReview(client, { atMs = Date.now(), dryRun = false, force = false } = {}) {
+async function postRaidNightReview(client, { atMs = Date.now(), dryRun = false, force = false, live = false, nowMs = null } = {}) {
   try {
     const win = nightWindowFor(atMs);
-    const data = await _collect(win);
+    if (live && !liveEnabled()) return { ok: false, reason: 'live-disabled', window: win };
+    if (live && _finalDone.has(win.nightKey)) return { ok: false, reason: 'final-posted', window: win };
+
+    const data = await _collect(win, live ? { live: true } : undefined);
     if (!data) return { ok: false, reason: 'supabase-disabled', window: win };
 
-    const summary = summarizeNight(data);
+    const summary = summarizeNight(data, live
+      ? { requireKills: false, nowMs: Number.isFinite(nowMs) ? nowMs : Date.now() }
+      : {});
     if (!summary) return { ok: false, reason: 'no-kills', window: win };
-    if (summary.kills.length < minKills()) return { ok: false, reason: 'below-min-kills', window: win, summary };
+    if (!live && summary.kills.length < minKills()) return { ok: false, reason: 'below-min-kills', window: win, summary };
 
     const embeds = renderReviewEmbeds(summary);
     if (dryRun) return { ok: true, reason: 'dry-run', window: win, summary, embeds };
@@ -614,12 +1062,14 @@ async function postRaidNightReview(client, { atMs = Date.now(), dryRun = false, 
       const msg = await target.thread.messages.fetch(existingId).catch(() => null);
       if (msg) {
         await msg.edit({ embeds });
+        if (!live) _finalDone.add(win.nightKey);
         return { ok: true, reason: 'edited', window: win, summary, messageId: msg.id, threadId: target.thread.id };
       }
     }
     const sent = await target.thread.send({ embeds });
     try { state.setRaidReviewMessageId(win.nightKey, sent.id); } catch { /* volume issue — a re-run reposts, not a crash */ }
-    console.log(`[raid-review] posted ${win.label} → thread ${target.thread.id} (${summary.kills.length} kills)`);
+    if (!live) _finalDone.add(win.nightKey);
+    console.log(`[raid-review] posted ${live ? 'LIVE ' : ''}${win.label} → thread ${target.thread.id} (${summary.kills.length} kills)`);
     return { ok: true, reason: 'posted', window: win, summary, messageId: sent.id, threadId: target.thread.id };
   } catch (err) {
     console.warn('[raid-review] post failed:', err?.message);
@@ -687,19 +1137,130 @@ function catchUpRaidNightReview(client, { nowMs = Date.now(), delayMs = 60_000 }
   }
 }
 
-/** Test seam — drops the pending timer. */
-function _clearTimer() { if (_timer) { clearTimeout(_timer); _timer = null; } }
+// ── Live: the ingest-side hooks ──────────────────────────────────────────────
+// Called from _handleAgentUpload AFTER the 200 has gone back to the agent.
+// Both are synchronous and swallow everything: the live review must never be
+// able to slow, fail, or alter a parse upload.
+
+const _liveNights = new Map();   // nightKey → { dirty, lastRunMs, running, timer, atMs }
+
+function _liveNight(key, atMs) {
+  let s = _liveNights.get(key);
+  if (!s) { s = { dirty: false, lastRunMs: 0, running: false, timer: null, atMs }; _liveNights.set(key, s); }
+  if (Number.isFinite(atMs)) s.atMs = Math.min(s.atMs, atMs);   // anchor stays the night's FIRST pull
+  return s;
+}
+
+/**
+ * The refresh itself. Async, fully try/caught, and single-flight per night.
+ * Persists the trash tally on the same cadence — one bot_kv write per edit,
+ * never one per upload.
+ */
+async function _runLiveRefresh(client, key) {
+  const s = _liveNights.get(key);
+  if (!s || s.running) return;
+  s.running = true;
+  s.dirty = false;
+  s.lastRunMs = Date.now();
+  try {
+    const win = nightWindowFor(s.atMs);
+    await saveTrash(win).catch(() => false);
+    const res = await postRaidNightReview(client, { atMs: s.atMs, live: true });
+    if (!res.ok && res.reason !== 'no-thread' && res.reason !== 'event-night') {
+      console.log(`[raid-review] live refresh: ${res.reason}`);
+    }
+  } catch (err) {
+    console.warn('[raid-review] live refresh failed:', err?.message);
+  } finally {
+    s.running = false;
+    if (s.dirty) _armLive(client, key);      // uploads landed while we were building
+  }
+}
+
+function _armLive(client, key) {
+  const s = _liveNights.get(key);
+  if (!s || s.timer) return;
+  const sinceLast = Date.now() - s.lastRunMs;
+  const wait = Math.max(liveDebounceMs(), liveMinIntervalMs() - sinceLast);
+  s.timer = setTimeout(() => { s.timer = null; _runLiveRefresh(client, key); }, wait);
+  if (typeof s.timer.unref === 'function') s.timer.unref();
+}
+
+/**
+ * "An encounter just landed for this night." SYNCHRONOUS, never throws, never
+ * awaits — it marks the night dirty and (re)arms the debounced refresh. It
+ * passes NO combat data: every number on the card still comes from Supabase
+ * via summarizeNight, so the live card can never disagree with the parse card.
+ */
+function touchLiveRaidReview(client, { atMs = Date.now() } = {}) {
+  try {
+    if (!liveEnabled() || !client) return { armed: false, reason: 'disabled' };
+    const at = Number.isFinite(atMs) ? atMs : Date.now();
+    // Daytime grinding is not a raid. The same gate the night thread uses, so a
+    // card only ever exists for a night that HAS a thread to live in.
+    if (!_night().isRaidNightAt(at)) return { armed: false, reason: 'not-raid-night' };
+    const win = nightWindowFor(at);
+    if (_finalDone.has(win.nightKey)) return { armed: false, reason: 'final-posted' };
+    // Past the moment the final review is due → let the final own the card.
+    const dueMs = win.fromMs + (24 - _night().rolloverHour()) * 3_600_000 + reviewDelayMin() * 60_000;
+    if (Date.now() >= dueMs) return { armed: false, reason: 'past-final' };
+    const s = _liveNight(win.nightKey, at);
+    s.dirty = true;
+    _armLive(client, win.nightKey);
+    return { armed: true, nightKey: win.nightKey };
+  } catch (err) {
+    console.warn('[raid-review] live touch failed:', err?.message);
+    return { armed: false, reason: 'error' };
+  }
+}
+
+/**
+ * The whole ingest-side hook in one call: tally a trash kill (when it wasn't a
+ * tracked boss) and mark the night dirty. SYNCHRONOUS, never throws.
+ *
+ * `isBoss` comes from the SAME bosses.json match the parse-card volume filter
+ * uses (`findBossFromName`), so "trash" here means exactly what it means in
+ * the night thread. `confirmed` is the agent's observed death line — an
+ * idle-flush pull that never died is not a kill.
+ */
+function noteEncounterUpload({ atMs, bossName, isBoss = false, confirmed = false,
+                               damage = 0, durationSec = 0, players = 0, client = null } = {}) {
+  const out = { trash: 'skipped', live: null };
+  try {
+    if (!isBoss && confirmed && players > 0 && bossName) {
+      out.trash = noteTrashKill({ atMs, name: bossName, damage, durationSec });
+    }
+    if (client) out.live = touchLiveRaidReview(client, { atMs });
+  } catch (err) {
+    console.warn('[raid-review] note upload failed:', err?.message);
+  }
+  return out;
+}
+
+/** Test seam — drops the pending timer(s). */
+function _clearTimer() {
+  if (_timer) { clearTimeout(_timer); _timer = null; }
+  for (const s of _liveNights.values()) if (s.timer) { clearTimeout(s.timer); s.timer = null; }
+  _liveNights.clear();
+  _finalDone.clear();
+}
 
 module.exports = {
   // pure
   nightWindowFor, isoDateKey, mostRecentReviewableNight,
   summarizeNight, renderReviewEmbeds,
-  cleanBossName, fmtDmg, fmtDur, fmtClock, clampLines,
+  cleanBossName, fmtDmg, fmtDur, fmtSpan, fmtClock, clampLines, deathStrip, relTime,
   NIGHT_DEATH_DEDUP_MS, AUTO_FOREIGN_MAX_MEMBER_FRAC, AUTO_FOREIGN_MIN_PLAYERS,
+  TIMELINE_CELLS,
   // fetch
   collectNightData,
+  // trash tally
+  noteTrashKill, trashSummary, loadTrash, saveTrash,
   // post
   postRaidNightReview, scheduleRaidNightReview, catchUpRaidNightReview,
   reviewEnabled, reviewDelayMin, minKills,
-  _clearTimer, _setDeps,
+  // live
+  noteEncounterUpload, touchLiveRaidReview, liveEnabled,
+  liveDebounceMs, liveMinIntervalMs,
+  _clearTimer, _setDeps, _clearLiveCaches,
 };
