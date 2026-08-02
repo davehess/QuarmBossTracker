@@ -37,6 +37,19 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'roadmap-votes',
+    title: '🗳️ The roadmap is yours now — vote, sort, unblock',
+    version: 'Web 1.0.288',
+    date: '2026-08-02',
+    headline: 'The What\'s-next queue got numbers, a vote button, and a way to hand us exactly the thing an item is stuck on. Open to read without signing in; sign in with Discord to vote or submit.',
+    features: [
+      { name: '▲ Vote it up', blurb: 'Every queue item has a vote button — tell us what you want built next and sort the whole queue by votes. One vote per member per item, take it back any time.' },
+      { name: '🙏 Unblock us', blurb: 'Items stuck on something a member can supply — a verbatim log line, a raid-night observation — say exactly what they need, with a box right on the card. Submissions go straight to the officers\' feedback thread.' },
+      { name: '#️⃣ Numbers on everything', blurb: 'Each item carries its tracking number, so "I vote #193" means the same thing on the site, in Discord, and in the dev docs.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'new-member-walkthrough',
     title: '✨ The guided tour — your data, page by page',
     version: 'Web 1.0.286 · Agent 3.4.43',
@@ -937,25 +950,33 @@ export const sprintMeta = {
 export type QueueComponent = 'Bot' | 'Web' | 'Agent' | 'Mimic' | 'Database' | 'Upstream';
 export type QueueItem = {
   key: string;
+  num: string;           // canonical ledger number ('#169'); minted #190+ are
+                         // recorded in docs/STATUS.md so the numbering stays owned
   title: string;
   summary: string;
   effort: 'quick' | 'medium' | 'large';
   components: QueueComponent[];
   status?: string;
+  // Something a member can hand us that unblocks or verifies this item —
+  // renders a highlighted "we need" callout + the submission box.
+  needs?: string;
 };
 
 export const queueItems: QueueItem[] = [
   // ── Quick wins ─────────────────────────────────────────────────────────
   {
     key: 'dead-triggers',
+    num: '#190',
     title: '30 silent callouts wake up',
     summary: 'An audit found 30 of our 102 guild triggers can never fire — a pattern-anchoring bug that the rehearsal tool accidentally hid. Each gets fixed against a real log line in one reviewed batch (waking 30 callouts mid-raid-week unreviewed is its own hazard), and the rehearsal tool gets fixed so this can\'t hide again.',
     effort: 'quick',
     components: ['Bot', 'Database'],
     status: 'audited — the list is in hand',
+    needs: 'Real log lines for any boss emote or callout you rely on — each fixed trigger gets verified against one before it re-arms.',
   },
   {
     key: 'rampage-hp-source',
+    num: '#144',
     title: 'Real HP on the Rampage card, always',
     summary: 'A Zeal weight reading (130/180) was sneaking into the data as if it were health. The displays are already guarded; this fixes the source so garbage never lands in the database at all, and rampage victims not running Mimic show what the raid collectively knows about their HP.',
     effort: 'quick',
@@ -963,6 +984,7 @@ export const queueItems: QueueItem[] = [
   },
   {
     key: 'parse-log-dedup',
+    num: '#191',
     title: 'One archive entry per fight',
     summary: 'The parse archive sometimes gets near-identical entries posted seconds apart by different uploaders. Collapse them — carefully, because this archive is also what the bot rebuilds its history from after a restart.',
     effort: 'quick',
@@ -970,22 +992,27 @@ export const queueItems: QueueItem[] = [
   },
   {
     key: 'dt-pet-victims',
+    num: '#169',
     title: 'Death Touch on a pet gets captured',
     summary: 'The Death Touch trigger recognizes player victims but not pets. Blocked on one thing: a verbatim log line of a pet eating a DT (send it if you have one!). May resolve itself when the silent-callouts batch lands.',
     effort: 'quick',
     components: ['Database'],
     status: 'blocked — needs one real log line',
+    needs: 'A verbatim log line of a PET being Death Touched (copy it straight from your eqlog file, timestamp and all).',
   },
   {
     key: 'buster-double-fire',
+    num: '#142',
     title: 'Tank-buster countdown: one voice, not two',
     summary: 'The Emperor tank-buster now has two working detection paths (the rebuilt guild trigger and the built-in countdown). Verify they don\'t both fire on the same cast.',
     effort: 'quick',
     components: ['Agent', 'Database'],
+    needs: 'A raid-night observation from the next Emperor pull: did the tank-buster callout fire once or twice per cast?',
   },
   // ── Medium builds ──────────────────────────────────────────────────────
   {
     key: 'onboarding-v1',
+    num: '#192',
     title: 'New Here? — the start-to-raiding checklist',
     summary: 'A slimmer Discord welcome card plus a /start page that checks off the steps it can already prove — signed in, Mimic uploading, first parse recorded. The guided tours that just shipped are step one of this design.',
     effort: 'medium',
@@ -994,6 +1021,7 @@ export const queueItems: QueueItem[] = [
   },
   {
     key: 'serialization-p1',
+    num: '#56',
     title: 'Two same-named mobs, two cards',
     summary: 'When two "a crypt guardian" die back to back, their damage currently knits into one card. Phase one separates two instances using the HP tracks we already record — no client update needed.',
     effort: 'medium',
@@ -1002,6 +1030,7 @@ export const queueItems: QueueItem[] = [
   },
   {
     key: 'aoe-burn-windows',
+    num: '#84',
     title: 'AoE burn windows, automatically',
     summary: 'Detect the raid\'s AoE burn phases from the data instead of the manual /parseaoe ritual, and put the results on the fight page.',
     effort: 'medium',
@@ -1009,6 +1038,7 @@ export const queueItems: QueueItem[] = [
   },
   {
     key: 'golden-log-ci',
+    num: '#75',
     title: 'The golden log — a replayable raid for testing',
     summary: 'A recorded raid night that every parser change replays before it ships, so "did this break charm tracking?" gets answered by a machine instead of a raid. Doubles as the pre-raid drill.',
     effort: 'medium',
@@ -1016,6 +1046,7 @@ export const queueItems: QueueItem[] = [
   },
   {
     key: 'first-raid-mode',
+    num: '#86',
     title: 'First-raid mode',
     summary: 'A role-aware Mimic preset for someone\'s first night: the two overlays their class actually needs, the callouts that matter, nothing else. Builds on the first-run setup flow.',
     effort: 'medium',
@@ -1023,6 +1054,7 @@ export const queueItems: QueueItem[] = [
   },
   {
     key: 'officer-console',
+    num: '#87',
     title: 'Officer runbooks + one console',
     summary: 'The "how do I fix X mid-raid" knowledge, written down and wired to buttons — one officer surface instead of knowledge living in three heads.',
     effort: 'medium',
@@ -1030,6 +1062,7 @@ export const queueItems: QueueItem[] = [
   },
   {
     key: 'opendkp-auctions',
+    num: '#68–70',
     title: 'Finish the OpenDKP wiring',
     summary: 'Auction creation is already captured; bids and awards still happen on the OpenDKP site. Wire the rest so loot night never leaves Discord.',
     effort: 'medium',
@@ -1037,6 +1070,7 @@ export const queueItems: QueueItem[] = [
   },
   {
     key: 'deck-graduation',
+    num: '#156',
     title: 'Steam Deck / Linux Mimic graduates',
     summary: 'The native Linux build works on its own experimental update channel today. Graduation means it stops being a science project: supported, documented, on by default for Deck testers.',
     effort: 'medium',
@@ -1045,6 +1079,7 @@ export const queueItems: QueueItem[] = [
   // ── Big rocks ──────────────────────────────────────────────────────────
   {
     key: 'zeal-spawn-id',
+    num: '#193',
     title: 'The spawn-id ask — exact mob identity',
     summary: 'One additive field in Zeal\'s data pipe would give every mob a unique id — ending same-name ambiguity forever: charm credit to the right charmer, debuff timers per mob, multi-pull cards that never merge. The upstream request is drafted with implementation sketch; once it lands, a chain of workarounds on this list simply gets deleted.',
     effort: 'large',
@@ -1053,6 +1088,7 @@ export const queueItems: QueueItem[] = [
   },
   {
     key: 'serialization-p2',
+    num: '#194',
     title: 'Many same-named mobs, all separate',
     summary: 'Beyond two instances: cluster the raiders fighting each copy by position ("a tanked mob is a mob standing on a tank") to keep three-plus same-named mobs apart. Honest caveat: spawn-id upstream makes most of this unnecessary.',
     effort: 'large',
@@ -1061,6 +1097,7 @@ export const queueItems: QueueItem[] = [
   },
   {
     key: 'raid-night-review',
+    num: '#80',
     title: 'Raid Night Review, automatic',
     summary: 'The morning-after writeup — kills, wipes, standout parses, loot, attendance — generated from the night\'s data and posted to that night\'s thread.',
     effort: 'large',
@@ -1068,6 +1105,7 @@ export const queueItems: QueueItem[] = [
   },
   {
     key: 'raid-guide',
+    num: '#81',
     title: 'The living Wolf Pack Raid Guide',
     summary: 'Per-boss pages seeded from our own playbooks, real parses, and what the callouts already know — a guide that updates itself because the raids feed it.',
     effort: 'large',
@@ -1075,6 +1113,7 @@ export const queueItems: QueueItem[] = [
   },
   {
     key: 'ui-studio-web',
+    num: '#195',
     title: 'UI Studio on the website + cloud backups',
     summary: 'View and edit your EQ interface layouts from the browser, with automatic cloud backups of your UI and settings files — restore a blown-up layout from any machine.',
     effort: 'large',
@@ -1082,6 +1121,7 @@ export const queueItems: QueueItem[] = [
   },
   {
     key: 'me-advisors',
+    num: '#196',
     title: 'Advisors on /me',
     summary: 'Spells you\'re missing at your level, tradeskill next-steps, faction runs worth doing — computed from your own uploads against the game data we already mirror.',
     effort: 'large',
@@ -1089,6 +1129,7 @@ export const queueItems: QueueItem[] = [
   },
   {
     key: 'multi-raid',
+    num: '#114',
     title: 'Two raids at once',
     summary: 'A split night (two targets, two raid groups) currently risks the data streams colliding. Leader-anchored identity keeps each raid\'s parses, threads, and callouts separate.',
     effort: 'large',
@@ -1097,6 +1138,7 @@ export const queueItems: QueueItem[] = [
   },
   {
     key: 'storage-partitioning',
+    num: '#197',
     title: 'Years of raids, still fast',
     summary: 'Partition the long-haul storage so three years of parses and sightings stay as quick as three weeks. Invisible when done right — that\'s the point.',
     effort: 'large',
@@ -1104,6 +1146,7 @@ export const queueItems: QueueItem[] = [
   },
   {
     key: 'eql-support',
+    num: '#198',
     title: 'EQLegends support',
     summary: 'When the pack plays EQLegends, the parser and overlays should come along. The groundwork study is done; the port waits until we\'re actually raiding there.',
     effort: 'large',

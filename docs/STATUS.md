@@ -1186,6 +1186,27 @@ folly** — it's here.*
   (HaveIBeenPwned check) — Dashboard → Authentication → password settings. No
   MCP/SQL toggle exists; it's an Auth config flip.
 
+### Task-number registry — minted 2026-08-02 for the public roadmap queue
+The wolfpack.quest/roadmap "What's next" queue (web 1.0.288: numbers + member
+voting + blocked-on-evidence submissions) shows a canonical `#` per item.
+Items that already had ledger numbers keep them (#56, #68–70, #75, #80, #81,
+#84, #86, #87, #114, #142, #144, #156, #169). These were UNNUMBERED and got
+minted here — the numbering is now owned by this ledger, next free is
+**#199**:
+- **#190** dead ^-anchored guild triggers batch (rn-buster-audit follow-up)
+- **#191** Parse Log duplicate embeds (near-identical archive entries seconds apart)
+- **#192** onboarding overhaul v1 (`DESIGN-onboarding-overhaul.md`)
+- **#193** Zeal spawn-id ask + consuming it (`zeal-spawn-id-request.md`)
+- **#194** serialization phase 2 — position-clustered same-name instances
+- **#195** UI Studio web viewer/editor + UI/eqclient.ini cloud backups
+- **#196** /me advisors (spells / tradeskill / faction)
+- **#197** long-haul storage partitioning
+- **#198** EQLegends support (`DESIGN-eql-support.md`)
+Member votes land in `roadmap_votes` (RLS service-role-only; migration
+`20260802031500_roadmap_votes.sql`); evidence submissions ride the existing
+`feedback` pipeline prefixed `[roadmap #N — title]`, so they surface in the
+Discord #feedback thread + /admin/feedback automatically.
+
 ### ⏳ Open TODO — carried forward from the retired docs
 *(These are durable items; the active wave order is in `DESIGN-platform-queue.md`.)*
 
