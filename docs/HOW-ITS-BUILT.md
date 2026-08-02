@@ -161,6 +161,37 @@ Load-bearing details:
 - `RAID_REVIEW=0` kills the automatic post; `/raidreview [date] [preview]` is the
   officer escape hatch. Regression: `test/raid-review-post.test.js`.
 
+### Outcome-driven backfill requests (`utils/backfillScan.js` + `commands/backfillscan.js`)
+Finds fights whose parse is demonstrably wrong and proposes the 2-3 people whose
+log would settle it — then files into the EXISTING `agent_backfill_requests`
+pipeline (no new table, no new endpoint, no agent change). Design + threshold
+derivation: `docs/DESIGN-outcome-backfill.md`.
+- **Detect.** `INFLATED` = one upload ≥1.30× the mob's HP pool **AND** ≥1.50× the
+  median of its siblings, on an encounter with ≥4 uploads. Both gates, always:
+  the sibling gate alone fires on 21% of uploads, the pair on 1.1%. `THIN` =
+  a confirmed kill whose merged damage is <0.35× the pool (nobody's log covered
+  it). The HP pool comes from `mobSpecials.pickAndMergeMobRows()` with
+  `zoneId = npc_id/1000`, **not** the keyed row — `encounters.npc_id` for the
+  Emperor points at the 1.0M placeholder body, the real one is 1.25M.
+- **Target.** Hard gates: on the consensus parse, ≥20 melee-verb hits in
+  `encounter_combat_rollup.by_skill` (or ≥10 defender hits) as a positional
+  proof, uploaded something in the last 14d, didn't already upload this fight,
+  not the suspect, not `exclude_from_stats`, no open ask for the same
+  `start_iso`. Then score: melee +40 / whole-fight +25 / tank class +20 /
+  took ≥2k +15 / alive +10 vs died −25. Deaths via `dedupParseDeaths` (#134).
+- **The 92 stale pending rows** are a TARGETING failure, not a lifecycle one:
+  50 of their 58 characters have never uploaded a contribution. Proposed
+  cleanup is a new terminal status `expired` (no migration — the agent poll
+  already filters `status=in.(pending,acked,running)`), swept on the **log**
+  window at 45 days. NOT applied — the one-off SQL is in the design doc.
+- **Officer-triggered only.** `/backfillscan [date] [apply] [expire]` previews by
+  default; no timer, no midnight-chain hook, no DM (delivery stays the pull-based
+  agent-dashboard 📋 banner). Automatic filing is parked pending Hitya's sign-off.
+- Validation: over the 2026-07-30 night (13 fights, 118 uploads) it flags exactly
+  the three `state.petOwners` casualties and nothing else; 24 of the last 42
+  nights flag nothing at all. Regression: `test/backfill-scan.test.js` (fixtures
+  are the verbatim night).
+
 ### Event-driven posting windows (`utils/raidEvents.js`) — v2, 2026-07-31
 Which thread a timestamp wants is decided by the guild's **Discord scheduled
 events**, not a weekday table. `guild.scheduledEvents.fetch()` is a REST call,
