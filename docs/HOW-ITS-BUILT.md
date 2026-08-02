@@ -418,9 +418,29 @@ Zeal health, Settings, loading. Overlays poll the local agent
   status shown), guild common-macro library (≥3 characters), suggestion
   catalog (`web/lib/macroSuggestions.ts`).
 - **Member surfaces** — /parses, /raid (Zeal raid roster + coverage),
-  /buffs (coverage grid vs role targets), /who, /pvp, /boards, /boss,
-  /character, /leaderboards, /loadouts, /bards, /fun, /planner, /feedback,
-  /roadmap, /search.
+  /raid/review (#80 morning-after page, kernel `web/lib/raidReview.ts`),
+  /guide (#81 Raid Guide, below), /buffs (coverage grid vs role targets),
+  /who, /pvp, /boards, /boss, /character, /leaderboards, /loadouts, /bards,
+  /fun, /planner, /feedback, /roadmap, /search.
+- **/guide — the Wolf Pack Raid Guide (#81, phase 0)**. One page per boss,
+  generated from our own history; `/guide` is the index *and* the authoring
+  worklist (most-killed-but-unwritten first). Pure kernel
+  **`web/lib/raidGuide.ts`** (`test/raid-guide.test.js`, 30 tests) holds the
+  rules that make it right rather than merely populated:
+  **`resolveCatalogRow`** — the #171 pick-and-merge, because
+  `encounters.npc_id` often points at a stats-empty shell row (Emperor 162065
+  has no loot table, no spells, AC 200; the live row is 162491);
+  **`hpCorroboration`** — our median raid damage proves which row is right
+  (1.21 M = 96.9 % of 162491's pool, 121 % of the shell's);
+  **`bucketEncounters`** — a *damage* floor, not a duration floor, so an 81 s
+  re-pull fragment stops poisoning the medians; **`attributeLoot`** — DKP
+  prices only on items this boss is the sole catalog source for, because
+  `loot_drops` is empty and OpenDKP records item→raid, not item→NPC;
+  **`pairwiseOrder`/`precedence`** for zone run order. Phase 0 renders blocks
+  1/2/3/9/10/11 with **no new schema**; the mechanics, callout, debuff and
+  death blocks wait on the nightly accretion table, because their source
+  streams expire (`buff_casts` is a 7-day window). Full design + the Emperor
+  Ssraeshza worked example: **`docs/DESIGN-81-raid-guide.md`**.
 - **/admin/*** — queue, encounters, members, links (OpenDKP register with
   ignore/trader/raid-alt), quarmy, agents, audit, feedback, signups,
   attendance, triggers, analytics, voice, **overlays** (live tuning knobs),

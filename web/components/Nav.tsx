@@ -10,6 +10,7 @@ const links = [
   { href: '/roster',        label: 'Roster' },
   { href: '/parses',        label: 'Parses' },
   { href: '/db',            label: '📚 Database' },
+  { href: '/guide',         label: '📖 Raid Guide' },
   { href: '/buffs',         label: 'Buffs' },
   { href: '/quartermaster', label: '🧰 Quartermaster' },
   { href: '/raid',          label: 'Raid' },
