@@ -467,6 +467,14 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   (`utils/supabase.js`, env-tuned); `target-buffs` cache; poison-payload
   hardening. `GET /health` readiness for zero-downtime deploys (#58,
   `railway.toml`).
+- **Mob-info row-picker (#171, folds #161-P1/#173)** — `utils/mobSpecials.js` is
+  the ONE eqemu `special_abilities` table (shared with
+  `scripts/audit-mob-specials.mjs`). `mob-info` fetches ALL same-name rows
+  instead of `limit=1`, splits real vs placeholder (immune melee 19 + magic 20),
+  prefers the #141 zone, displays the highest-level REAL row and UNIONs the
+  warning flags across real variants only. Adds `runspeed`→`rooted`/`flees`/
+  `flee_pct` and codes 22/26/36/37/39/44/46. Design note + deviations:
+  `docs/audit-mob-specials.md` §"#171 SHIPPED"; proof `test/mob-rowpicker.test.js`.
 - **Multiplexed poll (#106)** — `GET /api/agent/poll` bundles the six background
   GET loops into one (per-stream cursors + shed-omission); agent falls back to
   individual routes on 404.
