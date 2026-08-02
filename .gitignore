@@ -35,3 +35,6 @@ gemini-image-*.png
 
 # Agent-tool git worktrees (transient per-session workspaces for subagents)
 .claude/worktrees/
+
+# Playwright MCP plugin artifacts (page snapshots + console logs from browser-driven verification sessions)
+.playwright-mcp/
