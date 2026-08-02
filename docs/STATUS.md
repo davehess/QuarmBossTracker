@@ -31,6 +31,7 @@ folly** — it's here.*
 | `BETA-TESTING.md` | Test plan for features in the beta channel (versions + ✅ solo / 👥 multi-person cases) | **Where to verify beta work.** |
 | `DESIGN-buff-debuff-queue.md` | Design spec for the raid buff/debuff/cure queue overlay | CLAUDE.md roadmap ref; feature is live but spec still guides changes |
 | `DESIGN-ch-chain.md` | Design spec for the CH-rotation overlay | CLAUDE.md roadmap ref |
+| `DESIGN-87-officer-console.md` | #87 officer runbooks + console: the runbook set (RB-01…RB-12, each grounded in a dated incident), the health-signal set, button safety classes, and the anti-rot mechanism | Phase 1 shipped (`/admin/console`); §7.2 bot-side levers still proposed |
 | `DESIGN-quarmy-gear.md` | Build spec for Quarmy gear/AA/spell import to character pages | Unbuilt — still the spec |
 | `DESIGN-onboarding-overhaul.md` | "New Here?" walkthrough on web (`/start`) + Discord, shared screenshot set, auto-checkoff from existing signals | Unbuilt — the spec (2026-07-31); also documents the live `/onboarding` embed-overflow break |
 | `mimic-1.4-roadmap.md` | **Active Mimic beta queue** (overlay layout sync, UI-Studio UX, trigger onboarding) | Real open work; see ledger |
