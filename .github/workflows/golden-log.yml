@@ -57,5 +57,12 @@ jobs:
       # agent in this checkout. Network probes are skipped by design here (no
       # bot/site reachability from CI matters for a merge gate); this asserts
       # the parser self-test the drill leads with.
+      # NOTE: block scalar (`run: |`), not a one-line `run:`. The script contains
+      # "drill: ..." strings, and a colon-space inside a PLAIN yaml scalar is a
+      # mapping indicator — GitHub then can't parse this file at all and the run
+      # fails with zero jobs (it shows up under the file path instead of the
+      # workflow name). That silently disabled this whole check from the day it
+      # landed until 2026-08-03. Keep multi-line scripts in a block scalar.
       - name: Pre-raid drill — parser self-test
-        run: node -e "const R=require('./test/fixtures/golden/_replay.js');const fs=require('fs');const want=JSON.parse(fs.readFileSync('test/fixtures/golden/expected-encounter.json','utf8'));const got=R.digestEncounter(R.replayEncounter('raid-pull.log')[0]);if(JSON.stringify(got)!==JSON.stringify(want)){console.error('drill: golden digest mismatch');process.exit(1);}console.log('drill: parser self-test OK — agent',R.agent.AGENT_VERSION);"
+        run: |
+          node -e "const R=require('./test/fixtures/golden/_replay.js');const fs=require('fs');const want=JSON.parse(fs.readFileSync('test/fixtures/golden/expected-encounter.json','utf8'));const got=R.digestEncounter(R.replayEncounter('raid-pull.log')[0]);if(JSON.stringify(got)!==JSON.stringify(want)){console.error('drill: golden digest mismatch');process.exit(1);}console.log('drill: parser self-test OK — agent',R.agent.AGENT_VERSION);"
