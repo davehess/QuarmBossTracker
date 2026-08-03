@@ -3451,7 +3451,7 @@ const _CH_SPEAKER_RX = /^\[[^\]]+\]\s+(\S+)\s+(?:shouts?|says?(?:\s+out of chara
 // case-sensitive CH token is untouched) may sit between the separator and CH —
 // our druids gap-fill the chain and shout "002 - DRUID CH - Currygoat" /
 // "004 - Druid CH - X" (#148). Plain "001 - CH - X" still matches.
-const _CH_CALL_RX = /^0*(\d{1,3})\s*(?:-+>?|—+>?|:)?\s*(?:[Dd][Rr][Uu][Ii][Dd]\s+)?CH\b[\s:\-]*(?:on\s+)?([A-Z][\w`]*)?/;
+const _CH_CALL_RX = /^0*(\d{1,3})\s*(?:-+>?|—+>?|:)?\s*(?:[Dd][Rr][Uu][Ii][Dd]\s+)?CH\b[\s:\-<]*(?:on\s+)?([A-Z][\w`]*)?/;
 const _CH_MANA_RX = /\bmana\b\D{0,6}(\d{1,3})\s*%/i;
 const _CH_GO_RX   = /^0*(\d{1,3})\s*[-—:.\s]*go\b[\s\-]*go/i;
 // Cheap gate so a chain-ROSTER announcement ("Fargan 001, Rapha 002, …")
@@ -3940,10 +3940,23 @@ function chChainSnapshot() {
 // True when `name` matches one of the characters this agent is tailing (the
 // uploader + any boxed windows). Case-insensitive exact match — deliberately
 // NOT prefix, so a nickname collision can't mis-attribute a slot.
+// A watched log only counts as "you" while it's actually being written. The
+// agent tails EVERY eqlog_*_pq.proj.txt in the EQ folder and seeds watchedLogs
+// from all of them at startup, so a log left behind by someone who played on
+// this machine once (shared box, couple two-boxing) made their character
+// permanently "ours" — no live client required. That spoke the CH-chain
+// "0N GO" callout for THEIR slot and highlighted THEIR slot as yours on the
+// overlay (Dant hearing Aimey's 002 GO, 2026-08-03). Freshness gate matches the
+// existing active-log window in _resolveChatSpeaker; a genuine two-box keeps
+// working because both logs are being written.
+const OWN_CHARACTER_ACTIVE_MS = 3 * 60_000;
 function _isOwnCharacterName(name) {
   if (!name) return false;
   const lc = String(name).toLowerCase();
-  return (stats.watchedLogs || []).some(w => w && w.character && String(w.character).toLowerCase() === lc);
+  const now = Date.now();
+  return (stats.watchedLogs || []).some(w =>
+    w && w.character && String(w.character).toLowerCase() === lc
+    && w.lastSeen && (now - w.lastSeen) <= OWN_CHARACTER_ACTIVE_MS);
 }
 
 // CH chain "0N GO" callout (#103). Called after every point that advances
