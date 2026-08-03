@@ -283,7 +283,10 @@ stats, 6h cache), `who-lookup` (de-anon from who history), `spell-catalog` +
 `target-buffs` (who's casting on / what's landed on a target — powers
 cross-client Mob Info), `raid-buff-queue` (buff/debuff/cure queues: online
 raiders only, same-zone first, tank-HP priority, curse-counter sort),
-`guild-triggers` (10-min poll), `backfill-requests`, `character-prefs`
+`guild-triggers` (2-min poll — a new/edited guild trigger reaches raiders in
+~2 min; `_guildTriggersFor` reads Supabase live, so a direct DB write is served
+immediately and the no-change gate is `max(updated_at)`), `backfill-requests`,
+`character-prefs`
 (opt-out flags), `recent-fires`, `threat-snapshot`, `incomplete-encounters`,
 `server-panel`, `poll` (#106 multiplexed bundle — one GET carrying
 `recent_fires`+`tuning`+`triggers`+`prefs`+`backfill`+`ui_edits` at each
