@@ -4300,6 +4300,8 @@ const SLOW_SPELLS = new Set([
   'drowsy', 'walking sleep', "tagar's insects", "togor's insects", "tigir's insects", "turgur's insects", 'cripple',
   // Enchanter
   'languid pace', 'shiftless deeds', 'tepid deeds', 'forlorn deeds',
+  // Beastlord
+  "sha's advantage",
   // Boss tank-busters that are ALSO attack-speed slows (#142). Rage of
   // Ssraeshza (spell 2310, SPA 11 base 10 = −90% attack speed + a 4000 hit)
   // lands on the Emperor's tank; grounded from eqemu_spells.
@@ -4349,11 +4351,26 @@ const SLOW_MAGNITUDES = new Map([
   ['forlorn deeds',     70],
   ['shiftless deeds',   65],
   ["tagar's insects",   50],
+  ["tigir's insects",   50],
   ['tepid deeds',       50],
+  ["sha's advantage",   50],
   ['walking sleep',     35],
   ['languid pace',      30],
   ['drowsy',            25],
 ]);
+// Casting class per slow, for the badge label ("BST SLOW 50%"). Boss-cast slows
+// (Rage of Ssraeshza) have no player class and stay unlabeled.
+const SLOW_CLASSES = new Map([
+  ["turgur's insects", 'SHM'], ["togor's insects", 'SHM'], ["tagar's insects", 'SHM'],
+  ["tigir's insects",  'SHM'], ['walking sleep',   'SHM'], ['drowsy',          'SHM'],
+  ['forlorn deeds',    'ENC'], ['shiftless deeds', 'ENC'], ['tepid deeds',     'ENC'],
+  ['languid pace',     'ENC'],
+  ["sha's advantage",  'BST'],
+]);
+function _slowClass(name) {
+  if (!name) return null;
+  return SLOW_CLASSES.get(String(name).toLowerCase().replace(/`/g, "'").trim()) || null;
+}
 function _slowMagnitude(name) {
   if (!name) return 0;
   return SLOW_MAGNITUDES.get(String(name).toLowerCase().replace(/`/g, "'").trim()) || 0;
@@ -4412,6 +4429,7 @@ function _bestSlowForTarget(targetLower, nowMs) {
   const remaining = best.expiresAtMs > 0 ? Math.max(0, Math.round((best.expiresAtMs - now) / 1000)) : null;
   const total     = best.expiresAtMs > 0 ? Math.max(0, Math.round((best.expiresAtMs - best.landedAtMs) / 1000)) : null;
   return { name: best.name, magnitude: best.magnitude, caster: best.caster || null,
+           cls: _slowClass(best.name),
            remaining_secs: remaining, total_secs: total, landedAtMs: best.landedAtMs || 0 };
 }
 // #181 — the bystander land text for the classic slows is a bare shared emote:
