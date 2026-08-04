@@ -17,6 +17,7 @@ import { redirect } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { isOfficer } from '@/lib/officer';
 import { supabaseServer } from '@/lib/supabase-server';
+import { normalizeTriggerPattern, isDeadAnchored } from '@/lib/triggerPattern';
 
 export const dynamic = 'force-dynamic';
 
@@ -53,7 +54,12 @@ async function createOrUpdate(formData: FormData) {
   const id      = String(formData.get('id') || '').trim();
   const name    = String(formData.get('name') || '').trim().slice(0, 100);
   const category= String(formData.get('category') || 'callout').slice(0, 40);
-  const pattern = String(formData.get('pattern') || '');
+  // #190: a leading bare `^` anchors before the EQ timestamp, not before the
+  // message, so the trigger can never fire. 37 enabled triggers were written
+  // that way and read as coverage for months. Rewrite at save rather than
+  // rejecting — a bare `^` has no valid meaning here, so there is nothing to
+  // preserve, and the normalized form is what the list below renders.
+  const pattern = normalizeTriggerPattern(String(formData.get('pattern') || ''));
   const overlayText = String(formData.get('overlay_text') || '').slice(0, 200);
   const overlayColor = String(formData.get('overlay_color') || 'red');
   const overlayMs    = Math.max(500, Math.min(60000, parseInt(String(formData.get('overlay_ms') || '5000'), 10) || 5000));
@@ -302,9 +308,15 @@ export default async function AdminTriggersPage({
             </select>
           </label>
           <label className="space-y-1 sm:col-span-2">
-            <span className="text-dim block">Pattern (regex, case-insensitive). Use <code>{'(?<name>...)'}</code> for captures.</span>
+            <span className="text-dim block">
+              Pattern (regex, case-insensitive). Use <code>{'(?<name>...)'}</code> for captures.
+              <br />
+              Patterns are matched against the whole log line, timestamp included — a leading{' '}
+              <code>^</code> is rewritten to <code>{'^\\[.+?\\]\\s+'}</code> on save so it anchors
+              to the start of the <em>message</em>. Without that it can never match.
+            </span>
             <input name="pattern" required defaultValue={editTarget?.pattern ?? p.pattern ?? ''}
-              placeholder="^(?<npc>.+) goes on a RAMPAGE against (?<target>.+)!$"
+              placeholder="(?<npc>.+) goes on a RAMPAGE against (?<target>.+)!$"
               className="w-full bg-bg border border-border rounded px-2 py-1.5 font-mono" />
           </label>
           <label className="space-y-1 sm:col-span-2">
@@ -388,6 +400,18 @@ export default async function AdminTriggersPage({
                         )}
                       </div>
                       <div className="text-dim text-[11px] font-mono break-all mt-1">{t.pattern}</div>
+                      {/* #190: existing rows aren't touched by the save-time
+                          rewrite, and 37 of them are dead. Say so on the row —
+                          an enabled trigger that can never fire is worse than
+                          no trigger, because it reads as coverage. */}
+                      {isDeadAnchored(t.pattern) && (
+                        <div className="text-orange text-[11px] mt-1">
+                          ⚠ Can never fire — the leading <code>^</code> anchors before the log
+                          timestamp. Re-save this trigger to fix it (the pattern is corrected
+                          automatically), or see <code>docs/RUNBOOK-dead-triggers.md</code> for
+                          the bulk fix.
+                        </div>
+                      )}
                       {ov && (
                         <div className="text-[11px] mt-1">
                           → <span style={{ color: ov.color || 'red' }}>{ov.text}</span>
