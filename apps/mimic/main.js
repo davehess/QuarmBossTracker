@@ -3874,13 +3874,20 @@ const EQ_CLOSE_INSTALL_GRACE_MS = 15_000;
 const UPDATE_NAG_EVERY_MS       = 60 * 60 * 1000;
 let _updateNagAt = 0;
 
+// One pending install timer at a time. Without this, the "EQ is already closed"
+// path below would arm a fresh 15s timer on every presence poll.
+let _installArmed = false;
+
 function _installPendingUpdateOnEqClose() {
   if (!updatePending || !autoUpdater) return;
+  if (_installArmed) return;
+  _installArmed = true;
   const ver = updatePending.version;
   appendAgentLog(`[updater] EQ closed with v${ver} pending — installing in ${EQ_CLOSE_INSTALL_GRACE_MS / 1000}s\n`);
   // Grace window: a crash-and-relaunch, or alt-F4 followed by starting EQ again,
   // must NOT get Mimic pulled out from under them. Re-check before committing.
   setTimeout(() => {
+    _installArmed = false;
     if (_eqRunning)   { appendAgentLog('[updater] EQ came back — deferring install to the next close\n'); return; }
     if (!updatePending) return;
     appendAgentLog(`[updater] installing v${ver} now (EQ closed)\n`);
@@ -3916,6 +3923,26 @@ async function _pollEqPresence() {
     try { applyAllVisibility(); } catch {}
     // EQ just went away — take the free restart.
     if (wasRunning && !running) { try { _installPendingUpdateOnEqClose(); } catch { /* never break presence polling */ } }
+  }
+  // EQ is closed and an update is waiting — install it, EVEN THOUGH no
+  // close-transition happened on our watch.
+  //
+  // THE BUG (Uilnayar, 2026-08-04: "beta 9 did not update after eq closed"):
+  // the call above only fires on the FALLING EDGE, so it required us to observe
+  // running → closed. It misses the common orderings entirely:
+  //   • the download finishes while EQ is already shut (the overnight case —
+  //     Mimic sits idle, polls hourly, downloads at 3am, and then waits for the
+  //     user to both LAUNCH and QUIT the game before it will install);
+  //   • Mimic starts with an update already downloaded and EQ not running;
+  //   • EQ was never running this session at all.
+  // In every one of those the tray says "Restart to install" indefinitely and
+  // the update silently never applies — which is exactly what "it did not
+  // update in place" looks like from the outside.
+  //
+  // _installArmed makes this safe to evaluate on every poll, and the existing
+  // 15s grace re-check still protects a launch that lands mid-window.
+  if (!running && updatePending) {
+    try { _installPendingUpdateOnEqClose(); } catch { /* never break presence polling */ }
   }
   // Hourly, focus-safe reminder while they're still playing on the old build.
   if (running) { try { _nagPendingUpdate(); } catch { /* ditto */ } }
