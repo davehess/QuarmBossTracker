@@ -294,6 +294,62 @@ async function claimThreatSnapshots({ encounterId, uploader, startedAtMs, durati
   }
 }
 
+// Link a freshly-resolved encounter to its raid night, creating the night row
+// on first sight.
+//
+// raid_nights was designed and never implemented: the table sat empty, nothing
+// wrote it, and encounters.raid_night_id was NULL on all 1,526 rows despite a
+// real FK — so "which raid was this" has always been an ad-hoc time-window join
+// (Uilnayar 2026-08-03). The history is backfilled by migration
+// 20260804_backfill_raid_nights_and_link_encounters; this keeps it true going
+// forward.
+//
+// The night predicate is raidNight.isRaidNightAt/nightKey — the SAME functions
+// the trash tally and the review's pace calc use, so nothing here can drift
+// from them. An encounter OUTSIDE a raid window deliberately keeps
+// raid_night_id NULL: a daytime XP kill is not part of a raid, which is the
+// exact distinction bot v3.1.1 restored for the trash tally.
+//
+// zone_main is FK'd to eqemu_zone(short_name), so an unrecognised zone would
+// reject the whole insert — we retry once without it rather than lose the link.
+// insert-ignore (not upsert) means the FIRST encounter of the night sets the
+// zone and later ones leave it alone.
+async function linkEncounterToRaidNight({ encounterId, startedAtMs, zoneShort = null }) {
+  if (!isEnabled() || !encounterId) return null;
+  const startMs = Number(startedAtMs);
+  if (!Number.isFinite(startMs)) return null;
+  const raidNight = require('./raidNight');
+  if (!raidNight.isRaidNightAt(startMs)) return null;      // not a raid → stays NULL
+
+  // nightKey is MM/DD/YYYY (the format /raidnight stores); raid_nights.date is a DATE.
+  const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(raidNight.nightKey(startMs));
+  if (!m) return null;
+  const dateIso = `${m[3]}-${m[1]}-${m[2]}`;
+  const guildId = _guildId();
+
+  try {
+    const base = { guild_id: guildId, date: dateIso };
+    let created = await insertIgnoreDuplicates('raid_nights',
+      [zoneShort ? { ...base, zone_main: zoneShort } : base]);
+    // An unknown zone_short trips the eqemu_zone FK and returns null; the night
+    // matters more than the zone label, so try again without it.
+    if (created === null && zoneShort) {
+      created = await insertIgnoreDuplicates('raid_nights', [base]);
+    }
+    const rows = await select('raid_nights',
+      `guild_id=eq.${encodeURIComponent(guildId)}&date=eq.${encodeURIComponent(dateIso)}&select=id&limit=1`);
+    const nightId = Array.isArray(rows) && rows[0]?.id;
+    if (!nightId) return null;
+    // Only stamp when unset — never re-point an encounter a previous run linked.
+    await update('encounters', `id=eq.${encounterId}&raid_night_id=is.null`,
+      { raid_night_id: nightId });
+    return nightId;
+  } catch (err) {
+    console.warn('[supabase] raid-night link failed:', err?.message);
+    return null;
+  }
+}
+
 // Record a contribution (one player's perspective) for an encounter.
 // rawParse is the { bossName, duration, totalDamage, totalDps, players: [...] } structure.
 // Idempotent for named contributors via the contributions_dedup partial unique
@@ -423,6 +479,14 @@ async function recordParse({
       durationSec: parsed.duration,
     });
   }
+
+  // Attach the encounter to its raid night (creating the night on first sight).
+  // Best-effort, same as above — bookkeeping must never fail a parse upload.
+  await linkEncounterToRaidNight({
+    encounterId,
+    startedAtMs: timestampMs,
+    zoneShort:   zoneShort || row.zone_short || null,
+  }).catch(err => console.warn('[supabase] raid-night link failed:', err?.message));
 
   const hasAbilityDetail = !!(rollupByChar && Object.keys(rollupByChar).length);
   const contributionId = await recordContribution({
@@ -669,6 +733,7 @@ module.exports = {
   getNpcIdForInternalId,
   findOrCreateEncounter,
   claimThreatSnapshots,
+  linkEncounterToRaidNight,
   recordContribution,
   recordParse,
   upsertCombatRollup,
