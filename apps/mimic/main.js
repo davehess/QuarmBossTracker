@@ -2354,7 +2354,32 @@ function createMainWindow() {
   // doesn't ambush the user mid-login. The user can pop it open from the tray.
   // Detected via the --autostart arg (set in applyAutoStart) OR Electron's
   // openAsHidden flag (which Windows passes when "Start hidden" was checked).
+  // An UNATTENDED auto-install counts as an auto-start too (Uilnayar,
+  // 2026-08-04: "The settings/dashboard did pop up to the foreground").
+  //
+  // The whole promise of install-on-EQ-close is that it happens without
+  // interrupting you — but the relaunch afterwards is not a login and carries no
+  // --autostart, so the dashboard came up SHOWN and grabbed focus. If the raider
+  // had relaunched EverQuest in the meantime, that lands a window over the game:
+  // exactly the outcome the feature exists to avoid ("it should not become the
+  // active window while they're doing things in game").
+  //
+  // A user-initiated "Restart now" is NOT this: they asked for it and expect the
+  // window back, so only the unattended path sets the flag. The flag is
+  // one-shot — cleared as soon as it is read, so a later manual launch shows the
+  // dashboard normally.
+  let _autoInstalled = false;
+  try {
+    const _c = loadConfig();
+    if (_c && _c.pendingSilentRelaunch) {
+      _autoInstalled = true;
+      delete _c.pendingSilentRelaunch;
+      saveConfig(_c);
+      appendAgentLog('[updater] relaunched after an unattended install — starting to tray, not to the foreground\n');
+    }
+  } catch (e) { void e; }
   const _autoStarted =
+    _autoInstalled ||
     process.argv.includes('--autostart') ||
     (process.platform === 'win32' && app.getLoginItemSettings && app.getLoginItemSettings().wasOpenedAtLogin);
   mainWindow = new BrowserWindow({
@@ -3891,6 +3916,13 @@ function _installPendingUpdateOnEqClose() {
     if (_eqRunning)   { appendAgentLog('[updater] EQ came back — deferring install to the next close\n'); return; }
     if (!updatePending) return;
     appendAgentLog(`[updater] installing v${ver} now (EQ closed)\n`);
+    // Mark the relaunch as unattended so the new instance starts to TRAY.
+    // Written before quitAndInstall because that call does not return.
+    try {
+      const c = loadConfig();
+      c.pendingSilentRelaunch = true;
+      saveConfig(c);
+    } catch (e) { void e; }
     try { autoUpdater.quitAndInstall(true, true); }
     catch (e) { appendAgentLog(`[updater] quitAndInstall failed: ${e && e.message}\n`); }
   }, EQ_CLOSE_INSTALL_GRACE_MS);
