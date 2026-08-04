@@ -78,11 +78,22 @@
       if (!primed) { primed = true; summary.textContent = 'measuring…'; return; }
       var eqCls = m.eqRunning ? 'eq on' : 'eq off';
       var eqTxt = m.eqRunning ? 'EverQuest running' : 'EverQuest closed';
+      // eqgame.exe is the binary name for EVERY EverQuest client, so another
+      // install (EQLegends, a Live client) shows up in the same process list.
+      // Mimic only tracks the one in your configured EQ folder — say which one
+      // it passed on, or "EverQuest closed" reads as broken while a game is
+      // plainly running (Uilnayar 2026-08-04).
+      var ignored = (m.eqIgnored && m.eqIgnored.length)
+        ? '<div style="margin-top:6px;color:#6e7681;font-size:11px">Not tracking: '
+          + esc(m.eqIgnored.join(', '))
+          + ' — a different EverQuest install. Add its folder in Settings if you want Mimic to follow it.</div>'
+        : '';
       summary.innerHTML = '<span style="color:#7ee787;font-size:15px">' + esc(m.totalCpu) + '%</span>'
         + '<span style="color:#6e7681"> CPU of one core · </span>'
         + '<span style="color:#79c0ff;font-size:15px">' + esc(m.totalMemMb) + '</span>'
         + '<span style="color:#6e7681"> MB · ' + esc(m.procs.length) + ' processes ('
-        + esc(m.windows) + ' windows)</span> <span class="' + eqCls + '">' + esc(eqTxt) + '</span>';
+        + esc(m.windows) + ' windows)</span> <span class="' + eqCls + '">' + esc(eqTxt) + '</span>'
+        + ignored;
       var rows = m.procs.slice().sort(function (a, b) { return b.memMb - a.memMb; });
       var h = '<tr><th>process</th><th style="text-align:right">CPU</th><th style="text-align:right">memory</th></tr>';
       for (var i = 0; i < rows.length; i++) {

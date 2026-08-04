@@ -3167,6 +3167,10 @@ function _autoArrangeOverlays(pinnedKey) {
 
 function applyOverlayInteractivity() {
   const cfg = loadConfig();
+  // Unlocking force-shows EVERY overlay for placement — including ones whose
+  // pref is off, whose windows lazy creation has not built (or has reaped).
+  // Build them first or "unlock to move" would silently skip them.
+  _materializeEnabledOverlays();
   // Setup mode overrides: every overlay is unlocked + visible regardless of
   // user prefs, so they can all be placed at once.
   const locked = !setupMode && cfg.overlaysLocked !== false;
@@ -3199,21 +3203,9 @@ function applyOverlayInteractivity() {
 function applySetupMode(on) {
   setupMode = !!on;
   if (setupMode) {
-    if (!overlayWindow) createOverlayWindow();
-    if (!triggerWindow) createTriggerOverlay();
-    if (!charmWindow)   createCharmOverlay();
-    if (!petsWindow)    createPetsOverlay();
-    if (!mobInfoWindow) createMobInfoOverlay();
-    if (!buffQueueWindow) createBuffQueueOverlay();
-    if (!whoWindow)     createWhoOverlay();
-    if (!melodyWindow)  createMelodyOverlay();
-    if (!zealWindow)    createZealHealthOverlay();
-    if (!threatWindow)  createThreatMeterOverlay();
-    if (!chChainWindow) createChChainOverlay();
-    if (!tankWindow)    createTankOverlay();
-    if (!extTargetWindow) createExtTargetOverlay();
-    if (!commandWindow) createCommandOverlay();
-    if (!popRaidWindow) createPopRaidOverlay();
+    // Every overlay has to exist to be placed. _overlayForcedOn() reports true
+    // for all of them while setupMode is set, so this builds the full set.
+    _materializeEnabledOverlays();
     // Force-show every overlay
     for (const [, win] of _overlayEntries()) {
       try { win.showInactive(); } catch {}
@@ -3230,6 +3222,10 @@ function applySetupMode(on) {
   applyMelodyVisibility();
   applyZealVisibility();
   applyAllOverlayOpacities();
+  // Leaving setup mode hands back the renderers it built for overlays the user
+  // does not actually run. No-op on the way IN — _overlayForcedOn() spares
+  // everything while setupMode is set.
+  _reapDisabledOverlays();
   pushStatus();
 }
 
@@ -4154,6 +4150,83 @@ ipcMain.handle('ui-studio-capture-pvp-draft', (_e, params) => {
 // failed poll (CSV parse error etc.) to avoid flicker.
 let _eqRunning = true;     // assume running until first poll resolves
 let _eqPollTimer = null;
+
+// The EQ folders that count as OURS, lowercased with trailing separators
+// stripped. Empty means we have nothing to compare against — callers must then
+// fail OPEN and accept any eqgame.exe.
+function _ourEqDirs() {
+  let cfg; try { cfg = loadConfig(); } catch { return []; }
+  const excluded = new Set((cfg.eqPathsExcluded || []).map(p => String(p || '').toLowerCase()));
+  const raw = (Array.isArray(cfg.eqPaths) && cfg.eqPaths.length)
+    ? cfg.eqPaths
+    : (cfg.eqPath ? [cfg.eqPath] : []);
+  return raw
+    // Only folders we are ACTUALLY tailing count. A stale eqPaths entry that
+    // holds no logs would otherwise disown the client the user really plays —
+    // resolveEqDirsWithLogs() falls back past those entries, so trusting them
+    // here would let this check disagree with the rest of Mimic. No usable
+    // folder → empty → fail open, same as an unconfigured install.
+    .filter(p => _dirHasEqLogs(p))
+    .map(p => String(p || '').trim().replace(/\//g, '\\').replace(/\\+$/, '').toLowerCase())
+    .filter(p => p && !excluded.has(p));
+}
+
+// PID → "is this OUR EverQuest?".
+//
+// eqgame.exe is the binary name for EVERY EverQuest client, so the process name
+// alone cannot tell Project Quarm from another install on the same machine.
+// Uilnayar 2026-08-04: EQLegends was the running client and Mimic reported
+// "EverQuest running" — overlays up over the wrong game, the Zeal-missing nag
+// primed, and the EQ-close auto-install armed against a process we don't care
+// about. Only the full ExecutablePath distinguishes them.
+//
+// Get-CimInstance is far too heavy for a 5s poll, so the verdict is cached per
+// PID: the lookup runs once per game launch and never again while it's up.
+const _eqPidVerdict = new Map();
+// pid → exe path, for the eqgame.exe processes we decided are NOT ours.
+const _eqIgnoredPaths = new Map();
+
+// Resolve ownership for PIDs we haven't judged yet. Every failure path marks
+// them OURS — a lookup we couldn't perform must degrade to the old
+// name-only behavior, never to hiding a real raider's overlays.
+function _resolveEqPidOwners(pids) {
+  return new Promise((resolve) => {
+    const claimAll = () => { for (const p of pids) _eqPidVerdict.set(p, true); resolve(); };
+    const dirs = _ourEqDirs();
+    if (!dirs.length) return claimAll();       // nothing configured → can't tell
+    try {
+      const { execFile } = require('child_process');
+      const filter = pids.map(p => `ProcessId=${p}`).join(' OR ');
+      const psCmd = `Get-CimInstance Win32_Process -Filter "${filter}" | ForEach-Object { "$($_.ProcessId)|$($_.ExecutablePath)" }`;
+      execFile('powershell', ['-NoProfile', '-NonInteractive', '-Command', psCmd],
+        { timeout: 8000, windowsHide: true },
+        (err, stdout) => {
+          if (err || !stdout) return claimAll();
+          const judged = new Set();
+          for (const line of String(stdout).split(/\r?\n/)) {
+            const m = line.trim().match(/^(\d+)\|(.+)$/);
+            if (!m) continue;
+            const pid = Number(m[1]);
+            const exe = m[2].trim();
+            const low = exe.replace(/\//g, '\\').toLowerCase();
+            const ours = dirs.some(d => low.startsWith(d + '\\'));
+            _eqPidVerdict.set(pid, ours);
+            judged.add(pid);
+            if (ours) { _eqIgnoredPaths.delete(pid); continue; }
+            // Remember WHICH client we passed on. "EverQuest closed" while an
+            // EverQuest is visibly running is alarming without this — the
+            // Resource use window prints it, so the answer is on screen instead
+            // of buried in agent.log.
+            _eqIgnoredPaths.set(pid, exe);
+            appendAgentLog(`[eq] ignoring eqgame.exe pid ${pid} — ${exe} is not under a configured EQ folder (${dirs.join(', ') || 'none'})\n`);
+          }
+          for (const p of pids) if (!judged.has(p)) _eqPidVerdict.set(p, true);
+          resolve();
+        });
+    } catch { claimAll(); }
+  });
+}
+
 function _checkEqRunning() {
   return new Promise(resolve => {
     if (process.platform !== 'win32') return resolve(true);
@@ -4166,9 +4239,21 @@ function _checkEqRunning() {
       const timer = setTimeout(() => { try { child.kill(); } catch {} ; resolve(_eqRunning); }, 3000);
       child.once('exit', () => {
         clearTimeout(timer);
-        // Match any eqgame.exe row — tasklist returns "INFO: No tasks…" on the
-        // stdout when the filter has zero matches.
-        resolve(/eqgame\.exe/i.test(out));
+        // Parse the CSV rows for PIDs rather than substring-matching the name:
+        // tasklist prints "INFO: No tasks…" to STDOUT when the filter matches
+        // nothing, and we need the PIDs anyway to check which install each one
+        // came from.
+        const pids = [];
+        for (const m of String(out).matchAll(/"eqgame\.exe"\s*,\s*"(\d+)"/gi)) pids.push(Number(m[1]));
+        if (!pids.length) { _eqPidVerdict.clear(); _eqIgnoredPaths.clear(); return resolve(false); }
+        // Drop exited PIDs so the verdict map can't grow across a long session.
+        for (const known of [..._eqPidVerdict.keys()]) if (!pids.includes(known)) { _eqPidVerdict.delete(known); _eqIgnoredPaths.delete(known); }
+        // `!== false` keeps the fail-open default: only a PID we positively
+        // identified as someone else's client is discounted.
+        const done = () => resolve(pids.some(p => _eqPidVerdict.get(p) !== false));
+        const unknown = pids.filter(p => !_eqPidVerdict.has(p));
+        if (!unknown.length) return done();
+        _resolveEqPidOwners(unknown).then(done, done);
       });
       child.once('error', () => { clearTimeout(timer); resolve(_eqRunning); });
     } catch { resolve(_eqRunning); }
@@ -4847,9 +4932,93 @@ function applyChChainVisibility() {
   if (shouldShow) chChainWindow.showInactive(); else chChainWindow.hide();
 }
 
+// ── Overlay window lifecycle: create when enabled, free when not ───────────
+//
+// Every Electron BrowserWindow is its OWN Chromium renderer process — ~80 MB
+// resident before it paints a single pixel. Boot used to create ten of them
+// unconditionally, so a user running two overlays still paid for ten — around
+// 800 MB of renderers for overlays that were switched OFF (Uilnayar measured
+// the per-overlay floor at 80 MB, 2026-08-04). Windows now exist only while
+// their pref says they should.
+//
+// The invariant everything else hangs off: **a window must exist whenever
+// anything can SHOW it.** applyAllVisibility() is the funnel every visibility
+// re-evaluation already runs through, so materializing at the TOP of it means
+// hide-all restore, per-character profiles, class-set seeding, the EQ-presence
+// flip and the unlock/placement path all get their windows without any of them
+// having to know to ask. That also makes a wrong reap self-healing: the next
+// apply pass builds the window back.
+//
+// Getters (not captured refs) because these are module-level `let`s that the
+// creators reassign; the destroyers null them so a reaped entry reads as
+// missing rather than as a destroyed window.
+const _OVERLAY_WINDOWS = [
+  { key: 'hud',       flag: 'showHud',          get: () => overlayWindow,   create: createOverlayWindow,       drop: () => { overlayWindow = null; } },
+  // The trigger overlay's flag is enableTriggerTts, NOT showTriggerOverlay:
+  // #97 decoupled them and TTS deliberately fires from the HIDDEN window, so
+  // the visual being off must never free the renderer.
+  { key: 'trigger',   flag: 'enableTriggerTts', get: () => triggerWindow,   create: createTriggerOverlay,      drop: () => { triggerWindow = null; },   blind: 'triggers' },
+  { key: 'charm',     flag: 'showCharm',        get: () => charmWindow,     create: createCharmOverlay,        drop: () => { charmWindow = null; } },
+  { key: 'pets',      flag: 'showPets',         get: () => petsWindow,      create: createPetsOverlay,         drop: () => { petsWindow = null; } },
+  { key: 'mobinfo',   flag: 'showMobInfo',      get: () => mobInfoWindow,   create: createMobInfoOverlay,      drop: () => { mobInfoWindow = null; } },
+  { key: 'buffQueue', flag: 'showBuffQueue',    get: () => buffQueueWindow, create: createBuffQueueOverlay,    drop: () => { buffQueueWindow = null; } },
+  { key: 'who',       flag: 'showWho',          get: () => whoWindow,       create: createWhoOverlay,          drop: () => { whoWindow = null; } },
+  { key: 'melody',    flag: 'showMelody',       get: () => melodyWindow,    create: createMelodyOverlay,       drop: () => { melodyWindow = null; } },
+  { key: 'zeal',      flag: 'showZeal',         get: () => zealWindow,      create: createZealHealthOverlay,   drop: () => { zealWindow = null; } },
+  { key: 'threat',    flag: 'showThreat',       get: () => threatWindow,    create: createThreatMeterOverlay,  drop: () => { threatWindow = null; } },
+  { key: 'chchain',   flag: 'showChChain',      get: () => chChainWindow,   create: createChChainOverlay,      drop: () => { chChainWindow = null; } },
+  { key: 'tank',      flag: 'showTank',         get: () => tankWindow,      create: createTankOverlay,         drop: () => { tankWindow = null; } },
+  { key: 'exttarget', flag: 'showExtTarget',    get: () => extTargetWindow, create: createExtTargetOverlay,    drop: () => { extTargetWindow = null; } },
+  { key: 'command',   flag: 'showCommand',      get: () => commandWindow,   create: createCommandOverlay,      drop: () => { commandWindow = null; } },
+  { key: 'popraid',   flag: 'showPopRaid',      get: () => popRaidWindow,   create: createPopRaidOverlay,      drop: () => { popRaidWindow = null; } },
+];
+
+// True when something OTHER than the overlay's own pref can put it on screen,
+// in which case its window has to exist (and must not be reaped) whatever the
+// flag says.
+function _overlayForcedOn(cfg, e) {
+  if (setupMode) return true;                    // 🛠 place-them-all mode
+  if (cfg.overlaysLocked === false) return true; // unlocked → every overlay force-shown for dragging
+  if (_hideAllActive) return true;               // flags are off only until the hotkey flips back
+  if (_blindForceOpen(e.blind || e.key)) return true;
+  return false;
+}
+
+// Build any window whose overlay is (or can be) shown. Cheap no-op once they
+// exist, so it is safe to call on every visibility pass.
+function _materializeEnabledOverlays() {
+  let cfg; try { cfg = loadConfig(); } catch { cfg = {}; }
+  for (const e of _OVERLAY_WINDOWS) {
+    if (e.get()) continue;
+    if (!cfg[e.flag] && !_overlayForcedOn(cfg, e)) continue;
+    try { e.create(); }
+    catch (err) { appendAgentLog(`[overlay] could not create ${e.key}: ${err && err.message}\n`); }
+  }
+}
+
+// Free the renderer behind an overlay the user has switched off. Deliberately
+// conservative: _overlayForcedOn() covers every mode that shows an overlay past
+// its own pref, and a window the user is actively placing ("Setup THIS") is
+// spared even though the global setupMode flag is not set for it.
+function _reapDisabledOverlays() {
+  let cfg; try { cfg = loadConfig(); } catch { return; }
+  for (const e of _OVERLAY_WINDOWS) {
+    const win = e.get();
+    if (!win) continue;
+    if (cfg[e.flag] || _overlayForcedOn(cfg, e)) continue;
+    if (_inSingleSetup(win)) continue;
+    try { if (!win.isDestroyed()) win.destroy(); } catch { /* already gone */ }
+    e.drop();
+    appendAgentLog(`[overlay] freed ${e.key} — ${e.flag} is off\n`);
+  }
+}
+
 // Convenience: refresh every overlay's visibility at once. Used by the EQ-
 // presence poller (on running ↔ not-running flips) and by config toggles.
+// Materialize BEFORE applying (each apply*Visibility no-ops without a window)
+// and reap AFTER (so a window is only freed once it has been asked to hide).
 function applyAllVisibility() {
+  _materializeEnabledOverlays();
   applyOverlayVisibility();
   applyTriggerVisibility();
   applyCharmVisibility();
@@ -4865,6 +5034,7 @@ function applyAllVisibility() {
   applyExtTargetVisibility();
   applyCommandVisibility();
   applyPopRaidVisibility();
+  _reapDisabledOverlays();
 }
 
 // ── Hide-all-overlays toggle ────────────────────────────────────────────────
@@ -5261,44 +5431,44 @@ function buildTrayMenu() {
   const overlaysSubmenu = [
     { label: 'DPS HUD', type: 'checkbox', checked: s.showHud, enabled: !s.quietMode, click: (mi) => {
         const cfg = loadConfig(); cfg.showHud = mi.checked; saveConfig(cfg);
-        if (mi.checked && !overlayWindow) createOverlayWindow(); else applyOverlayVisibility();
+        if (mi.checked && !overlayWindow) createOverlayWindow(); else applyOverlayVisibility(); _reapDisabledOverlays();
         pushStatus();
       } },
     { label: 'Trigger alerts (TTS)', type: 'checkbox', checked: s.enableTriggerTts, enabled: !s.quietMode, click: (mi) => {
         const cfg = loadConfig(); cfg.enableTriggerTts = mi.checked;
         if (mi.checked) cfg.showTriggerOverlay = true;   // turning on → show the visual too (#97)
         saveConfig(cfg);
-        if (mi.checked && !triggerWindow) createTriggerOverlay(); else applyTriggerVisibility();
+        if (mi.checked && !triggerWindow) createTriggerOverlay(); else applyTriggerVisibility(); _reapDisabledOverlays();
         pushStatus();
       } },
     { label: 'Charm tracker', type: 'checkbox', checked: s.showCharm, enabled: !s.quietMode, click: (mi) => {
         const cfg = loadConfig(); cfg.showCharm = mi.checked; saveConfig(cfg);
-        if (mi.checked && !charmWindow) createCharmOverlay(); else applyCharmVisibility();
+        if (mi.checked && !charmWindow) createCharmOverlay(); else applyCharmVisibility(); _reapDisabledOverlays();
         pushStatus();
       } },
     { label: 'Pet tracker (summoned pets)', type: 'checkbox', checked: s.showPets, enabled: !s.quietMode, click: (mi) => {
         const cfg = loadConfig(); cfg.showPets = mi.checked; saveConfig(cfg);
-        if (mi.checked && !petsWindow) createPetsOverlay(); else applyPetsVisibility();
+        if (mi.checked && !petsWindow) createPetsOverlay(); else applyPetsVisibility(); _reapDisabledOverlays();
         pushStatus();
       } },
     { label: 'Target Info (target stats)', type: 'checkbox', checked: s.showMobInfo, enabled: !s.quietMode, click: (mi) => {
         const cfg = loadConfig(); cfg.showMobInfo = mi.checked; saveConfig(cfg);
-        if (mi.checked && !mobInfoWindow) createMobInfoOverlay(); else applyMobInfoVisibility();
+        if (mi.checked && !mobInfoWindow) createMobInfoOverlay(); else applyMobInfoVisibility(); _reapDisabledOverlays();
         pushStatus();
       } },
     { label: 'Buff queue (raid gaps + cures)', type: 'checkbox', checked: s.showBuffQueue, enabled: !s.quietMode, click: (mi) => {
         const cfg = loadConfig(); cfg.showBuffQueue = mi.checked; saveConfig(cfg);
-        if (mi.checked && !buffQueueWindow) createBuffQueueOverlay(); else applyBuffQueueVisibility();
+        if (mi.checked && !buffQueueWindow) createBuffQueueOverlay(); else applyBuffQueueVisibility(); _reapDisabledOverlays();
         pushStatus();
       } },
     { label: '/who (zone roster)', type: 'checkbox', checked: s.showWho, enabled: !s.quietMode, click: (mi) => {
         const cfg = loadConfig(); cfg.showWho = mi.checked; saveConfig(cfg);
-        if (mi.checked && !whoWindow) createWhoOverlay(); else applyWhoVisibility();
+        if (mi.checked && !whoWindow) createWhoOverlay(); else applyWhoVisibility(); _reapDisabledOverlays();
         pushStatus();
       } },
     { label: 'Casting tracker (melody on bards, spells otherwise)', type: 'checkbox', checked: s.showMelody, enabled: !s.quietMode, click: (mi) => {
         const cfg = loadConfig(); cfg.showMelody = mi.checked; saveConfig(cfg);
-        if (mi.checked && !melodyWindow) createMelodyOverlay(); else applyMelodyVisibility();
+        if (mi.checked && !melodyWindow) createMelodyOverlay(); else applyMelodyVisibility(); _reapDisabledOverlays();
         pushStatus();
       } },
     { label: '  ↳ Only show on bard characters', type: 'checkbox', checked: s.melodyBardOnly, enabled: !s.quietMode && s.showMelody, click: (mi) => {
@@ -5307,37 +5477,37 @@ function buildTrayMenu() {
       } },
     { label: 'Zeal health (diagnostic)', type: 'checkbox', checked: s.showZeal, enabled: !s.quietMode, click: (mi) => {
         const cfg = loadConfig(); cfg.showZeal = mi.checked; saveConfig(cfg);
-        if (mi.checked && !zealWindow) createZealHealthOverlay(); else applyZealVisibility();
+        if (mi.checked && !zealWindow) createZealHealthOverlay(); else applyZealVisibility(); _reapDisabledOverlays();
         pushStatus();
       } },
     { label: 'Threat meter', type: 'checkbox', checked: s.showThreat, enabled: !s.quietMode, click: (mi) => {
         const cfg = loadConfig(); cfg.showThreat = mi.checked; saveConfig(cfg);
-        if (mi.checked && !threatWindow) createThreatMeterOverlay(); else applyThreatVisibility();
+        if (mi.checked && !threatWindow) createThreatMeterOverlay(); else applyThreatVisibility(); _reapDisabledOverlays();
         pushStatus();
       } },
     { label: 'Tank HUD (DS, buffs, DA, rampage)', type: 'checkbox', checked: s.showTank, enabled: !s.quietMode, click: (mi) => {
         const cfg = loadConfig(); cfg.showTank = mi.checked; saveConfig(cfg);
-        if (mi.checked && !tankWindow) createTankOverlay(); else applyTankVisibility();
+        if (mi.checked && !tankWindow) createTankOverlay(); else applyTankVisibility(); _reapDisabledOverlays();
         pushStatus();
       } },
     { label: 'CH chain', type: 'checkbox', checked: s.showChChain, enabled: !s.quietMode, click: (mi) => {
         const cfg = loadConfig(); cfg.showChChain = mi.checked; saveConfig(cfg);
-        if (mi.checked && !chChainWindow) createChChainOverlay(); else applyChChainVisibility();
+        if (mi.checked && !chChainWindow) createChChainOverlay(); else applyChChainVisibility(); _reapDisabledOverlays();
         pushStatus();
       } },
     { label: 'Extended Target (raid-wide targets)', type: 'checkbox', checked: s.showExtTarget, enabled: !s.quietMode, click: (mi) => {
         const cfg = loadConfig(); cfg.showExtTarget = mi.checked; saveConfig(cfg);
-        if (mi.checked && !extTargetWindow) createExtTargetOverlay(); else applyExtTargetVisibility();
+        if (mi.checked && !extTargetWindow) createExtTargetOverlay(); else applyExtTargetVisibility(); _reapDisabledOverlays();
         pushStatus();
       } },
     { label: 'Command Center (one-window raid board)', type: 'checkbox', checked: s.showCommand, enabled: !s.quietMode, click: (mi) => {
         const cfg = loadConfig(); cfg.showCommand = mi.checked; saveConfig(cfg);
-        if (mi.checked && !commandWindow) createCommandOverlay(); else applyCommandVisibility();
+        if (mi.checked && !commandWindow) createCommandOverlay(); else applyCommandVisibility(); _reapDisabledOverlays();
         pushStatus();
       } },
     { label: 'PoP raids (encounter slideshow)', type: 'checkbox', checked: s.showPopRaid, enabled: !s.quietMode, click: (mi) => {
         const cfg = loadConfig(); cfg.showPopRaid = mi.checked; saveConfig(cfg);
-        if (mi.checked && !popRaidWindow) createPopRaidOverlay(); else applyPopRaidVisibility();
+        if (mi.checked && !popRaidWindow) createPopRaidOverlay(); else applyPopRaidVisibility(); _reapDisabledOverlays();
         pushStatus();
       } },
     { type: 'separator' },
@@ -6201,6 +6371,10 @@ ipcMain.handle('toggle-overlay', (_e, name) => {
   // "take out that automatic movement — it's very disruptive"). Turning an
   // overlay on/off never moves anything; arranging is manual-only via the
   // right-click ✨ Auto-arrange item.
+  // Toggling OFF should hand the ~80 MB renderer back now, not at the next
+  // EQ-presence flip. Deferred a tick so this handler answers the dashboard
+  // first (currentStatus reads config, never window existence).
+  setImmediate(() => { try { _reapDisabledOverlays(); } catch { /* never break the toggle */ } });
   pushStatus();
   return currentStatus();
 });
@@ -6375,6 +6549,11 @@ ipcMain.handle('hide-overlay', (e) => {
         if (w === win) { try { w.close(); } catch {} panelOverlays.delete(key); break; }
       }
     }
+    // ✕ means "I'm done with this one" — free its renderer. Deferred a tick so
+    // this handler returns to the (possibly reaped) sender before it goes away.
+    // The trigger overlay is untouched here on purpose: ✕ clears
+    // showTriggerOverlay only, and TTS keeps firing from the hidden window (#97).
+    setImmediate(() => { try { _reapDisabledOverlays(); } catch { /* never break hide */ } });
     pushStatus();
     return true;
   } catch { return false; }
@@ -7501,7 +7680,7 @@ ipcMain.handle('restart-to-update', () => {
 // percentCPUUsage is a share of ONE core sampled since the previous call, so the
 // first reading after a cold start reads high — the renderer discards sample #1.
 ipcMain.handle('app-metrics', () => {
-  const out = { at: Date.now(), eqRunning: _eqRunning, procs: [], agent: null };
+  const out = { at: Date.now(), eqRunning: _eqRunning, eqIgnored: [...new Set(_eqIgnoredPaths.values())], procs: [], agent: null };
   try {
     for (const m of app.getAppMetrics()) {
       out.procs.push({
@@ -7550,16 +7729,10 @@ app.whenReady().then(async () => {
   // works immediately. User clicks "Connect to Wolf Pack" in the tray menu
   // when they're ready to start uploading.
   await launchAgent();
-  createOverlayWindow();
-  createTriggerOverlay();
-  createCharmOverlay();
-  createPetsOverlay();
-  createMobInfoOverlay();
-  createWhoOverlay();
-  createMelodyOverlay();
-  createZealHealthOverlay();
-  createChChainOverlay();
-  createTankOverlay();
+  // Only the overlays that are actually switched on. This used to be ten
+  // unconditional create calls — ten Chromium renderers, ~80 MB each, for
+  // overlays most users never turn on. See _materializeEnabledOverlays().
+  _materializeEnabledOverlays();
   pushStatus();
   startZealCapture();
 
