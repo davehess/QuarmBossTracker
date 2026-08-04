@@ -28524,13 +28524,27 @@ function _cancelTimer(id) {
 // e.g. a healer whose log carries no combat for the boss) is left to expire
 // naturally — today's behavior. EXACT case-insensitive name match so a
 // same-named add's death can't clear an unrelated boss's timer.
+//
+// "dies." is NOT accepted here, for the same reason parseEvent stopped
+// accepting it (v3.5.11): `<Name> dies.` is the FEIGN DEATH emote, not a death.
+// This site was missed by that fix and matters more than it looks, because THREE
+// consumers read it — and the two beyond the timer cancel act on a NAME:
+//   • _cancelTimersOnMobDeath — a countdown whose target is a PLAYER (a
+//     "<name>, get out" callout) was cancelled when that player feigned. SKs
+//     and necros are exactly the classes that both feign and get called out.
+//   • _mobTracksOnDeathLine → _clearNameObservations — wipes that name's
+//     buff-landing and slow buckets. A feigning knight silently reset their own
+//     buff tracking mid-fight.
+// (_checkBossSpawnChain is unaffected in practice: precursors are mobs.)
+// The comment on _mobTracksOnDeathLine claiming "SLAIN entity only" was never
+// true of this matcher; with `died.` it is at least true of real deaths.
 const _DEATH_SLAIN_BY_RX = /\]\s+(.+?)\s+has been slain by\s+/i;
 const _DEATH_YOU_SLEW_RX = /\]\s+You have slain\s+(.+?)[!.]*\s*$/i;
-const _DEATH_DIED_RX     = /\]\s+(.+?)\s+die[ds]\.\s*$/i;
+const _DEATH_DIED_RX     = /\]\s+(.+?)\s+died\.\s*$/i;
 function _deadMobNameFromLine(line) {
   if (!line) return null;
   const hasSlain = line.indexOf('slain') !== -1;
-  const hasDied  = /\bdie[ds]\./i.test(line);
+  const hasDied  = /\bdied\./i.test(line);
   if (!hasSlain && !hasDied) return null;
   let m = hasSlain ? line.match(_DEATH_SLAIN_BY_RX) : null;
   if (m) return m[1].trim().replace(/[!.]+$/, '');

@@ -70,3 +70,77 @@ describe('feign death must never be counted as a death', () => {
     expect(ev('Syko dies.')?.type).not.toBe('death');
   });
 });
+
+// The SECOND site. parseEvent was fixed in 3.5.11; _deadMobNameFromLine was
+// missed and still carried /die[ds]\./ until 3.5.14. It has THREE consumers and
+// two of them act on the returned NAME, not on a mob:
+//
+//   _cancelTimersOnMobDeath  — kills any countdown whose target is that name.
+//                              A "<player>, get out" callout was cancelled the
+//                              moment that player feigned.
+//   _mobTracksOnDeathLine    — → _clearNameObservations, wiping that name's
+//                              buff-landing + slow buckets. A feigning knight
+//                              silently reset their own buff tracking mid-fight.
+//   _checkBossSpawnChain     — precursors are mobs; unaffected in practice.
+//
+// The failure needs a feign-capable class whose NAME is also a timer target,
+// which is why it hid behind the louder parseEvent bug rather than showing up
+// on its own.
+describe('_deadMobNameFromLine — the timer/observation-clearing gate', () => {
+  it('accepts a real slain line', () => {
+    expect(agent._deadMobNameFromLine(P + 'Lord Inquisitor Seru has been slain by Hitya!'))
+      .toBe('Lord Inquisitor Seru');
+  });
+
+  it('accepts "You have slain <Mob>!"', () => {
+    expect(agent._deadMobNameFromLine(P + 'You have slain a shissar disciple!'))
+      .toBe('a shissar disciple');
+  });
+
+  it('accepts a real "died." line', () => {
+    expect(agent._deadMobNameFromLine(P + 'a shissar disciple died.')).toBe('a shissar disciple');
+  });
+
+  it('THE FIX: "dies." is a feign and must not name a dead entity', () => {
+    // Before 3.5.14 this returned 'Syko', cancelling Syko's timers and clearing
+    // Syko's tracked buffs every time they threw Death Peace.
+    expect(agent._deadMobNameFromLine(P + 'Syko dies.')).toBeNull();
+    expect(agent._deadMobNameFromLine(P + 'Dongru dies.')).toBeNull();
+  });
+
+  it('a feign by a MOB-named charm pet is equally not a death', () => {
+    expect(agent._deadMobNameFromLine(P + 'a shissar disciple dies.')).toBeNull();
+  });
+
+  it('non-death lines stay null', () => {
+    expect(agent._deadMobNameFromLine(P + 'Syko has fallen to the ground.')).toBeNull();
+    expect(agent._deadMobNameFromLine(P + 'Hitya hits a shissar disciple for 412 points of damage.')).toBeNull();
+    expect(agent._deadMobNameFromLine('')).toBeNull();
+    expect(agent._deadMobNameFromLine(null)).toBeNull();
+  });
+
+  it('END TO END: a feign does not cancel that player\'s countdown', () => {
+    // The consumer that motivated the fix. Arm a timer targeting a player, then
+    // feed the feign line through the real cancel path.
+    // _startTimer keys the row by id + sorted captures, so the live id is
+    // "test-feign-timer|target=Syko" — match on target, which is what
+    // _cancelTimersOnMobDeath itself compares.
+    const mine = () => agent._activeTimersSnapshot()
+      .filter(t => String(t.target || '').toLowerCase() === 'syko');
+    agent._startTimer({
+      id: 'test-feign-timer', name: 'GET OUT', timer_duration_sec: 30,
+      actions: [{ color: 'red' }],
+    }, Date.now(), false, { target: 'Syko' });
+    expect(mine().length, 'timer must arm, or the rest of this case proves nothing').toBe(1);
+
+    expect(
+      agent._cancelTimersOnMobDeath(P + 'Syko dies.'),
+      'a feign must cancel nothing',
+    ).toBe(0);
+    expect(mine().length, 'a feign must leave the countdown running').toBe(1);
+
+    // …and a REAL death still cancels it, so the guard isn't just inert.
+    expect(agent._cancelTimersOnMobDeath(P + 'Syko died.')).toBe(1);
+    expect(mine().length, 'a real death must still cancel').toBe(0);
+  });
+});
