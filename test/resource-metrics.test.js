@@ -1,19 +1,22 @@
 // The Resource use readout has to agree with Task Manager.
 //
-// THE BUG (Uilnayar, 2026-08-04): "this shows way less in task manager. How
-// reliable are these numbers?" — Mimic said 1267 MB across 13 processes; Task
-// Manager said 460.7 MB across 14.
+// Uilnayar checked it against Task Manager twice, and was right both times.
 //
-// The card summed `workingSetSize`, which counts pages SHARED between processes
-// once per process. Every Chromium renderer maps the same tens of MB of Electron
-// framework, so thirteen processes counted that framework thirteen times. The
-// per-process rows were inflated ~2.5× and the total was meaningless.
+// ROUND 1 — 1267 MB vs 460.7. The card summed `workingSetSize`, which counts
+// pages SHARED between processes once per process. Every Chromium renderer maps
+// the same tens of MB of Electron framework, so thirteen processes counted that
+// framework thirteen times.
 //
-// `privateBytes` is the memory NOT shared with any other process — the figure
-// Task Manager's Memory column shows, and the only one where per-process rows
-// legitimately sum to a total. It is Windows-only, so the payload has to say
-// which basis produced the number rather than let an uncomparable figure pass
-// as a comparable one.
+// ROUND 2 — 274 MB vs 161.3, after switching to `privateBytes`. Closer, still
+// not the same measurement: privateBytes is private COMMIT (every private page
+// reserved, resident or not) while Task Manager's Memory column is the private
+// WORKING SET (only what is in RAM now). Commit is always higher, by a
+// different factor per process — the GPU helper reported 102 MB committed
+// against ~32 MB resident because it reserves buffers it never touches. So this
+// gap is not an error with a correct scalar; the fix is to report the same
+// figure Task Manager does, which Chromium does not expose and Windows does
+// (Win32_PerfRawData_PerfProc_Process.WorkingSetPrivate), and to keep commit on
+// screen beside it so the difference reads as information.
 //
 // This mattered beyond the card: the inflated reading is what sized the overlay
 // memory problem in the first place.
@@ -28,50 +31,130 @@ const src = readSource(path.join(ROOT, 'apps', 'mimic', 'main.js'));
 const handler = sliceBlock(src, "ipcMain.handle('app-metrics'", '\n});');
 
 describe('memory basis', () => {
-  it('prefers privateBytes over workingSetSize', () => {
-    expect(handler).toMatch(/const privKb = Number\(mem\.privateBytes\) \|\| 0;/);
-    expect(handler, 'workingSetSize is the FALLBACK, never the first choice')
-      .toMatch(/privKb \|\| mem\.workingSetSize/);
+  it('headlines the private working set Windows reports', () => {
+    // The figure Task Manager's Memory column shows. Everything else is a
+    // fallback for when the query has not answered (or is not Windows).
+    expect(handler).toMatch(/const wsBytes = _wsPrivate\.byPid\.get\(m\.pid\);/);
+    expect(handler).toMatch(/memMb: wsBytes != null/);
+  });
+
+  it('still carries the committed figure alongside it', () => {
+    // Two numbers on screen turn "these disagree" into "these measure
+    // different things", which is the actual answer.
+    expect(handler).toMatch(/commitMb: Math\.round\(\(privKb \|\| mem\.workingSetSize \|\| 0\) \/ 1024\)/);
+    expect(handler).toMatch(/out\.totalCommitMb = /);
   });
 
   it('reports which basis the numbers came from', () => {
     // Without this the card cannot tell the user whether its total is
     // comparable to Task Manager's — and on the wrong basis it is not.
-    expect(handler).toMatch(/out\.memBasis = anyWorkingSet \? 'workingSet' : 'private';/);
+    expect(handler).toMatch(/out\.memBasis = anyEstimated \? \(anyWorkingSet \? 'workingSet' : 'commit'\) : 'workingSetPrivate';/);
+  });
+
+  it('refreshes AFTER building the payload, so no poll waits on PowerShell', () => {
+    const build = handler.indexOf('out.procs.push(');
+    const refresh = handler.indexOf('_refreshPrivateWorkingSet(');
+    expect(refresh).toBeGreaterThan(build);
   });
 
   // The selection itself, against numbers shaped like the real report.
-  const pick = (mem) => {
+  const pick = (mem, wsBytes) => {
     const privKb = Number(mem.privateBytes) || 0;
-    return { mb: Math.round((privKb || mem.workingSetSize || 0) / 1024), ws: !privKb };
+    const commitMb = Math.round((privKb || mem.workingSetSize || 0) / 1024);
+    return {
+      mb: wsBytes != null ? Math.round(wsBytes / (1024 * 1024)) : commitMb,
+      commitMb,
+      estimated: wsBytes == null,
+      ws: !privKb,
+    };
   };
 
-  it('an overlay reports its private cost, not its mapped-framework cost', () => {
-    // Real shape: ~100 MB working set, ~38 MB actually unique to the process.
-    const r = pick({ workingSetSize: 103 * 1024, privateBytes: 38 * 1024 });
-    expect(r.mb).toBe(38);
-    expect(r.ws).toBe(false);
+  it('an overlay reports what is in RAM, not what it mapped or reserved', () => {
+    // Real shape: ~100 MB working set (shared framework included), 38 MB
+    // private commit, ~32 MB actually resident and private.
+    const r = pick({ workingSetSize: 103 * 1024, privateBytes: 38 * 1024 }, 32 * 1024 * 1024);
+    expect(r.mb).toBe(32);
+    expect(r.commitMb, 'commit stays visible next to it').toBe(38);
+    expect(r.estimated).toBe(false);
   });
 
-  it('falls back to working set where privateBytes is absent (non-Windows)', () => {
-    const r = pick({ workingSetSize: 103 * 1024 });
+  it('falls back to commit until Windows answers', () => {
+    const r = pick({ workingSetSize: 103 * 1024, privateBytes: 38 * 1024 }, null);
+    expect(r.mb).toBe(38);
+    expect(r.estimated, 'and the payload must flag that it is a fallback').toBe(true);
+  });
+
+  it('falls back again to working set where privateBytes is absent (non-Windows)', () => {
+    const r = pick({ workingSetSize: 103 * 1024 }, null);
     expect(r.mb).toBe(103);
-    expect(r.ws, 'and the payload must flag that it did').toBe(true);
+    expect(r.ws).toBe(true);
   });
 
   it('a zero/missing memory block does not throw or invent a number', () => {
-    expect(pick({}).mb).toBe(0);
-    expect(pick({ workingSetSize: 0, privateBytes: 0 }).mb).toBe(0);
+    expect(pick({}, null).mb).toBe(0);
+    expect(pick({ workingSetSize: 0, privateBytes: 0 }, null).mb).toBe(0);
   });
 
-  it('the summed total lands near Task Manager instead of 2.5x over it', () => {
-    // Uilnayar's measured set: thirteen Mimic processes.
-    const ws   = [125, 119, 118, 105, 103, 103, 101, 99, 93, 85, 82, 80, 54];
-    const priv = [ 45,  40,  49,  38,  38,  36,  35, 49, 28, 18, 15, 14, 13];
-    const procs = ws.map((w, i) => ({ workingSetSize: w * 1024, privateBytes: priv[i] * 1024 }));
-    const total = procs.reduce((a, m) => a + pick(m).mb, 0);
-    expect(total).toBe(418);                        // Task Manager read 460.7
-    expect(ws.reduce((a, b) => a + b, 0)).toBe(1267); // what the card used to print
+  it('the total lands ON Task Manager, not 1.7x over it', () => {
+    // Uilnayar's third measurement: five Mimic processes, 274 MB reported
+    // against Task Manager's 161.
+    const priv = [102, 79, 46, 25, 22];                   // committed, what we printed
+    const res  = [33.8, 32.1, 35.9, 29.5, 15.8];          // Task Manager's rows
+    const procs = priv.map((p, i) => pick({ privateBytes: p * 1024 }, res[i] * 1024 * 1024));
+    const total = procs.reduce((a, r) => a + r.mb, 0);
+    const commit = procs.reduce((a, r) => a + r.commitMb, 0);
+    expect(total).toBe(148);        // Task Manager's group row read 161.3
+    expect(commit).toBe(274);       // exactly what the card printed before
+    expect(commit / total).toBeGreaterThan(1.5);   // the gap the user spotted
+  });
+});
+
+describe('the working-set query does not become the cost it measures', () => {
+  const fn = sliceBlock(src, 'function _refreshPrivateWorkingSet(pids) {', '\n}');
+
+  it('rate-limits to one PowerShell spawn per TTL', () => {
+    // The card polls every 2s and claims Mimic is free at idle. A query per
+    // poll would make this window the biggest CPU consumer on the list.
+    expect(src).toMatch(/const _WS_TTL_MS = 12_000;/);
+    expect(fn).toMatch(/if \(Date\.now\(\) - _wsPrivate\.at < _WS_TTL_MS\) return;/);
+  });
+
+  it('never runs two at once', () => {
+    expect(fn).toMatch(/if \(_wsPrivate\.inFlight\) return;/);
+    expect(fn).toMatch(/_wsPrivate\.inFlight = true;/);
+  });
+
+  it('stamps the clock even when the query FAILS', () => {
+    // Otherwise a broken query re-spawns PowerShell on every 2s poll forever —
+    // the runaway version of this feature.
+    const cb = fn.slice(fn.indexOf('(err, stdout) =>'));
+    expect(cb.indexOf('_wsPrivate.at = Date.now();'))
+      .toBeLessThan(cb.indexOf('if (err || !stdout) return;'));
+    expect(fn, 'the throw path must stamp it too').toMatch(/catch \{ _wsPrivate\.inFlight = false; _wsPrivate\.at = Date\.now\(\); \}/);
+  });
+
+  it('keeps the last good snapshot rather than blanking on a bad read', () => {
+    expect(fn).toMatch(/if \(byPid\.size\) _wsPrivate\.byPid = byPid;/);
+  });
+
+  it('does nothing off Windows, and nothing with no pids', () => {
+    expect(fn).toMatch(/if \(process\.platform !== 'win32'\) return;/);
+    expect(fn).toMatch(/if \(!pids \|\| !pids\.length\) return;/);
+  });
+
+  it('parses the pid|bytes lines the query emits', () => {
+    const parse = (out) => {
+      const byPid = new Map();
+      for (const line of String(out).split(/\r?\n/)) {
+        const m = line.trim().match(/^(\d+)\|(\d+)$/);
+        if (m) byPid.set(Number(m[1]), Number(m[2]));
+      }
+      return byPid;
+    };
+    const r = parse('1234|35438592\r\n5678|15204352\r\n');
+    expect(r.get(1234)).toBe(35438592);
+    expect(Math.round(r.get(5678) / (1024 * 1024))).toBe(15);
+    expect(parse('nonsense\r\n').size, 'garbage must not become a zero-byte process').toBe(0);
   });
 });
 

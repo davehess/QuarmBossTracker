@@ -48,7 +48,9 @@
   <div class="foot">
     CPU is a share of <b>one</b> core, measured since the previous sample — so the
     first reading after opening this window is discarded rather than shown, because
-    it would be a meaningless spike.
+    it would be a meaningless spike. Task Manager divides by <b>all</b> your cores
+    and samples over its own window, so the two percentages will not match and
+    neither is wrong. At around 1% both are noise either way.
   </div>
 
 <script>
@@ -84,22 +86,32 @@
     // thirteen processes counted it thirteen times and Mimic read 1267 MB where
     // Task Manager read 460. Private bytes is the memory unique to each process,
     // which is what Task Manager's Memory column shows.
+    var TM_TIP = '<br>To match these names up in Task Manager: <b>Details</b> tab → right-click any '
+               + 'column header → <b>Select columns</b> → <b>Command line</b>. Each window carries a '
+               + '<code style="background:#0d1117;padding:1px 4px;border-radius:3px">--wp-window=</code> '
+               + 'tag there. (The Name column reads the .exe, which is the same file for all of them, '
+               + 'so it can\'t be changed.)';
     function basisNote(m){
-      if (m.memBasis === 'private') {
+      if (m.memBasis === 'workingSetPrivate') {
         return '<div style="margin-top:6px;color:#6e7681;font-size:11px">'
-             + 'Memory is <b>private bytes</b> — the part not shared with other processes. '
-             + 'This should line up with Task Manager. Shared framework pages are excluded '
-             + 'on purpose: counting them once per process is what made older builds read 2–3× high.'
-             + '<br>To match these names up in Task Manager: <b>Details</b> tab → right-click any '
-             + 'column header → <b>Select columns</b> → <b>Command line</b>. Each window carries a '
-             + '<code style="background:#0d1117;padding:1px 4px;border-radius:3px">--wp-window=</code> '
-             + 'tag there. (The Name column reads the .exe, which is the same file for all of them, '
-             + 'so it can\'t be changed.)'
-             + '</div>';
+             + 'Memory is the <b>private working set</b> read from Windows — the same figure Task '
+             + 'Manager\'s Memory column shows, so the two should agree. '
+             + '<b>Committed</b> is the larger number next to it: every private page the processes '
+             + 'have reserved, including ones not currently in RAM. Commit is always higher, and by '
+             + 'a different amount per process (the GPU helper reserves buffers it never touches), '
+             + 'which is why the two totals differ rather than one being wrong.'
+             + TM_TIP + '</div>';
+      }
+      if (m.memBasis === 'commit') {
+        return '<div style="margin-top:6px;color:#f0b429;font-size:11px">'
+             + 'Memory is <b>committed private bytes</b> — Windows has not answered the working-set '
+             + 'query yet (it refreshes every 12s). This reads HIGHER than Task Manager, because '
+             + 'commit counts private pages that are not currently in RAM. Give it a moment.'
+             + TM_TIP + '</div>';
       }
       return '<div style="margin-top:6px;color:#f0b429;font-size:11px">'
-           + 'Memory is <b>working set</b> — private bytes were unavailable. This OVERSTATES the '
-           + 'total, because pages shared between processes are counted once per process. '
+           + 'Memory is <b>working set</b> — neither private figure was available. This OVERSTATES '
+           + 'the total, because pages shared between processes are counted once per process. '
            + 'Trust Task Manager over this number.'
            + '</div>';
     }
@@ -117,10 +129,15 @@
           + esc(m.eqIgnored.join(', '))
           + ' — a different EverQuest install. Add its folder in Settings if you want Mimic to follow it.</div>'
         : '';
+      // Show committed alongside in-RAM. One number invites "this disagrees
+      // with Task Manager"; two label the difference as what it is.
+      var commit = (m.totalCommitMb && m.totalCommitMb !== m.totalMemMb)
+        ? '<span style="color:#6e7681"> (' + esc(m.totalCommitMb) + ' MB committed)</span>' : '';
       summary.innerHTML = '<span style="color:#7ee787;font-size:15px">' + esc(m.totalCpu) + '%</span>'
         + '<span style="color:#6e7681"> CPU of one core · </span>'
         + '<span style="color:#79c0ff;font-size:15px">' + esc(m.totalMemMb) + '</span>'
-        + '<span style="color:#6e7681"> MB · ' + esc(m.procs.length) + ' processes ('
+        + '<span style="color:#6e7681"> MB in RAM</span>' + commit
+        + '<span style="color:#6e7681"> · ' + esc(m.procs.length) + ' processes ('
         + esc(m.windows) + ' windows)</span> <span class="' + eqCls + '">' + esc(eqTxt) + '</span>'
         + ignored
         + basisNote(m);

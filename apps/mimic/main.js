@@ -7725,6 +7725,62 @@ ipcMain.handle('restart-to-update', () => {
 // nothing about WHICH overlays were alive (Uilnayar 2026-08-04). Only we can
 // name them. Several windows can legitimately share one renderer process, so
 // labels accumulate rather than overwrite.
+// ── Private working set, straight from Windows ─────────────────────────────
+//
+// "This says 274MB but task manager calls out 161MB. Why is there such a gap?"
+// (Uilnayar 2026-08-04.) Because they are two different measurements, and both
+// are correct:
+//
+//   • Electron's privateBytes is PRIVATE COMMIT — every private page the
+//     process has reserved from the pagefile, resident or not.
+//   • Task Manager's Memory column is the PRIVATE WORKING SET — only the
+//     private pages actually sitting in RAM right now.
+//
+// Commit is always ≥ working set, and the ratio varies wildly per process: the
+// GPU helper reported 102 MB committed against ~32 MB resident because it
+// reserves large buffers it never touches. So the gap is not an error to
+// correct with a fudge factor — the honest fix is to report the same figure
+// Task Manager does, which is what people compare against.
+//
+// Chromium exposes no working-set-private, so we ask Windows. The perf class
+// Win32_PerfRawData_PerfProc_Process carries WorkingSetPrivate keyed by
+// IDProcess — one query covers every Mimic process. Readable by a standard
+// user, no elevation.
+//
+// It is NOT free (~200-400ms of PowerShell), and this window's whole claim is
+// that Mimic costs nothing at idle, so it runs at most once every 12s and only
+// while something is actually asking for metrics — i.e. while the Resource use
+// window is open. Everything falls back to the committed figure.
+const _WS_TTL_MS = 12_000;
+let _wsPrivate = { at: 0, byPid: new Map(), inFlight: false };
+function _refreshPrivateWorkingSet(pids) {
+  if (process.platform !== 'win32') return;
+  if (_wsPrivate.inFlight) return;
+  if (Date.now() - _wsPrivate.at < _WS_TTL_MS) return;
+  if (!pids || !pids.length) return;
+  _wsPrivate.inFlight = true;
+  try {
+    const { execFile } = require('child_process');
+    const filter = pids.map(p => `IDProcess=${p}`).join(' OR ');
+    const psCmd = `Get-CimInstance Win32_PerfRawData_PerfProc_Process -Filter "${filter}" | ForEach-Object { "$($_.IDProcess)|$($_.WorkingSetPrivate)" }`;
+    execFile('powershell', ['-NoProfile', '-NonInteractive', '-Command', psCmd],
+      { timeout: 8000, windowsHide: true },
+      (err, stdout) => {
+        _wsPrivate.inFlight = false;
+        // Stamp the time even on failure, or a broken query would re-spawn
+        // PowerShell on every single 2s poll.
+        _wsPrivate.at = Date.now();
+        if (err || !stdout) return;
+        const byPid = new Map();
+        for (const line of String(stdout).split(/\r?\n/)) {
+          const m = line.trim().match(/^(\d+)\|(\d+)$/);
+          if (m) byPid.set(Number(m[1]), Number(m[2]));   // bytes
+        }
+        if (byPid.size) _wsPrivate.byPid = byPid;
+      });
+  } catch { _wsPrivate.inFlight = false; _wsPrivate.at = Date.now(); }
+}
+
 function _windowLabelsByPid() {
   const byPid = new Map();
   const put = (win, label) => {
@@ -7761,7 +7817,8 @@ ipcMain.handle('app-metrics', () => {
   const out = { at: Date.now(), eqRunning: _eqRunning, eqIgnored: [...new Set(_eqIgnoredPaths.values())], procs: [], agent: null };
   let labels = new Map();
   try { labels = _windowLabelsByPid(); } catch { /* naming is a bonus, never the point */ }
-  let anyWorkingSet = false;
+  let anyWorkingSet = false;   // no privateBytes at all (non-Windows)
+  let anyEstimated  = false;   // no working-set-private for at least one pid
   try {
     for (const m of app.getAppMetrics()) {
       const mem = m.memory || {};
@@ -7774,6 +7831,9 @@ ipcMain.handle('app-metrics', () => {
       // rows legitimately add up to a total.
       const privKb = Number(mem.privateBytes) || 0;
       if (!privKb) anyWorkingSet = true;
+      // Working set private, if Windows has told us. Falls back to committed.
+      const wsBytes = _wsPrivate.byPid.get(m.pid);
+      if (wsBytes == null) anyEstimated = true;
       out.procs.push({
         pid:  m.pid,
         type: m.type || 'unknown',
@@ -7781,18 +7841,29 @@ ipcMain.handle('app-metrics', () => {
         name: m.name || m.serviceName || null,
         label: labels.get(m.pid) || null,
         cpu:  m.cpu ? Number(m.cpu.percentCPUUsage) || 0 : 0,
-        // Both fields are KB on every platform electron supports.
-        memMb: Math.round((privKb || mem.workingSetSize || 0) / 1024),
+        // The headline number: what Task Manager's Memory column shows.
+        memMb: wsBytes != null
+          ? Math.round(wsBytes / (1024 * 1024))
+          : Math.round((privKb || mem.workingSetSize || 0) / 1024),
+        // …and the committed figure alongside it. Keeping both on screen is
+        // what stops the difference reading as an error. Both source fields
+        // are KB on every platform electron supports.
+        commitMb: Math.round((privKb || mem.workingSetSize || 0) / 1024),
       });
     }
   } catch { /* metrics unavailable — the card renders what it has */ }
-  // privateBytes is Windows-only. Say which basis is on screen rather than let
-  // a number that can't be compared to Task Manager pass as one that can.
-  out.memBasis = anyWorkingSet ? 'workingSet' : 'private';
+  // Refresh AFTER building the payload: this poll uses the cached snapshot and
+  // the next one picks up the new numbers, so nothing ever waits on PowerShell.
+  try { _refreshPrivateWorkingSet(out.procs.map(p => p.pid)); } catch { /* best effort */ }
+  // privateBytes is Windows-only, and the working-set query can fail or not
+  // have run yet. Say which basis is on screen rather than let a number that
+  // can't be compared to Task Manager pass as one that can.
+  out.memBasis = anyEstimated ? (anyWorkingSet ? 'workingSet' : 'commit') : 'workingSetPrivate';
   // The agent is a spawned node process, so it is NOT in getAppMetrics().
   try { if (agentProc && agentProc.pid) out.agent = { pid: agentProc.pid }; } catch { /* */ }
   out.totalCpu   = Math.round(out.procs.reduce((a, p) => a + p.cpu, 0) * 10) / 10;
   out.totalMemMb = out.procs.reduce((a, p) => a + p.memMb, 0);
+  out.totalCommitMb = out.procs.reduce((a, p) => a + (p.commitMb || 0), 0);
   out.windows    = out.procs.filter(p => p.type === 'Tab' || p.type === 'Renderer').length;
   return out;
 });
