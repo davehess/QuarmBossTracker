@@ -250,6 +250,50 @@ async function findOrCreateEncounter({ npcId, startedAtMs, durationSec, windowMi
   return typeof result === 'string' ? result : null;
 }
 
+// Back-stamp encounter_id onto the threat snapshots that belong to this fight.
+//
+// The agent uploads a threat snapshot every N seconds DURING a fight, but the
+// encounter row does not exist until the fight flushes — so the agent has no
+// encounter_id to send and never will (its payload has no such field). Result:
+// every snapshot ever written has encounter_id NULL, which orphans the one
+// real per-fight time series we keep. This closes the loop from the other end:
+// once the encounter exists, claim the snapshots that fall inside its span.
+//
+// Matching is (uploader, time-window), because that is all both sides share.
+// SNAP_CLAIM_MARGIN_MS absorbs clock skew and the snapshot that lands just
+// before the first combat line or just after the killing blow. Deliberately
+// small: the tighter it is, the less chance a back-to-back pull by the same
+// uploader has of claiming its neighbour's boundary sample. `encounter_id=is.null`
+// makes this idempotent and stops a re-submitted parse from stealing rows an
+// earlier encounter already claimed.
+//
+// NOTE: we stamp encounter_id only, never boss_name. All existing rows have
+// boss_name NULL, and the table's unique key is
+// (guild_id, uploader, boss_name, snapshot_at) — NULLs never collide there, so
+// duplicate (uploader, snapshot_at) pairs may exist. Writing a real boss_name
+// across them could raise a constraint violation. encounter_id is the better
+// label anyway: join to `encounters` for the name.
+const SNAP_CLAIM_MARGIN_MS = 20_000;
+async function claimThreatSnapshots({ encounterId, uploader, startedAtMs, durationSec }) {
+  if (!isEnabled() || !encounterId || !uploader) return 0;
+  const startMs = Number(startedAtMs);
+  if (!Number.isFinite(startMs)) return 0;
+  const from = new Date(startMs - SNAP_CLAIM_MARGIN_MS).toISOString();
+  const to   = new Date(startMs + (Number(durationSec) || 0) * 1000 + SNAP_CLAIM_MARGIN_MS).toISOString();
+  const q = `uploader=eq.${encodeURIComponent(uploader)}`
+          + `&encounter_id=is.null`
+          + `&snapshot_at=gte.${encodeURIComponent(from)}`
+          + `&snapshot_at=lte.${encodeURIComponent(to)}`;
+  try {
+    await update('encounter_threat_snapshots', q, { encounter_id: encounterId });
+    return 1;
+  } catch (err) {
+    // Never let telemetry bookkeeping fail a parse upload.
+    console.warn('[supabase] threat-snapshot claim failed:', err?.message);
+    return 0;
+  }
+}
+
 // Record a contribution (one player's perspective) for an encounter.
 // rawParse is the { bossName, duration, totalDamage, totalDps, players: [...] } structure.
 // Idempotent for named contributors via the contributions_dedup partial unique
@@ -367,6 +411,18 @@ async function recordParse({
     zoneShort:   zoneShort || row.zone_short || null,
   });
   if (!encounterId) return null;
+
+  // Claim this uploader's in-fight threat snapshots for the encounter that just
+  // resolved. Best-effort and never awaited into the failure path — see
+  // claimThreatSnapshots.
+  if (contributorCharacter) {
+    await claimThreatSnapshots({
+      encounterId,
+      uploader:    contributorCharacter,
+      startedAtMs: timestampMs,
+      durationSec: parsed.duration,
+    });
+  }
 
   const hasAbilityDetail = !!(rollupByChar && Object.keys(rollupByChar).length);
   const contributionId = await recordContribution({
@@ -612,6 +668,7 @@ module.exports = {
   applyQuakeToPvpBoardMirror,
   getNpcIdForInternalId,
   findOrCreateEncounter,
+  claimThreatSnapshots,
   recordContribution,
   recordParse,
   upsertCombatRollup,

@@ -265,6 +265,14 @@ function noteTrashKill({ atMs, name, damage = 0, durationSec = 0 } = {}) {
     const at = Number(atMs);
     const nm = String(name || '').trim();
     if (!nm || !Number.isFinite(at)) return 'skipped';
+    // Must have happened DURING the raid. nightKey() alone buckets by night, so
+    // anything a raider killed earlier that same day — a lunchtime XP group, a
+    // solo camp — landed in the night's tally and got reported as raid trash.
+    // That is how "Trash cleared" showed 967 mobs and 9h22m of combat for a
+    // 1h48m raid, topped by named mobs the raid never touched (2026-08-02).
+    // Same predicate the kills path already uses (see the pace calc above), so
+    // bosses and trash now agree on what "during the raid" means.
+    if (!raidNight.isRaidNightAt(at)) return 'skipped';
     const key = raidNight.nightKey(at);
     const t = _trashBucket(key);
     for (const off of [0, -1, 1]) {
