@@ -14614,6 +14614,32 @@ function renderInfo(s) {
   h += '<div>Lifetime: ' + ((s.lifetime?.totalEvents||0) + s.sessionEvents) + ' ev / ' + lifetimeMin + ' min</div>';
   if (s.lifetime?.firstSeenAt) h += '<div class="dim">First run: ' + esc(s.lifetime.firstSeenAt) + '</div>';
   h += '</div>';
+  // 🧩 Client versions — what each watched client actually has LOADED, harvested
+  // from the /zeal version output (agent 3.5.16). Deliberately distinct from the
+  // Zeal update notice, which reports what zealUpdater found ON DISK: the two
+  // disagree exactly when Zeal has been updated but EQ has not been restarted,
+  // and that is the one state where "you are up to date" is a lie.
+  //
+  // Byte-stable between polls on purpose — these values only change when someone
+  // runs the command, so no wp* placeholder is needed. Rendering a relative
+  // "2m ago" here instead of the fixed stamp would repaint #info every 2s and
+  // reset anything the user had open (dashboard rendering rules).
+  const _cv = s.clientVersions || [];
+  h += '<div class="card"><h2>🧩 Client versions</h2>';
+  if (!_cv.length) {
+    h += '<div class="dim">Nothing captured yet. Type <b>/zeal version</b> in game and it appears here — Zeal, eqw.dll and eqgame.dll builds, per character. We never send the command for you.</div>';
+  } else {
+    h += '<table>';
+    for (const c of _cv) {
+      h += '<tr><td colspan="2" style="padding-top:6px"><b>' + esc(c.character) + '</b></td></tr>';
+      if (c.zeal)   h += '<tr><td>Zeal</td><td class="num">' + esc(c.zeal) + (c.zeal_hash ? ' <span class="dim">(' + esc(c.zeal_hash) + ')</span>' : '') + '</td></tr>';
+      if (c.eqw)    h += '<tr><td>eqw.dll</td><td class="num">' + esc(c.eqw) + '</td></tr>';
+      if (c.eqgame) h += '<tr><td>eqgame.dll</td><td class="num">' + esc(c.eqgame) + '</td></tr>';
+      if (c.at)     h += '<tr><td class="dim">read</td><td class="dim num">' + esc(String(c.at).replace('T', ' ').slice(0, 19)) + '</td></tr>';
+    }
+    h += '</table>';
+  }
+  h += '</div>';
   // 🩺 Raw Zeal capture — opt-in diagnostic. The control lives here, but the
   // capture itself runs in Mimic (it owns the pipe); we drive it through the
   // window.mimic config bridge. wpWireZealCapture wires the buttons after render.
