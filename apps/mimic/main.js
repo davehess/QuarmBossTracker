@@ -4979,8 +4979,14 @@ const _OVERLAY_WINDOWS = [
 function _overlayForcedOn(cfg, e) {
   if (setupMode) return true;                    // 🛠 place-them-all mode
   if (cfg.overlaysLocked === false) return true; // unlocked → every overlay force-shown for dragging
-  if (_hideAllActive) return true;               // flags are off only until the hotkey flips back
   if (_blindForceOpen(e.blind || e.key)) return true;
+  // NOT hide-all. It looked like it belonged here — the flags are off only
+  // until the hotkey flips back — but cfg.hideAllActive PERSISTS across
+  // restarts, so sparing it meant a user who hid once got all fifteen
+  // renderers built at every boot and never freed: the exact opposite of the
+  // point. It is also unnecessary. toggleHideAllOverlays() restores the
+  // snapshot into cfg and saves BEFORE calling applyAllVisibility(), so the
+  // materialize pass reads the restored flags and rebuilds what was hidden.
   return false;
 }
 
@@ -5072,7 +5078,12 @@ function toggleHideAllOverlays() {
   } else if (_hideAllPrev) {
     // Restore from snapshot — respects whatever individual prefs the user
     // had when they hid. Skip restore when no snapshot exists.
-    Object.assign(cfg, _hideAllPrev);
+    //
+    // Only fills flags that are still OFF. Hiding wrote every flag false, so
+    // anything reading true now was switched on BY HAND while hidden — and a
+    // blanket Object.assign would quietly revert it, which looks like the
+    // hotkey turning your overlay back off. Their later choice wins.
+    for (const f of _HIDEALL_FLAGS) if (!cfg[f]) cfg[f] = !!_hideAllPrev[f];
     _hideAllActive = false;
     _hideAllPrev = null;
   } else {
@@ -5299,6 +5310,14 @@ function currentStatus() {
     damageAlert: !!cfg.damageAlert,
     overlayTheme: cfg.overlayTheme || 'default',
     overlaysLocked: cfg.overlaysLocked !== false,
+    // Hide-all flips every show* flag to false, which makes "I turned this off"
+    // and "the hotkey hid this" look identical everywhere — the dashboard, the
+    // tray, this payload (Uilnayar 2026-08-04: "we should be able to see in the
+    // overlays section which ones were previously off but are hidden").
+    // Shipping the snapshot alongside the flags lets a UI tell them apart:
+    // flag false + hideAllPrev[flag] true means HIDDEN, and it is coming back.
+    hideAllActive: !!_hideAllActive,
+    hideAllPrev: (_hideAllActive && _hideAllPrev) ? { ..._hideAllPrev } : null,
     setupMode: !!setupMode,
     onboarded: !!cfg.onboarded,
     updatePending: updatePending ? updatePending.version : null,
@@ -7679,21 +7698,75 @@ ipcMain.handle('restart-to-update', () => {
 //
 // percentCPUUsage is a share of ONE core sampled since the previous call, so the
 // first reading after a cold start reads high — the renderer discards sample #1.
+// OS pid → what that renderer actually IS. getAppMetrics() has no idea what a
+// process is FOR, so ten identical "overlay / window" rows told the user
+// nothing about WHICH overlays were alive (Uilnayar 2026-08-04). Only we can
+// name them. Several windows can legitimately share one renderer process, so
+// labels accumulate rather than overwrite.
+function _windowLabelsByPid() {
+  const byPid = new Map();
+  const put = (win, label) => {
+    try {
+      if (!win || win.isDestroyed()) return;
+      const pid = win.webContents.getOSProcessId();
+      if (!pid) return;
+      const prior = byPid.get(pid);
+      byPid.set(pid, prior ? prior + ' + ' + label : label);
+    } catch { /* window mid-close */ }
+  };
+  let cfg; try { cfg = loadConfig(); } catch { cfg = {}; }
+  const NAMES = {
+    hud: 'DPS HUD', trigger: 'Trigger alerts', charm: 'Charm tracker',
+    pets: 'Pet tracker', mobinfo: 'Mob Info', buffQueue: 'Buff queue',
+    who: '/who', melody: 'Melody', zeal: 'Zeal health', threat: 'Threat meter',
+    chchain: 'CH chain', tank: 'Tank HUD', exttarget: 'Extended target',
+    command: 'Command center', popraid: 'PoP raids',
+  };
+  for (const e of _OVERLAY_WINDOWS) {
+    // Flag the ones that are alive despite being switched off — that pairing is
+    // the whole reason someone opens this window.
+    put(e.get(), (NAMES[e.key] || e.key) + (cfg[e.flag] ? '' : ' (switched OFF)'));
+  }
+  for (const [key, win] of panelOverlays.entries()) put(win, 'panel overlay · ' + key);
+  put(mainWindow,      'Dashboard');
+  put(settingsWindow,  'Settings');
+  put(uiStudioWindow,  'UI Studio');
+  put(resourcesWindow, 'Resource use (this window)');
+  return byPid;
+}
+
 ipcMain.handle('app-metrics', () => {
   const out = { at: Date.now(), eqRunning: _eqRunning, eqIgnored: [...new Set(_eqIgnoredPaths.values())], procs: [], agent: null };
+  let labels = new Map();
+  try { labels = _windowLabelsByPid(); } catch { /* naming is a bonus, never the point */ }
+  let anyWorkingSet = false;
   try {
     for (const m of app.getAppMetrics()) {
+      const mem = m.memory || {};
+      // workingSetSize counts SHARED pages in EVERY process that maps them, and
+      // every Chromium renderer maps the same tens of MB of Electron framework.
+      // Summing it across 13 processes counted that framework 13 times: Mimic
+      // reported 1267 MB where Task Manager showed 460 (Uilnayar 2026-08-04).
+      // privateBytes is memory not shared with any other process — what Task
+      // Manager's Memory column shows, and the only basis where the per-process
+      // rows legitimately add up to a total.
+      const privKb = Number(mem.privateBytes) || 0;
+      if (!privKb) anyWorkingSet = true;
       out.procs.push({
         pid:  m.pid,
         type: m.type || 'unknown',
         // serviceName/name disambiguate the several "Utility" rows.
         name: m.name || m.serviceName || null,
+        label: labels.get(m.pid) || null,
         cpu:  m.cpu ? Number(m.cpu.percentCPUUsage) || 0 : 0,
-        // workingSetSize is KB on every platform electron supports.
-        memMb: m.memory ? Math.round((m.memory.workingSetSize || 0) / 1024) : 0,
+        // Both fields are KB on every platform electron supports.
+        memMb: Math.round((privKb || mem.workingSetSize || 0) / 1024),
       });
     }
   } catch { /* metrics unavailable — the card renders what it has */ }
+  // privateBytes is Windows-only. Say which basis is on screen rather than let
+  // a number that can't be compared to Task Manager pass as one that can.
+  out.memBasis = anyWorkingSet ? 'workingSet' : 'private';
   // The agent is a spawned node process, so it is NOT in getAppMetrics().
   try { if (agentProc && agentProc.pid) out.agent = { pid: agentProc.pid }; } catch { /* */ }
   out.totalCpu   = Math.round(out.procs.reduce((a, p) => a + p.cpu, 0) * 10) / 10;

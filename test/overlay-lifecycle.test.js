@@ -175,14 +175,34 @@ describe('materialize: an overlay that is on gets a window', () => {
     expect(h.__live()).toHaveLength(PAIRS.length);
   });
 
-  it('builds ALL of them while hide-all is active, so the hotkey can unhide', () => {
-    // Restart-while-hidden persists every flag as false. If boot creates
-    // nothing and the reap keeps it that way, the un-hide hotkey flips fifteen
-    // flags on and nothing appears — the exact stuck state toggleHideAll's
-    // no-snapshot branch already goes out of its way to prevent.
+  it('does NOT keep windows alive just because hide-all is active', () => {
+    // My first cut spared hide-all, reasoning that the flags are off only until
+    // the hotkey flips back. Wrong: cfg.hideAllActive PERSISTS across restarts,
+    // so anyone who used the hotkey once got all fifteen renderers rebuilt at
+    // every boot and never freed — the exact opposite of the point.
     const h = harness({ cfg: { overlaysLocked: true }, hideAll: true });
     h._materializeEnabledOverlays();
-    expect(h.__live()).toHaveLength(PAIRS.length);
+    expect(h.__live()).toEqual([]);
+  });
+
+  it('rebuilds from the RESTORED flags when the hotkey un-hides', () => {
+    // What makes the above safe. toggleHideAllOverlays() puts the snapshot back
+    // into cfg and saves BEFORE calling applyAllVisibility(), so materialize
+    // sees the restored flags — no window has to be kept warm for it.
+    const restored = harness({ cfg: { showHud: true, showCharm: true, overlaysLocked: true } });
+    restored._materializeEnabledOverlays();
+    expect(restored.__live().sort()).toEqual(['charmWindow', 'overlayWindow']);
+  });
+
+  it('the hotkey saves the restored flags BEFORE applying visibility', () => {
+    // Load-bearing order: reversed, materialize would read the all-false config
+    // and the hotkey could never unhide anything.
+    const fn = sliceBlock(src, 'function toggleHideAllOverlays() {', '\n}');
+    expect(fn.indexOf('saveConfig(cfg);')).toBeLessThan(fn.indexOf('applyAllVisibility();'));
+    // …and the restore that runs before that save. (Its own semantics —
+    // never clobbering a choice made while hidden — live in
+    // test/hide-all-state.test.js.)
+    expect(fn).toMatch(/for \(const f of _HIDEALL_FLAGS\) if \(!cfg\[f\]\) cfg\[f\] = !!_hideAllPrev\[f\];/);
   });
 
   it('builds the blind-mode set even with their prefs off', () => {
@@ -258,12 +278,13 @@ describe('reap: an overlay that is off hands its renderer back', () => {
     expect(h.__destroyed).toEqual([]);
   });
 
-  it('frees nothing while hide-all is active', () => {
-    // Hide-all sets every flag false TEMPORARILY. Reaping there would make the
-    // un-hide hotkey rebuild fifteen renderers instead of calling show().
+  it('DOES free them under hide-all — that state persists across restarts', () => {
+    // The counterpart to the materialize case above: hide-all means "I want
+    // these gone", and cfg.hideAllActive survives a restart, so holding the
+    // renderers would be holding them indefinitely.
     const h = harness({ cfg: { overlaysLocked: true }, hideAll: true, alive: PAIRS.map(p => p[0]) });
     h._reapDisabledOverlays();
-    expect(h.__destroyed).toEqual([]);
+    expect(h.__destroyed).toHaveLength(PAIRS.length);
   });
 
   it('spares an overlay the user is placing via "Setup THIS"', () => {

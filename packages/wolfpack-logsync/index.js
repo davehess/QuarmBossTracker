@@ -13622,6 +13622,9 @@ function renderOverlays(s) {
   // toggle. No inline onclick (keeps the dashboard template free of escaped
   // quotes — see the WEB_HTML escape-hazard note).
   h += '<div class="card wide"><h2>Built-in overlays</h2>';
+  // Volatile — filled by wpRefreshOverlayToggles. Kept out of the render string
+  // so the section stays byte-stable across polls (see the morphInto note).
+  h += '<div id="wpHideAllBanner"></div>';
   h += '<table style="font-size:12px"><tr><th>Overlay</th><th>State</th><th>Description</th></tr>';
   for (var i = 0; i < WP_OVERLAY_ROWS.length; i++) {
     var key = WP_OVERLAY_ROWS[i][0], label = WP_OVERLAY_ROWS[i][1], desc = WP_OVERLAY_ROWS[i][2];
@@ -13802,11 +13805,33 @@ function wpRefreshOverlayToggles() {
     window.mimic.getStatus().then(function(st){
       st = st || {};
       var on = { hud: !!st.showHud, trigger: !!st.enableTriggerTts, charm: !!st.showCharm, pet: !!st.showPets, mobinfo: !!st.showMobInfo, buffQueue: !!st.showBuffQueue, who: !!st.showWho, melody: !!st.showMelody, zeal: !!st.showZeal, threat: !!st.showThreat, chchain: !!st.showChChain, tank: !!st.showTank, exttarget: !!st.showExtTarget, command: !!st.showCommand, popraid: !!st.showPopRaid };
+      // Which cfg flag each row reads, so a HIDDEN row can be told from an OFF
+      // one. Hide-all writes every flag false, so without the snapshot the two
+      // are indistinguishable here (Uilnayar 2026-08-04).
+      var flagOf = { hud: 'showHud', trigger: 'enableTriggerTts', charm: 'showCharm', pet: 'showPets', mobinfo: 'showMobInfo', buffQueue: 'showBuffQueue', who: 'showWho', melody: 'showMelody', zeal: 'showZeal', threat: 'showThreat', chchain: 'showChChain', tank: 'showTank', exttarget: 'showExtTarget', command: 'showCommand', popraid: 'showPopRaid' };
+      var hidPrev = (st.hideAllActive && st.hideAllPrev) ? st.hideAllPrev : null;
+      var hidCount = 0;
       var btns = document.querySelectorAll('.wp-ov-toggle');
       for (var i = 0; i < btns.length; i++) {
         var b = btns[i]; var k = b.getAttribute('data-ov'); var isOn = !!on[k];
-        b.textContent = isOn ? 'ON' : 'OFF';
+        var wasOn = !isOn && !!hidPrev && !!hidPrev[flagOf[k]];
+        if (wasOn) hidCount++;
+        b.textContent = isOn ? 'ON' : (wasOn ? 'HIDDEN' : 'OFF');
         b.className = 'wp-ov-toggle' + (isOn ? ' on' : '');
+        // Amber, distinct from both the green ON and the plain OFF: this one is
+        // yours, it is just parked until you release the hide-all hotkey.
+        b.style.borderColor = wasOn ? '#f0b429' : '';
+        b.style.color       = wasOn ? '#f0b429' : '';
+        b.title = wasOn ? 'Switched ON — hidden right now by the hide-all hotkey. Releasing hide-all brings it back.' : '';
+      }
+      var hb = document.getElementById('wpHideAllBanner');
+      if (hb) {
+        hb.innerHTML = hidPrev
+          ? '<div style="font-size:12px;padding:8px 10px;background:rgba(240,180,41,0.12);border:1px solid #f0b429;border-radius:6px;margin-bottom:8px;color:#f0b429">'
+            + '<b>Hide-all is on.</b> ' + hidCount + ' overlay(s) marked <b>HIDDEN</b> are switched ON and parked &mdash; press the hide-all hotkey again (or the tray item) to bring them back. '
+            + 'Their windows are freed while hidden, so they reopen with fresh data rather than whatever was on screen before.'
+            + '</div>'
+          : '';
       }
       // Theme picker highlight — driven from Mimic status (st.overlayTheme),
       // not the render's state blob (which never carries it).

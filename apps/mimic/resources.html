@@ -69,10 +69,34 @@
     function esc(t){ return String(t == null ? '' : t).replace(/[&<>"]/g, function (c) {
       return ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' })[c]; }); }
     function label(p){
+      // main.js names the windows it owns (p.label) — ten identical
+      // "overlay / window" rows never answered the only question this window
+      // gets opened to answer: WHICH overlays are running.
+      if (p.label) return p.label;
       if (p.type === 'Browser') return 'Mimic core';
       if (p.type === 'Tab' || p.type === 'Renderer') return 'overlay / window' + (p.name ? ' · ' + p.name : '');
       if (p.type === 'GPU') return 'GPU helper';
       return p.type + (p.name ? ' · ' + p.name : '');
+    }
+    // Say which memory figure is on screen. Until 2026-08-04 this summed
+    // workingSetSize, which counts pages SHARED between processes once per
+    // process — every Chromium renderer maps the same Electron framework, so
+    // thirteen processes counted it thirteen times and Mimic read 1267 MB where
+    // Task Manager read 460. Private bytes is the memory unique to each process,
+    // which is what Task Manager's Memory column shows.
+    function basisNote(m){
+      if (m.memBasis === 'private') {
+        return '<div style="margin-top:6px;color:#6e7681;font-size:11px">'
+             + 'Memory is <b>private bytes</b> — the part not shared with other processes. '
+             + 'This should line up with Task Manager. Shared framework pages are excluded '
+             + 'on purpose: counting them once per process is what made older builds read 2–3× high.'
+             + '</div>';
+      }
+      return '<div style="margin-top:6px;color:#f0b429;font-size:11px">'
+           + 'Memory is <b>working set</b> — private bytes were unavailable. This OVERSTATES the '
+           + 'total, because pages shared between processes are counted once per process. '
+           + 'Trust Task Manager over this number.'
+           + '</div>';
     }
     function paint(m){
       if (!primed) { primed = true; summary.textContent = 'measuring…'; return; }
@@ -93,7 +117,8 @@
         + '<span style="color:#79c0ff;font-size:15px">' + esc(m.totalMemMb) + '</span>'
         + '<span style="color:#6e7681"> MB · ' + esc(m.procs.length) + ' processes ('
         + esc(m.windows) + ' windows)</span> <span class="' + eqCls + '">' + esc(eqTxt) + '</span>'
-        + ignored;
+        + ignored
+        + basisNote(m);
       var rows = m.procs.slice().sort(function (a, b) { return b.memMb - a.memMb; });
       var h = '<tr><th>process</th><th style="text-align:right">CPU</th><th style="text-align:right">memory</th></tr>';
       for (var i = 0; i < rows.length; i++) {
