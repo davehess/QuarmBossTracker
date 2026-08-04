@@ -37,6 +37,21 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'dead-triggers-190',
+    title: '🔇 37 callouts that were never going to fire',
+    version: 'Web 1.1.4',
+    date: '2026-08-04',
+    headline: 'A third of our enabled triggers cannot match a log line, and never could — including the Feeblemind and Shadow Poison callouts added this week. They were all switched on, which is exactly why nobody noticed.',
+    features: [
+      { name: '🔇 What went wrong', blurb: 'A trigger pattern is matched against the whole log line, and every line starts with its timestamp. So a pattern beginning with ^ — meaning "the message starts with this" — was actually asking the TIMESTAMP to start with it. 37 of our 109 live triggers are written that way: every slow-landed callout, Enrage, Cripple, Malo, Death Touch RIP, and the new Vex Thal ones.' },
+      { name: '🛡️ It cannot happen again', blurb: 'The officer trigger form now corrects a leading ^ when you save, and explains why. Every existing trigger with the problem carries a warning on its row telling you that re-saving fixes it.' },
+      { name: '⏳ Not switched on yet — on purpose', blurb: 'Un-deadening 37 callouts at once, the day before a Vex Thal night, could be a wall of voice lines mid-fight. Six different slow-landed callouts firing on every single pull is the obvious risk. The fix is staged so the boss mechanics can go first and the noisy family can wait for a verdict.' },
+    ],
+    fixes: [
+      'The "D.I. fired on <tank>" trigger was matching text that does not exist in the game — three phrasings, none of them the real one. It has been enabled and silent this whole time.',
+    ],
+  },
+  {
     key: 'what-counts-as-a-death',
     title: '💀 What counts as a death',
     version: 'Bot 3.1.7 · Web 1.1.2',

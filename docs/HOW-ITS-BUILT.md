@@ -524,12 +524,42 @@ enrage math on Tank/Command Center; local Zeal target is only the fallback.
 MAIN TARGET's melee connects on most (15s window), else any-mob tally.
 
 ### Triggers
-Guild set polled from the bot (10 min; class-filtered), personal set from
+Guild set polled from the bot (2 min; class-filtered), personal set from
 `personal_triggers.json`. `{s}` placeholders compile to named groups;
 `_captureMatchesCharmPet` suppresses self-charm-pet fires; roster gate via
 `require_raid_member`. Zeal gauge conditions fire without a log line.
 Cross-Mimic relay: detecting agent POSTs `trigger-relay`, others poll
 `recent-fires` (~1.5s) and run the same actions; dedup by name+captures in 8s.
+Fires live in an **in-memory ring buffer** — nothing durable, so "has this
+trigger ever fired?" is currently unanswerable (`DESIGN-callout-overlay.md`).
+
+### Trigger pattern anchoring — the `^` trap (#190) — 2026-08-04
+`evaluateTriggersAgainstLine` matches the **raw** line (`[Sun Aug 02 21:10:01
+2026] <message>`) and `_applyGuildTriggersResponse` compiles with flags `i`, **no
+`m`** — so `^` anchors before the timestamp. `_translateDotNetRegex` passes `^`
+through untouched (it only rewrites `(?>` and `{s}`-family placeholders).
+**37 of 109 enabled triggers were written `^<message>` and could never fire**,
+including eight callouts added the day it was found. Fix is `^` →
+`^\[.+?\]\s+`; **deleting the `^` is wrong** because the `{s}` class includes
+space, so the leftmost match starts at the space after `]` and captures a
+leading space. `web/lib/triggerPattern.ts` normalizes on save and
+`/admin/triggers` flags existing dead rows; the 37 in the table are staged, not
+applied (`RUNBOOK-dead-triggers.md`) — mass-enabling callouts is a raid-noise
+decision. Sibling failure modes, same "enabled therefore assumed working" shape:
+the DI trigger matched **invented** text (check `eqemu_spells.cast_on_*` for the
+real string) and AOE_DANCE was **mis-signatured** to another spell's text.
+
+### Agent boot smoke test — 2026-08-04
+`test/agent-boots.test.js` spawns the real agent process in a throwaway cwd and
+asserts it stays up. It exists because agent 3.5.5–3.5.14 on `beta` **did not
+start at all** (`ReferenceError: _threatSnapMs is not defined` in
+`startChatRelay`, which runs unguarded on the watch-mode path) and six releases
+shipped that way in a day. Nothing else executes the startup path — every other
+suite imports the module and calls exports, so `main()` was never invoked.
+The self-check injects an undefined identifier into `startChatRelay`
+specifically because that runs AFTER the ready banner, reproducing the hard
+shape (looks started, then dies) rather than a module-load throw. Kept
+byte-identical on `main` and `beta`.
 
 ### Web-staged macro edits (/me/ui apply loop)
 `pollUiPendingEdits` (5 min): GET pending edits for watched characters; apply

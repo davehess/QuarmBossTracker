@@ -55,6 +55,17 @@ entry so the index stays trustworthy — a stale index causes exactly the wrong
 - **Working branches** (`claude/*`) — branch off `main`, merge back with a
   versioned `-m` message.
 
+**CI runs on `beta` as of 2026-08-04 — it did not before, and that cost us a
+P0.** `test.yml` and `golden-log.yml` both declared `push: branches: [main,
+beta]`, but **GitHub runs the workflow file from the branch being pushed**, and
+neither file existed on `beta` (24 golden-log runs on main, 0 on beta). So the
+branch every agent + Mimic change lands on was the one with nothing checking it,
+and agent 3.5.5–3.5.14 shipped an agent that crashed at boot. Lint caught it on
+the first run there. **A workflow that DECLARES a branch is not a workflow that
+runs on it** — `test/workflow-yaml.test.js` catches a *broken* workflow, not a
+*missing* one, and both look exactly like green CI. When adding a workflow meant
+for both branches, put the file on both.
+
 ### Routing a change
 | Change touches | Push to | Bump |
 |---|---|---|
@@ -562,6 +573,24 @@ members). Excluded characters never contribute or display.
 every Mimic version. The `voice` action with `marks` requires the newer agent;
 use only for multi-callout sequences. Curse counters for the debuff queue live
 in the bot's `_CURSE_COUNTERS` (Gravel Rain 12 … "Word of" 1).
+
+**⚠ Trigger patterns match the RAW log line — never start one with a bare `^`.**
+The line is `[Sun Aug 02 21:10:01 2026] <message>`, and patterns compile with
+flags `i` and **no `m`**, so `^` anchors before the TIMESTAMP, not before the
+message. `^{s} yawns\.$` can never fire. Write it unanchored, or anchor as
+`^\[.+?\]\s+`. **Do NOT "fix" one by deleting the `^`** — `{s}` expands to a
+class that includes space, so an unanchored pattern captures `" Uilnayar"` with
+a leading space and corrupts every name-keyed consumer. `/admin/triggers` now
+normalizes on save (`web/lib/triggerPattern.ts`) and flags existing dead rows,
+but **37 of 109 enabled triggers are still dead in the table** — measured
+2026-08-04, staged fix in `docs/RUNBOOK-dead-triggers.md`, deliberately unapplied
+because turning 37 callouts on at once is a raid-noise decision. Two sibling
+failure modes cost us the same way: an **invented pattern** (the Divine
+Intervention trigger matched text that appears nowhere in spell 1546 — always
+check `eqemu_spells.cast_on_you/cast_on_other/spell_fades` for the real string)
+and a **mis-signatured** one (AOE_DANCE watching another spell's text). In all
+three cases the trigger was *enabled*, which is what made it invisible — an
+enabled trigger reads as coverage.
 
 **Chat-extracted historical parses** under-count DoT classes and credit
 damage shields to the tank — keep `contributions.raw_parse->source` distinct
