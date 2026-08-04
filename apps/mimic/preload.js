@@ -323,6 +323,10 @@ contextBridge.exposeInMainWorld('mimic', {
   // Live per-process CPU + memory, so "how much does Mimic cost?" is answered by
   // a measurement on the user's own machine instead of a claim from us.
   appMetrics:    () => ipcRenderer.invoke('app-metrics'),
+  // Opt in to the Windows working-set query so the totals match Task Manager
+  // exactly. Off by default — it spawns PowerShell every 12s, and the free
+  // number plus an explanation of the difference is the better trade.
+  setExactMemory: (on) => ipcRenderer.invoke('set-exact-memory', !!on),
   onAgentPort:   (cb) => ipcRenderer.on('agent-port', (_e, port) => cb(port)),
 
   // Runtime status — also pushed via onStatus when it changes.

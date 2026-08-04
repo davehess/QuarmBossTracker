@@ -53,7 +53,7 @@ const PAIRS = [
 
 // Stand up the sliced code over fake windows. `alive` seeds windows that
 // already exist (i.e. "before" state); everything else starts null.
-function harness({ cfg = {}, setupMode = false, hideAll = false, blind = [], singleSetup = [], alive = [] } = {}) {
+function harness({ cfg = {}, setupMode = false, hideAll = false, blind = [], singleSetup = [], alive = [], eqRunning = true } = {}) {
   const decls = PAIRS.map(([v, c]) => `
     let ${v} = null;
     function ${c}() { ${v} = __mkWin('${v}'); __created.push('${v}'); }
@@ -68,6 +68,8 @@ function harness({ cfg = {}, setupMode = false, hideAll = false, blind = [], sin
     let _hideAllActive = ${JSON.stringify(hideAll)};
     const __blind = ${JSON.stringify(blind)};
     function _blindForceOpen(k) { return __blind.includes(k); }
+    let _eqRunning = ${JSON.stringify(eqRunning)};
+    function _eqGateOk(c) { if (c.hideOverlaysWhenEqDown === false) return true; return _eqRunning; }
     const __single = new Set(${JSON.stringify(singleSetup)});
     function _inSingleSetup(w) { return !!w && __single.has(w.name); }
     function __mkWin(name) {
@@ -82,7 +84,7 @@ function harness({ cfg = {}, setupMode = false, hideAll = false, blind = [], sin
   `;
 
   return evalBlock(prelude + '\n' + block, [
-    '_OVERLAY_WINDOWS', '_overlayForcedOn', '_materializeEnabledOverlays',
+    '_OVERLAY_WINDOWS', '_overlayForcedOn', '_overlayWanted', '_materializeEnabledOverlays',
     '_reapDisabledOverlays', '__created', '__destroyed', '__log', '__live',
   ]);
 }
@@ -317,6 +319,7 @@ describe('reap: an overlay that is off hands its renderer back', () => {
       function _blindForceOpen() { return false; }
       function _inSingleSetup() { return false; }
       function _overlayForcedOn() { return false; }
+      function _overlayWanted(c, e) { return !!c[e.flag]; }
       let w = { name: 'x', isDestroyed: () => false, destroy() { __destroyed.push('x'); } };
       const _OVERLAY_WINDOWS = [{ key: 'x', flag: 'showX', get: () => w, create: () => {}, drop: () => { w = null; } }];
       ${sliceBlock(src, 'function _reapDisabledOverlays() {', '\n}')}
@@ -331,6 +334,92 @@ describe('reap: an overlay that is off hands its renderer back', () => {
     const ok = oneOverlay(`function loadConfig() { return {}; }`);
     ok._reapDisabledOverlays();
     expect(ok.__destroyed).toEqual(['x']);
+  });
+});
+
+describe('a hidden overlay holds no renderer', () => {
+  // "we have a toggle in taskbar for 'Hide Overlays when Everquest is not
+  // running', and we should adhere to that" (Uilnayar 2026-08-04). Existence
+  // tracks VISIBILITY, not just the pref — which is where most of the saving
+  // is, since EQ is closed most of the day.
+  const RUNNING = { showHud: true, showCharm: true, overlaysLocked: true };
+
+  it('builds the enabled set while EQ is running', () => {
+    const h = harness({ cfg: RUNNING, eqRunning: true });
+    h._materializeEnabledOverlays();
+    expect(h.__live().sort()).toEqual(['charmWindow', 'overlayWindow']);
+  });
+
+  it('builds nothing while EQ is closed and the gate is on', () => {
+    const h = harness({ cfg: RUNNING, eqRunning: false });
+    h._materializeEnabledOverlays();
+    expect(h.__live()).toEqual([]);
+  });
+
+  it('frees them when EQ goes away', () => {
+    const h = harness({ cfg: RUNNING, eqRunning: false, alive: ['overlayWindow', 'charmWindow'] });
+    h._reapDisabledOverlays();
+    expect(h.__destroyed.sort()).toEqual(['charmWindow', 'overlayWindow']);
+    expect(h.__log.join(''), 'the log says WHY, not just that it happened')
+      .toMatch(/EverQuest is not running/);
+  });
+
+  it('keeps them when the user turned that gate OFF', () => {
+    // hideOverlaysWhenEqDown === false means "always show", so always exist.
+    const cfg = { ...RUNNING, hideOverlaysWhenEqDown: false };
+    const h = harness({ cfg, eqRunning: false, alive: ['overlayWindow', 'charmWindow'] });
+    h._reapDisabledOverlays();
+    expect(h.__destroyed).toEqual([]);
+  });
+
+  it('frees them in quiet mode too — same argument', () => {
+    const h = harness({ cfg: { ...RUNNING, quietMode: true }, alive: ['overlayWindow'] });
+    h._reapDisabledOverlays();
+    expect(h.__destroyed).toEqual(['overlayWindow']);
+    expect(h.__log.join('')).toMatch(/quiet mode/);
+  });
+
+  it('NEVER frees the trigger overlay for the EQ gate or quiet mode', () => {
+    // #97: TTS fires from the hidden window, and triggers.html polls the agent
+    // itself — no window, no voice. Reaping it would trade a missed raid
+    // callout for 35 MB at exactly the time nobody cares about 35 MB.
+    for (const cfg of [
+      { enableTriggerTts: true, overlaysLocked: true },                    // EQ down
+      { enableTriggerTts: true, overlaysLocked: true, quietMode: true },
+    ]) {
+      const h = harness({ cfg, eqRunning: false, alive: ['triggerWindow'] });
+      h._reapDisabledOverlays();
+      expect(h.__live(), JSON.stringify(cfg)).toEqual(['triggerWindow']);
+    }
+  });
+
+  it('still builds everything for placement while EQ is closed', () => {
+    // Unlocking to position overlays before launching EQ is a normal thing to
+    // do, and _eqGateOk is bypassed there for exactly that reason.
+    const h = harness({ cfg: { overlaysLocked: false }, eqRunning: false });
+    h._materializeEnabledOverlays();
+    expect(h.__live()).toHaveLength(PAIRS.length);
+  });
+
+  it('materialize and reap agree about every case', () => {
+    // They are the two halves of one predicate; if they ever disagreed, an
+    // overlay would be created and destroyed on every visibility pass.
+    const cases = [
+      { cfg: RUNNING, eqRunning: true },
+      { cfg: RUNNING, eqRunning: false },
+      { cfg: { ...RUNNING, quietMode: true }, eqRunning: true },
+      { cfg: { ...RUNNING, hideOverlaysWhenEqDown: false }, eqRunning: false },
+      { cfg: { overlaysLocked: false }, eqRunning: false },
+      { cfg: { enableTriggerTts: true, overlaysLocked: true }, eqRunning: false },
+    ];
+    for (const c of cases) {
+      const h = harness(c);
+      h._materializeEnabledOverlays();
+      const built = h.__live().slice();
+      h._reapDisabledOverlays();
+      expect(h.__live(), JSON.stringify(c)).toEqual(built);
+      expect(h.__destroyed, JSON.stringify(c)).toEqual([]);
+    }
   });
 });
 

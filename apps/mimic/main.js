@@ -5012,13 +5012,35 @@ function _overlayForcedOn(cfg, e) {
   return false;
 }
 
+// Does this overlay need a window right now?
+//
+// "we have a toggle in taskbar for 'Hide Overlays when Everquest is not
+// running', and we should adhere to that" (Uilnayar 2026-08-04). Right: an
+// overlay the EQ gate is hiding has no reason to hold an ~35 MB renderer, and
+// the same argument covers quiet mode. So existence tracks VISIBILITY, not just
+// the pref — which is the bulk of the saving, since EQ is closed most of the
+// day.
+//
+// One exception, and it is load-bearing: the trigger overlay. #97 has TTS
+// firing from the HIDDEN window, and triggers.html polls the agent itself —
+// no window, no voice. It exists whenever enableTriggerTts is on, gate or no
+// gate. Reaping it would trade a missed raid callout for 35 MB while EQ is
+// closed, which is precisely when nobody cares about the 35 MB.
+function _overlayWanted(cfg, e) {
+  if (_overlayForcedOn(cfg, e)) return true;
+  if (!cfg[e.flag]) return false;
+  if (e.key === 'trigger') return true;
+  if (cfg.quietMode) return false;
+  return _eqGateOk(cfg);
+}
+
 // Build any window whose overlay is (or can be) shown. Cheap no-op once they
 // exist, so it is safe to call on every visibility pass.
 function _materializeEnabledOverlays() {
   let cfg; try { cfg = loadConfig(); } catch { cfg = {}; }
   for (const e of _OVERLAY_WINDOWS) {
     if (e.get()) continue;
-    if (!cfg[e.flag] && !_overlayForcedOn(cfg, e)) continue;
+    if (!_overlayWanted(cfg, e)) continue;
     try { e.create(); }
     catch (err) { appendAgentLog(`[overlay] could not create ${e.key}: ${err && err.message}\n`); }
   }
@@ -5033,11 +5055,14 @@ function _reapDisabledOverlays() {
   for (const e of _OVERLAY_WINDOWS) {
     const win = e.get();
     if (!win) continue;
-    if (cfg[e.flag] || _overlayForcedOn(cfg, e)) continue;
+    if (_overlayWanted(cfg, e)) continue;
     if (_inSingleSetup(win)) continue;
     try { if (!win.isDestroyed()) win.destroy(); } catch { /* already gone */ }
     e.drop();
-    appendAgentLog(`[overlay] freed ${e.key} — ${e.flag} is off\n`);
+    const why = !cfg[e.flag] ? `${e.flag} is off`
+              : cfg.quietMode ? 'quiet mode'
+              : 'EverQuest is not running';
+    appendAgentLog(`[overlay] freed ${e.key} — ${why}\n`);
   }
 }
 
@@ -7751,14 +7776,24 @@ ipcMain.handle('restart-to-update', () => {
 // that Mimic costs nothing at idle, so it runs at most once every 12s and only
 // while something is actually asking for metrics — i.e. while the Resource use
 // window is open. Everything falls back to the committed figure.
+// OFF BY DEFAULT. "I'd rather not take up extra cycles all the time just to be
+// right and match Task Manager, but we should explain that we are provisioned
+// for more committed RAM and that's why it wouldn't match" (Uilnayar
+// 2026-08-04) — so the default is the free number plus the explanation, and
+// this is a checkbox in the Resource use window for when an exact comparison is
+// actually wanted. Each run times itself and reports the cost next to the
+// toggle: a number measured on the user's machine beats an estimate from ours.
 const _WS_TTL_MS = 12_000;
-let _wsPrivate = { at: 0, byPid: new Map(), inFlight: false };
+let _wsPrivate = { at: 0, byPid: new Map(), inFlight: false, lastMs: 0 };
 function _refreshPrivateWorkingSet(pids) {
   if (process.platform !== 'win32') return;
+  let cfg; try { cfg = loadConfig(); } catch { return; }
+  if (!cfg.exactMemory) { _wsPrivate.byPid = new Map(); return; }
   if (_wsPrivate.inFlight) return;
   if (Date.now() - _wsPrivate.at < _WS_TTL_MS) return;
   if (!pids || !pids.length) return;
   _wsPrivate.inFlight = true;
+  const started = Date.now();
   try {
     const { execFile } = require('child_process');
     const filter = pids.map(p => `IDProcess=${p}`).join(' OR ');
@@ -7770,6 +7805,7 @@ function _refreshPrivateWorkingSet(pids) {
         // Stamp the time even on failure, or a broken query would re-spawn
         // PowerShell on every single 2s poll.
         _wsPrivate.at = Date.now();
+        _wsPrivate.lastMs = _wsPrivate.at - started;
         if (err || !stdout) return;
         const byPid = new Map();
         for (const line of String(stdout).split(/\r?\n/)) {
@@ -7780,6 +7816,17 @@ function _refreshPrivateWorkingSet(pids) {
       });
   } catch { _wsPrivate.inFlight = false; _wsPrivate.at = Date.now(); }
 }
+// Checkbox in the Resource use window. Clearing it drops the cached snapshot on
+// the next refresh, so the card falls straight back to the committed figure.
+ipcMain.handle('set-exact-memory', (_e, on) => {
+  const cfg = loadConfig();
+  cfg.exactMemory = !!on;
+  saveConfig(cfg);
+  if (!cfg.exactMemory) { _wsPrivate.byPid = new Map(); _wsPrivate.lastMs = 0; }
+  else _wsPrivate.at = 0;                    // let the next poll query at once
+  appendAgentLog(`[metrics] exact memory (Windows working-set query) ${cfg.exactMemory ? 'ON' : 'off'}\n`);
+  return !!cfg.exactMemory;
+});
 
 function _windowLabelsByPid() {
   const byPid = new Map();
@@ -7859,6 +7906,9 @@ ipcMain.handle('app-metrics', () => {
   // have run yet. Say which basis is on screen rather than let a number that
   // can't be compared to Task Manager pass as one that can.
   out.memBasis = anyEstimated ? (anyWorkingSet ? 'workingSet' : 'commit') : 'workingSetPrivate';
+  // So the card can render the checkbox and show what the query costs HERE.
+  try { out.exactMemory = !!loadConfig().exactMemory; } catch { out.exactMemory = false; }
+  out.wsQueryMs = _wsPrivate.lastMs || 0;
   // The agent is a spawned node process, so it is NOT in getAppMetrics().
   try { if (agentProc && agentProc.pid) out.agent = { pid: agentProc.pid }; } catch { /* */ }
   out.totalCpu   = Math.round(out.procs.reduce((a, p) => a + p.cpu, 0) * 10) / 10;

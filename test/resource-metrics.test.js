@@ -112,6 +112,25 @@ describe('memory basis', () => {
 describe('the working-set query does not become the cost it measures', () => {
   const fn = sliceBlock(src, 'function _refreshPrivateWorkingSet(pids) {', '\n}');
 
+  it('does NOTHING unless the user opted in', () => {
+    // "I'd rather not take up extra cycles all the time just to be right and
+    // match Task Manager" (Uilnayar 2026-08-04). Default off; the free number
+    // plus an explanation of the difference is the shipped behaviour.
+    expect(fn).toMatch(/if \(!cfg\.exactMemory\) \{ _wsPrivate\.byPid = new Map\(\); return; \}/);
+    // …and the opt-out must DROP the snapshot, or stale resident numbers would
+    // keep being printed as if the query were still running.
+    expect(src).toMatch(/ipcMain\.handle\('set-exact-memory'/);
+  });
+
+  it('reports what the query cost on THIS machine', () => {
+    // An estimate from us is worth less than a measurement from them, and the
+    // whole point of the toggle is deciding whether the cost is acceptable.
+    expect(fn).toMatch(/const started = Date\.now\(\);/);
+    expect(fn).toMatch(/_wsPrivate\.lastMs = _wsPrivate\.at - started;/);
+    expect(handler).toMatch(/out\.wsQueryMs = _wsPrivate\.lastMs \|\| 0;/);
+    expect(handler).toMatch(/out\.exactMemory = !!loadConfig\(\)\.exactMemory;/);
+  });
+
   it('rate-limits to one PowerShell spawn per TTL', () => {
     // The card polls every 2s and claims Mimic is free at idle. A query per
     // poll would make this window the biggest CPU consumer on the list.

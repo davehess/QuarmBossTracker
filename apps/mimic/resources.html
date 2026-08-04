@@ -80,40 +80,64 @@
       if (p.type === 'GPU') return 'GPU helper';
       return p.type + (p.name ? ' · ' + p.name : '');
     }
-    // Say which memory figure is on screen. Until 2026-08-04 this summed
-    // workingSetSize, which counts pages SHARED between processes once per
-    // process — every Chromium renderer maps the same Electron framework, so
-    // thirteen processes counted it thirteen times and Mimic read 1267 MB where
-    // Task Manager read 460. Private bytes is the memory unique to each process,
-    // which is what Task Manager's Memory column shows.
+    // Say which memory figure is on screen — Uilnayar checked this against Task
+    // Manager twice and neither reading survived.
+    //
+    // It first summed workingSetSize, which counts pages SHARED between
+    // processes once per process: every Chromium renderer maps the same Electron
+    // framework, so thirteen processes counted it thirteen times (1267 vs 460).
+    // Then privateBytes, which is private COMMIT — provisioned, not resident —
+    // still above Task Manager's resident-only column (274 vs 161).
+    //
+    // Commit is the DEFAULT now, with the difference explained rather than
+    // chased: matching exactly needs a Windows query that costs real CPU in a
+    // window whose whole claim is that Mimic costs none. The checkbox is there
+    // for when an exact comparison is actually worth it.
     var TM_TIP = '<br>To match these names up in Task Manager: <b>Details</b> tab → right-click any '
                + 'column header → <b>Select columns</b> → <b>Command line</b>. Each window carries a '
                + '<code style="background:#0d1117;padding:1px 4px;border-radius:3px">--wp-window=</code> '
                + 'tag there. (The Name column reads the .exe, which is the same file for all of them, '
                + 'so it can\'t be changed.)';
+    // The opt-in checkbox + whatever the last query actually cost on THIS
+    // machine. Rendered as a placeholder that gets its checked state applied
+    // afterwards, so re-rendering never fights the user mid-click.
+    function exactBox(m){
+      if (!window.mimic || !window.mimic.setExactMemory) return '';
+      var cost = m.wsQueryMs
+        ? ' <span style="color:#6e7681">last query took ' + esc(m.wsQueryMs) + 'ms</span>'
+        : '';
+      return '<div style="margin-top:8px;font-size:11px">'
+           + '<label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer">'
+           + '<input type="checkbox" id="wpExactMem" style="cursor:pointer" />'
+           + '<span>Match Task Manager exactly</span></label>'
+           + '<span style="color:#6e7681"> — asks Windows for the resident figure every 12s. '
+           + 'Off by default so this window stays free.</span>' + cost
+           + '</div>';
+    }
     function basisNote(m){
       if (m.memBasis === 'workingSetPrivate') {
         return '<div style="margin-top:6px;color:#6e7681;font-size:11px">'
              + 'Memory is the <b>private working set</b> read from Windows — the same figure Task '
              + 'Manager\'s Memory column shows, so the two should agree. '
              + '<b>Committed</b> is the larger number next to it: every private page the processes '
-             + 'have reserved, including ones not currently in RAM. Commit is always higher, and by '
-             + 'a different amount per process (the GPU helper reserves buffers it never touches), '
-             + 'which is why the two totals differ rather than one being wrong.'
+             + 'have reserved, including ones not currently in RAM.'
              + TM_TIP + '</div>';
       }
-      if (m.memBasis === 'commit') {
-        return '<div style="margin-top:6px;color:#f0b429;font-size:11px">'
-             + 'Memory is <b>committed private bytes</b> — Windows has not answered the working-set '
-             + 'query yet (it refreshes every 12s). This reads HIGHER than Task Manager, because '
-             + 'commit counts private pages that are not currently in RAM. Give it a moment.'
-             + TM_TIP + '</div>';
-      }
-      return '<div style="margin-top:6px;color:#f0b429;font-size:11px">'
-           + 'Memory is <b>working set</b> — neither private figure was available. This OVERSTATES '
-           + 'the total, because pages shared between processes are counted once per process. '
-           + 'Trust Task Manager over this number.'
-           + '</div>';
+      // The DEFAULT path. Not an apology — commit is a real number, it is just
+      // not the one Task Manager prints, and saying why costs nothing.
+      return '<div style="margin-top:6px;color:#6e7681;font-size:11px">'
+           + 'Memory is <b>committed private bytes</b>: what Windows has <b>provisioned</b> for '
+           + 'Mimic, not what is sitting in RAM. Task Manager\'s Memory column shows only the '
+           + 'resident part, so <b>it will read lower than this and both are correct</b>. Processes '
+           + 'reserve more than they touch — the GPU helper is usually the biggest gap — so there '
+           + 'is no single factor between the two. Tick the box below if you want the resident '
+           + 'figure instead.'
+           + (m.memBasis === 'workingSet'
+              ? ' <span style="color:#f0b429">(Private bytes were unavailable, so this is the '
+                + 'whole working set — higher again, since pages shared between processes get '
+                + 'counted once per process.)</span>'
+              : '')
+           + TM_TIP + '</div>';
     }
     function paint(m){
       if (!primed) { primed = true; summary.textContent = 'measuring…'; return; }
@@ -131,16 +155,18 @@
         : '';
       // Show committed alongside in-RAM. One number invites "this disagrees
       // with Task Manager"; two label the difference as what it is.
-      var commit = (m.totalCommitMb && m.totalCommitMb !== m.totalMemMb)
+      var exact = m.memBasis === 'workingSetPrivate';
+      var commit = (exact && m.totalCommitMb && m.totalCommitMb !== m.totalMemMb)
         ? '<span style="color:#6e7681"> (' + esc(m.totalCommitMb) + ' MB committed)</span>' : '';
       summary.innerHTML = '<span style="color:#7ee787;font-size:15px">' + esc(m.totalCpu) + '%</span>'
         + '<span style="color:#6e7681"> CPU of one core · </span>'
         + '<span style="color:#79c0ff;font-size:15px">' + esc(m.totalMemMb) + '</span>'
-        + '<span style="color:#6e7681"> MB in RAM</span>' + commit
+        + '<span style="color:#6e7681"> MB ' + (exact ? 'in RAM' : 'committed') + '</span>' + commit
         + '<span style="color:#6e7681"> · ' + esc(m.procs.length) + ' processes ('
         + esc(m.windows) + ' windows)</span> <span class="' + eqCls + '">' + esc(eqTxt) + '</span>'
         + ignored
-        + basisNote(m);
+        + basisNote(m)
+        + exactBox(m);
       var rows = m.procs.slice().sort(function (a, b) { return b.memMb - a.memMb; });
       var h = '<tr><th>process</th><th style="text-align:right">CPU</th><th style="text-align:right">memory</th></tr>';
       for (var i = 0; i < rows.length; i++) {
@@ -158,6 +184,23 @@
            + '</td><td></td><td style="text-align:right;color:#6e7681">—</td></tr>';
       }
       table.innerHTML = h;
+      wireExact(m);
+    }
+    // Checked state is applied AFTER render (never baked into the HTML), so a
+    // repaint mid-click can't fight the user. The listener is attached once.
+    var exactWired = false;
+    function wireExact(m){
+      var box = document.getElementById('wpExactMem');
+      if (!box) return;
+      if (document.activeElement !== box) box.checked = !!m.exactMemory;
+      if (exactWired) return;
+      exactWired = true;
+      document.addEventListener('change', function (e) {
+        var t = e.target;
+        if (!t || t.id !== 'wpExactMem') return;
+        if (window.mimic && window.mimic.setExactMemory) window.mimic.setExactMemory(t.checked);
+        tick();
+      });
     }
     function tick(){ window.mimic.appMetrics().then(paint).catch(function(){}); }
     tick();
