@@ -246,6 +246,7 @@ function _bidsFromAuction(auctionId, a) {
       rank:           b?.Rank || b?.rank || null,
       value:          Number.isFinite(Number(valueRaw)) ? Number(valueRaw) : null,
       bid_at:         b?.Date || b?.date || b?.CreatedAt || null,
+      raw:            b,   // see _bidRow — bid_at is NULL fleet-wide; keep the payload
       fetched_at:     new Date().toISOString(),
     };
   }).filter(Boolean);
@@ -271,6 +272,12 @@ function _bidRow(auctionId, b, position) {
     rank:           _lootField(b, 'Rank', 'rank') || null,
     value:          Number.isFinite(valueRaw) ? Number(valueRaw) : null,
     bid_at:         bidAt || null,
+    // Verbatim payload. bid_at is NULL on every row despite the matcher above
+    // trying six names and the OpenDKP web UI showing a Date column — so the
+    // API uses some other key. Ties are broken by who bid FIRST, so this is an
+    // award-correctness gap, not cosmetics. Keeping the raw object makes the
+    // next sync reveal the real field name; the fix is then one _lootField entry.
+    raw:            b,
     fetched_at:     new Date().toISOString(),
   };
 }
