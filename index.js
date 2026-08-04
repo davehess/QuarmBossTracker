@@ -6553,6 +6553,11 @@ async function _handleAgentThreatSnapshot(req, res) {
     guild_id:    guildId,
     encounter_id: payload?.encounter_id || null,
     boss_name:   payload?.boss_name || null,
+    // The uploader's OWN target at sample time (agent v3.5.5+) — distinct from
+    // boss_name, which is the fight. Healer-on-heal-target vs off-tank-on-add
+    // is exactly the distinction healing attribution needs. Older agents don't
+    // send it; the column stays null.
+    target_name: payload?.target_name ? String(payload.target_name).slice(0, 80) : null,
     started_at:  payload?.started_at || null,
     snapshot_at: payload?.snapshot_at || new Date().toISOString(),
     uploader:    payload?.uploader || payload?.character || null,

@@ -67,6 +67,14 @@ const GROUPS: KnobGroup[] = [
     ],
   },
   {
+    title: '📈 Fight telemetry (agent-side, live in ~90s)',
+    blurb: 'How finely the per-fight damage/threat curve is sampled. Only applies DURING a fight — between pulls the agent sends nothing at all.',
+    knobs: [
+      { key: 'threat_snapshot_ms', label: 'Snapshot cadence (ms)', default: 6000, min: 2000, max: 60000, step: 1000,
+        desc: 'How often each Mimic posts the running per-player damage/heal/damage-taken rollup. Lower = a finer fight curve (better for "when exactly did the tank start dropping"), at more rows. Clamped 2s–60s agent-side, so a bad value here degrades rather than floods: the ingest budget is 120/min per uploader and the 2s floor is 30/min. Cost lands almost entirely in the 7-day window — older rows are thinned to 1/min regardless.' },
+    ],
+  },
+  {
     title: '⛓ CH chain (agent-side, live in ~90s)',
     blurb: 'Complete Heal rotation overlay behavior.',
     knobs: [
