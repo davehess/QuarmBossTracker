@@ -335,7 +335,18 @@ reaches history). The consensus pass is TWO-PASS — a single-pass median includ
 the skewed observers and is dragged by them. `offset_ms` is signed
 server-minus-client; correct a client timestamp with `ts + offset_ms`.
 `spread_ms` is the honesty column: high spread = unstable clock, do not trust it.
-Measured 2026-08-03: two installs at −42s and −14s, everyone else within ±4s.
+**Sign convention, stated once because a flipped sign here corrupts every
+correction:** `offset_ms` positive = client clock BEHIND (server-minus-client);
+the three flagged installs are at **+42s/+14s/+7s**, i.e. their machines read
+early-looking timestamps and `ts + offset_ms` moves them forward to true time.
+Everyone else is within ±3s. **The bad clocks DRIFT (~1.5–3 s/day) and a
+one-time sync doesn't hold** — one was observed synced to ~0 on Jul 26–27 and
+was 11s off again two days later — so offsets are a time series, resolved near
+the event's own timestamp, never a stored scalar. A third estimator
+(`min(created_at − event_ts)` per install per day — server stamp minus agent
+stamp, minimum as a latency-free lower bound) needs no agent at all, works on
+history, and cross-checks the other two. Full analysis:
+`docs/DESIGN-clock-correction.md`.
 
 ### Buff-cast spell-id resolution (`_resolveSpellIdByName`) — 2026-08-04
 When several spells share one landing message the agent picks a representative,

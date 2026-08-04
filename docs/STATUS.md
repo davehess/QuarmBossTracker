@@ -1418,12 +1418,17 @@ before anyone touches them.** All four exist because of the two bugs found
   retune by eye — that's how we got 30s.** Deliberately untouched.
 - **#202 Apply the clock offset at ingest, keep the raw stamp** —
   **`docs/DESIGN-clock-correction.md`. The premise changed: the bad clocks are
-  DRIFTING, ~3 seconds per day, not set wrong once.** Fargan's install went
-  **43.5s → 56.4s in four days**; Bardtholemu's 10.2s → 22.3s. So a single stored
-  `offset_ms` is stale within a week and corrections must resolve an offset
-  *near the event's own timestamp* — offsets are a time series, not a number.
-  **By Wednesday Fargan's install will be ~1 minute off**, enough to move a kill
-  across the 19:30 raid boundary by itself.
+  DRIFTING continuously (~1.5–3 s/day), not set wrong once — and a one-time sync
+  provably doesn't hold.** 30-day history (morning re-verification, 2026-08-04):
+  Fargan's install has slid **uninterrupted for ≥ a month** (7.5s Jul 8 → 56.5s
+  Aug 4, never corrected, last day +8s); **Bardtholemu's was manually synced to
+  ~0 on Jul 26–27 and was 11s off again by Jul 29** — we watched the fix fail.
+  So a single stored `offset_ms` is stale within a week and corrections must
+  resolve an offset *near the event's own timestamp* — offsets are a time
+  series, not a number, **and interpolation must not span a sync-reset step**
+  (Bardtholemu's 39s → 0 overnight). **By Wednesday Fargan's install will be
+  ~1 minute off**, enough to move a kill across the 19:30 raid boundary by
+  itself.
   **A third estimator fell out of data we already have and costs nothing:**
   every table with an agent-stamped event time also has a server-stamped
   `created_at`, and `min(created_at − event_ts)` per install per day is a lower
@@ -1433,19 +1438,28 @@ before anyone touches them.** All four exist because of the two bugs found
   because consensus needs a 3+-witness death and that uploader never had one.
   Use `min`, never mean/median: one control day shows a 44-hour lag from a
   `--since` backfill. Guard with a ~300s ceiling + a 30-row floor.
-  Control group (the other ~20 installs) is flat at ≈0 across the same window,
-  which is what rules out a global upload slowdown.
+  **Verified cross-stream** (the clock-vs-latency discriminator): per-day
+  min-lag computed independently from `buff_casts` and `chat_messages` agrees
+  within **0.1–0.4s on every day for all three installs** — pipeline latency
+  can't do that; a clock does. Control group (18 of 21 uploaders with volume,
+  last 4 days) sits between −2.9s and +1.8s, which rules out a global upload
+  slowdown. **Pulse is live**: the first 3.5.15 install (Hitya's) began
+  heartbeating 2026-08-04 ~11:30 UTC — pulse +0.4s vs consensus −1.3s, agreeing
+  within spread, so all three estimators now cross-check.
   Still recommend ingest-time `corrected_at` alongside the raw column, migrating
   consumers one at a time (death dedup first). Blocked on the call.
 - **#203 Tell the THREE drifting installs — and the advice is not "fix your
-  clock".** They are drifting ~3 s/day (Fargan **+56s and climbing**,
-  Bardtholemu **+22s**, `6333…7023` **+7s**), so a one-time correction drifts
-  straight back. The actual fix is **Windows time sync**: Settings → Time &
-  language → Date & time → "Sync now", with "Set time automatically" ON; if it
-  won't stay on, the `w32time` service is disabled and needs setting to
-  Automatic. Draft wording in `DESIGN-clock-correction.md` §3. The agent warns
-  its own user once at >5s absolute — a **rate** alert would have caught all
-  three far earlier, which is an open question in that doc.
+  clock", because we have now WATCHED a fix fail to hold.** Fargan **+56s and
+  climbing** (≥ a month, never corrected), Bardtholemu **+22s** (synced to ~0 on
+  Jul 26–27, 11s off again two days later), and the third install is
+  **Stupidrichard's machine** (+7s, synced ~Jul 25, drifting again) — **who is
+  one of the four clerics on the DI callout roster**, so his cast/callout
+  stamps carry that skew. The actual fix is **Windows time sync**: Settings →
+  Time & language → Date & time → "Sync now", with "Set time automatically" ON;
+  if the offset returns within days, the `w32time` service is disabled and
+  needs setting to Automatic. Draft wording in `DESIGN-clock-correction.md` §3.
+  The agent warns its own user once at >5s absolute — a **rate** alert would
+  have caught all three far earlier, which is an open question in that doc.
   *Loose end: the drifting discord_id `272226525426876416` has no `characters`
   row, so it renders as a bare id — linking it would let the report name a
   person.*

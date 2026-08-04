@@ -161,9 +161,11 @@ player **feigns**, since the feign emits `"<Name> dies."` and this matcher accep
 it. SKs and monks are exactly the classes that both feign and get called out.
 Mob-targeted timers are unaffected in practice — NPCs emit `died.`.
 
-I have not demonstrated it against a real log, so treat it as **plausible, not
-confirmed**. It's a one-character fix (`die[ds]` → `died`) in two places on
-`beta` plus a test. Deliberately not made during a design pass.
+**Update, later the same night: fixed in agent 3.5.14** (`beta`), with an
+end-to-end test that arms a player-targeted countdown, feeds it the feign line,
+and asserts the timer survives — then asserts a real `died.` still cancels it.
+The paragraph above is kept as the record of how it was found: by tracing parse
+gates for this design, not by a bug report.
 
 ## 5. Related standing gap
 

@@ -65,7 +65,7 @@ export const releases: Release[] = [
       { name: '📣 New callouts', blurb: 'Feeblemind on the Overfiend with a 30-second countdown and an OUT call at 26 seconds. Shadow Poison naming who needs the cure. Wave of Death for the Ssra serpents — the one that stuns and feigns half the raid and never appeared in a log we read.' },
     ],
     fixes: [
-      'Two machines were running 42 and 14 seconds behind everyone else, which split single deaths into two on the parse page. Their clocks are now measured and corrected — and if yours drifts, Mimic will tell you.',
+      'Three machines are running behind everyone else — the worst by nearly a minute — which split single deaths into two on the parse page. Those clocks are now measured continuously (correcting the stored timestamps with them is designed and queued), and Mimic warns you if your own clock is off.',
       'Deaths from a daytime XP group could land on a raid parse, because encounters merge within a 30-minute window.',
       'A pending Zeal update now shows in Mimic Mail on the dashboard, not just as a toast you probably missed.',
       'The golden-log parser suite contained no "died." line at all, which is why the feign bug survived a regression net for a month. It does now.',

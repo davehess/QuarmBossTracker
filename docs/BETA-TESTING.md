@@ -68,16 +68,21 @@ Mimic **2.3.0** (**beta** — testers must update) · web **1.1.2**.
 ### 🔴 Highest value — the two that change every number
 
 **1. Clock skew is visible and actionable — and the clocks are DRIFTING.**
-- ⚠️ **Do this before the raid.** Re-measured 2026-08-04: these machines are
-  losing **~3 seconds a day** and still going. Fargan's install
-  **43.5s → 56.4s in four days** — it will be about a **minute** off by
-  Wednesday, enough to move a kill across the 19:30 boundary on its own.
-  Bardtholemu's is at ~22s, and a **third** install (`6333…7023`) is at ~7s and
-  climbing. **Telling them to "fix the clock" is not enough — it drifts back.**
-  They need Windows time sync ON: Settings → Time & language → Date & time →
-  "Sync now" + "Set time automatically". Wording in
+- ⚠️ **Do this before the raid.** Three machines, everyone else fine (18 of 21
+  uploaders sit within ±3s): **Fargan's** is **~56s behind** and has been
+  sliding for **at least a month** without ever being corrected;
+  **Bardtholemu's** is ~22s behind — and here's the kicker: it **was synced to
+  correct on Jul 26–27 and was 11s off again two days later**, so a one-time
+  "fix your clock" provably does not hold; the third is **Stupidrichard's**
+  machine (~7s, same sync-then-drift cycle — and he's on the DI callout
+  roster). They need Windows time sync ON, not a one-off sync: Settings → Time
+  & language → Date & time → "Sync now" + "Set time automatically"; if it
+  drifts back, the `w32time` service is disabled. Wording in
   `DESIGN-clock-correction.md` §3. **If those three sync before the pull, most
   of row 2 fixes itself.**
+- ✅ First green signal already in: one install updated to 3.5.15 this morning
+  and its `pulse` row landed (+0.4s, agreeing with its consensus estimate) —
+  the update path and the pulse pipeline both work in the field.
 - ✅ **Solo:** the agent warns you once if your own clock is off by >5s.
 - 👥 **Multi:** after one boss kill, run the multi-observer spread query in
   `RUNBOOK-death-backfill.md` §3 against a death several people witnessed. **Pass

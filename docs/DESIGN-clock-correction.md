@@ -6,11 +6,17 @@ this matters; this is how to actually do it.*
 
 **The headline, and it is worse than we thought on 2026-08-03:**
 
-> The skewed clocks are **not set wrong once. They are drifting, at about
-> 3 seconds per day, and still going.** Fargan's install went **43.5s → 56.4s in
-> four days**. A single stored `offset_ms` per install is therefore wrong within
-> a week of being measured, and the design has to account for that rather than
-> store a scalar.
+> The skewed clocks are **not set wrong once. They drift continuously at
+> ~1.5–3 s/day — and when someone manually corrects one, it drifts right
+> back.** Fargan's install has been sliding uninterrupted for **at least a
+> month** (7.5s on Jul 8 → 56.5s on Aug 4, never once corrected).
+> Bardtholemu's was synced to ~0 on **Jul 26–27** — we can see the reset in the
+> data — and was 11s off again within two days. A single stored `offset_ms`
+> per install is therefore wrong within a week of being measured, and the
+> design has to account for that rather than store a scalar.
+
+*Re-verified the morning of 2026-08-04, against two independent streams — see
+§1a.*
 
 ---
 
@@ -37,37 +43,71 @@ release, no new stream, and it works on **history**.
 |---|---:|---:|---:|
 | `2722…6416` (Fargan) | 3,744 | **43.5s** | 42.3s |
 | `1706…9824` (Bardtholemu) | 7,950 | **10.2s** | 14.0s |
-| `6333…7023` | 4,591 | **3.3s** | **none — never measured** |
-| every other install (17) | — | ≤ 1.8s | ≈ 0 |
+| `6333…7023` (**Stupidrichard**/Calador/Tildias) | 4,591 | **3.3s** | **none — never measured** |
+| every other install (18) | — | ≤ 1.8s | ≈ 0 |
 
 Two things fall out:
 
 - **Coverage.** `6333…7023` has 4,591 rows and a real (small, growing) skew, but
   **no consensus row at all** — consensus needs a death with 3+ witnesses, and
   this uploader never contributed to one. Min-lag covers every uploader that
-  writes any row.
+  writes any row. (And this one matters: **Stupidrichard is one of the four
+  clerics Uilnayar named for the DI callout roster** — that machine's callout
+  and cast timestamps are ~7s off.)
 - **The estimators disagree for Bardtholemu** (10.2 vs 14.0), and min-lag ought
   to be ≥ the true skew. That is not a contradiction once you look at drift.
 
-### The drift, per day
+### 1a. Cross-stream verification (run 2026-08-04 morning — this is the proof)
 
-| date | Fargan | Bardtholemu | `6333…7023` |
-|---|---:|---:|---:|
-| Jul 29/30 | — | 10.2 | 3.3 |
-| Jul 31 | 43.5 | 13.4 | 5.0 |
-| Aug 1 | 45.4 | — | — |
-| Aug 2 | — | 20.7 | — |
-| Aug 3 | 48.6 | 22.3 | — |
-| Aug 4 | **56.4** | — | 7.4 |
+Clock skew must appear **identically** in every stream that carries an agent
+log-timestamp; pipeline latency will not, because the streams flush through
+different paths. Computing per-day min-lag independently from `buff_casts` and
+`chat_messages`:
 
-≈ **+3.2 s/day** (Fargan), **+3.0 s/day** (Bardtholemu), **+0.8 s/day** (third).
-The disagreement above is simply the two estimators sampling a moving target at
-different times.
+**the two streams agree within 0.1–0.4s on every single day, for all three
+installs** (e.g. Fargan Aug 4: buff 56.4 / chat 56.5; Bardtholemu Aug 3:
+22.3 / 22.4). That agreement is the clock-vs-latency discriminator, and it
+came back unambiguous.
 
-**Control** (the other ~20 installs, same query, same days): `min(lag)` sits
-between −3s and +8s with a daily average near zero, flat across the whole
-window. So this is **per-machine clock drift, not a global upload slowdown** —
-which is the alternative explanation the control exists to kill.
+### The drift, 30 days (chat stream, per-day min-lag, backfill-days > 300s excluded)
+
+| | Fargan `2722…` | Bardtholemu `1706…` | Stupidrichard `6333…` |
+|---|---|---|---|
+| early Jul | 7.5 (Jul 8) | **−0.1 (Jul 6 — fine)** | 0.2–1.8 (fine) |
+| mid Jul | 15.5 → 22.9 (Jul 13–18) | 9.4 → 16.5, dips to 3.9 on Jul 13 | fine until Jul 18 |
+| Jul 20–25 | 26.0 → 32.4 | 23.6 → **39.3** | 2.5 → 5.9 |
+| **Jul 26–27** | (no data) | **1.0 / −0.2 — MANUALLY SYNCED** | ~1.4 on Jul 25 — synced |
+| Jul 29–31 | 43.8 | **11.4 — drifting again** | 2.7 → 5.0 |
+| Aug 3–4 | 48.8 → **56.5** | 22.4 | 7.4 |
+
+Three different machines, one story:
+
+- **Fargan:** ≥ a month of uninterrupted drift, **never corrected once**.
+  Long-run rate ~1.6 s/day, but the last day jumped **+7.7s** (confirmed on
+  both streams, so it is real, not sampling) — consistent with sleep/hibernate
+  drift or a failing RTC, i.e. it may be getting worse.
+- **Bardtholemu:** drifts ~3 s/day, was **manually synced to correct on
+  Jul 26–27, and was 11s off again by Jul 29**. We have now *watched* a
+  one-time "fix your clock" fail on this machine. This is the direct evidence
+  behind §3's advice.
+- **Stupidrichard's machine:** same cycle at ~0.8 s/day — fine until ~Jul 18,
+  drifted to ~6s, corrected ~Jul 25, drifting again, now ~7s.
+
+The reset days are also a free calibration: when Bardtholemu's clock was
+correct, min-lag read **−0.2 to 1.0s** — so the pipeline-latency floor in this
+estimator is ≈ 0–1s, and min-lag ≈ true skew to within a second.
+
+**Control** (the other 18 installs with volume, last 4 days): every one sits
+between **−2.9s and +1.8s**. So this is **per-machine clock drift on exactly
+three machines, not a global upload slowdown** — which is the alternative
+explanation the control exists to kill.
+
+### The pulse estimator is now live and agrees
+
+First working 3.5.15 install (Hitya's) began heartbeating the morning of
+2026-08-04: `pulse` offset **+0.4s** (1,772 samples, spread 1.7s) vs that
+install's consensus estimate **−1.3s**. Both ≈ 0, agreeing within the spread —
+the third estimator cross-checks the other two on the first machine to run it.
 
 ### Why `min`, not mean or median
 
@@ -90,7 +130,11 @@ three-week-old event with today's offset would be *worse* than not correcting.
 
 Store **per-install, per-day** samples (`method` ∈ `pulse` | `consensus` |
 `min_lag`) and resolve a correction by looking up the offset **nearest the
-event's own timestamp**, interpolating between samples. Keep the existing
+event's own timestamp**, interpolating between samples — **but never across a
+step**. The 30-day history shows manual sync events (Bardtholemu Jul 26–27:
+39s → 0 overnight); interpolating across that discontinuity would smear a
+20s error over two days of events. Treat a day-over-day change beyond ~5s as
+a step: use the nearer side, don't average. Keep the existing
 single-row table as a "current best" view for the dashboard if convenient, but
 it must not be the thing corrections read.
 
@@ -142,24 +186,34 @@ switch would not be.
 - **Anything where the raw agent stamp IS the subject** (agent diagnostics, the
   clock-offset samples themselves). Correcting those is circular.
 
-## 3. #203 — what to actually tell the two (three) raiders
+## 3. #203 — what to actually tell the three raiders
 
-The advice changes because of the drift finding. "Fix your clock" is wrong — they
-would drift straight back at 3 s/day.
+The advice changes because of the drift finding. "Fix your clock" is wrong — and
+this is no longer a prediction: **Bardtholemu's machine was synced on Jul 26–27
+and was 11 seconds off again two days later.** A one-time sync provably does not
+hold on these machines.
 
-> Your machine's clock is losing about 3 seconds a day and is currently ~1 minute
-> behind. That is Windows time sync being off or blocked, not a one-off. Fix:
-> **Settings → Time & language → Date & time → "Sync now"**, and make sure **"Set
-> time automatically"** is on. If it will not stay on, the Windows Time service
-> (`w32time`) is disabled — set it to Automatic.
+> Your machine's clock is losing seconds every day (one install is ~a minute
+> behind and has been sliding for over a month). That is Windows time sync
+> being off or blocked, not a one-off. Fix: **Settings → Time & language →
+> Date & time → "Sync now"**, and make sure **"Set time automatically"** is on.
+> If the offset comes back within a few days, the Windows Time service
+> (`w32time`) is disabled or losing to another sync tool — set it to Automatic.
 
-Three installs, not two: `6333…7023` is drifting at 0.8 s/day with no consensus
-estimate ever taken. And the loose end from the runbook still stands — Fargan's
-discord_id has no `characters` row, so the report names an id rather than a
-person.
+The three installs:
 
-**By Wednesday's raid, Fargan's install will be roughly a minute off.** That is
-enough to move a kill across a raid-window boundary on its own.
+| machine | current | history |
+|---|---|---|
+| Fargan's (`2722…6416`) | **~56s behind** | ≥ a month of drift, never corrected; last day jumped +8s |
+| Bardtholemu's (`1706…9824`) | ~22s behind | synced Jul 26–27, drifting again since |
+| **Stupidrichard's** (`6333…7023`) | ~7s behind | synced ~Jul 25, drifting again — and he is on the DI callout roster |
+
+The loose end from the runbook still stands — Fargan's discord_id has no
+`characters` row, so automated reports name an id rather than a person.
+
+**By Wednesday's raid, Fargan's install will be roughly a minute off** (more if
+the recent +8s/day rate holds). That is enough to move a kill across a
+raid-window boundary on its own.
 
 ## 4. Open questions for Hitya
 
