@@ -54,6 +54,17 @@ Mimic **2.3.0** (**beta** — testers must update) · web **1.1.2**.
 > number from a stable reporter on Wednesday is still inflated. This is correct
 > per the routing rule — just don't read it as a regression.
 
+> ### ⚠️ Before the raid: the new callouts do not fire yet
+>
+> The Feeblemind, Shadow Poison and Wave of Death triggers are `^`-anchored, and
+> patterns match against the raw line *including* the `[timestamp] ` prefix — so
+> `^` anchors before the timestamp and they can never match. **37 of our 109
+> enabled triggers have the same defect** (the long-open #190). One-line fix,
+> reaches the fleet in ~2 minutes, needs no release — but it is **not applied**,
+> because turning all 37 on at once is a genuine noise decision.
+> **`docs/RUNBOOK-dead-triggers.md` has the staged SQL.** Row 11 below cannot
+> pass until Stage 1 runs.
+
 ### 🔴 Highest value — the two that change every number
 
 **1. Clock skew is visible and actionable.**
@@ -122,7 +133,9 @@ behind, and **clears** when current.
 ### ⚫ Vex Thal specifics
 
 **11. Shadow Poison callout** fires when it lands on a player (it's curable —
-that's why it's worth calling). This is its first live raid.
+that's why it's worth calling). This is its first live raid. **Blocked until the
+Stage 1 SQL in `RUNBOOK-dead-triggers.md` runs** — as shipped, the pattern cannot
+match. Don't score this row until then.
 
 **12. Feeblemind in/out will NOT be exercised** — that's Thought Horror
 Overfiend, and Uilnayar's note was "at least a week and a half" out. Don't score

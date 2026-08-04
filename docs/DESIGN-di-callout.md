@@ -177,6 +177,11 @@ network path is needed.
 1. **Fix the dead trigger** — swap the invented pattern for the real
    `cast_on_other` line, so "DI applied to \<tank\>" works *today*. One
    `guild_triggers` UPDATE; reaches the fleet in ~2 minutes, no release.
+   **Write it UNANCHORED, or anchored as `^\[.+?\]\s+`** — patterns match the raw
+   line including the `[timestamp] ` prefix, so a leading bare `^` is dead on
+   arrival. That is a separate defect affecting 37 enabled triggers; see
+   `RUNBOOK-dead-triggers.md`. (The DI trigger dodged it only because its author
+   left off the anchor — it fails on invented text instead.)
 2. **Capture the DI-fired line** from a real log (see §0). Blocking for the fire
    callout, nothing else.
 3. **Ship the two-name selector** agent-side behind the existing chain overlay.

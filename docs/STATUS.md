@@ -1339,7 +1339,22 @@ Items that already had ledger numbers keep them (#56, #68–70, #75, #80, #81,
 minted here — the numbering is now owned by this ledger, next free is
 **#208** (#200–#207 minted 2026-08-04 for the death/timestamp follow-ups and
 the callout designs; they're written up in the Open TODO section, not here):
-- **#190** dead ^-anchored guild triggers batch (rn-buster-audit follow-up)
+- **#190** dead ^-anchored guild triggers batch (rn-buster-audit follow-up) —
+  **MEASURED + FIX PREPARED 2026-08-04: `docs/RUNBOOK-dead-triggers.md`.**
+  **37 of 109 enabled triggers can never match a log line**, including the eight
+  Feeblemind / Shadow Poison / Wave of Death callouts built this session — one of
+  which was rushed out ahead of a raid and has never fired. Patterns run against
+  the RAW line (`[Sun Aug 02 21:10:01 2026] …`) with flags `i` and no `m`, so `^`
+  anchors before the timestamp, not before the message. Verified by lifting the
+  shipped `_translateDotNetRegex` and running the real compiled patterns against
+  real-shaped lines, with an unanchored control to prove it's the anchor.
+  One-line fix (`^` → `^\[.+?\]\s+`) restores matching and captures cleanly
+  including multi-word/backtick names; **deleting the `^` instead is wrong** —
+  `{s}` allows spaces, so it captures a leading space and corrupts every
+  name-keyed consumer. **Not applied — needs Hitya's go-ahead**, and the runbook
+  stages it: the 8 from this session (requested work, boss-scoped, low noise)
+  vs the other 29 (long dormant; six slow-landed callouts firing on every pull
+  is a real noise risk the day before a Vex Thal night).
 - **#191** Parse Log duplicate embeds (near-identical archive entries seconds apart)
 - **#192** onboarding overhaul v1 (`DESIGN-onboarding-overhaul.md`)
 - **#193** Zeal spawn-id ask + consuming it (`zeal-spawn-id-request.md`)
