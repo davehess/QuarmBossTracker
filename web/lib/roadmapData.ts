@@ -37,6 +37,46 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'what-counts-as-a-death',
+    title: '💀 What counts as a death',
+    version: 'Bot 3.1.7 · Web 1.1.2',
+    date: '2026-08-04',
+    headline: 'It turns out 44% of every death we have ever recorded never happened — a Shadow Knight feigning read as a Shadow Knight dying. Fixing that pulled a thread through the death list, the trash tally, the cure queue and the raid review.',
+    features: [
+      { name: '💀 Feign death is no longer a death', blurb: 'Feign Death and Death Peace print "Soandso dies." — and we counted every one. Shadow Knights averaged 58 deaths each, Necromancers 15, a Cleric 5.5, a Bard 1. Those two classes were 44% of all deaths ever stored. New parses are clean; the old numbers need a log re-run to correct, which is coming.' },
+      { name: '💊 Shadow Poison now reaches the cure queue', blurb: 'It has been landing on us 324 times a week and never once showed up as curable, because the spell was stored without an id. It carries 5 poison counters, so one weak cure will not strip it. A callout now names who to cure, and 28,000 other landings got their ids back at the same time.' },
+      { name: '🧟 Trash cleared counts only the raid', blurb: 'Last review said 967 mobs and 9h22m of combat for a 1h48m raid — it was counting everything anyone killed that day, including lunchtime XP groups. Now gated to actual raid hours, so expect a much smaller and much truer number.' },
+      { name: '🗓️ Every fight knows its raid night', blurb: '193 raid nights reconstructed from our own history and 1,022 encounters linked to them. "Which raid was this?" used to be a guess based on timestamps; now it is a fact.' },
+      { name: '📣 New callouts', blurb: 'Feeblemind on the Overfiend with a 30-second countdown and an OUT call at 26 seconds. Shadow Poison naming who needs the cure. Wave of Death for the Ssra serpents — the one that stuns and feigns half the raid and never appeared in a log we read.' },
+    ],
+    fixes: [
+      'Two machines were running 42 and 14 seconds behind everyone else, which split single deaths into two on the parse page. Their clocks are now measured and corrected — and if yours drifts, Mimic will tell you.',
+      'Deaths from a daytime XP group could land on a raid parse, because encounters merge within a 30-minute window.',
+      'A pending Zeal update now shows in Mimic Mail on the dashboard, not just as a toast you probably missed.',
+      'The golden-log parser suite contained no "died." line at all, which is why the feign bug survived a regression net for a month. It does now.',
+    ],
+  },
+  {
+    key: 'mimic-2-3-0-beta',
+    title: '🔄 Mimic 2.3.0 — it updates itself now',
+    version: 'Mimic 2.3.0 · Agent 3.5.13',
+    date: '2026-08-04',
+    channel: 'beta',
+    headline: 'People kept turning up to raid on old builds without realising it. Mimic was downloading updates fine — it was just waiting for you to quit, and nobody quits Mimic.',
+    features: [
+      { name: '🔄 Updates install when you close EverQuest', blurb: 'The safest possible moment: you are provably not raiding. If you relaunch within 15 seconds it defers and catches you next time. Meanwhile it nags once an hour via a Windows notification that cannot steal focus from the game — and it asks nothing of you, because there is nothing to do.' },
+      { name: '📊 Resource use, measured not promised', blurb: 'Settings now shows live CPU and memory for every Mimic process on YOUR machine with YOUR overlays. Close EQ and watch it settle. If it does not settle on your box, that is a real finding and we want to hear it.' },
+      { name: '😴 Quieter when you are not playing', blurb: 'Mimic checked whether EverQuest was running every 10 seconds forever — about 8,600 process spawns a day on an idle desktop. Now 45 seconds once the game has been closed a minute: 76% fewer. Everything else already idled properly.' },
+      { name: '🐌 Sha\'s Advantage reads as a slow', blurb: 'Beastlord slow now shows BST SLOW 50% on the target instead of sitting in the debuff list unrecognised. Tigir\'s Insects had the same gap and never raised the badge at all.' },
+    ],
+    fixes: [
+      'If someone had played on your computer, the CH chain would call THEIR slot number at you forever — a leftover log file made them permanently "you".',
+      'CH callouts written with brackets, like "004 CH < Dongru >", never registered a heal target on anybody\'s client.',
+      'Zeal occasionally reports a negative HP percent, which could make the off-heal list rank a dead target above a genuinely hurt raider.',
+      'Per-fight damage curves are sampled every 6 seconds instead of 18, and officers can change that mid-raid without a release.',
+    ],
+  },
+  {
     key: 'raid-review-2-ddr-boogaloo',
     title: '🎉 Raid Review 2: Plus CH Chain DDR Boogaloo',
     version: 'Bot 3.1.0 · Web 1.1.0 · Mimic 2.2.0 · Agent 3.5.0',
