@@ -94,3 +94,47 @@ describe('cancelled must mean cancelled', () => {
     ]) expect(declined(s), s).toBe(false);
   });
 });
+
+// ── EQ scan: never probe a speculative path on a non-local drive ────────────
+//
+// Measured 2026-08-04:
+//   [eq-scan] scanned 26 dir(s) in 21050ms (hint A:\EQ) — SLOW: B:\Quarm 21046ms
+// B: is a mapped NAS backup drive. Asleep, one fs.existsSync on it costs ~21
+// SECONDS on the main process, freezing every Mimic window. One path was the
+// entire hang.
+//
+// The guard MUST use DriveType, never IsReady: IsReady queries free space and
+// blocks on exactly the drives being skipped, which would make the guard the
+// bug. And it must NOT short-circuit discovery once a configured hint resolves
+// — this user has a second install at D:\EQ that only the speculative pass
+// finds, and dropping it would trade a slow scan for a missing folder.
+describe('EQ scan drive filter', () => {
+  const src = readSource(path.join(ROOT, 'apps', 'mimic', 'main.js'));
+
+  it('enumerates by DriveType, not IsReady', () => {
+    expect(src, 'must filter on DriveType').toMatch(/DriveType -eq 'Fixed'/);
+    expect(src, 'IsReady blocks on the very drives we are avoiding').not.toMatch(/\$_\.IsReady/);
+  });
+
+  it('does not abandon discovery when a hint resolves', () => {
+    // The early return that would have hidden D:\EQ.
+    expect(src).not.toMatch(/if \(hint && found\.length > 0\) return/);
+  });
+
+  it('fails OPEN when drives cannot be enumerated', () => {
+    // A null set must mean "scan everything", not "scan nothing" — silently
+    // hiding someone's EQ folder is worse than a slow scan.
+    expect(src).toMatch(/const local = _fixedDriveSet\(\);/);
+    expect(src).toMatch(/if \(local && \/\^\[A-Za-z\]:\/\.test\(dir\) && !local\.has\(/);
+  });
+
+  it('the filter keeps local installs and drops non-local speculation', () => {
+    const local = new Set(['A:', 'C:', 'D:']);          // B: NAS, E:/F: absent
+    const keep = (d) => !(/^[A-Za-z]:/.test(d)) || local.has(d.slice(0, 2).toUpperCase());
+    expect(keep('D:\\EQ'), 'the 28-log second install must stay discoverable').toBe(true);
+    expect(keep('A:\\EQ')).toBe(true);
+    expect(keep('B:\\Quarm'), 'the 21-second NAS probe must be skipped').toBe(false);
+    expect(keep('B:\\EQ')).toBe(false);
+    expect(keep('E:\\Quarm')).toBe(false);
+  });
+});

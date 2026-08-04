@@ -616,6 +616,46 @@ function _isEqLogFile(dir, filename) {
 // the first thing that reads it, and a const used above its declaration is a
 // temporal-dead-zone trap waiting for someone to call this during init.
 const _EQ_SCAN_TTL_MS = 30_000;
+
+// Local FIXED drive letters ("C:", "D:", …), enumerated once per process.
+//
+// Used to keep the speculative EQ-install scan off network and removable
+// drives. A mapped NAS that is asleep costs ~21 SECONDS on a single
+// fs.existsSync (measured 2026-08-04: B:\Quarm, 21046ms of a 21050ms scan),
+// and that runs on the main process, so every Mimic window freezes with it.
+//
+// DriveType — NOT IsReady. IsReady queries free space and would block on the
+// very drives we are trying to skip, turning the guard into the bug. DriveType
+// comes from the drive map without touching the device.
+//
+// Returns null if enumeration fails, and callers then skip filtering entirely:
+// failing OPEN keeps today's (slow but correct) behaviour rather than silently
+// hiding someone's EQ folder because a PowerShell spawn misbehaved.
+let _fixedDrives;   // undefined = not tried, null = unavailable, Set = known
+function _fixedDriveSet() {
+  if (_fixedDrives !== undefined) return _fixedDrives;
+  _fixedDrives = null;
+  if (process.platform !== 'win32') return _fixedDrives;
+  try {
+    const { execFileSync } = require('child_process');
+    const out = execFileSync('powershell.exe',
+      ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command',
+       "[System.IO.DriveInfo]::GetDrives() | Where-Object { $_.DriveType -eq 'Fixed' } | ForEach-Object { $_.Name }"],
+      { timeout: 10000, windowsHide: true, encoding: 'utf8' });
+    const set = new Set();
+    for (const line of String(out || '').split(/\r?\n/)) {
+      const m = /^([A-Za-z]):/.exec(line.trim());
+      if (m) set.add(m[1].toUpperCase() + ':');
+    }
+    if (set.size) {
+      _fixedDrives = set;
+      appendAgentLog(`[eq-scan] local fixed drives: ${[...set].join(' ')}\n`);
+    }
+  } catch (e) {
+    appendAgentLog(`[eq-scan] could not enumerate drives (${e && e.message}) — scanning all defaults\n`);
+  }
+  return _fixedDrives;
+}
 // Memoized for the same reason findEqInstalls is (see the scan-cache note
 // there): this is sync fs on the main process, six different call paths reach
 // it, and several of them re-probe the SAME directories in a loop. `.some()`
@@ -821,6 +861,7 @@ function _findEqInstallsUncached(hint) {
   const scanned = [];
   const found   = [];
   const slow    = [];   // dirs that individually cost >=500ms — the real culprits
+  const skipped = [];   // paths on drives that are absent or have no media
   const seen    = new Set();
   const probe   = (dir, source) => {
     if (!dir) return;
@@ -867,8 +908,41 @@ function _findEqInstallsUncached(hint) {
     }
   } catch {}
 
-  // 3. The 14 known common EQ install paths.
-  for (const dir of EQ_DEFAULT_DIRS) probe(dir, 'common');
+  // 3. The known common EQ install paths — the SPECULATIVE pass, and the
+  //    expensive one. Two guards, both earned from a measurement:
+  //
+  //    [eq-scan] scanned 26 dir(s) in 21050ms (hint A:\EQ) — SLOW: B:\Quarm 21046ms
+  //
+  //    B: is a mapped NAS backup drive. When the NAS is asleep or unreachable,
+  //    fs.existsSync on it blocks for TWENTY-ONE SECONDS waiting on SMB, on the
+  //    main process, freezing every window. One directory was the entire hang;
+  //    the other 25 were free.
+  //
+  //    NOT solved by stopping early once a hint resolves, tempting as that is.
+  //    This user has TWO installs — A:\EQ (configured) and D:\EQ (28 logs,
+  //    discovered here and offered as an unticked option). An early return
+  //    after the hint would silently delete D:\EQ from the picker, trading a
+  //    performance bug for a correctness one. Discovery has to keep running.
+  //
+  //    Restrict speculation to LOCAL FIXED drives instead.
+  //        Deliberately DriveType, not IsReady: IsReady queries free space,
+  //        which for an unreachable network drive blocks on exactly the SMB
+  //        timeout we are trying to avoid — the check would become the bug.
+  //        DriveType reads the drive map and never touches the device.
+  //        Network and removable drives are excluded from GUESSING only; a
+  //        folder the user actually configured is always probed, so EQ on a NAS
+  //        or a USB disk still works when you point us at it.
+  const local = _fixedDriveSet();
+  for (const dir of EQ_DEFAULT_DIRS) {
+    if (local && /^[A-Za-z]:/.test(dir) && !local.has(dir.slice(0, 2).toUpperCase())) {
+      skipped.push(dir);
+      continue;
+    }
+    probe(dir, 'common');
+  }
+  if (skipped.length) {
+    appendAgentLog(`[eq-scan] skipped ${skipped.length} speculative path(s) on non-local drives: ${skipped.join(', ')}\n`);
+  }
 
   // Rank: eqgame.exe present beats logs-only; more logs wins as a tiebreaker.
   found.sort((a, b) => (Number(b.hasEqgame) - Number(a.hasEqgame)) || (b.logCount - a.logCount));
