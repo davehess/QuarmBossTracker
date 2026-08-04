@@ -317,6 +317,69 @@ function trashSummary(nightKey) {
 }
 
 function _kvKey(win) { return `raid_trash_${win.dateKey}`; }
+function _kvReviewKey(nightKey) { return `raid_review_msg_${nightKey}`; }
+
+// ── The review's message id, somewhere that survives a redeploy ──────────────
+//
+// THE BUG THIS FIXES (2026-08-04): the id lived only in data/state.json, and on
+// Railway that file does NOT persist — there is no volume mounted on the
+// service, so every deploy boots with `[state] state.json not found — creating
+// fresh state`. Boot then runs catchUpRaidNightReview(), finds no id, and posts
+// the night's review AGAIN. Eleven redeploys in one night produced eleven
+// copies of the same Sunday review in the raid thread ("why is the bot just
+// spamming the raid review").
+//
+// Every OTHER anchor survived this because it has an env-var fallback
+// (SUMMARY_MESSAGE_ID, THREAD_LINKS_MESSAGE_ID, …) — the documented
+// `process.env` → `state.channelSlots` → null priority. A review id is
+// PER-NIGHT, so it structurally cannot use that escape hatch: you cannot
+// pre-declare an env var for a night that has not happened yet. That is
+// precisely why this one anchor was the one that broke.
+//
+// bot_kv is the answer the trash tally in this same file already reached for
+// ("merged back from bot_kv — the morning-after review runs in a process that
+// may have restarted"). Same table, same guild scoping, one row per night.
+// state.json is still written as a fast local mirror, so nothing regresses if
+// Supabase is disabled; kv simply wins when both exist.
+async function _getReviewMessageId(nightKey) {
+  // Local mirror first — free, and correct within one process lifetime.
+  try {
+    const local = _state().getRaidReviewMessageId(nightKey);
+    if (local) return local;
+  } catch { /* fall through to kv */ }
+  try {
+    const supabase = _supa();
+    if (!supabase.isEnabled()) return null;
+    const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+    const rows = await supabase.select('bot_kv',
+      `guild_id=eq.${encodeURIComponent(guildId)}&key=eq.${encodeURIComponent(_kvReviewKey(nightKey))}&select=value&limit=1`);
+    const id = Array.isArray(rows) && rows[0]?.value?.message_id;
+    if (!id) return null;
+    // Warm the local mirror so the rest of this process skips the round trip.
+    try { _state().setRaidReviewMessageId(nightKey, id); } catch { /* mirror is optional */ }
+    return id;
+  } catch (err) {
+    // Fail OPEN (return null → post): a kv outage that made us silently skip
+    // the review would be worse than a duplicate, and duplicates are visible.
+    console.warn('[raid-review] kv id lookup failed:', err?.message);
+    return null;
+  }
+}
+
+async function _setReviewMessageId(nightKey, messageId, threadId) {
+  try { _state().setRaidReviewMessageId(nightKey, messageId); } catch { /* mirror is optional */ }
+  try {
+    const supabase = _supa();
+    if (!supabase.isEnabled()) return;
+    await supabase.upsert('bot_kv', [{
+      guild_id: process.env.SUPABASE_GUILD_ID || 'wolfpack',
+      key: _kvReviewKey(nightKey),
+      value: { message_id: messageId, thread_id: threadId || null, night: nightKey,
+               updated_at: new Date().toISOString() },
+      updated_at: new Date().toISOString(),
+    }], 'guild_id,key');
+  } catch (err) { console.warn('[raid-review] kv id save failed:', err?.message); }
+}
 
 /** Merge the persisted tally for a night back into memory (after a restart). */
 async function loadTrash(win) {
@@ -1008,14 +1071,20 @@ async function collectNightData(win, opts = {}) {
 let _collector = null;
 let _stateMod  = null;
 let _nightMod  = null;
-function _setDeps({ collect, state, raidNight: rn } = {}) {
+let _supaMod   = null;
+function _setDeps({ collect, state, raidNight: rn, supabase: sb } = {}) {
   _collector = collect || null;
   _stateMod  = state   || null;
   _nightMod  = rn      || null;
+  _supaMod   = sb      || null;
 }
 function _collect(win, opts) { return (_collector || collectNightData)(win, opts); }
 function _state()      { return _stateMod || require('./state'); }
 function _night()      { return _nightMod || raidNight; }
+// Injectable so the durable-id path can be tested without a network — the
+// restart case is exactly the one that shipped broken, so it has to be
+// reachable from a spec.
+function _supa()       { return _supaMod || require('./supabase'); }
 
 // Nights whose FINAL review has already been written. The live refresher
 // refuses to touch those, so a timer that survived past 00:45 can never
@@ -1064,8 +1133,8 @@ async function postRaidNightReview(client, { atMs = Date.now(), dryRun = false, 
     if (!target.thread) return { ok: false, reason: 'no-thread', window: win, summary, embeds };
     if (target.kind === 'event' && !force) return { ok: false, reason: 'event-night', window: win, summary, embeds };
 
-    const state = _state();
-    const existingId = state.getRaidReviewMessageId(win.nightKey);
+    // Durable across redeploys (bot_kv), not just this container's state.json.
+    const existingId = await _getReviewMessageId(win.nightKey);
     if (existingId) {
       const msg = await target.thread.messages.fetch(existingId).catch(() => null);
       if (msg) {
@@ -1075,7 +1144,7 @@ async function postRaidNightReview(client, { atMs = Date.now(), dryRun = false, 
       }
     }
     const sent = await target.thread.send({ embeds });
-    try { state.setRaidReviewMessageId(win.nightKey, sent.id); } catch { /* volume issue — a re-run reposts, not a crash */ }
+    await _setReviewMessageId(win.nightKey, sent.id, target.thread.id);
     if (!live) _finalDone.add(win.nightKey);
     console.log(`[raid-review] posted ${live ? 'LIVE ' : ''}${win.label} → thread ${target.thread.id} (${summary.kills.length} kills)`);
     return { ok: true, reason: 'posted', window: win, summary, messageId: sent.id, threadId: target.thread.id };
@@ -1130,6 +1199,12 @@ function catchUpRaidNightReview(client, { nowMs = Date.now(), delayMs = 60_000 }
     if (!reviewEnabled() || !client) return { scheduled: false, reason: 'disabled' };
     const win = mostRecentReviewableNight(nowMs);
     if (!win) return { scheduled: false, reason: 'no-recent-night' };
+    // Local-mirror check only — this function is deliberately SYNCHRONOUS and
+    // never awaits the network, so it cannot consult bot_kv. On a fresh
+    // container the mirror is always empty, so we schedule; postRaidNightReview
+    // then does the durable kv lookup and EDITS the existing message instead of
+    // posting a second one. Before the kv id existed this same path is what
+    // produced eleven duplicate reviews in one night.
     let already = null;
     try { already = _state().getRaidReviewMessageId(win.nightKey); } catch { /* fall through */ }
     if (already) return { scheduled: false, reason: 'already-posted', window: win };

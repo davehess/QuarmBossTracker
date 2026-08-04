@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.1.8': [
+    '**The raid review stopped duplicating itself.** If you saw the same Sunday review posted over and over in the raid thread this morning — that was us. The review remembers which message to edit, but it was only remembering it on the bot\'s own disk, and that disk is wiped every time the bot redeploys. Eleven deploys overnight meant eleven copies of the same review. It now remembers in the database instead, so a redeploy edits the existing post rather than adding another one. The duplicates already in the thread need deleting by hand — sorry about the noise.',
+  ],
   '3.1.0': [
     '**🎉 Raid Review 2: Plus CH Chain DDR Boogaloo.** The raid review now builds itself WHILE you raid — a card lands in the night\'s thread on the first pull and grows all night, then becomes the morning writeup at 00:45. It counts trash kills now (those totals start fresh tonight — trash was never stored before) and carries the per-fight timeline. **CH Chain DDR graduates from beta to everyone**: PERFECT within a quarter second of the beat, MARVELOUS for three straight, plus the cast bar with a red ✕ on interrupt. Also new: a Raid Guide page for all 99 bosses we have parses for, built from our own kills; an officer console with runbooks; and `/backfillscan`, which finds fights whose numbers are wrong and names the raiders whose logs would settle it. Fixes: damage shields now name the spell instead of reading "non-melee", charm sessions record a real duration, other players\' critical heals and critical spell damage are no longer thrown away, and Mob Info stopped showing bosses as level-1 dummies immune to everything.',
   ],

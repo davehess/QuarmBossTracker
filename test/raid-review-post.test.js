@@ -336,6 +336,101 @@ describe('(c) the review lands in the night thread that already exists', () => {
     expect(parent.threads.create).not.toHaveBeenCalled();
   });
 
+  // THE 2026-08-04 SPAM BUG. The case above passes only because its `slots` Map
+  // survives between the two calls — i.e. it models a state.json that persists.
+  // On Railway it does NOT: there is no volume mounted on the service, so every
+  // deploy boots with "[state] state.json not found — creating fresh state".
+  // Eleven redeploys in one night → boot → catch-up → no id → eleven copies of
+  // the same Sunday review in the raid thread.
+  //
+  // So the honest fixture wipes the local state between runs and keeps only the
+  // durable bot_kv row, which is what a redeploy actually looks like.
+  function fakeKv() {
+    const rows = new Map();                       // key → value object
+    return {
+      rows,
+      isEnabled: () => true,
+      select: async (table, q) => {
+        const m = /key=eq\.([^&]+)/.exec(q || '');
+        const key = m ? decodeURIComponent(m[1]) : null;
+        const v = key ? rows.get(key) : null;
+        return v ? [{ value: v }] : [];
+      },
+      upsert: async (table, list) => { for (const r of list) rows.set(r.key, r.value); return list; },
+    };
+  }
+
+  it('SURVIVES A REDEPLOY: state.json wiped, kv remembers → edits, does not repost', async () => {
+    process.env.RAID_NIGHT_THREAD_PARENT_ID = 'PARENT';
+    events._seed([{ ...RAID_EVENT, source: 'discord' }], FIRST_PULL);
+    const { client, sent, edited } = fakeDiscord();
+    const kv = fakeKv();
+    let slots = new Map();                        // this container's state.json
+    const deps = () => ({
+      raidNight,
+      collect: async () => nightData(),
+      supabase: kv,
+      state: {
+        getRaidReviewMessageId: (k) => slots.get(k) || null,
+        setRaidReviewMessageId: (k, v) => slots.set(k, v),
+      },
+    });
+
+    raidReview._setDeps(deps());
+    const first = await raidReview.postRaidNightReview(client, { atMs: FIRST_PULL });
+    expect(first.reason).toBe('posted');
+    expect(kv.rows.size, 'the id must reach bot_kv, not just state.json').toBe(1);
+
+    // ── redeploy ──────────────────────────────────────────────────────────
+    slots = new Map();                            // fresh container, empty state
+    raidReview._clearLiveCaches?.();
+    raidReview._setDeps(deps());
+
+    const second = await raidReview.postRaidNightReview(client, { atMs: FIRST_PULL });
+    expect(second.reason, 'a restart must EDIT the existing review').toBe('edited');
+    expect(sent, 'exactly one message may ever be sent for a night').toHaveLength(1);
+    expect(edited).toHaveLength(1);
+  });
+
+  it('eleven redeploys produce ONE review, not eleven', async () => {
+    process.env.RAID_NIGHT_THREAD_PARENT_ID = 'PARENT';
+    events._seed([{ ...RAID_EVENT, source: 'discord' }], FIRST_PULL);
+    const { client, sent } = fakeDiscord();
+    const kv = fakeKv();
+    for (let i = 0; i < 11; i++) {
+      const slots = new Map();                    // every boot starts empty
+      raidReview._setDeps({
+        raidNight, collect: async () => nightData(), supabase: kv,
+        state: {
+          getRaidReviewMessageId: (k) => slots.get(k) || null,
+          setRaidReviewMessageId: (k, v) => slots.set(k, v),
+        },
+      });
+      await raidReview.postRaidNightReview(client, { atMs: FIRST_PULL });
+    }
+    expect(sent, 'this is the exact count the raid thread saw on 2026-08-04').toHaveLength(1);
+  });
+
+  it('a kv outage fails OPEN — posting a duplicate beats silently losing the review', async () => {
+    process.env.RAID_NIGHT_THREAD_PARENT_ID = 'PARENT';
+    events._seed([{ ...RAID_EVENT, source: 'discord' }], FIRST_PULL);
+    const { client, sent } = fakeDiscord();
+    const slots = new Map();
+    raidReview._setDeps({
+      raidNight, collect: async () => nightData(),
+      supabase: { isEnabled: () => true,
+                  select: async () => { throw new Error('kv down'); },
+                  upsert: async () => { throw new Error('kv down'); } },
+      state: {
+        getRaidReviewMessageId: (k) => slots.get(k) || null,
+        setRaidReviewMessageId: (k, v) => slots.set(k, v),
+      },
+    });
+    const res = await raidReview.postRaidNightReview(client, { atMs: FIRST_PULL });
+    expect(res.ok, 'a kv failure must not take the review down with it').toBe(true);
+    expect(sent).toHaveLength(1);
+  });
+
   it('an off-night EVENT thread gets no review', async () => {
     process.env.RAID_NIGHT_THREAD_PARENT_ID = 'PARENT';
     const social = { id: 'discord:2', title: 'Bingo Night', source: 'discord',
