@@ -6841,6 +6841,130 @@ function _zealEqDir() {
   for (const p of userPaths) { if (_dirHasEqLogs(p)) return p; }
   return detectEqDir(null);
 }
+// ── Windows Defender exclusions (opt-in, explicit, never silent) ────────────
+//
+// Real-time scanning sits in front of every file open, and both halves of Mimic
+// are I/O-shaped: the agent re-reads its spell/clicky catalogs and queue from
+// userData on each start, and the EQ folder holds multi-GB append-only logs we
+// tail continuously. Excluding those folders is the single biggest win
+// available on a Windows box (Uilnayar 2026-08-04, whose EQ folder was already
+// excluded but Mimic's was not).
+//
+// DELIBERATELY NOT IN THE INSTALLER. An unsigned installer that silently
+// excludes its own folder from antivirus is behaving exactly like the thing
+// antivirus exists to catch, and our installer runs without UAC today
+// (perMachine:false) so adding elevation solely for this would make every
+// install scarier for a benefit most users do not know they are getting. This
+// is a button: the user sees the exact paths first, clicks, and approves one
+// UAC prompt.
+//
+// Elevation goes through a temp .ps1 rather than an inline -Command string
+// because the nested quoting of Start-Process -ArgumentList around a command
+// containing Windows paths is a well-known way to ship a quoting bug.
+function _defenderPaths() {
+  const out = [];
+  const seen = new Set();
+  const add = (p, why) => {
+    if (!p) return;
+    const norm = path.normalize(String(p));
+    const k = norm.toLowerCase();
+    if (seen.has(k)) return;
+    seen.add(k);
+    out.push({ path: norm, why });
+  };
+  // EQ folders — configured first, then whatever autodetect can see.
+  try {
+    const cfg = loadConfig();
+    const userPaths = Array.isArray(cfg.eqPaths) && cfg.eqPaths.length ? cfg.eqPaths
+                    : (cfg.eqPath ? [cfg.eqPath] : []);
+    for (const p of userPaths) add(p, 'EverQuest folder');
+    if (out.length === 0) {
+      for (const f of (findEqInstalls(null).found || [])) add(f.path, 'EverQuest folder (detected)');
+    }
+  } catch (e) { void e; }
+  // Mimic's own two locations: the per-user data dir (agent catalogs, upload
+  // queue, logs — read and written constantly) and the install dir (the exe and
+  // the bundled Node runtime).
+  try { add(app.getPath('userData'), 'Mimic data folder'); } catch (e) { void e; }
+  try { add(path.dirname(app.getPath('exe')), 'Mimic program folder'); } catch (e) { void e; }
+  return out;
+}
+
+// Read-only: which of our paths Windows already excludes. Get-MpPreference does
+// not need elevation, so the UI can show state before asking for anything.
+ipcMain.handle('defender-status', async () => {
+  if (process.platform !== 'win32') return { ok: false, unsupported: true, paths: [] };
+  const wanted = _defenderPaths();
+  try {
+    const { execFile } = require('child_process');
+    const current = await new Promise((resolve) => {
+      execFile('powershell.exe',
+        ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command',
+         '(Get-MpPreference).ExclusionPath -join [char]10'],
+        { timeout: 15000, windowsHide: true },
+        (err, stdout) => resolve(err ? null : String(stdout || '')));
+    });
+    if (current === null) return { ok: false, error: 'Could not read Defender settings', paths: wanted };
+    const have = new Set(current.split(/\r?\n/).map(s => path.normalize(s.trim()).toLowerCase()).filter(Boolean));
+    return { ok: true, paths: wanted.map(p => ({ ...p, excluded: have.has(p.path.toLowerCase()) })) };
+  } catch (e) {
+    return { ok: false, error: e && e.message ? e.message : String(e), paths: wanted };
+  }
+});
+
+ipcMain.handle('defender-add-exclusions', async () => {
+  if (process.platform !== 'win32') return { ok: false, error: 'Windows only.' };
+  const wanted = _defenderPaths();
+  if (wanted.length === 0) return { ok: false, error: 'Nothing to exclude — set your EverQuest folder first.' };
+  const tmpDir  = app.getPath('temp');
+  const psFile  = path.join(tmpDir, 'wolfpack-defender-exclusions.ps1');
+  const outFile = path.join(tmpDir, 'wolfpack-defender-result.json');
+  // PowerShell single-quoted strings escape a quote by doubling it.
+  const q = (s) => "'" + String(s).replace(/'/g, "''") + "'";
+  const script = [
+    '$ErrorActionPreference = "Stop"',
+    '$done = @(); $failed = @()',
+    ...wanted.map(p =>
+      `try { Add-MpPreference -ExclusionPath ${q(p.path)}; $done += ${q(p.path)} } ` +
+      `catch { $failed += (${q(p.path)} + " :: " + $_.Exception.Message) }`),
+    `@{ done = $done; failed = $failed } | ConvertTo-Json -Compress | Set-Content -Path ${q(outFile)} -Encoding UTF8`,
+  ].join('\n');
+  try {
+    const { execFile } = require('child_process');
+    try { fs.unlinkSync(outFile); } catch { /* not there — fine */ }
+    fs.writeFileSync(psFile, script, 'utf8');
+    const code = await new Promise((resolve) => {
+      // Outer (non-elevated) PowerShell launches an elevated child and WAITS,
+      // so we know when the user has answered UAC one way or the other.
+      execFile('powershell.exe',
+        ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command',
+         `Start-Process powershell.exe -Verb RunAs -Wait -WindowStyle Hidden ` +
+         `-ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File',${q(psFile)}`],
+        { timeout: 120000, windowsHide: true },
+        (err) => resolve(err ? (err.code || 1) : 0));
+    });
+    let result = null;
+    try { result = JSON.parse(fs.readFileSync(outFile, 'utf8')); } catch { /* no result file */ }
+    try { fs.unlinkSync(psFile); } catch { /* */ }
+    try { fs.unlinkSync(outFile); } catch { /* */ }
+    if (!result) {
+      // No result file means the elevated process never ran — overwhelmingly
+      // this is the user declining UAC, which is a choice, not an error.
+      return { ok: false, cancelled: true, error: code === 0
+        ? 'Defender did not report a result.'
+        : 'Cancelled at the Windows permission prompt.' };
+    }
+    const done = [].concat(result.done || []);
+    const failed = [].concat(result.failed || []);
+    appendAgentLog(`[defender] added ${done.length} exclusion(s)`
+      + (failed.length ? `, ${failed.length} failed` : '') + `: ${done.join(', ')}\n`);
+    return { ok: failed.length === 0, added: done, failed };
+  } catch (e) {
+    appendAgentLog(`[defender] exclusion attempt failed: ${e && e.message}\n`);
+    return { ok: false, error: e && e.message ? e.message : String(e) };
+  }
+});
+
 // Local status only — no network. Feeds the Settings "Zeal" card on open.
 ipcMain.handle('zeal-status', () => {
   try {

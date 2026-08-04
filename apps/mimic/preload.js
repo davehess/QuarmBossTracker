@@ -348,6 +348,9 @@ contextBridge.exposeInMainWorld('mimic', {
   // Zeal auto-updater (CoastalRedwood/Zeal). status is local-only; checkUpdate
   // hits GitHub; installUpdate downloads + drops Zeal.asi + uifiles/ into the
   // EQ folder (backs up what's there, refuses while EQ is running).
+  // Windows Defender exclusions — opt-in, one UAC prompt, EQ + Mimic folders.
+  defenderStatus:        () => ipcRenderer.invoke('defender-status'),
+  defenderAddExclusions: () => ipcRenderer.invoke('defender-add-exclusions'),
   zealStatus:        ()   => ipcRenderer.invoke('zeal-status'),
   zealCheckUpdate:   ()   => ipcRenderer.invoke('zeal-check-update'),
   zealInstallUpdate: ()   => ipcRenderer.invoke('zeal-install-update'),

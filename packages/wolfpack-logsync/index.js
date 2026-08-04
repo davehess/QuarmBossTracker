@@ -12146,8 +12146,15 @@ function renderSetupChecks(s) {
   // the in-game equivalents are spelled out so a user can act live too.
   h += '<div style="margin-top:8px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">'
      + '<button class="wp-eq-setup" style="background:#1f6feb;color:#fff;border:0;border-radius:5px;padding:5px 12px;cursor:pointer;font-weight:600;font-size:12px">🔧 Set up for me</button>'
+     // Two more one-click fixers, same row, Mimic-only (they need the Electron
+     // bridge — a browser tab cannot elevate or write into the EQ folder).
+     // Hidden rather than dimmed outside Mimic: neither is a thing a plain tab
+     // could ever do, so a greyed control would just be a dead end.
+     + '<button class="wp-defender" style="display:none;background:#21262d;color:var(--fg);border:1px solid var(--border);border-radius:5px;padding:5px 12px;cursor:pointer;font-size:12px">🛡 Add Windows Defender EQ Exceptions</button>'
+     + '<button class="wp-zeal-install" style="display:none;background:#21262d;color:var(--fg);border:1px solid var(--border);border-radius:5px;padding:5px 12px;cursor:pointer;font-size:12px">⬇ Check / install Zeal</button>'
      + '<span class="dim" style="font-size:11px">Writes <b>Log=TRUE</b> (eqclient.ini) + <b>ExportOnCamp</b> / <b>PipeDelay</b> / <b>PipeVerbose</b> (zeal.ini). <b>EQ must be CLOSED</b> — it overwrites eqclient.ini on exit. Live in-game: <code>/log on</code> starts logging this session; the Zeal settings apply when EQ restarts.</span>'
-     + '</div>';
+     + '</div>'
+     + '<div class="wp-fixer-note dim" style="display:none;font-size:11px;margin-top:6px"></div>';
   morphInto(el, h);
   // Delegated so it survives the morphInto repaint; bound once.
   if (!window.__wpEqSetupBound) {
@@ -12173,6 +12180,68 @@ function renderSetupChecks(s) {
       } catch (err) { alert('Setup request failed: ' + ((err && err.message) || err)); }
       finally { btn.disabled = false; btn.textContent = orig; }
     });
+  }
+  // Reveal + wire the two Mimic-only fixers that sit beside Set up for me.
+  wpWireFixerButtons();
+}
+// Windows Defender exclusions + Zeal install, on the dashboard next to
+// "Set up for me" (Uilnayar 2026-08-04). Both already existed as Settings
+// actions; this puts them where a user is actually standing when they discover
+// something is wrong, rather than three clicks away in a form.
+//
+// Re-run after every repaint of the card, so the handlers are bound with a
+// dataset latch rather than a global one — the buttons are re-created by
+// morphInto each time this section re-renders.
+function wpWireFixerButtons() {
+  var note = document.querySelector('.wp-fixer-note');
+  var dBtn = document.querySelector('.wp-defender');
+  var zBtn = document.querySelector('.wp-zeal-install');
+  var say = function (msg, color) {
+    if (!note) return;
+    note.style.display = '';
+    note.innerHTML = color ? '<span style="color:' + color + '">' + esc(msg) + '</span>' : esc(msg);
+  };
+  if (dBtn && window.mimic && window.mimic.defenderAddExclusions) {
+    dBtn.style.display = '';
+    if (!dBtn.dataset.wired) {
+      dBtn.dataset.wired = '1';
+      dBtn.addEventListener('click', function () {
+        var orig = dBtn.textContent;
+        dBtn.disabled = true; dBtn.textContent = 'Waiting for Windows permission…';
+        window.mimic.defenderAddExclusions().then(function (r) {
+          if (r && r.ok) say('✓ Excluded ' + (r.added || []).length + ' folder(s) from Windows Defender: ' + (r.added || []).join(', '), 'var(--green)');
+          else if (r && r.cancelled) say('Cancelled at the Windows permission prompt — nothing changed.');
+          else say('Could not add exclusions: ' + ((r && (r.error || (r.failed || []).join('; '))) || 'unknown error'), 'var(--red,#f87171)');
+        }).catch(function (e) {
+          say('Failed: ' + ((e && e.message) || e), 'var(--red,#f87171)');
+        }).then(function () { dBtn.disabled = false; dBtn.textContent = orig; });
+      });
+    }
+  }
+  if (zBtn && window.mimic && window.mimic.zealCheckUpdate) {
+    zBtn.style.display = '';
+    if (!zBtn.dataset.wired) {
+      zBtn.dataset.wired = '1';
+      zBtn.addEventListener('click', function () {
+        var orig = zBtn.textContent;
+        zBtn.disabled = true; zBtn.textContent = 'Checking…';
+        window.mimic.zealCheckUpdate().then(function (c) {
+          if (!c || !c.ok) { say('Could not check Zeal: ' + ((c && c.error) || 'unknown error'), 'var(--red,#f87171)'); return null; }
+          if (!c.updateAvailable) { say('✓ Zeal is current (' + (c.installedTag || c.latestTag) + ').', 'var(--green)'); return null; }
+          // Confirm before writing into the EQ folder — Zeal is a game mod and
+          // replacing it is not something to do on a single stray click.
+          if (!confirm('Install Zeal ' + c.latestTag + ' into ' + c.eqDir + '?\\n\\nEverQuest must be closed. Existing files are backed up.')) return null;
+          zBtn.textContent = 'Installing…';
+          return window.mimic.zealInstallUpdate();
+        }).then(function (r) {
+          if (!r) return;
+          if (r.ok) say('✓ Installed Zeal ' + r.tag + ' — ' + r.written + ' file(s), ' + r.backedUp + ' backed up. Restart EverQuest to load it.', 'var(--green)');
+          else say('Install failed: ' + (r.error || 'unknown error'), 'var(--red,#f87171)');
+        }).catch(function (e) {
+          say('Failed: ' + ((e && e.message) || e), 'var(--red,#f87171)');
+        }).then(function () { zBtn.disabled = false; zBtn.textContent = orig; });
+      });
+    }
   }
 }
 function renderDamageDoneCard(s) {

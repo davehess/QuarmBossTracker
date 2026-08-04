@@ -191,6 +191,24 @@
     📊 Open Resource use…
   </button>
 
+  <h2>Windows Defender</h2>
+  <div class="hint" style="margin-bottom:8px">
+    Real-time scanning inspects every file open, and both halves of this are
+    file-heavy: EverQuest's logs are append-only and grow into the gigabytes, and
+    Mimic re-reads its spell/item catalogs on each start. Excluding those two
+    folders is the biggest single speed-up available on Windows.
+    <br><br>
+    <b>This is opt-in and never silent.</b> You will see the exact folders below,
+    and Windows will ask for permission once. Nothing else is touched — Defender
+    keeps protecting the rest of your machine.
+  </div>
+  <div id="defenderPaths" class="hint" style="margin-bottom:8px;font-family:ui-monospace,Consolas,monospace">checking…</div>
+  <button id="defenderBtn" type="button"
+    style="margin-top:2px;background:#21262d;color:#c9d1d9;border:1px solid #30363d;border-radius:6px;padding:6px 13px;cursor:pointer;font-family:inherit;font-size:12px">
+    🛡 Add Windows Defender EQ Exceptions
+  </button>
+  <div id="defenderResult" class="hint" style="margin-top:6px"></div>
+
   <div>
     <button id="save">Save</button>
   </div>
@@ -902,6 +920,62 @@
     if (!(window.mimic && window.mimic.openResources)) { btn.style.display = 'none'; return; }
     btn.addEventListener('click', function () {
       try { window.mimic.openResources(); } catch (e) { void e; }
+    });
+  })();
+
+  // ── Windows Defender exclusions ───────────────────────────────────────────
+  // Shows the exact folders BEFORE asking, and marks the ones Windows already
+  // excludes — so a user can see this is scoped to EQ + Mimic and nothing else.
+  (function () {
+    var list = document.getElementById('defenderPaths');
+    var btn  = document.getElementById('defenderBtn');
+    var out  = document.getElementById('defenderResult');
+    if (!list || !btn) return;
+    if (!(window.mimic && window.mimic.defenderStatus)) {
+      list.textContent = '';
+      btn.style.display = 'none';
+      return;
+    }
+    function esc(t){ return String(t == null ? '' : t).replace(/[&<>"]/g, function (c) {
+      return ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' })[c]; }); }
+    function refresh() {
+      window.mimic.defenderStatus().then(function (s) {
+        if (!s || !s.paths || !s.paths.length) {
+          list.textContent = 'No folders to exclude yet — set your EverQuest folder above first.';
+          btn.disabled = true;
+          return;
+        }
+        btn.disabled = false;
+        var allDone = s.ok && s.paths.every(function (p) { return p.excluded; });
+        list.innerHTML = s.paths.map(function (p) {
+          var mark = !s.ok ? '·' : (p.excluded ? '<span style="color:#56d364">✓</span>' : '<span style="color:#f6c365">+</span>');
+          return mark + ' ' + esc(p.path) + ' <span style="opacity:.6">— ' + esc(p.why) + '</span>';
+        }).join('<br>');
+        if (allDone) {
+          btn.textContent = '🛡 Already excluded — re-apply anyway';
+        }
+      }).catch(function () { list.textContent = 'Could not read Defender settings.'; });
+    }
+    refresh();
+    btn.addEventListener('click', function () {
+      var orig = btn.textContent;
+      btn.disabled = true; btn.textContent = 'Waiting for Windows permission…';
+      if (out) out.textContent = '';
+      window.mimic.defenderAddExclusions().then(function (r) {
+        if (r && r.ok) {
+          if (out) out.innerHTML = '<span style="color:#56d364">✓ Added ' + (r.added || []).length + ' exclusion(s).</span>';
+        } else if (r && r.cancelled) {
+          if (out) out.innerHTML = '<span style="opacity:.8">Cancelled — nothing was changed.</span>';
+        } else {
+          var msg = (r && (r.error || (r.failed || []).join('; '))) || 'unknown error';
+          if (out) out.innerHTML = '<span style="color:#f87171">Could not add: ' + esc(msg) + '</span>';
+        }
+      }).catch(function (e) {
+        if (out) out.innerHTML = '<span style="color:#f87171">Failed: ' + esc(e && e.message) + '</span>';
+      }).then(function () {
+        btn.disabled = false; btn.textContent = orig;
+        refresh();
+      });
     });
   })();
 </script>
