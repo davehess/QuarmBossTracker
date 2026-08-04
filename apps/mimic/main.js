@@ -3828,13 +3828,69 @@ function _checkEqRunning() {
     } catch { resolve(_eqRunning); }
   });
 }
+// ── Pending-update install + nag ─────────────────────────────────────────────
+// Raiders kept arriving on old builds without realising it and quietly missing
+// features (Uilnayar 2026-08-03). autoInstallOnAppQuit already applies an update
+// at the next normal Mimic quit — but people leave Mimic running for days, so
+// that almost never fires.
+//
+// EQ closing is the safest instant that exists to restart Mimic: they are
+// provably not playing, let alone mid-pull. So we install there, and otherwise
+// only NAG.
+//
+// The nag is an OS Notification on purpose. It cannot take focus or raise a
+// window over the game — the hard requirement here is that nothing yanks the
+// user out of EverQuest ("it should not become the active window while they're
+// doing things in game"). Same surface checkZealUpdate() already uses.
+const EQ_CLOSE_INSTALL_GRACE_MS = 15_000;
+const UPDATE_NAG_EVERY_MS       = 60 * 60 * 1000;
+let _updateNagAt = 0;
+
+function _installPendingUpdateOnEqClose() {
+  if (!updatePending || !autoUpdater) return;
+  const ver = updatePending.version;
+  appendAgentLog(`[updater] EQ closed with v${ver} pending — installing in ${EQ_CLOSE_INSTALL_GRACE_MS / 1000}s\n`);
+  // Grace window: a crash-and-relaunch, or alt-F4 followed by starting EQ again,
+  // must NOT get Mimic pulled out from under them. Re-check before committing.
+  setTimeout(() => {
+    if (_eqRunning)   { appendAgentLog('[updater] EQ came back — deferring install to the next close\n'); return; }
+    if (!updatePending) return;
+    appendAgentLog(`[updater] installing v${ver} now (EQ closed)\n`);
+    try { autoUpdater.quitAndInstall(true, true); }
+    catch (e) { appendAgentLog(`[updater] quitAndInstall failed: ${e && e.message}\n`); }
+  }, EQ_CLOSE_INSTALL_GRACE_MS);
+}
+
+function _nagPendingUpdate() {
+  if (!updatePending) return;
+  const now = Date.now();
+  if (now - _updateNagAt < UPDATE_NAG_EVERY_MS) return;
+  _updateNagAt = now;
+  if (!Notification.isSupported()) return;
+  try {
+    // Deliberately reassuring, not demanding: the whole point is that they do
+    // NOT have to act. A nag that asks for nothing stops being pestering.
+    const n = new Notification({
+      title:  `Mimic ${updatePending.version} is ready`,
+      body:   'It installs by itself the next time you close EverQuest — nothing to do.',
+      silent: true,
+    });
+    n.show();
+  } catch { /* notifications unavailable — the tray item still shows it */ }
+}
+
 async function _pollEqPresence() {
   const running = await _checkEqRunning();
   if (running !== _eqRunning) {
+    const wasRunning = _eqRunning;
     _eqRunning = running;
     // Visibility flip — overlays appear/vanish as EQ comes up / goes down.
     try { applyAllVisibility(); } catch {}
+    // EQ just went away — take the free restart.
+    if (wasRunning && !running) { try { _installPendingUpdateOnEqClose(); } catch { /* never break presence polling */ } }
   }
+  // Hourly, focus-safe reminder while they're still playing on the old build.
+  if (running) { try { _nagPendingUpdate(); } catch { /* ditto */ } }
 }
 function _startEqPolling() {
   if (_eqPollTimer || process.platform !== 'win32') return;
