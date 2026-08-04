@@ -12659,6 +12659,56 @@ function _controlPlanePolicy(tune) {
 // back which shared streams it should upload. Non-reporters stand down; the
 // elected reporter(s) keep uploading. See the _reporterRegistry block above for
 // the fail-open contract and per-stream election rationale.
+// ── Clock-offset store ───────────────────────────────────────────────────────
+// See migration 20260804_agent_clock_offsets for why this exists and why
+// widening the dedup window cannot substitute for it.
+//
+// offset_ms is SIGNED, server-minus-client: positive means the install's clock
+// reads EARLY (it is behind), and a client timestamp is corrected with
+// ts + offset_ms.
+//
+// Smoothed with an EWMA rather than last-write-wins so one GC pause or one
+// scheduler hiccup cannot move a machine's correction. Held in memory and
+// flushed on a slow cadence — a 20s heartbeat per install would otherwise be a
+// pointless write amplifier, and losing a few minutes of smoothing on a restart
+// costs nothing (it re-converges in a couple of minutes).
+const CLOCK_EWMA_ALPHA   = 0.2;
+const CLOCK_FLUSH_EVERY_MS = 5 * 60_000;
+const _clockPulse = new Map();   // `${guild}|${discordId}` → { offset, samples, min, max, lastAt, flushedAt }
+async function _noteClockPulse(guildId, discordId, rawOffsetMs) {
+  if (!guildId || !discordId || !Number.isFinite(rawOffsetMs)) return;
+  const key = `${guildId}|${discordId}`;
+  const now = Date.now();
+  let s = _clockPulse.get(key);
+  if (!s) {
+    s = { offset: rawOffsetMs, samples: 0, min: rawOffsetMs, max: rawOffsetMs, lastAt: 0, flushedAt: 0 };
+    _clockPulse.set(key, s);
+  }
+  s.offset  = s.samples === 0 ? rawOffsetMs : (CLOCK_EWMA_ALPHA * rawOffsetMs + (1 - CLOCK_EWMA_ALPHA) * s.offset);
+  s.samples += 1;
+  s.min      = Math.min(s.min, rawOffsetMs);
+  s.max      = Math.max(s.max, rawOffsetMs);
+  s.lastAt   = now;
+  if (now - s.flushedAt < CLOCK_FLUSH_EVERY_MS) return;
+  s.flushedAt = now;
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) return;
+  await supabase.upsert('agent_clock_offsets', [{
+    guild_id:   guildId,
+    discord_id: String(discordId),
+    method:     'pulse',
+    offset_ms:  Math.round(s.offset),
+    samples:    s.samples,
+    // Spread is the honesty column: a machine whose samples scatter by minutes
+    // has an unstable clock, and its offset should not be trusted to correct
+    // anything. Consumers gate on this rather than assuming a number is good.
+    spread_ms:  Math.round(s.max - s.min),
+    last_sample_at: new Date(s.lastAt).toISOString(),
+    updated_at: new Date().toISOString(),
+  }], 'guild_id,discord_id,method').catch(err =>
+    console.warn('[clock] pulse upsert failed:', err?.message));
+}
+
 async function _handleAgentReporterPoll(req, res) {
   const identity = await mimicLink.requireAgentAuth(req, res);
   if (!identity) return;
@@ -12683,6 +12733,28 @@ async function _handleAgentReporterPoll(req, res) {
   try { tune = await _overlayTuningMap(); } catch { /* fail-open: run fail-open */ }
   const disabled = Number(tune.flag_disable_reporter_election) >= 1;
   const flags = disabled ? { chat: false, buffs: false, roster: false } : _dedupFlags(tune);
+
+  // ── Clock pulse ────────────────────────────────────────────────────────────
+  // The agent stamps every event from its own machine clock, and EQ writes log
+  // timestamps with that same clock — so an install running 48s slow reports
+  // deaths 48s slow. That is not a rounding nuisance: death dedup collapses
+  // reports within 30s, so a skewed observer's copy escapes as a phantom second
+  // death (Dongru + Uilnayar, 2026-08-02 Seru parse).
+  //
+  // The heartbeat is already a 20s unqueued round trip, so the offset comes free
+  // — no new stream, no new timer. One-way latency contaminates it by tens of
+  // ms, which is irrelevant against a 30s window; the agent does the full
+  // four-stamp NTP calculation on its side using server_now below when it wants
+  // precision.
+  //
+  // Fire-and-forget: a clock reading must never be able to fail a heartbeat,
+  // because heartbeats drive reporter election and liveness.
+  try {
+    const clientNow = Number(payload && payload.client_now);
+    if (Number.isFinite(clientNow) && clientNow > 0) {
+      _noteClockPulse(guildId, id, Date.now() - clientNow).catch(() => {});
+    }
+  } catch { /* never break the heartbeat over telemetry */ }
 
   // Always record the heartbeat so liveness/failover works even while disabled.
   // `camping` (agent typed /camp) demotes this agent from every election ~30s
@@ -12777,6 +12849,11 @@ async function _handleAgentReporterPoll(req, res) {
     roster_group: rosterGroup, // P1c per-group election detail for this agent (null when off)
     agent_kill:        control.agent_kill,        // #74 fleet dormancy (fail-open when absent)
     min_agent_ver_num: control.min_agent_ver_num, // #74 version floor (0 = unset)
+    // Clock pulse — server send time, so an agent that sent client_now can do
+    // the full four-stamp NTP calculation (t1 send, t2 recv, t3 reply, t4 recv)
+    // and cancel one-way latency instead of folding it into the offset.
+    // Harmless to older agents, which ignore the field.
+    server_now:        Date.now(),
   }));
 }
 
