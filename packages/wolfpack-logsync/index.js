@@ -10217,6 +10217,12 @@ function _serializeForDashboard() {
     // What each watched client actually has LOADED, from `/zeal version`.
     // Empty until someone runs it — we never inject commands into the game.
     clientVersions: clientVersionsSnapshot(),
+    // This machine's measured clock offset vs the bot, from the heartbeat's
+    // four-stamp NTP exchange. POSITIVE = this clock is BEHIND. Surfaced so the
+    // dashboard can show the drift and, after a Windows time resync, prove the
+    // fix landed instead of asking the user to take it on faith. null until the
+    // first heartbeat completes (and stays null with no token / offline).
+    clockOffsetMs: Number.isFinite(stats.clockOffsetMs) ? stats.clockOffsetMs : null,
     // Per-cleric Divine Intervention readiness (bot aggregate ⊕ local casts) —
     // chchain.html renders the chips + "only <X> has DI" callout.
     diStatus: diStatusSnapshot(),
@@ -12152,6 +12158,7 @@ function renderSetupChecks(s) {
      // could ever do, so a greyed control would just be a dead end.
      + '<button class="wp-defender" style="display:none;background:#21262d;color:var(--fg);border:1px solid var(--border);border-radius:5px;padding:5px 12px;cursor:pointer;font-size:12px">🛡 Add Windows Defender EQ Exceptions</button>'
      + '<button class="wp-zeal-install" style="display:none;background:#21262d;color:var(--fg);border:1px solid var(--border);border-radius:5px;padding:5px 12px;cursor:pointer;font-size:12px">⬇ Check / install Zeal</button>'
+     + '<button class="wp-clock-fix" style="display:none;background:#21262d;color:var(--fg);border:1px solid var(--border);border-radius:5px;padding:5px 12px;cursor:pointer;font-size:12px">🕐 Fix Windows clock sync</button>'
      + '<span class="dim" style="font-size:11px">Writes <b>Log=TRUE</b> (eqclient.ini) + <b>ExportOnCamp</b> / <b>PipeDelay</b> / <b>PipeVerbose</b> (zeal.ini). <b>EQ must be CLOSED</b> — it overwrites eqclient.ini on exit. Live in-game: <code>/log on</code> starts logging this session; the Zeal settings apply when EQ restarts.</span>'
      + '</div>'
      + '<div class="wp-fixer-note dim" style="display:none;font-size:11px;margin-top:6px"></div>';
@@ -12182,7 +12189,7 @@ function renderSetupChecks(s) {
     });
   }
   // Reveal + wire the two Mimic-only fixers that sit beside Set up for me.
-  wpWireFixerButtons();
+  wpWireFixerButtons(s);
 }
 // Windows Defender exclusions + Zeal install, on the dashboard next to
 // "Set up for me" (Uilnayar 2026-08-04). Both already existed as Settings
@@ -12192,7 +12199,7 @@ function renderSetupChecks(s) {
 // Re-run after every repaint of the card, so the handlers are bound with a
 // dataset latch rather than a global one — the buttons are re-created by
 // morphInto each time this section re-renders.
-function wpWireFixerButtons() {
+function wpWireFixerButtons(s) {
   var note = document.querySelector('.wp-fixer-note');
   var dBtn = document.querySelector('.wp-defender');
   var zBtn = document.querySelector('.wp-zeal-install');
@@ -12215,6 +12222,42 @@ function wpWireFixerButtons() {
         }).catch(function (e) {
           say('Failed: ' + ((e && e.message) || e), 'var(--red,#f87171)');
         }).then(function () { dBtn.disabled = false; dBtn.textContent = orig; });
+      });
+    }
+  }
+  var cBtn = document.querySelector('.wp-clock-fix');
+  if (cBtn && window.mimic && window.mimic.clockResync) {
+    cBtn.style.display = '';
+    // Label the button with the drift we have actually MEASURED, so it reads as
+    // a specific problem ("you are 56s behind") rather than a generic
+    // maintenance chore nobody will ever click. The state is passed in from the
+    // caller rather than read off a global; clockOffsetMs is null until the
+    // first heartbeat lands (no token / offline keeps it null).
+    var off = s && s.clockOffsetMs;
+    if (typeof off === 'number' && Math.abs(off) >= 5000) {
+      cBtn.textContent = '🕐 Clock is ' + Math.round(Math.abs(off) / 1000) + 's '
+        + (off > 0 ? 'behind' : 'ahead') + ' — fix it';
+      cBtn.style.borderColor = 'var(--orange, #f0b429)';
+      cBtn.style.color = 'var(--orange, #f0b429)';
+    }
+    if (!cBtn.dataset.wired) {
+      cBtn.dataset.wired = '1';
+      cBtn.addEventListener('click', function () {
+        var orig = cBtn.textContent;
+        cBtn.disabled = true; cBtn.textContent = 'Waiting for Windows permission…';
+        window.mimic.clockResync().then(function (r) {
+          if (r && r.ok) {
+            say('✓ Clock synced, and the Windows Time service is set to keep it synced'
+              + (r.source ? ' (source: ' + r.source + ')' : '')
+              + '. The drift reading updates within a minute.', 'var(--green)');
+          } else if (r && r.cancelled) {
+            say('Cancelled at the Windows permission prompt — nothing changed.');
+          } else {
+            say('Could not sync: ' + ((r && (r.error || (r.steps || []).join(' | '))) || 'unknown error'), 'var(--red,#f87171)');
+          }
+        }).catch(function (e) {
+          say('Failed: ' + ((e && e.message) || e), 'var(--red,#f87171)');
+        }).then(function () { cBtn.disabled = false; cBtn.textContent = orig; });
       });
     }
   }

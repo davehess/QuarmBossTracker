@@ -6912,57 +6912,148 @@ ipcMain.handle('defender-status', async () => {
   }
 });
 
+// PowerShell single-quoted strings escape a quote by doubling it. Used to build
+// every elevated script below — a path or peer name containing a quote must not
+// be able to terminate the string and append a second statement.
+const _psq = (s) => "'" + String(s).replace(/'/g, "''") + "'";
+
+// Run a PowerShell script ELEVATED and read back the JSON it writes.
+//
+// Shared by the Defender and clock-sync buttons. Goes through a temp .ps1
+// rather than an inline -Command because nesting Start-Process -ArgumentList
+// around a command containing Windows paths is a well-known way to ship a
+// quoting bug. The outer (non-elevated) PowerShell launches the elevated child
+// with -Wait, so we learn when the user has answered UAC either way.
+//
+// `buildScript(outFile)` returns the script body; it must write its result JSON
+// to outFile. A MISSING result file is treated as "cancelled", because that is
+// overwhelmingly what it means: the user declined the prompt, which is a choice
+// rather than a failure and should not be reported in red.
+async function _runElevatedPs(tag, buildScript) {
+  if (process.platform !== 'win32') return { ok: false, error: 'Windows only.' };
+  const tmpDir  = app.getPath('temp');
+  const psFile  = path.join(tmpDir, `wolfpack-${tag}.ps1`);
+  const outFile = path.join(tmpDir, `wolfpack-${tag}-result.json`);
+  try {
+    const { execFile } = require('child_process');
+    try { fs.unlinkSync(outFile); } catch { /* not there — fine */ }
+    fs.writeFileSync(psFile, buildScript(outFile), 'utf8');
+    const code = await new Promise((resolve) => {
+      execFile('powershell.exe',
+        ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command',
+         'Start-Process powershell.exe -Verb RunAs -Wait -WindowStyle Hidden ' +
+         `-ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File',${_psq(psFile)}`],
+        { timeout: 180000, windowsHide: true },
+        (err) => resolve(err ? (err.code || 1) : 0));
+    });
+    let result = null;
+    try { result = JSON.parse(fs.readFileSync(outFile, 'utf8')); } catch { /* none written */ }
+    try { fs.unlinkSync(psFile); } catch { /* */ }
+    try { fs.unlinkSync(outFile); } catch { /* */ }
+    if (!result) {
+      return { ok: false, cancelled: true,
+        error: code === 0 ? 'Windows did not report a result.'
+                          : 'Cancelled at the Windows permission prompt.' };
+    }
+    return { ok: true, result };
+  } catch (e) {
+    appendAgentLog(`[${tag}] elevated run failed: ${e && e.message}\n`);
+    return { ok: false, error: e && e.message ? e.message : String(e) };
+  }
+}
+
 ipcMain.handle('defender-add-exclusions', async () => {
   if (process.platform !== 'win32') return { ok: false, error: 'Windows only.' };
   const wanted = _defenderPaths();
   if (wanted.length === 0) return { ok: false, error: 'Nothing to exclude — set your EverQuest folder first.' };
-  const tmpDir  = app.getPath('temp');
-  const psFile  = path.join(tmpDir, 'wolfpack-defender-exclusions.ps1');
-  const outFile = path.join(tmpDir, 'wolfpack-defender-result.json');
-  // PowerShell single-quoted strings escape a quote by doubling it.
-  const q = (s) => "'" + String(s).replace(/'/g, "''") + "'";
-  const script = [
+  const run = await _runElevatedPs('defender-exclusions', (outFile) => [
     '$ErrorActionPreference = "Stop"',
     '$done = @(); $failed = @()',
     ...wanted.map(p =>
-      `try { Add-MpPreference -ExclusionPath ${q(p.path)}; $done += ${q(p.path)} } ` +
-      `catch { $failed += (${q(p.path)} + " :: " + $_.Exception.Message) }`),
-    `@{ done = $done; failed = $failed } | ConvertTo-Json -Compress | Set-Content -Path ${q(outFile)} -Encoding UTF8`,
-  ].join('\n');
+      `try { Add-MpPreference -ExclusionPath ${_psq(p.path)}; $done += ${_psq(p.path)} } ` +
+      `catch { $failed += (${_psq(p.path)} + " :: " + $_.Exception.Message) }`),
+    `@{ done = $done; failed = $failed } | ConvertTo-Json -Compress | Set-Content -Path ${_psq(outFile)} -Encoding UTF8`,
+  ].join('\n'));
+  if (!run.ok) return run;
+  const done = [].concat(run.result.done || []);
+  const failed = [].concat(run.result.failed || []);
+  appendAgentLog(`[defender] added ${done.length} exclusion(s)`
+    + (failed.length ? `, ${failed.length} failed` : '') + `: ${done.join(', ')}\n`);
+  return { ok: failed.length === 0, added: done, failed };
+});
+
+// ── Windows clock sync ──────────────────────────────────────────────────────
+//
+// Three installs are drifting ~1.5-3 s/day, one of them ~a minute behind after
+// a month (2026-08-04). At that size a machine's deaths and casts land outside
+// the dedup windows everyone else's fall in, so one bad clock corrupts numbers
+// for the whole raid, not just its owner.
+//
+// A one-time "set the clock" does NOT hold — we watched exactly that fail:
+// Bardtholemu's machine was synced to ~0 on Jul 26-27 and was 11s off again by
+// Jul 29. So this deliberately fixes the CAUSE, in order:
+//   1. w32time set to Automatic and started (the usual reason drift returns is
+//      the service being Disabled or Manual and never running);
+//   2. a resync;
+//   3. only IF that fails, point it at time.windows.com and retry.
+// Step 3 is last on purpose — overwriting the time source on a DOMAIN-JOINED
+// machine would be rude and wrong, so it is a fallback, never the opening move.
+ipcMain.handle('clock-status', async () => {
+  if (process.platform !== 'win32') return { ok: false, unsupported: true };
   try {
     const { execFile } = require('child_process');
-    try { fs.unlinkSync(outFile); } catch { /* not there — fine */ }
-    fs.writeFileSync(psFile, script, 'utf8');
-    const code = await new Promise((resolve) => {
-      // Outer (non-elevated) PowerShell launches an elevated child and WAITS,
-      // so we know when the user has answered UAC one way or the other.
+    const out = await new Promise((resolve) => {
       execFile('powershell.exe',
         ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command',
-         `Start-Process powershell.exe -Verb RunAs -Wait -WindowStyle Hidden ` +
-         `-ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File',${q(psFile)}`],
-        { timeout: 120000, windowsHide: true },
-        (err) => resolve(err ? (err.code || 1) : 0));
+         '$s = Get-Service w32time -ErrorAction SilentlyContinue; ' +
+         '@{ status = [string]$s.Status; startType = [string]$s.StartType; ' +
+         'source = (w32tm /query /source 2>&1 | Out-String).Trim() } | ConvertTo-Json -Compress'],
+        { timeout: 20000, windowsHide: true },
+        (err, stdout) => resolve(err ? null : String(stdout || '')));
     });
-    let result = null;
-    try { result = JSON.parse(fs.readFileSync(outFile, 'utf8')); } catch { /* no result file */ }
-    try { fs.unlinkSync(psFile); } catch { /* */ }
-    try { fs.unlinkSync(outFile); } catch { /* */ }
-    if (!result) {
-      // No result file means the elevated process never ran — overwhelmingly
-      // this is the user declining UAC, which is a choice, not an error.
-      return { ok: false, cancelled: true, error: code === 0
-        ? 'Defender did not report a result.'
-        : 'Cancelled at the Windows permission prompt.' };
-    }
-    const done = [].concat(result.done || []);
-    const failed = [].concat(result.failed || []);
-    appendAgentLog(`[defender] added ${done.length} exclusion(s)`
-      + (failed.length ? `, ${failed.length} failed` : '') + `: ${done.join(', ')}\n`);
-    return { ok: failed.length === 0, added: done, failed };
+    if (!out) return { ok: false, error: 'Could not read the Windows Time service.' };
+    const j = JSON.parse(out);
+    return {
+      ok: true,
+      running: /running/i.test(j.status || ''),
+      automatic: /automatic/i.test(j.startType || ''),
+      status: j.status || null,
+      startType: j.startType || null,
+      source: j.source || null,
+    };
   } catch (e) {
-    appendAgentLog(`[defender] exclusion attempt failed: ${e && e.message}\n`);
     return { ok: false, error: e && e.message ? e.message : String(e) };
   }
+});
+
+ipcMain.handle('clock-resync', async () => {
+  const run = await _runElevatedPs('clock-sync', (outFile) => [
+    '$steps = @(); $ok = $false',
+    // 1. The service itself — the actual cause of recurring drift.
+    'try { Set-Service -Name w32time -StartupType Automatic -ErrorAction Stop; $steps += "startup=Automatic" }',
+    'catch { $steps += ("startup FAILED :: " + $_.Exception.Message) }',
+    'try { if ((Get-Service w32time).Status -ne "Running") { Start-Service w32time -ErrorAction Stop }; $steps += "service=Running" }',
+    'catch { $steps += ("start FAILED :: " + $_.Exception.Message) }',
+    // 2. Resync with whatever source is already configured.
+    'try { $r = (w32tm /resync /force 2>&1 | Out-String).Trim(); ' +
+      'if ($LASTEXITCODE -eq 0) { $ok = $true; $steps += "resync=ok" } else { $steps += ("resync said: " + $r) } }',
+    'catch { $steps += ("resync FAILED :: " + $_.Exception.Message) }',
+    // 3. Fallback ONLY if the above did not work: give it a public NTP source.
+    'if (-not $ok) {',
+    '  try { w32tm /config /update /manualpeerlist:"time.windows.com,0x9" /syncfromflags:MANUAL | Out-Null;',
+    '        Restart-Service w32time -ErrorAction SilentlyContinue;',
+    '        $r2 = (w32tm /resync /force 2>&1 | Out-String).Trim();',
+    '        if ($LASTEXITCODE -eq 0) { $ok = $true; $steps += "resync=ok (after setting time.windows.com)" }',
+    '        else { $steps += ("still failing: " + $r2) } }',
+    '  catch { $steps += ("fallback FAILED :: " + $_.Exception.Message) }',
+    '}',
+    '$src = (w32tm /query /source 2>&1 | Out-String).Trim()',
+    `@{ ok = $ok; steps = $steps; source = $src } | ConvertTo-Json -Compress | Set-Content -Path ${_psq(outFile)} -Encoding UTF8`,
+  ].join('\n'));
+  if (!run.ok) return run;
+  const r = run.result;
+  appendAgentLog(`[clock-sync] ok=${r.ok} source=${r.source} — ${[].concat(r.steps || []).join(' | ')}\n`);
+  return { ok: !!r.ok, steps: [].concat(r.steps || []), source: r.source || null };
 });
 
 // Local status only — no network. Feeds the Settings "Zeal" card on open.

@@ -351,6 +351,9 @@ contextBridge.exposeInMainWorld('mimic', {
   // Windows Defender exclusions — opt-in, one UAC prompt, EQ + Mimic folders.
   defenderStatus:        () => ipcRenderer.invoke('defender-status'),
   defenderAddExclusions: () => ipcRenderer.invoke('defender-add-exclusions'),
+  // Windows clock: read the w32time service state, and (elevated) fix it.
+  clockStatus:           () => ipcRenderer.invoke('clock-status'),
+  clockResync:           () => ipcRenderer.invoke('clock-resync'),
   zealStatus:        ()   => ipcRenderer.invoke('zeal-status'),
   zealCheckUpdate:   ()   => ipcRenderer.invoke('zeal-check-update'),
   zealInstallUpdate: ()   => ipcRenderer.invoke('zeal-install-update'),

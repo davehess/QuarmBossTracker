@@ -209,6 +209,24 @@
   </button>
   <div id="defenderResult" class="hint" style="margin-top:6px"></div>
 
+  <h2>Windows clock</h2>
+  <div class="hint" style="margin-bottom:8px">
+    Every parse timestamp comes from this machine's clock, so a clock that drifts
+    puts your deaths, casts and kills at times nobody else saw — and the raid's
+    merged numbers get it wrong for everyone, not just you.
+    <br><br>
+    This does <b>not</b> just set the time once. We have watched that drift back
+    within two days. It sets the Windows Time service to start automatically,
+    starts it, and resyncs — fixing the reason the drift returns. Windows will
+    ask for permission once.
+  </div>
+  <div id="clockState" class="hint" style="margin-bottom:8px;font-family:ui-monospace,Consolas,monospace">checking…</div>
+  <button id="clockBtn" type="button"
+    style="margin-top:2px;background:#21262d;color:#c9d1d9;border:1px solid #30363d;border-radius:6px;padding:6px 13px;cursor:pointer;font-family:inherit;font-size:12px">
+    🕐 Fix Windows clock sync
+  </button>
+  <div id="clockResult" class="hint" style="margin-top:6px"></div>
+
   <div>
     <button id="save">Save</button>
   </div>
@@ -976,6 +994,50 @@
         btn.disabled = false; btn.textContent = orig;
         refresh();
       });
+    });
+  })();
+
+  // ── Windows clock sync ────────────────────────────────────────────────────
+  // Reports the SERVICE state, not just "what time is it" — a machine can show
+  // the right time this second and still be drifting because w32time is
+  // Disabled and never runs. That distinction is the whole point of the button.
+  (function () {
+    var state = document.getElementById('clockState');
+    var btn   = document.getElementById('clockBtn');
+    var out   = document.getElementById('clockResult');
+    if (!state || !btn) return;
+    if (!(window.mimic && window.mimic.clockStatus)) { state.textContent = ''; btn.style.display = 'none'; return; }
+    function esc(t){ return String(t == null ? '' : t).replace(/[&<>"]/g, function (c) {
+      return ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' })[c]; }); }
+    function refresh() {
+      window.mimic.clockStatus().then(function (s) {
+        if (!s || !s.ok) { state.textContent = (s && s.error) || 'Could not read the Windows Time service.'; return; }
+        var good = s.running && s.automatic;
+        state.innerHTML =
+          (good ? '<span style="color:#56d364">✓</span>' : '<span style="color:#f6c365">!</span>')
+          + ' Windows Time service: <b>' + esc(s.status || '?') + '</b>, starts <b>' + esc(s.startType || '?') + '</b>'
+          + (s.source ? '<br><span style="opacity:.6">source: ' + esc(s.source) + '</span>' : '')
+          + (good ? '' : '<br><span style="opacity:.8">That is why the clock drifts back after you correct it.</span>');
+      }).catch(function () { state.textContent = 'Could not read the Windows Time service.'; });
+    }
+    refresh();
+    btn.addEventListener('click', function () {
+      var orig = btn.textContent;
+      btn.disabled = true; btn.textContent = 'Waiting for Windows permission…';
+      if (out) out.textContent = '';
+      window.mimic.clockResync().then(function (r) {
+        if (r && r.ok) {
+          if (out) out.innerHTML = '<span style="color:#56d364">✓ Clock synced and the service is set to keep it synced.</span>'
+            + (r.source ? '<br><span style="opacity:.6">source: ' + esc(r.source) + '</span>' : '');
+        } else if (r && r.cancelled) {
+          if (out) out.innerHTML = '<span style="opacity:.8">Cancelled — nothing was changed.</span>';
+        } else {
+          if (out) out.innerHTML = '<span style="color:#f87171">Could not sync: '
+            + esc((r && (r.error || (r.steps || []).join(' | '))) || 'unknown error') + '</span>';
+        }
+      }).catch(function (e) {
+        if (out) out.innerHTML = '<span style="color:#f87171">Failed: ' + esc(e && e.message) + '</span>';
+      }).then(function () { btn.disabled = false; btn.textContent = orig; refresh(); });
     });
   })();
 </script>
