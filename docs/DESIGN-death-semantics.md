@@ -166,6 +166,36 @@ Add a `death_kind` to the stored record rather than filtering at read time:
 > Start with the explicit declaration and only add inference once we can measure
 > it against declared ground truth.
 
+### The corpse's two clocks
+
+**Source: Uilnayar, 2026-08-03.** Considering (`/con`) a corpse reports its exact
+decay timer. There are **two independent clocks**, and conflating them would
+produce a wrong callout at the worst moment:
+
+| Clock | Length | Ticks when | Ends in |
+|---|---|---|---|
+| **Zone residency** | **1 hour REAL time** | always | corpse leaves the instance for the graveyard (near the entry book) |
+| **Rez window** | **3 hours GAME time** | **only while that character is logged in** | corpse can no longer be rezzed at all |
+
+Consequences that matter:
+
+- The two can expire in either order. A corpse can leave the zone while still
+  rezzable (retrievable at the graveyard), or become unrezzable while still
+  sitting in the instance.
+- The rez clock is a **played-time** clock. A raider who camps for an hour has
+  spent none of it. Any countdown we render must therefore be driven by that
+  character's own logged-in time, not wall clock — a naive wall-clock countdown
+  will tell someone their corpse is dead when it is fine, and worse, the reverse.
+- `/con` on the corpse is the authoritative read. If its output is loggable, it
+  is strictly better than us modelling either clock ourselves, and it is the
+  only thing that can resolve the played-time question without us tracking
+  session time per character.
+
+**Design implication:** do not attempt to *simulate* the rez clock. Capture
+`/con` output when it happens, and treat everything else as an estimate clearly
+labelled as one. The zone-residency hour is safe to model (it is real time); the
+rez window is not.
+
 ### Open questions
 
 - Should a tactical death still appear on the fight timeline (as a distinct
@@ -173,9 +203,77 @@ Add a `death_kind` to the stored record rather than filtering at read time:
   in that rogue's damage.*
 - Is the corpse-pull strategy per-boss stable enough to store on
   `bosses_local`/`officer_notes`, so the platform knows which pulls expect one?
-- Does the graveyard relocation produce a loggable line? If so it bounds the
-  corpse's usable window and could drive a "corpse expiring" callout — genuinely
-  useful mid-raid, and nothing else gives us that clock.
+- Does `/con` on a corpse produce a parseable line, and does the graveyard
+  relocation log anything? Either would let us drive a real "corpse expiring"
+  callout instead of an estimate.
+- Does the 3-hour figure mean EQ game-time (which runs faster than real time) or
+  three hours of played time? **Recorded as stated, not yet converted.** Getting
+  this wrong in either direction produces a confidently wrong countdown, so it
+  needs confirming against a `/con` reading before anything renders it.
+
+---
+
+## 3a. Bind location — a death's cost is variable (DESIGN)
+
+**Source: Uilnayar, 2026-08-03.** *"during Wednesday's raid at Vex Thal, Hitya
+and Rockin (and others) are bound right outside. it is less than 5-10 seconds to
+run back into the zone instance to jump back into a fight."*
+
+This reframes the metric. **"Died" is not the cost — time out of the fight is.**
+A raider bound at the instance entrance is back in under ten seconds; one bound
+in a distant zone is gone for minutes, or needs a port, or needs the corpse
+moved. Same log line, wildly different impact on the pull.
+
+Counting both as "1 death" is the same category error as counting a feign: it
+treats a cheap, planned outcome and an expensive, disruptive one as the same
+event.
+
+### Capturing bind location
+
+Bind Affinity (spell 35) is the hook:
+
+| Message | Form |
+|---|---|
+| cast on you | `You feel yourself bind to the area.` |
+| cast on other | `<Name> is bound to the area.` |
+
+Instant, single-target, unresistable, range 100 — so the landing is reliable.
+
+When that line lands, capture the caster/target's **zone and location** (Zeal
+already streams `loc {x,y,z}` and `zone_name` on live-state; `/charinfo` is the
+in-game alternative). That gives us a per-character bind point.
+
+With bind points known:
+
+- **Estimated return time** after a death, instead of a bare death count.
+- **A pre-raid check**: "you are bound in Nexus, not outside Vex Thal" is exactly
+  the kind of thing nobody notices until they die.
+- A real input to the tactical-death model in section 3 — a rogue's corpse-pull
+  bind is deliberate and near the pull point.
+
+### Caveats
+
+- **Bind points move.** This is a variable that must be re-captured, not a
+  one-time fact. The value is only as fresh as the last observed Bind Affinity.
+- We see the bind *cast*, not the bind *state*. A character bound before they
+  ever ran Mimic has no observation, and we must show "unknown" rather than
+  guess.
+- Anomalies are expected and that is fine. Per Uilnayar: *"there are always going
+  to be anomalies to our logic, but we can recognize those."* The design goal is
+  a labelled estimate that is usually right and visibly uncertain when it is not
+  — never a confident number.
+
+### Rez does not require reaching zero first
+
+Worth stating explicitly because it constrains section 4: a player can take a rez
+without the platform having observed a `0` HP sample. Between the pipe's sampling
+cadence and a fast rez, the zero may simply never be sampled.
+
+So the group-HP watcher must treat `0` as **sufficient but not necessary**
+evidence of a death. A character who vanishes from the gauges and reappears at
+partial health has almost certainly died and been rezzed, even though no zero was
+ever seen. Requiring the zero would silently miss exactly the fast-rez cases the
+raid handles best.
 
 ---
 
@@ -205,6 +303,10 @@ that is not self/target/pet feeds `liveHpByName`). What is missing is a
   zoning, and the pipe dropping all look like disappearance and are not deaths.
 - **The edge is the test, not the level.** A rez reads `0 → N`, which is a real
   death correctly detected. "Currently 0" is not sufficient.
+- **Zero is sufficient but NOT necessary.** See §3a — a fast rez can be sampled
+  either side of the zero, so a character who vanishes and returns at partial
+  health died even though no `0` was ever observed. Requiring the zero would miss
+  precisely the cases the raid recovers from fastest.
 - **Same-name ambiguity does not apply here** — group gauges carry player names,
   which are unique, unlike the mob-name problem in
   `docs/zeal-spawn-id-request.md`.
