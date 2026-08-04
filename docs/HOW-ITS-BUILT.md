@@ -670,6 +670,38 @@ per-process CPU + memory, sorted by memory, with EQ-running state. Discards the
 first CPU sample (it is a delta since the previous call) and lists the log agent
 separately because it is a spawned process and NOT in `getAppMetrics()`.
 
+### Overlay windows are lazy — 2026-08-04
+Every overlay is its own Chromium renderer (~80 MB resident before it paints;
+Uilnayar measured the floor). Boot created **ten** of them unconditionally,
+ignoring every `cfg.show*`. `_OVERLAY_WINDOWS` (main.js, next to
+`applyAllVisibility`) is the flag → getter → creator → dropper table;
+`_materializeEnabledOverlays()` builds what is enabled and
+`_reapDisabledOverlays()` frees what is not. **The invariant: a window must
+exist whenever anything can SHOW it** — so materialize runs at the TOP of
+`applyAllVisibility()` (the funnel for hide-all restore, per-character
+profiles, class seeding, EQ-presence flips) and at the top of
+`applyOverlayInteractivity()` (unlock-to-place force-shows everything). That
+makes a wrong reap self-healing. `_overlayForcedOn()` spares setup mode,
+unlocked, hide-all, blind mode; `_inSingleSetup` spares "Setup THIS"; the
+trigger overlay keys on `enableTriggerTts`, NEVER `showTriggerOverlay`, because
+TTS fires from the hidden window (#97). Tests: `test/overlay-lifecycle.test.js`.
+
+### Not every eqgame.exe is yours — 2026-08-04
+`_checkEqRunning` matched the process NAME, but `eqgame.exe` is the binary for
+every EverQuest client — Uilnayar had EQLegends up and Mimic reported "EverQuest
+running" (overlays over the wrong game, Zeal nag primed, EQ-close auto-install
+armed against an untracked process). Now `tasklist` yields PIDs, and
+`_resolveEqPidOwners` reads each one's `ExecutablePath` via `Get-CimInstance`
+and keeps only paths under an `_ourEqDirs()` folder — configured `eqPaths`
+**that actually hold logs** (a stale entry would disown the real client, and
+`resolveEqDirsWithLogs` already falls back past those). `_eqPidVerdict` caches
+per PID, so the expensive lookup is once per game launch, not once per 5s poll.
+**Every failure path claims the process** (nothing configured, PowerShell
+blocked/errored, path unreadable, PID unjudged) — hiding a raider's overlays
+mid-fight is far worse than tracking one extra client. Disowned paths ride the
+`app-metrics` payload as `eqIgnored` so Resource use can say which client it
+passed on. Tests: `test/eq-process-identity.test.js`.
+
 ### Zeal update notice on the dashboard — 2026-08-04
 Mimic owns Zeal detection (`zealUpdater`, 12h check); the agent owns the
 dashboard. Mimic POSTs to the agent's `/api/zeal-update` and the agent folds it
