@@ -271,7 +271,22 @@ re-posted. Anchor-ID priority everywhere: `process.env.<KEY>` →
 `state.channelSlots` → `null`, so anchors survive volume loss. Named threads
 (Historic Kills, Parses Log, Onboarding, Hate, Roster ×2, Audit, Feedback,
 PvP, Live…) are all env-var IDs — see `.env.example`, which documents every
-variable. **Discord is the source of truth** for parses (`PARSES_LOG_THREAD_ID`
+variable.
+
+**⚠ `data/state.json` DOES NOT PERSIST on Railway — there is no volume mounted
+on the service.** Every deploy boots with `[state] state.json not found —
+creating fresh state` (verified in the live deploy log + the Railway service
+config, 2026-08-04). `.dockerignore` says the file "must come from the mounted
+volume"; that intent is currently NOT true. Everything else survives because it
+has an env-var fallback — which is what the anchor priority above is FOR — so
+the gap only shows up for state whose key can't be pre-declared as an env var.
+That is exactly how the raid review's per-night message id ended up posting
+**eleven copies of the same review in one night** (eleven redeploys, bot 3.1.8).
+**Anything keyed per-night / per-fight / per-anything-dynamic must go in
+`bot_kv`, not `state.json`** — the trash tally and now the review id both do.
+Treat `state.json` as a within-process cache, never as memory across a deploy.
+
+**Discord is the source of truth** for parses (`PARSES_LOG_THREAD_ID`
 reloaded on startup), hate state (hidden JSON embeds), and roster (chunked
 messages); `data/state.json` and `data/parses.json` are local mirrors with
 atomic writes (`.tmp` + rename). Recovery: `/restore <message links>`,
