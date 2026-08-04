@@ -23993,8 +23993,32 @@ function startChatRelay() {
   // the table near 525 MB. Well inside the ingest budget too — threat_snapshot
   // allows 120/min per uploader (_BUDGET_DEFAULTS), and 6s is 10/min.
   // Dial without a release via WP_THREAT_SNAPSHOT_MS.
-  const _threatSnapMs    = parseInt(process.env.WP_THREAT_SNAPSHOT_MS, 10) || 6_000;
-  const _threatSnapFloor = Math.max(1000, _threatSnapMs - 1000);
+  // TUNABLE MID-RAID (Uilnayar 2026-08-03: "go more frequent when we're in the
+  // middle of fights and less frequent in downtime"). The env var alone was
+  // read once at startup and baked into setInterval's period, so changing it
+  // meant restarting every raider's agent — useless in the moment. So: tick on
+  // a fixed short interval and gate on elapsed time against a cadence read
+  // LIVE from the officer tuning map, which rides the existing overlay-tuning
+  // poll (~90s fleet-wide, faster on the multiplexed poll). No new stream, no
+  // new timer, no release to change it.
+  //
+  // Clamped deliberately. The ingest budget allows 120/min per uploader
+  // (_BUDGET_DEFAULTS.threat_snapshot), i.e. one per 500ms; a 2s floor is
+  // 30/min and keeps 4x headroom, so a fat-fingered `100` can't turn 40 agents
+  // into a hammer. The env var remains the compiled default for anyone running
+  // the agent standalone.
+  //
+  // Note downtime is ALREADY free: this uploader early-returns unless there is
+  // a live un-flushed encounter, so between pulls it sends nothing at all. The
+  // knob is about resolution DURING a fight.
+  const THREAT_SNAP_TICK_MS = 1_000;
+  const THREAT_SNAP_MIN_MS  = 2_000;
+  const THREAT_SNAP_MAX_MS  = 60_000;
+  const _threatSnapEnvMs = parseInt(process.env.WP_THREAT_SNAPSHOT_MS, 10) || 6_000;
+  function _threatSnapCadenceMs() {
+    const t = tuneNum('threat_snapshot_ms', _threatSnapEnvMs);
+    return Math.max(THREAT_SNAP_MIN_MS, Math.min(THREAT_SNAP_MAX_MS, t));
+  }
   let _lastSnapAt = 0;
   setInterval(() => {
     if (!_uploadOpts || !_uploadOpts.botUrl || !_uploadOpts.token) return;
@@ -24002,7 +24026,7 @@ function startChatRelay() {
     if (!et || !et.perPlayer || Object.keys(et.perPlayer).length === 0) return;
     if (et.flushedAt) return; // fight already wrapped up
     const now = Date.now();
-    if (now - _lastSnapAt < _threatSnapFloor) return;
+    if (now - _lastSnapAt < _threatSnapCadenceMs()) return;
     _lastSnapAt = now;
     // pick the first watched character as the uploader; fall back to "?".
     let uploader = "?";
@@ -24025,6 +24049,13 @@ function startChatRelay() {
       // defender") and IS populated mid-fight — verified on the golden fixture,
       // where "Lord of Ire" is known from event 12 of 58.
       boss_name:   et.bossName || et.targetName || null,
+      // THIS uploader's own Zeal target at the moment of the sample — distinct
+      // from boss_name, which is the FIGHT (the most-damaged defender). A
+      // healer is on their heal target, an off-tank on an add, a slower on the
+      // next mob. Carried here so the damage curve and who-was-on-what live on
+      // the same row without a join. target_observations (bot-side) is the
+      // durable, all-raiders view; this is the in-fight, per-sample one.
+      target_name: _zealTargetForChar(String(uploader).toLowerCase()),
       started_at:  et.startedAt ? new Date(et.startedAt).toISOString() : null,
       snapshot_at: new Date(now).toISOString(),
       per_player:  et.perPlayer,
