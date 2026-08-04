@@ -395,7 +395,15 @@ const KEEP_PATTERNS = [
   /\bhas been slain by/i,
   /\byou have slain /i,
   /^\[.+\]\s+You died\./i,                        // /death of self
-  /\bdie[ds]\./i,                                 // "X died." (npc) or "X dies." (older variant)
+  /\bdie[ds]\./i,                                 // "X died." — see parseEvent; "X dies." is FEIGN, kept only so the trigger engine can see it
+  // ── Real-death CONFIRMATION (Uilnayar 2026-08-03) ────────────────────────
+  // A real death has a corpse-run tail that a feign never produces. These lines
+  // appear ONLY in the dying player's OWN log, which is exactly what makes them
+  // trustworthy: "<Name> dies." is ambiguous to a bystander, but nobody feigns
+  // their way to a home point. Kept so a backfill can VERIFY a recorded death
+  // instead of trusting the line that created it.
+  /\byou are bleeding to death\b/i,
+  /\breturning to home point, please wait\b/i,
   /\bhas been knocked unconscious/i,
   // DoT ticks and spell damage attributed to caster.
   // Quarm uses two forms (verified May 2026):
@@ -983,6 +991,14 @@ function parseEvent(line, ts) {
   m = line.match(/\]\s+You died\./i);
   if (m) {
     return { ts: tsIso, type: 'death', defender: null /* self */, attacker: null };
+  }
+  // Real-death CONFIRMATION — the corpse-run tail. Only ever appears in the
+  // dying player's OWN log, and a feign never produces it: nobody feigns their
+  // way to a home point. This is what lets a backfill VERIFY a stored death
+  // rather than re-trusting the line that created it (Uilnayar 2026-08-03).
+  if (/\]\s+You are bleeding to death!/i.test(line)
+      || /\]\s+Returning to home point, please wait/i.test(line)) {
+    return { ts: tsIso, type: 'death_confirm', defender: null /* self */, attacker: null };
   }
 
   // ── Heals ─────────────────────────────────────────────────────────────────
@@ -2765,6 +2781,12 @@ const _CAST_BEGIN_RX = /\]\s+You begin (?:casting|singing)\s+(.+?)\.\s*$/i;
 // Default = ready (a cleric who hasn't cast this session shows "up").
 // Rides live-state (di_ready_at) → bot aggregates per-cleric → CH-chain +
 // Command Center chips.
+// How long after a self-death the corpse-run confirmation may still arrive.
+// The real sequence is "You died." → "You are bleeding to death!" → "Returning
+// to home point, please wait..." within a couple of seconds, but a player who
+// lingers before releasing pushes the home-point line out; 60s covers that
+// without ever reaching back to a PREVIOUS death.
+const DEATH_CONFIRM_WINDOW_MS = 60_000;
 const DI_CAST_MS = 6000, DI_RECAST_MS = 90_000;
 const _diStateByChar = new Map();   // charLower → { castAt, readyAt }
 function _noteDiCast(charLower, atMs) {
@@ -6901,6 +6923,31 @@ class EncounterBuilder {
     // EQ NPC names are always multi-word ("A Shadel Bandit", "An Elder Vah Shir")
     // or start with lowercase ("a spirit", "an undead"). Player names are proper
     // nouns — single capitalised word.
+    // Back-patch the corpse-run confirmation onto the death that preceded it.
+    //
+    // Streaming means we cannot look ahead, so the death is recorded first and
+    // this arrives a moment later ("You died." → "You are bleeding to death!" →
+    // "Returning to home point, please wait..."). We stamp the most recent
+    // SELF death inside a short window; a bystander's death is not ours to
+    // confirm, since these lines only ever appear in the dying player's own log.
+    //
+    // What this buys: a stored death carrying confirmed=true is provably real,
+    // so a backfill can separate genuine deaths from the feign-death false
+    // positives that "<Name> dies." produced for a month — evidence rather than
+    // the class-based guess we would otherwise be stuck with.
+    if (event.type === 'death_confirm') {
+      const meLower = String(this.character || '').toLowerCase();
+      const atMs = Date.parse(event.ts) || Date.now();
+      for (let i = this.deaths.length - 1; i >= 0; i--) {
+        const d = this.deaths[i];
+        if (!d || String(d.name || '').toLowerCase() !== meLower) continue;
+        const dMs = Date.parse(d.ts) || 0;
+        if (atMs - dMs > DEATH_CONFIRM_WINDOW_MS) break;   // too old — stop scanning back
+        d.confirmed = true;
+        break;
+      }
+      return;
+    }
     if (event.type === 'death') {
       const rawDef  = event.defender;
       // Normalise "You died." first-person form to the character name
