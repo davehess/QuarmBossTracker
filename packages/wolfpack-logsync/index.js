@@ -24193,7 +24193,15 @@ function startChatRelay() {
       per_player:  et.perPlayer,
       total:       Object.values(et.perPlayer).reduce((a, p) => a + ((p.swing||0)+(p.proc||0)+(p.spell||0)+(p.heal||0)), 0),
     });
-  }, _threatSnapMs);
+    // Fixed 1s TICK, not the cadence: the cadence is read per-tick inside the
+    // body (_threatSnapCadenceMs) so an officer's mid-raid change takes effect
+    // within a second. A setInterval cannot change its own period, so the tick
+    // has to be the fast one and the gate has to be in the body.
+    // (v3.5.5 renamed the old `_threatSnapMs` const to `_threatSnapEnvMs` and
+    // missed THIS reference — which is a boot-time ReferenceError, not a
+    // degraded feature: startChatRelay() runs unguarded in watch mode, so the
+    // agent died on startup for every beta build 3.5.5 → 3.5.14.)
+  }, THREAT_SNAP_TICK_MS);
 }
 
 // ── Fun-event detection ─────────────────────────────────────────────────────
