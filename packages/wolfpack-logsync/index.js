@@ -23984,7 +23984,16 @@ function startChatRelay() {
   // cadence so a slow drain doesn't double-post inside one interval.
   // 2026-06-21: cranked default 30s → 18s after the Supabase Pro upgrade
   // — more granular per-fight tank-threat detail. Original was 15s.
-  const _threatSnapMs    = parseInt(process.env.WP_THREAT_SNAPSHOT_MS, 10) || 18_000;
+  // 2026-08-03: 18s → 6s (one EQ tick). Uilnayar: an accurate picture of the
+  // fight as it happens matters more than the historical record. The cost is
+  // bounded and lands almost entirely in the 7-day hot window, because the
+  // midnight job already downsamples anything older than 7 days to 1/min — so
+  // the aged tail is the SAME size at any cadence. Measured at 18s: 69.6k rows
+  // / ~62 MB in that window, 399 MB total; 6s puts the window near 187 MB and
+  // the table near 525 MB. Well inside the ingest budget too — threat_snapshot
+  // allows 120/min per uploader (_BUDGET_DEFAULTS), and 6s is 10/min.
+  // Dial without a release via WP_THREAT_SNAPSHOT_MS.
+  const _threatSnapMs    = parseInt(process.env.WP_THREAT_SNAPSHOT_MS, 10) || 6_000;
   const _threatSnapFloor = Math.max(1000, _threatSnapMs - 1000);
   let _lastSnapAt = 0;
   setInterval(() => {
@@ -24004,7 +24013,18 @@ function startChatRelay() {
     enqueueUpload('threat_snapshot', {
       agent_version: AGENT_VERSION,
       uploader,
-      boss_name:   et.bossName || null,
+      // et.bossName is ALWAYS null here, by construction. It is assigned in
+      // exactly two places — the boss-death handler (which immediately flushes)
+      // and inside flush() itself — while this uploader refuses to run once the
+      // fight has flushed (see the flushedAt guard above). The two windows are
+      // mutually exclusive, so every snapshot ever written carried boss_name
+      // NULL: 463,505 of 463,505 as of 2026-08-03, which orphaned the only
+      // per-fight time series we keep.
+      // et.targetName is the fallback the snapshot already builds for exactly
+      // this ("the catalog-matched boss when known, else the most-damaged
+      // defender") and IS populated mid-fight — verified on the golden fixture,
+      // where "Lord of Ire" is known from event 12 of 58.
+      boss_name:   et.bossName || et.targetName || null,
       started_at:  et.startedAt ? new Date(et.startedAt).toISOString() : null,
       snapshot_at: new Date(now).toISOString(),
       per_player:  et.perPlayer,
