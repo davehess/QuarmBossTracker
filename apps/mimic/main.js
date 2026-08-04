@@ -2022,6 +2022,13 @@ async function launchAgent() {
   const agentPath = ensureWritableAgent();
   agentPort = await findFreePort(BASE_PORT);
 
+  // The agent holds the Zeal-update notice in memory, so a relaunch (config
+  // save, crash, tray "Restart agent") wipes it. Without this it would stay
+  // blank until the next 12h check. Delayed so the agent's HTTP server is up.
+  if (_zealNotifiedTag) {
+    setTimeout(() => { try { _pushZealUpdateToAgent(_zealNotifiedTag, loadConfig().zealInstalledTag); } catch { /* */ } }, 8000);
+  }
+
   const args = [agentPath, '--watch', '--web-port', String(agentPort)];
   // Local-only: no token → don't pass --bot-url, so the agent runs dashboard +
   // tail only and never attempts uploads (no 4xx-spam in the queue).
@@ -6682,6 +6689,23 @@ ipcMain.handle('zeal-install-update', async () => {
 // mod and silently overwriting it mid-session would be surprising (and fails
 // while EQ is up anyway). Shows a native notification once per newly-seen tag;
 // the user does the one-click install from Settings when they're ready.
+// Relay Zeal update status to the agent, which surfaces it on the dashboard
+// through the existing Mimic Mail list. Mimic owns Zeal detection (it knows the
+// EQ dir and runs zealUpdater), the agent owns the dashboard — this is the
+// bridge. Fire-and-forget: a missing agent must never break the Zeal check.
+function _pushZealUpdateToAgent(tag, installed) {
+  try {
+    if (!agentPort) return;
+    const body = JSON.stringify({ tag: tag || null, installed: installed || null });
+    const req = http.request({
+      host: '127.0.0.1', port: agentPort, path: '/api/zeal-update', method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+      timeout: 3000,
+    }, (res) => { res.resume(); });
+    req.on('error', () => {}); req.on('timeout', () => req.destroy());
+    req.write(body); req.end();
+  } catch { /* agent not up yet — the next 12h check (or a manual one) re-pushes */ }
+}
 let _zealNotifiedTag = null;
 async function checkZealUpdate({ manual = false } = {}) {
   try {
@@ -6691,7 +6715,13 @@ async function checkZealUpdate({ manual = false } = {}) {
     if (!eqDir) return;                              // no EQ folder yet — nothing to update
     const latest = await zealUpdater.checkLatest();
     if (!latest.tag) return;
-    if (latest.tag === cfg.zealInstalledTag) return; // already current
+    const current = latest.tag === cfg.zealInstalledTag;
+    // Tell the agent on EVERY check, before the once-per-tag latch below.
+    // The dashboard notice must survive an agent restart (Mimic restarts it on
+    // config saves and crashes), and it must CLEAR the moment Zeal is current —
+    // a stale "update available" that never goes away is worse than none.
+    _pushZealUpdateToAgent(current ? null : latest.tag, cfg.zealInstalledTag);
+    if (current) return;                             // already current
     if (latest.tag === _zealNotifiedTag) return;     // already nudged for this tag
     _zealNotifiedTag = latest.tag;
     appendAgentLog(`[zeal-update] newer Zeal available: ${latest.tag} (installed: ${cfg.zealInstalledTag || 'unknown'})\n`);

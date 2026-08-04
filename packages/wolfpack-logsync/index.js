@@ -19248,7 +19248,47 @@ function startWebDashboard(port) {
       // heavy /api/state poll for a value that changes rarely).
       if (req.url === '/api/notices') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ notices: _guildNotices }));
+        // A pending Zeal update rides the SAME mail list as guild notices
+        // (Uilnayar 2026-08-03: "a notice at the top of the dashboard when zeal
+        // has an update outstanding"). Deliberately reusing this list instead of
+        // adding a banner: the mail button, unread badge and panel already
+        // exist, and WEB_HTML is the one file where a single mis-escaped
+        // character blanks the whole page — the cheapest new markup is none.
+        //
+        // Mimic owns Zeal detection (zealUpdater), so it POSTs the result to
+        // /api/zeal-update; the agent just relays what it was told.
+        const out = _guildNotices.slice();
+        if (_zealUpdate && _zealUpdate.tag) {
+          out.unshift({
+            // Derive the id from the TAG so a newer Zeal release reads as
+            // unread again. A fixed id would be dismissed once and then stay
+            // silent forever, which is exactly the failure this is meant to fix.
+            id: 900000000 + (_zealHashTag(_zealUpdate.tag) % 1000000),
+            title: `Zeal ${_zealUpdate.tag} is available`,
+            body: (_zealUpdate.installed ? `You have ${_zealUpdate.installed}. ` : '')
+                + 'Install it from Mimic Settings → Zeal (one click). '
+                + 'Zeal feeds target HP, buffs, the raid roster and every gauge-driven callout — '
+                + 'an out-of-date Zeal quietly degrades all of them.',
+            severity: 'normal',
+            created_at: _zealUpdate.at || new Date().toISOString(),
+          });
+        }
+        return res.end(JSON.stringify({ notices: out }));
+      }
+      // Mimic pushes Zeal update status here (it owns zealUpdater + the EQ dir).
+      if (req.url === '/api/zeal-update' && req.method === 'POST') {
+        const body = await _readBody(req, 8 * 1024);
+        let p = null;
+        try { p = JSON.parse(body); } catch { p = null; }
+        if (p && typeof p === 'object') {
+          _zealUpdate = p.tag
+            ? { tag: String(p.tag).slice(0, 40),
+                installed: p.installed ? String(p.installed).slice(0, 40) : null,
+                at: new Date().toISOString() }
+            : null;   // null/absent tag = up to date, clear the notice
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ ok: true }));
       }
       // #113 Extended Target "same-zone targets only" per-user pref. GET returns
       // the current value (dashboard Overlays checkbox reads it); POST sets it
@@ -25366,6 +25406,17 @@ let _overlayTuning = {};
 // wide within ~2 minutes. Bot side: automatic on the raid schedule, with a
 // flag_raid_hold=1/0 officer override in /admin/overlays.
 let _raidHold = false;
+// Pending Zeal update, pushed by Mimic (which owns zealUpdater + the EQ dir).
+// Surfaced through the existing Mimic Mail list — see the /api/notices handler.
+let _zealUpdate = null;   // { tag, installed, at } | null
+// Cheap stable hash so the synthetic notice id changes with the TAG. A fixed id
+// would be dismissed once and never resurface for a later Zeal release.
+function _zealHashTag(tag) {
+  let h = 0;
+  const s = String(tag || '');
+  for (let i = 0; i < s.length; i++) { h = ((h << 5) - h + s.charCodeAt(i)) | 0; }
+  return Math.abs(h);
+}
 // Guild notices ("Mimic Mail") — officer broadcasts from /admin/notices, served
 // by the bot alongside overlay tuning (same poll, zero extra timers). Shown as
 // a pulsing ✉ in the dashboard header; critical ones ALSO post to Discord
