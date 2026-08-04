@@ -3892,13 +3892,52 @@ async function _pollEqPresence() {
   // Hourly, focus-safe reminder while they're still playing on the old build.
   if (running) { try { _nagPendingUpdate(); } catch { /* ditto */ } }
 }
+// Presence polling backs OFF while EQ is absent.
+//
+// Some raiders quit Mimic between sessions "to save on processing" (Uilnayar
+// 2026-08-03), and they had a point about this one: everything else already
+// idles hard — the 1Hz blind poll early-returns on !_eqRunning, the 300ms Zeal
+// flush no-ops when no snapshot is dirty — but _checkEqRunning() SPAWNS
+// tasklist.exe unconditionally. At a flat 10s that is ~8,640 process spawns a
+// day on a desktop that is not even running the game, and spawn pressure is
+// already why this went 5s -> 10s in the 2026-07-07 review.
+//
+// While EQ is up, keep 10s: overlay show/hide gating hangs off this and needs to
+// feel immediate. While EQ is down, nothing is time-critical except noticing it
+// come back, so ease out to 45s after a minute of absence — ~87% fewer idle
+// spawns, and the worst case is overlays appearing a few seconds later on
+// launch. Any transition resets to the fast cadence immediately.
+const EQ_POLL_ACTIVE_MS = 10_000;
+const EQ_POLL_IDLE_MS   = 45_000;
+const EQ_POLL_IDLE_AFTER = 6;        // consecutive absent polls (~1 min) before easing off
+let _eqAbsentStreak = 0;
+let _eqPollStopped  = false;
+function _eqPollDelay() {
+  return (!_eqRunning && _eqAbsentStreak >= EQ_POLL_IDLE_AFTER) ? EQ_POLL_IDLE_MS : EQ_POLL_ACTIVE_MS;
+}
 function _startEqPolling() {
   if (_eqPollTimer || process.platform !== 'win32') return;
-  _pollEqPresence().catch(() => {});
-  _eqPollTimer = setInterval(() => { _pollEqPresence().catch(() => {}); }, 10000);   // 5s->10s (2026-07-07 review: tasklist spawn pressure)
+  _eqPollStopped = false;
+  const tick = async () => {
+    const before = _eqRunning;
+    try { await _pollEqPresence(); } catch { /* never let a poll kill the loop */ }
+    if (_eqPollStopped) { _eqPollTimer = null; return; }   // stopped mid-flight
+    // Streak drives the backoff; any state change snaps back to fast polling so
+    // launching EQ is picked up promptly even from a long idle.
+    if (_eqRunning) _eqAbsentStreak = 0;
+    else if (before === _eqRunning) _eqAbsentStreak++;
+    else _eqAbsentStreak = 0;
+    // Self-rescheduling: a fixed setInterval cannot change its own period.
+    _eqPollTimer = setTimeout(tick, _eqPollDelay());
+  };
+  _eqPollTimer = setTimeout(tick, 0);
 }
 function _stopEqPolling() {
-  if (_eqPollTimer) { clearInterval(_eqPollTimer); _eqPollTimer = null; }
+  // _eqPollStopped is load-bearing, not belt-and-braces: the tick awaits
+  // _pollEqPresence (which spawns tasklist), so a stop landing mid-flight would
+  // otherwise be undone by that tick's own reschedule and resurrect the loop.
+  _eqPollStopped = true;
+  if (_eqPollTimer) { clearTimeout(_eqPollTimer); _eqPollTimer = null; }
 }
 
 // ── Visibility helpers (quiet mode is the master override) ─────────────────
