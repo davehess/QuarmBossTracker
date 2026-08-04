@@ -960,8 +960,23 @@ function parseEvent(line, ts) {
   if (m) {
     return { ts: tsIso, type: 'death', defender: m[1], attacker: null /* self */ };
   }
-  // "X died." (Quarm/most modern EQ format) or "X dies." (older variant)
-  m = line.match(/\]\s+(.+?)\s+die[ds]\./i);
+  // "X died." — a real death with no named killer (drowning, falling, DoT tick).
+  //
+  // DO NOT re-add "dies." here. `<Name> dies.` is the FEIGN DEATH message, not a
+  // death: it is the cast_on_other text of Feign Death (spell 366, SK 30 /
+  // NEC 16), Death Peace (1460, SK 60 / NEC 60), Paralyzing Venom (1118) and FD
+  // Test (2807) — every one an SPA-'Feign Death' effect, all four fading with
+  // "You no longer appear dead." This regex used to be /die[ds]\./ on the
+  // assumption that "dies." was an older real-death variant. It is not, and the
+  // cost was enormous: every feign a knight or necro threw was recorded as a
+  // death by EVERY observer in range. Shadow Knights showed 175 death records
+  // across 3 characters (58 each) and Necromancers 58 across 4, against 5.5 for
+  // a Cleric and 1 for a Bard — 44% of every death we have ever stored came
+  // from the only two classes that can feign (Uilnayar 2026-08-03).
+  //
+  // Feign death is already parsed correctly further down as type 'feign_death'
+  // via "has fallen to the ground"; this line simply must not shadow it.
+  m = line.match(/\]\s+(.+?)\s+died\./i);
   if (m) {
     return { ts: tsIso, type: 'death', defender: m[1], attacker: null };
   }
