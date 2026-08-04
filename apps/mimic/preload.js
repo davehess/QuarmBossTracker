@@ -616,8 +616,8 @@ if (location.protocol === 'http:') {
 
     // "Update ready" banner — replaces the naggy OS pop-up. Shows when a Mimic
     // update has downloaded (status.updatePending); restarts to apply on click.
-    // The update also applies on its own at the next quit, so this is purely a
-    // convenience nudge, not a demand.
+    // The update also applies on its own the next time EQ closes (2.3.0) and at
+    // the next Mimic quit, so this is purely a convenience nudge, not a demand.
     const upd = document.createElement('div');
     upd.id = 'mimic-update-banner';
     upd.setAttribute('style', [
@@ -636,7 +636,7 @@ if (location.protocol === 'http:') {
     updBtn.onclick = () => { try { ipcRenderer.invoke('restart-to-update'); } catch (e) {} };
     const updDismiss = document.createElement('button');
     updDismiss.textContent = '✕';
-    updDismiss.title = 'Dismiss (the update still applies next time you close Mimic)';
+    updDismiss.title = 'Dismiss (the update still installs next time you close EverQuest)';
     updDismiss.setAttribute('style', [
       'background:transparent', 'color:#56d364', 'border:none', 'cursor:pointer', 'font-size:13px',
     ].join(';'));
@@ -658,7 +658,13 @@ if (location.protocol === 'http:') {
     const refreshBanner = (s) => {
       banner.style.display = (s && s.localOnly) ? 'flex' : 'none';
       if (s && s.updatePending && !_updDismissed) {
-        updMsg.innerHTML = '⬆ <b>Mimic v' + String(s.updatePending).replace(/[<>&]/g, '') + ' is ready.</b> Restart to update — or it applies next time you close Mimic.';
+        // Wording matters here: since 2.3.0 the update applies when you close
+        // EVERQUEST (autoInstallOnAppQuit still covers a Mimic quit as well),
+        // and nobody quits Mimic — that was the whole reason the EQ-close path
+        // was built. Telling a raider "close Mimic" sends them to do the one
+        // thing they never do, and makes a working auto-update look broken
+        // (Uilnayar, 2026-08-04: "it did not update in place").
+        updMsg.innerHTML = '⬆ <b>Mimic v' + String(s.updatePending).replace(/[<>&]/g, '') + ' is ready.</b> Nothing to do — it installs by itself next time you close EverQuest. Or restart now:';
         upd.style.display = 'flex';
       } else {
         upd.style.display = 'none';
