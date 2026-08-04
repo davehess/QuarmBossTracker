@@ -300,6 +300,54 @@ curse-counter sort. MGB-trained set cached from `character_aas`. Served to
 agents (3s agent-side cache) for the Buff-queue overlay; "buffs feel laggy"
 click drops the agent into snappy mode + reports to the bot for audit.
 
+### Raid nights (`raid_nights` + `linkEncounterToRaidNight`) — 2026-08-04
+`utils/supabase.js` creates the night row on the first encounter that resolves
+and stamps `encounters.raid_night_id`. Night predicate is
+`raidNight.isRaidNightAt`/`nightKey` — the SAME functions the trash tally and
+the review's pace calc use, so they cannot drift. Encounters OUTSIDE a raid
+window keep `raid_night_id` NULL on purpose (a daytime XP kill is not a raid).
+`zone_main` is FK'd to `eqemu_zone`, so an unknown zone retries without it
+rather than losing the link. History (193 nights, 1,022 encounters) backfilled
+by migration; the SQL reimplements the window and was cross-checked against the
+JS on a 30-row stratified sample.
+
+### Target history (`target_observations`) — 2026-08-04
+Who was targeting what, over time. The agent has always sent `target_name`
+(Zeal slot 6) on live-state and it is EVENT-DRIVEN (a switch uploads
+immediately, plus a 45s heartbeat) — but `character_live_state` is keyed
+`(guild_id, character)`, so every switch overwrote the last. `_noteTargetSwitches`
+appends **on change only**, using an in-memory last-target map (no extra
+Supabase read on a hot path), so rows scale with target SWITCHES not samples
+(~5k a raid night). Transitions to NULL are recorded too, or an interval never
+closes. Intervals derived at read time with `lead()`. Bot-side only, so it
+collects from every agent version. **Limits by construction:** Zeal reports only
+the LOCAL client's target (coverage = whoever runs Mimic), and same-name mobs
+are still not distinguishable.
+
+### Agent clock offsets (`agent_clock_offsets`) — 2026-08-04
+Every agent stamps events from its own machine clock, and EQ writes log
+timestamps with that same clock — so a slow machine reports slow deaths. Two
+independent estimators stored side by side so they cross-check:
+`pulse` (agent sends `client_now` on the 20s heartbeat; bot computes
+`server_recv - client_now`, EWMA-smoothed, flushed every 5 min) and `consensus`
+(for a death with 3+ witnesses the median is truth; needs no agent release so it
+reaches history). The consensus pass is TWO-PASS — a single-pass median includes
+the skewed observers and is dragged by them. `offset_ms` is signed
+server-minus-client; correct a client timestamp with `ts + offset_ms`.
+`spread_ms` is the honesty column: high spread = unstable clock, do not trust it.
+Measured 2026-08-03: two installs at −42s and −14s, everyone else within ±4s.
+
+### Buff-cast spell-id resolution (`_resolveSpellIdByName`) — 2026-08-04
+When several spells share one landing message the agent picks a representative,
+writes its NAME, then withholds `spell_id` "rather than guessing wrong" — but
+those are the same claim, and the cure queue resolves poison/disease COUNTERS
+(SPA 35/36) from the catalog, so a 0 meant it could never learn a debuff was
+curable. The bot now resolves by the name it was given, accepting it ONLY when
+that name is unique in the catalog (cached per name; the vocabulary is ~52 names
+a month). Unresolved share fell 34.4% → 0.5%. The two survivors (Ensnare,
+Ring of Winter) are true two-candidate names — resolving those wants the
+target's own Mimic buff window or the mob's spell list.
+
 ### PvP pipeline
 Agent `pvp`/`pvp_assists` uploads (kill/death/assist broadcasts + /who
 harvest) → dedup (`_isPvpDupe` collapses multi-relayer echoes) → #pvp posts,
@@ -405,6 +453,32 @@ the latency floor for the debuff queue and Extended Target. Type-5 raid
 frames upload `raid_roster` + populate `_raidRosterMembers`. **The pipe has
 no spawn id** — same-name mobs are not disambiguable (see CLAUDE.md scope
 boundary).
+
+### Death semantics (feign exclusion + corpse-run confirmation) — 2026-08-04
+**`"<Name> dies."` is FEIGN DEATH, not death** — the `cast_on_other` text of
+Feign Death (366), Death Peace (1460), Paralyzing Venom (1118) and FD Test
+(2807). `parseEvent` matched `/die[ds]\./` on the belief that "dies." was an
+older real-death variant; it is not, and 44% of every death ever stored came
+from the only two classes that can feign. Now matches `died.` only.
+**Real deaths carry a corpse-run tail** ("You are bleeding to death!",
+"Returning to home point, please wait…") which appears ONLY in the dying
+player's own log — parsed as `death_confirm`, back-patching `confirmed: true`
+onto the matching SELF death inside 60s. **`confirmed: false` means "no proof
+either way", never "this was a feign"** — a rezzed death is real and
+unconfirmable, and every rogue corpse pull looks exactly like one. Full model
+and the open design work in `docs/DESIGN-death-semantics.md`.
+
+### Threat snapshots (cadence, labelling, claiming) — 2026-08-04
+`boss_name` was NULL on all 463k rows by construction: it is assigned only at
+flush (death handler / inside `flush()`), while the uploader refuses to run once
+`flushedAt` is set — the two windows are mutually exclusive. Now sends
+`et.bossName || et.targetName`, the fallback the snapshot already built for
+exactly this. Also carries `target_name` (the uploader's OWN Zeal target, which
+is NOT the fight — a healer is on their heal target). Cadence 18s → 6s and now
+tunable mid-raid via `tuneNum('threat_snapshot_ms')`, clamped 2s–60s (the ingest
+budget is 120/min per uploader). `encounter_id` is claimed bot-side at flush
+(`claimThreatSnapshots`) because the agent cannot know it — the encounter row
+does not exist until the fight ends.
 
 ### Charm pipeline
 `_charmTickTracker` (slot-16 gauge-driven; 1.5s land debounce, 10s re-charm
@@ -533,6 +607,37 @@ Zeal health, Settings, loading. Overlays poll the local agent
 `/api/extended-target`, `/api/buff-queue`) every ~1.5–2s.
 
 ---
+
+### Auto-update on EQ close + focus-safe nag — 2026-08-04 (Mimic 2.3.0)
+Mimic already polled hourly with `autoDownload` on; `autoInstallOnAppQuit` then
+waited for a quit that never comes because nobody quits Mimic. So the download
+sat there and raiders arrived on old builds. `_pollEqPresence` now installs a
+pending update when EQ CLOSES (provably not playing), with a 15s grace that
+re-checks presence so a crash-and-relaunch defers instead of yanking Mimic away.
+Otherwise it only NAGS, hourly, via an OS `Notification` — chosen because it
+structurally cannot take focus or raise a window over the game. **Bootstrap
+caveat: this can only auto-install for people already on 2.3.0+.**
+
+### Idle backoff + resource readout — 2026-08-04
+`_checkEqRunning` spawned `tasklist.exe` unconditionally every 10s (~8,640/day on
+an idle desktop). Now eases to 45s once EQ has been gone a minute — 76% fewer
+spawns — via a self-rescheduling `setTimeout` (a fixed `setInterval` cannot
+change its own period). `_eqPollStopped` is load-bearing, not defensive: the tick
+awaits a spawn, so a stop landing mid-flight would be undone by that tick's own
+reschedule. Settings → **Resource use** renders `app.getAppMetrics()` live (2s):
+per-process CPU + memory, sorted by memory, with EQ-running state. Discards the
+first CPU sample (it is a delta since the previous call) and lists the log agent
+separately because it is a spawned process and NOT in `getAppMetrics()`.
+
+### Zeal update notice on the dashboard — 2026-08-04
+Mimic owns Zeal detection (`zealUpdater`, 12h check); the agent owns the
+dashboard. Mimic POSTs to the agent's `/api/zeal-update` and the agent folds it
+into the existing **Mimic Mail** notice list — deliberately reusing that UI
+rather than adding a banner, since `WEB_HTML` is the one file where a single
+mis-escaped character blanks the page. Status pushes on EVERY check and clears
+when Zeal is current; the synthetic notice id derives from the TAG so a later
+release resurfaces; `launchAgent` re-pushes 8s after spawn because the agent
+holds it in memory.
 
 ## Web features
 
