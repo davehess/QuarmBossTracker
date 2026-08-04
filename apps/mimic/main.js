@@ -810,7 +810,8 @@ function findEqInstalls(hint) {
   // user's agent.log instead of guessing. Only when it is worth noticing.
   if (ms >= 250) {
     appendAgentLog(`[eq-scan] scanned ${result.scanned.length} dir(s) in ${ms}ms`
-      + (hint ? ` (hint ${hint})` : '') + ` — cached ${_EQ_SCAN_TTL_MS / 1000}s\n`);
+      + (hint ? ` (hint ${hint})` : '') + ` — cached ${_EQ_SCAN_TTL_MS / 1000}s`
+      + ((result.slow && result.slow.length) ? ` — SLOW: ${result.slow.join(', ')}` : '') + '\n');
   }
   _eqScanCache.set(key, { at: Date.now(), result });
   return result;
@@ -819,6 +820,7 @@ function findEqInstalls(hint) {
 function _findEqInstallsUncached(hint) {
   const scanned = [];
   const found   = [];
+  const slow    = [];   // dirs that individually cost >=500ms — the real culprits
   const seen    = new Set();
   const probe   = (dir, source) => {
     if (!dir) return;
@@ -826,6 +828,11 @@ function _findEqInstallsUncached(hint) {
     if (seen.has(norm.toLowerCase())) return;
     seen.add(norm.toLowerCase());
     scanned.push(norm);
+    // Per-directory timing. The aggregate ("26 dirs in 20383ms") proved the
+    // scan was the problem but not WHICH probe, and on Windows the answer is
+    // usually one absent or offline drive letter costing seconds by itself.
+    // Naming the specific directory turns the next report into a fix.
+    const _t = Date.now();
     try {
       if (!fs.existsSync(norm)) return;
       const entries = fs.readdirSync(norm);
@@ -838,6 +845,10 @@ function _findEqInstallsUncached(hint) {
         found.push({ path: norm, hasEqgame, hasLogs, logCount: logFiles.length, source });
       }
     } catch { /* unreadable dir — fine */ }
+    finally {
+      const _ms = Date.now() - _t;
+      if (_ms >= 500) slow.push(norm + ' ' + _ms + 'ms');
+    }
   };
 
   // 1. Explicit override always wins (still recorded so the UI can show it).
@@ -861,7 +872,7 @@ function _findEqInstallsUncached(hint) {
 
   // Rank: eqgame.exe present beats logs-only; more logs wins as a tiebreaker.
   found.sort((a, b) => (Number(b.hasEqgame) - Number(a.hasEqgame)) || (b.logCount - a.logCount));
-  return { scanned, found };
+  return { scanned, found, slow };
 }
 
 // ── Manual window drag (replaces broken CSS -webkit-app-region) ────────────
@@ -6220,9 +6231,25 @@ ipcMain.handle('find-eq-installs', () => {
   // Probe every user-configured path PLUS the autodetection passes. The
   // picker UI uses `scanned` to show "we looked in these paths".
   const hints = Array.isArray(cfg.eqPaths) ? cfg.eqPaths : (cfg.eqPath ? [cfg.eqPath] : []);
-  const merged = { scanned: [], found: [] };
+  // SKIP the speculative pass when a configured folder already answers the
+  // question (Uilnayar 2026-08-04: 20383ms, then 21027ms, hint A:\EQ).
+  //
+  // The `null` hint is the DISCOVERY pass — 20 hard-coded default paths across
+  // drives A: through F:. Probing a drive letter that is not present, or is
+  // mapped to something offline, is exactly the operation Windows is slowest to
+  // fail: this user's 26-directory scan took TWENTY SECONDS, on the main
+  // process, freezing every window. And it ran on every scan even though their
+  // EQ folder was already configured and valid, so all twenty probes were
+  // asking a question we had already answered.
+  //
+  // Discovery still runs for someone with nothing configured — which is exactly
+  // when a slow first scan is acceptable, because there is no faster answer to
+  // be had.
+  const configuredWorks = hints.some(h => { try { return _dirHasEqLogs(h); } catch { return false; } });
+  const passes = configuredWorks ? hints : [...hints, null];
+  const merged = { scanned: [], found: [], skippedDiscovery: configuredWorks };
   const seen = new Set();
-  for (const h of [...hints, null]) {
+  for (const h of passes) {
     const r = findEqInstalls(h);
     for (const p of r.scanned) {
       const k = p.toLowerCase();
@@ -6938,22 +6965,59 @@ async function _runElevatedPs(tag, buildScript) {
     const { execFile } = require('child_process');
     try { fs.unlinkSync(outFile); } catch { /* not there — fine */ }
     fs.writeFileSync(psFile, buildScript(outFile), 'utf8');
-    const code = await new Promise((resolve) => {
+    // Capture the ELEVATED child's own output too. Without this we only see the
+    // launcher's stderr, so a script that ran but failed inside (no write
+    // permission on the result path, a cmdlet missing, Defender policy blocking
+    // Add-MpPreference) is indistinguishable from a prompt that was declined.
+    const errFile = path.join(tmpDir, `wolfpack-${tag}-stderr.txt`);
+    const logFile = path.join(tmpDir, `wolfpack-${tag}-stdout.txt`);
+    try { fs.unlinkSync(errFile); } catch { /* */ }
+    try { fs.unlinkSync(logFile); } catch { /* */ }
+    const run = await new Promise((resolve) => {
       execFile('powershell.exe',
         ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command',
          'Start-Process powershell.exe -Verb RunAs -Wait -WindowStyle Hidden ' +
+         `-RedirectStandardError ${_psq(errFile)} -RedirectStandardOutput ${_psq(logFile)} ` +
          `-ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File',${_psq(psFile)}`],
         { timeout: 180000, windowsHide: true },
-        (err) => resolve(err ? (err.code || 1) : 0));
+        (err, stdout, stderr) => {
+          let childErr = '';
+          try { childErr = fs.readFileSync(errFile, 'utf8'); } catch { /* none */ }
+          try { fs.unlinkSync(errFile); } catch { /* */ }
+          try { fs.unlinkSync(logFile); } catch { /* */ }
+          resolve({
+            code: err ? (err.code || 1) : 0,
+            out: String(stdout || '').trim(),
+            err: [String(stderr || '').trim(), String(childErr || '').trim(),
+                  (err && err.message) || ''].filter(Boolean).join(' | '),
+          });
+        });
     });
     let result = null;
     try { result = JSON.parse(fs.readFileSync(outFile, 'utf8')); } catch { /* none written */ }
     try { fs.unlinkSync(psFile); } catch { /* */ }
     try { fs.unlinkSync(outFile); } catch { /* */ }
     if (!result) {
-      return { ok: false, cancelled: true,
-        error: code === 0 ? 'Windows did not report a result.'
-                          : 'Cancelled at the Windows permission prompt.' };
+      // Do NOT blanket-call this "cancelled". Declining UAC and the elevated
+      // script failing outright produced the SAME message before, so a real
+      // failure looked like a user decision and nobody investigated it
+      // (Uilnayar 2026-08-04: "i also did not see a note in there about the
+      // clock sync working or the windows defender exception being created").
+      //
+      // Windows reports a declined UAC prompt as Win32 error 1223, surfaced by
+      // Start-Process as "The operation was canceled by the user". Match that
+      // specifically; anything else is a genuine error and must say so, with
+      // whatever PowerShell actually printed.
+      const blob = `${run.err}\n${run.out}`;
+      const declined = /canceled by the user|cancelled by the user|1223/i.test(blob);
+      appendAgentLog(`[${tag}] no result (exit ${run.code})`
+        + (blob.trim() ? ` — ${blob.trim().replace(/\s+/g, ' ').slice(0, 400)}` : '') + '\n');
+      if (declined) {
+        return { ok: false, cancelled: true, error: 'Cancelled at the Windows permission prompt.' };
+      }
+      return { ok: false,
+        error: (blob.trim() || `The elevated step did not run (exit ${run.code}) and reported nothing.`)
+          .replace(/\s+/g, ' ').slice(0, 400) };
     }
     return { ok: true, result };
   } catch (e) {
