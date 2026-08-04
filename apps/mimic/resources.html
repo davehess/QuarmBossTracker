@@ -90,6 +90,11 @@
              + 'Memory is <b>private bytes</b> — the part not shared with other processes. '
              + 'This should line up with Task Manager. Shared framework pages are excluded '
              + 'on purpose: counting them once per process is what made older builds read 2–3× high.'
+             + '<br>To match these names up in Task Manager: <b>Details</b> tab → right-click any '
+             + 'column header → <b>Select columns</b> → <b>Command line</b>. Each window carries a '
+             + '<code style="background:#0d1117;padding:1px 4px;border-radius:3px">--wp-window=</code> '
+             + 'tag there. (The Name column reads the .exe, which is the same file for all of them, '
+             + 'so it can\'t be changed.)'
              + '</div>';
       }
       return '<div style="margin-top:6px;color:#f0b429;font-size:11px">'

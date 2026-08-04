@@ -89,6 +89,28 @@ const BASE_PORT   = 7779; // 7777/7778 left for Parser.bat coexistence
 
 const WOLFPACK_URL    = 'https://wolfpack.quest';
 
+// Standard webPreferences for every window we open, PLUS a name stamped onto
+// that renderer's own command line.
+//
+// "Can these expose their names in Task manager as well?" (Uilnayar 2026-08-04)
+// — partly. The Name column cannot change: every renderer is the same
+// Wolf Pack Mimic.exe and Task Manager reads that column from the exe's version
+// resource. (The Dashboard row is named only because it owns a visible taskbar
+// window, whose title Task Manager appends. Overlays are skipTaskbar so they
+// have no such window — deliberately, or they would flood alt-tab.)
+//
+// What CAN carry a name is the process command line, and additionalArguments
+// lands there. Task Manager → Details → right-click any column header → Select
+// columns → Command line shows it, as do Process Explorer and Resource Monitor.
+// Costs nothing at runtime: nothing reads process.argv in the renderers.
+function _wpPrefs(name, extra) {
+  return Object.assign({
+    preload: path.join(__dirname, 'preload.js'),
+    contextIsolation: true,
+    additionalArguments: ['--wp-window=' + String(name || 'window').replace(/\s+/g, '-')],
+  }, extra || {});
+}
+
 let mainWindow = null;
 let overlayWindow = null;
 let triggerWindow = null;
@@ -2684,7 +2706,7 @@ function createMainWindow() {
     // (not shipped), so use the packaged assets PNG. The Start-menu/.exe icon
     // comes separately from build/icon.ico via electron-builder win.icon.
     icon: path.join(__dirname, 'assets', 'icon-256.png'),
-    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true },
+    webPreferences: _wpPrefs('Dashboard'),
   });
   // Keep the OS/Task-Manager title stable instead of letting the loaded page
   // (loading.html → the agent dashboard) overwrite it — so this process stays
@@ -3264,7 +3286,7 @@ function createPanelOverlay(panelKey) {
     alwaysOnTop: true, skipTaskbar: true,
     focusable: true,
     show: false,
-    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true },
+    webPreferences: _wpPrefs('panel overlay ' + panelKey),
   });
   win.setAlwaysOnTop(true, 'screen-saver');
   win.setVisibleOnAllWorkspaces(true);
@@ -3293,7 +3315,7 @@ function createOverlayWindow() {
     alwaysOnTop: true, skipTaskbar: true,
     focusable: true, // needed so it can be dragged when unlocked
     show: false,     // visibility decided from config + quiet mode below
-    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true },
+    webPreferences: _wpPrefs('DPS HUD'),
   });
   overlayWindow.setAlwaysOnTop(true, 'screen-saver');
   overlayWindow.setVisibleOnAllWorkspaces(true);
@@ -3321,7 +3343,7 @@ function createTriggerOverlay() {
     // backgroundThrottling:false so a HIDDEN trigger overlay keeps running its
     // TTS + countdowns full-speed — the ✕ hides the visual only (#97), it must
     // never throttle or silence callouts.
-    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, backgroundThrottling: false },
+    webPreferences: _wpPrefs('Trigger alerts', { backgroundThrottling: false }),
   });
   triggerWindow.setAlwaysOnTop(true, 'screen-saver');
   triggerWindow.setVisibleOnAllWorkspaces(true);
@@ -3348,7 +3370,7 @@ function openSettings() {
   if (settingsWindow) { settingsWindow.focus(); return; }
   settingsWindow = new BrowserWindow({
     width: 540, height: 560, title: 'Mimic Settings', backgroundColor: '#0e1116',
-    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true },
+    webPreferences: _wpPrefs('Settings'),
   });
   settingsWindow.loadFile('settings.html');
   settingsWindow.on('closed', () => { settingsWindow = null; });
@@ -3369,7 +3391,7 @@ function openResources() {
   if (resourcesWindow) { resourcesWindow.focus(); return; }
   resourcesWindow = new BrowserWindow({
     width: 520, height: 520, title: 'Mimic — Resource use', backgroundColor: '#0e1116',
-    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true },
+    webPreferences: _wpPrefs('Resource use'),
   });
   resourcesWindow.loadFile('resources.html');
   resourcesWindow.on('closed', () => { resourcesWindow = null; });
@@ -3385,7 +3407,7 @@ function openUiStudio() {
   uiStudioWindow = new BrowserWindow({
     width: 1200, height: 780, title: 'Wolf Pack miMIC — UI Studio',
     backgroundColor: '#0d1117',
-    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true },
+    webPreferences: _wpPrefs('UI Studio'),
   });
   uiStudioWindow.setMenu(null);
   uiStudioWindow.loadFile('ui-studio.html');
@@ -4438,7 +4460,7 @@ function createCharmOverlay() {
     minWidth: 200, minHeight: 80,
     frame: false, transparent: true, resizable: true,
     alwaysOnTop: true, skipTaskbar: true, focusable: true, show: false,
-    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true },
+    webPreferences: _wpPrefs('Charm tracker'),
   });
   charmWindow.setAlwaysOnTop(true, 'screen-saver');
   charmWindow.setVisibleOnAllWorkspaces(true);
@@ -4472,7 +4494,7 @@ function createPetsOverlay() {
     minWidth: 200, minHeight: 70,
     frame: false, transparent: true, resizable: true,
     alwaysOnTop: true, skipTaskbar: true, focusable: true, show: false,
-    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true },
+    webPreferences: _wpPrefs('Pet tracker'),
   });
   petsWindow.setAlwaysOnTop(true, 'screen-saver');
   petsWindow.setVisibleOnAllWorkspaces(true);
@@ -4506,7 +4528,7 @@ function createBuffQueueOverlay() {
     minWidth: 240, minHeight: 100,
     frame: false, transparent: true, resizable: true,
     alwaysOnTop: true, skipTaskbar: true, focusable: true, show: false,
-    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true },
+    webPreferences: _wpPrefs('Buff queue'),
   });
   buffQueueWindow.setAlwaysOnTop(true, 'screen-saver');
   buffQueueWindow.setVisibleOnAllWorkspaces(true);
@@ -4542,7 +4564,7 @@ function createPopRaidOverlay() {
     minWidth: 300, minHeight: 160,
     frame: false, transparent: true, resizable: true,
     alwaysOnTop: true, skipTaskbar: true, focusable: true, show: false,
-    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true },
+    webPreferences: _wpPrefs('PoP raids'),
   });
   popRaidWindow.setAlwaysOnTop(true, 'screen-saver');
   popRaidWindow.setVisibleOnAllWorkspaces(true);
@@ -4574,7 +4596,7 @@ function createMobInfoOverlay() {
     minWidth: 230, minHeight: 90,
     frame: false, transparent: true, resizable: true,
     alwaysOnTop: true, skipTaskbar: true, focusable: true, show: false,
-    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true },
+    webPreferences: _wpPrefs('Mob Info'),
   });
   mobInfoWindow.setAlwaysOnTop(true, 'screen-saver');
   mobInfoWindow.setVisibleOnAllWorkspaces(true);
@@ -4605,7 +4627,7 @@ function createWhoOverlay() {
     minWidth: 220, minHeight: 100,
     frame: false, transparent: true, resizable: true,
     alwaysOnTop: true, skipTaskbar: true, focusable: true, show: false,
-    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true },
+    webPreferences: _wpPrefs('/who'),
   });
   whoWindow.setAlwaysOnTop(true, 'screen-saver');
   whoWindow.setVisibleOnAllWorkspaces(true);
@@ -4637,7 +4659,7 @@ function createMelodyOverlay() {
     minWidth: 200, minHeight: 80,
     frame: false, transparent: true, resizable: true,
     alwaysOnTop: true, skipTaskbar: true, focusable: true, show: false,
-    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true },
+    webPreferences: _wpPrefs('Melody'),
   });
   melodyWindow.setAlwaysOnTop(true, 'screen-saver');
   melodyWindow.setVisibleOnAllWorkspaces(true);
@@ -4672,7 +4694,7 @@ function createZealHealthOverlay() {
     minWidth: 220, minHeight: 100,
     frame: false, transparent: true, resizable: true,
     alwaysOnTop: true, skipTaskbar: true, focusable: true, show: false,
-    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true },
+    webPreferences: _wpPrefs('Zeal health'),
   });
   zealWindow.setAlwaysOnTop(true, 'screen-saver');
   zealWindow.setVisibleOnAllWorkspaces(true);
@@ -4709,7 +4731,7 @@ function createTankOverlay() {
     minWidth: 240, minHeight: 120,
     frame: false, transparent: true, resizable: true,
     alwaysOnTop: true, skipTaskbar: true, focusable: true, show: false,
-    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true },
+    webPreferences: _wpPrefs('Tank HUD'),
   });
   tankWindow.setAlwaysOnTop(true, 'screen-saver');
   tankWindow.setVisibleOnAllWorkspaces(true);
@@ -4744,7 +4766,7 @@ function createThreatMeterOverlay() {
     minWidth: 240, minHeight: 80,
     frame: false, transparent: true, resizable: true,
     alwaysOnTop: true, skipTaskbar: true, focusable: true, show: false,
-    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true },
+    webPreferences: _wpPrefs('Threat meter'),
   });
   threatWindow.setAlwaysOnTop(true, 'screen-saver');
   threatWindow.setVisibleOnAllWorkspaces(true);
@@ -4779,7 +4801,7 @@ function createExtTargetOverlay() {
     minWidth: 240, minHeight: 80,
     frame: false, transparent: true, resizable: true,
     alwaysOnTop: true, skipTaskbar: true, focusable: true, show: false,
-    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true },
+    webPreferences: _wpPrefs('Extended target'),
   });
   extTargetWindow.setAlwaysOnTop(true, 'screen-saver');
   extTargetWindow.setVisibleOnAllWorkspaces(true);
@@ -4860,7 +4882,7 @@ function createCommandOverlay() {
     minWidth: 260, minHeight: 160,
     frame: false, transparent: true, resizable: true,
     alwaysOnTop: true, skipTaskbar: true, focusable: true, show: false,
-    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true },
+    webPreferences: _wpPrefs('Command center'),
   });
   commandWindow.setAlwaysOnTop(true, 'screen-saver');
   commandWindow.setVisibleOnAllWorkspaces(true);
@@ -4909,7 +4931,7 @@ function createChChainOverlay() {
     // one in a live raid.
     focusable: false,
     show: false,
-    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true },
+    webPreferences: _wpPrefs('CH chain'),
   });
   chChainWindow.setAlwaysOnTop(true, 'screen-saver');
   chChainWindow.setVisibleOnAllWorkspaces(true);
