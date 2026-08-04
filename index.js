@@ -2946,6 +2946,25 @@ function scheduleMidnightSummary(readyClient) {
         console.warn('[midnight] threat snapshot retention skipped:', err?.message);
       }
 
+      // ── Retention sweep: target_observations ──────────────────────────────
+      // Append-on-change, so volume is proportional to target SWITCHES (~5k a
+      // raid night), not to time — an order of magnitude below the threat
+      // snapshots. Still swept, because nothing here is worth keeping forever
+      // and an unbounded telemetry table is how the last one reached 351 MB.
+      // TARGET_OBSERVATION_RETENTION_DAYS (0 disables).
+      try {
+        const supabase = require('./utils/supabase');
+        const d = parseInt(process.env.TARGET_OBSERVATION_RETENTION_DAYS, 10);
+        const keep = Number.isFinite(d) ? d : 90;
+        if (supabase.isEnabled() && keep > 0) {
+          const cutoff = new Date(Date.now() - keep * 24 * 60 * 60 * 1000).toISOString();
+          await supabase.del('target_observations', `at=lt.${encodeURIComponent(cutoff)}`);
+          console.log(`[midnight] swept target_observations older than ${keep} days`);
+        }
+      } catch (err) {
+        console.warn('[midnight] target_observations retention skipped:', err?.message);
+      }
+
       // ── Retention sweep: buff_casts ───────────────────────────────────────
       // Observed buff/debuff LANDINGS — the live "who has what buff" truth is
       // character_live_state (replaced in place per character); buff_casts is
@@ -11654,6 +11673,53 @@ async function _handleAgentCharacterPrefs(req, res) {
 //   { agent_version, uploaded_by, states: [
 //       { character, zone_id, zone_name, self_hp_pct, buffs:[{name,ticks}],
 //         buff_count }, ... ] }
+// ── Target history (append-on-change) ────────────────────────────────────────
+// See supabase/migrations/*_target_observations.sql for the why. Keyed
+// `<guild>|<character-lowercased>` → last target string we recorded ('' = the
+// target was cleared). In-memory on purpose: the alternative is a SELECT per
+// live-state POST, and live-state is change-driven plus a 45s heartbeat across
+// ~40 raiders. A bot restart just re-learns each character on their next
+// switch; worst case one duplicate row per character, which is harmless because
+// intervals are derived with lead() at read time.
+const _lastTargetByChar = new Map();
+const TARGET_OBS_MAX_KEYS = 2000;   // bound the map; guild is ~200 characters
+function _targetObsKey(guildId, character) {
+  return `${guildId}|${String(character).toLowerCase()}`;
+}
+async function _noteTargetSwitches(rows) {
+  if (!Array.isArray(rows) || rows.length === 0) return 0;
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) return 0;
+  if (_lastTargetByChar.size > TARGET_OBS_MAX_KEYS) _lastTargetByChar.clear();
+
+  const out = [];
+  for (const r of rows) {
+    if (!r || !r.character) continue;
+    const key  = _targetObsKey(r.guild_id, r.character);
+    // Normalize so a null target and an absent one compare equal — otherwise
+    // every heartbeat with no target would look like a fresh switch.
+    const next = r.target_name ? String(r.target_name) : '';
+    const prev = _lastTargetByChar.get(key);
+    if (prev === next) continue;                 // no switch → nothing to record
+    _lastTargetByChar.set(key, next);
+    // Don't write a row for the very first sighting when it's "no target" —
+    // that's the cold-start default, not an observed switch.
+    if (prev === undefined && next === '') continue;
+    out.push({
+      guild_id:      r.guild_id,
+      character:     r.character,
+      target_name:   next || null,
+      target_hp_pct: next ? r.target_hp_pct : null,
+      zone_name:     r.zone_name || null,
+      at:            r.updated_at || new Date().toISOString(),
+      uploaded_by:   r.uploaded_by || null,
+    });
+  }
+  if (out.length === 0) return 0;
+  await supabase.insert('target_observations', out);
+  return out.length;
+}
+
 async function _handleAgentLiveState(req, res) {
   const identity = await mimicLink.requireAgentAuth(req, res);
   if (!identity) return;
@@ -11794,6 +11860,16 @@ async function _handleAgentLiveState(req, res) {
   }
   try {
     if (rows.length) await supabase.upsert('character_live_state', rows, 'guild_id,character');
+    // Target HISTORY (#target-obs). character_live_state is keyed
+    // (guild_id, character), so the upsert above destroys the previous target
+    // every time — see the migration header. Append the switch here, BEFORE
+    // that information is gone, using an in-memory last-known map so this costs
+    // zero extra Supabase reads on what is a hot path (change-driven + a 45s
+    // heartbeat, times ~40 raiders). Best-effort: never fail a live-state POST
+    // over telemetry.
+    try { await _noteTargetSwitches(rows); } catch (err) {
+      console.warn('[target-obs] append failed:', err?.message);
+    }
     for (const s of swaps) {
       await supabase.update('character_live_state',
         `guild_id=eq.${encodeURIComponent(guildId)}&character=eq.${encodeURIComponent(s.character)}`,
