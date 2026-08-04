@@ -1356,6 +1356,18 @@ the callout designs; they're written up in the Open TODO section, not here):
   vs the other 29 (long dormant; six slow-landed callouts firing on every pull
   is a real noise risk the day before a Vex Thal night).
 - **#191** Parse Log duplicate embeds (near-identical archive entries seconds apart)
+- **❓ `release-parser.yml` has run exactly twice, both on 2026-05-31** (one push,
+  one manual dispatch) — so the standalone **CLI zip** has not been rebuilt since
+  then, while the bundled-in-Mimic agent has moved from 3.4.x to 3.5.15. Its
+  trigger is a `v*` tag push, and Mimic's release tags are created by the Actions
+  token, which by design does not trigger other workflows — so it will never fire
+  on its own. **Not filed as a bug:** if the intent is "dispatch manually when we
+  want a CLI release", this is working as designed. Needs a one-line answer from
+  Hitya — *does anyone still run `Parser.bat` standalone?* If yes, they are two
+  months behind and the feign fix has not reached them. Noticed during the
+  2026-08-04 workflow sweep (the rest are main-only, tag, scheduled or manual —
+  `test.yml`/`golden-log.yml` were the only two declaring a branch they were
+  absent from).
 - **#192** onboarding overhaul v1 (`DESIGN-onboarding-overhaul.md`)
 - **#193** Zeal spawn-id ask + consuming it (`zeal-spawn-id-request.md`)
 - **#194** serialization phase 2 — position-clustered same-name instances
