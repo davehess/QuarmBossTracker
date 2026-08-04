@@ -3394,7 +3394,14 @@ function openResources() {
     webPreferences: _wpPrefs('Resource use'),
   });
   resourcesWindow.loadFile('resources.html');
-  resourcesWindow.on('closed', () => { resourcesWindow = null; });
+  resourcesWindow.on('closed', () => {
+    resourcesWindow = null;
+    // Nothing reads these now, and a stale snapshot would be served to the next
+    // open before its first query lands.
+    _wsPrivate.byPid = new Map();
+    _wsPrivate.at = 0;
+    _wsPrivate.lastMs = 0;
+  });
 }
 
 // UI Studio — graphical EQ-window editor. Loads per-character ini files
@@ -7785,8 +7792,20 @@ ipcMain.handle('restart-to-update', () => {
 // toggle: a number measured on the user's machine beats an estimate from ours.
 const _WS_TTL_MS = 12_000;
 let _wsPrivate = { at: 0, byPid: new Map(), inFlight: false, lastMs: 0 };
+// True only while the window that consumes these numbers is actually open.
+// "when we close that resource use window make sure we're not matching task
+// manager still and querying for the exact in the background" (Uilnayar
+// 2026-08-04). Today the only caller is resources.html's 2s poll, so closing
+// the window already stops it — but that is a property of the renderer, and a
+// background PowerShell loop is not something to leave resting on one. This
+// makes it structural in the main process instead.
+function _resourcesWindowOpen() {
+  return !!(resourcesWindow && !resourcesWindow.isDestroyed());
+}
+
 function _refreshPrivateWorkingSet(pids) {
   if (process.platform !== 'win32') return;
+  if (!_resourcesWindowOpen()) { _wsPrivate.byPid = new Map(); return; }
   let cfg; try { cfg = loadConfig(); } catch { return; }
   if (!cfg.exactMemory) { _wsPrivate.byPid = new Map(); return; }
   if (_wsPrivate.inFlight) return;
@@ -7807,6 +7826,10 @@ function _refreshPrivateWorkingSet(pids) {
         _wsPrivate.at = Date.now();
         _wsPrivate.lastMs = _wsPrivate.at - started;
         if (err || !stdout) return;
+        // The window can close mid-query. Landing the result then would leave a
+        // populated cache behind for whoever opens it next, showing resident
+        // numbers with the checkbox off.
+        if (!_resourcesWindowOpen()) { _wsPrivate.byPid = new Map(); return; }
         const byPid = new Map();
         for (const line of String(stdout).split(/\r?\n/)) {
           const m = line.trim().match(/^(\d+)\|(\d+)$/);

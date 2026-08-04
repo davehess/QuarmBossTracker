@@ -122,6 +122,39 @@ describe('the working-set query does not become the cost it measures', () => {
     expect(src).toMatch(/ipcMain\.handle\('set-exact-memory'/);
   });
 
+  it('does not run at all once the Resource use window is closed', () => {
+    // "when we close that resource use window make sure we're not matching task
+    // manager still and querying for the exact in the background" (Uilnayar
+    // 2026-08-04). Today the only caller is that window's own 2s poll, so it
+    // already stops — but that is the RENDERER's behaviour, and a background
+    // PowerShell loop should not rest on it.
+    // Must be the FIRST thing after the platform check — an identical guard
+    // also lives in the callback, so match on position, not on the text.
+    const gate = fn.indexOf('_resourcesWindowOpen()');
+    expect(gate, 'no window gate at all').toBeGreaterThan(-1);
+    expect(gate, 'the gate must precede the config read, not just exist somewhere')
+      .toBeLessThan(fn.indexOf('loadConfig()'));
+    expect(src).toMatch(/function _resourcesWindowOpen\(\) \{[\s\S]*?resourcesWindow && !resourcesWindow\.isDestroyed\(\)/);
+  });
+
+  it('a query still in flight when the window closes does not repopulate', () => {
+    const cb = fn.slice(fn.indexOf('(err, stdout) =>'));
+    expect(cb).toMatch(/if \(!_resourcesWindowOpen\(\)\) \{ _wsPrivate\.byPid = new Map\(\); return; \}/);
+    // …and the guard must sit BEFORE the parse, not after it.
+    expect(cb.indexOf('_resourcesWindowOpen()')).toBeLessThan(cb.indexOf('const byPid = new Map();'));
+  });
+
+  it('closing the window drops the snapshot outright', () => {
+    // Otherwise the next open shows resident numbers, from a query that is no
+    // longer running, with the checkbox reading whatever it reads.
+    const closer = src.slice(src.indexOf("resourcesWindow.on('closed'"));
+    const stanza = closer.slice(0, 400);
+    expect(stanza).toMatch(/resourcesWindow = null;/);
+    expect(stanza).toMatch(/_wsPrivate\.byPid = new Map\(\);/);
+    expect(stanza, 'the TTL clock must reset too, or the reopen waits 12s')
+      .toMatch(/_wsPrivate\.at = 0;/);
+  });
+
   it('reports what the query cost on THIS machine', () => {
     // An estimate from us is worth less than a measurement from them, and the
     // whole point of the toggle is deciding whether the cost is acceptable.

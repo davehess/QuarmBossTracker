@@ -23,6 +23,11 @@
   .sub{color:#8b949e;font-size:11px;line-height:1.5;margin-bottom:12px}
   .box{background:#161b22;border:1px solid #2a3140;border-radius:6px;padding:11px 13px}
   #metricsSummary{color:#8b949e;font-size:11px}
+  /* Options + the folded explanation sit UNDER the data, styled quietly so the
+     numbers stay the loudest thing in the window. */
+  #metricsOptions{margin-top:10px;font-size:11px;color:#c9d1d9}
+  #metricsOptions summary::-webkit-details-marker{color:#6e7681}
+  #metricsOptions summary:hover{color:#c9d1d9}
   table{width:100%;margin-top:9px;border-collapse:collapse;font-size:11px}
   th{font-weight:normal;color:#6e7681;text-align:left;padding:2px 0}
   td{padding:3px 0}
@@ -40,18 +45,22 @@
     with EQ shut Mimic only checks whether it reopened (every 45s) and whether an update landed.
   </div>
 
+  <!--
+    Reading order (Uilnayar 2026-08-04): "Ideally it says the CPU/Memory, then
+    processes, then the options and what is not being tracked."
+
+    The prose used to sit between the numbers and the table and ran three times
+    the height of the data — "an eyesore". It is all still here, just folded into
+    a <details> under the option it explains, so the default window is the
+    measurement and nothing else.
+  -->
   <div class="box">
     <div id="metricsSummary">measuring…</div>
     <table id="metricsTable"></table>
   </div>
 
-  <div class="foot">
-    CPU is a share of <b>one</b> core, measured since the previous sample — so the
-    first reading after opening this window is discarded rather than shown, because
-    it would be a meaningless spike. Task Manager divides by <b>all</b> your cores
-    and samples over its own window, so the two percentages will not match and
-    neither is wrong. At around 1% both are noise either way.
-  </div>
+  <div id="metricsOptions"></div>
+  <div id="metricsNotTracking"></div>
 
 <script>
   // Identical rendering to the Settings card this replaces — deliberately kept
@@ -61,8 +70,10 @@
   // getAppMetrics() call, so the very first sample after a cold start reads
   // high and is meaningless. Discard it and only show settled readings.
   (function () {
-    var summary = document.getElementById('metricsSummary');
-    var table   = document.getElementById('metricsTable');
+    var summary     = document.getElementById('metricsSummary');
+    var table       = document.getElementById('metricsTable');
+    var options     = document.getElementById('metricsOptions');
+    var notTracking = document.getElementById('metricsNotTracking');
     if (!summary || !table || !window.mimic || !window.mimic.appMetrics) {
       if (summary) summary.textContent = 'Resource metrics are unavailable in this window.';
       return;
@@ -93,66 +104,86 @@
     // chased: matching exactly needs a Windows query that costs real CPU in a
     // window whose whole claim is that Mimic costs none. The checkbox is there
     // for when an exact comparison is actually worth it.
-    var TM_TIP = '<br>To match these names up in Task Manager: <b>Details</b> tab → right-click any '
+    var TM_TIP = 'To match these names up in Task Manager: <b>Details</b> tab → right-click any '
                + 'column header → <b>Select columns</b> → <b>Command line</b>. Each window carries a '
                + '<code style="background:#0d1117;padding:1px 4px;border-radius:3px">--wp-window=</code> '
                + 'tag there. (The Name column reads the .exe, which is the same file for all of them, '
                + 'so it can\'t be changed.)';
-    // The opt-in checkbox + whatever the last query actually cost on THIS
-    // machine. Rendered as a placeholder that gets its checked state applied
-    // afterwards, so re-rendering never fights the user mid-click.
-    function exactBox(m){
-      if (!window.mimic || !window.mimic.setExactMemory) return '';
-      var cost = m.wsQueryMs
-        ? ' <span style="color:#6e7681">last query took ' + esc(m.wsQueryMs) + 'ms</span>'
-        : '';
-      return '<div style="margin-top:8px;font-size:11px">'
-           + '<label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer">'
-           + '<input type="checkbox" id="wpExactMem" style="cursor:pointer" />'
-           + '<span>Match Task Manager exactly</span></label>'
-           + '<span style="color:#6e7681"> — asks Windows for the resident figure every 12s. '
-           + 'Off by default so this window stays free.</span>' + cost
-           + '</div>';
-    }
-    function basisNote(m){
+    var CPU_NOTE = 'CPU is a share of <b>one</b> core, measured since the previous sample — the first '
+                 + 'reading after opening this window is discarded rather than shown, because it would '
+                 + 'be a meaningless spike. Task Manager divides by <b>all</b> your cores over its own '
+                 + 'window, so the two percentages will not match and neither is wrong. At around 1% '
+                 + 'both are noise either way.';
+
+    // What the memory number means. Three variants, one per basis.
+    function memNote(m){
       if (m.memBasis === 'workingSetPrivate') {
-        return '<div style="margin-top:6px;color:#6e7681;font-size:11px">'
-             + 'Memory is the <b>private working set</b> read from Windows — the same figure Task '
-             + 'Manager\'s Memory column shows, so the two should agree. '
-             + '<b>Committed</b> is the larger number next to it: every private page the processes '
-             + 'have reserved, including ones not currently in RAM.'
-             + TM_TIP + '</div>';
+        return 'Memory is the <b>private working set</b> read from Windows — the same figure Task '
+             + 'Manager\'s Memory column shows, so the two should agree. <b>Committed</b> is the '
+             + 'larger number beside it: every private page the processes have reserved, including '
+             + 'ones not currently in RAM.';
       }
-      // The DEFAULT path. Not an apology — commit is a real number, it is just
-      // not the one Task Manager prints, and saying why costs nothing.
-      return '<div style="margin-top:6px;color:#6e7681;font-size:11px">'
-           + 'Memory is <b>committed private bytes</b>: what Windows has <b>provisioned</b> for '
+      // The DEFAULT. Commit is a real number, just not the one Task Manager
+      // prints, and saying why costs nothing.
+      return 'Memory is <b>committed private bytes</b>: what Windows has <b>provisioned</b> for '
            + 'Mimic, not what is sitting in RAM. Task Manager\'s Memory column shows only the '
            + 'resident part, so <b>it will read lower than this and both are correct</b>. Processes '
-           + 'reserve more than they touch — the GPU helper is usually the biggest gap — so there '
-           + 'is no single factor between the two. Tick the box below if you want the resident '
-           + 'figure instead.'
+           + 'reserve more than they touch — the GPU helper is usually the biggest gap — so there is '
+           + 'no single factor between the two. Tick the box above for the resident figure instead.'
            + (m.memBasis === 'workingSet'
-              ? ' <span style="color:#f0b429">(Private bytes were unavailable, so this is the '
-                + 'whole working set — higher again, since pages shared between processes get '
-                + 'counted once per process.)</span>'
-              : '')
-           + TM_TIP + '</div>';
+              ? ' <span style="color:#f0b429">(Private bytes were unavailable, so this is the whole '
+                + 'working set — higher again, since pages shared between processes get counted once '
+                + 'per process.)</span>'
+              : '');
     }
+
+    // Options block: the checkbox first, the prose folded underneath it.
+    function optionsHtml(m){
+      var h = '';
+      if (window.mimic && window.mimic.setExactMemory) {
+        var cost = m.wsQueryMs
+          ? ' <span style="color:#6e7681">· last query took ' + esc(m.wsQueryMs) + 'ms</span>'
+          : '';
+        h += '<label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer">'
+          +  '<input type="checkbox" id="wpExactMem" style="cursor:pointer" />'
+          +  '<span>Match Task Manager exactly</span></label>'
+          +  '<span style="color:#6e7681"> — asks Windows for the resident figure every 12s. '
+          +  'Off by default so this window stays free.</span>' + cost;
+      }
+      h += '<details id="wpWhyDetails" style="margin-top:' + (h ? '7px' : '0') + '">'
+        +  '<summary style="cursor:pointer;color:#8b949e;font-size:11px;list-style:revert">'
+        +  'Why these numbers differ from Task Manager</summary>'
+        +  '<div style="margin-top:6px;color:#6e7681;font-size:11px;line-height:1.55">'
+        +  memNote(m) + '<br><br>' + CPU_NOTE + '<br><br>' + TM_TIP
+        +  '</div></details>';
+      return h;
+    }
+
+    // Which EverQuest we passed on. Last, because it is a footnote to the
+    // EQ badge above and not something to read every time.
+    function notTrackingHtml(m){
+      if (!(m.eqIgnored && m.eqIgnored.length)) return '';
+      return '<div style="margin-top:10px;color:#6e7681;font-size:11px;line-height:1.5">'
+           + '<b>Not tracking:</b> ' + esc(m.eqIgnored.join(', '))
+           + ' — a different EverQuest install. eqgame.exe is the binary name for every EverQuest '
+           + 'client, so Mimic follows only the one in your configured EQ folder. Add its folder in '
+           + 'Settings if you want Mimic to follow it too.</div>';
+    }
+
+    // Byte-compare before writing. The 2s poll must not rewrite the options
+    // block, or the <details> the user just opened snaps shut every tick.
+    var lastHtml = {};
+    function setHtml(el, html){
+      if (!el || lastHtml[el.id] === html) return false;
+      lastHtml[el.id] = html;
+      el.innerHTML = html;
+      return true;
+    }
+
     function paint(m){
       if (!primed) { primed = true; summary.textContent = 'measuring…'; return; }
       var eqCls = m.eqRunning ? 'eq on' : 'eq off';
       var eqTxt = m.eqRunning ? 'EverQuest running' : 'EverQuest closed';
-      // eqgame.exe is the binary name for EVERY EverQuest client, so another
-      // install (EQLegends, a Live client) shows up in the same process list.
-      // Mimic only tracks the one in your configured EQ folder — say which one
-      // it passed on, or "EverQuest closed" reads as broken while a game is
-      // plainly running (Uilnayar 2026-08-04).
-      var ignored = (m.eqIgnored && m.eqIgnored.length)
-        ? '<div style="margin-top:6px;color:#6e7681;font-size:11px">Not tracking: '
-          + esc(m.eqIgnored.join(', '))
-          + ' — a different EverQuest install. Add its folder in Settings if you want Mimic to follow it.</div>'
-        : '';
       // Show committed alongside in-RAM. One number invites "this disagrees
       // with Task Manager"; two label the difference as what it is.
       var exact = m.memBasis === 'workingSetPrivate';
@@ -163,10 +194,7 @@
         + '<span style="color:#79c0ff;font-size:15px">' + esc(m.totalMemMb) + '</span>'
         + '<span style="color:#6e7681"> MB ' + (exact ? 'in RAM' : 'committed') + '</span>' + commit
         + '<span style="color:#6e7681"> · ' + esc(m.procs.length) + ' processes ('
-        + esc(m.windows) + ' windows)</span> <span class="' + eqCls + '">' + esc(eqTxt) + '</span>'
-        + ignored
-        + basisNote(m)
-        + exactBox(m);
+        + esc(m.windows) + ' windows)</span> <span class="' + eqCls + '">' + esc(eqTxt) + '</span>';
       var rows = m.procs.slice().sort(function (a, b) { return b.memMb - a.memMb; });
       var h = '<tr><th>process</th><th style="text-align:right">CPU</th><th style="text-align:right">memory</th></tr>';
       for (var i = 0; i < rows.length; i++) {
@@ -184,10 +212,26 @@
            + '</td><td></td><td style="text-align:right;color:#6e7681">—</td></tr>';
       }
       table.innerHTML = h;
+      // Rewritten only when the text actually changes (a basis flip, a new
+      // query time), and the open state is restored when it does.
+      if (setHtml(options, optionsHtml(m))) restoreDetails();
+      setHtml(notTracking, notTrackingHtml(m));
       wireExact(m);
     }
+
+    // <details> open-state survives the rewrites, tracked JS-side rather than
+    // read back off a DOM node that is about to be replaced.
+    var whyOpen = false;
+    document.addEventListener('toggle', function (e) {
+      if (e.target && e.target.id === 'wpWhyDetails') whyOpen = !!e.target.open;
+    }, true);
+    function restoreDetails(){
+      var d = document.getElementById('wpWhyDetails');
+      if (d) d.open = whyOpen;
+    }
+
     // Checked state is applied AFTER render (never baked into the HTML), so a
-    // repaint mid-click can't fight the user. The listener is attached once.
+    // repaint mid-click can\'t fight the user. The listener is attached once.
     var exactWired = false;
     function wireExact(m){
       var box = document.getElementById('wpExactMem');
