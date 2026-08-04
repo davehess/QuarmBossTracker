@@ -182,15 +182,14 @@
 
   <h2>Resource use</h2>
   <div class="hint" style="margin-bottom:8px">
-    Live numbers from this machine — Mimic's own processes plus every overlay you
-    have open. Nothing here is uploaded. If you close EverQuest and leave this
-    open, you should watch CPU settle to roughly nothing: with EQ shut, Mimic
-    only checks whether it has reopened (every 45s) and whether an update landed.
+    Live CPU and memory for every Mimic process on this machine, measured here and
+    never uploaded. It opens in its own window so you can leave it next to
+    EverQuest while you play — which is when the question actually comes up.
   </div>
-  <div id="metricsBox" style="background:#0e1116;border:1px solid #2a3140;border-radius:6px;padding:10px 12px;font-family:ui-monospace,Consolas,monospace;font-size:11px;color:#c9d1d9">
-    <div id="metricsSummary" style="color:#8b949e">measuring…</div>
-    <table id="metricsTable" style="width:100%;margin-top:8px;border-collapse:collapse"></table>
-  </div>
+  <button id="openResourcesBtn" type="button"
+    style="margin-top:4px;background:#21262d;color:#c9d1d9;border:1px solid #30363d;border-radius:6px;padding:6px 13px;cursor:pointer;font-family:inherit;font-size:12px">
+    📊 Open Resource use…
+  </button>
 
   <div>
     <button id="save">Save</button>
@@ -888,57 +887,22 @@
 
 <script>
   // ── Resource use ──────────────────────────────────────────────────────────
-  // Answers "does Mimic cost me anything?" with a measurement on the user's own
-  // machine rather than a claim (Uilnayar 2026-08-03: "I don't want false
-  // claims, I want real stats").
+  // The panel itself moved to its OWN WINDOW (resources.html) on 2026-08-04 so it can
+  // be left open beside EQ while you play — which is when "is Mimic costing me
+  // anything?" actually gets asked. This is just the way in.
   //
-  // percentCPUUsage is a share of ONE core measured since the PREVIOUS
-  // getAppMetrics() call, so the very first sample after a cold start reads
-  // high and is meaningless. Discard it and only show settled readings.
+  // Deliberately NOT a second copy of the rendering code: two implementations of
+  // the same table would drift, and this was already the harder of the two to
+  // reach (three sections down a form with a Save button).
   (function () {
-    var summary = document.getElementById('metricsSummary');
-    var table   = document.getElementById('metricsTable');
-    if (!summary || !table || !window.mimic || !window.mimic.appMetrics) return;
-    var primed = false;
-    function esc(t){ return String(t == null ? '' : t).replace(/[&<>"]/g, function (c) {
-      return ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' })[c]; }); }
-    function label(p){
-      if (p.type === 'Browser') return 'Mimic core';
-      if (p.type === 'Tab' || p.type === 'Renderer') return 'overlay / window' + (p.name ? ' \u00b7 ' + p.name : '');
-      if (p.type === 'GPU') return 'GPU helper';
-      return p.type + (p.name ? ' \u00b7 ' + p.name : '');
-    }
-    function paint(m){
-      if (!primed) { primed = true; summary.textContent = 'measuring\u2026'; return; }
-      var eq = m.eqRunning ? 'EverQuest running' : 'EverQuest closed';
-      summary.innerHTML = '<span style="color:#7ee787;font-size:13px">' + esc(m.totalCpu) + '% CPU</span>'
-        + '<span style="color:#6e7681"> of one core \u00b7 </span>'
-        + '<span style="color:#79c0ff;font-size:13px">' + esc(m.totalMemMb) + ' MB</span>'
-        + '<span style="color:#6e7681"> \u00b7 ' + esc(m.procs.length) + ' processes ('
-        + esc(m.windows) + ' windows) \u00b7 ' + esc(eq) + '</span>';
-      var rows = m.procs.slice().sort(function (a, b) { return b.memMb - a.memMb; });
-      var h = '<tr style="color:#6e7681;text-align:left"><th style="font-weight:normal;padding:2px 0">process</th>'
-            + '<th style="font-weight:normal;text-align:right">CPU</th>'
-            + '<th style="font-weight:normal;text-align:right">memory</th></tr>';
-      for (var i = 0; i < rows.length; i++) {
-        var p = rows[i];
-        h += '<tr style="border-top:1px solid #1c2128">'
-           + '<td style="padding:2px 0">' + esc(label(p)) + '</td>'
-           + '<td style="text-align:right;color:' + (p.cpu >= 1 ? '#f0b429' : '#6e7681') + '">' + esc(p.cpu.toFixed(1)) + '%</td>'
-           + '<td style="text-align:right">' + esc(p.memMb) + ' MB</td></tr>';
-      }
-      // The agent is a spawned node process, so it is NOT in getAppMetrics() —
-      // say so rather than let the total look complete when it is not.
-      if (m.agent && m.agent.pid) {
-        h += '<tr style="border-top:1px solid #1c2128"><td style="padding:2px 0;color:#8b949e">'
-           + 'log agent (pid ' + esc(m.agent.pid) + ') \u2014 separate process, not counted above'
-           + '</td><td></td><td style="text-align:right;color:#6e7681">\u2014</td></tr>';
-      }
-      table.innerHTML = h;
-    }
-    function tick(){ window.mimic.appMetrics().then(paint).catch(function(){}); }
-    tick();
-    setInterval(tick, 2000);
+    var btn = document.getElementById('openResourcesBtn');
+    if (!btn) return;
+    // Older Mimic shells have no openResources bridge — hide rather than offer
+    // a button that does nothing.
+    if (!(window.mimic && window.mimic.openResources)) { btn.style.display = 'none'; return; }
+    btn.addEventListener('click', function () {
+      try { window.mimic.openResources(); } catch (e) { void e; }
+    });
   })();
 </script>
 </body></html>

@@ -3040,6 +3040,27 @@ function openSettings() {
   settingsWindow.on('closed', () => { settingsWindow = null; });
 }
 
+// Resource use — its own window as of 2026-08-04 (Uilnayar), reachable
+// from the tray and the dashboard rather than only from inside Settings.
+// "Is Mimic costing me anything?" gets asked while the game is running, so the
+// answer has to be openable next to EQ and leavable open; buried in Settings it
+// meant keeping a form with a Save button open to watch a number.
+//
+// A plain window, NOT an overlay: it is not frameless/transparent/always-on-top
+// and never sits over the game, so the overlay feature-parity checklist
+// (hide button, hover-interact handshake, _HIDEALL_FLAGS, …) does not apply —
+// it is a sibling of Settings and UI Studio.
+let resourcesWindow = null;
+function openResources() {
+  if (resourcesWindow) { resourcesWindow.focus(); return; }
+  resourcesWindow = new BrowserWindow({
+    width: 520, height: 520, title: 'Mimic — Resource use', backgroundColor: '#0e1116',
+    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true },
+  });
+  resourcesWindow.loadFile('resources.html');
+  resourcesWindow.on('closed', () => { resourcesWindow = null; });
+}
+
 // UI Studio — graphical EQ-window editor. Loads per-character ini files
 // from the user's EQ folder, parses XPos/YPos/Size.cx/Size.cy from each
 // section, rescales 1440 → 1080 (or any source→target res), lets the user
@@ -5165,6 +5186,7 @@ function buildTrayMenu() {
     { label: 'Show agent log…', click: () => shell.openPath(AGENT_LOG()) },
     { label: 'Open dashboard in browser', click: () => shell.openExternal(`http://127.0.0.1:${agentPort}/`) },
     { label: 'UI Studio — rescale EQ UI for a new resolution', click: () => openUiStudio() },
+    { label: 'Resource use — what Mimic costs this machine', click: () => openResources() },
     updatePopupItem,
     betaChannelItem,
     revertStableItem,
@@ -6489,6 +6511,7 @@ ipcMain.handle('open-dashboard', () => {
 });
 // Gear icon on the dashboard opens the Settings window.
 ipcMain.handle('open-settings', () => { openSettings(); return true; });
+ipcMain.handle('open-resources', () => { openResources(); return true; });
 // "Send this panel to its own overlay window" — increment 2d of the
 // customizable-dashboard work. Renderer passes a normalized panel key
 // (stable <h2> prefix); spawns a transparent always-on-top window that

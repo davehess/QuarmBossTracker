@@ -8225,6 +8225,30 @@ function enqueueUpload(kind, payload) {
       platform:     process.platform,
       node_version: process.versions && process.versions.node,
     };
+    // This machine's measured clock offset, attached to EVERY payload (#202).
+    //
+    // Every timestamp in this payload was stamped from the local clock, and on
+    // three of our installs that clock is wrong AND DRIFTING (~1.5-3 s/day;
+    // one is ~56s behind after a month of drift, 2026-08-04). Correcting
+    // bot-side from a stored per-install offset therefore needs a time series
+    // plus step-detection for manual re-syncs — because a scalar measured last
+    // week is simply wrong today.
+    //
+    // Sending the offset WITH the data removes that whole problem: the value
+    // here was measured within the last heartbeat (20s), so it is always fresh
+    // and no interpolation is ever required. Sign matches agent_clock_offsets:
+    // POSITIVE = this clock is BEHIND, so true time is `stamp + offset`.
+    //
+    // Purely additive — nothing reads it yet, and the raw stamps are unchanged,
+    // so the bot can start correcting whenever we decide where that belongs.
+    // `measured_at` is what makes it auditable: on a BACKFILL the events are
+    // old but this offset is current, so a consumer must not apply it there
+    // (payload.backfill marks those) — hence recording when it was taken
+    // rather than pretending it belongs to the event.
+    if (Number.isFinite(stats.clockOffsetMs)) {
+      payload.agent_state.clock_offset_ms = stats.clockOffsetMs;
+      payload.agent_state.clock_measured_at = new Date().toISOString();
+    }
   }
   const entry = {
     id:          _queueId(),
@@ -10190,6 +10214,9 @@ function _serializeForDashboard() {
     // CH chain rotation snapshot (cleric Complete Heal callouts) — null when
     // no chain has called in the last 5 minutes. Drives chchain.html.
     chChain: chChainSnapshot(),
+    // What each watched client actually has LOADED, from `/zeal version`.
+    // Empty until someone runs it — we never inject commands into the game.
+    clientVersions: clientVersionsSnapshot(),
     // Per-cleric Divine Intervention readiness (bot aggregate ⊕ local casts) —
     // chchain.html renders the chips + "only <X> has DI" callout.
     diStatus: diStatusSnapshot(),
@@ -11234,6 +11261,9 @@ body.wp-overlay-mode .wp-overlay-target table th:nth-child(2) { text-align:right
     <button id="wpUiStudioBtn" type="button"
        style="background:transparent;border:1px solid var(--green);color:var(--green);padding:3px 9px;border-radius:5px;cursor:pointer;font:inherit"
        title="Open the UI Studio — graphical rescaler for EQ window layouts (move a 1440 UI to 1080, drag/snap windows visually)">UI Studio</button>
+    <button id="wpResourcesBtn" type="button"
+       style="display:none;background:transparent;border:1px solid var(--border);color:var(--fg);padding:3px 9px;border-radius:5px;cursor:pointer;font:inherit"
+       title="What Mimic costs this machine — live CPU and memory for every Mimic process, measured here and never uploaded">📊 Resources</button>
     <button id="wpReload" class="wp-gear" title="Reload the dashboard — reconnect to the parser engine (use this if panels are blank after an update)" onclick="if(window.mimic&&window.mimic.openDashboard){window.mimic.openDashboard()}else{location.reload()}">🔄 Reload</button>
   </span>
 </div>
@@ -16090,6 +16120,20 @@ if (_uiStudioBtn) {
     _uiStudioBtn.style.opacity = '0.4';
     _uiStudioBtn.title = 'UI Studio is only available inside Mimic — open the Mimic dashboard window';
   }
+}
+
+// 📊 Resources — opens Mimic's Resource use window (Uilnayar 2026-08-04, "its
+// own window accessible from the tray and the dashboard"). Unlike UI Studio,
+// which dims when unavailable, this one stays HIDDEN outside Mimic: the answer
+// it gives is specifically "what do MIMIC's processes cost", which is not a
+// meaningful question in a plain browser tab, so a dimmed button would just be
+// a control that can never work.
+var _wpResourcesBtn = document.getElementById('wpResourcesBtn');
+if (_wpResourcesBtn && window.mimic && window.mimic.openResources) {
+  _wpResourcesBtn.style.display = '';
+  _wpResourcesBtn.addEventListener('click', function(){
+    try { window.mimic.openResources(); } catch (e) { void e; }
+  });
 }
 
 // Buffs & Zone per-character hide (✕) + "show all". Stored in localStorage so a
@@ -25464,6 +25508,47 @@ let _raidHold = false;
 // Pending Zeal update, pushed by Mimic (which owns zealUpdater + the EQ dir).
 // Surfaced through the existing Mimic Mail list — see the /api/notices handler.
 let _zealUpdate = null;   // { tag, installed, at } | null
+// What is ACTUALLY LOADED in the client, harvested from `/zeal version` output.
+// Distinct from _zealUpdate.installed, which is what zealUpdater found ON DISK:
+// the two disagree exactly when someone has updated Zeal but not restarted EQ,
+// which is the state where "you're up to date" is a lie and nobody can tell.
+// Also the only place we learn eqgame.dll / eqw.dll builds outside a crash zip
+// (_parseCrashReason), so a client-version question stops requiring a crash.
+//   [Tue Aug 04 09:34:08 2026] Zeal version: 1.4.3 (23c766f)
+//   [Tue Aug 04 09:34:08 2026] eqw.dll version: 1.0.1 (Jan 20 2026 22:09:32)
+//   [Tue Aug 04 09:34:08 2026] eqgame.dll version: 7 (Jul 7 2026 09:14:03)
+// Per watched character, since one box can run several clients at once.
+const _clientVersions = new Map();   // charLower → { zeal, zeal_hash, eqw, eqgame, at }
+// Anchored past the EQ timestamp — patterns here match the RAW line, so a bare
+// ^ would anchor before "[Tue Aug…" and never fire (the #190 trap).
+const _ZEAL_VER_RX   = /\]\s+Zeal version:\s*([\w.]+)(?:\s*\(([^)]+)\))?/i;
+const _EQW_VER_RX    = /\]\s+eqw\.dll version:\s*(.+?)\s*$/i;
+const _EQGAME_VER_RX = /\]\s+eqgame\.dll version:\s*(.+?)\s*$/i;
+function noteClientVersionLine(line, character) {
+  if (!line || !character) return false;
+  // Cheap gate first — this runs on every log line.
+  if (line.indexOf(' version: ') === -1) return false;
+  const key = String(character).toLowerCase();
+  const rec = _clientVersions.get(key) || {};
+  let hit = false;
+  let m = line.match(_ZEAL_VER_RX);
+  if (m) { rec.zeal = m[1]; rec.zeal_hash = m[2] || null; hit = true; }
+  if (!hit && (m = line.match(_EQW_VER_RX)))    { rec.eqw    = m[1]; hit = true; }
+  if (!hit && (m = line.match(_EQGAME_VER_RX))) { rec.eqgame = m[1]; hit = true; }
+  if (!hit) return false;
+  const ts = parseEqTimestamp(line);
+  rec.at = ts ? ts.toISOString() : new Date().toISOString();
+  _clientVersions.set(key, rec);
+  return true;
+}
+// Snapshot for the dashboard + /api/state. Newest-first so the box the user is
+// actually playing leads.
+function clientVersionsSnapshot() {
+  const out = [];
+  for (const [char, v] of _clientVersions) out.push({ character: char, ...v });
+  out.sort((a, b) => String(b.at || '').localeCompare(String(a.at || '')));
+  return out;
+}
 // Cheap stable hash so the synthetic notice id changes with the TAG. A fixed id
 // would be dismissed once and never resurface for a later Zeal release.
 function _zealHashTag(tag) {
@@ -30988,6 +31073,11 @@ async function main() {
         // same slain/death line. Local-only, live tail.
         try { _cancelTimersOnMobDeath(line); } catch { /* never let a bad line break the tail */ }
         try { const _dts = parseEqTimestamp(line); _checkBossSpawnChain(line, _dts ? _dts.getTime() : Date.now()); } catch { void 0; }
+        // `/zeal version` output → what's actually LOADED in this client. Runs
+        // on the raw line before any filter because none of the keep patterns
+        // describe it, and it gates on a substring first so the cost on a
+        // non-matching line is one indexOf.
+        try { noteClientVersionLine(line, b.character); } catch { void 0; }
         // #56 — a mob death closes one same-name serial track; on K→0 (the last
         // instance died) it clears that name's stale debuff/slow/HP buckets so the
         // next same-name mob starts clean (the debuff-bleed fix). Same trusted
@@ -31147,6 +31237,7 @@ module.exports = {
   _fireLog, _triggerJournal, _triggerLastFire,
   // #142 buster/spawn-chain timers — exported for the scratchpad fixture.
   _startTimer, _activeTimersSnapshot, _cancelTimersOnMobDeath, _deadMobNameFromLine,
+  noteClientVersionLine, clientVersionsSnapshot,
   _checkBossSpawnChain, _checkTankBuster, _armBossCountdown, BOSS_SPAWN_CHAINS,
   _checkAoeDance, AOE_DANCE,   // #36 AoE-dance callouts — exported for the scratchpad fixture
   // Damage-taken audio alert — exported for the cooldown / default-off harness.

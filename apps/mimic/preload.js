@@ -311,6 +311,9 @@ function _autoFitOverlay(wrapEl) {
 
 contextBridge.exposeInMainWorld('mimic', {
   openSettings:        ()         => ipcRenderer.invoke('open-settings'),
+  // Resource use in its own window — the dashboard's "what does Mimic cost?"
+  // link calls this, same as the tray entry.
+  openResources:       ()         => ipcRenderer.invoke('open-resources'),
   createPanelOverlay:  (panelKey) => ipcRenderer.invoke('create-panel-overlay', panelKey),
   getConfig:     () => ipcRenderer.invoke('get-config'),
   saveConfig:    (cfg) => ipcRenderer.invoke('save-config', cfg),

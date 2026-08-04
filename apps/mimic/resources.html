@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Mimic Resource use</title>
+<!--
+  Resource use, promoted out of Settings into its own window (Uilnayar
+  2026-08-04: "have it be its own window that's accessible from the tray and
+  the dashboard").
+
+  WHY ITS OWN WINDOW: the question this answers is "is Mimic costing me
+  anything RIGHT NOW" — which people ask while the game is running and their
+  frame rate feels off. Buried three sections down a Settings page you have to
+  scroll, it could not be used at the moment of doubt: you had to open Settings,
+  find it, and leave Settings open (risking a stray Save) to keep watching. As
+  its own window it can sit on a second monitor next to EQ for as long as you
+  like, and it costs nothing when closed because the 2s poll only runs while
+  this page is open.
+
+  Everything here is measured on THIS machine and nothing is uploaded
+  (Uilnayar 2026-08-03: "I don't want false claims, I want real stats").
+-->
+<style>
+  body{margin:0;background:#0e1116;color:#c9d1d9;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px;padding:16px 18px}
+  h1{color:#f6c365;font-size:15px;font-weight:normal;margin:0 0 4px;display:flex;align-items:center;gap:9px}
+  .sub{color:#8b949e;font-size:11px;line-height:1.5;margin-bottom:12px}
+  .box{background:#161b22;border:1px solid #2a3140;border-radius:6px;padding:11px 13px}
+  #metricsSummary{color:#8b949e;font-size:11px}
+  table{width:100%;margin-top:9px;border-collapse:collapse;font-size:11px}
+  th{font-weight:normal;color:#6e7681;text-align:left;padding:2px 0}
+  td{padding:3px 0}
+  .eq{display:inline-block;padding:1px 7px;border-radius:9px;font-size:10px;border:1px solid}
+  .eq.on {color:#7ee787;border-color:#2ea04326;background:#2ea0431a}
+  .eq.off{color:#8b949e;border-color:#30363d;background:#161b22}
+  .foot{color:#6b7280;font-size:10px;margin-top:11px;line-height:1.5}
+</style></head>
+<body>
+  <h1><img src="assets/icon-256.png" alt="" style="width:26px;height:26px;border-radius:6px"><span>Resource use</span></h1>
+  <div class="sub">
+    Live from this machine — Mimic's own processes plus every overlay you have open.
+    <b>Nothing here is uploaded.</b>
+    Close EverQuest and leave this open: CPU should settle to roughly nothing, because
+    with EQ shut Mimic only checks whether it reopened (every 45s) and whether an update landed.
+  </div>
+
+  <div class="box">
+    <div id="metricsSummary">measuring…</div>
+    <table id="metricsTable"></table>
+  </div>
+
+  <div class="foot">
+    CPU is a share of <b>one</b> core, measured since the previous sample — so the
+    first reading after opening this window is discarded rather than shown, because
+    it would be a meaningless spike.
+  </div>
+
+<script>
+  // Identical rendering to the Settings card this replaces — deliberately kept
+  // as one implementation rather than two that drift.
+  //
+  // percentCPUUsage is a share of ONE core measured since the PREVIOUS
+  // getAppMetrics() call, so the very first sample after a cold start reads
+  // high and is meaningless. Discard it and only show settled readings.
+  (function () {
+    var summary = document.getElementById('metricsSummary');
+    var table   = document.getElementById('metricsTable');
+    if (!summary || !table || !window.mimic || !window.mimic.appMetrics) {
+      if (summary) summary.textContent = 'Resource metrics are unavailable in this window.';
+      return;
+    }
+    var primed = false;
+    function esc(t){ return String(t == null ? '' : t).replace(/[&<>"]/g, function (c) {
+      return ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' })[c]; }); }
+    function label(p){
+      if (p.type === 'Browser') return 'Mimic core';
+      if (p.type === 'Tab' || p.type === 'Renderer') return 'overlay / window' + (p.name ? ' · ' + p.name : '');
+      if (p.type === 'GPU') return 'GPU helper';
+      return p.type + (p.name ? ' · ' + p.name : '');
+    }
+    function paint(m){
+      if (!primed) { primed = true; summary.textContent = 'measuring…'; return; }
+      var eqCls = m.eqRunning ? 'eq on' : 'eq off';
+      var eqTxt = m.eqRunning ? 'EverQuest running' : 'EverQuest closed';
+      summary.innerHTML = '<span style="color:#7ee787;font-size:15px">' + esc(m.totalCpu) + '%</span>'
+        + '<span style="color:#6e7681"> CPU of one core · </span>'
+        + '<span style="color:#79c0ff;font-size:15px">' + esc(m.totalMemMb) + '</span>'
+        + '<span style="color:#6e7681"> MB · ' + esc(m.procs.length) + ' processes ('
+        + esc(m.windows) + ' windows)</span> <span class="' + eqCls + '">' + esc(eqTxt) + '</span>';
+      var rows = m.procs.slice().sort(function (a, b) { return b.memMb - a.memMb; });
+      var h = '<tr><th>process</th><th style="text-align:right">CPU</th><th style="text-align:right">memory</th></tr>';
+      for (var i = 0; i < rows.length; i++) {
+        var p = rows[i];
+        h += '<tr style="border-top:1px solid #1c2128">'
+           + '<td>' + esc(label(p)) + '</td>'
+           + '<td style="text-align:right;color:' + (p.cpu >= 1 ? '#f0b429' : '#6e7681') + '">' + esc(p.cpu.toFixed(1)) + '%</td>'
+           + '<td style="text-align:right">' + esc(p.memMb) + ' MB</td></tr>';
+      }
+      // The agent is a spawned node process, so it is NOT in getAppMetrics() —
+      // say so rather than let the total look complete when it is not.
+      if (m.agent && m.agent.pid) {
+        h += '<tr style="border-top:1px solid #1c2128"><td style="color:#8b949e">'
+           + 'log agent (pid ' + esc(m.agent.pid) + ') — separate process, not counted above'
+           + '</td><td></td><td style="text-align:right;color:#6e7681">—</td></tr>';
+      }
+      table.innerHTML = h;
+    }
+    function tick(){ window.mimic.appMetrics().then(paint).catch(function(){}); }
+    tick();
+    var timer = setInterval(tick, 2000);
+    // Stop sampling if the window is hidden — this page exists to prove Mimic
+    // is cheap, so it must not be a background cost itself.
+    window.addEventListener('beforeunload', function(){ clearInterval(timer); });
+  })();
+</script>
+</body></html>
