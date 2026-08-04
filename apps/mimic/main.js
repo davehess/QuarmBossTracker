@@ -271,6 +271,14 @@ function loadConfig() {
 function saveConfig(cfg) {
   fs.mkdirSync(path.dirname(CONFIG_FILE()), { recursive: true });
   fs.writeFileSync(CONFIG_FILE(), JSON.stringify(cfg, null, 2));
+  // Any config write can change where we should be looking for EverQuest
+  // (eqPaths / eqPathsExcluded), so drop the memoized scans rather than trying
+  // to detect which keys moved — config saves are rare user actions, and a
+  // needless re-scan is far cheaper than serving a stale answer to someone who
+  // just picked their folder. try/catch because saveConfig is defined well
+  // above the caches and may run during module init, before their `const`
+  // declarations have executed.
+  try { _invalidateEqScan(); } catch { /* not initialised yet — nothing cached */ }
 }
 
 // ── Secret-at-rest (safeStorage / OS keychain) ──────────────────────────────
@@ -548,11 +556,30 @@ function _isEqLogFile(dir, filename) {
 
 // True if `dir` contains at least one EQ log file. Cheap probe — used by
 // both the default-dirs scan and the walk-up-from-Mimic-exe scan below.
+// Shared TTL for both EQ-scan caches. Declared here because _dirHasEqLogs is
+// the first thing that reads it, and a const used above its declaration is a
+// temporal-dead-zone trap waiting for someone to call this during init.
+const _EQ_SCAN_TTL_MS = 30_000;
+// Memoized for the same reason findEqInstalls is (see the scan-cache note
+// there): this is sync fs on the main process, six different call paths reach
+// it, and several of them re-probe the SAME directories in a loop. `.some()`
+// short-circuits on the first match, so a real EQ folder is cheap — but a
+// directory with many non-canonical eqlog files and no match reads 256 bytes
+// from every one of them before returning false, and that is the case that got
+// slower as rotated logs piled up.
+const _eqDirLogCache = new Map();   // dir (lowercased) → { at, has }
+function _invalidateEqScan() { _eqDirLogCache.clear(); if (typeof _eqScanCache !== 'undefined') _eqScanCache.clear(); }
 function _dirHasEqLogs(dir) {
+  if (!dir) return false;
+  const key = String(dir).toLowerCase();
+  const hit = _eqDirLogCache.get(key);
+  if (hit && (Date.now() - hit.at) < _EQ_SCAN_TTL_MS) return hit.has;
+  let has = false;
   try {
-    if (!dir || !fs.existsSync(dir)) return false;
-    return fs.readdirSync(dir).some(f => _isEqLogFile(dir, f));
-  } catch { return false; }
+    if (fs.existsSync(dir)) has = fs.readdirSync(dir).some(f => _isEqLogFile(dir, f));
+  } catch { has = false; }
+  _eqDirLogCache.set(key, { at: Date.now(), has });
+  return has;
 }
 
 function detectEqDir(hint) {
@@ -689,7 +716,50 @@ async function resolveEqDirsWithLogs() {
 //
 // `scanned` is the literal list of paths probed so we can show the user
 // exactly where we looked ("we scanned these common EQ directories").
+// ── Scan cache ──────────────────────────────────────────────────────────────
+// The scan below is ALL-SYNCHRONOUS fs, and its callers sit in ipcMain.handle
+// bodies — so it runs on the MAIN process event loop, and while it runs every
+// Mimic window stops pumping messages. That is why a slow scan shows up as the
+// dashboard AND Settings both freezing, with Windows painting "(Not
+// Responding)" on the title bar (Uilnayar, 2026-08-04: "Something on the initial
+// loading page is taking a long time to load. same with the settings page. It
+// has gotten worse lately.").
+//
+// Cost scales with FILES IN THE EQ FOLDER, which is why it got worse rather than
+// staying constant: every entry matching the eqlog stem but not the canonical
+// name (.txt2 / .txt3 / " BACKUP.txt" — the rotations players make precisely
+// BECAUSE EQ slows on multi-GB logs) costs an open+read+close to sniff its first
+// line, and each of those syscalls goes through Defender. This user's folder has
+// 58 log files totalling ~40 GB.
+//
+// And it was re-walked constantly: find-eq-installs runs it once per configured
+// hint PLUS once for null, the loading page and Settings each call that handler,
+// and _newestUiIniFile runs its own copy of the same loop.
+//
+// So: memoize per hint for a short TTL. Correctness is preserved because the
+// only things that change the answer are user actions, and those invalidate
+// explicitly (_invalidateEqScan). A 30s stale window on "where is EverQuest
+// installed" is not a real risk; freezing the UI is.
+const _eqScanCache = new Map();   // hint (lowercased) → { at, result }
+
 function findEqInstalls(hint) {
+  const key = 'h:' + String(hint || '').toLowerCase();
+  const hit = _eqScanCache.get(key);
+  if (hit && (Date.now() - hit.at) < _EQ_SCAN_TTL_MS) return hit.result;
+  const t0 = Date.now();
+  const result = _findEqInstallsUncached(hint);
+  const ms = Date.now() - t0;
+  // Log the real cost so "it feels slow" becomes a number we can read off a
+  // user's agent.log instead of guessing. Only when it is worth noticing.
+  if (ms >= 250) {
+    appendAgentLog(`[eq-scan] scanned ${result.scanned.length} dir(s) in ${ms}ms`
+      + (hint ? ` (hint ${hint})` : '') + ` — cached ${_EQ_SCAN_TTL_MS / 1000}s\n`);
+  }
+  _eqScanCache.set(key, { at: Date.now(), result });
+  return result;
+}
+
+function _findEqInstallsUncached(hint) {
   const scanned = [];
   const found   = [];
   const seen    = new Set();
