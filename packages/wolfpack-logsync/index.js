@@ -23883,7 +23883,15 @@ function _reporterHeartbeatOnce() {
     // agent/mimic. Mimic stamps WOLFPACK_APP_VERSION at spawn (main.js);
     // standalone Parser.bat installs have no such env → null.
     const mimic_version = process.env.WOLFPACK_APP_VERSION || null;
-    const body = JSON.stringify({ primary_character: primary, zone, group_num, camping: _camping, has_zeal, agent_version: AGENT_VERSION, mimic_version, last_line_ms, live_character });
+    // Clock pulse — this machine's own clock, so the bot can measure how far it
+    // drifts from server time. EQ writes log timestamps with this same clock, so
+    // the offset applies to every event we report, deaths included: two installs
+    // were found running 42s and 14s slow, which is enough for a skewed
+    // observer's death report to escape the 30s dedup window and surface as a
+    // phantom second death (2026-08-02 Seru parse). Rides the existing 20s
+    // heartbeat — no new stream, no new timer.
+    const _t1 = Date.now();
+    const body = JSON.stringify({ primary_character: primary, zone, group_num, camping: _camping, has_zeal, agent_version: AGENT_VERSION, mimic_version, last_line_ms, live_character, client_now: _t1 });
     const req = mod.request({
       method: 'POST', hostname: u.hostname, port: u.port, path: u.pathname,
       headers: {
@@ -23901,6 +23909,26 @@ function _reporterHeartbeatOnce() {
         try {
           const j = JSON.parse(buf);
           _applyControlPlane(j, 'reporter-poll');   // #74 — fleet kill + version floor
+          // Four-stamp NTP offset. The bot stamps server_now inside the same
+          // handler that received us, so t2 (its receive) and t3 (its reply)
+          // collapse to one value and the classic
+          //   offset = ((t2-t1) + (t3-t4)) / 2
+          // reduces to server_now - (t1+t4)/2 — i.e. we compare the server's
+          // clock against the MIDPOINT of our own round trip, which cancels
+          // one-way latency instead of charging it to the offset.
+          if (j && Number.isFinite(Number(j.server_now))) {
+            const _t4 = Date.now();
+            const off = Math.round(Number(j.server_now) - (_t1 + _t4) / 2);
+            stats.clockOffsetMs = off;
+            // Warn once per session past a threshold well under the 30s death
+            // dedup window — at 42s a machine's death reports escape it and
+            // surface as phantom duplicates for everyone (2026-08-02).
+            if (Math.abs(off) >= 5000 && !_clockSkewWarned) {
+              _clockSkewWarned = true;
+              console.warn(`[clock] this machine is ${off > 0 ? 'BEHIND' : 'AHEAD OF'} server time by ${Math.abs(Math.round(off / 1000))}s — `
+                + 'parses, deaths and buff timings from this machine will be offset. Fix with:  w32tm /resync');
+            }
+          }
           if (j && j.roles && typeof j.roles === 'object') {
             const prevChat   = _reporterRoles.chat;
             const prevBuffs  = _reporterRoles.buffs;
@@ -23926,6 +23954,8 @@ function _reporterHeartbeatOnce() {
     req.write(body); req.end();
   } catch { _reporterFailOpen(); }
 }
+// One-shot latch so a bad clock warns once per session, not every 20s.
+let _clockSkewWarned = false;
 function startReporterHeartbeat() {
   if (_reporterHeartbeatOn) return;
   _reporterHeartbeatOn = true;
