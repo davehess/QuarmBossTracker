@@ -670,6 +670,51 @@ per-process CPU + memory, sorted by memory, with EQ-running state. Discards the
 first CPU sample (it is a delta since the previous call) and lists the log agent
 separately because it is a spawned process and NOT in `getAppMetrics()`.
 
+### Resource use: which memory number, and why they disagree — 2026-08-04
+Uilnayar checked the card against Task Manager twice and was right both times.
+**Round 1 (1267 vs 460):** it summed `workingSetSize`, which counts pages SHARED
+between processes once per process — every Chromium renderer maps the same
+Electron framework, so 13 processes counted it 13×. **Round 2 (274 vs 161):**
+`privateBytes` is private **commit** (every private page reserved, resident or
+not); Task Manager's Memory column is the private **working set** (only what's
+in RAM). Commit is always higher by a per-process factor — the GPU helper showed
+102 MB committed against ~32 resident — so **no scalar fixes it**. Chromium does
+not expose working-set-private, so `_refreshPrivateWorkingSet()` asks Windows
+(`Win32_PerfRawData_PerfProc_Process.WorkingSetPrivate`, one query for all pids,
+no elevation) and the card shows "N MB in RAM (M MB committed)". Guard rails,
+because this window's claim is that Mimic is free at idle: ≤1 spawn per 12s,
+never concurrent, never blocking a poll (payload uses the cached snapshot, the
+refresh runs after), and **the clock is stamped even on failure** or a broken
+query respawns PowerShell every 2s. `memBasis` says which of
+workingSetPrivate/commit/workingSet is on screen. Rows are named via
+`_windowLabelsByPid()` (`webContents.getOSProcessId()`), flagging any overlay
+alive while switched OFF. **CPU 0.9 vs 0.6 is NOT fixable and not a bug** —
+Electron reports a share of ONE core over its own sample window, Task Manager
+divides by all cores. Tests: `test/resource-metrics.test.js`.
+
+### Naming renderer processes for Task Manager — 2026-08-04
+The **Name** column cannot be changed: every renderer is the same
+`Wolf Pack Mimic.exe` and that column reads the exe's version resource. (The
+Dashboard row is named only because it owns a visible taskbar window whose title
+Task Manager appends; overlays are `skipTaskbar`.) What *can* carry a name is the
+command line, so `_wpPrefs(name, extra)` is the single source of webPreferences
+for **all 20 windows** and adds `additionalArguments: ['--wp-window=<name>']` —
+visible under Task Manager → Details → Select columns → Command line, and in
+Process Explorer / Resource Monitor. Whitespace is collapsed or the tag splits
+into two argv entries. Tests: `test/window-process-names.test.js`.
+
+### Hide-all is distinguishable from "off" — 2026-08-04
+`toggleHideAllOverlays` writes every `show*` flag false and keeps the old values
+in `_hideAllPrev` — which nothing could see, so a hidden overlay and a disabled
+one looked identical ("Currently, when we hide the windows, it just sets
+everything to off"). `currentStatus()` now ships `hideAllActive` + a **copy** of
+the snapshot, and the dashboard's Overlays tab renders a third state: ON / amber
+**HIDDEN** / OFF, plus a `#wpHideAllBanner` placeholder (kept out of the render
+string so the section stays byte-stable). Restore changed from
+`Object.assign(cfg, _hideAllPrev)` to filling **only flags still off** — the
+blanket version reverted anything switched on while hidden. Note the row-key vs
+flag-name split (`pet` → `showPets`). Tests: `test/hide-all-state.test.js`.
+
 ### Overlay windows are lazy — 2026-08-04
 Every overlay is its own Chromium renderer (~80 MB resident before it paints;
 Uilnayar measured the floor). Boot created **ten** of them unconditionally,

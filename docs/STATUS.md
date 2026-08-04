@@ -69,6 +69,20 @@ folly** — it's here.*
 ## The work ledger
 
 ### ✅ Done — major shipped features (not exhaustive; see git + roadmapData.ts)
+- **Mimic 2.3 line — NAMED "Quick Setup and Save Memory Update" by Uilnayar
+  (2026-08-04). Beta-only so far (2.3.0-beta.22 → .25, agent 3.5.29); NOT yet
+  graduated to stable.** Carries, in order shipped: the one-click fixers
+  (Windows Defender EQ+Mimic exclusions, Zeal install/update, clock resync) and
+  the Settings-hang fixes that made setup quick (non-local drive skip, learned
+  dead ends, persistent log-file verdict cache); then the memory work — overlay
+  windows created only when switched on and freed when off (`_OVERLAY_WINDOWS`
+  + materialize/reap), hide-all rendered as a distinct HIDDEN state instead of
+  clobbering every pref to off, and the Resource use readout corrected twice
+  until it matched Task Manager. Also here: the eqgame.exe identity check (an
+  EQLegends client was being tracked as Quarm) and `--wp-window=` tags so Task
+  Manager's Command line column can name each renderer. Details per feature in
+  `docs/HOW-ITS-BUILT.md` (five 2026-08-04 entries). **Graduation to stable is
+  Hitya's call — do not cut it unprompted.**
 - **#141 zone-scope the cross-client Target Info / Mob Info merge — DONE
   (2026-07-22, bot 3.0.226 on main + agent 3.4.4 beta; Mimic parked 2.0.2; web
   1.0.265 roadmap/docs).** Field bug (live-verified): a raider in **The Wakening
