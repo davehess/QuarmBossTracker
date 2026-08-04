@@ -20,6 +20,113 @@ raid; move it to STATUS.md's "Done" once graduated to stable.*
 
 ---
 
+## 🗓 Wednesday 2026-08-05 — the verification pass for the 08-03/04 batch
+
+*Written 2026-08-04. This is the priority list for the next raid. Everything
+here shipped in the last 36 hours and **none of it has been seen in a real
+raid**. Vex Thal is the planned target, which matters for two rows below.*
+
+**Versions needed:** bot **3.1.7** (main, already live) · agent **3.5.13** +
+Mimic **2.3.0** (**beta** — testers must update) · web **1.1.2**.
+
+> **Bootstrap caveat, read first:** the EQ-close auto-update in Mimic 2.3.0 can
+> only auto-install for people **already on 2.3.0+**. Everyone else still has to
+> update by hand this once. Say so when you ask people to update.
+
+> **Stable installs are still generating false deaths.** The feign fix is agent
+> 3.5.11 on `beta`; `main`'s agent copy still matches `/die[ds]\./`. Any death
+> number from a stable reporter on Wednesday is still inflated. This is correct
+> per the routing rule — just don't read it as a regression.
+
+### 🔴 Highest value — the two that change every number
+
+**1. Clock skew is visible and actionable.**
+- ✅ **Solo:** the agent warns you once if your own clock is off by >5s. Fargan's
+  install (`+42.3s`) and Bardtholemu's (`+14.0s`) should each see it. **If those
+  two fix their clocks before the pull, most of row 2 fixes itself.**
+- 👥 **Multi:** after one boss kill, run the multi-observer spread query in
+  `RUNBOOK-death-backfill.md` §3 against a death several people witnessed. **Pass
+  = every observer inside a few seconds.** On 08-03 the same check showed a 45s
+  spread from one machine.
+- 👥 Check `agent_clock_offsets` has both a `pulse` row (new — needs agent
+  3.5.10+) and a `consensus` row per install, and that they **agree**. They are
+  independent estimators; disagreement means one is broken.
+
+**2. Deaths are real deaths.**
+- ✅ **Solo (SK/monk/necro):** feign during a fight. **Pass = you do NOT appear in
+  the parse card's 💀 Deaths section.** This is the single most direct test of
+  the whole night's work.
+- ✅ **Solo:** actually die, then run back. **Pass = one death, and it is
+  `confirmed`** (the corpse-run tail back-patches it). Get a rez instead and it
+  stays unconfirmed — **that's correct**, not a bug.
+- 👥 **Multi:** one player dies with 5+ Mimic users present. **Pass = ONE row on
+  the parse card, not one per observer.** This is the Uilnayar case; it may still
+  fail until #202 lands, and if it does, capture the timestamps — that IS the
+  measurement #201 needs.
+
+### 🟡 Should just work — confirm and move on
+
+**3. Threat snapshots carry a mob name.** Query
+`encounter_threat_snapshots` after a kill: `boss_name` non-null (was NULL on all
+463k prior rows), `target_name` present, rows ~6s apart not ~18s. Try the
+`threat_snapshot_ms` knob in `/admin/overlays` mid-raid — it should take effect
+inside 60s with no deploy.
+
+**4. Raid Review "Trash Cleared" only counts in-raid kills.** Anything killed
+before 19:30 ET must NOT appear. Previously daytime XP kills landed in the
+night's tally.
+
+**5. `raid_nights` links the night's encounters.** After the raid, the night row
+exists and the night's encounters carry `raid_night_id`. A kill *outside* the
+window stays NULL — that's intended.
+
+**6. Buff-cast `spell_id` resolution.** Post-raid, unresolved share should stay
+near **0.5%** (was 34.4%). If it jumps, a new spell vocabulary arrived — check
+which names failed rather than loosening the uniqueness rule.
+
+**7. Slow badges.** A beastlord's **Sha's Advantage** shows `BST SLOW 50%` on
+Target Info; **Tigir's Insects** likewise. Class label must be right, not just
+the percentage.
+
+### 🟢 Mimic 2.3.0 — the quality-of-life batch
+
+**8. Update installs when EQ closes.** Have a pending update, close EQ. **Pass =
+Mimic updates within ~15s.** Crash-and-relaunch EQ during that grace → the update
+**defers**. Nag is hourly and must **never** steal focus from the game — if a
+window pops over EQ mid-fight, that's a P0.
+
+**9. Resource use card** (Settings). Real per-process CPU/memory, 2s refresh, log
+agent listed separately. **The point of this is honesty** — if the numbers look
+wrong, say so; the whole reason it exists is that we didn't want to make claims
+we hadn't measured.
+
+**10. Zeal update notice** appears in Mimic Mail on the dashboard when Zeal is
+behind, and **clears** when current.
+
+### ⚫ Vex Thal specifics
+
+**11. Shadow Poison callout** fires when it lands on a player (it's curable —
+that's why it's worth calling). This is its first live raid.
+
+**12. Feeblemind in/out will NOT be exercised** — that's Thought Horror
+Overfiend, and Uilnayar's note was "at least a week and a half" out. Don't score
+it as a failure this week.
+
+**13. Take one `character_live_state` sample mid-fight** and check
+`incoming_mob` is populated. It's an upsert table, so a null-fraction reading is
+*not* evidence either way (I got that wrong on 08-03) — you need a live sample
+during an actual fight.
+
+### 📋 Post-raid, five minutes
+
+- Re-run the three diagnostics in `RUNBOOK-death-backfill.md` §3 and record the
+  numbers. **This is the clean baseline** #201 has been waiting for — a raid
+  night with feigns excluded at parse time.
+- Note which callouts people **dismissed**. We can't record it yet (#207), so
+  memory is the instrument this once.
+
+---
+
 ## #141 — Target Info / Mob Info no longer leaks a same-name mob from another zone
 
 **Needs:** bot **3.0.226** (main, live on Railway) + agent **3.4.4** (beta Mimic).

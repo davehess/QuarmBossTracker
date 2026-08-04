@@ -1218,13 +1218,93 @@ folly** — it's here.*
   subtraction) — every charm session reaches the bot with no duration. All four
   are one-to-two-line agent fixes on `beta`, deliberately NOT made here.
 
+- **Timestamp fidelity + what counts as a death (2026-08-03/04)** — bot 3.1.1 →
+  3.1.7 on `main`, agent 3.5.2 → 3.5.13 and Mimic 2.3.0 on `beta`, web 1.1.0 →
+  1.1.2. One night's chain, from "the deaths on this parse aren't accurate" to
+  the two measurement bugs underneath it. Ordered by how load-bearing it is:
+  - **`"<Name> dies."` is FEIGN DEATH, not a death.** It's the `cast_on_other`
+    text of Feign Death (366), Death Peace (1460), Paralyzing Venom (1118) and
+    FD Test (2807). `parseEvent` matched `/die[ds]\./` on the belief that
+    "dies." was an older real-death phrasing. **44% of every stored death row
+    came from the only two classes that can feign** (Shadow Knight + Necromancer
+    — 233 of 534), and the worst single fight recorded **63 "deaths" for one
+    character**. Fixed to `died.` only (agent 3.5.11). *(Careful with that 44%:
+    it's the SUSPECT SET — an upper bound — not a count of confirmed feigns.
+    SKs really do die.)*
+  - **Real deaths carry a corpse-run tail** ("You are bleeding to death!",
+    "Returning to home point, please wait…") that appears ONLY in the dying
+    player's own log. Parsed as a `death_confirm` event that back-patches
+    `confirmed: true` onto the matching SELF death inside 60s (agent 3.5.13).
+    **`confirmed: false` means "no proof either way", NEVER "this was a
+    feign"** — a rezzed death is real and unconfirmable, and a rogue corpse pull
+    looks exactly like one. Full model: `docs/DESIGN-death-semantics.md`.
+  - **Per-install clock skew is real and large.** Every agent stamps events from
+    its own machine clock — and EQ writes the log timestamps with that same
+    clock — so a slow machine reports slow deaths, slow casts, slow everything.
+    Two independent estimators now land in `agent_clock_offsets` so they
+    cross-check: `pulse` (agent sends `client_now` on the 20s heartbeat, bot
+    computes `server_recv − client_now`, EWMA, flushed every 5 min — agent
+    3.5.10 / bot 3.1.7) and `consensus` (for a 3+-witness death the median is
+    truth; needs no agent release, so it reaches history). The consensus pass
+    must be TWO-PASS — a single-pass median is dragged by the skewed observers
+    it's trying to find. **Measured: two installs at −42.3s and −14.0s;
+    everyone else inside ±4s.** The agent warns its own user once when it sees
+    itself out by >5s.
+  - **Raid Review "Trash Cleared" counted daytime kills.** `noteTrashKill` had
+    no raid-window guard, so mobs killed at 2pm landed in that night's tally
+    (bot 3.1.1). Same predicate as everything else — `raidNight.isRaidNightAt`.
+  - **`raid_nights` actually implemented** (bot 3.1.4): the table existed and was
+    empty. Night row created on the first encounter that resolves; encounters
+    stamped `raid_night_id`; out-of-window kills stay NULL on purpose. Backfill:
+    **193 nights, 1,022 encounters**, SQL cross-checked against the JS on a
+    30-row stratified sample.
+  - **`encounter_threat_snapshots.boss_name` was NULL on all 463k rows by
+    construction** — assigned only at flush, while the uploader refuses to run
+    once `flushedAt` is set. Now sends `et.bossName || et.targetName`. Cadence
+    18s → 6s, tunable mid-raid via `tuneNum('threat_snapshot_ms')` clamped
+    2s–60s. `encounter_id` claimed bot-side at flush (`claimThreatSnapshots`) —
+    the agent cannot know it, the row doesn't exist until the fight ends.
+  - **`target_observations`** (bot 3.1.2): `character_live_state` is keyed
+    `(guild_id, character)`, so every target switch overwrote the last — 576
+    rows for the whole guild, forever. Now appended **on change only**, so rows
+    scale with switches not samples.
+  - **Buff-cast `spell_id` unresolved 34.4% → 0.5%** (bot 3.1.6): resolve by the
+    name the agent already sent, accepted only when unique in the catalog. The
+    cure queue reads poison/disease counters off `spell_id`, so a 0 meant it
+    could never learn a debuff was curable.
+  - **Mimic 2.3.0 (beta)**: installs a pending update the moment **EQ closes**
+    (15s grace, re-checks presence, so crash-and-relaunch defers) — Mimic was
+    downloading updates and then waiting for an app quit that never comes.
+    Otherwise it only nags hourly via an OS notification, which structurally
+    cannot steal focus from the game. Plus Settings → **Resource use** (real
+    `app.getAppMetrics()` per-process CPU/memory, 2s refresh — measured on the
+    user's own machine, not a claim), EQ-presence polling backed off 10s → 45s
+    while EQ is closed (**76% fewer `tasklist` spawns**), and a dashboard notice
+    when Zeal has an update outstanding.
+  - **Callouts shipped straight to `guild_triggers`** (live in ~2 min, no
+    release): Feeblemind in/out for Thought Horror Overfiend (26s "FEEBLEMIND
+    OUT" ahead of the 30s recast), Shadow Poison (curable, so it's worth
+    calling), Wave of Death. **Sha's Advantage** and **Tigir's Insects** added
+    to the agent's slow table with magnitudes, and the slow badge now names the
+    class (`BST SLOW 50%`).
+  - **CH chain**: a stale log file is no longer "you" (3-minute freshness gate —
+    this is what made Dant hear Aimey's callouts on their shared machine), and
+    bracketed heal targets parse.
+  - **`golden-log.yml` had never run once** — invalid YAML (colon-space in a
+    plain scalar) since the day it was added. Fixed, plus
+    `test/workflow-yaml.test.js` so no workflow can silently not-exist again.
+  **⚠ Two things deliberately NOT done, both need Hitya's call** — see the Open
+  TODO section: cleaning feigns out of the stored history, and re-deriving the
+  death dedup window.
+
 ### Task-number registry — minted 2026-08-02 for the public roadmap queue
 The wolfpack.quest/roadmap "What's next" queue (web 1.0.288: numbers + member
 voting + blocked-on-evidence submissions) shows a canonical `#` per item.
 Items that already had ledger numbers keep them (#56, #68–70, #75, #80, #81,
 #84, #86, #87, #114, #142, #144, #156, #169). These were UNNUMBERED and got
 minted here — the numbering is now owned by this ledger, next free is
-**#200**:
+**#208** (#200–#207 minted 2026-08-04 for the death/timestamp follow-ups and
+the callout designs; they're written up in the Open TODO section, not here):
 - **#190** dead ^-anchored guild triggers batch (rn-buster-audit follow-up)
 - **#191** Parse Log duplicate embeds (near-identical archive entries seconds apart)
 - **#192** onboarding overhaul v1 (`DESIGN-onboarding-overhaul.md`)
@@ -1244,6 +1324,72 @@ Discord #feedback thread + /admin/feedback automatically.
 
 ### ⏳ Open TODO — carried forward from the retired docs
 *(These are durable items; the active wave order is in `DESIGN-platform-queue.md`.)*
+
+**Death + timestamp follow-ups (2026-08-04) — the four that need YOUR call
+before anyone touches them.** All four exist because of the two bugs found
+2026-08-03 (feign deaths counted as deaths; per-install clock skew up to 42s).
+- **#200 Clean feigns out of the stored window** — **smaller and less urgent
+  than it first looked, and it comes with a bigger finding.** Deaths live in
+  `contributions.raw_parse`, which the midnight job **nulls after 7 days**. So
+  the entire stored death corpus is **534 rows over 2026-07-28 → 08-03**, of
+  which 193 are already dropped by the phantom rule and **83 actually display**.
+  **It self-clears around 2026-08-10 whether we act or not.** Three options:
+  (a) do nothing and let it expire, (b) flag the suspect rows + a roadmap note
+  explaining why death counts changed *(recommended)*, (c) flag silently.
+  **The bigger finding: we have no durable death history at all.** Beyond 7 days
+  there are no deaths to be wrong about — "who dies most", "are we improving on
+  this boss", "what mechanic kills us" have never been answerable. Everything
+  from agent 3.5.11 forward is trustworthy for the first time, so **now is the
+  moment to give deaths a real table**. Full evidence + ordered steps:
+  `docs/RUNBOOK-death-backfill.md` (rehearsed read-only, stops at a confirm gate).
+  Related: `utils/parseDeaths.js`'s phantom rule ("a player can only die once per
+  encounter") is FALSE once feigns are gone — rez-and-die-again is normal and a
+  rogue corpse pull is deliberate. Revisit it with #200.
+- **#201 Re-derive the death dedup window** — but **#202 probably makes it
+  unnecessary**, and that's the interesting part. The 30s same-name collapse
+  (`utils/parseDeaths.js`) was fitted against feign-inflated, skew-spread data.
+  **Worked example**: Uilnayar died ONCE on 2026-08-03 and seven machines saw it
+  — six agree inside 6 seconds, and Fargan's is **45 seconds early**, because
+  Fargan's install is the `+42.3s` one. 45s > the 30s window, so the card said
+  she died twice. Correcting that one stamp puts it 2.7s ahead of the cluster and
+  it collapses correctly with the window *unchanged*. So: apply offsets first,
+  then measure what spread is left, then set the window from that. **Do not
+  retune by eye — that's how we got 30s.** Deliberately untouched.
+- **#202 Apply the clock offset at ingest, keep the raw stamp.** We now MEASURE
+  skew but don't correct with it — and per #201 above, that single change is what
+  makes the death record come out right. The decision is where correction happens:
+  ingest-time (`corrected_at` alongside `at`, so every consumer benefits and
+  nothing loses provenance) vs read-time (nothing to backfill, but every consumer
+  must remember, and they won't). Recommend ingest-time with both columns kept.
+  Blocked on nothing but the call.
+- **#203 Tell the two skewed installs.** Two machines are wrong by **+42.3s**
+  (Fargan's — the one that produced the phantom double-death above) and
+  **+14.0s** (Bardtholemu's account). The agent now warns its own user, but only
+  when it next runs. A one-line "your clock is off, here's the Windows setting"
+  nudge fixes those two installs permanently and improves every fight they
+  witness. *Loose end: the +42.3s discord_id `272226525426876416` has no
+  `characters` row, so it renders as a bare id — linking it would let the skew
+  report name a person.*
+
+**Callout + overlay work designed 2026-08-04 (specs written, unbuilt).**
+- **#204 Divine Intervention two-cleric callout.** `docs/DESIGN-di-callout.md`.
+  Full "who should cast it" selector needs recast state, emerald inventory and
+  CH-chain position — we have none of those reliably. The shippable version
+  names the two clerics who most recently healed on the chain as candidates and
+  lets voice resolve it. Read the doc's "what we can't know" section before
+  building.
+- **#205 Group-HP death watcher.** `docs/DESIGN-group-death-watcher.md`. Zeal
+  gives group member HP; a member going to 0 and leaving the zone is
+  independent evidence of a real death that doesn't depend on the log text at
+  all — the cross-check that would have caught the feign bug on day one.
+- **#206 Third capture path for instant boss mechanics.** The discard audit
+  found **113 timed effects captured, 138 instant ones invisible** — an instant
+  effect has no duration, so the buff-landing index never indexes it, and
+  `shouldKeep` (default DROP) never passes it to the parser. These are exactly
+  the AoEs and death-touches worth calling out. `docs/DESIGN-mechanic-capture.md`.
+- **#207 Overlay UX for callouts**: visible countdowns mirroring the TTS,
+  dismissible lines, and **recording dismissals** so we learn which callouts
+  people don't want or don't trust. `docs/DESIGN-callout-overlay.md`.
 
 **Raid-night 2026-07-30 field reports (Hitya) — all still OPEN, each blocked on
 one concrete detail. Shipped that night: stable 2.1.2 / agent 3.4.36.**
