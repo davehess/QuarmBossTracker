@@ -7691,6 +7691,48 @@ function _isJunkSpellName(n) { return !!n && _JUNK_SPELL_RX.test(String(n).trim(
 // { target, spell_id, spell_name, landing_text, dur_ticks, dur_formula, cast_at,
 //   observer }. Every nearby agent sees the same landing, so we upsert with a
 // dedup key that collapses N observers of one cast into one row.
+// Recover the spell_id the agent declined to send.
+//
+// When several spells share one landing message the agent picks a representative,
+// writes ITS NAME as spell_name, then deliberately sets spell_id = 0 "rather than
+// guessing wrong" (see _buffLandingBySuffix in the agent). But publishing the
+// name and withholding the id are the same claim — and every consumer that
+// matters keys on the ID: the cure queue resolves poison/disease COUNTERS
+// (SPA 35/36) from the catalog, so a 0 means it cannot learn a debuff is
+// curable at all.
+//
+// Measured 2026-08-03: 28,842 of 83,770 landings in 30 days (34.4%) carried
+// spell_id 0 across 52 distinct names — and 50 of those 52 names resolve to
+// EXACTLY ONE catalog row, covering 28,444 landings (98.6%). Shadow Poison was
+// seen 324 times on 36 targets and never once reached the cure queue despite
+// carrying 5 poison counters.
+//
+// So: resolve by the name we were already given, and accept it ONLY when the
+// name is unique in the catalog. A name matching 2+ rows stays 0 — that is real
+// ambiguity the name cannot settle, and it is only ~1.4% of the volume.
+//
+// Cached forever per name (the vocabulary is tiny — 52 names across a month), so
+// this costs a handful of lookups on a cold bot and nothing thereafter.
+const _spellIdByName = new Map();   // lowercased name → id, or 0 for "cannot resolve"
+async function _resolveSpellIdByName(name) {
+  const key = String(name || '').trim().toLowerCase();
+  if (!key) return 0;
+  if (_spellIdByName.has(key)) return _spellIdByName.get(key);
+  let id = 0;
+  try {
+    const supabase = require('./utils/supabase');
+    // limit=2 is deliberate: we need to know whether the name is UNIQUE, not
+    // just whether it exists.
+    const rows = await supabase.select('eqemu_spells',
+      `name=eq.${encodeURIComponent(String(name).trim())}&select=id&limit=2`);
+    if (Array.isArray(rows) && rows.length === 1 && Number.isFinite(Number(rows[0].id))) {
+      id = Number(rows[0].id);
+    }
+  } catch { id = 0; }
+  _spellIdByName.set(key, id);
+  return id;
+}
+
 async function _handleAgentBuffCasts(req, res) {
   const identity = await mimicLink.requireAgentAuth(req, res);
   if (!identity) return;
@@ -7722,6 +7764,23 @@ async function _handleAgentBuffCasts(req, res) {
   const resolved = [];
   const ambiguous = [];
   let _skippedBadCast = 0;   // poison guard: rows with an unparseable cast_at
+  // Fill in the ids the agent withheld, before the resolved/ambiguous split
+  // below routes rows to their dedup index (see _resolveSpellIdByName).
+  try {
+    const needy = [...new Set(casts
+      .filter(c => c && c.spell_name && !(Number(c.spell_id) > 0))
+      .map(c => String(c.spell_name).trim()))];
+    for (const nm of needy) await _resolveSpellIdByName(nm);
+    for (const c of casts) {
+      if (!c || !c.spell_name || Number(c.spell_id) > 0) continue;
+      const id = _spellIdByName.get(String(c.spell_name).trim().toLowerCase()) || 0;
+      if (id > 0) c.spell_id = id;
+    }
+  } catch (err) {
+    // Never fail an ingest over an enrichment — the row is still useful
+    // unresolved, exactly as it was before this existed.
+    console.warn('[buff-casts] spell-id backfill skipped:', err?.message);
+  }
   for (const c of casts) {
     if (!c || !c.target || !c.cast_at) continue;
     // Nameless landings are UNREADABLE downstream — every consumer
