@@ -1297,6 +1297,40 @@ folly** — it's here.*
   TODO section: cleaning feigns out of the stored history, and re-deriving the
   death dedup window.
 
+- **`beta` had no CI, and it was hiding a P0 (2026-08-04)** — agent **3.5.15**,
+  and the reason it took four releases to notice.
+  - **The beta agent had not STARTED since 3.5.5.**
+    `FATAL: ReferenceError: _threatSnapMs is not defined`. v3.5.5 made the
+    threat-snapshot cadence tunable, renaming the interval constant
+    (`_threatSnapMs` → `_threatSnapEnvMs` + a per-tick `_threatSnapCadenceMs()`)
+    and leaving the `setInterval` argument behind. `startChatRelay()` runs
+    unguarded on the **watch-mode** path — the default and the only mode raiders
+    use — so 3.5.5, 3.5.10, 3.5.11, 3.5.12, 3.5.13 and 3.5.14 all printed the
+    ready banner and exited. **Stable was never affected.**
+  - **`beta` had NO CI AT ALL.** `test.yml` and `golden-log.yml` both declare
+    `push: branches: [main, beta]` — which reads as coverage — but GitHub runs
+    the workflow file **from the branch being pushed**, and neither file existed
+    on `beta`. Confirmed against the API: golden-log had **24 runs on main and 0
+    on beta**. Every agent change lands on `beta`, on the 30k-line component that
+    ships to end-user machines, with nothing checking it. Both workflows,
+    eslint, the golden fixtures and the devDependencies (beta had none, so
+    `npm ci` installed neither vitest nor eslint) are now on `beta`. Lint caught
+    the P0 on its first run there.
+  - **New: `test/agent-boots.test.js`** spawns the real process and asserts it
+    stays up. Nothing we ran had ever executed the startup path — the unit suite
+    imports the module and calls exports, the golden replays `parseEvent`,
+    `check:dashboard` parses template literals; **`main()` was never invoked by a
+    test.** Its second case reintroduces the exact 3.5.5 defect in a scratch copy
+    and asserts the harness reports it, so it can't quietly go vacuous.
+  - **Also fixed (agent 3.5.14): `_deadMobNameFromLine` still matched
+    `die[ds]`** — the second death-regex site, missed by the 3.5.11 feign fix. A
+    feign cancelled any countdown targeting that player AND wiped their
+    buff-landing/slow buckets via `_clearNameObservations`.
+  - **Lesson worth keeping:** two workflows *declaring* a branch is not the same
+    as running on it. `test/workflow-yaml.test.js` (added after golden-log.yml
+    shipped as invalid YAML and never ran) catches a broken workflow but not a
+    **missing** one. Both failures looked exactly like green CI.
+
 ### Task-number registry — minted 2026-08-02 for the public roadmap queue
 The wolfpack.quest/roadmap "What's next" queue (web 1.0.288: numbers + member
 voting + blocked-on-evidence submissions) shows a canonical `#` per item.

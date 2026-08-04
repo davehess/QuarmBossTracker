@@ -26,8 +26,24 @@ raid; move it to STATUS.md's "Done" once graduated to stable.*
 here shipped in the last 36 hours and **none of it has been seen in a real
 raid**. Vex Thal is the planned target, which matters for two rows below.*
 
-**Versions needed:** bot **3.1.7** (main, already live) · agent **3.5.13** +
+**Versions needed:** bot **3.1.7** (main, already live) · agent **3.5.15** +
 Mimic **2.3.0** (**beta** — testers must update) · web **1.1.2**.
+
+> ### 🚨 Take agent **3.5.15** or nothing. The beta agent did not start at all
+> ### from 3.5.5 through 3.5.14.
+>
+> `FATAL: ReferenceError: _threatSnapMs is not defined` — v3.5.5 renamed the
+> threat-snapshot interval constant and missed one reference, in a function that
+> runs unguarded on the watch-mode path. The agent printed its ready banner and
+> exited. **Watch mode is the only mode raiders use**, so every beta build for
+> the last day was dead on arrival. Fixed in 3.5.15 (2026-08-04).
+>
+> **Stable was never affected** — this never left the beta line.
+>
+> If a beta tester updated Tuesday and says "Mimic is running but nothing is
+> uploading", this is why, and the fix is simply to update again. **Confirm the
+> agent dashboard is actually alive before treating any other row below as a
+> failure** — a dead agent fails all of them identically.
 
 > **Bootstrap caveat, read first:** the EQ-close auto-update in Mimic 2.3.0 can
 > only auto-install for people **already on 2.3.0+**. Everyone else still has to

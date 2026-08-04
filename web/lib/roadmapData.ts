@@ -41,9 +41,9 @@ export const releases: Release[] = [
     title: '💀 What counts as a death',
     version: 'Bot 3.1.7 · Web 1.1.2',
     date: '2026-08-04',
-    headline: 'It turns out 44% of every death we have ever recorded never happened — a Shadow Knight feigning read as a Shadow Knight dying. Fixing that pulled a thread through the death list, the trash tally, the cure queue and the raid review.',
+    headline: 'A Shadow Knight feigning read as a Shadow Knight dying, and 44% of every death we have stored came from the only two classes that can feign. Fixing that pulled a thread through the death list, the trash tally, the cure queue and the raid review.',
     features: [
-      { name: '💀 Feign death is no longer a death', blurb: 'Feign Death and Death Peace print "Soandso dies." — and we counted every one. Shadow Knights averaged 58 deaths each, Necromancers 15, a Cleric 5.5, a Bard 1. Those two classes were 44% of all deaths ever stored. New parses are clean; the old numbers need a log re-run to correct, which is coming.' },
+      { name: '💀 Feign death is no longer a death', blurb: 'Feign Death and Death Peace print "Soandso dies." — and we counted every one. One Shadow Knight shows 63 deaths in a single fight. Between them, Shadow Knights and Necromancers account for 44% of every death row we hold, which is the size of the suspect pile rather than a count of fakes — those classes do really die too. New parses are clean.' },
       { name: '💊 Shadow Poison now reaches the cure queue', blurb: 'It has been landing on us 324 times a week and never once showed up as curable, because the spell was stored without an id. It carries 5 poison counters, so one weak cure will not strip it. A callout now names who to cure, and 28,000 other landings got their ids back at the same time.' },
       { name: '🧟 Trash cleared counts only the raid', blurb: 'Last review said 967 mobs and 9h22m of combat for a 1h48m raid — it was counting everything anyone killed that day, including lunchtime XP groups. Now gated to actual raid hours, so expect a much smaller and much truer number.' },
       { name: '🗓️ Every fight knows its raid night', blurb: '193 raid nights reconstructed from our own history and 1,022 encounters linked to them. "Which raid was this?" used to be a guess based on timestamps; now it is a fact.' },
@@ -54,6 +54,22 @@ export const releases: Release[] = [
       'Deaths from a daytime XP group could land on a raid parse, because encounters merge within a 30-minute window.',
       'A pending Zeal update now shows in Mimic Mail on the dashboard, not just as a toast you probably missed.',
       'The golden-log parser suite contained no "died." line at all, which is why the feign bug survived a regression net for a month. It does now.',
+    ],
+  },
+  {
+    key: 'beta-agent-3-5-15',
+    title: '🚑 Beta testers: update again, the agent was not starting',
+    version: 'Agent 3.5.15',
+    date: '2026-08-04',
+    channel: 'beta',
+    headline: 'Every beta build from yesterday crashed the log agent at startup. If you updated Tuesday and Mimic looked fine but nothing was uploading, this is why. Stable was never affected.',
+    features: [
+      { name: '🚑 The agent starts again', blurb: 'A rename in the threat-snapshot code left one stale reference behind, in a line that runs the moment the agent begins watching your logs. It printed "ready" and then quit. Six beta builds shipped that way in a day. Update to 3.5.15 and it is gone.' },
+      { name: '🧪 Beta now has the same tests main does', blurb: 'This is the embarrassing part: the beta branch had no automated checks at all. Two of them claimed to cover it and neither ever ran once. Beta is where every Mimic and agent change lands, so it was the branch that needed them most. They run now — and caught this on the first try.' },
+      { name: '🏃 A test that just starts the agent', blurb: 'Nothing we ran had ever actually launched it. The suites all loaded the code and called pieces of it, which cannot notice that the program does not run. Now something starts it for real every time, and there is a second test that breaks it on purpose to prove the first one would notice.' },
+    ],
+    fixes: [
+      'Feigning also cancelled countdown timers aimed at you and wiped your tracked buffs — the same "dies." mixup as yesterday, in a second place that the first fix missed.',
     ],
   },
   {
