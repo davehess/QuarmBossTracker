@@ -1404,21 +1404,39 @@ before anyone touches them.** All four exist because of the two bugs found
   it collapses correctly with the window *unchanged*. So: apply offsets first,
   then measure what spread is left, then set the window from that. **Do not
   retune by eye — that's how we got 30s.** Deliberately untouched.
-- **#202 Apply the clock offset at ingest, keep the raw stamp.** We now MEASURE
-  skew but don't correct with it — and per #201 above, that single change is what
-  makes the death record come out right. The decision is where correction happens:
-  ingest-time (`corrected_at` alongside `at`, so every consumer benefits and
-  nothing loses provenance) vs read-time (nothing to backfill, but every consumer
-  must remember, and they won't). Recommend ingest-time with both columns kept.
-  Blocked on nothing but the call.
-- **#203 Tell the two skewed installs.** Two machines are wrong by **+42.3s**
-  (Fargan's — the one that produced the phantom double-death above) and
-  **+14.0s** (Bardtholemu's account). The agent now warns its own user, but only
-  when it next runs. A one-line "your clock is off, here's the Windows setting"
-  nudge fixes those two installs permanently and improves every fight they
-  witness. *Loose end: the +42.3s discord_id `272226525426876416` has no
-  `characters` row, so it renders as a bare id — linking it would let the skew
-  report name a person.*
+- **#202 Apply the clock offset at ingest, keep the raw stamp** —
+  **`docs/DESIGN-clock-correction.md`. The premise changed: the bad clocks are
+  DRIFTING, ~3 seconds per day, not set wrong once.** Fargan's install went
+  **43.5s → 56.4s in four days**; Bardtholemu's 10.2s → 22.3s. So a single stored
+  `offset_ms` is stale within a week and corrections must resolve an offset
+  *near the event's own timestamp* — offsets are a time series, not a number.
+  **By Wednesday Fargan's install will be ~1 minute off**, enough to move a kill
+  across the 19:30 raid boundary by itself.
+  **A third estimator fell out of data we already have and costs nothing:**
+  every table with an agent-stamped event time also has a server-stamped
+  `created_at`, and `min(created_at − event_ts)` per install per day is a lower
+  bound on skew (one-way-delay min filter). It reproduces both known outliers,
+  works retroactively on history, needs no agent release — and **found a third
+  drifting install (`6333…7023`, +0.8 s/day) that consensus never measured**,
+  because consensus needs a 3+-witness death and that uploader never had one.
+  Use `min`, never mean/median: one control day shows a 44-hour lag from a
+  `--since` backfill. Guard with a ~300s ceiling + a 30-row floor.
+  Control group (the other ~20 installs) is flat at ≈0 across the same window,
+  which is what rules out a global upload slowdown.
+  Still recommend ingest-time `corrected_at` alongside the raw column, migrating
+  consumers one at a time (death dedup first). Blocked on the call.
+- **#203 Tell the THREE drifting installs — and the advice is not "fix your
+  clock".** They are drifting ~3 s/day (Fargan **+56s and climbing**,
+  Bardtholemu **+22s**, `6333…7023` **+7s**), so a one-time correction drifts
+  straight back. The actual fix is **Windows time sync**: Settings → Time &
+  language → Date & time → "Sync now", with "Set time automatically" ON; if it
+  won't stay on, the `w32time` service is disabled and needs setting to
+  Automatic. Draft wording in `DESIGN-clock-correction.md` §3. The agent warns
+  its own user once at >5s absolute — a **rate** alert would have caught all
+  three far earlier, which is an open question in that doc.
+  *Loose end: the drifting discord_id `272226525426876416` has no `characters`
+  row, so it renders as a bare id — linking it would let the report name a
+  person.*
 
 **Callout + overlay work designed 2026-08-04 (specs written, unbuilt).**
 - **#204 Divine Intervention two-cleric callout.** `docs/DESIGN-di-callout.md`.

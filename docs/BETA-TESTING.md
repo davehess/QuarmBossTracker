@@ -67,10 +67,18 @@ Mimic **2.3.0** (**beta** — testers must update) · web **1.1.2**.
 
 ### 🔴 Highest value — the two that change every number
 
-**1. Clock skew is visible and actionable.**
-- ✅ **Solo:** the agent warns you once if your own clock is off by >5s. Fargan's
-  install (`+42.3s`) and Bardtholemu's (`+14.0s`) should each see it. **If those
-  two fix their clocks before the pull, most of row 2 fixes itself.**
+**1. Clock skew is visible and actionable — and the clocks are DRIFTING.**
+- ⚠️ **Do this before the raid.** Re-measured 2026-08-04: these machines are
+  losing **~3 seconds a day** and still going. Fargan's install
+  **43.5s → 56.4s in four days** — it will be about a **minute** off by
+  Wednesday, enough to move a kill across the 19:30 boundary on its own.
+  Bardtholemu's is at ~22s, and a **third** install (`6333…7023`) is at ~7s and
+  climbing. **Telling them to "fix the clock" is not enough — it drifts back.**
+  They need Windows time sync ON: Settings → Time & language → Date & time →
+  "Sync now" + "Set time automatically". Wording in
+  `DESIGN-clock-correction.md` §3. **If those three sync before the pull, most
+  of row 2 fixes itself.**
+- ✅ **Solo:** the agent warns you once if your own clock is off by >5s.
 - 👥 **Multi:** after one boss kill, run the multi-observer spread query in
   `RUNBOOK-death-backfill.md` §3 against a death several people witnessed. **Pass
   = every observer inside a few seconds.** On 08-03 the same check showed a 45s
