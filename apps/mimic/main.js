@@ -1122,17 +1122,32 @@ function _zealAbsorb(obj, pid) {
   if (type === 2) {                                   // gauge — HP per-mille (0..1000)
     const inner = _zealParseData(obj);
     if (!Array.isArray(inner)) return;
+    // Per-mille → percent, CLAMPED to [0,100]. Zeal emits occasional negative
+    // gauge values (observed -3 per-mille, which stored as target_hp_pct = -0.3
+    // on 5 live rows, 2026-08-03) — a negative HP% is nonsense and silently
+    // poisons anything doing a threshold or a min(): the off-heal "lowest HP"
+    // pick would choose a dead/invalid target over a genuinely hurt raider.
+    //
+    // NOTE on precision, measured rather than assumed: 300 of 303 stored values
+    // have fractional part EXACTLY .900 and the rest .000, so the real
+    // granularity is ONE percentage point and the .9 is a constant −0.1
+    // artifact, not resolution. EQ only exposes target HP as an integer percent;
+    // the per-mille is Zeal's container, not extra information. Deliberately NOT
+    // "corrected" by adding 0.1 (that would invent data) and NOT rounded to int
+    // (that would throw away any finer resolution Zeal might ship later). Treat
+    // this as ~1% granularity anywhere it feeds same-name mob inference.
+    const _pct = (v) => Math.max(0, Math.min(100, Number(v) / 10));
     const self = inner.find(g => g && g.type === 1);
     const tgt  = inner.find(g => g && g.type === 6 && g.text);
-    if (self) s.self_hp_pct = self.value / 10;
-    if (tgt)  { s.target_name = tgt.text; s.target_hp_pct = tgt.value / 10; }
+    if (self) s.self_hp_pct = _pct(self.value);
+    if (tgt)  { s.target_name = tgt.text; s.target_hp_pct = _pct(tgt.value); }
     else      { s.target_name = null; s.target_hp_pct = null; }
     // Pet — Zeal gauge slot 16 (confirmed from a live charmed-pet dump:
     // 1=self, 6=target, 16=pet). Require a name so an empty/fixed UI gauge
     // never reads as a pet. Surfaced so gauge-condition triggers + the charm
     // overlay can use live pet HP directly.
     const pet = inner.find(g => g && g.type === 16 && g.text);
-    if (pet) { s.pet_name = pet.text; s.pet_hp_pct = pet.value / 10; }
+    if (pet) { s.pet_name = pet.text; s.pet_hp_pct = _pct(pet.value); }
     else     { s.pet_name = null; s.pet_hp_pct = null; }
     // Retain every populated gauge slot verbatim — the agent reads slot 16 for
     // the pet and keeps the full list for the diagnostic gauge dump + the
@@ -1142,14 +1157,16 @@ function _zealAbsorb(obj, pid) {
       if (!g || g.type == null || g.value == null) continue;
       // value=0 happens for empty slots; skip those so the array isn't noise.
       if (g.value === 0 && !g.text) continue;
-      slots.push({ slot: g.type, hp_pct: g.value / 10, text: g.text || '' });
+      slots.push({ slot: g.type, hp_pct: _pct(g.value), text: g.text || '' });
     }
     s.gauges = slots;
     // Group HP: gauge slots other than self(1)/target(6) that carry a name.
     let minPct = null, minName = null;
     for (const g of inner) {
       if (!g || g.type === 1 || g.type === 6 || !g.text || g.value == null) continue;
-      const pct = g.value / 10;
+      const pct = _pct(g.value);
+      // `> 0` already skipped negatives here by luck; the clamp makes it
+      // explicit and keeps this consistent with the other three gauge reads.
       if (pct > 0 && (minPct === null || pct < minPct)) { minPct = pct; minName = g.text; }
     }
     s.group_min_hp_pct = minPct;
