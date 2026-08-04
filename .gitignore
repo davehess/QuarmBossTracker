@@ -29,6 +29,13 @@ packages/wolfpack-logsync/logsync.stats.json
 packages/wolfpack-logsync/logsync.optin.json
 packages/wolfpack-logsync/logsync.session.json
 packages/wolfpack-logsync/logsync.pid.json
+# Durable upload queue + pet/buff state. Same machine-local runtime class as the
+# four above, but they were missing from this list — so merely REQUIRING the
+# agent (a test, a repl, a probe script) drops them in the working tree and they
+# show up as untracked. They carry real guild data (queued trigger fires with
+# raider names, observed buff landings), so they must never be committed.
+packages/wolfpack-logsync/logsync.queue.json
+packages/wolfpack-logsync/logsync.pet-state.json
 packages/wolfpack-logsync/.last-update-check
 packages/wolfpack-logsync/.force-update-on-restart
 packages/wolfpack-logsync/.update-token-on-restart
