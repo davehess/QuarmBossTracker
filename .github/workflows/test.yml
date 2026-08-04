@@ -1,0 +1,38 @@
+name: Test
+
+# Blocking CI gate for the two giant single-file components (bot monolith +
+# zero-dep agent). Runs the narrow `no-undef` ESLint tripwire (task #71 — it
+# catches undeclared globals like the _mtLiveStateByName outage that Node only
+# throws on at execution time), the dashboard-escape check, and the vitest
+# characterization suite (Phase 0b — election/auth/privacy/triggers/timeline/
+# rate-limit). All three must pass for the job to go green.
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - beta
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint (no-undef gate)
+        run: npm run lint
+
+      - name: Check agent dashboard escaping
+        run: npm run check:dashboard
+
+      - name: Unit tests (vitest characterization suite)
+        run: npm test

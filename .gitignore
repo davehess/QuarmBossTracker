@@ -19,6 +19,10 @@ raid-tick-*.txt
 # Logs
 *.log
 npm-debug.log*
+# …except the #75 golden-log fixtures, which are SYNTHETIC (hand-written,
+# invented names — never a real player log; see docs/PRIVACY.md) and must be
+# committed for the parser regression net to mean anything.
+!test/fixtures/golden/*.log
 package-lock.json
 dist/
 packages/wolfpack-logsync/logsync.stats.json

@@ -1,0 +1,300 @@
+{
+  "character": "Sylvarra",
+  "boss_name": "Lord of Ire",
+  "confirmed_kill": true,
+  "kill_slayer": "a fear touched drolvarg",
+  "kill_credit": "Sylvarra",
+  "is_raid_window": true,
+  "active_duration_s": 47,
+  "started_at": "2026-08-03T00:41:02.000Z",
+  "ended_at": "2026-08-03T00:41:50.000Z",
+  "boss_max_melee": 903,
+  "event_count": 41,
+  "events_by_type": {
+    "avoid": 5,
+    "cast": 3,
+    "crit_heal": 1,
+    "critical": 2,
+    "damage": 24,
+    "death": 2,
+    "heal": 2,
+    "spell_resisted": 2
+  },
+  "damage_by_attacker": {
+    "Brambleth": 24,
+    "Draggomir": 1516,
+    "Fenrisk": 245,
+    "Lord of Ire": 2090,
+    "Torvahk": 997,
+    "__SELF__": 625,
+    "a fear touched drolvarg": 648
+  },
+  "damage_by_defender": {
+    "Fenrisk": 903,
+    "Lord of Ire": 4055,
+    "Torvahk": 1187
+  },
+  "pet_leaders": {
+    "a fear touched drolvarg": "Sylvarra"
+  },
+  "defenders": [
+    {
+      "name": "Fenrisk",
+      "hits": 1,
+      "damageTaken": 903,
+      "misses": 0,
+      "dodges": 0,
+      "parries": 0,
+      "ripostes": 0,
+      "blocks": 0,
+      "invulns": 0
+    },
+    {
+      "name": "Lord of Ire",
+      "hits": 20,
+      "damageTaken": 4055,
+      "misses": 0,
+      "dodges": 1,
+      "parries": 0,
+      "ripostes": 0,
+      "blocks": 0,
+      "invulns": 0
+    },
+    {
+      "name": "Torvahk",
+      "hits": 3,
+      "damageTaken": 1187,
+      "misses": 0,
+      "dodges": 1,
+      "parries": 1,
+      "ripostes": 1,
+      "blocks": 1,
+      "invulns": 0
+    }
+  ],
+  "healers": [
+    {
+      "name": "Kaelthorne",
+      "healed": 1601,
+      "ticks": 1,
+      "targets": [
+        "Torvahk"
+      ]
+    }
+  ],
+  "heals_received": {
+    "name": "Sylvarra",
+    "total": 402,
+    "ticks": 1
+  },
+  "deaths": [
+    {
+      "name": "Fenrisk",
+      "riposteDeath": false
+    }
+  ],
+  "ds_reflects": {
+    "legacy of spike": {
+      "count": 1,
+      "total": 24,
+      "min": 24,
+      "max": 24
+    },
+    "thorns": {
+      "count": 1,
+      "total": 14,
+      "min": 14,
+      "max": 14
+    }
+  },
+  "charm_sessions": [
+    {
+      "pet": "a fear touched drolvarg",
+      "owner": "Sylvarra",
+      "end_reason": "charm_break",
+      "duration_sec": 12,
+      "damage": null
+    },
+    {
+      "pet": "a fear touched drolvarg",
+      "owner": "Sylvarra",
+      "end_reason": "encounter_flush",
+      "duration_sec": 9,
+      "damage": null
+    }
+  ],
+  "rollup": {
+    "Brambleth": {
+      "total_hits": 1,
+      "total_damage": 24,
+      "self_attack_count": 0,
+      "by_skill": {
+        "ds:legacy of spike": {
+          "hits": 1,
+          "dmg": 24
+        }
+      }
+    },
+    "Draggomir": {
+      "total_hits": 2,
+      "total_damage": 1516,
+      "self_attack_count": 0,
+      "by_skill": {
+        "Ancient: Strike of Chaos": {
+          "hits": 1,
+          "dmg": 412
+        },
+        "Ice Comet": {
+          "hits": 1,
+          "dmg": 1104
+        }
+      }
+    },
+    "Fenrisk": {
+      "total_hits": 1,
+      "total_damage": 245,
+      "self_attack_count": 0,
+      "by_skill": {
+        "shoot": {
+          "hits": 1,
+          "dmg": 245
+        }
+      }
+    },
+    "Lord of Ire": {
+      "total_hits": 4,
+      "total_damage": 2090,
+      "self_attack_count": 0,
+      "by_skill": {
+        "hit": {
+          "hits": 4,
+          "dmg": 2090
+        }
+      }
+    },
+    "Sylvarra": {
+      "total_hits": 10,
+      "total_damage": 1273,
+      "self_attack_count": 0,
+      "by_skill": {
+        "Denon`s Desperate Dirge": {
+          "hits": 1,
+          "dmg": 177
+        },
+        "Tuyen`s Chant of Flame": {
+          "hits": 2,
+          "dmg": 160
+        },
+        "dot": {
+          "hits": 1,
+          "dmg": 88
+        },
+        "slash": {
+          "hits": 6,
+          "dmg": 848
+        }
+      }
+    },
+    "Torvahk": {
+      "total_hits": 6,
+      "total_damage": 997,
+      "self_attack_count": 0,
+      "by_skill": {
+        "crush": {
+          "hits": 3,
+          "dmg": 548
+        },
+        "ds:thorns": {
+          "hits": 1,
+          "dmg": 14
+        },
+        "hit": {
+          "hits": 2,
+          "dmg": 435
+        }
+      }
+    }
+  },
+  "who_data": [
+    {
+      "name": "Brambleth",
+      "level": 60,
+      "class": "Druid",
+      "race": "Wood Elf",
+      "guild": "Wolf Pack",
+      "anonymous": false,
+      "gm": false,
+      "zone": null
+    },
+    {
+      "name": "Draggomir",
+      "level": 60,
+      "class": "Magician",
+      "race": "Erudite",
+      "guild": "Wolf Pack",
+      "anonymous": false,
+      "gm": false,
+      "zone": null
+    },
+    {
+      "name": "Fenrisk",
+      "level": 60,
+      "class": "Ranger",
+      "race": "Half Elf",
+      "guild": "Wolf Pack",
+      "anonymous": false,
+      "gm": false,
+      "zone": null
+    },
+    {
+      "name": "Kaelthorne",
+      "level": 60,
+      "class": "Cleric",
+      "race": "High Elf",
+      "guild": "Wolf Pack",
+      "anonymous": false,
+      "gm": false,
+      "zone": null
+    },
+    {
+      "name": "Nyxaria",
+      "level": 60,
+      "class": "Enchanter",
+      "race": "Gnome",
+      "guild": "Wolf Pack",
+      "anonymous": false,
+      "gm": false,
+      "zone": null
+    },
+    {
+      "name": "Orvo",
+      "level": null,
+      "class": null,
+      "race": null,
+      "guild": "Wolf Pack",
+      "anonymous": true,
+      "gm": false,
+      "zone": null
+    },
+    {
+      "name": "Sylvarra",
+      "level": 60,
+      "class": "Bard",
+      "race": "Half Elf",
+      "guild": "Wolf Pack",
+      "anonymous": false,
+      "gm": false,
+      "zone": null
+    },
+    {
+      "name": "Torvahk",
+      "level": 60,
+      "class": "Warrior",
+      "race": "Barbarian",
+      "guild": "Wolf Pack",
+      "anonymous": false,
+      "gm": false,
+      "zone": null
+    }
+  ]
+}
