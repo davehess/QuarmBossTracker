@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Mimic Resource use</title>
+<!--
+  Resource use, promoted out of Settings into its own window (Uilnayar
+  2026-08-04: "have it be its own window that's accessible from the tray and
+  the dashboard").
+
+  WHY ITS OWN WINDOW: the question this answers is "is Mimic costing me
+  anything RIGHT NOW" — which people ask while the game is running and their
+  frame rate feels off. Buried three sections down a Settings page you have to
+  scroll, it could not be used at the moment of doubt: you had to open Settings,
+  find it, and leave Settings open (risking a stray Save) to keep watching. As
+  its own window it can sit on a second monitor next to EQ for as long as you
+  like, and it costs nothing when closed because the 2s poll only runs while
+  this page is open.
+
+  Everything here is measured on THIS machine and nothing is uploaded
+  (Uilnayar 2026-08-03: "I don't want false claims, I want real stats").
+-->
+<style>
+  body{margin:0;background:#0e1116;color:#c9d1d9;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px;padding:16px 18px}
+  h1{color:#f6c365;font-size:15px;font-weight:normal;margin:0 0 4px;display:flex;align-items:center;gap:9px}
+  .sub{color:#8b949e;font-size:11px;line-height:1.5;margin-bottom:12px}
+  .box{background:#161b22;border:1px solid #2a3140;border-radius:6px;padding:11px 13px}
+  #metricsSummary{color:#8b949e;font-size:11px}
+  /* Options + the folded explanation sit UNDER the data, styled quietly so the
+     numbers stay the loudest thing in the window. */
+  #metricsOptions{margin-top:10px;font-size:11px;color:#c9d1d9}
+  #metricsOptions summary::-webkit-details-marker{color:#6e7681}
+  #metricsOptions summary:hover{color:#c9d1d9}
+  table{width:100%;margin-top:9px;border-collapse:collapse;font-size:11px}
+  th{font-weight:normal;color:#6e7681;text-align:left;padding:2px 0}
+  td{padding:3px 0}
+  .eq{display:inline-block;padding:1px 7px;border-radius:9px;font-size:10px;border:1px solid}
+  .eq.on {color:#7ee787;border-color:#2ea04326;background:#2ea0431a}
+  .eq.off{color:#8b949e;border-color:#30363d;background:#161b22}
+  .foot{color:#6b7280;font-size:10px;margin-top:11px;line-height:1.5}
+</style></head>
+<body>
+  <h1><img src="assets/icon-256.png" alt="" style="width:26px;height:26px;border-radius:6px"><span>Resource use</span></h1>
+  <div class="sub">
+    Live from this machine — Mimic's own processes plus every overlay you have open.
+    <b>Nothing here is uploaded.</b>
+    Close EverQuest and leave this open: CPU should settle to roughly nothing, because
+    with EQ shut Mimic only checks whether it reopened (every 45s) and whether an update landed.
+  </div>
+
+  <!--
+    Reading order (Uilnayar 2026-08-04): "Ideally it says the CPU/Memory, then
+    processes, then the options and what is not being tracked."
+
+    The prose used to sit between the numbers and the table and ran three times
+    the height of the data — "an eyesore". It is all still here, just folded into
+    a <details> under the option it explains, so the default window is the
+    measurement and nothing else.
+  -->
+  <div class="box">
+    <div id="metricsSummary">measuring…</div>
+    <table id="metricsTable"></table>
+  </div>
+
+  <div id="metricsOptions"></div>
+  <div id="metricsNotTracking"></div>
+
+<script>
+  // Identical rendering to the Settings card this replaces — deliberately kept
+  // as one implementation rather than two that drift.
+  //
+  // percentCPUUsage is a share of ONE core measured since the PREVIOUS
+  // getAppMetrics() call, so the very first sample after a cold start reads
+  // high and is meaningless. Discard it and only show settled readings.
+  (function () {
+    var summary     = document.getElementById('metricsSummary');
+    var table       = document.getElementById('metricsTable');
+    var options     = document.getElementById('metricsOptions');
+    var notTracking = document.getElementById('metricsNotTracking');
+    if (!summary || !table || !window.mimic || !window.mimic.appMetrics) {
+      if (summary) summary.textContent = 'Resource metrics are unavailable in this window.';
+      return;
+    }
+    var primed = false;
+    function esc(t){ return String(t == null ? '' : t).replace(/[&<>"]/g, function (c) {
+      return ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' })[c]; }); }
+    function label(p){
+      // main.js names the windows it owns (p.label) — ten identical
+      // "overlay / window" rows never answered the only question this window
+      // gets opened to answer: WHICH overlays are running.
+      if (p.label) return p.label;
+      if (p.type === 'Browser') return 'Mimic core';
+      if (p.type === 'Tab' || p.type === 'Renderer') return 'overlay / window' + (p.name ? ' · ' + p.name : '');
+      if (p.type === 'GPU') return 'GPU helper';
+      return p.type + (p.name ? ' · ' + p.name : '');
+    }
+    // Say which memory figure is on screen — Uilnayar checked this against Task
+    // Manager twice and neither reading survived.
+    //
+    // It first summed workingSetSize, which counts pages SHARED between
+    // processes once per process: every Chromium renderer maps the same Electron
+    // framework, so thirteen processes counted it thirteen times (1267 vs 460).
+    // Then privateBytes, which is private COMMIT — provisioned, not resident —
+    // still above Task Manager's resident-only column (274 vs 161).
+    //
+    // Commit is the DEFAULT now, with the difference explained rather than
+    // chased: matching exactly needs a Windows query that costs real CPU in a
+    // window whose whole claim is that Mimic costs none. The checkbox is there
+    // for when an exact comparison is actually worth it.
+    var TM_TIP = 'To match these names up in Task Manager: <b>Details</b> tab → right-click any '
+               + 'column header → <b>Select columns</b> → <b>Command line</b>. Each window carries a '
+               + '<code style="background:#0d1117;padding:1px 4px;border-radius:3px">--wp-window=</code> '
+               + 'tag there. (The Name column reads the .exe, which is the same file for all of them, '
+               + 'so it can\'t be changed.)';
+    var CPU_NOTE = 'CPU is a share of <b>one</b> core, measured since the previous sample — the first '
+                 + 'reading after opening this window is discarded rather than shown, because it would '
+                 + 'be a meaningless spike. Task Manager divides by <b>all</b> your cores over its own '
+                 + 'window, so the two percentages will not match and neither is wrong. At around 1% '
+                 + 'both are noise either way.';
+
+    // What the memory number means. Three variants, one per basis.
+    function memNote(m){
+      if (m.memBasis === 'workingSetPrivate') {
+        return 'Memory is the <b>private working set</b> read from Windows — the same figure Task '
+             + 'Manager\'s Memory column shows, so the two should agree. <b>Committed</b> is the '
+             + 'larger number beside it: every private page the processes have reserved, including '
+             + 'ones not currently in RAM.';
+      }
+      // The DEFAULT. Commit is a real number, just not the one Task Manager
+      // prints, and saying why costs nothing.
+      return 'Memory is <b>committed private bytes</b>: what Windows has <b>provisioned</b> for '
+           + 'Mimic, not what is sitting in RAM. Task Manager\'s Memory column shows only the '
+           + 'resident part, so <b>it will read lower than this and both are correct</b>. Processes '
+           + 'reserve more than they touch — the GPU helper is usually the biggest gap — so there is '
+           + 'no single factor between the two. Tick the box above for the resident figure instead.'
+           + (m.memBasis === 'workingSet'
+              ? ' <span style="color:#f0b429">(Private bytes were unavailable, so this is the whole '
+                + 'working set — higher again, since pages shared between processes get counted once '
+                + 'per process.)</span>'
+              : '');
+    }
+
+    // Options block: the checkbox first, the prose folded underneath it.
+    function optionsHtml(m){
+      var h = '';
+      if (window.mimic && window.mimic.setExactMemory) {
+        var cost = m.wsQueryMs
+          ? ' <span style="color:#6e7681">· last query took ' + esc(m.wsQueryMs) + 'ms</span>'
+          : '';
+        h += '<label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer">'
+          +  '<input type="checkbox" id="wpExactMem" style="cursor:pointer" />'
+          +  '<span>Match Task Manager exactly</span></label>'
+          +  '<span style="color:#6e7681"> — asks Windows for the resident figure every 12s. '
+          +  'Off by default so this window stays free.</span>' + cost;
+      }
+      h += '<details id="wpWhyDetails" style="margin-top:' + (h ? '7px' : '0') + '">'
+        +  '<summary style="cursor:pointer;color:#8b949e;font-size:11px;list-style:revert">'
+        +  'Why these numbers differ from Task Manager</summary>'
+        +  '<div style="margin-top:6px;color:#6e7681;font-size:11px;line-height:1.55">'
+        +  memNote(m) + '<br><br>' + CPU_NOTE + '<br><br>' + TM_TIP
+        +  '</div></details>';
+      return h;
+    }
+
+    // Which EverQuest we passed on. Last, because it is a footnote to the
+    // EQ badge above and not something to read every time.
+    function notTrackingHtml(m){
+      if (!(m.eqIgnored && m.eqIgnored.length)) return '';
+      return '<div style="margin-top:10px;color:#6e7681;font-size:11px;line-height:1.5">'
+           + '<b>Not tracking:</b> ' + esc(m.eqIgnored.join(', '))
+           + ' — a different EverQuest install. eqgame.exe is the binary name for every EverQuest '
+           + 'client, so Mimic follows only the one in your configured EQ folder. Add its folder in '
+           + 'Settings if you want Mimic to follow it too.</div>';
+    }
+
+    // Byte-compare before writing. The 2s poll must not rewrite the options
+    // block, or the <details> the user just opened snaps shut every tick.
+    var lastHtml = {};
+    function setHtml(el, html){
+      if (!el || lastHtml[el.id] === html) return false;
+      lastHtml[el.id] = html;
+      el.innerHTML = html;
+      return true;
+    }
+
+    function paint(m){
+      if (!primed) { primed = true; summary.textContent = 'measuring…'; return; }
+      var eqCls = m.eqRunning ? 'eq on' : 'eq off';
+      var eqTxt = m.eqRunning ? 'EverQuest running' : 'EverQuest closed';
+      // Show committed alongside in-RAM. One number invites "this disagrees
+      // with Task Manager"; two label the difference as what it is.
+      var exact = m.memBasis === 'workingSetPrivate';
+      var commit = (exact && m.totalCommitMb && m.totalCommitMb !== m.totalMemMb)
+        ? '<span style="color:#6e7681"> (' + esc(m.totalCommitMb) + ' MB committed)</span>' : '';
+      summary.innerHTML = '<span style="color:#7ee787;font-size:15px">' + esc(m.totalCpu) + '%</span>'
+        + '<span style="color:#6e7681"> CPU of one core · </span>'
+        + '<span style="color:#79c0ff;font-size:15px">' + esc(m.totalMemMb) + '</span>'
+        + '<span style="color:#6e7681"> MB ' + (exact ? 'in RAM' : 'committed') + '</span>' + commit
+        + '<span style="color:#6e7681"> · ' + esc(m.procs.length) + ' processes ('
+        + esc(m.windows) + ' windows)</span> <span class="' + eqCls + '">' + esc(eqTxt) + '</span>';
+      var rows = m.procs.slice().sort(function (a, b) { return b.memMb - a.memMb; });
+      var h = '<tr><th>process</th><th style="text-align:right">CPU</th><th style="text-align:right">memory</th></tr>';
+      for (var i = 0; i < rows.length; i++) {
+        var p = rows[i];
+        h += '<tr style="border-top:1px solid #1c2128">'
+           + '<td>' + esc(label(p)) + '</td>'
+           + '<td style="text-align:right;color:' + (p.cpu >= 1 ? '#f0b429' : '#6e7681') + '">' + esc(p.cpu.toFixed(1)) + '%</td>'
+           + '<td style="text-align:right">' + esc(p.memMb) + ' MB</td></tr>';
+      }
+      // The agent is a spawned node process, so it is NOT in getAppMetrics() —
+      // say so rather than let the total look complete when it is not.
+      if (m.agent && m.agent.pid) {
+        h += '<tr style="border-top:1px solid #1c2128"><td style="color:#8b949e">'
+           + 'log agent (pid ' + esc(m.agent.pid) + ') — separate process, not counted above'
+           + '</td><td></td><td style="text-align:right;color:#6e7681">—</td></tr>';
+      }
+      table.innerHTML = h;
+      // Rewritten only when the text actually changes (a basis flip, a new
+      // query time), and the open state is restored when it does.
+      if (setHtml(options, optionsHtml(m))) restoreDetails();
+      setHtml(notTracking, notTrackingHtml(m));
+      wireExact(m);
+    }
+
+    // <details> open-state survives the rewrites, tracked JS-side rather than
+    // read back off a DOM node that is about to be replaced.
+    var whyOpen = false;
+    document.addEventListener('toggle', function (e) {
+      if (e.target && e.target.id === 'wpWhyDetails') whyOpen = !!e.target.open;
+    }, true);
+    function restoreDetails(){
+      var d = document.getElementById('wpWhyDetails');
+      if (d) d.open = whyOpen;
+    }
+
+    // Checked state is applied AFTER render (never baked into the HTML), so a
+    // repaint mid-click can\'t fight the user. The listener is attached once.
+    var exactWired = false;
+    function wireExact(m){
+      var box = document.getElementById('wpExactMem');
+      if (!box) return;
+      if (document.activeElement !== box) box.checked = !!m.exactMemory;
+      if (exactWired) return;
+      exactWired = true;
+      document.addEventListener('change', function (e) {
+        var t = e.target;
+        if (!t || t.id !== 'wpExactMem') return;
+        if (window.mimic && window.mimic.setExactMemory) window.mimic.setExactMemory(t.checked);
+        tick();
+      });
+    }
+    function tick(){ window.mimic.appMetrics().then(paint).catch(function(){}); }
+    tick();
+    var timer = setInterval(tick, 2000);
+    // Stop sampling if the window is hidden — this page exists to prove Mimic
+    // is cheap, so it must not be a background cost itself.
+    window.addEventListener('beforeunload', function(){ clearInterval(timer); });
+  })();
+</script>
+</body></html>

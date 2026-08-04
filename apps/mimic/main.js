@@ -89,6 +89,28 @@ const BASE_PORT   = 7779; // 7777/7778 left for Parser.bat coexistence
 
 const WOLFPACK_URL    = 'https://wolfpack.quest';
 
+// Standard webPreferences for every window we open, PLUS a name stamped onto
+// that renderer's own command line.
+//
+// "Can these expose their names in Task manager as well?" (Uilnayar 2026-08-04)
+// — partly. The Name column cannot change: every renderer is the same
+// Wolf Pack Mimic.exe and Task Manager reads that column from the exe's version
+// resource. (The Dashboard row is named only because it owns a visible taskbar
+// window, whose title Task Manager appends. Overlays are skipTaskbar so they
+// have no such window — deliberately, or they would flood alt-tab.)
+//
+// What CAN carry a name is the process command line, and additionalArguments
+// lands there. Task Manager → Details → right-click any column header → Select
+// columns → Command line shows it, as do Process Explorer and Resource Monitor.
+// Costs nothing at runtime: nothing reads process.argv in the renderers.
+function _wpPrefs(name, extra) {
+  return Object.assign({
+    preload: path.join(__dirname, 'preload.js'),
+    contextIsolation: true,
+    additionalArguments: ['--wp-window=' + String(name || 'window').replace(/\s+/g, '-')],
+  }, extra || {});
+}
+
 let mainWindow = null;
 let overlayWindow = null;
 let triggerWindow = null;
@@ -271,6 +293,21 @@ function loadConfig() {
 function saveConfig(cfg) {
   fs.mkdirSync(path.dirname(CONFIG_FILE()), { recursive: true });
   fs.writeFileSync(CONFIG_FILE(), JSON.stringify(cfg, null, 2));
+  // Any config write can change where we should be looking for EverQuest
+  // (eqPaths / eqPathsExcluded), so drop the memoized scans rather than trying
+  // to detect which keys moved — config saves are rare user actions, and a
+  // needless re-scan is far cheaper than serving a stale answer to someone who
+  // just picked their folder. try/catch because saveConfig is defined well
+  // above the caches and may run during module init, before their `const`
+  // declarations have executed.
+  try { _invalidateEqScan(); } catch { /* not initialised yet — nothing cached */ }
+  // An explicitly configured folder must never stay on the learned skip list —
+  // the user pointing at it outranks anything we inferred from a slow probe.
+  try {
+    const paths = Array.isArray(cfg && cfg.eqPaths) ? cfg.eqPaths : (cfg && cfg.eqPath ? [cfg.eqPath] : []);
+    for (const p of paths) _eqSkipForget(path.normalize(String(p)));
+    _flushEqSkip();
+  } catch { /* pre-init — nothing learned yet */ }
 }
 
 // ── Secret-at-rest (safeStorage / OS keychain) ──────────────────────────────
@@ -540,19 +577,195 @@ function _firstLineIsEqWelcome(filePath) {
 // eqlog_*_pq.proj stem (rotation / backup) pass only when line 1 is the EQ
 // welcome signature — so renamed logs are caught without tailing arbitrary
 // eqlog_-prefixed junk.
+// ── Persistent verdict cache (Uilnayar 2026-08-04) ──────────────────────────
+// "we should be able to track the previous last updated dates on those files
+// and file size to not interpret them again."
+//
+// Right. The expensive half of this scan is _firstLineIsEqWelcome — an
+// open+read+close per non-canonical candidate — and it re-ran from scratch on
+// EVERY launch, for files whose answer cannot have changed. EQ logs are
+// APPEND-ONLY: once line 1 is the welcome banner it stays the welcome banner
+// forever, no matter how large the file grows. Re-sniffing a 1.4 GB log to
+// re-learn what we already knew is pure waste.
+//
+// So the verdict is cached to disk keyed on (size, mtime), and a hit costs ONE
+// statSync instead of three syscalls plus a content read.
+//
+// Invalidation is deliberately asymmetric, because append-only is the whole
+// premise: a file that GREW is still the same file, so the verdict stands. A
+// file that SHRANK was replaced or truncated, so we re-sniff. That is the only
+// direction that can change the first line.
+const _EQ_VERDICT_FILE = () => path.join(app.getPath('userData'), 'eqlog-verdicts.json');
+let _eqVerdicts = null;      // path(lower) → { v: bool, size, mtimeMs }
+let _eqVerdictsDirty = false;
+
+function _loadEqVerdicts() {
+  if (_eqVerdicts) return _eqVerdicts;
+  _eqVerdicts = new Map();
+  try {
+    const raw = JSON.parse(fs.readFileSync(_EQ_VERDICT_FILE(), 'utf8'));
+    for (const [k, v] of Object.entries(raw || {})) {
+      if (v && typeof v.size === 'number') _eqVerdicts.set(k, v);
+    }
+  } catch { /* absent or corrupt — start empty, it rebuilds itself */ }
+  return _eqVerdicts;
+}
+
+function _flushEqVerdicts() {
+  if (!_eqVerdictsDirty || !_eqVerdicts) return;
+  _eqVerdictsDirty = false;
+  try {
+    // Bound it so a folder churning through rotated logs can't grow this
+    // unboundedly; newest-touched win.
+    const entries = [..._eqVerdicts.entries()].slice(-500);
+    fs.writeFileSync(_EQ_VERDICT_FILE(), JSON.stringify(Object.fromEntries(entries)));
+  } catch { /* cache is an optimisation — never fail a scan over it */ }
+}
+
 function _isEqLogFile(dir, filename) {
-  if (EQ_LOG_CANONICAL_RX.test(filename)) return true;
-  if (!EQ_LOG_STEM_RX.test(filename)) return false;
-  return _firstLineIsEqWelcome(path.join(dir, filename));
+  if (EQ_LOG_CANONICAL_RX.test(filename)) return true;   // filename alone — no I/O
+  if (!EQ_LOG_STEM_RX.test(filename)) return false;      // not even a candidate
+  const full = path.join(dir, filename);
+  const key  = full.toLowerCase();
+  const map  = _loadEqVerdicts();
+  let st;
+  try { st = fs.statSync(full); } catch { return false; }
+  const hit = map.get(key);
+  // Grew or unchanged → the first line is untouched, reuse the verdict.
+  if (hit && st.size >= hit.size) return hit.v;
+  const v = _firstLineIsEqWelcome(full);
+  map.set(key, { v, size: st.size, mtimeMs: st.mtimeMs });
+  _eqVerdictsDirty = true;
+  return v;
 }
 
 // True if `dir` contains at least one EQ log file. Cheap probe — used by
 // both the default-dirs scan and the walk-up-from-Mimic-exe scan below.
-function _dirHasEqLogs(dir) {
+// Shared TTL for both EQ-scan caches. Declared here because _dirHasEqLogs is
+// the first thing that reads it, and a const used above its declaration is a
+// temporal-dead-zone trap waiting for someone to call this during init.
+const _EQ_SCAN_TTL_MS = 30_000;
+
+// Local FIXED drive letters ("C:", "D:", …), enumerated once per process.
+//
+// Used to keep the speculative EQ-install scan off network and removable
+// drives. A mapped NAS that is asleep costs ~21 SECONDS on a single
+// fs.existsSync (measured 2026-08-04: B:\Quarm, 21046ms of a 21050ms scan),
+// and that runs on the main process, so every Mimic window freezes with it.
+//
+// DriveType — NOT IsReady. IsReady queries free space and would block on the
+// very drives we are trying to skip, turning the guard into the bug. DriveType
+// comes from the drive map without touching the device.
+//
+// Returns null if enumeration fails, and callers then skip filtering entirely:
+// failing OPEN keeps today's (slow but correct) behaviour rather than silently
+// hiding someone's EQ folder because a PowerShell spawn misbehaved.
+// ── Learned dead ends ───────────────────────────────────────────────────────
+//
+// "it didn't show up on my list of installs but it showed up in the logs. We
+// should be able to ignore it" (Uilnayar 2026-08-04, on B:\Quarm costing 21s).
+//
+// The DriveType filter catches the network-drive case, but it only knows about
+// drive TYPES. A slow dead end on a local fixed drive — a failing disk, a
+// dismounted encrypted volume, a folder behind a filter driver — would sail
+// straight past it. The durable rule is simpler and covers all of them: a
+// SPECULATIVE path that was slow AND held nothing is not worth asking about
+// again.
+//
+// Guard rails, because a skip-list that hides a real EQ folder is far worse
+// than a slow scan:
+//   • only SPECULATIVE probes are ever recorded — never a folder the user
+//     configured, and never the walk-up-from-Mimic path;
+//   • only when the probe found NOTHING. A slow directory that contains EQ
+//     stays in the rotation, however slow it is;
+//   • entries EXPIRE, so installing EQ somewhere we once wrote off is found
+//     again within the month;
+//   • configuring that folder explicitly makes it a hint, which is always
+//     probed regardless of this list.
+const _EQ_SKIP_FILE  = () => path.join(app.getPath('userData'), 'eq-scan-skip.json');
+const _EQ_SKIP_MS    = 2000;                    // "slow" — 4ms is typical, 21046ms was the NAS
+const _EQ_SKIP_TTL   = 30 * 24 * 60 * 60 * 1000; // re-check monthly
+let _eqSkip = null;                             // path(lower) → { at, ms }
+let _eqSkipDirty = false;
+
+function _loadEqSkip() {
+  if (_eqSkip) return _eqSkip;
+  _eqSkip = new Map();
   try {
-    if (!dir || !fs.existsSync(dir)) return false;
-    return fs.readdirSync(dir).some(f => _isEqLogFile(dir, f));
-  } catch { return false; }
+    const raw = JSON.parse(fs.readFileSync(_EQ_SKIP_FILE(), 'utf8'));
+    const now = Date.now();
+    for (const [k, v] of Object.entries(raw || {})) {
+      if (v && typeof v.at === 'number' && (now - v.at) < _EQ_SKIP_TTL) _eqSkip.set(k, v);
+    }
+  } catch { /* absent or corrupt — rebuilds itself */ }
+  return _eqSkip;
+}
+function _flushEqSkip() {
+  if (!_eqSkipDirty || !_eqSkip) return;
+  _eqSkipDirty = false;
+  try {
+    fs.writeFileSync(_EQ_SKIP_FILE(), JSON.stringify(Object.fromEntries(_eqSkip)));
+  } catch { /* optimisation only — never fail a scan over it */ }
+}
+function _eqSkipHas(dir) {
+  return _loadEqSkip().has(String(dir).toLowerCase());
+}
+function _eqSkipRemember(dir, ms) {
+  _loadEqSkip().set(String(dir).toLowerCase(), { at: Date.now(), ms });
+  _eqSkipDirty = true;
+}
+// Called when the user picks or configures a folder, so an explicit choice always
+// beats anything we previously learned about that path.
+function _eqSkipForget(dir) {
+  if (!dir) return;
+  if (_loadEqSkip().delete(String(dir).toLowerCase())) _eqSkipDirty = true;
+}
+
+let _fixedDrives;   // undefined = not tried, null = unavailable, Set = known
+function _fixedDriveSet() {
+  if (_fixedDrives !== undefined) return _fixedDrives;
+  _fixedDrives = null;
+  if (process.platform !== 'win32') return _fixedDrives;
+  try {
+    const { execFileSync } = require('child_process');
+    const out = execFileSync('powershell.exe',
+      ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command',
+       "[System.IO.DriveInfo]::GetDrives() | Where-Object { $_.DriveType -eq 'Fixed' } | ForEach-Object { $_.Name }"],
+      { timeout: 10000, windowsHide: true, encoding: 'utf8' });
+    const set = new Set();
+    for (const line of String(out || '').split(/\r?\n/)) {
+      const m = /^([A-Za-z]):/.exec(line.trim());
+      if (m) set.add(m[1].toUpperCase() + ':');
+    }
+    if (set.size) {
+      _fixedDrives = set;
+      appendAgentLog(`[eq-scan] local fixed drives: ${[...set].join(' ')}\n`);
+    }
+  } catch (e) {
+    appendAgentLog(`[eq-scan] could not enumerate drives (${e && e.message}) — scanning all defaults\n`);
+  }
+  return _fixedDrives;
+}
+// Memoized for the same reason findEqInstalls is (see the scan-cache note
+// there): this is sync fs on the main process, six different call paths reach
+// it, and several of them re-probe the SAME directories in a loop. `.some()`
+// short-circuits on the first match, so a real EQ folder is cheap — but a
+// directory with many non-canonical eqlog files and no match reads 256 bytes
+// from every one of them before returning false, and that is the case that got
+// slower as rotated logs piled up.
+const _eqDirLogCache = new Map();   // dir (lowercased) → { at, has }
+function _invalidateEqScan() { _eqDirLogCache.clear(); if (typeof _eqScanCache !== 'undefined') _eqScanCache.clear(); }
+function _dirHasEqLogs(dir) {
+  if (!dir) return false;
+  const key = String(dir).toLowerCase();
+  const hit = _eqDirLogCache.get(key);
+  if (hit && (Date.now() - hit.at) < _EQ_SCAN_TTL_MS) return hit.has;
+  let has = false;
+  try {
+    if (fs.existsSync(dir)) has = fs.readdirSync(dir).some(f => _isEqLogFile(dir, f));
+  } catch { has = false; }
+  _eqDirLogCache.set(key, { at: Date.now(), has });
+  return has;
 }
 
 function detectEqDir(hint) {
@@ -689,16 +902,73 @@ async function resolveEqDirsWithLogs() {
 //
 // `scanned` is the literal list of paths probed so we can show the user
 // exactly where we looked ("we scanned these common EQ directories").
+// ── Scan cache ──────────────────────────────────────────────────────────────
+// The scan below is ALL-SYNCHRONOUS fs, and its callers sit in ipcMain.handle
+// bodies — so it runs on the MAIN process event loop, and while it runs every
+// Mimic window stops pumping messages. That is why a slow scan shows up as the
+// dashboard AND Settings both freezing, with Windows painting "(Not
+// Responding)" on the title bar (Uilnayar, 2026-08-04: "Something on the initial
+// loading page is taking a long time to load. same with the settings page. It
+// has gotten worse lately.").
+//
+// Cost scales with FILES IN THE EQ FOLDER, which is why it got worse rather than
+// staying constant: every entry matching the eqlog stem but not the canonical
+// name (.txt2 / .txt3 / " BACKUP.txt" — the rotations players make precisely
+// BECAUSE EQ slows on multi-GB logs) costs an open+read+close to sniff its first
+// line, and each of those syscalls goes through Defender. This user's folder has
+// 58 log files totalling ~40 GB.
+//
+// And it was re-walked constantly: find-eq-installs runs it once per configured
+// hint PLUS once for null, the loading page and Settings each call that handler,
+// and _newestUiIniFile runs its own copy of the same loop.
+//
+// So: memoize per hint for a short TTL. Correctness is preserved because the
+// only things that change the answer are user actions, and those invalidate
+// explicitly (_invalidateEqScan). A 30s stale window on "where is EverQuest
+// installed" is not a real risk; freezing the UI is.
+const _eqScanCache = new Map();   // hint (lowercased) → { at, result }
+
 function findEqInstalls(hint) {
+  const key = 'h:' + String(hint || '').toLowerCase();
+  const hit = _eqScanCache.get(key);
+  if (hit && (Date.now() - hit.at) < _EQ_SCAN_TTL_MS) return hit.result;
+  const t0 = Date.now();
+  const result = _findEqInstallsUncached(hint);
+  const ms = Date.now() - t0;
+  _flushEqVerdicts();
+  _flushEqSkip();   // persist anything this scan had to sniff for the first time
+  // Log the real cost so "it feels slow" becomes a number we can read off a
+  // user's agent.log instead of guessing. Only when it is worth noticing.
+  if (ms >= 250) {
+    appendAgentLog(`[eq-scan] scanned ${result.scanned.length} dir(s) in ${ms}ms`
+      + (hint ? ` (hint ${hint})` : '') + ` — cached ${_EQ_SCAN_TTL_MS / 1000}s`
+      + ((result.slow && result.slow.length) ? ` — SLOW: ${result.slow.join(', ')}` : '') + '\n');
+  }
+  _eqScanCache.set(key, { at: Date.now(), result });
+  return result;
+}
+
+function _findEqInstallsUncached(hint) {
   const scanned = [];
   const found   = [];
+  const slow    = [];   // dirs that individually cost >=500ms — the real culprits
+  const skipped = [];   // paths on drives that are absent or have no media
   const seen    = new Set();
   const probe   = (dir, source) => {
     if (!dir) return;
     const norm = path.normalize(dir);
     if (seen.has(norm.toLowerCase())) return;
     seen.add(norm.toLowerCase());
+    // A speculative path we already learned is a slow dead end. Never applies
+    // to a configured folder or the walk-up, which are always probed.
+    if (source === 'common' && _eqSkipHas(norm)) { skipped.push(norm); return; }
     scanned.push(norm);
+    const foundBefore = found.length;
+    // Per-directory timing. The aggregate ("26 dirs in 20383ms") proved the
+    // scan was the problem but not WHICH probe, and on Windows the answer is
+    // usually one absent or offline drive letter costing seconds by itself.
+    // Naming the specific directory turns the next report into a fix.
+    const _t = Date.now();
     try {
       if (!fs.existsSync(norm)) return;
       const entries = fs.readdirSync(norm);
@@ -711,6 +981,18 @@ function findEqInstalls(hint) {
         found.push({ path: norm, hasEqgame, hasLogs, logCount: logFiles.length, source });
       }
     } catch { /* unreadable dir — fine */ }
+    finally {
+      const _ms = Date.now() - _t;
+      if (_ms >= 500) slow.push(norm + ' ' + _ms + 'ms');
+      // Learn the dead end: slow, speculative, and held nothing. `found` is
+      // checked by length because probe() pushes on success — if this path
+      // contributed an install it is NOT a dead end, however slow it was.
+      if (source === 'common' && _ms >= _EQ_SKIP_MS && found.length === foundBefore) {
+        _eqSkipRemember(norm, _ms);
+        appendAgentLog(`[eq-scan] ignoring ${norm} from now on — ${_ms}ms and no EverQuest install `
+          + `(re-checked in ${Math.round(_EQ_SKIP_TTL / 86400000)} days, or immediately if you pick it yourself)\n`);
+      }
+    }
   };
 
   // 1. Explicit override always wins (still recorded so the UI can show it).
@@ -729,12 +1011,45 @@ function findEqInstalls(hint) {
     }
   } catch {}
 
-  // 3. The 14 known common EQ install paths.
-  for (const dir of EQ_DEFAULT_DIRS) probe(dir, 'common');
+  // 3. The known common EQ install paths — the SPECULATIVE pass, and the
+  //    expensive one. Two guards, both earned from a measurement:
+  //
+  //    [eq-scan] scanned 26 dir(s) in 21050ms (hint A:\EQ) — SLOW: B:\Quarm 21046ms
+  //
+  //    B: is a mapped NAS backup drive. When the NAS is asleep or unreachable,
+  //    fs.existsSync on it blocks for TWENTY-ONE SECONDS waiting on SMB, on the
+  //    main process, freezing every window. One directory was the entire hang;
+  //    the other 25 were free.
+  //
+  //    NOT solved by stopping early once a hint resolves, tempting as that is.
+  //    This user has TWO installs — A:\EQ (configured) and D:\EQ (28 logs,
+  //    discovered here and offered as an unticked option). An early return
+  //    after the hint would silently delete D:\EQ from the picker, trading a
+  //    performance bug for a correctness one. Discovery has to keep running.
+  //
+  //    Restrict speculation to LOCAL FIXED drives instead.
+  //        Deliberately DriveType, not IsReady: IsReady queries free space,
+  //        which for an unreachable network drive blocks on exactly the SMB
+  //        timeout we are trying to avoid — the check would become the bug.
+  //        DriveType reads the drive map and never touches the device.
+  //        Network and removable drives are excluded from GUESSING only; a
+  //        folder the user actually configured is always probed, so EQ on a NAS
+  //        or a USB disk still works when you point us at it.
+  const local = _fixedDriveSet();
+  for (const dir of EQ_DEFAULT_DIRS) {
+    if (local && /^[A-Za-z]:/.test(dir) && !local.has(dir.slice(0, 2).toUpperCase())) {
+      skipped.push(dir);
+      continue;
+    }
+    probe(dir, 'common');
+  }
+  if (skipped.length) {
+    appendAgentLog(`[eq-scan] skipped ${skipped.length} speculative path(s) on non-local drives: ${skipped.join(', ')}\n`);
+  }
 
   // Rank: eqgame.exe present beats logs-only; more logs wins as a tiebreaker.
   found.sort((a, b) => (Number(b.hasEqgame) - Number(a.hasEqgame)) || (b.logCount - a.logCount));
-  return { scanned, found };
+  return { scanned, found, slow };
 }
 
 // ── Manual window drag (replaces broken CSS -webkit-app-region) ────────────
@@ -1122,17 +1437,32 @@ function _zealAbsorb(obj, pid) {
   if (type === 2) {                                   // gauge — HP per-mille (0..1000)
     const inner = _zealParseData(obj);
     if (!Array.isArray(inner)) return;
+    // Per-mille → percent, CLAMPED to [0,100]. Zeal emits occasional negative
+    // gauge values (observed -3 per-mille, which stored as target_hp_pct = -0.3
+    // on 5 live rows, 2026-08-03) — a negative HP% is nonsense and silently
+    // poisons anything doing a threshold or a min(): the off-heal "lowest HP"
+    // pick would choose a dead/invalid target over a genuinely hurt raider.
+    //
+    // NOTE on precision, measured rather than assumed: 300 of 303 stored values
+    // have fractional part EXACTLY .900 and the rest .000, so the real
+    // granularity is ONE percentage point and the .9 is a constant −0.1
+    // artifact, not resolution. EQ only exposes target HP as an integer percent;
+    // the per-mille is Zeal's container, not extra information. Deliberately NOT
+    // "corrected" by adding 0.1 (that would invent data) and NOT rounded to int
+    // (that would throw away any finer resolution Zeal might ship later). Treat
+    // this as ~1% granularity anywhere it feeds same-name mob inference.
+    const _pct = (v) => Math.max(0, Math.min(100, Number(v) / 10));
     const self = inner.find(g => g && g.type === 1);
     const tgt  = inner.find(g => g && g.type === 6 && g.text);
-    if (self) s.self_hp_pct = self.value / 10;
-    if (tgt)  { s.target_name = tgt.text; s.target_hp_pct = tgt.value / 10; }
+    if (self) s.self_hp_pct = _pct(self.value);
+    if (tgt)  { s.target_name = tgt.text; s.target_hp_pct = _pct(tgt.value); }
     else      { s.target_name = null; s.target_hp_pct = null; }
     // Pet — Zeal gauge slot 16 (confirmed from a live charmed-pet dump:
     // 1=self, 6=target, 16=pet). Require a name so an empty/fixed UI gauge
     // never reads as a pet. Surfaced so gauge-condition triggers + the charm
     // overlay can use live pet HP directly.
     const pet = inner.find(g => g && g.type === 16 && g.text);
-    if (pet) { s.pet_name = pet.text; s.pet_hp_pct = pet.value / 10; }
+    if (pet) { s.pet_name = pet.text; s.pet_hp_pct = _pct(pet.value); }
     else     { s.pet_name = null; s.pet_hp_pct = null; }
     // Retain every populated gauge slot verbatim — the agent reads slot 16 for
     // the pet and keeps the full list for the diagnostic gauge dump + the
@@ -1142,14 +1472,16 @@ function _zealAbsorb(obj, pid) {
       if (!g || g.type == null || g.value == null) continue;
       // value=0 happens for empty slots; skip those so the array isn't noise.
       if (g.value === 0 && !g.text) continue;
-      slots.push({ slot: g.type, hp_pct: g.value / 10, text: g.text || '' });
+      slots.push({ slot: g.type, hp_pct: _pct(g.value), text: g.text || '' });
     }
     s.gauges = slots;
     // Group HP: gauge slots other than self(1)/target(6) that carry a name.
     let minPct = null, minName = null;
     for (const g of inner) {
       if (!g || g.type === 1 || g.type === 6 || !g.text || g.value == null) continue;
-      const pct = g.value / 10;
+      const pct = _pct(g.value);
+      // `> 0` already skipped negatives here by luck; the clamp makes it
+      // explicit and keeps this consistent with the other three gauge reads.
       if (pct > 0 && (minPct === null || pct < minPct)) { minPct = pct; minName = g.text; }
     }
     s.group_min_hp_pct = minPct;
@@ -2005,6 +2337,13 @@ async function launchAgent() {
   const agentPath = ensureWritableAgent();
   agentPort = await findFreePort(BASE_PORT);
 
+  // The agent holds the Zeal-update notice in memory, so a relaunch (config
+  // save, crash, tray "Restart agent") wipes it. Without this it would stay
+  // blank until the next 12h check. Delayed so the agent's HTTP server is up.
+  if (_zealNotifiedTag) {
+    setTimeout(() => { try { _pushZealUpdateToAgent(_zealNotifiedTag, loadConfig().zealInstalledTag); } catch { /* */ } }, 8000);
+  }
+
   const args = [agentPath, '--watch', '--web-port', String(agentPort)];
   // Local-only: no token → don't pass --bot-url, so the agent runs dashboard +
   // tail only and never attempts uploads (no 4xx-spam in the queue).
@@ -2330,7 +2669,32 @@ function createMainWindow() {
   // doesn't ambush the user mid-login. The user can pop it open from the tray.
   // Detected via the --autostart arg (set in applyAutoStart) OR Electron's
   // openAsHidden flag (which Windows passes when "Start hidden" was checked).
+  // An UNATTENDED auto-install counts as an auto-start too (Uilnayar,
+  // 2026-08-04: "The settings/dashboard did pop up to the foreground").
+  //
+  // The whole promise of install-on-EQ-close is that it happens without
+  // interrupting you — but the relaunch afterwards is not a login and carries no
+  // --autostart, so the dashboard came up SHOWN and grabbed focus. If the raider
+  // had relaunched EverQuest in the meantime, that lands a window over the game:
+  // exactly the outcome the feature exists to avoid ("it should not become the
+  // active window while they're doing things in game").
+  //
+  // A user-initiated "Restart now" is NOT this: they asked for it and expect the
+  // window back, so only the unattended path sets the flag. The flag is
+  // one-shot — cleared as soon as it is read, so a later manual launch shows the
+  // dashboard normally.
+  let _autoInstalled = false;
+  try {
+    const _c = loadConfig();
+    if (_c && _c.pendingSilentRelaunch) {
+      _autoInstalled = true;
+      delete _c.pendingSilentRelaunch;
+      saveConfig(_c);
+      appendAgentLog('[updater] relaunched after an unattended install — starting to tray, not to the foreground\n');
+    }
+  } catch (e) { void e; }
   const _autoStarted =
+    _autoInstalled ||
     process.argv.includes('--autostart') ||
     (process.platform === 'win32' && app.getLoginItemSettings && app.getLoginItemSettings().wasOpenedAtLogin);
   mainWindow = new BrowserWindow({
@@ -2342,7 +2706,7 @@ function createMainWindow() {
     // (not shipped), so use the packaged assets PNG. The Start-menu/.exe icon
     // comes separately from build/icon.ico via electron-builder win.icon.
     icon: path.join(__dirname, 'assets', 'icon-256.png'),
-    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true },
+    webPreferences: _wpPrefs('Dashboard'),
   });
   // Keep the OS/Task-Manager title stable instead of letting the loaded page
   // (loading.html → the agent dashboard) overwrite it — so this process stays
@@ -2825,6 +3189,10 @@ function _autoArrangeOverlays(pinnedKey) {
 
 function applyOverlayInteractivity() {
   const cfg = loadConfig();
+  // Unlocking force-shows EVERY overlay for placement — including ones whose
+  // pref is off, whose windows lazy creation has not built (or has reaped).
+  // Build them first or "unlock to move" would silently skip them.
+  _materializeEnabledOverlays();
   // Setup mode overrides: every overlay is unlocked + visible regardless of
   // user prefs, so they can all be placed at once.
   const locked = !setupMode && cfg.overlaysLocked !== false;
@@ -2857,21 +3225,9 @@ function applyOverlayInteractivity() {
 function applySetupMode(on) {
   setupMode = !!on;
   if (setupMode) {
-    if (!overlayWindow) createOverlayWindow();
-    if (!triggerWindow) createTriggerOverlay();
-    if (!charmWindow)   createCharmOverlay();
-    if (!petsWindow)    createPetsOverlay();
-    if (!mobInfoWindow) createMobInfoOverlay();
-    if (!buffQueueWindow) createBuffQueueOverlay();
-    if (!whoWindow)     createWhoOverlay();
-    if (!melodyWindow)  createMelodyOverlay();
-    if (!zealWindow)    createZealHealthOverlay();
-    if (!threatWindow)  createThreatMeterOverlay();
-    if (!chChainWindow) createChChainOverlay();
-    if (!tankWindow)    createTankOverlay();
-    if (!extTargetWindow) createExtTargetOverlay();
-    if (!commandWindow) createCommandOverlay();
-    if (!popRaidWindow) createPopRaidOverlay();
+    // Every overlay has to exist to be placed. _overlayForcedOn() reports true
+    // for all of them while setupMode is set, so this builds the full set.
+    _materializeEnabledOverlays();
     // Force-show every overlay
     for (const [, win] of _overlayEntries()) {
       try { win.showInactive(); } catch {}
@@ -2888,6 +3244,10 @@ function applySetupMode(on) {
   applyMelodyVisibility();
   applyZealVisibility();
   applyAllOverlayOpacities();
+  // Leaving setup mode hands back the renderers it built for overlays the user
+  // does not actually run. No-op on the way IN — _overlayForcedOn() spares
+  // everything while setupMode is set.
+  _reapDisabledOverlays();
   pushStatus();
 }
 
@@ -2926,7 +3286,7 @@ function createPanelOverlay(panelKey) {
     alwaysOnTop: true, skipTaskbar: true,
     focusable: true,
     show: false,
-    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true },
+    webPreferences: _wpPrefs('panel overlay ' + panelKey),
   });
   win.setAlwaysOnTop(true, 'screen-saver');
   win.setVisibleOnAllWorkspaces(true);
@@ -2955,7 +3315,7 @@ function createOverlayWindow() {
     alwaysOnTop: true, skipTaskbar: true,
     focusable: true, // needed so it can be dragged when unlocked
     show: false,     // visibility decided from config + quiet mode below
-    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true },
+    webPreferences: _wpPrefs('DPS HUD'),
   });
   overlayWindow.setAlwaysOnTop(true, 'screen-saver');
   overlayWindow.setVisibleOnAllWorkspaces(true);
@@ -2983,7 +3343,7 @@ function createTriggerOverlay() {
     // backgroundThrottling:false so a HIDDEN trigger overlay keeps running its
     // TTS + countdowns full-speed — the ✕ hides the visual only (#97), it must
     // never throttle or silence callouts.
-    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, backgroundThrottling: false },
+    webPreferences: _wpPrefs('Trigger alerts', { backgroundThrottling: false }),
   });
   triggerWindow.setAlwaysOnTop(true, 'screen-saver');
   triggerWindow.setVisibleOnAllWorkspaces(true);
@@ -3010,10 +3370,38 @@ function openSettings() {
   if (settingsWindow) { settingsWindow.focus(); return; }
   settingsWindow = new BrowserWindow({
     width: 540, height: 560, title: 'Mimic Settings', backgroundColor: '#0e1116',
-    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true },
+    webPreferences: _wpPrefs('Settings'),
   });
   settingsWindow.loadFile('settings.html');
   settingsWindow.on('closed', () => { settingsWindow = null; });
+}
+
+// Resource use — its own window as of 2026-08-04 (Uilnayar), reachable
+// from the tray and the dashboard rather than only from inside Settings.
+// "Is Mimic costing me anything?" gets asked while the game is running, so the
+// answer has to be openable next to EQ and leavable open; buried in Settings it
+// meant keeping a form with a Save button open to watch a number.
+//
+// A plain window, NOT an overlay: it is not frameless/transparent/always-on-top
+// and never sits over the game, so the overlay feature-parity checklist
+// (hide button, hover-interact handshake, _HIDEALL_FLAGS, …) does not apply —
+// it is a sibling of Settings and UI Studio.
+let resourcesWindow = null;
+function openResources() {
+  if (resourcesWindow) { resourcesWindow.focus(); return; }
+  resourcesWindow = new BrowserWindow({
+    width: 520, height: 520, title: 'Mimic — Resource use', backgroundColor: '#0e1116',
+    webPreferences: _wpPrefs('Resource use'),
+  });
+  resourcesWindow.loadFile('resources.html');
+  resourcesWindow.on('closed', () => {
+    resourcesWindow = null;
+    // Nothing reads these now, and a stale snapshot would be served to the next
+    // open before its first query lands.
+    _wsPrivate.byPid = new Map();
+    _wsPrivate.at = 0;
+    _wsPrivate.lastMs = 0;
+  });
 }
 
 // UI Studio — graphical EQ-window editor. Loads per-character ini files
@@ -3026,7 +3414,7 @@ function openUiStudio() {
   uiStudioWindow = new BrowserWindow({
     width: 1200, height: 780, title: 'Wolf Pack miMIC — UI Studio',
     backgroundColor: '#0d1117',
-    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true },
+    webPreferences: _wpPrefs('UI Studio'),
   });
   uiStudioWindow.setMenu(null);
   uiStudioWindow.loadFile('ui-studio.html');
@@ -3791,6 +4179,83 @@ ipcMain.handle('ui-studio-capture-pvp-draft', (_e, params) => {
 // failed poll (CSV parse error etc.) to avoid flicker.
 let _eqRunning = true;     // assume running until first poll resolves
 let _eqPollTimer = null;
+
+// The EQ folders that count as OURS, lowercased with trailing separators
+// stripped. Empty means we have nothing to compare against — callers must then
+// fail OPEN and accept any eqgame.exe.
+function _ourEqDirs() {
+  let cfg; try { cfg = loadConfig(); } catch { return []; }
+  const excluded = new Set((cfg.eqPathsExcluded || []).map(p => String(p || '').toLowerCase()));
+  const raw = (Array.isArray(cfg.eqPaths) && cfg.eqPaths.length)
+    ? cfg.eqPaths
+    : (cfg.eqPath ? [cfg.eqPath] : []);
+  return raw
+    // Only folders we are ACTUALLY tailing count. A stale eqPaths entry that
+    // holds no logs would otherwise disown the client the user really plays —
+    // resolveEqDirsWithLogs() falls back past those entries, so trusting them
+    // here would let this check disagree with the rest of Mimic. No usable
+    // folder → empty → fail open, same as an unconfigured install.
+    .filter(p => _dirHasEqLogs(p))
+    .map(p => String(p || '').trim().replace(/\//g, '\\').replace(/\\+$/, '').toLowerCase())
+    .filter(p => p && !excluded.has(p));
+}
+
+// PID → "is this OUR EverQuest?".
+//
+// eqgame.exe is the binary name for EVERY EverQuest client, so the process name
+// alone cannot tell Project Quarm from another install on the same machine.
+// Uilnayar 2026-08-04: EQLegends was the running client and Mimic reported
+// "EverQuest running" — overlays up over the wrong game, the Zeal-missing nag
+// primed, and the EQ-close auto-install armed against a process we don't care
+// about. Only the full ExecutablePath distinguishes them.
+//
+// Get-CimInstance is far too heavy for a 5s poll, so the verdict is cached per
+// PID: the lookup runs once per game launch and never again while it's up.
+const _eqPidVerdict = new Map();
+// pid → exe path, for the eqgame.exe processes we decided are NOT ours.
+const _eqIgnoredPaths = new Map();
+
+// Resolve ownership for PIDs we haven't judged yet. Every failure path marks
+// them OURS — a lookup we couldn't perform must degrade to the old
+// name-only behavior, never to hiding a real raider's overlays.
+function _resolveEqPidOwners(pids) {
+  return new Promise((resolve) => {
+    const claimAll = () => { for (const p of pids) _eqPidVerdict.set(p, true); resolve(); };
+    const dirs = _ourEqDirs();
+    if (!dirs.length) return claimAll();       // nothing configured → can't tell
+    try {
+      const { execFile } = require('child_process');
+      const filter = pids.map(p => `ProcessId=${p}`).join(' OR ');
+      const psCmd = `Get-CimInstance Win32_Process -Filter "${filter}" | ForEach-Object { "$($_.ProcessId)|$($_.ExecutablePath)" }`;
+      execFile('powershell', ['-NoProfile', '-NonInteractive', '-Command', psCmd],
+        { timeout: 8000, windowsHide: true },
+        (err, stdout) => {
+          if (err || !stdout) return claimAll();
+          const judged = new Set();
+          for (const line of String(stdout).split(/\r?\n/)) {
+            const m = line.trim().match(/^(\d+)\|(.+)$/);
+            if (!m) continue;
+            const pid = Number(m[1]);
+            const exe = m[2].trim();
+            const low = exe.replace(/\//g, '\\').toLowerCase();
+            const ours = dirs.some(d => low.startsWith(d + '\\'));
+            _eqPidVerdict.set(pid, ours);
+            judged.add(pid);
+            if (ours) { _eqIgnoredPaths.delete(pid); continue; }
+            // Remember WHICH client we passed on. "EverQuest closed" while an
+            // EverQuest is visibly running is alarming without this — the
+            // Resource use window prints it, so the answer is on screen instead
+            // of buried in agent.log.
+            _eqIgnoredPaths.set(pid, exe);
+            appendAgentLog(`[eq] ignoring eqgame.exe pid ${pid} — ${exe} is not under a configured EQ folder (${dirs.join(', ') || 'none'})\n`);
+          }
+          for (const p of pids) if (!judged.has(p)) _eqPidVerdict.set(p, true);
+          resolve();
+        });
+    } catch { claimAll(); }
+  });
+}
+
 function _checkEqRunning() {
   return new Promise(resolve => {
     if (process.platform !== 'win32') return resolve(true);
@@ -3803,29 +4268,170 @@ function _checkEqRunning() {
       const timer = setTimeout(() => { try { child.kill(); } catch {} ; resolve(_eqRunning); }, 3000);
       child.once('exit', () => {
         clearTimeout(timer);
-        // Match any eqgame.exe row — tasklist returns "INFO: No tasks…" on the
-        // stdout when the filter has zero matches.
-        resolve(/eqgame\.exe/i.test(out));
+        // Parse the CSV rows for PIDs rather than substring-matching the name:
+        // tasklist prints "INFO: No tasks…" to STDOUT when the filter matches
+        // nothing, and we need the PIDs anyway to check which install each one
+        // came from.
+        const pids = [];
+        for (const m of String(out).matchAll(/"eqgame\.exe"\s*,\s*"(\d+)"/gi)) pids.push(Number(m[1]));
+        if (!pids.length) { _eqPidVerdict.clear(); _eqIgnoredPaths.clear(); return resolve(false); }
+        // Drop exited PIDs so the verdict map can't grow across a long session.
+        for (const known of [..._eqPidVerdict.keys()]) if (!pids.includes(known)) { _eqPidVerdict.delete(known); _eqIgnoredPaths.delete(known); }
+        // `!== false` keeps the fail-open default: only a PID we positively
+        // identified as someone else's client is discounted.
+        const done = () => resolve(pids.some(p => _eqPidVerdict.get(p) !== false));
+        const unknown = pids.filter(p => !_eqPidVerdict.has(p));
+        if (!unknown.length) return done();
+        _resolveEqPidOwners(unknown).then(done, done);
       });
       child.once('error', () => { clearTimeout(timer); resolve(_eqRunning); });
     } catch { resolve(_eqRunning); }
   });
 }
+// ── Pending-update install + nag ─────────────────────────────────────────────
+// Raiders kept arriving on old builds without realising it and quietly missing
+// features (Uilnayar 2026-08-03). autoInstallOnAppQuit already applies an update
+// at the next normal Mimic quit — but people leave Mimic running for days, so
+// that almost never fires.
+//
+// EQ closing is the safest instant that exists to restart Mimic: they are
+// provably not playing, let alone mid-pull. So we install there, and otherwise
+// only NAG.
+//
+// The nag is an OS Notification on purpose. It cannot take focus or raise a
+// window over the game — the hard requirement here is that nothing yanks the
+// user out of EverQuest ("it should not become the active window while they're
+// doing things in game"). Same surface checkZealUpdate() already uses.
+const EQ_CLOSE_INSTALL_GRACE_MS = 15_000;
+const UPDATE_NAG_EVERY_MS       = 60 * 60 * 1000;
+let _updateNagAt = 0;
+
+// One pending install timer at a time. Without this, the "EQ is already closed"
+// path below would arm a fresh 15s timer on every presence poll.
+let _installArmed = false;
+
+function _installPendingUpdateOnEqClose() {
+  if (!updatePending || !autoUpdater) return;
+  if (_installArmed) return;
+  _installArmed = true;
+  const ver = updatePending.version;
+  appendAgentLog(`[updater] EQ closed with v${ver} pending — installing in ${EQ_CLOSE_INSTALL_GRACE_MS / 1000}s\n`);
+  // Grace window: a crash-and-relaunch, or alt-F4 followed by starting EQ again,
+  // must NOT get Mimic pulled out from under them. Re-check before committing.
+  setTimeout(() => {
+    _installArmed = false;
+    if (_eqRunning)   { appendAgentLog('[updater] EQ came back — deferring install to the next close\n'); return; }
+    if (!updatePending) return;
+    appendAgentLog(`[updater] installing v${ver} now (EQ closed)\n`);
+    // Mark the relaunch as unattended so the new instance starts to TRAY.
+    // Written before quitAndInstall because that call does not return.
+    try {
+      const c = loadConfig();
+      c.pendingSilentRelaunch = true;
+      saveConfig(c);
+    } catch (e) { void e; }
+    try { autoUpdater.quitAndInstall(true, true); }
+    catch (e) { appendAgentLog(`[updater] quitAndInstall failed: ${e && e.message}\n`); }
+  }, EQ_CLOSE_INSTALL_GRACE_MS);
+}
+
+function _nagPendingUpdate() {
+  if (!updatePending) return;
+  const now = Date.now();
+  if (now - _updateNagAt < UPDATE_NAG_EVERY_MS) return;
+  _updateNagAt = now;
+  if (!Notification.isSupported()) return;
+  try {
+    // Deliberately reassuring, not demanding: the whole point is that they do
+    // NOT have to act. A nag that asks for nothing stops being pestering.
+    const n = new Notification({
+      title:  `Mimic ${updatePending.version} is ready`,
+      body:   'It installs by itself the next time you close EverQuest — nothing to do.',
+      silent: true,
+    });
+    n.show();
+  } catch { /* notifications unavailable — the tray item still shows it */ }
+}
+
 async function _pollEqPresence() {
   const running = await _checkEqRunning();
   if (running !== _eqRunning) {
+    const wasRunning = _eqRunning;
     _eqRunning = running;
     // Visibility flip — overlays appear/vanish as EQ comes up / goes down.
     try { applyAllVisibility(); } catch {}
+    // EQ just went away — take the free restart.
+    if (wasRunning && !running) { try { _installPendingUpdateOnEqClose(); } catch { /* never break presence polling */ } }
   }
+  // EQ is closed and an update is waiting — install it, EVEN THOUGH no
+  // close-transition happened on our watch.
+  //
+  // THE BUG (Uilnayar, 2026-08-04: "beta 9 did not update after eq closed"):
+  // the call above only fires on the FALLING EDGE, so it required us to observe
+  // running → closed. It misses the common orderings entirely:
+  //   • the download finishes while EQ is already shut (the overnight case —
+  //     Mimic sits idle, polls hourly, downloads at 3am, and then waits for the
+  //     user to both LAUNCH and QUIT the game before it will install);
+  //   • Mimic starts with an update already downloaded and EQ not running;
+  //   • EQ was never running this session at all.
+  // In every one of those the tray says "Restart to install" indefinitely and
+  // the update silently never applies — which is exactly what "it did not
+  // update in place" looks like from the outside.
+  //
+  // _installArmed makes this safe to evaluate on every poll, and the existing
+  // 15s grace re-check still protects a launch that lands mid-window.
+  if (!running && updatePending) {
+    try { _installPendingUpdateOnEqClose(); } catch { /* never break presence polling */ }
+  }
+  // Hourly, focus-safe reminder while they're still playing on the old build.
+  if (running) { try { _nagPendingUpdate(); } catch { /* ditto */ } }
+}
+// Presence polling backs OFF while EQ is absent.
+//
+// Some raiders quit Mimic between sessions "to save on processing" (Uilnayar
+// 2026-08-03), and they had a point about this one: everything else already
+// idles hard — the 1Hz blind poll early-returns on !_eqRunning, the 300ms Zeal
+// flush no-ops when no snapshot is dirty — but _checkEqRunning() SPAWNS
+// tasklist.exe unconditionally. At a flat 10s that is ~8,640 process spawns a
+// day on a desktop that is not even running the game, and spawn pressure is
+// already why this went 5s -> 10s in the 2026-07-07 review.
+//
+// While EQ is up, keep 10s: overlay show/hide gating hangs off this and needs to
+// feel immediate. While EQ is down, nothing is time-critical except noticing it
+// come back, so ease out to 45s after a minute of absence — ~87% fewer idle
+// spawns, and the worst case is overlays appearing a few seconds later on
+// launch. Any transition resets to the fast cadence immediately.
+const EQ_POLL_ACTIVE_MS = 10_000;
+const EQ_POLL_IDLE_MS   = 45_000;
+const EQ_POLL_IDLE_AFTER = 6;        // consecutive absent polls (~1 min) before easing off
+let _eqAbsentStreak = 0;
+let _eqPollStopped  = false;
+function _eqPollDelay() {
+  return (!_eqRunning && _eqAbsentStreak >= EQ_POLL_IDLE_AFTER) ? EQ_POLL_IDLE_MS : EQ_POLL_ACTIVE_MS;
 }
 function _startEqPolling() {
   if (_eqPollTimer || process.platform !== 'win32') return;
-  _pollEqPresence().catch(() => {});
-  _eqPollTimer = setInterval(() => { _pollEqPresence().catch(() => {}); }, 10000);   // 5s->10s (2026-07-07 review: tasklist spawn pressure)
+  _eqPollStopped = false;
+  const tick = async () => {
+    const before = _eqRunning;
+    try { await _pollEqPresence(); } catch { /* never let a poll kill the loop */ }
+    if (_eqPollStopped) { _eqPollTimer = null; return; }   // stopped mid-flight
+    // Streak drives the backoff; any state change snaps back to fast polling so
+    // launching EQ is picked up promptly even from a long idle.
+    if (_eqRunning) _eqAbsentStreak = 0;
+    else if (before === _eqRunning) _eqAbsentStreak++;
+    else _eqAbsentStreak = 0;
+    // Self-rescheduling: a fixed setInterval cannot change its own period.
+    _eqPollTimer = setTimeout(tick, _eqPollDelay());
+  };
+  _eqPollTimer = setTimeout(tick, 0);
 }
 function _stopEqPolling() {
-  if (_eqPollTimer) { clearInterval(_eqPollTimer); _eqPollTimer = null; }
+  // _eqPollStopped is load-bearing, not belt-and-braces: the tick awaits
+  // _pollEqPresence (which spawns tasklist), so a stop landing mid-flight would
+  // otherwise be undone by that tick's own reschedule and resurrect the loop.
+  _eqPollStopped = true;
+  if (_eqPollTimer) { clearTimeout(_eqPollTimer); _eqPollTimer = null; }
 }
 
 // ── Visibility helpers (quiet mode is the master override) ─────────────────
@@ -3861,7 +4467,7 @@ function createCharmOverlay() {
     minWidth: 200, minHeight: 80,
     frame: false, transparent: true, resizable: true,
     alwaysOnTop: true, skipTaskbar: true, focusable: true, show: false,
-    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true },
+    webPreferences: _wpPrefs('Charm tracker'),
   });
   charmWindow.setAlwaysOnTop(true, 'screen-saver');
   charmWindow.setVisibleOnAllWorkspaces(true);
@@ -3895,7 +4501,7 @@ function createPetsOverlay() {
     minWidth: 200, minHeight: 70,
     frame: false, transparent: true, resizable: true,
     alwaysOnTop: true, skipTaskbar: true, focusable: true, show: false,
-    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true },
+    webPreferences: _wpPrefs('Pet tracker'),
   });
   petsWindow.setAlwaysOnTop(true, 'screen-saver');
   petsWindow.setVisibleOnAllWorkspaces(true);
@@ -3929,7 +4535,7 @@ function createBuffQueueOverlay() {
     minWidth: 240, minHeight: 100,
     frame: false, transparent: true, resizable: true,
     alwaysOnTop: true, skipTaskbar: true, focusable: true, show: false,
-    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true },
+    webPreferences: _wpPrefs('Buff queue'),
   });
   buffQueueWindow.setAlwaysOnTop(true, 'screen-saver');
   buffQueueWindow.setVisibleOnAllWorkspaces(true);
@@ -3965,7 +4571,7 @@ function createPopRaidOverlay() {
     minWidth: 300, minHeight: 160,
     frame: false, transparent: true, resizable: true,
     alwaysOnTop: true, skipTaskbar: true, focusable: true, show: false,
-    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true },
+    webPreferences: _wpPrefs('PoP raids'),
   });
   popRaidWindow.setAlwaysOnTop(true, 'screen-saver');
   popRaidWindow.setVisibleOnAllWorkspaces(true);
@@ -3997,7 +4603,7 @@ function createMobInfoOverlay() {
     minWidth: 230, minHeight: 90,
     frame: false, transparent: true, resizable: true,
     alwaysOnTop: true, skipTaskbar: true, focusable: true, show: false,
-    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true },
+    webPreferences: _wpPrefs('Mob Info'),
   });
   mobInfoWindow.setAlwaysOnTop(true, 'screen-saver');
   mobInfoWindow.setVisibleOnAllWorkspaces(true);
@@ -4028,7 +4634,7 @@ function createWhoOverlay() {
     minWidth: 220, minHeight: 100,
     frame: false, transparent: true, resizable: true,
     alwaysOnTop: true, skipTaskbar: true, focusable: true, show: false,
-    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true },
+    webPreferences: _wpPrefs('/who'),
   });
   whoWindow.setAlwaysOnTop(true, 'screen-saver');
   whoWindow.setVisibleOnAllWorkspaces(true);
@@ -4060,7 +4666,7 @@ function createMelodyOverlay() {
     minWidth: 200, minHeight: 80,
     frame: false, transparent: true, resizable: true,
     alwaysOnTop: true, skipTaskbar: true, focusable: true, show: false,
-    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true },
+    webPreferences: _wpPrefs('Melody'),
   });
   melodyWindow.setAlwaysOnTop(true, 'screen-saver');
   melodyWindow.setVisibleOnAllWorkspaces(true);
@@ -4095,7 +4701,7 @@ function createZealHealthOverlay() {
     minWidth: 220, minHeight: 100,
     frame: false, transparent: true, resizable: true,
     alwaysOnTop: true, skipTaskbar: true, focusable: true, show: false,
-    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true },
+    webPreferences: _wpPrefs('Zeal health'),
   });
   zealWindow.setAlwaysOnTop(true, 'screen-saver');
   zealWindow.setVisibleOnAllWorkspaces(true);
@@ -4132,7 +4738,7 @@ function createTankOverlay() {
     minWidth: 240, minHeight: 120,
     frame: false, transparent: true, resizable: true,
     alwaysOnTop: true, skipTaskbar: true, focusable: true, show: false,
-    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true },
+    webPreferences: _wpPrefs('Tank HUD'),
   });
   tankWindow.setAlwaysOnTop(true, 'screen-saver');
   tankWindow.setVisibleOnAllWorkspaces(true);
@@ -4167,7 +4773,7 @@ function createThreatMeterOverlay() {
     minWidth: 240, minHeight: 80,
     frame: false, transparent: true, resizable: true,
     alwaysOnTop: true, skipTaskbar: true, focusable: true, show: false,
-    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true },
+    webPreferences: _wpPrefs('Threat meter'),
   });
   threatWindow.setAlwaysOnTop(true, 'screen-saver');
   threatWindow.setVisibleOnAllWorkspaces(true);
@@ -4202,7 +4808,7 @@ function createExtTargetOverlay() {
     minWidth: 240, minHeight: 80,
     frame: false, transparent: true, resizable: true,
     alwaysOnTop: true, skipTaskbar: true, focusable: true, show: false,
-    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true },
+    webPreferences: _wpPrefs('Extended target'),
   });
   extTargetWindow.setAlwaysOnTop(true, 'screen-saver');
   extTargetWindow.setVisibleOnAllWorkspaces(true);
@@ -4283,7 +4889,7 @@ function createCommandOverlay() {
     minWidth: 260, minHeight: 160,
     frame: false, transparent: true, resizable: true,
     alwaysOnTop: true, skipTaskbar: true, focusable: true, show: false,
-    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true },
+    webPreferences: _wpPrefs('Command center'),
   });
   commandWindow.setAlwaysOnTop(true, 'screen-saver');
   commandWindow.setVisibleOnAllWorkspaces(true);
@@ -4332,7 +4938,7 @@ function createChChainOverlay() {
     // one in a live raid.
     focusable: false,
     show: false,
-    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true },
+    webPreferences: _wpPrefs('CH chain'),
   });
   chChainWindow.setAlwaysOnTop(true, 'screen-saver');
   chChainWindow.setVisibleOnAllWorkspaces(true);
@@ -4355,9 +4961,124 @@ function applyChChainVisibility() {
   if (shouldShow) chChainWindow.showInactive(); else chChainWindow.hide();
 }
 
+// ── Overlay window lifecycle: create when enabled, free when not ───────────
+//
+// Every Electron BrowserWindow is its OWN Chromium renderer process — ~80 MB
+// resident before it paints a single pixel. Boot used to create ten of them
+// unconditionally, so a user running two overlays still paid for ten — around
+// 800 MB of renderers for overlays that were switched OFF (Uilnayar measured
+// the per-overlay floor at 80 MB, 2026-08-04). Windows now exist only while
+// their pref says they should.
+//
+// The invariant everything else hangs off: **a window must exist whenever
+// anything can SHOW it.** applyAllVisibility() is the funnel every visibility
+// re-evaluation already runs through, so materializing at the TOP of it means
+// hide-all restore, per-character profiles, class-set seeding, the EQ-presence
+// flip and the unlock/placement path all get their windows without any of them
+// having to know to ask. That also makes a wrong reap self-healing: the next
+// apply pass builds the window back.
+//
+// Getters (not captured refs) because these are module-level `let`s that the
+// creators reassign; the destroyers null them so a reaped entry reads as
+// missing rather than as a destroyed window.
+const _OVERLAY_WINDOWS = [
+  { key: 'hud',       flag: 'showHud',          get: () => overlayWindow,   create: createOverlayWindow,       drop: () => { overlayWindow = null; } },
+  // The trigger overlay's flag is enableTriggerTts, NOT showTriggerOverlay:
+  // #97 decoupled them and TTS deliberately fires from the HIDDEN window, so
+  // the visual being off must never free the renderer.
+  { key: 'trigger',   flag: 'enableTriggerTts', get: () => triggerWindow,   create: createTriggerOverlay,      drop: () => { triggerWindow = null; },   blind: 'triggers' },
+  { key: 'charm',     flag: 'showCharm',        get: () => charmWindow,     create: createCharmOverlay,        drop: () => { charmWindow = null; } },
+  { key: 'pets',      flag: 'showPets',         get: () => petsWindow,      create: createPetsOverlay,         drop: () => { petsWindow = null; } },
+  { key: 'mobinfo',   flag: 'showMobInfo',      get: () => mobInfoWindow,   create: createMobInfoOverlay,      drop: () => { mobInfoWindow = null; } },
+  { key: 'buffQueue', flag: 'showBuffQueue',    get: () => buffQueueWindow, create: createBuffQueueOverlay,    drop: () => { buffQueueWindow = null; } },
+  { key: 'who',       flag: 'showWho',          get: () => whoWindow,       create: createWhoOverlay,          drop: () => { whoWindow = null; } },
+  { key: 'melody',    flag: 'showMelody',       get: () => melodyWindow,    create: createMelodyOverlay,       drop: () => { melodyWindow = null; } },
+  { key: 'zeal',      flag: 'showZeal',         get: () => zealWindow,      create: createZealHealthOverlay,   drop: () => { zealWindow = null; } },
+  { key: 'threat',    flag: 'showThreat',       get: () => threatWindow,    create: createThreatMeterOverlay,  drop: () => { threatWindow = null; } },
+  { key: 'chchain',   flag: 'showChChain',      get: () => chChainWindow,   create: createChChainOverlay,      drop: () => { chChainWindow = null; } },
+  { key: 'tank',      flag: 'showTank',         get: () => tankWindow,      create: createTankOverlay,         drop: () => { tankWindow = null; } },
+  { key: 'exttarget', flag: 'showExtTarget',    get: () => extTargetWindow, create: createExtTargetOverlay,    drop: () => { extTargetWindow = null; } },
+  { key: 'command',   flag: 'showCommand',      get: () => commandWindow,   create: createCommandOverlay,      drop: () => { commandWindow = null; } },
+  { key: 'popraid',   flag: 'showPopRaid',      get: () => popRaidWindow,   create: createPopRaidOverlay,      drop: () => { popRaidWindow = null; } },
+];
+
+// True when something OTHER than the overlay's own pref can put it on screen,
+// in which case its window has to exist (and must not be reaped) whatever the
+// flag says.
+function _overlayForcedOn(cfg, e) {
+  if (setupMode) return true;                    // 🛠 place-them-all mode
+  if (cfg.overlaysLocked === false) return true; // unlocked → every overlay force-shown for dragging
+  if (_blindForceOpen(e.blind || e.key)) return true;
+  // NOT hide-all. It looked like it belonged here — the flags are off only
+  // until the hotkey flips back — but cfg.hideAllActive PERSISTS across
+  // restarts, so sparing it meant a user who hid once got all fifteen
+  // renderers built at every boot and never freed: the exact opposite of the
+  // point. It is also unnecessary. toggleHideAllOverlays() restores the
+  // snapshot into cfg and saves BEFORE calling applyAllVisibility(), so the
+  // materialize pass reads the restored flags and rebuilds what was hidden.
+  return false;
+}
+
+// Does this overlay need a window right now?
+//
+// "we have a toggle in taskbar for 'Hide Overlays when Everquest is not
+// running', and we should adhere to that" (Uilnayar 2026-08-04). Right: an
+// overlay the EQ gate is hiding has no reason to hold an ~35 MB renderer, and
+// the same argument covers quiet mode. So existence tracks VISIBILITY, not just
+// the pref — which is the bulk of the saving, since EQ is closed most of the
+// day.
+//
+// One exception, and it is load-bearing: the trigger overlay. #97 has TTS
+// firing from the HIDDEN window, and triggers.html polls the agent itself —
+// no window, no voice. It exists whenever enableTriggerTts is on, gate or no
+// gate. Reaping it would trade a missed raid callout for 35 MB while EQ is
+// closed, which is precisely when nobody cares about the 35 MB.
+function _overlayWanted(cfg, e) {
+  if (_overlayForcedOn(cfg, e)) return true;
+  if (!cfg[e.flag]) return false;
+  if (e.key === 'trigger') return true;
+  if (cfg.quietMode) return false;
+  return _eqGateOk(cfg);
+}
+
+// Build any window whose overlay is (or can be) shown. Cheap no-op once they
+// exist, so it is safe to call on every visibility pass.
+function _materializeEnabledOverlays() {
+  let cfg; try { cfg = loadConfig(); } catch { cfg = {}; }
+  for (const e of _OVERLAY_WINDOWS) {
+    if (e.get()) continue;
+    if (!_overlayWanted(cfg, e)) continue;
+    try { e.create(); }
+    catch (err) { appendAgentLog(`[overlay] could not create ${e.key}: ${err && err.message}\n`); }
+  }
+}
+
+// Free the renderer behind an overlay the user has switched off. Deliberately
+// conservative: _overlayForcedOn() covers every mode that shows an overlay past
+// its own pref, and a window the user is actively placing ("Setup THIS") is
+// spared even though the global setupMode flag is not set for it.
+function _reapDisabledOverlays() {
+  let cfg; try { cfg = loadConfig(); } catch { return; }
+  for (const e of _OVERLAY_WINDOWS) {
+    const win = e.get();
+    if (!win) continue;
+    if (_overlayWanted(cfg, e)) continue;
+    if (_inSingleSetup(win)) continue;
+    try { if (!win.isDestroyed()) win.destroy(); } catch { /* already gone */ }
+    e.drop();
+    const why = !cfg[e.flag] ? `${e.flag} is off`
+              : cfg.quietMode ? 'quiet mode'
+              : 'EverQuest is not running';
+    appendAgentLog(`[overlay] freed ${e.key} — ${why}\n`);
+  }
+}
+
 // Convenience: refresh every overlay's visibility at once. Used by the EQ-
 // presence poller (on running ↔ not-running flips) and by config toggles.
+// Materialize BEFORE applying (each apply*Visibility no-ops without a window)
+// and reap AFTER (so a window is only freed once it has been asked to hide).
 function applyAllVisibility() {
+  _materializeEnabledOverlays();
   applyOverlayVisibility();
   applyTriggerVisibility();
   applyCharmVisibility();
@@ -4373,6 +5094,7 @@ function applyAllVisibility() {
   applyExtTargetVisibility();
   applyCommandVisibility();
   applyPopRaidVisibility();
+  _reapDisabledOverlays();
 }
 
 // ── Hide-all-overlays toggle ────────────────────────────────────────────────
@@ -4410,7 +5132,12 @@ function toggleHideAllOverlays() {
   } else if (_hideAllPrev) {
     // Restore from snapshot — respects whatever individual prefs the user
     // had when they hid. Skip restore when no snapshot exists.
-    Object.assign(cfg, _hideAllPrev);
+    //
+    // Only fills flags that are still OFF. Hiding wrote every flag false, so
+    // anything reading true now was switched on BY HAND while hidden — and a
+    // blanket Object.assign would quietly revert it, which looks like the
+    // hotkey turning your overlay back off. Their later choice wins.
+    for (const f of _HIDEALL_FLAGS) if (!cfg[f]) cfg[f] = !!_hideAllPrev[f];
     _hideAllActive = false;
     _hideAllPrev = null;
   } else {
@@ -4637,6 +5364,14 @@ function currentStatus() {
     damageAlert: !!cfg.damageAlert,
     overlayTheme: cfg.overlayTheme || 'default',
     overlaysLocked: cfg.overlaysLocked !== false,
+    // Hide-all flips every show* flag to false, which makes "I turned this off"
+    // and "the hotkey hid this" look identical everywhere — the dashboard, the
+    // tray, this payload (Uilnayar 2026-08-04: "we should be able to see in the
+    // overlays section which ones were previously off but are hidden").
+    // Shipping the snapshot alongside the flags lets a UI tell them apart:
+    // flag false + hideAllPrev[flag] true means HIDDEN, and it is coming back.
+    hideAllActive: !!_hideAllActive,
+    hideAllPrev: (_hideAllActive && _hideAllPrev) ? { ..._hideAllPrev } : null,
     setupMode: !!setupMode,
     onboarded: !!cfg.onboarded,
     updatePending: updatePending ? updatePending.version : null,
@@ -4769,44 +5504,44 @@ function buildTrayMenu() {
   const overlaysSubmenu = [
     { label: 'DPS HUD', type: 'checkbox', checked: s.showHud, enabled: !s.quietMode, click: (mi) => {
         const cfg = loadConfig(); cfg.showHud = mi.checked; saveConfig(cfg);
-        if (mi.checked && !overlayWindow) createOverlayWindow(); else applyOverlayVisibility();
+        if (mi.checked && !overlayWindow) createOverlayWindow(); else applyOverlayVisibility(); _reapDisabledOverlays();
         pushStatus();
       } },
     { label: 'Trigger alerts (TTS)', type: 'checkbox', checked: s.enableTriggerTts, enabled: !s.quietMode, click: (mi) => {
         const cfg = loadConfig(); cfg.enableTriggerTts = mi.checked;
         if (mi.checked) cfg.showTriggerOverlay = true;   // turning on → show the visual too (#97)
         saveConfig(cfg);
-        if (mi.checked && !triggerWindow) createTriggerOverlay(); else applyTriggerVisibility();
+        if (mi.checked && !triggerWindow) createTriggerOverlay(); else applyTriggerVisibility(); _reapDisabledOverlays();
         pushStatus();
       } },
     { label: 'Charm tracker', type: 'checkbox', checked: s.showCharm, enabled: !s.quietMode, click: (mi) => {
         const cfg = loadConfig(); cfg.showCharm = mi.checked; saveConfig(cfg);
-        if (mi.checked && !charmWindow) createCharmOverlay(); else applyCharmVisibility();
+        if (mi.checked && !charmWindow) createCharmOverlay(); else applyCharmVisibility(); _reapDisabledOverlays();
         pushStatus();
       } },
     { label: 'Pet tracker (summoned pets)', type: 'checkbox', checked: s.showPets, enabled: !s.quietMode, click: (mi) => {
         const cfg = loadConfig(); cfg.showPets = mi.checked; saveConfig(cfg);
-        if (mi.checked && !petsWindow) createPetsOverlay(); else applyPetsVisibility();
+        if (mi.checked && !petsWindow) createPetsOverlay(); else applyPetsVisibility(); _reapDisabledOverlays();
         pushStatus();
       } },
     { label: 'Target Info (target stats)', type: 'checkbox', checked: s.showMobInfo, enabled: !s.quietMode, click: (mi) => {
         const cfg = loadConfig(); cfg.showMobInfo = mi.checked; saveConfig(cfg);
-        if (mi.checked && !mobInfoWindow) createMobInfoOverlay(); else applyMobInfoVisibility();
+        if (mi.checked && !mobInfoWindow) createMobInfoOverlay(); else applyMobInfoVisibility(); _reapDisabledOverlays();
         pushStatus();
       } },
     { label: 'Buff queue (raid gaps + cures)', type: 'checkbox', checked: s.showBuffQueue, enabled: !s.quietMode, click: (mi) => {
         const cfg = loadConfig(); cfg.showBuffQueue = mi.checked; saveConfig(cfg);
-        if (mi.checked && !buffQueueWindow) createBuffQueueOverlay(); else applyBuffQueueVisibility();
+        if (mi.checked && !buffQueueWindow) createBuffQueueOverlay(); else applyBuffQueueVisibility(); _reapDisabledOverlays();
         pushStatus();
       } },
     { label: '/who (zone roster)', type: 'checkbox', checked: s.showWho, enabled: !s.quietMode, click: (mi) => {
         const cfg = loadConfig(); cfg.showWho = mi.checked; saveConfig(cfg);
-        if (mi.checked && !whoWindow) createWhoOverlay(); else applyWhoVisibility();
+        if (mi.checked && !whoWindow) createWhoOverlay(); else applyWhoVisibility(); _reapDisabledOverlays();
         pushStatus();
       } },
     { label: 'Casting tracker (melody on bards, spells otherwise)', type: 'checkbox', checked: s.showMelody, enabled: !s.quietMode, click: (mi) => {
         const cfg = loadConfig(); cfg.showMelody = mi.checked; saveConfig(cfg);
-        if (mi.checked && !melodyWindow) createMelodyOverlay(); else applyMelodyVisibility();
+        if (mi.checked && !melodyWindow) createMelodyOverlay(); else applyMelodyVisibility(); _reapDisabledOverlays();
         pushStatus();
       } },
     { label: '  ↳ Only show on bard characters', type: 'checkbox', checked: s.melodyBardOnly, enabled: !s.quietMode && s.showMelody, click: (mi) => {
@@ -4815,37 +5550,37 @@ function buildTrayMenu() {
       } },
     { label: 'Zeal health (diagnostic)', type: 'checkbox', checked: s.showZeal, enabled: !s.quietMode, click: (mi) => {
         const cfg = loadConfig(); cfg.showZeal = mi.checked; saveConfig(cfg);
-        if (mi.checked && !zealWindow) createZealHealthOverlay(); else applyZealVisibility();
+        if (mi.checked && !zealWindow) createZealHealthOverlay(); else applyZealVisibility(); _reapDisabledOverlays();
         pushStatus();
       } },
     { label: 'Threat meter', type: 'checkbox', checked: s.showThreat, enabled: !s.quietMode, click: (mi) => {
         const cfg = loadConfig(); cfg.showThreat = mi.checked; saveConfig(cfg);
-        if (mi.checked && !threatWindow) createThreatMeterOverlay(); else applyThreatVisibility();
+        if (mi.checked && !threatWindow) createThreatMeterOverlay(); else applyThreatVisibility(); _reapDisabledOverlays();
         pushStatus();
       } },
     { label: 'Tank HUD (DS, buffs, DA, rampage)', type: 'checkbox', checked: s.showTank, enabled: !s.quietMode, click: (mi) => {
         const cfg = loadConfig(); cfg.showTank = mi.checked; saveConfig(cfg);
-        if (mi.checked && !tankWindow) createTankOverlay(); else applyTankVisibility();
+        if (mi.checked && !tankWindow) createTankOverlay(); else applyTankVisibility(); _reapDisabledOverlays();
         pushStatus();
       } },
     { label: 'CH chain', type: 'checkbox', checked: s.showChChain, enabled: !s.quietMode, click: (mi) => {
         const cfg = loadConfig(); cfg.showChChain = mi.checked; saveConfig(cfg);
-        if (mi.checked && !chChainWindow) createChChainOverlay(); else applyChChainVisibility();
+        if (mi.checked && !chChainWindow) createChChainOverlay(); else applyChChainVisibility(); _reapDisabledOverlays();
         pushStatus();
       } },
     { label: 'Extended Target (raid-wide targets)', type: 'checkbox', checked: s.showExtTarget, enabled: !s.quietMode, click: (mi) => {
         const cfg = loadConfig(); cfg.showExtTarget = mi.checked; saveConfig(cfg);
-        if (mi.checked && !extTargetWindow) createExtTargetOverlay(); else applyExtTargetVisibility();
+        if (mi.checked && !extTargetWindow) createExtTargetOverlay(); else applyExtTargetVisibility(); _reapDisabledOverlays();
         pushStatus();
       } },
     { label: 'Command Center (one-window raid board)', type: 'checkbox', checked: s.showCommand, enabled: !s.quietMode, click: (mi) => {
         const cfg = loadConfig(); cfg.showCommand = mi.checked; saveConfig(cfg);
-        if (mi.checked && !commandWindow) createCommandOverlay(); else applyCommandVisibility();
+        if (mi.checked && !commandWindow) createCommandOverlay(); else applyCommandVisibility(); _reapDisabledOverlays();
         pushStatus();
       } },
     { label: 'PoP raids (encounter slideshow)', type: 'checkbox', checked: s.showPopRaid, enabled: !s.quietMode, click: (mi) => {
         const cfg = loadConfig(); cfg.showPopRaid = mi.checked; saveConfig(cfg);
-        if (mi.checked && !popRaidWindow) createPopRaidOverlay(); else applyPopRaidVisibility();
+        if (mi.checked && !popRaidWindow) createPopRaidOverlay(); else applyPopRaidVisibility(); _reapDisabledOverlays();
         pushStatus();
       } },
     { type: 'separator' },
@@ -5046,6 +5781,7 @@ function buildTrayMenu() {
     { label: 'Show agent log…', click: () => shell.openPath(AGENT_LOG()) },
     { label: 'Open dashboard in browser', click: () => shell.openExternal(`http://127.0.0.1:${agentPort}/`) },
     { label: 'UI Studio — rescale EQ UI for a new resolution', click: () => openUiStudio() },
+    { label: 'Resource use — what Mimic costs this machine', click: () => openResources() },
     updatePopupItem,
     betaChannelItem,
     revertStableItem,
@@ -5708,6 +6444,10 @@ ipcMain.handle('toggle-overlay', (_e, name) => {
   // "take out that automatic movement — it's very disruptive"). Turning an
   // overlay on/off never moves anything; arranging is manual-only via the
   // right-click ✨ Auto-arrange item.
+  // Toggling OFF should hand the ~80 MB renderer back now, not at the next
+  // EQ-presence flip. Deferred a tick so this handler answers the dashboard
+  // first (currentStatus reads config, never window existence).
+  setImmediate(() => { try { _reapDisabledOverlays(); } catch { /* never break the toggle */ } });
   pushStatus();
   return currentStatus();
 });
@@ -5882,6 +6622,11 @@ ipcMain.handle('hide-overlay', (e) => {
         if (w === win) { try { w.close(); } catch {} panelOverlays.delete(key); break; }
       }
     }
+    // ✕ means "I'm done with this one" — free its renderer. Deferred a tick so
+    // this handler returns to the (possibly reaped) sender before it goes away.
+    // The trigger overlay is untouched here on purpose: ✕ clears
+    // showTriggerOverlay only, and TTS keeps firing from the hidden window (#97).
+    setImmediate(() => { try { _reapDisabledOverlays(); } catch { /* never break hide */ } });
     pushStatus();
     return true;
   } catch { return false; }
@@ -5893,9 +6638,25 @@ ipcMain.handle('find-eq-installs', () => {
   // Probe every user-configured path PLUS the autodetection passes. The
   // picker UI uses `scanned` to show "we looked in these paths".
   const hints = Array.isArray(cfg.eqPaths) ? cfg.eqPaths : (cfg.eqPath ? [cfg.eqPath] : []);
-  const merged = { scanned: [], found: [] };
+  // SKIP the speculative pass when a configured folder already answers the
+  // question (Uilnayar 2026-08-04: 20383ms, then 21027ms, hint A:\EQ).
+  //
+  // The `null` hint is the DISCOVERY pass — 20 hard-coded default paths across
+  // drives A: through F:. Probing a drive letter that is not present, or is
+  // mapped to something offline, is exactly the operation Windows is slowest to
+  // fail: this user's 26-directory scan took TWENTY SECONDS, on the main
+  // process, freezing every window. And it ran on every scan even though their
+  // EQ folder was already configured and valid, so all twenty probes were
+  // asking a question we had already answered.
+  //
+  // Discovery still runs for someone with nothing configured — which is exactly
+  // when a slow first scan is acceptable, because there is no faster answer to
+  // be had.
+  const configuredWorks = hints.some(h => { try { return _dirHasEqLogs(h); } catch { return false; } });
+  const passes = configuredWorks ? hints : [...hints, null];
+  const merged = { scanned: [], found: [], skippedDiscovery: configuredWorks };
   const seen = new Set();
-  for (const h of [...hints, null]) {
+  for (const h of passes) {
     const r = findEqInstalls(h);
     for (const p of r.scanned) {
       const k = p.toLowerCase();
@@ -6370,6 +7131,7 @@ ipcMain.handle('open-dashboard', () => {
 });
 // Gear icon on the dashboard opens the Settings window.
 ipcMain.handle('open-settings', () => { openSettings(); return true; });
+ipcMain.handle('open-resources', () => { openResources(); return true; });
 // "Send this panel to its own overlay window" — increment 2d of the
 // customizable-dashboard work. Renderer passes a normalized panel key
 // (stable <h2> prefix); spawns a transparent always-on-top window that
@@ -6513,6 +7275,265 @@ function _zealEqDir() {
   for (const p of userPaths) { if (_dirHasEqLogs(p)) return p; }
   return detectEqDir(null);
 }
+// ── Windows Defender exclusions (opt-in, explicit, never silent) ────────────
+//
+// Real-time scanning sits in front of every file open, and both halves of Mimic
+// are I/O-shaped: the agent re-reads its spell/clicky catalogs and queue from
+// userData on each start, and the EQ folder holds multi-GB append-only logs we
+// tail continuously. Excluding those folders is the single biggest win
+// available on a Windows box (Uilnayar 2026-08-04, whose EQ folder was already
+// excluded but Mimic's was not).
+//
+// DELIBERATELY NOT IN THE INSTALLER. An unsigned installer that silently
+// excludes its own folder from antivirus is behaving exactly like the thing
+// antivirus exists to catch, and our installer runs without UAC today
+// (perMachine:false) so adding elevation solely for this would make every
+// install scarier for a benefit most users do not know they are getting. This
+// is a button: the user sees the exact paths first, clicks, and approves one
+// UAC prompt.
+//
+// Elevation goes through a temp .ps1 rather than an inline -Command string
+// because the nested quoting of Start-Process -ArgumentList around a command
+// containing Windows paths is a well-known way to ship a quoting bug.
+function _defenderPaths() {
+  const out = [];
+  const seen = new Set();
+  const add = (p, why) => {
+    if (!p) return;
+    const norm = path.normalize(String(p));
+    const k = norm.toLowerCase();
+    if (seen.has(k)) return;
+    seen.add(k);
+    out.push({ path: norm, why });
+  };
+  // EQ folders — configured first, then whatever autodetect can see.
+  try {
+    const cfg = loadConfig();
+    const userPaths = Array.isArray(cfg.eqPaths) && cfg.eqPaths.length ? cfg.eqPaths
+                    : (cfg.eqPath ? [cfg.eqPath] : []);
+    for (const p of userPaths) add(p, 'EverQuest folder');
+    if (out.length === 0) {
+      for (const f of (findEqInstalls(null).found || [])) add(f.path, 'EverQuest folder (detected)');
+    }
+  } catch (e) { void e; }
+  // Mimic's own two locations: the per-user data dir (agent catalogs, upload
+  // queue, logs — read and written constantly) and the install dir (the exe and
+  // the bundled Node runtime).
+  try { add(app.getPath('userData'), 'Mimic data folder'); } catch (e) { void e; }
+  try { add(path.dirname(app.getPath('exe')), 'Mimic program folder'); } catch (e) { void e; }
+  return out;
+}
+
+// Read-only: which of our paths Windows already excludes. Get-MpPreference does
+// not need elevation, so the UI can show state before asking for anything.
+ipcMain.handle('defender-status', async () => {
+  if (process.platform !== 'win32') return { ok: false, unsupported: true, paths: [] };
+  const wanted = _defenderPaths();
+  try {
+    const { execFile } = require('child_process');
+    const current = await new Promise((resolve) => {
+      execFile('powershell.exe',
+        ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command',
+         '(Get-MpPreference).ExclusionPath -join [char]10'],
+        { timeout: 15000, windowsHide: true },
+        (err, stdout) => resolve(err ? null : String(stdout || '')));
+    });
+    if (current === null) return { ok: false, error: 'Could not read Defender settings', paths: wanted };
+    const have = new Set(current.split(/\r?\n/).map(s => path.normalize(s.trim()).toLowerCase()).filter(Boolean));
+    return { ok: true, paths: wanted.map(p => ({ ...p, excluded: have.has(p.path.toLowerCase()) })) };
+  } catch (e) {
+    return { ok: false, error: e && e.message ? e.message : String(e), paths: wanted };
+  }
+});
+
+// PowerShell single-quoted strings escape a quote by doubling it. Used to build
+// every elevated script below — a path or peer name containing a quote must not
+// be able to terminate the string and append a second statement.
+const _psq = (s) => "'" + String(s).replace(/'/g, "''") + "'";
+
+// Run a PowerShell script ELEVATED and read back the JSON it writes.
+//
+// Shared by the Defender and clock-sync buttons. Goes through a temp .ps1
+// rather than an inline -Command because nesting Start-Process -ArgumentList
+// around a command containing Windows paths is a well-known way to ship a
+// quoting bug. The outer (non-elevated) PowerShell launches the elevated child
+// with -Wait, so we learn when the user has answered UAC either way.
+//
+// `buildScript(outFile)` returns the script body; it must write its result JSON
+// to outFile. A MISSING result file is treated as "cancelled", because that is
+// overwhelmingly what it means: the user declined the prompt, which is a choice
+// rather than a failure and should not be reported in red.
+async function _runElevatedPs(tag, buildScript) {
+  if (process.platform !== 'win32') return { ok: false, error: 'Windows only.' };
+  const tmpDir  = app.getPath('temp');
+  const psFile  = path.join(tmpDir, `wolfpack-${tag}.ps1`);
+  const outFile = path.join(tmpDir, `wolfpack-${tag}-result.json`);
+  try {
+    const { execFile } = require('child_process');
+    try { fs.unlinkSync(outFile); } catch { /* not there — fine */ }
+    fs.writeFileSync(psFile, buildScript(outFile), 'utf8');
+    // NO -RedirectStandardOutput/-RedirectStandardError here, however much we
+    // want the elevated child's output: those live in Start-Process's DIRECT
+    // parameter set and -Verb lives in the ShellExecute one. They are mutually
+    // exclusive, and combining them throws "Parameter set cannot be resolved
+    // using the specified named parameters" — which is exactly the regression
+    // 3.5.25 shipped while trying to improve diagnostics. The script captures
+    // its own errors into the result JSON instead (see the callers).
+    const run = await new Promise((resolve) => {
+      execFile('powershell.exe',
+        ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command',
+         'Start-Process powershell.exe -Verb RunAs -Wait -WindowStyle Hidden ' +
+         `-ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File',${_psq(psFile)}`],
+        { timeout: 180000, windowsHide: true },
+        (err, stdout, stderr) => resolve({
+          code: err ? (err.code || 1) : 0,
+          out: String(stdout || '').trim(),
+          err: [String(stderr || '').trim(), (err && err.message) || ''].filter(Boolean).join(' | '),
+        }));
+    });
+    // THE BUG (Uilnayar 2026-08-04: "I approved the UAC prompts", and still got
+    // told it was cancelled). Windows PowerShell 5.1 — which is what
+    // powershell.exe is — ALWAYS writes a UTF-8 BOM with `-Encoding UTF8`, and
+    // there is no utf8NoBOM in 5.1. JSON.parse throws on a leading U+FEFF, so a
+    // result file that was written perfectly read back as "no result", which we
+    // then reported as a declined prompt.
+    //
+    // The elevated script had in fact run and the exclusions were applied; only
+    // the reporting was broken. Strip the BOM, and trim, before parsing.
+    let result = null;
+    let rawOut = null;
+    try { rawOut = fs.readFileSync(outFile, 'utf8').replace(/^\uFEFF/, '').trim(); } catch { /* none written */ }
+    if (rawOut) {
+      try { result = JSON.parse(rawOut); }
+      catch (e) {
+        appendAgentLog(`[${tag}] result file present but unparseable: ${e && e.message} :: ${rawOut.slice(0, 200)}\n`);
+      }
+    }
+    try { fs.unlinkSync(psFile); } catch { /* */ }
+    try { fs.unlinkSync(outFile); } catch { /* */ }
+    if (!result) {
+      // Do NOT blanket-call this "cancelled". Declining UAC and the elevated
+      // script failing outright produced the SAME message before, so a real
+      // failure looked like a user decision and nobody investigated it
+      // (Uilnayar 2026-08-04: "i also did not see a note in there about the
+      // clock sync working or the windows defender exception being created").
+      //
+      // Windows reports a declined UAC prompt as Win32 error 1223, surfaced by
+      // Start-Process as "The operation was canceled by the user". Match that
+      // specifically; anything else is a genuine error and must say so, with
+      // whatever PowerShell actually printed.
+      const blob = `${run.err}\n${run.out}`;
+      const declined = /canceled by the user|cancelled by the user|1223/i.test(blob);
+      appendAgentLog(`[${tag}] no result (exit ${run.code})`
+        + (blob.trim() ? ` — ${blob.trim().replace(/\s+/g, ' ').slice(0, 400)}` : '') + '\n');
+      if (declined) {
+        return { ok: false, cancelled: true, error: 'Cancelled at the Windows permission prompt.' };
+      }
+      return { ok: false,
+        error: (blob.trim() || `The elevated step did not run (exit ${run.code}) and reported nothing.`)
+          .replace(/\s+/g, ' ').slice(0, 400) };
+    }
+    return { ok: true, result };
+  } catch (e) {
+    appendAgentLog(`[${tag}] elevated run failed: ${e && e.message}\n`);
+    return { ok: false, error: e && e.message ? e.message : String(e) };
+  }
+}
+
+ipcMain.handle('defender-add-exclusions', async () => {
+  if (process.platform !== 'win32') return { ok: false, error: 'Windows only.' };
+  const wanted = _defenderPaths();
+  if (wanted.length === 0) return { ok: false, error: 'Nothing to exclude — set your EverQuest folder first.' };
+  const run = await _runElevatedPs('defender-exclusions', (outFile) => [
+    '$ErrorActionPreference = "Stop"',
+    '$done = @(); $failed = @()',
+    ...wanted.map(p =>
+      `try { Add-MpPreference -ExclusionPath ${_psq(p.path)}; $done += ${_psq(p.path)} } ` +
+      `catch { $failed += (${_psq(p.path)} + " :: " + $_.Exception.Message) }`),
+    `@{ done = $done; failed = $failed } | ConvertTo-Json -Compress | Set-Content -Path ${_psq(outFile)} -Encoding UTF8`,
+  ].join('\n'));
+  if (!run.ok) return run;
+  const done = [].concat(run.result.done || []);
+  const failed = [].concat(run.result.failed || []);
+  appendAgentLog(`[defender] added ${done.length} exclusion(s)`
+    + (failed.length ? `, ${failed.length} failed` : '') + `: ${done.join(', ')}\n`);
+  return { ok: failed.length === 0, added: done, failed };
+});
+
+// ── Windows clock sync ──────────────────────────────────────────────────────
+//
+// Three installs are drifting ~1.5-3 s/day, one of them ~a minute behind after
+// a month (2026-08-04). At that size a machine's deaths and casts land outside
+// the dedup windows everyone else's fall in, so one bad clock corrupts numbers
+// for the whole raid, not just its owner.
+//
+// A one-time "set the clock" does NOT hold — we watched exactly that fail:
+// Bardtholemu's machine was synced to ~0 on Jul 26-27 and was 11s off again by
+// Jul 29. So this deliberately fixes the CAUSE, in order:
+//   1. w32time set to Automatic and started (the usual reason drift returns is
+//      the service being Disabled or Manual and never running);
+//   2. a resync;
+//   3. only IF that fails, point it at time.windows.com and retry.
+// Step 3 is last on purpose — overwriting the time source on a DOMAIN-JOINED
+// machine would be rude and wrong, so it is a fallback, never the opening move.
+ipcMain.handle('clock-status', async () => {
+  if (process.platform !== 'win32') return { ok: false, unsupported: true };
+  try {
+    const { execFile } = require('child_process');
+    const out = await new Promise((resolve) => {
+      execFile('powershell.exe',
+        ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command',
+         '$s = Get-Service w32time -ErrorAction SilentlyContinue; ' +
+         '@{ status = [string]$s.Status; startType = [string]$s.StartType; ' +
+         'source = (w32tm /query /source 2>&1 | Out-String).Trim() } | ConvertTo-Json -Compress'],
+        { timeout: 20000, windowsHide: true },
+        (err, stdout) => resolve(err ? null : String(stdout || '')));
+    });
+    if (!out) return { ok: false, error: 'Could not read the Windows Time service.' };
+    const j = JSON.parse(out);
+    return {
+      ok: true,
+      running: /running/i.test(j.status || ''),
+      automatic: /automatic/i.test(j.startType || ''),
+      status: j.status || null,
+      startType: j.startType || null,
+      source: j.source || null,
+    };
+  } catch (e) {
+    return { ok: false, error: e && e.message ? e.message : String(e) };
+  }
+});
+
+ipcMain.handle('clock-resync', async () => {
+  const run = await _runElevatedPs('clock-sync', (outFile) => [
+    '$steps = @(); $ok = $false',
+    // 1. The service itself — the actual cause of recurring drift.
+    'try { Set-Service -Name w32time -StartupType Automatic -ErrorAction Stop; $steps += "startup=Automatic" }',
+    'catch { $steps += ("startup FAILED :: " + $_.Exception.Message) }',
+    'try { if ((Get-Service w32time).Status -ne "Running") { Start-Service w32time -ErrorAction Stop }; $steps += "service=Running" }',
+    'catch { $steps += ("start FAILED :: " + $_.Exception.Message) }',
+    // 2. Resync with whatever source is already configured.
+    'try { $r = (w32tm /resync /force 2>&1 | Out-String).Trim(); ' +
+      'if ($LASTEXITCODE -eq 0) { $ok = $true; $steps += "resync=ok" } else { $steps += ("resync said: " + $r) } }',
+    'catch { $steps += ("resync FAILED :: " + $_.Exception.Message) }',
+    // 3. Fallback ONLY if the above did not work: give it a public NTP source.
+    'if (-not $ok) {',
+    '  try { w32tm /config /update /manualpeerlist:"time.windows.com,0x9" /syncfromflags:MANUAL | Out-Null;',
+    '        Restart-Service w32time -ErrorAction SilentlyContinue;',
+    '        $r2 = (w32tm /resync /force 2>&1 | Out-String).Trim();',
+    '        if ($LASTEXITCODE -eq 0) { $ok = $true; $steps += "resync=ok (after setting time.windows.com)" }',
+    '        else { $steps += ("still failing: " + $r2) } }',
+    '  catch { $steps += ("fallback FAILED :: " + $_.Exception.Message) }',
+    '}',
+    '$src = (w32tm /query /source 2>&1 | Out-String).Trim()',
+    `@{ ok = $ok; steps = $steps; source = $src } | ConvertTo-Json -Compress | Set-Content -Path ${_psq(outFile)} -Encoding UTF8`,
+  ].join('\n'));
+  if (!run.ok) return run;
+  const r = run.result;
+  appendAgentLog(`[clock-sync] ok=${r.ok} source=${r.source} — ${[].concat(r.steps || []).join(' | ')}\n`);
+  return { ok: !!r.ok, steps: [].concat(r.steps || []), source: r.source || null };
+});
+
 // Local status only — no network. Feeds the Settings "Zeal" card on open.
 ipcMain.handle('zeal-status', () => {
   try {
@@ -6570,6 +7591,23 @@ ipcMain.handle('zeal-install-update', async () => {
 // mod and silently overwriting it mid-session would be surprising (and fails
 // while EQ is up anyway). Shows a native notification once per newly-seen tag;
 // the user does the one-click install from Settings when they're ready.
+// Relay Zeal update status to the agent, which surfaces it on the dashboard
+// through the existing Mimic Mail list. Mimic owns Zeal detection (it knows the
+// EQ dir and runs zealUpdater), the agent owns the dashboard — this is the
+// bridge. Fire-and-forget: a missing agent must never break the Zeal check.
+function _pushZealUpdateToAgent(tag, installed) {
+  try {
+    if (!agentPort) return;
+    const body = JSON.stringify({ tag: tag || null, installed: installed || null });
+    const req = http.request({
+      host: '127.0.0.1', port: agentPort, path: '/api/zeal-update', method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+      timeout: 3000,
+    }, (res) => { res.resume(); });
+    req.on('error', () => {}); req.on('timeout', () => req.destroy());
+    req.write(body); req.end();
+  } catch { /* agent not up yet — the next 12h check (or a manual one) re-pushes */ }
+}
 let _zealNotifiedTag = null;
 async function checkZealUpdate({ manual = false } = {}) {
   try {
@@ -6579,7 +7617,13 @@ async function checkZealUpdate({ manual = false } = {}) {
     if (!eqDir) return;                              // no EQ folder yet — nothing to update
     const latest = await zealUpdater.checkLatest();
     if (!latest.tag) return;
-    if (latest.tag === cfg.zealInstalledTag) return; // already current
+    const current = latest.tag === cfg.zealInstalledTag;
+    // Tell the agent on EVERY check, before the once-per-tag latch below.
+    // The dashboard notice must survive an agent restart (Mimic restarts it on
+    // config saves and crashes), and it must CLEAR the moment Zeal is current —
+    // a stale "update available" that never goes away is worse than none.
+    _pushZealUpdateToAgent(current ? null : latest.tag, cfg.zealInstalledTag);
+    if (current) return;                             // already current
     if (latest.tag === _zealNotifiedTag) return;     // already nudged for this tag
     _zealNotifiedTag = latest.tag;
     appendAgentLog(`[zeal-update] newer Zeal available: ${latest.tag} (installed: ${cfg.zealInstalledTag || 'unknown'})\n`);
@@ -6697,6 +7741,206 @@ ipcMain.handle('restart-to-update', () => {
   try { autoUpdater && autoUpdater.quitAndInstall(true, true); } catch (e) { console.warn('[updater] quitAndInstall failed', e); }
   return true;
 });
+// Real resource numbers, not a promise.
+//
+// Raiders quit Mimic between sessions to save processing (Uilnayar 2026-08-03),
+// and the honest answer to "does it cost anything?" is a measurement they can
+// take on their OWN machine with their OWN overlay set — not a reassurance from
+// us. Electron's app.getAppMetrics() reports per-process CPU and working set for
+// the main process, every overlay renderer, and the GPU/utility helpers; the
+// agent runs as a separate child so we add it explicitly.
+//
+// percentCPUUsage is a share of ONE core sampled since the previous call, so the
+// first reading after a cold start reads high — the renderer discards sample #1.
+// OS pid → what that renderer actually IS. getAppMetrics() has no idea what a
+// process is FOR, so ten identical "overlay / window" rows told the user
+// nothing about WHICH overlays were alive (Uilnayar 2026-08-04). Only we can
+// name them. Several windows can legitimately share one renderer process, so
+// labels accumulate rather than overwrite.
+// ── Private working set, straight from Windows ─────────────────────────────
+//
+// "This says 274MB but task manager calls out 161MB. Why is there such a gap?"
+// (Uilnayar 2026-08-04.) Because they are two different measurements, and both
+// are correct:
+//
+//   • Electron's privateBytes is PRIVATE COMMIT — every private page the
+//     process has reserved from the pagefile, resident or not.
+//   • Task Manager's Memory column is the PRIVATE WORKING SET — only the
+//     private pages actually sitting in RAM right now.
+//
+// Commit is always ≥ working set, and the ratio varies wildly per process: the
+// GPU helper reported 102 MB committed against ~32 MB resident because it
+// reserves large buffers it never touches. So the gap is not an error to
+// correct with a fudge factor — the honest fix is to report the same figure
+// Task Manager does, which is what people compare against.
+//
+// Chromium exposes no working-set-private, so we ask Windows. The perf class
+// Win32_PerfRawData_PerfProc_Process carries WorkingSetPrivate keyed by
+// IDProcess — one query covers every Mimic process. Readable by a standard
+// user, no elevation.
+//
+// It is NOT free (~200-400ms of PowerShell), and this window's whole claim is
+// that Mimic costs nothing at idle, so it runs at most once every 12s and only
+// while something is actually asking for metrics — i.e. while the Resource use
+// window is open. Everything falls back to the committed figure.
+// OFF BY DEFAULT. "I'd rather not take up extra cycles all the time just to be
+// right and match Task Manager, but we should explain that we are provisioned
+// for more committed RAM and that's why it wouldn't match" (Uilnayar
+// 2026-08-04) — so the default is the free number plus the explanation, and
+// this is a checkbox in the Resource use window for when an exact comparison is
+// actually wanted. Each run times itself and reports the cost next to the
+// toggle: a number measured on the user's machine beats an estimate from ours.
+const _WS_TTL_MS = 12_000;
+let _wsPrivate = { at: 0, byPid: new Map(), inFlight: false, lastMs: 0 };
+// True only while the window that consumes these numbers is actually open.
+// "when we close that resource use window make sure we're not matching task
+// manager still and querying for the exact in the background" (Uilnayar
+// 2026-08-04). Today the only caller is resources.html's 2s poll, so closing
+// the window already stops it — but that is a property of the renderer, and a
+// background PowerShell loop is not something to leave resting on one. This
+// makes it structural in the main process instead.
+function _resourcesWindowOpen() {
+  return !!(resourcesWindow && !resourcesWindow.isDestroyed());
+}
+
+function _refreshPrivateWorkingSet(pids) {
+  if (process.platform !== 'win32') return;
+  if (!_resourcesWindowOpen()) { _wsPrivate.byPid = new Map(); return; }
+  let cfg; try { cfg = loadConfig(); } catch { return; }
+  if (!cfg.exactMemory) { _wsPrivate.byPid = new Map(); return; }
+  if (_wsPrivate.inFlight) return;
+  if (Date.now() - _wsPrivate.at < _WS_TTL_MS) return;
+  if (!pids || !pids.length) return;
+  _wsPrivate.inFlight = true;
+  const started = Date.now();
+  try {
+    const { execFile } = require('child_process');
+    const filter = pids.map(p => `IDProcess=${p}`).join(' OR ');
+    const psCmd = `Get-CimInstance Win32_PerfRawData_PerfProc_Process -Filter "${filter}" | ForEach-Object { "$($_.IDProcess)|$($_.WorkingSetPrivate)" }`;
+    execFile('powershell', ['-NoProfile', '-NonInteractive', '-Command', psCmd],
+      { timeout: 8000, windowsHide: true },
+      (err, stdout) => {
+        _wsPrivate.inFlight = false;
+        // Stamp the time even on failure, or a broken query would re-spawn
+        // PowerShell on every single 2s poll.
+        _wsPrivate.at = Date.now();
+        _wsPrivate.lastMs = _wsPrivate.at - started;
+        if (err || !stdout) return;
+        // The window can close mid-query. Landing the result then would leave a
+        // populated cache behind for whoever opens it next, showing resident
+        // numbers with the checkbox off.
+        if (!_resourcesWindowOpen()) { _wsPrivate.byPid = new Map(); return; }
+        const byPid = new Map();
+        for (const line of String(stdout).split(/\r?\n/)) {
+          const m = line.trim().match(/^(\d+)\|(\d+)$/);
+          if (m) byPid.set(Number(m[1]), Number(m[2]));   // bytes
+        }
+        if (byPid.size) _wsPrivate.byPid = byPid;
+      });
+  } catch { _wsPrivate.inFlight = false; _wsPrivate.at = Date.now(); }
+}
+// Checkbox in the Resource use window. Clearing it drops the cached snapshot on
+// the next refresh, so the card falls straight back to the committed figure.
+ipcMain.handle('set-exact-memory', (_e, on) => {
+  const cfg = loadConfig();
+  cfg.exactMemory = !!on;
+  saveConfig(cfg);
+  if (!cfg.exactMemory) { _wsPrivate.byPid = new Map(); _wsPrivate.lastMs = 0; }
+  else _wsPrivate.at = 0;                    // let the next poll query at once
+  appendAgentLog(`[metrics] exact memory (Windows working-set query) ${cfg.exactMemory ? 'ON' : 'off'}\n`);
+  return !!cfg.exactMemory;
+});
+
+function _windowLabelsByPid() {
+  const byPid = new Map();
+  const put = (win, label) => {
+    try {
+      if (!win || win.isDestroyed()) return;
+      const pid = win.webContents.getOSProcessId();
+      if (!pid) return;
+      const prior = byPid.get(pid);
+      byPid.set(pid, prior ? prior + ' + ' + label : label);
+    } catch { /* window mid-close */ }
+  };
+  let cfg; try { cfg = loadConfig(); } catch { cfg = {}; }
+  const NAMES = {
+    hud: 'DPS HUD', trigger: 'Trigger alerts', charm: 'Charm tracker',
+    pets: 'Pet tracker', mobinfo: 'Mob Info', buffQueue: 'Buff queue',
+    who: '/who', melody: 'Melody', zeal: 'Zeal health', threat: 'Threat meter',
+    chchain: 'CH chain', tank: 'Tank HUD', exttarget: 'Extended target',
+    command: 'Command center', popraid: 'PoP raids',
+  };
+  for (const e of _OVERLAY_WINDOWS) {
+    // Flag the ones that are alive despite being switched off — that pairing is
+    // the whole reason someone opens this window.
+    put(e.get(), (NAMES[e.key] || e.key) + (cfg[e.flag] ? '' : ' (switched OFF)'));
+  }
+  for (const [key, win] of panelOverlays.entries()) put(win, 'panel overlay · ' + key);
+  put(mainWindow,      'Dashboard');
+  put(settingsWindow,  'Settings');
+  put(uiStudioWindow,  'UI Studio');
+  put(resourcesWindow, 'Resource use (this window)');
+  return byPid;
+}
+
+ipcMain.handle('app-metrics', () => {
+  const out = { at: Date.now(), eqRunning: _eqRunning, eqIgnored: [...new Set(_eqIgnoredPaths.values())], procs: [], agent: null };
+  let labels = new Map();
+  try { labels = _windowLabelsByPid(); } catch { /* naming is a bonus, never the point */ }
+  let anyWorkingSet = false;   // no privateBytes at all (non-Windows)
+  let anyEstimated  = false;   // no working-set-private for at least one pid
+  try {
+    for (const m of app.getAppMetrics()) {
+      const mem = m.memory || {};
+      // workingSetSize counts SHARED pages in EVERY process that maps them, and
+      // every Chromium renderer maps the same tens of MB of Electron framework.
+      // Summing it across 13 processes counted that framework 13 times: Mimic
+      // reported 1267 MB where Task Manager showed 460 (Uilnayar 2026-08-04).
+      // privateBytes is memory not shared with any other process — what Task
+      // Manager's Memory column shows, and the only basis where the per-process
+      // rows legitimately add up to a total.
+      const privKb = Number(mem.privateBytes) || 0;
+      if (!privKb) anyWorkingSet = true;
+      // Working set private, if Windows has told us. Falls back to committed.
+      const wsBytes = _wsPrivate.byPid.get(m.pid);
+      if (wsBytes == null) anyEstimated = true;
+      out.procs.push({
+        pid:  m.pid,
+        type: m.type || 'unknown',
+        // serviceName/name disambiguate the several "Utility" rows.
+        name: m.name || m.serviceName || null,
+        label: labels.get(m.pid) || null,
+        cpu:  m.cpu ? Number(m.cpu.percentCPUUsage) || 0 : 0,
+        // The headline number: what Task Manager's Memory column shows.
+        memMb: wsBytes != null
+          ? Math.round(wsBytes / (1024 * 1024))
+          : Math.round((privKb || mem.workingSetSize || 0) / 1024),
+        // …and the committed figure alongside it. Keeping both on screen is
+        // what stops the difference reading as an error. Both source fields
+        // are KB on every platform electron supports.
+        commitMb: Math.round((privKb || mem.workingSetSize || 0) / 1024),
+      });
+    }
+  } catch { /* metrics unavailable — the card renders what it has */ }
+  // Refresh AFTER building the payload: this poll uses the cached snapshot and
+  // the next one picks up the new numbers, so nothing ever waits on PowerShell.
+  try { _refreshPrivateWorkingSet(out.procs.map(p => p.pid)); } catch { /* best effort */ }
+  // privateBytes is Windows-only, and the working-set query can fail or not
+  // have run yet. Say which basis is on screen rather than let a number that
+  // can't be compared to Task Manager pass as one that can.
+  out.memBasis = anyEstimated ? (anyWorkingSet ? 'workingSet' : 'commit') : 'workingSetPrivate';
+  // So the card can render the checkbox and show what the query costs HERE.
+  try { out.exactMemory = !!loadConfig().exactMemory; } catch { out.exactMemory = false; }
+  out.wsQueryMs = _wsPrivate.lastMs || 0;
+  // The agent is a spawned node process, so it is NOT in getAppMetrics().
+  try { if (agentProc && agentProc.pid) out.agent = { pid: agentProc.pid }; } catch { /* */ }
+  out.totalCpu   = Math.round(out.procs.reduce((a, p) => a + p.cpu, 0) * 10) / 10;
+  out.totalMemMb = out.procs.reduce((a, p) => a + p.memMb, 0);
+  out.totalCommitMb = out.procs.reduce((a, p) => a + (p.commitMb || 0), 0);
+  out.windows    = out.procs.filter(p => p.type === 'Tab' || p.type === 'Renderer').length;
+  return out;
+});
+
 ipcMain.handle('get-agent-log-tail', (_e, lines) => {
   const n = Math.max(1, Math.min(500, lines || 80));
   return logTail.slice(-n).join('');
@@ -6724,16 +7968,10 @@ app.whenReady().then(async () => {
   // works immediately. User clicks "Connect to Wolf Pack" in the tray menu
   // when they're ready to start uploading.
   await launchAgent();
-  createOverlayWindow();
-  createTriggerOverlay();
-  createCharmOverlay();
-  createPetsOverlay();
-  createMobInfoOverlay();
-  createWhoOverlay();
-  createMelodyOverlay();
-  createZealHealthOverlay();
-  createChChainOverlay();
-  createTankOverlay();
+  // Only the overlays that are actually switched on. This used to be ten
+  // unconditional create calls — ten Chromium renderers, ~80 MB each, for
+  // overlays most users never turn on. See _materializeEnabledOverlays().
+  _materializeEnabledOverlays();
   pushStatus();
   startZealCapture();
 

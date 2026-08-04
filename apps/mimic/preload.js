@@ -311,12 +311,22 @@ function _autoFitOverlay(wrapEl) {
 
 contextBridge.exposeInMainWorld('mimic', {
   openSettings:        ()         => ipcRenderer.invoke('open-settings'),
+  // Resource use in its own window — the dashboard's "what does Mimic cost?"
+  // link calls this, same as the tray entry.
+  openResources:       ()         => ipcRenderer.invoke('open-resources'),
   createPanelOverlay:  (panelKey) => ipcRenderer.invoke('create-panel-overlay', panelKey),
   getConfig:     () => ipcRenderer.invoke('get-config'),
   saveConfig:    (cfg) => ipcRenderer.invoke('save-config', cfg),
   getAgentPort:  () => ipcRenderer.invoke('get-agent-port'),
   eqSetupForMe:  () => ipcRenderer.invoke('eq-setup-for-me'),
   relaunchAgent: () => ipcRenderer.invoke('relaunch-agent'),
+  // Live per-process CPU + memory, so "how much does Mimic cost?" is answered by
+  // a measurement on the user's own machine instead of a claim from us.
+  appMetrics:    () => ipcRenderer.invoke('app-metrics'),
+  // Opt in to the Windows working-set query so the totals match Task Manager
+  // exactly. Off by default — it spawns PowerShell every 12s, and the free
+  // number plus an explanation of the difference is the better trade.
+  setExactMemory: (on) => ipcRenderer.invoke('set-exact-memory', !!on),
   onAgentPort:   (cb) => ipcRenderer.on('agent-port', (_e, port) => cb(port)),
 
   // Runtime status — also pushed via onStatus when it changes.
@@ -342,6 +352,12 @@ contextBridge.exposeInMainWorld('mimic', {
   // Zeal auto-updater (CoastalRedwood/Zeal). status is local-only; checkUpdate
   // hits GitHub; installUpdate downloads + drops Zeal.asi + uifiles/ into the
   // EQ folder (backs up what's there, refuses while EQ is running).
+  // Windows Defender exclusions — opt-in, one UAC prompt, EQ + Mimic folders.
+  defenderStatus:        () => ipcRenderer.invoke('defender-status'),
+  defenderAddExclusions: () => ipcRenderer.invoke('defender-add-exclusions'),
+  // Windows clock: read the w32time service state, and (elevated) fix it.
+  clockStatus:           () => ipcRenderer.invoke('clock-status'),
+  clockResync:           () => ipcRenderer.invoke('clock-resync'),
   zealStatus:        ()   => ipcRenderer.invoke('zeal-status'),
   zealCheckUpdate:   ()   => ipcRenderer.invoke('zeal-check-update'),
   zealInstallUpdate: ()   => ipcRenderer.invoke('zeal-install-update'),
@@ -610,8 +626,8 @@ if (location.protocol === 'http:') {
 
     // "Update ready" banner — replaces the naggy OS pop-up. Shows when a Mimic
     // update has downloaded (status.updatePending); restarts to apply on click.
-    // The update also applies on its own at the next quit, so this is purely a
-    // convenience nudge, not a demand.
+    // The update also applies on its own the next time EQ closes (2.3.0) and at
+    // the next Mimic quit, so this is purely a convenience nudge, not a demand.
     const upd = document.createElement('div');
     upd.id = 'mimic-update-banner';
     upd.setAttribute('style', [
@@ -630,7 +646,7 @@ if (location.protocol === 'http:') {
     updBtn.onclick = () => { try { ipcRenderer.invoke('restart-to-update'); } catch (e) {} };
     const updDismiss = document.createElement('button');
     updDismiss.textContent = '✕';
-    updDismiss.title = 'Dismiss (the update still applies next time you close Mimic)';
+    updDismiss.title = 'Dismiss (the update still installs next time you close EverQuest)';
     updDismiss.setAttribute('style', [
       'background:transparent', 'color:#56d364', 'border:none', 'cursor:pointer', 'font-size:13px',
     ].join(';'));
@@ -652,7 +668,13 @@ if (location.protocol === 'http:') {
     const refreshBanner = (s) => {
       banner.style.display = (s && s.localOnly) ? 'flex' : 'none';
       if (s && s.updatePending && !_updDismissed) {
-        updMsg.innerHTML = '⬆ <b>Mimic v' + String(s.updatePending).replace(/[<>&]/g, '') + ' is ready.</b> Restart to update — or it applies next time you close Mimic.';
+        // Wording matters here: since 2.3.0 the update applies when you close
+        // EVERQUEST (autoInstallOnAppQuit still covers a Mimic quit as well),
+        // and nobody quits Mimic — that was the whole reason the EQ-close path
+        // was built. Telling a raider "close Mimic" sends them to do the one
+        // thing they never do, and makes a working auto-update look broken
+        // (Uilnayar, 2026-08-04: "it did not update in place").
+        updMsg.innerHTML = '⬆ <b>Mimic v' + String(s.updatePending).replace(/[<>&]/g, '') + ' is ready.</b> Nothing to do — it installs by itself next time you close EverQuest. Or restart now:';
         upd.style.display = 'flex';
       } else {
         upd.style.display = 'none';

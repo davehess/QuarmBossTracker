@@ -395,7 +395,15 @@ const KEEP_PATTERNS = [
   /\bhas been slain by/i,
   /\byou have slain /i,
   /^\[.+\]\s+You died\./i,                        // /death of self
-  /\bdie[ds]\./i,                                 // "X died." (npc) or "X dies." (older variant)
+  /\bdie[ds]\./i,                                 // "X died." — see parseEvent; "X dies." is FEIGN, kept only so the trigger engine can see it
+  // ── Real-death CONFIRMATION (Uilnayar 2026-08-03) ────────────────────────
+  // A real death has a corpse-run tail that a feign never produces. These lines
+  // appear ONLY in the dying player's OWN log, which is exactly what makes them
+  // trustworthy: "<Name> dies." is ambiguous to a bystander, but nobody feigns
+  // their way to a home point. Kept so a backfill can VERIFY a recorded death
+  // instead of trusting the line that created it.
+  /\byou are bleeding to death\b/i,
+  /\breturning to home point, please wait\b/i,
   /\bhas been knocked unconscious/i,
   // DoT ticks and spell damage attributed to caster.
   // Quarm uses two forms (verified May 2026):
@@ -960,14 +968,37 @@ function parseEvent(line, ts) {
   if (m) {
     return { ts: tsIso, type: 'death', defender: m[1], attacker: null /* self */ };
   }
-  // "X died." (Quarm/most modern EQ format) or "X dies." (older variant)
-  m = line.match(/\]\s+(.+?)\s+die[ds]\./i);
+  // "X died." — a real death with no named killer (drowning, falling, DoT tick).
+  //
+  // DO NOT re-add "dies." here. `<Name> dies.` is the FEIGN DEATH message, not a
+  // death: it is the cast_on_other text of Feign Death (spell 366, SK 30 /
+  // NEC 16), Death Peace (1460, SK 60 / NEC 60), Paralyzing Venom (1118) and FD
+  // Test (2807) — every one an SPA-'Feign Death' effect, all four fading with
+  // "You no longer appear dead." This regex used to be /die[ds]\./ on the
+  // assumption that "dies." was an older real-death variant. It is not, and the
+  // cost was enormous: every feign a knight or necro threw was recorded as a
+  // death by EVERY observer in range. Shadow Knights showed 175 death records
+  // across 3 characters (58 each) and Necromancers 58 across 4, against 5.5 for
+  // a Cleric and 1 for a Bard — 44% of every death we have ever stored came
+  // from the only two classes that can feign (Uilnayar 2026-08-03).
+  //
+  // Feign death is already parsed correctly further down as type 'feign_death'
+  // via "has fallen to the ground"; this line simply must not shadow it.
+  m = line.match(/\]\s+(.+?)\s+died\./i);
   if (m) {
     return { ts: tsIso, type: 'death', defender: m[1], attacker: null };
   }
   m = line.match(/\]\s+You died\./i);
   if (m) {
     return { ts: tsIso, type: 'death', defender: null /* self */, attacker: null };
+  }
+  // Real-death CONFIRMATION — the corpse-run tail. Only ever appears in the
+  // dying player's OWN log, and a feign never produces it: nobody feigns their
+  // way to a home point. This is what lets a backfill VERIFY a stored death
+  // rather than re-trusting the line that created it (Uilnayar 2026-08-03).
+  if (/\]\s+You are bleeding to death!/i.test(line)
+      || /\]\s+Returning to home point, please wait/i.test(line)) {
+    return { ts: tsIso, type: 'death_confirm', defender: null /* self */, attacker: null };
   }
 
   // ── Heals ─────────────────────────────────────────────────────────────────
@@ -2750,6 +2781,12 @@ const _CAST_BEGIN_RX = /\]\s+You begin (?:casting|singing)\s+(.+?)\.\s*$/i;
 // Default = ready (a cleric who hasn't cast this session shows "up").
 // Rides live-state (di_ready_at) → bot aggregates per-cleric → CH-chain +
 // Command Center chips.
+// How long after a self-death the corpse-run confirmation may still arrive.
+// The real sequence is "You died." → "You are bleeding to death!" → "Returning
+// to home point, please wait..." within a couple of seconds, but a player who
+// lingers before releasing pushes the home-point line out; 60s covers that
+// without ever reaching back to a PREVIOUS death.
+const DEATH_CONFIRM_WINDOW_MS = 60_000;
 const DI_CAST_MS = 6000, DI_RECAST_MS = 90_000;
 const _diStateByChar = new Map();   // charLower → { castAt, readyAt }
 function _noteDiCast(charLower, atMs) {
@@ -3451,7 +3488,7 @@ const _CH_SPEAKER_RX = /^\[[^\]]+\]\s+(\S+)\s+(?:shouts?|says?(?:\s+out of chara
 // case-sensitive CH token is untouched) may sit between the separator and CH —
 // our druids gap-fill the chain and shout "002 - DRUID CH - Currygoat" /
 // "004 - Druid CH - X" (#148). Plain "001 - CH - X" still matches.
-const _CH_CALL_RX = /^0*(\d{1,3})\s*(?:-+>?|—+>?|:)?\s*(?:[Dd][Rr][Uu][Ii][Dd]\s+)?CH\b[\s:\-]*(?:on\s+)?([A-Z][\w`]*)?/;
+const _CH_CALL_RX = /^0*(\d{1,3})\s*(?:-+>?|—+>?|:)?\s*(?:[Dd][Rr][Uu][Ii][Dd]\s+)?CH\b[\s:\-<]*(?:on\s+)?([A-Z][\w`]*)?/;
 const _CH_MANA_RX = /\bmana\b\D{0,6}(\d{1,3})\s*%/i;
 const _CH_GO_RX   = /^0*(\d{1,3})\s*[-—:.\s]*go\b[\s\-]*go/i;
 // Cheap gate so a chain-ROSTER announcement ("Fargan 001, Rapha 002, …")
@@ -3940,10 +3977,23 @@ function chChainSnapshot() {
 // True when `name` matches one of the characters this agent is tailing (the
 // uploader + any boxed windows). Case-insensitive exact match — deliberately
 // NOT prefix, so a nickname collision can't mis-attribute a slot.
+// A watched log only counts as "you" while it's actually being written. The
+// agent tails EVERY eqlog_*_pq.proj.txt in the EQ folder and seeds watchedLogs
+// from all of them at startup, so a log left behind by someone who played on
+// this machine once (shared box, couple two-boxing) made their character
+// permanently "ours" — no live client required. That spoke the CH-chain
+// "0N GO" callout for THEIR slot and highlighted THEIR slot as yours on the
+// overlay (Dant hearing Aimey's 002 GO, 2026-08-03). Freshness gate matches the
+// existing active-log window in _resolveChatSpeaker; a genuine two-box keeps
+// working because both logs are being written.
+const OWN_CHARACTER_ACTIVE_MS = 3 * 60_000;
 function _isOwnCharacterName(name) {
   if (!name) return false;
   const lc = String(name).toLowerCase();
-  return (stats.watchedLogs || []).some(w => w && w.character && String(w.character).toLowerCase() === lc);
+  const now = Date.now();
+  return (stats.watchedLogs || []).some(w =>
+    w && w.character && String(w.character).toLowerCase() === lc
+    && w.lastSeen && (now - w.lastSeen) <= OWN_CHARACTER_ACTIVE_MS);
 }
 
 // CH chain "0N GO" callout (#103). Called after every point that advances
@@ -4287,6 +4337,8 @@ const SLOW_SPELLS = new Set([
   'drowsy', 'walking sleep', "tagar's insects", "togor's insects", "tigir's insects", "turgur's insects", 'cripple',
   // Enchanter
   'languid pace', 'shiftless deeds', 'tepid deeds', 'forlorn deeds',
+  // Beastlord
+  "sha's advantage",
   // Boss tank-busters that are ALSO attack-speed slows (#142). Rage of
   // Ssraeshza (spell 2310, SPA 11 base 10 = −90% attack speed + a 4000 hit)
   // lands on the Emperor's tank; grounded from eqemu_spells.
@@ -4336,11 +4388,26 @@ const SLOW_MAGNITUDES = new Map([
   ['forlorn deeds',     70],
   ['shiftless deeds',   65],
   ["tagar's insects",   50],
+  ["tigir's insects",   50],
   ['tepid deeds',       50],
+  ["sha's advantage",   50],
   ['walking sleep',     35],
   ['languid pace',      30],
   ['drowsy',            25],
 ]);
+// Casting class per slow, for the badge label ("BST SLOW 50%"). Boss-cast slows
+// (Rage of Ssraeshza) have no player class and stay unlabeled.
+const SLOW_CLASSES = new Map([
+  ["turgur's insects", 'SHM'], ["togor's insects", 'SHM'], ["tagar's insects", 'SHM'],
+  ["tigir's insects",  'SHM'], ['walking sleep',   'SHM'], ['drowsy',          'SHM'],
+  ['forlorn deeds',    'ENC'], ['shiftless deeds', 'ENC'], ['tepid deeds',     'ENC'],
+  ['languid pace',     'ENC'],
+  ["sha's advantage",  'BST'],
+]);
+function _slowClass(name) {
+  if (!name) return null;
+  return SLOW_CLASSES.get(String(name).toLowerCase().replace(/`/g, "'").trim()) || null;
+}
 function _slowMagnitude(name) {
   if (!name) return 0;
   return SLOW_MAGNITUDES.get(String(name).toLowerCase().replace(/`/g, "'").trim()) || 0;
@@ -4399,6 +4466,7 @@ function _bestSlowForTarget(targetLower, nowMs) {
   const remaining = best.expiresAtMs > 0 ? Math.max(0, Math.round((best.expiresAtMs - now) / 1000)) : null;
   const total     = best.expiresAtMs > 0 ? Math.max(0, Math.round((best.expiresAtMs - best.landedAtMs) / 1000)) : null;
   return { name: best.name, magnitude: best.magnitude, caster: best.caster || null,
+           cls: _slowClass(best.name),
            remaining_secs: remaining, total_secs: total, landedAtMs: best.landedAtMs || 0 };
 }
 // #181 — the bystander land text for the classic slows is a bare shared emote:
@@ -6855,6 +6923,31 @@ class EncounterBuilder {
     // EQ NPC names are always multi-word ("A Shadel Bandit", "An Elder Vah Shir")
     // or start with lowercase ("a spirit", "an undead"). Player names are proper
     // nouns — single capitalised word.
+    // Back-patch the corpse-run confirmation onto the death that preceded it.
+    //
+    // Streaming means we cannot look ahead, so the death is recorded first and
+    // this arrives a moment later ("You died." → "You are bleeding to death!" →
+    // "Returning to home point, please wait..."). We stamp the most recent
+    // SELF death inside a short window; a bystander's death is not ours to
+    // confirm, since these lines only ever appear in the dying player's own log.
+    //
+    // What this buys: a stored death carrying confirmed=true is provably real,
+    // so a backfill can separate genuine deaths from the feign-death false
+    // positives that "<Name> dies." produced for a month — evidence rather than
+    // the class-based guess we would otherwise be stuck with.
+    if (event.type === 'death_confirm') {
+      const meLower = String(this.character || '').toLowerCase();
+      const atMs = Date.parse(event.ts) || Date.now();
+      for (let i = this.deaths.length - 1; i >= 0; i--) {
+        const d = this.deaths[i];
+        if (!d || String(d.name || '').toLowerCase() !== meLower) continue;
+        const dMs = Date.parse(d.ts) || 0;
+        if (atMs - dMs > DEATH_CONFIRM_WINDOW_MS) break;   // too old — stop scanning back
+        d.confirmed = true;
+        break;
+      }
+      return;
+    }
     if (event.type === 'death') {
       const rawDef  = event.defender;
       // Normalise "You died." first-person form to the character name
@@ -8132,6 +8225,30 @@ function enqueueUpload(kind, payload) {
       platform:     process.platform,
       node_version: process.versions && process.versions.node,
     };
+    // This machine's measured clock offset, attached to EVERY payload (#202).
+    //
+    // Every timestamp in this payload was stamped from the local clock, and on
+    // three of our installs that clock is wrong AND DRIFTING (~1.5-3 s/day;
+    // one is ~56s behind after a month of drift, 2026-08-04). Correcting
+    // bot-side from a stored per-install offset therefore needs a time series
+    // plus step-detection for manual re-syncs — because a scalar measured last
+    // week is simply wrong today.
+    //
+    // Sending the offset WITH the data removes that whole problem: the value
+    // here was measured within the last heartbeat (20s), so it is always fresh
+    // and no interpolation is ever required. Sign matches agent_clock_offsets:
+    // POSITIVE = this clock is BEHIND, so true time is `stamp + offset`.
+    //
+    // Purely additive — nothing reads it yet, and the raw stamps are unchanged,
+    // so the bot can start correcting whenever we decide where that belongs.
+    // `measured_at` is what makes it auditable: on a BACKFILL the events are
+    // old but this offset is current, so a consumer must not apply it there
+    // (payload.backfill marks those) — hence recording when it was taken
+    // rather than pretending it belongs to the event.
+    if (Number.isFinite(stats.clockOffsetMs)) {
+      payload.agent_state.clock_offset_ms = stats.clockOffsetMs;
+      payload.agent_state.clock_measured_at = new Date().toISOString();
+    }
   }
   const entry = {
     id:          _queueId(),
@@ -10097,6 +10214,15 @@ function _serializeForDashboard() {
     // CH chain rotation snapshot (cleric Complete Heal callouts) — null when
     // no chain has called in the last 5 minutes. Drives chchain.html.
     chChain: chChainSnapshot(),
+    // What each watched client actually has LOADED, from `/zeal version`.
+    // Empty until someone runs it — we never inject commands into the game.
+    clientVersions: clientVersionsSnapshot(),
+    // This machine's measured clock offset vs the bot, from the heartbeat's
+    // four-stamp NTP exchange. POSITIVE = this clock is BEHIND. Surfaced so the
+    // dashboard can show the drift and, after a Windows time resync, prove the
+    // fix landed instead of asking the user to take it on faith. null until the
+    // first heartbeat completes (and stays null with no token / offline).
+    clockOffsetMs: Number.isFinite(stats.clockOffsetMs) ? stats.clockOffsetMs : null,
     // Per-cleric Divine Intervention readiness (bot aggregate ⊕ local casts) —
     // chchain.html renders the chips + "only <X> has DI" callout.
     diStatus: diStatusSnapshot(),
@@ -11141,6 +11267,9 @@ body.wp-overlay-mode .wp-overlay-target table th:nth-child(2) { text-align:right
     <button id="wpUiStudioBtn" type="button"
        style="background:transparent;border:1px solid var(--green);color:var(--green);padding:3px 9px;border-radius:5px;cursor:pointer;font:inherit"
        title="Open the UI Studio — graphical rescaler for EQ window layouts (move a 1440 UI to 1080, drag/snap windows visually)">UI Studio</button>
+    <button id="wpResourcesBtn" type="button"
+       style="display:none;background:transparent;border:1px solid var(--border);color:var(--fg);padding:3px 9px;border-radius:5px;cursor:pointer;font:inherit"
+       title="What Mimic costs this machine — live CPU and memory for every Mimic process, measured here and never uploaded">📊 Resources</button>
     <button id="wpReload" class="wp-gear" title="Reload the dashboard — reconnect to the parser engine (use this if panels are blank after an update)" onclick="if(window.mimic&&window.mimic.openDashboard){window.mimic.openDashboard()}else{location.reload()}">🔄 Reload</button>
   </span>
 </div>
@@ -12023,8 +12152,16 @@ function renderSetupChecks(s) {
   // the in-game equivalents are spelled out so a user can act live too.
   h += '<div style="margin-top:8px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">'
      + '<button class="wp-eq-setup" style="background:#1f6feb;color:#fff;border:0;border-radius:5px;padding:5px 12px;cursor:pointer;font-weight:600;font-size:12px">🔧 Set up for me</button>'
+     // Two more one-click fixers, same row, Mimic-only (they need the Electron
+     // bridge — a browser tab cannot elevate or write into the EQ folder).
+     // Hidden rather than dimmed outside Mimic: neither is a thing a plain tab
+     // could ever do, so a greyed control would just be a dead end.
+     + '<button class="wp-defender" style="display:none;background:#21262d;color:var(--fg);border:1px solid var(--border);border-radius:5px;padding:5px 12px;cursor:pointer;font-size:12px">🛡 Add Windows Defender EQ Exceptions</button>'
+     + '<button class="wp-zeal-install" style="display:none;background:#21262d;color:var(--fg);border:1px solid var(--border);border-radius:5px;padding:5px 12px;cursor:pointer;font-size:12px">⬇ Check / install Zeal</button>'
+     + '<button class="wp-clock-fix" style="display:none;background:#21262d;color:var(--fg);border:1px solid var(--border);border-radius:5px;padding:5px 12px;cursor:pointer;font-size:12px">🕐 Fix Windows clock sync</button>'
      + '<span class="dim" style="font-size:11px">Writes <b>Log=TRUE</b> (eqclient.ini) + <b>ExportOnCamp</b> / <b>PipeDelay</b> / <b>PipeVerbose</b> (zeal.ini). <b>EQ must be CLOSED</b> — it overwrites eqclient.ini on exit. Live in-game: <code>/log on</code> starts logging this session; the Zeal settings apply when EQ restarts.</span>'
-     + '</div>';
+     + '</div>'
+     + '<div class="wp-fixer-note dim" style="display:none;font-size:11px;margin-top:6px"></div>';
   morphInto(el, h);
   // Delegated so it survives the morphInto repaint; bound once.
   if (!window.__wpEqSetupBound) {
@@ -12050,6 +12187,104 @@ function renderSetupChecks(s) {
       } catch (err) { alert('Setup request failed: ' + ((err && err.message) || err)); }
       finally { btn.disabled = false; btn.textContent = orig; }
     });
+  }
+  // Reveal + wire the two Mimic-only fixers that sit beside Set up for me.
+  wpWireFixerButtons(s);
+}
+// Windows Defender exclusions + Zeal install, on the dashboard next to
+// "Set up for me" (Uilnayar 2026-08-04). Both already existed as Settings
+// actions; this puts them where a user is actually standing when they discover
+// something is wrong, rather than three clicks away in a form.
+//
+// Re-run after every repaint of the card, so the handlers are bound with a
+// dataset latch rather than a global one — the buttons are re-created by
+// morphInto each time this section re-renders.
+function wpWireFixerButtons(s) {
+  var note = document.querySelector('.wp-fixer-note');
+  var dBtn = document.querySelector('.wp-defender');
+  var zBtn = document.querySelector('.wp-zeal-install');
+  var say = function (msg, color) {
+    if (!note) return;
+    note.style.display = '';
+    note.innerHTML = color ? '<span style="color:' + color + '">' + esc(msg) + '</span>' : esc(msg);
+  };
+  if (dBtn && window.mimic && window.mimic.defenderAddExclusions) {
+    dBtn.style.display = '';
+    if (!dBtn.dataset.wired) {
+      dBtn.dataset.wired = '1';
+      dBtn.addEventListener('click', function () {
+        var orig = dBtn.textContent;
+        dBtn.disabled = true; dBtn.textContent = 'Waiting for Windows permission…';
+        window.mimic.defenderAddExclusions().then(function (r) {
+          if (r && r.ok) say('✓ Excluded ' + (r.added || []).length + ' folder(s) from Windows Defender: ' + (r.added || []).join(', '), 'var(--green)');
+          else if (r && r.cancelled) say((r && r.error) || 'Cancelled at the Windows permission prompt — nothing changed.');
+          else say('Could not add exclusions: ' + ((r && (r.error || (r.failed || []).join('; '))) || 'unknown error'), 'var(--red,#f87171)');
+        }).catch(function (e) {
+          say('Failed: ' + ((e && e.message) || e), 'var(--red,#f87171)');
+        }).then(function () { dBtn.disabled = false; dBtn.textContent = orig; });
+      });
+    }
+  }
+  var cBtn = document.querySelector('.wp-clock-fix');
+  if (cBtn && window.mimic && window.mimic.clockResync) {
+    cBtn.style.display = '';
+    // Label the button with the drift we have actually MEASURED, so it reads as
+    // a specific problem ("you are 56s behind") rather than a generic
+    // maintenance chore nobody will ever click. The state is passed in from the
+    // caller rather than read off a global; clockOffsetMs is null until the
+    // first heartbeat lands (no token / offline keeps it null).
+    var off = s && s.clockOffsetMs;
+    if (typeof off === 'number' && Math.abs(off) >= 5000) {
+      cBtn.textContent = '🕐 Clock is ' + Math.round(Math.abs(off) / 1000) + 's '
+        + (off > 0 ? 'behind' : 'ahead') + ' — fix it';
+      cBtn.style.borderColor = 'var(--orange, #f0b429)';
+      cBtn.style.color = 'var(--orange, #f0b429)';
+    }
+    if (!cBtn.dataset.wired) {
+      cBtn.dataset.wired = '1';
+      cBtn.addEventListener('click', function () {
+        var orig = cBtn.textContent;
+        cBtn.disabled = true; cBtn.textContent = 'Waiting for Windows permission…';
+        window.mimic.clockResync().then(function (r) {
+          if (r && r.ok) {
+            say('✓ Clock synced, and the Windows Time service is set to keep it synced'
+              + (r.source ? ' (source: ' + r.source + ')' : '')
+              + '. The drift reading updates within a minute.', 'var(--green)');
+          } else if (r && r.cancelled) {
+            say((r && r.error) || 'Cancelled at the Windows permission prompt — nothing changed.');
+          } else {
+            say('Could not sync: ' + ((r && (r.error || (r.steps || []).join(' | '))) || 'unknown error'), 'var(--red,#f87171)');
+          }
+        }).catch(function (e) {
+          say('Failed: ' + ((e && e.message) || e), 'var(--red,#f87171)');
+        }).then(function () { cBtn.disabled = false; cBtn.textContent = orig; });
+      });
+    }
+  }
+  if (zBtn && window.mimic && window.mimic.zealCheckUpdate) {
+    zBtn.style.display = '';
+    if (!zBtn.dataset.wired) {
+      zBtn.dataset.wired = '1';
+      zBtn.addEventListener('click', function () {
+        var orig = zBtn.textContent;
+        zBtn.disabled = true; zBtn.textContent = 'Checking…';
+        window.mimic.zealCheckUpdate().then(function (c) {
+          if (!c || !c.ok) { say('Could not check Zeal: ' + ((c && c.error) || 'unknown error'), 'var(--red,#f87171)'); return null; }
+          if (!c.updateAvailable) { say('✓ Zeal is current (' + (c.installedTag || c.latestTag) + ').', 'var(--green)'); return null; }
+          // Confirm before writing into the EQ folder — Zeal is a game mod and
+          // replacing it is not something to do on a single stray click.
+          if (!confirm('Install Zeal ' + c.latestTag + ' into ' + c.eqDir + '?\\n\\nEverQuest must be closed. Existing files are backed up.')) return null;
+          zBtn.textContent = 'Installing…';
+          return window.mimic.zealInstallUpdate();
+        }).then(function (r) {
+          if (!r) return;
+          if (r.ok) say('✓ Installed Zeal ' + r.tag + ' — ' + r.written + ' file(s), ' + r.backedUp + ' backed up. Restart EverQuest to load it.', 'var(--green)');
+          else say('Install failed: ' + (r.error || 'unknown error'), 'var(--red,#f87171)');
+        }).catch(function (e) {
+          say('Failed: ' + ((e && e.message) || e), 'var(--red,#f87171)');
+        }).then(function () { zBtn.disabled = false; zBtn.textContent = orig; });
+      });
+    }
   }
 }
 function renderDamageDoneCard(s) {
@@ -13387,6 +13622,9 @@ function renderOverlays(s) {
   // toggle. No inline onclick (keeps the dashboard template free of escaped
   // quotes — see the WEB_HTML escape-hazard note).
   h += '<div class="card wide"><h2>Built-in overlays</h2>';
+  // Volatile — filled by wpRefreshOverlayToggles. Kept out of the render string
+  // so the section stays byte-stable across polls (see the morphInto note).
+  h += '<div id="wpHideAllBanner"></div>';
   h += '<table style="font-size:12px"><tr><th>Overlay</th><th>State</th><th>Description</th></tr>';
   for (var i = 0; i < WP_OVERLAY_ROWS.length; i++) {
     var key = WP_OVERLAY_ROWS[i][0], label = WP_OVERLAY_ROWS[i][1], desc = WP_OVERLAY_ROWS[i][2];
@@ -13567,11 +13805,33 @@ function wpRefreshOverlayToggles() {
     window.mimic.getStatus().then(function(st){
       st = st || {};
       var on = { hud: !!st.showHud, trigger: !!st.enableTriggerTts, charm: !!st.showCharm, pet: !!st.showPets, mobinfo: !!st.showMobInfo, buffQueue: !!st.showBuffQueue, who: !!st.showWho, melody: !!st.showMelody, zeal: !!st.showZeal, threat: !!st.showThreat, chchain: !!st.showChChain, tank: !!st.showTank, exttarget: !!st.showExtTarget, command: !!st.showCommand, popraid: !!st.showPopRaid };
+      // Which cfg flag each row reads, so a HIDDEN row can be told from an OFF
+      // one. Hide-all writes every flag false, so without the snapshot the two
+      // are indistinguishable here (Uilnayar 2026-08-04).
+      var flagOf = { hud: 'showHud', trigger: 'enableTriggerTts', charm: 'showCharm', pet: 'showPets', mobinfo: 'showMobInfo', buffQueue: 'showBuffQueue', who: 'showWho', melody: 'showMelody', zeal: 'showZeal', threat: 'showThreat', chchain: 'showChChain', tank: 'showTank', exttarget: 'showExtTarget', command: 'showCommand', popraid: 'showPopRaid' };
+      var hidPrev = (st.hideAllActive && st.hideAllPrev) ? st.hideAllPrev : null;
+      var hidCount = 0;
       var btns = document.querySelectorAll('.wp-ov-toggle');
       for (var i = 0; i < btns.length; i++) {
         var b = btns[i]; var k = b.getAttribute('data-ov'); var isOn = !!on[k];
-        b.textContent = isOn ? 'ON' : 'OFF';
+        var wasOn = !isOn && !!hidPrev && !!hidPrev[flagOf[k]];
+        if (wasOn) hidCount++;
+        b.textContent = isOn ? 'ON' : (wasOn ? 'HIDDEN' : 'OFF');
         b.className = 'wp-ov-toggle' + (isOn ? ' on' : '');
+        // Amber, distinct from both the green ON and the plain OFF: this one is
+        // yours, it is just parked until you release the hide-all hotkey.
+        b.style.borderColor = wasOn ? '#f0b429' : '';
+        b.style.color       = wasOn ? '#f0b429' : '';
+        b.title = wasOn ? 'Switched ON — hidden right now by the hide-all hotkey. Releasing hide-all brings it back.' : '';
+      }
+      var hb = document.getElementById('wpHideAllBanner');
+      if (hb) {
+        hb.innerHTML = hidPrev
+          ? '<div style="font-size:12px;padding:8px 10px;background:rgba(240,180,41,0.12);border:1px solid #f0b429;border-radius:6px;margin-bottom:8px;color:#f0b429">'
+            + '<b>Hide-all is on.</b> ' + hidCount + ' overlay(s) marked <b>HIDDEN</b> are switched ON and parked &mdash; press the hide-all hotkey again (or the tray item) to bring them back. '
+            + 'Their windows are freed while hidden, so they reopen with fresh data rather than whatever was on screen before.'
+            + '</div>'
+          : '';
       }
       // Theme picker highlight — driven from Mimic status (st.overlayTheme),
       // not the render's state blob (which never carries it).
@@ -14490,6 +14750,32 @@ function renderInfo(s) {
   h += '<div>Top session: ' + (s.lifetime?.topSessionEvents||0) + ' ev / ' + (s.lifetime?.topSessionMinutes||0) + ' min</div>';
   h += '<div>Lifetime: ' + ((s.lifetime?.totalEvents||0) + s.sessionEvents) + ' ev / ' + lifetimeMin + ' min</div>';
   if (s.lifetime?.firstSeenAt) h += '<div class="dim">First run: ' + esc(s.lifetime.firstSeenAt) + '</div>';
+  h += '</div>';
+  // 🧩 Client versions — what each watched client actually has LOADED, harvested
+  // from the /zeal version output (agent 3.5.16). Deliberately distinct from the
+  // Zeal update notice, which reports what zealUpdater found ON DISK: the two
+  // disagree exactly when Zeal has been updated but EQ has not been restarted,
+  // and that is the one state where "you are up to date" is a lie.
+  //
+  // Byte-stable between polls on purpose — these values only change when someone
+  // runs the command, so no wp* placeholder is needed. Rendering a relative
+  // "2m ago" here instead of the fixed stamp would repaint #info every 2s and
+  // reset anything the user had open (dashboard rendering rules).
+  const _cv = s.clientVersions || [];
+  h += '<div class="card"><h2>🧩 Client versions</h2>';
+  if (!_cv.length) {
+    h += '<div class="dim">Nothing captured yet. Type <b>/zeal version</b> in game and it appears here — Zeal, eqw.dll and eqgame.dll builds, per character. We never send the command for you.</div>';
+  } else {
+    h += '<table>';
+    for (const c of _cv) {
+      h += '<tr><td colspan="2" style="padding-top:6px"><b>' + esc(c.character) + '</b></td></tr>';
+      if (c.zeal)   h += '<tr><td>Zeal</td><td class="num">' + esc(c.zeal) + (c.zeal_hash ? ' <span class="dim">(' + esc(c.zeal_hash) + ')</span>' : '') + '</td></tr>';
+      if (c.eqw)    h += '<tr><td>eqw.dll</td><td class="num">' + esc(c.eqw) + '</td></tr>';
+      if (c.eqgame) h += '<tr><td>eqgame.dll</td><td class="num">' + esc(c.eqgame) + '</td></tr>';
+      if (c.at)     h += '<tr><td class="dim">read</td><td class="dim num">' + esc(String(c.at).replace('T', ' ').slice(0, 19)) + '</td></tr>';
+    }
+    h += '</table>';
+  }
   h += '</div>';
   // 🩺 Raw Zeal capture — opt-in diagnostic. The control lives here, but the
   // capture itself runs in Mimic (it owns the pipe); we drive it through the
@@ -15997,6 +16283,20 @@ if (_uiStudioBtn) {
     _uiStudioBtn.style.opacity = '0.4';
     _uiStudioBtn.title = 'UI Studio is only available inside Mimic — open the Mimic dashboard window';
   }
+}
+
+// 📊 Resources — opens Mimic's Resource use window (Uilnayar 2026-08-04, "its
+// own window accessible from the tray and the dashboard"). Unlike UI Studio,
+// which dims when unavailable, this one stays HIDDEN outside Mimic: the answer
+// it gives is specifically "what do MIMIC's processes cost", which is not a
+// meaningful question in a plain browser tab, so a dimmed button would just be
+// a control that can never work.
+var _wpResourcesBtn = document.getElementById('wpResourcesBtn');
+if (_wpResourcesBtn && window.mimic && window.mimic.openResources) {
+  _wpResourcesBtn.style.display = '';
+  _wpResourcesBtn.addEventListener('click', function(){
+    try { window.mimic.openResources(); } catch (e) { void e; }
+  });
 }
 
 // Buffs & Zone per-character hide (✕) + "show all". Stored in localStorage so a
@@ -19202,7 +19502,47 @@ function startWebDashboard(port) {
       // heavy /api/state poll for a value that changes rarely).
       if (req.url === '/api/notices') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ notices: _guildNotices }));
+        // A pending Zeal update rides the SAME mail list as guild notices
+        // (Uilnayar 2026-08-03: "a notice at the top of the dashboard when zeal
+        // has an update outstanding"). Deliberately reusing this list instead of
+        // adding a banner: the mail button, unread badge and panel already
+        // exist, and WEB_HTML is the one file where a single mis-escaped
+        // character blanks the whole page — the cheapest new markup is none.
+        //
+        // Mimic owns Zeal detection (zealUpdater), so it POSTs the result to
+        // /api/zeal-update; the agent just relays what it was told.
+        const out = _guildNotices.slice();
+        if (_zealUpdate && _zealUpdate.tag) {
+          out.unshift({
+            // Derive the id from the TAG so a newer Zeal release reads as
+            // unread again. A fixed id would be dismissed once and then stay
+            // silent forever, which is exactly the failure this is meant to fix.
+            id: 900000000 + (_zealHashTag(_zealUpdate.tag) % 1000000),
+            title: `Zeal ${_zealUpdate.tag} is available`,
+            body: (_zealUpdate.installed ? `You have ${_zealUpdate.installed}. ` : '')
+                + 'Install it from Mimic Settings → Zeal (one click). '
+                + 'Zeal feeds target HP, buffs, the raid roster and every gauge-driven callout — '
+                + 'an out-of-date Zeal quietly degrades all of them.',
+            severity: 'normal',
+            created_at: _zealUpdate.at || new Date().toISOString(),
+          });
+        }
+        return res.end(JSON.stringify({ notices: out }));
+      }
+      // Mimic pushes Zeal update status here (it owns zealUpdater + the EQ dir).
+      if (req.url === '/api/zeal-update' && req.method === 'POST') {
+        const body = await _readBody(req, 8 * 1024);
+        let p = null;
+        try { p = JSON.parse(body); } catch { p = null; }
+        if (p && typeof p === 'object') {
+          _zealUpdate = p.tag
+            ? { tag: String(p.tag).slice(0, 40),
+                installed: p.installed ? String(p.installed).slice(0, 40) : null,
+                at: new Date().toISOString() }
+            : null;   // null/absent tag = up to date, clear the notice
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ ok: true }));
       }
       // #113 Extended Target "same-zone targets only" per-user pref. GET returns
       // the current value (dashboard Overlays checkbox reads it); POST sets it
@@ -23852,7 +24192,15 @@ function _reporterHeartbeatOnce() {
     // agent/mimic. Mimic stamps WOLFPACK_APP_VERSION at spawn (main.js);
     // standalone Parser.bat installs have no such env → null.
     const mimic_version = process.env.WOLFPACK_APP_VERSION || null;
-    const body = JSON.stringify({ primary_character: primary, zone, group_num, camping: _camping, has_zeal, agent_version: AGENT_VERSION, mimic_version, last_line_ms, live_character });
+    // Clock pulse — this machine's own clock, so the bot can measure how far it
+    // drifts from server time. EQ writes log timestamps with this same clock, so
+    // the offset applies to every event we report, deaths included: two installs
+    // were found running 42s and 14s slow, which is enough for a skewed
+    // observer's death report to escape the 30s dedup window and surface as a
+    // phantom second death (2026-08-02 Seru parse). Rides the existing 20s
+    // heartbeat — no new stream, no new timer.
+    const _t1 = Date.now();
+    const body = JSON.stringify({ primary_character: primary, zone, group_num, camping: _camping, has_zeal, agent_version: AGENT_VERSION, mimic_version, last_line_ms, live_character, client_now: _t1 });
     const req = mod.request({
       method: 'POST', hostname: u.hostname, port: u.port, path: u.pathname,
       headers: {
@@ -23870,6 +24218,26 @@ function _reporterHeartbeatOnce() {
         try {
           const j = JSON.parse(buf);
           _applyControlPlane(j, 'reporter-poll');   // #74 — fleet kill + version floor
+          // Four-stamp NTP offset. The bot stamps server_now inside the same
+          // handler that received us, so t2 (its receive) and t3 (its reply)
+          // collapse to one value and the classic
+          //   offset = ((t2-t1) + (t3-t4)) / 2
+          // reduces to server_now - (t1+t4)/2 — i.e. we compare the server's
+          // clock against the MIDPOINT of our own round trip, which cancels
+          // one-way latency instead of charging it to the offset.
+          if (j && Number.isFinite(Number(j.server_now))) {
+            const _t4 = Date.now();
+            const off = Math.round(Number(j.server_now) - (_t1 + _t4) / 2);
+            stats.clockOffsetMs = off;
+            // Warn once per session past a threshold well under the 30s death
+            // dedup window — at 42s a machine's death reports escape it and
+            // surface as phantom duplicates for everyone (2026-08-02).
+            if (Math.abs(off) >= 5000 && !_clockSkewWarned) {
+              _clockSkewWarned = true;
+              console.warn(`[clock] this machine is ${off > 0 ? 'BEHIND' : 'AHEAD OF'} server time by ${Math.abs(Math.round(off / 1000))}s — `
+                + 'parses, deaths and buff timings from this machine will be offset. Fix with:  w32tm /resync');
+            }
+          }
           if (j && j.roles && typeof j.roles === 'object') {
             const prevChat   = _reporterRoles.chat;
             const prevBuffs  = _reporterRoles.buffs;
@@ -23895,6 +24263,8 @@ function _reporterHeartbeatOnce() {
     req.write(body); req.end();
   } catch { _reporterFailOpen(); }
 }
+// One-shot latch so a bad clock warns once per session, not every 20s.
+let _clockSkewWarned = false;
 function startReporterHeartbeat() {
   if (_reporterHeartbeatOn) return;
   _reporterHeartbeatOn = true;
@@ -23953,8 +24323,41 @@ function startChatRelay() {
   // cadence so a slow drain doesn't double-post inside one interval.
   // 2026-06-21: cranked default 30s → 18s after the Supabase Pro upgrade
   // — more granular per-fight tank-threat detail. Original was 15s.
-  const _threatSnapMs    = parseInt(process.env.WP_THREAT_SNAPSHOT_MS, 10) || 18_000;
-  const _threatSnapFloor = Math.max(1000, _threatSnapMs - 1000);
+  // 2026-08-03: 18s → 6s (one EQ tick). Uilnayar: an accurate picture of the
+  // fight as it happens matters more than the historical record. The cost is
+  // bounded and lands almost entirely in the 7-day hot window, because the
+  // midnight job already downsamples anything older than 7 days to 1/min — so
+  // the aged tail is the SAME size at any cadence. Measured at 18s: 69.6k rows
+  // / ~62 MB in that window, 399 MB total; 6s puts the window near 187 MB and
+  // the table near 525 MB. Well inside the ingest budget too — threat_snapshot
+  // allows 120/min per uploader (_BUDGET_DEFAULTS), and 6s is 10/min.
+  // Dial without a release via WP_THREAT_SNAPSHOT_MS.
+  // TUNABLE MID-RAID (Uilnayar 2026-08-03: "go more frequent when we're in the
+  // middle of fights and less frequent in downtime"). The env var alone was
+  // read once at startup and baked into setInterval's period, so changing it
+  // meant restarting every raider's agent — useless in the moment. So: tick on
+  // a fixed short interval and gate on elapsed time against a cadence read
+  // LIVE from the officer tuning map, which rides the existing overlay-tuning
+  // poll (~90s fleet-wide, faster on the multiplexed poll). No new stream, no
+  // new timer, no release to change it.
+  //
+  // Clamped deliberately. The ingest budget allows 120/min per uploader
+  // (_BUDGET_DEFAULTS.threat_snapshot), i.e. one per 500ms; a 2s floor is
+  // 30/min and keeps 4x headroom, so a fat-fingered `100` can't turn 40 agents
+  // into a hammer. The env var remains the compiled default for anyone running
+  // the agent standalone.
+  //
+  // Note downtime is ALREADY free: this uploader early-returns unless there is
+  // a live un-flushed encounter, so between pulls it sends nothing at all. The
+  // knob is about resolution DURING a fight.
+  const THREAT_SNAP_TICK_MS = 1_000;
+  const THREAT_SNAP_MIN_MS  = 2_000;
+  const THREAT_SNAP_MAX_MS  = 60_000;
+  const _threatSnapEnvMs = parseInt(process.env.WP_THREAT_SNAPSHOT_MS, 10) || 6_000;
+  function _threatSnapCadenceMs() {
+    const t = tuneNum('threat_snapshot_ms', _threatSnapEnvMs);
+    return Math.max(THREAT_SNAP_MIN_MS, Math.min(THREAT_SNAP_MAX_MS, t));
+  }
   let _lastSnapAt = 0;
   setInterval(() => {
     if (!_uploadOpts || !_uploadOpts.botUrl || !_uploadOpts.token) return;
@@ -23962,7 +24365,7 @@ function startChatRelay() {
     if (!et || !et.perPlayer || Object.keys(et.perPlayer).length === 0) return;
     if (et.flushedAt) return; // fight already wrapped up
     const now = Date.now();
-    if (now - _lastSnapAt < _threatSnapFloor) return;
+    if (now - _lastSnapAt < _threatSnapCadenceMs()) return;
     _lastSnapAt = now;
     // pick the first watched character as the uploader; fall back to "?".
     let uploader = "?";
@@ -23973,13 +24376,39 @@ function startChatRelay() {
     enqueueUpload('threat_snapshot', {
       agent_version: AGENT_VERSION,
       uploader,
-      boss_name:   et.bossName || null,
+      // et.bossName is ALWAYS null here, by construction. It is assigned in
+      // exactly two places — the boss-death handler (which immediately flushes)
+      // and inside flush() itself — while this uploader refuses to run once the
+      // fight has flushed (see the flushedAt guard above). The two windows are
+      // mutually exclusive, so every snapshot ever written carried boss_name
+      // NULL: 463,505 of 463,505 as of 2026-08-03, which orphaned the only
+      // per-fight time series we keep.
+      // et.targetName is the fallback the snapshot already builds for exactly
+      // this ("the catalog-matched boss when known, else the most-damaged
+      // defender") and IS populated mid-fight — verified on the golden fixture,
+      // where "Lord of Ire" is known from event 12 of 58.
+      boss_name:   et.bossName || et.targetName || null,
+      // THIS uploader's own Zeal target at the moment of the sample — distinct
+      // from boss_name, which is the FIGHT (the most-damaged defender). A
+      // healer is on their heal target, an off-tank on an add, a slower on the
+      // next mob. Carried here so the damage curve and who-was-on-what live on
+      // the same row without a join. target_observations (bot-side) is the
+      // durable, all-raiders view; this is the in-fight, per-sample one.
+      target_name: _zealTargetForChar(String(uploader).toLowerCase()),
       started_at:  et.startedAt ? new Date(et.startedAt).toISOString() : null,
       snapshot_at: new Date(now).toISOString(),
       per_player:  et.perPlayer,
       total:       Object.values(et.perPlayer).reduce((a, p) => a + ((p.swing||0)+(p.proc||0)+(p.spell||0)+(p.heal||0)), 0),
     });
-  }, _threatSnapMs);
+    // Fixed 1s TICK, not the cadence: the cadence is read per-tick inside the
+    // body (_threatSnapCadenceMs) so an officer's mid-raid change takes effect
+    // within a second. A setInterval cannot change its own period, so the tick
+    // has to be the fast one and the gate has to be in the body.
+    // (v3.5.5 renamed the old `_threatSnapMs` const to `_threatSnapEnvMs` and
+    // missed THIS reference — which is a boot-time ReferenceError, not a
+    // degraded feature: startChatRelay() runs unguarded in watch mode, so the
+    // agent died on startup for every beta build 3.5.5 → 3.5.14.)
+  }, THREAT_SNAP_TICK_MS);
 }
 
 // ── Fun-event detection ─────────────────────────────────────────────────────
@@ -25239,6 +25668,58 @@ let _overlayTuning = {};
 // wide within ~2 minutes. Bot side: automatic on the raid schedule, with a
 // flag_raid_hold=1/0 officer override in /admin/overlays.
 let _raidHold = false;
+// Pending Zeal update, pushed by Mimic (which owns zealUpdater + the EQ dir).
+// Surfaced through the existing Mimic Mail list — see the /api/notices handler.
+let _zealUpdate = null;   // { tag, installed, at } | null
+// What is ACTUALLY LOADED in the client, harvested from `/zeal version` output.
+// Distinct from _zealUpdate.installed, which is what zealUpdater found ON DISK:
+// the two disagree exactly when someone has updated Zeal but not restarted EQ,
+// which is the state where "you're up to date" is a lie and nobody can tell.
+// Also the only place we learn eqgame.dll / eqw.dll builds outside a crash zip
+// (_parseCrashReason), so a client-version question stops requiring a crash.
+//   [Tue Aug 04 09:34:08 2026] Zeal version: 1.4.3 (23c766f)
+//   [Tue Aug 04 09:34:08 2026] eqw.dll version: 1.0.1 (Jan 20 2026 22:09:32)
+//   [Tue Aug 04 09:34:08 2026] eqgame.dll version: 7 (Jul 7 2026 09:14:03)
+// Per watched character, since one box can run several clients at once.
+const _clientVersions = new Map();   // charLower → { zeal, zeal_hash, eqw, eqgame, at }
+// Anchored past the EQ timestamp — patterns here match the RAW line, so a bare
+// ^ would anchor before "[Tue Aug…" and never fire (the #190 trap).
+const _ZEAL_VER_RX   = /\]\s+Zeal version:\s*([\w.]+)(?:\s*\(([^)]+)\))?/i;
+const _EQW_VER_RX    = /\]\s+eqw\.dll version:\s*(.+?)\s*$/i;
+const _EQGAME_VER_RX = /\]\s+eqgame\.dll version:\s*(.+?)\s*$/i;
+function noteClientVersionLine(line, character) {
+  if (!line || !character) return false;
+  // Cheap gate first — this runs on every log line.
+  if (line.indexOf(' version: ') === -1) return false;
+  const key = String(character).toLowerCase();
+  const rec = _clientVersions.get(key) || {};
+  let hit = false;
+  let m = line.match(_ZEAL_VER_RX);
+  if (m) { rec.zeal = m[1]; rec.zeal_hash = m[2] || null; hit = true; }
+  if (!hit && (m = line.match(_EQW_VER_RX)))    { rec.eqw    = m[1]; hit = true; }
+  if (!hit && (m = line.match(_EQGAME_VER_RX))) { rec.eqgame = m[1]; hit = true; }
+  if (!hit) return false;
+  const ts = parseEqTimestamp(line);
+  rec.at = ts ? ts.toISOString() : new Date().toISOString();
+  _clientVersions.set(key, rec);
+  return true;
+}
+// Snapshot for the dashboard + /api/state. Newest-first so the box the user is
+// actually playing leads.
+function clientVersionsSnapshot() {
+  const out = [];
+  for (const [char, v] of _clientVersions) out.push({ character: char, ...v });
+  out.sort((a, b) => String(b.at || '').localeCompare(String(a.at || '')));
+  return out;
+}
+// Cheap stable hash so the synthetic notice id changes with the TAG. A fixed id
+// would be dismissed once and never resurface for a later Zeal release.
+function _zealHashTag(tag) {
+  let h = 0;
+  const s = String(tag || '');
+  for (let i = 0; i < s.length; i++) { h = ((h << 5) - h + s.charCodeAt(i)) | 0; }
+  return Math.abs(h);
+}
 // Guild notices ("Mimic Mail") — officer broadcasts from /admin/notices, served
 // by the bot alongside overlay tuning (same poll, zero extra timers). Shown as
 // a pulsing ✉ in the dashboard header; critical ones ALSO post to Discord
@@ -28299,13 +28780,27 @@ function _cancelTimer(id) {
 // e.g. a healer whose log carries no combat for the boss) is left to expire
 // naturally — today's behavior. EXACT case-insensitive name match so a
 // same-named add's death can't clear an unrelated boss's timer.
+//
+// "dies." is NOT accepted here, for the same reason parseEvent stopped
+// accepting it (v3.5.11): `<Name> dies.` is the FEIGN DEATH emote, not a death.
+// This site was missed by that fix and matters more than it looks, because THREE
+// consumers read it — and the two beyond the timer cancel act on a NAME:
+//   • _cancelTimersOnMobDeath — a countdown whose target is a PLAYER (a
+//     "<name>, get out" callout) was cancelled when that player feigned. SKs
+//     and necros are exactly the classes that both feign and get called out.
+//   • _mobTracksOnDeathLine → _clearNameObservations — wipes that name's
+//     buff-landing and slow buckets. A feigning knight silently reset their own
+//     buff tracking mid-fight.
+// (_checkBossSpawnChain is unaffected in practice: precursors are mobs.)
+// The comment on _mobTracksOnDeathLine claiming "SLAIN entity only" was never
+// true of this matcher; with `died.` it is at least true of real deaths.
 const _DEATH_SLAIN_BY_RX = /\]\s+(.+?)\s+has been slain by\s+/i;
 const _DEATH_YOU_SLEW_RX = /\]\s+You have slain\s+(.+?)[!.]*\s*$/i;
-const _DEATH_DIED_RX     = /\]\s+(.+?)\s+die[ds]\.\s*$/i;
+const _DEATH_DIED_RX     = /\]\s+(.+?)\s+died\.\s*$/i;
 function _deadMobNameFromLine(line) {
   if (!line) return null;
   const hasSlain = line.indexOf('slain') !== -1;
-  const hasDied  = /\bdie[ds]\./i.test(line);
+  const hasDied  = /\bdied\./i.test(line);
   if (!hasSlain && !hasDied) return null;
   let m = hasSlain ? line.match(_DEATH_SLAIN_BY_RX) : null;
   if (m) return m[1].trim().replace(/[!.]+$/, '');
@@ -30741,6 +31236,11 @@ async function main() {
         // same slain/death line. Local-only, live tail.
         try { _cancelTimersOnMobDeath(line); } catch { /* never let a bad line break the tail */ }
         try { const _dts = parseEqTimestamp(line); _checkBossSpawnChain(line, _dts ? _dts.getTime() : Date.now()); } catch { void 0; }
+        // `/zeal version` output → what's actually LOADED in this client. Runs
+        // on the raw line before any filter because none of the keep patterns
+        // describe it, and it gates on a substring first so the cost on a
+        // non-matching line is one indexOf.
+        try { noteClientVersionLine(line, b.character); } catch { void 0; }
         // #56 — a mob death closes one same-name serial track; on K→0 (the last
         // instance died) it clears that name's stale debuff/slow/HP buckets so the
         // next same-name mob starts clean (the debuff-bleed fix). Same trusted
@@ -30900,6 +31400,7 @@ module.exports = {
   _fireLog, _triggerJournal, _triggerLastFire,
   // #142 buster/spawn-chain timers — exported for the scratchpad fixture.
   _startTimer, _activeTimersSnapshot, _cancelTimersOnMobDeath, _deadMobNameFromLine,
+  noteClientVersionLine, clientVersionsSnapshot,
   _checkBossSpawnChain, _checkTankBuster, _armBossCountdown, BOSS_SPAWN_CHAINS,
   _checkAoeDance, AOE_DANCE,   // #36 AoE-dance callouts — exported for the scratchpad fixture
   // Damage-taken audio alert — exported for the cooldown / default-off harness.

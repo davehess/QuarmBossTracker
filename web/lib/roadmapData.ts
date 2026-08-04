@@ -37,6 +37,27 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'mimic-230-quick-setup-save-memory',
+    title: '🧹 Quick Setup and Save Memory Update',
+    version: 'Mimic 2.3.0 · Agent 3.5.29',
+    date: '2026-08-04',
+    headline: 'Mimic used to open eleven windows whether you used them or not — around a gigabyte of them. Now it only opens the overlays you actually run, and closes them again when EverQuest is not up. Setup got faster too: the Settings page that used to hang for twenty seconds opens straight away.',
+    features: [
+      { name: '💾 Only the overlays you use', blurb: 'Every overlay is its own window, and every window costs memory whether it is on screen or not. Mimic now opens one only when you have it switched on, and hands the memory back the moment you switch it off. With EverQuest closed it keeps almost nothing running.' },
+      { name: '🙈 Hide-all no longer looks like off', blurb: 'The hide-overlays hotkey used to flip every overlay to OFF, so afterwards you could not tell what you had turned off yourself from what the hotkey was holding. The Overlays page now shows those as HIDDEN, with a note saying how many are coming back. They also reopen with fresh data instead of whatever was frozen on screen before.' },
+      { name: '⚡ Settings opens immediately', blurb: 'Hunting for your EverQuest folder could stall Mimic for twenty seconds if you had a network or backup drive attached — it was waiting on a drive that was asleep. Mimic now skips drives that are not local, remembers folders that turned out to be dead ends, and never re-reads a log file it has already identified.' },
+      { name: '🛡️ One-click Windows fixes', blurb: 'Buttons on the dashboard and in Settings to add Windows Defender exceptions for your EverQuest and Mimic folders, install or update Zeal, and fix a drifting Windows clock. Each asks for permission once and tells you exactly what it did.' },
+      { name: '📊 An honest resource readout', blurb: 'The Resource use window names every process — DPS HUD, Charm tracker, Dashboard — instead of ten identical rows, and explains why its memory figure differs from Task Manager rather than pretending to match. There is a checkbox if you want it to match exactly.' },
+    ],
+    fixes: [
+      'Mimic could track the wrong EverQuest. Every EverQuest client uses the same program name, so a second install — EQLegends, a Live client — counted as yours: overlays over the wrong game, and closing it looked like closing Quarm. Mimic now checks which folder the running game came from.',
+      'The Windows Defender and clock buttons reported "cancelled at the permission prompt" even when you had approved it and the fix had worked.',
+      'The one-click folder scan no longer hides a second EverQuest install it found.',
+      'Beta updates that were ready would not install when you closed EverQuest unless Mimic happened to notice at the right moment.',
+      'A raid review could post to the thread again on every redeploy — eleven copies in one night at worst.',
+    ],
+  },
+  {
     key: 'dead-triggers-190',
     title: '🔇 37 callouts that were never going to fire',
     version: 'Web 1.1.4',

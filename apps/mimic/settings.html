@@ -180,6 +180,53 @@
   <div class="row"><input type="radio" name="tells" value="local" id="tells_local"><label for="tells_local">Local only — show on this machine</label></div>
   <div class="row"><input type="radio" name="tells" value="synced" id="tells_synced"><label for="tells_synced">Synced (encrypted) — read on wolfpack.quest, key only you hold</label></div>
 
+  <h2>Resource use</h2>
+  <div class="hint" style="margin-bottom:8px">
+    Live CPU and memory for every Mimic process on this machine, measured here and
+    never uploaded. It opens in its own window so you can leave it next to
+    EverQuest while you play — which is when the question actually comes up.
+  </div>
+  <button id="openResourcesBtn" type="button"
+    style="margin-top:4px;background:#21262d;color:#c9d1d9;border:1px solid #30363d;border-radius:6px;padding:6px 13px;cursor:pointer;font-family:inherit;font-size:12px">
+    📊 Open Resource use…
+  </button>
+
+  <h2>Windows Defender</h2>
+  <div class="hint" style="margin-bottom:8px">
+    Real-time scanning inspects every file open, and both halves of this are
+    file-heavy: EverQuest's logs are append-only and grow into the gigabytes, and
+    Mimic re-reads its spell/item catalogs on each start. Excluding those two
+    folders is the biggest single speed-up available on Windows.
+    <br><br>
+    <b>This is opt-in and never silent.</b> You will see the exact folders below,
+    and Windows will ask for permission once. Nothing else is touched — Defender
+    keeps protecting the rest of your machine.
+  </div>
+  <div id="defenderPaths" class="hint" style="margin-bottom:8px;font-family:ui-monospace,Consolas,monospace">checking…</div>
+  <button id="defenderBtn" type="button"
+    style="margin-top:2px;background:#21262d;color:#c9d1d9;border:1px solid #30363d;border-radius:6px;padding:6px 13px;cursor:pointer;font-family:inherit;font-size:12px">
+    🛡 Add Windows Defender EQ Exceptions
+  </button>
+  <div id="defenderResult" class="hint" style="margin-top:6px"></div>
+
+  <h2>Windows clock</h2>
+  <div class="hint" style="margin-bottom:8px">
+    Every parse timestamp comes from this machine's clock, so a clock that drifts
+    puts your deaths, casts and kills at times nobody else saw — and the raid's
+    merged numbers get it wrong for everyone, not just you.
+    <br><br>
+    This does <b>not</b> just set the time once. We have watched that drift back
+    within two days. It sets the Windows Time service to start automatically,
+    starts it, and resyncs — fixing the reason the drift returns. Windows will
+    ask for permission once.
+  </div>
+  <div id="clockState" class="hint" style="margin-bottom:8px;font-family:ui-monospace,Consolas,monospace">checking…</div>
+  <button id="clockBtn" type="button"
+    style="margin-top:2px;background:#21262d;color:#c9d1d9;border:1px solid #30363d;border-radius:6px;padding:6px 13px;cursor:pointer;font-family:inherit;font-size:12px">
+    🕐 Fix Windows clock sync
+  </button>
+  <div id="clockResult" class="hint" style="margin-top:6px"></div>
+
   <div>
     <button id="save">Save</button>
   </div>
@@ -872,5 +919,126 @@
       }
     });
   }
+</script>
+
+<script>
+  // ── Resource use ──────────────────────────────────────────────────────────
+  // The panel itself moved to its OWN WINDOW (resources.html) on 2026-08-04 so it can
+  // be left open beside EQ while you play — which is when "is Mimic costing me
+  // anything?" actually gets asked. This is just the way in.
+  //
+  // Deliberately NOT a second copy of the rendering code: two implementations of
+  // the same table would drift, and this was already the harder of the two to
+  // reach (three sections down a form with a Save button).
+  (function () {
+    var btn = document.getElementById('openResourcesBtn');
+    if (!btn) return;
+    // Older Mimic shells have no openResources bridge — hide rather than offer
+    // a button that does nothing.
+    if (!(window.mimic && window.mimic.openResources)) { btn.style.display = 'none'; return; }
+    btn.addEventListener('click', function () {
+      try { window.mimic.openResources(); } catch (e) { void e; }
+    });
+  })();
+
+  // ── Windows Defender exclusions ───────────────────────────────────────────
+  // Shows the exact folders BEFORE asking, and marks the ones Windows already
+  // excludes — so a user can see this is scoped to EQ + Mimic and nothing else.
+  (function () {
+    var list = document.getElementById('defenderPaths');
+    var btn  = document.getElementById('defenderBtn');
+    var out  = document.getElementById('defenderResult');
+    if (!list || !btn) return;
+    if (!(window.mimic && window.mimic.defenderStatus)) {
+      list.textContent = '';
+      btn.style.display = 'none';
+      return;
+    }
+    function esc(t){ return String(t == null ? '' : t).replace(/[&<>"]/g, function (c) {
+      return ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' })[c]; }); }
+    function refresh() {
+      window.mimic.defenderStatus().then(function (s) {
+        if (!s || !s.paths || !s.paths.length) {
+          list.textContent = 'No folders to exclude yet — set your EverQuest folder above first.';
+          btn.disabled = true;
+          return;
+        }
+        btn.disabled = false;
+        var allDone = s.ok && s.paths.every(function (p) { return p.excluded; });
+        list.innerHTML = s.paths.map(function (p) {
+          var mark = !s.ok ? '·' : (p.excluded ? '<span style="color:#56d364">✓</span>' : '<span style="color:#f6c365">+</span>');
+          return mark + ' ' + esc(p.path) + ' <span style="opacity:.6">— ' + esc(p.why) + '</span>';
+        }).join('<br>');
+        if (allDone) {
+          btn.textContent = '🛡 Already excluded — re-apply anyway';
+        }
+      }).catch(function () { list.textContent = 'Could not read Defender settings.'; });
+    }
+    refresh();
+    btn.addEventListener('click', function () {
+      var orig = btn.textContent;
+      btn.disabled = true; btn.textContent = 'Waiting for Windows permission…';
+      if (out) out.textContent = '';
+      window.mimic.defenderAddExclusions().then(function (r) {
+        if (r && r.ok) {
+          if (out) out.innerHTML = '<span style="color:#56d364">✓ Added ' + (r.added || []).length + ' exclusion(s).</span>';
+        } else if (r && r.cancelled) {
+          if (out) out.innerHTML = '<span style="opacity:.8">' + esc((r && r.error) || 'Cancelled — nothing was changed.') + '</span>';
+        } else {
+          var msg = (r && (r.error || (r.failed || []).join('; '))) || 'unknown error';
+          if (out) out.innerHTML = '<span style="color:#f87171">Could not add: ' + esc(msg) + '</span>';
+        }
+      }).catch(function (e) {
+        if (out) out.innerHTML = '<span style="color:#f87171">Failed: ' + esc(e && e.message) + '</span>';
+      }).then(function () {
+        btn.disabled = false; btn.textContent = orig;
+        refresh();
+      });
+    });
+  })();
+
+  // ── Windows clock sync ────────────────────────────────────────────────────
+  // Reports the SERVICE state, not just "what time is it" — a machine can show
+  // the right time this second and still be drifting because w32time is
+  // Disabled and never runs. That distinction is the whole point of the button.
+  (function () {
+    var state = document.getElementById('clockState');
+    var btn   = document.getElementById('clockBtn');
+    var out   = document.getElementById('clockResult');
+    if (!state || !btn) return;
+    if (!(window.mimic && window.mimic.clockStatus)) { state.textContent = ''; btn.style.display = 'none'; return; }
+    function esc(t){ return String(t == null ? '' : t).replace(/[&<>"]/g, function (c) {
+      return ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' })[c]; }); }
+    function refresh() {
+      window.mimic.clockStatus().then(function (s) {
+        if (!s || !s.ok) { state.textContent = (s && s.error) || 'Could not read the Windows Time service.'; return; }
+        var good = s.running && s.automatic;
+        state.innerHTML =
+          (good ? '<span style="color:#56d364">✓</span>' : '<span style="color:#f6c365">!</span>')
+          + ' Windows Time service: <b>' + esc(s.status || '?') + '</b>, starts <b>' + esc(s.startType || '?') + '</b>'
+          + (s.source ? '<br><span style="opacity:.6">source: ' + esc(s.source) + '</span>' : '')
+          + (good ? '' : '<br><span style="opacity:.8">That is why the clock drifts back after you correct it.</span>');
+      }).catch(function () { state.textContent = 'Could not read the Windows Time service.'; });
+    }
+    refresh();
+    btn.addEventListener('click', function () {
+      var orig = btn.textContent;
+      btn.disabled = true; btn.textContent = 'Waiting for Windows permission…';
+      if (out) out.textContent = '';
+      window.mimic.clockResync().then(function (r) {
+        if (r && r.ok) {
+          if (out) out.innerHTML = '<span style="color:#56d364">✓ Clock synced and the service is set to keep it synced.</span>'
+            + (r.source ? '<br><span style="opacity:.6">source: ' + esc(r.source) + '</span>' : '');
+        } else if (r && r.cancelled) {
+          if (out) out.innerHTML = '<span style="opacity:.8">' + esc((r && r.error) || 'Cancelled — nothing was changed.') + '</span>';
+        } else {
+          if (out) out.innerHTML = '<span style="color:#f87171">Could not sync: '
+            + esc((r && (r.error || (r.steps || []).join(' | '))) || 'unknown error') + '</span>';
+        }
+      }).catch(function (e) {
+        if (out) out.innerHTML = '<span style="color:#f87171">Failed: ' + esc(e && e.message) + '</span>';
+      }).then(function () { btn.disabled = false; btn.textContent = orig; refresh(); });
+    });
+  })();
 </script>
 </body></html>

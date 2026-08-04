@@ -1461,6 +1461,30 @@
       "keep": false,
       "trigger_visible": true,
       "event": null
+    },
+    {
+      "i": 49,
+      "line": "[Sun Aug 02 21:10:48 2026] You are bleeding to death!",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T01:10:48.000Z",
+        "type": "death_confirm",
+        "defender": null,
+        "attacker": null
+      }
+    },
+    {
+      "i": 50,
+      "line": "[Sun Aug 02 21:10:49 2026] Returning to home point, please wait...",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T01:10:49.000Z",
+        "type": "death_confirm",
+        "defender": null,
+        "attacker": null
+      }
     }
   ]
 }
