@@ -983,7 +983,7 @@
         if (r && r.ok) {
           if (out) out.innerHTML = '<span style="color:#56d364">✓ Added ' + (r.added || []).length + ' exclusion(s).</span>';
         } else if (r && r.cancelled) {
-          if (out) out.innerHTML = '<span style="opacity:.8">Cancelled — nothing was changed.</span>';
+          if (out) out.innerHTML = '<span style="opacity:.8">' + esc((r && r.error) || 'Cancelled — nothing was changed.') + '</span>';
         } else {
           var msg = (r && (r.error || (r.failed || []).join('; '))) || 'unknown error';
           if (out) out.innerHTML = '<span style="color:#f87171">Could not add: ' + esc(msg) + '</span>';
@@ -1030,7 +1030,7 @@
           if (out) out.innerHTML = '<span style="color:#56d364">✓ Clock synced and the service is set to keep it synced.</span>'
             + (r.source ? '<br><span style="opacity:.6">source: ' + esc(r.source) + '</span>' : '');
         } else if (r && r.cancelled) {
-          if (out) out.innerHTML = '<span style="opacity:.8">Cancelled — nothing was changed.</span>';
+          if (out) out.innerHTML = '<span style="opacity:.8">' + esc((r && r.error) || 'Cancelled — nothing was changed.') + '</span>';
         } else {
           if (out) out.innerHTML = '<span style="color:#f87171">Could not sync: '
             + esc((r && (r.error || (r.steps || []).join(' | '))) || 'unknown error') + '</span>';

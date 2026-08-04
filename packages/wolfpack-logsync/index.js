@@ -12217,7 +12217,7 @@ function wpWireFixerButtons(s) {
         dBtn.disabled = true; dBtn.textContent = 'Waiting for Windows permission…';
         window.mimic.defenderAddExclusions().then(function (r) {
           if (r && r.ok) say('✓ Excluded ' + (r.added || []).length + ' folder(s) from Windows Defender: ' + (r.added || []).join(', '), 'var(--green)');
-          else if (r && r.cancelled) say('Cancelled at the Windows permission prompt — nothing changed.');
+          else if (r && r.cancelled) say((r && r.error) || 'Cancelled at the Windows permission prompt — nothing changed.');
           else say('Could not add exclusions: ' + ((r && (r.error || (r.failed || []).join('; '))) || 'unknown error'), 'var(--red,#f87171)');
         }).catch(function (e) {
           say('Failed: ' + ((e && e.message) || e), 'var(--red,#f87171)');
@@ -12251,7 +12251,7 @@ function wpWireFixerButtons(s) {
               + (r.source ? ' (source: ' + r.source + ')' : '')
               + '. The drift reading updates within a minute.', 'var(--green)');
           } else if (r && r.cancelled) {
-            say('Cancelled at the Windows permission prompt — nothing changed.');
+            say((r && r.error) || 'Cancelled at the Windows permission prompt — nothing changed.');
           } else {
             say('Could not sync: ' + ((r && (r.error || (r.steps || []).join(' | '))) || 'unknown error'), 'var(--red,#f87171)');
           }

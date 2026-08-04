@@ -6965,36 +6965,43 @@ async function _runElevatedPs(tag, buildScript) {
     const { execFile } = require('child_process');
     try { fs.unlinkSync(outFile); } catch { /* not there — fine */ }
     fs.writeFileSync(psFile, buildScript(outFile), 'utf8');
-    // Capture the ELEVATED child's own output too. Without this we only see the
-    // launcher's stderr, so a script that ran but failed inside (no write
-    // permission on the result path, a cmdlet missing, Defender policy blocking
-    // Add-MpPreference) is indistinguishable from a prompt that was declined.
-    const errFile = path.join(tmpDir, `wolfpack-${tag}-stderr.txt`);
-    const logFile = path.join(tmpDir, `wolfpack-${tag}-stdout.txt`);
-    try { fs.unlinkSync(errFile); } catch { /* */ }
-    try { fs.unlinkSync(logFile); } catch { /* */ }
+    // NO -RedirectStandardOutput/-RedirectStandardError here, however much we
+    // want the elevated child's output: those live in Start-Process's DIRECT
+    // parameter set and -Verb lives in the ShellExecute one. They are mutually
+    // exclusive, and combining them throws "Parameter set cannot be resolved
+    // using the specified named parameters" — which is exactly the regression
+    // 3.5.25 shipped while trying to improve diagnostics. The script captures
+    // its own errors into the result JSON instead (see the callers).
     const run = await new Promise((resolve) => {
       execFile('powershell.exe',
         ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command',
          'Start-Process powershell.exe -Verb RunAs -Wait -WindowStyle Hidden ' +
-         `-RedirectStandardError ${_psq(errFile)} -RedirectStandardOutput ${_psq(logFile)} ` +
          `-ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File',${_psq(psFile)}`],
         { timeout: 180000, windowsHide: true },
-        (err, stdout, stderr) => {
-          let childErr = '';
-          try { childErr = fs.readFileSync(errFile, 'utf8'); } catch { /* none */ }
-          try { fs.unlinkSync(errFile); } catch { /* */ }
-          try { fs.unlinkSync(logFile); } catch { /* */ }
-          resolve({
-            code: err ? (err.code || 1) : 0,
-            out: String(stdout || '').trim(),
-            err: [String(stderr || '').trim(), String(childErr || '').trim(),
-                  (err && err.message) || ''].filter(Boolean).join(' | '),
-          });
-        });
+        (err, stdout, stderr) => resolve({
+          code: err ? (err.code || 1) : 0,
+          out: String(stdout || '').trim(),
+          err: [String(stderr || '').trim(), (err && err.message) || ''].filter(Boolean).join(' | '),
+        }));
     });
+    // THE BUG (Uilnayar 2026-08-04: "I approved the UAC prompts", and still got
+    // told it was cancelled). Windows PowerShell 5.1 — which is what
+    // powershell.exe is — ALWAYS writes a UTF-8 BOM with `-Encoding UTF8`, and
+    // there is no utf8NoBOM in 5.1. JSON.parse throws on a leading U+FEFF, so a
+    // result file that was written perfectly read back as "no result", which we
+    // then reported as a declined prompt.
+    //
+    // The elevated script had in fact run and the exclusions were applied; only
+    // the reporting was broken. Strip the BOM, and trim, before parsing.
     let result = null;
-    try { result = JSON.parse(fs.readFileSync(outFile, 'utf8')); } catch { /* none written */ }
+    let rawOut = null;
+    try { rawOut = fs.readFileSync(outFile, 'utf8').replace(/^\uFEFF/, '').trim(); } catch { /* none written */ }
+    if (rawOut) {
+      try { result = JSON.parse(rawOut); }
+      catch (e) {
+        appendAgentLog(`[${tag}] result file present but unparseable: ${e && e.message} :: ${rawOut.slice(0, 200)}\n`);
+      }
+    }
     try { fs.unlinkSync(psFile); } catch { /* */ }
     try { fs.unlinkSync(outFile); } catch { /* */ }
     if (!result) {
