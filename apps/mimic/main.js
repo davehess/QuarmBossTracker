@@ -6809,6 +6809,40 @@ ipcMain.handle('restart-to-update', () => {
   try { autoUpdater && autoUpdater.quitAndInstall(true, true); } catch (e) { console.warn('[updater] quitAndInstall failed', e); }
   return true;
 });
+// Real resource numbers, not a promise.
+//
+// Raiders quit Mimic between sessions to save processing (Uilnayar 2026-08-03),
+// and the honest answer to "does it cost anything?" is a measurement they can
+// take on their OWN machine with their OWN overlay set — not a reassurance from
+// us. Electron's app.getAppMetrics() reports per-process CPU and working set for
+// the main process, every overlay renderer, and the GPU/utility helpers; the
+// agent runs as a separate child so we add it explicitly.
+//
+// percentCPUUsage is a share of ONE core sampled since the previous call, so the
+// first reading after a cold start reads high — the renderer discards sample #1.
+ipcMain.handle('app-metrics', () => {
+  const out = { at: Date.now(), eqRunning: _eqRunning, procs: [], agent: null };
+  try {
+    for (const m of app.getAppMetrics()) {
+      out.procs.push({
+        pid:  m.pid,
+        type: m.type || 'unknown',
+        // serviceName/name disambiguate the several "Utility" rows.
+        name: m.name || m.serviceName || null,
+        cpu:  m.cpu ? Number(m.cpu.percentCPUUsage) || 0 : 0,
+        // workingSetSize is KB on every platform electron supports.
+        memMb: m.memory ? Math.round((m.memory.workingSetSize || 0) / 1024) : 0,
+      });
+    }
+  } catch { /* metrics unavailable — the card renders what it has */ }
+  // The agent is a spawned node process, so it is NOT in getAppMetrics().
+  try { if (agentProc && agentProc.pid) out.agent = { pid: agentProc.pid }; } catch { /* */ }
+  out.totalCpu   = Math.round(out.procs.reduce((a, p) => a + p.cpu, 0) * 10) / 10;
+  out.totalMemMb = out.procs.reduce((a, p) => a + p.memMb, 0);
+  out.windows    = out.procs.filter(p => p.type === 'Tab' || p.type === 'Renderer').length;
+  return out;
+});
+
 ipcMain.handle('get-agent-log-tail', (_e, lines) => {
   const n = Math.max(1, Math.min(500, lines || 80));
   return logTail.slice(-n).join('');

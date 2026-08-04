@@ -317,6 +317,9 @@ contextBridge.exposeInMainWorld('mimic', {
   getAgentPort:  () => ipcRenderer.invoke('get-agent-port'),
   eqSetupForMe:  () => ipcRenderer.invoke('eq-setup-for-me'),
   relaunchAgent: () => ipcRenderer.invoke('relaunch-agent'),
+  // Live per-process CPU + memory, so "how much does Mimic cost?" is answered by
+  // a measurement on the user's own machine instead of a claim from us.
+  appMetrics:    () => ipcRenderer.invoke('app-metrics'),
   onAgentPort:   (cb) => ipcRenderer.on('agent-port', (_e, port) => cb(port)),
 
   // Runtime status — also pushed via onStatus when it changes.
