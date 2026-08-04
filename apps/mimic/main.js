@@ -548,10 +548,66 @@ function _firstLineIsEqWelcome(filePath) {
 // eqlog_*_pq.proj stem (rotation / backup) pass only when line 1 is the EQ
 // welcome signature — so renamed logs are caught without tailing arbitrary
 // eqlog_-prefixed junk.
+// ── Persistent verdict cache (Uilnayar 2026-08-04) ──────────────────────────
+// "we should be able to track the previous last updated dates on those files
+// and file size to not interpret them again."
+//
+// Right. The expensive half of this scan is _firstLineIsEqWelcome — an
+// open+read+close per non-canonical candidate — and it re-ran from scratch on
+// EVERY launch, for files whose answer cannot have changed. EQ logs are
+// APPEND-ONLY: once line 1 is the welcome banner it stays the welcome banner
+// forever, no matter how large the file grows. Re-sniffing a 1.4 GB log to
+// re-learn what we already knew is pure waste.
+//
+// So the verdict is cached to disk keyed on (size, mtime), and a hit costs ONE
+// statSync instead of three syscalls plus a content read.
+//
+// Invalidation is deliberately asymmetric, because append-only is the whole
+// premise: a file that GREW is still the same file, so the verdict stands. A
+// file that SHRANK was replaced or truncated, so we re-sniff. That is the only
+// direction that can change the first line.
+const _EQ_VERDICT_FILE = () => path.join(app.getPath('userData'), 'eqlog-verdicts.json');
+let _eqVerdicts = null;      // path(lower) → { v: bool, size, mtimeMs }
+let _eqVerdictsDirty = false;
+
+function _loadEqVerdicts() {
+  if (_eqVerdicts) return _eqVerdicts;
+  _eqVerdicts = new Map();
+  try {
+    const raw = JSON.parse(fs.readFileSync(_EQ_VERDICT_FILE(), 'utf8'));
+    for (const [k, v] of Object.entries(raw || {})) {
+      if (v && typeof v.size === 'number') _eqVerdicts.set(k, v);
+    }
+  } catch { /* absent or corrupt — start empty, it rebuilds itself */ }
+  return _eqVerdicts;
+}
+
+function _flushEqVerdicts() {
+  if (!_eqVerdictsDirty || !_eqVerdicts) return;
+  _eqVerdictsDirty = false;
+  try {
+    // Bound it so a folder churning through rotated logs can't grow this
+    // unboundedly; newest-touched win.
+    const entries = [..._eqVerdicts.entries()].slice(-500);
+    fs.writeFileSync(_EQ_VERDICT_FILE(), JSON.stringify(Object.fromEntries(entries)));
+  } catch { /* cache is an optimisation — never fail a scan over it */ }
+}
+
 function _isEqLogFile(dir, filename) {
-  if (EQ_LOG_CANONICAL_RX.test(filename)) return true;
-  if (!EQ_LOG_STEM_RX.test(filename)) return false;
-  return _firstLineIsEqWelcome(path.join(dir, filename));
+  if (EQ_LOG_CANONICAL_RX.test(filename)) return true;   // filename alone — no I/O
+  if (!EQ_LOG_STEM_RX.test(filename)) return false;      // not even a candidate
+  const full = path.join(dir, filename);
+  const key  = full.toLowerCase();
+  const map  = _loadEqVerdicts();
+  let st;
+  try { st = fs.statSync(full); } catch { return false; }
+  const hit = map.get(key);
+  // Grew or unchanged → the first line is untouched, reuse the verdict.
+  if (hit && st.size >= hit.size) return hit.v;
+  const v = _firstLineIsEqWelcome(full);
+  map.set(key, { v, size: st.size, mtimeMs: st.mtimeMs });
+  _eqVerdictsDirty = true;
+  return v;
 }
 
 // True if `dir` contains at least one EQ log file. Cheap probe — used by
@@ -749,6 +805,7 @@ function findEqInstalls(hint) {
   const t0 = Date.now();
   const result = _findEqInstallsUncached(hint);
   const ms = Date.now() - t0;
+  _flushEqVerdicts();   // persist anything this scan had to sniff for the first time
   // Log the real cost so "it feels slow" becomes a number we can read off a
   // user's agent.log instead of guessing. Only when it is worth noticing.
   if (ms >= 250) {
