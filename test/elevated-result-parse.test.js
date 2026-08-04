@@ -138,3 +138,48 @@ describe('EQ scan drive filter', () => {
     expect(keep('E:\\Quarm')).toBe(false);
   });
 });
+
+// ── Learned dead ends ───────────────────────────────────────────────────────
+//
+// "it didn't show up on my list of installs but it showed up in the logs. We
+// should be able to ignore it" (Uilnayar 2026-08-04, on B:\Quarm costing 21s).
+//
+// A skip-list that hides a real EQ folder would be far worse than a slow scan,
+// so the guard rails are the point of this block, not the caching.
+describe('EQ scan: learned dead ends', () => {
+  const src = readSource(path.join(ROOT, 'apps', 'mimic', 'main.js'));
+
+  it('only ever records SPECULATIVE probes', () => {
+    // A configured folder or the walk-up path must never be written off.
+    expect(src).toMatch(/if \(source === 'common' && _ms >= _EQ_SKIP_MS && found\.length === foundBefore\)/);
+    expect(src).toMatch(/if \(source === 'common' && _eqSkipHas\(norm\)\) \{ skipped\.push\(norm\); return; \}/);
+  });
+
+  it('only records paths that found NOTHING', () => {
+    // found.length === foundBefore is the "contributed no install" test. If a
+    // slow directory contains EQ it stays in the rotation forever.
+    expect(src).toMatch(/const foundBefore = found\.length;/);
+  });
+
+  it('entries expire, so a later install is rediscovered', () => {
+    expect(src).toMatch(/_EQ_SKIP_TTL\s*=\s*30 \* 24 \* 60 \* 60 \* 1000/);
+    expect(src, 'expired entries must be dropped on load')
+      .toMatch(/\(now - v\.at\) < _EQ_SKIP_TTL/);
+  });
+
+  it('an explicitly configured folder is forgotten from the list', () => {
+    expect(src).toMatch(/for \(const p of paths\) _eqSkipForget\(/);
+  });
+
+  // The decision itself, as a table — this is the logic that must not invert.
+  const shouldLearn = (source, ms, addedInstall) =>
+    source === 'common' && ms >= 2000 && !addedInstall;
+
+  it('decides correctly across the cases that matter', () => {
+    expect(shouldLearn('common', 21046, false), 'B:\\Quarm — slow, speculative, empty').toBe(true);
+    expect(shouldLearn('common', 21046, true),  'slow but HOLDS EQ — never skip').toBe(false);
+    expect(shouldLearn('common', 4, false),     'fast and empty — no need to remember').toBe(false);
+    expect(shouldLearn('override', 21046, false), 'a folder the USER configured').toBe(false);
+    expect(shouldLearn('walk-up', 21046, false),  'the walk-up-from-Mimic path').toBe(false);
+  });
+});

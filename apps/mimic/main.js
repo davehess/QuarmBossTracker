@@ -279,6 +279,13 @@ function saveConfig(cfg) {
   // above the caches and may run during module init, before their `const`
   // declarations have executed.
   try { _invalidateEqScan(); } catch { /* not initialised yet — nothing cached */ }
+  // An explicitly configured folder must never stay on the learned skip list —
+  // the user pointing at it outranks anything we inferred from a slow probe.
+  try {
+    const paths = Array.isArray(cfg && cfg.eqPaths) ? cfg.eqPaths : (cfg && cfg.eqPath ? [cfg.eqPath] : []);
+    for (const p of paths) _eqSkipForget(path.normalize(String(p)));
+    _flushEqSkip();
+  } catch { /* pre-init — nothing learned yet */ }
 }
 
 // ── Secret-at-rest (safeStorage / OS keychain) ──────────────────────────────
@@ -631,6 +638,67 @@ const _EQ_SCAN_TTL_MS = 30_000;
 // Returns null if enumeration fails, and callers then skip filtering entirely:
 // failing OPEN keeps today's (slow but correct) behaviour rather than silently
 // hiding someone's EQ folder because a PowerShell spawn misbehaved.
+// ── Learned dead ends ───────────────────────────────────────────────────────
+//
+// "it didn't show up on my list of installs but it showed up in the logs. We
+// should be able to ignore it" (Uilnayar 2026-08-04, on B:\Quarm costing 21s).
+//
+// The DriveType filter catches the network-drive case, but it only knows about
+// drive TYPES. A slow dead end on a local fixed drive — a failing disk, a
+// dismounted encrypted volume, a folder behind a filter driver — would sail
+// straight past it. The durable rule is simpler and covers all of them: a
+// SPECULATIVE path that was slow AND held nothing is not worth asking about
+// again.
+//
+// Guard rails, because a skip-list that hides a real EQ folder is far worse
+// than a slow scan:
+//   • only SPECULATIVE probes are ever recorded — never a folder the user
+//     configured, and never the walk-up-from-Mimic path;
+//   • only when the probe found NOTHING. A slow directory that contains EQ
+//     stays in the rotation, however slow it is;
+//   • entries EXPIRE, so installing EQ somewhere we once wrote off is found
+//     again within the month;
+//   • configuring that folder explicitly makes it a hint, which is always
+//     probed regardless of this list.
+const _EQ_SKIP_FILE  = () => path.join(app.getPath('userData'), 'eq-scan-skip.json');
+const _EQ_SKIP_MS    = 2000;                    // "slow" — 4ms is typical, 21046ms was the NAS
+const _EQ_SKIP_TTL   = 30 * 24 * 60 * 60 * 1000; // re-check monthly
+let _eqSkip = null;                             // path(lower) → { at, ms }
+let _eqSkipDirty = false;
+
+function _loadEqSkip() {
+  if (_eqSkip) return _eqSkip;
+  _eqSkip = new Map();
+  try {
+    const raw = JSON.parse(fs.readFileSync(_EQ_SKIP_FILE(), 'utf8'));
+    const now = Date.now();
+    for (const [k, v] of Object.entries(raw || {})) {
+      if (v && typeof v.at === 'number' && (now - v.at) < _EQ_SKIP_TTL) _eqSkip.set(k, v);
+    }
+  } catch { /* absent or corrupt — rebuilds itself */ }
+  return _eqSkip;
+}
+function _flushEqSkip() {
+  if (!_eqSkipDirty || !_eqSkip) return;
+  _eqSkipDirty = false;
+  try {
+    fs.writeFileSync(_EQ_SKIP_FILE(), JSON.stringify(Object.fromEntries(_eqSkip)));
+  } catch { /* optimisation only — never fail a scan over it */ }
+}
+function _eqSkipHas(dir) {
+  return _loadEqSkip().has(String(dir).toLowerCase());
+}
+function _eqSkipRemember(dir, ms) {
+  _loadEqSkip().set(String(dir).toLowerCase(), { at: Date.now(), ms });
+  _eqSkipDirty = true;
+}
+// Called when the user picks or configures a folder, so an explicit choice always
+// beats anything we previously learned about that path.
+function _eqSkipForget(dir) {
+  if (!dir) return;
+  if (_loadEqSkip().delete(String(dir).toLowerCase())) _eqSkipDirty = true;
+}
+
 let _fixedDrives;   // undefined = not tried, null = unavailable, Set = known
 function _fixedDriveSet() {
   if (_fixedDrives !== undefined) return _fixedDrives;
@@ -845,7 +913,8 @@ function findEqInstalls(hint) {
   const t0 = Date.now();
   const result = _findEqInstallsUncached(hint);
   const ms = Date.now() - t0;
-  _flushEqVerdicts();   // persist anything this scan had to sniff for the first time
+  _flushEqVerdicts();
+  _flushEqSkip();   // persist anything this scan had to sniff for the first time
   // Log the real cost so "it feels slow" becomes a number we can read off a
   // user's agent.log instead of guessing. Only when it is worth noticing.
   if (ms >= 250) {
@@ -868,7 +937,11 @@ function _findEqInstallsUncached(hint) {
     const norm = path.normalize(dir);
     if (seen.has(norm.toLowerCase())) return;
     seen.add(norm.toLowerCase());
+    // A speculative path we already learned is a slow dead end. Never applies
+    // to a configured folder or the walk-up, which are always probed.
+    if (source === 'common' && _eqSkipHas(norm)) { skipped.push(norm); return; }
     scanned.push(norm);
+    const foundBefore = found.length;
     // Per-directory timing. The aggregate ("26 dirs in 20383ms") proved the
     // scan was the problem but not WHICH probe, and on Windows the answer is
     // usually one absent or offline drive letter costing seconds by itself.
@@ -889,6 +962,14 @@ function _findEqInstallsUncached(hint) {
     finally {
       const _ms = Date.now() - _t;
       if (_ms >= 500) slow.push(norm + ' ' + _ms + 'ms');
+      // Learn the dead end: slow, speculative, and held nothing. `found` is
+      // checked by length because probe() pushes on success — if this path
+      // contributed an install it is NOT a dead end, however slow it was.
+      if (source === 'common' && _ms >= _EQ_SKIP_MS && found.length === foundBefore) {
+        _eqSkipRemember(norm, _ms);
+        appendAgentLog(`[eq-scan] ignoring ${norm} from now on — ${_ms}ms and no EverQuest install `
+          + `(re-checked in ${Math.round(_EQ_SKIP_TTL / 86400000)} days, or immediately if you pick it yourself)\n`);
+      }
     }
   };
 
