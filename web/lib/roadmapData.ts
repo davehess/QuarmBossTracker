@@ -37,6 +37,19 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'header-one-line',
+    title: '🧭 The site header stopped sprawling',
+    version: 'Web 1.1.11',
+    date: '2026-08-05',
+    headline: 'Your name and the Sign out button now sit on the same line as the WolfPack.quest logo, instead of on a row of their own.',
+    features: [
+      { name: '🧭 Two tidy rows', blurb: 'Logo and your account controls share the top line; the download buttons, search and timezone picker sit on the line below. On a phone the account controls wrap under themselves rather than shoving the logo around.' },
+    ],
+    fixes: [
+      'The logo and the three download buttons were treated as one block, which was too wide to fit beside the account controls — so the browser pushed them onto their own line and the header read as four ragged rows.',
+    ],
+  },
+  {
     key: 'same-name-instance-split-194',
     title: '👥 Two mobs with one name show as two mobs',
     version: 'Bot 3.1.10 · Agent 3.5.30',

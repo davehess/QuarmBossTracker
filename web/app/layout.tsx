@@ -45,22 +45,64 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       <body className="font-mono">
         <div className="max-w-7xl mx-auto p-3 sm:p-4">
           <header className="mb-6">
-            {/* Row 1 — brand (left) + account block (right). The signed-in
-                user sits top-right; Admin (officers only) sits directly beside
-                the avatar so it doesn't bloat the nav row; the timezone picker
-                stacks underneath the user. */}
-            <div className="flex items-start justify-between gap-3 flex-wrap">
-              {/* Brand column — wordmark with the download CTAs directly
-                  underneath, per user request. */}
-              <div className="flex flex-col gap-2 min-w-0">
-                <a href="/" className="flex items-center gap-2.5 no-underline">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src="/mimic-logo.png" alt="Wolf Pack miMIC" width={38} height={38} className="rounded-md shrink-0" />
-                  <span className="text-lg sm:text-2xl text-blue font-bold whitespace-nowrap">
-                    WolfPack<span className="text-dim">.quest</span>
-                  </span>
+            {/* Row 1 — wordmark (left) + account block (right), on ONE line.
+                The account block used to share this row with the whole brand
+                COLUMN (wordmark + three download CTAs + search); together they
+                overflow max-w-7xl, so flex-wrap dropped the account block onto
+                a line of its own and the header read as four ragged rows
+                (Uilnayar 2026-08-05). Only the wordmark shares the row now, so
+                the account block stays beside it at every width. */}
+            <div className="flex items-center justify-between gap-3">
+              <a href="/" className="flex items-center gap-2.5 no-underline min-w-0">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src="/mimic-logo.png" alt="Wolf Pack miMIC" width={38} height={38} className="rounded-md shrink-0" />
+                <span className="text-lg sm:text-2xl text-blue font-bold whitespace-nowrap">
+                  WolfPack<span className="text-dim">.quest</span>
+                </span>
+              </a>
+              {/* Account block — Tour / Feedback / OpenDKP / Admin / avatar.
+                  Wraps internally on narrow screens rather than pushing the
+                  wordmark off its line. */}
+              <div className="flex items-center justify-end gap-2 flex-wrap">
+                {/* ✨ new-member walkthrough — re-runnable any time; the
+                    engine itself is mounted at the end of <body>. */}
+                {showMe && <TourLauncher />}
+                <Link
+                  href="/feedback"
+                  className="px-2.5 py-1 rounded border border-border bg-panel text-xs sm:text-sm text-text hover:bg-[#21262d] transition-colors whitespace-nowrap no-underline"
+                >
+                  💬 Feedback
+                </Link>
+                {/* Direct link to the Wolf Pack OpenDKP roster + auction
+                    site. External — opens in a new tab so it doesn't
+                    nuke the user's current wolfpack.quest context. */}
+                <a
+                  href="https://wolfpack.opendkp.com"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded border border-border bg-panel text-xs sm:text-sm text-text hover:bg-[#21262d] transition-colors whitespace-nowrap no-underline"
+                  title="Wolf Pack OpenDKP — roster, DKP, raid attendance, auctions"
+                >
+                  💰 OpenDKP
+                  <span aria-hidden className="text-dim text-[10px]">↗</span>
                 </a>
-                <div className="flex flex-wrap gap-2">
+                {showAdmin && (
+                  <Link
+                    href="/admin"
+                    className="px-2.5 py-1 rounded border border-border bg-panel text-xs sm:text-sm text-text hover:bg-[#21262d] transition-colors whitespace-nowrap no-underline"
+                  >
+                    🛡️ Admin
+                  </Link>
+                )}
+                <AuthBadge />
+              </div>
+            </div>
+
+            {/* Row 2 — download CTAs + search on the left, timezone on the
+                right. These are the wide elements; giving them their own strip
+                is what keeps the account block beside the wordmark above. */}
+            <div className="flex items-start justify-between gap-3 flex-wrap mt-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <a
                     href="/mimic?direct=1"
                     target="_blank"
@@ -102,47 +144,11 @@ export default async function RootLayout({ children }: { children: React.ReactNo
                       members-only. Enter opens the full /search results page. */}
                   {showMe && <GlobalSearch />}
                 </div>
-              </div>
-              <div className="flex flex-col items-end gap-2 shrink-0">
-                <div className="flex items-center gap-2">
-                  {/* ✨ new-member walkthrough — re-runnable any time; the
-                      engine itself is mounted at the end of <body>. */}
-                  {showMe && <TourLauncher />}
-                  <Link
-                    href="/feedback"
-                    className="px-2.5 py-1 rounded border border-border bg-panel text-xs sm:text-sm text-text hover:bg-[#21262d] transition-colors whitespace-nowrap no-underline"
-                  >
-                    💬 Feedback
-                  </Link>
-                  {/* Direct link to the Wolf Pack OpenDKP roster + auction
-                      site. External — opens in a new tab so it doesn't
-                      nuke the user's current wolfpack.quest context. */}
-                  <a
-                    href="https://wolfpack.opendkp.com"
-                    target="_blank"
-                    rel="noreferrer"
-                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded border border-border bg-panel text-xs sm:text-sm text-text hover:bg-[#21262d] transition-colors whitespace-nowrap no-underline"
-                    title="Wolf Pack OpenDKP — roster, DKP, raid attendance, auctions"
-                  >
-                    💰 OpenDKP
-                    <span aria-hidden className="text-dim text-[10px]">↗</span>
-                  </a>
-                  {showAdmin && (
-                    <Link
-                      href="/admin"
-                      className="px-2.5 py-1 rounded border border-border bg-panel text-xs sm:text-sm text-text hover:bg-[#21262d] transition-colors whitespace-nowrap no-underline"
-                    >
-                      🛡️ Admin
-                    </Link>
-                  )}
-                  <AuthBadge />
-                </div>
-                <TimezonePicker />
-              </div>
+              <TimezonePicker />
             </div>
 
-            {/* Row 2 — primary nav on its own clean strip. Search moved up
-                beside the download CTAs; Feedback + Admin live in the account
+            {/* Row 3 — primary nav on its own clean strip. Search sits beside
+                the download CTAs; Feedback + Admin live in the account
                 block. */}
             <div className="flex items-start justify-between gap-3 flex-wrap border-t border-border/60 mt-3 pt-3">
               <Nav showMe={showMe} />
