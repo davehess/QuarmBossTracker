@@ -9112,20 +9112,45 @@ async function _announceMimicReleases() {
   // message) with install boilerplate below a `---` rule — show the changelog
   // part only (Uilnayar 2026-07-14). Falls back to the whole body for older
   // releases that have no rule.
+  // The card is read by RAIDERS, but the body it renders is a release COMMIT
+  // MESSAGE written for `git log` — file-checkout rationale, blast-radius
+  // notes, test counts. At 20 lines / 1550 chars that produced an unreadable
+  // wall, truncated mid-sentence, with the bold subject repeated verbatim
+  // under a title already derived from it (Uilnayar 2026-08-05, screenshot of
+  // the v2.3.0 + v2.3.1 cards). Budgeting by LINE was the 2026-07-15 fix for a
+  // mid-sentence cut; the real problem is that the whole body was never the
+  // right thing to show.
+  //
+  // Now: drop the subject line (it IS the title), lead with the first
+  // paragraph, and add the bullet block if the body has one — that's the
+  // "what you actually get" part. Everything else is one click away. Prose
+  // paragraphs after the lede are deliberately dropped, however good they are.
   const _summaryOf = (rel) => {
     const changelog = String(rel.body || '').split(/\n\s*-{3,}\s*\n/)[0].trim();
-    // Budgeted at LINE granularity — the old hard .slice(0, 1600) cut the
-    // v1.9.0 notice mid-sentence (Uilnayar 2026-07-15). Keep whole lines
-    // until the budget is spent, then close with an ellipsis; the full notes
-    // are one click away via the release link.
-    const lines = changelog.split('\n').filter(l => l.trim()).slice(0, 20);
+    // Strip the leading **bold subject** — stableTitle is built from it, so
+    // keeping it prints the same sentence twice.
+    const noSubject = changelog.replace(/^\*\*.+?\*\*\s*\n?/s, '').trim();
+    const paras = noSubject.split(/\n\s*\n/).map(p => p.trim()).filter(Boolean);
+    const clip = (s, n) => {
+      const t = s.replace(/\s+/g, ' ').trim();
+      if (t.length <= n) return t;
+      const cut = t.slice(0, n);
+      const stop = Math.max(cut.lastIndexOf('. '), cut.lastIndexOf('? '), cut.lastIndexOf('! '));
+      return (stop > n * 0.5 ? cut.slice(0, stop + 1) : cut.replace(/\s\S*$/, '') + '…');
+    };
     const out = [];
-    let used = 0;
-    for (const l of lines) {
-      if (used + l.length + 1 > 1550) { out.push('…'); break; }
-      out.push(l); used += l.length + 1;
-    }
-    return out.join('\n');
+    // Lede: the first paragraph that ISN'T a bullet block.
+    const lede = paras.find(p => !/^\s*[·*\-•]\s/.test(p));
+    if (lede) out.push(clip(lede, 340));
+    // Bullets: the first block of them, wherever it appears, capped so a long
+    // list can't reintroduce the wall.
+    const bullets = noSubject.split('\n')
+      .map(l => l.trim())
+      .filter(l => /^[·*\-•]\s+\S/.test(l))
+      .slice(0, 5)
+      .map(l => '· ' + clip(l.replace(/^[·*\-•]\s+/, ''), 130));
+    if (bullets.length) out.push(bullets.join('\n'));
+    return out.join('\n\n').slice(0, 900);
   };
   const _dlLink = (rel) => {
     const exe = (rel.assets || []).find(a => /\.exe$/i.test(a.name));
