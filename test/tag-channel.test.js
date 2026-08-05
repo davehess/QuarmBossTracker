@@ -39,7 +39,8 @@ function harness() {
   `;
   // eslint-disable-next-line no-new-func
   return new Function(prelude + full
-    + '\nreturn { noteTagChannelLine, zealTagsSnapshot, _zealTags, _applyZealTagMessage };')();
+    + '\nreturn { noteTagChannelLine, zealTagsSnapshot, _zealTags, _applyZealTagMessage,'
+    + '\n  _tagLineParts, _tagPrettyPrintSeen: () => _tagPrettyPrintSeen };')();
 }
 
 const NOW = new Date('2026-08-05T01:00:05Z').getTime();
@@ -65,6 +66,35 @@ describe('privacy + relay hygiene', () => {
 
   it('the capture hook runs on the raw tail line', () => {
     expect(src).toMatch(/try \{ noteTagChannelLine\(line, b\.character\); \} catch/);
+  });
+
+  // Adding the gsay transport put GROUP chat on the capture path for the
+  // first time. Group chat is privacy-critical (small group, not guild-wide),
+  // so the same "capture rides beside the filter" invariant has to hold for
+  // it — in BOTH directions, and against triggerVisibleLine, which is
+  // default-KEEP and therefore sees anything the drop list misses.
+  describe('group-say tags stay private', () => {
+    const drops = sliceArrayLiteral(src, 'const DEFAULT_DROP_PATTERNS = [');
+    const dropped = (line) => drops.some(rx => rx instanceof RegExp && rx.test(line));
+    const TAG = "ZEALTAG | Bardy | a Darkpaw warrior | 511";
+
+    it('incoming group say is dropped', () => {
+      expect(dropped(`[Wed Aug 05 21:10:01 2026] Bardy tells the group, '${TAG}'`)).toBe(true);
+    });
+
+    it('BOTH self wordings are dropped', () => {
+      expect(dropped(`[Wed Aug 05 21:10:01 2026] You say to your group, '${TAG}'`)).toBe(true);
+      expect(dropped(`[Wed Aug 05 21:10:01 2026] You tell your party, '${TAG}'`),
+        'the list carried only "say to your group"; Zeal enumerates "tell your party" too').toBe(true);
+    });
+
+    it('group say never reaches the Discord chat relay', () => {
+      // parseChatLine gates on "guild," / "raid," before anything else, so
+      // group lines can't even enter it — assert the gate, not the outcome of
+      // one sample line.
+      const fn = sliceBlock(src, 'function parseChatLine(line, selfName) {', '\n}');
+      expect(fn).toMatch(/indexOf\('guild,'\) === -1 && line\.indexOf\('raid,'\) === -1/);
+    });
   });
 });
 
@@ -111,6 +141,64 @@ describe('noteTagChannelLine — the real wire format', () => {
     expect(h.zealTagsSnapshot(NOW)[0].tagger).toBe('Naggato');
   });
 
+  // ── The transports the first cut missed. Uilnayar's first live test (two
+  // `a Darkpaw warrior`s tagged Bardy and Cano, NOT in a raid) captured
+  // NOTHING — the parser knew only the ZT channel and rsay, and `/tag gsay`
+  // is the natural transport when you're in a group and not a raid.
+  // nameplate.cpp handle_tag_command: rsay | gsay | chat | local, where gsay
+  // gates on GroupInfo->is_in_group() — it is GROUP say, not guild.
+  describe('every transport Zeal can broadcast over', () => {
+    const CASES = [
+      ['gsay, other',        `[Wed Aug 05 21:10:01 2026] Bardy tells the group, 'ZEALTAG | Bardy | a Darkpaw warrior | 511'`, 'Bardy'],
+      ['gsay, self',         `[Wed Aug 05 21:10:01 2026] You tell your party, 'ZEALTAG | Bardy | a Darkpaw warrior | 511'`, 'Uilnayar'],
+      ['rsay, self',         `[Wed Aug 05 21:10:01 2026] You tell the raid, 'ZEALTAG | Bardy | a Darkpaw warrior | 511'`, 'Uilnayar'],
+      ['chat channel, self', `[Wed Aug 05 21:10:01 2026] You say to Ztwolfpacktag:1, 'ZEALTAG | Bardy | a Darkpaw warrior | 511'`, 'Uilnayar'],
+      ['chat channel, mixed-case name (join_tag_channel lowercases then capitalizes)',
+                             `[Wed Aug 05 21:10:01 2026] Bardy tells Ztwolfpacktag:1, 'ZEALTAG | Bardy | a Darkpaw warrior | 511'`, 'Bardy'],
+      // AbbreviatedChat=2 rewrites the LOG line to "[P] [Sender]: body" and
+      // drops the quotes entirely (chat.cpp abbreviateChat). Zeal has already
+      // substituted the real name for "You" by then.
+      ['abbreviated group',  `[Wed Aug 05 21:10:01 2026] [P] [Bardy]: ZEALTAG | Bardy | a Darkpaw warrior | 511`, 'Bardy'],
+      ['abbreviated raid',   `[Wed Aug 05 21:10:01 2026] [R] [Bardy]: ZEALTAG | Bardy | a Darkpaw warrior | 511`, 'Bardy'],
+      ['abbreviated channel (numeric prefix)',
+                             `[Wed Aug 05 21:10:01 2026] [1] [Bardy]: ZEALTAG | Bardy | a Darkpaw warrior | 511`, 'Bardy'],
+    ];
+    for (const [label, line, tagger] of CASES) {
+      it(`captures ${label}`, () => {
+        const h = harness();
+        expect(h.noteTagChannelLine(line, 'Uilnayar'), label).toBe(true);
+        const [t] = h.zealTagsSnapshot(NOW);
+        expect(t.spawn_id).toBe(511);
+        expect(t.mobDisplay).toBe('a Darkpaw warrior');
+        expect(t.text).toBe('Bardy');
+        expect(t.tagger, 'tagger read off whatever prefix precedes the header').toBe(tagger);
+      });
+    }
+
+    it('the two same-name adds from the failing field test come back as two rows', () => {
+      // Two `a Darkpaw warrior`s, tagged Bardy and Cano over GROUP say.
+      const h = harness();
+      h.noteTagChannelLine(`[Wed Aug 05 21:10:01 2026] You tell your party, 'ZEALTAG | Bardy | a Darkpaw warrior | 511'`, 'Uilnayar');
+      h.noteTagChannelLine(`[Wed Aug 05 21:10:05 2026] You tell your party, 'ZEALTAG | Cano | a Darkpaw warrior | 512'`, 'Uilnayar');
+      const byId = Object.fromEntries(h.zealTagsSnapshot(NOW).map(t => [t.spawn_id, t.text]));
+      expect(byId).toEqual({ 511: 'Bardy', 512: 'Cano' });
+    });
+
+    it('_tagLineParts hands the payload over quote-free, both shapes', () => {
+      // Contract of the extractor itself. parseInt happens to tolerate a
+      // trailing quote today, so an end-to-end spawn-id check can NOT see
+      // this — but every field is read positionally off the last delimiter,
+      // and Zeal already demonstrates it appends suffixes after the payload
+      // (prettyprint's " (Arrow:G)"). Assert the boundary where it is real.
+      const h = harness();
+      expect(h._tagLineParts(`[Wed Aug 05 21:10:01 2026] Bardy tells the group, 'ZEALTAG | Bardy | a Darkpaw warrior | 511'`, 'Me'))
+        .toEqual({ payload: 'ZEALTAG | Bardy | a Darkpaw warrior | 511', tagger: 'Bardy' });
+      expect(h._tagLineParts(`[Wed Aug 05 21:10:01 2026] [P] [Bardy]: ZEALTAG | Bardy | a Darkpaw warrior | 511`, 'Me'))
+        .toEqual({ payload: 'ZEALTAG | Bardy | a Darkpaw warrior | 511', tagger: 'Bardy' });
+      expect(h._tagLineParts(`[Wed Aug 05 21:10:01 2026] Bardy says, 'no tag here'`, 'Me')).toBeNull();
+    });
+  });
+
   it("'clear' broadcast wipes every stored tag", () => {
     const h = harness();
     h.noteTagChannelLine(CH('Naggato', 'ZEALTAG | Naggato-Tanking | Thall Va Xakra | 1234'), 'Me');
@@ -132,12 +220,10 @@ describe('noteTagChannelLine — the real wire format', () => {
     expect(h.zealTagsSnapshot(NOW)[0].text).toBe('TASH');
   });
 
-  it('a non-tag line and a non-ZT channel are ignored', () => {
+  it('a non-tag line is ignored', () => {
     const h = harness();
     expect(h.noteTagChannelLine(CH('Naggato', 'anyone got a port?'), 'Me')).toBe(false);
-    expect(h.noteTagChannelLine(
-      `[Wed Aug 05 21:10:01 2026] Naggato tells General:2, 'ZEALTAG | X | a wolf | 5'`, 'Me'),
-      'ZEALTAG payload outside a ZT channel or rsay is not trusted').toBe(false);
+    expect(h.noteTagChannelLine(`[Wed Aug 05 21:10:01 2026] Naggato says, 'ZEALTAG is a cool feature'`, 'Me')).toBe(false);
     expect(h._zealTags.size).toBe(0);
   });
 
@@ -182,12 +268,14 @@ describe('zeal.ini readiness (readZealTagConfig)', () => {
 
   it('reads the persisted channel + enable flag from [Zeal]', () => {
     const rows = run({ [INI]: '[Other]\nNameplateTagChannel=Nope\n[Zeal]\nNameplateTagEnable=1\nNameplateTagChannel=ZTwolfpacktag\n[Next]\nX=1\n' });
-    expect(rows).toEqual([{ dir: 'A:/EQ/Logs', channel: 'ZTwolfpacktag', enabled: true }]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ dir: 'A:/EQ/Logs', channel: 'ZTwolfpacktag', enabled: true });
+    expect(rows[0].warnings, 'a healthy config raises nothing').toEqual([]);
   });
 
   it('a key OUTSIDE the [Zeal] section is never read — section walk, not grep', () => {
     const rows = run({ [INI]: '[Other]\nNameplateTagChannel=ZTwrong\n' });
-    expect(rows).toEqual([{ dir: 'A:/EQ/Logs', channel: null, enabled: null }]);
+    expect(rows[0]).toMatchObject({ dir: 'A:/EQ/Logs', channel: null, enabled: null });
   });
 
   it('no zeal.ini → empty, not an error', () => {
@@ -197,6 +285,80 @@ describe('zeal.ini readiness (readZealTagConfig)', () => {
   it('disabled tags surface as enabled:false so the card can nudge', () => {
     const rows = run({ [INI]: '[Zeal]\nNameplateTagChannel=ZTwolfpacktag\nNameplateTagEnable=0\n' });
     expect(rows[0].enabled).toBe(false);
+  });
+
+  // ── The settings that make capture fail SILENTLY. This is the reason the
+  // readiness read exists at all: a tag that never reaches the log looks
+  // exactly like nobody tagging, which is what the first live test looked
+  // like. All three are LOCAL-client settings — the filter runs on my client
+  // for my display — so my ini fully decides whether my log is degraded.
+  const READY = '[Zeal]\nNameplateTagChannel=ZTwolfpacktag\nNameplateTagEnable=1\n';
+  const warnsOf = (ini) => run({ [INI]: ini })[0].warnings.join(' ');
+
+  it('/tag suppress on is flagged — Zeal clears the message before it is logged', () => {
+    // nameplate.cpp handle_zeal_spam_filter: `msg = ""` and PrintChat skips
+    // the log write on an empty buffer. Unrecoverable downstream.
+    expect(warnsOf(READY + 'NameplateTagSuppress=1\n')).toMatch(/suppress off/);
+    expect(warnsOf(READY + 'NameplateTagSuppress=0\n')).not.toMatch(/suppress/);
+  });
+
+  it('/tag prettyprint on is flagged ONLY when the filter that invokes it is on', () => {
+    // prettyprint_tag_message rewrites to "text => target" and drops the
+    // spawn id — but handle_zeal_spam_filter returns early unless
+    // setting_tag_filter is on, so prettyprint alone is inert.
+    expect(warnsOf(READY + 'NameplateTagFilter=1\nNameplateTagPrettyPrint=1\n')).toMatch(/prettyprint off/);
+    expect(warnsOf(READY + 'NameplateTagPrettyPrint=1\n'),
+      'prettyprint without filter never runs — do not send the user chasing it').not.toMatch(/prettyprint/);
+    expect(warnsOf(READY + 'NameplateTagFilter=1\n'),
+      'filter alone only re-colors the line; the payload survives').not.toMatch(/prettyprint/);
+  });
+
+  it('suppress outranks prettyprint — one actionable fix, not two', () => {
+    const w = run({ [INI]: READY + 'NameplateTagSuppress=1\nNameplateTagFilter=1\nNameplateTagPrettyPrint=1\n' })[0].warnings;
+    expect(w).toHaveLength(1);
+    expect(w[0]).toMatch(/suppress off/);
+  });
+
+  it('a missing channel is flagged with the one-time fix', () => {
+    expect(warnsOf('[Zeal]\nNameplateTagEnable=1\n')).toMatch(/\/tag channel ZTwolfpacktag/);
+  });
+
+  it('AbbreviatedChat is read but never warned about — the parser handles both shapes', () => {
+    const row = run({ [INI]: READY + 'AbbreviatedChat=2\n' })[0];
+    expect(row.abbrev).toBe(2);
+    expect(row.warnings).toEqual([]);
+  });
+});
+
+describe('prettyprint sighting (log-side backup for an unreachable zeal.ini)', () => {
+  it('recognises a rewritten tag and remembers the sample', () => {
+    const h = harness();
+    // What `/tag filter on` + `/tag prettyprint on` actually emits.
+    expect(h.noteTagChannelLine(
+      `[Wed Aug 05 21:10:01 2026] Bardy tells the group, 'Bardy => a Darkpaw warrior (Arrow:G)'`, 'Me'),
+      'still returns false — there is no spawn id to store').toBe(false);
+    expect(h._tagPrettyPrintSeen().sample).toBe('Bardy => a Darkpaw warrior');
+  });
+
+  it('handles the abbreviated shape and the no-shape form', () => {
+    const h = harness();
+    h.noteTagChannelLine(`[Wed Aug 05 21:10:01 2026] [P] [Bardy]: Cano => a Darkpaw warrior`, 'Me');
+    expect(h._tagPrettyPrintSeen().sample).toBe('Cano => a Darkpaw warrior');
+  });
+
+  it('ordinary chat containing an arrow is not mistaken for a tag', () => {
+    const h = harness();
+    h.noteTagChannelLine(`[Wed Aug 05 21:10:01 2026] Bardy tells the group, 'pull => camp'`, 'Me');
+    // Two words either side is exactly the pretty shape, so this one DOES
+    // register — the sighting is a hint, not an ingest path, and the only
+    // consequence is a dashboard nudge. What must NOT happen is a stored tag.
+    expect(h.zealTagsSnapshot(NOW), 'a sighting never becomes a tag').toEqual([]);
+  });
+
+  it('a line with no arrow at all leaves the sighting untouched', () => {
+    const h = harness();
+    h.noteTagChannelLine(`[Wed Aug 05 21:10:01 2026] Bardy tells the group, 'inc adds'`, 'Me');
+    expect(h._tagPrettyPrintSeen()).toBeNull();
   });
 });
 
