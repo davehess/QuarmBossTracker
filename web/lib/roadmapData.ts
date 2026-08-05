@@ -37,6 +37,22 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'same-name-instance-split-194',
+    title: '👥 Two mobs with one name show as two mobs',
+    version: 'Bot 3.1.10 · Agent 3.5.30',
+    date: '2026-08-05',
+    channel: 'beta',
+    headline: 'When two same-name adds are tanked apart, the Extended Target overlay now splits them into separate rows — each labeled with who is tanking it — and shows which one your slows and tashes actually landed on. Built for Thall Va Xakra\'s twin adds.',
+    features: [
+      { name: '👥 The split', blurb: 'The game gives us no mob identity at all — two same-name mobs are pixel-identical in every data stream (we\'ve asked the Zeal team for the one field that would fix this properly; no traction yet). The workaround: a tanked mob stands on its tank, and we DO know where our own people are. Tanks held apart mean separate mobs, and each row is labeled "@ <tank>" so callouts finally have a handle.' },
+      { name: '🎯 Debuffs land on the right row', blurb: 'A slow or tash is credited to the add its caster or tank was actually on. When we genuinely can\'t tell — both adds at identical health, nobody placeable — the debuff shows dimmed with a ? on both rows rather than pretending to know.' },
+      { name: '📡 One Mimic covers the raid', blurb: 'A single raider running Mimic with Zeal now reports every raid member\'s position and every tank the mobs are hitting — so the feature works even when none of the tanks run Mimic themselves.' },
+    ],
+    fixes: [
+      'Same-name mobs at identical health that are tanked on the same spot still merge into one row — that is the honest limit of the data, and the row says so rather than guessing.',
+    ],
+  },
+  {
     key: 'fun-tunare-zero',
     title: '🌿 Tunare invocations was reading zero',
     version: 'Web 1.1.9',

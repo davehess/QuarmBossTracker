@@ -9677,6 +9677,159 @@ const EXT_HURT_PCT    = 85;        // missing >15% health (ext_hurt_pct)
 const EXT_HURT_MIN_MS = 10_000;    // …for >10s = "hurt" (ext_hurt_min_sec)
 const EXT_HP_SPLIT_TOL = 8;        // same-name split %HP gap (ext_hp_split_tol)
 
+// ── #194 position clustering — same-name instances via engaged-player loc ───
+//
+// The Zeal pipe has no spawn id, so two "a thall va xakra" are byte-identical
+// on every gauge (docs/DESIGN-mob-serialization.md, ceiling VERIFIED). What we
+// DO have is where our own people stand: a mob being tanked is a mob standing
+// on top of a tank, so tanks engaged with the same NAME in two different
+// places prove two instances — and hand each instance a tank label for free.
+//
+// Laws inherited from the parent design (DESIGN-dedup-and-mob-serialization):
+//   • position is a SEPARATOR, never a joiner — it may only ever RAISE K;
+//   • K_pos is a lower bound (two mobs on one spot cluster as one, correctly);
+//   • when unsure, merge (today's behavior) — a phantom split is the visible
+//     failure, an honest merge is the status quo.
+const EXT_POS_CLUSTER_UNITS = 25;  // melee reach + jitter (ext_pos_cluster_units)
+const EXT_POS_FRESH_MS = 30_000;   // engagement evidence freshness (ext_pos_fresh_sec)
+
+// Single-linkage clustering of engaged raiders on 3D distance. `engaged` is
+// [{ raider, tank, x, y, z }] — `tank` is the display-case name to label the
+// instance with. Members with no usable coordinates cannot separate anything:
+// they fold into the FIRST cluster their tank name already appears in, else
+// into the largest cluster (merge-when-unsure). Sorted input ⇒ stable output.
+function _extPosCluster(engaged, units) {
+  const withLoc = engaged.filter(m => Number.isFinite(m.x) && Number.isFinite(m.y) && Number.isFinite(m.z))
+    .sort((a, b) => a.raider.localeCompare(b.raider));
+  const noLoc = engaged.filter(m => !withLoc.includes(m));
+  const dist = (a, b) => Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2 + (a.z - b.z) ** 2);
+  const clusters = [];
+  for (const m of withLoc) {
+    const hits = clusters.filter(c => c.some(q => dist(m, q) <= units));
+    if (hits.length === 0) clusters.push([m]);
+    else if (hits.length === 1) hits[0].push(m);
+    else {
+      // m bridges several clusters ⇒ they were one mob all along. Merge —
+      // the conservative direction the design demands.
+      const merged = hits.flat(); merged.push(m);
+      for (const h of hits) clusters.splice(clusters.indexOf(h), 1);
+      clusters.push(merged);
+    }
+  }
+  for (const m of noLoc) {
+    const byTank = m.tank && clusters.find(c => c.some(q => q.tank && q.tank.toLowerCase() === m.tank.toLowerCase()));
+    if (byTank) { byTank.push(m); continue; }
+    if (clusters.length) { clusters.sort((a, b) => b.length - a.length); clusters[0].push(m); }
+    else clusters.push([m]);
+  }
+  return clusters.map(c => ({
+    raiders: [...new Set(c.map(m => m.raider))],
+    tanks:   [...new Set(c.filter(m => m.tank).map(m => m.tank))],
+  }));
+}
+
+// Reconcile HP clusters (today's rows) with position instances. Returns the
+// rows to emit: each an HP cluster, possibly SPLIT when position proves two
+// instances inside one HP band (fresh pulls at equal HP, tanked apart), each
+// carrying the tank labels of the position instance it bound to.
+//
+// Binding rule: a raider who both TARGETS the name (HP cluster member) and is
+// ENGAGED with it (position instance member) welds the two together — tanks
+// target their own mob, so the weld exists in practice.
+//
+// K=1 GUARANTEE: with no position instances the input array is returned as-is
+// (same references, Object.is — fixture-enforced). With exactly one instance
+// and one HP cluster the single row is returned labeled; the EMIT layer drops
+// the label at K=1, so the K=1 payload stays byte-identical either way.
+function _extBindInstances(hpClusters, posInstances) {
+  if (!posInstances || posInstances.length === 0) return hpClusters;
+  const memberOf = new Map();   // raiderLower → instance index
+  posInstances.forEach((inst, i) => {
+    for (const r of inst.raiders) memberOf.set(String(r).toLowerCase(), i);
+  });
+  if (posInstances.length === 1 && hpClusters.length === 1) {
+    // No split possible — just label, preserving every existing field.
+    return [{ ...hpClusters[0], tanks: posInstances[0].tanks }];
+  }
+  const out = [];
+  const boundInstances = new Set();
+  for (const c of hpClusters) {
+    // Which instances does this HP cluster's membership touch?
+    const touched = new Map();  // instance idx → raiders of c in it
+    for (const r of c.raiders) {
+      const i = memberOf.get(String(r).toLowerCase());
+      if (i == null) continue;
+      if (!touched.has(i)) touched.set(i, []);
+      touched.get(i).push(r);
+    }
+    if (touched.size <= 1) {
+      const i = touched.size ? [...touched.keys()][0] : null;
+      if (i != null) boundInstances.add(i);
+      out.push(i != null ? { ...c, tanks: posInstances[i].tanks } : c);
+      continue;
+    }
+    // Position proves this one HP band is ≥2 mobs (equal HP, tanked apart) —
+    // split it. Raiders bound to an instance follow it; unplaceable raiders
+    // (healers, casters, no engagement evidence) stay with the first split so
+    // nobody vanishes from the board.
+    const idxs = [...touched.keys()].sort((a, b) => a - b);
+    const placed = new Set(idxs.flatMap(i => touched.get(i)).map(r => String(r).toLowerCase()));
+    const unplaced = c.raiders.filter(r => !placed.has(String(r).toLowerCase()));
+    idxs.forEach((i, n) => {
+      boundInstances.add(i);
+      out.push({
+        ...c,
+        raiders: n === 0 ? [...touched.get(i), ...unplaced] : touched.get(i),
+        tanks: posInstances[i].tanks,
+        pos_split: true,
+      });
+    });
+  }
+  // An instance no HP cluster touched (its tank targets nothing / another mob)
+  // still exists — the off-tank path surfaces those today; don't duplicate.
+  return out;
+}
+
+// #194 debuff attribution at K≥2. A landing's observer is the agent whose log
+// saw it — for self-casts the observer IS the caster (resolveSelfCastLanding),
+// and a caster targets what they debuff. The same landing reaches us once per
+// nearby Mimic, so each debuff entry carries EVERY recent observer and any of
+// them may place it. Rules, most-confident first:
+//   1. an observer is a TANK of one emitted row (their name is in row.tanks —
+//      they are being hit by that instance) → that row;
+//   2. an observer currently targets the name and their reported target HP
+//      sits inside exactly one emitted row's HP band → that row;
+//   3. otherwise unknowable from this data → the debuff appears on EVERY row
+//      dimmed (attributed:false) — today's behavior, stated honestly. Wrong
+//      attribution is strictly worse than an honest "we don't know".
+// Timing caveat (documented, accepted): placement uses the observer's CURRENT
+// engagement/target, not their state at cast_at — right while the fight is
+// live, which is when anyone looks at the overlay.
+//
+// `observerInfo`: Map(observerLower → { targetsName: bool, targetHp: n|null }).
+function _extAttributeDebuffs(debuffEntries, rows, observerInfo, hpTol) {
+  if (rows.length <= 1) return;   // K=1 — debuffs stay exactly as they are
+  for (const row of rows) row.debuffs = [];
+  for (const d of debuffEntries) {
+    let target = null;
+    for (const obs of (d.observers || [])) {
+      const ol = String(obs || '').toLowerCase();
+      if (!ol) continue;
+      target = rows.find(r => (r.tanks || []).some(t => String(t).toLowerCase() === ol));
+      if (target) break;
+      const info = observerInfo.get(ol);
+      if (info && info.targetsName && info.targetHp != null) {
+        // Rows here are pre-emit cluster objects — HP lives on `hp`.
+        const inBand = rows.filter(r => r.hp != null && Math.abs(r.hp - info.targetHp) <= hpTol);
+        if (inBand.length === 1) { target = inBand[0]; break; }
+      }
+    }
+    if (target) target.debuffs.push({ name: d.name, remaining_secs: d.remaining_secs });
+    else for (const row of rows) row.debuffs.push({ name: d.name, remaining_secs: d.remaining_secs, attributed: false });
+  }
+  for (const row of rows) row.debuffs = row.debuffs.slice(0, 12);
+}
+
 // Previously-targeted mobs that drop off everyone's target gauge (an
 // off-tank's brief targeting gap, a target swap mid-fight) stay on the
 // board for a grace window if they were last seen hurt — Uilnayar
@@ -9753,20 +9906,27 @@ async function _handleAgentExtendedTarget(req, res) {
     // Bundle memo (2026-07-07 review): ~20 agents poll this every ~2-3s and
     // the two selects are identical across them (scoping happens in JS after
     // the fetch). One 1.5s memo cuts the Supabase traffic ~20x.
-    let liveRows, buffRows;
+    let liveRows, buffRows, rosterLocRows;
     if (globalThis._extBundleCache && Date.now() - globalThis._extBundleCache.at < 1500) {
-      ({ liveRows, buffRows } = globalThis._extBundleCache);
+      ({ liveRows, buffRows, rosterLocRows } = globalThis._extBundleCache);
     } else {
-    [liveRows, buffRows] = await Promise.all([
+    [liveRows, buffRows, rosterLocRows] = await Promise.all([
       supabase.select('character_live_state',
         `guild_id=eq.${encodeURIComponent(guildId)}&updated_at=gte.${encodeURIComponent(onlineSince)}` +
         `&select=character,zone_name,self_hp_pct,self_hp_cur,self_hp_max,target_name,target_hp_pct,pet_name,pet_hp_pct,` +
-        `incoming_mob,incoming_mob_since,updated_at`),
+        `incoming_mob,incoming_mob_since,loc_x,loc_y,loc_z,observed_tanks,updated_at`),
       supabase.select('buff_casts',
         `guild_id=eq.${encodeURIComponent(guildId)}&cast_at=gte.${encodeURIComponent(debuffSince)}` +
         `&select=target,spell_name,dur_ticks,cast_at,observer,is_charm_spell&order=cast_at.desc&limit=600`),
+      // #194: raid-wide position from the type-5 forward (beta agents). One
+      // Mimic in the raid covers every member's loc; rows without loc_at are
+      // pre-forwarding uploads and are skipped at use time. Best-effort — the
+      // clustering works (with less coverage) when this returns nothing.
+      supabase.select('raid_roster',
+        `guild_id=eq.${encodeURIComponent(guildId)}&loc_at=gte.${encodeURIComponent(onlineSince)}` +
+        `&select=name,loc_x,loc_y,loc_z,loc_at`).catch(() => []),
     ]);
-    globalThis._extBundleCache = { at: Date.now(), liveRows, buffRows };
+    globalThis._extBundleCache = { at: Date.now(), liveRows, buffRows, rosterLocRows };
     }
     const now = Date.now();
     const live = (liveRows || []).filter(r => r && r.character);
@@ -9847,7 +10007,19 @@ async function _handleAgentExtendedTarget(req, res) {
       const m = debuffsByTarget.get(k);
       const sk = String(b.spell_name).toLowerCase();
       const prev = m.get(sk);
-      if (!prev || castMs > prev.castMs) m.set(sk, { name: b.spell_name, castMs, durSecs });
+      if (!prev || castMs > prev.castMs) {
+        // Fold the superseded entry's observers in when it is the SAME landing
+        // seen from another client (within 5s) — any of them may be able to
+        // place the debuff on an instance (#194).
+        const observers = [];
+        if (b.observer) observers.push(String(b.observer));
+        if (prev && Math.abs(castMs - prev.castMs) <= 5000) observers.push(...(prev.observers || []));
+        m.set(sk, { name: b.spell_name, castMs, durSecs, observers });
+      } else if (prev && b.observer && Math.abs(castMs - prev.castMs) <= 5000) {
+        if (!prev.observers.some(o => o.toLowerCase() === String(b.observer).toLowerCase())) {
+          prev.observers.push(String(b.observer));
+        }
+      }
     }
     const debuffsFor = (key) => {
       const m = debuffsByTarget.get(key); if (!m) return [];
@@ -9856,6 +10028,75 @@ async function _handleAgentExtendedTarget(req, res) {
         remaining_secs: d.durSecs > 0 ? Math.max(0, Math.round(d.durSecs - (now - d.castMs) / 1000)) : null,
       })).slice(0, 12);
     };
+    // #194: same map, with observers retained — the attribution input at K≥2.
+    const debuffEntriesFor = (key) => {
+      const m = debuffsByTarget.get(key); if (!m) return [];
+      return [...m.values()].map(d => ({
+        name: d.name,
+        remaining_secs: d.durSecs > 0 ? Math.max(0, Math.round(d.durSecs - (now - d.castMs) / 1000)) : null,
+        observers: d.observers || [],
+      })).slice(0, 24);
+    };
+
+    // ── #194 engagement index: who is each mob NAME's melee connecting on ──
+    // Two sources, deduped per (mob, tank):
+    //   • a raider's own incoming_mob (stable fleet, agent ≥3.3.x) — they are
+    //     the tank, their own loc places the instance;
+    //   • observed_tanks forwarded by beta agents — one observer's log names
+    //     every tank in range, and the tank's position comes from their own
+    //     live_state row (if they run Mimic) or the type-5 raid_roster forward
+    //     (one Mimic covers the whole raid).
+    // Officer kill switch: flag_ext_pos_off=1 in /admin/overlays (60s cache).
+    const extPosClusterUnits = tn('ext_pos_cluster_units', EXT_POS_CLUSTER_UNITS);
+    const extPosFreshMs = tn('ext_pos_fresh_sec', EXT_POS_FRESH_MS / 1000) * 1000;
+    const extPosOff = tn('flag_ext_pos_off', 0) === 1;
+    const locByName = new Map();   // raiderLower → {x,y,z}
+    for (const r of inScope) {
+      if (Number.isFinite(Number(r.loc_x)) && Number.isFinite(Number(r.loc_y)) && Number.isFinite(Number(r.loc_z))) {
+        locByName.set(r.character.toLowerCase(), { x: Number(r.loc_x), y: Number(r.loc_y), z: Number(r.loc_z) });
+      }
+    }
+    for (const rr of (rosterLocRows || [])) {
+      if (!rr || !rr.name) continue;
+      const k = String(rr.name).toLowerCase();
+      const locMs = rr.loc_at ? Date.parse(rr.loc_at) : 0;
+      if (!locMs || (now - locMs) > extPosFreshMs) continue;
+      if (locByName.has(k)) continue;   // their own live_state loc wins
+      if (Number.isFinite(Number(rr.loc_x)) && Number.isFinite(Number(rr.loc_y)) && Number.isFinite(Number(rr.loc_z))) {
+        locByName.set(k, { x: Number(rr.loc_x), y: Number(rr.loc_y), z: Number(rr.loc_z) });
+      }
+    }
+    const engagedByMob = new Map();   // mobNameLower → [{raider, tank, x, y, z}]
+    const _addEngaged = (mobKey, tankName) => {
+      if (!mobKey || !tankName) return;
+      let arr = engagedByMob.get(mobKey);
+      if (!arr) { arr = []; engagedByMob.set(mobKey, arr); }
+      const tl = String(tankName).toLowerCase();
+      if (arr.some(m => m.raider.toLowerCase() === tl)) return;
+      const loc = locByName.get(tl) || {};
+      arr.push({ raider: String(tankName), tank: String(tankName), x: loc.x, y: loc.y, z: loc.z });
+    };
+    if (!extPosOff) {
+      for (const r of inScope) {
+        if (r.incoming_mob) {
+          const sinceMs = r.incoming_mob_since ? Date.parse(r.incoming_mob_since) : 0;
+          if (sinceMs && (now - sinceMs) <= extPosFreshMs) {
+            _addEngaged(String(r.incoming_mob).trim().toLowerCase(), r.character);
+          }
+        }
+        if (Array.isArray(r.observed_tanks)) {
+          for (const ot of r.observed_tanks.slice(0, 16)) {
+            if (!ot || !ot.mob || !ot.tank) continue;
+            const sinceMs = ot.since ? Date.parse(ot.since) : 0;
+            if (!sinceMs || (now - sinceMs) > extPosFreshMs) continue;
+            // Players only — the agent's recentTankHits heuristic can misread
+            // pets; a name with a backtick/apostrophe is an NPC, not a tank.
+            if (!/^[A-Za-z]+$/.test(String(ot.tank))) continue;
+            _addEngaged(String(ot.mob).trim().toLowerCase(), ot.tank);
+          }
+        }
+      }
+    }
 
     // Aggregate targets by name, then sub-cluster each name by HP.
     const byName = new Map();
@@ -9890,18 +10131,50 @@ async function _handleAgentExtendedTarget(req, res) {
       const clusters = cls.ambiguous
         ? clusterByHp(g.obs)
         : [{ raiders: g.obs.map(o => o.raider), hp: median(g.obs.filter(o => o.hp != null).map(o => o.hp)) }];
-      const multi = clusters.length > 1;     // proven duplicate same-name mobs
+      // #194: position instances for this name. Runs for CAPITALIZED npc names
+      // too — Vex Thal-style adds share a capitalized name with no article
+      // ("Thall Va Xakra" ×2), which the classifier calls unique and collapses.
+      // Reporter HP noise must never split a unique name (the old rule stands),
+      // but two tanks 25+ units apart both being melee'd by that name is not
+      // noise — position evidence is allowed to overrule the label.
+      const engaged = engagedByMob.get(g.key) || [];
+      const posInstances = engaged.length >= 2 ? _extPosCluster(engaged, extPosClusterUnits) : [];
+      const rows = _extBindInstances(clusters, posInstances);
+      // A pos-split row inherits the merged cluster's median — recompute from
+      // the raiders that actually landed on it so the two rows don't show one HP.
+      const hpOfRaider = new Map(g.obs.filter(o => o.hp != null).map(o => [String(o.raider).toLowerCase(), o.hp]));
+      for (const c of rows) {
+        if (!c.pos_split) continue;
+        const hps = c.raiders.map(r2 => hpOfRaider.get(String(r2).toLowerCase())).filter(h => h != null);
+        if (hps.length) c.hp = median(hps);
+      }
+      const multi = rows.length > 1;         // proven duplicate same-name mobs
       const debuffs = debuffsFor(g.key);
-      clusters.forEach((c, idx) => {
+      if (multi) {
+        // Per-instance debuff attribution — the actual #194 payoff. Sets
+        // c.debuffs per row; unplaceable landings appear on every row with
+        // attributed:false so the overlay can dim them instead of lying.
+        const observerInfo = new Map();
+        for (const r2 of inScope) {
+          const t2 = r2.target_name && String(r2.target_name).trim().toLowerCase();
+          if (t2 === g.key) observerInfo.set(r2.character.toLowerCase(),
+            { targetsName: true, targetHp: r2.target_hp_pct != null ? Number(r2.target_hp_pct) : null });
+        }
+        _extAttributeDebuffs(debuffEntriesFor(g.key), rows, observerInfo, extHpSplitTol);
+      }
+      rows.forEach((c, idx) => {
         targets.push({
           name: g.name, kind: cls.kind,
           raider_count: c.raiders.length, raiders: c.raiders.slice(0, 20),
           hp_pct: c.hp,
           is_named: cls.is_named,
           ambiguous: cls.ambiguous || multi,
-          same_name_count: clusters.length,
+          same_name_count: rows.length,
           dup_index: multi ? idx + 1 : null,
-          debuffs,
+          debuffs: multi ? (c.debuffs || []) : debuffs,
+          // Tank labels only at K≥2 — the K=1 payload stays byte-identical
+          // (the non-negotiable guarantee; fixture-enforced).
+          ...(multi && c.tanks && c.tanks.length ? { tanks: c.tanks.slice(0, 4) } : {}),
           hurt: false, hurt_secs: 0,
           zone: scopeZone || null,
         });
@@ -11903,6 +12176,16 @@ async function _handleAgentLiveState(req, res) {
       incoming_mob: st?.incoming_mob ? String(st.incoming_mob).slice(0, 80) : null,
       incoming_mob_since: (st?.incoming_mob_since && Number.isFinite(Date.parse(st.incoming_mob_since)))
         ? new Date(Date.parse(st.incoming_mob_since)).toISOString() : null,
+      // #194: the observer's recent mob→tank connects (beta agents) — feeds the
+      // ext-target position clustering's engagement index. Sanitized + capped;
+      // null from pre-#194 agents.
+      observed_tanks: (Array.isArray(st?.observed_tanks) && st.observed_tanks.length)
+        ? st.observed_tanks.slice(0, 16).map(ot => ({
+            mob:   String(ot?.mob || '').slice(0, 80),
+            tank:  String(ot?.tank || '').slice(0, 30),
+            since: (ot?.since && Number.isFinite(Date.parse(ot.since))) ? new Date(Date.parse(ot.since)).toISOString() : null,
+          })).filter(ot => ot.mob && ot.tank && ot.since)
+        : null,
       loc_x:       locX,
       loc_y:       locY,
       loc_z:       locZ,
@@ -12568,6 +12851,15 @@ async function _handleAgentRaidRoster(req, res) {
       level:                  Number.isFinite(lvl) ? lvl : null,
       rank:                   m?.rank ? String(m.rank).slice(0, 20) : null,
       hp_pct:                 Number.isFinite(hp) ? Math.max(0, Math.min(100, hp)) : null,
+      // #194: type-5 loc/heading forwarded by beta agents — position for every
+      // raid member from one uploader (the clustering coverage multiplier).
+      // loc_at stamps freshness; consumers gate on IT, never captured_at
+      // (see the migration header). Null-safe for pre-forwarding agents.
+      loc_x:   Number.isFinite(Number(m?.loc_x)) ? Number(m.loc_x) : null,
+      loc_y:   Number.isFinite(Number(m?.loc_y)) ? Number(m.loc_y) : null,
+      loc_z:   Number.isFinite(Number(m?.loc_z)) ? Number(m.loc_z) : null,
+      heading: Number.isFinite(Number(m?.heading)) ? Number(m.heading) : null,
+      loc_at:  Number.isFinite(Number(m?.loc_x)) ? nowIso : null,
       hp_current:             hasExact ? Math.max(0, hpc) : null,
       hp_max:                 hasExact ? hpm : null,
       captured_at:            nowIso,

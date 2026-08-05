@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.1.10': [
+    '**Two mobs with one name finally show as two mobs.** When two same-name adds are tanked apart — tomorrow\'s Thall Va Xakra pull is the case this was built for — the Extended Target overlay now splits them into separate rows, each labeled with WHO is tanking it ("@ Grabthar" vs "@ Borim"), and shows which one your slows and tashes actually landed on. When a debuff can\'t be pinned to one of them, it shows dimmed with a ? on both instead of guessing. The game data has no mob identity at all (that\'s a Zeal limitation we\'ve asked upstream about), so this works by noticing that the PEOPLE being hit by each mob are standing in different places — it needs the tanks held apart to work, and it will honestly merge them when they\'re stacked on one spot.',
+  ],
   '3.1.8': [
     '**The raid review stopped duplicating itself.** If you saw the same Sunday review posted over and over in the raid thread this morning — that was us. The review remembers which message to edit, but it was only remembering it on the bot\'s own disk, and that disk is wiped every time the bot redeploys. Eleven deploys overnight meant eleven copies of the same review. It now remembers in the database instead, so a redeploy edits the existing post rather than adding another one. The duplicates already in the thread need deleting by hand — sorry about the noise.',
   ],

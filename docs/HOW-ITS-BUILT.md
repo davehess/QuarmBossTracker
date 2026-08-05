@@ -670,6 +670,30 @@ per-process CPU + memory, sorted by memory, with EQ-running state. Discards the
 first CPU sample (it is a delta since the previous call) and lists the log agent
 separately because it is a spawned process and NOT in `getAppMetrics()`.
 
+### #194 same-name instance split — position clustering — 2026-08-05
+**Two "Thall Va Xakra" tanked apart are two rows, each labeled "@ <tank>", with
+per-instance debuffs.** The pipe ceiling is permanent (no spawn id — do NOT
+re-derive; `DESIGN-mob-serialization.md`), so the split clusters the PLAYERS:
+a tanked mob stands on its tank. Bot (`index.js`, next to `EXT_HP_SPLIT_TOL`):
+`_extPosCluster` (single-linkage over engaged raiders, 3D,
+`ext_pos_cluster_units`=25; a bridging player MERGES — separators may only
+raise K), `_extBindInstances` (welds HP clusters to position instances via
+raiders in both; splits an equal-HP band position proves is two mobs; with no
+instances returns the INPUT array — the K=1 byte-identity anchor),
+`_extAttributeDebuffs` (observer-is-tank → that row; casting observer's
+target-HP matches ONE band → that row; else dimmed `attributed:false` on every
+row — never guess). Engagement evidence: fresh `incoming_mob` (whole fleet) +
+`observed_tanks` (beta agents — every mob→player connect the observer's log
+saw); positions from `live_state.loc_*` + the type-5 `raid_roster` loc forward
+(gate on `loc_at`, NEVER `captured_at`). **Clustering runs for CAPITALIZED npc
+names too** — the classifier calls them unique, but position evidence may
+overrule (the Vex Thal adds are article-less). Tank labels ship only at K≥2.
+Kill switch `flag_ext_pos_off=1` (tuning). Overlay (`extarget.html`): tank tag,
+dimmed `?` chips, and per-row debuffs when any row carries `tanks` (pooling
+stays the fallback for pre-#194 bots). Tests: `test/ext-pos-cluster.test.js`
+(bot), `test/raid-loc-forward.test.js` (agent, beta). Privacy:
+raid-loc forwarding noted in `docs/PRIVACY.md`.
+
 ### One card in a thread: utils/threadAnchor.js — 2026-08-04
 **A failed edit must never become a second post.** Three duplicate-post bugs have
 now been chased here: the Mimic release announcer (2026-07-13, ephemeral

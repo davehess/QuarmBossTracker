@@ -1384,7 +1384,12 @@ the callout designs; they're written up in the Open TODO section, not here):
   absent from).
 - **#192** onboarding overhaul v1 (`DESIGN-onboarding-overhaul.md`)
 - **#193** Zeal spawn-id ask + consuming it (`zeal-spawn-id-request.md`)
-- **#194** serialization phase 2 — position-clustered same-name instances
+- **#194** serialization phase 2 — position-clustered same-name instances —
+  **phases 0-1 + the phase-2 coverage forwards SHIPPED 2026-08-05** (bot
+  3.1.10 main, agent 3.5.30 beta) for the Thall Va Xakra twin-add pull;
+  remaining: feed K_pos into the agent's #56 local tracks, N>2 soak,
+  per-instance HP history. Uilnayar 2026-08-04: upstream Zeal ask has zero
+  traction — the end-around is now the plan of record
 - **#195** UI Studio web viewer/editor + UI/eqclient.ini cloud backups
 - **#196** /me advisors (spells / tradeskill / faction)
 - **#197** long-haul storage partitioning

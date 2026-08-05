@@ -75,3 +75,18 @@ than 30 days is collected at opt-in.
 
 **That's it.** No selling, no ads, no leaderboards of who whispered whom. Just tools
 to help the Pack run smoother on a crazy night.
+
+## Raid-member positions (#194, 2026-08-05)
+
+Zeal's raid pipe includes each raid member's in-zone coordinates. Beta agents
+forward them (with the roster upload) so the platform can tell two same-name
+mobs apart by where their tanks stand. Scope and limits:
+
+- **Same data class as raid HP**: intra-guild, in-raid, visible to signed-in
+  members on the same surfaces that already show raid HP. Never public, never
+  cross-guild.
+- **Raid windows only** — the type-5 pipe only fires while you are in a raid;
+  there is no out-of-raid position collection.
+- Positions of guildmates who run nothing are forwarded by raiders who DO run
+  Mimic, exactly as their raid HP already is. The existing per-character
+  opt-out flags apply to derived display surfaces.
