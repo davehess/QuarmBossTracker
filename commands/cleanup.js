@@ -396,6 +396,41 @@ async function runCleanup(client) {
       }
     }
 
+  // ── Onboarding thread: duplicate Quick Start cards ────────────────────────
+  // Cause fixed in utils/threadAnchor.js (an edit that failed in an archived
+  // thread used to fall through to posting a new card, once per bot restart).
+  // This clears the backlog those restarts left behind.
+  //
+  // Keeps the NEWEST, not the earliest as the board sweeps above do. That is
+  // deliberate: postOrEditCard() adopts the newest card in the thread, so
+  // keeping the earliest here would delete the one the bot is editing and the
+  // pair would fight — cleanup deleting the live card, the anchor adopting
+  // another, forever.
+  const onbId = process.env.ONBOARDING_THREAD_ID;
+  if (onbId) {
+    try {
+      const thread = await client.channels.fetch(onbId);
+      const { findOwnCard, unarchiveIfNeeded } = require('../utils/threadAnchor');
+      const { INSTRUCTIONS_TITLE } = require('../utils/onboarding');
+      const { duplicates } = await findOwnCard(thread, {
+        botId: client.user.id, title: INSTRUCTIONS_TITLE, limit: 100,
+      });
+      if (duplicates.length) {
+        if (await unarchiveIfNeeded(thread, () => {})) {
+          let gone = 0;
+          for (const m of duplicates) {
+            try { await m.delete(); gone++; } catch { /* already gone / no perms */ }
+          }
+          results.push(`🗑️ Onboarding thread: deleted ${gone} duplicate Quick Start card(s), kept the newest`);
+        } else {
+          results.push('⚠️ Onboarding thread: locked — could not remove duplicate Quick Start cards');
+        }
+      }
+    } catch (err) {
+      results.push(`❌ Onboarding thread: ${err?.message}`);
+    }
+  }
+
   return results;
 }
 

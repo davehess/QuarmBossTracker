@@ -571,22 +571,68 @@ function buildInstructionsEmbed() {
     .setFooter({ text: 'Timer data sourced from PQDI.cc • Wolf Pack EQ (Quarm)' });
 }
 
+// The Quick Start card's message id, somewhere that survives a redeploy.
+// In-process memory plus the thread rescan used to be the whole story, and the
+// rescan does work — but it only ever recovered the ID. The card was still
+// re-posted because the EDIT failed (archived thread) and the old code treated
+// any edit failure as "post a new one". See utils/threadAnchor.js.
+const _KV_INSTRUCTIONS = 'onboarding_instructions_msg';
+async function _getInstructionsMsgId() {
+  if (_instructionsMsgId) return _instructionsMsgId;
+  try {
+    const supabase = require('./supabase');
+    if (!supabase.isEnabled?.()) return null;
+    const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+    const rows = await supabase.select('bot_kv',
+      `guild_id=eq.${encodeURIComponent(guildId)}&key=eq.${_KV_INSTRUCTIONS}&select=value&limit=1`);
+    const id = Array.isArray(rows) && rows[0]?.value?.message_id;
+    if (id) _instructionsMsgId = id;
+    return id || null;
+  } catch (err) {
+    console.warn('[onboarding] kv instructions id read failed:', err?.message);
+    return null;
+  }
+}
+async function _setInstructionsMsgId(messageId) {
+  _instructionsMsgId = messageId;
+  try {
+    const supabase = require('./supabase');
+    if (!supabase.isEnabled?.()) return;
+    await supabase.upsert('bot_kv', [{
+      guild_id: process.env.SUPABASE_GUILD_ID || 'wolfpack',
+      key: _KV_INSTRUCTIONS,
+      value: { message_id: messageId, updated_at: new Date().toISOString() },
+      updated_at: new Date().toISOString(),
+    }], 'guild_id,key');
+  } catch (err) { console.warn('[onboarding] kv instructions id save failed:', err?.message); }
+}
+
 async function postOrUpdateInstructions(client) {
   const threadId = process.env.ONBOARDING_THREAD_ID;
   if (!threadId) return;
   try {
     const thread = await client.channels.fetch(threadId);
-    const embed  = buildInstructionsEmbed();
-
-    if (_instructionsMsgId) {
-      try {
-        const msg = await thread.messages.fetch(_instructionsMsgId);
-        await msg.edit({ embeds: [embed] });
-        return;
-      } catch {}
+    const { postOrEditCard } = require('./threadAnchor');
+    const res = await postOrEditCard(thread, {
+      botId:   client.user.id,
+      title:   INSTRUCTIONS_TITLE,
+      payload: { embeds: [buildInstructionsEmbed()] },
+      getId:   _getInstructionsMsgId,
+      setId:   _setInstructionsMsgId,
+      log:     (m) => console.log('[onboarding]', m),
+    });
+    if (res.action === 'posted') console.log('[onboarding] posted a fresh Quick Start card');
+    // Say how many older copies are sitting in the thread. Nothing is deleted
+    // automatically — they are real messages in the guild's history and that is
+    // the officers' call — but "how many do I need to clear?" should have an
+    // answer that is not "scroll and count".
+    if (res.duplicates?.length) {
+      console.warn(`[onboarding] ${res.duplicates.length} duplicate Quick Start card(s) still in the thread `
+        + `(ids: ${res.duplicates.map(m => m.id).join(', ')}) — run /cleanup to remove them`);
     }
-    const msg          = await thread.send({ embeds: [embed] });
-    _instructionsMsgId = msg.id;
+    if (res.action === 'skipped') {
+      console.warn('[onboarding] instructions card not updated:', res.reason);
+    }
     await saveOnboardingData(client);
   } catch (err) {
     console.warn('[onboarding] Could not post/update instructions:', err?.message);

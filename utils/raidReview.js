@@ -1133,21 +1133,33 @@ async function postRaidNightReview(client, { atMs = Date.now(), dryRun = false, 
     if (!target.thread) return { ok: false, reason: 'no-thread', window: win, summary, embeds };
     if (target.kind === 'event' && !force) return { ok: false, reason: 'event-night', window: win, summary, embeds };
 
-    // Durable across redeploys (bot_kv), not just this container's state.json.
-    const existingId = await _getReviewMessageId(win.nightKey);
-    if (existingId) {
-      const msg = await target.thread.messages.fetch(existingId).catch(() => null);
-      if (msg) {
-        await msg.edit({ embeds });
-        if (!live) _finalDone.add(win.nightKey);
-        return { ok: true, reason: 'edited', window: win, summary, messageId: msg.id, threadId: target.thread.id };
-      }
+    // Durable across redeploys (bot_kv), not just this container's state.json —
+    // and posted through the shared anchor so a failure to READ or EDIT the
+    // existing card can never become a second card. The old code here caught
+    // the fetch with `.catch(() => null)`, which made any transient failure
+    // indistinguishable from "the message is gone" and fell through to send().
+    // Same defect that was spamming the onboarding thread (2026-08-04); see
+    // utils/threadAnchor.js for why an archived thread is the usual trigger.
+    const { postOrEditCard } = require('./threadAnchor');
+    const res = await postOrEditCard(target.thread, {
+      botId:   client.user.id,
+      title:   embeds[0]?.data?.title || embeds[0]?.title,
+      payload: { embeds },
+      getId:   () => _getReviewMessageId(win.nightKey),
+      setId:   (id) => _setReviewMessageId(win.nightKey, id, target.thread.id),
+      log:     (m) => console.log('[raid-review]', m),
+    });
+    if (res.action === 'skipped') {
+      console.warn(`[raid-review] ${win.label} not posted (${res.reason}) — deliberately NOT sending a duplicate`);
+      return { ok: false, reason: res.reason, window: win, summary, embeds };
     }
-    const sent = await target.thread.send({ embeds });
-    await _setReviewMessageId(win.nightKey, sent.id, target.thread.id);
+    if (res.duplicates?.length) {
+      console.warn(`[raid-review] ${res.duplicates.length} older copy/copies of this night's review are still in the thread `
+        + `(ids: ${res.duplicates.map(m => m.id).join(', ')})`);
+    }
     if (!live) _finalDone.add(win.nightKey);
-    console.log(`[raid-review] posted ${live ? 'LIVE ' : ''}${win.label} → thread ${target.thread.id} (${summary.kills.length} kills)`);
-    return { ok: true, reason: 'posted', window: win, summary, messageId: sent.id, threadId: target.thread.id };
+    console.log(`[raid-review] ${res.action} ${live ? 'LIVE ' : ''}${win.label} → thread ${target.thread.id} (${summary.kills.length} kills)`);
+    return { ok: true, reason: res.action, window: win, summary, messageId: res.messageId, threadId: target.thread.id };
   } catch (err) {
     console.warn('[raid-review] post failed:', err?.message);
     return { ok: false, reason: 'error', error: err?.message };
