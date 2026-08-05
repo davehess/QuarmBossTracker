@@ -64,6 +64,10 @@
   /* #194 — which tank this same-name instance is melee'ing. The label that
      finally tells two "Thall Va Xakra" apart on screen. */
   .row .tank-tag{color:#7ee787;font-size:9px;margin-left:4px;cursor:help}
+  /* #194 — Zeal /tag text + shape on the row. Colors mirror Zeal's arrow set. */
+  .row .ztag{font-size:9px;margin-left:4px;padding:0 3px;border-radius:2px;background:#1c2128;cursor:help}
+  .row .ztag .shp{margin-right:2px}
+  .debuffs .chip.ztag-pool{background:#1c2128;border-color:#30363d}
   .debuffs .chip.unattr{opacity:.45;font-style:italic}
   .row.player .nm{color:#79c0ff}
   .row.pet    .nm{color:#c9a0ff}
@@ -396,6 +400,17 @@
   function rowKey(t){
     return 'row:' + (t.name || '?') + '|' + (t.kind || '') + '|' + (t.dup_index || '') + '|' + (t.owner || '');
   }
+  // Zeal /tag shapes → glyphs, colored like Zeal's arrows. P = pet paw,
+  // S = stop sign; unknown/absent shapes render nothing.
+  var ZTAG_SHAPES = { R:['\u25B2','#f85149'], O:['\u25B2','#f0883e'], Y:['\u25B2','#f0b429'],
+                      G:['\u25B2','#7ee787'], B:['\u25B2','#58a6ff'], W:['\u25B2','#e6edf3'],
+                      P:['\uD83D\uDC3E','#7ee787'], S:['\uD83D\uDED1','#f85149'] };
+  function ztagHtml(text, shape){
+    var g = shape && ZTAG_SHAPES[shape];
+    var shp = g ? '<span class="shp" style="color:' + g[1] + '">' + g[0] + '</span>' : '';
+    if (!shp && !text) return '';
+    return '<span class="ztag" title="Zeal tag — set in game with /tag">' + shp + esc(text || '') + '</span>';
+  }
   function rowHtml(t, suppressDeb){
     var kind = t.kind || 'npc';
     var tier = hpTier(t.hp_pct);
@@ -417,6 +432,8 @@
     if (t.tanks && t.tanks.length) {
       nm += '<span class="tank-tag" title="This one is meleeing: ' + esc(t.tanks.join(', ')) + '">@ ' + esc(t.tanks.join(', ')) + '</span>';
     }
+    // #194 — the in-game Zeal /tag, welded to this instance by the bot.
+    if (t.tag_text || t.tag_shape) nm += ztagHtml(t.tag_text, t.tag_shape);
     if (kind === 'pet' && t.owner) nm += '<span class="owner">(' + esc(t.owner) + ')</span>';
     if (t.hurt) nm += '<span class="warn">⚠ ' + (t.hurt_secs || 0) + 's</span>';
     if (t.off_tank) {
@@ -446,6 +463,18 @@
     // divided per row is false precision (Uilnayar 2026-07-13). The group's
     // debuffs render once, pooled, in debuffBlock() below.
     var deb = suppressDeb ? '' : debuffBlock(t.debuffs);
+    // #194 — tags the bot could not weld to a specific instance: shown once,
+    // pooled, on the group's first row (same honesty rule as pooled debuffs).
+    if (t.tag_pool && t.tag_pool.length) {
+      var tp = '<div class="debuffs" data-k="ztags:' + esc(t.name) + '">'
+             + '<span class="chip pool-lbl" title="In-game /tag marks on this name that could not be matched to a specific row.">tags:</span>';
+      for (var tpi = 0; tpi < t.tag_pool.length; tpi++) {
+        var tg = t.tag_pool[tpi];
+        var g2 = tg.shape && ZTAG_SHAPES[tg.shape];
+        tp += '<span class="chip ztag-pool">' + (g2 ? '<span style="color:' + g2[1] + '">' + g2[0] + '</span> ' : '') + esc(tg.text || ('#' + tg.spawn_id)) + '</span>';
+      }
+      deb += tp + '</div>';
+    }
     // Who's targeting this — the bot already ships the names (raiders[]);
     // show up to 4 + "+N", full list on the row tooltip (Uilnayar
     // 2026-07-15: "should show who is targeting which target").

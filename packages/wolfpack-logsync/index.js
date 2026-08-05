@@ -23766,6 +23766,10 @@ function transformEqItemLinks(text) {
 function parseChatLine(line, selfName) {
   // Cheap gate — all four channel regexes require "guild," or "raid,".
   if (line.indexOf('guild,') === -1 && line.indexOf('raid,') === -1) return null;
+  // #194: Zeal /tag broadcasts ride rsay when raiders use the rsay transport —
+  // machine traffic, not conversation. The tag parser captures them from the
+  // raw line; they must not spam the Discord raid-chat relay.
+  if (line.indexOf('ZEALTAG | ') !== -1 || line.indexOf('ZT | ') !== -1) return null;
   for (const { rx, channel, self: isSelf } of CHAT_LINE_PATTERNS) {
     const m = line.match(rx);
     if (!m) continue;
@@ -25700,66 +25704,101 @@ const _clientVersions = new Map();   // charLower → { zeal, zeal_hash, eqw, eq
 const _ZEAL_VER_RX   = /\]\s+Zeal version:\s*([\w.]+)(?:\s*\(([^)]+)\))?/i;
 const _EQW_VER_RX    = /\]\s+eqw\.dll version:\s*(.+?)\s*$/i;
 const _EQGAME_VER_RX = /\]\s+eqgame\.dll version:\s*(.+?)\s*$/i;
-// ── #194 tag channel — a chat channel as a machine-tag broadcast bus ────────
+// ── #194 Zeal /tag capture — the spawn-id side door ─────────────────────────
 //
-// "if we captured the zeal tag from our channel in game from ztwolfpacktag …
-// or request those tanks output their target's name" (Uilnayar 2026-08-05).
+// Zeal's native /tag command (CoastalRedwood/Zeal nameplate.cpp, read
+// 2026-08-05) broadcasts nameplate tags through rsay, gsay, or a joined "ZT*"
+// chat channel. The wire format — verified from source, not the wiki —
 //
-// The insight: EQ's chat system is the one raid-wide broadcast medium every
-// client has. A tank hits a social —
+//     ZEALTAG | <tag_text> | <target_name> | <spawn_id>
 //
-//     /ztwolfpacktag tag %T
+// ("ZT" is the abbreviated header both sides accept; the delimiter is
+// exactly " | "; tag_text caps at 32 visible-ASCII chars). THE PAYLOAD FIELD
+// IS THE SPAWN ID — the one datum the Zeal pipe never carries and the reason
+// same-name serialization has been heuristic. A tank targets their add, hits
+// "/tag chat Naggato-Tanking", and every channel member's LOG receives the
+// mob's true per-zone identity. Tags are therefore an AUTHORITATIVE separator:
+// two fresh tags with different spawn_ids are two mobs, full stop.
 //
-// — and EVERY member of the channel logs the line. %T (target name) is BASE EQ
-// macro substitution, so this works for tanks running neither Zeal nor Mimic;
-// one Mimic user in the channel harvests every tank's tag. An optional
-// trailing number is read as target HP% for clients that can emit it.
+// tag_text prefixes (same source): '+'/'@' append, '!' replace, '-' erase,
+// and '^?^' sets a shape — R/O/Y/G/B/W colored arrows, P paw, S stop sign,
+// '-' clears the shape. 'clear' as the whole text clears every tag;
+// 'ChatChannel: <name>' is the autojoin broadcast, not a tag.
 //
-// PRIVACY: the raw line never leaves the machine. The custom-channel drop
-// pattern in DEFAULT_DROP_PATTERNS still matches this channel and still drops
-// it from every upload/parse path — this capture runs independently on the raw
-// line (the noteClientVersionLine pattern) and ships ONLY the structured
-// extract {tank, mob, hp}. Joining the channel is the opt-in.
-//
-// Grammar (deliberately loose — socials get mistyped):
-//     tag <mob name> [<hp>[%]]
-// Speaker is the tank. Incoming ("Grabthar tells ztwolfpacktag:5, 'tag …'")
-// and outgoing ("You tell ztwolfpacktag:5, 'tag …'") both count.
-const WP_TAG_CHANNEL = (process.env.WP_TAG_CHANNEL || 'ztwolfpacktag').toLowerCase();
-const _TAG_FRESH_MS = 30_000;
-const _tagTargets = new Map();   // tankLower → { tank, mob, mobDisplay, hp, tsMs }
-function noteTagChannelLine(line, selfCharacter) {
-  if (!line) return false;
-  // Cheap gate — one indexOf per log line, like the /zeal version harvest.
-  if (line.toLowerCase().indexOf(WP_TAG_CHANNEL + ':') === -1) return false;
-  let speaker = null, payload = null;
-  const m = line.match(/^\[.+?\]\s+(\w+) tells? ([A-Za-z]+):\d+,\s*'(.+)'\s*$/i);
-  if (m && m[2].toLowerCase() === WP_TAG_CHANNEL) {
-    // The outgoing form is "You tell <channel>:N" and matches this same
-    // pattern with speaker "You" — resolve it to the watched character (the
-    // test that caught this: speaker literally became "You").
-    speaker = /^you$/i.test(m[1]) ? (selfCharacter || null) : m[1];
-    payload = m[3];
+// PRIVACY: unchanged. ZT-channel lines still match the custom-channel drop
+// pattern and never upload raw; rsay-borne tags are raid chat (kept) but are
+// EXCLUDED from the Discord chat relay (machine traffic, not conversation).
+// Only the structured extract {spawn_id, mob, text, shape, tagger} ships.
+const _ZEAL_TAG_SHAPES = { r: 'R', o: 'O', y: 'Y', g: 'G', b: 'B', w: 'W', p: 'P', s: 'S' };
+const _TAG_FRESH_MS = 120_000;   // tags are deliberate marks, not transient connects
+const _zealTags = new Map();     // spawnId → { spawn_id, mob, mobDisplay, text, shape, tagger, tsMs }
+function _isZealTagPayload(msg) {
+  return typeof msg === 'string' && (msg.startsWith('ZEALTAG | ') || msg.startsWith('ZT | '));
+}
+function _applyZealTagMessage(msg, tagger, tsMs) {
+  const parts = msg.split(' | ');
+  if (parts.length < 4) return false;
+  const rawText = parts[1];
+  if (!rawText) return false;
+  if (rawText === 'clear') { _zealTags.clear(); return true; }        // broadcast clear-all
+  if (rawText.startsWith('ChatChannel: ')) return false;              // autojoin plumbing, not a tag
+  const name = parts.slice(2, parts.length - 1).join(' | ').trim();   // names can't contain " | ", but be safe
+  const spawnId = parseInt(parts[parts.length - 1], 10);
+  if (!Number.isFinite(spawnId)) return false;
+  if (spawnId === 0 || name === '0') return true;                     // targeted-clear form
+  let text = rawText;
+  // Prefix semantics, simplified for a DISPLAY consumer: append variants
+  // replace our stored text (the nameplate-merge subtleties don't matter for
+  // a row label); a bare erase drops the tag.
+  const first = text[0];
+  if (first === '+' || first === '@' || first === '!') text = text.slice(1);
+  else if (first === '-') {
+    if (!text.includes('^')) { _zealTags.delete(spawnId); return true; }
+    text = text.slice(1);
   }
-  if (!speaker || !payload) return false;
-  if (!/^[A-Za-z]+$/.test(speaker)) return false;      // players only, same rule as observed_tanks
-  const t = payload.match(/^tag\s+(.+?)(?:\s+(\d{1,3})\s*%?)?\s*$/i);
-  if (!t) return false;                                 // not a tag — other channel chatter, ignore
-  const mob = t[1].trim();
-  if (mob.length < 3 || mob.length > 64) return false;
-  const hp = t[2] != null ? Math.max(0, Math.min(100, parseInt(t[2], 10))) : null;
-  const ts = parseEqTimestamp(line);
-  _tagTargets.set(speaker.toLowerCase(), {
-    tank: speaker, mob: mob.toLowerCase(), mobDisplay: mob, hp,
-    tsMs: ts ? ts.getTime() : Date.now(),
+  let shape = null;
+  const sm = text.match(/^\^(.)\^/);
+  if (sm) {
+    shape = _ZEAL_TAG_SHAPES[sm[1].toLowerCase()] || null;            // '^-^' → null = shape cleared
+    text = text.slice(sm[0].length);
+  }
+  text = text.replace(/\s+/g, ' ').trim().slice(0, 48);
+  const prev = _zealTags.get(spawnId);
+  _zealTags.set(spawnId, {
+    spawn_id: spawnId, mob: name.toLowerCase(), mobDisplay: name,
+    text: text || (prev ? prev.text : ''),
+    shape: shape != null ? shape : (sm ? null : (prev ? prev.shape : null)),
+    tagger: tagger || null, tsMs,
   });
   return true;
 }
-function tagTargetsSnapshot(nowMs) {
+function noteTagChannelLine(line, selfCharacter) {
+  if (!line) return false;
+  // Cheap gate — one indexOf per log line, like the /zeal version harvest.
+  if (line.indexOf('ZEALTAG | ') === -1 && line.indexOf('ZT | ') === -1) return false;
+  let tagger = null, payload = null;
+  // ZT channel transport (channel names must start with "ZT" per Zeal).
+  let m = line.match(/^\[.+?\]\s+(\w+) tells? (ZT[A-Za-z0-9]*):\d+,\s*'(.+)'\s*$/i);
+  if (m) { tagger = /^you$/i.test(m[1]) ? (selfCharacter || null) : m[1]; payload = m[3]; }
+  if (!payload) {
+    m = line.match(/^\[.+?\]\s+You tell (ZT[A-Za-z0-9]*):\d+,\s*'(.+)'\s*$/i);
+    if (m) { tagger = selfCharacter || null; payload = m[2]; }
+  }
+  // rsay transport — raid chat carries the same message.
+  if (!payload) {
+    m = line.match(/^\[.+?\]\s+(\w+) tells the raid,\s*['"](.+)['"]\s*$/i);
+    if (m) { tagger = /^you$/i.test(m[1]) ? (selfCharacter || null) : m[1]; payload = m[2]; }
+  }
+  if (!payload || !_isZealTagPayload(payload)) return false;
+  if (tagger && !/^[A-Za-z]+$/.test(tagger)) return false;
+  const ts = parseEqTimestamp(line);
+  return _applyZealTagMessage(payload, tagger, ts ? ts.getTime() : Date.now());
+}
+function zealTagsSnapshot(nowMs) {
   const now = nowMs || Date.now();
   const out = [];
-  for (const [k, v] of _tagTargets) {
-    if (now - v.tsMs > _TAG_FRESH_MS) { _tagTargets.delete(k); continue; }
+  for (const [k, v] of _zealTags) {
+    if (now - v.tsMs > _TAG_FRESH_MS) { _zealTags.delete(k); continue; }
     out.push(v);
   }
   return out;
@@ -28561,16 +28600,7 @@ function flushLiveStateToBot(opts) {
       // the heartbeat + existing triggers, like loc).
       observed_tanks: (() => {
         const cutoff = now - 30_000;
-        const seen = new Map();   // mobLower|tankLower → { mob, tank, since, hp? }
-        // Tag-channel claims first — a deliberate "tag <mob>" beats an inferred
-        // melee connect, and it may carry the tank's read of the mob's HP.
-        for (const tg of tagTargetsSnapshot(now)) {
-          const k = tg.mob + '|' + tg.tank.toLowerCase();
-          const e = { mob: tg.mobDisplay, tank: tg.tank, since: new Date(tg.tsMs).toISOString() };
-          if (tg.hp != null) e.hp = tg.hp;
-          seen.set(k, e);
-          if (seen.size >= 12) break;
-        }
+        const seen = new Map();   // mobLower|tankLower → { mob, tank, since }
         const rt = stats.recentTankHits || [];
         for (let i = rt.length - 1; i >= 0 && seen.size < 12; i--) {
           const h = rt[i];
@@ -28580,6 +28610,17 @@ function flushLiveStateToBot(opts) {
           if (!seen.has(k)) seen.set(k, { mob: h.mobDisplay || h.mob, tank: h.tank, since: new Date(h.tsMs).toISOString() });
         }
         return seen.size ? [...seen.values()] : null;
+      })(),
+      // #194: fresh Zeal /tag broadcasts — each carries the mob's TRUE spawn
+      // id, the authoritative same-name separator (see noteTagChannelLine).
+      zeal_tags: (() => {
+        const tags = zealTagsSnapshot(now);
+        if (!tags.length) return null;
+        return tags.slice(0, 24).map(t => ({
+          spawn_id: t.spawn_id, mob: t.mobDisplay, text: t.text || '',
+          shape: t.shape || null, tagger: t.tagger || null,
+          since: new Date(t.tsMs).toISOString(),
+        }));
       })(),
       buffs,
       buff_count:  buffs.length,
