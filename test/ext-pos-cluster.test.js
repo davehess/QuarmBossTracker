@@ -25,11 +25,12 @@ import { describe, it, expect } from 'vitest';
 import { readSource, sliceBlock, evalBlock, BOT_INDEX } from './_source-slice.js';
 
 const src = readSource(BOT_INDEX);
-const { _extPosCluster, _extBindInstances, _extAttributeDebuffs } = evalBlock(
-  sliceBlock(src, 'function _extPosCluster(engaged, units) {', '\n}') + '\n'
+const { _extHeadingPoint, _extPosCluster, _extBindInstances, _extAttributeDebuffs } = evalBlock(
+  sliceBlock(src, 'function _extHeadingPoint(m, reach, scale) {', '\n}') + '\n'
+  + sliceBlock(src, 'function _extPosCluster(engaged, units, hOpts) {', '\n}') + '\n'
   + sliceBlock(src, 'function _extBindInstances(hpClusters, posInstances) {', '\n}') + '\n'
   + sliceBlock(src, 'function _extAttributeDebuffs(debuffEntries, rows, observerInfo, hpTol) {', '\n}'),
-  ['_extPosCluster', '_extBindInstances', '_extAttributeDebuffs'],
+  ['_extHeadingPoint', '_extPosCluster', '_extBindInstances', '_extAttributeDebuffs'],
 );
 
 const UNITS = 25;
@@ -85,6 +86,60 @@ describe('_extPosCluster — engaged raiders → instances', () => {
     const a = _extPosCluster([tank('Zed', 0, 0), tank('Abe', 120, 0)], UNITS);
     const b = _extPosCluster([tank('Abe', 120, 0), tank('Zed', 0, 0)], UNITS);
     expect(a).toEqual(b);
+  });
+});
+
+describe('heading modes — opt-in, and mode 1 can never phantom-split', () => {
+  // The assumed convention (UNVERIFIED — the shadow log exists to check it):
+  // heading 0 = +Y, clockwise, scale 512. h=128 → +X, h=256 → −Y, h=384 → −X.
+  const t = (name, x, y, h) => ({ raider: name, tank: name, x, y, z: 0, h });
+
+  it('projects along the assumed convention', () => {
+    const p0 = _extHeadingPoint({ x: 0, y: 0, z: 0, h: 0 }, 10, 512);
+    expect(p0.y).toBeCloseTo(10); expect(p0.x).toBeCloseTo(0);
+    const p128 = _extHeadingPoint({ x: 0, y: 0, z: 0, h: 128 }, 10, 512);
+    expect(p128.x).toBeCloseTo(10); expect(p128.y).toBeCloseTo(0);
+    expect(_extHeadingPoint({ x: 0, y: 0, z: 0, h: null }, 10, 512)).toBeNull();
+  });
+
+  it('mode 0 (default) ignores headings entirely', () => {
+    // Back-to-back on one spot: tank distance 6 → one cluster, headings unread.
+    const out = _extPosCluster([t('Grabthar', 0, 0, 0), t('Borim', 0, -6, 256)], UNITS);
+    expect(out).toHaveLength(1);
+  });
+
+  it('mode 1 MERGES the huge-hitbox case distance alone would split', () => {
+    // Two tanks on opposite sides of one big mob, 30 apart, both FACING it —
+    // projections meet in the middle. min(tank,proj) joins them. This is the
+    // safe mode: it can only ever join more than mode 0.
+    const facing = [t('Grabthar', 0, 0, 0), t('Borim', 0, 30, 256)];   // 0 faces +Y, 256 faces −Y
+    expect(_extPosCluster(facing, UNITS)).toHaveLength(2);             // mode 0 splits at 30 > 25
+    expect(_extPosCluster(facing, UNITS, { mode: 1, reach: 12, scale: 512 })).toHaveLength(1);
+  });
+
+  it('mode 1 NEVER splits what mode 0 joins — min() is join-only', () => {
+    // Back-to-back stacked camp: tank distance 6 (joined today). Projections
+    // diverge to ~30, but mode 1 takes min(6, 30) = 6 → still joined. The
+    // phantom-split direction is structurally impossible in mode 1.
+    const backToBack = [t('Grabthar', 0, 0, 0), t('Borim', 0, -6, 256)];
+    expect(_extPosCluster(backToBack, UNITS, { mode: 1, reach: 12, scale: 512 })).toHaveLength(1);
+  });
+
+  it('mode 2 splits the back-to-back stacked camp mode 1 cannot', () => {
+    // 0 faces +Y from (0,0) → mob at (0,12); 256 faces −Y from (0,-6) → mob at
+    // (0,-18). Projected distance 30 > 25 → two instances from one camp spot.
+    // This is the aggressive mode gated on the shadow log verifying the
+    // convention — a wrong axis here WOULD phantom-split, which is why it
+    // ships dark.
+    const backToBack = [t('Grabthar', 0, 0, 0), t('Borim', 0, -6, 256)];
+    expect(_extPosCluster(backToBack, UNITS, { mode: 2, reach: 12, scale: 512 })).toHaveLength(2);
+  });
+
+  it('a member with no heading falls back to tank distance in both modes', () => {
+    const mixed = [t('Grabthar', 0, 0, null), t('Borim', 0, 30, 256)];
+    expect(_extPosCluster(mixed, UNITS, { mode: 1, reach: 12, scale: 512 }),
+      'no projection possible → mode 0 behavior').toHaveLength(2);
+    expect(_extPosCluster(mixed, UNITS, { mode: 2, reach: 12, scale: 512 })).toHaveLength(2);
   });
 });
 

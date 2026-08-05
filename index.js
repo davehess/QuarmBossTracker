@@ -9693,16 +9693,58 @@ const EXT_HP_SPLIT_TOL = 8;        // same-name split %HP gap (ext_hp_split_tol)
 const EXT_POS_CLUSTER_UNITS = 25;  // melee reach + jitter (ext_pos_cluster_units)
 const EXT_POS_FRESH_MS = 30_000;   // engagement evidence freshness (ext_pos_fresh_sec)
 
+// ── Heading-aware refinement (opt-in; see ext_pos_heading) ─────────────────
+//
+// A tank faces the mob they are tanking, so the mob sits roughly at
+// tank_loc + REACH · dir(heading). Clustering PROJECTED mob-points instead of
+// tank positions fixes both edge cases at once: two tanks on opposite sides of
+// one huge-hitbox mob FACE INWARD (projections converge → correctly one
+// cluster even 30 units apart), while two tanks stacked back-to-back on one
+// camp spot FACE OUTWARD (projections diverge → correctly two mobs).
+//
+// ⚠ THE HEADING CONVENTION IS UNVERIFIED. Zeal forwards a raw number the
+// protocol doc never scales (EQ native is 0–512; degrees would be 0–360), and
+// the axis convention (0 = +Y? clockwise?) is an assumption below. A wrong
+// convention turns projection into a phantom-split machine — the one failure
+// the design forbids. Hence THREE modes on the ext_pos_heading knob:
+//   0 (default) — headings ignored entirely; tank positions only.
+//   1 (safe)    — join-only: distance = min(tank-dist, projected-dist). min()
+//                 can only MERGE more than mode 0, never split more, so a
+//                 wrong convention costs merges (today's behavior), not lies.
+//   2 (full)    — cluster projected points alone. Splits back-to-back camps.
+//                 DO NOT enable until the shadow log has verified the
+//                 convention on a real raid (co-tanking pairs must show
+//                 convergent projections; see [ext-pos] lines).
+// Scale/reach are knobs too: ext_pos_heading_scale (512), ext_pos_proj_reach (12).
+function _extHeadingPoint(m, reach, scale) {
+  if (!Number.isFinite(m.h)) return null;
+  // Assumed EQ convention: heading 0 = +Y (north), increasing clockwise.
+  const theta = (m.h / (scale || 512)) * 2 * Math.PI;
+  return { x: m.x + reach * Math.sin(theta), y: m.y + reach * Math.cos(theta), z: m.z };
+}
+
 // Single-linkage clustering of engaged raiders on 3D distance. `engaged` is
-// [{ raider, tank, x, y, z }] — `tank` is the display-case name to label the
-// instance with. Members with no usable coordinates cannot separate anything:
-// they fold into the FIRST cluster their tank name already appears in, else
-// into the largest cluster (merge-when-unsure). Sorted input ⇒ stable output.
-function _extPosCluster(engaged, units) {
+// [{ raider, tank, x, y, z, h? }] — `tank` is the display-case name to label
+// the instance with, `h` the raw Zeal heading when known. Members with no
+// usable coordinates cannot separate anything: they fold into the FIRST
+// cluster their tank name already appears in, else into the largest cluster
+// (merge-when-unsure). Sorted input ⇒ stable output.
+function _extPosCluster(engaged, units, hOpts) {
   const withLoc = engaged.filter(m => Number.isFinite(m.x) && Number.isFinite(m.y) && Number.isFinite(m.z))
     .sort((a, b) => a.raider.localeCompare(b.raider));
   const noLoc = engaged.filter(m => !withLoc.includes(m));
-  const dist = (a, b) => Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2 + (a.z - b.z) ** 2);
+  const rawDist = (a, b) => Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2 + (a.z - b.z) ** 2);
+  const mode  = hOpts && hOpts.mode  ? hOpts.mode  : 0;
+  const reach = hOpts && hOpts.reach ? hOpts.reach : 12;
+  const scale = hOpts && hOpts.scale ? hOpts.scale : 512;
+  const dist = (a, b) => {
+    const dTank = rawDist(a, b);
+    if (!mode) return dTank;
+    const pa = _extHeadingPoint(a, reach, scale), pb = _extHeadingPoint(b, reach, scale);
+    if (!pa || !pb) return dTank;               // heading unknown → tank distance
+    const dProj = rawDist(pa, pb);
+    return mode === 2 ? dProj : Math.min(dTank, dProj);
+  };
   const clusters = [];
   for (const m of withLoc) {
     const hits = clusters.filter(c => c.some(q => dist(m, q) <= units));
@@ -9924,7 +9966,7 @@ async function _handleAgentExtendedTarget(req, res) {
       // clustering works (with less coverage) when this returns nothing.
       supabase.select('raid_roster',
         `guild_id=eq.${encodeURIComponent(guildId)}&loc_at=gte.${encodeURIComponent(onlineSince)}` +
-        `&select=name,loc_x,loc_y,loc_z,loc_at`).catch(() => []),
+        `&select=name,loc_x,loc_y,loc_z,heading,loc_at`).catch(() => []),
     ]);
     globalThis._extBundleCache = { at: Date.now(), liveRows, buffRows, rosterLocRows };
     }
@@ -10050,10 +10092,13 @@ async function _handleAgentExtendedTarget(req, res) {
     const extPosClusterUnits = tn('ext_pos_cluster_units', EXT_POS_CLUSTER_UNITS);
     const extPosFreshMs = tn('ext_pos_fresh_sec', EXT_POS_FRESH_MS / 1000) * 1000;
     const extPosOff = tn('flag_ext_pos_off', 0) === 1;
-    const locByName = new Map();   // raiderLower → {x,y,z}
+    const extPosHeading = tn('ext_pos_heading', 0);            // 0 off · 1 join-only · 2 full (see _extHeadingPoint)
+    const extPosReach   = tn('ext_pos_proj_reach', 12);
+    const extPosScale   = tn('ext_pos_heading_scale', 512);
+    const locByName = new Map();   // raiderLower → {x,y,z,h}
     for (const r of inScope) {
       if (Number.isFinite(Number(r.loc_x)) && Number.isFinite(Number(r.loc_y)) && Number.isFinite(Number(r.loc_z))) {
-        locByName.set(r.character.toLowerCase(), { x: Number(r.loc_x), y: Number(r.loc_y), z: Number(r.loc_z) });
+        locByName.set(r.character.toLowerCase(), { x: Number(r.loc_x), y: Number(r.loc_y), z: Number(r.loc_z), h: null });
       }
     }
     for (const rr of (rosterLocRows || [])) {
@@ -10061,9 +10106,15 @@ async function _handleAgentExtendedTarget(req, res) {
       const k = String(rr.name).toLowerCase();
       const locMs = rr.loc_at ? Date.parse(rr.loc_at) : 0;
       if (!locMs || (now - locMs) > extPosFreshMs) continue;
-      if (locByName.has(k)) continue;   // their own live_state loc wins
+      const h = Number.isFinite(Number(rr.heading)) ? Number(rr.heading) : null;
+      if (locByName.has(k)) {
+        // live_state loc wins, but it has no heading column — graft the
+        // roster's heading onto it so the projection modes can run.
+        if (h != null) locByName.get(k).h = h;
+        continue;
+      }
       if (Number.isFinite(Number(rr.loc_x)) && Number.isFinite(Number(rr.loc_y)) && Number.isFinite(Number(rr.loc_z))) {
-        locByName.set(k, { x: Number(rr.loc_x), y: Number(rr.loc_y), z: Number(rr.loc_z) });
+        locByName.set(k, { x: Number(rr.loc_x), y: Number(rr.loc_y), z: Number(rr.loc_z), h });
       }
     }
     const engagedByMob = new Map();   // mobNameLower → [{raider, tank, x, y, z}]
@@ -10074,7 +10125,7 @@ async function _handleAgentExtendedTarget(req, res) {
       const tl = String(tankName).toLowerCase();
       if (arr.some(m => m.raider.toLowerCase() === tl)) return;
       const loc = locByName.get(tl) || {};
-      arr.push({ raider: String(tankName), tank: String(tankName), x: loc.x, y: loc.y, z: loc.z });
+      arr.push({ raider: String(tankName), tank: String(tankName), x: loc.x, y: loc.y, z: loc.z, h: loc.h != null ? loc.h : null });
     };
     if (!extPosOff) {
       for (const r of inScope) {
@@ -10138,7 +10189,33 @@ async function _handleAgentExtendedTarget(req, res) {
       // but two tanks 25+ units apart both being melee'd by that name is not
       // noise — position evidence is allowed to overrule the label.
       const engaged = engagedByMob.get(g.key) || [];
-      const posInstances = engaged.length >= 2 ? _extPosCluster(engaged, extPosClusterUnits) : [];
+      const posInstances = engaged.length >= 2
+        ? _extPosCluster(engaged, extPosClusterUnits, { mode: extPosHeading, reach: extPosReach, scale: extPosScale })
+        : [];
+      // Shadow log (design open question 6 + the heading-convention check):
+      // whenever ≥2 tanks are engaged with one name, record their pairwise
+      // distances + raw headings + the K decision. One raid night of these
+      // lines answers "how far apart are real twin camps" (tunes
+      // ext_pos_cluster_units from data instead of a guess) and shows whether
+      // co-tanking pairs' projections converge under the assumed convention
+      // (the gate for ext_pos_heading=2). Throttled per name; ~10s.
+      if (engaged.length >= 2) {
+        try {
+          if (!globalThis._extPosShadowAt) globalThis._extPosShadowAt = new Map();
+          const lastAt = globalThis._extPosShadowAt.get(g.key) || 0;
+          if (now - lastAt > 10_000) {
+            globalThis._extPosShadowAt.set(g.key, now);
+            const located = engaged.filter(m => Number.isFinite(m.x));
+            const pairs = [];
+            for (let i = 0; i < located.length; i++) for (let j = i + 1; j < located.length; j++) {
+              const d = Math.sqrt((located[i].x - located[j].x) ** 2 + (located[i].y - located[j].y) ** 2 + (located[i].z - located[j].z) ** 2);
+              pairs.push(`${located[i].tank}↔${located[j].tank}=${Math.round(d)}`);
+            }
+            console.log(`[ext-pos] "${g.name}" tanks=${engaged.map(m => m.tank + (Number.isFinite(m.h) ? '@h' + Math.round(m.h) : '')).join(',')} `
+              + `dist{${pairs.join(' ')}} K_pos=${posInstances.length} units=${extPosClusterUnits} hmode=${extPosHeading}`);
+          }
+        } catch { /* telemetry only */ }
+      }
       const rows = _extBindInstances(clusters, posInstances);
       // A pos-split row inherits the merged cluster's median — recompute from
       // the raiders that actually landed on it so the two rows don't show one HP.
