@@ -697,12 +697,37 @@ header `ZT`, delimiter exactly `" | "`, `clear` = clear-all,
 `ChatChannel: <name>` = autojoin plumbing, `^?^` prefixes set shapes
 (R/O/Y/G/B/W arrows, P paw, S stop sign). **The broadcast carries the mob's
 TRUE spawn id** — the field the pipe lacks — logged by every member of the ZT*
-channel (the guild's is `ZTwolfpacktag`; Zeal requires the ZT prefix) and by
-rsay. Agent: `noteTagChannelLine` on the raw tail line (the /zeal-version
-pattern); ships `zeal_tags` `[{spawn_id, mob, text, shape, tagger, since}]`.
+channel (the guild's is `ZTwolfpacktag`; Zeal requires the ZT prefix), by rsay,
+and by **gsay — GROUP say, not guild** (`handle_tag_command` gates it on
+`GroupInfo->is_in_group()`). Agent: `noteTagChannelLine` on the raw tail line
+(the /zeal-version pattern); ships `zeal_tags`
+`[{spawn_id, mob, text, shape, tagger, since}]`.
+**Do NOT enumerate transports (agent 3.5.34).** 3.5.32 matched only the ZT
+channel + rsay and the first live test captured NOTHING — two `a Darkpaw
+warrior`s tagged over `/tag gsay` because the testers weren't in a raid, and a
+missing transport is indistinguishable from nobody tagging. `_tagLineParts`
+now finds the `ZEALTAG | ` header ANYWHERE in the line, takes the payload from
+there, and reads the tagger off whatever prefix precedes it — covering every
+transport, self and other, in both render shapes: quoted
+(`Name tells the group, '…'`) and abbreviated (`[P] [Name]: …`, which Zeal
+writes to the LOG when `AbbreviatedChat=2`). The header is machine-generated,
+which is what makes the loose match safe.
+**Two Zeal settings kill capture silently** — both read from `[Zeal]` by
+`readZealTagConfig()` and warned on the 🏷 dashboard card with the exact fix:
+`NameplateTagSuppress` (`handle_zeal_spam_filter` sets `msg = ""` and PrintChat
+skips the log write — nothing to parse, ever) and `NameplateTagPrettyPrint`
+**when `NameplateTagFilter` is also on** (rewrites to `"text => mob"` and
+DESTROYS THE SPAWN ID at the source; prettyprint alone never runs, so don't
+warn on it). Degraded prettyprint rows are deliberately NOT stored — a tag
+without a spawn id can't do the job the feature exists for.
 **Privacy unchanged** — ZT-channel lines still match the custom-channel drop
 pattern; rsay-borne tags are EXCLUDED from the Discord chat relay
-(`parseChatLine` guard) as machine traffic. Bot: tags LABEL rows (weld only
+(`parseChatLine` guard) as machine traffic; group say can't reach the relay at
+all (the `guild,`/`raid,` gate). gsay put group chat on this path for the first
+time, so the self group-say drop pattern was widened to cover **both** wordings
+(`You tell your party,` as well as `You say to your group,`) —
+`triggerVisibleLine` is default-KEEP, so a wording the drop list misses is a
+private line the local trigger engine can see. Bot: tags LABEL rows (weld only
 when the tag text names a row's tank, or the unambiguous 1-tag-1-row case);
 unweldable tags POOL on the group's first row (`tag_pool`) — never pinned to a
 guessed row; **tags do not raise K in v1** (an unwelded tag can't say which HP
