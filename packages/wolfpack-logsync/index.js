@@ -14824,6 +14824,12 @@ function renderInfo(s) {
       }
     }
     h += '<div class="dim" style="font-size:11px">The channel persists in zeal.ini once joined — no per-raid setup. Tags heard in the last 2 min: <b>' + (s.zealTagCount || 0) + '</b>. Tank usage: target the add → <code>/tag chat &lt;Name&gt;-Tanking</code> (shapes: <code>^G^</code> arrows, <code>^P^</code> paw, <code>^S^</code> stop). Any of <code>/tag chat</code>, <code>/tag gsay</code> (group) or <code>/tag rsay</code> (raid) is captured.</div>';
+    // The three causes the ini can NOT see. All of them show the nameplate
+    // arrow in game and log nothing, which is why "the arrow is right there"
+    // is not evidence the tag was broadcast.
+    if (!(s.zealTagCount || 0)) {
+      h += '<div class="dim" style="font-size:11px;margin-top:4px">Arrow in game but nothing here? The arrow only proves Zeal applied the tag locally. Three ways it never reaches the log: <code>/tag local</code> (never broadcasts at all), <code>/tag chat</code> with the channel not actually joined (Zeal prints “You must join a channel”), and <code>/tag suppress on</code> — that one hides the broadcast from your chat window AND your log while still drawing the arrow.</div>';
+    }
   }
   h += '</div>';
   // 🩺 Raw Zeal capture — opt-in diagnostic. The control lives here, but the
@@ -25888,8 +25894,16 @@ function readZealTagConfig() {
     }
     for (const dir of dirs) {
       try {
-        const ini = path.join(dir, 'zeal.ini');
-        if (!fs.existsSync(ini)) continue;
+        // Zeal writes `.\zeal.ini` — RELATIVE TO THE EQ ROOT (io_ini.h
+        // kZealIniFilename), where eqgame.exe runs — NOT into Logs\. 3.5.33
+        // looked only next to the watched log, found nothing on every real
+        // install, and the card said "no zeal.ini found yet" forever: a
+        // readiness check that could never fire, on the exact question the
+        // user was stuck on. Parent first (the EQ root, per _crashSystemSnapshot's
+        // same dirname(logdir) convention), then the log dir as a fallback.
+        const ini = [path.join(path.dirname(dir), 'zeal.ini'), path.join(dir, 'zeal.ini')]
+          .find(p => { try { return fs.existsSync(p); } catch { return false; } });
+        if (!ini) continue;
         const txt = fs.readFileSync(ini, 'utf8');
         // Minimal ini walk: find [Zeal], read keys until the next section.
         // All six live in [Zeal] (nameplate.h ZealSetting decls; AbbreviatedChat
@@ -25918,7 +25932,7 @@ function readZealTagConfig() {
         else if (filter && prettyprint) warnings.push('`/tag prettyprint on` rewrites tags to "text => mob" and strips the spawn id, so same-name mobs cannot be told apart. Run `/tag prettyprint off`.');
         if (enabled === false) warnings.push('`NameplateTagEnable=0` — incoming tags are ignored. Run `/tag on`.');
         if (!channel) warnings.push('No tag channel set. Run `/tag channel ZTwolfpacktag` once (Zeal remembers it).');
-        rows.push({ dir, channel, enabled, suppress, prettyprint, filter, abbrev, warnings });
+        rows.push({ dir: path.dirname(ini), channel, enabled, suppress, prettyprint, filter, abbrev, warnings });
       } catch { /* unreadable ini — skip this dir */ }
     }
   } catch { /* never break state over a readiness hint */ }

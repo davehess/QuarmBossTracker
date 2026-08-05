@@ -264,18 +264,47 @@ describe('zeal.ini readiness (readZealTagConfig)', () => {
     // eslint-disable-next-line no-new-func
     return new Function(prelude + block + '\nreturn readZealTagConfig();')();
   }
-  const INI = 'A:/EQ/Logs/zeal.ini';
+  // Zeal writes `.\zeal.ini` relative to the EQ ROOT (io_ini.h), i.e. the
+  // PARENT of the log dir — not next to the logs. 3.5.33 looked only in the
+  // log dir, so on every real install the card said "no zeal.ini found yet"
+  // and the readiness check could never fire.
+  const INI = 'A:/EQ/zeal.ini';
+  const LOGDIR_INI = 'A:/EQ/Logs/zeal.ini';
 
   it('reads the persisted channel + enable flag from [Zeal]', () => {
     const rows = run({ [INI]: '[Other]\nNameplateTagChannel=Nope\n[Zeal]\nNameplateTagEnable=1\nNameplateTagChannel=ZTwolfpacktag\n[Next]\nX=1\n' });
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ dir: 'A:/EQ/Logs', channel: 'ZTwolfpacktag', enabled: true });
+    expect(rows[0]).toMatchObject({ dir: 'A:/EQ', channel: 'ZTwolfpacktag', enabled: true });
     expect(rows[0].warnings, 'a healthy config raises nothing').toEqual([]);
+  });
+
+  it('finds zeal.ini in the EQ ROOT, the parent of the log dir', () => {
+    // The bug that made the whole readiness check inert: Zeal's
+    // kZealIniFilename is ".\\zeal.ini", resolved against eqgame.exe's
+    // directory, and logs live in a Logs\ subfolder.
+    const rows = run({ [INI]: '[Zeal]\nNameplateTagChannel=ZTwolfpacktag\nNameplateTagEnable=1\n' });
+    expect(rows, 'an ini one level up must not be invisible').toHaveLength(1);
+    expect(rows[0].dir).toBe('A:/EQ');
+  });
+
+  it('still reads an ini sitting next to the logs (in-EQ-folder installs)', () => {
+    const rows = run({ [LOGDIR_INI]: '[Zeal]\nNameplateTagChannel=ZTfallback\n' });
+    expect(rows[0].channel).toBe('ZTfallback');
+    expect(rows[0].dir).toBe('A:/EQ/Logs');
+  });
+
+  it('the EQ root wins when both exist — that is the one Zeal writes', () => {
+    const rows = run({
+      [INI]: '[Zeal]\nNameplateTagChannel=ZTroot\n',
+      [LOGDIR_INI]: '[Zeal]\nNameplateTagChannel=ZTstale\n',
+    });
+    expect(rows).toHaveLength(1);
+    expect(rows[0].channel).toBe('ZTroot');
   });
 
   it('a key OUTSIDE the [Zeal] section is never read — section walk, not grep', () => {
     const rows = run({ [INI]: '[Other]\nNameplateTagChannel=ZTwrong\n' });
-    expect(rows[0]).toMatchObject({ dir: 'A:/EQ/Logs', channel: null, enabled: null });
+    expect(rows[0]).toMatchObject({ dir: 'A:/EQ', channel: null, enabled: null });
   });
 
   it('no zeal.ini → empty, not an error', () => {
