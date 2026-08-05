@@ -163,6 +163,43 @@ describe('noteTagChannelLine — the real wire format', () => {
   });
 });
 
+describe('zeal.ini readiness (readZealTagConfig)', () => {
+  // The channel persists in [Zeal] NameplateTagChannel once seen — the
+  // dashboard reads it instead of assuming the user is set up.
+  function run(files) {
+    const block = sliceBlock(src, 'let _zealTagCfgCache = ', '\n  return rows;\n}');
+    const prelude = `
+      const stats = { watchedLogs: [{ file: 'A:/EQ/Logs/eqlog_Uil_pq.proj.txt' }] };
+      const path = { dirname: (f) => f.slice(0, f.lastIndexOf('/')), join: (...a) => a.join('/') };
+      const files = ${JSON.stringify(files)};
+      const fs = { existsSync: (p) => p in files, readFileSync: (p) => files[p] };
+      const Date_now = Date.now;
+    `;
+    // eslint-disable-next-line no-new-func
+    return new Function(prelude + block + '\nreturn readZealTagConfig();')();
+  }
+  const INI = 'A:/EQ/Logs/zeal.ini';
+
+  it('reads the persisted channel + enable flag from [Zeal]', () => {
+    const rows = run({ [INI]: '[Other]\nNameplateTagChannel=Nope\n[Zeal]\nNameplateTagEnable=1\nNameplateTagChannel=ZTwolfpacktag\n[Next]\nX=1\n' });
+    expect(rows).toEqual([{ dir: 'A:/EQ/Logs', channel: 'ZTwolfpacktag', enabled: true }]);
+  });
+
+  it('a key OUTSIDE the [Zeal] section is never read — section walk, not grep', () => {
+    const rows = run({ [INI]: '[Other]\nNameplateTagChannel=ZTwrong\n' });
+    expect(rows).toEqual([{ dir: 'A:/EQ/Logs', channel: null, enabled: null }]);
+  });
+
+  it('no zeal.ini → empty, not an error', () => {
+    expect(run({})).toEqual([]);
+  });
+
+  it('disabled tags surface as enabled:false so the card can nudge', () => {
+    const rows = run({ [INI]: '[Zeal]\nNameplateTagChannel=ZTwolfpacktag\nNameplateTagEnable=0\n' });
+    expect(rows[0].enabled).toBe(false);
+  });
+});
+
 describe('zeal_tags upload payload', () => {
   const block = sliceBlock(src, 'zeal_tags: (() => {', '})(),');
   const build = (tags, nowMs) => {

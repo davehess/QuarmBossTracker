@@ -10230,6 +10230,11 @@ function _serializeForDashboard() {
     // What each watched client actually has LOADED, from `/zeal version`.
     // Empty until someone runs it — we never inject commands into the game.
     clientVersions: clientVersionsSnapshot(),
+    // #194 readiness: the tag channel Zeal has PERSISTED in zeal.ini (channel
+    // membership survives once seen), plus live capture stats. The dashboard
+    // renders "tag capture: ready" from this instead of assuming.
+    zealTagConfig: readZealTagConfig(),
+    zealTagCount: zealTagsSnapshot().length,
     // This machine's measured clock offset vs the bot, from the heartbeat's
     // four-stamp NTP exchange. POSITIVE = this clock is BEHIND. Surfaced so the
     // dashboard can show the drift and, after a Windows time resync, prove the
@@ -14788,6 +14793,23 @@ function renderInfo(s) {
       if (c.at)     h += '<tr><td class="dim">read</td><td class="dim num">' + esc(String(c.at).replace('T', ' ').slice(0, 19)) + '</td></tr>';
     }
     h += '</table>';
+  }
+  h += '</div>';
+  // 🏷 Zeal tag capture readiness (#194). Byte-stable: zeal.ini values change
+  // rarely and the fresh-tag count only moves while tags are actually flowing
+  // (an acceptable repaint — the Info tab is not a form surface mid-raid).
+  const _ztc = s.zealTagConfig || [];
+  h += '<div class="card"><h2>🏷 Zeal tag capture</h2>';
+  if (!_ztc.length) {
+    h += '<div class="dim">No <b>zeal.ini</b> found next to the watched logs yet — it appears once Zeal runs in that EQ folder.</div>';
+  } else {
+    for (const zc of _ztc) {
+      const ok = zc.channel && zc.enabled !== false;
+      h += '<div style="margin-bottom:4px">' + (ok ? '✅' : '⚠️') + ' <b>' + esc(zc.channel || 'no channel persisted') + '</b>'
+        + (zc.enabled === false ? ' <span class="dim">(tags disabled — /tag on)</span>' : '')
+        + ' <span class="dim">' + esc(zc.dir) + '</span></div>';
+    }
+    h += '<div class="dim" style="font-size:11px">The channel persists in zeal.ini once joined — no per-raid setup. Tags heard in the last 2 min: <b>' + (s.zealTagCount || 0) + '</b>. Tank usage: target the add → <code>/tag chat &lt;Name&gt;-Tanking</code> (shapes: <code>^G^</code> arrows, <code>^P^</code> paw, <code>^S^</code> stop).</div>';
   }
   h += '</div>';
   // 🩺 Raw Zeal capture — opt-in diagnostic. The control lives here, but the
@@ -25794,6 +25816,47 @@ function noteTagChannelLine(line, selfCharacter) {
   const ts = parseEqTimestamp(line);
   return _applyZealTagMessage(payload, tagger, ts ? ts.getTime() : Date.now());
 }
+// zeal.ini readiness check — "people already autojoin the channel and seeing
+// the channel once persists it for that user. my zeal ini should contain
+// this" (Uilnayar 2026-08-05). Zeal persists the tag config as
+// [Zeal] NameplateTagChannel / NameplateTagEnable in <eqdir>\zeal.ini
+// (verified: ZealSetting ctor → kZealIniFilename, nameplate.h:52,62). Reading
+// it lets the dashboard answer "am I set up for tag capture?" instead of
+// assuming — no join step, no take-it-on-faith. Read-only, cached 60s.
+let _zealTagCfgCache = { at: 0, rows: [] };
+function readZealTagConfig() {
+  const now = Date.now();
+  if (now - _zealTagCfgCache.at < 60_000) return _zealTagCfgCache.rows;
+  const rows = [];
+  try {
+    const dirs = new Set();
+    for (const w of (stats.watchedLogs || [])) {
+      if (w && w.file) { try { dirs.add(path.dirname(String(w.file))); } catch { /* skip */ } }
+    }
+    for (const dir of dirs) {
+      try {
+        const ini = path.join(dir, 'zeal.ini');
+        if (!fs.existsSync(ini)) continue;
+        const txt = fs.readFileSync(ini, 'utf8');
+        // Minimal ini walk: find [Zeal], read keys until the next section.
+        let inZeal = false; let channel = null; let enabled = null;
+        for (const rawLine of txt.split(/\r?\n/)) {
+          const t = rawLine.trim();
+          if (/^\[/.test(t)) { inZeal = /^\[zeal\]$/i.test(t); continue; }
+          if (!inZeal) continue;
+          const kv = t.match(/^([A-Za-z0-9_]+)\s*=\s*(.*)$/);
+          if (!kv) continue;
+          if (/^NameplateTagChannel$/i.test(kv[1])) channel = kv[2].trim() || null;
+          if (/^NameplateTagEnable$/i.test(kv[1]))  enabled = /^(1|true|on)$/i.test(kv[2].trim());
+        }
+        rows.push({ dir, channel, enabled });
+      } catch { /* unreadable ini — skip this dir */ }
+    }
+  } catch { /* never break state over a readiness hint */ }
+  _zealTagCfgCache = { at: now, rows };
+  return rows;
+}
+
 function zealTagsSnapshot(nowMs) {
   const now = nowMs || Date.now();
   const out = [];
