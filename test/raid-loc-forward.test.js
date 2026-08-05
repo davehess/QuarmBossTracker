@@ -67,8 +67,10 @@ describe('observed_tanks — every connect this log saw, compact', () => {
   const block = sliceBlock(src, 'observed_tanks: (() => {', '})(),');
   const build = (recentTankHits, nowMs) => {
     const body = block.slice('observed_tanks: '.length).replace(/,$/, '');
+    // Tag claims are exercised in test/tag-channel.test.js — stubbed empty here
+    // so this file stays about the melee-connect half.
     // eslint-disable-next-line no-new-func
-    return new Function('stats', 'now', 'return ' + body)({ recentTankHits }, nowMs);
+    return new Function('stats', 'now', 'tagTargetsSnapshot', 'return ' + body)({ recentTankHits }, nowMs, () => []);
   };
   const NOW = 1_000_000_000;
   const hit = (mob, tankName, ageMs) => ({ mob: mob.toLowerCase(), mobDisplay: mob, tank: tankName, tsMs: NOW - ageMs });

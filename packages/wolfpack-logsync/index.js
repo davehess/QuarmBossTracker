@@ -25700,6 +25700,71 @@ const _clientVersions = new Map();   // charLower → { zeal, zeal_hash, eqw, eq
 const _ZEAL_VER_RX   = /\]\s+Zeal version:\s*([\w.]+)(?:\s*\(([^)]+)\))?/i;
 const _EQW_VER_RX    = /\]\s+eqw\.dll version:\s*(.+?)\s*$/i;
 const _EQGAME_VER_RX = /\]\s+eqgame\.dll version:\s*(.+?)\s*$/i;
+// ── #194 tag channel — a chat channel as a machine-tag broadcast bus ────────
+//
+// "if we captured the zeal tag from our channel in game from ztwolfpacktag …
+// or request those tanks output their target's name" (Uilnayar 2026-08-05).
+//
+// The insight: EQ's chat system is the one raid-wide broadcast medium every
+// client has. A tank hits a social —
+//
+//     /ztwolfpacktag tag %T
+//
+// — and EVERY member of the channel logs the line. %T (target name) is BASE EQ
+// macro substitution, so this works for tanks running neither Zeal nor Mimic;
+// one Mimic user in the channel harvests every tank's tag. An optional
+// trailing number is read as target HP% for clients that can emit it.
+//
+// PRIVACY: the raw line never leaves the machine. The custom-channel drop
+// pattern in DEFAULT_DROP_PATTERNS still matches this channel and still drops
+// it from every upload/parse path — this capture runs independently on the raw
+// line (the noteClientVersionLine pattern) and ships ONLY the structured
+// extract {tank, mob, hp}. Joining the channel is the opt-in.
+//
+// Grammar (deliberately loose — socials get mistyped):
+//     tag <mob name> [<hp>[%]]
+// Speaker is the tank. Incoming ("Grabthar tells ztwolfpacktag:5, 'tag …'")
+// and outgoing ("You tell ztwolfpacktag:5, 'tag …'") both count.
+const WP_TAG_CHANNEL = (process.env.WP_TAG_CHANNEL || 'ztwolfpacktag').toLowerCase();
+const _TAG_FRESH_MS = 30_000;
+const _tagTargets = new Map();   // tankLower → { tank, mob, mobDisplay, hp, tsMs }
+function noteTagChannelLine(line, selfCharacter) {
+  if (!line) return false;
+  // Cheap gate — one indexOf per log line, like the /zeal version harvest.
+  if (line.toLowerCase().indexOf(WP_TAG_CHANNEL + ':') === -1) return false;
+  let speaker = null, payload = null;
+  const m = line.match(/^\[.+?\]\s+(\w+) tells? ([A-Za-z]+):\d+,\s*'(.+)'\s*$/i);
+  if (m && m[2].toLowerCase() === WP_TAG_CHANNEL) {
+    // The outgoing form is "You tell <channel>:N" and matches this same
+    // pattern with speaker "You" — resolve it to the watched character (the
+    // test that caught this: speaker literally became "You").
+    speaker = /^you$/i.test(m[1]) ? (selfCharacter || null) : m[1];
+    payload = m[3];
+  }
+  if (!speaker || !payload) return false;
+  if (!/^[A-Za-z]+$/.test(speaker)) return false;      // players only, same rule as observed_tanks
+  const t = payload.match(/^tag\s+(.+?)(?:\s+(\d{1,3})\s*%?)?\s*$/i);
+  if (!t) return false;                                 // not a tag — other channel chatter, ignore
+  const mob = t[1].trim();
+  if (mob.length < 3 || mob.length > 64) return false;
+  const hp = t[2] != null ? Math.max(0, Math.min(100, parseInt(t[2], 10))) : null;
+  const ts = parseEqTimestamp(line);
+  _tagTargets.set(speaker.toLowerCase(), {
+    tank: speaker, mob: mob.toLowerCase(), mobDisplay: mob, hp,
+    tsMs: ts ? ts.getTime() : Date.now(),
+  });
+  return true;
+}
+function tagTargetsSnapshot(nowMs) {
+  const now = nowMs || Date.now();
+  const out = [];
+  for (const [k, v] of _tagTargets) {
+    if (now - v.tsMs > _TAG_FRESH_MS) { _tagTargets.delete(k); continue; }
+    out.push(v);
+  }
+  return out;
+}
+
 function noteClientVersionLine(line, character) {
   if (!line || !character) return false;
   // Cheap gate first — this runs on every log line.
@@ -28496,15 +28561,23 @@ function flushLiveStateToBot(opts) {
       // the heartbeat + existing triggers, like loc).
       observed_tanks: (() => {
         const cutoff = now - 30_000;
-        const seen = new Map();   // mobLower|tankLower → { mob, tank, since }
+        const seen = new Map();   // mobLower|tankLower → { mob, tank, since, hp? }
+        // Tag-channel claims first — a deliberate "tag <mob>" beats an inferred
+        // melee connect, and it may carry the tank's read of the mob's HP.
+        for (const tg of tagTargetsSnapshot(now)) {
+          const k = tg.mob + '|' + tg.tank.toLowerCase();
+          const e = { mob: tg.mobDisplay, tank: tg.tank, since: new Date(tg.tsMs).toISOString() };
+          if (tg.hp != null) e.hp = tg.hp;
+          seen.set(k, e);
+          if (seen.size >= 12) break;
+        }
         const rt = stats.recentTankHits || [];
-        for (let i = rt.length - 1; i >= 0; i--) {
+        for (let i = rt.length - 1; i >= 0 && seen.size < 12; i--) {
           const h = rt[i];
           if (!h || h.tsMs < cutoff) continue;
           if (!/^[A-Za-z]+$/.test(String(h.tank || ''))) continue;
           const k = String(h.mob) + '|' + String(h.tank).toLowerCase();
           if (!seen.has(k)) seen.set(k, { mob: h.mobDisplay || h.mob, tank: h.tank, since: new Date(h.tsMs).toISOString() });
-          if (seen.size >= 12) break;
         }
         return seen.size ? [...seen.values()] : null;
       })(),
@@ -31276,6 +31349,10 @@ async function main() {
         // describe it, and it gates on a substring first so the cost on a
         // non-matching line is one indexOf.
         try { noteClientVersionLine(line, b.character); } catch { void 0; }
+        // #194 tag channel — same raw-line hook, same reasoning. The line
+        // itself stays dropped by the custom-channel privacy filter; only the
+        // structured {tank, mob, hp} extract rides observed_tanks.
+        try { noteTagChannelLine(line, b.character); } catch { void 0; }
         // #56 — a mob death closes one same-name serial track; on K→0 (the last
         // instance died) it clears that name's stale debuff/slow/HP buckets so the
         // next same-name mob starts clean (the debuff-bleed fix). Same trusted
