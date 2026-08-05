@@ -190,52 +190,80 @@ SECTIONS.push(async (sb, counters) => {
 });
 
 SECTIONS.push(async (sb, counters) => {
-  // Tunare mentions from Naggato + alts. Two queries: first the family name
-  // list, then the chat scan.
+  // Tunare mentions from Naggato + alts.
+  //
+  // THE BUG (Uilnayar 2026-08-04, "what happened to our Tunare invocations?"):
+  // this card read 0 while the data was right there — 83 rows, latest
+  // 2026-07-31. The reason it read 0 rather than SAYING anything is the shape
+  // below: supabase-js does not throw on a failed call, it returns
+  // `{ data: null, error }`. The old code destructured `{ data: stats }` and
+  // dropped `error` on the floor, so "the RPC did not answer" and "nobody has
+  // ever ranted about Tunare" rendered identically — a quiet 0 that then got
+  // demoted into the dormant "waiting on data" bucket, where it looked
+  // deliberate.
+  //
+  // Two changes, and the second is the one that matters:
+  //   1. read `error` — a failure must never be indistinguishable from a zero;
+  //   2. the RPC is an OPTIMISATION, not the source of truth. If it is
+  //      unavailable for any reason, fall back to querying chat_messages
+  //      directly. Slower (that regression is why the RPC exists) but correct,
+  //      and the card heals itself instead of waiting for someone to notice.
+  const push = (value: number, sub: string) =>
+    counters.push({ label: 'Tunare invocations', emoji: <TunareKissScene />, value, sub });
   try {
-    const { data: family } = await sb
+    const { data: family, error: famErr } = await sb
       .from('characters')
       .select('name')
       .eq('guild_id', 'wolfpack')
       .or('main_name.eq.Naggato,name.eq.Naggato');
+    if (famErr) throw famErr;
     const familyNames = (family ?? []).map((r: { name: string }) => r.name);
-    if (familyNames.length > 0) {
-      // ONE indexed RPC (count + latest together). The old version ran two
-      // parallel `text ILIKE '%tunare%'` scans through PostgREST — each a
-      // full seq scan of chat_messages, ~1.5s apiece by the time the table
-      // hit 284k rows. fun_tunare_stats walks the lower(speaker) index to
-      // touch only the family's rows: ~18ms measured.
-      const { data: stats } = await sb.rpc('fun_tunare_stats', { p_names: familyNames });
-      const row = (Array.isArray(stats) ? stats[0] : stats) as { invocations: number | null; last_ts: string | null } | undefined;
-      const count = Number(row?.invocations ?? 0);
-      const lastTs = row?.last_ts ? new Date(row.last_ts) : null;
-      const days   = lastTs ? Math.floor((Date.now() - lastTs.getTime()) / 86400000) : null;
-      const sub = days === null
-        ? 'no Tunare invocations on record yet — first rant resets the clock.'
-        : days === 0
-          ? 'Last rant was today. Stay vigilant.'
-          : `${days} day${days === 1 ? '' : 's'} since the last Tunare Text Rant™.`;
-      counters.push({
-        label: 'Tunare invocations',
-        emoji: <TunareKissScene />,
-        value: count ?? 0,
-        sub,
-      });
-    } else {
-      counters.push({
-        label: 'Tunare invocations',
-        emoji: <TunareKissScene />,
-        value: 0,
-        sub: 'Naggato family not resolved yet — characters sync needs to run',
-      });
+    if (familyNames.length === 0) {
+      push(0, 'Naggato family not resolved yet — characters sync needs to run');
+      return;
     }
+
+    // ONE indexed RPC (count + latest together). The old version ran two
+    // parallel `text ILIKE '%tunare%'` scans through PostgREST — each a
+    // full seq scan of chat_messages, ~1.5s apiece by the time the table
+    // hit 284k rows. fun_tunare_stats walks the lower(speaker) index to
+    // touch only the family's rows: ~18ms measured.
+    let count: number | null = null;
+    let lastTs: Date | null = null;
+    const { data: stats, error: rpcErr } = await sb.rpc('fun_tunare_stats', { p_names: familyNames });
+    if (!rpcErr) {
+      const row = (Array.isArray(stats) ? stats[0] : stats) as
+        { invocations: number | string | null; last_ts: string | null } | undefined;
+      if (row) {
+        count  = Number(row.invocations ?? 0);   // bigint arrives as a string
+        lastTs = row.last_ts ? new Date(row.last_ts) : null;
+      }
+    }
+
+    if (count === null) {
+      // Fallback. `count: 'exact'` totals every match while `limit(1)` fetches
+      // only the newest row, so this stays one round trip and cannot
+      // under-count the way a capped page of rows would.
+      const { data: rows, count: exact, error } = await sb
+        .from('chat_messages')
+        .select('ts', { count: 'exact' })
+        .in('speaker', familyNames)          // exact-case; both tables store the canonical name
+        .ilike('text', '%tunare%')
+        .order('ts', { ascending: false })
+        .limit(1);
+      if (error) throw error;
+      count  = exact ?? 0;
+      lastTs = rows?.[0]?.ts ? new Date(rows[0].ts as string) : null;
+    }
+
+    const days = lastTs ? Math.floor((Date.now() - lastTs.getTime()) / 86400000) : null;
+    push(count, days === null
+      ? 'no Tunare invocations on record yet — first rant resets the clock.'
+      : days === 0
+        ? 'Last rant was today. Stay vigilant.'
+        : `${days} day${days === 1 ? '' : 's'} since the last Tunare Text Rant™.`);
   } catch (err) {
-    counters.push({
-      label: 'Tunare invocations',
-      emoji: <TunareKissScene />,
-      value: 0,
-      sub: 'query failed: ' + (err instanceof Error ? err.message : String(err)),
-    });
+    push(0, 'query failed: ' + (err instanceof Error ? err.message : String(err)));
   }
 });
 

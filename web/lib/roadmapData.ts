@@ -37,6 +37,20 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'fun-tunare-zero',
+    title: '🌿 Tunare invocations was reading zero',
+    version: 'Web 1.1.9',
+    date: '2026-08-04',
+    headline: 'The Tunare counter showed 0 and sat in the "waiting on data" pile, while 83 invocations were recorded and the most recent was July 31st.',
+    features: [
+      { name: '🌿 The count is back', blurb: 'Naggato\'s family has 83 Tunare invocations on record. The card had been quietly reporting none of them.' },
+    ],
+    fixes: [
+      'The card fetched its number in a way that returns an error object instead of throwing, and the error was never checked — so "the query did not answer" looked exactly like "nobody has ever mentioned Tunare". A failure now says so instead of showing a zero.',
+      'If the fast lookup is ever unavailable, the card falls back to counting directly rather than reporting nothing.',
+    ],
+  },
+  {
     key: 'item-page-nodrop-effects',
     title: '🏷️ NO DROP was showing on the wrong items',
     version: 'Web 1.1.8',

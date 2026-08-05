@@ -25,6 +25,9 @@ watchPatterns = [
   "!releases/**",
   "!experiments/**",
   "!supabase/**",   # migrations apply via the GitHub↔Supabase integration — no bot restart needed
+  "!test/**",       # tests never run in the container. Adding test/item-flags.test.js to an
+                    # otherwise web-only commit bounced the bot mid-session (2026-08-04) —
+                    # the web/ files were correctly ignored and the TEST triggered the deploy.
 ]
 
 [deploy]
