@@ -16,6 +16,7 @@ import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
 import {
   type ItemCard, decodeMask, decodeSlots, fmtPrice, fmtWeight,
+  isNoDrop, isNoRent, isLoreItem, loreText,
   CLASS_TAGS, RACE_TAGS, ALL_CLASS_MASK, ALL_RACE_MASK, ERA_LABEL,
 } from '@/lib/itemDecode';
 
@@ -28,6 +29,18 @@ type Turnin = {
   inputs: TurninIO[] | null; outputs: TurninIO[] | null; cash: number | null; exp_award: number | null;
 };
 type ZoneRow = { zone_id: number; short_name: string; long_name: string | null; expansion: number | null };
+// The columns item_card_info does NOT return, read straight off eqemu_items.
+type ItemRow = {
+  id: number; name: string; lore: string | null; casttime: number | null; norent: boolean | null;
+  str: number | null; sta: number | null; dex: number | null; agi: number | null;
+  intel: number | null; wis: number | null; cha: number | null;
+  worneffect: number | null; worntype: number | null;
+  proc_effect: number | null; focus_effect: number | null; itemtype: number | null;
+};
+const ATTR_ORDER: [keyof ItemRow, string][] = [
+  ['str','STR'], ['sta','STA'], ['agi','AGI'], ['dex','DEX'],
+  ['wis','WIS'], ['intel','INT'], ['cha','CHA'],
+];
 
 const zoneOf = (entityId: number) => Math.floor(entityId / 1000);
 const deUnderscore = (s: string | null) => (s ?? '').replace(/_/g, ' ').trim();
@@ -44,7 +57,10 @@ export default async function DbItemPage({ params }: { params: Promise<{ id: str
 
   const [cardRes, itemRes, dropRes, merchRes, givesRes, getsRes] = await Promise.all([
     sb.rpc('item_card_info', { p_item_ids: [itemId] }),
-    sb.from('eqemu_items').select('id, name, lore, lore_flag, casttime').eq('id', itemId).maybeSingle(),
+    sb.from('eqemu_items')
+      .select('id, name, lore, casttime, norent, str, sta, dex, agi, intel, wis, cha, '
+            + 'worneffect, worntype, proc_effect, focus_effect, itemtype')
+      .eq('id', itemId).maybeSingle(),
     sb.from('eqemu_npc_drops').select('npc_id, npc_name, effective_chance').eq('item_id', itemId).limit(500),
     sb.from('eqemu_merchantlist').select('merchantid').eq('item', itemId).limit(500),
     // Quest turn-ins, both directions: what this item is handed IN for, and
@@ -60,19 +76,36 @@ export default async function DbItemPage({ params }: { params: Promise<{ id: str
   ]);
 
   const card = ((cardRes.data ?? []) as ItemCard[])[0];
-  const itemRow = itemRes.data as
-    { id: number; name: string; lore: string | null; lore_flag: boolean | null; casttime: number | null } | null;
+  const itemRow = itemRes.data as ItemRow | null;
   if (!card && !itemRow) notFound();
 
   const name = card?.name ?? itemRow?.name ?? `Item #${itemId}`;
 
-  // Clicky effect: show the SPELL NAME the way the in-game item window does
+  // STR/STA/… are populated on every item and were never rendered: #8733 shows
+  // STA 20 / WIS 15 on pqdi.cc and nothing here.
+  const attrs = itemRow
+    ? ATTR_ORDER.map(([k, label]) => {
+        const v = itemRow[k] as number | null;
+        return v ? `${label} ${v > 0 ? '+' : ''}${v}` : null;
+      }).filter((x): x is string => !!x)
+    : [];
+
+  // Effects: show the SPELL NAME the way the in-game item window does
   // ("Effect: JourneymanBoots"), not a bare id.
-  let clickSpellName: string | null = null;
-  if (card?.clickeffect && card.clickeffect > 0) {
-    const { data: cs } = await sb.from('eqemu_spells').select('name').eq('id', card.clickeffect).maybeSingle();
-    clickSpellName = (cs as { name: string } | null)?.name ?? null;
+  //
+  // Until 2026-08-04 only the CLICK effect was rendered, so an item whose whole
+  // point is a worn or proc effect looked like it had none — #8733 carries
+  // Truesight in both `worneffect` and `proc_effect` and the page showed
+  // neither (Uilnayar, comparing against pqdi.cc). All three resolve in one
+  // query rather than one round trip each.
+  const effectIds = [card?.clickeffect, itemRow?.worneffect, itemRow?.proc_effect]
+    .filter((n): n is number => typeof n === 'number' && n > 0);
+  const spellNameById = new Map<number, string>();
+  if (effectIds.length) {
+    const { data: sp } = await sb.from('eqemu_spells').select('id, name').in('id', [...new Set(effectIds)]);
+    for (const r of ((sp ?? []) as { id: number; name: string }[])) spellNameById.set(r.id, r.name);
   }
+  const clickSpellName = card?.clickeffect ? (spellNameById.get(card.clickeffect) ?? null) : null;
 
   // Dropped-by: dedupe to one row per NPC (keep the best observed chance).
   const dropsByNpc = new Map<number, DropRow>();
@@ -138,8 +171,10 @@ export default async function DbItemPage({ params }: { params: Promise<{ id: str
 
         {card && (
           <div className="text-[11px] uppercase tracking-wider text-dim mt-1 mb-3">
-            {[card.magic ? 'MAGIC ITEM' : 'ITEM', card.nodrop ? 'NO DROP' : null,
-              itemRow?.lore_flag ? 'LORE ITEM' : null].filter(Boolean).join(' ')}
+            {[card.magic ? 'MAGIC ITEM' : 'ITEM',
+              isLoreItem(itemRow?.lore) ? 'LORE ITEM' : null,
+              isNoDrop(card) ? 'NO DROP' : null,
+              isNoRent(itemRow) ? 'NO RENT' : null].filter(Boolean).join(' ')}
           </div>
         )}
         {!card && (
@@ -161,6 +196,21 @@ export default async function DbItemPage({ params }: { params: Promise<{ id: str
                   card.fr && `FR +${card.fr}`, card.pr && `PR +${card.pr}`].filter(Boolean).join('  ')}
               </Line>
             ) : null}
+            {attrs.length > 0 && <Line k="Stats">{attrs.join('  ')}</Line>}
+            {!!itemRow?.worneffect && itemRow.worneffect > 0 && (
+              <Line k="Worn effect">
+                <Link href={`/db/spell/${itemRow.worneffect}`} className="text-blue hover:underline">
+                  {spellNameById.get(itemRow.worneffect) || `spell #${itemRow.worneffect}`}
+                </Link>
+              </Line>
+            )}
+            {!!itemRow?.proc_effect && itemRow.proc_effect > 0 && (
+              <Line k="Combat effect">
+                <Link href={`/db/spell/${itemRow.proc_effect}`} className="text-blue hover:underline">
+                  {spellNameById.get(itemRow.proc_effect) || `spell #${itemRow.proc_effect}`}
+                </Link>
+              </Line>
+            )}
             {card.clickeffect != null && card.clickeffect > 0 && (
               <Line k="Effect">
                 <Link href={`/db/spell/${card.clickeffect}`} className="text-blue hover:underline">
@@ -185,8 +235,8 @@ export default async function DbItemPage({ params }: { params: Promise<{ id: str
           </div>
         )}
 
-        {card?.lore && card.lore !== card.name && (
-          <div className="text-purple/90 text-xs mt-3">Lore: {card.lore}</div>
+        {loreText(card?.lore) && loreText(card?.lore) !== card?.name && (
+          <div className="text-purple/90 text-xs mt-3">Lore: {loreText(card?.lore)}</div>
         )}
         <div className="mt-3 text-[11px] font-sans">
           <a href={`https://www.pqdi.cc/item/${itemId}`} target="_blank" rel="noreferrer"

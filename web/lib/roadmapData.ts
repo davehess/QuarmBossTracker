@@ -37,6 +37,23 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'item-page-nodrop-effects',
+    title: '🏷️ NO DROP was showing on the wrong items',
+    version: 'Web 1.1.8',
+    date: '2026-08-04',
+    headline: 'The item pages had the NO DROP tag backwards — it appeared on items you CAN trade, and was missing from the ones you cannot. Worn and combat effects were never shown at all.',
+    features: [
+      { name: '🏷️ NO DROP is right now', blurb: 'The mirror stores this flag inverted, and three places on the site read it as-is: the item page, the inventory tile border, and the item hover card. So a tradeable item was tagged NO DROP and a genuinely untradeable one showed nothing. If you ever checked the site before passing loot to someone, it told you the opposite of the truth. All three now go through one shared check.' },
+      { name: '✨ Worn and combat effects', blurb: 'Item pages only ever showed CLICK effects, so gear whose whole point is a worn or proc effect looked like it had none — the Ancient Burrower Flesh Cap carries Truesight in both and showed neither. 1,560 items gain an effect line, each linking to the spell.' },
+      { name: '📊 The full stat block', blurb: 'STR/STA/AGI/DEX/WIS/INT/CHA are now listed alongside AC, HP and mana instead of being dropped.' },
+      { name: '📖 LORE ITEM appears again', blurb: 'The tag was reading a column that is empty for every single item, so it could never show. It now uses the marker the game itself uses — 11,148 items are lore and none of them said so.' },
+    ],
+    fixes: [
+      'Lore text no longer prints the internal asterisk marker in front of it.',
+      'NO RENT is shown on item pages for the first time.',
+    ],
+  },
+  {
     key: 'mimic-230-quick-setup-save-memory',
     title: '🧹 Quick Setup and Save Memory Update',
     version: 'Mimic 2.3.0 · Agent 3.5.29',

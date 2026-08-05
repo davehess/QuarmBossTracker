@@ -16,6 +16,7 @@
 import { useEffect, useState } from 'react';
 import ItemHover, { type ItemCard } from './ItemHover';
 import ItemIcon from './ItemIcon';
+import { isNoDrop } from '@/lib/itemDecode';
 
 export type CellData = {
   label: string;
@@ -148,7 +149,9 @@ function Cell({ c, mode }: { c: CellData; mode: Mode }) {
       </div>
     );
   }
-  const nodrop = c.card?.nodrop;
+  // eqemu_items.nodrop is INVERTED (false = NO DROP) — this tile used to gold-
+  // border every TRADEABLE item and leave real no-drops unmarked.
+  const nodrop = isNoDrop(c.card);
   const magic  = c.card?.magic;
   const borderClass = nodrop ? 'border-gold/60' : magic ? 'border-blue/60' : 'border-border';
   return (

@@ -26,7 +26,7 @@ import WpDbLink from '@/components/WpDbLink';
 // places; folded onto one so a fix can't land in only half of them.
 import {
   type ItemCard, decodeMask, decodeSlots, fmtPrice, fmtWeight,
-  CLASS_TAGS, RACE_TAGS, ALL_CLASS_MASK, ALL_RACE_MASK,
+  CLASS_TAGS, RACE_TAGS, ALL_CLASS_MASK, ALL_RACE_MASK, isNoDrop,
 } from '@/lib/itemDecode';
 
 export type { ItemCard };
@@ -75,7 +75,7 @@ export default function ItemHover({ card, fallbackName, className, children }: {
             <div className="min-w-0">
               <div className="flex items-baseline gap-2 flex-wrap">
                 <span className="text-text font-medium leading-tight">{card?.name ?? fallbackName}</span>
-                {card?.nodrop && <span className="text-[9px] text-gold uppercase tracking-wider">NO DROP</span>}
+                {isNoDrop(card) && <span className="text-[9px] text-gold uppercase tracking-wider">NO DROP</span>}
                 {card?.magic  && <span className="text-[9px] text-blue uppercase tracking-wider">MAGIC</span>}
               </div>
             </div>

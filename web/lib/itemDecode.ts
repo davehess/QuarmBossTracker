@@ -83,6 +83,43 @@ export function decodeMask(mask: number | null, tags: [number, string][], allMas
   return hits.length ? hits.join(' ') : '—';
 }
 
+// ── The two flag columns that do NOT mean what they are named ──────────────
+//
+// `eqemu_items.nodrop` is INVERTED on this mirror: the column really answers
+// "can this be traded", so **false = NO DROP** and true = freely tradeable.
+// Same for `norent`. Verified 2026-08-04 against known-tradeable vendor
+// staples (Water Flask, Cloth Cap, Rusty Long Sword — all `true`) and a
+// known NO-DROP raid piece (Ancient Burrower Flesh Cap #8733 — `false`,
+// and pqdi.cc marks it NODROP).
+//
+// Three surfaces read the column raw and printed the flag BACKWARDS on all
+// ~27k items — the /db item page, the character inventory tile border, and the
+// inventory hover card. Two others (me/inventory, character quests) got it
+// right and left a comment saying so, which is exactly the situation a shared
+// helper exists to end. Anything asking "can I pass this to someone?" must go
+// through here.
+export function isNoDrop(v: { nodrop?: boolean | null } | boolean | null | undefined): boolean {
+  const raw = typeof v === 'object' && v !== null ? v.nodrop : v;
+  return raw === false;              // null/undefined = unknown, not no-drop
+}
+export function isNoRent(v: { norent?: boolean | null } | boolean | null | undefined): boolean {
+  const raw = typeof v === 'object' && v !== null ? v.norent : v;
+  return raw === false;
+}
+
+// LORE is not `lore_flag` — that column is false on all 26,971 rows and has
+// never rendered anything. EQEmu marks a lore item with a leading asterisk on
+// the lore STRING (11,148 items), which is also what the in-game card shows.
+export function isLoreItem(lore: string | null | undefined): boolean {
+  return typeof lore === 'string' && lore.startsWith('*');
+}
+// …and that asterisk is a marker, not part of the text.
+export function loreText(lore: string | null | undefined): string | null {
+  if (!lore) return null;
+  const t = lore.replace(/^\*/, '').trim();
+  return t || null;
+}
+
 // EQEmu stores weight in TENTHS of a stone — 25 means 2.5. Rendering the raw
 // column made every item ten times heavier than it is in game.
 export function fmtWeight(w: number | null): string {
