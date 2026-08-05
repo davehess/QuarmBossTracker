@@ -506,6 +506,22 @@ never compute 0. `_captureTargetBuffsOnCharm` sweeps pre-charm debuffs to the
 owner key. MT/rampage buff+HP resolution waterfall: self Zeal list → the
 character's own uploaded live-state (bot relay, `_mtLiveStateByName`) →
 observed landings (partial, labeled).
+**`_petBuffLandings` is keyed by OWNER, and NOTHING about that key changes when
+the pet does** (agent 3.5.36). The owner key is deliberate — it's what makes
+`_captureTargetBuffsOnCharm` work at all — but it meant a dead pet's spells
+unioned onto whatever stood in the slot next: a charmed rat's Glamour of Tunare
++ Tunare's Request (1800 ticks = 3h) showed on a summoned warder that never had
+them (Uilnayar 2026-08-05). `_reconcilePetIdentity()` clears landings + the
+`/pet health` report on a slot-16 name → DIFFERENT name transition; slot 16
+going **empty is not an identity change** (it dips ~3s during a re-charm, and
+treating that as a new pet erases a live pet's buffs — fixture-enforced).
+`/pet health` is authoritative over anything older than it, guarded three ways:
+only once the report has CLOSED (`PET_REPORT_GAP_MS`; mid-stream the set is
+still filling), never for landings newer than the snapshot, never for
+uncatalogued spells (`applyPetHealthLine` can only record catalog names, so
+their absence says nothing). KNOWN GAP: re-charming a DIFFERENT mob with the
+SAME name is invisible to the identity check — the `/pet health` reconcile is
+what catches it. Tests: `test/pet-buff-landing.test.js`.
 
 ### CH chain tracker
 Parses shout/raid callouts: numbered calls (`_CH_CALL_RX`), GO cues
@@ -712,6 +728,20 @@ transport, self and other, in both render shapes: quoted
 (`Name tells the group, '…'`) and abbreviated (`[P] [Name]: …`, which Zeal
 writes to the LOG when `AbbreviatedChat=2`). The header is machine-generated,
 which is what makes the loose match safe.
+**`zeal.ini` lives in the EQ ROOT, not next to the logs** (`io_ini.h`
+`kZealIniFilename = ".\\zeal.ini"`, resolved against `eqgame.exe`'s directory).
+3.5.33 read it from `dirname(watched log)` = `Logs\`, found nothing on every
+real install, and the readiness card said "no zeal.ini found yet" forever — a
+diagnostic that could never fire, on the exact question the user was stuck on.
+3.5.35 reads the parent first, log dir as the in-EQ-folder fallback.
+**Three ways a tag draws the nameplate arrow and reaches NO log** — the arrow is
+NOT evidence the broadcast happened, which is what made this so hard to see:
+`/tag local` (never broadcasts — `handle_tag_command` only sends for
+rsay/gsay/chat); `/tag chat` with the channel unjoined
+(`send_tag_message_to_channel` bails); and `/tag suppress on`, where
+`chatPrintChat` returns early on `check_for_tag_channel_message`'s suppression
+verdict AFTER `handle_tag_message` has already drawn the arrow. Note suppress
+does NOT need `/tag filter` for the chat-channel path.
 **Two Zeal settings kill capture silently** — both read from `[Zeal]` by
 `readZealTagConfig()` and warned on the 🏷 dashboard card with the exact fix:
 `NameplateTagSuppress` (`handle_zeal_spam_filter` sets `msg = ""` and PrintChat

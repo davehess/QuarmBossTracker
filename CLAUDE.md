@@ -238,8 +238,27 @@ Rules that keep them married:
   told apart from the pipe; consumer-side correlation (death-boundary
   segmentation, HP-continuity) only resolves *sequential* same-name kills. Do
   NOT design features that need N≥3 simultaneous same-name identities — the
-  data can't support it. The clean fix is upstream: `docs/zeal-spawn-id-request.md`
-  is the drafted ask to CoastalRedwood/Zeal to add `spawn_id` to those two gauges.
+  data can't support it.
+  **The upstream ask was aimed at the wrong surface (corrected 2026-08-05).**
+  `docs/zeal-spawn-id-request.md` asks for `spawn_id` on those two GAUGES, which
+  is the hardest possible place to put it — gauges are a stringly-typed
+  `GetGauge(id, text)` channel with no room for structured fields. That is
+  probably why it got no traction. The **entity** surface is trivial by
+  comparison, and reading `Zeal/named_pipe.cpp` + `game_structures.h` proves it:
+  - `Entity.SpawnId` sits at offset `0x0094`, with `PetOwnerSpawnId` at `0x0096`.
+    The pipe's raid (type 5) and group (type 6) loops ALREADY hold that exact
+    `Entity*` and dereference `->Position`, `->Heading`, `->HpCurrent` off it —
+    `raid_data["spawn_id"] = entity->SpawnId;` is one line that is never written.
+  - `player_data["target"] = {id, name}` via `get_target()->SpawnId` would close
+    #194 outright.
+  - **Pet position exists too** — Zeal reads it every frame to draw the pet arrow
+    on the map (`zone_map.cpp:1056` `add_self_pet_position_vertices`:
+    `self->ActorInfo->PetID` → `get_entity_by_id()` → `Position`/`Heading`). The
+    pipe emits `loc` for exactly three things — raid member, group member, self —
+    so a pet-tanked mob is unplaceable for us while being visible on the user's
+    own map. Uilnayar spotted this 2026-08-05; do not repeat the claim that Zeal
+    lacks the data.
+  Rewrite the request against `named_pipe.cpp` before asking again.
 
 ---
 
