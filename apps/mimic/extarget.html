@@ -61,6 +61,10 @@
   /* The non-unique asterisk — amber, help cursor; tooltip explains the caveat. */
   .row .amb{color:#f0b429;font-weight:700;cursor:help;margin-left:2px}
   .row .dup{color:#9aa4ad;font-size:9px;margin-left:3px;font-variant-numeric:tabular-nums}
+  /* #194 — which tank this same-name instance is melee'ing. The label that
+     finally tells two "Thall Va Xakra" apart on screen. */
+  .row .tank-tag{color:#7ee787;font-size:9px;margin-left:4px;cursor:help}
+  .debuffs .chip.unattr{opacity:.45;font-style:italic}
   .row.player .nm{color:#79c0ff}
   .row.pet    .nm{color:#c9a0ff}
   .row .owner{color:#8b949e;font-size:9px;margin-left:4px}
@@ -363,7 +367,14 @@
     for (var i = 0; i < debuffs.length; i++) {
       var d = debuffs[i];
       var rem = (d.remaining_secs != null) ? '<span class="rem">' + d.remaining_secs + 's</span>' : '';
-      s += '<span class="chip">' + esc(d.name) + rem + '</span>';
+      // #194 — attributed:false marks a landing no observer could place on a
+      // specific instance. Shown dimmed with a ? on every instance rather than
+      // asserted on one: wrong attribution is worse than an honest maybe.
+      if (d.attributed === false) {
+        s += '<span class="chip unattr" title="Landed on one of the same-name mobs — could not tell which.">' + esc(d.name) + '?' + rem + '</span>';
+      } else {
+        s += '<span class="chip">' + esc(d.name) + rem + '</span>';
+      }
     }
     return s + '</div>';
   }
@@ -401,6 +412,11 @@
     nm += ccBadges(t.debuffs);
     if (t.ambiguous) nm += '<span class="amb" title="Non-unique name — same-name mobs share a name on the Zeal pipe, so buffs/debuffs here may be from a different mob of the same name. Split out below by HP when health differs.">*</span>';
     if (t.dup_index) nm += '<span class="dup">#' + t.dup_index + '/' + (t.same_name_count || '?') + '</span>';
+    // #194 — the bot's position clustering names the tank(s) each same-name
+    // instance is hitting. THE disambiguator: "#1 @ Grabthar" vs "#2 @ Borim".
+    if (t.tanks && t.tanks.length) {
+      nm += '<span class="tank-tag" title="This one is meleeing: ' + esc(t.tanks.join(', ')) + '">@ ' + esc(t.tanks.join(', ')) + '</span>';
+    }
     if (kind === 'pet' && t.owner) nm += '<span class="owner">(' + esc(t.owner) + ')</span>';
     if (t.hurt) nm += '<span class="warn">⚠ ' + (t.hurt_secs || 0) + 's</span>';
     if (t.off_tank) {
@@ -573,9 +589,19 @@
       if (grp && grp.length > 1) {
         if (renderedGroup[t.name]) continue;   // group already emitted
         renderedGroup[t.name] = true;
-        for (var j = 0; j < grp.length; j++) html += rowHtml(grp[j], true);   // rows w/o per-mob debuffs
-        var pooled = pooledDebuffs(grp);
-        if (pooled.length) html += debuffBlock(pooled, 'on one of these ' + grp.length + ':').replace('<div class="debuffs">', '<div class="debuffs" data-k="pool:' + esc(t.name) + '">');
+        // #194 — when the bot's position clustering labeled the instances
+        // (any row carries tanks), debuffs arrive PER INSTANCE and render on
+        // their own rows; unplaceable ones come pre-dimmed (attributed:false).
+        // Pooling was only ever the honest fallback for "can't tell which".
+        var attributed = false;
+        for (var aj = 0; aj < grp.length; aj++) { if (grp[aj].tanks && grp[aj].tanks.length) { attributed = true; break; } }
+        if (attributed) {
+          for (var j2 = 0; j2 < grp.length; j2++) html += rowHtml(grp[j2], false);
+        } else {
+          for (var j = 0; j < grp.length; j++) html += rowHtml(grp[j], true);   // rows w/o per-mob debuffs
+          var pooled = pooledDebuffs(grp);
+          if (pooled.length) html += debuffBlock(pooled, 'on one of these ' + grp.length + ':').replace('<div class="debuffs">', '<div class="debuffs" data-k="pool:' + esc(t.name) + '">');
+        }
       } else {
         html += rowHtml(t, false);
       }

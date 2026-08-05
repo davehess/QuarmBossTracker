@@ -8088,6 +8088,15 @@ function _maybeUploadRaidRoster(sample) {
           const hp = liveHpByName.get(String(m.name).toLowerCase());
           if (typeof hp === 'number') hpPct = Math.max(0, Math.min(100, Math.round(hp)));
         }
+        // #194: Zeal sends loc {x,y,z} + heading for EVERY raid member on the
+        // type-5 pipe (not verbose-gated) and this mapping used to drop both.
+        // Forwarding them gives the bot's same-name instance clustering a
+        // position for every tank in the raid from ONE Mimic-running uploader
+        // — the coverage multiplier docs/DESIGN-mob-serialization.md names as
+        // gap 3. Intra-guild data of guildmates, same class as the HP above;
+        // recorded in docs/PRIVACY.md.
+        const _lx = m.loc && Number(m.loc.x), _ly = m.loc && Number(m.loc.y), _lz = m.loc && Number(m.loc.z);
+        const _hasLoc = Number.isFinite(_lx) && Number.isFinite(_ly) && Number.isFinite(_lz);
         return {
           name:   String(m.name),
           class:  m.class != null ? String(m.class) : null,
@@ -8099,6 +8108,10 @@ function _maybeUploadRaidRoster(sample) {
           // the Tank/Target overlays can show real numbers cross-client.
           hp_current: hpCur,
           hp_max:     hpMax,
+          loc_x:   _hasLoc ? _lx : null,
+          loc_y:   _hasLoc ? _ly : null,
+          loc_z:   _hasLoc ? _lz : null,
+          heading: Number.isFinite(Number(m.heading)) ? Number(m.heading) : null,
         };
       });
     if (compact.length === 0) return;
@@ -28473,6 +28486,28 @@ function flushLiveStateToBot(opts) {
       loc_z:          (st.loc && Number.isFinite(Number(st.loc.z))) ? Number(st.loc.z) : null,
       incoming_mob:       incomingMob,
       incoming_mob_since: incomingMobSinceMs ? new Date(incomingMobSinceMs).toISOString() : null,
+      // #194: every mob→player connect THIS observer's log saw recently — the
+      // log shows all nearby melee, so one observer names the tank of every
+      // same-name instance in range, including tanks who run nothing. Bot-side
+      // clustering pairs these names with type-5 raid positions. Deduped per
+      // (mob, tank) keeping the newest connect; players only (the recorder's
+      // heuristic can misread backtick pet names — the bot re-filters, but no
+      // reason to ship them). Capped small; NOT in the change signature (rides
+      // the heartbeat + existing triggers, like loc).
+      observed_tanks: (() => {
+        const cutoff = now - 30_000;
+        const seen = new Map();   // mobLower|tankLower → { mob, tank, since }
+        const rt = stats.recentTankHits || [];
+        for (let i = rt.length - 1; i >= 0; i--) {
+          const h = rt[i];
+          if (!h || h.tsMs < cutoff) continue;
+          if (!/^[A-Za-z]+$/.test(String(h.tank || ''))) continue;
+          const k = String(h.mob) + '|' + String(h.tank).toLowerCase();
+          if (!seen.has(k)) seen.set(k, { mob: h.mobDisplay || h.mob, tank: h.tank, since: new Date(h.tsMs).toISOString() });
+          if (seen.size >= 12) break;
+        }
+        return seen.size ? [...seen.values()] : null;
+      })(),
       buffs,
       buff_count:  buffs.length,
       pet_name:    pet ? pet.name : null,
