@@ -37,6 +37,25 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'mimic-231-stable',
+    title: '🏷 Mimic 2.3.1 — nameplate tags, and two mobs with one name',
+    version: 'Mimic 2.3.1 · Agent 3.5.36',
+    date: '2026-08-05',
+    headline: 'Everything the beta testers have been running for the last week goes out to everyone: Zeal nameplate tags feed the Extended Target overlay, same-name adds show as separate rows, and the pet tracker stops showing a dead pet\'s buffs.',
+    features: [
+      { name: '🏷 Tag a mob, see it everywhere', blurb: 'Target an add and use Zeal\'s /tag — the label and its arrow show up on the Extended Target overlay for everyone in the tag channel. The tag carries the mob\'s true identity, which is the one thing the game never tells us otherwise, so it is the most reliable way to tell two identical adds apart. Works over the chat channel, group say or raid say.' },
+      { name: '👥 Two mobs with one name show as two mobs', blurb: 'When two same-name adds are tanked apart, they show as separate rows labeled with who is tanking each — and your slows and tashes are credited to the right one. Built for Thall Va Xakra\'s twin adds.' },
+      { name: '📡 One Mimic covers the raid', blurb: 'A single raider running Mimic reports every raid member\'s position and every tank the mobs are hitting, so the split works even when the tanks themselves are not running it.' },
+      { name: '🩺 The dashboard says whether tags will work', blurb: 'A readiness card reads your Zeal settings and names the exact fix when something is switched on that would quietly stop tags reaching us — including the two that draw the arrow in game while sending nothing at all.' },
+    ],
+    fixes: [
+      'The pet tracker showed a previous pet\'s buffs on a new one. A charmed pet\'s spells stayed filed under the owner, so when the charm broke and a warder was summoned, the warder appeared to be carrying spells it never had — for up to three hours. A new pet now starts clean, and /pet health corrects anything stale.',
+      'Tags sent over group say were not picked up at all, which looked exactly like nobody having tagged. Every way Zeal can broadcast a tag is now read, in both chat formats.',
+      'The tag readiness check was looking for zeal.ini next to your log files instead of in your EverQuest folder, so it never found anything to report.',
+      'Your own group chat is now excluded from the local trigger engine in both of the wordings the game uses, not just one.',
+    ],
+  },
+  {
     key: 'header-one-line',
     title: '🧭 The site header stopped sprawling',
     version: 'Web 1.1.11',

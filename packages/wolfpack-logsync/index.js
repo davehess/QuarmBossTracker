@@ -268,7 +268,13 @@ const DEFAULT_DROP_PATTERNS = [
 
   // Group chat both directions — genuinely private (small group, not guild-wide)
   /\btells the group,\s*['"]/i,
-  /^\[.+\]\s+You say to your group,/i,
+  // Both self wordings. The list carried only "say to your group" for years;
+  // Zeal's own chat regex (chat.cpp abbreviateChat) enumerates "tell your
+  // party" as a group form too, and triggerVisibleLine is default-KEEP — so a
+  // wording this list misses is a private line the local trigger engine can
+  // see. Widened while adding /tag gsay capture (#194), which put group chat
+  // on this path deliberately for the first time.
+  /^\[.+\]\s+You (?:say to your group|tell your party),/i,
 
   // Note: guild chat (/gu, "tells the guild") and raid chat (/rs, "tells the raid") are
   // intentionally NOT filtered here. These channels are shared among the whole guild
@@ -2543,8 +2549,38 @@ function _collapseObservedBuffSlots(buffs) {
 // linger when they expire (per user feedback: 'Heals over time should fall
 // off within a tick'). Other expired buffs still linger as a rebuff cue.
 function _isHotBuff(name) { return _categorizeBuff(name) === 'regen'; }
+// A pet's buffs belong to THAT pet, but `_petBuffLandings` is keyed by OWNER —
+// which is exactly what makes charm-pet attribution work (see
+// _captureTargetBuffsOnCharm) and also means NOTHING about the key changes when
+// the pet does. Uilnayar 2026-08-05: a charmed rat carried Glamour of Tunare
+// and Tunare's Request (1800 ticks — three hours); the charm broke, no recharm,
+// a summoned warder took its place, and the warder's row showed both, because
+// the entries were still inside their duration and still filed under "canopy".
+// Unreset, they bleed for hours onto a pet that never had them.
+//
+// Slot 16 going EMPTY is NOT an identity change — it dips during a re-charm
+// cast (~3s) and between pets. Only a confident name → different-name
+// transition clears, so a dropout can never wipe a live pet's buffs.
+//
+// KNOWN GAP: re-charming a DIFFERENT mob with the SAME name looks identical
+// here (no spawn id on the pipe — the #194 problem in another costume). The
+// /pet health reconcile below is what catches that case.
+const _lastPetByOwner = new Map();   // ownerLower → last confidently-seen petLower
+function _reconcilePetIdentity(ownerLower) {
+  const petName = _petNameForOwner(ownerLower);
+  if (!petName) return;                                  // unknown → never wipe on a dropout
+  const petLower = String(petName).toLowerCase();
+  const prev = _lastPetByOwner.get(ownerLower);
+  _lastPetByOwner.set(ownerLower, petLower);
+  if (!prev || prev === petLower) return;
+  _petBuffLandings.delete(ownerLower);
+  _petHealthByOwner.delete(ownerLower);
+  console.log(`[pet] ${ownerLower}'s pet changed ${prev} → ${petLower} — dropped the previous pet's buffs`);
+  _savePetStateSoon();
+}
 function petBuffsForOwner(ownerLower) {
   if (!ownerLower) return [];
+  _reconcilePetIdentity(ownerLower);
   const now = Date.now();
   const byName = new Map();
   const rep = _petHealthByOwner.get(ownerLower);
@@ -2552,6 +2588,24 @@ function petBuffsForOwner(ownerLower) {
     for (const [k, b] of rep.buffs) byName.set(k, { name: b.name, remaining_secs: null, observed_at_ms: rep.last_seen_at, good: _spellGood(b.name) });
   }
   const lm = _petBuffLandings.get(ownerLower);
+  // `/pet health` is a SNAPSHOT of everything on the pet right now, so it is
+  // authoritative over anything we recorded BEFORE it: "The Pet health includes
+  // the 3 buffs but should remove those two debuffs as they are not present"
+  // (Uilnayar 2026-08-05). Landings NEWER than the snapshot are kept — they
+  // happened after the pet answered. Only applied once the report has CLOSED
+  // (no further line for the gap window); mid-stream the set is still filling.
+  // Restricted to catalog spells because applyPetHealthLine can only RECORD
+  // catalog spells — an uncatalogued buff is absent from the report for a
+  // reason that has nothing to do with the pet, and must not be dropped.
+  if (lm && rep && rep.buffs && (now - (rep.last_seen_at || 0)) <= PET_HEALTH_TTL_MS
+      && (Date.now() - (rep.last_seen_at || 0)) > PET_REPORT_GAP_MS) {
+    for (const [k, b] of lm) {
+      if (rep.buffs.has(k)) continue;
+      if (!_spellByNameLower.has(k)) continue;
+      if ((b.landed_at || 0) > (rep.last_line_at || 0)) continue;   // landed after the snapshot
+      lm.delete(k);
+    }
+  }
   if (lm) {
     for (const [k, b] of lm) {
       const durSecs = (Number(b.dur_ticks) || 0) * 6;
@@ -8088,6 +8142,15 @@ function _maybeUploadRaidRoster(sample) {
           const hp = liveHpByName.get(String(m.name).toLowerCase());
           if (typeof hp === 'number') hpPct = Math.max(0, Math.min(100, Math.round(hp)));
         }
+        // #194: Zeal sends loc {x,y,z} + heading for EVERY raid member on the
+        // type-5 pipe (not verbose-gated) and this mapping used to drop both.
+        // Forwarding them gives the bot's same-name instance clustering a
+        // position for every tank in the raid from ONE Mimic-running uploader
+        // — the coverage multiplier docs/DESIGN-mob-serialization.md names as
+        // gap 3. Intra-guild data of guildmates, same class as the HP above;
+        // recorded in docs/PRIVACY.md.
+        const _lx = m.loc && Number(m.loc.x), _ly = m.loc && Number(m.loc.y), _lz = m.loc && Number(m.loc.z);
+        const _hasLoc = Number.isFinite(_lx) && Number.isFinite(_ly) && Number.isFinite(_lz);
         return {
           name:   String(m.name),
           class:  m.class != null ? String(m.class) : null,
@@ -8099,6 +8162,10 @@ function _maybeUploadRaidRoster(sample) {
           // the Tank/Target overlays can show real numbers cross-client.
           hp_current: hpCur,
           hp_max:     hpMax,
+          loc_x:   _hasLoc ? _lx : null,
+          loc_y:   _hasLoc ? _ly : null,
+          loc_z:   _hasLoc ? _lz : null,
+          heading: Number.isFinite(Number(m.heading)) ? Number(m.heading) : null,
         };
       });
     if (compact.length === 0) return;
@@ -10217,6 +10284,14 @@ function _serializeForDashboard() {
     // What each watched client actually has LOADED, from `/zeal version`.
     // Empty until someone runs it — we never inject commands into the game.
     clientVersions: clientVersionsSnapshot(),
+    // #194 readiness: the tag channel Zeal has PERSISTED in zeal.ini (channel
+    // membership survives once seen), plus live capture stats. The dashboard
+    // renders "tag capture: ready" from this instead of assuming.
+    zealTagConfig: readZealTagConfig(),
+    zealTagCount: zealTagsSnapshot().length,
+    // Backup for when zeal.ini isn't reachable: a tag we SAW arrive already
+    // rewritten by prettyprint (spawn id stripped at the source).
+    zealTagPretty: _tagPrettyPrintSeen,
     // This machine's measured clock offset vs the bot, from the heartbeat's
     // four-stamp NTP exchange. POSITIVE = this clock is BEHIND. Surfaced so the
     // dashboard can show the drift and, after a Windows time resync, prove the
@@ -14775,6 +14850,34 @@ function renderInfo(s) {
       if (c.at)     h += '<tr><td class="dim">read</td><td class="dim num">' + esc(String(c.at).replace('T', ' ').slice(0, 19)) + '</td></tr>';
     }
     h += '</table>';
+  }
+  h += '</div>';
+  // 🏷 Zeal tag capture readiness (#194). Byte-stable: zeal.ini values change
+  // rarely and the fresh-tag count only moves while tags are actually flowing
+  // (an acceptable repaint — the Info tab is not a form surface mid-raid).
+  const _ztc = s.zealTagConfig || [];
+  h += '<div class="card"><h2>🏷 Zeal tag capture</h2>';
+  if (s.zealTagPretty && !_ztc.some(function (z) { return z.prettyprint; })) {
+    h += '<div style="margin-bottom:4px;color:#f2b632;font-size:11px">⚠️ Saw a tag arrive already rewritten by <code>/tag prettyprint</code> (<code>' + esc(s.zealTagPretty.sample || '') + '</code>) — that strips the spawn id, so same-name mobs cannot be told apart. Run <code>/tag prettyprint off</code>.</div>';
+  }
+  if (!_ztc.length) {
+    h += '<div class="dim">No <b>zeal.ini</b> found next to the watched logs yet — it appears once Zeal runs in that EQ folder.</div>';
+  } else {
+    for (const zc of _ztc) {
+      const warns = zc.warnings || [];
+      h += '<div style="margin-bottom:4px">' + (warns.length ? '⚠️' : '✅') + ' <b>' + esc(zc.channel || 'no channel persisted') + '</b>'
+        + ' <span class="dim">' + esc(zc.dir) + '</span></div>';
+      for (const w of warns) {
+        h += '<div style="margin:0 0 4px 18px;color:#f2b632;font-size:11px">' + esc(w) + '</div>';
+      }
+    }
+    h += '<div class="dim" style="font-size:11px">The channel persists in zeal.ini once joined — no per-raid setup. Tags heard in the last 2 min: <b>' + (s.zealTagCount || 0) + '</b>. Tank usage: target the add → <code>/tag chat &lt;Name&gt;-Tanking</code> (shapes: <code>^G^</code> arrows, <code>^P^</code> paw, <code>^S^</code> stop). Any of <code>/tag chat</code>, <code>/tag gsay</code> (group) or <code>/tag rsay</code> (raid) is captured.</div>';
+    // The three causes the ini can NOT see. All of them show the nameplate
+    // arrow in game and log nothing, which is why "the arrow is right there"
+    // is not evidence the tag was broadcast.
+    if (!(s.zealTagCount || 0)) {
+      h += '<div class="dim" style="font-size:11px;margin-top:4px">Arrow in game but nothing here? The arrow only proves Zeal applied the tag locally. Three ways it never reaches the log: <code>/tag local</code> (never broadcasts at all), <code>/tag chat</code> with the channel not actually joined (Zeal prints “You must join a channel”), and <code>/tag suppress on</code> — that one hides the broadcast from your chat window AND your log while still drawing the arrow.</div>';
+    }
   }
   h += '</div>';
   // 🩺 Raw Zeal capture — opt-in diagnostic. The control lives here, but the
@@ -23753,6 +23856,10 @@ function transformEqItemLinks(text) {
 function parseChatLine(line, selfName) {
   // Cheap gate — all four channel regexes require "guild," or "raid,".
   if (line.indexOf('guild,') === -1 && line.indexOf('raid,') === -1) return null;
+  // #194: Zeal /tag broadcasts ride rsay when raiders use the rsay transport —
+  // machine traffic, not conversation. The tag parser captures them from the
+  // raw line; they must not spam the Discord raid-chat relay.
+  if (line.indexOf('ZEALTAG | ') !== -1 || line.indexOf('ZT | ') !== -1) return null;
   for (const { rx, channel, self: isSelf } of CHAT_LINE_PATTERNS) {
     const m = line.match(rx);
     if (!m) continue;
@@ -25687,6 +25794,210 @@ const _clientVersions = new Map();   // charLower → { zeal, zeal_hash, eqw, eq
 const _ZEAL_VER_RX   = /\]\s+Zeal version:\s*([\w.]+)(?:\s*\(([^)]+)\))?/i;
 const _EQW_VER_RX    = /\]\s+eqw\.dll version:\s*(.+?)\s*$/i;
 const _EQGAME_VER_RX = /\]\s+eqgame\.dll version:\s*(.+?)\s*$/i;
+// ── #194 Zeal /tag capture — the spawn-id side door ─────────────────────────
+//
+// Zeal's native /tag command (CoastalRedwood/Zeal nameplate.cpp, read
+// 2026-08-05) broadcasts nameplate tags through rsay, gsay, or a joined "ZT*"
+// chat channel. The wire format — verified from source, not the wiki —
+//
+//     ZEALTAG | <tag_text> | <target_name> | <spawn_id>
+//
+// ("ZT" is the abbreviated header both sides accept; the delimiter is
+// exactly " | "; tag_text caps at 32 visible-ASCII chars). THE PAYLOAD FIELD
+// IS THE SPAWN ID — the one datum the Zeal pipe never carries and the reason
+// same-name serialization has been heuristic. A tank targets their add, hits
+// "/tag chat Naggato-Tanking", and every channel member's LOG receives the
+// mob's true per-zone identity. Tags are therefore an AUTHORITATIVE separator:
+// two fresh tags with different spawn_ids are two mobs, full stop.
+//
+// tag_text prefixes (same source): '+'/'@' append, '!' replace, '-' erase,
+// and '^?^' sets a shape — R/O/Y/G/B/W colored arrows, P paw, S stop sign,
+// '-' clears the shape. 'clear' as the whole text clears every tag;
+// 'ChatChannel: <name>' is the autojoin broadcast, not a tag.
+//
+// PRIVACY: unchanged. ZT-channel lines still match the custom-channel drop
+// pattern and never upload raw; rsay-borne tags are raid chat (kept) but are
+// EXCLUDED from the Discord chat relay (machine traffic, not conversation).
+// Only the structured extract {spawn_id, mob, text, shape, tagger} ships.
+const _ZEAL_TAG_SHAPES = { r: 'R', o: 'O', y: 'Y', g: 'G', b: 'B', w: 'W', p: 'P', s: 'S' };
+const _TAG_FRESH_MS = 120_000;   // tags are deliberate marks, not transient connects
+const _zealTags = new Map();     // spawnId → { spawn_id, mob, mobDisplay, text, shape, tagger, tsMs }
+function _isZealTagPayload(msg) {
+  return typeof msg === 'string' && (msg.startsWith('ZEALTAG | ') || msg.startsWith('ZT | '));
+}
+function _applyZealTagMessage(msg, tagger, tsMs) {
+  const parts = msg.split(' | ');
+  if (parts.length < 4) return false;
+  const rawText = parts[1];
+  if (!rawText) return false;
+  if (rawText === 'clear') { _zealTags.clear(); return true; }        // broadcast clear-all
+  if (rawText.startsWith('ChatChannel: ')) return false;              // autojoin plumbing, not a tag
+  const name = parts.slice(2, parts.length - 1).join(' | ').trim();   // names can't contain " | ", but be safe
+  const spawnId = parseInt(parts[parts.length - 1], 10);
+  if (!Number.isFinite(spawnId)) return false;
+  if (spawnId === 0 || name === '0') return true;                     // targeted-clear form
+  let text = rawText;
+  // Prefix semantics, simplified for a DISPLAY consumer: append variants
+  // replace our stored text (the nameplate-merge subtleties don't matter for
+  // a row label); a bare erase drops the tag.
+  const first = text[0];
+  if (first === '+' || first === '@' || first === '!') text = text.slice(1);
+  else if (first === '-') {
+    if (!text.includes('^')) { _zealTags.delete(spawnId); return true; }
+    text = text.slice(1);
+  }
+  let shape = null;
+  const sm = text.match(/^\^(.)\^/);
+  if (sm) {
+    shape = _ZEAL_TAG_SHAPES[sm[1].toLowerCase()] || null;            // '^-^' → null = shape cleared
+    text = text.slice(sm[0].length);
+  }
+  text = text.replace(/\s+/g, ' ').trim().slice(0, 48);
+  const prev = _zealTags.get(spawnId);
+  _zealTags.set(spawnId, {
+    spawn_id: spawnId, mob: name.toLowerCase(), mobDisplay: name,
+    text: text || (prev ? prev.text : ''),
+    shape: shape != null ? shape : (sm ? null : (prev ? prev.shape : null)),
+    tagger: tagger || null, tsMs,
+  });
+  return true;
+}
+// Transport-agnostic extraction. Zeal broadcasts the SAME payload over three
+// transports — `/tag chat` (a ZT* chat channel), `/tag rsay` (raid), and
+// `/tag gsay` (GROUP say, not guild: handle_tag_command gates it on
+// GroupInfo->is_in_group()) — and the client renders each in two shapes
+// depending on Zeal's `AbbreviatedChat` setting: the quoted form
+// `Name tells the group, 'body'` and the abbreviated form `[P] [Name]: body`.
+// Enumerating transport × shape × self/other is six regexes that go stale the
+// moment Zeal adds a fourth transport, and the gaps are invisible — we shipped
+// with only chat+rsay and the first live test (two `a Darkpaw warrior`s tagged
+// Bardy and Cano, NOT in a raid) captured nothing at all. So: find the header,
+// take the payload from there to end-of-line, and read the speaker off whatever
+// prefix precedes it. The `ZEALTAG | ` header is machine-generated and can't
+// collide with human chat, which is what makes the loose match safe.
+function _tagLineParts(line, selfCharacter) {
+  let idx = line.indexOf('ZEALTAG | ');
+  if (idx === -1) idx = line.indexOf('ZT | ');
+  if (idx === -1) return null;
+  // Quoted shape closes with the quote; abbreviated shape just ends.
+  const payload = line.slice(idx).replace(/\s*['"]\s*$/, '').trim();
+  let prefix = line.slice(0, idx).replace(/^\[[^\]]*\]\s*/, '');   // drop the EQ timestamp
+  let tagger = null;
+  // Abbreviated form ends `…[Sender]: ` — Zeal already substitutes the real
+  // name for "You" there (abbreviateChat), so trust it as-is.
+  let m = prefix.match(/\[([A-Za-z]+)\]:\s*$/);
+  if (m) tagger = m[1];
+  else { m = prefix.match(/^([A-Za-z]+)\b/); if (m) tagger = m[1]; }
+  if (tagger && /^you$/i.test(tagger)) tagger = selfCharacter || null;
+  if (tagger && !/^[A-Za-z]+$/.test(tagger)) tagger = null;
+  return { payload, tagger };
+}
+// `/tag filter on` + `/tag prettyprint on` rewrites the broadcast to
+// "<text> => <target>" BEFORE it reaches the log (nameplate.cpp
+// prettyprint_tag_message) — the spawn id, the one thing that separates two
+// same-name mobs, is destroyed at the source and no consumer can recover it.
+// We can't parse our way out; we can only tell the user to turn it off. The
+// zeal.ini read below is the authoritative check (the filter runs on the LOCAL
+// client, so the local ini fully decides whether MY log is degraded); this
+// log-side sighting is the backup for when the ini isn't reachable.
+let _tagPrettyPrintSeen = null;   // { at, sample } — dashboard warning only
+function _notePrettyTagLine(line, tsMs) {
+  if (line.indexOf(' => ') === -1) return false;
+  const m = line.match(/(?:,\s*['"]|\]:\s+)(.+?)\s+=>\s+(.+?)(?:\s+\((?:Arrow:[ROYGBWroygbw]|Paw|Stop)\))?['"]?\s*$/);
+  if (!m) return false;
+  _tagPrettyPrintSeen = { at: tsMs, sample: `${m[1]} => ${m[2]}`.slice(0, 80) };
+  return true;
+}
+function noteTagChannelLine(line, selfCharacter) {
+  if (!line) return false;
+  // Cheap gate — one indexOf per log line, like the /zeal version harvest.
+  if (line.indexOf('ZEALTAG | ') === -1 && line.indexOf('ZT | ') === -1) {
+    if (line.indexOf(' => ') !== -1) {
+      const ppTs = parseEqTimestamp(line);
+      _notePrettyTagLine(line, ppTs ? ppTs.getTime() : Date.now());
+    }
+    return false;
+  }
+  const parts = _tagLineParts(line, selfCharacter);
+  if (!parts || !_isZealTagPayload(parts.payload)) return false;
+  const ts = parseEqTimestamp(line);
+  return _applyZealTagMessage(parts.payload, parts.tagger, ts ? ts.getTime() : Date.now());
+}
+// zeal.ini readiness check — "people already autojoin the channel and seeing
+// the channel once persists it for that user. my zeal ini should contain
+// this" (Uilnayar 2026-08-05). Zeal persists the tag config as
+// [Zeal] NameplateTagChannel / NameplateTagEnable in <eqdir>\zeal.ini
+// (verified: ZealSetting ctor → kZealIniFilename, nameplate.h:52,62). Reading
+// it lets the dashboard answer "am I set up for tag capture?" instead of
+// assuming — no join step, no take-it-on-faith. Read-only, cached 60s.
+let _zealTagCfgCache = { at: 0, rows: [] };
+function readZealTagConfig() {
+  const now = Date.now();
+  if (now - _zealTagCfgCache.at < 60_000) return _zealTagCfgCache.rows;
+  const rows = [];
+  try {
+    const dirs = new Set();
+    for (const w of (stats.watchedLogs || [])) {
+      if (w && w.file) { try { dirs.add(path.dirname(String(w.file))); } catch { /* skip */ } }
+    }
+    for (const dir of dirs) {
+      try {
+        // Zeal writes `.\zeal.ini` — RELATIVE TO THE EQ ROOT (io_ini.h
+        // kZealIniFilename), where eqgame.exe runs — NOT into Logs\. 3.5.33
+        // looked only next to the watched log, found nothing on every real
+        // install, and the card said "no zeal.ini found yet" forever: a
+        // readiness check that could never fire, on the exact question the
+        // user was stuck on. Parent first (the EQ root, per _crashSystemSnapshot's
+        // same dirname(logdir) convention), then the log dir as a fallback.
+        const ini = [path.join(path.dirname(dir), 'zeal.ini'), path.join(dir, 'zeal.ini')]
+          .find(p => { try { return fs.existsSync(p); } catch { return false; } });
+        if (!ini) continue;
+        const txt = fs.readFileSync(ini, 'utf8');
+        // Minimal ini walk: find [Zeal], read keys until the next section.
+        // All six live in [Zeal] (nameplate.h ZealSetting decls; AbbreviatedChat
+        // is chat.h but the same section).
+        let inZeal = false;
+        let channel = null, enabled = null, suppress = null, prettyprint = null, filter = null, abbrev = null;
+        for (const rawLine of txt.split(/\r?\n/)) {
+          const t = rawLine.trim();
+          if (/^\[/.test(t)) { inZeal = /^\[zeal\]$/i.test(t); continue; }
+          if (!inZeal) continue;
+          const kv = t.match(/^([A-Za-z0-9_]+)\s*=\s*(.*)$/);
+          if (!kv) continue;
+          const on = () => /^(1|true|on)$/i.test(kv[2].trim());
+          if (/^NameplateTagChannel$/i.test(kv[1]))     channel = kv[2].trim() || null;
+          if (/^NameplateTagEnable$/i.test(kv[1]))      enabled = on();
+          if (/^NameplateTagSuppress$/i.test(kv[1]))    suppress = on();
+          if (/^NameplateTagPrettyPrint$/i.test(kv[1])) prettyprint = on();
+          if (/^NameplateTagFilter$/i.test(kv[1]))      filter = on();
+          if (/^AbbreviatedChat$/i.test(kv[1]))         abbrev = parseInt(kv[2].trim(), 10) || 0;
+        }
+        // Warnings are the point of this read — a tag that never reaches the
+        // log looks IDENTICAL to nobody tagging, and that's what the first
+        // live test looked like. Ordered most-fatal first.
+        const warnings = [];
+        if (suppress) warnings.push('`/tag suppress on` — Zeal drops the tag before it is written to the log. Run `/tag suppress off`.');
+        else if (filter && prettyprint) warnings.push('`/tag prettyprint on` rewrites tags to "text => mob" and strips the spawn id, so same-name mobs cannot be told apart. Run `/tag prettyprint off`.');
+        if (enabled === false) warnings.push('`NameplateTagEnable=0` — incoming tags are ignored. Run `/tag on`.');
+        if (!channel) warnings.push('No tag channel set. Run `/tag channel ZTwolfpacktag` once (Zeal remembers it).');
+        rows.push({ dir: path.dirname(ini), channel, enabled, suppress, prettyprint, filter, abbrev, warnings });
+      } catch { /* unreadable ini — skip this dir */ }
+    }
+  } catch { /* never break state over a readiness hint */ }
+  _zealTagCfgCache = { at: now, rows };
+  return rows;
+}
+
+function zealTagsSnapshot(nowMs) {
+  const now = nowMs || Date.now();
+  const out = [];
+  for (const [k, v] of _zealTags) {
+    if (now - v.tsMs > _TAG_FRESH_MS) { _zealTags.delete(k); continue; }
+    out.push(v);
+  }
+  return out;
+}
+
 function noteClientVersionLine(line, character) {
   if (!line || !character) return false;
   // Cheap gate first — this runs on every log line.
@@ -28473,6 +28784,38 @@ function flushLiveStateToBot(opts) {
       loc_z:          (st.loc && Number.isFinite(Number(st.loc.z))) ? Number(st.loc.z) : null,
       incoming_mob:       incomingMob,
       incoming_mob_since: incomingMobSinceMs ? new Date(incomingMobSinceMs).toISOString() : null,
+      // #194: every mob→player connect THIS observer's log saw recently — the
+      // log shows all nearby melee, so one observer names the tank of every
+      // same-name instance in range, including tanks who run nothing. Bot-side
+      // clustering pairs these names with type-5 raid positions. Deduped per
+      // (mob, tank) keeping the newest connect; players only (the recorder's
+      // heuristic can misread backtick pet names — the bot re-filters, but no
+      // reason to ship them). Capped small; NOT in the change signature (rides
+      // the heartbeat + existing triggers, like loc).
+      observed_tanks: (() => {
+        const cutoff = now - 30_000;
+        const seen = new Map();   // mobLower|tankLower → { mob, tank, since }
+        const rt = stats.recentTankHits || [];
+        for (let i = rt.length - 1; i >= 0 && seen.size < 12; i--) {
+          const h = rt[i];
+          if (!h || h.tsMs < cutoff) continue;
+          if (!/^[A-Za-z]+$/.test(String(h.tank || ''))) continue;
+          const k = String(h.mob) + '|' + String(h.tank).toLowerCase();
+          if (!seen.has(k)) seen.set(k, { mob: h.mobDisplay || h.mob, tank: h.tank, since: new Date(h.tsMs).toISOString() });
+        }
+        return seen.size ? [...seen.values()] : null;
+      })(),
+      // #194: fresh Zeal /tag broadcasts — each carries the mob's TRUE spawn
+      // id, the authoritative same-name separator (see noteTagChannelLine).
+      zeal_tags: (() => {
+        const tags = zealTagsSnapshot(now);
+        if (!tags.length) return null;
+        return tags.slice(0, 24).map(t => ({
+          spawn_id: t.spawn_id, mob: t.mobDisplay, text: t.text || '',
+          shape: t.shape || null, tagger: t.tagger || null,
+          since: new Date(t.tsMs).toISOString(),
+        }));
+      })(),
       buffs,
       buff_count:  buffs.length,
       pet_name:    pet ? pet.name : null,
@@ -31241,6 +31584,10 @@ async function main() {
         // describe it, and it gates on a substring first so the cost on a
         // non-matching line is one indexOf.
         try { noteClientVersionLine(line, b.character); } catch { void 0; }
+        // #194 tag channel — same raw-line hook, same reasoning. The line
+        // itself stays dropped by the custom-channel privacy filter; only the
+        // structured {tank, mob, hp} extract rides observed_tanks.
+        try { noteTagChannelLine(line, b.character); } catch { void 0; }
         // #56 — a mob death closes one same-name serial track; on K→0 (the last
         // instance died) it clears that name's stale debuff/slow/HP buckets so the
         // next same-name mob starts clean (the debuff-bleed fix). Same trusted

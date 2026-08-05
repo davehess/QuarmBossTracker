@@ -60,7 +60,9 @@ const BLOCKS = [
      '  return (e && e.good != null) ? (Number(e.good) ? 1 : 0) : null;\n}'),
   fn('function recordPetBuffLanding(bcEvt) {',
      '  _savePetStateSoon();\n}'),
-  fn('function petBuffsForOwner(ownerLower) {',
+  fn('function _petNameForOwner(ownerLower) {',
+     '  }\n  return null;\n}'),
+  fn('const _lastPetByOwner = new Map();',
      '  return Array.from(byName.values());\n}'),
   fn('function _zealTargetForChar(charLower) {',
      '    return (st && st.target_name) ? String(st.target_name) : null;\n  }\n  return null;\n}'),
@@ -99,6 +101,7 @@ const PRELUDE = `
   const PENDING_CHARM_WINDOW_MS = 12000;
   const FELL_OFF_LINGER_MS = 5 * 60 * 1000;
   const PET_HEALTH_TTL_MS = 30 * 60 * 1000;
+  const PET_REPORT_GAP_MS = 6000;
   const _CAST_BEGIN_RX = /\\]\\s+You begin (?:casting|singing)\\s+(.+?)\\.\\s*$/i;
   const CHARM_SPELLS = new Map();
   const buffCastBuffer = [];
@@ -128,6 +131,7 @@ const PRELUDE = `
 const EXPORTS = [
   'noteSelfCast', 'resolveSelfCastLanding', 'parseBuffLanding',
   'recordPetBuffLanding', 'petBuffsForOwner', '_rebuildBuffMatchers',
+  '_reconcilePetIdentity', '_lastPetByOwner',
   '_petOwnerByName', '_isTrackedBuffName',
   '_zealState', '_spellByNameLower', '_petBuffLandings', '_petHealthByOwner',
   '_recentSelfCast', '_petBuffDiagRing',
@@ -297,5 +301,101 @@ describe('#117 pet-buff attribution (source-sliced from agent)', () => {
     const drop = A._petBuffDiagRing.find(e => !e.ok && e.target === 'Groupie');
     expect(drop).toBeTruthy();
     expect(drop.reason).toMatch(/not a watched pet/i);
+  });
+});
+
+// ── Pet identity: buffs belong to the PET, not the owner slot ────────────────
+//
+// Field report (Uilnayar 2026-08-05): a charmed "a giant plague rat" carried
+// Glamour of Tunare and Tunare's Request (1800 ticks — three hours). The charm
+// broke, was NOT recast, and a summoned warder "Goneker" took its place. The
+// Pet tracker showed Goneker with both of the rat's spells, because
+// _petBuffLandings is keyed by OWNER and nothing about that key changes when
+// the pet does. `/pet health` listed only the three real buffs.
+describe('pet identity change (charm break → summoned warder)', () => {
+  const PET_CATALOG = [
+    { id: 9001, name: 'Glamour of Tunare',  you: '', other: 'looks different.', dur: 80,   durf: 3, good: 1 },
+    { id: 9002, name: "Tunare's Request",   you: '', other: 'shimmers.',        dur: 1800, durf: 3, good: 0 },
+    { id: 9003, name: 'Shield of Blades',   you: '', other: 'is surrounded by blades.', dur: 70, durf: 3, good: 1 },
+  ];
+  function withPet(petName) {
+    const a = buildAgent();
+    for (const e of [...CATALOG, ...PET_CATALOG]) a._spellByNameLower.set(e.name.toLowerCase(), e);
+    a._rebuildBuffMatchers();
+    a._zealState['Canopy'] = { target_name: petName, gauges: [{ slot: 16, text: petName, hp_pct: 100 }], updatedAt: Date.now() };
+    return a;
+  }
+  const landed = (names, atMs) => new Map(names.map(n => [n.toLowerCase(),
+    { name: n, dur_ticks: 1800, dur_formula: 3, landed_at: atMs != null ? atMs : Date.now() }]));
+
+  it("the warder does NOT inherit the charmed rat's spells", () => {
+    const a = withPet('a giant plague rat');
+    a._petBuffLandings.set('canopy', landed(['Glamour of Tunare', "Tunare's Request", 'Shield of Blades']));
+    expect(a.petBuffsForOwner('canopy')).toHaveLength(3);        // establishes the identity baseline
+    a._zealState['Canopy'].gauges = [{ slot: 16, text: 'Goneker', hp_pct: 100 }];
+    expect(a.petBuffsForOwner('canopy'), 'a new pet starts clean').toEqual([]);
+  });
+
+  it('a slot-16 DROPOUT never wipes a live pet — only a name→different-name change does', () => {
+    // Slot 16 dips for ~3s during a re-charm cast. Treating empty as "new pet"
+    // would erase the buffs of the pet that is still standing there.
+    const a = withPet('Goneker');
+    a._petBuffLandings.set('canopy', landed(['Shield of Blades']));
+    expect(a.petBuffsForOwner('canopy')).toHaveLength(1);
+    a._zealState['Canopy'].gauges = [];                          // dropout
+    expect(a.petBuffsForOwner('canopy').map(b => b.name)).toEqual(['Shield of Blades']);
+    a._zealState['Canopy'].gauges = [{ slot: 16, text: 'Goneker', hp_pct: 100 }];
+    expect(a.petBuffsForOwner('canopy').map(b => b.name), 'same pet, buffs survive').toEqual(['Shield of Blades']);
+  });
+
+  it('the /pet health snapshot drops pre-snapshot spells it does not list', () => {
+    // "The Pet health includes the 3 buffs but should remove those two debuffs
+    // as they are not present." The report is a full snapshot of the pet's
+    // current effects, so anything older that it omits is gone.
+    const a = withPet('Goneker');
+    const snapAt = Date.now() - 60_000;
+    a._petBuffLandings.set('canopy', landed(['Glamour of Tunare', "Tunare's Request", 'Shield of Blades'], snapAt - 60_000));
+    a._petHealthByOwner.set('canopy', {
+      hp_pct: 100,
+      buffs: new Map([['shield of blades', { name: 'Shield of Blades', dur_ticks: 70, dur_formula: 3 }]]),
+      last_line_at: snapAt, last_seen_at: snapAt,
+    });
+    expect(a.petBuffsForOwner('canopy').map(b => b.name)).toEqual(['Shield of Blades']);
+  });
+
+  it('a landing NEWER than the snapshot survives it', () => {
+    const a = withPet('Goneker');
+    const snapAt = Date.now() - 60_000;
+    a._petBuffLandings.set('canopy', landed(['Girdle of Karana'], snapAt + 30_000));
+    a._petHealthByOwner.set('canopy', {
+      hp_pct: 100,
+      buffs: new Map([['shield of blades', { name: 'Shield of Blades', dur_ticks: 70, dur_formula: 3 }]]),
+      last_line_at: snapAt, last_seen_at: snapAt,
+    });
+    expect(a.petBuffsForOwner('canopy').map(b => b.name).sort())
+      .toEqual(['Girdle of Karana', 'Shield of Blades']);
+  });
+
+  it('an UNCATALOGUED spell survives the snapshot — the report could never list it', () => {
+    // applyPetHealthLine only records names that resolve in _spellByNameLower,
+    // so absence from the report says nothing about an uncatalogued buff.
+    const a = withPet('Goneker');
+    const snapAt = Date.now() - 60_000;
+    a._petBuffLandings.set('canopy', landed(['Wolf Pack Mystery Buff'], snapAt - 60_000));
+    a._petHealthByOwner.set('canopy', {
+      hp_pct: 100, buffs: new Map(), last_line_at: snapAt, last_seen_at: snapAt,
+    });
+    expect(a.petBuffsForOwner('canopy').map(b => b.name)).toEqual(['Wolf Pack Mystery Buff']);
+  });
+
+  it('a still-OPEN report (lines still arriving) does not drop anything yet', () => {
+    // Mid-stream the buff list is incomplete; reconciling now would delete
+    // every spell whose line has not been read yet.
+    const a = withPet('Goneker');
+    a._petBuffLandings.set('canopy', landed(['Girdle of Karana', 'Shield of Blades'], Date.now() - 120_000));
+    a._petHealthByOwner.set('canopy', {
+      hp_pct: 100, buffs: new Map(), last_line_at: Date.now(), last_seen_at: Date.now(),
+    });
+    expect(a.petBuffsForOwner('canopy')).toHaveLength(2);
   });
 });
