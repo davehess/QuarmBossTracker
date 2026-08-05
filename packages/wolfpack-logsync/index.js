@@ -2549,8 +2549,38 @@ function _collapseObservedBuffSlots(buffs) {
 // linger when they expire (per user feedback: 'Heals over time should fall
 // off within a tick'). Other expired buffs still linger as a rebuff cue.
 function _isHotBuff(name) { return _categorizeBuff(name) === 'regen'; }
+// A pet's buffs belong to THAT pet, but `_petBuffLandings` is keyed by OWNER —
+// which is exactly what makes charm-pet attribution work (see
+// _captureTargetBuffsOnCharm) and also means NOTHING about the key changes when
+// the pet does. Uilnayar 2026-08-05: a charmed rat carried Glamour of Tunare
+// and Tunare's Request (1800 ticks — three hours); the charm broke, no recharm,
+// a summoned warder took its place, and the warder's row showed both, because
+// the entries were still inside their duration and still filed under "canopy".
+// Unreset, they bleed for hours onto a pet that never had them.
+//
+// Slot 16 going EMPTY is NOT an identity change — it dips during a re-charm
+// cast (~3s) and between pets. Only a confident name → different-name
+// transition clears, so a dropout can never wipe a live pet's buffs.
+//
+// KNOWN GAP: re-charming a DIFFERENT mob with the SAME name looks identical
+// here (no spawn id on the pipe — the #194 problem in another costume). The
+// /pet health reconcile below is what catches that case.
+const _lastPetByOwner = new Map();   // ownerLower → last confidently-seen petLower
+function _reconcilePetIdentity(ownerLower) {
+  const petName = _petNameForOwner(ownerLower);
+  if (!petName) return;                                  // unknown → never wipe on a dropout
+  const petLower = String(petName).toLowerCase();
+  const prev = _lastPetByOwner.get(ownerLower);
+  _lastPetByOwner.set(ownerLower, petLower);
+  if (!prev || prev === petLower) return;
+  _petBuffLandings.delete(ownerLower);
+  _petHealthByOwner.delete(ownerLower);
+  console.log(`[pet] ${ownerLower}'s pet changed ${prev} → ${petLower} — dropped the previous pet's buffs`);
+  _savePetStateSoon();
+}
 function petBuffsForOwner(ownerLower) {
   if (!ownerLower) return [];
+  _reconcilePetIdentity(ownerLower);
   const now = Date.now();
   const byName = new Map();
   const rep = _petHealthByOwner.get(ownerLower);
@@ -2558,6 +2588,24 @@ function petBuffsForOwner(ownerLower) {
     for (const [k, b] of rep.buffs) byName.set(k, { name: b.name, remaining_secs: null, observed_at_ms: rep.last_seen_at, good: _spellGood(b.name) });
   }
   const lm = _petBuffLandings.get(ownerLower);
+  // `/pet health` is a SNAPSHOT of everything on the pet right now, so it is
+  // authoritative over anything we recorded BEFORE it: "The Pet health includes
+  // the 3 buffs but should remove those two debuffs as they are not present"
+  // (Uilnayar 2026-08-05). Landings NEWER than the snapshot are kept — they
+  // happened after the pet answered. Only applied once the report has CLOSED
+  // (no further line for the gap window); mid-stream the set is still filling.
+  // Restricted to catalog spells because applyPetHealthLine can only RECORD
+  // catalog spells — an uncatalogued buff is absent from the report for a
+  // reason that has nothing to do with the pet, and must not be dropped.
+  if (lm && rep && rep.buffs && (now - (rep.last_seen_at || 0)) <= PET_HEALTH_TTL_MS
+      && (Date.now() - (rep.last_seen_at || 0)) > PET_REPORT_GAP_MS) {
+    for (const [k, b] of lm) {
+      if (rep.buffs.has(k)) continue;
+      if (!_spellByNameLower.has(k)) continue;
+      if ((b.landed_at || 0) > (rep.last_line_at || 0)) continue;   // landed after the snapshot
+      lm.delete(k);
+    }
+  }
   if (lm) {
     for (const [k, b] of lm) {
       const durSecs = (Number(b.dur_ticks) || 0) * 6;
