@@ -19,6 +19,7 @@ import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
 import { ownedCharacters } from '@/lib/ownedCharacters';
 import InventoryExplorer, { type InvItem, type LocGroup } from './InventoryExplorer';
+import { selectAll } from '@/lib/selectAll';
 
 export const dynamic = 'force-dynamic';
 export const metadata = { title: 'My inventory — Wolf Pack' };
@@ -63,13 +64,17 @@ export default async function MyInventoryPage() {
   let rowCount = 0;
   if (charNames.length > 0) {
     const admin = supabaseAdmin();
-    const { data: invRaw } = await admin
+    // Paginated: an active player's family is 2,238 rows today and PostgREST
+    // silently caps a single response at 1000 (lib/selectAll.ts) — .limit(50000)
+    // never raised it. Uilnayar 2026-08-05: "inventory rows for an account looks
+    // to be capped at 1000".
+    const rows = await selectAll<InvRow>((from, to) => admin
       .from('character_inventory')
       .select('character_name, slot_label, item_id, item_name, quantity')
       .eq('guild_id', 'wolfpack')
       .in('character_name', charNames)
-      .limit(50000);
-    const rows = (invRaw ?? []) as InvRow[];
+      .order('character_name').order('slot_label')
+      .range(from, to));
     rowCount = rows.length;
 
     const ids = [...new Set(rows.map(r => r.item_id).filter((n): n is number => !!n))];

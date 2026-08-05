@@ -20,6 +20,7 @@ import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
 import { isOfficer } from '@/lib/officer';
 import { ownedCharacters } from '@/lib/ownedCharacters';
+import { selectAll } from '@/lib/selectAll';
 import {
   KIT_CATALOG, KIT_ITEM_IDS, KIT_CATEGORY_LABEL, computeKitCoverage,
   ownedFromRows, computeQuestProgress,
@@ -118,13 +119,19 @@ async function load(userId: string, officer: boolean): Promise<Loaded> {
   const invByChar = new Map<string, OwnedItems>();
   if (invNames.length) {
     const rowsByChar = new Map<string, { item_id: number | null; item_name: string | null; quantity: number | null }[]>();
-    const { data: invData } = await sb
-      .from('character_inventory')
-      .select('character_name, item_id, item_name, quantity')
-      .eq('guild_id', 'wolfpack')
-      .in('character_name', invNames)
-      .limit(50000);
-    for (const r of (invData ?? []) as { character_name: string; item_id: number | null; item_name: string | null; quantity: number | null }[]) {
+    // Officers pull the whole roster's inventory here — 18,320 rows in the
+    // table today, of which PostgREST would silently hand back 1,000
+    // (lib/selectAll.ts). Every "who has one of these?" answer below was
+    // computed from ~5% of the data.
+    const invData = await selectAll<{ character_name: string; item_id: number | null; item_name: string | null; quantity: number | null }>(
+      (from, to) => sb
+        .from('character_inventory')
+        .select('character_name, item_id, item_name, quantity')
+        .eq('guild_id', 'wolfpack')
+        .in('character_name', invNames)
+        .order('character_name').order('item_name').order('item_id')
+        .range(from, to));
+    for (const r of invData) {
       const k = r.character_name.toLowerCase();
       (rowsByChar.get(k) ?? rowsByChar.set(k, []).get(k)!).push(r);
     }

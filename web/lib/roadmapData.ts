@@ -37,6 +37,21 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'thousand-row-cap',
+    title: '🔢 Pages were only ever seeing 1,000 rows',
+    version: 'Web 1.1.13',
+    date: '2026-08-05',
+    headline: 'Several pages were quietly working from the first 1,000 records and no further — inventories were cut off, and the era timeline could not see a new main had started raiding.',
+    features: [
+      { name: '🔢 The whole list, everywhere', blurb: 'Account inventory, the Quartermaster boards and the character era timeline now read every record instead of the first 1,000. Nothing about how you use them changes — the numbers are just right now.' },
+    ],
+    fixes: [
+      'Your account inventory stopped at 1,000 items. Four accounts are over that, the largest by more than double, so those players were missing over half their stuff.',
+      'The era timeline named the wrong main. It works out who your main was from raid attendance, but the newest attendance records were exactly the ones being cut off — so a character who became the main recently had every single one of their raids invisible to it, and the page kept showing the previous main.',
+      'The Quartermaster "who owns one of these?" boards were answering from about 5% of the guild\'s inventory.',
+    ],
+  },
+  {
     key: 'mimic-231-stable',
     title: '🏷 Mimic 2.3.1 — nameplate tags, and two mobs with one name',
     version: 'Mimic 2.3.1 · Agent 3.5.36',

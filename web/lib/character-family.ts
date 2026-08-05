@@ -30,6 +30,7 @@
 // the rest.
 
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { selectAll } from './selectAll';
 import { ERAS, eraForTimestamp, rankIndex, type EraName } from './eras';
 
 export type FamilyMember = {
@@ -159,26 +160,37 @@ export async function loadEraTimeline(
   // We split the bid lookup into id+name passes rather than trying to pack
   // both into a single .or() clause — PostgREST quoting rules around array
   // values with spaces get gnarly.
+  // EVERY one of these must paginate. `.limit(N)` does NOT raise PostgREST's
+  // silent 1000-row response cap (see lib/selectAll.ts) — and this query is
+  // where that cost us a wrong answer on screen: an active family's tick pull
+  // is 1,149 rows, the unordered query returned heap order, so the 149 rows
+  // dropped were the NEWEST. A main who started this era has ALL of their ticks
+  // in that tail, so "most ticks" kept naming the previous main and no swap was
+  // ever detected (Chadivarius → still showing Moash for Luclin, Uilnayar
+  // 2026-08-05). The .order() calls are load-bearing: range pagination over an
+  // unordered query may repeat or skip rows between pages.
   const bidSelect = 'character_id, character_name, value, auction_id, opendkp_auctions!inner(end_at)';
-  const [bidsById, bidsByName, lootRes, ticksRes] = await Promise.all([
+  const [bidsById, bidsByName, loot, ticks] = await Promise.all([
     familyIds.length > 0
-      ? sb.from('opendkp_auction_bids').select(bidSelect).gt('value', 100).in('character_id', familyIds).limit(1000)
-      : Promise.resolve({ data: [] as unknown[] }),
-    sb.from('opendkp_auction_bids').select(bidSelect).gt('value', 100).is('character_id', null).in('character_name', familyNames).limit(1000),
-    sb.from('opendkp_loot_recent').select('character_name, dkp, raid_date, item_name').in('character_name', familyNames).order('raid_date', { ascending: true }).limit(2000),
-    sb.from('opendkp_ticks').select('value, attendees, raid_id, opendkp_raids!inner(ts)').overlaps('attendees', familyNames).limit(10000),
+      ? selectAll<BidRow>((from, to) => sb.from('opendkp_auction_bids').select(bidSelect)
+          .gt('value', 100).in('character_id', familyIds).order('auction_id').order('character_id').range(from, to))
+      : Promise.resolve([] as BidRow[]),
+    selectAll<BidRow>((from, to) => sb.from('opendkp_auction_bids').select(bidSelect)
+      .gt('value', 100).is('character_id', null).in('character_name', familyNames)
+      .order('auction_id').order('character_name').range(from, to)),
+    selectAll<LootRow>((from, to) => sb.from('opendkp_loot_recent')
+      .select('character_name, dkp, raid_date, item_name').in('character_name', familyNames)
+      .order('raid_date', { ascending: true }).order('character_name').order('item_name').range(from, to)),
+    selectAll<TickRow>((from, to) => sb.from('opendkp_ticks')
+      .select('value, attendees, raid_id, opendkp_raids!inner(ts)').overlaps('attendees', familyNames)
+      .order('raid_id').range(from, to)),
   ]);
 
   type BidRow   = { character_id: number | null; character_name: string | null; value: number | null; auction_id: number | null; opendkp_auctions: { end_at: string | null } | { end_at: string | null }[] | null };
   type LootRow  = { character_name: string | null; dkp: number | null; raid_date: string | null; item_name: string | null };
   type TickRow  = { value: number | null; attendees: string[] | null; raid_id: number | null; opendkp_raids: { ts: string | null } | { ts: string | null }[] | null };
 
-  const bigBids = [
-    ...(bidsById.data  || []),
-    ...(bidsByName.data || []),
-  ] as BidRow[];
-  const loot    = (lootRes.data    || []) as LootRow[];
-  const ticks   = (ticksRes.data   || []) as TickRow[];
+  const bigBids: BidRow[] = [...bidsById, ...bidsByName];
 
   // Helper to map a raw character_id back to family name (or fall back to
   // case-insensitive name match).
