@@ -10117,22 +10117,25 @@ async function _handleAgentExtendedTarget(req, res) {
         locByName.set(k, { x: Number(rr.loc_x), y: Number(rr.loc_y), z: Number(rr.loc_z), h });
       }
     }
-    const engagedByMob = new Map();   // mobNameLower → [{raider, tank, x, y, z}]
-    const _addEngaged = (mobKey, tankName) => {
+    const engagedByMob = new Map();   // mobNameLower → [{raider, tank, x, y, z, h, hp, mobDisplay}]
+    const _addEngaged = (mobKey, mobDisplay, tankName, tagHp) => {
       if (!mobKey || !tankName) return;
       let arr = engagedByMob.get(mobKey);
       if (!arr) { arr = []; engagedByMob.set(mobKey, arr); }
       const tl = String(tankName).toLowerCase();
-      if (arr.some(m => m.raider.toLowerCase() === tl)) return;
+      const prev = arr.find(m => m.raider.toLowerCase() === tl);
+      if (prev) { if (tagHp != null && prev.hp == null) prev.hp = tagHp; return; }
       const loc = locByName.get(tl) || {};
-      arr.push({ raider: String(tankName), tank: String(tankName), x: loc.x, y: loc.y, z: loc.z, h: loc.h != null ? loc.h : null });
+      arr.push({ raider: String(tankName), tank: String(tankName), mobDisplay,
+                 x: loc.x, y: loc.y, z: loc.z, h: loc.h != null ? loc.h : null,
+                 hp: tagHp != null ? tagHp : null });
     };
     if (!extPosOff) {
       for (const r of inScope) {
         if (r.incoming_mob) {
           const sinceMs = r.incoming_mob_since ? Date.parse(r.incoming_mob_since) : 0;
           if (sinceMs && (now - sinceMs) <= extPosFreshMs) {
-            _addEngaged(String(r.incoming_mob).trim().toLowerCase(), r.character);
+            _addEngaged(String(r.incoming_mob).trim().toLowerCase(), String(r.incoming_mob).trim(), r.character, null);
           }
         }
         if (Array.isArray(r.observed_tanks)) {
@@ -10143,7 +10146,8 @@ async function _handleAgentExtendedTarget(req, res) {
             // Players only — the agent's recentTankHits heuristic can misread
             // pets; a name with a backtick/apostrophe is an NPC, not a tank.
             if (!/^[A-Za-z]+$/.test(String(ot.tank))) continue;
-            _addEngaged(String(ot.mob).trim().toLowerCase(), ot.tank);
+            const hp = Number.isFinite(Number(ot.hp)) ? Math.max(0, Math.min(100, Number(ot.hp))) : null;
+            _addEngaged(String(ot.mob).trim().toLowerCase(), String(ot.mob).trim(), ot.tank, hp);
           }
         }
       }
@@ -10159,6 +10163,22 @@ async function _handleAgentExtendedTarget(req, res) {
       if (!g) { g = { name: tn, key, obs: [] }; byName.set(key, g); }
       g.obs.push({ raider: r.character, hp: (r.target_hp_pct != null ? Number(r.target_hp_pct) : null) });
     }
+    // #194: an engaged tank is a TARGETER whether or not they run Mimic — a
+    // tag-channel claim ("tag <mob>") or an observed melee connect puts them on
+    // the mob. Give each engaged tank not already observed a pseudo-observation
+    // so (a) the mob surfaces even when no Mimic user has it on their gauge,
+    // and (b) a tag-carried HP opens its own band for the instance weld —
+    // which is what serializes four same-name mobs by their four tanks.
+    for (const [mobKey, arr] of engagedByMob) {
+      for (const m of arr) {
+        let g = byName.get(mobKey);
+        if (!g) { g = { name: m.mobDisplay || mobKey, key: mobKey, obs: [] }; byName.set(mobKey, g); }
+        const tl = m.raider.toLowerCase();
+        if (g.obs.some(o => String(o.raider).toLowerCase() === tl)) continue;
+        g.obs.push({ raider: m.raider, hp: m.hp != null ? m.hp : null });
+      }
+    }
+
     const targets = [];
     for (const g of byName.values()) {
       const cls = classify(g.name, g.key);
@@ -12261,6 +12281,9 @@ async function _handleAgentLiveState(req, res) {
             mob:   String(ot?.mob || '').slice(0, 80),
             tank:  String(ot?.tank || '').slice(0, 30),
             since: (ot?.since && Number.isFinite(Date.parse(ot.since))) ? new Date(Date.parse(ot.since)).toISOString() : null,
+            // Tag-channel entries may carry the tank's read of the mob's HP% —
+            // it opens an HP band for a tank no Mimic gauge covers (#194).
+            ...(Number.isFinite(Number(ot?.hp)) ? { hp: Math.max(0, Math.min(100, Math.trunc(Number(ot.hp)))) } : {}),
           })).filter(ot => ot.mob && ot.tank && ot.since)
         : null,
       loc_x:       locX,

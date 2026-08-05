@@ -688,9 +688,23 @@ saw); positions from `live_state.loc_*` + the type-5 `raid_roster` loc forward
 (gate on `loc_at`, NEVER `captured_at`). **Clustering runs for CAPITALIZED npc
 names too** — the classifier calls them unique, but position evidence may
 overrule (the Vex Thal adds are article-less). Tank labels ship only at K≥2.
-Kill switch `flag_ext_pos_off=1` (tuning). Overlay (`extarget.html`): tank tag,
-dimmed `?` chips, and per-row debuffs when any row carries `tanks` (pooling
-stays the fallback for pre-#194 bots). Tests: `test/ext-pos-cluster.test.js`
+Kill switch `flag_ext_pos_off=1` (tuning). **Tag channel (bot 3.1.12 / agent
+3.5.31):** the in-game channel `ztwolfpacktag` is a machine-tag broadcast bus —
+a tank's social `/ztwolfpacktag tag %T [hp]` is logged by every member, ONE
+Mimic harvests all claims (`noteTagChannelLine`, hooked on the raw line like
+the /zeal-version harvest), and the extract rides `observed_tanks` with
+optional `hp`. **The raw line stays DROPPED by the custom-channel privacy
+pattern — the capture never punches a hole in the filter**
+(`test/tag-channel.test.js` holds this). %T is BASE EQ substitution, so tag
+claims work for tanks running nothing. Bot-side, engaged tanks become
+pseudo-observations (the mob surfaces with no Mimic targeter; a tag hp opens
+its own HP band), which is what serializes 4 same-name mobs by their 4 tanks —
+camps apart OR tag HPs distinct; stacked-and-equal still merges (the honest
+ceiling). Heading modes on `ext_pos_heading` (0 off / 1 join-only-safe / 2
+full, dark until the `[ext-pos]` shadow log verifies the pipe's heading
+convention); `ext_pos_heading_scale`, `ext_pos_proj_reach` knobs. Overlay
+(`extarget.html`): tank tag, dimmed `?` chips, and per-row debuffs when any
+row carries `tanks` (pooling stays the fallback for pre-#194 bots). Tests: `test/ext-pos-cluster.test.js`
 (bot), `test/raid-loc-forward.test.js` (agent, beta). Privacy:
 raid-loc forwarding noted in `docs/PRIVACY.md`.
 

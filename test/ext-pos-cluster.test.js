@@ -287,6 +287,105 @@ describe('two adds, same capitalized name, tanked apart', () => {
   });
 });
 
+// ── The 4×4 — the tag-channel scenario, end to end ──────────────────────────
+//
+// "if we have 4 of the same mob and 4 tanks with zeal actively targeting each
+// one 25+ units away we could perhaps serialize them by the tank that way"
+// (Uilnayar 2026-08-05). Four tanks tag four same-name mobs in the tag
+// channel; one Mimic harvests the claims; the bot serializes by tank. This
+// runs the shipped clusterByHp + position + bind + attribution chain over
+// exactly that shape.
+describe('four same-name mobs, four tagging tanks', () => {
+  // clusterByHp lives inline in the handler — slice it with its two deps.
+  const { clusterByHp } = evalBlock(
+    `const extHpSplitTol = 8;
+     const median = (arr) => {
+       if (!arr.length) return null;
+       const s2 = [...arr].sort((a, b) => a - b); const m2 = Math.floor(s2.length / 2);
+       return s2.length % 2 ? s2[m2] : Math.round((s2[m2 - 1] + s2[m2]) / 2);
+     };
+    ` + sliceBlock(src, 'const clusterByHp = (obs) => {', '\n    };'),
+    ['clusterByHp'],
+  );
+
+  it('serializes all four by tank: distinct HP bands + distinct camps', () => {
+    // Tag claims carried as pseudo-observations: each tank "targets" their mob
+    // at the HP their tag reported.
+    const obs = [
+      { raider: 'Grabthar', hp: 100 }, { raider: 'Borim', hp: 74 },
+      { raider: 'Cyra', hp: 51 },      { raider: 'Dolm', hp: 25 },
+    ];
+    const hpClusters = clusterByHp(obs);
+    expect(hpClusters).toHaveLength(4);
+
+    const engaged = [
+      tank('Grabthar', 0, 0), tank('Borim', 60, 0),
+      tank('Cyra', 0, 60),    tank('Dolm', 60, 60),
+    ];
+    const inst = _extPosCluster(engaged, UNITS);
+    expect(inst).toHaveLength(4);
+
+    const rows = _extBindInstances(hpClusters, inst);
+    expect(rows).toHaveLength(4);
+    for (const [tk, hp] of [['Grabthar', 100], ['Borim', 74], ['Cyra', 51], ['Dolm', 25]]) {
+      const row = rows.find(r => (r.tanks || []).includes(tk));
+      expect(row, tk + ' has a row').toBeTruthy();
+      expect(row.hp, tk + "'s row keeps their tagged HP").toBe(hp);
+    }
+
+    // The slow cast by Cyra's group lands on Cyra's mob — the observing tank
+    // pins it, and no other row inherits it.
+    _extAttributeDebuffs(
+      [{ name: "Turgur's Insects", remaining_secs: 300, observers: ['Cyra'] }],
+      rows, new Map(), 8);
+    expect(rows.find(r => r.tanks.includes('Cyra')).debuffs.map(d => d.name)).toEqual(["Turgur's Insects"]);
+    expect(rows.filter(r => !r.tanks.includes('Cyra')).every(r => r.debuffs.length === 0)).toBe(true);
+  });
+
+  it('four tags at EQUAL HP still serialize when the camps are apart', () => {
+    // Fresh quad pull, all at 100% — HP separates nothing; the camps do, and
+    // the tag identities label them.
+    const hpClusters = clusterByHp([
+      { raider: 'Grabthar', hp: 100 }, { raider: 'Borim', hp: 100 },
+      { raider: 'Cyra', hp: 100 },     { raider: 'Dolm', hp: 100 },
+    ]);
+    expect(hpClusters).toHaveLength(1);
+    const inst = _extPosCluster([
+      tank('Grabthar', 0, 0), tank('Borim', 60, 0),
+      tank('Cyra', 0, 60),    tank('Dolm', 60, 60),
+    ], UNITS);
+    const rows = _extBindInstances(hpClusters, inst);
+    expect(rows).toHaveLength(4);
+    expect(rows.map(r => r.tanks[0]).sort()).toEqual(['Borim', 'Cyra', 'Dolm', 'Grabthar']);
+  });
+
+  it('the honest limit: four tags on ONE piled-up camp stay merged', () => {
+    // Tags give identity, not geometry. Four tanks stacked on one spot at one
+    // HP is still one row — the ceiling, stated rather than papered over.
+    const hpClusters = clusterByHp([
+      { raider: 'Grabthar', hp: 100 }, { raider: 'Borim', hp: 100 },
+      { raider: 'Cyra', hp: 100 },     { raider: 'Dolm', hp: 100 },
+    ]);
+    const inst = _extPosCluster([
+      tank('Grabthar', 0, 0), tank('Borim', 5, 0), tank('Cyra', 0, 5), tank('Dolm', 5, 5),
+    ], UNITS);
+    expect(inst).toHaveLength(1);
+    expect(_extBindInstances(hpClusters, inst)).toHaveLength(1);
+  });
+});
+
+describe('tag plumbing through the handler', () => {
+  it('engaged tanks become pseudo-observations (mob surfaces, HP band opens)', () => {
+    expect(src).toMatch(/g\.obs\.push\(\{ raider: m\.raider, hp: m\.hp != null \? m\.hp : null \}\)/);
+    expect(src, 'a missing group is created from the engagement evidence')
+      .toMatch(/g = \{ name: m\.mobDisplay \|\| mobKey, key: mobKey, obs: \[\] \}; byName\.set\(mobKey, g\);/);
+  });
+
+  it('ingest clamps a tag hp to 0-100', () => {
+    expect(src).toMatch(/hp: Math\.max\(0, Math\.min\(100, Math\.trunc\(Number\(ot\.hp\)\)\)\)/);
+  });
+});
+
 // ── Handler wiring that the slices can't see ────────────────────────────────
 describe('handler wiring', () => {
   it('position clustering runs for CAPITALIZED npc names too', () => {
