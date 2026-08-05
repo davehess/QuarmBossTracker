@@ -670,6 +670,34 @@ per-process CPU + memory, sorted by memory, with EQ-running state. Discards the
 first CPU sample (it is a delta since the previous call) and lists the log agent
 separately because it is a spawned process and NOT in `getAppMetrics()`.
 
+### One card in a thread: utils/threadAnchor.js — 2026-08-04
+**A failed edit must never become a second post.** Three duplicate-post bugs have
+now been chased here: the Mimic release announcer (2026-07-13, ephemeral
+cursor), the raid review (2026-08-04, `state.json` not persisted on Railway),
+and this one — which happens *with the id in hand*, which is why the bot_kv fix
+did not stop it. Both onboarding and the raid review had written:
+
+    if (savedId) { try { const m = await thread.messages.fetch(savedId);
+                         await m.edit(payload); return; } catch {} }
+    await thread.send(payload);          // ← the duplicate
+
+The bare catch turns EVERY edit failure into a fresh post, and the failure that
+fires is mundane: **Discord refuses edits in an ARCHIVED thread (50083)**, and
+these are precisely the threads that archive — the onboarding thread's parent is
+literally `raid-mobs-archive`. Each restart fetched the card, failed to edit,
+posted a new one, and (sending UNARCHIVES) left it primed to repeat.
+`postOrEditCard()` owns the three rules so both call sites get all three:
+**(1)** unarchive first — archived is a resting state, not an error; **(2)** a
+failed edit is not a missing message — only `10008`/`10003`/404 may fall through
+to posting, anything else reports and gives up; **(3)** look before you post —
+rescan and adopt an existing card, which makes duplication structurally
+impossible even with the id lost. `/cleanup` clears the backlog and keeps the
+**newest** card (not the earliest, as its board sweeps do) because the anchor
+adopts the newest — keeping the earliest would have the two fighting forever.
+Nothing is auto-deleted: the startup path only logs the count and ids, since
+deleting guild history is an officer decision. Tests:
+`test/thread-anchor.test.js`.
+
 ### Resource use: which memory number, and why they disagree — 2026-08-04
 Uilnayar checked the card against Task Manager twice and was right both times.
 **Round 1 (1267 vs 460):** it summed `workingSetSize`, which counts pages SHARED
