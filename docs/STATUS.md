@@ -1400,6 +1400,38 @@ Discord #feedback thread + /admin/feedback automatically.
 ### ⏳ Open TODO — carried forward from the retired docs
 *(These are durable items; the active wave order is in `DESIGN-platform-queue.md`.)*
 
+**#208 Item pages under-report — and the NO DROP flag is BACKWARDS (2026-08-04,
+Uilnayar comparing `/db/item/8733` against pqdi.cc/item/8733).** Every field
+below is ALREADY in `eqemu_items`; this is a rendering gap in
+`web/app/db/item/[id]/page.tsx`, not a sync or backfill problem. Ordered by
+how much harm it does:
+- **🔴 `nodrop` is inverted and the page reads it raw.** EQEmu's column means
+  "can be traded", so **`false` = NO DROP** and `true` = tradeable. The page
+  does `card.nodrop ? 'NO DROP' : null`, which labels every **tradeable** item
+  NO DROP and shows **nothing** on genuinely no-drop items — backwards on all
+  ~27k rows. Verified: Water Flask / Cloth Cap / Rusty Long Sword (obviously
+  tradeable) are `true`; Ancient Burrower Flesh Cap (PQDI: NODROP) is `false`.
+  **This one misinforms loot calls** — "can I pass this to someone?" gets the
+  opposite answer. Check `norent` at the same time (same inversion suspected;
+  every sampled row is `true`).
+- **🟠 `lore_flag` is dead** — `false` on all 26,971 rows, so the "LORE ITEM"
+  badge can never render. The real marker is EQEmu's leading asterisk on the
+  lore string: `lore LIKE '*%'` matches 11,148 items (8733's lore is
+  `*Ancient Burrower Flesh Cap`, and PQDI does show it as LORE).
+- **🟡 Worn + proc effects are never shown.** The page renders `clickeffect`
+  only. `worneffect` and `proc_effect` are populated — 8733 has **1788 =
+  Truesight** in BOTH — and they want the same `/db/spell/<id>` link treatment
+  the click effect already gets.
+- **🟡 Stat block stops at AC/HP/Mana/resists.** `str/sta/dex/agi/intel/wis/cha`
+  are all populated and unrendered (8733: STA 20, WIS 15). Also absent:
+  item type, size, weight is shown but `weight` is stored ×10 (8733 stores 50,
+  PQDI shows 5.0).
+- **🟢 "Purchased From" is missing.** Drops DO render (8733 correctly shows
+  *A burrower parasite · The Deep · 12.5%*); it is the vendor side that has no
+  section, though `eqemu_merchantlist` is synced and available.
+Web-only change, so it ships via Vercel without bouncing the bot (`web/**` is
+excluded from `railway.toml` watchPatterns).
+
 **Death + timestamp follow-ups (2026-08-04) — the four that need YOUR call
 before anyone touches them.** All four exist because of the two bugs found
 2026-08-03 (feign deaths counted as deaths; per-install clock skew up to 42s).
