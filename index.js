@@ -9956,7 +9956,7 @@ async function _handleAgentExtendedTarget(req, res) {
       supabase.select('character_live_state',
         `guild_id=eq.${encodeURIComponent(guildId)}&updated_at=gte.${encodeURIComponent(onlineSince)}` +
         `&select=character,zone_name,self_hp_pct,self_hp_cur,self_hp_max,target_name,target_hp_pct,pet_name,pet_hp_pct,` +
-        `incoming_mob,incoming_mob_since,loc_x,loc_y,loc_z,observed_tanks,updated_at`),
+        `incoming_mob,incoming_mob_since,loc_x,loc_y,loc_z,observed_tanks,zeal_tags,updated_at`),
       supabase.select('buff_casts',
         `guild_id=eq.${encodeURIComponent(guildId)}&cast_at=gte.${encodeURIComponent(debuffSince)}` +
         `&select=target,spell_name,dur_ticks,cast_at,observer,is_charm_spell&order=cast_at.desc&limit=600`),
@@ -10153,6 +10153,29 @@ async function _handleAgentExtendedTarget(req, res) {
       }
     }
 
+    // ── #194 Zeal /tag index: nameLower → Map(spawn_id → tag) ──────────────
+    // Tags carry the mob's TRUE spawn id (the pipe's missing field, via chat).
+    // Newest tag per spawn id wins across uploaders. Freshness-gated: a tag is
+    // a deliberate mark, so it outlives a melee connect (ext_tag_fresh_sec).
+    const extTagFreshMs = tn('ext_tag_fresh_sec', 120) * 1000;
+    const tagsByName = new Map();
+    for (const r of inScope) {
+      if (!Array.isArray(r.zeal_tags)) continue;
+      for (const t of r.zeal_tags.slice(0, 24)) {
+        if (!t || !t.spawn_id || !t.mob) continue;
+        const sinceMs = t.since ? Date.parse(t.since) : 0;
+        if (!sinceMs || (now - sinceMs) > extTagFreshMs) continue;
+        const nk = String(t.mob).trim().toLowerCase();
+        let m = tagsByName.get(nk);
+        if (!m) { m = new Map(); tagsByName.set(nk, m); }
+        const prev = m.get(t.spawn_id);
+        if (!prev || sinceMs > prev.sinceMs) {
+          m.set(t.spawn_id, { spawn_id: t.spawn_id, text: t.text || '', shape: t.shape || null,
+                              tagger: t.tagger || null, sinceMs });
+        }
+      }
+    }
+
     // Aggregate targets by name, then sub-cluster each name by HP.
     const byName = new Map();
     for (const r of inScope) {
@@ -10232,7 +10255,7 @@ async function _handleAgentExtendedTarget(req, res) {
               pairs.push(`${located[i].tank}↔${located[j].tank}=${Math.round(d)}`);
             }
             console.log(`[ext-pos] "${g.name}" tanks=${engaged.map(m => m.tank + (Number.isFinite(m.h) ? '@h' + Math.round(m.h) : '')).join(',')} `
-              + `dist{${pairs.join(' ')}} K_pos=${posInstances.length} units=${extPosClusterUnits} hmode=${extPosHeading}`);
+              + `dist{${pairs.join(' ')}} K_pos=${posInstances.length} K_tags=${(tagsByName.get(g.key) || new Map()).size} units=${extPosClusterUnits} hmode=${extPosHeading}`);
           }
         } catch { /* telemetry only */ }
       }
@@ -10259,6 +10282,38 @@ async function _handleAgentExtendedTarget(req, res) {
         }
         _extAttributeDebuffs(debuffEntriesFor(g.key), rows, observerInfo, extHpSplitTol);
       }
+      // ── #194 Zeal tags: label rows, pool what can't be welded ────────────
+      // A tag welds to a row when its text mentions that row's tank by name
+      // ("Naggato-Tanking" → the row tanked by Naggato). Unweldable tags pool
+      // on the group's first row — shown as "tags on this name", never pinned
+      // to a guessed row. Tags do not change K in v1 (an unwelded tag cannot
+      // say WHICH HP band is its mob); the shadow log records K_tags for the
+      // soak that decides whether spawn-id counting should raise K next.
+      //
+      // Deliberate deviation from the strict K=1 byte-law (Uilnayar 2026-08-05,
+      // "if we could add that into our target info/extended target display
+      // that would be fabulous"): a tagged SINGLE-instance mob does show its
+      // tag — the assist-arrow-on-the-boss case is mostly a K=1 case. Additive
+      // fields only; with no tags present the K=1 payload is byte-identical.
+      const nameTags = tagsByName.get(g.key);
+      let tagPool = [];
+      if (nameTags && nameTags.size) {
+        const unwelded = [];
+        const sorted = [...nameTags.values()].sort((a, b) => a.spawn_id - b.spawn_id);
+        for (const tg of sorted) {
+          const textLower = String(tg.text || '').toLowerCase();
+          const target = rows.find(c => !c._tag && (c.tanks || []).some(t2 =>
+            textLower.includes(String(t2).toLowerCase())));
+          if (target) target._tag = tg;
+          else unwelded.push(tg);
+        }
+        // A single tag on a single row is unambiguous — weld it even with no
+        // text match (there is nothing else it could be).
+        if (unwelded.length === 1 && rows.length === 1 && !rows[0]._tag) {
+          rows[0]._tag = unwelded.pop();
+        }
+        tagPool = unwelded.map(tg => ({ spawn_id: tg.spawn_id, text: tg.text, shape: tg.shape }));
+      }
       rows.forEach((c, idx) => {
         targets.push({
           name: g.name, kind: cls.kind,
@@ -10272,6 +10327,8 @@ async function _handleAgentExtendedTarget(req, res) {
           // Tank labels only at K≥2 — the K=1 payload stays byte-identical
           // (the non-negotiable guarantee; fixture-enforced).
           ...(multi && c.tanks && c.tanks.length ? { tanks: c.tanks.slice(0, 4) } : {}),
+          ...(c._tag ? { tag_text: c._tag.text, tag_shape: c._tag.shape, spawn_id: c._tag.spawn_id } : {}),
+          ...(idx === 0 && tagPool.length ? { tag_pool: tagPool.slice(0, 8) } : {}),
           hurt: false, hurt_secs: 0,
           zone: scopeZone || null,
         });
@@ -12273,6 +12330,18 @@ async function _handleAgentLiveState(req, res) {
       incoming_mob: st?.incoming_mob ? String(st.incoming_mob).slice(0, 80) : null,
       incoming_mob_since: (st?.incoming_mob_since && Number.isFinite(Date.parse(st.incoming_mob_since)))
         ? new Date(Date.parse(st.incoming_mob_since)).toISOString() : null,
+      // #194: fresh Zeal /tag broadcasts — each carries the mob's true spawn
+      // id, the authoritative same-name separator. Sanitized + capped.
+      zeal_tags: (Array.isArray(st?.zeal_tags) && st.zeal_tags.length)
+        ? st.zeal_tags.slice(0, 24).map(t => ({
+            spawn_id: Number.isFinite(Number(t?.spawn_id)) ? Math.trunc(Number(t.spawn_id)) : 0,
+            mob:    String(t?.mob || '').slice(0, 80),
+            text:   String(t?.text || '').slice(0, 48),
+            shape:  (typeof t?.shape === 'string' && /^[ROYGBWPS]$/.test(t.shape)) ? t.shape : null,
+            tagger: (typeof t?.tagger === 'string' && /^[A-Za-z]{2,30}$/.test(t.tagger)) ? t.tagger : null,
+            since:  (t?.since && Number.isFinite(Date.parse(t.since))) ? new Date(Date.parse(t.since)).toISOString() : null,
+          })).filter(t => t.spawn_id > 0 && t.mob && t.since)
+        : null,
       // #194: the observer's recent mob→tank connects (beta agents) — feeds the
       // ext-target position clustering's engagement index. Sanitized + capped;
       // null from pre-#194 agents.

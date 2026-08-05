@@ -688,19 +688,29 @@ saw); positions from `live_state.loc_*` + the type-5 `raid_roster` loc forward
 (gate on `loc_at`, NEVER `captured_at`). **Clustering runs for CAPITALIZED npc
 names too** — the classifier calls them unique, but position evidence may
 overrule (the Vex Thal adds are article-less). Tank labels ship only at K≥2.
-Kill switch `flag_ext_pos_off=1` (tuning). **Tag channel (bot 3.1.12 / agent
-3.5.31):** the in-game channel `ztwolfpacktag` is a machine-tag broadcast bus —
-a tank's social `/ztwolfpacktag tag %T [hp]` is logged by every member, ONE
-Mimic harvests all claims (`noteTagChannelLine`, hooked on the raw line like
-the /zeal-version harvest), and the extract rides `observed_tanks` with
-optional `hp`. **The raw line stays DROPPED by the custom-channel privacy
-pattern — the capture never punches a hole in the filter**
-(`test/tag-channel.test.js` holds this). %T is BASE EQ substitution, so tag
-claims work for tanks running nothing. Bot-side, engaged tanks become
-pseudo-observations (the mob surfaces with no Mimic targeter; a tag hp opens
-its own HP band), which is what serializes 4 same-name mobs by their 4 tanks —
-camps apart OR tag HPs distinct; stacked-and-equal still merges (the honest
-ceiling). Heading modes on `ext_pos_heading` (0 off / 1 join-only-safe / 2
+Kill switch `flag_ext_pos_off=1` (tuning). **Zeal /tag capture (bot 3.1.13 /
+agent 3.5.32) — THE SPAWN-ID SIDE DOOR.** Zeal's native `/tag <rsay|gsay|chat>
+<text>` broadcasts nameplate tags, and the wire format (VERIFIED from
+CoastalRedwood/Zeal `nameplate.cpp`, cloned 2026-08-05 — do not re-derive from
+the wiki) is **`ZEALTAG | <text> | <target_name> | <spawn_id>`** — abbreviated
+header `ZT`, delimiter exactly `" | "`, `clear` = clear-all,
+`ChatChannel: <name>` = autojoin plumbing, `^?^` prefixes set shapes
+(R/O/Y/G/B/W arrows, P paw, S stop sign). **The broadcast carries the mob's
+TRUE spawn id** — the field the pipe lacks — logged by every member of the ZT*
+channel (the guild's is `ZTwolfpacktag`; Zeal requires the ZT prefix) and by
+rsay. Agent: `noteTagChannelLine` on the raw tail line (the /zeal-version
+pattern); ships `zeal_tags` `[{spawn_id, mob, text, shape, tagger, since}]`.
+**Privacy unchanged** — ZT-channel lines still match the custom-channel drop
+pattern; rsay-borne tags are EXCLUDED from the Discord chat relay
+(`parseChatLine` guard) as machine traffic. Bot: tags LABEL rows (weld only
+when the tag text names a row's tank, or the unambiguous 1-tag-1-row case);
+unweldable tags POOL on the group's first row (`tag_pool`) — never pinned to a
+guessed row; **tags do not raise K in v1** (an unwelded tag can't say which HP
+band is its mob — the shadow log records `K_tags` for the soak that decides
+spawn-id counting). Deliberate K=1 byte-law deviation: a tagged single
+instance DOES show `tag_text/tag_shape/spawn_id` (the assist-arrow-on-the-boss
+case); additive only, no-tags K=1 stays byte-identical. Overlay: `ztagHtml`
+colored glyphs (▲/🐾/🛑) + pooled "tags:" block. `ext_tag_fresh_sec` (120). Heading modes on `ext_pos_heading` (0 off / 1 join-only-safe / 2
 full, dark until the `[ext-pos]` shadow log verifies the pipe's heading
 convention); `ext_pos_heading_scale`, `ext_pos_proj_reach` knobs. Overlay
 (`extarget.html`): tank tag, dimmed `?` chips, and per-row debuffs when any

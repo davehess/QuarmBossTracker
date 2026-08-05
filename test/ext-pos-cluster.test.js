@@ -374,6 +374,36 @@ describe('four same-name mobs, four tagging tanks', () => {
   });
 });
 
+describe('Zeal /tag integration (spawn ids through chat)', () => {
+  it('tags index is freshness-gated and newest-per-spawn-id', () => {
+    expect(src).toMatch(/const extTagFreshMs = tn\('ext_tag_fresh_sec', 120\) \* 1000;/);
+    expect(src).toMatch(/if \(!prev \|\| sinceMs > prev\.sinceMs\)/);
+  });
+
+  it('a tag welds ONLY when its text names the row tank — no guessed pinning', () => {
+    expect(src).toMatch(/const target = rows\.find\(c => !c\._tag && \(c\.tanks \|\| \[\]\)\.some\(t2 =>/);
+    expect(src).toMatch(/textLower\.includes\(String\(t2\)\.toLowerCase\(\)\)/);
+  });
+
+  it('the single-tag-single-row case welds without a text match', () => {
+    expect(src).toMatch(/if \(unwelded\.length === 1 && rows\.length === 1 && !rows\[0\]\._tag\)/);
+  });
+
+  it('unwelded tags pool on the FIRST row only — never duplicated per row', () => {
+    expect(src).toMatch(/\.\.\.\(idx === 0 && tagPool\.length \? \{ tag_pool: tagPool\.slice\(0, 8\) \} : \{\}\)/);
+  });
+
+  it('ingest sanitizes shape to the Zeal set and requires a positive spawn id', () => {
+    expect(src).toMatch(/\/\^\[ROYGBWPS\]\$\/\.test\(t\.shape\)/);
+    expect(src).toMatch(/\.filter\(t => t\.spawn_id > 0 && t\.mob && t\.since\)/);
+  });
+
+  it('the bundle selects zeal_tags and the shadow log records K_tags', () => {
+    expect(src).toMatch(/observed_tanks,zeal_tags,updated_at/);
+    expect(src).toMatch(/K_tags=\$\{\(tagsByName\.get\(g\.key\) \|\| new Map\(\)\)\.size\}/);
+  });
+});
+
 describe('tag plumbing through the handler', () => {
   it('engaged tanks become pseudo-observations (mob surfaces, HP band opens)', () => {
     expect(src).toMatch(/g\.obs\.push\(\{ raider: m\.raider, hp: m\.hp != null \? m\.hp : null \}\)/);
@@ -401,7 +431,7 @@ describe('handler wiring', () => {
   });
 
   it('the select carries loc + observed_tanks, and the roster loc ride-along exists', () => {
-    expect(src).toMatch(/incoming_mob,incoming_mob_since,loc_x,loc_y,loc_z,observed_tanks,updated_at/);
+    expect(src).toMatch(/incoming_mob,incoming_mob_since,loc_x,loc_y,loc_z,observed_tanks,zeal_tags,updated_at/);
     expect(src).toMatch(/supabase\.select\('raid_roster',[\s\S]{0,200}loc_at=gte\./);
   });
 
