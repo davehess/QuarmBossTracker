@@ -291,13 +291,61 @@ function noteTrashKill({ atMs, name, damage = 0, durationSec = 0 } = {}) {
   } catch { return 'skipped'; }
 }
 
-/** Aggregate the tally for a night. Pure over the in-memory map. */
-function trashSummary(nightKey) {
+// How long after the night's LAST CONFIRMED KILL trash still counts as raid
+// trash. Mirrors web/lib/raidReview.ts activitySpan()'s 30-minute pad, which
+// solves the same problem for slows/fires.
+const TRASH_TAIL_GRACE_MIN = Number(process.env.RAID_REVIEW_TRASH_TAIL_GRACE_MIN) || 30;
+
+/**
+ * The night's real fight span, for bounding the trash tally.
+ * [first pull − grace, last CONFIRMED kill + grace].
+ *
+ * Returns {} when nothing has been killed yet, which matters mid-raid: bounding
+ * to a last kill that does not exist would zero out legitimate trash cleared on
+ * the way to the first pull. Unbounded is the safe default everywhere here.
+ */
+const _trashBounds = new Map();          // nightKey → { sinceMs, untilMs }
+function _rememberTrashBounds(nightKey, bounds) {
+  if (bounds && Number.isFinite(bounds.untilMs)) _trashBounds.set(nightKey, bounds);
+  return bounds;
+}
+
+function _resetTrashForTest(nightKey) { _trash.delete(nightKey); _trashBounds.delete(nightKey); }
+
+function trashBoundsFor(encounters, graceMin = TRASH_TAIL_GRACE_MIN) {
+  const rows = Array.isArray(encounters) ? encounters : [];
+  const pad = Math.max(0, graceMin) * 60_000;
+  const starts = rows.map(e => Date.parse(e?.started_at)).filter(Number.isFinite);
+  const ends   = rows.filter(e => e?.ended_at).map(e => Date.parse(e.ended_at)).filter(Number.isFinite);
+  if (!ends.length) return {};                       // no confirmed kill yet → do not bound
+  return { sinceMs: (starts.length ? Math.min(...starts) : Math.min(...ends)) - pad,
+           untilMs: Math.max(...ends) + pad };
+}
+
+/**
+ * Aggregate the tally for a night. Pure over the in-memory map.
+ *
+ * `bounds` ({ sinceMs, untilMs }, both optional) trims entries outside the
+ * night's real fight span. WITHOUT it the tally has no upper edge and keeps
+ * accruing for as long as anyone stays logged in — isRaidNightAt() (the gate
+ * every trash kill passes) is deliberately open-ended so raids can spill past
+ * midnight, which is right for thread routing and wrong for "what did the raid
+ * clear". On 2026-08-05 that put ALL 89 trash mobs after the raid: last boss
+ * died 23:32 ET, trash ran 23:53 → 00:42 (Uilnayar reported it as "trash from
+ * earlier in the day" — the data says the opposite, it is trash from after).
+ *
+ * Omitting `bounds` preserves the old behaviour exactly, which is what the
+ * 2026-08-02 leading-edge test relies on.
+ */
+function trashSummary(nightKey, bounds) {
   const t = _trash.get(nightKey);
   if (!t || t.entries.size === 0) return null;
+  const sinceMs = Number.isFinite(bounds?.sinceMs) ? bounds.sinceMs : -Infinity;
+  const untilMs = Number.isFinite(bounds?.untilMs) ? bounds.untilMs : Infinity;
   const byName = new Map();
   let kills = 0, damage = 0, seconds = 0, firstMs = Infinity, lastMs = -Infinity;
   for (const e of t.entries.values()) {
+    if (e.atMs < sinceMs || e.atMs > untilMs) continue;
     kills += 1; damage += e.damage; seconds += e.sec;
     firstMs = Math.min(firstMs, e.atMs); lastMs = Math.max(lastMs, e.atMs);
     const k = e.name.toLowerCase();
@@ -305,6 +353,7 @@ function trashSummary(nightKey) {
     cur.kills += 1; cur.damage += e.damage;
     byName.set(k, cur);
   }
+  if (kills === 0) return null;          // everything fell outside the span
   return {
     kills, damage, seconds,
     firstMs: Number.isFinite(firstMs) ? firstMs : null,
@@ -382,13 +431,13 @@ async function _setReviewMessageId(nightKey, messageId, threadId) {
 }
 
 /** Merge the persisted tally for a night back into memory (after a restart). */
-async function loadTrash(win) {
+async function loadTrash(win, bounds) {
   const t = _trashBucket(win.nightKey);
-  if (t.loaded) return trashSummary(win.nightKey);
+  if (t.loaded) return trashSummary(win.nightKey, bounds);
   t.loaded = true;                                   // one attempt per process/night
   try {
     const supabase = require('./supabase');
-    if (!supabase.isEnabled()) return trashSummary(win.nightKey);
+    if (!supabase.isEnabled()) return trashSummary(win.nightKey, bounds);
     const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
     const rows = await supabase.select('bot_kv',
       `guild_id=eq.${encodeURIComponent(guildId)}&key=eq.${encodeURIComponent(_kvKey(win))}&select=value&limit=1`);
@@ -402,17 +451,21 @@ async function loadTrash(win) {
       else if (t.entries.size < TRASH_MAX_ENTRIES) t.entries.set(k, { name, damage: damage || 0, sec: sec || 0, atMs });
     }
   } catch (err) { console.warn('[raid-review] trash load failed:', err?.message); }
-  return trashSummary(win.nightKey);
+  return trashSummary(win.nightKey, bounds);
 }
 
 /** Persist the tally. Called on the throttled refresh cadence, never per upload. */
-async function saveTrash(win) {
+async function saveTrash(win, bounds) {
   const t = _trash.get(win.nightKey);
+  // Fall back to whatever span the last review build computed. Unbounded on the
+  // very first refresh of a night (nothing has been killed yet, so there is no
+  // span to trim to); self-heals on the next pass.
+  if (!bounds) bounds = _trashBounds.get(win.nightKey);
   if (!t || !t.dirty || t.entries.size === 0) return false;
   try {
     const supabase = require('./supabase');
     if (!supabase.isEnabled()) return false;
-    const sum = trashSummary(win.nightKey);
+    const sum = trashSummary(win.nightKey, bounds);
     const entries = [...t.entries.values()]
       .sort((a, b) => b.atMs - a.atMs).slice(0, TRASH_PERSIST_ENTRIES)
       .map(e => [e.name, e.damage, e.sec, e.atMs]);
@@ -1046,7 +1099,10 @@ async function collectNightData(win, opts = {}) {
       `&started_at=lt.${encodeURIComponent(fromIso)}&order=started_at.asc&limit=1500`)) : null,
     // Trash: in-memory when the raid is live, otherwise merged back from bot_kv
     // (the morning-after review runs in a process that may have restarted).
-    loadTrash(win).catch(() => null),
+    // Stash the span so saveTrash (which persists the value the WEB page reads
+    // straight out of bot_kv) trims to the same edges the embed does, without
+    // paying for its own encounters query.
+    loadTrash(win, _rememberTrashBounds(win.nightKey, trashBoundsFor(encounters))).catch(() => null),
   ]);
 
   const raidIds = (raids || []).map(r => r.raid_id).filter(n => Number.isFinite(n));
@@ -1270,8 +1326,10 @@ async function _runLiveRefresh(client, key) {
   s.lastRunMs = Date.now();
   try {
     const win = nightWindowFor(s.atMs);
-    await saveTrash(win).catch(() => false);
+    // Review FIRST: collectNightData is what learns the night's fight span, and
+    // saveTrash needs it to persist the same trimmed totals the embed shows.
     const res = await postRaidNightReview(client, { atMs: s.atMs, live: true });
+    await saveTrash(win).catch(() => false);
     if (!res.ok && res.reason !== 'no-thread' && res.reason !== 'event-night') {
       console.log(`[raid-review] live refresh: ${res.reason}`);
     }
@@ -1361,7 +1419,7 @@ module.exports = {
   // fetch
   collectNightData,
   // trash tally
-  noteTrashKill, trashSummary, loadTrash, saveTrash,
+  noteTrashKill, trashSummary, trashBoundsFor, loadTrash, saveTrash, _resetTrashForTest,
   // post
   postRaidNightReview, scheduleRaidNightReview, catchUpRaidNightReview,
   reviewEnabled, reviewDelayMin, minKills,
