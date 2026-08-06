@@ -292,9 +292,16 @@ function noteTrashKill({ atMs, name, damage = 0, durationSec = 0 } = {}) {
 }
 
 // How long after the night's LAST CONFIRMED KILL trash still counts as raid
-// trash. Mirrors web/lib/raidReview.ts activitySpan()'s 30-minute pad, which
-// solves the same problem for slows/fires.
-const TRASH_TAIL_GRACE_MIN = Number(process.env.RAID_REVIEW_TRASH_TAIL_GRACE_MIN) || 30;
+// trash.
+//
+// Deliberately TIGHTER than web/lib/raidReview.ts activitySpan()'s 30-minute
+// pad. That pad exists to keep a fight's own slows/fires from being clipped at
+// the edges, so erring wide is free. This one decides membership — what the
+// raid cleared vs. what a group went off and did afterwards — so erring wide
+// costs us the exact bug being fixed. Uilnayar set 15 (2026-08-06): "15 minutes
+// gives us plenty of time", the line being the last DKP tick, after which
+// "anything beyond that is trash that shouldn't be included."
+const TRASH_TAIL_GRACE_MIN = Number(process.env.RAID_REVIEW_TRASH_TAIL_GRACE_MIN) || 15;
 
 /**
  * The night's real fight span, for bounding the trash tally.

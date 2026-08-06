@@ -42,6 +42,16 @@ describe('trashBoundsFor', () => {
     expect(b.untilMs).toBe(LAST_KILL + 30 * 60_000);
   });
 
+  it('defaults to a 15-minute grace', () => {
+    // Pins the DEFAULT, not just the plumbing — every other test here passes
+    // graceMin explicitly, so widening the constant back to 30 would otherwise
+    // change what ships and break nothing. 15 is Uilnayar's call: the line is
+    // the last DKP tick, and 23:53 (21 min after the last kill) is past it.
+    const b = raidReview.trashBoundsFor(ENCOUNTERS);
+    expect(b.untilMs).toBe(LAST_KILL + 15 * 60_000);
+    expect(b.sinceMs).toBe(FIRST_PULL - 15 * 60_000);
+  });
+
   it('refuses to bound when nothing has been killed yet', () => {
     // Mid-raid, engaged but no kill. Bounding to a last kill that does not
     // exist would erase legitimate trash cleared on the way to the first pull.
