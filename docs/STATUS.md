@@ -1402,6 +1402,81 @@ Member votes land in `roadmap_votes` (RLS service-role-only; migration
 `feedback` pipeline prefixed `[roadmap #N — title]`, so they surface in the
 Discord #feedback thread + /admin/feedback automatically.
 
+### 🔴 Raid-night queue — opened 2026-08-05/06 (Vex Thal)
+
+Uilnayar, 2026-08-06: *"I'm mostly queueing things up to work on while we have
+live data to work on."* So this section is split by WHAT IS PERISHABLE. The fix
+is almost never the scarce part — the OBSERVATION is. Anything under "capture
+next raid" cannot be reproduced cold and should be grabbed on the next
+Sun/Wed/Thu window before touching the code.
+
+#### 📸 Capture next raid (perishable — cannot be reproduced cold)
+
+1. **DI-fired trigger — BLOCKED, needs one real log line.** `guild_triggers`
+   "Divine Intervention fired" is enabled with an INVENTED pattern:
+   `(?<tank>[A-Z][\w']+)(?:'s wounds heal|is filled with divine|has been graced with divine intervention)`.
+   None of those three is a real EQ string, and two cannot match even their own
+   invented text (no space before the alternation). Spell 1546's catalog columns
+   hold only cast/fade text — the FIRE message is an effect proc and is in no
+   column. **Grab: a raider's `eqlog` line from the moment a tank was saved.**
+   Do NOT guess a third pattern; that is how this broke twice. (CLAUDE.md
+   already lists this spell as the canonical invented-pattern failure.)
+2. **`[ext-pos]` shadow log for a REAL twin-add pull.** Gates on
+   `engaged.length >= 2`, so it needs two tanks genuinely hit by two same-name
+   mobs. Tunes `ext_pos_cluster_units` from measurement instead of the 25 guess.
+3. **Healer-mana: were the shamans missing MID-FIGHT or between pulls?** This
+   single question decides whether it is a bug or the designed 5-min macro-roster
+   GC. Both shamans are macro-fed (Fungalfist has no `discord_id` — not on
+   Mimic), so they legitimately age out between pulls.
+4. **Raid ticks failing / output files blank.** The DKP TICKS panel went
+   "cannot submit" → "No attendees in that source" → then worked. Grab the
+   failing state: which slot, what the file contained, what the network call
+   returned.
+5. **`/raid` slow load UNDER RAID LOAD.** Not the obvious suspect — the
+   `buff_casts` pull is properly served by `buff_casts_recent_idx
+   (guild_id, cast_at DESC)`. The page fires many parallel queries; it needs real
+   profiling while 43 raiders are live, not another hypothesis.
+
+#### 🔧 Cold work (do any time — no raid needed)
+
+6. **Extended Target over-split — KILL SWITCH IS ON** (`flag_ext_pos_off=1` set
+   in `overlay_tuning` 2026-08-05 mid-raid). A unique boss split into 6 then 8
+   rows, all at identical HP and DPS. Uilnayar's diagnosis is the root cause:
+   *"the boss we just fought has a larger melee range because it's a larger
+   mob"* — `ext_pos_cluster_units` is a flat 25, but a big model lets melee
+   stand far wider while on ONE mob. Two fixes: scale the radius by
+   `eqemu_npc_types.size`, and never split when every cluster shares HP **and**
+   DPS. **Turn the switch back off only after both land.**
+7. **Bubonian Rabies (spell 1070) shown as a debuff ON the boss.** Mana 0, skill
+   Conjuration, target type "Area of effect around the caster", resist Disease
+   −300 — an NPC point-blank AE the boss cast on the RAID, mis-attributed to the
+   caster. Matriarch Poison and Spirit Curse in the same list look like the same
+   error. Likely the target resolving to the observer's current target.
+8. **Finish the PostgREST 1000-row sweep** (started in web 1.1.13,
+   `lib/selectAll.ts`). Still truncating: `/pvp` over `who_observations`
+   (115,554 rows), `admin/members`, `admin/signups`, `admin/analytics`, `fun`,
+   `guide`, `pop`, `factions`. Also `/raid`'s own `buff_casts` pull says
+   `.limit(3000)` and silently gets 1000 — it orders `cast_at DESC` so it takes
+   the NEWEST, but a raid making 11k casts in 2h means inference may span only
+   minutes.
+9. **`encounter_threat_snapshots` retention.** 411 MB / 491k rows / ~65 MB a
+   week (~3.4 GB/yr) to describe 1,531 encounters. Hot-tier retention is one
+   policy, needs no code, and stops the growth immediately. Full two-tier model
+   + measured 14.5× roll-up in `docs/DESIGN-fight-timeline.md`.
+10. **Duplicate index:** `buff_casts_target_idx` and
+    `buff_casts_target_recent_idx` are byte-identical
+    (`guild_id, target, cast_at DESC`). Drop one — pure write cost.
+11. **Fight timeline v2** — designed, not built. `docs/DESIGN-fight-timeline.md`.
+    The only capture change is one `ramp` field in the threat-snapshot payload.
+12. **The "tanking check"** (deferred by Uilnayar 2026-08-05): concurrent
+    connect streams as a K signal, plus recording mobs that hit our PETS —
+    `recentTankHits` drops them today because `_isPlayer` rejects multi-word
+    names, so a charm pet tanking contributes zero evidence.
+13. **Rewrite `docs/zeal-spawn-id-request.md` against `named_pipe.cpp`.** The
+    current ask targets the gauges, the hardest possible surface. See the
+    corrected CLAUDE.md scope-boundary note: `Entity.SpawnId` is one unwritten
+    line away from data the pipe already sends.
+
 ### ⏳ Open TODO — carried forward from the retired docs
 *(These are durable items; the active wave order is in `DESIGN-platform-queue.md`.)*
 
