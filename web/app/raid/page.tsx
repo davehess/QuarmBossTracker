@@ -481,9 +481,18 @@ export default async function RaidHubPage() {
     const hpSlots = analyzeHpSlots(buffsForRow.map(b => b?.name).filter(Boolean) as string[]);
     const isInferred = !live && !!(inferred && inferred.length);
     const noAgent = !live && !isInferred;
+    // hasAgent is NOT !noAgent. noAgent answers "do we have buff data for this
+    // row", and it is false for an INFERRED raider — someone who runs nothing,
+    // but whose group buff was caught by a groupmate's Mimic. Coverage asks a
+    // different question: is THIS PERSON running Mimic. Conflating them made
+    // /raid report 43/43 (100%) on a night when 40 characters across 18
+    // accounts had uploaded, because on a well-buffed raid nearly everyone
+    // picks up an inferred buff (Uilnayar 2026-08-06).
+    const hasAgent = !!live;
     const swappedTo = swapFor(live);
     rows.push({
       name: rr.name,
+      hasAgent,
       className,
       role,
       raidGroup: swappedTo ? null : (rr.group_num ?? null),
@@ -543,6 +552,7 @@ export default async function RaidHubPage() {
       inRaid: false,
       swappedTo: swapFor(r),
       noAgent: false,
+      hasAgent: true,          // this row EXISTS because it has live state
       zone: r.zone_name,
       updatedAt: r.updated_at,
       hpPct: r.self_hp_pct ?? null,

@@ -41,7 +41,8 @@ export type RaidRow = {
   rank: string | null;           // '2' raid leader, '1' group leader
   inRaid: boolean;
   swappedTo: string | null;      // this client logged another character in
-  noAgent: boolean;              // not running Mimic → unknown buff state
+  noAgent: boolean;              // no buff data for this row (see hasAgent — NOT the same question)
+  hasAgent: boolean;             // this character is actually running Mimic
   zone: string | null;
   updatedAt: string | null;
   hpPct: number | null;          // live HP%: roster broadcast (any Mimic groupmate) or self-state HP
@@ -224,7 +225,10 @@ export default function RaidView({
   // which is exactly how two concurrent raids blended together).
   const inRaidRows   = useMemo(() => tabRows.filter(r => r.inRaid), [tabRows]);
   const raidSize     = inRaidRows.length;
-  const mimicCovered = inRaidRows.filter(r => !r.noAgent).length;
+  // Count real Mimic installs, not rows we happen to have buff data for. See
+  // the hasAgent note in page.tsx: !noAgent includes INFERRED raiders (buffs
+  // seen by a groupmate's Mimic), which pinned this at 100%.
+  const mimicCovered = inRaidRows.filter(r => r.hasAgent).length;
   const leaderRow    = inRaidRows.find(r => r.rank === '2') ?? null;
   const leaderName   = leaderRow?.name ?? null;
   const leaderClass  = leaderRow?.className ?? null;
