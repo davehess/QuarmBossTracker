@@ -77,6 +77,7 @@
   .di-chips .di-lab{color:#9aa4ad;font-weight:600}
   .di-chips .up{color:#7ee787}
   .di-chips .cd{color:#f0b429;font-variant-numeric:tabular-nums}
+  .di-chips .unk{color:#7d8590}
   .di-chips .sep{color:#6e7681}
   .di-chips.solo{outline:1px solid rgba(240,196,25,0.7);outline-offset:1px;border-radius:3px;padding:0 3px}
   /* Curse/Cure per-line dismiss + clear-all (#66). Extra right padding on the
@@ -245,7 +246,9 @@
     var parts = [];
     for (var i = 0; i < di.clerics.length; i++) {
       var dc = di.clerics[i];
-      parts.push(dc.up
+      parts.push(dc.unknown
+        ? '<span class="unk" title="No DI cast observed for this cleric — availability unknown, not confirmed ready">' + esc(dc.name) + ' ?</span>'
+        : dc.up
         ? '<span class="up">' + esc(dc.name) + ' ✓</span>'
         : '<span class="cd">' + esc(dc.name) + ' ' + Math.max(1, dc.seconds || 1) + 's</span>');
     }

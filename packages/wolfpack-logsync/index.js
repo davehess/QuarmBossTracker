@@ -18876,6 +18876,7 @@ const COMMAND_HTML = `<!doctype html>
   .di-chips .di-lab{color:#9aa4ad;font-weight:600}
   .di-chips .up{color:#7ee787}
   .di-chips .cd{color:#f0b429;font-variant-numeric:tabular-nums}
+  .di-chips .unk{color:#7d8590}
   .di-chips .sep{color:#6e7681}
   .di-chips.solo{outline:1px solid rgba(240,196,25,0.7);outline-offset:1px;border-radius:3px;padding:0 3px}
   /* Curse/Cure per-line dismiss + clear-all (#66). Extra right padding on the
@@ -19044,7 +19045,9 @@ const COMMAND_HTML = `<!doctype html>
     var parts = [];
     for (var i = 0; i < di.clerics.length; i++) {
       var dc = di.clerics[i];
-      parts.push(dc.up
+      parts.push(dc.unknown
+        ? '<span class="unk" title="No DI cast observed for this cleric — availability unknown, not confirmed ready">' + esc(dc.name) + ' ?</span>'
+        : dc.up
         ? '<span class="up">' + esc(dc.name) + ' ✓</span>'
         : '<span class="cd">' + esc(dc.name) + ' ' + Math.max(1, dc.seconds || 1) + 's</span>');
     }
@@ -27770,7 +27773,14 @@ function diStatusSnapshot() {
     byName.set(String(c.name).toLowerCase(), {
       name: c.name,
       ready_at_ms: readyMs,
+      // `up` stays assumed-ready for consumers that gate on it, but UNKNOWN is
+      // now distinguishable. A null ready_at does not mean the DI is available
+      // — it means we never SAW the cast. Fargan showed a green tick while his
+      // DI was on cooldown, purely because nobody's log gave us his cast
+      // (Uilnayar 2026-08-06, and it is NOT clock skew: the measured offsets
+      // are +314ms / +210ms, and Fargan has no offset row at all).
       up: readyMs == null || readyMs <= now,
+      unknown: readyMs == null,
       seconds: readyMs != null && readyMs > now ? Math.ceil((readyMs - now) / 1000) : 0,
     });
   }
@@ -27785,6 +27795,7 @@ function diStatusSnapshot() {
       name,
       ready_at_ms: di.readyAt,
       up: di.readyAt <= now,
+      unknown: false,          // we watched this cast ourselves
       seconds: di.readyAt > now ? Math.ceil((di.readyAt - now) / 1000) : 0,
     });
   }
