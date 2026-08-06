@@ -25929,7 +25929,18 @@ const _EQGAME_VER_RX = /\]\s+eqgame\.dll version:\s*(.+?)\s*$/i;
 // EXCLUDED from the Discord chat relay (machine traffic, not conversation).
 // Only the structured extract {spawn_id, mob, text, shape, tagger} ships.
 const _ZEAL_TAG_SHAPES = { r: 'R', o: 'O', y: 'Y', g: 'G', b: 'B', w: 'W', p: 'P', s: 'S' };
-const _TAG_FRESH_MS = 120_000;   // tags are deliberate marks, not transient connects
+// A tag is a deliberate, FIGHT-LONG mark ("KILL AND SLEEP"), not a transient
+// connect. 120s was far too short and it showed the first time capture actually
+// worked: on 2026-08-06 six uploaders independently caught
+// {mob:"Thall Va Xakra", text:"KILL AND SLEEP", tagger:"Melting", spawn_id:360}
+// — and it had aged out four minutes later, mid-fight, while the boss was still
+// at 32%. Boss fights run 5-10 minutes, so expiring at 2 discards the ONLY
+// field that carries true mob identity for most of the encounter.
+// 10 minutes. Safe to hold this long because a tag is never the sole authority:
+// `clear`/`-` broadcasts erase explicitly, a same-name death clears that name's
+// buckets, and every stored entry keeps its mob name so a reused spawn id on a
+// different mob cannot silently inherit the label.
+const _TAG_FRESH_MS = 600_000;
 const _zealTags = new Map();     // spawnId → { spawn_id, mob, mobDisplay, text, shape, tagger, tsMs }
 function _isZealTagPayload(msg) {
   return typeof msg === 'string' && (msg.startsWith('ZEALTAG | ') || msg.startsWith('ZT | '));

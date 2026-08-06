@@ -44,6 +44,13 @@ function harness() {
 }
 
 const NOW = new Date('2026-08-05T01:00:05Z').getTime();
+// Read the shipped TTL rather than restating it, so raising the constant can
+// never leave this file asserting the old value.
+const h_TAG_FRESH_MS = () => {
+  const m = src.match(/const _TAG_FRESH_MS = ([\d_]+);/);
+  if (!m) throw new Error('_TAG_FRESH_MS not found in agent source');
+  return Number(m[1].replace(/_/g, ''));
+};
 const CH = (who, msg) => `[Wed Aug 05 21:10:01 2026] ${who} tells ZTwolfpacktag:5, '${msg}'`;
 const RSAY = (who, msg) => `[Wed Aug 05 21:10:01 2026] ${who} tells the raid, '${msg}'`;
 
@@ -234,11 +241,28 @@ describe('noteTagChannelLine — the real wire format', () => {
     expect(h.zealTagsSnapshot(NOW)[0].tagger).toBe('Uilnayar');
   });
 
-  it('freshness sweep expires stale tags', () => {
+  it('a tag SURVIVES a whole boss fight', () => {
+    // The bug this pins: at the old 120s TTL, the first tag that ever captured
+    // successfully (six uploaders, spawn_id 360, 2026-08-06) aged out four
+    // minutes in while the boss was still at 32%. Bosses run 5-10 minutes and a
+    // tag is a deliberate fight-long mark, so it has to outlive the fight.
+    const h = harness();
+    h.noteTagChannelLine(CH('Melting', 'ZEALTAG | KILL AND SLEEP | Thall Va Xakra | 360'), 'Me');
+    const [t] = h.zealTagsSnapshot(NOW + 5 * 60_000);   // 5 minutes in
+    expect(t, 'still marked five minutes into the fight').toBeTruthy();
+    expect(t.text).toBe('KILL AND SLEEP');
+    expect(t.spawn_id).toBe(360);
+  });
+
+  it('freshness sweep still expires a tag eventually', () => {
+    // Derived from the SHIPPED constant, never a hard-coded number — the old
+    // test asserted 121s and silently became wrong the moment the TTL changed.
+    const ttl = h_TAG_FRESH_MS();
+    expect(ttl, 'must cover a long boss fight').toBeGreaterThanOrEqual(5 * 60_000);
     const h = harness();
     h.noteTagChannelLine(CH('Naggato', 'ZEALTAG | X | a wolf | 5'), 'Me');
-    expect(h.zealTagsSnapshot(NOW + 121_000)).toEqual([]);
-    expect(h._zealTags.size).toBe(0);
+    expect(h.zealTagsSnapshot(NOW + ttl + 1000)).toEqual([]);
+    expect(h._zealTags.size, 'expired entries are swept, not just hidden').toBe(0);
   });
 
   it('garbage spawn ids and malformed messages are rejected', () => {
