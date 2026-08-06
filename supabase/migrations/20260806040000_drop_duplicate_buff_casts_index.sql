@@ -1,0 +1,21 @@
+-- Drop a byte-identical duplicate index on buff_casts.
+--
+-- Found 2026-08-06 while investigating /raid load time. Two indexes exist with
+-- the SAME definition:
+--
+--   buff_casts_target_idx         btree (guild_id, target, cast_at DESC)
+--   buff_casts_target_recent_idx  btree (guild_id, target, cast_at DESC)
+--
+-- pg_stat_user_indexes confirms the redundancy is real and which one to keep:
+-- both are 8880 kB, but buff_casts_target_idx has idx_scan = 0 while
+-- buff_casts_target_recent_idx has been used. The planner can only pick one, so
+-- the other is pure cost — ~8.9 MB of storage plus a write amplification on
+-- every buff_casts insert, and this table takes ~11,000 inserts in a two-hour
+-- raid.
+--
+-- This does NOT touch buff_casts_recent_idx (guild_id, cast_at DESC), which is a
+-- different index and is the one serving /raid's inference query.
+--
+-- Reversible: recreate with the definition above if anything regresses.
+
+DROP INDEX IF EXISTS public.buff_casts_target_idx;
