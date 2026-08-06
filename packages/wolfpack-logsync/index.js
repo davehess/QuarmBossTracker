@@ -9907,7 +9907,19 @@ function _serializeCommandCenterState() {
       if (chain && chain.slots) {
         for (const num of Object.keys(chain.slots)) {
           const s = chain.slots[num];
-          if (s && s.name && s.mana != null) put(s.name, 'Cleric', s.mana, s.lastAtMs ? (nowMs - s.lastAtMs) / 1000 : 0, false);
+          if (!s || !s.name || s.mana == null) continue;
+          // Being in the chain proves someone is CHAIN HEALING, not that they
+          // are a Cleric — druids take CH-equivalent auto-slots and shamans
+          // appear too. This used to hard-code 'Cleric', which fought the
+          // exact-class source on every render: Brynnja and Denniker (both
+          // Druid) flashed Cleric↔Druid at the DI-poll cadence, because the
+          // invented label won whenever the ~4s piggyback happened to be empty
+          // (Uilnayar 2026-08-06). Look the class up; pass null when unknown so
+          // the merge keeps whatever a better source already knew, rather than
+          // overwriting it with a guess.
+          const sl = String(s.name).toLowerCase();
+          const scls = ((whoData.get(sl) || {}).class) || _raidClassByName.get(sl) || null;
+          put(s.name, scls, s.mana, s.lastAtMs ? (nowMs - s.lastAtMs) / 1000 : 0, false);
         }
       }
       // 2. Mimic priests raid-wide (exact, via the /di-status piggyback).
