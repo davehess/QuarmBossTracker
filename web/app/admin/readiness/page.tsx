@@ -13,6 +13,7 @@
 
 import Link from 'next/link';
 import { supabaseAdmin } from '@/lib/supabase';
+import { selectAll } from '@/lib/selectAll';
 import {
   computeRaidKit, MR_FLOOR, UTILITY_KEYS, UTILITY_LABEL, type RaidKitResult,
 } from '@/lib/raidKit';
@@ -59,42 +60,57 @@ async function load(): Promise<Row[]> {
   const scribedByChar = new Map<string, string[]>();
 
   if (computeNames.length > 0) {
-    const { data: gearRows } = await sb
+    // Paginated. Measured 2026-08-06: this scoped query returns 1,629 rows and
+    // PostgREST silently capped it at 1,000 (lib/selectAll.ts) — .limit(20000)
+    // never raised the ceiling. A page whose entire job is "who is missing
+    // what" was answering from 61% of the roster's gear.
+    const gearRows = await selectAll<GearRow>((from, to) => sb
       .from('character_gear')
       .select('character, loc, slot, item_id, item_name')
       .in('character', computeNames)
       .in('loc', ['equipped', 'bag'])
-      .limit(20000);
-    for (const g of (gearRows ?? []) as GearRow[]) {
+      .order('character').order('slot').order('item_id')
+      .range(from, to));
+    for (const g of gearRows) {
       const k = g.character.toLowerCase();
       (gearByChar.get(k) ?? gearByChar.set(k, []).get(k)!).push(g);
     }
 
-    const itemIds = [...new Set(((gearRows ?? []) as GearRow[]).map(g => g.item_id))];
+    const itemIds = [...new Set(gearRows.map(g => g.item_id))];
     if (itemIds.length) {
-      const { data: itemRows } = await sb
-        .from('eqemu_items')
-        .select('id, mr, clickeffect, worneffect')
-        .in('id', itemIds);
-      for (const it of (itemRows ?? []) as ItemRow[]) items[it.id] = it;
+      // Chunked: itemIds now comes from the COMPLETE gear set and can exceed
+      // the cap on its own, which would silently drop item stats for the tail.
+      for (let i = 0; i < itemIds.length; i += 800) {
+        const { data: itemRows } = await sb
+          .from('eqemu_items')
+          .select('id, mr, clickeffect, worneffect')
+          .in('id', itemIds.slice(i, i + 800));
+        for (const it of ((itemRows ?? []) as ItemRow[])) items[it.id] = it;
+      }
       const spellIds = [...new Set(
         Object.values(items).flatMap(it =>
           [it.clickeffect, it.worneffect].filter((x): x is number => typeof x === 'number' && x > 0)),
       )];
       if (spellIds.length) {
-        const { data: spellRows } = await sb
-          .from('eqemu_spells').select('id, name').in('id', spellIds);
-        for (const s of (spellRows ?? []) as { id: number; name: string }[]) spellNames[s.id] = s.name;
+        for (let i = 0; i < spellIds.length; i += 800) {
+          const { data: spellRows } = await sb
+            .from('eqemu_spells').select('id, name').in('id', spellIds.slice(i, i + 800));
+          for (const sp of ((spellRows ?? []) as { id: number; name: string }[])) spellNames[sp.id] = sp.name;
+        }
       }
     }
 
-    const { data: bookRows } = await sb
-      .from('character_spellbook')
-      .select('character_name, spell_name')
-      .eq('guild_id', 'wolfpack')
-      .in('character_name', computeNames)
-      .limit(50000);
-    for (const b of (bookRows ?? []) as { character_name: string; spell_name: string | null }[]) {
+    // Same cap, worse ratio: 2,705 rows scoped, 1,000 delivered — 63% of every
+    // raider's scribed spells were invisible to the missing-spell report.
+    const bookRows = await selectAll<{ character_name: string; spell_name: string | null }>(
+      (from, to) => sb
+        .from('character_spellbook')
+        .select('character_name, spell_name')
+        .eq('guild_id', 'wolfpack')
+        .in('character_name', computeNames)
+        .order('character_name').order('spell_name')
+        .range(from, to));
+    for (const b of bookRows) {
       if (!b.spell_name) continue;
       const k = b.character_name.toLowerCase();
       (scribedByChar.get(k) ?? scribedByChar.set(k, []).get(k)!).push(b.spell_name);

@@ -167,4 +167,24 @@ describe('call sites that overflow today', () => {
     expect(s).toMatch(/selectAll</);
     expect(s).not.toMatch(/character_inventory[\s\S]{0,300}?\.limit\(50000\)/);
   });
+
+  it('admin/readiness paginates BOTH its over-cap pulls', () => {
+    // Measured 2026-08-06 on the live roster scope: character_gear returns
+    // 1,629 rows and character_spellbook 2,705 — both silently delivered 1,000.
+    // This is the page that reports who is missing what, so it was answering
+    // from 61% and 37% of the data respectively.
+    const s = web('app/admin/readiness/page.tsx');
+    expect(s).toMatch(/selectAll<GearRow>/);
+    expect(s).toMatch(/character_spellbook[\s\S]{0,200}?\.range\(from, to\)/);
+    expect(s).not.toMatch(/character_gear[\s\S]{0,300}?\.limit\(20000\)/);
+    expect(s).not.toMatch(/character_spellbook[\s\S]{0,300}?\.limit\(50000\)/);
+  });
+
+  it('readiness chunks its id lookups too — a complete gear set can exceed the cap', () => {
+    // Fixing the gear pull makes itemIds bigger, which would newly overflow the
+    // .in() lookups. Fixing one truncation must not create another.
+    const s = web('app/admin/readiness/page.tsx');
+    expect(s).toMatch(/itemIds\.slice\(i, i \+ 800\)/);
+    expect(s).toMatch(/spellIds\.slice\(i, i \+ 800\)/);
+  });
 });
