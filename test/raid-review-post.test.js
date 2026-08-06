@@ -697,6 +697,39 @@ describe('the Discord fight timeline (the FightTimeline analogue)', () => {
     expect(sum.deaths).toHaveLength(1);
   });
 
+  // Uilnayar 2026-08-06: "we only saw 4 of the fight timelines posted" — on a
+  // night with 12 kills. The suppression was correct (the other 8 were clean),
+  // but the embed printed "Fight timelines (4)" a few lines under "12 down"
+  // with nothing connecting them, so a suppressed clean kill was
+  // indistinguishable from a fight we failed to record.
+  it('says how many kills the timelines cover, and why the rest are missing', () => {
+    const quiet = enc({ id: 'e2', npc_id: 162039, eqemu_npc_types: { name: '#Vyzh`dra_the_Exiled', zone_short: null } });
+    const sum = raidReview.summarizeNight(nightData({
+      encounters: [enc(), quiet],
+      deathContribs: [
+        { encounter_id: 'e1', deaths: [{ name: 'Hitya', ts: iso(FIRST_PULL + 5000), class: 'Monk' }] },
+      ],
+    }));
+    const field = raidReview.renderReviewEmbeds(sum)[0].toJSON()
+      .fields.find(f => f.name.startsWith('\u{1F552}'));
+    expect(field.name, 'the ratio must be legible without counting rows').toContain('1 of 2');
+    expect(field.value, 'a clean kill is good news — say so, do not just omit it')
+      .toMatch(/1 clean kill not shown — nobody died/);
+  });
+
+  it('adds no clean-kill note when every kill had a death', () => {
+    // The note must not appear as "0 clean kills not shown".
+    const sum = raidReview.summarizeNight(nightData({
+      deathContribs: [{ encounter_id: 'e1', deaths: [
+        { name: 'Hitya', ts: iso(FIRST_PULL + 5000), class: 'Monk' },
+      ] }],
+    }));
+    const field = raidReview.renderReviewEmbeds(sum)[0].toJSON()
+      .fields.find(f => f.name.startsWith('\u{1F552}'));
+    expect(field.name).toContain('1 of 1');
+    expect(field.value).not.toMatch(/clean kill/);
+  });
+
   it('drops out entirely when nothing died', () => {
     const sum = raidReview.summarizeNight(nightData());
     expect(sum.timelines).toEqual([]);

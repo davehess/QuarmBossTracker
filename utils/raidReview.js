@@ -879,8 +879,19 @@ function renderReviewEmbeds(sum, { webBase } = {}) {
     const lines = sum.timelines.slice(0, 6).map(t =>
       `\`${t.strip}\` [${t.boss}](${base}/parses/${t.id}) · ${fmtDur(t.duration_sec)} · 💀${t.deaths}` +
       (t.worstCluster >= 3 ? ` · **${t.worstCluster} together**` : ''));
-    lines.push('_start → end of each fight · bar height = deaths in that slice_');
-    addField(`🕒 Fight timelines (${sum.timelines.length})`, clampLines(lines, 1024, 'more fights'), { optional: true });
+    // Say WHY this is not one row per kill. The section is deaths-only by
+    // design (above), so a clean kill has nothing to draw — but the embed used
+    // to render "Fight timelines (4)" directly under "12 down" with nothing
+    // connecting the two, and a raider has no way to tell a suppressed clean
+    // kill from a fight we failed to record (Uilnayar 2026-08-06: "we only saw
+    // 4 of the fight timelines posted"). The 2026-08-05 night was 4 of 12 —
+    // and the 8 omissions were genuinely death-free, which is good news the
+    // embed was not taking credit for.
+    const clean = Math.max(0, sum.kills.length - sum.timelines.length);
+    lines.push('_start → end of each fight · bar height = deaths in that slice_'
+      + (clean ? `\n_${clean} clean kill${clean === 1 ? '' : 's'} not shown — nobody died_` : ''));
+    addField(`🕒 Fight timelines (${sum.timelines.length} of ${sum.kills.length})`,
+      clampLines(lines, 1024, 'more fights'), { optional: true });
   }
 
   // 🐜 Trash — what the raid cleared getting to the bosses (Hitya, 2026-08-02).
