@@ -1867,7 +1867,25 @@ async function startMimicLink() {
   const pub = { user_code, verification_url, verification_url_complete, expires_at: expiresAt };
   _linkInFlight = { device_code, user_code, expires_at: expiresAt, _pub: pub, timer: null };
   // Open the user's browser at the verification URL with the code prefilled.
-  try { shell.openExternal(verification_url_complete || verification_url); } catch (e) { void e; }
+  //
+  // shell.openExternal returns a PROMISE. The old `try { shell.openExternal(x) }
+  // catch {}` could never catch a launch failure — the rejection escaped the
+  // synchronous catch entirely, so a browser that refused to open produced an
+  // unhandled rejection and, on screen, absolute silence. Emma/Camping hit this
+  // on Firefox 2026-08-06: clicked Sign in, nothing happened, no error.
+  // Await it, and record the failure so Settings can tell the user to open the
+  // page themselves instead of leaving them staring at a dead button.
+  pub.browser_opened = null;                       // null = still trying
+  const linkUrl = verification_url_complete || verification_url;
+  shell.openExternal(linkUrl).then(
+    () => { pub.browser_opened = true;  pushStatus(); },
+    (err) => {
+      pub.browser_opened = false;
+      pub.browser_error  = String(err && err.message || err || '').slice(0, 200);
+      console.warn('[mimic-link] could not open the browser:', pub.browser_error);
+      pushStatus();
+    },
+  );
   // Start the poll loop.
   const intervalMs = Math.max(1500, Number(poll_interval || 2) * 1000);
   const tick = async () => {
@@ -5391,6 +5409,13 @@ function currentStatus() {
     mimicLinking: _linkInFlight ? {
       user_code:        _linkInFlight._pub.user_code,
       verification_url: _linkInFlight._pub.verification_url,
+      // The code-prefilled variant, so the manual "Open page" retry lands the
+      // user on the same URL the automatic launch would have.
+      verification_url_complete: _linkInFlight._pub.verification_url_complete || null,
+      // null = still launching, true = opened, false = the OS refused. Settings
+      // shows the "open it yourself" hint only on false.
+      browser_opened:   _linkInFlight._pub.browser_opened ?? null,
+      browser_error:    _linkInFlight._pub.browser_error || null,
       expires_at:       _linkInFlight._pub.expires_at,
     } : null,
   };

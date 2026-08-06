@@ -66,6 +66,8 @@
       <div id="acctLinkCode" style="font-family:ui-monospace,Consolas,monospace;font-size:26px;letter-spacing:0.3em;color:#f6c365;font-weight:bold;background:#0e1116;border:1px solid #2a3140;border-radius:4px;padding:6px 14px">------</div>
       <button id="acctLinkCopyBtn" type="button" style="background:#21262d;border:1px solid #2a3140;color:#c9d1d9;padding:6px 10px;font-size:11px;margin:0">Copy</button>
       <span id="acctLinkRemaining" style="font-size:11px;color:#8b949e"></span>
+      <div id="acctLinkBrowserWarn" style="display:none;flex-basis:100%;font-size:11px;color:#f0b429;margin-top:6px"></div>
+      <button id="acctLinkOpenBtn" type="button" style="background:#12263a;border:1px solid #1f6feb;color:#58a6ff;padding:6px 10px;font-size:11px;margin:0">Open page</button>
       <button id="acctLinkCancelBtn" type="button" style="background:#2a1212;border:1px solid #a3260a;color:#f87171;padding:6px 10px;font-size:11px;margin:0">Cancel</button>
     </div>
     <div class="hint">Waiting for the browser… your dashboard will update as soon as the link is confirmed.</div>
@@ -642,6 +644,7 @@
     return m + ':' + String(r).padStart(2, '0') + ' left';
   }
   let _linkRemainingTimer = null;
+  let _lastLinkUrl = null;
   function _renderAccount(status){
     const linking = status && status.mimicLinking;
     const session = status && status.mimicSession;
@@ -653,6 +656,18 @@
       document.getElementById('acctLinkCode').textContent = linking.user_code;
       document.getElementById('acctLinkUrl').textContent  =
         (linking.verification_url || 'wolfpack.quest/auth/mimic-link').replace(/^https?:\/\//, '');
+      // Mimic asks the OS to open your browser; that can fail silently (a
+      // broken default-browser association, a sandboxed Firefox). Say so
+      // rather than leaving a code on screen with no instruction — the code
+      // is still perfectly usable by hand, which is the point.
+      _lastLinkUrl = linking.verification_url_complete || linking.verification_url || null;
+      const warn = document.getElementById('acctLinkBrowserWarn');
+      if (linking.browser_opened === false) {
+        warn.style.display = '';
+        warn.textContent = 'Could not open your browser automatically — go to the address above and enter this code.';
+      } else {
+        warn.style.display = 'none';
+      }
       if (_linkRemainingTimer) clearInterval(_linkRemainingTimer);
       const paint = () => {
         const rem = (linking.expires_at || 0) - Date.now();
@@ -691,6 +706,14 @@
     const code = document.getElementById('acctLinkCode').textContent;
     try { navigator.clipboard.writeText(code); showToast('success', '✓ Code copied', 1500); }
     catch (e) { showToast('error', '✕ Copy failed', 2000); }
+  });
+  // Retry the browser launch by hand. Also the escape hatch when the OS never
+  // opened it in the first place — the link stays valid for its whole window,
+  // so re-opening is always safe and never restarts the flow.
+  document.getElementById('acctLinkOpenBtn').addEventListener('click', async () => {
+    const url = _lastLinkUrl || ('https://' + document.getElementById('acctLinkUrl').textContent);
+    try { await window.mimic.openExternal(url); }
+    catch (e) { showToast('error', '✕ ' + (e && e.message || e), 4000); }
   });
   document.getElementById('acctLinkCancelBtn').addEventListener('click', async () => {
     try { await window.mimic.mimicLinkCancel(); } catch (e) {}
