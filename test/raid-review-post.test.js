@@ -1022,3 +1022,299 @@ describe('(f) _handleAgentUpload is unchanged by the live hook', () => {
     expect(handler).not.toMatch(/return\s+[^\n]*noteEncounterUpload/);
   });
 });
+
+// ── Intentional deaths (R2, Uilnayar 2026-08-06) ─────────────────────────────
+//
+// "Fawx and Dant both 'made corpses' on purpose with Kaas Thox Xi Ans Dyek, so
+// while they did have 2 deaths, they were intentional. Perhaps officers can
+// have a way to set this, we do it every time for these rogues on that fight."
+//
+// A STANDING rule keyed (character, boss) — not a per-death toggle, because it
+// is the same two rogues on the same boss every week. The load-bearing
+// property, and the one most of these tests defend, is that the death is
+// MARKED, NOT REMOVED: it stays in the headline count and the deaths list, and
+// only stops counting as something to fix.
+
+describe('intentional deaths', () => {
+  const iso = (ms) => new Date(ms).toISOString();
+  const KAAS = 162100;
+  const kaas = (over = {}) => enc({
+    id: 'e2', npc_id: KAAS,
+    eqemu_npc_types: { name: '#Kaas_Thox_Xi_Ans_Dyek', zone_short: null },
+    encounter_players: [
+      { character_name: 'Fawx', total_damage: 50000, dps: 340, rank: 1 },
+      { character_name: 'Dant', total_damage: 40000, dps: 270, rank: 2 },
+      { character_name: 'Hitya', total_damage: 30000, dps: 200, rank: 3 },
+    ],
+    ...over,
+  });
+  const ROGUES = [
+    { name: 'Fawx', class: 'Rogue', exclude_from_stats: false },
+    { name: 'Dant', class: 'Rogue', exclude_from_stats: false },
+  ];
+  const corpses = [{ encounter_id: 'e2', deaths: [
+    { name: 'Fawx', ts: iso(FIRST_PULL + 60_000), class: 'Rogue' },
+    { name: 'Dant', ts: iso(FIRST_PULL + 65_000), class: 'Rogue' },
+  ] }];
+  const RULES = [
+    { character_name: 'Fawx', npc_id: KAAS, active: true, note: 'corpse drag' },
+    { character_name: 'Dant', npc_id: KAAS, active: true, note: 'corpse drag' },
+  ];
+  const night = (over = {}) => nightData({
+    encounters: [kaas()],
+    deathContribs: corpses,
+    characters: [...CHARACTERS, ...ROGUES],
+    ...over,
+  });
+
+  it('without a rule, the fight is blamed — this is the reported behaviour', () => {
+    // Fixture-validity check. If this stops failing to exclude, the tests below
+    // prove nothing.
+    const sum = raidReview.summarizeNight(night());
+    expect(sum.worstFights).toEqual([{ boss: 'Kaas Thox Xi Ans Dyek', deaths: 2 }]);
+    expect(sum.intentionalDeaths).toBe(0);
+  });
+
+  it('a standing rule drops the fight out of "what to work on"', () => {
+    const sum = raidReview.summarizeNight(night({ intentionalRules: RULES }));
+    expect(sum.worstFights).toEqual([]);
+    expect(sum.intentionalDeaths).toBe(2);
+  });
+
+  it('the deaths are MARKED, not removed — they still happened', () => {
+    const sum = raidReview.summarizeNight(night({ intentionalRules: RULES }));
+    expect(sum.deaths).toHaveLength(2);                       // headline count unchanged
+    expect(sum.deaths.map(d => d.name).sort()).toEqual(['Dant', 'Fawx']);
+    expect(sum.deaths.every(d => d.intentional)).toBe(true);
+  });
+
+  it('the embed says how many were on purpose without hiding any', () => {
+    const sum = raidReview.summarizeNight(night({ intentionalRules: RULES }));
+    const text = JSON.stringify(raidReview.renderReviewEmbeds(sum)[0].toJSON());
+    expect(text).toMatch(/\*\*2\*\* deaths \(2 on purpose\)/);
+    expect(text).not.toMatch(/Kaas Thox Xi Ans Dyek\*\* — /);   // not in "work on"
+  });
+
+  it('a real death on the same fight still counts, and the fight comes back', () => {
+    // The rule excuses Fawx and Dant, NOT the fight. Hitya wiping there is
+    // still a thing to work on.
+    const withReal = [{ encounter_id: 'e2', deaths: [
+      ...corpses[0].deaths,
+      { name: 'Hitya', ts: iso(FIRST_PULL + 70_000), class: 'Monk' },
+    ] }];
+    const sum = raidReview.summarizeNight(night({ deathContribs: withReal, intentionalRules: RULES }));
+    expect(sum.worstFights).toEqual([{ boss: 'Kaas Thox Xi Ans Dyek', deaths: 1 }]);
+    expect(sum.deaths).toHaveLength(3);
+    expect(sum.intentionalDeaths).toBe(2);
+  });
+
+  it('the rule is per BOSS — Fawx dying anywhere else still counts', () => {
+    const elsewhere = [{ encounter_id: 'e1', deaths: [
+      { name: 'Fawx', ts: iso(FIRST_PULL + 20_000), class: 'Rogue' },
+    ] }];
+    const sum = raidReview.summarizeNight(night({
+      encounters: [enc(), kaas()],
+      deathContribs: elsewhere,
+      intentionalRules: RULES,
+    }));
+    expect(sum.worstFights).toEqual([{ boss: 'a glyph covered serpent', deaths: 1 }]);
+    expect(sum.intentionalDeaths).toBe(0);
+  });
+
+  it('matches on npc_id, not the rendered boss name', () => {
+    // cleanBossName() strips '#'/'_' for display and two differently-templated
+    // NPCs can render the same clean name, so a name-keyed rule would leak
+    // across bosses. A rule for the right NAME but the wrong ID must not fire.
+    const wrongId = [{ character_name: 'Fawx', npc_id: 999999, active: true },
+                     { character_name: 'Dant', npc_id: 999999, active: true }];
+    const sum = raidReview.summarizeNight(night({ intentionalRules: wrongId }));
+    expect(sum.worstFights).toEqual([{ boss: 'Kaas Thox Xi Ans Dyek', deaths: 2 }]);
+  });
+
+  it('matches case-insensitively — log lines and officer typing disagree', () => {
+    const cased = RULES.map(r => ({ ...r, character_name: r.character_name.toUpperCase() }));
+    const sum = raidReview.summarizeNight(night({ intentionalRules: cased }));
+    expect(sum.intentionalDeaths).toBe(2);
+  });
+
+  it('an inactive rule does nothing', () => {
+    const off = RULES.map(r => ({ ...r, active: false }));
+    const sum = raidReview.summarizeNight(night({ intentionalRules: off }));
+    expect(sum.worstFights).toEqual([{ boss: 'Kaas Thox Xi Ans Dyek', deaths: 2 }]);
+    expect(sum.intentionalDeaths).toBe(0);
+  });
+
+  it('malformed or missing rules leave the review exactly as it was', () => {
+    for (const rules of [undefined, null, [], 'nope', [null], [{}],
+                         [{ character_name: 'Fawx' }],
+                         [{ character_name: 'Fawx', npc_id: 'not-a-number', active: true }]]) {
+      const sum = raidReview.summarizeNight(night({ intentionalRules: rules }));
+      expect(sum.worstFights).toEqual([{ boss: 'Kaas Thox Xi Ans Dyek', deaths: 2 }]);
+      expect(sum.intentionalDeaths).toBe(0);
+    }
+  });
+});
+
+// ── Reserved top-of-thread slots (R3, Uilnayar 2026-08-06) ───────────────────
+//
+// "the /raidreview posted to the third line of the page — when the raid night
+// thread opens up it should reserve the first two lines of it for the raid
+// review(s) to land if they're long."
+//
+// Discord orders a thread by post time and cannot move a message, so being
+// first is a one-shot opportunity that exists only at thread creation. The
+// thread posts placeholders immediately and the review EDITS one — which is
+// why it ends up on top without ever being re-posted.
+
+describe('reserved review slots', () => {
+  // A thread that records everything, so "did it post or did it edit" and
+  // "which message" are both observable.
+  function fakeThread(id = 'THREAD_NEW') {
+    const posted = [], edits = [], deleted = [];
+    let n = 0;
+    const thread = {
+      id, name: NIGHT_NAME, posted, edits, deleted,
+      send: async (payload) => {
+        const mid = `M${++n}`;
+        posted.push({ id: mid, payload });
+        return { id: mid };
+      },
+      messages: {
+        fetch: async (mid) => {
+          if (!posted.some(p => p.id === mid) || deleted.includes(mid)) {
+            const e = new Error('Unknown Message'); e.code = 10008; throw e;
+          }
+          return {
+            id: mid,
+            edit: async (p) => { edits.push({ id: mid, payload: p }); },
+            delete: async () => { deleted.push(mid); },
+          };
+        },
+      },
+    };
+    return thread;
+  }
+
+  function fakeKv() {
+    const rows = new Map();
+    return {
+      rows,
+      isEnabled: () => true,
+      select: async (_t, q) => {
+        const m = /key=eq\.([^&]+)/.exec(q || '');
+        const key = m ? decodeURIComponent(m[1]) : null;
+        const v = key ? rows.get(key) : null;
+        return v ? [{ value: v }] : [];
+      },
+      upsert: async (_t, list) => { for (const r of list) rows.set(r.key, r.value); return list; },
+    };
+  }
+
+  const KEY = raidReview.nightWindowFor(FIRST_PULL).nightKey;
+
+  it('reserves exactly RESERVED_SLOTS placeholders', async () => {
+    const kv = fakeKv(); const thread = fakeThread();
+    raidReview._setDeps({ raidNight, supabase: kv });
+    const ids = await raidReview.reserveReviewSlots(thread, KEY);
+    expect(ids).toHaveLength(raidReview.RESERVED_SLOTS);
+    expect(raidReview.RESERVED_SLOTS).toBe(2);                 // the number Uilnayar asked for
+    expect(thread.posted).toHaveLength(2);
+    for (const p of thread.posted) {
+      expect(p.payload.embeds[0].data.title).toBe(raidReview.RESERVED_TITLE);
+    }
+  });
+
+  it('is idempotent — a second call cannot double-post', async () => {
+    const kv = fakeKv(); const thread = fakeThread();
+    raidReview._setDeps({ raidNight, supabase: kv });
+    const a = await raidReview.reserveReviewSlots(thread, KEY);
+    const b = await raidReview.reserveReviewSlots(thread, KEY);
+    expect(b).toEqual(a);
+    expect(thread.posted).toHaveLength(2);
+  });
+
+  it('THE POINT: the review EDITS the first reserved slot instead of posting below', async () => {
+    process.env.RAID_NIGHT_THREAD_PARENT_ID = 'PARENT';
+    events._seed([{ ...RAID_EVENT, source: 'discord' }], FIRST_PULL);
+    const kv = fakeKv();
+    const thread = fakeThread('THREAD_NIGHT');
+    const parent = { id: 'PARENT', threads: {
+      create: vi.fn(), fetchActive: async () => ({ threads: [thread] }) } };
+    const client = { user: { id: 'bot' },
+      channels: { fetch: async (id) => (id === 'PARENT' ? parent : (id === thread.id ? thread : null)) } };
+    const slots = new Map();
+    raidReview._setDeps({ raidNight, supabase: kv, collect: async () => nightData(),
+      state: { getRaidReviewMessageId: k => slots.get(k) || null,
+               setRaidReviewMessageId: (k, v) => slots.set(k, v) } });
+
+    await raidReview.reserveReviewSlots(thread, KEY);
+    const firstSlot = thread.posted[0].id;
+    expect(thread.posted).toHaveLength(2);
+
+    const res = await raidReview.postRaidNightReview(client, { atMs: FIRST_PULL });
+    expect(res.reason, 'the review must EDIT a held slot, never send a new message').toBe('edited');
+    expect(res.messageId).toBe(firstSlot);                     // ← the FIRST one, not the second
+    // Nothing new was sent: the only two sends are the placeholders themselves.
+    expect(thread.posted).toHaveLength(2);
+    expect(thread.edits[0].id).toBe(firstSlot);
+  });
+
+  it('the final review deletes the slot it did not grow into', async () => {
+    process.env.RAID_NIGHT_THREAD_PARENT_ID = 'PARENT';
+    events._seed([{ ...RAID_EVENT, source: 'discord' }], FIRST_PULL);
+    const kv = fakeKv();
+    const thread = fakeThread('THREAD_NIGHT');
+    const parent = { id: 'PARENT', threads: {
+      create: vi.fn(), fetchActive: async () => ({ threads: [thread] }) } };
+    const client = { user: { id: 'bot' },
+      channels: { fetch: async (id) => (id === 'PARENT' ? parent : (id === thread.id ? thread : null)) } };
+    const slots = new Map();
+    raidReview._setDeps({ raidNight, supabase: kv, collect: async () => nightData(),
+      state: { getRaidReviewMessageId: k => slots.get(k) || null,
+               setRaidReviewMessageId: (k, v) => slots.set(k, v) } });
+
+    await raidReview.reserveReviewSlots(thread, KEY);
+    const [used, unused] = thread.posted.map(p => p.id);
+    await raidReview.postRaidNightReview(client, { atMs: FIRST_PULL });
+    // A permanent "reserved" stub would be litter; the one that became the
+    // review obviously stays.
+    expect(thread.deleted).toEqual([unused]);
+    expect(thread.deleted).not.toContain(used);
+  });
+
+  it('releaseUnclaimedSlots survives a placeholder someone already deleted', async () => {
+    const kv = fakeKv(); const thread = fakeThread();
+    raidReview._setDeps({ raidNight, supabase: kv });
+    await raidReview.reserveReviewSlots(thread, KEY);
+    const [a, b] = thread.posted.map(p => p.id);
+    thread.deleted.push(b);                                    // gone by hand
+    const freed = await raidReview.releaseUnclaimedSlots(thread, KEY, a);
+    expect(freed).toBe(0);                                     // nothing left to free, no throw
+  });
+
+  it('a thread that refuses to be posted in still reserves nothing and does not throw', async () => {
+    const kv = fakeKv();
+    const broken = { id: 'T', send: async () => { throw new Error('Missing Permissions'); } };
+    raidReview._setDeps({ raidNight, supabase: kv });
+    await expect(raidReview.reserveReviewSlots(broken, KEY)).resolves.toEqual([]);
+  });
+
+  it('with no slots reserved the review posts normally — nothing regressed', async () => {
+    process.env.RAID_NIGHT_THREAD_PARENT_ID = 'PARENT';
+    events._seed([{ ...RAID_EVENT, source: 'discord' }], FIRST_PULL);
+    const kv = fakeKv();
+    const thread = fakeThread('THREAD_NIGHT');
+    const parent = { id: 'PARENT', threads: {
+      create: vi.fn(), fetchActive: async () => ({ threads: [thread] }) } };
+    const client = { user: { id: 'bot' },
+      channels: { fetch: async (id) => (id === 'PARENT' ? parent : (id === thread.id ? thread : null)) } };
+    const slots = new Map();
+    raidReview._setDeps({ raidNight, supabase: kv, collect: async () => nightData(),
+      state: { getRaidReviewMessageId: k => slots.get(k) || null,
+               setRaidReviewMessageId: (k, v) => slots.set(k, v) } });
+
+    const res = await raidReview.postRaidNightReview(client, { atMs: FIRST_PULL });
+    expect(res.reason).toBe('posted');
+    expect(thread.posted).toHaveLength(1);
+  });
+});

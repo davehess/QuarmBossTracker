@@ -374,6 +374,119 @@ function trashSummary(nightKey, bounds) {
 
 function _kvKey(win) { return `raid_trash_${win.dateKey}`; }
 function _kvReviewKey(nightKey) { return `raid_review_msg_${nightKey}`; }
+function _kvSlotsKey(nightKey) { return `raid_review_slots_${nightKey}`; }
+
+// ── Reserved slots at the TOP of the night thread (R3) ───────────────────────
+//
+// Uilnayar 2026-08-06: "the /raidreview posted to the third line of the page —
+// when the raid night thread opens up it should reserve the first two lines of
+// it for the raid review(s) to land if they're long."
+//
+// Discord orders a thread by post time and there is no way to move a message,
+// so the ONLY way to be first is to already be there. The thread posts
+// placeholders the moment it is created, before any parse card can land, and
+// the review later EDITS one of them — which is why it appears at the top
+// without ever being re-posted.
+//
+// Two, not one, because a long review can spill past the embed budget: optional
+// fields (timelines, trash, campfire) are silently dropped at EMBED_BUDGET, and
+// a second message is where the overflow will go (STATUS R5b). The second slot
+// is deliberately kept all night and DELETED by the final review if nothing
+// claimed it — a permanent "reserved" stub in the thread would be litter.
+//
+// No claimed-flag bookkeeping: the review's own stored id (bot_kv, above) wins
+// as soon as an edit succeeds, so "unclaimed" is simply "not the stored id".
+// That makes a failed edit self-healing — the next refresh returns the same
+// slot and tries again — instead of burning a slot on a transient error.
+const RESERVED_SLOTS = Math.max(0, Math.min(5, Number(process.env.RAID_REVIEW_RESERVED_SLOTS) || 2));
+
+const RESERVED_TITLE = '📓 Raid Night Review — reserved';
+const RESERVED_BODY  = '_Holding this spot so tonight\'s review lands at the top of the thread._';
+
+async function _getSlotIds(nightKey) {
+  try {
+    const supabase = _supa();
+    if (!supabase.isEnabled()) return [];
+    const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+    const rows = await supabase.select('bot_kv',
+      `guild_id=eq.${encodeURIComponent(guildId)}&key=eq.${encodeURIComponent(_kvSlotsKey(nightKey))}&select=value&limit=1`);
+    const ids = Array.isArray(rows) && rows[0]?.value?.message_ids;
+    return Array.isArray(ids) ? ids.filter(Boolean).map(String) : [];
+  } catch (err) {
+    console.warn('[raid-review] slot lookup failed:', err?.message);
+    return [];
+  }
+}
+
+async function _saveSlotIds(nightKey, ids, threadId) {
+  try {
+    const supabase = _supa();
+    if (!supabase.isEnabled()) return;
+    await supabase.upsert('bot_kv', [{
+      guild_id: process.env.SUPABASE_GUILD_ID || 'wolfpack',
+      key: _kvSlotsKey(nightKey),
+      value: { message_ids: ids, thread_id: threadId || null, night: nightKey,
+               updated_at: new Date().toISOString() },
+      updated_at: new Date().toISOString(),
+    }], 'guild_id,key');
+  } catch (err) { console.warn('[raid-review] slot save failed:', err?.message); }
+}
+
+/**
+ * Post the placeholders. Called ONCE, by raidNight, at thread creation — the
+ * only moment "first in the thread" is still available.
+ *
+ * Idempotent on the kv record, so a double call cannot double-post. Never
+ * throws: failing to reserve a slot must not fail thread creation, and the
+ * review still posts normally (just lower down) if this is skipped.
+ */
+async function reserveReviewSlots(thread, nightKey) {
+  try {
+    if (!thread || !nightKey || RESERVED_SLOTS < 1) return [];
+    const existing = await _getSlotIds(nightKey);
+    if (existing.length) return existing;                  // already reserved
+    const ids = [];
+    for (let i = 0; i < RESERVED_SLOTS; i++) {
+      const msg = await thread.send({ embeds: [new EmbedBuilder()
+        .setTitle(RESERVED_TITLE)
+        .setDescription(RESERVED_BODY)
+        .setColor(0x2b2d31)] });
+      ids.push(msg.id);
+    }
+    await _saveSlotIds(nightKey, ids, thread.id);
+    console.log(`[raid-review] reserved ${ids.length} slot(s) at the top of thread ${thread.id} for ${nightKey}`);
+    return ids;
+  } catch (err) {
+    console.warn('[raid-review] could not reserve slots:', err?.message);
+    return [];
+  }
+}
+
+/**
+ * Delete any reserved placeholder the review did not end up using. Called after
+ * the FINAL review posts, when the review's real size is known.
+ */
+async function releaseUnclaimedSlots(thread, nightKey, usedId) {
+  try {
+    if (!thread || !nightKey) return 0;
+    const ids = await _getSlotIds(nightKey);
+    if (!ids.length) return 0;
+    let freed = 0;
+    for (const id of ids) {
+      if (String(id) === String(usedId)) continue;         // this one became the review
+      try {
+        const msg = await thread.messages.fetch(id);
+        await msg.delete();
+        freed++;
+      } catch { /* already gone, or not ours to delete — either is fine */ }
+    }
+    if (freed) console.log(`[raid-review] released ${freed} unused reserved slot(s) for ${nightKey}`);
+    return freed;
+  } catch (err) {
+    console.warn('[raid-review] slot release failed:', err?.message);
+    return 0;
+  }
+}
 
 // ── The review's message id, somewhere that survives a redeploy ──────────────
 //
@@ -410,7 +523,16 @@ async function _getReviewMessageId(nightKey) {
     const rows = await supabase.select('bot_kv',
       `guild_id=eq.${encodeURIComponent(guildId)}&key=eq.${encodeURIComponent(_kvReviewKey(nightKey))}&select=value&limit=1`);
     const id = Array.isArray(rows) && rows[0]?.value?.message_id;
-    if (!id) return null;
+    if (!id) {
+      // Nothing posted yet — take the slot the thread reserved at the top (R3)
+      // so the review EDITS into first position instead of landing wherever the
+      // night's parse cards left off. Deliberately NOT mirrored to state.json:
+      // this is a "where to write", not "where we wrote". _setReviewMessageId
+      // records the real answer once the edit succeeds, and until then a failed
+      // edit retries against the same slot on the next refresh.
+      const slots = await _getSlotIds(nightKey);
+      return slots[0] || null;
+    }
     // Warm the local mirror so the rest of this process skips the round trip.
     try { _state().setRaidReviewMessageId(nightKey, id); } catch { /* mirror is optional */ }
     return id;
@@ -560,7 +682,8 @@ function _computePace(rows, startMs, nowMs, killsSoFar) {
  * Everything the review says, derived from plain rows. No I/O, no Discord.
  *
  * data = { window, encounters, deathContribs, characters, loot, ticks,
- *          funEvents, history, uploaders, trash?, paceHistory? }
+ *          funEvents, history, uploaders, trash?, paceHistory?,
+ *          intentionalRules? }
  * Returns null when the night has nothing worth posting.
  *
  * `opts.requireKills = false` is the LIVE path: a raid that has pulled but not
@@ -614,7 +737,8 @@ function summarizeNight(data, opts = {}) {
       if (!t) continue;
       const klass = d.class || classBy.get(String(d.name).toLowerCase()) || null;
       for (let i = 0; i < Math.max(1, d.count); i++) {
-        rawDeaths.push({ name: d.name, ts: t, class: klass, boss: nameOf(e), encId: e.id });
+        rawDeaths.push({ name: d.name, ts: t, class: klass, boss: nameOf(e), encId: e.id,
+                         npcId: Number.isFinite(e.npc_id) ? e.npc_id : null });
       }
     }
   }
@@ -631,6 +755,31 @@ function summarizeNight(data, opts = {}) {
   // Class-less rows are pets / untracked entities (web/lib/raidReview.ts
   // partitionDeaths). They're noise on a raider-facing list.
   const playerDeaths = deaths.filter(d => d.class);
+
+  // ── Intentional deaths (Uilnayar 2026-08-06) ───────────────────────────────
+  // Some deaths are the strat. Fawx and Dant make a corpse on purpose on Kaas
+  // Thox Xi Ans Dyek every week, and the review kept listing that fight under
+  // "What to work on" as if the raid had gone wrong.
+  //
+  // A STANDING rule, keyed (character, boss) — not a per-death toggle, because
+  // it is the same two rogues on the same boss every single week and officers
+  // would be re-marking it forever. See docs/DESIGN-intentional-deaths.md.
+  //
+  // MARKED, NOT REMOVED. The death stays in the headline count, in the deaths
+  // list, and on the fight timelines — it happened. It only stops counting as
+  // something to fix. Hiding it would make the review lie about the night.
+  //
+  // Boss identity is npc_id, never the display string: cleanBossName() strips
+  // '#'/'_' purely for rendering, and two differently-templated NPCs can render
+  // the same clean name.
+  const intentionalRules = new Set(
+    (Array.isArray(data?.intentionalRules) ? data.intentionalRules : [])
+      .filter(r => r && r.active !== false && Number.isFinite(Number(r.npc_id)))
+      .map(r => `${String(r.character_name).toLowerCase()}|${Number(r.npc_id)}`));
+  for (const d of playerDeaths) {
+    if (d.npcId != null && intentionalRules.has(`${d.name.toLowerCase()}|${d.npcId}`)) d.intentional = true;
+  }
+  const intentionalDeaths = playerDeaths.filter(d => d.intentional).length;
 
   // ── Roll-up numbers + standouts.
   // Only ROSTER names are counted or named. encounter_players carries pets and
@@ -687,9 +836,14 @@ function summarizeNight(data, opts = {}) {
   slowFights.sort((a, b) => b.pct - a.pct);
   fastFights.sort((a, b) => b.pct - a.pct);
 
-  // ── Deaths by fight (top 3).
+  // ── Deaths by fight (top 3). Intentional deaths are the ONE place they are
+  // excluded — this list is "what went wrong", and a deliberate corpse did not.
+  // A fight whose only deaths were intentional drops out entirely.
   const deathsByBoss = new Map();
-  for (const d of playerDeaths) deathsByBoss.set(d.boss, (deathsByBoss.get(d.boss) || 0) + 1);
+  for (const d of playerDeaths) {
+    if (d.intentional) continue;
+    deathsByBoss.set(d.boss, (deathsByBoss.get(d.boss) || 0) + 1);
+  }
   const worstFights = [...deathsByBoss.entries()]
     .map(([boss, n]) => ({ boss, deaths: n }))
     .sort((a, b) => b.deaths - a.deaths)
@@ -827,6 +981,7 @@ function summarizeNight(data, opts = {}) {
     topDamage, bestFight,
     hardest: hardest ? { boss: nameOf(hardest), duration_sec: hardest.duration_sec || 0, damage: hardest.total_damage || 0 } : null,
     deaths: playerDeaths,
+    intentionalDeaths,
     worstFights, slowFights,
     fastFights,
     loot, dkpSpent,
@@ -871,7 +1026,13 @@ function renderReviewEmbeds(sum, { webBase } = {}) {
   head.push(
     `**${sum.zones.length ? sum.zones.join(' · ') : 'Norrath'}** — ${fmtClock(sum.startMs)} → ${live ? 'now' : fmtClock(sum.endMs)} (${elapsed})`,
     `**${sum.kills.length}** down · **${fmtDmg(sum.totalDamage)}** damage · **${sum.raiders}** on the parse` +
-      (sum.deathsAvailable ? ` · **${sum.deaths.length}** deaths` : ''),
+      // The intentional ones are still IN the count — they happened. The note
+      // just says how many of them the raid meant to take, so nobody reads the
+      // headline as five things going wrong when two were the strat.
+      (sum.deathsAvailable
+        ? ` · **${sum.deaths.length}** deaths` +
+          (sum.intentionalDeaths > 0 ? ` (${sum.intentionalDeaths} on purpose)` : '')
+        : ''),
   );
   if (live) {
     for (const p of live.inProgress) head.push(`⚔️ Fighting **${p.boss}** — pulled ${relTime(p.sinceMs)}`);
@@ -1076,7 +1237,8 @@ async function collectNightData(win, opts = {}) {
   // whitelist keeps them quote-free (a quoted list would need its separating
   // commas percent-encoded) and makes injection structurally impossible.
   const inList = arr => `(${arr.map(v => String(v).replace(/[^A-Za-z0-9_-]/g, '')).join(',')})`;
-  const [deathContribs, characters, zones, loot, raids, funEvents, history, paceHistory, trash] = await Promise.all([
+  const [deathContribs, characters, zones, loot, raids, funEvents, history, paceHistory, trash,
+         intentionalRules] = await Promise.all([
     ids.length ? supabase.select('contributions',
       `select=encounter_id,contributor_character,deaths:raw_parse->deaths&encounter_id=in.${inList(ids)}&limit=4000`) : [],
     _cached(win, live, 'characters', _COLD_TTL_MS, () => supabase.select('characters',
@@ -1110,6 +1272,12 @@ async function collectNightData(win, opts = {}) {
     // straight out of bot_kv) trims to the same edges the embed does, without
     // paying for its own encounters query.
     loadTrash(win, _rememberTrashBounds(win.nightKey, trashBoundsFor(encounters))).catch(() => null),
+    // Standing intentional-death rules. Warm-cached rather than cold: an
+    // officer marking a rule mid-raid should see the live card stop blaming
+    // that fight on the next refresh, not next session.
+    _cached(win, live, 'intentional', _WARM_TTL_MS, () => supabase.select('intentional_death_rules',
+      `select=character_name,npc_id,active,note&guild_id=eq.${encodeURIComponent(guildId)}` +
+      '&active=is.true&limit=500')),
   ]);
 
   const raidIds = (raids || []).map(r => r.raid_id).filter(n => Number.isFinite(n));
@@ -1132,6 +1300,7 @@ async function collectNightData(win, opts = {}) {
     history: history || [],
     paceHistory: paceHistory || [],
     trash: trash || null,
+    intentionalRules: intentionalRules || [],
     uploaders,
   };
 }
@@ -1231,7 +1400,14 @@ async function postRaidNightReview(client, { atMs = Date.now(), dryRun = false, 
       console.warn(`[raid-review] ${res.duplicates.length} older copy/copies of this night's review are still in the thread `
         + `(ids: ${res.duplicates.map(m => m.id).join(', ')})`);
     }
-    if (!live) _finalDone.add(win.nightKey);
+    if (!live) {
+      _finalDone.add(win.nightKey);
+      // The review's final size is now known, so any reserved slot it did not
+      // grow into is just a stub in the thread. Best-effort — a placeholder we
+      // fail to delete is cosmetic, and must not fail the review.
+      await releaseUnclaimedSlots(target.thread, win.nightKey, res.messageId)
+        .catch(() => {});
+    }
     console.log(`[raid-review] ${res.action} ${live ? 'LIVE ' : ''}${win.label} → thread ${target.thread.id} (${summary.kills.length} kills)`);
     return { ok: true, reason: res.action, window: win, summary, messageId: res.messageId, threadId: target.thread.id };
   } catch (err) {
@@ -1430,6 +1606,8 @@ module.exports = {
   // post
   postRaidNightReview, scheduleRaidNightReview, catchUpRaidNightReview,
   reviewEnabled, reviewDelayMin, minKills,
+  // reserved top-of-thread slots (R3)
+  reserveReviewSlots, releaseUnclaimedSlots, RESERVED_SLOTS, RESERVED_TITLE,
   // live
   noteEncounterUpload, touchLiveRaidReview, liveEnabled,
   liveDebounceMs, liveMinIntervalMs,

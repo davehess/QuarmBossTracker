@@ -1410,33 +1410,51 @@ of the same death only when their timestamps are within 30s. Fargan's measured
 offset is **59,224 ms** — nearly DOUBLE the window — so every death his log sees
 is counted twice. The 2026-08-05 review shows 17 deaths where 8 names each appear
 twice at 8:41 PM, once flagged `riposte kill` and once bare.
-**Fix is STATUS item "Apply clock offset at ingest, keep raw" (still pending).**
+**FIXED — bot 3.1.20, 2026-08-06.** The offset is applied at INGEST
+(`utils/clockOffset.js` + `_resolveClockOffsetMs` in `index.js`): `ts` is
+rewritten to server time and the original kept as `tsRaw`, so dedup, phantom
+suppression, the Discord card, the web parse page and the timelines all become
+correct with no consumer changes. Pulse only — the `consensus` rows have zero
+write sites and are frozen at 2026-08-04 (that estimator reads Fargan at 42s
+where pulse, still measuring, reads 63.5s). Spread gate is 30s and the
+calibration is pinned by a test: fleet spread is a record of the worst ROUND
+TRIP, median 7.2s and 15 of 28 installs above 5s, so a "conservative" 5s gate
+would have rejected Fargan's 10.3s machine — the one it exists to fix.
 Do NOT fix by widening DEATH_DEDUP_MS: real deaths 30–60s apart in a long fight
 would silently merge, trading a visible overcount for an invisible undercount.
 
-**R2. Intentional deaths need an officer flag. DESIGNED —
-`docs/DESIGN-intentional-deaths.md`.** Key finding: "What to work on" is
-Discord-only (`utils/raidReview.js` `worstFights`) and shows boss + count, never
-names — so the whole fix is excluding intentional deaths from that one tally.
-Standing rule keyed on (character, `npc_id`), per-death override wins in BOTH
-directions. Migration is drafted inside the design doc and deliberately NOT in
-`supabase/migrations/` yet: the GitHub integration auto-applies on merge, and
-shipping schema before its code creates unused production tables. Open question
-recorded — put the control on the existing `/parses/[id]` officer strip rather
-than a new `/admin/deaths` page. ORIGINAL REPORT: Fawx and Dant deliberately made
-corpses on Kaas Thox Xi Ans Dyek — standard practice for those rogues on that
-fight, every time. They show in "What to work on" as failures. Wants an officer
-control to mark a death intentional. Note the pattern is per (character, boss)
-and recurring, so a one-off toggle is the wrong shape — it should be settable as
-a standing rule, not re-applied every week.
+**R2. Intentional deaths need an officer flag. BUILT — bot 3.1.21 / web 1.1.19.**
+Standing rule keyed (character, `npc_id`) in `intentional_death_rules`; officers
+set it from the fight's own `/parses/[id]` page (the design's open question,
+resolved that way — no new admin surface, and the page already knows the
+encounter, its npc_id and who died). Excluded from `worstFights` and NOWHERE
+else: the death keeps its place in the headline count, the deaths list and the
+timelines, and the header now reads "5 deaths (2 on purpose)". Fawx + Dant on
+Kaas Thox Xi Ans Dyek (158444) seeded from the report. The phase-2
+`intentional_death_overrides` table is still unbuilt on purpose.
 
-**R3. Raid-night thread should reserve the first two slots for the review.**
-`/raidreview` landed on the third line. When the thread opens it should hold the
-first two message slots so a long review (or two) can land there.
+**R3. Raid-night thread reserves the first two slots for the review. BUILT —
+bot 3.1.21.** `reserveReviewSlots()` posts two placeholders the instant a raid
+thread is created — the only moment "first in the thread" is still available,
+since Discord orders by post time and cannot move a message — and
+`_getReviewMessageId` falls back to slot 1 so `postOrEditCard` EDITS into first
+position instead of sending. The second slot is R5b's overflow landing spot and
+is DELETED by the final review if unused, so a permanent stub never lingers. No
+claimed-flag bookkeeping: "unclaimed" is just "not the stored review id", which
+makes a failed edit retry against the same slot instead of burning it.
 
-**R4. Trash section includes mobs from EARLIER IN THE DAY.** The 2026-08-05
-review counted 89 trash mobs / 115k damage / 21m in combat, sweeping in
-pre-raid-window kills. Needs scoping to the raid window, same as the kill list.
+**R4. Trash section includes mobs from outside the raid. FIXED — bot 3.1.18,
+grace tightened to 15 min in 3.1.19.** The report said "earlier in the day"; the
+persisted data said the reverse — all 89 entries landed AFTER the last boss died
+(first trash 21 min after, last still going 70 min after). Cause was
+`isRaidNightAt()`, deliberately open-ended at the tail so a raid can spill past
+midnight — right for routing threads, wrong for "what did the raid clear".
+`trashBoundsFor()` now bounds the tally to [first pull, last CONFIRMED kill] ±
+grace, and returns `{}` mid-raid when nothing is dead yet (bounding to a kill
+that does not exist would erase legitimate pre-first-pull trash). Grace is 15
+per Uilnayar — the line is the last DKP tick. Deliberately tighter than web
+`activitySpan()`'s 30-min pad, which pads fight EDGES where erring wide is free;
+this one decides membership, where erring wide IS the bug.
 
 **R5. Only 4 of 12 fight timelines rendered. RESOLVED — bot 3.1.17.** Not a bug:
 `utils/raidReview.js:700` drops fights with no in-window player death, because

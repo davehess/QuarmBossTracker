@@ -296,6 +296,22 @@ async function _resolve(client, plan) {
   });
   _remember(key, thread.id);
   console.log(`[raid-night] opened ${kind} thread "${name}" (${thread.id}) in ${parent.id} · ${plan.why}`);
+
+  // Hold the top of the thread for the night's review (R3, Uilnayar
+  // 2026-08-06 — "/raidreview posted to the third line"). Discord orders by
+  // post time and cannot move a message, so first-in-thread is a one-shot
+  // opportunity that exists ONLY here, before the first parse card lands.
+  // Raid nights only; a social event thread gets no review. Lazily required
+  // because raidReview already requires this module.
+  if (kind === 'raid') {
+    try {
+      await require('./raidReview').reserveReviewSlots(thread, plan.nightKey);
+    } catch (err) {
+      // A thread without reserved slots still works — the review just posts
+      // wherever it lands. Never fail thread creation over cosmetics.
+      console.warn('[raid-night] could not reserve review slots:', err?.message);
+    }
+  }
   return thread;
 }
 

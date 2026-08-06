@@ -1,10 +1,31 @@
 # Intentional deaths — standing rules, not per-death toggles
 
-**Status:** designed, not built. Migration drafted below but DELIBERATELY NOT
-COMMITTED as a migration file — the GitHub integration auto-applies on merge to
-`main`, and shipping schema before the code that reads it just creates unused
-production tables. Move the SQL into `supabase/migrations/` as part of the
-implementation commit, not before.
+**Status: PHASE 1 BUILT — bot 3.1.21 / web 1.1.19, 2026-08-06.**
+`supabase/migrations/20260806200000_intentional_death_rules.sql` (applied),
+`utils/raidReview.js` `summarizeNight`, `web/app/parses/actions.ts`
+`markDeathIntentional` / `unmarkDeathIntentional`, and the per-death control +
+"on purpose" chip on `/parses/[id]`. Fawx and Dant on Kaas Thox Xi Ans Dyek
+(npc_id 158444) are seeded, so the case that prompted this is already covered.
+Tests: `test/raid-review-post.test.js` "intentional deaths" (11 cases, 6 mutants
+killed including one that REMOVES the death instead of marking it).
+
+Two deviations from the design below, both deliberate:
+
+1. **Only the rules table shipped.** The drafted `intentional_death_overrides`
+   is phase 2 and is NOT created — this doc's own header argues against shipping
+   schema ahead of the code that reads it, and no override has been asked for.
+   It is a three-line migration the day one is.
+2. **The rule hangs off `/parses/[id]`, not a new `/admin/deaths` page** — the
+   "Open question" below, resolved its own way: the officer is already looking
+   at the fight, and the page already knows the encounter, its `npc_id`, and who
+   died. No new surface.
+
+One correction to the header's premise, established 2026-08-06: **the GitHub
+integration does NOT auto-apply these files.** 165 of 182 repo migrations use
+round `…0000` timestamps and exactly ONE such version exists in
+`supabase_migrations.schema_migrations`. Migrations here are applied via the
+Supabase MCP and committed alongside. The advice to not ship dead schema still
+stands on its own merits.
 
 **Ask:** Uilnayar 2026-08-06 — *"Fawx and Dant both 'made corpses' on purpose
 with Kaas Thox Xi Ans Dyek, so while they did have 2 deaths, they were

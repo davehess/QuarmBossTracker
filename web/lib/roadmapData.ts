@@ -37,6 +37,18 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'intentional-deaths',
+    title: '\u{1F480} Deaths that were the plan, and a review that sits at the top',
+    version: 'Bot 3.1.21 \u00b7 Web 1.1.19',
+    date: '2026-08-06',
+    headline: 'Some deaths are the strat. The raid review kept filing them under "what to work on" \u2014 and it was landing on the third line of the thread besides.',
+    features: [
+      { name: '\u{1F480} Mark a death as on purpose', blurb: 'Officers can mark a character as dying deliberately on a specific boss. Fawx and Dant make a corpse on Kaas Thox Xi Ans Dyek every single week, so it is set once from that fight\u2019s parse page and holds every week after \u2014 no re-marking. Those two are already set. The death is never hidden: it still counts in the night\u2019s total and still shows in the deaths list, it just stops being listed as a mistake, and the header says how many were on purpose.' },
+      { name: '\u{1F4D3} The review sits at the top of the thread', blurb: 'The night\u2019s thread now holds its first two spots the moment it opens, and the review moves into one of them instead of posting under whatever landed first. The second spot is there for nights when the review runs long, and is cleaned up when it is not needed.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'clock-skew-deaths',
     title: '⏱ A slow PC clock stops inventing deaths',
     version: 'Bot 3.1.20 · Web 1.1.18',

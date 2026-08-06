@@ -17,7 +17,7 @@ import { userTz } from '@/lib/timezone';
 import LootBlock, { type LootRow } from '@/components/LootBlock';
 import { ClassificationChip } from '@/components/KillCard';
 import { FightTimeline } from '@/components/FightTimeline';
-import { classifyEncounter, clearClassification } from '../actions';
+import { classifyEncounter, clearClassification, markDeathIntentional, unmarkDeathIntentional } from '../actions';
 
 export const dynamic = 'force-dynamic';
 
@@ -301,8 +301,27 @@ async function load(id: string) {
       bossLocalZone = (bl as { zone_short: string | null } | null)?.zone_short ?? null;
     }
 
+    // Standing intentional-death rules for THIS boss (docs/DESIGN-intentional
+    // -deaths.md). Keyed on npc_id, never the display name — cleanBossName()
+    // strips '#'/'_' for rendering and two differently-templated NPCs can
+    // render the same clean name. Read through the admin client: the table is
+    // service-role only, like every other officer-written table here.
+    const intentionalNames = new Set<string>();
+    if (encTyped.npc_id) {
+      const { data: rules } = await sb
+        .from('intentional_death_rules')
+        .select('character_name')
+        .eq('guild_id', 'wolfpack')
+        .eq('npc_id', encTyped.npc_id)
+        .eq('active', true);
+      for (const r of (rules ?? []) as { character_name: string }[]) {
+        intentionalNames.add(r.character_name.toLowerCase());
+      }
+    }
+
     return {
       enc: encTyped,
+      intentionalNames,
       contribs: (contribs ?? []) as Contribution[],
       zones,
       loot: (lootRows ?? []) as LootRow[],
@@ -335,7 +354,8 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
   }
   const officer = await isOfficer(user.id);
   const tz = await userTz();
-  const { enc, contribs, zones, loot, whoMap, bossLocalZone, petSet, date, latestAtTime, timelineEvents } = data;
+  const { enc, contribs, zones, loot, whoMap, bossLocalZone, petSet, date, latestAtTime, timelineEvents,
+          intentionalNames } = data;
   // `date` (from load) is the ET raid-day bucket — keep it for the loot query
   // join. For DISPLAY, re-bucket the kill time in the viewer's chosen zone.
   const dispDate = dayKey(enc.started_at, tz);
@@ -770,14 +790,48 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
             <span className="text-dim text-xs">· {deaths.length}</span>
           </h3>
           <ul className="text-xs space-y-0.5">
-            {deaths.map((d, i) => (
-              <li key={i} className="flex gap-3">
-                <span className="text-dim">{fmtTime(d.ts, tz)}</span>
-                <span className="text-text">{d.name}</span>
-                {d.class && <span className="text-dim">({d.class})</span>}
-                {d.riposteDeath && <span className="text-red">⚔ riposte kill</span>}
-              </li>
-            ))}
+            {deaths.map((d, i) => {
+              // A standing rule marks this death as part of the strat rather
+              // than a mistake. It is NEVER hidden — it stays in this list and
+              // in the count above, and only stops the raid-night review
+              // listing this fight under "What to work on".
+              const isIntentional = intentionalNames.has(String(d.name).toLowerCase());
+              return (
+                <li key={i} className="flex gap-3 items-center">
+                  <span className="text-dim">{fmtTime(d.ts, tz)}</span>
+                  <span className="text-text">{d.name}</span>
+                  {d.class && <span className="text-dim">({d.class})</span>}
+                  {d.riposteDeath && <span className="text-red">⚔ riposte kill</span>}
+                  {isIntentional && (
+                    <span
+                      className="px-1.5 rounded border border-dim/50 text-dim text-[10px]"
+                      title="Officers marked this a deliberate death on this boss — it still counts in every total, it just isn't listed as something to fix."
+                    >
+                      on purpose
+                    </span>
+                  )}
+                  {officer && enc.npc_id && (
+                    <form
+                      action={isIntentional ? unmarkDeathIntentional : markDeathIntentional}
+                      className="contents"
+                    >
+                      <input type="hidden" name="id" value={enc.id} />
+                      <input type="hidden" name="character" value={d.name} />
+                      <input type="hidden" name="npc_id" value={enc.npc_id} />
+                      <button
+                        type="submit"
+                        title={isIntentional
+                          ? `Stop treating ${d.name}'s deaths on this boss as deliberate`
+                          : `${d.name} dies here on purpose every time — stop listing this fight as something to work on. Applies to this boss from now on, not just this kill.`}
+                        className="text-[10px] text-dim hover:text-text underline decoration-dotted"
+                      >
+                        {isIntentional ? 'undo' : 'mark on purpose'}
+                      </button>
+                    </form>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         </section>
       )}
