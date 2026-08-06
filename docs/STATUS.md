@@ -1412,6 +1412,12 @@ Sun/Wed/Thu window before touching the code.
 
 #### 📸 Capture next raid (perishable — cannot be reproduced cold)
 
+0. **Zeal `/tag` TTL is 120s and a boss fight is 5–10 min.** CONFIRMED WORKING
+   2026-08-06: six uploaders independently captured
+   `{mob:"Thall Va Xakra", text:"KILL AND SLEEP", tagger:"Melting", spawn_id:360}`
+   — the spawn id is real and arriving. Then it expired mid-fight. Raise
+   `_TAG_FRESH_MS` (agent) AND `ext_tag_fresh_sec` (bot tuning, live-settable);
+   the agent expires first, so the bot knob alone will not help.
 1. **DI-fired trigger — BLOCKED, needs one real log line.** `guild_triggers`
    "Divine Intervention fired" is enabled with an INVENTED pattern:
    `(?<tank>[A-Z][\w']+)(?:'s wounds heal|is filled with divine|has been graced with divine intervention)`.
@@ -1483,11 +1489,19 @@ Sun/Wed/Thu window before touching the code.
     (`guild_id, target, cast_at DESC`). Drop one — pure write cost.
 12. **Fight timeline v2** — designed, not built. `docs/DESIGN-fight-timeline.md`.
     The only capture change is one `ramp` field in the threat-snapshot payload.
-13. **The "tanking check"** (deferred by Uilnayar 2026-08-05): concurrent
+13. **Same-name discriminator via damage-TAKEN ratio — MEASURED, not built.**
+    `docs/DESIGN-samename-took-ratio.md`. Tested against the real Va Xakra twin
+    adds (encounter 7dfe09b3, 2026-08-06): two mobs show a second-highest taker
+    within ~0.75–1.19× of the highest across consecutive buckets, while a boss
+    with rampage/AE splash sits at 0.23–0.38×. Needs no Zeal, no position, no
+    spawn id — so it also covers pet-tanked mobs, which the position path can
+    never place. Backtestable over 36,784 fights of durable `took` history
+    BEFORE shipping. Solve the repeated-`821` stale-delta anomaly first.
+14. **The "tanking check"** (deferred by Uilnayar 2026-08-05): concurrent
     connect streams as a K signal, plus recording mobs that hit our PETS —
     `recentTankHits` drops them today because `_isPlayer` rejects multi-word
     names, so a charm pet tanking contributes zero evidence.
-14. **Rewrite `docs/zeal-spawn-id-request.md` against `named_pipe.cpp`.** The
+15. **Rewrite `docs/zeal-spawn-id-request.md` against `named_pipe.cpp`.** The
     current ask targets the gauges, the hardest possible surface. See the
     corrected CLAUDE.md scope-boundary note: `Entity.SpawnId` is one unwritten
     line away from data the pipe already sends.
