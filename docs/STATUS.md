@@ -1432,14 +1432,25 @@ Sun/Wed/Thu window before touching the code.
    "cannot submit" → "No attendees in that source" → then worked. Grab the
    failing state: which slot, what the file contained, what the network call
    returned.
-5. **`/raid` slow load UNDER RAID LOAD.** Not the obvious suspect — the
+5. **No "Loot posted" TTS at 23:13 ET 2026-08-05.** The pipeline is fully built
+   on both halves — the bot rings `_recordLootPosted` and the agent consumes it
+   in `_consumeLootPosted` — so this is almost certainly one of two gates, and
+   only the person who missed it can say which:
+   `const voiceOff = _optinState.lootAuctionTts === false || stale;`
+   **Check on the machine that missed it:** is the loot-auction TTS toggle on,
+   and did the chip appear silently (⇒ `stale`, i.e. the post arrived older than
+   `LOOT_ANNOUNCE_FRESH_MS`) or not at all (⇒ the poll never delivered it —
+   check `_multiplexActive` / `_recentFiresActive` / control stand-down).
+   Ruled out already: the bot's in-memory ring seeds from `Date.now()` at boot
+   and the bot had been up ~6h, so this was not a deploy dropping the event.
+6. **`/raid` slow load UNDER RAID LOAD.** Not the obvious suspect — the
    `buff_casts` pull is properly served by `buff_casts_recent_idx
    (guild_id, cast_at DESC)`. The page fires many parallel queries; it needs real
    profiling while 43 raiders are live, not another hypothesis.
 
 #### 🔧 Cold work (do any time — no raid needed)
 
-6. **Extended Target over-split — KILL SWITCH IS ON** (`flag_ext_pos_off=1` set
+7. **Extended Target over-split — KILL SWITCH IS ON** (`flag_ext_pos_off=1` set
    in `overlay_tuning` 2026-08-05 mid-raid). A unique boss split into 6 then 8
    rows, all at identical HP and DPS. Uilnayar's diagnosis is the root cause:
    *"the boss we just fought has a larger melee range because it's a larger
@@ -1447,32 +1458,32 @@ Sun/Wed/Thu window before touching the code.
    stand far wider while on ONE mob. Two fixes: scale the radius by
    `eqemu_npc_types.size`, and never split when every cluster shares HP **and**
    DPS. **Turn the switch back off only after both land.**
-7. **Bubonian Rabies (spell 1070) shown as a debuff ON the boss.** Mana 0, skill
+8. **Bubonian Rabies (spell 1070) shown as a debuff ON the boss.** Mana 0, skill
    Conjuration, target type "Area of effect around the caster", resist Disease
    −300 — an NPC point-blank AE the boss cast on the RAID, mis-attributed to the
    caster. Matriarch Poison and Spirit Curse in the same list look like the same
    error. Likely the target resolving to the observer's current target.
-8. **Finish the PostgREST 1000-row sweep** (started in web 1.1.13,
+9. **Finish the PostgREST 1000-row sweep** (started in web 1.1.13,
    `lib/selectAll.ts`). Still truncating: `/pvp` over `who_observations`
    (115,554 rows), `admin/members`, `admin/signups`, `admin/analytics`, `fun`,
    `guide`, `pop`, `factions`. Also `/raid`'s own `buff_casts` pull says
    `.limit(3000)` and silently gets 1000 — it orders `cast_at DESC` so it takes
    the NEWEST, but a raid making 11k casts in 2h means inference may span only
    minutes.
-9. **`encounter_threat_snapshots` retention.** 411 MB / 491k rows / ~65 MB a
+10. **`encounter_threat_snapshots` retention.** 411 MB / 491k rows / ~65 MB a
    week (~3.4 GB/yr) to describe 1,531 encounters. Hot-tier retention is one
    policy, needs no code, and stops the growth immediately. Full two-tier model
    + measured 14.5× roll-up in `docs/DESIGN-fight-timeline.md`.
-10. **Duplicate index:** `buff_casts_target_idx` and
+11. **Duplicate index:** `buff_casts_target_idx` and
     `buff_casts_target_recent_idx` are byte-identical
     (`guild_id, target, cast_at DESC`). Drop one — pure write cost.
-11. **Fight timeline v2** — designed, not built. `docs/DESIGN-fight-timeline.md`.
+12. **Fight timeline v2** — designed, not built. `docs/DESIGN-fight-timeline.md`.
     The only capture change is one `ramp` field in the threat-snapshot payload.
-12. **The "tanking check"** (deferred by Uilnayar 2026-08-05): concurrent
+13. **The "tanking check"** (deferred by Uilnayar 2026-08-05): concurrent
     connect streams as a K signal, plus recording mobs that hit our PETS —
     `recentTankHits` drops them today because `_isPlayer` rejects multi-word
     names, so a charm pet tanking contributes zero evidence.
-13. **Rewrite `docs/zeal-spawn-id-request.md` against `named_pipe.cpp`.** The
+14. **Rewrite `docs/zeal-spawn-id-request.md` against `named_pipe.cpp`.** The
     current ask targets the gauges, the hardest possible surface. See the
     corrected CLAUDE.md scope-boundary note: `Entity.SpawnId` is one unwritten
     line away from data the pipe already sends.
