@@ -1402,6 +1402,42 @@ Member votes land in `roadmap_votes` (RLS service-role-only; migration
 `feedback` pipeline prefixed `[roadmap #N — title]`, so they surface in the
 Discord #feedback thread + /admin/feedback automatically.
 
+### 🌙 Raid-night review findings — 2026-08-05 Vex Thal (opened 2026-08-06)
+
+**R1. Death OVERCOUNT is clock skew, and it is now fully diagnosed — SHIPPABLE.**
+`DEATH_DEDUP_MS = 30_000` (`web/lib/raidReview.ts:26`) merges two uploaders' view
+of the same death only when their timestamps are within 30s. Fargan's measured
+offset is **59,224 ms** — nearly DOUBLE the window — so every death his log sees
+is counted twice. The 2026-08-05 review shows 17 deaths where 8 names each appear
+twice at 8:41 PM, once flagged `riposte kill` and once bare.
+**Fix is STATUS item "Apply clock offset at ingest, keep raw" (still pending).**
+Do NOT fix by widening DEATH_DEDUP_MS: real deaths 30–60s apart in a long fight
+would silently merge, trading a visible overcount for an invisible undercount.
+
+**R2. Intentional deaths need an officer flag.** Fawx and Dant deliberately made
+corpses on Kaas Thox Xi Ans Dyek — standard practice for those rogues on that
+fight, every time. They show in "What to work on" as failures. Wants an officer
+control to mark a death intentional. Note the pattern is per (character, boss)
+and recurring, so a one-off toggle is the wrong shape — it should be settable as
+a standing rule, not re-applied every week.
+
+**R3. Raid-night thread should reserve the first two slots for the review.**
+`/raidreview` landed on the third line. When the thread opens it should hold the
+first two message slots so a long review (or two) can land there.
+
+**R4. Trash section includes mobs from EARLIER IN THE DAY.** The 2026-08-05
+review counted 89 trash mobs / 115k damage / 21m in combat, sweeping in
+pre-raid-window kills. Needs scoping to the raid window, same as the kill list.
+
+**R5. Only 4 of 12 fight timelines rendered.** Unknown gate — worth checking
+whether it is a snapshot-availability threshold, a per-fight minimum, or a hard
+cap on how many render.
+
+**R6. Partial parse on Diabo Xi Va (64k damage, flagged `*`).** The review itself
+says "only a partial parse reached us for this one". 8 of 12 kills got full
+parses; this one did not. Worth finding out whether an uploader dropped, the
+fight was too short to flush, or the encounter split.
+
 ### 🔴 Raid-night queue — opened 2026-08-05/06 (Vex Thal)
 
 Uilnayar, 2026-08-06: *"I'm mostly queueing things up to work on while we have
