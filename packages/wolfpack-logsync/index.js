@@ -15608,8 +15608,29 @@ async function refreshRaidTab() {
     }
     var qs = _raidTabCls ? ('?class=' + encodeURIComponent(_raidTabCls)) : '';
     var r = await fetch('/api/buff-queue' + qs, { cache: 'no-store' });
-    renderRaidTab(await r.json());
-  } catch (e) { renderRaidTab(null); }
+    var j = await r.json();
+    if (j && j.roster && j.roster.length) {
+      _raidTabLast = j; _raidTabLastAt = Date.now();
+      renderRaidTab(j);
+    } else {
+      renderRaidTab(_raidTabHold() || j);
+    }
+  } catch (e) { renderRaidTab(_raidTabHold()); }
+}
+// Hold the last GOOD roster through a blip instead of blanking the panel.
+// Every failure mode here rendered the empty "join a raid" state: a fetch
+// timeout, a non-JSON body, or a poll that legitimately came back empty for a
+// moment while the reporter election moved roster duty to another agent. The
+// panel then refilled on the next poll, so a raid of 45 flickered in and out
+// (Uilnayar 2026-08-06). Same stale-while-error rule the mob-info cache needed.
+// Bounded at 2 minutes so genuinely LEAVING a raid still clears the board
+// rather than pinning a roster that no longer exists.
+var _raidTabLast = null, _raidTabLastAt = 0;
+var RAID_TAB_HOLD_MS = 120000;
+function _raidTabHold() {
+  if (!_raidTabLast) return null;
+  if (Date.now() - _raidTabLastAt > RAID_TAB_HOLD_MS) { _raidTabLast = null; return null; }
+  return _raidTabLast;
 }
 
 let _optinPane = 'active';   // 'active' | 'ignored' — UI-only, server uses its own
