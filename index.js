@@ -8454,6 +8454,7 @@ function _normMobName(n) {
 }
 const _mobInfoCache = new Map();   // normName → { at, row|null }
 const _MOB_INFO_TTL_MS = 6 * 60 * 60 * 1000;   // static catalog data — cache hard
+const _MOB_INFO_MISS_TTL_MS = 60 * 1000;       // a MISS is retried in a minute, never pinned for 6h
 // ── Chat → loot detection ───────────────────────────────────────────────────
 // EQ item links in chat carry their 7-digit zero-padded item ID inline. We
 // scan every relayed chat row for those IDs, find the most-recent boss kill
@@ -11524,7 +11525,7 @@ async function _handleAgentMobInfo(req, res) {
   const cacheKey = norm + '|' + (reqZoneId != null ? reqZoneId : '*');
 
   const cached = _mobInfoCache.get(cacheKey);
-  if (cached && (Date.now() - cached.at) < _MOB_INFO_TTL_MS) {
+  if (cached && (Date.now() - cached.at) < (cached.ttl || _MOB_INFO_TTL_MS)) {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({ ok: true, mob: cached.row }));
   }
@@ -11828,7 +11829,13 @@ async function _handleAgentMobInfo(req, res) {
     console.warn('[mob-info] lookup failed:', err?.message);
   }
   if (_mobInfoCache.size > 1000) _mobInfoCache.clear();   // cap set-only growth (efficiency review rule 4)
-  _mobInfoCache.set(cacheKey, { at: Date.now(), row: mob });   // #141 zone-scoped key
+  // #141 zone-scoped key. A MISS is cached far shorter than a hit: the 6h TTL
+  // is right for catalog rows (they never change between weekly syncs) but
+  // catastrophic for nulls, because a single transient failure — a Supabase
+  // timeout, a lookup that lands mid-deploy — pinned "no catalog stats for this
+  // target" for six hours on a mob whose row exists and whose query works.
+  // Uilnayar hit it on Va_Xi_Aten_Ha_Ra (id 158440, 1.6M HP), 2026-08-06.
+  _mobInfoCache.set(cacheKey, { at: Date.now(), row: mob, ttl: mob ? _MOB_INFO_TTL_MS : _MOB_INFO_MISS_TTL_MS });
   res.writeHead(200, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify({ ok: true, mob }));
 }
