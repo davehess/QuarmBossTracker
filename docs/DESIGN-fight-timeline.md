@@ -88,16 +88,18 @@ field, agent-side, no schema change (it is jsonb).
 > — a real 510s fight with 41 players and 1.34M damage. npc 158464 is one of the
 > two duplicate `Kaas_Thox_Xi_Aten_Ha_Ra` rows in the catalog (158437 / 158464),
 > which may or may not be related. Worth chasing before trusting binding
-> unconditionally. They carry `boss_name` +
-`started_at` instead, so a fight is addressable as `(boss_name, started_at)` and
-joinable to `encounters` on an overlapping window — the same ±window idea
-`find_or_create_encounter` already uses. Two options:
+> unconditionally.
+
+Unbound rows carry `boss_name` + `started_at` instead, so a fight is addressable
+as `(boss_name, started_at)` and joinable to `encounters` on an overlapping
+window — the same ±window idea `find_or_create_encounter` already uses. Two
+options:
 
 - bind at ingest (bot writes `encounter_id` when it can resolve one), and/or
 - a read-time view `encounter_timeline` doing the window join.
 
-Do BOTH: the view unlocks all the history we already hold; the ingest binding
-keeps new rows cheap to query.
+Do BOTH — but note the correction above: ingest binding already works, so the
+view is purely for the historical backlog, not the live path.
 
 Note `boss_name` is NULL on trash snapshots — that is correct and those rows are
 simply not fights.
