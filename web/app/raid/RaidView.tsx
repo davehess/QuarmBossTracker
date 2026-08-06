@@ -531,7 +531,12 @@ export default function RaidView({
             const leader = grpNum != null ? groupLeaders[grpNum] : null;
             // Does this group have at least one Mimic? Drives the group header
             // chip — clarifies "do we have HP signals from this group at all?"
-            const mimicInGroup = grpRows.some(r => !r.noAgent);
+            // MUST be hasAgent, not !noAgent: an INFERRED raider has buff data
+            // (someone else's Mimic saw the cast) but produces no HP signal of
+            // their own, so !noAgent marked whole groups as covered when nobody
+            // in them ran anything. Group 6 showed the MIMIC chip on five
+            // inferred rows (Uilnayar 2026-08-06).
+            const mimicInGroup = grpRows.some(r => r.hasAgent);
             return (
               <section key={label} className="bg-panel border border-border rounded-lg overflow-hidden">
                 <header className="px-3 py-2 bg-bg/60 border-b border-border flex items-center justify-between gap-2 flex-wrap">
@@ -583,7 +588,7 @@ export default function RaidView({
                             </span>
                           )}
                         </span>
-                        {!r.noAgent && (
+                        {r.hasAgent && (
                           <span
                             title="Running Mimic — buffs + HP signals flowing"
                             className="text-[9px] leading-none px-1 py-0.5 rounded bg-blue/15 text-blue border border-blue/30 shrink-0"
