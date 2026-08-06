@@ -9440,7 +9440,16 @@ setInterval(async () => {
     const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
     const rows = await supabase.select('bot_kv',
       `guild_id=eq.${encodeURIComponent(guildId)}&key=eq.${_PRERAID_KV_KEY}&select=value&limit=1`);
-    const st = (Array.isArray(rows) && rows[0]?.value) || {};
+    // A FAILED READ IS NOT "HASN'T RUN TONIGHT" (Hitya 2026-08-06: this posted
+    // FIVE times at 19:30, once per minute of the firing window). supabase.select
+    // returns null on a timeout or an open breaker, `|| {}` turned that into an
+    // empty state, `st.lastRunDate` was undefined, and the check ran again — then
+    // the latching upsert failed for the same reason, so it never stuck. Same
+    // shape as the announcement that reposted in raid chat the same day; see
+    // utils/kvLatch.js. Fail closed: a skipped health check costs nothing, five
+    // copies in the raid thread cost attention right before a pull.
+    if (!Array.isArray(rows)) { console.warn('[preraid] latch unreadable — skipping this pass'); return; }
+    const st = rows[0]?.value || {};
     if (st.lastRunDate === today) return;   // already ran tonight
     // Latch FIRST (a failed post shouldn't retry every minute for 5 minutes
     // and quintuple-post on a flaky Discord).

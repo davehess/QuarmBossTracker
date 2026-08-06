@@ -1187,6 +1187,7 @@ describe('reserved review slots', () => {
     });
     const thread = {
       id, name: NIGHT_NAME, posted, edits, deleted, live,
+      isThread: () => true,
       send: async (payload) => {
         const mid = `M${++n}`;
         posted.push({ id: mid, payload });
@@ -1232,6 +1233,22 @@ describe('reserved review slots', () => {
     for (const p of thread.posted) {
       expect(p.payload.embeds[0].data.title).toBe(raidReview.RESERVED_TITLE);
     }
+  });
+
+  it('REFUSES to reserve in a plain channel — /raidnight here:true', async () => {
+    // "here:true" makes the CURRENT CHANNEL the night's target, so
+    // getRaidNightTarget can hand back #raid-chat itself. Six placeholder cards
+    // are fine at the top of a quiet per-night thread and are pure spam in the
+    // guild's busiest channel (Hitya, 2026-08-06).
+    const kv = fakeKv();
+    const channel = fakeThread('RAID_CHAT');
+    channel.isThread = () => false;                 // a plain text channel
+    raidReview._setDeps({ raidNight, supabase: kv });
+    expect(await raidReview.reserveReviewSlots(channel, KEY)).toEqual([]);
+    expect(channel.posted, 'nothing may be posted into #raid-chat').toHaveLength(0);
+    // And with no slots, a caller falls back to posting normally rather than
+    // silently dropping the card.
+    expect(await raidReview.claimSlot(channel, KEY, 3, { embeds: [] })).toBe(false);
   });
 
   it('maps the four ticks onto thread slots 3-6, in order', () => {

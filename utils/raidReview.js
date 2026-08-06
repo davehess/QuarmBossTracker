@@ -455,9 +455,29 @@ async function _saveSlotIds(nightKey, ids, threadId) {
  * throws: failing to reserve a slot must not fail thread creation, and the
  * review still posts normally (just lower down) if this is skipped.
  */
+// Is this an actual thread, or the main channel wearing a thread's job?
+// `/raidnight here:true` makes the CURRENT CHANNEL the night's target, so
+// getRaidNightTarget can hand back #raid-chat itself (Hitya, 2026-08-06). Six
+// placeholder cards are fine at the top of a quiet per-night thread and are
+// pure spam in the middle of the guild's busiest channel.
+function _isRealThread(ch) {
+  try {
+    if (!ch) return false;
+    if (typeof ch.isThread === 'function') return !!ch.isThread();
+    return !!ch.parentId;                       // fallback for fakes/older shapes
+  } catch { return false; }
+}
+
 async function reserveReviewSlots(thread, nightKey, want = RESERVED_SLOTS) {
   try {
     if (!thread || !nightKey || want < 1) return [];
+    // Reserve ONLY in a real thread. Callers fall back to posting normally, so
+    // the review and the tick cards still land — they just don't get a slot,
+    // and #raid-chat doesn't get six stubs.
+    if (!_isRealThread(thread)) {
+      console.log(`[raid-review] ${thread.id} is not a thread — not reserving slots`);
+      return [];
+    }
     const existing = await _getSlotIds(nightKey);
     // TOP UP rather than all-or-nothing. A thread opened before the tick slots
     // existed (or by an older build) already holds 2; it should gain the other
