@@ -159,6 +159,15 @@ Load-bearing details:
 - **`insert()` cannot report success** — `utils/supabase.js` `_request` never
   throws and returns `null` for both an empty-body 201 and any 4xx — so the write
   is confirmed by reading it back.
+- **The card goes in the thread's reserved slot 3-6** (`claimSlot`), so the top of
+  the night's thread reads review · review-overflow · 8:30 · 9:30 · 10:30 · 11:30.
+  `reserveReviewSlots` TOPS UP, so a thread opened before the tick slots existed
+  gains them mid-night instead of going without. If no slot is available the card
+  posts normally — a tick card at the bottom beats no tick card.
+  ⚠ `releaseUnclaimedSlots` deletes by checking each message still carries
+  `RESERVED_TITLE`, NOT by "isn't the review's id" — the latter would delete the
+  night's tick cards. Every placeholder shares that one title for exactly this
+  reason.
 - Scheduling copies the pre-raid health check: 60s interval reading wall-clock ET,
   which survives the restarts a `setTimeout` chain does not. 5-minute firing
   window (`RAID_TICK_FIRE_WINDOW_MIN`) so a deploy across the hour can't skip a

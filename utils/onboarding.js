@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.1.24': [
+    '**The attendance ticks now show up in the raid thread.** The night\'s thread holds its first six spots: the review at the top, then the 8:30, 9:30, 10:30 and 11:30 rosters, each filling in as it is captured. Every card lists who was in the raid at that moment and says plainly that nothing was submitted — it is a record to check a tick against, not a tick.',
+  ],
   '3.1.23': [
     '**The raid roster is now written down at 8:30, 9:30, 10:30 and 11:30.** Nothing is submitted and no DKP moves — this only records who was in the raid at each of those moments so officers have something to check a tick against, including the nights we take the last tick early so nobody gets missed. It had to be automatic: the live raid list is overwritten every few seconds and thrown away an hour later, so who was there at 8:30 genuinely cannot be looked up at 9:30. It reads every reporting Mimic and merges them, so one person zoning at the wrong moment cannot drop you off the list.',
   ],

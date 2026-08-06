@@ -1169,26 +1169,34 @@ describe('intentional deaths', () => {
 describe('reserved review slots', () => {
   // A thread that records everything, so "did it post or did it edit" and
   // "which message" are both observable.
+  // Models message STATE, not just calls: releaseUnclaimedSlots decides what to
+  // delete by reading each message's current embed title, so a fake that forgot
+  // what an edit did would let a "deletes only placeholders" test pass vacuously.
   function fakeThread(id = 'THREAD_NEW') {
     const posted = [], edits = [], deleted = [];
+    const live = new Map();          // id → current payload
     let n = 0;
+    const view = (mid) => ({
+      id: mid,
+      get embeds() {
+        const p = live.get(mid);
+        return (p?.embeds || []).map(e => (typeof e.toJSON === 'function' ? e.toJSON() : e));
+      },
+      edit: async (p) => { edits.push({ id: mid, payload: p }); live.set(mid, p); },
+      delete: async () => { deleted.push(mid); live.delete(mid); },
+    });
     const thread = {
-      id, name: NIGHT_NAME, posted, edits, deleted,
+      id, name: NIGHT_NAME, posted, edits, deleted, live,
       send: async (payload) => {
         const mid = `M${++n}`;
         posted.push({ id: mid, payload });
+        live.set(mid, payload);
         return { id: mid };
       },
       messages: {
         fetch: async (mid) => {
-          if (!posted.some(p => p.id === mid) || deleted.includes(mid)) {
-            const e = new Error('Unknown Message'); e.code = 10008; throw e;
-          }
-          return {
-            id: mid,
-            edit: async (p) => { edits.push({ id: mid, payload: p }); },
-            delete: async () => { deleted.push(mid); },
-          };
+          if (!live.has(mid)) { const e = new Error('Unknown Message'); e.code = 10008; throw e; }
+          return view(mid);
         },
       },
     };
@@ -1217,11 +1225,18 @@ describe('reserved review slots', () => {
     raidReview._setDeps({ raidNight, supabase: kv });
     const ids = await raidReview.reserveReviewSlots(thread, KEY);
     expect(ids).toHaveLength(raidReview.RESERVED_SLOTS);
-    expect(raidReview.RESERVED_SLOTS).toBe(2);                 // the number Uilnayar asked for
-    expect(thread.posted).toHaveLength(2);
+    expect(raidReview.RESERVED_SLOTS).toBe(6);                 // review 1-2, ticks 3-6
+    expect(raidReview.RESERVED_REVIEW_SLOTS).toBe(2);
+    expect(raidReview.RESERVED_TICK_SLOTS).toBe(4);
+    expect(thread.posted).toHaveLength(6);
     for (const p of thread.posted) {
       expect(p.payload.embeds[0].data.title).toBe(raidReview.RESERVED_TITLE);
     }
+  });
+
+  it('maps the four ticks onto thread slots 3-6, in order', () => {
+    // "put them as reserved posts 3-6" — 8:30 → 3, 9:30 → 4, 10:30 → 5, 11:30 → 6.
+    expect([1, 2, 3, 4].map(raidReview.tickSlotIndex)).toEqual([3, 4, 5, 6]);
   });
 
   it('is idempotent — a second call cannot double-post', async () => {
@@ -1230,7 +1245,20 @@ describe('reserved review slots', () => {
     const a = await raidReview.reserveReviewSlots(thread, KEY);
     const b = await raidReview.reserveReviewSlots(thread, KEY);
     expect(b).toEqual(a);
-    expect(thread.posted).toHaveLength(2);
+    expect(thread.posted).toHaveLength(6);
+  });
+
+  it('TOPS UP a thread that only holds the old two slots', async () => {
+    // Tonight's thread may already exist from before the tick slots shipped. It
+    // should gain slots 3-6 rather than go without ticks for the night.
+    const kv = fakeKv(); const thread = fakeThread();
+    raidReview._setDeps({ raidNight, supabase: kv });
+    const two = await raidReview.reserveReviewSlots(thread, KEY, 2);
+    expect(two).toHaveLength(2);
+    const all = await raidReview.reserveReviewSlots(thread, KEY);
+    expect(all).toHaveLength(6);
+    expect(all.slice(0, 2)).toEqual(two);        // the review's slots keep their ids
+    expect(thread.posted).toHaveLength(6);
   });
 
   it('THE POINT: the review EDITS the first reserved slot instead of posting below', async () => {
@@ -1249,13 +1277,13 @@ describe('reserved review slots', () => {
 
     await raidReview.reserveReviewSlots(thread, KEY);
     const firstSlot = thread.posted[0].id;
-    expect(thread.posted).toHaveLength(2);
+    expect(thread.posted).toHaveLength(6);
 
     const res = await raidReview.postRaidNightReview(client, { atMs: FIRST_PULL });
     expect(res.reason, 'the review must EDIT a held slot, never send a new message').toBe('edited');
     expect(res.messageId).toBe(firstSlot);                     // ← the FIRST one, not the second
-    // Nothing new was sent: the only two sends are the placeholders themselves.
-    expect(thread.posted).toHaveLength(2);
+    // Nothing new was sent: the only sends are the placeholders themselves.
+    expect(thread.posted).toHaveLength(6);
     expect(thread.edits[0].id).toBe(firstSlot);
   });
 
@@ -1274,22 +1302,50 @@ describe('reserved review slots', () => {
                setRaidReviewMessageId: (k, v) => slots.set(k, v) } });
 
     await raidReview.reserveReviewSlots(thread, KEY);
-    const [used, unused] = thread.posted.map(p => p.id);
+    const ids = thread.posted.map(p => p.id);
+    const used = ids[0];
+
+    // Slot 4 (the 9:30 tick) is filled in before the review runs — it must
+    // SURVIVE. This is the regression that matters: a release that deleted
+    // everything-but-the-review would wipe the night's attendance cards.
+    const tickIdx = raidReview.tickSlotIndex(2);
+    expect(await raidReview.claimSlot(thread, KEY, tickIdx,
+      { embeds: [{ title: '🫂 Tick 2 (1 Hour) — 44 in raid' }] })).toBe(true);
+
     await raidReview.postRaidNightReview(client, { atMs: FIRST_PULL });
-    // A permanent "reserved" stub would be litter; the one that became the
-    // review obviously stays.
-    expect(thread.deleted).toEqual([unused]);
-    expect(thread.deleted).not.toContain(used);
+
+    expect(thread.deleted).not.toContain(used);                  // became the review
+    expect(thread.deleted).not.toContain(ids[tickIdx - 1]);      // became a tick card
+    // Everything still bearing the placeholder title is litter and goes.
+    expect([...thread.deleted].sort()).toEqual(
+      ids.filter((_, i) => i !== 0 && i !== tickIdx - 1).sort());
+  });
+
+  it('claimSlot writes into the right slot and refuses one that does not exist', async () => {
+    const kv = fakeKv(); const thread = fakeThread();
+    raidReview._setDeps({ raidNight, supabase: kv });
+    await raidReview.reserveReviewSlots(thread, KEY);
+    const ids = thread.posted.map(p => p.id);
+    const card = { embeds: [{ title: '🫂 Tick 3 (2 Hour) — 40 in raid' }] };
+    expect(await raidReview.claimSlot(thread, KEY, 5, card)).toBe(true);
+    expect(thread.edits.at(-1).id).toBe(ids[4]);                 // 1-based slot 5
+    // Past the end → false, so the caller posts normally instead of losing the card.
+    expect(await raidReview.claimSlot(thread, KEY, 99, card)).toBe(false);
+    expect(await raidReview.claimSlot(thread, 'no-such-night', 3, card)).toBe(false);
   });
 
   it('releaseUnclaimedSlots survives a placeholder someone already deleted', async () => {
     const kv = fakeKv(); const thread = fakeThread();
     raidReview._setDeps({ raidNight, supabase: kv });
     await raidReview.reserveReviewSlots(thread, KEY);
-    const [a, b] = thread.posted.map(p => p.id);
-    thread.deleted.push(b);                                    // gone by hand
-    const freed = await raidReview.releaseUnclaimedSlots(thread, KEY, a);
-    expect(freed).toBe(0);                                     // nothing left to free, no throw
+    const ids = thread.posted.map(p => p.id);
+    thread.live.delete(ids[1]);                                // deleted by hand
+    const freed = await raidReview.releaseUnclaimedSlots(thread, KEY, ids[0]);
+    // The 4 remaining placeholders go; the hand-deleted one is skipped without
+    // throwing, and slot 1 is the review.
+    expect(freed).toBe(ids.length - 2);
+    expect(thread.deleted).not.toContain(ids[0]);
+    expect(thread.deleted).not.toContain(ids[1]);
   });
 
   it('a thread that refuses to be posted in still reserves nothing and does not throw', async () => {

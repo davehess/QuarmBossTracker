@@ -398,10 +398,25 @@ function _kvSlotsKey(nightKey) { return `raid_review_slots_${nightKey}`; }
 // as soon as an edit succeeds, so "unclaimed" is simply "not the stored id".
 // That makes a failed edit self-healing — the next refresh returns the same
 // slot and tries again — instead of burning a slot on a transient error.
-const RESERVED_SLOTS = Math.max(0, Math.min(5, Number(process.env.RAID_REVIEW_RESERVED_SLOTS) || 2));
+// Slots 1-2 are the review (2 because a long one can spill past EMBED_BUDGET).
+// Slots 3-6 are the night's four attendance ticks, in order, so the top of the
+// thread reads: review, review overflow, 8:30, 9:30, 10:30, 11:30
+// (Uilnayar 2026-08-06: "put them as reserved posts 3-6").
+const RESERVED_REVIEW_SLOTS = 2;
+const RESERVED_TICK_SLOTS   = 4;
+const RESERVED_SLOTS = Math.max(0, Math.min(10,
+  Number(process.env.RAID_REVIEW_RESERVED_SLOTS) || (RESERVED_REVIEW_SLOTS + RESERVED_TICK_SLOTS)));
 
-const RESERVED_TITLE = '📓 Raid Night Review — reserved';
-const RESERVED_BODY  = '_Holding this spot so tonight\'s review lands at the top of the thread._';
+// EVERY placeholder carries this exact title, and that is load-bearing in two
+// places: it is how releaseUnclaimedSlots tells a still-empty slot from one that
+// has been filled in (so it can never delete a real tick card), and it is
+// deliberately NOT the review's own embed title, so postOrEditCard's
+// find-my-card-by-title backstop cannot adopt a placeholder by mistake.
+const RESERVED_TITLE = '📓 Reserved — Wolf Pack raid night';
+const RESERVED_BODY  = '_Holding this spot so tonight\'s review and attendance ticks land at the top of the thread._';
+
+/** 1-based thread slot index for a tick slot (1-4) → 3, 4, 5, 6. */
+function tickSlotIndex(tickSlot) { return RESERVED_REVIEW_SLOTS + Number(tickSlot); }
 
 async function _getSlotIds(nightKey) {
   try {
@@ -440,13 +455,17 @@ async function _saveSlotIds(nightKey, ids, threadId) {
  * throws: failing to reserve a slot must not fail thread creation, and the
  * review still posts normally (just lower down) if this is skipped.
  */
-async function reserveReviewSlots(thread, nightKey) {
+async function reserveReviewSlots(thread, nightKey, want = RESERVED_SLOTS) {
   try {
-    if (!thread || !nightKey || RESERVED_SLOTS < 1) return [];
+    if (!thread || !nightKey || want < 1) return [];
     const existing = await _getSlotIds(nightKey);
-    if (existing.length) return existing;                  // already reserved
-    const ids = [];
-    for (let i = 0; i < RESERVED_SLOTS; i++) {
+    // TOP UP rather than all-or-nothing. A thread opened before the tick slots
+    // existed (or by an older build) already holds 2; it should gain the other
+    // 4 rather than going without them for the night. Re-running with the same
+    // count stays a no-op, so this is still safe to call repeatedly.
+    if (existing.length >= want) return existing;
+    const ids = [...existing];
+    for (let i = existing.length; i < want; i++) {
       const msg = await thread.send({ embeds: [new EmbedBuilder()
         .setTitle(RESERVED_TITLE)
         .setDescription(RESERVED_BODY)
@@ -476,6 +495,11 @@ async function releaseUnclaimedSlots(thread, nightKey, usedId) {
       if (String(id) === String(usedId)) continue;         // this one became the review
       try {
         const msg = await thread.messages.fetch(id);
+        // Delete ONLY a slot that is still an empty placeholder. Checking the
+        // title rather than trusting a list of "used" ids is what keeps this
+        // from deleting the night's attendance ticks, which live in slots 3-6
+        // and are just as claimed as the review is.
+        if (msg.embeds?.[0]?.title !== RESERVED_TITLE) continue;
         await msg.delete();
         freed++;
       } catch { /* already gone, or not ours to delete — either is fine */ }
@@ -485,6 +509,30 @@ async function releaseUnclaimedSlots(thread, nightKey, usedId) {
   } catch (err) {
     console.warn('[raid-review] slot release failed:', err?.message);
     return 0;
+  }
+}
+
+/**
+ * Fill a reserved slot with real content, by 1-based slot index.
+ *
+ * Returns true when the slot existed and the edit landed. False means the caller
+ * should fall back to posting normally — a thread from before this shipped has
+ * no slot 4 to write into, and a tick card at the bottom of the thread beats no
+ * tick card at all.
+ */
+async function claimSlot(thread, nightKey, index, payload) {
+  try {
+    if (!thread || !nightKey || !(index >= 1)) return false;
+    const ids = await _getSlotIds(nightKey);
+    const id = ids[index - 1];
+    if (!id) return false;
+    const msg = await thread.messages.fetch(id).catch(() => null);
+    if (!msg) return false;
+    await msg.edit(payload);
+    return true;
+  } catch (err) {
+    console.warn(`[raid-review] could not claim slot ${index}:`, err?.message);
+    return false;
   }
 }
 
@@ -1607,7 +1655,8 @@ module.exports = {
   postRaidNightReview, scheduleRaidNightReview, catchUpRaidNightReview,
   reviewEnabled, reviewDelayMin, minKills,
   // reserved top-of-thread slots (R3)
-  reserveReviewSlots, releaseUnclaimedSlots, RESERVED_SLOTS, RESERVED_TITLE,
+  reserveReviewSlots, releaseUnclaimedSlots, claimSlot, tickSlotIndex,
+  RESERVED_SLOTS, RESERVED_TITLE, RESERVED_REVIEW_SLOTS, RESERVED_TICK_SLOTS,
   // live
   noteEncounterUpload, touchLiveRaidReview, liveEnabled,
   liveDebounceMs, liveMinIntervalMs,

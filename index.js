@@ -9550,10 +9550,53 @@ async function _captureRaidTickIfDue() {
     `&night_key=eq.${encodeURIComponent(nightKey)}&slot=eq.${slot.slot}&limit=1`);
   if (Array.isArray(confirm) && confirm[0]) {
     console.log(`[raid-tick] captured ${slot.description} — ${confirm[0].name_count} raiders from ${uploaders} agent view(s), NOT submitted`);
+    await _postRaidTickCard(slot, names, uploaders, scheduledFor, nightKey).catch(err =>
+      console.warn(`[raid-tick] slot ${slot.slot} card failed:`, err?.message));
   } else {
     // Nothing persisted. The next pass inside the firing window tries again,
     // which is why this is a warning and not an error.
     console.warn(`[raid-tick] slot ${slot.slot} (${slot.description}) did NOT persist — retrying inside the window`);
+  }
+}
+
+// Put the captured tick in the night's thread, in its reserved slot (Uilnayar
+// 2026-08-06: "can you add the captured raid ticks for now in the raid thread?
+// and put them as reserved posts 3-6"). Slots 1-2 are the review, 3-6 are these
+// four ticks in order, so the top of the thread reads review → 8:30 → 9:30 →
+// 10:30 → 11:30.
+//
+// The card is a mirror of the row, not a second source of truth — the row is
+// already written by the time this runs, so a Discord failure loses a card, not
+// an attendance record. It says NOT SUBMITTED on its face because that is the
+// one thing an officer must not have to guess about.
+async function _postRaidTickCard(slot, names, uploaders, scheduledForIso, nightKey) {
+  const raidReview = require('./utils/raidReview');
+  const target = await require('./utils/raidNight').getRaidNightTarget(client, Date.now()).catch(() => null);
+  if (!target?.thread) { console.log(`[raid-tick] slot ${slot.slot}: no raid thread to post into`); return; }
+
+  const { EmbedBuilder } = require('discord.js');
+  const when = Math.floor(Date.parse(scheduledForIso) / 1000);
+  const emb = new EmbedBuilder()
+    .setColor(0x57a773)
+    .setTitle(`🫂 ${slot.description} — ${names.length} in raid`)
+    .setDescription([
+      `<t:${when}:t> · seen by ${uploaders} Mimic${uploaders === 1 ? '' : 's'}`,
+      '',
+      names.join(' · ') || '_nobody_',
+    ].join('\n').slice(0, 4000))
+    .setFooter({ text: 'Captured automatically · NOT submitted to OpenDKP' });
+
+  // Top up first: a thread opened before slots 3-6 existed holds only the two
+  // review slots, and tonight should not go without its tick cards waiting for
+  // tomorrow's thread. Idempotent — a thread that already has six is untouched.
+  await raidReview.reserveReviewSlots(target.thread, nightKey).catch(() => {});
+
+  // Try the reserved slot; fall back to a normal post rather than losing the card.
+  const idx = raidReview.tickSlotIndex(slot.slot);
+  const claimed = await raidReview.claimSlot(target.thread, nightKey, idx, { embeds: [emb] });
+  if (!claimed) {
+    await target.thread.send({ embeds: [emb], allowedMentions: { parse: [] } });
+    console.log(`[raid-tick] slot ${slot.slot}: no reserved slot ${idx} — posted at the end instead`);
   }
 }
 
