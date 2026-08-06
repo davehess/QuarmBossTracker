@@ -9453,6 +9453,114 @@ setInterval(async () => {
   }
 }, 60_000);
 
+// ── Staged raid-attendance tick capture (Uilnayar 2026-08-06) ───────────────
+// "can we put in the automatic raid tick capture (without submission) at
+// 830/930/1030/1130" — following "sometimes we will take the 'last tick' before
+// the end of the raid, though, so we're not missing people."
+//
+// CAPTURE ONLY. utils/dkpTick.js submitRaidTick() is a working path to OpenDKP
+// and this never calls it; these rows are a record an officer reads and acts on.
+//
+// It has to be captured live because raid_roster is a LIVE view — per-uploader
+// rows overwritten every few seconds, pruned to RAID_ROSTER_RETENTION_HOURS
+// (default ONE hour) by the midnight chain. Who was in the raid at 8:30 is
+// unrecoverable by 9:30.
+//
+// Same shape as the pre-raid check above: a 60s interval reading wall-clock ET,
+// which survives the restarts a setTimeout chain does not. The idempotency guard
+// is the (guild, night, slot) unique index rather than a bot_kv latch — the
+// insert simply loses the race, so there is no read-then-write window and no
+// latch to misread (the lesson from the announcement that reposted today).
+const _RAID_ROSTER_FRESH_MS = 15 * 60 * 1000;      // matches ROSTER_FRESH_MS
+
+// raid_roster rows for the capture, paginated.
+//
+// PostgREST caps EVERY response at 1000 rows no matter what limit you ask for,
+// and a live raid is genuinely near that line: ~17 agents x ~55 raiders is ~935
+// fresh rows. A silent truncation here would quietly drop raiders from an
+// attendance record — precisely the failure this feature exists to prevent — so
+// it pages instead of trusting one call.
+async function _fetchFreshRosterRows(guildId, sinceIso) {
+  const supabase = require('./utils/supabase');
+  const PAGE = 1000;
+  const out = [];
+  for (let offset = 0; offset < 20 * PAGE; offset += PAGE) {
+    const page = await supabase.select('raid_roster',
+      `select=name,uploaded_by_discord_id&guild_id=eq.${encodeURIComponent(guildId)}` +
+      `&captured_at=gte.${encodeURIComponent(sinceIso)}` +
+      `&order=name.asc&offset=${offset}&limit=${PAGE}`);
+    if (!Array.isArray(page)) return null;          // lookup failed — say so, don't half-answer
+    out.push(...page);
+    if (page.length < PAGE) break;
+  }
+  return out;
+}
+
+async function _captureRaidTickIfDue() {
+  const { nowPartsInTz } = require('./utils/timezone');
+  const raidTick = require('./utils/raidTick');
+  const slot = raidTick.dueSlotAt(nowPartsInTz('America/New_York'));
+  if (!slot) return;
+
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) return;
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+  const nightKey = require('./utils/raidNight').nightKey(Date.now());
+
+  // Cheap pre-check so a normal night does one small SELECT per minute in the
+  // window instead of paging the roster five times. Not the safety guard — the
+  // unique index is — so a failed read falls THROUGH to the insert, which the
+  // constraint will refuse if it is genuinely a duplicate.
+  const existing = await supabase.select('raid_attendance_ticks',
+    `select=id&guild_id=eq.${encodeURIComponent(guildId)}` +
+    `&night_key=eq.${encodeURIComponent(nightKey)}&slot=eq.${slot.slot}&limit=1`);
+  if (Array.isArray(existing) && existing[0]) return;
+
+  const sinceIso = new Date(Date.now() - _RAID_ROSTER_FRESH_MS).toISOString();
+  const rows = await _fetchFreshRosterRows(guildId, sinceIso);
+  if (rows === null) { console.warn(`[raid-tick] slot ${slot.slot}: roster read failed — will retry inside the window`); return; }
+
+  const { names, uploaders } = raidTick.rosterUnion(rows);
+  if (!raidTick.worthRecording(names.length)) {
+    console.log(`[raid-tick] slot ${slot.slot} (${slot.description}): only ${names.length} raider(s) present — raid looks over, not recording`);
+    return;
+  }
+
+  // scheduled_for is the tick's nominal moment, not now: a capture that ran late
+  // after a restart should still be filed against 8:30, with captured_at showing
+  // how late it was.
+  const p = nowPartsInTz('America/New_York');
+  const { localToUTC } = require('./utils/timezone');
+  const scheduledFor = new Date(localToUTC(p.year, p.month, p.day, slot.hour, slot.minute, 'America/New_York')).toISOString();
+
+  await supabase.insert('raid_attendance_ticks', [{
+    guild_id: guildId, night_key: nightKey, slot: slot.slot,
+    description: slot.description, scheduled_for: scheduledFor,
+    captured_at: new Date().toISOString(),
+    names, name_count: names.length, uploaders, source: 'raid_roster',
+  }]);
+
+  // insert() cannot report what happened: utils/supabase.js `_request` NEVER
+  // throws, and it returns null both for a successful 201 with an empty body and
+  // for any 4xx — including the unique index refusing a duplicate. So the write
+  // is confirmed by reading it back rather than assumed. Four extra selects a
+  // night buys a log line that is actually true.
+  const confirm = await supabase.select('raid_attendance_ticks',
+    `select=name_count,captured_at&guild_id=eq.${encodeURIComponent(guildId)}` +
+    `&night_key=eq.${encodeURIComponent(nightKey)}&slot=eq.${slot.slot}&limit=1`);
+  if (Array.isArray(confirm) && confirm[0]) {
+    console.log(`[raid-tick] captured ${slot.description} — ${confirm[0].name_count} raiders from ${uploaders} agent view(s), NOT submitted`);
+  } else {
+    // Nothing persisted. The next pass inside the firing window tries again,
+    // which is why this is a warning and not an error.
+    console.warn(`[raid-tick] slot ${slot.slot} (${slot.description}) did NOT persist — retrying inside the window`);
+  }
+}
+
+if (process.env.RAID_TICK_CAPTURE !== '0') {
+  setInterval(() => { _captureRaidTickIfDue().catch(err => console.warn('[raid-tick] pass failed:', err?.message)); }, 60_000);
+}
+
 // Raid hold — tells every agent to hold its background file work for later
 // while a raid is active ("gracefully tell mimic to hold onto its files",
 // Hitya 2026-07-16). Agents 3.3.58+ defer gear/spellbook/crash scans AND

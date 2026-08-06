@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.1.23': [
+    '**The raid roster is now written down at 8:30, 9:30, 10:30 and 11:30.** Nothing is submitted and no DKP moves — this only records who was in the raid at each of those moments so officers have something to check a tick against, including the nights we take the last tick early so nobody gets missed. It had to be automatic: the live raid list is overwritten every few seconds and thrown away an hour later, so who was there at 8:30 genuinely cannot be looked up at 9:30. It reads every reporting Mimic and merges them, so one person zoning at the wrong moment cannot drop you off the list.',
+  ],
   '3.1.21': [
     '**Some deaths are the plan, and the review finally knows it.** Officers can mark a character as dying on purpose on a specific boss — Fawx and Dant make a corpse on Kaas Thox Xi Ans Dyek every single week, and the review kept filing that fight under "what to work on" as though something had gone wrong. Mark it once from the fight\'s parse page and it holds every week after; those two are already set. The death is never hidden — it still counts in the night\'s total and still shows in the deaths list, it just stops being listed as a mistake, and the header now says how many were on purpose.',
     '**The raid review sits at the top of the night\'s thread.** It was landing on the third line, under whatever posted first. The thread now holds the top two spots the moment it opens and the review moves into one of them — the second is there for nights when the review runs long, and gets cleaned up when it isn\'t needed.',

@@ -130,6 +130,43 @@ the `📊 Parse Log` JSON embed to `PARSES_LOG_THREAD_ID`, which is the only
 thread `loadParsesFromDiscord`, `/restore` and the midnight consolidation
 read. Night threads carry the presentation copy only.
 
+### Staged raid-attendance ticks (`utils/raidTick.js` + `index.js` capture loop)
+Automatic capture of who is in the raid at **20:30 / 21:30 / 22:30 / 23:30 ET**
+on Sun/Wed/Thu, into `raid_attendance_ticks`. **Capture only — nothing is
+submitted.** `utils/dkpTick.js` `submitRaidTick()` is a working OpenDKP write
+path and this deliberately never calls it; filing a tick stays an officer action.
+Slot names mirror the real ticks (`Tick 1 (Raid Start)` … `Tick 4 (Raid End)`).
+Load-bearing details:
+- **It must capture live; the data cannot be reconstructed.** `raid_roster` is a
+  LIVE view — PK `(guild_id, uploaded_by_discord_id, name)`, so each agent
+  overwrites its own rows every few seconds — and the midnight chain prunes it to
+  `RAID_ROSTER_RETENTION_HOURS` (default ONE hour). Who was in the raid at 8:30
+  is unrecoverable by 9:30. A corollary that WILL mislead you: querying
+  `captured_at` in a past window does NOT reconstruct a past roster, it returns
+  whoever's row went stale then. Retrospective checks under-count; don't "verify"
+  the feature that way.
+- **Union across agents, not one agent's view.** Zeal's type-5 event shows the
+  whole raid to everyone in it, but a client that just zoned reports a partial
+  roster — and dropping a raider is the exact failure this exists to prevent.
+  Cost: a concurrent splinter raid merges in (this does NOT do the union-find
+  clustering `index.js` uses for the buff queue). Safe because nothing is
+  submitted; `uploaders` is stored so a wide union is visible.
+- **Paginated read.** A live raid is ~17 agents × ~55 raiders ≈ 935 rows, against
+  PostgREST's hard 1000-row cap — silent truncation would drop raiders.
+- **Idempotency is the `(guild_id, night_key, slot)` unique index**, not a
+  `bot_kv` latch: the insert loses the race, so there's no read-then-write window.
+  A cheap pre-check avoids paging five times a window but is NOT the guard.
+- **`insert()` cannot report success** — `utils/supabase.js` `_request` never
+  throws and returns `null` for both an empty-body 201 and any 4xx — so the write
+  is confirmed by reading it back.
+- Scheduling copies the pre-raid health check: 60s interval reading wall-clock ET,
+  which survives the restarts a `setTimeout` chain does not. 5-minute firing
+  window (`RAID_TICK_FIRE_WINDOW_MIN`) so a deploy across the hour can't skip a
+  tick; past the window it skips rather than attributing the wrong people.
+- `RAID_TICK_MIN_NAMES` (5) is the "(if we don't end early)" rule — mostly
+  self-enforcing, since a disbanded raid produces no type-5 event and the rows
+  age out. `RAID_TICK_CAPTURE=0` disables.
+
 ### Raid Night Review (`utils/raidReview.js` + `commands/raidreview.js`) — #80
 The morning-after writeup, generated instead of hand-built. **Two surfaces, ONE
 generator each — do not add a third.** Web: `/raid/review` (index) +
