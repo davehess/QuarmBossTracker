@@ -32,7 +32,14 @@ type PlayerRow  = {
   has_pets: boolean | null;
 };
 type RawPlayer    = { name: string; damage: number; dps: number; duration: number; hasPets?: boolean; rank?: number };
-type RawDeath     = { name: string; ts: string; class?: string | null; riposteDeath?: boolean };
+// `ts` is SERVER time for anything ingested after bot 3.1.20 — the bot rewrites
+// it with the uploader's measured clock offset before persisting (utils/
+// clockOffset.js), which is what stops a skewed observer's copy of a shared
+// death from escaping the dedup window below as a phantom second death. tsRaw
+// is the uploader's original stamp, kept for forensics; older rows have neither
+// and their `ts` is uncorrected.
+type RawDeath     = { name: string; ts: string; class?: string | null; riposteDeath?: boolean;
+                      tsRaw?: string | number; clockOffsetMs?: number };
 // #98 encounter_events row — raid-wide events + trigger fires for the timeline.
 type TimelineEventRow = { at: string; kind: string; subtype: string | null; actor: string | null; label: string | null };
 // Per-defender tanking stats from the agent's EncounterBuilder — what the

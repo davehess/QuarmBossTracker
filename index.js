@@ -235,6 +235,7 @@ const { hasAllowedRole, allowedRolesList, hasOfficerRole, officerRolesList } = r
 const mimicLink = require('./utils/mimicLink');
 const { EXPANSION_ORDER, getThreadId, getBossExpansion, isPopLocked, isPopEraLocked } = require('./utils/config');
 const { dedupParseDeaths } = require('./utils/parseDeaths');
+const clockOffset = require('./utils/clockOffset');
 const { discordAbsoluteTime, discordRelativeTime } = require('./utils/timer');
 
 function getBosses() {
@@ -13208,6 +13209,44 @@ async function _noteClockPulse(guildId, discordId, rawOffsetMs) {
     console.warn('[clock] pulse upsert failed:', err?.message));
 }
 
+// ── Applying the offset at ingest ────────────────────────────────────────────
+// Measuring skew fixes nothing on its own; this is the half that spends it.
+// The gates and the rewrite itself live in utils/clockOffset.js (testable
+// without booting the bot); what stays here is the read and its cache.
+//
+// WHY AT INGEST, not at read time: the offset we store is the machine's skew
+// RIGHT NOW, and a clock that is 63s slow today was some other number last
+// month. An upload arrives seconds after the fight, so "now" and "then" are the
+// same reading — correcting later would apply today's skew to an old fight and
+// be wrong in a new way. Stamp it once, at the only moment the two agree.
+const CLOCK_OFFSET_CACHE_MS = 60_000;
+const _clockOffsetCache = new Map();   // `${guild}|${discordId}` → { at, offsetMs }
+
+async function _resolveClockOffsetMs(guildId, discordId, nowMs = Date.now()) {
+  if (!guildId || !discordId) return 0;
+  const key = `${guildId}|${discordId}`;
+  const hit = _clockOffsetCache.get(key);
+  if (hit && (nowMs - hit.at) < CLOCK_OFFSET_CACHE_MS) return hit.offsetMs;
+
+  let offsetMs = 0;
+  try {
+    const supabase = require('./utils/supabase');
+    if (supabase.isEnabled()) {
+      const rows = await supabase.select('agent_clock_offsets',
+        `guild_id=eq.${encodeURIComponent(guildId)}` +
+        `&discord_id=eq.${encodeURIComponent(String(discordId))}` +
+        `&method=eq.pulse&select=offset_ms,samples,spread_ms,last_sample_at&limit=1`);
+      offsetMs = clockOffset.trustedOffsetMs(Array.isArray(rows) ? rows[0] : null, nowMs);
+    }
+  } catch (err) {
+    // Cache the zero too — a Supabase outage must not turn every upload into a
+    // retry storm against the same failing read.
+    console.warn('[clock] offset lookup failed:', err?.message);
+  }
+  _clockOffsetCache.set(key, { at: nowMs, offsetMs });
+  return offsetMs;
+}
+
 async function _handleAgentReporterPoll(req, res) {
   const identity = await mimicLink.requireAgentAuth(req, res);
   if (!identity) return;
@@ -14843,7 +14882,19 @@ async function _handleAgentUpload(req, res) {
   // Extract them here so we can merge across parsers and feed to the parse card.
   let uploadedHealers     = Array.isArray(encounter.healers)   ? encounter.healers   : [];
   const uploadedDefenders = Array.isArray(encounter.defenders) ? encounter.defenders : [];
-  const uploadedDeaths    = Array.isArray(encounter.deaths)    ? encounter.deaths    : [];
+  // Deaths carry the uploader's machine clock, so they get corrected to server
+  // time here — before dedup, before _noteRaiderDeaths, and before they are
+  // persisted on the contribution (utils/clockOffset.js). A skewed observer's
+  // copy of a shared death used to escape the 30s dedup window and render as a
+  // second death (Fargan's 63s-slow install, Uilnayar 2026-08-06).
+  //
+  // Gated on there being deaths at all: most uploads have none, and the lookup
+  // is a Supabase read. No deaths, nothing to correct, no reason to ask.
+  const _rawDeaths        = Array.isArray(encounter.deaths) ? encounter.deaths : [];
+  const _clockOffsetMs    = _rawDeaths.length
+    ? await _resolveClockOffsetMs(process.env.SUPABASE_GUILD_ID || 'wolfpack', identity.discord_id)
+    : 0;
+  const uploadedDeaths    = clockOffset.applyClockOffsetToDeaths(_rawDeaths, _clockOffsetMs);
   // Heal attribution inputs (agent 3.3.35+): the recipient's unattributed
   // received heals + the uploader's own heal casts (spell, Zeal target,
   // expected land time). Joined below so the Healers table shows how much
@@ -15737,8 +15788,11 @@ async function _handleAgentUpload(req, res) {
         // Deaths + healers — already referenced by /parses/[id] and merged
         // Discord cards. Persisting them on contributions means the detail page
         // doesn't have to wait for the merged card path to backfill.
-        deaths:      Array.isArray(encounter.deaths)  && encounter.deaths.length  > 0
-                       ? encounter.deaths  : undefined,
+        // uploadedDeaths, NOT encounter.deaths — the clock-corrected copy. The
+        // web parse page runs its own dedup over exactly these per-contributor
+        // rows, so persisting the raw stamps here would leave the website
+        // overcounting after the Discord card had already been fixed.
+        deaths:      uploadedDeaths.length > 0 ? uploadedDeaths : undefined,
         healers:     Array.isArray(encounter.healers) && encounter.healers.length > 0
                        ? encounter.healers : undefined,
         // CH-chain visibility — { tank, count, maxGapMs } when the agent saw

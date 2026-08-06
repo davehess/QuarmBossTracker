@@ -29,6 +29,11 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.1.20': [
+    '**Deaths stop counting twice for people whose PC clock is off.** Your computer\'s clock stamps every line the parser reads, so an install running a minute slow reports a death a minute late. When several people saw the same death, the slow copy landed too far from everyone else\'s to be recognised as the same event — and the parse showed two deaths where one happened. The bot has been quietly measuring each install\'s clock on its heartbeat; it now spends that measurement, correcting the time as the upload arrives. Nothing to install and nothing to configure — though if your clock is off by a minute, Windows date & time settings → "Sync now" is still worth doing. The original timestamp is kept alongside the corrected one, so nothing is lost.',
+    '**Diabo Xi Va and Diabo Xi Xin were wearing each other\'s names.** The two were transposed in our boss table, so every kill of one was recorded and displayed as the other. Verified against what the parsers actually reported, then fixed — and the 41 past kills going back to January have been relabelled too, so the history reads correctly now.',
+    '**The raid review stops counting the after-party.** Trash kills from the grinding people do after the raid breaks up were landing in the night\'s totals — 89 of them last Tuesday, some over an hour past the last boss. The tally now ends 15 minutes after the final kill.',
+  ],
   '3.1.10': [
     '**Two mobs with one name finally show as two mobs.** When two same-name adds are tanked apart — tomorrow\'s Thall Va Xakra pull is the case this was built for — the Extended Target overlay now splits them into separate rows, each labeled with WHO is tanking it ("@ Grabthar" vs "@ Borim"), and shows which one your slows and tashes actually landed on. When a debuff can\'t be pinned to one of them, it shows dimmed with a ? on both instead of guessing. The game data has no mob identity at all (that\'s a Zeal limitation we\'ve asked upstream about), so this works by noticing that the PEOPLE being hit by each mob are standing in different places — it needs the tanks held apart to work, and it will honestly merge them when they\'re stacked on one spot.',
   ],

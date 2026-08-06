@@ -25,7 +25,13 @@
 //      Cross-parser clock skew collapses; a real rez-and-die stays separate.
 export const DEATH_DEDUP_MS = 30_000;
 
-export type RawDeath = { name: string; ts: string | number; class?: string | null; riposteDeath?: boolean };
+// `ts` is SERVER time for anything ingested after bot 3.1.20 — the bot rewrites
+// it with the uploader's measured clock offset at ingest (utils/clockOffset.js)
+// so a skewed observer's copy of a shared death cannot escape the dedup window
+// below. tsRaw keeps the uploader's original stamp; rows older than that have
+// neither field and their `ts` is uncorrected.
+export type RawDeath = { name: string; ts: string | number; class?: string | null; riposteDeath?: boolean;
+                         tsRaw?: string | number; clockOffsetMs?: number };
 export type DeathRow = { name: string; count: number; class: string | null; riposteDeath: boolean; ts: string | number };
 
 function _tsMs(ts: string | number): number {

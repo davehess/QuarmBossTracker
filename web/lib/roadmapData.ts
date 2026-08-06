@@ -37,6 +37,21 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'clock-skew-deaths',
+    title: '⏱ A slow PC clock stops inventing deaths',
+    version: 'Bot 3.1.20 · Web 1.1.18',
+    date: '2026-08-06',
+    headline: 'Your computer\'s clock stamps every line the parser reads, so an install running a minute slow reported a death a minute late — far enough from everyone else\'s copy of the same death that it counted as a second one.',
+    features: [
+      { name: '⏱ The clock correction gets spent', blurb: 'The bot has been measuring how far off each install\'s clock is on its regular heartbeat. It now uses that measurement, correcting death times as the upload lands rather than trusting the stamp. Nothing to install and nothing to configure. If your clock is a minute out it is still worth a Windows date & time → "Sync now" — but the parse is right either way now. The original timestamp is kept alongside the corrected one.' },
+    ],
+    fixes: [
+      'A parse could show two deaths where one happened, if any of the raiders reporting it had a clock more than 30 seconds off. One install was over a minute out.',
+      'Diabo Xi Va and Diabo Xi Xin were transposed in the boss table, so every kill of one was recorded and shown as the other. Fixed, and the 41 past kills back to January have been relabelled to match.',
+      'The raid review counted trash from after the raid broke up — 89 kills last Tuesday, some more than an hour past the final boss. The tally now stops 15 minutes after the last kill.',
+    ],
+  },
+  {
     key: 'thousand-row-cap',
     title: '🔢 Pages were only ever seeing 1,000 rows',
     version: 'Web 1.1.13',
