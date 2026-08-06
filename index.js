@@ -236,6 +236,7 @@ const mimicLink = require('./utils/mimicLink');
 const { EXPANSION_ORDER, getThreadId, getBossExpansion, isPopLocked, isPopEraLocked } = require('./utils/config');
 const { dedupParseDeaths } = require('./utils/parseDeaths');
 const clockOffset = require('./utils/clockOffset');
+const kvLatch = require('./utils/kvLatch');
 const { discordAbsoluteTime, discordRelativeTime } = require('./utils/timer');
 
 function getBosses() {
@@ -9227,7 +9228,14 @@ async function _announceHarmonicHowlOnce() {
   const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
   const rows = await supabase.select('bot_kv',
     `guild_id=eq.${encodeURIComponent(guildId)}&key=eq.${_HOWL_KV_KEY}&select=value&limit=1`);
-  if (Array.isArray(rows) && rows[0]) return;   // already announced
+  // A FAILED LOOKUP IS NOT "NEVER ANNOUNCED" — see utils/kvLatch.js for the
+  // full story. This posted twice weeks after the fact during the 2026-08-06
+  // Supabase brownout because `select` returns null on a timeout and the old
+  // guard read that as an empty result.
+  if (!kvLatch.shouldRunOnce(rows)) {
+    if (kvLatch.latchState(rows) === 'unknown') console.warn('[howl-announce] latch unreadable — NOT posting');
+    return;
+  }
   // Channel: env wins; else resolve #raid-chat by NAME (Hitya 2026-07-19:
   // "deploy that image to raid chat" — the id was never captured as an env).
   let ch = process.env.RAID_CHAT_CHANNEL_ID
@@ -9277,7 +9285,13 @@ async function _fixV200CardNameOnce() {
   const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
   const rows = await supabase.select('bot_kv',
     `guild_id=eq.${encodeURIComponent(guildId)}&key=eq.${_HOWL_CARD_KV_KEY}&select=value&limit=1`);
-  if (Array.isArray(rows) && rows[0]) return;
+  // Same fail-closed rule (utils/kvLatch.js): null is "could not check", not
+  // "not done". This one only EDITS a card so it cannot spam, but a brownout
+  // would still make it re-scan and re-edit every boot.
+  if (!kvLatch.shouldRunOnce(rows)) {
+    if (kvLatch.latchState(rows) === 'unknown') console.warn('[howl-card] latch unreadable — skipping this boot');
+    return;
+  }
   const ch = await client.channels.fetch(process.env.MIMIC_RELEASE_CHANNEL_ID || '1525569949551300729').catch(() => null);
   if (!ch) return;
   const msgs = await ch.messages.fetch({ limit: 30 }).catch(() => null);
