@@ -149,11 +149,31 @@ Load-bearing details:
   failed review can never stop archives/consolidation/resets.
   `catchUpRaidNightReview` re-posts on boot (a deploy right after the 00:30
   freeze lift kills the timer).
-- **Idempotent**: message id in `state.channelSlots['rreview_<nightKey>']` (same
-  anchor+prune shape as `rn_`/`rollcard_`) — a re-run EDITS.
+- **Idempotent**: message id in `bot_kv` (`raid_review_msg_<nightKey>`), with
+  `state.json` only as a local mirror — a re-run EDITS. It was state.json-only
+  and that file does NOT persist on Railway, which is how eleven redeploys
+  produced eleven copies of one night's review (bot 3.1.8).
+- **Reserves the top two slots of the thread** (bot 3.1.21, R3). Discord orders
+  a thread by post time and cannot move a message, so `reserveReviewSlots()`
+  posts two placeholders at thread CREATION (`utils/raidNight.js` `_resolve`
+  step 4) and the review EDITS slot 1 into first position. Slot 2 is the
+  overflow landing spot for a review that exceeds `EMBED_BUDGET`, and the final
+  review DELETES it if unused. "Unclaimed" is just "not the stored review id" —
+  no claimed-flag bookkeeping — so a failed edit retries the same slot.
+- **Intentional deaths** (bot 3.1.21, R2): standing per-(character, `npc_id`)
+  rules in `intentional_death_rules`, set by officers from `/parses/[id]`
+  (`web/app/parses/actions.ts`). They are excluded from `worstFights` — "what to
+  work on" — and NOWHERE else: the death keeps its place in the headline count,
+  the deaths list and the timelines, and the header reads "5 deaths (2 on
+  purpose)". `docs/DESIGN-intentional-deaths.md`.
 - Death counts come from `contributions.raw_parse->deaths` through the shared
   `utils/parseDeaths.js` dedup (#134) plus a 60s cross-encounter collapse, so
-  the review, the parse card and the web page never disagree. The midnight
+  the review, the parse card and the web page never disagree. Those timestamps
+  are CLOCK-CORRECTED at ingest (`utils/clockOffset.js`, bot 3.1.20): a death's
+  `ts` is rewritten to server time using the uploader's measured offset and the
+  original kept as `tsRaw`, because an install running 63s slow put its copy of
+  a shared death outside the 30s dedup window and it escaped as a phantom
+  second death. The midnight
   compaction nulls `raw_parse` after 7 days — older nights render without deaths.
 - Night window = rollover→rollover (spans midnight, matches the thread). The
   shipped web page still buckets by plain ET calendar day — known, documented
