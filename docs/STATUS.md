@@ -1405,6 +1405,20 @@ Discord #feedback thread + /admin/feedback automatically.
 ### ⏳ Open TODO — carried forward from the retired docs
 *(These are durable items; the active wave order is in `DESIGN-platform-queue.md`.)*
 
+**Fight timeline v2 — boss HP curve + MT/RAMP lanes + class/player highlighting.
+DESIGNED, NOT BUILT. Full spec + data audit: `docs/DESIGN-fight-timeline.md`.**
+Uilnayar's napkin sketch 2026-08-06. The load-bearing finding is that the series
+already exists: `encounter_threat_snapshots` holds **490,850 rows across 36,784
+fights** of cumulative per-player `dmg`/`took`/`tookMax`/`pet_owner`, at a
+measured 3.5–6.4s cadence. The area chart, the class filtering AND the MT lane
+(argmax of Δ`took` per interval) are all derivable from it with no new capture.
+Two gaps only: (1) `rampageDmg` is computed by the threat tracker but never
+serialised into `per_player`, so the RAMP lane needs one added field rather than
+an inference; (2) 489,844 of 490,850 snapshot rows have `encounter_id IS NULL` —
+they carry `(boss_name, started_at)` instead, so binding needs a window join at
+read time plus resolution at ingest. Do not re-derive this audit; it is in the
+design doc.
+
 **#208 Item pages under-reported — and NO DROP rendered BACKWARDS. DONE
 (2026-08-04, web 1.1.8).** Found by Uilnayar comparing `/db/item/8733` with
 pqdi.cc. Every missing field was already in `eqemu_items`; it was a rendering
