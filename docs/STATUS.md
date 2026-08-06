@@ -1414,7 +1414,16 @@ twice at 8:41 PM, once flagged `riposte kill` and once bare.
 Do NOT fix by widening DEATH_DEDUP_MS: real deaths 30–60s apart in a long fight
 would silently merge, trading a visible overcount for an invisible undercount.
 
-**R2. Intentional deaths need an officer flag.** Fawx and Dant deliberately made
+**R2. Intentional deaths need an officer flag. DESIGNED —
+`docs/DESIGN-intentional-deaths.md`.** Key finding: "What to work on" is
+Discord-only (`utils/raidReview.js` `worstFights`) and shows boss + count, never
+names — so the whole fix is excluding intentional deaths from that one tally.
+Standing rule keyed on (character, `npc_id`), per-death override wins in BOTH
+directions. Migration is drafted inside the design doc and deliberately NOT in
+`supabase/migrations/` yet: the GitHub integration auto-applies on merge, and
+shipping schema before its code creates unused production tables. Open question
+recorded — put the control on the existing `/parses/[id]` officer strip rather
+than a new `/admin/deaths` page. ORIGINAL REPORT: Fawx and Dant deliberately made
 corpses on Kaas Thox Xi Ans Dyek — standard practice for those rogues on that
 fight, every time. They show in "What to work on" as failures. Wants an officer
 control to mark a death intentional. Note the pattern is per (character, boss)
@@ -1429,9 +1438,21 @@ first two message slots so a long review (or two) can land there.
 review counted 89 trash mobs / 115k damage / 21m in combat, sweeping in
 pre-raid-window kills. Needs scoping to the raid window, same as the kill list.
 
-**R5. Only 4 of 12 fight timelines rendered.** Unknown gate — worth checking
-whether it is a snapshot-availability threshold, a per-fight minimum, or a hard
-cap on how many render.
+**R5. Only 4 of 12 fight timelines rendered. RESOLVED — bot 3.1.17.** Not a bug:
+`utils/raidReview.js:700` drops fights with no in-window player death, because
+the section is a deaths-only sparkline and a clean kill renders a flatline of
+noise (comment at :873-877). Verified — the 8 omitted fights had ZERO deaths from
+any of the 6-9 uploaders, and the header's "7 deaths" equals the four rendered
+timelines' 2+2+2+1 exactly. The BUG was the silence: "(4)" printed under "12
+down" with nothing connecting them, so a suppressed clean kill was
+indistinguishable from a fight we failed to record. Now reads "(4 of 12)" with
+"8 clean kills not shown — nobody died".
+
+**R5b. Optional embed fields are SILENTLY DROPPED at the budget.** Found while
+investigating R3, unrelated to R5's cause. `utils/raidReview.js:839-846` — when
+`EMBED_BUDGET` (5800) is spent, optional fields (timelines, trash, campfire)
+return early and vanish with no trace. This is the real justification for the
+second review slot in R3.
 
 **R6. Partial parse on Diabo Xi Va (64k damage, flagged `*`).** The review itself
 says "only a partial parse reached us for this one". 8 of 12 kills got full
