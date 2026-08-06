@@ -4217,11 +4217,23 @@ function offHealCandidatesSnapshot() {
 //                  "defensive down"   (Currygoat, 2026-07-08 — the miss that
 //                  prompted broadening this beyond DA)
 //   Weapon Shield: "Weapon Shield activated for the next 15s!"
+//   Harmshield:    "Harmshield up 18s" · ">> HARMSHIELD <<"  (Uilnayar
+//                  2026-08-05 — the necro/SK invuln was named in this comment
+//                  from the start but was never a KIND, so a Harmshield
+//                  announce matched nothing and the rampage gold bar stayed
+//                  dark for a target who was, in fact, immune.)
 const _PROT_KINDS = [
   { kind: 'DA',            rx: /\bDA\b|divine aura/i,  caseSensitiveToken: /\bDA\b/ },
+  { kind: 'Harmshield',    rx: /harm\s*shield/i },
   { kind: 'Weapon Shield', rx: /weapon\s*shield/i },
   { kind: 'Defensive',     rx: /defensiv/i },
 ];
+// Kinds that make the target genuinely IMMUNE to melee, so a rampage cannot
+// hurt them — these light the gold bar. Defensive and Weapon Shield mitigate
+// but do not grant immunity, and must never appear here.
+// Harmshield (eqemu_spells 199) shares Divine Aura's exact fade string,
+// "Your invulnerability fades." — the game itself calls them the same class.
+const _PROT_INVULN_KINDS = ['DA', 'Harmshield'];
 // "3 minutes" / "1 min on defensive" → seconds; "15s" / "18 secs" → seconds.
 function _parseProtSeconds(text) {
   const min = text.match(/(\d{1,3})\s*(?:min|minute)/i);
@@ -4236,9 +4248,50 @@ const DA_BROADCAST_TTL_MS = 30_000;   // drop a chat "up" entry 30s after its sp
 // ACTIVATION (not from fade): a discipline is on cooldown for this long total,
 // so it's "DOWN, ready in (reuse − elapsed)" after its active window ends. DAs
 // are proccable (clickies/items — no fixed reuse), so they get no cooldown.
-const _PROT_ACTIVE_SECS   = { Defensive: 180, 'Weapon Shield': 15, DA: 18 };
-const _PROT_COOLDOWN_SECS = { Defensive: 631 };   // 10m31s from activation (Uilnayar 2026-07-09)
+// Harmshield: 3 ticks = 18s, from eqemu_spells 199 (buffduration 3) — the same
+// active window as Divine Aura.
+const _PROT_ACTIVE_SECS   = { Defensive: 180, 'Weapon Shield': 15, DA: 18, Harmshield: 18 };
+// Harmshield's 600s is its real spell recast_time (eqemu_spells 199). DA gets
+// no cooldown on purpose — it is proccable off clickies/items, so its 900s
+// spell recast says nothing about when the tank can do it again. Harmshield is
+// cast-only, so the recast IS the answer.
+const _PROT_COOLDOWN_SECS = { Defensive: 631, Harmshield: 600 };   // Defensive: 10m31s from activation (Uilnayar 2026-07-09)
 const _daBroadcasts = new Map();      // "speakerLower|kind" → { name, kind, activeEndsAtMs, readyAtMs, updatedAtMs }
+
+// ── Invulnerability OBSERVED in the combat log (Uilnayar 2026-08-05) ─────────
+// "we didn't see Syko's DA and we wasted heals on him as he was Rampage."
+// Both existing paths needed something Syko didn't have: the buff-list path
+// needs him uploading live-state (he was installing Zeal that night), and the
+// broadcast path needs a DA announce macro (his raid chat has none). Neither
+// could ever have fired — so the healers had nothing.
+//
+// But the log already says it. `_classifyAvoid` has recognised
+// "…but <name> is INVULNERABLE!" since forever and counts it per-tank as
+// `invulns`; we simply never fed it back to the rampage bar. This is the same
+// move as reading Defensive Discipline off bystander-visible combat lines
+// instead of demanding a macro — it works for a tank who runs NOTHING, as long
+// as ONE raider's log sees the mob swing at them.
+//
+// Deliberately NO countdown: an INVULNERABLE line says "immune right now", not
+// when it started, and inventing a duration would be worse than none. Freshness
+// is tight on purpose — the risk here is ASYMMETRIC. Saying "immune" when the
+// window has lapsed can get a tank killed; saying nothing merely costs the heal
+// this feature exists to save. A mob swings every ~2s, so while an invuln is
+// genuinely up these lines keep arriving and the mark stays lit.
+const _INVULN_OBSERVED_TTL_MS = 4000;
+const _invulnObserved = new Map();    // defenderLower → last "is INVULNERABLE" ms
+function noteInvulnObserved(defender, atMs) {
+  if (!defender) return;
+  _invulnObserved.set(String(defender).toLowerCase(), atMs || Date.now());
+}
+function _invulnObservedForName(name) {
+  if (!name) return null;
+  const at = _invulnObserved.get(String(name).toLowerCase());
+  if (!at) return null;
+  if (Date.now() - at > _INVULN_OBSERVED_TTL_MS) return null;
+  // seconds:null renders as "UP" with no timer — honest about what we know.
+  return { name: 'Invuln', seconds: null, critical: false, observed: true };
+}
 // Centralized state setter for a protective. up=true records an activation
 // (active window + discipline cooldown); up=false is a fade (active ends now,
 // the cooldown keeps running to its ready time — estimated back from the fade
@@ -4267,7 +4320,9 @@ function trackDaBroadcastLine(line, character) {
   // Cheap pre-filter: 'DA' substring (case-sensitive) OR a defensive/weapon-
   // shield word. Only pays the regex when the fast substring misses.
   if (!line) return;
-  if (line.indexOf('DA') === -1 && !/defensiv|weapon\s*shield|divine aura/i.test(line)) return;
+  // "Harmshield" contains no 'DA', so without it here the fast path returned
+  // before any kind could match — the announce was invisible.
+  if (line.indexOf('DA') === -1 && !/defensiv|weapon\s*shield|divine aura|harm\s*shield/i.test(line)) return;
   const m = line.match(_CH_SPEAKER_RX);
   if (!m) return;
   const text = m[2];
@@ -4336,17 +4391,28 @@ function daBroadcastsSnapshot() {
 // gold bar — Defensive/Weapon Shield reduce damage but don't make the tank immune.
 function _daBroadcastForName(name, greenSecs) {
   if (!name) return null;
-  const e = _daBroadcasts.get(String(name).toLowerCase() + '|DA');
-  if (!e) return null;
   const now = Date.now();
-  if (e.activeEndsAtMs != null) {
-    if (now >= e.activeEndsAtMs) return null;   // no longer up
-    const seconds = Math.max(0, Math.round((e.activeEndsAtMs - now) / 1000));
-    return { name: e.name || 'DA', seconds, critical: seconds <= greenSecs };
+  const lower = String(name).toLowerCase();
+  // Check every TRUE-INVULN kind, not just 'DA'. Whichever has the most time
+  // left wins: the bar answers "is this target immune, and for how long",
+  // so the longest active immunity is the honest number.
+  let best = null;
+  for (const kind of _PROT_INVULN_KINDS) {
+    const e = _daBroadcasts.get(lower + '|' + kind);
+    if (!e) continue;
+    if (e.activeEndsAtMs != null) {
+      if (now >= e.activeEndsAtMs) continue;    // no longer up
+      const seconds = Math.max(0, Math.round((e.activeEndsAtMs - now) / 1000));
+      if (!best || best.seconds == null || seconds > best.seconds) {
+        best = { name: e.name || kind, seconds, critical: seconds <= greenSecs };
+      }
+      continue;
+    }
+    // "Up" with unknown duration — still up until it goes stale (re-announced).
+    if (now - e.updatedAtMs > DA_BROADCAST_TTL_MS) continue;
+    if (!best) best = { name: e.name || kind, seconds: null, critical: false };
   }
-  // "Up" with unknown duration — still up until it goes stale (re-announced).
-  if (now - e.updatedAtMs > DA_BROADCAST_TTL_MS) return null;
-  return { name: e.name || 'DA', seconds: null, critical: false };
+  return best;
 }
 
 // ── Defensive Discipline via the COMBAT LOG (Uilnayar 2026-07-08) ────────────
@@ -6786,6 +6852,9 @@ class EncounterBuilder {
                 : k === 'invulnerable' ? 'invulns'
                 : null;
       if (col) this._bumpDefender(def, col, 1, Date.parse(event.ts) || Date.now());
+      // Feed the rampage invuln mark. Same event that already increments the
+      // `invulns` column — the data was here all along.
+      if (k === 'invulnerable') noteInvulnObserved(def, Date.parse(event.ts) || Date.now());
 
       // On a riposte, the defender is about to counter-attack the original attacker.
       // Track that so we can credit the next damage event (def → attacker) as
@@ -9483,7 +9552,11 @@ function _serializeTankState() {
       // Tank's buff list first; fall back to their DA /rsay broadcast when they
       // don't upload buffs via Mimic (#152). Either lights the gold bar; the
       // by-name lookup preserves the ≤5s→green (critical) rule.
-      da: _findDA(rampBuffs, 5) || _daBroadcastForName(r.target, 5),
+      // Three sources, best-known first: the target's own uploaded buff list
+      // (exact spell + countdown), their announce macro (kind + countdown),
+      // then the combat log's INVULNERABLE lines (immune NOW, no timer) —
+      // which is the only one that works for a tank running nothing at all.
+      da: _findDA(rampBuffs, 5) || _daBroadcastForName(r.target, 5) || _invulnObservedForName(r.target),
     };
   }
 
