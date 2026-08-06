@@ -376,7 +376,13 @@ describe('four same-name mobs, four tagging tanks', () => {
 
 describe('Zeal /tag integration (spawn ids through chat)', () => {
   it('tags index is freshness-gated and newest-per-spawn-id', () => {
-    expect(src).toMatch(/const extTagFreshMs = tn\('ext_tag_fresh_sec', 120\) \* 1000;/);
+    // Assert the SHAPE and a lower BOUND, never the literal number — pinning
+    // 120 is what made this test wrong the moment the TTL was raised, and the
+    // number is a tuning decision, not a contract.
+    const m = src.match(/const extTagFreshMs = tn\('ext_tag_fresh_sec', (\d+)\) \* 1000;/);
+    expect(m, 'tag index must stay freshness-gated via ext_tag_fresh_sec').toBeTruthy();
+    expect(Number(m[1]), 'default must outlast a 5-10 min boss fight — a tag is a fight-long mark')
+      .toBeGreaterThanOrEqual(300);
     expect(src).toMatch(/if \(!prev \|\| sinceMs > prev\.sinceMs\)/);
   });
 

@@ -10183,7 +10183,13 @@ async function _handleAgentExtendedTarget(req, res) {
     // Tags carry the mob's TRUE spawn id (the pipe's missing field, via chat).
     // Newest tag per spawn id wins across uploaders. Freshness-gated: a tag is
     // a deliberate mark, so it outlives a melee connect (ext_tag_fresh_sec).
-    const extTagFreshMs = tn('ext_tag_fresh_sec', 120) * 1000;
+    // 600s, not 120s: a tag is a FIGHT-LONG statement and bosses run 5-10
+    // minutes. At 120 the first successful capture (six uploaders, spawn_id
+    // 360, 2026-08-06) aged out mid-fight with the boss still at 32%, throwing
+    // away the only field that carries true mob identity. The agent expires its
+    // own copy first (_TAG_FRESH_MS), so this knob alone cannot fix it — both
+    // had to move. Still live-tunable here for a raid that wants it shorter.
+    const extTagFreshMs = tn('ext_tag_fresh_sec', 600) * 1000;
     const tagsByName = new Map();
     for (const r of inScope) {
       if (!Array.isArray(r.zeal_tags)) continue;
