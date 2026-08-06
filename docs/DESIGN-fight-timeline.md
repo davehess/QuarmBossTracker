@@ -103,6 +103,90 @@ Recommend shipping BOTH against one selection model — a set of highlighted
 characters, with class buttons as bulk selectors over that set. One highlight
 mechanism, two ways to fill it, no second code path.
 
+## Long-term storage — the two-tier model (measured 2026-08-06)
+
+Uilnayar: "can we come up with a longterm storage model that would shrink this
+but still maintain that sort of timeline view?" Yes, and the numbers are lopsided
+enough that the answer is easy.
+
+### Where it stands today
+
+| | |
+|---|---|
+| `encounter_threat_snapshots` | **411 MB**, 491,365 rows, **876 B/row** |
+| growth | ~80k rows + ~65 MB **per week** → **~3.4 GB/year** |
+| encounters that exist, EVER | **1,531** (200 in the last 35 days) |
+
+Half a million snapshot rows exist to describe fifteen hundred fights. The table
+grows with WALL-CLOCK TIME — it snapshots whether or not anything is happening —
+while the thing we want to look at grows with FIGHTS. That mismatch is the whole
+problem, and it is what makes this fixable.
+
+### Measured on one real fight
+
+Kaas Thox Xi Ans Dyek, 2026-08-06 00:38:03, rolled to 5s buckets:
+
+| form | rows | size | vs raw |
+|---|---|---|---|
+| raw snapshots (jsonb, cumulative) | 609 | 275 kB | — |
+| one row per character, cumulative arrays | 10 | 39 kB | **7.2×** |
+| one row per character, **delta** arrays | 10 | **19 kB** | **14.5×** |
+
+And the number that decides the encoding: **4,908 of 4,928 delta buckets are
+ZERO**. The series is 99.6% empty, because a fight record spans a long window in
+which any given player acts in a handful of buckets. Dense arrays of mostly-zero
+are the wrong shape; a sparse `(idx[], val[])` pair goes far below the 19 kB
+above. (Note `pg_column_size` on these arrays reports the INLINE size — they sit
+under the ~2 kB TOAST threshold, so on-disk compression is not yet helping. That
+is an argument for sparsity, not against it.)
+
+### The model
+
+**HOT — `encounter_threat_snapshots`, unchanged.** It feeds the live overlays and
+must stay exactly as it is. Add **retention only: 14 days.** Steady state
+becomes ~156k rows / ~130 MB and stops growing. This one change caps the biggest
+table on the platform.
+
+**COLD — `encounter_series`, one row per `(encounter_id, character)`**, written
+once when a fight closes:
+
+```
+encounter_id, character, pet_owner,
+t0            timestamptz,   -- fight start
+step_sec      smallint,      -- 5
+dmg_idx  int[],  dmg_val  int[],   -- sparse: bucket index + delta
+took_idx int[],  took_val int[],
+ramp_idx int[],  ramp_val int[]
+```
+
+A fixed step means **no timestamps are stored at all** — bucket `i` is
+`t0 + i*step`. That alone removes 8 bytes per point, and it makes the chart's
+x-axis arithmetic instead of a join.
+
+Rules at roll-up time:
+- **Only encounters.** Snapshots that never bind to an encounter are trash and
+  are never archived — they simply age out of the hot tier.
+- **Dedup uploaders.** Several uploaders snapshot the same fight (Diabo Xi Xin
+  Thall had 2). Merge to one canonical series, max-per-player-per-bucket — the
+  `merge_encounter_players` idiom, reused rather than reinvented.
+- **Deltas, not cumulative.** 2× on its own, and it makes the sparse encoding
+  possible (a cumulative series has no zeros to drop).
+
+### What this buys
+
+~2,100 encounters/year × ~20 kB dense (far less sparse) ≈ **40 MB/year**, against
+**3.4 GB/year** today — and the cold tier is the ONLY thing the timeline reads,
+so the view gets faster as well as smaller. Growth becomes proportional to fights
+fought rather than hours elapsed, which is the property that actually matters for
+a guild that raids three nights a week.
+
+### Order to build it
+
+Retention on the hot tier FIRST — it is one policy, needs no new code, and stops
+the bleeding immediately. Roll-up and the cold table next. **Do not delete
+anything before the roll-up is verified against the raw rows for the same
+fight**; the raw data is the only copy until then.
+
 ## Deliberately NOT in scope
 
 - Per-ability breakdown inside the curve. `by_skill` lives in
