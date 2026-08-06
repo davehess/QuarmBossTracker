@@ -1424,10 +1424,14 @@ Sun/Wed/Thu window before touching the code.
 2. **`[ext-pos]` shadow log for a REAL twin-add pull.** Gates on
    `engaged.length >= 2`, so it needs two tanks genuinely hit by two same-name
    mobs. Tunes `ext_pos_cluster_units` from measurement instead of the 25 guess.
-3. **Healer-mana: were the shamans missing MID-FIGHT or between pulls?** This
-   single question decides whether it is a bug or the designed 5-min macro-roster
-   GC. Both shamans are macro-fed (Fungalfist has no `discord_id` — not on
-   Mimic), so they legitimately age out between pulls.
+3. ~~**Healer-mana: were the shamans missing MID-FIGHT or between pulls?**~~
+   **ANSWERED 2026-08-06 23:26 ET — NOT A BUG.** Observed mid-fight on Diabo Xi
+   Va Temariel: Fungalfist (12%) and Ghalix (100%) both present. The earlier
+   absence was the macro-roster's 5-minute between-pulls GC working as designed.
+   No code change. (Same session also confirmed the druid class labels reading
+   correctly — but that does NOT validate the 3.5.38 fix, which was not
+   installed: it only shows the DI-status piggyback had data, which is exactly
+   when the flap does not occur.)
 4. **Raid ticks failing / output files blank.** The DKP TICKS panel went
    "cannot submit" → "No attendees in that source" → then worked. Grab the
    failing state: which slot, what the file contained, what the network call

@@ -66,8 +66,29 @@ serialised into `per_player`. Without it the RAMP lane can only be guessed
 platform keeps getting burned by. **Add `ramp` to the snapshot payload** — one
 field, agent-side, no schema change (it is jsonb).
 
-**2. The snapshots are not bound to encounters.** 489,844 of 490,850 rows have
-`encounter_id IS NULL`; only 1,069 are bound. They carry `boss_name` +
+**2. The snapshots are not bound to encounters — HISTORICALLY.** 489,844 of
+490,850 rows have `encounter_id IS NULL`; only 1,069 are bound.
+
+> **CORRECTION, measured live 2026-08-06 03:26 during the Vex Thal raid.** That
+> ratio describes the BACKLOG, not the live pipeline — which already binds.
+> Four of the last five fights bound hundreds of snapshots each:
+>
+> | encounter | npc | duration | players | bound snaps |
+> |---|---|---|---|---|
+> | 6518d6e2 | 158441 | 535s | 42 | **387** |
+> | 3aae7afe | 158464 | 510s | 41 | **0** ⚠ |
+> | 5f29124d | 158436 | 306s | 39 | **137** |
+> | 0efbf21c | 158446 | 358s | 39 | **184** |
+> | fda97834 | 158440 | 517s | 36 | **277** |
+>
+> So the read-time window join is a BACKFILL tool, not the mechanism. Do not
+> build the live path around it.
+>
+> ⚠ **Open anomaly:** `3aae7afe` bound ZERO while its neighbours bound hundreds
+> — a real 510s fight with 41 players and 1.34M damage. npc 158464 is one of the
+> two duplicate `Kaas_Thox_Xi_Aten_Ha_Ra` rows in the catalog (158437 / 158464),
+> which may or may not be related. Worth chasing before trusting binding
+> unconditionally. They carry `boss_name` +
 `started_at` instead, so a fight is addressable as `(boss_name, started_at)` and
 joinable to `encounters` on an overlapping window — the same ±window idea
 `find_or_create_encounter` already uses. Two options:
