@@ -164,9 +164,20 @@ is an argument for sparsity, not against it.)
 ### The model
 
 **HOT — `encounter_threat_snapshots`, unchanged.** It feeds the live overlays and
-must stay exactly as it is. Add **retention only: 14 days.** Steady state
-becomes ~156k rows / ~130 MB and stops growing. This one change caps the biggest
-table on the platform.
+must stay exactly as it is. Add **retention only**.
+
+> **DECIDED 2026-08-06 (Uilnayar): Model B, with a 2-MONTH hot window**, not the
+> 14 days originally proposed — *"I'd like to keep 2 months full before tuning
+> down."* Costed at the measured 12.2 MB/day:
+>
+> | hot window | steady-state hot tier |
+> |---|---|
+> | 14 days (proposed) | ~170 MB |
+> | **60 days (chosen)** | **~730 MB** |
+>
+> Still bounded and still stops the growth — total DB settles around 1.6 GB
+> against Pro's 8 GB included, so the extra 560 MB costs nothing and buys full
+> native resolution for the whole of last month's raids. Take the 2 months.
 
 **COLD — `encounter_series`, one row per `(encounter_id, character)`**, written
 once when a fight closes:

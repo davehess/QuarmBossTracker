@@ -3,10 +3,20 @@
 // callbacks land but the session never propagates to RSC reads.
 //
 // Also logs page views to page_views (Uilnayar 2026-06-24 — /admin/analytics).
-// Fire-and-forget; never awaited, so a slow Supabase write never delays the
-// page render. Only logs when there's an authenticated user (anonymous traffic
-// + bots are silently dropped).
-import { NextResponse, type NextRequest } from 'next/server';
+// Handed to event.waitUntil() rather than left dangling, so the write completes
+// without the response ever waiting on it. Only logs when there's an
+// authenticated user (anonymous traffic + bots are silently dropped).
+//
+// WHY waitUntil AND NOT A BARE `void promise`: this runs in the Edge runtime,
+// where the isolate is torn down as soon as the response is returned. An
+// un-awaited promise is simply abandoned — the fetch may never leave the
+// machine. The original code was correct-looking, the RLS policy
+// (page_views_insert_own, check auth.uid() = user_id) was correct, and
+// page_views still held ZERO rows from 2026-06-24 to 2026-08-06 because every
+// insert was dropped on the floor. The errors were swallowed by design, so
+// nothing ever surfaced. waitUntil is what tells the runtime to keep the
+// isolate alive until the work finishes.
+import { NextResponse, type NextRequest, type NextFetchEvent } from 'next/server';
 import { createServerClient, type CookieOptions } from '@supabase/ssr';
 
 // Routes we never log: API/RSC payloads, auth callbacks, admin pages
@@ -37,7 +47,7 @@ function normalizeRoute(pathname: string): string {
 // which serves per-path OG tags (web/lib/pageMeta.ts). Case-insensitive.
 const PREVIEW_BOT_RX = /discordbot|slackbot|twitterbot|facebookexternalhit|whatsapp|telegrambot|linkedinbot|skypeuripreview|redditbot|mastodon|pinterestbot/i;
 
-export async function middleware(request: NextRequest) {
+export async function middleware(request: NextRequest, event: NextFetchEvent) {
   // Per-page link unfurls (Uilnayar 2026-07-08) — serve crawlers the meta
   // document BEFORE any session work; bots carry no cookies anyway.
   if (request.method === 'GET'
@@ -115,13 +125,19 @@ export async function middleware(request: NextRequest) {
               || pathname === '/favicon.ico';
     if (!skip) {
       const ua = request.headers.get('user-agent') || null;
-      void supabase.from('page_views').insert({
-        user_id:    user.id,
-        path:       pathname,
-        route:      normalizeRoute(pathname),
-        referrer:   request.headers.get('referer') || null,
-        user_agent: ua ? ua.slice(0, 200) : null,
-      }).then(() => undefined, () => undefined);
+      // Errors still swallowed — a logging failure must never break navigation
+      // — but the promise is now HANDED TO THE RUNTIME instead of abandoned.
+      // Promise.resolve() because the Supabase builder is a PromiseLike, not a
+      // real Promise, and waitUntil demands the latter.
+      event.waitUntil(Promise.resolve(
+        supabase.from('page_views').insert({
+          user_id:    user.id,
+          path:       pathname,
+          route:      normalizeRoute(pathname),
+          referrer:   request.headers.get('referer') || null,
+          user_agent: ua ? ua.slice(0, 200) : null,
+        }),
+      ).then(() => undefined, () => undefined));
     }
   }
 
