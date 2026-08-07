@@ -20,8 +20,9 @@ it, so nobody re-derives them from EXPLAIN plans again. If you're about to query
 - **`spawn2` / `spawnentry` / `spawngroup` ARE populated** (verified 2026-07-27:
   43,654 spawn points — all with x/y/z + respawn — across 182 zones; 16,187 of
   18,033 NPCs placed). Join `npc_id → eqemu_spawnentry.spawngroup_id →
-  eqemu_spawn2` for a mob's zone(s), coords, respawn timer, and per-entry spawn
-  `chance` (placeholder odds); read zone from `eqemu_spawn2.zone_short`. The
+  eqemu_spawn2` for a mob's zone(s), coords, and per-entry spawn
+  `chance` (placeholder odds); read zone from `eqemu_spawn2.zone_short`. For
+  `respawntime` see the warning below — it is NOT the raid timer. The
   *denormalized* `eqemu_npc_types.zone_short` column is still NULL — don't read
   that one. (This bullet used to say the spawn tables were empty; the weekly
   `sync-quarm.yml` mirror now pulls them.)
@@ -32,6 +33,20 @@ it, so nobody re-derives them from EXPLAIN plans again. If you're about to query
     `npc_id, item_id, item_name`) → `z.zone_id = d.npc_id/1000` → `z.expansion`.
     (The normalized path is npc_types.loottable_id → loottable_entries →
     lootdrop_entries.item_id; `eqemu_npc_drops` is the shortcut.)
+- **⚠ `eqemu_spawn2.respawntime` IS NOT THE RAID TIMER — `data/bosses.json`
+  `timerHours` is.** Measured 2026-08-06 against PQDI: Derakor the Vindicator's
+  real instance timer is **2d18h (66h)**, and the catalog says **472.22h**
+  (1,700,000s). That 472.22h is a flat **sentinel**, not a measurement — 15 of
+  the 19 tracked raid bosses that join to a spawn row carry the identical value
+  whether their true timer is 66h or 162h. Instanced raid targets are spawned by
+  the instance system, so the spawn2 row just parks a very-long placeholder.
+  Three bosses happen to agree (Aten Ha Ra 162, Maestro of Rancor 66, a
+  Dracoliche 66) — coincidence, not a rule to lean on — and Saryrn disagrees the
+  *other* way (catalog 72h, actual 168h), so "catalog value looks plausible" is
+  not a safety check. Nothing in the bot reads this column today (only
+  `scripts/sync-from-eqmac.js` writes it); keep it that way. Trash respawns are
+  a different matter and look real — the Kael protectors' 24.4m, the Sleeper's
+  Tomb 24h — but they are unverified against live behaviour.
 - **Useful indexes exist** on `eqemu_merchantlist(item)` and
   `eqemu_npc_drops`… but NOT a prefix index on `eqemu_items.name` (only a GIN
   tsvector) — see the spells-page perf note below.
