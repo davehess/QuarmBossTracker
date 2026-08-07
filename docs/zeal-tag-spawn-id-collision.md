@@ -99,6 +99,49 @@ the mobs people tag — occupy the same low ids in *every zone at once*. Cross-z
 collision is therefore structural rather than unlucky, which matches every
 observation above landing in the 17–53 range.
 
+Note the mechanism is simply that an id belongs to a *spawn instance*: it dies
+with the mob and the next spawn takes the next number. A mob that is never
+killed keeps its boot-time id indefinitely. That is a useful safety property —
+a stale tag can never re-attach to a respawned mob, because the respawn has a
+new id — and it means the ENTIRE realistic risk is cross-zone, against mobs
+that do not die. Which is precisely the static named NPCs people tag.
+
+### 2c. How dense the collision band actually is (measured)
+
+Every mob in one zone (Surefall Glade) tagged in a single sweep, 24 in total.
+The named NPCs:
+
+| spawn_id | mob | | spawn_id | mob |
+|---|---|---|---|---|
+| 11 | Livam T\`Lant | | 38 | Niera Farbreeze |
+| 13 | Vesteri Nomanoi | | 40 | Lerian Wyndrunner |
+| 14 | Salmekia Treherth | | 41 | Jhaya Wyndrunner |
+| 16 | Te\`Anara | | 43 | Qomber Roblen |
+| 17 | Gerael Woodone | | 44 | Sallah |
+| 18 | Sequea Erthinon | | 45 | Arrivae Valleren |
+| 34 | Corun Finisc | | | |
+| 35 | Frenway Marthank | | | |
+
+**Fourteen named NPCs inside a 35-integer window (11–45) — 40% occupancy of
+that band, in one zone.** Every zone allocates from the same base, so a tag
+broadcast with a low id has roughly even odds of finding *a* named NPC in
+whatever zone the receiver is standing in. This is the quantitative reason the
+bug is so visible in practice.
+
+Cross-checks against tags taken two hours earlier in the same session:
+`Gerael Woodone` was spawn 17 then and spawn 17 now; `Arrivae Valleren` was 45
+then and 45 now. Both stable — so the `DAFEET THIS` label seen on Arrivae
+Valleren, and the labels on the bears, came from *other zones*, not from local
+id churn.
+
+### 2d. Same-name separation at N=5
+
+The same sweep caught five simultaneous `a brown bear` (ids 54, 55, 56, 57,
+4363) and three simultaneous `a bear cub` (58, 140, 3802) — eight mobs across
+two display names, every one distinguishable. All 24 tags in the sweep were
+captured independently by two separate client installs with tagger, name and id
+intact, so the cross-client relay is lossless at this volume.
+
 ### 3. Same-name mobs in different zones, live
 
 Two players in different zones tagged mobs sharing the display name `a gnoll`:
