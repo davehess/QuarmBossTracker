@@ -10374,6 +10374,10 @@ function _serializeForDashboard() {
     // renders "tag capture: ready" from this instead of assuming.
     zealTagConfig: readZealTagConfig(),
     zealTagCount: zealTagsSnapshot().length,
+    // Tags the upload cap had to drop, and the last time the SERVER refused a
+    // tag broadcast. Both are silent failures otherwise — see the 🏷 card.
+    zealTagsDropped: Number(stats.zealTagsDropped) || 0,
+    zealTagRateLimit: tagRateLimitSnapshot(),
     // Backup for when zeal.ini isn't reachable: a tag we SAW arrive already
     // rewritten by prettyprint (spawn id stripped at the source).
     zealTagPretty: _tagPrettyPrintSeen,
@@ -14942,6 +14946,16 @@ function renderInfo(s) {
   // (an acceptable repaint — the Info tab is not a form surface mid-raid).
   const _ztc = s.zealTagConfig || [];
   h += '<div class="card"><h2>🏷 Zeal tag capture</h2>';
+  if (s.zealTagRateLimit) {
+    h += '<div style="margin-bottom:4px;color:#f2b632;font-size:11px">⚠️ The server rate limited your chat around <code>'
+      + esc(new Date(s.zealTagRateLimit.at).toLocaleTimeString())
+      + '</code> (' + esc(String(s.zealTagRateLimit.seconds)) + 's lockout). Tags sent in that window did <b>not</b> broadcast — '
+      + 'Zeal still draws the arrow, so they look tagged to you and to nobody else. Re-tag them, and spread tagging across raiders (the limit is per character).</div>';
+  }
+  if (s.zealTagsDropped > 0) {
+    h += '<div style="margin-bottom:4px;color:#f2b632;font-size:11px">⚠️ <b>' + esc(String(s.zealTagsDropped))
+      + '</b> tag(s) exceeded the upload cap and were not sent. Named mobs are kept first, then the newest — but this many live tags means the raid is marking faster than the cap allows.</div>';
+  }
   if (s.zealTagPretty && !_ztc.some(function (z) { return z.prettyprint; })) {
     h += '<div style="margin-bottom:4px;color:#f2b632;font-size:11px">⚠️ Saw a tag arrive already rewritten by <code>/tag prettyprint</code> (<code>' + esc(s.zealTagPretty.sample || '') + '</code>) — that strips the spawn id, so same-name mobs cannot be told apart. Run <code>/tag prettyprint off</code>.</div>';
   }
@@ -25936,12 +25950,41 @@ const _ZEAL_TAG_SHAPES = { r: 'R', o: 'O', y: 'Y', g: 'G', b: 'B', w: 'W', p: 'P
 // — and it had aged out four minutes later, mid-fight, while the boss was still
 // at 32%. Boss fights run 5-10 minutes, so expiring at 2 discards the ONLY
 // field that carries true mob identity for most of the encounter.
-// 10 minutes. Safe to hold this long because a tag is never the sole authority:
-// `clear`/`-` broadcasts erase explicitly, a same-name death clears that name's
-// buckets, and every stored entry keeps its mob name so a reused spawn id on a
-// different mob cannot silently inherit the label.
+// 10 minutes. The safeguards that justify holding this long, CORRECTED
+// 2026-08-07 — the previous note claimed three and only one of them was real:
+//   · `clear`/`-` broadcasts erase explicitly. TRUE.
+//   · "a same-name death clears that name's buckets" — FALSE for this map. Those
+//     buckets are the BOT's clustering state. Nothing here has ever cleared on a
+//     death, and grep confirms only four mutation sites (set / clear / erase /
+//     TTL sweep). Not needed either, as it turns out: a spawn id belongs to a
+//     spawn INSTANCE and dies with the mob, so a respawn takes a fresh id and
+//     cannot inherit a stale tag (measured — a killed `a bloodsaber defiler`
+//     came back 3250 → 4029 → 4038).
+//   · "every stored entry keeps its mob name so a reused spawn id cannot
+//     silently inherit the label" — the name IS stored, but nothing compared it
+//     on read, so it protected nothing on its own. The bot's index is keyed
+//     `nameLower → Map(spawn_id → tag)`, and THAT is what actually shields us.
+// The real exposure is cross-zone: ids are allocated from a low base in every
+// zone, so two zones' never-killed mobs share ids constantly (14 named NPCs
+// inside ids 11–45 in one zone). Hence the zone-change clear below.
 const _TAG_FRESH_MS = 600_000;
 const _zealTags = new Map();     // spawnId → { spawn_id, mob, mobDisplay, text, shape, tagger, tsMs }
+// Zone the tags in _zealTags were captured in. A tag is only meaningful in the
+// zone it was broadcast for; on a zone change the whole map is stale (see the
+// cross-zone note above) and gets dropped.
+let _zealTagsZone = null;
+// Cap on how many tags ride one live-state upload. Was 24 in both the agent and
+// the bot, and a full-zone sweep in The Deep hit it EXACTLY — the payload kept
+// the OLDEST 24 (Map insertion order) and silently dropped the rest, including
+// the boss, which had been tagged last. Bot 3.1.31 raised its half to 64 first;
+// this is the matching agent half. Named mobs are never dropped.
+const _TAG_UPLOAD_CAP = 64;
+// Most recent "You are currently rate limited" the log showed us. Tags are chat
+// messages, so a burst is REFUSED by the server — and Zeal still draws the
+// nameplate arrow, so the tagger believes the raid can see a mark nobody got.
+// A fourth silent-failure mode alongside /tag local, unjoined channel, and
+// suppress-on; the only one that hits a correctly-configured install mid-raid.
+let _tagRateLimit = null;        // { at: ms, untilMs: ms, seconds: n }
 function _isZealTagPayload(msg) {
   return typeof msg === 'string' && (msg.startsWith('ZEALTAG | ') || msg.startsWith('ZT | '));
 }
@@ -25998,7 +26041,24 @@ function _applyZealTagMessage(msg, tagger, tsMs) {
     // Two names on one spawn id inside a single row is the strongest single
     // observation the experiment can produce: an append proves both clients
     // resolved the same id to the same mob, with no timing luck involved.
+    //
+    // CARRY IT FORWARD on a self-append (2026-08-07). We store one entry per
+    // spawn id, so appending onto your OWN tag used to overwrite `prev` with
+    // yourself and null this out — even though the nameplate still showed the
+    // other tagger's fragment. Verified live: Canopy appended twice onto
+    // Gerael Woodone, the first kept `appended_to: Adiwen` and the second
+    // dropped it, and the only difference was who broadcast last. Re-marking
+    // your own tag mid-fight is normal, so the link has to survive it.
     appendedTo: (mode === 'append' && prev && prev.tagger && prev.tagger !== tagger)
+      ? prev.tagger
+      : (mode === 'append' && prev ? (prev.appendedTo || null) : null),
+    // A plain re-tag (`set`) over someone else's tag OVERWRITES them, and the
+    // evidence that two clients agreed on this spawn id goes with it. Observed:
+    // four skeletons, one re-tagged by a second player, and afterwards nothing
+    // in the row showed the first tagger had ever been there — we could not
+    // even tell WHICH one they had tagged. Same evidentiary value as
+    // appendedTo, so keep it rather than throw it away.
+    replacedTagger: (mode === 'set' && prev && prev.tagger && prev.tagger !== tagger)
       ? prev.tagger : null,
   });
   return true;
@@ -26137,6 +26197,64 @@ function zealTagsSnapshot(nowMs) {
     out.push(v);
   }
   return out;
+}
+
+// A mob whose display name is a proper noun — `Thought Horror Overfiend`,
+// `Agent of Solusek`. Generic spawns are article-prefixed and lowercase
+// (`an elder thought horror`).
+function _isNamedMobTag(t) {
+  return /^[A-Z]/.test(String((t && t.mobDisplay) || ''));
+}
+// Choose which tags survive _TAG_UPLOAD_CAP. Named mobs first and in full —
+// they are rare and they are what a raid needs identified — then generics
+// newest-first. The old code sliced the Map in INSERTION order, which kept the
+// oldest and dropped the newest; in The Deep that discarded the boss.
+function _pickTagsForUpload(tags, cap) {
+  const lim = cap || _TAG_UPLOAD_CAP;
+  if (!Array.isArray(tags) || tags.length <= lim) return tags || [];
+  const newestFirst = (a, b) => (b.tsMs || 0) - (a.tsMs || 0);
+  const named   = tags.filter(_isNamedMobTag).sort(newestFirst);
+  const generic = tags.filter(t => !_isNamedMobTag(t)).sort(newestFirst);
+  const picked  = named.concat(generic).slice(0, lim);
+  stats.zealTagsDropped = tags.length - picked.length;
+  return picked;
+}
+
+// Zone changed → every tag we hold describes spawn ids in the zone we LEFT, and
+// ids are reused across zones (see the _TAG_FRESH_MS note). Drop them all.
+// Called from the live-state zone tracking; cheap and idempotent.
+function noteZoneForTags(zone) {
+  const z = zone ? String(zone) : null;
+  if (!z) return false;
+  if (_zealTagsZone === z) return false;
+  const had = _zealTags.size;
+  _zealTags.clear();
+  _zealTagsZone = z;
+  if (had) console.log(`[zeal-tag] zone → ${z}; dropped ${had} tag(s) from the previous zone`);
+  return true;
+}
+
+// "You are currently rate limited, you cannot send more messages for N seconds"
+// Tags are chat messages, so a burst is refused by the SERVER and the broadcast
+// never happens — while Zeal still draws the nameplate arrow locally. Record it
+// so the dashboard can say so instead of the user seeing an empty capture and
+// assuming the agent is broken.
+const _RATE_LIMIT_RX = /you are currently rate limited, you cannot send more messages for (\d+) seconds/i;
+function noteRateLimitLine(line, tsMs) {
+  if (!line || line.indexOf('rate limited') === -1) return false;
+  const m = line.match(_RATE_LIMIT_RX);
+  if (!m) return false;
+  const seconds = parseInt(m[1], 10) || 0;
+  const at = tsMs || Date.now();
+  _tagRateLimit = { at, seconds, untilMs: at + seconds * 1000 };
+  return true;
+}
+function tagRateLimitSnapshot() {
+  if (!_tagRateLimit) return null;
+  // Keep it visible for a few minutes after it clears — the useful message is
+  // "tags you sent around then did not broadcast", which outlives the lockout.
+  if (Date.now() - _tagRateLimit.at > 300_000) return null;
+  return _tagRateLimit;
 }
 
 function noteClientVersionLine(line, character) {
@@ -28957,14 +29075,19 @@ function flushLiveStateToBot(opts) {
       // #194: fresh Zeal /tag broadcasts — each carries the mob's TRUE spawn
       // id, the authoritative same-name separator (see noteTagChannelLine).
       zeal_tags: (() => {
+        // Zone gate first: ids are per-zone and reused, so anything held from
+        // the zone we just left describes different mobs now.
+        noteZoneForTags(_zoneName(st.zone) || (st.zone != null ? String(st.zone) : null));
         const tags = zealTagsSnapshot(now);
         if (!tags.length) return null;
-        return tags.slice(0, 24).map(t => ({
+        return _pickTagsForUpload(tags).map(t => ({
           spawn_id: t.spawn_id, mob: t.mobDisplay, text: t.text || '',
           shape: t.shape || null, tagger: t.tagger || null,
           since: new Date(t.tsMs).toISOString(),
-          // Append semantics — see _applyZealTagMessage. Older bots ignore both.
+          // Append semantics — see _applyZealTagMessage. Older bots ignore all
+          // three; replaced_tagger needs bot 3.1.31+ to be stored.
           mode: t.mode || null, appended_to: t.appendedTo || null,
+          replaced_tagger: t.replacedTagger || null,
         }));
       })(),
       buffs,
@@ -31739,6 +31862,10 @@ async function main() {
         // itself stays dropped by the custom-channel privacy filter; only the
         // structured {tank, mob, hp} extract rides observed_tanks.
         try { noteTagChannelLine(line, b.character); } catch { void 0; }
+        // Chat rate limit — the server REFUSING a tag broadcast looks exactly
+        // like nobody tagging, except Zeal still drew the arrow. Substring gate
+        // first, same as the hooks above.
+        try { const _dtrl = parseEqTimestamp(line); noteRateLimitLine(line, _dtrl ? _dtrl.getTime() : Date.now()); } catch { void 0; }
         // #56 — a mob death closes one same-name serial track; on K→0 (the last
         // instance died) it clears that name's stale debuff/slow/HP buckets so the
         // next same-name mob starts clean (the debuff-bleed fix). Same trusted
