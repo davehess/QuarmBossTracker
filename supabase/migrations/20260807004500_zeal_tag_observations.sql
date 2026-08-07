@@ -46,12 +46,16 @@ CREATE TABLE IF NOT EXISTS zeal_tag_observations (
   -- The tag payload carries NO zone (verified against Zeal's nameplate.cpp wire
   -- format: ZEALTAG | text | name | spawn_id). Without it a name cannot be
   -- scored for uniqueness at all — "a temple guardian" matches three zones in
-  -- our catalog with 2 / 68 / 11 spawn points. Joined at ingest from the
-  -- observing character's live-state row; nullable because that row can be
-  -- missing, and a null zone makes the row unusable for the uniqueness test
-  -- rather than silently wrong.
-  zone_short   text,
-  zone_name    text,
+  -- our catalog with 2 / 68 / 11 spawn points. Taken from the OBSERVING
+  -- character's own live-state row, which is the tagger's zone in practice
+  -- (a tag only reaches you in-zone) but is not guaranteed to be — hence
+  -- `observer_zone_*` naming, so nobody later reads it as the mob's zone.
+  --
+  -- Stored as the id the agent already sends, NOT resolved to a short name at
+  -- ingest: this is a hot path (~40 raiders, change-driven + 45s heartbeat) and
+  -- the catalog join belongs in the view, where it costs nothing per request.
+  observer_zone_id   integer,
+  observer_zone_name text,
   -- The tag's own timestamp as the observing agent stamped it, NOT ingest time.
   -- Doubles as the idempotency key: an agent re-reports an unchanged tag every
   -- upload for the 120s freshness window, and `since` stays put across those
@@ -69,7 +73,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS zeal_tag_obs_dedup
 
 -- The correlation query's access path: everything that shared an identity.
 CREATE INDEX IF NOT EXISTS zeal_tag_obs_identity
-  ON zeal_tag_observations (zone_short, spawn_id, tagged_at DESC);
+  ON zeal_tag_observations (observer_zone_id, spawn_id, tagged_at DESC);
 
 CREATE INDEX IF NOT EXISTS zeal_tag_obs_time
   ON zeal_tag_observations (tagged_at DESC);
@@ -80,7 +84,7 @@ ALTER TABLE zeal_tag_observations ENABLE ROW LEVEL SECURITY;
 
 COMMENT ON TABLE zeal_tag_observations IS
   'Append-only Zeal /tag observations (#194). Verification instrument: two '
-  'different taggers on one (zone_short, spawn_id) confirms the spawn id is '
+  'different taggers on one (observer_zone_id, spawn_id) confirms the spawn id is '
   'server-assigned. Not current state — see character_live_state.zeal_tags.';
 
 -- ── The verification query ───────────────────────────────────────────────────
@@ -92,15 +96,16 @@ COMMENT ON TABLE zeal_tag_observations IS
 -- best confirmation candidates.
 CREATE OR REPLACE VIEW zeal_tag_identity_candidates AS
 WITH obs AS (
-  SELECT zone_short, spawn_id, lower(mob) AS mob,
-         count(DISTINCT tagger)      AS taggers,
-         count(DISTINCT observed_by) AS observers,
-         string_agg(DISTINCT tagger, ', ') AS tagger_names,
-         min(tagged_at) AS first_tag,
-         max(tagged_at) AS last_tag
-  FROM zeal_tag_observations
-  WHERE tagger IS NOT NULL
-  GROUP BY 1, 2, 3
+  SELECT o.observer_zone_id, z.short_name AS zone_short, o.spawn_id, lower(o.mob) AS mob,
+         count(DISTINCT o.tagger)      AS taggers,
+         count(DISTINCT o.observed_by) AS observers,
+         string_agg(DISTINCT o.tagger, ', ') AS tagger_names,
+         min(o.tagged_at) AS first_tag,
+         max(o.tagged_at) AS last_tag
+  FROM zeal_tag_observations o
+  LEFT JOIN eqemu_zone z ON z.zone_id = o.observer_zone_id
+  WHERE o.tagger IS NOT NULL
+  GROUP BY 1, 2, 3, 4
 ),
 pts AS (
   SELECT lower(replace(n.name, '_', ' ')) AS mob, s.zone_short,
@@ -111,10 +116,49 @@ pts AS (
   GROUP BY 1, 2
 )
 SELECT o.*, p.spawn_points,
-       CASE WHEN p.spawn_points = 1 THEN 'UNIQUE — two taggers prove identity'
-            WHEN p.spawn_points IS NULL THEN 'no spawn2 row (script/quest spawn) — check by hand'
-            ELSE 'multi-spawn — inconclusive on its own' END AS verdict
+       CASE WHEN p.spawn_points = 1 THEN 'UNIQUE - two taggers prove identity'
+            WHEN p.spawn_points IS NULL THEN 'no spawn2 row (script/quest spawn) - check by hand'
+            ELSE 'multi-spawn - inconclusive on its own' END AS verdict
 FROM obs o
 LEFT JOIN pts p ON p.mob = o.mob AND p.zone_short = o.zone_short
 WHERE o.taggers > 1
 ORDER BY (p.spawn_points = 1) DESC NULLS LAST, o.last_tag DESC;
+
+-- ── Is the id random, per-person, or a per-zone entity index? ────────────────
+-- Uilnayar 2026-08-06: "we need to determine if those spawn IDs are unique or
+-- random or per person. are they sequential in the channel?"
+--
+-- Already answered NO for "sequential in the channel" from night one: broadcast
+-- order was 150, 148, 307, 145, 114, 139, 315, 318, 149, 176, 45, 71, 39, 57,
+-- 61 -- not monotonic, so the number is not a message counter.
+--
+-- The live hypothesis is a per-ZONE-INSTANCE entity index assigned as things
+-- spawn, which night one fits: Kael (242 spawn points) produced 71-318 while
+-- Sleeper's Tomb (66 points) produced 39-61. This view is the standing test.
+-- Read it as:
+--   * id range tracking spawn_points, per zone  => per-zone entity index
+--   * ranges that partition BY TAGGER           => per-person, and worthless
+--   * no structure at all                       => random, and worthless
+-- `taggers_agreeing` is the column that kills the per-person theory: it counts
+-- taggers whose ids interleave with another tagger's in the same zone. Under a
+-- per-person scheme they would never interleave.
+CREATE OR REPLACE VIEW zeal_tag_id_structure AS
+SELECT z.short_name AS zone_short,
+       o.observer_zone_id,
+       count(*)                       AS observations,
+       count(DISTINCT o.spawn_id)     AS distinct_ids,
+       min(o.spawn_id)                AS min_id,
+       max(o.spawn_id)                AS max_id,
+       count(DISTINCT o.tagger)       AS taggers,
+       (SELECT count(*) FROM eqemu_spawn2 s WHERE s.zone_short = z.short_name) AS zone_spawn_points,
+       count(DISTINCT o.tagger) FILTER (
+         WHERE EXISTS (
+           SELECT 1 FROM zeal_tag_observations o2
+           WHERE o2.observer_zone_id = o.observer_zone_id
+             AND o2.tagger IS DISTINCT FROM o.tagger
+             AND o2.spawn_id BETWEEN o.spawn_id - 40 AND o.spawn_id + 40
+         ))                           AS taggers_agreeing
+FROM zeal_tag_observations o
+LEFT JOIN eqemu_zone z ON z.zone_id = o.observer_zone_id
+GROUP BY 1, 2
+ORDER BY observations DESC;
