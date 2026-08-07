@@ -37,6 +37,23 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'harmshield-ch-chain-tags',
+    title: '\u{1F6E1} Harmshield counts as invuln, and the chain stops renaming your healers',
+    version: 'Mimic 2.3.3 · Agent 3.5.42',
+    date: '2026-08-07',
+    headline: 'Everything the beta testers have been running for the last few weeks, now on the stable channel for the whole guild — three raid-floor corrections and a sign-in that no longer fails in silence.',
+    features: [
+      { name: '\u{1F6E1} Harmshield counts on Rampage', blurb: 'The rampage warning only ever recognised Divine Aura. A monk who popped Harmshield still showed as a normal target, and the raid kept spending heals on someone who could not be hurt — that is exactly how Syko’s went unnoticed. Harmshield now lights the gold bar alongside DA. Defensive and Weapon Shield deliberately stay off it: they reduce damage, they do not make you immune.' },
+      { name: '\u{1F49A} Your healers show their real class', blurb: 'The Command Center listed Brynnja and Denniker as Cleric and Druid at the same time, flickering between the two. Anyone in the CH chain was being called a Cleric, but druids take chain slots too and shamans turn up as well. Being in the chain now proves you are chain healing and nothing more — the class shown is the real one.' },
+      { name: '\u{1F3F7} A tag lasts the whole fight', blurb: 'Marking a mob with /tag used to expire after two minutes. On Thall Va Xakra the tag six people had caught aged out at 32% boss health, halfway through the pull, taking the only thing that told the two spawns apart with it. Tags now hold for ten minutes. Appending with +tag also records both taggers rather than only the last one.' },
+    ],
+    fixes: [
+      'The Command Center raid panel blinked between a full 45-raider board and "No raid roster flowing yet". A single slow or empty poll was enough to wipe the whole list; it now keeps the last good roster through a blip.',
+      'Divine Intervention could show as ready for someone nobody was observing — Fargan read as up when he was not. An unobserved DI now reads as unknown instead of ready.',
+      'Clicking Discord sign-in in Settings did nothing whatsoever if your default browser failed to open, with no tab and no error. Seen on Firefox. The failure is now reported with the link shown so you can open it yourself.',
+    ],
+  },
+  {
     key: 'intentional-deaths',
     title: '\u{1F480} Deaths that were the plan, and a review that sits at the top',
     version: 'Bot 3.1.21 \u00b7 Web 1.1.19',
