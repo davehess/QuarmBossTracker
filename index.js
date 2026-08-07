@@ -9591,7 +9591,11 @@ async function _postRaidTickCard(slot, names, uploaders, scheduledForIso, nightK
     .setDescription([
       `<t:${when}:t> · seen by ${uploaders} Mimic${uploaders === 1 ? '' : 's'}`,
       '',
-      names.join(' · ') || '_nobody_',
+      // Comma-delimited, not the middot the rest of the cards use (Uilnayar
+      // 2026-08-06). This is a LIST OF PEOPLE an officer reads name by name and
+      // may well copy out; the middot reads as decoration and makes 35 names
+      // blur together.
+      names.join(', ') || '_nobody_',
     ].join('\n').slice(0, 4000))
     .setFooter({ text: 'Captured automatically · NOT submitted to OpenDKP' });
 
