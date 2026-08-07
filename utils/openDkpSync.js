@@ -639,7 +639,10 @@ async function runSync(opts = {}) {
   const auctionsResult = await syncAuctions(opts).catch(err =>
     ({ error: err?.message || String(err), upserted: 0, pages: 0 }));
 
-  // Audits + adjustments: full walks every time for now (~15 pages each).
+  // Audits + adjustments: the page walk is still full (~15 pages each — the
+  // API has no "since" filter), but the WRITE is watermarked and DO NOTHING,
+  // so a walk that finds nothing new costs zero row writes. See
+  // _syncListEndpoint for why that mattered.
   // These are the canonical sources for officer-driven changes (rank moves,
   // main switches, manual DKP corrections) and feed the era timeline on the
   // character page.
@@ -670,9 +673,13 @@ async function runSync(opts = {}) {
     auctions_error:    auctionsResult?.error || null,
     audits_upserted:        auditsResult?.upserted ?? 0,
     audits_pages:           auditsResult?.pages ?? 0,
+    audits_offered:         auditsResult?.offered ?? 0,
+    audits_full_sweep:      !!auditsResult?.full_sweep,
     audits_error:           auditsResult?.error || null,
     adjustments_upserted:   adjustmentsResult?.upserted ?? 0,
     adjustments_pages:      adjustmentsResult?.pages ?? 0,
+    adjustments_offered:    adjustmentsResult?.offered ?? 0,
+    adjustments_full_sweep: !!adjustmentsResult?.full_sweep,
     adjustments_error:      adjustmentsResult?.error || null,
     reconcile_scanned:  reconcileResult?.raids_scanned ?? 0,
     reconcile_removed:  reconcileResult?.loot_removed ?? 0,
@@ -706,17 +713,63 @@ function _firstString(row, ...keys) {
   return null;
 }
 
-// Walk a paginated list endpoint and upsert raw rows into the given table.
+// 'AuditId' → 'audit_id'. The mirror's PK column name is derived from the
+// first id key, so the walk can read its watermark before it has any rows.
+function _pkColFor(idKeys) {
+  return idKeys[0].toLowerCase().replace(/id$/, '_id');
+}
+
+// Highest id already mirrored, or 0 if the table is empty / unreadable. A read
+// failure returning 0 is the safe direction: every row is then "new" and gets
+// offered, and DO NOTHING absorbs the ones we already had.
+async function _maxMirroredId(table, pkCol) {
+  try {
+    const rows = await supabase.select(table, `select=${pkCol}&order=${pkCol}.desc&limit=1`);
+    const top  = Array.isArray(rows) && rows[0] && Number(rows[0][pkCol]);
+    return Number.isFinite(top) ? top : 0;
+  } catch { return 0; }
+}
+
+// Full-offer cadence, per table. Process-local on purpose: it is an egress
+// optimization, not correctness state, so losing it on redeploy is harmless —
+// a redeploy just buys one extra (write-free) full offer.
+const _lastFullSweepAt = new Map();
+function _fullSweepIntervalMs() {
+  return _envNum('OPENDKP_LIST_FULL_SWEEP_HOURS', 24) * 3600 * 1000;
+}
+function _dueForFullSweep(table) {
+  const last = _lastFullSweepAt.get(table);
+  return last == null || (Date.now() - last) >= _fullSweepIntervalMs();
+}
+function _markFullSweep(table) {
+  _lastFullSweepAt.set(table, Date.now());
+}
+
+// Walk a paginated list endpoint and mirror raw rows into the given table.
 // Used for both /audits and /adjustments since we don't yet know the exact
 // field shape — we store the full payload as JSONB and surface an ID +
-// timestamp for indexing.
+// timestamp for indexing. Both endpoints are append-only, which is what lets
+// the write path be insert-only; see the DO NOTHING note below.
 async function _syncListEndpoint({
   label, fetchPage, table, idKeys, tsKeys, shapeFlag,
 }) {
   if (!supabase.isEnabled()) return { error: 'supabase disabled', upserted: 0, pages: 0 };
 
+  const pkCol = _pkColFor(idKeys);
+
+  // Highest id we already hold. Everything at or below it is already mirrored
+  // and — because these endpoints are append-only — can never have changed, so
+  // it does not need to be sent again. One row read, not a 47k-row scan.
+  const priorMax = await _maxMirroredId(table, pkCol);
+
+  // Periodic full offer so a gap below priorMax (a partial run, an upstream
+  // out-of-order insert) still heals. Costs nothing to be wrong about: the
+  // write path is DO NOTHING, so re-offering a known row is an index probe.
+  const fullSweep = _dueForFullSweep(table);
+
   let pagesWalked   = 0;
   let totalUpserted = 0;
+  let totalOffered  = 0;
 
   for (let page = 1; page <= AUDIT_PAGE_LIMIT; page++) {
     let arr;
@@ -763,23 +816,49 @@ async function _syncListEndpoint({
       if (id == null) return null;
       const tsRaw = _firstString(row, ...tsKeys);
       return {
-        [idKeys[0].toLowerCase().replace(/id$/, '_id')]: id,
+        [pkCol]:    id,
         ts:         tsRaw ? new Date(tsRaw).toISOString() : null,
         raw:        row,
         fetched_at: new Date().toISOString(),
       };
     }).filter(Boolean);
 
-    if (rows.length > 0) {
-      const pkCol = Object.keys(rows[0])[0];
-      const written = await supabase.upsert(table, rows, pkCol);
-      if (Array.isArray(written)) totalUpserted += written.length;
+    // Rows above the watermark are the only ones that can be new. On a full
+    // sweep we still offer the rest (DO NOTHING absorbs them) but they are
+    // never counted as written — `upserted` stays an honest "new rows" number.
+    const freshRows = rows.filter(r => Number(r[pkCol]) > priorMax);
+    const toSend    = fullSweep ? rows : freshRows;
+
+    if (toSend.length > 0) {
+      totalOffered += toSend.length;
+      // ON CONFLICT DO NOTHING, not merge-duplicates. These endpoints are
+      // append-only audit logs — a row that exists upstream never changes —
+      // but `fetched_at` above is regenerated every run, so a merge-duplicates
+      // upsert rewrote EVERY row on EVERY one of the 48 daily runs. That cost
+      // 141M updates against 47k inserts on opendkp_audits (~2,986 rewrites
+      // per row) and 3,170 autovacuum cycles, versus 36 on chat_messages —
+      // the OpenDKP mirror was monopolizing the shared autovacuum workers and
+      // the WAL that the durable ingest streams depend on. DO NOTHING leaves
+      // existing tuples untouched: no rewrite, no dead tuple, no vacuum debt.
+      // No result check: with `return=minimal` a success body is empty, which
+      // _request parses to null — the same value it returns on error. Nothing
+      // to branch on. supabase._request already logs failures, and this module
+      // is fail-open by contract (see the file header).
+      await supabase.insertIgnoreDuplicates(table, toSend);
     }
+    totalUpserted += freshRows.length;
 
     if (arr?.TotalPages && arr?.CurrentPage && arr.CurrentPage >= arr.TotalPages) break;
   }
 
-  return { upserted: totalUpserted, pages: pagesWalked };
+  if (fullSweep) _markFullSweep(table);
+
+  return {
+    upserted:   totalUpserted,
+    pages:      pagesWalked,
+    offered:    totalOffered,
+    full_sweep: fullSweep,
+  };
 }
 
 async function syncAudits() {
