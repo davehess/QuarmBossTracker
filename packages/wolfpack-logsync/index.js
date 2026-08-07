@@ -20908,7 +20908,10 @@ function startWebDashboard(port) {
           const row = {
             id:            'p_' + Math.random().toString(36).slice(2, 10),
             name:          t.name.slice(0, 100),
-            pattern:       _translateGinaPlaceholders(t.pattern).slice(0, 1000),
+            // Stored RAW — {s1}/{n}/{c} tokens are expanded at COMPILE time by
+            // compileTriggerPattern with digit-true naming; pre-translating here
+            // was the source of the positional-renumbering bug.
+            pattern:       String(t.pattern).slice(0, 1000),
             pattern_flags: 'i',
             use_regex:     t.use_regex !== false,
             enabled:       true,
@@ -20923,7 +20926,7 @@ function startWebDashboard(port) {
             row.warning_text    = String(t.warning_text).slice(0, 200);
           }
           if (t.end_text)          row.end_text = String(t.end_text).slice(0, 200);
-          if (t.end_early_pattern) { row.end_early_pattern = _translateGinaPlaceholders(t.end_early_pattern).slice(0, 1000); row.end_use_regex = true; }
+          if (t.end_early_pattern) { row.end_early_pattern = String(t.end_early_pattern).slice(0, 1000); row.end_use_regex = true; }
           try {
             compiled.push(_compilePersonalTrigger(row));
             existingNames.add(row.name.toLowerCase());
@@ -20957,8 +20960,11 @@ function startWebDashboard(port) {
           return res.end(JSON.stringify({ matched: false, note: 'pattern + line required' }));
         }
         try {
-          const pat = useRegex ? _translateDotNetRegex(pattern) : _escapeForLiteralMatch(pattern);
-          const rx = new RegExp(pat, flags);
+          // Same pipeline as the live evaluator, so the test box can never
+          // disagree with what a real fire would do (the old path skipped the
+          // anchor rewrite and token table entirely).
+          const c = compileTriggerPattern(pattern, { flags, use_regex: useRegex !== false });
+          const rx = c.regex;
           const m = rx.exec(line);
           res.writeHead(200, { 'Content-Type': 'application/json' });
           return res.end(JSON.stringify({
@@ -25852,29 +25858,11 @@ function shouldUploadForCharacter(character) {
 //             compile). The capture name {s} is reserved by us.
 // Anything else we leave alone — JS regex supports named captures, lookbehind,
 // lookahead, Unicode property escapes, etc.
-function _translateDotNetRegex(pattern) {
-  let p = String(pattern || '');
-  // (?>...) → (?:...)
-  p = p.replace(/\(\?>/g, '(?:');
-  // {s} / {S} / {S2} / {c} → permissive name-like capture. The earlier form
-  // ([^\s]+) refused ANY whitespace, so multi-word mob names ("Zov Va Dyn",
-  // "Aten Ha Ra", "Lord Nagafen") never matched and triggers like Enrage
-  // silently never fired. Allow word chars + space + apostrophe + hyphen +
-  // BACKTICK — Luclin names like Rhag`Zhezum / Aten`Ha`Ra carry a backtick, and
-  // without it a {s} trigger could never fire on those mobs (audit fix). Lazy so
-  // the surrounding anchored context (^...$) still constrains the
-  // match. The capture is NAMED — first occurrence as `s`, second as `s1`,
-  // etc. — so (a) action templates like "ENRAGE - {s}" interpolate the
-  // captured mob name and (b) the live evaluator can audit the match against
-  // our charm-pet tracker to suppress triggers firing on our own pet.
-  let sIdx = 0;
-  p = p.replace(/\{[sScC]\d*\}/g, () => {
-    const name = sIdx === 0 ? 's' : `s${sIdx}`;
-    sIdx++;
-    return `(?<${name}>[\\w'\` -]+?)`;
-  });
-  return p;
-}
+// (_translateDotNetRegex removed 2026-08-07 — superseded by
+// compileTriggerPattern. Its positional {s}-naming bound action tokens to the
+// wrong capture, its [\w'` -] class couldn't span ", '", and it treated {c}
+// as a wildcard. See the trigger-pattern compiler block below
+// _escapeForLiteralMatch.)
 // True when the captured {s}-style name matches a currently active charm pet.
 // Live triggers using `{s} yawns.`, `{s} slows down.`, `{s} has become ENRAGED.`
 // etc. otherwise false-fire when our OWN charm pet gets slowed/enraged. The
@@ -25897,6 +25885,266 @@ function _captureMatchesCharmPet(captures) {
 // the source string matches itself when fed to RegExp.
 function _escapeForLiteralMatch(s) {
   return String(s || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// ── Trigger pattern compiler (GINA / EQLogParser / native) ──────────────────
+// One pipeline for every pattern, no matter which door it came through —
+// import, guild poll, personal load, or the dashboard test box. Built from the
+// pq-companion comparison (scratchpad analysis 01), which ran 1,189 real
+// GINA/EQLP fixture triggers through the OLD translators: 92 threw at compile,
+// 311 ^-anchored patterns could never fire, and 82 bound their action tokens
+// to the wrong capture. With this pipeline the same corpus compiles 583/583.
+
+// Walk a pattern once, calling visit(index, char, src) for every UNESCAPED
+// character that is NOT inside a character class. Return a positive number
+// from visit to skip that many characters. Everything below needs this: a
+// plain .replace() can't tell `^` (anchor) from `[^abc]` (negated class), and
+// mis-rewriting one silently changes what a raid callout matches.
+function _scanRegexSource(src, visit) {
+  let inClass = false;
+  for (let i = 0; i < src.length; i++) {
+    const ch = src[i];
+    if (ch === '\\') { i++; continue; }              // escaped — skip the pair
+    if (inClass) { if (ch === ']') inClass = false; continue; }
+    if (ch === '[') { inClass = true; continue; }
+    const skip = visit(i, ch, src);
+    if (skip > 0) i += skip - 1;
+  }
+}
+
+// GINA and EQLogParser both strip "[Tue Aug 04 21:14:33 2026] " before
+// matching, so most real-world imported patterns are ^-anchored. We match the
+// RAW line (the convention every other parser in this file follows), which put
+// a bare ^ BEFORE the bracket — the trigger could never fire, and 12 of our
+// own 17 SUGGESTED_TRIGGERS were dead the same way. Rewriting each top-level
+// ^ into "^(?:<ts>)?" keeps both dialects alive: the prefix is OPTIONAL, so a
+// legacy \]\s+-style pattern is unaffected and an imported ^-pattern matches —
+// and because the group is consumed, a leading {s1} no longer swallows the
+// timestamp.
+const EQ_TS_PREFIX_RX = '\\[[^\\]]{1,40}\\]\\s+';
+
+function _rewriteAnchorsForRawLine(pattern) {
+  const src = String(pattern || '');
+  const spots = [];
+  _scanRegexSource(src, (i, ch, s) => {
+    if (ch !== '^') return 0;
+    if (i === 0) { spots.push(i); return 0; }
+    const before = s.slice(0, i);
+    if (/\($/.test(before) || /\(\?:$/.test(before) || /\|$/.test(before)) spots.push(i);
+    return 0;
+  });
+  if (spots.length === 0) return { source: src, rewrote: 0 };
+  let out = '', last = 0;
+  for (const i of spots) {
+    out += src.slice(last, i) + '^(?:' + EQ_TS_PREFIX_RX + ')?';
+    last = i + 1;
+  }
+  return { source: out + src.slice(last), rewrote: spots.length };
+}
+
+// .NET / RE2 dialect → JavaScript. GINA and EQLogParser write .NET regex; a
+// pq-companion pack writes Go/RE2. JS has lookbehind and backrefs (RE2's gap —
+// our advantage) but NOT scoped inline flags, which .NET packs use heavily.
+// Rewrites: (?P<n>…)→(?<n>…) · (?#comment) removed · (?i:…)→(?:…)+flag ·
+// (?i) hoisted · (?>…)→(?:…) · duplicate (?<x>…) renamed x_2 with an alias so
+// the capture bag folds it back at fire time. Lookaround, \k<name>, \1,
+// {2,3} repetition all pass through byte-identical.
+const _DOTNET_INLINE_FLAGS = 'imsxn';
+
+function _normalizeRegexDialect(pattern, flags) {
+  let src = String(pattern || '');
+  let outFlags = String(flags || 'i');
+  const warnings = [];
+  const addFlag = (f) => { if ('ims'.includes(f) && !outFlags.includes(f)) outFlags += f; };
+
+  src = src.replace(/\(\?P</g, '(?<');
+  src = src.replace(/\(\?#[^)]*\)/g, '');
+
+  // Inline flag groups — collected first, spliced back-to-front so earlier
+  // indices stay valid.
+  const edits = [];
+  _scanRegexSource(src, (i, ch, s) => {
+    if (ch !== '(' || s[i + 1] !== '?') return 0;
+    const m = /^\(\?([a-zA-Z]*)(-[a-zA-Z]+)?([:)])/.exec(s.slice(i));
+    if (!m) return 0;
+    const on  = m[1] || '';
+    const off = m[2] ? m[2].slice(1) : '';
+    if (!on && !off) return 0;                                  // (?:  (?=  (?!
+    for (const c of on + off) if (!_DOTNET_INLINE_FLAGS.includes(c)) return 0;
+    for (const c of on) {
+      addFlag(c);
+      if (c === 'x' || c === 'n') warnings.push('inline (?' + c + ') has no JS equivalent — ignored');
+    }
+    if (off) warnings.push('inline flag disable (?-' + off + ') has no JS equivalent — ignored');
+    edits.push({ at: i, len: m[0].length, repl: m[3] === ':' ? '(?:' : '' });
+    return m[0].length;
+  });
+  for (let k = edits.length - 1; k >= 0; k--) {
+    const e = edits[k];
+    src = src.slice(0, e.at) + e.repl + src.slice(e.at + e.len);
+  }
+
+  src = src.replace(/\(\?>/g, '(?:');
+
+  // Duplicate named groups: one logical group in .NET, a SyntaxError in JS
+  // (V8 allows cross-alternative duplicates only from Node 23; Mimic bundles
+  // Node 20 — assume not).
+  const seen = new Set();
+  const aliases = {};
+  src = src.replace(/\(\?<([A-Za-z][A-Za-z0-9_]*)>/g, (whole, name) => {
+    if (!seen.has(name)) { seen.add(name); return whole; }
+    let n = 2, alt;
+    do { alt = name + '_' + n++; } while (seen.has(alt));
+    seen.add(alt);
+    aliases[alt] = name;
+    warnings.push('duplicate capture name "' + name + '" — second occurrence renamed ' + alt);
+    return '(?<' + alt + '>';
+  });
+
+  return { source: src, flags: outFlags, aliases, warnings };
+}
+
+// The ONE token table. Previously two divergent translators (import-time
+// _translateGinaPlaceholders, compile-time _translateDotNetRegex) disagreed on
+// naming, on the {s} character class, and on whether {n} existed — the same
+// pattern behaved differently depending on which door it came through.
+// Non-negotiables, both learned from real packs:
+//   • the group name comes from the TOKEN'S OWN DIGIT, never its position —
+//     positional naming silently spoke the wrong capture in the action text;
+//   • {s} is `.+?`, NOT an allow-list — the old [\w'` -] class could not span
+//     ", '" and killed the whole assist/CH trigger family;
+//   • {2,3} repetition must pass through untouched (alpha-first key below).
+const TRIGGER_TOKEN_KINDS = {
+  s: { rx: '.+?',  prefix: 's' },
+  n: { rx: '\\d+', prefix: 'n' },
+};
+
+// Expand tokens. ctx.characters binds {c}/{char}/{self} to an alternation of
+// the watched characters (boxing-aware); when none are known yet the token is
+// left LITERAL — an unmatchable string — rather than becoming a wildcard that
+// fires for every player in the zone (the old {c} bug). Numeric guards
+// ({N>=50000}) become fire conditions checked after the match.
+function _expandTriggerTokens(pattern, ctx) {
+  ctx = ctx || {};
+  const used = new Set();
+  const conditions = [];
+  const warnings = [];
+  const source = String(pattern || '').replace(
+    /\{([A-Za-z][A-Za-z0-9_]*)((?:>=|<=|>|<|=)\s*\d+)?\}/g,
+    (whole, key, guard) => {
+      const lower = key.toLowerCase();
+      if (lower === 'c' || lower === 'char' || lower === 'self') {
+        const chars = (ctx.characters || []).filter(Boolean);
+        if (!chars.length) {
+          warnings.push('{' + key + '} left literal — no active character detected yet');
+          return whole;
+        }
+        return '(?:' + chars.map(_escapeForLiteralMatch).join('|') + ')';
+      }
+      const kind = lower[0];
+      const rest = lower.slice(1);
+      if (!TRIGGER_TOKEN_KINDS[kind]) return whole;           // {target}, {spell}, …
+      if (rest !== '' && !/^\d+$/.test(rest)) return whole;   // {seller}, {sender}, …
+      const spec = TRIGGER_TOKEN_KINDS[kind];
+      let name = spec.prefix + rest;
+      if (rest === '') { let i = 2; while (used.has(name)) name = spec.prefix + i++; }
+      if (used.has(name)) {
+        let i = 2, alt = name;
+        while (used.has(alt)) alt = name + '_' + i++;
+        warnings.push('duplicate token {' + key + '} — second capture named ' + alt);
+        name = alt;
+      }
+      used.add(name);
+      if (guard) {
+        const g = /^(>=|<=|>|<|=)\s*(\d+)$/.exec(guard.replace(/\s+/g, ''));
+        if (g) conditions.push({ group: name, op: g[1] === '=' ? '==' : g[1], value: Number(g[2]) });
+      }
+      return '(?<' + name + '>' + spec.rx + ')';
+    });
+  return { source, conditions, warnings };
+}
+
+// Characters the agent is currently watching — the {c} binding. Compiles run
+// at load + every guild poll, so a log that appears later is picked up on the
+// next cycle (with the leave-literal fallback covering the gap).
+function _watchedCharacters() {
+  const out = [];
+  for (const w of (stats.watchedLogs || [])) {
+    if (w && w.character && !out.includes(w.character)) out.push(w.character);
+  }
+  return out;
+}
+
+// The single compile entry point. Returns { regex, conditions, aliases,
+// anchorsRewritten, warnings, source } and throws only when the final RegExp
+// is genuinely unusable.
+function compileTriggerPattern(pattern, opts) {
+  opts = opts || {};
+  const flags = opts.flags || 'i';
+  if (opts.use_regex === false) {
+    return { regex: new RegExp(_escapeForLiteralMatch(pattern), flags),
+             conditions: [], aliases: {}, anchorsRewritten: 0, warnings: [], source: pattern };
+  }
+  const warnings = [];
+  const tok = _expandTriggerTokens(pattern, { characters: opts.characters || _watchedCharacters() });
+  warnings.push(...tok.warnings);
+  const dia = _normalizeRegexDialect(tok.source, flags);
+  warnings.push(...dia.warnings);
+  const anc = opts.rawLine === false
+    ? { source: dia.source, rewrote: 0 }
+    : _rewriteAnchorsForRawLine(dia.source);
+  return {
+    regex:            new RegExp(anc.source, dia.flags),
+    conditions:       tok.conditions,
+    aliases:          dia.aliases,
+    anchorsRewritten: anc.rewrote,
+    warnings,
+    source:           anc.source,
+  };
+}
+
+// Numeric guards from {N>=50000}-style tokens — the capture matched, but the
+// trigger only fires when the number clears the threshold.
+function _captureConditionsPass(conditions, groups) {
+  for (const c of conditions) {
+    const v = Number((groups || {})[c.group]);
+    if (!Number.isFinite(v)) return false;
+    if (c.op === '>=' && !(v >= c.value)) return false;
+    if (c.op === '>'  && !(v >  c.value)) return false;
+    if (c.op === '<=' && !(v <= c.value)) return false;
+    if (c.op === '<'  && !(v <  c.value)) return false;
+    if (c.op === '==' && !(v === c.value)) return false;
+  }
+  return true;
+}
+
+// Everything an action template can reference, resolved once per fire. We used
+// to pass m.groups alone, which threw away the numbered submatches — so GINA's
+// "${2} broke charm!" and EQLP's "{1}: {2}" (and our OWN suggested trigger
+// "RESISTED: {1}") printed their tokens literally. Keys: "0".."N" (0 = whole
+// match), every named group, renamed duplicates folded back, {s}<->{s1}
+// equivalence, {sN} falling back to numbered group N for plain-parens
+// patterns, {L}/{l} = the whole line, {c}/{char}/{self} = the character.
+// Built-ins never shadow a real capture. _captureMatchesCharmPet keeps
+// working: it filters on /^s\d*$/ and none of the extras match that.
+function _buildCaptureBag(m, line, ctx, aliases) {
+  ctx = ctx || {};
+  const bag = Object.create(null);
+  for (let i = 0; i < m.length; i++) if (m[i] != null) bag[String(i)] = m[i];
+  if (m.groups) for (const k of Object.keys(m.groups)) if (m.groups[k] != null) bag[k] = m.groups[k];
+  if (aliases) for (const alt of Object.keys(aliases)) {
+    if (bag[alt] != null && bag[aliases[alt]] == null) bag[aliases[alt]] = bag[alt];
+  }
+  for (const p of ['s', 'n']) {
+    if (bag[p] != null && bag[p + '1'] == null) bag[p + '1'] = bag[p];
+    if (bag[p + '1'] != null && bag[p] == null) bag[p] = bag[p + '1'];
+  }
+  for (let i = 1; i <= 9; i++) {
+    if (bag['s' + i] == null && bag[String(i)] != null) bag['s' + i] = bag[String(i)];
+  }
+  bag.L = bag.l = line;
+  if (ctx.character) { bag.c = bag.char = bag.self = ctx.character; }
+  return bag;
 }
 
 // ── Remote overlay tuning ───────────────────────────────────────────────────
@@ -26540,11 +26788,9 @@ function _applyGuildTriggersResponse(resp) {
     const compiled = [];
     for (const t of resp.triggers) {
       try {
-        const flags = t.pattern_flags || 'i';
-        const pat = t.use_regex === false
-          ? _escapeForLiteralMatch(t.pattern)
-          : _translateDotNetRegex(t.pattern);
-        compiled.push({ ...t, _regex: new RegExp(pat, flags), _endRegex: _compileEndEarlyRegex(t), _scope: 'guild' });
+        const c = compileTriggerPattern(t.pattern, { flags: t.pattern_flags || 'i', use_regex: t.use_regex });
+        compiled.push({ ...t, _regex: c.regex, _conditions: c.conditions, _aliases: c.aliases,
+                        _endRegex: _compileEndEarlyRegex(t), _scope: 'guild' });
       } catch (err) {
         console.warn(`[guild-triggers] bad pattern "${t.name}":`, err.message);
       }
@@ -26680,15 +26926,14 @@ function _compilePersonalTrigger(t) {
   // an empty pattern would compile to a match-everything regex and fire on
   // every log line. The text evaluator skips triggers without _regex; the
   // zeal evaluator picks them up via zeal_condition.
-  let regex = null;
+  let regex = null, conditions = [], aliases = {};
   if (t.pattern && String(t.pattern).trim()) {
-    const flags = t.pattern_flags || 'i';
-    const pat = t.use_regex === false
-      ? _escapeForLiteralMatch(t.pattern)
-      : _translateDotNetRegex(t.pattern);
-    regex = new RegExp(pat, flags);
+    const c = compileTriggerPattern(t.pattern, { flags: t.pattern_flags || 'i', use_regex: t.use_regex });
+    regex = c.regex; conditions = c.conditions; aliases = c.aliases;
+    for (const w of c.warnings) console.warn('[triggers] "' + (t.name || '?') + '": ' + w);
   }
-  return { ...t, _regex: regex, _endRegex: _compileEndEarlyRegex(t), _scope: 'personal' };
+  return { ...t, _regex: regex, _conditions: conditions, _aliases: aliases,
+           _endRegex: _compileEndEarlyRegex(t), _scope: 'personal' };
 }
 
 // Compile end_early_pattern on a trigger so the live evaluator can cancel
@@ -26700,11 +26945,9 @@ function _compilePersonalTrigger(t) {
 function _compileEndEarlyRegex(t) {
   if (!t || !t.end_early_pattern || !String(t.end_early_pattern).trim()) return null;
   try {
-    const flags = t.pattern_flags || 'i';
-    const pat = t.end_use_regex === false
-      ? _escapeForLiteralMatch(t.end_early_pattern)
-      : _translateDotNetRegex(t.end_early_pattern);
-    return new RegExp(pat, flags);
+    return compileTriggerPattern(t.end_early_pattern, {
+      flags: t.pattern_flags || 'i', use_regex: t.end_use_regex,
+    }).regex;
   } catch (err) {
     console.warn('[triggers] bad end_early_pattern on "' + (t.name || '?') + '":', err.message);
     return null;
@@ -26967,20 +27210,10 @@ function _parseTriggerTgfJson(text) {
   return out;
 }
 
-// GINA / EQLogParser capture placeholders → regex. Both tools write {S}/{s}
-// (match-any text) and {N}/{n} (a number) into the pattern, with a trailing
-// digit for a *named* capture you can reference in the alert text ({s1}, {n1}).
-// We turn the numbered forms into .NET-style named groups (?<s1>…) — which our
-// alert templates already reference as {s1} — and the bare forms into plain
-// captures. Applied before _translateDotNetRegex compiles to JS.
-function _translateGinaPlaceholders(pattern) {
-  if (!pattern) return pattern;
-  return String(pattern)
-    .replace(/\{[sS](\d+)\}/g, '(?<s$1>.+?)')
-    .replace(/\{[nN](\d+)\}/g, '(?<n$1>\\d+)')
-    .replace(/\{[sS]\}/g,      '(.+?)')
-    .replace(/\{[nN]\}/g,      '(\\d+)');
-}
+// (_translateGinaPlaceholders removed 2026-08-07 — imports now store the RAW
+// pattern and compileTriggerPattern expands tokens at compile time with
+// digit-true naming. Pre-translating at import was one half of the two-table
+// split that made the same pattern behave differently per entry door.)
 
 // Per-trigger last-fire timestamp for cooldown enforcement
 const _triggerLastFire = new Map();
@@ -29933,12 +30166,27 @@ function noteLootAuction(chatMsg) {
   } catch (e) { void e; }
 }
 
+// Action-text expansion — every reference dialect that shows up in imported
+// packs: ${name}/${2} (GINA — the $ is consumed), {name}/{2}/{0} (native +
+// EQLogParser), $1/$2 (.NET replacement form). Anything unresolved is left
+// EXACTLY as written so literal braces and dollar signs in a callout survive.
+// The captures arg is the _buildCaptureBag output on live fires, so "{1}",
+// "${2}", "{L}" and folded duplicate names all resolve; older callers passing
+// a plain object keep working (lookup is just key access).
 function _expandTemplate(template, captures) {
   if (!template) return '';
-  return template.replace(/\{(\w+)\}/g, (_, k) => {
-    if (captures && captures[k] != null) return String(captures[k]);
-    return `{${k}}`;
-  });
+  const bag = captures || {};
+  const lookup = (whole, k) => {
+    if (bag[k] != null) return String(bag[k]);
+    const lower = String(k).toLowerCase();
+    if (bag[lower] != null) return String(bag[lower]);
+    return whole;
+  };
+  let out = String(template);
+  out = out.replace(/\$\{([A-Za-z0-9_]+)\}/g, lookup);
+  out = out.replace(/\{([A-Za-z0-9_]+)\}/g, lookup);
+  out = out.replace(/\$(\d)/g, lookup);
+  return out;
 }
 
 // ── Trigger checkpoint journal (#76) ────────────────────────────────────────
@@ -30013,9 +30261,16 @@ function _synthesizeMatchingLine(t, captures) {
   src = src.replace(/\\w[+*?]?/g, 'word');
   src = src.replace(/\\s[+*?]?/g, ' ');
   src = src.replace(/\.[+*?]/g, 'something');
-  // Drop anchors, quantifiers on literals, and unescape escaped punctuation.
+  // Drop quantifiers on literals and the end anchor; a LEADING ^ is honoured
+  // by prepending a synthetic timestamp below, so REHEARSE chews on the same
+  // raw-line shape the live tail produces. The old blanket anchor delete made
+  // a ^-anchored pattern rehearse green while being dead on live (the
+  // false-green half of the pq-companion 01 findings).
   src = src.replace(/[?*+]/g, '');
+  src = src.replace(/\$$/, '');
+  if (src.startsWith('^')) src = src.slice(1);
   src = src.replace(/[\^$]/g, '');
+  src = '[Thu Aug 07 12:00:00 2026] ' + src;
   src = src.replace(/\\([.\-+*?()\[\]{}|^$/])/g, '$1');
   src = src.replace(/\s{2,}/g, ' ').trim();
   try { return t._regex.test(src) ? src : null; }
@@ -30131,11 +30386,19 @@ function evaluateTriggersAgainstLine(line, tsMs) {
     let m;
     try { m = t._regex.exec(line); } catch { continue; }
     if (!m) continue;
+    // GINA numeric guards ({N>=50000}): the capture matched, but the trigger
+    // only fires when the number clears the threshold. Cheap — most triggers
+    // carry no conditions at all.
+    if (t._conditions && t._conditions.length && !_captureConditionsPass(t._conditions, m.groups)) {
+      _journalTrigger({ trigger: t.name, scope: t._scope || 'personal', checkpoint: TJ.GATES,
+                        stopped: true, reason: 'numeric guard not met' });
+      continue;
+    }
     // Charm-pet filter — if the captured {s} name is one of our currently
     // active charm pets, the message is about OUR pet (slow on a charmed
     // mob, our pet enrages at low HP, etc.) and the call would be wrong.
     // Don't apply to Zeal-condition triggers (no log-match captures there).
-    const captures = m.groups || {};
+    const captures = _buildCaptureBag(m, line, {}, t._aliases);
     if (_captureMatchesCharmPet(captures)) {
       _journalTrigger({ trigger: t.name, scope: t._scope || 'personal', checkpoint: TJ.MATCHED,
                         stopped: true, reason: 'suppressed — capture is your charm pet' });
@@ -30540,7 +30803,9 @@ function _replayEvaluateLine(line, tsMs, ctx) {
     let m;
     try { m = t._regex.exec(line); } catch { continue; }
     if (!m) continue;
-    const captures = m.groups || {};
+    // Same guard + bag as the live evaluator — rehearsal must match live.
+    if (t._conditions && t._conditions.length && !_captureConditionsPass(t._conditions, m.groups)) continue;
+    const captures = _buildCaptureBag(m, line, {}, t._aliases);
     // Suppression — mirror the live pipeline (evaluate AND enforce), journalled
     // as a replay row so a swallowed callout is visible in the checkpoint log.
     if (_captureMatchesCharmPet(captures)) {
