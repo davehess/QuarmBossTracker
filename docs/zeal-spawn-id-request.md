@@ -32,11 +32,39 @@ mobs of the same type share an identical display name (`an orc warrior`,
 to a pipe consumer: same string, frequently the same HP%, no handle to tell
 them apart.
 
-The client already tracks a unique spawn id for every entity (`Spawn->SpawnID`),
-and Zeal already resolves the target/pet to those `Spawn` objects to populate
-the gauge. **The request is to add that existing id to the gauge payload** — an
-additive, backward-compatible field. With it, a consumer can key on a stable
-identity instead of guessing from name + HP.
+The client already tracks a unique spawn id for every entity (`Entity.SpawnId`,
+offset `0x0094`), and the pipe's raid (type 5) and group (type 6) loops ALREADY
+hold that exact `Entity*` and dereference it for `Position`/`Heading`/
+`HpCurrent`. **The request is to emit that id** — additive and
+backward-compatible. With it, a consumer can key on a stable identity instead
+of guessing from name + HP.
+
+## Why we are asking again, with evidence (2026-08-07)
+
+**We built the workaround, it works, and it cannot scale. That is the argument.**
+
+Zeal's own `/tag` broadcasts carry a spawn id (`ZEALTAG | <text> | <mob name> |
+<spawn id>`), so we used tags as a side door to the identity the pipe withholds.
+Measured live on Project Quarm:
+
+- **It proves spawn id is the right key.** In The Deep, one zone held **~17
+  simultaneous `an elder thought horror`**, ~11 `a horror guard`, ~9 `a thought
+  horror evoker`. Every one carried a distinct spawn id, and every one was
+  separable. Nothing else in the client's external surface can do this — the
+  gauges give name + HP‰, and seventeen mobs at full health are seventeen
+  identical strings.
+- **It cannot be the answer.** Getting those ids required a player to manually
+  target and tag **every single mob**, one at a time. Tags are chat messages, so
+  they are rate limited by the server: bursts trip *"You are currently rate
+  limited, you cannot send more messages for 32 seconds."* And Zeal draws the
+  nameplate arrow whether or not the send succeeded, so a raider cannot even
+  tell which of their marks actually went out.
+
+So the shape of the problem is now precisely known. The identity exists, it is
+exactly what consumers need, and the only route to it is a manual, rate-limited,
+human-driven one that no raid can sustain while actually raiding. A tool that
+wants to *track* mobs continuously — which is the entire point — needs the id on
+the wire, not typed in by hand.
 
 ## What the pipe sends today
 
@@ -81,9 +109,31 @@ the case for enchanter charm rotations, adds, and pulls.
 
 ## Proposed change
 
-Add the spawn id Zeal already has to the **target (slot 6)** and **pet
-(slot 16)** gauge entries. Suggested key: `spawn_id` (a non-negative integer;
-omit or `0`/`-1` when there is no current target/pet).
+**Preferred: emit the id where the pipe already holds the `Entity*`.** These are
+one-line additions to code that already dereferences the object in question, and
+they are strictly easier than the gauge change described afterwards.
+
+1. **Target.** `player_data["target"] = { id, name }` sourced from
+   `get_target()->SpawnId`. This alone closes the disambiguation case for the
+   mob you are fighting.
+2. **Raid (type 5) / group (type 6) members.** Those loops already hold the
+   `Entity*` and read `->Position`, `->Heading`, `->HpCurrent` off it.
+   `raid_data["spawn_id"] = entity->SpawnId;` is one line that is never written.
+3. **Pet position.** Zeal already resolves the player's pet every frame to draw
+   the map arrow (`zone_map.cpp` `add_self_pet_position_vertices`:
+   `self->ActorInfo->PetID` → `get_entity_by_id()` → `Position`/`Heading`), but
+   the pipe emits `loc` only for raid member, group member and self. A
+   pet-tanked mob is therefore unplaceable for a companion tool while being
+   plainly visible on the user's own map.
+
+### Secondary: the gauge slots
+
+If the entity surface is not workable, the same id on the **target (slot 6)** and
+**pet (slot 16)** gauge entries would also serve. Suggested key: `spawn_id` (a
+non-negative integer; omit or `0`/`-1` when there is no current target/pet). We
+list this second deliberately — the gauges are a stringly-typed
+`GetGauge(id, text)` channel with no room for structured fields, which is likely
+why this request got no traction the first time it was made.
 
 ```json
 {
