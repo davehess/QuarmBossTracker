@@ -52,8 +52,7 @@ Two independent captures of spawn id **39**:
 | 02:28:26 | `an ancient sentry` | **39** | Jankzer | **`70% slowed`** |
 | 12:33:41 | `Merdan Fleetfoot` | **39** | Canopy | `TAGGEDWITHSLOWBEFORE` |
 
-At 12:33 the reporter was standing in front of **Merdan Fleetfoot**, a Qeynos
-Hills NPC, and the nameplate read **`70% slowed`** — Jankzer's label from *an
+At 12:33 the reporter was standing in front of **Merdan Fleetfoot**, a Surefall Glade NPC, and the nameplate read **`70% slowed`** — Jankzer's label from *an
 ancient sentry*, a different mob in a different zone, tagged ten hours earlier.
 The second row is the reporter deliberately re-tagging it to confirm.
 
