@@ -663,6 +663,25 @@ function normalizeClass(raw) {
 // would key on the finishing-blow log signature; until we capture it from a
 // live log, magnitude is the safe filter. Tunable via WP_MELEE_HIT_MAX.
 const MELEE_HIT_MAX = Math.max(6000, parseInt(process.env.WP_MELEE_HIT_MAX, 10) || 15000);
+
+// ── Multi-word melee skill verbs ────────────────────────────────────────────
+// EQ logs class skills as their literal skill name, which is two words for the
+// monk line, Harm Touch, and Frenzy. These MUST be tried before ATTACK_VERBS_RX:
+// the single-token pattern's lazy (.+?) attacker capture otherwise absorbs the
+// first word ("You flying" / "Torvahk round"), producing a phantom combatant
+// whose damage the multi-word anti-NPC filter then discards — monk specials
+// were credited to nobody and Harm Touch damage never parsed at all
+// (pq-companion comparison, analysis 04 §3-A).
+const SPECIAL_VERB_RX =
+  '(?:harm\\s+touch(?:es)?|flying\\s+kicks?|round\\s+kicks?|dragon\\s+punch(?:es)?|' +
+  'eagle\\s+strikes?|tiger\\s+claws?|tail\\s+rakes?|frenzies\\s+on|frenzy\\s+on)';
+
+// "flying kicks" → "flying kick"; "frenzies on" → "frenzy".
+function normalizeSpecialVerb(raw) {
+  const v = String(raw).toLowerCase().replace(/\s+/g, ' ').trim();
+  if (/^frenz/.test(v)) return 'frenzy';
+  return v.replace(/(?:es|s)$/, '');
+}
 let _finishingBlowsDropped = 0;
 
 // ── Event parser ────────────────────────────────────────────────────────────
@@ -779,6 +798,29 @@ function parseEvent(line, ts) {
   m = line.match(/\]\s+(.+?)\s+has\s+taken\s+(\d+)(?:\s+points?\s+of)?\s+damage\s+from\s+(\S+?)(?:`s|'s)\s+([^.]+)\./i);
   if (m) {
     return { ts: tsIso, type: 'damage', attacker: m[3], defender: m[1], ability: m[4].trim(), amount: parseInt(m[2], 10), spellName: m[4].trim() };
+  }
+
+  // Second person, multi-word skill: "You flying kick a gnoll for 452 points of damage."
+  m = line.match(new RegExp(
+    `\\]\\s+You\\s+(${SPECIAL_VERB_RX})\\s+(.+?)\\s+for\\s+(\\d+)` +
+    `(?:\\s+\\((\\d+)\\))?\\s+points?\\s+of\\s+damage`, 'i'));
+  if (m) {
+    if (parseInt(m[3], 10) > MELEE_HIT_MAX) { _finishingBlowsDropped++; return null; }
+    return { ts: tsIso, type: 'damage', attacker: null /* self */,
+             defender: m[2], ability: normalizeSpecialVerb(m[1]),
+             amount: parseInt(m[3], 10) };
+  }
+
+  // Third person, multi-word skill: "Torvahk round kicks Lord of Ire for 388 points of damage."
+  m = line.match(new RegExp(
+    `\\]\\s+(.+?)\\s+(${SPECIAL_VERB_RX})\\s+(.+?)\\s+for\\s+(\\d+)` +
+    `(?:\\s+\\((\\d+)\\))?\\s+points?\\s+of\\s+damage`, 'i'));
+  if (m) {
+    if (!isPlausibleAttacker(m[1])) return null;
+    if (parseInt(m[4], 10) > MELEE_HIT_MAX) { _finishingBlowsDropped++; return null; }
+    return { ts: tsIso, type: 'damage', attacker: m[1],
+             defender: m[3], ability: normalizeSpecialVerb(m[2]),
+             amount: parseInt(m[4], 10) };
   }
 
   // "You <verb> X for N points of damage." (player attacking, second-person)
@@ -990,7 +1032,9 @@ function parseEvent(line, ts) {
   //
   // Feign death is already parsed correctly further down as type 'feign_death'
   // via "has fallen to the ground"; this line simply must not shadow it.
-  m = line.match(/\]\s+(.+?)\s+died\./i);
+  // Optional "has": "X has died." otherwise mis-captured the mob name as
+  // "a gnoll has", breaking the boss-flush comparison + respawn-timer cancel.
+  m = line.match(/\]\s+(.+?)\s+(?:has\s+)?died\./i);
   if (m) {
     return { ts: tsIso, type: 'death', defender: m[1], attacker: null };
   }
@@ -21199,6 +21243,9 @@ function saveStatsSoon() {
 // Classify the ability of a damage event for the dashboard's "top damage" lists.
 // Returns one of: 'Melee Crit', 'Spell Crit' (DoT, proc, nuke), or 'Hit'.
 const MELEE_ABILITIES = new Set([
+  // Multi-word class skills (SPECIAL_VERB_RX) — melee for DPS bucketing.
+  'flying kick','round kick','dragon punch','eagle strike','tiger claw',
+  'tail rake','harm touch','frenzy',
   'hit','slash','crush','pierce','punch','kick','bash','backstab','bite','claw',
   'gore','maul','slam','smash','peck','gnaw','sting','trample','snap','stomp',
   'chomp','swing','tear','rend','spit','swipe','buffet','thrash','mangle',
@@ -29786,7 +29833,7 @@ function _cancelTimer(id) {
 // true of this matcher; with `died.` it is at least true of real deaths.
 const _DEATH_SLAIN_BY_RX = /\]\s+(.+?)\s+has been slain by\s+/i;
 const _DEATH_YOU_SLEW_RX = /\]\s+You have slain\s+(.+?)[!.]*\s*$/i;
-const _DEATH_DIED_RX     = /\]\s+(.+?)\s+died\.\s*$/i;
+const _DEATH_DIED_RX     = /\]\s+(.+?)\s+(?:has\s+)?died\.\s*$/i;
 function _deadMobNameFromLine(line) {
   if (!line) return null;
   const hasSlain = line.indexOf('slain') !== -1;
