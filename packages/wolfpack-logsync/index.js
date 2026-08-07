@@ -18461,13 +18461,14 @@ async function dismissTopDamage(key) {
   async function runImport(text) {
     var out = document.getElementById('trigImportResult');
     if (!out) return;
-    if (!text || !text.trim()) { out.textContent = 'Nothing to import.'; out.style.color = 'var(--dim)'; return; }
+    var isObj = text && typeof text === 'object';
+    if (!text || (!isObj && !text.trim())) { out.textContent = 'Nothing to import.'; out.style.color = 'var(--dim)'; return; }
     out.textContent = 'Importing…'; out.style.color = 'var(--dim)';
     try {
       const r = await fetch('/api/personal-triggers/import', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ data: text }),
+        body: JSON.stringify(isObj ? text : { data: text }),
       });
       const j = await r.json().catch(function(){ return {}; });
       if (!r.ok || !j.ok) {
@@ -18506,6 +18507,16 @@ async function dismissTopDamage(key) {
       var buf   = await file.arrayBuffer();
       var bytes = new Uint8Array(buf);
       var text;
+      if (bytes.length > 3 && bytes[0] === 0x50 && bytes[1] === 0x4b && bytes[2] === 0x03 && bytes[3] === 0x04) {
+        // GINA .gtp — a PKZIP. Browsers gunzip natively but cannot unzip, so
+        // ship the raw bytes base64d and let the agent extract ShareData.xml.
+        var b64 = '';
+        for (var zo = 0; zo < bytes.length; zo += 0x8000) {
+          b64 += String.fromCharCode.apply(null, bytes.subarray(zo, zo + 0x8000));
+        }
+        await runImport({ zip_b64: btoa(b64) });
+        return;
+      }
       if (bytes.length > 2 && bytes[0] === 0x1f && bytes[1] === 0x8b) {
         var stream = new Blob([buf]).stream().pipeThrough(new DecompressionStream('gzip'));
         text = await new Response(stream).text();
@@ -20875,7 +20886,17 @@ function startWebDashboard(port) {
         // Accept the body under `xml` (legacy key) OR `data`; the content can be
         // GINA/EQLP SharedTriggers XML *or* EQLogParser's native JSON .tgf tree
         // (the client gunzips .tgf.gz before sending). Detect by first char.
-        const raw = String(payload?.xml || payload?.data || '');
+        let raw = String(payload?.xml || payload?.data || '');
+        // .gtp path: the dashboard base64s the PKZIP bytes (browsers can gunzip
+        // natively but not unzip) and the member is extracted here.
+        if (!raw.trim() && payload?.zip_b64) {
+          try {
+            raw = _readZipMemberFromBuf(Buffer.from(String(payload.zip_b64), 'base64'), 'sharedata.xml') || '';
+          } catch { raw = ''; }
+          if (!raw.trim()) {
+            res.writeHead(400); return res.end(JSON.stringify({ error: 'could not read the .gtp archive (no XML member found)' }));
+          }
+        }
         if (!raw.trim()) {
           res.writeHead(400); return res.end(JSON.stringify({ error: 'import body required' }));
         }
@@ -20926,12 +20947,18 @@ function startWebDashboard(port) {
             row.warning_text    = String(t.warning_text).slice(0, 200);
           }
           if (t.end_text)          row.end_text = String(t.end_text).slice(0, 200);
-          if (t.end_early_pattern) { row.end_early_pattern = String(t.end_early_pattern).slice(0, 1000); row.end_use_regex = true; }
+          if (t.end_early_pattern) { row.end_early_pattern = String(t.end_early_pattern).slice(0, 1000); row.end_use_regex = t.end_use_regex !== false; }
           try {
             compiled.push(_compilePersonalTrigger(row));
             existingNames.add(row.name.toLowerCase());
             imported++;
           } catch (err) {
+            // Import DISABLED rather than drop (pq-companion's contract, and
+            // the right one): a silently-missing trigger is the worse failure
+            // mode. The row sits in the list flagged for manual editing.
+            compiled.push({ ...row, enabled: false, import_error: String(err.message || err).slice(0, 200),
+                            _regex: null, _endRegex: null, _conditions: [], _aliases: {}, _scope: 'personal' });
+            existingNames.add(row.name.toLowerCase());
             errors.push({ name: row.name, error: err.message });
           }
         }
@@ -27127,6 +27154,17 @@ function _decodeXmlEntities(s) {
     .replace(/&quot;/g, '"')
     .replace(/&apos;/g, '\'');
 }
+// GINA duration fields appear as plain seconds ("400"), floats, or clock
+// notation ("6:40", "1:02:03"). Milliseconds are handled by the caller.
+function _ginaDurationSecs(raw) {
+  const v = String(raw || '').trim();
+  if (!v) return 0;
+  if (/^\d+(?:\.\d+)?$/.test(v)) return Math.round(parseFloat(v));
+  const parts = v.split(':').map(x => parseInt(x, 10));
+  if (!parts.length || parts.some(x => !Number.isFinite(x))) return 0;
+  return parts.reduce((acc, x) => acc * 60 + x, 0);
+}
+
 function _parseTriggerXml(xml) {
   const triggers = [];
   // Match each <Trigger>...</Trigger> block. GINA top-level is
@@ -27148,18 +27186,44 @@ function _parseTriggerXml(xml) {
     const enableRegex = get('EnableRegex').toLowerCase() === 'true';
     const displayText = get('DisplayText');
     const ttsText     = get('TextToVoiceText');
-    // GINA's TimerDuration is in seconds; we don't yet wire timer triggers,
-    // but parse the cooldown if present so we don't lose the field.
-    const cooldownRaw = get('TimerDuration');
-    const cooldown    = parseInt(cooldownRaw, 10) || 0;
+    // GINA timer semantics — corrected 2026-08-07 (pq-companion analysis 01
+    // §3.9): TimerDuration is the COUNTDOWN length, and we used to import it
+    // as cooldown_seconds — a semantic inversion that turned a 450s raid
+    // timer into a 450s MUTE on the trigger with no timer at all. GINA has no
+    // lockout concept, so cooldown is always 0 here; the duration becomes a
+    // real countdown when TimerType says this is a timer trigger.
+    const timerType = get('TimerType').toLowerCase();
+    const isTimer   = timerType === 'timer' || timerType === 'repeatingtimer';
+    const durMs     = parseInt(get('TimerMillisecondDuration'), 10) || 0;
+    const durSec    = durMs > 0 ? Math.round(durMs / 1000) : _ginaDurationSecs(get('TimerDuration'));
+    // UseText / UseTextToVoice gate the alert actions when present (GINA
+    // always writes them); an EQLP-shaped XML without the tags keeps the
+    // old use-if-non-empty behavior.
+    const useText  = get('UseText');
+    const useTts   = get('UseTextToVoice');
+    // Early enders: every <EarlyEnder> block's text, joined as alternatives.
+    // A non-regex ender is escaped so it matches itself.
+    const enders = [];
+    const enderRx = /<EarlyEnder>([\s\S]*?)<\/EarlyEnder>/gi;
+    let em2;
+    while ((em2 = enderRx.exec(body)) !== null) {
+      const eb   = em2[1];
+      const et   = /<(?:EarlyEndText|EndingTrigger|TriggerText)\b[^>]*>([\s\S]*?)<\//i.exec(eb);
+      const text = et ? _decodeXmlEntities(et[1].trim()) : '';
+      if (!text) continue;
+      const eRegex = /<EnableRegex\b[^>]*>\s*true\s*</i.test(eb);
+      enders.push(eRegex ? '(?:' + text + ')' : '(?:' + _escapeForLiteralMatch(text) + ')');
+    }
     if (!name || !pattern) continue;
     triggers.push({
       name,
       pattern,
       use_regex:        enableRegex,
-      display_text:     displayText,
-      tts_text:         ttsText,
-      cooldown_seconds: cooldown,
+      display_text:     (useText === '' || useText.toLowerCase() === 'true') ? displayText : '',
+      tts_text:         (useTts === '' || useTts.toLowerCase() === 'true') ? ttsText : '',
+      cooldown_seconds: 0,
+      timer_duration_sec: (isTimer && durSec > 0) ? durSec : 0,
+      ...(enders.length ? { end_early_pattern: enders.join('|'), end_use_regex: true } : {}),
     });
   }
   return triggers;
@@ -27200,7 +27264,9 @@ function _parseTriggerTgfJson(text) {
           warning_seconds:    Math.max(0, parseInt(td.WarningSeconds, 10) || 0),
           warning_text:       String(td.WarningTextToSpeak || td.WarningTextToDisplay || '').trim(),
           end_text:           String(td.EndTextToSpeak || td.EndTextToDisplay || '').trim(),
-          end_early_pattern:  String(td.EndEarlyPattern || '').trim(),
+          end_early_pattern:  [String(td.EndEarlyPattern || '').trim(), String(td.EndEarlyPattern2 || '').trim()]
+                                .filter(Boolean).map(x => '(?:' + x + ')').join('|'),
+          end_use_regex:      td.EndUseRegex !== false,
         });
       }
     }
@@ -27217,6 +27283,9 @@ function _parseTriggerTgfJson(text) {
 
 // Per-trigger last-fire timestamp for cooldown enforcement
 const _triggerLastFire = new Map();
+// Per-trigger fire count — GINA's {COUNTER} template token. Resets on restart
+// by design (a session-scoped tally, matching GINA's behavior).
+const _triggerFireCounts = new Map();
 // Recent overlay queue — surfaced on /api/state for the dashboard to render.
 // Cap at 20 so a runaway trigger can't OOM us.
 const _activeOverlays = [];
@@ -29110,6 +29179,48 @@ function _readZipEntry(zipPath, entryName) {
   throw new Error(`entry not found: ${entryName}`);
 }
 
+// Buffer-based sibling of _readZipEntry for GINA .gtp packages — a .gtp is a
+// PKZIP holding one ShareData.xml, which our gzip-only import path could never
+// read (the "advertised and broken" finding in the pq-companion comparison).
+// Prefers a member whose basename matches `preferBase`, else the first .xml
+// member, else the first member. Store (0) and deflate (8) only.
+function _readZipMemberFromBuf(buf, preferBase) {
+  if (!buf || buf.length < 22 || buf.readUInt32LE(0) !== 0x04034b50) return null;
+  let eocd = -1;
+  for (let i = buf.length - 22; i >= Math.max(0, buf.length - 22 - 65535); i--) {
+    if (buf.readUInt32LE(i) === 0x06054b50) { eocd = i; break; }
+  }
+  if (eocd < 0) return null;
+  const count = buf.readUInt16LE(eocd + 10);
+  let off = buf.readUInt32LE(eocd + 16);
+  const members = [];
+  for (let n = 0; n < count && off + 46 <= buf.length; n++) {
+    if (buf.readUInt32LE(off) !== 0x02014b50) break;
+    const method   = buf.readUInt16LE(off + 10);
+    const csize    = buf.readUInt32LE(off + 20);
+    const nameLen  = buf.readUInt16LE(off + 28);
+    const extraLen = buf.readUInt16LE(off + 30);
+    const cmtLen   = buf.readUInt16LE(off + 32);
+    const lho      = buf.readUInt32LE(off + 42);
+    const name     = buf.toString('utf8', off + 46, off + 46 + nameLen);
+    members.push({ name, base: name.split(/[\\/]/).pop().toLowerCase(), method, csize, lho });
+    off += 46 + nameLen + extraLen + cmtLen;
+  }
+  const pick = members.find(m => preferBase && m.base === preferBase)
+            || members.find(m => m.base.endsWith('.xml'))
+            || members[0];
+  if (!pick) return null;
+  try {
+    const lNameLen  = buf.readUInt16LE(pick.lho + 26);
+    const lExtraLen = buf.readUInt16LE(pick.lho + 28);
+    const start = pick.lho + 30 + lNameLen + lExtraLen;
+    const data  = buf.subarray(start, start + pick.csize);
+    if (pick.method === 0) return data.toString('utf8');
+    if (pick.method === 8) return zlib.inflateRawSync(data).toString('utf8');
+  } catch { /* corrupt member — fall through */ }
+  return null;
+}
+
 // crash_reason.txt → structured fields. Lines look like "Key: value"; the
 // leading "Unhandled exception occurred: ..." headline is kept in raw only.
 function _parseCrashReason(text) {
@@ -30522,6 +30633,13 @@ function _calloutScopeGated(scope) {
 }
 
 function _fireTriggerActions(t, captures, tsMs, test, isRelay) {
+  // GINA's {COUNTER} — session-scoped per-trigger fire tally, available to
+  // every action template. Test/replay fires read the count without bumping
+  // it, so a rehearsal can't skew a live "third add incoming" counter.
+  const _fcKey = t.id || t.name;
+  const _fc = (_triggerFireCounts.get(_fcKey) || 0) + (test ? 0 : 1);
+  if (!test) _triggerFireCounts.set(_fcKey, _fc);
+  if (captures && captures.counter == null) captures.counter = _fc;
   // #136 raid callout allow-list — decide ONCE per fire whether speech is muted.
   // Applies only to the raid-wide voice scopes (guild + relayed), only when the
   // allow-list is enabled, and only when the trigger matches no critical
