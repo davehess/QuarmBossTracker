@@ -45,7 +45,7 @@ CREATE TABLE IF NOT EXISTS zeal_tag_observations (
   shape        text,
   -- Append semantics (Uilnayar 2026-08-06: "tags can append as well if you do a
   -- /tag chat +<tag> with a plus symbol"). 'set' | 'append' | 'replace' |
-  -- 'erase'; NULL from agents older than 3.5.17, which is deliberately NOT the
+  -- 'erase'; NULL from agents older than 3.5.42, which is deliberately NOT the
   -- same as 'set' — null means "we could not tell", and the log must not assert
   -- a replace it never observed.
   --
