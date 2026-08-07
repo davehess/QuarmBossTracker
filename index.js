@@ -12429,6 +12429,67 @@ async function _noteTargetSwitches(rows) {
   return out.length;
 }
 
+// ── #194 Zeal /tag observations — append the evidence before it evaporates ───
+//
+// Uilnayar 2026-08-06: "let's craft a table to store these tags into to verify
+// how this operates … we need to determine if those spawn IDs are unique or
+// random or per person."
+//
+// Same shape and same reason as _noteTargetSwitches below: the live_state
+// upsert this rides behind REPLACES zeal_tags wholesale, so the only moment the
+// tag exists durably is right here. On top of that the agent expires a tag from
+// its own snapshot 120s after it was set (_TAG_FRESH_MS), so a poller can and
+// did miss them entirely — night one's tags were already unreadable by 23:13.
+//
+// Dedup is in-memory and keyed (guild, observer, spawn_id, tagger, tagged_at):
+// an agent re-sends an unchanged tag on EVERY upload for those 120 seconds, and
+// `since` holds still across those re-sends, so first-write-wins collapses ~60
+// duplicate rows per tag to one without a Supabase read. The unique index is
+// the backstop for a restart, not the mechanism.
+//
+// Deliberately NOT keyed on spawn_id alone: two taggers on one mob is the whole
+// experiment, so `tagger` must be part of the key or we would reproduce, in the
+// bot, exactly the collapse that makes the agent's Map unable to answer this.
+const _seenZealTags   = new Map();          // key → true
+const ZEAL_TAG_MAX_KEYS = 4000;
+function _zealTagKey(guildId, observer, spawnId, tagger, taggedAt) {
+  return `${guildId} ${observer} ${spawnId} ${tagger || ''} ${taggedAt}`;
+}
+async function _noteZealTags(rows) {
+  if (!Array.isArray(rows) || rows.length === 0) return 0;
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) return 0;
+  if (_seenZealTags.size > ZEAL_TAG_MAX_KEYS) _seenZealTags.clear();
+
+  const out = [];
+  for (const r of rows) {
+    if (!r || !r.character || !Array.isArray(r.zeal_tags)) continue;
+    for (const t of r.zeal_tags) {
+      // r.zeal_tags is already sanitized by the caller (spawn_id > 0, mob and
+      // since present, tagger shape-checked) — don't re-validate, just key it.
+      if (!t || !t.since) continue;
+      const key = _zealTagKey(r.guild_id, r.character, t.spawn_id, t.tagger, t.since);
+      if (_seenZealTags.has(key)) continue;
+      _seenZealTags.set(key, true);
+      out.push({
+        guild_id:    r.guild_id,
+        observed_by: r.character,
+        tagger:      t.tagger || null,
+        spawn_id:    t.spawn_id,
+        mob:         t.mob,
+        tag_text:    t.text || null,
+        shape:       t.shape || null,
+        observer_zone_id:   r.zone_id   || null,
+        observer_zone_name: r.zone_name || null,
+        tagged_at:   t.since,
+      });
+    }
+  }
+  if (out.length === 0) return 0;
+  await supabase.insert('zeal_tag_observations', out);
+  return out.length;
+}
+
 async function _handleAgentLiveState(req, res) {
   const identity = await mimicLink.requireAgentAuth(req, res);
   if (!identity) return;
@@ -12603,6 +12664,12 @@ async function _handleAgentLiveState(req, res) {
     // over telemetry.
     try { await _noteTargetSwitches(rows); } catch (err) {
       console.warn('[target-obs] append failed:', err?.message);
+    }
+    // #194 tag evidence — same placement, same best-effort contract: the upsert
+    // above has already replaced zeal_tags, so this is the last point the tag
+    // is durable. Never fail a live-state POST over an experiment.
+    try { await _noteZealTags(rows); } catch (err) {
+      console.warn('[zeal-tags] append failed:', err?.message);
     }
     for (const s of swaps) {
       await supabase.update('character_live_state',
