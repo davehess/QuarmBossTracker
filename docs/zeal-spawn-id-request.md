@@ -5,6 +5,20 @@ This is not a Wolf Pack change — it documents the one upstream addition that
 would unblock same-name mob identification for any companion tool reading
 Zeal's named pipe. Keep it here so the ask (and the reasoning) survives.
 
+> **See also `zeal-tag-spawn-id-collision.md`** — a separate, and much cheaper,
+> upstream ask. `/tag` ALREADY carries a spawn id (and the mob name) over the
+> chat channel, and measured on 2026-08-07 it cleanly separated four
+> simultaneous same-name mobs. So the same-name problem this doc opens with is
+> partly solved already, by an operator-driven path rather than a passive one.
+> That doc reports the bug in it: Zeal applies a received tag by id alone and
+> ignores the name it was sent, so tags land on unrelated mobs across zones.
+>
+> Note also the CLAUDE.md correction: the ask BELOW is aimed at the gauge
+> stream, which is the hardest possible surface to extend. The **entity**
+> surface (raid/group loops in `named_pipe.cpp`, which already dereference the
+> `Entity*` carrying `SpawnId` at `0x0094`) is a one-line change. Re-aim this
+> request there before sending it.
+
 ---
 
 ## Summary
