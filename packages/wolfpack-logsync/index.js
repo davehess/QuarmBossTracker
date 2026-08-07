@@ -29352,7 +29352,14 @@ function _startTimer(t, tsMs, isTest, captures) {
     timerTarget = stats.currentEncounterThreat.bossName;
   }
   const id = baseId + captureSuffix;
-  const startMs = tsMs || Date.now();
+  // Replay arms the countdown on the WALL clock. tsMs stays authoritative for
+  // pacing and the journal, but it is the historical log time — for any log
+  // older than the duration, ends_at_ms lands in the past and
+  // _activeTimersSnapshot deletes the row before the overlay ever paints it.
+  // Field report: replaying a pull fired the TTS but "the countdown bar never
+  // appears", so authors concluded the timer itself was broken. Live fires are
+  // unaffected (tsMs is already ~now).
+  const startMs = t._replay ? Date.now() : (tsMs || Date.now());
   const action = (Array.isArray(t.actions) && t.actions[0]) || {};
   _activeTimers.set(id, {
     id,
@@ -30368,7 +30375,11 @@ function _fireTriggerActions(t, captures, tsMs, test, isRelay) {
       const speakAt  = (text, offsetMs) => {
         const msg = _expandTemplate(text || '', captures || {}).trim();
         if (!msg) return;
-        const fireMs = (tsMs || Date.now()) + Math.max(0, offsetMs || 0);
+        // Replay rebases mark offsets onto now — a historical tsMs made every
+        // fireMs more than a minute old, so the stale-drop below discarded the
+        // whole 30→10→5→0 sequence and a rehearsal played nothing.
+        const markBaseMs = t._replay ? Date.now() : (tsMs || Date.now());
+        const fireMs = markBaseMs + Math.max(0, offsetMs || 0);
         if (Date.now() - fireMs > 60_000) return;          // stale, drop
         const delay  = Math.max(0, fireMs - Date.now());
         const key    = baseKey + ':' + Math.round(offsetMs || 0);
@@ -30598,6 +30609,13 @@ async function _replayWorker(st) {
   }
   st.done    = true;
   st.running = false;
+  // Now that replayed timers arm on the wall clock (see _startTimer), a long
+  // replay can end with a stack of rehearsal countdowns still ticking. Sweep
+  // every test-marked timer on completion — same rule as the dashboard's
+  // testOnly clear — so a finished rehearsal leaves the overlay clean.
+  for (const [id, t] of _activeTimers) {
+    if (t.test) _activeTimers.delete(id);
+  }
   scheduleRender();
 }
 
