@@ -24,7 +24,7 @@
 //
 // Run: npx vitest run test/tag-channel.test.js
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { readSource, sliceBlock, sliceArrayLiteral, AGENT_INDEX } from './_source-slice.js';
 
 const src = readSource(AGENT_INDEX);
@@ -427,8 +427,18 @@ describe('zeal_tags upload payload', () => {
     const out = build([{ spawn_id: 1234, mob: 'thall va xakra', mobDisplay: 'Thall Va Xakra',
       text: 'Naggato-Tanking', shape: 'G', tagger: 'Naggato', tsMs: NOW - 3000 }], NOW);
     expect(out).toEqual([{ spawn_id: 1234, mob: 'Thall Va Xakra', text: 'Naggato-Tanking',
-      shape: 'G', tagger: 'Naggato', since: new Date(NOW - 3000).toISOString() }]);
+      shape: 'G', tagger: 'Naggato', since: new Date(NOW - 3000).toISOString(),
+      // Append semantics ride along; null here because this fixture predates
+      // them, which is exactly what an older agent's payload looks like.
+      mode: null, appended_to: null }]);
     expect(build([], NOW)).toBeNull();
+  });
+
+  it('ships mode + appended_to when the tag was an append', () => {
+    const out = build([{ spawn_id: 114, mob: 'derakor the vindicator',
+      mobDisplay: 'Derakor the Vindicator', text: 'SLOWED', shape: null,
+      tagger: 'Canniball', tsMs: NOW - 1000, mode: 'append', appendedTo: 'Dafeet' }], NOW);
+    expect(out[0]).toMatchObject({ mode: 'append', appended_to: 'Dafeet', tagger: 'Canniball' });
   });
 });
 
@@ -440,5 +450,71 @@ describe('bot integration points', () => {
 
   it('the agent sanitizes shapes to the Zeal set on capture', () => {
     expect(src).toMatch(/_ZEAL_TAG_SHAPES = \{ r: 'R', o: 'O', y: 'Y', g: 'G', b: 'B', w: 'W', p: 'P', s: 'S' \}/);
+  });
+});
+
+// ── Append semantics (Uilnayar 2026-08-06) ──────────────────────────────────
+// "tags can append as well if you do a /tag chat +<tag> with a plus symbol."
+//
+// The prefix used to be stripped and thrown away, which was harmless while the
+// only consumer was a row label. It is not harmless for the identity log: an
+// append is a SECOND TAGGER on one spawn id, and it names the person appended
+// onto — two clients agreeing on one id in a single observation, with none of
+// the upload-timing luck the two-independent-taggers path depends on.
+describe('zeal /tag — append semantics carry the prior tagger', () => {
+  const TNOW = Date.parse('2026-08-06T01:35:52.000Z');
+  const h = harness();
+  beforeEach(() => h._zealTags.clear());
+
+  const tag = (payload, who, at = TNOW) =>
+    h._applyZealTagMessage(payload, who, at);
+  const one = () => h.zealTagsSnapshot(TNOW)[0];
+
+  it('records mode=set for a plain tag', () => {
+    tag('ZEALTAG | TANKING | Derakor the Vindicator | 114', 'Dafeet');
+    expect(one()).toMatchObject({ mode: 'set', appendedTo: null, text: 'TANKING' });
+  });
+
+  it('a + append from a SECOND tagger names who they appended onto', () => {
+    tag('ZEALTAG | TANKING | Derakor the Vindicator | 114', 'Dafeet');
+    tag('ZEALTAG | +SLOWED | Derakor the Vindicator | 114', 'Canniball');
+    expect(one()).toMatchObject({
+      mode: 'append',
+      appendedTo: 'Dafeet',        // ← the proof: two names, one spawn id
+      tagger: 'Canniball',
+      spawn_id: 114,
+    });
+  });
+
+  it('@ is an append too', () => {
+    tag('ZEALTAG | TANKING | a wolf | 7', 'Dafeet');
+    tag('ZEALTAG | @ADD | a wolf | 7', 'Jankzer');
+    expect(one()).toMatchObject({ mode: 'append', appendedTo: 'Dafeet' });
+  });
+
+  it('! is a replace, not an append', () => {
+    tag('ZEALTAG | TANKING | a wolf | 7', 'Dafeet');
+    tag('ZEALTAG | !MINE | a wolf | 7', 'Jankzer');
+    expect(one()).toMatchObject({ mode: 'replace', appendedTo: null });
+  });
+
+  it('appending to your OWN tag proves nothing, so appendedTo stays null', () => {
+    tag('ZEALTAG | TANKING | a wolf | 7', 'Dafeet');
+    tag('ZEALTAG | +SLOWED | a wolf | 7', 'Dafeet');
+    expect(one()).toMatchObject({ mode: 'append', appendedTo: null });
+  });
+
+  it('an append with no prior tag has nobody to name', () => {
+    tag('ZEALTAG | +SLOWED | a wolf | 7', 'Canniball');
+    expect(one()).toMatchObject({ mode: 'append', appendedTo: null });
+  });
+
+  it('text still holds only the appender fragment — the merge is the log\'s job', () => {
+    tag('ZEALTAG | TANKING | a wolf | 7', 'Dafeet');
+    tag('ZEALTAG | +SLOWED | a wolf | 7', 'Canniball');
+    // In game the nameplate reads "TANKING SLOWED"; we deliberately keep the
+    // fragment and let SQL reconstruct, so nobody reads tag_text as what the
+    // raid saw.
+    expect(one().text).toBe('SLOWED');
   });
 });

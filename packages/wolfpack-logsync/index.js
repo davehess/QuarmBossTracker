@@ -25960,10 +25960,25 @@ function _applyZealTagMessage(msg, tagger, tsMs) {
   // Prefix semantics, simplified for a DISPLAY consumer: append variants
   // replace our stored text (the nameplate-merge subtleties don't matter for
   // a row label); a bare erase drops the tag.
+  //
+  // The mode is RECORDED, not just stripped (Uilnayar 2026-08-06: "tags can
+  // append as well if you do a /tag chat +<tag> with a plus symbol"). It used
+  // to be discarded, which was fine while the only consumer was a row label but
+  // is wrong for the observation log: on an append the nameplate in game reads
+  // `<theirs> <mine>` while `text` here holds only MY fragment, so the log would
+  // show a replace where the raid saw a merge. `mode` lets the log reconstruct
+  // the merged string in SQL from the ordered rows for a spawn id.
+  //
+  // Worth knowing for #194: an append is a SECOND TAGGER on one spawn id, which
+  // is exactly the confirmation the identity experiment needs, and it is a much
+  // more natural raid action than two people tagging simultaneously.
   const first = text[0];
-  if (first === '+' || first === '@' || first === '!') text = text.slice(1);
+  let mode = 'set';
+  if (first === '+' || first === '@') { mode = 'append'; text = text.slice(1); }
+  else if (first === '!') { mode = 'replace'; text = text.slice(1); }
   else if (first === '-') {
     if (!text.includes('^')) { _zealTags.delete(spawnId); return true; }
+    mode = 'erase';
     text = text.slice(1);
   }
   let shape = null;
@@ -25978,7 +25993,13 @@ function _applyZealTagMessage(msg, tagger, tsMs) {
     spawn_id: spawnId, mob: name.toLowerCase(), mobDisplay: name,
     text: text || (prev ? prev.text : ''),
     shape: shape != null ? shape : (sm ? null : (prev ? prev.shape : null)),
-    tagger: tagger || null, tsMs,
+    tagger: tagger || null, tsMs, mode,
+    // The tagger this one appended ONTO, captured while we still have `prev`.
+    // Two names on one spawn id inside a single row is the strongest single
+    // observation the experiment can produce: an append proves both clients
+    // resolved the same id to the same mob, with no timing luck involved.
+    appendedTo: (mode === 'append' && prev && prev.tagger && prev.tagger !== tagger)
+      ? prev.tagger : null,
   });
   return true;
 }
@@ -28942,6 +28963,8 @@ function flushLiveStateToBot(opts) {
           spawn_id: t.spawn_id, mob: t.mobDisplay, text: t.text || '',
           shape: t.shape || null, tagger: t.tagger || null,
           since: new Date(t.tsMs).toISOString(),
+          // Append semantics — see _applyZealTagMessage. Older bots ignore both.
+          mode: t.mode || null, appended_to: t.appendedTo || null,
         }));
       })(),
       buffs,
