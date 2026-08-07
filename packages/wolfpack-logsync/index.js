@@ -31318,6 +31318,64 @@ async function tailFile(logPath, onLine) {
   }, 500);
 }
 
+// ── Log rotation (feedback: Ashieron 2026-08-07) ────────────────────────────
+// "Keep track of logfile size and cull the file when it gets too big, or keep
+// it at a maximum size and file old logs to another location." We do the
+// second, never the first: old logs are the raw material for --since backfill,
+// historical chat, and parse re-runs, so culling would destroy the guild's own
+// history. A live log over the threshold is RENAMED into LogArchive/ next to
+// the logs and an empty file is recreated in its place, which the tailer's
+// existing size<pos rotation handling picks up as a reset.
+//
+// Safety model, in order:
+//   1. mtime idle gate — we only touch a file quiet for LOG_ROTATE_IDLE_MS
+//      (not being written = the character is not playing).
+//   2. The OS is the real gate: Windows refuses to rename a file EQ holds
+//      open (no FILE_SHARE_DELETE on its append handle), so a racing EQ
+//      session makes the rename fail cleanly and we just skip this sweep.
+//   3. Same-directory rename — atomic, instant, no copy, no disk double-use.
+// WP_LOG_ROTATE_MB=0 disables; default 750MB. Idle default 15 min.
+const LOG_ROTATE_MB      = (() => { const v = parseInt(process.env.WP_LOG_ROTATE_MB, 10); return Number.isFinite(v) ? v : 750; })();
+const LOG_ROTATE_IDLE_MS = Math.max(60_000, (parseInt(process.env.WP_LOG_ROTATE_IDLE_MIN, 10) || 15) * 60_000);
+
+// Pure decision — exercised directly by test/log-rotate.test.js.
+function _shouldRotateLog(sizeBytes, mtimeMs, nowMs, thresholdMb, idleMs) {
+  if (!(thresholdMb > 0)) return false;                       // feature off
+  if (!(sizeBytes > thresholdMb * 1024 * 1024)) return false; // under the cap
+  if (!(nowMs - mtimeMs >= idleMs)) return false;             // being written
+  return true;
+}
+
+function _rotateArchiveName(logPath, nowMs) {
+  const d = new Date(nowMs);
+  const pad = (n) => String(n).padStart(2, '0');
+  const stamp = d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate())
+              + '-' + pad(d.getHours()) + pad(d.getMinutes());
+  return path.basename(logPath).replace(/\.txt$/i, '') + '.' + stamp + '.txt';
+}
+
+async function _logRotateSweep() {
+  if (!(LOG_ROTATE_MB > 0)) return;
+  const now = Date.now();
+  for (const w of (stats.watchedLogs || [])) {
+    if (!w || !w.logPath) continue;
+    try {
+      const st = await fs.promises.stat(w.logPath);
+      if (!_shouldRotateLog(st.size, st.mtimeMs, now, LOG_ROTATE_MB, LOG_ROTATE_IDLE_MS)) continue;
+      const dir = path.join(path.dirname(w.logPath), 'LogArchive');
+      try { fs.mkdirSync(dir, { recursive: true }); } catch { /* exists */ }
+      const dest = path.join(dir, _rotateArchiveName(w.logPath, now));
+      fs.renameSync(w.logPath, dest);              // EQ holding it open → throws → skip
+      try { fs.writeFileSync(w.logPath, '', { flag: 'wx' }); } catch { /* recreated by EQ */ }
+      const mb = Math.round(st.size / (1024 * 1024));
+      if (!Array.isArray(stats.logRotations)) stats.logRotations = [];
+      stats.logRotations.unshift({ file: path.basename(w.logPath), dest, mb, at: new Date(now).toISOString() });
+      if (stats.logRotations.length > 10) stats.logRotations.length = 10;
+      console.log('[log-rotate] ' + path.basename(w.logPath) + ' (' + mb + 'MB) → ' + dest);
+    } catch { /* stat failed or rename refused (EQ has it open) — next sweep */ }
+  }
+}
+
 // ── Time-window mode (backfill) ─────────────────────────────────────────────
 async function readWindow(logPath, since, until, onLine) {
   // For now, naive: stream the file line by line and only emit lines whose
@@ -32446,6 +32504,11 @@ async function main() {
         if (ev) { b.builder.add(ev); idleCount = 0; }
       });
     }
+    // Log-size sweep (Ashieron's feedback): every 10 min, archive any watched
+    // log over the size cap that has been idle long enough. First pass after
+    // 2 min so an oversized log from a previous session is handled promptly.
+    setTimeout(() => { _logRotateSweep().catch(() => {}); }, 2 * 60_000);
+    setInterval(() => { _logRotateSweep().catch(() => {}); }, 10 * 60_000);
     setInterval(() => {
       idleCount++;
       if (idleCount > 10) {  // ~5s idle
