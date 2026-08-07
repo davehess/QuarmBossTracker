@@ -10444,6 +10444,14 @@ function _serializeForDashboard() {
     // tag broadcast. Both are silent failures otherwise — see the 🏷 card.
     zealTagsDropped: Number(stats.zealTagsDropped) || 0,
     zealTagRateLimit: tagRateLimitSnapshot(),
+    // Log archiving (Ashieron's feedback) — drives the dashboard banner:
+    // on/off, the cap, which files are over it, and what was archived.
+    logRotate: {
+      enabled:     _logRotateEnabled(),
+      thresholdMb: LOG_ROTATE_MB,
+      candidates:  _logRotateCandidates(),
+      recent:      Array.isArray(stats.logRotations) ? stats.logRotations.slice(0, 5) : [],
+    },
     // Backup for when zeal.ini isn't reachable: a tag we SAW arrive already
     // rewritten by prettyprint (spawn id stripped at the source).
     zealTagPretty: _tagPrettyPrintSeen,
@@ -15011,6 +15019,33 @@ function renderInfo(s) {
   // rarely and the fresh-tag count only moves while tags are actually flowing
   // (an acceptable repaint — the Info tab is not a form surface mid-raid).
   const _ztc = s.zealTagConfig || [];
+  // 🗂 Log archiving banner — the user-facing notice + kill switch for the
+  // auto-archive feature (Ashieron feedback). Plain language: nothing is
+  // deleted, and the impacted files are named with sizes.
+  const _lr = s.logRotate;
+  if (_lr) {
+    h += '<div class="card"><h2>🗂 Log archiving</h2>';
+    if (_lr.enabled) {
+      h += '<div style="font-size:12px;margin-bottom:4px">Log archiving is <b style="color:var(--green)">ON</b>. '
+        + 'A log file bigger than <b>' + esc(String(_lr.thresholdMb)) + ' MB</b> is moved into a <code>LogArchive</code> folder next to your logs once it has been quiet for 15 minutes. '
+        + 'Nothing is deleted &mdash; EQ starts a fresh file, and the old one stays on your disk.</div>';
+      if (_lr.candidates && _lr.candidates.length) {
+        h += '<div style="font-size:11px;margin-bottom:4px"><b>Will be archived on the next quiet sweep:</b> '
+          + _lr.candidates.map(function (c) { return esc(c.file) + ' (' + esc(String(c.size_mb)) + ' MB)'; }).join(', ') + '</div>';
+      } else {
+        h += '<div class="dim" style="font-size:11px;margin-bottom:4px">No log files are over the cap right now.</div>';
+      }
+      if (_lr.recent && _lr.recent.length) {
+        h += '<div class="dim" style="font-size:11px;margin-bottom:4px">Recently archived: '
+          + _lr.recent.map(function (r) { return esc(r.file) + ' (' + esc(String(r.mb)) + ' MB)'; }).join(', ') + '</div>';
+      }
+      h += '<button class="btn" onclick="wpLogRotateToggle(1)">Turn log archiving off</button>';
+    } else {
+      h += '<div class="dim" style="font-size:12px;margin-bottom:4px">Log archiving is <b>off</b>. Big log files will keep growing.</div>';
+      h += '<button class="btn" onclick="wpLogRotateToggle(0)">Turn log archiving on</button>';
+    }
+    h += '</div>';
+  }
   h += '<div class="card"><h2>🏷 Zeal tag capture</h2>';
   if (s.zealTagRateLimit) {
     h += '<div style="margin-bottom:4px;color:#f2b632;font-size:11px">⚠️ The server rate limited your chat around <code>'
@@ -18502,6 +18537,13 @@ async function dismissTopDamage(key) {
   }
   // Shared import: POST the raw text (EQLP .tgf JSON or GINA/EQLP XML — the
   // server sniffs which) and render the result summary.
+  function wpLogRotateToggle(off) {
+    fetch('/api/log-rotate/toggle', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ off: !!off }),
+    }).then(function () { location.reload(); }).catch(function () {});
+  }
   async function runImport(text) {
     var out = document.getElementById('trigImportResult');
     if (!out) return;
@@ -20922,6 +20964,17 @@ function startWebDashboard(port) {
       // triggers are preserved; duplicates by name are skipped (caller can
       // delete + re-import to overwrite). Returns { imported, skipped,
       // errors[] } so the UI can show a summary.
+      // Log-archiving kill switch — persisted to logsync.prefs.json so the
+      // choice survives restarts and updates.
+      if (req.url === '/api/log-rotate/toggle' && req.method === 'POST') {
+        const body = await _readBody(req);
+        let off = false;
+        try { off = !!JSON.parse(body || '{}').off; } catch { off = false; }
+        _saveAgentPrefs({ log_rotate_off: off });
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ ok: true, enabled: _logRotateEnabled() }));
+      }
+
       if (req.url === '/api/personal-triggers/import' && req.method === 'POST') {
         const body = await _readBody(req, 2 * 1024 * 1024);   // 2MB cap — trigger packs can be big
         let payload;
@@ -31354,8 +31407,53 @@ function _rotateArchiveName(logPath, nowMs) {
   return path.basename(logPath).replace(/\.txt$/i, '') + '.' + stamp + '.txt';
 }
 
+// Tiny persisted agent prefs (state dir, beside personal_triggers.json).
+// First use: the dashboard's log-archiving off switch — env vars are not a
+// reachable surface for Mimic users, so the opt-out has to live in a file.
+let _agentPrefsCache = null;
+function _agentPrefsPath() {
+  const dir = path.dirname(STATS_FILE || '');
+  return dir ? path.join(dir, 'logsync.prefs.json') : null;
+}
+function _agentPrefs() {
+  if (_agentPrefsCache) return _agentPrefsCache;
+  try {
+    const p2 = _agentPrefsPath();
+    _agentPrefsCache = (p2 && fs.existsSync(p2)) ? (JSON.parse(fs.readFileSync(p2, 'utf8')) || {}) : {};
+  } catch { _agentPrefsCache = {}; }
+  return _agentPrefsCache;
+}
+function _saveAgentPrefs(patch) {
+  const merged = Object.assign({}, _agentPrefs(), patch || {});
+  _agentPrefsCache = merged;
+  try {
+    const p2 = _agentPrefsPath();
+    if (p2) fs.writeFileSync(p2, JSON.stringify(merged, null, 2));
+  } catch (err) { console.warn('[prefs] save failed:', err.message); }
+  return merged;
+}
+function _logRotateEnabled() {
+  return LOG_ROTATE_MB > 0 && !_agentPrefs().log_rotate_off;
+}
+// Watched logs currently over the cap — the "these will be archived on the
+// next quiet sweep" list for the dashboard banner. Size gate only (no idle
+// check): the point is telling the user WHAT is impacted, not when.
+function _logRotateCandidates() {
+  const out = [];
+  for (const w of (stats.watchedLogs || [])) {
+    if (!w || !w.logPath) continue;
+    try {
+      const st = fs.statSync(w.logPath);
+      if (st.size > LOG_ROTATE_MB * 1024 * 1024) {
+        out.push({ file: path.basename(w.logPath), size_mb: Math.round(st.size / (1024 * 1024)) });
+      }
+    } catch { /* unreadable — skip */ }
+  }
+  return out;
+}
+
 async function _logRotateSweep() {
-  if (!(LOG_ROTATE_MB > 0)) return;
+  if (!_logRotateEnabled()) return;
   const now = Date.now();
   for (const w of (stats.watchedLogs || [])) {
     if (!w || !w.logPath) continue;
