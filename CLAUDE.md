@@ -237,8 +237,19 @@ Rules that keep them married:
   were byte-identical). So ≥2 identically-named mobs alive at once can't be
   told apart from the pipe; consumer-side correlation (death-boundary
   segmentation, HP-continuity) only resolves *sequential* same-name kills. Do
-  NOT design features that need N≥3 simultaneous same-name identities — the
-  data can't support it.
+  NOT design features that need N≥3 simultaneous same-name identities **off the
+  PIPE** — that surface can't support it.
+  **Scoped 2026-08-07: the /tag CHANNEL is a different surface and DOES carry a
+  spawn id, at any N we have been able to test.** Live measurements: 4
+  simultaneous `a decaying skeleton`, 5 `a brown bear`, and in The Deep ~17
+  `an elder thought horror` + ~11 `a horror guard` + ~9 `a thought horror
+  evoker` — every one separable, captured losslessly by two independent agents.
+  So same-name identity IS available; the catch is that it is **operator-driven,
+  not passive** — a human must target and tag each mob, against a server chat
+  rate limit (~8/min on `/tag chat` before a 30s lockout). Design for tags as
+  high-confidence labels on the few mobs that matter, layered OVER position/HP
+  clustering; never assume full coverage. Evidence + both upstream asks:
+  `docs/zeal-tag-spawn-id-collision.md`, `docs/zeal-spawn-id-request.md`.
   **The upstream ask was aimed at the wrong surface (corrected 2026-08-05).**
   `docs/zeal-spawn-id-request.md` asks for `spawn_id` on those two GAUGES, which
   is the hardest possible place to put it — gauges are a stringly-typed

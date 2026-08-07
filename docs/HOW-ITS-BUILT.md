@@ -800,7 +800,7 @@ which is what makes the loose match safe.
 real install, and the readiness card said "no zeal.ini found yet" forever — a
 diagnostic that could never fire, on the exact question the user was stuck on.
 3.5.35 reads the parent first, log dir as the in-EQ-folder fallback.
-**Three ways a tag draws the nameplate arrow and reaches NO log** — the arrow is
+**FOUR ways a tag draws the nameplate arrow and reaches NO log** — the arrow is
 NOT evidence the broadcast happened, which is what made this so hard to see:
 `/tag local` (never broadcasts — `handle_tag_command` only sends for
 rsay/gsay/chat); `/tag chat` with the channel unjoined
@@ -808,6 +808,17 @@ rsay/gsay/chat); `/tag chat` with the channel unjoined
 `chatPrintChat` returns early on `check_for_tag_channel_message`'s suppression
 verdict AFTER `handle_tag_message` has already drawn the arrow. Note suppress
 does NOT need `/tag filter` for the chat-channel path.
+**The fourth is the only one that hits a CORRECTLY configured install, mid-raid:
+the server's chat rate limit.** Tags are chat messages, so a burst trips *"You
+are currently rate limited, you cannot send more messages for 32 seconds"* and
+the broadcast is simply refused — while the arrow still draws locally, so the
+tagger believes the raid can see a mark nobody received (Canopy 2026-08-07,
+tagging through The Deep). The other three are config states you fix once; this
+one recurs, dynamically, exactly when marking fastest. Measured usable rate:
+~8/min sustained on `/tag chat` before the lockout. Agent surfaces it on the 🏷
+card (`_tagRateLimit`) — treat "no tags captured" during heavy marking as
+rate-limiting until proven otherwise. **Spread tagging across several raiders:
+the limit is per character.**
 **Two Zeal settings kill capture silently** — both read from `[Zeal]` by
 `readZealTagConfig()` and warned on the 🏷 dashboard card with the exact fix:
 `NameplateTagSuppress` (`handle_zeal_spam_filter` sets `msg = ""` and PrintChat
@@ -831,7 +842,11 @@ band is its mob — the shadow log records `K_tags` for the soak that decides
 spawn-id counting). Deliberate K=1 byte-law deviation: a tagged single
 instance DOES show `tag_text/tag_shape/spawn_id` (the assist-arrow-on-the-boss
 case); additive only, no-tags K=1 stays byte-identical. Overlay: `ztagHtml`
-colored glyphs (▲/🐾/🛑) + pooled "tags:" block. `ext_tag_fresh_sec` (120). Heading modes on `ext_pos_heading` (0 off / 1 join-only-safe / 2
+colored glyphs (▲/🐾/🛑) + pooled "tags:" block. `ext_tag_fresh_sec` (**600** —
+raised from 120 in bot 3.1.16 / agent 3.5.41; a tag is a deliberate fight-long
+mark and 120 expired it mid-pull). Upload cap `ZEAL_TAG_UPLOAD_CAP` (64, was 24
+— a Deep sweep hit 24 exactly and dropped the boss; named mobs are now kept
+unconditionally, generics fill newest-first). Heading modes on `ext_pos_heading` (0 off / 1 join-only-safe / 2
 full, dark until the `[ext-pos]` shadow log verifies the pipe's heading
 convention); `ext_pos_heading_scale`, `ext_pos_proj_reach` knobs. Overlay
 (`extarget.html`): tank tag, dimmed `?` chips, and per-row debuffs when any

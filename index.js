@@ -12455,6 +12455,34 @@ const ZEAL_TAG_MAX_KEYS = 4000;
 function _zealTagKey(guildId, observer, spawnId, tagger, taggedAt) {
   return `${guildId} ${observer} ${spawnId} ${tagger || ''} ${taggedAt}`;
 }
+
+// How many tags survive one live-state upload. Was 24, and a full-zone tagging
+// sweep in The Deep hit it EXACTLY — 24/24 on two independent agents, with the
+// rest silently gone (Canopy 2026-08-07). Worse, the old slice took the array
+// as given, which from the agent is Map INSERTION order: the oldest tags were
+// kept and the newest dropped, so `Thought Horror Overfiend` — tagged last, and
+// the one mob in the zone anybody needed identified — fell off the end.
+//
+// A real pull tags far fewer mobs than a sweep does, so this is a correctness
+// fix rather than an active raid-night failure. 64 rows is ~8KB of JSON against
+// a 256KB budget; the cap exists to bound a runaway, not to save bytes.
+const ZEAL_TAG_UPLOAD_CAP = 64;
+
+// Pick which tags survive the cap. Named mobs (proper nouns — `Thought Horror
+// Overfiend`, `Agent of Solusek`) are kept unconditionally: they are the ones a
+// raid actually needs identified, and they are rare. Generic article-prefixed
+// mobs (`an elder thought horror` — 17 of them in one Deep pull) fill the
+// remainder newest-first, because a stale tag is worth less than a fresh one.
+function _isNamedMob(mob) {
+  return /^[A-Z]/.test(String(mob || ''));
+}
+function _pickZealTags(tags, cap = ZEAL_TAG_UPLOAD_CAP) {
+  if (!Array.isArray(tags) || tags.length <= cap) return tags || [];
+  const newestFirst = (a, b) => Date.parse(b?.since || 0) - Date.parse(a?.since || 0);
+  const named   = tags.filter(t => _isNamedMob(t?.mob)).sort(newestFirst);
+  const generic = tags.filter(t => !_isNamedMob(t?.mob)).sort(newestFirst);
+  return named.concat(generic).slice(0, cap);
+}
 async function _noteZealTags(rows) {
   if (!Array.isArray(rows) || rows.length === 0) return 0;
   const supabase = require('./utils/supabase');
@@ -12614,7 +12642,7 @@ async function _handleAgentLiveState(req, res) {
       // #194: fresh Zeal /tag broadcasts — each carries the mob's true spawn
       // id, the authoritative same-name separator. Sanitized + capped.
       zeal_tags: (Array.isArray(st?.zeal_tags) && st.zeal_tags.length)
-        ? st.zeal_tags.slice(0, 24).map(t => ({
+        ? _pickZealTags(st.zeal_tags).map(t => ({
             spawn_id: Number.isFinite(Number(t?.spawn_id)) ? Math.trunc(Number(t.spawn_id)) : 0,
             mob:    String(t?.mob || '').slice(0, 80),
             text:   String(t?.text || '').slice(0, 48),
