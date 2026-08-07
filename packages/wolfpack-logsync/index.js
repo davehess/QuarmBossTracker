@@ -2335,20 +2335,32 @@ function _durTicksForLevel(formula, capTicks, level) {
   const f   = Number(formula) || 0;
   if (f === 50 || f === 51) return cap || 72000;   // permanent / until-fade
   if (!lvl || !f) return cap;                       // no level → spell max
+  // EQMac/Al'Kabor integer division is FLOOR, and formula 6 carries a +2 term
+  // we never had (verified against the EQMacEmu CalcBuffDuration_formula port
+  // in the pq-companion comparison, pinned by its PQDI-checked test vectors:
+  // f6 L57 → 30 ticks, L60 → 32). On our catalog f6/base-35 is 25 spells —
+  // essentially the whole slow line (Forlorn Deeds, Tagar's/Togor's/Tigir's
+  // Insects, Languid Pace, Slow, Cloud of Grummus …). At L60 the real answer
+  // is 32 ticks (192s); we computed 30 (180s), so the Mob Info slow chip went
+  // purple and the #130 tracker called "Slow dropped" 12s early — long enough
+  // for the shaman to burn a re-slow into a still-live slow. The ceil→floor
+  // swap only moves odd-level results; f4's `50` is capped just below, which
+  // reproduces the old `cap || 50` for every real f4 spell (all have base≤50)
+  // and fixes the cap===0 case (was 0, now 50).
   let t;
   switch (f) {
-    case 1:  t = Math.ceil(lvl / 2);      break;
-    case 2:  t = Math.ceil(lvl / 2) + 5;  break;
-    case 3:  t = lvl * 30;                break;
-    case 4:  t = cap || 50;               break;
-    case 5:  t = 2;                        break;
-    case 6:  t = Math.ceil(lvl / 2);      break;
-    case 7:  t = lvl;                      break;
-    case 8:  t = lvl + 10;                break;
-    case 9:  t = lvl * 2 + 10;            break;
-    case 10: t = lvl * 3 + 10;            break;
-    case 11: t = (lvl + 3) * 30;          break;
-    case 12: t = Math.ceil(lvl / 4);      break;
+    case 1:  t = Math.floor(lvl / 2);                       break;
+    case 2:  t = (lvl <= 1) ? 6 : Math.floor(lvl / 2) + 5;  break;
+    case 3:  t = lvl * 30;                                  break;
+    case 4:  t = 50;                                        break;
+    case 5:  t = 2;                                         break;
+    case 6:  t = Math.floor(lvl / 2) + 2;                   break;
+    case 7:  t = lvl;                                       break;
+    case 8:  t = lvl + 10;                                  break;
+    case 9:  t = lvl * 2 + 10;                              break;
+    case 10: t = lvl * 3 + 10;                              break;
+    case 11: t = lvl * 30 + 90;                             break;
+    case 12: t = Math.max(1, Math.floor(lvl / 4));          break;
     default: return cap;
   }
   if (!(t > 0)) return cap;
@@ -2670,22 +2682,28 @@ function recordTargetBuffLanding(bcEvt) {
   const k = String(bcEvt.target).toLowerCase();
   let mp = _buffLandingsByTarget.get(k);
   if (!mp) { mp = new Map(); _buffLandingsByTarget.set(k, mp); }
-  // Best-effort caster level for the duration estimate:
-  //   • DEBUFF (good===0) on a target — cast by a raider whose level we don't
-  //     track at land time. Assume the era level cap (_assumedCasterLevel:
-  //     60 now, 65 once PoP unlocks) so we show a realistic FLOOR duration
-  //     instead of the spell's absolute max.
-  //   • BUFF — our pet → the owner cast it; else a self-buff → the target's own
-  //     observed level. Fall back to the assumed cap when we have no level.
-  const good = _spellGood(bcEvt.spell_name);
+  // Whose level scales this landing? EQ computes buff duration on the CASTER,
+  // so the recipient's level is only the right input when the recipient IS the
+  // caster. We used to read whoData for the TARGET on every beneficial buff,
+  // which under-reported any level-scaled buff on a sub-60 character: a L60
+  // druid's Chloroplast (f10/205) on a L52 alt is 190 ticks (1140s), but
+  // scaled at 52 it computes 166 (996s) — the chip flipped to "fell off —
+  // rebuff" nearly two and a half minutes early. (f3 cap-dominated buffs like
+  // Aegolism/KEI were unaffected, which is why this stayed hidden.) Order:
+  //   1. our own pet → the owner cast it; use the owner's /who level
+  //   2. genuine self-buff (we cast it AND we are the target) → own level
+  //   3. everything else (raid buffs, all debuffs) → the era cap; the land
+  //      line never names the caster, and _assumedCasterLevel() already
+  //      tracks the PoP unlock (60 → 65).
   let lvl;
-  if (good === 0) {
-    lvl = _assumedCasterLevel();
+  const petOwner = _petOwnerByName(k);
+  if (petOwner) {
+    lvl = (whoData.get(petOwner) || {}).level || _assumedCasterLevel();
   } else {
-    const petOwner = _petOwnerByName(k);
-    lvl = petOwner ? ((whoData.get(petOwner) || {}).level || null)
-                   : ((whoData.get(k) || {}).level || null);
-    if (!lvl) lvl = _assumedCasterLevel();
+    const obs = String((bcEvt && bcEvt.observer) || '').toLowerCase();
+    lvl = (bcEvt && bcEvt._selfCast && obs && obs === k)
+      ? ((whoData.get(k) || {}).level || _assumedCasterLevel())
+      : _assumedCasterLevel();
   }
   const newKey = String(bcEvt.spell_name).toLowerCase();
   // Slot-based overwrite (same logic as recordPetBuffLanding) — a new buff in
@@ -2733,9 +2751,13 @@ function targetBuffsFor(targetLower) {
     const durSecs = (Number(b.dur_ticks) || 0) * 6;
     let rem = durSecs - (now - (b.landed_at || now)) / 1000;
     let fellOff = false;
-    // HoTs (regen category) get a 6s (one-tick) linger; everything else gets
-    // the 5-min rebuff cue. Same rationale as petBuffsForOwner above.
-    const lingerMs = _isHotBuff(b && b.name) ? 6_000 : FELL_OFF_LINGER_MS;
+    // HoTs (regen category) and short effects (stuns, procs — catalog duration
+    // under 60s) get a 6s (one-tick) linger; everything else gets the 5-min
+    // rebuff cue. Same rule as petBuffsForOwner above — you don't rebuff a
+    // stun, you re-stun. The target path was missing the short-effect half, so
+    // a 12s stun on a mob sat purple "fell off — rebuff" for five minutes.
+    const _shortFx = ((Number(b && b.dur_ticks) || 0) * 6) > 0 && ((Number(b && b.dur_ticks) || 0) * 6) < 60;
+    const lingerMs = (_isHotBuff(b && b.name) || _shortFx) ? 6_000 : FELL_OFF_LINGER_MS;
     if (b.worn_off_at) {                                     // explicit "worn off"
       if (now - b.worn_off_at > lingerMs) { mp.delete(k); continue; }
       fellOff = true; rem = 0;
