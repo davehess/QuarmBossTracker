@@ -9591,11 +9591,12 @@ async function _postRaidTickCard(slot, names, uploaders, scheduledForIso, nightK
     .setDescription([
       `<t:${when}:t> · seen by ${uploaders} Mimic${uploaders === 1 ? '' : 's'}`,
       '',
-      // Comma-delimited, not the middot the rest of the cards use (Uilnayar
-      // 2026-08-06). This is a LIST OF PEOPLE an officer reads name by name and
-      // may well copy out; the middot reads as decoration and makes 35 names
-      // blur together.
-      names.join(', ') || '_nobody_',
+      // One name per LINE, not the middot the rest of the cards use (Uilnayar
+      // 2026-08-06). This list gets copied out of Discord and pasted into bulk
+      // entry, which splits on newlines — so the separator is not decoration,
+      // it is the paste format. Keep it a bare `\n`: no bullets, no numbering,
+      // nothing a paste target would have to strip back off.
+      names.join('\n') || '_nobody_',
     ].join('\n').slice(0, 4000))
     .setFooter({ text: 'Captured automatically · NOT submitted to OpenDKP' });
 
