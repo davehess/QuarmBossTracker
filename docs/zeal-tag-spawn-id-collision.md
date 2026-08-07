@@ -71,8 +71,33 @@ different mob entirely:
 | `a brown bear` | 51 | `anotherdafeettag` |
 | `Merdan Fleetfoot` | 39 | `70% slowed` |
 
-Note the ids: **39, 45, 51, 53**. Low-numbered and dense — collisions between
-zones are the normal case, not an edge case.
+Note the ids: **39, 45, 51, 53**. Low-numbered and dense — and that is not a
+coincidence. See below.
+
+### 2b. Why the collisions concentrate in low ids (measured)
+
+Spawn ids are allocated in spawn order from a low base, and **every zone starts
+from that same base**. Measured in one session:
+
+| id range | what those spawns are |
+|---|---|
+| 17, 39, 45, 51, 53 | mobs standing in the zone since it booted |
+| 2266 – 4029 | later respawns, allocated incrementally |
+
+Two confirmations from the same session:
+
+- **Ids are stable per zone, not churning.** `Merdan Fleetfoot` was spawn **39**
+  at 12:33 and still spawn **39** at 13:12. So the `an ancient sentry` that held
+  id 39 earlier that day was in a *different zone* — a true collision, not a
+  recycled id within one zone.
+- **Same-zone respawns do NOT reuse the id.** A killed `a bloodsaber defiler`
+  (id 3250) came back as id **4029**. So the dangerous "same name, same id,
+  different creature" case does not arise from ordinary respawning.
+
+The consequence: the static, named NPCs that sit in a zone from boot — exactly
+the mobs people tag — occupy the same low ids in *every zone at once*. Cross-zone
+collision is therefore structural rather than unlucky, which matches every
+observation above landing in the 17–53 range.
 
 ### 3. Same-name mobs in different zones, live
 
