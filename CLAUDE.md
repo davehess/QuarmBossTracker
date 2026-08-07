@@ -84,6 +84,18 @@ file-checkout between branches rather than merging whole branches (the beta
 branch must never promote stale bot/web files to `main`). Graduating a Mimic
 beta to stable: merge the Mimic/agent state to `main` with a stable version.
 
+**Release-visible text is member-facing, not a git log (Hitya 2026-08-07,
+from the v1.1.20 announcement wall-of-text).** The graduation/stable commit
+body becomes the GitHub release body, which the #mimic-releases announcer
+reposts verbatim — so write it for a raider on a phone: **bullet every
+user-facing item** (one `- ` line each, never a prose paragraph), and **no
+technical jargon** — no code identifiers, API/library names, or internal
+shorthand. EverQuest-mechanic terms (rampage, DA, slow, CH chain, mez) are
+fine; `shell.openExternal` is not. The same rule applies to
+`web/lib/roadmapData.ts` release entries and any Discord-facing changelog.
+Detailed technical commits stay technical — this rule is only for text that
+reaches a release surface.
+
 **Beta-first (Hitya, 2026-07-23): Mimic/agent changes ship to `beta` by
 default.** Cut a stable graduation only when something specifically warrants
 the whole fleet getting it (a raid-critical fix, a broken stable, or an
