@@ -43,6 +43,22 @@ CREATE TABLE IF NOT EXISTS zeal_tag_observations (
   mob          text        NOT NULL,
   tag_text     text,
   shape        text,
+  -- Append semantics (Uilnayar 2026-08-06: "tags can append as well if you do a
+  -- /tag chat +<tag> with a plus symbol"). 'set' | 'append' | 'replace' |
+  -- 'erase'; NULL from agents older than 3.5.17, which is deliberately NOT the
+  -- same as 'set' — null means "we could not tell", and the log must not assert
+  -- a replace it never observed.
+  --
+  -- WHY IT MATTERS BEYOND BOOKKEEPING: `tag_text` holds only THIS tagger's
+  -- fragment, so on an append the nameplate in game reads "<theirs> <mine>"
+  -- while the row shows just "<mine>". Reconstruct the merged string from the
+  -- ordered rows for a spawn id — do not read tag_text as what the raid saw.
+  tag_mode     text,
+  -- The tagger this one appended ONTO. This single column can settle the whole
+  -- identity question by itself: an append names two people against one spawn
+  -- id in one row, proving both clients resolved that id to the same mob — with
+  -- no dependence on upload timing, unlike the two-independent-taggers path.
+  appended_to  text,
   -- The tag payload carries NO zone (verified against Zeal's nameplate.cpp wire
   -- format: ZEALTAG | text | name | spawn_id). Without it a name cannot be
   -- scored for uniqueness at all — "a temple guardian" matches three zones in
@@ -123,6 +139,23 @@ FROM obs o
 LEFT JOIN pts p ON p.mob = o.mob AND p.zone_short = o.zone_short
 WHERE o.taggers > 1
 ORDER BY (p.spawn_points = 1) DESC NULLS LAST, o.last_tag DESC;
+
+-- ── The strongest single row the experiment can produce ─────────────────────
+-- An APPEND names two people against one spawn id in ONE observation: the
+-- appender, and the tagger they appended onto. Both clients therefore resolved
+-- that id to the same mob. Unlike zeal_tag_identity_candidates this needs no
+-- luck of upload timing and no second observer, so a single row here settles
+-- "is the spawn id tied to the mob" for that mob.
+CREATE OR REPLACE VIEW zeal_tag_append_proofs AS
+SELECT o.observer_zone_id, z.short_name AS zone_short, o.spawn_id, o.mob,
+       o.appended_to AS first_tagger, o.tagger AS appending_tagger,
+       o.tag_text AS appended_fragment, o.tagged_at, o.observed_by
+FROM zeal_tag_observations o
+LEFT JOIN eqemu_zone z ON z.zone_id = o.observer_zone_id
+WHERE o.tag_mode = 'append'
+  AND o.appended_to IS NOT NULL
+  AND o.appended_to IS DISTINCT FROM o.tagger
+ORDER BY o.tagged_at DESC;
 
 -- ── Is the id random, per-person, or a per-zone entity index? ────────────────
 -- Uilnayar 2026-08-06: "we need to determine if those spawn IDs are unique or

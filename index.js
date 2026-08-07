@@ -12479,6 +12479,8 @@ async function _noteZealTags(rows) {
         mob:         t.mob,
         tag_text:    t.text || null,
         shape:       t.shape || null,
+        tag_mode:    t.mode || null,
+        appended_to: t.appended_to || null,
         observer_zone_id:   r.zone_id   || null,
         observer_zone_name: r.zone_name || null,
         tagged_at:   t.since,
@@ -12619,6 +12621,12 @@ async function _handleAgentLiveState(req, res) {
             shape:  (typeof t?.shape === 'string' && /^[ROYGBWPS]$/.test(t.shape)) ? t.shape : null,
             tagger: (typeof t?.tagger === 'string' && /^[A-Za-z]{2,30}$/.test(t.tagger)) ? t.tagger : null,
             since:  (t?.since && Number.isFinite(Date.parse(t.since))) ? new Date(Date.parse(t.since)).toISOString() : null,
+            // Append semantics (agent ≥3.5.17). null from older agents — which
+            // is NOT the same as 'set', so don't default it: a null means "this
+            // agent couldn't tell us", and the observation log must not claim
+            // a replace it never saw.
+            mode: (typeof t?.mode === 'string' && /^(set|append|replace|erase)$/.test(t.mode)) ? t.mode : null,
+            appended_to: (typeof t?.appended_to === 'string' && /^[A-Za-z]{2,30}$/.test(t.appended_to)) ? t.appended_to : null,
           })).filter(t => t.spawn_id > 0 && t.mob && t.since)
         : null,
       // #194: the observer's recent mob→tank connects (beta agents) — feeds the
