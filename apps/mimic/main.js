@@ -381,6 +381,13 @@ function _setupIssue() {
   } catch { return null; }
 }
 
+// Overlay-visibility state for the renderer: whether hide-all is on, and
+// whether the hotkey that undoes it is actually bound.
+function hideAllStatusForRenderer() {
+  return { hideAllActive: !!_hideAllActive, hideAllHotkeyBound: _hideAllHotkeyBound(),
+           hideAllHotkeyLabel: _hideAllHotkeyMenuLabel() };
+}
+
 function configForRenderer(cfg) {
   const safe = Object.assign({}, cfg);
   if (safe.session) {
@@ -5131,6 +5138,20 @@ function _hideAllAccelerator() {
 }
 function _fmtAccel(accel) { return String(accel || '').replace(/CommandOrControl|CmdOrCtrl/gi, 'Ctrl'); }
 function _hideAllHotkeyLabelNow() { const a = _hideAllAccelerator(); return a ? _fmtAccel(a) : ''; }
+// True only when the OS actually gave us the accelerator. Windows hands a
+// global shortcut to whoever asks FIRST, so Edge (Ctrl+Shift+H is one of its
+// defaults) or any other app can own it and our register() silently returns
+// false — the user then presses a dead key forever. Field report: Naggato
+// 2026-08-07, overlays hidden, hotkey doing nothing, about to reinstall.
+function _hideAllHotkeyBound() { return !!_registeredHideAccel; }
+// What the tray/menu should SAY about the hotkey: the key when it works, an
+// explicit warning when the OS refused it. Never show a key we don't own.
+function _hideAllHotkeyMenuLabel() {
+  const cfg = loadConfig();
+  if (cfg && cfg.hideAllHotkeyEnabled === false) return 'hotkey off';
+  if (!_hideAllAccelerator()) return 'no hotkey';
+  return _hideAllHotkeyBound() ? _hideAllHotkeyLabelNow() : '⚠ hotkey blocked by another app';
+}
 // EVERY overlay's show flag, in one list — the old hand-written snapshot/flip
 // blocks silently missed showCommand (the Command Center kept showing through
 // hide-all, Uilnayar 2026-07-10). New overlays: add the flag HERE and it's
@@ -5421,7 +5442,7 @@ function currentStatus() {
   };
 }
 function pushStatus() {
-  const s = currentStatus();
+  const s = Object.assign(currentStatus(), hideAllStatusForRenderer());
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('status', s);
   if (settingsWindow && !settingsWindow.isDestroyed()) settingsWindow.webContents.send('status', s);
   if (tray) tray.setToolTip(tooltipFor(s));
@@ -5435,6 +5456,13 @@ function tooltipFor(s) {
   // should call out what to fix when they finally hover.
   const issue = _setupIssue();
   if (issue) return `⚠ Wolf Pack miMIC ${v} — SETUP NEEDED: ${issue}`;
+  // Overlays hidden outranks the normal tooltip: when every overlay is gone
+  // the tray icon is the ONLY Mimic surface left, and "nothing is showing" is
+  // indistinguishable from "Mimic is broken" without this line.
+  if (_hideAllActive) {
+    return `⚠ Wolf Pack miMIC ${v} — OVERLAYS HIDDEN · right-click → Show overlays`
+      + (_hideAllHotkeyBound() ? '' : ' (hotkey blocked by another app)');
+  }
   const mode = s.localOnly ? 'Local only' : 'Uploading';
   const quiet = s.quietMode ? ' · Quiet mode' : '';
   const upd = s.updatePending ? ` · update ${s.updatePending} ready` : '';
@@ -5630,7 +5658,7 @@ function buildTrayMenu() {
     // their previous visibility on the next toggle. The "memory" lives in
     // _hideAllPrev so the user's pref selection is preserved across the
     // hide/show round-trip. Bindable hotkey lives in registerHideAllHotkey().
-    { label: _hideAllActive ? '👁 Show overlays (' + (_hideAllHotkeyLabelNow() || 'no hotkey') + ')' : '🙈 Hide all overlays (' + (_hideAllHotkeyLabelNow() || 'no hotkey') + ')',
+    { label: _hideAllActive ? '👁 Show overlays (' + _hideAllHotkeyMenuLabel() + ')' : '🙈 Hide all overlays (' + _hideAllHotkeyMenuLabel() + ')',
       click: () => { toggleHideAllOverlays(); } },
     // Per-character overlay layouts (v1.2 Phase B) — save/restore the visibility
     // set per toon, swapped automatically as the active character changes.
