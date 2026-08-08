@@ -26937,6 +26937,7 @@ function _applyGuildTriggersResponse(resp) {
       try {
         const c = compileTriggerPattern(t.pattern, { flags: t.pattern_flags || 'i', use_regex: t.use_regex });
         compiled.push({ ...t, _regex: c.regex, _conditions: c.conditions, _aliases: c.aliases,
+                        _excludes: _compileExcludes(t),
                         _endRegex: _compileEndEarlyRegex(t), _scope: 'guild' });
       } catch (err) {
         console.warn(`[guild-triggers] bad pattern "${t.name}":`, err.message);
@@ -27074,13 +27075,14 @@ function _compilePersonalTrigger(t) {
   // every log line. The text evaluator skips triggers without _regex; the
   // zeal evaluator picks them up via zeal_condition.
   let regex = null, conditions = [], aliases = {};
+  const excludes = _compileExcludes(t);
   if (t.pattern && String(t.pattern).trim()) {
     const c = compileTriggerPattern(t.pattern, { flags: t.pattern_flags || 'i', use_regex: t.use_regex });
     regex = c.regex; conditions = c.conditions; aliases = c.aliases;
     for (const w of c.warnings) console.warn('[triggers] "' + (t.name || '?') + '": ' + w);
   }
   return { ...t, _regex: regex, _conditions: conditions, _aliases: aliases,
-           _endRegex: _compileEndEarlyRegex(t), _scope: 'personal' };
+           _excludes: excludes, _endRegex: _compileEndEarlyRegex(t), _scope: 'personal' };
 }
 
 // Compile end_early_pattern on a trigger so the live evaluator can cancel
@@ -27089,6 +27091,22 @@ function _compilePersonalTrigger(t) {
 // Returns null if the trigger has no end-early pattern OR the pattern is
 // invalid — a bad end-early shouldn't prevent the main trigger from
 // loading.
+// exclude_patterns: suppress the fire when any of these ALSO matches the line.
+// The clean fix for "my incoming-tell alert fires on every merchant line" —
+// previously the only options were a broader pattern or lookahead gymnastics.
+// A bad exclude never takes the trigger down with it: the offending entry is
+// dropped and the rest kept, same fail-open policy as the end-early regex.
+function _compileExcludes(t) {
+  const src = Array.isArray(t && t.exclude_patterns) ? t.exclude_patterns : [];
+  const out = [];
+  for (const p of src) {
+    if (!p || !String(p).trim()) continue;
+    try { out.push(compileTriggerPattern(String(p), { flags: t.pattern_flags || 'i' }).regex); }
+    catch (err) { console.warn('[triggers] bad exclude on "' + (t.name || '?') + '":', err.message); }
+  }
+  return out;
+}
+
 function _compileEndEarlyRegex(t) {
   if (!t || !t.end_early_pattern || !String(t.end_early_pattern).trim()) return null;
   try {
@@ -29808,14 +29826,67 @@ function _evaluateZealConditions(character, tsMs) {
     }
   }
 }
+// ── EQLogParser-parity trigger fields (Hitya 2026-08-07) ────────────────────
+// "I'm doing almost all of the authoring, until this system is as granular as
+// EQLogParser triggers." Each helper reads a new guild_triggers column and
+// falls back to the legacy portable shape, so a trigger authored the old way
+// keeps working byte-identically and an older Mimic ignores what it can't read.
+
+// One warning was never enough: a tank buster wants 10s AND 4s, a 3h KEI wants
+// 5m AND 60s. Officers used to clone the trigger, which double-fired the
+// banner. Sorted descending so the overlay's latch walk is monotonic.
+function _timerWarnings(t) {
+  const list = Array.isArray(t.timer_warnings) ? t.timer_warnings : [];
+  const out = list
+    .filter(w => w && Number(w.seconds) > 0 && w.text)
+    .map(w => ({ at_ms: Math.round(Number(w.seconds) * 1000),
+                 text: String(w.text).slice(0, 200),
+                 tts: w.tts !== false }));
+  if (out.length === 0 && t.warning_seconds > 0 && t.warning_text) {
+    out.push({ at_ms: t.warning_seconds * 1000,
+               text: String(t.warning_text).slice(0, 200), tts: true });
+  }
+  return out.sort((a, b) => b.at_ms - a.at_ms);
+}
+
+// A mechanic that announces its own timing ("recasts in 45 seconds") can now be
+// timed: timer_duration_capture names the group whose TEXT holds the duration.
+// Accepts plain seconds, M:SS / H:MM:SS, and unit notation (6m40s, 90s, 2h).
+function _parseDurationText(raw) {
+  const v = String(raw == null ? '' : raw).trim().toLowerCase();
+  if (!v) return 0;
+  if (/^\d+(?:\.\d+)?$/.test(v)) return Math.round(parseFloat(v));
+  if (/^\d+(?::\d{1,2})+$/.test(v)) {
+    return v.split(':').map(Number).reduce((acc, n) => acc * 60 + n, 0);
+  }
+  const um = v.match(/^(?:(\d+)\s*h)?\s*(?:(\d+)\s*m)?\s*(?:(\d+)\s*s)?$/);
+  if (um && (um[1] || um[2] || um[3])) {
+    return (Number(um[1]) || 0) * 3600 + (Number(um[2]) || 0) * 60 + (Number(um[3]) || 0);
+  }
+  return 0;
+}
+function _timerDurationSec(t, captures) {
+  if (t.timer_duration_capture && captures) {
+    const n = _parseDurationText(captures[t.timer_duration_capture]);
+    if (n > 0) return Math.min(n, 3 * 3600);   // sane ceiling on captured text
+  }
+  return Number(t.timer_duration_sec) || 0;
+}
+
 function _startTimer(t, tsMs, isTest, captures) {
-  if (!t || !(t.timer_duration_sec > 0)) return;
+  const _durSec = _timerDurationSec(t, captures);
+  if (!t || !(_durSec > 0)) return;
   // Per-CAPTURE keying — a trigger that fires twice on different mob names
   // ("Pacify on Lord Nagafen" then "Pacify on Vox") gets two independent
   // timer rows, not one whose countdown restarts. Same trigger firing on
   // the SAME captures restarts the existing row (DnDOverlay convention).
   // Captures are sorted by key so insert-order can't cause cache misses.
-  const baseId = String(t.id || t.name || 'unknown');
+  // timer_key_capture: the captured text becomes the timer KEY, so ONE "Mez"
+  // trigger runs N independent countdowns keyed by real spell/mob name instead
+  // of one row that keeps restarting.
+  const _keyCap = (t.timer_key_capture && captures && captures[t.timer_key_capture])
+    ? String(captures[t.timer_key_capture]).trim().slice(0, 60) : '';
+  const baseId = String(t.id || t.name || 'unknown') + (_keyCap ? '::' + _keyCap.toLowerCase() : '');
   let captureSuffix = '';
   // "target" — the thing the timer is ABOUT (the boss the spell was cast on,
   // OR the boss currently being fought if no explicit target was captured).
@@ -29855,14 +29926,20 @@ function _startTimer(t, tsMs, isTest, captures) {
     target:         timerTarget || null,
     effect:         t.name || 'timer',
     started_at_ms:  startMs,
-    ends_at_ms:     startMs + (t.timer_duration_sec * 1000),
-    duration_sec:   t.timer_duration_sec,
+    ends_at_ms:     startMs + (_durSec * 1000),
+    duration_sec:   _durSec,
     color:          action.color || 'red',
     end_text:       t.end_text || null,
     // Warning callout fired by the overlay N seconds before the timer ends
     // (EQLP WarningSeconds + WarningTextToSpeak — e.g. "RAGE SOON" 12s out).
+    // Legacy scalars stay ALONGSIDE the list forever — an older triggers.html
+    // bundled in an older Mimic reads these and keeps its one warning.
     warn_ms:        (t.warning_seconds > 0 && t.warning_text) ? t.warning_seconds * 1000 : 0,
     warn_text:      t.warning_text || null,
+    warnings:       _timerWarnings(t),
+    bar_color:      t.bar_color || null,
+    pinned:         !!t.pinned,
+    show_at_ms:     (Number(t.display_threshold_sec) || 0) * 1000,
     trigger_name:   t.name || null,   // used by end-early matching against the trigger group
     captures:       captures && typeof captures === 'object' ? { ...captures } : null,
     scope:          t._scope || 'unknown',
@@ -30214,6 +30291,10 @@ function _activeTimersSnapshot() {
   const out = [];
   for (const [id, t] of _activeTimers) {
     if (t.ends_at_ms <= now) { _activeTimers.delete(id); continue; }
+    // display_threshold_sec: hide the row until it is nearly up ("only show me
+    // the last 30s"). Filtered HERE rather than in the overlay so an older
+    // bundled triggers.html gets the behaviour without a Mimic update.
+    if (t.show_at_ms > 0 && (t.ends_at_ms - now) > t.show_at_ms) continue;
     out.push({
       id:           t.id,
       name:         t.name,
@@ -30225,6 +30306,9 @@ function _activeTimersSnapshot() {
       end_text:     t.end_text,
       warning_ms:   t.warn_ms || 0,
       warn_text:    t.warn_text || null,
+      warnings:     Array.isArray(t.warnings) ? t.warnings : [],
+      bar_color:    t.bar_color || null,
+      pinned:       !!t.pinned,
       scope:        t.scope,
       // #107 loot chips carry kind:'loot' + dismissible so the trigger overlay
       // draws a per-chip ✕ (deathtouch timers stay non-dismissible as before).
@@ -30234,7 +30318,10 @@ function _activeTimersSnapshot() {
     });
   }
   // Soonest-to-expire first — that's the most useful default for a stack of bars.
-  out.sort((a, b) => a.remaining_ms - b.remaining_ms);
+  // Pinned rows float as a GROUP above unpinned, then soonest-first within
+  // each — so a 3-minute boss-cadence bar stays on top instead of sinking
+  // under six 20-second rows on a busy pull.
+  out.sort((a, b) => (b.pinned === true) - (a.pinned === true) || a.remaining_ms - b.remaining_ms);
   return out;
 }
 
@@ -30625,6 +30712,13 @@ function evaluateTriggersAgainstLine(line, tsMs) {
                         stopped: true, reason: 'numeric guard not met' });
       continue;
     }
+    // exclude_patterns — the line matched, but something on the exclude list
+    // matched it too, so this is one of the cases the author carved out.
+    if (t._excludes && t._excludes.length && t._excludes.some(rx => rx.test(line))) {
+      _journalTrigger({ trigger: t.name, scope: t._scope || 'personal', checkpoint: TJ.GATES,
+                        stopped: true, reason: 'suppressed — matched an exclude pattern' });
+      continue;
+    }
     // Charm-pet filter — if the captured {s} name is one of our currently
     // active charm pets, the message is about OUR pet (slow on a charmed
     // mob, our pet enrages at low HP, etc.) and the call would be wrong.
@@ -30947,7 +31041,22 @@ function _fireTriggerActions(t, captures, tsMs, test, isRelay) {
   // are passed so per-mob keying works — "Pacify on Lord Nagafen" and
   // "Pacify on Vox" become two independent countdowns rather than the
   // second restarting the first.
-  if (t.timer_duration_sec > 0) _startTimer(t, tsMs, test, captures);
+  if (t.timer_duration_sec > 0 || t.timer_duration_capture) _startTimer(t, tsMs, test, captures);
+  // cooldown_timer_sec: a SECOND, visible countdown for recast/reuse — distinct
+  // from cooldown_seconds, which is the silent anti-spam lockout. Feign Death
+  // has no duration but a 9s recast, and that was previously inexpressible.
+  // target:null is deliberate — a recast bar is never per-mob, and inheriting
+  // the current boss would let _cancelTimersOnMobDeath wrongly cancel it.
+  if (Number(t.cooldown_timer_sec) > 0) {
+    _startTimer({ ...t,
+      id: String(t.id || t.name) + '::cd',
+      name: (t.name || 'ability') + ' CD',
+      timer_duration_sec: Number(t.cooldown_timer_sec),
+      timer_duration_capture: null, timer_key_capture: null,
+      timer_warnings: [{ seconds: 1, text: (t.name || 'ability') + ' ready', tts: true }],
+      warning_seconds: 0, warning_text: null, pinned: false,
+    }, tsMs, test, null);
+  }
 
   // Fan-out — mark the local fire seen, then relay to the bot so other
   // Mimics that missed the source line can replay it. Skip when this

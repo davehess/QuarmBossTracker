@@ -621,6 +621,14 @@
       // once by paintTimers when the countdown crosses the threshold.
       n.warn_ms   = t.warning_ms || 0;
       n.warn_text = t.warn_text || null;
+      // Multi-threshold warnings (agent >= 3.5.52). Falls back to the single
+      // legacy pair when absent, so a new overlay against an older agent still
+      // fires the one warning it knows about.
+      n.warnings  = (t.warnings && t.warnings.length) ? t.warnings
+                  : (t.warning_ms > 0 && t.warn_text
+                      ? [{ at_ms: t.warning_ms, text: t.warn_text, tts: true }] : []);
+      if (t.bar_color) n.bar_color = t.bar_color;
+      n.pinned = !!t.pinned;
     }
     // Drop any rows the server stopped reporting (ended early or cleared).
     for (const [id, n] of timerNodes){
@@ -644,9 +652,19 @@
       // Pre-end warning callout: fire once when the countdown crosses into the
       // warning window. Reset the latch if the timer restarts (remaining climbs
       // back above the threshold) so a re-pulled timer warns again.
-      if (n.warn_ms > 0 && n.warn_text){
-        if (remMs > n.warn_ms){ n.warned = false; }
-        else if (!n.warned){ n.warned = true; fire({ text: n.warn_text, tts: n.warn_text }); }
+      if (n.warnings && n.warnings.length){
+        // One latch PER threshold, so 10s and 4s both fire. A latch resets when
+        // the countdown climbs back above its threshold, so a restarted timer
+        // warns again — same re-arm rule as the single latch this replaces.
+        if (!n.firedWarns) n.firedWarns = {};
+        for (var wi = 0; wi < n.warnings.length; wi++){
+          var w = n.warnings[wi];
+          if (!w || !(w.at_ms > 0) || !w.text) continue;
+          if (remMs > w.at_ms){ n.firedWarns[w.at_ms] = false; continue; }
+          if (n.firedWarns[w.at_ms]) continue;
+          n.firedWarns[w.at_ms] = true;
+          fire({ text: w.text, tts: (w.tts === false ? null : w.text) });
+        }
       }
       // Last 5s → amber accent + background + pulse to drag the eye.
       if (remMs < 5000) n.row.classList.add('warn');

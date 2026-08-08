@@ -24,6 +24,10 @@ function build() {
     const _activeTimers = new Map();
     const stats = {};
     function _activeTimersSnapshot() { return []; }
+    // EQLP-parity helpers _startTimer now calls; their own behaviour is
+    // covered by test/trigger-eqlp-parity.test.js, so stub them minimally.
+    function _timerDurationSec(t) { return Number(t.timer_duration_sec) || 0; }
+    function _timerWarnings() { return []; }
   ` + block + `
     return { _startTimer, _activeTimers };
   `;
