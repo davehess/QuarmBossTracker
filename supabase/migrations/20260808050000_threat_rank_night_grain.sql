@@ -1,0 +1,17 @@
+-- Right grain per fight type, so the threat roll-up is genuinely permanent.
+--
+-- Hitya: "if it's that tiny we can continue to retain it indefinitely." At
+-- per-fight-per-player grain it was NOT tiny — 31 MB for five weeks
+-- (~330 MB/yr), 87% of it trash. The signal differs by fight type:
+--   · BOSS  — "where did I rank on THIS pull". Per-fight is the unit.
+--   · TRASH — "across Wednesday's trash, who rode the top". Per-NIGHT is the
+--             unit; nobody asks about trash pull #4,213.
+--
+-- Trash therefore collapses to one row per (raid night, character) with
+-- fights_counted recording how many pulls fed it. Boss rows are untouched.
+-- Result: 114,444 trash rows -> 1,087, folding 104,846 pulls. Whole table
+-- 31 MB -> 4.8 MB (~49 MB/yr), which IS indefinitely retainable.
+--
+-- Applied via MCP 2026-08-08; this file is the repo copy of the same DDL.
+-- See the rollup_threat_ranks() body in
+-- 20260808040000_threat_rank_rollup.sql for the base version this supersedes.
