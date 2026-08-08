@@ -2914,6 +2914,22 @@ function scheduleMidnightSummary(readyClient) {
         console.warn('[midnight] contribution compaction skipped:', err?.message);
       }
 
+      // ── Roll up threat RANKS before anything can be swept ─────────────────
+      // The raw snapshot stream's only consumer is a ranking question ("how
+      // often was I top of threat"). encounter_threat_rank answers it in a few
+      // hundred KB instead of hundreds of MB, and — unlike the stream — it
+      // survives the sweep below, so the stat stops evaporating at the
+      // retention horizon. ORDER MATTERS: roll up first, delete second.
+      try {
+        const supabase = require('./utils/supabase');
+        if (supabase.isEnabled()) {
+          const n = await supabase.rpc('rollup_threat_ranks', { p_since_hours: 48 });
+          console.log('[midnight] rolled up threat ranks:', JSON.stringify(n));
+        }
+      } catch (err) {
+        console.warn('[midnight] threat rank rollup failed:', err?.message);
+      }
+
       // ── Retention sweep: encounter_threat_snapshots ───────────────────────
       // Per-fight tank-pull telemetry. Useful during the fight + /parses
       // post-mortem, NOT for long-term storage. Configure via
@@ -6533,6 +6549,49 @@ async function _handleAgentServerPanel(req, res) {
   }
 }
 
+// ── Threat-snapshot content dedup ───────────────────────────────────────────
+// A snapshot is the FULL running scoreboard for the fight, re-sent every few
+// seconds. Between pulls, mid-buff, or on a mob nobody is hitting, consecutive
+// snapshots are byte-identical — and we stored every one of them. Measured
+// 2026-08-07: 548k rows across 28 encounters (~19,580 per encounter), 288 MB
+// of it per_player JSONB, with adjacent rows carrying identical totals.
+//
+// Keyed on (guild, uploader, boss) → hash of the last per_player+total we
+// actually wrote. In-memory only: a bot restart just means one redundant row,
+// which is the safe direction. Bounded so a long session can't grow it without
+// limit. This is the bot half — it protects EVERY agent version including the
+// ones already deployed; the agent half (don't even send) follows on beta.
+const _threatSnapHashes = new Map();   // key → { hash, at }
+const THREAT_SNAP_HASH_MAX = 500;
+const THREAT_SNAP_HASH_TTL_MS = 60 * 60 * 1000;
+function _threatSnapHash(row) {
+  // Stable stringify: JSON.stringify on an object built by the agent preserves
+  // insertion order, which can differ between uploads for the same content —
+  // so sort the player keys before hashing or the dedup silently never hits.
+  const pp = row.per_player || {};
+  const parts = Object.keys(pp).sort().map(k => k + ':' + JSON.stringify(pp[k]));
+  return require('crypto').createHash('sha1')
+    .update(String(row.total) + '|' + parts.join('|')).digest('hex');
+}
+function _threatSnapIsDuplicate(row) {
+  const key = [row.guild_id, row.uploader, row.boss_name || ''].join('\u0000');
+  const hash = _threatSnapHash(row);
+  const now = Date.now();
+  const prev = _threatSnapHashes.get(key);
+  if (prev && prev.hash === hash && (now - prev.at) < THREAT_SNAP_HASH_TTL_MS) {
+    prev.at = now;                      // keep the entry warm while it repeats
+    return true;
+  }
+  if (_threatSnapHashes.size > THREAT_SNAP_HASH_MAX) {
+    for (const [k, v] of _threatSnapHashes) {
+      if (now - v.at > THREAT_SNAP_HASH_TTL_MS) _threatSnapHashes.delete(k);
+    }
+    if (_threatSnapHashes.size > THREAT_SNAP_HASH_MAX) _threatSnapHashes.clear();
+  }
+  _threatSnapHashes.set(key, { hash, at: now });
+  return false;
+}
+
 // Receive a threat snapshot from a running agent (uploader's view of the
 // currentEncounterThreat.perPlayer map). One row per (guild, uploader,
 // boss, snapshot_at); the unique constraint dedups re-uploads.
@@ -6568,6 +6627,14 @@ async function _handleAgentThreatSnapshot(req, res) {
   };
   if (!row.uploader || !row.per_player || Object.keys(row.per_player).length === 0) {
     res.writeHead(200); return res.end(JSON.stringify({ ok: true, written: 0, note: 'empty' }));
+  }
+  // Nothing changed since the last row we wrote for this uploader+boss — the
+  // scoreboard is identical, so a new row would add storage and no
+  // information. The upload still counts as a heartbeat.
+  if (_threatSnapIsDuplicate(row)) {
+    _trackUpload({ endpoint: 'threat_snapshot', character: row.uploader, agentVersion: payload?.agent_version, payloadBytes: total, agentState: payload?.agent_state || null, uploadedBy: identity.discord_id });
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ ok: true, written: 0, note: 'unchanged' }));
   }
   await supabase.upsert('encounter_threat_snapshots', [row], 'guild_id,uploader,boss_name,snapshot_at')
     .catch(err => console.warn('[threat-snap] upsert failed:', err?.message));
