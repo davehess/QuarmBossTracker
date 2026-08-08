@@ -24,6 +24,10 @@ Electron desktop app; bundles its own Node runtime — nothing else to install. 
 - **Buffs / Raid tab** — live raid roster with HP bars and a full per-raider buff breakdown, refreshing every 3s
 - **Overlays** — DPS/Tank HUD, trigger alerts with TTS + countdown timers, charm tracker, pet tracker, Target Info, buff queue, /who, melody/casting, threat meter
 - **Factions & Gear sync** — drop your `<Name>Quarmy.txt` export in your EQ folder (enable Zeal's *Export data on /camp*); gear, AAs and factions sync, powering accurate cast bars + MGB detection. Bank and coin are stripped on **your** machine and never uploaded
+- **Heal-rotation board** — follows the complete-heal rotation call by call, shows whose turn is next, flags a gap before it becomes a dead tank, and speaks your turn out loud
+- **Command Center** — one board for healer mana, who needs curing, whether Divine Intervention is up, and who has a defensive running
+- **Mob Info** — stats, loot table and spell list for whatever you're targeting, pooled from the whole raid's sightings
+- **Loot bidding** — place sealed DKP bids from the dashboard without alt-tabbing, once you've signed in to the guild's loot site
 - **`/tells` history** — synced privately to [wolfpack.quest/me](https://wolfpack.quest/me)
 - **UI Studio** — back up your EQ window layout, hotkeys, chat tabs and `eqclient.ini`; restore on any machine
 
@@ -62,7 +66,7 @@ Double-click **`Parser.bat`** in the repo folder. That's it. No PowerShell execu
 
 Parser watches every recently-active EQ log file simultaneously (no need to pick a character) and uploads encounter data to the bot while you raid.
 
-**First run** — auto-detects your EQ directory across all drives (`C:\`, `D:\`, `E:\`, etc.) looking for `EverQuest`, `EQ`, `TAKP`, `TAKP2.2`, and standard install paths. Asks for the bot URL and token (get these from an officer), then **copies itself into your EQ directory** — which is typically already excluded from Windows Defender — and offers three startup options:
+**First run** — auto-detects your EQ directory across all drives (`C:\`, `D:\`, `E:\`, etc.) looking for `EverQuest`, `EQ`, `TAKP`, `TAKP2.2`, and standard install paths. Asks for the bot URL and your personal upload key — run **`/token`** in Discord to mint one (Mimic users get this automatically when they sign in). There is no shared guild token any more; each key is yours alone and can be revoked without affecting anyone else. It then **copies itself into your EQ directory** — which is typically already excluded from Windows Defender — and offers three startup options:
 
 ![Parser.bat first run — setup wizard](docs/screenshot-logsync-setup.png)
 
@@ -139,7 +143,7 @@ Every `/parse` submission is archived here as a JSON embed. This is the **source
 
 ## Commands
 
-The tables below cover the core raid-timer / parse / PvP set. The bot has ~80 slash commands total — run **`/raidbosshelp`** in Discord for the live, complete reference (DKP, loot, wishlists, triggers, roster, and admin commands included).
+The tables below cover the core raid-timer / parse / PvP set. The bot has 83 slash commands total — run **`/raidbosshelp`** in Discord for the live, complete reference. Whole areas live only there: DKP balances and wishlists, loot bidding, Plane of Hate tracking, `/who` lookups and roster tools, raid attendance ticks, feedback and suggestions, and the officer backfill/recovery set.
 
 ### Kill Tracking
 
@@ -251,7 +255,7 @@ When a new member joins, the bot sends them a welcome message (DM, or falls back
 1. Push this repo to GitHub
 2. [railway.app](https://railway.app) → **New Project** → **Deploy from GitHub repo**
 3. Add all variables from `.env.example` under the **Variables** tab
-4. Add a **Volume** at mount path `/app/data` to persist `state.json` and `bosses.json`
+4. **Don't rely on a Railway volume for anything you care about.** `data/state.json` is a within-process cache, not memory across deploys — production runs with no volume mounted and every deploy starts from a fresh file. Durability comes from three other places instead: Discord itself (parses, boards and roster live in threads and are re-read on boot), the message-ID environment variables in step 9 (so anchors survive a restart), and Supabase `bot_kv` for anything keyed per-night or per-fight. Anything you store only in `state.json` will be gone after the next deploy
 
 ### Docker
 
@@ -331,7 +335,7 @@ timer, but the analytics, character pages, and uploads are dark.
 | `SUPABASE_URL` | Supabase project URL — backs parses, characters, DKP, live state, and every wolfpack.quest surface |
 | `SUPABASE_SERVICE_ROLE_KEY` | Service-role key (bypasses RLS; server-side only — never ship to a client) |
 | `SUPABASE_GUILD_ID` | Guild tag written to all rows (default: `wolfpack`) |
-| `WOLFPACK_AGENT_TOKEN` | Bearer token the Mimic/Parser agents present to the `/api/agent/*` ingest surface. Unset → those endpoints return 503 |
+| `WOLFPACK_AGENT_TOKEN` | **Agent-side only.** Where the standalone Parser reads *your personal* upload key (`wpms_…`, minted by `/token`). The bot does not read this — since 2026-06-04 the ingest surface accepts only per-user session tokens and rejects a shared secret outright. Mimic stores your key itself and ignores this variable |
 | `PORT` | HTTP port for the agent API + `/health` (Railway sets this automatically) |
 | `OPENDKP_*` | OpenDKP connection (raids URL, Cognito client, credentials) for DKP sync and loot auctions — see `.env.example` |
 

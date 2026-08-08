@@ -33,7 +33,7 @@ export const BRANCHES = [
     icon: '📡',
     title: 'Logsync Agent',
     tint: 'green',
-    tag: '~24k lines · zero deps',
+    tag: '~32k lines · zero deps',
     summary:
       'A single-file engine on each raider\'s machine: tails EQ logs, bridges the Zeal pipe, and filters privately before anything leaves.',
     leaves: ['Privacy-first filter', 'Multi-char tailing', 'Zeal pipe bridge', 'Durable queue'],
@@ -54,7 +54,7 @@ export const BRANCHES = [
     icon: '🤖',
     title: 'Discord Bot',
     tint: 'gold',
-    tag: '80 commands · 58 endpoints',
+    tag: '83 commands · 52 endpoints',
     summary:
       'The hub: raid timers, multi-perspective parse merging, DKP, and the API every agent talks to — running 24/7.',
     leaves: ['133 boss timers', 'Parse merging', 'DKP + sealed bids', 'Spawn alerts'],
@@ -74,15 +74,16 @@ export const BRANCHES = [
     icon: '🌐',
     title: 'wolfpack.quest',
     tint: 'purple',
-    tag: '59 pages · OAuth gated',
+    tag: '75 pages · OAuth gated',
     summary:
       'The between-fights surface: compare parses, plan raids, manage loot — and the officer console behind it.',
-    leaves: ['/me home base', 'Parses + boards', 'Raid HQ', '20+ admin pages'],
+    leaves: ['/me home base', 'Parses + boards', 'Raid HQ', 'Raid Guide', '20+ admin pages'],
     details: [
       ['/me', 'your characters, tells, buffs, stats, gear, spellbooks, and privacy toggles in one place'],
       ['Parses', 'every merged fight, drillable to per-player ability detail — with a timeline of deaths, slows, mob heals, discs, and which callouts fired'],
       ['Roll nights', '/rolls: off-night NBG raids reviewed — who rolled, who won, who actually looted, and the Hot Dice crown'],
       ['Raid HQ', 'live raid page: roster, healer mana, buff queues, boss boards'],
+      ['Raid Guide', 'one page per boss, built from our OWN kill history — what the fight does, what went wrong last time, and who usually handles what'],
       ['Leaderboards', 'damage, healing, attendance — scoped so excluded characters never appear'],
       ['Planner + PoP flags', 'raid-night planning with per-character flag progress for the next era'],
       ['Admin suite', 'triggers, attendance, encounters, agents, members, audits, feedback — 20+ officer pages'],
@@ -120,7 +121,7 @@ export const BRANCHES = [
       ['Raid-hold', 'the bot tells every agent "a raid is live — hold your updates and heavy scans for later"'],
       ['Remote tuning', 'officers flip load-shedding and overlay knobs mid-raid from the website — no deploys'],
       ['Escape hatches', 'one-click revert to stable, update gates that refuse to interrupt a live fight, and a crash-looping update that rolls itself back to last-known-good'],
-      ['CI gates', '275 blocking tests + a lint wall on every push — the gate caught two latent raid-night bugs the day it turned on'],
+      ['CI gates', '1,100+ blocking tests + a lint wall on every push — the gate caught two latent raid-night bugs the day it turned on'],
     ],
   },
 ] as const;
@@ -153,12 +154,12 @@ const MAP_POS: Record<string, { x: number; y: number; leafDir: 1 | -1; leafYStar
 export const STATS: Array<[string, string]> = [
   ['4', 'independent components'],
   ['500+', 'versioned releases'],
-  ['~43k', 'lines across the three cores'],
+  ['~57k', 'lines across the three cores'],
   ['18', 'desktop overlay surfaces'],
-  ['80', 'Discord slash commands'],
-  ['58', 'agent API endpoints'],
+  ['83', 'Discord slash commands'],
+  ['52', 'agent API endpoints'],
   ['133', 'bosses on timers'],
-  ['59', 'website pages'],
+  ['75', 'website pages'],
 ];
 
 // anchorBase: '' on /platform (same-page anchors), '/platform' when the map is
