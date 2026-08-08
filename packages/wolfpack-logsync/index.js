@@ -10448,6 +10448,7 @@ function _serializeForDashboard() {
     // on/off, the cap, which files are over it, and what was archived.
     logRotate: {
       enabled:     _logRotateEnabled(),
+      noticeSeen:  !!_agentPrefs().log_rotate_notice_seen,
       thresholdMb: LOG_ROTATE_MB,
       candidates:  _logRotateCandidates(),
       recent:      Array.isArray(stats.logRotations) ? stats.logRotations.slice(0, 5) : [],
@@ -15025,6 +15026,15 @@ function renderInfo(s) {
   const _lr = s.logRotate;
   if (_lr) {
     h += '<div class="card"><h2>🗂 Log archiving</h2>';
+    // One-time NEW-FEATURE announcement (Hitya: a Mimic banner, not a Discord
+    // post). Dismissed state persists in prefs so it appears once per install.
+    if (!_lr.noticeSeen) {
+      h += '<div style="border-left:3px solid var(--green);background:rgba(63,185,80,.08);padding:6px 8px;margin-bottom:8px;font-size:12px">'
+        + '<b>New:</b> Mimic now keeps your EverQuest log files from growing without limit. '
+        + 'Nothing is ever deleted &mdash; a large log is simply moved into a <code>LogArchive</code> folder and EQ starts a fresh one. '
+        + 'Your old logs stay on your disk and can still be used to fill in past raids. '
+        + '<button class="btn" style="margin-left:6px" onclick="wpLogRotateSeen()">Got it</button></div>';
+    }
     if (_lr.enabled) {
       h += '<div style="font-size:12px;margin-bottom:4px">Log archiving is <b style="color:var(--green)">ON</b>. '
         + 'A log file bigger than <b>' + esc(String(_lr.thresholdMb)) + ' MB</b> is moved into a <code>LogArchive</code> folder next to your logs once it has been quiet for 15 minutes. '
@@ -18537,6 +18547,10 @@ async function dismissTopDamage(key) {
   }
   // Shared import: POST the raw text (EQLP .tgf JSON or GINA/EQLP XML — the
   // server sniffs which) and render the result summary.
+  function wpLogRotateSeen() {
+    fetch('/api/log-rotate/seen', { method: 'POST' })
+      .then(function () { location.reload(); }).catch(function () {});
+  }
   function wpLogRotateToggle(off) {
     fetch('/api/log-rotate/toggle', {
       method: 'POST',
@@ -20966,6 +20980,12 @@ function startWebDashboard(port) {
       // errors[] } so the UI can show a summary.
       // Log-archiving kill switch — persisted to logsync.prefs.json so the
       // choice survives restarts and updates.
+      if (req.url === '/api/log-rotate/seen' && req.method === 'POST') {
+        _saveAgentPrefs({ log_rotate_notice_seen: true });
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ ok: true }));
+      }
+
       if (req.url === '/api/log-rotate/toggle' && req.method === 'POST') {
         const body = await _readBody(req);
         let off = false;
@@ -31387,8 +31407,9 @@ async function tailFile(logPath, onLine) {
 //      open (no FILE_SHARE_DELETE on its append handle), so a racing EQ
 //      session makes the rename fail cleanly and we just skip this sweep.
 //   3. Same-directory rename — atomic, instant, no copy, no disk double-use.
-// WP_LOG_ROTATE_MB=0 disables; default 750MB. Idle default 15 min.
-const LOG_ROTATE_MB      = (() => { const v = parseInt(process.env.WP_LOG_ROTATE_MB, 10); return Number.isFinite(v) ? v : 750; })();
+// WP_LOG_ROTATE_MB=0 disables; default 500MB (Hitya 2026-08-07), default ON.
+// Idle default 15 min.
+const LOG_ROTATE_MB      = (() => { const v = parseInt(process.env.WP_LOG_ROTATE_MB, 10); return Number.isFinite(v) ? v : 500; })();
 const LOG_ROTATE_IDLE_MS = Math.max(60_000, (parseInt(process.env.WP_LOG_ROTATE_IDLE_MIN, 10) || 15) * 60_000);
 
 // Pure decision — exercised directly by test/log-rotate.test.js.
