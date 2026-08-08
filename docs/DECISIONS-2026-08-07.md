@@ -120,10 +120,10 @@ shipped from them (3.5.44–3.5.48).
 | Item | State |
 |---|---|
 | **Beta adoption is ~zero** | 9 beta builds shipped 2026-08-07; only stable-channel agents (3.5.36, 3.5.42) ever reported. Consider graduating rather than piling onto beta |
-| Threat roll-up grain | 31 MB / 5 weeks (~330 MB/yr). 87% is trash at per-fight-per-player grain; per-(raid night, player) would make it permanent-cheap |
+| ~~Threat roll-up grain~~ | **DONE 2026-08-08** — trash collapsed to per-(raid night, character): 114,444 rows → 1,087 folding 104,846 pulls. Table 31 MB → 4.8 MB (~49 MB/yr), now safe to retain indefinitely. Trash history starts 2026-07-09; the first week of July is boss-only (backfill timed out, midnight job only covers 48h) |
 | Threat raw retention | untouched at 120 days |
 | `opendkp_raids` / `_auctions` | still rewriting; needs the Version check above |
-| Trigger features | multiple warning thresholds, capture-derived durations, exclude patterns, visible recast timers — unblocked, not built |
+| ~~Trigger features~~ | **DONE 2026-08-08** — agent 3.5.52 + `guild_triggers_eqlogparser_parity`: multiple warning thresholds, captured durations, timer key capture, visible recast timer, exclude patterns, colour/pin/display-threshold |
 | Zone map overlay | blocked on a 1–2h in-game coordinate spike (docs say Zeal transposes x/y; the dashboard path disagrees) |
 | Report 04 P3–P5 | taunt-emote attribution, wildcard verb fallback, EQMac threat weights |
 | Archived logs | drop out of the smart-backfill picker until moved back |
