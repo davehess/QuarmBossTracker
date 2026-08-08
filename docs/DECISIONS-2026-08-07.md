@@ -107,6 +107,20 @@ clustering, never as full coverage.
 **Two upstream asks are drafted** (`docs/zeal-tag-spawn-id-collision.md`,
 `docs/zeal-spawn-id-request.md`) and not yet sent.
 
+**Tagging is only useful if the tag REACHES THE LOG — and two Zeal settings
+silently stop that.** The broadcast is
+`ZEALTAG | <text> | <mob name> | <spawn id>`, and that spawn id is the only
+thing in the entire external surface that can separate same-name mobs. But:
+  · `/tag suppress on` — Zeal drops the message before it is written to the
+    log. Nothing to parse, ever. Cost us every capture from one raider for a
+    whole session; their own tags never reached their own agent.
+  · `/tag prettyprint on` — rewrites the line to `text => mob` and **strips the
+    spawn id**, degrading the tag to a name we already had.
+Both are warned about on the Mimic dashboard's tag-capture card with the exact
+fix. A third and fourth way a tag draws the nameplate arrow but reaches no log:
+`/tag local` (never broadcasts) and the server's chat rate limit. The arrow is
+NOT evidence the broadcast happened.
+
 ## pq-companion
 
 **Study and reimplement; never copy.** The repo has no license — all rights
@@ -127,4 +141,4 @@ shipped from them (3.5.44–3.5.48).
 | Zone map overlay | blocked on a 1–2h in-game coordinate spike (docs say Zeal transposes x/y; the dashboard path disagrees) |
 | Report 04 P3–P5 | taunt-emote attribution, wildcard verb fallback, EQMac threat weights |
 | Archived logs | drop out of the smart-backfill picker until moved back |
-| Release naming | Hitya's call; themes never proposed |
+| ~~Release naming~~ | **DECIDED 2026-08-08** — the tag/trigger/parser graduation is named **"Tag! You're spawn_id it!"** (Hitya). No standing theme system; names stay ad-hoc per release |
