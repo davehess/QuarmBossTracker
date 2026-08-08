@@ -37,6 +37,41 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'tag-youre-spawn-id-it',
+    title: '\u{1F3F7} Tag! You’re spawn_id it!',
+    version: 'Mimic 2.3.4 · Agent 3.5.52',
+    channel: 'beta',
+    date: '2026-08-08',
+    headline: 'When two mobs share a name, nothing the game hands us can tell them apart — except a /tag. Marking a mob quietly carries a hidden ID that is the only thing separating one “a decaying skeleton” from the other four, and this release makes that work properly.',
+    features: [
+      { name: '\u{1F3F7} Tagging is how we tell identical mobs apart — but check two settings', blurb: 'Live in The Deep we separated seventeen simultaneous “an elder thought horror” purely from tags. That only works if your tag actually reaches the log, and two Zeal options silently stop it. “Suppress tag msgs” drops the message entirely, and “Prettyprint tag msgs” rewrites it and throws away the ID — leaving just the name we already had. In both cases the arrow still appears over the mob, so it looks like it worked when nobody received it. Turn both OFF. Mimic’s tag card now warns you if either is on, and tells you when the game’s chat limit ate a tag so you know to send it again. Thanks to Adiwen, Rockin and Dafeet for the live testing that found all of this.' },
+      { name: '\u{1F5C2} Huge logs tidy themselves up', blurb: 'A log file over 500 MB gets moved into a LogArchive folder once you have stopped playing that character, and EverQuest starts a fresh one. Nothing is ever deleted — your old logs stay on your disk and can still be used to fill in past raids. There is a card on the dashboard showing what is about to be archived and a one-click off switch. Suggested by Ashieron.' },
+      { name: '⏱ Timers can warn you more than once', blurb: 'A tank buster can now call out at ten seconds AND at four, instead of forcing a choice. A timer can also read its length straight out of the game text when a mob announces its own timing, one trigger can run several separate countdowns at once (one per mez target, say), and abilities with only a recast — Feign Death, Lay on Hands — can finally show a bar telling you when they are back. Triggers you already wrote keep working exactly as they did.' },
+      { name: '\u{1F4E5} Imported GINA and EQLogParser triggers actually fire', blurb: 'Most triggers imported from those tools were silently dead on arrival — they loaded, looked fine in the list, and never fired. Several separate faults in how their patterns were read have been fixed, GINA trigger packages (.gtp) now import at all, and a GINA timer arrives as a real countdown instead of muting the trigger for its duration.' },
+    ],
+    fixes: [
+      'Every slow in the game read as dropped 12 seconds early — Slow, the Insects line, Forlorn Deeds, Cloud of Grummus and the rest — so the call went out while the mob was still slowed and shamans re-slowed for nothing.',
+      'Monk special attacks (flying kick, round kick, dragon punch, eagle strike, tiger claw) and Harm Touch were credited to nobody on the damage meter. Harm Touch never counted as damage at all.',
+      'A buff cast on a lower-level character showed a shorter time than it really had, because the countdown used the recipient’s level instead of the caster’s.',
+      'On a busy pull the tag list quietly filled up and kept only the oldest marks, so the boss — usually tagged last — was the one thrown away.',
+      'A tag stayed put when you changed zones and could end up sitting on a completely unrelated mob, because the game reuses mob ID numbers between zones.',
+      'Re-tagging a mob wiped out the record of who had tagged it before you.',
+      'Replaying an old log to test a trigger never showed the countdown bar, so a perfectly good timer looked broken.',
+      'If another program had already claimed Ctrl+Shift+H — Microsoft Edge is a common culprit — the hide-all-overlays hotkey did nothing at all and every overlay just looked broken. The tray menu now says when the hotkey is blocked so you can use the menu instead. Reported by Naggato, diagnosed by vj.',
+    ],
+  },
+  {
+    key: 'attendance-since-you-joined',
+    title: '\u{1F4CA} Your attendance counts from when you joined',
+    version: 'Bot 3.1.32',
+    date: '2026-08-08',
+    headline: 'Attendance was measured against every raid tick the guild has ever held — including the years before you were in it.',
+    features: [
+      { name: '\u{1F4CA} Measured against raids you could actually have attended', blurb: 'Your percentage now counts only the ticks since you joined, for every window, which is what OpenDKP has always shown. Everyone who joined after the guild’s early days was being under-reported, and the newer you were the worse it looked — exactly backwards for a number used to spot who needs a nudge. Long-standing members barely move; genuinely low attendance stays low. Spotted by Hitya, who pointed out that Gonner has never missed a tick while the page showed him at 64%.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'harmshield-ch-chain-tags',
     title: '\u{1F6E1} Harmshield counts as invuln, and the chain stops renaming your healers',
     version: 'Mimic 2.3.3 · Agent 3.5.42',
