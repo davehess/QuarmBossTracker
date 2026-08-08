@@ -27,6 +27,21 @@ adjacent or unrelated code, stop and flag it before proceeding. (The
 13k-line `index.js` monolith makes "small line count" a poor proxy for "small
 blast radius" — reaching into unrelated behavior is a structural hazard here.)
 
+### Working rule — decisions get WRITTEN DOWN, same session
+A decision that lives only in chat is lost: cloud and desktop sessions cannot
+share a conversation, and a container reset takes the scratchpad with it. When
+the guild lead makes a call — a default, a threshold, a policy, a "we don't do
+that" — append it to **`docs/DECISIONS-<YYYY-MM-DD>.md`** before the session
+ends, and fold anything that outlives the week into this file. Each entry: the
+call, why, and where it landed. Keep the "Open — read this first" table at the
+bottom current; that table is what the next session reads first.
+
+Retrieval is automatic and cheap: `.claude/hooks/session-digest.sh` runs on
+SessionStart and prints the open-items table + doc index + live versions, and
+`/recall <question>` fans a Haiku subagent over `docs/` to answer from the
+files with citations. Both are only as good as the writing discipline above —
+**the reading half was never the weak link.**
+
 ### Working rule — "do we already have X?" (answer from the index, not one grep)
 For any *does-this-exist / where-does-it-live* question, read
 **`docs/HOW-ITS-BUILT.md`** (the feature-by-feature index) FIRST — it maps every

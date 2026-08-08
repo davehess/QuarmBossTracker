@@ -5,7 +5,22 @@
   },
   "extraKnownMarketplaces": {
     "trailofbits": {
-      "source": { "source": "github", "repo": "trailofbits/skills" }
+      "source": {
+        "source": "github",
+        "repo": "trailofbits/skills"
+      }
     }
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/session-digest.sh"
+          }
+        ]
+      }
+    ]
   }
 }
