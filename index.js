@@ -6549,6 +6549,28 @@ async function _handleAgentServerPanel(req, res) {
   }
 }
 
+// Resolve (guild, instant) → raid_nights.id, cached per night key. Read-only:
+// the row is created by the encounter path (linkEncounterToRaidNight); if a
+// night has no row yet the snapshot simply stays unlinked and a later sweep
+// can fill it in.
+const _raidNightIdCache = new Map();   // 'guild|YYYY-MM-DD' → id | null
+async function _raidNightIdForMs(guildId, ms) {
+  const raidNight = require('./utils/raidNight');
+  if (!raidNight.isRaidNightAt(ms)) return null;
+  const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(raidNight.nightKey(ms));
+  if (!m) return null;
+  const dateIso = `${m[3]}-${m[1]}-${m[2]}`;
+  const key = guildId + '|' + dateIso;
+  if (_raidNightIdCache.has(key)) return _raidNightIdCache.get(key);
+  const supabase = require('./utils/supabase');
+  const rows = await supabase.select('raid_nights',
+    `guild_id=eq.${encodeURIComponent(guildId)}&date=eq.${encodeURIComponent(dateIso)}&select=id&limit=1`);
+  const id = (Array.isArray(rows) && rows[0]?.id) || null;
+  if (_raidNightIdCache.size > 200) _raidNightIdCache.clear();
+  _raidNightIdCache.set(key, id);
+  return id;
+}
+
 // ── Threat-snapshot content dedup ───────────────────────────────────────────
 // A snapshot is the FULL running scoreboard for the fight, re-sent every few
 // seconds. Between pulls, mid-buff, or on a mob nobody is hitting, consecutive
@@ -6628,6 +6650,32 @@ async function _handleAgentThreatSnapshot(req, res) {
   if (!row.uploader || !row.per_player || Object.keys(row.per_player).length === 0) {
     res.writeHead(200); return res.end(JSON.stringify({ ok: true, written: 0, note: 'empty' }));
   }
+  // ── Is this worth keeping at all? ───────────────────────────────────────
+  // Threat only means something when the guild is together (Hitya
+  // 2026-08-07: "most of those fights outside of raiding time aren't things
+  // we need to count... we can still include trash when we're all together").
+  // Measured before building this: snapshots from outside raid time were 54%
+  // of the payload and answered nothing. Keep a snapshot when EITHER
+  //   · it is raid time AND enough people are in the fight to be a raid, or
+  //   · it names a boss — an off-night boss kill is still real raid data.
+  // Trash during a raid is deliberately IN: that is the pull-by-pull threat
+  // picture, and it is the case the guild lead specifically asked for.
+  const _snapMs = Date.parse(row.snapshot_at) || Date.now();
+  const _players = Object.keys(row.per_player).length;
+  const _raidTime = require('./utils/raidNight').isRaidNightAt(_snapMs);
+  const _minGroup = parseInt(process.env.THREAT_SNAPSHOT_MIN_GROUP, 10) || 8;
+  if (!row.boss_name && !(_raidTime && _players >= _minGroup)) {
+    _trackUpload({ endpoint: 'threat_snapshot', character: row.uploader, agentVersion: payload?.agent_version, payloadBytes: total, agentState: payload?.agent_state || null, uploadedBy: identity.discord_id });
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ ok: true, written: 0, note: 'not raid activity' }));
+  }
+  // Link to the raid night so /raid and the review can group threat by night.
+  // Same 06:00-ET rollover the rest of the platform uses, so a 00:30 Thursday
+  // fight belongs to Wednesday's raid.
+  try {
+    const rn = await _raidNightIdForMs(guildId, _snapMs);
+    if (rn) row.raid_night_id = rn;
+  } catch { /* link is a nicety, never block the write */ }
   // Nothing changed since the last row we wrote for this uploader+boss — the
   // scoreboard is identical, so a new row would add storage and no
   // information. The upload still counts as a heartbeat.
