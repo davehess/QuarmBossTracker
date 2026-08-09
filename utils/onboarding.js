@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.1.36': [
+    '**The kill buttons on the boards now ask before they record.** Tapping a boss on a board used to start its respawn timer on the first press, which is easy to do by accident on a phone — and once a timer is running, the spawn alerts, the 24-hour board and the daily summary all work from it until an officer undoes it. You now get a quick "record a kill for this?" with a Confirm and a Cancel, and only you can see it. The event announcements have always worked this way; the boards now match.',
+  ],
   '3.1.33': [
     '**Loot you already won stopped showing up as loot you still want.** The bidding panel only ever looked at your hundred most recent awards when deciding what you had won — and it sorted them by when our copy of OpenDKP last refreshed rather than by when you actually won them, so which hundred it looked at was close to random. Anyone with more than a hundred pieces of loot had the rest come back as "bid on but not yet won" and as recent misses. It now checks your whole award history, and the wins list is ordered by the raid you won it in.',
   ],
