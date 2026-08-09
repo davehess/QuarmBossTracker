@@ -1492,6 +1492,74 @@
       "keep": false,
       "trigger_visible": true,
       "event": null
+    },
+    {
+      "i": 52,
+      "line": "[Sun Aug 02 21:11:00 2026] You flying kick Lord Nagafen for 452 points of damage.",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T01:11:00.000Z",
+        "type": "damage",
+        "attacker": null,
+        "defender": "Lord Nagafen",
+        "ability": "flying kick",
+        "amount": 452
+      }
+    },
+    {
+      "i": 53,
+      "line": "[Sun Aug 02 21:11:01 2026] Torvahk round kicks Lord Nagafen for 388 points of damage.",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T01:11:01.000Z",
+        "type": "damage",
+        "attacker": "Torvahk",
+        "defender": "Lord Nagafen",
+        "ability": "round kick",
+        "amount": 388
+      }
+    },
+    {
+      "i": 54,
+      "line": "[Sun Aug 02 21:11:02 2026] You harm touch Lord Nagafen for 3200 points of damage.",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T01:11:02.000Z",
+        "type": "damage",
+        "attacker": null,
+        "defender": "Lord Nagafen",
+        "ability": "harm touch",
+        "amount": 3200
+      }
+    },
+    {
+      "i": 55,
+      "line": "[Sun Aug 02 21:11:03 2026] an ancient guardian frenzies on Torvahk for 210 points of damage.",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T01:11:03.000Z",
+        "type": "damage",
+        "attacker": "an ancient guardian",
+        "defender": "Torvahk",
+        "ability": "frenzy",
+        "amount": 210
+      }
+    },
+    {
+      "i": 56,
+      "line": "[Sun Aug 02 21:11:04 2026] a greater gnoll pup has died.",
+      "keep": true,
+      "trigger_visible": true,
+      "event": {
+        "ts": "2026-08-03T01:11:04.000Z",
+        "type": "death",
+        "defender": "a greater gnoll pup",
+        "attacker": null
+      }
     }
   ]
 }

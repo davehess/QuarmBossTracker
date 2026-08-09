@@ -39,8 +39,7 @@ export const releases: Release[] = [
   {
     key: 'loot-panel-knows-what-you-won',
     title: '\u{1F4B0} The bidding panel knows what you already won',
-    version: 'Bot 3.1.33 · Agent 3.5.53',
-    channel: 'beta',
+    version: 'Bot 3.1.33 · Mimic 2.3.4 · Agent 3.5.54',
     date: '2026-08-09',
     headline: 'Gear you had already won kept showing up as gear you still wanted — and the alt list threw away what you typed into it.',
     features: [
@@ -57,8 +56,7 @@ export const releases: Release[] = [
   {
     key: 'tag-youre-spawn-id-it',
     title: '\u{1F3F7} Tag! You’re spawn_id it!',
-    version: 'Mimic 2.3.4 · Agent 3.5.52',
-    channel: 'beta',
+    version: 'Mimic 2.3.4 · Agent 3.5.54',
     date: '2026-08-08',
     headline: 'When two mobs share a name, nothing the game hands us can tell them apart — except a /tag. Marking a mob quietly carries a hidden ID that is the only thing separating one “a decaying skeleton” from the other four, and this release makes that work properly.',
     features: [
@@ -75,6 +73,7 @@ export const releases: Release[] = [
       'A tag stayed put when you changed zones and could end up sitting on a completely unrelated mob, because the game reuses mob ID numbers between zones.',
       'Re-tagging a mob wiped out the record of who had tagged it before you.',
       'Replaying an old log to test a trigger never showed the countdown bar, so a perfectly good timer looked broken.',
+      'A trigger that began with a mob or player name — like the Razor Fang callout — was picking up the date and time stamped at the front of every log line as part of the name. The callout read the timestamp out loud, and any timer keyed to that name started a brand new bar on every single fire instead of reusing one.',
       'If another program had already claimed Ctrl+Shift+H — Microsoft Edge is a common culprit — the hide-all-overlays hotkey did nothing at all and every overlay just looked broken. The tray menu now says when the hotkey is blocked so you can use the menu instead. Reported by Naggato, diagnosed by vj.',
     ],
   },

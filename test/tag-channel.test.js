@@ -419,8 +419,14 @@ describe('zeal_tags upload payload', () => {
   const block = sliceBlock(src, 'zeal_tags: (() => {', '})(),');
   const build = (tags, nowMs) => {
     const body = block.slice('zeal_tags: '.length).replace(/,$/, '');
+    // The payload now gates on zone (ids are per-zone and reused) and picks
+    // which tags survive the upload cap. Both are exercised in
+    // test/zeal-tag-agent.test.js; here they are inert so this stays a test of
+    // the payload SHAPE.
     // eslint-disable-next-line no-new-func
-    return new Function('now', 'zealTagsSnapshot', 'return ' + body)(nowMs, () => tags);
+    return new Function('now', 'zealTagsSnapshot', 'st', 'noteZoneForTags', '_zoneName',
+      '_pickTagsForUpload', 'return ' + body)(
+      nowMs, () => tags, { zone: 'thedeep' }, () => false, z => z, t => t);
   };
 
   it('ships the structured extract, capped', () => {
@@ -430,7 +436,7 @@ describe('zeal_tags upload payload', () => {
       shape: 'G', tagger: 'Naggato', since: new Date(NOW - 3000).toISOString(),
       // Append semantics ride along; null here because this fixture predates
       // them, which is exactly what an older agent's payload looks like.
-      mode: null, appended_to: null }]);
+      mode: null, appended_to: null, replaced_tagger: null }]);
     expect(build([], NOW)).toBeNull();
   });
 

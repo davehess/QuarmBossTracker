@@ -148,6 +148,33 @@ uploads nothing. Always reversible via "restore all".
 award rather than hard-coded, so it advances by itself when PoP unlocks. Falls
 back to "all" rather than showing an empty panel.
 
+## Triggers — the `{s}` timestamp swallow (2026-08-09)
+
+**An unanchored pattern opening with `{s}` was eating the timestamp.** When
+`compileTriggerPattern` replaced `_translateDotNetRegex`, `{s}` went from an
+allow-list char class to `.+?`. The old class could not match `[`, so the engine
+skipped past `"[Sun Aug 02 21:10:45 2026] "` on its own; `.+?` at index 0 of an
+unanchored pattern consumes it happily. So the capture contained the timestamp.
+
+This was the RECOMMENDED shape — `CLAUDE.md` tells authors to write patterns
+unanchored, because a bare `^` anchors before the timestamp and can never fire.
+The `^`-rewrite path had a guard and its comment claimed "a leading {s1} no
+longer swallows the timestamp"; that was only ever true for `^`-anchored
+patterns. Live casualty: the **Razor Fang** guild trigger. A timestamp inside a
+name capture breaks every name-keyed consumer at once — charm-pet suppression
+stops recognising your own pet, action text and TTS speak the timestamp, and a
+captured timer key mints a new bar per fire.
+
+Fix: `_expandTriggerTokens` reports `leadingWildcard`, and `compileTriggerPattern`
+prepends the same OPTIONAL `^(?:<ts>)?` prefix the anchor rewrite uses when a
+pattern is unanchored AND opens with `{s}`/`{n}`. `{c}` is exempt — it expands to
+a literal alternation that cannot match inside a timestamp.
+→ agent 3.5.54, pinned by `test/trigger-class.test.js`.
+
+**Found only because the graduation ran main's suite.** `test/trigger-class.test.js`
+does not exist on `beta`, so agent 3.5.44–3.5.53 shipped with nothing checking
+this. Same class of gap as the 2026-08-04 "CI runs on beta now" P0.
+
 ## pq-companion
 
 **Study and reimplement; never copy.** The repo has no license — all rights
@@ -169,5 +196,6 @@ shipped from them (3.5.44–3.5.48).
 | Report 04 P3–P5 | taunt-emote attribution, wildcard verb fallback, EQMac threat weights |
 | Archived logs | drop out of the smart-backfill picker until moved back |
 | ~~Release naming~~ | **DECIDED 2026-08-08** — the tag/trigger/parser graduation is named **"Tag! You're spawn_id it!"** (Hitya). No standing theme system; names stay ad-hoc per release |
-| Graduate "Tag! You're spawn_id it!" | **NOT yet done** — still beta-only. Agent is now at 3.5.53 (adds the loot-bidding round); Mimic parked at 2.3.4. Hitya's call on when to cut stable |
+| ~~Graduate "Tag! You're spawn_id it!"~~ | **DONE 2026-08-09** — Mimic 2.3.4 stable + agent 3.5.54 to the whole Windows fleet, by file-level promotion (never a branch merge: `beta` was 79k lines stale on bot/web/docs). Re-park beta at 2.3.5 |
+| Beta's test suite is a SUBSET of main's | The graduation caught a P1 that beta CI could never have seen — `test/trigger-class.test.js` does not exist on `beta`, so nothing checked the new trigger compiler against it for the 10 releases it shipped in. Treat "green on beta" as weaker evidence than "green on main" |
 | Other capped-query-as-a-set risks | The loot bug's shape is generic: 23 other `limit=####` queries in `index.js`. Nobody has audited whether another one feeds a *set* rather than a *list* |

@@ -663,6 +663,25 @@ function normalizeClass(raw) {
 // would key on the finishing-blow log signature; until we capture it from a
 // live log, magnitude is the safe filter. Tunable via WP_MELEE_HIT_MAX.
 const MELEE_HIT_MAX = Math.max(6000, parseInt(process.env.WP_MELEE_HIT_MAX, 10) || 15000);
+
+// ── Multi-word melee skill verbs ────────────────────────────────────────────
+// EQ logs class skills as their literal skill name, which is two words for the
+// monk line, Harm Touch, and Frenzy. These MUST be tried before ATTACK_VERBS_RX:
+// the single-token pattern's lazy (.+?) attacker capture otherwise absorbs the
+// first word ("You flying" / "Torvahk round"), producing a phantom combatant
+// whose damage the multi-word anti-NPC filter then discards — monk specials
+// were credited to nobody and Harm Touch damage never parsed at all
+// (pq-companion comparison, analysis 04 §3-A).
+const SPECIAL_VERB_RX =
+  '(?:harm\\s+touch(?:es)?|flying\\s+kicks?|round\\s+kicks?|dragon\\s+punch(?:es)?|' +
+  'eagle\\s+strikes?|tiger\\s+claws?|tail\\s+rakes?|frenzies\\s+on|frenzy\\s+on)';
+
+// "flying kicks" → "flying kick"; "frenzies on" → "frenzy".
+function normalizeSpecialVerb(raw) {
+  const v = String(raw).toLowerCase().replace(/\s+/g, ' ').trim();
+  if (/^frenz/.test(v)) return 'frenzy';
+  return v.replace(/(?:es|s)$/, '');
+}
 let _finishingBlowsDropped = 0;
 
 // ── Event parser ────────────────────────────────────────────────────────────
@@ -779,6 +798,29 @@ function parseEvent(line, ts) {
   m = line.match(/\]\s+(.+?)\s+has\s+taken\s+(\d+)(?:\s+points?\s+of)?\s+damage\s+from\s+(\S+?)(?:`s|'s)\s+([^.]+)\./i);
   if (m) {
     return { ts: tsIso, type: 'damage', attacker: m[3], defender: m[1], ability: m[4].trim(), amount: parseInt(m[2], 10), spellName: m[4].trim() };
+  }
+
+  // Second person, multi-word skill: "You flying kick a gnoll for 452 points of damage."
+  m = line.match(new RegExp(
+    `\\]\\s+You\\s+(${SPECIAL_VERB_RX})\\s+(.+?)\\s+for\\s+(\\d+)` +
+    `(?:\\s+\\((\\d+)\\))?\\s+points?\\s+of\\s+damage`, 'i'));
+  if (m) {
+    if (parseInt(m[3], 10) > MELEE_HIT_MAX) { _finishingBlowsDropped++; return null; }
+    return { ts: tsIso, type: 'damage', attacker: null /* self */,
+             defender: m[2], ability: normalizeSpecialVerb(m[1]),
+             amount: parseInt(m[3], 10) };
+  }
+
+  // Third person, multi-word skill: "Torvahk round kicks Lord of Ire for 388 points of damage."
+  m = line.match(new RegExp(
+    `\\]\\s+(.+?)\\s+(${SPECIAL_VERB_RX})\\s+(.+?)\\s+for\\s+(\\d+)` +
+    `(?:\\s+\\((\\d+)\\))?\\s+points?\\s+of\\s+damage`, 'i'));
+  if (m) {
+    if (!isPlausibleAttacker(m[1])) return null;
+    if (parseInt(m[4], 10) > MELEE_HIT_MAX) { _finishingBlowsDropped++; return null; }
+    return { ts: tsIso, type: 'damage', attacker: m[1],
+             defender: m[3], ability: normalizeSpecialVerb(m[2]),
+             amount: parseInt(m[4], 10) };
   }
 
   // "You <verb> X for N points of damage." (player attacking, second-person)
@@ -990,7 +1032,9 @@ function parseEvent(line, ts) {
   //
   // Feign death is already parsed correctly further down as type 'feign_death'
   // via "has fallen to the ground"; this line simply must not shadow it.
-  m = line.match(/\]\s+(.+?)\s+died\./i);
+  // Optional "has": "X has died." otherwise mis-captured the mob name as
+  // "a gnoll has", breaking the boss-flush comparison + respawn-timer cancel.
+  m = line.match(/\]\s+(.+?)\s+(?:has\s+)?died\./i);
   if (m) {
     return { ts: tsIso, type: 'death', defender: m[1], attacker: null };
   }
@@ -2335,20 +2379,32 @@ function _durTicksForLevel(formula, capTicks, level) {
   const f   = Number(formula) || 0;
   if (f === 50 || f === 51) return cap || 72000;   // permanent / until-fade
   if (!lvl || !f) return cap;                       // no level → spell max
+  // EQMac/Al'Kabor integer division is FLOOR, and formula 6 carries a +2 term
+  // we never had (verified against the EQMacEmu CalcBuffDuration_formula port
+  // in the pq-companion comparison, pinned by its PQDI-checked test vectors:
+  // f6 L57 → 30 ticks, L60 → 32). On our catalog f6/base-35 is 25 spells —
+  // essentially the whole slow line (Forlorn Deeds, Tagar's/Togor's/Tigir's
+  // Insects, Languid Pace, Slow, Cloud of Grummus …). At L60 the real answer
+  // is 32 ticks (192s); we computed 30 (180s), so the Mob Info slow chip went
+  // purple and the #130 tracker called "Slow dropped" 12s early — long enough
+  // for the shaman to burn a re-slow into a still-live slow. The ceil→floor
+  // swap only moves odd-level results; f4's `50` is capped just below, which
+  // reproduces the old `cap || 50` for every real f4 spell (all have base≤50)
+  // and fixes the cap===0 case (was 0, now 50).
   let t;
   switch (f) {
-    case 1:  t = Math.ceil(lvl / 2);      break;
-    case 2:  t = Math.ceil(lvl / 2) + 5;  break;
-    case 3:  t = lvl * 30;                break;
-    case 4:  t = cap || 50;               break;
-    case 5:  t = 2;                        break;
-    case 6:  t = Math.ceil(lvl / 2);      break;
-    case 7:  t = lvl;                      break;
-    case 8:  t = lvl + 10;                break;
-    case 9:  t = lvl * 2 + 10;            break;
-    case 10: t = lvl * 3 + 10;            break;
-    case 11: t = (lvl + 3) * 30;          break;
-    case 12: t = Math.ceil(lvl / 4);      break;
+    case 1:  t = Math.floor(lvl / 2);                       break;
+    case 2:  t = (lvl <= 1) ? 6 : Math.floor(lvl / 2) + 5;  break;
+    case 3:  t = lvl * 30;                                  break;
+    case 4:  t = 50;                                        break;
+    case 5:  t = 2;                                         break;
+    case 6:  t = Math.floor(lvl / 2) + 2;                   break;
+    case 7:  t = lvl;                                       break;
+    case 8:  t = lvl + 10;                                  break;
+    case 9:  t = lvl * 2 + 10;                              break;
+    case 10: t = lvl * 3 + 10;                              break;
+    case 11: t = lvl * 30 + 90;                             break;
+    case 12: t = Math.max(1, Math.floor(lvl / 4));          break;
     default: return cap;
   }
   if (!(t > 0)) return cap;
@@ -2670,22 +2726,28 @@ function recordTargetBuffLanding(bcEvt) {
   const k = String(bcEvt.target).toLowerCase();
   let mp = _buffLandingsByTarget.get(k);
   if (!mp) { mp = new Map(); _buffLandingsByTarget.set(k, mp); }
-  // Best-effort caster level for the duration estimate:
-  //   • DEBUFF (good===0) on a target — cast by a raider whose level we don't
-  //     track at land time. Assume the era level cap (_assumedCasterLevel:
-  //     60 now, 65 once PoP unlocks) so we show a realistic FLOOR duration
-  //     instead of the spell's absolute max.
-  //   • BUFF — our pet → the owner cast it; else a self-buff → the target's own
-  //     observed level. Fall back to the assumed cap when we have no level.
-  const good = _spellGood(bcEvt.spell_name);
+  // Whose level scales this landing? EQ computes buff duration on the CASTER,
+  // so the recipient's level is only the right input when the recipient IS the
+  // caster. We used to read whoData for the TARGET on every beneficial buff,
+  // which under-reported any level-scaled buff on a sub-60 character: a L60
+  // druid's Chloroplast (f10/205) on a L52 alt is 190 ticks (1140s), but
+  // scaled at 52 it computes 166 (996s) — the chip flipped to "fell off —
+  // rebuff" nearly two and a half minutes early. (f3 cap-dominated buffs like
+  // Aegolism/KEI were unaffected, which is why this stayed hidden.) Order:
+  //   1. our own pet → the owner cast it; use the owner's /who level
+  //   2. genuine self-buff (we cast it AND we are the target) → own level
+  //   3. everything else (raid buffs, all debuffs) → the era cap; the land
+  //      line never names the caster, and _assumedCasterLevel() already
+  //      tracks the PoP unlock (60 → 65).
   let lvl;
-  if (good === 0) {
-    lvl = _assumedCasterLevel();
+  const petOwner = _petOwnerByName(k);
+  if (petOwner) {
+    lvl = (whoData.get(petOwner) || {}).level || _assumedCasterLevel();
   } else {
-    const petOwner = _petOwnerByName(k);
-    lvl = petOwner ? ((whoData.get(petOwner) || {}).level || null)
-                   : ((whoData.get(k) || {}).level || null);
-    if (!lvl) lvl = _assumedCasterLevel();
+    const obs = String((bcEvt && bcEvt.observer) || '').toLowerCase();
+    lvl = (bcEvt && bcEvt._selfCast && obs && obs === k)
+      ? ((whoData.get(k) || {}).level || _assumedCasterLevel())
+      : _assumedCasterLevel();
   }
   const newKey = String(bcEvt.spell_name).toLowerCase();
   // Slot-based overwrite (same logic as recordPetBuffLanding) — a new buff in
@@ -2733,9 +2795,13 @@ function targetBuffsFor(targetLower) {
     const durSecs = (Number(b.dur_ticks) || 0) * 6;
     let rem = durSecs - (now - (b.landed_at || now)) / 1000;
     let fellOff = false;
-    // HoTs (regen category) get a 6s (one-tick) linger; everything else gets
-    // the 5-min rebuff cue. Same rationale as petBuffsForOwner above.
-    const lingerMs = _isHotBuff(b && b.name) ? 6_000 : FELL_OFF_LINGER_MS;
+    // HoTs (regen category) and short effects (stuns, procs — catalog duration
+    // under 60s) get a 6s (one-tick) linger; everything else gets the 5-min
+    // rebuff cue. Same rule as petBuffsForOwner above — you don't rebuff a
+    // stun, you re-stun. The target path was missing the short-effect half, so
+    // a 12s stun on a mob sat purple "fell off — rebuff" for five minutes.
+    const _shortFx = ((Number(b && b.dur_ticks) || 0) * 6) > 0 && ((Number(b && b.dur_ticks) || 0) * 6) < 60;
+    const lingerMs = (_isHotBuff(b && b.name) || _shortFx) ? 6_000 : FELL_OFF_LINGER_MS;
     if (b.worn_off_at) {                                     // explicit "worn off"
       if (now - b.worn_off_at > lingerMs) { mp.delete(k); continue; }
       fellOff = true; rem = 0;
@@ -10374,6 +10440,19 @@ function _serializeForDashboard() {
     // renders "tag capture: ready" from this instead of assuming.
     zealTagConfig: readZealTagConfig(),
     zealTagCount: zealTagsSnapshot().length,
+    // Tags the upload cap had to drop, and the last time the SERVER refused a
+    // tag broadcast. Both are silent failures otherwise — see the 🏷 card.
+    zealTagsDropped: Number(stats.zealTagsDropped) || 0,
+    zealTagRateLimit: tagRateLimitSnapshot(),
+    // Log archiving (Ashieron's feedback) — drives the dashboard banner:
+    // on/off, the cap, which files are over it, and what was archived.
+    logRotate: {
+      enabled:     _logRotateEnabled(),
+      noticeSeen:  !!_agentPrefs().log_rotate_notice_seen,
+      thresholdMb: LOG_ROTATE_MB,
+      candidates:  _logRotateCandidates(),
+      recent:      Array.isArray(stats.logRotations) ? stats.logRotations.slice(0, 5) : [],
+    },
     // Backup for when zeal.ini isn't reachable: a tag we SAW arrive already
     // rewritten by prettyprint (spawn id stripped at the source).
     zealTagPretty: _tagPrettyPrintSeen,
@@ -14941,7 +15020,53 @@ function renderInfo(s) {
   // rarely and the fresh-tag count only moves while tags are actually flowing
   // (an acceptable repaint — the Info tab is not a form surface mid-raid).
   const _ztc = s.zealTagConfig || [];
+  // 🗂 Log archiving banner — the user-facing notice + kill switch for the
+  // auto-archive feature (Ashieron feedback). Plain language: nothing is
+  // deleted, and the impacted files are named with sizes.
+  const _lr = s.logRotate;
+  if (_lr) {
+    h += '<div class="card"><h2>🗂 Log archiving</h2>';
+    // One-time NEW-FEATURE announcement (Hitya: a Mimic banner, not a Discord
+    // post). Dismissed state persists in prefs so it appears once per install.
+    if (!_lr.noticeSeen) {
+      h += '<div style="border-left:3px solid var(--green);background:rgba(63,185,80,.08);padding:6px 8px;margin-bottom:8px;font-size:12px">'
+        + '<b>New:</b> Mimic now keeps your EverQuest log files from growing without limit. '
+        + 'Nothing is ever deleted &mdash; a large log is simply moved into a <code>LogArchive</code> folder and EQ starts a fresh one. '
+        + 'Your old logs stay on your disk and can still be used to fill in past raids. '
+        + '<button class="btn" style="margin-left:6px" onclick="wpLogRotateSeen()">Got it</button></div>';
+    }
+    if (_lr.enabled) {
+      h += '<div style="font-size:12px;margin-bottom:4px">Log archiving is <b style="color:var(--green)">ON</b>. '
+        + 'A log file bigger than <b>' + esc(String(_lr.thresholdMb)) + ' MB</b> is moved into a <code>LogArchive</code> folder next to your logs once it has been quiet for 15 minutes. '
+        + 'Nothing is deleted &mdash; EQ starts a fresh file, and the old one stays on your disk.</div>';
+      if (_lr.candidates && _lr.candidates.length) {
+        h += '<div style="font-size:11px;margin-bottom:4px"><b>Will be archived on the next quiet sweep:</b> '
+          + _lr.candidates.map(function (c) { return esc(c.file) + ' (' + esc(String(c.size_mb)) + ' MB)'; }).join(', ') + '</div>';
+      } else {
+        h += '<div class="dim" style="font-size:11px;margin-bottom:4px">No log files are over the cap right now.</div>';
+      }
+      if (_lr.recent && _lr.recent.length) {
+        h += '<div class="dim" style="font-size:11px;margin-bottom:4px">Recently archived: '
+          + _lr.recent.map(function (r) { return esc(r.file) + ' (' + esc(String(r.mb)) + ' MB)'; }).join(', ') + '</div>';
+      }
+      h += '<button class="btn" onclick="wpLogRotateToggle(1)">Turn log archiving off</button>';
+    } else {
+      h += '<div class="dim" style="font-size:12px;margin-bottom:4px">Log archiving is <b>off</b>. Big log files will keep growing.</div>';
+      h += '<button class="btn" onclick="wpLogRotateToggle(0)">Turn log archiving on</button>';
+    }
+    h += '</div>';
+  }
   h += '<div class="card"><h2>🏷 Zeal tag capture</h2>';
+  if (s.zealTagRateLimit) {
+    h += '<div style="margin-bottom:4px;color:#f2b632;font-size:11px">⚠️ The server rate limited your chat around <code>'
+      + esc(new Date(s.zealTagRateLimit.at).toLocaleTimeString())
+      + '</code> (' + esc(String(s.zealTagRateLimit.seconds)) + 's lockout). Tags sent in that window did <b>not</b> broadcast — '
+      + 'Zeal still draws the arrow, so they look tagged to you and to nobody else. Re-tag them, and spread tagging across raiders (the limit is per character).</div>';
+  }
+  if (s.zealTagsDropped > 0) {
+    h += '<div style="margin-bottom:4px;color:#f2b632;font-size:11px">⚠️ <b>' + esc(String(s.zealTagsDropped))
+      + '</b> tag(s) exceeded the upload cap and were not sent. Named mobs are kept first, then the newest — but this many live tags means the raid is marking faster than the cap allows.</div>';
+  }
   if (s.zealTagPretty && !_ztc.some(function (z) { return z.prettyprint; })) {
     h += '<div style="margin-bottom:4px;color:#f2b632;font-size:11px">⚠️ Saw a tag arrive already rewritten by <code>/tag prettyprint</code> (<code>' + esc(s.zealTagPretty.sample || '') + '</code>) — that strips the spawn id, so same-name mobs cannot be told apart. Run <code>/tag prettyprint off</code>.</div>';
   }
@@ -17567,14 +17692,21 @@ async function dismissTopDamage(key) {
   var drafts       = {};    // rowKey -> in-progress bid string (survives repaints)
   var planned      = {};    // item_id -> planned next bid (mirrors the agent's local store)
   var ticks        = {};    // spanId -> ends-at ms (1s countdown ticker)
+  var dismissed    = {};    // item_id -> 1 (locally hidden wishlist/miss rows)
   var lastChar     = null;
   var showLogin    = false;
   var showFamily   = false;
+  var famDirty     = false; // family editor has UNSAVED edits — polls must not clobber it
+  // Your loot history is HIDDEN until you ask for it, and re-hides on every
+  // dashboard load. The dashboard gets screen-shared and shoulder-surfed during
+  // raids; a wishlist on screen is a bidding tell.
+  var showLoot     = false;
   var loginErr     = "";
   var lastHistKey  = "";
   var lastBidHistAt = 0;
   var opendkpBase  = "";    // https://<client>.opendkp.com — from the bot (bid-history)
   var eraFilter    = "";    // "" = all; else "Classic"/"Kunark"/"Velious"/"Luclin"
+  var eraAuto      = false; // one-shot: default the filter to the CURRENT expansion
   var famPrefilled = false; // one-shot auto-prefill of the family from OpenDKP
   var acctDkp      = null;  // #124 { ok, account_dkp, character } — REAL pooled balance from OpenDKP standings
   var lastAcctKey  = "";    // family signature the acctDkp figure is for
@@ -17595,6 +17727,27 @@ async function dismissTopDamage(key) {
   }
   function eraTag(era){ return era ? " <span class=dim style='font-size:10px'>· " + esc(era) + "</span>" : ""; }
   function passEra(era){ return !eraFilter || era === eraFilter; }
+  function notDismissed(x){ return !(x && x.item_id!=null && dismissed[x.item_id]); }
+  // ✕ on a wishlist / miss row. Local-only hide (the wishlist is inferred from
+  // OpenDKP bid history — there is nothing upstream to delete), reversible via
+  // the "restore all" link.
+  function dismissBtn(itemId){
+    if (itemId==null) return "";
+    return "<span class=wpLootX data-item='"+esc(itemId)+"' title='hide this from your list' style='cursor:pointer;color:var(--dim,#8b949e);padding:0 3px'>✕</span>";
+  }
+  function dismissCount(){ var n=0; for(var k in dismissed){ if(dismissed.hasOwnProperty(k)) n++; } return n; }
+  // The CURRENT expansion, derived from the data rather than hard-coded, so it
+  // advances on its own when the server unlocks the next one. Newest award wins
+  // (wins arrive raid_id-desc = award order); misses are the fallback.
+  function currentEra(wins, misses){
+    for (var i=0;i<(wins||[]).length;i++) if (wins[i].era) return wins[i].era;
+    var best=null, bestT=-1;
+    for (var m=0;m<(misses||[]).length;m++){
+      var t = misses[m].last_end ? (Date.parse(misses[m].last_end)||0) : 0;
+      if (misses[m].era && t>bestT){ bestT=t; best=misses[m].era; }
+    }
+    return best;
+  }
 
   function makeCard(){
     var c = document.createElement("div");
@@ -17731,8 +17884,11 @@ async function dismissTopDamage(key) {
       h += "<div style='display:flex;gap:6px;align-items:center'>";
       h += "<input id=wpFamAdd placeholder='add alt' style='background:#0e1116;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:3px 6px;font-family:inherit;font-size:12px;width:110px'>";
       h += "<button id=wpFamAddGo style='background:#21262d;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 8px;font-size:11px;cursor:pointer;font-family:inherit'>+ add</button>";
+      if (bidHist && bidHist.suggested_family && bidHist.suggested_family.main)
+        h += "<button id=wpFamPull title='replace this with the characters OpenDKP has for your account' style='background:#21262d;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 8px;font-size:11px;cursor:pointer;font-family:inherit'>⟲ from OpenDKP</button>";
       h += "<button id=wpFamSave style='margin-left:auto;background:var(--gold,#d4af37);color:#000;border:none;border-radius:4px;padding:2px 10px;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit'>save</button>";
       h += "</div>";
+      if (famDirty) h += "<div style='color:var(--orange,#d29922);margin-top:5px;font-size:10px'>unsaved — hit save</div>";
       h += "</div>";
     }
 
@@ -17788,9 +17944,29 @@ async function dismissTopDamage(key) {
       h += "</table>";
     }
 
-    // History + wishlist + misses (authed only)
-    if (cfg.authed && bidHist){
+    // History + wishlist + misses (authed only). COLLAPSED until asked for —
+    // this is your bidding hand, and the dashboard gets shoulder-surfed.
+    if (cfg.authed && bidHist && !showLoot){
+      h += "<div style='margin:12px 0 2px'><button id=wpLootReveal style='background:#21262d;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:3px 10px;font-size:11px;cursor:pointer;font-family:inherit'>👁 show my loot history</button> <span class=dim style='font-size:10px'>hidden by default — your wishlist, misses and wins</span></div>";
+    }
+    if (cfg.authed && bidHist && showLoot){
       var wins = bidHist.wins||[]; var wl = bidHist.wishlist||[]; var misses = bidHist.misses||[]; var dkp = bidHist.dkp||null;
+      // One-shot: land on the CURRENT expansion instead of "all", so the list
+      // opens on what is actually dropping. Manual changes stick after that.
+      // Only applied if it leaves something to look at — defaulting to an
+      // expansion the user has no open items in would show an empty panel.
+      if (!eraAuto){
+        eraAuto = true;
+        var ce = currentEra(wins, misses);
+        if (ce){
+          var inEra = 0;
+          for (var c1=0;c1<wl.length;c1++) if (wl[c1].era===ce && notDismissed(wl[c1])) inEra++;
+          for (var c2=0;c2<misses.length;c2++) if (misses[c2].era===ce && notDismissed(misses[c2])) inEra++;
+          if (inEra) eraFilter = ce;
+        }
+      }
+
+      h += "<div style='margin:12px 0 2px'><button id=wpLootHide style='background:#21262d;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:3px 10px;font-size:11px;cursor:pointer;font-family:inherit'>🙈 hide my loot history</button></div>";
 
       // DKP pill + expansion filter row. Prefer the REAL pooled balance read
       // straight from OpenDKP's standings (#124); the mirror-derived family total
@@ -17817,9 +17993,11 @@ async function dismissTopDamage(key) {
         for (var eq=0;eq<eraOpts.length;eq++){ h += "<option"+(eraFilter===eraOpts[eq]?" selected":"")+">"+esc(eraOpts[eq])+"</option>"; }
         h += "</select>";
       }
+      var dCount = dismissCount();
+      if (dCount) h += "<span class=dim style='font-size:10px'>"+dCount+" hidden · <span id=wpLootRestore style='cursor:pointer;color:var(--blue,#58a6ff)'>restore all</span></span>";
       h += "</div>";
 
-      var wlF = wl.filter(function(x){ return passEra(x.era); });
+      var wlF = wl.filter(function(x){ return passEra(x.era) && notDismissed(x); });
       if (wlF.length){
         h += "<div style='font-size:11px;color:var(--dim,#8b949e);text-transform:uppercase;letter-spacing:.05em;margin:8px 0 4px'>your wishlist <span style='text-transform:none;letter-spacing:0'>· bid on but not yet won</span></div>";
         h += "<div style='font-size:11px'>";
@@ -17828,16 +18006,16 @@ async function dismissTopDamage(key) {
           var srcTag = it.source==="prereg"
             ? "<span title='preregistered' style='color:var(--gold,#d4af37)'>★ prereg</span>"
             : "<span class=dim title='inferred from your bid history'>↺ from bid history</span>";
-          h += "<div style='display:flex;gap:6px;padding:1px 0'>"+itemLink(it.item_name||("item "+it.item_id), it.raid_id)+eraTag(it.era)+"<span style='margin-left:auto'>"+srcTag+"</span></div>";
+          h += "<div style='display:flex;gap:6px;padding:1px 0'>"+itemLink(it.item_name||("item "+it.item_id), it.raid_id)+eraTag(it.era)+"<span style='margin-left:auto'>"+srcTag+"</span>"+dismissBtn(it.item_id)+"</div>";
         }
         h += "</div>";
       }
 
       // RECENT MISSES — bid on and lost. Full width; per-item columns.
-      var misF = misses.filter(function(x){ return passEra(x.era); });
+      var misF = misses.filter(function(x){ return passEra(x.era) && notDismissed(x); });
       if (misF.length){
         h += "<div style='font-size:11px;color:var(--dim,#8b949e);text-transform:uppercase;letter-spacing:.05em;margin:12px 0 4px'>recent misses <span style='text-transform:none;letter-spacing:0'>· you bid and lost — figures are from each item's most recent auction</span></div>";
-        h += "<table><tr><th>Item</th><th>Char</th><th class=num>Your last</th><th class=num>Last win</th><th class=num>2nd place</th><th class=num>Planned</th><th class=num>DKP</th></tr>";
+        h += "<table><tr><th>Item</th><th>Char</th><th class=num>Your last</th><th class=num>Last win</th><th class=num>2nd place</th><th class=num>Planned</th><th class=num>DKP</th><th></th></tr>";
         for (var mi=0;mi<misF.length;mi++){
           var m = misF[mi];
           var pv = (planned[m.item_id]!=null) ? planned[m.item_id] : "";
@@ -17850,6 +18028,7 @@ async function dismissTopDamage(key) {
           h += "<td class=num><input id=wpPlan_"+m.item_id+" type=number min=1 value='"+esc(pv)+"' placeholder='—' style='width:52px;background:#0e1116;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:1px 4px;font-family:inherit;text-align:right'></td>";
           var dkpCell = (acctDkp&&acctDkp.account_dkp!=null) ? fmt(acctDkp.account_dkp) : (dkp?("~"+fmt(dkp.family_total)):"—");
           h += "<td class=num>"+dkpCell+"</td>";
+          h += "<td>"+dismissBtn(m.item_id)+"</td>";
           h += "</tr>";
         }
         h += "</table>";
@@ -17880,13 +18059,22 @@ async function dismissTopDamage(key) {
     el = document.getElementById("wpLootLoginGo"); if (el) el.onclick = doLogin;
     el = document.getElementById("wpLootPass"); if (el) el.onkeydown = function(e){ if(e.key==="Enter") doLogin(); };
     el = document.getElementById("wpLootLogout"); if (el) el.onclick = function(){ fetch("/api/loot/logout",{method:"POST"}).then(function(){ cfg.authed=false; bidHist=null; acctDkp=null; lastAcctKey=""; lastAcctAt=0; render(); }); };
-    el = document.getElementById("wpFamToggle"); if (el) el.onclick = function(){ showFamily=!showFamily; render(); };
+    el = document.getElementById("wpFamToggle"); if (el) el.onclick = function(){ if(showFamily) captureFamilyDraft(); showFamily=!showFamily; render(); };
     el = document.getElementById("wpFamAddGo"); if (el) el.onclick = addAlt;
     el = document.getElementById("wpFamAdd"); if (el) el.onkeydown = function(e){ if(e.key==="Enter") addAlt(); };
     el = document.getElementById("wpFamSave"); if (el) el.onclick = saveFamily;
+    el = document.getElementById("wpFamPull"); if (el) el.onclick = pullFamilyFromOpendkp;
+    el = document.getElementById("wpLootReveal"); if (el) el.onclick = function(){ showLoot=true; render(); };
+    el = document.getElementById("wpLootHide"); if (el) el.onclick = function(){ showLoot=false; render(); };
+    el = document.getElementById("wpLootRestore"); if (el) el.onclick = function(){ setDismissed("all", false); };
+    var xs = card.querySelectorAll(".wpLootX");
+    for (var x=0;x<xs.length;x++){ (function(sp){ sp.onclick=function(){ setDismissed(sp.getAttribute("data-item"), true); }; })(xs[x]); }
+    // Typing in the family editor marks it dirty so the 7s poll can't overwrite
+    // what is on screen with the last-saved copy.
+    el = document.getElementById("wpFamMain"); if (el) el.oninput = function(){ famDirty=true; };
     el = document.getElementById("wpBidChar"); if (el) el.onchange = function(){ lastChar=el.value; fetchServer(); };
     var dels = card.querySelectorAll(".wpFamDel");
-    for (var i=0;i<dels.length;i++){ (function(d){ d.onclick=function(){ var a=d.getAttribute("data-alt"); cfg.family.alts=(cfg.family.alts||[]).filter(function(x){return x!==a;}); render(); }; })(dels[i]); }
+    for (var i=0;i<dels.length;i++){ (function(d){ d.onclick=function(){ var a=d.getAttribute("data-alt"); captureFamilyDraft(); cfg.family.alts=(cfg.family.alts||[]).filter(function(x){return x!==a;}); famDirty=true; render(); }; })(dels[i]); }
     var gos = card.querySelectorAll(".wpBidGo");
     for (var g=0;g<gos.length;g++){ (function(btn){ btn.onclick=function(){ submitBid(btn); }; })(gos[g]); }
     var plus = card.querySelectorAll(".wpBidPlus");
@@ -17906,6 +18094,10 @@ async function dismissTopDamage(key) {
   function savePlanned(itemId, value){
     fetch("/api/loot/planned",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({item_id:parseInt(itemId,10),value:parseInt(value,10)||0})})
       .then(function(r){return r.json();}).then(function(j){ if(j&&j.planned) planned=j.planned; }).catch(function(){});
+  }
+  function setDismissed(itemId, on){
+    fetch("/api/loot/dismiss",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({item_id:itemId,on:!!on})})
+      .then(function(r){return r.json();}).then(function(j){ if(j&&j.dismissed) dismissed=j.dismissed; render(); }).catch(function(){});
   }
 
   function restoreDrafts(){
@@ -17929,23 +18121,45 @@ async function dismissTopDamage(key) {
       .catch(function(){ loginErr="could not reach OpenDKP"; render(); });
   }
 
+  // Pull whatever is typed in the family editor into cfg BEFORE any re-render.
+  // render() rebuilds the inputs from cfg, so anything sitting only in the DOM
+  // is discarded — which is why adding an alt used to wipe a typed main, and
+  // why a background poll landing mid-edit lost the lot.
+  function captureFamilyDraft(){
+    var m=document.getElementById("wpFamMain");
+    if (m && typeof m.value==="string") cfg.family.main = m.value.trim() || cfg.family.main;
+  }
   function addAlt(){
     var inp=document.getElementById("wpFamAdd"); if(!inp) return;
     var v=inp.value.trim();
     if(!isChar(v)){ inp.style.borderColor="var(--orange,#d29922)"; return; }
+    captureFamilyDraft();
     cfg.family.alts=cfg.family.alts||[];
     var low=v.toLowerCase();
     if(low===String(cfg.family.main||"").toLowerCase()){ inp.value=""; return; }
     for (var i=0;i<cfg.family.alts.length;i++){ if(cfg.family.alts[i].toLowerCase()===low){ inp.value=""; return; } }
-    cfg.family.alts.push(v); inp.value=""; render();
+    cfg.family.alts.push(v); inp.value=""; famDirty=true; render();
+    var again=document.getElementById("wpFamAdd"); if(again) again.focus();
   }
   function saveFamily(){
     var mv=((document.getElementById("wpFamMain")||{}).value||"").trim();
     var payload={ main: mv, alts: cfg.family.alts||[] };
-    fetch("/api/loot/family",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)})
+    return putFamily(payload).then(function(){ showFamily=false; });
+  }
+  // Single write path for the family, so every caller clears famDirty and
+  // re-fetches the (family-scoped) bid history exactly once.
+  function putFamily(payload){
+    return fetch("/api/loot/family",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)})
       .then(function(r){return r.json();})
-      .then(function(j){ if(j&&j.family){ cfg.family={ main:j.family.main||null, alts:j.family.alts||[] }; } showFamily=false; if(!lastChar) lastChar=pickChar(); lastBidHistAt=0; fetchServer(); })
+      .then(function(j){ if(j&&j.family){ cfg.family={ main:j.family.main||null, alts:j.family.alts||[] }; } famDirty=false; if(!lastChar) lastChar=pickChar(); lastBidHistAt=0; return fetchServer(); })
       .catch(function(){});
+  }
+  // Replace the local family with the one OpenDKP has for this account.
+  function pullFamilyFromOpendkp(){
+    var sf = bidHist && bidHist.suggested_family;
+    if (!sf || !sf.main) return;
+    lastChar=null;
+    putFamily({ main: sf.main, alts: sf.alts||[] });
   }
 
   function submitBid(btn){
@@ -17972,8 +18186,12 @@ async function dismissTopDamage(key) {
   function fetchConfig(){
     return fetch("/api/loot/config").then(function(r){return r.json();}).then(function(j){
       if(j){ cfg.authed=!!j.authed; cfg.opendkp_username=j.opendkp_username; cfg.expires_at=j.expires_at;
-        if(j.family) cfg.family={ main:j.family.main||null, alts:j.family.alts||[] };
-        if(j.planned) planned=j.planned; }
+        // NEVER overwrite the family while the editor holds unsaved edits — this
+        // poll runs every 7s, and it used to hand back the last SAVED family
+        // mid-typing, silently wiping alts the user had just added.
+        if(j.family && !famDirty) cfg.family={ main:j.family.main||null, alts:j.family.alts||[] };
+        if(j.planned) planned=j.planned;
+        if(j.dismissed) dismissed=j.dismissed; }
     }).catch(function(){});
   }
   function fetchLocal(){
@@ -18002,15 +18220,26 @@ async function dismissTopDamage(key) {
         bidHist={ wins:j.wins||[], wishlist:j.wishlist||[], misses:j.misses||[], dkp:j.dkp||null, suggested_family:j.suggested_family||null };
         if(j.opendkp_base) opendkpBase=j.opendkp_base;
         lastBidHistAt=Date.now();
-        // Auto-prefill the family (main + raid alts) from OpenDKP — ONLY when the
-        // local family is still empty, and only once. The manual editor stays.
-        if(!famPrefilled && !famList().length && j.suggested_family && j.suggested_family.main){
+        // Auto-populate the family from OpenDKP — nobody should have to type
+        // their own main and alts, OpenDKP already knows them. Once per session,
+        // and never while the editor has unsaved edits.
+        //   empty family → adopt OpenDKP's wholesale
+        //   existing family → ADD any character OpenDKP knows that we don't
+        // Additive only: a name the user typed by hand is never removed here,
+        // and their chosen main is never demoted. The ⟲ button is the explicit
+        // "replace mine with OpenDKP's" path.
+        var sf = j.suggested_family;
+        if(!famPrefilled && !famDirty && sf && sf.main){
           famPrefilled=true;
-          var sf={ main:j.suggested_family.main, alts:j.suggested_family.alts||[] };
-          fetch("/api/loot/family",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(sf)})
-            .then(function(r){return r.json();})
-            .then(function(res){ if(res&&res.family){ cfg.family={ main:res.family.main||null, alts:res.family.alts||[] }; if(!lastChar) lastChar=pickChar(); lastBidHistAt=0; fetchServer(); } })
-            .catch(function(){});
+          var have={}; var cur=famList();
+          for(var q=0;q<cur.length;q++) have[cur[q].toLowerCase()]=1;
+          if(!cur.length){
+            putFamily({ main:sf.main, alts:sf.alts||[] });
+          } else {
+            var add=[]; var sugg=[sf.main].concat(sf.alts||[]);
+            for(var s2=0;s2<sugg.length;s2++){ var nm=sugg[s2]; if(nm && !have[nm.toLowerCase()]){ have[nm.toLowerCase()]=1; add.push(nm); } }
+            if(add.length) putFamily({ main:cfg.family.main, alts:(cfg.family.alts||[]).concat(add) });
+          }
         }
       }
     }).catch(function(){});
@@ -18422,16 +18651,28 @@ async function dismissTopDamage(key) {
   }
   // Shared import: POST the raw text (EQLP .tgf JSON or GINA/EQLP XML — the
   // server sniffs which) and render the result summary.
+  function wpLogRotateSeen() {
+    fetch('/api/log-rotate/seen', { method: 'POST' })
+      .then(function () { location.reload(); }).catch(function () {});
+  }
+  function wpLogRotateToggle(off) {
+    fetch('/api/log-rotate/toggle', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ off: !!off }),
+    }).then(function () { location.reload(); }).catch(function () {});
+  }
   async function runImport(text) {
     var out = document.getElementById('trigImportResult');
     if (!out) return;
-    if (!text || !text.trim()) { out.textContent = 'Nothing to import.'; out.style.color = 'var(--dim)'; return; }
+    var isObj = text && typeof text === 'object';
+    if (!text || (!isObj && !text.trim())) { out.textContent = 'Nothing to import.'; out.style.color = 'var(--dim)'; return; }
     out.textContent = 'Importing…'; out.style.color = 'var(--dim)';
     try {
       const r = await fetch('/api/personal-triggers/import', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ data: text }),
+        body: JSON.stringify(isObj ? text : { data: text }),
       });
       const j = await r.json().catch(function(){ return {}; });
       if (!r.ok || !j.ok) {
@@ -18470,6 +18711,16 @@ async function dismissTopDamage(key) {
       var buf   = await file.arrayBuffer();
       var bytes = new Uint8Array(buf);
       var text;
+      if (bytes.length > 3 && bytes[0] === 0x50 && bytes[1] === 0x4b && bytes[2] === 0x03 && bytes[3] === 0x04) {
+        // GINA .gtp — a PKZIP. Browsers gunzip natively but cannot unzip, so
+        // ship the raw bytes base64d and let the agent extract ShareData.xml.
+        var b64 = '';
+        for (var zo = 0; zo < bytes.length; zo += 0x8000) {
+          b64 += String.fromCharCode.apply(null, bytes.subarray(zo, zo + 0x8000));
+        }
+        await runImport({ zip_b64: btoa(b64) });
+        return;
+      }
       if (bytes.length > 2 && bytes[0] === 0x1f && bytes[1] === 0x8b) {
         var stream = new Blob([buf]).stream().pipeThrough(new DecompressionStream('gzip'));
         text = await new Response(stream).text();
@@ -19945,6 +20196,7 @@ function startWebDashboard(port) {
           expires_at:       (_opendkpAuth && _opendkpAuth.expires_at) || null,
           family:           { main: _bidFamily.main, alts: _bidFamily.alts || [] },
           planned:          _plannedBids,
+          dismissed:        _lootDismissed,
         }));
       }
       if (req.url === '/api/loot/login' && req.method === 'POST') {
@@ -19992,6 +20244,15 @@ function startWebDashboard(port) {
         if (!_setPlannedBid(p.item_id, p.value)) { res.writeHead(400); return res.end('{"error":"item_id required"}'); }
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ ok: true, planned: _plannedBids }));
+      }
+      if (req.url === '/api/loot/dismiss' && req.method === 'POST') {
+        // Hide (or restore) one wishlist / miss row. { item_id, on } — item_id
+        // "all" with on:false is the restore-all link. Local file only.
+        let p; try { p = JSON.parse(await _readBody(req, 8 * 1024) || '{}'); }
+        catch { res.writeHead(400); return res.end('{"error":"bad json"}'); }
+        if (!_setLootDismissed(p.item_id, p.on !== false)) { res.writeHead(400); return res.end('{"error":"item_id required"}'); }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ ok: true, dismissed: _lootDismissed }));
       }
       if (req.url === '/api/loot/auctions' && req.method === 'GET') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -20831,6 +21092,23 @@ function startWebDashboard(port) {
       // triggers are preserved; duplicates by name are skipped (caller can
       // delete + re-import to overwrite). Returns { imported, skipped,
       // errors[] } so the UI can show a summary.
+      // Log-archiving kill switch — persisted to logsync.prefs.json so the
+      // choice survives restarts and updates.
+      if (req.url === '/api/log-rotate/seen' && req.method === 'POST') {
+        _saveAgentPrefs({ log_rotate_notice_seen: true });
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ ok: true }));
+      }
+
+      if (req.url === '/api/log-rotate/toggle' && req.method === 'POST') {
+        const body = await _readBody(req);
+        let off = false;
+        try { off = !!JSON.parse(body || '{}').off; } catch { off = false; }
+        _saveAgentPrefs({ log_rotate_off: off });
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ ok: true, enabled: _logRotateEnabled() }));
+      }
+
       if (req.url === '/api/personal-triggers/import' && req.method === 'POST') {
         const body = await _readBody(req, 2 * 1024 * 1024);   // 2MB cap — trigger packs can be big
         let payload;
@@ -20839,7 +21117,17 @@ function startWebDashboard(port) {
         // Accept the body under `xml` (legacy key) OR `data`; the content can be
         // GINA/EQLP SharedTriggers XML *or* EQLogParser's native JSON .tgf tree
         // (the client gunzips .tgf.gz before sending). Detect by first char.
-        const raw = String(payload?.xml || payload?.data || '');
+        let raw = String(payload?.xml || payload?.data || '');
+        // .gtp path: the dashboard base64s the PKZIP bytes (browsers can gunzip
+        // natively but not unzip) and the member is extracted here.
+        if (!raw.trim() && payload?.zip_b64) {
+          try {
+            raw = _readZipMemberFromBuf(Buffer.from(String(payload.zip_b64), 'base64'), 'sharedata.xml') || '';
+          } catch { raw = ''; }
+          if (!raw.trim()) {
+            res.writeHead(400); return res.end(JSON.stringify({ error: 'could not read the .gtp archive (no XML member found)' }));
+          }
+        }
         if (!raw.trim()) {
           res.writeHead(400); return res.end(JSON.stringify({ error: 'import body required' }));
         }
@@ -20872,7 +21160,10 @@ function startWebDashboard(port) {
           const row = {
             id:            'p_' + Math.random().toString(36).slice(2, 10),
             name:          t.name.slice(0, 100),
-            pattern:       _translateGinaPlaceholders(t.pattern).slice(0, 1000),
+            // Stored RAW — {s1}/{n}/{c} tokens are expanded at COMPILE time by
+            // compileTriggerPattern with digit-true naming; pre-translating here
+            // was the source of the positional-renumbering bug.
+            pattern:       String(t.pattern).slice(0, 1000),
             pattern_flags: 'i',
             use_regex:     t.use_regex !== false,
             enabled:       true,
@@ -20887,12 +21178,18 @@ function startWebDashboard(port) {
             row.warning_text    = String(t.warning_text).slice(0, 200);
           }
           if (t.end_text)          row.end_text = String(t.end_text).slice(0, 200);
-          if (t.end_early_pattern) { row.end_early_pattern = _translateGinaPlaceholders(t.end_early_pattern).slice(0, 1000); row.end_use_regex = true; }
+          if (t.end_early_pattern) { row.end_early_pattern = String(t.end_early_pattern).slice(0, 1000); row.end_use_regex = t.end_use_regex !== false; }
           try {
             compiled.push(_compilePersonalTrigger(row));
             existingNames.add(row.name.toLowerCase());
             imported++;
           } catch (err) {
+            // Import DISABLED rather than drop (pq-companion's contract, and
+            // the right one): a silently-missing trigger is the worse failure
+            // mode. The row sits in the list flagged for manual editing.
+            compiled.push({ ...row, enabled: false, import_error: String(err.message || err).slice(0, 200),
+                            _regex: null, _endRegex: null, _conditions: [], _aliases: {}, _scope: 'personal' });
+            existingNames.add(row.name.toLowerCase());
             errors.push({ name: row.name, error: err.message });
           }
         }
@@ -20921,8 +21218,11 @@ function startWebDashboard(port) {
           return res.end(JSON.stringify({ matched: false, note: 'pattern + line required' }));
         }
         try {
-          const pat = useRegex ? _translateDotNetRegex(pattern) : _escapeForLiteralMatch(pattern);
-          const rx = new RegExp(pat, flags);
+          // Same pipeline as the live evaluator, so the test box can never
+          // disagree with what a real fire would do (the old path skipped the
+          // anchor rewrite and token table entirely).
+          const c = compileTriggerPattern(pattern, { flags, use_regex: useRegex !== false });
+          const rx = c.regex;
           const m = rx.exec(line);
           res.writeHead(200, { 'Content-Type': 'application/json' });
           return res.end(JSON.stringify({
@@ -21130,6 +21430,9 @@ function saveStatsSoon() {
 // Classify the ability of a damage event for the dashboard's "top damage" lists.
 // Returns one of: 'Melee Crit', 'Spell Crit' (DoT, proc, nuke), or 'Hit'.
 const MELEE_ABILITIES = new Set([
+  // Multi-word class skills (SPECIAL_VERB_RX) — melee for DPS bucketing.
+  'flying kick','round kick','dragon punch','eagle strike','tiger claw',
+  'tail rake','harm touch','frenzy',
   'hit','slash','crush','pierce','punch','kick','bash','backstab','bite','claw',
   'gore','maul','slam','smash','peck','gnaw','sting','trample','snap','stomp',
   'chomp','swing','tear','rend','spit','swipe','buffet','thrash','mangle',
@@ -21851,6 +22154,40 @@ function _setPlannedBid(itemId, value) {
   return true;
 }
 
+// Per-item DISMISSED flag for the wishlist / RECENT MISSES lists — the ✕ on a
+// row. Purely a local view preference (logsync.lootdismiss.json): the wishlist
+// is INFERRED from OpenDKP bid history, so there is nothing upstream to delete
+// and nothing to upload. Same durable pattern as the planned bids above.
+const LOOTDISMISS_FILE = path.join(__dirname, 'logsync.lootdismiss.json');
+let _lootDismissed = {};   // { item_id(int): 1 }
+function _loadLootDismissed() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(LOOTDISMISS_FILE, 'utf8'));
+    const out = {};
+    for (const k of Object.keys(raw || {})) {
+      const id = parseInt(k, 10);
+      if (Number.isFinite(id) && id > 0) out[id] = 1;
+    }
+    _lootDismissed = out;
+  } catch { _lootDismissed = {}; }
+}
+function _saveLootDismissed() {
+  try {
+    fs.writeFileSync(LOOTDISMISS_FILE + '.tmp', JSON.stringify(_lootDismissed));
+    fs.renameSync(LOOTDISMISS_FILE + '.tmp', LOOTDISMISS_FILE);
+  } catch { /* non-fatal */ }
+}
+// on=false restores the row; itemId 'all' with on=false clears every dismissal
+// (the "restore all" link, so a mis-click is never permanent).
+function _setLootDismissed(itemId, on) {
+  if (String(itemId) === 'all') { if (!on) { _lootDismissed = {}; _saveLootDismissed(); return true; } return false; }
+  const id = parseInt(itemId, 10);
+  if (!Number.isFinite(id) || id <= 0) return false;
+  if (on) _lootDismissed[id] = 1; else delete _lootDismissed[id];
+  _saveLootDismissed();
+  return true;
+}
+
 // Fetch (and cache ~1h) the PUBLIC Cognito app-client id + region from the bot.
 // Requires a bot connection (per-user bearer token). Throws a friendly message
 // when the bot is unreachable or OpenDKP login isn't configured server-side.
@@ -22064,6 +22401,7 @@ async function _opendkpAccountDkp(main, familyNames) {
 _loadOpendkpAuth();
 _loadBidFamily();
 _loadPlannedBids();
+_loadLootDismissed();
 
 // ── Inventory file ingestion ──────────────────────────────────────────────
 // EQ's /output inventory command writes <Character>-Inventory.txt to the EQ
@@ -25816,29 +26154,11 @@ function shouldUploadForCharacter(character) {
 //             compile). The capture name {s} is reserved by us.
 // Anything else we leave alone — JS regex supports named captures, lookbehind,
 // lookahead, Unicode property escapes, etc.
-function _translateDotNetRegex(pattern) {
-  let p = String(pattern || '');
-  // (?>...) → (?:...)
-  p = p.replace(/\(\?>/g, '(?:');
-  // {s} / {S} / {S2} / {c} → permissive name-like capture. The earlier form
-  // ([^\s]+) refused ANY whitespace, so multi-word mob names ("Zov Va Dyn",
-  // "Aten Ha Ra", "Lord Nagafen") never matched and triggers like Enrage
-  // silently never fired. Allow word chars + space + apostrophe + hyphen +
-  // BACKTICK — Luclin names like Rhag`Zhezum / Aten`Ha`Ra carry a backtick, and
-  // without it a {s} trigger could never fire on those mobs (audit fix). Lazy so
-  // the surrounding anchored context (^...$) still constrains the
-  // match. The capture is NAMED — first occurrence as `s`, second as `s1`,
-  // etc. — so (a) action templates like "ENRAGE - {s}" interpolate the
-  // captured mob name and (b) the live evaluator can audit the match against
-  // our charm-pet tracker to suppress triggers firing on our own pet.
-  let sIdx = 0;
-  p = p.replace(/\{[sScC]\d*\}/g, () => {
-    const name = sIdx === 0 ? 's' : `s${sIdx}`;
-    sIdx++;
-    return `(?<${name}>[\\w'\` -]+?)`;
-  });
-  return p;
-}
+// (_translateDotNetRegex removed 2026-08-07 — superseded by
+// compileTriggerPattern. Its positional {s}-naming bound action tokens to the
+// wrong capture, its [\w'` -] class couldn't span ", '", and it treated {c}
+// as a wildcard. See the trigger-pattern compiler block below
+// _escapeForLiteralMatch.)
 // True when the captured {s}-style name matches a currently active charm pet.
 // Live triggers using `{s} yawns.`, `{s} slows down.`, `{s} has become ENRAGED.`
 // etc. otherwise false-fire when our OWN charm pet gets slowed/enraged. The
@@ -25861,6 +26181,288 @@ function _captureMatchesCharmPet(captures) {
 // the source string matches itself when fed to RegExp.
 function _escapeForLiteralMatch(s) {
   return String(s || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// ── Trigger pattern compiler (GINA / EQLogParser / native) ──────────────────
+// One pipeline for every pattern, no matter which door it came through —
+// import, guild poll, personal load, or the dashboard test box. Built from the
+// pq-companion comparison (scratchpad analysis 01), which ran 1,189 real
+// GINA/EQLP fixture triggers through the OLD translators: 92 threw at compile,
+// 311 ^-anchored patterns could never fire, and 82 bound their action tokens
+// to the wrong capture. With this pipeline the same corpus compiles 583/583.
+
+// Walk a pattern once, calling visit(index, char, src) for every UNESCAPED
+// character that is NOT inside a character class. Return a positive number
+// from visit to skip that many characters. Everything below needs this: a
+// plain .replace() can't tell `^` (anchor) from `[^abc]` (negated class), and
+// mis-rewriting one silently changes what a raid callout matches.
+function _scanRegexSource(src, visit) {
+  let inClass = false;
+  for (let i = 0; i < src.length; i++) {
+    const ch = src[i];
+    if (ch === '\\') { i++; continue; }              // escaped — skip the pair
+    if (inClass) { if (ch === ']') inClass = false; continue; }
+    if (ch === '[') { inClass = true; continue; }
+    const skip = visit(i, ch, src);
+    if (skip > 0) i += skip - 1;
+  }
+}
+
+// GINA and EQLogParser both strip "[Tue Aug 04 21:14:33 2026] " before
+// matching, so most real-world imported patterns are ^-anchored. We match the
+// RAW line (the convention every other parser in this file follows), which put
+// a bare ^ BEFORE the bracket — the trigger could never fire, and 12 of our
+// own 17 SUGGESTED_TRIGGERS were dead the same way. Rewriting each top-level
+// ^ into "^(?:<ts>)?" keeps both dialects alive: the prefix is OPTIONAL, so a
+// legacy \]\s+-style pattern is unaffected and an imported ^-pattern matches —
+// and because the group is consumed, a leading {s1} no longer swallows the
+// timestamp.
+const EQ_TS_PREFIX_RX = '\\[[^\\]]{1,40}\\]\\s+';
+
+function _rewriteAnchorsForRawLine(pattern) {
+  const src = String(pattern || '');
+  const spots = [];
+  _scanRegexSource(src, (i, ch, s) => {
+    if (ch !== '^') return 0;
+    if (i === 0) { spots.push(i); return 0; }
+    const before = s.slice(0, i);
+    if (/\($/.test(before) || /\(\?:$/.test(before) || /\|$/.test(before)) spots.push(i);
+    return 0;
+  });
+  if (spots.length === 0) return { source: src, rewrote: 0 };
+  let out = '', last = 0;
+  for (const i of spots) {
+    out += src.slice(last, i) + '^(?:' + EQ_TS_PREFIX_RX + ')?';
+    last = i + 1;
+  }
+  return { source: out + src.slice(last), rewrote: spots.length };
+}
+
+// .NET / RE2 dialect → JavaScript. GINA and EQLogParser write .NET regex; a
+// pq-companion pack writes Go/RE2. JS has lookbehind and backrefs (RE2's gap —
+// our advantage) but NOT scoped inline flags, which .NET packs use heavily.
+// Rewrites: (?P<n>…)→(?<n>…) · (?#comment) removed · (?i:…)→(?:…)+flag ·
+// (?i) hoisted · (?>…)→(?:…) · duplicate (?<x>…) renamed x_2 with an alias so
+// the capture bag folds it back at fire time. Lookaround, \k<name>, \1,
+// {2,3} repetition all pass through byte-identical.
+const _DOTNET_INLINE_FLAGS = 'imsxn';
+
+function _normalizeRegexDialect(pattern, flags) {
+  let src = String(pattern || '');
+  let outFlags = String(flags || 'i');
+  const warnings = [];
+  const addFlag = (f) => { if ('ims'.includes(f) && !outFlags.includes(f)) outFlags += f; };
+
+  src = src.replace(/\(\?P</g, '(?<');
+  src = src.replace(/\(\?#[^)]*\)/g, '');
+
+  // Inline flag groups — collected first, spliced back-to-front so earlier
+  // indices stay valid.
+  const edits = [];
+  _scanRegexSource(src, (i, ch, s) => {
+    if (ch !== '(' || s[i + 1] !== '?') return 0;
+    const m = /^\(\?([a-zA-Z]*)(-[a-zA-Z]+)?([:)])/.exec(s.slice(i));
+    if (!m) return 0;
+    const on  = m[1] || '';
+    const off = m[2] ? m[2].slice(1) : '';
+    if (!on && !off) return 0;                                  // (?:  (?=  (?!
+    for (const c of on + off) if (!_DOTNET_INLINE_FLAGS.includes(c)) return 0;
+    for (const c of on) {
+      addFlag(c);
+      if (c === 'x' || c === 'n') warnings.push('inline (?' + c + ') has no JS equivalent — ignored');
+    }
+    if (off) warnings.push('inline flag disable (?-' + off + ') has no JS equivalent — ignored');
+    edits.push({ at: i, len: m[0].length, repl: m[3] === ':' ? '(?:' : '' });
+    return m[0].length;
+  });
+  for (let k = edits.length - 1; k >= 0; k--) {
+    const e = edits[k];
+    src = src.slice(0, e.at) + e.repl + src.slice(e.at + e.len);
+  }
+
+  src = src.replace(/\(\?>/g, '(?:');
+
+  // Duplicate named groups: one logical group in .NET, a SyntaxError in JS
+  // (V8 allows cross-alternative duplicates only from Node 23; Mimic bundles
+  // Node 20 — assume not).
+  const seen = new Set();
+  const aliases = {};
+  src = src.replace(/\(\?<([A-Za-z][A-Za-z0-9_]*)>/g, (whole, name) => {
+    if (!seen.has(name)) { seen.add(name); return whole; }
+    let n = 2, alt;
+    do { alt = name + '_' + n++; } while (seen.has(alt));
+    seen.add(alt);
+    aliases[alt] = name;
+    warnings.push('duplicate capture name "' + name + '" — second occurrence renamed ' + alt);
+    return '(?<' + alt + '>';
+  });
+
+  return { source: src, flags: outFlags, aliases, warnings };
+}
+
+// The ONE token table. Previously two divergent translators (import-time
+// _translateGinaPlaceholders, compile-time _translateDotNetRegex) disagreed on
+// naming, on the {s} character class, and on whether {n} existed — the same
+// pattern behaved differently depending on which door it came through.
+// Non-negotiables, both learned from real packs:
+//   • the group name comes from the TOKEN'S OWN DIGIT, never its position —
+//     positional naming silently spoke the wrong capture in the action text;
+//   • {s} is `.+?`, NOT an allow-list — the old [\w'` -] class could not span
+//     ", '" and killed the whole assist/CH trigger family;
+//   • {2,3} repetition must pass through untouched (alpha-first key below).
+const TRIGGER_TOKEN_KINDS = {
+  s: { rx: '.+?',  prefix: 's' },
+  n: { rx: '\\d+', prefix: 'n' },
+};
+
+// Expand tokens. ctx.characters binds {c}/{char}/{self} to an alternation of
+// the watched characters (boxing-aware); when none are known yet the token is
+// left LITERAL — an unmatchable string — rather than becoming a wildcard that
+// fires for every player in the zone (the old {c} bug). Numeric guards
+// ({N>=50000}) become fire conditions checked after the match.
+function _expandTriggerTokens(pattern, ctx) {
+  ctx = ctx || {};
+  const used = new Set();
+  const conditions = [];
+  const warnings = [];
+  // True when the pattern OPENS with a wildcard token ({s}/{n}). Such a pattern
+  // has nothing to its left to stop `.+?` starting at index 0 of the raw line,
+  // so the capture eats the timestamp — see the guard in compileTriggerPattern.
+  // {c} is exempt: it expands to a literal alternation of character names, which
+  // cannot match inside "[Sun Aug 02 …]".
+  let leadingWildcard = false;
+  const source = String(pattern || '').replace(
+    /\{([A-Za-z][A-Za-z0-9_]*)((?:>=|<=|>|<|=)\s*\d+)?\}/g,
+    (whole, key, guard, offset) => {
+      const lower = key.toLowerCase();
+      if (lower === 'c' || lower === 'char' || lower === 'self') {
+        const chars = (ctx.characters || []).filter(Boolean);
+        if (!chars.length) {
+          warnings.push('{' + key + '} left literal — no active character detected yet');
+          return whole;
+        }
+        return '(?:' + chars.map(_escapeForLiteralMatch).join('|') + ')';
+      }
+      const kind = lower[0];
+      const rest = lower.slice(1);
+      if (!TRIGGER_TOKEN_KINDS[kind]) return whole;           // {target}, {spell}, …
+      if (rest !== '' && !/^\d+$/.test(rest)) return whole;   // {seller}, {sender}, …
+      const spec = TRIGGER_TOKEN_KINDS[kind];
+      let name = spec.prefix + rest;
+      if (rest === '') { let i = 2; while (used.has(name)) name = spec.prefix + i++; }
+      if (used.has(name)) {
+        let i = 2, alt = name;
+        while (used.has(alt)) alt = name + '_' + i++;
+        warnings.push('duplicate token {' + key + '} — second capture named ' + alt);
+        name = alt;
+      }
+      used.add(name);
+      if (offset === 0) leadingWildcard = true;
+      if (guard) {
+        const g = /^(>=|<=|>|<|=)\s*(\d+)$/.exec(guard.replace(/\s+/g, ''));
+        if (g) conditions.push({ group: name, op: g[1] === '=' ? '==' : g[1], value: Number(g[2]) });
+      }
+      return '(?<' + name + '>' + spec.rx + ')';
+    });
+  return { source, conditions, warnings, leadingWildcard };
+}
+
+// Characters the agent is currently watching — the {c} binding. Compiles run
+// at load + every guild poll, so a log that appears later is picked up on the
+// next cycle (with the leave-literal fallback covering the gap).
+function _watchedCharacters() {
+  const out = [];
+  for (const w of (stats.watchedLogs || [])) {
+    if (w && w.character && !out.includes(w.character)) out.push(w.character);
+  }
+  return out;
+}
+
+// The single compile entry point. Returns { regex, conditions, aliases,
+// anchorsRewritten, warnings, source } and throws only when the final RegExp
+// is genuinely unusable.
+function compileTriggerPattern(pattern, opts) {
+  opts = opts || {};
+  const flags = opts.flags || 'i';
+  if (opts.use_regex === false) {
+    return { regex: new RegExp(_escapeForLiteralMatch(pattern), flags),
+             conditions: [], aliases: {}, anchorsRewritten: 0, warnings: [], source: pattern };
+  }
+  const warnings = [];
+  const tok = _expandTriggerTokens(pattern, { characters: opts.characters || _watchedCharacters() });
+  warnings.push(...tok.warnings);
+  const dia = _normalizeRegexDialect(tok.source, flags);
+  warnings.push(...dia.warnings);
+  const anc = opts.rawLine === false
+    ? { source: dia.source, rewrote: 0 }
+    : _rewriteAnchorsForRawLine(dia.source);
+  // A pattern that OPENS with {s}/{n} and carries no ^ has nothing to stop the
+  // capture starting at index 0 of the raw line — `.+?` then swallows the whole
+  // "[Sun Aug 02 21:10:45 2026] " prefix into the name. The anchor rewrite above
+  // only fixes the ^-anchored case, and CLAUDE.md tells authors to write
+  // patterns UNANCHORED, so this is the shape we actively recommend.
+  // Live example: the "Razor Fang" guild trigger, `{S} is surrounded by an aura
+  // of nature.` — every fire spoke the timestamp and keyed its timer on it.
+  // The old allow-list `{s}` class hid this by accident (it could not match "["
+  // so the engine advanced past the timestamp on its own); `.+?` cannot.
+  // Same OPTIONAL prefix the ^ rewrite uses, so a bare (timestamp-less) line
+  // still matches and no existing pattern changes meaning.
+  let source = anc.source;
+  if (opts.rawLine !== false && anc.rewrote === 0 && tok.leadingWildcard) {
+    source = '^(?:' + EQ_TS_PREFIX_RX + ')?' + source;
+  }
+  return {
+    regex:            new RegExp(source, dia.flags),
+    conditions:       tok.conditions,
+    aliases:          dia.aliases,
+    anchorsRewritten: anc.rewrote,
+    warnings,
+    source,
+  };
+}
+
+// Numeric guards from {N>=50000}-style tokens — the capture matched, but the
+// trigger only fires when the number clears the threshold.
+function _captureConditionsPass(conditions, groups) {
+  for (const c of conditions) {
+    const v = Number((groups || {})[c.group]);
+    if (!Number.isFinite(v)) return false;
+    if (c.op === '>=' && !(v >= c.value)) return false;
+    if (c.op === '>'  && !(v >  c.value)) return false;
+    if (c.op === '<=' && !(v <= c.value)) return false;
+    if (c.op === '<'  && !(v <  c.value)) return false;
+    if (c.op === '==' && !(v === c.value)) return false;
+  }
+  return true;
+}
+
+// Everything an action template can reference, resolved once per fire. We used
+// to pass m.groups alone, which threw away the numbered submatches — so GINA's
+// "${2} broke charm!" and EQLP's "{1}: {2}" (and our OWN suggested trigger
+// "RESISTED: {1}") printed their tokens literally. Keys: "0".."N" (0 = whole
+// match), every named group, renamed duplicates folded back, {s}<->{s1}
+// equivalence, {sN} falling back to numbered group N for plain-parens
+// patterns, {L}/{l} = the whole line, {c}/{char}/{self} = the character.
+// Built-ins never shadow a real capture. _captureMatchesCharmPet keeps
+// working: it filters on /^s\d*$/ and none of the extras match that.
+function _buildCaptureBag(m, line, ctx, aliases) {
+  ctx = ctx || {};
+  const bag = Object.create(null);
+  for (let i = 0; i < m.length; i++) if (m[i] != null) bag[String(i)] = m[i];
+  if (m.groups) for (const k of Object.keys(m.groups)) if (m.groups[k] != null) bag[k] = m.groups[k];
+  if (aliases) for (const alt of Object.keys(aliases)) {
+    if (bag[alt] != null && bag[aliases[alt]] == null) bag[aliases[alt]] = bag[alt];
+  }
+  for (const p of ['s', 'n']) {
+    if (bag[p] != null && bag[p + '1'] == null) bag[p + '1'] = bag[p];
+    if (bag[p + '1'] != null && bag[p] == null) bag[p] = bag[p + '1'];
+  }
+  for (let i = 1; i <= 9; i++) {
+    if (bag['s' + i] == null && bag[String(i)] != null) bag['s' + i] = bag[String(i)];
+  }
+  bag.L = bag.l = line;
+  if (ctx.character) { bag.c = bag.char = bag.self = ctx.character; }
+  return bag;
 }
 
 // ── Remote overlay tuning ───────────────────────────────────────────────────
@@ -25936,12 +26538,41 @@ const _ZEAL_TAG_SHAPES = { r: 'R', o: 'O', y: 'Y', g: 'G', b: 'B', w: 'W', p: 'P
 // — and it had aged out four minutes later, mid-fight, while the boss was still
 // at 32%. Boss fights run 5-10 minutes, so expiring at 2 discards the ONLY
 // field that carries true mob identity for most of the encounter.
-// 10 minutes. Safe to hold this long because a tag is never the sole authority:
-// `clear`/`-` broadcasts erase explicitly, a same-name death clears that name's
-// buckets, and every stored entry keeps its mob name so a reused spawn id on a
-// different mob cannot silently inherit the label.
+// 10 minutes. The safeguards that justify holding this long, CORRECTED
+// 2026-08-07 — the previous note claimed three and only one of them was real:
+//   · `clear`/`-` broadcasts erase explicitly. TRUE.
+//   · "a same-name death clears that name's buckets" — FALSE for this map. Those
+//     buckets are the BOT's clustering state. Nothing here has ever cleared on a
+//     death, and grep confirms only four mutation sites (set / clear / erase /
+//     TTL sweep). Not needed either, as it turns out: a spawn id belongs to a
+//     spawn INSTANCE and dies with the mob, so a respawn takes a fresh id and
+//     cannot inherit a stale tag (measured — a killed `a bloodsaber defiler`
+//     came back 3250 → 4029 → 4038).
+//   · "every stored entry keeps its mob name so a reused spawn id cannot
+//     silently inherit the label" — the name IS stored, but nothing compared it
+//     on read, so it protected nothing on its own. The bot's index is keyed
+//     `nameLower → Map(spawn_id → tag)`, and THAT is what actually shields us.
+// The real exposure is cross-zone: ids are allocated from a low base in every
+// zone, so two zones' never-killed mobs share ids constantly (14 named NPCs
+// inside ids 11–45 in one zone). Hence the zone-change clear below.
 const _TAG_FRESH_MS = 600_000;
 const _zealTags = new Map();     // spawnId → { spawn_id, mob, mobDisplay, text, shape, tagger, tsMs }
+// Zone the tags in _zealTags were captured in. A tag is only meaningful in the
+// zone it was broadcast for; on a zone change the whole map is stale (see the
+// cross-zone note above) and gets dropped.
+let _zealTagsZone = null;
+// Cap on how many tags ride one live-state upload. Was 24 in both the agent and
+// the bot, and a full-zone sweep in The Deep hit it EXACTLY — the payload kept
+// the OLDEST 24 (Map insertion order) and silently dropped the rest, including
+// the boss, which had been tagged last. Bot 3.1.31 raised its half to 64 first;
+// this is the matching agent half. Named mobs are never dropped.
+const _TAG_UPLOAD_CAP = 64;
+// Most recent "You are currently rate limited" the log showed us. Tags are chat
+// messages, so a burst is REFUSED by the server — and Zeal still draws the
+// nameplate arrow, so the tagger believes the raid can see a mark nobody got.
+// A fourth silent-failure mode alongside /tag local, unjoined channel, and
+// suppress-on; the only one that hits a correctly-configured install mid-raid.
+let _tagRateLimit = null;        // { at: ms, untilMs: ms, seconds: n }
 function _isZealTagPayload(msg) {
   return typeof msg === 'string' && (msg.startsWith('ZEALTAG | ') || msg.startsWith('ZT | '));
 }
@@ -25998,7 +26629,24 @@ function _applyZealTagMessage(msg, tagger, tsMs) {
     // Two names on one spawn id inside a single row is the strongest single
     // observation the experiment can produce: an append proves both clients
     // resolved the same id to the same mob, with no timing luck involved.
+    //
+    // CARRY IT FORWARD on a self-append (2026-08-07). We store one entry per
+    // spawn id, so appending onto your OWN tag used to overwrite `prev` with
+    // yourself and null this out — even though the nameplate still showed the
+    // other tagger's fragment. Verified live: Canopy appended twice onto
+    // Gerael Woodone, the first kept `appended_to: Adiwen` and the second
+    // dropped it, and the only difference was who broadcast last. Re-marking
+    // your own tag mid-fight is normal, so the link has to survive it.
     appendedTo: (mode === 'append' && prev && prev.tagger && prev.tagger !== tagger)
+      ? prev.tagger
+      : (mode === 'append' && prev ? (prev.appendedTo || null) : null),
+    // A plain re-tag (`set`) over someone else's tag OVERWRITES them, and the
+    // evidence that two clients agreed on this spawn id goes with it. Observed:
+    // four skeletons, one re-tagged by a second player, and afterwards nothing
+    // in the row showed the first tagger had ever been there — we could not
+    // even tell WHICH one they had tagged. Same evidentiary value as
+    // appendedTo, so keep it rather than throw it away.
+    replacedTagger: (mode === 'set' && prev && prev.tagger && prev.tagger !== tagger)
       ? prev.tagger : null,
   });
   return true;
@@ -26137,6 +26785,64 @@ function zealTagsSnapshot(nowMs) {
     out.push(v);
   }
   return out;
+}
+
+// A mob whose display name is a proper noun — `Thought Horror Overfiend`,
+// `Agent of Solusek`. Generic spawns are article-prefixed and lowercase
+// (`an elder thought horror`).
+function _isNamedMobTag(t) {
+  return /^[A-Z]/.test(String((t && t.mobDisplay) || ''));
+}
+// Choose which tags survive _TAG_UPLOAD_CAP. Named mobs first and in full —
+// they are rare and they are what a raid needs identified — then generics
+// newest-first. The old code sliced the Map in INSERTION order, which kept the
+// oldest and dropped the newest; in The Deep that discarded the boss.
+function _pickTagsForUpload(tags, cap) {
+  const lim = cap || _TAG_UPLOAD_CAP;
+  if (!Array.isArray(tags) || tags.length <= lim) return tags || [];
+  const newestFirst = (a, b) => (b.tsMs || 0) - (a.tsMs || 0);
+  const named   = tags.filter(_isNamedMobTag).sort(newestFirst);
+  const generic = tags.filter(t => !_isNamedMobTag(t)).sort(newestFirst);
+  const picked  = named.concat(generic).slice(0, lim);
+  stats.zealTagsDropped = tags.length - picked.length;
+  return picked;
+}
+
+// Zone changed → every tag we hold describes spawn ids in the zone we LEFT, and
+// ids are reused across zones (see the _TAG_FRESH_MS note). Drop them all.
+// Called from the live-state zone tracking; cheap and idempotent.
+function noteZoneForTags(zone) {
+  const z = zone ? String(zone) : null;
+  if (!z) return false;
+  if (_zealTagsZone === z) return false;
+  const had = _zealTags.size;
+  _zealTags.clear();
+  _zealTagsZone = z;
+  if (had) console.log(`[zeal-tag] zone → ${z}; dropped ${had} tag(s) from the previous zone`);
+  return true;
+}
+
+// "You are currently rate limited, you cannot send more messages for N seconds"
+// Tags are chat messages, so a burst is refused by the SERVER and the broadcast
+// never happens — while Zeal still draws the nameplate arrow locally. Record it
+// so the dashboard can say so instead of the user seeing an empty capture and
+// assuming the agent is broken.
+const _RATE_LIMIT_RX = /you are currently rate limited, you cannot send more messages for (\d+) seconds/i;
+function noteRateLimitLine(line, tsMs) {
+  if (!line || line.indexOf('rate limited') === -1) return false;
+  const m = line.match(_RATE_LIMIT_RX);
+  if (!m) return false;
+  const seconds = parseInt(m[1], 10) || 0;
+  const at = tsMs || Date.now();
+  _tagRateLimit = { at, seconds, untilMs: at + seconds * 1000 };
+  return true;
+}
+function tagRateLimitSnapshot() {
+  if (!_tagRateLimit) return null;
+  // Keep it visible for a few minutes after it clears — the useful message is
+  // "tags you sent around then did not broadcast", which outlives the lockout.
+  if (Date.now() - _tagRateLimit.at > 300_000) return null;
+  return _tagRateLimit;
 }
 
 function noteClientVersionLine(line, character) {
@@ -26400,11 +27106,10 @@ function _applyGuildTriggersResponse(resp) {
     const compiled = [];
     for (const t of resp.triggers) {
       try {
-        const flags = t.pattern_flags || 'i';
-        const pat = t.use_regex === false
-          ? _escapeForLiteralMatch(t.pattern)
-          : _translateDotNetRegex(t.pattern);
-        compiled.push({ ...t, _regex: new RegExp(pat, flags), _endRegex: _compileEndEarlyRegex(t), _scope: 'guild' });
+        const c = compileTriggerPattern(t.pattern, { flags: t.pattern_flags || 'i', use_regex: t.use_regex });
+        compiled.push({ ...t, _regex: c.regex, _conditions: c.conditions, _aliases: c.aliases,
+                        _excludes: _compileExcludes(t),
+                        _endRegex: _compileEndEarlyRegex(t), _scope: 'guild' });
       } catch (err) {
         console.warn(`[guild-triggers] bad pattern "${t.name}":`, err.message);
       }
@@ -26540,15 +27245,15 @@ function _compilePersonalTrigger(t) {
   // an empty pattern would compile to a match-everything regex and fire on
   // every log line. The text evaluator skips triggers without _regex; the
   // zeal evaluator picks them up via zeal_condition.
-  let regex = null;
+  let regex = null, conditions = [], aliases = {};
+  const excludes = _compileExcludes(t);
   if (t.pattern && String(t.pattern).trim()) {
-    const flags = t.pattern_flags || 'i';
-    const pat = t.use_regex === false
-      ? _escapeForLiteralMatch(t.pattern)
-      : _translateDotNetRegex(t.pattern);
-    regex = new RegExp(pat, flags);
+    const c = compileTriggerPattern(t.pattern, { flags: t.pattern_flags || 'i', use_regex: t.use_regex });
+    regex = c.regex; conditions = c.conditions; aliases = c.aliases;
+    for (const w of c.warnings) console.warn('[triggers] "' + (t.name || '?') + '": ' + w);
   }
-  return { ...t, _regex: regex, _endRegex: _compileEndEarlyRegex(t), _scope: 'personal' };
+  return { ...t, _regex: regex, _conditions: conditions, _aliases: aliases,
+           _excludes: excludes, _endRegex: _compileEndEarlyRegex(t), _scope: 'personal' };
 }
 
 // Compile end_early_pattern on a trigger so the live evaluator can cancel
@@ -26557,14 +27262,28 @@ function _compilePersonalTrigger(t) {
 // Returns null if the trigger has no end-early pattern OR the pattern is
 // invalid — a bad end-early shouldn't prevent the main trigger from
 // loading.
+// exclude_patterns: suppress the fire when any of these ALSO matches the line.
+// The clean fix for "my incoming-tell alert fires on every merchant line" —
+// previously the only options were a broader pattern or lookahead gymnastics.
+// A bad exclude never takes the trigger down with it: the offending entry is
+// dropped and the rest kept, same fail-open policy as the end-early regex.
+function _compileExcludes(t) {
+  const src = Array.isArray(t && t.exclude_patterns) ? t.exclude_patterns : [];
+  const out = [];
+  for (const p of src) {
+    if (!p || !String(p).trim()) continue;
+    try { out.push(compileTriggerPattern(String(p), { flags: t.pattern_flags || 'i' }).regex); }
+    catch (err) { console.warn('[triggers] bad exclude on "' + (t.name || '?') + '":', err.message); }
+  }
+  return out;
+}
+
 function _compileEndEarlyRegex(t) {
   if (!t || !t.end_early_pattern || !String(t.end_early_pattern).trim()) return null;
   try {
-    const flags = t.pattern_flags || 'i';
-    const pat = t.end_use_regex === false
-      ? _escapeForLiteralMatch(t.end_early_pattern)
-      : _translateDotNetRegex(t.end_early_pattern);
-    return new RegExp(pat, flags);
+    return compileTriggerPattern(t.end_early_pattern, {
+      flags: t.pattern_flags || 'i', use_regex: t.end_use_regex,
+    }).regex;
   } catch (err) {
     console.warn('[triggers] bad end_early_pattern on "' + (t.name || '?') + '":', err.message);
     return null;
@@ -26744,6 +27463,17 @@ function _decodeXmlEntities(s) {
     .replace(/&quot;/g, '"')
     .replace(/&apos;/g, '\'');
 }
+// GINA duration fields appear as plain seconds ("400"), floats, or clock
+// notation ("6:40", "1:02:03"). Milliseconds are handled by the caller.
+function _ginaDurationSecs(raw) {
+  const v = String(raw || '').trim();
+  if (!v) return 0;
+  if (/^\d+(?:\.\d+)?$/.test(v)) return Math.round(parseFloat(v));
+  const parts = v.split(':').map(x => parseInt(x, 10));
+  if (!parts.length || parts.some(x => !Number.isFinite(x))) return 0;
+  return parts.reduce((acc, x) => acc * 60 + x, 0);
+}
+
 function _parseTriggerXml(xml) {
   const triggers = [];
   // Match each <Trigger>...</Trigger> block. GINA top-level is
@@ -26765,18 +27495,44 @@ function _parseTriggerXml(xml) {
     const enableRegex = get('EnableRegex').toLowerCase() === 'true';
     const displayText = get('DisplayText');
     const ttsText     = get('TextToVoiceText');
-    // GINA's TimerDuration is in seconds; we don't yet wire timer triggers,
-    // but parse the cooldown if present so we don't lose the field.
-    const cooldownRaw = get('TimerDuration');
-    const cooldown    = parseInt(cooldownRaw, 10) || 0;
+    // GINA timer semantics — corrected 2026-08-07 (pq-companion analysis 01
+    // §3.9): TimerDuration is the COUNTDOWN length, and we used to import it
+    // as cooldown_seconds — a semantic inversion that turned a 450s raid
+    // timer into a 450s MUTE on the trigger with no timer at all. GINA has no
+    // lockout concept, so cooldown is always 0 here; the duration becomes a
+    // real countdown when TimerType says this is a timer trigger.
+    const timerType = get('TimerType').toLowerCase();
+    const isTimer   = timerType === 'timer' || timerType === 'repeatingtimer';
+    const durMs     = parseInt(get('TimerMillisecondDuration'), 10) || 0;
+    const durSec    = durMs > 0 ? Math.round(durMs / 1000) : _ginaDurationSecs(get('TimerDuration'));
+    // UseText / UseTextToVoice gate the alert actions when present (GINA
+    // always writes them); an EQLP-shaped XML without the tags keeps the
+    // old use-if-non-empty behavior.
+    const useText  = get('UseText');
+    const useTts   = get('UseTextToVoice');
+    // Early enders: every <EarlyEnder> block's text, joined as alternatives.
+    // A non-regex ender is escaped so it matches itself.
+    const enders = [];
+    const enderRx = /<EarlyEnder>([\s\S]*?)<\/EarlyEnder>/gi;
+    let em2;
+    while ((em2 = enderRx.exec(body)) !== null) {
+      const eb   = em2[1];
+      const et   = /<(?:EarlyEndText|EndingTrigger|TriggerText)\b[^>]*>([\s\S]*?)<\//i.exec(eb);
+      const text = et ? _decodeXmlEntities(et[1].trim()) : '';
+      if (!text) continue;
+      const eRegex = /<EnableRegex\b[^>]*>\s*true\s*</i.test(eb);
+      enders.push(eRegex ? '(?:' + text + ')' : '(?:' + _escapeForLiteralMatch(text) + ')');
+    }
     if (!name || !pattern) continue;
     triggers.push({
       name,
       pattern,
       use_regex:        enableRegex,
-      display_text:     displayText,
-      tts_text:         ttsText,
-      cooldown_seconds: cooldown,
+      display_text:     (useText === '' || useText.toLowerCase() === 'true') ? displayText : '',
+      tts_text:         (useTts === '' || useTts.toLowerCase() === 'true') ? ttsText : '',
+      cooldown_seconds: 0,
+      timer_duration_sec: (isTimer && durSec > 0) ? durSec : 0,
+      ...(enders.length ? { end_early_pattern: enders.join('|'), end_use_regex: true } : {}),
     });
   }
   return triggers;
@@ -26817,7 +27573,9 @@ function _parseTriggerTgfJson(text) {
           warning_seconds:    Math.max(0, parseInt(td.WarningSeconds, 10) || 0),
           warning_text:       String(td.WarningTextToSpeak || td.WarningTextToDisplay || '').trim(),
           end_text:           String(td.EndTextToSpeak || td.EndTextToDisplay || '').trim(),
-          end_early_pattern:  String(td.EndEarlyPattern || '').trim(),
+          end_early_pattern:  [String(td.EndEarlyPattern || '').trim(), String(td.EndEarlyPattern2 || '').trim()]
+                                .filter(Boolean).map(x => '(?:' + x + ')').join('|'),
+          end_use_regex:      td.EndUseRegex !== false,
         });
       }
     }
@@ -26827,23 +27585,16 @@ function _parseTriggerTgfJson(text) {
   return out;
 }
 
-// GINA / EQLogParser capture placeholders → regex. Both tools write {S}/{s}
-// (match-any text) and {N}/{n} (a number) into the pattern, with a trailing
-// digit for a *named* capture you can reference in the alert text ({s1}, {n1}).
-// We turn the numbered forms into .NET-style named groups (?<s1>…) — which our
-// alert templates already reference as {s1} — and the bare forms into plain
-// captures. Applied before _translateDotNetRegex compiles to JS.
-function _translateGinaPlaceholders(pattern) {
-  if (!pattern) return pattern;
-  return String(pattern)
-    .replace(/\{[sS](\d+)\}/g, '(?<s$1>.+?)')
-    .replace(/\{[nN](\d+)\}/g, '(?<n$1>\\d+)')
-    .replace(/\{[sS]\}/g,      '(.+?)')
-    .replace(/\{[nN]\}/g,      '(\\d+)');
-}
+// (_translateGinaPlaceholders removed 2026-08-07 — imports now store the RAW
+// pattern and compileTriggerPattern expands tokens at compile time with
+// digit-true naming. Pre-translating at import was one half of the two-table
+// split that made the same pattern behave differently per entry door.)
 
 // Per-trigger last-fire timestamp for cooldown enforcement
 const _triggerLastFire = new Map();
+// Per-trigger fire count — GINA's {COUNTER} template token. Resets on restart
+// by design (a session-scoped tally, matching GINA's behavior).
+const _triggerFireCounts = new Map();
 // Recent overlay queue — surfaced on /api/state for the dashboard to render.
 // Cap at 20 so a runaway trigger can't OOM us.
 const _activeOverlays = [];
@@ -28737,6 +29488,48 @@ function _readZipEntry(zipPath, entryName) {
   throw new Error(`entry not found: ${entryName}`);
 }
 
+// Buffer-based sibling of _readZipEntry for GINA .gtp packages — a .gtp is a
+// PKZIP holding one ShareData.xml, which our gzip-only import path could never
+// read (the "advertised and broken" finding in the pq-companion comparison).
+// Prefers a member whose basename matches `preferBase`, else the first .xml
+// member, else the first member. Store (0) and deflate (8) only.
+function _readZipMemberFromBuf(buf, preferBase) {
+  if (!buf || buf.length < 22 || buf.readUInt32LE(0) !== 0x04034b50) return null;
+  let eocd = -1;
+  for (let i = buf.length - 22; i >= Math.max(0, buf.length - 22 - 65535); i--) {
+    if (buf.readUInt32LE(i) === 0x06054b50) { eocd = i; break; }
+  }
+  if (eocd < 0) return null;
+  const count = buf.readUInt16LE(eocd + 10);
+  let off = buf.readUInt32LE(eocd + 16);
+  const members = [];
+  for (let n = 0; n < count && off + 46 <= buf.length; n++) {
+    if (buf.readUInt32LE(off) !== 0x02014b50) break;
+    const method   = buf.readUInt16LE(off + 10);
+    const csize    = buf.readUInt32LE(off + 20);
+    const nameLen  = buf.readUInt16LE(off + 28);
+    const extraLen = buf.readUInt16LE(off + 30);
+    const cmtLen   = buf.readUInt16LE(off + 32);
+    const lho      = buf.readUInt32LE(off + 42);
+    const name     = buf.toString('utf8', off + 46, off + 46 + nameLen);
+    members.push({ name, base: name.split(/[\\/]/).pop().toLowerCase(), method, csize, lho });
+    off += 46 + nameLen + extraLen + cmtLen;
+  }
+  const pick = members.find(m => preferBase && m.base === preferBase)
+            || members.find(m => m.base.endsWith('.xml'))
+            || members[0];
+  if (!pick) return null;
+  try {
+    const lNameLen  = buf.readUInt16LE(pick.lho + 26);
+    const lExtraLen = buf.readUInt16LE(pick.lho + 28);
+    const start = pick.lho + 30 + lNameLen + lExtraLen;
+    const data  = buf.subarray(start, start + pick.csize);
+    if (pick.method === 0) return data.toString('utf8');
+    if (pick.method === 8) return zlib.inflateRawSync(data).toString('utf8');
+  } catch { /* corrupt member — fall through */ }
+  return null;
+}
+
 // crash_reason.txt → structured fields. Lines look like "Key: value"; the
 // leading "Unhandled exception occurred: ..." headline is kept in raw only.
 function _parseCrashReason(text) {
@@ -28957,14 +29750,19 @@ function flushLiveStateToBot(opts) {
       // #194: fresh Zeal /tag broadcasts — each carries the mob's TRUE spawn
       // id, the authoritative same-name separator (see noteTagChannelLine).
       zeal_tags: (() => {
+        // Zone gate first: ids are per-zone and reused, so anything held from
+        // the zone we just left describes different mobs now.
+        noteZoneForTags(_zoneName(st.zone) || (st.zone != null ? String(st.zone) : null));
         const tags = zealTagsSnapshot(now);
         if (!tags.length) return null;
-        return tags.slice(0, 24).map(t => ({
+        return _pickTagsForUpload(tags).map(t => ({
           spawn_id: t.spawn_id, mob: t.mobDisplay, text: t.text || '',
           shape: t.shape || null, tagger: t.tagger || null,
           since: new Date(t.tsMs).toISOString(),
-          // Append semantics — see _applyZealTagMessage. Older bots ignore both.
+          // Append semantics — see _applyZealTagMessage. Older bots ignore all
+          // three; replaced_tagger needs bot 3.1.31+ to be stored.
           mode: t.mode || null, appended_to: t.appendedTo || null,
+          replaced_tagger: t.replacedTagger || null,
         }));
       })(),
       buffs,
@@ -29199,14 +29997,67 @@ function _evaluateZealConditions(character, tsMs) {
     }
   }
 }
+// ── EQLogParser-parity trigger fields (Hitya 2026-08-07) ────────────────────
+// "I'm doing almost all of the authoring, until this system is as granular as
+// EQLogParser triggers." Each helper reads a new guild_triggers column and
+// falls back to the legacy portable shape, so a trigger authored the old way
+// keeps working byte-identically and an older Mimic ignores what it can't read.
+
+// One warning was never enough: a tank buster wants 10s AND 4s, a 3h KEI wants
+// 5m AND 60s. Officers used to clone the trigger, which double-fired the
+// banner. Sorted descending so the overlay's latch walk is monotonic.
+function _timerWarnings(t) {
+  const list = Array.isArray(t.timer_warnings) ? t.timer_warnings : [];
+  const out = list
+    .filter(w => w && Number(w.seconds) > 0 && w.text)
+    .map(w => ({ at_ms: Math.round(Number(w.seconds) * 1000),
+                 text: String(w.text).slice(0, 200),
+                 tts: w.tts !== false }));
+  if (out.length === 0 && t.warning_seconds > 0 && t.warning_text) {
+    out.push({ at_ms: t.warning_seconds * 1000,
+               text: String(t.warning_text).slice(0, 200), tts: true });
+  }
+  return out.sort((a, b) => b.at_ms - a.at_ms);
+}
+
+// A mechanic that announces its own timing ("recasts in 45 seconds") can now be
+// timed: timer_duration_capture names the group whose TEXT holds the duration.
+// Accepts plain seconds, M:SS / H:MM:SS, and unit notation (6m40s, 90s, 2h).
+function _parseDurationText(raw) {
+  const v = String(raw == null ? '' : raw).trim().toLowerCase();
+  if (!v) return 0;
+  if (/^\d+(?:\.\d+)?$/.test(v)) return Math.round(parseFloat(v));
+  if (/^\d+(?::\d{1,2})+$/.test(v)) {
+    return v.split(':').map(Number).reduce((acc, n) => acc * 60 + n, 0);
+  }
+  const um = v.match(/^(?:(\d+)\s*h)?\s*(?:(\d+)\s*m)?\s*(?:(\d+)\s*s)?$/);
+  if (um && (um[1] || um[2] || um[3])) {
+    return (Number(um[1]) || 0) * 3600 + (Number(um[2]) || 0) * 60 + (Number(um[3]) || 0);
+  }
+  return 0;
+}
+function _timerDurationSec(t, captures) {
+  if (t.timer_duration_capture && captures) {
+    const n = _parseDurationText(captures[t.timer_duration_capture]);
+    if (n > 0) return Math.min(n, 3 * 3600);   // sane ceiling on captured text
+  }
+  return Number(t.timer_duration_sec) || 0;
+}
+
 function _startTimer(t, tsMs, isTest, captures) {
-  if (!t || !(t.timer_duration_sec > 0)) return;
+  const _durSec = _timerDurationSec(t, captures);
+  if (!t || !(_durSec > 0)) return;
   // Per-CAPTURE keying — a trigger that fires twice on different mob names
   // ("Pacify on Lord Nagafen" then "Pacify on Vox") gets two independent
   // timer rows, not one whose countdown restarts. Same trigger firing on
   // the SAME captures restarts the existing row (DnDOverlay convention).
   // Captures are sorted by key so insert-order can't cause cache misses.
-  const baseId = String(t.id || t.name || 'unknown');
+  // timer_key_capture: the captured text becomes the timer KEY, so ONE "Mez"
+  // trigger runs N independent countdowns keyed by real spell/mob name instead
+  // of one row that keeps restarting.
+  const _keyCap = (t.timer_key_capture && captures && captures[t.timer_key_capture])
+    ? String(captures[t.timer_key_capture]).trim().slice(0, 60) : '';
+  const baseId = String(t.id || t.name || 'unknown') + (_keyCap ? '::' + _keyCap.toLowerCase() : '');
   let captureSuffix = '';
   // "target" — the thing the timer is ABOUT (the boss the spell was cast on,
   // OR the boss currently being fought if no explicit target was captured).
@@ -29229,7 +30080,14 @@ function _startTimer(t, tsMs, isTest, captures) {
     timerTarget = stats.currentEncounterThreat.bossName;
   }
   const id = baseId + captureSuffix;
-  const startMs = tsMs || Date.now();
+  // Replay arms the countdown on the WALL clock. tsMs stays authoritative for
+  // pacing and the journal, but it is the historical log time — for any log
+  // older than the duration, ends_at_ms lands in the past and
+  // _activeTimersSnapshot deletes the row before the overlay ever paints it.
+  // Field report: replaying a pull fired the TTS but "the countdown bar never
+  // appears", so authors concluded the timer itself was broken. Live fires are
+  // unaffected (tsMs is already ~now).
+  const startMs = t._replay ? Date.now() : (tsMs || Date.now());
   const action = (Array.isArray(t.actions) && t.actions[0]) || {};
   _activeTimers.set(id, {
     id,
@@ -29239,14 +30097,20 @@ function _startTimer(t, tsMs, isTest, captures) {
     target:         timerTarget || null,
     effect:         t.name || 'timer',
     started_at_ms:  startMs,
-    ends_at_ms:     startMs + (t.timer_duration_sec * 1000),
-    duration_sec:   t.timer_duration_sec,
+    ends_at_ms:     startMs + (_durSec * 1000),
+    duration_sec:   _durSec,
     color:          action.color || 'red',
     end_text:       t.end_text || null,
     // Warning callout fired by the overlay N seconds before the timer ends
     // (EQLP WarningSeconds + WarningTextToSpeak — e.g. "RAGE SOON" 12s out).
+    // Legacy scalars stay ALONGSIDE the list forever — an older triggers.html
+    // bundled in an older Mimic reads these and keeps its one warning.
     warn_ms:        (t.warning_seconds > 0 && t.warning_text) ? t.warning_seconds * 1000 : 0,
     warn_text:      t.warning_text || null,
+    warnings:       _timerWarnings(t),
+    bar_color:      t.bar_color || null,
+    pinned:         !!t.pinned,
+    show_at_ms:     (Number(t.display_threshold_sec) || 0) * 1000,
     trigger_name:   t.name || null,   // used by end-early matching against the trigger group
     captures:       captures && typeof captures === 'object' ? { ...captures } : null,
     scope:          t._scope || 'unknown',
@@ -29290,7 +30154,7 @@ function _cancelTimer(id) {
 // true of this matcher; with `died.` it is at least true of real deaths.
 const _DEATH_SLAIN_BY_RX = /\]\s+(.+?)\s+has been slain by\s+/i;
 const _DEATH_YOU_SLEW_RX = /\]\s+You have slain\s+(.+?)[!.]*\s*$/i;
-const _DEATH_DIED_RX     = /\]\s+(.+?)\s+died\.\s*$/i;
+const _DEATH_DIED_RX     = /\]\s+(.+?)\s+(?:has\s+)?died\.\s*$/i;
 function _deadMobNameFromLine(line) {
   if (!line) return null;
   const hasSlain = line.indexOf('slain') !== -1;
@@ -29598,6 +30462,10 @@ function _activeTimersSnapshot() {
   const out = [];
   for (const [id, t] of _activeTimers) {
     if (t.ends_at_ms <= now) { _activeTimers.delete(id); continue; }
+    // display_threshold_sec: hide the row until it is nearly up ("only show me
+    // the last 30s"). Filtered HERE rather than in the overlay so an older
+    // bundled triggers.html gets the behaviour without a Mimic update.
+    if (t.show_at_ms > 0 && (t.ends_at_ms - now) > t.show_at_ms) continue;
     out.push({
       id:           t.id,
       name:         t.name,
@@ -29609,6 +30477,9 @@ function _activeTimersSnapshot() {
       end_text:     t.end_text,
       warning_ms:   t.warn_ms || 0,
       warn_text:    t.warn_text || null,
+      warnings:     Array.isArray(t.warnings) ? t.warnings : [],
+      bar_color:    t.bar_color || null,
+      pinned:       !!t.pinned,
       scope:        t.scope,
       // #107 loot chips carry kind:'loot' + dismissible so the trigger overlay
       // draws a per-chip ✕ (deathtouch timers stay non-dismissible as before).
@@ -29618,7 +30489,10 @@ function _activeTimersSnapshot() {
     });
   }
   // Soonest-to-expire first — that's the most useful default for a stack of bars.
-  out.sort((a, b) => a.remaining_ms - b.remaining_ms);
+  // Pinned rows float as a GROUP above unpinned, then soonest-first within
+  // each — so a 3-minute boss-cadence bar stays on top instead of sinking
+  // under six 20-second rows on a busy pull.
+  out.sort((a, b) => (b.pinned === true) - (a.pinned === true) || a.remaining_ms - b.remaining_ms);
   return out;
 }
 
@@ -29781,12 +30655,27 @@ function noteLootAuction(chatMsg) {
   } catch (e) { void e; }
 }
 
+// Action-text expansion — every reference dialect that shows up in imported
+// packs: ${name}/${2} (GINA — the $ is consumed), {name}/{2}/{0} (native +
+// EQLogParser), $1/$2 (.NET replacement form). Anything unresolved is left
+// EXACTLY as written so literal braces and dollar signs in a callout survive.
+// The captures arg is the _buildCaptureBag output on live fires, so "{1}",
+// "${2}", "{L}" and folded duplicate names all resolve; older callers passing
+// a plain object keep working (lookup is just key access).
 function _expandTemplate(template, captures) {
   if (!template) return '';
-  return template.replace(/\{(\w+)\}/g, (_, k) => {
-    if (captures && captures[k] != null) return String(captures[k]);
-    return `{${k}}`;
-  });
+  const bag = captures || {};
+  const lookup = (whole, k) => {
+    if (bag[k] != null) return String(bag[k]);
+    const lower = String(k).toLowerCase();
+    if (bag[lower] != null) return String(bag[lower]);
+    return whole;
+  };
+  let out = String(template);
+  out = out.replace(/\$\{([A-Za-z0-9_]+)\}/g, lookup);
+  out = out.replace(/\{([A-Za-z0-9_]+)\}/g, lookup);
+  out = out.replace(/\$(\d)/g, lookup);
+  return out;
 }
 
 // ── Trigger checkpoint journal (#76) ────────────────────────────────────────
@@ -29861,9 +30750,16 @@ function _synthesizeMatchingLine(t, captures) {
   src = src.replace(/\\w[+*?]?/g, 'word');
   src = src.replace(/\\s[+*?]?/g, ' ');
   src = src.replace(/\.[+*?]/g, 'something');
-  // Drop anchors, quantifiers on literals, and unescape escaped punctuation.
+  // Drop quantifiers on literals and the end anchor; a LEADING ^ is honoured
+  // by prepending a synthetic timestamp below, so REHEARSE chews on the same
+  // raw-line shape the live tail produces. The old blanket anchor delete made
+  // a ^-anchored pattern rehearse green while being dead on live (the
+  // false-green half of the pq-companion 01 findings).
   src = src.replace(/[?*+]/g, '');
+  src = src.replace(/\$$/, '');
+  if (src.startsWith('^')) src = src.slice(1);
   src = src.replace(/[\^$]/g, '');
+  src = '[Thu Aug 07 12:00:00 2026] ' + src;
   src = src.replace(/\\([.\-+*?()\[\]{}|^$/])/g, '$1');
   src = src.replace(/\s{2,}/g, ' ').trim();
   try { return t._regex.test(src) ? src : null; }
@@ -29979,11 +30875,26 @@ function evaluateTriggersAgainstLine(line, tsMs) {
     let m;
     try { m = t._regex.exec(line); } catch { continue; }
     if (!m) continue;
+    // GINA numeric guards ({N>=50000}): the capture matched, but the trigger
+    // only fires when the number clears the threshold. Cheap — most triggers
+    // carry no conditions at all.
+    if (t._conditions && t._conditions.length && !_captureConditionsPass(t._conditions, m.groups)) {
+      _journalTrigger({ trigger: t.name, scope: t._scope || 'personal', checkpoint: TJ.GATES,
+                        stopped: true, reason: 'numeric guard not met' });
+      continue;
+    }
+    // exclude_patterns — the line matched, but something on the exclude list
+    // matched it too, so this is one of the cases the author carved out.
+    if (t._excludes && t._excludes.length && t._excludes.some(rx => rx.test(line))) {
+      _journalTrigger({ trigger: t.name, scope: t._scope || 'personal', checkpoint: TJ.GATES,
+                        stopped: true, reason: 'suppressed — matched an exclude pattern' });
+      continue;
+    }
     // Charm-pet filter — if the captured {s} name is one of our currently
     // active charm pets, the message is about OUR pet (slow on a charmed
     // mob, our pet enrages at low HP, etc.) and the call would be wrong.
     // Don't apply to Zeal-condition triggers (no log-match captures there).
-    const captures = m.groups || {};
+    const captures = _buildCaptureBag(m, line, {}, t._aliases);
     if (_captureMatchesCharmPet(captures)) {
       _journalTrigger({ trigger: t.name, scope: t._scope || 'personal', checkpoint: TJ.MATCHED,
                         stopped: true, reason: 'suppressed — capture is your charm pet' });
@@ -30107,6 +31018,13 @@ function _calloutScopeGated(scope) {
 }
 
 function _fireTriggerActions(t, captures, tsMs, test, isRelay) {
+  // GINA's {COUNTER} — session-scoped per-trigger fire tally, available to
+  // every action template. Test/replay fires read the count without bumping
+  // it, so a rehearsal can't skew a live "third add incoming" counter.
+  const _fcKey = t.id || t.name;
+  const _fc = (_triggerFireCounts.get(_fcKey) || 0) + (test ? 0 : 1);
+  if (!test) _triggerFireCounts.set(_fcKey, _fc);
+  if (captures && captures.counter == null) captures.counter = _fc;
   // #136 raid callout allow-list — decide ONCE per fire whether speech is muted.
   // Applies only to the raid-wide voice scopes (guild + relayed), only when the
   // allow-list is enabled, and only when the trigger matches no critical
@@ -30245,7 +31163,11 @@ function _fireTriggerActions(t, captures, tsMs, test, isRelay) {
       const speakAt  = (text, offsetMs) => {
         const msg = _expandTemplate(text || '', captures || {}).trim();
         if (!msg) return;
-        const fireMs = (tsMs || Date.now()) + Math.max(0, offsetMs || 0);
+        // Replay rebases mark offsets onto now — a historical tsMs made every
+        // fireMs more than a minute old, so the stale-drop below discarded the
+        // whole 30→10→5→0 sequence and a rehearsal played nothing.
+        const markBaseMs = t._replay ? Date.now() : (tsMs || Date.now());
+        const fireMs = markBaseMs + Math.max(0, offsetMs || 0);
         if (Date.now() - fireMs > 60_000) return;          // stale, drop
         const delay  = Math.max(0, fireMs - Date.now());
         const key    = baseKey + ':' + Math.round(offsetMs || 0);
@@ -30290,7 +31212,22 @@ function _fireTriggerActions(t, captures, tsMs, test, isRelay) {
   // are passed so per-mob keying works — "Pacify on Lord Nagafen" and
   // "Pacify on Vox" become two independent countdowns rather than the
   // second restarting the first.
-  if (t.timer_duration_sec > 0) _startTimer(t, tsMs, test, captures);
+  if (t.timer_duration_sec > 0 || t.timer_duration_capture) _startTimer(t, tsMs, test, captures);
+  // cooldown_timer_sec: a SECOND, visible countdown for recast/reuse — distinct
+  // from cooldown_seconds, which is the silent anti-spam lockout. Feign Death
+  // has no duration but a 9s recast, and that was previously inexpressible.
+  // target:null is deliberate — a recast bar is never per-mob, and inheriting
+  // the current boss would let _cancelTimersOnMobDeath wrongly cancel it.
+  if (Number(t.cooldown_timer_sec) > 0) {
+    _startTimer({ ...t,
+      id: String(t.id || t.name) + '::cd',
+      name: (t.name || 'ability') + ' CD',
+      timer_duration_sec: Number(t.cooldown_timer_sec),
+      timer_duration_capture: null, timer_key_capture: null,
+      timer_warnings: [{ seconds: 1, text: (t.name || 'ability') + ' ready', tts: true }],
+      warning_seconds: 0, warning_text: null, pinned: false,
+    }, tsMs, test, null);
+  }
 
   // Fan-out — mark the local fire seen, then relay to the bot so other
   // Mimics that missed the source line can replay it. Skip when this
@@ -30384,7 +31321,9 @@ function _replayEvaluateLine(line, tsMs, ctx) {
     let m;
     try { m = t._regex.exec(line); } catch { continue; }
     if (!m) continue;
-    const captures = m.groups || {};
+    // Same guard + bag as the live evaluator — rehearsal must match live.
+    if (t._conditions && t._conditions.length && !_captureConditionsPass(t._conditions, m.groups)) continue;
+    const captures = _buildCaptureBag(m, line, {}, t._aliases);
     // Suppression — mirror the live pipeline (evaluate AND enforce), journalled
     // as a replay row so a swallowed callout is visible in the checkpoint log.
     if (_captureMatchesCharmPet(captures)) {
@@ -30475,6 +31414,13 @@ async function _replayWorker(st) {
   }
   st.done    = true;
   st.running = false;
+  // Now that replayed timers arm on the wall clock (see _startTimer), a long
+  // replay can end with a stack of rehearsal countdowns still ticking. Sweep
+  // every test-marked timer on completion — same rule as the dashboard's
+  // testOnly clear — so a finished rehearsal leaves the overlay clean.
+  for (const [id, t] of _activeTimers) {
+    if (t.test) _activeTimers.delete(id);
+  }
   scheduleRender();
 }
 
@@ -30723,6 +31669,110 @@ async function tailFile(logPath, onLine) {
       console.warn(`[tail] ${err.message}`);
     }
   }, 500);
+}
+
+// ── Log rotation (feedback: Ashieron 2026-08-07) ────────────────────────────
+// "Keep track of logfile size and cull the file when it gets too big, or keep
+// it at a maximum size and file old logs to another location." We do the
+// second, never the first: old logs are the raw material for --since backfill,
+// historical chat, and parse re-runs, so culling would destroy the guild's own
+// history. A live log over the threshold is RENAMED into LogArchive/ next to
+// the logs and an empty file is recreated in its place, which the tailer's
+// existing size<pos rotation handling picks up as a reset.
+//
+// Safety model, in order:
+//   1. mtime idle gate — we only touch a file quiet for LOG_ROTATE_IDLE_MS
+//      (not being written = the character is not playing).
+//   2. The OS is the real gate: Windows refuses to rename a file EQ holds
+//      open (no FILE_SHARE_DELETE on its append handle), so a racing EQ
+//      session makes the rename fail cleanly and we just skip this sweep.
+//   3. Same-directory rename — atomic, instant, no copy, no disk double-use.
+// WP_LOG_ROTATE_MB=0 disables; default 500MB (Hitya 2026-08-07), default ON.
+// Idle default 15 min.
+const LOG_ROTATE_MB      = (() => { const v = parseInt(process.env.WP_LOG_ROTATE_MB, 10); return Number.isFinite(v) ? v : 500; })();
+const LOG_ROTATE_IDLE_MS = Math.max(60_000, (parseInt(process.env.WP_LOG_ROTATE_IDLE_MIN, 10) || 15) * 60_000);
+
+// Pure decision — exercised directly by test/log-rotate.test.js.
+function _shouldRotateLog(sizeBytes, mtimeMs, nowMs, thresholdMb, idleMs) {
+  if (!(thresholdMb > 0)) return false;                       // feature off
+  if (!(sizeBytes > thresholdMb * 1024 * 1024)) return false; // under the cap
+  if (!(nowMs - mtimeMs >= idleMs)) return false;             // being written
+  return true;
+}
+
+function _rotateArchiveName(logPath, nowMs) {
+  const d = new Date(nowMs);
+  const pad = (n) => String(n).padStart(2, '0');
+  const stamp = d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate())
+              + '-' + pad(d.getHours()) + pad(d.getMinutes());
+  return path.basename(logPath).replace(/\.txt$/i, '') + '.' + stamp + '.txt';
+}
+
+// Tiny persisted agent prefs (state dir, beside personal_triggers.json).
+// First use: the dashboard's log-archiving off switch — env vars are not a
+// reachable surface for Mimic users, so the opt-out has to live in a file.
+let _agentPrefsCache = null;
+function _agentPrefsPath() {
+  const dir = path.dirname(STATS_FILE || '');
+  return dir ? path.join(dir, 'logsync.prefs.json') : null;
+}
+function _agentPrefs() {
+  if (_agentPrefsCache) return _agentPrefsCache;
+  try {
+    const p2 = _agentPrefsPath();
+    _agentPrefsCache = (p2 && fs.existsSync(p2)) ? (JSON.parse(fs.readFileSync(p2, 'utf8')) || {}) : {};
+  } catch { _agentPrefsCache = {}; }
+  return _agentPrefsCache;
+}
+function _saveAgentPrefs(patch) {
+  const merged = Object.assign({}, _agentPrefs(), patch || {});
+  _agentPrefsCache = merged;
+  try {
+    const p2 = _agentPrefsPath();
+    if (p2) fs.writeFileSync(p2, JSON.stringify(merged, null, 2));
+  } catch (err) { console.warn('[prefs] save failed:', err.message); }
+  return merged;
+}
+function _logRotateEnabled() {
+  return LOG_ROTATE_MB > 0 && !_agentPrefs().log_rotate_off;
+}
+// Watched logs currently over the cap — the "these will be archived on the
+// next quiet sweep" list for the dashboard banner. Size gate only (no idle
+// check): the point is telling the user WHAT is impacted, not when.
+function _logRotateCandidates() {
+  const out = [];
+  for (const w of (stats.watchedLogs || [])) {
+    if (!w || !w.logPath) continue;
+    try {
+      const st = fs.statSync(w.logPath);
+      if (st.size > LOG_ROTATE_MB * 1024 * 1024) {
+        out.push({ file: path.basename(w.logPath), size_mb: Math.round(st.size / (1024 * 1024)) });
+      }
+    } catch { /* unreadable — skip */ }
+  }
+  return out;
+}
+
+async function _logRotateSweep() {
+  if (!_logRotateEnabled()) return;
+  const now = Date.now();
+  for (const w of (stats.watchedLogs || [])) {
+    if (!w || !w.logPath) continue;
+    try {
+      const st = await fs.promises.stat(w.logPath);
+      if (!_shouldRotateLog(st.size, st.mtimeMs, now, LOG_ROTATE_MB, LOG_ROTATE_IDLE_MS)) continue;
+      const dir = path.join(path.dirname(w.logPath), 'LogArchive');
+      try { fs.mkdirSync(dir, { recursive: true }); } catch { /* exists */ }
+      const dest = path.join(dir, _rotateArchiveName(w.logPath, now));
+      fs.renameSync(w.logPath, dest);              // EQ holding it open → throws → skip
+      try { fs.writeFileSync(w.logPath, '', { flag: 'wx' }); } catch { /* recreated by EQ */ }
+      const mb = Math.round(st.size / (1024 * 1024));
+      if (!Array.isArray(stats.logRotations)) stats.logRotations = [];
+      stats.logRotations.unshift({ file: path.basename(w.logPath), dest, mb, at: new Date(now).toISOString() });
+      if (stats.logRotations.length > 10) stats.logRotations.length = 10;
+      console.log('[log-rotate] ' + path.basename(w.logPath) + ' (' + mb + 'MB) → ' + dest);
+    } catch { /* stat failed or rename refused (EQ has it open) — next sweep */ }
+  }
 }
 
 // ── Time-window mode (backfill) ─────────────────────────────────────────────
@@ -31739,6 +32789,10 @@ async function main() {
         // itself stays dropped by the custom-channel privacy filter; only the
         // structured {tank, mob, hp} extract rides observed_tanks.
         try { noteTagChannelLine(line, b.character); } catch { void 0; }
+        // Chat rate limit — the server REFUSING a tag broadcast looks exactly
+        // like nobody tagging, except Zeal still drew the arrow. Substring gate
+        // first, same as the hooks above.
+        try { const _dtrl = parseEqTimestamp(line); noteRateLimitLine(line, _dtrl ? _dtrl.getTime() : Date.now()); } catch { void 0; }
         // #56 — a mob death closes one same-name serial track; on K→0 (the last
         // instance died) it clears that name's stale debuff/slow/HP buckets so the
         // next same-name mob starts clean (the debuff-bleed fix). Same trusted
@@ -31849,6 +32903,11 @@ async function main() {
         if (ev) { b.builder.add(ev); idleCount = 0; }
       });
     }
+    // Log-size sweep (Ashieron's feedback): every 10 min, archive any watched
+    // log over the size cap that has been idle long enough. First pass after
+    // 2 min so an oversized log from a previous session is handled promptly.
+    setTimeout(() => { _logRotateSweep().catch(() => {}); }, 2 * 60_000);
+    setInterval(() => { _logRotateSweep().catch(() => {}); }, 10 * 60_000);
     setInterval(() => {
       idleCount++;
       if (idleCount > 10) {  // ~5s idle
