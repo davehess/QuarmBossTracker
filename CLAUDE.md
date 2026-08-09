@@ -27,6 +27,17 @@ adjacent or unrelated code, stop and flag it before proceeding. (The
 13k-line `index.js` monolith makes "small line count" a poor proxy for "small
 blast radius" — reaching into unrelated behavior is a structural hazard here.)
 
+### Working rule — attribute decisions to the person who made them
+**Hitya is the guild lead and makes the calls on this platform.** Do NOT credit
+decisions or feature suggestions to **Uilnayar** — corrected 2026-08-09, and it
+had propagated widely (the fight-timeline napkin sketch, the release-cadence
+rule, the roadmap rule, the raid-night deploy freeze were all mis-credited).
+Other guild members do submit real suggestions and bug reports — Ashieron,
+Naggato, vj, Adiwen, Rockin, Dafeet, Emma/Camping, Jankzer — and those stay
+credited; the rule is specifically that Uilnayar is not a decision or suggestion
+source here. Note `Uilnayar` IS a legitimate character name in test fixtures and
+in the `{s}`-capture example below — leave those alone.
+
 ### Working rule — decisions get WRITTEN DOWN, same session
 A decision that lives only in chat is lost: cloud and desktop sessions cannot
 share a conversation, and a container reset takes the scratchpad with it. When
@@ -140,7 +151,7 @@ for both branches, put the file on both.
 | Bot (`index.js`, `commands/`, `utils/`) | `main` | root `package.json` (+ a `CHANGELOGS` entry in `utils/onboarding.js` — drives `/onboarding` "what's new"; skip if nothing user-facing) |
 | Web (`web/`) | `main` (default — web still ships straight to main). To have a change reviewable first, land it on `beta` and read it at `b.wolfpack.quest/<same path>`, then graduate to `main` | `web/package.json` |
 | Agent, for beta users | `beta` | `packages/wolfpack-logsync/package.json` only. Since 2026-07-08 ANY beta push touching `apps/mimic/**` or `packages/wolfpack-logsync/**` builds; do NOT bump Mimic per iteration |
-| Mimic | `beta` (or `main` to cut stable) | `apps/mimic/package.json` stays PARKED at the line's target — the workflow auto-increments the `-beta.N` tag per push (v1.7.2-beta.1, -beta.2, …). Bump only when opening a new line or cutting stable on `main`. **Cadence rule (Uilnayar 2026-07-14): everything EXCEPT Mimic ships straight to `main`; Mimic alone runs the beta→stable loop** — cut stable when the line is *meaningful*, re-park beta, iterate, repeat. A meaningful feature set takes a MINOR bump for its line (the healer-attribution work is the **1.9** line), routine fix rounds take a patch. **After cutting a stable, immediately re-park beta above it** (stable 1.7.1 → beta parks at 1.7.2): a park at/below the stable would tag prereleases that semver-sort BELOW it, and the updater would stop offering new betas (Uilnayar 2026-07-09) |
+| Mimic | `beta` (or `main` to cut stable) | `apps/mimic/package.json` stays PARKED at the line's target — the workflow auto-increments the `-beta.N` tag per push (v1.7.2-beta.1, -beta.2, …). Bump only when opening a new line or cutting stable on `main`. **Cadence rule (Hitya 2026-07-14): everything EXCEPT Mimic ships straight to `main`; Mimic alone runs the beta→stable loop** — cut stable when the line is *meaningful*, re-park beta, iterate, repeat. A meaningful feature set takes a MINOR bump for its line (the healer-attribution work is the **1.9** line), routine fix rounds take a patch. **After cutting a stable, immediately re-park beta above it** (stable 1.7.1 → beta parks at 1.7.2): a park at/below the stable would tag prereleases that semver-sort BELOW it, and the updater would stop offering new betas (Hitya 2026-07-09) |
 | Supabase migration | `main` (file) + apply | see Migrations below |
 | Docs only | `main` | none |
 
@@ -215,7 +226,7 @@ Load-bearing facts:
   clean feature commits — resolving only the boot-timer hunk (its Linux anchor
   line is absent on beta) and dropping the Deck doc.
 
-**Every release updates the roadmap** (Uilnayar 2026-07-08). Add/extend a
+**Every release updates the roadmap** (Hitya 2026-07-08). Add/extend a
 `releases[]` entry at the TOP of `web/lib/roadmapData.ts` (newest first) for
 any user-facing change — bot, web, agent, or Mimic. Each entry: the version
 pill (`Web 1.0.x · Bot 3.0.y`, add a `beta` channel flag for beta-only), a
@@ -224,7 +235,7 @@ and the **bug fixes at the bottom**. This is what a raider reads (mirrors the
 `/onboarding` CHANGELOGS in tone) — keep it human, not a git log. Bump
 `web/package.json` for the roadmap edit like any web change.
 
-### Raid-night deploy freeze (Uilnayar 2026-07-13)
+### Raid-night deploy freeze (Hitya 2026-07-13)
 **Never push to `main` during a raid window: Sun/Wed/Thu 19:30 ET → 00:30 ET.**
 Any main push restarts production surfaces the raid depends on (and mid-raid
 restarts are what amplified the 2026-07-13 queue backup + announcer spam).
@@ -347,7 +358,7 @@ Rules that keep them married:
     `self->ActorInfo->PetID` → `get_entity_by_id()` → `Position`/`Heading`). The
     pipe emits `loc` for exactly three things — raid member, group member, self —
     so a pet-tanked mob is unplaceable for us while being visible on the user's
-    own map. Uilnayar spotted this 2026-08-05; do not repeat the claim that Zeal
+    own map. Hitya spotted this 2026-08-05; do not repeat the claim that Zeal
     lacks the data.
   Rewrite the request against `named_pipe.cpp` before asking again.
 

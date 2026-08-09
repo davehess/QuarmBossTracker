@@ -24,7 +24,8 @@ migration `20260809030000`). Chart not built yet. Data audit 2026-08-06, re-audi
 > **The highest-value follow-up on this whole feature is to apply that same
 > normalisation at INGEST** so `encounter_id` is populated going forward. Until
 > then the read-side window join cannot separate repeat pulls of one boss.
-**Ask:** Uilnayar 2026-08-06 (napkin sketch) — "retool the timeline … capture the
+
+**Ask:** Hitya 2026-08-06 (napkin sketch) — "retool the timeline … capture the
 parse's damage timeline and who is main tank or rampage throughout the fight,
 then allow us to highlight sections of the damage meter by class(es), toggleable
 via some classes on the side, or have a search list with all of the damage
@@ -171,7 +172,7 @@ Diabo Xi Xin Thall 189.6% — and all three share one property: the boss was
 pulled several times inside the window. Step 2 is the fix. Until it lands, do
 not present the chart as authoritative for repeat-pull fights.
 
-## Open decision for Hitya/Uilnayar
+## Open decision for Hitya
 
 The sketch says class toggles *or* a searchable damage-dealer list. These are
 different interactions and both are cheap once the tidy series exists:
@@ -185,7 +186,7 @@ mechanism, two ways to fill it, no second code path.
 
 ## Long-term storage — the two-tier model (measured 2026-08-06)
 
-Uilnayar: "can we come up with a longterm storage model that would shrink this
+Hitya: "can we come up with a longterm storage model that would shrink this
 but still maintain that sort of timeline view?" Yes, and the numbers are lopsided
 enough that the answer is easy.
 
@@ -225,7 +226,7 @@ is an argument for sparsity, not against it.)
 **HOT — `encounter_threat_snapshots`, unchanged.** It feeds the live overlays and
 must stay exactly as it is. Add **retention only**.
 
-> **DECIDED 2026-08-06 (Uilnayar): Model B, with a 2-MONTH hot window**, not the
+> **DECIDED 2026-08-06 (Hitya): Model B, with a 2-MONTH hot window**, not the
 > 14 days originally proposed — *"I'd like to keep 2 months full before tuning
 > down."* Costed at the measured 12.2 MB/day:
 >

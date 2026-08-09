@@ -19,7 +19,7 @@ export type RoadmapFeature = {
 };
 
 // ── Release log — the member-facing changelog. NEWEST FIRST. ─────────────────
-// RULE (Uilnayar 2026-07-08): EVERY release updates this list. Call out the
+// RULE (Hitya 2026-07-08): EVERY release updates this list. Call out the
 // version, give a SIMPLIFIED plain-language line per headline feature, and put
 // the bug fixes at the bottom of that release. Keep it human — this is what a
 // raider reads, not a git log. (Technical detail lives in the component
