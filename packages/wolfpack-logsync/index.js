@@ -402,7 +402,7 @@ const KEEP_PATTERNS = [
   /\byou have slain /i,
   /^\[.+\]\s+You died\./i,                        // /death of self
   /\bdie[ds]\./i,                                 // "X died." — see parseEvent; "X dies." is FEIGN, kept only so the trigger engine can see it
-  // ── Real-death CONFIRMATION (Uilnayar 2026-08-03) ────────────────────────
+  // ── Real-death CONFIRMATION (Hitya 2026-08-03) ────────────────────────
   // A real death has a corpse-run tail that a feign never produces. These lines
   // appear ONLY in the dying player's OWN log, which is exactly what makes them
   // trustworthy: "<Name> dies." is ambiguous to a bystander, but nobody feigns
@@ -651,7 +651,7 @@ function normalizeClass(raw) {
   return CLASS_TITLES.get(key) || String(raw).trim();
 }
 
-// Finishing-blow / anomalous-hit guard (Uilnayar 2026-07-14). Quarm's finishing
+// Finishing-blow / anomalous-hit guard (Hitya 2026-07-14). Quarm's finishing
 // blows log as an ordinary melee "hit … for N" where N is a mob-HP-sized number
 // — e.g. "hit a goblin cavehunter for 32011" from a monk whose real hits are a
 // few hundred. Counted as damage they wreck parses: one such line roughly
@@ -1028,7 +1028,7 @@ function parseEvent(line, ts) {
   // death by EVERY observer in range. Shadow Knights showed 175 death records
   // across 3 characters (58 each) and Necromancers 58 across 4, against 5.5 for
   // a Cleric and 1 for a Bard — 44% of every death we have ever stored came
-  // from the only two classes that can feign (Uilnayar 2026-08-03).
+  // from the only two classes that can feign (Hitya 2026-08-03).
   //
   // Feign death is already parsed correctly further down as type 'feign_death'
   // via "has fallen to the ground"; this line simply must not shadow it.
@@ -1045,14 +1045,14 @@ function parseEvent(line, ts) {
   // Real-death CONFIRMATION — the corpse-run tail. Only ever appears in the
   // dying player's OWN log, and a feign never produces it: nobody feigns their
   // way to a home point. This is what lets a backfill VERIFY a stored death
-  // rather than re-trusting the line that created it (Uilnayar 2026-08-03).
+  // rather than re-trusting the line that created it (Hitya 2026-08-03).
   if (/\]\s+You are bleeding to death!/i.test(line)
       || /\]\s+Returning to home point, please wait/i.test(line)) {
     return { ts: tsIso, type: 'death_confirm', defender: null /* self */, attacker: null };
   }
 
   // ── Heals ─────────────────────────────────────────────────────────────────
-  // CONFIRMED PHYSICS (Uilnayar 2026-07-14): heal AMOUNTS are private — only
+  // CONFIRMED PHYSICS (Hitya 2026-07-14): heal AMOUNTS are private — only
   // the healed sees "You have been healed for N". What bystanders see is the
   // spell's cast_on_other LANDING message with the target's name ("X is
   // completely healed.", "X feels much better.", "X's wounds fade away.") —
@@ -1270,7 +1270,7 @@ function parseEvent(line, ts) {
     return { ts: tsIso, type: 'charm_break', pet: m[1] };
   }
 
-  // Charm BREAK — self-only form (Uilnayar 2026-07-03, Shavimo the
+  // Charm BREAK — self-only form (Hitya 2026-07-03, Shavimo the
   // enchanter: "gives buff durations and stuff, but when the key word
   // 'Your charm spell has worn off' I dont get any notification"). This
   // line is ONLY visible to the charmer, no third-person subject at all —
@@ -1691,7 +1691,7 @@ const GAUGE_CHARM_DEBOUNCE_MS = 1500;
 // proper-named mob ("Dark Elf Reaver") slips the article heuristic, and the
 // SBB begin-cast line can predate the gauge by more than the 12s pending
 // window (resists, melody re-twists), killing the pending bypass too
-// (Uilnayar 2026-07-13 — charm tracker latched "a crag spider" but not the
+// (Hitya 2026-07-13 — charm tracker latched "a crag spider" but not the
 // reaver; a same-named second reaver was mezzed nearby, which is fine here:
 // slot 16 is only ever the LOCAL client's pet, so name twins can't confuse
 // attribution). Class comes from the same whoData → raid-roster chain
@@ -1715,7 +1715,7 @@ function _reconcileGaugeCharms() {
     // Article-prefix is the cheap heuristic for "this is a charmed mob, not
     // a summoned pet" — most EQ mobs are named "a/an/the <thing>". But
     // NAMED mobs are valid charm targets too (Jareker, Mistmoore, etc) and
-    // they have proper-noun names, no article. Uilnayar 2026-06-21
+    // they have proper-noun names, no article. Hitya 2026-06-21
     // ("Canopy charmed Jareker, tracker didn't light up"). Relax:
     //   • article-prefixed slot-16 (a/an/the) → accept (legacy path,
     //     covers ~95% of charm targets) OR
@@ -2138,7 +2138,7 @@ const _petStatsByOwner  = new Map();   // ownerLower → { pet, skills:{[skill]:
 // because we can't tell apart 1HB and H2H from the verb alone.
 //
 // Bow-armed pets: EQ pets can equip a bow + arrows just like a player; per
-// Uilnayar 2026-06-21 the attack lands as a generic "Petname hits Y" verb
+// Hitya 2026-06-21 the attack lands as a generic "Petname hits Y" verb
 // (not the player-form "shoots") so the hit/hits mapping below covers it.
 // The shoots/fires/throws/flings aliases are here defensively — covers any
 // EQ version (or future emu pet AI revision) that emits the more specific
@@ -2608,7 +2608,7 @@ function _isHotBuff(name) { return _categorizeBuff(name) === 'regen'; }
 // A pet's buffs belong to THAT pet, but `_petBuffLandings` is keyed by OWNER —
 // which is exactly what makes charm-pet attribution work (see
 // _captureTargetBuffsOnCharm) and also means NOTHING about the key changes when
-// the pet does. Uilnayar 2026-08-05: a charmed rat carried Glamour of Tunare
+// the pet does. Hitya 2026-08-05: a charmed rat carried Glamour of Tunare
 // and Tunare's Request (1800 ticks — three hours); the charm broke, no recharm,
 // a summoned warder took its place, and the warder's row showed both, because
 // the entries were still inside their duration and still filed under "canopy".
@@ -2647,7 +2647,7 @@ function petBuffsForOwner(ownerLower) {
   // `/pet health` is a SNAPSHOT of everything on the pet right now, so it is
   // authoritative over anything we recorded BEFORE it: "The Pet health includes
   // the 3 buffs but should remove those two debuffs as they are not present"
-  // (Uilnayar 2026-08-05). Landings NEWER than the snapshot are kept — they
+  // (Hitya 2026-08-05). Landings NEWER than the snapshot are kept — they
   // happened after the pet answered. Only applied once the report has CLOSED
   // (no further line for the gap window); mid-stream the set is still filling.
   // Restricted to catalog spells because applyPetHealthLine can only RECORD
@@ -2705,7 +2705,7 @@ const _buffLandingsByTarget = new Map();   // targetLower → Map<spellLower,{na
 // off the buff_casts upload)? True for:
 //   • a CATALOGUED instant effect (nuke/stun/proc/dispel/gate: no timed duration
 //     formula and no positive base duration) — no lasting effect, must never
-//     linger as a timer-less "fell off" cue (Uilnayar 2026-07-13); and
+//     linger as a timer-less "fell off" cue (Hitya 2026-07-13); and
 //   • an UNCATALOGUED self-cast landing — resolveSelfCastLanding matches ANY
 //     self-cast by landing text ungated on duration, so an uncatalogued one is
 //     overwhelmingly a nuke/proc. Real DoTs/curses (Bolt of Karana, Ignite
@@ -2843,7 +2843,7 @@ function _zealTargetForChar(charLower) {
   }
   return null;
 }
-// ── Auto-Raid Invite lead detection (Uilnayar 2026-07-13) ───────────────────
+// ── Auto-Raid Invite lead detection (Hitya 2026-07-13) ───────────────────
 // The raid leader who turns on in-game Auto-Raid invite IS who members should
 // /who for an auto-invite. Two self-lines drive it (from that char's own log):
 //   "You are now the leader of the raid."   → this char is raid leader
@@ -2892,7 +2892,7 @@ function trackAriLeadLine(line, character) {
 // "You begin casting/singing <Spell>." — shared by noteSelfCast (landing
 // attribution) and relaySelfCastForCasting (cross-client Casting relay).
 const _CAST_BEGIN_RX = /\]\s+You begin (?:casting|singing)\s+(.+?)\.\s*$/i;
-// ── Divine Intervention availability (BACKLOG §1, Uilnayar 2026-07-14) ───────
+// ── Divine Intervention availability (BACKLOG §1, Hitya 2026-07-14) ───────
 // DI = spell 1546: 6s cast + 90s recast, short enough that "who has it up"
 // matters mid-fight. Zeal's gem/recast payloads aren't wired (zealPipe.js:
 // "need ground truth, not inference"), so this is LOG-driven: a self-cast of
@@ -2963,14 +2963,14 @@ function noteSelfCast(line, character) {
 // our own casts are nameable (EQ hides others' spell/target), so coverage scales
 // with Mimic adoption. LIVE path only (never backfill — stale casts are useless).
 // Heal-spell name detector for the per-encounter spell-count tally surfaced on
-// the heal perspective panel (Uilnayar 2026-06-25). Word-boundary'd so we
+// the heal perspective panel (Hitya 2026-06-25). Word-boundary'd so we
 // don't pick up unrelated names like "Annul Magic" or "Reflect Spell"; a
 // broad-enough match that custom Quarm heal spells are still captured if
 // they're named recognisably.
 // `chloro\w*` (not `chloropl`): the druid direct heal is ChloroBLast — the old
 // `chloropl` alternative matched neither Chloroblast NOR Chloroplast (the
 // trailing \b killed the prefix match) and both spells fell out of heal
-// detection entirely (Uilnayar 2026-07-15). nature[`']s touch: both possessive
+// detection entirely (Hitya 2026-07-15). nature[`']s touch: both possessive
 // spellings — EQ logs backticks.
 const HEAL_SPELL_RX = /\b(heal(?:ing)?|renewal|chloro\w*|regrowth|torpor|lay on hands|restoration|touch of the divine|nature[`']s touch|vigor|salve)\b/i;
 const _lastCastRelay = new Map();   // charLower → { sig, at }
@@ -2982,7 +2982,7 @@ const _lastCastRelay = new Map();   // charLower → { sig, at }
 //   2. Encounter payload `heal_casts` — the bot joins these against OTHER
 //      Mimic users' heals_received events to build real per-healer totals
 //      (Quarm never logs other people's heal amounts, so cross-client join
-//      is the only way to attribute; Uilnayar 2026-07-14).
+//      is the only way to attribute; Hitya 2026-07-14).
 // `consumed` stops one cast from absorbing two landed events.
 // Estimated heal amount for a spell, from the bot's spell catalog (v7+ carries
 // `heal`/`heal_fixed` per heal spell — computed at the era level). Rides on the
@@ -3106,7 +3106,7 @@ function noteCureCastFailed(line, character) {
     cure_failed: true,
   }] });
 }
-// Recipient-side heal attribution (Uilnayar 2026-07-15). EQ shows OTHER
+// Recipient-side heal attribution (Hitya 2026-07-15). EQ shows OTHER
 // players' cast starts as "<Caster> begins to cast a spell." (caster named,
 // spell hidden). Ring these so that when a heal LANDS on us ("You have been
 // healed for N") we can name the healer from OUR OWN log — no cross-client
@@ -3145,7 +3145,7 @@ function _correlateHealer(landMs) {
   return null;
 }
 // Bystander-visible heal LANDINGS — the spell's cast_on_other message with the
-// target's name (Uilnayar 2026-07-14: heal AMOUNTS are private to the healed,
+// target's name (Hitya 2026-07-14: heal AMOUNTS are private to the healed,
 // but LANDINGS are public to everyone). Any single Mimic in the raid witnessing
 // a landing lets the bot attribute the heal (cleric's heal_cast × this sighting)
 // even when the TARGET runs no Mimic — the amount rides on the matched cast.
@@ -3191,7 +3191,7 @@ const _BLIND_DUR_PITTED_MS = 24_000;
 const _BLIND_DUR_GENERIC_MS = 30_000;
 const _BLIND_RX = [
   // Pitted Iron Ring self-cast — the only Wabumkin/raid use we know about
-  // (Uilnayar 2026-06-26). Self-only spell; no "X is blinded by a manaflare"
+  // (Hitya 2026-06-26). Self-only spell; no "X is blinded by a manaflare"
   // path because no one else can land it on you.
   { rx: /\bFlames of mana spout from your ring and engulf you\b/i, source: 'pitted_iron_ring', dur: _BLIND_DUR_PITTED_MS, dur_sec: 24 },
   // Generic NPC blind landings — the standard EQ blind family ("Eye of the
@@ -3210,7 +3210,7 @@ const _BLIND_FADE_RX = [
 // Self-hit while blind — EQ writes the self-target in ALL CAPS ("...YOURSELF...")
 // when a blind/confused swing lands on the caster. Match the common melee verbs
 // plus a catch-all "...YOURSELF for N points of damage" so we don't have to
-// enumerate every skill. (v1.1.9 — Uilnayar 2026-06-26: "alerts for … hitting
+// enumerate every skill. (v1.1.9 — Hitya 2026-06-26: "alerts for … hitting
 // themselves (or attempting)".)
 const _BLIND_SELFHIT_RX = /\bYOURSELF\b.*\bpoints of damage\b/i;
 // Blind-event ring buffer — consumed by the trigger overlay (triggers.html)
@@ -3467,7 +3467,7 @@ function parseFactionLine(line, character) {
   // Match all four. The old regex anchored `.\s*$` so any line carrying a
   // magnitude after the period was silently dropped — which is why Kael
   // giant kills (each ticking Coldain by far more than 1) read as single
-  // hits on the faction page (Uilnayar 2026-06-23).
+  // hits on the faction page (Hitya 2026-06-23).
   const m = line.match(/\]\s+Your faction standing with (.+?) (?:got (better|worse)(?:\s+by\s+(\d+))?\.\s*(?:\((?:([+\-]?)(\d+))\)\s*)?|could not possibly get any (better|worse)\.)\s*$/i);
   if (!m) return null;
   const ts = parseEqTimestamp(line);
@@ -3620,7 +3620,7 @@ const _CH_ROSTER_HINT = /\d\s*,\s*[A-Za-z]/;
 // slot convention above — no slot number, no literal "CH":
 //   "TUNARE'S RENEWAL  Inc to Tikal - 91% Mana Left"   (Pyxil's Tunare's Renewal)
 //   "CHLOROBLAST  Inc to Abrahms - 100% Mana Left"     (Pyxil's Chloroblast)
-// Uilnayar 2026-07-02: "sometimes our druids will hop in and fill the CH
+// Hitya 2026-07-02: "sometimes our druids will hop in and fill the CH
 // gaps, are they able to be included as well?" — confirmed via 2,349 of
 // Pyxil's actual raid-chat lines that this is her own cast-macro output,
 // firing on every heal she lands, not just gap-fills; there's no slot
@@ -3629,7 +3629,7 @@ const _CH_ROSTER_HINT = /\d\s*,\s*[A-Za-z]/;
 // numbered rotation (auto-assigned a slot); anything else is a one-off
 // spot heal — surfaced as a banner, never consumes a slot.
 const _CH_PERSONAL_RX = /^([A-Za-z][A-Za-z'`\s]*?)\s+Inc to\s+([A-Z][\w`]*)\s*-\s*(\d{1,3})%\s*Mana Left/i;
-// spellKey → display label shown on the slot row (Uilnayar 2026-07-02: "we
+// spellKey → display label shown on the slot row (Hitya 2026-07-02: "we
 // should denote Druid CH on the chain"), so the overlay reads "Pyxil [Druid
 // CH]" rather than looking like an ordinary numbered cleric slot.
 const CH_EQUIVALENT_SPELLS = new Map([
@@ -3784,7 +3784,7 @@ function trackChChainLine(line, character) {
   // raid's OWN ground truth for who owns each slot, so it wins over the noisy
   // speaker-inference the numbered shout-calls do — a boxer shouting the number
   // from the wrong window (or a short nickname) otherwise pins the wrong player
-  // on a slot (Uilnayar 2026-07-06: "shows Dant as 004 instead of Manamana").
+  // on a slot (Hitya 2026-07-06: "shows Dant as 004 instead of Manamana").
   const rosterPairs = [];
   {
     const RX = /([A-Za-z][A-Za-z'`]+)\s+0*(\d{1,3})(?=\s*[,;]|\s*$)/g;
@@ -3909,7 +3909,7 @@ function trackChChainLine(line, character) {
       if (!num || num > 30) return;
       _chChain.nextNum = num;
       // Stamp the explicit GO cue so the overlay can flash "GO!" on that slot's
-      // row until the cleric casts (Uilnayar 2026-07-06: "when the GO GO GO
+      // row until the cleric casts (Hitya 2026-07-06: "when the GO GO GO
       // message happens it should show up on that healer's CH bubble").
       _chChain.lastGo = { num, atMs, by: speaker };
       _chChain.updatedAt = atMs;
@@ -4007,7 +4007,7 @@ function chChainSnapshot() {
   if ((Date.now() - _chChain.updatedAt) > CH_CHAIN_IDLE_RESET_MS) { _chChain = null; return null; }
   const beats = _chChain.beats.slice().sort((a, b) => a - b);
   const beatMs = beats.length ? beats[Math.floor(beats.length / 2)] : null;
-  // CH-chain interruption / pivot detection — v1.1.5 (Uilnayar 2026-06-26).
+  // CH-chain interruption / pivot detection — v1.1.5 (Hitya 2026-06-26).
   // When the time elapsed since the last call exceeds 1.5× the measured beat
   // AND we know whose slot was supposed to call (next_num → slots[next_num]),
   // the chain has slipped. Caller didn't shout, didn't finish their cast,
@@ -4039,7 +4039,7 @@ function chChainSnapshot() {
   const spotHeal = (_chChain.spotHeal && (Date.now() - _chChain.spotHeal.atMs) < SPOT_HEAL_DISPLAY_MS)
     ? _chChain.spotHeal : null;
   // Explicit "NNN GO GO GO" cue — surface it while fresh so the overlay can
-  // flash "GO!" on THAT slot's row until the cleric casts (Uilnayar 2026-07-06).
+  // flash "GO!" on THAT slot's row until the cleric casts (Hitya 2026-07-06).
   // Cleared once the cued slot has cast since the GO (their lastAtMs advanced)
   // or the cue ages past CH_GO_DISPLAY_MS.
   let lastGo = null;
@@ -4155,7 +4155,7 @@ function _maybeAnnounceChGo(c, atMs) {
 // now who ISN'T the resolved Main Tank or the current Rampage target (both
 // already get dedicated coverage — Tank overlay, Rampage banner). Surfaced
 // at the bottom of the CH Chain overlay since that's where healers are
-// already looking (Uilnayar 2026-07-04: "who's taking repeated single
+// already looking (Hitya 2026-07-04: "who's taking repeated single
 // target damage outside of the current main tank and rampage... CH chain
 // could list off heal candidates at the bottom"). Reuses the same
 // recentTankHits combat-log signal as MT resolution and the Extended
@@ -4165,7 +4165,7 @@ function _maybeAnnounceChGo(c, atMs) {
 // rampage target is effectively FIXED for the whole fight (second seat on the
 // hate list), so the card must persist for the fight's duration — not vanish
 // 8s after each rampage swing, which had it strobing on and off between
-// rampage cycles (Uilnayar 2026-07-09: "rampage should not be falling off of
+// rampage cycles (Hitya 2026-07-09: "rampage should not be falling off of
 // the command center or tank overlay during a fight"). Show while EITHER:
 //   • fresh — a rampage line landed in the last 8s (also covers pulls where
 //     the threat tracker never spun up), or
@@ -4188,7 +4188,7 @@ const OFFHEAL_WINDOW_MS = 20_000;
 const OFFHEAL_MIN_HITS  = 2;
 // A full-health offtank doesn't need an off-heal — only surface ones actually
 // hurt, so the one person who needs a heal isn't buried under a wall of 100%/
-// unknown rows (Uilnayar 2026-07-06: "a ton of offtank options that all had full
+// unknown rows (Hitya 2026-07-06: "a ton of offtank options that all had full
 // health ... only offtanks actually below full HP"). Zeal reports full HP as
 // 99.9%, so this is below "basically full".
 const OFFHEAL_HURT_PCT  = 90;
@@ -4231,7 +4231,7 @@ function offHealCandidatesSnapshot() {
     // NPC/pet names with a backtick/apostrophe ("Xin`Xakra", "Shavimo`s warder")
     // for players — our own pets beating on a mob look like "a mob hit a player".
     // EQ character names are letters only, so anything else is an NPC and has no
-    // business on an OFF-HEAL list (Uilnayar 2026-07-06: "npcs should not be on
+    // business on an OFF-HEAL list (Hitya 2026-07-06: "npcs should not be on
     // the off-heal candidates list").
     if (!/^[A-Za-z]+$/.test(e.name)) continue;
     const nameLower = e.name.toLowerCase();
@@ -4239,7 +4239,7 @@ function offHealCandidatesSnapshot() {
     const hp = _resolveHpForName(nameLower, active, st);
     // Hurt offtanks only. Unknown HP (no Mimic / not yet resolved) is dropped
     // too — we can't off-heal what we can't see, and it was the bulk of the
-    // noise (Uilnayar 2026-07-06).
+    // noise (Hitya 2026-07-06).
     if (hp == null || hp >= hurtPct) continue;
     out.push({
       name: e.name, mob: e.mob,
@@ -4248,7 +4248,7 @@ function offHealCandidatesSnapshot() {
       last_hit_secs_ago:   Math.round((now - e.lastMs) / 1000),
     });
   }
-  // Lowest HP first (who needs an off-heal most) — Uilnayar 2026-07-06: "we
+  // Lowest HP first (who needs an off-heal most) — Hitya 2026-07-06: "we
   // should see their percentage not seconds left". Unknown HP sorts last, then
   // by longest under fire.
   out.sort((a, b) => {
@@ -4273,7 +4273,7 @@ function offHealCandidatesSnapshot() {
 // now). Only a bare DOWN/UP with no number is terminal (0s) / duration-
 // unknown. These lines are raid-chat, so every Mimic already sees them in
 // its own log — purely local, no bot relay, same as the CH-chain tracker
-// (Uilnayar 2026-07-03: "That lets the whole raid know in raidchat when
+// (Hitya 2026-07-03: "That lets the whole raid know in raidchat when
 // its happening").
 // Kinds we recognize, checked in order (DA first — it's the case-sensitive,
 // most-specific token). Wording is whatever each tank's trigger /rsay's:
@@ -4283,7 +4283,7 @@ function offHealCandidatesSnapshot() {
 //                  "defensive down"   (Currygoat, 2026-07-08 — the miss that
 //                  prompted broadening this beyond DA)
 //   Weapon Shield: "Weapon Shield activated for the next 15s!"
-//   Harmshield:    "Harmshield up 18s" · ">> HARMSHIELD <<"  (Uilnayar
+//   Harmshield:    "Harmshield up 18s" · ">> HARMSHIELD <<"  (Hitya
 //                  2026-08-05 — the necro/SK invuln was named in this comment
 //                  from the start but was never a KIND, so a Harmshield
 //                  announce matched nothing and the rampage gold bar stayed
@@ -4321,10 +4321,10 @@ const _PROT_ACTIVE_SECS   = { Defensive: 180, 'Weapon Shield': 15, DA: 18, Harms
 // no cooldown on purpose — it is proccable off clickies/items, so its 900s
 // spell recast says nothing about when the tank can do it again. Harmshield is
 // cast-only, so the recast IS the answer.
-const _PROT_COOLDOWN_SECS = { Defensive: 631, Harmshield: 600 };   // Defensive: 10m31s from activation (Uilnayar 2026-07-09)
+const _PROT_COOLDOWN_SECS = { Defensive: 631, Harmshield: 600 };   // Defensive: 10m31s from activation (Hitya 2026-07-09)
 const _daBroadcasts = new Map();      // "speakerLower|kind" → { name, kind, activeEndsAtMs, readyAtMs, updatedAtMs }
 
-// ── Invulnerability OBSERVED in the combat log (Uilnayar 2026-08-05) ─────────
+// ── Invulnerability OBSERVED in the combat log (Hitya 2026-08-05) ─────────
 // "we didn't see Syko's DA and we wasted heals on him as he was Rampage."
 // Both existing paths needed something Syko didn't have: the buff-list path
 // needs him uploading live-state (he was installing Zeal that night), and the
@@ -4481,7 +4481,7 @@ function _daBroadcastForName(name, greenSecs) {
   return best;
 }
 
-// ── Defensive Discipline via the COMBAT LOG (Uilnayar 2026-07-08) ────────────
+// ── Defensive Discipline via the COMBAT LOG (Hitya 2026-07-08) ────────────
 // Warriors' Defensive Discipline emits bystander-visible lines, so we don't
 // need the tank to run an announce macro — every nearby raider's own log has:
 //   up (self):   "You assume a defensive fighting style."
@@ -4871,7 +4871,7 @@ function _isHealerClass(cls) {
 }
 function healerManaRosterSnapshot() {
   const now = Date.now();
-  // Readings stay up for the LENGTH OF THE FIGHT (Uilnayar 2026-07-09) — the
+  // Readings stay up for the LENGTH OF THE FIGHT (Hitya 2026-07-09) — the
   // 5-min silence GC only runs between fights, so a cleric who called mana
   // once at the pull is still on the board ten minutes into the encounter.
   const fightLive = !!(stats.currentEncounterThreat && !stats.currentEncounterThreat.flushedAt);
@@ -4895,7 +4895,7 @@ function healerManaRosterSnapshot() {
 }
 
 // ── Roll tracker (/random) — Command Center + dashboard ─────────────────────
-// EQ prints every nearby /random as a two-line pair (Uilnayar 2026-07-10):
+// EQ prints every nearby /random as a two-line pair (Hitya 2026-07-10):
 //   [ts] **A Magic Die is rolled by Seigneur.
 //   [ts] **It could have been any number from 0 to 333, but this time it turned up a 116.
 // Rolls with the same 0–N range within a window group into a SET (EQ Log
@@ -5297,7 +5297,7 @@ function buildWhoSnapshot() {
   // Enrich a row from the bot's who-lookup cache. Anon rows get de-anon'd
   // (class/level/guild/Zek → entry.known); the gone list is included too, so a
   // raider who just /anon'd and walked off still shows the class we had
-  // (Uilnayar 2026-07-14, Camping). PLUS (#111) EVERY row can pick up two
+  // (Hitya 2026-07-14, Camping). PLUS (#111) EVERY row can pick up two
   // guild-member enrichments — the main-in-parens (entry.main) and Mimic
   // presence (entry.mimic) — so a member showing normally still gets their 🐺
   // and (Main). We now queue a lookup for ANY row without a fresh cache hit
@@ -5402,7 +5402,7 @@ function inferClassFromAbility(character, ability) {
 // independently parsing the same raid. When Damyu's builder sees the boss
 // kill line, Borowhay's SHOULD see it too — but if Borowhay's log writer
 // hiccuped, or his client crashed, or the agent missed the line in his
-// buffer, his builder's fight stays open forever (Uilnayar 2026-06-21
+// buffer, his builder's fight stays open forever (Hitya 2026-06-21
 // reported a 17h-old encounter on Damyu's overlay; same Mimic was uploading
 // Borowhay's logs). Now a successful flush broadcasts to peer builders so
 // they catch the boss-died signal even when their own log stream missed it.
@@ -5501,7 +5501,7 @@ class EncounterBuilder {
     // EQ only logs the spell name on the caster's "You begin casting X" line,
     // so this is meaningful for self-casts only (other healers' casts arrive
     // as "X begins to cast a spell" with no name). { spellName: count }.
-    // Attached to the uploader's own healer entry at emit time. (Uilnayar
+    // Attached to the uploader's own healer entry at emit time. (Hitya
     // 2026-06-25: "x CHs and other heal types".)
     this.healSpellCounts = {};
     // Heals WE received that no local heal-cast could attribute ("You have
@@ -5845,6 +5845,12 @@ class EncounterBuilder {
         // Inbound damage taken (from mobs) — Tank tab on the damage overlay.
         took:       Math.round(t.took || 0),
         tookMax:    Math.round(t.tookMax || 0),
+        // Cumulative rampage damage taken (defenderStats), for the fight
+        // timeline's RAMP swimlane (docs/DESIGN-fight-timeline.md — the one
+        // part of the sketch with no capture at all until this field).
+        // Omitted when zero to keep the payload flat, like pet_charm.
+        ramp:       (this.defenderStats.get(name)?.rampageDmg > 0)
+                      ? Math.round(this.defenderStats.get(name).rampageDmg) : undefined,
         // Set for OUR pet rows (charm or summoned) — lets the DPS HUD allow
         // the multi-word name past its anti-NPC filter and label the row
         // "A Fungoid Sporeling (Hopeya)".
@@ -5927,7 +5933,7 @@ class EncounterBuilder {
       s.targets.add(target);
       // Per-recipient totals — agent v3.1.69+. Lets the heal-perspective UI
       // show "Ashieron 320k · Moash 180k" instead of a bare name list.
-      // (Uilnayar 2026-06-25: "how much tanks were healed".)
+      // (Hitya 2026-06-25: "how much tanks were healed".)
       if (!s.byTarget) s.byTarget = {};
       s.byTarget[target] = (s.byTarget[target] || 0) + amount;
     }
@@ -6003,7 +6009,7 @@ class EncounterBuilder {
     if (!wd) return null;
     const evTsMs = Date.parse(pvpBcast.ts) || Date.now();
     const gapMs = evTsMs - wd.tsMs;
-    // Window widened 30s → 120s on 2026-06-21 (Uilnayar — Interlude
+    // Window widened 30s → 120s on 2026-06-21 (Hitya — Interlude
     // tar-goo death, multiple Wolf Pack characters had damaged him in
     // the fight but the broadcast landed after a regroup pause; every
     // 30s window had already expired). Two minutes covers a typical
@@ -6352,7 +6358,7 @@ class EncounterBuilder {
       // EQ character names are letters only — a backtick/apostrophe means it's
       // an NPC or pet ("Xin`Xakra", "Shavimo`s warder"), NOT a player the mob is
       // tanking. Allowing them here fed NPCs into MT resolution and the off-heal
-      // list (Uilnayar 2026-07-06).
+      // list (Hitya 2026-07-06).
       const _isPlayer = (n) => n && (n === 'YOU' || n === 'You' || /^[A-Z][a-zA-Z]+$/.test(n));
       if (_isMob(att) && _isPlayer(def)) {
         const tank = (def === 'YOU' || def === 'You') ? (this.character || def) : def;
@@ -6385,7 +6391,7 @@ class EncounterBuilder {
       //   • event.attacker === null            ("You slash X" form)
       //   • event.attacker === this.character  (named-self melee form)
       //   • event.attacker is one of OUR PETS  (necro/mage/beastlord pet,
-      //     active charm pet) — added 2026-06-21 (Uilnayar — Interlude
+      //     active charm pet) — added 2026-06-21 (Hitya — Interlude
       //     tar-goo death; pet damage was silently failing to stamp the
       //     window, so necro DoT plus pet-only damage chains never
       //     credited an assist). Pet-ness is checked via petLeaders +
@@ -6523,7 +6529,7 @@ class EncounterBuilder {
       // Publish the current rampage target to stats so the Tank overlay can
       // surface it without poking builder internals. Cleared by the damage-tag
       // path below or by the 8s freshness check on the /api/tank-state side.
-      // (Uilnayar 2026-06-25: tank overlay should say who current Rampage is.)
+      // (Hitya 2026-06-25: tank overlay should say who current Rampage is.)
       stats.currentRampage = {
         target:   event.defender || null,
         attacker: event.attacker || this.bossName || null,
@@ -7042,7 +7048,7 @@ class EncounterBuilder {
       // Unattributed RECEIVED heal ("You have been healed for N") — this used
       // to run through `healer = this.character`, crediting the RECIPIENT as a
       // healer of themselves (the "Tildias 1,300 → You" rows on parse cards,
-      // Uilnayar 2026-07-14). Divert: try the local heal-cast ring (multiboxed
+      // Hitya 2026-07-14). Divert: try the local heal-cast ring (multiboxed
       // healer on this machine attributes instantly); otherwise record it as a
       // received event for the bot's cross-client cast×landing join.
       if (!event.attacker && event.defender === 'You') {
@@ -7191,7 +7197,7 @@ class EncounterBuilder {
       // boss was still in early phase, so the agent flagged Vulak as killed
       // and the bot set the 7-day timer. Tightened to 100k AND ≥85% share so
       // a real boss kill (which always lands the killing blow on the most-
-      // damaged single target) still flags but add-deaths can't. (Uilnayar
+      // damaged single target) still flags but add-deaths can't. (Hitya
       // 2026-06-26.)
       const isBossLike = deadDmg > 100000 && topDmg > 0 && deadDmg >= topDmg * 0.85;
       if (top && (isTop || isBossLike)) {
@@ -7678,7 +7684,7 @@ class EncounterBuilder {
               byTarget:    (s.byTarget && Object.keys(s.byTarget).length) ? s.byTarget : undefined,
               // Heal-spell cast counts — populated ONLY on the uploader's own
               // healer entry, since EQ hides the spell name on bystander cast
-              // lines. (Uilnayar 2026-06-25: CHs and other heal-type counts.)
+              // lines. (Hitya 2026-06-25: CHs and other heal-type counts.)
               spells:      (this.character && name === this.character && Object.keys(this.healSpellCounts).length)
                 ? { ...this.healSpellCounts }
                 : undefined,
@@ -8089,7 +8095,7 @@ function _saveQueueToDisk() {
   }, 500);
 }
 
-// ASYNC flush for the debounced hot path (Uilnayar 2026-07-15: "spurts" —
+// ASYNC flush for the debounced hot path (Hitya 2026-07-15: "spurts" —
 // blank overlays + dead /api/state in bursts). The sync flush blocks the
 // event loop for the WHOLE multi-MB write; with a gear+spellbook sweep in
 // the queue (17 alts' Quarmy exports + 200-spell books) every 500ms save
@@ -8220,7 +8226,7 @@ function _endpointForKind(kind, botUrl) {
 let _raidRosterLastUpload = 0;
 let _raidRosterLastHash   = '';
 // Last decoded type-5 raid sample — the dashboard's Zeal Pipe explorer shows
-// it as the "raid (type 5)" section (Uilnayar 2026-07-15).
+// it as the "raid (type 5)" section (Hitya 2026-07-15).
 let _lastRaidPipe = null;   // { at, members: [{name,class,group,level,rank,hp_pct,hp_current,hp_max}] }
 // HP heartbeat cadence — how often the roster (incl. cross-client HP for the
 // Tank overlay) is re-uploaded when composition is unchanged. Was 10s, which
@@ -8305,7 +8311,7 @@ function _maybeUploadRaidRoster(sample) {
       });
     if (compact.length === 0) return;
     // Stash the decoded roster for the dashboard's Zeal Pipe explorer (Info
-    // tab "raid (type 5)" section — Uilnayar 2026-07-15). Updated on EVERY
+    // tab "raid (type 5)" section — Hitya 2026-07-15). Updated on EVERY
     // pipe fire, before the upload debounce below, so the local view stays
     // live even between heartbeat uploads.
     _lastRaidPipe = { at: Date.now(), members: compact };
@@ -8388,7 +8394,7 @@ function enqueueUpload(kind, payload) {
     // was straight FIFO — during a big --since/opt-in run, live PvP/chat/
     // bosskill events queued up BEHIND the historical encounter payloads
     // got crowded out as the queue churned, and the user lost the live
-    // ones (Uilnayar's missed [PVP] kill broadcasts, 2026-06-21). Backfill
+    // ones (Hitya's missed [PVP] kill broadcasts, 2026-06-21). Backfill
     // is rerunnable (idempotent via DB dedup_key + the bot's
     // findOrCreateEncounter ±30min window), so dropping its oldest is
     // far cheaper than dropping a live event the user expected to see
@@ -8569,7 +8575,7 @@ async function _drainUploadQueue(opts = {}) {
   // force = explicit "drain now" from the dashboard. Bypasses the read-only
   // guard so a stranded queue on a non-uploader instance (another Parser/Mimic
   // holds the lock) can still be flushed — safe because every upload is
-  // idempotent (dedup_key + ±30min find_or_create_encounter). (Uilnayar
+  // idempotent (dedup_key + ±30min find_or_create_encounter). (Hitya
   // 2026-06-24: 240 stuck on a read-only instance, "drain now" did nothing.)
   const force = opts.force === true;
   if (_queueDraining) return;
@@ -8598,7 +8604,7 @@ async function _drainUploadQueue(opts = {}) {
     // payloads ahead of 4 live PVP broadcasts in the queue, the PVP rows
     // sat behind every single backfill encounter and waited tens of
     // minutes (or more, under ECONNRESET retries) before getting a turn.
-    // (Uilnayar's queue diagnostic 2026-06-21 caught it: pvp:4 trapped
+    // (Hitya's queue diagnostic 2026-06-21 caught it: pvp:4 trapped
     // behind encounter:2800.) Now we pick live items first, then fill
     // the remainder of the per-pass budget with backfill. Backfill is
     // idempotent (DB dedup_key + ±30min find_or_create_encounter
@@ -8648,7 +8654,7 @@ async function _drainUploadQueue(opts = {}) {
         // a connection, the bot restarting, a momentary network blip.
         // Walking these to the 10-min backoff cap means a single bad
         // moment leaves the queue effectively dead for half an hour
-        // (Uilnayar's stalled-queue diagnostic 2026-06-21:
+        // (Hitya's stalled-queue diagnostic 2026-06-21:
         // `net: read ECONNRESET` was driving every retry into deep
         // backoff). Hold transport errors to a flat 30s retry instead;
         // server-shape errors (5xx body) still get the normal exponential
@@ -8693,7 +8699,7 @@ async function _drainUploadQueue(opts = {}) {
       }
     };
 
-    // PARALLEL drain (Uilnayar 2026-07-13, raid queue backup): the old serial
+    // PARALLEL drain (Hitya 2026-07-13, raid queue backup): the old serial
     // for-await sent ONE upload at a time and waited its full timeout before
     // starting the next — so on a congested raid-night link (net: timeout) the
     // drain couldn't keep pace with the inflow and the queue only grew. Fire
@@ -9265,7 +9271,7 @@ function loadSessionState() {
 //
 // Binds 127.0.0.1 only — never exposes the dashboard to the network.
 
-// Tank overlay snapshot — see the /api/tank-state route comment. (Uilnayar
+// Tank overlay snapshot — see the /api/tank-state route comment. (Hitya
 // 2026-06-25.) Pulls from the currently focused character's _zealState entry
 // plus the global stats.currentDsReflects + stats.currentRampage. Always
 // returns a shape — never null — so the overlay can render a "no data yet"
@@ -9273,13 +9279,13 @@ function loadSessionState() {
 // Any short-duration invulnerability/near-invulnerability self-buff — Divine
 // Aura and kin for paladins/clerics, Harmshield for shadowknights, and
 // whatever else lands under these names. "DA" in identifiers below is a
-// holdover name for "one of these", not literally Divine Aura only (Uilnayar
+// holdover name for "one of these", not literally Divine Aura only (Hitya
 // 2026-07-03: "this should also include Shadowknights harmshield and other
 // forms of invulnerability").
 const DA_SPELL_RX = /^(divine aura|divine barrier|divine intervention|harmshield|forced sound channeling|invulnerability)/i;
 const DA_CRITICAL_TICKS = 2;  // ≤12s remaining (1 tick = 6s) → flash + ramp callout
 // Bosses that enrage at low HP — primary use is the warning gauge. ~8% on
-// Quarm per Uilnayar 2026-06-25; not every boss enrages. Until we have a
+// Quarm per Hitya 2026-06-25; not every boss enrages. Until we have a
 // proper data-table, recognize the most-asked-about ones. Empty list → no
 // warning (overlay just shows boss HP).
 const ENRAGE_BOSSES = new Set([
@@ -9304,7 +9310,7 @@ function _isEnrageBoss(name) {
 // live-state (their Mimic, relayed through the bot) as the cross-client
 // fallback. null when nobody currently sees them. Shared by Main-Tank
 // resolution and the Rampage-target HP card — both are "some named person,
-// find their HP from whatever's watching them" (Uilnayar 2026-07-03: "We
+// find their HP from whatever's watching them" (Hitya 2026-07-03: "We
 // also need the Ramp tank's health on the tank bar.").
 function _resolveHpForName(nameLower, active, st) {
   if (active && nameLower === String(active).toLowerCase() && typeof st.self_hp_pct === 'number') {
@@ -9374,7 +9380,7 @@ function _resolveHpValuesForName(nameLower, active, st) {
 // landing relay (partial, but better than nothing). Each entry has
 // { name, seconds, fell_off }. `source` is 'self' | 'mimic' | 'observed' so
 // callers can annotate partial data. Shared by MT buff resolution and
-// Rampage-target DA detection (Uilnayar 2026-07-03).
+// Rampage-target DA detection (Hitya 2026-07-03).
 function _resolveBuffsForName(name, active, buffsOut) {
   const nameLower = String(name || '').toLowerCase();
   if (active && nameLower === String(active).toLowerCase()) return { buffs: buffsOut, source: 'self' };
@@ -9435,7 +9441,7 @@ function _resolveMainTank(mainTargetName) {
   // recentTankHits carries the ATTACKING mob per hit, so when we know the raid's
   // main target (the NPC the most raiders are on, per Extended Target) we can
   // pin the MT to whoever THAT mob is beating on — instead of picking whoever
-  // happens to be off-tanking a random add near the local client (Uilnayar
+  // happens to be off-tanking a random add near the local client (Hitya
   // 2026-07-06: "Main tank was wrong … use the main target from extended target").
   const tallyMain = new Map();   // tank → hits taken FROM the main target
   const tallyAny  = new Map();   // tank → hits taken from anything (fallback)
@@ -9458,7 +9464,7 @@ function _resolveMainTank(mainTargetName) {
 // targeted, from the bot's Extended Target aggregation. The local Zeal slot-6
 // target is per-CLIENT — a healer's is usually the TANK, not the boss — so the
 // Tank / Command-Center TARGET bar and the MT resolution key off THIS instead
-// (Uilnayar 2026-07-06). Primes the shared extended-target cache as a side
+// (Hitya 2026-07-06). Primes the shared extended-target cache as a side
 // effect, so these overlays get fed even without the Extended Target overlay
 // open. Returns { name, hp_pct, raider_count } or null (out of combat / cold).
 function _resolveMainTarget(activeCharacter) {
@@ -9507,7 +9513,7 @@ function _serializeTankState() {
   // Main target — the NPC the most raiders are on (Extended Target aggregate).
   // This drives the TARGET bar, the enrage/boss-HP tracking, AND the MT pin;
   // the local target only fills in when we're out of combat or the
-  // cross-client feed hasn't warmed yet (Uilnayar 2026-07-06).
+  // cross-client feed hasn't warmed yet (Hitya 2026-07-06).
   const mainTarget   = _resolveMainTarget(active);
   const targetName   = mainTarget ? mainTarget.name   : localTargetName;
   // #128 — near-live local-target HP. When the raid's main target IS this
@@ -9573,7 +9579,7 @@ function _serializeTankState() {
   // known DS buff's DESIGNED per-hit value. Empty when no currently-active
   // buff is a known DS spell (the true source may be worn gear/an AA, which
   // never shows up in the buff list at all) — the overlay says so rather than
-  // silently showing nothing. (Uilnayar 2026-06-29: "Highlight the DS spells
+  // silently showing nothing. (Hitya 2026-06-29: "Highlight the DS spells
   // and songs and how much you're getting from each one in the damage shield
   // section.")
   const dsSources = [];
@@ -9595,7 +9601,7 @@ function _serializeTankState() {
     const rLower = String(r.target).toLowerCase();
     try { fetchCharacterLiveState(r.target); } catch {}
     // DA on the rampage target — gold-highlight the HP bar while it's up (they're
-    // invulnerable, no need to panic-heal), green once ≤5s remain (Uilnayar
+    // invulnerable, no need to panic-heal), green once ≤5s remain (Hitya
     // 2026-07-03: "once less than 5 seconds remain on DA we can highlight the
     // ramp in green instead" — that's the cue healers should be ready to land
     // the next heal the moment DA drops).
@@ -9699,7 +9705,7 @@ function _serializeTankState() {
   // character) — cross-client heal casts targeting them, from the casting relay
   // via target-casts (which now carries the estimated catalog amount). EXCLUDES
   // Complete Heal — the CH-chain overlay owns that, and CH volume would swamp
-  // this cast-bar view (Uilnayar 2026-07-14: "tanks seeing the heals coming in…
+  // this cast-bar view (Hitya 2026-07-14: "tanks seeing the heals coming in…
   // the complete heals would overwhelm the UI"). The overlay draws a cast bar
   // counting down to each land + a projected-HP ghost segment from these
   // amounts. Anchored to the fetch timestamp so the countdown survives the
@@ -9709,7 +9715,7 @@ function _serializeTankState() {
   // the cross-client target-casts relay (our own echoes skipped so nothing
   // doubles). null amount = a heal we can't size (HoT / catalog gap) — the
   // overlay shows "?" and the ghost segment skips it, but the cast shows.
-  // Used for the MT card AND the Rampage card (Uilnayar 2026-07-15: "will
+  // Used for the MT card AND the Rampage card (Hitya 2026-07-15: "will
   // heals to Rampage tanks also show up?").
   const _inboundHealsFor = (targetName) => {
     if (!targetName) return [];
@@ -9805,7 +9811,7 @@ function _serializeTankState() {
   // and starts an identical countdown on each (_fireTriggerActions calls
   // _startTimer on both the local fire and every relayed one), so this just
   // surfaces the soonest such countdown here too — both tanks are staring
-  // at the tank bar, not the triggers overlay (Uilnayar 2026-07-03: "the
+  // at the tank bar, not the triggers overlay (Hitya 2026-07-03: "the
   // deathtouch countdowns on mobs that deathtouch is important for both
   // tanks to see coming").
   let deathtouch = null;
@@ -9857,7 +9863,7 @@ function _serializeTankState() {
     rampage,
     enrage,
     deathtouch,
-    // CH chain spot-heal window — v1.1.4 (Uilnayar 2026-06-26).
+    // CH chain spot-heal window — v1.1.4 (Hitya 2026-06-26).
     // When a CH chain is running on a tank, predict when the next CH hits and
     // surface "spot heal in: Xs" so the tank's own healers can fill the gap
     // before the chain re-arrives. We compute against the chain target —
@@ -9898,7 +9904,7 @@ function _serializeTankState() {
     updated_at: st.updatedAt || 0,
     // Hurt offtanks (taking add damage outside MT/rampage, below full HP) — the
     // Tank overlay shows the same list the CH-chain overlay does so a tank
-    // watching only that window still sees who needs an off-heal (Uilnayar
+    // watching only that window still sees who needs an off-heal (Hitya
     // 2026-07-06: "get offtanks on CH chain overlay or Tank overlay").
     off_heal_candidates: offHealCandidatesSnapshot(),
     // Cross-raid sync hasn't shipped yet — overlay reads local data only.
@@ -9907,7 +9913,7 @@ function _serializeTankState() {
   };
 }
 
-// Command Center overlay snapshot — the "one window" board (Uilnayar
+// Command Center overlay snapshot — the "one window" board (Hitya
 // 2026-07-03) combining everything the Tank overlay already resolves
 // (boss/MT/rampage/DA/DT/enrage) with two raid-wide sections that only
 // exist because raiders already broadcast them in chat: DA/invuln status
@@ -9947,7 +9953,7 @@ function _serializeCommandCenterState() {
     enrage:        tank.enrage,
     deathtouch:    tank.deathtouch,
     da_broadcasts: daBroadcastsSnapshot(),
-    // ALL healer mana, merged from every source we have (Uilnayar 2026-07-15:
+    // ALL healer mana, merged from every source we have (Hitya 2026-07-15:
     // "Command center should have all healer mana if its reported in the CH
     // chain or as %n mana or mana %n or if they're in mimic"):
     //   1. exact — local Zeal mana for characters on THIS machine;
@@ -9980,7 +9986,7 @@ function _serializeCommandCenterState() {
           // exact-class source on every render: Brynnja and Denniker (both
           // Druid) flashed Cleric↔Druid at the DI-poll cadence, because the
           // invented label won whenever the ~4s piggyback happened to be empty
-          // (Uilnayar 2026-08-06). Look the class up; pass null when unknown so
+          // (Hitya 2026-08-06). Look the class up; pass null when unknown so
           // the merge keeps whatever a better source already knew, rather than
           // overwriting it with a guess.
           const sl = String(s.name).toLowerCase();
@@ -10217,7 +10223,7 @@ function _iniSetKey(filePath, section, key, value) {
 // Log. EQ REWRITES eqclient.ini on exit, so writing while it's running is lost —
 // refuse (rather than silently no-op) if a log updated in the last 90s, which
 // means a client is live. Returns a per-folder report the dashboard renders.
-// (Uilnayar 2026-07-14.)
+// (Hitya 2026-07-14.)
 const _EQ_SETUP_KEYS = [
   ['zeal.ini',     'Zeal',     'ExportOnCamp', 'TRUE'],
   ['zeal.ini',     'Zeal',     'PipeDelay',    '100'],
@@ -10382,7 +10388,7 @@ function _serializeForDashboard() {
     // <name>" badge in the header + a soft "sign in to unlock cross-machine
     // sync + officer tools" nudge when absent. We require BOTH the session
     // token AND a confirmed identity from the bot — token-without-identity
-    // is the stale/expired-session state (Uilnayar 2026-06-21 reported the
+    // is the stale/expired-session state (Hitya 2026-06-21 reported the
     // header reading 'signed in' on installs that only carried the legacy
     // agent token + had never completed the Discord OAuth flow; the
     // Settings panel correctly demanded 'Sign in to Wolf Pack' but the
@@ -11865,7 +11871,7 @@ function renderHeader(s) {
     // Click-to-force-drain link — POSTs /api/drain which resets next_try_at
     // on every entry to now(), un-parks poison entries, and kicks an immediate
     // pass. Helpful when the queue gets stuck in a long exponential backoff
-    // after a transient server hiccup (added 2026-06-21 from Uilnayar's
+    // after a transient server hiccup (added 2026-06-21 from Hitya's
     // stalled-queue report).
     const parkedTag = q.parked > 0 ? ' <span style="color:#d18a2d" title="Entries the bot keeps rejecting — parked to a slow retry lane so they don&rsquo;t block live uploads. Drain now to retry them at full speed.">(' + q.parked + ' parked)</span>' : '';
     queueChip = ' · <span style="background:#3b2a06;color:#ffd07a;border:1px solid #d18a2d;border-radius:3px;font-size:11px;padding:2px 6px;margin-left:4px" title="' + esc(tip) + '">⏳ ' + q.pending + ' queued' + parkedTag + ' · <a href="#" id="wpDrainNow" style="color:#ffd07a;text-decoration:underline;cursor:pointer" title="Reset all backoff timers and force an immediate drain pass">drain now</a></span>';
@@ -11957,7 +11963,7 @@ function renderHeader(s) {
     // checkAgentUpdate (silent in-place agent hot-swap). The user gets
     // one unified result driven by Mimic's dialogs; no need for our
     // dashboard-side restart confirm to add a second prompt.
-    // (Uilnayar 2026-06-21 — the dashboard button used to be agent-only,
+    // (Hitya 2026-06-21 — the dashboard button used to be agent-only,
     // missing every Mimic-only update that landed in between.)
     const inMimic = !!(window.mimic && typeof window.mimic.checkForUpdates === 'function');
     if (inMimic) {
@@ -12431,7 +12437,7 @@ function renderSetupChecks(s) {
   wpWireFixerButtons(s);
 }
 // Windows Defender exclusions + Zeal install, on the dashboard next to
-// "Set up for me" (Uilnayar 2026-08-04). Both already existed as Settings
+// "Set up for me" (Hitya 2026-08-04). Both already existed as Settings
 // actions; this puts them where a user is actually standing when they discover
 // something is wrong, rather than three clicks away in a form.
 //
@@ -13137,7 +13143,7 @@ function renderZealClients(s) {
     }
     // Char-info diagnostic — Zeal's type-1 fields (ids 1-13). This is where
     // raw HP cur/max would live if Zeal exposes it; surfaced so we can
-    // confirm what's actually sent (Uilnayar 2026-07-05 self-HP-numbers ask).
+    // confirm what's actually sent (Hitya 2026-07-05 self-HP-numbers ask).
     if (c.live && Array.isArray(c.char_info) && c.char_info.length) {
       // Field names come from the shared WP_ZLABELS map (Zeal named_pipe.cpp
       // LabelNames — see the definition above renderZealClients).
@@ -13790,7 +13796,7 @@ function renderOverlays(s) {
     return;
   }
   h += '<div class="dim" style="font-size:12px;margin-bottom:8px">Toggle any overlay on or off here — same as the tray menu (right-click the wolf in the system tray → <b>Overlays</b>), which also has lock/unlock, <b>Setup mode</b> placement, and per-overlay opacity.</div>';
-  // 🎨 Theme picker (Uilnayar 2026-07-12) — direct pick instead of cycling
+  // 🎨 Theme picker (Hitya 2026-07-12) — direct pick instead of cycling
   // the chrome-menu item. Buttons call wp-theme-set via the bridge; the
   // active one highlights from status.overlayTheme.
   h += '<div style="font-size:12px;padding:8px 10px;background:#161b22;border:1px solid var(--border);border-radius:6px;margin-bottom:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">';
@@ -14046,7 +14052,7 @@ function wpRefreshOverlayToggles() {
       var on = { hud: !!st.showHud, trigger: !!st.enableTriggerTts, charm: !!st.showCharm, pet: !!st.showPets, mobinfo: !!st.showMobInfo, buffQueue: !!st.showBuffQueue, who: !!st.showWho, melody: !!st.showMelody, zeal: !!st.showZeal, threat: !!st.showThreat, chchain: !!st.showChChain, tank: !!st.showTank, exttarget: !!st.showExtTarget, command: !!st.showCommand, popraid: !!st.showPopRaid };
       // Which cfg flag each row reads, so a HIDDEN row can be told from an OFF
       // one. Hide-all writes every flag false, so without the snapshot the two
-      // are indistinguishable here (Uilnayar 2026-08-04).
+      // are indistinguishable here (Hitya 2026-08-04).
       var flagOf = { hud: 'showHud', trigger: 'enableTriggerTts', charm: 'showCharm', pet: 'showPets', mobinfo: 'showMobInfo', buffQueue: 'showBuffQueue', who: 'showWho', melody: 'showMelody', zeal: 'showZeal', threat: 'showThreat', chchain: 'showChChain', tank: 'showTank', exttarget: 'showExtTarget', command: 'showCommand', popraid: 'showPopRaid' };
       var hidPrev = (st.hideAllActive && st.hideAllPrev) ? st.hideAllPrev : null;
       var hidCount = 0;
@@ -14111,7 +14117,7 @@ if (typeof window !== 'undefined' && !window.__wpOvDelegated) {
 // Local trigger-library scan — v1.1.1 foundation. Hits /api/triggers/local-scan
 // once per dashboard render and paints the result into #wpTriggerScanCard.
 // Discovery only — never uploads anything; the result is visible in this
-// browser only. (Uilnayar 2026-06-26.)
+// browser only. (Hitya 2026-06-26.)
 var _wpTriggerScanCacheMs = 0;
 function wpScanLocalTriggers(){
   // Throttle to once per 60s so a re-render burst doesn't hammer the local
@@ -15293,7 +15299,7 @@ function renderInfo(s) {
   // Weapon Loadouts + Known Pets live here now (moved off the combat tabs).
   h += '<div class="grid">' + buildLoadoutsHtml(s) + buildPetsHtml(s) + '</div>';
   // GINA/EQLP scan placeholder card — populated by wpScanLocalTriggers() on
-  // dashboard load via /api/triggers/local-scan. (Uilnayar 2026-06-26 — v1.1.1
+  // dashboard load via /api/triggers/local-scan. (Hitya 2026-06-26 — v1.1.1
   // foundation; parse + import land in 1.1.2+.) Empty placeholder so the
   // section's HTML stays byte-stable for morphInto until the scan resolves.
   h += '<div class="card wide" id="wpTriggerScanCard">'
@@ -15368,7 +15374,7 @@ var _raidSelName = null;   // click-to-expand raider in the Raid card
 // DAMAGE SHIELDS (+N per slot, total), SONGS (n/6), OTHER, DI/CHA warning.
 var _RD_RES_ORDER  = ['MR','FR','CR','PR','DR'];
 var _RD_RES_LABELS = { MR:'Magic', FR:'Fire', CR:'Cold', PR:'Poison', DR:'Disease' };
-// 2026-06-22 (Uilnayar): dropped 'mana' from the displayed order — the raw
+// 2026-06-22 (Hitya): dropped 'mana' from the displayed order — the raw
 // max-mana category was always blank for the practical caster case (Mask of
 // the Stalker / Protection of the Cabbage carry +mana regen, not +max mana),
 // so the row just read "— missing" forever. Added 'seeInvis' + 'invis' so
@@ -15435,7 +15441,7 @@ function _raidDetailHtml(sel, det) {
     // Dedup primaries by buff name — Circle of Seasons covers Fire AND Cold,
     // and the catalog can return two SPA entries for one school (or a stale +
     // fresh cast lingers), which rendered "Circle of Seasons +1 more" with
-    // nothing behind the +1 (Uilnayar 2026-06-22). "+N more" now only fires
+    // nothing behind the +1 (Hitya 2026-06-22). "+N more" now only fires
     // when the extra entry is a genuinely different spell.
     var seenPrim = {};
     for (var i5 = 0; i5 < entries.length; i5++) {
@@ -15747,7 +15753,7 @@ async function refreshRaidTab() {
 // timeout, a non-JSON body, or a poll that legitimately came back empty for a
 // moment while the reporter election moved roster duty to another agent. The
 // panel then refilled on the next poll, so a raid of 45 flickered in and out
-// (Uilnayar 2026-08-06). Same stale-while-error rule the mob-info cache needed.
+// (Hitya 2026-08-06). Same stale-while-error rule the mob-info cache needed.
 // Bounded at 2 minutes so genuinely LEAVING a raid still clears the board
 // rather than pinning a roster that no longer exists.
 var _raidTabLast = null, _raidTabLastAt = 0;
@@ -16144,7 +16150,7 @@ async function refresh() {
     // Make it VISIBLE instead of a silent blank, with the exact origin so the
     // problem is obvious, plus a one-click reload to the live engine.
     _refreshFailures++;
-    // SELF-HEAL (Uilnayar 2026-07-15: banner sat for minutes — "ITS A PROBLEM
+    // SELF-HEAL (Hitya 2026-07-15: banner sat for minutes — "ITS A PROBLEM
     // FOR ME"), refined the same night: reload ONLY when the shell says the
     // engine actually moved ports — that is the one failure a reload fixes.
     // A same-port engine that is busy or rebooting recovers on its own once
@@ -16619,7 +16625,7 @@ if (_uiStudioBtn) {
   }
 }
 
-// 📊 Resources — opens Mimic's Resource use window (Uilnayar 2026-08-04, "its
+// 📊 Resources — opens Mimic's Resource use window (Hitya 2026-08-04, "its
 // own window accessible from the tray and the dashboard"). Unlike UI Studio,
 // which dims when unavailable, this one stays HIDDEN outside Mimic: the answer
 // it gives is specifically "what do MIMIC's processes cost", which is not a
@@ -19051,7 +19057,7 @@ function _serializeOptinForWeb() {
 const COMMAND_HTML = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>command center</title>
 <style>
-  /* Wolf Pack Command Center — the "one window" raid board (Uilnayar
+  /* Wolf Pack Command Center — the "one window" raid board (Hitya
      2026-07-03: "put those into a tidy command center so if someone only
      wanted to have one window they could do that"). Combines the Tank
      overlay's boss/MT/rampage/enrage/Death Touch focus with two sections
@@ -19439,7 +19445,7 @@ const COMMAND_HTML = `<!doctype html>
     }
 
     // /random roll sets (last 15 min) — "333 (Item name) — Winner names"
-    // (Uilnayar 2026-07-10). Winners = top-(qty) first-rolls; the qty comes
+    // (Hitya 2026-07-10). Winners = top-(qty) first-rolls; the qty comes
     // from the loot link "Item (3)333". Full per-roll detail lives on the
     // agent dashboard's 🎲 Rolls card.
     if (s.rolls && s.rolls.length) {
@@ -19624,7 +19630,7 @@ function startWebDashboard(port) {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(_stateJsonCache.body);
       }
-      // Tank overlay snapshot (Uilnayar 2026-06-25). Aggregates everything the
+      // Tank overlay snapshot (Hitya 2026-06-25). Aggregates everything the
       // tank.html overlay needs from the active character's live state:
       //   • self HP %, target name + HP %, current buffs (with ticks remaining)
       //   • DS reflect total this fight (sum of stats.currentDsReflects)
@@ -19639,7 +19645,7 @@ function startWebDashboard(port) {
       // buttons (<< Earlier / ✓ Good! / >> Too early). Enqueued through the
       // durable upload queue so a brief network blip doesn't lose votes;
       // forwards to the bot's /api/agent/trigger_feedback which writes to
-      // trigger_timing_feedback. (Uilnayar 2026-06-26 — v1.1.2.)
+      // trigger_timing_feedback. (Hitya 2026-06-26 — v1.1.2.)
       // Settings-file restore ("rebuild") — dashboard Info tab card. Strictly
       // validated against the backup index; refused while EQ looks running.
       if (req.url === '/api/backups/restore' && req.method === 'POST') {
@@ -19810,7 +19816,7 @@ function startWebDashboard(port) {
       // Local trigger scanner (v1.1.1). Finds GINA + EQLP trigger files on the
       // local machine and returns paths + sizes + pack-fingerprint guess.
       // Discovery only — no parsing, no upload, never leaves the dashboard.
-      // The parse + import + log-correlation layers ship in 1.1.2+. (Uilnayar
+      // The parse + import + log-correlation layers ship in 1.1.2+. (Hitya
       // 2026-06-26: "mimic could review settings from Gina and eqlp directly".)
       if (req.url === '/api/triggers/local-scan') {
         try {
@@ -19862,7 +19868,7 @@ function startWebDashboard(port) {
           }
         } catch { /* */ }
         // No explicit class picked = AUTO: default to the class of the
-        // character you're logged in as (Uilnayar 2026-07-15: "the Buff
+        // character you're logged in as (Hitya 2026-07-15: "the Buff
         // queue should default to the character class you're logged in as,
         // versus making us change it"). Same resolution the class-default
         // overlay sets use: /who first, Zeal type-5 raid roster fallback.
@@ -19966,7 +19972,7 @@ function startWebDashboard(port) {
       if (req.url === '/api/notices') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         // A pending Zeal update rides the SAME mail list as guild notices
-        // (Uilnayar 2026-08-03: "a notice at the top of the dashboard when zeal
+        // (Hitya 2026-08-03: "a notice at the top of the dashboard when zeal
         // has an update outstanding"). Deliberately reusing this list instead of
         // adding a banner: the mail button, unread badge and panel already
         // exist, and WEB_HTML is the one file where a single mis-escaped
@@ -20428,7 +20434,7 @@ function startWebDashboard(port) {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ ok: true }));
       }
-      // Crowd-sourced /who class set (Uilnayar 2026-07-14): the /who overlay's
+      // Crowd-sourced /who class set (Hitya 2026-07-14): the /who overlay's
       // dropdown POSTs { name, class } here when someone identifies an anon
       // player. We (1) reflect it LOCALLY at once so the picker's own overlay
       // updates immediately, and (2) forward to the bot's /api/agent/who-override
@@ -20478,7 +20484,7 @@ function startWebDashboard(port) {
       // every entry's next_try_at to right now (skipping backoff windows)
       // and kicks a single immediate pass. Counts: how many had their
       // backoff cleared, kinds in the queue, and a snippet of the most
-      // recent failure for diagnosis. Recovered from Uilnayar's
+      // recent failure for diagnosis. Recovered from Hitya's
       // stalled-queue report 2026-06-21.
       if (req.url === '/api/drain' && req.method === 'POST') {
         const now = Date.now();
@@ -22748,7 +22754,7 @@ function scanQuarmyExports() {
 // EQ's `/outputfile spellbook` writes <Char>-Spellbook.txt to the EQ dir, TSV:
 // Index <tab> SpellId <tab> Level <tab> Name. Auto-ingested the same way as
 // the Quarmy export so the /character/<name>/spells "missing spells" page stays
-// current with zero manual paste (Uilnayar 2026-07-08: "built in please").
+// current with zero manual paste (Hitya 2026-07-08: "built in please").
 // Bot side (/api/agent/spellbook) already replaces + checksum-dedups + honors
 // exclude_inventory; we just have to ship the file. KEEP the parse in sync with
 // web/app/me/spellbook-actions.ts parseSpellbook (same columns).
@@ -23008,7 +23014,7 @@ function runOptinBackfill(files, opts = {}) {
     // backfill ran the throw path inside readFromBytePos's `try { onLine }
     // catch { /* swallow */ }` (line 12987), silently dropping every
     // historical [PVP] kill from the pvp_kills ledger. (Discovered while
-    // diagnosing Uilnayar's missed live PVP messages 2026-06-21.) Now we
+    // diagnosing Hitya's missed live PVP messages 2026-06-21.) Now we
     // mirror the chatBatch pattern: batch up to 200, flush via uploadPvp
     // which routes through the durable queue so a slow drain doesn't lose
     // anything.
@@ -24041,7 +24047,7 @@ const PVP_BARE_BOSS_GUILDLESS_RX = /^\[(.+?)\]\s+\[PVP\]\s+(\w+) has killed (.+?
 // first Druzzil fire of the session it stays null, which makes the
 // `(Instanced)` PvP-echo filter conservative (drops all instance echoes,
 // the old behavior). Once known, foreign-guild instance kills pass through
-// instead — fixing Uilnayar's 2026-06-21 missed-Lord-of-Ire-by-<Freedom>
+// instead — fixing Hitya's 2026-06-21 missed-Lord-of-Ire-by-<Freedom>
 // report. We never clear this; if the agent is restarted, it re-learns
 // from the next Druzzil broadcast.
 let _observedOwnGuild = null;
@@ -24057,7 +24063,7 @@ function _ciEq(a, b) {
 // the guild" broadcast already routed them through /bosskill — which fails
 // when the killer doesn't run Mimic: Timberr's Lord of Ire instance kill
 // vanished with no ledger row, no /pvp/hate entry, and no #pvp post
-// (Uilnayar 2026-07-05). The bot records own-guild echoes (informational
+// (Hitya 2026-07-05). The bot records own-guild echoes (informational
 // #pvp post, no open-world timer tick) and dedups as needed.
 function parseDruzzilKill(line) {
   if (line.indexOf('Druzzil Ro') === -1) return null;   // cheap gate
@@ -24877,7 +24883,7 @@ function startChatRelay() {
   // cadence so a slow drain doesn't double-post inside one interval.
   // 2026-06-21: cranked default 30s → 18s after the Supabase Pro upgrade
   // — more granular per-fight tank-threat detail. Original was 15s.
-  // 2026-08-03: 18s → 6s (one EQ tick). Uilnayar: an accurate picture of the
+  // 2026-08-03: 18s → 6s (one EQ tick). Hitya: an accurate picture of the
   // fight as it happens matters more than the historical record. The cost is
   // bounded and lands almost entirely in the 7-day hot window, because the
   // midnight job already downsamples anything older than 7 days to 1/min — so
@@ -24886,7 +24892,7 @@ function startChatRelay() {
   // the table near 525 MB. Well inside the ingest budget too — threat_snapshot
   // allows 120/min per uploader (_BUDGET_DEFAULTS), and 6s is 10/min.
   // Dial without a release via WP_THREAT_SNAPSHOT_MS.
-  // TUNABLE MID-RAID (Uilnayar 2026-08-03: "go more frequent when we're in the
+  // TUNABLE MID-RAID (Hitya 2026-08-03: "go more frequent when we're in the
   // middle of fights and less frequent in downtime"). The env var alone was
   // read once at startup and baked into setInterval's period, so changing it
   // meant restarting every raider's agent — useless in the moment. So: tick on
@@ -25014,7 +25020,7 @@ function parsePeopleslayerLd(line, selfName) {
   // Zone of the LD — observer's zone IS Peopleslayer's zone, since EQ only
   // broadcasts "<X> has gone Linkdead" to the same zone. Pull from Zeal state
   // for the watching character; fall back to null if Zeal hasn't reported
-  // yet (the row still records, just without a zone). (Uilnayar 2026-06-26.)
+  // yet (the row still records, just without a zone). (Hitya 2026-06-26.)
   let zone = null;
   try {
     if (selfName && _zealState && _zealState[selfName]) {
@@ -26468,7 +26474,7 @@ function _buildCaptureBag(m, line, ctx, aliases) {
 // ── Remote overlay tuning ───────────────────────────────────────────────────
 // Officer-set knob overrides (guild_settings.overlay_tuning, edited on
 // /admin/overlays) polled from the bot so thresholds like the off-heal hurt
-// cutoff can be changed mid-raid WITHOUT cutting a new Mimic release (Uilnayar
+// cutoff can be changed mid-raid WITHOUT cutting a new Mimic release (Hitya
 // 2026-07-06: "make more of these configuration changes without a full
 // redeployment"). Missing/invalid keys fall back to the compiled defaults, so
 // a cold agent (or a bot without the endpoint yet) behaves exactly as shipped.
@@ -26592,7 +26598,7 @@ function _applyZealTagMessage(msg, tagger, tsMs) {
   // replace our stored text (the nameplate-merge subtleties don't matter for
   // a row label); a bare erase drops the tag.
   //
-  // The mode is RECORDED, not just stripped (Uilnayar 2026-08-06: "tags can
+  // The mode is RECORDED, not just stripped (Hitya 2026-08-06: "tags can
   // append as well if you do a /tag chat +<tag> with a plus symbol"). It used
   // to be discarded, which was fine while the only consumer was a row label but
   // is wrong for the observation log: on an append the nameplate in game reads
@@ -26714,7 +26720,7 @@ function noteTagChannelLine(line, selfCharacter) {
 }
 // zeal.ini readiness check — "people already autojoin the channel and seeing
 // the channel once persists it for that user. my zeal ini should contain
-// this" (Uilnayar 2026-08-05). Zeal persists the tag config as
+// this" (Hitya 2026-08-05). Zeal persists the tag config as
 // [Zeal] NameplateTagChannel / NameplateTagEnable in <eqdir>\zeal.ini
 // (verified: ZealSetting ctor → kZealIniFilename, nameplate.h:52,62). Reading
 // it lets the dashboard answer "am I set up for tag capture?" instead of
@@ -28560,7 +28566,7 @@ function diStatusSnapshot() {
       // now distinguishable. A null ready_at does not mean the DI is available
       // — it means we never SAW the cast. Fargan showed a green tick while his
       // DI was on cooldown, purely because nobody's log gave us his cast
-      // (Uilnayar 2026-08-06, and it is NOT clock skew: the measured offsets
+      // (Hitya 2026-08-06, and it is NOT clock skew: the measured offsets
       // are +314ms / +210ms, and Fargan has no offset row at all).
       up: readyMs == null || readyMs <= now,
       unknown: readyMs == null,
@@ -28665,7 +28671,7 @@ const SNAPPY_TTL_MS  = 500;
 const SNAPPY_WINDOW  = 60_000;
 // Raid-buff-queue cache TTL on the agent. History: 3s pre-egress-squeeze →
 // 8s during the squeeze → 4s after the 2026-06-21 Supabase Pro upgrade gave
-// back headroom → 2s on 2026-07-03 (Uilnayar: "Debuff queue definitely needs
+// back headroom → 2s on 2026-07-03 (Hitya: "Debuff queue definitely needs
 // to be faster") — the bigger win there was flushLiveStateToBot's own
 // interval (20s → 5s, see main()), which gates whether the bot even KNOWS
 // about a new debuff before this cache's freshness matters at all; this TTL
@@ -29259,7 +29265,7 @@ function buildMobInfo() {
   // Cross-client live buffs — the target is another Mimic-running raider:
   // use THEIR uploaded Zeal list (real remaining time — actual counters, not
   // "?"-duration observed landings), same source the Tank overlay's MT buffs
-  // already use (Uilnayar 2026-07-15: "buff counters in the target info like
+  // already use (Hitya 2026-07-15: "buff counters in the target info like
   // we had discussed" — targeting Peopleslayer showed observed-only). EQ
   // character names never contain spaces, so anything with one skips the
   // fetch (mobs would just churn null lookups).
@@ -29352,7 +29358,7 @@ function buildMobInfo() {
 // playing. This used to be gated on having a target (built narrowly to fix
 // extended-target specifically), which left every OTHER consumer of this
 // row's freshness — the buff queue chief among them — silently starved:
-// confirmed live (Uilnayar 2026-07-03), mid-raid, ZERO of 30 rostered
+// confirmed live (Hitya 2026-07-03), mid-raid, ZERO of 30 rostered
 // raiders had a fresh-enough row, some multiple hours stale. Deliberately
 // NOT routed through the durable upload queue — live state is replaceable
 // (latest wins via the bot's upsert), so queuing stale snapshots during an
@@ -29668,7 +29674,7 @@ function flushLiveStateToBot(opts) {
     // Extended Target surface "who's tanking something nobody's
     // targeting" — Emperor Ssraeshza-style fights where an add is
     // deliberately off-tanked at 100% HP and never targeted/damaged
-    // (Uilnayar 2026-07-04). 20s window matches the freshness the bot
+    // (Hitya 2026-07-04). 20s window matches the freshness the bot
     // requires before treating it as "currently hitting someone".
     let incomingMob = null, incomingMobSinceMs = null;
     {
@@ -29692,7 +29698,7 @@ function flushLiveStateToBot(opts) {
       // overlay's "cur / max · pct%" label for a Mimic-running MT. These
       // never left the machine before (only the pipeverbose raid-sample path
       // carried exact numbers), so the MT bar showed % only
-      // (Uilnayar 2026-07-15). NOT in the change signature — refreshes ride
+      // (Hitya 2026-07-15). NOT in the change signature — refreshes ride
       // the heartbeat + existing sig triggers.
       self_hp_cur: st.self_hp_cur != null ? st.self_hp_cur : null,
       self_hp_max: st.self_hp_max != null ? st.self_hp_max : null,
@@ -29714,7 +29720,7 @@ function flushLiveStateToBot(opts) {
       // raid-wide into "who's targeting what". Was missing entirely here (the
       // field existed in _zealState and locally in Mob Info, but never left
       // the machine), so the overlay showed "waiting for raid targets" for
-      // everyone regardless of party size (Uilnayar 2026-06-29).
+      // everyone regardless of party size (Hitya 2026-06-29).
       target_name:    st.target_name || null,
       target_hp_pct:  st.target_hp_pct != null ? st.target_hp_pct : null,
       // Position (Zeal loc {x,y,z}) → character_live_state.loc_* → the bot's
@@ -29790,7 +29796,7 @@ function flushLiveStateToBot(opts) {
     // Self HP bucket — so a Mimic MT's HP on a REMOTE healer's Tank overlay
     // tracks their real swings, not just the 45s heartbeat. Without this, the
     // exact cur/max we now upload (v3.3.42) landed but sat frozen between
-    // sig changes — the healer saw a stale bar (Uilnayar 2026-07-15, "we need
+    // sig changes — the healer saw a stale bar (Hitya 2026-07-15, "we need
     // cross-raid HP sync"). 5% is finer than the 10% target/mana buckets (a
     // tank bar wants tighter tracking) and still bounded by the 5s flush, so
     // at most one re-send per 5s per raider who crossed a 5% line.
@@ -29818,7 +29824,7 @@ function flushLiveStateToBot(opts) {
     // target-only gate below was scoped narrowly to fix extended-target
     // specifically, but left every idle-but-online character free to age
     // out of the bot's freshness windows entirely — confirmed live
-    // (Uilnayar 2026-07-03, "buff queue overlay is assuming all buffs
+    // (Hitya 2026-07-03, "buff queue overlay is assuming all buffs
     // incorrectly"): mid-raid, ZERO of 30 rostered raiders had a
     // character_live_state row inside the bot's 15-min freshness cutoff,
     // some multiple HOURS stale despite actively playing — because nobody
@@ -32131,7 +32137,7 @@ async function main() {
     setInterval(() => pollUiPendingEdits({ botUrl, token }), 5 * 60_000);
     // Live character state (buffs + last-seen zone) → bot → Supabase so
     // wolfpack.quest/me can show what each character is carrying + where, AND
-    // (Uilnayar 2026-07-03: "Debuff queue definitely needs to be faster") this
+    // (Hitya 2026-07-03: "Debuff queue definitely needs to be faster") this
     // is the PRIMARY latency source for a newly-landed curse showing up on
     // anyone's debuff queue — this interval is how often a cursed player's own
     // agent even CHECKS whether their buff set changed, before the bot ever
