@@ -6285,14 +6285,31 @@ async function _handleAgentServerPanel(req, res) {
       const cached = _lootCacheGet(ck);
       if (cached) { res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(cached); }
       const famClause = _ilikeAnyClause('character_name', family);
-      // Wins.
+      // Wins — the DISPLAY list, deliberately capped and newest-award-first.
+      // Ordered by raid_id (raids are sequential, so this IS award order); the
+      // old `fetched_at` order was the MIRROR SYNC time, which is meaningless
+      // for "recent" and made the cap drop an arbitrary slice.
       let wins = [];
       if (famClause) {
         const winRows = await supabase.select(
           'opendkp_loot',
-          `select=character_name,item_id,item_name,dkp,raid_id,fetched_at&${famClause}&order=fetched_at.desc&limit=100`
+          `select=character_name,item_id,item_name,dkp,raid_id,fetched_at&${famClause}&order=raid_id.desc&limit=100`
         ) || [];
         wins = winRows.map(r => ({ character: r.character_name, item_id: r.item_id, item_name: r.item_name, dkp: r.dkp, raid_id: r.raid_id, when: r.fetched_at }));
+      }
+      // ⚠ The "already won" SET is a SEPARATE, UNCAPPED sweep — never derive it
+      // from `wins` above. `wins` is capped at 100 for display, and Hitya's
+      // family alone has 187 awards; building the set from the capped list left
+      // 87 genuinely-won items looking unwon, so they came back as "bid on but
+      // not yet won" and as RECENT MISSES (reported 2026-08-09). item_id only,
+      // so the row is tiny and the high cap is cheap.
+      const wonItemIds = new Set();
+      if (famClause) {
+        const wonIdRows = await supabase.select(
+          'opendkp_loot',
+          `select=item_id&${famClause}&limit=5000`
+        ) || [];
+        for (const r of wonIdRows) if (r.item_id != null) wonItemIds.add(r.item_id);
       }
       // Explicit prereg wishlist (+ resolve item names from eqemu_items).
       let preregRows = [];
@@ -6349,9 +6366,7 @@ async function _handleAgentServerPanel(req, res) {
           `select=auction_id,item_id,raid_id,winner_character_id&winner_character_id=in.(${famCharIds.join(',')})&limit=2000`
         ) || [];
       }
-      const wonItemIds = new Set();
       for (const a of wonAuctions) if (a.item_id != null) wonItemIds.add(a.item_id);
-      for (const w of wins) if (w.item_id != null) wonItemIds.add(w.item_id);
       // char_id → real name (MODE over the won-auction ↔ loot join).
       let nameByCharId = {};
       if (wonAuctions.length) {

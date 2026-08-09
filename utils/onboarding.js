@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.1.33': [
+    '**Loot you already won stopped showing up as loot you still want.** The bidding panel only ever looked at your hundred most recent awards when deciding what you had won — and it sorted them by when our copy of OpenDKP last refreshed rather than by when you actually won them, so which hundred it looked at was close to random. Anyone with more than a hundred pieces of loot had the rest come back as "bid on but not yet won" and as recent misses. It now checks your whole award history, and the wins list is ordered by the raid you won it in.',
+  ],
   '3.1.24': [
     '**The attendance ticks now show up in the raid thread.** The night\'s thread holds its first six spots: the review at the top, then the 8:30, 9:30, 10:30 and 11:30 rosters, each filling in as it is captured. Every card lists who was in the raid at that moment and says plainly that nothing was submitted — it is a record to check a tick against, not a tick.',
   ],
