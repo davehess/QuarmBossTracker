@@ -26325,9 +26325,15 @@ function _expandTriggerTokens(pattern, ctx) {
   const used = new Set();
   const conditions = [];
   const warnings = [];
+  // True when the pattern OPENS with a wildcard token ({s}/{n}). Such a pattern
+  // has nothing to its left to stop `.+?` starting at index 0 of the raw line,
+  // so the capture eats the timestamp — see the guard in compileTriggerPattern.
+  // {c} is exempt: it expands to a literal alternation of character names, which
+  // cannot match inside "[Sun Aug 02 …]".
+  let leadingWildcard = false;
   const source = String(pattern || '').replace(
     /\{([A-Za-z][A-Za-z0-9_]*)((?:>=|<=|>|<|=)\s*\d+)?\}/g,
-    (whole, key, guard) => {
+    (whole, key, guard, offset) => {
       const lower = key.toLowerCase();
       if (lower === 'c' || lower === 'char' || lower === 'self') {
         const chars = (ctx.characters || []).filter(Boolean);
@@ -26351,13 +26357,14 @@ function _expandTriggerTokens(pattern, ctx) {
         name = alt;
       }
       used.add(name);
+      if (offset === 0) leadingWildcard = true;
       if (guard) {
         const g = /^(>=|<=|>|<|=)\s*(\d+)$/.exec(guard.replace(/\s+/g, ''));
         if (g) conditions.push({ group: name, op: g[1] === '=' ? '==' : g[1], value: Number(g[2]) });
       }
       return '(?<' + name + '>' + spec.rx + ')';
     });
-  return { source, conditions, warnings };
+  return { source, conditions, warnings, leadingWildcard };
 }
 
 // Characters the agent is currently watching — the {c} binding. Compiles run
@@ -26389,13 +26396,28 @@ function compileTriggerPattern(pattern, opts) {
   const anc = opts.rawLine === false
     ? { source: dia.source, rewrote: 0 }
     : _rewriteAnchorsForRawLine(dia.source);
+  // A pattern that OPENS with {s}/{n} and carries no ^ has nothing to stop the
+  // capture starting at index 0 of the raw line — `.+?` then swallows the whole
+  // "[Sun Aug 02 21:10:45 2026] " prefix into the name. The anchor rewrite above
+  // only fixes the ^-anchored case, and CLAUDE.md tells authors to write
+  // patterns UNANCHORED, so this is the shape we actively recommend.
+  // Live example: the "Razor Fang" guild trigger, `{S} is surrounded by an aura
+  // of nature.` — every fire spoke the timestamp and keyed its timer on it.
+  // The old allow-list `{s}` class hid this by accident (it could not match "["
+  // so the engine advanced past the timestamp on its own); `.+?` cannot.
+  // Same OPTIONAL prefix the ^ rewrite uses, so a bare (timestamp-less) line
+  // still matches and no existing pattern changes meaning.
+  let source = anc.source;
+  if (opts.rawLine !== false && anc.rewrote === 0 && tok.leadingWildcard) {
+    source = '^(?:' + EQ_TS_PREFIX_RX + ')?' + source;
+  }
   return {
-    regex:            new RegExp(anc.source, dia.flags),
+    regex:            new RegExp(source, dia.flags),
     conditions:       tok.conditions,
     aliases:          dia.aliases,
     anchorsRewritten: anc.rewrote,
     warnings,
-    source:           anc.source,
+    source,
   };
 }
 
