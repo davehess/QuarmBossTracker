@@ -17,7 +17,7 @@ import Link from 'next/link';
 import type { Metadata } from 'next';
 import { supabaseAdmin } from '@/lib/supabase';
 import { Reveal, CountUp } from '@/components/about/Reveal';
-import { TankOverlayDemo, CommandCenterDemo } from '@/components/about/OverlayDemo';
+import { TankOverlayDemo, CommandCenterDemo, ChChainDemo, LootTtsDemo } from '@/components/about/OverlayDemo';
 
 export const revalidate = 3600;
 
@@ -28,20 +28,19 @@ export const metadata: Metadata = {
 };
 
 type Stats = {
-  fights: number; damage: number; characters: number; chat: number;
-  who: number; snapshots: number; buffs: number; loot: number;
-  uploads: number; days: number; mobs: number; members: number;
-  raid_people: number; raid_chars: number; raid_parsers: number;
-  raid_biggest: number; dau_avg: number;
+  characters: number; who: number; snapshots: number; buffs: number;
+  uploads: number; members: number;
+  raid_avg: number; raid_biggest: number; raids: number; max_parsers: number;
+  pvp: number; fights_apr: number; damage_apr: number; bosses_apr: number;
 };
 
 const ZERO: Stats = {
-  fights: 0, damage: 0, characters: 0, chat: 0, who: 0, snapshots: 0, buffs: 0,
-  loot: 0, uploads: 0, days: 0, mobs: 0, members: 0,
-  raid_people: 0, raid_chars: 0, raid_parsers: 0, raid_biggest: 0, dau_avg: 0,
+  characters: 0, who: 0, snapshots: 0, buffs: 0, uploads: 0, members: 0,
+  raid_avg: 0, raid_biggest: 0, raids: 0, max_parsers: 0,
+  pvp: 0, fights_apr: 0, damage_apr: 0, bosses_apr: 0,
 };
 
-// One RPC, ~65ms. Doing this from PostgREST instead took 32 SECONDS — see the
+// One RPC, ~200ms. Doing this from PostgREST instead took 32 SECONDS — see the
 // migration for why (full scans on million-row tables, plus three
 // count(distinct) over the snapshot stream). Never re-expand this into
 // per-table counts.
@@ -125,7 +124,12 @@ export default async function AboutPage() {
       {/* ── Hero ── */}
       <section className="pt-6 sm:pt-16">
         <Reveal>
-          <div className="text-[11px] uppercase tracking-widest text-gold mb-3">Wolf Pack · Project Quarm</div>
+          <div className="flex items-center justify-between gap-3 mb-3">
+            <div className="text-[11px] uppercase tracking-widest text-gold">Wolf Pack · Project Quarm</div>
+            <Link href="/shortabout" className="text-[11px] text-dim hover:text-blue whitespace-nowrap no-underline">
+              in a hurry? the short version →
+            </Link>
+          </div>
           <h1 className="text-3xl sm:text-6xl font-bold text-text leading-[1.1]">
             It started as a bot that answered<br className="hidden sm:block" />{' '}
             <span className="text-blue">one question.</span>
@@ -196,11 +200,11 @@ export default async function AboutPage() {
               typing, and no one having to remember.
             </p>
             <p>
-              And not everyone has to run it. Each log sees the whole fight, so a handful of
-              uploads merge into one record — a typical raid night here is{' '}
-              <span className="text-text"><CountUp to={s.raid_people} /> people</span> covered by
-              about <span className="text-text"><CountUp to={s.raid_parsers} /></span> of them
-              parsing.
+              And not everyone has to run it. Each log sees the whole fight, so the uploads merge
+              into one record — a raid night here averages{' '}
+              <span className="text-text"><CountUp to={s.raid_avg} /> raiders</span>, and a
+              fraction of them parsing covers everyone. The most we&apos;ve seen upload in one
+              night is <span className="text-text"><CountUp to={s.max_parsers} /></span>.
             </p>
             <p className="text-dim">
               Officer chat, tells and private channels are filtered out{' '}
@@ -280,9 +284,18 @@ export default async function AboutPage() {
           </>
         }
       >
-        <div className="grid md:grid-cols-2 gap-4">
-          <TankOverlayDemo />
-          <CommandCenterDemo />
+        {/* Three seats, three overlays — a horizontal strip so each demo gets a
+            full card on a phone. Every name, class, HP and spell value in these
+            is real and was checked against the database before it went here. */}
+        <div>
+          <div className="text-[11px] text-dim mb-2">
+            Three seats, three views — <span className="text-text">there&apos;s an overlay for every job in the raid</span>. Swipe →
+          </div>
+          <div className="flex gap-4 overflow-x-auto snap-x snap-mandatory pb-2 -mx-3 px-3 sm:-mx-4 sm:px-4">
+            <div className="snap-center shrink-0 w-[88%] sm:w-[400px]"><TankOverlayDemo /></div>
+            <div className="snap-center shrink-0 w-[88%] sm:w-[400px]"><CommandCenterDemo /></div>
+            <div className="snap-center shrink-0 w-[88%] sm:w-[400px]"><ChChainDemo /></div>
+          </div>
         </div>
       </Chapter>
 
@@ -336,10 +349,10 @@ export default async function AboutPage() {
             </div>
 
             <p className="text-xs text-dim mt-5 leading-relaxed">
-              It is also why the numbers above separate people from characters: a typical night is{' '}
-              <span className="text-text"><CountUp to={s.raid_people} /> raiders</span> playing{' '}
-              <span className="text-text"><CountUp to={s.raid_chars} /> characters</span>, and the
-              platform has to know those are the same people.
+              It is also why the platform counts <span className="text-text">people</span>, not
+              character names: plenty of raiders are on a different character by the last pull than
+              the one they zoned in on, and everything — attendance, parses, loot — has to know
+              those are the same person.
             </p>
           </div>
         </Reveal>
@@ -360,11 +373,13 @@ export default async function AboutPage() {
               last tick early.
             </p>
             <p>
-              Loot goes up by pasting the drop straight out of the game. It comes back tagged{' '}
-              <span className="text-gold">🆕 NEW</span> if the guild has never seen it and{' '}
-              <span className="text-gold">💎 ULTRA RARE</span> if it has dropped once and sits in
-              the bottom quarter of that boss&apos;s table — checked against our own history and
-              the drop tables, not somebody&apos;s memory. Then one button posts it.
+              Loot is read <span className="text-text">straight out of guild and raid chat</span> —
+              by the time an officer opens the post screen, the drops are already listed and{' '}
+              <span className="text-text">two clicks from being up for bids</span>. (Pasting works
+              too.) Each item comes back tagged <span className="text-gold">🆕 NEW</span> if the
+              guild has never seen it and <span className="text-gold">💎 ULTRA RARE</span> if it
+              has dropped once and sits in the bottom quarter of that boss&apos;s table — checked
+              against our own history and the drop tables, not somebody&apos;s memory.
             </p>
           </>
         }
@@ -387,22 +402,11 @@ export default async function AboutPage() {
             <div className="text-[10px] uppercase tracking-widest text-gold mb-3">
               🔊 You will hear it
             </div>
-            <div className="rounded-md bg-black/60 p-3 font-mono text-white text-xs space-y-2">
-              <div className="flex items-center gap-2">
-                <span className="inline-block w-1.5 h-1.5 rounded-full bg-gold animate-pulse" />
-                <span style={{ textShadow: '0 1px 2px #000' }}>
-                  &ldquo;Loot posted — <span className="text-gold">three items</span>, bidding for
-                  five minutes.&rdquo;
-                </span>
-              </div>
-              <div className="flex items-center gap-2 text-[11px] text-[#9aa4ad]">
-                <span className="rounded border border-white/15 px-1.5 py-px tabular-nums">4:52</span>
-                <span>Bracer of Black Blood</span>
-              </div>
-            </div>
+            <LootTtsDemo />
             <p className="text-[11px] text-dim mt-3 leading-relaxed">
-              Mimic says it out loud and puts a countdown on screen. You can be mid-fight, tabbed
-              out, or not reading chat — you still get the window.
+              Mimic says it out loud and puts the countdowns on screen. Two minutes is not long
+              when you are mid-fight, tabbed out, or not reading chat — this way the window
+              reaches you anyway, and nobody misses their shot at a bid.
             </p>
           </div>
 
@@ -431,7 +435,10 @@ export default async function AboutPage() {
           <>
             <p>
               Raids happen three nights a week at a fixed time. Something that breaks at 8pm on a
-              Wednesday is not a bug report, it is a wasted night for forty people.
+              Wednesday does not stop the raid — the guild raided for years without any of this —
+              but every convenience that fails becomes hand-work for the people already spending
+              their evening running the night. They volunteer their time; the platform&apos;s job
+              is to never hand it back to them broken.
             </p>
           </>
         }
@@ -460,49 +467,50 @@ export default async function AboutPage() {
           </p>
         </Reveal>
 
-        {/* Every figure here is TIME-OF-DAY STABLE by construction — medians per
-            raid night, and a daily-active averaged over active days. A live
-            "users right now" count would read near zero whenever someone opens
-            this outside the Sun/Wed/Thu window, which says nothing true about
-            the platform. */}
+        {/* Every figure here is TIME-OF-DAY STABLE by construction. Raid size is
+            OPENDKP ATTENDANCE (distinct attendees per raid since Luclin opened)
+            — the number the guild's own sheets use — and parser coverage counts
+            PEOPLE, never characters. A live "users right now" count would read
+            near zero outside the Sun/Wed/Thu window and say nothing true. */}
         <Reveal delay={100}>
           <div className="grid grid-cols-3 gap-3 sm:gap-4 mt-6">
-            <Stat value={s.raid_people} label="People in a raid" accent="text-green"
-                  sub={`actual raiders, not characters · biggest ${s.raid_biggest}`} />
-            <Stat value={s.raid_chars} label="Characters they play" accent="text-green"
-                  sub="the same night — mains, swaps and boxes" />
-            <Stat value={s.dau_avg} label="Daily active" accent="text-green"
-                  sub="average across active days" />
+            <Stat value={s.raid_avg} label="A raid night" accent="text-green"
+                  sub={`raiders on average since Luclin opened · biggest ${s.raid_biggest}`} />
+            <Stat value={s.max_parsers} label="Most parsers in one night" accent="text-green"
+                  sub="people uploading — their logs merge into one record" />
+            <Stat value={s.raids} label="Raids this expansion" accent="text-green"
+                  sub="on the DKP books" />
           </div>
         </Reveal>
 
         <Reveal delay={160}>
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mt-3 sm:mt-4">
-            <Stat value={s.fights} label="Fights recorded" accent="text-blue" />
-            <Stat value={s.damage / 1_000_000} decimals={1} suffix="M" label="Damage parsed" accent="text-blue" />
-            <Stat value={s.days} label="Days of history" accent="text-blue" />
-            <Stat value={s.mobs} label="Distinct bosses" accent="text-blue" />
+            <Stat value={s.fights_apr} label="Fights recorded" accent="text-blue"
+                  sub="since the platform started in April" />
+            <Stat value={s.damage_apr / 1_000_000} decimals={1} suffix="M" label="Damage parsed" accent="text-blue"
+                  sub="since April" />
+            <Stat value={s.bosses_apr} label="Distinct bosses" accent="text-blue"
+                  sub="since April" />
+            <Stat value={s.pvp} label="PvP broadcasts captured" accent="text-blue"
+                  sub="kills and assists on Zek" />
           </div>
         </Reveal>
 
         <Reveal delay={220}>
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mt-3 sm:mt-4">
-            <Stat value={s.chat} label="Guild chat lines kept" accent="text-purple"
-                  sub="our shared history, searchable" />
             <Stat value={s.who} label="/who sightings" accent="text-purple" />
             <Stat value={s.snapshots} label="Combat snapshots" accent="text-purple"
                   sub="every few seconds, per fight" />
             <Stat value={s.buffs} label="Buff landings tracked" accent="text-purple" />
+            <Stat value={s.uploads} label="Parse uploads merged" accent="text-purple"
+                  sub="many people, one record per fight" />
           </div>
         </Reveal>
 
         <Reveal delay={280}>
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mt-3 sm:mt-4">
+          <div className="grid grid-cols-2 gap-3 sm:gap-4 mt-3 sm:mt-4">
             <Stat value={s.characters} label="Characters known" accent="text-gold" />
             <Stat value={s.members} label="Discord members" accent="text-gold" />
-            <Stat value={s.loot} label="Items awarded" accent="text-gold" sub="via OpenDKP" />
-            <Stat value={s.uploads} label="Parse uploads merged" accent="text-gold"
-                  sub="many people, one record per fight" />
           </div>
         </Reveal>
       </section>
