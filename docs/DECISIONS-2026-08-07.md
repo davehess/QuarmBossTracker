@@ -121,6 +121,33 @@ fix. A third and fourth way a tag draws the nameplate arrow but reaches no log:
 `/tag local` (never broadcasts) and the server's chat rate limit. The arrow is
 NOT evidence the broadcast happened.
 
+## Loot bidding (2026-08-09)
+
+**A capped DISPLAY query must never double as a SET.** `bid-history` seeded the
+"already won" set from `wins` — `opendkp_loot … order=fetched_at.desc&limit=100`.
+The Hitya/Melting/Canopy family has 187 awards, so 87 read as unwon and came back
+as "bid on but not yet won" and RECENT MISSES. The three items reported sat at
+rows 101, 120 and 184. Worse, `fetched_at` is the MIRROR SYNC time, so *which*
+100 survived would have reshuffled on every weekly sync. Won-set is now its own
+uncapped `item_id`-only sweep; `wins` orders by `raid_id.desc` (real award order).
+→ bot 3.1.33, pinned by `test/loot-won-set.test.js`.
+
+**Nobody types their own main and alts.** OpenDKP already knows the family, so
+the panel adopts it on sign-in — wholesale when empty, additive when not (a
+hand-typed name is never removed, the chosen main is never demoted). `⟲ from
+OpenDKP` is the explicit replace path.
+
+**Loot history is hidden by default and re-hides on every load.** The dashboard
+gets screen-shared during raids and a visible wishlist is a bidding tell.
+
+**Dismissals are local-only.** The wishlist is INFERRED from OpenDKP bid history —
+there is nothing upstream to delete — so ✕ writes `logsync.lootdismiss.json` and
+uploads nothing. Always reversible via "restore all".
+
+**The expansion filter opens on the current expansion**, derived from the newest
+award rather than hard-coded, so it advances by itself when PoP unlocks. Falls
+back to "all" rather than showing an empty panel.
+
 ## pq-companion
 
 **Study and reimplement; never copy.** The repo has no license — all rights
@@ -142,3 +169,5 @@ shipped from them (3.5.44–3.5.48).
 | Report 04 P3–P5 | taunt-emote attribution, wildcard verb fallback, EQMac threat weights |
 | Archived logs | drop out of the smart-backfill picker until moved back |
 | ~~Release naming~~ | **DECIDED 2026-08-08** — the tag/trigger/parser graduation is named **"Tag! You're spawn_id it!"** (Hitya). No standing theme system; names stay ad-hoc per release |
+| Graduate "Tag! You're spawn_id it!" | **NOT yet done** — still beta-only. Agent is now at 3.5.53 (adds the loot-bidding round); Mimic parked at 2.3.4. Hitya's call on when to cut stable |
+| Other capped-query-as-a-set risks | The loot bug's shape is generic: 23 other `limit=####` queries in `index.js`. Nobody has audited whether another one feeds a *set* rather than a *list* |

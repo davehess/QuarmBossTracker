@@ -1093,6 +1093,12 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   (`commands/ingestrules.js`, `utils/rulesParser.js`) + `/admin/rules`.
 - **Loot bidding serving (#108/#121)** — `server-panel` keys `opendkp-auth-config`
   / `item-history` / `bid-history`; `_lootItemSummary`/`_familyDkpTotals`.
+  ⚠ In `bid-history` the "already won" set (`wonItemIds`) is a SEPARATE uncapped
+  `opendkp_loot` sweep — never seeded from the `wins` display array, which is
+  `limit=100`. Seeding from `wins` left 87 of one family's 187 awards looking
+  unwon, so they resurfaced as wishlist + RECENT MISSES rows (bot 3.1.33).
+  `wins` orders by `raid_id.desc` (award order); `fetched_at` is MIRROR SYNC
+  time and is never an ordering key. Pinned by `test/loot-won-set.test.js`.
 - **Roll nights (#91)** — `_handleAgentLooted` + `looted_items`,
   `computeHotDiceNightAward` (`utils/hotDiceNight.js`) on the midnight chain.
 - **/who enrichment (#111)** — `who-lookup` now returns `{level, main, mimic}`;
@@ -1108,7 +1114,16 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
 - **Timeline enrichment (#105)** — `noteSlowLanding` (SLOW_SPELLS), `noteMobHeal`,
   `DISC_LINES`/`_matchDiscLine` → `timeline_events`.
 - **Loot bidding panel (#108/#121)** — dashboard WEB_HTML card, OpenDKP Cognito
-  login (`logsync.opendkp.json`), alt-family (`logsync.bidfamily.json`).
+  login (`logsync.opendkp.json`), alt-family (`logsync.bidfamily.json`),
+  per-item planned bids (`logsync.plannedbids.json`), per-item dismissals
+  (`logsync.lootdismiss.json` + `POST /api/loot/dismiss`, agent 3.5.53).
+  The family is auto-populated from OpenDKP's `suggested_family` (additive —
+  a hand-typed name is never removed; `⟲ from OpenDKP` is the replace path),
+  and `famDirty` gates the 7s `fetchConfig` poll so it can't overwrite an open
+  editor. Loot history is collapsed behind `showLoot` by default (privacy —
+  the dashboard gets screen-shared); the expansion filter one-shots onto the
+  current expansion via `currentEra()`, falling back to "all" if that would
+  render an empty list.
 - **Replay (#101)** — `startReplay`/`_replayWorker`: walk a log slice through the
   REAL trigger pipeline as a rehearsal (no uploads, refuses during a live fight).
 - **Pet buffs + range (#117/#119)** — own-pet landing attribution; buff-queue
