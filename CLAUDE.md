@@ -70,6 +70,23 @@ entry so the index stays trustworthy — a stale index causes exactly the wrong
 - **Working branches** (`claude/*`) — branch off `main`, merge back with a
   versioned `-m` message.
 
+**`beta` is `main` + the Mimic park, and must be RE-SYNCED after every
+graduation (2026-08-09).** Nothing ever flowed main→beta — agent/Mimic work
+landed on `beta`, graduations copied FILES to `main`, and the rest of the repo
+on `beta` just aged. It reached **79,199 lines behind** on bot/web/docs/tests.
+Two concrete costs: `git merge beta` into `main` would have DELETED the raid
+review, raid guide, officer console, `/me` surfaces, 60+ migrations and 50+ test
+files (so every graduation had to be a hand-picked file list, and picking wrong
+was silent); and `beta` carried **35 test files against main's 90**, which is
+why the `{s}`-eats-the-timestamp P1 rode through agent 3.5.44–3.5.53 unseen —
+`test/trigger-class.test.js` simply did not exist there. After cutting a stable:
+`git checkout beta && git reset --hard origin/main`, re-park
+`apps/mimic/package.json` one patch above the new stable, verify the agent +
+Mimic files are byte-identical to the beta being replaced, run the full gate,
+then `push --force-with-lease`. Discarding beta's history is safe **because
+every beta build's commit stays reachable through its release tag**
+(`v2.3.4-beta.1` … `v2.3.5-beta.1`) — check that before force-pushing.
+
 **CI runs on `beta` as of 2026-08-04 — it did not before, and that cost us a
 P0.** `test.yml` and `golden-log.yml` both declared `push: branches: [main,
 beta]`, but **GitHub runs the workflow file from the branch being pushed**, and

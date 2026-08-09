@@ -175,6 +175,28 @@ a literal alternation that cannot match inside a timestamp.
 does not exist on `beta`, so agent 3.5.44–3.5.53 shipped with nothing checking
 this. Same class of gap as the 2026-08-04 "CI runs on beta now" P0.
 
+## Branches — beta stops drifting (2026-08-09)
+
+**`beta` is `main` + the Mimic park, re-synced after every graduation.** Audited
+the divergence: 420 files differed outside Mimic/agent and **416 were pure
+staleness** — main ahead, beta never updated. Only four carried beta-only
+commits, and three of those (`CLAUDE.md`, `package.json`, `package-lock.json`)
+held nothing but obsolete text. The five beta-only files were pre-move copies of
+docs `main` had archived plus one deliberately-deleted deprecated command.
+
+So **nothing on `beta` would have broken `main`** — the danger ran the other
+way. Re-synced rather than reconciled, because there was nothing to reconcile.
+Procedure + rationale now in `CLAUDE.md` → Branches.
+
+**Force-pushing `beta` is safe specifically because release tags anchor the
+history.** Every beta build cut a tag (`v2.3.4-beta.1` … `v2.3.5-beta.1`)
+pointing at its commit, so the discarded branch history stays reachable. Verify
+that before any future force-push; it is what makes this reversible.
+
+**Version call: the graduation shipped as 2.3.4, not 2.4.0** (Hitya). The park
+IS the line's target — cut stable at whatever the line was parked at rather than
+re-deriving a number from how big the feature set feels.
+
 ## pq-companion
 
 **Study and reimplement; never copy.** The repo has no license — all rights
@@ -197,5 +219,7 @@ shipped from them (3.5.44–3.5.48).
 | Archived logs | drop out of the smart-backfill picker until moved back |
 | ~~Release naming~~ | **DECIDED 2026-08-08** — the tag/trigger/parser graduation is named **"Tag! You're spawn_id it!"** (Hitya). No standing theme system; names stay ad-hoc per release |
 | ~~Graduate "Tag! You're spawn_id it!"~~ | **DONE 2026-08-09** — Mimic 2.3.4 stable + agent 3.5.54 to the whole Windows fleet, by file-level promotion (never a branch merge: `beta` was 79k lines stale on bot/web/docs). Re-park beta at 2.3.5 |
-| Beta's test suite is a SUBSET of main's | The graduation caught a P1 that beta CI could never have seen — `test/trigger-class.test.js` does not exist on `beta`, so nothing checked the new trigger compiler against it for the 10 releases it shipped in. Treat "green on beta" as weaker evidence than "green on main" |
+| ~~Beta's test suite is a SUBSET of main's~~ | **FIXED 2026-08-09** by the resync — beta went from 35 test files to 90. It was 55 files short, which is why the `{s}` P1 shipped in ten releases. Re-sync after every graduation or it drifts back |
+| ~~beta ↔ main drift~~ | **FIXED 2026-08-09** — beta re-synced to `main` + the Mimic park (was 79,199 lines behind). Rule + procedure in `CLAUDE.md` → Branches |
+| `.gitignore` never graduates | Found 2026-08-09: `beta` had ignored `logsync.opendkp.json` (an OpenDKP **bearer token**), `.bidfamily.json` and `.plannedbids.json` since agent 3.3.100; `main` never picked them up because no graduation has ever carried a `.gitignore`. Nothing leaked (never tracked). Fixed on main + inherited by the resync — but the general lesson stands: **file-level graduation only moves the files you name** |
 | Other capped-query-as-a-set risks | The loot bug's shape is generic: 23 other `limit=####` queries in `index.js`. Nobody has audited whether another one feeds a *set* rather than a *list* |
