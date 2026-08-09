@@ -1734,6 +1734,31 @@ Sun/Wed/Thu window before touching the code.
    pattern; the old row is repointed at spell 1546's real landing text and its
    TTS now says "landed", not "fired". Full provenance:
    `DESIGN-di-callout.md` §0. Tonight's watch item is just: does it FIRE.
+1b. **🔴 `/restore` stamps `killed_at = now`, so 7 Vex Thal timers are ~23h
+   LATE (found 2026-08-09).** The bulk restore run on 2026-08-06 21:15–21:17 ET
+   wrote that clock as the kill time for every boss it touched, instead of the
+   real kill time. `/recoverkills` does it correctly (it reads
+   `encounters.started_at`), which is why the `killed_by='recovered'` rows are
+   right and the `killed_by='restored'` rows are not. **Cost: the board says
+   Vex Thal is up Thu 08-13 15:15; it is actually up Wed 08-12 15:09–17:27 —
+   before a raid-night start. As it stood we would have skipped a full clear.**
+   Affected (real kill → correct spawn): Thall Xundraux Diabo 15:47, Va Xi Aten
+   Ha Ra 16:02, Diabo Xi Va 16:16, Aten Ha Ra 16:22, Kaas Thox Xi Aten Ha Ra
+   (South) 16:49, Diabo Xi Va Temariel 17:16, Thall Va Xakra (South) 17:27 (all
+   Wed 08-12 ET). **Fix the CODE too** — `/restore` should take the kill time
+   from the encounter/message it restores, not `Date.now()`.
+   Two related facts worth keeping:
+   - **Thall Va Xakra was killed TWICE on 08-05** (21:09, 35 players; 23:27, 42
+     players) but only ONE timer was ever set, so the North twin sat with no
+     timer at all — which is why a stray board tap could "record" it. Undo then
+     cleared it: for a `kill`/`kill_board` action Undo calls `clearKill()` and
+     never restores, because `prevState` is hardcoded `null` on that path
+     (`index.js` kill_board `postAuditEntry`). **`prevState: null` in an audit
+     row is therefore NOT evidence that no timer existed** — only the
+     `kill_board` vs `unkill_board` action tells you that.
+   - **Diabo Xi Xin's timer (08-08 08:57, from the corrupted foreign encounter)
+     is CORRECT** and must not be "fixed": the mob genuinely died then, whoever
+     killed it. A foreign parse can still be a true respawn signal.
 2. **`[ext-pos]` shadow log for a REAL twin-add pull.** Gates on
    `engaged.length >= 2`, so it needs two tanks genuinely hit by two same-name
    mobs. Tunes `ext_pos_cluster_units` from measurement instead of the 25 guess.
