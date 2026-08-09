@@ -68,3 +68,43 @@ export function isReviewForeign(share: GuildShare): boolean {
   return share.players >= REVIEW_FOREIGN_MIN_PLAYERS
       && share.memberFrac < REVIEW_FOREIGN_MAX_MEMBER_FRAC;
 }
+
+// ── Off-hours raid-target kills ─────────────────────────────────────────────
+// Hitya 2026-08-09, after two morning pug raids landed on our board with
+// inflated rosters: *"That's outside of our raid window on a current era mob.
+// you can assume that those are not us."*
+//
+// Deliberately a REVIEW queue, not an auto-hide. Measured before building: 51
+// current-era fights since April start outside the window, and most are
+// genuinely ours — off-night Praesertum/Akheva runs at 70–100% roster. Hitya:
+// *"Some smaller fights can be done with less people on a different timeframe
+// (The Va`Dyn in Akheva Ruins comes to mind). Most of the fights that we do
+// during our raids should be off limits and shouldn't count us."*
+//
+// So the signal that matters is not "outside the window" alone — it is
+// "outside the window AND this is a mob we kill ON raid nights". A boss the
+// guild only ever kills during raids, showing up at 09:00 on a Saturday, is
+// the pug case. A boss that also gets killed off-night by six people is the
+// legitimate case, and it ranks below.
+export const OFFHOURS_MIN_PLAYERS = 10;
+
+const RAID_DAYS  = new Set(['Sun', 'Wed', 'Thu']);
+const SPILL_DAYS = new Set(['Mon', 'Thu', 'Fri']);   // post-midnight tail
+
+/** ET wall-clock weekday + minutes for an encounter start. DST-correct. */
+export function etPartsOf(iso: string): { day: string; minutes: number } {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
+    weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false,
+  }).formatToParts(new Date(iso));
+  const get = (t: string) => parts.find(p => p.type === t)?.value ?? '';
+  return { day: get('weekday'), minutes: (Number(get('hour')) % 24) * 60 + Number(get('minute')) };
+}
+
+/** True inside Sun/Wed/Thu 19:30 ET → 00:30 ET — same bounds as the deploy freeze. */
+export function startedInRaidWindow(iso: string): boolean {
+  const { day, minutes } = etPartsOf(iso);
+  if (RAID_DAYS.has(day) && minutes >= 19 * 60 + 30) return true;
+  if (SPILL_DAYS.has(day) && minutes < 30) return true;
+  return false;
+}
