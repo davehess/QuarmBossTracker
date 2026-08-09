@@ -112,14 +112,27 @@ try {
             else { 'node (unrelated?)' }
         $isLockHolder = ($lockHolderPid -and $pr.ProcessId -eq $lockHolderPid)
         $tag = if ($isLockHolder) { '  <== HOLDS THE UPLOADER LOCK' } else { '' }
-        $found += [pscustomobject]@{ Pid = $pr.ProcessId; Kind = $kind; Cmd = $cl }
+        # How many character logs this instance is tailing. This is the number
+        # that actually matters: an agent that watches 1 log uploads 1 log,
+        # and if THAT one holds the uploader lock, every other log on the box
+        # is being parsed for nothing.
+        $logCount = ([regex]::Matches($cl, '--log\s')).Count
+        $found += [pscustomobject]@{ Pid = $pr.ProcessId; Kind = $kind; Cmd = $cl; LogCount = $logCount }
         Write-Host "    [$kind] pid $($pr.ProcessId)$tag" -ForegroundColor $(if ($isLockHolder) { 'Green' } else { 'Gray' })
         # Pull the install directory out of the command line -- this is the
         # "where did this thing come from" answer.
         if ($cl -match '"?([A-Za-z]:\\[^"]*?)\\(wolfpack-logsync\\index\.js|start-logsync\.ps1|supervisor\.js)') {
             Dim "  from: $($Matches[1])"
         }
-        Dim "  $($cl -replace '\s+', ' ')"
+        if ($logCount -gt 0) { Info "  watching $logCount character log file(s)" }
+        # REDACT the bearer token before printing. The agent takes it as
+        # --token on the command line, so a raw dump of the command line puts
+        # the guild's API token on screen -- and into whatever file or
+        # screenshot this output gets pasted into.
+        $safe = $cl -replace '(--token|token=)(\s*)(\S+)', '$1$2***REDACTED***'
+        $safe = $safe -replace '\s+', ' '
+        if ($safe.Length -gt 200) { $safe = $safe.Substring(0, 200) + ' ...' }
+        Dim "  $safe"
     }
 } catch { Warn "Could not enumerate processes: $($_.Exception.Message)" }
 if ($found.Count -eq 0) { Info 'No node.exe / Mimic processes found.' }
@@ -209,6 +222,18 @@ if ($parserRunning -and $mimicRunning) {
     Info 'This is safe -- the uploader lock means only one of them posts, so nothing'
     Info 'is double-counted. But the parser is the one holding the lock, so Mimic sits'
     Info 'in read-only mode and its newer bundled agent is not the one uploading.'
+    # The coverage question. Mimic tails every log in the EQ folder; the
+    # standalone parser is usually launched against a single --log. When the
+    # single-log one holds the lock, every other character on this machine is
+    # being parsed locally and uploaded nowhere.
+    $pLogs = @($found | Where-Object { $_.Kind -eq 'PARSER (agent)' -and $_.LogCount -gt 0 } | Select-Object -First 1).LogCount
+    $mLogs = @($found | Where-Object { $_.Kind -eq 'MIMIC' -and $_.LogCount -gt 0 } | Select-Object -First 1).LogCount
+    if ($pLogs -and $mLogs -and $mLogs -gt $pLogs) {
+        Write-Host ''
+        Write-Host "    >> COVERAGE LOSS: the uploader (parser) is watching $pLogs log(s)," -ForegroundColor Red
+        Write-Host "       while Mimic is watching $mLogs and uploading none of them." -ForegroundColor Red
+        Write-Host "       Everything except those $pLogs character(s) is being parsed for nothing." -ForegroundColor Red
+    }
     Info ''
     Info 'To hand the job to Mimic:   .\whats-running.ps1 -StopParser'
 } elseif ($parserRunning) {
