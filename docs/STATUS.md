@@ -19,6 +19,13 @@ folly** — it's here.*
 > **Rule for future sessions:** don't start a new queue file. Open TODOs go on
 > the task board and, if durable, into the ledger here. Deep designs get their
 > own `DESIGN-*.md` and a row in the Document Map.
+>
+> **Decisions are a fourth thing and they go somewhere else** (2026-08-08): a
+> call, a default, a threshold, a "we don't do that" is appended to
+> **`docs/DECISIONS-<YYYY-MM-DD>.md`** the same session. That file's
+> "Open — read this first" table is what `.claude/hooks/session-digest.sh`
+> prints at SessionStart, so it is the first thing the next session reads;
+> anything that outlives the week also lands here and in `CLAUDE.md`.
 
 ---
 
@@ -52,6 +59,18 @@ folly** — it's here.*
 | `pop-raids-local.md` | Local-session playbook: capture PoTime slideshow stubs | Actionable pending local task |
 | `spell-levels-local.md` | Local-session playbook: fill `spell_level_seed` via PQDI scrape | Actionable; seed still used |
 | `pvp-capture-audit.md` | Reusable local runbook for PvP kill/assist recovery (`scripts/pvp-audit.js`) | Diagnostic runbook |
+| `DECISIONS-2026-08-07.md` | **The decision record** for the 2026-08-07→09 sessions: storage/threat, attendance, release process, Zeal `/tag`, loot bidding, the `{s}` P1, the beta re-sync — each as *the call · why · where it landed*, with an "Open — read this first" table at the bottom | Read FIRST via the SessionStart digest; newest `DECISIONS-*.md` wins |
+| `DESIGN-fight-timeline.md` | Fight timeline v2 — boss HP curve + MT/RAMP swimlanes + class/player highlighting; the data audit, the two paid-for correctness traps, and the two-tier storage model | Data layer BUILT 2026-08-09; chart unbuilt. ⚠ its 2026-08-06 "CORRECTION" block is WRONG and is flagged in-place |
+| `zeal-tag-spawn-id-collision.md` | Measured upstream bug report: why `/tag` spawn ids collide across zones, quantified, with N=5+ same-name evidence | Drafted, NOT sent (with `zeal-spawn-id-request.md`) |
+
+⚠ **The map is behind the folder** (2026-08-09): 15 entries under `docs/` have no
+row here — `AI-CONTRIBUTOR-BRIEF.md`, `RESEARCH-HELPER.md`,
+`HANDOFF-2026-07-20-opus.md`, `audit-mob-specials.md`, `DESIGN-80-raid-night-review.md`,
+`-81-raid-guide`, `-dedup-and-mob-serialization`, `-intentional-deaths`,
+`-live-raid-review`, `-mob-serialization`, `-multi-raid`, `-outcome-backfill`,
+`-wpqdi`, plus `pq-companion/` and `release-cards/`. Most are real
+and current; they were simply written faster than this table. Add a row when you
+next touch one rather than assuming a missing row means a missing doc.
 
 ### Archived 2026-07-17 → `archive/` (superseded; live bits lifted into the ledger)
 | File | Was | Why archived |
@@ -69,9 +88,208 @@ folly** — it's here.*
 ## The work ledger
 
 ### ✅ Done — major shipped features (not exhaustive; see git + roadmapData.ts)
-- **Mimic 2.3 line — NAMED "Quick Setup and Save Memory Update" by Uilnayar
-  (2026-08-04). Beta-only so far (2.3.0-beta.22 → .25, agent 3.5.29); NOT yet
-  graduated to stable.** Carries, in order shipped: the one-click fixers
+
+*Weekend of 2026-08-08/09 — full decision record in `DECISIONS-2026-08-07.md`.*
+
+- **Mimic 2.3.4 "Tag! You're spawn_id it!" — GRADUATED STABLE, whole Windows
+  fleet (2026-08-09; agent 3.5.54; beta re-parked at 2.3.5).** Closes the tag /
+  trigger / parser line: `/tag` spawn-id capture, the EQLogParser trigger-parity
+  set (agent 3.5.52 — multiple warning thresholds, captured durations, timer key
+  capture, visible recast timer, exclude patterns, colour/pin/display-threshold),
+  and the five pq-companion-derived parser fixes (3.5.44–3.5.48). Its bot-side
+  half had already shipped straight to main on 2026-08-07 — **bot 3.1.31**, where
+  the tag upload cap was keeping the OLDEST 24 tags and dropping the boss.
+  **Version call (Hitya): shipped as 2.3.4, not 2.4.0 — the park IS the
+  line's target**, cut stable at whatever the line was parked at rather than
+  re-deriving a number from how big the feature set feels. Named by Hitya; there
+  is no standing theme system, names stay ad-hoc per release.
+  - **Graduation was FILE-LEVEL, never a branch merge** — `beta` was 79,199 lines
+    behind on bot/web/docs and a merge would have deleted live surfaces.
+  - ⚠ **A graduation push must put the Mimic version bump in the LAST commit** —
+    `release-mimic.yml` diffs `HEAD` vs `HEAD~1`, so a docs commit landing after
+    the bump makes the build a no-op *with a green check*. Cost us the v2.3.3
+    stable build, recovered by `workflow_dispatch`.
+- **Agent 3.5.54 — P1: a leading `{s}` in an unanchored trigger was eating the
+  timestamp (2026-08-09).** When `compileTriggerPattern` replaced
+  `_translateDotNetRegex`, `{s}` went from an allow-list char class (which could
+  not match `[`, so the engine skipped the `[Sun Aug 02 21:10:45 2026] ` prefix
+  by itself) to `.+?`, which consumes it happily at index 0. **This was the
+  RECOMMENDED shape** — CLAUDE.md tells authors to write patterns unanchored,
+  because a bare `^` anchors before the timestamp and can never fire. Live
+  casualty: the **Razor Fang** guild trigger. A timestamp inside a name capture
+  breaks every name-keyed consumer at once — charm-pet suppression stops
+  recognising your own pet, TTS speaks the timestamp, and a captured timer key
+  mints a new bar per fire. Fix: `_expandTriggerTokens` reports
+  `leadingWildcard` and `compileTriggerPattern` prepends the same OPTIONAL
+  `^(?:<ts>)?` prefix the anchor rewrite uses; `{c}` is exempt (literal
+  alternation, cannot match inside a timestamp). Pinned by
+  `test/trigger-class.test.js`.
+  **Found ONLY because the graduation ran main's suite** — that test file does
+  not exist on `beta`, so agent 3.5.44 → 3.5.53 shipped with nothing checking it.
+  Same class of gap as the 2026-08-04 "CI runs on beta now" P0.
+- **`beta` re-synced to `main` + the Mimic park — and that is now the standing
+  rule (2026-08-09).** Nothing had ever flowed main→beta, so beta had aged to
+  **79,199 lines behind**. Audited before touching it: 420 files differed outside
+  Mimic/agent and **416 were pure staleness**; the four with beta-only commits
+  held nothing but obsolete text. So there was nothing to reconcile —
+  `git checkout beta && git reset --hard origin/main`, re-park
+  `apps/mimic/package.json` one patch above the new stable, verify the agent +
+  Mimic files are byte-identical to the beta being replaced, run the gate,
+  `push --force-with-lease`. **Force-pushing is safe specifically because every
+  beta build cut a release tag** (`v2.3.4-beta.1` … `v2.3.5-beta.1`) that keeps
+  the discarded history reachable — verify that before any future force-push.
+  Effect: beta's test suite went from **35 files in `test/` to 90**, which is
+  exactly why the `{s}` P1 rode through ten releases unseen. Procedure +
+  rationale now in `CLAUDE.md` → Branches.
+  - **Lesson that outlives the resync: file-level graduation only moves the files
+    you NAME.** `.gitignore` had never graduated, so `main` never picked up
+    beta's ignores for `logsync.opendkp.json` (which holds an OpenDKP **bearer
+    token**), `.bidfamily.json` and `.plannedbids.json`. Nothing leaked — they
+    were never tracked — and main now ignores them.
+  - ⚠ **PR #78 is a live hazard**: a standing `beta`→`main` PR whose post-resync
+    diff is exactly one line, the Mimic version park. Merging it sets `main`'s
+    Mimic to 2.3.5 and cuts an unintended stable release. It has no informational
+    value now that beta *is* main — close it.
+- **Loot bidding — the "already won" set, and a UX round (2026-08-09; bot 3.1.33
+  on main, agent 3.5.53).**
+  - **bot 3.1.33 — a capped DISPLAY query was doubling as a SET.** `bid-history`
+    seeded the already-won set from `wins`
+    (`opendkp_loot … order=fetched_at.desc&limit=100`). The Hitya/Melting/Canopy
+    family has **187 awards, so 87 read as unwon** and came back as "bid on but
+    not yet won" and as RECENT MISSES; the three items reported sat at rows 101,
+    120 and 184. Worse, `fetched_at` is the MIRROR SYNC time, so *which* 100
+    survived would have reshuffled on every weekly sync. The won-set is now its
+    own uncapped `item_id`-only sweep and `wins` orders by `raid_id.desc` (real
+    award order). Pinned by `test/loot-won-set.test.js`. **The shape is generic —
+    see the open item on the other 23 `limit=####` queries.**
+  - **agent 3.5.53 — UX.** Nobody types their own main and alts, so the panel
+    adopts the family **from OpenDKP** on sign-in (wholesale when empty, additive
+    when not — a hand-typed name is never removed, the chosen main never demoted;
+    `⟲ from OpenDKP` is the explicit replace path), with a `famDirty` guard.
+    Loot history is **collapsed by default and re-hides on every load** — the
+    dashboard gets screen-shared during raids and a visible wishlist is a bidding
+    tell. ✕ dismissals are **local-only** (`logsync.lootdismiss.json`): the
+    wishlist is INFERRED from OpenDKP bid history, so there is nothing upstream
+    to delete, and "restore all" always reverses it. The expansion filter opens
+    on the **current** expansion, derived from the newest award rather than
+    hard-coded, so it advances by itself when PoP unlocks.
+- **Web 1.1.23 → 1.1.35 — the beta mirror, and the page that explains the
+  platform (2026-08-08/09).**
+  - **`b.wolfpack.quest`** (Hitya): put a `b.` in front of any page to see it as
+    it stands on `beta`. Beta banner linking back to the same path on production,
+    `noindex, nofollow` (load-bearing — same pages on another host is duplicate
+    content), "(beta)" titles; `NEXT_PUBLIC_IS_BETA` comes from
+    `VERCEL_GIT_COMMIT_REF` at BUILD time, deliberately not a Host-header check
+    (reading headers in the root layout forces every page dynamic). Verified by
+    building the app both ways and then against the live deployment, not by
+    reasoning. **The first pass got this wrong in an instructive way** — it
+    disabled beta web builds entirely; Vercel was already building beta, and the
+    waste was never the build, it was that the output sat on an unguessable
+    preview URL. Turning the build off removed a capability; naming it turned the
+    same build into a review tool. Wiring (incl. the blank-Git-Branch trap) is in
+    `CLAUDE.md` → Branches; the DNS/registrar step is human-only — **no Porkbun
+    integration exists** and cloud sessions cannot reach the API or read the zone.
+  - **`/about`** — the walkthrough page, with live numbers and three verified
+    overlay demos (Peopleslayer, the Ashieron DA, the CH chain, Shei Vinitras).
+    Headline stats: OpenDKP attendance **avg 49 · biggest 67 · 132 raids · 21
+    parsers in the busiest night**; since-April combat **650 fights · 288.3M
+    damage · 88 bosses**; **612 PvP broadcasts**. **`/shortabout`** tells the same
+    build-up story as one phone-sized scroll.
+  - **`about_stats()`** (migration `20260809040000`) serves all of it in one round
+    trip, and the migration carries the lesson: nine PostgREST counts folded into
+    one function of exact counts was **still 32,398 ms** (`count(*)` is a full
+    scan across ~1M rows); **~200 ms** came from changing *what is asked*
+    (`pg_class.reltuples` for big-table display counts), not from folding calls.
+    Three measurement rules are pinned in the same file — raid size comes from
+    **OpenDKP attendance, not parses** (the parse-derived figure read ~36 because
+    `encounter_players` only sees roster-resolvable characters, and carries other
+    guilds' players in contested content); parser coverage counts **people, not
+    characters** (distinct `uploaded_by_discord_id` = 21, distinct
+    `contributor_character` = 23); and **nothing is a "right now" count** — the
+    guild raids Sun/Wed/Thu, so a live figure read at 3am Saturday makes a
+    healthy platform look dead.
+- **Fight timeline v2 — the data layer is BUILT and validated; the chart is not
+  (2026-08-09). Spec + audit: `DESIGN-fight-timeline.md`.**
+  - `encounter_timeline(uuid, step)` in migration `20260809030000` — shipped as a
+    FUNCTION rather than a view so the encounter filter lands *before* the jsonb
+    expansion (the table is 557k rows / 458 MB).
+  - **Root cause of the broken snapshot→encounter binding, found and trivial:
+    NAME FORMAT.** Only **96 of 3,651** distinct boss fights in 14 days had any
+    snapshot bound (**2.6%**). `encounters` names a boss through
+    `eqemu_npc_types.name` — underscored and sometimes `#`-prefixed
+    (`Kaas_Thox_Xi_Ans_Dyek`, `#Tukaarak_the_Warder`) — while the agent writes
+    `boss_name` with spaces, so equality matched **only single-word bosses**
+    (Talendor, Severilous, Faydedar, Kelorek\`Dar). That is exactly the set that
+    looked bound, which is how a plain bug read as a backlog. Normalising
+    `_`→space + stripping `#` took the last raid's top twelve fights from ZERO
+    snapshots each to full coverage. ⚠ The design doc's 2026-08-06 "CORRECTION"
+    block (*"the live pipeline already binds — do not build around the window
+    join"*) is **wrong** and is flagged in place; it sampled the single-word
+    bosses.
+  - **Two correctness traps already paid for:** never `max()` per-bucket deltas
+    across uploaders (breaks the telescoping property — over-counts ~2.4×; pick
+    ONE canonical uploader per player), and never count the first sample in a
+    window as a delta (it is a BASELINE — one uploader's series began 52 minutes
+    before the encounter and alone read 311% of truth).
+  - **IN FLIGHT 2026-08-09, being live-tested at tonight's Ssra raid:** the agent
+    adds `ramp` to the `per_player` payload (**beta 3.5.55**) — the RAMP swimlane
+    is the only part of the sketch with no data at all — and the bot resolves
+    **`encounter_id` at encounter close (3.1.34)**, which is what removes the
+    repeat-pull ambiguity the read-side window join can never fix. Until that
+    lands, do not present the chart as authoritative for repeat-pull fights
+    (three of the ten biggest fights reconstruct at 20.7% / 63.6% / 189.6% of
+    truth, and all three were pulled several times inside the window).
+- **Threat-snapshot storage + the attendance denominator (2026-08-08; bot
+  3.1.32, migrations `20260808030000`/`040000`/`050000`).**
+  - **Snapshots gated to raid activity:** keep one when it names a boss, OR it is
+    raid time and 8+ players are in the fight. Trash pulls during a raid are
+    deliberately IN; off-hours duo camping is OUT (measured at 54% of the payload,
+    answering nothing). Named bosses are kept regardless of the clock, so off-night
+    kills still count. `raid_night_id` now rides both the snapshots and the
+    roll-up, on the platform's 06:00-ET rollover, so a 00:30 Thursday pull belongs
+    to Wednesday's raid.
+  - **Unchanged scoreboards are no longer stored** — consecutive snapshots were
+    routinely byte-identical six seconds apart. Bot-side content hash over
+    **SORTED** keys: the agent rebuilds `per_player` per upload and raw
+    `JSON.stringify` order varies, so hashing unsorted would never have hit.
+  - **⚠ The roll-up keys on `(boss_name, started_at)`, NEVER `encounter_id`** —
+    that column is assigned at fight END by `find_or_create_encounter`, so it is
+    NULL on 99.3% of snapshots. A first attempt keyed on it silently summarised
+    0.7% of the table and missed King Tormax, Aten Ha Ra and Diabo Xi Xin Thall.
+    **If you ever join threat data on `encounter_id`, you are reading a 0.7%
+    sample.**
+  - **Night-grain roll-up for trash:** per-(raid night, character) instead of
+    per-pull — **114,444 rows → 1,087**, folding 104,846 pulls; table **31 MB →
+    4.8 MB** (~49 MB/yr), now safe to retain indefinitely. Bosses stay per-fight.
+    Trash history starts 2026-07-09; the first week of July is boss-only (the
+    backfill timed out and the midnight job only covers 48h).
+  - **RA is measured against ticks the member could have attended.** The
+    denominator is now per-family and floored at that family's first tick
+    (`GREATEST(window_start, first_attended)` — the same rule OpenDKP applies),
+    for every window. Previously every member was measured against all 1,492
+    guild ticks ever, so everyone who joined after the guild started was
+    under-reported, worst for the newest people: Gonner went **64% → 100%**,
+    which matches ground truth (he has never missed a tick). Note the two roster
+    counts are two different right answers — the leader's sheet filters to ≥50%
+    RA over 30 days (41 people), ours counts every raiding rank (64); Dant and
+    Denniker sit at exactly 50%, which is where 41-vs-42 comes from.
+  - **Chat history stays in Postgres** — not moving `chat_messages` to object
+    storage; ~79 MB/year is a decade from mattering.
+  - Shipped the same day: **project memory** — `docs/DECISIONS-<date>.md`, the
+    `.claude/hooks/session-digest.sh` SessionStart digest, and `/recall`.
+- **Attribution normalised to Hitya (2026-08-09) — 523 mentions across 160
+  files.** Every decision, bug report, sketch and live-test result credited to
+  Uilnayar, Canopy, Rockin, vj, Hopeya, Utoh or Melting is **Hitya** — one
+  person, many characters. The ONLY genuine other names are the `feedback`-table
+  submitters (`Wabumkin/Adiwen`, `Jankzer`, `Ashieron/Donaldus/Oravayne`), who
+  keep theirs. Character names in fixtures, golden logs and worked examples were
+  deliberately NOT touched — this was an attribution sweep, not a rename. Rule +
+  the complete feedback list live in `CLAUDE.md`; check that table rather than
+  trusting an existing comment, since a stale comment is exactly what was wrong.
+- **Mimic 2.3 line — NAMED "Quick Setup and Save Memory Update" by Hitya
+  (2026-08-04). GRADUATED to stable on 2026-08-09 as part of 2.3.4 (see the top
+  of this section); it ran beta-only from 2.3.0-beta.22 → .25 (agent 3.5.29).**
+  Carries, in order shipped: the one-click fixers
   (Windows Defender EQ+Mimic exclusions, Zeal install/update, clock resync) and
   the Settings-hang fixes that made setup quick (non-local drive skip, learned
   dead ends, persistent log-file verdict cache); then the memory work — overlay
@@ -81,8 +299,9 @@ folly** — it's here.*
   until it matched Task Manager. Also here: the eqgame.exe identity check (an
   EQLegends client was being tracked as Quarm) and `--wp-window=` tags so Task
   Manager's Command line column can name each renderer. Details per feature in
-  `docs/HOW-ITS-BUILT.md` (five 2026-08-04 entries). **Graduation to stable is
-  Hitya's call — do not cut it unprompted.**
+  `docs/HOW-ITS-BUILT.md` (five 2026-08-04 entries). *(The standing rule that
+  graduation is Hitya's call still holds for every future line — it was
+  exercised, not retired, when 2.3.4 was cut on 2026-08-09.)*
 - **#141 zone-scope the cross-client Target Info / Mob Info merge — DONE
   (2026-07-22, bot 3.0.226 on main + agent 3.4.4 beta; Mimic parked 2.0.2; web
   1.0.265 roadmap/docs).** Field bug (live-verified): a raider in **The Wakening
@@ -1351,8 +1570,10 @@ voting + blocked-on-evidence submissions) shows a canonical `#` per item.
 Items that already had ledger numbers keep them (#56, #68–70, #75, #80, #81,
 #84, #86, #87, #114, #142, #144, #156, #169). These were UNNUMBERED and got
 minted here — the numbering is now owned by this ledger, next free is
-**#208** (#200–#207 minted 2026-08-04 for the death/timestamp follow-ups and
-the callout designs; they're written up in the Open TODO section, not here):
+**#209** (#200–#207 minted 2026-08-04 for the death/timestamp follow-ups and
+the callout designs, and **#208** was taken the same day by the item-page
+under-reporting fix; all of them are written up in the Open TODO section, not
+here — corrected 2026-08-09, this line still read "#208"):
 - **#190** dead ^-anchored guild triggers batch (rn-buster-audit follow-up) —
   **MEASURED + FIX PREPARED 2026-08-04: `docs/RUNBOOK-dead-triggers.md`.**
   **37 of 109 enabled triggers can never match a log line**, including the eight
@@ -1479,7 +1700,7 @@ fight was too short to flush, or the encounter split.
 
 ### 🔴 Raid-night queue — opened 2026-08-05/06 (Vex Thal)
 
-Uilnayar, 2026-08-06: *"I'm mostly queueing things up to work on while we have
+Hitya, 2026-08-06: *"I'm mostly queueing things up to work on while we have
 live data to work on."* So this section is split by WHAT IS PERISHABLE. The fix
 is almost never the scarce part — the OBSERVATION is. Anything under "capture
 next raid" cannot be reproduced cold and should be grabbed on the next
@@ -1493,6 +1714,14 @@ Sun/Wed/Thu window before touching the code.
    — the spawn id is real and arriving. Then it expired mid-fight. Raise
    `_TAG_FRESH_MS` (agent) AND `ext_tag_fresh_sec` (bot tuning, live-settable);
    the agent expires first, so the bot knob alone will not help.
+   ⚠ **Before blaming capture, check the tagger's Zeal settings** (2026-08-07):
+   `/tag suppress on` drops the broadcast before it is ever written to the log
+   (cost us every capture from one raider for a whole session — their own tags
+   never reached their own agent), and `/tag prettyprint on` rewrites the line to
+   `text => mob` and **strips the spawn id**, degrading the tag to a name we
+   already had. `/tag local` never broadcasts, and the server rate-limits chat
+   (~8/min). **The nameplate arrow is NOT evidence the broadcast happened.** Both
+   settings are warned about on the Mimic dashboard's tag-capture card.
 1. **DI-fired trigger — BLOCKED, needs one real log line.** `guild_triggers`
    "Divine Intervention fired" is enabled with an INVENTED pattern:
    `(?<tank>[A-Z][\w']+)(?:'s wounds heal|is filled with divine|has been graced with divine intervention)`.
@@ -1555,15 +1784,32 @@ Sun/Wed/Thu window before touching the code.
    `.limit(3000)` and silently gets 1000 — it orders `cast_at DESC` so it takes
    the NEWEST, but a raid making 11k casts in 2h means inference may span only
    minutes.
-10. **`encounter_threat_snapshots` retention.** 411 MB / 491k rows / ~65 MB a
-   week (~3.4 GB/yr) to describe 1,531 encounters. Hot-tier retention is one
-   policy, needs no code, and stops the growth immediately. Full two-tier model
-   + measured 14.5× roll-up in `docs/DESIGN-fight-timeline.md`.
+10. **`encounter_threat_snapshots` retention — PARTLY DONE 2026-08-08, the raw
+   tier is still untouched.** Shipped (bot 3.1.32): raid-activity gating,
+   unchanged-scoreboard suppression, and the night-grain roll-up that took trash
+   from 114,444 rows → 1,087 (31 MB → 4.8 MB, ~49 MB/yr). **Still open: raw
+   retention, at its default 120 days** — and the comment justifying that number
+   estimates ~7 MB/week against an actual ~90 MB/week, so the decision was never
+   really made. Hitya has chosen a **2-month hot window** for the two-tier model
+   (~730 MB steady state, vs ~170 MB at the originally-proposed 14 days) — *"I'd
+   like to keep 2 months full before tuning down."* Order: hot-tier retention
+   FIRST (one policy, no code), roll-up + cold `encounter_series` next, and **do
+   not delete anything before the roll-up is verified against the raw rows for
+   the same fight**. Full two-tier model + the measured 14.5× in
+   `docs/DESIGN-fight-timeline.md`.
 11. **Duplicate index:** `buff_casts_target_idx` and
     `buff_casts_target_recent_idx` are byte-identical
     (`guild_id, target, cast_at DESC`). Drop one — pure write cost.
-12. **Fight timeline v2** — designed, not built. `docs/DESIGN-fight-timeline.md`.
-    The only capture change is one `ramp` field in the threat-snapshot payload.
+12. **Fight timeline v2 — DATA LAYER DONE 2026-08-09; the CHART is the remaining
+    work.** `encounter_timeline()` ships in migration `20260809030000`, the
+    binding root cause (name FORMAT) is found and fixed at read time, and the two
+    capture-side pieces are in flight tonight (agent `ramp` on beta 3.5.55, bot
+    `encounter_id`-at-close 3.1.34). What is left: the chart on `/parses/[id]`,
+    and **one decision from Hitya** — the sketch says class toggles *or* a
+    searchable damage-dealer list; recommendation is BOTH against one selection
+    model (a set of highlighted characters, class buttons as bulk selectors over
+    that set), so there is one highlight mechanism and no second code path.
+    `docs/DESIGN-fight-timeline.md`.
 13. **Same-name discriminator via damage-TAKEN ratio — MEASURED, not built.**
     `docs/DESIGN-samename-took-ratio.md`. Tested against the real Va Xakra twin
     adds (encounter 7dfe09b3, 2026-08-06): two mobs show a second-highest taker
@@ -1576,30 +1822,58 @@ Sun/Wed/Thu window before touching the code.
     connect streams as a K signal, plus recording mobs that hit our PETS —
     `recentTankHits` drops them today because `_isPlayer` rejects multi-word
     names, so a charm pet tanking contributes zero evidence.
-15. **Rewrite `docs/zeal-spawn-id-request.md` against `named_pipe.cpp`.** The
-    current ask targets the gauges, the hardest possible surface. See the
-    corrected CLAUDE.md scope-boundary note: `Entity.SpawnId` is one unwritten
-    line away from data the pipe already sends.
+15. **Rewrite `docs/zeal-spawn-id-request.md` against `named_pipe.cpp`, then
+    SEND both asks.** The current ask targets the gauges, the hardest possible
+    surface. See the corrected CLAUDE.md scope-boundary note: `Entity.SpawnId` is
+    one unwritten line away from data the pipe already sends. Its sibling —
+    `docs/zeal-tag-spawn-id-collision.md`, the measured report that `/tag` spawn
+    ids are per-zone and structurally collide (ids allocated in spawn order from
+    a low base in every zone; 14 named NPCs inside ids 11–45 in one zone alone) —
+    is also **drafted and unsent** as of 2026-08-07. Neither has been sent to
+    upstream; Hitya's read is that the ask has zero traction, so the end-around
+    (#194) is the plan of record either way.
+
+### 🧾 Still open after the 2026-08-08/09 weekend
+*(The short list a Monday session should read. Full reasoning per item is in
+`DECISIONS-2026-08-07.md`; the deeper queues are the sections above and below.)*
+
+| Item | State / next step |
+|---|---|
+| **PR #78** | ⚠ **Close it.** Standing `beta`→`main` PR; post-resync its diff is one line — the Mimic version park. Merging cuts an unintended stable release. No informational value now that beta *is* main |
+| **Kill switches untested** | The #74/#118 control plane (`flag_agent_kill`, `min_agent_ver_num`, the shed flags) has never been exercised in the field. Shipped as a conservative v1 pending Hitya's sign-off — a switch nobody has pulled is not a switch you can pull mid-raid |
+| **Threat raw retention** | Untouched at 120 days; the justifying comment is off by ~13× (~7 MB/week claimed vs ~90 MB/week actual). Hitya has chosen a 2-month hot window — see Cold work #10 |
+| **`opendkp_raids` / `_auctions` rewrite** | Still re-upserting themselves every sync (1.5M and 3.7M updates). Decision made, NOT implemented: re-upsert a closed raid only when its upstream `Version` moves; ticks/DKP/attendance corrections still flow |
+| **Other capped-query-as-a-set risks** | The bot 3.1.33 loot bug's shape is generic — **23 other `limit=####` queries in `index.js`**, none audited for whether they feed a *set* rather than a *list*. Cheap sweep, real payoff |
+| **Archived logs vanish from the backfill picker** | Log archiving is ON by default at 500 MB (idle 15 min, `WP_LOG_ROTATE_MB=0` disables) and archives rather than culls — but an archived log drops out of the smart-backfill picker until it is moved back. Archive, never cull, was the point |
+| **Zone map overlay** | Blocked on a 1–2h **in-game coordinate spike**: the docs say Zeal transposes x/y, the dashboard path disagrees, and only a live client settles it. `docs/pq-companion/03-zone-maps.md` |
+| **Report 04 P3–P5** | `docs/pq-companion/04-combat-parse-accuracy.md`, the three unshipped items: P3 bystander taunt-emote → per-player taunt threat (a `says` line — belongs in `PRIORITY_KEEP_PATTERNS`, watch the privacy filter), P4 wildcard-verb fallback for incoming damage (**must stay LAST** among damage patterns), P5 real hate for non-damaging detrimentals (`maxHP/15`) + miss hate + backstab cap |
+| **Fight timeline chart** | Data layer done; chart unbuilt, and it needs one call from Hitya (class toggles vs player search — recommendation: both, one selection model). Two in-flight pieces being live-tested tonight: agent `ramp` (beta 3.5.55), bot `encounter_id` at close (3.1.34) |
+| **Both Zeal upstream asks unsent** | `zeal-spawn-id-request.md` still aims at the gauges (rewrite against `named_pipe.cpp` first) and `zeal-tag-spawn-id-collision.md` has never been sent. See Cold work #15 |
+| ~~Beta adoption near zero~~ | Addressed 2026-08-09 by graduating rather than piling onto beta: 9 beta builds shipped 2026-08-07 and only stable-channel agents ever reported. **Re-check after the 2.3.5 re-park** — if beta stays empty, the answer is shorter beta lines, not more of them |
 
 ### ⏳ Open TODO — carried forward from the retired docs
 *(These are durable items; the active wave order is in `DESIGN-platform-queue.md`.)*
 
 **Fight timeline v2 — boss HP curve + MT/RAMP lanes + class/player highlighting.
-DESIGNED, NOT BUILT. Full spec + data audit: `docs/DESIGN-fight-timeline.md`.**
+DATA LAYER BUILT 2026-08-09, CHART NOT BUILT. Full spec + data audit:
+`docs/DESIGN-fight-timeline.md`; what shipped is in the Done section above.**
 Hitya's napkin sketch 2026-08-06. The load-bearing finding is that the series
 already exists: `encounter_threat_snapshots` holds **490,850 rows across 36,784
 fights** of cumulative per-player `dmg`/`took`/`tookMax`/`pet_owner`, at a
 measured 3.5–6.4s cadence. The area chart, the class filtering AND the MT lane
 (argmax of Δ`took` per interval) are all derivable from it with no new capture.
-Two gaps only: (1) `rampageDmg` is computed by the threat tracker but never
-serialised into `per_player`, so the RAMP lane needs one added field rather than
-an inference; (2) 489,844 of 490,850 snapshot rows have `encounter_id IS NULL` —
-they carry `(boss_name, started_at)` instead, so binding needs a window join at
-read time plus resolution at ingest. Do not re-derive this audit; it is in the
-design doc.
+Both original gaps are now closing: (1) `rampageDmg` is computed by the threat
+tracker but was never serialised into `per_player` — the agent adds `ramp` on
+beta 3.5.55 (in flight 2026-08-09), so the RAMP lane stops being an inference;
+(2) snapshots were effectively unbound to encounters — **root cause was name
+FORMAT, not a backlog** (underscored/`#`-prefixed catalog names vs the agent's
+display names, so equality matched only single-word bosses; 2.6% of fights bound).
+Read-time normalisation ships in `encounter_timeline()`; ingest-time binding is
+bot 3.1.34, in flight. Remaining: the chart itself. Do not re-derive this audit;
+it is in the design doc.
 
 **#208 Item pages under-reported — and NO DROP rendered BACKWARDS. DONE
-(2026-08-04, web 1.1.8).** Found by Uilnayar comparing `/db/item/8733` with
+(2026-08-04, web 1.1.8).** Found by Hitya comparing `/db/item/8733` with
 pqdi.cc. Every missing field was already in `eqemu_items`; it was a rendering
 gap, not a sync gap.
 - **`nodrop` is INVERTED** — the column means "can be traded", so `false` =
