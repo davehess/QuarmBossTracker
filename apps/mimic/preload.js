@@ -353,6 +353,10 @@ contextBridge.exposeInMainWorld('mimic', {
   // hits GitHub; installUpdate downloads + drops Zeal.asi + uifiles/ into the
   // EQ folder (backs up what's there, refuses while EQ is running).
   // Windows Defender exclusions — opt-in, one UAC prompt, EQ + Mimic folders.
+  // Standalone Parser (Parser.bat) left over from before Mimic — detect it and
+  // retire it so Mimic's bundled agent stops sitting in read-only mode.
+  parserStatus:          () => ipcRenderer.invoke('parser-status'),
+  parserRetire:          () => ipcRenderer.invoke('parser-retire'),
   defenderStatus:        () => ipcRenderer.invoke('defender-status'),
   defenderAddExclusions: () => ipcRenderer.invoke('defender-add-exclusions'),
   // Windows clock: read the w32time service state, and (elevated) fix it.

@@ -7377,6 +7377,188 @@ function _defenderPaths() {
   return out;
 }
 
+// ── Standalone Parser detection + retirement ───────────────────────────────
+// Mimic BUNDLES the agent, so a machine that used to run Parser.bat ends up
+// with two agents. That is safe — they elect ONE uploader through a lock in
+// %TEMP% — but the loser shows "Read-only mode: parser (localhost:7777) is the
+// active uploader", and since the standalone install auto-starts at every
+// login via the "WolfpackParser" scheduled task, it wins the race forever.
+// Mimic's bundled agent is then permanently the read-only one, running a build
+// the user cannot update from here.
+//
+// These two handlers let Settings say "you still have the old parser" and
+// retire it in one click. Nothing under the EQ folder is deleted — re-running
+// Parser.bat brings it all back — and no elevation is needed: the task was
+// registered by this user for this user, and the process runs as this user.
+const _PARSER_TASK_NAME = 'WolfpackParser';
+
+// One PowerShell round trip; JSON back. Kept read-only so Settings can poll it.
+// `excludeDir` is Mimic's own agent folder — its bundled agent must never be
+// mistaken for the standalone one (both are "some index.js under node.exe").
+// The parser-matching predicate, shared by the probe and the cleanup so they
+// can never disagree about what counts as "the standalone parser".
+//   * three entry points cover every way it starts: the agent itself, the
+//     PowerShell launcher, and the supervisor that restarts it;
+//   * $exclude is Mimic's own agent folder — its bundled agent is also
+//     "an index.js under node.exe" and must never match.
+const _PARSER_MATCH_PS = `
+$exclude = %EXCLUDE%
+function Get-WpParserProcs {
+  @(Get-CimInstance Win32_Process | Where-Object {
+    $_.CommandLine -and
+    ($_.CommandLine -match 'wolfpack-logsync\\\\index\\.js' -or
+     $_.CommandLine -match 'start-logsync\\.ps1' -or
+     $_.CommandLine -match 'supervisor\\.js') -and
+    ($exclude -eq '' -or $_.CommandLine -notlike ('*' + $exclude + '*'))
+  })
+}
+$ParserShortcuts = @(
+  (Join-Path ([Environment]::GetFolderPath('Desktop'))  'Parser.lnk'),
+  (Join-Path ([Environment]::GetFolderPath('Programs')) 'Parser.lnk'),
+  (Join-Path ([Environment]::GetFolderPath('Startup'))  'Parser.lnk'))
+`;
+
+function _parserProbeScript(excludeDir) {
+  return `
+$ErrorActionPreference = 'SilentlyContinue'
+${_PARSER_MATCH_PS.replace('%EXCLUDE%', _psq(excludeDir || ''))}
+$lockFile = Join-Path $env:TEMP 'wolfpack-logsync-uploader.json'
+$lockPid = 0; $lockClient = ''; $lockPort = 0; $lockVer = ''
+if (Test-Path $lockFile) {
+  $lock = Get-Content $lockFile -Raw | ConvertFrom-Json
+  if ($lock) {
+    $lockPid    = [int]$lock.pid
+    $lockClient = [string]$lock.client
+    $lockPort   = [int]$lock.webPort
+    $lockVer    = [string]$lock.agentVersion
+  }
+}
+$task      = Get-ScheduledTask -TaskName '${_PARSER_TASK_NAME}'
+$hasTask   = ($null -ne $task)
+$taskState = ''
+if ($hasTask) { $taskState = [string]$task.State }
+$procs = @(Get-WpParserProcs | ForEach-Object {
+  $dir = ''
+  if ($_.CommandLine -match '"?([A-Za-z]:\\\\[^"]*?)\\\\(wolfpack-logsync\\\\index\\.js|start-logsync\\.ps1|supervisor\\.js)') { $dir = $Matches[1] }
+  [pscustomobject]@{ procId = [int]$_.ProcessId; dir = $dir }
+})
+$sc = @($ParserShortcuts | Where-Object { Test-Path $_ })
+[pscustomobject]@{
+  procs      = $procs
+  hasTask    = $hasTask
+  taskState  = $taskState
+  shortcuts  = $sc
+  lockPid    = $lockPid
+  lockClient = $lockClient
+  lockPort   = $lockPort
+  lockVer    = $lockVer
+} | ConvertTo-Json -Compress -Depth 4
+`.trim();
+}
+
+// Run a PowerShell script from a TEMP FILE rather than -Command. These scripts
+// are multi-line and full of quotes, `$`, and regex backslashes; passing that
+// as one command-line argument is a well-known way to ship a quoting bug (the
+// elevated helper below takes the same approach for the same reason).
+function _runPs(script, timeout = 20000) {
+  return new Promise((resolve) => {
+    let file = null;
+    try {
+      const { execFile } = require('child_process');
+      file = path.join(app.getPath('temp'), `wp-mimic-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.ps1`);
+      fs.writeFileSync(file, script, 'utf8');
+      execFile('powershell.exe',
+        ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', file],
+        { timeout, windowsHide: true },
+        (err, stdout) => {
+          try { fs.unlinkSync(file); } catch { /* best effort */ }
+          resolve(err && !stdout ? null : String(stdout || ''));
+        });
+    } catch {
+      if (file) { try { fs.unlinkSync(file); } catch { /* best effort */ } }
+      resolve(null);
+    }
+  });
+}
+
+ipcMain.handle('parser-status', async () => {
+  if (process.platform !== 'win32') return { ok: false, unsupported: true, present: false };
+  const out = await _runPs(_parserProbeScript(AGENT_DIR()));
+  if (out === null) return { ok: false, present: false, error: 'Could not query Windows.' };
+  let d;
+  try { d = JSON.parse(out.trim() || '{}'); } catch { return { ok: false, present: false, error: 'Unreadable probe result.' }; }
+  // ConvertTo-Json collapses a single-element array to a bare object.
+  const asArr = (v) => (!v ? [] : (Array.isArray(v) ? v : [v]));
+  const procs = asArr(d.procs);
+  const shortcuts = asArr(d.shortcuts);
+  const running = procs.length > 0;
+  return {
+    ok: true,
+    // "present" drives whether Settings shows the card at all — a machine that
+    // never had the standalone parser should never see this section.
+    present: running || !!d.hasTask || shortcuts.length > 0,
+    running,
+    pids: procs.map(p => p.procId).filter(Boolean),
+    installDir: (procs.find(p => p.dir) || {}).dir || '',
+    hasTask: !!d.hasTask,
+    taskState: d.taskState || '',
+    shortcuts,
+    // Does the STANDALONE parser hold the uploader lock (i.e. is Mimic the one
+    // sitting in read-only mode)? That's the case this button exists for.
+    parserHoldsLock: !!(d.lockPid && procs.some(p => Number(p.procId) === Number(d.lockPid))),
+    lockClient: d.lockClient || '',
+    lockPort: d.lockPort || 0,
+    lockVer: d.lockVer || '',
+  };
+});
+
+ipcMain.handle('parser-retire', async () => {
+  if (process.platform !== 'win32') return { ok: false, error: 'Windows only.' };
+  // Recomputed here rather than trusted from the renderer: the pids to stop must
+  // come from a fresh probe, never from whatever the UI last rendered.
+  const script = `
+$ErrorActionPreference = 'SilentlyContinue'
+${_PARSER_MATCH_PS.replace('%EXCLUDE%', _psq(AGENT_DIR()))}
+$done = @()
+$fail = @()
+foreach ($p in (Get-WpParserProcs)) {
+  try { Stop-Process -Id $p.ProcessId -Force -ErrorAction Stop; $done += ('Stopped parser process ' + $p.ProcessId) }
+  catch { $fail += ('Could not stop process ' + $p.ProcessId + ': ' + $_.Exception.Message) }
+}
+$task = Get-ScheduledTask -TaskName '${_PARSER_TASK_NAME}'
+if ($task) {
+  try { Unregister-ScheduledTask -TaskName '${_PARSER_TASK_NAME}' -Confirm:$false -ErrorAction Stop; $done += 'Removed the auto-start task' }
+  catch { $fail += ('Could not remove the auto-start task: ' + $_.Exception.Message) }
+}
+foreach ($p in $ParserShortcuts) {
+  if (Test-Path $p) {
+    try { Remove-Item $p -Force -ErrorAction Stop; $done += ('Removed shortcut ' + (Split-Path $p -Leaf)) }
+    catch { $fail += ('Could not remove ' + $p + ': ' + $_.Exception.Message) }
+  }
+}
+# A hard stop never releases the lock, so it would sit there until the 45s TTL
+# expires. Clearing a lock whose pid is now dead lets our agent take over on its
+# next 15s heartbeat instead.
+$lockFile = Join-Path $env:TEMP 'wolfpack-logsync-uploader.json'
+if (Test-Path $lockFile) {
+  $lk = Get-Content $lockFile -Raw | ConvertFrom-Json
+  if ($lk -and -not (Get-Process -Id $lk.pid -ErrorAction SilentlyContinue)) {
+    Remove-Item $lockFile -Force
+    $done += 'Cleared the stale uploader lock'
+  }
+}
+[pscustomobject]@{ done = $done; fail = $fail } | ConvertTo-Json -Compress -Depth 3
+`.trim();
+  const out = await _runPs(script, 30000);
+  if (out === null) return { ok: false, error: 'Could not run the cleanup.' };
+  let d;
+  try { d = JSON.parse(out.trim() || '{}'); } catch { return { ok: false, error: 'Cleanup ran but returned nothing readable.' }; }
+  const asArr = (v) => (!v ? [] : (Array.isArray(v) ? v : [v]));
+  const done = asArr(d.done), fail = asArr(d.fail);
+  appendAgentLog(`[parser] retire standalone: ${done.length} done, ${fail.length} failed\n`);
+  return { ok: fail.length === 0, done, fail };
+});
+
 // Read-only: which of our paths Windows already excludes. Get-MpPreference does
 // not need elevation, so the UI can show state before asking for anything.
 ipcMain.handle('defender-status', async () => {
