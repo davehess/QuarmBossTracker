@@ -67,15 +67,26 @@ entry so the index stays trustworthy — a stale index causes exactly the wrong
   branch. Because the agent is *bundled inside* Mimic, agent fixes that beta
   users need must land on `beta` (and bump Mimic) — they do NOT reach beta
   users via `main`.
-  **There is no bot beta and no web beta, by design (2026-08-09).** The bot has
-  ONE Railway environment pinned to `main`; wolfpack.quest ships from `main` on
-  Vercel. Vercel *was* building `beta` as a preview on a stable branch alias —
-  a second copy of the identical site — because a standing `beta`→`main` PR made
-  every beta push a PR preview. Killed with
-  `"git": { "deploymentEnabled": { "beta": false } }` in `web/vercel.json`.
-  `claude/*` previews stay ON — reviewing a web change before merge is the one
-  case a preview earns its keep. Note the file is strict-schema: Vercel rejects
-  unknown properties, so **never add a `comment` key** — document here instead.
+  **There is no bot beta** (2026-08-09) — the bot has ONE Railway environment
+  pinned to `main`. Verified in the Railway config, not assumed.
+  **The web beta is `b.wolfpack.quest`** (Hitya, 2026-08-09): put a `b.` in
+  front of any page to see it as it stands on `beta`. Vercel had been building
+  the branch anyway, but only onto a throwaway preview URL nobody could guess;
+  this makes it addressable. Wiring:
+  - `web/vercel.json` → `"git": { "deploymentEnabled": { "beta": true } }`;
+  - Vercel → Domains: `b.wolfpack.quest` assigned to the **`beta` branch**,
+    with a `b` CNAME → `cname.vercel-dns.com` **at Porkbun** (that is where DNS
+    for this domain lives — same step every other subdomain needed);
+  - `next.config.js` sets `NEXT_PUBLIC_IS_BETA` from `VERCEL_GIT_COMMIT_REF`,
+    so the flag is a BUILD-time constant. Deliberately not a Host-header check:
+    reading headers in the root layout forces every page dynamic.
+  - `components/BetaBanner.tsx` renders the bar and links back to the same path
+    on production; the layout also flips metadata to `noindex, nofollow` and
+    titles to "(beta)". **The noindex is load-bearing** — the mirror serves the
+    same pages on another host, which is duplicate content that would otherwise
+    compete with wolfpack.quest in search.
+  ⚠ `web/vercel.json` is strict-schema — Vercel rejects unknown properties, so
+  **never add a `comment` key** to it. Document here instead.
 - **Working branches** (`claude/*`) — branch off `main`, merge back with a
   versioned `-m` message.
 
@@ -111,7 +122,7 @@ for both branches, put the file on both.
 | Change touches | Push to | Bump |
 |---|---|---|
 | Bot (`index.js`, `commands/`, `utils/`) | `main` | root `package.json` (+ a `CHANGELOGS` entry in `utils/onboarding.js` — drives `/onboarding` "what's new"; skip if nothing user-facing) |
-| Web (`web/`) | `main` | `web/package.json` |
+| Web (`web/`) | `main` (default — web still ships straight to main). To have a change reviewable first, land it on `beta` and read it at `b.wolfpack.quest/<same path>`, then graduate to `main` | `web/package.json` |
 | Agent, for beta users | `beta` | `packages/wolfpack-logsync/package.json` only. Since 2026-07-08 ANY beta push touching `apps/mimic/**` or `packages/wolfpack-logsync/**` builds; do NOT bump Mimic per iteration |
 | Mimic | `beta` (or `main` to cut stable) | `apps/mimic/package.json` stays PARKED at the line's target — the workflow auto-increments the `-beta.N` tag per push (v1.7.2-beta.1, -beta.2, …). Bump only when opening a new line or cutting stable on `main`. **Cadence rule (Uilnayar 2026-07-14): everything EXCEPT Mimic ships straight to `main`; Mimic alone runs the beta→stable loop** — cut stable when the line is *meaningful*, re-park beta, iterate, repeat. A meaningful feature set takes a MINOR bump for its line (the healer-attribution work is the **1.9** line), routine fix rounds take a patch. **After cutting a stable, immediately re-park beta above it** (stable 1.7.1 → beta parks at 1.7.2): a park at/below the stable would tag prereleases that semver-sort BELOW it, and the updater would stop offering new betas (Uilnayar 2026-07-09) |
 | Supabase migration | `main` (file) + apply | see Migrations below |

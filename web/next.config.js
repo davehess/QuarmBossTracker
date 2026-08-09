@@ -23,8 +23,27 @@ const DISCORD_INVITE_URL =
   process.env.DISCORD_INVITE_URL ||
   'https://discord.gg/VBCs6hCcau';
 
+// b.wolfpack.quest — the beta mirror of the site. Put a `b.` in front of any
+// page to see that page as it stands on the `beta` branch; the banner at the
+// top says so and links back to the same path on production.
+//
+// Derived from the branch Vercel is BUILDING, not from the request host, so it
+// is baked into the bundle and costs nothing at runtime (reading the Host
+// header in the root layout would force every page to render dynamically).
+// That works because beta is its own deployment: the `b.` domain is pinned to
+// the beta branch in Vercel → Domains, so the beta build is the only one that
+// domain ever serves.
+//
+// WP_FORCE_BETA=1 reproduces the banner on a local `next dev`.
+const IS_BETA =
+  process.env.VERCEL_GIT_COMMIT_REF === 'beta' ||
+  process.env.WP_FORCE_BETA === '1';
+
 module.exports = {
   reactStrictMode: true,
+  env: {
+    NEXT_PUBLIC_IS_BETA: IS_BETA ? '1' : '',
+  },
   images: {
     remotePatterns: [
       { protocol: 'https', hostname: 'www.pqdi.cc' },

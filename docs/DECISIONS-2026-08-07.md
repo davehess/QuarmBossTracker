@@ -197,16 +197,25 @@ that before any future force-push; it is what makes this reversible.
 IS the line's target — cut stable at whatever the line was parked at rather than
 re-deriving a number from how big the feature set feels.
 
-**No bot beta, no web beta — `beta` is the Mimic prerelease channel and nothing
-else** (Hitya, "we don't run either component separately"). Audited both:
-- **Bot: never existed.** Railway has ONE project, ONE environment
-  (`production`), ONE service, `source.branch = main`. Nothing to remove.
-- **Web: existed and was building.** Vercel deployed every `beta` push as a
-  preview on the stable alias `quarmparse-git-beta-…vercel.app` — a second copy
-  of a site now byte-identical to production. The cause was a standing
-  `beta`→`main` PR (#78), which makes Vercel treat each beta push as a PR
-  preview. Disabled with `"git": { "deploymentEnabled": { "beta": false } }` in
-  `web/vercel.json`. `claude/*` previews left ON deliberately.
+**No bot beta — that one never existed.** Railway has ONE project, ONE
+environment (`production`), ONE service, `source.branch = main`. Checked rather
+than assumed. Nothing to remove.
+
+**The web beta became `b.wolfpack.quest`** (Hitya, same session). First pass
+disabled beta web builds entirely on "we don't run either component
+separately"; Hitya then asked for the better version — *put a `b.` in front of
+any page to see the beta of it, with a beta tag at the top*. So the build is
+back ON and now has a real address instead of an unguessable preview URL.
+Superseded within the hour; the interesting part is WHY the first answer was
+wrong. Vercel was already building beta — the waste was not the build, it was
+that the output was unreachable. Turning the build off removed a capability;
+naming it turned the same build into a review tool.
+
+Verified by building the app both ways rather than reasoning about it: the
+production build renders no banner in any prerendered HTML, and the beta build
+renders the banner, `robots: noindex, nofollow`, and a "(beta)" title. The
+banner component is ~700 bytes of the 17.5 KB layout chunk on production, where
+it is bundled but never rendered — accepted rather than engineered around.
 
 ⚠ `web/vercel.json` is **strict-schema** — Vercel rejects unknown properties, so
 a `comment` key would break production web deploys. Explain in docs, never in

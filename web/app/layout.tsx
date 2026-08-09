@@ -7,16 +7,27 @@ import TimezonePicker from '@/components/TimezonePicker';
 import LocalDashboardLink from '@/components/LocalDashboardLink';
 import GlobalSearch from '@/components/GlobalSearch';
 import GuidedTour, { TourLauncher } from '@/components/GuidedTour';
+import BetaBanner from '@/components/BetaBanner';
 import { getSessionUser } from '@/lib/session';
 import { isOfficer } from '@/lib/officer';
 
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://wolfpack.quest';
+// b.wolfpack.quest. Set at BUILD time from the branch (see next.config.js), so
+// this is a constant in the bundle rather than a per-request check.
+const IS_BETA = process.env.NEXT_PUBLIC_IS_BETA === '1';
+
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL
+  || (IS_BETA ? 'https://b.wolfpack.quest' : 'https://wolfpack.quest');
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
+  // The beta mirror serves the same pages on a different host, which is
+  // textbook duplicate content — left indexable it would compete with
+  // wolfpack.quest in search results and could outrank it. Never index it.
+  ...(IS_BETA ? { robots: { index: false, follow: false } } : {}),
   title: {
-    default:  'WolfPack.quest',
-    template: '%s · WolfPack.quest',
+    // Distinguishable in a browser tab when prod and beta are both open.
+    default:  IS_BETA ? 'WolfPack.quest (beta)' : 'WolfPack.quest',
+    template: IS_BETA ? '%s · WolfPack.quest (beta)' : '%s · WolfPack.quest',
   },
   description: 'Guild-wide build planner, parse history, and loadout library for Project Quarm.',
   openGraph: {
@@ -43,6 +54,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   return (
     <html lang="en">
       <body className="font-mono">
+        {IS_BETA && <BetaBanner />}
         <div className="max-w-7xl mx-auto p-3 sm:p-4">
           <header className="mb-6">
             {/* Row 1 — wordmark (left) + account block (right), on ONE line.
