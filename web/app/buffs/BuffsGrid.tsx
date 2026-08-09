@@ -248,7 +248,9 @@ export default function BuffsGrid({ rows, categories, spellIds = {} }: { rows: B
         and a blank cell means &quot;we don&apos;t know,&quot; <i>not</i> &quot;definitely missing.&quot;
         <br /><br />
         <b>Want an accurate accounting for your own characters?</b> Install Mimic
-        (<a href="https://wolfpack.quest/mimic" className="text-blue underline">wolfpack.quest/mimic</a>) or
+        {/* Relative, not absolute — an absolute wolfpack.quest link here threw a
+            b.wolfpack.quest visitor out of the beta mirror mid-browse. */}
+        (<a href="/mimic" className="text-blue underline">wolfpack.quest/mimic</a>) or
         run the local agent — their buffs + zone will sync within seconds. Open <code>localhost:7779</code> for your live view.
       </div>
 

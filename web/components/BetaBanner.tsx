@@ -29,6 +29,20 @@ export default function BetaBanner() {
         <span className="opacity-80">
           You are on <b>b.wolfpack.quest</b> — the beta branch. Changes here may be unfinished.
         </span>
+        {/* "What is actually different?" answered as a CODE diff rather than a
+            side-by-side of the two sites. A visual diff would be swamped by
+            noise here: 69 of 75 pages read live data, and both hosts hit the
+            same database, so timers, DKP and who-is-online move between the two
+            requests. The repo is public, so GitHub renders the real answer. */}
+        <a
+          href="https://github.com/davehess/QuarmBossTracker/compare/main...beta"
+          target="_blank"
+          rel="noreferrer"
+          className="underline whitespace-nowrap hover:opacity-70"
+          title="Every code change on beta that is not yet on production. Empty means the two are identical."
+        >
+          what&apos;s different?
+        </a>
         <a
           href={prodHref}
           className="ml-auto underline whitespace-nowrap font-semibold hover:opacity-70"

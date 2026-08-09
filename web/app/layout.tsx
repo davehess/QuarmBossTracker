@@ -8,6 +8,7 @@ import LocalDashboardLink from '@/components/LocalDashboardLink';
 import GlobalSearch from '@/components/GlobalSearch';
 import GuidedTour, { TourLauncher } from '@/components/GuidedTour';
 import BetaBanner from '@/components/BetaBanner';
+import BetaLink from '@/components/BetaLink';
 import { getSessionUser } from '@/lib/session';
 import { isOfficer } from '@/lib/officer';
 
@@ -179,6 +180,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
               <span aria-hidden>·</span>{' '}
               <a href="/roadmap" className="text-blue hover:underline">Roadmap</a>{' '}
               <span aria-hidden>·</span>{' '}
+              {!IS_BETA && <><BetaLink /> <span aria-hidden>·</span>{' '}</>}
               Your logs stay on your device. Toggle exclusions any time on{' '}
               <a href="/me" className="text-blue hover:underline">/me</a>.
             </div>
