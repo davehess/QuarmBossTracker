@@ -17692,14 +17692,21 @@ async function dismissTopDamage(key) {
   var drafts       = {};    // rowKey -> in-progress bid string (survives repaints)
   var planned      = {};    // item_id -> planned next bid (mirrors the agent's local store)
   var ticks        = {};    // spanId -> ends-at ms (1s countdown ticker)
+  var dismissed    = {};    // item_id -> 1 (locally hidden wishlist/miss rows)
   var lastChar     = null;
   var showLogin    = false;
   var showFamily   = false;
+  var famDirty     = false; // family editor has UNSAVED edits — polls must not clobber it
+  // Your loot history is HIDDEN until you ask for it, and re-hides on every
+  // dashboard load. The dashboard gets screen-shared and shoulder-surfed during
+  // raids; a wishlist on screen is a bidding tell.
+  var showLoot     = false;
   var loginErr     = "";
   var lastHistKey  = "";
   var lastBidHistAt = 0;
   var opendkpBase  = "";    // https://<client>.opendkp.com — from the bot (bid-history)
   var eraFilter    = "";    // "" = all; else "Classic"/"Kunark"/"Velious"/"Luclin"
+  var eraAuto      = false; // one-shot: default the filter to the CURRENT expansion
   var famPrefilled = false; // one-shot auto-prefill of the family from OpenDKP
   var acctDkp      = null;  // #124 { ok, account_dkp, character } — REAL pooled balance from OpenDKP standings
   var lastAcctKey  = "";    // family signature the acctDkp figure is for
@@ -17720,6 +17727,27 @@ async function dismissTopDamage(key) {
   }
   function eraTag(era){ return era ? " <span class=dim style='font-size:10px'>· " + esc(era) + "</span>" : ""; }
   function passEra(era){ return !eraFilter || era === eraFilter; }
+  function notDismissed(x){ return !(x && x.item_id!=null && dismissed[x.item_id]); }
+  // ✕ on a wishlist / miss row. Local-only hide (the wishlist is inferred from
+  // OpenDKP bid history — there is nothing upstream to delete), reversible via
+  // the "restore all" link.
+  function dismissBtn(itemId){
+    if (itemId==null) return "";
+    return "<span class=wpLootX data-item='"+esc(itemId)+"' title='hide this from your list' style='cursor:pointer;color:var(--dim,#8b949e);padding:0 3px'>✕</span>";
+  }
+  function dismissCount(){ var n=0; for(var k in dismissed){ if(dismissed.hasOwnProperty(k)) n++; } return n; }
+  // The CURRENT expansion, derived from the data rather than hard-coded, so it
+  // advances on its own when the server unlocks the next one. Newest award wins
+  // (wins arrive raid_id-desc = award order); misses are the fallback.
+  function currentEra(wins, misses){
+    for (var i=0;i<(wins||[]).length;i++) if (wins[i].era) return wins[i].era;
+    var best=null, bestT=-1;
+    for (var m=0;m<(misses||[]).length;m++){
+      var t = misses[m].last_end ? (Date.parse(misses[m].last_end)||0) : 0;
+      if (misses[m].era && t>bestT){ bestT=t; best=misses[m].era; }
+    }
+    return best;
+  }
 
   function makeCard(){
     var c = document.createElement("div");
@@ -17856,8 +17884,11 @@ async function dismissTopDamage(key) {
       h += "<div style='display:flex;gap:6px;align-items:center'>";
       h += "<input id=wpFamAdd placeholder='add alt' style='background:#0e1116;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:3px 6px;font-family:inherit;font-size:12px;width:110px'>";
       h += "<button id=wpFamAddGo style='background:#21262d;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 8px;font-size:11px;cursor:pointer;font-family:inherit'>+ add</button>";
+      if (bidHist && bidHist.suggested_family && bidHist.suggested_family.main)
+        h += "<button id=wpFamPull title='replace this with the characters OpenDKP has for your account' style='background:#21262d;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 8px;font-size:11px;cursor:pointer;font-family:inherit'>⟲ from OpenDKP</button>";
       h += "<button id=wpFamSave style='margin-left:auto;background:var(--gold,#d4af37);color:#000;border:none;border-radius:4px;padding:2px 10px;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit'>save</button>";
       h += "</div>";
+      if (famDirty) h += "<div style='color:var(--orange,#d29922);margin-top:5px;font-size:10px'>unsaved — hit save</div>";
       h += "</div>";
     }
 
@@ -17913,9 +17944,29 @@ async function dismissTopDamage(key) {
       h += "</table>";
     }
 
-    // History + wishlist + misses (authed only)
-    if (cfg.authed && bidHist){
+    // History + wishlist + misses (authed only). COLLAPSED until asked for —
+    // this is your bidding hand, and the dashboard gets shoulder-surfed.
+    if (cfg.authed && bidHist && !showLoot){
+      h += "<div style='margin:12px 0 2px'><button id=wpLootReveal style='background:#21262d;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:3px 10px;font-size:11px;cursor:pointer;font-family:inherit'>👁 show my loot history</button> <span class=dim style='font-size:10px'>hidden by default — your wishlist, misses and wins</span></div>";
+    }
+    if (cfg.authed && bidHist && showLoot){
       var wins = bidHist.wins||[]; var wl = bidHist.wishlist||[]; var misses = bidHist.misses||[]; var dkp = bidHist.dkp||null;
+      // One-shot: land on the CURRENT expansion instead of "all", so the list
+      // opens on what is actually dropping. Manual changes stick after that.
+      // Only applied if it leaves something to look at — defaulting to an
+      // expansion the user has no open items in would show an empty panel.
+      if (!eraAuto){
+        eraAuto = true;
+        var ce = currentEra(wins, misses);
+        if (ce){
+          var inEra = 0;
+          for (var c1=0;c1<wl.length;c1++) if (wl[c1].era===ce && notDismissed(wl[c1])) inEra++;
+          for (var c2=0;c2<misses.length;c2++) if (misses[c2].era===ce && notDismissed(misses[c2])) inEra++;
+          if (inEra) eraFilter = ce;
+        }
+      }
+
+      h += "<div style='margin:12px 0 2px'><button id=wpLootHide style='background:#21262d;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:3px 10px;font-size:11px;cursor:pointer;font-family:inherit'>🙈 hide my loot history</button></div>";
 
       // DKP pill + expansion filter row. Prefer the REAL pooled balance read
       // straight from OpenDKP's standings (#124); the mirror-derived family total
@@ -17942,9 +17993,11 @@ async function dismissTopDamage(key) {
         for (var eq=0;eq<eraOpts.length;eq++){ h += "<option"+(eraFilter===eraOpts[eq]?" selected":"")+">"+esc(eraOpts[eq])+"</option>"; }
         h += "</select>";
       }
+      var dCount = dismissCount();
+      if (dCount) h += "<span class=dim style='font-size:10px'>"+dCount+" hidden · <span id=wpLootRestore style='cursor:pointer;color:var(--blue,#58a6ff)'>restore all</span></span>";
       h += "</div>";
 
-      var wlF = wl.filter(function(x){ return passEra(x.era); });
+      var wlF = wl.filter(function(x){ return passEra(x.era) && notDismissed(x); });
       if (wlF.length){
         h += "<div style='font-size:11px;color:var(--dim,#8b949e);text-transform:uppercase;letter-spacing:.05em;margin:8px 0 4px'>your wishlist <span style='text-transform:none;letter-spacing:0'>· bid on but not yet won</span></div>";
         h += "<div style='font-size:11px'>";
@@ -17953,16 +18006,16 @@ async function dismissTopDamage(key) {
           var srcTag = it.source==="prereg"
             ? "<span title='preregistered' style='color:var(--gold,#d4af37)'>★ prereg</span>"
             : "<span class=dim title='inferred from your bid history'>↺ from bid history</span>";
-          h += "<div style='display:flex;gap:6px;padding:1px 0'>"+itemLink(it.item_name||("item "+it.item_id), it.raid_id)+eraTag(it.era)+"<span style='margin-left:auto'>"+srcTag+"</span></div>";
+          h += "<div style='display:flex;gap:6px;padding:1px 0'>"+itemLink(it.item_name||("item "+it.item_id), it.raid_id)+eraTag(it.era)+"<span style='margin-left:auto'>"+srcTag+"</span>"+dismissBtn(it.item_id)+"</div>";
         }
         h += "</div>";
       }
 
       // RECENT MISSES — bid on and lost. Full width; per-item columns.
-      var misF = misses.filter(function(x){ return passEra(x.era); });
+      var misF = misses.filter(function(x){ return passEra(x.era) && notDismissed(x); });
       if (misF.length){
         h += "<div style='font-size:11px;color:var(--dim,#8b949e);text-transform:uppercase;letter-spacing:.05em;margin:12px 0 4px'>recent misses <span style='text-transform:none;letter-spacing:0'>· you bid and lost — figures are from each item's most recent auction</span></div>";
-        h += "<table><tr><th>Item</th><th>Char</th><th class=num>Your last</th><th class=num>Last win</th><th class=num>2nd place</th><th class=num>Planned</th><th class=num>DKP</th></tr>";
+        h += "<table><tr><th>Item</th><th>Char</th><th class=num>Your last</th><th class=num>Last win</th><th class=num>2nd place</th><th class=num>Planned</th><th class=num>DKP</th><th></th></tr>";
         for (var mi=0;mi<misF.length;mi++){
           var m = misF[mi];
           var pv = (planned[m.item_id]!=null) ? planned[m.item_id] : "";
@@ -17975,6 +18028,7 @@ async function dismissTopDamage(key) {
           h += "<td class=num><input id=wpPlan_"+m.item_id+" type=number min=1 value='"+esc(pv)+"' placeholder='—' style='width:52px;background:#0e1116;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:1px 4px;font-family:inherit;text-align:right'></td>";
           var dkpCell = (acctDkp&&acctDkp.account_dkp!=null) ? fmt(acctDkp.account_dkp) : (dkp?("~"+fmt(dkp.family_total)):"—");
           h += "<td class=num>"+dkpCell+"</td>";
+          h += "<td>"+dismissBtn(m.item_id)+"</td>";
           h += "</tr>";
         }
         h += "</table>";
@@ -18005,13 +18059,22 @@ async function dismissTopDamage(key) {
     el = document.getElementById("wpLootLoginGo"); if (el) el.onclick = doLogin;
     el = document.getElementById("wpLootPass"); if (el) el.onkeydown = function(e){ if(e.key==="Enter") doLogin(); };
     el = document.getElementById("wpLootLogout"); if (el) el.onclick = function(){ fetch("/api/loot/logout",{method:"POST"}).then(function(){ cfg.authed=false; bidHist=null; acctDkp=null; lastAcctKey=""; lastAcctAt=0; render(); }); };
-    el = document.getElementById("wpFamToggle"); if (el) el.onclick = function(){ showFamily=!showFamily; render(); };
+    el = document.getElementById("wpFamToggle"); if (el) el.onclick = function(){ if(showFamily) captureFamilyDraft(); showFamily=!showFamily; render(); };
     el = document.getElementById("wpFamAddGo"); if (el) el.onclick = addAlt;
     el = document.getElementById("wpFamAdd"); if (el) el.onkeydown = function(e){ if(e.key==="Enter") addAlt(); };
     el = document.getElementById("wpFamSave"); if (el) el.onclick = saveFamily;
+    el = document.getElementById("wpFamPull"); if (el) el.onclick = pullFamilyFromOpendkp;
+    el = document.getElementById("wpLootReveal"); if (el) el.onclick = function(){ showLoot=true; render(); };
+    el = document.getElementById("wpLootHide"); if (el) el.onclick = function(){ showLoot=false; render(); };
+    el = document.getElementById("wpLootRestore"); if (el) el.onclick = function(){ setDismissed("all", false); };
+    var xs = card.querySelectorAll(".wpLootX");
+    for (var x=0;x<xs.length;x++){ (function(sp){ sp.onclick=function(){ setDismissed(sp.getAttribute("data-item"), true); }; })(xs[x]); }
+    // Typing in the family editor marks it dirty so the 7s poll can't overwrite
+    // what is on screen with the last-saved copy.
+    el = document.getElementById("wpFamMain"); if (el) el.oninput = function(){ famDirty=true; };
     el = document.getElementById("wpBidChar"); if (el) el.onchange = function(){ lastChar=el.value; fetchServer(); };
     var dels = card.querySelectorAll(".wpFamDel");
-    for (var i=0;i<dels.length;i++){ (function(d){ d.onclick=function(){ var a=d.getAttribute("data-alt"); cfg.family.alts=(cfg.family.alts||[]).filter(function(x){return x!==a;}); render(); }; })(dels[i]); }
+    for (var i=0;i<dels.length;i++){ (function(d){ d.onclick=function(){ var a=d.getAttribute("data-alt"); captureFamilyDraft(); cfg.family.alts=(cfg.family.alts||[]).filter(function(x){return x!==a;}); famDirty=true; render(); }; })(dels[i]); }
     var gos = card.querySelectorAll(".wpBidGo");
     for (var g=0;g<gos.length;g++){ (function(btn){ btn.onclick=function(){ submitBid(btn); }; })(gos[g]); }
     var plus = card.querySelectorAll(".wpBidPlus");
@@ -18031,6 +18094,10 @@ async function dismissTopDamage(key) {
   function savePlanned(itemId, value){
     fetch("/api/loot/planned",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({item_id:parseInt(itemId,10),value:parseInt(value,10)||0})})
       .then(function(r){return r.json();}).then(function(j){ if(j&&j.planned) planned=j.planned; }).catch(function(){});
+  }
+  function setDismissed(itemId, on){
+    fetch("/api/loot/dismiss",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({item_id:itemId,on:!!on})})
+      .then(function(r){return r.json();}).then(function(j){ if(j&&j.dismissed) dismissed=j.dismissed; render(); }).catch(function(){});
   }
 
   function restoreDrafts(){
@@ -18054,23 +18121,45 @@ async function dismissTopDamage(key) {
       .catch(function(){ loginErr="could not reach OpenDKP"; render(); });
   }
 
+  // Pull whatever is typed in the family editor into cfg BEFORE any re-render.
+  // render() rebuilds the inputs from cfg, so anything sitting only in the DOM
+  // is discarded — which is why adding an alt used to wipe a typed main, and
+  // why a background poll landing mid-edit lost the lot.
+  function captureFamilyDraft(){
+    var m=document.getElementById("wpFamMain");
+    if (m && typeof m.value==="string") cfg.family.main = m.value.trim() || cfg.family.main;
+  }
   function addAlt(){
     var inp=document.getElementById("wpFamAdd"); if(!inp) return;
     var v=inp.value.trim();
     if(!isChar(v)){ inp.style.borderColor="var(--orange,#d29922)"; return; }
+    captureFamilyDraft();
     cfg.family.alts=cfg.family.alts||[];
     var low=v.toLowerCase();
     if(low===String(cfg.family.main||"").toLowerCase()){ inp.value=""; return; }
     for (var i=0;i<cfg.family.alts.length;i++){ if(cfg.family.alts[i].toLowerCase()===low){ inp.value=""; return; } }
-    cfg.family.alts.push(v); inp.value=""; render();
+    cfg.family.alts.push(v); inp.value=""; famDirty=true; render();
+    var again=document.getElementById("wpFamAdd"); if(again) again.focus();
   }
   function saveFamily(){
     var mv=((document.getElementById("wpFamMain")||{}).value||"").trim();
     var payload={ main: mv, alts: cfg.family.alts||[] };
-    fetch("/api/loot/family",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)})
+    return putFamily(payload).then(function(){ showFamily=false; });
+  }
+  // Single write path for the family, so every caller clears famDirty and
+  // re-fetches the (family-scoped) bid history exactly once.
+  function putFamily(payload){
+    return fetch("/api/loot/family",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)})
       .then(function(r){return r.json();})
-      .then(function(j){ if(j&&j.family){ cfg.family={ main:j.family.main||null, alts:j.family.alts||[] }; } showFamily=false; if(!lastChar) lastChar=pickChar(); lastBidHistAt=0; fetchServer(); })
+      .then(function(j){ if(j&&j.family){ cfg.family={ main:j.family.main||null, alts:j.family.alts||[] }; } famDirty=false; if(!lastChar) lastChar=pickChar(); lastBidHistAt=0; return fetchServer(); })
       .catch(function(){});
+  }
+  // Replace the local family with the one OpenDKP has for this account.
+  function pullFamilyFromOpendkp(){
+    var sf = bidHist && bidHist.suggested_family;
+    if (!sf || !sf.main) return;
+    lastChar=null;
+    putFamily({ main: sf.main, alts: sf.alts||[] });
   }
 
   function submitBid(btn){
@@ -18097,8 +18186,12 @@ async function dismissTopDamage(key) {
   function fetchConfig(){
     return fetch("/api/loot/config").then(function(r){return r.json();}).then(function(j){
       if(j){ cfg.authed=!!j.authed; cfg.opendkp_username=j.opendkp_username; cfg.expires_at=j.expires_at;
-        if(j.family) cfg.family={ main:j.family.main||null, alts:j.family.alts||[] };
-        if(j.planned) planned=j.planned; }
+        // NEVER overwrite the family while the editor holds unsaved edits — this
+        // poll runs every 7s, and it used to hand back the last SAVED family
+        // mid-typing, silently wiping alts the user had just added.
+        if(j.family && !famDirty) cfg.family={ main:j.family.main||null, alts:j.family.alts||[] };
+        if(j.planned) planned=j.planned;
+        if(j.dismissed) dismissed=j.dismissed; }
     }).catch(function(){});
   }
   function fetchLocal(){
@@ -18127,15 +18220,26 @@ async function dismissTopDamage(key) {
         bidHist={ wins:j.wins||[], wishlist:j.wishlist||[], misses:j.misses||[], dkp:j.dkp||null, suggested_family:j.suggested_family||null };
         if(j.opendkp_base) opendkpBase=j.opendkp_base;
         lastBidHistAt=Date.now();
-        // Auto-prefill the family (main + raid alts) from OpenDKP — ONLY when the
-        // local family is still empty, and only once. The manual editor stays.
-        if(!famPrefilled && !famList().length && j.suggested_family && j.suggested_family.main){
+        // Auto-populate the family from OpenDKP — nobody should have to type
+        // their own main and alts, OpenDKP already knows them. Once per session,
+        // and never while the editor has unsaved edits.
+        //   empty family → adopt OpenDKP's wholesale
+        //   existing family → ADD any character OpenDKP knows that we don't
+        // Additive only: a name the user typed by hand is never removed here,
+        // and their chosen main is never demoted. The ⟲ button is the explicit
+        // "replace mine with OpenDKP's" path.
+        var sf = j.suggested_family;
+        if(!famPrefilled && !famDirty && sf && sf.main){
           famPrefilled=true;
-          var sf={ main:j.suggested_family.main, alts:j.suggested_family.alts||[] };
-          fetch("/api/loot/family",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(sf)})
-            .then(function(r){return r.json();})
-            .then(function(res){ if(res&&res.family){ cfg.family={ main:res.family.main||null, alts:res.family.alts||[] }; if(!lastChar) lastChar=pickChar(); lastBidHistAt=0; fetchServer(); } })
-            .catch(function(){});
+          var have={}; var cur=famList();
+          for(var q=0;q<cur.length;q++) have[cur[q].toLowerCase()]=1;
+          if(!cur.length){
+            putFamily({ main:sf.main, alts:sf.alts||[] });
+          } else {
+            var add=[]; var sugg=[sf.main].concat(sf.alts||[]);
+            for(var s2=0;s2<sugg.length;s2++){ var nm=sugg[s2]; if(nm && !have[nm.toLowerCase()]){ have[nm.toLowerCase()]=1; add.push(nm); } }
+            if(add.length) putFamily({ main:cfg.family.main, alts:(cfg.family.alts||[]).concat(add) });
+          }
         }
       }
     }).catch(function(){});
@@ -20092,6 +20196,7 @@ function startWebDashboard(port) {
           expires_at:       (_opendkpAuth && _opendkpAuth.expires_at) || null,
           family:           { main: _bidFamily.main, alts: _bidFamily.alts || [] },
           planned:          _plannedBids,
+          dismissed:        _lootDismissed,
         }));
       }
       if (req.url === '/api/loot/login' && req.method === 'POST') {
@@ -20139,6 +20244,15 @@ function startWebDashboard(port) {
         if (!_setPlannedBid(p.item_id, p.value)) { res.writeHead(400); return res.end('{"error":"item_id required"}'); }
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ ok: true, planned: _plannedBids }));
+      }
+      if (req.url === '/api/loot/dismiss' && req.method === 'POST') {
+        // Hide (or restore) one wishlist / miss row. { item_id, on } — item_id
+        // "all" with on:false is the restore-all link. Local file only.
+        let p; try { p = JSON.parse(await _readBody(req, 8 * 1024) || '{}'); }
+        catch { res.writeHead(400); return res.end('{"error":"bad json"}'); }
+        if (!_setLootDismissed(p.item_id, p.on !== false)) { res.writeHead(400); return res.end('{"error":"item_id required"}'); }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ ok: true, dismissed: _lootDismissed }));
       }
       if (req.url === '/api/loot/auctions' && req.method === 'GET') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -22040,6 +22154,40 @@ function _setPlannedBid(itemId, value) {
   return true;
 }
 
+// Per-item DISMISSED flag for the wishlist / RECENT MISSES lists — the ✕ on a
+// row. Purely a local view preference (logsync.lootdismiss.json): the wishlist
+// is INFERRED from OpenDKP bid history, so there is nothing upstream to delete
+// and nothing to upload. Same durable pattern as the planned bids above.
+const LOOTDISMISS_FILE = path.join(__dirname, 'logsync.lootdismiss.json');
+let _lootDismissed = {};   // { item_id(int): 1 }
+function _loadLootDismissed() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(LOOTDISMISS_FILE, 'utf8'));
+    const out = {};
+    for (const k of Object.keys(raw || {})) {
+      const id = parseInt(k, 10);
+      if (Number.isFinite(id) && id > 0) out[id] = 1;
+    }
+    _lootDismissed = out;
+  } catch { _lootDismissed = {}; }
+}
+function _saveLootDismissed() {
+  try {
+    fs.writeFileSync(LOOTDISMISS_FILE + '.tmp', JSON.stringify(_lootDismissed));
+    fs.renameSync(LOOTDISMISS_FILE + '.tmp', LOOTDISMISS_FILE);
+  } catch { /* non-fatal */ }
+}
+// on=false restores the row; itemId 'all' with on=false clears every dismissal
+// (the "restore all" link, so a mis-click is never permanent).
+function _setLootDismissed(itemId, on) {
+  if (String(itemId) === 'all') { if (!on) { _lootDismissed = {}; _saveLootDismissed(); return true; } return false; }
+  const id = parseInt(itemId, 10);
+  if (!Number.isFinite(id) || id <= 0) return false;
+  if (on) _lootDismissed[id] = 1; else delete _lootDismissed[id];
+  _saveLootDismissed();
+  return true;
+}
+
 // Fetch (and cache ~1h) the PUBLIC Cognito app-client id + region from the bot.
 // Requires a bot connection (per-user bearer token). Throws a friendly message
 // when the bot is unreachable or OpenDKP login isn't configured server-side.
@@ -22253,6 +22401,7 @@ async function _opendkpAccountDkp(main, familyNames) {
 _loadOpendkpAuth();
 _loadBidFamily();
 _loadPlannedBids();
+_loadLootDismissed();
 
 // ── Inventory file ingestion ──────────────────────────────────────────────
 // EQ's /output inventory command writes <Character>-Inventory.txt to the EQ
