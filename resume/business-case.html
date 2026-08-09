@@ -7,7 +7,7 @@
 <meta name="description" content="Measured throughput and cost discipline from a single AI-assisted engineering seat: metered-equivalent consumption, a 5.9x caching gap, deliberate model routing, and what actually shipped.">
 <meta name="robots" content="index, follow">
 <meta property="og:title" content="What one seat returns">
-<meta property="og:description" content="One flat-rate seat, ten weeks, four production components — and the measurements that show the spend is managed.">
+<meta property="og:description" content="One flat-rate seat, four production components, and the measurements that show the spend is managed.">
 <link rel="stylesheet" href="/style.css">
 </head>
 <body>
@@ -36,7 +36,7 @@
 <section>
   <div class="wrap">
     <h2 class="rv">The four numbers</h2>
-    <div class="h2sub rv">Ten weeks, one engineer, one flat-rate seat.</div>
+    <div class="h2sub rv">One engineer, one flat-rate seat, 10.4 measured weeks.</div>
     <div class="stats">
       <div class="stat rv"><div class="n">$7,367</div><div class="l">metered-equivalent consumption, at list API rates</div></div>
       <div class="stat rv"><div class="n">5.9×</div><div class="l">what the same work would cost without caching discipline</div></div>
@@ -47,8 +47,23 @@
       To be precise about what the first figure is and is not: it is <strong style="color:var(--text)">not
       an invoice, and not a saving.</strong> The work ran on a flat-rate plan. It is what the same
       token volume would bill if metered at published API rates — the honest way to express what a
-      single seat carried. It is also a <strong style="color:var(--text)">floor</strong>: it covers
-      cloud sessions only, because those containers are reclaimed along with their records.
+      single seat carried.
+    </p>
+    <div class="tblwrap rv">
+      <table class="tbl">
+        <thead><tr><th>Two windows, kept separate</th><th>Span</th><th>Commits</th></tr></thead>
+        <tbody>
+          <tr><td>Project life</td><td>21 Apr → 9 Aug · 15.7 weeks</td><td class="num">1,851</td></tr>
+          <tr><td>Measured token window</td><td>28 May → 9 Aug · 10.4 weeks</td><td class="num">1,461</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="rv muted" style="margin-top:16px;font-size:13.5px">
+      The consumption figure covers <strong style="color:var(--text)">66% of the project's life and
+      cloud sessions only</strong> — records from earlier and from local machines are not in it.
+      So it bought 1,461 of the 1,851 commits, not all of them, and the true figure is higher than
+      what is printed here. Every number on this page is a floor, and where two spans could be
+      conflated to make something look better, they are listed separately instead.
     </p>
   </div>
 </section>
@@ -79,6 +94,35 @@
       management is not a heroic effort, it is a handful of practices applied consistently
       (<a href="/method.html">the working method</a> documents them). The figure is reproducible on
       any machine's usage records, not a claim.
+    </p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2 class="rv">The demand signal</h2>
+    <div class="h2sub rv">The tier was outgrown twice, on personal money, before anyone was asked to fund anything.</div>
+    <div class="tblwrap rv">
+      <table class="tbl">
+        <thead><tr><th>Stage</th><th>What happened</th></tr></thead>
+        <tbody>
+          <tr><td>Entry individual tier</td><td>Where the project started, in April</td></tr>
+          <tr><td>Upgraded to the top individual tier</td><td>Self-funded, because the work had outgrown the first one</td></tr>
+          <tr><td>Exceeded that tier twice</td><td>Two overages paid on top — demand kept climbing past the ceiling</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="rv muted" style="margin-top:18px">
+      This is the part a forecast cannot give you. Projected demand is an argument;
+      <strong style="color:var(--text)">a tier upgrade and two overages paid out of pocket are
+      revealed preference.</strong> The usage did not have to be talked into existing, and the
+      ceiling was not theoretical — it was hit, twice, by one person on one project.
+    </p>
+    <p class="rv muted">
+      The honest read of that: the individual tiers are correctly sized for individual use, and this
+      stopped being individual use somewhere around the third component. The ask is not for more
+      capacity in the abstract — it is for the tier that matches a workload which has already
+      demonstrated its own size.
     </p>
   </div>
 </section>
@@ -231,7 +275,7 @@
 <section>
   <div class="wrap">
     <h2 class="rv">In one line</h2>
-    <div class="h2sub rv">One seat carried $7,367 of metered-equivalent work in ten weeks, at a sixth of what the same tokens cost undisciplined, and shipped four production components and their presentation layer.</div>
+    <div class="h2sub rv">One seat carried $7,367 of metered-equivalent work in 10.4 measured weeks, at a sixth of what the same tokens cost undisciplined, and shipped four production components and their presentation layer.</div>
     <p class="rv muted">
       Every number on this page is counted, and every one of them is a floor.
     </p>
@@ -241,7 +285,7 @@
 
 <footer>
   <div class="wrap">
-    Figures from production systems and assistant usage records, ~2026-05-28 to 2026-08-09. Cloud sessions only.
+    Project 2026-04-21 → 2026-08-09. Consumption figures measured 2026-05-28 → 2026-08-09, cloud sessions only — a floor, not a total.
   </div>
 </footer>
 
