@@ -274,6 +274,57 @@ async function findOrCreateEncounter({ npcId, startedAtMs, durationSec, windowMi
 // across them could raise a constraint violation. encounter_id is the better
 // label anyway: join to `encounters` for the name.
 const SNAP_CLAIM_MARGIN_MS = 20_000;
+
+// Catalog name → the display form the agent writes on snapshots.
+// eqemu_npc_types names are underscored and sometimes #-prefixed for instanced
+// spawns (`Kaas_Thox_Xi_Ans_Dyek`, `#Shei_Vinitras`); the agent's boss_name is
+// "Kaas Thox Xi Ans Dyek". Mirror of SQL npc_display_name() (migration
+// 20260809030000) — keep the two in lockstep.
+function npcDisplayName(name) {
+  return String(name || '').replace(/_/g, ' ').replace(/#/g, '').trim();
+}
+
+// Claim EVERY uploader's snapshots for a fight, by boss name + window.
+//
+// The per-uploader claim below only ever binds the SUBMITTING uploader's rows —
+// ~1 of the ~12 people snapshotting a raid fight — and its 20s margin is
+// smaller than the 22–56s clock skew measured on real machines
+// (docs/BETA-TESTING.md #1). Net result, measured 2026-08-09: 96 of 3,651 boss
+// fights in 14 days had ANY bound snapshot (2.6%). This is the fix the
+// fight-timeline design ordered as its step 2 (docs/DESIGN-fight-timeline.md):
+// once the encounter exists, claim by NORMALIZED boss name across ALL
+// uploaders, with a margin sized to the real per-uploader fight-start spread
+// (±2 min — the same skirt the read-side join validated to full coverage).
+//
+// Repeat pulls: encounter_id=is.null + each encounter claiming only its own
+// span keeps back-to-back pulls of one boss from cross-claiming anything but
+// boundary samples — and each fight's claim runs at ITS close, so the earlier
+// pull has already taken its rows by the time the next one closes.
+const SNAP_CLAIM_BOSS_MARGIN_MS = 120_000;
+async function claimThreatSnapshotsByBoss({ encounterId, npcId, startedAtMs, durationSec }) {
+  if (!isEnabled() || !encounterId || !npcId) return 0;
+  const startMs = Number(startedAtMs);
+  if (!Number.isFinite(startMs)) return 0;
+  try {
+    const rows = await select('eqemu_npc_types', `id=eq.${npcId}&select=name&limit=1`);
+    const bossName = npcDisplayName(Array.isArray(rows) ? rows[0]?.name : null);
+    if (!bossName) return 0;
+    const from = new Date(startMs - SNAP_CLAIM_BOSS_MARGIN_MS).toISOString();
+    const to   = new Date(startMs + (Number(durationSec) || 0) * 1000 + SNAP_CLAIM_BOSS_MARGIN_MS).toISOString();
+    // ilike with no wildcards = case-insensitive equality in PostgREST.
+    const q = `boss_name=ilike.${encodeURIComponent(bossName)}`
+            + `&encounter_id=is.null`
+            + `&snapshot_at=gte.${encodeURIComponent(from)}`
+            + `&snapshot_at=lte.${encodeURIComponent(to)}`;
+    await update('encounter_threat_snapshots', q, { encounter_id: encounterId });
+    return 1;
+  } catch (err) {
+    // Bookkeeping must never fail a parse upload.
+    console.warn('[supabase] threat-snapshot boss claim failed:', err?.message);
+    return 0;
+  }
+}
+
 async function claimThreatSnapshots({ encounterId, uploader, startedAtMs, durationSec }) {
   if (!isEnabled() || !encounterId || !uploader) return 0;
   const startMs = Number(startedAtMs);
@@ -468,9 +519,16 @@ async function recordParse({
   });
   if (!encounterId) return null;
 
-  // Claim this uploader's in-fight threat snapshots for the encounter that just
-  // resolved. Best-effort and never awaited into the failure path — see
-  // claimThreatSnapshots.
+  // Claim in-fight threat snapshots for the encounter that just resolved.
+  // The by-boss claim binds EVERY uploader's rows (the timeline's data path);
+  // the per-uploader claim stays as the fallback for fights whose npc name
+  // is missing from the catalog. Both idempotent via encounter_id=is.null.
+  await claimThreatSnapshotsByBoss({
+    encounterId,
+    npcId,
+    startedAtMs: timestampMs,
+    durationSec: parsed.duration,
+  });
   if (contributorCharacter) {
     await claimThreatSnapshots({
       encounterId,
@@ -733,6 +791,8 @@ module.exports = {
   getNpcIdForInternalId,
   findOrCreateEncounter,
   claimThreatSnapshots,
+  claimThreatSnapshotsByBoss,
+  npcDisplayName,
   linkEncounterToRaidNight,
   recordContribution,
   recordParse,
