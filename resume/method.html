@@ -1,0 +1,353 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Working method — Dave Hess</title>
+<meta name="description" content="How a solo four-component platform is built with AI assistance: docs as durable memory, cheap deterministic retrieval, audits that paid for themselves, and verification over plausibility.">
+<meta name="robots" content="index, follow">
+<meta property="og:title" content="Working method — Dave Hess">
+<meta property="og:description" content="Strategies for avoiding careless spend: memory as files, two-tier retrieval, rules that pre-empt rework, and the audits that paid off.">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<nav class="site">
+  <div class="wrap">
+    <a href="/">← Profile</a>
+    <a href="/method.html" class="here">Working method</a>
+  </div>
+</nav>
+
+<header style="padding:72px 0 56px">
+  <div class="wrap">
+    <div class="eyebrow rv">Working method</div>
+    <h1 class="rv" style="font-size:clamp(30px,5.4vw,48px)">Spending less by<br>re-deriving less</h1>
+    <p class="lede rv">
+      The expensive thing about AI-assisted development is not the tokens. It is
+      <strong>re-answering questions that were already answered</strong> — re-reading a codebase to
+      recover a decision, re-litigating a settled trade-off, or confidently shipping something that
+      then has to be unshipped. Everything below exists to make that class of waste structurally
+      hard.
+    </p>
+  </div>
+</header>
+
+<section>
+  <div class="wrap">
+    <h2 class="rv">1 · Memory is a file, not a conversation</h2>
+    <div class="h2sub rv">Two kinds of session work on this repo. They cannot share a conversation.</div>
+    <p class="rv muted">
+      Some work happens on a workstation with the live application, local database and hardware
+      attached. Some happens in a cloud container with the repo and production database but none of
+      that. Neither can see the other's chat history. If a decision lives only in a conversation, it
+      is already lost — so the repository carries it instead, and there is a standing rule that a
+      call gets written down <em>in the same session it is made</em>.
+    </p>
+    <div class="tblwrap rv">
+      <table class="tbl">
+        <thead><tr><th>File</th><th>What it exists to stop</th><th>Size</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>Architecture map</td>
+            <td>Re-deriving how the system fits together, and re-litigating release routing. Explicitly outranks the README when they disagree.</td>
+            <td class="num">766 lines</td>
+          </tr>
+          <tr>
+            <td>Feature → file index</td>
+            <td>The wrong <em>“no, we don’t have that.”</em> A feature can span four surfaces; a single grep that misses one produces a confident false negative.</td>
+            <td class="num">1,209 lines</td>
+          </tr>
+          <tr>
+            <td>Status ledger</td>
+            <td>Redoing finished work, or re-proposing something already tried and abandoned. Carries done / queued / abandoned and why.</td>
+            <td class="num">2,305 lines</td>
+          </tr>
+          <tr>
+            <td>Dated decision log</td>
+            <td>Losing the reasoning behind a call. Each entry: the decision, why, and where it took effect.</td>
+            <td class="num">running</td>
+          </tr>
+          <tr>
+            <td>Design docs</td>
+            <td>Reconstructing intent from code. Each opens with the request captured <strong>verbatim</strong>.</td>
+            <td class="num">25 docs</td>
+          </tr>
+          <tr>
+            <td>Domain cheat-sheet</td>
+            <td>Re-deriving schema conventions from query plans every single time someone touches the catalog.</td>
+            <td class="num">—</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="rv muted" style="margin-top:16px;font-size:13.5px">
+      52 documents in total, plus an archive for retired plans. The archive matters as much as the
+      index: a superseded plan left in place reads as current and gets re-implemented.
+    </p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2 class="rv">2 · Retrieval in two tiers</h2>
+    <div class="h2sub rv">Free and deterministic for what is always needed; a cheap model for the rest.</div>
+
+    <div class="grid2">
+      <div class="card rv">
+        <h3>Tier one — the session digest</h3>
+        <div class="role">Shell hook · no model call · every session</div>
+        <p>
+          A startup hook prints the open-items table, the document index, and the live version of
+          each component read straight from its manifest. Deliberately <strong>prints pointers, not
+          a summary</strong>: no model call, no latency, nothing that can go stale or be
+          hallucinated. It is guarded at every read and exits successfully no matter what, because a
+          memory aid that can fail a session is worse than none.
+        </p>
+      </div>
+      <div class="card rv">
+        <h3>Tier two — on-demand recall</h3>
+        <div class="role">Small model · documentation only · cited</div>
+        <p>
+          A slash command dispatches a single subagent on the cheapest capable model to answer from
+          the committed docs — in a fixed precedence order, returning <strong>every supporting quote
+          with its file and line</strong>. It is explicitly instructed to do three things most
+          retrieval does not: flag loudly when two documents disagree, answer
+          <em>“not documented”</em> rather than guess from code, and offer to fix the doc when what
+          it finds is stale.
+        </p>
+      </div>
+    </div>
+
+    <p class="rv muted" style="margin-top:20px">
+      The split is the point. The thing needed at the start of every session should cost nothing and
+      never lie; the thing needed occasionally can afford a model, but not the expensive one, and
+      must show its sources. A stale index produces exactly the wrong
+      <em>“we don’t have that”</em> answer — which is why the recall path is required to surface
+      disagreement instead of silently picking a winner.
+    </p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2 class="rv">3 · Rules that pre-empt the expensive mistake</h2>
+    <div class="h2sub rv">Each one was written after paying for its absence.</div>
+    <dl class="deflist rv">
+      <dt>Minimal diff</dt>
+      <dd>Touch only what the task requires; if adjacent code appears to need changing, stop and flag it. In a 17k-line file, “small line count” is a poor proxy for “small blast radius.”</dd>
+
+      <dt>Answer from the index</dt>
+      <dd>For any <em>does this exist</em> question, read the feature index first. <strong>“No” is the failure-prone direction</strong> — never conclude it from a single file.</dd>
+
+      <dt>Scope boundaries</dt>
+      <dd>A standing list of things deliberately not built, with reasons. Without it, the same rejected idea returns every few weeks and costs a fresh evaluation each time.</dd>
+
+      <dt>Load-bearing policies</dt>
+      <dd>Domain rules marked <em>“don’t re-derive”</em> — identity scopes, data floors, visibility tiers. These took real investigation to settle; re-deriving them risks landing somewhere subtly different.</dd>
+
+      <dt>Measure before building</dt>
+      <dd>A rule earned twice this month: a proposed auto-hide filter would have silently hidden ~35 legitimate records, and only counting first revealed it. The measurement cost minutes; the rollback would have cost trust.</dd>
+
+      <dt>Write it down same session</dt>
+      <dd>Decisions are appended before the session ends, not “later.” A container reset takes the scratchpad with it.</dd>
+    </dl>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2 class="rv">4 · Audits that paid for themselves</h2>
+    <div class="h2sub rv">Each was a deliberate sweep, not a bug report from a user.</div>
+    <div class="tblwrap rv">
+      <table class="tbl">
+        <thead><tr><th>Audit</th><th>What it found</th><th>Result</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>Cross-branch drift</td>
+            <td>The branch every client release shipped from had drifted <strong>79,199 lines</strong> behind, and carried 35 test files against the other branch’s 90.</td>
+            <td class="num">55 suites restored</td>
+          </tr>
+          <tr>
+            <td>Release-gate replay</td>
+            <td>Running the full suite against the shipping branch surfaced a pattern-compiler defect that had ridden through <strong>ten consecutive releases</strong> unseen — because the suite that caught it did not exist on that branch.</td>
+            <td class="num">P1 caught pre-fleet</td>
+          </tr>
+          <tr>
+            <td>Silent-join audit</td>
+            <td>A join that was supposed to bind time-series rows to their parent matched <strong>96 of 3,651</strong>. Two independent causes; the query returned rows either way, so nothing ever errored.</td>
+            <td class="num">2.6% → full</td>
+          </tr>
+          <tr>
+            <td>Enabled-but-dead rules</td>
+            <td><strong>37 of 109</strong> enabled user rules could never fire — anchored against a line format that does not exist at match time. Being <em>enabled</em> is what made them invisible; they read as coverage.</td>
+            <td class="num">whole class fixed</td>
+          </tr>
+          <tr>
+            <td>Single-source evidence</td>
+            <td>One emote was being counted as a real event. <strong>44% of every stored record of that type was false</strong>, and nothing in the pipeline could contradict it, because nothing else was watching.</td>
+            <td class="num">2nd source designed</td>
+          </tr>
+          <tr>
+            <td>Capped-query sweep</td>
+            <td>A paginated query feeding a <em>set</em> rather than a <em>list</em> produced wrong answers past the cap. The audit generalised the shape and flagged <strong>23 more instances</strong> of it.</td>
+            <td class="num">class documented</td>
+          </tr>
+          <tr>
+            <td>Retention grain</td>
+            <td>A telemetry table rolled up to the grain actually queried: <strong>114,444 rows → 1,087</strong>, folding 104,846 events.</td>
+            <td class="num">31 MB → 4.8 MB</td>
+          </tr>
+          <tr>
+            <td>Ignore-file inheritance</td>
+            <td>A file-level promotion process only ever moves the files it is told to. An ignore rule protecting a credential existed on one branch and had never crossed to the other.</td>
+            <td class="num">closed; never leaked</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="rv muted" style="margin-top:16px;font-size:13.5px">
+      The common thread: <strong style="color:var(--text)">every one of these looked healthy from
+      the outside.</strong> Green tests, enabled features, queries returning rows. They were only
+      findable by asking a question nobody had asked yet, which is exactly the work that is cheap to
+      run and expensive to skip.
+    </p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2 class="rv">5 · Capturing intent verbatim</h2>
+    <div class="h2sub rv">The design docs quote the request rather than paraphrasing it.</div>
+    <p class="rv muted">
+      Every design doc opens with the original ask, unedited. Paraphrasing loses the constraints,
+      and the constraints are the part that survives contact with reality. A worked example — the
+      first ask specified the goal <em>and</em> every gating condition:
+    </p>
+    <blockquote class="pq rv">
+      request the cleric that has it available (not on recast cooldown) and has emeralds AND is not
+      coming up on the chain within the cast time plus global cooldown time
+    </blockquote>
+    <p class="rv muted">
+      Research then established that two of those conditions were unknowable: one depended on a
+      manual inventory export three weeks stale, the other on data only a minority of clients
+      report. A paraphrased version would have hidden that. Instead the follow-up ask absorbed the
+      finding and landed on something buildable:
+    </p>
+    <blockquote class="pq rv">
+      how about calling out two clerics that have recently healed on the chain as potential casters
+      so that they can call out in voice who is doing it?
+      <cite>The design doc’s verdict: “That second message is the design. The rest of this doc explains why.”</cite>
+    </blockquote>
+    <p class="rv muted">
+      That is the pattern worth naming: <strong style="color:var(--text)">a well-specified request
+      is not one that gets built as written — it is one that can be revised precisely when a
+      constraint turns out to be false.</strong> The counter-example is in the same corpus: a
+      perfectly clear request for arrival estimates that research killed outright, because the data
+      source carries no position information at all. Good ask, impossible answer, settled in one
+      pass because the ask was specific enough to test.
+    </p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2 class="rv">6 · Verification over plausibility</h2>
+    <div class="h2sub rv">The failure mode of generated answers is confident, well-formatted, and wrong.</div>
+    <p class="rv muted">
+      A feature needed the exact string a server emits on a rare event. Documentation, forums and an
+      AI assistant all agreed on two strings. One was real. The other described an outcome the
+      server never emits at all — and a version of it had already been implemented once from a
+      guess, sitting enabled and matching nothing for weeks.
+    </p>
+    <p class="rv muted">
+      Reading the server’s own source settled it in minutes, and produced three facts no secondary
+      source had: the message uses the name form even for the affected player, it is range-limited
+      so distant clients never receive it, and the failure case is silent by design — meaning
+      “detect the failure” was not a feature that could be built, and would have been chased
+      indefinitely.
+    </p>
+    <div class="grid2" style="margin-top:20px">
+      <div class="card rv">
+        <h3>Sources that settle an argument</h3>
+        <p>Server source, database schema, a live measurement, or a recorded real-world sample. Anything else is a hypothesis to be checked, including a confident answer from a model.</p>
+      </div>
+      <div class="card rv">
+        <h3>Gates that make speed safe</h3>
+        <p>86 test suites, golden-file regression over recorded production input, a dedicated checker for a template that had shipped a blank-page bug twice, and CI on every branch that reaches a user.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2 class="rv">7 · Tooling</h2>
+    <div class="h2sub rv">Connected to live systems, so answers come from state rather than memory.</div>
+    <dl class="deflist rv">
+      <dt>Database</dt>
+      <dd>Direct connector to the production Postgres — schema, migrations, advisories and live queries. Most “is this actually broken?” questions are one query, not an investigation.</dd>
+
+      <dt>Hosting</dt>
+      <dd>Connectors for both deploy targets: deployment status, build logs, runtime logs, environment configuration. Verifying a deploy landed does not require asking anyone.</dd>
+
+      <dt>Source control</dt>
+      <dd>Repository connector for the authoritative branch state — the local clone can come up with stale refs, and “my commits vanished” has a real answer that only the remote can give.</dd>
+
+      <dt>Browser automation</dt>
+      <dd>Headless browser plugin for verifying rendered pages and interaction flows rather than assuming markup implies behaviour.</dd>
+
+      <dt>Skills &amp; plugins</dt>
+      <dd>A general capability plugin plus the browser plugin, with an additional security-skills marketplace registered — extending the toolset without hand-rolling equivalents.</dd>
+
+      <dt>Custom command</dt>
+      <dd>One project-specific slash command: documentation recall, described above. Deliberately the only one — a command that duplicates what the tooling already does is another thing to maintain and drift.</dd>
+    </dl>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2 class="rv">In one line</h2>
+    <div class="h2sub rv">Write down what was decided, index what exists, verify what matters, and measure before building.</div>
+    <p class="rv muted">
+      None of it is exotic. It is the same discipline any long-lived codebase needs, applied a
+      little earlier than usual — because assistance makes it cheap to produce work and just as
+      cheap to produce the <em>wrong</em> work, and the difference between the two is almost always
+      whether someone bothered to check first.
+    </p>
+    <p class="rv muted">
+      <a href="/">← Back to the profile</a>
+    </p>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    Every figure on this page is counted from the repository or measured from the running system.
+  </div>
+</footer>
+
+<script>
+(function(){
+  var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var rv = Array.prototype.slice.call(document.querySelectorAll('.rv'));
+  if (reduce || !('IntersectionObserver' in window)){
+    rv.forEach(function(el){ el.classList.add('in'); });
+    return;
+  }
+  var io = new IntersectionObserver(function(entries){
+    entries.forEach(function(e){
+      if (!e.isIntersecting) return;
+      e.target.classList.add('in');
+      io.unobserve(e.target);
+    });
+  }, { rootMargin: '0px 0px -10% 0px', threshold: 0.1 });
+  rv.forEach(function(el, i){
+    el.style.transitionDelay = Math.min(i % 5, 4) * 45 + 'ms';
+    io.observe(el);
+  });
+})();
+</script>
+</body>
+</html>

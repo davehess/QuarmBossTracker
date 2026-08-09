@@ -9,113 +9,16 @@
 <meta property="og:title" content="Dave Hess — Engineering Profile">
 <meta property="og:description" content="Four independently-versioned components, one monorepo, ~58k lines. Built and operated solo for a live user base.">
 <meta property="og:type" content="profile">
-<style>
-  /* Self-contained: no external fonts, no CDN, no network at render time. */
-  :root{
-    --bg:#0b0f16; --panel:#111823; --panel2:#0e141d; --border:#1e2a3a;
-    --text:#e6edf3; --dim:#8b98a9; --gold:#f0b429; --blue:#58a6ff;
-    --green:#56d364; --purple:#bc8cff; --red:#ff7b72;
-    --mono:ui-monospace,SFMono-Regular,Consolas,"Liberation Mono",monospace;
-    --sans:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
-  }
-  *{box-sizing:border-box}
-  html{scroll-behavior:smooth}
-  body{
-    margin:0;background:var(--bg);color:var(--text);font-family:var(--sans);
-    line-height:1.65;-webkit-font-smoothing:antialiased;overflow-x:hidden;
-  }
-  .wrap{max-width:980px;margin:0 auto;padding:0 20px}
-  a{color:var(--blue);text-decoration:none}
-  a:hover{text-decoration:underline}
-
-  /* ── Hero ─────────────────────────────────────────────────────────── */
-  header{
-    padding:96px 0 72px;position:relative;
-    background:
-      radial-gradient(900px 380px at 12% -10%, rgba(88,166,255,.14), transparent 60%),
-      radial-gradient(700px 320px at 88% 0%, rgba(240,180,41,.10), transparent 60%);
-  }
-  .eyebrow{
-    font-family:var(--mono);font-size:12px;letter-spacing:.16em;text-transform:uppercase;
-    color:var(--gold);margin-bottom:18px;
-  }
-  h1{font-size:clamp(34px,6.4vw,60px);line-height:1.06;margin:0 0 18px;letter-spacing:-.02em;font-weight:700}
-  .lede{font-size:clamp(17px,2.3vw,21px);color:var(--dim);max-width:62ch;margin:0 0 28px}
-  .lede strong{color:var(--text);font-weight:600}
-  .chips{display:flex;flex-wrap:wrap;gap:8px}
-  .chip{
-    font-family:var(--mono);font-size:11.5px;color:var(--dim);
-    border:1px solid var(--border);border-radius:999px;padding:5px 12px;background:var(--panel2);
-  }
-
-  /* ── Sections ─────────────────────────────────────────────────────── */
-  section{padding:64px 0;border-top:1px solid var(--border)}
-  h2{
-    font-size:12px;font-family:var(--mono);letter-spacing:.18em;text-transform:uppercase;
-    color:var(--gold);margin:0 0 8px;font-weight:600;
-  }
-  .h2sub{font-size:clamp(21px,3.2vw,29px);line-height:1.25;margin:0 0 26px;font-weight:650;letter-spacing:-.01em}
-  p{margin:0 0 16px}
-  .muted{color:var(--dim)}
-
-  /* ── Stat strip ───────────────────────────────────────────────────── */
-  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
-  .stat{background:var(--panel);border:1px solid var(--border);border-radius:11px;padding:18px 16px}
-  .stat .n{font-size:clamp(23px,3.6vw,31px);font-weight:700;font-family:var(--mono);letter-spacing:-.02em;color:var(--text)}
-  .stat .l{font-size:12.5px;color:var(--dim);margin-top:4px;line-height:1.4}
-
-  /* ── Component cards ──────────────────────────────────────────────── */
-  .grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(270px,1fr));gap:14px}
-  .card{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:20px}
-  .card h3{margin:0 0 4px;font-size:16.5px;font-weight:650}
-  .card .role{font-family:var(--mono);font-size:11px;color:var(--gold);letter-spacing:.06em;text-transform:uppercase;margin-bottom:10px}
-  .card p{font-size:14.5px;color:var(--dim);margin:0}
-  .card .meta{margin-top:12px;font-family:var(--mono);font-size:11.5px;color:var(--dim);opacity:.85}
-
-  /* ── Case studies ─────────────────────────────────────────────────── */
-  .case{
-    background:var(--panel2);border:1px solid var(--border);border-left:3px solid var(--blue);
-    border-radius:10px;padding:20px 22px;margin-bottom:14px;
-  }
-  .case h3{margin:0 0 10px;font-size:16.5px;font-weight:650;letter-spacing:-.01em}
-  .case p{font-size:14.5px;color:var(--dim);margin:0 0 12px}
-  .case p:last-child{margin-bottom:0}
-  .case .result{
-    display:inline-flex;align-items:baseline;gap:9px;font-family:var(--mono);font-size:13px;
-    background:rgba(86,211,100,.09);border:1px solid rgba(86,211,100,.28);color:var(--green);
-    border-radius:7px;padding:6px 12px;
-  }
-  .case .result .was{color:var(--dim);text-decoration:line-through}
-  .case.amber{border-left-color:var(--gold)}
-  .case.purple{border-left-color:var(--purple)}
-  .case.red{border-left-color:var(--red)}
-
-  /* ── Stack ────────────────────────────────────────────────────────── */
-  .stackrow{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:14px;align-items:baseline}
-  .stackrow .k{font-family:var(--mono);font-size:11.5px;color:var(--gold);min-width:104px;letter-spacing:.06em;text-transform:uppercase}
-  .stackrow .v{color:var(--dim);font-size:14.5px;flex:1;min-width:220px}
-
-  /* ── TODO blocks — visible on purpose until filled in ─────────────── */
-  .todo{
-    border:1px dashed var(--gold);border-radius:10px;padding:18px 20px;background:rgba(240,180,41,.05);
-  }
-  .todo h3{margin:0 0 8px;font-size:15px;color:var(--gold);font-family:var(--mono);letter-spacing:.06em;text-transform:uppercase;font-weight:600}
-  .todo p{font-size:14px;color:var(--dim);margin:0 0 8px}
-  .todo ul{margin:0;padding-left:20px;color:var(--dim);font-size:14px}
-  .todo li{margin-bottom:5px}
-
-  footer{padding:56px 0 72px;border-top:1px solid var(--border);color:var(--dim);font-size:13.5px}
-
-  /* ── Motion ───────────────────────────────────────────────────────── */
-  .rv{opacity:0;transform:translateY(16px);transition:opacity .6s cubic-bezier(.2,.7,.3,1),transform .6s cubic-bezier(.2,.7,.3,1)}
-  .rv.in{opacity:1;transform:none}
-  @media (prefers-reduced-motion:reduce){
-    html{scroll-behavior:auto}
-    .rv{opacity:1;transform:none;transition:none}
-  }
-</style>
+<link rel="stylesheet" href="/style.css">
 </head>
 <body>
+
+<nav class="site">
+  <div class="wrap">
+    <a href="/" class="here">Profile</a>
+    <a href="/method.html">Working method →</a>
+  </div>
+</nav>
 
 <header>
   <div class="wrap">
@@ -387,6 +290,10 @@
       budgets, a fleet-wide pause — are configuration read on a short cache rather than a deploy.
       When something needs attention during a live window, the response is a settings change, not
       an emergency.
+    </p>
+    <p class="rv" style="margin-top:6px">
+      <a href="/method.html">The full working method — memory as files, two-tier retrieval, the
+      audits that paid off →</a>
     </p>
 
     <div class="todo rv" style="margin-top:22px">
