@@ -1,0 +1,287 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>What one seat returns — Dave Hess</title>
+<meta name="description" content="Measured throughput and cost discipline from a single AI-assisted engineering seat: metered-equivalent consumption, a 5.9x caching gap, deliberate model routing, and what actually shipped.">
+<meta name="robots" content="index, follow">
+<meta property="og:title" content="What one seat returns">
+<meta property="og:description" content="One flat-rate seat, ten weeks, four production components — and the measurements that show the spend is managed.">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<nav class="site">
+  <div class="wrap">
+    <a href="/">Profile</a>
+    <a href="/method.html">Working method</a>
+    <a href="/business-case.html" class="here">What a seat returns</a>
+  </div>
+</nav>
+
+<header style="padding:72px 0 52px">
+  <div class="wrap">
+    <div class="eyebrow rv">The business case</div>
+    <h1 class="rv" style="font-size:clamp(30px,5.4vw,48px)">What one seat<br>actually returns</h1>
+    <p class="lede rv">
+      The usual objection to funding AI tooling is not <em>“does it work”</em> — it is
+      <strong>“is the spend controlled, and what comes out the other end.”</strong> Both are
+      measurable. Everything below is counted from production systems and from the assistant's own
+      usage records, not estimated.
+    </p>
+  </div>
+</header>
+
+<section>
+  <div class="wrap">
+    <h2 class="rv">The four numbers</h2>
+    <div class="h2sub rv">Ten weeks, one engineer, one flat-rate seat.</div>
+    <div class="stats">
+      <div class="stat rv"><div class="n">$7,367</div><div class="l">metered-equivalent consumption, at list API rates</div></div>
+      <div class="stat rv"><div class="n">5.9×</div><div class="l">what the same work would cost without caching discipline</div></div>
+      <div class="stat rv"><div class="n" data-count="29267">0</div><div class="l">model calls, across five model tiers</div></div>
+      <div class="stat rv"><div class="n" data-count="4">0</div><div class="l">production components shipped and operated</div></div>
+    </div>
+    <p class="rv muted" style="margin-top:20px">
+      To be precise about what the first figure is and is not: it is <strong style="color:var(--text)">not
+      an invoice, and not a saving.</strong> The work ran on a flat-rate plan. It is what the same
+      token volume would bill if metered at published API rates — the honest way to express what a
+      single seat carried. It is also a <strong style="color:var(--text)">floor</strong>: it covers
+      cloud sessions only, because those containers are reclaimed along with their records.
+    </p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2 class="rv">Is the spend controlled?</h2>
+    <div class="h2sub rv">This is the question worth answering first, and it has a number.</div>
+    <p class="rv muted">
+      Of 7.16 billion tokens consumed, <strong style="color:var(--text)">96.3% were cache
+      reads</strong> — billed at a tenth of the standard input rate because the work was
+      deliberately structured around a stable, reusable context. Price the identical token volume
+      with no caching discipline and it comes to <strong style="color:var(--text)">$43,544</strong>.
+    </p>
+    <div class="tblwrap rv">
+      <table class="tbl">
+        <thead><tr><th>Same work, priced two ways</th><th>Cost</th><th></th></tr></thead>
+        <tbody>
+          <tr><td>As actually run</td><td class="num">$7,367</td><td>structured for cache reuse</td></tr>
+          <tr><td>With no caching discipline</td><td class="num">$43,544</td><td>every token billed fresh</td></tr>
+          <tr><td><strong>Difference</strong></td><td class="num">$36,178</td><td>the cost of not knowing this</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="rv muted" style="margin-top:18px">
+      That gap is the entire argument about predictability. Unmanaged, this consumption pattern
+      produces the runaway bill people are right to fear. Managed, it is a sixth of that — and the
+      management is not a heroic effort, it is a handful of practices applied consistently
+      (<a href="/method.html">the working method</a> documents them). The figure is reproducible on
+      any machine's usage records, not a claim.
+    </p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2 class="rv">Cheap models on cheap work</h2>
+    <div class="h2sub rv">Routing by difficulty, visible in the billing shape.</div>
+    <div class="tblwrap rv">
+      <table class="tbl">
+        <thead><tr><th>Tier</th><th>Calls</th><th>Cost</th><th>What it was used for</th></tr></thead>
+        <tbody>
+          <tr><td>Frontier</td><td>3,159</td><td class="num">$2,398</td><td>the hardest reasoning and long-horizon runs</td></tr>
+          <tr><td>High</td><td>24,217</td><td class="num">$4,919</td><td>the working majority — code, review, analysis</td></tr>
+          <tr><td>Mid</td><td>671</td><td class="num">$34</td><td>well-specified mid-difficulty tasks</td></tr>
+          <tr><td>Small</td><td>1,210</td><td class="num">$12</td><td>documentation retrieval, cited and verified</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="rv muted" style="margin-top:18px">
+      1,210 retrieval calls cost <strong style="color:var(--text)">twelve dollars</strong> because
+      retrieval does not need a frontier model. That is a design decision, made once and applied
+      automatically — the kind of thing that separates a tool being used well from a tool being
+      used.
+    </p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2 class="rv">What came out</h2>
+    <div class="h2sub rv">Not a prototype — production systems with users on a schedule.</div>
+    <div class="grid2">
+      <div class="card rv">
+        <h3>Four components, four release targets</h3>
+        <p>
+          An ingest and orchestration service, a zero-dependency telemetry agent running on machines
+          I cannot access, an auto-updating desktop client with three release channels, and a web
+          application. Each independently versioned, each with its own rollback story.
+        </p>
+        <div class="meta">~58k lines · 1,851 commits · 596 automated releases</div>
+      </div>
+      <div class="card rv">
+        <h3>Operated, not just built</h3>
+        <p>
+          Deploy freezes during live windows enforced in CI, load-shedding and per-client budgets as
+          configuration rather than deploys, circuit breakers, crash-loop auto-rollback, and a
+          durable client queue so an outage costs latency rather than data.
+        </p>
+        <div class="meta">86 test suites · CI on every shipping branch</div>
+      </div>
+      <div class="card rv">
+        <h3>Data platform</h3>
+        <p>
+          192 schema migrations, row-level security, reporting functions, and a reconciliation layer
+          that merges overlapping records from many independent clients into one authoritative row
+          without double-counting.
+        </p>
+        <div class="meta">77 application routes</div>
+      </div>
+      <div class="card rv">
+        <h3>Audits that found real defects</h3>
+        <p>
+          A join silently matching 2.6% of the time, 37 enabled-but-dead user rules, a category of
+          records 44% of which were false, and 79,199 lines of branch drift — each found by asking a
+          question nobody had asked, and each cheap to run.
+        </p>
+        <div class="meta">every one looked healthy from outside</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2 class="rv">The exhibit most people miss</h2>
+    <div class="h2sub rv">The same seat produced the presentation layer, not just the code.</div>
+    <p class="rv muted">
+      A seat is usually justified on engineering output alone, which undersells it. The same seat,
+      in the same sessions, produced the explanatory and marketing surfaces that would otherwise
+      need a designer, a front-end developer, and a copywriter — including
+      <strong style="color:var(--text)">the page you are reading and the two beside it</strong>.
+    </p>
+    <div class="tblwrap rv">
+      <table class="tbl">
+        <thead><tr><th>Surface</th><th>Size</th><th>What it involved</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>Product story page</td>
+            <td class="num">550 lines</td>
+            <td>A seven-chapter scroll-through explaining the platform to non-technical readers, written from corrected source facts rather than invention</td>
+          </tr>
+          <tr>
+            <td>Animated interface demos</td>
+            <td class="num">401 lines</td>
+            <td>Four working recreations of live product overlays — a damage meter with a defensive-cooldown countdown, a healer-status board, a synchronized-callout sequence, and an auction flow — animated from real recorded values</td>
+          </tr>
+          <tr>
+            <td>Storyboarded sequence</td>
+            <td class="num">192 lines</td>
+            <td>A scroll-driven build-up animation storyboarded shot by shot with the client, contained to a phone viewport after the first version overflowed it</td>
+          </tr>
+          <tr>
+            <td>Condensed variant</td>
+            <td class="num">148 lines</td>
+            <td>A short version of the same story for readers who will not scroll seven chapters</td>
+          </tr>
+          <tr>
+            <td>This site</td>
+            <td class="num">900 lines</td>
+            <td>Three pages and a shared stylesheet, self-contained: no external fonts, no CDN, nothing fetched at render time</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="rv muted" style="margin-top:18px">
+      All of it hand-built rather than templated — scroll-reveal and count-up behavior written
+      directly against the browser's intersection observer, reduced-motion honored, light and dark
+      both handled. <strong style="color:var(--text)">The point is not that the pages are
+      elaborate.</strong> It is that explanatory and design work landed inside the same seat, on the
+      same day, as the database migration and the release — which is where a lot of the real return
+      sits, and where a code-only accounting misses it entirely.
+    </p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2 class="rv">The objections, answered</h2>
+    <div class="h2sub rv">In the order they usually arrive.</div>
+    <dl class="deflist rv">
+      <dt>“Costs are unpredictable”</dt>
+      <dd>A flat seat is a fixed line item by definition. The consumption behind it is also measurable and, here, managed — 96.3% cache reads, and a 5.9× gap against the undisciplined version of the same work.</dd>
+
+      <dt>“Output quality is unverifiable”</dt>
+      <dd>86 test suites, golden-file regression over recorded production input, and CI on every branch that reaches a user. The audits above found defects that had passed green tests for months — the verification is real enough to catch things people missed.</dd>
+
+      <dt>“It only helps with boilerplate”</dt>
+      <dd>The listed findings are not boilerplate: a silent join failure, a clock-skew measurement across real machines, a pattern compiler eating its own input. The gains were largest on the ambiguous work.</dd>
+
+      <dt>“One person got lucky”</dt>
+      <dd>Possibly — which is why every figure here is reproducible: counted from the repository, the production database, or the usage records, with the method written down so it transfers.</dd>
+
+      <dt>“What does it replace?”</dt>
+      <dd>Nothing, in this case — it is work that would not otherwise exist at this scope. That is the honest answer, and a better one than a fabricated headcount equivalence.</dd>
+    </dl>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2 class="rv">In one line</h2>
+    <div class="h2sub rv">One seat carried $7,367 of metered-equivalent work in ten weeks, at a sixth of what the same tokens cost undisciplined, and shipped four production components and their presentation layer.</div>
+    <p class="rv muted">
+      Every number on this page is counted, and every one of them is a floor.
+    </p>
+    <p class="rv muted"><a href="/">← Profile</a> &nbsp;·&nbsp; <a href="/method.html">Working method →</a></p>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    Figures from production systems and assistant usage records, ~2026-05-28 to 2026-08-09. Cloud sessions only.
+  </div>
+</footer>
+
+<script>
+(function(){
+  var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var rv = Array.prototype.slice.call(document.querySelectorAll('.rv'));
+  function fmt(n){ return n.toLocaleString('en-US'); }
+  function countUp(el){
+    var target = parseInt(el.getAttribute('data-count'), 10);
+    if (!isFinite(target)) return;
+    if (reduce){ el.textContent = fmt(target); return; }
+    var dur = 1100, start = null;
+    function step(ts){
+      if (start === null) start = ts;
+      var p = Math.min(1, (ts - start) / dur);
+      el.textContent = fmt(Math.round(target * (1 - Math.pow(1 - p, 4))));
+      if (p < 1) requestAnimationFrame(step);
+    }
+    requestAnimationFrame(step);
+  }
+  if (reduce || !('IntersectionObserver' in window)){
+    rv.forEach(function(el){ el.classList.add('in'); });
+    document.querySelectorAll('[data-count]').forEach(countUp);
+    return;
+  }
+  var io = new IntersectionObserver(function(entries){
+    entries.forEach(function(e){
+      if (!e.isIntersecting) return;
+      e.target.classList.add('in');
+      var n = e.target.querySelector('[data-count]');
+      if (n) countUp(n);
+      io.unobserve(e.target);
+    });
+  }, { rootMargin: '0px 0px -10% 0px', threshold: 0.1 });
+  rv.forEach(function(el, i){
+    el.style.transitionDelay = Math.min(i % 5, 4) * 45 + 'ms';
+    io.observe(el);
+  });
+})();
+</script>
+</body>
+</html>
