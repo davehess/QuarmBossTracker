@@ -13,14 +13,40 @@ Directory `resume/`. Keep it that way — one project per site.
 
 ## Deploying it
 
-1. **Vercel → Add New → Project → import this repo.**
-2. **Root Directory: `resume`.** This is the load-bearing setting; without it
-   Vercel builds the monorepo root and fails.
+**Root Directory depends on which repo this is sitting in** — that one setting
+is the whole difference:
+
+| Repo | Vercel Root Directory |
+|---|---|
+| Its own repo (`davehess/Hesstastic`) | **`.`** (repo root — the default) |
+| Inside the QuarmBossTracker monorepo | **`resume`** |
+
+Getting it wrong means Vercel builds the wrong directory and fails.
+
+1. **Vercel → Add New → Project → import the repo.**
+2. Set **Root Directory** per the table above.
 3. Framework Preset: **Other**. There is no build step — `vercel.json` here
    pins `framework: null` so a stray auto-detect cannot start one.
 4. Deploy. It will come up on a `*.vercel.app` URL immediately.
 5. **Domains → Add `mimic.hesstastic.com`** to THIS project (not the
    wolfpack.quest one). Leave the Git Branch field on `main`.
+
+## Moving it to its own repo
+
+The site is fully self-contained, so the move is a subtree split — which keeps
+the commit history for these files instead of landing them as one squashed
+"initial commit":
+
+```sh
+git subtree split --prefix=resume -b resume-site   # already run; branch exists
+git remote add hesstastic https://github.com/davehess/Hesstastic.git
+git push hesstastic resume-site:main
+```
+
+Files land at the repo root (no `resume/` wrapper), so set Vercel's Root
+Directory to `.` per the table above. Once it is live from the new repo, delete
+`resume/` from the monorepo — leaving both copies means edits silently diverge
+and the deployed one stops matching the one you are editing.
 
 ## DNS (Porkbun — human-only step)
 
