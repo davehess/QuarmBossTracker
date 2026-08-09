@@ -323,7 +323,7 @@ export default async function AboutPage() {
               {[
                 { icon: '✚', t: 'Short a healer', d: 'Swap to the cleric and the CH chain overlay is already up, already knows your slot, already counting your beat.' },
                 { icon: '🐺', t: 'Short a shaman', d: 'The buff queue re-aims — who still needs Feral Avatar, who has a curse counter waiting to be cured.' },
-                { icon: '🎵', t: 'On the bard', d: 'See which casters are missing Clarity, and go and stand near them.' },
+                { icon: '🎵', t: 'On the bard', d: "See which casters are missing Lcea's, and go and stand near them." },
               ].map((x, i) => (
                 <Reveal key={x.t} delay={140 + i * 90} from="scale">
                   <div className="h-full rounded-lg border border-border bg-bg/40 p-4">
