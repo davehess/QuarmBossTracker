@@ -31,12 +31,13 @@ type Stats = {
   fights: number; damage: number; characters: number; chat: number;
   who: number; snapshots: number; buffs: number; loot: number;
   uploads: number; days: number; mobs: number; members: number;
-  dau: number; wau: number; mau: number;
+  raid_typical: number; raid_parsers: number; raid_biggest: number; dau_avg: number;
 };
 
 const ZERO: Stats = {
   fights: 0, damage: 0, characters: 0, chat: 0, who: 0, snapshots: 0, buffs: 0,
-  loot: 0, uploads: 0, days: 0, mobs: 0, members: 0, dau: 0, wau: 0, mau: 0,
+  loot: 0, uploads: 0, days: 0, mobs: 0, members: 0,
+  raid_typical: 0, raid_parsers: 0, raid_biggest: 0, dau_avg: 0,
 };
 
 // One RPC, ~65ms. Doing this from PostgREST instead took 32 SECONDS — see the
@@ -193,6 +194,13 @@ export default async function AboutPage() {
               file and turns it into parses, attendance, buff coverage and boss kills — with no
               typing, and no one having to remember.
             </p>
+            <p>
+              And not everyone has to run it. Each log sees the whole fight, so a handful of
+              uploads merge into one record — a typical raid night here is{' '}
+              <span className="text-text"><CountUp to={s.raid_typical} /> characters</span> covered
+              by about <span className="text-text"><CountUp to={s.raid_parsers} /></span> people
+              parsing.
+            </p>
             <p className="text-dim">
               Officer chat, tells and private channels are filtered out{' '}
               <span className="text-text">on your own PC</span>, before anything is sent. That is
@@ -314,15 +322,19 @@ export default async function AboutPage() {
           </p>
         </Reveal>
 
-        {/* Widest window FIRST, deliberately. This guild raids three nights a
-            week, so "today" is legitimately near zero on a Tuesday — leading
-            with it would make a healthy platform look abandoned. Same numbers,
-            honest order. */}
+        {/* Every figure here is TIME-OF-DAY STABLE by construction — medians per
+            raid night, and a daily-active averaged over active days. A live
+            "users right now" count would read near zero whenever someone opens
+            this outside the Sun/Wed/Thu window, which says nothing true about
+            the platform. */}
         <Reveal delay={100}>
           <div className="grid grid-cols-3 gap-3 sm:gap-4 mt-6">
-            <Stat value={s.mau} label="Raiders parsing" accent="text-green" sub="last 30 days" />
-            <Stat value={s.wau} label="This week" accent="text-green" sub="last 7 days" />
-            <Stat value={s.dau} label="Today" accent="text-green" sub="raid nights are Sun/Wed/Thu" />
+            <Stat value={s.raid_typical} label="A typical raid" accent="text-green"
+                  sub={`characters on a raid night · biggest ${s.raid_biggest}`} />
+            <Stat value={s.raid_parsers} label="Running the parser" accent="text-green"
+                  sub="per raid night — their logs merge, so not everyone needs it" />
+            <Stat value={s.dau_avg} label="Daily active" accent="text-green"
+                  sub="average across active days" />
           </div>
         </Reveal>
 

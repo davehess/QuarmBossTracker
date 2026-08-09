@@ -37,6 +37,33 @@ returns json language sql stable as $$
     where relname in ('chat_messages','who_observations','encounter_threat_snapshots',
                       'buff_casts','opendkp_loot')
       and relnamespace = 'public'::regnamespace
+  ),
+  -- Distinct characters in a raid night, and distinct people uploading parses
+  -- for it. 90 days, so a quiet fortnight cannot swing the figure.
+  per_night as (
+    select e.raid_night_id,
+           count(distinct ep.character_name)       players,
+           count(distinct c.contributor_character) parsers
+    from public.encounters e
+    left join public.encounter_players ep on ep.encounter_id = e.id
+    left join public.contributions     c  on c.encounter_id  = e.id
+    where e.raid_night_id is not null
+      and e.started_at > now() - interval '90 days'
+    group by 1
+  ),
+  -- Daily active, averaged over days that HAD activity.
+  --
+  -- ⚠ Deliberately NOT a "right now" or "today so far" count (Hitya
+  -- 2026-08-09: "not current total of users because that would fluctuate
+  -- wildly with the time of day"). This guild raids Sun/Wed/Thu, so a live
+  -- count read at 3am on a Saturday is 1 and makes a healthy platform look
+  -- abandoned. Every activity figure this function returns is time-of-day
+  -- stable by construction.
+  per_day as (
+    select date_trunc('day', created_at) d, count(distinct contributor_character) n
+    from public.contributions
+    where created_at > now() - interval '30 days'
+    group by 1
   )
   select json_build_object(
     'fights',     (select count(*) from public.encounters),
@@ -51,12 +78,13 @@ returns json language sql stable as $$
     'snapshots',  (select n from est where relname='encounter_threat_snapshots'),
     'buffs',      (select n from est where relname='buff_casts'),
     'loot',       (select n from est where relname='opendkp_loot'),
-    'dau', (select count(distinct contributor_character) from public.contributions
-              where created_at > now() - interval '24 hours'),
-    'wau', (select count(distinct contributor_character) from public.contributions
-              where created_at > now() - interval '7 days'),
-    'mau', (select count(distinct contributor_character) from public.contributions
-              where created_at > now() - interval '30 days')
+    -- median, not mean: one 110-character night must not drag the "typical"
+    'raid_typical', (select percentile_cont(0.5) within group (order by players)::int
+                       from per_night where players > 0),
+    'raid_parsers', (select percentile_cont(0.5) within group (order by parsers)::int
+                       from per_night where parsers > 0),
+    'raid_biggest', (select max(players) from per_night),
+    'dau_avg',      (select round(avg(n))::int from per_day)
   );
 $$;
 
