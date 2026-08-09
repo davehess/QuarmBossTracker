@@ -158,6 +158,8 @@ def main():
                     help="transcript root (default: ~/.claude/projects)")
     ap.add_argument("--since", help="only count messages on/after this date (YYYY-MM-DD)")
     ap.add_argument("--by-model", action="store_true", help="group by model, not session")
+    ap.add_argument("--counterfactual", action="store_true",
+                    help="also price the same tokens with NO prompt caching")
     ap.add_argument("--json", action="store_true", dest="as_json", help="machine-readable output")
     args = ap.parse_args()
 
@@ -273,6 +275,30 @@ def main():
         print(f"  {'TOTAL':<38} {calls:>7,} {tok:>16,} {grand:>10,.2f}")
 
     print()
+
+    if args.counterfactual:
+        # What the SAME tokens would cost with no prompt caching at all: every
+        # cached token (read or written) billed as fresh input. This is the
+        # number that shows caching discipline is load-bearing rather than
+        # incidental — useful when the question is "is this spend controlled?"
+        uncached = 0.0
+        cache_tokens = 0
+        for model, b in per_model.items():
+            pr = price_for(model)
+            if pr is None:
+                continue
+            inp_rate, out_rate = pr
+            cached = b.cache_read + b.cache_5m + b.cache_1h
+            cache_tokens += b.cache_read
+            uncached += (b.inp / 1e6) * inp_rate
+            uncached += (b.out / 1e6) * out_rate
+            uncached += (cached / 1e6) * inp_rate
+        print(f"  cache reads          {cache_tokens:>18,}  "
+              f"({cache_tokens / tok * 100:.1f}% of all tokens)")
+        print(f"  as measured (list)   ${grand:>17,.0f}")
+        print(f"  same work, no cache  ${uncached:>17,.0f}   ({uncached / grand:.1f}x)")
+        print(f"  avoided by caching   ${uncached - grand:>17,.0f}")
+        print()
 
     unpriced = set()
     for b in per_model.values():
