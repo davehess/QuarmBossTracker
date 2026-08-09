@@ -618,7 +618,10 @@ MAIN TARGET's melee connects on most (15s window), else any-mob tally.
 
 ### Triggers
 Guild set polled from the bot (2 min; class-filtered), personal set from
-`personal_triggers.json`. `{s}` placeholders compile to named groups;
+`personal_triggers.json`. One compile entry point — `compileTriggerPattern`
+(token expansion → .NET/RE2 dialect normalisation → raw-line anchoring), which
+replaced the divergent `_translateDotNetRegex` / `_translateGinaPlaceholders`
+pair on 2026-08-07. `{s}` placeholders compile to named groups;
 `_captureMatchesCharmPet` suppresses self-charm-pet fires; roster gate via
 `require_raid_member`. Zeal gauge conditions fire without a log line.
 Cross-Mimic relay: detecting agent POSTs `trigger-relay`, others poll
@@ -626,21 +629,35 @@ Cross-Mimic relay: detecting agent POSTs `trigger-relay`, others poll
 Fires live in an **in-memory ring buffer** — nothing durable, so "has this
 trigger ever fired?" is currently unanswerable (`DESIGN-callout-overlay.md`).
 
-### Trigger pattern anchoring — the `^` trap (#190) — 2026-08-04
+### Trigger pattern anchoring — the `^` trap (#190) — 2026-08-04, revised 2026-08-09
 `evaluateTriggersAgainstLine` matches the **raw** line (`[Sun Aug 02 21:10:01
-2026] <message>`) and `_applyGuildTriggersResponse` compiles with flags `i`, **no
-`m`** — so `^` anchors before the timestamp. `_translateDotNetRegex` passes `^`
-through untouched (it only rewrites `(?>` and `{s}`-family placeholders).
-**37 of 109 enabled triggers were written `^<message>` and could never fire**,
-including eight callouts added the day it was found. Fix is `^` →
-`^\[.+?\]\s+`; **deleting the `^` is wrong** because the `{s}` class includes
-space, so the leftmost match starts at the space after `]` and captures a
-leading space. `web/lib/triggerPattern.ts` normalizes on save and
-`/admin/triggers` flags existing dead rows; the 37 in the table are staged, not
-applied (`RUNBOOK-dead-triggers.md`) — mass-enabling callouts is a raid-noise
-decision. Sibling failure modes, same "enabled therefore assumed working" shape:
-the DI trigger matched **invented** text (check `eqemu_spells.cast_on_*` for the
-real string) and AOE_DANCE was **mis-signatured** to another spell's text.
+2026] <message>`) with flags `i`, **no `m`** — so a bare `^` anchors before the
+timestamp. **37 of 109 enabled triggers were written `^<message>` and could
+never fire**, including eight callouts added the day it was found.
+`web/lib/triggerPattern.ts` normalizes on save and `/admin/triggers` flags dead
+rows; the 37 are staged, not applied (`RUNBOOK-dead-triggers.md`) —
+mass-enabling callouts is a raid-noise decision. Sibling failure modes, same
+"enabled therefore assumed working" shape: the DI trigger matched **invented**
+text (check `eqemu_spells.cast_on_*` for the real string) and AOE_DANCE was
+**mis-signatured** to another spell's text.
+
+**Both halves are now handled in the compiler** (`compileTriggerPattern`, which
+replaced `_translateDotNetRegex` on 2026-08-07):
+- a top-level `^` is rewritten to `^(?:\[[^\]]{1,40}\]\s+)?` —
+  **optional**, so imported GINA/EQLP patterns and legacy `\]\s+` ones both fire
+  (`_rewriteAnchorsForRawLine`);
+- an **unanchored** pattern that OPENS with `{s}`/`{n}` gets the same optional
+  prefix prepended. `{s}` is now `.+?`, which at index 0 of a raw line eats
+  `"[Sun Aug 02 …] "` straight into the capture. The old allow-list class hid
+  this by accident (it could not match `[`, so the engine advanced past the
+  timestamp itself). Shipped broken in agent 3.5.44–3.5.53; fixed in 3.5.54,
+  caught only because `test/trigger-class.test.js` **does not exist on `beta`**.
+  `{c}` is exempt — it expands to a literal alternation of character names.
+
+⚠ The old note here said *"deleting the `^` is wrong — you capture a leading
+space."* That was true of the allow-list class and is **no longer true**: an
+unanchored `{s}`-leading pattern is now guarded and captures cleanly. Do not
+re-derive the old advice when applying `RUNBOOK-dead-triggers.md`.
 
 ### Agent boot smoke test — 2026-08-04
 `test/agent-boots.test.js` spawns the real agent process in a throwaway cwd and
