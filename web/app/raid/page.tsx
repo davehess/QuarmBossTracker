@@ -487,7 +487,7 @@ export default async function RaidHubPage() {
     // different question: is THIS PERSON running Mimic. Conflating them made
     // /raid report 43/43 (100%) on a night when 40 characters across 18
     // accounts had uploaded, because on a well-buffed raid nearly everyone
-    // picks up an inferred buff (Uilnayar 2026-08-06).
+    // picks up an inferred buff (Hitya 2026-08-06).
     const hasAgent = !!live;
     const swappedTo = swapFor(live);
     rows.push({

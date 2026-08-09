@@ -1,6 +1,6 @@
 // utils/kvLatch.js — "has this one-shot already run?", answered honestly.
 //
-// THE BUG (Uilnayar, 2026-08-06: "Why are these reposting in Raid Chat?"). The
+// THE BUG (Hitya, 2026-08-06: "Why are these reposting in Raid Chat?"). The
 // Mimic 2.0.0 "Harmonic Howl" announcement is a one-shot from 2026-07-20,
 // latched in bot_kv so it can only ever post once. It posted twice in 22
 // minutes, weeks later, on a release it had nothing to do with.

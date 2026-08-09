@@ -57,7 +57,7 @@ export async function clearClassification(formData: FormData) {
   revalidatePath('/admin/anomalies');
 }
 
-// ── Intentional deaths (Uilnayar 2026-08-06) ─────────────────────────────────
+// ── Intentional deaths (Hitya 2026-08-06) ─────────────────────────────────
 // A STANDING rule: "<character> always dies on purpose on <this boss>". Set
 // once from the fight the officer is already looking at, and it applies every
 // week after — Fawx and Dant make a corpse on Kaas Thox Xi Ans Dyek every

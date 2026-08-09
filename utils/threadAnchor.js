@@ -1,7 +1,7 @@
 // utils/threadAnchor.js — post-or-edit a single pinned-in-place card in a
 // thread, without ever leaving a duplicate behind.
 //
-// THE BUG (Uilnayar 2026-08-04, "the onboarding thread and the raid review
+// THE BUG (Hitya 2026-08-04, "the onboarding thread and the raid review
 // thread keep getting populated with posts"). Both call sites were written the
 // same way:
 //

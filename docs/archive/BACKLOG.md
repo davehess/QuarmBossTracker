@@ -34,7 +34,7 @@ class filter + "only gaps" + "hide logged-off" toggles, accuracy caveat banner.
 
 ## Quick requested features (buildable, queued)
 - **Per-class name colors on overlays — 📐 designed, ⛔ NEEDS LOCAL SESSION
-  for the data.** (Uilnayar 2026-07-11: use each user's own EQ raid-window
+  for the data.** (Hitya 2026-07-11: use each user's own EQ raid-window
   class colors "in some capacity for different class types; use Hitya's
   color palette for classes as a template, with the ability to turn that
   off in options".) Design: (1) agent parses the player's raid-window class
@@ -92,7 +92,7 @@ class filter + "only gaps" + "hide logged-off" toggles, accuracy caveat banner.
   instead of/alongside admin-crafted. Packer + UI parser:
   apps/mimic/main.js (`_autoArrangeOverlays` / `_parseUiWindowRects`).
 - **Capture the `wolfpacktag` raid channel → live raid-leader overlays.**
-  (Uilnayar 2026-07-08. ⛔ BLOCKED on a raw log sample — not ready to provide
+  (Hitya 2026-07-08. ⛔ BLOCKED on a raw log sample — not ready to provide
   yet.) The guild already runs an in-game custom chat channel (`ztwolfpacktag`
   / `wolfpacktag`) to tag mobs: pull, tank picked up an add, which to assist,
   "this charmed mob is a pet", etc. This IS the raid-intent stream we were
@@ -222,7 +222,7 @@ Raid feedback driving it (2026-07-15 night, all currently shell-build-bound):
   holds, draft the upstream report to CoastalRedwood/Zeal (pattern:
   `docs/zeal-spawn-id-request.md`).
 
-- ~~Verify the first-person OUTGOING heal line~~ **RESOLVED (Uilnayar
+- ~~Verify the first-person OUTGOING heal line~~ **RESOLVED (Hitya
   2026-07-14): it does not exist.** Heal amounts are private to the healed;
   bystanders only see the spell's `cast_on_other` landing message with the
   target's name ("X is completely healed." / "X feels much better."). The
@@ -290,7 +290,7 @@ Raid feedback driving it (2026-07-15 night, all currently shell-build-bound):
   /me named-mob kill counts, and mob-immunity observed capture (§6 Fix A)
   are the next unblocked items, in that order.
 
-### 1c. Gameplay-first + scale readiness (Uilnayar 2026-07-15, raid-day findings)
+### 1c. Gameplay-first + scale readiness (Hitya 2026-07-15, raid-day findings)
 Design principle (owner, verbatim intent): "we ALWAYS want to prioritize
 gameplay over background activity." Encode in every future agent change: no
 sync I/O, no unbounded CPU on the event loop; background work yields to the
@@ -392,7 +392,7 @@ overlay-serving path. The 3.3.51 async queue-flush is the reference fix.
   eqemu_npc_types — design in "Quick requested features" above) + a
   searchable section and timeframe filtering on those views.
 
-### 6. Mob immunity display on Target/Mob Info (Uilnayar 2026-07-15)
+### 6. Mob immunity display on Target/Mob Info (Hitya 2026-07-15)
 Report: "a sonic warwolf" showed **"Your target is immune to changes in its
 run speed"** in-game, but the Target Info / Mob Info Stats tab gave **no**
 snare/root-immune warning — "it needs to show up on the target info if people
@@ -441,7 +441,7 @@ are going to rely on it."
   so verify against in-game behavior — (A) is the trustworthy source, (B) makes
   it show up before anyone casts.
 
-### 7. Cross-client HP serialization of simultaneous same-name mobs (Uilnayar 2026-07-15)
+### 7. Cross-client HP serialization of simultaneous same-name mobs (Hitya 2026-07-15)
 Report: two "a grimling marauder" up at once, each with the in-game target
 ring (clearly distinct entities). The Mob Info "DEBUFFS (OBSERVED)" card
 merges BOTH mobs' debuffs onto whichever one you target — Engulfing Roots on

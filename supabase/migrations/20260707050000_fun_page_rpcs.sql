@@ -1,4 +1,4 @@
--- /fun page load regression fixes (Uilnayar 2026-07-07: "time to load the fun
+-- /fun page load regression fixes (Hitya 2026-07-07: "time to load the fun
 -- page has increased substantially").
 --
 -- Measured on prod: chat_messages grew to 284k rows / 138MB → the Tunare

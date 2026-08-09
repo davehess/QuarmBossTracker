@@ -4,7 +4,7 @@
 // (most recent first) or Standing (best tier first). Each mob links to its
 // PQDI npc page; when we've resolved the mob's faction it shows the faction
 // name linking to its PQDI faction page, and an "ally" con is flagged as the
-// maximum standing. Uilnayar 2026-06-23.
+// maximum standing. Hitya 2026-06-23.
 
 import { useMemo, useState } from 'react';
 import type { ConEnriched } from './page';

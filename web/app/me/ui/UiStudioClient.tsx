@@ -4,7 +4,7 @@
 // server actions do the writes; useTransition drives the pending states; no
 // router.refresh() — revalidatePath in the action keeps things fresh.
 //
-// 2026-07-15 (Uilnayar: "reorder/drag/drop would help a ton since reworking
+// 2026-07-15 (Hitya: "reorder/drag/drop would help a ton since reworking
 // these in game is tedious"): the macro list is now a full 12-slot grid per
 // page with HTML5 drag & drop — drop on an empty cell to MOVE, on another
 // macro to SWAP. Moves stage through the same ui_pending_edits pipeline as

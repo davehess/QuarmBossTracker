@@ -1,4 +1,4 @@
-// /me/ui — Web UI Studio (Uilnayar 2026-07-06: "UI studio needs a version on
+// /me/ui — Web UI Studio (Hitya 2026-07-06: "UI studio needs a version on
 // wolfpack.quest to update these outside of that machine, access backed up UI
 // files and macros, find those common macros and suggest updates").
 //

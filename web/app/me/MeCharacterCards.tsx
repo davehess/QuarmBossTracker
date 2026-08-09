@@ -10,7 +10,7 @@
 //
 // Preferences persist to localStorage (per Discord account), so the page
 // remembers your layout without a server round-trip. Zero deps — drag-and-drop
-// is the native HTML5 API. (Uilnayar 2026-06-23: "select which toons to
+// is the native HTML5 API. (Hitya 2026-06-23: "select which toons to
 // display, order, minimize to header+buffs/zone, drag to reorder.")
 
 import { useEffect, useMemo, useRef, useState } from 'react';

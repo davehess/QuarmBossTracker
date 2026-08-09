@@ -17,14 +17,14 @@ export type BuffCategory =
   | 'levitate' | 'seeInvis' | 'invis' | 'resists';
 
 export const CATEGORY_ORDER: BuffCategory[] = [
-  // 2026-06-21 (Uilnayar): dropped 'mana' from the displayed order — the
+  // 2026-06-21 (Hitya): dropped 'mana' from the displayed order — the
   // raw mana category on its own renders as an empty column on the
   // /buffs grid (we don't track flat-mana buffs separately from
   // Mana Regen, so every row's Mana cell was '·' and the column just
   // ate horizontal width). The CATEGORY_LABELS entry below still has
   // 'mana': 'Mana' so any other consumer that looks the label up by
   // name continues to work.
-  // 2026-06-22 (Uilnayar): added 'seeInvis' + 'invis' so the Mimic raid-
+  // 2026-06-22 (Hitya): added 'seeInvis' + 'invis' so the Mimic raid-
   // detail panel surfaces them as their own rows instead of dumping them
   // into Other (worn-item detection still TODO — the buff signal alone
   // covers the cast case).
@@ -66,7 +66,7 @@ const KEYWORDS: Record<BuffCategory, string[]> = {
   // HP regeneration over time. Nature's Recovery (lvl 49 druid line) and
   // its rank variants don't share a stem with the other regen spells; add
   // them explicitly so they categorize instead of falling into "Other"
-  // (Uilnayar 2026-06-22 — "Nature's Recovery is HP Regen").
+  // (Hitya 2026-06-22 — "Nature's Recovery is HP Regen").
   regen: ['regrowth', 'regenerat', 'chloroplast', 'replenish', 'pack regen',
           "nature's recovery", 'natures recovery'],
   // Max-mana boosts.
@@ -116,7 +116,7 @@ const KEYWORDS: Record<BuffCategory, string[]> = {
   // See Invisible and Invisibility — separate categories so the dashboard
   // and /buffs page surface them as their own rows. seeInvis comes first
   // in CATEGORY_ORDER so categorizeBuff returns it before invis's broader
-  // 'invisib' substring would match (Uilnayar 2026-06-22).
+  // 'invisib' substring would match (Hitya 2026-06-22).
   seeInvis: ['see invis'],
   invis:    ['invisib', 'camouflage', 'cloak of shadows', 'shauri'],
   // Resist buffs (single + group). Circle of Seasons = Fire + Cold only;
@@ -443,7 +443,7 @@ const HP_SLOT_KEYWORDS: Record<HpSlot, string[]> = {
 };
 // 'virtue' — Virtue is the PoP successor to Aegolism (same Type-One slot,
 // bigger numbers) and matches Quarm's PoP-beta reward "Beta Virtue" too.
-// Beta buffs OUTRANK the era tops (Uilnayar 2026-07-09: "beta virtue should
+// Beta buffs OUTRANK the era tops (Hitya 2026-07-09: "beta virtue should
 // show as above ancient aego") — without this, a Beta Virtue holder read as
 // HP slots A+B EMPTY, went orange, and the queue told clerics to land Ancient
 // Aego over the strictly better buff.

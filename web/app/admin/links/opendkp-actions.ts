@@ -99,7 +99,7 @@ export async function registerInOpenDKP(args: RegisterArgs): Promise<{ ok: boole
 // member's box happened to tail, an operator/junk name). These have NO row in
 // our characters mirror yet, so we upsert a stub with link_ignored=true: it
 // drops off the "Not in OpenDKP" list and lands in the Dismissed view, where
-// an officer can restore it. (Uilnayar 2026-07-05: "Dopefiend was some other
+// an officer can restore it. (Hitya 2026-07-05: "Dopefiend was some other
 // guild's player — we should have an ignore button.")
 export async function ignoreUnregistered(name: string): Promise<{ ok: boolean; error?: string }> {
   const { data: { user } } = await supabaseServer().auth.getUser();

@@ -4,7 +4,7 @@
 // member's Mimic with no OpenDKP entry; the Register cell is the
 // OpenDkpRegisterRow client form (level/class/race/rank + DM + Register).
 // Sort by character name, owner, or level so officers can work the list in
-// whatever order suits them (Uilnayar 2026-06-22 — "make this section
+// whatever order suits them (Hitya 2026-06-22 — "make this section
 // sortable by name or owner"). Level is filled from /who sightings server-
 // side, including the owner's own /who when their Mimic captured it.
 

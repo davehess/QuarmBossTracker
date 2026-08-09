@@ -1,4 +1,4 @@
-// Per-page link-preview descriptions (Uilnayar 2026-07-08: shared links must
+// Per-page link-preview descriptions (Hitya 2026-07-08: shared links must
 // unfurl with THAT page's description, not the site-wide one).
 //
 // Served to link-preview crawlers by /api/embed-meta (middleware rewrites

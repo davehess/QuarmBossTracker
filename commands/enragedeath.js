@@ -1,6 +1,6 @@
 // commands/enragedeath.js — Officer command to log a player death to boss
 // enrage. Powers the "days since <character> died to enrage" counter on /fun.
-// (Uilnayar 2026-06-26: Moash's "0 raids since enrage death" joke with the
+// (Hitya 2026-06-26: Moash's "0 raids since enrage death" joke with the
 // previous streak struck through — Shavimo posted the joke version manually
 // in Discord, this makes it a real automated card on /fun.)
 

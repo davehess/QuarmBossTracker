@@ -6,7 +6,7 @@
 // everything navigates client-side; the `external` flag is still honoured for
 // any hit that opts into it. Keyboard: ↑/↓ to move, Enter to open, Esc to close. Built to
 // extend — add a category block here when the API grows (parses, loot, gear).
-// Uilnayar 2026-06-22 epic: "a search bar across all pages... any deep-linked
+// Hitya 2026-06-22 epic: "a search bar across all pages... any deep-linked
 // element should be accessible here."
 
 import { useEffect, useRef, useState, useCallback } from 'react';
@@ -92,7 +92,7 @@ export default function GlobalSearch() {
     else if (e.key === 'Enter') {
       e.preventDefault();
       // Arrowed to a specific hit → open it. Otherwise Enter opens the full
-      // results page (Uilnayar 2026-06-23 "do a search, hit enter, show
+      // results page (Hitya 2026-06-23 "do a search, hit enter, show
       // search results").
       if (arrowed && flat[active]) go(flat[active]);
       else if (q.trim().length >= 2) {

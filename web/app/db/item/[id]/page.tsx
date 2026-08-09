@@ -96,7 +96,7 @@ export default async function DbItemPage({ params }: { params: Promise<{ id: str
   // Until 2026-08-04 only the CLICK effect was rendered, so an item whose whole
   // point is a worn or proc effect looked like it had none — #8733 carries
   // Truesight in both `worneffect` and `proc_effect` and the page showed
-  // neither (Uilnayar, comparing against pqdi.cc). All three resolve in one
+  // neither (Hitya, comparing against pqdi.cc). All three resolve in one
   // query rather than one round trip each.
   const effectIds = [card?.clickeffect, itemRow?.worneffect, itemRow?.proc_effect]
     .filter((n): n is number => typeof n === 'number' && n > 0);

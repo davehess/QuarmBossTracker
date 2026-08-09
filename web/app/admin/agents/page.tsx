@@ -363,7 +363,7 @@ function groupByMain(summaries: CharSummary[], roster: RosterRow[], memberName: 
 // uploaded 15 characters across 3 family roots (Hitya/Canopy/Bonebro)
 // and showed up as 3 top-level rows + a 'same uploader as' warning fan-out.
 // Now those 3 collapse into one "Hitya install" row with all 15 members
-// underneath, sorted by most-recent activity (Uilnayar 2026-06-21,
+// underneath, sorted by most-recent activity (Hitya 2026-06-21,
 // instructing "should be grouped under one uploader … show the current
 // character that's online, THEN order the uploaders underneath").
 //

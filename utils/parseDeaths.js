@@ -12,7 +12,7 @@
 //      ≥2 times, drop that name entirely across the whole fight. A real player
 //      can only die once per encounter (corpses don't respawn mid-fight), so a
 //      repeat death from one observer means an NPC namesake got mis-attributed
-//      to the player (Uilnayar 2026-06-25: 30+ phantom "Syphon" deaths in Ssra
+//      to the player (Hitya 2026-06-25: 30+ phantom "Syphon" deaths in Ssra
 //      because "Syphon" is both an SK player and a Quarm-custom NPC). One
 //      agent's view is enough to discredit the name across the whole fight.
 //   2. Window dedup — collect the surviving deaths across all contributors,

@@ -4,7 +4,7 @@
 -- Mana, weapon damage/delay, attack, haste, weight, resists, price), and the
 -- clicky link. eqemu_items does NOT mirror stat-attribute columns (astr/asta/
 -- etc.) on Quarm, so those are intentionally absent — pqdi.cc/item/<id> handles
--- the full sheet. (Uilnayar 2026-06-23.)
+-- the full sheet. (Hitya 2026-06-23.)
 create or replace function item_card_info(p_item_ids integer[])
 returns table(
   item_id integer, name text, lore text,

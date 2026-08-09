@@ -6,7 +6,7 @@
 //
 // Reorder uses native HTML5 drag-and-drop (zero deps) and persists in batches
 // — moving a card emits one reorderQuests() call with the new order. Hide /
-// dismiss are per-button. (Uilnayar 2026-06-23.)
+// dismiss are per-button. (Hitya 2026-06-23.)
 
 import { useTransition } from 'react';
 import { setQuestHidden, setQuestDismissed, moveQuest, promoteTurnin, demoteTurnin, dismissTurnin, restoreTurnin } from './actions';
@@ -34,7 +34,7 @@ export function QuestActionButtons({ character, questId }: { character: string; 
   );
 }
 
-// Per-turn-in controls for the discovery panel (Uilnayar 2026-06-24).
+// Per-turn-in controls for the discovery panel (Hitya 2026-06-24).
 //   • 'discovery' → ▲ to active  +  🚫 dismiss
 //   • 'promoted'  → ✕ remove (un-pin from Active)
 //   • 'dismissed' → ↺ restore (back to discovery)

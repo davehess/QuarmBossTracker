@@ -66,7 +66,7 @@ export default async function MyInventoryPage() {
     const admin = supabaseAdmin();
     // Paginated: an active player's family is 2,238 rows today and PostgREST
     // silently caps a single response at 1000 (lib/selectAll.ts) — .limit(50000)
-    // never raised it. Uilnayar 2026-08-05: "inventory rows for an account looks
+    // never raised it. Hitya 2026-08-05: "inventory rows for an account looks
     // to be capped at 1000".
     const rows = await selectAll<InvRow>((from, to) => admin
       .from('character_inventory')

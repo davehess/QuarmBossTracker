@@ -1,5 +1,5 @@
 -- Locked-zone → required-key mapping. Holding any NO-DROP item that drops ONLY
--- in a locked zone is proof you had its key (Uilnayar 2026-06-24). Seeded for
+-- in a locked zone is proof you had its key (Hitya 2026-06-24). Seeded for
 -- four zones; add a row to extend (PoP planar access, NToV, etc).
 --
 -- Polarity note (verified against Key of Veeshan, Trakanon Idol, etc.):

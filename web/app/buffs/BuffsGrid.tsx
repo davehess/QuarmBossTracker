@@ -63,7 +63,7 @@ function BuffChip({ name, ticks, updatedAt, spellId }: { name: string; ticks: nu
   const t = fmtBuffRemaining(ticks, at);
   const tone = buffTimeTone(ticks, at);
   // Tooltip shows the full name + a hint about the deep-link target so users
-  // know what clicking does (Uilnayar 2026-06-23: "hover over for exact name
+  // know what clicking does (Hitya 2026-06-23: "hover over for exact name
   // and clicking on the name of a spell or the abbreviation will take you to
   // the pqdi link for that buff").
   const linkHref = spellId ? `https://www.pqdi.cc/spell/${spellId}` : null;
@@ -140,7 +140,7 @@ function ago(iso: string | null): string {
 
 export default function BuffsGrid({ rows, categories, spellIds = {} }: { rows: BuffRow[]; categories: BuffCategory[]; spellIds?: Record<string, number> }) {
   // name(lower) → spell id. Passed to every BuffChip so it can deep-link
-  // to PQDI. Uilnayar 2026-06-23.
+  // to PQDI. Hitya 2026-06-23.
   const lookupSpellId = (n: string | null | undefined): number | null => {
     if (!n) return null;
     return spellIds[n.toLowerCase()] ?? null;

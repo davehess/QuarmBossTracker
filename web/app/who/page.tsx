@@ -47,7 +47,7 @@ async function loadRows(): Promise<{ rows: WhoRow[]; totalInDb: number | null }>
   // honor it; the Supabase REST gateway silently caps any single response at
   // its `max-rows` (1000 by default), so a "Druids only" filter was scoping
   // to the top-1000 by last_seen and silently missing the rest of the
-  // catalog (~7700 rows on the wire today). Uilnayar caught it 2026-06-21
+  // catalog (~7700 rows on the wire today). Hitya caught it 2026-06-21
   // ("76 shown · 1,000 loaded · 8,738 in catalog" → are these 76 in the
   // 1k or the 8.7k? — they were in the 1k). Loop with .range() now until
   // we drain.
@@ -104,7 +104,7 @@ async function loadRows(): Promise<{ rows: WhoRow[]; totalInDb: number | null }>
   // in the (very common) case where a Wolf Pack member's /who was always /anon
   // so we never observed a class. Used as a fallback below the observed class.
   // ALSO pull opendkp_id so the table can deep-link Wolf Pack member names to
-  // their OpenDKP character page for easy edits (Uilnayar 2026-06-21).
+  // their OpenDKP character page for easy edits (Hitya 2026-06-21).
   const { data: chars } = await admin
     .from('characters')
     .select('name, class, opendkp_id')
@@ -181,7 +181,7 @@ export default async function WhoPage() {
     : `${rows.length.toLocaleString()} total`;
 
   // The catalog breakdown now lives INSIDE WhoTable so it tracks the active
-  // filters (Uilnayar 2026-06-22 — "the breakdown should take into account the
+  // filters (Hitya 2026-06-22 — "the breakdown should take into account the
   // filtering we're doing below"). Page just hands WhoTable the full row set.
   return (
     <div className="space-y-4">

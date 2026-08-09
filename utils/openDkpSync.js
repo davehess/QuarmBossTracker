@@ -374,7 +374,7 @@ async function syncAuctions(opts = {}) {
       // Minimal-return: the auction upsert often batches more than 1000
       // rows on a full sync, and PostgREST caps the representation response
       // at max-rows (default 1000), which made the "upserted" count read
-      // 1000 even when more rows were written (Uilnayar 2026-06-23: "12,797
+      // 1000 even when more rows were written (Hitya 2026-06-23: "12,797
       // actual auctions but the report said 1000"). All rows ARE written;
       // count from the input length.
       await supabase.upsert('opendkp_auctions', auctionRows, 'auction_id', { minimal: true });
@@ -437,7 +437,7 @@ async function syncRaidsList() {
   if (rows.length === 0) return { fetched: raids.length, upserted: 0 };
 
   // Minimal-return: same 1000-row PostgREST cap that hit the auctions upsert
-  // (Uilnayar 2026-06-23). We're at 385 raids today but the count will grow,
+  // (Hitya 2026-06-23). We're at 385 raids today but the count will grow,
   // and getting capped silently 18 months from now is exactly the failure
   // mode we just fixed elsewhere. Count from the input length.
   await supabase.upsert('opendkp_raids', rows, 'raid_id', { minimal: true });

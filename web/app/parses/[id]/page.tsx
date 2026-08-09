@@ -87,7 +87,7 @@ type RawHealer    = {
   // EQ only shows the spell name on the caster's "You begin casting X" line
   // (bystanders get "X begins to cast a spell"), so this is populated ONLY
   // on the healer whose name equals the contribution's uploader.
-  // (Uilnayar 2026-06-25: "x CHs and other heal types".)
+  // (Hitya 2026-06-25: "x CHs and other heal types".)
   spells?: Record<string, number>;
 };
 // CH-chain gap analysis on the primary tank — agent fills in when it saw at
@@ -401,7 +401,7 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
   // names that any SINGLE contributor reported dying 2+ times — a real player
   // can only die once per encounter (corpses don't respawn mid-fight), so a
   // repeat death from one machine's view means it's an NPC namesake getting
-  // mis-attributed (Uilnayar 2026-06-25: 30+ phantom "Syphon" deaths in
+  // mis-attributed (Hitya 2026-06-25: 30+ phantom "Syphon" deaths in
   // Ssra because "Syphon" is both an SK player and a Quarm-custom NPC; the
   // agent's confirmedPlayer check matched the player and credited every
   // NPC-Syphon kill to him). One agent's view is enough to discredit the
@@ -422,7 +422,7 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
   // sorted by (name, ts) and drop any within DEATH_DEDUP_MS of the last KEPT
   // death for that name. Cross-parser skew (a few seconds) collapses; a genuine
   // rez-and-die-again (well beyond the window) stays a separate row.
-  // (Uilnayar 2026-07-14: 4× Xobobab / 3× Currygoat on one Aten Ha Ra kill.)
+  // (Hitya 2026-07-14: 4× Xobobab / 3× Currygoat on one Aten Ha Ra kill.)
   const DEATH_DEDUP_MS = 30_000;
   const collected: RawDeath[] = [];
   for (const c of contribs) {
@@ -1177,7 +1177,7 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
               // "Complete Heal" (the real Cleric spell, no "ing") never
               // matched here before — only the "Complete Healing" item-click
               // spelling did — so a cleric's own CH casts always fell through
-              // to the raw unabbreviated name (Uilnayar 2026-07-02 confirmed
+              // to the raw unabbreviated name (Hitya 2026-07-02 confirmed
               // via Supabase: zero rows have ever shown ANY "Complete Heal"
               // spelling, across the whole database — the label bug masked
               // whether that's "nobody's cast it" or "it's mislabeled," but
@@ -1299,7 +1299,7 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
                       ) : null}
                     </div>
                   ) : null}
-                  {/* Officer-only (Uilnayar 2026-07-02: "can we start showing
+                  {/* Officer-only (Hitya 2026-07-02: "can we start showing
                       CHs cast per fight just for admins?"). The data has
                       existed since v3.1.69 but was visible to every signed-in
                       raider — gating it here, not by removing the data from

@@ -1,6 +1,6 @@
 // #194 — two mobs with one name, told apart by where their tanks stand.
 //
-// THE ASK (Uilnayar 2026-08-04): "having zero traction on the [Zeal spawn_id]
+// THE ASK (Hitya 2026-08-04): "having zero traction on the [Zeal spawn_id]
 // suggestion, we need to make end routes. given the location data we have with
 // tanks, with just one person in the raid having zeal and mimic running, we
 // should be able to figure out where mobs are being tanked and try to figure
@@ -291,7 +291,7 @@ describe('two adds, same capitalized name, tanked apart', () => {
 //
 // "if we have 4 of the same mob and 4 tanks with zeal actively targeting each
 // one 25+ units away we could perhaps serialize them by the tank that way"
-// (Uilnayar 2026-08-05). Four tanks tag four same-name mobs in the tag
+// (Hitya 2026-08-05). Four tanks tag four same-name mobs in the tag
 // channel; one Mimic harvests the claims; the bot serializes by tank. This
 // runs the shipped clusterByHp + position + bind + attribution chain over
 // exactly that shape.

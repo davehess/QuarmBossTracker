@@ -1,6 +1,6 @@
 // Mimic release announcer — the Discord card's body. SOURCE-SLICE tier.
 //
-// Field report (Uilnayar 2026-08-05, screenshot of the v2.3.0 and v2.3.1
+// Field report (Hitya 2026-08-05, screenshot of the v2.3.0 and v2.3.1
 // cards): "This wall of text is unreadable." Two defects, both visible:
 //
 //   1. The bold subject line appeared TWICE — once as the embed title (which

@@ -1,6 +1,6 @@
 // /test-server — proposal for a private practice server, with per-topic
 // "I'm interested" buttons and a comments section. Members-only. Replaces
-// what would otherwise be a static doc on GitHub — Uilnayar 2026-06-23
+// what would otherwise be a static doc on GitHub — Hitya 2026-06-23
 // preferred this lives on the site so we can collect signal directly.
 
 import Link from 'next/link';

@@ -1,4 +1,4 @@
-// /admin/notices — compose "Mimic Mail" broadcasts (Uilnayar 2026-07-07:
+// /admin/notices — compose "Mimic Mail" broadcasts (Hitya 2026-07-07:
 // "a communications channel to notify users of critical elements, regardless
 // of mimic version moving forward").
 //

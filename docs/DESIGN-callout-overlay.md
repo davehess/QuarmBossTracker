@@ -4,7 +4,7 @@
 `DESIGN-di-callout.md` (#204) and `DESIGN-mechanic-capture.md` (#206) — both
 depend on this being the surface their callouts land on.*
 
-**The ask (Uilnayar, 2026-08-03):**
+**The ask (Hitya, 2026-08-03):**
 
 > the TTS messages need to have their messages with countdowns reflected visually
 > on that overlay. the AOE dodges/dance should be on there. and those line should

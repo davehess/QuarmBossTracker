@@ -306,7 +306,7 @@ describe('#117 pet-buff attribution (source-sliced from agent)', () => {
 
 // ── Pet identity: buffs belong to the PET, not the owner slot ────────────────
 //
-// Field report (Uilnayar 2026-08-05): a charmed "a giant plague rat" carried
+// Field report (Hitya 2026-08-05): a charmed "a giant plague rat" carried
 // Glamour of Tunare and Tunare's Request (1800 ticks — three hours). The charm
 // broke, was NOT recast, and a summoned warder "Goneker" took its place. The
 // Pet tracker showed Goneker with both of the rat's spells, because

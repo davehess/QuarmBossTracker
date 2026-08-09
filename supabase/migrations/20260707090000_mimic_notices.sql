@@ -1,4 +1,4 @@
--- mimic_notices — "Mimic Mail" broadcast channel (Uilnayar 2026-07-07: "a
+-- mimic_notices — "Mimic Mail" broadcast channel (Hitya 2026-07-07: "a
 -- communications channel to notify users of critical elements, regardless of
 -- mimic version moving forward").
 --

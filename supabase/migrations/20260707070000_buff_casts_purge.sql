@@ -1,4 +1,4 @@
--- buff_casts one-time purge (Uilnayar 2026-07-07: "chuck the useless data").
+-- buff_casts one-time purge (Hitya 2026-07-07: "chuck the useless data").
 --
 -- Verified before this migration: every consumer of buff_casts reads at most
 -- 3 HOURS back (bot target-buffs + raid-buff-queue: 3h; extended-target

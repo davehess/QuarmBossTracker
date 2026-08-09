@@ -1,6 +1,6 @@
 // NO DROP means you cannot pass it to anyone. Getting it backwards is a loot bug.
 //
-// THE BUG (Uilnayar 2026-08-04, comparing /db/item/8733 against pqdi.cc):
+// THE BUG (Hitya 2026-08-04, comparing /db/item/8733 against pqdi.cc):
 // `eqemu_items.nodrop` is INVERTED on this mirror. The column really answers
 // "can this be traded", so **false = NO DROP** and true = freely tradeable.
 //

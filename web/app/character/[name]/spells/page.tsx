@@ -3,7 +3,7 @@
 // What it answers: "which vendor-buyable spells for this class hasn't this
 // character scribed yet, and is a guildmate already holding the scroll?"
 // PQDI's Missing Spells parser inspired this; the guild-holdings overlay is
-// the part PQDI can't do (Uilnayar 2026-06-23).
+// the part PQDI can't do (Hitya 2026-06-23).
 //
 // Data path (see migration 20260624020000_spell_exchange.sql):
 //   • character_spellbook — uploaded on /me (📖 Upload spellbook).

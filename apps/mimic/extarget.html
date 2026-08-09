@@ -8,7 +8,7 @@
      a ★ on named/unique mobs, and a * caveat on non-unique names (the pipe has
      no spawn id, so same-name mobs are only told apart when their HP differs).
      Players/pets missing >15% HP for >10s fold in as "needs attention" rows.
-     (Uilnayar 2026-06-29.) */
+     (Hitya 2026-06-29.) */
   /* --bg-alpha: card-surface alpha, driven by slider via main → preload
      'bg-alpha' IPC. 1.0 = opaque (EQ hidden). Text stays bright at every value. */
   :root{ --bg-alpha:0.5; }
@@ -101,7 +101,7 @@
      Surfaced from combat-log "who's hitting whom" (incoming_mob), NOT the
      Zeal target gauge, so it can show even with zero direct targeters —
      cyan accent + a shield badge instead of the raider-count number.
-     Uilnayar 2026-07-04: "there will always be mobs that we don't want to
+     Hitya 2026-07-04: "there will always be mobs that we don't want to
      injure but we will off tank." */
   .row.offtank{border-left-color:#5fd0c9}
   .row .ct.offtank-ct{color:#5fd0c9;font-size:13px}
@@ -140,7 +140,7 @@
   .row:hover .rowhide{opacity:0.9}
   .row .rowhide:hover{color:#f87171;opacity:1}
   /* Who's targeting this — the raiders on each target, dim full-width line
-     under the row (Uilnayar 2026-07-15: "Extended Target should show who is
+     under the row (Hitya 2026-07-15: "Extended Target should show who is
      targeting which target"). */
   .row .who{grid-column:1 / -1;color:#9aa4ad;font-size:9px;line-height:1.4;
     padding-left:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
@@ -460,7 +460,7 @@
     var bw = (t.hp_pct != null ? Math.max(0, Math.min(100, t.hp_pct)) : 0);
     // Debuff chips. Suppressed for members of a same-name group — the pipe
     // can't attribute a debuff to a SPECIFIC same-name mob, so showing them
-    // divided per row is false precision (Uilnayar 2026-07-13). The group's
+    // divided per row is false precision (Hitya 2026-07-13). The group's
     // debuffs render once, pooled, in debuffBlock() below.
     var deb = suppressDeb ? '' : debuffBlock(t.debuffs);
     // #194 — tags the bot could not weld to a specific instance: shown once,
@@ -476,7 +476,7 @@
       deb += tp + '</div>';
     }
     // Who's targeting this — the bot already ships the names (raiders[]);
-    // show up to 4 + "+N", full list on the row tooltip (Uilnayar
+    // show up to 4 + "+N", full list on the row tooltip (Hitya
     // 2026-07-15: "should show who is targeting which target").
     var raiders = Array.isArray(t.raiders) ? t.raiders.filter(Boolean) : [];
     var whoLine = '';
@@ -528,7 +528,7 @@
 
   // "Show players/pets" toggle — player/pet entries (a raider targeting a
   // friendly, or a hurt pet folding in) clutter the mob list and are hidden by
-  // default (Uilnayar 2026-07-15: "remove or hide entries that are not
+  // default (Hitya 2026-07-15: "remove or hide entries that are not
   // targeted — often these are players or pets"). Persisted like the off-tank
   // toggle.
   var _showPlayers = localStorage.getItem('wp_ext_show_players') === '1';
@@ -599,7 +599,7 @@
     var html = '';
     var anyAmb = false;
     // Group same-name mobs (ambiguous / same_name_count>1) so their debuffs
-    // pool into ONE block instead of being falsely divided per row (Uilnayar
+    // pool into ONE block instead of being falsely divided per row (Hitya
     // 2026-07-13). HP rows stay per-mob (HP is reliable per target). Members
     // render together at the first member's sort position; other kinds render
     // normally.
@@ -638,7 +638,7 @@
     // Byte-stability guard (2026-07-07 review): identical HTML -> skip the
     // innerHTML re-layout AND the autofit IPC round-trip.
     if (rowsEl.__wpHtml !== html) {
-      // FLIP reorder animation (Uilnayar #7): rows glide to their new sort
+      // FLIP reorder animation (Hitya #7): rows glide to their new sort
       // position when raider-count changes instead of jumping. Capture each
       // keyed child's top BEFORE the swap, then translate it from there to 0.
       // Node identity is lost across innerHTML, but position is keyed by

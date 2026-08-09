@@ -26,7 +26,7 @@ export default async function AuthBadge() {
   // sync upserts by discord_id, not by Supabase Auth user_id, so unless
   // a member has actively signed in to wolfpack.quest AND a separate
   // sync pass has stamped their auth user_id, the column is blank).
-  // Uilnayar 2026-06-21 ("back to seeing my Discord profile in the top
+  // Hitya 2026-06-21 ("back to seeing my Discord profile in the top
   // corner instead of my Wolf Pack server profile") — every member
   // whose user_id link hadn't been written was falling through to the
   // Discord global name. Look up by Discord ID from the OAuth identity

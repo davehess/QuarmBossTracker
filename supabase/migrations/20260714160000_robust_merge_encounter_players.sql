@@ -1,4 +1,4 @@
--- merge_encounter_players: robust per-player merge (Uilnayar 2026-07-14).
+-- merge_encounter_players: robust per-player merge (Hitya 2026-07-14).
 --
 -- The old merge took MAX damage per player across contributions — on the theory
 -- that each parser sees only a subset (distance culling) so the max is the most

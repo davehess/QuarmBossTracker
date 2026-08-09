@@ -1,4 +1,4 @@
--- Correct mis-seeded faction/stack turn-ins (Uilnayar 2026-06-24):
+-- Correct mis-seeded faction/stack turn-ins (Hitya 2026-06-24):
 --   • Ice Giant Toes (16540) are NOT a Kael faction turn-in — Kael uses
 --     Storm/Frost Giant Toes. Ice Giant Toes feed Nivold Predd (Paineel) and
 --     Vira (Temple of Solusek Ro).

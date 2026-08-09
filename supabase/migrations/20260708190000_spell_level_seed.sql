@@ -1,4 +1,4 @@
--- Spell level seed (Uilnayar 2026-07-08: "start building out the levels for
+-- Spell level seed (Hitya 2026-07-08: "start building out the levels for
 -- these spells 61-65").
 --
 -- The missing-spells page derives a spell's level from guild spellbooks, so any

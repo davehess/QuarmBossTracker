@@ -2,7 +2,7 @@
 -- in-game item icon. icon is a stable numeric index into the EQ gequip sprite
 -- set; the web renders <base>/item_<icon>.png with an onError fallback so an
 -- unreachable host degrades to the text cell rather than a broken image.
--- (Uilnayar 2026-06-24.) Drop-first because the OUT-param row type changes.
+-- (Hitya 2026-06-24.) Drop-first because the OUT-param row type changes.
 drop function if exists item_card_info(integer[]);
 create or replace function item_card_info(p_item_ids integer[])
 returns table(

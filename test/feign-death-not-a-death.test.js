@@ -13,7 +13,7 @@
 // in range. The fingerprint was unmistakable once looked for: 175 death records
 // across 3 Shadow Knights (58 each) and 58 across 4 Necromancers, against 5.5
 // for a Cleric and 1 for a Bard — 44% of every death ever stored came from the
-// only two classes that can feign (Uilnayar 2026-08-03).
+// only two classes that can feign (Hitya 2026-08-03).
 //
 // The golden log contained no "dies."/"died." line at all, which is exactly why
 // this survived a parser regression suite. These cases exist so it cannot again.

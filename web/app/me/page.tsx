@@ -278,7 +278,7 @@ async function loadCharStats(name: string, floorRow: FloorRow | null, coverageRo
       .select('id', { count: 'exact', head: true })
       .ilike('victim', name),
     // PvP assists — credited to the assister on someone else's kill
-    // (Uilnayar 2026-06-24: "the /me page should also list assists").
+    // (Hitya 2026-06-24: "the /me page should also list assists").
     admin
       .from('pvp_assists')
       .select('id', { count: 'exact', head: true })
@@ -434,7 +434,7 @@ async function loadCharStats(name: string, floorRow: FloorRow | null, coverageRo
 // Best-known level per character. Two signals:
 //   (a) who_observations.level — /who history (highest level we've ever seen).
 //   (b) character_spellbook.spell_level — a scribed L60 spell IS proof of L60,
-//       independent of /who staleness (Uilnayar 2026-06-23: Canopy's /who
+//       independent of /who staleness (Hitya 2026-06-23: Canopy's /who
 //       cache held an L57 row but her spellbook proves L60).
 // Compute the max client-side. who_observations has tons of NULL-level rows
 // (anonymous /who hides level) and a chained PostgREST .not('level','is',null)
@@ -743,7 +743,7 @@ export default async function MePage() {
               <a href={`https://wolfpack.opendkp.com/#/characters/${c.opendkp_id}`} target="_blank" rel="noreferrer" className="text-blue hover:underline">opendkp →</a>
             )}
           </div>
-          {/* Uploads on their own line (Uilnayar 2026-06-24: "lets put the
+          {/* Uploads on their own line (Hitya 2026-06-24: "lets put the
               uploads on a new line"). */}
           <div className="flex items-center gap-2 flex-wrap sm:justify-end">
             <InventoryUpload character={c.name} />

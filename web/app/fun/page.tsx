@@ -81,7 +81,7 @@ SECTIONS.push(async (sb, counters) => {
   // "raids since the most recent LD", per his own suggestion. Shows the date
   // of the last LD in bold + the zone it happened in (agent v3.1.72+ enriches
   // the event with the zone from Zeal state). Previous-best streak strikes
-  // through when broken — same pattern as the Moash card. (Uilnayar 2026-06-26.)
+  // through when broken — same pattern as the Moash card. (Hitya 2026-06-26.)
   try {
     const { data: ldRows, count: ldTotal } = await sb
       .from('fun_events')
@@ -192,7 +192,7 @@ SECTIONS.push(async (sb, counters) => {
 SECTIONS.push(async (sb, counters) => {
   // Tunare mentions from Naggato + alts.
   //
-  // THE BUG (Uilnayar 2026-08-04, "what happened to our Tunare invocations?"):
+  // THE BUG (Hitya 2026-08-04, "what happened to our Tunare invocations?"):
   // this card read 0 while the data was right there — 83 rows, latest
   // 2026-07-31. The reason it read 0 rather than SAYING anything is the shape
   // below: supabase-js does not throw on a failed call, it returns
@@ -480,7 +480,7 @@ SECTIONS.push(async (sb, counters) => {
 SECTIONS.push(async (sb, counters) => {
   // ── 🤬 Pottymouth award — chat-filter asterisk redactions ────────────────
   // Fires when the bot sees a chat line where EQ's filter scrubbed a word with
-  // asterisks ('f***ing nice'). Sub-text: top 3 offenders. (Uilnayar 2026-06-26.)
+  // asterisks ('f***ing nice'). Sub-text: top 3 offenders. (Hitya 2026-06-26.)
   try {
     const { data: pmRows, count: pmTotal } = await sb
       .from('fun_events')
@@ -539,7 +539,7 @@ SECTIONS.push(async (sb, counters) => {
   // ── 💀 Days since Moash died to enrage ───────────────────────────────────
   // Loud-and-tall card with the date bolded + the previous-best streak
   // strikethrough'd when broken. Source: fun_events emitted by the
-  // /enragedeath officer command (Uilnayar 2026-06-26 — Shavimo's manual
+  // /enragedeath officer command (Hitya 2026-06-26 — Shavimo's manual
   // "It has been ~~167~~ 0 days since Moash died to enrage" gag goes live).
   try {
     const { data: enrageRows } = await sb
@@ -741,7 +741,7 @@ export default async function FunPage() {
   // Bucket cards: "live" ones carry real data; "dormant" ones are still at
   // zero / "—" (detector hasn't fired or nobody's triggered them yet) and
   // get demoted to a dimmer section at the bottom so the live stats lead.
-  // Uilnayar 2026-06-22 ("any empty fun ones should be moved to the bottom
+  // Hitya 2026-06-22 ("any empty fun ones should be moved to the bottom
   // section").
   const isLive = (c: { value: number | string }) =>
     !(c.value === 0 || c.value === '—');
@@ -765,7 +765,7 @@ export default async function FunPage() {
       {/* What's new tonight — small callout marking the fresh fun cards so
           guildies can laugh at them (and at each other). Hard-coded ledger
           rather than a feed; intentionally short. Update this list as new
-          fun stuff lands and rotate older items out. (Uilnayar 2026-06-26.) */}
+          fun stuff lands and rotate older items out. (Hitya 2026-06-26.) */}
       <details className="bg-panel border border-purple/50 rounded-lg p-4 group">
         <summary className="flex items-center gap-2 cursor-pointer list-none select-none">
           <span aria-hidden className="text-base">🆕</span>
@@ -791,7 +791,7 @@ export default async function FunPage() {
         {liveCounters.map(c => <FunCard key={c.label} c={c} />)}
       </section>
 
-      {/* The Kyinen decree — moved below the live counters (Uilnayar
+      {/* The Kyinen decree — moved below the live counters (Hitya
           2026-06-22 "move the decree to the bottom"). Still its own gold
           frame, just no longer hogging the top of the page. */}
       <KyinenExecutionCard
@@ -830,7 +830,7 @@ export default async function FunPage() {
 // One fun counter card. Emoji is absolutely positioned in the top-right so a
 // tall SVG emoji (the Tunare kiss scene) can't push the number down and break
 // vertical alignment with sibling cards in the same grid row — that was the
-// "Tunare Invocations is off" misalignment (Uilnayar 2026-06-22). Label +
+// "Tunare Invocations is off" misalignment (Hitya 2026-06-22). Label +
 // number reserve right padding so they never run under the emoji.
 function FunCard({ c }: { c: { label: string; emoji: React.ReactNode; value: number | string; sub?: string | React.ReactNode; href?: string } }) {
   return (

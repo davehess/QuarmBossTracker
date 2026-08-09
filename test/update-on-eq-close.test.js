@@ -1,6 +1,6 @@
 // Mimic installs a pending update when EverQuest is not running.
 //
-// THE BUG (Uilnayar, 2026-08-04, on v2.3.0-beta.9): "beta 9 did not update
+// THE BUG (Hitya, 2026-08-04, on v2.3.0-beta.9): "beta 9 did not update
 // after eq closed… i just got the notification that its ready to install, but
 // it did not update in place."
 //

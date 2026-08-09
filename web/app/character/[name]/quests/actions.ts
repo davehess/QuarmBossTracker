@@ -2,7 +2,7 @@
 
 // Per-character quest layout actions: reorder / hide / unhide / dismiss /
 // undismiss. Owner-or-officer gated, mirroring the upload actions on /me.
-// (Uilnayar 2026-06-23: "users should be able to reorder/hide/dismiss quests
+// (Hitya 2026-06-23: "users should be able to reorder/hide/dismiss quests
 // they don't care about.")
 
 import { revalidatePath } from 'next/cache';
@@ -112,9 +112,9 @@ export async function moveQuest(characterName: string, questId: number, directio
 // Per-character status for a discovered scripted turn-in (which isn't in
 // quest_catalog) — stored as a lightweight pin in character_active_turnins:
 //   • 'active'    → pinned to the Active quests section ("Let people move those
-//                   quests to the active quests section", Uilnayar 2026-06-24)
+//                   quests to the active quests section", Hitya 2026-06-24)
 //   • 'dismissed' → hidden from discovery ("mark off which quests are not of
-//                   interest, and remove them from the list", Uilnayar 2026-06-24)
+//                   interest, and remove them from the list", Hitya 2026-06-24)
 //   • no row      → neutral (shown in discovery)
 async function setTurninStatus(characterName: string, turninId: number, status: 'active' | 'dismissed') {
   const gate = await ownsOrOfficer(characterName);

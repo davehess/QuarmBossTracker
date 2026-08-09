@@ -1,4 +1,4 @@
--- Discovery panel rework (Uilnayar 2026-06-24):
+-- Discovery panel rework (Hitya 2026-06-24):
 --   • "Everything here should have a link to PQDI" — resolve each turn-in NPC to
 --     its eqemu_npc_types.id so the page can build pqdi.cc/npc/<id>. EQ npc ids
 --     are zone-prefixed (id / 1000 == eqemu_zone.zone_id), so we match on

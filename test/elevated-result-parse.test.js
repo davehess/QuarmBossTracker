@@ -1,6 +1,6 @@
 // Reading back what an elevated PowerShell wrote.
 //
-// THE BUG (Uilnayar, 2026-08-04): "I approved the UAC prompts" — and Mimic
+// THE BUG (Hitya, 2026-08-04): "I approved the UAC prompts" — and Mimic
 // still reported "Cancelled at the Windows permission prompt."
 //
 // Windows PowerShell 5.1 IS powershell.exe, and its `-Encoding UTF8` ALWAYS
@@ -142,7 +142,7 @@ describe('EQ scan drive filter', () => {
 // ── Learned dead ends ───────────────────────────────────────────────────────
 //
 // "it didn't show up on my list of installs but it showed up in the logs. We
-// should be able to ignore it" (Uilnayar 2026-08-04, on B:\Quarm costing 21s).
+// should be able to ignore it" (Hitya 2026-08-04, on B:\Quarm costing 21s).
 //
 // A skip-list that hides a real EQ folder would be far worse than a slow scan,
 // so the guard rails are the point of this block, not the caching.

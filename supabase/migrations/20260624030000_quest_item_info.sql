@@ -3,7 +3,7 @@
 -- The Vex Thal key (recipe 10040) needs 10 components ALL named "A Lucid Shard"
 -- — distinguishable only by their lore tag (Set/Raf/Vin/…). Matching quest
 -- components by NAME is therefore wrong; the tracker keys on item_id and shows
--- the lore + drop zone so a human can tell the shards apart. (Uilnayar
+-- the lore + drop zone so a human can tell the shards apart. (Hitya
 -- 2026-06-23: "display the item lore name for these Lucid Shards and the zone
 -- that it's from.")
 --

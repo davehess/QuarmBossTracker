@@ -3,7 +3,7 @@
 // that feeds the chain is here, deduplicated and labelled by class. Used by
 // /character/[name]/quests to surface the "Epics" section at the top: when a
 // member holds an Epic-chain item, they (and every officer/MQ planner) can
-// see it at a glance.  (Uilnayar 2026-06-26: "for example the dragon scales
+// see it at a glance.  (Hitya 2026-06-26: "for example the dragon scales
 // of kedge backbone".)
 //
 // Some items legitimately belong to multiple class chains (Shining Metallic
@@ -85,7 +85,7 @@ export const EPIC_COMPONENTS: Record<string, EpicComponent[]> = {
   ],
   'Druid': [
     // Journeyman's Boots (2300), Tan Rope Bridle (21800), and Rebreather
-    // (16889) were removed 2026-06-30 (Uilnayar: "journeyman's boots are not
+    // (16889) were removed 2026-06-30 (Hitya: "journeyman's boots are not
     // part of the druid epic at all"). The recursive walk had picked them up
     // because they form a joke NPC chain — "Triathalon Bike" (Lake Rathetear,
     // takes a Rebreather) → "Triathalon Running Shoes" (South Karana, takes
@@ -201,7 +201,7 @@ export const EPIC_COMPONENTS: Record<string, EpicComponent[]> = {
     // triggered by handing him a Child's Tear, which drops from the Iksar
     // Broodling that spawns after killing a Plane of Fear golem (Dread /
     // Fright / Terror). The Erudin paper trail (depth 3) is the long-faction
-    // grind that comes before the Tear. (Uilnayar 2026-06-26: P99/quarm.guide
+    // grind that comes before the Tear. (Hitya 2026-06-26: P99/quarm.guide
     // hints + DB verify.)
     { itemId:  1674, name: "Iksar Scale",                          depth: 1 },
     { itemId:  1673, name: "Child's Tear",                         depth: 2 },
@@ -227,7 +227,7 @@ export const EPIC_COMPONENTS: Record<string, EpicComponent[]> = {
     { itemId: 18168, name: "Note to Arantir",                      depth: 3 },
   ],
   'Monk': [
-    // 2026-06-30 (Uilnayar: real epic components were missing / mis-depthed).
+    // 2026-06-30 (Hitya: real epic components were missing / mis-depthed).
     // The prior version anchored on Lheao's turn-in as if it produced the
     // FINAL weapon — it doesn't. Re-verified end-to-end against
     // scripted_npc_turnins AND the Quarm-specific community guide
@@ -279,7 +279,7 @@ export const EPIC_COMPONENTS: Record<string, EpicComponent[]> = {
   // Innocent + Head of the Valiant + Will of Innoruuk). The Glohnor/Kyrenna
   // drops feed the crafted finals via Gerot Kastane, Marl Kastane, and the
   // Soulcase. Built from P99/EQProgression hints + DB verify; the importer
-  // hasn't captured these turn-ins as scripted yet. (Uilnayar 2026-06-26.)
+  // hasn't captured these turn-ins as scripted yet. (Hitya 2026-06-26.)
   'Shadow Knight': [
     { itemId: 14367, name: "Corrupted Ghoulbane",                  depth: 1 },
     { itemId: 14368, name: "Heart of the Innocent",                depth: 1 },

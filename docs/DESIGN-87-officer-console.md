@@ -173,7 +173,7 @@ not in how bad it sounds.
 | **RB-05** | **Guild chat stopped reaching Discord** | Low (mitigated) but **unresolved** | High | ★★★★☆ | The 2026-07-19 blackout, 6:43am–3:16pm. Fixed in #112 by liveness + zone-spread — but the mitigation `dedup_chat=0` **is still on 14 days later**, so the fix has never actually been exercised in prod. |
 | **RB-06** | **Mimic won't update / a bad build is out** | Medium | Medium-high | ★★★☆☆ | 2026-07-30 atom-feed starvation: 14 Deck builds in 2 days pushed every `beta` tag out of GitHub's 10-entry `releases.atom` window → *the entire Windows beta channel* failed with "No published versions on GitHub". 2026-07-09: parking beta at/below stable stops the updater offering betas. `forceStable` nag loop. LKG crash-loop rollback + blacklist. |
 | **RB-07** | **A raider can't get Mimic/Zeal working** | **Highest volume** | Low each | ★★★☆☆ | In-EQ-folder install breaks Zeal DX-hook detection (n=1, 2026-06-12) *and* `detectEqDir()` actively steers people into that layout. Elevation mismatch = silent connect-then-close. `/log on` not set. Token lockout (`/token for:@member` exists precisely for this). Release-announce DMs failed for 15 of 26. |
-| **RB-08** | **Something must ship during the raid window** | Medium | High if fumbled | ★★★☆☆ | The freeze rule itself (Uilnayar 2026-07-13) and its `[hotfix]` escape hatch; `raid-freeze.yml` is advisory only — Railway/Vercel deploy regardless. |
+| **RB-08** | **Something must ship during the raid window** | Medium | High if fumbled | ★★★☆☆ | The freeze rule itself (Hitya 2026-07-13) and its `[hotfix]` escape hatch; `raid-freeze.yml` is advisory only — Railway/Vercel deploy regardless. |
 | RB-09 | Night thread in the wrong channel / missing | Medium | Low-medium | ★★☆☆☆ | 2026-07-31: v1's parent chain stopped at `RAID_CHAT_CHANNEL_ID`, unset on Railway → night one's threads all landed in #raid-mobs. |
 | RB-10 | Loot / DKP didn't propagate | Medium | High (disputes) | ★★★☆☆ | #138 OpenDKP upsert PG 21000 — whole batches silently never mirrored. #110 "Backpack" incident: 3 deleted awards still live on the site. |
 | RB-11 | A trigger is spamming the raid | Low-medium | Medium-high | ★★☆☆☆ | Ghost callouts (relays riding the durable FIFO, served for 60s from `posted_at`); the DT false positive; the `voice` action retry loop. |
@@ -538,7 +538,7 @@ diagnostic card — they walk the checkpoints for you.
 ### RB-08 — "It's raid night and this has to ship" *(outline)*
 
 **Symptom.** Something is broken *now* and the fix is a code change.
-**Grounded in.** Uilnayar 2026-07-13. Any `main` push restarts production
+**Grounded in.** Hitya 2026-07-13. Any `main` push restarts production
 surfaces the raid depends on.
 **Decide first: does it *have* to ship?** A tuning flag, a guild-trigger row, a
 Mimic Mail notice, and a reporter pin all take effect in 60s–10min **with no

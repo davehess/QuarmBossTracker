@@ -2,7 +2,7 @@
 // which pins the 2026-08-02 LEADING-edge bug (daytime grinding swept into the
 // review). This is the opposite symptom, found 2026-08-06.
 //
-// Uilnayar reported it as "we're also getting a bunch of the trash from earlier
+// Hitya reported it as "we're also getting a bunch of the trash from earlier
 // in the day". The persisted data says the reverse — every one of the 89 trash
 // entries in bot_kv.raid_trash_2026-08-05 landed AFTER the raid's last kill:
 //
@@ -45,7 +45,7 @@ describe('trashBoundsFor', () => {
   it('defaults to a 15-minute grace', () => {
     // Pins the DEFAULT, not just the plumbing — every other test here passes
     // graceMin explicitly, so widening the constant back to 30 would otherwise
-    // change what ships and break nothing. 15 is Uilnayar's call: the line is
+    // change what ships and break nothing. 15 is Hitya's call: the line is
     // the last DKP tick, and 23:53 (21 min after the last kill) is past it.
     const b = raidReview.trashBoundsFor(ENCOUNTERS);
     expect(b.untilMs).toBe(LAST_KILL + 15 * 60_000);

@@ -4,7 +4,7 @@
 `_noteDiCast`, `/api/agent/di-status`, or the "Divine Intervention fired"
 guild trigger.*
 
-**The ask (Uilnayar, 2026-08-03):**
+**The ask (Hitya, 2026-08-03):**
 
 > can you identify if we have the "D.I. fired on \<tank name\>" trigger for
 > divine Intervention? we would like to start building in logic to call that out

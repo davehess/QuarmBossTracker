@@ -11,7 +11,7 @@
 //     machine (incoming_mob).
 //
 // "with just one person in the raid having zeal and mimic running, we should
-// be able to figure out where mobs are being tanked" (Uilnayar 2026-08-04).
+// be able to figure out where mobs are being tanked" (Hitya 2026-08-04).
 // These two forwards are exactly that sentence.
 //
 // Run: npx vitest run test/raid-loc-forward.test.js

@@ -1,4 +1,4 @@
--- page_views — lightweight analytics for /admin/analytics (Uilnayar 2026-06-24:
+-- page_views — lightweight analytics for /admin/analytics (Hitya 2026-06-24:
 -- "an admin page to see which pages are getting the most use"). Logged from
 -- web/middleware.ts on every authenticated page request, fire-and-forget so
 -- the request itself is never blocked.

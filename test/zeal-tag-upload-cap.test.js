@@ -1,6 +1,6 @@
 // test/zeal-tag-upload-cap.test.js — which /tag rows survive the upload cap.
 //
-// The bug (Canopy, 2026-08-07): tagging through The Deep produced ~50 tags and
+// The bug (Hitya, 2026-08-07): tagging through The Deep produced ~50 tags and
 // the payload capped at EXACTLY 24 on two independent agents. The old code was
 // `st.zeal_tags.slice(0, 24)` over an array the agent builds in Map INSERTION
 // order — so it kept the OLDEST 24 and silently dropped everything later,

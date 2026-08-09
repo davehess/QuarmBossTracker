@@ -2,7 +2,7 @@
 //
 //  1. FOREIGN RAIDS — a Wolf Pack member pugging ANOTHER guild's raid uploads
 //     the fight via their agent, so it lands on our parses even though almost
-//     no one in it is a Pack member (Uilnayar 2026-06-29: "Ikibob attended a
+//     no one in it is a Pack member (Hitya 2026-06-29: "Ikibob attended a
 //     morning Kael raid with a different guild and it all showed up").
 //     Encounters with <1/3 roster members (10+ raid) are already auto-hidden
 //     from /parses; this page surfaces the whole majority-non-member band so an

@@ -27,7 +27,7 @@ round `…0000` timestamps and exactly ONE such version exists in
 Supabase MCP and committed alongside. The advice to not ship dead schema still
 stands on its own merits.
 
-**Ask:** Uilnayar 2026-08-06 — *"Fawx and Dant both 'made corpses' on purpose
+**Ask:** Hitya 2026-08-06 — *"Fawx and Dant both 'made corpses' on purpose
 with Kaas Thox Xi Ans Dyek, so while they did have 2 deaths, they were
 intentional. Perhaps officers can have a way to set this, we do it every time
 for these rogues on that fight."*
@@ -94,7 +94,7 @@ alone on purpose — the sparkline is a factual record of what happened.
     -- timelines, the web Deaths list) -- a death that happened is never hidden,
     -- only excluded from the "things to fix" tally.
     --
-    -- Real case (Uilnayar, guild lead, 2026-08-06): Fawx and Dant both "make a
+    -- Real case (Hitya, guild lead, 2026-08-06): Fawx and Dant both "make a
     -- corpse on purpose" with Kaas Thox Xi Ans Dyek every single week (a known
     -- rogue-CH-battery / corpse-drag strat). Because it happens EVERY TIME for
     -- the same (character, boss) pair, a per-death toggle would make officers
@@ -106,7 +106,7 @@ alone on purpose — the sparkline is a factual record of what happened.
     --      Set once ("Fawx is always intentional on Kaas Thox Xi Ans Dyek"),
     --      applies to every future death of that character on that boss without
     --      officers re-marking it week after week. THIS IS PHASE 1 -- it is what
-    --      Uilnayar's report actually needs, and the only layer with UI wiring
+    --      Hitya's report actually needs, and the only layer with UI wiring
     --      in the first cut.
     --
     --   2. intentional_death_overrides -- a PER-DEATH exception for the rare

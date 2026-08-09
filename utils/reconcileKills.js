@@ -160,7 +160,7 @@ async function reconcileKillsFromSupabase(opts = {}) {
 // ── Engaged-encounter reconcile ─────────────────────────────────────────────
 // The /parses "Engaged now" section keys on encounters.ended_at IS NULL, but
 // nothing populated ended_at — so a fight whose slain line no agent happened to
-// catch lingered as "ENGAGED" forever (Uilnayar 2026-06-29: "this looks like all
+// catch lingered as "ENGAGED" forever (Hitya 2026-06-29: "this looks like all
 // of these mobs are still engaged"). The primary fix is at ingest (a
 // confirmed_kill upload sets ended_at). This sweep keeps the section honest:
 //
@@ -168,11 +168,11 @@ async function reconcileKillsFromSupabase(opts = {}) {
 //      more than STALE_MIN ago is, by definition, not being fought right now —
 //      clear it (set ended_at = fight-end). Agents only upload an encounter
 //      AFTER it concludes (death or idle flush), so a row older than a few
-//      minutes is over (Uilnayar: "make all the engaged mobs no longer engaged
+//      minutes is over (Hitya: "make all the engaged mobs no longer engaged
 //      if they aren't currently engaged").
 //   2. RECENT + loot evidence → register the kill early (before STALE_MIN)
 //      when loot was posted for that npc AND there's no same-name ambiguity
-//      (Uilnayar's earlier rule). Mostly redundant with the confirmed_kill
+//      (Hitya's earlier rule). Mostly redundant with the confirmed_kill
 //      ingest path, but covers a death no agent flagged.
 //
 // ended_at is set-once via the ended_at=is.null filter, so a precise death time

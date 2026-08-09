@@ -302,7 +302,7 @@ raid to prove the whole chain is alive". Splitting it by side effects:
 
 ### Already exists (found while building this — index it)
 
-`_preRaidHealthCheck()` in `index.js` (~line 9260, Uilnayar 2026-07-13) already
+`_preRaidHealthCheck()` in `index.js` (~line 9260, Hitya 2026-07-13) already
 runs at 19:30 ET on raid nights and posts one green/red line to Discord, probing
 the Discord gateway, Supabase REST, GoTrue, and `wolfpack.quest/api/health`, with
 a `bot_kv` once-per-day latch. **It is not in `docs/HOW-ITS-BUILT.md`** — which is

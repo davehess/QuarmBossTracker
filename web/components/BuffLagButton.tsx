@@ -10,7 +10,7 @@
 //      setInterval, if any, resumes).
 //   3. Default duration is 60s (the original behavior); a dropdown lets the
 //      user lock fast mode for a full raid (1h or 3h) or turn it off early
-//      (Uilnayar 2026-06-22 — "lockable for longer timeframes like 1h then
+//      (Hitya 2026-06-22 — "lockable for longer timeframes like 1h then
 //      3h, and also toggle off").
 // Quiet by default so it doesn't compete with the live data; turns green
 // while snappy mode is active.

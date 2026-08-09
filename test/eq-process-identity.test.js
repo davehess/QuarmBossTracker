@@ -1,6 +1,6 @@
 // Which running eqgame.exe is OURS.
 //
-// THE BUG (Uilnayar, 2026-08-04): "Right now the Everquest that's running is
+// THE BUG (Hitya, 2026-08-04): "Right now the Everquest that's running is
 // EQLegends not Quarm, which is not the process i'm tracking in my settings" —
 // and Mimic's Resource use window said "EverQuest running" anyway.
 //

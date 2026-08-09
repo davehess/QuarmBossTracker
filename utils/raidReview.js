@@ -338,7 +338,7 @@ function trashBoundsFor(encounters, graceMin = TRASH_TAIL_GRACE_MIN) {
  * every trash kill passes) is deliberately open-ended so raids can spill past
  * midnight, which is right for thread routing and wrong for "what did the raid
  * clear". On 2026-08-05 that put ALL 89 trash mobs after the raid: last boss
- * died 23:32 ET, trash ran 23:53 → 00:42 (Uilnayar reported it as "trash from
+ * died 23:32 ET, trash ran 23:53 → 00:42 (Hitya reported it as "trash from
  * earlier in the day" — the data says the opposite, it is trash from after).
  *
  * Omitting `bounds` preserves the old behaviour exactly, which is what the
@@ -378,7 +378,7 @@ function _kvSlotsKey(nightKey) { return `raid_review_slots_${nightKey}`; }
 
 // ── Reserved slots at the TOP of the night thread (R3) ───────────────────────
 //
-// Uilnayar 2026-08-06: "the /raidreview posted to the third line of the page —
+// Hitya 2026-08-06: "the /raidreview posted to the third line of the page —
 // when the raid night thread opens up it should reserve the first two lines of
 // it for the raid review(s) to land if they're long."
 //
@@ -401,7 +401,7 @@ function _kvSlotsKey(nightKey) { return `raid_review_slots_${nightKey}`; }
 // Slots 1-2 are the review (2 because a long one can spill past EMBED_BUDGET).
 // Slots 3-6 are the night's four attendance ticks, in order, so the top of the
 // thread reads: review, review overflow, 8:30, 9:30, 10:30, 11:30
-// (Uilnayar 2026-08-06: "put them as reserved posts 3-6").
+// (Hitya 2026-08-06: "put them as reserved posts 3-6").
 const RESERVED_REVIEW_SLOTS = 2;
 const RESERVED_TICK_SLOTS   = 4;
 const RESERVED_SLOTS = Math.max(0, Math.min(10,
@@ -824,7 +824,7 @@ function summarizeNight(data, opts = {}) {
   // partitionDeaths). They're noise on a raider-facing list.
   const playerDeaths = deaths.filter(d => d.class);
 
-  // ── Intentional deaths (Uilnayar 2026-08-06) ───────────────────────────────
+  // ── Intentional deaths (Hitya 2026-08-06) ───────────────────────────────
   // Some deaths are the strat. Fawx and Dant make a corpse on purpose on Kaas
   // Thox Xi Ans Dyek every week, and the review kept listing that fight under
   // "What to work on" as if the raid had gone wrong.
@@ -1172,7 +1172,7 @@ function renderReviewEmbeds(sum, { webBase } = {}) {
     // design (above), so a clean kill has nothing to draw — but the embed used
     // to render "Fight timelines (4)" directly under "12 down" with nothing
     // connecting the two, and a raider has no way to tell a suppressed clean
-    // kill from a fight we failed to record (Uilnayar 2026-08-06: "we only saw
+    // kill from a fight we failed to record (Hitya 2026-08-06: "we only saw
     // 4 of the fight timelines posted"). The 2026-08-05 night was 4 of 12 —
     // and the 8 omissions were genuinely death-free, which is good news the
     // embed was not taking credit for.

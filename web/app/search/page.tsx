@@ -1,6 +1,6 @@
 // /search — full results page for the site-wide search box. Hitting Enter in
 // the header search navigates here (the dropdown is the quick-pick; this is
-// the "show me everything" view). Uilnayar 2026-06-23.
+// the "show me everything" view). Hitya 2026-06-23.
 //
 // Sections:
 //   • Encounters — when the query matches an NPC name, every parse of that NPC

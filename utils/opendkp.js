@@ -166,7 +166,7 @@ async function createCharacter(payload) {
 // OPENDKP_CLIENT_ID read token — it's the client's internal id, constant per
 // OpenDKP client and present on every character row. We cache it (env override
 // first, then read it off any character row, then a known fallback) so linking
-// never needs a manual config step. Uilnayar 2026-06-23.
+// never needs a manual config step. Hitya 2026-06-23.
 let _openDkpClientHash = null;
 async function _resolveClientHash() {
   if (_openDkpClientHash) return _openDkpClientHash;

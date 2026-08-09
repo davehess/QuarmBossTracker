@@ -4,7 +4,7 @@
 -- Distinct from boss_name, which is the FIGHT — the most-damaged defender this
 -- encounter. A healer is on their heal target, an off-tank on an add, a slower
 -- on the next mob, and that difference is exactly what healing attribution and
--- off-tank review need (Uilnayar 2026-08-03). Carrying it here puts the damage
+-- off-tank review need (Hitya 2026-08-03). Carrying it here puts the damage
 -- curve and who-was-on-what on one row, so a fight scrubber needs no join.
 --
 -- target_observations remains the durable, all-raiders, append-on-change view;

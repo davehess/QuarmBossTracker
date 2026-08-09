@@ -1,6 +1,6 @@
 'use client';
 
-// Stats-only item hover card for the inventory page (Uilnayar 2026-06-23:
+// Stats-only item hover card for the inventory page (Hitya 2026-06-23:
 // "hover-over that shows an item card like we get in game"). No icon in v1 —
 // eqemu_items.icon is a numeric index into the EQ gequip*.png sprite atlas we
 // don't host yet. Once we mirror the sprite, the icon slot at the top of the

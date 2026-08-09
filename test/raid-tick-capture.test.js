@@ -1,4 +1,4 @@
-// Staged raid-attendance tick capture (Uilnayar 2026-08-06).
+// Staged raid-attendance tick capture (Hitya 2026-08-06).
 //
 // "can we put in the automatic raid tick capture (without submission) at
 // 830/930/1030/1130" — following "sometimes we will take the 'last tick' before

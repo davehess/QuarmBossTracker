@@ -1,4 +1,4 @@
--- who_observations retention (Uilnayar 2026-07-07: "keep the who information,
+-- who_observations retention (Hitya 2026-07-07: "keep the who information,
 -- but we don't need every instance of a player if we know their information,
 -- really just the latest one").
 --

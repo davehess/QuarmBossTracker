@@ -1,6 +1,6 @@
 -- find_or_create_encounter: the sequential-kill splitter may only fire when
 -- the matched encounter is a CONFIRMED kill (ended_at set — the confirmed_kill
--- upload path / reconcile stamp it). Field case (Uilnayar 2026-07-13, Lord of
+-- upload path / reconcile stamp it). Field case (Hitya 2026-07-13, Lord of
 -- Ire): a duo burned the mob to ~96%, the monk dispelled + Feigned Death, the
 -- mob reset and FULL-HEALED, and they re-killed it 11 minutes later. The old
 -- splitter saw "damage >= 0.9 x HP and a new start past the fight window" and

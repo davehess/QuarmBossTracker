@@ -258,7 +258,7 @@ With bind points known:
 - We see the bind *cast*, not the bind *state*. A character bound before they
   ever ran Mimic has no observation, and we must show "unknown" rather than
   guess.
-- Anomalies are expected and that is fine. Per Uilnayar: *"there are always going
+- Anomalies are expected and that is fine. Per Hitya: *"there are always going
   to be anomalies to our logic, but we can recognize those."* The design goal is
   a labelled estimate that is usually right and visibly uncertain when it is not
   — never a confident number.

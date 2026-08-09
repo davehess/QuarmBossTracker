@@ -138,7 +138,7 @@ async function load(decoded: string) {
       // our mirror (0 rows; the _full variant carries all 2,123 factions and
       // covers every npc_faction.primaryfaction). Reading the empty table
       // meant no con ever resolved a faction name, so the cons table's
-      // Faction column never rendered (Uilnayar 2026-07-09).
+      // Faction column never rendered (Hitya 2026-07-09).
       const { data } = await sb.from('eqemu_faction_list_full').select('id, name').in('id', factionIds);
       for (const r of ((data ?? []) as { id: number; name: string }[])) if (r.name) factionNameById.set(r.id, r.name);
     }
@@ -326,7 +326,7 @@ export default async function CharacterFactionsPage({ params }: { params: Promis
                       // counts when not. Tooltip surfaces whichever number
                       // ISN'T the headline so officers can sanity-check
                       // "+96 points (8 hits)" vs "+8 hits (no per-hit deltas
-                      // captured)" (Uilnayar 2026-06-23).
+                      // captured)" (Hitya 2026-06-23).
                       const bTot = f.better_total ?? 0;
                       const wTot = f.worse_total  ?? 0;
                       const betterHead = bTot > 0

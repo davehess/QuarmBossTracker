@@ -1,6 +1,6 @@
 'use client';
 
-// Client-side inventory grid with a view-mode toggle (Uilnayar 2026-06-24:
+// Client-side inventory grid with a view-mode toggle (Hitya 2026-06-24:
 // "Can the Inventory page get a condensed mode that's just text or a small
 // mode that has smaller items?"). Three modes, persisted to localStorage:
 //   • Normal — 32px icon boxes
@@ -157,7 +157,7 @@ function Cell({ c, mode }: { c: CellData; mode: Mode }) {
   return (
     <ItemHover card={c.card ?? undefined} fallbackName={c.name}
       className={`group aspect-square bg-bg border ${borderClass} rounded p-1 flex flex-col items-center justify-between text-center hover:border-blue overflow-hidden`}>
-      {/* Item name at the top of the box (Uilnayar 2026-06-24). */}
+      {/* Item name at the top of the box (Hitya 2026-06-24). */}
       <span className={`${mode === 'small' ? 'text-[7px] leading-[1.1] line-clamp-1' : 'text-[8px] leading-tight line-clamp-2'} text-text w-full`}>
         {c.name}
       </span>

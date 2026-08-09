@@ -1,6 +1,6 @@
 # Time-window audit — wolfpack.quest (2026-07-08)
 
-Requested by Uilnayar: find hardcoded timeframes, let users expand/contract
+Requested by Hitya: find hardcoded timeframes, let users expand/contract
 (day/week/30/60/90/expansion/lifetime), assess expensive queries + incomplete
 data, and **track which windows get used** so unused ones can be retired.
 

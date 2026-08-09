@@ -5,5 +5,5 @@
 --   • inline currency keys: plugin::check_handin(\%ic, 7836 => 1, platinum => 100)
 --   • prefix condition:    ($platinum >= 900) && plugin::check_handin(\%ic, ...)
 -- The parser handles both. cash on the same table is the REWARD currency
--- (quest::givecash); money_required is the cost. (Uilnayar 2026-06-24.)
+-- (quest::givecash); money_required is the cost. (Hitya 2026-06-24.)
 alter table scripted_npc_turnins add column if not exists money_required jsonb;

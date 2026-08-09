@@ -3,7 +3,7 @@
 // Spellbook upload. EQ outputs:
 //   Index <tab> SpellId <tab> Level <tab> Name
 // SpellId joins eqemu_spells.id directly so the downstream "who needs this
-// spell we have" admin view (Uilnayar 2026-06-23) joins exactly.
+// spell we have" admin view (Hitya 2026-06-23) joins exactly.
 
 import { revalidatePath } from 'next/cache';
 import { supabaseServer } from '@/lib/supabase-server';

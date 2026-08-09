@@ -155,7 +155,7 @@ function main() {
     process.exit(1);
   }
 
-  // RULE (Uilnayar 2026-07-08, after the 1.7.0-beta.2 Zeal-pipe collapse):
+  // RULE (Hitya 2026-07-08, after the 1.7.0-beta.2 Zeal-pipe collapse):
   // every <details> the dashboard emits MUST persist its open state through
   // the wpKeep store — section repaints (and PARENT-section repaints, which
   // destroy nested placeholders before their own render runs) reset plain

@@ -5,7 +5,7 @@
 // knight or necro threw — and the stored record kept only name/ts/class, so the
 // two were byte-identical and could not be separated after the fact.
 //
-// Uilnayar's insight: a REAL death has a tail a feign never produces —
+// Hitya's insight: a REAL death has a tail a feign never produces —
 //     You died.
 //     You are bleeding to death!
 //     Returning to home point, please wait...

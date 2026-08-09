@@ -1,4 +1,4 @@
--- Time-window picker usage telemetry (Uilnayar 2026-07-08: "track which
+-- Time-window picker usage telemetry (Hitya 2026-07-08: "track which
 -- elements are being frequently expanded for usage and the ones that aren't
 -- may be less important to end users, worth turning off").
 --

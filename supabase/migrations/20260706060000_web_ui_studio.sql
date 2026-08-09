@@ -1,4 +1,4 @@
--- Web UI Studio (/me/ui) — three tables (Uilnayar 2026-07-06: "UI studio
+-- Web UI Studio (/me/ui) — three tables (Hitya 2026-07-06: "UI studio
 -- needs a version on wolfpack.quest to update these outside of that machine,
 -- access backed up UI files and macros, find those common macros and suggest
 -- updates").

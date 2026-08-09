@@ -1,5 +1,5 @@
 -- Let players mark discovered turn-ins as "not of interest" so they drop out of
--- the discovery list (Uilnayar 2026-06-24). Reuse the per-character pin table
+-- the discovery list (Hitya 2026-06-24). Reuse the per-character pin table
 -- with a status: 'active' (pinned to Active quests) or 'dismissed' (hidden from
 -- discovery, restorable). A missing row = neutral (shown in discovery).
 alter table character_active_turnins

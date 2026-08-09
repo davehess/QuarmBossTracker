@@ -1,6 +1,6 @@
 -- character_quest_prefs — per-character quest layout: reorder, hide, dismiss.
 -- "Hide" is reversible from the picker; "dismiss" is the stronger "I'm never
--- doing this" intent (Uilnayar 2026-06-23). Both bring the quest back via the
+-- doing this" intent (Hitya 2026-06-23). Both bring the quest back via the
 -- collapsed "Dismissed (N)" footer on the page, so nothing is destructively
 -- lost. display_order overrides the catalog's display_order when set.
 

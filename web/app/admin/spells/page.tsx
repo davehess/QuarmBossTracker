@@ -4,7 +4,7 @@
 // inventory: who's holding it, the classes that can use it, and which
 // spellbook-uploaded characters of those classes are still missing it. This
 // is the distribution side of the spell exchange — "we collect these on raids,
-// get them to the people who need them" (Uilnayar 2026-06-23).
+// get them to the people who need them" (Hitya 2026-06-23).
 //
 // Gated by the /admin layout (officer only). Backed by the
 // guild_held_spell_needs() RPC (migration 20260624020000_spell_exchange.sql).

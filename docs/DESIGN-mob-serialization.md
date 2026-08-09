@@ -9,7 +9,7 @@ spatially separate clusters of engaged raiders; each cluster is one instance.
 
 **Status:** phases 0-1 shipped (bot 3.1.10, 2026-08-05) + phase-2 coverage
 forwards (agent 3.5.30 beta: type-5 loc, observed_tanks). Open question 1
-answered by Uilnayar 2026-08-04: debuff attribution IS the want; q3: the
+answered by Hitya 2026-08-04: debuff attribution IS the want; q3: the
 upstream ask got zero traction; q4: raid-wide position forwarding approved
 (PRIVACY.md updated). Author: cloud session 2026-07-31, from Hitya's
 2026-07-30 raid-night report and his refined framing ("we don't need the mob's

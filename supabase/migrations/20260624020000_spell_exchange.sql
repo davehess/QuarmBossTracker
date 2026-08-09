@@ -2,7 +2,7 @@
 --
 -- Inspired by PQDI's Missing Spells parser, but our angle is the part PQDI
 -- can't do: cross a character's scribed set against the spells the GUILD is
--- physically holding as scrolls in someone's bank. (Uilnayar 2026-06-23.)
+-- physically holding as scrolls in someone's bank. (Hitya 2026-06-23.)
 --
 -- Data realities baked into this design:
 --   • eqemu_spells has NO per-class scribe levels (no classes_1..16). We

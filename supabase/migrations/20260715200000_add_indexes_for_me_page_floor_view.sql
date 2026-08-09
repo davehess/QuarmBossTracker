@@ -1,4 +1,4 @@
--- /me took >60s (Uilnayar 2026-07-15). EXPLAIN showed character_data_floor at
+-- /me took >60s (Hitya 2026-07-15). EXPLAIN showed character_data_floor at
 -- 22.5s: three MIN(ts) GROUP BY lower(speaker) aggregates over ~300k
 -- chat_messages rows (guild channel twice, raid once) re-run on every call.
 -- This composite lets each aggregate run as a grouped index scan.

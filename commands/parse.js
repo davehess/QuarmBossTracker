@@ -314,7 +314,7 @@ function buildParseEmbed(bossName, parsed, bossEmoji, extras = {}) {
   // and the bot marries the two (Quarm never logs another player's heal
   // amount). Healers whose recipients don't run Mimic still show with a casts
   // count and "—" healed. Recipient-only rows ("→ You" self heals) are gone —
-  // those now pool into the unattributed footnote (Uilnayar 2026-07-14).
+  // those now pool into the unattributed footnote (Hitya 2026-07-14).
   // Heal chain gap warning is appended when gaps >8s were detected on the
   // primary tank (8s = ~2 missed CH ticks in Luclin-era chain healing).
   if (Array.isArray(healers) && healers.length > 0) {

@@ -84,7 +84,7 @@ export async function loadFamily(
   //       grouping sometimes splits ONE person's characters across roots
   //       (e.g. when an officer's newer main becomes its own root), which
   //       breaks the era timeline because each split sees only part of the
-  //       person's DKP history. (Uilnayar 2026-06-23: Hitya was its own root,
+  //       person's DKP history. (Hitya 2026-06-23: Hitya was its own root,
   //       split from Canopy/Melting, so Hitya's page claimed Hitya was the
   //       Classic main when the player was actually Canopy then.)
   const queries = [
@@ -275,7 +275,7 @@ export async function loadEraTimeline(
     // A single end-of-era big bid shouldn't override a season of attendance,
     // so big-bid count is only a tiebreaker — and stands in alone when there
     // were no ticks at all (e.g. a main who bid but whose ticks predate our
-    // OpenDKP history). Rank breaks remaining ties. (Uilnayar 2026-06-23:
+    // OpenDKP history). Rank breaks remaining ties. (Hitya 2026-06-23:
     // big-bid-first wrongly flipped Classic from Canopy→Melting on one bid.)
     const candidates = new Set<string>([...tickCounts.keys(), ...bidVotes.keys()]);
     let detectedMain: string | null = null;
@@ -327,7 +327,7 @@ export async function loadEraTimeline(
 
   // Mark main swaps: an era whose main differs from the previous known main.
   // Runs AFTER carry-forward so quiet eras (which inherit the prior main)
-  // don't register a false swap. (Uilnayar 2026-06-23: surface WHEN the main
+  // don't register a false swap. (Hitya 2026-06-23: surface WHEN the main
   // changed in the timeline.)
   let prevMain: string | null = null;
   for (const r of results) {

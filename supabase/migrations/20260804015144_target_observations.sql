@@ -8,7 +8,7 @@
 -- rows for the whole guild, forever.
 --
 -- Healing attribution, off-tank detection, add assignment and buff coverage all
--- need the history, not the latest value (Uilnayar 2026-08-03).
+-- need the history, not the latest value (Hitya 2026-08-03).
 --
 -- APPEND-ON-CHANGE: the bot keeps an in-memory last-target map and inserts only
 -- when target_name actually differs, so rows are proportional to TARGET SWITCHES

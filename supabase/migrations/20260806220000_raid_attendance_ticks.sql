@@ -1,6 +1,6 @@
 -- Staged raid-attendance ticks: captured automatically, submitted by nobody.
 --
--- Ask (Uilnayar, 2026-08-06): "can we put in the automatic raid tick capture
+-- Ask (Hitya, 2026-08-06): "can we put in the automatic raid tick capture
 -- (without submission) at 830/930/1030/1130". Context from the day before —
 -- "sometimes we will take the 'last tick' before the end of the raid, though,
 -- so we're not missing people."

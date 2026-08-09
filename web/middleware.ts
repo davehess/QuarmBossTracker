@@ -2,7 +2,7 @@
 // Components and Route Handlers see a fresh user. Without this, OAuth
 // callbacks land but the session never propagates to RSC reads.
 //
-// Also logs page views to page_views (Uilnayar 2026-06-24 — /admin/analytics).
+// Also logs page views to page_views (Hitya 2026-06-24 — /admin/analytics).
 // Handed to event.waitUntil() rather than left dangling, so the write completes
 // without the response ever waiting on it. Only logs when there's an
 // authenticated user (anonymous traffic + bots are silently dropped).
@@ -48,7 +48,7 @@ function normalizeRoute(pathname: string): string {
 const PREVIEW_BOT_RX = /discordbot|slackbot|twitterbot|facebookexternalhit|whatsapp|telegrambot|linkedinbot|skypeuripreview|redditbot|mastodon|pinterestbot/i;
 
 export async function middleware(request: NextRequest, event: NextFetchEvent) {
-  // Per-page link unfurls (Uilnayar 2026-07-08) — serve crawlers the meta
+  // Per-page link unfurls (Hitya 2026-07-08) — serve crawlers the meta
   // document BEFORE any session work; bots carry no cookies anyway.
   if (request.method === 'GET'
       && !request.nextUrl.pathname.startsWith('/api/')

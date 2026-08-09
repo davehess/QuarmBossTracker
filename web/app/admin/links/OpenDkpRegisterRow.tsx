@@ -2,7 +2,7 @@
 
 // Interactive form row for the "Not in OpenDKP" table on /admin/links.
 //
-// Streamlined 2026-07-05 (Uilnayar): the old row forced the officer to pick a
+// Streamlined 2026-07-05 (Hitya): the old row forced the officer to pick a
 // RACE before Register would enable — but /who never reports race, so that
 // field was ALWAYS the red blocker. Now race defaults to Human (a correctable
 // placeholder — "click add without making something up; fix it in OpenDKP or
@@ -153,7 +153,7 @@ export default function OpenDkpRegisterRow({
         <input type="checkbox" checked={canDm && dmOwner} disabled={!canDm || busy} onChange={e => setDmOwner(e.target.checked)} />
         DM
       </label>
-      {/* Two common ranks as one-click register buttons (Uilnayar: "simple
+      {/* Two common ranks as one-click register buttons (Hitya: "simple
           trader / raid alt button"). Raid Alt goes to OpenDKP; Trader stays
           local-only. Both blocked only when the class is genuinely unknown. */}
       <button type="button" onClick={() => register('Raid Alt')} disabled={busy || classMissing}

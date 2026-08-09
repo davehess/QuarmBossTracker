@@ -375,7 +375,7 @@ export default async function CharacterGearPage({ params }: { params: Promise<{ 
     // stat — the worn spell is how the item DELIVERS its attack, so they're
     // equal on every atk piece (Hoop 10 = Vengeance II 10, Legs 50 = Vengeance
     // X 50, …). Take the MAX per item, never the sum. Adding both double-counted
-    // every piece: a set whose real worn atk is 150 read 300 (Uilnayar
+    // every piece: a set whose real worn atk is 150 read 300 (Hitya
     // 2026-07-14; the in-game ItemAtk 250 was 150 gear + 100 self-Avatar).
     atkSum += Math.max(it.attack ?? 0, wfx?.atk ?? 0);
     if (wfx) { ftSum += wfx.ft; regenSum += wfx.regen; }
@@ -385,7 +385,7 @@ export default async function CharacterGearPage({ params }: { params: Promise<{ 
     if ((!it.haste || it.haste <= 0) && /\bhaste\b/.test(wornNameLower)) hasteUnknownItems++;
   }
 
-  // Worn ATK caps at 250 in-game (Uilnayar 2026-07-14: page showed 300, game
+  // Worn ATK caps at 250 in-game (Hitya 2026-07-14: page showed 300, game
   // capped ItemAtk at 250). Item `attack` columns and EVERY worn-effect +ATK
   // stack toward ONE 250 ceiling — so a set with five Aura of Battle / Vengeance
   // pieces still tops out at 250. Buff spell-ATK (shaman/druid/bard/beastlord/SK,
@@ -612,7 +612,7 @@ export default async function CharacterGearPage({ params }: { params: Promise<{ 
                   {equipped.map(g => {
                     const it = items[g.item_id];
                     const worn = fx(it?.worneffect, spellNames);
-                    // What the worn effect grants, shown inline (Uilnayar
+                    // What the worn effect grants, shown inline (Hitya
                     // 2026-07-14: "Vengeance X (+50 atk)", plus regen + FT).
                     // Makes it legible which pieces feed the 250 item-atk pool —
                     // once capped, a raider gains nothing from more ITEM atk and

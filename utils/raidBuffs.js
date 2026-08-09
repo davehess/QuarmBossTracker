@@ -24,7 +24,7 @@ const KEYWORDS = {
   // HP regeneration over time. Nature's Recovery (lvl 49 druid line) and
   // its rank variants don't share a stem with the other regen spells so we
   // list them explicitly — without this they fall through categorizeBuff
-  // and land in the dashboard's "Other" pile (Uilnayar 2026-06-22).
+  // and land in the dashboard's "Other" pile (Hitya 2026-06-22).
   regen: ['regrowth','regenerat','chloroplast','replenish','pack regen','elixir',
           "nature's recovery", 'natures recovery'],
   mana: ['brilliance','iridescence','gift of brilliance'],
@@ -54,7 +54,7 @@ const KEYWORDS = {
   // place seeInvis first; categorizeBuff returns the first hit and 'see
   // invis' is the more-specific match. We also have an entry for the
   // 'see invisible' clicky-form name and the Ranger/Druid Camouflage line
-  // that confers invis (Uilnayar 2026-06-22). 'invis' alone matches both
+  // that confers invis (Hitya 2026-06-22). 'invis' alone matches both
   // 'invisible' and 'invisibility'.
   seeInvis: ['see invis'],
   invis:    ['invisib', 'camouflage', 'cloak of shadows', 'shauri'],
@@ -180,7 +180,7 @@ const HP_SLOT_KEYWORDS = {
 };
 // 'virtue' — Virtue is the PoP successor to Aegolism (same Type-One slot) and
 // matches Quarm's PoP-beta reward "Beta Virtue" too. Beta buffs OUTRANK the
-// era tops (Uilnayar 2026-07-09) — without this, a Beta Virtue holder read as
+// era tops (Hitya 2026-07-09) — without this, a Beta Virtue holder read as
 // HP slots A+B empty and the queue told clerics to land Aego over the
 // strictly better buff. Kept in sync with web/lib/buffs.ts.
 const AEGOLISM_KEYWORDS = ['aegolism', 'virtue'];

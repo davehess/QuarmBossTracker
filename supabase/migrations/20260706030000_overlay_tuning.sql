@@ -1,7 +1,7 @@
 -- overlay_tuning — officer-set numeric knob overrides for Mimic overlays and
 -- the bot's Extended Target aggregation, so thresholds (off-heal hurt cutoff,
 -- Extended Target hurt %, stale grace, …) can be changed mid-raid WITHOUT
--- cutting a Mimic release or redeploying the bot (Uilnayar 2026-07-06).
+-- cutting a Mimic release or redeploying the bot (Hitya 2026-07-06).
 --
 -- One row per guild; `tuning` is a flat jsonb object of snake_case keys →
 -- NUMBERS ONLY (agents ignore non-numeric values by design — nothing stringy

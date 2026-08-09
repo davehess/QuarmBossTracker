@@ -577,7 +577,7 @@ the pet does** (agent 3.5.36). The owner key is deliberate — it's what makes
 `_captureTargetBuffsOnCharm` work at all — but it meant a dead pet's spells
 unioned onto whatever stood in the slot next: a charmed rat's Glamour of Tunare
 + Tunare's Request (1800 ticks = 3h) showed on a summoned warder that never had
-them (Uilnayar 2026-08-05). `_reconcilePetIdentity()` clears landings + the
+them (Hitya 2026-08-05). `_reconcilePetIdentity()` clears landings + the
 `/pet health` report on a slot-16 name → DIFFERENT name transition; slot 16
 going **empty is not an identity change** (it dips ~3s during a re-charm, and
 treating that as a new pet erases a live pet's buffs — fixture-enforced).
@@ -829,7 +829,7 @@ does NOT need `/tag filter` for the chat-channel path.
 the server's chat rate limit.** Tags are chat messages, so a burst trips *"You
 are currently rate limited, you cannot send more messages for 32 seconds"* and
 the broadcast is simply refused — while the arrow still draws locally, so the
-tagger believes the raid can see a mark nobody received (Canopy 2026-08-07,
+tagger believes the raid can see a mark nobody received (Hitya 2026-08-07,
 tagging through The Deep). The other three are config states you fix once; this
 one recurs, dynamically, exactly when marking fastest. Measured usable rate:
 ~8/min sustained on `/tag chat` before the lockout. Agent surfaces it on the 🏷

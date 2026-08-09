@@ -9,7 +9,7 @@ one it needs no Zeal, no position, and no spawn id.
 
 ## What the twins actually are
 
-Corrected on the spot by Uilnayar: the same-name pair is **`Va Xakra`**, and they
+Corrected on the spot by Hitya: the same-name pair is **`Va Xakra`**, and they
 spawn *with* `Thall Va Xakra`. The boss is a different name, so the ambiguity is
 between the two adds, not with the boss.
 

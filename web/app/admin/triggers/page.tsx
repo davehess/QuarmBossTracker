@@ -144,7 +144,7 @@ export default async function AdminTriggersPage({
   const { data: rows } = await q;
   const triggers = (rows ?? []) as TriggerRow[];
 
-  // ── Trigger timing feedback aggregate (Uilnayar 2026-06-26 — v1.1.3).
+  // ── Trigger timing feedback aggregate (Hitya 2026-06-26 — v1.1.3).
   // Last 30 days of votes (« Earlier / ✓ Good! / » Too early) from Mimic's
   // trigger overlay. Group by trigger_name (denormalised at write time so we
   // don't need to join), compute the dominant direction + a confidence so the
@@ -221,7 +221,7 @@ export default async function AdminTriggersPage({
         </div>
       </section>
 
-      {/* Trigger timing feedback — last 30d (Uilnayar 2026-06-26 — v1.1.3). */}
+      {/* Trigger timing feedback — last 30d (Hitya 2026-06-26 — v1.1.3). */}
       <section className="bg-panel border border-purple/40 rounded-lg p-5">
         <div className="flex items-baseline justify-between gap-3 mb-2 flex-wrap">
           <h3 className="text-lg text-purple">🗳 Trigger timing feedback</h3>

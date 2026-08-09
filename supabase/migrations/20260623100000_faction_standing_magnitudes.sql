@@ -5,7 +5,7 @@
 -- kills tick Coldain by more than +1, quest turn-ins routinely +25 / +50),
 -- and treating every line as a single hit hides that signal — a +8 row on
 -- the page might be +96 points from 8 Kael giants or +400 from 8 quest
--- turn-ins, and they read identically (Uilnayar 2026-06-23).
+-- turn-ins, and they read identically (Hitya 2026-06-23).
 --
 -- Add better_total / worse_total bigint columns that the bot SUMS instead of
 -- counting. Magnitude defaults to 0 (= "we don't have a delta for that line"

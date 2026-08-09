@@ -5,7 +5,7 @@
 // immediately, plus a 45s heartbeat. The bot upserts that into
 // character_live_state keyed (guild_id, character), so every switch overwrote
 // the last — 576 rows for the whole guild, forever, and no history for healing
-// attribution / off-tank detection / add assignment (Uilnayar 2026-08-03).
+// attribution / off-tank detection / add assignment (Hitya 2026-08-03).
 //
 // _noteTargetSwitches appends to target_observations, but ONLY on an actual
 // change, using an in-memory last-known map so it costs zero extra Supabase

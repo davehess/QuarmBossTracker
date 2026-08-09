@@ -4,7 +4,7 @@
 //
 // Replaces the native <datalist>, which renders its own browser-controlled
 // popup — on Chrome Android that popup collapses to a floating grey pill that
-// overlaps the field when the query narrows to a single match (Uilnayar
+// overlaps the field when the query narrows to a single match (Hitya
 // 2026-07-05: "you lose the background on the text and it just overlays").
 // It can't be styled or repositioned with CSS. This renders a normal absolute
 // dropdown below the field instead, identical on desktop + mobile.

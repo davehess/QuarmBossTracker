@@ -63,7 +63,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
                 COLUMN (wordmark + three download CTAs + search); together they
                 overflow max-w-7xl, so flex-wrap dropped the account block onto
                 a line of its own and the header read as four ragged rows
-                (Uilnayar 2026-08-05). Only the wordmark shares the row now, so
+                (Hitya 2026-08-05). Only the wordmark shares the row now, so
                 the account block stays beside it at every width. */}
             <div className="flex items-center justify-between gap-3">
               <a href="/" className="flex items-center gap-2.5 no-underline min-w-0">
@@ -152,7 +152,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
                     <span>Linux / SteamOS</span>
                     <span aria-hidden className="text-dim text-[10px]">↗</span>
                   </a>
-                  {/* Site-wide search sits beside the download CTAs (Uilnayar
+                  {/* Site-wide search sits beside the download CTAs (Hitya
                       2026-06-23). Signed-in only — the search API is
                       members-only. Enter opens the full /search results page. */}
                   {showMe && <GlobalSearch />}

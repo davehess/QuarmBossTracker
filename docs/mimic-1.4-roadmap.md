@@ -7,7 +7,7 @@
 > living doc, not a changelog (see `CHANGELOGS` in `utils/onboarding.js` for
 > what actually shipped).
 
-## 1. Extended Target — "Pull Tracker" (Uilnayar 2026-07-03)
+## 1. Extended Target — "Pull Tracker" (Hitya 2026-07-03)
 
 **The ask:** watch incoming adds approach camp — ideally with an ETA, and a
 visual of the target list where mobs "glide" up as more raiders pick them up,
@@ -37,7 +37,7 @@ climb the list" experience — `raider_count` per target, already sorted by
 that count (`index.js`'s `_handleAgentExtendedTarget`, most-targeted first).
 The only gap is that today's render is a plain repaint: a mob's row jumps to
 its new position with no motion, so a raider watching the overlay (per
-Uilnayar: "we tend to watch another screen where all the mobs are being
+Hitya: "we tend to watch another screen where all the mobs are being
 fought") can miss the actual moment more people start hitting it. Fix is a
 pure animation change — FLIP technique (record each row's bounding rect
 before the re-render, then animate the transform delta after) — no backend

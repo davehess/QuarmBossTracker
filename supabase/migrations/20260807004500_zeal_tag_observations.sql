@@ -2,7 +2,7 @@
 -- is the spawn id in a /tag broadcast actually tied to the mob, or is it a
 -- number that only means something on the tagger's own client?
 --
--- Uilnayar 2026-08-06, after the first night of tags reached us: "let's craft a
+-- Hitya 2026-08-06, after the first night of tags reached us: "let's craft a
 -- table to store these tags into to verify how this operates … or have a friend
 -- tag the same mob as me."
 --
@@ -43,7 +43,7 @@ CREATE TABLE IF NOT EXISTS zeal_tag_observations (
   mob          text        NOT NULL,
   tag_text     text,
   shape        text,
-  -- Append semantics (Uilnayar 2026-08-06: "tags can append as well if you do a
+  -- Append semantics (Hitya 2026-08-06: "tags can append as well if you do a
   -- /tag chat +<tag> with a plus symbol"). 'set' | 'append' | 'replace' |
   -- 'erase'; NULL from agents older than 3.5.42, which is deliberately NOT the
   -- same as 'set' — null means "we could not tell", and the log must not assert
@@ -158,7 +158,7 @@ WHERE o.tag_mode = 'append'
 ORDER BY o.tagged_at DESC;
 
 -- ── Is the id random, per-person, or a per-zone entity index? ────────────────
--- Uilnayar 2026-08-06: "we need to determine if those spawn IDs are unique or
+-- Hitya 2026-08-06: "we need to determine if those spawn IDs are unique or
 -- random or per person. are they sequential in the channel?"
 --
 -- Already answered NO for "sequential in the channel" from night one: broadcast

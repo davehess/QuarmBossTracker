@@ -1,6 +1,6 @@
 // utils/raidTick.js — staged raid-attendance ticks (capture only, never submit).
 //
-// Uilnayar 2026-08-06: "can we put in the automatic raid tick capture (without
+// Hitya 2026-08-06: "can we put in the automatic raid tick capture (without
 // submission) at 830/930/1030/1130", following "sometimes we will take the
 // 'last tick' before the end of the raid, though, so we're not missing people."
 //
@@ -43,7 +43,7 @@ const FIRE_WINDOW_MIN = Math.max(1, Math.min(15,
   Number(process.env.RAID_TICK_FIRE_WINDOW_MIN) || 5));
 
 // Below this many raiders, treat it as "the raid already ended" rather than a
-// tick worth recording. This is what makes Uilnayar's "(if we don't end early)"
+// tick worth recording. This is what makes Hitya's "(if we don't end early)"
 // work, and it mostly takes care of itself: when a raid disbands there is no
 // Zeal type-5 raid event, so agents stop reporting and the rows age out of the
 // freshness window within minutes. The floor only catches the tail case of a

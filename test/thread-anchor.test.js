@@ -1,6 +1,6 @@
 // A failed edit must never become a second post.
 //
-// THE BUG (Uilnayar 2026-08-04): "the onboarding thread and the raid review
+// THE BUG (Hitya 2026-08-04): "the onboarding thread and the raid review
 // thread keep getting populated with posts."
 //
 // Both call sites had written the same thing:

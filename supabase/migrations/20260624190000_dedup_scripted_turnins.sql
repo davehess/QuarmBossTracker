@@ -1,4 +1,4 @@
--- Deduplicate scripted_npc_turnins (Uilnayar 2026-06-24: "What's with these
+-- Deduplicate scripted_npc_turnins (Hitya 2026-06-24: "What's with these
 -- duplicates?"). Two root causes:
 --   1. The unique key included raw_snippet, so the same turn-in stored with
 --      different snippet text (old manual loads used "path#hash"; GH runs use

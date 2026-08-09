@@ -150,7 +150,7 @@ export default async function BuffsPage() {
   const categories = (CATEGORY_ORDER as BuffCategory[]).filter(c => c !== 'hp');
 
   // Resolve buff names → eqemu_spells.id so BuffChip can deep-link each
-  // chip to its PQDI page (Uilnayar 2026-06-23). Only look up the names
+  // chip to its PQDI page (Hitya 2026-06-23). Only look up the names
   // that actually appear in the current rows (player buffs + pet buffs +
   // HP slots + Other), bounded — avoids fetching the full 4k-spell catalog.
   const wantedNames = new Set<string>();

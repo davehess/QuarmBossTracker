@@ -9,7 +9,7 @@
 -- Raid-Helper client.
 --
 -- This matters for awards, not just tidiness: ties are broken by who bid FIRST
--- (Uilnayar 2026-08-03), and with bid_at NULL there is currently no way to
+-- (Hitya 2026-08-03), and with bid_at NULL there is currently no way to
 -- resolve one. `position` cannot substitute — it is a within-auction rank 1..6,
 -- not an arrival clock.
 --

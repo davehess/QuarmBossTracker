@@ -2,7 +2,7 @@
 -- quest scripts (https://github.com/ProjectEQ/projecteqquests). Each row is one
 -- turn-in handler: the items a player gives, the items rewarded, the faction
 -- nudges, and the raw script slice as forensic trace. Lets us seed real quest
--- discovery instead of hand-typing (Uilnayar 2026-06-24: "Build the script
+-- discovery instead of hand-typing (Hitya 2026-06-24: "Build the script
 -- import" → unblocks Velium armor, Coldain rings, Skyshrine class armor,
 -- Dozekar tears, epic 1.0 chains, etc.).
 --

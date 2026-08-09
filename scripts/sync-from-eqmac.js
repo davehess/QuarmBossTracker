@@ -858,7 +858,7 @@ if (require.main !== module) return;
   // Have we already synced this exact dump? Skip if yes (idempotent) — UNLESS
   // FORCE_RESYNC is set. Force is needed when the dump is unchanged but the
   // WHITELIST grew (new mirror tables added in code), so a re-import of the
-  // same dump is required to populate them (Uilnayar 2026-06-23 — faction
+  // same dump is required to populate them (Hitya 2026-06-23 — faction
   // tables added; the unchanged-dump short-circuit was skipping them).
   let prevState = {};
   try { prevState = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')); } catch {}

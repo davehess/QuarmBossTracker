@@ -1,6 +1,6 @@
 // Rampage invulnerability mark — three sources, and the one that needs nothing.
 //
-// Uilnayar 2026-08-05, mid-raid: "we didn't see Syko's DA and we wasted heals
+// Hitya 2026-08-05, mid-raid: "we didn't see Syko's DA and we wasted heals
 // on him as he was Rampage", and separately "we need to include Harmshield into
 // the Rampage DA mark".
 //

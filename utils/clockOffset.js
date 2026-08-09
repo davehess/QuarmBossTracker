@@ -8,7 +8,7 @@
 // its deaths 63s behind. Death dedup collapses sightings within 30s of each
 // other, so that observer's copy of a SHARED death falls outside the window and
 // escapes as a second death — the parse shows two deaths where one happened
-// (Fargan's install, Uilnayar 2026-08-06). Widening the dedup window cannot
+// (Fargan's install, Hitya 2026-08-06). Widening the dedup window cannot
 // substitute for this: 63s is wider than a real rez-and-die-again, so a window
 // big enough to swallow the skew would also swallow genuine second deaths.
 //

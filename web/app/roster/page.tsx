@@ -1,9 +1,9 @@
 // /roster — the guild's typical raiders, by role and class, from raid ticks.
-// (Uilnayar 2026-07-08: "implement our own roster page with our typical
+// (Hitya 2026-07-08: "implement our own roster page with our typical
 // raiders, broken out by class... off of raid ticks... list their 60 day raid
 // attendance, using that as the sorting descending by class.")
 //
-// Reworked 2026-07-10 (Uilnayar): rows are FAMILIES (main + linked alts), and
+// Reworked 2026-07-10 (Hitya): rows are FAMILIES (main + linked alts), and
 // the headline number is the PERSON's attendance — distinct ticks attended by
 // ANY of their characters ÷ possible ticks — shown as % and tick count. Alts
 // under 50% of the family's usage fold into an expandable "alts" section

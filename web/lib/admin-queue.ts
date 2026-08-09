@@ -47,7 +47,7 @@ async function loadUnrosteredChatSpeakers(): Promise<QueueCategory> {
   // ROSTER SOURCE: we used to read from opendkp_character_id_to_name —
   // which is EMPTY on the live database (the OpenDKP sync never populated
   // it), so the diff treated every chatter as missing and the queue
-  // showed every active Wolf Pack member. Uilnayar 2026-06-21 ("I know
+  // showed every active Wolf Pack member. Hitya 2026-06-21 ("I know
   // for a fact this is not true — Kazmodon/Statlander/Pyxil et al ARE
   // in OpenDKP"). The real "is this character in OpenDKP" signal lives
   // in opendkp_attendance_recent — every character who's been ticked
@@ -375,7 +375,7 @@ function parseTickTime(raidTs: string, description: string | null): string | nul
 // (5) Potentially-missing raid ticks — family-aware, evidence-backed.
 //
 // A "missed tick" only counts when the person was demonstrably PRESENT but not
-// in the snapshot. Three cases (Uilnayar 2026-06-23):
+// in the snapshot. Three cases (Hitya 2026-06-23):
 //   • INTERIOR gap — ticked (on any of their characters) BEFORE and AFTER the
 //     missed tick. Self-evident: a swap / LD / zone cost them a tick.
 //   • END-OF-RAID (trailing) — missed the last tick(s) but combat or chat

@@ -151,7 +151,7 @@ Stage 1 SQL in `RUNBOOK-dead-triggers.md` runs** — as shipped, the pattern can
 match. Don't score this row until then.
 
 **12. Feeblemind in/out will NOT be exercised** — that's Thought Horror
-Overfiend, and Uilnayar's note was "at least a week and a half" out. Don't score
+Overfiend, and Hitya's note was "at least a week and a half" out. Don't score
 it as a failure this week.
 
 **13. Take one `character_live_state` sample mid-fight** and check

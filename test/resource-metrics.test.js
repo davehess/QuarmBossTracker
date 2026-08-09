@@ -96,7 +96,7 @@ describe('memory basis', () => {
   });
 
   it('the total lands ON Task Manager, not 1.7x over it', () => {
-    // Uilnayar's third measurement: five Mimic processes, 274 MB reported
+    // Hitya's third measurement: five Mimic processes, 274 MB reported
     // against Task Manager's 161.
     const priv = [102, 79, 46, 25, 22];                   // committed, what we printed
     const res  = [33.8, 32.1, 35.9, 29.5, 15.8];          // Task Manager's rows
@@ -114,7 +114,7 @@ describe('the working-set query does not become the cost it measures', () => {
 
   it('does NOTHING unless the user opted in', () => {
     // "I'd rather not take up extra cycles all the time just to be right and
-    // match Task Manager" (Uilnayar 2026-08-04). Default off; the free number
+    // match Task Manager" (Hitya 2026-08-04). Default off; the free number
     // plus an explanation of the difference is the shipped behaviour.
     expect(fn).toMatch(/if \(!cfg\.exactMemory\) \{ _wsPrivate\.byPid = new Map\(\); return; \}/);
     // …and the opt-out must DROP the snapshot, or stale resident numbers would
@@ -124,7 +124,7 @@ describe('the working-set query does not become the cost it measures', () => {
 
   it('does not run at all once the Resource use window is closed', () => {
     // "when we close that resource use window make sure we're not matching task
-    // manager still and querying for the exact in the background" (Uilnayar
+    // manager still and querying for the exact in the background" (Hitya
     // 2026-08-04). Today the only caller is that window's own 2s poll, so it
     // already stops — but that is the RENDERER's behaviour, and a background
     // PowerShell loop should not rest on it.

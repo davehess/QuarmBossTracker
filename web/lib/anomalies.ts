@@ -3,7 +3,7 @@
 //
 // "Foreign raid": a guildie pugging ANOTHER guild's raid uploads the fight via
 // their agent, so it lands on Wolf Pack's parses even though almost no one in
-// it is a Pack member (Uilnayar 2026-06-29: "Ikibob attended a morning Kael
+// it is a Pack member (Hitya 2026-06-29: "Ikibob attended a morning Kael
 // raid with a different guild and it all showed up on Wolfpack quest").
 //
 // Membership signal: presence in the `characters` roster (the OpenDKP mirror +

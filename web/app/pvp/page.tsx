@@ -172,7 +172,7 @@ async function loadBossTimers(): Promise<BossKill[]> {
   //      spawn_earliest — useful camp planning.
   //   2. Already-open rows (camp now): newest killed_at first — most recently
   //      camped/contested floats to the top so you can spot fresh activity
-  //      and friend the killers. (Uilnayar 2026-06-23.)
+  //      and friend the killers. (Hitya 2026-06-23.)
   const now = Date.now();
   out.sort((a, b) => {
     const aOpen = new Date(a.spawn_latest).getTime() < now;

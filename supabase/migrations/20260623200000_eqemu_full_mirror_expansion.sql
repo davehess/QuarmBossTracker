@@ -12,7 +12,7 @@
 -- Faction tables drive /character/[name]/factions — name resolution, PQDI
 -- links, and per-character BASELINE computation from race/class/deity
 -- (faction_list.base + faction_list_mod entries for the character's
--- r<N>/c<N>/d<N> codes). Uilnayar 2026-06-23.
+-- r<N>/c<N>/d<N> codes). Hitya 2026-06-23.
 
 -- ── Faction definitions ────────────────────────────────────────────────────
 create table if not exists eqemu_faction_list_full (

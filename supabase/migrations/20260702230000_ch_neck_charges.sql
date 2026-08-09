@@ -1,4 +1,4 @@
--- CH-neck (Necklace of Resolution, Plane of Sky) charge tracker (Uilnayar
+-- CH-neck (Necklace of Resolution, Plane of Sky) charge tracker (Hitya
 -- 2026-07-02). It's a one-charge item, manually recharged by combining with
 -- a Mana Battery - Class Four inside a Box of the Void — both lore items, so
 -- recharging is rare and deliberate. The combine's success line is generic

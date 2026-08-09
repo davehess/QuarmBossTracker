@@ -98,7 +98,7 @@ export default async function HateTrackerPage() {
   // Named-boss PoH kills (Lord of Ire, Maestro of Rancor, Innoruuk, Ashenbone)
   // — every PvP-server broadcast for a boss whose data/bosses.json zone is
   // Plane of Hate. We surface the killer (and guild) prominently so members
-  // can friend the killer for tracking, per Uilnayar 2026-06-23: "it's very
+  // can friend the killer for tracking, per Hitya 2026-06-23: "it's very
   // useful to know when it was last killed and who's doing it so you can add
   // them to friends list for tracking." Sourced from pvp_boss_kills (the auto-
   // record / timer table), not pvp_kills (player-vs-player ledger), because

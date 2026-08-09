@@ -4,7 +4,7 @@
 -- eqlog_<Name> the uploader's agent is tailing); the roster speaker on the same
 -- line is the real one. Returns one row per (ghost, uploader) with the inferred
 -- real name + line count, so officers can tell that uploader to remove the
--- stray log. (Uilnayar 2026-06-23: Wabumkin→Dopefiend, Chadivarius→Ashaiya.)
+-- stray log. (Hitya 2026-06-23: Wabumkin→Dopefiend, Chadivarius→Ashaiya.)
 create or replace function chat_attribution_conflicts(p_days int default 7)
 returns table(ghost_speaker text, uploader_discord_id text, likely_real text, lines int, last_line timestamptz)
 language sql stable as $$

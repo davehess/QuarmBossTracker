@@ -1,5 +1,5 @@
 // /admin/overlays — live tuning knobs for Mimic overlays + the bot's Extended
-// Target aggregation, WITHOUT a redeploy or Mimic release (Uilnayar
+// Target aggregation, WITHOUT a redeploy or Mimic release (Hitya
 // 2026-07-06: "we need to be able to make more of these configuration changes
 // to overlays without a full redeployment").
 //

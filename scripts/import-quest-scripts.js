@@ -7,7 +7,7 @@
 // Authoritative source for every NPC turn-in in EQ — what items the player
 // gives, what items come back, faction nudges, cash, exp. Quarm runs the
 // same script set; specific items may differ but the structure is identical.
-// (Uilnayar 2026-06-24: "Build the script import".)
+// (Hitya 2026-06-24: "Build the script import".)
 //
 // Patterns recognized:
 //
@@ -150,7 +150,7 @@ function splitPerlBranches(eventBody) {
 // id. EQ turn-ins that want N of an item are sometimes written as N separate
 // slots — Perl `7836 => 1, 7836 => 1` or Lua `{item1=X,item2=X,item3=X}` — and
 // must NOT render as three rows of the same item. Sorting also makes the row
-// content-stable so dedup works across runs. (Uilnayar 2026-06-24.)
+// content-stable so dedup works across runs. (Hitya 2026-06-24.)
 function aggregateInputs(items) {
   const byId = new Map();
   for (const it of items) byId.set(it.item_id, (byId.get(it.item_id) || 0) + (it.qty || 1));
@@ -164,7 +164,7 @@ function aggregateInputs(items) {
 //                   (also quest::check_handin / quest::handin with \%ic)
 //   (b) hash literal: quest::handin({ID => QTY, ...}) — older idiom, ~27 Perl
 //       scripts incl. the Magician elemental-tool quests (Vira → Ice Giant
-//       Toes). The importer missed these entirely until now. (Uilnayar
+//       Toes). The importer missed these entirely until now. (Hitya
 //       2026-06-24.)
 // Currency can ride inside the call (… platinum => 100) or as a prefix
 // condition (($platinum >= 900) && …); we collect both.
@@ -290,7 +290,7 @@ function parseLuaTurnIns(src) {
 
     // Drop pure-noise turn-ins with no reward of any kind (no item out, no
     // faction, no money) — e.g. Reebo Leafsway's "feed Jumjum to Nillipuss"
-    // flavor handins. Mirrors the Perl filter. (Uilnayar 2026-06-24.)
+    // flavor handins. Mirrors the Perl filter. (Hitya 2026-06-24.)
     if (outputs.length === 0 && factions.length === 0 && !anyMoney) continue;
     results.push({
       inputs: aggregateInputs(inputs), outputs: outputs.slice().sort((a, b) => a.item_id - b.item_id), factions, cash: null, exp_award: null, random,
@@ -306,7 +306,7 @@ function parseLuaTurnIns(src) {
 // { if (check_handin...) {...} elsif (...) {...} }` (every Velious class-armor
 // NPC does this). splitPerlBranches isn't recursive, so those nested turn-ins
 // were silently dropped. Here we walk into any branch whose cond ISN'T a handin
-// but whose body still contains handin calls. (Uilnayar 2026-06-24: Foreman
+// but whose body still contains handin calls. (Hitya 2026-06-24: Foreman
 // Felspar / corroded armor molds.)
 function collectHandinBranches(body, depth = 0) {
   if (depth > 6) return [];
@@ -365,7 +365,7 @@ async function upsertBatch(rows, { commit }) {
   if (!url || !key) throw new Error('SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY required to --commit');
   // Dedup on the generated content_key (zone|npc|sorted inputs|sorted outputs|
   // money) so re-runs never create content-duplicates regardless of the snippet
-  // text. (Uilnayar 2026-06-24.)
+  // text. (Hitya 2026-06-24.)
   const endpoint = `${url.replace(/\/$/, '')}/rest/v1/scripted_npc_turnins?on_conflict=content_key`;
   const body = JSON.stringify(rows);
   return new Promise((resolve, reject) => {

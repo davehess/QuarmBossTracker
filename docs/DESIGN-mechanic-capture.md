@@ -1,7 +1,7 @@
 # DESIGN — capturing instant boss mechanics (#206)
 
 *Written 2026-08-04 (overnight design pass). Unbuilt. This is the write-up of
-the discard audit Uilnayar asked for on 2026-08-03.*
+the discard audit Hitya asked for on 2026-08-03.*
 
 **The ask:**
 

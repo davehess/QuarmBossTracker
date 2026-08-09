@@ -1388,7 +1388,7 @@ the callout designs; they're written up in the Open TODO section, not here):
   **phases 0-1 + the phase-2 coverage forwards SHIPPED 2026-08-05** (bot
   3.1.10 main, agent 3.5.30 beta) for the Thall Va Xakra twin-add pull;
   remaining: feed K_pos into the agent's #56 local tracks, N>2 soak,
-  per-instance HP history. Uilnayar 2026-08-04: upstream Zeal ask has zero
+  per-instance HP history. Hitya 2026-08-04: upstream Zeal ask has zero
   traction — the end-around is now the plan of record
 - **#195** UI Studio web viewer/editor + UI/eqclient.ini cloud backups
 - **#196** /me advisors (spells / tradeskill / faction)
@@ -1452,7 +1452,7 @@ midnight — right for routing threads, wrong for "what did the raid clear".
 `trashBoundsFor()` now bounds the tally to [first pull, last CONFIRMED kill] ±
 grace, and returns `{}` mid-raid when nothing is dead yet (bounding to a kill
 that does not exist would erase legitimate pre-first-pull trash). Grace is 15
-per Uilnayar — the line is the last DKP tick. Deliberately tighter than web
+per Hitya — the line is the last DKP tick. Deliberately tighter than web
 `activitySpan()`'s 30-min pad, which pads fight EDGES where erring wide is free;
 this one decides membership, where erring wide IS the bug.
 
@@ -1537,7 +1537,7 @@ Sun/Wed/Thu window before touching the code.
 
 7. **Extended Target over-split — KILL SWITCH IS ON** (`flag_ext_pos_off=1` set
    in `overlay_tuning` 2026-08-05 mid-raid). A unique boss split into 6 then 8
-   rows, all at identical HP and DPS. Uilnayar's diagnosis is the root cause:
+   rows, all at identical HP and DPS. Hitya's diagnosis is the root cause:
    *"the boss we just fought has a larger melee range because it's a larger
    mob"* — `ext_pos_cluster_units` is a flat 25, but a big model lets melee
    stand far wider while on ONE mob. Two fixes: scale the radius by
@@ -1572,7 +1572,7 @@ Sun/Wed/Thu window before touching the code.
     spawn id — so it also covers pet-tanked mobs, which the position path can
     never place. Backtestable over 36,784 fights of durable `took` history
     BEFORE shipping. Solve the repeated-`821` stale-delta anomaly first.
-14. **The "tanking check"** (deferred by Uilnayar 2026-08-05): concurrent
+14. **The "tanking check"** (deferred by Hitya 2026-08-05): concurrent
     connect streams as a K signal, plus recording mobs that hit our PETS —
     `recentTankHits` drops them today because `_isPlayer` rejects multi-word
     names, so a charm pet tanking contributes zero evidence.
@@ -1586,7 +1586,7 @@ Sun/Wed/Thu window before touching the code.
 
 **Fight timeline v2 — boss HP curve + MT/RAMP lanes + class/player highlighting.
 DESIGNED, NOT BUILT. Full spec + data audit: `docs/DESIGN-fight-timeline.md`.**
-Uilnayar's napkin sketch 2026-08-06. The load-bearing finding is that the series
+Hitya's napkin sketch 2026-08-06. The load-bearing finding is that the series
 already exists: `encounter_threat_snapshots` holds **490,850 rows across 36,784
 fights** of cumulative per-player `dmg`/`took`/`tookMax`/`pet_owner`, at a
 measured 3.5–6.4s cadence. The area chart, the class filtering AND the MT lane

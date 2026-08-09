@@ -3,7 +3,7 @@
 // /keys upload from /me. Same pattern as inventory: parse the log-line burst
 // the EQ /keys command produces, store as a replace-semantics snapshot.
 //
-// Real format (Uilnayar 2026-06-23 screenshot):
+// Real format (Hitya 2026-06-23 screenshot):
 //   [09:06:12] Trakanon Idol
 //   [09:06:12] Key of Veeshan
 //   [09:06:12] Sky: Island 1.5 (Noble Dojorn)

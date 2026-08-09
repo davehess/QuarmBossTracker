@@ -1,4 +1,4 @@
--- scripted_npc_turnins data-quality cleanup (Uilnayar 2026-06-30):
+-- scripted_npc_turnins data-quality cleanup (Hitya 2026-06-30):
 -- "It looks like all of these Caerlyna or Realnyna quests are broken. Maybe
 -- we should remove any of these. Really anything where the reward is a
 -- number and not an item, cash, or faction." + "There are also a bunch of

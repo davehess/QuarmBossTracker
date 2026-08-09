@@ -285,7 +285,7 @@ async function _linkOneUnder(
 }
 
 // Bulk "confirm these are all one family" — folds every family root the
-// officer selected under a single main in one action (Uilnayar 2026-07-05:
+// officer selected under a single main in one action (Hitya 2026-07-05:
 // "needs a way to confirm these are all part of the same family/main").
 // `names` is a comma-joined list of the cluster's HOME family roots (the ones
 // that carry this Discord account); the chosen main is skipped. Deliberately
@@ -309,7 +309,7 @@ async function setFamilyLinkBulk(formData: FormData) {
 }
 
 // "Remove linkage" — declare a character a standalone main, NOT an alt of
-// anyone (Uilnayar 2026-06-22: "Luter is his own person"). Sets main_name =
+// anyone (Hitya 2026-06-22: "Luter is his own person"). Sets main_name =
 // name and main_name_override = name (self-pin) so the character (a) stops
 // rendering as someone else's alt immediately and (b) survives the next
 // OpenDKP sync re-parenting them. The self-pin is deliberate here — unlike
@@ -578,7 +578,7 @@ export default async function AdminLinksPage({
     //   • Non-home families an officer marked "Not an alt" (override === self)
     //     — they've been reviewed, the row in the cluster was spurious.
     //   • Raid Packs — anyone Raid Pack is a main and doesn't need linking
-    //     anywhere (Uilnayar 2026-06-23). Hiding them keeps the cluster
+    //     anywhere (Hitya 2026-06-23). Hiding them keeps the cluster
     //     focused on the actual decisions: Raid Alts that should be folded
     //     under a Raid Pack root.
     // Home stays so the cluster still anchors visually. If fewer than 2
@@ -617,7 +617,7 @@ export default async function AdminLinksPage({
   // Mimic isn't authenticated and several multi-boxers tail their log.
   // Officers need to be able to link that row to a main OUTSIDE the
   // current cluster — Bardtholemu to themselves (he IS a main),
-  // Luter to whichever real owner he is. Uilnayar 2026-06-21.
+  // Luter to whichever real owner he is. Hitya 2026-06-21.
   const allMains = [...new Set(
     allChars
       .map(c => ((c.main_name && c.main_name.trim()) || c.name).trim())
@@ -715,7 +715,7 @@ export default async function AdminLinksPage({
   // every unregistered name still missing a level, look it up directly by
   // name across ALL of who_observations (bounded to the candidate set) and
   // keep the highest level + most recent class seen — including the owner's
-  // own /who when their Mimic captured it (Uilnayar 2026-06-22).
+  // own /who when their Mimic captured it (Hitya 2026-06-22).
   {
     const needLevel = unregistered.filter(u => u.level == null).map(u => u.name);
     if (needLevel.length > 0) {
@@ -761,7 +761,7 @@ export default async function AdminLinksPage({
 
   // Recent OpenDKP register-queue rows — surface who requested each one and
   // whether the bot succeeded, so a failed/stuck registration is visible
-  // (Uilnayar 2026-06-22 "whoever made the updates... should be shown").
+  // (Hitya 2026-06-22 "whoever made the updates... should be shown").
   type RegisterReq = {
     id: string; name: string; status: string; error: string | null;
     requested_by_discord_id: string | null; opendkp_id: number | null;
@@ -967,7 +967,7 @@ export default async function AdminLinksPage({
                       // they were auto-stamped by the linker as a no-op
                       // "pin to default" so OpenDKP wouldn't re-parent the
                       // row. Showing them as "override" misled officers
-                      // (Uilnayar 2026-06-21 — every HOME row was rendering
+                      // (Hitya 2026-06-21 — every HOME row was rendering
                       // with a gold "override" tag that looked like a
                       // contradiction). Now only flag the GENUINE case:
                       // override points to a name DIFFERENT from the
@@ -985,7 +985,7 @@ export default async function AdminLinksPage({
                       // OpenDKP's view of who this character is parented
                       // under — surfaces "(Shavimo in OpenDKP)" next to
                       // Gnomistakes when OpenDKP has Gnomistakes rooted
-                      // under Shavimo (Uilnayar 2026-06-23). main_name is
+                      // under Shavimo (Hitya 2026-06-23). main_name is
                       // set by the OpenDKP sync from ParentId, so if it
                       // differs from the row's own name AND we have the
                       // parent's OpenDKP id, link out to that character
@@ -1016,7 +1016,7 @@ export default async function AdminLinksPage({
                               </span>
                             )
                           )}
-                          {/* HOME label removed 2026-06-21 (Uilnayar) — it
+                          {/* HOME label removed 2026-06-21 (Hitya) — it
                               fired on every family whose root carried the
                               uploader's discord_id, which meant clusters
                               like Hitya's painted three identical green
@@ -1061,7 +1061,7 @@ export default async function AdminLinksPage({
                         )}
                         {/* "Not an alt" — declare this character their own
                             standalone main so they stop showing as an alt
-                            candidate under this uploader (Uilnayar 2026-06-22:
+                            candidate under this uploader (Hitya 2026-06-22:
                             "Luter is his own person"). Pins main_name to self
                             so it sticks through the OpenDKP sync. */}
                         <form action={makeOwnMain}>

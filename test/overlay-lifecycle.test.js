@@ -1,6 +1,6 @@
 // Overlay windows are created when enabled and freed when not.
 //
-// WHY (Uilnayar, 2026-08-04): "what causes each overlay to take up at least 80
+// WHY (Hitya, 2026-08-04): "what causes each overlay to take up at least 80
 // MB of ram? especially when they're all in the off state". Each Electron
 // BrowserWindow is its own Chromium renderer — 80 MB resident before it paints
 // anything, which is the floor Uilnayar measured — and Mimic's boot created ten
@@ -339,7 +339,7 @@ describe('reap: an overlay that is off hands its renderer back', () => {
 
 describe('a hidden overlay holds no renderer', () => {
   // "we have a toggle in taskbar for 'Hide Overlays when Everquest is not
-  // running', and we should adhere to that" (Uilnayar 2026-08-04). Existence
+  // running', and we should adhere to that" (Hitya 2026-08-04). Existence
   // tracks VISIBILITY, not just the pref — which is where most of the saving
   // is, since EQ is closed most of the day.
   const RUNNING = { showHud: true, showCharm: true, overlaysLocked: true };

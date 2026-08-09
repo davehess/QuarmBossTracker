@@ -16,7 +16,7 @@
 -- Only UNIQUE name matches are accepted. A name matching 2+ catalog rows stays 0
 -- — genuine ambiguity a name cannot settle, ~1.4% of volume. Those are the cases
 -- worth resolving from the target's own Mimic buff window or from the spell list
--- of the mob being fought (Uilnayar 2026-08-03); this pass does not guess.
+-- of the mob being fought (Hitya 2026-08-03); this pass does not guess.
 --
 -- ORDER MATTERS. buff_casts carries TWO partial unique indexes —
 --   ambiguous: (guild_id, target, landing_text, cast_at) WHERE spell_id = 0

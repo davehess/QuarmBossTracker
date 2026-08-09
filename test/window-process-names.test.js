@@ -1,6 +1,6 @@
 // Every renderer carries its name on its own command line.
 //
-// "Can these expose their names in Task manager as well?" (Uilnayar 2026-08-04)
+// "Can these expose their names in Task manager as well?" (Hitya 2026-08-04)
 //
 // Partly, and the limit is worth writing down so nobody tries again: Task
 // Manager's Name column reads the executable's version resource, and every

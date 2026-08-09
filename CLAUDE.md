@@ -27,16 +27,29 @@ adjacent or unrelated code, stop and flag it before proceeding. (The
 13k-line `index.js` monolith makes "small line count" a poor proxy for "small
 blast radius" — reaching into unrelated behavior is a structural hazard here.)
 
-### Working rule — attribute decisions to the person who made them
-**Hitya is the guild lead and makes the calls on this platform.** Do NOT credit
-decisions or feature suggestions to **Uilnayar** — corrected 2026-08-09, and it
-had propagated widely (the fight-timeline napkin sketch, the release-cadence
-rule, the roadmap rule, the raid-night deploy freeze were all mis-credited).
-Other guild members do submit real suggestions and bug reports — Ashieron,
-Naggato, vj, Adiwen, Rockin, Dafeet, Emma/Camping, Jankzer — and those stay
-credited; the rule is specifically that Uilnayar is not a decision or suggestion
-source here. Note `Uilnayar` IS a legitimate character name in test fixtures and
-in the `{s}`-capture example below — leave those alone.
+### Working rule — attribution: everything is Hitya unless it came via feedback
+**You only ever interact with one person: Hitya.** They also play Uilnayar,
+Canopy, Rockin, vj, Hopeya, Utoh, Melting and others, so a decision, a bug
+report, a sketch or a live-test result arriving under any of those names is
+still Hitya. Credit it to **Hitya** (established 2026-08-09).
+
+**The one exception is the `feedback` table** — the wolfpack.quest feedback form
+and `/feedback`. Those are genuinely other members and KEEP their own names.
+The complete list, from the table itself:
+
+| Submitter | What |
+|---|---|
+| `Wabumkin/Adiwen` | 3 × general (Jun 2026) |
+| `Jankzer` | bug + idea (Jul 2026) |
+| `Ashieron/Donaldus/Oravayne` | the log-archiving idea (2026-08-07) |
+
+If you are about to credit anyone NOT in that table, it is Hitya. Check the
+table rather than trusting an existing comment — a name being in a code comment
+today is not evidence, since that is exactly what was wrong before.
+
+⚠ These are also real CHARACTER NAMES in test fixtures, golden logs and worked
+examples (the `{s}`-capture rule below turns on capturing `" Uilnayar"` with a
+leading space). Attribution text only — never blanket-rename.
 
 ### Working rule — decisions get WRITTEN DOWN, same session
 A decision that lives only in chat is lost: cloud and desktop sessions cannot

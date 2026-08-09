@@ -18,7 +18,7 @@
 //
 // Sections on the page (top → bottom):
 //   1. Active quests — catalog quests + turn-ins the character pinned from
-//      discovery (▲ to active). At the top per Uilnayar 2026-06-24.
+//      discovery (▲ to active). At the top per Hitya 2026-06-24.
 //   2. Inferred zone access — locked zones proven by NO DROP loot held.
 //   3. Inventory-driven discovery — scripted NPC turn-ins matched to held
 //      items, triaged: Ready to turn in → NO DROP vs tradeable → gems folded.
@@ -128,7 +128,7 @@ async function load(decoded: string) {
   const questItems = (itemsRes.data ?? []) as QuestItem[];
 
   // Key inference: holding a NO-DROP item exclusive to a locked zone proves
-  // you had the key (Uilnayar 2026-06-24). This implies the catalog quest
+  // you had the key (Hitya 2026-06-24). This implies the catalog quest
   // whose reward IS that key — VP key, Trakanon Idol, VT Scepter of Shadows.
   // The Howling Stones row has no key_item_id (no single mirrored key item),
   // so its catalog implication is currently null but the evidence is still
@@ -143,7 +143,7 @@ async function load(decoded: string) {
   };
   const inferredKeys = (inferredRows ?? []) as InferredKey[];
 
-  // Inventory-driven quest discovery from scripted_npc_turnins (Uilnayar
+  // Inventory-driven quest discovery from scripted_npc_turnins (Hitya
   // 2026-06-24: "start populating quests based on the inventories"). For every
   // item id the character holds, surface the NPC turn-ins where that item is
   // either an input (piece-of-quest) or an output (completed turn-in). We
@@ -173,7 +173,7 @@ async function load(decoded: string) {
     discovered = (dRows ?? []) as Discovered[];
   }
 
-  // Per-character turn-in prefs (Uilnayar 2026-06-24): 'active' = pinned into
+  // Per-character turn-in prefs (Hitya 2026-06-24): 'active' = pinned into
   // the Active section, 'dismissed' = hidden from discovery. Fetch the pinned +
   // dismissed turn-ins by id so they render even if the matching inventory item
   // was since consumed.
@@ -391,7 +391,7 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
 
   // Chain-implication: if you hold a downstream output, the upstream steps that
   // feed it are provably done — their components were consumed in the combine.
-  // (Uilnayar 2026-06-23: "If someone has the Vex Thal key, they definitely did
+  // (Hitya 2026-06-23: "If someone has the Vex Thal key, they definitely did
   // the first part of the quest.") Edge: quest Q's reward_item_id appears as a
   // required item of quest P ⇒ completing P implies Q. Propagate to a fixpoint
   // so a 3+-step chain fully resolves.
@@ -449,7 +449,7 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
   const stacks     = visibleProgress.filter(p => !p.completed &&  p.quest.is_stack_turnin);
   const completed  = visibleProgress.filter(p => p.completed);
 
-  // ---- Class Epic 1.0 components held (Uilnayar 2026-06-26: "Epics section at
+  // ---- Class Epic 1.0 components held (Hitya 2026-06-26: "Epics section at
   // the top that shows pieces of epic 1.0 quests that you have on your character
   // by class … e.g. dragon scales of kedge backbone"). Walk the character's
   // inventory; for every held item that appears in any class's Epic 1.0 chain,
@@ -480,7 +480,7 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
     }))
     .sort((a, b) => b.hits.length - a.hits.length || a.cls.localeCompare(b.cls));
 
-  // ---- Inventory-driven discovery presentation (Uilnayar 2026-06-24 rework) ----
+  // ---- Inventory-driven discovery presentation (Hitya 2026-06-24 rework) ----
   // One row per turn-in (deduped), classified for triage:
   //   • Ready to turn in (hold every component) → top
   //   • In progress, NO DROP component vs tradeable-only → two groups
@@ -509,7 +509,7 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
   const promotedSet = new Set<number>(promotedTurninIds);
   const dismissedSet = new Set<number>(dismissedTurninIds);
 
-  // ── Class/race usability (Uilnayar 2026-06-24: "say the classes/races that
+  // ── Class/race usability (Hitya 2026-06-24: "say the classes/races that
   // can use the item; if it's not one that that character can use and it's
   // droppable" → route to 'don't need'). eqemu_items.classes / .races are EQ
   // bitmasks. The viewed character's bit is matched against them.
@@ -546,7 +546,7 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
   };
   // A clicky usable from inventory (any slot) is useful to ANY class — clicktype
   // 4 = "must equip", anything else with a click effect works from bags. (Manastone,
-  // Amulet of Necropotence, etc.) Weapons may be carried for pets. (Uilnayar 2026-06-24.)
+  // Amulet of Necropotence, etc.) Weapons may be carried for pets. (Hitya 2026-06-24.)
   const hasInventoryClicky = (id: number) => { const m = itemMetaById.get(id); return !!m && (m.clickeffect ?? 0) > 0 && m.clicktype !== 4; };
   const isWeapon = (id: number) => (itemMetaById.get(id)?.damage ?? 0) > 0;
   const isEquippable = (id: number) => (itemMetaById.get(id)?.slots ?? 0) > 0;
@@ -625,7 +625,7 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
 
   // Shared row renderer for a discovered/promoted/dismissed turn-in. Format the
   // header as "Item — Turn-in NPC — where" (the held item drives discovery),
-  // then a ✓/✗ give-list and the reward. (Uilnayar 2026-06-24.)
+  // then a ✓/✗ give-list and the reward. (Hitya 2026-06-24.)
   const turninRow = (t: Turnin, matched: Set<number>, kind: 'discovery' | 'promoted' | 'dismissed') => {
     const ready = t.inputs.every(i => heldQty(i.item_id) >= i.qty);
     const headId = [...matched][0] ?? t.inputs[0]?.item_id ?? t.outputs[0]?.item_id ?? null;
@@ -653,7 +653,7 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
             {/* MQ matters when there's a NO DROP component you can't just trade
                 to one person — the NO DROP holder does the final hand-in while
                 others contribute the tradeable pieces. All-tradeable turn-ins
-                don't need MQ; just trade everything to one person. (Uilnayar
+                don't need MQ; just trade everything to one person. (Hitya
                 2026-06-24.) */}
             {t.inputs.length >= 2 && t.inputs.some(i => dIsNoDrop(i.item_id)) && (
               <span className="text-[9px] text-purple/90 border border-purple/40 rounded px-1" title="Multi-questable — the NO DROP holder does the final hand-in; others contribute the tradeable pieces">MQ</span>
@@ -706,7 +706,7 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
 
   // Render a list of turn-ins grouped by the held item that drives them — each
   // group a collapsible "Item ✓ — N turn-ins" (auto-open when small). Fixes the
-  // flood from one item feeding many NPCs. (Uilnayar 2026-06-24.)
+  // flood from one item feeding many NPCs. (Hitya 2026-06-24.)
   const renderGroups = (entries: Entry[]) =>
     groupByHeld(entries).map(([itemId, list]) => (
       <details key={itemId} open={list.length <= 2} className="border-l-2 border-purple/20 pl-2">
@@ -718,7 +718,7 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
       </details>
     ));
 
-  // ── Inventory dead-weight + broken items (Uilnayar 2026-06-24) ──
+  // ── Inventory dead-weight + broken items (Hitya 2026-06-24) ──
   // Classify held bag/bank items (not equipped). A "quest piece" is any held
   // item that feeds or is rewarded by a discovered turn-in.
   const questPieceIds = new Set<number>(discovered.map(d => d.matched_item_id));
@@ -732,7 +732,7 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
   // (questPieceIds) — the previous single "Quest pieces you probably don't
   // need" bucket lumped in plain unusable loot (spell scrolls for other
   // classes, generic droppable armor) that has nothing to do with any quest.
-  // (Uilnayar 2026-06-30: "If these items ... are not quest pieces they can
+  // (Hitya 2026-06-30: "If these items ... are not quest pieces they can
   // be in a different section.")
   const dontNeedQuest: { id: number; qty: number }[] = [];  // droppable quest-turn-in piece, unusable by this char
   const dontNeedOther: { id: number; qty: number }[] = [];  // droppable non-quest loot, unusable by this char
@@ -742,7 +742,7 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
     if (!m) continue;
     const usable = usableByChar(id);
     // Clickies usable from inventory (any class) and weapons (often carried for
-    // pets) are NOT dead-weight even if the class can't wear them. (Uilnayar
+    // pets) are NOT dead-weight even if the class can't wear them. (Hitya
     // 2026-06-24: Amulet of Necropotence / Shield of the Immaculate / Blade of
     // the Earthcaller.)
     if (hasInventoryClicky(id) || isWeapon(id)) continue;
@@ -758,7 +758,7 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
   dontNeedOther.sort((a, b) => dItemName(a.id).localeCompare(dItemName(b.id)));
   brokenItems.sort((a, b) => dItemName(a.id).localeCompare(dItemName(b.id)));
   // Bag/bank slot location for a held item — same lookup the Completed-quests
-  // section uses (ownInvSlotByName, keyed by lowercased item name). (Uilnayar
+  // section uses (ownInvSlotByName, keyed by lowercased item name). (Hitya
   // 2026-06-30: "Droppable vs nondroppable with the specific bag and slot
   // they're in.")
   const slotsFor = (id: number) => ownInvSlotByName.get(dItemName(id).toLowerCase());
@@ -826,7 +826,7 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
         )}
       </section>
 
-      {/* Class Epic 1.0 components held (Uilnayar 2026-06-26). Grouped by
+      {/* Class Epic 1.0 components held (Hitya 2026-06-26). Grouped by
           class — the same piece can feed more than one class chain (e.g.
           Shining Metallic Robes feeds both the Rogue and Enchanter epics),
           so it shows up under every relevant section. Sorted by held-count
@@ -873,7 +873,7 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
       )}
 
       {/* Active quests — catalog quests + turn-ins the character pinned from
-          discovery. Pinned ones render first. (Uilnayar 2026-06-24: "Let people
+          discovery. Pinned ones render first. (Hitya 2026-06-24: "Let people
           move those quests to the active quests section and have that be at the
           top of the page.") */}
       <section className="bg-panel border border-border rounded-lg p-5">
@@ -940,7 +940,7 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
       {/* Inferred zone access — derived from NO DROP loot in inventory that
           drops ONLY in a locked zone. Surfaces even when no catalog quest is
           seeded for the zone (e.g. Howling Stones), so the evidence is always
-          visible. (Uilnayar 2026-06-24.) */}
+          visible. (Hitya 2026-06-24.) */}
       {inferredKeys.length > 0 && (
         <section className="bg-panel border border-gold/40 rounded-lg p-5">
           <h3 className="text-lg text-gold mb-2">🗝 Inferred zone access</h3>
@@ -967,7 +967,7 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
 
       {/* Inventory-driven discovery — scripted NPC turn-ins matched against the
           player's inventory (ProjectEQ quest scripts → scripted_npc_turnins).
-          Reworked (Uilnayar 2026-06-24): ready-to-turn-in first, NO DROP vs
+          Reworked (Hitya 2026-06-24): ready-to-turn-in first, NO DROP vs
           tradeable split, gem-only matches minimized, "Item — NPC — where"
           format with PQDI links and ✓/✗ per component. */}
       {(discoveryCount > 0 || completedTurninItems.length > 0 || dismissed.length > 0) && (
@@ -1111,7 +1111,7 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
           </ul>
         )}
 
-        {/* Turn-in rewards held — deduped by item with a held count (Uilnayar
+        {/* Turn-in rewards held — deduped by item with a held count (Hitya
             2026-06-24: "there shouldn't be multiples displayed - we should see a
             count (x)"). Holding a turn-in's reward implies the turn-in was done. */}
         {completedTurninItems.length > 0 && (
@@ -1175,7 +1175,7 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
 
       {/* Dead-weight: held (bag/bank) items the char's class/race can't use,
           split by whether they actually tie to a discovered turn-in.
-          (Uilnayar 2026-06-24; split + droppable tag + slot location added
+          (Hitya 2026-06-24; split + droppable tag + slot location added
           2026-06-30 — "if these are not quest pieces they can be in a
           different section... Droppable vs nondroppable with the specific
           bag and slot they're in.") */}

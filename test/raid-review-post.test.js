@@ -697,7 +697,7 @@ describe('the Discord fight timeline (the FightTimeline analogue)', () => {
     expect(sum.deaths).toHaveLength(1);
   });
 
-  // Uilnayar 2026-08-06: "we only saw 4 of the fight timelines posted" — on a
+  // Hitya 2026-08-06: "we only saw 4 of the fight timelines posted" — on a
   // night with 12 kills. The suppression was correct (the other 8 were clean),
   // but the embed printed "Fight timelines (4)" a few lines under "12 down"
   // with nothing connecting them, so a suppressed clean kill was
@@ -1023,7 +1023,7 @@ describe('(f) _handleAgentUpload is unchanged by the live hook', () => {
   });
 });
 
-// ── Intentional deaths (R2, Uilnayar 2026-08-06) ─────────────────────────────
+// ── Intentional deaths (R2, Hitya 2026-08-06) ─────────────────────────────
 //
 // "Fawx and Dant both 'made corpses' on purpose with Kaas Thox Xi Ans Dyek, so
 // while they did have 2 deaths, they were intentional. Perhaps officers can
@@ -1155,7 +1155,7 @@ describe('intentional deaths', () => {
   });
 });
 
-// ── Reserved top-of-thread slots (R3, Uilnayar 2026-08-06) ───────────────────
+// ── Reserved top-of-thread slots (R3, Hitya 2026-08-06) ───────────────────
 //
 // "the /raidreview posted to the third line of the page — when the raid night
 // thread opens up it should reserve the first two lines of it for the raid

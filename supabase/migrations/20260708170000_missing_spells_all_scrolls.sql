@@ -1,4 +1,4 @@
--- Missing-spells rework (Uilnayar 2026-07-08):
+-- Missing-spells rework (Hitya 2026-07-08):
 --   1. "Spell: Courage*" and other trailing-'*' EQEmu duplicate items showed
 --      as phantom missing spells — the '*' meant they never matched the
 --      scribed "Courage". Strip a trailing '*' so junk rows collapse into the

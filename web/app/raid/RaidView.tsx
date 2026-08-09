@@ -200,7 +200,7 @@ export default function RaidView({
   ari: { character: string; setByName: string | null; setAt: string | null } | null;
   // No Zeal type-5 raid snapshot from ANY uploader, yet we do have live-state
   // characters — the roster grid can't group anyone, so surface WHY instead of
-  // a bare "No roster yet" (Uilnayar 2026-07-05: "lost Peopleslayer off the
+  // a bare "No roster yet" (Hitya 2026-07-05: "lost Peopleslayer off the
   // raids tab and Bstie isn't here").
   rosterMissing?: boolean;
 }) {
@@ -240,7 +240,7 @@ export default function RaidView({
     return m;
   }, [inRaidRows]);
   // Parking-lot threshold: characters unseen for >5 min get moved to the
-  // "Not seen / offline" group (Uilnayar 2026-06-22 — "Not in raid implies
+  // "Not seen / offline" group (Hitya 2026-06-22 — "Not in raid implies
   // they're still online"). 5 min lines up with Mimic's live-state heartbeat
   // cadence; anything older than that is almost always logged out, not
   // just sitting in the parking lot. Default still hides stale rows from
@@ -535,7 +535,7 @@ export default function RaidView({
             // (someone else's Mimic saw the cast) but produces no HP signal of
             // their own, so !noAgent marked whole groups as covered when nobody
             // in them ran anything. Group 6 showed the MIMIC chip on five
-            // inferred rows (Uilnayar 2026-08-06).
+            // inferred rows (Hitya 2026-08-06).
             const mimicInGroup = grpRows.some(r => r.hasAgent);
             return (
               <section key={label} className="bg-panel border border-border rounded-lg overflow-hidden">

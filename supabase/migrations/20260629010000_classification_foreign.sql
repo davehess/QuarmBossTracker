@@ -3,7 +3,7 @@
 -- uploaded the fight so it landed on our parses). Like the other non-null
 -- classifications it's excluded from guild kill counts + hidden on /parses.
 --
--- Uilnayar 2026-06-29: "Ikibob attended a morning Kael raid with a different
+-- Hitya 2026-06-29: "Ikibob attended a morning Kael raid with a different
 -- guild and it all showed up on Wolfpack quest … if the majority of members of
 -- a raid are not Wolfpack members we should flag that, not display on parses."
 --

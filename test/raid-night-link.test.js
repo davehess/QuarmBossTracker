@@ -3,7 +3,7 @@
 // raid_nights was designed and never implemented: empty table, no writer, and
 // encounters.raid_night_id NULL on all 1,526 rows despite a real FK. History is
 // backfilled by migration; this function keeps it true going forward
-// (Uilnayar 2026-08-03).
+// (Hitya 2026-08-03).
 //
 // The property that matters and could silently drift: the LIVE path and the SQL
 // BACKFILL must agree on what night an encounter belongs to. The backfill

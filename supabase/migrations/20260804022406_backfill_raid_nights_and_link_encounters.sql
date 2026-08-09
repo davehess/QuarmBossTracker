@@ -1,7 +1,7 @@
 -- raid_nights was designed and never implemented: the table sat EMPTY (0 rows),
 -- nothing in the codebase wrote it, and encounters.raid_night_id was NULL on all
 -- 1,526 rows despite a real FK. So "which raid was this encounter part of" has
--- always been answered by an ad-hoc time-window join (Uilnayar 2026-08-03).
+-- always been answered by an ad-hoc time-window join (Hitya 2026-08-03).
 --
 -- This backfills both halves from the encounters we already have.
 --

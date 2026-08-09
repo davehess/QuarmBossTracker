@@ -1,6 +1,6 @@
 // Threat-snapshot cadence clamp — SOURCE-SLICE fidelity tier.
 //
-// The cadence is officer-tunable mid-raid (Uilnayar 2026-08-03) via the
+// The cadence is officer-tunable mid-raid (Hitya 2026-08-03) via the
 // overlay-tuning map, which means a number arriving over the network now
 // controls how often ~40 agents POST. The clamp is the only thing standing
 // between a fat-fingered value and the fleet hammering the bot, so it is worth

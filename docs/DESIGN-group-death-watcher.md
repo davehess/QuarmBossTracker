@@ -4,7 +4,7 @@
 `docs/DESIGN-death-semantics.md` — that doc defines what a death IS; this one
 adds a source of evidence that doesn't come from log text at all.*
 
-**The ask (Uilnayar, 2026-08-03):**
+**The ask (Hitya, 2026-08-03):**
 
 > also for deaths, when we are in the raid the group containing the person that
 > dies will have their health go to zero on the zeal pipe, and they would
