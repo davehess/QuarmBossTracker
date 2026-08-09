@@ -1146,7 +1146,12 @@ function _startWindowDrag(win, persistKey) {
 // Bundles every relevant ini file for a character (plus the global
 // eqclient.ini) so a player switching to a new machine can re-import in one
 // click. The bot encrypts before storing; we send plaintext over HTTPS.
-const UI_STUDIO_GLOBAL = ['eqclient.ini'];
+// Globals worth carrying to a new machine: eqclient.ini (client options,
+// UISkin, logging) and zeal.ini (Zeal's own settings, keyed by character
+// INSIDE the file — so it is global on disk but per-character in content).
+// zeal.ini was missing until 2026-08-09, which meant a machine migration
+// silently dropped every Zeal setting.
+const UI_STUDIO_GLOBAL = ['eqclient.ini', 'zeal.ini'];
 function _uiStudioFilesFor(character) {
   // Quarm log files are *_pq.proj.txt; the matching ini suffix is
   // _pq.proj.ini for per-character files and bare for the globals.
@@ -1185,6 +1190,20 @@ function _readUiBundle(eqDir, character) {
     // every named set. Real-name resolved like the rest, written back with .bak.
     const ms = f.match(/^([A-Za-z]+).*spellsets.*\.ini$/i);
     if (ms && ms[1].toLowerCase() === cLower) want.push(f);
+    // CATCH-ALL (2026-08-09): any other .ini belonging to this character.
+    // The enumerated list above only captures the conventions we happened to
+    // know about, so a machine migration dropped whatever it had not been
+    // told about — bandolier sets, and anything a future client/Zeal build
+    // adds. Enumerating features is the losing side of this; capture the set
+    // instead. The name must sit on a boundary (start of file, or between
+    // underscores) so a short character name cannot sweep in unrelated files.
+    if (/\.ini$/i.test(f)) {
+      const lf = f.toLowerCase();
+      if (lf.startsWith(cLower + '_') || lf.startsWith(cLower + '.') ||
+          lf.includes('_' + cLower + '_') || lf.includes('_' + cLower + '.')) {
+        want.push(f);
+      }
+    }
   }
 
   for (const wanted of want) {
