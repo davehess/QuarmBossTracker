@@ -1,19 +1,37 @@
 // /shortabout — the two-minute version of /about (Hitya 2026-08-09).
 //
-// For handing to someone who will not scroll a long page: the four pieces spin
-// out of the central platform circle as you scroll, then one card each on what
-// they are and where they run, then the one diagram of how data flows through
-// them. Everything deeper links to /about.
+// One scrolling story: the bot appears, the agent starts feeding it, the
+// database grows between them, the chest swallows the agent (that is Mimic),
+// the platform frames the lot — then the same verified numbers the long page
+// carries. Deeper detail lives on /about.
 
 import Link from 'next/link';
 import type { Metadata } from 'next';
-import { Reveal } from '@/components/about/Reveal';
+import { supabaseAdmin } from '@/lib/supabase';
+import { Reveal, CountUp } from '@/components/about/Reveal';
 import PlatformSpin from '@/components/about/PlatformSpin';
+
+export const revalidate = 3600;
 
 export const metadata: Metadata = {
   title: 'The short version',
-  description: 'The Wolf Pack platform in two minutes: four pieces, where they live, and how they connect.',
+  description: 'The Wolf Pack platform in two minutes: how it grew, where it lives, and the numbers.',
 };
+
+type Stats = {
+  raid_avg: number; raid_biggest: number; raids: number; max_parsers: number;
+  fights_apr: number; damage_apr: number; bosses_apr: number; pvp: number;
+};
+const ZERO: Stats = { raid_avg: 0, raid_biggest: 0, raids: 0, max_parsers: 0,
+                      fights_apr: 0, damage_apr: 0, bosses_apr: 0, pvp: 0 };
+
+async function getStats(): Promise<Stats> {
+  try {
+    const { data, error } = await supabaseAdmin().rpc('about_stats');
+    if (error || !data) return ZERO;
+    return { ...ZERO, ...(data as Partial<Stats>) };
+  } catch { return ZERO; }
+}
 
 const PIECES = [
   {
@@ -38,7 +56,22 @@ const PIECES = [
   },
 ];
 
-export default function ShortAboutPage() {
+function MiniStat({ v, label, suffix, decimals, accent = 'text-green' }: {
+  v: number; label: string; suffix?: string; decimals?: number; accent?: string;
+}) {
+  return (
+    <div className="rounded-lg border border-border bg-panel p-3 text-center">
+      <div className={`text-xl sm:text-2xl font-bold ${accent}`}>
+        <CountUp to={v} suffix={suffix} decimals={decimals} />
+      </div>
+      <div className="text-[10px] text-dim mt-0.5 leading-tight">{label}</div>
+    </div>
+  );
+}
+
+export default async function ShortAboutPage() {
+  const s = await getStats();
+
   return (
     <div className="pb-24">
 
@@ -46,23 +79,42 @@ export default function ShortAboutPage() {
         <Reveal>
           <div className="text-[11px] uppercase tracking-widest text-gold mb-3">Wolf Pack · Project Quarm</div>
           <h1 className="text-3xl sm:text-5xl font-bold text-text leading-tight">
-            One platform, <span className="text-blue">four pieces</span>
+            How the platform <span className="text-blue">grew</span>
           </h1>
           <p className="mt-4 text-sm sm:text-base text-dim max-w-xl mx-auto leading-relaxed">
-            Everything below grew out of one Discord bot answering{' '}
+            It started with one Discord bot answering{' '}
             <span className="text-text">&ldquo;when does the boss come back?&rdquo;</span>{' '}
-            Scroll, and watch it grow.
+            Scroll, and watch what happened next.
           </p>
         </Reveal>
       </section>
 
-      {/* The spin-out. Tall section; the diagram is sticky inside it. */}
-      <section className="mt-8">
+      {/* The story — bot, agent, database, chest, platform. */}
+      <section className="mt-6">
         <PlatformSpin />
       </section>
 
-      {/* One card per piece — what it is, where it lives. */}
-      <section className="mt-10 space-y-4">
+      {/* The numbers, popping in at the end of the story — same verified
+          figures as the long page: OpenDKP attendance for raid size, people
+          (never characters) for parsers, platform-lifetime combat totals. */}
+      <section className="mt-8">
+        <Reveal from="scale">
+          <div className="text-[10px] uppercase tracking-widest text-dim mb-3 text-center">And where that leaves us</div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3">
+            <MiniStat v={s.raid_avg} label="raiders on an average night" />
+            <MiniStat v={s.raid_biggest} label="on the biggest one" />
+            <MiniStat v={s.raids} label="raids this expansion" />
+            <MiniStat v={s.max_parsers} label="most parsers in one night" />
+            <MiniStat v={s.fights_apr} label="fights recorded since April" accent="text-blue" />
+            <MiniStat v={s.damage_apr / 1_000_000} decimals={1} suffix="M" label="damage parsed" accent="text-blue" />
+            <MiniStat v={s.bosses_apr} label="distinct bosses" accent="text-blue" />
+            <MiniStat v={s.pvp} label="PvP broadcasts captured" accent="text-blue" />
+          </div>
+        </Reveal>
+      </section>
+
+      {/* One card per piece — the durable reference under the animation. */}
+      <section className="mt-12 space-y-4">
         {PIECES.map((p, i) => (
           <Reveal key={p.name} delay={i * 60} from={i % 2 ? 'right' : 'left'}>
             <div className={`rounded-lg border-l-2 ${p.color} border-y border-r border-border bg-panel/60 p-4`}>
@@ -75,37 +127,6 @@ export default function ShortAboutPage() {
             </div>
           </Reveal>
         ))}
-      </section>
-
-      {/* How it connects — one line of data flow, the whole architecture. */}
-      <section className="mt-12">
-        <Reveal>
-          <div className="rounded-lg border border-border bg-bg/40 p-4 sm:p-6">
-            <div className="text-[10px] uppercase tracking-widest text-dim mb-4">How it all connects</div>
-            <div className="flex items-center gap-1.5 sm:gap-3 flex-wrap justify-center text-[11px] sm:text-sm font-mono">
-              {[
-                { t: 'your combat log', c: 'text-dim' },
-                { t: 'Agent', c: 'text-green' },
-                { t: 'Bot', c: 'text-gold' },
-                { t: 'one shared database', c: 'text-text' },
-              ].map((x, i) => (
-                <span key={x.t} className="flex items-center gap-1.5 sm:gap-3">
-                  {i > 0 && <span className="text-dim" aria-hidden>→</span>}
-                  <span className={`${x.c} rounded border border-border bg-panel px-2 py-1 whitespace-nowrap`}>{x.t}</span>
-                </span>
-              ))}
-              <span className="text-dim" aria-hidden>→</span>
-              <span className="flex flex-col gap-1">
-                <span className="text-purple rounded border border-border bg-panel px-2 py-1 whitespace-nowrap">Mimic overlays</span>
-                <span className="text-blue rounded border border-border bg-panel px-2 py-1 whitespace-nowrap">wolfpack.quest</span>
-              </span>
-            </div>
-            <p className="text-[11px] text-dim mt-4 text-center leading-relaxed">
-              One database is the whole trick: the bot, the website and every overlay read the same
-              truth, so a fight parsed by a handful of people shows up everywhere for everyone.
-            </p>
-          </div>
-        </Reveal>
       </section>
 
       <section className="mt-10 text-center">
