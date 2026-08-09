@@ -1757,6 +1757,29 @@ Sun/Wed/Thu window before touching the code.
    likely the same failure. Related unfixed gaps: character pages still
    count classified encounters; parse-thread mirror keeps the FIRST payload
    state forever (here that accident preserved the good data).
+   **Evidence added 2026-08-09 (second pass):**
+   - **The uploader is `Hawkner` (discord `189927438958985218`), whose linked
+     characters include `Smokestomp` AND `Ikibob`** — i.e. the same person
+     whose morning pug created the original foreign-raid problem
+     (`web/lib/anomalies.ts` header, Hitya 2026-06-29). Same account, same
+     behaviour, second incident. Any future foreign-raid tuning should assume
+     this is a recurring pattern from ONE member, not a fleet-wide issue.
+   - **The corrupted payload is a singleton.** Exactly one contribution
+     fleet-wide since 2026-07-01 has `player_count > 55` (this one, at 95).
+     Normal Vex Thal raids from the same uploader run 32–39.
+   - ⚠ **But 3.5.54 exposure is 2 uploads by 1 person**, both from this
+     account, both very late (11.6h — drained queue / backfill), one corrupt.
+     "Singleton" therefore means *not yet seen elsewhere*, NOT *3.5.54 is
+     clear*. Watch the first pulls of the next raid before concluding.
+   - **The WP names in the payload were not in the fight** — settled
+     independently of memory: chat capture was live through that window (29
+     distinct speakers, 20 of them also in the parse), and of the 38
+     roster-matching names in the payload **only `Smokestomp` ever spoke**.
+     Combined with the Wednesday cooldown, the WP evening crew were absent.
+   - Their **July 22 09:02 ET Kaas Thox morning raid** (`2d58dba8`, 47
+     players, 55% roster) was ALSO re-uploaded on 3.5.54 an hour after the
+     Diabo one. Above the auto-foreign bar, so still unclassified — an
+     officer call, and the reason a time-of-day signal was proposed.
 3. ~~**Healer-mana: were the shamans missing MID-FIGHT or between pulls?**~~
    **ANSWERED 2026-08-06 23:26 ET — NOT A BUG.** Observed mid-fight on Diabo Xi
    Va Temariel: Fungalfist (12%) and Ghalix (100%) both present. The earlier
