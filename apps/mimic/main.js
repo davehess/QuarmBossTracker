@@ -6926,7 +6926,15 @@ ipcMain.handle('ui-studio-capture', async (_e, params) => {
     const result = await _httpsJson(`${_botBaseUrl(cfg)}/api/agent/ui_layout`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${_uiToken}` },
-      body: { character, label, server_short: 'pq.proj', source_width: srcW, source_height: srcH, files, agent_version: app.getVersion() },
+      // machine_name: which computer this backup came from. With two machines
+      // backing up the same character, a timestamp alone can't tell you whose
+      // snapshot you are about to restore (Hitya 2026-08-09).
+      body: {
+        character, label, server_short: 'pq.proj',
+        source_width: srcW, source_height: srcH, files,
+        agent_version: app.getVersion(),
+        machine_name: (() => { try { return require('os').hostname(); } catch { return null; } })(),
+      },
     });
     return { ok: true, id: result?.id, file_count: fileCount, pending_link: !!result?.pending_link };
   } catch (err) {

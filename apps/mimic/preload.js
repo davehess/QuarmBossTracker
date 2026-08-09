@@ -310,6 +310,10 @@ function _autoFitOverlay(wrapEl) {
 }
 
 contextBridge.exposeInMainWorld('mimic', {
+  // This computer's hostname — a plain string, resolved once here because the
+  // renderer has no Node access. UI Studio uses it to mark which cloud backups
+  // came from the machine you are sitting at.
+  machineName:         (() => { try { return require('os').hostname(); } catch { return ''; } })(),
   openSettings:        ()         => ipcRenderer.invoke('open-settings'),
   // Resource use in its own window — the dashboard's "what does Mimic cost?"
   // link calls this, same as the tray entry.
