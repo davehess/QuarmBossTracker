@@ -4,6 +4,9 @@
   "buildCommand": "next build",
   "installCommand": "npm install",
   "outputDirectory": ".next",
+  "git": {
+    "deploymentEnabled": { "beta": false }
+  },
   "redirects": [
     {
       "source": "/(.*)",

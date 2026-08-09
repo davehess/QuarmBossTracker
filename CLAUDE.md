@@ -62,11 +62,20 @@ entry so the index stays trustworthy — a stale index causes exactly the wrong
 ### Branches
 - **`main`** — production. Bot (Railway), web (Vercel), and *stable* Mimic
   releases ship from here. Always green.
-- **`beta`** — Mimic beta channel. `release-mimic.yml` builds a prerelease
-  whenever `apps/mimic/package.json`'s version changes on this branch.
-  Because the agent is *bundled inside* Mimic, agent fixes that beta users
-  need must land on `beta` (and bump Mimic) — they do NOT reach beta users
-  via `main`.
+- **`beta`** — Mimic beta channel, and ONLY that. `release-mimic.yml` builds a
+  prerelease whenever `apps/mimic/package.json`'s version changes on this
+  branch. Because the agent is *bundled inside* Mimic, agent fixes that beta
+  users need must land on `beta` (and bump Mimic) — they do NOT reach beta
+  users via `main`.
+  **There is no bot beta and no web beta, by design (2026-08-09).** The bot has
+  ONE Railway environment pinned to `main`; wolfpack.quest ships from `main` on
+  Vercel. Vercel *was* building `beta` as a preview on a stable branch alias —
+  a second copy of the identical site — because a standing `beta`→`main` PR made
+  every beta push a PR preview. Killed with
+  `"git": { "deploymentEnabled": { "beta": false } }` in `web/vercel.json`.
+  `claude/*` previews stay ON — reviewing a web change before merge is the one
+  case a preview earns its keep. Note the file is strict-schema: Vercel rejects
+  unknown properties, so **never add a `comment` key** — document here instead.
 - **Working branches** (`claude/*`) — branch off `main`, merge back with a
   versioned `-m` message.
 

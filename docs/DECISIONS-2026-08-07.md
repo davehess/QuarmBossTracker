@@ -197,6 +197,26 @@ that before any future force-push; it is what makes this reversible.
 IS the line's target — cut stable at whatever the line was parked at rather than
 re-deriving a number from how big the feature set feels.
 
+**No bot beta, no web beta — `beta` is the Mimic prerelease channel and nothing
+else** (Hitya, "we don't run either component separately"). Audited both:
+- **Bot: never existed.** Railway has ONE project, ONE environment
+  (`production`), ONE service, `source.branch = main`. Nothing to remove.
+- **Web: existed and was building.** Vercel deployed every `beta` push as a
+  preview on the stable alias `quarmparse-git-beta-…vercel.app` — a second copy
+  of a site now byte-identical to production. The cause was a standing
+  `beta`→`main` PR (#78), which makes Vercel treat each beta push as a PR
+  preview. Disabled with `"git": { "deploymentEnabled": { "beta": false } }` in
+  `web/vercel.json`. `claude/*` previews left ON deliberately.
+
+⚠ `web/vercel.json` is **strict-schema** — Vercel rejects unknown properties, so
+a `comment` key would break production web deploys. Explain in docs, never in
+that file.
+
+⚠ **PR #78 is now a live hazard.** It is a `beta`→`main` PR whose diff, post
+resync, is exactly one line: the Mimic version park. Merging it would set
+`main`'s Mimic to 2.3.5 and cut an unintended stable release. A standing
+beta→main PR has no informational value now that beta *is* main.
+
 ## pq-companion
 
 **Study and reimplement; never copy.** The repo has no license — all rights
