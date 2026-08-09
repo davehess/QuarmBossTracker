@@ -31,13 +31,14 @@ type Stats = {
   fights: number; damage: number; characters: number; chat: number;
   who: number; snapshots: number; buffs: number; loot: number;
   uploads: number; days: number; mobs: number; members: number;
-  raid_typical: number; raid_parsers: number; raid_biggest: number; dau_avg: number;
+  raid_people: number; raid_chars: number; raid_parsers: number;
+  raid_biggest: number; dau_avg: number;
 };
 
 const ZERO: Stats = {
   fights: 0, damage: 0, characters: 0, chat: 0, who: 0, snapshots: 0, buffs: 0,
   loot: 0, uploads: 0, days: 0, mobs: 0, members: 0,
-  raid_typical: 0, raid_parsers: 0, raid_biggest: 0, dau_avg: 0,
+  raid_people: 0, raid_chars: 0, raid_parsers: 0, raid_biggest: 0, dau_avg: 0,
 };
 
 // One RPC, ~65ms. Doing this from PostgREST instead took 32 SECONDS — see the
@@ -197,8 +198,8 @@ export default async function AboutPage() {
             <p>
               And not everyone has to run it. Each log sees the whole fight, so a handful of
               uploads merge into one record — a typical raid night here is{' '}
-              <span className="text-text"><CountUp to={s.raid_typical} /> characters</span> covered
-              by about <span className="text-text"><CountUp to={s.raid_parsers} /></span> people
+              <span className="text-text"><CountUp to={s.raid_people} /> people</span> covered by
+              about <span className="text-text"><CountUp to={s.raid_parsers} /></span> of them
               parsing.
             </p>
             <p className="text-dim">
@@ -285,9 +286,68 @@ export default async function AboutPage() {
         </div>
       </Chapter>
 
-      {/* ── 05 ── */}
+      {/* ── 05 — the multi-character thing. Its own chapter because it is the
+             one capability the alternatives structurally cannot match, and it
+             is the reason the raid-size tiles above separate people from
+             characters. ── */}
+      <section className="scroll-mt-16">
+        <Reveal>
+          <div className="flex items-baseline gap-3 flex-wrap">
+            <span className="text-4xl sm:text-6xl font-bold text-green opacity-30 leading-none">05</span>
+            <div>
+              <div className="text-[11px] uppercase tracking-widest text-dim">the part nothing else does</div>
+              <h2 className="text-xl sm:text-3xl text-text font-bold leading-tight">
+                It follows <span className="text-green">you</span>, not one character
+              </h2>
+            </div>
+          </div>
+        </Reveal>
+
+        <Reveal delay={80}>
+          <div className="mt-5 rounded-lg border border-green/30 bg-panel/60 p-4 sm:p-6">
+            <p className="text-sm sm:text-base text-text leading-relaxed">
+              Every other log parser points at <span className="text-text font-bold">one selected
+              log file</span>. Change character and it is watching the wrong one until you go and
+              re-point it.
+            </p>
+            <p className="text-sm sm:text-base text-dim leading-relaxed mt-3">
+              Mimic tails <span className="text-text">every</span> character&apos;s log in your EQ
+              folder at once and follows whoever you are actually playing. The overlays re-aim
+              themselves. Nothing to switch, mid-raid, with eleven people waiting.
+            </p>
+
+            <div className="text-[10px] uppercase tracking-widest text-green mt-6 mb-3">
+              Which matters if you fill whatever the raid is short of
+            </div>
+            <div className="grid sm:grid-cols-3 gap-3">
+              {[
+                { icon: '✚', t: 'Short a healer', d: 'Swap to the cleric and the CH chain overlay is already up, already knows your slot, already counting your beat.' },
+                { icon: '🐺', t: 'Short a shaman', d: 'The buff queue re-aims — who still needs Feral Avatar, who has a curse counter waiting to be cured.' },
+                { icon: '🎵', t: 'On the bard', d: 'See which casters are missing Clarity, and go and stand near them.' },
+              ].map((x, i) => (
+                <Reveal key={x.t} delay={140 + i * 90} from="scale">
+                  <div className="h-full rounded-lg border border-border bg-bg/40 p-4">
+                    <div className="text-xl mb-1.5" aria-hidden>{x.icon}</div>
+                    <div className="text-sm text-text font-bold">{x.t}</div>
+                    <div className="text-xs text-dim mt-1.5 leading-relaxed">{x.d}</div>
+                  </div>
+                </Reveal>
+              ))}
+            </div>
+
+            <p className="text-xs text-dim mt-5 leading-relaxed">
+              It is also why the numbers above separate people from characters: a typical night is{' '}
+              <span className="text-text"><CountUp to={s.raid_people} /> raiders</span> playing{' '}
+              <span className="text-text"><CountUp to={s.raid_chars} /> characters</span>, and the
+              platform has to know those are the same people.
+            </p>
+          </div>
+        </Reveal>
+      </section>
+
+      {/* ── 06 ── */}
       <Chapter
-        n="05" date="18 July 2026" accent="text-orange"
+        n="06" date="18 July 2026" accent="text-orange"
         title="And then: not breaking it"
         plat={
           <>
@@ -329,10 +389,10 @@ export default async function AboutPage() {
             the platform. */}
         <Reveal delay={100}>
           <div className="grid grid-cols-3 gap-3 sm:gap-4 mt-6">
-            <Stat value={s.raid_typical} label="A typical raid" accent="text-green"
-                  sub={`characters on a raid night · biggest ${s.raid_biggest}`} />
-            <Stat value={s.raid_parsers} label="Running the parser" accent="text-green"
-                  sub="per raid night — their logs merge, so not everyone needs it" />
+            <Stat value={s.raid_people} label="People in a raid" accent="text-green"
+                  sub={`actual raiders, not characters · biggest ${s.raid_biggest}`} />
+            <Stat value={s.raid_chars} label="Characters they play" accent="text-green"
+                  sub="the same night — mains, swaps and boxes" />
             <Stat value={s.dau_avg} label="Daily active" accent="text-green"
                   sub="average across active days" />
           </div>

@@ -38,15 +38,30 @@ returns json language sql stable as $$
                       'buff_casts','opendkp_loot')
       and relnamespace = 'public'::regnamespace
   ),
-  -- Distinct characters in a raid night, and distinct people uploading parses
-  -- for it. 90 days, so a quiet fortnight cannot swing the figure.
+  -- 90 days, so a quiet fortnight cannot swing the figure.
+  -- "How big is a raid" has THREE answers and only one is honest.
+  --   chars_all  (~68) every character in the fight — encounter_players also
+  --                    contains NON-GUILD players in contested content; on one
+  --                    sampled night only 38 of 53 resolved to our roster
+  --   chars_ours (~42) characters that are ours
+  --   people_ours(~38) those collapsed to the FAMILY ROOT, so somebody who
+  --                    swaps warrior→cleric mid-raid counts once
+  -- Family root precedence: main_name_override → main_name → own name.
+  -- ⚠ discord_id must NOT lead — it is set on 355 of 473 characters, so a main
+  -- with a Discord link and its unlinked alt yield two keys and no dedup at
+  -- all. Measured wrong that way once (1.06 chars/person) before this fix.
   per_night as (
     select e.raid_night_id,
-           count(distinct ep.character_name)       players,
-           count(distinct c.contributor_character) parsers
+           count(distinct ep.character_name) filter (where c.name is not null) chars_ours,
+           count(distinct lower(coalesce(nullif(c.main_name_override,''),
+                                         nullif(c.main_name,''), c.name)))
+             filter (where c.name is not null) people_ours,
+           count(distinct co.contributor_character) parsers
     from public.encounters e
-    left join public.encounter_players ep on ep.encounter_id = e.id
-    left join public.contributions     c  on c.encounter_id  = e.id
+    join public.encounter_players ep on ep.encounter_id = e.id
+    left join public.characters c
+      on lower(c.name) = lower(ep.character_name) and coalesce(c.deleted,false) = false
+    left join public.contributions co on co.encounter_id = e.id
     where e.raid_night_id is not null
       and e.started_at > now() - interval '90 days'
     group by 1
@@ -70,7 +85,7 @@ returns json language sql stable as $$
     'damage',     (select coalesce(sum(total_damage),0) from public.encounters),
     'days',       (select count(distinct date_trunc('day', started_at)) from public.encounters),
     'mobs',       (select count(distinct npc_id) from public.encounters),
-    'characters', (select count(*) from public.characters),
+    'characters', (select count(*) from public.characters where coalesce(deleted,false)=false),
     'members',    (select count(*) from public.wolfpack_members),
     'uploads',    (select count(*) from public.contributions),
     'chat',       (select n from est where relname='chat_messages'),
@@ -78,17 +93,19 @@ returns json language sql stable as $$
     'snapshots',  (select n from est where relname='encounter_threat_snapshots'),
     'buffs',      (select n from est where relname='buff_casts'),
     'loot',       (select n from est where relname='opendkp_loot'),
-    -- median, not mean: one 110-character night must not drag the "typical"
-    'raid_typical', (select percentile_cont(0.5) within group (order by players)::int
-                       from per_night where players > 0),
+    -- median, not mean: one huge night must not drag the "typical"
+    'raid_people',  (select percentile_cont(0.5) within group (order by people_ours)::int
+                       from per_night where people_ours > 0),
+    'raid_chars',   (select percentile_cont(0.5) within group (order by chars_ours)::int
+                       from per_night where chars_ours > 0),
+    'raid_biggest', (select max(people_ours) from per_night),
     'raid_parsers', (select percentile_cont(0.5) within group (order by parsers)::int
                        from per_night where parsers > 0),
-    'raid_biggest', (select max(players) from per_night),
     'dau_avg',      (select round(avg(n))::int from per_day)
   );
 $$;
 
 comment on function public.about_stats() is
-  'Aggregate counts for the public /about page in one cheap round trip (~65ms). Big-table counts are pg_class.reltuples estimates (display only); encounters/characters/members are exact. Active-parser windows come from contributions, not threat snapshots. See web/app/about/page.tsx.';
+  'Aggregate counts for the public /about page in one cheap round trip. raid_people is the honest raid size: OUR characters only (encounter_players also contains non-guild players in contested content) collapsed to the family root so an alt swap counts once. All activity figures are time-of-day stable by construction. See web/app/about/page.tsx.';
 
 grant execute on function public.about_stats() to anon, authenticated;
