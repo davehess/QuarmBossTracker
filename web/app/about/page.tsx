@@ -345,9 +345,87 @@ export default async function AboutPage() {
         </Reveal>
       </section>
 
-      {/* ── 06 ── */}
+      {/* ── 06 — the loot + attendance loop. The bit that costs an officer their
+             raid night if it is slow, and costs a raider DKP if they miss it. ── */}
       <Chapter
-        n="06" date="18 July 2026" accent="text-orange"
+        n="06" date="through the summer" accent="text-gold"
+        title="Ticks, loot, and not missing your shot at it"
+        plat={
+          <>
+            <p>
+              Attendance <span className="text-text">records itself</span> at 8:30, 9:30, 10:30
+              and 11:30 — who was actually in the raid at that moment, written down before the
+              live roster is overwritten. Filing the tick stays a deliberate officer action; the
+              record is just there so nobody gets missed, including on the nights we take the
+              last tick early.
+            </p>
+            <p>
+              Loot goes up by pasting the drop straight out of the game. It comes back tagged{' '}
+              <span className="text-gold">🆕 NEW</span> if the guild has never seen it and{' '}
+              <span className="text-gold">💎 ULTRA RARE</span> if it has dropped once and sits in
+              the bottom quarter of that boss&apos;s table — checked against our own history and
+              the drop tables, not somebody&apos;s memory. Then one button posts it.
+            </p>
+          </>
+        }
+        infra={
+          <>
+            <p>
+              The live raid roster is overwritten every few seconds and pruned within the hour, so
+              who was there at 8:30 genuinely cannot be recovered at 9:30. It has to be captured
+              at the moment or it is gone — that is why this is a scheduled job and not a query.
+            </p>
+            <p>
+              Bids are sealed: encrypted at rest and readable only by the bot, so nobody can see
+              what anyone else put in — including whoever is running the auction.
+            </p>
+          </>
+        }
+      >
+        <div className="grid sm:grid-cols-2 gap-4">
+          <div className="rounded-lg border border-gold/30 bg-panel/60 p-4 sm:p-5">
+            <div className="text-[10px] uppercase tracking-widest text-gold mb-3">
+              🔊 You will hear it
+            </div>
+            <div className="rounded-md bg-black/60 p-3 font-mono text-white text-xs space-y-2">
+              <div className="flex items-center gap-2">
+                <span className="inline-block w-1.5 h-1.5 rounded-full bg-gold animate-pulse" />
+                <span style={{ textShadow: '0 1px 2px #000' }}>
+                  &ldquo;Loot posted — <span className="text-gold">three items</span>, bidding for
+                  five minutes.&rdquo;
+                </span>
+              </div>
+              <div className="flex items-center gap-2 text-[11px] text-[#9aa4ad]">
+                <span className="rounded border border-white/15 px-1.5 py-px tabular-nums">4:52</span>
+                <span>Bracer of Black Blood</span>
+              </div>
+            </div>
+            <p className="text-[11px] text-dim mt-3 leading-relaxed">
+              Mimic says it out loud and puts a countdown on screen. You can be mid-fight, tabbed
+              out, or not reading chat — you still get the window.
+            </p>
+          </div>
+
+          <div className="rounded-lg border border-border bg-bg/40 p-4 sm:p-5">
+            <div className="text-[10px] uppercase tracking-widest text-dim mb-3">
+              💰 And bid without leaving the game
+            </div>
+            <p className="text-sm text-text leading-relaxed">
+              The bid box is on the dashboard, next to the parse. Your characters come from
+              OpenDKP, your DKP balance is right there, and it remembers what the item last went
+              for and what you bid last time.
+            </p>
+            <p className="text-[11px] text-dim mt-3 leading-relaxed">
+              Which matters when the auction opens while you are tanking. No alt-tab hunt for a
+              website, no working out whether you can afford it.
+            </p>
+          </div>
+        </div>
+      </Chapter>
+
+      {/* ── 07 ── */}
+      <Chapter
+        n="07" date="18 July 2026" accent="text-orange"
         title="And then: not breaking it"
         plat={
           <>
