@@ -4,19 +4,82 @@
 verification. Each entry names the exact component versions it needs, then splits
 test cases into **✅ Solo** (you can do these alone) and **👥 Multi-person**
 (need 2+ raiders on separate machines). Mark a row ✔ when verified in a real
-raid; move it to STATUS.md's "Done" once graduated to stable.*
+raid; move it to STATUS.md's "Done" once graduated to stable.* — **amended
+2026-08-09: entries no longer get moved out on graduation. See "Nothing here gets
+deleted on graduation" below.**
 
 > How to read component versions: **bot** ships from `main` (live on Railway
 > immediately). **agent** ships bundled in the **beta Mimic** — testers must be
 > on the beta channel and have updated Mimic so the agent version below is what's
-> running (check the agent dashboard footer / `/status`).
+> running (check the agent dashboard footer / `/status`). **⚠ 2026-08-09: this no
+> longer applies to anything currently in the file** — every entry below has
+> graduated to stable. Read the block immediately after this one first.
 
-> **Graduated 2026-07-20: Mimic 2.0.0 "Harmonic Howl"** (agent **3.4.0**) — the
-> entire 1.9.6 beta line is now the **stable** build for the whole fleet.
-> Every entry below (#91–#121) is live on stable; the ✅/👥 cases remain the
-> verification checklist — tonight's raid is the 2.0 shakedown, so the
-> watch-list on wolfpack.quest/roadmap is the priority pass. Beta re-parked at
-> **2.0.1**. (Prior graduation 2026-07-18: 1.9.5 / agent 3.3.80.)
+## 📍 Current state — 2026-08-09 (read this before any version number below)
+
+**Graduated 2026-08-09: Mimic 2.3.4 "Tag! You're spawn_id it!"** (agent
+**3.5.54**) — the whole 2.3 beta line is now the **stable** build for the entire
+Windows fleet.
+
+| Component | Live now | Beta |
+|---|---|---|
+| Bot | **3.1.34** on `main` | *no bot beta — one Railway environment, pinned to `main`* |
+| Web | **1.1.35** on `main` | same commit visible at `b.wolfpack.quest/<path>` |
+| Agent | **3.5.54** stable, fleet-wide | **3.5.54** (identical to stable); **3.5.55** — adds `ramp` to the threat-snapshot `per_player` payload — is the first build of the new line and lands today |
+| Mimic | **2.3.4** stable | parked at **2.3.5** |
+
+> **⚠ How to read the version numbers below.** Every entry keeps the versions it
+> shipped in — that is its history and it stays. But **nothing below still needs
+> a beta install.** Every agent 3.3.x / 3.4.x / 3.5.x entry in this file has
+> since graduated. "**Needs:** agent 3.4.4 (beta Mimic)" now means "*first
+> shipped* in 3.4.4, and every install has had it for weeks." The ✅/👥 cases
+> stay useful, but they are now **stable-fleet regression checks anyone can
+> run**, not beta-tester homework. Rows that were genuinely never proven carry a
+> dated **⏳ still unverified** line — those are the real backlog.
+
+> **⚠ Beta adoption is ~zero, and that is why so much below is unverified.**
+> Measured 2026-08-07: nine beta builds shipped that day and **only
+> stable-channel agents (3.5.36, 3.5.42) ever reported** — no beta tester ran
+> any of them. That is a large part of why this ledger accumulated rows nobody
+> ever scored, and it is why the 2026-08-09 graduation went out rather than
+> piling more onto beta. **Plan verification against the STABLE fleet**
+> (`DECISIONS-2026-08-07.md` → Open).
+
+> **Nothing here gets deleted on graduation.** The original rule said to move a
+> row to `STATUS.md` once it shipped stable; applied literally today that would
+> empty the file, because everything has shipped. Entries stay, annotated with
+> dated status lines, so the "what did we actually prove?" question keeps an
+> answer.
+
+**Graduation history** (each one moved everything above it to the whole fleet):
+2026-08-09 **2.3.4** "Tag! You're spawn_id it!" / agent **3.5.54** · 2026-08-07
+**2.3.3** / **3.5.42** · 2026-08-05 **2.3.1** / **3.5.36** · 2026-08-04 **2.3.0**
+"Quick Setup and Save Memory Update" / **3.5.29** · 2026-08-02 **2.2.0** /
+**3.5.0** · 2026-07-20 **2.0.0** "Harmonic Howl" / **3.4.0** (the entire 1.9.6
+beta line) · 2026-07-18 **1.9.5** / **3.3.80**.
+
+### 🔎 What is actually still unproven — the short list
+
+Everything else in this file is shipped and either exercised by daily use or
+simply unscored. These are the rows where **nobody has ever run the check and
+the code path has never executed in production** — worth reading as the real
+backlog rather than scrolling the whole ledger.
+
+| Row | Why it is still open |
+|---|---|
+| **#74 / #118 kill switch + version floor** | Hitya 2026-08-09: *"I have not messed with kill switches."* `flag_agent_kill` and `min_agent_ver_num` have never appeared in the tuning map. The conservative-v1 sign-off never happened. **The lever you'd reach for in an incident is the one nobody has pulled.** |
+| **#115 reporter swap / include** | No `reporter_pin_*` or `reporter_extra_*` key has ever been written |
+| **#72 P1b `dedup_buffs`** | Flag never set, defaults OFF → buff-landing election has never run |
+| **#72 P1c `dedup_roster`** | Flag never set, defaults OFF → roster election has never run |
+| **#73 admission-control 429** | No `budget_*` key ever set → nothing has ever been rate-limited |
+| **#107 loot-post TTS** | ⚠ **Failing in the field**, not merely unverified — the 2026-08-05 23:13 ET miss is still undiagnosed |
+| **#108 sealed bids stay sealed** | Needs a real open auction + a second bidder; never had one |
+| **#117 buff-range 📍 chip** | Needs a partner to run 200+ units away mid-buff |
+| **#120 trigger TTS on silent machines** | Windows-only Chromium condition — **cannot** be closed from the build container; needs a field journal row |
+| **Rows 5, 6, 7, 13** of the 08-05 pass | `raid_nights` linkage, buff-cast `spell_id` share, slow badges, `incoming_mob` — all just never scored |
+
+*(Tuning-map claims verified directly against `overlay_tuning` on 2026-08-09: the
+row holds exactly two keys, `hide_main_names` and `flag_ext_pos_off`.)*
 
 ---
 
@@ -26,8 +89,21 @@ raid; move it to STATUS.md's "Done" once graduated to stable.*
 here shipped in the last 36 hours and **none of it has been seen in a real
 raid**. Vex Thal is the planned target, which matters for two rows below.*
 
+> ### ✅ This pass RAN — 2026-08-05 Vex Thal. The findings are in `STATUS.md`
+> → **"🌙 Raid-night review findings — 2026-08-05 Vex Thal" (R1–R6)** and
+> **"🔴 Raid-night queue — opened 2026-08-05/06"** (the perishable capture list).
+> The section below is kept as the record of what was asked for and what each
+> row means; the dated annotations on each row say where it landed. Rows with no
+> annotation had no result recorded and are still open.
+
 **Versions needed:** bot **3.1.7** (main, already live) · agent **3.5.15** +
 Mimic **2.3.0** (**beta** — testers must update) · web **1.1.2**.
+
+> *(2026-08-09: all four superseded. Mimic **2.3.0** graduated to STABLE the
+> same evening it was written — 2026-08-04 23:07 UTC, carrying agent **3.5.29** —
+> and three more graduations followed. The fleet is on Mimic **2.3.4** / agent
+> **3.5.54**, bot **3.1.34**, web **1.1.35**. Nothing in this section needs a
+> beta install any more; run these against stable.)*
 
 > ### 🚨 Take agent **3.5.15** or nothing. The beta agent did not start at all
 > ### from 3.5.5 through 3.5.14.
@@ -44,17 +120,36 @@ Mimic **2.3.0** (**beta** — testers must update) · web **1.1.2**.
 > uploading", this is why, and the fix is simply to update again. **Confirm the
 > agent dashboard is actually alive before treating any other row below as a
 > failure** — a dead agent fails all of them identically.
+>
+> **✅ CLOSED 2026-08-04 — ignore the "take 3.5.15 or nothing" instruction; the
+> agent is 3.5.54.** The dead-on-arrival window was 3.5.5–3.5.14 on `beta` only.
+> `test/agent-boots.test.js` now spawns the real agent process in a throwaway cwd
+> and fails the build if it doesn't stay up, and it is kept byte-identical on
+> `main` and `beta` (`HOW-ITS-BUILT.md` → "Agent boot smoke test"). The deeper
+> cause — `beta` running a 35-file subset of main's 90-file suite — was fixed by
+> the 2026-08-09 resync.
 
 > **Bootstrap caveat, read first:** the EQ-close auto-update in Mimic 2.3.0 can
 > only auto-install for people **already on 2.3.0+**. Everyone else still has to
 > update by hand this once. Say so when you ask people to update.
+>
+> *(2026-08-09: behind us. 2.3.0 went stable 2026-08-04 and three graduations
+> have followed, so any install that has updated once is on the auto-update
+> path.)*
 
 > **Stable installs are still generating false deaths.** The feign fix is agent
 > 3.5.11 on `beta`; `main`'s agent copy still matches `/die[ds]\./`. Any death
 > number from a stable reporter on Wednesday is still inflated. This is correct
 > per the routing rule — just don't read it as a regression.
+>
+> **✅ RESOLVED 2026-08-04.** The feign fix (agent **3.5.11**, `died.` only) plus
+> the second death-regex site (`_deadMobNameFromLine`, agent **3.5.14**) rode
+> agent **3.5.29** into stable Mimic **2.3.0** that night; the fleet is on
+> **3.5.54**. **Stable reporters no longer inflate death counts.** Historic rows
+> are a separate question (#200 in `STATUS.md`) and were expected to age out on
+> their own around 2026-08-10, when the midnight job nulls `raw_parse` at 7 days.
 
-> ### ⚠️ Before the raid: the new callouts do not fire yet
+> ### ⚠️ ~~Before the raid: the new callouts do not fire yet~~ — SUPERSEDED 2026-08-09, read the next box
 >
 > The Feeblemind, Shadow Poison and Wave of Death triggers are `^`-anchored, and
 > patterns match against the raw line *including* the `[timestamp] ` prefix — so
@@ -64,6 +159,42 @@ Mimic **2.3.0** (**beta** — testers must update) · web **1.1.2**.
 > because turning all 37 on at once is a genuine noise decision.
 > **`docs/RUNBOOK-dead-triggers.md` has the staged SQL.** Row 11 below cannot
 > pass until Stage 1 runs.
+
+> ### ✅ CHANGED 2026-08-09 — the compiler fixes the anchor, so those triggers fire
+>
+> The box above is **history**. `compileTriggerPattern` (which replaced
+> `_translateDotNetRegex` on 2026-08-07) now handles both halves of the raw-line
+> problem, and both are live on agent **3.5.54** — i.e. the whole fleet since the
+> 2026-08-09 graduation:
+> - **`_rewriteAnchorsForRawLine`** rewrites a top-level `^` to
+>   `^(?:\[[^\]]{1,40}\]\s+)?` — an **optional** timestamp prefix, so the pattern
+>   matches the raw line *and* a bare message (imported GINA/EQLogParser patterns
+>   and legacy `\]\s+` ones both fire);
+> - an **unanchored** pattern that OPENS with `{s}`/`{n}` gets the same optional
+>   prefix prepended. That is the separate `{s}`-eats-the-timestamp P1 which rode
+>   agent 3.5.44–3.5.53 unseen (the "Razor Fang" casualty), fixed in **3.5.54**
+>   and pinned by `test/trigger-class.test.js`. `{c}` is exempt.
+>
+> Full write-up: `docs/HOW-ITS-BUILT.md` → **"Trigger pattern anchoring — the
+> `^` trap (#190)"**, revised 2026-08-09, and `DECISIONS-2026-08-07.md`
+> → "Triggers — the `{s}` timestamp swallow".
+>
+> **What that means for this file:** the 37 are **no longer structurally dead**.
+> The DB rows are untouched (verified against `guild_triggers` 2026-08-09: still
+> 37 of 109 enabled triggers with a bare leading `^`, and **0** rewritten to
+> `^\[`), so **`docs/RUNBOOK-dead-triggers.md`'s staged SQL is now hygiene, not a
+> resurrection** — it makes the stored pattern say what the compiler already
+> does, which still matters if an older agent ever reads them. Row 11 below is
+> **unblocked**.
+>
+> ⚠ **The raid-noise decision the runbook was holding back has already happened,
+> at the compiler.** 37 previously-silent callouts went live in one release. If a
+> raid is suddenly noisy, that is the first place to look — and the lever is
+> disabling the individual triggers in `/admin/triggers`, not the SQL.
+>
+> ⚠ The old advice *"don't fix one by deleting the `^` — you'll capture a leading
+> space"* is **no longer true** (that was the allow-list `{s}` class; `{s}` is
+> `.+?` now and the unanchored case is guarded). Do not re-derive it.
 
 ### 🔴 Highest value — the two that change every number
 
@@ -91,8 +222,32 @@ Mimic **2.3.0** (**beta** — testers must update) · web **1.1.2**.
 - 👥 Check `agent_clock_offsets` has both a `pulse` row (new — needs agent
   3.5.10+) and a `consensus` row per install, and that they **agree**. They are
   independent estimators; disagreement means one is broken.
+- **⏳ STILL LIVE GUIDANCE as of 2026-08-09 — but the correction now also happens
+  at INGEST.** `bot 3.1.20` (2026-08-06) rewrites an event's `ts` to server time
+  using the pulse offset and keeps the original as `tsRaw`
+  (`utils/clockOffset.js` + `_resolveClockOffsetMs`), so death dedup, phantom
+  suppression, the Discord card, the parse page and the timelines all became
+  correct with no consumer changes — that is what closed the death **overcount**
+  (`STATUS.md` R1; Fargan measured at 59,224 ms, nearly double the 30s dedup
+  window). It does **not** close this row: offsets are a drifting time series,
+  the correction is only as good as the current pulse estimate, and the
+  `consensus` estimator has **zero write sites** and is frozen at 2026-08-04
+  (it reads Fargan at 42s where pulse reads 63.5s) — so the "both rows agree"
+  check above cannot pass on its own terms right now. The three machines still
+  need Windows time sync **ON**, not a one-off sync.
+- **This row is load-bearing elsewhere, which is why it stays open.** Bot
+  **3.1.34** cites it by name: the old `claimThreatSnapshots` used a 20-second
+  margin, *smaller than the 22–56s skew measured on real machines*, so even the
+  submitting uploader's own snapshot claim could miss. Skew is not just a death-
+  count problem — it silently breaks any time-window join in the platform.
+- ⚠ Do **not** "fix" this by widening `DEATH_DEDUP_MS`: real deaths 30–60s apart
+  in a long fight would silently merge, trading a visible overcount for an
+  invisible undercount.
 
-**2. Deaths are real deaths.**
+**2. Deaths are real deaths.** — **✅ SHIPPED STABLE 2026-08-04** (agent 3.5.11 +
+3.5.14, delivered fleet-wide as 3.5.29 in Mimic 2.3.0; now 3.5.54). The cases
+below stay as stable-fleet regression checks. Post-raid audit query is still
+`RUNBOOK-death-backfill.md` §3.
 - ✅ **Solo (SK/monk/necro):** feign during a fight. **Pass = you do NOT appear in
   the parse card's 💀 Deaths section.** This is the single most direct test of
   the whole night's work.
@@ -103,6 +258,10 @@ Mimic **2.3.0** (**beta** — testers must update) · web **1.1.2**.
   the parse card, not one per observer.** This is the Uilnayar case; it may still
   fail until #202 lands, and if it does, capture the timestamps — that IS the
   measurement #201 needs.
+  - **Update 2026-08-09:** #202 **did** land, as ingest-time correction in bot
+    **3.1.20**, so this case should now pass for a different reason than it was
+    written for — the skew-split duplicates are collapsed before dedup ever runs.
+    ⏳ **No result recorded since.** Worth one deliberate observation.
 
 ### 🟡 Should just work — confirm and move on
 
@@ -111,24 +270,71 @@ Mimic **2.3.0** (**beta** — testers must update) · web **1.1.2**.
 463k prior rows), `target_name` present, rows ~6s apart not ~18s. Try the
 `threat_snapshot_ms` knob in `/admin/overlays` mid-raid — it should take effect
 inside 60s with no deploy.
+- **⚠ Re-read before running — the storage rules moved twice (2026-08-07/08).**
+  `boss_name` / `target_name` / the `threat_snapshot_ms` knob are unchanged, but
+  bot **3.1.32** now keeps a snapshot only when it **names a boss** OR it is raid
+  time with 8+ players in the fight, and drops byte-identical consecutive
+  scoreboards — so "rows ~6s apart" is no longer the expectation for an
+  off-hours duo pull. The roll-up became per-(raid night, character) for trash
+  and per-fight for bosses, and both carry `raid_night_id`
+  (`DECISIONS-2026-08-07.md` → Storage / data).
+- ⚠ **`encounter_id` on threat snapshots — the rule just changed, read both
+  halves.** *Historically* it was assigned only at fight end, to the submitting
+  uploader's own rows, so it was NULL on 99.3% of snapshots and any join on it
+  read a 0.7% sample. **Bot 3.1.34 (2026-08-09) fixes that going forward**:
+  `claimThreatSnapshotsByBoss` runs at encounter close and claims **every**
+  uploader's rows by normalized catalog name within a ±2 min window (binding was
+  measured at just 2.6% of boss fights before — 96 of 3,651 in 14 days). The old
+  per-uploader claim stays as the fallback for bosses missing from the catalog.
+  **Still true:** the roll-up keys on `(boss_name, started_at)`, never
+  `encounter_id`, and any query over *historical* rows is still reading the
+  sparse sample.
+- **🔴 LIVE TEST TONIGHT (2026-08-09, Ssra).** Two in-flight pieces get their
+  first real raid, and both are worth watching:
+  1. **bot 3.1.34 `encounter_id`-at-close.** Ssra means **multiple pulls of the
+     same boss**, which is exactly the case the design has to survive: each
+     encounter claims at ITS own close with `encounter_id=is.null`, so the
+     earlier pull takes its rows before the next one finishes. **Pass = repeat
+     pulls stay separable** and boss fights show far better than 2.6% binding.
+     ⚠ `npcDisplayName()` (JS) must stay in lockstep with the SQL normalisation
+     (underscores→spaces, strip `#`) or the two sides disagree on what a boss is
+     called.
+  2. **agent 3.5.55 `ramp`** in the threat-snapshot `per_player` payload.
+  Neither has a written ✅/👥 case yet — capture what you see.
 
 **4. Raid Review "Trash Cleared" only counts in-raid kills.** Anything killed
 before 19:30 ET must NOT appear. Previously daytime XP kills landed in the
 night's tally.
+- **✅ FIXED FURTHER — bot 3.1.18, grace tightened to 15 min in 3.1.19
+  (2026-08-06).** The 08-05 review showed the *opposite* of the original report:
+  all 89 trash entries landed **after** the last boss died, because
+  `isRaidNightAt()` is deliberately open-ended at the tail. `trashBoundsFor()`
+  now bounds the tally to [first pull, last CONFIRMED kill] ± a 15-min grace —
+  the DKP-tick line, per Hitya — and returns `{}` mid-raid when nothing is dead
+  yet. `STATUS.md` R4.
 
 **5. `raid_nights` links the night's encounters.** After the raid, the night row
 exists and the night's encounters carry `raid_night_id`. A kill *outside* the
 window stays NULL — that's intended.
+- **⏳ Still unverified as of 2026-08-09** — no result was recorded. Runnable
+  against stable now.
 
 **6. Buff-cast `spell_id` resolution.** Post-raid, unresolved share should stay
 near **0.5%** (was 34.4%). If it jumps, a new spell vocabulary arrived — check
 which names failed rather than loosening the uniqueness rule.
+- **⏳ Still unverified as of 2026-08-09** — no post-raid number was recorded.
 
 **7. Slow badges.** A beastlord's **Sha's Advantage** shows `BST SLOW 50%` on
 Target Info; **Tigir's Insects** likewise. Class label must be right, not just
 the percentage.
+- **⏳ Still unverified as of 2026-08-09** — no result recorded.
 
 ### 🟢 Mimic 2.3.0 — the quality-of-life batch
+
+> **✅ All three shipped stable 2026-08-04 in Mimic 2.3.0** ("Quick Setup and
+> Save Memory Update", agent 3.5.29) and are on **2.3.4** today — they are no
+> longer a beta batch. ⏳ None of the three has a recorded verification result;
+> run them against stable.
 
 **8. Update installs when EQ closes.** Have a pending update, close EQ. **Pass =
 Mimic updates within ~15s.** Crash-and-relaunch EQ during that grace → the update
@@ -149,23 +355,48 @@ behind, and **clears** when current.
 that's why it's worth calling). This is its first live raid. **Blocked until the
 Stage 1 SQL in `RUNBOOK-dead-triggers.md` runs** — as shipped, the pattern cannot
 match. Don't score this row until then.
+- **✅ UNBLOCKED 2026-08-09 — no SQL needed.** Agent **3.5.54**'s
+  `compileTriggerPattern` rewrites the leading `^` into an optional-timestamp
+  prefix, so this trigger (and the other 36) now compile to something that
+  matches a real log line. See the anchoring box at the top of this section.
+  The row is scorable on any 3.5.54 agent — which is the whole fleet.
+  ⏳ **Still unscored**: Vex Thal ran on 08-05, before the fix.
 
 **12. Feeblemind in/out will NOT be exercised** — that's Thought Horror
 Overfiend, and Hitya's note was "at least a week and a half" out. Don't score
 it as a failure this week.
+- **2026-08-09:** still no recorded Overfiend pull, so still unscored — but the
+  reason has changed. It is no longer *structurally* dead (same anchor fix as
+  row 11); it just needs the mob.
 
 **13. Take one `character_live_state` sample mid-fight** and check
 `incoming_mob` is populated. It's an upsert table, so a null-fraction reading is
 *not* evidence either way (I got that wrong on 08-03) — you need a live sample
 during an actual fight.
+- **⏳ Still unverified as of 2026-08-09** — no mid-fight sample was recorded.
 
 ### 📋 Post-raid, five minutes
 
 - Re-run the three diagnostics in `RUNBOOK-death-backfill.md` §3 and record the
   numbers. **This is the clean baseline** #201 has been waiting for — a raid
   night with feigns excluded at parse time.
+  - **✅ Done, 2026-08-05/06.** The numbers drove `STATUS.md` R1–R6 and the fix
+    round that followed (bot 3.1.17–3.1.21). Headline: the overcount was clock
+    skew, not death semantics, and it was corrected at ingest in bot **3.1.20**
+    rather than by retuning the window.
 - Note which callouts people **dismissed**. We can't record it yet (#207), so
   memory is the instrument this once.
+  - **⏳ Still memory-only as of 2026-08-09** — #207 (overlay UX for callouts +
+    recording dismissals) is still spec-only, `docs/DESIGN-callout-overlay.md`.
+    ⚠ This got more valuable, not less: 37 previously-silent callouts went live
+    with the 2026-08-09 anchor fix, and dismissals are the only signal we have
+    for which ones people don't want.
+- **Also open from that night, still uncaptured** (`STATUS.md` → 🔴 Raid-night
+  queue): the DI-fired trigger still has an **invented** pattern and needs one
+  real log line; a real twin-add pull is still needed for `[ext-pos]`; the DKP
+  TICKS "cannot submit → No attendees in that source" failure was never captured
+  in its failing state; and the missing "Loot posted" TTS at 23:13 ET (see #107
+  below).
 
 ---
 
@@ -174,6 +405,11 @@ during an actual fight.
 **Needs:** bot **3.0.226** (main, live on Railway) + agent **3.4.4** (beta Mimic).
 No DB change. The bot fix is the enabler + fails open; the agent fix (sending
 `?character=`) is what activates zone-scoping for you.
+
+**Status (2026-08-09): ✅ live for the whole fleet** — agent 3.4.4 is long
+superseded (fleet on **3.5.54**), so both halves are active everywhere.
+⏳ **No ✅/👥 result was ever recorded**; the cases below are now stable-fleet
+regression checks.
 
 **What it is:** the Mimic **Mob Info / Target Info** overlay used to merge
 cross-client data by mob **name** across all zones, so a mob whose name also
@@ -209,6 +445,14 @@ never appears). Unknown-zone requester → served as before (fail-open).
 
 **Needs:** agent **3.4.3** (beta Mimic) + web **1.0.264** (roadmap/docs, live on
 Vercel). No bot change, no DB change. All agent/overlay side.
+
+**Status (2026-08-09): ✅ live for the whole fleet** (agent 3.4.3 → fleet on
+**3.5.54**; web on 1.1.35). ⏳ **No ✅/👥 result recorded.** Note the timer
+engine has grown a lot since — agent **3.5.52** added multiple warning
+thresholds, captured durations, timer-key capture, a visible recast timer,
+exclude patterns and colour/pin/display-threshold (`guild_triggers`
+EQLogParser-parity work) — so the "arm twice → resets, not stacks" case is worth
+re-running rather than assuming.
 
 **What it is:**
 - **#142 tank-buster countdown.** For the **Emperor Ssraeshza** fight the agent
@@ -259,6 +503,11 @@ No DB change; no bot change. The replay tool + ⏪ overlay tag are the agent
 side (beta Mimic); the parse-page link is web/main (works for everyone, but
 the localhost URL only lands when you are running Mimic 3.4.1+).
 
+**Status (2026-08-09): ✅ live for the whole fleet** (agent 3.4.1 → **3.5.54**).
+⏳ **No result recorded.** Replay is the cheapest way to exercise the 37 callouts
+that just came alive with the 2026-08-09 anchor fix — replay a past Vex Thal
+window and listen for the ones that were silent before.
+
 **What it is:** Mimic's Triggers tab gains a **⏪ Replay** card — pick a watched
 log + a time window and Mimic walks those lines back through your REAL trigger
 engine (pattern, cooldown, suppression) and speaks the actual callouts, at
@@ -298,6 +547,10 @@ with that fight's window.
 `character_gear`, `eqemu_items`, and the existing quest tracker
 (`quest_catalog` / `quest_required_item` / `character_inventory`).
 
+**Status (2026-08-09): ✅ live** — web ships straight to `main`, so this has been
+public since 2026-07-19 (web now 1.1.35). It was never a beta item; it sits here
+only because the batch did. ⏳ No result recorded.
+
 **What it is:** a member-visible **`/quartermaster`** page. Board 1 = utility-kit
 coverage (who owns the raid movers, with gaps). Board 2 = common-quest checklist
 (your characters' progress + an officer "who's missing what" rollup), seeded with
@@ -331,6 +584,12 @@ OpenDKP's own standings directly with the OpenDKP login you already use on the
 Loot bidding card (the token stays on your PC). Log into OpenDKP on the card
 first.
 
+**Status (2026-08-09): ✅ live for the whole fleet** (agent 3.4.2 → **3.5.54**).
+The OpenDKP sign-in path is **field-proven by daily use** — the 2026-08-09
+bidding-panel work (see #121 below) all came out of real sessions against real
+standings. ⏳ The specific "matches Current DKP to the number" comparison still
+has no recorded result.
+
 **What changed:** the DKP figure on the 💰 Loot bidding card used to be an
 estimate our server pieced together from the OpenDKP mirror (ticks + adjustments
 − loot), which could be well off — Hitya's family showed **−123** (and a
@@ -357,6 +616,34 @@ so it's never mistaken for your real balance.
 **Needs:** agent **3.3.100** (beta Mimic) + bot **3.0.221** (live on Railway) +
 web **1.0.252**. No DB change — bot reads the OpenDKP mirrors only. The Loot
 bidding card needs you logged into OpenDKP (the token stays on your PC).
+
+**Status (2026-08-09): ✅ live for the whole fleet** (agent 3.3.100 →
+**3.5.54**), and this is one of the few sections with a *real* verification
+story — because a case below was **failing in the field and this ledger did not
+catch it**:
+
+> ⚠ **"Wishlist prune" (case 2) was BROKEN from the day it shipped.**
+> `bid-history` seeded the already-won set from `wins` — an
+> `opendkp_loot … order=fetched_at.desc&limit=100` query. Any family past 100
+> awards (Hitya's has **187**) had the other 87 come back as "bid on but not yet
+> won" *and* as Recent misses; the three reported items sat at rows 101, 120 and
+> 184. Worse, `fetched_at` is the **mirror sync** time, so *which* 100 survived
+> would reshuffle on every weekly sync. **A capped DISPLAY query must never
+> double as a SET.** Fixed in bot **3.1.33** (2026-08-09) — the won-set is now
+> its own uncapped `item_id`-only sweep and `wins` orders by `raid_id.desc` —
+> pinned by `test/loot-won-set.test.js`. **Re-run case 2 on a family with 100+
+> awards**; on a small family it passes either way, which is exactly why the
+> written case never caught it. (`DECISIONS-2026-08-09` block in
+> `DECISIONS-2026-08-07.md` → Loot bidding.)
+
+**Shipped on this card since, with no test case written yet:** family auto-adopt
+from OpenDKP on sign-in (wholesale when empty, additive otherwise; `⟲ from
+OpenDKP` is the explicit replace path), loot history **hidden by default and
+re-hidden on every load** (the dashboard gets screen-shared during raids — a
+visible wishlist is a bidding tell), per-row ✕ dismissals that are **local-only**
+(`logsync.lootdismiss.json`, always reversible via "restore all"), and an
+expansion filter that opens on the current expansion derived from the newest
+award.
 
 **What changed (guild-lead field feedback — OpenDKP `vaporjesus`, main `Hitya`):**
 1. Item names no longer 404 — they link to the OpenDKP raid page (or aren't
@@ -404,6 +691,11 @@ bidding card needs you logged into OpenDKP (the token stays on your PC).
 **Needs:** agent **3.3.99** (beta Mimic) + bot **3.0.220** (live on Railway). No
 DB change. The fleet-table "Alt (Main)" label lights up once BOTH are deployed;
 the diagnostic card and the /who 🐺-on-alt work with agent 3.3.99 alone.
+
+**Status (2026-08-09): ✅ live for the whole fleet** (agent 3.3.99 →
+**3.5.54**). ⏳ No ✅/👥 result recorded. Note part 3 of this entry **supersedes
+the "Known limit" paragraph in #111 below** — the heartbeat reports the live
+character now, so the 🐺 lights on the alt you are actually online as.
 
 **What changed (post-#117 field report + guild-lead identity ask):**
 1. **Pet buffs STILL missing — it was a version gap, not a code bug.** The
@@ -456,6 +748,14 @@ the diagnostic card and the /who 🐺-on-alt work with agent 3.3.99 alone.
 
 **Needs:** agent **3.3.98** (beta Mimic) + web **1.0.251** (roadmap/docs; live on
 Vercel). No bot change.
+
+**Status (2026-08-09): ✅ live for the whole fleet** (agent 3.3.98 →
+**3.5.54**). ⏳ No result recorded — and part 1 (**"trigger voice callouts were
+silent on some machines"**) is the one row in this file that explicitly **cannot
+be closed from the build container**: it is a Windows-only Chromium
+user-activation condition and needs a field report. The self-serve instrument is
+the 🧭 Trigger checkpoint journal's green "5b playback started" / orange "5b
+playback FAILED" rows. Worth collecting now that 37 more callouts fire.
 
 **What changed (three raid-night field reports):**
 1. **Trigger voice callouts were silent on some machines** — the alert overlay
@@ -513,6 +813,9 @@ Vercel). No bot change.
 **Needs:** agent **3.3.97** (beta Mimic) + bot **3.0.219** + web **1.0.250**
 (both live on Railway/Vercel).
 
+**Status (2026-08-09): ✅ live for the whole fleet** (agent 3.3.97 →
+**3.5.54**). ⏳ No result recorded.
+
 **What changed:** Mimic now records the **"You have looted" line from your own
 log** — the real answer to who ended up with a no-drop drop, since a re-roll or
 a pass means the roll winner often isn't the looter. The site's new 🎲 **Rolls**
@@ -551,6 +854,15 @@ time — the same privacy posture as rolls.
 
 **Needs:** agent **3.3.96** (beta Mimic) + bot **3.0.218** (live on Railway).
 
+**Status (2026-08-09): ✅ live for the whole fleet** (agent 3.3.96 →
+**3.5.54**). ⏳ No result recorded. ⚠ Same overlay, different switch: the
+production tuning map currently carries **`flag_ext_pos_off = 1`**, the officer
+kill switch for the #194 engagement-index / position clustering in the Extended
+Target aggregate (`index.js:10430`). It does **not** touch this same-zone toggle
+— but while it is set, don't read a missing `[ext-pos]` cluster as a failure of
+either feature, and note it must come OFF before the twin-add capture in
+`STATUS.md`'s raid-night queue can produce anything.
+
 **What changed:** the Extended Target overlay can now hide targets reported by
 Mimics that are in a *different zone* from you, so a splinter group off in
 another zone stops cluttering your raid's target list. It's a per-user toggle —
@@ -585,6 +897,25 @@ particular raider's zone is unknown, that data is shown, never hidden.
 
 **Needs:** agent **3.3.95** (beta Mimic) + bot **3.0.217** (live on Railway).
 Officer-only — you must be signed into Mimic as an officer to see any of this.
+
+> ### ⏳ STILL UNVERIFIED as of 2026-08-09 — and now confirmed, not assumed
+>
+> **Hitya, 2026-08-09: *"I have not messed with kill switches."*** The code has
+> been live for the whole fleet for weeks (agent 3.3.95 → **3.5.54**), but
+> **nobody has ever flipped one.**
+>
+> Corroborated against production the same day: the `overlay_tuning.tuning` row
+> holds **exactly two keys — `hide_main_names` and `flag_ext_pos_off`**. None of
+> the `_FLAG_OVERRIDE_KEYS` this panel writes has ever been set:
+> no `flag_agent_kill`, no `min_agent_ver_num`, no `flag_shed_*`,
+> no `flag_disable_budgets`, no `dedup_*`, no `flag_raid_hold`. (The one key that
+> *is* set, `flag_ext_pos_off`, is **web-only** — not in this panel's whitelist —
+> so it is not evidence the panel works.)
+>
+> **Treat the kill switch as an untested lever.** It is the thing you would reach
+> for during a live incident, which is the worst moment to discover it doesn't
+> round-trip. The solo cases below are ~5 minutes on a quiet night and would
+> close both this and #74. **Do the `☠ AGENT KILL` case off-raid, not mid-raid.**
 
 **What changed:** the `/admin/overlays` 🛑 **Kill switches** now live inside Mimic,
 in the 🛡 **Admin** tab, so an officer can flip them mid-raid without opening the
@@ -622,6 +953,18 @@ and the fresh/stale dot.
 
 **Needs:** agent **3.3.94** (beta Mimic) + the `buffqueue.html` overlay in Mimic
 **1.9.6** beta + bot **3.0.216** (live on Railway).
+
+**Status (2026-08-09): ✅ live for the whole fleet** (agent 3.3.94 →
+**3.5.54**), split verdict on the two halves:
+- **Pet buffs (part 1) — closest thing to a field confirmation we have.** The
+  post-ship "still missing" report was chased in #119 and proved to be a
+  **version gap, not a resolver bug**: the reporter's fleet row was agent
+  3.3.91, *below* this 3.3.94 fix, so a pre-fix runtime showed exactly the
+  reported symptom. No resolver change was needed. That is diagnosis, not a
+  scored ✅ — but the failure it explains is accounted for.
+- **Advisory buff-range hints (part 2) — ⏳ still unverified.** The 👥 range-chip
+  case (>~200 units → dim + 📍) has no recorded result, and it needs a raid
+  partner willing to run away mid-buff.
 
 **What changed:** two things. (1) **Pet buffs now show on the Pet tracker.** A
 single-target buff you cast on your *summoned* pet (Girdle of Karana, Aegolism,
@@ -663,6 +1006,17 @@ Position updates at the live-state heartbeat, so treat range as advisory.
 
 **Needs:** bot **3.0.215** (live on Railway) + agent **3.3.93** (beta Mimic) +
 the `who.html` overlay in Mimic **1.9.6** beta.
+
+**Status (2026-08-09): ✅ live for the whole fleet** (agent 3.3.93 →
+**3.5.54**). ⏳ No result recorded, but the officer hide-list case has a real
+value to check against: `overlay_tuning.hide_main_names` is live in production
+and currently holds exactly **`Tildias,Serreth`** (verified 2026-08-09) — so
+those two must show no main on anyone's /who, and adding/removing a third name
+is the round-trip test.
+⚠ **The "Known limit" paragraph at the end of this entry is OBSOLETE** — #119
+(agent 3.3.99) made the heartbeat report the character you are actually playing,
+so the 🐺 lights on the alt, not only on your `--character` primary. Read it as
+history.
 
 **What changed:** the in-game /who overlay's rows now carry four things. (1) A
 🐺 next to any guildmate whose Mimic is running right now (their agent is a fresh
@@ -709,6 +1063,9 @@ unreachable the overlay renders exactly as it did before.
 
 **Needs:** agent **3.3.92** (beta Mimic). No bot change.
 
+**Status (2026-08-09): ✅ live for the whole fleet** (agent 3.3.92 →
+**3.5.54**). ⏳ No result recorded.
+
 **✅ Solo**
 - **Stale casting card**: cast anything, then camp that character (or kill EQ).
   The Spell Casting card's entry must clear within ~a minute — no frozen
@@ -734,6 +1091,22 @@ it, no election) posted all day — the fleet was fine; only the one elected str
 died. **Mitigation currently in place:** `dedup_chat = 0` in the `overlay_tuning`
 editor (everyone uploads chat, so nothing can go dark). This work makes
 re-enabling `dedup_chat` safe.
+
+> ### ✅ The re-enable procedure below HAS BEEN DONE — chat election is live now
+>
+> Verified against production 2026-08-09: **`overlay_tuning.tuning` no longer
+> contains a `dedup_chat` key at all**, and the bot defaults it **ON**
+> (`chat: Number(tune.dedup_chat) !== 0`, `index.js:13543`). So the mitigation
+> described above is **no longer in place**, and one elected reporter per zone is
+> carrying guild chat in production today. The ≥3.3.91 precondition is long met
+> (fleet on **3.5.54**).
+>
+> ⏳ **The two test cases were never formally scored** — this is "the flag is
+> unset, therefore the election is running", not a measured demotion or failover.
+> The failure signal to watch for is a **repeat of the 2026-07-19 blackout**:
+> guild chat silently stopping while the fleet looks healthy. If that happens,
+> the instant fail-open is step 3 below — set `dedup_chat = 0` and everyone
+> uploads again.
 
 **What changed:** (1) the agent heartbeat now sends `last_line_ms` — how long
 since it last processed a live log line from its PRIMARY character's tail (a
@@ -773,6 +1146,22 @@ treated fresh; if nobody anywhere is fresh, everyone stays eligible.
 Officer OpenDKP/Discord identity linked in Mimic (same sign-in as the DKP tick
 widget).
 
+> ### ⏳ STILL UNVERIFIED as of 2026-08-09 — same finding as #118
+>
+> Live for the whole fleet (agent 3.3.91 → **3.5.54**), but **no officer has ever
+> used it.** Production `overlay_tuning.tuning` carries no `reporter_pin_*` and
+> no `reporter_extra_*` key — the only two keys in the row are
+> `hide_main_names` and `flag_ext_pos_off` — so no swap and no include has ever
+> been written. Hitya, 2026-08-09: *"I have not messed with kill switches"*
+> covers this panel; it lives in the same 🛡 Admin tab and writes the same tuning
+> map.
+>
+> The read-only half (seeing the fleet, zones, fresh dots, elected badges) is
+> worth eyeballing on its own — it costs nothing and it is the instrument you
+> would want during a chat blackout. Case 4 (**dead pin is safe**) is the one
+> that matters most and is risk-free: pin an offline character and confirm the
+> computed pick survives.
+
 **What it is:** a 📡 Reporters card on the agent dashboard's **🛡 Admin** tab
 (officer-only, same data gate as the DKP/loot widgets). It shows the live reporter
 fleet (character · zone · group · agent version · camping · last-line age · fresh),
@@ -805,7 +1194,26 @@ can never be pinned.
 ## #94 / #92 — guild-rules ingest + family-aware attendance metrics
 
 **Needs:** bot **3.0.213** (live on Railway) + web **1.0.244** (Vercel). No
-Mimic/agent change. **Post-merge setup required:** (1) run `node deploy-commands.js`
+Mimic/agent change.
+
+> **Status (2026-08-09): ✅ live** (bot 3.1.34 / web 1.1.35). ⏳ No result
+> recorded for the three cases — **and case 3 must be re-baselined before it is
+> scored.** The RA denominator changed materially on 2026-08-08: RA is now
+> measured against the ticks a member **could have attended**
+> (`GREATEST(window_start, first_attended)`, per-family), where before every
+> member was measured against all 1,492 guild ticks ever. That under-reported
+> everyone who joined after the guild started, worst for the newest people —
+> Gonner went **64% → 100%**, which matches ground truth (he has never missed a
+> tick). Migration
+> `20260808030000_attendance_denominator_member_floor.sql`;
+> `DECISIONS-2026-08-07.md` → Attendance. **Do not compare the Family RA% table
+> against any figure written down before 2026-08-08.**
+>
+> Related, so nobody re-litigates it: the leader's sheet says 41 raiders and ours
+> says 64 — **both are right.** Theirs filters to ≥50% RA over 30 days; ours
+> counts every raiding rank. Ours is not the recruiting number.
+
+**Post-merge setup required:** (1) run `node deploy-commands.js`
 (or the usual command-deploy) so `/ingestrules` registers with Discord; (2) set
 `RULES_CHANNEL_ID`, `RAID_RULES_CHANNEL_ID`, `LOOT_RULES_CHANNEL_ID` in the bot's
 Railway env (any left unset are skipped and reported).
@@ -837,6 +1245,10 @@ up), read from the `member_attendance_metrics` SQL view.
 ---
 
 ## #95 / #93 — Raid Kit readiness (rule 12) + comp templates & sign-up gap matcher
+
+**Status (2026-08-09): ✅ live** (web on 1.1.35 — this shipped straight to `main`
+2026-07-18 and was never gated on a beta install). ⏳ No result recorded for any
+of the five cases.
 
 **Needs:** web **1.0.245** (Vercel). No bot/Mimic/agent change. Migration
 `20260719140000_comp_templates` auto-applies on merge (already applied to prod
@@ -886,6 +1298,12 @@ raid ran during the event window.
 ## #110 — OpenDKP audit-trail reconciliation (deletions propagate to the mirror)
 
 **Needs:** bot **3.0.212** (live on Railway). No Mimic/agent change.
+
+**Status (2026-08-09): ✅ live** (bot on 3.1.34). ⏳ No result recorded.
+⚠ Adjacent open item, same sync: `opendkp_raids` / `opendkp_auctions` still
+re-upsert closed raids on every pass (1.5M and 3.7M updates). The decision — only
+re-upsert when the upstream `Version` moves — is made but **not implemented**
+(`DECISIONS-2026-08-07.md` → Storage / data). It does not affect this test.
 
 **What it does:** when an officer **deletes or edits loot in OpenDKP**, that
 change now propagates to our Supabase mirror (`opendkp_loot`) instead of
@@ -949,8 +1367,13 @@ links to the wolfpack.quest admin pages. Non-officers don't see the tab at all.
    review a captured loot list from here exactly as before — same controls, new
    home. Confirm a **non-officer** partner still has no Admin tab.
 
-**Status:** ⏳ awaiting verification (solo is quick; officer case needs an officer
-account signed into Mimic).
+**Status:** ~~⏳ awaiting verification~~ → **2026-08-09: ✅ live for the whole
+fleet** (agent 3.3.90 → **3.5.54**), ⏳ **still unscored.** The 🐺 Me card and the
+🛡 Admin tab are the daily-driver surfaces now — the loot-bidding and DKP-tick
+work all happens inside them — so the *structure* is exercised constantly even
+though nobody ticked these boxes. The one case still worth running deliberately
+is #2 (⚙ Engine stays open across polls), because it is the `wpKeep` rule and a
+regression there is silent.
 
 ---
 
@@ -1003,8 +1426,15 @@ login won't work — set your token first.
    the panel — only their own bids appear under "your open bids" (the values ride
    the encrypted place-bid path; nobody sees a competitor's number).
 
-**Status:** ⏳ awaiting verification (solo is quick; multi-person needs a real
-open auction + 2 testers).
+**Status:** ~~⏳ awaiting verification~~ → **2026-08-09, split verdict:**
+- **✅ Solo path is field-proven by daily use.** This card is in real service —
+  the whole 2026-08-09 bidding round (the capped-query "already won" bug, family
+  auto-adopt from OpenDKP, hidden-by-default loot history, local-only
+  dismissals) came out of live sessions against real standings, not a test plan.
+  The OpenDKP login gate, the family editor and the wishlist all work in anger.
+- **⏳ The 👥 cases are still unverified**, both of them — and case 2 (**sealed
+  bids stay sealed**) is the one with real consequences if it is wrong. It needs
+  a genuine open auction plus a second bidder and has never had one.
 
 ---
 
@@ -1066,7 +1496,17 @@ timers.
    local log tail, no relay. Neither should hear it twice (multibox second-log
    copies reset silently).
 
-**Status:** ⏳ awaiting verification (solo is quick; multi-person needs 2 testers).
+**Status:** ~~⏳ awaiting verification~~ → **2026-08-09: ✅ live for the whole
+fleet** (agent 3.3.88 → **3.5.54**), and this one has a **real field failure
+still open**:
+
+> ⚠ **No "Loot posted" TTS at 23:13 ET on 2026-08-05.** Both halves of the
+> pipeline are built and deployed — the bot rings `_recordLootPosted`, the agent
+> consumes it in `_consumeLootPosted` — so the miss is almost certainly one of
+> two gates (`_optinState.lootAuctionTts === false`, or the staleness check), and
+> **only the person who missed it can say which**. Open in `STATUS.md` → 🔴
+> Raid-night queue, item 5. Until that is resolved, treat solo case 1 as
+> **FAILING in the field**, not unverified. Everything else here is unscored.
 
 ## #106 — Multiplexed agent poll (six GET loops → one) + encounter-burst jitter
 
@@ -1114,7 +1554,17 @@ preserved (while paused the loop asks for the tuning/kill stream ONLY).
    guild trigger; the other hears/sees the relayed callout within ~1–2s — the
    multiplexed poll preserves recent-fires latency (still a 1.5s cadence).
 
-**Status:** ⏳ awaiting verification (solo is quick; multi-person needs 2 testers).
+**Status:** ~~⏳ awaiting verification~~ → **2026-08-09: ✅ effectively proven in
+production, by running.** Every agent in the fleet is ≥3.3.87, so
+`GET /api/agent/poll` is the *only* poll path anything uses — `poll.mode:
+multiplexed` is normal operation, and solo cases 1–2 (triggers/fires/journal
+still arrive; tuning and notices still land) are exercised continuously by every
+raider on every raid night. The permanent-fallback path (case 5) stays
+code-review-only by design.
+⏳ **Genuinely unscored:** case 3 (the `hash(uploader) % 15s` encounter jitter —
+nobody has timed a big-raid card against a solo one) and case 4 (kill switch over
+the poll), which is blocked behind #74/#118's untested kill switch. The 👥
+cross-client relay-latency case has no recorded number either.
 
 ---
 
@@ -1169,14 +1619,36 @@ conservative v1 — Hitya to sign off before relying on kill/floor in a real rai
   dashboard should show the pause banner + stop uploading within ~20s, and all
   resume within a heartbeat when cleared.
 
-**Status:** ⏳ awaiting verification (solo kill/floor is quick; the multi-person
-beta hot-swap needs a beta bump + 2 testers).
+**Status:** ⏳ **STILL UNVERIFIED as of 2026-08-09, and the sign-off never
+happened.** Three things, all confirmed rather than assumed:
+1. **The kill switch and the version floor have never been used.** Hitya,
+   2026-08-09: *"I have not messed with kill switches."* Production
+   `overlay_tuning.tuning` has never carried `flag_agent_kill` or
+   `min_agent_ver_num` — the row holds two unrelated keys. The **"⚠ Policy
+   semantics are conservative v1 — Hitya to sign off"** caveat above therefore
+   **still stands, unchanged, weeks later**. Nothing should depend on this lever
+   in a real raid until solo cases 1–2 have been run once, off-raid.
+2. **The 👥 beta hot-swap case has effectively no testers.** Beta adoption is
+   ~zero: nine beta builds shipped 2026-08-07 and only stable-channel agents
+   ever reported. The per-channel manifest is *built* and stable installs update
+   fine, but "beta Mimic hot-swaps along the beta agent line" has not been
+   observed on more than a token install.
+3. **LKG rollback (case 4) remains unit-test + code-review only**, as written —
+   no safe way to force it. That is still the right call.
 
 ---
 
 ## #73 — Admission-control 429/Retry-After honored by the durable queue
 
 **Needs:** agent **3.3.85** (beta Mimic 1.9.6) · bot **3.0.208** (live on main).
+
+**Status (2026-08-09): ✅ live for the whole fleet** (agent 3.3.85 → **3.5.54**,
+so the Retry-After honoring is universal now — the "don't enforce until the fleet
+is on ≥3.3.85" warning below is satisfied). ⏳ **The 429 path has never been
+exercised in production**: no `budget_*` key and no `flag_disable_budgets` has
+ever appeared in `overlay_tuning.tuning` (verified 2026-08-09), so no uploader
+has ever been rate-limited. The solo case is self-contained and safe — `rolls` is
+low-volume — but remember to clear both keys afterwards.
 
 **What it does:** the bot can now rate-limit a runaway/crash-looping uploader
 per-endpoint (per-uploader budgets, off by default for durable data). When it
@@ -1210,6 +1682,12 @@ upload from being shunted to the 30-min poison-park lane.)
 **Needs:** agent **3.3.84** (beta Mimic 1.9.6) · web **1.0.239** (live on main,
 for the colored ticks + legend). No bot change — `encounter_events` ingest is
 generic over kind/subtype.
+
+**Status (2026-08-09): ✅ live for the whole fleet** (agent 3.3.84 →
+**3.5.54**; web 1.1.35). ⏳ No result recorded for any of the four cases. The
+fight-timeline surface itself has been reworked since (the HP-curve series +
+binding fix, 2026-08-09) — worth re-checking that the three tick types still
+render with their legend rather than assuming.
 
 **What it does:** three new event types join the existing `/parses/[id]` fight
 timeline (#98), each a distinctly-colored tick with a legend:
@@ -1249,6 +1727,18 @@ timeline (#98), each a distinctly-colored tick with a legend:
 **Needs:** agent **3.3.83** (beta Mimic 1.9.6) · web **1.0.238** (live on main,
 for the officer sticky checkbox). No bot change — the relay already carried the
 original fire timestamp end-to-end.
+
+**Status (2026-08-09): ✅ live for the whole fleet** (agent 3.3.83 →
+**3.5.54**). ⏳ No result recorded, but two of these five became load-bearing
+instruments rather than features, and are used constantly now:
+- the **🧭 checkpoint journal** (part 1) is the standard answer to "why didn't my
+  trigger fire?" and gained the `5b playback started/FAILED` rows in #120;
+- **▶ Rehearse** (part 2) is how a pattern gets proven without a raid — the
+  fastest way to confirm the 2026-08-09 anchor fix on any of the 37 revived
+  callouts is to Rehearse one and watch the journal reach *pattern matched*
+  instead of *pattern not exercised*.
+The **📌 Sticky**, **ghost-callout TTL** and **CH "0X GO"** cases are the ones
+with no evidence at all.
 
 **What it does (five parts):**
 1. **Trigger checkpoint journal** — a "why didn't my trigger fire?" panel on the
@@ -1365,7 +1855,16 @@ Also `agent.log` prints `[reporter] chat role → REPORTER (uploading /gu·/rs)`
 - Raid-roster de-duplication (group-aware) — see the **#72 P1c** section below.
   This completes the #72 election work (chat + buffs + roster all elect).
 
-**Status:** ⏳ awaiting solo + multi-person verification.
+**Status:** ~~⏳ awaiting solo + multi-person verification~~ → **2026-08-09: ✅
+live for the whole fleet AND switched on in production** (agent 3.3.74 →
+**3.5.54**; bot 3.1.34). The chat election is running right now — `dedup_chat` is
+absent from `overlay_tuning.tuning` and defaults **ON**, so the
+`dedup_chat = 0` mitigation from the 2026-07-19 blackout has been lifted (see the
+box in **#112**). ⏳ The specific solo/multi cases were never scored; what we have
+is "the flag is unset and chat is flowing", not a measured failover.
+⚠ Note the kill switch in case 3 (**"Disable reporter election (#72)"**,
+`flag_disable_reporter_election`) has never been set either — same finding as
+#118.
 
 ---
 
@@ -1416,7 +1915,15 @@ stand down` when it flips.
    per zone, and an agent in zone A is never gated by zone B's reporters. Confirm
    both zones' landings keep flowing.
 
-**Status:** ⏳ awaiting solo + multi-person verification.
+**Status:** ⏳ **STILL UNVERIFIED as of 2026-08-09 — and the feature has never
+run in production.** The code is live for the whole fleet (agent 3.3.81 →
+**3.5.54**, bot 3.1.34), but `dedup_buffs` **has never been set**: it is absent
+from `overlay_tuning.tuning` and the bot defaults it **OFF**
+(`buffs: Number(tune.dedup_buffs) >= 1`, `index.js:13544`). So every agent still
+uploads every landing, exactly as solo case 1 describes — which means case 1 is
+the only one that is (trivially) true today, and cases 2–3 plus the whole
+multi-person section have never been exercised at all. Flipping it is a real
+change to production ingest; do it deliberately, not incidentally.
 
 ---
 
@@ -1479,7 +1986,15 @@ the roster; false = you stand down) and the reporter status line, which now show
    hard-closes Mimic (no `/camp`). Within ~60s (the TTL) a peer takes over. This
    is the backstop the camp handoff front-runs.
 
-**Status:** ⏳ awaiting solo + multi-person verification.
+**Status:** ⏳ **STILL UNVERIFIED as of 2026-08-09 — roster election has never run
+in production**, same as P1b: `dedup_roster` is absent from
+`overlay_tuning.tuning` and defaults **OFF** (`index.js:13545`). Every agent
+still uploads the roster.
+**The two non-roster halves ARE live and ungated, though**, and are worth
+checking on their own: the **stray-endpoint gates** (buff-lag report rides
+`roles.buffs`; `debuff-clear` deliberately left UNGATED so any raider's "✓ cured"
+click still clears the chip for everyone) and the **`/camp` early handoff**,
+which runs regardless of the flags — solo case 3 is runnable today.
 
 ---
 
@@ -1505,7 +2020,16 @@ fired. Fixed; multi-word and apostrophe names still match.
 ### 👥 Multi-person
 - Not required — trigger matching is per-client. One person near the mob proves it.
 
-**Status:** ⏳ awaiting verification on a backtick-named pull (Luclin raid).
+**Status:** ~~⏳ awaiting verification on a backtick-named pull~~ → **2026-08-09:
+✅ live, and the underlying mechanism has since been replaced.** `{s}` no longer
+compiles to an allow-list character class at all — `compileTriggerPattern` (which
+replaced `_translateDotNetRegex` on 2026-08-07) expands it to `.+?`, so a
+backtick name cannot be excluded by construction any more. That same change is
+what caused the `{s}`-eats-the-timestamp P1 in agent 3.5.44–3.5.53, fixed in
+**3.5.54**; both behaviours are now pinned by `test/trigger-class.test.js`.
+So this hotfix is subsumed rather than merely shipped — but a Rhag\`Zhezum /
+Aten\`Ha\`Ra pull is still the cheapest live confirmation, and it now also checks
+that the capture contains **no leading timestamp**.
 
 ---
 
@@ -1532,7 +2056,14 @@ trigger, and only the trigger name + captures relay, never the raw line.
 
 #### 👥 Multi-person — not required (per-client matching).
 
-**Status:** ⏳ awaiting verification.
+**Status:** ~~⏳ awaiting verification~~ → **2026-08-09: ✅ live for the whole
+fleet** (agent 3.3.76 → **3.5.54**). ⏳ Never formally scored. ⚠ Worth pairing
+with the 2026-08-09 anchor fix when you do: *"9 of the 17 shipped suggested
+templates could never fire"* and *"37 of 109 enabled guild triggers could never
+fire"* were two independent silent-coverage bugs with the same shape — **an
+enabled trigger reads as coverage.** Both are now fixed in the engine, which
+means a lot of previously-silent callouts speak for the first time on the same
+night.
 
 ---
 
