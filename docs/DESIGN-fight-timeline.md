@@ -1,6 +1,29 @@
 # Fight timeline v2 — boss HP curve + MT/RAMP lanes + class filtering
 
-**Status:** designed, not built. Data audit done 2026-08-06 against live Supabase.
+**Status:** data layer BUILT + validated 2026-08-09 (`encounter_timeline()`,
+migration `20260809030000`). Chart not built yet. Data audit 2026-08-06, re-audited
+2026-08-09.
+
+> ## ⚠ READ THIS BEFORE THE "CORRECTION" SECTION BELOW — it is wrong
+>
+> The correction at line ~72 says the live pipeline already binds snapshots to
+> encounters and instructs you NOT to build around the window join. Re-measured
+> 2026-08-09: **96 of 3,651 distinct boss fights in the last 14 days had any
+> snapshot bound — 2.6%.** The 2026-08-06 spot check happened to sample fights
+> that bound; it was not representative.
+>
+> **Root cause found 2026-08-09, and it is trivial: NAME FORMAT.** `encounters`
+> names a boss through `eqemu_npc_types.name`, which is underscored and
+> sometimes `#`-prefixed (`Kaas_Thox_Xi_Ans_Dyek`, `#Tukaarak_the_Warder`); the
+> agent writes `boss_name` with spaces. Equality therefore matched **only
+> single-word bosses** — Talendor, Severilous, Faydedar, Kelorek\`Dar — which is
+> exactly the set that looked bound, and is why a plain bug read as a backlog.
+> Normalising `_`→space + stripping `#` took the last raid's top twelve fights
+> from **zero** snapshots each to full coverage.
+>
+> **The highest-value follow-up on this whole feature is to apply that same
+> normalisation at INGEST** so `encounter_id` is populated going forward. Until
+> then the read-side window join cannot separate repeat pulls of one boss.
 **Ask:** Uilnayar 2026-08-06 (napkin sketch) — "retool the timeline … capture the
 parse's damage timeline and who is main tank or rampage throughout the fight,
 then allow us to highlight sections of the damage meter by class(es), toggleable
@@ -106,13 +129,47 @@ simply not fights.
 
 ## Build order
 
-1. **Agent** — add `ramp` to `per_player`. Beta. (The value already exists.)
-2. **Bot** — resolve `encounter_id` at threat-snapshot ingest.
-3. **Migration** — `encounter_timeline` view: window-join snapshots to encounters,
-   difference the cumulative counters, emit tidy
-   `(encounter_id, t_sec, character, dmg_delta, took_delta, ramp_delta)`.
-   Differencing in SQL keeps the page from shipping 736 jsonb blobs to a browser.
-4. **Web** — the chart on `/parses/[id]`, replacing the current timeline.
+1. ~~**Migration** — tidy series~~ **DONE 2026-08-09**, `encounter_timeline(uuid, step)`
+   in `20260809030000_encounter_timeline.sql`. Shipped as a FUNCTION rather than
+   a view so the encounter filter lands before the jsonb expansion (the table is
+   557k rows / 458 MB).
+2. **Bot** — resolve `encounter_id` at ingest **using `npc_display_name()`**.
+   Now the highest-value item, not an optional extra: it is what removes the
+   repeat-pull ambiguity the read-side join cannot fix.
+3. **Agent** — add `ramp` to `per_player`. Beta. (The value already exists.) The
+   RAMP swimlane is the only part of the sketch with no data at all; everything
+   else is already reconstructable, so this need not block the chart.
+4. **Web** — the chart on `/parses/[id]`.
+
+### Two correctness traps already paid for — do not re-introduce them
+
+Both were found by reconstructing a fight and comparing to
+`sum(encounter_players.total_damage)` (which equals `encounters.total_damage`
+exactly). Anything built on this data should be checked the same way.
+
+- **Do not `max()` per-bucket deltas across uploaders** — over-counts ~2.4×.
+  `max` breaks the telescoping property of a difference series: uploaders sample
+  at different offsets, so their bucket sums are cut at different points and
+  sum-of-max-of-deltas ≠ max-of-totals. Pick ONE canonical uploader per player
+  (the one who saw the most of them, mirroring `merge_encounter_players`) and
+  difference that single series.
+- **Do not count the first sample in the window as a delta** — it is a BASELINE.
+  Counting it charges the entire cumulative counter to bucket zero, which is
+  harmless when an uploader began at this fight and catastrophic when their
+  counters carry an earlier pull (one uploader's series began 52 minutes before
+  the encounter; that alone read 311% of truth).
+
+### Where it stands, measured
+
+Seven of the ten biggest fights in the last ten days reconstruct within ~6% of
+truth (99.6 / 99.7 / 103.5 / 94.1 / 94.8 / 106.7 / 114.1 %). The residual is
+pets + a few non-roster names the timeline counts and `encounter_players` folds
+or excludes — fold pets under owners via `pet_owner`.
+
+**Three are still wrong** — Kaas Thox Xi Aten Ha Ra 20.7%, Aten Ha Ra 63.6%,
+Diabo Xi Xin Thall 189.6% — and all three share one property: the boss was
+pulled several times inside the window. Step 2 is the fix. Until it lands, do
+not present the chart as authoritative for repeat-pull fights.
 
 ## Open decision for Hitya/Uilnayar
 
