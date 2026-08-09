@@ -176,6 +176,8 @@ export default async function RootLayout({ children }: { children: React.ReactNo
               for live in-raid stats.
             </div>
             <div>
+              <a href="/about" className="text-blue hover:underline">About</a>{' '}
+              <span aria-hidden>·</span>{' '}
               <a href="/privacy" className="text-blue hover:underline">Privacy</a>{' '}
               <span aria-hidden>·</span>{' '}
               <a href="/roadmap" className="text-blue hover:underline">Roadmap</a>{' '}
