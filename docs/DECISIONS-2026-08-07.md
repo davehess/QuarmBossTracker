@@ -213,9 +213,29 @@ naming it turned the same build into a review tool.
 
 Verified by building the app both ways rather than reasoning about it: the
 production build renders no banner in any prerendered HTML, and the beta build
-renders the banner, `robots: noindex, nofollow`, and a "(beta)" title. The
-banner component is ~700 bytes of the 17.5 KB layout chunk on production, where
-it is bundled but never rendered — accepted rather than engineered around.
+renders the banner, `robots: noindex, nofollow`, and a "(beta)" title. Then
+confirmed against the LIVE beta deployment, which returns
+`WolfPack.quest (beta)`, `noindex, nofollow`, the banner, and a path-preserving
+link home. The banner component is ~700 bytes of the 17.5 KB layout chunk on
+production, where it is bundled but never rendered — accepted rather than
+engineered around.
+
+**No Porkbun integration exists, and a cloud session cannot create the DNS
+record.** Checked all three routes: no MCP connector in the registry, no
+credentials in the repo, and `api.porkbun.com` is refused by the egress proxy
+(`CONNECT tunnel failed, 403`) — so even handed API keys this could not be done
+from here. DNS-over-HTTPS is blocked too, so a cloud session cannot even READ
+the zone to confirm which registrar serves it. Adding `b.wolfpack.quest` in
+Vercel → Domains is a human step (or a local session); the Vercel UI reports
+whether a registrar record is needed at all.
+
+⚠ Possible pre-existing gap, spotted while reading the Vercel project:
+`mimic.wolfpack.quest` has redirect rules in BOTH `vercel.json` and
+`next.config.js`, but it is **not in the project's domain list** while `parser.`
+and `discord.` are. If it is genuinely unattached that redirect can never fire.
+NOT confirmed — the proxy blocks outbound to every host, so the reachability
+test returned the same result for a domain that IS attached. Check from a
+browser.
 
 ⚠ `web/vercel.json` is **strict-schema** — Vercel rejects unknown properties, so
 a `comment` key would break production web deploys. Explain in docs, never in

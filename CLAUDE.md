@@ -74,9 +74,17 @@ entry so the index stays trustworthy — a stale index causes exactly the wrong
   the branch anyway, but only onto a throwaway preview URL nobody could guess;
   this makes it addressable. Wiring:
   - `web/vercel.json` → `"git": { "deploymentEnabled": { "beta": true } }`;
-  - Vercel → Domains: `b.wolfpack.quest` assigned to the **`beta` branch**,
-    with a `b` CNAME → `cname.vercel-dns.com` **at Porkbun** (that is where DNS
-    for this domain lives — same step every other subdomain needed);
+  - Vercel → Domains: `b.wolfpack.quest` assigned to the **`beta` branch**.
+    Vercel then shows whether DNS is already delegated to it or a CNAME →
+    `cname.vercel-dns.com` is needed at the registrar. `next.config.js` says
+    that registrar is Porkbun; **treat that as unverified** — a cloud session
+    cannot check (DNS-over-HTTPS and `api.porkbun.com` are both blocked by the
+    egress proxy, and `dig` is absent), and two other long-standing doc claims
+    turned out stale the same night. Let the Vercel UI tell you.
+    ⚠ There is **no Porkbun integration** — no MCP connector exists (registry
+    searched 2026-08-09), no credentials in the repo, and the REST API is
+    unreachable from cloud sessions. This step is human-only, or needs a local
+    session;
   - `next.config.js` sets `NEXT_PUBLIC_IS_BETA` from `VERCEL_GIT_COMMIT_REF`,
     so the flag is a BUILD-time constant. Deliberately not a Host-header check:
     reading headers in the root layout forces every page dynamic.
