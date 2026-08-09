@@ -48,8 +48,12 @@ async function load(w: ResolvedWindow) {
     .from('encounter_players')
     .select(`
       encounter_id, character_name, total_damage, dps, duration_sec,
-      encounters!inner ( id, started_at, eqemu_npc_types ( name ) )
+      encounters!inner ( id, started_at, classification, eqemu_npc_types ( name ) )
     `)
+    // Officer-classified encounters (foreign/wipe/live/pvp/test) never rank —
+    // the 2026-08-08 corrupted foreign upload put an impossible 868k single-
+    // fight row at #1 before this filter existed.
+    .is('encounters.classification', null)
     .gt('total_damage', 0)
     .order('total_damage', { ascending: false })
     .limit(30);

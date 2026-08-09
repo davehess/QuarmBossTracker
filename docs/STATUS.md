@@ -1737,6 +1737,26 @@ Sun/Wed/Thu window before touching the code.
 2. **`[ext-pos]` shadow log for a REAL twin-add pull.** Gates on
    `engaged.length >= 2`, so it needs two tanks genuinely hit by two same-name
    mobs. Tunes `ext_pos_cluster_units` from measurement instead of the 25 guess.
+2b. **🐞 P1 — agent emitted a SESSION-CUMULATIVE encounter payload (found
+   2026-08-09, encounter `3b1069fd…`).** Smokestomp (agent 3.5.54, queue
+   drained ~11h late) uploaded a Breakfast Club Sat-morning Diabo Xi Xin
+   fight TWICE: first a correct 31-player/1.01M/943s payload (preserved in
+   the Discord 📊 Parse Log), then a corrupted 95-player/2.55M payload —
+   same 943s duration, every number ≥ the first, per-player values matching
+   **the whole day's witnessed damage** (his own 239k → 868k; the WP
+   Saturday-EVENING dragon crew — Tycon/Timberowl/Alondra/Uilz/Fargan —
+   appear with plausible evening totals despite never being in the fight;
+   Hitya confirms they were not there). Max-merge folded it in; the inflated
+   roster share (0.400) also defeated the auto-foreign hide. **Done same
+   day:** encounter marked `foreign` (reason on the row); classification now
+   excluded from /leaderboards (web 1.1.36) and `about_stats()` (migration
+   20260809140000). **Root cause needs Smokestomp's machine**: his
+   `logsync.log`/queue remnants + the Sat eqlog segment — which code path
+   built a payload from day-cumulative per-player state? Note his OTHER
+   morning fights (BC cleared several VT bosses) never uploaded at all —
+   likely the same failure. Related unfixed gaps: character pages still
+   count classified encounters; parse-thread mirror keeps the FIRST payload
+   state forever (here that accident preserved the good data).
 3. ~~**Healer-mana: were the shamans missing MID-FIGHT or between pulls?**~~
    **ANSWERED 2026-08-06 23:26 ET — NOT A BUG.** Observed mid-fight on Diabo Xi
    Va Temariel: Fungalfist (12%) and Ghalix (100%) both present. The earlier
