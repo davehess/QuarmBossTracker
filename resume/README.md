@@ -53,3 +53,26 @@ once those are filled in.
 Every number on the page is measured from the production database
 (`about_stats()`) or counted from the repo, as of 2026-08-09. Re-check them
 before sending the link anywhere that matters.
+
+## Why the "Pace & method" section never mentions hours
+
+Deliberate. The section argues leverage — durable written state, gates, and
+automation — and says nothing about when the work happens, because the commit
+history does not support a "nights and weekends" claim and a reader can check:
+
+| Window (ET) | Commits | Share |
+|---|---|---|
+| Outside 09:00–17:00 | 1,328 | 71% |
+| Inside 09:00–17:00 | 523 | 28% |
+| Mon–Fri / Sat–Sun | 1,381 / 470 | — |
+
+A good chunk of the business-hours commits are automated or agent-driven rather
+than hands-on, but a timestamp cannot tell a reader that. So the page makes the
+throughput argument on method instead, which is both stronger and unfalsifiable
+by `git log`. **Do not add an "evenings and weekends" line** — it is the one
+claim on the page that could be checked and found wanting.
+
+The token/spend figure is left out for the same reason: the repo does not record
+it, and an estimated number on a page whose whole pitch is "measured, not
+estimated" would undercut everything around it. Real number from the Anthropic
+Console, or nothing.

@@ -348,6 +348,61 @@
 
 <section>
   <div class="wrap">
+    <h2 class="rv">Pace &amp; method</h2>
+    <div class="h2sub rv">Velocity came from removing rework, not from adding hours.</div>
+    <div class="stats">
+      <div class="stat rv"><div class="n" data-count="1851">0</div><div class="l">commits across four components</div></div>
+      <div class="stat rv"><div class="n" data-count="596">0</div><div class="l">automated releases cut</div></div>
+      <div class="stat rv"><div class="n" data-count="86">0</div><div class="l">test suites gating every push</div></div>
+      <div class="stat rv"><div class="n" data-count="4">0</div><div class="l">independent release targets</div></div>
+    </div>
+
+    <p class="rv muted" style="margin-top:24px">
+      This is AI-assisted development run at a deliberate cadence, and the interesting part is not
+      the volume — it is what had to be true for the volume to be safe. Work happens in
+      <strong style="color:var(--text)">short, discontinuous sessions</strong> that cannot share
+      context with each other, so the repository carries the memory instead of my head: a dated
+      decision log, a feature-to-file index read before anyone concludes something does not exist,
+      and a status ledger of what is done, blocked, or deliberately abandoned. A session can end
+      mid-thought without losing the thread, which is the whole reason this compounds instead of
+      stalling.
+    </p>
+    <p class="rv muted">
+      Speed with no gate is just faster breakage, so the gates came first: 86 test suites,
+      golden-file regression over recorded real-world input, a dedicated checker for a template
+      that had shipped a blank-page bug twice, and continuous integration on every branch that
+      ships to a user — after a release once slipped through on a branch that quietly had 55 fewer
+      test files than the one it was cut from.
+    </p>
+    <p class="rv muted">
+      The same skepticism applies to the assistance itself. Generated answers are treated as
+      hypotheses: the case above — where documentation, forums and an assistant all supplied a
+      string the server never emits — is exactly why the habit is to verify against source,
+      schema, or a live measurement before shipping. <strong style="color:var(--text)">Knowing
+      which claims must be checked is the skill that makes the rest of it usable.</strong>
+    </p>
+    <p class="rv muted">
+      Operationally it is built to run without a person watching it. Releases are automated per
+      channel, client updates are pull-based, and the runtime controls — load shedding, per-client
+      budgets, a fleet-wide pause — are configuration read on a short cache rather than a deploy.
+      When something needs attention during a live window, the response is a settings change, not
+      an emergency.
+    </p>
+
+    <div class="todo rv" style="margin-top:22px">
+      <h3>Optional: exact assistant usage</h3>
+      <p>
+        The commit, release and test figures above are counted from the repository. A precise
+        token/spend figure is not something the repo records — if you want one here, pull it from
+        the Anthropic Console usage page and I will drop the real number in. I would rather show
+        no figure than an estimated one.
+      </p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
     <h2 class="rv">Stack</h2>
     <div class="h2sub rv">Chosen for operability, not novelty.</div>
     <div class="rv">
