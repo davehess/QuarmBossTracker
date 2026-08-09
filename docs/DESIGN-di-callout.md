@@ -1,8 +1,9 @@
 # DESIGN — Divine Intervention callout (#204)
 
-*Written 2026-08-04 (overnight design pass). Unbuilt. Read this before touching
-`_noteDiCast`, `/api/agent/di-status`, or the "Divine Intervention fired"
-guild trigger.*
+*Written 2026-08-04 (overnight design pass). §4 steps 1–2 built 2026-08-09
+(both DI triggers live and source-verified); the two-name selector (§3) is
+still unbuilt. Read this before touching `_noteDiCast`,
+`/api/agent/di-status`, or either Divine Intervention guild trigger.*
 
 **The ask (Hitya, 2026-08-03):**
 
@@ -66,16 +67,46 @@ field. DI is `effect_id_1 = 150` (SE_DivineSave) with `effect_base_value_1 = 2`
 from the server's death path, so its text lives in the client string table, not
 in `eqemu_spells`, and **we cannot read it from the catalog we have**.
 
-> **⚠ Needs one line from a real log.** Next time DI saves someone, grab the
-> verbatim line. Until then, do NOT guess the pattern — guessing is exactly what
-> produced the dead trigger above. This is the same rule we set for the pet
-> Death Touch capture (#169): get the line first, widen the regex second.
+> **✅ RESOLVED 2026-08-09 — verified at the server source, no log capture
+> needed.** Quarm runs EQMacEmu, and the death-save path is public:
+> `zone/spell_effects.cpp` → `Mob::TryDeathSave()`. On a successful save it
+> emits **exactly one** message:
 >
-> Cheap way to get it without waiting: the dying player's own log has it. Once
-> `death_confirm` (agent 3.5.13) is in the fleet we will be capturing the
-> corpse-run tail already — a DI save is *precisely* a death that didn't happen,
-> so the lines around a near-death are worth a one-off `--since` sweep of a
-> cleric's log after any night a DI fired.
+> ```cpp
+> entity_list.MessageClose_StringID(this, false, 200, Chat::MeleeCrit,
+>                                   StringID::DIVINE_INTERVENTION, GetCleanName());
+> ```
+>
+> with (`zone/string_ids.h`):
+>
+> | id | constant | client string |
+> |---|---|---|
+> | 1029 | `DIVINE_INTERVENTION` | `%1 has been rescued by divine intervention!` |
+> | 1028 | `DEATH_PACT` | `%1's death pact has been benevolently fulfilled!` |
+>
+> Load-bearing details read straight off that call:
+> - **Always name-form**, even in the saved player's own log (`%1` =
+>   `GetCleanName()`, `skipsender = false`) — there is no "You have been
+>   rescued" variant on Quarm, so one named-capture pattern covers everyone.
+> - **200-unit range** — a cleric far from the tank never sees the line. Any
+>   raid-wide callout has to come from a trigger relay, not from assuming every
+>   client logs it.
+> - **A FAILED save emits NOTHING.** The roll fails, the function returns
+>   false, the player dies with no dedicated message. The
+>   `"<Player> survived divine intervention!"` line that circulates in
+>   GINA/AI-generated trigger guides **does not exist on Quarm** — it is the
+>   same invented-pattern trap as §0. "DI failed" is only detectable as
+>   rescue-line-absent + a death message, never as its own line.
+> - Success also fades the buff (`BuffFadeBySlot`), so the tank's self-only
+>   `You are no longer watched.` follows a fire — but that text also appears on
+>   natural expiry, so it is a fade signal, not a fire signal.
+>
+> Shipped the same day: `guild_triggers` row `60d9797f-d64c-424a-ba3d-460c53c0946f`
+> **"Divine Intervention fired (death save)"**, pattern
+> `(?<tank>\w+) has been rescued by divine intervention!`, verified through
+> `compileTriggerPattern` against a raw timestamped line (captures the name,
+> ignores chat near-misses). The landed trigger's TTS was reworded to
+> "D I **landed** on {tank}" so apply and consume are distinguishable by ear.
 
 ---
 
@@ -174,16 +205,17 @@ network path is needed.
 
 ## 4. Build order
 
-1. **Fix the dead trigger** — swap the invented pattern for the real
-   `cast_on_other` line, so "DI applied to \<tank\>" works *today*. One
-   `guild_triggers` UPDATE; reaches the fleet in ~2 minutes, no release.
-   **Write it UNANCHORED, or anchored as `^\[.+?\]\s+`** — patterns match the raw
-   line including the `[timestamp] ` prefix, so a leading bare `^` is dead on
-   arrival. That is a separate defect affecting 37 enabled triggers; see
-   `RUNBOOK-dead-triggers.md`. (The DI trigger dodged it only because its author
-   left off the anchor — it fails on invented text instead.)
-2. **Capture the DI-fired line** from a real log (see §0). Blocking for the fire
-   callout, nothing else.
+1. ~~**Fix the dead trigger**~~ — **✅ DONE 2026-08-09.** Row `91a0a617…` is
+   "Divine Intervention landed", pattern = the real spell-1546
+   `cast_on_other`/`cast_on_you` texts, TTS "D I landed on {tank}".
+   (The historical hazard stands for future edits: patterns match the raw
+   line including the `[timestamp] ` prefix — write them unanchored or
+   anchored as `^\[.+?\]\s+`; see `RUNBOOK-dead-triggers.md`. Since agent
+   3.5.54 the compiler also rewrites a bare leading `^` to the timestamp-
+   tolerant form, so this is belt-and-braces rather than load-bearing.)
+2. ~~**Capture the DI-fired line**~~ — **✅ DONE 2026-08-09**, from the server
+   source rather than a log (see §0). The fire trigger `60d9797f…` is enabled;
+   first live fire still unobserved.
 3. **Ship the two-name selector** agent-side behind the existing chain overlay.
 4. **Overlay UX** (#207) — countdown + dismiss + dismissal recording.
 5. *Later, only if inventory ever becomes a feed:* emerald evidence as a fourth

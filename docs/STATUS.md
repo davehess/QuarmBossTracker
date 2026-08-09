@@ -1722,15 +1722,18 @@ Sun/Wed/Thu window before touching the code.
    already had. `/tag local` never broadcasts, and the server rate-limits chat
    (~8/min). **The nameplate arrow is NOT evidence the broadcast happened.** Both
    settings are warned about on the Mimic dashboard's tag-capture card.
-1. **DI-fired trigger — BLOCKED, needs one real log line.** `guild_triggers`
-   "Divine Intervention fired" is enabled with an INVENTED pattern:
-   `(?<tank>[A-Z][\w']+)(?:'s wounds heal|is filled with divine|has been graced with divine intervention)`.
-   None of those three is a real EQ string, and two cannot match even their own
-   invented text (no space before the alternation). Spell 1546's catalog columns
-   hold only cast/fade text — the FIRE message is an effect proc and is in no
-   column. **Grab: a raider's `eqlog` line from the moment a tank was saved.**
-   Do NOT guess a third pattern; that is how this broke twice. (CLAUDE.md
-   already lists this spell as the canonical invented-pattern failure.)
+1. ~~**DI-fired trigger — BLOCKED, needs one real log line.**~~ **✅ RESOLVED
+   2026-08-09 — no capture needed after all.** The fire message was verified at
+   the SERVER source instead of a log: Quarm's codebase (EQMacEmu,
+   `zone/spell_effects.cpp` `TryDeathSave()`) emits StringID **1029** =
+   `%1 has been rescued by divine intervention!` to everyone within 200 units
+   including the saved player, always name-form. A FAILED save emits **no
+   message at all** — a "survived divine intervention" line circulating in
+   AI/GINA answers does not exist on Quarm; never add it. New enabled trigger
+   `Divine Intervention fired (death save)` (`60d9797f…`) carries the verified
+   pattern; the old row is repointed at spell 1546's real landing text and its
+   TTS now says "landed", not "fired". Full provenance:
+   `DESIGN-di-callout.md` §0. Tonight's watch item is just: does it FIRE.
 2. **`[ext-pos]` shadow log for a REAL twin-add pull.** Gates on
    `engaged.length >= 2`, so it needs two tanks genuinely hit by two same-name
    mobs. Tunes `ext_pos_cluster_units` from measurement instead of the 25 guess.
