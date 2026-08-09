@@ -6913,6 +6913,11 @@ async function _handleAgentUiLayoutUpload(req, res) {
   const sourceHeight  = Number.isFinite(payload?.source_height) ? payload.source_height : null;
   const files         = (payload?.files && typeof payload.files === 'object') ? payload.files : null;
   const agentVersion  = (payload?.agent_version || null) && String(payload.agent_version).slice(0, 32);
+  // Which computer took this backup. Older agents don't send it — the restore
+  // picker shows "unknown machine" rather than guessing (Hitya 2026-08-09:
+  // with several machines backing up the same character, the timestamp alone
+  // can't tell you which box a snapshot came from).
+  const machineName   = (payload?.machine_name || null) && String(payload.machine_name).trim().slice(0, 64);
   if (!character || !files) {
     res.writeHead(400, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({ error: 'character + files required' }));
@@ -6994,6 +6999,7 @@ async function _handleAgentUiLayoutUpload(req, res) {
     payload_bytes_plain: Buffer.byteLength(plaintext, 'utf8'),
     file_count:          Object.keys(files).length,
     agent_version:       agentVersion,
+    machine_name:        machineName,
     pending_link:        pendingLink,
   };
   const written = await supabase.insert('ui_snapshots', [row]).catch(err => {
@@ -7048,7 +7054,7 @@ async function _handleAgentUiLayoutList(req, res) {
   }
   const rows = await supabase.select(
     'ui_snapshots',
-    `owner_discord_id=eq.${encodeURIComponent(ownerDiscord)}&select=id,character_name,server_short,label,source_width,source_height,payload_bytes_plain,file_count,agent_version,created_at&order=created_at.desc&limit=50`,
+    `owner_discord_id=eq.${encodeURIComponent(ownerDiscord)}&select=id,character_name,server_short,label,source_width,source_height,payload_bytes_plain,file_count,agent_version,machine_name,created_at&order=created_at.desc&limit=50`,
   ).catch(() => []);
   res.writeHead(200, { 'Content-Type': 'application/json' });
   return res.end(JSON.stringify({ snapshots: Array.isArray(rows) ? rows : [] }));
