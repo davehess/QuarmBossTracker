@@ -74,8 +74,16 @@ entry so the index stays trustworthy — a stale index causes exactly the wrong
   the branch anyway, but only onto a throwaway preview URL nobody could guess;
   this makes it addressable. Wiring:
   - `web/vercel.json` → `"git": { "deploymentEnabled": { "beta": true } }`;
-  - Vercel → Domains: `b.wolfpack.quest` assigned to the **`beta` branch**.
-    Vercel then shows whether DNS is already delegated to it or a CNAME →
+  - Vercel → Domains → Add `b.wolfpack.quest`. **Pick the `Preview`
+    environment, then set Git Branch to `beta`.** There is no "beta"
+    environment and there should not be — Vercel's environments are
+    Production/Preview (+ paid Custom Environments, which this project has
+    none of); a branch is a separate field ON the domain (`gitBranch`, per
+    `PATCH /v9/projects/{id}/domains/{domain}`).
+    ⚠ **Leaving Git Branch blank is the trap**: the domain then follows the
+    most recent preview deployment from ANY branch, so `b.wolfpack.quest`
+    would drift onto whatever `claude/*` branch built last instead of beta.
+    Then Vercel shows whether DNS is already delegated to it or a CNAME →
     `cname.vercel-dns.com` is needed at the registrar. `next.config.js` says
     that registrar is Porkbun; **treat that as unverified** — a cloud session
     cannot check (DNS-over-HTTPS and `api.porkbun.com` are both blocked by the
