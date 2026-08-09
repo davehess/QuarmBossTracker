@@ -37,6 +37,24 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'loot-panel-knows-what-you-won',
+    title: '\u{1F4B0} The bidding panel knows what you already won',
+    version: 'Bot 3.1.33 · Agent 3.5.53',
+    channel: 'beta',
+    date: '2026-08-09',
+    headline: 'Gear you had already won kept showing up as gear you still wanted — and the alt list threw away what you typed into it.',
+    features: [
+      { name: '\u{1F3C6} Your wins are no longer forgotten past the hundredth one', blurb: 'The panel only ever checked your hundred most recent awards when working out what you had won, and it sorted them by when our copy of OpenDKP last refreshed rather than by when you actually won them — so which hundred it looked at was close to random and shifted every week. If you have more than a hundred pieces of loot, the rest came back as “bid on but not yet won” and as recent misses. It now reads your whole award history, and your wins list is in the order you won them. This one is already live for everyone. Reported by Hitya.' },
+      { name: '\u{1F464} Your characters come from OpenDKP now', blurb: 'You should not have to type your own main and alts — OpenDKP already knows them. They fill in on their own when you sign in, and any character OpenDKP knows about that your list is missing gets added. Anything you typed yourself stays put, and there is a button to replace your list with OpenDKP’s outright if you would rather start clean.' },
+      { name: '\u{1F576} Your loot history stays hidden until you ask for it', blurb: 'The wishlist, misses and wins now start closed behind a “show my loot history” button, and close again every time the dashboard loads. People share their screen during raids, and a wishlist on display tells everyone else exactly what you are saving for. Suggested by Hitya.' },
+      { name: '✕ Take anything off the list', blurb: 'Every wishlist and miss row has an ✕ to hide it — useful for the items the panel guessed at from your old bids that you have no interest in any more. A “restore all” link brings them back, so a mis-click costs you nothing. This is only on your own PC; nothing is sent anywhere.' },
+      { name: '\u{1F5D3} The list opens on the current expansion', blurb: 'Instead of every item you have ever bid on going back to Classic, the expansion filter starts on the one being raided now — worked out from your newest award, so it moves on by itself when the next expansion opens. If that would leave you with an empty list it shows everything instead.' },
+    ],
+    fixes: [
+      'Adding an alt wiped out the main you had just typed, and a name you added was thrown away if you did not hit save within seven seconds — the panel refreshes on a timer and was handing back your last saved list mid-typing. It now leaves what is on screen alone and tells you when there is something unsaved.',
+    ],
+  },
+  {
     key: 'tag-youre-spawn-id-it',
     title: '\u{1F3F7} Tag! You’re spawn_id it!',
     version: 'Mimic 2.3.4 · Agent 3.5.52',
