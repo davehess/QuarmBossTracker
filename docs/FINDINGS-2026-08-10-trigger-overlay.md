@@ -292,7 +292,110 @@ and use `!` (replace) rather than `+` (append) — `/tag chat !Fuggin-Tanking`.
 A bare `inc` or `SLOWED` tag will pool, and an appended one will erase whatever
 tank name was there.
 
-### 5. Carried over from earlier tonight
+### 5. "Kneel Test" on Mob Info — the junk-text guard counts the wrong set
+
+Hitya, live: *"still seeing Kneel Test"* — Mob Info's DEBUFFS (OBSERVED) list on
+Xerkizh The Creator showing `Kneel Test  1/1 · 0:01`.
+
+The guard for this already exists and names the bug by name
+(`packages/wolfpack-logsync/index.js:25841`, 2026-07-07):
+
+> *"is struck by a sudden force." is 33 knockback-type spells, and the
+> ambiguous-family resolver kept crowning EQEmu's internal "Kneel Test" (the
+> only one with a nonzero duration) as its representative, writing 10k phantom
+> rows into buff_casts and phantom entries onto Mob Info. Anything shared by >8
+> distinct spell names is dropped from both indexes.*
+
+It never fires, because of the order of two filters. Line 25824 skips every
+spell without a timed duration formula **before** anything is indexed:
+
+```js
+if (!_isTimedDurationFormula(e.durf)) continue;   // 0 < f < 50
+```
+
+and the >8 threshold at line 25855 then counts only what survived that filter.
+Of the 32 spells sharing `is struck by a sudden force.`, **exactly one has a
+timed formula — Kneel Test (durf 5)**. Every other member is `durf 0`. So the
+guard sees a family of size 1, not 33, and a family of one looks like the most
+confident match in the catalog rather than the least.
+
+**This is a class, not one row.** Measured against the live catalog — families
+whose true size is >8 but whose timed-detrimental survivors are ≤8, so the guard
+misses them:
+
+| Landing text | Spells sharing it | Timed survivors | Verdict |
+|---|---:|---|---|
+| `is struck by a sudden force.` | 32 | **Kneel Test** | junk — a dev artifact |
+| `has been struck by lightning.` | 11 | **Bolt of Karana** | junk — 10 unrelated lightning effects all credited to one real spell |
+| `winces.` | 12 | Chords of Dissonance, Denon\`s Disruptive Discord | junk-ish |
+| `looks very afraid.` | 12 | 7 fear spells | genuine family |
+| `screams as poison burns their veins!` | 14 | 8 poison DoTs | genuine family |
+| `begins to spin.` | 11 | 8 dizzy effects | genuine family |
+| `begins to move faster.` | 9 | 4 × Brittle Haste | genuine family |
+
+`Bolt of Karana` is the one to notice: it is a **real** spell, so nothing looks
+wrong, and it appeared in tonight's own Mob Info screenshot on the crypt
+guardian. Any of eleven lightning effects landing on a mob gets recorded as Bolt
+of Karana with a real duration.
+
+**Fix — do NOT just raise the threshold.** Counting the full family and dropping
+everything >8 would take the four genuine families with it. The discriminator is
+the *ratio*: a text shared by many spells where almost none are timed detrimental
+is a generic effect text, and the one or two that are timed are coincidental.
+
+```js
+// Count the WHOLE family (before the durf/good filters), not the survivors.
+// famSize: suffix → Set of every spell name carrying that landing text.
+if (famSize.get(suffix).size > 8 && new Set(arr.map(h => h.name)).size <= 2) {
+  dm.delete(suffix); junked++; continue;     // 32→1, 11→1, 12→2 all drop
+}
+// existing >8-survivors rule + slow-rescue continue to apply unchanged
+```
+
+That drops Kneel Test, Bolt of Karana and `winces.`, and leaves the fear / poison
+/ dizzy / haste families alone (7, 8, 8 and 4 survivors). The fuller version is a
+coherence check — keep the members that form one effect class, the way the
+2026-07-27 slow-rescue already does for `yawns.` — but the ratio rule fixes
+every case observed today and is two lines.
+
+**No mid-raid mitigation.** The obvious one — zeroing `buffdurationformula` on
+spell 2808 — was refused by the permission classifier, and it would have been
+undone by the next weekly `sync-quarm.yml` run anyway. `eqemu_spells` is a
+mirror; the fix belongs in the agent.
+
+Backfill note: `buff_casts` rows already carry `spell_name = 'Kneel Test'` (and
+misattributed `Bolt of Karana`). Worth a cleanup pass once the guard is fixed, or
+those rows keep feeding `target-buffs` and the cure queue.
+
+### 6. "Too Far" / "Can Not See" / "Can Not Hit From Here" — relay spam (FIXED live)
+
+Hitya: *"someone is spamming too far or cannot see to the whole raid, we're not
+seeing it or hearing it, but it's filling up the log on the dashboard."*
+
+Three guild triggers on `Your target is too far`, `You cannot see your target`
+and `You can't hit them from here`, all scoped `class_specific`, all relaying
+guild-wide. The checkpoint journal was solid `guild_relay` rows, most of them
+`stale-skipped — fire was 94s old at consumption` (a ~95s relay backlog, which is
+itself the volume signal).
+
+Their **only** action is `{"type":"sound","file":"alert3.wav"}`, and sound
+actions are a documented no-op (`index.js:31208`: *"sound / emit_event beyond the
+overlay's own audio remain no-ops in v1"*). So they produced nothing anyone could
+see or hear, and relayed to the whole raid regardless — pure overhead. That is
+also why the report was "we're not seeing it or hearing it": there was never
+anything to see.
+
+Fixed live by setting `default_scope = 'personal'` on all three
+(`b8271e57-…`, `0f460928-…`, `54c8f9ae-…`). These are `You …` messages — only the
+client that generated the line can ever see it, so a broadcast scope was never
+meaningful. **No revert needed**; this one is a straight correction, not a
+mitigation.
+
+Follow-up worth taking: `sound` actions being silent no-ops is invisible in
+`/admin/triggers`, so an officer can build a trigger that does nothing and get no
+feedback. Either implement the action or mark it unsupported in the editor.
+
+### 7. Carried over from earlier tonight
 
 - **`require_raid_member` is an action-level gate only** — it does not suppress
   the trigger's timer, so a non-raider still gets the countdown row.
