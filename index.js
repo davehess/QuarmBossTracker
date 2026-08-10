@@ -14268,6 +14268,31 @@ async function _handleAgentTrigger(req, res) {
 // validation is light because each field is also re-validated on the
 // receiving Mimic before action execution.
 
+// How far behind true time the SENDING machine's clock is, from the offset that
+// rides every agent payload (#202). POSITIVE = that clock is BEHIND, so the true
+// time of any stamp it wrote is `stamp + offset`.
+//
+// The bot resolves this once at ingest because it is the only party that sees
+// every clock — asking each receiving agent to know about every sender's drift
+// would need the whole fleet's offsets on every poll. Installs have been measured
+// 14s, 42s and 56s off and drifting ~1.5-3 s/day, which is enough to break the
+// relay's 15s staleness gate, the TTS delay, and every countdown armed off a
+// relayed fire (2026-08-10).
+//
+// Returns 0 (no correction, i.e. previous behaviour) when:
+//   • the sender is an older agent that sends no offset;
+//   • the payload is a BACKFILL — the offset is current but the events are old,
+//     which the agent's own clock_measured_at comment calls out explicitly;
+//   • the value is absurd (>10 min), which reads as a broken clock reading
+//     rather than a real skew, and is safer ignored than trusted.
+function _senderClockOffsetMs(payload) {
+  const raw = Number(payload?.agent_state?.clock_offset_ms);
+  if (!Number.isFinite(raw)) return 0;
+  if (payload?.backfill) return 0;
+  if (Math.abs(raw) > 600_000) return 0;
+  return raw;
+}
+
 async function _handleTriggerRelayPost(req, res) {
   const identity = await mimicLink.requireAgentAuth(req, res);
   if (!identity) return;
@@ -14296,19 +14321,25 @@ async function _handleTriggerRelayPost(req, res) {
     return res.end(JSON.stringify({ error: 'rate limited' }));
   }
 
+  const senderOffset = _senderClockOffsetMs(payload);
+
   let accepted = 0;
   for (const f of fires.slice(0, 10)) {
     const name = String(f?.name || '').slice(0, 120);
     const key  = String(f?.key  || name).slice(0, 200);
     if (!name) continue;
     const firedAt = Number(f?.fired_at_ms) || now;
+    const firedAtTrue = firedAt + senderOffset;
     // Cross-agent dedup: same key fired within 8s = same logical event,
-    // skip storing the duplicate so polling clients don't echo it.
+    // skip storing the duplicate so polling clients don't echo it. Compared on
+    // TRUE time — these stamps come from DIFFERENT machines, so two observers of
+    // one event whose clocks differed by more than the window both got stored
+    // and both fanned out, doubling the callout.
     let duplicate = false;
     for (let i = _triggerRelay.entries.length - 1; i >= 0; i--) {
       const e = _triggerRelay.entries[i];
       if (now - e.posted_at_ms > TRIGGER_RELAY_DEDUP_WINDOW_MS) break;
-      if (e.key === key && Math.abs(e.fired_at_ms - firedAt) <= TRIGGER_RELAY_DEDUP_WINDOW_MS) {
+      if (e.key === key && Math.abs(e.fired_at_true_ms - firedAtTrue) <= TRIGGER_RELAY_DEDUP_WINDOW_MS) {
         duplicate = true; break;
       }
     }
@@ -14321,7 +14352,12 @@ async function _handleTriggerRelayPost(req, res) {
       captures:            (f?.captures && typeof f.captures === 'object') ? f.captures : {},
       actions:             Array.isArray(f?.actions) ? f.actions.slice(0, 5) : [],
       timer_duration_sec:  Math.max(0, Math.min(3600, parseInt(f?.timer_duration_sec, 10) || 0)),
-      fired_at_ms:         firedAt,
+      // Carried so a receiver can apply the same cooldown gate as the origin —
+      // relayed fires previously had no cooldown at all.
+      trigger_id:          f?.trigger_id ? String(f.trigger_id).slice(0, 64) : null,
+      cooldown_seconds:    Math.max(0, Math.min(3600, parseInt(f?.cooldown_seconds, 10) || 0)),
+      fired_at_ms:         firedAt,        // raw, as the sender's clock read it
+      fired_at_true_ms:    firedAtTrue,    // skew-resolved; what receivers time off
       posted_at_ms:        now,
       uploaded_by:         identity.discord_id,
     };
@@ -14356,7 +14392,13 @@ function _recentFiresFor(identity, sinceId, lootSinceId = 0) {
       captures:            e.captures,
       actions:             e.actions,
       timer_duration_sec:  e.timer_duration_sec,
+      trigger_id:          e.trigger_id,
+      cooldown_seconds:    e.cooldown_seconds,
       fired_at_ms:         e.fired_at_ms,
+      // Skew-resolved fire time. Agents ≥3.5.56 subtract their OWN offset from
+      // this to land on their local clock; older agents ignore it and keep using
+      // the raw stamp, which is exactly the previous behaviour.
+      fired_at_true_ms:    e.fired_at_true_ms,
     }));
   const loot = _lootPostedSince(lootSinceId);
   return { next_id: _triggerRelay.nextId, fires, loot_posted: loot.loot_posted, loot_next_id: loot.loot_next_id };

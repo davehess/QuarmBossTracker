@@ -29,6 +29,10 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.1.37': [
+    '**Tagged mobs stay on the Extended Target list.** Tagging a mob is a deliberate "watch this one", but the list was still filtering tagged mobs by health along with everything else — so the mob you had just marked could drop off the list at exactly the moment you wanted it. Anything carrying a tag now stays put at any health, and keeps its tag through a refresh.',
+    '**Shared callouts are now timed against your own clock.** When someone else\'s trigger fires and gets passed to the raid, it arrives stamped with the time THEIR PC thought it was — and PCs drift, three of ours by 14 to 56 seconds. Everyone receiving it was doing the maths against their own clock, so a sender running slow had their callouts discarded as too old before anyone heard them, a sender running fast had them arrive and then sit silent, and every countdown started from a shared trigger was off by that same gap. The bot now works out the difference as the callout arrives and hands out a corrected time. The matching Mimic update is on beta.',
+  ],
   '3.1.36': [
     '**The kill buttons on the boards now ask before they record.** Tapping a boss on a board used to start its respawn timer on the first press, which is easy to do by accident on a phone — and once a timer is running, the spawn alerts, the 24-hour board and the daily summary all work from it until an officer undoes it. You now get a quick "record a kill for this?" with a Confirm and a Cancel, and only you can see it. The event announcements have always worked this way; the boards now match.',
   ],

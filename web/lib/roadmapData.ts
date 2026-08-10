@@ -37,6 +37,33 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'timers-agree-with-each-other',
+    title: '\u{23F1} Everyone’s countdown finally says the same thing',
+    version: 'Agent 3.5.56 · Bot 3.1.37',
+    date: '2026-08-10',
+    channel: 'beta',
+    headline: 'Timer triggers piled up a fresh row on every single fire, and when a callout was shared with the raid it was timed off the sender’s PC clock instead of yours — so no two people saw the same number.',
+    features: [
+      { name: '\u{1F5D3} A re-slow resets the bar instead of adding another one', blurb: 'Every timer trigger was starting a brand new row each time it fired, so a Ssra trash pull buried the overlay in near-identical lines — and killing the mob could not clear them. The cause was the countdown quietly using the whole log line, timestamp included, as the name of the timer, which made every fire look like a different mob. Slows, snares and the rest now reuse one bar per mob, the row is labelled with the mob’s name rather than the raw line, and killing it clears the bar. Reported by Hitya mid-raid.' },
+      { name: '\u{1F551} Shared callouts run on YOUR clock, not the sender’s', blurb: 'When someone else’s trigger fires and gets passed to the rest of the raid, it carries the time their computer thought it was. PCs drift — three of ours are between 14 and 56 seconds out and getting worse by a couple of seconds a day — and everyone receiving it was doing the maths against their own clock. A sender running slow had their callouts thrown away as "too old" before anyone heard them; a sender running fast had the callout arrive on time and then sit silent for as long as their clock was ahead; and every countdown started from a shared trigger was wrong by that same gap, warnings included. The difference is now measured and taken out on arrival, so the bar you see matches the bar next to you.' },
+      { name: '\u{1F507} A death callout you hear once', blurb: 'Two people watching the same death each announced it, because the check for "we have already said this" included their own log line — and two PCs never write that line identically. It now compares the parts that actually describe the event, so the raid hears it once. Shared callouts also respect the trigger’s cooldown now; they previously ignored it entirely, which is why turning the cooldown up never helped.' },
+    ],
+    fixes: [
+      'A trigger set up to run one countdown per target — one bar per mez, say — was ignoring that setting completely and starting a new bar every fire anyway.',
+    ],
+  },
+  {
+    key: 'tagged-mobs-stay-put',
+    title: '\u{1F3F7} Tagged mobs stop vanishing off the list',
+    version: 'Bot 3.1.37',
+    date: '2026-08-10',
+    headline: 'A mob you had tagged dropped off the Extended Target list as soon as its health moved out of the band the list was watching.',
+    features: [
+      { name: '\u{1F4CC} If you tagged it, it stays on the list', blurb: 'Tagging a mob is a deliberate "keep an eye on this one", but the list was still filtering tagged mobs by health like everything else, so the thing you had just marked could disappear at exactly the wrong moment. Anything carrying a tag now stays on the list at any health, and keeps its tag text through a refresh.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'loot-panel-knows-what-you-won',
     title: '\u{1F4B0} The bidding panel knows what you already won',
     version: 'Bot 3.1.33 · Mimic 2.3.4 · Agent 3.5.54',
