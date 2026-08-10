@@ -89,3 +89,59 @@ is emphatic that the screen has no spare space.
 Given those, ship the order as a collapsible, explicitly-observed list — useful
 for "who is next" — and do not wire it into anything automated until the hate
 reducers land.
+
+---
+
+## 4. Mez ownership (2026-08-10, the Zlakas sequence)
+
+Hitya: *"The Tag on that should be JANKZER MEZ not just MEZ in the extended
+target."* Then the failure that proves it: Jankzer died, **his mez state dropped
+off the row immediately**, and Zlakas showed as un-mezzed and went for Fargan —
+a cleric 5.8s into a Complete Heal.
+
+Two defects:
+
+- **The MEZ chip is derived from who is TARGETING the mob, not from the mez
+  itself.** So a dead mezzer reads as "not mezzed" while the mez is in fact still
+  running. We already track the real duration — the rows carry `Rapture 22s`,
+  `Rapture 36s`, `Rapture 38s` — so the chip should key off that timer, not the
+  targeter list. A mezzer dying does not un-mez the mob; it means nobody is
+  watching it re-break.
+- **The chip does not say whose mez it is.** With owners on the chips, the raid
+  leader's *"take those two"* and the answering *"Griz and Zlakas"* becomes
+  something the overlay already shows. That exchange happened over voice mid-wipe
+  because the information existed nowhere on screen.
+
+Render `JANKZER MEZ · 22s`. When the owner dies, keep the timer and mark the
+owner dead — that row is now the most urgent thing on the board, and today it
+silently goes quiet instead.
+
+## 5. CH chain — show the tank, and fix slot ownership
+
+From the same sequence, where three consecutive CH landings decided the fight:
+
+- **Put the MT's health on the CH chain overlay.** Hitya: *"i know we have this
+  in multiple places but its for a reason."* The chain is where the clerics look;
+  the number that decides whether the chain is keeping up is on a different
+  window. Duplication is correct here.
+- **Interrupts are invisible on the chain.** Fargan's CH was interrupted halfway
+  when an un-mezzed add hit him. The chain kept his slot as if the cast were
+  coming. An interrupted CH should mark the slot immediately — the next heal was
+  6.2s out, with 7.2s behind it, against a tank at 45%.
+- **Slot ownership gets overwritten by whoever calls the number.** Mcdorf held
+  001; Pyxil called a CH as 001 and **replaced Mcdorf in the overlay**. Same root
+  as §3 of `FINDINGS-2026-08-10-trigger-overlay.md` (the roster parser trusting
+  the shout over the roster) — a call should update the SLOT's timing, not
+  reassign who owns it, unless the roster says so.
+- **A countdown froze**: Lenolshot's Weapon Shield sat at `2s` for longer than
+  two seconds. Same family as the stale cross-client HP — a timer whose source
+  stopped updating keeps rendering its last value instead of expiring.
+
+### Worth building once, used by all of the above
+
+Every item in §4 and §5 is the same underlying gap: **overlays render the last
+value they were given, with no notion of how old it is or whether its source is
+still alive.** Mez owner, tank HP, weapon-shield countdown, off-heal HP, the DA
+tank — all of them. A shared "this datum has an age and a liveness" wrapper is a
+smaller change than fixing each surface, and it is the difference between an
+overlay that goes quiet and one that lies.
