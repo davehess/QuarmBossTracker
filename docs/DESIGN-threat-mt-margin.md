@@ -47,6 +47,103 @@ series, not just a current value. The ordering called this fight correctly.
 - Tank-facing counterpart: name who is closing, so the MT can pick a taunt
   target instead of asking the whole raid to back off.
 
+## The enrage window is the real feature
+
+Hitya, with the mechanic that makes this urgent: *"it was about at 14-10 percent
+on a mob that Enrages and will turn on the raid and possibly kill a bunch of
+them. And Currygoat needs to turn off attack at 8% for enrage meaning people
+would surpass him, turn the boss, and then everyone takes return hits on
+enrage."*
+
+That is a different and much sharper problem than general threat management:
+
+1. Approaching enrage, the MT **deliberately stops attacking** (~8%) so he does
+   not die to riposte.
+2. His threat therefore **stops growing on purpose**, while every DPS — plus
+   DoTs and pets that nobody "stopped" — keeps climbing.
+3. Someone passes him, **the boss turns**, and it turns while enraged, into a
+   raid that is not positioned for it. *"everyone takes return hits on enrage."*
+
+So the danger is not a mistake anyone is making — it is the *correct* tank play
+creating a threat vacuum, at the exact HP where the cost of a swap is highest.
+
+### The ask: caution tape
+
+*"That flashing caution over the melee on the parse would be good to see. Caution
+tape style on a diagonal over who's gaining during that timeframe if it's close."*
+
+A diagonal hazard-stripe hatch over any row that is **gaining on the MT while the
+boss is inside the enrage window**, so the people who need to stop can see it on
+their own meter without the tank calling it. Conditions, all of which we already
+have:
+
+- **Boss HP%** — from the Zeal target gauge (the pipe carries name + HP
+  per-mille, which is what the Extended Target rows already render).
+- **Enrage actually firing** — `"<Mob> has become ENRAGED."` is already a known
+  live trigger pattern in the agent, so the window can be confirmed, not just
+  predicted from HP.
+- **Gaining** — the snapshot slope from §Proposal.
+- **Close** — the % of MT margin from §Proposal.
+
+Window default ~15% HP (opens before the 8% the tank acts on, since the warning
+has to arrive early enough to matter), closing when the mob dies or enrage ends.
+The hatch belongs on the threat meter rows AND on the parse afterwards, so a
+post-fight review can see who was climbing during the window.
+
+## The model has no hate REDUCERS at all
+
+Hitya: *"We aren't currently counting Ancient Greater Concussion as far as I can
+tell on threat reduction, but Wabumkin should have been lower because of it."*
+
+Correct — `threatBy` only ever adds (swing / proc / spell / heal). There is no
+subtraction anywhere, so every hate-shedding tool in the raid is invisible to the
+meter. **Wabumkin is a Wizard**, so the concussion line is exactly his tool.
+
+Grounded from `eqemu_spells` — **SPA 92 is hate reduction**, negative base = hate
+removed, and the whole family is small enough to hardcode like `SLOW_MAGNITUDES`:
+
+| Spell | Hate | Landing text (bystander) |
+|---|---:|---|
+| Ancient: Greater Concussion (2117) | **−600** | `staggers from a blow to the head.` |
+| Jolt (1741) | −500 | `'s head snaps back.` |
+| Cinder Jolt (1296) | −500 | `'s head snaps back.` |
+| Concussion (752) | −400 | `staggers from a blow to the head.` |
+| JoltingBladesEffect (2876) | −200 | `'s head snaps back.` |
+
+Bigger reducers are also unmodeled and matter more: **Feign Death** wipes hate
+outright (monk/necro/SK — and the agent already detects FD lines for the death
+semantics work, so the signal is in hand), and rogue evade drops it hard.
+
+**Attribution caveat, same shape as the slow problem.** The bystander line names
+the MOB, not the caster — `<Mob> staggers from a blow to the head.` could be any
+wizard in the raid. But the CASTER's own client resolves it exactly through the
+self-cast path, and for a personal "you are closing on the MT" warning that is
+the only client that matters. Cross-client, treat an unattributed reducer as
+unknown rather than guessing an owner.
+
+### ⚠ Scale check — modelling this alone would NOT have explained that screenshot
+
+Be honest about the arithmetic before promising it fixes anything. At the
+catalog's flat **−600**, against Wabumkin's **120k**, one Ancient: Greater
+Concussion is **~0.5%**. Ten casts is still ~5%. It does not close an 11k gap to
+the MT.
+
+So one of two things is true, and they lead to different work:
+
+1. Our damage→hate weighting is roughly 1:1 and concussion really is a rounding
+   error at raid-boss hate pools — in which case model it for correctness, but
+   the gap has another cause; **or**
+2. concussion feels far stronger in play than −600 out of 120k, which would mean
+   our **damage→hate weighting is wrong** — and that is precisely the open
+   `EQMac threat weights` Report-04 item. Wizards pulling aggro at top damage is
+   the classic symptom of spell hate not being weighted like melee hate.
+
+**Validating the weights is the higher-value work of the two**, and it is
+testable: the threat snapshot series plus a known concussion cast gives an
+observed step change to compare against −600. If the step is much larger than the
+catalog says, hypothesis 2 is confirmed and the whole meter needs re-weighting,
+not just a reducer added.
+
 ## ⚠ Honest limits — state these on the overlay, not just here
 
 - **Taunt is unmodeled.** `taunt-emote attribution` is still an open Report-04
