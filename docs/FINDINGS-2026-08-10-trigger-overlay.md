@@ -458,16 +458,64 @@ within a second or two — one `guild`, one `guild_relay`, both reaching
 `5/6 dispatched` — is this bug. A single row means the second voice came from
 someone's open mic on Discord.
 
-**Interim option, DB-only:** set `default_scope = 'personal'`. Every client that
-can see the death line fires it once from its own log, so the double is
+**Interim option A, DB-only:** set `default_scope = 'personal'`. Every client
+that can see the death line fires it once from its own log, so the double is
 impossible. The cost is real: a raider out of range of the death stops hearing it
-at all, which is the case the relay was built for. Not applied — this is a raid-
-behaviour call, not a bug fix.
+at all, which is the case the relay was built for. **Rejected by Hitya
+2026-08-10: "No we want that broadcast. We only want to hear it once."**
+
+**Interim option B, DB-only — the one that actually matches the ask.** Move the
+spoken half onto a `discord` voice action and leave the visual on the local
+overlay:
+
+```json
+[{"type":"text_overlay","text":"RIP {victim}","color":"yellow",
+  "duration_ms":4000,"require_raid_member":"victim"},
+ {"type":"discord","voice":true,"message":"Rest in Peace {victim}"}]
+```
+
+Why this gives broadcast reach heard exactly once:
+
+- `_relayLocalFire` **strips `discord` actions** (line 25232), so the spoken half
+  never rides the relay — it can't double through that path by construction.
+- The `discord` action's dedup key defaults to `t.name + ':' + msg`
+  (line 28206) — the EXPANDED message, `Death touch — RIP:Rest in Peace Hitya`.
+  No `L`, no timestamp, so it is **identical across every observer**, and the
+  bot's cross-agent dedup (`index.js:12781`, `guildId|mode|key`) collapses all N
+  reporters into one spoken callout.
+- Everyone in raid voice hears it, including raiders out of range of the death
+  line — which is the coverage `personal` scope would have lost.
+- `require_raid_member` still protects it: the gate is **trigger-level**, so one
+  action declaring it suppresses the entire fire (see the correction below).
+
+Verified prerequisites: `RAID_VOICE_CHANNEL_ID` **is** set in Railway production
+(the bot drops voice fires silently when it isn't — `if (!voiceCh) continue;`).
+
+Residual risks, both real:
+1. **No guild trigger uses a `discord` action today** — zero rows in
+   `guild_triggers` match. This path is unexercised in this guild, so the first
+   trigger to use it is also its first test.
+2. It moves the callout from each raider's local speaker to Discord TTS, adding
+   the agent → upload queue → Discord hop. Fine for a death notice (after the
+   fact); wrong for anything that needs to warn *before* an event.
+
+**Not applied mid-raid** for reason 1 — swapping the only death callout onto an
+unproven surface during a raid risks losing it entirely. Test it on a throwaway
+trigger first, then move RIP over.
 
 ### 8. Carried over from earlier tonight
 
-- **`require_raid_member` is an action-level gate only** — it does not suppress
-  the trigger's timer, so a non-raider still gets the countdown row.
+- ~~**`require_raid_member` is an action-level gate only** — it does not suppress
+  the trigger's timer.~~ **WRONG — checked and retracted 2026-08-10.** The field
+  is *declared* on an action but *enforced* trigger-wide: `_fireTriggerActions`
+  (`packages/wolfpack-logsync/index.js:28128`) returns before any action or timer
+  runs if any action's `require_raid_member` capture is not a raid member or one
+  of our pets. The comment says so explicitly — *"treat the whole trigger as
+  suppressed (no actions, no timer)"* — and gives the reason: rendering a Death
+  Touch countdown for a pet while suppressing the overlay text would be worse
+  than doing neither. The only softness is deliberate: the gate **falls open**
+  when `_raidRosterMembers` is empty (no Zeal type-5 roster seen yet), so
+  out-of-raid testing still fires. Nothing to fix here.
 - **Mute control on `/admin/triggers`** — Hitya asked for a quick edit link plus
   a mute; deferred past the freeze. Open choice: page-level TTS mute vs a
   per-row soft mute.
