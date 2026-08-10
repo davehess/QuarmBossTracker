@@ -145,3 +145,70 @@ still alive.** Mez owner, tank HP, weapon-shield countdown, off-heal HP, the DA
 tank — all of them. A shared "this datum has an age and a liveness" wrapper is a
 smaller change than fixing each surface, and it is the difference between an
 overlay that goes quiet and one that lies.
+
+---
+
+## 6. CH overlap detection must be measured LOCALLY, then merged on true time
+
+Hitya, 2026-08-10: *"We need an alert when two people have casts that appear to
+be going at the same time or nearby on CHs, and we have it built in but everyone
+mutes it because the gap is small, and physics won't allow us to hit those
+timings on a round trip. this comparison needs to be local."* And: *"that local
+compare needs to know clock offset for each healer."*
+
+Both halves are right, and together they give the design.
+
+**Why the current alert gets muted.** `CH GAP` / `CH GAP SOON` already exists
+(`apps/mimic/chchain.html`, with a per-machine mute that persists — so a raider
+mutes it once and never hears it again). The problem is measurement, not policy:
+a chain beat is 2–4 seconds, and a cross-client comparison carries **relay
+latency plus clock skew** — both of which are on the same order as the thing
+being measured. An alert whose error bar is as wide as its signal fires wrongly,
+so everyone mutes it, so the one alert that could prevent a tank death is off on
+every machine in the raid.
+
+**Local is the accurate source.** EQ writes `<Name> begins to cast a spell.` into
+*every nearby client's* log — visible in the raid captures as consecutive lines
+for Jankzer, Ghalix, Mcdorf and others. So one observer sees several clerics'
+cast STARTS, all stamped by **one clock**, with the agent's own sub-second
+arrival time. Comparing two of those is exact: no skew, no round trip. That is
+where overlap detection belongs.
+
+**But local is incomplete, which is where the offsets come in.** An observer only
+logs casts they were in range for and whose chat filters let through, so no
+single client reliably sees all seven chain slots. Completeness needs merging
+across observers — and the moment you merge, you are back on multiple clocks.
+
+So the rule, in priority order:
+
+1. **Compare locally observed casts against each other directly.** Same clock,
+   sub-second, no correction needed and none applied.
+2. **When merging another observer's sighting, convert it to TRUE time first**
+   using that observer's `clock_offset_ms` — the same correction shipped for
+   relayed trigger fires on 2026-08-10 (`fired_at_true_ms` = stamp + offset, then
+   minus our own offset to land on our clock).
+3. **Never compare raw stamps from two machines.** That is the current behaviour
+   and it is why the feature is muted fleet-wide.
+
+⚠ **Offset correction fixes skew, not latency.** A relayed sighting is still
+*late* even once its timestamp is honest. So a merged observation is good for
+"did these two overlap" after the fact; only the LOCAL path is fast enough to
+warn *before* a wasted CH. Rank the two accordingly — never let a merged
+sighting drive a real-time callout that a local one could.
+
+### The related ask: name who should DI
+
+From the same sequence — DI fired on Currygoat and Emma's CH landed just after,
+which is what saved the tank. Hitya: *"That would have been the perfect callout
+for Emma OR Aimey to DI because Fargan was being hit, Uilnayar was landing his
+heal already, bwavair was 3.4 seconds in, mcdorf and stupidrichard 6.4 seconds
+into cast each."*
+
+Every input is on the CH overlay already — who is mid-cast and how far in. The
+missing step is inverting it: when the tank is in danger and the chain has a gap,
+**name the cleric who is NOT committed** rather than making seven people work out
+who is free. Same local-first measurement rule applies: cast progress must come
+from local observation to be trustworthy at this timescale.
+
+DI has a real cost (an Emerald per cast), so the callout should name ONE person,
+not broadcast "someone DI" to the whole chain.
