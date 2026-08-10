@@ -193,7 +193,64 @@ same release.
 The exact shout that caused it is not recoverable — chain calls go out on
 `/shout`, and only `/gu` and `/rs` reach `chat_messages`.
 
-### 4. Carried over from earlier tonight
+### 4. Zeal tags don't disambiguate same-name mobs — two defects
+
+Hitya, live: *"we're not getting disambiguation after I tagged 3 as inc and they
+were retagged with tank names"*. The Extended Target overlay showed two
+`a crypt guardian` rows, both 81%, with **eight** `SLOWED` chips sitting in the
+`tags:` pool — the "tags on this name we could not weld to a row" bucket.
+
+The pool is doing exactly what it was built to do; the problem is upstream of
+it, in two places.
+
+**(a) An append silently discards the previous tag text** —
+`packages/wolfpack-logsync/index.js:26590`. The stored entry is one record per
+spawn id, and `+`/`@` are treated as replace:
+
+> *"append variants replace our stored text (the nameplate-merge subtleties
+> don't matter for a row label)"*
+
+They do matter now. In game the nameplate reads `<theirs> <mine>`, so after a
+tank tags `Fuggin-Tanking` and a slow macro appends `+SLOWED`, the raid sees
+`Fuggin-Tanking SLOWED` while we store just `SLOWED`. The tank name — the only
+part the welder can use — is thrown away. That is how three mobs tagged with
+tank names end up as an unweldable pool of `SLOWED`.
+
+Fix: on `mode === 'append'`, store `((prev && prev.text ? prev.text + ' ' : '') + text).slice(0, 48)`.
+The comment above it already predicted this ("the log would show a replace where
+the raid saw a merge") — it is now a display bug too, not just a log fidelity one.
+
+**(b) Welding only matches on tank NAME, never on the spawn id or the tagger** —
+`index.js:10604`:
+
+```js
+const target = rows.find(c => !c._tag && (c.tanks || []).some(t2 =>
+  textLower.includes(String(t2).toLowerCase())));
+```
+
+So a tag whose text is `inc`, `SLOWED`, `^S^`, or any callout that isn't a tank's
+name can never bind, even though the tag carries a `spawn_id` that uniquely
+identifies the mob. `#194` deliberately froze this at v1 ("Tags do not change K
+in v1"), which was the right call for *counting* instances — an unwelded tag
+can't say which HP band is its mob. But it also blocks the easy win:
+
+1. **Weld by TAGGER first.** `tg.tagger` is the character who sent the tag. If
+   that name is one of a row's tanks, the tag is theirs — no text matching
+   needed. This alone fixes the "tank tags their own add with `inc`" case, which
+   is the normal raid action.
+2. Then fall back to the existing text match.
+3. Then the existing single-tag/single-row rule.
+
+Both are small and neither touches the K=1 byte-identical payload guarantee
+(tags are additive fields). (a) is agent-side, (b) is bot-side, so they ship
+separately.
+
+**Workaround until then (usable tonight):** put the tank's name in the tag text
+and use `!` (replace) rather than `+` (append) — `/tag chat !Fuggin-Tanking`.
+A bare `inc` or `SLOWED` tag will pool, and an appended one will erase whatever
+tank name was there.
+
+### 5. Carried over from earlier tonight
 
 - **`require_raid_member` is an action-level gate only** — it does not suppress
   the trigger's timer, so a non-raider still gets the countdown row.
