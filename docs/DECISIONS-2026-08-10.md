@@ -45,3 +45,70 @@ fires before 4s.
   fight. That is a deliberate raid-noise trade against the alternative of the
   prep not happening. If it reads as too chatty, drop the 10s line first — the
   curse-cure call is the one with no verbal substitute mid-crisis.
+
+## Emperor Ssraeshza: the melee proc, the Blood shell, and where playbooks live
+
+**Three findings, all now live in production data rather than a doc.**
+
+### 1. The Emperor casts TWO things, and the second explains the threat problem
+
+Hitya spotted a second spell. It is not a spell — it is a **melee attack proc**:
+`eqemu_npc_spells.attack_proc = 2981`, `proc_chance = 4`.
+
+**Diminutive Stature** (2981), unresistable: **SPA 64 spin stun + SPA 114 −95%
+aggro**, 5-tick duration, emote `<target> looks far less imposing.` It lands on
+whoever he is meleeing, i.e. the main tank.
+
+So the tank absorbs **two aggro wipes**: a guaranteed −95% every 60s from Rage of
+Ssraeshza, plus a random −95% on 4% of swings. That is the mechanical reason dps
+passes the tank, and it confirms Luter's "the tank is getting spin stun proc'd on
+a lot" — SPA 64 *is* that stun.
+
+Settled at the same time: **the buster has no healing component.** SPA 114 is
+aggro, proven by the family — `Calming Visage` −5 / `Beguiling Visage` −50
+("non-threatening") against `Haunting` +5 / `Horrifying Visage` +10
+("threatening"), plus the `Voice of` hate line at +2/+4/+6/+10/+12. The Emperor's
+spell list contains exactly one spell, so nothing else lands alongside. What
+makes healing *feel* useless is the **−1000 AC**. The real 75% heal reduction is
+the Devourers' proc, on the **offtanks**.
+
+**Trigger created** (`d2f9b74d-80aa-4df2-94c7-fb8ff4ab7842`), broadcast, 15s
+cooldown, on `^\[.+?\]\s+{s} looks far less imposing\.$` — anchored per the
+CLAUDE.md rule so `{s}` cannot eat the timestamp.
+
+⚠ **We cannot scope it to "currently attacking the Emperor."** `ZEAL_FIELDS` is
+numeric-only (`target_hp_pct`, `self_hp_pct`, `group_min_hp_pct`), so there is no
+target-name condition. The closest available is `applies_to_classes`, which the
+bot DOES honour server-side when serving guild triggers. Scoped to
+**Monk, Rogue, Ranger, Beastlord, Wizard, Magician, Necromancer** — tanks must
+NOT back off, and healers/enchanters/bards have add duty. The callout says
+"ON EMP? BACK OFF" and leaves the judgement to the player. Making it exact would
+need a target-name zeal condition, which does not exist today.
+
+### 2. We fight Blood of Ssraeshza, NOT the Ssraeshzian Blood Golem
+
+Settled from our own `encounters`, not from a writeup: **162189
+`#Blood_of_Ssraeshza` — 9 kills. 162493 `#Ssraeshzian_Blood_Golem` — 0
+engagements, ever.** Same shell/real split as the Emperor. Strategy writeups link
+162493; the mob is 162189, and its resists differ (MR **90**, not 60 — DR and PR
+both 1000 either way, so disease is useless on Blood and is the *only* way into
+the Emperor).
+
+Also recorded: Blood is the **clock, not the fight**. One tank holds it while add
+control happens; killing it starts the 2m10s Emperor countdown and is a one-way
+door.
+
+### 3. Playbooks belong on wolfpack.quest, not in a chat artifact
+
+Hitya: *"where are these artifacts getting placed? our point is to have these
+things in our Wolfpack quest."* Correct — Claude artifacts live on claude.ai and
+are fine for drafting, wrong as a destination.
+
+The home already existed: **`/guide/<internal_id>`**, whose Approach block renders
+`bosses_local.strat_notes` as pre-wrapped plain text (no markdown). Both rows were
+empty and are now written — `emperor_ssraeshza` (6.3k chars) and
+`blood_ssraeshza` (2.4k). No deploy needed; the page reads the DB.
+
+The guide index doubles as an authoring worklist, sorted so the bosses we kill
+most with nothing written float to the top. **Write strategy there, not into a
+doc or a chat page.**
