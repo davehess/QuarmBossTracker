@@ -395,7 +395,76 @@ Follow-up worth taking: `sound` actions being silent no-ops is invisible in
 `/admin/triggers`, so an officer can build a trigger that does nothing and get no
 feedback. Either implement the action or mark it unsupported in the editor.
 
-### 7. Carried over from earlier tonight
+### 7. "REST IN PEACE" spoken twice — relay dedup keyed on observer-specific data
+
+Hitya: *"We hear the 'REST IN PEACE' twice, not sure if it's local or hearing it
+over discord."* It is local. Two defects compound.
+
+**(a) The relay dedup key contains the raw log line.** A local fire is marked
+seen under (`packages/wolfpack-logsync/index.js:28303`):
+
+```js
+const fireKey = (t.name || 'trigger') + ':' + JSON.stringify(captures || {});
+```
+
+and that same key is what rides the relay (`_relayLocalFire`, line 25238) and
+what the consumer dedups on (`_consumeRelayFires`, line 25302). But `captures`
+is the full `_buildCaptureBag` output, which always carries `0` (the whole
+match) and `L`/`l` (**the raw log line, including that client's timestamp**).
+
+Two raiders watching the same death produce the same `victim`/`killer` but
+different `L`, because EQ log timestamps are second-resolution and client clocks
+drift — the exact drift this repo already measures and corrects for (the
+clock-offset work, agent `client_now` → consensus estimator). So:
+
+- the ORIGINATOR dedups its own echo correctly (same machine, same key), but
+- a SECOND observer's relay arrives with a different key and is never recognised
+  as the same event.
+
+Result: one callout locally, plus one more for every other observer whose
+timestamp differed by a second. Intermittent by construction — which is exactly
+why it sounds like it might be Discord bleed.
+
+**This is the same root cause as the `_startTimer` P1 at the top of this
+document.** Non-semantic bag keys (`0`, `L`, `l`) leaking into an identity key.
+One fix serves both: build identity from the *semantic* captures only.
+
+```js
+const NON_SEMANTIC = new Set(['L', 'l', 'c', 'char', 'self']);
+const idCaptures = Object.fromEntries(Object.entries(captures || {})
+  .filter(([k]) => !NON_SEMANTIC.has(k) && !/^\d+$/.test(k)));
+const fireKey = (t.name || 'trigger') + ':' + JSON.stringify(idCaptures);
+```
+
+The deliberate behaviour the comment at line 28299 protects — *"'RIP Hitya' and
+'RIP Sweenie' within the same second both land"* — is preserved, because
+`victim` is a semantic capture and stays in the key.
+
+**(b) Relayed fires ignore `cooldown_seconds` entirely.** `_runRelayedFire`
+(line 25543) builds a synthetic trigger with only `name`, `actions`,
+`timer_duration_sec` and `_scope`. No `cooldown_seconds`, so the gate at line
+27995 sees `undefined` and never fires. `Death touch — RIP` carries a 5s
+cooldown that would otherwise have absorbed this whole class of duplicate.
+
+That also means **raising `cooldown_seconds` in the DB cannot mitigate it** —
+worth stating, because that is the obvious first thing to try.
+
+Fix: carry `cooldown_seconds` (and `id`) onto the synthetic trigger so relayed
+fires respect the same gate as local ones.
+
+**How to confirm from the dashboard** (no code needed): the Trigger Checkpoint
+Journal shows one row per fire with its scope. Two `Death touch — RIP` rows
+within a second or two — one `guild`, one `guild_relay`, both reaching
+`5/6 dispatched` — is this bug. A single row means the second voice came from
+someone's open mic on Discord.
+
+**Interim option, DB-only:** set `default_scope = 'personal'`. Every client that
+can see the death line fires it once from its own log, so the double is
+impossible. The cost is real: a raider out of range of the death stops hearing it
+at all, which is the case the relay was built for. Not applied — this is a raid-
+behaviour call, not a bug fix.
+
+### 8. Carried over from earlier tonight
 
 - **`require_raid_member` is an action-level gate only** — it does not suppress
   the trigger's timer, so a non-raider still gets the countdown row.
