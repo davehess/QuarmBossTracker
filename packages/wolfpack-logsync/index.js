@@ -4235,6 +4235,11 @@ function offHealCandidatesSnapshot() {
     // the off-heal candidates list").
     if (!/^[A-Za-z]+$/.test(e.name)) continue;
     const nameLower = e.name.toLowerCase();
+    // A corpse is not an off-heal candidate. Without this the dead stay on the
+    // list at whatever HP they died on — Hawkner was published at 32% well
+    // after dying (2026-08-09), because recent tank hits keep them inside the
+    // window and their last HP still reads as "hurt".
+    if (_isDead(nameLower, now)) continue;
     try { fetchCharacterLiveState(e.name); } catch { /* prime cross-client HP */ }
     const hp = _resolveHpForName(nameLower, active, st);
     // Hurt offtanks only. Unknown HP (no Mimic / not yet resolved) is dropped
@@ -7184,6 +7189,10 @@ class EncounterBuilder {
         const whoEntry     = whoData.get(defName.toLowerCase());
         const charClass    = whoEntry?.class?.trim() || null;
         this.deaths.push({ name: defName, ts: event.ts, riposteDeath, class: charClass });
+        // Liveness: every surface that names a raider can now ask whether they
+        // are a corpse. Silent builders (old-log replay) must not tombstone
+        // anyone in the live session.
+        if (!this.silent) _noteDeath(defName, deathTs);
         // Silent builders (opt-in backfill) skip the session-wide deaths
         // counter — old log replays shouldn't move the Deaths panel.
         if (!this.silent) {
@@ -9351,6 +9360,78 @@ function _resolveHpForName(nameLower, active, st) {
   if (live && live.state && typeof live.state.self_hp_pct === 'number') return live.state.self_hp_pct;
   return null;
 }
+// ── Age + liveness (2026-08-10) ─────────────────────────────────────────────
+// Overlays were rendering the last value they were given with no notion of how
+// old it was or whether its source was still alive. That produced a whole family
+// of confident lies on raid night: a tank showing "7k / 7k · 100%" while at half
+// health, a dead tank still listed as the tank, and a corpse published as an
+// off-heal candidate at its final HP.
+//
+// Two primitives fix the class. AGE: every cross-client value carries the bot's
+// `updated_at`, so we can bound its real staleness — and because that stamp is
+// written by the BOT on ingest it is one consistent clock, which sidesteps
+// per-client skew entirely. We only have to correct for OUR own offset to
+// compare it against our Date.now(). LIVENESS: a death registry, so any surface
+// that names a raider can ask whether they are currently a corpse.
+//
+// The house rule this follows is already in this file (see _isPlausibleHpPool):
+// when a number cannot be stood behind, return NOTHING and let the card degrade
+// to the plain % it already has. A missing number reads as missing; a stale one
+// reads as fact.
+
+// Our clock translated onto the bot's, using the offset the heartbeat measures.
+// POSITIVE clockOffsetMs = this machine is BEHIND, so true = local + offset.
+function _nowOnServerClock() {
+  const off = stats.clockOffsetMs;
+  return Date.now() + (Number.isFinite(off) ? off : 0);
+}
+// Age of a bot-issued ISO timestamp, in ms. Infinity when unusable, so every
+// caller's `age > limit` check fails closed rather than treating it as fresh.
+function _ageOfServerStamp(iso) {
+  if (!iso) return Infinity;
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return Infinity;
+  return Math.max(0, _nowOnServerClock() - t);
+}
+// Exact cur/max HP is only meaningful for a few seconds on a tank taking 900s.
+// The relay path (agent poll + the bot's 2s cache) can legitimately be ~10s
+// behind, so this tolerates that and nothing like the 90s the bot allows —
+// 90s-old exact numbers next to a live percentage is precisely the bug.
+const HP_EXACT_MAX_AGE_MS = 20_000;
+
+// Who is currently dead. Fed by confirmed player deaths in the encounter
+// builder; cleared when they turn up alive again (a rez, or any fresh self-HP).
+const _deadSince = new Map();     // nameLower → diedAtMs
+const DEAD_FORGET_MS = 15 * 60_000;
+function _noteDeath(name, atMs) {
+  const k = String(name || '').toLowerCase();
+  if (!k) return;
+  _deadSince.set(k, atMs || Date.now());
+  if (_deadSince.size > 200) {
+    const cutoff = Date.now() - DEAD_FORGET_MS;
+    for (const [n, t] of _deadSince) if (t < cutoff) _deadSince.delete(n);
+  }
+}
+function _clearDeath(name) {
+  const k = String(name || '').toLowerCase();
+  if (k) _deadSince.delete(k);
+}
+// Deliberately forgets a death after DEAD_FORGET_MS. We do not see every rez —
+// an un-cleared entry would tombstone someone for the rest of the night, which
+// is a worse failure than briefly missing a corpse.
+function _isDead(nameLower, nowMs) {
+  const t = _deadSince.get(String(nameLower || '').toLowerCase());
+  if (t == null) return false;
+  if ((nowMs || Date.now()) - t > DEAD_FORGET_MS) return false;
+  return true;
+}
+function _deadNamesSnapshot(nowMs) {
+  const now = nowMs || Date.now();
+  const out = [];
+  for (const [n, t] of _deadSince) if (now - t <= DEAD_FORGET_MS) out.push({ name: n, since_ms: now - t });
+  return out;
+}
+
 // Is this number pair believable as an EQ character's HP pool? Every hop in the
 // exact-HP chain (Zeal label learner → raid_roster → the bot's live-state relay
 // → here) gated on `max > 100` and nothing else. That gate was written for ONE
@@ -9380,16 +9461,32 @@ function _isPlausibleHpPool(cur, max) {
 function _resolveHpValuesForName(nameLower, active, st) {
   const ok = (o) => o && _isPlausibleHpPool(o.self_hp_cur, o.self_hp_max);
   if (active && nameLower === String(active).toLowerCase() && ok(st)) {
-    return { cur: st.self_hp_cur, max: st.self_hp_max };
+    return { cur: st.self_hp_cur, max: st.self_hp_max, source: 'self' };
   }
   const now = Date.now();
   for (const ch of Object.keys(_zealState || {})) {
     const zst = _zealState[ch];
     if (!zst || (now - (zst.updatedAt || 0)) > 60_000) continue;
-    if (String(ch).toLowerCase() === nameLower && ok(zst)) return { cur: zst.self_hp_cur, max: zst.self_hp_max };
+    if (String(ch).toLowerCase() === nameLower && ok(zst)) {
+      // Another box on THIS machine — same clock, and the Zeal pipe refreshes
+      // sub-second, so the 60s gate above is the only one needed.
+      return { cur: zst.self_hp_cur, max: zst.self_hp_max, source: 'local' };
+    }
   }
   const live = _mtLiveStateByName.get(nameLower);
-  if (live && ok(live.state)) return { cur: live.state.self_hp_cur, max: live.state.self_hp_max };
+  if (live && ok(live.state)) {
+    // Cross-client. The bot allows exact numbers up to 90s old and can backfill
+    // them from a groupmate's raid_roster row, so this pair may be far older
+    // than the percentage rendered beside it — which is how a tank at half
+    // health displayed "7k / 7k · 100%" (2026-08-09). Age it against the bot's
+    // own stamp and drop it when stale: the card falls back to the plain %,
+    // which is live, instead of painting numbers we cannot stand behind.
+    const age = _ageOfServerStamp(live.state.updated_at);
+    if (age <= HP_EXACT_MAX_AGE_MS) {
+      return { cur: live.state.self_hp_cur, max: live.state.self_hp_max, source: 'relay', age_ms: age };
+    }
+    return null;
+  }
   return null;
 }
 // Resolve a named character's current buff list, mirroring _resolveHpForName's
@@ -33084,6 +33181,10 @@ module.exports = {
   _fireLog, _triggerJournal, _triggerLastFire,
   // #142 buster/spawn-chain timers — exported for the scratchpad fixture.
   _startTimer, _activeTimersSnapshot, _cancelTimersOnMobDeath, _deadMobNameFromLine,
+  // Age + liveness (2026-08-10) — exported so the wrapper is tested against
+  // the shipped code rather than a copy.
+  _noteDeath, _clearDeath, _isDead, _deadNamesSnapshot, _ageOfServerStamp,
+  _nowOnServerClock, _resolveHpValuesForName, _mtLiveStateByName,
   noteClientVersionLine, clientVersionsSnapshot,
   _checkBossSpawnChain, _checkTankBuster, _armBossCountdown, BOSS_SPAWN_CHAINS,
   _checkAoeDance, AOE_DANCE,   // #36 AoE-dance callouts — exported for the scratchpad fixture
