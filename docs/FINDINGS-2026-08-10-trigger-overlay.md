@@ -115,6 +115,48 @@ is gone. Restore `timer_duration_sec` once the agent fix ships:
 Ensnared at 780s was the worst offender: thirteen minutes of accumulation
 against one row per snared mob per cast.
 
+**The `tts` action was stripped from the same eight** (Hitya, live: *"it's VERY
+chatty for callouts"*). The on-screen text overlay is untouched — `SHM SLOW`,
+`ENSNARE - {s}` and friends still flash; they just no longer speak. A slow
+landing on every trash mob in a Ssra pull is not eight things worth saying out
+loud.
+
+### ⚠ RESTORE THIS after the agent fix ships
+
+Both changes above are temporary. One statement puts all of it back — run it
+once the fixed agent has reached the fleet, then re-check one pull:
+
+```sql
+update guild_triggers set timer_duration_sec = 780,
+  actions = '[{"text":"ENSNARE - {s}","type":"text_overlay","color":"red","duration_ms":5000},{"text":"Ensnare","type":"tts"}]'
+  where id = '384594e5-2170-49a3-ae2a-440df824f764';
+update guild_triggers set timer_duration_sec = 180,
+  actions = '[{"text":"BRD SLOW","type":"text_overlay","color":"green","duration_ms":5000},{"text":"Bard slow.","type":"tts"}]'
+  where id = '2ff69aa3-3b36-4bc1-a634-178d832bc12c';
+update guild_triggers set timer_duration_sec = 180,
+  actions = '[{"text":"DRU SLOW","type":"text_overlay","color":"green","duration_ms":5000},{"text":"Druid slow.","type":"tts"}]'
+  where id = 'be362ce9-1515-4c5f-a472-3239dc139101';
+update guild_triggers set timer_duration_sec = 180,
+  actions = '[{"text":"ENC SLOW","type":"text_overlay","color":"green","duration_ms":5000},{"text":"Enchanter slow.","type":"tts"}]'
+  where id = '85d5ed12-4f0f-43e3-989c-1320a20a4bff';
+update guild_triggers set timer_duration_sec = 180,
+  actions = '[{"text":"MAG SLOW","type":"text_overlay","color":"green","duration_ms":5000},{"text":"Magician slow.","type":"tts"}]'
+  where id = 'fadc1705-0aae-47ce-b548-3bcab000af23';
+update guild_triggers set timer_duration_sec = 180,
+  actions = '[{"text":"PLAGUE SLOW","type":"text_overlay","color":"green","duration_ms":5000},{"text":"Shaman plague.","type":"tts"}]'
+  where id = '8944158d-8d54-4132-9ae4-a6500d640faa';
+update guild_triggers set timer_duration_sec = 180,
+  actions = '[{"text":"SHM SLOW","type":"text_overlay","color":"green","duration_ms":5000},{"text":"Shaman slow.","type":"tts"}]'
+  where id = 'facb6fea-b21f-4dfd-b585-d36a65e06d58';
+update guild_triggers set timer_duration_sec = 180,
+  actions = '[{"text":"BST SLOW","type":"text_overlay","color":"red","duration_ms":5000},{"text":"Beastlord slowed","type":"tts"}]'
+  where id = '06b4935c-d58f-45a8-ac5f-0aa3e49997d9';
+```
+
+Restoring the TTS does not depend on the agent fix — that one is a taste call
+and can go back whenever the guild wants it. The **timers** are the ones gated
+on the fix; putting them back before it ships just re-creates the wall of rows.
+
 Left ON deliberately — low fire rate, one stray duplicate row is survivable
 until the fix: Death touch (120s), Emperor Ssra Tank Buster (60s), Dragon Roar
 (36s), Carnage / Copied Carnage (360s), Explorer Slain (350s), Feeblemind (30s),
