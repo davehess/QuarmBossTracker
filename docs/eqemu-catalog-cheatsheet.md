@@ -115,3 +115,53 @@ catalog source), so they can't be auto-classified — officer seed is the fallba
   feedback). A `[name]/loading.tsx` skeleton covers the perceived hang.
 </content>
 </invoke>
+
+---
+
+## `/useitem <slot>` — the equipped-slot click numbers
+
+Asked for periodically by members, so it lives here rather than being re-derived.
+`/useitem N` fires whatever is equipped in slot N. Weaker than `/use <itemname>`
+(it does not follow the item if you move it) but **consistent for that slot**,
+which is exactly what you want in a macro that should always click the thing on
+your wrist.
+
+| N | Slot | | N | Slot |
+|---:|---|---|---:|---|
+| 0 | Left Ear | | 11 | Hands |
+| 1 | Head | | 12 | Primary |
+| 2 | Face | | 13 | Secondary |
+| 3 | Right Ear | | 14 | Left Finger |
+| 4 | Neck | | 15 | Right Finger |
+| 5 | Shoulders | | 16 | Chest |
+| 6 | Arms | | 17 | Legs |
+| 7 | Back | | 18 | Feet |
+| 8 | Left Wrist | | 19 | Waist |
+| 9 | Right Wrist | | 20 / 21 | Ammo |
+| 10 | Ranged | | 22–29 | General inventory |
+
+⚠ **The in-game inventory diagram misprints Waist as `10`.** It is **19** — 10 is
+Ranged. Copying the diagram literally produces a macro that fires your ranged
+item instead of your waist clicky, and it fails silently.
+
+⚠ **These are NOT the EQEmu internal slot ids.** The internal ids in
+`eqemu_*` start at Charm = 0, so they run one AHEAD of this list from Left Ear
+onward (internal Left Ear = 1, `/useitem` Left Ear = 0). Never feed a DB slot id
+straight into `/useitem`.
+
+### What we can and cannot auto-generate today
+
+`character_inventory.slot_label` stores slot NAMES, not numbers — `Primary`,
+`Chest`, `Waist`, `General1`, `SharedBank6-Slot2` and so on. So:
+
+- **Auto-generable**: every unambiguous equipped slot — Head, Face, Neck,
+  Shoulders, Arms, Back, Ranged, Hands, Primary, Secondary, Chest, Legs, Feet,
+  Waist. A `slot_label` → N lookup is all it takes.
+- **NOT auto-generable**: the paired slots. We store `Ear`, `Wrist` and `Fingers`
+  with no left/right distinction, so we cannot tell 0 from 3, 8 from 9, or 14
+  from 15. A clicky generator must either ask which side, or emit both and let
+  the user delete one. **Do not guess a side** — a wrong number is a macro that
+  silently clicks the wrong item mid-raid.
+- Bag slots (`General1`…) are inventory, not equipped, so `/useitem` numbering
+  above 21 is only meaningful for items actually sitting in the top-level
+  general slots.
