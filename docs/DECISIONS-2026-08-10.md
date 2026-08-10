@@ -112,3 +112,40 @@ empty and are now written — `emperor_ssraeshza` (6.3k chars) and
 The guide index doubles as an authoring worklist, sorted so the bosses we kill
 most with nothing written float to the top. **Write strategy there, not into a
 doc or a chat page.**
+
+## RULE: when `main` gets something, `beta` gets it too
+
+**The call (Hitya, 2026-08-10):** beta must track main continuously, not be
+re-synced at graduations.
+
+**Why.** Re-syncing by hand was already the documented practice and it still did
+not work, because a re-sync is a snapshot rather than a link. Measured: the
+2026-08-09 re-sync landed 02:05 UTC, main took 50 more commits over the next day
+and a half, and by the next graduation beta was 7,714 deletions behind — three
+test files and a whole `/about` page main had gained *after* the snapshot.
+Nothing on beta was deleted; main moved forward, at 12–42 commits/day, because
+bot, web and docs all land there. Any rule that depends on remembering loses to
+that rate.
+
+**Where it landed.** `.github/workflows/sync-beta.yml` — merges main into beta on
+every push to main, serialised so two quick pushes cannot race. Rule + rationale
+in `CLAUDE.md` → Branches.
+
+- The two deliberately-ahead version files keep beta's side on conflict: the
+  Mimic park (`apps/mimic/package.json`) and the in-flight agent version. A park
+  at or below stable would tag prereleases sorting BELOW it and the updater would
+  stop offering betas.
+- Any other conflict **fails loudly** instead of auto-resolving — that means the
+  branches diverged on shared code, and silently picking a side loses work.
+- Pushes with `GITHUB_TOKEN`, which by design does not trigger `on: push`
+  workflows: no spurious `-beta.N` (the release feed caps at 10 and filling it
+  once broke beta updates fleet-wide), no duplicate CI. If anyone swaps it for a
+  PAT, add a `[sync]` guard to `release-mimic.yml` in the same change.
+
+**What it does NOT change.** A `beta → main` branch merge is still unsafe: beta
+carries the park and in-flight Mimic work, so graduations remain file-level
+promotions. The sync removes the drift, not the direction.
+
+**Verified on the first run** (2026-08-10): beta contains all of main, the park
+held at 2.3.6 against the 2.3.5 stable, and the files that previously showed as
+deletions are present on beta.
