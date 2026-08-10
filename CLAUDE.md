@@ -151,6 +151,17 @@ entry so the index stays trustworthy — a stale index causes exactly the wrong
 - **Working branches** (`claude/*`) — branch off `main`, merge back with a
   versioned `-m` message.
 
+⚠ **A re-sync is a SNAPSHOT, not a link — beta is stale again within hours, and
+that is normal (measured 2026-08-10).** The 2026-08-09 re-sync landed at 02:05
+UTC; `main` took **50 more commits** over the next day and a half (it runs 12–42
+commits/day — bot, web and docs all land there), so by the next graduation beta
+was already 7,714 deletions behind, including three test files and a whole
+`/about` page main had gained *after* the re-sync. Nothing on beta was deleted —
+**main moved forward.** So do NOT read "we re-synced recently" as "a branch merge
+is safe now": it is unsafe permanently, and the file-level promotion below is the
+only correct mechanism, not a workaround for forgetting to re-sync. The re-sync
+bounds the drift; it never removes it.
+
 **`beta` is `main` + the Mimic park, and must be RE-SYNCED after every
 graduation (2026-08-09).** Nothing ever flowed main→beta — agent/Mimic work
 landed on `beta`, graduations copied FILES to `main`, and the rest of the repo
