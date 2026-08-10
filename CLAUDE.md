@@ -151,16 +151,32 @@ entry so the index stays trustworthy — a stale index causes exactly the wrong
 - **Working branches** (`claude/*`) — branch off `main`, merge back with a
   versioned `-m` message.
 
-⚠ **A re-sync is a SNAPSHOT, not a link — beta is stale again within hours, and
-that is normal (measured 2026-08-10).** The 2026-08-09 re-sync landed at 02:05
-UTC; `main` took **50 more commits** over the next day and a half (it runs 12–42
-commits/day — bot, web and docs all land there), so by the next graduation beta
-was already 7,714 deletions behind, including three test files and a whole
+### RULE — when `main` gets something, `beta` gets it too (Hitya, 2026-08-10)
+Automated, not remembered: **`.github/workflows/sync-beta.yml`** merges `main`
+into `beta` on every push to `main`. So beta is continuously `main` + whatever
+agent/Mimic work is in flight, rather than a snapshot that starts rotting the
+moment it is taken.
+
+- The only files the sync will not pull backwards are the two deliberately-ahead
+  version files — `apps/mimic/package.json` (the park) and
+  `packages/wolfpack-logsync/package.json`. On a conflict there, beta wins.
+- **Any other conflict fails the workflow loudly** rather than auto-resolving.
+  That means main and beta genuinely diverged on shared code, and silently
+  picking a side is how you lose work.
+- It pushes with `GITHUB_TOKEN`, which by design does not trigger `on: push`
+  workflows — so a sync never cuts a spurious `-beta.N` and never double-runs CI.
+- **This does not make a `beta → main` branch merge safe.** Beta still carries
+  the park and in-flight Mimic work, so graduations stay file-level promotions.
+  The sync removes the *drift*, not the *direction*.
+
+⚠ **Why the old "re-sync at each graduation" was never enough — a re-sync is a
+SNAPSHOT, not a link (measured 2026-08-10).** The 2026-08-09 re-sync landed at
+02:05 UTC; `main` took **50 more commits** over the next day and a half (it runs
+12–42 commits/day — bot, web and docs all land there), so by the next graduation
+beta was already 7,714 deletions behind, including three test files and a whole
 `/about` page main had gained *after* the re-sync. Nothing on beta was deleted —
-**main moved forward.** So do NOT read "we re-synced recently" as "a branch merge
-is safe now": it is unsafe permanently, and the file-level promotion below is the
-only correct mechanism, not a workaround for forgetting to re-sync. The re-sync
-bounds the drift; it never removes it.
+**main moved forward.** Kept here because the failure mode is worth recognising:
+if the sync workflow is ever disabled, beta starts rotting again within hours.
 
 **`beta` is `main` + the Mimic park, and must be RE-SYNCED after every
 graduation (2026-08-09).** Nothing ever flowed main→beta — agent/Mimic work
