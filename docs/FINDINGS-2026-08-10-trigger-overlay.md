@@ -16,6 +16,7 @@ during the freeze.**
 | §7(b) relayed fires ignore `cooldown_seconds` | **FIXED** — agent 3.5.56 + bot 3.1.37 carry it across the relay |
 | Clock skew on relayed fires (NEW — below) | **FIXED** — bot 3.1.37 (`main`) + agent 3.5.56 (`beta`) |
 | The 8 muted trash triggers | **STILL MUTED — do not restore yet.** Gate below. |
+| §7b "yawns." always reads as Turgur's, incl. item procs | **NOT FIXED — needs Hitya's call.** 940 rows affected; badge says 75% for a 35% proc |
 | §1 clear-all · §2 tag on the chip · §3 CH filler word · §5 Kneel Test | queued |
 | §6 "Too Far" relay spam | fixed live, DB only, no revert needed |
 
@@ -561,6 +562,78 @@ Residual risks, both real:
 **Not applied mid-raid** for reason 1 — swapping the only death callout onto an
 unproven surface during a raid risks losing it entirely. Test it on a throwaway
 trigger first, then move RIP over.
+
+### 7b. Every "yawns." in the database is recorded as Turgur's Insects — including item procs (NEW, 2026-08-10 post-raid)
+
+Hitya: *"Ashieron slowed this sun revenant and it showed as shaman slow… instead
+it shows as turgurs. It should have been the effect of Willsapper, since he
+procced while wearing it."* Mob Info showed **`SHM SLOW Turgur's 75%`** with
+`Turgur's Insects 43/60 · 4:18` in DEBUFFS (OBSERVED).
+
+**The two spells are indistinguishable on a mob.** Verified against
+`eqemu_spells`:
+
+| | Energy Sap (1960, Willsapper proc) | Turgur's Insects (1588, SHM 60) |
+|---|---|---|
+| `cast_on_other` | `yawns.` | `yawns.` |
+| duration | 65 ticks, formula 7 | 65 ticks, formula 7 |
+| SPA 11 `max` | 65 → **35% slow** | 25 → **75% slow** |
+
+Same emote, same duration. The one thing that differs — the magnitude — is never
+printed. Energy Sap *does* have distinct text (`cast_on_you` = "You feel your
+energy being sapped.", `spell_fades` = "You feel less tired.", against the shaman
+line's shared "You feel drowsy."), but those are the ON-YOU forms and never
+appear for a mob. **From a bystander log line the two are byte-identical.**
+
+**We crown Turgur's on purpose.** `index.js:25862` — the 2026-07-27 slow-rescue
+keeps the yawns family from the >8 junk guard, filtered to `_isSlowSpell`
+members, so `parseDebuffLanding` "crowns a slow (Turgur's, longest duration)".
+Energy Sap is not in `SLOW_SPELLS`, so it is dropped by the rescue filter and can
+never be crowned, or tracked, or displayed.
+
+**Scale — this is not one row.** Across the whole `buff_casts` table there are
+**940 `Turgur's Insects` rows and ZERO rows for any other "yawns." spell** (Energy
+Sap, Walking Sleep, Drowsy, Tagar's, Togor's, Tigir's, Curse of Turgur, Curse of
+Walking Sleep, Mort Drowsy — none, ever). Every yawn the guild has recorded has
+been labelled Turgur's.
+
+**A large share of those are procs, not shaman casts.** On this one sun revenant:
+thirteen "Turgur's" landings in 80 minutes, including pairs 23 seconds apart
+(04:44:47 → 04:45:10, 04:48:17 → 04:50:25). Nobody re-casts a 6m30s slow that
+way. And **Ashieron is a Paladin** — he cannot cast Turgur's Insects at all,
+while `PAL` is in Willsapper's class list. For that landing the attribution is
+provably wrong.
+
+**The harm is tactical, not cosmetic.** The badge tells the raid the mob is
+slowed **75%** when a proc has slowed it **35%** — and the same misattribution
+feeds `target-buffs`, the cure queue and any analysis over `buff_casts`. It is
+the same shape as §5 (Kneel Test / Bolt of Karana): an ambiguous landing text
+where the resolver crowns a plausible representative and is silently wrong.
+
+**Not fixed — needs a call from Hitya**, because it reverses a deliberate design
+choice and changes raid-facing information. The options, and why this is not a
+straight bug fix:
+
+1. **Crown the weakest plausible member** when nothing names the caster. Never
+   overstates; a real Turgur's would read 35% until a named cast confirms it.
+2. **Show the family honestly** — `SLOWED (unidentified)`, no percentage — unless
+   a cast was actually observed. Most truthful, loses the at-a-glance number.
+3. **Prefer evidence, default to today's crown.** A self-cast or a relayed cast of
+   a yawns-family slow on that target within a few seconds names the spell
+   exactly; with no such cast, a yawn is far more likely a proc. Strong, but it
+   assumes fleet coverage — an unmonitored shaman would be read as a proc.
+4. **Gate on the roster**: a yawn cannot be Turgur's if no shaman is in the raid.
+   Cheap and sound, but only helps on shaman-less nights.
+
+Recommend **3 + 1**: use a named cast when one exists, and when none does, stop
+claiming 75%. Either way `SLOW_SPELLS`/`SLOW_MAGNITUDES` need Energy Sap (35%,
+labelled as a proc rather than a class) plus the four other unlisted yawns
+members, and the 940 existing rows need a decision on relabelling.
+
+⚠ Note for whoever implements: `_refreshSlowFromAmbiguousLand` has the same blind
+spot from the other direction — an ambiguous yawn REFRESHES whichever family
+member is already tracked, so a 35% proc silently re-opens a tracked 75% Turgur's
+window. That is likely why the badge read `4:18` remaining rather than expiring.
 
 ### 8. Carried over from earlier tonight
 
