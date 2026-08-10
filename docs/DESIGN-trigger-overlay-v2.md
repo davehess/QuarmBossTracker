@@ -128,7 +128,68 @@ right-click menu, hover-interact handshake, dashboard row, `apply*Visibility()`,
 The big clear TTS/callout text needs a user-settable font size. Setting lives
 with the other overlay prefs; applies to the alert overlay only.
 
-## 6. The mute / correct / edit loop
+## 6. The mute / correct / edit loop — an EVERYONE workflow
+
+Hitya, 2026-08-10: *"i need the mute wrong button to be an everyone workflow. no
+one of us can do it best, and suggestions on what's wrong need to come in. if
+it's wrong, we should add it in as a queue item. Something marked wrong that we
+could play back would be ideal. Hear the TTS fire while watching the fight
+happen."*
+
+Two things that follow, and neither is officer-gated:
+
+- **Filing is open to the whole raid.** Trigger curation has been one person
+  reading a table, which is how 37 of 109 enabled triggers ended up dead without
+  anyone noticing — an enabled trigger reads as coverage. The raid hears every
+  fire; they are the sensor. Anyone can mute, anyone can file Wrong, anyone can
+  attach a suggestion.
+- **Volume is the ranking signal.** Dedup reports by (trigger, ~same fire) so
+  five people flagging one callout becomes ONE queue item with five reporters,
+  not five items. Reporter count is the priority, replacing a judgement call
+  nobody is well placed to make alone.
+
+### ⏪ The replay half already exists — do not rebuild it
+
+`#101` shipped the hard part (`docs/HOW-ITS-BUILT.md:1144`):
+`startReplay`/`_replayWorker` walk any slice of a log back through the **real**
+trigger pipeline — pattern, cooldown, suppression — and speak the actual TTS.
+Fires are tagged `_replay`, nothing uploads or relays, live cooldowns are
+untouched, and it refuses mid-fight. It is driven by `POST /api/replay/start` on
+the agent, exposed as the ⏪ Replay card on the dashboard's Triggers tab and as
+**"⏪ Replay this fight locally"** on every `/parses/[id]` page, which already
+pre-fills the fight's time window.
+
+So *"hear the TTS fire while watching the fight happen"* is mostly a **linking**
+job, not a new engine:
+
+1. A Wrong report records what is needed to reconstruct a replay window —
+   `trigger_id`, the matched line, `character`, the log file, the fire timestamp,
+   `encounter_id` when the fire happened inside a known fight, and `agent_version`.
+2. "Replay this report" = `/api/replay/start` over `[ts - 30s, ts + 30s]` on that
+   character's log. One click, the same engine, and the reporter hears exactly
+   what they heard on raid night.
+3. When `encounter_id` is set the report also deep-links to the parse page, so the
+   fight timeline is on screen while it replays — the "watching the fight happen"
+   half, already built.
+
+**Privacy is satisfied by construction, and this is load-bearing.** The agent
+filters officer chat, tells, group and custom channels at the BYTE level *before*
+parse (`docs/PRIVACY.md`), so a line that reached a trigger is already a line we
+are allowed to keep. Capturing the matched line adds no new exposure. Capturing
+surrounding *context* lines would — those have not been through the trigger
+filter — so context stays LOCAL for replay and is never uploaded. The report
+carries the matched line only; the replay reads the user's own log on their own
+machine, which is exactly how #101 already works.
+
+### The report becomes a queue item
+
+A Wrong report is a work item, not a log entry. New `trigger_reports` table
+(reporter, trigger_id, matched line, ts, encounter_id, agent version, free-text
+suggestion, status), surfaced as a queue on `/admin/triggers` ranked by reporter
+count, with the status flowing open → fixed/won't-fix. This is the officer-facing
+half; filing stays open to everyone.
+
+### The rest of the loop
 
 The point: *"so they don't get spammed"*, self-service, without an officer.
 
