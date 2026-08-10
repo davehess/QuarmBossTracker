@@ -451,15 +451,32 @@
     var slowBadge = '';
     if (mi.target_slow && mi.target_slow.name) {
       var sl = mi.target_slow;
-      var slCls = sl.cls ? '<span class="sc">'+esc(sl.cls)+' SLOW</span> ' : '';
-      var slMag = sl.magnitude ? ' <span class="sm">'+sl.magnitude+'%</span>' : '';
+      // An ambiguous landing names no spell, class or strength — the game's
+      // emote is shared. Say "SLOWED" and put the possibilities in the tooltip
+      // rather than printing one family member's percentage as fact.
+      var slAmb = !!sl.ambiguous;
+      var slCls = (!slAmb && sl.cls) ? '<span class="sc">'+esc(sl.cls)+' SLOW</span> ' : '';
+      var slMag = (!slAmb && sl.magnitude) ? ' <span class="sm">'+sl.magnitude+'%</span>' : '';
       var slBy  = sl.caster ? ' <span class="by">by '+esc(sl.caster)+'</span>' : '';
       var slRem = (sl.remaining_secs != null) ? '<span class="st2">'+fmtSecs(sl.remaining_secs)+'</span>' : '';
-      var slTip = 'Slowed — '+esc(sl.name)+(sl.magnitude ? ' '+sl.magnitude+'% attack speed' : '')
-                + (sl.caster ? ' · cast by '+esc(sl.caster) : ' · caster unknown (bystander landing)')
-                + (sl.remaining_secs != null ? ' · '+fmtSecs(sl.remaining_secs)+' left' : '')
-                + ' · EQ slows do not stack — strongest shown';
-      slowBadge = '<div class="slowbadge" title="'+slTip+'">🐌 '+slCls+'<span class="sn">'+esc(_slowShort(sl.name))+'</span>'+slMag+slBy+slRem+'</div>';
+      var slName = slAmb ? (sl.display_name || 'SLOWED') : _slowShort(sl.name);
+      var slTip;
+      if (slAmb) {
+        var fam = (sl.family && sl.family.length) ? sl.family.slice().sort().join(', ') : '';
+        slTip = 'Slowed — strength unknown. The game prints the same emote for '
+              + (sl.family && sl.family.length ? sl.family.length : 'several')
+              + ' different spells, so we cannot tell which one landed'
+              + (fam ? ' (' + fam + ')' : '')
+              + '. An item proc such as Willsapper (Energy Sap, 35%) is indistinguishable here from '
+              + 'a shaman Turgur\'s Insects (75%) — same message, same duration.'
+              + (sl.remaining_secs != null ? ' · ' + fmtSecs(sl.remaining_secs) + ' left (longest of the family)' : '');
+      } else {
+        slTip = 'Slowed — '+esc(sl.name)+(sl.magnitude ? ' '+sl.magnitude+'% attack speed' : '')
+              + (sl.caster ? ' · cast by '+esc(sl.caster) : ' · caster unknown (bystander landing)')
+              + (sl.remaining_secs != null ? ' · '+fmtSecs(sl.remaining_secs)+' left' : '')
+              + ' · EQ slows do not stack — strongest shown';
+      }
+      slowBadge = '<div class="slowbadge'+(slAmb ? ' amb' : '')+'" title="'+slTip+'">🐌 '+slCls+'<span class="sn">'+esc(slName)+'</span>'+slMag+slBy+slRem+'</div>';
     }
     // Mana — comes from eqemu_npc_types.mana via the bot. Render a bar +
     // numeric line for any NPC with non-zero mana. Live tracking (per-cast

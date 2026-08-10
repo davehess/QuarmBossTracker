@@ -4651,7 +4651,18 @@ function _bestSlowForTarget(targetLower, nowMs) {
   if (!best) return null;
   const remaining = best.expiresAtMs > 0 ? Math.max(0, Math.round((best.expiresAtMs - now) / 1000)) : null;
   const total     = best.expiresAtMs > 0 ? Math.max(0, Math.round((best.expiresAtMs - best.landedAtMs) / 1000)) : null;
-  return { name: best.name, magnitude: best.magnitude, caster: best.caster || null,
+  // Ambiguous → report the duration (which the whole family shares closely
+  // enough to be useful) but NOT a spell name, class or percentage. Showing
+  // "SHM SLOW Turgur's 75%" for what may be a 35% item proc is worse than
+  // showing "SLOWED": it is the number a tank plans around.
+  if (best.ambiguous) {
+    return { name: best.name, display_name: 'SLOWED', ambiguous: true,
+             family: best.family || null,
+             magnitude: null, caster: null, cls: null,
+             remaining_secs: remaining, total_secs: total, landedAtMs: best.landedAtMs || 0 };
+  }
+  return { name: best.name, display_name: null, ambiguous: false, family: null,
+           magnitude: best.magnitude, caster: best.caster || null,
            cls: _slowClass(best.name),
            remaining_secs: remaining, total_secs: total, landedAtMs: best.landedAtMs || 0 };
 }
@@ -4702,14 +4713,23 @@ function _noteSlowForTarget(evt, caster) {
   const magnitude   = _slowMagnitude(evt.spell_name);
   let mp = _slowsByTarget.get(targetLower);
   if (!mp) { mp = new Map(); _slowsByTarget.set(targetLower, mp); }
+  // An ambiguous crown is only a guess at WHICH slow landed, so the magnitude
+  // that comes with it is a guess too. A named caster resolves it (a self-cast
+  // or relayed cast names the spell exactly), so ambiguity clears the moment we
+  // get one.
+  const ambiguous = !caster && !!evt.ambiguous;
   const existing = mp.get(spellLower);
   if (existing) {
     existing.landedAtMs = atMs;
     if (expiresAtMs) existing.expiresAtMs = expiresAtMs;
     if (caster) existing.caster = caster;    // a later self-cast view names a bystander-first land
     existing.magnitude = magnitude;
+    if (caster) existing.ambiguous = false;
+    else if (ambiguous) existing.ambiguous = true;
+    if (evt.family) existing.family = evt.family;
   } else {
-    mp.set(spellLower, { name: evt.spell_name, magnitude, caster: caster || null, landedAtMs: atMs, expiresAtMs });
+    mp.set(spellLower, { name: evt.spell_name, magnitude, caster: caster || null,
+                         ambiguous, family: evt.family || null, landedAtMs: atMs, expiresAtMs });
   }
   if (_slowsByTarget.size > SLOW_TARGET_CAP) {
     const oldest = _slowsByTarget.keys().next().value;
@@ -26000,6 +26020,16 @@ function parseDebuffLanding(line, observer) {
     const ts = parseEqTimestamp(line);
     return {
       target:       name,
+      // TRUE when the landing text is shared and this spell is only the
+      // longest-duration representative of its family, NOT an identification.
+      // "<mob> yawns." is the case that matters: eleven spells emit it, and the
+      // crown is Turgur's Insects (75% slow) while the very same emote is
+      // produced by the Willsapper proc Energy Sap (35%) — same text, same 65
+      // ticks, same formula 7. Consumers that show a MAGNITUDE must not present
+      // an ambiguous crown as fact (Hitya, 2026-08-10: a paladin's proc reading
+      // as "SHM SLOW Turgur's 75%").
+      ambiguous:    names.size > 1,
+      family:       names.size > 1 ? [...names] : null,
       spell_id:     names.size === 1 ? (resolved.id || 0) : 0,
       spell_name:   resolved ? resolved.name : null,
       landing_text: suffixRaw.trim().slice(0, 200),
