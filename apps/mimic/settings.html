@@ -193,6 +193,28 @@
     📊 Open Resource use…
   </button>
 
+  <div id="parserCard" style="display:none">
+    <h2>Old standalone Parser <span style="background:#5a1d1d;color:#ff9b9b;border:1px solid #a04040;border-radius:3px;font-size:9px;padding:1px 5px;margin-left:6px;vertical-align:middle;letter-spacing:1px">FOUND</span></h2>
+    <div class="hint" style="margin-bottom:8px">
+      This machine still has the older <b>Parser.bat</b> install, which starts itself
+      every time you log into Windows. Mimic already includes the same parser, so
+      only one of them uploads — whichever starts first. That is why Mimic can show
+      <i>“Read-only mode: parser is the active uploader.”</i> Nothing is
+      double-counted, but the older one wins the race every login, so Mimic's newer
+      parser never gets to do the work.
+      <br><br>
+      Retiring it stops the old parser and removes its auto-start and shortcuts.
+      <b>Nothing in your EverQuest folder is deleted</b> — running Parser.bat again
+      brings it all back if you ever want it.
+    </div>
+    <div id="parserDetail" class="hint" style="margin-bottom:8px;font-family:ui-monospace,Consolas,monospace">checking…</div>
+    <button id="parserBtn" type="button"
+      style="margin-top:2px;background:#21262d;color:#c9d1d9;border:1px solid #30363d;border-radius:6px;padding:6px 13px;cursor:pointer;font-family:inherit;font-size:12px">
+      🧹 Retire the old Parser and let Mimic take over
+    </button>
+    <div id="parserResult" class="hint" style="margin-top:6px"></div>
+  </div>
+
   <h2>Windows Defender</h2>
   <div class="hint" style="margin-bottom:8px">
     Real-time scanning inspects every file open, and both halves of this are
@@ -962,6 +984,60 @@
     btn.addEventListener('click', function () {
       try { window.mimic.openResources(); } catch (e) { void e; }
     });
+  })();
+
+  // ── Old standalone Parser ─────────────────────────────────────────────────
+  // The whole card stays hidden unless a leftover install is actually found —
+  // most users came straight to Mimic and should never see this section.
+  (function () {
+    var card = document.getElementById('parserCard');
+    var det  = document.getElementById('parserDetail');
+    var btn  = document.getElementById('parserBtn');
+    var out  = document.getElementById('parserResult');
+    if (!card || !btn) return;
+    if (!(window.mimic && window.mimic.parserStatus)) return;
+    function esc(t){ return String(t == null ? '' : t).replace(/[&<>"]/g, function (c) {
+      return ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' })[c]; }); }
+    function refresh() {
+      window.mimic.parserStatus().then(function (s) {
+        if (!s || !s.ok || !s.present) { card.style.display = 'none'; return; }
+        card.style.display = '';
+        var rows = [];
+        if (s.running) {
+          rows.push('<span style="color:#f6c365">●</span> running now (process ' + esc(s.pids.join(', ')) + ')'
+            + (s.parserHoldsLock
+                ? ' <span style="color:#ff9b9b">— it is the active uploader, so Mimic is read-only</span>'
+                : ' <span style="opacity:.7">— Mimic currently holds the uploader role</span>'));
+        } else {
+          rows.push('<span style="opacity:.6">·</span> not running right now');
+        }
+        if (s.installDir) rows.push('<span style="opacity:.6">·</span> installed in ' + esc(s.installDir));
+        if (s.hasTask)    rows.push('<span style="color:#f6c365">+</span> starts automatically at login (scheduled task' + (s.taskState ? ', ' + esc(s.taskState) : '') + ')');
+        (s.shortcuts || []).forEach(function (p) {
+          rows.push('<span style="color:#f6c365">+</span> shortcut ' + esc(p));
+        });
+        det.innerHTML = rows.join('<br>');
+        btn.disabled = false;
+      }).catch(function () { card.style.display = 'none'; });
+    }
+    btn.addEventListener('click', function () {
+      btn.disabled = true;
+      out.textContent = 'Working…';
+      window.mimic.parserRetire().then(function (r) {
+        var lines = [];
+        (r.done || []).forEach(function (d) { lines.push('<span style="color:#56d364">✓</span> ' + esc(d)); });
+        (r.fail || []).forEach(function (f) { lines.push('<span style="color:#ff9b9b">✕</span> ' + esc(f)); });
+        if (!lines.length) lines.push(esc(r.error || 'Nothing to do.'));
+        if (r.ok) lines.push('<span style="opacity:.75">Mimic takes over uploading within about 15 seconds.</span>');
+        else if ((r.fail || []).length) lines.push('<span style="opacity:.75">Anything left can be removed by hand in Task Scheduler.</span>');
+        out.innerHTML = lines.join('<br>');
+        setTimeout(refresh, 2000);
+      }).catch(function (e) {
+        out.textContent = 'Failed: ' + (e && e.message ? e.message : e);
+        btn.disabled = false;
+      });
+    });
+    refresh();
   })();
 
   // ── Windows Defender exclusions ───────────────────────────────────────────

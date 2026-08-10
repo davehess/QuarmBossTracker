@@ -28,13 +28,13 @@
   /* Trigger timing feedback row — three buttons below the flashed text so the
      person who just heard the callout can say whether the timing was right.
      Persists ~8s after the flash so the operator has time to click without
-     forcing the alert to linger. (Hitya 2026-06-26 — v1.1.2.)
+     forcing the alert to linger. (Uilnayar 2026-06-26 — v1.1.2.)
      Stacked in a column UNDER the alert (was position:absolute bottom:14%,
      which floated the buttons right on top of the flashed text — 2026-07-09).
      The row's height is ALWAYS reserved (visibility, not display) so the
      alert text sits at the same spot whether or not a vote is offered —
      appearing buttons must never shove the callout around mid-fight
-     ("include the buttons in the default spacing", Hitya 2026-07-09). */
+     ("include the buttons in the default spacing", Uilnayar 2026-07-09). */
   #alertcol{display:flex; flex-direction:column; align-items:center; gap:10px}
   #feedback{display:flex; visibility:hidden; gap:8px; align-items:center; pointer-events:auto;}
   #feedback.show{visibility:visible}
@@ -375,7 +375,7 @@
 
   // Trigger timing feedback — show the three vote buttons after each fire.
   // The most-recent trigger is stored so the buttons know which one to vote on.
-  // (Hitya 2026-06-26 — v1.1.2.) Buttons are hover-interactive while shown
+  // (Uilnayar 2026-06-26 — v1.1.2.) Buttons are hover-interactive while shown
   // so the click registers — they're inside the click-through overlay otherwise.
   let _lastFireTs = 0;
   let _lastTrigger = null;

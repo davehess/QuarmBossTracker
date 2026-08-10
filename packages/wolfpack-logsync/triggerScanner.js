@@ -1,5 +1,5 @@
 // triggerScanner.js — Locate GINA + EQ Log Parser (EQLP) installations on the
-// local machine and report what trigger files they hold. (Hitya 2026-06-26
+// local machine and report what trigger files they hold. (Uilnayar 2026-06-26
 // — v1.1.1 foundation: take advantage of the fact that the agent already runs
 // on each raider's machine to discover their existing trigger setup, rather
 // than asking them to upload an XML file.)

@@ -92,7 +92,7 @@ const WOLFPACK_URL    = 'https://wolfpack.quest';
 // Standard webPreferences for every window we open, PLUS a name stamped onto
 // that renderer's own command line.
 //
-// "Can these expose their names in Task manager as well?" (Hitya 2026-08-04)
+// "Can these expose their names in Task manager as well?" (Uilnayar 2026-08-04)
 // — partly. The Name column cannot change: every renderer is the same
 // Wolf Pack Mimic.exe and Task Manager reads that column from the exe's version
 // resource. (The Dashboard row is named only because it owns a visible taskbar
@@ -584,7 +584,7 @@ function _firstLineIsEqWelcome(filePath) {
 // eqlog_*_pq.proj stem (rotation / backup) pass only when line 1 is the EQ
 // welcome signature — so renamed logs are caught without tailing arbitrary
 // eqlog_-prefixed junk.
-// ── Persistent verdict cache (Hitya 2026-08-04) ──────────────────────────
+// ── Persistent verdict cache (Uilnayar 2026-08-04) ──────────────────────────
 // "we should be able to track the previous last updated dates on those files
 // and file size to not interpret them again."
 //
@@ -670,7 +670,7 @@ const _EQ_SCAN_TTL_MS = 30_000;
 // ── Learned dead ends ───────────────────────────────────────────────────────
 //
 // "it didn't show up on my list of installs but it showed up in the logs. We
-// should be able to ignore it" (Hitya 2026-08-04, on B:\Quarm costing 21s).
+// should be able to ignore it" (Uilnayar 2026-08-04, on B:\Quarm costing 21s).
 //
 // The DriveType filter catches the network-drive case, but it only knows about
 // drive TYPES. A slow dead end on a local fixed drive — a failing disk, a
@@ -914,7 +914,7 @@ async function resolveEqDirsWithLogs() {
 // bodies — so it runs on the MAIN process event loop, and while it runs every
 // Mimic window stops pumping messages. That is why a slow scan shows up as the
 // dashboard AND Settings both freezing, with Windows painting "(Not
-// Responding)" on the title bar (Hitya, 2026-08-04: "Something on the initial
+// Responding)" on the title bar (Uilnayar, 2026-08-04: "Something on the initial
 // loading page is taking a long time to load. same with the settings page. It
 // has gotten worse lately.").
 //
@@ -1103,7 +1103,7 @@ function _startWindowDrag(win, persistKey) {
     // that ends a drag — the window gets WS_EX_NOACTIVATE, the cursor slides
     // off the moving window, and mouseup lands on EQ instead. Result: the
     // 60fps setBounds stays glued to the cursor = "the overlay is stuck to my
-    // mouse" (Hitya 2026-06-22, CH chain + threat). Make the window
+    // mouse" (Uilnayar 2026-06-22, CH chain + threat). Make the window
     // focusable for the duration of the drag so mouseup is delivered, then
     // restore its resting focusability on drag end. isFocusable() captures the
     // resting state so we only re-disable windows that were non-focusable.
@@ -1146,7 +1146,12 @@ function _startWindowDrag(win, persistKey) {
 // Bundles every relevant ini file for a character (plus the global
 // eqclient.ini) so a player switching to a new machine can re-import in one
 // click. The bot encrypts before storing; we send plaintext over HTTPS.
-const UI_STUDIO_GLOBAL = ['eqclient.ini'];
+// Globals worth carrying to a new machine: eqclient.ini (client options,
+// UISkin, logging) and zeal.ini (Zeal's own settings, keyed by character
+// INSIDE the file — so it is global on disk but per-character in content).
+// zeal.ini was missing until 2026-08-09, which meant a machine migration
+// silently dropped every Zeal setting.
+const UI_STUDIO_GLOBAL = ['eqclient.ini', 'zeal.ini'];
 function _uiStudioFilesFor(character) {
   // Quarm log files are *_pq.proj.txt; the matching ini suffix is
   // _pq.proj.ini for per-character files and bare for the globals.
@@ -1185,6 +1190,20 @@ function _readUiBundle(eqDir, character) {
     // every named set. Real-name resolved like the rest, written back with .bak.
     const ms = f.match(/^([A-Za-z]+).*spellsets.*\.ini$/i);
     if (ms && ms[1].toLowerCase() === cLower) want.push(f);
+    // CATCH-ALL (2026-08-09): any other .ini belonging to this character.
+    // The enumerated list above only captures the conventions we happened to
+    // know about, so a machine migration dropped whatever it had not been
+    // told about — bandolier sets, and anything a future client/Zeal build
+    // adds. Enumerating features is the losing side of this; capture the set
+    // instead. The name must sit on a boundary (start of file, or between
+    // underscores) so a short character name cannot sweep in unrelated files.
+    if (/\.ini$/i.test(f)) {
+      const lf = f.toLowerCase();
+      if (lf.startsWith(cLower + '_') || lf.startsWith(cLower + '.') ||
+          lf.includes('_' + cLower + '_') || lf.includes('_' + cLower + '.')) {
+        want.push(f);
+      }
+    }
   }
 
   for (const wanted of want) {
@@ -2638,7 +2657,7 @@ function _curWindowUrl() {
   try { return (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents.getURL()) || '(none)'; }
   catch { return '(err)'; }
 }
-// Self-healing port watcher (Hitya 2026-07-15: "Can't reach the parser
+// Self-healing port watcher (Uilnayar 2026-07-15: "Can't reach the parser
 // engine at :7779" appearing constantly). The one-shot reload after
 // launchAgent() only fires when waitForAgent succeeds INSIDE its window — a
 // slow agent boot (23 logs to open), a crash-restart with backoff, or a
@@ -2694,7 +2713,7 @@ function createMainWindow() {
   // doesn't ambush the user mid-login. The user can pop it open from the tray.
   // Detected via the --autostart arg (set in applyAutoStart) OR Electron's
   // openAsHidden flag (which Windows passes when "Start hidden" was checked).
-  // An UNATTENDED auto-install counts as an auto-start too (Hitya,
+  // An UNATTENDED auto-install counts as an auto-start too (Uilnayar,
   // 2026-08-04: "The settings/dashboard did pop up to the foreground").
   //
   // The whole promise of install-on-EQ-close is that it happens without
@@ -2831,7 +2850,7 @@ function _boundsOnScreen(b) {
   } catch { return false; }
 }
 
-// ── Overlay home display (multi-monitor, Hitya 2026-07-15) ────────────────
+// ── Overlay home display (multi-monitor, Uilnayar 2026-07-15) ────────────────
 // "I've lost several overlays off my window and cannot find them." Overlays
 // can legitimately sit on ANY connected display (so _boundsOnScreen passes)
 // while the user plays EQ on another. The HOME display is where overlays
@@ -2867,7 +2886,7 @@ function _rescueOverlays() {
       const b = win.getBounds();
       // "Already home" = the window's CENTER sits on the home display. The
       // first cut tested for a mere sliver of overlap, so a window straddling
-      // the monitor boundary (Hitya 2026-07-15: CH chain never came back)
+      // the monitor boundary (Uilnayar 2026-07-15: CH chain never came back)
       // was counted as home and skipped — still mostly lost off-screen.
       const cx = b.x + b.width / 2, cy = b.y + b.height / 2;
       const onHome = cx >= a.x && cx < a.x + a.width && cy >= a.y && cy < a.y + a.height;
@@ -2983,7 +3002,7 @@ function applyAllOverlayOpacities() {
   for (const [key, win] of _overlayEntries()) applyOverlayOpacity(win, key);
 }
 
-// ── Per-overlay solid backdrop (Hitya 2026-07-10) ─────────────────────────
+// ── Per-overlay solid backdrop (Uilnayar 2026-07-10) ─────────────────────────
 // A dark opaque plate behind the WHOLE overlay window (not just the cards) so
 // overlays stay readable over bright scenes. Per-overlay in the right-click
 // chrome menu; all-at-once via the backdrop hotkey (default Ctrl+Shift+B,
@@ -3013,7 +3032,7 @@ function toggleAllBackdrops() {
   applyAllOverlayBackdrops();
 }
 
-// ── Auto-arrange overlays around the in-game UI (Hitya 2026-07-10) ────────
+// ── Auto-arrange overlays around the in-game UI (Uilnayar 2026-07-10) ────────
 // Reads the freshest UI_<Char>_*.ini (position data EQ itself writes; we NEVER
 // write these — EQ overwrites them on camp/zone/quit), projects the player's
 // window rects onto the primary display, and packs the VISIBLE overlay windows
@@ -3123,7 +3142,7 @@ function _autoArrangeOverlays(pinnedKey) {
       }
     }
   }
-  // Perimeter rule (Hitya 2026-07-11 — "they should stay out of the center
+  // Perimeter rule (Uilnayar 2026-07-11 — "they should stay out of the center
   // of the screen for the most part, lining the outside"): the middle ~52% of
   // the display is the play view and is a soft no-go zone. Pass 1 blocks it,
   // which fills the right column → top/bottom bands → left column; pass 2
@@ -3155,7 +3174,7 @@ function _autoArrangeOverlays(pinnedKey) {
   for (const o of moveList) {
     // Shrink-only preset ladder: try the current width, then narrower presets
     // ("auto-resize" — a too-wide overlay steps down until it fits somewhere).
-    // No resizing during arrange (Hitya 2026-07-12): windows keep their
+    // No resizing during arrange (Uilnayar 2026-07-12): windows keep their
     // exact size — an overlay that fits nowhere at its current size is
     // simply left where it was.
     const ladder = [o.b.width];
@@ -3167,7 +3186,7 @@ function _autoArrangeOverlays(pinnedKey) {
         // Right edge first, then sweep left — keeps the EQ center clear and
         // matches how raiders park overlays today.
         //
-        // Skip-ahead sweep (Hitya 2026-07-13: "hitting autoarrange lags
+        // Skip-ahead sweep (Uilnayar 2026-07-13: "hitting autoarrange lags
         // out the system"): the old inner loop stepped y 16px at a time
         // through BLOCKED space — up to ~12k candidate rects per overlay,
         // each overlap-checked against every obstacle, all synchronous on
@@ -3401,7 +3420,7 @@ function openSettings() {
   settingsWindow.on('closed', () => { settingsWindow = null; });
 }
 
-// Resource use — its own window as of 2026-08-04 (Hitya), reachable
+// Resource use — its own window as of 2026-08-04 (Uilnayar), reachable
 // from the tray and the dashboard rather than only from inside Settings.
 // "Is Mimic costing me anything?" gets asked while the game is running, so the
 // answer has to be openable next to EQ and leavable open; buried in Settings it
@@ -4229,7 +4248,7 @@ function _ourEqDirs() {
 //
 // eqgame.exe is the binary name for EVERY EverQuest client, so the process name
 // alone cannot tell Project Quarm from another install on the same machine.
-// Hitya 2026-08-04: EQLegends was the running client and Mimic reported
+// Uilnayar 2026-08-04: EQLegends was the running client and Mimic reported
 // "EverQuest running" — overlays up over the wrong game, the Zeal-missing nag
 // primed, and the EQ-close auto-install armed against a process we don't care
 // about. Only the full ExecutablePath distinguishes them.
@@ -4315,7 +4334,7 @@ function _checkEqRunning() {
 }
 // ── Pending-update install + nag ─────────────────────────────────────────────
 // Raiders kept arriving on old builds without realising it and quietly missing
-// features (Hitya 2026-08-03). autoInstallOnAppQuit already applies an update
+// features (Uilnayar 2026-08-03). autoInstallOnAppQuit already applies an update
 // at the next normal Mimic quit — but people leave Mimic running for days, so
 // that almost never fires.
 //
@@ -4391,7 +4410,7 @@ async function _pollEqPresence() {
   // EQ is closed and an update is waiting — install it, EVEN THOUGH no
   // close-transition happened on our watch.
   //
-  // THE BUG (Hitya, 2026-08-04: "beta 9 did not update after eq closed"):
+  // THE BUG (Uilnayar, 2026-08-04: "beta 9 did not update after eq closed"):
   // the call above only fires on the FALLING EDGE, so it required us to observe
   // running → closed. It misses the common orderings entirely:
   //   • the download finishes while EQ is already shut (the overnight case —
@@ -4413,7 +4432,7 @@ async function _pollEqPresence() {
 }
 // Presence polling backs OFF while EQ is absent.
 //
-// Some raiders quit Mimic between sessions "to save on processing" (Hitya
+// Some raiders quit Mimic between sessions "to save on processing" (Uilnayar
 // 2026-08-03), and they had a point about this one: everything else already
 // idles hard — the 1Hz blind poll early-returns on !_eqRunning, the 300ms Zeal
 // flush no-ops when no snapshot is dirty — but _checkEqRunning() SPAWNS
@@ -4754,7 +4773,7 @@ function applyZealVisibility() {
 // HP, boss enrage warning, current rampage target. Reads /api/tank-state which
 // aggregates everything from the locally-watched Zeal state. Cross-raid HP sync
 // is Tier 4 (deferred); the overlay shows the active local character only.
-// (Hitya 2026-06-25.)
+// (Uilnayar 2026-06-25.)
 function createTankOverlay() {
   const b = _resolveBounds('tankBounds', 'tankBoundsSig', { x: 40, y: 480, width: 300, height: 280 });
   tankWindow = new BrowserWindow({
@@ -4824,7 +4843,7 @@ function applyThreatVisibility() {
 
 // Extended Target overlay — raid-wide "who's targeting what", sorted by raider
 // count, with HP + debuffs per target. Polls /api/extended-target (agent proxy
-// of the bot aggregation). Opt-in (default off); EQ-gated. (Hitya 2026-06-29.)
+// of the bot aggregation). Opt-in (default off); EQ-gated. (Uilnayar 2026-06-29.)
 function createExtTargetOverlay() {
   const b = _resolveBounds('extTargetBounds', 'extTargetBoundsSig', { x: 40, y: 360, width: 320, height: 240 });
   extTargetWindow = new BrowserWindow({
@@ -4900,7 +4919,7 @@ async function _loadOverlayPreferAgent(win, overlayPath, fallbackFile) {
   try { await win.loadFile(fallbackFile); } catch (e) { void e; /* last resort — nothing more to try */ }
 }
 
-// Command Center overlay — the "one window" raid board (Hitya 2026-07-03):
+// Command Center overlay — the "one window" raid board (Uilnayar 2026-07-03):
 // boss/MT/rampage/enrage/Death Touch (same data as the Tank overlay) plus
 // raid-wide DA/invuln status and healer mana parsed from raid-chat macros,
 // plus Curse/Cure alerts from the buff queue. Reads /api/command-center.
@@ -4991,7 +5010,7 @@ function applyChChainVisibility() {
 // Every Electron BrowserWindow is its OWN Chromium renderer process — ~80 MB
 // resident before it paints a single pixel. Boot used to create ten of them
 // unconditionally, so a user running two overlays still paid for ten — around
-// 800 MB of renderers for overlays that were switched OFF (Hitya measured
+// 800 MB of renderers for overlays that were switched OFF (Uilnayar measured
 // the per-overlay floor at 80 MB, 2026-08-04). Windows now exist only while
 // their pref says they should.
 //
@@ -5047,7 +5066,7 @@ function _overlayForcedOn(cfg, e) {
 // Does this overlay need a window right now?
 //
 // "we have a toggle in taskbar for 'Hide Overlays when Everquest is not
-// running', and we should adhere to that" (Hitya 2026-08-04). Right: an
+// running', and we should adhere to that" (Uilnayar 2026-08-04). Right: an
 // overlay the EQ gate is hiding has no reason to hold an ~35 MB renderer, and
 // the same argument covers quiet mode. So existence tracks VISIBILITY, not just
 // the pref — which is the bulk of the saving, since EQ is closed most of the
@@ -5154,7 +5173,7 @@ function _hideAllHotkeyMenuLabel() {
 }
 // EVERY overlay's show flag, in one list — the old hand-written snapshot/flip
 // blocks silently missed showCommand (the Command Center kept showing through
-// hide-all, Hitya 2026-07-10). New overlays: add the flag HERE and it's
+// hide-all, Uilnayar 2026-07-10). New overlays: add the flag HERE and it's
 // covered automatically.
 const _HIDEALL_FLAGS = [
   'showHud', 'enableTriggerTts', 'showCharm', 'showPets', 'showMobInfo',
@@ -5405,7 +5424,7 @@ function currentStatus() {
     overlaysLocked: cfg.overlaysLocked !== false,
     // Hide-all flips every show* flag to false, which makes "I turned this off"
     // and "the hotkey hid this" look identical everywhere — the dashboard, the
-    // tray, this payload (Hitya 2026-08-04: "we should be able to see in the
+    // tray, this payload (Uilnayar 2026-08-04: "we should be able to see in the
     // overlays section which ones were previously off but are hidden").
     // Shipping the snapshot alongside the flags lets a UI tell them apart:
     // flag false + hideAllPrev[flag] true means HIDDEN, and it is coming back.
@@ -5797,7 +5816,7 @@ function buildTrayMenu() {
     { label: 'Open wolfpack.quest ↗', click: () => shell.openExternal(WOLFPACK_URL) },
     { type: 'separator' },
     // Multi-monitor rescue — run from the tray on the monitor you play on;
-    // every overlay gathers there and auto-arranges (Hitya 2026-07-15:
+    // every overlay gathers there and auto-arranges (Uilnayar 2026-07-15:
     // "lost several overlays off my window and cannot find them").
     { label: '🧲 Rescue overlays to this screen', click: () => {
         try { _rescueOverlays(); } catch (e) { appendAgentLog('[rescue] failed: ' + e.message + '\n'); }
@@ -5867,7 +5886,7 @@ function buildTrayMenu() {
 // (found / not found / downloaded) came back through electron-updater's
 // events, which fire identically whether the check was manual or the silent
 // hourly poll, so a manual click when already current gave literally zero
-// feedback (Hitya 2026-07-03: "the check for update doesn't look like
+// feedback (Uilnayar 2026-07-03: "the check for update doesn't look like
 // it's working - no popup"). _manualCheckPending bridges that: set here,
 // consumed + cleared by whichever updater event fires next in wireAutoUpdater.
 let _manualCheckPending = false;
@@ -6286,7 +6305,7 @@ ipcMain.handle('overlay-auto-height', (e, h) => {
     const delta = target - bounds.height;
     if (Math.abs(delta) < 4) return true;
     if (delta < 0 && delta > -12) return true;
-    // Grow-upward mode (Hitya 2026-07-11, asked for Extended Target): the
+    // Grow-upward mode (Uilnayar 2026-07-11, asked for Extended Target): the
     // BOTTOM edge stays anchored and the top moves — for overlays parked
     // near the bottom of the screen, where growing downward runs off-screen.
     // Per-overlay opt-in via the right-click chrome menu (cfg.overlayGrowUp).
@@ -6308,7 +6327,7 @@ ipcMain.handle('overlay-auto-height', (e, h) => {
     } else if (stashFresh) {
       y = stash.y;
     }
-    // Temporary grow-up diagnostic (Hitya 2026-07-13 "grows downward"): one
+    // Temporary grow-up diagnostic (Uilnayar 2026-07-13 "grows downward"): one
     // line per resize while grow-up is enabled, so a live repro shows whether
     // the branch fired and whether it clamped at the screen top (= overlay is
     // parked too high to grow up). Remove once confirmed.
@@ -6353,7 +6372,7 @@ ipcMain.handle('overlay-ensure-min-height', (e, h) => {
     // against them, not the temporarily grown edges. Without this, toggling
     // ⬆ Grow upward from the menu bottom-anchored the re-fit to the grown
     // window's extended bottom and teleported the overlay far south
-    // (Hitya 2026-07-11). Consumed by the next overlay-auto-height.
+    // (Uilnayar 2026-07-11). Consumed by the next overlay-auto-height.
     if (!win.__wpPreMenuBounds) {
       win.__wpPreMenuBounds = { x: b.x, y: b.y, width: b.width, height: b.height, at: Date.now() };
     }
@@ -6493,7 +6512,7 @@ ipcMain.handle('toggle-overlay', (_e, name) => {
     default:
       return null;
   }
-  // Auto-arrange on toggle REMOVED (Hitya 2026-07-12, 1.7.4-beta.2 test:
+  // Auto-arrange on toggle REMOVED (Uilnayar 2026-07-12, 1.7.4-beta.2 test:
   // "take out that automatic movement — it's very disruptive"). Turning an
   // overlay on/off never moves anything; arranging is manual-only via the
   // right-click ✨ Auto-arrange item.
@@ -6512,7 +6531,7 @@ ipcMain.handle('auto-arrange-overlays', () => {
 // 🧲 Rescue — gather every overlay onto the display under the cursor (the
 // monitor the user is looking at when they click the button), stamp it as
 // the overlay HOME display, and auto-arrange there. The fix for "I've lost
-// overlays somewhere on my other monitors" (Hitya 2026-07-15).
+// overlays somewhere on my other monitors" (Uilnayar 2026-07-15).
 ipcMain.handle('rescue-overlays', () => {
   try { return _rescueOverlays(); } catch (e) { return { error: e.message }; }
 });
@@ -6692,7 +6711,7 @@ ipcMain.handle('find-eq-installs', () => {
   // picker UI uses `scanned` to show "we looked in these paths".
   const hints = Array.isArray(cfg.eqPaths) ? cfg.eqPaths : (cfg.eqPath ? [cfg.eqPath] : []);
   // SKIP the speculative pass when a configured folder already answers the
-  // question (Hitya 2026-08-04: 20383ms, then 21027ms, hint A:\EQ).
+  // question (Uilnayar 2026-08-04: 20383ms, then 21027ms, hint A:\EQ).
   //
   // The `null` hint is the DISCOVERY pass — 20 hard-coded default paths across
   // drives A: through F:. Probing a drive letter that is not present, or is
@@ -6907,7 +6926,15 @@ ipcMain.handle('ui-studio-capture', async (_e, params) => {
     const result = await _httpsJson(`${_botBaseUrl(cfg)}/api/agent/ui_layout`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${_uiToken}` },
-      body: { character, label, server_short: 'pq.proj', source_width: srcW, source_height: srcH, files, agent_version: app.getVersion() },
+      // machine_name: which computer this backup came from. With two machines
+      // backing up the same character, a timestamp alone can't tell you whose
+      // snapshot you are about to restore (Hitya 2026-08-09).
+      body: {
+        character, label, server_short: 'pq.proj',
+        source_width: srcW, source_height: srcH, files,
+        agent_version: app.getVersion(),
+        machine_name: (() => { try { return require('os').hostname(); } catch { return null; } })(),
+      },
     });
     return { ok: true, id: result?.id, file_count: fileCount, pending_link: !!result?.pending_link };
   } catch (err) {
@@ -7334,7 +7361,7 @@ function _zealEqDir() {
 // are I/O-shaped: the agent re-reads its spell/clicky catalogs and queue from
 // userData on each start, and the EQ folder holds multi-GB append-only logs we
 // tail continuously. Excluding those folders is the single biggest win
-// available on a Windows box (Hitya 2026-08-04, whose EQ folder was already
+// available on a Windows box (Uilnayar 2026-08-04, whose EQ folder was already
 // excluded but Mimic's was not).
 //
 // DELIBERATELY NOT IN THE INSTALLER. An unsigned installer that silently
@@ -7376,6 +7403,188 @@ function _defenderPaths() {
   try { add(path.dirname(app.getPath('exe')), 'Mimic program folder'); } catch (e) { void e; }
   return out;
 }
+
+// ── Standalone Parser detection + retirement ───────────────────────────────
+// Mimic BUNDLES the agent, so a machine that used to run Parser.bat ends up
+// with two agents. That is safe — they elect ONE uploader through a lock in
+// %TEMP% — but the loser shows "Read-only mode: parser (localhost:7777) is the
+// active uploader", and since the standalone install auto-starts at every
+// login via the "WolfpackParser" scheduled task, it wins the race forever.
+// Mimic's bundled agent is then permanently the read-only one, running a build
+// the user cannot update from here.
+//
+// These two handlers let Settings say "you still have the old parser" and
+// retire it in one click. Nothing under the EQ folder is deleted — re-running
+// Parser.bat brings it all back — and no elevation is needed: the task was
+// registered by this user for this user, and the process runs as this user.
+const _PARSER_TASK_NAME = 'WolfpackParser';
+
+// One PowerShell round trip; JSON back. Kept read-only so Settings can poll it.
+// `excludeDir` is Mimic's own agent folder — its bundled agent must never be
+// mistaken for the standalone one (both are "some index.js under node.exe").
+// The parser-matching predicate, shared by the probe and the cleanup so they
+// can never disagree about what counts as "the standalone parser".
+//   * three entry points cover every way it starts: the agent itself, the
+//     PowerShell launcher, and the supervisor that restarts it;
+//   * $exclude is Mimic's own agent folder — its bundled agent is also
+//     "an index.js under node.exe" and must never match.
+const _PARSER_MATCH_PS = `
+$exclude = %EXCLUDE%
+function Get-WpParserProcs {
+  @(Get-CimInstance Win32_Process | Where-Object {
+    $_.CommandLine -and
+    ($_.CommandLine -match 'wolfpack-logsync\\\\index\\.js' -or
+     $_.CommandLine -match 'start-logsync\\.ps1' -or
+     $_.CommandLine -match 'supervisor\\.js') -and
+    ($exclude -eq '' -or $_.CommandLine -notlike ('*' + $exclude + '*'))
+  })
+}
+$ParserShortcuts = @(
+  (Join-Path ([Environment]::GetFolderPath('Desktop'))  'Parser.lnk'),
+  (Join-Path ([Environment]::GetFolderPath('Programs')) 'Parser.lnk'),
+  (Join-Path ([Environment]::GetFolderPath('Startup'))  'Parser.lnk'))
+`;
+
+function _parserProbeScript(excludeDir) {
+  return `
+$ErrorActionPreference = 'SilentlyContinue'
+${_PARSER_MATCH_PS.replace('%EXCLUDE%', _psq(excludeDir || ''))}
+$lockFile = Join-Path $env:TEMP 'wolfpack-logsync-uploader.json'
+$lockPid = 0; $lockClient = ''; $lockPort = 0; $lockVer = ''
+if (Test-Path $lockFile) {
+  $lock = Get-Content $lockFile -Raw | ConvertFrom-Json
+  if ($lock) {
+    $lockPid    = [int]$lock.pid
+    $lockClient = [string]$lock.client
+    $lockPort   = [int]$lock.webPort
+    $lockVer    = [string]$lock.agentVersion
+  }
+}
+$task      = Get-ScheduledTask -TaskName '${_PARSER_TASK_NAME}'
+$hasTask   = ($null -ne $task)
+$taskState = ''
+if ($hasTask) { $taskState = [string]$task.State }
+$procs = @(Get-WpParserProcs | ForEach-Object {
+  $dir = ''
+  if ($_.CommandLine -match '"?([A-Za-z]:\\\\[^"]*?)\\\\(wolfpack-logsync\\\\index\\.js|start-logsync\\.ps1|supervisor\\.js)') { $dir = $Matches[1] }
+  [pscustomobject]@{ procId = [int]$_.ProcessId; dir = $dir }
+})
+$sc = @($ParserShortcuts | Where-Object { Test-Path $_ })
+[pscustomobject]@{
+  procs      = $procs
+  hasTask    = $hasTask
+  taskState  = $taskState
+  shortcuts  = $sc
+  lockPid    = $lockPid
+  lockClient = $lockClient
+  lockPort   = $lockPort
+  lockVer    = $lockVer
+} | ConvertTo-Json -Compress -Depth 4
+`.trim();
+}
+
+// Run a PowerShell script from a TEMP FILE rather than -Command. These scripts
+// are multi-line and full of quotes, `$`, and regex backslashes; passing that
+// as one command-line argument is a well-known way to ship a quoting bug (the
+// elevated helper below takes the same approach for the same reason).
+function _runPs(script, timeout = 20000) {
+  return new Promise((resolve) => {
+    let file = null;
+    try {
+      const { execFile } = require('child_process');
+      file = path.join(app.getPath('temp'), `wp-mimic-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.ps1`);
+      fs.writeFileSync(file, script, 'utf8');
+      execFile('powershell.exe',
+        ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', file],
+        { timeout, windowsHide: true },
+        (err, stdout) => {
+          try { fs.unlinkSync(file); } catch { /* best effort */ }
+          resolve(err && !stdout ? null : String(stdout || ''));
+        });
+    } catch {
+      if (file) { try { fs.unlinkSync(file); } catch { /* best effort */ } }
+      resolve(null);
+    }
+  });
+}
+
+ipcMain.handle('parser-status', async () => {
+  if (process.platform !== 'win32') return { ok: false, unsupported: true, present: false };
+  const out = await _runPs(_parserProbeScript(AGENT_DIR()));
+  if (out === null) return { ok: false, present: false, error: 'Could not query Windows.' };
+  let d;
+  try { d = JSON.parse(out.trim() || '{}'); } catch { return { ok: false, present: false, error: 'Unreadable probe result.' }; }
+  // ConvertTo-Json collapses a single-element array to a bare object.
+  const asArr = (v) => (!v ? [] : (Array.isArray(v) ? v : [v]));
+  const procs = asArr(d.procs);
+  const shortcuts = asArr(d.shortcuts);
+  const running = procs.length > 0;
+  return {
+    ok: true,
+    // "present" drives whether Settings shows the card at all — a machine that
+    // never had the standalone parser should never see this section.
+    present: running || !!d.hasTask || shortcuts.length > 0,
+    running,
+    pids: procs.map(p => p.procId).filter(Boolean),
+    installDir: (procs.find(p => p.dir) || {}).dir || '',
+    hasTask: !!d.hasTask,
+    taskState: d.taskState || '',
+    shortcuts,
+    // Does the STANDALONE parser hold the uploader lock (i.e. is Mimic the one
+    // sitting in read-only mode)? That's the case this button exists for.
+    parserHoldsLock: !!(d.lockPid && procs.some(p => Number(p.procId) === Number(d.lockPid))),
+    lockClient: d.lockClient || '',
+    lockPort: d.lockPort || 0,
+    lockVer: d.lockVer || '',
+  };
+});
+
+ipcMain.handle('parser-retire', async () => {
+  if (process.platform !== 'win32') return { ok: false, error: 'Windows only.' };
+  // Recomputed here rather than trusted from the renderer: the pids to stop must
+  // come from a fresh probe, never from whatever the UI last rendered.
+  const script = `
+$ErrorActionPreference = 'SilentlyContinue'
+${_PARSER_MATCH_PS.replace('%EXCLUDE%', _psq(AGENT_DIR()))}
+$done = @()
+$fail = @()
+foreach ($p in (Get-WpParserProcs)) {
+  try { Stop-Process -Id $p.ProcessId -Force -ErrorAction Stop; $done += ('Stopped parser process ' + $p.ProcessId) }
+  catch { $fail += ('Could not stop process ' + $p.ProcessId + ': ' + $_.Exception.Message) }
+}
+$task = Get-ScheduledTask -TaskName '${_PARSER_TASK_NAME}'
+if ($task) {
+  try { Unregister-ScheduledTask -TaskName '${_PARSER_TASK_NAME}' -Confirm:$false -ErrorAction Stop; $done += 'Removed the auto-start task' }
+  catch { $fail += ('Could not remove the auto-start task: ' + $_.Exception.Message) }
+}
+foreach ($p in $ParserShortcuts) {
+  if (Test-Path $p) {
+    try { Remove-Item $p -Force -ErrorAction Stop; $done += ('Removed shortcut ' + (Split-Path $p -Leaf)) }
+    catch { $fail += ('Could not remove ' + $p + ': ' + $_.Exception.Message) }
+  }
+}
+# A hard stop never releases the lock, so it would sit there until the 45s TTL
+# expires. Clearing a lock whose pid is now dead lets our agent take over on its
+# next 15s heartbeat instead.
+$lockFile = Join-Path $env:TEMP 'wolfpack-logsync-uploader.json'
+if (Test-Path $lockFile) {
+  $lk = Get-Content $lockFile -Raw | ConvertFrom-Json
+  if ($lk -and -not (Get-Process -Id $lk.pid -ErrorAction SilentlyContinue)) {
+    Remove-Item $lockFile -Force
+    $done += 'Cleared the stale uploader lock'
+  }
+}
+[pscustomobject]@{ done = $done; fail = $fail } | ConvertTo-Json -Compress -Depth 3
+`.trim();
+  const out = await _runPs(script, 30000);
+  if (out === null) return { ok: false, error: 'Could not run the cleanup.' };
+  let d;
+  try { d = JSON.parse(out.trim() || '{}'); } catch { return { ok: false, error: 'Cleanup ran but returned nothing readable.' }; }
+  const asArr = (v) => (!v ? [] : (Array.isArray(v) ? v : [v]));
+  const done = asArr(d.done), fail = asArr(d.fail);
+  appendAgentLog(`[parser] retire standalone: ${done.length} done, ${fail.length} failed\n`);
+  return { ok: fail.length === 0, done, fail };
+});
 
 // Read-only: which of our paths Windows already excludes. Get-MpPreference does
 // not need elevation, so the UI can show state before asking for anything.
@@ -7444,7 +7653,7 @@ async function _runElevatedPs(tag, buildScript) {
           err: [String(stderr || '').trim(), (err && err.message) || ''].filter(Boolean).join(' | '),
         }));
     });
-    // THE BUG (Hitya 2026-08-04: "I approved the UAC prompts", and still got
+    // THE BUG (Uilnayar 2026-08-04: "I approved the UAC prompts", and still got
     // told it was cancelled). Windows PowerShell 5.1 — which is what
     // powershell.exe is — ALWAYS writes a UTF-8 BOM with `-Encoding UTF8`, and
     // there is no utf8NoBOM in 5.1. JSON.parse throws on a leading U+FEFF, so a
@@ -7468,7 +7677,7 @@ async function _runElevatedPs(tag, buildScript) {
       // Do NOT blanket-call this "cancelled". Declining UAC and the elevated
       // script failing outright produced the SAME message before, so a real
       // failure looked like a user decision and nobody investigated it
-      // (Hitya 2026-08-04: "i also did not see a note in there about the
+      // (Uilnayar 2026-08-04: "i also did not see a note in there about the
       // clock sync working or the windows defender exception being created").
       //
       // Windows reports a declined UAC prompt as Win32 error 1223, surfaced by
@@ -7796,7 +8005,7 @@ ipcMain.handle('restart-to-update', () => {
 });
 // Real resource numbers, not a promise.
 //
-// Raiders quit Mimic between sessions to save processing (Hitya 2026-08-03),
+// Raiders quit Mimic between sessions to save processing (Uilnayar 2026-08-03),
 // and the honest answer to "does it cost anything?" is a measurement they can
 // take on their OWN machine with their OWN overlay set — not a reassurance from
 // us. Electron's app.getAppMetrics() reports per-process CPU and working set for
@@ -7807,13 +8016,13 @@ ipcMain.handle('restart-to-update', () => {
 // first reading after a cold start reads high — the renderer discards sample #1.
 // OS pid → what that renderer actually IS. getAppMetrics() has no idea what a
 // process is FOR, so ten identical "overlay / window" rows told the user
-// nothing about WHICH overlays were alive (Hitya 2026-08-04). Only we can
+// nothing about WHICH overlays were alive (Uilnayar 2026-08-04). Only we can
 // name them. Several windows can legitimately share one renderer process, so
 // labels accumulate rather than overwrite.
 // ── Private working set, straight from Windows ─────────────────────────────
 //
 // "This says 274MB but task manager calls out 161MB. Why is there such a gap?"
-// (Hitya 2026-08-04.) Because they are two different measurements, and both
+// (Uilnayar 2026-08-04.) Because they are two different measurements, and both
 // are correct:
 //
 //   • Electron's privateBytes is PRIVATE COMMIT — every private page the
@@ -7838,7 +8047,7 @@ ipcMain.handle('restart-to-update', () => {
 // window is open. Everything falls back to the committed figure.
 // OFF BY DEFAULT. "I'd rather not take up extra cycles all the time just to be
 // right and match Task Manager, but we should explain that we are provisioned
-// for more committed RAM and that's why it wouldn't match" (Hitya
+// for more committed RAM and that's why it wouldn't match" (Uilnayar
 // 2026-08-04) — so the default is the free number plus the explanation, and
 // this is a checkbox in the Resource use window for when an exact comparison is
 // actually wanted. Each run times itself and reports the cost next to the
@@ -7847,7 +8056,7 @@ const _WS_TTL_MS = 12_000;
 let _wsPrivate = { at: 0, byPid: new Map(), inFlight: false, lastMs: 0 };
 // True only while the window that consumes these numbers is actually open.
 // "when we close that resource use window make sure we're not matching task
-// manager still and querying for the exact in the background" (Hitya
+// manager still and querying for the exact in the background" (Uilnayar
 // 2026-08-04). Today the only caller is resources.html's 2s poll, so closing
 // the window already stops it — but that is a property of the renderer, and a
 // background PowerShell loop is not something to leave resting on one. This
@@ -7948,7 +8157,7 @@ ipcMain.handle('app-metrics', () => {
       // workingSetSize counts SHARED pages in EVERY process that maps them, and
       // every Chromium renderer maps the same tens of MB of Electron framework.
       // Summing it across 13 processes counted that framework 13 times: Mimic
-      // reported 1267 MB where Task Manager showed 460 (Hitya 2026-08-04).
+      // reported 1267 MB where Task Manager showed 460 (Uilnayar 2026-08-04).
       // privateBytes is memory not shared with any other process — what Task
       // Manager's Memory column shows, and the only basis where the per-process
       // rows legitimately add up to a total.

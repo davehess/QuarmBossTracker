@@ -4,7 +4,7 @@
 // Sources: EQProgression encounter pages (guide URLs per encounter), TAKP
 // wiki, EQ Fandom — transcribed from the guild's reference docs
 // (wolfpack-pop-raid-reference.md + wolfpackplaneoftimeslideshow.md,
-// Hitya 2026-07-10). Numbers are GUIDE ESTIMATES; "confirmed on Quarm"
+// Uilnayar 2026-07-10). Numbers are GUIDE ESTIMATES; "confirmed on Quarm"
 // is the source of truth after the 2026-10-01 PoP unlock. The ⚑ Flag
 // anomaly button on each panel exists exactly for the deltas.
 //

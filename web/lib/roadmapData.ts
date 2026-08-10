@@ -37,6 +37,25 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'overlays-stop-guessing',
+    title: '\u{1F6E1} Your overlays stop telling you things they don’t know',
+    version: 'Mimic 2.3.5 · Agent 3.5.58',
+    date: '2026-08-10',
+    headline: 'Everything from the Ssra raid, now on the stable release — timers that stop stacking up, countdowns that agree with each other, and overlays that admit when they are not sure instead of guessing.',
+    features: [
+      { name: '\u{23F1} A re-slow resets the bar instead of adding another one', blurb: 'Every timer trigger was starting a brand new row each time it fired, so a trash pull buried the overlay in near-identical lines — and killing the mob could not clear them. Slows, snares and the rest now reuse one bar per mob, the row is labelled with the mob’s name, and killing it clears the bar. Reported by Hitya mid-raid.' },
+      { name: '\u{1F551} Shared callouts run on your clock, not the sender’s', blurb: 'When someone else’s trigger fires and gets passed to the raid it used to carry the time THEIR computer thought it was. PCs drift — three of ours are between 14 and 56 seconds out. A sender running slow had their callouts thrown away as "too old" before anyone heard them; a sender running fast had the callout arrive and then sit silent. Every countdown started from a shared trigger was wrong by that same gap. That difference is now measured and taken out on arrival.' },
+      { name: '\u{1F507} A death callout you hear once', blurb: 'Two people watching the same death each announced it, because the "have we already said this" check included their own log line — and two PCs never write that line identically. Shared callouts also respect the trigger’s cooldown now; they previously ignored it entirely.' },
+      { name: '\u{1F40C} The slow badge stops naming a spell it cannot know', blurb: 'Eleven different spells print the exact same message when they land, and a Willsapper proc (35%) was being reported as a shaman Turgur’s Insects (75%) — the same message, the same duration, less than half the actual slow. When we cannot tell which one landed the badge now just says SLOWED, with the possibilities in the tooltip. A slow we can actually identify still shows its real strength.' },
+      { name: '\u{1F489} Tank health numbers stop lying when they go stale', blurb: 'The main tank could show a full "7k / 7k" bar while sitting at half health, because the percentage came from your live game data while the exact numbers came from a snapshot that could be a minute and a half old. Exact numbers now expire, and the card falls back to the live percentage instead of showing figures nobody can stand behind.' },
+      { name: '\u{1FAA6} The dead stop showing up as people to heal', blurb: 'A raider who died stayed on the off-heal list at whatever health they died on, and stayed listed as a tank. Overlays now know who is currently dead.' },
+    ],
+    fixes: [
+      'A trigger set up to run one countdown per target — one bar per mez, say — was ignoring that setting and starting a new bar every fire anyway.',
+      'Raising a trigger’s cooldown could not stop a duplicated callout, because callouts passed between raiders ignored cooldowns completely.',
+    ],
+  },
+  {
     key: 'timers-agree-with-each-other',
     title: '\u{23F1} Everyone’s countdown finally says the same thing',
     version: 'Agent 3.5.56 · Bot 3.1.37',

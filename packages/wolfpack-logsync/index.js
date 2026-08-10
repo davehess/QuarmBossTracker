@@ -4235,6 +4235,11 @@ function offHealCandidatesSnapshot() {
     // the off-heal candidates list").
     if (!/^[A-Za-z]+$/.test(e.name)) continue;
     const nameLower = e.name.toLowerCase();
+    // A corpse is not an off-heal candidate. Without this the dead stay on the
+    // list at whatever HP they died on — Hawkner was published at 32% well
+    // after dying (2026-08-09), because recent tank hits keep them inside the
+    // window and their last HP still reads as "hurt".
+    if (_isDead(nameLower, now)) continue;
     try { fetchCharacterLiveState(e.name); } catch { /* prime cross-client HP */ }
     const hp = _resolveHpForName(nameLower, active, st);
     // Hurt offtanks only. Unknown HP (no Mimic / not yet resolved) is dropped
@@ -4651,7 +4656,18 @@ function _bestSlowForTarget(targetLower, nowMs) {
   if (!best) return null;
   const remaining = best.expiresAtMs > 0 ? Math.max(0, Math.round((best.expiresAtMs - now) / 1000)) : null;
   const total     = best.expiresAtMs > 0 ? Math.max(0, Math.round((best.expiresAtMs - best.landedAtMs) / 1000)) : null;
-  return { name: best.name, magnitude: best.magnitude, caster: best.caster || null,
+  // Ambiguous → report the duration (which the whole family shares closely
+  // enough to be useful) but NOT a spell name, class or percentage. Showing
+  // "SHM SLOW Turgur's 75%" for what may be a 35% item proc is worse than
+  // showing "SLOWED": it is the number a tank plans around.
+  if (best.ambiguous) {
+    return { name: best.name, display_name: 'SLOWED', ambiguous: true,
+             family: best.family || null,
+             magnitude: null, caster: null, cls: null,
+             remaining_secs: remaining, total_secs: total, landedAtMs: best.landedAtMs || 0 };
+  }
+  return { name: best.name, display_name: null, ambiguous: false, family: null,
+           magnitude: best.magnitude, caster: best.caster || null,
            cls: _slowClass(best.name),
            remaining_secs: remaining, total_secs: total, landedAtMs: best.landedAtMs || 0 };
 }
@@ -4702,14 +4718,23 @@ function _noteSlowForTarget(evt, caster) {
   const magnitude   = _slowMagnitude(evt.spell_name);
   let mp = _slowsByTarget.get(targetLower);
   if (!mp) { mp = new Map(); _slowsByTarget.set(targetLower, mp); }
+  // An ambiguous crown is only a guess at WHICH slow landed, so the magnitude
+  // that comes with it is a guess too. A named caster resolves it (a self-cast
+  // or relayed cast names the spell exactly), so ambiguity clears the moment we
+  // get one.
+  const ambiguous = !caster && !!evt.ambiguous;
   const existing = mp.get(spellLower);
   if (existing) {
     existing.landedAtMs = atMs;
     if (expiresAtMs) existing.expiresAtMs = expiresAtMs;
     if (caster) existing.caster = caster;    // a later self-cast view names a bystander-first land
     existing.magnitude = magnitude;
+    if (caster) existing.ambiguous = false;
+    else if (ambiguous) existing.ambiguous = true;
+    if (evt.family) existing.family = evt.family;
   } else {
-    mp.set(spellLower, { name: evt.spell_name, magnitude, caster: caster || null, landedAtMs: atMs, expiresAtMs });
+    mp.set(spellLower, { name: evt.spell_name, magnitude, caster: caster || null,
+                         ambiguous, family: evt.family || null, landedAtMs: atMs, expiresAtMs });
   }
   if (_slowsByTarget.size > SLOW_TARGET_CAP) {
     const oldest = _slowsByTarget.keys().next().value;
@@ -5845,6 +5870,12 @@ class EncounterBuilder {
         // Inbound damage taken (from mobs) — Tank tab on the damage overlay.
         took:       Math.round(t.took || 0),
         tookMax:    Math.round(t.tookMax || 0),
+        // Cumulative rampage damage taken (defenderStats), for the fight
+        // timeline's RAMP swimlane (docs/DESIGN-fight-timeline.md — the one
+        // part of the sketch with no capture at all until this field).
+        // Omitted when zero to keep the payload flat, like pet_charm.
+        ramp:       (this.defenderStats.get(name)?.rampageDmg > 0)
+                      ? Math.round(this.defenderStats.get(name).rampageDmg) : undefined,
         // Set for OUR pet rows (charm or summoned) — lets the DPS HUD allow
         // the multi-word name past its anti-NPC filter and label the row
         // "A Fungoid Sporeling (Hopeya)".
@@ -7158,6 +7189,10 @@ class EncounterBuilder {
         const whoEntry     = whoData.get(defName.toLowerCase());
         const charClass    = whoEntry?.class?.trim() || null;
         this.deaths.push({ name: defName, ts: event.ts, riposteDeath, class: charClass });
+        // Liveness: every surface that names a raider can now ask whether they
+        // are a corpse. Silent builders (old-log replay) must not tombstone
+        // anyone in the live session.
+        if (!this.silent) _noteDeath(defName, deathTs);
         // Silent builders (opt-in backfill) skip the session-wide deaths
         // counter — old log replays shouldn't move the Deaths panel.
         if (!this.silent) {
@@ -9325,6 +9360,78 @@ function _resolveHpForName(nameLower, active, st) {
   if (live && live.state && typeof live.state.self_hp_pct === 'number') return live.state.self_hp_pct;
   return null;
 }
+// ── Age + liveness (2026-08-10) ─────────────────────────────────────────────
+// Overlays were rendering the last value they were given with no notion of how
+// old it was or whether its source was still alive. That produced a whole family
+// of confident lies on raid night: a tank showing "7k / 7k · 100%" while at half
+// health, a dead tank still listed as the tank, and a corpse published as an
+// off-heal candidate at its final HP.
+//
+// Two primitives fix the class. AGE: every cross-client value carries the bot's
+// `updated_at`, so we can bound its real staleness — and because that stamp is
+// written by the BOT on ingest it is one consistent clock, which sidesteps
+// per-client skew entirely. We only have to correct for OUR own offset to
+// compare it against our Date.now(). LIVENESS: a death registry, so any surface
+// that names a raider can ask whether they are currently a corpse.
+//
+// The house rule this follows is already in this file (see _isPlausibleHpPool):
+// when a number cannot be stood behind, return NOTHING and let the card degrade
+// to the plain % it already has. A missing number reads as missing; a stale one
+// reads as fact.
+
+// Our clock translated onto the bot's, using the offset the heartbeat measures.
+// POSITIVE clockOffsetMs = this machine is BEHIND, so true = local + offset.
+function _nowOnServerClock() {
+  const off = stats.clockOffsetMs;
+  return Date.now() + (Number.isFinite(off) ? off : 0);
+}
+// Age of a bot-issued ISO timestamp, in ms. Infinity when unusable, so every
+// caller's `age > limit` check fails closed rather than treating it as fresh.
+function _ageOfServerStamp(iso) {
+  if (!iso) return Infinity;
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return Infinity;
+  return Math.max(0, _nowOnServerClock() - t);
+}
+// Exact cur/max HP is only meaningful for a few seconds on a tank taking 900s.
+// The relay path (agent poll + the bot's 2s cache) can legitimately be ~10s
+// behind, so this tolerates that and nothing like the 90s the bot allows —
+// 90s-old exact numbers next to a live percentage is precisely the bug.
+const HP_EXACT_MAX_AGE_MS = 20_000;
+
+// Who is currently dead. Fed by confirmed player deaths in the encounter
+// builder; cleared when they turn up alive again (a rez, or any fresh self-HP).
+const _deadSince = new Map();     // nameLower → diedAtMs
+const DEAD_FORGET_MS = 15 * 60_000;
+function _noteDeath(name, atMs) {
+  const k = String(name || '').toLowerCase();
+  if (!k) return;
+  _deadSince.set(k, atMs || Date.now());
+  if (_deadSince.size > 200) {
+    const cutoff = Date.now() - DEAD_FORGET_MS;
+    for (const [n, t] of _deadSince) if (t < cutoff) _deadSince.delete(n);
+  }
+}
+function _clearDeath(name) {
+  const k = String(name || '').toLowerCase();
+  if (k) _deadSince.delete(k);
+}
+// Deliberately forgets a death after DEAD_FORGET_MS. We do not see every rez —
+// an un-cleared entry would tombstone someone for the rest of the night, which
+// is a worse failure than briefly missing a corpse.
+function _isDead(nameLower, nowMs) {
+  const t = _deadSince.get(String(nameLower || '').toLowerCase());
+  if (t == null) return false;
+  if ((nowMs || Date.now()) - t > DEAD_FORGET_MS) return false;
+  return true;
+}
+function _deadNamesSnapshot(nowMs) {
+  const now = nowMs || Date.now();
+  const out = [];
+  for (const [n, t] of _deadSince) if (now - t <= DEAD_FORGET_MS) out.push({ name: n, since_ms: now - t });
+  return out;
+}
+
 // Is this number pair believable as an EQ character's HP pool? Every hop in the
 // exact-HP chain (Zeal label learner → raid_roster → the bot's live-state relay
 // → here) gated on `max > 100` and nothing else. That gate was written for ONE
@@ -9354,16 +9461,32 @@ function _isPlausibleHpPool(cur, max) {
 function _resolveHpValuesForName(nameLower, active, st) {
   const ok = (o) => o && _isPlausibleHpPool(o.self_hp_cur, o.self_hp_max);
   if (active && nameLower === String(active).toLowerCase() && ok(st)) {
-    return { cur: st.self_hp_cur, max: st.self_hp_max };
+    return { cur: st.self_hp_cur, max: st.self_hp_max, source: 'self' };
   }
   const now = Date.now();
   for (const ch of Object.keys(_zealState || {})) {
     const zst = _zealState[ch];
     if (!zst || (now - (zst.updatedAt || 0)) > 60_000) continue;
-    if (String(ch).toLowerCase() === nameLower && ok(zst)) return { cur: zst.self_hp_cur, max: zst.self_hp_max };
+    if (String(ch).toLowerCase() === nameLower && ok(zst)) {
+      // Another box on THIS machine — same clock, and the Zeal pipe refreshes
+      // sub-second, so the 60s gate above is the only one needed.
+      return { cur: zst.self_hp_cur, max: zst.self_hp_max, source: 'local' };
+    }
   }
   const live = _mtLiveStateByName.get(nameLower);
-  if (live && ok(live.state)) return { cur: live.state.self_hp_cur, max: live.state.self_hp_max };
+  if (live && ok(live.state)) {
+    // Cross-client. The bot allows exact numbers up to 90s old and can backfill
+    // them from a groupmate's raid_roster row, so this pair may be far older
+    // than the percentage rendered beside it — which is how a tank at half
+    // health displayed "7k / 7k · 100%" (2026-08-09). Age it against the bot's
+    // own stamp and drop it when stale: the card falls back to the plain %,
+    // which is live, instead of painting numbers we cannot stand behind.
+    const age = _ageOfServerStamp(live.state.updated_at);
+    if (age <= HP_EXACT_MAX_AGE_MS) {
+      return { cur: live.state.self_hp_cur, max: live.state.self_hp_max, source: 'relay', age_ms: age };
+    }
+    return null;
+  }
   return null;
 }
 // Resolve a named character's current buff list, mirroring _resolveHpForName's
@@ -25994,6 +26117,16 @@ function parseDebuffLanding(line, observer) {
     const ts = parseEqTimestamp(line);
     return {
       target:       name,
+      // TRUE when the landing text is shared and this spell is only the
+      // longest-duration representative of its family, NOT an identification.
+      // "<mob> yawns." is the case that matters: eleven spells emit it, and the
+      // crown is Turgur's Insects (75% slow) while the very same emote is
+      // produced by the Willsapper proc Energy Sap (35%) — same text, same 65
+      // ticks, same formula 7. Consumers that show a MAGNITUDE must not present
+      // an ambiguous crown as fact (Hitya, 2026-08-10: a paladin's proc reading
+      // as "SHM SLOW Turgur's 75%").
+      ambiguous:    names.size > 1,
+      family:       names.size > 1 ? [...names] : null,
       spell_id:     names.size === 1 ? (resolved.id || 0) : 0,
       spell_name:   resolved ? resolved.name : null,
       landing_text: suffixRaw.trim().slice(0, 200),
@@ -27904,6 +28037,10 @@ function _relayLocalFire(t, actions, captures, tsMs, key) {
       captures:            captures && typeof captures === 'object' ? captures : {},
       actions:             localActions,
       timer_duration_sec:  t.timer_duration_sec || 0,
+      // Carried so the receiver can apply the SAME cooldown gate we do — a
+      // relayed fire used to have no cooldown at all (see _runRelayedFire).
+      trigger_id:          t.id || null,
+      cooldown_seconds:    t.cooldown_seconds || 0,
       fired_at_ms:         tsMs || Date.now(),
     }],
   });
@@ -27953,6 +28090,41 @@ function _recentFiresActive() {
 // run each not-yet-seen, non-stale relayed fire. Shared by the standalone
 // /recent-fires poll and the #106 multiplexed poll so the ghost-TTL + dedup
 // logic stays identical between the two paths.
+// Translate a relayed fire's timestamp onto OUR clock (#202 follow-up).
+//
+// `fired_at_ms` was stamped from the ORIGINATOR's clock — it is the EQ log-line
+// time on their machine — and three installs have been measured 14s, 42s and
+// 56s off, drifting ~1.5-3 s/day. Every consumer compared that stamp against
+// its own Date.now(), so the skew showed up four ways, all of them live on
+// raid night (Hitya, 2026-08-10: "the clock skew was VERY apparent"):
+//   • the RELAY_STALE_MS gate below dropped EVERY fire from a machine running
+//     more than 15s behind — journalled as "stale-skipped, Ns old", which reads
+//     like relay backlog and isn't;
+//   • speakAt delays by (fireMs - Date.now()), so an originator whose clock runs
+//     AHEAD pushed the TTS that many seconds late (>60s dropped it outright);
+//   • _startTimer set ends_at_ms = origin_stamp + duration, so every receiver's
+//     countdown — and the warning TTS N seconds before it — was wrong by the
+//     full skew, with no two raiders' bars agreeing;
+//   • _localFireKeys mixed local and origin stamps, so echo-suppression of our
+//     own fire against someone else's relay of the same event misfired.
+// The bot resolves the stamp to true time at ingest (it is the only party that
+// sees every clock) and sends it as `fired_at_true_ms`; we subtract our OWN
+// offset to land on our local clock. Sign matches agent_clock_offsets: POSITIVE
+// = this clock is BEHIND, true = local + offset, so local = true - offset.
+//
+// Fail open, both directions: an older bot sends no true stamp, and our own
+// offset is null until the first heartbeat lands — either way we fall back to
+// the raw stamp, which is exactly today's behaviour.
+function _relayFiredAtLocal(fire) {
+  const raw = Number(fire && fire.fired_at_ms);
+  const trueMs = Number(fire && fire.fired_at_true_ms);
+  const mine = stats.clockOffsetMs;
+  if (!Number.isFinite(trueMs) || !Number.isFinite(mine)) {
+    return Number.isFinite(raw) ? raw : Date.now();
+  }
+  return Math.round(trueMs - mine);
+}
+
 function _consumeRelayFires(data) {
   if (!data) return;
   // #149 — the loot-posted broadcast rides the SAME payload as the trigger
@@ -27964,20 +28136,25 @@ function _consumeRelayFires(data) {
   }
   for (const fire of (data.fires || [])) {
     const fireKey = fire.key || fire.name || '';
-    if (_hasRecentFire(fireKey, fire.fired_at_ms)) continue;
-    _markFireSeen(fireKey, fire.fired_at_ms);
+    // Our-clock time for this fire — _localFireKeys holds LOCAL stamps from our
+    // own fires, so comparing a raw origin stamp against them mis-suppressed
+    // (or failed to suppress) whenever the two clocks disagreed.
+    const firedAtLocal = _relayFiredAtLocal(fire);
+    if (_hasRecentFire(fireKey, firedAtLocal)) continue;
+    _markFireSeen(fireKey, firedAtLocal);
     // Ghost-callout TTL (#76): after a queue backlog, a relayed fire can arrive
     // minutes late (posted_at is fresh, but the ORIGINAL fired_at is stale) and
     // speak as if live. Drop anything older than RELAY_STALE_MS at consumption —
     // journal it instead of speaking. Fail OPEN: a missing/unparseable timestamp
     // is treated as live so a real callout is never eaten by a bad clock.
-    const firedAt = Number(fire.fired_at_ms);
+    const firedAt = firedAtLocal;
     if (Number.isFinite(firedAt) && (Date.now() - firedAt) > RELAY_STALE_MS) {
+      const _skewNote = Number.isFinite(Number(fire.fired_at_true_ms)) ? '' : ' (uncorrected — no clock offset from the sender)';
       _journalTrigger({ trigger: fire.name || 'relayed', scope: 'guild_relay', checkpoint: TJ.MATCHED,
-                        stopped: true, reason: 'stale-skipped — fire was ' + Math.round((Date.now() - firedAt) / 1000) + 's old at consumption' });
+                        stopped: true, reason: 'stale-skipped — fire was ' + Math.round((Date.now() - firedAt) / 1000) + 's old at consumption' + _skewNote });
       continue;
     }
-    _runRelayedFire(fire);
+    _runRelayedFire(fire, firedAtLocal);
   }
 }
 
@@ -28200,7 +28377,7 @@ setInterval(_pollMultiplexed, POLL_FAST_MS).unref();
 
 // Execute a relayed fire — runs the same shape as a local detection,
 // but with _isRelay=true so the receiving Mimic doesn't re-relay it.
-function _runRelayedFire(fire) {
+function _runRelayedFire(fire, firedAtLocal) {
   if (!fire || !Array.isArray(fire.actions)) return;
   // Build a synthetic trigger-like object so the existing action handler
   // can process it. Marked _scope='guild_relay' so logs are
@@ -28209,9 +28386,18 @@ function _runRelayedFire(fire) {
     name:               fire.name || 'relayed',
     actions:            fire.actions,
     timer_duration_sec: fire.timer_duration_sec || 0,
+    // Carry the cooldown (and id) so a relayed fire passes through the SAME
+    // cooldown gate as a local one. Without these the synthetic trigger had no
+    // cooldown_seconds, the gate saw undefined and never held — so raising a
+    // trigger's cooldown in the DB could not suppress a duplicated relay, which
+    // is the first thing anyone tries.
+    id:                 fire.trigger_id || fire.id || null,
+    cooldown_seconds:   fire.cooldown_seconds || 0,
     _scope:             'guild_relay',
   };
-  _fireTriggerActions(trig, fire.captures || {}, fire.fired_at_ms || Date.now(), /*test=*/false, /*isRelay=*/true);
+  // firedAtLocal is the originator's stamp translated onto OUR clock (see
+  // _relayFiredAtLocal) — it drives the speakAt delay and the countdown start.
+  _fireTriggerActions(trig, fire.captures || {}, firedAtLocal || fire.fired_at_ms || Date.now(), /*test=*/false, /*isRelay=*/true);
 }
 
 // Helpers for the relay endpoints. _queueUploadOpts is the canonical
@@ -30044,6 +30230,32 @@ function _timerDurationSec(t, captures) {
   return Number(t.timer_duration_sec) || 0;
 }
 
+// The capture bag carries three things that are NOT semantic captures:
+// numeric keys ('0' is the whole match — for an ^…$ pattern, the entire line),
+// L/l (the raw log line, EQ timestamp included) and c/char/self (the local
+// character). They exist so action text can interpolate {L}/{c}, and they must
+// stay in the bag for that — but anything that derives an IDENTITY from the bag
+// has to drop them first, because they vary per line and per observer.
+//
+// Two bugs came from that leak (2026-08-10 Ssra, docs/FINDINGS-…-trigger-overlay):
+// every timer trigger made a NEW overlay row per fire (L carries the timestamp,
+// so no two ids matched, timer_key_capture was dead, the row label was the whole
+// log line, and _cancelTimersOnMobDeath could never match it); and REST IN PEACE
+// spoke twice, because two observers of one death build different relay keys
+// from their own second-resolution timestamps.
+const _NON_SEMANTIC_CAPTURES = new Set(['L', 'l', 'c', 'char', 'self']);
+function _semanticCaptureKeys(captures) {
+  if (!captures || typeof captures !== 'object') return [];
+  return Object.keys(captures)
+    .filter(k => !_NON_SEMANTIC_CAPTURES.has(k) && !/^\d+$/.test(k))
+    .sort();
+}
+function _semanticCaptures(captures) {
+  const out = {};
+  for (const k of _semanticCaptureKeys(captures)) out[k] = captures[k];
+  return out;
+}
+
 function _startTimer(t, tsMs, isTest, captures) {
   const _durSec = _timerDurationSec(t, captures);
   if (!t || !(_durSec > 0)) return;
@@ -30066,7 +30278,7 @@ function _startTimer(t, tsMs, isTest, captures) {
   // exactly like a debuff tracker — boss on the left, effect on the right.
   let timerTarget = null;
   if (captures && typeof captures === 'object') {
-    const keys = Object.keys(captures).sort();
+    const keys = _semanticCaptureKeys(captures);
     if (keys.length > 0) {
       captureSuffix = '|' + keys.map(k => k + '=' + String(captures[k])).join('|');
       timerTarget = captures.target || captures.npc || captures.mob || captures[keys[0]] || null;
@@ -30079,7 +30291,12 @@ function _startTimer(t, tsMs, isTest, captures) {
   if (!timerTarget && stats.currentEncounterThreat && stats.currentEncounterThreat.bossName) {
     timerTarget = stats.currentEncounterThreat.bossName;
   }
-  const id = baseId + captureSuffix;
+  // An explicit timer_key_capture IS the identity — appending the rest of the
+  // captures on top of it defeats the key (that is why the seven slow triggers
+  // carried timer_key_capture='s' and still duplicated on every fire). Keyed off
+  // the RESOLVED capture, not the field: a key_capture that matched nothing
+  // leaves no identity behind, so per-capture keying still applies there.
+  const id = _keyCap ? baseId : baseId + captureSuffix;
   // Replay arms the countdown on the WALL clock. tsMs stays authoritative for
   // pacing and the journal, but it is the historical log time — for any log
   // older than the duration, ends_at_ms lands in the past and
@@ -31237,7 +31454,14 @@ function _fireTriggerActions(t, captures, tsMs, test, isRelay) {
   // ("RIP Hitya" and "RIP Sweenie" within the same second) both land.
   let _relayed = false;
   if (!test) {
-    const fireKey = (t.name || 'trigger') + ':' + JSON.stringify(captures || {});
+    // SEMANTIC captures only — the bag's `0`/`L`/`l` carry the raw line and its
+    // second-resolution EQ timestamp, so two observers of the same death built
+    // different keys and neither recognised the other's relay as a duplicate:
+    // one local callout plus one more per observer whose clock differed by a
+    // second ("REST IN PEACE" spoken twice). The behaviour the comment above
+    // protects is preserved — `victim` is semantic and stays in the key, so
+    // "RIP Hitya" and "RIP Sweenie" in the same second still both land.
+    const fireKey = (t.name || 'trigger') + ':' + JSON.stringify(_semanticCaptures(captures));
     _markFireSeen(fireKey, tsMs || Date.now());
     if (!isRelay && t._scope !== 'personal') {
       _relayed = !!_relayLocalFire(t, t.actions || [], captures || {}, tsMs || Date.now(), fireKey);
@@ -32957,6 +33181,10 @@ module.exports = {
   _fireLog, _triggerJournal, _triggerLastFire,
   // #142 buster/spawn-chain timers — exported for the scratchpad fixture.
   _startTimer, _activeTimersSnapshot, _cancelTimersOnMobDeath, _deadMobNameFromLine,
+  // Age + liveness (2026-08-10) — exported so the wrapper is tested against
+  // the shipped code rather than a copy.
+  _noteDeath, _clearDeath, _isDead, _deadNamesSnapshot, _ageOfServerStamp,
+  _nowOnServerClock, _resolveHpValuesForName, _mtLiveStateByName,
   noteClientVersionLine, clientVersionsSnapshot,
   _checkBossSpawnChain, _checkTankBuster, _armBossCountdown, BOSS_SPAWN_CHAINS,
   _checkAoeDance, AOE_DANCE,   // #36 AoE-dance callouts — exported for the scratchpad fixture

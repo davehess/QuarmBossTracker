@@ -242,6 +242,11 @@
   //   id, file, section, label, x, y, w, h, origX, origY, origW, origH,
   //   sectionStart, sectionEnd  (line numbers in the file's contents)
   // }
+  // This computer's hostname, for labelling cloud backups in the restore
+  // picker. Empty on an older shell that predates the preload field — the
+  // picker then just never says "this computer", which is the safe direction.
+  var THIS_MACHINE = (window.mimic && window.mimic.machineName) || '';
+
   var STATE = {
     character: null,
     eqDir:     null,
@@ -809,7 +814,7 @@
     // windows that don't exist on this emu (mail, barter, tribute,
     // marketplace, mercenaries…). EQ still writes position sections for all
     // of them, which is why they appeared on the stage as arrangeable
-    // windows (Hitya 2026-07-06: "plenty of windows that show up in the
+    // windows (Uilnayar 2026-07-06: "plenty of windows that show up in the
     // UI studio that are not displayed during the game"). Default OFF —
     // toggle the category on if you really need to move one. Extend the
     // pattern as more are reported.
@@ -1566,6 +1571,11 @@
       var when = s.created_at ? new Date(s.created_at).toLocaleString() : '';
       var srcRes = (s.source_width && s.source_height) ? (s.source_width + '×' + s.source_height) : 'unknown res';
       var label = s.label || ('Backup ' + (i + 1));
+      // Which computer this came from. Pre-2026-08-09 snapshots have no
+      // machine_name — say so rather than implying it was this machine.
+      var machine = s.machine_name ? String(s.machine_name) : 'unknown machine';
+      var isThis  = THIS_MACHINE && s.machine_name &&
+                    String(s.machine_name).toLowerCase() === THIS_MACHINE.toLowerCase();
       html += '<button data-id="' + escapeHtml(s.id) + '" ' +
         'data-w="' + (s.source_width || '') + '" data-h="' + (s.source_height || '') + '" ' +
         'style="display:block;width:100%;text-align:left;background:#0d1117;color:#e6edf3;' +
@@ -1574,6 +1584,9 @@
         '<div style="color:#e6edf3;font-weight:600">' + escapeHtml(label) + '</div>' +
         '<div style="color:#8b949e;font-size:10px">' + escapeHtml(when) + ' · ' + escapeHtml(srcRes) +
         ' · ' + (s.file_count || '?') + ' file(s)</div>' +
+        '<div style="font-size:10px;margin-top:1px;color:' + (s.machine_name ? '#7ee7c7' : '#6e7681') + '">' +
+        '💻 ' + escapeHtml(machine) +
+        (isThis ? '<span style="color:#8b949e"> · this computer</span>' : '') + '</div>' +
         '</button>';
     }
     html += '<div style="margin-top:6px;text-align:right">' +
@@ -1654,7 +1667,7 @@
     openSocialsInspector(res);
   });
 
-  // ── Macro suggestion catalog (Hitya 2026-07-06) ────────────────────────
+  // ── Macro suggestion catalog (Uilnayar 2026-07-06) ────────────────────────
   // Seeded from the raid's REAL callout macros observed in raid chat — the
   // same line shapes the agent's CH-chain / DA-broadcast / healer-mana
   // trackers parse — plus clicky templates (incl. the bard stopsong→click→

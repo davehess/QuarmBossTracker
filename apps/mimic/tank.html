@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>tank</title>
 <style>
-  /* Wolf Pack Tank Overlay — Hitya 2026-06-25:
+  /* Wolf Pack Tank Overlay — Uilnayar 2026-06-25:
      "DS total and buffs with timers, enrage upcoming based on boss HP …
      who current Rampage is … DA countdown + 'start CH on <DA ramp>' at ≤10s."
      Refocused 2026-07-01: centers on the MAIN TANK (CH-chain target or
@@ -96,7 +96,7 @@
   /* DS sources — which of the tank's CURRENT buffs are a KNOWN damage-shield
      spell (catalog SPA-59 lookup), and its designed per-hit value. EQ's combat
      log can't say which buff caused a given reflect line, so this is the one
-     place we CAN attribute "how much from each one" (Hitya 2026-06-29). */
+     place we CAN attribute "how much from each one" (Uilnayar 2026-06-29). */
   .ds-sources{margin-top:3px;padding-top:3px;border-top:1px solid rgba(255,255,255,0.08);
     display:flex;flex-direction:column;gap:1px}
   .ds-sources .src{display:flex;justify-content:space-between;gap:6px;font-size:10px;line-height:1.4}
@@ -256,10 +256,10 @@
   // In flight → a filling cast bar counting down to the land. Already landed
   // → a full green "+N healed" row that LINGERS a few seconds and fades. The
   // linger is essential: cross-client latency (2-4s) means most non-CH heals
-  // arrive already landed, so an in-flight-only bar showed nothing (Hitya
+  // arrive already landed, so an in-flight-only bar showed nothing (Uilnayar
   // 2026-07-15: "he's still not seeing my heals load up on his tank overlay").
   // Two independent inbound lists: the displayed tank (MT/self) and the
-  // Rampage tank (Hitya 2026-07-15: "will heals to Rampage tanks also
+  // Rampage tank (Uilnayar 2026-07-15: "will heals to Rampage tanks also
   // show up?"). Same merge/paint machinery, separate keys + containers.
   var _inb = [];
   var _inbRamp = [];
@@ -282,7 +282,7 @@
       var landsIn = x.landsAt - now;
       var col = x.color;
       // "+2.5k" / "+~2.5k" — the plus makes it read as INCOMING healing at a
-      // glance (Hitya 2026-07-15: "specify the potential heal amount as
+      // glance (Uilnayar 2026-07-15: "specify the potential heal amount as
       // +XXXX"). null amount = a heal we couldn't size (HoT / catalog gap) —
       // still show the cast, just without a number.
       var amt = (x.amount == null) ? '?' : '+' + (x.estimated ? '~' : '') + fmtK(x.amount);
@@ -488,7 +488,7 @@
            +  '</div>';
     }
 
-    // CH chain spot-heal window — v1.1.4 (Hitya 2026-06-26). When a chain
+    // CH chain spot-heal window — v1.1.4 (Uilnayar 2026-06-26). When a chain
     // is running on the focused character (we're the target) we render the
     // banner prominently as "Next CH in Xs · spot heal if HP < Y". When the
     // chain is running on someone else (e.g. the off-tank or another MT) we
@@ -510,7 +510,7 @@
     // curated/correlated DS events now), plus known DS SOURCES from the MT's
     // buff list (the one place we can say "how much from each one" — spell
     // catalog SPA-59, not the log). Falls back to the raid-wide pool when no
-    // MT is resolved. (Hitya 2026-06-29; refocused 2026-07-01.)
+    // MT is resolved. (Uilnayar 2026-06-29; refocused 2026-07-01.)
     var ds = (mt && mt.ds) ? mt.ds : s.ds;
     var dsWho = (mt && mt.ds) ? ' — ' + esc(mt.name) : '';
     if (ds && (ds.total > 0 || (ds.abilities && ds.abilities.length) || (ds.sources && ds.sources.length))) {
@@ -566,7 +566,7 @@
 
     // Hurt offtanks — the same list the CH-chain overlay shows, so a tank
     // watching only this window still sees who's taking add damage and needs an
-    // off-heal (Hitya 2026-07-06: "get offtanks on ... Tank overlay"). Only
+    // off-heal (Uilnayar 2026-07-06: "get offtanks on ... Tank overlay"). Only
     // genuinely-hurt offtanks reach here (agent-side <90% filter).
     var oh = s.off_heal_candidates || [];
     if (oh.length) {

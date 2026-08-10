@@ -71,7 +71,7 @@ document.addEventListener('mouseout', function (ev) {
   if (!ev.relatedTarget && _wpHoverArmed) { _wpHoverArmed = false; _hoverOff(); }
 }, { capture: true, passive: true });
 
-// ── Solid backdrop (Hitya 2026-07-10) ────────────────────────────────────
+// ── Solid backdrop (Uilnayar 2026-07-10) ────────────────────────────────────
 // One injected rule + a body class = every overlay gets a toggleable opaque
 // plate with zero per-HTML changes. Main pushes 'wp-backdrop' on toggle; the
 // load-time pull covers windows created after the last push. Gated to overlay
@@ -79,7 +79,7 @@ document.addEventListener('mouseout', function (ev) {
 ipcRenderer.on('wp-backdrop', function (_e, on) {
   try { if (_wpOverlayDoc()) document.body.classList.toggle('wp-backdrop', !!on); } catch (e) {}
 });
-// ── Overlay color themes (Hitya 2026-07-11: "alternative color schemes
+// ── Overlay color themes (Uilnayar 2026-07-11: "alternative color schemes
 // for people that prefer brighter colors") ─────────────────────────────────
 // One body-level CSS filter per theme restyles EVERY overlay at once with
 // zero per-page changes. 'light' uses the invert+hue-rotate(180) pair so
@@ -153,7 +153,7 @@ function _buildOverlayMenu(onClose, state) {
   // "Setup ALL" first — the most-used entry sits at the top.
   menu.appendChild(mkItem('🛠 Setup ALL overlays', '#2a3d57', () => ipcRenderer.invoke('set-setup-mode', true)));
   menu.appendChild(mkItem('🛠 Setup THIS overlay',  '#3d2a57', () => ipcRenderer.invoke('set-setup-mode-this', true)));
-  // Visibility + layout actions (Hitya 2026-07-10). `state` comes from
+  // Visibility + layout actions (Uilnayar 2026-07-10). `state` comes from
   // main's wp-overlay-menu-state so the toggles show their current value.
   const st = state || {};
   menu.appendChild(mkItem('👁 Hide this overlay', '#6b2130', () => ipcRenderer.invoke('hide-overlay')));
@@ -184,7 +184,7 @@ function _buildOverlayMenu(onClose, state) {
 // Chrome-menu open state. While the menu is open, the page's auto-fit calls
 // are SUPPRESSED — overlays that re-fit every poll tick (Target Info, CH
 // chain, /who…) were shrinking the window right back down while the menu was
-// still open, clipping it to the first two items (Hitya 2026-07-11). The
+// still open, clipping it to the first two items (Uilnayar 2026-07-11). The
 // deferred fit runs once on close so the window snaps back to content size.
 let _wpMenuOpen = false;
 let _wpMenuOpenAt = 0;             // #159: when suppression began — bounds the pause
@@ -310,6 +310,10 @@ function _autoFitOverlay(wrapEl) {
 }
 
 contextBridge.exposeInMainWorld('mimic', {
+  // This computer's hostname — a plain string, resolved once here because the
+  // renderer has no Node access. UI Studio uses it to mark which cloud backups
+  // came from the machine you are sitting at.
+  machineName:         (() => { try { return require('os').hostname(); } catch { return ''; } })(),
   openSettings:        ()         => ipcRenderer.invoke('open-settings'),
   // Resource use in its own window — the dashboard's "what does Mimic cost?"
   // link calls this, same as the tray entry.
@@ -353,6 +357,10 @@ contextBridge.exposeInMainWorld('mimic', {
   // hits GitHub; installUpdate downloads + drops Zeal.asi + uifiles/ into the
   // EQ folder (backs up what's there, refuses while EQ is running).
   // Windows Defender exclusions — opt-in, one UAC prompt, EQ + Mimic folders.
+  // Standalone Parser (Parser.bat) left over from before Mimic — detect it and
+  // retire it so Mimic's bundled agent stops sitting in read-only mode.
+  parserStatus:          () => ipcRenderer.invoke('parser-status'),
+  parserRetire:          () => ipcRenderer.invoke('parser-retire'),
   defenderStatus:        () => ipcRenderer.invoke('defender-status'),
   defenderAddExclusions: () => ipcRenderer.invoke('defender-add-exclusions'),
   // Windows clock: read the w32time service state, and (elevated) fix it.
@@ -673,7 +681,7 @@ if (location.protocol === 'http:') {
         // and nobody quits Mimic — that was the whole reason the EQ-close path
         // was built. Telling a raider "close Mimic" sends them to do the one
         // thing they never do, and makes a working auto-update look broken
-        // (Hitya, 2026-08-04: "it did not update in place").
+        // (Uilnayar, 2026-08-04: "it did not update in place").
         updMsg.innerHTML = '⬆ <b>Mimic v' + String(s.updatePending).replace(/[<>&]/g, '') + ' is ready.</b> Nothing to do — it installs by itself next time you close EverQuest. Or restart now:';
         upd.style.display = 'flex';
       } else {
