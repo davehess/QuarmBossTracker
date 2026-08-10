@@ -117,6 +117,27 @@ entry so the index stays trustworthy — a stale index causes exactly the wrong
     searched 2026-08-09), no credentials in the repo, and the REST API is
     unreachable from cloud sessions. This step is human-only, or needs a local
     session;
+  - **Supabase → Authentication → URL Configuration → Redirect URLs must list
+    `https://b.wolfpack.quest/**`** — otherwise sign-in silently fails on the
+    mirror (Hitya, 2026-08-10: *"can't actually sign into beta"*). `SignInButton`
+    sends `redirectTo = window.location.origin + '/auth/callback'`, and Supabase
+    **ignores a redirectTo that is not on the allowlist and uses the Site URL
+    instead** — so the user completes Discord consent and lands signed-in on
+    production while beta still shows Sign in. Nothing errors; it just never
+    takes. Leave Site URL as `https://wolfpack.quest`.
+    ⚠ **This does NOT need a second Discord app / "beta SSO."** Discord never
+    sees the app host: the redirect URI registered with Discord is Supabase's
+    own `https://zhtoekwakucbckvatfky.supabase.co/auth/v1/callback`, which is
+    host-independent. A second Discord app would be actively harmful — Supabase
+    allows ONE Discord provider config per project, so it would force a second
+    Supabase project, and then beta users get different `auth.users` ids,
+    `wolfpack_members.user_id` diverges and the mirror stops reflecting
+    production data. The app code is already fully host-relative
+    (`window.location.origin` / `url.origin`); nothing in the repo needs to
+    change for beta auth.
+    ⚠ Dashboard-only from a cloud session — the Supabase MCP exposes no
+    auth-config tool (checked 2026-08-10), same shape as the Vercel domain step
+    above;
   - `next.config.js` sets `NEXT_PUBLIC_IS_BETA` from `VERCEL_GIT_COMMIT_REF`,
     so the flag is a BUILD-time constant. Deliberately not a Host-header check:
     reading headers in the root layout forces every page dynamic.
