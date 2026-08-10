@@ -9787,6 +9787,11 @@ async function _handleAgentExtendedTarget(req, res) {
       _extMobLastSeen.set(scopeKeyPrefix + t.name.toLowerCase(), {
         name: t.name, hp: t.hp_pct, raiders: t.raiders.slice(), debuffs: t.debuffs,
         is_named: t.is_named, lastSeenMs: now,
+        // Carry the Zeal tag into the cache so a restored row keeps its mark.
+        // Without this a tagged mob that nobody is targeting comes back as a
+        // bare name and the "DON'T TOUCH" / "<Tank> TANK" label is lost.
+        tag_text: t.tag_text || null, tag_shape: t.tag_shape || null,
+        spawn_id: t.spawn_id != null ? t.spawn_id : null,
       });
     }
     for (const [k, cached] of _extMobLastSeen) {
@@ -9794,7 +9799,14 @@ async function _handleAgentExtendedTarget(req, res) {
       if (now - cached.lastSeenMs > extStaleGraceMs) { _extMobLastSeen.delete(k); continue; }
       const key = k.slice(scopeKeyPrefix.length);
       if (byName.has(key)) continue;                       // already fresh this poll
-      if (cached.hp == null || cached.hp >= 100) continue;  // only "had less than 100%"
+      // A TAGGED mob stays on the board at ANY health (Hitya 2026-08-10: "for
+      // these tagged mobs I think we should keep them on extended target so we
+      // can still see their timers"). A tag is a deliberate mark someone put on
+      // a specific spawn — "DON'T FRICKIN TOUCH THIS MOB", "<Tank> TANK" — and
+      // those are exactly the mobs nobody targets, so the original "was hurt"
+      // rule dropped precisely the rows the mark exists to keep visible.
+      // Untagged mobs are unchanged: still only restored when last seen hurt.
+      if (!cached.tag_text && (cached.hp == null || cached.hp >= 100)) continue;
       targets.push({
         name: cached.name, kind: 'npc',
         raider_count: 0, raiders: [],
@@ -9806,6 +9818,10 @@ async function _handleAgentExtendedTarget(req, res) {
         zone: scopeZone || null,
         stale: true, stale_secs: Math.round((now - cached.lastSeenMs) / 1000),
         last_raiders: cached.raiders.slice(0, 20),
+        // Additive, exactly like the fresh-row tag fields above — absent when
+        // the mob carries no tag, so an untagged board stays byte-identical.
+        ...(cached.tag_text ? { tag_text: cached.tag_text, tag_shape: cached.tag_shape,
+                                spawn_id: cached.spawn_id } : {}),
       });
     }
 
