@@ -144,6 +144,15 @@ SITE_URL=http://<VM-IP>:3000
 ADDITIONAL_REDIRECT_URLS=http://<VM-IP>:3000/**
 ```
 
+⚠ **Sign-in and sign-out landing on `localhost:3000` was a real code bug, fixed
+in web 1.1.41** (found here 2026-08-11). Every redirect in `app/auth/callback`
+and `app/auth/signout` was built from `new URL(req.url).origin`, and Next
+resolves `req.url` against the SERVER's own listening address — inside a
+container that is `http://localhost:3000`. Vercel hid it because its proxy
+rewrites the request first. Now `web/lib/request-origin.ts` prefers
+`x-forwarded-host` then `Host`, covered by `test/request-origin.test.js`. If a
+local mirror predates that version, redeploy it before debugging redirects.
+
 ⚠ **`ADDITIONAL_REDIRECT_URLS` is the same trap that broke beta sign-in**
 (Hitya, 2026-08-10). `SignInButton` sends `redirectTo = window.location.origin +
 '/auth/callback'`, and GoTrue **silently ignores a redirectTo that is not on the
