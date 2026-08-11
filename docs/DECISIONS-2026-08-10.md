@@ -245,3 +245,13 @@ and the store is **ephemeral** (in-memory ring on the bot, ~1h TTL, trigger-rela
 shape — no table, no migration). The other three questions were overtaken by
 shipped code and are marked so in the design doc. Remaining build: the shared
 manual layer + one-click resolve on the existing auto queues.
+
+## Unraid Supabase: backup first, then dev sandbox (Hitya, 2026-08-11)
+
+Not the live replica. Ordering matters twice over: the nightly `pg_dump` needs
+only the SESSION pooler (IPv4 — the replication path's IPv6/IPv4-add-on caveat
+vanishes), and the dump becomes the sandbox's seed data. Phase 1 is committed
+copy-paste ready (`scripts/unraid-backup-supabase.sh` + runbook §Phase 1;
+execution is a needs-local-session item). Phase 2 (supabase CLI sandbox) waits
+on Phase 1 proving out — and its first `db reset` doubles as the first-ever
+test of whether the 193 committed migrations rebuild the live schema.

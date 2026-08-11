@@ -1,7 +1,28 @@
 # Runbook — replicating the Supabase project to an Unraid box
 
-**Status: PREPARED, not executed** (Hitya asked 2026-08-11; goal not yet chosen —
-see "pick the goal first"). Facts below were verified live against
+**Status: DECIDED 2026-08-11 (Hitya): backup first, then dev sandbox.** The
+live-mirror replication path below stays documented but is NOT the plan — which
+dissolves its worst constraint: **a plain `pg_dump` rides the SESSION pooler,
+which has IPv4, so the IPv6/IPv4-add-on caveat does not apply to Phase 1 at
+all.** The nightly dump doubles as the sandbox's seed.
+
+**Phase 1 — backup (local session executes):** `scripts/unraid-backup-supabase.sh`
+is committed and copy-paste ready for the User Scripts plugin. Needs two local
+steps: the session-pooler URI from Dashboard → Connect into
+`/boot/config/wolfpack-db-url` (chmod 600), and ONE manual restore test —
+a backup that has never been restored is a hope, not a backup. The script
+refuses to rotate on an implausibly small dump so a silent auth failure can
+never age out the last good copy.
+
+**Phase 2 — dev sandbox (after Phase 1 proves out):** `supabase init` at the
+repo root (config.toml does NOT exist yet — checked 2026-08-11), then
+`supabase start` and seed from the nightly:
+`pg_restore -d "$(supabase status -o json | jq -r .DB_URL)" --clean --no-owner --no-acl --schema=public latest.dump`.
+Restore `--schema=public` only — GoTrue owns auth locally. Worthwhile side
+effect: the first `supabase db reset` against the 193 committed migrations is
+also the first-ever test of whether the migrations actually rebuild the live
+schema; any drift it exposes is a finding to record, and the dump is the
+fallback schema source if they don't. Facts below were verified live against
 `zhtoekwakucbckvatfky` on 2026-08-11: `wal_level = logical` (replication-ready
 out of the box), **0** replication slots in use, database size **1171 MB**.
 Related but different: `DESIGN-external-tenancy.md` §4 walks OTHER guilds
