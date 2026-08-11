@@ -2123,8 +2123,8 @@ before anyone touches them.** All four exist because of the two bugs found
   row, so it renders as a bare id — linking it would let the report name a
   person.*
 
-**Callout + overlay work designed 2026-08-04 (specs written; #204 and #205
-built 2026-08-11, the rest in flight).**
+**Callout + overlay work designed 2026-08-04 (specs written; #204, #205 and
+#206 built 2026-08-11, #207 in flight).**
 - **#204 Divine Intervention two-cleric callout — BUILT 2026-08-11, not yet
   released.** `docs/DESIGN-di-callout.md` (§6 = what shipped + every call made
   beyond the doc). Agent-side in the CH-chain module: `trackDiFired` on the
@@ -2165,11 +2165,25 @@ built 2026-08-11, the rest in flight).**
   invent. **First measurement wanted:** whether group gauges actually emit a 0
   for a corpse — `_groupDeathWatchSnapshot()` answers it, and the answer decides
   whether the collapse path is optional or necessary.
-- **#206 Third capture path for instant boss mechanics.** The discard audit
+- **#206 Third capture path for instant boss mechanics — CAPTURE BUILT
+  2026-08-11 (record-only, local), consumers still open.** The discard audit
   found **113 timed effects captured, 138 instant ones invisible** — an instant
   effect has no duration, so the buff-landing index never indexes it, and
   `shouldKeep` (default DROP) never passes it to the parser. These are exactly
-  the AoEs and death-touches worth calling out. `docs/DESIGN-mechanic-capture.md`.
+  the AoEs and death-touches worth calling out. The audit re-ran identical on
+  2026-08-11 (263/113/138). What landed: spell-catalog **v8** adds an
+  NPC-castable flag (`npc`) so the matcher can't be fed player spells; the agent
+  builds a third index keyed on `cast_on_other` for INSTANT spells, records one
+  row per CAST with a victim count while a fight is open, and shows them on a
+  💥 Boss mechanics card (Triggers tab). **Ambiguity is carried, never crowned**
+  — a shared landing text reads "unidentified · N spells share this", which is
+  the Kneel Test / every-yawn-is-Turgur's lesson applied at build time. Nothing
+  uploads yet, by design (`DESIGN-mechanic-capture.md` §7: record for one raid
+  cycle, then argue callouts from evidence). ⚠ The agent index stays EMPTY until
+  the v8 bot is deployed — an unflagged catalog is treated as "bot too old",
+  not as "index everything". Next: `mechanic_events` upload + table, then
+  auto-suggest on `/admin/triggers`, then #207. Full record of what shipped and
+  the three places it departs from the spec: `docs/DESIGN-mechanic-capture.md` §0.
 - **#207 Overlay UX for callouts**: visible countdowns mirroring the TTS,
   dismissible lines, and **recording dismissals** so we learn which callouts
   people don't want or don't trust. `docs/DESIGN-callout-overlay.md`.

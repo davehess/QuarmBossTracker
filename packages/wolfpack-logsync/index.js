@@ -11747,6 +11747,9 @@ function _serializeForDashboard() {
     // Trigger checkpoint journal (#76) — newest first, capped, for the Triggers
     // tab diagnostic card. Pure in-memory; never persisted or uploaded.
     triggerJournal:      _triggerJournal.slice(-60).reverse(),
+    // #206 instant boss mechanics — newest first, for the Triggers-tab card.
+    // Pure in-memory; never persisted or uploaded (record-only first pass).
+    recentMechanics:     _recentMechanicsForWeb(),
     activeOverlays:      _activeOverlays,
     // Trigger fires for the Mimic trigger-alert overlay (triggers.html). It
     // dedupes on `ts` and speaks `tts || text`, so map the overlay ring buffer
@@ -14041,6 +14044,48 @@ function renderTriggerJournal(s) {
   h += '</table>';
   morphInto(el, h);
 }
+// 💥 Boss mechanics (#206) — the instant effects the two duration-keyed indexes
+// can never hold. Same isolation pattern as the journal above: fmtAgo ticks
+// every poll, so it fills its own #wpMechanics placeholder instead of making
+// the whole Triggers section differ every 2s. Hidden until something fires.
+// NOTE: no class="name" on the victim/effect cells — the character-link
+// delegation slices a .name cell to its first word, and these are as often a
+// mob ("a glyph covered serpent") as a raider.
+function renderMechanics(s) {
+  var el = document.getElementById('wpMechanics');
+  if (!el) return;   // Triggers tab not painted yet
+  var rows = (s && s.recentMechanics) || [];
+  if (!rows.length) {
+    if (el.style.display !== 'none') el.style.display = 'none';
+    morphInto(el, '');
+    return;
+  }
+  if (el.style.display === 'none') el.style.display = '';
+  var h = '<h2>💥 Boss mechanics <span class="dim" style="font-size:11px;font-weight:normal">(what the mob just DID — instant effects, recorded while you fight)</span></h2>';
+  h += '<div class="dim" style="font-size:10px;margin-bottom:6px">AEs, death touches, dispels, stuns and boss self-heals emit a log line that carries no duration, so nothing else here can see them. One row per cast, with how many it hit. When a message is shared by several spells it stays <b>unidentified</b> on purpose — naming one of them would be a guess. Local only: nothing is uploaded.</div>';
+  h += '<table style="font-size:11px;width:100%"><tr><th>When</th><th>Mob</th><th>Effect</th><th>Hit</th><th>Message</th></tr>';
+  var shown = rows.slice(0, 30);
+  for (var i = 0; i < shown.length; i++) {
+    var r = shown[i];
+    var eff = r.spell_name
+      ? esc(r.spell_name)
+      : '<span style="color:var(--gold)">unidentified</span> <span class="dim">· ' + esc(String(r.family_size || 0)) + ' spells share this</span>';
+    var who = (r.victims || []).slice(0, 3).join(', ');
+    if ((r.victim_count || 0) > (r.victims || []).length) who += ' …';
+    var hit = r.on_fight_target
+      ? '<span class="dim">on the mob</span>'
+      : esc(String(r.victim_count || 0)) + ' <span class="dim">' + esc(who) + '</span>';
+    h += '<tr>'
+       + '<td class="dim">' + esc(fmtAgo(r.last_at_ms || 0)) + '</td>'
+       + '<td class="dim">' + esc(r.mob || '?') + '</td>'
+       + '<td>' + eff + '</td>'
+       + '<td>' + hit + '</td>'
+       + '<td class="dim">' + esc(r.landing_text || '') + '</td>'
+       + '</tr>';
+  }
+  h += '</table>';
+  morphInto(el, h);
+}
 // ⚡ Recent fires (#120) — the volatile counterpart to renderTriggers, filling
 // its own #wpRecentFires placeholder every poll (fmtAgo ticks) so the parent
 // Triggers section stays byte-stable and never flashes. Same isolation pattern
@@ -14141,6 +14186,9 @@ function renderTriggers(s) {
   // Trigger checkpoint journal (#76) — filled by renderTriggerJournal(). Own
   // wp* placeholder so its volatile rows don't force this section to repaint.
   h += '<div id="wpTriggerJournal" class="card wide" style="display:none"></div>';
+  // Boss mechanics (#206) — filled by renderMechanics(). Own wp* placeholder
+  // for the same reason as the journal: its rows carry fmtAgo stamps.
+  h += '<div id="wpMechanics" class="card wide" style="display:none"></div>';
 
   // ⚡ Recent fires (recent trigger matches) — its rows carry fmtAgo timestamps
   // that tick every poll, so it MUST live in its own wp* placeholder filled by
@@ -16632,6 +16680,7 @@ async function refresh() {
                      ['triggers', renderTriggers], ['zealcard', renderZealCard],
                      ['recentfires', renderRecentFires], ['replaystatus', renderReplayStatus],
                      ['charmdiag', renderCharmDiag], ['petbuffdiag', renderPetBuffDiag], ['triggerjournal', renderTriggerJournal],
+                     ['mechanics', renderMechanics],
                      ['overlays', renderOverlays], ['info', renderInfo],
                      // After info: fill the placeholders renderInfo just
                      // (re)painted, so they show same-tick.
@@ -26122,6 +26171,7 @@ function _loadSpellCatalogFromDisk() {
     }
     _spellCatalogMeta = { fetchedAt: raw.fetched_at, etag: raw.etag || null, count: raw.entries.length };
     _rebuildBuffMatchers();
+    _rebuildMechanicMatchers();   // #206 — the instant-effect index, built from the same catalog
     console.log(`[spell-catalog] loaded ${raw.entries.length} spells from disk (cached ${raw.fetched_at || '?'})`);
   } catch (err) {
     console.warn('[spell-catalog] disk load failed:', err && err.message);
@@ -26181,6 +26231,7 @@ function fetchSpellCatalog({ botUrl, token }) {
             }
             _spellCatalogMeta = { fetchedAt: data.fetched_at, etag: etag || null, count: data.entries.length };
             _rebuildBuffMatchers();
+            _rebuildMechanicMatchers();   // #206 — same catalog, separate instant-effect key
             try {
               const out = { fetched_at: data.fetched_at, etag: etag || null, entries: data.entries };
               fs.writeFileSync(SPELL_CATALOG_FILE + '.tmp', JSON.stringify(out));
@@ -26551,6 +26602,202 @@ function parseDebuffLanding(line, observer) {
     };
   }
   return null;
+}
+
+// ── #206 — the THIRD capture path: INSTANT boss mechanics ──────────────────
+// The discard audit (docs/DESIGN-mechanic-capture.md) counted 113 timed boss
+// effects we capture and **138 instant ones we cannot see at all** — not
+// because the log line is missing, but because of how we look:
+//   • the two indexes above are keyed on DURATION, and an instant effect has
+//     none. `_isTimedDurationFormula` skips them BY DESIGN (a durf-0 spell has
+//     no countdown to show, and indexing them there is exactly what let the
+//     "Kneel Test" phantom onto Mob Info) — so this path does NOT relax that
+//     gate, it adds a parallel one with its own key and no timers at all;
+//   • `shouldKeep` is default-DROP, so "<Name>'s soul fades into darkness."
+//     never reaches parseEvent either. This hook runs on the RAW line in the
+//     watch tail, before that filter, like `_checkAoeDance` and `noteBlindLine`.
+// What lands here: the AE dance class, death touches, dispels, stuns, boss
+// self-heals ("<mob> is completely healed."), gates. `_checkAoeDance` is the
+// hand-curated version of exactly this — one entry per AE somebody noticed;
+// this index is DERIVED from the same catalog row the server prints from, so
+// it cannot be wrong about the text (the DI-trigger / AOE_DANCE failure mode).
+//
+// suffix(lower) → [{ id, name, good, heal }] for every INSTANT spell an NPC can
+// cast that carries an on-other message. Deliberately NOT junk-guarded like the
+// two above: that guard exists because those indexes CROWN a representative and
+// a crown can be wrong (Kneel Test, Bolt of Karana, Turgur's-for-every-yawn).
+// This one never crowns — a shared text stays ambiguous with its family
+// attached — so there is nothing for a big family to be wrong about, and
+// dropping it would re-create the very blindness this path exists to fix.
+//
+// SCOPE — `npc` (spell-catalog v8) is what keeps this from being a firehose.
+// The landing text says nothing about who cast it, so an unscoped index matches
+// every player nuke, cure and Complete Healing in view and the boss mechanics
+// become a minority of the rows. The flag is the bot's `eqemu_npc_spells_entries`
+// join — the same one the #206 audit used. A pre-v8 catalog carries no flags at
+// all, and we leave the index EMPTY rather than fall back to everything: idle is
+// recoverable (the bot deploys, the ETag changes, the index builds), a raid's
+// worth of mislabelled rows is not.
+let _mechanicLandingBySuffix = new Map();
+function _rebuildMechanicMatchers() {
+  const mm = new Map();
+  let sawNpcFlag = false;
+  for (const e of _spellByNameLower.values()) {
+    if (!e || !e.other || !e.name) continue;
+    if (e.npc !== 1) continue;
+    sawNpcFlag = true;
+    // INSTANT only — the exact complement of the timed predicate #154 uses in
+    // _shouldSuppressBuffLanding, so a spell can never sit in both a duration
+    // index and this one. (Measured against the live catalog: of the 138
+    // instant-with-text spells on mobs we have fought, 137 land here and one —
+    // Itraer Vius Touch, buffduration 0 but formula 4 — is a level-scaled
+    // duration and belongs in the timed index, where it already is.)
+    if (_isTimedDurationFormula(e.durf) || Number(e.dur) > 0) continue;
+    const suffix = String(e.other).trim().toLowerCase();
+    if (!suffix || suffix.length < 6) continue;   // too short → false positives
+    const arr = mm.get(suffix) || [];
+    arr.push({ id: e.id, name: e.name, good: e.good, heal: Number(e.heal) || 0 });
+    mm.set(suffix, arr);
+  }
+  _mechanicLandingBySuffix = mm;
+  if (mm.size) console.log(`[mechanic-index] indexed ${mm.size} instant-effect landing messages (#206)`);
+  else if (!sawNpcFlag) console.log('[mechanic-index] spell catalog carries no NPC-castable flag (bot pre-v8) — instant-mechanic capture idle until the bot deploys');
+}
+
+// Parse one RAW log line as an instant-effect landing. Same name-peeling shape
+// as parseDebuffLanding (multi-word mob victims: "a glyph covered serpent feels
+// dispelled." — the #169 pet-Death-Touch lesson), same raw-line anchoring (the
+// "[Sun Aug 02 21:10:01 2026] " prefix is part of the line, never optional).
+//
+// AMBIGUITY IS CARRIED, NEVER RESOLVED AWAY. `cast_on_other` is a suffix shared
+// across whole families — "is struck by a sudden force." is 32 spells — and the
+// standing lesson from Kneel Test / Bolt of Karana / "every yawn is Turgur's"
+// (docs/FINDINGS-2026-08-10-trigger-overlay.md §5 + §7b) is that crowning one
+// member of a shared text is silently wrong at scale. So: unique text → the
+// spell; shared text → spell_id 0, spell_name null, and the family rides along
+// for a consumer to weigh.
+function parseMechanicLanding(line) {
+  if (!_mechanicLandingBySuffix.size) return null;
+  const m = String(line || '').match(/^\[(.+?)\]\s+(.+)$/);
+  if (!m) return null;
+  const body = m[2].replace(/\s+$/, '');
+  const candidates = [];
+  const apos = body.indexOf("'s");
+  if (apos > 0) candidates.push([body.slice(0, apos), body.slice(apos)]);   // possessive
+  const words = body.split(' ');
+  for (let k = 1; k <= Math.min(5, words.length - 1); k++) {
+    candidates.push([words.slice(0, k).join(' '), words.slice(k).join(' ')]);
+  }
+  for (const [name, suffixRaw] of candidates) {
+    if (!_looksLikeTargetName(name)) continue;
+    const hits = _mechanicLandingBySuffix.get(suffixRaw.trim().toLowerCase());
+    if (!hits || !hits.length) continue;
+    const names = [...new Set(hits.map(h => h.name))];
+    const ts = parseEqTimestamp(line);
+    return {
+      victim:       name,
+      ambiguous:    names.length > 1,
+      spell_id:     names.length === 1 ? (hits[0].id || 0) : 0,
+      spell_name:   names.length === 1 ? hits[0].name : null,
+      family:       names.length > 1 ? names.slice(0, 12) : null,
+      family_size:  names.length,
+      landing_text: suffixRaw.trim().slice(0, 200),
+      // Character of the FAMILY, not of one member — what the victim-kind gate
+      // in noteMechanicLanding reads.
+      detrimental:  hits.some(h => h.good === 0),
+      heal_family:  hits.some(h => Number(h.heal) > 0),
+      at:           ts ? ts.toISOString() : new Date().toISOString(),
+      at_ms:        ts ? ts.getTime() : Date.now(),
+    };
+  }
+  return null;
+}
+
+// Recorded mechanics — an in-memory ring, newest last. Local only in this
+// version: record first, decide callouts from what it finds (design doc §7).
+const MECHANIC_RING_CAP    = 60;
+const MECHANIC_COALESCE_MS = 2500;   // one AE burst = one row, not one per victim
+const MECHANIC_VICTIM_CAP  = 12;     // names kept per row; the COUNT is uncapped
+const _recentMechanics = [];
+
+// Classify + record one instant landing. Returns the row it touched, or null.
+//
+// Two gates, both about not drowning the signal:
+//  1. FIGHT-SCOPED. Out of combat this index has no fight to describe, and the
+//     mob name that gives a row its meaning comes from the builder.
+//  2. VICTIM-KIND. `_fightTargetMatches` (the same helper #105 uses to keep
+//     off-target chatter off the board) answers "is this the mob we are
+//     hitting?" — and that flips which half of the catalog is interesting:
+//       • victim IS the fight target → drop any family with a DETRIMENTAL
+//         member: that is our own raid nuking it, hundreds of lines a minute
+//         with no mechanic in them. What survives is the boss acting on itself
+//         — Complete Healing's "<mob> is completely healed.", Gate's "<mob>
+//         fades away." — which is the case the encounter-splitter currently
+//         INFERS from damage totals while the mob announces it in plain text.
+//       • victim is anything else (a raider, a pet, an add) → drop HEAL
+//         families: "<name> is completely healed." is also every CH in the
+//         chain. Everything else stays, which is the AE / death-touch / stun /
+//         knockback / dispel class the callouts are for.
+//     ⚠ Do NOT gate this on `good_effect` instead. EQ classifies dispels as
+//     BENEFICIAL (Nullify Magic 49, Annul Magic 1526, Beholder Dispel 955 are
+//     all good=1), so a good-based gate silently drops "<raider> feels
+//     dispelled." — one of the four mechanics the design doc named by name.
+function noteMechanicLanding(line, observer, builder) {
+  if (!builder) return null;
+  if (!builder.startedAt && !(builder.targets && builder.targets.size)) return null;
+  const evt = parseMechanicLanding(line);
+  if (!evt) return null;
+  const onFightTarget = !!(builder._fightTargetMatches && builder._fightTargetMatches(evt.victim));
+  if (onFightTarget ? evt.detrimental : evt.heal_family) return null;
+  const nowMs = evt.at_ms;
+  const vKey  = String(evt.victim).toLowerCase();
+  // Per-CAST rows with a victim COUNT (design doc §3 volume rule): 23 AE spells
+  // × a raid × a long fight is a row per victim per cast otherwise. Collapsing
+  // on distinct victim also absorbs the main+alt double — one install watching
+  // two logs sees the identical line twice.
+  for (let i = _recentMechanics.length - 1; i >= 0; i--) {
+    const r = _recentMechanics[i];
+    if (nowMs - r.last_at_ms >= MECHANIC_COALESCE_MS) break;
+    if (r.landing_text !== evt.landing_text || r.on_fight_target !== onFightTarget) continue;
+    if (!r._victims.has(vKey)) {
+      r._victims.add(vKey);
+      r.victim_count++;
+      if (r.victims.length < MECHANIC_VICTIM_CAP) r.victims.push(evt.victim);
+    }
+    if (nowMs > r.last_at_ms) r.last_at_ms = nowMs;
+    return r;
+  }
+  const rec = {
+    landing_text:    evt.landing_text,
+    spell_name:      evt.spell_name,
+    spell_id:        evt.spell_id,
+    ambiguous:       evt.ambiguous,
+    family:          evt.family,
+    family_size:     evt.family_size,
+    victims:         [evt.victim],
+    victim_count:    1,
+    _victims:        new Set([vKey]),
+    on_fight_target: onFightTarget,
+    mob:             builder.bossName || null,
+    observer:        observer || null,
+    first_at_ms:     nowMs,
+    last_at_ms:      nowMs,
+    at:              evt.at,
+  };
+  _recentMechanics.push(rec);
+  while (_recentMechanics.length > MECHANIC_RING_CAP) _recentMechanics.shift();
+  return rec;
+}
+
+// Newest first for the dashboard; drops the victim Set (not JSON-safe).
+function _recentMechanicsForWeb() {
+  const out = [];
+  for (let i = _recentMechanics.length - 1; i >= 0; i--) {
+    const { _victims, ...rest } = _recentMechanics[i];
+    void _victims;
+    out.push(rest);
+  }
+  return out;
 }
 
 // Poll the bot for officer-filed backfill requests targeting any character
@@ -33361,6 +33608,14 @@ async function main() {
             // observer of the SAME land collapses to one row — no flood.
             const _dbFp = `buffcast|${dbEvt.target}|${dbEvt.spell_id}|${dbEvt.landing_text}|${dbEvt.cast_at}`;
             if (!_crossLogDupe(_dbFp)) buffCastBuffer.push(dbEvt);
+          }
+          // #206 — the THIRD capture path. Only lines neither timed path
+          // claimed reach it, which is the whole point: an INSTANT effect has
+          // no duration, so it is structurally unindexable above and
+          // shouldKeep (default-DROP, and still ahead of us in this callback)
+          // would have thrown it away. Local ring only — nothing uploads.
+          if (!dbEvt) {
+            try { noteMechanicLanding(line, b.character, b.builder); } catch (e) { void e; }
           }
         }
 

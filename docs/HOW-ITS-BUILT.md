@@ -608,6 +608,38 @@ their absence says nothing). KNOWN GAP: re-charming a DIFFERENT mob with the
 SAME name is invisible to the identity check — the `/pet health` reconcile is
 what catches it. Tests: `test/pet-buff-landing.test.js`.
 
+### Instant boss mechanics — the third capture path (#206, 2026-08-11)
+Two paths existed and both are keyed on things an instant effect does not have:
+`shouldKeep`→`parseEvent` on damage/heal NUMBERS, and the buff/debuff landing
+indexes on spell DURATION. So the ~138 instant boss effects that emit a perfectly
+good line (AEs, death touches, dispels, stuns, "\<mob\> is completely healed.",
+"\<mob\> fades away.") were invisible. The third path is keyed on the catalog's
+`cast_on_other` text: `_rebuildMechanicMatchers` / `parseMechanicLanding` /
+`noteMechanicLanding` in `packages/wolfpack-logsync/index.js`, hooked in the
+watch tail beside the debuff path (ahead of `shouldKeep`) and only on lines the
+two timed paths declined. Surfaced on the 💥 **Boss mechanics** card, Triggers
+tab; served as `recentMechanics` on `/api/state`. Local ring only — nothing
+uploads yet (`DESIGN-mechanic-capture.md` §0/§7).
+Four load-bearing rules:
+- **Scope comes from the bot.** Spell-catalog **v8** stamps `npc: 1` on the ~1.4k
+  spells in `eqemu_npc_spells_entries`; the index refuses anything else, and if
+  NO entry carries the flag it stays EMPTY (bot pre-v8) rather than indexing
+  every player nuke and cure in view.
+- **The gate is the FIGHT, not `good_effect`.** EQ classifies dispels as
+  BENEFICIAL (Nullify Magic / Annul Magic / Beholder Dispel are all `good=1`), so
+  a detrimental-only filter drops "\<raider\> feels dispelled." Instead:
+  `_fightTargetMatches` → on the mob we are hitting, drop detrimental families
+  (our own nukes); on anyone else, drop heal families (our own CH chain).
+- **Never crowned.** The junk-family guard the timed indexes use is deliberately
+  not copied: it exists because those indexes pick a representative and can be
+  wrong (Kneel Test, Bolt of Karana, every-yawn-is-Turgur's). Shared text →
+  `spell_id 0`, `spell_name null`, family attached, printed as "unidentified".
+- **One row per CAST**, with a victim count (names capped at 12, count is not) —
+  a 30-target AE is one row, and the same line seen in a main + an alt log
+  collapses instead of double-counting.
+Tests: `test/mechanic-capture.test.js` (includes an assertion that the timed
+indexes are byte-for-byte unaffected).
+
 ### CH chain tracker
 Parses shout/raid callouts: numbered calls (`_CH_CALL_RX`), GO cues
 (`_CH_GO_RX` — stamps `lastGo` so the overlay flashes GO! on that slot),

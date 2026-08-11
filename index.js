@@ -8375,6 +8375,35 @@ async function _handleAgentSpellCatalog(req, res) {
         }
         return null;
       }
+      // #206 — which spells can an NPC actually cast. The agent's instant-effect
+      // (mechanic) index is derived from `cast_on_other`, and without this flag
+      // it would also match every player nuke, cure and CH landing in view —
+      // the boss mechanics would be a minority of what it recorded.
+      // `eqemu_npc_spells_entries` is the table the #206 discard audit joins
+      // through (docs/DESIGN-mechanic-capture.md §6); this reads it WHOLE rather
+      // than scoping to NPCs we have fought, so a boss we meet for the first
+      // time (and everything PoP unlocks in October) is already covered. ~1.4k
+      // distinct ids over ~4.2k rows, riding the SAME 1h catalog cache — five
+      // paged reads an hour.
+      // FAIL-SOFT on purpose: #139 is the memory here — one throw ahead of the
+      // row loop took the ENTIRE catalog endpoint down for weeks. If this read
+      // fails the catalog still serves without the flag, and the agent reads an
+      // unflagged catalog as "bot too old" and leaves its mechanic index idle.
+      const npcCastable = new Set();
+      try {
+        let nfrom = 0;
+        while (true) {
+          const nrows = await supabase.select('eqemu_npc_spells_entries',
+            `select=spellid&order=spellid.asc&offset=${nfrom}&limit=${PAGE}`);
+          if (!Array.isArray(nrows) || nrows.length === 0) break;
+          for (const nr of nrows) if (nr && nr.spellid != null) npcCastable.add(Number(nr.spellid));
+          if (nrows.length < PAGE) break;
+          nfrom += PAGE;
+        }
+      } catch (err) {
+        npcCastable.clear();
+        console.warn('[spell-catalog] NPC-castable flag unavailable:', err && err.message);
+      }
       while (true) {
         // PostgREST paging via Range header is wrapped by Supabase's REST API
         // as offset/limit query params. We pass them as `&offset=X&limit=Y`
@@ -8409,13 +8438,19 @@ async function _handleAgentSpellCatalog(req, res) {
             // landing at this amount; the tank overlay shows inbound-heal size.
             heal:       _hm ? _hm.amount : undefined,
             heal_fixed: _hm ? _hm.fixed  : undefined,
+            // #206 — set only for spells an NPC can cast (~1.4k of ~3.9k), so
+            // the payload barely grows. The agent's instant-mechanic index
+            // refuses to build without it: an unflagged catalog means the bot
+            // predates v8, and indexing everything would record our own raid's
+            // nukes as boss mechanics.
+            npc:        npcCastable.has(Number(r.id)) ? 1 : undefined,
           });
         }
         if (data.length < PAGE) break;
         from += PAGE;
       }
       const body = JSON.stringify({
-        version: 7,   // v7: adds `heal`/`heal_fixed` (est. heal amount) per heal spell
+        version: 8,   // v8: adds `npc` (NPC-castable flag) — #206 instant-mechanic index
         fetched_at: new Date().toISOString(),
         count: entries.length,
         entries,
