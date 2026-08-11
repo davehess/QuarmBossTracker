@@ -107,3 +107,36 @@ If the goal is "don't lose the guild's data," start with the dump — it can run
 tonight. The live mirror is worth it primarily for the local-session workflow
 (peq joins + wolfpack data on one box), and it can be added later on top of the
 same stack.
+
+## Troubleshooting the Unraid stack (confirmed live, 2026-08-11)
+
+**Symptom:** 2/11 containers up (imgproxy + Studio only); `supabase-db` and
+`supavisor` unhealthy; everything else stopped. **This is ONE failure, not
+nine** — every other service has a `depends_on` health gate on the database, so
+a crash-looping db holds the whole stack down. Diagnose the db and ignore the
+rest; they cascade up once it is healthy.
+
+**Confirmed cause:** `docker logs supabase-db` showed
+`chown: /var/lib/postgresql/data: Operation not permitted` repeating forever.
+That is Unraid's FUSE/shfs layer (`/mnt/user/...`) refusing ownership changes —
+the Postgres entrypoint chowns its data dir first thing, fails, dies, restarts.
+Postgres never initialized at all.
+
+**Fix:** point the `db` service's host volume at a REAL pool path
+(`/mnt/cache/appdata/supabase/...` — check the pool name with `ls /mnt/`),
+never `/mnt/user/...`. shfs also has fsync semantics Postgres cannot trust, so
+this is correctness, not just permissions. Then: delete the never-initialized
+data dir contents, `docker compose up -d db`, watch for
+`database system is ready to accept connections` and a green health check, then
+start the rest. Do `storage`'s volume at the same time — same trap waiting.
+Databases on direct disk paths is the standing Unraid rule (SQLite apps bite
+identically).
+
+**Stack identification note:** this template is NOT the official
+`supabase/docker` compose — the gateway is Envoy (official uses Kong) and the
+db image is Postgres 17 (official self-host pins 15). Fixes found for the
+official stack will not always map onto it.
+
+**Scope reminder:** none of this blocks Phase 1 — the backup script needs
+Docker and the session-pooler URI, not a running local stack. This stack is
+live-mirror/Phase-2+ infrastructure.
