@@ -227,7 +227,14 @@ Fierce Eye, Auspice, Chromatic Haze, Casting Spell).
 
 ## Queued — needs a release
 
-### 1. No way to clear a timer chip by hand
+### 1. No way to clear a timer chip by hand — **FIXED 2026-08-11 (#207, unreleased)**
+
+Both halves shipped: a per-chip ✕ on EVERY countdown (not just the `dismissible`
+loot chips) and a 🗑 clear-all on the overlay's title bar, which also clears
+pinned sticky callouts. Every clear is now RECORDED as a `dismissed` row on
+`trigger_timing_feedback`, with natural expiries recorded as `expired` — the
+control group that turns a count into a rate. Details below are the original
+report.
 
 `apps/mimic/triggers.html` only renders a per-chip ✕ when the server marks the
 row `dismissible` — that flag exists for #107 loot-auction chips and nothing

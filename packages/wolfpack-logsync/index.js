@@ -11348,6 +11348,9 @@ function _serializeForDashboard() {
         text:    o.text,
         tts:     o.tts || o.text,
         trigger: o.trigger,
+        // #207 — so a dismissal of a sticky callout is attributed to the
+        // trigger, not to its (interpolated, per-fire) text.
+        trigger_id: o.trigger_id || null,
         scope:   o.scope,
         test:    !!o.test,
         sound:   o.sound || null,
@@ -11364,6 +11367,10 @@ function _serializeForDashboard() {
       };
     }),
     activeTimers:        _activeTimersSnapshot(),
+    // #207 callout dismissal counters (in-memory, this session). Local proof
+    // that a ✕ was recorded — the durable half rides the trigger_feedback
+    // upload, which a rehearsal deliberately does not touch.
+    calloutFeedback:     _calloutFeedbackSnapshot(),
     // #101 log-replay status — running/idle + progress for the Triggers-tab
     // ⏪ Replay card. Pure in-memory; never persisted or uploaded.
     replay:              _replayStateForWeb(),
@@ -19872,6 +19879,24 @@ function startWebDashboard(port) {
         try { payload = JSON.parse(_body || '{}'); }
         catch { res.writeHead(400); return res.end('{"error":"bad json"}'); }
         const dir = String(payload.direction || '').toLowerCase();
+        // #207 implicit directions — the overlay reports a CALLOUT (sticky row /
+        // centre flash) being cleared or aging out. Countdown chips take the
+        // /api/timers/cancel path instead, because the agent owns those rows and
+        // can attribute them itself. Both funnel into _recordCalloutFeedback so
+        // there is one recorder, one batch and one local counter.
+        if (dir === 'dismissed' || dir === 'expired') {
+          const firedMs = payload.fired_at ? Date.parse(payload.fired_at) : 0;
+          _recordCalloutFeedback({
+            direction:    dir,
+            trigger_id:   payload.trigger_id || null,
+            trigger_name: payload.trigger_name || null,
+            firedAtMs:    Number.isFinite(firedMs) && firedMs > 0 ? firedMs : Date.now(),
+            source:       payload.note || 'callout',
+            test:         !!payload.test,
+          });
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          return res.end('{"ok":true}');
+        }
         if (!['earlier','good','too_early'].includes(dir)) {
           res.writeHead(400); return res.end('{"error":"bad direction"}');
         }
@@ -21150,17 +21175,41 @@ function startWebDashboard(port) {
         return res.end(JSON.stringify(out));
       }
 
-      // POST /api/timers/cancel — dismiss a single active timer by id. Powers
-      // the per-chip ✕ on the trigger overlay (loot auction chips, #107). A
-      // loot chip's id is `loot|<sig>`; when dismissed we also drop the auction
-      // correlation entry so a stray repeat post opens a fresh chip rather than
-      // silently resetting a chip the user just closed.
+      // POST /api/timers/cancel — dismiss active countdowns. Powers the per-chip
+      // ✕ AND the title-bar clear-all on the trigger overlay. A loot chip's id
+      // is `loot|<sig>`; when dismissed we also drop the auction correlation
+      // entry so a stray repeat post opens a fresh chip rather than silently
+      // resetting a chip the user just closed.
+      //
+      // Body: { id } for one row, or { all: true } for every countdown. Each
+      // cancel records a `dismissed` row (#207) — the ONE place the overlay's ✕
+      // becomes a signal instead of a DOM removal.
+      //
+      // { all: true } deliberately SPARES loot chips: an open bid window is
+      // actionable (#129 — a raider must see every auction to bid on it), and
+      // "clear the countdown clutter" must not silently cost someone an item.
+      // They keep their own per-chip ✕.
       if (req.url === '/api/timers/cancel' && req.method === 'POST') {
         const body = await _readBody(req).catch(() => '');
         let payload = {};
         try { payload = body ? JSON.parse(body) : {}; } catch { payload = {}; }
+        const reason = String(payload?.reason || 'dismissed').slice(0, 40);
+        if (payload && payload.all) {
+          let cancelled = 0;
+          for (const [tid, row] of [..._activeTimers]) {
+            if (row && row.kind === 'loot') continue;
+            _activeTimers.delete(tid);
+            cancelled++;
+            _recordCalloutFeedback({ direction: 'dismissed', timer: row, source: reason });
+          }
+          scheduleRender();
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ ok: true, cancelled }));
+        }
         const id = String(payload?.id || '');
+        const row = id ? _activeTimers.get(id) : null;
         const ok = id ? _cancelTimer(id) : false;
+        if (ok) _recordCalloutFeedback({ direction: 'dismissed', timer: row, source: reason });
         if (ok && id.startsWith('loot|')) {
           const sig = id.slice('loot|'.length);
           _lootAuctions.delete(sig);
@@ -21168,7 +21217,7 @@ function startWebDashboard(port) {
         }
         scheduleRender();
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ ok }));
+        return res.end(JSON.stringify({ ok, cancelled: ok ? 1 : 0 }));
       }
 
       // POST /api/loot-prefs — dashboard Triggers-tab toggle + default-duration
@@ -30329,6 +30378,10 @@ function _startTimer(t, tsMs, isTest, captures) {
     pinned:         !!t.pinned,
     show_at_ms:     (Number(t.display_threshold_sec) || 0) * 1000,
     trigger_name:   t.name || null,   // used by end-early matching against the trigger group
+    // #207 — the trigger this countdown came from, so a dismissal can be
+    // attributed to the trigger rather than to the composite timer id (which
+    // carries the captures). Nothing else reads it.
+    trigger_id:     t.id || null,
     captures:       captures && typeof captures === 'object' ? { ...captures } : null,
     scope:          t._scope || 'unknown',
     test:           !!isTest,
@@ -30674,11 +30727,134 @@ function _checkAoeDance(line, tsMs) {
     return;
   }
 }
+// ── #207 callout dismissals — the implicit signal ───────────────────────────
+// Hitya 2026-08-03: "those lines should be dismissable AND we should track when
+// things are dismissed so we learn from items that people either don't care
+// about or may be inaccurate" (docs/DESIGN-callout-overlay.md §3.2).
+//
+// Two directions ride the EXISTING trigger_timing_feedback stream rather than a
+// new table:
+//   • `dismissed` — the raider cleared the row. The most honest signal we can
+//     collect, and it costs them nothing extra: they were already swatting it
+//     away. Compare the explicit thumbs-up widget — 47 votes from 7 people in a
+//     month, because pressing a feedback button mid-raid competes with playing.
+//   • `expired`   — the row aged out untouched. This is the CONTROL GROUP, and
+//     it is what makes the signal readable at all: 3 dismissals is damning at 3
+//     fires and meaningless at 300 (design §Gap C). Without it a dismissal
+//     COUNT is not a dismissal RATE.
+// Latency needs no column — `voted_at − fired_at` on a dismissed row already
+// separates "swatted it instantly, it's noise" (<1s) from "read it, acted, then
+// cleared it" (several seconds). Those are opposite verdicts.
+//
+// Scope, per docs/DESIGN-trigger-overlay-v2.md: per-user and session-scoped BY
+// CONSTRUCTION. A dismissal clears the row in this agent only — it never
+// relays, never touches guild_triggers, and dies with the process. One raider
+// clearing a Death Touch bar must never clear the raid's.
+//
+// Votes are BATCHED (30s / 25 rows) into one upload: `expired` fires once per
+// countdown per raider, so a per-row POST would put hundreds of tiny requests
+// on the ingest surface for a signal that is only ever read in aggregate.
+const CALLOUT_FEEDBACK_RECENT_MAX = 12;
+const CALLOUT_VOTE_FLUSH_MS  = 30_000;
+const CALLOUT_VOTE_MAX_BATCH = 25;
+const _calloutFeedback = { dismissed: 0, expired: 0, uploaded: 0, recent: [] };
+const _calloutVoteBuffer = [];
+let _calloutVoteFlushTimer = null;
+function _flushCalloutVotes() {
+  if (_calloutVoteFlushTimer) { clearTimeout(_calloutVoteFlushTimer); _calloutVoteFlushTimer = null; }
+  if (_calloutVoteBuffer.length === 0) return 0;
+  const votes = _calloutVoteBuffer.splice(0, _calloutVoteBuffer.length);
+  enqueueUpload('trigger_feedback', { agent_version: AGENT_VERSION, votes });
+  _calloutFeedback.uploaded += votes.length;
+  return votes.length;
+}
+function _queueCalloutVote(vote) {
+  _calloutVoteBuffer.push(vote);
+  if (_calloutVoteBuffer.length >= CALLOUT_VOTE_MAX_BATCH) return _flushCalloutVotes();
+  if (!_calloutVoteFlushTimer) {
+    _calloutVoteFlushTimer = setTimeout(_flushCalloutVotes, CALLOUT_VOTE_FLUSH_MS);
+    if (_calloutVoteFlushTimer.unref) _calloutVoteFlushTimer.unref();
+  }
+  return 0;
+}
+// The active character, same 60s-freshness rule the timing-vote endpoint uses.
+function _calloutVoterCharacter() {
+  let active = null, activeTs = 0;
+  const now = Date.now();
+  for (const ch of Object.keys(_zealState || {})) {
+    const st = _zealState[ch]; const ts = (st && st.updatedAt) || 0;
+    if (ts > activeTs && (now - ts) < 60_000) { activeTs = ts; active = ch; }
+  }
+  return active;
+}
+// e: { direction, timer? , trigger_id?, trigger_name?, firedAtMs?, source?, test? }
+function _recordCalloutFeedback(e) {
+  if (!e) return null;
+  const dir = e.direction === 'expired' ? 'expired' : 'dismissed';
+  const row = e.timer || null;
+  // A loot-auction chip is a BID WINDOW, not a callout. Its ✕ means "I've bid"
+  // or "not for me" and says nothing about whether a trigger was useful, so it
+  // must never enter the learning set (#107/#129).
+  if (row && row.kind === 'loot') return null;
+  const name = String((row && (row.trigger_name || row.effect || row.name))
+                      || e.trigger_name || '(unknown trigger)').slice(0, 200);
+  const triggerId = (row && row.trigger_id) || e.trigger_id || null;
+  const firedMs = Number(e.firedAtMs) || (row && row.started_at_ms) || Date.now();
+  const atMs = Date.now();
+  const isTest = !!(e.test || (row && row.test));
+  const entry = {
+    at:         atMs,
+    direction:  dir,
+    trigger:    name,
+    latency_ms: Math.max(0, atMs - firedMs),
+    source:     String(e.source || 'callout').slice(0, 40),
+    test:       isTest,
+  };
+  _calloutFeedback[dir]++;
+  _calloutFeedback.recent.push(entry);
+  if (_calloutFeedback.recent.length > CALLOUT_FEEDBACK_RECENT_MAX) _calloutFeedback.recent.shift();
+  console.log('[callout] ' + dir + ' — ' + name + ' after ' + Math.round(entry.latency_ms / 1000) + 's'
+              + (isTest ? ' (test/rehearsal — not uploaded)' : ''));
+  // A rehearsal or a ⏪ replay drives the whole path on purpose — that is how
+  // this gets tested without a raid — but a test drive is not a raider's
+  // verdict, so it stops at the local counters.
+  if (isTest) return entry;
+  _queueCalloutVote({
+    trigger_id:      triggerId ? String(triggerId).slice(0, 120) : null,
+    trigger_name:    name,
+    direction:       dir,
+    fired_at:        new Date(firedMs).toISOString(),
+    voted_at:        new Date(atMs).toISOString(),
+    voter_character: _calloutVoterCharacter(),
+    note:            entry.source,
+  });
+  return entry;
+}
+// Local, in-memory view for /api/state — how the overlay's ✕ is verified
+// without a raid (and without waiting on an upload round-trip).
+function _calloutFeedbackSnapshot() {
+  return {
+    dismissed: _calloutFeedback.dismissed,
+    expired:   _calloutFeedback.expired,
+    uploaded:  _calloutFeedback.uploaded,
+    pending:   _calloutVoteBuffer.length,
+    recent:    _calloutFeedback.recent.slice().reverse(),
+  };
+}
+
 function _activeTimersSnapshot() {
   const now = Date.now();
   const out = [];
   for (const [id, t] of _activeTimers) {
-    if (t.ends_at_ms <= now) { _activeTimers.delete(id); continue; }
+    // Aged out untouched — the control group for the dismissal rate (#207).
+    // Only a NATURAL expiry lands here: a mob-death cancel and a user dismissal
+    // both delete the row themselves, so neither is double-counted.
+    if (t.ends_at_ms <= now) {
+      _activeTimers.delete(id);
+      try { _recordCalloutFeedback({ direction: 'expired', timer: t, source: 'timer_expired' }); }
+      catch { /* never let bookkeeping break the snapshot */ }
+      continue;
+    }
     // display_threshold_sec: hide the row until it is nearly up ("only show me
     // the last 30s"). Filtered HERE rather than in the overlay so an older
     // bundled triggers.html gets the behaviour without a Mimic update.
@@ -31307,6 +31483,7 @@ function _fireTriggerActions(t, captures, tsMs, test, isRelay) {
         // de-duped, swallowing rapid back-to-back alerts).
         firedAt:     Date.now(),
         trigger:     t.name,
+        trigger_id:  t.id || null,   // #207 — attribution for a dismissal
         scope:       t._scope || (test ? 'test' : 'personal'),
         test:        !!test,
       };
@@ -33181,6 +33358,8 @@ module.exports = {
   _fireLog, _triggerJournal, _triggerLastFire,
   // #142 buster/spawn-chain timers — exported for the scratchpad fixture.
   _startTimer, _activeTimersSnapshot, _cancelTimersOnMobDeath, _deadMobNameFromLine,
+  // #207 callout dismissals — exported for the scratchpad fixture.
+  _recordCalloutFeedback, _calloutFeedbackSnapshot, _flushCalloutVotes,
   // Age + liveness (2026-08-10) — exported so the wrapper is tested against
   // the shipped code rather than a copy.
   _noteDeath, _clearDeath, _isDead, _deadNamesSnapshot, _ageOfServerStamp,

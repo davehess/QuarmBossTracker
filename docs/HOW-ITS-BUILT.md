@@ -748,6 +748,49 @@ Zeal health, Settings, loading. Overlays poll the local agent
 
 ---
 
+### Callout overlay UX — dismissible countdowns + recorded dismissals (#207) — 2026-08-11
+Where each half lives, because this one spans three files.
+
+**Layout (`triggers.html`).** `#timers` is **bottom-anchored** (`bottom:8px`,
+`flex-direction:column-reverse`) so the stack grows UPWARD, away from the centre
+of the screen — the centre is reserved for the momentary flash
+(`DESIGN-trigger-overlay-v2.md` §3/§3b). The window itself is bottom-anchored to
+match: `_GROW_UP_DEFAULT_KEYS` in `main.js` makes `trigger` grow-up **by
+default**, and every reader (resize path, chrome-menu checkbox, ⬆ toggle) goes
+through the one `_growUpSetting(cfg, key)` helper so an explicit choice wins in
+both directions. `--timers-space` (set from `measureWanted`) lifts the centred
+`#alertcol` clear of the stack — flex centring halves a bottom margin, hence
+twice the stack height.
+
+**Two render invariants, applied to the server list before any DOM work.**
+`collapseTimers` keeps at most one row per `(mob, effect class)` — today only
+slows classify (`TIMER_SLOW_RX`), longest-remaining wins — so the Ssra wall of
+identical slow rows cannot be drawn even if a new upstream cause appears.
+`splitVisible` caps the stack at `MAX_TIMER_ROWS` (6) with a `+N more` tail;
+**loot-auction chips are exempt** (#129 — a bid window a raider cannot see is a
+lost item). Capped-out rows leave the DOM but stay in `timerNodes`, so their
+pre-end warning still SPEAKS. Row reconciliation is an insert-before loop, not a
+blanket re-append (that restarts every row's pop animation each poll).
+
+**Dismissal (the ✕ on every row, 🗑 clear-all in the title bar).** Both use the
+hover-interact handshake — locked overlays are click-through. `dismissTimer`
+POSTs `/api/timers/cancel {id, reason}`; clear-all POSTs `{all:true}` (the agent
+spares loot chips) and also clears pinned sticky callouts.
+
+**Recording (`packages/wolfpack-logsync/index.js`).** `_recordCalloutFeedback`
+is the single funnel: `dismissed` from the cancel endpoint and from
+`/api/triggers/feedback` (sticky rows), `expired` from the natural-expiry branch
+of `_activeTimersSnapshot` — the control group, without which a dismissal count
+is not a rate. A mob-death cancel deletes the row itself and so is neither.
+Votes batch (30s / 25) into the existing `trigger_feedback` upload; latency is
+`voted_at − fired_at`, no new column. Rehearsal/replay fires update the local
+counters (`/api/state` → `calloutFeedback`) but never upload — that is the
+without-a-raid test path. Bot: `TRIGGER_FEEDBACK_DIRECTIONS`; DB: migration
+`20260811120000_trigger_feedback_dismissal_directions.sql` widens the CHECK
+constraint (a row is REJECTED until it is applied). Dismissals are per-user and
+session-scoped by construction — nothing relays, nothing touches
+`guild_triggers`. Tests: `test/callout-dismissals.test.js`.
+
 ### Auto-update on EQ close + focus-safe nag — 2026-08-04 (Mimic 2.3.0)
 Mimic already polled hourly with `autoDownload` on; `autoInstallOnAppQuit` then
 waited for a quit that never comes because nobody quits Mimic. So the download
