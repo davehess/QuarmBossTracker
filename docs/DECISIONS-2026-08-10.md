@@ -149,3 +149,63 @@ promotions. The sync removes the drift, not the direction.
 **Verified on the first run** (2026-08-10): beta contains all of main, the park
 held at 2.3.6 against the 2.3.5 stable, and the files that previously showed as
 deletions are present on beta.
+
+## Boss zone audit — `bosses_local.zone_short` had drifted from the repo seed
+
+**Reported (Hitya):** `/parses` filed Galiel Spirithoof under *Plane of Mischief*.
+
+**It is Plane of Growth**, and the error was in the database, not the page.
+`bosses_local.zone_short` said `mischiefplane`; `data/bosses.json` — the seed —
+correctly says "Plane of Growth". The DB drifted from the repo.
+
+**Method — three independent sources, not one guess.** For every boss:
+1. `data/bosses.json`, the committed seed;
+2. the npc-id convention (`id = zoneid*1000 + n`, per the catalog cheat-sheet);
+3. the **authoritative** `spawnentry → spawn2` join, which carries real placement
+   data (the denormalised `eqemu_npc_types.zone_short` is NULL catalog-wide, so
+   this join is the documented way to read a mob's zone).
+
+Nine rows disagreed with the id convention. Only fixing the reported one would
+have left eight.
+
+**Fixed (≥2 sources agreeing), 6 rows in `bosses_local` + 35 in `encounters`:**
+
+| boss | was | now |
+|---|---|---|
+| galiel_spirithoof | mischiefplane | growthplane |
+| master_yael | chardok | hole |
+| nortlav_scalekeeper | chardok | hole |
+| kelorek_dar | *(null)* | cobaltscar |
+| severilous | *(null)* | emeraldjungle |
+| ssraeshzian_blood_golem | *(null)* | ssratemple |
+
+The encounter backfill reached back to **January 2025** — Galiel was mis-zoned on
+8 separate kill dates and Severilous carried no zone across 20.
+
+**Deliberately NOT fixed — needs a human, all PoP (locked until 2026-10-01):**
+
+- `bertoxxulous` — seed and DB both say `podisease`; only the id convention says
+  `codecay`, and it has **zero spawn points**, so nothing corroborates. Two
+  sources against one is not enough to overwrite.
+- `aerin_dar` (seed+DB `postorms` vs spawn `povalor`) and `agnarr_storm_lord`
+  (seed+DB `postorms` vs spawn `bothunder`) — here the *spawn* data contradicts
+  both the seed and the DB. Spawn placement is the stronger source, so these are
+  probably wrong in the seed too, but they are locked content nobody can verify
+  in-game right now.
+
+**Add to the PoP unlock checklist** (alongside `/board` and refreshing
+`pqdiUrl`s): re-run this audit and settle those three against PQDI.
+
+**Re-runnable audit** — the query that found it, worth repeating after any boss
+import:
+
+```sql
+select b.internal_id, b.zone_short as recorded, z.short_name as by_npcid,
+       string_agg(distinct s2.zone_short, ', ') as by_spawn_join
+from bosses_local b
+join eqemu_zone z on z.zone_id = (b.npc_id / 1000)
+left join eqemu_spawnentry se on se.npc_id = b.npc_id
+left join eqemu_spawn2 s2 on s2.spawngroup_id = se.spawngroup_id
+where b.zone_short is distinct from z.short_name
+group by b.internal_id, b.zone_short, z.short_name;
+```
