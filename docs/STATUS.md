@@ -2371,7 +2371,12 @@ one concrete detail. Shipped that night: stable 2.1.2 / agent 3.4.36.**
 - **Unraid Supabase stack: UP 12/12 and verified 2026-08-11** (roles present, so
   the bootstrap really ran). It is now the restore-test target for Phase 1 —
   same Postgres major (17.6) as the hosted project.
-- **Local copy of wolfpack.quest on Unraid** — decided 2026-08-11: Coolify in an
+- **Local copy of wolfpack.quest is LIVE (2026-08-11)** at
+  `http://192.168.1.163:3000`, served by Coolify in an Unraid VM against the
+  local Supabase stack. Remaining: Part F (Discord sign-in on the local GoTrue),
+  gated on having the Discord client secret. Full steps + the four traps hit
+  along the way in `docs/RUNBOOK-local-web-coolify.md`.
+- ~~**Local copy of wolfpack.quest on Unraid**~~ — decided 2026-08-11: Coolify in an
   Unraid VM, site pointed at the LOCAL Supabase stack (zero production risk).
   Steps in `docs/RUNBOOK-local-web-coolify.md`. Prerequisite that gates Part F:
   the Discord client secret must be in hand — resetting it breaks production

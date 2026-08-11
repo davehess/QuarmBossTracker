@@ -54,7 +54,8 @@ The repo is a monorepo and the site is NOT at the root:
 |---|---|
 | Build Pack | Nixpacks |
 | **Base Directory** | `/web` ← the load-bearing one |
-| Port | `3000` |
+| Ports Exposes | `3000` |
+| **Ports Mappings** | **`3000:3000`** ← publishes it; Exposes alone does NOT |
 | Branch | `main` (or `beta` for a mirror of the beta line) |
 
 `web/` has its own `package-lock.json`, so `npm ci` inside that directory works —
@@ -79,6 +80,19 @@ NIXPACKS_NODE_VERSION=20
 Use the LOCAL stack's keys — the ones generated for the Unraid compose, never the
 cloud project's. They are different trust domains and the local anon key is the
 only one the local GoTrue will honor.
+
+⚠ **`Ports Exposes` and `Ports Mappings` are different fields, and only the
+second one publishes to the host** (hit 2026-08-11). With Exposes alone,
+`docker ps` shows a bare `3000/tcp` — metadata for the proxy, nothing listening
+on the LAN — and the browser gets ERR_CONNECTION_REFUSED while Coolify still
+reports the app Running. Published looks like `0.0.0.0:3000->3000/tcp`. After
+setting it, **Redeploy, not Restart**: Docker can only apply port mappings when
+the container is recreated.
+
+**VERIFIED LIVE 2026-08-11:** built in ~5 min on Node 20 with 8 GB, site serving
+at `http://192.168.1.163:3000`. Note the roadmap page renders from static
+`web/lib/roadmapData.ts`, so it proves the BUILD only — open `/parses` or
+`/boards` to prove the Supabase link end to end.
 
 At this point Deploy gives you the public pages. Sign-in needs Part F.
 
