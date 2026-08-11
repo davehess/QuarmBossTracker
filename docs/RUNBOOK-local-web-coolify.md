@@ -103,18 +103,28 @@ guild membership via Discord's live API, resolves role IDs through the restored
 `wolfpack_roles`, then upserts `wolfpack_members` **`onConflict: 'discord_id'`**.
 That last detail is why this works locally at all: the row keys on Discord ID, so
 a local GoTrue user with a brand-new `auth.users` UUID still lands on the restored
-member row. **No second Discord app and no second Supabase project** — the trap
-documented in CLAUDE.md for `b.wolfpack.quest` does not apply, because we are
-adding a redirect URI to the SAME Discord app.
+member row.
 
-### F1 — prerequisite: the Discord client secret
+**Use a SEPARATE Discord app for the local sandbox** (revised 2026-08-11). The
+CLAUDE.md "never a second Discord app" rule is about `b.wolfpack.quest`, which
+shares the PRODUCTION Supabase project — a second app there would force a second
+project and diverge `auth.users`. The local stack is already a separate project
+by construction, so that objection does not apply, and a separate app avoids the
+one genuinely dangerous step (resetting the production client secret). Verified
+in code: `SignInButton` requests scopes `identify guilds.members.read` and the
+callback checks the SIGNED-IN USER's membership with their own token
+(`GET /users/@me/guilds/{id}/member`) — **the Discord app itself never needs to be
+in the guild**, so any app works.
 
-⚠ **Check this BEFORE anything else.** Discord shows a client secret once, at
-creation. If it was never saved, the only way to get one is **Reset Secret**,
-**which immediately breaks production sign-in** until the cloud project's Discord
-provider is updated with the new value. If you must reset: update the cloud
-Supabase provider config in the same sitting, and do it outside a raid window.
-Look first in the cloud Dashboard → Authentication → Providers → Discord.
+### F1 — create a sandbox Discord app (do NOT reuse production's)
+
+Discord Developer Portal → **New Application** → `Wolfpack Local` → OAuth2 → copy
+the Client ID, Reset Secret and copy that too (a fresh app has nothing to break),
+then OAuth2 → Redirects → Add `http://<supabase-gateway>:8000/auth/v1/callback`.
+
+⚠ Do NOT reset the PRODUCTION app's secret to obtain it. Discord shows a secret
+once; resetting it **breaks production sign-in** until the cloud Supabase provider
+config is updated with the new value. A sandbox app sidesteps that entirely.
 
 ### F2 — enable the provider in the local GoTrue
 
