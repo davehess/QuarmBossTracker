@@ -35,6 +35,29 @@ Related but different: `DESIGN-external-tenancy.md` §4 walks OTHER guilds
 self-hosting the whole platform; this runbook is about mirroring OUR project's
 data to hardware we own.
 
+## ✅ PHASE 1 PROVEN END-TO-END (2026-08-11)
+
+Dump: 106,294,330 bytes, custom format, 1527 TOC entries, from server 17.6.
+Restored into the local stack and verified: **`select count(*) from encounters`
+→ 1575**. Backup path and restore path both exercised on real data, same night.
+
+Three restore errors are EXPECTED and harmless — do not chase them:
+- `operator class "extensions.gin_trgm_ops" does not exist` — `pg_trgm` is not
+  installed locally, so one trigram index on `who_observations` is skipped.
+  `create extension if not exists pg_trgm schema extensions` fixes it.
+- FK `wolfpack_members_user_id_fkey` → `auth.users` — we restore `--schema=public`
+  only, so local `auth.users` is empty and the constraint cannot attach. Correct
+  by design: the local stack's GoTrue owns `auth`.
+- `publication "wolfpack_replica" does not exist` — the HOSTED project carries
+  that publication (the replication SQL in this runbook was run at some point).
+  Verified 2026-08-11: **0 replication slots**, so it retains no WAL and costs
+  nothing. A publication is inert without a slot; a slot without a consumer is
+  what fills a disk. Drop it if tidiness is wanted.
+
+⚠ Remaining: the User Scripts copy must be re-pasted from
+`scripts/unraid-backup-supabase.sh` (the first-run copy still carries the
+`-f /dev/stdout` bug) BEFORE enabling the `0 5 * * *` schedule.
+
 ## ⚠ The three Community Applications tiles are not the stack
 
 `SupabaseKong` / `SupabaseMeta` / `SupabaseStudio` are the API gateway, the

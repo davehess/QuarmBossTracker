@@ -2371,7 +2371,12 @@ one concrete detail. Shipped that night: stable 2.1.2 / agent 3.4.36.**
 - **Unraid Supabase stack: UP 12/12 and verified 2026-08-11** (roles present, so
   the bootstrap really ran). It is now the restore-test target for Phase 1 —
   same Postgres major (17.6) as the hosted project.
-- **Run Phase 1 of the Unraid backup** (`docs/RUNBOOK-unraid-supabase-replica.md`,
+- **Unraid backup Phase 1 is PROVEN (2026-08-11)** — 106 MB dump restored into
+  the local stack, `encounters` = 1575. ONLY remaining step: re-paste the
+  corrected `scripts/unraid-backup-supabase.sh` into User Scripts (the copy
+  there still has the `-f /dev/stdout` bug) and set the schedule to
+  `0 5 * * *`. Phase 2 (dev sandbox) is effectively seeded by that same restore.
+- ~~**Run Phase 1 of the Unraid backup**~~ (superseded by the line above) (`docs/RUNBOOK-unraid-supabase-replica.md`,
   decided 2026-08-11: backup first, then dev sandbox): copy
   `scripts/unraid-backup-supabase.sh` into the User Scripts plugin, put the
   SESSION-pooler URI (Dashboard → Connect — port 5432, NOT the 6543 transaction

@@ -255,3 +255,18 @@ copy-paste ready (`scripts/unraid-backup-supabase.sh` + runbook §Phase 1;
 execution is a needs-local-session item). Phase 2 (supabase CLI sandbox) waits
 on Phase 1 proving out — and its first `db reset` doubles as the first-ever
 test of whether the 193 committed migrations rebuild the live schema.
+
+## Unraid Phase 1 PROVEN, and four bugs it flushed out (2026-08-11)
+
+Backup + restore both exercised on real data the same night: 106 MB dump
+(1527 TOC entries, server 17.6) restored into the local stack, `encounters` =
+1575. The evening's real value was the failure list, all now in
+`RUNBOOK-unraid-supabase-replica.md`: (1) relative compose binds put PGDATA on
+the FAT32 boot flash — chown EPERM crash loop; (2) a UI-created Compose Manager
+project has NO `volumes/` tree, so Docker auto-created empty directories and
+Postgres came up "healthy" having run none of its bootstrap — the role list, not
+the healthcheck, is the acceptance test; (3) the backup script pinned a
+`postgres:15` client against a 17.6 server, which pg_dump refuses; (4)
+`pg_dump -f /dev/stdout` fsyncs on completion and dies AFTER writing a complete
+dump. Also: Studio's project ref follows `POOLER_TENANT_ID` (`/project/wolfpack`,
+not `/project/default`), and `docker cp` of `latest.dump` copies the symlink.
