@@ -65,14 +65,20 @@ QueueItem = {
   toggle we just built in G). Rows sorted by priority desc, color by kind, a
   one-click "✓ got it" that resolves the item for everyone.
 
-## Open questions for sign-off
-1. **Auto vs manual:** start auto-detect-only (Phase 1), or go straight to the
-   shared manual+auto queue (Phase 2)? (Recommend Phase 1 first — testable
-   tomorrow, then Phase 2.)
-2. **Which buffs/debuffs auto-enqueue?** A curated list (Malo/Tash/Slow/CH-target
-   markers) or everything that "wears off"? (Everything is noisy; recommend a
-   short curated raid-debuff list, editable.)
-3. **Who can resolve an item** — anyone, or only the creator/officers?
-4. **Durable or ephemeral** on the bot? (Recommend ephemeral in-memory.)
-5. **Need:** paste 5–10 real Quarm log lines for: a buff wearing off, a dispel,
-   a curse/cure, and a death — so the detectors are exact, not guessed.
+## Open questions — ALL RESOLVED 2026-08-11
+
+1. **Auto vs manual** — OVERTAKEN BY SHIPPED CODE: auto-detection exists (the
+   bot's `raid-buff-queue` — online raiders, same-zone first, tank-HP priority,
+   curse-counter sort — plus Mimic's Buff queue overlay). The rez half is owned
+   by `DESIGN-death-awareness-and-rez-queue.md`. Remaining build = the shared
+   MANUAL layer on top ("Sue cursed", "kite help") with one-click resolve.
+2. **Which auto-enqueue** — OVERTAKEN: the curated list exists bot-side
+   (`_CURSE_COUNTERS` + the queue's sort rules) and is editable there.
+3. **Who can resolve** — **ANYONE (Hitya, 2026-08-11).** Same philosophy as the
+   Wrong-button everyone-workflow call: a wrong resolve costs one re-enqueue, a
+   locked resolve costs a stale queue mid-fight.
+4. **Durable or ephemeral** — **EPHEMERAL (Hitya, 2026-08-11).** In-memory ring
+   on the bot, ~1h TTL, same shape as the trigger-relay ring. No table, no
+   migration; a shared scratchpad has no business surviving a deploy.
+5. **Real log lines** — SATISFIED: detectors ground in `eqemu_spells`
+   `cast_on_you/cast_on_other/spell_fades` text now, not guesses.

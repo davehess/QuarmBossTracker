@@ -235,3 +235,13 @@ confidently wrong answers for every future session. Landed in `CLAUDE.md`
 | **Timer-warning sweep** | Which timer triggers have a duration but no `timer_warnings`? Emperor's was a blank field |
 | **PR #78** | CLOSED 2026-08-11 (diff had become the 2.3.6 park — merging would have cut an accidental stable) |
 | **PoP unlock checklist** | + settle bertoxxulous / aerin_dar / agnarr zones against PQDI |
+
+## Buff/debuff queue: anyone resolves, ephemeral store (Hitya, 2026-08-11)
+
+The two questions that were still live in `DESIGN-buff-debuff-queue.md`:
+**anyone can resolve** a queue item (everyone-workflow philosophy — a wrong
+resolve costs one re-enqueue; a locked resolve costs a stale queue mid-fight),
+and the store is **ephemeral** (in-memory ring on the bot, ~1h TTL, trigger-relay
+shape — no table, no migration). The other three questions were overtaken by
+shipped code and are marked so in the design doc. Remaining build: the shared
+manual layer + one-click resolve on the existing auto queues.
