@@ -6333,21 +6333,41 @@ ipcMain.handle('overlay-auto-height', (e, h) => {
     // parked too high to grow up). Remove once confirmed.
     if (growsUp) {
       let key = null; for (const [k, w] of _overlayEntries()) if (w === win) { key = k; break; }
-      appendAgentLog(`[grow-up] ${key} h ${bounds.height}->${target} y ${bounds.y}->${y}${clampedAtTop ? ' CLAMPED-AT-TOP(no room above)' : ''} workAreaY=${disp.workArea.y}\n`);
+      // Skip the routine re-fits of an overlay that is bottom-anchored BY
+      // DEFAULT: the trigger stack re-fits on every chip add/remove, so this
+      // would write a line per countdown all raid. CLAMPED-AT-TOP still logs —
+      // that one says the overlay is parked too high to grow up, which is the
+      // actionable case and the one a default-on overlay is most likely to hit.
+      if (key && (clampedAtTop || !_GROW_UP_DEFAULT_KEYS.has(key))) {
+        appendAgentLog(`[grow-up] ${key} h ${bounds.height}->${target} y ${bounds.y}->${y}${clampedAtTop ? ' CLAMPED-AT-TOP(no room above)' : ''} workAreaY=${disp.workArea.y}\n`);
+      }
     }
     win.setBounds({ x: bounds.x, y, width: bounds.width, height: target });
     return true;
   } catch { return false; }
 });
 
+// Which overlays are bottom-anchored by DEFAULT (no explicit user choice yet).
+// The trigger overlay is, because its countdown stack must grow UPWARD, away
+// from the centre of the screen: "the middle of the screen is crucial area for
+// positioning, but that whole line of timers was awful to compete with"
+// (Hitya 2026-08-10 — docs/DESIGN-trigger-overlay-v2.md §3/§3b). Growing down
+// from a top anchor walks the stack straight through the play area.
+// An explicit choice — the chrome menu's ⬆ Grow upward — always wins, in BOTH
+// directions, which is why every reader goes through this one helper.
+const _GROW_UP_DEFAULT_KEYS = new Set(['trigger']);
+function _growUpSetting(cfg, key) {
+  if (!key) return false;
+  const map = (cfg && cfg.overlayGrowUp && typeof cfg.overlayGrowUp === 'object') ? cfg.overlayGrowUp : {};
+  return Object.prototype.hasOwnProperty.call(map, key) ? !!map[key] : _GROW_UP_DEFAULT_KEYS.has(key);
+}
 // Does this overlay grow upward (bottom-anchored auto-height)?
 function _overlayGrowsUp(win) {
   try {
     let key = null;
     for (const [k, w] of _overlayEntries()) if (w === win) { key = k; break; }
     if (!key) return false;
-    const cfg = loadConfig();
-    return !!((cfg.overlayGrowUp && typeof cfg.overlayGrowUp === 'object') ? cfg.overlayGrowUp[key] : false);
+    return _growUpSetting(loadConfig(), key);
   } catch { return false; }
 }
 
@@ -6552,7 +6572,7 @@ ipcMain.handle('wp-overlay-menu-state', (e) => {
     key,
     backdrop: key ? !!((cfg.overlayBackdrop || {})[key]) : false,
     arrangeOnShow: !!cfg.autoArrangeOnShow,
-    growUp: key ? !!((cfg.overlayGrowUp || {})[key]) : false,
+    growUp: _growUpSetting(cfg, key),
     theme: cfg.overlayTheme || 'default',
   };
 });
@@ -6611,7 +6631,10 @@ ipcMain.handle('wp-growup-toggle', (e) => {
   if (!key) return false;
   const cfg = loadConfig();
   const map = (cfg.overlayGrowUp && typeof cfg.overlayGrowUp === 'object') ? cfg.overlayGrowUp : {};
-  map[key] = !map[key];
+  // Flip the EFFECTIVE value, not the raw map entry — an overlay that is
+  // bottom-anchored by default has no entry yet, so `!map[key]` would compute
+  // true and the first click would appear to do nothing.
+  map[key] = !_growUpSetting(cfg, key);
   cfg.overlayGrowUp = map;
   saveConfig(cfg);
   return !!map[key];

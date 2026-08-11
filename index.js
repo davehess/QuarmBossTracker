@@ -7175,6 +7175,17 @@ async function _handleAgentFunEvent(req, res) {
 // into trigger_timing_feedback. No dedup — the overlay debounces locally; we
 //'d rather honestly count three quick clicks than risk losing a real burst
 // of disagreement. (Hitya 2026-06-26 — v1.1.2.)
+//
+// #207 adds two IMPLICIT directions on the same table: `dismissed` (the raider
+// cleared the callout) and `expired` (it aged out untouched). The second is the
+// control group — a dismissal COUNT is meaningless without the exposures it is
+// a fraction of (docs/DESIGN-callout-overlay.md §Gap C). Latency needs no
+// column: voted_at − fired_at separates "swatted it instantly" from "read it,
+// acted, cleared it". The DB check constraint is widened by migration
+// 20260811120000_trigger_feedback_dismissal_directions.sql — a row with one of
+// these directions is REJECTED until that has been applied, so ship the
+// migration with (or before) an agent that sends them.
+const TRIGGER_FEEDBACK_DIRECTIONS = ['earlier', 'good', 'too_early', 'dismissed', 'expired'];
 async function _handleAgentTriggerFeedback(req, res) {
   const identity = await mimicLink.requireAgentAuth(req, res);
   if (!identity) return;
@@ -7201,7 +7212,7 @@ async function _handleAgentTriggerFeedback(req, res) {
 
   const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
   const rows = votes
-    .filter(v => v && ['earlier','good','too_early'].includes(String(v.direction)))
+    .filter(v => v && TRIGGER_FEEDBACK_DIRECTIONS.includes(String(v.direction)))
     .map(v => ({
       guild_id:        guildId,
       trigger_id:      v.trigger_id ? String(v.trigger_id).slice(0, 120) : null,

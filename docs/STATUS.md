@@ -2187,6 +2187,26 @@ before anyone touches them.** All four exist because of the two bugs found
 - **#207 Overlay UX for callouts**: visible countdowns mirroring the TTS,
   dismissible lines, and **recording dismissals** so we learn which callouts
   people don't want or don't trust. `docs/DESIGN-callout-overlay.md`.
+  **PARTLY BUILT 2026-08-11** — unreleased, on a working branch, no version
+  bump yet. Landed: ✕ on EVERY countdown + 🗑 clear-all on the title bar;
+  bottom-anchored stack that grows upward (the trigger overlay is now grow-up
+  by default) with a 6-row cap + "+N more" and a one-row-per-mob collapse for
+  slows; dismissals and expiries recorded through `_recordCalloutFeedback` →
+  the existing `trigger_timing_feedback` table as `dismissed` / `expired`
+  (migration `20260811120000_trigger_feedback_dismissal_directions.sql` widens
+  the CHECK constraint — **the insert is rejected until it is applied**, so
+  that file and the bot change go to `main` with, or before, the agent).
+  Deliberately NOT built: the `callout_fires` table (§3.1), the callout-health
+  panel on `/admin/triggers` (§3.3), the collapse of the three-field timer
+  config (§Gap A), the separate timers window (v2 §4), the callout font-size
+  setting (v2 §5) and the whole mute / Wrong / edit loop (v2 §6 — v2 says it
+  "wants its own review"). See `docs/HOW-ITS-BUILT.md` → "Callout overlay UX".
+  ⚠ Also fixed in that change, found on the way: **GINA's `{COUNTER}` was
+  missing from `_NON_SEMANTIC_CAPTURES`**, which re-created the P1 wall of
+  duplicate rows for any timer trigger without `timer_key_capture`, blanked the
+  mob from every timer label (`null - Shaman Slow landed`, because the first
+  fire's counter is `0`) and could double a relayed callout again. Write-up:
+  `FINDINGS-2026-08-10-trigger-overlay.md` §P1b.
 
 **Raid-night 2026-07-30 field reports (Hitya) — all still OPEN, each blocked on
 one concrete detail. Shipped that night: stable 2.1.2 / agent 3.4.36.**
