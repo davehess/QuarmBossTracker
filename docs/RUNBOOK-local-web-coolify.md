@@ -154,6 +154,15 @@ break libvirt. `br0` is the load-bearing line — the default `virbr0` NATs the 
 and makes both Coolify and the site unreachable from your desktop. SeaBIOS rather
 than OVMF on purpose: no nvram file to go wrong on a headless server VM.
 
+⚠ **Create the vdisk before starting.** An XML-defined VM does not auto-create
+its disk image — only Form View does — so a pasted XML fails to start with
+*"Cannot access storage file … No such file or directory"* (hit 2026-08-11):
+```
+mkdir -p /mnt/user/domains/Coolify
+qemu-img create -f raw /mnt/user/domains/Coolify/vdisk1.img 40G
+```
+The raw image is sparse: it reports 40G but consumes only what is written.
+
 Delete the `<disk device='cdrom'>` block once Debian is installed, or it can boot
 the installer again. Install `qemu-guest-agent` in the guest and Unraid's VMs tab
 will report the VM's IP for you.
@@ -204,7 +213,11 @@ runbook is unchanged.
   <devices>
     <emulator>/usr/local/sbin/qemu</emulator>
 
-    <!-- Main disk. 40G raw image; Unraid creates it on first start.
+    <!-- Main disk. CREATE IT FIRST — an XML-defined VM does NOT auto-create
+         the image (only Form View does), and starting without it errors with
+         "Cannot access storage file ... No such file or directory":
+           mkdir -p /mnt/user/domains/Coolify
+           qemu-img create -f raw /mnt/user/domains/Coolify/vdisk1.img 40G
          NOTE: /mnt/user is the FUSE layer — if your appdata/domains share
          lives on a pool, /mnt/cache/domains/... is measurably faster. -->
     <disk type='file' device='disk'>
