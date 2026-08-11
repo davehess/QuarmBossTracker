@@ -270,3 +270,20 @@ the healthcheck, is the acceptance test; (3) the backup script pinned a
 `pg_dump -f /dev/stdout` fsyncs on completion and dies AFTER writing a complete
 dump. Also: Studio's project ref follows `POOLER_TENANT_ID` (`/project/wolfpack`,
 not `/project/default`), and `docker cp` of `latest.dump` copies the symlink.
+
+## Local wolfpack.quest: Coolify in a VM, pointed at the LOCAL Supabase (Hitya, 2026-08-11)
+
+Two calls. **Coolify runs in an Unraid VM**, not on bare Unraid — its installer
+wants systemd and the Docker daemon, and its proxy wants ports 80/443, which
+collides with Unraid's own web UI. **The site points at the local Supabase
+stack**, so officer pages can be clicked without touching production; the cost is
+that the data is a snapshot refreshed by restoring a nightly dump.
+
+Local Discord sign-in turns out to be viable with no second Discord app and no
+second Supabase project: the callback upserts `wolfpack_members` with
+`onConflict: 'discord_id'`, so a local GoTrue user with a fresh `auth.users` UUID
+still lands on the restored member row, and the role gate reads live Discord plus
+the restored `wolfpack_roles`. What it needs is a redirect URI added to the
+EXISTING Discord app. ⚠ Gated on having the Discord client secret — Discord shows
+it once, and resetting it breaks production sign-in until the cloud provider
+config is updated. Full steps: `docs/RUNBOOK-local-web-coolify.md`.

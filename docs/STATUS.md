@@ -2371,6 +2371,11 @@ one concrete detail. Shipped that night: stable 2.1.2 / agent 3.4.36.**
 - **Unraid Supabase stack: UP 12/12 and verified 2026-08-11** (roles present, so
   the bootstrap really ran). It is now the restore-test target for Phase 1 —
   same Postgres major (17.6) as the hosted project.
+- **Local copy of wolfpack.quest on Unraid** — decided 2026-08-11: Coolify in an
+  Unraid VM, site pointed at the LOCAL Supabase stack (zero production risk).
+  Steps in `docs/RUNBOOK-local-web-coolify.md`. Prerequisite that gates Part F:
+  the Discord client secret must be in hand — resetting it breaks production
+  sign-in until the cloud provider config is updated.
 - **Unraid backup Phase 1 is PROVEN (2026-08-11)** — 106 MB dump restored into
   the local stack, `encounters` = 1575. ONLY remaining step: re-paste the
   corrected `scripts/unraid-backup-supabase.sh` into User Scripts (the copy
