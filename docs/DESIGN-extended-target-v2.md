@@ -133,6 +133,12 @@ From the same sequence, where three consecutive CH landings decided the fight:
   as §3 of `FINDINGS-2026-08-10-trigger-overlay.md` (the roster parser trusting
   the shout over the roster) — a call should update the SLOT's timing, not
   reassign who owns it, unless the roster says so.
+  **Display half SHIPPED (agent 3.5.61, 2026-08-11, Hitya's call):** both
+  claimants render on the row in first-claimed order ("Mcdorf / Pyxil") and the
+  overlay banners **ORDER CONFLICT** (yellow letters, red outline). Claimants
+  self-evict after 120s of silence so a corrected mis-call heals on its own.
+  Tests: `test/ch-slot-conflict.test.js`. The structural half — the
+  officer-pushed authoritative rotation — is still the open question above.
 - **A countdown froze**: Lenolshot's Weapon Shield sat at `2s` for longer than
   two seconds. Same family as the stale cross-client HP — a timer whose source
   stopped updating keeps rendering its last value instead of expiring.

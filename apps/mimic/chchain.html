@@ -50,7 +50,7 @@
     letter-spacing:0.04em;
     text-shadow:0 1px 2px #000, 0 0 4px rgba(246,195,101,0.3);
   }
-  .row.casting .num{color:#7ee787; border-color:rgba(126,231,135,0.55)}
+  .row.casting .num{color:#79c0ff; border-color:rgba(88,166,255,0.55)}
   .row.next    .num{color:#f6c365; border-color:rgba(246,195,101,0.65); background:rgba(246,195,101,0.10)}
   .row .nm{color:#e6edf3;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
   /* Tag on an auto-slotted row folded in from a non-cleric CH-equivalent
@@ -60,10 +60,13 @@
   .row .mana{font-variant-numeric:tabular-nums;font-weight:600;text-align:right;font-size:11px}
   .mana.hi{color:#56d364} .mana.mid{color:#f0b429} .mana.lo{color:#f87171} .mana.unk{color:#6e7681}
   .row .stat{color:#8b949e;font-size:10px;font-variant-numeric:tabular-nums;text-align:right;min-width:3.4em}
-  /* Casting row — green accent + a 10s CH cast bar under the row. */
-  .row.casting{background:rgba(86,211,100,0.12);border-left-color:#56d364}
-  .row.casting .nm{color:#7ee787}
-  .row.casting .stat{color:#7ee787;font-weight:600}
+  /* Casting row — BLUE accent + a 10s CH cast bar that fills RIGHT-TO-LEFT
+     (Hitya 2026-08-11: every countdown fills left-to-right, so the cast bar
+     runs the other way and in its own color — one glance tells a cast from a
+     countdown). GO stays green (green = go), interrupted stays red-frozen. */
+  .row.casting{background:rgba(88,166,255,0.12);border-left-color:#58a6ff}
+  .row.casting .nm{color:#79c0ff}
+  .row.casting .stat{color:#79c0ff;font-weight:600}
   /* Next-up row — amber accent, like the GO call it's about to get. */
   .row.next{background:rgba(240,180,41,0.12);border-left-color:#f0b429}
   .row.next .nm{color:#f6c365}
@@ -84,15 +87,28 @@
     to{box-shadow:inset 0 0 16px rgba(240,180,41,0.30)}
   }
   .bar{grid-column:1 / -1;height:4px;background:rgba(255,255,255,0.08);
-    border-radius:2px;overflow:hidden;margin-top:3px}
-  .bar .fill{height:100%;background:#56d364;transition:width 120ms linear}
+    border-radius:2px;overflow:hidden;margin-top:3px;position:relative}
+  /* Anchored RIGHT: width growth extends leftward. The interrupted state
+     inherits the anchor so a frozen bar is visibly the same bar, stopped. */
+  .bar .fill{height:100%;background:#58a6ff;transition:width 120ms linear;
+    position:absolute;top:0;right:0}
   /* Interrupted cast — the bar FREEZES at however far the cast got and turns
      red, and the row's stat cell becomes a ✕. Distinct from every other row
-     state: casting is green-and-moving, this is red-and-stopped. */
+     state: casting is blue-and-moving-right-to-left, this is red-and-stopped. */
   .row.interrupted{background:rgba(220,38,38,0.16);border-left-color:#f87171}
   .row.interrupted .num{color:#f87171;border-color:rgba(248,113,113,0.55)}
   .row.interrupted .nm{color:#fca5a5}
   .row.interrupted .bar .fill{background:#f87171;transition:none}
+  /* ORDER CONFLICT (Hitya 2026-08-11): two callers on one slot number. Bright
+     yellow letters with a red outline — loud on purpose; a contested rotation
+     is a wipe risk the raid should see before the missed beat. Static text,
+     not clickable, so no hover-interact handshake is needed. */
+  #conflictbanner{display:none;color:#ffd60a;font-weight:800;font-size:12px;
+    letter-spacing:0.08em;text-align:center;padding:2px 8px;margin-bottom:4px;
+    border:2px solid #f87171;border-radius:4px;
+    text-shadow:-1px 0 rgba(220,38,38,0.9),1px 0 rgba(220,38,38,0.9),
+      0 -1px rgba(220,38,38,0.9),0 1px rgba(220,38,38,0.9)}
+  .row.conflict .nm{color:#ffd60a}
   .xbadge{display:inline-block;font-weight:800;font-size:11px;color:#fff;
     background:rgba(220,38,38,0.85);border-radius:8px;padding:0 6px;
     text-shadow:none;box-shadow:0 0 8px rgba(248,113,113,0.6)}
@@ -354,6 +370,7 @@
     <button id="exitSetupBtn">Done</button>
   </div>
   <div id="wrap">
+    <div id="conflictbanner">ORDER CONFLICT</div>
     <div class="head">
       <span id="conn" class="conn bad">○</span>
       <span class="icon">⛑</span>
@@ -1064,6 +1081,9 @@
     var lingerMs   = (c.ch_interrupt_linger_ms > 0 ? c.ch_interrupt_linger_ms : CH_INTERRUPT_LINGER_MS);
     var ddrShowMs  = (c.ddr && c.ddr.display_ms > 0 ? c.ddr.display_ms : CH_DDR_DISPLAY_MS);
     var nums = Object.keys(c.slots).map(Number).sort(function(a, b){ return a - b; });
+    // ORDER CONFLICT: server flag is authoritative; the per-row claimant check
+    // below also sets it so a row and its banner can never disagree.
+    var anyConflict = !!c.order_conflict;
     var html = '';
     for (var i = 0; i < nums.length; i++) {
       var n = nums[i], s = c.slots[n];
@@ -1082,8 +1102,14 @@
       // up next" (Uilnayar 2026-07-06).
       var goActive  = !isCasting && !isInterrupted && c.last_go && c.last_go.num === n;
       var isNext    = !isCasting && !isInterrupted && !goActive && c.next_num === n;
+      // Two live claimants on this number → show BOTH, in first-claimed order,
+      // rather than the last caller silently owning the row (Mcdorf stays
+      // first when Pyxil mis-calls 001).
+      var claimNames = (s.claimants && s.claimants.length > 1)
+        ? s.claimants.map(function (cl) { return cl.name; }) : null;
+      if (claimNames) anyConflict = true;
       var cls = 'row' + (isCasting ? ' casting' : '') + (isInterrupted ? ' interrupted' : '')
-              + (goActive ? ' go' : '') + (isNext ? ' next' : '');
+              + (goActive ? ' go' : '') + (isNext ? ' next' : '') + (claimNames ? ' conflict' : '');
       var stat, bar = '';
       if (isInterrupted) {
         // Frozen at the fraction of the cast that actually completed.
@@ -1106,13 +1132,14 @@
       }
       html += '<div class="' + cls + '">'
         +   '<span class="num">' + pad3(n) + '</span>'
-        +   '<span class="nm">' + esc(s.name || '?') + (s.kind ? ' <span class="slot-kind">' + esc(s.kind) + '</span>' : '') + '</span>'
+        +   '<span class="nm">' + esc(claimNames ? claimNames.join(' / ') : (s.name || '?')) + (s.kind ? ' <span class="slot-kind">' + esc(s.kind) + '</span>' : '') + '</span>'
         +   '<span class="mana ' + manaCls(s.mana) + '">' + (s.mana != null ? s.mana + '%' : '·') + '</span>'
         +   '<span class="stat">' + stat + '</span>'
         +   bar
         +   ddrSticker(s, now, ddrShowMs)
         + '</div>';
     }
+    document.getElementById('conflictbanner').style.display = anyConflict ? 'block' : 'none';
     if (rowsEl.__wpHtml !== html) {   // byte-stability guard (2026-07-07)
       rowsEl.innerHTML = html;
       rowsEl.__wpHtml = html;

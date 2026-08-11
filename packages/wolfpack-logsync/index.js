@@ -3844,7 +3844,8 @@ function trackChChainLine(line, character) {
     // kind: null — a real numbered CH call is never a labeled auto-slot;
     // clears any stale "Druid CH" tag on the rare chance this slot number
     // collides with one the personal-macro path auto-assigned earlier.
-    c.slots[num] = { name: slotName, mana: mana != null ? mana : (prev.mana ?? null), lastAtMs: atMs, count: (prev.count || 0) + 1, kind: null };
+    c.slots[num] = { name: slotName, mana: mana != null ? mana : (prev.mana ?? null), lastAtMs: atMs, count: (prev.count || 0) + 1, kind: null,
+                     claimants: _chMergeClaimants(prev, slotName, speaker, atMs) };
     c.lastCh = { num, name: slotName, mana, atMs };
     _applyChGrade(c, num, ddr);
     // Default next = numeric successor, wrapping at the highest slot seen.
@@ -3884,7 +3885,8 @@ function trackChChainLine(line, character) {
       }
       const prev = c.slots[num] || {};
       const slotName = (c.rosterNames && c.rosterNames[num]) || speaker;
-      c.slots[num] = { name: slotName, mana, lastAtMs: atMs, count: (prev.count || 0) + 1, kind: CH_EQUIVALENT_SPELLS.get(spellKey) };
+      c.slots[num] = { name: slotName, mana, lastAtMs: atMs, count: (prev.count || 0) + 1, kind: CH_EQUIVALENT_SPELLS.get(spellKey),
+                       claimants: _chMergeClaimants(prev, slotName, speaker, atMs) };
       c.lastCh = { num, name: slotName, mana, atMs };
       _applyChGrade(c, num, ddr);
       const nums = Object.keys(c.slots).map(Number);
@@ -3980,6 +3982,46 @@ function _chSlotCastingAs(who, atMs) {
   if (exact != null) return exact;
   return prefix.length === 1 ? prefix[0] : null;
 }
+// ── Slot claimants (Hitya, 2026-08-11): "Mcdorf and Pyxil both having 001
+// shouldn't overwrite the spot, it should show both of them in the order." ──
+// When two callers claim the same slot number, the slot no longer silently
+// renames to the latest voice. Every distinct recent claimant is kept, in
+// FIRST-CLAIMED order (the earlier holder stays first), and the overlay shows
+// all of them plus an ORDER CONFLICT banner. This is the display-side half of
+// the §5 slot-stealing bug (DESIGN-extended-target-v2.md) — honest display
+// now; the officer-pushed authoritative rotation remains the structural fix.
+const CH_CLAIM_WINDOW_MS = 120_000;   // a claimant silent this long has moved on
+function _chMergeClaimants(prev, resolvedName, speaker, atMs) {
+  const out = [];
+  const seen = new Set();
+  const push = (nm) => {
+    const name = String(nm || '').trim();
+    if (!/^[A-Za-z]+$/.test(name)) return;          // real character names only
+    const k = name.toLowerCase();
+    if (seen.has(k)) {
+      for (const c of out) if (c.name.toLowerCase() === k) c.lastAtMs = atMs;
+      return;
+    }
+    seen.add(k);
+    out.push({ name, lastAtMs: atMs });
+  };
+  // Previous claimants seed the list so the FIRST holder keeps first position —
+  // their stamps are only refreshed if they are one of this call's names.
+  const prevList = Array.isArray(prev && prev.claimants) ? prev.claimants
+                 : (prev && prev.name ? [{ name: prev.name, lastAtMs: prev.lastAtMs || 0 }] : []);
+  for (const c of prevList) {
+    const name = String((c && c.name) || '').trim();
+    if (!/^[A-Za-z]+$/.test(name)) continue;
+    const k = name.toLowerCase();
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push({ name, lastAtMs: (c && c.lastAtMs) || 0 });
+  }
+  push(resolvedName);
+  push(speaker);
+  return out.filter(c => (atMs - c.lastAtMs) <= CH_CLAIM_WINDOW_MS);
+}
+
 function _chChainEnsure(atMs) {
   if (_chChain && (atMs - _chChain.updatedAt) > CH_CHAIN_IDLE_RESET_MS) _chChain = null;
   if (!_chChain) _chChain = { target: null, slots: {}, lastCh: null, nextNum: null, beats: [], startedAt: atMs, updatedAt: atMs };
@@ -4056,8 +4098,19 @@ function chChainSnapshot() {
     const s = _chChain.slots[nStr];
     if (s && _isOwnCharacterName(s.name)) youNums.push(Number(nStr));
   }
+  // Two live claimants on any slot = the rotation itself is contested — the
+  // overlay banners it instead of the raid finding out from a missed beat.
+  let orderConflict = false;
+  for (const nStr of Object.keys(_chChain.slots)) {
+    const s = _chChain.slots[nStr];
+    if (s && Array.isArray(s.claimants)
+        && s.claimants.filter(cl => (Date.now() - cl.lastAtMs) <= CH_CLAIM_WINDOW_MS).length >= 2) {
+      orderConflict = true; break;
+    }
+  }
   return {
     target:     _chChain.target,
+    order_conflict: orderConflict,
     slots:      _chChain.slots,
     last_ch:    _chChain.lastCh,
     next_num:   _chChain.nextNum,
