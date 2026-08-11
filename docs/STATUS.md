@@ -2368,6 +2368,14 @@ one concrete detail. Shipped that night: stable 2.1.2 / agent 3.4.36.**
 - Per-class overlay colors / PoP P2-P3 slideshow stubs (blocked on local capture).
 - Any migration needing local verification (per CLAUDE.md Migrations rule).
 
+- **Run Phase 1 of the Unraid backup** (`docs/RUNBOOK-unraid-supabase-replica.md`,
+  decided 2026-08-11: backup first, then dev sandbox): copy
+  `scripts/unraid-backup-supabase.sh` into the User Scripts plugin, put the
+  SESSION-pooler URI (Dashboard → Connect — port 5432, NOT the 6543 transaction
+  pooler) into `/boot/config/wolfpack-db-url` (chmod 600), run once by hand,
+  then do the one-time restore test. The script self-guards against the wrong
+  pooler and against rotating away good backups on a silently-failed dump.
+
 ### 🚫 Abandoned — deliberately dropped or blocked on something external
 - **Windows code-signing** — CLOSED 2026-07-14 (SignPath declined; user base too
   small). Installers stay unsigned unless another provider appears. (`code-signing.md`)
