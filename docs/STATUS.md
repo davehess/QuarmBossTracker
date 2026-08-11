@@ -2124,12 +2124,23 @@ before anyone touches them.** All four exist because of the two bugs found
   person.*
 
 **Callout + overlay work designed 2026-08-04 (specs written, unbuilt).**
-- **#204 Divine Intervention two-cleric callout.** `docs/DESIGN-di-callout.md`.
-  Full "who should cast it" selector needs recast state, emerald inventory and
-  CH-chain position — we have none of those reliably. The shippable version
-  names the two clerics who most recently healed on the chain as candidates and
-  lets voice resolve it. Read the doc's "what we can't know" section before
-  building.
+- **#204 Divine Intervention two-cleric callout — BUILT 2026-08-11, not yet
+  released.** `docs/DESIGN-di-callout.md` (§6 = what shipped + every call made
+  beyond the doc). Agent-side in the CH-chain module: `trackDiFired` on the
+  real death-save line (`%1 has been rescued by divine intervention!`,
+  StringID 1029) → `_diRankCandidates` → one `text_overlay` fire ("D I down.
+  <A> or <B>.") on the existing trigger-TTS surface, plus a card on
+  `apps/mimic/chchain.html` with per-name evidence chips and a 20s countdown.
+  Hard exclusions the doc did not have: druids/known non-clerics (DI is
+  cleric-only and the chain is not a cleric roster), corpses (via the 3.5.58
+  death registry — §2 of the doc is stale on this), and a MEASURED recast.
+  Ties/empty fall back to the chain's two most recent healers; no candidates
+  at all means no nomination, because the guild trigger already announces the
+  event. Tests: `test/di-callout.test.js`. **Still open from the doc**: §5's
+  "fire when DI is simply ABSENT from the MT" (deliberately unbuilt) and
+  whether the DI roster should be configurable. Dismissal RECORDING is #207's,
+  not done here — the card's ✕ is local-only. ⚠ Needs an agent version bump +
+  a `beta` push + a `web/lib/roadmapData.ts` entry to actually reach anyone.
 - **#205 Group-HP death watcher.** `docs/DESIGN-group-death-watcher.md`. Zeal
   gives group member HP; a member going to 0 and leaving the zone is
   independent evidence of a real death that doesn't depend on the log text at

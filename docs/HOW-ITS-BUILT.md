@@ -609,6 +609,29 @@ streak), ≤0.5s GREAT, ≤1s GOOD — flashed as an arcade sticker atop the
 caster's bar in `apps/mimic/chchain.html` (`ddrSticker`). Visual only, never
 TTS, by design; 🎯 overlay toggle + `POST /api/chchain/ddr`.
 
+### Divine Intervention: readiness chips + the two-cleric callout (#204)
+Two separate things on the same overlay. **Readiness** is log-driven: a
+self-cast of DI stamps `di_ready_at = castStart + 6s + 90s` (`_noteDiCast`;
+`noteDiInterrupt` refunds an interrupted/fizzled cast), rides `live-state` →
+`GET /api/agent/di-status` → `diStatusSnapshot()` → the ✓/countdown chips.
+A null `ready_at` means **we never SAW the cast**, not that DI is available —
+`unknown` is carried separately from `up` for exactly that reason.
+**The callout** (agent 2026-08-11, `DESIGN-di-callout.md` §6) fires on the
+death-save line `<Tank> has been rescued by divine intervention!` (EQMacEmu
+`Mob::TryDeathSave` → StringID 1029; **always name-form, 200-unit range, and a
+FAILED save emits nothing** — "survived divine intervention" is an invented
+line, do not add it). `trackDiFired` → `_diRankCandidates` nominates **two**
+clerics off the chain: recently active, not due to cast inside
+`DI_CAST_MS + one beat`, confirmed-ready DI outranking unknown, mana as
+tie-break. Hard exclusions: `kind`-labeled druid auto-slots and known
+non-Clerics (DI is cleric-only; the chain is not a cleric roster), corpses
+(`_isDead`), and a MEASURED recast. Ties/empty → the chain's two most recent
+healers; nobody nameable → no nomination (the guild trigger still calls the
+event). Output is ONE `text_overlay` fire on the existing trigger-TTS surface
+plus `diCallout` on `/api/state` → the card in `chchain.html` (evidence chips,
+20s countdown, local-only ✕ — recording is #207). Tests:
+`test/di-callout.test.js`.
+
 ### Main target & main tank
 `_resolveMainTarget` = the NPC most raiders target, from the bot's Extended
 Target aggregate (agent-side 3s cache primes it) — drives the TARGET bar +
