@@ -37,6 +37,23 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'raid-brain-batch-204-207',
+    title: '\u{1F9E0} Four raid-night helpers land on beta',
+    version: 'Agent 3.5.59 \u00b7 Bot 3.1.38',
+    date: '2026-08-11',
+    channel: 'beta',
+    headline: 'The four designed-during-the-Ssra-review helpers, built and on the beta channel: a DI callout that names who should cast next, a second death-detector that watches group health, capture for the boss effects that vanish instantly, and dismissible countdown chips that stay out of the middle of your screen.',
+    features: [
+      { name: '\u{1F64F} When a Divine Intervention fires, the overlay names who should recast', blurb: 'Instead of "someone DI", the CH chain card shows the two clerics best placed to recast \u2014 skipping anyone dead, anyone who just cast theirs, and anyone who is not a cleric at all.' },
+      { name: '\u{1FAA6} A second witness for deaths', blurb: 'Your group members\u2019 health bars are now a death detector in their own right: a bar that hits zero and stays there counts as proof, cross-checked against the log \u2014 with guards so a feigning monk or a zoning groupmate never reads as dead.' },
+      { name: '\u{1F4A5} The instant boss effects stop being invisible', blurb: 'About 138 boss abilities land and vanish in the same moment \u2014 dispels, drains, knockbacks \u2014 and none of them were being kept. A new Boss Mechanics card on the dashboard records each one with who it hit, honestly marked "unidentified" when several spells share the same message.' },
+      { name: '\u2715 Every countdown chip can be dismissed', blurb: 'Every timer chip now has an \u2715, there is a clear-all button, the stack grows upward from the bottom so it never creeps over the middle of your screen, caps at six rows with a "+N more" tail, and one mob never shows two slow bars. Dismissals are counted so we can learn which callouts people do not want.' },
+    ],
+    fixes: [
+      'A rehearsed or replayed timer chip showed "null" instead of the mob name, and timer triggers without a per-mob key were quietly back to stacking one row per fire \u2014 a counter added for imported GINA triggers had snuck back into the timer\u2019s identity.',
+    ],
+  },
+  {
     key: 'overlays-stop-guessing',
     title: '\u{1F6E1} Your overlays stop telling you things they don’t know',
     version: 'Mimic 2.3.5 · Agent 3.5.58',
