@@ -14,7 +14,11 @@ gateway, but they are different hosts so there is no clash.)
 
 ## Part A — the VM
 
-Unraid → **VMS** → Add VM → Debian 12 (or Ubuntu Server):
+Unraid → **VMS** → Add VM → **Debian 13 (trixie)**. Not bookworm: Debian 12 hit
+end of regular support in 2026 and is LTS-only now (Hitya spotted it, 2026-08-11)
+— nothing on fire, but a fresh build should start on current stable. A ready-made
+libvirt XML is in the appendix below; paste it into Add VM → **XML View**.
+Settings:
 - 2 vCPU, **4 GB RAM**, 40 GB vdisk
 - Network: **br0** so it gets its own LAN IP (not the NAT default) — Coolify and
   the site need to be reachable from your desktop
@@ -139,3 +143,114 @@ Then Compose Up the Supabase stack and redeploy in Coolify.
   stable across the two auth stores.
 - **Not a failover site.** If Vercel is down, this does not serve the guild — it
   has no public DNS, no TLS, and its database stops at the last restore.
+
+
+---
+
+## Appendix — VM definition (Unraid → VMS → Add VM → XML View)
+
+Generate a FRESH `uuid` and `mac` if you ever build a second one; duplicates
+break libvirt. `br0` is the load-bearing line — the default `virbr0` NATs the VM
+and makes both Coolify and the site unreachable from your desktop. SeaBIOS rather
+than OVMF on purpose: no nvram file to go wrong on a headless server VM.
+
+Delete the `<disk device='cdrom'>` block once Debian is installed, or it can boot
+the installer again. Install `qemu-guest-agent` in the guest and Unraid's VMs tab
+will report the VM's IP for you.
+
+⚠ If Coolify's installer refuses trixie (its supported-distro check can lag a
+Debian release), Ubuntu 24.04 LTS is the fallback — everything else in this
+runbook is unchanged.
+
+```xml
+<domain type='kvm'>
+  <name>Coolify</name>
+  <uuid>5031ece5-48b6-4779-8201-4c20a96573c7</uuid>
+  <description>Coolify host — runs the local copy of wolfpack.quest</description>
+  <metadata>
+    <vmtemplate xmlns="unraid" name="Debian" icon="debian.png" os="debian"/>
+  </metadata>
+  <memory unit='KiB'>4194304</memory>
+  <currentMemory unit='KiB'>4194304</currentMemory>
+  <vcpu placement='static'>2</vcpu>
+  <os>
+    <type arch='x86_64' machine='q35'>hvm</type>
+    <boot dev='hd'/>
+    <boot dev='cdrom'/>
+  </os>
+  <features>
+    <acpi/>
+    <apic/>
+  </features>
+  <cpu mode='host-passthrough' check='none' migratable='on'>
+    <topology sockets='1' dies='1' cores='2' threads='1'/>
+  </cpu>
+  <clock offset='utc'>
+    <timer name='rtc' tickpolicy='catchup'/>
+    <timer name='pit' tickpolicy='delay'/>
+    <timer name='hpet' present='no'/>
+  </clock>
+  <on_poweroff>destroy</on_poweroff>
+  <on_reboot>restart</on_reboot>
+  <on_crash>restart</on_crash>
+  <devices>
+    <emulator>/usr/local/sbin/qemu</emulator>
+
+    <!-- Main disk. 40G raw image; Unraid creates it on first start.
+         NOTE: /mnt/user is the FUSE layer — if your appdata/domains share
+         lives on a pool, /mnt/cache/domains/... is measurably faster. -->
+    <disk type='file' device='disk'>
+      <driver name='qemu' type='raw' cache='writeback'/>
+      <source file='/mnt/user/domains/Coolify/vdisk1.img'/>
+      <target dev='hdc' bus='virtio'/>
+      <boot order='1'/>
+    </disk>
+
+    <!-- Debian 13 (trixie) installer ISO. Change to your actual filename.
+         After the install completes, delete this whole <disk> block. -->
+    <disk type='file' device='cdrom'>
+      <driver name='qemu' type='raw'/>
+      <source file='/mnt/user/isos/debian-13-netinst.iso'/>
+      <target dev='hda' bus='sata'/>
+      <readonly/>
+      <boot order='2'/>
+    </disk>
+
+    <controller type='usb' index='0' model='qemu-xhci' ports='15'/>
+    <controller type='pci' index='0' model='pcie-root'/>
+    <controller type='pci' index='1' model='pcie-root-port'/>
+    <controller type='pci' index='2' model='pcie-root-port'/>
+    <controller type='pci' index='3' model='pcie-root-port'/>
+    <controller type='virtio-serial' index='0'/>
+
+    <!-- br0 = its own IP on your LAN, which Coolify and the site need.
+         The default virbr0 would NAT it and make both unreachable. -->
+    <interface type='bridge'>
+      <mac address='52:54:00:72:1e:a5'/>
+      <source bridge='br0'/>
+      <model type='virtio-net'/>
+    </interface>
+
+    <serial type='pty'>
+      <target type='isa-serial' port='0'><model name='isa-serial'/></target>
+    </serial>
+    <console type='pty'><target type='serial' port='0'/></console>
+    <channel type='unix'>
+      <target type='virtio' name='org.qemu.guest_agent.0'/>
+    </channel>
+
+    <input type='tablet' bus='usb'/>
+    <input type='mouse' bus='ps2'/>
+    <input type='keyboard' bus='ps2'/>
+
+    <!-- VNC console, reachable from the Unraid VMs tab -->
+    <graphics type='vnc' port='-1' autoport='yes' websocket='-1' listen='0.0.0.0' keymap='en-us'>
+      <listen type='address' address='0.0.0.0'/>
+    </graphics>
+    <video>
+      <model type='qxl' ram='65536' vram='65536' vgamem='16384' heads='1' primary='yes'/>
+    </video>
+    <memballoon model='virtio'/>
+  </devices>
+</domain>
+```
