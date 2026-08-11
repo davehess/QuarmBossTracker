@@ -158,6 +158,22 @@ the stragglers. Verify end-state with Studio at `http://<lan-ip>:8000` (proves
 gateway→studio→meta→db and the signed JWT keys) and a session-mode psql to
 port 5432 (proves the pooler).
 
+**⚠ `docker compose` from the project directory does NOT work.** `cd
+/boot/config/plugins/compose.manager/projects/supabase && docker compose up -d`
+fails with `stat …/docker-compose.yml: no such file or directory` even while the
+stack is running — the plugin does not necessarily store the file under that
+plain name, and `/boot` is vfat (case-insensitive) so the `cd` succeeds without
+proving the folder name either. Authoritative lookup: **`docker compose ls`**
+prints each project's CONFIG FILES path; then `docker compose -f <that path>
+up -d` from anywhere. Or just use the UI's **Compose Up** button.
+
+**Starting stragglers without compose at all:** containers stuck in "Created"
+already exist with the right config — `docker start supabase-pooler
+supabase-storage supabase-envoy supabase-edge-functions` starts them from any
+directory. `depends_on` is only evaluated at compose-up time, so this is safe
+once the database is healthy. (`docker logs -f <name>` is likewise
+directory-independent; only `docker compose …` subcommands care where you are.)
+
 **Stack identification note:** this template is NOT the official
 `supabase/docker` compose — the gateway is Envoy (official uses Kong) and the
 db image is Postgres 17 (official self-host pins 15). Fixes found for the
