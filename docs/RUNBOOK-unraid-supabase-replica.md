@@ -256,6 +256,16 @@ and from the LAN through the pooler in session mode —
 supavisor's `postgres.<tenant>` form; the db container publishes no port of its
 own by design, so all LAN access goes through supavisor on 5432/6543).
 
+**⚠ `pg_dump -f /dev/stdout` fails at the very END of a good dump.** First run
+2026-08-11 wrote all 106 MB and then died with `could not fsync file
+"/dev/stdout": Invalid argument`. With `-f`, pg_dump treats the target as a real
+file and fsyncs it on completion; fsync on a redirected stdout is EINVAL. The
+data was already written — only the exit code was bad, and `set -e` then skipped
+the rename, leaving a complete dump stranded as `.tmp`. Fix: drop `-f
+/dev/stdout` (pg_dump writes to stdout by default and skips the fsync) and pass
+`--no-sync`. A stranded `.tmp` from this failure mode is recoverable — verify
+with `pg_restore -l <file> | head` and, if it lists a TOC, just rename it.
+
 **Stack identification note:** this template is NOT the official
 `supabase/docker` compose — the gateway is Envoy (official uses Kong) and the
 db image is Postgres 17 (official self-host pins 15). Fixes found for the

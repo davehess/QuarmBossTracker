@@ -55,8 +55,15 @@ OUT="$DEST/wolfpack-$STAMP.dump"
 # version 15.x". Dumping an OLDER server with a newer client is the supported
 # direction, so this tag only ever needs raising, never lowering. If Supabase
 # upgrades the project's major version, bump this tag to match.
+#
+# ⚠ NO `-f /dev/stdout`, and `--no-sync` (learned 2026-08-11). With `-f`,
+# pg_dump treats the target as a real file and fsyncs it on completion —
+# fsync on a redirected stdout fails with `could not fsync file "/dev/stdout":
+# Invalid argument` AFTER the whole dump has been written, so the run exits
+# non-zero and `set -e` discards a dump that was actually complete. Writing to
+# the default stdout skips that fsync; --no-sync is belt-and-braces.
 docker run --rm --network host -e DB_URL="$DB_URL" postgres:17 \
-  pg_dump "$DB_URL" -Fc --no-owner --no-acl -f /dev/stdout > "$OUT.tmp"
+  pg_dump "$DB_URL" -Fc --no-owner --no-acl --no-sync > "$OUT.tmp"
 
 # Refuse to keep an implausibly small dump — a silent auth failure writes ~0
 # bytes, and rotation would then age out the last GOOD backup while every
