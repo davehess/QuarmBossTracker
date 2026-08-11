@@ -116,21 +116,37 @@ nine** — every other service has a `depends_on` health gate on the database, s
 a crash-looping db holds the whole stack down. Diagnose the db and ignore the
 rest; they cascade up once it is healthy.
 
-**Confirmed cause:** `docker logs supabase-db` showed
-`chown: /var/lib/postgresql/data: Operation not permitted` repeating forever.
-That is Unraid's FUSE/shfs layer (`/mnt/user/...`) refusing ownership changes —
-the Postgres entrypoint chowns its data dir first thing, fails, dies, restarts.
-Postgres never initialized at all.
+**Confirmed cause (refined after reading the actual compose file):**
+`docker logs supabase-db` showed `chown: /var/lib/postgresql/data: Operation
+not permitted` forever. The compose used RELATIVE binds (`./volumes/db/data`),
+and Compose Manager projects live under
+`/boot/config/plugins/compose.manager/projects/…` — **the Unraid USB flash
+drive, formatted FAT32, which has no file-ownership concept at all.** So
+Postgres was trying to initialize its data directory on the boot thumb drive:
+chown = EPERM, crash, restart. (Even had it worked, a database on the flash
+drive would be slow and would wear the drive out.) The first-guess shfs
+diagnosis was the right family, wrong filesystem — the rule covers both:
+**databases go on absolute pool paths, never `/boot`, never `/mnt/user`.**
 
-**Fix:** point the `db` service's host volume at a REAL pool path
-(`/mnt/cache/appdata/supabase/...` — check the pool name with `ls /mnt/`),
-never `/mnt/user/...`. shfs also has fsync semantics Postgres cannot trust, so
-this is correctness, not just permissions. Then: delete the never-initialized
-data dir contents, `docker compose up -d db`, watch for
-`database system is ready to accept connections` and a green health check, then
-start the rest. Do `storage`'s volume at the same time — same trap waiting.
-Databases on direct disk paths is the standing Unraid rule (SQLite apps bite
-identically).
+**Fix (applied 2026-08-11, files handed to Hitya):** rewrote every
+`./volumes/…` bind to `/mnt/cache/appdata/supabase/volumes/…` (19 rewrites;
+compose header now documents the rule so a future edit can't regress it), and
+generated a complete `.env` — every secret filled, ANON/SERVICE keys signed
+against the new `JWT_SECRET` (the env.example demo keys are signed with the
+demo secret; changing one without the others breaks all API auth), LAN URLs
+(`http://192.168.1.5:8000`), tenant id `wolfpack`. One-time setup on the box:
+```
+mkdir -p /mnt/cache/appdata/supabase
+cp -r /boot/config/plugins/compose.manager/projects/supabase/volumes /mnt/cache/appdata/supabase/
+rm -rf /mnt/cache/appdata/supabase/volumes/db/data
+```
+(the config files — envoy yaml, init SQL, pooler.exs — must move too, since
+every bind is now absolute; the data dir leftovers are wiped because nothing
+ever initialized). If the pool is not named `cache` (`ls /mnt/`),
+search-replace `/mnt/cache`. Then `db` up alone until
+`database system is ready to accept connections` + green health, then the rest.
+⚠ The generated env/compose contain real secrets — they live on the box, never
+in this repo.
 
 **Stack identification note:** this template is NOT the official
 `supabase/docker` compose — the gateway is Envoy (official uses Kong) and the
