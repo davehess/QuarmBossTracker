@@ -4151,6 +4151,221 @@ function _maybeAnnounceChGo(c, atMs) {
   scheduleRender();
 }
 
+// ── Divine Intervention two-cleric callout (#204) ────────────────────────────
+// DESIGN-di-callout.md §3. A DI death-save FIRING means the tank is alive and
+// UNPROTECTED, and the raid has seconds to put another one up. We deliberately
+// do NOT pick the caster: emeralds (DI's reagent), the global cooldown and
+// "I'm about to med" are all things a cleric knows instantly and we cannot know
+// at all. A confident single-name call that picks someone with no emerald is
+// worse than useless — it costs a tank while two clerics each assume the other
+// has it. So we NOMINATE two names and let voice resolve it.
+//
+// The fire line is grounded in the server source Quarm runs on (EQMacEmu
+// zone/spell_effects.cpp `Mob::TryDeathSave` → `StringID::DIVINE_INTERVENTION`
+// 1029 = "%1 has been rescued by divine intervention!"). Load-bearing details
+// read straight off that call:
+//   • ALWAYS the name form, even in the saved player's own log (`%1` =
+//     GetCleanName(), skipsender = false) — one pattern covers everyone;
+//   • 200-unit range, so a cleric across the room never logs it. That is why
+//     the selection runs on whoever DID see it rather than assuming every
+//     client can work it out for themselves;
+//   • a FAILED save emits NOTHING. The "<Player> survived divine intervention!"
+//     line that circulates in GINA/AI trigger packs does not exist on Quarm —
+//     same invented-pattern trap as the dead DI trigger this doc opened with.
+//     "DI failed" is only ever rescue-line-absent + a death, never its own line.
+// Anchored on `\]\s+` like every other agent-side line detector (the raw line
+// carries its `[timestamp] ` prefix — a bare `^` would anchor before it).
+const _DI_FIRED_RX = /\]\s+([A-Za-z][A-Za-z'`]*) has been rescued by divine intervention[.!]/i;
+const DI_CALLOUT_NAMES = 2;              // the ask is TWO — see the decision note below
+const DI_CALLOUT_TTL_MS = 20_000;        // how long the nomination stays on the overlay
+const DI_CHAIN_RECENT_ROTATIONS = 2;     // "recently healed on the chain" = last ~2 passes
+const DI_CHAIN_RECENT_FALLBACK_MS = 60_000;  // window when the beat isn't measured yet
+const DI_FIRED_DEDUP_MS = 5000;          // the line is zone-visible → every boxed log has it
+let _diCallout = null;                   // the live nomination (null = nothing to show)
+let _lastDiFired = { key: null, atMs: 0 };
+
+// ms until chain slot `num` is due to cast, or null when the chain hasn't told
+// us enough (no beat measured, no on-deck slot). Negative = already overdue,
+// which counts as "up next" for exclusion purposes — a cleric who is LATE on
+// their CH is the worst possible person to spend 6 seconds casting DI.
+function _diSlotTurnInMs(chain, num, nowMs) {
+  if (!chain || !chain.slots || !chain.beat_ms || chain.next_num == null) return null;
+  const nums = Object.keys(chain.slots).map(Number).sort((a, b) => a - b);
+  const iNext = nums.indexOf(Number(chain.next_num));
+  const iThis = nums.indexOf(Number(num));
+  if (iNext < 0 || iThis < 0) return null;
+  // The on-deck slot fires at the chain's own expected-next time; every slot
+  // after it is one more beat down the rotation, wrapping at the top.
+  const expectedNext = chain.next_expected_at
+    || ((chain.last_ch && chain.last_ch.atMs) ? chain.last_ch.atMs + chain.beat_ms : null);
+  if (!expectedNext) return null;
+  const dist = (iThis - iNext + nums.length) % nums.length;
+  return (expectedNext + dist * chain.beat_ms) - nowMs;
+}
+
+// The ranking itself, kept PURE so it can be tested without a live chain: every
+// input arrives as an argument (`ctx.classOf` / `ctx.isDead` / `ctx.manaOf`).
+// Returns { names, candidates, fallback } or null when nobody is nameable.
+//
+// Hard exclusions (things we KNOW, not things we guess):
+//   • not a Cleric — DI is spell 1546, cleric-only. Chain slots are NOT all
+//     clerics: druids gap-fill via CH_EQUIVALENT_SPELLS auto-slots (which carry
+//     a `kind` label) and shamans show up too. An UNKNOWN class stays eligible;
+//     only a known non-Cleric is dropped.
+//   • dead — the 3.5.58 death registry. The design doc predates it and lists
+//     "is this cleric actually alive" under what we cannot know; we can now.
+//   • DI confirmed on cooldown — `up === false && unknown === false` means we
+//     WATCHED the cast. "Rank, don't filter" in the doc is about clerics we
+//     know nothing about, not about a recast we measured.
+// Then: recently active on the chain, and not due to cast inside
+// DI_CAST_MS + one beat (a cleric who casts a 6s DI misses their CH, and a
+// missed CH is how tanks die). Both of those are soft — if they empty the
+// list we fall back to the chain's two most recent healers rather than go
+// silent, exactly as the doc specifies.
+function _diRankCandidates(chain, ctx) {
+  if (!chain || !chain.slots) return null;
+  const now = ctx.now;
+  const nums = Object.keys(chain.slots).map(Number).sort((a, b) => a - b);
+  const rotationMs = chain.beat_ms ? chain.beat_ms * nums.length : null;
+  const recentWindow = rotationMs
+    ? rotationMs * DI_CHAIN_RECENT_ROTATIONS
+    : DI_CHAIN_RECENT_FALLBACK_MS;
+  const rows = [];
+  for (const num of nums) {
+    const s = chain.slots[num];
+    if (!s || !s.name || !s.lastAtMs) continue;      // roster-seeded but never called
+    // Real character names only — same guard the off-heal list uses, for the
+    // same reason (single-word NPC/pet names leak into name-keyed rows).
+    if (!/^[A-Za-z]+$/.test(s.name)) continue;
+    if (s.kind) continue;                            // labeled auto-slot = a druid CH-equivalent
+    const lc = s.name.toLowerCase();
+    if (ctx.isDead(lc)) continue;
+    const cls = ctx.classOf(lc);
+    if (cls && cls !== 'Cleric') continue;
+    const di = ctx.diOf(lc);
+    if (di && !di.up && !di.unknown) continue;       // measured recast — they cannot cast it
+    const sinceMs = now - s.lastAtMs;
+    const turnIn = _diSlotTurnInMs(chain, num, now);
+    rows.push({
+      name: s.name,
+      chain_num: num,
+      since_ms: sinceMs,
+      recent: sinceMs <= recentWindow,
+      // null turn = unknown, which is NOT "busy": an unmeasured chain must not
+      // exclude the whole roster.
+      busy: (turnIn != null && chain.beat_ms) ? (turnIn <= DI_CAST_MS + chain.beat_ms) : false,
+      turn_in_ms: turnIn,
+      di: di ? (di.unknown ? 'unknown' : 'ready') : 'unknown',
+      mana_pct: ctx.manaOf(lc, s.mana),
+    });
+  }
+  if (!rows.length) return null;
+  const manaOf = (r) => (r.mana_pct == null ? -1 : r.mana_pct);
+  const diTier = (r) => (r.di === 'ready' ? 1 : 0);
+  let pool = rows.filter(r => r.recent && !r.busy);
+  let fallback = false;
+  if (!pool.length) {
+    // Ties and empty results both resolve to the chain's most recent healers —
+    // never to silence (doc §3). The hard exclusions above still stand, and the
+    // ordering here is plain recency, because that is what the fallback IS:
+    // we have no clean pick, so we name who was demonstrably healing last.
+    pool = rows.slice();
+    fallback = true;
+  }
+  pool.sort(fallback
+    ? (a, b) => a.since_ms - b.since_ms
+    : (a, b) =>
+      diTier(b) - diTier(a)          // confirmed-ready outranks unknown
+      || manaOf(b) - manaOf(a)       // then mana — 500 mana is not nothing
+      || a.since_ms - b.since_ms);   // then most recently active on the chain
+  const picked = pool.slice(0, DI_CALLOUT_NAMES);
+  return { names: picked.map(p => p.name), candidates: picked, fallback };
+}
+
+// Wire the live agent state into the pure ranker above.
+function diCalloutCandidates(nowMs) {
+  const chain = chChainSnapshot();
+  if (!chain) return null;
+  const now = nowMs || Date.now();
+  const di = diStatusSnapshot();
+  const diByName = new Map();
+  for (const c of (di && di.clerics) || []) if (c && c.name) diByName.set(String(c.name).toLowerCase(), c);
+  const exactMana = new Map();
+  for (const h of (_diStatusCache.healer_mana || [])) {
+    if (h && h.name && h.mana_pct != null) exactMana.set(String(h.name).toLowerCase(), Math.round(h.mana_pct));
+  }
+  return _diRankCandidates(chain, {
+    now,
+    isDead:  (lc) => _isDead(lc, now),
+    classOf: (lc) => ((whoData.get(lc) || {}).class) || _raidClassByName.get(lc) || null,
+    diOf:    (lc) => diByName.get(lc) || null,
+    // Exact (Mimic) mana beats the percentage the cleric shouted in their chain
+    // call — same precedence the Command Center's healer-mana merge uses.
+    manaOf:  (lc, called) => (exactMana.has(lc) ? exactMana.get(lc) : (called == null ? null : called)),
+  });
+}
+
+// "<Tank> has been rescued by divine intervention!" → nominate two clerics.
+// Deliberately NOT gated on _sourceExcluded: this is a local UI/audio callout
+// that uploads nothing, and a raider opting out of STATS must not lose a
+// raid-critical call (same reasoning as noteBlindLine / noteSongAoeLine).
+function trackDiFired(line) {
+  if (!line || line.indexOf('rescued by') === -1) return null;   // cheap gate (tail hot path)
+  const m = line.match(_DI_FIRED_RX);
+  if (!m) return null;
+  const ts = parseEqTimestamp(line);
+  const atMs = ts ? ts.getTime() : Date.now();
+  const tank = m[1];
+  // The line is zone-visible, so a two-boxer's every watched log carries it.
+  const key = tank.toLowerCase();
+  if (_lastDiFired.key === key && (atMs - _lastDiFired.atMs) < DI_FIRED_DEDUP_MS) return null;
+  _lastDiFired = { key, atMs };
+  const sel = diCalloutCandidates(Date.now());
+  // No nameable cleric → no nomination. This is NOT the doc's "never silence":
+  // the raid still hears the event from the guild trigger ("D I fired on
+  // {tank}"). Silence here is only the SELECTOR declining to invent a name,
+  // which is the whole point of the honesty layer.
+  if (!sel || !sel.names.length) return null;
+  const spoken = 'D I down. ' + sel.names.join(' or ') + '.';
+  _diCallout = {
+    id: key + '|' + atMs,
+    tank,
+    at: atMs,
+    expires_at: Date.now() + DI_CALLOUT_TTL_MS,
+    ttl_ms: DI_CALLOUT_TTL_MS,
+    names: sel.names,
+    candidates: sel.candidates,
+    fallback: sel.fallback,
+    tts: spoken,
+  };
+  // Same text_overlay-shaped fire the CH GO callout uses — the trigger overlay
+  // flashes `text` and speaks `tts` (gated on the user's enableTriggerTts).
+  // No new SpeechSynthesis path.
+  _pushOverlay({
+    text:        'D.I. DOWN on ' + tank + ' — ' + sel.names.join(' or '),
+    tts:         spoken,
+    color:       'red',
+    duration_ms: 8000,
+    shownAt:     atMs,
+    firedAt:     Date.now(),
+    trigger:     'DI DOWN',
+    scope:       'guild',
+    test:        false,
+  });
+  scheduleRender();
+  return _diCallout;
+}
+
+// Live nomination for the overlays; self-expires so a stale call can't sit on
+// screen after the window to act on it has closed.
+function diCalloutSnapshot() {
+  const c = _diCallout;
+  if (!c) return null;
+  const now = Date.now();
+  if (now >= c.expires_at) { _diCallout = null; return null; }
+  return Object.assign({}, c, { seconds_left: Math.max(0, Math.ceil((c.expires_at - now) / 1000)) });
+}
+
 // Off-heal candidates — raiders taking repeated single-target damage right
 // now who ISN'T the resolved Main Tank or the current Rampage target (both
 // already get dedicated coverage — Tank overlay, Rampage banner). Surfaced
@@ -10778,6 +10993,11 @@ function _serializeForDashboard() {
     // Per-cleric Divine Intervention readiness (bot aggregate ⊕ local casts) —
     // chchain.html renders the chips + "only <X> has DI" callout.
     diStatus: diStatusSnapshot(),
+    // Live DI nomination (#204) — the two clerics to call after a death save
+    // fires. Null except for the ~20s a nomination is on the clock. Kept
+    // alongside diStatus rather than inside chChain so it survives the chain
+    // snapshot being null.
+    diCallout: diCalloutSnapshot(),
     // Last decoded Zeal type-5 raid sample — Info tab pipe explorer's
     // "raid (type 5)" section. null until the client fires one (you must be
     // in a raid; Zeal re-sends on composition change).
@@ -33162,6 +33382,14 @@ async function main() {
         // freeze that slot's cast bar and put a ✕ on it. No-ops unless a chain
         // is already running and the name maps to a slot mid-cast.
         if (!_sourceExcluded) { try { trackChChainInterrupt(line, b.character); } catch {} }
+        // "<Tank> has been rescued by divine intervention!" → nominate the two
+        // clerics who could put the next DI up (#204). Ungated on purpose —
+        // local callout, no upload (see trackDiFired).
+        // ⚠ MUST stay ABOVE the shouldKeep gate below: the death-save line does
+        // not survive the byte filter (same trap as the "you have taken"
+        // family). Moving it down silences the callout with no error anywhere;
+        // test/di-callout.test.js pins that.
+        try { trackDiFired(line); } catch {}
         // Raid-wide DA/invuln broadcast + healer mana roster — same
         // shout/raid/guild-chat macro pattern as CH chain, feeding the
         // Command Center overlay.
@@ -33356,6 +33584,10 @@ module.exports = {
   CH_DDR_MARVELOUS_STREAK, CH_DDR_MIN_BEATS, CH_DDR_DISPLAY_MS,
   _setChDdrEnabledForTest: (v) => { _chDdrEnabled = !!v; },
   _resetChChainForTest: () => { _chChain = null; _lastChGoNum = null; },
+  // #204 DI two-cleric callout — exported for the scratchpad harness.
+  trackDiFired, diCalloutSnapshot, diCalloutCandidates, _diRankCandidates,
+  _diSlotTurnInMs, _DI_FIRED_RX, DI_CALLOUT_NAMES, DI_CALLOUT_TTL_MS,
+  _resetDiCalloutForTest: () => { _diCallout = null; _lastDiFired = { key: null, atMs: 0 }; },
   _readZipEntry, _parseCrashReason, _crashZipTime,
   // #107/#149 loot-post announce — exported for the scratchpad smoke test.
   parseLootChatBody, noteLootAuction, _parseAuctionDuration, _spokenDuration,
