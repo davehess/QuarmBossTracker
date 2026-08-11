@@ -158,6 +158,11 @@ Delete the `<disk device='cdrom'>` block once Debian is installed, or it can boo
 the installer again. Install `qemu-guest-agent` in the guest and Unraid's VMs tab
 will report the VM's IP for you.
 
+⚠ **Boot order goes on the disks, never both places.** Combining `<boot dev='hd'/>`
+inside `<os>` with per-device `<boot order='N'/>` fails VM creation with
+*"per-device boot elements cannot be used together with os/boot elements"*
+(hit 2026-08-11). The XML below uses the per-device form only.
+
 ⚠ If Coolify's installer refuses trixie (its supported-distro check can lag a
 Debian release), Ubuntu 24.04 LTS is the fallback — everything else in this
 runbook is unchanged.
@@ -175,8 +180,11 @@ runbook is unchanged.
   <vcpu placement='static'>2</vcpu>
   <os>
     <type arch='x86_64' machine='q35'>hvm</type>
-    <boot dev='hd'/>
-    <boot dev='cdrom'/>
+    <!-- Boot order lives on each <disk> below as <boot order='N'/>.
+         Do NOT also add <boot dev='hd'/> here: libvirt rejects the mix with
+         "per-device boot elements cannot be used together with os/boot
+         elements". Empty vdisk falls through to the CD on first start, then
+         boots the installed system once the disk is bootable. -->
   </os>
   <features>
     <acpi/>
