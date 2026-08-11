@@ -174,6 +174,49 @@ directory. `depends_on` is only evaluated at compose-up time, so this is safe
 once the database is healthy. (`docker logs -f <name>` is likewise
 directory-independent; only `docker compose …` subcommands care where you are.)
 
+## ⚠ A Compose Manager UI project has NO `volumes/` tree — fetch it (2026-08-11)
+
+The second, bigger failure after the FAT32 one, and the correction matters more
+than the fix. A project created by pasting a compose file into the Compose
+Manager UI contains **only `compose.yaml` and `.env`**. The supporting config
+files — envoy config, the db init SQL, `pooler.exs`, the edge-function main —
+ship with the **supabase/docker repo** and were never on the box. So a
+`cp -r <project>/volumes …` copies nothing, and **Docker then auto-creates every
+missing bind source as an empty DIRECTORY.**
+
+Why that is worse than it looks: those empty dirs mount *successfully* wherever
+the destination does not already exist in the image — which is every db init
+script. Postgres came up **`healthy`** (pg_isready passes) having run **none**
+of the bootstrap: no `supabase_auth_admin`, no `authenticator`, no `_realtime`.
+Auth/rest/realtime then crash-loop forever against it (`docker compose ls`
+showed `restarting(5)`). Only envoy failed loudly, because `/docker-entrypoint.sh`
+DOES pre-exist as a file in its image, and directory-onto-file is a hard error.
+**A green db healthcheck is not evidence the bootstrap ran** — check
+`ls -la volumes/db/`: entries must be `-` with real sizes, never `d` at 40 bytes.
+
+Fetch the real tree (verify each landed as a FILE afterwards):
+```
+rm -rf /mnt/cache/appdata/supabase/volumes
+cd /mnt/cache/appdata/supabase
+mkdir -p volumes/api/envoy volumes/db volumes/pooler volumes/functions/main
+BASE=https://raw.githubusercontent.com/supabase/supabase/master/docker/volumes
+for f in api/envoy/envoy.yaml api/envoy/cds.yaml api/envoy/lds.template.yaml \
+         api/envoy/docker-entrypoint.sh db/realtime.sql db/webhooks.sql \
+         db/roles.sql db/jwt.sql db/_supabase.sql db/logs.sql db/pooler.sql \
+         pooler/pooler.exs functions/main/index.ts; do
+  curl -fsSL "$BASE/$f" -o "volumes/$f" || echo "MISSING: $f"; done
+chmod +x volumes/api/envoy/docker-entrypoint.sh
+```
+Do NOT recreate `volumes/db/data` — Docker makes it empty, which is what
+`initdb` needs. The old cluster MUST be wiped: init scripts only run against an
+empty data directory, so a hollow database cannot be repaired in place.
+
+**`COMPOSE_FILE` in `.env` overrides compose's file discovery.** The upstream
+`env.example` ships `COMPOSE_FILE=docker-compose.yml`, but Compose Manager saves
+the file as `compose.yaml` — which is why `docker compose up -d` in the project
+directory failed with `stat …/docker-compose.yml: no such file` while the stack
+was running. Set it to `compose.yaml` or delete the line.
+
 **Stack identification note:** this template is NOT the official
 `supabase/docker` compose — the gateway is Envoy (official uses Kong) and the
 db image is Postgres 17 (official self-host pins 15). Fixes found for the
