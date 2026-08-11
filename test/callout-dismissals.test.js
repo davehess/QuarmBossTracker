@@ -168,6 +168,63 @@ describe('the control group: expired', () => {
   });
 });
 
+// ── GINA's {COUNTER} is not an identity ────────────────────────────────────
+// Found while building #207. `_fireTriggerActions` injects `counter` (this
+// client's own fire tally) into the capture bag on every fire, and it sorts
+// alphabetically ahead of the usual capture names — so it re-created BOTH bugs
+// the 2026-08-10 fix closed, plus one of its own. Everything the overlay work
+// depends on keys off `target`, so this is load-bearing for the collapse
+// invariant above, not a drive-by.
+describe('the fire counter never becomes part of a timer identity', () => {
+  const helpers = sliceBlock(agentSrc, 'const _NON_SEMANTIC_CAPTURES', '\n  return out;\n}');
+  const startTimer = sliceBlock(agentSrc, 'function _startTimer(t, tsMs, isTest, captures)', '\n}');
+  function build() {
+     
+    return new Function(`
+      const _activeTimers = new Map();
+      const stats = {};
+      function _timerDurationSec(t) { return Number(t.timer_duration_sec) || 0; }
+      function _timerWarnings() { return []; }
+      ${helpers}
+      ${startTimer}
+      return { _startTimer, _activeTimers, _semanticCaptures };
+    `)();
+  }
+  const SLOW = { id: 'facb6fea', name: 'Shaman Slow landed', timer_duration_sec: 180 };
+  const bag = (counter, mob) => ({ '0': 'x', L: 'x', l: 'x', c: 'Hitya', counter, s: mob });
+
+  it('the row is labelled with the MOB, not the counter', () => {
+    // counter sorts before `s`, so the target fallback picked it — and on the
+    // first fire the counter is 0, which is falsy, so the label lost its mob
+    // entirely: "null - Shaman Slow landed".
+    const h = build();
+    h._startTimer(SLOW, Date.now(), false, bag(0, 'A Shissar Templar'));
+    const row = [...h._activeTimers.values()][0];
+    expect(row.target).toBe('A Shissar Templar');
+    expect(row.name).toBe('A Shissar Templar - Shaman Slow landed');
+  });
+
+  it('a re-slow on the same mob resets ONE row even as the counter climbs', () => {
+    // The counter bumps on every live fire, so captureSuffix differed per fire
+    // and any timer trigger without timer_key_capture duplicated its row —
+    // the original P1 by another route.
+    const h = build();
+    h._startTimer(SLOW, Date.now(), false, bag(1, 'A Shissar Templar'));
+    h._startTimer(SLOW, Date.now(), false, bag(2, 'A Shissar Templar'));
+    h._startTimer(SLOW, Date.now(), false, bag(3, 'A Shissar Templar'));
+    expect(h._activeTimers.size).toBe(1);
+  });
+
+  it('two observers of one event build the SAME relay key', () => {
+    // Each client holds its own tally, so the relay dedup key differed between
+    // observers — REST IN PEACE spoken twice, again.
+    const h = build();
+    const mine   = JSON.stringify(h._semanticCaptures({ victim: 'Hitya', counter: 3, L: 'a' }));
+    const theirs = JSON.stringify(h._semanticCaptures({ victim: 'Hitya', counter: 41, L: 'b' }));
+    expect(mine).toBe(theirs);
+  });
+});
+
 // ── overlay: the render invariants ─────────────────────────────────────────
 const renderBlock = sliceBlock(
   overlay,

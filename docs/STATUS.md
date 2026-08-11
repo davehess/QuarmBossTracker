@@ -2156,6 +2156,12 @@ before anyone touches them.** All four exist because of the two bugs found
   config (§Gap A), the separate timers window (v2 §4), the callout font-size
   setting (v2 §5) and the whole mute / Wrong / edit loop (v2 §6 — v2 says it
   "wants its own review"). See `docs/HOW-ITS-BUILT.md` → "Callout overlay UX".
+  ⚠ Also fixed in that change, found on the way: **GINA's `{COUNTER}` was
+  missing from `_NON_SEMANTIC_CAPTURES`**, which re-created the P1 wall of
+  duplicate rows for any timer trigger without `timer_key_capture`, blanked the
+  mob from every timer label (`null - Shaman Slow landed`, because the first
+  fire's counter is `0`) and could double a relayed callout again. Write-up:
+  `FINDINGS-2026-08-10-trigger-overlay.md` §P1b.
 
 **Raid-night 2026-07-30 field reports (Hitya) — all still OPEN, each blocked on
 one concrete detail. Shipped that night: stable 2.1.2 / agent 3.4.36.**

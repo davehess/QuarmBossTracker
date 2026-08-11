@@ -30279,12 +30279,14 @@ function _timerDurationSec(t, captures) {
   return Number(t.timer_duration_sec) || 0;
 }
 
-// The capture bag carries three things that are NOT semantic captures:
+// The capture bag carries FOUR things that are NOT semantic captures:
 // numeric keys ('0' is the whole match — for an ^…$ pattern, the entire line),
-// L/l (the raw log line, EQ timestamp included) and c/char/self (the local
-// character). They exist so action text can interpolate {L}/{c}, and they must
-// stay in the bag for that — but anything that derives an IDENTITY from the bag
-// has to drop them first, because they vary per line and per observer.
+// L/l (the raw log line, EQ timestamp included), c/char/self (the local
+// character) and `counter` (GINA's {COUNTER}, this client's own fire tally for
+// the trigger). They exist so action text can interpolate {L}/{c}/{counter},
+// and they must stay in the bag for that — but anything that derives an
+// IDENTITY from the bag has to drop them first, because they vary per line and
+// per observer.
 //
 // Two bugs came from that leak (2026-08-10 Ssra, docs/FINDINGS-…-trigger-overlay):
 // every timer trigger made a NEW overlay row per fire (L carries the timestamp,
@@ -30292,7 +30294,23 @@ function _timerDurationSec(t, captures) {
 // log line, and _cancelTimersOnMobDeath could never match it); and REST IN PEACE
 // spoke twice, because two observers of one death build different relay keys
 // from their own second-resolution timestamps.
-const _NON_SEMANTIC_CAPTURES = new Set(['L', 'l', 'c', 'char', 'self']);
+//
+// ⚠ `counter` was MISSED by that fix and re-creates both of them (found while
+// building #207, 2026-08-11). `_fireTriggerActions` injects it into the bag on
+// every fire, and it sorts alphabetically ahead of the usual capture names, so:
+//   • the timer's `target` fallback picked the counter instead of the mob — and
+//     on the first fire the counter is 0, which is FALSY, so the row label lost
+//     its mob entirely ("null - Shaman Slow landed"). That also broke
+//     _cancelTimersOnMobDeath and the overlay's one-row-per-mob collapse, both
+//     of which key on `target`;
+//   • it bumps on every live fire, so `captureSuffix` differed per fire and a
+//     timer trigger WITHOUT timer_key_capture duplicated its row every time —
+//     the original P1, by another route;
+//   • two observers hold different tallies for the same event, so the relay
+//     dedup key differed between them — the RIP-spoken-twice defect, again.
+// Interpolation is unaffected: the bag itself still carries `counter`, and
+// _expandTemplate reads the bag, not this filtered view.
+const _NON_SEMANTIC_CAPTURES = new Set(['L', 'l', 'c', 'char', 'self', 'counter']);
 function _semanticCaptureKeys(captures) {
   if (!captures || typeof captures !== 'object') return [];
   return Object.keys(captures)

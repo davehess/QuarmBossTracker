@@ -12,6 +12,7 @@ during the freeze.**
 | Item | State |
 |---|---|
 | §P1 timer identity | **FIXED** — agent 3.5.56 (`beta`) |
+| §P1b `counter` re-broke it | **FIXED 2026-08-11** (unreleased, with #207). The 3.5.56 filter missed GINA's `{COUNTER}`, which is injected per fire and sorts first — see below |
 | §7(a) RIP dedup key | **FIXED** — same commit, one shared filter serves both |
 | §7(b) relayed fires ignore `cooldown_seconds` | **FIXED** — agent 3.5.56 + bot 3.1.37 carry it across the relay |
 | Clock skew on relayed fires (NEW — below) | **FIXED** — bot 3.1.37 (`main`) + agent 3.5.56 (`beta`) |
@@ -154,6 +155,36 @@ them at the bag — that would break action interpolation.
 Test to add: two fires of the same trigger on the same mob, one second apart →
 exactly one entry in `_activeTimers`, `target` equal to the mob name (not the
 line), and `_cancelTimersOnMobDeath(<mob>)` clears it.
+
+### P1b — `counter` re-created the same bug, and the fix missed it (2026-08-11)
+
+Found while building #207 and fixed in the same change. `_fireTriggerActions`
+injects GINA's `{COUNTER}` — *this client's own fire tally for the trigger* —
+into the capture bag on every fire, AFTER the filter above was written. It sorts
+alphabetically ahead of `s` / `mob` / `npc` / `target`, so:
+
+1. **The row lost its mob.** `timerTarget` fell back to `captures[keys[0]]`,
+   which was now the counter — and on the first fire the counter is `0`, which
+   is falsy, so the label read **`null - Shaman Slow landed`**. Everything that
+   keys on `target` broke with it: `_cancelTimersOnMobDeath` (kill the mob, the
+   chip stays) and the new one-row-per-mob render collapse.
+2. **Rows duplicated again.** The counter bumps on every live fire, so
+   `captureSuffix` differed per fire — any timer trigger *without*
+   `timer_key_capture` re-created the P1 wall of rows. The seven slow triggers
+   were spared only because they carry `timer_key_capture='s'`, which skips the
+   suffix entirely.
+3. **RIP could double again.** Two observers hold different tallies for the same
+   event, so their relay dedup keys differed — §7(a) by another route.
+
+Fix: `counter` joins `_NON_SEMANTIC_CAPTURES`. Interpolation is untouched — the
+BAG still carries it, and `_expandTemplate` reads the bag, not the filtered
+view. Tests: `test/callout-dismissals.test.js` → "the fire counter never becomes
+part of a timer identity".
+
+**The lesson generalises**: anything that adds a key to the capture bag must ask
+whether it varies per fire or per observer. The filter is a denylist, so a new
+key is included in identity by default — the wrong default, but changing it to
+an allow-list would break named captures nobody has enumerated.
 
 ### Applied mid-raid (DB only, no deploy)
 
