@@ -19,14 +19,17 @@
 #      has never been restored is a hope, not a backup.
 #
 # RESTORE TEST (once, and after any Postgres major-version change) — restore
-# into the local Unraid stack, which runs Postgres 17.6 and so matches:
-#   docker cp /mnt/user/backups/wolfpack/latest.dump supabase-db:/tmp/latest.dump
-#   docker exec supabase-db createdb -U postgres restoretest
-#   docker exec supabase-db pg_restore -U postgres -d restoretest \
-#     --no-owner --no-acl --schema=public /tmp/latest.dump
-#   docker exec supabase-db psql -U postgres -d restoretest \
-#     -c "select count(*) from encounters"      # sanity: real rows landed
-#   docker exec supabase-db dropdb -U postgres restoretest    # when satisfied
+# into the local Unraid stack, which runs Postgres 17.6 and so matches.
+# STREAM it in on stdin; do NOT `docker cp` (2026-08-11: cp copies the
+# latest.dump SYMLINK rather than its target — "Successfully copied 0B" — and
+# leaves a dangling link in the container; it would also duplicate the whole
+# dump inside docker.img):
+#   docker exec -i supabase-db pg_restore -U postgres -d postgres \
+#     --no-owner --no-acl --schema=public < /mnt/user/backups/wolfpack/latest.dump
+#   docker exec supabase-db psql -U postgres -c "select count(*) from encounters"
+# `-i` is required for stdin. --schema=public only: the archive also carries
+# auth/graphql/pgbouncer, which belong to the LOCAL stack's own services.
+# "already exists" notices during the restore are expected and non-fatal.
 #
 # ~1.2 GB database (measured 2026-08-11) → -Fc compresses to a few hundred MB.
 
