@@ -148,6 +148,16 @@ search-replace `/mnt/cache`. Then `db` up alone until
 ⚠ The generated env/compose contain real secrets — they live on the box, never
 in this repo.
 
+**VERIFIED FIXED 2026-08-11:** with the absolute pool paths, `supabase-db`
+came up **healthy** on first boot from `/mnt/cache/appdata/supabase/`. One
+first-boot wrinkle to expect: `initdb` takes longer than dependent containers'
+wait window, so the first `compose up` strands a few services in "Created"
+("dependency failed to start") while Postgres is still initializing. The fix is
+just `docker compose up -d` a second time once db is healthy — it starts only
+the stragglers. Verify end-state with Studio at `http://<lan-ip>:8000` (proves
+gateway→studio→meta→db and the signed JWT keys) and a session-mode psql to
+port 5432 (proves the pooler).
+
 **Stack identification note:** this template is NOT the official
 `supabase/docker` compose — the gateway is Envoy (official uses Kong) and the
 db image is Postgres 17 (official self-host pins 15). Fixes found for the
