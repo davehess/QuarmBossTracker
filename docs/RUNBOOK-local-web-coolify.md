@@ -187,6 +187,70 @@ Then Compose Up the Supabase stack and redeploy in Coolify.
 
 ---
 
+## Part G — automation (the point of all this)
+
+Three things run without anyone clicking. Each exists because of something that
+actually went wrong, not because it was tidy.
+
+### G1 — the mirror follows `main` by itself
+
+`scripts/coolify-autodeploy.sh` + `scripts/systemd/coolify-autodeploy.{service,timer}`
+poll GitHub every 5 minutes and trigger Coolify's deploy webhook when the branch
+head moves. Install steps are in the script header.
+
+**Polling, not a webhook, on purpose.** Coolify's built-in auto-deploy needs GitHub
+to reach Coolify; ours is on a LAN VM with no public address, and the two ways to
+change that — publishing port 8000, or a Tailscale Funnel — both put a dashboard
+that can deploy arbitrary containers on the open internet. Polling is outbound
+only: nothing inbound, no tunnel, no exposure. The cost is up to 5 minutes of lag,
+which for a sandbox is nothing.
+
+**Why bother auto-deploying a sandbox at all:** it is the only place the site runs
+outside Vercel, which makes it the canary for Vercel-masked bugs. Exactly one such
+bug had been shipping unnoticed — every auth redirect built from
+`new URL(req.url).origin`, which resolves to localhost in a container and is
+invisible behind Vercel's proxy (web 1.1.41). A mirror that tracks `main`
+automatically catches the next one. A mirror that needs a click drifts and catches
+nothing.
+
+The script records the deployed SHA only when Coolify *accepts* the trigger, not
+when the build succeeds. A failing build is a thing to go look at; re-triggering
+the same broken commit every 5 minutes would bury the logs. The fix is a new
+commit, which the next tick picks up regardless.
+
+### G2 — the sandbox data refreshes nightly
+
+`scripts/refresh-local-sandbox.sh`, Unraid User Scripts, `30 5 * * *` — half an
+hour after the 05:00 backup. Restores the newest dump into the local stack.
+
+A snapshot nobody refreshes is worth less every day, and eventually stops
+representing production while still *looking* like it does — which is how a
+sandbox starts producing confidently wrong answers. It also **re-proves the
+backup every night**: a dump that restores cleanly is a dump you can rely on in a
+real loss, and that verification is the part most backup setups never get.
+
+Guards: it follows the `latest.dump` symlink to the real file, refuses anything
+under 50 MB, and treats "is `encounters` queryable afterwards" as the pass/fail
+rather than `pg_restore`'s exit code — which is always non-zero here because of
+the three expected, harmless errors.
+
+### G3 — deploy failures reach Discord
+
+Coolify → **Notifications → Discord** → paste a channel webhook URL, tick
+deployment failure. Without it an unattended deploy that breaks is silent until
+someone happens to open the mirror — which defeats the canary in G1.
+
+### Deliberately NOT automated
+
+- **Applying migrations to the local stack.** They arrive with the nightly dump's
+  schema anyway, and a script that runs DDL against a database on a schedule is
+  the kind of thing that is fine 50 times and catastrophic once.
+- **Auto-deploying anything on a raid night.** The mirror is harmless, but the
+  freeze in CLAUDE.md is about `main` — and `main` is what Vercel and Railway
+  deploy from. This poller only ever touches the LAN copy.
+
+---
+
 ## Appendix — VM definition (Unraid → VMS → Add VM → XML View)
 
 Generate a FRESH `uuid` and `mac` if you ever build a second one; duplicates

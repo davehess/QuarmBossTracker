@@ -1,0 +1,13 @@
+[Unit]
+Description=Check main for new commits every 5 minutes
+
+[Timer]
+# 2 min after boot, then every 5. Coolify itself needs a moment after a reboot.
+OnBootSec=2min
+OnUnitActiveSec=5min
+# Spread the tick so it never lands exactly on the backup/refresh cron minute.
+RandomizedDelaySec=30
+Persistent=true
+
+[Install]
+WantedBy=timers.target

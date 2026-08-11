@@ -287,3 +287,29 @@ the restored `wolfpack_roles`. What it needs is a redirect URI added to the
 EXISTING Discord app. ⚠ Gated on having the Discord client secret — Discord shows
 it once, and resetting it breaks production sign-in until the cloud provider
 config is updated. Full steps: `docs/RUNBOOK-local-web-coolify.md`.
+
+## Local mirror automation: pull, don't expose (2026-08-11)
+
+Asked to turn the evening's manual steps into automated deployment. Three pieces
+shipped, each traceable to something that actually broke.
+
+**The mirror follows `main` by polling, not by webhook.** Coolify's auto-deploy
+needs GitHub to reach Coolify, and ours is LAN-only; the fixes for that (publish
+port 8000, or a Tailscale Funnel) put a container-deploying dashboard on the open
+internet. Polling is outbound-only and costs ≤5 minutes of lag. Justification for
+automating a sandbox at all: it is the ONLY place the site runs outside Vercel,
+and it just caught a bug Vercel had been masking for months (auth redirects built
+from `new URL(req.url).origin`, which is localhost in a container — web 1.1.41).
+A mirror that needs a click drifts and catches nothing.
+
+**The sandbox data refreshes nightly**, which doubles as a nightly proof that the
+backup restores — the verification most backup setups never perform.
+
+**Deliberately not automated:** applying migrations to the local stack on a
+schedule (DDL on a timer is fine 50 times and catastrophic once), and anything
+touching `main` during a raid window.
+
+Related fix from the same session: **Vercel scopes env vars per environment**, and
+`b.wolfpack.quest` is a Preview deployment — a Production-only
+`SUPABASE_SERVICE_ROLE_KEY` meant beta rendered fine but sign-in died server-side.
+Rule recorded in CLAUDE.md.

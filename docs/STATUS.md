@@ -2371,6 +2371,16 @@ one concrete detail. Shipped that night: stable 2.1.2 / agent 3.4.36.**
 - **Unraid Supabase stack: UP 12/12 and verified 2026-08-11** (roles present, so
   the bootstrap really ran). It is now the restore-test target for Phase 1 —
   same Postgres major (17.6) as the hosted project.
+- **Local mirror automation shipped (2026-08-11)** — `scripts/coolify-autodeploy.sh`
+  (+ systemd timer) polls `main` every 5 min and triggers Coolify; polling rather
+  than a webhook because Coolify is LAN-only and exposing it would be worse than
+  the 5-min lag. `scripts/refresh-local-sandbox.sh` restores the newest dump at
+  05:30, which also re-proves the backup nightly. Both are committed and
+  installable; ⚠ **execution is a needs-local-session item** (deploy key, Coolify
+  API token, User Scripts entry — details in each script header).
+- ⚠ **Vercel Preview env vars** — beta sign-in was broken because
+  `SUPABASE_SERVICE_ROLE_KEY` was Production-scoped only. Rule now in CLAUDE.md:
+  every var must be enabled for Preview too. Verify the rest are ticked.
 - **Local copy of wolfpack.quest is LIVE (2026-08-11)** at
   `http://192.168.1.163:3000`, served by Coolify in an Unraid VM against the
   local Supabase stack. Remaining: Part F (Discord sign-in on the local GoTrue),

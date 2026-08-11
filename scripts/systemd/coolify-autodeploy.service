@@ -1,0 +1,12 @@
+[Unit]
+Description=Deploy the local wolfpack.quest mirror when main moves
+Documentation=file:///opt/wolfpack/scripts/coolify-autodeploy.sh
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/wolfpack/scripts/coolify-autodeploy.sh
+# One tick must never outlive its interval, or a hung git ls-remote stacks runs.
+TimeoutStartSec=300
+Nice=10
