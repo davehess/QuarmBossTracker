@@ -2123,17 +2123,37 @@ before anyone touches them.** All four exist because of the two bugs found
   row, so it renders as a bare id — linking it would let the report name a
   person.*
 
-**Callout + overlay work designed 2026-08-04 (specs written, unbuilt).**
+**Callout + overlay work designed 2026-08-04 (specs written; #205 built
+2026-08-11, the rest still unbuilt).**
 - **#204 Divine Intervention two-cleric callout.** `docs/DESIGN-di-callout.md`.
   Full "who should cast it" selector needs recast state, emerald inventory and
   CH-chain position — we have none of those reliably. The shippable version
   names the two clerics who most recently healed on the chain as candidates and
   lets voice resolve it. Read the doc's "what we can't know" section before
   building.
-- **#205 Group-HP death watcher.** `docs/DESIGN-group-death-watcher.md`. Zeal
-  gives group member HP; a member going to 0 and leaving the zone is
-  independent evidence of a real death that doesn't depend on the log text at
-  all — the cross-check that would have caught the feign bug on day one.
+- **#205 Group-HP death watcher — BUILT 2026-08-11 (agent, on `beta`; not yet
+  in a stable Mimic).** `docs/DESIGN-group-death-watcher.md` §8 is the record of
+  what shipped. Zeal gives group member HP, so a member going to 0 is evidence
+  of a real death that owes nothing to the log text — the cross-check that would
+  have caught the feign bug on day one. It ships as a **second SOURCE feeding
+  the 3.5.58 death registry**, not as the standalone evidence pipeline the doc
+  drew: `_noteGroupHpFromState` on the `/api/zeal-state` ingest path →
+  `_noteDeath` / `_clearDeath`. Three guards: seen-alive-first, the zero must
+  hold (≥2 samples / ≥2.5s — Zeal's clamped negative per-mille makes a lone zero
+  a known artifact), **a 60s refusal after that name's feign emote**
+  (`"<Name> dies."`, newly recorded by `noteFeignEmoteLine` — nothing in the
+  agent knew a feign had happened before), and **a zoning member's zero is
+  ignored** when verbose `zone_id` proves they left (an *alive* reading from
+  another zone still clears — that's the bind run). Tests:
+  `test/group-death-watcher.test.js`.
+  ⚠ **Without `/pipeverbose on` a zoning groupmate is indistinguishable from a
+  dying one** — one more reason to ask the raid to turn it on.
+  **Still open:** the durable `death_evidence` table + upload + `death_source`
+  chip (needs a bot endpoint + migration, i.e. `main`); the `hp_collapse` path,
+  whose threshold the doc says to derive from a clean raid night rather than
+  invent. **First measurement wanted:** whether group gauges actually emit a 0
+  for a corpse — `_groupDeathWatchSnapshot()` answers it, and the answer decides
+  whether the collapse path is optional or necessary.
 - **#206 Third capture path for instant boss mechanics.** The discard audit
   found **113 timed effects captured, 138 instant ones invisible** — an instant
   effect has no duration, so the buff-landing index never indexes it, and

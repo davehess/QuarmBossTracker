@@ -9432,6 +9432,196 @@ function _deadNamesSnapshot(nowMs) {
   return out;
 }
 
+// ── #205 group-HP death watcher — a SECOND, independent death source ────────
+// Everything above is fed by ONE channel: a sentence in a log file. That single
+// source is exactly what let the feign bug run for the platform's whole life —
+// "<Name> dies." is the Feign Death emote, we banked it as a death, 44% of every
+// stored death was false, and nothing could contradict the log because nothing
+// else was watching (docs/DESIGN-group-death-watcher.md §0).
+//
+// Zeal's group gauges read the client's MEMORY, not its text output, so they are
+// a genuinely independent witness — and the discriminator falls out for free:
+// **feign death does not change hit points.** A feigning knight sits at 80% while
+// emitting a line that says they died; a real death is HP → 0.
+//
+// This is a SOURCE, not a second registry. Every conclusion goes through
+// _noteDeath/_clearDeath so the 15-minute forget and the clear-on-alive
+// semantics stay in exactly one place.
+//
+// Group HP arrives on two surfaces (docs/zeal-pipe-protocol.md): gauges 11-15
+// (name + per-mille, always available) and the type-6 group payload's
+// hp_current/hp_max (exact, `/pipeverbose on` only). Slots 1/6/16 (self /
+// target / pet) and 17-21 (group PETS) are deliberately NOT read — a pet at 0
+// is not a raider death, and self already has the log path with its corpse-run
+// confirmation tail.
+const GROUP_HP_GAUGE_SLOTS = [11, 12, 13, 14, 15];
+// A zero is a strong hint, never a fact (§2 ceiling 1). Three guards stand
+// between a gauge reading 0 and a name entering the registry:
+//
+//  1. TRANSITION — the name must have been seen ALIVE first. A slot reading 0
+//     the first time we ever see it is an empty or unrendered gauge, not a corpse.
+//  2. DWELL — the zero must survive GROUP_DEATH_ZERO_DWELL_MS across at least
+//     GROUP_DEATH_MIN_ZERO_SAMPLES samples. Zeal emits occasional NEGATIVE
+//     per-mille values (observed -3 on 5 live rows, 2026-08-03) and
+//     apps/mimic/main.js clamps them into [0,100] — so a single-sample zero is a
+//     KNOWN ARTIFACT SHAPE, and waiting one more sample costs a death nothing
+//     (a corpse holds at 0 until rez or bind).
+//  3. FEIGN SUPPRESSION — see _feignedRecently below.
+//
+// Dwell is kept short on purpose: a player who releases to bind is alive again
+// in 5-10s (Vex Thal, Hitya 2026-08-03), so a long dwell would miss the corpse
+// entirely rather than merely arriving late.
+const GROUP_DEATH_ZERO_DWELL_MS   = 2500;
+const GROUP_DEATH_MIN_ZERO_SAMPLES = 2;
+// Alive evidence clears a death — but not one recorded seconds ago. The log
+// line and the gauge race each other, and the gauge can still be carrying the
+// dead raider's LAST live value when the death line lands; clearing on that
+// would let the corpse-run-confirmed log path be overruled by a stale frame.
+// Nobody is rezzed and standing inside this window, so nothing real is lost.
+const GROUP_ALIVE_CLEAR_MIN_AGE_MS = 5000;
+const GROUP_HP_TRACK_FORGET_MS     = 10 * 60_000;
+// nameLower → { name, pct, at, sawAlive, zeroSince, zeroSamples, noted, … }
+const _groupHpTrack = new Map();
+
+// "<Name> dies." is the `cast_on_other` text of every Feign Death spell on
+// Quarm (366 / 1118 / 1460 — test/feign-death-not-a-death.test.js). parseEvent
+// deliberately returns NOTHING for it, which means nothing in the agent knows a
+// feign just happened. The watcher needs that knowledge: the design doc's whole
+// premise is that a feign leaves HP untouched, but that premise has never been
+// checked against a live feigning groupmate's GAUGE, and a monk sitting in the
+// corpse list is precisely the false positive that gets a feature switched off.
+// So we record the emote and refuse a zero for that name for a minute after it.
+// (Guard added 2026-08-11 — not in the design doc; recorded back into it.)
+const _feignSince = new Map();          // nameLower → atMs of the last feign emote
+const FEIGN_SUPPRESS_MS = 60_000;
+function noteFeignEmoteLine(line, nowMs) {
+  if (!line || line.indexOf(' dies.') === -1) return null;
+  // Player-name shape only, case-SENSITIVE: EQ NPCs are multi-word or lowercase
+  // ("a shissar disciple dies." is a charm pet feigning, not a raider).
+  const m = line.match(/\]\s+([A-Z][a-zA-Z]{2,19})\s+dies\.\s*$/);
+  if (!m) return null;
+  const at = nowMs || Date.now();
+  _feignSince.set(m[1].toLowerCase(), at);
+  if (_feignSince.size > 100) {
+    for (const [n, t] of _feignSince) if (at - t > FEIGN_SUPPRESS_MS) _feignSince.delete(n);
+  }
+  return m[1];
+}
+function _feignedRecently(nameLower, nowMs) {
+  const t = _feignSince.get(String(nameLower || '').toLowerCase());
+  if (t == null) return false;
+  return ((nowMs || Date.now()) - t) <= FEIGN_SUPPRESS_MS;
+}
+
+// One Zeal snapshot → {nameLower → {name, pct, verbose, offZone}} for GROUP
+// MEMBERS only. Exact hp_current/hp_max wins over the gauge percentage when both
+// are present. `offZone` = verbose zone_id proves they are NOT in our zone.
+function _groupHpObservations(st, selfCharacter) {
+  const out = new Map();
+  if (!st || typeof st !== 'object') return out;
+  const selfL = String(selfCharacter || '').toLowerCase();
+  const selfZone = (st.zone != null && Number.isFinite(Number(st.zone))) ? Number(st.zone) : null;
+  const take = (rawName, pct, verbose, zoneId) => {
+    const name = String(rawName || '').trim();
+    if (!/^[A-Z][a-zA-Z]{2,19}$/.test(name)) return;   // player-name shape
+    const k = name.toLowerCase();
+    if (k === selfL) return;                           // self rides the log path
+    if (typeof pct !== 'number' || !Number.isFinite(pct)) return;
+    if (pct < 0 || pct > 100) return;
+    const prev = out.get(k);
+    if (prev && prev.verbose && !verbose) return;      // exact beats the gauge
+    const offZone = (zoneId != null && selfZone != null && Number(zoneId) !== selfZone);
+    out.set(k, { name, pct, verbose: !!verbose, offZone });
+  };
+  if (Array.isArray(st.gauges)) {
+    for (const g of st.gauges) {
+      if (!g || !g.text) continue;
+      if (GROUP_HP_GAUGE_SLOTS.indexOf(g.slot) === -1) continue;
+      take(g.text, g.hp_pct, false, null);
+    }
+  }
+  if (Array.isArray(st.group_members)) {
+    for (const mrec of st.group_members) {
+      if (!mrec || !mrec.name) continue;
+      const cur = Number(mrec.hp_current), max = Number(mrec.hp_max);
+      if (!Number.isFinite(cur) || !Number.isFinite(max) || max <= 0) continue;   // non-verbose row
+      take(mrec.name, Math.max(0, Math.min(100, (cur / max) * 100)), true, mrec.zone_id);
+    }
+  }
+  return out;
+}
+
+// Called on every Zeal state push (the sample-to-sample deltas only exist here —
+// the bot sees debounced uploads, §5). Emits on TRANSITION, not per sample.
+function _noteGroupHpFromState(character, st, nowMs) {
+  const now = nowMs || Date.now();
+  const obs = _groupHpObservations(st, character);
+  for (const [k, o] of obs) {
+    let t = _groupHpTrack.get(k);
+    if (!t) { t = { name: o.name, sawAlive: false, zeroSince: 0, zeroSamples: 0, noted: 0 }; _groupHpTrack.set(k, t); }
+    t.name = o.name; t.pct = o.pct; t.at = now; t.verbose = o.verbose; t.observer = character || null;
+    if (o.pct > 0) {
+      // Alive on an independent channel. The registry clears on exactly this
+      // ("a rez, or any fresh self-HP") — but never on evidence younger than a
+      // freshly recorded death, which is the log-vs-gauge race above.
+      t.sawAlive = true; t.zeroSince = 0; t.zeroSamples = 0; t.noted = 0;
+      const diedAt = _deadSince.get(k);
+      if (diedAt != null && (now - diedAt) >= GROUP_ALIVE_CLEAR_MIN_AGE_MS) {
+        _clearDeath(k);
+        t.clearedAt = now;
+      }
+      continue;
+    }
+    // A groupmate who ZONES can sit at 0% in the group window for as long as
+    // the load takes, which no dwell survives. When verbose gives us their
+    // zone_id and it isn't ours, the zero proves nothing (§4: a bare
+    // zone_changed scores zero) — so it neither starts nor advances a dwell.
+    // Deliberately asymmetric: an ALIVE reading from another zone is still
+    // alive evidence and still clears, which is the bind-point round trip.
+    if (o.offZone) continue;
+    if (!t.sawAlive) continue;                                       // guard 1 — transition
+    if (!t.zeroSince) { t.zeroSince = now; t.zeroSamples = 1; continue; }
+    t.zeroSamples += 1;
+    if (t.noted) continue;                                           // this collapse already concluded
+    if (t.zeroSamples < GROUP_DEATH_MIN_ZERO_SAMPLES) continue;      // guard 2 — dwell
+    if (now - t.zeroSince < GROUP_DEATH_ZERO_DWELL_MS) continue;
+    if (_feignedRecently(k, now)) { t.suppressedFeignAt = now; continue; }   // guard 3 — feign
+    t.noted = now;
+    if (_isDead(k, now)) {
+      // The log got here first. Corroboration only — re-noting would push the
+      // death's timestamp forward and extend the 15-minute tombstone, which is
+      // the one thing the registry is deliberately built not to do.
+      t.corroboratedAt = now;
+    } else {
+      // Independent proof: HP hit zero and stayed there, and no log line said so.
+      // Stamp it at the FIRST zero sample — that is when they died, not when we
+      // finished being sure.
+      _noteDeath(t.name, t.zeroSince);
+      t.notedSource = 'hp_zero';
+    }
+  }
+  if (_groupHpTrack.size > 60) {
+    for (const [n, v] of _groupHpTrack) if (now - (v.at || 0) > GROUP_HP_TRACK_FORGET_MS) _groupHpTrack.delete(n);
+  }
+}
+
+function _groupDeathWatchSnapshot(nowMs) {
+  const now = nowMs || Date.now();
+  const out = [];
+  for (const [n, t] of _groupHpTrack) {
+    out.push({
+      name: t.name, name_lower: n, pct: t.pct, verbose: !!t.verbose,
+      age_ms: now - (t.at || 0), saw_alive: !!t.sawAlive,
+      zero_ms: t.zeroSince ? now - t.zeroSince : 0, zero_samples: t.zeroSamples || 0,
+      noted_at: t.noted || 0, noted_source: t.notedSource || null,
+      corroborated_at: t.corroboratedAt || 0,
+      suppressed_feign_at: t.suppressedFeignAt || 0,
+      cleared_at: t.clearedAt || 0, observer: t.observer || null,
+    });
+  }
+  return out;
+}
+
 // Is this number pair believable as an EQ character's HP pool? Every hop in the
 // exact-HP chain (Zeal label learner → raid_roster → the bot's live-state relay
 // → here) gated on `max > 100` and nothing else. That gate was written for ONE
@@ -20732,6 +20922,9 @@ function startWebDashboard(port) {
           // #105 — mob self-heal: the Zeal target gauge HP% rising for the same
           // target across frames → a mob_heal timeline tick on the live fight.
           try { _noteMobHealFromState(character, prevState, st); } catch (e) { void e; }
+          // #205 — group member HP hitting (and holding) zero is death evidence
+          // that owes nothing to the log text. Feeds the death registry.
+          try { _noteGroupHpFromState(character, st, Date.now()); } catch (e) { void e; }
           if (newCasting && newCasting !== prevCasting) {
             // Heuristic: anything > 4 chars + has at least one letter is a
             // real spell/song name. Filters out one-off junk labels.
@@ -33003,6 +33196,12 @@ async function main() {
         // Ssraeshza dies → 2:10 cycle, "Paladin DA NOW" at 2:00). Both key off the
         // same slain/death line. Local-only, live tail.
         try { _cancelTimersOnMobDeath(line); } catch { /* never let a bad line break the tail */ }
+        // #205 — "<Name> dies." is the FEIGN emote (never a death; see
+        // test/feign-death-not-a-death.test.js). Nothing else in the agent
+        // records that a feign happened, and the group-HP death watcher needs
+        // it: a knight who feigns must never be turned into a corpse by a
+        // gauge reading zero. Raw-line hook, substring-gated like the two below.
+        try { const _dfd = parseEqTimestamp(line); noteFeignEmoteLine(line, _dfd ? _dfd.getTime() : Date.now()); } catch { void 0; }
         try { const _dts = parseEqTimestamp(line); _checkBossSpawnChain(line, _dts ? _dts.getTime() : Date.now()); } catch { void 0; }
         // `/zeal version` output → what's actually LOADED in this client. Runs
         // on the raw line before any filter because none of the keep patterns
@@ -33184,6 +33383,10 @@ module.exports = {
   // Age + liveness (2026-08-10) — exported so the wrapper is tested against
   // the shipped code rather than a copy.
   _noteDeath, _clearDeath, _isDead, _deadNamesSnapshot, _ageOfServerStamp,
+  // #205 group-HP death watcher — the independent death source feeding that
+  // registry. Exported so the tests exercise the shipped code, not a copy.
+  _noteGroupHpFromState, _groupHpObservations, _groupDeathWatchSnapshot,
+  noteFeignEmoteLine, _feignedRecently,
   _nowOnServerClock, _resolveHpValuesForName, _mtLiveStateByName,
   noteClientVersionLine, clientVersionsSnapshot,
   _checkBossSpawnChain, _checkTankBuster, _armBossCountdown, BOSS_SPAWN_CHAINS,

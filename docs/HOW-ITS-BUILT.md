@@ -545,6 +545,25 @@ either way", never "this was a feign"** — a rezzed death is real and
 unconfirmable, and every rogue corpse pull looks exactly like one. Full model
 and the open design work in `docs/DESIGN-death-semantics.md`.
 
+### Who is dead right now — the registry and its two sources — 2026-08-10/11
+**The registry** (agent, `_noteDeath` / `_clearDeath` / `_isDead` /
+`_deadNamesSnapshot`): `nameLower → diedAtMs`, consulted by any surface that
+names a raider (the off-heal list excludes the dead). It **forgets after 15
+minutes** and clears on alive evidence — we don't see every rez, and tombstoning
+someone for the rest of the night is worse than briefly missing a corpse.
+**Source 1 — the log**: a confirmed player death in the encounter builder.
+**Source 2 (#205, agent 2026-08-11) — Zeal group HP**: `_noteGroupHpFromState`
+on the `/api/zeal-state` ingest path watches gauges 11-15 (+ exact
+`hp_current/hp_max` when `/pipeverbose` is on) and marks a member dead when
+their HP hits zero **and holds** — evidence that owes nothing to log text, which
+is the cross-check the feign bug never had. Guards: seen-alive-first, ≥2 samples
+/ ≥2.5s dwell (Zeal's clamped negative per-mille makes a lone zero an artifact),
+and a 60s refusal after that name's feign emote — `noteFeignEmoteLine` is the
+only thing in the agent that knows `"<Name> dies."` happened. It never
+re-stamps a death the log already holds. `_groupDeathWatchSnapshot()` is the
+diagnostic. **No `death_evidence` table or upload exists** —
+`docs/DESIGN-group-death-watcher.md` §8 for what was deliberately left.
+
 ### Threat snapshots (cadence, labelling, claiming) — 2026-08-04
 `boss_name` was NULL on all 463k rows by construction: it is assigned only at
 flush (death handler / inside `flush()`), while the uploader refuses to run once
