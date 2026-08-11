@@ -7,7 +7,13 @@ which has IPv4, so the IPv6/IPv4-add-on caveat does not apply to Phase 1 at
 all.** The nightly dump doubles as the sandbox's seed.
 
 **Phase 1 — backup (local session executes):** `scripts/unraid-backup-supabase.sh`
-is committed and copy-paste ready for the User Scripts plugin. Needs two local
+is committed and copy-paste ready. ⚠ **User Scripts is a PLUGIN and was not
+installed on this box** (2026-08-11) — it is not part of stock Unraid. It is not
+needed to run the backup: save the script to `/boot/config/wolfpack-backup.sh`
+(flash survives reboots) and run `bash /boot/config/wolfpack-backup.sh` — invoking
+it via `bash` sidesteps the executable bit, which FAT32 cannot store anyway.
+Install User Scripts from Community Applications afterwards purely for the
+`0 5 * * *` schedule; the script itself does not change. Needs two local
 steps: the session-pooler URI from Dashboard → Connect into
 `/boot/config/wolfpack-db-url` (chmod 600), and ONE manual restore test —
 a backup that has never been restored is a hope, not a backup. The script
