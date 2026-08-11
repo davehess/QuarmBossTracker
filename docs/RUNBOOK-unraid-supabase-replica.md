@@ -234,12 +234,16 @@ Phase 1 dump. This also caught a real defect in the backup script: it pinned a
 itself**, so the first nightly run would have aborted. Now pinned `postgres:17`
 — raise the tag if Supabase ever upgrades the project's major, never lower it.
 
-**Two Studio buttons are dead in self-hosted, and both are cosmetic.** The
-account menu shows *"You do not have access to this project"* and Connect shows
-*"Project is currently not active and cannot be connected"* — Studio asks the
-HOSTED platform API (supabase.com) for account/project status, which no
-self-hosted stack has. Nothing is wrong: Advisors returning "no issues" is
-itself a live meta→db round trip. Do not chase these. Real connection paths:
+**⚠ Studio's project ref in the URL must match `POOLER_TENANT_ID` — ours is
+`wolfpack`, NOT `default`.** Landing on `/project/default` (the path most
+self-host docs quote) makes Studio query a project that does not exist here, and
+it answers truthfully but misleadingly: the account menu shows *"You do not have
+access to this project"* and Connect shows *"Project is currently not active and
+cannot be connected"*. Both errors vanish at
+**`http://<lan-ip>:8000/project/wolfpack`** (Hitya found this 2026-08-11 — an
+earlier note in this runbook wrongly wrote both off as cosmetic self-hosted
+artifacts; they were real and the ref was the cause). If the tenant id is ever
+changed, the Studio URL changes with it. Real connection paths:
 Studio's SQL Editor / Table Editor, `docker exec supabase-db psql -U postgres`,
 and from the LAN through the pooler in session mode —
 `postgresql://postgres.<POOLER_TENANT_ID>@<lan-ip>:5432/postgres` (username is
