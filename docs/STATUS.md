@@ -2123,8 +2123,9 @@ before anyone touches them.** All four exist because of the two bugs found
   row, so it renders as a bare id — linking it would let the report name a
   person.*
 
-**Callout + overlay work designed 2026-08-04 (specs written; #204, #205 and
-#206 built 2026-08-11, #207 in flight).**
+**Callout + overlay work designed 2026-08-04 — ALL FOUR BUILT 2026-08-11 and
+ON BETA as of agent 3.5.59 (bot halves + migration in bot 3.1.38 on `main`).
+Stable stamp pending graduation, per the both-gates rule.**
 - **#204 Divine Intervention two-cleric callout — BUILT 2026-08-11, not yet
   released.** `docs/DESIGN-di-callout.md` (§6 = what shipped + every call made
   beyond the doc). Agent-side in the CH-chain module: `trackDiFired` on the
