@@ -1,7 +1,62 @@
 # DESIGN — capturing instant boss mechanics (#206)
 
-*Written 2026-08-04 (overnight design pass). Unbuilt. This is the write-up of
-the discard audit Hitya asked for on 2026-08-03.*
+*Written 2026-08-04 (overnight design pass). **Step 1 built 2026-08-11** — see
+§0. This is the write-up of the discard audit Hitya asked for on 2026-08-03.*
+
+## 0. What shipped (2026-08-11) — and where it differs from this spec
+
+**Built: the capture path itself, record-only and local.** Consumer 1 of §2 ("record
+it"), which §7 recommends running for a raid cycle before anyone argues about
+callouts. Nothing uploads, no table, no auto-suggest, no TTS.
+
+- **Bot** — `/api/agent/spell-catalog` is now **v8**: each entry carries `npc: 1`
+  when the spell appears in `eqemu_npc_spells_entries` (the same join §6's audit
+  uses). ~1.4k of ~3.9k spells; the flag rides the existing 1h cache + ETag.
+- **Agent** — `_rebuildMechanicMatchers` builds a third index keyed on
+  `cast_on_other` for INSTANT, NPC-castable spells; `parseMechanicLanding` reads
+  the raw line; `noteMechanicLanding` classifies and records into a 60-row ring;
+  a 💥 **Boss mechanics** card on the Triggers tab shows it. Hooked in the watch
+  tail next to the debuff path, i.e. ahead of `shouldKeep`, and only on lines the
+  two timed paths declined. Tests: `test/mechanic-capture.test.js`.
+
+Five things this spec did not say, or said differently:
+
+1. **No new endpoint was needed.** §2 proposes "an ETag'd endpoint next to
+   `spell-catalog`". `spell-catalog` already ships `cast_on_other` for *every*
+   spell — instant ones included — so the only thing missing was the scope flag.
+   One field on the existing payload beat a second catalog.
+2. **⚠ Do not scope this on `good_effect`. EQ classifies DISPELS as beneficial.**
+   Nullify Magic (49), Annul Magic (1526) and Beholder Dispel (955) are all
+   `good_effect = 1`, so a "keep the detrimental ones" filter silently drops
+   "\<raider\> feels dispelled." — one of the four mechanics §1 names by name.
+   The shipped gate reads the FIGHT instead: on the mob we are hitting, drop
+   anything detrimental (that is our own raid's nukes); on anyone else, drop heal
+   families (that is our own CH chain). Everything else records.
+3. **Zone scoping (§3) was replaced by something tighter.** Two scopes do the
+   work zone scoping was asked to do: the `npc` flag (a player-only spell can
+   never enter the index) and the live fight (`_fightTargetMatches`, the helper
+   #105 already uses to keep off-target chatter off the board). A row is only
+   written while a fight is open, and it carries that fight's mob.
+4. **Ambiguity is carried, never resolved.** §3 asks for "resolve when unique,
+   record the name and leave `spell_id` NULL when not" — built exactly, and the
+   junk-family guard the two timed indexes use is deliberately NOT copied over.
+   That guard exists because those indexes CROWN a representative and a crown can
+   be wrong (Kneel Test, Bolt of Karana, every-yawn-is-Turgur's —
+   `FINDINGS-2026-08-10-trigger-overlay.md` §5/§7b). This index never crowns, so
+   a 32-spell family has nothing to be wrong about; dropping it would re-create
+   the blindness. The dashboard prints **unidentified · N spells share this**.
+5. **The audit re-ran clean, with one row of drift.** 263 / 113 / 138 exactly, on
+   2026-08-11. Of the 138, **137** land in the new index; the one that does not is
+   **Itraer Vius Touch** (2846, `buffduration` 0 but `buffdurationformula` 4) — a
+   level-scaled duration whose base is 0, which is genuinely timed and is already
+   in the timed index. The gate is `_isTimedDurationFormula(durf) || dur > 0`, the
+   exact complement of the timed predicate, so nothing can sit in both.
+
+**Still open** (in the order §7 recommends): upload + a `mechanic_events` table so
+the "we wipe 40 seconds in — what fires at 40 seconds?" question is answerable
+across installs and nights; auto-suggest on `/admin/triggers`; live callouts
+(#207). None of them should be built before a raid cycle of the card above says
+the matcher is right.
 
 **The ask:**
 

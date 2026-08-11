@@ -4151,6 +4151,221 @@ function _maybeAnnounceChGo(c, atMs) {
   scheduleRender();
 }
 
+// ── Divine Intervention two-cleric callout (#204) ────────────────────────────
+// DESIGN-di-callout.md §3. A DI death-save FIRING means the tank is alive and
+// UNPROTECTED, and the raid has seconds to put another one up. We deliberately
+// do NOT pick the caster: emeralds (DI's reagent), the global cooldown and
+// "I'm about to med" are all things a cleric knows instantly and we cannot know
+// at all. A confident single-name call that picks someone with no emerald is
+// worse than useless — it costs a tank while two clerics each assume the other
+// has it. So we NOMINATE two names and let voice resolve it.
+//
+// The fire line is grounded in the server source Quarm runs on (EQMacEmu
+// zone/spell_effects.cpp `Mob::TryDeathSave` → `StringID::DIVINE_INTERVENTION`
+// 1029 = "%1 has been rescued by divine intervention!"). Load-bearing details
+// read straight off that call:
+//   • ALWAYS the name form, even in the saved player's own log (`%1` =
+//     GetCleanName(), skipsender = false) — one pattern covers everyone;
+//   • 200-unit range, so a cleric across the room never logs it. That is why
+//     the selection runs on whoever DID see it rather than assuming every
+//     client can work it out for themselves;
+//   • a FAILED save emits NOTHING. The "<Player> survived divine intervention!"
+//     line that circulates in GINA/AI trigger packs does not exist on Quarm —
+//     same invented-pattern trap as the dead DI trigger this doc opened with.
+//     "DI failed" is only ever rescue-line-absent + a death, never its own line.
+// Anchored on `\]\s+` like every other agent-side line detector (the raw line
+// carries its `[timestamp] ` prefix — a bare `^` would anchor before it).
+const _DI_FIRED_RX = /\]\s+([A-Za-z][A-Za-z'`]*) has been rescued by divine intervention[.!]/i;
+const DI_CALLOUT_NAMES = 2;              // the ask is TWO — see the decision note below
+const DI_CALLOUT_TTL_MS = 20_000;        // how long the nomination stays on the overlay
+const DI_CHAIN_RECENT_ROTATIONS = 2;     // "recently healed on the chain" = last ~2 passes
+const DI_CHAIN_RECENT_FALLBACK_MS = 60_000;  // window when the beat isn't measured yet
+const DI_FIRED_DEDUP_MS = 5000;          // the line is zone-visible → every boxed log has it
+let _diCallout = null;                   // the live nomination (null = nothing to show)
+let _lastDiFired = { key: null, atMs: 0 };
+
+// ms until chain slot `num` is due to cast, or null when the chain hasn't told
+// us enough (no beat measured, no on-deck slot). Negative = already overdue,
+// which counts as "up next" for exclusion purposes — a cleric who is LATE on
+// their CH is the worst possible person to spend 6 seconds casting DI.
+function _diSlotTurnInMs(chain, num, nowMs) {
+  if (!chain || !chain.slots || !chain.beat_ms || chain.next_num == null) return null;
+  const nums = Object.keys(chain.slots).map(Number).sort((a, b) => a - b);
+  const iNext = nums.indexOf(Number(chain.next_num));
+  const iThis = nums.indexOf(Number(num));
+  if (iNext < 0 || iThis < 0) return null;
+  // The on-deck slot fires at the chain's own expected-next time; every slot
+  // after it is one more beat down the rotation, wrapping at the top.
+  const expectedNext = chain.next_expected_at
+    || ((chain.last_ch && chain.last_ch.atMs) ? chain.last_ch.atMs + chain.beat_ms : null);
+  if (!expectedNext) return null;
+  const dist = (iThis - iNext + nums.length) % nums.length;
+  return (expectedNext + dist * chain.beat_ms) - nowMs;
+}
+
+// The ranking itself, kept PURE so it can be tested without a live chain: every
+// input arrives as an argument (`ctx.classOf` / `ctx.isDead` / `ctx.manaOf`).
+// Returns { names, candidates, fallback } or null when nobody is nameable.
+//
+// Hard exclusions (things we KNOW, not things we guess):
+//   • not a Cleric — DI is spell 1546, cleric-only. Chain slots are NOT all
+//     clerics: druids gap-fill via CH_EQUIVALENT_SPELLS auto-slots (which carry
+//     a `kind` label) and shamans show up too. An UNKNOWN class stays eligible;
+//     only a known non-Cleric is dropped.
+//   • dead — the 3.5.58 death registry. The design doc predates it and lists
+//     "is this cleric actually alive" under what we cannot know; we can now.
+//   • DI confirmed on cooldown — `up === false && unknown === false` means we
+//     WATCHED the cast. "Rank, don't filter" in the doc is about clerics we
+//     know nothing about, not about a recast we measured.
+// Then: recently active on the chain, and not due to cast inside
+// DI_CAST_MS + one beat (a cleric who casts a 6s DI misses their CH, and a
+// missed CH is how tanks die). Both of those are soft — if they empty the
+// list we fall back to the chain's two most recent healers rather than go
+// silent, exactly as the doc specifies.
+function _diRankCandidates(chain, ctx) {
+  if (!chain || !chain.slots) return null;
+  const now = ctx.now;
+  const nums = Object.keys(chain.slots).map(Number).sort((a, b) => a - b);
+  const rotationMs = chain.beat_ms ? chain.beat_ms * nums.length : null;
+  const recentWindow = rotationMs
+    ? rotationMs * DI_CHAIN_RECENT_ROTATIONS
+    : DI_CHAIN_RECENT_FALLBACK_MS;
+  const rows = [];
+  for (const num of nums) {
+    const s = chain.slots[num];
+    if (!s || !s.name || !s.lastAtMs) continue;      // roster-seeded but never called
+    // Real character names only — same guard the off-heal list uses, for the
+    // same reason (single-word NPC/pet names leak into name-keyed rows).
+    if (!/^[A-Za-z]+$/.test(s.name)) continue;
+    if (s.kind) continue;                            // labeled auto-slot = a druid CH-equivalent
+    const lc = s.name.toLowerCase();
+    if (ctx.isDead(lc)) continue;
+    const cls = ctx.classOf(lc);
+    if (cls && cls !== 'Cleric') continue;
+    const di = ctx.diOf(lc);
+    if (di && !di.up && !di.unknown) continue;       // measured recast — they cannot cast it
+    const sinceMs = now - s.lastAtMs;
+    const turnIn = _diSlotTurnInMs(chain, num, now);
+    rows.push({
+      name: s.name,
+      chain_num: num,
+      since_ms: sinceMs,
+      recent: sinceMs <= recentWindow,
+      // null turn = unknown, which is NOT "busy": an unmeasured chain must not
+      // exclude the whole roster.
+      busy: (turnIn != null && chain.beat_ms) ? (turnIn <= DI_CAST_MS + chain.beat_ms) : false,
+      turn_in_ms: turnIn,
+      di: di ? (di.unknown ? 'unknown' : 'ready') : 'unknown',
+      mana_pct: ctx.manaOf(lc, s.mana),
+    });
+  }
+  if (!rows.length) return null;
+  const manaOf = (r) => (r.mana_pct == null ? -1 : r.mana_pct);
+  const diTier = (r) => (r.di === 'ready' ? 1 : 0);
+  let pool = rows.filter(r => r.recent && !r.busy);
+  let fallback = false;
+  if (!pool.length) {
+    // Ties and empty results both resolve to the chain's most recent healers —
+    // never to silence (doc §3). The hard exclusions above still stand, and the
+    // ordering here is plain recency, because that is what the fallback IS:
+    // we have no clean pick, so we name who was demonstrably healing last.
+    pool = rows.slice();
+    fallback = true;
+  }
+  pool.sort(fallback
+    ? (a, b) => a.since_ms - b.since_ms
+    : (a, b) =>
+      diTier(b) - diTier(a)          // confirmed-ready outranks unknown
+      || manaOf(b) - manaOf(a)       // then mana — 500 mana is not nothing
+      || a.since_ms - b.since_ms);   // then most recently active on the chain
+  const picked = pool.slice(0, DI_CALLOUT_NAMES);
+  return { names: picked.map(p => p.name), candidates: picked, fallback };
+}
+
+// Wire the live agent state into the pure ranker above.
+function diCalloutCandidates(nowMs) {
+  const chain = chChainSnapshot();
+  if (!chain) return null;
+  const now = nowMs || Date.now();
+  const di = diStatusSnapshot();
+  const diByName = new Map();
+  for (const c of (di && di.clerics) || []) if (c && c.name) diByName.set(String(c.name).toLowerCase(), c);
+  const exactMana = new Map();
+  for (const h of (_diStatusCache.healer_mana || [])) {
+    if (h && h.name && h.mana_pct != null) exactMana.set(String(h.name).toLowerCase(), Math.round(h.mana_pct));
+  }
+  return _diRankCandidates(chain, {
+    now,
+    isDead:  (lc) => _isDead(lc, now),
+    classOf: (lc) => ((whoData.get(lc) || {}).class) || _raidClassByName.get(lc) || null,
+    diOf:    (lc) => diByName.get(lc) || null,
+    // Exact (Mimic) mana beats the percentage the cleric shouted in their chain
+    // call — same precedence the Command Center's healer-mana merge uses.
+    manaOf:  (lc, called) => (exactMana.has(lc) ? exactMana.get(lc) : (called == null ? null : called)),
+  });
+}
+
+// "<Tank> has been rescued by divine intervention!" → nominate two clerics.
+// Deliberately NOT gated on _sourceExcluded: this is a local UI/audio callout
+// that uploads nothing, and a raider opting out of STATS must not lose a
+// raid-critical call (same reasoning as noteBlindLine / noteSongAoeLine).
+function trackDiFired(line) {
+  if (!line || line.indexOf('rescued by') === -1) return null;   // cheap gate (tail hot path)
+  const m = line.match(_DI_FIRED_RX);
+  if (!m) return null;
+  const ts = parseEqTimestamp(line);
+  const atMs = ts ? ts.getTime() : Date.now();
+  const tank = m[1];
+  // The line is zone-visible, so a two-boxer's every watched log carries it.
+  const key = tank.toLowerCase();
+  if (_lastDiFired.key === key && (atMs - _lastDiFired.atMs) < DI_FIRED_DEDUP_MS) return null;
+  _lastDiFired = { key, atMs };
+  const sel = diCalloutCandidates(Date.now());
+  // No nameable cleric → no nomination. This is NOT the doc's "never silence":
+  // the raid still hears the event from the guild trigger ("D I fired on
+  // {tank}"). Silence here is only the SELECTOR declining to invent a name,
+  // which is the whole point of the honesty layer.
+  if (!sel || !sel.names.length) return null;
+  const spoken = 'D I down. ' + sel.names.join(' or ') + '.';
+  _diCallout = {
+    id: key + '|' + atMs,
+    tank,
+    at: atMs,
+    expires_at: Date.now() + DI_CALLOUT_TTL_MS,
+    ttl_ms: DI_CALLOUT_TTL_MS,
+    names: sel.names,
+    candidates: sel.candidates,
+    fallback: sel.fallback,
+    tts: spoken,
+  };
+  // Same text_overlay-shaped fire the CH GO callout uses — the trigger overlay
+  // flashes `text` and speaks `tts` (gated on the user's enableTriggerTts).
+  // No new SpeechSynthesis path.
+  _pushOverlay({
+    text:        'D.I. DOWN on ' + tank + ' — ' + sel.names.join(' or '),
+    tts:         spoken,
+    color:       'red',
+    duration_ms: 8000,
+    shownAt:     atMs,
+    firedAt:     Date.now(),
+    trigger:     'DI DOWN',
+    scope:       'guild',
+    test:        false,
+  });
+  scheduleRender();
+  return _diCallout;
+}
+
+// Live nomination for the overlays; self-expires so a stale call can't sit on
+// screen after the window to act on it has closed.
+function diCalloutSnapshot() {
+  const c = _diCallout;
+  if (!c) return null;
+  const now = Date.now();
+  if (now >= c.expires_at) { _diCallout = null; return null; }
+  return Object.assign({}, c, { seconds_left: Math.max(0, Math.ceil((c.expires_at - now) / 1000)) });
+}
+
 // Off-heal candidates — raiders taking repeated single-target damage right
 // now who ISN'T the resolved Main Tank or the current Rampage target (both
 // already get dedicated coverage — Tank overlay, Rampage banner). Surfaced
@@ -9432,6 +9647,196 @@ function _deadNamesSnapshot(nowMs) {
   return out;
 }
 
+// ── #205 group-HP death watcher — a SECOND, independent death source ────────
+// Everything above is fed by ONE channel: a sentence in a log file. That single
+// source is exactly what let the feign bug run for the platform's whole life —
+// "<Name> dies." is the Feign Death emote, we banked it as a death, 44% of every
+// stored death was false, and nothing could contradict the log because nothing
+// else was watching (docs/DESIGN-group-death-watcher.md §0).
+//
+// Zeal's group gauges read the client's MEMORY, not its text output, so they are
+// a genuinely independent witness — and the discriminator falls out for free:
+// **feign death does not change hit points.** A feigning knight sits at 80% while
+// emitting a line that says they died; a real death is HP → 0.
+//
+// This is a SOURCE, not a second registry. Every conclusion goes through
+// _noteDeath/_clearDeath so the 15-minute forget and the clear-on-alive
+// semantics stay in exactly one place.
+//
+// Group HP arrives on two surfaces (docs/zeal-pipe-protocol.md): gauges 11-15
+// (name + per-mille, always available) and the type-6 group payload's
+// hp_current/hp_max (exact, `/pipeverbose on` only). Slots 1/6/16 (self /
+// target / pet) and 17-21 (group PETS) are deliberately NOT read — a pet at 0
+// is not a raider death, and self already has the log path with its corpse-run
+// confirmation tail.
+const GROUP_HP_GAUGE_SLOTS = [11, 12, 13, 14, 15];
+// A zero is a strong hint, never a fact (§2 ceiling 1). Three guards stand
+// between a gauge reading 0 and a name entering the registry:
+//
+//  1. TRANSITION — the name must have been seen ALIVE first. A slot reading 0
+//     the first time we ever see it is an empty or unrendered gauge, not a corpse.
+//  2. DWELL — the zero must survive GROUP_DEATH_ZERO_DWELL_MS across at least
+//     GROUP_DEATH_MIN_ZERO_SAMPLES samples. Zeal emits occasional NEGATIVE
+//     per-mille values (observed -3 on 5 live rows, 2026-08-03) and
+//     apps/mimic/main.js clamps them into [0,100] — so a single-sample zero is a
+//     KNOWN ARTIFACT SHAPE, and waiting one more sample costs a death nothing
+//     (a corpse holds at 0 until rez or bind).
+//  3. FEIGN SUPPRESSION — see _feignedRecently below.
+//
+// Dwell is kept short on purpose: a player who releases to bind is alive again
+// in 5-10s (Vex Thal, Hitya 2026-08-03), so a long dwell would miss the corpse
+// entirely rather than merely arriving late.
+const GROUP_DEATH_ZERO_DWELL_MS   = 2500;
+const GROUP_DEATH_MIN_ZERO_SAMPLES = 2;
+// Alive evidence clears a death — but not one recorded seconds ago. The log
+// line and the gauge race each other, and the gauge can still be carrying the
+// dead raider's LAST live value when the death line lands; clearing on that
+// would let the corpse-run-confirmed log path be overruled by a stale frame.
+// Nobody is rezzed and standing inside this window, so nothing real is lost.
+const GROUP_ALIVE_CLEAR_MIN_AGE_MS = 5000;
+const GROUP_HP_TRACK_FORGET_MS     = 10 * 60_000;
+// nameLower → { name, pct, at, sawAlive, zeroSince, zeroSamples, noted, … }
+const _groupHpTrack = new Map();
+
+// "<Name> dies." is the `cast_on_other` text of every Feign Death spell on
+// Quarm (366 / 1118 / 1460 — test/feign-death-not-a-death.test.js). parseEvent
+// deliberately returns NOTHING for it, which means nothing in the agent knows a
+// feign just happened. The watcher needs that knowledge: the design doc's whole
+// premise is that a feign leaves HP untouched, but that premise has never been
+// checked against a live feigning groupmate's GAUGE, and a monk sitting in the
+// corpse list is precisely the false positive that gets a feature switched off.
+// So we record the emote and refuse a zero for that name for a minute after it.
+// (Guard added 2026-08-11 — not in the design doc; recorded back into it.)
+const _feignSince = new Map();          // nameLower → atMs of the last feign emote
+const FEIGN_SUPPRESS_MS = 60_000;
+function noteFeignEmoteLine(line, nowMs) {
+  if (!line || line.indexOf(' dies.') === -1) return null;
+  // Player-name shape only, case-SENSITIVE: EQ NPCs are multi-word or lowercase
+  // ("a shissar disciple dies." is a charm pet feigning, not a raider).
+  const m = line.match(/\]\s+([A-Z][a-zA-Z]{2,19})\s+dies\.\s*$/);
+  if (!m) return null;
+  const at = nowMs || Date.now();
+  _feignSince.set(m[1].toLowerCase(), at);
+  if (_feignSince.size > 100) {
+    for (const [n, t] of _feignSince) if (at - t > FEIGN_SUPPRESS_MS) _feignSince.delete(n);
+  }
+  return m[1];
+}
+function _feignedRecently(nameLower, nowMs) {
+  const t = _feignSince.get(String(nameLower || '').toLowerCase());
+  if (t == null) return false;
+  return ((nowMs || Date.now()) - t) <= FEIGN_SUPPRESS_MS;
+}
+
+// One Zeal snapshot → {nameLower → {name, pct, verbose, offZone}} for GROUP
+// MEMBERS only. Exact hp_current/hp_max wins over the gauge percentage when both
+// are present. `offZone` = verbose zone_id proves they are NOT in our zone.
+function _groupHpObservations(st, selfCharacter) {
+  const out = new Map();
+  if (!st || typeof st !== 'object') return out;
+  const selfL = String(selfCharacter || '').toLowerCase();
+  const selfZone = (st.zone != null && Number.isFinite(Number(st.zone))) ? Number(st.zone) : null;
+  const take = (rawName, pct, verbose, zoneId) => {
+    const name = String(rawName || '').trim();
+    if (!/^[A-Z][a-zA-Z]{2,19}$/.test(name)) return;   // player-name shape
+    const k = name.toLowerCase();
+    if (k === selfL) return;                           // self rides the log path
+    if (typeof pct !== 'number' || !Number.isFinite(pct)) return;
+    if (pct < 0 || pct > 100) return;
+    const prev = out.get(k);
+    if (prev && prev.verbose && !verbose) return;      // exact beats the gauge
+    const offZone = (zoneId != null && selfZone != null && Number(zoneId) !== selfZone);
+    out.set(k, { name, pct, verbose: !!verbose, offZone });
+  };
+  if (Array.isArray(st.gauges)) {
+    for (const g of st.gauges) {
+      if (!g || !g.text) continue;
+      if (GROUP_HP_GAUGE_SLOTS.indexOf(g.slot) === -1) continue;
+      take(g.text, g.hp_pct, false, null);
+    }
+  }
+  if (Array.isArray(st.group_members)) {
+    for (const mrec of st.group_members) {
+      if (!mrec || !mrec.name) continue;
+      const cur = Number(mrec.hp_current), max = Number(mrec.hp_max);
+      if (!Number.isFinite(cur) || !Number.isFinite(max) || max <= 0) continue;   // non-verbose row
+      take(mrec.name, Math.max(0, Math.min(100, (cur / max) * 100)), true, mrec.zone_id);
+    }
+  }
+  return out;
+}
+
+// Called on every Zeal state push (the sample-to-sample deltas only exist here —
+// the bot sees debounced uploads, §5). Emits on TRANSITION, not per sample.
+function _noteGroupHpFromState(character, st, nowMs) {
+  const now = nowMs || Date.now();
+  const obs = _groupHpObservations(st, character);
+  for (const [k, o] of obs) {
+    let t = _groupHpTrack.get(k);
+    if (!t) { t = { name: o.name, sawAlive: false, zeroSince: 0, zeroSamples: 0, noted: 0 }; _groupHpTrack.set(k, t); }
+    t.name = o.name; t.pct = o.pct; t.at = now; t.verbose = o.verbose; t.observer = character || null;
+    if (o.pct > 0) {
+      // Alive on an independent channel. The registry clears on exactly this
+      // ("a rez, or any fresh self-HP") — but never on evidence younger than a
+      // freshly recorded death, which is the log-vs-gauge race above.
+      t.sawAlive = true; t.zeroSince = 0; t.zeroSamples = 0; t.noted = 0;
+      const diedAt = _deadSince.get(k);
+      if (diedAt != null && (now - diedAt) >= GROUP_ALIVE_CLEAR_MIN_AGE_MS) {
+        _clearDeath(k);
+        t.clearedAt = now;
+      }
+      continue;
+    }
+    // A groupmate who ZONES can sit at 0% in the group window for as long as
+    // the load takes, which no dwell survives. When verbose gives us their
+    // zone_id and it isn't ours, the zero proves nothing (§4: a bare
+    // zone_changed scores zero) — so it neither starts nor advances a dwell.
+    // Deliberately asymmetric: an ALIVE reading from another zone is still
+    // alive evidence and still clears, which is the bind-point round trip.
+    if (o.offZone) continue;
+    if (!t.sawAlive) continue;                                       // guard 1 — transition
+    if (!t.zeroSince) { t.zeroSince = now; t.zeroSamples = 1; continue; }
+    t.zeroSamples += 1;
+    if (t.noted) continue;                                           // this collapse already concluded
+    if (t.zeroSamples < GROUP_DEATH_MIN_ZERO_SAMPLES) continue;      // guard 2 — dwell
+    if (now - t.zeroSince < GROUP_DEATH_ZERO_DWELL_MS) continue;
+    if (_feignedRecently(k, now)) { t.suppressedFeignAt = now; continue; }   // guard 3 — feign
+    t.noted = now;
+    if (_isDead(k, now)) {
+      // The log got here first. Corroboration only — re-noting would push the
+      // death's timestamp forward and extend the 15-minute tombstone, which is
+      // the one thing the registry is deliberately built not to do.
+      t.corroboratedAt = now;
+    } else {
+      // Independent proof: HP hit zero and stayed there, and no log line said so.
+      // Stamp it at the FIRST zero sample — that is when they died, not when we
+      // finished being sure.
+      _noteDeath(t.name, t.zeroSince);
+      t.notedSource = 'hp_zero';
+    }
+  }
+  if (_groupHpTrack.size > 60) {
+    for (const [n, v] of _groupHpTrack) if (now - (v.at || 0) > GROUP_HP_TRACK_FORGET_MS) _groupHpTrack.delete(n);
+  }
+}
+
+function _groupDeathWatchSnapshot(nowMs) {
+  const now = nowMs || Date.now();
+  const out = [];
+  for (const [n, t] of _groupHpTrack) {
+    out.push({
+      name: t.name, name_lower: n, pct: t.pct, verbose: !!t.verbose,
+      age_ms: now - (t.at || 0), saw_alive: !!t.sawAlive,
+      zero_ms: t.zeroSince ? now - t.zeroSince : 0, zero_samples: t.zeroSamples || 0,
+      noted_at: t.noted || 0, noted_source: t.notedSource || null,
+      corroborated_at: t.corroboratedAt || 0,
+      suppressed_feign_at: t.suppressedFeignAt || 0,
+      cleared_at: t.clearedAt || 0, observer: t.observer || null,
+    });
+  }
+  return out;
+}
+
 // Is this number pair believable as an EQ character's HP pool? Every hop in the
 // exact-HP chain (Zeal label learner → raid_roster → the bot's live-state relay
 // → here) gated on `max > 100` and nothing else. That gate was written for ONE
@@ -10588,6 +10993,11 @@ function _serializeForDashboard() {
     // Per-cleric Divine Intervention readiness (bot aggregate ⊕ local casts) —
     // chchain.html renders the chips + "only <X> has DI" callout.
     diStatus: diStatusSnapshot(),
+    // Live DI nomination (#204) — the two clerics to call after a death save
+    // fires. Null except for the ~20s a nomination is on the clock. Kept
+    // alongside diStatus rather than inside chChain so it survives the chain
+    // snapshot being null.
+    diCallout: diCalloutSnapshot(),
     // Last decoded Zeal type-5 raid sample — Info tab pipe explorer's
     // "raid (type 5)" section. null until the client fires one (you must be
     // in a raid; Zeal re-sends on composition change).
@@ -11337,6 +11747,9 @@ function _serializeForDashboard() {
     // Trigger checkpoint journal (#76) — newest first, capped, for the Triggers
     // tab diagnostic card. Pure in-memory; never persisted or uploaded.
     triggerJournal:      _triggerJournal.slice(-60).reverse(),
+    // #206 instant boss mechanics — newest first, for the Triggers-tab card.
+    // Pure in-memory; never persisted or uploaded (record-only first pass).
+    recentMechanics:     _recentMechanicsForWeb(),
     activeOverlays:      _activeOverlays,
     // Trigger fires for the Mimic trigger-alert overlay (triggers.html). It
     // dedupes on `ts` and speaks `tts || text`, so map the overlay ring buffer
@@ -11348,6 +11761,9 @@ function _serializeForDashboard() {
         text:    o.text,
         tts:     o.tts || o.text,
         trigger: o.trigger,
+        // #207 — so a dismissal of a sticky callout is attributed to the
+        // trigger, not to its (interpolated, per-fire) text.
+        trigger_id: o.trigger_id || null,
         scope:   o.scope,
         test:    !!o.test,
         sound:   o.sound || null,
@@ -11364,6 +11780,10 @@ function _serializeForDashboard() {
       };
     }),
     activeTimers:        _activeTimersSnapshot(),
+    // #207 callout dismissal counters (in-memory, this session). Local proof
+    // that a ✕ was recorded — the durable half rides the trigger_feedback
+    // upload, which a rehearsal deliberately does not touch.
+    calloutFeedback:     _calloutFeedbackSnapshot(),
     // #101 log-replay status — running/idle + progress for the Triggers-tab
     // ⏪ Replay card. Pure in-memory; never persisted or uploaded.
     replay:              _replayStateForWeb(),
@@ -13631,6 +14051,48 @@ function renderTriggerJournal(s) {
   h += '</table>';
   morphInto(el, h);
 }
+// 💥 Boss mechanics (#206) — the instant effects the two duration-keyed indexes
+// can never hold. Same isolation pattern as the journal above: fmtAgo ticks
+// every poll, so it fills its own #wpMechanics placeholder instead of making
+// the whole Triggers section differ every 2s. Hidden until something fires.
+// NOTE: no class="name" on the victim/effect cells — the character-link
+// delegation slices a .name cell to its first word, and these are as often a
+// mob ("a glyph covered serpent") as a raider.
+function renderMechanics(s) {
+  var el = document.getElementById('wpMechanics');
+  if (!el) return;   // Triggers tab not painted yet
+  var rows = (s && s.recentMechanics) || [];
+  if (!rows.length) {
+    if (el.style.display !== 'none') el.style.display = 'none';
+    morphInto(el, '');
+    return;
+  }
+  if (el.style.display === 'none') el.style.display = '';
+  var h = '<h2>💥 Boss mechanics <span class="dim" style="font-size:11px;font-weight:normal">(what the mob just DID — instant effects, recorded while you fight)</span></h2>';
+  h += '<div class="dim" style="font-size:10px;margin-bottom:6px">AEs, death touches, dispels, stuns and boss self-heals emit a log line that carries no duration, so nothing else here can see them. One row per cast, with how many it hit. When a message is shared by several spells it stays <b>unidentified</b> on purpose — naming one of them would be a guess. Local only: nothing is uploaded.</div>';
+  h += '<table style="font-size:11px;width:100%"><tr><th>When</th><th>Mob</th><th>Effect</th><th>Hit</th><th>Message</th></tr>';
+  var shown = rows.slice(0, 30);
+  for (var i = 0; i < shown.length; i++) {
+    var r = shown[i];
+    var eff = r.spell_name
+      ? esc(r.spell_name)
+      : '<span style="color:var(--gold)">unidentified</span> <span class="dim">· ' + esc(String(r.family_size || 0)) + ' spells share this</span>';
+    var who = (r.victims || []).slice(0, 3).join(', ');
+    if ((r.victim_count || 0) > (r.victims || []).length) who += ' …';
+    var hit = r.on_fight_target
+      ? '<span class="dim">on the mob</span>'
+      : esc(String(r.victim_count || 0)) + ' <span class="dim">' + esc(who) + '</span>';
+    h += '<tr>'
+       + '<td class="dim">' + esc(fmtAgo(r.last_at_ms || 0)) + '</td>'
+       + '<td class="dim">' + esc(r.mob || '?') + '</td>'
+       + '<td>' + eff + '</td>'
+       + '<td>' + hit + '</td>'
+       + '<td class="dim">' + esc(r.landing_text || '') + '</td>'
+       + '</tr>';
+  }
+  h += '</table>';
+  morphInto(el, h);
+}
 // ⚡ Recent fires (#120) — the volatile counterpart to renderTriggers, filling
 // its own #wpRecentFires placeholder every poll (fmtAgo ticks) so the parent
 // Triggers section stays byte-stable and never flashes. Same isolation pattern
@@ -13731,6 +14193,9 @@ function renderTriggers(s) {
   // Trigger checkpoint journal (#76) — filled by renderTriggerJournal(). Own
   // wp* placeholder so its volatile rows don't force this section to repaint.
   h += '<div id="wpTriggerJournal" class="card wide" style="display:none"></div>';
+  // Boss mechanics (#206) — filled by renderMechanics(). Own wp* placeholder
+  // for the same reason as the journal: its rows carry fmtAgo stamps.
+  h += '<div id="wpMechanics" class="card wide" style="display:none"></div>';
 
   // ⚡ Recent fires (recent trigger matches) — its rows carry fmtAgo timestamps
   // that tick every poll, so it MUST live in its own wp* placeholder filled by
@@ -16222,6 +16687,7 @@ async function refresh() {
                      ['triggers', renderTriggers], ['zealcard', renderZealCard],
                      ['recentfires', renderRecentFires], ['replaystatus', renderReplayStatus],
                      ['charmdiag', renderCharmDiag], ['petbuffdiag', renderPetBuffDiag], ['triggerjournal', renderTriggerJournal],
+                     ['mechanics', renderMechanics],
                      ['overlays', renderOverlays], ['info', renderInfo],
                      // After info: fill the placeholders renderInfo just
                      // (re)painted, so they show same-tick.
@@ -19872,6 +20338,24 @@ function startWebDashboard(port) {
         try { payload = JSON.parse(_body || '{}'); }
         catch { res.writeHead(400); return res.end('{"error":"bad json"}'); }
         const dir = String(payload.direction || '').toLowerCase();
+        // #207 implicit directions — the overlay reports a CALLOUT (sticky row /
+        // centre flash) being cleared or aging out. Countdown chips take the
+        // /api/timers/cancel path instead, because the agent owns those rows and
+        // can attribute them itself. Both funnel into _recordCalloutFeedback so
+        // there is one recorder, one batch and one local counter.
+        if (dir === 'dismissed' || dir === 'expired') {
+          const firedMs = payload.fired_at ? Date.parse(payload.fired_at) : 0;
+          _recordCalloutFeedback({
+            direction:    dir,
+            trigger_id:   payload.trigger_id || null,
+            trigger_name: payload.trigger_name || null,
+            firedAtMs:    Number.isFinite(firedMs) && firedMs > 0 ? firedMs : Date.now(),
+            source:       payload.note || 'callout',
+            test:         !!payload.test,
+          });
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          return res.end('{"ok":true}');
+        }
         if (!['earlier','good','too_early'].includes(dir)) {
           res.writeHead(400); return res.end('{"error":"bad direction"}');
         }
@@ -20732,6 +21216,9 @@ function startWebDashboard(port) {
           // #105 — mob self-heal: the Zeal target gauge HP% rising for the same
           // target across frames → a mob_heal timeline tick on the live fight.
           try { _noteMobHealFromState(character, prevState, st); } catch (e) { void e; }
+          // #205 — group member HP hitting (and holding) zero is death evidence
+          // that owes nothing to the log text. Feeds the death registry.
+          try { _noteGroupHpFromState(character, st, Date.now()); } catch (e) { void e; }
           if (newCasting && newCasting !== prevCasting) {
             // Heuristic: anything > 4 chars + has at least one letter is a
             // real spell/song name. Filters out one-off junk labels.
@@ -21150,17 +21637,41 @@ function startWebDashboard(port) {
         return res.end(JSON.stringify(out));
       }
 
-      // POST /api/timers/cancel — dismiss a single active timer by id. Powers
-      // the per-chip ✕ on the trigger overlay (loot auction chips, #107). A
-      // loot chip's id is `loot|<sig>`; when dismissed we also drop the auction
-      // correlation entry so a stray repeat post opens a fresh chip rather than
-      // silently resetting a chip the user just closed.
+      // POST /api/timers/cancel — dismiss active countdowns. Powers the per-chip
+      // ✕ AND the title-bar clear-all on the trigger overlay. A loot chip's id
+      // is `loot|<sig>`; when dismissed we also drop the auction correlation
+      // entry so a stray repeat post opens a fresh chip rather than silently
+      // resetting a chip the user just closed.
+      //
+      // Body: { id } for one row, or { all: true } for every countdown. Each
+      // cancel records a `dismissed` row (#207) — the ONE place the overlay's ✕
+      // becomes a signal instead of a DOM removal.
+      //
+      // { all: true } deliberately SPARES loot chips: an open bid window is
+      // actionable (#129 — a raider must see every auction to bid on it), and
+      // "clear the countdown clutter" must not silently cost someone an item.
+      // They keep their own per-chip ✕.
       if (req.url === '/api/timers/cancel' && req.method === 'POST') {
         const body = await _readBody(req).catch(() => '');
         let payload = {};
         try { payload = body ? JSON.parse(body) : {}; } catch { payload = {}; }
+        const reason = String(payload?.reason || 'dismissed').slice(0, 40);
+        if (payload && payload.all) {
+          let cancelled = 0;
+          for (const [tid, row] of [..._activeTimers]) {
+            if (row && row.kind === 'loot') continue;
+            _activeTimers.delete(tid);
+            cancelled++;
+            _recordCalloutFeedback({ direction: 'dismissed', timer: row, source: reason });
+          }
+          scheduleRender();
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ ok: true, cancelled }));
+        }
         const id = String(payload?.id || '');
+        const row = id ? _activeTimers.get(id) : null;
         const ok = id ? _cancelTimer(id) : false;
+        if (ok) _recordCalloutFeedback({ direction: 'dismissed', timer: row, source: reason });
         if (ok && id.startsWith('loot|')) {
           const sig = id.slice('loot|'.length);
           _lootAuctions.delete(sig);
@@ -21168,7 +21679,7 @@ function startWebDashboard(port) {
         }
         scheduleRender();
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ ok }));
+        return res.end(JSON.stringify({ ok, cancelled: ok ? 1 : 0 }));
       }
 
       // POST /api/loot-prefs — dashboard Triggers-tab toggle + default-duration
@@ -25709,6 +26220,7 @@ function _loadSpellCatalogFromDisk() {
     }
     _spellCatalogMeta = { fetchedAt: raw.fetched_at, etag: raw.etag || null, count: raw.entries.length };
     _rebuildBuffMatchers();
+    _rebuildMechanicMatchers();   // #206 — the instant-effect index, built from the same catalog
     console.log(`[spell-catalog] loaded ${raw.entries.length} spells from disk (cached ${raw.fetched_at || '?'})`);
   } catch (err) {
     console.warn('[spell-catalog] disk load failed:', err && err.message);
@@ -25768,6 +26280,7 @@ function fetchSpellCatalog({ botUrl, token }) {
             }
             _spellCatalogMeta = { fetchedAt: data.fetched_at, etag: etag || null, count: data.entries.length };
             _rebuildBuffMatchers();
+            _rebuildMechanicMatchers();   // #206 — same catalog, separate instant-effect key
             try {
               const out = { fetched_at: data.fetched_at, etag: etag || null, entries: data.entries };
               fs.writeFileSync(SPELL_CATALOG_FILE + '.tmp', JSON.stringify(out));
@@ -26138,6 +26651,202 @@ function parseDebuffLanding(line, observer) {
     };
   }
   return null;
+}
+
+// ── #206 — the THIRD capture path: INSTANT boss mechanics ──────────────────
+// The discard audit (docs/DESIGN-mechanic-capture.md) counted 113 timed boss
+// effects we capture and **138 instant ones we cannot see at all** — not
+// because the log line is missing, but because of how we look:
+//   • the two indexes above are keyed on DURATION, and an instant effect has
+//     none. `_isTimedDurationFormula` skips them BY DESIGN (a durf-0 spell has
+//     no countdown to show, and indexing them there is exactly what let the
+//     "Kneel Test" phantom onto Mob Info) — so this path does NOT relax that
+//     gate, it adds a parallel one with its own key and no timers at all;
+//   • `shouldKeep` is default-DROP, so "<Name>'s soul fades into darkness."
+//     never reaches parseEvent either. This hook runs on the RAW line in the
+//     watch tail, before that filter, like `_checkAoeDance` and `noteBlindLine`.
+// What lands here: the AE dance class, death touches, dispels, stuns, boss
+// self-heals ("<mob> is completely healed."), gates. `_checkAoeDance` is the
+// hand-curated version of exactly this — one entry per AE somebody noticed;
+// this index is DERIVED from the same catalog row the server prints from, so
+// it cannot be wrong about the text (the DI-trigger / AOE_DANCE failure mode).
+//
+// suffix(lower) → [{ id, name, good, heal }] for every INSTANT spell an NPC can
+// cast that carries an on-other message. Deliberately NOT junk-guarded like the
+// two above: that guard exists because those indexes CROWN a representative and
+// a crown can be wrong (Kneel Test, Bolt of Karana, Turgur's-for-every-yawn).
+// This one never crowns — a shared text stays ambiguous with its family
+// attached — so there is nothing for a big family to be wrong about, and
+// dropping it would re-create the very blindness this path exists to fix.
+//
+// SCOPE — `npc` (spell-catalog v8) is what keeps this from being a firehose.
+// The landing text says nothing about who cast it, so an unscoped index matches
+// every player nuke, cure and Complete Healing in view and the boss mechanics
+// become a minority of the rows. The flag is the bot's `eqemu_npc_spells_entries`
+// join — the same one the #206 audit used. A pre-v8 catalog carries no flags at
+// all, and we leave the index EMPTY rather than fall back to everything: idle is
+// recoverable (the bot deploys, the ETag changes, the index builds), a raid's
+// worth of mislabelled rows is not.
+let _mechanicLandingBySuffix = new Map();
+function _rebuildMechanicMatchers() {
+  const mm = new Map();
+  let sawNpcFlag = false;
+  for (const e of _spellByNameLower.values()) {
+    if (!e || !e.other || !e.name) continue;
+    if (e.npc !== 1) continue;
+    sawNpcFlag = true;
+    // INSTANT only — the exact complement of the timed predicate #154 uses in
+    // _shouldSuppressBuffLanding, so a spell can never sit in both a duration
+    // index and this one. (Measured against the live catalog: of the 138
+    // instant-with-text spells on mobs we have fought, 137 land here and one —
+    // Itraer Vius Touch, buffduration 0 but formula 4 — is a level-scaled
+    // duration and belongs in the timed index, where it already is.)
+    if (_isTimedDurationFormula(e.durf) || Number(e.dur) > 0) continue;
+    const suffix = String(e.other).trim().toLowerCase();
+    if (!suffix || suffix.length < 6) continue;   // too short → false positives
+    const arr = mm.get(suffix) || [];
+    arr.push({ id: e.id, name: e.name, good: e.good, heal: Number(e.heal) || 0 });
+    mm.set(suffix, arr);
+  }
+  _mechanicLandingBySuffix = mm;
+  if (mm.size) console.log(`[mechanic-index] indexed ${mm.size} instant-effect landing messages (#206)`);
+  else if (!sawNpcFlag) console.log('[mechanic-index] spell catalog carries no NPC-castable flag (bot pre-v8) — instant-mechanic capture idle until the bot deploys');
+}
+
+// Parse one RAW log line as an instant-effect landing. Same name-peeling shape
+// as parseDebuffLanding (multi-word mob victims: "a glyph covered serpent feels
+// dispelled." — the #169 pet-Death-Touch lesson), same raw-line anchoring (the
+// "[Sun Aug 02 21:10:01 2026] " prefix is part of the line, never optional).
+//
+// AMBIGUITY IS CARRIED, NEVER RESOLVED AWAY. `cast_on_other` is a suffix shared
+// across whole families — "is struck by a sudden force." is 32 spells — and the
+// standing lesson from Kneel Test / Bolt of Karana / "every yawn is Turgur's"
+// (docs/FINDINGS-2026-08-10-trigger-overlay.md §5 + §7b) is that crowning one
+// member of a shared text is silently wrong at scale. So: unique text → the
+// spell; shared text → spell_id 0, spell_name null, and the family rides along
+// for a consumer to weigh.
+function parseMechanicLanding(line) {
+  if (!_mechanicLandingBySuffix.size) return null;
+  const m = String(line || '').match(/^\[(.+?)\]\s+(.+)$/);
+  if (!m) return null;
+  const body = m[2].replace(/\s+$/, '');
+  const candidates = [];
+  const apos = body.indexOf("'s");
+  if (apos > 0) candidates.push([body.slice(0, apos), body.slice(apos)]);   // possessive
+  const words = body.split(' ');
+  for (let k = 1; k <= Math.min(5, words.length - 1); k++) {
+    candidates.push([words.slice(0, k).join(' '), words.slice(k).join(' ')]);
+  }
+  for (const [name, suffixRaw] of candidates) {
+    if (!_looksLikeTargetName(name)) continue;
+    const hits = _mechanicLandingBySuffix.get(suffixRaw.trim().toLowerCase());
+    if (!hits || !hits.length) continue;
+    const names = [...new Set(hits.map(h => h.name))];
+    const ts = parseEqTimestamp(line);
+    return {
+      victim:       name,
+      ambiguous:    names.length > 1,
+      spell_id:     names.length === 1 ? (hits[0].id || 0) : 0,
+      spell_name:   names.length === 1 ? hits[0].name : null,
+      family:       names.length > 1 ? names.slice(0, 12) : null,
+      family_size:  names.length,
+      landing_text: suffixRaw.trim().slice(0, 200),
+      // Character of the FAMILY, not of one member — what the victim-kind gate
+      // in noteMechanicLanding reads.
+      detrimental:  hits.some(h => h.good === 0),
+      heal_family:  hits.some(h => Number(h.heal) > 0),
+      at:           ts ? ts.toISOString() : new Date().toISOString(),
+      at_ms:        ts ? ts.getTime() : Date.now(),
+    };
+  }
+  return null;
+}
+
+// Recorded mechanics — an in-memory ring, newest last. Local only in this
+// version: record first, decide callouts from what it finds (design doc §7).
+const MECHANIC_RING_CAP    = 60;
+const MECHANIC_COALESCE_MS = 2500;   // one AE burst = one row, not one per victim
+const MECHANIC_VICTIM_CAP  = 12;     // names kept per row; the COUNT is uncapped
+const _recentMechanics = [];
+
+// Classify + record one instant landing. Returns the row it touched, or null.
+//
+// Two gates, both about not drowning the signal:
+//  1. FIGHT-SCOPED. Out of combat this index has no fight to describe, and the
+//     mob name that gives a row its meaning comes from the builder.
+//  2. VICTIM-KIND. `_fightTargetMatches` (the same helper #105 uses to keep
+//     off-target chatter off the board) answers "is this the mob we are
+//     hitting?" — and that flips which half of the catalog is interesting:
+//       • victim IS the fight target → drop any family with a DETRIMENTAL
+//         member: that is our own raid nuking it, hundreds of lines a minute
+//         with no mechanic in them. What survives is the boss acting on itself
+//         — Complete Healing's "<mob> is completely healed.", Gate's "<mob>
+//         fades away." — which is the case the encounter-splitter currently
+//         INFERS from damage totals while the mob announces it in plain text.
+//       • victim is anything else (a raider, a pet, an add) → drop HEAL
+//         families: "<name> is completely healed." is also every CH in the
+//         chain. Everything else stays, which is the AE / death-touch / stun /
+//         knockback / dispel class the callouts are for.
+//     ⚠ Do NOT gate this on `good_effect` instead. EQ classifies dispels as
+//     BENEFICIAL (Nullify Magic 49, Annul Magic 1526, Beholder Dispel 955 are
+//     all good=1), so a good-based gate silently drops "<raider> feels
+//     dispelled." — one of the four mechanics the design doc named by name.
+function noteMechanicLanding(line, observer, builder) {
+  if (!builder) return null;
+  if (!builder.startedAt && !(builder.targets && builder.targets.size)) return null;
+  const evt = parseMechanicLanding(line);
+  if (!evt) return null;
+  const onFightTarget = !!(builder._fightTargetMatches && builder._fightTargetMatches(evt.victim));
+  if (onFightTarget ? evt.detrimental : evt.heal_family) return null;
+  const nowMs = evt.at_ms;
+  const vKey  = String(evt.victim).toLowerCase();
+  // Per-CAST rows with a victim COUNT (design doc §3 volume rule): 23 AE spells
+  // × a raid × a long fight is a row per victim per cast otherwise. Collapsing
+  // on distinct victim also absorbs the main+alt double — one install watching
+  // two logs sees the identical line twice.
+  for (let i = _recentMechanics.length - 1; i >= 0; i--) {
+    const r = _recentMechanics[i];
+    if (nowMs - r.last_at_ms >= MECHANIC_COALESCE_MS) break;
+    if (r.landing_text !== evt.landing_text || r.on_fight_target !== onFightTarget) continue;
+    if (!r._victims.has(vKey)) {
+      r._victims.add(vKey);
+      r.victim_count++;
+      if (r.victims.length < MECHANIC_VICTIM_CAP) r.victims.push(evt.victim);
+    }
+    if (nowMs > r.last_at_ms) r.last_at_ms = nowMs;
+    return r;
+  }
+  const rec = {
+    landing_text:    evt.landing_text,
+    spell_name:      evt.spell_name,
+    spell_id:        evt.spell_id,
+    ambiguous:       evt.ambiguous,
+    family:          evt.family,
+    family_size:     evt.family_size,
+    victims:         [evt.victim],
+    victim_count:    1,
+    _victims:        new Set([vKey]),
+    on_fight_target: onFightTarget,
+    mob:             builder.bossName || null,
+    observer:        observer || null,
+    first_at_ms:     nowMs,
+    last_at_ms:      nowMs,
+    at:              evt.at,
+  };
+  _recentMechanics.push(rec);
+  while (_recentMechanics.length > MECHANIC_RING_CAP) _recentMechanics.shift();
+  return rec;
+}
+
+// Newest first for the dashboard; drops the victim Set (not JSON-safe).
+function _recentMechanicsForWeb() {
+  const out = [];
+  for (let i = _recentMechanics.length - 1; i >= 0; i--) {
+    const { _victims, ...rest } = _recentMechanics[i];
+    void _victims;
+    out.push(rest);
+  }
+  return out;
 }
 
 // Poll the bot for officer-filed backfill requests targeting any character
@@ -30230,12 +30939,14 @@ function _timerDurationSec(t, captures) {
   return Number(t.timer_duration_sec) || 0;
 }
 
-// The capture bag carries three things that are NOT semantic captures:
+// The capture bag carries FOUR things that are NOT semantic captures:
 // numeric keys ('0' is the whole match — for an ^…$ pattern, the entire line),
-// L/l (the raw log line, EQ timestamp included) and c/char/self (the local
-// character). They exist so action text can interpolate {L}/{c}, and they must
-// stay in the bag for that — but anything that derives an IDENTITY from the bag
-// has to drop them first, because they vary per line and per observer.
+// L/l (the raw log line, EQ timestamp included), c/char/self (the local
+// character) and `counter` (GINA's {COUNTER}, this client's own fire tally for
+// the trigger). They exist so action text can interpolate {L}/{c}/{counter},
+// and they must stay in the bag for that — but anything that derives an
+// IDENTITY from the bag has to drop them first, because they vary per line and
+// per observer.
 //
 // Two bugs came from that leak (2026-08-10 Ssra, docs/FINDINGS-…-trigger-overlay):
 // every timer trigger made a NEW overlay row per fire (L carries the timestamp,
@@ -30243,7 +30954,23 @@ function _timerDurationSec(t, captures) {
 // log line, and _cancelTimersOnMobDeath could never match it); and REST IN PEACE
 // spoke twice, because two observers of one death build different relay keys
 // from their own second-resolution timestamps.
-const _NON_SEMANTIC_CAPTURES = new Set(['L', 'l', 'c', 'char', 'self']);
+//
+// ⚠ `counter` was MISSED by that fix and re-creates both of them (found while
+// building #207, 2026-08-11). `_fireTriggerActions` injects it into the bag on
+// every fire, and it sorts alphabetically ahead of the usual capture names, so:
+//   • the timer's `target` fallback picked the counter instead of the mob — and
+//     on the first fire the counter is 0, which is FALSY, so the row label lost
+//     its mob entirely ("null - Shaman Slow landed"). That also broke
+//     _cancelTimersOnMobDeath and the overlay's one-row-per-mob collapse, both
+//     of which key on `target`;
+//   • it bumps on every live fire, so `captureSuffix` differed per fire and a
+//     timer trigger WITHOUT timer_key_capture duplicated its row every time —
+//     the original P1, by another route;
+//   • two observers hold different tallies for the same event, so the relay
+//     dedup key differed between them — the RIP-spoken-twice defect, again.
+// Interpolation is unaffected: the bag itself still carries `counter`, and
+// _expandTemplate reads the bag, not this filtered view.
+const _NON_SEMANTIC_CAPTURES = new Set(['L', 'l', 'c', 'char', 'self', 'counter']);
 function _semanticCaptureKeys(captures) {
   if (!captures || typeof captures !== 'object') return [];
   return Object.keys(captures)
@@ -30329,6 +31056,10 @@ function _startTimer(t, tsMs, isTest, captures) {
     pinned:         !!t.pinned,
     show_at_ms:     (Number(t.display_threshold_sec) || 0) * 1000,
     trigger_name:   t.name || null,   // used by end-early matching against the trigger group
+    // #207 — the trigger this countdown came from, so a dismissal can be
+    // attributed to the trigger rather than to the composite timer id (which
+    // carries the captures). Nothing else reads it.
+    trigger_id:     t.id || null,
     captures:       captures && typeof captures === 'object' ? { ...captures } : null,
     scope:          t._scope || 'unknown',
     test:           !!isTest,
@@ -30674,11 +31405,134 @@ function _checkAoeDance(line, tsMs) {
     return;
   }
 }
+// ── #207 callout dismissals — the implicit signal ───────────────────────────
+// Hitya 2026-08-03: "those lines should be dismissable AND we should track when
+// things are dismissed so we learn from items that people either don't care
+// about or may be inaccurate" (docs/DESIGN-callout-overlay.md §3.2).
+//
+// Two directions ride the EXISTING trigger_timing_feedback stream rather than a
+// new table:
+//   • `dismissed` — the raider cleared the row. The most honest signal we can
+//     collect, and it costs them nothing extra: they were already swatting it
+//     away. Compare the explicit thumbs-up widget — 47 votes from 7 people in a
+//     month, because pressing a feedback button mid-raid competes with playing.
+//   • `expired`   — the row aged out untouched. This is the CONTROL GROUP, and
+//     it is what makes the signal readable at all: 3 dismissals is damning at 3
+//     fires and meaningless at 300 (design §Gap C). Without it a dismissal
+//     COUNT is not a dismissal RATE.
+// Latency needs no column — `voted_at − fired_at` on a dismissed row already
+// separates "swatted it instantly, it's noise" (<1s) from "read it, acted, then
+// cleared it" (several seconds). Those are opposite verdicts.
+//
+// Scope, per docs/DESIGN-trigger-overlay-v2.md: per-user and session-scoped BY
+// CONSTRUCTION. A dismissal clears the row in this agent only — it never
+// relays, never touches guild_triggers, and dies with the process. One raider
+// clearing a Death Touch bar must never clear the raid's.
+//
+// Votes are BATCHED (30s / 25 rows) into one upload: `expired` fires once per
+// countdown per raider, so a per-row POST would put hundreds of tiny requests
+// on the ingest surface for a signal that is only ever read in aggregate.
+const CALLOUT_FEEDBACK_RECENT_MAX = 12;
+const CALLOUT_VOTE_FLUSH_MS  = 30_000;
+const CALLOUT_VOTE_MAX_BATCH = 25;
+const _calloutFeedback = { dismissed: 0, expired: 0, uploaded: 0, recent: [] };
+const _calloutVoteBuffer = [];
+let _calloutVoteFlushTimer = null;
+function _flushCalloutVotes() {
+  if (_calloutVoteFlushTimer) { clearTimeout(_calloutVoteFlushTimer); _calloutVoteFlushTimer = null; }
+  if (_calloutVoteBuffer.length === 0) return 0;
+  const votes = _calloutVoteBuffer.splice(0, _calloutVoteBuffer.length);
+  enqueueUpload('trigger_feedback', { agent_version: AGENT_VERSION, votes });
+  _calloutFeedback.uploaded += votes.length;
+  return votes.length;
+}
+function _queueCalloutVote(vote) {
+  _calloutVoteBuffer.push(vote);
+  if (_calloutVoteBuffer.length >= CALLOUT_VOTE_MAX_BATCH) return _flushCalloutVotes();
+  if (!_calloutVoteFlushTimer) {
+    _calloutVoteFlushTimer = setTimeout(_flushCalloutVotes, CALLOUT_VOTE_FLUSH_MS);
+    if (_calloutVoteFlushTimer.unref) _calloutVoteFlushTimer.unref();
+  }
+  return 0;
+}
+// The active character, same 60s-freshness rule the timing-vote endpoint uses.
+function _calloutVoterCharacter() {
+  let active = null, activeTs = 0;
+  const now = Date.now();
+  for (const ch of Object.keys(_zealState || {})) {
+    const st = _zealState[ch]; const ts = (st && st.updatedAt) || 0;
+    if (ts > activeTs && (now - ts) < 60_000) { activeTs = ts; active = ch; }
+  }
+  return active;
+}
+// e: { direction, timer? , trigger_id?, trigger_name?, firedAtMs?, source?, test? }
+function _recordCalloutFeedback(e) {
+  if (!e) return null;
+  const dir = e.direction === 'expired' ? 'expired' : 'dismissed';
+  const row = e.timer || null;
+  // A loot-auction chip is a BID WINDOW, not a callout. Its ✕ means "I've bid"
+  // or "not for me" and says nothing about whether a trigger was useful, so it
+  // must never enter the learning set (#107/#129).
+  if (row && row.kind === 'loot') return null;
+  const name = String((row && (row.trigger_name || row.effect || row.name))
+                      || e.trigger_name || '(unknown trigger)').slice(0, 200);
+  const triggerId = (row && row.trigger_id) || e.trigger_id || null;
+  const firedMs = Number(e.firedAtMs) || (row && row.started_at_ms) || Date.now();
+  const atMs = Date.now();
+  const isTest = !!(e.test || (row && row.test));
+  const entry = {
+    at:         atMs,
+    direction:  dir,
+    trigger:    name,
+    latency_ms: Math.max(0, atMs - firedMs),
+    source:     String(e.source || 'callout').slice(0, 40),
+    test:       isTest,
+  };
+  _calloutFeedback[dir]++;
+  _calloutFeedback.recent.push(entry);
+  if (_calloutFeedback.recent.length > CALLOUT_FEEDBACK_RECENT_MAX) _calloutFeedback.recent.shift();
+  console.log('[callout] ' + dir + ' — ' + name + ' after ' + Math.round(entry.latency_ms / 1000) + 's'
+              + (isTest ? ' (test/rehearsal — not uploaded)' : ''));
+  // A rehearsal or a ⏪ replay drives the whole path on purpose — that is how
+  // this gets tested without a raid — but a test drive is not a raider's
+  // verdict, so it stops at the local counters.
+  if (isTest) return entry;
+  _queueCalloutVote({
+    trigger_id:      triggerId ? String(triggerId).slice(0, 120) : null,
+    trigger_name:    name,
+    direction:       dir,
+    fired_at:        new Date(firedMs).toISOString(),
+    voted_at:        new Date(atMs).toISOString(),
+    voter_character: _calloutVoterCharacter(),
+    note:            entry.source,
+  });
+  return entry;
+}
+// Local, in-memory view for /api/state — how the overlay's ✕ is verified
+// without a raid (and without waiting on an upload round-trip).
+function _calloutFeedbackSnapshot() {
+  return {
+    dismissed: _calloutFeedback.dismissed,
+    expired:   _calloutFeedback.expired,
+    uploaded:  _calloutFeedback.uploaded,
+    pending:   _calloutVoteBuffer.length,
+    recent:    _calloutFeedback.recent.slice().reverse(),
+  };
+}
+
 function _activeTimersSnapshot() {
   const now = Date.now();
   const out = [];
   for (const [id, t] of _activeTimers) {
-    if (t.ends_at_ms <= now) { _activeTimers.delete(id); continue; }
+    // Aged out untouched — the control group for the dismissal rate (#207).
+    // Only a NATURAL expiry lands here: a mob-death cancel and a user dismissal
+    // both delete the row themselves, so neither is double-counted.
+    if (t.ends_at_ms <= now) {
+      _activeTimers.delete(id);
+      try { _recordCalloutFeedback({ direction: 'expired', timer: t, source: 'timer_expired' }); }
+      catch { /* never let bookkeeping break the snapshot */ }
+      continue;
+    }
     // display_threshold_sec: hide the row until it is nearly up ("only show me
     // the last 30s"). Filtered HERE rather than in the overlay so an older
     // bundled triggers.html gets the behaviour without a Mimic update.
@@ -31307,6 +32161,7 @@ function _fireTriggerActions(t, captures, tsMs, test, isRelay) {
         // de-duped, swallowing rapid back-to-back alerts).
         firedAt:     Date.now(),
         trigger:     t.name,
+        trigger_id:  t.id || null,   // #207 — attribution for a dismissal
         scope:       t._scope || (test ? 'test' : 'personal'),
         test:        !!test,
       };
@@ -32949,6 +33804,14 @@ async function main() {
             const _dbFp = `buffcast|${dbEvt.target}|${dbEvt.spell_id}|${dbEvt.landing_text}|${dbEvt.cast_at}`;
             if (!_crossLogDupe(_dbFp)) buffCastBuffer.push(dbEvt);
           }
+          // #206 — the THIRD capture path. Only lines neither timed path
+          // claimed reach it, which is the whole point: an INSTANT effect has
+          // no duration, so it is structurally unindexable above and
+          // shouldKeep (default-DROP, and still ahead of us in this callback)
+          // would have thrown it away. Local ring only — nothing uploads.
+          if (!dbEvt) {
+            try { noteMechanicLanding(line, b.character, b.builder); } catch (e) { void e; }
+          }
         }
 
         // Server-wide PvP earthquake announcement → register the next-quake
@@ -32969,6 +33832,14 @@ async function main() {
         // freeze that slot's cast bar and put a ✕ on it. No-ops unless a chain
         // is already running and the name maps to a slot mid-cast.
         if (!_sourceExcluded) { try { trackChChainInterrupt(line, b.character); } catch {} }
+        // "<Tank> has been rescued by divine intervention!" → nominate the two
+        // clerics who could put the next DI up (#204). Ungated on purpose —
+        // local callout, no upload (see trackDiFired).
+        // ⚠ MUST stay ABOVE the shouldKeep gate below: the death-save line does
+        // not survive the byte filter (same trap as the "you have taken"
+        // family). Moving it down silences the callout with no error anywhere;
+        // test/di-callout.test.js pins that.
+        try { trackDiFired(line); } catch {}
         // Raid-wide DA/invuln broadcast + healer mana roster — same
         // shout/raid/guild-chat macro pattern as CH chain, feeding the
         // Command Center overlay.
@@ -33003,6 +33874,12 @@ async function main() {
         // Ssraeshza dies → 2:10 cycle, "Paladin DA NOW" at 2:00). Both key off the
         // same slain/death line. Local-only, live tail.
         try { _cancelTimersOnMobDeath(line); } catch { /* never let a bad line break the tail */ }
+        // #205 — "<Name> dies." is the FEIGN emote (never a death; see
+        // test/feign-death-not-a-death.test.js). Nothing else in the agent
+        // records that a feign happened, and the group-HP death watcher needs
+        // it: a knight who feigns must never be turned into a corpse by a
+        // gauge reading zero. Raw-line hook, substring-gated like the two below.
+        try { const _dfd = parseEqTimestamp(line); noteFeignEmoteLine(line, _dfd ? _dfd.getTime() : Date.now()); } catch { void 0; }
         try { const _dts = parseEqTimestamp(line); _checkBossSpawnChain(line, _dts ? _dts.getTime() : Date.now()); } catch { void 0; }
         // `/zeal version` output → what's actually LOADED in this client. Runs
         // on the raw line before any filter because none of the keep patterns
@@ -33157,6 +34034,10 @@ module.exports = {
   CH_DDR_MARVELOUS_STREAK, CH_DDR_MIN_BEATS, CH_DDR_DISPLAY_MS,
   _setChDdrEnabledForTest: (v) => { _chDdrEnabled = !!v; },
   _resetChChainForTest: () => { _chChain = null; _lastChGoNum = null; },
+  // #204 DI two-cleric callout — exported for the scratchpad harness.
+  trackDiFired, diCalloutSnapshot, diCalloutCandidates, _diRankCandidates,
+  _diSlotTurnInMs, _DI_FIRED_RX, DI_CALLOUT_NAMES, DI_CALLOUT_TTL_MS,
+  _resetDiCalloutForTest: () => { _diCallout = null; _lastDiFired = { key: null, atMs: 0 }; },
   _readZipEntry, _parseCrashReason, _crashZipTime,
   // #107/#149 loot-post announce — exported for the scratchpad smoke test.
   parseLootChatBody, noteLootAuction, _parseAuctionDuration, _spokenDuration,
@@ -33181,9 +34062,15 @@ module.exports = {
   _fireLog, _triggerJournal, _triggerLastFire,
   // #142 buster/spawn-chain timers — exported for the scratchpad fixture.
   _startTimer, _activeTimersSnapshot, _cancelTimersOnMobDeath, _deadMobNameFromLine,
+  // #207 callout dismissals — exported for the scratchpad fixture.
+  _recordCalloutFeedback, _calloutFeedbackSnapshot, _flushCalloutVotes,
   // Age + liveness (2026-08-10) — exported so the wrapper is tested against
   // the shipped code rather than a copy.
   _noteDeath, _clearDeath, _isDead, _deadNamesSnapshot, _ageOfServerStamp,
+  // #205 group-HP death watcher — the independent death source feeding that
+  // registry. Exported so the tests exercise the shipped code, not a copy.
+  _noteGroupHpFromState, _groupHpObservations, _groupDeathWatchSnapshot,
+  noteFeignEmoteLine, _feignedRecently,
   _nowOnServerClock, _resolveHpValuesForName, _mtLiveStateByName,
   noteClientVersionLine, clientVersionsSnapshot,
   _checkBossSpawnChain, _checkTankBuster, _armBossCountdown, BOSS_SPAWN_CHAINS,

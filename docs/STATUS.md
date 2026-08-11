@@ -2123,25 +2123,90 @@ before anyone touches them.** All four exist because of the two bugs found
   row, so it renders as a bare id — linking it would let the report name a
   person.*
 
-**Callout + overlay work designed 2026-08-04 (specs written, unbuilt).**
-- **#204 Divine Intervention two-cleric callout.** `docs/DESIGN-di-callout.md`.
-  Full "who should cast it" selector needs recast state, emerald inventory and
-  CH-chain position — we have none of those reliably. The shippable version
-  names the two clerics who most recently healed on the chain as candidates and
-  lets voice resolve it. Read the doc's "what we can't know" section before
-  building.
-- **#205 Group-HP death watcher.** `docs/DESIGN-group-death-watcher.md`. Zeal
-  gives group member HP; a member going to 0 and leaving the zone is
-  independent evidence of a real death that doesn't depend on the log text at
-  all — the cross-check that would have caught the feign bug on day one.
-- **#206 Third capture path for instant boss mechanics.** The discard audit
+**Callout + overlay work designed 2026-08-04 (specs written; #204, #205 and
+#206 built 2026-08-11, #207 in flight).**
+- **#204 Divine Intervention two-cleric callout — BUILT 2026-08-11, not yet
+  released.** `docs/DESIGN-di-callout.md` (§6 = what shipped + every call made
+  beyond the doc). Agent-side in the CH-chain module: `trackDiFired` on the
+  real death-save line (`%1 has been rescued by divine intervention!`,
+  StringID 1029) → `_diRankCandidates` → one `text_overlay` fire ("D I down.
+  <A> or <B>.") on the existing trigger-TTS surface, plus a card on
+  `apps/mimic/chchain.html` with per-name evidence chips and a 20s countdown.
+  Hard exclusions the doc did not have: druids/known non-clerics (DI is
+  cleric-only and the chain is not a cleric roster), corpses (via the 3.5.58
+  death registry — §2 of the doc is stale on this), and a MEASURED recast.
+  Ties/empty fall back to the chain's two most recent healers; no candidates
+  at all means no nomination, because the guild trigger already announces the
+  event. Tests: `test/di-callout.test.js`. **Still open from the doc**: §5's
+  "fire when DI is simply ABSENT from the MT" (deliberately unbuilt) and
+  whether the DI roster should be configurable. Dismissal RECORDING is #207's,
+  not done here — the card's ✕ is local-only. ⚠ Needs an agent version bump +
+  a `beta` push + a `web/lib/roadmapData.ts` entry to actually reach anyone.
+- **#205 Group-HP death watcher — BUILT 2026-08-11 (agent, on `beta`; not yet
+  in a stable Mimic).** `docs/DESIGN-group-death-watcher.md` §8 is the record of
+  what shipped. Zeal gives group member HP, so a member going to 0 is evidence
+  of a real death that owes nothing to the log text — the cross-check that would
+  have caught the feign bug on day one. It ships as a **second SOURCE feeding
+  the 3.5.58 death registry**, not as the standalone evidence pipeline the doc
+  drew: `_noteGroupHpFromState` on the `/api/zeal-state` ingest path →
+  `_noteDeath` / `_clearDeath`. Three guards: seen-alive-first, the zero must
+  hold (≥2 samples / ≥2.5s — Zeal's clamped negative per-mille makes a lone zero
+  a known artifact), **a 60s refusal after that name's feign emote**
+  (`"<Name> dies."`, newly recorded by `noteFeignEmoteLine` — nothing in the
+  agent knew a feign had happened before), and **a zoning member's zero is
+  ignored** when verbose `zone_id` proves they left (an *alive* reading from
+  another zone still clears — that's the bind run). Tests:
+  `test/group-death-watcher.test.js`.
+  ⚠ **Without `/pipeverbose on` a zoning groupmate is indistinguishable from a
+  dying one** — one more reason to ask the raid to turn it on.
+  **Still open:** the durable `death_evidence` table + upload + `death_source`
+  chip (needs a bot endpoint + migration, i.e. `main`); the `hp_collapse` path,
+  whose threshold the doc says to derive from a clean raid night rather than
+  invent. **First measurement wanted:** whether group gauges actually emit a 0
+  for a corpse — `_groupDeathWatchSnapshot()` answers it, and the answer decides
+  whether the collapse path is optional or necessary.
+- **#206 Third capture path for instant boss mechanics — CAPTURE BUILT
+  2026-08-11 (record-only, local), consumers still open.** The discard audit
   found **113 timed effects captured, 138 instant ones invisible** — an instant
   effect has no duration, so the buff-landing index never indexes it, and
   `shouldKeep` (default DROP) never passes it to the parser. These are exactly
-  the AoEs and death-touches worth calling out. `docs/DESIGN-mechanic-capture.md`.
+  the AoEs and death-touches worth calling out. The audit re-ran identical on
+  2026-08-11 (263/113/138). What landed: spell-catalog **v8** adds an
+  NPC-castable flag (`npc`) so the matcher can't be fed player spells; the agent
+  builds a third index keyed on `cast_on_other` for INSTANT spells, records one
+  row per CAST with a victim count while a fight is open, and shows them on a
+  💥 Boss mechanics card (Triggers tab). **Ambiguity is carried, never crowned**
+  — a shared landing text reads "unidentified · N spells share this", which is
+  the Kneel Test / every-yawn-is-Turgur's lesson applied at build time. Nothing
+  uploads yet, by design (`DESIGN-mechanic-capture.md` §7: record for one raid
+  cycle, then argue callouts from evidence). ⚠ The agent index stays EMPTY until
+  the v8 bot is deployed — an unflagged catalog is treated as "bot too old",
+  not as "index everything". Next: `mechanic_events` upload + table, then
+  auto-suggest on `/admin/triggers`, then #207. Full record of what shipped and
+  the three places it departs from the spec: `docs/DESIGN-mechanic-capture.md` §0.
 - **#207 Overlay UX for callouts**: visible countdowns mirroring the TTS,
   dismissible lines, and **recording dismissals** so we learn which callouts
   people don't want or don't trust. `docs/DESIGN-callout-overlay.md`.
+  **PARTLY BUILT 2026-08-11** — unreleased, on a working branch, no version
+  bump yet. Landed: ✕ on EVERY countdown + 🗑 clear-all on the title bar;
+  bottom-anchored stack that grows upward (the trigger overlay is now grow-up
+  by default) with a 6-row cap + "+N more" and a one-row-per-mob collapse for
+  slows; dismissals and expiries recorded through `_recordCalloutFeedback` →
+  the existing `trigger_timing_feedback` table as `dismissed` / `expired`
+  (migration `20260811120000_trigger_feedback_dismissal_directions.sql` widens
+  the CHECK constraint — **the insert is rejected until it is applied**, so
+  that file and the bot change go to `main` with, or before, the agent).
+  Deliberately NOT built: the `callout_fires` table (§3.1), the callout-health
+  panel on `/admin/triggers` (§3.3), the collapse of the three-field timer
+  config (§Gap A), the separate timers window (v2 §4), the callout font-size
+  setting (v2 §5) and the whole mute / Wrong / edit loop (v2 §6 — v2 says it
+  "wants its own review"). See `docs/HOW-ITS-BUILT.md` → "Callout overlay UX".
+  ⚠ Also fixed in that change, found on the way: **GINA's `{COUNTER}` was
+  missing from `_NON_SEMANTIC_CAPTURES`**, which re-created the P1 wall of
+  duplicate rows for any timer trigger without `timer_key_capture`, blanked the
+  mob from every timer label (`null - Shaman Slow landed`, because the first
+  fire's counter is `0`) and could double a relayed callout again. Write-up:
+  `FINDINGS-2026-08-10-trigger-overlay.md` §P1b.
 
 **Raid-night 2026-07-30 field reports (Hitya) — all still OPEN, each blocked on
 one concrete detail. Shipped that night: stable 2.1.2 / agent 3.4.36.**
