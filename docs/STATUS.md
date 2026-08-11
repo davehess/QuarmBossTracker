@@ -1904,13 +1904,75 @@ Sun/Wed/Thu window before touching the code.
     upstream; Hitya's read is that the ask has zero traction, so the end-around
     (#194) is the plan of record either way.
 
+### 🧾 2026-08-10 → 08-11 — Ssra review night, graduation, and the sync rule
+
+**Shipped (all verified live, not assumed):**
+- **Mimic 2.3.5 / agent 3.5.58 STABLE** (`v2.3.5` published, `prerelease:false`,
+  file-level promotion; main's full 92-file/1435-test suite green against it).
+  Carries the whole Ssra fix batch: timer identity from semantic captures (one
+  bar per mob, `timer_key_capture` honored), relay dedup keys without the raw
+  line, relayed fires on TRUE time (`fired_at_true_ms`) + cooldowns honored,
+  ambiguous slow landings render `SLOWED` (no invented spell/%), cross-client
+  exact-HP age gate (20s vs the bot's 90s), and the death registry
+  (`_noteDeath`/`_isDead` — off-heal list no longer publishes corpses).
+- **Bot 3.1.37** — tagged mobs stay on Extended Target at any HP; trigger-relay
+  ingest resolves sender stamps to true time; cross-agent dedup on true time.
+- **RULE + workflow: when main gets something, beta gets it too** —
+  `sync-beta.yml` merges main→beta on every main push (park files keep beta's
+  side; any other conflict fails loudly; GITHUB_TOKEN so no spurious `-beta.N`).
+  Beta re-parked at 2.3.6. Graduations REMAIN file-level promotions.
+- **Emperor tank-buster prep callouts live** (DB-only, no release): 10s "big
+  heals and spell shields" + 4s "start curse cures" via `timer_warnings` on
+  trigger `0680b9f6…`. The capability existed since 3.5.52; the field was blank.
+- **New trigger: Emperor aggro wipe** (`d2f9b74d…`) on the Diminutive Stature
+  proc emote (`looks far less imposing.`) — spin stun + −95% aggro at 4%/swing,
+  class-scoped to DPS. No target-name zeal condition exists, so the callout asks
+  ("ON EMP? BACK OFF") rather than knows.
+- **Boss zone audit**: `bosses_local.zone_short` had drifted from the seed on 6
+  bosses (Galiel filed under mischiefplane since ≥March); fixed those 6 + 35
+  encounter rows back to Jan 2025. Three PoP rows deliberately untouched
+  (bertoxxulous / aerin_dar / agnarr) — on the PoP-unlock checklist.
+- **Playbooks live on `/guide`**: `emperor_ssraeshza` (full strategy — Luter's
+  writeup + catalog-verified numbers + spell 2310 decode incl. the −95% aggro
+  curse and the Diminutive Stature proc) and `blood_ssraeshza` (Blood is the
+  clock, not the fight). `data/bosses.json` seed was RIGHT throughout.
+
+**New open items from the review (each has a design doc):**
+- Mez chips keyed to the TARGETER, not the mez — a dead mezzer reads as
+  un-mezzed while Rapture still runs; chips need owner names
+  (`DESIGN-extended-target-v2.md` §4).
+- CH chain: MT health on the chain overlay, interrupted casts must mark the
+  slot, slot ownership must not be stolen by a mis-called number, and the GAP
+  alert must be measured LOCALLY (cross-client compare carries skew+latency the
+  size of the signal — why it's muted fleet-wide) (§5–6).
+- DI nomination: name the ONE free cleric instead of broadcasting (§6).
+- Threat: hate REDUCERS entirely unmodelled (SPA 92 — Ancient: Greater
+  Concussion −600 etc., FD, evade); EQMac damage→hate weights unvalidated;
+  MT margin/caution-tape design (`DESIGN-threat-mt-margin.md`).
+- Trigger overlay v2: split timers from callouts, grow upward, one-row-per-mob
+  render invariant, everyone-files Wrong button + replay-backed reports
+  (`DESIGN-trigger-overlay-v2.md`).
+- Mimic 3 voice packs (`DESIGN-mimic3-voice.md`).
+- Death awareness surfaces + rez queue (`DESIGN-death-awareness-and-rez-queue.md`).
+- Timer-warning sweep: which other timer triggers have a duration but NO
+  `timer_warnings`? The Emperor's was a blank field, not a missing feature.
+- Task #27 UNBLOCKED: restore the 8 muted trash triggers once raiders are on
+  2.3.5 (the timer-identity fix is stable now).
+
+**RULE (Hitya, 2026-08-11): implementation updates its documentation at BOTH
+gates** — when a feature/fix lands on beta, its docs (this ledger + the relevant
+design/HOW-ITS-BUILT entry) are updated in the same change; when it graduates to
+main, the entry is updated again with the stable release version. A doc that
+lags its code produces confidently wrong recall answers — tonight's recall
+listed #202 as blocked when it had shipped.
+
 ### 🧾 Still open after the 2026-08-08/09 weekend
 *(The short list a Monday session should read. Full reasoning per item is in
 `DECISIONS-2026-08-07.md`; the deeper queues are the sections above and below.)*
 
 | Item | State / next step |
 |---|---|
-| **PR #78** | ⚠ **Close it.** Standing `beta`→`main` PR; post-resync its diff is one line — the Mimic version park. Merging cuts an unintended stable release. No informational value now that beta *is* main |
+| ~~**PR #78**~~ | **CLOSED 2026-08-11.** Verified live first: still open, and its diff had collapsed to exactly the park bump (`apps/mimic/package.json` 2.3.5→2.3.6) — merging would have cut an unintended stable 2.3.6 to the whole fleet. Its original content (the /who menu clip fix) had already graduated |
 | **Kill switches untested** | The #74/#118 control plane (`flag_agent_kill`, `min_agent_ver_num`, the shed flags) has never been exercised in the field. Shipped as a conservative v1 pending Hitya's sign-off — a switch nobody has pulled is not a switch you can pull mid-raid |
 | **Threat raw retention** | Untouched at 120 days; the justifying comment is off by ~13× (~7 MB/week claimed vs ~90 MB/week actual). Hitya has chosen a 2-month hot window — see Cold work #10 |
 | **`opendkp_raids` / `_auctions` rewrite** | Still re-upserting themselves every sync (1.5M and 3.7M updates). Decision made, NOT implemented: re-upsert a closed raid only when its upstream `Version` moves; ticks/DKP/attendance corrections still flow |
@@ -1918,9 +1980,9 @@ Sun/Wed/Thu window before touching the code.
 | **Archived logs vanish from the backfill picker** | Log archiving is ON by default at 500 MB (idle 15 min, `WP_LOG_ROTATE_MB=0` disables) and archives rather than culls — but an archived log drops out of the smart-backfill picker until it is moved back. Archive, never cull, was the point |
 | **Zone map overlay** | Blocked on a 1–2h **in-game coordinate spike**: the docs say Zeal transposes x/y, the dashboard path disagrees, and only a live client settles it. `docs/pq-companion/03-zone-maps.md` |
 | **Report 04 P3–P5** | `docs/pq-companion/04-combat-parse-accuracy.md`, the three unshipped items: P3 bystander taunt-emote → per-player taunt threat (a `says` line — belongs in `PRIORITY_KEEP_PATTERNS`, watch the privacy filter), P4 wildcard-verb fallback for incoming damage (**must stay LAST** among damage patterns), P5 real hate for non-damaging detrimentals (`maxHP/15`) + miss hate + backstab cap |
-| **Fight timeline chart** | Data layer done; chart unbuilt, and it needs one call from Hitya (class toggles vs player search — recommendation: both, one selection model). Two in-flight pieces being live-tested tonight: agent `ramp` (beta 3.5.55), bot `encounter_id` at close (3.1.34) |
+| **Fight timeline chart** | Data layer done; chart unbuilt, and it needs one call from Hitya (class toggles vs player search — recommendation: both, one selection model). The two formerly in-flight pieces LANDED: agent `ramp` reached stable in 3.5.58 (Mimic 2.3.5, 2026-08-10) and bot `encounter_id`-at-close shipped in 3.1.34 |
 | **Both Zeal upstream asks unsent** | `zeal-spawn-id-request.md` still aims at the gauges (rewrite against `named_pipe.cpp` first) and `zeal-tag-spawn-id-collision.md` has never been sent. See Cold work #15 |
-| ~~Beta adoption near zero~~ | Addressed 2026-08-09 by graduating rather than piling onto beta: 9 beta builds shipped 2026-08-07 and only stable-channel agents ever reported. **Re-check after the 2.3.5 re-park** — if beta stays empty, the answer is shorter beta lines, not more of them |
+| ~~Beta adoption near zero~~ | Addressed twice: graduated 2026-08-09 AND again 2026-08-10 (Mimic 2.3.5 / agent 3.5.58 — the whole Ssra fix batch went stable within a day instead of waiting on beta users who don't exist). `sync-beta.yml` now keeps beta = main + park continuously. **Standing posture: short beta lines, graduate fast** |
 
 ### ⏳ Open TODO — carried forward from the retired docs
 *(These are durable items; the active wave order is in `DESIGN-platform-queue.md`.)*
@@ -1989,8 +2051,12 @@ before anyone touches them.** All four exist because of the two bugs found
   Related: `utils/parseDeaths.js`'s phantom rule ("a player can only die once per
   encounter") is FALSE once feigns are gone — rez-and-die-again is normal and a
   rogue corpse pull is deliberate. Revisit it with #200.
-- **#201 Re-derive the death dedup window** — but **#202 probably makes it
-  unnecessary**, and that's the interesting part. The 30s same-name collapse
+- **#201 Re-derive the death dedup window** — **half-resolved by #202 shipping**:
+  offsets are now applied at ingest and dedup consumes corrected stamps, with the
+  30s window deliberately UNCHANGED (its own worked example predicted correction
+  alone fixes the phantom). Still open: measure the post-correction spread before
+  ever retuning the window. Original reasoning kept below because the method
+  matters ("do not retune by eye — that's how we got 30s"). The 30s same-name collapse
   (`utils/parseDeaths.js`) was fitted against feign-inflated, skew-spread data.
   **Worked example**: Uilnayar died ONCE on 2026-08-03 and seven machines saw it
   — six agree inside 6 seconds, and Fargan's is **45 seconds early**, because
@@ -2029,8 +2095,18 @@ before anyone touches them.** All four exist because of the two bugs found
   slowdown. **Pulse is live**: the first 3.5.15 install (Hitya's) began
   heartbeating 2026-08-04 ~11:30 UTC — pulse +0.4s vs consensus −1.3s, agreeing
   within spread, so all three estimators now cross-check.
-  Still recommend ingest-time `corrected_at` alongside the raw column, migrating
-  consumers one at a time (death dedup first). Blocked on the call.
+  **SHIPPED — the call was made and the design landed exactly as recommended.**
+  Bot 3.1.20 applies the heartbeat-measured offset at ingest and keeps the raw
+  stamp alongside (the /onboarding entry for 3.1.20 is the member-facing half:
+  "deaths stop counting twice for people whose PC clock is off"); death dedup was
+  the first migrated consumer (skew-corrected dedup, 2026-08-09). The agent
+  attaches `clock_offset_ms` + `clock_measured_at` to EVERY payload (#202 comment
+  at the enqueue site), and 2026-08-10 extended the same machinery to two more
+  consumers: trigger-relay fires resolve to true time at ingest
+  (`fired_at_true_ms`, bot 3.1.37 + agent 3.5.56) and cross-client live-state
+  exact-HP pairs are age-gated against the bot's stamp (agent 3.5.58). All of it
+  is on the STABLE fleet as of Mimic 2.3.5. Remaining from this family: #201's
+  spread re-measurement (below) and #203 (telling the three installs).
 - **#203 Tell the THREE drifting installs — and the advice is not "fix your
   clock", because we have now WATCHED a fix fail to hold.** Fargan **+56s and
   climbing** (≥ a month, never corrected), Bardtholemu **+22s** (synced to ~0 on
@@ -2124,8 +2200,22 @@ one concrete detail. Shipped that night: stable 2.1.2 / agent 3.4.36.**
   than his real HP. Likely the same non-Mimic gap as the cure item: no client
   reporting his live cur/max, leaving a placeholder or a mis-sourced value.
   Related to #144 (targeted raider cur/max HP) and #179 (rampage card scoping).
-- **⚠ 30 of 102 enabled guild triggers are structurally DEAD — `^`-anchored
-  patterns can never match.** (rn-buster-audit, 2026-07-31.) The agent tests
+- **⚠ Dead `^`-anchored guild triggers — count reconciled, and the RISK HAS
+  FLIPPED SIGN (2026-08-11).** Two measurements existed: 30 of 102
+  (rn-buster-audit, 2026-07-31 — this entry's original number) and **37 of 109
+  (2026-08-04, the authoritative one — CLAUDE.md, `RUNBOOK-dead-triggers.md`)**;
+  the table simply grew between counts. THEN the premise changed: the
+  EQLogParser-parity compiler (agent 3.5.54+) **rewrites leading anchors against
+  the timestamp prefix** (`anchorsRewritten` in the compile result), and that
+  compiler reached the STABLE fleet in Mimic 2.3.5 (2026-08-10). So the ~37 rows
+  are no longer silently dead — **they are silently COMING BACK as installs
+  update**, without the reviewed-batch gate this entry called for. The staged
+  RUNBOOK fix is now partly moot (the rows fire) and the raid-noise decision it
+  deferred is being made by the auto-updater instead. Re-audit which of the 37
+  actually fire under the new compiler, and expect surprise callouts on
+  Wednesday. Original analysis kept below.
+  (Original entry:) `^`-anchored patterns could never match.
+  (rn-buster-audit, 2026-07-31.) The agent tests
   guild-trigger regexes against the RAW log line including the
   `[Thu Jul 31 …] ` timestamp prefix, so any `^`-anchored pattern (Enrage, the
   Slow-landed rows, "Death touch — RIP", + 27 more) matches nothing, ever. It

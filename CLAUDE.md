@@ -216,6 +216,14 @@ for both branches, put the file on both.
 | Supabase migration | `main` (file) + apply | see Migrations below |
 | Docs only | `main` | none |
 
+**RULE — shipping updates the docs at BOTH gates (Hitya, 2026-08-11).** A
+feature or fix that lands on `beta` updates its documentation IN THE SAME
+CHANGE — its `docs/STATUS.md` entry plus the relevant design doc /
+`HOW-ITS-BUILT.md` row — and when it graduates to `main` the entry is updated
+AGAIN with the stable release version. Not optional polish: a ledger that lags
+its code is what made `/recall` report #202 as "blocked on the call" the day
+after it shipped. If the doc edit isn't in the diff, the ship isn't done.
+
 Patch bump by default. Commit message convention: `<component> vX.Y.Z — short
 reason` (Railway shows the merge commit message as the deploy name — never
 merge with `--no-edit`). When one change spans bot + agent, land the bot part
