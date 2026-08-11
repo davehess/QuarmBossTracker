@@ -19,7 +19,14 @@ end of regular support in 2026 and is LTS-only now (Hitya spotted it, 2026-08-11
 — nothing on fire, but a fresh build should start on current stable. A ready-made
 libvirt XML is in the appendix below; paste it into Add VM → **XML View**.
 Settings:
-- 2 vCPU, **4 GB RAM**, 40 GB vdisk
+- 2 vCPU, **8 GB RAM**, 40 GB vdisk. ⚠ **4 GB is NOT enough** — measured
+  2026-08-11: `next build` reached `✓ Compiled successfully` and was then
+  OOM-killed during *"Linting and checking validity of types"*, the
+  memory-hungriest phase. The signature is a build log that simply STOPS with no
+  error and an exit 255; confirm with `dmesg -T | grep -iE 'killed process|out of
+  memory'` on the VM. If 8 GB still isn't enough, add a Coolify build variable
+  `NODE_OPTIONS=--max-old-space-size=6144` — Node's heap ceiling does not
+  automatically follow a RAM increase
 - Network: **br0** so it gets its own LAN IP (not the NAT default) — Coolify and
   the site need to be reachable from your desktop
 - Install with SSH enabled; note the IP (referred to below as `<VM-IP>`)
