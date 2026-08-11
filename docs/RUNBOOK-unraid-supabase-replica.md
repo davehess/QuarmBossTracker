@@ -234,6 +234,18 @@ Phase 1 dump. This also caught a real defect in the backup script: it pinned a
 itself**, so the first nightly run would have aborted. Now pinned `postgres:17`
 — raise the tag if Supabase ever upgrades the project's major, never lower it.
 
+**Two Studio buttons are dead in self-hosted, and both are cosmetic.** The
+account menu shows *"You do not have access to this project"* and Connect shows
+*"Project is currently not active and cannot be connected"* — Studio asks the
+HOSTED platform API (supabase.com) for account/project status, which no
+self-hosted stack has. Nothing is wrong: Advisors returning "no issues" is
+itself a live meta→db round trip. Do not chase these. Real connection paths:
+Studio's SQL Editor / Table Editor, `docker exec supabase-db psql -U postgres`,
+and from the LAN through the pooler in session mode —
+`postgresql://postgres.<POOLER_TENANT_ID>@<lan-ip>:5432/postgres` (username is
+supavisor's `postgres.<tenant>` form; the db container publishes no port of its
+own by design, so all LAN access goes through supavisor on 5432/6543).
+
 **Stack identification note:** this template is NOT the official
 `supabase/docker` compose — the gateway is Envoy (official uses Kong) and the
 db image is Postgres 17 (official self-host pins 15). Fixes found for the
