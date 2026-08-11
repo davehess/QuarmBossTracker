@@ -2368,6 +2368,9 @@ one concrete detail. Shipped that night: stable 2.1.2 / agent 3.4.36.**
 - Per-class overlay colors / PoP P2-P3 slideshow stubs (blocked on local capture).
 - Any migration needing local verification (per CLAUDE.md Migrations rule).
 
+- **Unraid Supabase stack: UP 12/12 and verified 2026-08-11** (roles present, so
+  the bootstrap really ran). It is now the restore-test target for Phase 1 —
+  same Postgres major (17.6) as the hosted project.
 - **Run Phase 1 of the Unraid backup** (`docs/RUNBOOK-unraid-supabase-replica.md`,
   decided 2026-08-11: backup first, then dev sandbox): copy
   `scripts/unraid-backup-supabase.sh` into the User Scripts plugin, put the

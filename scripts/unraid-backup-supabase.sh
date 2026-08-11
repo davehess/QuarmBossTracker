@@ -18,10 +18,15 @@
 #   3. Run it once by hand, then run the RESTORE TEST below once. A backup that
 #      has never been restored is a hope, not a backup.
 #
-# RESTORE TEST (once, and after any Postgres major-version change):
-#   docker run --rm -v /mnt/user/backups/wolfpack:/b postgres:15 \
-#     bash -c "createdb -h <any pg> t && pg_restore -d t --no-owner /b/latest.dump"
-#   — or restore into the Phase 2 sandbox, which is the same test with a purpose.
+# RESTORE TEST (once, and after any Postgres major-version change) — restore
+# into the local Unraid stack, which runs Postgres 17.6 and so matches:
+#   docker cp /mnt/user/backups/wolfpack/latest.dump supabase-db:/tmp/latest.dump
+#   docker exec supabase-db createdb -U postgres restoretest
+#   docker exec supabase-db pg_restore -U postgres -d restoretest \
+#     --no-owner --no-acl --schema=public /tmp/latest.dump
+#   docker exec supabase-db psql -U postgres -d restoretest \
+#     -c "select count(*) from encounters"      # sanity: real rows landed
+#   docker exec supabase-db dropdb -U postgres restoretest    # when satisfied
 #
 # ~1.2 GB database (measured 2026-08-11) → -Fc compresses to a few hundred MB.
 
@@ -43,7 +48,14 @@ OUT="$DEST/wolfpack-$STAMP.dump"
 
 # --no-owner --no-acl: roles on the hosted project don't exist locally; without
 # these flags every restore into the sandbox fights ALTER OWNER errors.
-docker run --rm --network host -e DB_URL="$DB_URL" postgres:15 \
+#
+# ⚠ postgres:17 is REQUIRED, not incidental. The hosted project runs 17.6
+# (verified 2026-08-11) and pg_dump REFUSES to dump from a server newer than
+# itself — a postgres:15 client aborts with "server version 17.6; pg_dump
+# version 15.x". Dumping an OLDER server with a newer client is the supported
+# direction, so this tag only ever needs raising, never lowering. If Supabase
+# upgrades the project's major version, bump this tag to match.
+docker run --rm --network host -e DB_URL="$DB_URL" postgres:17 \
   pg_dump "$DB_URL" -Fc --no-owner --no-acl -f /dev/stdout > "$OUT.tmp"
 
 # Refuse to keep an implausibly small dump — a silent auth failure writes ~0

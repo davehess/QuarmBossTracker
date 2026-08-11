@@ -217,6 +217,23 @@ the file as `compose.yaml` — which is why `docker compose up -d` in the projec
 directory failed with `stat …/docker-compose.yml: no such file` while the stack
 was running. Set it to `compose.yaml` or delete the line.
 
+## ✅ Stack VERIFIED HEALTHY 12/12 (2026-08-11)
+
+After the volumes fetch: `Stack supabase started successfully`, 12/12, and the
+acceptance test passed — `docker exec supabase-db psql -U postgres -c '\du'`
+lists `supabase_auth_admin`, `authenticator`, `supabase_storage_admin`,
+`supabase_admin` and the realtime/functions/etl roles. **That role list, not the
+healthcheck, is the proof the bootstrap ran** (the hollow cluster reported
+healthy too). Use it as the acceptance test on any future rebuild.
+
+**Version match — load-bearing for backups.** Hosted project is Postgres
+**17.6** (verified live 2026-08-11); the local stack runs `supabase/postgres
+17.6.1.136`. Same major, so the local stack is a valid restore target for the
+Phase 1 dump. This also caught a real defect in the backup script: it pinned a
+`postgres:15` client, and **pg_dump refuses to dump from a server newer than
+itself**, so the first nightly run would have aborted. Now pinned `postgres:17`
+— raise the tag if Supabase ever upgrades the project's major, never lower it.
+
 **Stack identification note:** this template is NOT the official
 `supabase/docker` compose — the gateway is Envoy (official uses Kong) and the
 db image is Postgres 17 (official self-host pins 15). Fixes found for the
