@@ -209,3 +209,29 @@ left join eqemu_spawn2 s2 on s2.spawngroup_id = se.spawngroup_id
 where b.zone_short is distinct from z.short_name
 group by b.internal_id, b.zone_short, z.short_name;
 ```
+
+## RULE: shipping updates the docs at both gates (2026-08-11)
+
+**The call (Hitya):** *"implementation of a feature or fix must update that
+documentation once it graduates to beta, and upon shipping to main it needs to
+be updated again with the stable release version."*
+
+**Why:** the 2026-08-11 `/recall` run reported #202 (clock offset at ingest) as
+"blocked on the call" — it had shipped in bot 3.1.20 and was extended twice
+since. The ledger lagged the code by weeks, and a stale ledger produces
+confidently wrong answers for every future session. Landed in `CLAUDE.md`
+(Release playbook, above the commit conventions) and as the standing note in
+`STATUS.md`'s 2026-08-10→11 section.
+
+## Open — read this first (refreshed 2026-08-11)
+
+| Item | State |
+|---|---|
+| **#204–#207 implementations** | Four Opus agents dispatched 2026-08-11 (DI callout, group-HP death watcher, instant-mechanic capture, callout overlay UX) — review + integrate to beta; only #207 is testable by Hitya without a raid |
+| **Dead-trigger risk FLIPPED** | 3.5.54+ compiler revives `^`-anchored rows as the fleet updates to 2.3.5 — expect surprise callouts Wednesday; re-audit the 37 before/at the raid (`STATUS.md`, reconciled entry) |
+| **Task #27 unblocked** | Restore the 8 muted trash triggers once raiders are on 2.3.5; TTS stays off unless asked |
+| **Buff/debuff queue + CH DDR** | Open questions walked through with Hitya 2026-08-11 — answers pending |
+| **Kill switches untested** | Unchanged — never pulled in the field |
+| **Timer-warning sweep** | Which timer triggers have a duration but no `timer_warnings`? Emperor's was a blank field |
+| **PR #78** | CLOSED 2026-08-11 (diff had become the 2.3.6 park — merging would have cut an accidental stable) |
+| **PoP unlock checklist** | + settle bertoxxulous / aerin_dar / agnarr zones against PQDI |
