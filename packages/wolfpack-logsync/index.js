@@ -4326,7 +4326,11 @@ function trackDiFired(line) {
   // {tank}"). Silence here is only the SELECTOR declining to invent a name,
   // which is the whole point of the honesty layer.
   if (!sel || !sel.names.length) return null;
-  const spoken = 'D I down. ' + sel.names.join(' or ') + '.';
+  // "The one casting should call it out" (Hitya, 2026-08-11): the selector
+  // nominates X OR Y, and the cleric who takes it closes the ambiguity on
+  // voice — the Lenolshot "I got it Curry!" protocol, made standard. The cue
+  // rides the callout itself so the protocol is taught every time it fires.
+  const spoken = 'D I down. ' + sel.names.join(' or ') + ' — caster call it.';
   _diCallout = {
     id: key + '|' + atMs,
     tank,
@@ -4342,7 +4346,7 @@ function trackDiFired(line) {
   // flashes `text` and speaks `tts` (gated on the user's enableTriggerTts).
   // No new SpeechSynthesis path.
   _pushOverlay({
-    text:        'D.I. DOWN on ' + tank + ' — ' + sel.names.join(' or '),
+    text:        'D.I. DOWN on ' + tank + ' — ' + sel.names.join(' or ') + ' (caster: call it)',
     tts:         spoken,
     color:       'red',
     duration_ms: 8000,

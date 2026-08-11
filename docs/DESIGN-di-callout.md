@@ -313,3 +313,21 @@ Dismissal RECORDING. The ✕ on the card clears it on that machine for that
 callout id and nothing else — no endpoint, no row. Per `DESIGN-callout-overlay.md`
 §3.1 the prerequisite is persisting fires; a dismissal count without an
 exposure count is not a signal.
+
+
+## §7 — Hitya's calls, 2026-08-11 (all four points, against the shipped build)
+
+1. **"X OR Y if both have it ready and aren't getting ready to CH soon"** —
+   confirmed as shipped: primary pool is `recent && !busy` (busy = own CH turn
+   within one DI cast + one beat), confirmed-ready outranks unknown, two names.
+2. **"Druids can't DI, only clerics"** — confirmed as shipped: `kind`-labelled
+   CH-equivalent auto-slots and known non-clerics are hard-excluded.
+3. **"Not every cleric has Mimic… if the Mimic ones don't have it ready, rely
+   on the others"** — confirmed as shipped, and this is why a MEASURED recast is
+   a hard exclusion while `unknown` (non-Mimic) stays eligible below
+   confirmed-ready: when every Mimic cleric is known-down, the pool becomes
+   exactly the non-Mimic clerics, evidence chips marking them unknown.
+4. **"The one casting should call it out"** — NEW, added 2026-08-11: the
+   selector nominates, a human closes the ambiguity. The callout now ends
+   "— caster call it" (TTS and overlay), teaching the protocol every time it
+   fires. The Lenolshot "I got it Curry!" pattern, made standard.

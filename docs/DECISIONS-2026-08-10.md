@@ -245,3 +245,13 @@ and the store is **ephemeral** (in-memory ring on the bot, ~1h TTL, trigger-rela
 shape — no table, no migration). The other three questions were overtaken by
 shipped code and are marked so in the design doc. Remaining build: the shared
 manual layer + one-click resolve on the existing auto queues.
+
+## DI callout: Hitya's four calls (2026-08-11)
+
+X OR Y when both are ready and neither is about to CH; clerics only (druids
+cannot DI); when the Mimic-running clerics are known-not-ready, rely on the
+non-Mimic ones (unknown stays eligible, measured-down never does); and **the one
+casting calls it out** — the selector nominates, a human closes the ambiguity on
+voice. Points 1–3 were confirmed as already shipped in 3.5.59's ranker; point 4
+landed in 3.5.60 as the "— caster call it" cue on the TTS and overlay text.
+Full mapping in `DESIGN-di-callout.md` §7.

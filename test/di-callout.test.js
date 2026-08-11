@@ -341,8 +341,9 @@ describe('trackDiFired — end to end through the real chain tracker', () => {
     expect(fired.names.length).toBeGreaterThanOrEqual(1);
     expect(fired.names.length).toBeLessThanOrEqual(2);
 
-    // The doc's wording, verbatim: two names, no verb — the raid decides.
-    expect(fired.tts).toBe('D I down. ' + fired.names.join(' or ') + '.');
+    // Two names + the resolution protocol (Hitya 2026-08-11): the cleric who
+    // takes it calls it on voice — the cue rides the callout itself.
+    expect(fired.tts).toBe('D I down. ' + fired.names.join(' or ') + ' — caster call it.');
     // Exactly one fire pushed, on the existing trigger-overlay surface (no new
     // SpeechSynthesis path — the master TTS toggle still gates it downstream).
     expect(_activeOverlays.length).toBe(1);
