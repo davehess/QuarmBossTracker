@@ -2371,6 +2371,19 @@ one concrete detail. Shipped that night: stable 2.1.2 / agent 3.4.36.**
 - **Unraid Supabase stack: UP 12/12 and verified 2026-08-11** (roles present, so
   the bootstrap really ran). It is now the restore-test target for Phase 1 —
   same Postgres major (17.6) as the hosted project.
+- **⚠⚠ The Supabase GitHub integration has not applied a migration since
+  2026-08-09** (found 2026-08-12 when officer roll edits failed with a missing
+  table). Last auto-applied version was `20260809164542`; two committed
+  migrations were sitting unapplied, and one of them mattered: the production
+  `trigger_timing_feedback_direction_check` still only allowed
+  `earlier/good/too_early`, so **#207's `dismissed`/`expired` writes were being
+  rejected by the database** — the dismissal telemetry the design leans on was
+  silently recording nothing. Both applied by hand via the MCP (documented
+  fallback); the repo files are unchanged and idempotent, so the integration
+  re-applying them later is a no-op. ⚠ **Check the integration itself**
+  (Supabase Dashboard → Integrations → GitHub) — until it is fixed, every new
+  migration needs the manual MCP step, and the next one to be forgotten will
+  fail the same silent way.
 - **⚠ `sync-beta` had failed 8 times in a row (2026-08-12)** — every push tonight,
   all append-append conflicts in `docs/DECISIONS-2026-08-10.md`; beta sat 8h stale.
   Fixed three ways: beta re-merged by hand (union, nothing lost), `.gitattributes`
