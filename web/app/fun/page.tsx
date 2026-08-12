@@ -9,6 +9,7 @@ import { redirect } from 'next/navigation';
 import { unstable_cache } from 'next/cache';
 import { supabaseServer } from '@/lib/supabase-server';
 import { supabaseAdmin } from '@/lib/supabase';
+import { fetchAllPages } from '@/lib/supabase-paged';
 import { userTz, fmtAbs } from '@/lib/timezone';
 import { loadNameMap } from '@/lib/roster';
 
@@ -352,12 +353,16 @@ SECTIONS.push(async (sb, counters) => {
   // DISTINCT (target, event_ts) — one physical reposition regardless of how many
   // agents logged it — and report a guild total with no names.
   try {
-    const { data: dpRows } = await sb
-      .from('fun_events')
-      .select('target, event_ts')
-      .eq('event_type', 'dragon_punch');
+    // 4,004 rows as of 2026-08-12 — a plain select returns PostgREST's first
+    // 1000 and this counter then reported a quarter of the truth.
+    const dpRows = await fetchAllPages<{ target: string | null; event_ts: string | null }>(
+      (from, to) => sb.from('fun_events')
+        .select('target, event_ts')
+        .eq('event_type', 'dragon_punch')
+        .order('event_ts', { ascending: true })
+        .range(from, to));
     const seen = new Set<string>();
-    for (const r of (dpRows ?? []) as { target: string | null; event_ts: string | null }[]) {
+    for (const r of dpRows) {
       seen.add(`${(r.target || '?').toLowerCase()}|${r.event_ts || ''}`);
     }
     const total = seen.size;
@@ -513,12 +518,21 @@ SECTIONS.push(async (sb, counters) => {
   // copies, the signal Uilnayar called out ("really observed when seen by
   // multiple people and when a player is the one that says the word").
   try {
-    const { data: drRows, count: drTotal } = await sb
+    // The exact count was already right; the per-person tally below was not —
+    // it ranked 4,099 rows' worth of drinking from the first 1000, so the
+    // headline number and the leaderboard beside it disagreed silently.
+    const { count: drTotal } = await sb
       .from('fun_events')
-      .select('caster', { count: 'exact' })
+      .select('*', { count: 'exact', head: true })
       .eq('event_type', 'drunkard');
+    const drRows = await fetchAllPages<{ caster: string | null }>(
+      (from, to) => sb.from('fun_events')
+        .select('caster')
+        .eq('event_type', 'drunkard')
+        .order('event_ts', { ascending: true })
+        .range(from, to));
     const tally = new Map<string, number>();
-    for (const r of (drRows ?? []) as { caster: string | null }[]) {
+    for (const r of drRows) {
       const k = r.caster || 'unknown';
       tally.set(k, (tally.get(k) ?? 0) + 1);
     }

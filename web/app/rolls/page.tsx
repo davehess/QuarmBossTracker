@@ -14,6 +14,7 @@ import Link from 'next/link';
 import { supabaseServer } from '@/lib/supabase-server';
 import { supabaseAdmin } from '@/lib/supabase';
 import { isOfficer } from '@/lib/officer';
+import { fetchAllPages } from '@/lib/supabase-paged';
 import RollAdmin from './RollAdmin';
 import { userTz, fmtShort, fmtDateOnly, DEFAULT_TZ } from '@/lib/timezone';
 import {
@@ -34,27 +35,6 @@ export default async function RollsPage() {
   const tz = await userTz();
   const sb = supabaseAdmin();
   const sinceIso = new Date(Date.now() - LOOKBACK_DAYS * 24 * 60 * 60 * 1000).toISOString();
-
-  // PostgREST caps every response at the project's max-rows (1000 by default),
-  // so a bare .limit(4000) silently returned the newest 1000 and dropped the
-  // rest — with 5,622 loot rows in the 60-day window that quietly removed the
-  // OLDEST loot, which is exactly what older nights need to attribute a winner
-  // (Hitya spotted the count, 2026-08-12). Paging by range gets all of them
-  // regardless of how the project is configured.
-  async function fetchAllPages<T>(
-    build: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: unknown }>,
-    page = 1000,
-    hardCap = 50000,
-  ): Promise<T[]> {
-    const out: T[] = [];
-    for (let from = 0; from < hardCap; from += page) {
-      const { data, error } = await build(from, from + page - 1);
-      if (error || !data || data.length === 0) break;
-      out.push(...data);
-      if (data.length < page) break;      // short page = last page
-    }
-    return out;
-  }
 
   const [rollRows, lootRows, funRes, ovRes, officer] = await Promise.all([
     fetchAllPages<RollSetRow>((from, to) => sb.from('roll_sets')

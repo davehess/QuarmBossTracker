@@ -2371,6 +2371,22 @@ one concrete detail. Shipped that night: stable 2.1.2 / agent 3.4.36.**
 - **Unraid Supabase stack: UP 12/12 and verified 2026-08-11** (roles present, so
   the bootstrap really ran). It is now the restore-test target for Phase 1 —
   same Postgres major (17.6) as the hosted project.
+- **⚠ PostgREST's 1000-row cap silently truncates reads across the site
+  (audited 2026-08-12).** `.limit(N)` only LOWERS PostgREST's ceiling, never
+  raises it, so any query matching >1000 rows returns the first 1000 with no
+  error — and the code downstream computes a confident wrong answer. Audited all
+  of `web/`: **52 read sites** query a table that exceeds 1000 rows without
+  paging. Fixed so far (`web/lib/supabase-paged.ts` + `fetchAllPages`):
+  `/rolls` looted_items (saw 1000 of 5,622 — older nights lost their looter) and
+  `/fun`'s dragon-punch counter (1000 of 4,004) and Drunkard leaderboard (ranked
+  from 1000 of 4,099 while showing an exact total beside it).
+  **Still unfixed, mostly officer pages** — `chat_messages` (344k) in
+  `/admin/chat`, `/admin/members`, `lib/admin-queue.ts`; `who_observations`
+  (113k) in `/admin/links`, `/admin/signups`, `/admin/members`; `buff_casts`
+  (66k) in `/raid` and the raid review. Verify each against real counts before
+  fixing — most `eqemu_*` and per-character reads are naturally under the cap
+  and need nothing. The audit script is in the session log; re-run it before
+  assuming a page is safe.
 - **⚠⚠ The Supabase GitHub integration has not applied a migration since
   2026-08-09** (found 2026-08-12 when officer roll edits failed with a missing
   table). Last auto-applied version was `20260809164542`; two committed
