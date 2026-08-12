@@ -373,3 +373,23 @@ fresh-install path. The six tables are created EMPTY — per-guild data, never o
 Still open and unchanged: the ~97 MB `eqemu_*` catalog has no self-serve import,
 and the ~30 hand-copied Discord anchor IDs remain the likeliest place a new guild
 gives up.
+
+## Automation that fails where nobody looks (2026-08-12)
+
+`sync-beta` failed on EVERY push for eight consecutive commits and beta sat eight
+hours stale — the precise rot the workflow was built to prevent. It behaved
+correctly the whole time: it refused to auto-resolve and it left a red X. The
+failure was that a red X in the Actions tab is not a notification.
+
+Three fixes, in order of durability: `.gitattributes` sets `merge=union` on the
+append-only ledgers (`docs/DECISIONS-*.md`, `docs/STATUS.md`) so the cause cannot
+recur — both branches only append, so keeping both sides is always right, and it
+is scoped away from code and CLAUDE.md where a conflict is real information;
+beta was re-merged by hand with both sides kept; and the workflow now posts to
+Discord on failure, gated on a `DISCORD_SYNC_WEBHOOK` secret so forks and
+self-hosters do not fail on a missing one.
+
+The general rule this bought: **automation that reports failure only where nobody
+looks is indistinguishable from automation that does not run.** Applies equally
+to the mirror's autodeploy poller and the nightly backup — both already log, and
+both need somewhere the log is actually read.
