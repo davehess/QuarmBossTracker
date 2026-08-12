@@ -428,3 +428,28 @@ Nothing checks that the newest committed migration is actually applied. Until th
 integration is fixed, treat every new migration as needing the manual MCP step —
 and worth building: a check that compares the newest file in
 `supabase/migrations/` against `supabase_migrations.schema_migrations`.
+
+## PostgREST's 1000-row cap was silently wrong across the site (2026-08-12)
+
+Hitya asked whether rolls were limited to 1000 looted items. They were — and so
+was a lot else. `.limit(N)` only lowers PostgREST's `max-rows`, never raises it,
+so every query matching more than ~1000 rows returned the first 1000 with no
+error and no flag. The failure mode is the dangerous one: not an empty page, but
+a plausible wrong number.
+
+Audited every read in `web/` against live row counts. 52 sites query a table
+that exceeds the cap without paging. Three were verifiably wrong today and are
+fixed via `web/lib/supabase-paged.ts`: `/rolls` was reading 1000 of 5,622
+`looted_items` — the OLDEST loot, which is what older nights need to attribute a
+winner, so their "Looted by" column simply showed nothing; `/fun` counted 1,000
+of 4,004 dragon punches; and `/fun`'s Drunkard award displayed an EXACT total
+next to a top-3 leaderboard tallied from the truncated 1,000, so a right number
+sat beside a wrong ranking.
+
+The rest are mostly officer pages over `chat_messages` (344k) and
+`who_observations` (113k) and are queued in STATUS. Deliberately not mass-fixed:
+most of the 52 are `eqemu_*` catalog or per-character reads that never approach
+the cap, and paging them all would be churn — each needs checking against a real
+count first. The general lesson is worth keeping: **an ORM-shaped API that caps
+silently makes truncation indistinguishable from a complete answer**, and the
+only defence is measuring the table, not reading the code.
