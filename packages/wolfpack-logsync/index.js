@@ -30553,6 +30553,24 @@ function _parseCrashReason(text) {
     ui_skin:           pick('UI Skin'),
     zone_id:           pick('Zone ID', '(\\S*)'),
     callbacks:         pick('Callbacks'),
+    // Fields Zeal writes that we were throwing away, and which are the ones
+    // that actually answer "what was I doing when this happened":
+    //   Exception String  human-readable ("EXCEPTION_ACCESS_VIOLATION") — the
+    //                     only field a raider can read without a debugger.
+    //   Game state        ff = no world loaded (zoning / shutting down),
+    //                     1 = character select, 5 = in game.
+    //   Self / SpawnInfo  both 0x0 means the player entity is GONE, which
+    //                     together with zone ffffffff is the zoning fingerprint.
+    exception_string:  pick('Exception String'),
+    game_state:        pick('Game state', '(\\S*)'),
+    self_ptr:          pick('Self', '(\\S*)'),
+    spawn_info:        pick('SpawnInfo', '(\\S*)'),
+    // Which Zeal handler caught it. All three are fatal — every report opens
+    // "Unhandled exception occurred" — but they differ in how much context
+    // survived: 'Multiple Crashes' is the handler re-entering, and carries
+    // nothing but the code and module because Zeal could not safely re-read
+    // game state (0 of 64 such rows had a zone, skin or character).
+    handler_stage:     (/Unhandled exception occurred:\s*(.+)/i.exec(text)?.[1] || '').trim() || null,
     raw_reason:        text.slice(0, 4000),
   };
 }

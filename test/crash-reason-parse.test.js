@@ -49,6 +49,78 @@ const namedCrash = [
   'Zone ID: 0000004d',
 ].join('\n');
 
+// Verbatim shapes from live rows (2026-08-12), including the exact fields Zeal
+// writes that the parser used to discard.
+const realZoning = [
+  'Unhandled exception occurred: Initial Handler',
+  '',
+  'Exception Code: 0x6ef',
+  'Exception Address: 0x764C9F54',
+  'Exception occurred in module: C:\\WINDOWS\\System32\\KERNELBASE.dll',
+  'Zeal Version: 1.4.2 (c6b903b)',
+  'Character: ',
+  'UI Skin: UIFiles\\NillipussUI_1080p\\',
+  'Zone ID: ffffffff',
+  'Game state: ff',
+  'Callbacks: RenderUI : Exit (0x0)',
+  'SpawnInfo: 0x0',
+  'Self: 0x0',
+].join('\r\n');
+
+const realVeh = [
+  'Unhandled exception occurred: VEH',
+  '',
+  'Zeal Version: 0.6.6-beta1 (6d688ac)',
+  '',
+  'Exception Code: 0xc0000005',
+  'Exception String: EXCEPTION_ACCESS_VIOLATION',
+  'Exception Address: 0x7744FB03',
+  'Exception occurred in module: C:\\WINDOWS\\SYSTEM32\\ntdll.dll',
+  'Self: 0x33dc7a08',
+  'Character: ',
+  'UI Skin: UIFiles\\Default\\',
+  'Zone ID: 185',
+  'Game state: 1',
+  'Callbacks: DoCharacterSelection: Enter',
+].join('\r\n');
+
+describe('_parseCrashReason — diagnostic fields', () => {
+  it('captures the zoning fingerprint: no world, no player entity', () => {
+    const r = _parseCrashReason(realZoning);
+    expect(r.game_state).toBe('ff');      // ff = no world loaded
+    expect(r.zone_id).toBe('ffffffff');
+    expect(r.self_ptr).toBe('0x0');       // player entity gone
+    expect(r.spawn_info).toBe('0x0');
+    expect(r.callbacks).toBe('RenderUI : Exit (0x0)');
+  });
+
+  it('keeps the human-readable exception string when Zeal writes one', () => {
+    expect(_parseCrashReason(realVeh).exception_string).toBe('EXCEPTION_ACCESS_VIOLATION');
+    expect(_parseCrashReason(realZoning).exception_string).toBeNull();
+  });
+
+  it('records which handler caught it', () => {
+    expect(_parseCrashReason(realZoning).handler_stage).toBe('Initial Handler');
+    expect(_parseCrashReason(realVeh).handler_stage).toBe('VEH');
+    expect(_parseCrashReason('Unhandled exception occurred: Multiple Crashes\r\n\r\nException Code: 0x6ef\r\n')
+      .handler_stage).toBe('Multiple Crashes');
+  });
+
+  it('a context-free Multiple Crashes row parses without inventing fields', () => {
+    const r = _parseCrashReason('Unhandled exception occurred: Multiple Crashes\r\n\r\nException Code: 0x6ef\r\nException Address: 0x764C9F54\r\nException occurred in module: C:\\WINDOWS\\System32\\KERNELBASE.dll\r\nZeal Version: 1.4.2 (c6b903b)\r\n');
+    expect(r.exception_module).toBe('kernelbase.dll');
+    expect(r.zone_id).toBeNull();
+    expect(r.game_state).toBeNull();
+    expect(r.ui_skin).toBeNull();
+  });
+
+  it('still reads the character out of the real zoning sample as blank', () => {
+    // "Character: " with a trailing space — the exact live shape.
+    expect(_parseCrashReason(realZoning).character).toBeNull();
+    expect(_parseCrashReason(realZoning).ui_skin).toBe('UIFiles\\NillipussUI_1080p\\');
+  });
+});
+
 describe('_parseCrashReason', () => {
   it('a blank Character does NOT swallow the next line (the live bug)', () => {
     const r = _parseCrashReason(zoningCrash);
