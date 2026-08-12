@@ -3846,6 +3846,7 @@ function trackChChainLine(line, character) {
     // collides with one the personal-macro path auto-assigned earlier.
     c.slots[num] = { name: slotName, mana: mana != null ? mana : (prev.mana ?? null), lastAtMs: atMs, count: (prev.count || 0) + 1, kind: null,
                      claimants: _chMergeClaimants(prev, slotName, speaker, atMs, mana) };
+    _chReleaseClaimantsElsewhere(c, [slotName, speaker], num);
     c.lastCh = { num, name: slotName, mana, atMs };
     _applyChGrade(c, num, ddr);
     // Default next = numeric successor, wrapping at the highest slot seen.
@@ -3887,6 +3888,7 @@ function trackChChainLine(line, character) {
       const slotName = (c.rosterNames && c.rosterNames[num]) || speaker;
       c.slots[num] = { name: slotName, mana, lastAtMs: atMs, count: (prev.count || 0) + 1, kind: CH_EQUIVALENT_SPELLS.get(spellKey),
                        claimants: _chMergeClaimants(prev, slotName, speaker, atMs, mana) };
+      _chReleaseClaimantsElsewhere(c, [slotName, speaker], num);
       c.lastCh = { num, name: slotName, mana, atMs };
       _applyChGrade(c, num, ddr);
       const nums = Object.keys(c.slots).map(Number);
@@ -4025,6 +4027,27 @@ function _chMergeClaimants(prev, resolvedName, speaker, atMs, mana) {
   push(resolvedName);
   push(speaker);
   return out.filter(c => (atMs - c.lastAtMs) <= CH_CLAIM_WINDOW_MS);
+}
+
+// A cleric can only hold one slot number at a time, so claiming a new one
+// RELEASES every other slot they were on. Without this the old slot keeps them
+// as a claimant until the 120s window expires — and only if someone happens to
+// call that number again, since eviction runs on write. Hitya hit exactly that
+// live (2026-08-12): "They switched later to 002 and 003 and after that the
+// order conflict should be cleared. It's persisting."
+function _chReleaseClaimantsElsewhere(c, names, keepNum) {
+  const drop = new Set(
+    (names || []).map(n => String(n || '').trim().toLowerCase()).filter(Boolean));
+  if (!drop.size || !c || !c.slots) return;
+  for (const nStr of Object.keys(c.slots)) {
+    if (Number(nStr) === keepNum) continue;
+    const s = c.slots[nStr];
+    if (!s || !Array.isArray(s.claimants)) continue;
+    const kept = s.claimants.filter(cl => !drop.has(String(cl.name || '').toLowerCase()));
+    // An emptied list is fine: the slot keeps its own `name`/`lastAtMs` and the
+    // overlay falls back to the single-claimant row for it.
+    if (kept.length !== s.claimants.length) s.claimants = kept;
+  }
 }
 
 function _chChainEnsure(atMs) {

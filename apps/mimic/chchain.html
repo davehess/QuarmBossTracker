@@ -727,6 +727,9 @@
   // fallback so an overlay running ahead of its agent still draws a sane bar.
   // The bar runs from the slot's callout; with cast-time focus items it lands a
   // bit early, which reads fine (the bar simply completes ahead of the land).
+  // Mirrors the agent's CH_CLAIM_WINDOW_MS; used only when talking to an older
+  // agent that does not send ch_claim_window_ms.
+  var CH_CLAIM_WINDOW_MS = 120000;
   var CH_CAST_SECS = 10;
   // Fallbacks for the interrupt/grade display windows, likewise echoed by the
   // agent (ch_interrupt_linger_ms / ddr.display_ms).
@@ -1108,7 +1111,15 @@
       // "Mcdorf / Stupidric…" truncates AND collapses two different casts into
       // one bar — you could see that the slot was contested but not what either
       // cleric was actually doing (Hitya, live test 2026-08-12).
-      var claimRows = (s.claimants && s.claimants.length > 1) ? s.claimants : null;
+      // Age them out HERE too. The agent's order_conflict flag applies the claim
+      // window, but this row check did not, so a stale claimant kept the rows
+      // split and the banner lit long after the agent had stopped flagging it —
+      // the two could disagree indefinitely (Hitya, live 2026-08-12).
+      var claimWindowMs = (c.ch_claim_window_ms > 0 ? c.ch_claim_window_ms : CH_CLAIM_WINDOW_MS);
+      var liveClaims = (s.claimants || []).filter(function (cl) {
+        return cl && cl.lastAtMs && (now - cl.lastAtMs) <= claimWindowMs;
+      });
+      var claimRows = (liveClaims.length > 1) ? liveClaims : null;
       if (claimRows) anyConflict = true;
       var cls = 'row' + (isCasting ? ' casting' : '') + (isInterrupted ? ' interrupted' : '')
               + (goActive ? ' go' : '') + (isNext ? ' next' : '');

@@ -15,11 +15,12 @@ import { describe, it, expect } from 'vitest';
 import { readSource, sliceBlock, AGENT_INDEX } from './_source-slice.js';
 
 const src = readSource(AGENT_INDEX);
-const block = sliceBlock(src, 'const CH_CLAIM_WINDOW_MS', '\n}');
+const block = sliceBlock(src, 'const CH_CLAIM_WINDOW_MS', '\n}')
+            + sliceBlock(src, 'function _chReleaseClaimantsElsewhere', '\n}');
 
 // eslint-disable-next-line no-new-func
-const { _chMergeClaimants, CH_CLAIM_WINDOW_MS } =
-  new Function(block + '\nreturn { _chMergeClaimants, CH_CLAIM_WINDOW_MS };')();
+const { _chMergeClaimants, _chReleaseClaimantsElsewhere, CH_CLAIM_WINDOW_MS } =
+  new Function(block + '\nreturn { _chMergeClaimants, _chReleaseClaimantsElsewhere, CH_CLAIM_WINDOW_MS };')();
 
 const T = 1_000_000;
 
@@ -98,5 +99,53 @@ describe('_chMergeClaimants', () => {
   it('one clean caller produces one claimant — no conflict from normal play', () => {
     const out = _chMergeClaimants({}, 'Aimey', 'Aimey', T);
     expect(out).toHaveLength(1);
+  });
+});
+
+// The live sequence Hitya reported (2026-08-12): Mcdorf and Stupidrichard both
+// call 002 (conflict, correctly), then Stupidrichard moves to 003 — at which
+// point 002 is uncontested and the banner must clear IMMEDIATELY, not after the
+// 120s claim window, and not only if someone happens to call 002 again.
+describe('_chReleaseClaimantsElsewhere', () => {
+  const conflicted = () => ({
+    2: { name: 'Mcdorf', lastAtMs: T, claimants: [
+          { name: 'Mcdorf', lastAtMs: T, mana: 54 },
+          { name: 'Stupidrichard', lastAtMs: T + 1000, mana: 95 } ] },
+  });
+
+  it('switching to a new number clears the old slot the moment it happens', () => {
+    const c = { slots: conflicted() };
+    // Stupidrichard now calls 003.
+    c.slots[3] = { name: 'Stupidrichard', lastAtMs: T + 5000,
+                   claimants: _chMergeClaimants(null, 'Stupidrichard', 'Stupidrichard', T + 5000, 93) };
+    _chReleaseClaimantsElsewhere(c, ['Stupidrichard', 'Stupidrichard'], 3);
+
+    expect(c.slots[2].claimants.map(x => x.name)).toEqual(['Mcdorf']);   // 002 uncontested
+    expect(c.slots[3].claimants.map(x => x.name)).toEqual(['Stupidrichard']);
+  });
+
+  it('leaves the slot being claimed untouched', () => {
+    const c = { slots: conflicted() };
+    _chReleaseClaimantsElsewhere(c, ['Mcdorf'], 2);
+    expect(c.slots[2].claimants.map(x => x.name)).toEqual(['Mcdorf', 'Stupidrichard']);
+  });
+
+  it('is case-insensitive on names', () => {
+    const c = { slots: conflicted() };
+    _chReleaseClaimantsElsewhere(c, ['stupidRICHARD'], 3);
+    expect(c.slots[2].claimants.map(x => x.name)).toEqual(['Mcdorf']);
+  });
+
+  it('emptying a slot is allowed — it keeps its own name for the single row', () => {
+    const c = { slots: { 2: { name: 'Mcdorf', lastAtMs: T, claimants: [{ name: 'Mcdorf', lastAtMs: T }] } } };
+    _chReleaseClaimantsElsewhere(c, ['Mcdorf'], 5);
+    expect(c.slots[2].claimants).toEqual([]);
+    expect(c.slots[2].name).toBe('Mcdorf');
+  });
+
+  it('does nothing when the mover held no other slot', () => {
+    const c = { slots: conflicted() };
+    _chReleaseClaimantsElsewhere(c, ['Fargan'], 4);
+    expect(c.slots[2].claimants).toHaveLength(2);
   });
 });
