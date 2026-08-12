@@ -30521,20 +30521,38 @@ function _readZipMemberFromBuf(buf, preferBase) {
 // crash_reason.txt → structured fields. Lines look like "Key: value"; the
 // leading "Unhandled exception occurred: ..." headline is kept in raw only.
 function _parseCrashReason(text) {
-  const pick = (rx) => { const m = text.match(rx); return m ? m[1].trim() : null; };
-  const address = pick(/Exception Address:\s*(\S+)/i);
-  const modulePath = pick(/Exception occurred in module:\s*(.+)/i);
-  const character = pick(/Character:\s*(.+)/i);
+  // ⚠ Every field is LINE-ANCHORED, and the gap after the colon matches
+  // horizontal whitespace only. The obvious `/Character:\s*(.+)/i` is wrong:
+  // `\s` includes newlines, so an EMPTY field swallows the line break and
+  // captures the NEXT line instead. That is exactly how `UI Skin: UIFiles\...`
+  // ended up in the character column of live rows (found 2026-08-12) — and a
+  // crash during zoning is precisely when Character is blank, so the bug bit
+  // hardest on the reports we most wanted to read.
+  const H = '[^\\S\\r\\n]*';                 // spaces/tabs, never a newline
+  const line = (label, body) =>
+    new RegExp('^' + H + label + ':' + H + body, 'im');
+  const pick = (label, body = '(.*?)') => {
+    const m = text.match(line(label, body + H + '$'));
+    const v = m ? m[1].trim() : '';
+    return v || null;                       // an empty field is absent, not ''
+  };
+  const address = pick('Exception Address', '(\\S*)');
+  const modulePath = pick('Exception occurred in module');
+  const character = pick('Character');
   return {
-    exception_code:    pick(/Exception Code:\s*(\S+)/i),
-    exception_module:  modulePath ? path.basename(modulePath).toLowerCase() : null,
+    exception_code:    pick('Exception Code', '(\\S*)'),
+    // Split on BOTH separators rather than path.basename: the crash file always
+    // carries a Windows path, but on the Linux/Deck build Node's basename is the
+    // POSIX one and would hand back the whole "C:\\Windows\\...\\ntdll.dll"
+    // string, silently splitting one signature into two.
+    exception_module:  modulePath ? modulePath.split(/[\\/]/).pop().toLowerCase() : null,
     exception_address: address,
     address_low16:     address ? address.replace(/^0x/i, '').slice(-4).toLowerCase() : null,
-    zeal_version:      pick(/Zeal Version:\s*(.+)/i),
+    zeal_version:      pick('Zeal Version'),
     character:         (character && !/^unknown$/i.test(character)) ? character : null,
-    ui_skin:           pick(/UI Skin:\s*(.+)/i),
-    zone_id:           pick(/Zone ID:\s*(\S+)/i),
-    callbacks:         pick(/Callbacks:\s*(.+)/i),
+    ui_skin:           pick('UI Skin'),
+    zone_id:           pick('Zone ID', '(\\S*)'),
+    callbacks:         pick('Callbacks'),
     raw_reason:        text.slice(0, 4000),
   };
 }
