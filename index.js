@@ -9832,6 +9832,16 @@ async function _handleAgentCrashReport(req, res) {
       callbacks:         r.callbacks || null,
       zone_id:           r.zone_id || null,
       ui_skin:           r.ui_skin || null,
+      // The context fields — what the player actually had loaded when it faulted.
+      // This map is a whitelist, so a field the agent starts sending is silently
+      // DROPPED until it is named here; agent 3.5.66 began sending these five.
+      // game_state ff/ffffffff/-1 = no world loaded, and self_ptr/spawn_info 0x0
+      // = the player entity is gone — together, the zoning fingerprint.
+      exception_string:  r.exception_string || null,
+      game_state:        r.game_state || null,
+      self_ptr:          r.self_ptr || null,
+      spawn_info:        r.spawn_info || null,
+      handler_stage:     r.handler_stage || null,
       raw_reason:        r.raw_reason ? String(r.raw_reason).slice(0, 4000) : null,
       system:            (r.system && typeof r.system === 'object') ? r.system : null,
       agent_version:     payload?.agent_version || null,

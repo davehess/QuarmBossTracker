@@ -30,10 +30,12 @@ WMI GPU query.
 
 ## 2. The three real gaps
 
-**a) Consent is an environment variable.** `WOLFPACK_CRASH_REPORTS=1`. That is
-why, across 393 stored reports, there are exactly **two uploaders** — nobody can
-opt in without editing env. When Razek crashed, there was nothing to check,
-because his machine was never going to send anything.
+**a) Consent is a tray checkbox nobody is ever shown.** *"Share crash reports
+with the guild (opt-in)"* in Mimic's tray menu (`main.js:5797`) sets
+`cfg.crashReports`, which reaches the agent as `WOLFPACK_CRASH_REPORTS=1` at
+spawn. It works — it is just off by default and lives in a menu people open to
+restart the agent, so across 393 stored reports there are exactly **two
+uploaders**. Nothing ever asks; you have to go find it.
 
 **b) Nothing detects the crash and offers.** The agent sweeps the folder on its
 own schedule. Mimic already knows when `eqgame.exe` disappears (it resolves the
@@ -86,13 +88,14 @@ should not have to send us anything.
 
 The corpus already answers questions nothing else can: 393 reports back to
 January 2025, and the current signature (`0x6ef @ kernelbase.dll +9f54`) went
-from **1 crash in July to 28 in August** on an unchanged Zeal build. That is a
-real regression that no one would have noticed without the table.
+from **1 crash in July to 29 by 12 August** on an unchanged Zeal build. That is a
+real pattern no one would have noticed without the table.
 
 But with two uploaders it is one person's machine, not the fleet's. A consent
-prompt is the difference between "a signature spiked on Hitya's box" and "a
+prompt is the difference between "a signature spiked on one box" and "a
 signature spiked across nine raiders, all on the same UI skin" — which is an
-actionable bug report to send upstream to Zeal.
+actionable bug report to send upstream to Zeal. §7 is the worked example of
+exactly how far two uploaders let you get, and precisely where it stops.
 
 ## 5. Deliberately out of scope
 
@@ -114,3 +117,63 @@ field swallowed the line break and captured the next line. 55 live rows had
 precisely when the client crashes **while zoning**, so the reports we most wanted
 to attribute were the ones that came back unattributable. Fixed in agent 3.5.65,
 all fields line-anchored, 10 tests; the 55 rows were repaired in place.
+
+Then agent 3.5.66 added the five fields Zeal writes that we were still throwing
+away — `Exception String`, `Game state`, `Self`, `SpawnInfo`, and which handler
+caught it (`20260812060000_crash_reports_diagnostics.sql`, backfilled from
+`raw_reason` so all 393 historical rows gained them too). Those are what §7 is
+built on; without them the whole corpus is addresses.
+
+⚠ **The bot's ingest map is a whitelist** (`index.js`, `/api/agent/crash_report`).
+A field the agent starts sending is silently dropped until it is named there —
+which is why the same change had to land on `main` as well as `beta`.
+
+## 7. What the corpus actually says (measured 2026-08-12)
+
+The first real use of the new fields, and a fair test of how much two uploaders
+can support.
+
+**Zoning is the dominant crash, and always has been.** Classifying all 393
+reports by `game_state`:
+
+| What was loaded | n | % | player entity gone |
+|---|---|---|---|
+| **zoning / no world loaded** (`ff`/`ffffffff`/`-1`) | **212** | **54%** | 212 / 212 |
+| no context (`Multiple Crashes`) | 64 | 16% | — |
+| in game (`5`) | 59 | 15% | 47 |
+| character select (`1`) | 32 | 8% | 0 |
+| other | 26 | 7% | 6 |
+
+Every single zoning crash has `Self: 0x0` and `SpawnInfo: 0x0` — the player
+entity is already gone when the fault lands. That is one coherent failure, not a
+grab-bag: the client tears the world down, something still reaches for the
+player, and it dies on the way out. It shows up in every Zeal version in the
+corpus over 19 months, so it is not a regression in any particular build.
+
+**Razek's crashes are in the data, and they are their own signature.** All 29 of
+his reports (2026-07-31 → 2026-08-12, including the pair he reported) carry one
+fingerprint: `0x6ef` in `kernelbase.dll` at `+9f54`, Zeal 1.4.2 — and the four
+that kept their context all read `Game state: ff`, `Zone ID: ffffffff`,
+`Callbacks: RenderUI : Exit (0x0)`, `Self`/`SpawnInfo` `0x0`. **He is crashing
+while zoning**, which is what he said.
+
+**But it is not "Zeal 1.4.2 is broken", and this is where two uploaders stop.**
+The other uploader also ran Zeal 1.4.2 (c6b903b), 4 crashes June–July, and **zero**
+were `0x6ef` — they were the same `0xc0000005 @ ntdll.dll` the corpus has shown
+for 19 months. Same Zeal build, same graphics stack (`d3d8.dll`,
+`eqgfx_dx8.dll`, `dgvoodoo.conf` MD5s match byte for byte), different signature.
+What differs is the box: Windows **10.0.26200** vs `10.0.19045`. So the honest
+read is *a Win11-build-specific variant of the long-standing zoning crash*, and
+**we cannot go upstream on n=1**. One more uploader on 26200 settles it, which
+is the entire argument for §3.
+
+⚠ **`system` is captured at UPLOAD time, not crash time.** All 364 of the older
+reports share one snapshot, so OS/GPU/file hashes cannot be attributed to a
+historical crash — only to the machine as it stood when the zips were sent. Do
+not build correlations across the archive on those fields.
+
+⚠ **`Multiple Crashes` is the handler re-entering and it destroys the evidence.**
+0 of 64 such rows carry a zone, skin, character or game state — Zeal cannot
+safely re-read game state on the second pass. It is 25 of Razek's 29. That is a
+concrete, cheap upstream ask independent of the crash itself: *carry the context
+captured on the first pass into the re-entrant report.*
