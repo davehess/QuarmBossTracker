@@ -2371,6 +2371,13 @@ one concrete detail. Shipped that night: stable 2.1.2 / agent 3.4.36.**
 - **Unraid Supabase stack: UP 12/12 and verified 2026-08-11** (roles present, so
   the bootstrap really ran). It is now the restore-test target for Phase 1 —
   same Postgres major (17.6) as the hosted project.
+- **⚠ `sync-beta` had failed 8 times in a row (2026-08-12)** — every push tonight,
+  all append-append conflicts in `docs/DECISIONS-2026-08-10.md`; beta sat 8h stale.
+  Fixed three ways: beta re-merged by hand (union, nothing lost), `.gitattributes`
+  now `merge=union` on the append-only ledgers so it cannot recur, and the workflow
+  posts to Discord on failure. **Set the `DISCORD_SYNC_WEBHOOK` repo secret** or the
+  notification silently stays off — the whole point is that a red X in the Actions
+  tab is not a notification.
 - **Self-hosting is now buildable — and the repo could NOT rebuild its own schema
   (2026-08-12).** Measured on an empty Postgres: migrations alone = 182 clean /
   11 failed. Cause: SIX tables production uses are created by no migration

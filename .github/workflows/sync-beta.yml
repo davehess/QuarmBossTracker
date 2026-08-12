@@ -101,3 +101,25 @@ jobs:
 
           git push origin beta
           echo "beta synced to $(git rev-parse --short origin/main)"
+
+      # A red X in the Actions tab is not a notification. This workflow failed
+      # EIGHT times in one evening (2026-08-12) on an append-append conflict in
+      # the decisions ledger, and beta sat 8 hours stale before anyone noticed —
+      # the exact rot the sync exists to prevent. The .gitattributes union rule
+      # stops that particular cause; this step makes the NEXT cause visible.
+      #
+      # Optional by design: with no DISCORD_SYNC_WEBHOOK secret set the step is
+      # skipped, so a fork or a fresh self-host never fails on a missing secret.
+      - name: Tell Discord the sync broke
+        if: failure() && env.HOOK != ''
+        env:
+          HOOK: ${{ secrets.DISCORD_SYNC_WEBHOOK }}
+        run: |
+          curl -sS -X POST -H 'Content-Type: application/json' -d "$(python3 - <<'JSON'
+          import json, os
+          run = f"{os.environ['GITHUB_SERVER_URL']}/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}"
+          print(json.dumps({"content":
+            f"⚠️ **beta sync failed** — beta is no longer tracking main.\n"
+            f"Commit: `{os.environ['GITHUB_SHA'][:8]}`\n{run}"}))
+          JSON
+          )" "$HOOK" || echo "notify failed (non-fatal)"
