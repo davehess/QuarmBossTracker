@@ -2371,6 +2371,18 @@ one concrete detail. Shipped that night: stable 2.1.2 / agent 3.4.36.**
 - **Unraid Supabase stack: UP 12/12 and verified 2026-08-11** (roles present, so
   the bootstrap really ran). It is now the restore-test target for Phase 1 —
   same Postgres major (17.6) as the hosted project.
+- **Crash reports: parser fixed, data repaired, review designed (2026-08-12).**
+  Razek reported crashing twice while zoning with Mimic running. His crash is NOT
+  in our data — crash upload is gated behind `WOLFPACK_CRASH_REPORTS=1`, so 393
+  reports come from exactly TWO uploaders. Found and fixed a parser bug that hit
+  hardest on exactly this case: `\s` matches newlines, so a blank `Character:`
+  (which is what a zoning crash produces) swallowed the line break and captured
+  the next line — 55 rows had `character = 'UI Skin: ...'`, now repaired in place.
+  Agent 3.5.65, 10 tests. ⚠ Real signal worth chasing: signature
+  `0x6ef @ kernelbase.dll +9f54` went **1 crash in July → 28 in August** on an
+  unchanged Zeal 1.4.2 — but with two uploaders that is one machine, not the
+  fleet. Next: `docs/DESIGN-crash-review.md` (consent prompt in Mimic, local
+  review, dumps never uploaded).
 - **Local box is now an ARCHIVE, not a mirror (2026-08-12).**
   `refresh-local-archive.sh` + `lib/archive-merge.sql` merge each nightly dump:
   ARCHIVE tables (the five production sweeps + the append-only event logs) insert

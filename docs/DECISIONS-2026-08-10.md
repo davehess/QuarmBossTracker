@@ -471,3 +471,38 @@ is essentially GitHub Primer dark, so the identity comes from a developer tool
 rather than from EverQuest. That may still be correct — the audience reads parse
 tables and it matches the agent dashboard — but it is a guild-lead call, not a
 refactor to slip into an unrelated change.
+
+## Crash review: consent in Mimic, dumps stay local (Hitya, 2026-08-12)
+
+Prompted by Razek crashing twice while zoning. Three findings, in order of
+usefulness.
+
+**His crash was never captured.** Crash upload is gated on
+`WOLFPACK_CRASH_REPORTS=1`, an environment variable — which is why 393 stored
+reports come from exactly two uploaders. The data layer has been right all along
+(Zeal writes the zip, the agent uploads only parsed fields, the minidump never
+leaves the machine); what is missing is any way for a normal user to say yes.
+
+**A parser bug had been silently eating the most valuable reports.**
+`/Character:\s*(.+)/i` — `\s` matches newlines, so a BLANK `Character:` field
+swallowed the line break and captured the following line; 55 rows carried
+`character = 'UI Skin: UIFiles\NillipussUI_1080p\'`. `Character` is blank exactly
+when the client crashes WHILE ZONING, so the reports we most wanted to attribute
+were the unattributable ones. Fixed in agent 3.5.65 (all fields line-anchored,
+horizontal whitespace only, empty means null), 10 tests, and the 55 rows repaired
+in place. The same fix replaced `path.basename` with a split on both separators,
+because on the Linux/Deck build POSIX basename would return a whole Windows path
+and silently split one crash signature into two.
+
+**There is a real signal in the corpus:** `0x6ef @ kernelbase.dll +9f54` went
+from 1 crash in July to 28 in August on an unchanged Zeal 1.4.2. Worth chasing —
+but with two uploaders it describes one machine, which is the whole argument for
+the consent prompt.
+
+Design recorded in `docs/DESIGN-crash-review.md`: Mimic detects the crash (EQ
+gone + a new zip), offers to review THIS one, and separately offers a standing
+preference that defaults off and is revocable in Settings. Review means telling
+the USER what happened — module, exception, zone, and "this matches N others" —
+not just shipping telemetry upward. Local-only review works with no upload at
+all. Dumps are never uploaded; that is a storage decision as much as a privacy
+one, and it is recorded in the self-host wizard planning.
