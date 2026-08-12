@@ -37,6 +37,18 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'roll-officer-edits',
+    title: '\u{1F3B2} Officers can fix and hide roll records',
+    version: 'Web 1.1.42',
+    date: '2026-08-12',
+    headline: 'Rolls captured off the /random lines are now correctable \u2014 name one that came through blank, or hide a misfire so it stops cluttering the night.',
+    features: [
+      { name: '\u{270E} Name a roll that came through blank', blurb: 'Some announcements do not attach the item \u2014 "Do a 777 if you want a Shield of the Immaculate" landed as an unlabeled roll. Officers can now type the item in, and it sticks even as more people upload their view of the same roll.' },
+      { name: '\u{1F648} Hide a misfire', blurb: 'A stray 0-22 roll no longer has to sit in the night\u2019s record forever. Hidden rolls disappear for members but stay visible to officers, so a wrong hide is easy to undo.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'raid-brain-batch-204-207',
     title: '\u{1F9E0} Four raid-night helpers land on beta',
     version: 'Agent 3.5.59 \u00b7 Bot 3.1.38',

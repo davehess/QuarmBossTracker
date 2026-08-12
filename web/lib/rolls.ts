@@ -44,7 +44,7 @@ export type RollSession = {
 };
 export type LootMatch = { looter: string; at: string };
 
-const SET_GAP_MS = 10 * 60 * 1000;
+export const SET_GAP_MS = 10 * 60 * 1000;
 const STOPWORDS = new Set(['of', 'the', 'a', 'an']);
 
 // Lowercase, drop a leading article, collapse punctuation to single spaces.
@@ -183,4 +183,39 @@ export function nightKey(iso: string, tz: string): string {
   const p = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' })
     .formatToParts(d).reduce((a, { type, value }) => { a[type] = value; return a; }, {} as Record<string, string>);
   return `${p.year}-${p.month}-${p.day}`;
+}
+
+
+// ── Officer overrides ──────────────────────────────────────────────────────
+// Corrections live in their own table because roll_sets rows are per-uploader
+// and agents UPSERT them — an edit written onto a row would be undone by the
+// next observer's upload. Matched to a merged session by the SAME rule
+// mergeRollSets clusters by: identical range, start within SET_GAP_MS. That
+// tolerance matters because the merged start is the MIN across uploaders, so a
+// late upload with an earlier stamp can shift it after the officer acted.
+export type RollOverride = {
+  roll_from: number;
+  roll_to: number;
+  started_at: string;
+  hidden?: boolean | null;
+  item?: string | null;
+  edited_by_name?: string | null;
+};
+
+export function applyRollOverrides(
+  sessions: RollSession[],
+  overrides: RollOverride[],
+): (RollSession & { hidden: boolean; editedBy: string | null })[] {
+  const list = Array.isArray(overrides) ? overrides : [];
+  return (Array.isArray(sessions) ? sessions : []).map(s => {
+    const ov = list.find(o =>
+      Number(o?.roll_from) === s.from &&
+      Number(o?.roll_to) === s.to &&
+      Math.abs(toMs(o?.started_at, NaN) - s.startMs) <= SET_GAP_MS);
+    if (!ov) return { ...s, hidden: false, editedBy: null };
+    // An empty string clears a label back to "unlabeled"; null/undefined means
+    // the officer never touched the label and the agent's capture stands.
+    const item = ov.item == null ? s.item : (String(ov.item).trim() || null);
+    return { ...s, item, hidden: !!ov.hidden, editedBy: ov.edited_by_name ?? null };
+  });
 }
