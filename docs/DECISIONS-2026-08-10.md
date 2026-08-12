@@ -405,3 +405,26 @@ timer and its own mana (claimants now store mana individually; a shared number
 would print the caller's mana against the other cleric's name). The DDR grade
 stays on the first row only — it grades the slot's beat, and stamping it twice
 would double-count one graded cast.
+## The migration pipeline was stalled, and it was hiding a broken feature (2026-08-12)
+
+Officer roll edits failed on first use — `roll_set_overrides` did not exist. The
+cause was not that migration: **the Supabase GitHub integration had applied
+nothing since 2026-08-09**, so every migration committed after that was sitting
+in the repo believed-applied.
+
+The one that mattered: `20260811120000_trigger_feedback_dismissal_directions`
+widens `trigger_timing_feedback`'s direction check to allow `dismissed` and
+`expired`. Unapplied, production still rejected both — so #207's dismissal
+telemetry, which the callout-overlay design depends on to learn which callouts
+raiders do not want, was writing nothing and failing quietly. It shipped on beta
+believing it worked.
+
+Both applied by hand via the MCP per CLAUDE.md's documented fallback; the
+committed files are idempotent so the integration re-applying them is a no-op.
+
+The lesson generalises past this incident: **a migration pipeline that stops is
+indistinguishable from one that works, because the repo still shows the file.**
+Nothing checks that the newest committed migration is actually applied. Until the
+integration is fixed, treat every new migration as needing the manual MCP step —
+and worth building: a check that compares the newest file in
+`supabase/migrations/` against `supabase_migrations.schema_migrations`.
