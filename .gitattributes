@@ -1,0 +1,14 @@
+# Append-only ledgers: let git union both sides instead of conflicting.
+#
+# sync-beta.yml merges main into beta on every main push, and both branches
+# append to the bottom of these files — so every single sync collapsed into an
+# append-append conflict. Measured 2026-08-12: EIGHT consecutive sync-beta
+# failures in one evening, leaving beta 8 hours stale, which is exactly the rot
+# that workflow exists to prevent.
+#
+# `union` keeps BOTH sides' lines rather than picking one, which is precisely
+# right for a ledger nobody rewrites in place. It is deliberately NOT applied to
+# code or to CLAUDE.md: there, a conflict is real information and silently
+# unioning it would be how you lose work.
+docs/DECISIONS-*.md merge=union
+docs/STATUS.md      merge=union
