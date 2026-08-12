@@ -13,9 +13,11 @@ import { redirect } from 'next/navigation';
 import Link from 'next/link';
 import { supabaseServer } from '@/lib/supabase-server';
 import { supabaseAdmin } from '@/lib/supabase';
+import { isOfficer } from '@/lib/officer';
+import RollAdmin from './RollAdmin';
 import { userTz, fmtShort, fmtDateOnly, DEFAULT_TZ } from '@/lib/timezone';
 import {
-  mergeRollSets, attributeLoot, looterDiffersFromWinners, nightKey,
+  mergeRollSets, applyRollOverrides, attributeLoot, looterDiffersFromWinners, nightKey,
   type RollSetRow, type LootedRow, type RollSession,
 } from '@/lib/rolls';
 
@@ -33,7 +35,7 @@ export default async function RollsPage() {
   const sb = supabaseAdmin();
   const sinceIso = new Date(Date.now() - LOOKBACK_DAYS * 24 * 60 * 60 * 1000).toISOString();
 
-  const [rollRes, lootRes, funRes] = await Promise.all([
+  const [rollRes, lootRes, funRes, ovRes, officer] = await Promise.all([
     sb.from('roll_sets')
       .select('roll_from, roll_to, item, qty, zone, rolls, started_at, last_at, uploaded_by_discord_id')
       .eq('guild_id', 'wolfpack')
@@ -52,18 +54,28 @@ export default async function RollsPage() {
       .gte('event_ts', sinceIso)
       .order('event_ts', { ascending: false })
       .limit(2000),
+    sb.from('roll_set_overrides')
+      .select('roll_from, roll_to, started_at, hidden, item, edited_by_name')
+      .eq('guild_id', 'wolfpack')
+      .gte('started_at', sinceIso)
+      .limit(2000),
+    isOfficer(user.id),
   ]);
 
   const rollRows = (rollRes.data ?? []) as RollSetRow[];
   const lootRows = (lootRes.data ?? []) as LootedRow[];
   const funRows  = (funRes.data ?? []) as FunRow[];
 
-  const sessions = mergeRollSets(rollRows);
+  // Officer corrections applied at read: a hidden misfire disappears for
+  // members but stays visible (dimmed) to officers, so a wrong hide is
+  // reversible by whoever spots it rather than only by whoever made it.
+  const allSessions = applyRollOverrides(mergeRollSets(rollRows), ovRes.data ?? []);
+  const sessions = officer ? allSessions : allSessions.filter(s => !s.hidden);
 
   // Bucket everything by raid night (ET calendar day of the roll's start).
   type Night = {
     key: string;
-    sessions: RollSession[];
+    sessions: (RollSession & { hidden: boolean; editedBy: string | null })[];
     perfects: FunRow[];
     award: FunRow | null;
   };
@@ -166,11 +178,21 @@ export default async function RollsPage() {
                     const looters = attributeLoot(s, lootRows);
                     const differing = looters.filter(l => looterDiffersFromWinners(l.looter, s.winners));
                     return (
-                      <tr key={i} className="border-b border-border/50 align-top">
+                      <tr key={i} className={'border-b border-border/50 align-top' + (s.hidden ? ' opacity-40' : '')}>
                         <td className="py-1.5 pr-3 text-text">
                           {s.item
-                            ? <span>{s.item}{s.qty && s.qty > 1 ? <span className="text-dim"> ×{s.qty}</span> : null}</span>
+                            ? <span className={s.hidden ? 'line-through' : undefined}>{s.item}{s.qty && s.qty > 1 ? <span className="text-dim"> ×{s.qty}</span> : null}</span>
                             : <span className="text-dim italic">unlabeled roll</span>}
+                          {officer && (
+                            <RollAdmin
+                              from={s.from}
+                              to={s.to}
+                              startedAt={new Date(s.startMs).toISOString()}
+                              item={s.item}
+                              hidden={s.hidden}
+                            />
+                          )}
+                          {s.hidden && <span className="ml-1 text-[11px] text-dim">(hidden)</span>}
                           {s.zone && <div className="text-[11px] text-dim">{s.zone}</div>}
                         </td>
                         <td className="py-1.5 pr-3 text-dim tabular-nums">{s.from}–{s.to}</td>
