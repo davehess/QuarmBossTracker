@@ -94,6 +94,16 @@ must therefore ask or verify.
   disabled entirely — the wizard should offer that rather than leaving the
   hosted-tier defaults in place.
 
+- **Crash dumps NEVER leave the machine** (2026-08-12). Zeal writes
+  `crashes/<ts>.zip` (minidump + `crash_reason.txt`); the agent uploads only the
+  PARSED fields plus a system snapshot, keeping `zip_name` so a specific dump can
+  be requested by hand for the rare cluster that needs WinDbg. That is a storage
+  decision as much as a privacy one — dumps are megabytes, signatures are bytes.
+  The wizard must ask for crash-review consent explicitly (per-crash and a
+  standing preference, both default OFF), because today it is an environment
+  variable and that is why 393 reports have exactly TWO uploaders.
+  Design: `docs/DESIGN-crash-review.md`.
+
 ### Database
 - **The repo alone cannot build the schema** (2026-08-12): 182/193 migrations
   apply to an empty Postgres. `supabase/bootstrap/` supplies six tables no
