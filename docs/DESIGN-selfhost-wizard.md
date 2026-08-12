@@ -132,6 +132,16 @@ must therefore ask or verify.
 - **`next build` needs ~8 GB**; 4 GB is OOM-killed during type-checking with no
   error in the log.
 
+### Design & UI
+- **One visual language across four surfaces** (2026-08-12). The same twelve hex
+  values and the monospace stack appear in `web/`, the agent dashboard's
+  `WEB_HTML`, and every Mimic overlay — verified by grep, not assumed. A
+  self-hosting guild will want their own colours; the wizard should treat the
+  palette as ONE token set applied to all surfaces rather than something to
+  re-theme per surface, or the product stops feeling like one product.
+  Tokens and the mid-raid constraints that shape them:
+  `.claude/skills/frontend-design/SKILL.md`.
+
 ### Data access
 - **PostgREST caps responses at ~1000 rows and says nothing.** `.limit(N)` only
   lowers that ceiling. Anything that can match more must page

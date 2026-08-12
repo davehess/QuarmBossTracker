@@ -480,3 +480,32 @@ charges for storage, which is exactly why production prunes to 7 days, while an
 on-prem box keeps everything for electricity. So "how long do we keep this" has
 a different answer per deployment, and a future setup wizard for other guilds can
 only be built from decisions recorded at the time. Rule added to CLAUDE.md.
+
+## Anthropic's frontend-design skill, adapted; web-artifacts-builder declined (2026-08-12)
+
+Read both upstream skills. **frontend-design is installed** as a project skill at
+`.claude/skills/frontend-design/SKILL.md` — not copied verbatim but adapted,
+because its own central instruction is "make choices specific to the brief" and
+this brief already has answers. It now carries the platform's real tokens
+(verified by grep across all four surfaces, not invented) plus the constraints
+generic design advice cannot know: overlays are read in peripheral vision mid-
+fight, so motion is a cost rather than a delight, screen centre is reserved,
+density beats whitespace, and colour is semantic. It also carries the hard rules
+that break builds — wpKeep on every `<details>`, byte-stable section HTML, the
+`WEB_HTML` escape hazard, the overlay parity checklist.
+
+**web-artifacts-builder is NOT installed.** Its stack is React + Vite + Parcel +
+shadcn bundled to a single `bundle.html` for claude.ai artifacts. Nothing here
+is that shape: `web/` is Next.js with its own component set, and the Mimic
+overlays are deliberately dependency-free single files with byte-stability and
+escape-layer constraints that a bundler would fight. Installing it would invite
+a rewrite whose risk is entirely on the raid-night surfaces. Its one genuinely
+portable idea — the anti-generic guardrail (no purple gradients, no uniform
+rounded corners, no Inter, no reflexive centering) — is folded into the design
+skill instead.
+
+Recorded surfacing an honest open question rather than acting on it: the palette
+is essentially GitHub Primer dark, so the identity comes from a developer tool
+rather than from EverQuest. That may still be correct — the audience reads parse
+tables and it matches the agent dashboard — but it is a guild-lead call, not a
+refactor to slip into an unrelated change.
