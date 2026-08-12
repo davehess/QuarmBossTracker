@@ -3845,7 +3845,7 @@ function trackChChainLine(line, character) {
     // clears any stale "Druid CH" tag on the rare chance this slot number
     // collides with one the personal-macro path auto-assigned earlier.
     c.slots[num] = { name: slotName, mana: mana != null ? mana : (prev.mana ?? null), lastAtMs: atMs, count: (prev.count || 0) + 1, kind: null,
-                     claimants: _chMergeClaimants(prev, slotName, speaker, atMs) };
+                     claimants: _chMergeClaimants(prev, slotName, speaker, atMs, mana) };
     c.lastCh = { num, name: slotName, mana, atMs };
     _applyChGrade(c, num, ddr);
     // Default next = numeric successor, wrapping at the highest slot seen.
@@ -3886,7 +3886,7 @@ function trackChChainLine(line, character) {
       const prev = c.slots[num] || {};
       const slotName = (c.rosterNames && c.rosterNames[num]) || speaker;
       c.slots[num] = { name: slotName, mana, lastAtMs: atMs, count: (prev.count || 0) + 1, kind: CH_EQUIVALENT_SPELLS.get(spellKey),
-                       claimants: _chMergeClaimants(prev, slotName, speaker, atMs) };
+                       claimants: _chMergeClaimants(prev, slotName, speaker, atMs, mana) };
       c.lastCh = { num, name: slotName, mana, atMs };
       _applyChGrade(c, num, ddr);
       const nums = Object.keys(c.slots).map(Number);
@@ -3991,7 +3991,12 @@ function _chSlotCastingAs(who, atMs) {
 // the §5 slot-stealing bug (DESIGN-extended-target-v2.md) — honest display
 // now; the officer-pushed authoritative rotation remains the structural fix.
 const CH_CLAIM_WINDOW_MS = 120_000;   // a claimant silent this long has moved on
-function _chMergeClaimants(prev, resolvedName, speaker, atMs) {
+// `mana` is THIS call's mana and belongs to whoever is calling now — each
+// claimant keeps their own, because the overlay renders one row per claimant
+// and a shared number would put the wrong mana against the wrong cleric
+// (Hitya, live test 2026-08-12: "they should be on separate lines to see
+// their casting").
+function _chMergeClaimants(prev, resolvedName, speaker, atMs, mana) {
   const out = [];
   const seen = new Set();
   const push = (nm) => {
@@ -3999,11 +4004,11 @@ function _chMergeClaimants(prev, resolvedName, speaker, atMs) {
     if (!/^[A-Za-z]+$/.test(name)) return;          // real character names only
     const k = name.toLowerCase();
     if (seen.has(k)) {
-      for (const c of out) if (c.name.toLowerCase() === k) c.lastAtMs = atMs;
+      for (const c of out) if (c.name.toLowerCase() === k) { c.lastAtMs = atMs; if (mana != null) c.mana = mana; }
       return;
     }
     seen.add(k);
-    out.push({ name, lastAtMs: atMs });
+    out.push({ name, lastAtMs: atMs, mana: (mana != null ? mana : null) });
   };
   // Previous claimants seed the list so the FIRST holder keeps first position —
   // their stamps are only refreshed if they are one of this call's names.
@@ -4015,7 +4020,7 @@ function _chMergeClaimants(prev, resolvedName, speaker, atMs) {
     const k = name.toLowerCase();
     if (seen.has(k)) continue;
     seen.add(k);
-    out.push({ name, lastAtMs: (c && c.lastAtMs) || 0 });
+    out.push({ name, lastAtMs: (c && c.lastAtMs) || 0, mana: (c && c.mana != null ? c.mana : null) });
   }
   push(resolvedName);
   push(speaker);

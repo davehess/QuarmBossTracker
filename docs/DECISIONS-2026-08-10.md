@@ -393,3 +393,15 @@ The general rule this bought: **automation that reports failure only where nobod
 looks is indistinguishable from automation that does not run.** Applies equally
 to the mirror's autodeploy poller and the nightly backup — both already log, and
 both need somewhere the log is actually read.
+
+## CH conflict rows: one line per claimant (Hitya, live test 2026-08-12)
+
+An impromptu test of the 3.5.61 ORDER CONFLICT work showed the merged row was
+half a fix: `002 | Mcdorf / Stupidric… | 54% | NEXT` truncated both names and,
+worse, drove ONE cast bar for TWO clerics — the display told you the slot was
+contested but not what either of them was actually doing, which is the thing you
+need mid-chain. Agent 3.5.62 renders one row per claimant, each with its own cast
+timer and its own mana (claimants now store mana individually; a shared number
+would print the caller's mana against the other cleric's name). The DDR grade
+stays on the first row only — it grades the slot's beat, and stamping it twice
+would double-count one graded cast.

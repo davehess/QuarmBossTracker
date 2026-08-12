@@ -129,7 +129,15 @@ From the same sequence, where three consecutive CH landings decided the fight:
   coming. An interrupted CH should mark the slot immediately — the next heal was
   6.2s out, with 7.2s behind it, against a tank at 45%.
 - **Slot ownership gets overwritten by whoever calls the number.** Mcdorf held
-  001; Pyxil called a CH as 001 and **replaced Mcdorf in the overlay**. Same root
+  001; Pyxil called a CH as 001 and **replaced Mcdorf in the overlay**.
+  *SHIPPED agent 3.5.61, refined 3.5.62.* Both claimants are kept in
+  first-claimed order under an ORDER CONFLICT banner — and after a live test
+  (Hitya, 2026-08-12) they render as **one row each** rather than a merged
+  `Mcdorf / Stupidric…`, because the joined row truncated the names AND
+  collapsed two different casts into one bar: you could see the slot was
+  contested but not what either cleric was doing. Each row now runs its own cast
+  timer and carries its own mana. Still display-only; the officer-pushed
+  authoritative rotation remains the structural fix. Same root
   as §3 of `FINDINGS-2026-08-10-trigger-overlay.md` (the roster parser trusting
   the shout over the roster) — a call should update the SLOT's timing, not
   reassign who owns it, unless the roster says so.

@@ -68,6 +68,33 @@ describe('_chMergeClaimants', () => {
     expect(out.map(c => c.name)).toEqual(['Mcdorf']);
   });
 
+  // Per-claimant mana (Hitya, live test 2026-08-12): the overlay now renders one
+  // ROW per claimant so each cleric's own cast bar is visible, which means each
+  // claimant has to carry its own mana — a single shared number would print the
+  // caller's mana against the other cleric's name.
+  it('each claimant keeps their own mana, not the last caller\'s', () => {
+    const first = _chMergeClaimants(null, 'Mcdorf', 'Mcdorf', T, 54);
+    expect(first).toEqual([{ name: 'Mcdorf', lastAtMs: T, mana: 54 }]);
+
+    const both = _chMergeClaimants({ name: 'Mcdorf', lastAtMs: T, claimants: first },
+                                   'Stupidrichard', 'Stupidrichard', T + 5000, 95);
+    expect(both.map(c => c.name)).toEqual(['Mcdorf', 'Stupidrichard']);
+    expect(both.map(c => c.mana)).toEqual([54, 95]);   // Mcdorf's 54 survives
+  });
+
+  it('a repeat call updates that claimant\'s mana only', () => {
+    const seed = _chMergeClaimants(null, 'Mcdorf', 'Mcdorf', T, 54);
+    const two  = _chMergeClaimants({ claimants: seed }, 'Fargan', 'Fargan', T + 1000, 92);
+    const back = _chMergeClaimants({ claimants: two }, 'Mcdorf', 'Mcdorf', T + 2000, 31);
+    const byName = Object.fromEntries(back.map(c => [c.name, c.mana]));
+    expect(byName).toEqual({ Mcdorf: 31, Fargan: 92 });
+  });
+
+  it('an older agent sending no mana leaves it null rather than guessing', () => {
+    const out = _chMergeClaimants(null, 'Mcdorf', 'Mcdorf', T);
+    expect(out[0].mana).toBeNull();
+  });
+
   it('one clean caller produces one claimant — no conflict from normal play', () => {
     const out = _chMergeClaimants({}, 'Aimey', 'Aimey', T);
     expect(out).toHaveLength(1);

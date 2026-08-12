@@ -1102,14 +1102,16 @@
       // up next" (Uilnayar 2026-07-06).
       var goActive  = !isCasting && !isInterrupted && c.last_go && c.last_go.num === n;
       var isNext    = !isCasting && !isInterrupted && !goActive && c.next_num === n;
-      // Two live claimants on this number → show BOTH, in first-claimed order,
-      // rather than the last caller silently owning the row (Mcdorf stays
-      // first when Pyxil mis-calls 001).
-      var claimNames = (s.claimants && s.claimants.length > 1)
-        ? s.claimants.map(function (cl) { return cl.name; }) : null;
-      if (claimNames) anyConflict = true;
+      // Two live claimants on this number → ONE ROW EACH, in first-claimed
+      // order, rather than the last caller silently owning the row (Mcdorf
+      // stays first when Pyxil mis-calls 001). Separate rows because a merged
+      // "Mcdorf / Stupidric…" truncates AND collapses two different casts into
+      // one bar — you could see that the slot was contested but not what either
+      // cleric was actually doing (Hitya, live test 2026-08-12).
+      var claimRows = (s.claimants && s.claimants.length > 1) ? s.claimants : null;
+      if (claimRows) anyConflict = true;
       var cls = 'row' + (isCasting ? ' casting' : '') + (isInterrupted ? ' interrupted' : '')
-              + (goActive ? ' go' : '') + (isNext ? ' next' : '') + (claimNames ? ' conflict' : '');
+              + (goActive ? ' go' : '') + (isNext ? ' next' : '');
       var stat, bar = '';
       if (isInterrupted) {
         // Frozen at the fraction of the cast that actually completed.
@@ -1130,14 +1132,49 @@
       } else {
         stat = s.lastAtMs ? fmtAgo((now - s.lastAtMs) / 1000) : '—';
       }
-      html += '<div class="' + cls + '">'
-        +   '<span class="num">' + pad3(n) + '</span>'
-        +   '<span class="nm">' + esc(claimNames ? claimNames.join(' / ') : (s.name || '?')) + (s.kind ? ' <span class="slot-kind">' + esc(s.kind) + '</span>' : '') + '</span>'
-        +   '<span class="mana ' + manaCls(s.mana) + '">' + (s.mana != null ? s.mana + '%' : '·') + '</span>'
-        +   '<span class="stat">' + stat + '</span>'
-        +   bar
-        +   ddrSticker(s, now, ddrShowMs)
-        + '</div>';
+      if (!claimRows) {
+        html += '<div class="' + cls + '">'
+          +   '<span class="num">' + pad3(n) + '</span>'
+          +   '<span class="nm">' + esc(s.name || '?') + (s.kind ? ' <span class="slot-kind">' + esc(s.kind) + '</span>' : '') + '</span>'
+          +   '<span class="mana ' + manaCls(s.mana) + '">' + (s.mana != null ? s.mana + '%' : '·') + '</span>'
+          +   '<span class="stat">' + stat + '</span>'
+          +   bar
+          +   ddrSticker(s, now, ddrShowMs)
+          + '</div>';
+      } else {
+        // Each contested claimant gets a real row driven by THEIR OWN last call,
+        // so both cast bars run independently — which is the whole point: seeing
+        // two clerics burning the same beat is what tells you the rotation is
+        // doubled up rather than merely mislabelled.
+        for (var ci = 0; ci < claimRows.length; ci++) {
+          var cl = claimRows[ci];
+          var clElapsed = cl.lastAtMs ? (now - cl.lastAtMs) : Number.POSITIVE_INFINITY;
+          var clCasting = clElapsed < castSecs * 1000;
+          var clStat, clBar = '';
+          if (clCasting) {
+            var clEl = clElapsed / 1000;
+            clStat = Math.max(0, castSecs - clEl).toFixed(1) + 's';
+            clBar = '<div class="bar"><div class="fill" style="width:' + Math.min(100, (clEl / castSecs) * 100).toFixed(1) + '%"></div></div>';
+          } else if (goActive) { clStat = '<span class="gobadge">GO!</span>'; }
+          else if (isNext)     { clStat = 'NEXT'; }
+          else                 { clStat = cl.lastAtMs ? fmtAgo((now - cl.lastAtMs) / 1000) : '—'; }
+          // Mana is per claimant now; older agents send none, so fall back to
+          // the slot's rather than showing a confident wrong number.
+          var clMana = (cl.mana != null ? cl.mana : (ci === 0 ? s.mana : null));
+          html += '<div class="' + ('row conflict' + (clCasting ? ' casting' : '')
+                                    + (!clCasting && goActive ? ' go' : '')
+                                    + (!clCasting && isNext ? ' next' : '')) + '">'
+            +   '<span class="num">' + pad3(n) + '</span>'
+            +   '<span class="nm">' + esc(cl.name || '?') + '</span>'
+            +   '<span class="mana ' + manaCls(clMana) + '">' + (clMana != null ? clMana + '%' : '&middot;') + '</span>'
+            +   '<span class="stat">' + clStat + '</span>'
+            +   clBar
+            // DDR grade belongs to the SLOT, so it rides the first row only —
+            // stamping it on both would double-count one graded beat.
+            +   (ci === 0 ? ddrSticker(s, now, ddrShowMs) : '')
+            + '</div>';
+        }
+      }
     }
     document.getElementById('conflictbanner').style.display = anyConflict ? 'block' : 'none';
     if (rowsEl.__wpHtml !== html) {   // byte-stability guard (2026-07-07)
