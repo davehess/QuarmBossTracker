@@ -313,3 +313,36 @@ Related fix from the same session: **Vercel scopes env vars per environment**, a
 `b.wolfpack.quest` is a Preview deployment — a Production-only
 `SUPABASE_SERVICE_ROLE_KEY` meant beta rendered fine but sign-in died server-side.
 Rule recorded in CLAUDE.md.
+
+## Self-hosting: the repo could not rebuild its own schema (measured 2026-08-12)
+
+Goal from Hitya: let another guild run this without the hosting bill, and drop
+our own monthly fees. Tonight's Unraid work had already proven the two hard
+layers (self-hosted Supabase; the web app outside Vercel) and the bot was already
+containerized — so the open question was the database, which
+`DESIGN-external-tenancy.md` had flagged as untested.
+
+Tested it properly against an empty Postgres 16. **182 of 193 migrations apply;
+11 fail.** The cause is not migration bugs: **six tables production depends on are
+created by no migration at all** — `fun_events`, `pvp_kills`, `pvp_boss_kills`,
+`pvp_assists`, `mimic_sessions`, `trigger_timing_feedback` — applied out-of-band
+without committing the file, exactly the drift CLAUDE.md's Migrations rule warns
+about. This is a disaster-recovery finding as much as a self-hosting one: the repo
+cannot currently rebuild OUR database either.
+
+Fix shipped as `supabase/bootstrap/` (prereq roles/extensions/publication/auth
+helpers + the six tables, all idempotent) and `scripts/selfhost-bootstrap-db.sh`
+→ **190 clean / 3 partial / 0 failed, 124 tables, 79 functions**. The three
+partials are hardening and one-time data repair on objects a new install lacks;
+the script re-runs failures non-strict so `pin_function_search_path` still lands
+its other 23 statements instead of aborting on one missing function.
+
+Deliberately kept OUT of `supabase/migrations/`: landing them there needs
+timestamps older than the migrations referencing them, which rewrites applied
+history on a project where the tables already exist. **Open call for Hitya:**
+commit them as real migrations / squash to a baseline, or keep bootstrap as the
+fresh-install path. The six tables are created EMPTY — per-guild data, never ours.
+
+Still open and unchanged: the ~97 MB `eqemu_*` catalog has no self-serve import,
+and the ~30 hand-copied Discord anchor IDs remain the likeliest place a new guild
+gives up.

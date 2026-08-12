@@ -2371,6 +2371,16 @@ one concrete detail. Shipped that night: stable 2.1.2 / agent 3.4.36.**
 - **Unraid Supabase stack: UP 12/12 and verified 2026-08-11** (roles present, so
   the bootstrap really ran). It is now the restore-test target for Phase 1 —
   same Postgres major (17.6) as the hosted project.
+- **Self-hosting is now buildable — and the repo could NOT rebuild its own schema
+  (2026-08-12).** Measured on an empty Postgres: migrations alone = 182 clean /
+  11 failed. Cause: SIX tables production uses are created by no migration
+  (`fun_events`, `pvp_kills`, `pvp_boss_kills`, `pvp_assists`, `mimic_sessions`,
+  `trigger_timing_feedback`) — out-of-band applies never committed as files.
+  `supabase/bootstrap/` + `scripts/selfhost-bootstrap-db.sh` → 190 clean / 3
+  partial / 0 failed, 124 tables. Guide: `docs/SELFHOSTING.md`.
+  ⚠ **Decision needed from Hitya:** do those six get committed as real migrations
+  (or squashed into a baseline), or does `supabase/bootstrap/` stay the fresh-install
+  path? Today production and the repo still disagree.
 - **Local mirror automation shipped (2026-08-11)** — `scripts/coolify-autodeploy.sh`
   (+ systemd timer) polls `main` every 5 min and triggers Coolify; polling rather
   than a webhook because Coolify is LAN-only and exposing it would be worse than
