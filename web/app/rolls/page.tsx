@@ -35,19 +35,40 @@ export default async function RollsPage() {
   const sb = supabaseAdmin();
   const sinceIso = new Date(Date.now() - LOOKBACK_DAYS * 24 * 60 * 60 * 1000).toISOString();
 
-  const [rollRes, lootRes, funRes, ovRes, officer] = await Promise.all([
-    sb.from('roll_sets')
+  // PostgREST caps every response at the project's max-rows (1000 by default),
+  // so a bare .limit(4000) silently returned the newest 1000 and dropped the
+  // rest — with 5,622 loot rows in the 60-day window that quietly removed the
+  // OLDEST loot, which is exactly what older nights need to attribute a winner
+  // (Hitya spotted the count, 2026-08-12). Paging by range gets all of them
+  // regardless of how the project is configured.
+  async function fetchAllPages<T>(
+    build: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: unknown }>,
+    page = 1000,
+    hardCap = 50000,
+  ): Promise<T[]> {
+    const out: T[] = [];
+    for (let from = 0; from < hardCap; from += page) {
+      const { data, error } = await build(from, from + page - 1);
+      if (error || !data || data.length === 0) break;
+      out.push(...data);
+      if (data.length < page) break;      // short page = last page
+    }
+    return out;
+  }
+
+  const [rollRows, lootRows, funRes, ovRes, officer] = await Promise.all([
+    fetchAllPages<RollSetRow>((from, to) => sb.from('roll_sets')
       .select('roll_from, roll_to, item, qty, zone, rolls, started_at, last_at, uploaded_by_discord_id')
       .eq('guild_id', 'wolfpack')
       .gte('started_at', sinceIso)
       .order('started_at', { ascending: false })
-      .limit(2000),
-    sb.from('looted_items')
+      .range(from, to)),
+    fetchAllPages<LootedRow>((from, to) => sb.from('looted_items')
       .select('looter_character, item_name, zone, looted_at')
       .eq('guild_id', 'wolfpack')
       .gte('looted_at', sinceIso)
       .order('looted_at', { ascending: false })
-      .limit(4000),
+      .range(from, to)),
     sb.from('fun_events')
       .select('event_type, caster, event_ts, raw_text')
       .in('event_type', ['hot_dice', 'hot_dice_night'])
@@ -62,8 +83,6 @@ export default async function RollsPage() {
     isOfficer(user.id),
   ]);
 
-  const rollRows = (rollRes.data ?? []) as RollSetRow[];
-  const lootRows = (lootRes.data ?? []) as LootedRow[];
   const funRows  = (funRes.data ?? []) as FunRow[];
 
   // Officer corrections applied at read: a hidden misfire disappears for
