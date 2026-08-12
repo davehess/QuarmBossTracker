@@ -273,3 +273,103 @@ timers around it and read as one of them. It now runs the other way in its own
 color: one glance tells a cast from a countdown. GO stays green (green = go);
 an interrupted cast stays red-and-frozen, inheriting the right anchor so it
 reads as the same bar, stopped.
+## Unraid Supabase: backup first, then dev sandbox (Hitya, 2026-08-11)
+
+Not the live replica. Ordering matters twice over: the nightly `pg_dump` needs
+only the SESSION pooler (IPv4 — the replication path's IPv6/IPv4-add-on caveat
+vanishes), and the dump becomes the sandbox's seed data. Phase 1 is committed
+copy-paste ready (`scripts/unraid-backup-supabase.sh` + runbook §Phase 1;
+execution is a needs-local-session item). Phase 2 (supabase CLI sandbox) waits
+on Phase 1 proving out — and its first `db reset` doubles as the first-ever
+test of whether the 193 committed migrations rebuild the live schema.
+
+## Unraid Phase 1 PROVEN, and four bugs it flushed out (2026-08-11)
+
+Backup + restore both exercised on real data the same night: 106 MB dump
+(1527 TOC entries, server 17.6) restored into the local stack, `encounters` =
+1575. The evening's real value was the failure list, all now in
+`RUNBOOK-unraid-supabase-replica.md`: (1) relative compose binds put PGDATA on
+the FAT32 boot flash — chown EPERM crash loop; (2) a UI-created Compose Manager
+project has NO `volumes/` tree, so Docker auto-created empty directories and
+Postgres came up "healthy" having run none of its bootstrap — the role list, not
+the healthcheck, is the acceptance test; (3) the backup script pinned a
+`postgres:15` client against a 17.6 server, which pg_dump refuses; (4)
+`pg_dump -f /dev/stdout` fsyncs on completion and dies AFTER writing a complete
+dump. Also: Studio's project ref follows `POOLER_TENANT_ID` (`/project/wolfpack`,
+not `/project/default`), and `docker cp` of `latest.dump` copies the symlink.
+
+## Local wolfpack.quest: Coolify in a VM, pointed at the LOCAL Supabase (Hitya, 2026-08-11)
+
+Two calls. **Coolify runs in an Unraid VM**, not on bare Unraid — its installer
+wants systemd and the Docker daemon, and its proxy wants ports 80/443, which
+collides with Unraid's own web UI. **The site points at the local Supabase
+stack**, so officer pages can be clicked without touching production; the cost is
+that the data is a snapshot refreshed by restoring a nightly dump.
+
+Local Discord sign-in turns out to be viable with no second Discord app and no
+second Supabase project: the callback upserts `wolfpack_members` with
+`onConflict: 'discord_id'`, so a local GoTrue user with a fresh `auth.users` UUID
+still lands on the restored member row, and the role gate reads live Discord plus
+the restored `wolfpack_roles`. What it needs is a redirect URI added to the
+EXISTING Discord app. ⚠ Gated on having the Discord client secret — Discord shows
+it once, and resetting it breaks production sign-in until the cloud provider
+config is updated. Full steps: `docs/RUNBOOK-local-web-coolify.md`.
+
+## Local mirror automation: pull, don't expose (2026-08-11)
+
+Asked to turn the evening's manual steps into automated deployment. Three pieces
+shipped, each traceable to something that actually broke.
+
+**The mirror follows `main` by polling, not by webhook.** Coolify's auto-deploy
+needs GitHub to reach Coolify, and ours is LAN-only; the fixes for that (publish
+port 8000, or a Tailscale Funnel) put a container-deploying dashboard on the open
+internet. Polling is outbound-only and costs ≤5 minutes of lag. Justification for
+automating a sandbox at all: it is the ONLY place the site runs outside Vercel,
+and it just caught a bug Vercel had been masking for months (auth redirects built
+from `new URL(req.url).origin`, which is localhost in a container — web 1.1.41).
+A mirror that needs a click drifts and catches nothing.
+
+**The sandbox data refreshes nightly**, which doubles as a nightly proof that the
+backup restores — the verification most backup setups never perform.
+
+**Deliberately not automated:** applying migrations to the local stack on a
+schedule (DDL on a timer is fine 50 times and catastrophic once), and anything
+touching `main` during a raid window.
+
+Related fix from the same session: **Vercel scopes env vars per environment**, and
+`b.wolfpack.quest` is a Preview deployment — a Production-only
+`SUPABASE_SERVICE_ROLE_KEY` meant beta rendered fine but sign-in died server-side.
+Rule recorded in CLAUDE.md.
+
+## Self-hosting: the repo could not rebuild its own schema (measured 2026-08-12)
+
+Goal from Hitya: let another guild run this without the hosting bill, and drop
+our own monthly fees. Tonight's Unraid work had already proven the two hard
+layers (self-hosted Supabase; the web app outside Vercel) and the bot was already
+containerized — so the open question was the database, which
+`DESIGN-external-tenancy.md` had flagged as untested.
+
+Tested it properly against an empty Postgres 16. **182 of 193 migrations apply;
+11 fail.** The cause is not migration bugs: **six tables production depends on are
+created by no migration at all** — `fun_events`, `pvp_kills`, `pvp_boss_kills`,
+`pvp_assists`, `mimic_sessions`, `trigger_timing_feedback` — applied out-of-band
+without committing the file, exactly the drift CLAUDE.md's Migrations rule warns
+about. This is a disaster-recovery finding as much as a self-hosting one: the repo
+cannot currently rebuild OUR database either.
+
+Fix shipped as `supabase/bootstrap/` (prereq roles/extensions/publication/auth
+helpers + the six tables, all idempotent) and `scripts/selfhost-bootstrap-db.sh`
+→ **190 clean / 3 partial / 0 failed, 124 tables, 79 functions**. The three
+partials are hardening and one-time data repair on objects a new install lacks;
+the script re-runs failures non-strict so `pin_function_search_path` still lands
+its other 23 statements instead of aborting on one missing function.
+
+Deliberately kept OUT of `supabase/migrations/`: landing them there needs
+timestamps older than the migrations referencing them, which rewrites applied
+history on a project where the tables already exist. **Open call for Hitya:**
+commit them as real migrations / squash to a baseline, or keep bootstrap as the
+fresh-install path. The six tables are created EMPTY — per-guild data, never ours.
+
+Still open and unchanged: the ~97 MB `eqemu_*` catalog has no self-serve import,
+and the ~30 hand-copied Discord anchor IDs remain the likeliest place a new guild
+gives up.

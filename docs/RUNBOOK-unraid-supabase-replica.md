@@ -1,12 +1,62 @@
 # Runbook — replicating the Supabase project to an Unraid box
 
-**Status: PREPARED, not executed** (Hitya asked 2026-08-11; goal not yet chosen —
-see "pick the goal first"). Facts below were verified live against
+**Status: DECIDED 2026-08-11 (Hitya): backup first, then dev sandbox.** The
+live-mirror replication path below stays documented but is NOT the plan — which
+dissolves its worst constraint: **a plain `pg_dump` rides the SESSION pooler,
+which has IPv4, so the IPv6/IPv4-add-on caveat does not apply to Phase 1 at
+all.** The nightly dump doubles as the sandbox's seed.
+
+**Phase 1 — backup (local session executes):** `scripts/unraid-backup-supabase.sh`
+is committed and copy-paste ready. ⚠ **User Scripts is a PLUGIN and was not
+installed on this box** (2026-08-11) — it is not part of stock Unraid. It is not
+needed to run the backup: save the script to `/boot/config/wolfpack-backup.sh`
+(flash survives reboots) and run `bash /boot/config/wolfpack-backup.sh` — invoking
+it via `bash` sidesteps the executable bit, which FAT32 cannot store anyway.
+Install User Scripts from Community Applications afterwards purely for the
+`0 5 * * *` schedule; the script itself does not change. Needs two local
+steps: the session-pooler URI from Dashboard → Connect into
+`/boot/config/wolfpack-db-url` (chmod 600), and ONE manual restore test —
+a backup that has never been restored is a hope, not a backup. The script
+refuses to rotate on an implausibly small dump so a silent auth failure can
+never age out the last good copy.
+
+**Phase 2 — dev sandbox (after Phase 1 proves out):** `supabase init` at the
+repo root (config.toml does NOT exist yet — checked 2026-08-11), then
+`supabase start` and seed from the nightly:
+`pg_restore -d "$(supabase status -o json | jq -r .DB_URL)" --clean --no-owner --no-acl --schema=public latest.dump`.
+Restore `--schema=public` only — GoTrue owns auth locally. Worthwhile side
+effect: the first `supabase db reset` against the 193 committed migrations is
+also the first-ever test of whether the migrations actually rebuild the live
+schema; any drift it exposes is a finding to record, and the dump is the
+fallback schema source if they don't. Facts below were verified live against
 `zhtoekwakucbckvatfky` on 2026-08-11: `wal_level = logical` (replication-ready
 out of the box), **0** replication slots in use, database size **1171 MB**.
 Related but different: `DESIGN-external-tenancy.md` §4 walks OTHER guilds
 self-hosting the whole platform; this runbook is about mirroring OUR project's
 data to hardware we own.
+
+## ✅ PHASE 1 PROVEN END-TO-END (2026-08-11)
+
+Dump: 106,294,330 bytes, custom format, 1527 TOC entries, from server 17.6.
+Restored into the local stack and verified: **`select count(*) from encounters`
+→ 1575**. Backup path and restore path both exercised on real data, same night.
+
+Three restore errors are EXPECTED and harmless — do not chase them:
+- `operator class "extensions.gin_trgm_ops" does not exist` — `pg_trgm` is not
+  installed locally, so one trigram index on `who_observations` is skipped.
+  `create extension if not exists pg_trgm schema extensions` fixes it.
+- FK `wolfpack_members_user_id_fkey` → `auth.users` — we restore `--schema=public`
+  only, so local `auth.users` is empty and the constraint cannot attach. Correct
+  by design: the local stack's GoTrue owns `auth`.
+- `publication "wolfpack_replica" does not exist` — the HOSTED project carries
+  that publication (the replication SQL in this runbook was run at some point).
+  Verified 2026-08-11: **0 replication slots**, so it retains no WAL and costs
+  nothing. A publication is inert without a slot; a slot without a consumer is
+  what fills a disk. Drop it if tidiness is wanted.
+
+⚠ Remaining: the User Scripts copy must be re-pasted from
+`scripts/unraid-backup-supabase.sh` (the first-run copy still carries the
+`-f /dev/stdout` bug) BEFORE enabling the `0 5 * * *` schedule.
 
 ## ⚠ The three Community Applications tiles are not the stack
 
@@ -86,3 +136,164 @@ If the goal is "don't lose the guild's data," start with the dump — it can run
 tonight. The live mirror is worth it primarily for the local-session workflow
 (peq joins + wolfpack data on one box), and it can be added later on top of the
 same stack.
+
+## Troubleshooting the Unraid stack (confirmed live, 2026-08-11)
+
+**Symptom:** 2/11 containers up (imgproxy + Studio only); `supabase-db` and
+`supavisor` unhealthy; everything else stopped. **This is ONE failure, not
+nine** — every other service has a `depends_on` health gate on the database, so
+a crash-looping db holds the whole stack down. Diagnose the db and ignore the
+rest; they cascade up once it is healthy.
+
+**Confirmed cause (refined after reading the actual compose file):**
+`docker logs supabase-db` showed `chown: /var/lib/postgresql/data: Operation
+not permitted` forever. The compose used RELATIVE binds (`./volumes/db/data`),
+and Compose Manager projects live under
+`/boot/config/plugins/compose.manager/projects/…` — **the Unraid USB flash
+drive, formatted FAT32, which has no file-ownership concept at all.** So
+Postgres was trying to initialize its data directory on the boot thumb drive:
+chown = EPERM, crash, restart. (Even had it worked, a database on the flash
+drive would be slow and would wear the drive out.) The first-guess shfs
+diagnosis was the right family, wrong filesystem — the rule covers both:
+**databases go on absolute pool paths, never `/boot`, never `/mnt/user`.**
+
+**Fix (applied 2026-08-11, files handed to Hitya):** rewrote every
+`./volumes/…` bind to `/mnt/cache/appdata/supabase/volumes/…` (19 rewrites;
+compose header now documents the rule so a future edit can't regress it), and
+generated a complete `.env` — every secret filled, ANON/SERVICE keys signed
+against the new `JWT_SECRET` (the env.example demo keys are signed with the
+demo secret; changing one without the others breaks all API auth), LAN URLs
+(`http://192.168.1.5:8000`), tenant id `wolfpack`. One-time setup on the box:
+```
+mkdir -p /mnt/cache/appdata/supabase
+cp -r /boot/config/plugins/compose.manager/projects/supabase/volumes /mnt/cache/appdata/supabase/
+rm -rf /mnt/cache/appdata/supabase/volumes/db/data
+```
+(the config files — envoy yaml, init SQL, pooler.exs — must move too, since
+every bind is now absolute; the data dir leftovers are wiped because nothing
+ever initialized). If the pool is not named `cache` (`ls /mnt/`),
+search-replace `/mnt/cache`. Then `db` up alone until
+`database system is ready to accept connections` + green health, then the rest.
+⚠ The generated env/compose contain real secrets — they live on the box, never
+in this repo.
+
+**VERIFIED FIXED 2026-08-11:** with the absolute pool paths, `supabase-db`
+came up **healthy** on first boot from `/mnt/cache/appdata/supabase/`. One
+first-boot wrinkle to expect: `initdb` takes longer than dependent containers'
+wait window, so the first `compose up` strands a few services in "Created"
+("dependency failed to start") while Postgres is still initializing. The fix is
+just `docker compose up -d` a second time once db is healthy — it starts only
+the stragglers. Verify end-state with Studio at `http://<lan-ip>:8000` (proves
+gateway→studio→meta→db and the signed JWT keys) and a session-mode psql to
+port 5432 (proves the pooler).
+
+**⚠ `docker compose` from the project directory does NOT work.** `cd
+/boot/config/plugins/compose.manager/projects/supabase && docker compose up -d`
+fails with `stat …/docker-compose.yml: no such file or directory` even while the
+stack is running — the plugin does not necessarily store the file under that
+plain name, and `/boot` is vfat (case-insensitive) so the `cd` succeeds without
+proving the folder name either. Authoritative lookup: **`docker compose ls`**
+prints each project's CONFIG FILES path; then `docker compose -f <that path>
+up -d` from anywhere. Or just use the UI's **Compose Up** button.
+
+**Starting stragglers without compose at all:** containers stuck in "Created"
+already exist with the right config — `docker start supabase-pooler
+supabase-storage supabase-envoy supabase-edge-functions` starts them from any
+directory. `depends_on` is only evaluated at compose-up time, so this is safe
+once the database is healthy. (`docker logs -f <name>` is likewise
+directory-independent; only `docker compose …` subcommands care where you are.)
+
+## ⚠ A Compose Manager UI project has NO `volumes/` tree — fetch it (2026-08-11)
+
+The second, bigger failure after the FAT32 one, and the correction matters more
+than the fix. A project created by pasting a compose file into the Compose
+Manager UI contains **only `compose.yaml` and `.env`**. The supporting config
+files — envoy config, the db init SQL, `pooler.exs`, the edge-function main —
+ship with the **supabase/docker repo** and were never on the box. So a
+`cp -r <project>/volumes …` copies nothing, and **Docker then auto-creates every
+missing bind source as an empty DIRECTORY.**
+
+Why that is worse than it looks: those empty dirs mount *successfully* wherever
+the destination does not already exist in the image — which is every db init
+script. Postgres came up **`healthy`** (pg_isready passes) having run **none**
+of the bootstrap: no `supabase_auth_admin`, no `authenticator`, no `_realtime`.
+Auth/rest/realtime then crash-loop forever against it (`docker compose ls`
+showed `restarting(5)`). Only envoy failed loudly, because `/docker-entrypoint.sh`
+DOES pre-exist as a file in its image, and directory-onto-file is a hard error.
+**A green db healthcheck is not evidence the bootstrap ran** — check
+`ls -la volumes/db/`: entries must be `-` with real sizes, never `d` at 40 bytes.
+
+Fetch the real tree (verify each landed as a FILE afterwards):
+```
+rm -rf /mnt/cache/appdata/supabase/volumes
+cd /mnt/cache/appdata/supabase
+mkdir -p volumes/api/envoy volumes/db volumes/pooler volumes/functions/main
+BASE=https://raw.githubusercontent.com/supabase/supabase/master/docker/volumes
+for f in api/envoy/envoy.yaml api/envoy/cds.yaml api/envoy/lds.template.yaml \
+         api/envoy/docker-entrypoint.sh db/realtime.sql db/webhooks.sql \
+         db/roles.sql db/jwt.sql db/_supabase.sql db/logs.sql db/pooler.sql \
+         pooler/pooler.exs functions/main/index.ts; do
+  curl -fsSL "$BASE/$f" -o "volumes/$f" || echo "MISSING: $f"; done
+chmod +x volumes/api/envoy/docker-entrypoint.sh
+```
+Do NOT recreate `volumes/db/data` — Docker makes it empty, which is what
+`initdb` needs. The old cluster MUST be wiped: init scripts only run against an
+empty data directory, so a hollow database cannot be repaired in place.
+
+**`COMPOSE_FILE` in `.env` overrides compose's file discovery.** The upstream
+`env.example` ships `COMPOSE_FILE=docker-compose.yml`, but Compose Manager saves
+the file as `compose.yaml` — which is why `docker compose up -d` in the project
+directory failed with `stat …/docker-compose.yml: no such file` while the stack
+was running. Set it to `compose.yaml` or delete the line.
+
+## ✅ Stack VERIFIED HEALTHY 12/12 (2026-08-11)
+
+After the volumes fetch: `Stack supabase started successfully`, 12/12, and the
+acceptance test passed — `docker exec supabase-db psql -U postgres -c '\du'`
+lists `supabase_auth_admin`, `authenticator`, `supabase_storage_admin`,
+`supabase_admin` and the realtime/functions/etl roles. **That role list, not the
+healthcheck, is the proof the bootstrap ran** (the hollow cluster reported
+healthy too). Use it as the acceptance test on any future rebuild.
+
+**Version match — load-bearing for backups.** Hosted project is Postgres
+**17.6** (verified live 2026-08-11); the local stack runs `supabase/postgres
+17.6.1.136`. Same major, so the local stack is a valid restore target for the
+Phase 1 dump. This also caught a real defect in the backup script: it pinned a
+`postgres:15` client, and **pg_dump refuses to dump from a server newer than
+itself**, so the first nightly run would have aborted. Now pinned `postgres:17`
+— raise the tag if Supabase ever upgrades the project's major, never lower it.
+
+**⚠ Studio's project ref in the URL must match `POOLER_TENANT_ID` — ours is
+`wolfpack`, NOT `default`.** Landing on `/project/default` (the path most
+self-host docs quote) makes Studio query a project that does not exist here, and
+it answers truthfully but misleadingly: the account menu shows *"You do not have
+access to this project"* and Connect shows *"Project is currently not active and
+cannot be connected"*. Both errors vanish at
+**`http://<lan-ip>:8000/project/wolfpack`** (Hitya found this 2026-08-11 — an
+earlier note in this runbook wrongly wrote both off as cosmetic self-hosted
+artifacts; they were real and the ref was the cause). If the tenant id is ever
+changed, the Studio URL changes with it. Real connection paths:
+Studio's SQL Editor / Table Editor, `docker exec supabase-db psql -U postgres`,
+and from the LAN through the pooler in session mode —
+`postgresql://postgres.<POOLER_TENANT_ID>@<lan-ip>:5432/postgres` (username is
+supavisor's `postgres.<tenant>` form; the db container publishes no port of its
+own by design, so all LAN access goes through supavisor on 5432/6543).
+
+**⚠ `pg_dump -f /dev/stdout` fails at the very END of a good dump.** First run
+2026-08-11 wrote all 106 MB and then died with `could not fsync file
+"/dev/stdout": Invalid argument`. With `-f`, pg_dump treats the target as a real
+file and fsyncs it on completion; fsync on a redirected stdout is EINVAL. The
+data was already written — only the exit code was bad, and `set -e` then skipped
+the rename, leaving a complete dump stranded as `.tmp`. Fix: drop `-f
+/dev/stdout` (pg_dump writes to stdout by default and skips the fsync) and pass
+`--no-sync`. A stranded `.tmp` from this failure mode is recoverable — verify
+with `pg_restore -l <file> | head` and, if it lists a TOC, just rename it.
+
+**Stack identification note:** this template is NOT the official
+`supabase/docker` compose — the gateway is Envoy (official uses Kong) and the
+db image is Postgres 17 (official self-host pins 15). Fixes found for the
+official stack will not always map onto it.
+
+**Scope reminder:** none of this blocks Phase 1 — the backup script needs
+Docker and the session-pooler URI, not a running local stack. This stack is
+live-mirror/Phase-2+ infrastructure.

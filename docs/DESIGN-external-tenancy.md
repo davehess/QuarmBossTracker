@@ -12,6 +12,20 @@ start a process for external deployment, or tenant deployment within our
 supabase"* — plus, moments later: *"can you also leave out pieces of the PVP
 /who for that buildout? We don't want to give away our advantage for nothing."*
 
+> **UPDATE 2026-08-12 — two of the three abandonment points are now closed, and
+> the schema question is answered with numbers.** Self-hosted Supabase and the
+> web app outside Vercel were both stood up and verified end to end
+> (`docs/RUNBOOK-unraid-supabase-replica.md`, `docs/RUNBOOK-local-web-coolify.md`),
+> and the bot was already containerized. On "170 migrations + no catalog": applying
+> the now-193 migrations to an empty Postgres gives **182 clean / 11 failed —
+> unusable**, because SIX tables production uses are created by no migration at all
+> (`fun_events`, `pvp_kills`, `pvp_boss_kills`, `pvp_assists`, `mimic_sessions`,
+> `trigger_timing_feedback`) — out-of-band applies whose files were never
+> committed. With `supabase/bootstrap/` + `scripts/selfhost-bootstrap-db.sh` it is
+> **190 clean / 3 partial / 0 failed, 124 tables, 79 functions**, and the partials
+> create no schema. The catalog gap and the ~30-anchor-ID Discord ceremony are
+> unchanged, and remain the likely give-up points. Guide: `docs/SELFHOSTING.md`.
+
 ---
 
 ## 0. TL;DR — the recommendation in one page

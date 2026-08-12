@@ -138,6 +138,17 @@ entry so the index stays trustworthy — a stale index causes exactly the wrong
     ⚠ Dashboard-only from a cloud session — the Supabase MCP exposes no
     auth-config tool (checked 2026-08-10), same shape as the Vercel domain step
     above;
+  - **Every env var must be enabled for the `Preview` environment too, not just
+    `Production`** (Hitya, 2026-08-11). Vercel scopes env vars per environment and
+    `b.wolfpack.quest` is a *Preview* deployment, so a Production-only var simply
+    does not exist there. The failure is partial and therefore easy to miss: the
+    public pages render fine and only the server-side path breaks — sign-in on beta
+    died with *"SUPABASE_SERVICE_ROLE_KEY not set on the server"* while the same
+    key worked on production. Applies to all of them
+    (`SUPABASE_SERVICE_ROLE_KEY`, `DISCORD_GUILD_ID`, `ALLOWED_ROLE_NAMES`,
+    `OFFICER_ROLE_NAMES`, `DEMO_OBFUSCATE_SALT`, the `NEXT_PUBLIC_*` set); they
+    all address the same Supabase project, so there is no reason to withhold any.
+    Env changes need a redeploy to take effect.
   - `next.config.js` sets `NEXT_PUBLIC_IS_BETA` from `VERCEL_GIT_COMMIT_REF`,
     so the flag is a BUILD-time constant. Deliberately not a Host-header check:
     reading headers in the root layout forces every page dynamic.

@@ -11,6 +11,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { supabaseServer } from '@/lib/supabase-server';
 import { fetchGuildMember, memberAvatarUrl, memberDisplayName } from '@/lib/discord';
+import { requestOrigin } from '@/lib/request-origin';
 
 // Sanitize the post-login redirect target. Must be a same-origin relative
 // path: starts with a single "/" (not "//", which is protocol-relative and an
@@ -29,18 +30,20 @@ function safeNext(raw: string | null): string {
 
 export async function GET(req: NextRequest) {
   const url = new URL(req.url);
+  // NOT url.origin — see lib/request-origin.ts
+  const origin = requestOrigin(req);
   const code = url.searchParams.get('code');
   const next = safeNext(url.searchParams.get('next'));
 
   if (!code) {
-    return NextResponse.redirect(`${url.origin}/auth/signin?error=missing_code`);
+    return NextResponse.redirect(`${origin}/auth/signin?error=missing_code`);
   }
 
   const supabase = supabaseServer();
   const { data, error } = await supabase.auth.exchangeCodeForSession(code);
   if (error || !data.session) {
     return NextResponse.redirect(
-      `${url.origin}/auth/signin?error=${encodeURIComponent(error?.message || 'session_failed')}`,
+      `${origin}/auth/signin?error=${encodeURIComponent(error?.message || 'session_failed')}`,
     );
   }
 
@@ -48,7 +51,7 @@ export async function GET(req: NextRequest) {
   if (!providerToken) {
     await supabase.auth.signOut();
     return NextResponse.redirect(
-      `${url.origin}/auth/signin?error=no_provider_token`,
+      `${origin}/auth/signin?error=no_provider_token`,
     );
   }
 
@@ -58,14 +61,14 @@ export async function GET(req: NextRequest) {
   } catch (e: any) {
     await supabase.auth.signOut();
     return NextResponse.redirect(
-      `${url.origin}/auth/signin?error=${encodeURIComponent('discord_api: ' + e.message)}`,
+      `${origin}/auth/signin?error=${encodeURIComponent('discord_api: ' + e.message)}`,
     );
   }
 
   if (!member) {
     await supabase.auth.signOut();
     return NextResponse.redirect(
-      `${url.origin}/auth/signin?error=${encodeURIComponent('Not a Wolf Pack EQ member — sign in with the Discord account you use in our server.')}`,
+      `${origin}/auth/signin?error=${encodeURIComponent('Not a Wolf Pack EQ member — sign in with the Discord account you use in our server.')}`,
     );
   }
 
@@ -78,7 +81,7 @@ export async function GET(req: NextRequest) {
   if (!SR) {
     await supabase.auth.signOut();
     return NextResponse.redirect(
-      `${url.origin}/auth/signin?error=${encodeURIComponent('SUPABASE_SERVICE_ROLE_KEY not set on the server — ask an admin to configure Vercel env vars.')}`,
+      `${origin}/auth/signin?error=${encodeURIComponent('SUPABASE_SERVICE_ROLE_KEY not set on the server — ask an admin to configure Vercel env vars.')}`,
     );
   }
 
@@ -111,7 +114,7 @@ export async function GET(req: NextRequest) {
       await supabase.auth.signOut();
       const have = userRoleNames.length ? userRoleNames.join(', ') : '(none)';
       return NextResponse.redirect(
-        `${url.origin}/auth/signin?error=${encodeURIComponent(
+        `${origin}/auth/signin?error=${encodeURIComponent(
           `You need one of these roles to sign in: ${allowedNames.join(', ')}. You have: ${have}.`,
         )}`,
       );
@@ -134,9 +137,9 @@ export async function GET(req: NextRequest) {
   if (upsertError) {
     await supabase.auth.signOut();
     return NextResponse.redirect(
-      `${url.origin}/auth/signin?error=${encodeURIComponent('member_upsert: ' + upsertError.message)}`,
+      `${origin}/auth/signin?error=${encodeURIComponent('member_upsert: ' + upsertError.message)}`,
     );
   }
 
-  return NextResponse.redirect(`${url.origin}${next}`);
+  return NextResponse.redirect(`${origin}${next}`);
 }

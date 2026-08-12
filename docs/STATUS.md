@@ -2434,6 +2434,52 @@ one concrete detail. Shipped that night: stable 2.1.2 / agent 3.4.36.**
 - Per-class overlay colors / PoP P2-P3 slideshow stubs (blocked on local capture).
 - Any migration needing local verification (per CLAUDE.md Migrations rule).
 
+- **Unraid Supabase stack: UP 12/12 and verified 2026-08-11** (roles present, so
+  the bootstrap really ran). It is now the restore-test target for Phase 1 —
+  same Postgres major (17.6) as the hosted project.
+- **Self-hosting is now buildable — and the repo could NOT rebuild its own schema
+  (2026-08-12).** Measured on an empty Postgres: migrations alone = 182 clean /
+  11 failed. Cause: SIX tables production uses are created by no migration
+  (`fun_events`, `pvp_kills`, `pvp_boss_kills`, `pvp_assists`, `mimic_sessions`,
+  `trigger_timing_feedback`) — out-of-band applies never committed as files.
+  `supabase/bootstrap/` + `scripts/selfhost-bootstrap-db.sh` → 190 clean / 3
+  partial / 0 failed, 124 tables. Guide: `docs/SELFHOSTING.md`.
+  ⚠ **Decision needed from Hitya:** do those six get committed as real migrations
+  (or squashed into a baseline), or does `supabase/bootstrap/` stay the fresh-install
+  path? Today production and the repo still disagree.
+- **Local mirror automation shipped (2026-08-11)** — `scripts/coolify-autodeploy.sh`
+  (+ systemd timer) polls `main` every 5 min and triggers Coolify; polling rather
+  than a webhook because Coolify is LAN-only and exposing it would be worse than
+  the 5-min lag. `scripts/refresh-local-sandbox.sh` restores the newest dump at
+  05:30, which also re-proves the backup nightly. Both are committed and
+  installable; ⚠ **execution is a needs-local-session item** (deploy key, Coolify
+  API token, User Scripts entry — details in each script header).
+- ⚠ **Vercel Preview env vars** — beta sign-in was broken because
+  `SUPABASE_SERVICE_ROLE_KEY` was Production-scoped only. Rule now in CLAUDE.md:
+  every var must be enabled for Preview too. Verify the rest are ticked.
+- **Local copy of wolfpack.quest is LIVE (2026-08-11)** at
+  `http://192.168.1.163:3000`, served by Coolify in an Unraid VM against the
+  local Supabase stack. Remaining: Part F (Discord sign-in on the local GoTrue),
+  gated on having the Discord client secret. Full steps + the four traps hit
+  along the way in `docs/RUNBOOK-local-web-coolify.md`.
+- ~~**Local copy of wolfpack.quest on Unraid**~~ — decided 2026-08-11: Coolify in an
+  Unraid VM, site pointed at the LOCAL Supabase stack (zero production risk).
+  Steps in `docs/RUNBOOK-local-web-coolify.md`. Prerequisite that gates Part F:
+  the Discord client secret must be in hand — resetting it breaks production
+  sign-in until the cloud provider config is updated.
+- **Unraid backup Phase 1 is PROVEN (2026-08-11)** — 106 MB dump restored into
+  the local stack, `encounters` = 1575. ONLY remaining step: re-paste the
+  corrected `scripts/unraid-backup-supabase.sh` into User Scripts (the copy
+  there still has the `-f /dev/stdout` bug) and set the schedule to
+  `0 5 * * *`. Phase 2 (dev sandbox) is effectively seeded by that same restore.
+- ~~**Run Phase 1 of the Unraid backup**~~ (superseded by the line above) (`docs/RUNBOOK-unraid-supabase-replica.md`,
+  decided 2026-08-11: backup first, then dev sandbox): copy
+  `scripts/unraid-backup-supabase.sh` into the User Scripts plugin, put the
+  SESSION-pooler URI (Dashboard → Connect — port 5432, NOT the 6543 transaction
+  pooler) into `/boot/config/wolfpack-db-url` (chmod 600), run once by hand,
+  then do the one-time restore test. The script self-guards against the wrong
+  pooler and against rotating away good backups on a silently-failed dump.
+
 ### 🚫 Abandoned — deliberately dropped or blocked on something external
 - **Windows code-signing** — CLOSED 2026-07-14 (SignPath declined; user base too
   small). Installers stay unsigned unless another provider appears. (`code-signing.md`)
