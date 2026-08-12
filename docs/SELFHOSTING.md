@@ -119,8 +119,12 @@ make that survivable, both already written:
 
 - `scripts/unraid-backup-supabase.sh` — nightly `pg_dump`, 30-day retention, with
   a size floor so a silently-failed dump can never rotate away the last good one.
-- `scripts/refresh-local-sandbox.sh` — restores the newest dump nightly, which
-  re-proves the backup every single night rather than once.
+- `scripts/refresh-local-archive.sh` — MERGES the newest dump nightly, so rows
+  production prunes on its retention timers are kept here forever, and the backup
+  is re-proved every night rather than once. **This is the cost lever**: hosted
+  Supabase bills on storage, which is why production sweeps `buff_casts` to 7
+  days; an on-prem box keeps everything for the price of electricity. See
+  `docs/DESIGN-selfhost-wizard.md` §2.
 
 A backup you have never restored is a hope, not a backup. Restore one before you
 need to.

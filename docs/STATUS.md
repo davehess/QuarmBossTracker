@@ -2371,6 +2371,16 @@ one concrete detail. Shipped that night: stable 2.1.2 / agent 3.4.36.**
 - **Unraid Supabase stack: UP 12/12 and verified 2026-08-11** (roles present, so
   the bootstrap really ran). It is now the restore-test target for Phase 1 —
   same Postgres major (17.6) as the hosted project.
+- **Local box is now an ARCHIVE, not a mirror (2026-08-12).**
+  `refresh-local-archive.sh` + `lib/archive-merge.sql` merge each nightly dump:
+  ARCHIVE tables (the five production sweeps + the append-only event logs) insert
+  and update but NEVER delete; everything else mirrors production exactly,
+  because for those a delete is a correction (`character_inventory` and friends
+  are delete-then-reinsert on every upload). Proof:
+  `scripts/test-archive-merge.sh` — 9 assertions, run it after touching the SQL.
+  ⚠ Needs a local session: swap the User Scripts entry from
+  `refresh-local-sandbox.sh` to `refresh-local-archive.sh`; do not run both.
+  Growth is real — ~9,500 buff_casts rows/day, a few GB/year.
 - **⚠ PostgREST's 1000-row cap silently truncates reads across the site
   (audited 2026-08-12).** `.limit(N)` only LOWERS PostgREST's ceiling, never
   raises it, so any query matching >1000 rows returns the first 1000 with no
@@ -2420,8 +2430,9 @@ one concrete detail. Shipped that night: stable 2.1.2 / agent 3.4.36.**
 - **Local mirror automation shipped (2026-08-11)** — `scripts/coolify-autodeploy.sh`
   (+ systemd timer) polls `main` every 5 min and triggers Coolify; polling rather
   than a webhook because Coolify is LAN-only and exposing it would be worse than
-  the 5-min lag. `scripts/refresh-local-sandbox.sh` restores the newest dump at
-  05:30, which also re-proves the backup nightly. Both are committed and
+  the 5-min lag. `scripts/refresh-local-archive.sh` MERGES the newest dump at
+  05:30 (superseding refresh-local-sandbox.sh), so the local box never loses
+  history production prunes, and the backup is re-proved nightly. Both are committed and
   installable; ⚠ **execution is a needs-local-session item** (deploy key, Coolify
   API token, User Scripts entry — details in each script header).
 - ⚠ **Vercel Preview env vars** — beta sign-in was broken because

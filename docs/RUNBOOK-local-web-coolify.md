@@ -220,8 +220,14 @@ commit, which the next tick picks up regardless.
 
 ### G2 — the sandbox data refreshes nightly
 
-`scripts/refresh-local-sandbox.sh`, Unraid User Scripts, `30 5 * * *` — half an
+`scripts/refresh-local-archive.sh`, Unraid User Scripts, `30 5 * * *` — half an
 hour after the 05:00 backup. Restores the newest dump into the local stack.
+
+**It MERGES rather than restores** (2026-08-12): rows production prunes on its
+retention timers survive here forever, so the local box is the long-horizon
+archive rather than a second copy of the same 7 days. Per-table behaviour is an
+explicit allowlist in `scripts/lib/archive-merge.sql`, proved by
+`scripts/test-archive-merge.sh`.
 
 A snapshot nobody refreshes is worth less every day, and eventually stops
 representing production while still *looking* like it does — which is how a

@@ -66,6 +66,22 @@ SessionStart and prints the open-items table + doc index + live versions, and
 files with citations. Both are only as good as the writing discipline above —
 **the reading half was never the weak link.**
 
+### Working rule — deployment decisions write to the self-host epic
+**Every design or infrastructure decision that changes how the platform is
+deployed, what it stores, or what it costs to run gets a line in
+`docs/DESIGN-selfhost-wizard.md` §3 AT THE TIME IT IS MADE** (Hitya,
+2026-08-12). The end goal is a walkthrough wizard that stands the whole platform
+up for another guild — an epic for later, but one that can only be built from
+decisions that were recorded as they happened. A choice captured only in a
+runbook is written for one specific box and the wizard will not know about it.
+
+This has a direct cost dimension, which is the point: hosted Supabase bills on
+storage and egress, which is *why* production prunes `buff_casts` to 7 days —
+while an on-prem box keeps everything for the price of electricity. So
+"how long do we keep this?" is not a data-modelling question, it is a hosting-bill
+question, and the answer differs per deployment. Anything that assumes our
+retention windows, our hosting mix, or our Discord layout needs to say so.
+
 ### Working rule — "do we already have X?" (answer from the index, not one grep)
 For any *does-this-exist / where-does-it-live* question, read
 **`docs/HOW-ITS-BUILT.md`** (the feature-by-feature index) FIRST — it maps every
