@@ -453,3 +453,30 @@ the cap, and paging them all would be churn — each needs checking against a re
 count first. The general lesson is worth keeping: **an ORM-shaped API that caps
 silently makes truncation indistinguishable from a complete answer**, and the
 only defence is measuring the table, not reading the code.
+
+## The local box keeps history production discards (Hitya, 2026-08-12)
+
+*"local should not lose any history"* — so `refresh-local-archive.sh` replaces
+`refresh-local-sandbox.sh`. The old script restored with `--clean`, which meant
+the local copy faithfully reproduced production's retention deletes and was no
+more of an archive than production is.
+
+The merge is per-table by an explicit allowlist, because a production DELETE
+means two different things. For `buff_casts`, `raid_roster`,
+`target_observations`, `who_observations` and the threat snapshots it means
+"retention expired" — the row is still true, production just cannot afford it.
+For `character_inventory`, `_gear`, `_spellbook`, `_aas` (and `common_macros`,
+`ui_socials_index`, `mimic_link_codes`) it means "no longer true": those are
+deleted and re-inserted on every upload, so archiving them would show a character
+carrying items they no longer own. The allowlist is deliberately the SMALLER
+list, so an unclassified table defaults to mirroring — which can only ever make
+the local copy match production, while the opposite mistake silently accumulates
+stale rows that look real. Proved by `scripts/test-archive-merge.sh`.
+
+**And the standing rule that came with it:** every design or infrastructure
+decision now writes to `docs/DESIGN-selfhost-wizard.md` §3 as it is made. The
+retention question turns out to be a hosting-BILL question — hosted Supabase
+charges for storage, which is exactly why production prunes to 7 days, while an
+on-prem box keeps everything for electricity. So "how long do we keep this" has
+a different answer per deployment, and a future setup wizard for other guilds can
+only be built from decisions recorded at the time. Rule added to CLAUDE.md.
