@@ -186,6 +186,19 @@ export default async function RootLayout({ children }: { children: React.ReactNo
               Your logs stay on your device. Toggle exclusions any time on{' '}
               <a href="/me" className="text-blue hover:underline">/me</a>.
             </div>
+            {/* IP attribution. EverQuest's own art (item icons, spell gems) and
+                its game data are Daybreak's, and this site shows both. Standard
+                fan-project practice and what every long-running EQ community
+                site carries — state plainly what this is and what it is not.
+                Deliberately the quietest thing in the footer: it is a notice,
+                not a message to the reader. */}
+            <div className="pt-2 text-dim/70">
+              EverQuest is a registered trademark of Daybreak Game Company LLC.
+              All EverQuest game data and art assets are the property of Daybreak
+              Game Company LLC. This is an unofficial, non-commercial fan-made
+              companion for Project Quarm, and is neither affiliated with nor
+              endorsed by Daybreak Game Company LLC.
+            </div>
           </footer>
         </div>
         <GuidedTour signedIn={showMe} />

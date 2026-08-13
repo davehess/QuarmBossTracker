@@ -2361,10 +2361,29 @@ one concrete detail. Shipped that night: stable 2.1.2 / agent 3.4.36.**
   "…NN older → /roadmap" tail + move the call inside the `try`); also delete the
   dead `handleWelcome*` trio (`index.js:1669`/`:1690`/`:1704`). Routes to `main`.
 
+- **Item icons: packer written, needs the client files (2026-08-13).** Hitya's
+  call, and it is the right one — PQDI has hosted EQ's icons since the server
+  opened, every long-running EQ community site does, and there is no commercial
+  angle here. Site now carries the standard Daybreak trademark/ownership notice
+  in the footer (web 1.1.47).
+  We already mirror `eqemu_items.icon` for all 26,971 items (872 distinct,
+  range 500–2000). The client stores them as `dragitem<NN>.dds`, 6×6 grids of
+  40px cells from icon 500, so 500–2000 spans dragitem01–42.
+  `scripts/pack-item-icons.sh` re-packs them into ONE atlas laid out so that
+  `col=(icon-500)%40, row=floor((icon-500)/40)` — **deterministic, so there is
+  no manifest to drift**. ⚠ Blank slots are padded deliberately: a missing icon
+  must still occupy its cell or everything after it shifts and the atlas
+  silently shows the wrong picture for every item.
+  We do NOT hotlink pqdi.cc — that spends their bandwidth and breaks when they
+  reorganise; we pack from the same client source they did.
+
 **⚠ Needs a local (desktop) session** — cloud sessions can't reach the local
 `peq`/PQDI/EQ machine. Exact queries/files live in `archive/BACKLOG.md`; the asks:
 - Mob-immunity backfill from the local `peq` DB (fix B for board #55).
 - Zeal exit-crash bundles from `crashes/` (board #64 — `crash_reports` is empty).
+- **Run `bash scripts/pack-item-icons.sh "A:/EQ" web/public/icons`** (needs
+  ImageMagick) and commit `web/public/icons/items.png` — the only blocker on
+  item icons; everything else about them is arithmetic.
 - Per-class overlay colors / PoP P2-P3 slideshow stubs (blocked on local capture).
 - Any migration needing local verification (per CLAUDE.md Migrations rule).
 
