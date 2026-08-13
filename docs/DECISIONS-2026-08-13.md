@@ -126,6 +126,7 @@ which is how Armando got flagged "light on Sunday" when he had actually attended
 
 | Item | State |
 |---|---|
+| **Item icons DISABLED — needs a local session** | The atlas maps to the wrong icon ids (633 = boots → shovel). Off behind `ICON_ATLAS_DISABLED` since web 1.1.50. Repack via `scripts/pack-item-icons.ps1` on the EQ machine, check `uifiles/default` is stock, and VERIFY 633 is boots before re-enabling |
 | **Who rewrites guild chat?** | Hawkner + Syko ship punctuation-stripped, capitalised copies of lines they witnessed. Not our code (same agent build on both sides). Have Hawkner grep his own eqlog for one of the lines — that says client-side vs ours in one step |
 | **Zeal `EPERM` → ask about compat mode FIRST** | XP compatibility mode on eqgame.exe kills the pipe, and the guide we recommend tells people to turn it on. Mechanism unconfirmed; `lastError` still isn't surfaced anywhere in the UI |
 | **Raid-Helper sync is unmonitored** | It is the ONLY copy of declared availability (the upstream board expires on raid day) and nothing alerts on failure. Add a staleness check — no new `rh_signups` rows within ~48h of a raid should be loud |
@@ -290,3 +291,64 @@ speaker is lost for that line. Merging them would strictly improve attribution,
 but the witness map is what drives speaker relabelling and has its own history
 of subtle bugs (the Starrburst→Wabumkin ghost). Left alone on purpose; separate,
 considered change. Tests: `test/chat-rewrite-dedup.test.js`.
+
+## The item icon atlas draws the wrong art — disabled before raid
+
+**How it surfaced.** Hitya: *"Gear isn't showing icons… not gear, inventory."*
+Two separate problems, and the reported one was the smaller.
+
+**Why the inventory page showed nothing.** `/character/[name]/inventory` has its
+OWN `ItemIcon.tsx` that hotlinks PQDI (`https://www.pqdi.cc/Icons/item_<icon>.png`)
+and hides the `<img>` on error. The degradation is deliberate — "never a
+broken-image square" — but it is **silent**, so the page fails to exactly what
+was reported: names, no art, no console error, no placeholder. It was simply
+never moved onto the atlas; `web/components/ItemIcon.tsx` was built later for
+the loot surfaces and the inventory page kept its own copy.
+
+**Going to make that switch is what found the real bug.** The atlas does not
+correspond to the catalog's icon ids. Ground truth from `eqemu_items`, not from
+eyeballing art:
+
+| icon | what shares it | what the atlas drew |
+|---|---|---|
+| 633 | 276 items, every one named `…Boots` | a shovel |
+| 1050 | earrings only | a cake |
+| 746 | plate helms | a flower |
+| 510 | talismans / amulets | boots |
+
+2 of 10 sampled icons matched — chance. **Already live** on `/parses`,
+`/parses/[id]` and `/raid/review/[date]` via `LootBlock`, so wrong item art had
+been on production since the icon work landed.
+
+**Disabled rather than left (Hitya: "before raid").** Wrong art is worse than no
+art — it reads as bad *data* rather than a missing picture, and the raid review
+gets read the morning after a raid. One constant, `ICON_ATLAS_DISABLED`, drops
+every surface back to name-only. Web 1.1.50.
+
+**What is NOT wrong — do not re-investigate these:**
+- Geometry is exact: 1600×1240 = 40×31 cells for 1224 icons.
+- Content is clean: **1191 distinct non-blank cells, ZERO duplicates**.
+- Packing walked the sheets correctly: the blank cells form a clean **period-6**
+  pattern (2 filled, 4 blank), i.e. a partially-filled 6-wide source sheet read
+  row-major.
+- **Ruled out:** a lexicographic `dragitem1, dragitem10, dragitem11…` glob
+  (predicted cells came out a dagger, a bag, a ring); and any constant
+  whole-sheet offset (scanned ±180 in steps of 36 — nothing lands right).
+
+The sheet-to-icon-id mapping is what is wrong, and pinning it needs the source
+sheets. ⚠ **Needs a local session**: re-run `scripts/pack-item-icons.ps1` on the
+machine with the EQ install, and check whether that install's `uifiles/default`
+is stock or a custom UI pack (the guild's own guide recommends Nillipuss/Duxa),
+since a custom sheet set would explain coherent-but-differently-ordered art.
+**Verify icon 633 renders as boots before flipping the flag back.**
+
+**The testing lesson, which is the part worth keeping.**
+`test/item-icon.test.js` passed the entire time the atlas was rendering a cake
+for an earring — and its own header warns that a wrong offset "shows the WRONG
+ITEM'S picture, which looks like bad data rather than a bug." It checked the
+index arithmetic, which was never wrong. **Index maths and art correctness are
+different properties, and only one of them is testable without looking at the
+image.** The tests were not weak; they were aimed at the wrong half. Guarding
+this properly means rendering a known cell and comparing it to a reference — the
+kill-switch tests now at least fail loudly when the flag flips, forcing that
+check to happen.
