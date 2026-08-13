@@ -118,6 +118,21 @@ must therefore ask or verify.
   (and ideally CI) should compare the newest file in `supabase/migrations/`
   against `supabase_migrations.schema_migrations`.
 
+- **Mob scripts are a SECOND upstream, and a cheap one** (2026-08-13). The
+  catalog comes from a SQL dump; the `.lua` mob scripts come from a different
+  repo entirely (`SecretsOTheP/quests`, GPL-3.0). At **~3.7 MB** it is nothing
+  beside the 97 MB catalog, so unlike that one it does NOT force an on-prem
+  decision — it fits a hosted tier comfortably. The wizard should fetch it by
+  default and say what it is for: verifying that a trigger watches text which
+  actually exists. GPL-3.0 permits redistribution; do not confuse it with the
+  unlicensed `pq-companion` material.
+- **A competitor ships the whole catalog as one SQLite file inside the
+  installer** (`docs/pq-companion/06-data-provenance-and-gaps.md` §1) — offline,
+  zero latency, frozen at build time, every user downloading the lot. Ours is a
+  shared Postgres: fresh, tiny on the client, useless without network. **A
+  self-hosting guild on a flaky box may genuinely prefer their shape**, so the
+  wizard must not present the server-side answer as self-evidently correct.
+
 ### Identity & auth
 - **A sandbox/self-host instance uses its OWN Discord application.** The
   "never a second Discord app" rule applies only to surfaces sharing the
