@@ -1,9 +1,81 @@
 # Code signing — Wolf Pack Mimic (Windows)
 
-Status: **pre-staged, OFF.** The signing pipeline is wired into
-`.github/workflows/release-mimic.yml` but inert until the SignPath Foundation
-certificate is approved and the repo switches are set. Flipping it on is a
-checklist (below), not a rebuild.
+> ## ⚠ REOPENED 2026-08-13. The status line below was stale AND the blocker is gone.
+>
+> **Two corrections to what this file used to say.**
+>
+> **1. The pipeline is not "pre-staged, OFF" — it was DELETED.** When SignPath
+> declined, the signing block was removed from `.github/workflows/release-mimic.yml`
+> (see the comment at ~line 167). This file went on claiming a wired-but-inert
+> pipeline existed. A doc asserting infrastructure that isn't there is the exact
+> failure mode that had `/recall` confidently wrong about #202.
+>
+> **2. There is now a route that fits us, and it did not exist when this closed.**
+> **Azure Artifact Signing** (formerly Trusted Signing) — Microsoft's own CA
+> service. **$9.99/month** Basic (5,000 signatures, 1 certificate profile).
+> Crucially, **as of April 2026 a self-employed individual can apply and the
+> 3-year-history requirement from public preview is gone** — that history rule
+> and "your user base is too small" were the two things that shut every previous
+> door. GA in USA, Canada and Europe; individual **public-trust** certificates
+> require the applicant be in the **US or Canada**.
+>
+> **Live precedent, same audience as ours:** `jmoyers/everquest-companion`, an
+> Electron EQ Legends companion, ships an installer signed this way — publisher
+> "Joshua Moyers", via a custom electron-builder sign hook.
+
+## What signing does and does NOT do
+
+Worth stating plainly, because "no SmartScreen prompt" is not what signing buys
+on day one — the precedent repo's own README says so:
+
+> *"If SmartScreen still shows a 'Windows protected your PC' warning while the
+> certificate is new, click More info, then Run anyway — you only ever see it
+> once."*
+
+- **It does not instantly remove the warning.** Reputation still has to accrue.
+- **It changes "Unknown publisher" to our name**, which is most of the trust win.
+- **It makes reputation CUMULATIVE across releases** instead of resetting on
+  every new binary hash. That is the real prize for a project that ships a beta
+  every few days: unsigned, every single build starts from zero forever.
+
+## What is NOT our problem (already solved)
+
+⚠ Do not conflate the two Windows prompts. **The UAC/admin prompt is already
+gone** — `apps/mimic/package.json` sets `perMachine: false` and
+`allowElevation: false`, so Mimic already installs per-user with no admin
+elevation, the same shape the precedent repo describes as "like Discord". The
+only outstanding prompt is SmartScreen, and only signing addresses it.
+
+Two smaller notes from reading their build config:
+
+- They hit a real electron-builder bug: **its built-in Azure signing path breaks
+  on file paths containing spaces**, so they route through a custom
+  `scripts/azure-sign.cjs` hook. **We would not hit this** — our
+  `artifactName` is `Wolf-Pack-Mimic-Setup-${version}.${ext}`, hyphenated. Worth
+  knowing before anyone "tidies" that into a spaced product name.
+- They use `oneClick: true`; we use `oneClick: false` with
+  `allowToChangeInstallationDirectory: true`. Keep ours — but note that the
+  directory chooser is exactly how users end up installing Mimic INSIDE the EQ
+  folder, which is the documented way to break Zeal detection (CLAUDE.md, Mimic
+  §field issue). Unrelated to signing; related to that installer flag.
+
+## If we pursue it — the shape
+
+1. An Azure subscription + an Artifact Signing account and certificate profile.
+2. Identity validation as an individual (US/Canada) — Hitya's call, and it
+   requires real personal identity documents, which is a decision not a task.
+3. CI signs with a service principal; there is **no hardware token to ship or
+   plug in**. That is the practical reason this beats Certum Open Source
+   (~$80/yr) despite costing more: post-2023 key-storage rules put OV certs on a
+   physical HSM token, which a GitHub Actions runner cannot use.
+4. `release-mimic.yml` gains the signing step back, ideally behind the same
+   fail-open shape pq-companion uses — secrets present → signed; absent → build
+   proceeds unsigned, CI stays green
+   (`docs/pq-companion/06-data-provenance-and-gaps.md` §5).
+
+**Still Hitya's decision, not a task to pick up.** It costs money and requires
+personal identity verification. What has changed is that it is now *possible*;
+this file previously implied it was not.
 
 ## Why
 Unsigned installers trigger the Windows SmartScreen "unknown publisher" warning,
