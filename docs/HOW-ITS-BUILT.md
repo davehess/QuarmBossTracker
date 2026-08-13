@@ -13,6 +13,28 @@ Component paths: bot = `/index.js` + `commands/` + `utils/`; agent =
 
 ## Data spine (read this first)
 
+### Mob scripts + trigger text audit (2026-08-13)
+- **`eqemu_quest_scripts` + `scripts/sync-quest-scripts.js`** — the `.lua`
+  behaviour files for every mob, mirrored per zone from
+  `github.com/SecretsOTheP/quests` (GPL-3.0, ~3.7 MB). **Not in any SQL dump** —
+  they are files, so this is a SEPARATE sync from `sync-from-eqmac.js`, wired as
+  its own `continue-on-error` step in `sync-quarm.yml` so a quests-repo hiccup
+  can never fail the catalog sync. Skips unchanged files by git blob sha and
+  deletes rows whose file vanished upstream (MIRROR semantics — a removed script
+  is "no longer true", not "retention expired").
+  ⚠ UPSTREAM scripts, not a live-server dump; Quarm may run local edits. Best
+  available reference, never proof of live behaviour.
+- **`trigger_text_audit` view + `trigger_literal_probe()`** — the payoff. Takes
+  each trigger's longest literal phrase and asks whether it appears in
+  `eqemu_spells` (cast/fade text), `eqemu_npc_emotes`, or a mob script. All
+  three false on an ENABLED trigger = probably invented text, our worst
+  documented trigger failure — the audit re-found the known Divine Intervention
+  case independently. **A prompt, never an action**: turning callouts on or off
+  is a raid-noise decision (`docs/RUNBOOK-dead-triggers.md`).
+  ⚠ Read a miss as "worth a look", not "broken". Pure-regex patterns, and ones
+  watching client-generated combat text ("has been slain by", "points of
+  non-melee damage"), legitimately appear in none of the three sources.
+
 Everything flows through one pipeline: **EQ log file + Zeal named pipe →
 agent (on the player's PC) → bot HTTP API (bearer per-user token) → Supabase
 → (web reads Supabase) / (bot posts Discord) / (agents poll bot)**. The agent

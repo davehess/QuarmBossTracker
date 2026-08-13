@@ -47,6 +47,16 @@ jobs:
         id: sync
         run: node scripts/sync-from-eqmac.js
 
+      # Mob scripts (github.com/SecretsOTheP/quests, GPL-3.0). A SEPARATE source
+      # from the SQL dump above — .lua files, one directory per zone — so it
+      # gets its own script and its own step. continue-on-error because the
+      # catalog is the load-bearing half: a quests-repo hiccup must never mark
+      # the weekly catalog sync as failed.
+      - name: Sync mob scripts
+        id: quests
+        continue-on-error: true
+        run: node scripts/sync-quest-scripts.js
+
       - name: Commit sync state if changed
         run: |
           if [[ -n "$(git status --porcelain data/sync_state.json)" ]]; then
