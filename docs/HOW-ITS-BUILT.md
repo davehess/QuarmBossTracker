@@ -1313,6 +1313,18 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   Tests: `test/crash-reanalysis-watermark.test.js`.
 
 ### Mimic (`apps/mimic/`, beta)
+- **Injected chrome is dashboard-only (mimic, 2026-08-13)** — `preload.js` adds a
+  ⚙ (and a ✕ on panel windows) to pages loaded over `http:`. That was a safe
+  proxy for "this is the dashboard" until #65 started serving real overlays from
+  the agent at `/overlay/<name>` so they ride hot-swaps; the Command Center then
+  showed a gear that opened Mimic **Settings** from inside a raid overlay, and
+  because `/overlay/command` carries no `?overlay=` query it was misdetected as
+  the main window. Now guarded by `_isAgentServedOverlay`
+  (`location.pathname.startsWith('/overlay/')`). ⚠ The `?overlay=` PANEL windows
+  still need the injection — they are the dashboard in a small frameless window
+  with no chrome of its own. Any overlay with its own parity chrome (✥ / ✕ /
+  right-click) must NOT get injected chrome on top.
+  Tests: `test/preload-overlay-chrome.test.js`.
 - **Me card + officer Admin tab (#109)** — dashboard opens on 🐺 Me; officer
   tools + 📡 Reporters panel (#115, swap/include) + 🛑 kill switches (#118) under
   🛡 Admin. LKG crash-loop rollback + beta-channel hot-swap in `main.js` (#74).

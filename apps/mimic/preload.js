@@ -493,7 +493,20 @@ contextBridge.exposeInMainWorld('mimic', {
 //      surfaced as a fixable problem instead of silently not uploading.
 // This runs in the isolated preload world; it only touches the DOM + the
 // already-exposed window.mimic bridge, so there's no security surface change.
-if (location.protocol === 'http:') {
+//
+// ⚠ NOT on agent-served overlays (`/overlay/*`). When this was written the
+// dashboard was the ONLY http page Mimic loaded, so "protocol is http" meant
+// "this is the dashboard". #65 broke that assumption by serving real overlays
+// from the agent so they ride agent hot-swaps — and the Command Center then
+// picked up a ⚙ that opened Mimic Settings from inside a raid overlay (Hitya,
+// 2026-08-13). Those overlays ship their own chrome per the parity checklist
+// (✥ move, ✕ hide, right-click resize/Setup), so injected chrome is not just
+// redundant, it is a second way to do the same thing that looks like a bug.
+// The `?overlay=` PANEL windows below are different and still need it — they
+// are the dashboard rendered into a small floating window with no chrome of
+// its own.
+const _isAgentServedOverlay = location.pathname.startsWith('/overlay/');
+if (location.protocol === 'http:' && !_isAgentServedOverlay) {
   const ready = (fn) => {
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', fn);
     else fn();
