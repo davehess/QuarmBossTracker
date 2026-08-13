@@ -99,9 +99,12 @@ exactly how far two uploaders let you get, and precisely where it stops.
 
 ## 5. Deliberately out of scope
 
-- **Symbolicating the minidump.** Reading `crash_reason.txt` is free; parsing a
-  `.dmp` needs a symbol server and real debugger tooling. Ship the cheap layer,
-  keep `zip_name` for the rare case that needs the hard one.
+- **Symbolicating the minidump.** Function names and line numbers need a symbol
+  server and real debugger tooling. ⚠ **But do not read this as "the dump is
+  unreadable" — that was wrong and §8 is the proof.** A minidump carries the
+  module list with base addresses, so every address resolves to `module+offset`
+  with no symbols at all, and *which module* is the question we keep asking.
+  `scripts/read-minidump.py` does it in stdlib Python, offline.
 - **Uploading dumps, ever.** Size and privacy both argue against it, and the
   parsed signature has been sufficient for every cluster so far.
 - **Auto-diagnosing causes.** "This matches 28 others" is a fact. "Mimic caused
@@ -177,3 +180,73 @@ not build correlations across the archive on those fields.
 safely re-read game state on the second pass. It is 25 of Razek's 29. That is a
 concrete, cheap upstream ask independent of the crash itself: *carry the context
 captured on the first pass into the re-entrant report.*
+
+## 8. SOLVED — the `0x6ef` crash is the Windows audio stack, not Zeal (2026-08-12)
+
+Hitya sent the actual crash zip for the 16:13 ET report. Its `crash_reason.txt`
+is a context-free `Multiple Crashes`, exactly as §7 predicted — but the zip also
+carries `minidump.dmp`, which we had never looked at. `scripts/read-minidump.py`
+answers it outright:
+
+```
+EXCEPTION  thread 0x6fa0
+  code    0x6ef  RPC_X_SS_IN_NULL_CONTEXT — an RPC call was made with a NULL
+                 context handle (the object it referred to is gone)
+  flags   0x1    NONCONTINUABLE — the process could not survive this
+  at      KERNELBASE.dll+0x169f54        (RaiseException; esi = 0x6ef)
+```
+
+**It is not an access violation at all.** Everything else in the corpus is
+`0xC0000005` — a bad memory read. This one is a *software-raised* exception:
+`rpcrt4` called `RaiseException(0x6EF, NONCONTINUABLE)` and nothing caught it.
+
+The stack says who, bottom-up:
+
+```
+eqgame.exe                        the client
+  mss32.dll                       Miles Sound System — EQ's audio engine
+    winmmbase.dll                 WinMM / waveOut
+      wdmaud2.drv                 the WDM audio shim   (53 frames)
+        rpcrt4.dll                RPC to the Windows Audio service (20 frames)
+          ntdll!RtlRaiseException
+            KERNELBASE!RaiseException   → 0x6EF, noncontinuable
+```
+
+**`Zeal.asi` is loaded (base `0x51fd0000`, 11 MB) and appears ZERO times on the
+crashing thread.** So does `d3d8.dll`/dgVoodoo, and `eqgfx_dx8`. This is an
+audio-path failure end to end, and there is nothing here to report to Zeal.
+
+**What it means in one sentence:** the audio endpoint EQ was playing through went
+away, the RPC context handle to the audio service went NULL with it, and the next
+sound call raised a noncontinuable exception. That is consistent with the zoning
+correlation — EQ tears down and rebuilds the sound system on a zone change, so
+zoning is when it reaches for a handle that has gone stale.
+
+**Practical mitigations, in order of bluntness** (untested, n=1 — offer, don't
+assert): make the default playback device something that never disappears (the
+motherboard analog out) rather than an HDMI/DisplayPort endpoint on the GPU,
+which comes and goes with display power and mode changes; disable unused NVIDIA
+HDMI audio endpoints in Device Manager; and as the blunt instrument, turn EQ's
+sound off entirely, which removes the failing path.
+
+Machine, for the record: Windows 11 build 26200, RTX 4070, client at
+`C:\Users\Ryan\Desktop\TAKPv22`, `wdmaud2.drv`/`winmmbase.dll`/`rpcrt4.dll` all
+at 6.2.26100.**8875** while `dsound.dll`/`AudioSes.dll`/`wdmaud.drv` are at
+.**8737** — a split servicing state across the audio components, which may or may
+not be relevant and is worth noting if a second machine ever shows this.
+
+### What this changes about the design
+
+1. **Local dump review is the highest-value half, and it is cheap.** §3 ranked
+   "show them the parsed fields" first and treated the dump as out of reach. It
+   is the reverse: `crash_reason.txt` said `0x6ef @ kernelbase.dll` and could
+   not have told anyone anything, while the dump named the subsystem in one
+   pass, offline, with no symbols. **Wire `read-minidump.py` into the review
+   flow** — module attribution ("this was your sound driver / this was Zeal /
+   this was the video driver") is the answer users actually want.
+2. **"Is it Zeal?" is now a question we can answer per crash**, which is exactly
+   what an upstream report needs and what a member wants to hear. Absence from
+   the stack is real evidence when the module is loaded.
+3. **The corpus question was the wrong question here.** §7 spent its effort on
+   whether the *signature* was fleet-wide. One dump beat the whole table. Keep
+   the corpus for prevalence; use the dump for causation.

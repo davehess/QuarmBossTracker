@@ -2395,10 +2395,25 @@ one concrete detail. Shipped that night: stable 2.1.2 / agent 3.4.36.**
   signature (`0x6ef @ kernelbase.dll +9f54`, Zeal 1.4.2) and the four that kept
   context all read zoning. **But it is not a 1.4.2 regression** — the other
   uploader ran the same Zeal build with zero `0x6ef`; what differs is Windows
-  build 26200 vs 19045. n=1, so nothing goes upstream yet. Full numbers in
-  `docs/DESIGN-crash-review.md` §7; the consent prompt that would give us n>1 is
-  §3, and the tray toggle that exists today (`main.js:5797`) is off by default
-  and never surfaced.
+  build 26200 vs 19045. Full numbers in `docs/DESIGN-crash-review.md` §7; the
+  consent prompt that would give us n>1 is §3, and the tray toggle that exists
+  today (`main.js:5797`) is off by default and never surfaced.
+
+  ✅ **SOLVED the same night, from the minidump — it is the Windows audio stack,
+  not Zeal.** Hitya sent the actual crash zip. `0x6ef` is
+  `RPC_X_SS_IN_NULL_CONTEXT`, raised NONCONTINUABLE — not an access violation
+  like everything else in the corpus. The stack is
+  `eqgame.exe → mss32.dll (Miles) → winmmbase.dll → wdmaud2.drv → rpcrt4.dll`,
+  i.e. EQ's sound engine making an RPC call to the Windows Audio service with a
+  context handle that had gone NULL. **`Zeal.asi` is loaded and appears ZERO
+  times on the crashing thread** — nothing to report upstream. Fits the zoning
+  correlation: EQ rebuilds the sound system on a zone change, which is when it
+  reaches for the stale handle. Mitigations offered (untested, n=1) in §8.
+  ⚠ **This overturned the design's own assumption that dumps need a symbol
+  server.** They don't for the question we actually ask — module base addresses
+  resolve any address to `module+offset` with no symbols at all. New tool:
+  `scripts/read-minidump.py`, stdlib-only and offline, which is now the
+  highest-value piece of the local-review flow rather than the out-of-scope one.
 - **Local box is now an ARCHIVE, not a mirror (2026-08-12).**
   `refresh-local-archive.sh` + `lib/archive-merge.sql` merge each nightly dump:
   ARCHIVE tables (the five production sweeps + the append-only event logs) insert
