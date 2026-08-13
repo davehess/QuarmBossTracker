@@ -395,6 +395,18 @@
       }).catch(function(){});
     }catch(e){}
   }
+  // Make display text speakable: drop pictographs/symbols and the separator
+  // dashes that read as words, then collapse whitespace. Deliberately narrow -
+  // it must never mangle a character name or a number.
+  function _speakable(txt){
+    if (!txt) return '';
+    return String(txt)
+      .replace(/[\u2190-\u2BFF\u2600-\u27BF\uFE0F\u2028\u2029]/g, ' ')
+      .replace(/[\uD800-\uDBFF][\uDC00-\uDFFF]/g, ' ')   // surrogate-pair emoji
+      .replace(/\s+[-\u2013\u2014]+\s+/g, ' ')            // " - " / " -- " separators
+      .replace(/\s{2,}/g, ' ')
+      .trim();
+  }
   function speak(text, meta){
     try{
       if (!window.speechSynthesis){ reportPlayback('error', 'no speechSynthesis API', meta); return; }
@@ -555,7 +567,13 @@
     // when alerts/TTS are off or Quiet mode is on, this hidden window must stay
     // silent rather than narrate fires nobody can see.
     if (!alertsEnabled) return;
-    const spoken = t.tts || t.text || t.label || 'Trigger';
+    // Overlay text is written to be SEEN: it leads with an emoji and uses
+    // punctuation as visual separators. Speech synthesis reads all of that
+    // aloud - a leading U+26A1 becomes "high voltage", and "D.I. FIRED - {tank}
+    // saved" gains a spoken dash (Hitya, 2026-08-13: preview said "HIGH VOLTAGE
+    // D. I. Fired Tank Saved"). An explicit `tts` still wins untouched; this
+    // only cleans the FALLBACK, where we are reusing display text as speech.
+    const spoken = t.tts || _speakable(t.text) || t.label || 'Trigger';
     // audioOnly (the damage-taken alert) is the inverse of mute: speak it, but
     // never touch the shared centre flash or the timing-vote widget. Its ~5s
     // cadence would otherwise camp both for a whole fight and overwrite a live

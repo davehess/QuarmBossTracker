@@ -65,3 +65,55 @@ describe('the reproduction case', () => {
     expect(derive({ name: 'legacy' })).toBe('guild');
   });
 });
+
+// ---------------------------------------------------------------------------
+describe('hide-all silences the screen, not the voice', () => {
+  const main = readSource(new URL('../apps/mimic/main.js', import.meta.url).pathname);
+
+  it('does NOT list enableTriggerTts in _HIDEALL_FLAGS', () => {
+    // enableTriggerTts is the flag _OVERLAY_WINDOWS gates the trigger window's
+    // EXISTENCE on. Listing it here made hide-all destroy the renderer that
+    // owns speechSynthesis, so every callout — and Rehearse — went silent with
+    // no error anywhere.
+    const list = main.slice(main.indexOf('const _HIDEALL_FLAGS = ['));
+    const body = list.slice(0, list.indexOf('];'));
+    expect(body).not.toMatch(/'enableTriggerTts'/);
+    expect(body).toMatch(/'showTriggerOverlay'/);
+  });
+
+  it('snapshots showTriggerOverlay as TRI-STATE, not with a bare !!', () => {
+    // undefined means VISIBLE (applyTriggerVisibility tests `!== false`), so a
+    // plain !! snapshot records "hidden" for anyone who never touched it and
+    // unhide would leave the overlay off forever.
+    expect(main).toMatch(/f === 'showTriggerOverlay'\) \? \(cfg\[f\] !== false\)/);
+  });
+
+  it('keeps the trigger window exempt from quiet mode and the EQ gate', () => {
+    // The safeguards that were already right — the fix must not disturb them.
+    expect(main).toMatch(/if \(e\.key === 'trigger'\) return true;/);
+    expect(main).toMatch(/backgroundThrottling: false/);
+  });
+});
+
+describe('spoken text is not the display text', () => {
+  const html = readSource(new URL('../apps/mimic/triggers.html', import.meta.url).pathname);
+
+  it('cleans the FALLBACK but never an explicit tts', () => {
+    // t.tts wins untouched; only the reuse-display-text-as-speech path is
+    // cleaned, so a deliberately-written spoken line is never mangled.
+    expect(html).toMatch(/const spoken = t\.tts \|\| _speakable\(t\.text\)/);
+  });
+
+  it('strips symbols and separator dashes, keeping names and numbers', () => {
+    const m = html.match(/function _speakable\(txt\)\{[\s\S]*?\n  \}/);
+    expect(m, '_speakable not found').toBeTruthy();
+    // eslint-disable-next-line no-new-func
+    const fn = new Function('return (' + m[0].replace('function _speakable', 'function') + ')')();
+    // The live report: preview spoke "HIGH VOLTAGE D. I. Fired Tank Saved".
+    expect(fn('⚡ D.I. FIRED — Abrahms saved')).toBe('D.I. FIRED Abrahms saved');
+    expect(fn('💀 Death Touch — Hitya')).toBe('Death Touch Hitya');
+    // Must not damage ordinary callouts.
+    expect(fn('CH ON TANK')).toBe('CH ON TANK');
+    expect(fn('Kaas Thox Xi Ans Dyek at 20%')).toBe('Kaas Thox Xi Ans Dyek at 20%');
+  });
+});

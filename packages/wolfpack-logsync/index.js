@@ -19163,6 +19163,8 @@ async function dismissTopDamage(key) {
       + '      <input id="trigNewPattern" type="text" placeholder="e.g. (?&lt;target&gt;\\\\w+) begins to cast Mass Cancel Magic" style="width:100%;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px"></label>'
       + '    <label style="grid-column:1/3">Overlay text<br>'
       + '      <input id="trigNewOverlay" type="text" placeholder="e.g. CANCEL ON {target}!" style="width:100%;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px"></label>'
+      + '    <label style="grid-column:1/3">Spoken text (optional \u2014 leave blank to speak the overlay text)<br>'
+      + '      <input id="trigNewTts" type="text" placeholder="e.g. D I fired on {tank}" style="width:100%;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px"></label>'
       + '    <label>Color<br><select id="trigNewColor" style="width:100%;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px"><option value="red">red</option><option value="orange">orange</option><option value="gold">gold</option><option value="green">green</option><option value="blue">blue</option><option value="purple">purple</option><option value="white">white</option></select></label>'
       + '    <label>Duration (ms)<br><input id="trigNewDuration" type="number" min="500" max="60000" value="5000" style="width:100%;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px"></label>'
       + '    <label>Countdown timer (sec, 0 = no timer)<br><input id="trigNewTimerSec" type="number" min="0" max="3600" value="0" placeholder="e.g. 18 for a Cazic Touch refresh" style="width:100%;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px"></label>'
@@ -19279,6 +19281,7 @@ async function dismissTopDamage(key) {
   async function onPreview() {
     var name = (document.getElementById('trigNewName') || {}).value || 'preview';
     var overlayText = (document.getElementById('trigNewOverlay') || {}).value || '';
+    var ttsText = ((document.getElementById('trigNewTts') || {}).value || '').trim();
     var color = (document.getElementById('trigNewColor') || {}).value || 'red';
     var duration = parseInt((document.getElementById('trigNewDuration') || {}).value || '5000', 10) || 5000;
     var msg = document.getElementById('trigAddMsg');
@@ -19296,7 +19299,10 @@ async function dismissTopDamage(key) {
       body: JSON.stringify({
         trigger: {
           name: name,
-          actions: [{ type: 'text_overlay', text: overlayText, color: color, duration_ms: duration }],
+          // tts only when the user typed one: absent means the overlay falls back
+          // to the display text (cleaned of emoji by triggers.html), which is the
+          // sane default for the many triggers that read fine as written.
+          actions: [{ type: 'text_overlay', text: overlayText, color: color, duration_ms: duration, ...(ttsText ? { tts: ttsText } : {}) }],
         },
       }),
     });
@@ -19404,6 +19410,7 @@ async function dismissTopDamage(key) {
     var pattern = (document.getElementById('trigNewPattern') || {}).value || '';
     var cooldown = parseInt((document.getElementById('trigNewCooldown') || {}).value || '0', 10) || 0;
     var overlayText = (document.getElementById('trigNewOverlay') || {}).value || '';
+    var ttsText = ((document.getElementById('trigNewTts') || {}).value || '').trim();
     var color = (document.getElementById('trigNewColor') || {}).value || 'red';
     var duration = parseInt((document.getElementById('trigNewDuration') || {}).value || '5000', 10) || 5000;
     var timerSec = parseInt((document.getElementById('trigNewTimerSec') || {}).value || '0', 10) || 0;
@@ -19425,7 +19432,10 @@ async function dismissTopDamage(key) {
     const row = {
       name: name, pattern: pattern, use_regex: true, enabled: true,
       cooldown_seconds: cooldown,
-      actions: [{ type: 'text_overlay', text: overlayText, color: color, duration_ms: duration }],
+      // tts only when the user typed one: absent means the overlay falls back
+      // to the display text (cleaned of emoji by triggers.html), which is the
+      // sane default for the many triggers that read fine as written.
+      actions: [{ type: 'text_overlay', text: overlayText, color: color, duration_ms: duration, ...(ttsText ? { tts: ttsText } : {}) }],
     };
     if (timerSec > 0) row.timer_duration_sec = timerSec;
     if (endEarly.trim()) { row.end_early_pattern = endEarly.trim(); row.end_use_regex = true; }

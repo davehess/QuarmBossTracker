@@ -2313,7 +2313,7 @@ function _maybeSeedClassSet(s) {
   // (trigger TTS defaults ON — excluded) or any saved per-char profile means
   // this isn't fresh. Mark seeded so this check never runs again.
   const shaped = cfg.charProfilesEnabled
-    || _HIDEALL_FLAGS.some(f => f !== 'enableTriggerTts' && cfg[f]);
+    || _HIDEALL_FLAGS.some(f => f !== 'showTriggerOverlay' && cfg[f]);
   if (shaped) { cfg.classSetSeeded = true; saveConfig(cfg); return; }
   const classKey = String(cls).toLowerCase().replace(/[^a-z]/g, '');
   const set = Array.isArray(sets[classKey]) ? sets[classKey] : null;
@@ -5175,8 +5175,20 @@ function _hideAllHotkeyMenuLabel() {
 // blocks silently missed showCommand (the Command Center kept showing through
 // hide-all, Uilnayar 2026-07-10). New overlays: add the flag HERE and it's
 // covered automatically.
+// (!) 'showTriggerOverlay', NOT 'enableTriggerTts'. Hide-all must silence the
+// SCREEN, never the voice. enableTriggerTts is the flag _OVERLAY_WINDOWS gates
+// the trigger window's existence on, so listing it here made hide-all:
+//   flag=false -> _overlayWanted() false -> _reapDisabledOverlays() DESTROYS
+//   the window -> the renderer that owns speechSynthesis is gone -> every
+//   callout, and Rehearse, goes silent with no error anywhere.
+// Hitya, 2026-08-13: "clicking on rehearse doesn't speak out the TTS if the TTS
+// overlays are hidden. I thought we safeguarded from that." We had - _overlayWanted
+// exempts 'trigger' from quiet mode and the EQ-running gate, and the window
+// carries backgroundThrottling:false precisely so a HIDDEN one keeps speaking.
+// Hide-all was the one path that reached past all of it by turning the window
+// off entirely instead of hiding it.
 const _HIDEALL_FLAGS = [
-  'showHud', 'enableTriggerTts', 'showCharm', 'showPets', 'showMobInfo',
+  'showHud', 'showTriggerOverlay', 'showCharm', 'showPets', 'showMobInfo',
   'showBuffQueue', 'showWho', 'showMelody', 'showZeal', 'showThreat',
   'showChChain', 'showTank', 'showExtTarget', 'showCommand', 'showPopRaid',
 ];
@@ -5185,7 +5197,14 @@ function toggleHideAllOverlays() {
   if (!_hideAllActive) {
     // Snapshot + flip all off.
     _hideAllPrev = {};
-    for (const f of _HIDEALL_FLAGS) { _hideAllPrev[f] = !!cfg[f]; cfg[f] = false; }
+    for (const f of _HIDEALL_FLAGS) {
+      // showTriggerOverlay is tri-state: undefined means VISIBLE (see
+      // applyTriggerVisibility's `!== false`). Snapshotting it with a plain !!
+      // records "hidden" for a user who never touched it, and unhide would then
+      // leave the overlay off forever. Snapshot the EFFECTIVE state instead.
+      _hideAllPrev[f] = (f === 'showTriggerOverlay') ? (cfg[f] !== false) : !!cfg[f];
+      cfg[f] = false;
+    }
     _hideAllActive = true;
   } else if (_hideAllPrev) {
     // Restore from snapshot — respects whatever individual prefs the user
