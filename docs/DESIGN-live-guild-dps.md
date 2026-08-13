@@ -3,7 +3,10 @@
 **Ask (Hitya, 2026-08-13):** *"Can the DPS meter have the guild-reported version
 as well as the locally captured while the fight is going and show the diff?"*
 
-**Status: design only. Nothing built.**
+**Status: BUILT 2026-08-13** - bot 3.1.41 (`GET /api/agent/live-damage`),
+agent 3.5.71 (fight-gated read + `stats.guildDamage`), HUD rows in
+`apps/mimic/overlay.html`. Tests: `test/live-damage-merge.test.js` (11) +
+`test/hud-guild-merge.test.js` (10).
 
 ---
 
@@ -108,7 +111,7 @@ DAMAGE                    ⚠ you are seeing 38% of raid damage
 | Step | Where | Notes |
 |---|---|---|
 | 1 | **bot** `GET /api/agent/live-damage` | newest snapshot per uploader for a boss, merged max-per-player. Memo-cached ~2s, exactly like the extended-target bundle's 1.5s memo — ~20 agents polling one query. |
-| 2 | **agent** | ride the **existing #106 poll bundle**, do NOT add a loop. That bundle already carries six streams at their own cadences with per-stream cursors. |
+| 2 | **agent** | ⚠ **DEVIATED, deliberately.** Hung off the threat-snapshot uploader instead of the #106 bundle. The bundle is CADENCE-gated - its streams tick on their own clocks whether or not anything is happening - while this stream is FIGHT-gated. Reusing the uploader's existing `flushedAt`/`perPlayer` guard makes it cost exactly zero between pulls and adds no new schedule. |
 | 3 | **HUD** `overlay.html` | coverage chip + toggle. Reads `/api/state` like everything else. |
 | 4 | **staleness** | if the newest guild sample is older than ~30s, or a shed is active, say so rather than showing a frozen number. |
 
