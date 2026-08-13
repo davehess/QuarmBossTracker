@@ -4162,13 +4162,40 @@ async function _handleAgentChat(req, res) {
     if (!channelId) continue; // channel not configured — silently skip
 
     // Dedup: same speaker + text = multiple parsers saw the same line.
-    // CRITICAL: normalize the text in the key. EQ shows the SPEAKER their own
-    // /gu line lowercase-as-typed ("man both of you guys lol") but broadcasts
-    // an auto-capitalized version to every BYSTANDER ("Man both of you guys
-    // lol"). With multiple agents running, both casings arrive and a raw-text
-    // key fails to dedup → the message double-posts. Lowercasing + collapsing
-    // whitespace in the KEY (display text keeps original casing) closes it.
+    // CRITICAL: normalize the text in the key, because the same in-game line
+    // reaches different uploaders as different STRINGS and a raw-text key
+    // double-posts. Lowercase + collapsed whitespace (display text keeps its
+    // original casing) closes the casing half.
+    //
+    // ⚠ The casing difference is NOT EQ auto-capitalizing on the wire — that
+    // was this comment's claim until 2026-08-13 and it is wrong. Measured:
+    // Hitya's own client, as a BYSTANDER, shows the raw line verbatim
+    // ("its usually 5-7 k per full clear"). Instead, two specific uploaders
+    // (Hawkner, Syko) ship a REWRITTEN copy of lines they merely witnessed:
+    // first letter capitalized, and `-` `!` `/` `=` turned into spaces or
+    // dropped — "5-7 k" → "5 7 k", "ok!/camp" → "Ok camp", "=x" → "x".
+    // NOT our code: uploaders on the SAME agent build (3.5.58) sit on both
+    // sides of the split, so it is something client-side on those machines.
+    // Cause still unidentified — see docs/DECISIONS-2026-08-13.md.
     const normText = String(text).toLowerCase().replace(/\s+/g, ' ').trim();
+    // Punctuation-insensitive shadow of normText, used ONLY for the dedup keys
+    // below so both rewrites of one line collapse to a single post. The
+    // rewrite changes TOKEN COUNT (".." → " . " inserts a token), which is
+    // exactly why the fuzzy slur-variant matcher further down cannot catch it
+    // — that one requires equal token counts.
+    // Fallback guard: a message with no alphanumerics at all ("...", "!!!")
+    // would reduce to the empty string and collide with every other
+    // punctuation-only message, so those keep the exact-text key.
+    const punctText = normText.replace(/[^a-z0-9]+/g, ' ').trim();
+    const dedupText = /[a-z0-9]/.test(punctText) ? punctText : normText;
+    // Fidelity score — how much punctuation survived. The rewritten copy
+    // always scores LOWER than the raw one ("5-7 k" 1 vs "5 7 k" 0), which is
+    // what lets a later, better copy heal an already-posted worse one. Without
+    // this, collapsing the duplicate would be a REGRESSION whenever the
+    // rewritten copy happened to arrive first: today the guild at least sees
+    // the good text alongside the bad one.
+    const textScore = (s) => (String(s || '').match(/[^a-z0-9\s]/gi) || []).length;
+    const myTextScore = textScore(text);
     // Speaker safeguard: relabel a stray-log ghost name (e.g. Wabumkin's agent
     // emitting "Dopefiend") to a trusted alternative witnessed on the same
     // line. See the _safeguardSpeaker comment above.
@@ -4191,7 +4218,7 @@ async function _handleAgentChat(req, res) {
     // decorate a relabeled speaker (it's what stamped "[48 Troll Shaman]" on
     // Wabumkin's words).
     const whoForSpeaker = effectiveSpeaker.toLowerCase() === speaker.toLowerCase() ? uploadedWho : null;
-    const key = `${channel}|${effectiveSpeaker.toLowerCase()}|${normText}`;
+    const key = `${channel}|${effectiveSpeaker.toLowerCase()}|${dedupText}`;
     if (_chatDedup.has(key)) continue;
     _chatDedup.set(key, Date.now());
 
@@ -4200,12 +4227,12 @@ async function _handleAgentChat(req, res) {
     // attribution source so a later authoritative copy can HEAL a post made
     // under a filename-guessed name (edit-in-place), and so two genuinely
     // different speakers typing the same text both get posted.
-    const relayKey = `${channel}|${normText}`;
+    const relayKey = `${channel}|${dedupText}`;
     let relayEntry = _chatRelayDedup.get(relayKey);
     if (relayEntry && (Date.now() - relayEntry.at) > CHAT_RELAY_DEDUP_WINDOW_MS) relayEntry = null;
     const alreadyRelayed = !!relayEntry;
     if (relayEntry) relayEntry.at = Date.now();
-    else { relayEntry = { at: Date.now(), speaker: effectiveSpeaker, source: speakerSource, msg: null }; _chatRelayDedup.set(relayKey, relayEntry); }
+    else { relayEntry = { at: Date.now(), speaker: effectiveSpeaker, source: speakerSource, msg: null, score: myTextScore }; _chatRelayDedup.set(relayKey, relayEntry); }
 
     // Fuzzy dedup — drunk slur / censor variants. EQ broadcasts a different
     // mutation of the same line to each receiver, so each agent ships a
@@ -4344,14 +4371,29 @@ async function _handleAgentChat(req, res) {
       const sameName = String(relayEntry.speaker || '').toLowerCase() === effectiveSpeaker.toLowerCase();
       const distinctRepeat = !sameName && relayEntry.source === 'line' && speakerSource === 'line';
       const healable = !sameName && relayEntry.source !== 'line' && speakerSource === 'line';
-      if (healable && relayEntry.msg) {
+      // TEXT heal — this copy kept punctuation the posted one lost, so it is
+      // the un-rewritten original. Independent of the speaker heal: either can
+      // fire alone, and when both do the edit carries both improvements.
+      const textHealable = !!relayEntry.msg && myTextScore > (relayEntry.score || 0);
+      if ((healable || textHealable) && relayEntry.msg) {
+        // Keep whichever is better on EACH axis — never let a text heal
+        // clobber an already-healed speaker, or vice versa.
+        const bestSpeaker = healable ? safeSpeaker : (relayEntry.speaker || safeSpeaker);
+        const bestText    = textHealable ? safeText : (relayEntry.text || safeText);
         try {
-          await relayEntry.msg.edit(`${tsPrefix}**${safeSpeaker}**${whoTag}: ${safeText}`);
-          relayEntry.speaker = effectiveSpeaker;
-          relayEntry.source  = 'line';
-          console.log(`[chat-relay] healed speaker attribution: ${relayEntry.msg.id} → ${effectiveSpeaker}`);
+          await relayEntry.msg.edit(`${tsPrefix}**${bestSpeaker}**${whoTag}: ${bestText}`);
+          if (healable) {
+            relayEntry.speaker = effectiveSpeaker;
+            relayEntry.source  = 'line';
+            console.log(`[chat-relay] healed speaker attribution: ${relayEntry.msg.id} → ${effectiveSpeaker}`);
+          }
+          if (textHealable) {
+            relayEntry.text  = safeText;
+            relayEntry.score = myTextScore;
+            console.log(`[chat-relay] healed rewritten text: ${relayEntry.msg.id}`);
+          }
         } catch (err) {
-          console.warn('[chat-relay] speaker-heal edit failed:', err?.message);
+          console.warn('[chat-relay] heal edit failed:', err?.message);
         }
       }
       // Fall through to post when this is a genuine second utterance, or when
@@ -4367,6 +4409,11 @@ async function _handleAgentChat(req, res) {
       relayEntry.speaker = effectiveSpeaker;
       relayEntry.source = speakerSource;
       relayEntry.msg = sent;
+      // Record what actually reached Discord so a later, higher-fidelity copy
+      // of the same line can heal it (and so a speaker-only heal preserves
+      // this text rather than overwriting it with its own iteration's).
+      relayEntry.text  = safeText;
+      relayEntry.score = myTextScore;
       posted++;
     } catch (err) {
       console.warn(`[chat-relay] failed to post to ${channel}:`, err?.message);
