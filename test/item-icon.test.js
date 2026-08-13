@@ -12,8 +12,8 @@
 
 import { describe, it, expect } from 'vitest';
 import {
-  itemIconPos, itemIconStyle, hasItemIcon,
-  ICON_CELL, ICON_PER_ROW, ICON_FIRST, ICON_LAST,
+  itemIconPos, itemIconStyle, hasItemIcon, inAtlasRange,
+  ICON_CELL, ICON_PER_ROW, ICON_FIRST, ICON_LAST, ICON_ATLAS_DISABLED,
 } from '../web/lib/itemIcon.ts';
 
 describe('constants match the packer', () => {
@@ -85,12 +85,14 @@ describe('range guard', () => {
   });
 
   it('accepts both ends of the real range', () => {
-    expect(hasItemIcon(ICON_FIRST)).toBe(true);
-    expect(hasItemIcon(ICON_LAST)).toBe(true);
+    // Range membership is inAtlasRange; hasItemIcon additionally answers
+    // "and do we trust the art", which is false while the kill switch is on.
+    expect(inAtlasRange(ICON_FIRST)).toBe(true);
+    expect(inAtlasRange(ICON_LAST)).toBe(true);
   });
 });
 
-describe('itemIconStyle scaling', () => {
+describe.skipIf(ICON_ATLAS_DISABLED)('itemIconStyle scaling', () => {
   it('at full size uses raw cell offsets', () => {
     const s = itemIconStyle(541, 40);
     expect(s.width).toBe('40px');
@@ -114,5 +116,42 @@ describe('itemIconStyle scaling', () => {
   it('renders crisp rather than smoothed', () => {
     // 40px pixel art scaled down looks like mud with default interpolation.
     expect(itemIconStyle(500).imageRendering).toBe('pixelated');
+  });
+});
+
+// ── Kill switch ─────────────────────────────────────────────────────────────
+// The shipped atlas draws the wrong art (icon 633 is 276 items all named
+// "…Boots" and renders a shovel), so every surface is name-only until it is
+// repacked. These tests describe the DISABLED state on purpose: when someone
+// regenerates the atlas and flips the flag, they fail loudly and force a look
+// at the block above — which is where the "verify a known icon first"
+// instruction lives.
+describe('atlas kill switch', () => {
+  it('is currently ON', () => {
+    expect(ICON_ATLAS_DISABLED).toBe(true);
+  });
+
+  it('draws nothing at all while disabled', () => {
+    for (const icon of [ICON_FIRST, 633, 1050, ICON_LAST]) {
+      expect(hasItemIcon(icon), `icon ${icon} must not draw`).toBe(false);
+      expect(itemIconStyle(icon), `icon ${icon} must have no style`).toBeNull();
+    }
+  });
+
+  it('keeps the layout maths intact underneath, ready for the repack', () => {
+    // itemIconPos deliberately does NOT consult the kill switch: the offsets
+    // were never the bug, and gating them would delete the only coverage that
+    // makes re-enabling safe.
+    expect(itemIconPos(ICON_FIRST)).toEqual({ x: 0, y: 0 });
+    expect(itemIconPos(540)).toEqual({ x: 0, y: 40 });
+    expect(itemIconPos(2000)).toBeNull();
+  });
+
+  it('did not catch the bug, and says so', () => {
+    // Characterisation, not an assertion about behaviour: every positional test
+    // in this file passed while the atlas showed a cake for an earring. Index
+    // maths and art correctness are different properties, and only one of them
+    // is testable here.
+    expect(itemIconPos(1050)).not.toBeNull();
   });
 });
