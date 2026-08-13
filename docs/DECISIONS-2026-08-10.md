@@ -246,6 +246,33 @@ shape — no table, no migration). The other three questions were overtaken by
 shipped code and are marked so in the design doc. Remaining build: the shared
 manual layer + one-click resolve on the existing auto queues.
 
+## DI callout: Hitya's four calls (2026-08-11)
+
+X OR Y when both are ready and neither is about to CH; clerics only (druids
+cannot DI); when the Mimic-running clerics are known-not-ready, rely on the
+non-Mimic ones (unknown stays eligible, measured-down never does); and **the one
+casting calls it out** — the selector nominates, a human closes the ambiguity on
+voice. Points 1–3 were confirmed as already shipped in 3.5.59's ranker; point 4
+landed in 3.5.60 as the "— caster call it" cue on the TTS and overlay text.
+Full mapping in `DESIGN-di-callout.md` §7.
+
+## CH chain: show both claimants + ORDER CONFLICT; cast bar right-to-left, blue (Hitya, 2026-08-11)
+
+Two calls, both shipped in agent 3.5.61:
+
+**Slot conflicts display, never overwrite.** Two callers on one number → both
+names on the row in first-claimed order, plus an ORDER CONFLICT banner (bright
+yellow letters, red outline) at the top of the CH overlay. Claimants self-evict
+after 120s of silence so a corrected mis-call heals without a restart. This is
+the display half of the §5 slot-stealing bug; the officer-pushed rotation stays
+open as the structural fix.
+
+**The cast bar fills RIGHT-TO-LEFT and is BLUE.** Every countdown on every
+overlay fills left-to-right, so the CH cast bar ran the same direction as the
+timers around it and read as one of them. It now runs the other way in its own
+color: one glance tells a cast from a countdown. GO stays green (green = go);
+an interrupted cast stays red-and-frozen, inheriting the right anchor so it
+reads as the same bar, stopped.
 ## Unraid Supabase: backup first, then dev sandbox (Hitya, 2026-08-11)
 
 Not the live replica. Ordering matters twice over: the nightly `pg_dump` needs
@@ -367,6 +394,17 @@ looks is indistinguishable from automation that does not run.** Applies equally
 to the mirror's autodeploy poller and the nightly backup — both already log, and
 both need somewhere the log is actually read.
 
+## CH conflict rows: one line per claimant (Hitya, live test 2026-08-12)
+
+An impromptu test of the 3.5.61 ORDER CONFLICT work showed the merged row was
+half a fix: `002 | Mcdorf / Stupidric… | 54% | NEXT` truncated both names and,
+worse, drove ONE cast bar for TWO clerics — the display told you the slot was
+contested but not what either of them was actually doing, which is the thing you
+need mid-chain. Agent 3.5.62 renders one row per claimant, each with its own cast
+timer and its own mana (claimants now store mana individually; a shared number
+would print the caller's mana against the other cleric's name). The DDR grade
+stays on the first row only — it grades the slot's beat, and stamping it twice
+would double-count one graded cast.
 ## The migration pipeline was stalled, and it was hiding a broken feature (2026-08-12)
 
 Officer roll edits failed on first use — `roll_set_overrides` did not exist. The

@@ -286,3 +286,87 @@ fight**; the raw data is the only copy until then.
   it here would need a third capture change for a question nobody has asked yet.
 - Healing lanes. `heal`/`healRaw` are in the payload and could support a healer
   view later, but the ask is a damage timeline.
+
+---
+
+## Chart decisions — 2026-08-13 (taken at implementation time)
+
+The data layer above was built 2026-08-09 and the chart was still unbuilt. These
+are the calls made while building it; the sections above are unchanged and still
+describe the data.
+
+### ⚠ The sketch as drawn is a dual-axis chart. We do not ship those.
+
+The napkin sketch puts **boss HP %** and **stacked damage contribution** on one
+plot. Those are different measures on one Y axis — the single most common chart
+mistake, and the thing that makes a chart look informative while being unreadable.
+
+**The resolution keeps the sketch exactly and removes the second axis**, because
+the two quantities are the same quantity from opposite directions:
+
+> Cumulative damage dealt IS boss HP removed. If the stack is normalised to the
+> fight's total damage, the **top of the stack is the HP-removed curve** and the
+> descending HP line is its complement. One axis: **0–100 % of the boss's health
+> bar.** Your band's thickness at time *t* is the share of the boss you had taken
+> off by then.
+
+This also makes divergence *meaningful* instead of confusing: when observed
+`target_hp_pct` sits ABOVE the derived curve, the boss healed or an add absorbed
+damage. Two lines on one honest axis, not two scales.
+
+### Selection is HIGHLIGHT, not recolour
+
+The doc above recommends one selection model with class buttons as bulk
+selectors. Implementation detail that follows from it: with 21–34 characters in a
+real fight, per-character colour is impossible — the palette non-negotiable is
+that a 9th series is never a generated hue.
+
+So: **the top 7 damage dealers carry the categorical palette, everyone else folds
+into one muted "Others" band.** When a selection is active, selected characters
+keep their colour and everything else drops to the muted step. That satisfies
+"highlight sections of the damage meter by class(es)" without ever needing 30
+distinguishable hues.
+
+### Palette — validated, not eyeballed
+
+```
+#4493e8  #c9732a  #18a3ad  #a371f7  #3aa864  #e0619a  #b08a2e
+```
+
+Validated against surface `#0d1117`: lightness band PASS, chroma floor PASS,
+normal-vision floor PASS (worst adjacent ΔE 20.7), contrast PASS.
+**CVD separation WARN** — worst adjacent pair `#e0619a↔#3aa864` ΔE 6.2 (deutan),
+which is legal only with secondary encoding, so the stack ships with 2px surface
+gaps between segments, a legend, and direct labels on the largest bands. Do not
+reorder these hues without re-running the validator: order is load-bearing,
+because the check is on ADJACENT pairs.
+
+⚠ Platform tokens could not be used directly. Our UI hues (`#58a6ff`, `#56d364`,
+`#d29922`…) are tuned for text and chips on a dark ground and sit at OKLCH
+L ≈ 0.72–0.80, outside the L 0.48–0.67 band a dark-surface chart fill needs; as a
+set they also failed the chroma floor and the CVD check. These are the same hue
+FAMILIES re-stepped for fills. `#f85149` (red) is deliberately absent — it is the
+reserved death/critical status colour and must never mean "series 4".
+
+### It must share an axis with the FightTimeline already on the page
+
+`/parses/[id]` already renders `components/FightTimeline.tsx` — a different
+thing (deaths, raid events, trigger fires as markers on a time axis), not this
+chart. **Both are fight-time X axes on one page**, so they must use the same
+origin, the same seconds-per-pixel, and the same left gutter, or the reader will
+try to line up two axes that do not correspond. Not a merge: the event lane stays
+its own component. Shared geometry only.
+
+### Scope actually shipped
+
+- Boss HP curve (derived; observed overlaid when `target_observations` has it)
+- Stacked cumulative damage, top 7 + Others
+- MT lane (argmax of Δ`took`, run-length encoded)
+- Highlight by character search + class bulk selectors
+- **RAMP lane is NOT shipped** — `ramp` is still absent from the snapshot
+  payload (gap 1 above, agent-side). The lane renders only when the field
+  appears; guessing it from second-fastest `took` is exactly the inference this
+  platform keeps getting burned by.
+
+⚠ Repeat-pull fights remain wrong until ingest binding lands (build order step 2).
+The chart labels them rather than pretending.

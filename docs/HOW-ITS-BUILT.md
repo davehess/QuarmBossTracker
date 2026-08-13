@@ -567,6 +567,25 @@ either way", never "this was a feign"** — a rezzed death is real and
 unconfirmable, and every rogue corpse pull looks exactly like one. Full model
 and the open design work in `docs/DESIGN-death-semantics.md`.
 
+### Who is dead right now — the registry and its two sources — 2026-08-10/11
+**The registry** (agent, `_noteDeath` / `_clearDeath` / `_isDead` /
+`_deadNamesSnapshot`): `nameLower → diedAtMs`, consulted by any surface that
+names a raider (the off-heal list excludes the dead). It **forgets after 15
+minutes** and clears on alive evidence — we don't see every rez, and tombstoning
+someone for the rest of the night is worse than briefly missing a corpse.
+**Source 1 — the log**: a confirmed player death in the encounter builder.
+**Source 2 (#205, agent 2026-08-11) — Zeal group HP**: `_noteGroupHpFromState`
+on the `/api/zeal-state` ingest path watches gauges 11-15 (+ exact
+`hp_current/hp_max` when `/pipeverbose` is on) and marks a member dead when
+their HP hits zero **and holds** — evidence that owes nothing to log text, which
+is the cross-check the feign bug never had. Guards: seen-alive-first, ≥2 samples
+/ ≥2.5s dwell (Zeal's clamped negative per-mille makes a lone zero an artifact),
+and a 60s refusal after that name's feign emote — `noteFeignEmoteLine` is the
+only thing in the agent that knows `"<Name> dies."` happened. It never
+re-stamps a death the log already holds. `_groupDeathWatchSnapshot()` is the
+diagnostic. **No `death_evidence` table or upload exists** —
+`docs/DESIGN-group-death-watcher.md` §8 for what was deliberately left.
+
 ### Threat snapshots (cadence, labelling, claiming) — 2026-08-04
 `boss_name` was NULL on all 463k rows by construction: it is assigned only at
 flush (death handler / inside `flush()`), while the uploader refuses to run once
@@ -611,6 +630,38 @@ their absence says nothing). KNOWN GAP: re-charming a DIFFERENT mob with the
 SAME name is invisible to the identity check — the `/pet health` reconcile is
 what catches it. Tests: `test/pet-buff-landing.test.js`.
 
+### Instant boss mechanics — the third capture path (#206, 2026-08-11)
+Two paths existed and both are keyed on things an instant effect does not have:
+`shouldKeep`→`parseEvent` on damage/heal NUMBERS, and the buff/debuff landing
+indexes on spell DURATION. So the ~138 instant boss effects that emit a perfectly
+good line (AEs, death touches, dispels, stuns, "\<mob\> is completely healed.",
+"\<mob\> fades away.") were invisible. The third path is keyed on the catalog's
+`cast_on_other` text: `_rebuildMechanicMatchers` / `parseMechanicLanding` /
+`noteMechanicLanding` in `packages/wolfpack-logsync/index.js`, hooked in the
+watch tail beside the debuff path (ahead of `shouldKeep`) and only on lines the
+two timed paths declined. Surfaced on the 💥 **Boss mechanics** card, Triggers
+tab; served as `recentMechanics` on `/api/state`. Local ring only — nothing
+uploads yet (`DESIGN-mechanic-capture.md` §0/§7).
+Four load-bearing rules:
+- **Scope comes from the bot.** Spell-catalog **v8** stamps `npc: 1` on the ~1.4k
+  spells in `eqemu_npc_spells_entries`; the index refuses anything else, and if
+  NO entry carries the flag it stays EMPTY (bot pre-v8) rather than indexing
+  every player nuke and cure in view.
+- **The gate is the FIGHT, not `good_effect`.** EQ classifies dispels as
+  BENEFICIAL (Nullify Magic / Annul Magic / Beholder Dispel are all `good=1`), so
+  a detrimental-only filter drops "\<raider\> feels dispelled." Instead:
+  `_fightTargetMatches` → on the mob we are hitting, drop detrimental families
+  (our own nukes); on anyone else, drop heal families (our own CH chain).
+- **Never crowned.** The junk-family guard the timed indexes use is deliberately
+  not copied: it exists because those indexes pick a representative and can be
+  wrong (Kneel Test, Bolt of Karana, every-yawn-is-Turgur's). Shared text →
+  `spell_id 0`, `spell_name null`, family attached, printed as "unidentified".
+- **One row per CAST**, with a victim count (names capped at 12, count is not) —
+  a 30-target AE is one row, and the same line seen in a main + an alt log
+  collapses instead of double-counting.
+Tests: `test/mechanic-capture.test.js` (includes an assertion that the timed
+indexes are byte-for-byte unaffected).
+
 ### CH chain tracker
 Parses shout/raid callouts: numbered calls (`_CH_CALL_RX`), GO cues
 (`_CH_GO_RX` — stamps `lastGo` so the overlay flashes GO! on that slot),
@@ -630,6 +681,29 @@ filter-suppressible). DDR grading: `_chGradeCall` scores each call against
 streak), ≤0.5s GREAT, ≤1s GOOD — flashed as an arcade sticker atop the
 caster's bar in `apps/mimic/chchain.html` (`ddrSticker`). Visual only, never
 TTS, by design; 🎯 overlay toggle + `POST /api/chchain/ddr`.
+
+### Divine Intervention: readiness chips + the two-cleric callout (#204)
+Two separate things on the same overlay. **Readiness** is log-driven: a
+self-cast of DI stamps `di_ready_at = castStart + 6s + 90s` (`_noteDiCast`;
+`noteDiInterrupt` refunds an interrupted/fizzled cast), rides `live-state` →
+`GET /api/agent/di-status` → `diStatusSnapshot()` → the ✓/countdown chips.
+A null `ready_at` means **we never SAW the cast**, not that DI is available —
+`unknown` is carried separately from `up` for exactly that reason.
+**The callout** (agent 2026-08-11, `DESIGN-di-callout.md` §6) fires on the
+death-save line `<Tank> has been rescued by divine intervention!` (EQMacEmu
+`Mob::TryDeathSave` → StringID 1029; **always name-form, 200-unit range, and a
+FAILED save emits nothing** — "survived divine intervention" is an invented
+line, do not add it). `trackDiFired` → `_diRankCandidates` nominates **two**
+clerics off the chain: recently active, not due to cast inside
+`DI_CAST_MS + one beat`, confirmed-ready DI outranking unknown, mana as
+tie-break. Hard exclusions: `kind`-labeled druid auto-slots and known
+non-Clerics (DI is cleric-only; the chain is not a cleric roster), corpses
+(`_isDead`), and a MEASURED recast. Ties/empty → the chain's two most recent
+healers; nobody nameable → no nomination (the guild trigger still calls the
+event). Output is ONE `text_overlay` fire on the existing trigger-TTS surface
+plus `diCallout` on `/api/state` → the card in `chchain.html` (evidence chips,
+20s countdown, local-only ✕ — recording is #207). Tests:
+`test/di-callout.test.js`.
 
 ### Main target & main tank
 `_resolveMainTarget` = the NPC most raiders target, from the bot's Extended
@@ -769,6 +843,49 @@ Zeal health, Settings, loading. Overlays poll the local agent
 `/api/extended-target`, `/api/buff-queue`) every ~1.5–2s.
 
 ---
+
+### Callout overlay UX — dismissible countdowns + recorded dismissals (#207) — 2026-08-11
+Where each half lives, because this one spans three files.
+
+**Layout (`triggers.html`).** `#timers` is **bottom-anchored** (`bottom:8px`,
+`flex-direction:column-reverse`) so the stack grows UPWARD, away from the centre
+of the screen — the centre is reserved for the momentary flash
+(`DESIGN-trigger-overlay-v2.md` §3/§3b). The window itself is bottom-anchored to
+match: `_GROW_UP_DEFAULT_KEYS` in `main.js` makes `trigger` grow-up **by
+default**, and every reader (resize path, chrome-menu checkbox, ⬆ toggle) goes
+through the one `_growUpSetting(cfg, key)` helper so an explicit choice wins in
+both directions. `--timers-space` (set from `measureWanted`) lifts the centred
+`#alertcol` clear of the stack — flex centring halves a bottom margin, hence
+twice the stack height.
+
+**Two render invariants, applied to the server list before any DOM work.**
+`collapseTimers` keeps at most one row per `(mob, effect class)` — today only
+slows classify (`TIMER_SLOW_RX`), longest-remaining wins — so the Ssra wall of
+identical slow rows cannot be drawn even if a new upstream cause appears.
+`splitVisible` caps the stack at `MAX_TIMER_ROWS` (6) with a `+N more` tail;
+**loot-auction chips are exempt** (#129 — a bid window a raider cannot see is a
+lost item). Capped-out rows leave the DOM but stay in `timerNodes`, so their
+pre-end warning still SPEAKS. Row reconciliation is an insert-before loop, not a
+blanket re-append (that restarts every row's pop animation each poll).
+
+**Dismissal (the ✕ on every row, 🗑 clear-all in the title bar).** Both use the
+hover-interact handshake — locked overlays are click-through. `dismissTimer`
+POSTs `/api/timers/cancel {id, reason}`; clear-all POSTs `{all:true}` (the agent
+spares loot chips) and also clears pinned sticky callouts.
+
+**Recording (`packages/wolfpack-logsync/index.js`).** `_recordCalloutFeedback`
+is the single funnel: `dismissed` from the cancel endpoint and from
+`/api/triggers/feedback` (sticky rows), `expired` from the natural-expiry branch
+of `_activeTimersSnapshot` — the control group, without which a dismissal count
+is not a rate. A mob-death cancel deletes the row itself and so is neither.
+Votes batch (30s / 25) into the existing `trigger_feedback` upload; latency is
+`voted_at − fired_at`, no new column. Rehearsal/replay fires update the local
+counters (`/api/state` → `calloutFeedback`) but never upload — that is the
+without-a-raid test path. Bot: `TRIGGER_FEEDBACK_DIRECTIONS`; DB: migration
+`20260811120000_trigger_feedback_dismissal_directions.sql` widens the CHECK
+constraint (a row is REJECTED until it is applied). Dismissals are per-user and
+session-scoped by construction — nothing relays, nothing touches
+`guild_triggers`. Tests: `test/callout-dismissals.test.js`.
 
 ### Auto-update on EQ close + focus-safe nag — 2026-08-04 (Mimic 2.3.0)
 Mimic already polled hourly with `autoDownload` on; `autoInstallOnAppQuit` then
@@ -1187,7 +1304,49 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   song name (12 = Quarm AE cap, green at a full swarm; per-mob min–max in
   the tooltip). Badge goes stale-silent 30s after the last pulse.
 
+### Crash review (agent, beta)
+- **🩺 Crash review card + `/api/crash-review` (agent 3.5.67)** — reads this
+  machine's own Zeal crash zips and says, in plain language, what broke. The
+  headline answer is *"was this Zeal/Mimic?"*, because that is what people ask
+  when EQ vanishes. `_readMinidump` parses `minidump.dmp` with zero deps and no
+  symbol server (module base addresses resolve any address to `module+offset`);
+  `_crashVerdict` turns that into a subsystem, notes and concrete checks —
+  including the exact `reg query` for the audio device that failed. Dashboard
+  card is **on-demand only** (a button, never the 2s poll) and is NOT gated on
+  `WOLFPACK_CRASH_REPORTS`: that flag governs UPLOADING to the guild, and
+  reading your own crash should not require sharing it.
+  ⚠ Dumps never leave the machine. Same logic in Python for officers:
+  `scripts/read-minidump.py`. Worked example + limits:
+  `docs/DESIGN-crash-review.md` §8. Tests: `test/minidump-review.test.js`
+  (synthetic dumps built byte-by-byte; they pin two struct offsets and the
+  utf16 alignment bug that silently dropped every audio endpoint).
+- **Automatic backfill for existing uploaders (agent 3.5.68 · bot 3.1.40)** —
+  anyone who already had crash sharing on has a pile of rows that are just an
+  address, because they were uploaded before we could read dumps. The agent
+  re-sends those bundles once with the analysis attached (8 per 60s sweep; the
+  bot upserts on `zip_name`, so rows update in place rather than duplicating).
+  ⚠ The watermark (`crash-reports.state.json` → `analyzed`) advances **only**
+  when the bot echoes `analysis_version` >= the agent's `CRASH_ANALYSIS_VERSION`
+  — otherwise an older bot would drop the fields and the agent would mark the
+  history done anyway, burning the one chance to backfill it. Against an old
+  bot the agent pauses re-analysis and re-probes hourly, so a bot deploy resumes
+  it with nobody restarting anything. **`CRASH_ANALYSIS_VERSION` (agent) and
+  `CRASH_ANALYSIS_VERSION_SUPPORTED` (bot) are one contract — bump both.**
+  Tests: `test/crash-reanalysis-watermark.test.js`.
+
 ### Mimic (`apps/mimic/`, beta)
+- **Injected chrome is dashboard-only (mimic, 2026-08-13)** — `preload.js` adds a
+  ⚙ (and a ✕ on panel windows) to pages loaded over `http:`. That was a safe
+  proxy for "this is the dashboard" until #65 started serving real overlays from
+  the agent at `/overlay/<name>` so they ride hot-swaps; the Command Center then
+  showed a gear that opened Mimic **Settings** from inside a raid overlay, and
+  because `/overlay/command` carries no `?overlay=` query it was misdetected as
+  the main window. Now guarded by `_isAgentServedOverlay`
+  (`location.pathname.startsWith('/overlay/')`). ⚠ The `?overlay=` PANEL windows
+  still need the injection — they are the dashboard in a small frameless window
+  with no chrome of its own. Any overlay with its own parity chrome (✥ / ✕ /
+  right-click) must NOT get injected chrome on top.
+  Tests: `test/preload-overlay-chrome.test.js`.
 - **Me card + officer Admin tab (#109)** — dashboard opens on 🐺 Me; officer
   tools + 📡 Reporters panel (#115, swap/include) + 🛑 kill switches (#118) under
   🛡 Admin. LKG crash-loop rollback + beta-channel hot-swap in `main.js` (#74).

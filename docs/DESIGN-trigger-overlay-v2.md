@@ -220,13 +220,13 @@ raid. "Wrong" reports need a new officer-visible surface (a table + a row on
 
 ## Staged plan
 
-| Stage | Scope | Where |
-|---|---|---|
-| **1** | Graduate agent 3.5.56/3.5.57 to stable — the duplicate + skew + ambiguity fixes are done but sitting on a channel with no users | `main` |
-| **2** | Overlap/readability + grow-upward + one-row-per-mob render invariant | Mimic `triggers.html` |
-| **3** | Split timers into their own overlay (option, default on) + callout font size | Mimic + dashboard |
-| **4** | Full source labels (table in §1), driven off named casts only | agent + `mobinfo.html` |
-| **5** | Mute + Wrong + inline edit + end-of-night prompt + notify-on-fix | agent + bot + `/admin/triggers` |
+| Stage | Scope | Where | State |
+|---|---|---|---|
+| **1** | Graduate agent 3.5.56/3.5.57 to stable — the duplicate + skew + ambiguity fixes are done but sitting on a channel with no users | `main` | **done** — `STATUS.md` records the timer-identity fix as stable (task #27 unblocked) |
+| **2** | Overlap/readability + grow-upward + one-row-per-mob render invariant | Mimic `triggers.html` | **built 2026-08-11** with #207 (unreleased). Bottom-anchored stack growing upward, 6-row cap + "+N more", `collapseTimers` one-row-per-(mob, effect class) for slows, `--timers-space` keeps the centre flash off the stack. `main.js` makes the trigger overlay grow-up **by default** (`_GROW_UP_DEFAULT_KEYS` / `_growUpSetting`) |
+| **3** | Split timers into their own overlay (option, default on) + callout font size | Mimic + dashboard | open. Still worth doing: the bottom anchor bounds the problem but the flash and the stack still share one window, so a tall stack still nudges the centred flash (by half the stack height) |
+| **4** | Full source labels (table in §1), driven off named casts only | agent + `mobinfo.html` | open — the chip still reads `mob - <trigger name>`, with no class or % |
+| **5** | Mute + Wrong + inline edit + end-of-night prompt + notify-on-fix | agent + bot + `/admin/triggers` | open. #207 landed the **half of §6.1 that is not a mute**: every countdown and every pinned callout can be cleared, per-user and session-scoped, and the clearing is now RECORDED (`dismissed`/`expired` on `trigger_timing_feedback`) so the queue this stage builds has evidence to rank by |
 
 Stages 1-3 are what stops the bleeding on raid night. 4 is polish on top of the
 3.5.57 honesty work. 5 is the biggest build and the one that changes officer

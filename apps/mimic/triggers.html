@@ -35,7 +35,14 @@
      alert text sits at the same spot whether or not a vote is offered —
      appearing buttons must never shove the callout around mid-fight
      ("include the buttons in the default spacing", Uilnayar 2026-07-09). */
-  #alertcol{display:flex; flex-direction:column; align-items:center; gap:10px}
+  /* --timers-space keeps the centred callout column OFF the timer stack. The
+     column is centred by the body flexbox, so a bottom margin lifts its
+     content by HALF the margin — hence twice the stack height, set from JS
+     whenever the stack resizes. "The centre is reserved" for the momentary
+     flash; persistent countdowns live at the bottom edge and must not be
+     written over by it (docs/DESIGN-trigger-overlay-v2.md §3b). */
+  #alertcol{display:flex; flex-direction:column; align-items:center; gap:10px;
+    margin-bottom:var(--timers-space,0px)}
   #feedback{display:flex; visibility:hidden; gap:8px; align-items:center; pointer-events:auto;}
   #feedback.show{visibility:visible}
   .fb-btn{
@@ -99,17 +106,33 @@
 
   /* ─── Timer countdown stack ───────────────────────────────────────────
      GINA-style debuff-tracker rows: time on the LEFT (monospace, padded),
-     then "Boss - Effect" label. No progress bar — the time count IS the
-     progress. One row per active timer in the agent's _activeTimers map.
-     Top-left corner so the centered alert flash stays unblocked. Soonest-
-     to-expire is on top (the agent sorts that way).                      */
-  #timers{position:fixed;top:34px;left:8px;right:8px;display:flex;flex-direction:column;
+     then "Boss - Effect" label. One row per active timer in the agent's
+     _activeTimers map.
+
+     BOTTOM-ANCHORED, GROWING UPWARD (docs/DESIGN-trigger-overlay-v2.md §3,
+     Hitya 2026-08-10 after Ssra): "the middle of the screen is crucial area
+     for positioning, but that whole line of timers was awful to compete
+     with." A persistent countdown must never camp centre-screen, and a
+     growing stack must never creep into the play area — so the stack hangs
+     off the window's BOTTOM edge and extends toward the top. column-reverse
+     puts list index 0 (most urgent) nearest that anchor, with the "+N more"
+     overflow tail at the far top. The window itself defaults to grow-upward
+     for this overlay (main.js _growUpSetting), so the bottom edge stays put
+     on screen as rows accumulate.
+
+     The stack is ALSO hard-capped (MAX_TIMER_ROWS) — a burst can no longer
+     wall the game off behind chips, which is what the internal scrollbar
+     below never solved (the stack is click-through; nobody can scroll it). */
+  #timers{position:fixed;bottom:8px;left:8px;right:8px;display:flex;
+    flex-direction:column-reverse;
     gap:3px;z-index:40;min-width:180px;pointer-events:none;
-    /* Safety valve: if the auto-grow clamp (~60% of the work area) is reached,
-       the stack scrolls internally instead of running off-screen. Soonest-to-
-       expire chips are sorted to the top so the important ones stay visible. */
+    /* Safety valve only — the row cap is the real bound. */
     max-height:calc(100vh - 42px);overflow-y:auto;overflow-x:hidden;
     font-family:ui-monospace,Menlo,Consolas,monospace}
+  /* "+N more" overflow tail — dimmer than a real row so it reads as a count,
+     not a countdown. Sits at the top of the stack (furthest from the anchor). */
+  .timer-row.timer-more{justify-content:center;color:#8b949e;font-size:11px;
+    border-left-color:#6e7681;padding:2px 8px;animation:none}
   .timer-row{position:relative;display:flex;align-items:baseline;gap:8px;
     padding:3px 8px 5px;background:rgb(0 0 0 / var(--bg-alpha));border-radius:4px;
     color:#fff;font-size:13px;line-height:1.25;
@@ -146,18 +169,32 @@
     0%,100%{box-shadow:0 0 0 0 rgba(255,138,101,0)}
     50%    {box-shadow:0 0 0 2px rgba(255,138,101,0.7), 0 0 12px rgba(255,82,82,0.6)}
   }
-  /* #107 per-chip ✕ dismiss (loot auction chips). #timers is click-through
-     (pointer-events:none) so the row stays out of the way; the ✕ re-enables
-     pointer-events AND uses the hover-interact handshake so the click lands
-     even while the whole overlay is locked. */
+  /* Per-chip ✕ dismiss. #timers is click-through (pointer-events:none) so the
+     row stays out of the way; the ✕ re-enables pointer-events AND uses the
+     hover-interact handshake so the click lands even while the whole overlay
+     is locked. #107 gave this only to loot-auction chips; #207 gives it to
+     EVERY countdown — "this is annoying and no way to clear it" (Hitya, live
+     on Ssra) was the overlay's top complaint. */
   .timer-row .timer-x{flex-shrink:0;width:16px;height:16px;display:flex;
     align-items:center;justify-content:center;border-radius:3px;margin-left:2px;
     background:rgba(0,0,0,0.35);color:#c9d1d9;border:1px solid rgba(255,255,255,0.18);
     font-size:11px;line-height:1;cursor:pointer;pointer-events:auto}
   .timer-row .timer-x:hover{color:#fff;background:rgba(248,113,113,0.6);border-color:#f87171}
-  /* Setup mode pushes the timer stack down so the orange status bar at
-     top doesn't sit on top of it. */
-  body.setup #timers{top:58px}
+  /* (The stack is bottom-anchored now, so the setup bar at the top of the
+     window no longer sits on it — the old `body.setup #timers{top:58px}`
+     nudge is gone. measureWanted() still reserves the taller top gutter in
+     setup mode so the topmost row clears the moved ✕/✥ buttons.) */
+  /* 🗑 clear-all — dismiss every countdown at once. Sits LEFT of the fixed ✕
+     (which owns the ~30px right gutter, per the overlay checklist) and only
+     appears when there is something to clear. */
+  #clear-btn{position:fixed;top:6px;right:28px;z-index:60;width:18px;height:18px;
+    display:none;align-items:center;justify-content:center;border-radius:4px;
+    background:rgba(14,17,22,0.6);color:#6b7280;border:1px solid rgba(110,118,129,0.3);
+    font-size:10px;line-height:1;cursor:pointer;opacity:0.4;transition:opacity .12s;
+    padding:0}
+  #clear-btn.show{display:flex}
+  #clear-btn:hover{opacity:1;color:#f6c365;border-color:#f6c365}
+  body.setup #clear-btn{top:30px}
   /* ✕ hide button — top-right corner. Faint so it doesn't distract during a
      fight; brightens on hover. Works when locked via the hover-interact
      handshake. */
@@ -178,6 +215,7 @@
 </style></head>
 <body>
   <button id="move-btn" title="Drag from this icon to move the overlay (top-left corner — same on every overlay)">✥</button>
+  <button id="clear-btn" title="Clear every countdown + pinned callout on screen (yours only — never the raid's)">🗑</button>
   <button id="hide-btn" title="Hide trigger alerts + timers (turn back on from the tray → Overlays)">✕</button>
   <div id="drag-controls">
     <div id="move-handle" class="drag-btn" title="Drag to move">✥</div>
@@ -223,6 +261,17 @@
     hideBtn.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch (e) {} });
     hideBtn.addEventListener('mouseleave', function(){ try { window.mimic.overlayHoverInteractive(false); } catch (e) {} });
     hideBtn.addEventListener('click', function(){ try { window.mimic.hideThisOverlay(); } catch (e) {} });
+  }
+
+  // 🗑 clear-all (#207) — one click drops every countdown chip and every pinned
+  // callout. Same hover-interact handshake as ✕: the overlay is click-through
+  // when locked, so without it the click falls through to EQ and the button
+  // "does nothing" (CLAUDE.md overlay feature-parity checklist item 3).
+  var clearBtn = document.getElementById('clear-btn');
+  if (clearBtn) {
+    clearBtn.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch (e) {} });
+    clearBtn.addEventListener('mouseleave', function(){ try { window.mimic.overlayHoverInteractive(false); } catch (e) {} });
+    clearBtn.addEventListener('click', function(){ clearAllCallouts(); });
   }
 
   // Manual drag — see overlay.html for the rationale.
@@ -346,6 +395,18 @@
       }).catch(function(){});
     }catch(e){}
   }
+  // Make display text speakable: drop pictographs/symbols and the separator
+  // dashes that read as words, then collapse whitespace. Deliberately narrow -
+  // it must never mangle a character name or a number.
+  function _speakable(txt){
+    if (!txt) return '';
+    return String(txt)
+      .replace(/[\u2190-\u2BFF\u2600-\u27BF\uFE0F\u2028\u2029]/g, ' ')
+      .replace(/[\uD800-\uDBFF][\uDC00-\uDFFF]/g, ' ')   // surrogate-pair emoji
+      .replace(/\s+[-\u2013\u2014]+\s+/g, ' ')            // " - " / " -- " separators
+      .replace(/\s{2,}/g, ' ')
+      .trim();
+  }
   function speak(text, meta){
     try{
       if (!window.speechSynthesis){ reportPlayback('error', 'no speechSynthesis API', meta); return; }
@@ -427,15 +488,43 @@
   // same row instead of stacking duplicates.
   const STICKY_MAX_MS = 5 * 60 * 1000;
   const stickyEl = document.getElementById('sticky');
-  const stickyRows = new Map();   // key → { row, timer }
+  const stickyRows = new Map();   // key → { row, timer, fire, firedAt }
   function _stickyKey(t){ return String(t.trigger || '') + '|' + String(t.text || t.tts || ''); }
-  function dismissSticky(key){
+  // #207 — a dismissal is the single most honest signal we can collect about a
+  // callout ("a raider looked at this mid-fight and swatted it away"), and until
+  // now dismissSticky threw it away at the point of collection. Report it, with
+  // its twin: a row that aged out UNTOUCHED is the control group, without which
+  // a dismissal count can't become a rate (docs/DESIGN-callout-overlay.md §Gap C).
+  // Fire-and-forget: the agent owns the durable queue, and a callout dismissal
+  // must never block the UI on a fetch.
+  function reportCalloutFeedback(direction, fire, firedAtMs, note){
+    try {
+      fetch('http://127.0.0.1:' + PORT + '/api/triggers/feedback', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          direction: direction,
+          trigger_id:   (fire && fire.trigger_id) || null,
+          trigger_name: (fire && (fire.trigger || fire.text || fire.tts)) || '(unknown trigger)',
+          fired_at:     new Date(firedAtMs || Date.now()).toISOString(),
+          note:         note || 'callout',
+          // A rehearsal / ⏪ replay drives this whole path on purpose so it can
+          // be tested without a raid — the agent keeps it out of the learning
+          // set instead of pretending a test drive was a verdict.
+          test: !!(fire && (fire.test || fire.rehearsal || fire.replay)),
+        }),
+      }).catch(function(){});
+    } catch (e) {}
+  }
+  // why: 'dismissed' (user cleared it) | 'expired' (the 5-min cap ran out).
+  function dismissSticky(key, why){
     const e = stickyRows.get(key);
     if (!e) return;
     clearTimeout(e.timer);
     if (e.row && e.row.parentNode) e.row.parentNode.removeChild(e.row);
     stickyRows.delete(key);
+    reportCalloutFeedback(why === 'expired' ? 'expired' : 'dismissed', e.fire, e.firedAt, 'sticky');
     try { window.mimic.overlayHoverInteractive(false); } catch (err) {}
+    try { refreshClearButton(); } catch (err) {}
   }
   function pinSticky(t){
     const key = _stickyKey(t);
@@ -457,13 +546,20 @@
       // row must announce itself on hover or the click falls through to EQ.
       row.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch (err) {} });
       row.addEventListener('mouseleave', function(){ try { window.mimic.overlayHoverInteractive(false); } catch (err) {} });
-      x.addEventListener('click', function(){ dismissSticky(key); });
-      row.addEventListener('click', function(){ dismissSticky(key); });
+      x.addEventListener('click', function(){ dismissSticky(key, 'dismissed'); });
+      row.addEventListener('click', function(){ dismissSticky(key, 'dismissed'); });
       stickyEl.appendChild(row);
       e = { row: row };
       stickyRows.set(key, e);
     }
-    e.timer = setTimeout(function(){ dismissSticky(key); }, STICKY_MAX_MS);
+    // Remember WHAT was pinned and WHEN, so the dismissal can be attributed to
+    // the trigger and its latency (voted_at − fired_at) computed. A refresh of
+    // an existing row re-stamps it: the countdown to a verdict starts from the
+    // fire the raider is actually looking at.
+    e.fire    = t;
+    e.firedAt = Date.now();
+    e.timer = setTimeout(function(){ dismissSticky(key, 'expired'); }, STICKY_MAX_MS);
+    try { refreshClearButton(); } catch (err) {}
   }
 
   function fire(t){
@@ -471,7 +567,13 @@
     // when alerts/TTS are off or Quiet mode is on, this hidden window must stay
     // silent rather than narrate fires nobody can see.
     if (!alertsEnabled) return;
-    const spoken = t.tts || t.text || t.label || 'Trigger';
+    // Overlay text is written to be SEEN: it leads with an emoji and uses
+    // punctuation as visual separators. Speech synthesis reads all of that
+    // aloud - a leading U+26A1 becomes "high voltage", and "D.I. FIRED - {tank}
+    // saved" gains a spoken dash (Hitya, 2026-08-13: preview said "HIGH VOLTAGE
+    // D. I. Fired Tank Saved"). An explicit `tts` still wins untouched; this
+    // only cleans the FALLBACK, where we are reusing display text as speech.
+    const spoken = t.tts || _speakable(t.text) || t.label || 'Trigger';
     // audioOnly (the damage-taken alert) is the inverse of mute: speak it, but
     // never touch the shared centre flash or the timing-vote widget. Its ~5s
     // cadence would otherwise camp both for a whole fight and overwrite a live
@@ -543,6 +645,12 @@
     if (Date.now() > exp){ _dismissedIds.delete(id); return false; }
     return true;
   }
+  // Dismissal is LOCAL and SESSION-SCOPED by construction
+  // (docs/DESIGN-trigger-overlay-v2.md): the cancel POST clears the row in THIS
+  // raider's agent only — it never relays and never edits guild_triggers, so one
+  // person clearing a Death Touch bar can't clear the raid's, and nothing is
+  // remembered after the process exits. The agent records the dismissal as a
+  // signal (#207); it does not act on it.
   function dismissTimer(id){
     if (!id) return;
     _dismissedIds.set(id, Date.now() + 4000);
@@ -552,23 +660,110 @@
     try {
       fetch('http://127.0.0.1:'+PORT+'/api/timers/cancel', {
         method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ id: id }),
+        body: JSON.stringify({ id: id, reason: 'chip_x' }),
       }).catch(function(){});
     } catch(e){}
     // Shrink the window back now that a chip is gone.
     try { requestAutoHeight(); } catch(e){}
+    try { refreshClearButton(); } catch(e){}
+  }
+  // 🗑 title-bar clear-all — countdowns AND pinned callouts in one click.
+  // "this is annoying and no way to clear it" (Hitya, live on Ssra): before
+  // this the only escape was hiding the whole overlay.
+  function clearAllCallouts(){
+    for (const [id, n] of timerNodes){
+      // Skip loot chips on BOTH sides — the agent spares them too, so clearing
+      // one here would only blank it until the next 700ms poll put it back.
+      if (n.row.classList.contains('loot')) continue;
+      _dismissedIds.set(id, Date.now() + 4000);
+      n.row.remove();
+      timerNodes.delete(id);
+    }
+    for (const key of Array.from(stickyRows.keys())) dismissSticky(key, 'dismissed');
+    try { window.mimic.overlayHoverInteractive(false); } catch(e){}
+    try {
+      // The agent decides what "all" means — it spares open loot-auction
+      // windows (#129: a raider must see every bid window to bid on it) and
+      // records one dismissal per countdown it drops.
+      fetch('http://127.0.0.1:'+PORT+'/api/timers/cancel', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ all: true, reason: 'clear_all' }),
+      }).catch(function(){});
+    } catch(e){}
+    try { requestAutoHeight(); } catch(e){}
+    try { refreshClearButton(); } catch(e){}
+  }
+  // Show 🗑 only when there IS something to clear — a permanently-lit button is
+  // one more thing competing with the fight.
+  function refreshClearButton(){
+    var btn = document.getElementById('clear-btn');
+    if (!btn) return;
+    var want = (timerNodes.size > 0) || (stickyRows.size > 0);
+    if (want !== btn.classList.contains('show')) btn.classList.toggle('show', want);
+  }
+
+  // ── Render invariants (docs/DESIGN-trigger-overlay-v2.md §2 + §3) ────────
+  // Applied to the SERVER list before any DOM work, so the overlay is not
+  // ABLE to break them no matter what the agent sends.
+  //
+  // §2 one row per mob: agent 3.5.56 fixed the two known causes of eight
+  // identical slow rows (the raw log line in the timer id; per-observer relay
+  // keys), but "fixed upstream" is not the same as "cannot happen". Collapse
+  // by (mob, effect class) and keep the LONGEST-remaining — a re-slow that
+  // reset the bar is the honest one. Only classified effects collapse; two
+  // genuinely different countdowns on one mob still get their own rows.
+  const TIMER_SLOW_RX = /\bslow(ed|s|ing)?\b/i;
+  function timerEffectClass(effect){
+    return TIMER_SLOW_RX.test(String(effect == null ? '' : effect)) ? 'slow' : null;
+  }
+  function collapseTimers(list){
+    const out = [];
+    const byKey = new Map();          // 'class|mob' → index into out
+    for (const t of (list || [])){
+      if (!t || !t.id) continue;
+      const cls = timerEffectClass(t.effect || t.name);
+      const mob = String(t.target || '').trim().toLowerCase();
+      if (!cls || !mob){ out.push(t); continue; }
+      const key = cls + '|' + mob;
+      const at = byKey.get(key);
+      if (at == null){ byKey.set(key, out.length); out.push(t); continue; }
+      if ((t.remaining_ms || 0) > (out[at].remaining_ms || 0)) out[at] = t;
+    }
+    return out;
+  }
+  // §3 hard cap: a burst of countdowns must never wall off the game behind
+  // chips. The agent sorts pinned-first then soonest-first, so the head of the
+  // list is what matters; everything past the cap becomes "+N more". Loot
+  // auction chips are EXEMPT — an open bid window is actionable and must stay
+  // visible (#129), so it can never be pushed out by trigger countdowns.
+  const MAX_TIMER_ROWS = 6;
+  function splitVisible(list){
+    const loot = [], rest = [];
+    for (const t of list) ((t.kind === 'loot') ? loot : rest).push(t);
+    const shown = rest.slice(0, MAX_TIMER_ROWS);
+    return { visible: loot.concat(shown), hidden: rest.length - shown.length };
+  }
+  let _moreRow = null;
+  function overflowRow(n){
+    if (!_moreRow){
+      _moreRow = document.createElement('div');
+      _moreRow.className = 'timer-row timer-more';
+    }
+    const txt = '+' + n + ' more';
+    if (_moreRow.textContent !== txt) _moreRow.textContent = txt;
+    return _moreRow;
   }
   function renderTimers(serverTimers){
     const seen = new Set();
-    for (const t of (serverTimers || [])){
-      if (_isDismissed(t.id)) continue;   // just dismissed — don't re-add
+    const list = collapseTimers(serverTimers).filter(function(t){ return !_isDismissed(t.id); });
+    for (const t of list){
       seen.add(t.id);
       let n = timerNodes.get(t.id);
       const target = t.target || '';
       const effect = t.effect || t.name || 'timer';
       if (!n){
         const row = document.createElement('div');
-        row.className = 'timer-row' + (t.test ? ' test' : '');
+        row.className = 'timer-row' + (t.test ? ' test' : '') + (t.kind === 'loot' ? ' loot' : '');
         // GINA-style row: [remain] [Boss - Effect] on one line, with a thin
         // progress bar pinned to the bottom edge so the visual countdown
         // reads at a glance even when the digits are off-screen. The bar is
@@ -580,18 +775,17 @@
           + '<span class="timer-effect">' + _esc(effect) + '</span>'
           + '</span>'
           + '<div class="timer-bar"></div>';
-        // #107 dismissible chips (loot auctions) carry a per-chip ✕.
-        if (t.dismissible){
+        // #207: EVERY countdown gets a ✕, not just the #107 loot chips.
+        {
           const x = document.createElement('span');
           x.className = 'timer-x';
           x.textContent = '✕';
-          x.title = 'Dismiss this timer';
+          x.title = 'Dismiss this countdown (yours only)';
           x.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch(e){} });
           x.addEventListener('mouseleave', function(){ try { window.mimic.overlayHoverInteractive(false); } catch(e){} });
           x.addEventListener('click', function(){ dismissTimer(t.id); });
           row.appendChild(x);
         }
-        timersEl.appendChild(row);
         n = {
           row,
           remain:  row.querySelector('.timer-remain'),
@@ -634,6 +828,28 @@
     for (const [id, n] of timerNodes){
       if (!seen.has(id)){ n.row.remove(); timerNodes.delete(id); }
     }
+    // Attach exactly the visible set, in list order. #timers is column-reverse,
+    // so index 0 (most urgent) paints nearest the bottom anchor and the "+N
+    // more" tail lands at the top. Capped-out rows stay in timerNodes but leave
+    // the DOM — they still tick, and their pre-end warning still SPEAKS, which
+    // is the whole point of capping the display rather than the timers.
+    const split = splitVisible(list);
+    const want = [];
+    for (const t of split.visible){
+      const node = timerNodes.get(t.id);
+      if (node) want.push(node.row);
+    }
+    if (split.hidden > 0) want.push(overflowRow(split.hidden));
+    // Reconcile in place: only a node that is in the WRONG slot moves. Blanket
+    // re-appending would restart every row's pop animation on every poll, which
+    // is the flicker class this overlay has been bitten by before. Moving a node
+    // shifts the unwanted ones rightward, so after the loop everything past
+    // want.length is exactly the set to drop.
+    for (let i = 0; i < want.length; i++){
+      if (timersEl.children[i] !== want[i]) timersEl.insertBefore(want[i], timersEl.children[i] || null);
+    }
+    while (timersEl.children.length > want.length) timersEl.lastChild.remove();
+    refreshClearButton();
   }
   function paintTimers(){
     const now = Date.now();
@@ -691,12 +907,30 @@
   // presets only change WIDTH, so manual sizing and auto-grow never fight —
   // the 50 px baseline is the floor, ~60% of the work area is the ceiling.
   const _alertColEl = document.getElementById('alertcol');
+  var _lastTimersSpace = -1;
   function measureWanted(){
     var baseline = 50;
     var timersBottom = 0;
-    if (timersEl && timersEl.children.length){
-      // #timers is position:fixed at top:34px and grows downward.
-      timersBottom = timersEl.offsetTop + timersEl.scrollHeight + 8;
+    // Height the bottom-anchored stack occupies, including its 8px bottom gap.
+    var timersContent = (timersEl && timersEl.children.length) ? (timersEl.scrollHeight + 8) : 0;
+    if (timersContent){
+      // #timers is bottom-anchored now (v2 §3) and grows UPWARD, so the height
+      // it needs is its own content plus the top gutter that keeps the topmost
+      // row clear of the fixed ✥ / 🗑 / ✕ buttons — the ~30px right-gutter rule
+      // in reverse (CLAUDE.md: anything under the fixed ✕ eats a stray click).
+      // Setup mode moves that chrome down, so the gutter grows with it.
+      var topReserve = document.body.classList.contains('setup') ? 58 : 34;
+      timersBottom = timersContent + topReserve;
+    }
+    // Lift the centred callout column clear of the stack. Flex centring splits
+    // a bottom margin in half, so reserve TWICE the stack height; the window
+    // then has to be tall enough to hold column + margin or the flash clips off
+    // the top. Setting a margin does not change #alertcol's own box, so this
+    // cannot feed back through the ResizeObserver below.
+    var space = timersContent * 2;
+    if (space !== _lastTimersSpace){
+      _lastTimersSpace = space;
+      try { document.documentElement.style.setProperty('--timers-space', space + 'px'); } catch(e){}
     }
     var colNeeded = 0;
     if (_alertColEl){
@@ -705,7 +939,7 @@
       // cut-off sticky ✕ / feedback buttons bug). scrollHeight is unaffected
       // by the centering, so it is the honest content height.
       var ch = _alertColEl.scrollHeight;
-      if (ch > 0) colNeeded = ch + 24;
+      if (ch > 0) colNeeded = ch + 24 + space;
     }
     var wanted = Math.max(baseline, timersBottom, colNeeded);
     var avail = (window.screen && window.screen.availHeight) ? window.screen.availHeight : 1000;
@@ -716,7 +950,10 @@
     // the #159 bounded-pause on overlayAutoHeight still applies) so N simultaneous
     // auctions all stay visible; transient trigger timers keep the conservative
     // 60% so a burst of warnings can't eat the screen.
-    var hasLoot = !!(timersEl && timersEl.querySelector('.timer-x'));
+    // Keyed on the loot CLASS, not on the presence of a ✕ — every countdown
+    // carries a ✕ since #207, so the old probe would have handed the taller
+    // ceiling to any trigger burst.
+    var hasLoot = !!(timersEl && timersEl.querySelector('.timer-row.loot'));
     var cap = Math.max(baseline, Math.round(avail * (hasLoot ? 0.9 : 0.6)));
     return Math.min(wanted, cap);
   }

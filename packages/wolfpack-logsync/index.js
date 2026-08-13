@@ -3844,7 +3844,9 @@ function trackChChainLine(line, character) {
     // kind: null — a real numbered CH call is never a labeled auto-slot;
     // clears any stale "Druid CH" tag on the rare chance this slot number
     // collides with one the personal-macro path auto-assigned earlier.
-    c.slots[num] = { name: slotName, mana: mana != null ? mana : (prev.mana ?? null), lastAtMs: atMs, count: (prev.count || 0) + 1, kind: null };
+    c.slots[num] = { name: slotName, mana: mana != null ? mana : (prev.mana ?? null), lastAtMs: atMs, count: (prev.count || 0) + 1, kind: null,
+                     claimants: _chMergeClaimants(prev, slotName, speaker, atMs, mana) };
+    _chReleaseClaimantsElsewhere(c, [slotName, speaker], num);
     c.lastCh = { num, name: slotName, mana, atMs };
     _applyChGrade(c, num, ddr);
     // Default next = numeric successor, wrapping at the highest slot seen.
@@ -3884,7 +3886,9 @@ function trackChChainLine(line, character) {
       }
       const prev = c.slots[num] || {};
       const slotName = (c.rosterNames && c.rosterNames[num]) || speaker;
-      c.slots[num] = { name: slotName, mana, lastAtMs: atMs, count: (prev.count || 0) + 1, kind: CH_EQUIVALENT_SPELLS.get(spellKey) };
+      c.slots[num] = { name: slotName, mana, lastAtMs: atMs, count: (prev.count || 0) + 1, kind: CH_EQUIVALENT_SPELLS.get(spellKey),
+                       claimants: _chMergeClaimants(prev, slotName, speaker, atMs, mana) };
+      _chReleaseClaimantsElsewhere(c, [slotName, speaker], num);
       c.lastCh = { num, name: slotName, mana, atMs };
       _applyChGrade(c, num, ddr);
       const nums = Object.keys(c.slots).map(Number);
@@ -3980,6 +3984,72 @@ function _chSlotCastingAs(who, atMs) {
   if (exact != null) return exact;
   return prefix.length === 1 ? prefix[0] : null;
 }
+// ── Slot claimants (Hitya, 2026-08-11): "Mcdorf and Pyxil both having 001
+// shouldn't overwrite the spot, it should show both of them in the order." ──
+// When two callers claim the same slot number, the slot no longer silently
+// renames to the latest voice. Every distinct recent claimant is kept, in
+// FIRST-CLAIMED order (the earlier holder stays first), and the overlay shows
+// all of them plus an ORDER CONFLICT banner. This is the display-side half of
+// the §5 slot-stealing bug (DESIGN-extended-target-v2.md) — honest display
+// now; the officer-pushed authoritative rotation remains the structural fix.
+const CH_CLAIM_WINDOW_MS = 120_000;   // a claimant silent this long has moved on
+// `mana` is THIS call's mana and belongs to whoever is calling now — each
+// claimant keeps their own, because the overlay renders one row per claimant
+// and a shared number would put the wrong mana against the wrong cleric
+// (Hitya, live test 2026-08-12: "they should be on separate lines to see
+// their casting").
+function _chMergeClaimants(prev, resolvedName, speaker, atMs, mana) {
+  const out = [];
+  const seen = new Set();
+  const push = (nm) => {
+    const name = String(nm || '').trim();
+    if (!/^[A-Za-z]+$/.test(name)) return;          // real character names only
+    const k = name.toLowerCase();
+    if (seen.has(k)) {
+      for (const c of out) if (c.name.toLowerCase() === k) { c.lastAtMs = atMs; if (mana != null) c.mana = mana; }
+      return;
+    }
+    seen.add(k);
+    out.push({ name, lastAtMs: atMs, mana: (mana != null ? mana : null) });
+  };
+  // Previous claimants seed the list so the FIRST holder keeps first position —
+  // their stamps are only refreshed if they are one of this call's names.
+  const prevList = Array.isArray(prev && prev.claimants) ? prev.claimants
+                 : (prev && prev.name ? [{ name: prev.name, lastAtMs: prev.lastAtMs || 0 }] : []);
+  for (const c of prevList) {
+    const name = String((c && c.name) || '').trim();
+    if (!/^[A-Za-z]+$/.test(name)) continue;
+    const k = name.toLowerCase();
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push({ name, lastAtMs: (c && c.lastAtMs) || 0, mana: (c && c.mana != null ? c.mana : null) });
+  }
+  push(resolvedName);
+  push(speaker);
+  return out.filter(c => (atMs - c.lastAtMs) <= CH_CLAIM_WINDOW_MS);
+}
+
+// A cleric can only hold one slot number at a time, so claiming a new one
+// RELEASES every other slot they were on. Without this the old slot keeps them
+// as a claimant until the 120s window expires — and only if someone happens to
+// call that number again, since eviction runs on write. Hitya hit exactly that
+// live (2026-08-12): "They switched later to 002 and 003 and after that the
+// order conflict should be cleared. It's persisting."
+function _chReleaseClaimantsElsewhere(c, names, keepNum) {
+  const drop = new Set(
+    (names || []).map(n => String(n || '').trim().toLowerCase()).filter(Boolean));
+  if (!drop.size || !c || !c.slots) return;
+  for (const nStr of Object.keys(c.slots)) {
+    if (Number(nStr) === keepNum) continue;
+    const s = c.slots[nStr];
+    if (!s || !Array.isArray(s.claimants)) continue;
+    const kept = s.claimants.filter(cl => !drop.has(String(cl.name || '').toLowerCase()));
+    // An emptied list is fine: the slot keeps its own `name`/`lastAtMs` and the
+    // overlay falls back to the single-claimant row for it.
+    if (kept.length !== s.claimants.length) s.claimants = kept;
+  }
+}
+
 function _chChainEnsure(atMs) {
   if (_chChain && (atMs - _chChain.updatedAt) > CH_CHAIN_IDLE_RESET_MS) _chChain = null;
   if (!_chChain) _chChain = { target: null, slots: {}, lastCh: null, nextNum: null, beats: [], startedAt: atMs, updatedAt: atMs };
@@ -4056,8 +4126,19 @@ function chChainSnapshot() {
     const s = _chChain.slots[nStr];
     if (s && _isOwnCharacterName(s.name)) youNums.push(Number(nStr));
   }
+  // Two live claimants on any slot = the rotation itself is contested — the
+  // overlay banners it instead of the raid finding out from a missed beat.
+  let orderConflict = false;
+  for (const nStr of Object.keys(_chChain.slots)) {
+    const s = _chChain.slots[nStr];
+    if (s && Array.isArray(s.claimants)
+        && s.claimants.filter(cl => (Date.now() - cl.lastAtMs) <= CH_CLAIM_WINDOW_MS).length >= 2) {
+      orderConflict = true; break;
+    }
+  }
   return {
     target:     _chChain.target,
+    order_conflict: orderConflict,
     slots:      _chChain.slots,
     last_ch:    _chChain.lastCh,
     next_num:   _chChain.nextNum,
@@ -4149,6 +4230,225 @@ function _maybeAnnounceChGo(c, atMs) {
     test:        false,
   });
   scheduleRender();
+}
+
+// ── Divine Intervention two-cleric callout (#204) ────────────────────────────
+// DESIGN-di-callout.md §3. A DI death-save FIRING means the tank is alive and
+// UNPROTECTED, and the raid has seconds to put another one up. We deliberately
+// do NOT pick the caster: emeralds (DI's reagent), the global cooldown and
+// "I'm about to med" are all things a cleric knows instantly and we cannot know
+// at all. A confident single-name call that picks someone with no emerald is
+// worse than useless — it costs a tank while two clerics each assume the other
+// has it. So we NOMINATE two names and let voice resolve it.
+//
+// The fire line is grounded in the server source Quarm runs on (EQMacEmu
+// zone/spell_effects.cpp `Mob::TryDeathSave` → `StringID::DIVINE_INTERVENTION`
+// 1029 = "%1 has been rescued by divine intervention!"). Load-bearing details
+// read straight off that call:
+//   • ALWAYS the name form, even in the saved player's own log (`%1` =
+//     GetCleanName(), skipsender = false) — one pattern covers everyone;
+//   • 200-unit range, so a cleric across the room never logs it. That is why
+//     the selection runs on whoever DID see it rather than assuming every
+//     client can work it out for themselves;
+//   • a FAILED save emits NOTHING. The "<Player> survived divine intervention!"
+//     line that circulates in GINA/AI trigger packs does not exist on Quarm —
+//     same invented-pattern trap as the dead DI trigger this doc opened with.
+//     "DI failed" is only ever rescue-line-absent + a death, never its own line.
+// Anchored on `\]\s+` like every other agent-side line detector (the raw line
+// carries its `[timestamp] ` prefix — a bare `^` would anchor before it).
+const _DI_FIRED_RX = /\]\s+([A-Za-z][A-Za-z'`]*) has been rescued by divine intervention[.!]/i;
+const DI_CALLOUT_NAMES = 2;              // the ask is TWO — see the decision note below
+const DI_CALLOUT_TTL_MS = 20_000;        // how long the nomination stays on the overlay
+const DI_CHAIN_RECENT_ROTATIONS = 2;     // "recently healed on the chain" = last ~2 passes
+const DI_CHAIN_RECENT_FALLBACK_MS = 60_000;  // window when the beat isn't measured yet
+const DI_FIRED_DEDUP_MS = 5000;          // the line is zone-visible → every boxed log has it
+let _diCallout = null;                   // the live nomination (null = nothing to show)
+let _lastDiFired = { key: null, atMs: 0 };
+
+// ms until chain slot `num` is due to cast, or null when the chain hasn't told
+// us enough (no beat measured, no on-deck slot). Negative = already overdue,
+// which counts as "up next" for exclusion purposes — a cleric who is LATE on
+// their CH is the worst possible person to spend 6 seconds casting DI.
+function _diSlotTurnInMs(chain, num, nowMs) {
+  if (!chain || !chain.slots || !chain.beat_ms || chain.next_num == null) return null;
+  const nums = Object.keys(chain.slots).map(Number).sort((a, b) => a - b);
+  const iNext = nums.indexOf(Number(chain.next_num));
+  const iThis = nums.indexOf(Number(num));
+  if (iNext < 0 || iThis < 0) return null;
+  // The on-deck slot fires at the chain's own expected-next time; every slot
+  // after it is one more beat down the rotation, wrapping at the top.
+  const expectedNext = chain.next_expected_at
+    || ((chain.last_ch && chain.last_ch.atMs) ? chain.last_ch.atMs + chain.beat_ms : null);
+  if (!expectedNext) return null;
+  const dist = (iThis - iNext + nums.length) % nums.length;
+  return (expectedNext + dist * chain.beat_ms) - nowMs;
+}
+
+// The ranking itself, kept PURE so it can be tested without a live chain: every
+// input arrives as an argument (`ctx.classOf` / `ctx.isDead` / `ctx.manaOf`).
+// Returns { names, candidates, fallback } or null when nobody is nameable.
+//
+// Hard exclusions (things we KNOW, not things we guess):
+//   • not a Cleric — DI is spell 1546, cleric-only. Chain slots are NOT all
+//     clerics: druids gap-fill via CH_EQUIVALENT_SPELLS auto-slots (which carry
+//     a `kind` label) and shamans show up too. An UNKNOWN class stays eligible;
+//     only a known non-Cleric is dropped.
+//   • dead — the 3.5.58 death registry. The design doc predates it and lists
+//     "is this cleric actually alive" under what we cannot know; we can now.
+//   • DI confirmed on cooldown — `up === false && unknown === false` means we
+//     WATCHED the cast. "Rank, don't filter" in the doc is about clerics we
+//     know nothing about, not about a recast we measured.
+// Then: recently active on the chain, and not due to cast inside
+// DI_CAST_MS + one beat (a cleric who casts a 6s DI misses their CH, and a
+// missed CH is how tanks die). Both of those are soft — if they empty the
+// list we fall back to the chain's two most recent healers rather than go
+// silent, exactly as the doc specifies.
+function _diRankCandidates(chain, ctx) {
+  if (!chain || !chain.slots) return null;
+  const now = ctx.now;
+  const nums = Object.keys(chain.slots).map(Number).sort((a, b) => a - b);
+  const rotationMs = chain.beat_ms ? chain.beat_ms * nums.length : null;
+  const recentWindow = rotationMs
+    ? rotationMs * DI_CHAIN_RECENT_ROTATIONS
+    : DI_CHAIN_RECENT_FALLBACK_MS;
+  const rows = [];
+  for (const num of nums) {
+    const s = chain.slots[num];
+    if (!s || !s.name || !s.lastAtMs) continue;      // roster-seeded but never called
+    // Real character names only — same guard the off-heal list uses, for the
+    // same reason (single-word NPC/pet names leak into name-keyed rows).
+    if (!/^[A-Za-z]+$/.test(s.name)) continue;
+    if (s.kind) continue;                            // labeled auto-slot = a druid CH-equivalent
+    const lc = s.name.toLowerCase();
+    if (ctx.isDead(lc)) continue;
+    const cls = ctx.classOf(lc);
+    if (cls && cls !== 'Cleric') continue;
+    const di = ctx.diOf(lc);
+    if (di && !di.up && !di.unknown) continue;       // measured recast — they cannot cast it
+    const sinceMs = now - s.lastAtMs;
+    const turnIn = _diSlotTurnInMs(chain, num, now);
+    rows.push({
+      name: s.name,
+      chain_num: num,
+      since_ms: sinceMs,
+      recent: sinceMs <= recentWindow,
+      // null turn = unknown, which is NOT "busy": an unmeasured chain must not
+      // exclude the whole roster.
+      busy: (turnIn != null && chain.beat_ms) ? (turnIn <= DI_CAST_MS + chain.beat_ms) : false,
+      turn_in_ms: turnIn,
+      di: di ? (di.unknown ? 'unknown' : 'ready') : 'unknown',
+      mana_pct: ctx.manaOf(lc, s.mana),
+    });
+  }
+  if (!rows.length) return null;
+  const manaOf = (r) => (r.mana_pct == null ? -1 : r.mana_pct);
+  const diTier = (r) => (r.di === 'ready' ? 1 : 0);
+  let pool = rows.filter(r => r.recent && !r.busy);
+  let fallback = false;
+  if (!pool.length) {
+    // Ties and empty results both resolve to the chain's most recent healers —
+    // never to silence (doc §3). The hard exclusions above still stand, and the
+    // ordering here is plain recency, because that is what the fallback IS:
+    // we have no clean pick, so we name who was demonstrably healing last.
+    pool = rows.slice();
+    fallback = true;
+  }
+  pool.sort(fallback
+    ? (a, b) => a.since_ms - b.since_ms
+    : (a, b) =>
+      diTier(b) - diTier(a)          // confirmed-ready outranks unknown
+      || manaOf(b) - manaOf(a)       // then mana — 500 mana is not nothing
+      || a.since_ms - b.since_ms);   // then most recently active on the chain
+  const picked = pool.slice(0, DI_CALLOUT_NAMES);
+  return { names: picked.map(p => p.name), candidates: picked, fallback };
+}
+
+// Wire the live agent state into the pure ranker above.
+function diCalloutCandidates(nowMs) {
+  const chain = chChainSnapshot();
+  if (!chain) return null;
+  const now = nowMs || Date.now();
+  const di = diStatusSnapshot();
+  const diByName = new Map();
+  for (const c of (di && di.clerics) || []) if (c && c.name) diByName.set(String(c.name).toLowerCase(), c);
+  const exactMana = new Map();
+  for (const h of (_diStatusCache.healer_mana || [])) {
+    if (h && h.name && h.mana_pct != null) exactMana.set(String(h.name).toLowerCase(), Math.round(h.mana_pct));
+  }
+  return _diRankCandidates(chain, {
+    now,
+    isDead:  (lc) => _isDead(lc, now),
+    classOf: (lc) => ((whoData.get(lc) || {}).class) || _raidClassByName.get(lc) || null,
+    diOf:    (lc) => diByName.get(lc) || null,
+    // Exact (Mimic) mana beats the percentage the cleric shouted in their chain
+    // call — same precedence the Command Center's healer-mana merge uses.
+    manaOf:  (lc, called) => (exactMana.has(lc) ? exactMana.get(lc) : (called == null ? null : called)),
+  });
+}
+
+// "<Tank> has been rescued by divine intervention!" → nominate two clerics.
+// Deliberately NOT gated on _sourceExcluded: this is a local UI/audio callout
+// that uploads nothing, and a raider opting out of STATS must not lose a
+// raid-critical call (same reasoning as noteBlindLine / noteSongAoeLine).
+function trackDiFired(line) {
+  if (!line || line.indexOf('rescued by') === -1) return null;   // cheap gate (tail hot path)
+  const m = line.match(_DI_FIRED_RX);
+  if (!m) return null;
+  const ts = parseEqTimestamp(line);
+  const atMs = ts ? ts.getTime() : Date.now();
+  const tank = m[1];
+  // The line is zone-visible, so a two-boxer's every watched log carries it.
+  const key = tank.toLowerCase();
+  if (_lastDiFired.key === key && (atMs - _lastDiFired.atMs) < DI_FIRED_DEDUP_MS) return null;
+  _lastDiFired = { key, atMs };
+  const sel = diCalloutCandidates(Date.now());
+  // No nameable cleric → no nomination. This is NOT the doc's "never silence":
+  // the raid still hears the event from the guild trigger ("D I fired on
+  // {tank}"). Silence here is only the SELECTOR declining to invent a name,
+  // which is the whole point of the honesty layer.
+  if (!sel || !sel.names.length) return null;
+  // "The one casting should call it out" (Hitya, 2026-08-11): the selector
+  // nominates X OR Y, and the cleric who takes it closes the ambiguity on
+  // voice — the Lenolshot "I got it Curry!" protocol, made standard. The cue
+  // rides the callout itself so the protocol is taught every time it fires.
+  const spoken = 'D I down. ' + sel.names.join(' or ') + ' — caster call it.';
+  _diCallout = {
+    id: key + '|' + atMs,
+    tank,
+    at: atMs,
+    expires_at: Date.now() + DI_CALLOUT_TTL_MS,
+    ttl_ms: DI_CALLOUT_TTL_MS,
+    names: sel.names,
+    candidates: sel.candidates,
+    fallback: sel.fallback,
+    tts: spoken,
+  };
+  // Same text_overlay-shaped fire the CH GO callout uses — the trigger overlay
+  // flashes `text` and speaks `tts` (gated on the user's enableTriggerTts).
+  // No new SpeechSynthesis path.
+  _pushOverlay({
+    text:        'D.I. DOWN on ' + tank + ' — ' + sel.names.join(' or ') + ' (caster: call it)',
+    tts:         spoken,
+    color:       'red',
+    duration_ms: 8000,
+    shownAt:     atMs,
+    firedAt:     Date.now(),
+    trigger:     'DI DOWN',
+    scope:       'guild',
+    test:        false,
+  });
+  scheduleRender();
+  return _diCallout;
+}
+
+// Live nomination for the overlays; self-expires so a stale call can't sit on
+// screen after the window to act on it has closed.
+function diCalloutSnapshot() {
+  const c = _diCallout;
+  if (!c) return null;
+  const now = Date.now();
+  if (now >= c.expires_at) { _diCallout = null; return null; }
+  return Object.assign({}, c, { seconds_left: Math.max(0, Math.ceil((c.expires_at - now) / 1000)) });
 }
 
 // Off-heal candidates — raiders taking repeated single-target damage right
@@ -8584,6 +8884,45 @@ function _doOneUpload(entry) {
 // recent-parses dashboard counter. Mirrors what the old uploadEncounter
 // did inline before the queue refactor.
 function _onUploadSuccess(entry, responseText) {
+  // Crash reports: only NOW is it safe to say a bundle has been analysed.
+  //
+  // The re-analysis watermark is what makes an existing uploader's whole
+  // history get re-sent with dump detail exactly once. If we set it at send
+  // time and the bot turned out to be too old to store the new fields, that
+  // history would be burned silently and never re-sent — the same shape of bug
+  // as the ingest whitelist dropping fields nobody noticed. So the bot echoes
+  // back the analysis_version it actually persisted, and only that confirmation
+  // advances the watermark. An older bot echoes nothing, the watermark stays
+  // put, and the next sweep tries again.
+  if (entry.kind === 'crash_report') {
+    let accepted = 0;
+    try { accepted = Number(JSON.parse(responseText).analysis_version) || 0; } catch {}
+    // A bot that does not echo the version cannot store the analysis. Say so
+    // once and stop re-reading dumps, or an uploader with hundreds of bundles
+    // would re-parse and re-send eight of them every 60s forever against a bot
+    // that throws them away. Re-probed on the interval below.
+    if (accepted < CRASH_ANALYSIS_VERSION) {
+      if (_crashAnalysisSupported !== false) {
+        console.log('[crash-reports] bot does not store dump analysis yet — '
+          + 're-analysis paused, will re-check hourly');
+      }
+      _crashAnalysisSupported = false;
+      _crashAnalysisProbedAt = Date.now();
+      return;
+    }
+    _crashAnalysisSupported = true;
+    const names = (entry.payload?.reports || []).map(r => r && r.zip_name).filter(Boolean);
+    if (names.length) {
+      const state = _loadCrashState();
+      for (const n of names) {
+        if (!state.reported[n]) state.reported[n] = Date.now();
+        state.analyzed[n] = CRASH_ANALYSIS_VERSION;
+      }
+      _saveCrashState();
+      console.log(`[crash-reports] bot stored dump analysis for ${names.length} bundle(s)`);
+    }
+    return;
+  }
   if (entry.kind !== 'encounter') return;
   try {
     const resp = JSON.parse(responseText);
@@ -9429,6 +9768,196 @@ function _deadNamesSnapshot(nowMs) {
   const now = nowMs || Date.now();
   const out = [];
   for (const [n, t] of _deadSince) if (now - t <= DEAD_FORGET_MS) out.push({ name: n, since_ms: now - t });
+  return out;
+}
+
+// ── #205 group-HP death watcher — a SECOND, independent death source ────────
+// Everything above is fed by ONE channel: a sentence in a log file. That single
+// source is exactly what let the feign bug run for the platform's whole life —
+// "<Name> dies." is the Feign Death emote, we banked it as a death, 44% of every
+// stored death was false, and nothing could contradict the log because nothing
+// else was watching (docs/DESIGN-group-death-watcher.md §0).
+//
+// Zeal's group gauges read the client's MEMORY, not its text output, so they are
+// a genuinely independent witness — and the discriminator falls out for free:
+// **feign death does not change hit points.** A feigning knight sits at 80% while
+// emitting a line that says they died; a real death is HP → 0.
+//
+// This is a SOURCE, not a second registry. Every conclusion goes through
+// _noteDeath/_clearDeath so the 15-minute forget and the clear-on-alive
+// semantics stay in exactly one place.
+//
+// Group HP arrives on two surfaces (docs/zeal-pipe-protocol.md): gauges 11-15
+// (name + per-mille, always available) and the type-6 group payload's
+// hp_current/hp_max (exact, `/pipeverbose on` only). Slots 1/6/16 (self /
+// target / pet) and 17-21 (group PETS) are deliberately NOT read — a pet at 0
+// is not a raider death, and self already has the log path with its corpse-run
+// confirmation tail.
+const GROUP_HP_GAUGE_SLOTS = [11, 12, 13, 14, 15];
+// A zero is a strong hint, never a fact (§2 ceiling 1). Three guards stand
+// between a gauge reading 0 and a name entering the registry:
+//
+//  1. TRANSITION — the name must have been seen ALIVE first. A slot reading 0
+//     the first time we ever see it is an empty or unrendered gauge, not a corpse.
+//  2. DWELL — the zero must survive GROUP_DEATH_ZERO_DWELL_MS across at least
+//     GROUP_DEATH_MIN_ZERO_SAMPLES samples. Zeal emits occasional NEGATIVE
+//     per-mille values (observed -3 on 5 live rows, 2026-08-03) and
+//     apps/mimic/main.js clamps them into [0,100] — so a single-sample zero is a
+//     KNOWN ARTIFACT SHAPE, and waiting one more sample costs a death nothing
+//     (a corpse holds at 0 until rez or bind).
+//  3. FEIGN SUPPRESSION — see _feignedRecently below.
+//
+// Dwell is kept short on purpose: a player who releases to bind is alive again
+// in 5-10s (Vex Thal, Hitya 2026-08-03), so a long dwell would miss the corpse
+// entirely rather than merely arriving late.
+const GROUP_DEATH_ZERO_DWELL_MS   = 2500;
+const GROUP_DEATH_MIN_ZERO_SAMPLES = 2;
+// Alive evidence clears a death — but not one recorded seconds ago. The log
+// line and the gauge race each other, and the gauge can still be carrying the
+// dead raider's LAST live value when the death line lands; clearing on that
+// would let the corpse-run-confirmed log path be overruled by a stale frame.
+// Nobody is rezzed and standing inside this window, so nothing real is lost.
+const GROUP_ALIVE_CLEAR_MIN_AGE_MS = 5000;
+const GROUP_HP_TRACK_FORGET_MS     = 10 * 60_000;
+// nameLower → { name, pct, at, sawAlive, zeroSince, zeroSamples, noted, … }
+const _groupHpTrack = new Map();
+
+// "<Name> dies." is the `cast_on_other` text of every Feign Death spell on
+// Quarm (366 / 1118 / 1460 — test/feign-death-not-a-death.test.js). parseEvent
+// deliberately returns NOTHING for it, which means nothing in the agent knows a
+// feign just happened. The watcher needs that knowledge: the design doc's whole
+// premise is that a feign leaves HP untouched, but that premise has never been
+// checked against a live feigning groupmate's GAUGE, and a monk sitting in the
+// corpse list is precisely the false positive that gets a feature switched off.
+// So we record the emote and refuse a zero for that name for a minute after it.
+// (Guard added 2026-08-11 — not in the design doc; recorded back into it.)
+const _feignSince = new Map();          // nameLower → atMs of the last feign emote
+const FEIGN_SUPPRESS_MS = 60_000;
+function noteFeignEmoteLine(line, nowMs) {
+  if (!line || line.indexOf(' dies.') === -1) return null;
+  // Player-name shape only, case-SENSITIVE: EQ NPCs are multi-word or lowercase
+  // ("a shissar disciple dies." is a charm pet feigning, not a raider).
+  const m = line.match(/\]\s+([A-Z][a-zA-Z]{2,19})\s+dies\.\s*$/);
+  if (!m) return null;
+  const at = nowMs || Date.now();
+  _feignSince.set(m[1].toLowerCase(), at);
+  if (_feignSince.size > 100) {
+    for (const [n, t] of _feignSince) if (at - t > FEIGN_SUPPRESS_MS) _feignSince.delete(n);
+  }
+  return m[1];
+}
+function _feignedRecently(nameLower, nowMs) {
+  const t = _feignSince.get(String(nameLower || '').toLowerCase());
+  if (t == null) return false;
+  return ((nowMs || Date.now()) - t) <= FEIGN_SUPPRESS_MS;
+}
+
+// One Zeal snapshot → {nameLower → {name, pct, verbose, offZone}} for GROUP
+// MEMBERS only. Exact hp_current/hp_max wins over the gauge percentage when both
+// are present. `offZone` = verbose zone_id proves they are NOT in our zone.
+function _groupHpObservations(st, selfCharacter) {
+  const out = new Map();
+  if (!st || typeof st !== 'object') return out;
+  const selfL = String(selfCharacter || '').toLowerCase();
+  const selfZone = (st.zone != null && Number.isFinite(Number(st.zone))) ? Number(st.zone) : null;
+  const take = (rawName, pct, verbose, zoneId) => {
+    const name = String(rawName || '').trim();
+    if (!/^[A-Z][a-zA-Z]{2,19}$/.test(name)) return;   // player-name shape
+    const k = name.toLowerCase();
+    if (k === selfL) return;                           // self rides the log path
+    if (typeof pct !== 'number' || !Number.isFinite(pct)) return;
+    if (pct < 0 || pct > 100) return;
+    const prev = out.get(k);
+    if (prev && prev.verbose && !verbose) return;      // exact beats the gauge
+    const offZone = (zoneId != null && selfZone != null && Number(zoneId) !== selfZone);
+    out.set(k, { name, pct, verbose: !!verbose, offZone });
+  };
+  if (Array.isArray(st.gauges)) {
+    for (const g of st.gauges) {
+      if (!g || !g.text) continue;
+      if (GROUP_HP_GAUGE_SLOTS.indexOf(g.slot) === -1) continue;
+      take(g.text, g.hp_pct, false, null);
+    }
+  }
+  if (Array.isArray(st.group_members)) {
+    for (const mrec of st.group_members) {
+      if (!mrec || !mrec.name) continue;
+      const cur = Number(mrec.hp_current), max = Number(mrec.hp_max);
+      if (!Number.isFinite(cur) || !Number.isFinite(max) || max <= 0) continue;   // non-verbose row
+      take(mrec.name, Math.max(0, Math.min(100, (cur / max) * 100)), true, mrec.zone_id);
+    }
+  }
+  return out;
+}
+
+// Called on every Zeal state push (the sample-to-sample deltas only exist here —
+// the bot sees debounced uploads, §5). Emits on TRANSITION, not per sample.
+function _noteGroupHpFromState(character, st, nowMs) {
+  const now = nowMs || Date.now();
+  const obs = _groupHpObservations(st, character);
+  for (const [k, o] of obs) {
+    let t = _groupHpTrack.get(k);
+    if (!t) { t = { name: o.name, sawAlive: false, zeroSince: 0, zeroSamples: 0, noted: 0 }; _groupHpTrack.set(k, t); }
+    t.name = o.name; t.pct = o.pct; t.at = now; t.verbose = o.verbose; t.observer = character || null;
+    if (o.pct > 0) {
+      // Alive on an independent channel. The registry clears on exactly this
+      // ("a rez, or any fresh self-HP") — but never on evidence younger than a
+      // freshly recorded death, which is the log-vs-gauge race above.
+      t.sawAlive = true; t.zeroSince = 0; t.zeroSamples = 0; t.noted = 0;
+      const diedAt = _deadSince.get(k);
+      if (diedAt != null && (now - diedAt) >= GROUP_ALIVE_CLEAR_MIN_AGE_MS) {
+        _clearDeath(k);
+        t.clearedAt = now;
+      }
+      continue;
+    }
+    // A groupmate who ZONES can sit at 0% in the group window for as long as
+    // the load takes, which no dwell survives. When verbose gives us their
+    // zone_id and it isn't ours, the zero proves nothing (§4: a bare
+    // zone_changed scores zero) — so it neither starts nor advances a dwell.
+    // Deliberately asymmetric: an ALIVE reading from another zone is still
+    // alive evidence and still clears, which is the bind-point round trip.
+    if (o.offZone) continue;
+    if (!t.sawAlive) continue;                                       // guard 1 — transition
+    if (!t.zeroSince) { t.zeroSince = now; t.zeroSamples = 1; continue; }
+    t.zeroSamples += 1;
+    if (t.noted) continue;                                           // this collapse already concluded
+    if (t.zeroSamples < GROUP_DEATH_MIN_ZERO_SAMPLES) continue;      // guard 2 — dwell
+    if (now - t.zeroSince < GROUP_DEATH_ZERO_DWELL_MS) continue;
+    if (_feignedRecently(k, now)) { t.suppressedFeignAt = now; continue; }   // guard 3 — feign
+    t.noted = now;
+    if (_isDead(k, now)) {
+      // The log got here first. Corroboration only — re-noting would push the
+      // death's timestamp forward and extend the 15-minute tombstone, which is
+      // the one thing the registry is deliberately built not to do.
+      t.corroboratedAt = now;
+    } else {
+      // Independent proof: HP hit zero and stayed there, and no log line said so.
+      // Stamp it at the FIRST zero sample — that is when they died, not when we
+      // finished being sure.
+      _noteDeath(t.name, t.zeroSince);
+      t.notedSource = 'hp_zero';
+    }
+  }
+  if (_groupHpTrack.size > 60) {
+    for (const [n, v] of _groupHpTrack) if (now - (v.at || 0) > GROUP_HP_TRACK_FORGET_MS) _groupHpTrack.delete(n);
+  }
+}
+
+function _groupDeathWatchSnapshot(nowMs) {
+  const now = nowMs || Date.now();
+  const out = [];
+  for (const [n, t] of _groupHpTrack) {
+    out.push({
+      name: t.name, name_lower: n, pct: t.pct, verbose: !!t.verbose,
+      age_ms: now - (t.at || 0), saw_alive: !!t.sawAlive,
+      zero_ms: t.zeroSince ? now - t.zeroSince : 0, zero_samples: t.zeroSamples || 0,
+      noted_at: t.noted || 0, noted_source: t.notedSource || null,
+      corroborated_at: t.corroboratedAt || 0,
+      suppressed_feign_at: t.suppressedFeignAt || 0,
+      cleared_at: t.clearedAt || 0, observer: t.observer || null,
+    });
+  }
   return out;
 }
 
@@ -10588,6 +11117,11 @@ function _serializeForDashboard() {
     // Per-cleric Divine Intervention readiness (bot aggregate ⊕ local casts) —
     // chchain.html renders the chips + "only <X> has DI" callout.
     diStatus: diStatusSnapshot(),
+    // Live DI nomination (#204) — the two clerics to call after a death save
+    // fires. Null except for the ~20s a nomination is on the clock. Kept
+    // alongside diStatus rather than inside chChain so it survives the chain
+    // snapshot being null.
+    diCallout: diCalloutSnapshot(),
     // Last decoded Zeal type-5 raid sample — Info tab pipe explorer's
     // "raid (type 5)" section. null until the client fires one (you must be
     // in a raid; Zeal re-sends on composition change).
@@ -10691,6 +11225,20 @@ function _serializeForDashboard() {
       arr.sort((a, b) => (b.last_tick_at || 0) - (a.last_tick_at || 0));
       return arr.slice(0, 12);
     })(),
+    // How many Zeal crash bundles sit on this machine. Just a count — cheap
+    // (one readdir per folder, cached 60s) and enough for the dashboard to
+    // decide whether to auto-open the crash review. Reading the DUMPS is the
+    // expensive part and stays behind /api/crash-review.
+    // Guild-merged damage for the fight in progress (null when idle, or when
+    // the bot is too old to serve it - the HUD then shows local only).
+    guildDamage: stats.guildDamage && (Date.now() - stats.guildDamage.at < 30_000)
+      ? stats.guildDamage : null,
+    crashBundleCount: _crashBundleCount(),
+    // Whether crash metadata currently uploads. Mimic owns the setting
+    // (cfg.crashReports) and hands it over as an env var at spawn, so this is
+    // the agent reporting what it was STARTED with - which is exactly what the
+    // Info-tab checkbox must show, since a change only takes effect on restart.
+    crashReportsEnabled: CRASH_REPORTS_ENABLED,
     // Charm-tracking diagnostic — surfaces the four checkpoints the charm
     // detection has to pass through (cast seen → pending staged → slot 16
     // populated → tracker entry created), so a user can SEE where the
@@ -11337,6 +11885,9 @@ function _serializeForDashboard() {
     // Trigger checkpoint journal (#76) — newest first, capped, for the Triggers
     // tab diagnostic card. Pure in-memory; never persisted or uploaded.
     triggerJournal:      _triggerJournal.slice(-60).reverse(),
+    // #206 instant boss mechanics — newest first, for the Triggers-tab card.
+    // Pure in-memory; never persisted or uploaded (record-only first pass).
+    recentMechanics:     _recentMechanicsForWeb(),
     activeOverlays:      _activeOverlays,
     // Trigger fires for the Mimic trigger-alert overlay (triggers.html). It
     // dedupes on `ts` and speaks `tts || text`, so map the overlay ring buffer
@@ -11348,6 +11899,9 @@ function _serializeForDashboard() {
         text:    o.text,
         tts:     o.tts || o.text,
         trigger: o.trigger,
+        // #207 — so a dismissal of a sticky callout is attributed to the
+        // trigger, not to its (interpolated, per-fire) text.
+        trigger_id: o.trigger_id || null,
         scope:   o.scope,
         test:    !!o.test,
         sound:   o.sound || null,
@@ -11364,6 +11918,10 @@ function _serializeForDashboard() {
       };
     }),
     activeTimers:        _activeTimersSnapshot(),
+    // #207 callout dismissal counters (in-memory, this session). Local proof
+    // that a ✕ was recorded — the durable half rides the trigger_feedback
+    // upload, which a rehearsal deliberately does not touch.
+    calloutFeedback:     _calloutFeedbackSnapshot(),
     // #101 log-replay status — running/idle + progress for the Triggers-tab
     // ⏪ Replay card. Pure in-memory; never persisted or uploaded.
     replay:              _replayStateForWeb(),
@@ -13371,6 +13929,95 @@ function renderZealCard(s) {
 //   4. Did the tracker open a session? (tracker entries)
 // Hidden when there\\'s nothing to show; surfaces a "Detected ✓ / Missing ✗"
 // row per stage when there is.
+// 🩺 Crash review — on demand only, never on the poll. Reads this machine's own
+// Zeal crash zips through /api/crash-review and explains them in plain language.
+// The headline answer is "was this us?", because that is what people ask when
+// EQ vanishes while Mimic is running.
+// Mirror of the tray's crash-sharing checkbox. Mimic owns cfg.crashReports and
+// passes it to the agent as an env var at spawn, so flipping it restarts the
+// engine — same path the tray item uses, not a second mechanism.
+async function wpToggleCrashShare(on) {
+  try {
+    if (window.mimic && window.mimic.toggleCrashReports) {
+      await window.mimic.toggleCrashReports(!!on);
+    }
+  } catch (e) {}
+}
+
+async function wpRunCrashReview() {
+  const out = document.getElementById('wpCrashOut');
+  const btn = document.getElementById('wpCrashBtn');
+  if (!out) return;
+  if (btn) { btn.disabled = true; btn.textContent = 'Reading\\u2026'; }
+  out.innerHTML = '<div class="dim" style="margin-top:8px">Reading crash files\\u2026</div>';
+  try {
+    const r = await fetch('/api/crash-review');
+    const j = await r.json();
+    const list = (j && j.crashes) || [];
+    if (!list.length) {
+      out.innerHTML = '<div style="margin-top:8px;color:#56d364">No crash files found \\u2014 '
+        + 'EverQuest has not left a crash report on this machine.</div>';
+      return;
+    }
+    let h = '';
+    for (const c of list) {
+      const v = c.verdict || {};
+      // Colour carries the answer: green when we can positively clear Mimic and
+      // Zeal, red only when Zeal is genuinely implicated, grey when unknown.
+      const tone = v.blames_us === false ? '#56d364' : (v.blames_us === true ? '#f85149' : '#6e7681');
+      const when = c.when ? new Date(c.when).toLocaleString() : c.zip_name;
+      h += '<details ' + wpKeep('crashrev|' + c.zip_name) + ' style="margin-top:8px;'
+         + 'border:1px solid #30363d;border-radius:6px;padding:8px">';
+      h += '<summary style="cursor:pointer"><b>' + esc(when) + '</b> \\u2014 '
+         + '<span style="color:' + tone + '">' + esc(v.headline || 'Unreadable') + '</span></summary>';
+      for (const n of (v.notes || [])) {
+        h += '<div style="margin:6px 0 0 0">\\u2022 ' + esc(n) + '</div>';
+      }
+      if ((v.checks || []).length) {
+        h += '<div style="margin-top:8px"><b>What to try</b></div>';
+        for (const ck of v.checks) {
+          h += '<div style="margin:4px 0;color:#ffa657">\\u2192 ' + esc(ck) + '</div>';
+        }
+      }
+      const d = c.dump;
+      if (d && d.top && d.top.length) {
+        h += '<div class="dim" style="margin-top:8px;font-size:11px">Busiest on the failing stack: '
+           + d.top.map(t => esc(t[0]) + ' (' + t[1] + ')').join(', ') + '</div>';
+      }
+      if (c.reason) {
+        h += '<div class="dim" style="font-size:11px">Zeal ' + esc(c.reason.zeal_version || '?')
+           + ' \\u00b7 ' + esc(c.reason.exception_code || '?') + ' in '
+           + esc(c.reason.exception_module || '?') + ' \\u00b7 ' + esc(c.zip_name) + '</div>';
+      }
+      h += '</details>';
+    }
+    h += '<div class="dim" style="margin-top:10px;font-size:11px">These crash dumps stay on this '
+       + 'PC. If an officer asks for one, send the .zip named above by hand.</div>';
+    out.innerHTML = h;
+  } catch (e) {
+    out.innerHTML = '<div style="margin-top:8px;color:#f85149">Could not read crash files: '
+      + esc(String(e && e.message || e)) + '</div>';
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Review my crashes'; }
+  }
+}
+
+// Auto-open the crash review ONCE per dashboard session, when there is
+// actually something to look at. Runs from the poll dispatch, but guarded by a
+// one-shot flag: reading dumps is real work and must never become per-poll
+// work. If crash sharing is already on, the agent has analysed these during its
+// own sweep anyway — this just means the answers are on screen without anyone
+// having to know the button exists.
+let _wpCrashAutoRan = false;
+function renderCrashReview(s) {
+  if (_wpCrashAutoRan) return;
+  const el = document.getElementById('wpCrashOut');
+  if (!el) return;                                  // card not painted yet
+  if (!s || !s.crashBundleCount) return;            // nothing on this machine
+  _wpCrashAutoRan = true;
+  wpRunCrashReview();
+}
+
 function renderCharmDiag(s) {
   const el = document.getElementById('wpCharmDiag');
   if (!el) return;   // Triggers tab not painted yet
@@ -13631,6 +14278,48 @@ function renderTriggerJournal(s) {
   h += '</table>';
   morphInto(el, h);
 }
+// 💥 Boss mechanics (#206) — the instant effects the two duration-keyed indexes
+// can never hold. Same isolation pattern as the journal above: fmtAgo ticks
+// every poll, so it fills its own #wpMechanics placeholder instead of making
+// the whole Triggers section differ every 2s. Hidden until something fires.
+// NOTE: no class="name" on the victim/effect cells — the character-link
+// delegation slices a .name cell to its first word, and these are as often a
+// mob ("a glyph covered serpent") as a raider.
+function renderMechanics(s) {
+  var el = document.getElementById('wpMechanics');
+  if (!el) return;   // Triggers tab not painted yet
+  var rows = (s && s.recentMechanics) || [];
+  if (!rows.length) {
+    if (el.style.display !== 'none') el.style.display = 'none';
+    morphInto(el, '');
+    return;
+  }
+  if (el.style.display === 'none') el.style.display = '';
+  var h = '<h2>💥 Boss mechanics <span class="dim" style="font-size:11px;font-weight:normal">(what the mob just DID — instant effects, recorded while you fight)</span></h2>';
+  h += '<div class="dim" style="font-size:10px;margin-bottom:6px">AEs, death touches, dispels, stuns and boss self-heals emit a log line that carries no duration, so nothing else here can see them. One row per cast, with how many it hit. When a message is shared by several spells it stays <b>unidentified</b> on purpose — naming one of them would be a guess. Local only: nothing is uploaded.</div>';
+  h += '<table style="font-size:11px;width:100%"><tr><th>When</th><th>Mob</th><th>Effect</th><th>Hit</th><th>Message</th></tr>';
+  var shown = rows.slice(0, 30);
+  for (var i = 0; i < shown.length; i++) {
+    var r = shown[i];
+    var eff = r.spell_name
+      ? esc(r.spell_name)
+      : '<span style="color:var(--gold)">unidentified</span> <span class="dim">· ' + esc(String(r.family_size || 0)) + ' spells share this</span>';
+    var who = (r.victims || []).slice(0, 3).join(', ');
+    if ((r.victim_count || 0) > (r.victims || []).length) who += ' …';
+    var hit = r.on_fight_target
+      ? '<span class="dim">on the mob</span>'
+      : esc(String(r.victim_count || 0)) + ' <span class="dim">' + esc(who) + '</span>';
+    h += '<tr>'
+       + '<td class="dim">' + esc(fmtAgo(r.last_at_ms || 0)) + '</td>'
+       + '<td class="dim">' + esc(r.mob || '?') + '</td>'
+       + '<td>' + eff + '</td>'
+       + '<td>' + hit + '</td>'
+       + '<td class="dim">' + esc(r.landing_text || '') + '</td>'
+       + '</tr>';
+  }
+  h += '</table>';
+  morphInto(el, h);
+}
 // ⚡ Recent fires (#120) — the volatile counterpart to renderTriggers, filling
 // its own #wpRecentFires placeholder every poll (fmtAgo ticks) so the parent
 // Triggers section stays byte-stable and never flashes. Same isolation pattern
@@ -13731,6 +14420,9 @@ function renderTriggers(s) {
   // Trigger checkpoint journal (#76) — filled by renderTriggerJournal(). Own
   // wp* placeholder so its volatile rows don't force this section to repaint.
   h += '<div id="wpTriggerJournal" class="card wide" style="display:none"></div>';
+  // Boss mechanics (#206) — filled by renderMechanics(). Own wp* placeholder
+  // for the same reason as the journal: its rows carry fmtAgo stamps.
+  h += '<div id="wpMechanics" class="card wide" style="display:none"></div>';
 
   // ⚡ Recent fires (recent trigger matches) — its rows carry fmtAgo timestamps
   // that tick every poll, so it MUST live in its own wp* placeholder filled by
@@ -15080,6 +15772,26 @@ function renderInfo(s) {
   // the session that's already running.
   const lifetimeMin = Math.max(s.lifetime?.totalMinutes||0, sessionMin);
   let h = '';
+  // Crash review (moved here from Triggers, Hitya 2026-08-13 — a crash is a
+  // machine/diagnostic concern, not a callout one). Reading dumps costs real
+  // work, so the list fills on demand via renderCrashReview()'s one-shot.
+  // The checkbox mirrors the tray's "Share crash reports with the guild" toggle
+  // — same cfg.crashReports flag, two places to reach it, so nobody has to know
+  // the tray menu exists.
+  h += '<div id="wpCrashReview" class="card wide"><b>\\ud83e\\ude7a Crash review</b>'
+    +  '<div class="dim" style="margin:6px 0">Had EverQuest close on you? This reads the crash '
+    +  'files Zeal left on this machine and tells you what actually broke \\u2014 including '
+    +  'whether Mimic or Zeal had anything to do with it. The crash dumps never leave your PC.</div>'
+    +  '<label style="display:flex;gap:6px;align-items:center;margin:8px 0;cursor:pointer">'
+    +    '<input type="checkbox" id="wpCrashShare" onchange="wpToggleCrashShare(this.checked)"'
+    +      (s.crashReportsEnabled ? ' checked' : '') + '>'
+    +    '<span>Automatically send crash reports to the guild</span>'
+    +  '</label>'
+    +  '<div class="dim" style="font-size:11px;margin-bottom:8px">Sends only what the crash says '
+    +  '\\u2014 never the dump itself. Same setting as the tray menu; changing it restarts the '
+    +  'parser engine.</div>'
+    +  '<button id="wpCrashBtn" onclick="wpRunCrashReview()">Review my crashes</button>'
+    +  '<div id="wpCrashOut"></div></div>';
   // NOTE: Watched Logs (#wpWatchedLogs) moved to the Dashboard's ⚙ Engine card,
   // and the officer DKP tick / loot capture cards (#wpDkpTick / #wpDkpLoot)
   // moved to the 🛡 Admin tab (#109). Their render fns are unchanged — only the
@@ -16221,7 +16933,8 @@ async function refresh() {
                      ['tanks', renderTanks], ['deeps', renderDeeps],
                      ['triggers', renderTriggers], ['zealcard', renderZealCard],
                      ['recentfires', renderRecentFires], ['replaystatus', renderReplayStatus],
-                     ['charmdiag', renderCharmDiag], ['petbuffdiag', renderPetBuffDiag], ['triggerjournal', renderTriggerJournal],
+                     ['crashreview', renderCrashReview], ['charmdiag', renderCharmDiag], ['petbuffdiag', renderPetBuffDiag], ['triggerjournal', renderTriggerJournal],
+                     ['mechanics', renderMechanics],
                      ['overlays', renderOverlays], ['info', renderInfo],
                      // After info: fill the placeholders renderInfo just
                      // (re)painted, so they show same-tick.
@@ -18454,6 +19167,8 @@ async function dismissTopDamage(key) {
       + '      <input id="trigNewPattern" type="text" placeholder="e.g. (?&lt;target&gt;\\\\w+) begins to cast Mass Cancel Magic" style="width:100%;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px"></label>'
       + '    <label style="grid-column:1/3">Overlay text<br>'
       + '      <input id="trigNewOverlay" type="text" placeholder="e.g. CANCEL ON {target}!" style="width:100%;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px"></label>'
+      + '    <label style="grid-column:1/3">Spoken text (optional \u2014 leave blank to speak the overlay text)<br>'
+      + '      <input id="trigNewTts" type="text" placeholder="e.g. D I fired on {tank}" style="width:100%;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px"></label>'
       + '    <label>Color<br><select id="trigNewColor" style="width:100%;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px"><option value="red">red</option><option value="orange">orange</option><option value="gold">gold</option><option value="green">green</option><option value="blue">blue</option><option value="purple">purple</option><option value="white">white</option></select></label>'
       + '    <label>Duration (ms)<br><input id="trigNewDuration" type="number" min="500" max="60000" value="5000" style="width:100%;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px"></label>'
       + '    <label>Countdown timer (sec, 0 = no timer)<br><input id="trigNewTimerSec" type="number" min="0" max="3600" value="0" placeholder="e.g. 18 for a Cazic Touch refresh" style="width:100%;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px"></label>'
@@ -18570,6 +19285,7 @@ async function dismissTopDamage(key) {
   async function onPreview() {
     var name = (document.getElementById('trigNewName') || {}).value || 'preview';
     var overlayText = (document.getElementById('trigNewOverlay') || {}).value || '';
+    var ttsText = ((document.getElementById('trigNewTts') || {}).value || '').trim();
     var color = (document.getElementById('trigNewColor') || {}).value || 'red';
     var duration = parseInt((document.getElementById('trigNewDuration') || {}).value || '5000', 10) || 5000;
     var msg = document.getElementById('trigAddMsg');
@@ -18587,7 +19303,10 @@ async function dismissTopDamage(key) {
       body: JSON.stringify({
         trigger: {
           name: name,
-          actions: [{ type: 'text_overlay', text: overlayText, color: color, duration_ms: duration }],
+          // tts only when the user typed one: absent means the overlay falls back
+          // to the display text (cleaned of emoji by triggers.html), which is the
+          // sane default for the many triggers that read fine as written.
+          actions: [{ type: 'text_overlay', text: overlayText, color: color, duration_ms: duration, ...(ttsText ? { tts: ttsText } : {}) }],
         },
       }),
     });
@@ -18695,6 +19414,7 @@ async function dismissTopDamage(key) {
     var pattern = (document.getElementById('trigNewPattern') || {}).value || '';
     var cooldown = parseInt((document.getElementById('trigNewCooldown') || {}).value || '0', 10) || 0;
     var overlayText = (document.getElementById('trigNewOverlay') || {}).value || '';
+    var ttsText = ((document.getElementById('trigNewTts') || {}).value || '').trim();
     var color = (document.getElementById('trigNewColor') || {}).value || 'red';
     var duration = parseInt((document.getElementById('trigNewDuration') || {}).value || '5000', 10) || 5000;
     var timerSec = parseInt((document.getElementById('trigNewTimerSec') || {}).value || '0', 10) || 0;
@@ -18716,7 +19436,10 @@ async function dismissTopDamage(key) {
     const row = {
       name: name, pattern: pattern, use_regex: true, enabled: true,
       cooldown_seconds: cooldown,
-      actions: [{ type: 'text_overlay', text: overlayText, color: color, duration_ms: duration }],
+      // tts only when the user typed one: absent means the overlay falls back
+      // to the display text (cleaned of emoji by triggers.html), which is the
+      // sane default for the many triggers that read fine as written.
+      actions: [{ type: 'text_overlay', text: overlayText, color: color, duration_ms: duration, ...(ttsText ? { tts: ttsText } : {}) }],
     };
     if (timerSec > 0) row.timer_duration_sec = timerSec;
     if (endEarly.trim()) { row.end_early_pattern = endEarly.trim(); row.end_use_regex = true; }
@@ -19567,7 +20290,11 @@ const COMMAND_HTML = `<!doctype html>
     // agent dashboard's 🎲 Rolls card.
     if (s.rolls && s.rolls.length) {
       html += '<div class="card"><div class="head">🎲 Rolls</div><div class="list">';
-      var rMax = Math.min(s.rolls.length, 4);
+      // Six, then a "+N more" tail — matching the trigger overlay's cap. Four
+      // was too few for a real loot session: Hitya's Aug 11 night ran eight
+      // sets and the card silently showed half of them, with nothing to say it
+      // was truncating (2026-08-12).
+      var rMax = Math.min(s.rolls.length, 6);
       for (var ri = 0; ri < rMax; ri++) {
         var rs = s.rolls[ri];
         var winners = (rs.winners || []).map(function(w){ return esc(w.name) + ' <b>' + w.value + '</b>'; }).join(', ');
@@ -19575,6 +20302,10 @@ const COMMAND_HTML = `<!doctype html>
              +    (rs.item ? ' (' + esc(rs.item) + (rs.qty ? ' ×' + rs.qty : '') + ')' : '')
              +    ' — <span style="color:#f0c419">' + (winners || '—') + '</span></span>'
              +    '<span class="cls">' + rs.players + ' roll' + (rs.players === 1 ? '' : 's') + (rs.open ? ' · open' : '') + '</span></div>';
+      }
+      if (s.rolls.length > rMax) {
+        html += '<div class="row"><span class="nm" style="opacity:.6">+' + (s.rolls.length - rMax)
+             +  ' more — see the 🎲 Rolls card on the dashboard</span></div>';
       }
       html += '</div></div>';
     }
@@ -19872,6 +20603,24 @@ function startWebDashboard(port) {
         try { payload = JSON.parse(_body || '{}'); }
         catch { res.writeHead(400); return res.end('{"error":"bad json"}'); }
         const dir = String(payload.direction || '').toLowerCase();
+        // #207 implicit directions — the overlay reports a CALLOUT (sticky row /
+        // centre flash) being cleared or aging out. Countdown chips take the
+        // /api/timers/cancel path instead, because the agent owns those rows and
+        // can attribute them itself. Both funnel into _recordCalloutFeedback so
+        // there is one recorder, one batch and one local counter.
+        if (dir === 'dismissed' || dir === 'expired') {
+          const firedMs = payload.fired_at ? Date.parse(payload.fired_at) : 0;
+          _recordCalloutFeedback({
+            direction:    dir,
+            trigger_id:   payload.trigger_id || null,
+            trigger_name: payload.trigger_name || null,
+            firedAtMs:    Number.isFinite(firedMs) && firedMs > 0 ? firedMs : Date.now(),
+            source:       payload.note || 'callout',
+            test:         !!payload.test,
+          });
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          return res.end('{"ok":true}');
+        }
         if (!['earlier','good','too_early'].includes(dir)) {
           res.writeHead(400); return res.end('{"error":"bad direction"}');
         }
@@ -19941,6 +20690,56 @@ function startWebDashboard(port) {
           const out = scanLocalTriggers();
           res.writeHead(200, { 'Content-Type': 'application/json' });
           return res.end(JSON.stringify(out));
+        } catch (err) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ ok: false, error: String(err && err.message || err) }));
+        }
+      }
+
+      // Crash review — read the LOCAL crash zips and say what broke, in plain
+      // language. Deliberately NOT gated on WOLFPACK_CRASH_REPORTS: that flag
+      // governs whether crash metadata is UPLOADED to the guild, and a raider
+      // wanting to understand their own crash should never have to share it
+      // first. Nothing here touches the network; the dump is read off disk,
+      // analysed in-process, and the answer goes to localhost only.
+      if (req.url === '/api/crash-review') {
+        try {
+          const out = [];
+          for (const dir of _crashDirs()) {
+            let names = [];
+            try { names = fs.readdirSync(dir).filter(n => /\.zip$/i.test(n)); } catch { continue; }
+            names.sort().reverse();
+            for (const n of names.slice(0, 10)) {          // newest 10 per folder
+              const zip = path.join(dir, n);
+              let parsed = null, dump = null;
+              try { parsed = _parseCrashReason(_readZipEntry(zip, 'crash_reason.txt').toString('utf8')); } catch {}
+              try { dump = _readMinidump(_readZipEntry(zip, 'minidump.dmp')); } catch {}
+              let when = null;
+              try { when = fs.statSync(zip).mtimeMs; } catch {}
+              out.push({
+                zip_name: n, when,
+                // The summary file's own fields, so the card can show both what
+                // Zeal said and what the dump says — they disagree usefully:
+                // a "Multiple Crashes" summary carries no context at all while
+                // its dump still has the whole stack.
+                reason: parsed && {
+                  exception_code: parsed.exception_code, exception_module: parsed.exception_module,
+                  zeal_version: parsed.zeal_version, handler_stage: parsed.handler_stage,
+                  game_state: parsed.game_state, character: parsed.character,
+                },
+                verdict: _crashVerdict(parsed, dump),
+                dump: dump && {
+                  uptime_sec: dump.uptimeSec,
+                  top: [...dump.onStack.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6),
+                  churn: [...dump.unloaded.entries()].filter(([, c]) => c >= 3),
+                  endpoints: dump.endpoints,
+                },
+              });
+            }
+          }
+          out.sort((a, b) => (b.when || 0) - (a.when || 0));
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ ok: true, crashes: out.slice(0, 20) }));
         } catch (err) {
           res.writeHead(500, { 'Content-Type': 'application/json' });
           return res.end(JSON.stringify({ ok: false, error: String(err && err.message || err) }));
@@ -20732,6 +21531,9 @@ function startWebDashboard(port) {
           // #105 — mob self-heal: the Zeal target gauge HP% rising for the same
           // target across frames → a mob_heal timeline tick on the live fight.
           try { _noteMobHealFromState(character, prevState, st); } catch (e) { void e; }
+          // #205 — group member HP hitting (and holding) zero is death evidence
+          // that owes nothing to the log text. Feeds the death registry.
+          try { _noteGroupHpFromState(character, st, Date.now()); } catch (e) { void e; }
           if (newCasting && newCasting !== prevCasting) {
             // Heuristic: anything > 4 chars + has at least one letter is a
             // real spell/song name. Filters out one-off junk labels.
@@ -21150,17 +21952,41 @@ function startWebDashboard(port) {
         return res.end(JSON.stringify(out));
       }
 
-      // POST /api/timers/cancel — dismiss a single active timer by id. Powers
-      // the per-chip ✕ on the trigger overlay (loot auction chips, #107). A
-      // loot chip's id is `loot|<sig>`; when dismissed we also drop the auction
-      // correlation entry so a stray repeat post opens a fresh chip rather than
-      // silently resetting a chip the user just closed.
+      // POST /api/timers/cancel — dismiss active countdowns. Powers the per-chip
+      // ✕ AND the title-bar clear-all on the trigger overlay. A loot chip's id
+      // is `loot|<sig>`; when dismissed we also drop the auction correlation
+      // entry so a stray repeat post opens a fresh chip rather than silently
+      // resetting a chip the user just closed.
+      //
+      // Body: { id } for one row, or { all: true } for every countdown. Each
+      // cancel records a `dismissed` row (#207) — the ONE place the overlay's ✕
+      // becomes a signal instead of a DOM removal.
+      //
+      // { all: true } deliberately SPARES loot chips: an open bid window is
+      // actionable (#129 — a raider must see every auction to bid on it), and
+      // "clear the countdown clutter" must not silently cost someone an item.
+      // They keep their own per-chip ✕.
       if (req.url === '/api/timers/cancel' && req.method === 'POST') {
         const body = await _readBody(req).catch(() => '');
         let payload = {};
         try { payload = body ? JSON.parse(body) : {}; } catch { payload = {}; }
+        const reason = String(payload?.reason || 'dismissed').slice(0, 40);
+        if (payload && payload.all) {
+          let cancelled = 0;
+          for (const [tid, row] of [..._activeTimers]) {
+            if (row && row.kind === 'loot') continue;
+            _activeTimers.delete(tid);
+            cancelled++;
+            _recordCalloutFeedback({ direction: 'dismissed', timer: row, source: reason });
+          }
+          scheduleRender();
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ ok: true, cancelled }));
+        }
         const id = String(payload?.id || '');
+        const row = id ? _activeTimers.get(id) : null;
         const ok = id ? _cancelTimer(id) : false;
+        if (ok) _recordCalloutFeedback({ direction: 'dismissed', timer: row, source: reason });
         if (ok && id.startsWith('loot|')) {
           const sig = id.slice('loot|'.length);
           _lootAuctions.delete(sig);
@@ -21168,7 +21994,7 @@ function startWebDashboard(port) {
         }
         scheduleRender();
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ ok }));
+        return res.end(JSON.stringify({ ok, cancelled: ok ? 1 : 0 }));
       }
 
       // POST /api/loot-prefs — dashboard Triggers-tab toggle + default-duration
@@ -25077,6 +25903,44 @@ function startChatRelay() {
       per_player:  et.perPlayer,
       total:       Object.values(et.perPlayer).reduce((a, p) => a + ((p.swing||0)+(p.proc||0)+(p.spell||0)+(p.heal||0)), 0),
     });
+
+    // ── Guild view of THIS fight, for the HUD's "guild (what you saw)" rows ──
+    // docs/DESIGN-live-guild-dps.md. Deliberately hung off the SNAPSHOT
+    // uploader rather than the #106 poll bundle, which is what the design doc
+    // originally proposed: the bundle is CADENCE-gated (streams tick on their
+    // own clocks whether or not anything is happening), and this stream is
+    // FIGHT-gated. Sharing the uploader's guard means it costs exactly zero
+    // between pulls and needs no new schedule, and the bot memoises 2s per boss
+    // so a raid of agents asking the same question is still one query.
+    //
+    // Fire-and-forget: this is a display nicety, and it must never delay or
+    // fail the snapshot upload above.
+    (async () => {
+      const bossNow = et.bossName || et.targetName || null;
+      if (!bossNow) return;
+      try {
+        const base = _uploadOpts.botUrl.replace(/\/encounter(\?.*)?$/, '');
+        const r = await fetch(`${base}/live-damage?boss=${encodeURIComponent(bossNow)}`, {
+          headers: { Authorization: `Bearer ${_uploadOpts.token}` },
+        });
+        if (!r.ok) return;                       // old bot (404) → HUD just shows local
+        const j = await r.json();
+        if (!j || !Array.isArray(j.players)) return;
+        stats.guildDamage = {
+          boss:       bossNow,
+          players:    j.players.slice(0, 60),
+          uploaders:  j.uploaders || 0,
+          total:      j.total || 0,
+          // Age of the freshest sample ANY uploader contributed. The HUD needs
+          // this to say "paused" instead of freezing on a number that still
+          // looks live - threat_snapshot is sheddable, so the guild side can
+          // stop updating with nothing else visibly wrong.
+          ageSec:     j.newest_sample_age_sec,
+          at:         Date.now(),
+        };
+      } catch { /* never let the guild view break the upload path */ }
+    })();
+
     // Fixed 1s TICK, not the cadence: the cadence is read per-tick inside the
     // body (_threatSnapCadenceMs) so an officer's mid-raid change takes effect
     // within a second. A setInterval cannot change its own period, so the tick
@@ -25709,6 +26573,7 @@ function _loadSpellCatalogFromDisk() {
     }
     _spellCatalogMeta = { fetchedAt: raw.fetched_at, etag: raw.etag || null, count: raw.entries.length };
     _rebuildBuffMatchers();
+    _rebuildMechanicMatchers();   // #206 — the instant-effect index, built from the same catalog
     console.log(`[spell-catalog] loaded ${raw.entries.length} spells from disk (cached ${raw.fetched_at || '?'})`);
   } catch (err) {
     console.warn('[spell-catalog] disk load failed:', err && err.message);
@@ -25768,6 +26633,7 @@ function fetchSpellCatalog({ botUrl, token }) {
             }
             _spellCatalogMeta = { fetchedAt: data.fetched_at, etag: etag || null, count: data.entries.length };
             _rebuildBuffMatchers();
+            _rebuildMechanicMatchers();   // #206 — same catalog, separate instant-effect key
             try {
               const out = { fetched_at: data.fetched_at, etag: etag || null, entries: data.entries };
               fs.writeFileSync(SPELL_CATALOG_FILE + '.tmp', JSON.stringify(out));
@@ -26138,6 +27004,202 @@ function parseDebuffLanding(line, observer) {
     };
   }
   return null;
+}
+
+// ── #206 — the THIRD capture path: INSTANT boss mechanics ──────────────────
+// The discard audit (docs/DESIGN-mechanic-capture.md) counted 113 timed boss
+// effects we capture and **138 instant ones we cannot see at all** — not
+// because the log line is missing, but because of how we look:
+//   • the two indexes above are keyed on DURATION, and an instant effect has
+//     none. `_isTimedDurationFormula` skips them BY DESIGN (a durf-0 spell has
+//     no countdown to show, and indexing them there is exactly what let the
+//     "Kneel Test" phantom onto Mob Info) — so this path does NOT relax that
+//     gate, it adds a parallel one with its own key and no timers at all;
+//   • `shouldKeep` is default-DROP, so "<Name>'s soul fades into darkness."
+//     never reaches parseEvent either. This hook runs on the RAW line in the
+//     watch tail, before that filter, like `_checkAoeDance` and `noteBlindLine`.
+// What lands here: the AE dance class, death touches, dispels, stuns, boss
+// self-heals ("<mob> is completely healed."), gates. `_checkAoeDance` is the
+// hand-curated version of exactly this — one entry per AE somebody noticed;
+// this index is DERIVED from the same catalog row the server prints from, so
+// it cannot be wrong about the text (the DI-trigger / AOE_DANCE failure mode).
+//
+// suffix(lower) → [{ id, name, good, heal }] for every INSTANT spell an NPC can
+// cast that carries an on-other message. Deliberately NOT junk-guarded like the
+// two above: that guard exists because those indexes CROWN a representative and
+// a crown can be wrong (Kneel Test, Bolt of Karana, Turgur's-for-every-yawn).
+// This one never crowns — a shared text stays ambiguous with its family
+// attached — so there is nothing for a big family to be wrong about, and
+// dropping it would re-create the very blindness this path exists to fix.
+//
+// SCOPE — `npc` (spell-catalog v8) is what keeps this from being a firehose.
+// The landing text says nothing about who cast it, so an unscoped index matches
+// every player nuke, cure and Complete Healing in view and the boss mechanics
+// become a minority of the rows. The flag is the bot's `eqemu_npc_spells_entries`
+// join — the same one the #206 audit used. A pre-v8 catalog carries no flags at
+// all, and we leave the index EMPTY rather than fall back to everything: idle is
+// recoverable (the bot deploys, the ETag changes, the index builds), a raid's
+// worth of mislabelled rows is not.
+let _mechanicLandingBySuffix = new Map();
+function _rebuildMechanicMatchers() {
+  const mm = new Map();
+  let sawNpcFlag = false;
+  for (const e of _spellByNameLower.values()) {
+    if (!e || !e.other || !e.name) continue;
+    if (e.npc !== 1) continue;
+    sawNpcFlag = true;
+    // INSTANT only — the exact complement of the timed predicate #154 uses in
+    // _shouldSuppressBuffLanding, so a spell can never sit in both a duration
+    // index and this one. (Measured against the live catalog: of the 138
+    // instant-with-text spells on mobs we have fought, 137 land here and one —
+    // Itraer Vius Touch, buffduration 0 but formula 4 — is a level-scaled
+    // duration and belongs in the timed index, where it already is.)
+    if (_isTimedDurationFormula(e.durf) || Number(e.dur) > 0) continue;
+    const suffix = String(e.other).trim().toLowerCase();
+    if (!suffix || suffix.length < 6) continue;   // too short → false positives
+    const arr = mm.get(suffix) || [];
+    arr.push({ id: e.id, name: e.name, good: e.good, heal: Number(e.heal) || 0 });
+    mm.set(suffix, arr);
+  }
+  _mechanicLandingBySuffix = mm;
+  if (mm.size) console.log(`[mechanic-index] indexed ${mm.size} instant-effect landing messages (#206)`);
+  else if (!sawNpcFlag) console.log('[mechanic-index] spell catalog carries no NPC-castable flag (bot pre-v8) — instant-mechanic capture idle until the bot deploys');
+}
+
+// Parse one RAW log line as an instant-effect landing. Same name-peeling shape
+// as parseDebuffLanding (multi-word mob victims: "a glyph covered serpent feels
+// dispelled." — the #169 pet-Death-Touch lesson), same raw-line anchoring (the
+// "[Sun Aug 02 21:10:01 2026] " prefix is part of the line, never optional).
+//
+// AMBIGUITY IS CARRIED, NEVER RESOLVED AWAY. `cast_on_other` is a suffix shared
+// across whole families — "is struck by a sudden force." is 32 spells — and the
+// standing lesson from Kneel Test / Bolt of Karana / "every yawn is Turgur's"
+// (docs/FINDINGS-2026-08-10-trigger-overlay.md §5 + §7b) is that crowning one
+// member of a shared text is silently wrong at scale. So: unique text → the
+// spell; shared text → spell_id 0, spell_name null, and the family rides along
+// for a consumer to weigh.
+function parseMechanicLanding(line) {
+  if (!_mechanicLandingBySuffix.size) return null;
+  const m = String(line || '').match(/^\[(.+?)\]\s+(.+)$/);
+  if (!m) return null;
+  const body = m[2].replace(/\s+$/, '');
+  const candidates = [];
+  const apos = body.indexOf("'s");
+  if (apos > 0) candidates.push([body.slice(0, apos), body.slice(apos)]);   // possessive
+  const words = body.split(' ');
+  for (let k = 1; k <= Math.min(5, words.length - 1); k++) {
+    candidates.push([words.slice(0, k).join(' '), words.slice(k).join(' ')]);
+  }
+  for (const [name, suffixRaw] of candidates) {
+    if (!_looksLikeTargetName(name)) continue;
+    const hits = _mechanicLandingBySuffix.get(suffixRaw.trim().toLowerCase());
+    if (!hits || !hits.length) continue;
+    const names = [...new Set(hits.map(h => h.name))];
+    const ts = parseEqTimestamp(line);
+    return {
+      victim:       name,
+      ambiguous:    names.length > 1,
+      spell_id:     names.length === 1 ? (hits[0].id || 0) : 0,
+      spell_name:   names.length === 1 ? hits[0].name : null,
+      family:       names.length > 1 ? names.slice(0, 12) : null,
+      family_size:  names.length,
+      landing_text: suffixRaw.trim().slice(0, 200),
+      // Character of the FAMILY, not of one member — what the victim-kind gate
+      // in noteMechanicLanding reads.
+      detrimental:  hits.some(h => h.good === 0),
+      heal_family:  hits.some(h => Number(h.heal) > 0),
+      at:           ts ? ts.toISOString() : new Date().toISOString(),
+      at_ms:        ts ? ts.getTime() : Date.now(),
+    };
+  }
+  return null;
+}
+
+// Recorded mechanics — an in-memory ring, newest last. Local only in this
+// version: record first, decide callouts from what it finds (design doc §7).
+const MECHANIC_RING_CAP    = 60;
+const MECHANIC_COALESCE_MS = 2500;   // one AE burst = one row, not one per victim
+const MECHANIC_VICTIM_CAP  = 12;     // names kept per row; the COUNT is uncapped
+const _recentMechanics = [];
+
+// Classify + record one instant landing. Returns the row it touched, or null.
+//
+// Two gates, both about not drowning the signal:
+//  1. FIGHT-SCOPED. Out of combat this index has no fight to describe, and the
+//     mob name that gives a row its meaning comes from the builder.
+//  2. VICTIM-KIND. `_fightTargetMatches` (the same helper #105 uses to keep
+//     off-target chatter off the board) answers "is this the mob we are
+//     hitting?" — and that flips which half of the catalog is interesting:
+//       • victim IS the fight target → drop any family with a DETRIMENTAL
+//         member: that is our own raid nuking it, hundreds of lines a minute
+//         with no mechanic in them. What survives is the boss acting on itself
+//         — Complete Healing's "<mob> is completely healed.", Gate's "<mob>
+//         fades away." — which is the case the encounter-splitter currently
+//         INFERS from damage totals while the mob announces it in plain text.
+//       • victim is anything else (a raider, a pet, an add) → drop HEAL
+//         families: "<name> is completely healed." is also every CH in the
+//         chain. Everything else stays, which is the AE / death-touch / stun /
+//         knockback / dispel class the callouts are for.
+//     ⚠ Do NOT gate this on `good_effect` instead. EQ classifies dispels as
+//     BENEFICIAL (Nullify Magic 49, Annul Magic 1526, Beholder Dispel 955 are
+//     all good=1), so a good-based gate silently drops "<raider> feels
+//     dispelled." — one of the four mechanics the design doc named by name.
+function noteMechanicLanding(line, observer, builder) {
+  if (!builder) return null;
+  if (!builder.startedAt && !(builder.targets && builder.targets.size)) return null;
+  const evt = parseMechanicLanding(line);
+  if (!evt) return null;
+  const onFightTarget = !!(builder._fightTargetMatches && builder._fightTargetMatches(evt.victim));
+  if (onFightTarget ? evt.detrimental : evt.heal_family) return null;
+  const nowMs = evt.at_ms;
+  const vKey  = String(evt.victim).toLowerCase();
+  // Per-CAST rows with a victim COUNT (design doc §3 volume rule): 23 AE spells
+  // × a raid × a long fight is a row per victim per cast otherwise. Collapsing
+  // on distinct victim also absorbs the main+alt double — one install watching
+  // two logs sees the identical line twice.
+  for (let i = _recentMechanics.length - 1; i >= 0; i--) {
+    const r = _recentMechanics[i];
+    if (nowMs - r.last_at_ms >= MECHANIC_COALESCE_MS) break;
+    if (r.landing_text !== evt.landing_text || r.on_fight_target !== onFightTarget) continue;
+    if (!r._victims.has(vKey)) {
+      r._victims.add(vKey);
+      r.victim_count++;
+      if (r.victims.length < MECHANIC_VICTIM_CAP) r.victims.push(evt.victim);
+    }
+    if (nowMs > r.last_at_ms) r.last_at_ms = nowMs;
+    return r;
+  }
+  const rec = {
+    landing_text:    evt.landing_text,
+    spell_name:      evt.spell_name,
+    spell_id:        evt.spell_id,
+    ambiguous:       evt.ambiguous,
+    family:          evt.family,
+    family_size:     evt.family_size,
+    victims:         [evt.victim],
+    victim_count:    1,
+    _victims:        new Set([vKey]),
+    on_fight_target: onFightTarget,
+    mob:             builder.bossName || null,
+    observer:        observer || null,
+    first_at_ms:     nowMs,
+    last_at_ms:      nowMs,
+    at:              evt.at,
+  };
+  _recentMechanics.push(rec);
+  while (_recentMechanics.length > MECHANIC_RING_CAP) _recentMechanics.shift();
+  return rec;
+}
+
+// Newest first for the dashboard; drops the victim Set (not JSON-safe).
+function _recentMechanicsForWeb() {
+  const out = [];
+  for (let i = _recentMechanics.length - 1; i >= 0; i--) {
+    const { _victims, ...rest } = _recentMechanics[i];
+    void _victims;
+    out.push(rest);
+  }
+  return out;
 }
 
 // Poll the bot for officer-filed backfill requests targeting any character
@@ -27242,7 +28304,18 @@ function _applyGuildTriggersResponse(resp) {
         const c = compileTriggerPattern(t.pattern, { flags: t.pattern_flags || 'i', use_regex: t.use_regex });
         compiled.push({ ...t, _regex: c.regex, _conditions: c.conditions, _aliases: c.aliases,
                         _excludes: _compileExcludes(t),
-                        _endRegex: _compileEndEarlyRegex(t), _scope: 'guild' });
+                        _endRegex: _compileEndEarlyRegex(t),
+                        // Honour the trigger's own default_scope. This was
+                        // hardcoded to 'guild', so _relayLocalFire's
+                        // "skip personal triggers" guard could NEVER fire for a
+                        // guild trigger and every personal alert fanned out to
+                        // the whole raid. Live symptom: "Too Far"
+                        // (default_scope personal, cooldown 0, on a line melee
+                        // produces constantly) arrived at every Mimic as
+                        // scope=guild_relay and buried the checkpoint journal.
+                        // Only 'personal' suppresses the relay - class_specific
+                        // and broadcast still fan out, which is what they mean.
+                        _scope: t.default_scope === 'personal' ? 'personal' : 'guild' });
       } catch (err) {
         console.warn(`[guild-triggers] bad pattern "${t.name}":`, err.message);
       }
@@ -29602,7 +30675,18 @@ const CRASH_REPORTS_ENABLED = process.env.WOLFPACK_CRASH_REPORTS === '1';
 const CRASH_STATE_FILE = path.join(process.cwd(), 'crash-reports.state.json');
 const CRASH_BACKLOG_DAYS = 30;    // first-enable backlog window
 const CRASH_BACKLOG_MAX  = 50;    // first-enable backlog cap
-let _crashState = null;           // { reported: { zipName: epochMs } }
+const CRASH_REANALYZE_PER_SWEEP = 8;   // dumps re-read per 60s sweep
+// Bump when the dump analysis changes in a way that makes old rows worth
+// re-sending. 1 = the first version that reads minidump.dmp at all; every
+// report uploaded before this carried only what crash_reason.txt said, which
+// for a "Multiple Crashes" bundle is an address and nothing else.
+const CRASH_ANALYSIS_VERSION = 1;
+let _crashState = null;           // { reported: {zip: epochMs}, analyzed: {zip: version} }
+// null = not yet probed, true/false = bot's answer. Re-probed hourly so a
+// bot deploy is picked up without restarting the agent.
+let _crashAnalysisSupported = null;
+let _crashAnalysisProbedAt  = 0;
+const CRASH_ANALYSIS_REPROBE_MS = 3600_000;
 
 function _loadCrashState() {
   if (_crashState) return _crashState;
@@ -29610,6 +30694,14 @@ function _loadCrashState() {
   catch { _crashState = null; }
   if (!_crashState || typeof _crashState !== 'object' || !_crashState.reported) {
     _crashState = { reported: {} };
+  }
+  // Migration: state files written before dump analysis existed have no
+  // `analyzed` map at all. Leaving it absent (rather than back-filling it to
+  // the current version) is what makes an existing uploader's whole history
+  // get re-sent with dump detail the first time they run this build — which is
+  // the entire point of the watermark.
+  if (!_crashState.analyzed || typeof _crashState.analyzed !== 'object') {
+    _crashState.analyzed = {};
   }
   return _crashState;
 }
@@ -29719,22 +30811,324 @@ function _readZipMemberFromBuf(buf, preferBase) {
 // crash_reason.txt → structured fields. Lines look like "Key: value"; the
 // leading "Unhandled exception occurred: ..." headline is kept in raw only.
 function _parseCrashReason(text) {
-  const pick = (rx) => { const m = text.match(rx); return m ? m[1].trim() : null; };
-  const address = pick(/Exception Address:\s*(\S+)/i);
-  const modulePath = pick(/Exception occurred in module:\s*(.+)/i);
-  const character = pick(/Character:\s*(.+)/i);
+  // ⚠ Every field is LINE-ANCHORED, and the gap after the colon matches
+  // horizontal whitespace only. The obvious `/Character:\s*(.+)/i` is wrong:
+  // `\s` includes newlines, so an EMPTY field swallows the line break and
+  // captures the NEXT line instead. That is exactly how `UI Skin: UIFiles\...`
+  // ended up in the character column of live rows (found 2026-08-12) — and a
+  // crash during zoning is precisely when Character is blank, so the bug bit
+  // hardest on the reports we most wanted to read.
+  const H = '[^\\S\\r\\n]*';                 // spaces/tabs, never a newline
+  const line = (label, body) =>
+    new RegExp('^' + H + label + ':' + H + body, 'im');
+  const pick = (label, body = '(.*?)') => {
+    const m = text.match(line(label, body + H + '$'));
+    const v = m ? m[1].trim() : '';
+    return v || null;                       // an empty field is absent, not ''
+  };
+  const address = pick('Exception Address', '(\\S*)');
+  const modulePath = pick('Exception occurred in module');
+  const character = pick('Character');
   return {
-    exception_code:    pick(/Exception Code:\s*(\S+)/i),
-    exception_module:  modulePath ? path.basename(modulePath).toLowerCase() : null,
+    exception_code:    pick('Exception Code', '(\\S*)'),
+    // Split on BOTH separators rather than path.basename: the crash file always
+    // carries a Windows path, but on the Linux/Deck build Node's basename is the
+    // POSIX one and would hand back the whole "C:\\Windows\\...\\ntdll.dll"
+    // string, silently splitting one signature into two.
+    exception_module:  modulePath ? modulePath.split(/[\\/]/).pop().toLowerCase() : null,
     exception_address: address,
     address_low16:     address ? address.replace(/^0x/i, '').slice(-4).toLowerCase() : null,
-    zeal_version:      pick(/Zeal Version:\s*(.+)/i),
+    zeal_version:      pick('Zeal Version'),
     character:         (character && !/^unknown$/i.test(character)) ? character : null,
-    ui_skin:           pick(/UI Skin:\s*(.+)/i),
-    zone_id:           pick(/Zone ID:\s*(\S+)/i),
-    callbacks:         pick(/Callbacks:\s*(.+)/i),
+    ui_skin:           pick('UI Skin'),
+    zone_id:           pick('Zone ID', '(\\S*)'),
+    callbacks:         pick('Callbacks'),
+    // Fields Zeal writes that we were throwing away, and which are the ones
+    // that actually answer "what was I doing when this happened":
+    //   Exception String  human-readable ("EXCEPTION_ACCESS_VIOLATION") — the
+    //                     only field a raider can read without a debugger.
+    //   Game state        ff = no world loaded (zoning / shutting down),
+    //                     1 = character select, 5 = in game.
+    //   Self / SpawnInfo  both 0x0 means the player entity is GONE, which
+    //                     together with zone ffffffff is the zoning fingerprint.
+    exception_string:  pick('Exception String'),
+    game_state:        pick('Game state', '(\\S*)'),
+    self_ptr:          pick('Self', '(\\S*)'),
+    spawn_info:        pick('SpawnInfo', '(\\S*)'),
+    // Which Zeal handler caught it. All three are fatal — every report opens
+    // "Unhandled exception occurred" — but they differ in how much context
+    // survived: 'Multiple Crashes' is the handler re-entering, and carries
+    // nothing but the code and module because Zeal could not safely re-read
+    // game state (0 of 64 such rows had a zone, skin or character).
+    handler_stage:     (/Unhandled exception occurred:\s*(.+)/i.exec(text)?.[1] || '').trim() || null,
     raw_reason:        text.slice(0, 4000),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Minidump review — answering "what was wrong with MY machine", locally.
+//
+// The design doc used to list this as out of scope on the grounds that reading
+// a .dmp needs a symbol server. That is true for function names and wrong for
+// the question anyone actually asks. A minidump carries the module list with
+// base addresses, so every address resolves to module+offset with no symbols at
+// all — and "was this Zeal, the client, or Windows?" falls straight out.
+//
+// Proven on Razek's 2026-08-12 dump: crash_reason.txt said "0x6ef in
+// kernelbase.dll", which is unactionable, while the dump named the audio stack,
+// the specific playback device, and a GPU driver that had reset four times in
+// six minutes. See docs/DESIGN-crash-review.md §8.
+//
+// NOTHING here leaves the machine. These functions read a local file and return
+// a verdict for the local dashboard; only the short verdict would ever upload,
+// and only if the user opted in. Reference implementation + the same logic in
+// Python: scripts/read-minidump.py.
+const MD_STREAM = { THREAD_LIST: 3, MODULE_LIST: 4, EXCEPTION: 6, SYSTEM_INFO: 7,
+                    UNLOADED_MODULES: 14, MISC_INFO: 15 };
+
+// Codes Windows raises that we can explain in plain language. 0x6ef is the one
+// that started all this: RPC stubs raise it NONCONTINUABLE with no parameters.
+const MD_CODES = {
+  0xC0000005: 'tried to read or write memory that was not there',
+  0xC0000094: 'divided by zero',
+  0xC00000FD: 'ran out of stack space',
+  0xC0000409: 'a corrupted buffer was detected and Windows stopped the program',
+  0xE06D7363: 'an internal error was thrown and nothing handled it',
+  0x6EF:      'asked Windows for something that had already gone away',
+  0x6BA:      'a Windows service it needed was not answering',
+  0x6BE:      'a call to a Windows service failed',
+};
+
+// Which subsystem a module belongs to. Order matters — first match wins, and
+// the client/wrapper entries deliberately come before the generic Windows ones.
+const MD_SUBSYSTEMS = [
+  [/^zeal\.asi$/i,                                    'Zeal'],
+  [/^(eqgame\.exe|eqgame\.dll|eqmain\.dll|eqw\.dll)$/i, 'the EverQuest client'],
+  [/^(mss32|mssdolby|mssds3d|mssfast|msseax)/i,       'the game audio engine'],
+  [/^(wdmaud|winmm|mmdevapi|audioses|dsound|ksuser|avrt)/i, 'Windows audio'],
+  [/^(nv|ig|amdvlk|atiu|d3d|dxgi|ddraw|dpvs|eqgfx|dgvoodoo|opengl|vulkan)/i, 'the graphics driver'],
+  [/^(ws2_32|wsock|mswsock|dnsapi|iphlpapi)/i,        'networking'],
+  [/^rpcrt4/i,                                        'Windows service messaging'],
+  [/^(ntdll|kernel32|kernelbase|ole32|combase|user32|gdi32|msvcr|ucrtbase)/i, 'Windows itself'],
+];
+function _mdSubsystem(mod) {
+  if (!mod) return null;
+  for (const [rx, label] of MD_SUBSYSTEMS) if (rx.test(mod)) return label;
+  return null;
+}
+
+// Parse a minidump buffer. Returns null on anything malformed — a crash review
+// must never itself throw into the agent's sweep loop.
+function _readMinidump(buf) {
+  try {
+    if (!buf || buf.length < 32 || buf.readUInt32LE(0) !== 0x504D444D) return null; // 'MDMP'
+    const nStreams = buf.readUInt32LE(8);
+    const dirRva   = buf.readUInt32LE(12);
+    const streams  = new Map();
+    for (let i = 0; i < nStreams; i++) {
+      const o = dirRva + i * 12;
+      if (o + 12 > buf.length) break;
+      const type = buf.readUInt32LE(o);
+      if (!streams.has(type)) streams.set(type, { size: buf.readUInt32LE(o + 4), rva: buf.readUInt32LE(o + 8) });
+    }
+    const mdString = (rva) => {
+      if (!rva || rva + 4 > buf.length) return '';
+      const n = buf.readUInt32LE(rva);
+      if (n <= 0 || rva + 4 + n > buf.length) return '';
+      return buf.toString('utf16le', rva + 4, rva + 4 + n);
+    };
+    const baseName = (p) => String(p || '').split(/[\\/]/).pop();
+
+    // --- modules ---------------------------------------------------------
+    const modules = [];
+    const ml = streams.get(MD_STREAM.MODULE_LIST);
+    if (ml) {
+      const n = buf.readUInt32LE(ml.rva);
+      for (let i = 0; i < n; i++) {
+        const o = ml.rva + 4 + i * 108;           // sizeof(MINIDUMP_MODULE)
+        if (o + 108 > buf.length) break;
+        // BaseOfImage is 64-bit; these are 32-bit processes so the low half is
+        // the address space we resolve against.
+        const base = buf.readUInt32LE(o);
+        const size = buf.readUInt32LE(o + 8);
+        const ms = buf.readUInt32LE(o + 32), ls = buf.readUInt32LE(o + 36); // VS_FIXEDFILEINFO
+        modules.push({
+          base, size,
+          name: baseName(mdString(buf.readUInt32LE(o + 20))),
+          version: `${ms >>> 16}.${ms & 0xffff}.${ls >>> 16}.${ls & 0xffff}`,
+        });
+      }
+    }
+    const whose = (addr) => {
+      for (const m of modules) if (addr >= m.base && addr < m.base + m.size) return m;
+      return null;
+    };
+
+    // --- exception + register context ------------------------------------
+    let exception = null, crashTid = null, esp = 0;
+    const ex = streams.get(MD_STREAM.EXCEPTION);
+    if (ex) {
+      crashTid = buf.readUInt32LE(ex.rva);
+      const er = ex.rva + 8;                       // MINIDUMP_EXCEPTION
+      const code = buf.readUInt32LE(er);
+      const flags = buf.readUInt32LE(er + 4);
+      const addr = buf.readUInt32LE(er + 16);      // ExceptionAddress (low half)
+      const ctxRva = buf.readUInt32LE(er + 156);
+      const ctxSize = buf.readUInt32LE(er + 152);
+      if (ctxSize >= 204) esp = buf.readUInt32LE(ctxRva + 196);   // x86 CONTEXT.Esp
+      const at = whose(addr);
+      exception = {
+        code, code_hex: '0x' + code.toString(16),
+        noncontinuable: !!(flags & 1),
+        plain: MD_CODES[code] || null,
+        address: '0x' + addr.toString(16),
+        module: at ? at.name : null,
+      };
+    }
+
+    // --- scan-walk the crashing thread's stack ---------------------------
+    // No unwind info and no symbols, so this is the classic scan: every 4-byte
+    // value on the thread's stack that lands inside a loaded module. It
+    // OVER-reports (stale frames from earlier calls linger), which is why the
+    // verdict below uses module FREQUENCY rather than claiming an exact call
+    // chain. It never invents a module — each hit was really on the stack.
+    const onStack = new Map();
+    let frames = [];
+    const tl = streams.get(MD_STREAM.THREAD_LIST);
+    if (tl && crashTid !== null) {
+      const n = buf.readUInt32LE(tl.rva);
+      for (let i = 0; i < n; i++) {
+        const o = tl.rva + 4 + i * 48;             // sizeof(MINIDUMP_THREAD)
+        if (buf.readUInt32LE(o) !== crashTid) continue;
+        const start = buf.readUInt32LE(o + 24);    // Stack.StartOfMemoryRange
+        const memSize = buf.readUInt32LE(o + 32);
+        const memRva  = buf.readUInt32LE(o + 36);
+        for (let off = 0; off + 4 <= memSize && memRva + off + 4 <= buf.length; off += 4) {
+          if (start + off < esp) continue;
+          const m = whose(buf.readUInt32LE(memRva + off));
+          if (!m) continue;
+          onStack.set(m.name, (onStack.get(m.name) || 0) + 1);
+          if (frames.length < 40) frames.push(m.name);
+        }
+        break;
+      }
+    }
+
+    // --- modules that were loaded and then went away ---------------------
+    // Free system-health signal: a driver cycling 3+ times means a device was
+    // being torn down and rebuilt repeatedly.
+    const unloaded = new Map();
+    const ul = streams.get(MD_STREAM.UNLOADED_MODULES);
+    if (ul) {
+      const hdr = buf.readUInt32LE(ul.rva), ent = buf.readUInt32LE(ul.rva + 4), cnt = buf.readUInt32LE(ul.rva + 8);
+      for (let i = 0; i < cnt; i++) {
+        const o = ul.rva + hdr + i * ent;
+        if (o + ent > buf.length) break;
+        const nm = baseName(mdString(buf.readUInt32LE(o + 20)));   // NOT +16
+        if (nm) unloaded.set(nm, (unloaded.get(nm) || 0) + 1);
+      }
+    }
+
+    // --- how long the process had been alive -----------------------------
+    let uptimeSec = null;
+    const mi = streams.get(MD_STREAM.MISC_INFO);
+    if (mi && mi.size >= 24) {
+      const created = buf.readUInt32LE(mi.rva + 12);
+      const written = buf.readUInt32LE(20);         // header TimeDateStamp
+      if (created && written > created) uptimeSec = written - created;
+    }
+
+    // --- audio endpoints left in memory by the wdmaud RPC binding --------
+    // Format: {0.0.<flow>.00000000}.{guid} where flow 0 = render (playback),
+    // 1 = capture. This is how "the audio stack faulted" becomes "it faulted on
+    // THIS device" — the guid resolves to a friendly name with one local
+    // registry read under MMDevices\Audio\Render\{guid}\Properties.
+    //
+    // ⚠ BOTH byte alignments must be scanned. Decoding the whole buffer as
+    // utf16le from offset 0 only sees strings that begin on an EVEN offset, and
+    // on the dump this was built from every endpoint began on an odd one — the
+    // single-alignment version returned zero endpoints while the reference
+    // implementation found three. Silent, and it drops the most useful field.
+    const endpoints = [];
+    for (const start of [0, 1]) {
+      const utf16 = buf.toString('utf16le', start);
+      const epRx = /\{0\.0\.(\d)\.0+\}\.\{([0-9a-f-]{36})\}:(\w+)/gi;
+      for (let m; (m = epRx.exec(utf16)); ) {
+        const e = { flow: m[1] === '0' ? 'playback' : 'capture', guid: m[2].toLowerCase(), call: m[3] };
+        if (!endpoints.some(x => x.guid === e.guid)) endpoints.push(e);
+      }
+    }
+
+    return { modules, exception, onStack, frames, unloaded, uptimeSec, endpoints,
+             loaded: (nm) => modules.some(m => new RegExp(nm, 'i').test(m.name)) };
+  } catch { return null; }
+}
+
+// Turn a parsed dump into something a raider can read. Deliberately hedged:
+// module attribution is strong evidence, a single crash is never proof of a
+// cause. "Here is the check to run" beats "here is the answer".
+function _crashVerdict(parsed, dump) {
+  const out = { headline: null, subsystem: null, blames_us: null, notes: [], checks: [] };
+  if (!dump || !dump.exception) {
+    out.headline = 'Could not read the crash dump — only the summary file is available.';
+    return out;
+  }
+  const ex = dump.exception;
+  const top = [...dump.onStack.entries()].sort((a, b) => b[1] - a[1]);
+
+  // The subsystem is whoever owns the most frames on the faulting stack, with
+  // the pure-plumbing modules skipped: ntdll/kernelbase/rpcrt4 are on EVERY
+  // stack and naming them tells the user nothing.
+  const PLUMBING = /^(ntdll|kernel32|kernelbase|rpcrt4|combase|ole32)\.dll$/i;
+  const meaningful = top.filter(([nm]) => !PLUMBING.test(nm));
+  const leader = meaningful[0] ? meaningful[0][0] : (ex.module || null);
+  out.subsystem = _mdSubsystem(leader) || 'the EverQuest client';
+
+  // The question members actually ask. Absence is only evidence when the module
+  // is LOADED — otherwise "not on the stack" is meaningless.
+  const zealLoaded = dump.loaded('^zeal\\.asi$');
+  const zealOnStack = [...dump.onStack.keys()].some(n => /^zeal\.asi$/i.test(n));
+  if (zealLoaded) {
+    out.blames_us = zealOnStack;
+    out.notes.push(zealOnStack
+      ? 'Zeal was on the stack when this happened, so it may be involved.'
+      : 'Zeal was running but was NOT involved in this crash — it does not appear anywhere in the failure.');
+  }
+
+  const what = ex.plain || `hit an error Windows reports as ${ex.code_hex}`;
+  out.headline = `EverQuest ${what}, inside ${out.subsystem}.`;
+
+  if (/audio/i.test(out.subsystem)) {
+    const play = dump.endpoints.find(e => e.flow === 'playback');
+    out.notes.push('This is a sound problem, not a game or Zeal problem — EQ asked '
+      + 'Windows to play audio through a device that was no longer there.');
+    if (play) {
+      out.checks.push('Check which speaker/headset EQ was using: reg query '
+        + '"HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\MMDevices\\Audio\\Render\\{'
+        + play.guid + '}\\Properties" /v "{a45c254e-df1c-4efd-8020-67d146a850e0},2"');
+    }
+    out.checks.push('If that device is your monitor, TV, or anything on the graphics card, '
+      + 'switch Windows sound output to your motherboard or a USB headset — those do not '
+      + 'disappear when the display changes.');
+  }
+
+  // Driver churn: a device that rebuilt 3+ times is worth surfacing on its own,
+  // whatever the crash turned out to be.
+  const churn = [...dump.unloaded.entries()].filter(([, c]) => c >= 3).map(([nm]) => nm);
+  if (churn.length) {
+    const mins = dump.uptimeSec ? ` in ${Math.max(1, Math.round(dump.uptimeSec / 60))} minutes` : '';
+    out.notes.push(`Your graphics driver reset itself several times${mins} `
+      + `(${churn.slice(0, 3).join(', ')}). That is not normal, and it can knock out sound `
+      + 'devices attached to the graphics card.');
+    out.checks.push('Try running EverQuest windowed or borderless instead of full screen — '
+      + 'that avoids most display resets.');
+  }
+
+  if (ex.noncontinuable) out.notes.push('This one was not survivable — the game could not have kept going.');
+  if (parsed && /^(ff|ffffffff|-1)$/i.test(String(parsed.game_state || ''))) {
+    out.notes.push('You were zoning when it happened — no world was loaded yet.');
+  }
+  return out;
 }
 
 // System snapshot, computed once per agent run (crashes cluster by machine
@@ -29777,12 +31171,62 @@ function _crashSystemSnapshot(eqDir) {
   return snap;
 }
 
+// Cheap "is there anything to review?" for the dashboard. Counts zips only —
+// never opens one. Cached 60s because /api/state is served to every overlay
+// several times a second and a readdir per poll would be silly.
+let _crashCount = { at: 0, n: 0 };
+function _crashBundleCount() {
+  const now = Date.now();
+  if (now - _crashCount.at < 60_000) return _crashCount.n;
+  let n = 0;
+  try {
+    for (const dir of _crashDirs()) {
+      try { n += fs.readdirSync(dir).filter(x => /\.zip$/i.test(x)).length; } catch {}
+    }
+  } catch {}
+  _crashCount = { at: now, n };
+  return n;
+}
+
 // Zip filenames are local-time YYYY-MM-DD_HH-MM-SS stamps from Zeal.
 function _crashZipTime(name) {
   const m = name.match(/^(\d{4})-(\d{2})-(\d{2})_(\d{2})-(\d{2})-(\d{2})\.zip$/);
   if (!m) return null;
   const d = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]);
   return isNaN(d.getTime()) ? null : d;
+}
+
+// Read one bundle into an upload-shaped report: the crash_reason fields plus
+// everything the DUMP knows. Returns null if crash_reason itself is unreadable.
+function _buildCrashReport(dir, name, when, eqDir) {
+  let parsed;
+  try {
+    parsed = _parseCrashReason(_readZipEntry(path.join(dir, name), 'crash_reason.txt').toString('utf8'));
+  } catch { return null; }
+  let dump = null;
+  try { dump = _readMinidump(_readZipEntry(path.join(dir, name), 'minidump.dmp')); } catch {}
+  const verdict = _crashVerdict(parsed, dump);
+  return {
+    ...parsed,
+    zip_name: name,
+    crashed_at: when.toISOString(),
+    system: _crashSystemSnapshot(eqDir),
+    // Dump-derived. The DUMP ITSELF IS NOT INCLUDED and never will be — these
+    // are the conclusions drawn from it locally, which is the whole point:
+    // crash_reason.txt alone says "0x6ef in kernelbase.dll" and cannot tell
+    // anyone anything, while these say which subsystem died and whether it
+    // was us. See docs/DESIGN-crash-review.md §8c.
+    analysis_version: CRASH_ANALYSIS_VERSION,
+    crash_subsystem:  verdict.subsystem || null,
+    crash_blames_zeal: verdict.blames_us,          // true / false / null=unknown
+    crash_headline:   verdict.headline || null,
+    dump_uptime_sec:  dump ? dump.uptimeSec : null,
+    dump_stack_top:   dump ? [...dump.onStack.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8)
+                                 .map(([m, c]) => ({ module: m, frames: c })) : null,
+    dump_churn:       dump ? [...dump.unloaded.entries()].filter(([, c]) => c >= 3)
+                                 .map(([m, c]) => ({ module: m, times: c })) : null,
+    dump_audio_endpoints: dump && dump.endpoints.length ? dump.endpoints : null,
+  };
 }
 
 function scanCrashDirs() {
@@ -29792,6 +31236,17 @@ function scanCrashDirs() {
   const firstRun = Object.keys(state.reported).length === 0;
   const backlogCutoff = Date.now() - CRASH_BACKLOG_DAYS * 86400_000;
   const reports = [];
+  // Re-analysis is budgeted separately from new crashes and capped per sweep:
+  // a dump is ~1 MB to read and parse, and a long-time uploader has hundreds
+  // sitting on disk. At this cap and a 60s sweep, ~500 bundles drain in about
+  // an hour of uptime without ever making the agent stutter.
+  // Paused while the bot is known not to store it; one bundle is still sent
+  // after the re-probe interval so a bot deploy resumes the backfill on its
+  // own, without anyone restarting anything.
+  const reprobeDue = Date.now() - _crashAnalysisProbedAt > CRASH_ANALYSIS_REPROBE_MS;
+  let reanalyzeBudget = _crashAnalysisSupported === false
+    ? (reprobeDue ? 1 : 0)
+    : CRASH_REANALYZE_PER_SWEEP;
   for (const dir of _crashDirs()) {
     const eqDir = path.dirname(dir);
     let names;
@@ -29800,30 +31255,43 @@ function scanCrashDirs() {
     const dated = names.map(n => ({ n, t: _crashZipTime(n) })).filter(x => x.t)
       .sort((a, b) => a.t - b.t);
     for (const { n, t } of dated) {
-      if (state.reported[n]) continue;
+      if (state.reported[n]) {
+        // Already sent — but if it was sent BEFORE we could read dumps, its row
+        // is just an address. Re-send it once with the dump analysis attached;
+        // the bot upserts on (guild, uploader, zip_name), so this UPDATES the
+        // existing row rather than duplicating it. Newest first would be nicer
+        // but oldest-first keeps one simple ordering rule for the whole loop.
+        if (state.analyzed[n] === CRASH_ANALYSIS_VERSION) continue;
+        if (reanalyzeBudget <= 0) continue;
+        reanalyzeBudget--;
+        const again = _buildCrashReport(dir, n, t, eqDir);
+        // A bundle whose crash_reason will not parse never will — mark it here
+        // so it stops costing a slot every sweep. Everything else waits for the
+        // bot's confirmation in _onUploadSuccess.
+        if (!again) { state.analyzed[n] = CRASH_ANALYSIS_VERSION; continue; }
+        again.reanalysis = true;
+        reports.push(again);
+        continue;
+      }
       if (firstRun && t.getTime() < backlogCutoff) { state.reported[n] = 0; continue; }
       if (reports.length >= CRASH_BACKLOG_MAX) break;
-      let parsed;
-      try {
-        parsed = _parseCrashReason(_readZipEntry(path.join(dir, n), 'crash_reason.txt').toString('utf8'));
-      } catch (e) {
+      const rep = _buildCrashReport(dir, n, t, eqDir);
+      if (!rep) {
         // Zero-byte / malformed bundle (they exist in the wild) — mark seen
         // so we don't reparse it every minute, but record nothing.
         state.reported[n] = 0;
+        state.analyzed[n] = CRASH_ANALYSIS_VERSION;
         continue;
       }
-      reports.push({
-        ...parsed,
-        zip_name: n,
-        crashed_at: t.toISOString(),
-        system: _crashSystemSnapshot(eqDir),
-      });
+      reports.push(rep);
       state.reported[n] = Date.now();
     }
   }
   if (reports.length > 0) {
     enqueueUpload('crash_report', { agent_version: AGENT_VERSION, reports });
-    console.log(`[crash-reports] queued ${reports.length} crash report(s)`);
+    const redone = reports.filter(r => r.reanalysis).length;
+    console.log(`[crash-reports] queued ${reports.length} crash report(s)`
+      + (redone ? ` (${redone} re-analysed with dump detail)` : ''));
   }
   _saveCrashState();
 }
@@ -30230,12 +31698,14 @@ function _timerDurationSec(t, captures) {
   return Number(t.timer_duration_sec) || 0;
 }
 
-// The capture bag carries three things that are NOT semantic captures:
+// The capture bag carries FOUR things that are NOT semantic captures:
 // numeric keys ('0' is the whole match — for an ^…$ pattern, the entire line),
-// L/l (the raw log line, EQ timestamp included) and c/char/self (the local
-// character). They exist so action text can interpolate {L}/{c}, and they must
-// stay in the bag for that — but anything that derives an IDENTITY from the bag
-// has to drop them first, because they vary per line and per observer.
+// L/l (the raw log line, EQ timestamp included), c/char/self (the local
+// character) and `counter` (GINA's {COUNTER}, this client's own fire tally for
+// the trigger). They exist so action text can interpolate {L}/{c}/{counter},
+// and they must stay in the bag for that — but anything that derives an
+// IDENTITY from the bag has to drop them first, because they vary per line and
+// per observer.
 //
 // Two bugs came from that leak (2026-08-10 Ssra, docs/FINDINGS-…-trigger-overlay):
 // every timer trigger made a NEW overlay row per fire (L carries the timestamp,
@@ -30243,7 +31713,23 @@ function _timerDurationSec(t, captures) {
 // log line, and _cancelTimersOnMobDeath could never match it); and REST IN PEACE
 // spoke twice, because two observers of one death build different relay keys
 // from their own second-resolution timestamps.
-const _NON_SEMANTIC_CAPTURES = new Set(['L', 'l', 'c', 'char', 'self']);
+//
+// ⚠ `counter` was MISSED by that fix and re-creates both of them (found while
+// building #207, 2026-08-11). `_fireTriggerActions` injects it into the bag on
+// every fire, and it sorts alphabetically ahead of the usual capture names, so:
+//   • the timer's `target` fallback picked the counter instead of the mob — and
+//     on the first fire the counter is 0, which is FALSY, so the row label lost
+//     its mob entirely ("null - Shaman Slow landed"). That also broke
+//     _cancelTimersOnMobDeath and the overlay's one-row-per-mob collapse, both
+//     of which key on `target`;
+//   • it bumps on every live fire, so `captureSuffix` differed per fire and a
+//     timer trigger WITHOUT timer_key_capture duplicated its row every time —
+//     the original P1, by another route;
+//   • two observers hold different tallies for the same event, so the relay
+//     dedup key differed between them — the RIP-spoken-twice defect, again.
+// Interpolation is unaffected: the bag itself still carries `counter`, and
+// _expandTemplate reads the bag, not this filtered view.
+const _NON_SEMANTIC_CAPTURES = new Set(['L', 'l', 'c', 'char', 'self', 'counter']);
 function _semanticCaptureKeys(captures) {
   if (!captures || typeof captures !== 'object') return [];
   return Object.keys(captures)
@@ -30329,6 +31815,10 @@ function _startTimer(t, tsMs, isTest, captures) {
     pinned:         !!t.pinned,
     show_at_ms:     (Number(t.display_threshold_sec) || 0) * 1000,
     trigger_name:   t.name || null,   // used by end-early matching against the trigger group
+    // #207 — the trigger this countdown came from, so a dismissal can be
+    // attributed to the trigger rather than to the composite timer id (which
+    // carries the captures). Nothing else reads it.
+    trigger_id:     t.id || null,
     captures:       captures && typeof captures === 'object' ? { ...captures } : null,
     scope:          t._scope || 'unknown',
     test:           !!isTest,
@@ -30674,11 +32164,134 @@ function _checkAoeDance(line, tsMs) {
     return;
   }
 }
+// ── #207 callout dismissals — the implicit signal ───────────────────────────
+// Hitya 2026-08-03: "those lines should be dismissable AND we should track when
+// things are dismissed so we learn from items that people either don't care
+// about or may be inaccurate" (docs/DESIGN-callout-overlay.md §3.2).
+//
+// Two directions ride the EXISTING trigger_timing_feedback stream rather than a
+// new table:
+//   • `dismissed` — the raider cleared the row. The most honest signal we can
+//     collect, and it costs them nothing extra: they were already swatting it
+//     away. Compare the explicit thumbs-up widget — 47 votes from 7 people in a
+//     month, because pressing a feedback button mid-raid competes with playing.
+//   • `expired`   — the row aged out untouched. This is the CONTROL GROUP, and
+//     it is what makes the signal readable at all: 3 dismissals is damning at 3
+//     fires and meaningless at 300 (design §Gap C). Without it a dismissal
+//     COUNT is not a dismissal RATE.
+// Latency needs no column — `voted_at − fired_at` on a dismissed row already
+// separates "swatted it instantly, it's noise" (<1s) from "read it, acted, then
+// cleared it" (several seconds). Those are opposite verdicts.
+//
+// Scope, per docs/DESIGN-trigger-overlay-v2.md: per-user and session-scoped BY
+// CONSTRUCTION. A dismissal clears the row in this agent only — it never
+// relays, never touches guild_triggers, and dies with the process. One raider
+// clearing a Death Touch bar must never clear the raid's.
+//
+// Votes are BATCHED (30s / 25 rows) into one upload: `expired` fires once per
+// countdown per raider, so a per-row POST would put hundreds of tiny requests
+// on the ingest surface for a signal that is only ever read in aggregate.
+const CALLOUT_FEEDBACK_RECENT_MAX = 12;
+const CALLOUT_VOTE_FLUSH_MS  = 30_000;
+const CALLOUT_VOTE_MAX_BATCH = 25;
+const _calloutFeedback = { dismissed: 0, expired: 0, uploaded: 0, recent: [] };
+const _calloutVoteBuffer = [];
+let _calloutVoteFlushTimer = null;
+function _flushCalloutVotes() {
+  if (_calloutVoteFlushTimer) { clearTimeout(_calloutVoteFlushTimer); _calloutVoteFlushTimer = null; }
+  if (_calloutVoteBuffer.length === 0) return 0;
+  const votes = _calloutVoteBuffer.splice(0, _calloutVoteBuffer.length);
+  enqueueUpload('trigger_feedback', { agent_version: AGENT_VERSION, votes });
+  _calloutFeedback.uploaded += votes.length;
+  return votes.length;
+}
+function _queueCalloutVote(vote) {
+  _calloutVoteBuffer.push(vote);
+  if (_calloutVoteBuffer.length >= CALLOUT_VOTE_MAX_BATCH) return _flushCalloutVotes();
+  if (!_calloutVoteFlushTimer) {
+    _calloutVoteFlushTimer = setTimeout(_flushCalloutVotes, CALLOUT_VOTE_FLUSH_MS);
+    if (_calloutVoteFlushTimer.unref) _calloutVoteFlushTimer.unref();
+  }
+  return 0;
+}
+// The active character, same 60s-freshness rule the timing-vote endpoint uses.
+function _calloutVoterCharacter() {
+  let active = null, activeTs = 0;
+  const now = Date.now();
+  for (const ch of Object.keys(_zealState || {})) {
+    const st = _zealState[ch]; const ts = (st && st.updatedAt) || 0;
+    if (ts > activeTs && (now - ts) < 60_000) { activeTs = ts; active = ch; }
+  }
+  return active;
+}
+// e: { direction, timer? , trigger_id?, trigger_name?, firedAtMs?, source?, test? }
+function _recordCalloutFeedback(e) {
+  if (!e) return null;
+  const dir = e.direction === 'expired' ? 'expired' : 'dismissed';
+  const row = e.timer || null;
+  // A loot-auction chip is a BID WINDOW, not a callout. Its ✕ means "I've bid"
+  // or "not for me" and says nothing about whether a trigger was useful, so it
+  // must never enter the learning set (#107/#129).
+  if (row && row.kind === 'loot') return null;
+  const name = String((row && (row.trigger_name || row.effect || row.name))
+                      || e.trigger_name || '(unknown trigger)').slice(0, 200);
+  const triggerId = (row && row.trigger_id) || e.trigger_id || null;
+  const firedMs = Number(e.firedAtMs) || (row && row.started_at_ms) || Date.now();
+  const atMs = Date.now();
+  const isTest = !!(e.test || (row && row.test));
+  const entry = {
+    at:         atMs,
+    direction:  dir,
+    trigger:    name,
+    latency_ms: Math.max(0, atMs - firedMs),
+    source:     String(e.source || 'callout').slice(0, 40),
+    test:       isTest,
+  };
+  _calloutFeedback[dir]++;
+  _calloutFeedback.recent.push(entry);
+  if (_calloutFeedback.recent.length > CALLOUT_FEEDBACK_RECENT_MAX) _calloutFeedback.recent.shift();
+  console.log('[callout] ' + dir + ' — ' + name + ' after ' + Math.round(entry.latency_ms / 1000) + 's'
+              + (isTest ? ' (test/rehearsal — not uploaded)' : ''));
+  // A rehearsal or a ⏪ replay drives the whole path on purpose — that is how
+  // this gets tested without a raid — but a test drive is not a raider's
+  // verdict, so it stops at the local counters.
+  if (isTest) return entry;
+  _queueCalloutVote({
+    trigger_id:      triggerId ? String(triggerId).slice(0, 120) : null,
+    trigger_name:    name,
+    direction:       dir,
+    fired_at:        new Date(firedMs).toISOString(),
+    voted_at:        new Date(atMs).toISOString(),
+    voter_character: _calloutVoterCharacter(),
+    note:            entry.source,
+  });
+  return entry;
+}
+// Local, in-memory view for /api/state — how the overlay's ✕ is verified
+// without a raid (and without waiting on an upload round-trip).
+function _calloutFeedbackSnapshot() {
+  return {
+    dismissed: _calloutFeedback.dismissed,
+    expired:   _calloutFeedback.expired,
+    uploaded:  _calloutFeedback.uploaded,
+    pending:   _calloutVoteBuffer.length,
+    recent:    _calloutFeedback.recent.slice().reverse(),
+  };
+}
+
 function _activeTimersSnapshot() {
   const now = Date.now();
   const out = [];
   for (const [id, t] of _activeTimers) {
-    if (t.ends_at_ms <= now) { _activeTimers.delete(id); continue; }
+    // Aged out untouched — the control group for the dismissal rate (#207).
+    // Only a NATURAL expiry lands here: a mob-death cancel and a user dismissal
+    // both delete the row themselves, so neither is double-counted.
+    if (t.ends_at_ms <= now) {
+      _activeTimers.delete(id);
+      try { _recordCalloutFeedback({ direction: 'expired', timer: t, source: 'timer_expired' }); }
+      catch { /* never let bookkeeping break the snapshot */ }
+      continue;
+    }
     // display_threshold_sec: hide the row until it is nearly up ("only show me
     // the last 30s"). Filtered HERE rather than in the overlay so an older
     // bundled triggers.html gets the behaviour without a Mimic update.
@@ -31307,6 +32920,7 @@ function _fireTriggerActions(t, captures, tsMs, test, isRelay) {
         // de-duped, swallowing rapid back-to-back alerts).
         firedAt:     Date.now(),
         trigger:     t.name,
+        trigger_id:  t.id || null,   // #207 — attribution for a dismissal
         scope:       t._scope || (test ? 'test' : 'personal'),
         test:        !!test,
       };
@@ -32949,6 +34563,14 @@ async function main() {
             const _dbFp = `buffcast|${dbEvt.target}|${dbEvt.spell_id}|${dbEvt.landing_text}|${dbEvt.cast_at}`;
             if (!_crossLogDupe(_dbFp)) buffCastBuffer.push(dbEvt);
           }
+          // #206 — the THIRD capture path. Only lines neither timed path
+          // claimed reach it, which is the whole point: an INSTANT effect has
+          // no duration, so it is structurally unindexable above and
+          // shouldKeep (default-DROP, and still ahead of us in this callback)
+          // would have thrown it away. Local ring only — nothing uploads.
+          if (!dbEvt) {
+            try { noteMechanicLanding(line, b.character, b.builder); } catch (e) { void e; }
+          }
         }
 
         // Server-wide PvP earthquake announcement → register the next-quake
@@ -32969,6 +34591,14 @@ async function main() {
         // freeze that slot's cast bar and put a ✕ on it. No-ops unless a chain
         // is already running and the name maps to a slot mid-cast.
         if (!_sourceExcluded) { try { trackChChainInterrupt(line, b.character); } catch {} }
+        // "<Tank> has been rescued by divine intervention!" → nominate the two
+        // clerics who could put the next DI up (#204). Ungated on purpose —
+        // local callout, no upload (see trackDiFired).
+        // ⚠ MUST stay ABOVE the shouldKeep gate below: the death-save line does
+        // not survive the byte filter (same trap as the "you have taken"
+        // family). Moving it down silences the callout with no error anywhere;
+        // test/di-callout.test.js pins that.
+        try { trackDiFired(line); } catch {}
         // Raid-wide DA/invuln broadcast + healer mana roster — same
         // shout/raid/guild-chat macro pattern as CH chain, feeding the
         // Command Center overlay.
@@ -33003,6 +34633,12 @@ async function main() {
         // Ssraeshza dies → 2:10 cycle, "Paladin DA NOW" at 2:00). Both key off the
         // same slain/death line. Local-only, live tail.
         try { _cancelTimersOnMobDeath(line); } catch { /* never let a bad line break the tail */ }
+        // #205 — "<Name> dies." is the FEIGN emote (never a death; see
+        // test/feign-death-not-a-death.test.js). Nothing else in the agent
+        // records that a feign happened, and the group-HP death watcher needs
+        // it: a knight who feigns must never be turned into a corpse by a
+        // gauge reading zero. Raw-line hook, substring-gated like the two below.
+        try { const _dfd = parseEqTimestamp(line); noteFeignEmoteLine(line, _dfd ? _dfd.getTime() : Date.now()); } catch { void 0; }
         try { const _dts = parseEqTimestamp(line); _checkBossSpawnChain(line, _dts ? _dts.getTime() : Date.now()); } catch { void 0; }
         // `/zeal version` output → what's actually LOADED in this client. Runs
         // on the raw line before any filter because none of the keep patterns
@@ -33157,6 +34793,10 @@ module.exports = {
   CH_DDR_MARVELOUS_STREAK, CH_DDR_MIN_BEATS, CH_DDR_DISPLAY_MS,
   _setChDdrEnabledForTest: (v) => { _chDdrEnabled = !!v; },
   _resetChChainForTest: () => { _chChain = null; _lastChGoNum = null; },
+  // #204 DI two-cleric callout — exported for the scratchpad harness.
+  trackDiFired, diCalloutSnapshot, diCalloutCandidates, _diRankCandidates,
+  _diSlotTurnInMs, _DI_FIRED_RX, DI_CALLOUT_NAMES, DI_CALLOUT_TTL_MS,
+  _resetDiCalloutForTest: () => { _diCallout = null; _lastDiFired = { key: null, atMs: 0 }; },
   _readZipEntry, _parseCrashReason, _crashZipTime,
   // #107/#149 loot-post announce — exported for the scratchpad smoke test.
   parseLootChatBody, noteLootAuction, _parseAuctionDuration, _spokenDuration,
@@ -33181,9 +34821,15 @@ module.exports = {
   _fireLog, _triggerJournal, _triggerLastFire,
   // #142 buster/spawn-chain timers — exported for the scratchpad fixture.
   _startTimer, _activeTimersSnapshot, _cancelTimersOnMobDeath, _deadMobNameFromLine,
+  // #207 callout dismissals — exported for the scratchpad fixture.
+  _recordCalloutFeedback, _calloutFeedbackSnapshot, _flushCalloutVotes,
   // Age + liveness (2026-08-10) — exported so the wrapper is tested against
   // the shipped code rather than a copy.
   _noteDeath, _clearDeath, _isDead, _deadNamesSnapshot, _ageOfServerStamp,
+  // #205 group-HP death watcher — the independent death source feeding that
+  // registry. Exported so the tests exercise the shipped code, not a copy.
+  _noteGroupHpFromState, _groupHpObservations, _groupDeathWatchSnapshot,
+  noteFeignEmoteLine, _feignedRecently,
   _nowOnServerClock, _resolveHpValuesForName, _mtLiveStateByName,
   noteClientVersionLine, clientVersionsSnapshot,
   _checkBossSpawnChain, _checkTankBuster, _armBossCountdown, BOSS_SPAWN_CHAINS,

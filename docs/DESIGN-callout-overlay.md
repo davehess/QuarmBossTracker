@@ -1,8 +1,33 @@
 # DESIGN — callout overlay: countdowns, dismissal, and learning from it (#207)
 
-*Written 2026-08-04 (overnight design pass). Unbuilt. Read alongside
+*Written 2026-08-04 (overnight design pass). Read alongside
 `DESIGN-di-callout.md` (#204) and `DESIGN-mechanic-capture.md` (#206) — both
 depend on this being the surface their callouts land on.*
+
+> **STATUS 2026-08-11 — build order steps 2 and 4-of-§4 are BUILT** (working
+> branch, unreleased). ✕ on every countdown, 🗑 clear-all, and dismissals +
+> expiries recorded as directions on `trigger_timing_feedback`. Steps 1
+> (`callout_fires`), 3 (collapse the three-field config) and 4 (the
+> `/admin/triggers` health panel) are still open.
+>
+> ⚠ **Where this doc and `DESIGN-trigger-overlay-v2.md` (2026-08-10) disagree,
+> v2 wins — it is six days newer and written from a live raid.** Two concrete
+> overrides applied during the build:
+> - **§3.4 "don't make dismissal per-person sticky"** stands as written (a
+>   dismissal must not become a silent mute), but v2 adds that dismissals and
+>   mutes are **per-user and session-scoped by default** — so the implemented
+>   ✕ clears the row in that raider's own agent only, and remembers nothing
+>   after the process exits. Both docs agree on the thing that matters: one
+>   raider's ✕ never clears the raid's callout.
+> - **§4 "reuse the existing timer-chip renderer"** is not enough on its own.
+>   v2 §2/§3 add hard RENDER-time invariants — one row per mob, a capped stack
+>   with "+N more", and a bottom anchor that grows upward and away from centre
+>   screen. Those were built with the ✕, because a dismissible row that still
+>   overlaps the game is the same complaint.
+>
+> §6's open questions are still open. The build assumes nothing about the
+> "fast dismissal = didn't want it" threshold: it stores the latency
+> (`voted_at − fired_at`) and leaves the interpretation to whoever reads it.
 
 **The ask (Hitya, 2026-08-03):**
 

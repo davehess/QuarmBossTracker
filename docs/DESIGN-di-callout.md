@@ -1,9 +1,10 @@
 # DESIGN — Divine Intervention callout (#204)
 
 *Written 2026-08-04 (overnight design pass). §4 steps 1–2 built 2026-08-09
-(both DI triggers live and source-verified); the two-name selector (§3) is
-still unbuilt. Read this before touching `_noteDiCast`,
-`/api/agent/di-status`, or either Divine Intervention guild trigger.*
+(both DI triggers live and source-verified). **§4 step 3 — the two-name
+selector — built 2026-08-11**; what shipped and the calls made along the way
+are in §6. Read this before touching `_noteDiCast`, `/api/agent/di-status`,
+`trackDiFired`, or either Divine Intervention guild trigger.*
 
 **The ask (Hitya, 2026-08-03):**
 
@@ -216,8 +217,13 @@ network path is needed.
 2. ~~**Capture the DI-fired line**~~ — **✅ DONE 2026-08-09**, from the server
    source rather than a log (see §0). The fire trigger `60d9797f…` is enabled;
    first live fire still unobserved.
-3. **Ship the two-name selector** agent-side behind the existing chain overlay.
-4. **Overlay UX** (#207) — countdown + dismiss + dismissal recording.
+3. ~~**Ship the two-name selector** agent-side behind the existing chain
+   overlay~~ — **✅ DONE 2026-08-11.** See §6.
+4. **Overlay UX** (#207) — countdown + dismiss + dismissal recording. The
+   card shipped in step 3 carries a TTL countdown and a ✕ that hides it
+   **locally only**; the `callout_fires` table and dismissal RECORDING are
+   still #207's, and #207 remains the prerequisite for learning anything from
+   them (a dismissal count without an exposure count is not a signal).
 5. *Later, only if inventory ever becomes a feed:* emerald evidence as a fourth
    ranking chip. **Never as a filter.**
 
@@ -233,3 +239,95 @@ network path is needed.
   Fargan) — is that a fixed DI roster we should encode, or was that "these are
   the clerics we had that night"? A configured roster is easy and removes a lot
   of guessing; a hardcoded one rots.
+
+---
+
+## 6. What shipped (2026-08-11)
+
+**Where it lives.** `packages/wolfpack-logsync/index.js`, in the CH-chain
+module right after `_maybeAnnounceChGo`: `_DI_FIRED_RX` → `trackDiFired()` →
+`diCalloutCandidates()` → `_diRankCandidates()` (pure) + `_diSlotTurnInMs()`,
+surfaced as `diCallout` on `/api/state` via `diCalloutSnapshot()` and rendered
+by the card in `apps/mimic/chchain.html`. Tests: `test/di-callout.test.js`,
+riding the shipped exports and the real chain parser rather than a copy.
+
+⚠ **`trackDiFired` must stay ABOVE the `shouldKeep` gate in the watch loop.**
+The death-save line does not survive the byte filter — the hook only ever sees
+it because it runs first, same trap as the "you have taken" family. Moving it
+down silences the whole feature with no error anywhere. Pinned by a test.
+
+**The audio is the existing trigger surface**, not a new one: `trackDiFired`
+pushes one `text_overlay`-shaped fire (`trigger: 'DI DOWN'`) exactly the way
+the CH GO callout does, so the trigger overlay flashes it and speaks it under
+the user's own TTS toggle. The chchain card deliberately never speaks — that
+would talk over the fire it is the visual twin of.
+
+### Calls made beyond the doc
+
+- **Clerics only, and we can now check it.** The doc says "rank clerics"; the
+  CHAIN is not a cleric roster. Druids gap-fill it through
+  `CH_EQUIVALENT_SPELLS` auto-slots (which carry a `kind` label) and shamans
+  turn up too, and **a druid cannot cast DI at all**. Slots with a `kind` label
+  are dropped, as is anyone whose class is KNOWN and isn't Cleric
+  (`whoData` → `_raidClassByName`). An **unknown** class stays eligible — most
+  of the raid's clerics will never run Mimic.
+- **A corpse is never nominated.** §2 lists "is this cleric actually alive"
+  under what we cannot know. That is **stale** as of agent 3.5.58: `_isDead`
+  exists and this uses it.
+- **A MEASURED recast is a hard exclusion, not a rank.** "Rank, don't filter"
+  in §3.3 is about clerics we know nothing about. When `di-status` says
+  `up === false && unknown === false` we WATCHED the cast start — naming them
+  would burn one of only two slots on someone who provably cannot cast.
+- **One honest name beats two with a wrong one.** §3 says "never a single
+  name", and that holds for ties and empty results (which fall back to the two
+  most recent chain healers). It does NOT override a hard exclusion: if only
+  one cleric survives the exclusions, one name is what gets called — which is
+  also what `DESIGN-extended-target-v2.md` §6 asks for.
+- **The fallback orders by pure recency**, not by the main ranking. The
+  fallback IS "we have no clean pick, so name whoever was demonstrably healing
+  last" (doc wording), and the hard exclusions still apply to it.
+- **No candidates → no nomination.** The doc's "never to silence" is about the
+  selector degrading gracefully, not about conjuring names. With no chain
+  running there is nobody to rank, and the raid still hears the event from the
+  guild trigger (`60d9797f…`, "D I fired on {tank}"). Silence here is only the
+  selector declining to invent, which is the honesty layer working.
+- **Ungated by `exclude_from_stats`.** The callout uploads nothing; a raider
+  opting out of STATS must not lose a raid-critical call. Same reasoning as
+  `noteBlindLine` / `noteSongAoeLine`.
+- **20s TTL, DI down only.** §5's "should it fire when DI is simply ABSENT
+  from the MT" is still open and deliberately unbuilt — this fires on the death
+  save only. §5's "two names or three" stays at two (the ask), as one constant
+  (`DI_CALLOUT_NAMES`). No DI roster is encoded (§5's third question), because
+  a hardcoded one rots.
+- **Cadence note worth knowing before tuning:** the exclusion window is
+  `DI_CAST_MS (6s) + one beat`. On a SHORT chain that is most of the rotation —
+  a 4-slot chain on a 3s beat has a 12s rotation against a 9s window, so
+  nearly everyone is excluded and the fallback carries the call. That is the
+  correct behaviour (a cleric who casts DI misses their CH) but it means the
+  fallback path is not an edge case on small chains; it is the normal path.
+  `test/di-callout.test.js` pins both.
+
+### Not built here (still #207)
+
+Dismissal RECORDING. The ✕ on the card clears it on that machine for that
+callout id and nothing else — no endpoint, no row. Per `DESIGN-callout-overlay.md`
+§3.1 the prerequisite is persisting fires; a dismissal count without an
+exposure count is not a signal.
+
+
+## §7 — Hitya's calls, 2026-08-11 (all four points, against the shipped build)
+
+1. **"X OR Y if both have it ready and aren't getting ready to CH soon"** —
+   confirmed as shipped: primary pool is `recent && !busy` (busy = own CH turn
+   within one DI cast + one beat), confirmed-ready outranks unknown, two names.
+2. **"Druids can't DI, only clerics"** — confirmed as shipped: `kind`-labelled
+   CH-equivalent auto-slots and known non-clerics are hard-excluded.
+3. **"Not every cleric has Mimic… if the Mimic ones don't have it ready, rely
+   on the others"** — confirmed as shipped, and this is why a MEASURED recast is
+   a hard exclusion while `unknown` (non-Mimic) stays eligible below
+   confirmed-ready: when every Mimic cleric is known-down, the pool becomes
+   exactly the non-Mimic clerics, evidence chips marking them unknown.
+4. **"The one casting should call it out"** — NEW, added 2026-08-11: the
+   selector nominates, a human closes the ambiguity. The callout now ends
+   "— caster call it" (TTS and overlay), teaching the protocol every time it
+   fires. The Lenolshot "I got it Curry!" pattern, made standard.

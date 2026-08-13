@@ -1,8 +1,14 @@
 # DESIGN — group/raid HP death watcher (#205)
 
-*Written 2026-08-04 (overnight design pass). Unbuilt. Companion to
+*Written 2026-08-04 (overnight design pass). Companion to
 `docs/DESIGN-death-semantics.md` — that doc defines what a death IS; this one
 adds a source of evidence that doesn't come from log text at all.*
+
+> **STATUS 2026-08-11 — the watcher is BUILT (agent, on `beta`); the durable
+> `death_evidence` half of §4 is NOT.** What shipped feeds the in-agent death
+> registry; nothing is uploaded and no table exists yet. Read §8 at the bottom
+> before extending it — it records what was built, what was deliberately left,
+> and one guard that is NOT in the design above.
 
 **The ask (Hitya, 2026-08-03):**
 
@@ -160,3 +166,111 @@ kinds ≈ **150 rows a night**. Nothing.
   misses slow deaths; 25% catches more and will fire on ordinary tank swings.
   Recommend deriving it from one clean raid night rather than picking a number
   now — same discipline as the dedup window (#201).
+
+---
+
+## 8. What was actually built (2026-08-11, agent)
+
+The design above predates the **death registry** that agent 3.5.58 added
+(`_noteDeath` / `_clearDeath` / `_isDead` / `_deadNamesSnapshot`, born out of
+`DESIGN-death-awareness-and-rez-queue.md`). That changed the shape of the first
+increment: there is now somewhere for the evidence to GO that isn't a new table,
+so the watcher shipped as **a second SOURCE feeding that one registry**, not as
+the standalone evidence pipeline of §4.
+
+Everything is in `packages/wolfpack-logsync/index.js`, immediately below the
+registry it feeds:
+
+| Piece | What it does |
+|---|---|
+| `_groupHpObservations(st, self)` | one Zeal snapshot → `{nameLower → {name, pct, verbose}}`. Reads **gauges 11-15** and, when `/pipeverbose` is on, the exact `hp_current/hp_max` off the type-6 group payload (exact wins). |
+| `_noteGroupHpFromState(character, st, now)` | the transition watcher. Called from the `/api/zeal-state` POST handler beside `_noteMobHealFromState` — the only place sample-to-sample deltas exist (§5). |
+| `noteFeignEmoteLine(line, at)` | records `"<Name> dies."` sightings. Raw-line hook in the live tail next to `_cancelTimersOnMobDeath`. |
+| `_groupDeathWatchSnapshot()` | per-name diagnostic: last pct, dwell, why a zero did or didn't count. |
+
+Tests: `test/group-death-watcher.test.js` (source-sliced, 25 cases, plus an
+end-to-end pair against the real registry).
+
+### The guard that is NOT in the design above
+§0 rests on *"feign death does not change your hit points"*. **That premise has
+never been checked against a live feigning groupmate's GAUGE** — only against
+how EQ works — and a monk in the corpse list is exactly the false positive that
+gets the feature switched off. So a third guard was added and is recorded here
+as a decision: **a zero is refused for 60s after that name's feign emote.**
+`"<Name> dies."` is the `cast_on_other` text of every Feign Death spell
+(`test/feign-death-not-a-death.test.js`); `parseEvent` deliberately returns
+nothing for it, so until now **nothing in the agent knew a feign had happened**.
+Cost of the guard: a knight who feigns and then genuinely dies inside a minute
+is invisible to the watcher — the log path still records it, so the loss is
+corroboration, not a death.
+
+### A fourth guard the design didn't anticipate: zoning
+A groupmate who **zones** can sit at 0% in the group window for as long as the
+load takes — longer than any dwell will ever be. `/pipeverbose` already carries
+each member's `zone_id`, so when it proves they are not in our zone the zero
+neither starts nor advances a dwell. **Deliberately asymmetric**: an *alive*
+reading from another zone is still alive evidence and still clears the registry
+— that is the bind-point round trip in §4.
+⚠ **Residual risk, stated plainly: without `/pipeverbose` we cannot tell a
+zoning groupmate from a dying one.** That is one more reason §6 step 1 (ask the
+raid to turn verbose on) is worth more than any code here.
+
+The other two guards implement §2 ceiling 1 ("a zero is a strong hint, not a
+fact"): a name must have been seen **alive** first (a slot reading 0 on first
+sight is an unrendered gauge), and the zero must **hold** — ≥2 samples spanning
+≥2.5s. That second one has a concrete target: Zeal emits occasional *negative*
+per-mille values (observed −3 on 5 live rows, 2026-08-03) and `apps/mimic/main.js`
+clamps them into `[0,100]`, so **a single-sample zero is a known artifact
+shape.** Dwell is kept short on purpose — a player who releases to bind is alive
+again in 5–10s (the §4 bind-point wrinkle), so a long dwell misses the corpse
+rather than merely arriving late.
+
+### Registry semantics the watcher must not break
+- **It never re-stamps a death the log already recorded.** Re-noting would push
+  the death forward and extend the 15-minute forget window, which is the one
+  thing the registry is built not to do. That path counts as corroboration only.
+- **A death is stamped at the FIRST zero sample**, not at the moment we finished
+  being sure.
+- **Alive evidence clears** (the registry's own rule: "a rez, or any fresh
+  self-HP") — but never a death younger than 5s. The log line and the gauge race
+  each other, and right after a death the gauge can still be carrying the last
+  live value; clearing on that would let a stale frame overrule a
+  corpse-run-confirmed log death.
+  ⚠ Note this is a *different question* from §4's bind-point wrinkle: "did a
+  death happen" (evidence — where a reappearance STRENGTHENS the inference) vs
+  "is this person a corpse right now" (the registry — where a reappearance ends
+  it). Don't let the two rules cancel each other out when the evidence table
+  gets built.
+
+### Deliberately NOT built
+- **`death_evidence` (§4) and everything downstream of it** — the table, the
+  upload, the `death_source` chip. That spans a migration + a bot endpoint (bot
+  ships from `main`, agent from `beta`), and none of it is needed for the
+  registry to get its second witness.
+- **`hp_collapse`** — §7 says to derive the threshold from a clean raid night
+  rather than pick one now, and that is still the right call; a collapse-only
+  path with an invented threshold would fire on ordinary tank swings. The
+  watcher therefore records **sustained zero only**.
+- **`vanished_*` / `zone_changed`** — §4's own combining rules score a bare
+  disappearance at zero, so emitting one buys nothing without the table.
+
+### Stale in the sections above (checked 2026-08-11)
+- §1's `~7960` for the raid-roster verbose preference is now **~8296**; §3's
+  `~2992` for the retention sweep is bot `index.js` **~2966**. Line numbers in
+  this repo rot fast — grep the identifier.
+- §5 cites `_noteTargetSwitches` as the emit-on-transition precedent. That
+  function is in the **bot**, not the agent; the discipline is right, the
+  address isn't.
+- §6 step 1 / §7's first open question ("can we just ask for `/pipeverbose on`?")
+  is **partly answered by shipped code**: the dashboard's 🔌 Zeal Pipe card
+  already detects it (`pipe_verbose`, proved by `hp_current` being present) and
+  shows a "verbose off (`/pipeverbose on` for raid HP)" nudge. What does not
+  exist is a prompt in Mimic's *setup flow*, which is what the question was
+  really asking for.
+- §2 ceiling 2 says an implementation watching only for literal zeros "will miss
+  most deaths". That is right about the *transition* and unproven about the
+  *state*: a corpse should HOLD at 0 in the group window until rez or bind, and
+  a held value gets sampled even when the edge is missed. **This is the first
+  thing to measure on a raid night** — `_groupDeathWatchSnapshot()` plus the
+  registry is enough to tell whether zeros are being seen at all. If they are
+  not, the collapse path becomes necessary rather than optional.

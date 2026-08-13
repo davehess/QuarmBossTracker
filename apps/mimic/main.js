@@ -2313,7 +2313,7 @@ function _maybeSeedClassSet(s) {
   // (trigger TTS defaults ON — excluded) or any saved per-char profile means
   // this isn't fresh. Mark seeded so this check never runs again.
   const shaped = cfg.charProfilesEnabled
-    || _HIDEALL_FLAGS.some(f => f !== 'enableTriggerTts' && cfg[f]);
+    || _HIDEALL_FLAGS.some(f => f !== 'showTriggerOverlay' && cfg[f]);
   if (shaped) { cfg.classSetSeeded = true; saveConfig(cfg); return; }
   const classKey = String(cls).toLowerCase().replace(/[^a-z]/g, '');
   const set = Array.isArray(sets[classKey]) ? sets[classKey] : null;
@@ -5175,8 +5175,20 @@ function _hideAllHotkeyMenuLabel() {
 // blocks silently missed showCommand (the Command Center kept showing through
 // hide-all, Uilnayar 2026-07-10). New overlays: add the flag HERE and it's
 // covered automatically.
+// (!) 'showTriggerOverlay', NOT 'enableTriggerTts'. Hide-all must silence the
+// SCREEN, never the voice. enableTriggerTts is the flag _OVERLAY_WINDOWS gates
+// the trigger window's existence on, so listing it here made hide-all:
+//   flag=false -> _overlayWanted() false -> _reapDisabledOverlays() DESTROYS
+//   the window -> the renderer that owns speechSynthesis is gone -> every
+//   callout, and Rehearse, goes silent with no error anywhere.
+// Hitya, 2026-08-13: "clicking on rehearse doesn't speak out the TTS if the TTS
+// overlays are hidden. I thought we safeguarded from that." We had - _overlayWanted
+// exempts 'trigger' from quiet mode and the EQ-running gate, and the window
+// carries backgroundThrottling:false precisely so a HIDDEN one keeps speaking.
+// Hide-all was the one path that reached past all of it by turning the window
+// off entirely instead of hiding it.
 const _HIDEALL_FLAGS = [
-  'showHud', 'enableTriggerTts', 'showCharm', 'showPets', 'showMobInfo',
+  'showHud', 'showTriggerOverlay', 'showCharm', 'showPets', 'showMobInfo',
   'showBuffQueue', 'showWho', 'showMelody', 'showZeal', 'showThreat',
   'showChChain', 'showTank', 'showExtTarget', 'showCommand', 'showPopRaid',
 ];
@@ -5185,7 +5197,14 @@ function toggleHideAllOverlays() {
   if (!_hideAllActive) {
     // Snapshot + flip all off.
     _hideAllPrev = {};
-    for (const f of _HIDEALL_FLAGS) { _hideAllPrev[f] = !!cfg[f]; cfg[f] = false; }
+    for (const f of _HIDEALL_FLAGS) {
+      // showTriggerOverlay is tri-state: undefined means VISIBLE (see
+      // applyTriggerVisibility's `!== false`). Snapshotting it with a plain !!
+      // records "hidden" for a user who never touched it, and unhide would then
+      // leave the overlay off forever. Snapshot the EFFECTIVE state instead.
+      _hideAllPrev[f] = (f === 'showTriggerOverlay') ? (cfg[f] !== false) : !!cfg[f];
+      cfg[f] = false;
+    }
     _hideAllActive = true;
   } else if (_hideAllPrev) {
     // Restore from snapshot — respects whatever individual prefs the user
@@ -5798,14 +5817,7 @@ function buildTrayMenu() {
     label: 'Share crash reports with the guild (opt-in)',
     type: 'checkbox',
     checked: loadConfig().crashReports === true,
-    click: (mi) => {
-      const cfg = loadConfig();
-      cfg.crashReports = !!mi.checked;
-      saveConfig(cfg);
-      appendAgentLog(`[mimic] crash-report sharing ${cfg.crashReports ? 'ENABLED — dumps stay local; only crash metadata uploads' : 'disabled'}; restarting agent\n`);
-      if (agentProc) { try { agentProc.kill(); } catch {} } else { launchAgent(); }
-      pushStatus();
-    },
+    click: (mi) => setCrashReports(!!mi.checked),
   };
 
   const menu = Menu.buildFromTemplate([
@@ -6333,21 +6345,41 @@ ipcMain.handle('overlay-auto-height', (e, h) => {
     // parked too high to grow up). Remove once confirmed.
     if (growsUp) {
       let key = null; for (const [k, w] of _overlayEntries()) if (w === win) { key = k; break; }
-      appendAgentLog(`[grow-up] ${key} h ${bounds.height}->${target} y ${bounds.y}->${y}${clampedAtTop ? ' CLAMPED-AT-TOP(no room above)' : ''} workAreaY=${disp.workArea.y}\n`);
+      // Skip the routine re-fits of an overlay that is bottom-anchored BY
+      // DEFAULT: the trigger stack re-fits on every chip add/remove, so this
+      // would write a line per countdown all raid. CLAMPED-AT-TOP still logs —
+      // that one says the overlay is parked too high to grow up, which is the
+      // actionable case and the one a default-on overlay is most likely to hit.
+      if (key && (clampedAtTop || !_GROW_UP_DEFAULT_KEYS.has(key))) {
+        appendAgentLog(`[grow-up] ${key} h ${bounds.height}->${target} y ${bounds.y}->${y}${clampedAtTop ? ' CLAMPED-AT-TOP(no room above)' : ''} workAreaY=${disp.workArea.y}\n`);
+      }
     }
     win.setBounds({ x: bounds.x, y, width: bounds.width, height: target });
     return true;
   } catch { return false; }
 });
 
+// Which overlays are bottom-anchored by DEFAULT (no explicit user choice yet).
+// The trigger overlay is, because its countdown stack must grow UPWARD, away
+// from the centre of the screen: "the middle of the screen is crucial area for
+// positioning, but that whole line of timers was awful to compete with"
+// (Hitya 2026-08-10 — docs/DESIGN-trigger-overlay-v2.md §3/§3b). Growing down
+// from a top anchor walks the stack straight through the play area.
+// An explicit choice — the chrome menu's ⬆ Grow upward — always wins, in BOTH
+// directions, which is why every reader goes through this one helper.
+const _GROW_UP_DEFAULT_KEYS = new Set(['trigger']);
+function _growUpSetting(cfg, key) {
+  if (!key) return false;
+  const map = (cfg && cfg.overlayGrowUp && typeof cfg.overlayGrowUp === 'object') ? cfg.overlayGrowUp : {};
+  return Object.prototype.hasOwnProperty.call(map, key) ? !!map[key] : _GROW_UP_DEFAULT_KEYS.has(key);
+}
 // Does this overlay grow upward (bottom-anchored auto-height)?
 function _overlayGrowsUp(win) {
   try {
     let key = null;
     for (const [k, w] of _overlayEntries()) if (w === win) { key = k; break; }
     if (!key) return false;
-    const cfg = loadConfig();
-    return !!((cfg.overlayGrowUp && typeof cfg.overlayGrowUp === 'object') ? cfg.overlayGrowUp[key] : false);
+    return _growUpSetting(loadConfig(), key);
   } catch { return false; }
 }
 
@@ -6444,6 +6476,24 @@ ipcMain.handle('overlay-hover-interactive', (e, wantInteractive) => {
 // Mirrors the tray checkboxes: flips the cfg pref, creates the window on first
 // enable (else applies visibility), and returns the fresh status so the
 // dashboard can repaint the button. Returns null for an unknown name.
+// Crash-report sharing, in ONE place. The tray checkbox and the dashboard's
+// Info-tab checkbox both call this rather than each doing their own
+// load/save/restart - two copies of a restart-the-agent side effect is exactly
+// how the two surfaces end up disagreeing about what the setting is.
+// The flag reaches the agent as an env var at SPAWN, so it only takes effect on
+// restart; killing agentProc lets the existing auto-relaunch path bring it back.
+function setCrashReports(on) {
+  const cfg = loadConfig();
+  cfg.crashReports = !!on;
+  saveConfig(cfg);
+  appendAgentLog(`[mimic] crash-report sharing ${cfg.crashReports ? 'ENABLED — dumps stay local; only crash metadata uploads' : 'disabled'}; restarting agent\n`);
+  if (agentProc) { try { agentProc.kill(); } catch {} } else { launchAgent(); }
+  pushStatus();
+  return cfg.crashReports;
+}
+
+ipcMain.handle('toggle-crash-reports', (_e, on) => setCrashReports(!!on));
+
 ipcMain.handle('toggle-overlay', (_e, name) => {
   const cfg = loadConfig();
   switch (name) {
@@ -6552,7 +6602,7 @@ ipcMain.handle('wp-overlay-menu-state', (e) => {
     key,
     backdrop: key ? !!((cfg.overlayBackdrop || {})[key]) : false,
     arrangeOnShow: !!cfg.autoArrangeOnShow,
-    growUp: key ? !!((cfg.overlayGrowUp || {})[key]) : false,
+    growUp: _growUpSetting(cfg, key),
     theme: cfg.overlayTheme || 'default',
   };
 });
@@ -6611,7 +6661,10 @@ ipcMain.handle('wp-growup-toggle', (e) => {
   if (!key) return false;
   const cfg = loadConfig();
   const map = (cfg.overlayGrowUp && typeof cfg.overlayGrowUp === 'object') ? cfg.overlayGrowUp : {};
-  map[key] = !map[key];
+  // Flip the EFFECTIVE value, not the raw map entry — an overlay that is
+  // bottom-anchored by default has no entry yet, so `!map[key]` would compute
+  // true and the first click would appear to do nothing.
+  map[key] = !_growUpSetting(cfg, key);
   cfg.overlayGrowUp = map;
   saveConfig(cfg);
   return !!map[key];

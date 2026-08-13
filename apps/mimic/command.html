@@ -394,7 +394,11 @@
     // agent dashboard's 🎲 Rolls card.
     if (s.rolls && s.rolls.length) {
       html += '<div class="card"><div class="head">🎲 Rolls</div><div class="list">';
-      var rMax = Math.min(s.rolls.length, 4);
+      // Six, then a "+N more" tail — matching the trigger overlay's cap. Four
+      // was too few for a real loot session: Hitya's Aug 11 night ran eight
+      // sets and the card silently showed half of them, with nothing to say it
+      // was truncating (2026-08-12).
+      var rMax = Math.min(s.rolls.length, 6);
       for (var ri = 0; ri < rMax; ri++) {
         var rs = s.rolls[ri];
         var winners = (rs.winners || []).map(function(w){ return esc(w.name) + ' <b>' + w.value + '</b>'; }).join(', ');
@@ -402,6 +406,10 @@
              +    (rs.item ? ' (' + esc(rs.item) + (rs.qty ? ' ×' + rs.qty : '') + ')' : '')
              +    ' — <span style="color:#f0c419">' + (winners || '—') + '</span></span>'
              +    '<span class="cls">' + rs.players + ' roll' + (rs.players === 1 ? '' : 's') + (rs.open ? ' · open' : '') + '</span></div>';
+      }
+      if (s.rolls.length > rMax) {
+        html += '<div class="row"><span class="nm" style="opacity:.6">+' + (s.rolls.length - rMax)
+             +  ' more — see the 🎲 Rolls card on the dashboard</span></div>';
       }
       html += '</div></div>';
     }

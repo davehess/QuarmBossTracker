@@ -17,6 +17,8 @@ import { userTz } from '@/lib/timezone';
 import LootBlock, { type LootRow } from '@/components/LootBlock';
 import { ClassificationChip } from '@/components/KillCard';
 import { FightTimeline } from '@/components/FightTimeline';
+import { DamageCurve } from '@/components/DamageCurve';
+import { buildFightCurve, observedHpSeries } from '@/lib/fightCurve';
 import { classifyEncounter, clearClassification, markDeathIntentional, unmarkDeathIntentional } from '../actions';
 
 export const dynamic = 'force-dynamic';
@@ -183,6 +185,18 @@ async function load(id: string) {
       `)
       .eq('id', id)
       .single();
+
+    // Fight damage curve (docs/DESIGN-fight-timeline.md). encounter_timeline()
+    // is a FUNCTION, not a view, so the encounter filter lands before the jsonb
+    // expansion — the snapshot table is 557k rows / 458 MB and a view would
+    // expand first. 5s buckets: finer than the 3.5-6.4s capture cadence buys
+    // nothing but noise.
+    // Failure here must never take the parse page down; the curve is additive.
+    let timelineRows: any[] = [];
+    try {
+      const { data: tl } = await sb.rpc('encounter_timeline', { p_encounter_id: id, p_step_sec: 5 });
+      timelineRows = Array.isArray(tl) ? tl : [];
+    } catch { timelineRows = []; }
     if (encErr || !enc) return { error: encErr?.message || 'not found' };
 
     const { data: contribs } = await sb
@@ -353,6 +367,7 @@ async function load(id: string) {
       date,
       latestAtTime,
       timelineEvents: (rawEvents ?? []) as TimelineEventRow[],
+      timelineRows,
       error: null as string | null,
     };
   } catch (err: unknown) {
@@ -377,7 +392,18 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
   const officer = await isOfficer(user.id);
   const tz = await userTz();
   const { enc, contribs, zones, loot, whoMap, bossLocalZone, petSet, date, latestAtTime, timelineEvents,
-          intentionalNames } = data;
+          intentionalNames, timelineRows } = data;
+  // Damage curve series. Built here rather than in the component so the
+  // arithmetic stays testable without a DOM (test/fight-curve.test.js) — every
+  // way it can be wrong still renders a plausible chart.
+  const curve = (timelineRows && timelineRows.length)
+    ? buildFightCurve(timelineRows, 5)
+    : null;
+  // Class per contributor, for the bulk class selectors over the highlight set.
+  const classOf: Record<string, string | null> = {};
+  if (curve) for (const b of curve.bands) {
+    classOf[b.name] = whoMap.get(b.name.toLowerCase())?.class ?? null;
+  }
   // `date` (from load) is the ET raid-day bucket — keep it for the loot query
   // join. For DISPLAY, re-bucket the kill time in the viewer's chosen zone.
   const dispDate = dayKey(enc.started_at, tz);
@@ -788,6 +814,23 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
         </table>
         </div>
       </section>
+
+      {/* Damage curve — Hitya's napkin sketch (docs/DESIGN-fight-timeline.md).
+          Sits directly above the event timeline because the two share a
+          fight-time X axis and the same geometry (W=1000, PADL/PADR=8): the
+          curve is the fight's shape, the event lane annotates it. Rendered only
+          when snapshots actually bound to this encounter — an empty chart is
+          worse than no chart, because it implies we looked and saw nothing. */}
+      {curve && curve.bands.length > 0 && (
+        <DamageCurve
+          buckets={curve.buckets}
+          bands={curve.bands}
+          totalDamage={curve.totalDamage}
+          mt={curve.mt}
+          durationSec={enc.duration_sec || curve.buckets[curve.buckets.length - 1] || 1}
+          classOf={classOf}
+        />
+      )}
 
       {/* Fight timeline (#98) — deaths + raid-wide events (rampage/enrage) +
           which callouts fired, on one axis. Shown whenever there's anything to

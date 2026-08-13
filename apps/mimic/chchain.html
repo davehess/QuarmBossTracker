@@ -50,7 +50,7 @@
     letter-spacing:0.04em;
     text-shadow:0 1px 2px #000, 0 0 4px rgba(246,195,101,0.3);
   }
-  .row.casting .num{color:#7ee787; border-color:rgba(126,231,135,0.55)}
+  .row.casting .num{color:#79c0ff; border-color:rgba(88,166,255,0.55)}
   .row.next    .num{color:#f6c365; border-color:rgba(246,195,101,0.65); background:rgba(246,195,101,0.10)}
   .row .nm{color:#e6edf3;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
   /* Tag on an auto-slotted row folded in from a non-cleric CH-equivalent
@@ -60,10 +60,13 @@
   .row .mana{font-variant-numeric:tabular-nums;font-weight:600;text-align:right;font-size:11px}
   .mana.hi{color:#56d364} .mana.mid{color:#f0b429} .mana.lo{color:#f87171} .mana.unk{color:#6e7681}
   .row .stat{color:#8b949e;font-size:10px;font-variant-numeric:tabular-nums;text-align:right;min-width:3.4em}
-  /* Casting row — green accent + a 10s CH cast bar under the row. */
-  .row.casting{background:rgba(86,211,100,0.12);border-left-color:#56d364}
-  .row.casting .nm{color:#7ee787}
-  .row.casting .stat{color:#7ee787;font-weight:600}
+  /* Casting row — BLUE accent + a 10s CH cast bar that fills RIGHT-TO-LEFT
+     (Hitya 2026-08-11: every countdown fills left-to-right, so the cast bar
+     runs the other way and in its own color — one glance tells a cast from a
+     countdown). GO stays green (green = go), interrupted stays red-frozen. */
+  .row.casting{background:rgba(88,166,255,0.12);border-left-color:#58a6ff}
+  .row.casting .nm{color:#79c0ff}
+  .row.casting .stat{color:#79c0ff;font-weight:600}
   /* Next-up row — amber accent, like the GO call it's about to get. */
   .row.next{background:rgba(240,180,41,0.12);border-left-color:#f0b429}
   .row.next .nm{color:#f6c365}
@@ -84,15 +87,28 @@
     to{box-shadow:inset 0 0 16px rgba(240,180,41,0.30)}
   }
   .bar{grid-column:1 / -1;height:4px;background:rgba(255,255,255,0.08);
-    border-radius:2px;overflow:hidden;margin-top:3px}
-  .bar .fill{height:100%;background:#56d364;transition:width 120ms linear}
+    border-radius:2px;overflow:hidden;margin-top:3px;position:relative}
+  /* Anchored RIGHT: width growth extends leftward. The interrupted state
+     inherits the anchor so a frozen bar is visibly the same bar, stopped. */
+  .bar .fill{height:100%;background:#58a6ff;transition:width 120ms linear;
+    position:absolute;top:0;right:0}
   /* Interrupted cast — the bar FREEZES at however far the cast got and turns
      red, and the row's stat cell becomes a ✕. Distinct from every other row
-     state: casting is green-and-moving, this is red-and-stopped. */
+     state: casting is blue-and-moving-right-to-left, this is red-and-stopped. */
   .row.interrupted{background:rgba(220,38,38,0.16);border-left-color:#f87171}
   .row.interrupted .num{color:#f87171;border-color:rgba(248,113,113,0.55)}
   .row.interrupted .nm{color:#fca5a5}
   .row.interrupted .bar .fill{background:#f87171;transition:none}
+  /* ORDER CONFLICT (Hitya 2026-08-11): two callers on one slot number. Bright
+     yellow letters with a red outline — loud on purpose; a contested rotation
+     is a wipe risk the raid should see before the missed beat. Static text,
+     not clickable, so no hover-interact handshake is needed. */
+  #conflictbanner{display:none;color:#ffd60a;font-weight:800;font-size:12px;
+    letter-spacing:0.08em;text-align:center;padding:2px 8px;margin-bottom:4px;
+    border:2px solid #f87171;border-radius:4px;
+    text-shadow:-1px 0 rgba(220,38,38,0.9),1px 0 rgba(220,38,38,0.9),
+      0 -1px rgba(220,38,38,0.9),0 1px rgba(220,38,38,0.9)}
+  .row.conflict .nm{color:#ffd60a}
   .xbadge{display:inline-block;font-weight:800;font-size:11px;color:#fff;
     background:rgba(220,38,38,0.85);border-radius:8px;padding:0 6px;
     text-shadow:none;box-shadow:0 0 8px rgba(248,113,113,0.6)}
@@ -285,6 +301,31 @@
   .di-chip.cd{border-color:rgba(240,180,41,0.6);color:#f0b429}
   .di-chip .di-sec{font-variant-numeric:tabular-nums;font-weight:700}
   #diready.di-last{outline:1px solid #f0c419;outline-offset:2px;border-radius:4px}
+  /* DI nomination (#204) — a death save FIRED, so the tank is alive and now
+     unprotected. Two names, each carrying its own evidence chips, and a TTL
+     countdown. Deliberately loud (it sits above the chain rows) and short-
+     lived: after ~20s the window to act on it has closed. */
+  .dicall{margin:3px 0 4px;background:rgba(60,10,10,0.72);border:1px solid rgba(248,113,113,0.75);
+    border-radius:5px;padding:4px 6px}
+  .dicall-hd{display:flex;align-items:center;gap:6px;font-size:10px;line-height:1.5;
+    text-shadow:0 1px 2px #000}
+  .dicall-lbl{font-weight:700;color:#f87171;letter-spacing:0.5px}
+  .dicall-tank{color:#e6edf3;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .dicall-cd{color:#9aa4ad;font-variant-numeric:tabular-nums;flex-shrink:0}
+  /* ~30px right gutter is reserved by the fixed ✕ hide button, so the card's
+     own dismiss sits inboard of it (see the overlay parity checklist). */
+  .dicall-x{color:#8b949e;cursor:pointer;flex-shrink:0;margin-right:24px;padding:0 2px}
+  .dicall-x:hover{color:#f87171}
+  .dicall-names{display:flex;flex-wrap:wrap;gap:6px;margin-top:2px}
+  .dicall-cand{display:inline-flex;align-items:center;gap:4px;font-size:10px;
+    text-shadow:0 1px 2px #000}
+  .dicall-nm{font-weight:700;color:#7ee787}
+  .dicall-chip{font-size:9px;color:#9aa4ad;border:1px solid rgba(110,118,129,0.5);
+    border-radius:3px;padding:0 3px}
+  .dicall-chip.ok{color:#7ee787;border-color:rgba(86,211,100,0.6)}
+  .dicall-chip.unk{color:#f0b429;border-color:rgba(240,180,41,0.5)}
+  .dicall-or{color:#6e7681;font-size:10px;align-self:center}
+  .dicall-note{font-size:9px;color:#f0b429;margin-top:2px;text-shadow:0 1px 2px #000}
   /* drag/lock/setup chrome — same pattern as every other overlay. */
   #drag-controls{display:none;position:fixed;top:4px;left:4px;gap:4px;z-index:60}
   body.unlocked #drag-controls{display:flex}
@@ -329,6 +370,7 @@
     <button id="exitSetupBtn">Done</button>
   </div>
   <div id="wrap">
+    <div id="conflictbanner">ORDER CONFLICT</div>
     <div class="head">
       <span id="conn" class="conn bad">○</span>
       <span class="icon">⛑</span>
@@ -358,6 +400,27 @@
       <span class="tank" id="gaptank"></span>
       <span class="sep">|</span>
       <span class="cleric" id="gapcleric"></span>
+    </div>
+    <!-- Divine Intervention nomination (#204, DESIGN-di-callout.md §3). Shown
+         for ~20s after a DI death save FIRES: the tank lived, and now has no
+         DI on them. Two names — never "someone DI", because DI costs an
+         Emerald per cast and a broadcast has seven clerics each assuming
+         somebody else has it. (One name when only one cleric survives the
+         hard exclusions; we would rather call one honest name than pad it.)
+         We cannot see emeralds, the global cooldown, or who is about to med,
+         so the chips are the honesty layer: a cleric can see at a glance
+         which parts of this we are guessing about. Spoken by the
+         trigger overlay (the agent pushes one text_overlay fire) — this card
+         is the visual twin and never speaks, so the call is heard once. -->
+    <div id="dicall" class="dicall" style="display:none">
+      <div class="dicall-hd">
+        <span class="dicall-lbl">🛡 D.I. DOWN</span>
+        <span class="dicall-tank" id="dicallTank"></span>
+        <span class="dicall-cd" id="dicallCd"></span>
+        <span class="dicall-x" id="dicallX" title="Dismiss this callout">✕</span>
+      </div>
+      <div id="dicallNames" class="dicall-names"></div>
+      <div id="dicallNote" class="dicall-note" style="display:none"></div>
     </div>
     <div id="rows" class="rows"></div>
     <!-- Pivot banner — v1.1.5 (Uilnayar 2026-06-26). Flashes red when the
@@ -664,6 +727,9 @@
   // fallback so an overlay running ahead of its agent still draws a sane bar.
   // The bar runs from the slot's callout; with cast-time focus items it lands a
   // bit early, which reads fine (the bar simply completes ahead of the land).
+  // Mirrors the agent's CH_CLAIM_WINDOW_MS; used only when talking to an older
+  // agent that does not send ch_claim_window_ms.
+  var CH_CLAIM_WINDOW_MS = 120000;
   var CH_CAST_SECS = 10;
   // Fallbacks for the interrupt/grade display windows, likewise echoed by the
   // agent (ch_interrupt_linger_ms / ddr.display_ms).
@@ -744,6 +810,60 @@
     } else {
       _diSoloSpokenFor = null;
     }
+  }
+
+  // DI nomination (#204) — the two clerics to call after a death save fires.
+  // NEVER speaks: the agent already pushed one text_overlay fire, which the
+  // trigger overlay flashes AND speaks (gated on the user's TTS toggle). A
+  // second utterance here would talk over the first.
+  //
+  // The countdown is computed on the local clock between fetches. That is
+  // exact, not approximate — expires_at was stamped by the agent on THIS
+  // machine, so there is no skew to correct (same reasoning as the cast bars).
+  var _lastDiCall = null;
+  var _diCallDismissedId = null;   // dismissal is local-only; see #207 for recording
+  function renderDiCallout(){
+    var el = document.getElementById('dicall');
+    var c = _lastDiCall;
+    if (!c || !c.names || !c.names.length || _diCallDismissedId === c.id) { el.style.display = 'none'; return; }
+    var left = Math.max(0, Math.ceil(((c.expires_at || 0) - Date.now()) / 1000));
+    if (!left) { el.style.display = 'none'; return; }
+    el.style.display = 'block';
+    document.getElementById('dicallTank').textContent = c.tank ? ('on ' + c.tank) : '';
+    document.getElementById('dicallCd').textContent = left + 's';
+    var cands = c.candidates || [];
+    var html = '';
+    for (var i = 0; i < cands.length; i++) {
+      var cd = cands[i];
+      if (i) html += '<span class="dicall-or">or</span>';
+      html += '<span class="dicall-cand"><span class="dicall-nm">' + esc(cd.name) + '</span>';
+      // Evidence chips — what we actually know about this cleric, spelled out.
+      html += (cd.di === 'ready')
+        ? '<span class="dicall-chip ok">DI ✓</span>'
+        : '<span class="dicall-chip unk">DI ?</span>';
+      if (cd.chain_num != null) html += '<span class="dicall-chip">chain #' + cd.chain_num + '</span>';
+      if (cd.mana_pct != null) html += '<span class="dicall-chip">' + cd.mana_pct + '% mana</span>';
+      html += '</span>';
+    }
+    document.getElementById('dicallNames').innerHTML = html;
+    // Fallback = every candidate was either off-cadence or due to cast, so
+    // this is "the chain's most recent healers" rather than a clean pick. Say
+    // so rather than letting it read as a confident recommendation.
+    var note = document.getElementById('dicallNote');
+    if (c.fallback) { note.textContent = 'no clear pick — most recent on the chain'; note.style.display = 'block'; }
+    else { note.style.display = 'none'; }
+  }
+  var diCallX = document.getElementById('dicallX');
+  if (diCallX) {
+    // Locked overlays are click-through, so every clickable control needs the
+    // hover-interact handshake or the click lands in EQ instead.
+    diCallX.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch (e) {} });
+    diCallX.addEventListener('mouseleave', function(){ try { window.mimic.overlayHoverInteractive(false); } catch (e) {} });
+    diCallX.addEventListener('click', function(){
+      if (_lastDiCall) _diCallDismissedId = _lastDiCall.id;
+      renderDiCallout();
+      try { window.mimic.overlayHoverInteractive(false); } catch (e) {}
+    });
   }
 
   // Off-heal candidates — independent of chain state, so it's rendered on
@@ -865,6 +985,7 @@
   function render(){
     renderOffHeal();
     renderDi();
+    renderDiCallout();
     // Integrity FIRST, before the empty-chain early return below — the red
     // GO MANUAL state must stay visible even after the snapshot resets to
     // null (a dead log stops feeding the agent, whose 5-min idle reset then
@@ -963,6 +1084,9 @@
     var lingerMs   = (c.ch_interrupt_linger_ms > 0 ? c.ch_interrupt_linger_ms : CH_INTERRUPT_LINGER_MS);
     var ddrShowMs  = (c.ddr && c.ddr.display_ms > 0 ? c.ddr.display_ms : CH_DDR_DISPLAY_MS);
     var nums = Object.keys(c.slots).map(Number).sort(function(a, b){ return a - b; });
+    // ORDER CONFLICT: server flag is authoritative; the per-row claimant check
+    // below also sets it so a row and its banner can never disagree.
+    var anyConflict = !!c.order_conflict;
     var html = '';
     for (var i = 0; i < nums.length; i++) {
       var n = nums[i], s = c.slots[n];
@@ -981,6 +1105,22 @@
       // up next" (Uilnayar 2026-07-06).
       var goActive  = !isCasting && !isInterrupted && c.last_go && c.last_go.num === n;
       var isNext    = !isCasting && !isInterrupted && !goActive && c.next_num === n;
+      // Two live claimants on this number → ONE ROW EACH, in first-claimed
+      // order, rather than the last caller silently owning the row (Mcdorf
+      // stays first when Pyxil mis-calls 001). Separate rows because a merged
+      // "Mcdorf / Stupidric…" truncates AND collapses two different casts into
+      // one bar — you could see that the slot was contested but not what either
+      // cleric was actually doing (Hitya, live test 2026-08-12).
+      // Age them out HERE too. The agent's order_conflict flag applies the claim
+      // window, but this row check did not, so a stale claimant kept the rows
+      // split and the banner lit long after the agent had stopped flagging it —
+      // the two could disagree indefinitely (Hitya, live 2026-08-12).
+      var claimWindowMs = (c.ch_claim_window_ms > 0 ? c.ch_claim_window_ms : CH_CLAIM_WINDOW_MS);
+      var liveClaims = (s.claimants || []).filter(function (cl) {
+        return cl && cl.lastAtMs && (now - cl.lastAtMs) <= claimWindowMs;
+      });
+      var claimRows = (liveClaims.length > 1) ? liveClaims : null;
+      if (claimRows) anyConflict = true;
       var cls = 'row' + (isCasting ? ' casting' : '') + (isInterrupted ? ' interrupted' : '')
               + (goActive ? ' go' : '') + (isNext ? ' next' : '');
       var stat, bar = '';
@@ -1003,15 +1143,51 @@
       } else {
         stat = s.lastAtMs ? fmtAgo((now - s.lastAtMs) / 1000) : '—';
       }
-      html += '<div class="' + cls + '">'
-        +   '<span class="num">' + pad3(n) + '</span>'
-        +   '<span class="nm">' + esc(s.name || '?') + (s.kind ? ' <span class="slot-kind">' + esc(s.kind) + '</span>' : '') + '</span>'
-        +   '<span class="mana ' + manaCls(s.mana) + '">' + (s.mana != null ? s.mana + '%' : '·') + '</span>'
-        +   '<span class="stat">' + stat + '</span>'
-        +   bar
-        +   ddrSticker(s, now, ddrShowMs)
-        + '</div>';
+      if (!claimRows) {
+        html += '<div class="' + cls + '">'
+          +   '<span class="num">' + pad3(n) + '</span>'
+          +   '<span class="nm">' + esc(s.name || '?') + (s.kind ? ' <span class="slot-kind">' + esc(s.kind) + '</span>' : '') + '</span>'
+          +   '<span class="mana ' + manaCls(s.mana) + '">' + (s.mana != null ? s.mana + '%' : '·') + '</span>'
+          +   '<span class="stat">' + stat + '</span>'
+          +   bar
+          +   ddrSticker(s, now, ddrShowMs)
+          + '</div>';
+      } else {
+        // Each contested claimant gets a real row driven by THEIR OWN last call,
+        // so both cast bars run independently — which is the whole point: seeing
+        // two clerics burning the same beat is what tells you the rotation is
+        // doubled up rather than merely mislabelled.
+        for (var ci = 0; ci < claimRows.length; ci++) {
+          var cl = claimRows[ci];
+          var clElapsed = cl.lastAtMs ? (now - cl.lastAtMs) : Number.POSITIVE_INFINITY;
+          var clCasting = clElapsed < castSecs * 1000;
+          var clStat, clBar = '';
+          if (clCasting) {
+            var clEl = clElapsed / 1000;
+            clStat = Math.max(0, castSecs - clEl).toFixed(1) + 's';
+            clBar = '<div class="bar"><div class="fill" style="width:' + Math.min(100, (clEl / castSecs) * 100).toFixed(1) + '%"></div></div>';
+          } else if (goActive) { clStat = '<span class="gobadge">GO!</span>'; }
+          else if (isNext)     { clStat = 'NEXT'; }
+          else                 { clStat = cl.lastAtMs ? fmtAgo((now - cl.lastAtMs) / 1000) : '—'; }
+          // Mana is per claimant now; older agents send none, so fall back to
+          // the slot's rather than showing a confident wrong number.
+          var clMana = (cl.mana != null ? cl.mana : (ci === 0 ? s.mana : null));
+          html += '<div class="' + ('row conflict' + (clCasting ? ' casting' : '')
+                                    + (!clCasting && goActive ? ' go' : '')
+                                    + (!clCasting && isNext ? ' next' : '')) + '">'
+            +   '<span class="num">' + pad3(n) + '</span>'
+            +   '<span class="nm">' + esc(cl.name || '?') + '</span>'
+            +   '<span class="mana ' + manaCls(clMana) + '">' + (clMana != null ? clMana + '%' : '&middot;') + '</span>'
+            +   '<span class="stat">' + clStat + '</span>'
+            +   clBar
+            // DDR grade belongs to the SLOT, so it rides the first row only —
+            // stamping it on both would double-count one graded beat.
+            +   (ci === 0 ? ddrSticker(s, now, ddrShowMs) : '')
+            + '</div>';
+        }
+      }
     }
+    document.getElementById('conflictbanner').style.display = anyConflict ? 'block' : 'none';
     if (rowsEl.__wpHtml !== html) {   // byte-stability guard (2026-07-07)
       rowsEl.innerHTML = html;
       rowsEl.__wpHtml = html;
@@ -1087,6 +1263,7 @@
       if (_last && _last.ddr && typeof _last.ddr.enabled === 'boolean' && _last.ddr.enabled !== _ddrOn) postDdr();
       _lastOffHeal = (s && s.offHealCandidates) || [];
       _lastDi = (s && s.diStatus) || null;
+      _lastDiCall = (s && s.diCallout) || null;
       // Integrity signals — every link in the chain-data path (see the
       // heartbeat state block above for why each one matters).
       _lastFetchOkAt = Date.now();
