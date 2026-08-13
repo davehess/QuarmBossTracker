@@ -241,6 +241,28 @@ async function load(id: string) {
       .eq('raid_date', date)
       .order('dkp', { ascending: false });
 
+    // Item icons for the loot list. Fetched SEPARATELY rather than embedded:
+    // opendkp_loot_recent is a VIEW, and PostgREST can only embed across a real
+    // foreign key, so `eqemu_items(icon)` silently fails there. One extra query
+    // keyed on the ids we actually got is both correct and cheap.
+    const lootItemIds = [...new Set((lootRows ?? [])
+      .map((l: { game_item_id: number | null }) => l.game_item_id)
+      .filter((id): id is number => typeof id === 'number' && id > 0))];
+    const iconById = new Map<number, number>();
+    if (lootItemIds.length) {
+      const { data: iconRows } = await sb
+        .from('eqemu_items')
+        .select('id, icon')
+        .in('id', lootItemIds);
+      for (const r of (iconRows ?? []) as { id: number; icon: number | null }[]) {
+        if (typeof r.icon === 'number') iconById.set(r.id, r.icon);
+      }
+    }
+    const lootWithIcons = (lootRows ?? []).map((l: Record<string, unknown>) => ({
+      ...l,
+      icon: typeof l.game_item_id === 'number' ? iconById.get(l.game_item_id) ?? null : null,
+    }));
+
     // Class lookup comes from the OpenDKP roster mirror (characters table) —
     // the authoritative source. who_observations is too noisy and depends on
     // someone actually /who'ing the character in-zone. We include all players
@@ -324,7 +346,7 @@ async function load(id: string) {
       intentionalNames,
       contribs: (contribs ?? []) as Contribution[],
       zones,
-      loot: (lootRows ?? []) as LootRow[],
+      loot: lootWithIcons as unknown as LootRow[],
       whoMap,
       bossLocalZone,
       petSet,

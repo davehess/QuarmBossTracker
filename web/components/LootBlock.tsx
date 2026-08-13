@@ -1,6 +1,7 @@
 // Per-night loot block. Renders items sorted by DKP descending so big-ticket
 // pickups are at the top, then by item name.
 import { fmtDkp } from '@/lib/format';
+import { ItemIcon } from '@/components/ItemIcon';
 
 export type LootRow = {
   item_name: string;
@@ -8,6 +9,9 @@ export type LootRow = {
   dkp: number;
   game_item_id: number | null;
   notes: string | null;
+  /** eqemu_items.icon. Optional: rows from callers that do not join the
+   *  catalog simply render without art, rather than breaking. */
+  icon?: number | null;
 };
 
 export default function LootBlock({ loot }: { loot: LootRow[] }) {
@@ -38,10 +42,14 @@ export default function LootBlock({ loot }: { loot: LootRow[] }) {
               <span className="truncate">
                 {itemHref ? (
                   <a href={itemHref} target="_blank" rel="noreferrer" className="text-text hover:text-blue hover:underline">
+                    <ItemIcon icon={l.icon} size={20} className="inline-block align-middle mr-1.5" />
                     {l.item_name}
                   </a>
                 ) : (
-                  <span className="text-text">{l.item_name}</span>
+                  <span className="text-text">
+                    <ItemIcon icon={l.icon} size={20} className="inline-block align-middle mr-1.5" />
+                    {l.item_name}
+                  </span>
                 )}
                 <span className="text-dim"> → </span>
                 <span className="text-blue">{l.character_name}</span>

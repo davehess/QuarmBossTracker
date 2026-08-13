@@ -198,7 +198,9 @@ try {
     rows      = $rows
     note      = "Deterministic layout: col=(icon-firstIcon)%perRow, row=floor((icon-firstIcon)/perRow). Regenerate with scripts/pack-item-icons.ps1."
   }
-  $meta | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $OutDir "items.meta.json") -Encoding UTF8
+  # WriteAllText, not Set-Content -Encoding UTF8: PS 5.1's UTF8 writes a BOM,
+  # and a BOM ahead of '{' makes strict JSON.parse throw.
+  [System.IO.File]::WriteAllText((Join-Path $OutDir "items.meta.json"), ($meta | ConvertTo-Json))
 
   $sizeKb = [Math]::Round((Get-Item -LiteralPath $outPng).Length / 1KB)
   Write-Host ""
