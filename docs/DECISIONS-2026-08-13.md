@@ -126,6 +126,7 @@ which is how Armando got flagged "light on Sunday" when he had actually attended
 
 | Item | State |
 |---|---|
+| **Who rewrites guild chat?** | Hawkner + Syko ship punctuation-stripped, capitalised copies of lines they witnessed. Not our code (same agent build on both sides). Have Hawkner grep his own eqlog for one of the lines — that says client-side vs ours in one step |
 | **Zeal `EPERM` → ask about compat mode FIRST** | XP compatibility mode on eqgame.exe kills the pipe, and the guide we recommend tells people to turn it on. Mechanism unconfirmed; `lastError` still isn't surfaced anywhere in the UI |
 | **Raid-Helper sync is unmonitored** | It is the ONLY copy of declared availability (the upstream board expires on raid day) and nothing alerts on failure. Add a staleness check — no new `rh_signups` rows within ~48h of a raid should be loud |
 | **Dashboard split — live check** | Sidebar + 📊 Stats / 🩺 Diagnostics are on beta only; browser-verified but not yet used in a raid. Graduate with the next Mimic stable |
@@ -228,3 +229,64 @@ tried:
 **Mimic cannot fix this alone** — we are the client, and a client cannot widen
 permissions on an object it does not own. What we can do is stop failing
 silently, which is gap 1 above.
+
+## Two machines rewrite guild chat before we ever see it (chat double-posting)
+
+**The report (Hitya, 2026-08-13).** Guild lines were reaching Discord twice —
+once verbatim, once tidied up. Four pairs from one afternoon:
+
+| verbatim | rewritten |
+|---|---|
+| `its usually 5-7 k per full clear` | `Its usually 5 7 k per full clear` |
+| `ok!/camp` | `Ok camp` |
+| `well i'll die tonight lol.. i gotta run.. errand to do` | `Well i'll die tonight lol . i gotta run . errand to do` |
+| `thx.. but do have to go =x` | `Thx . but do have to go x` |
+
+The rewrite capitalises the first letter and turns `-` `!` `/` `=` into spaces
+or drops them. Apostrophes survive.
+
+**⚠ The cause written into our own code was wrong, and Hitya's screenshot
+disproved it.** `index.js` claimed EQ shows the speaker their own line as typed
+and broadcasts an auto-capitalised copy to bystanders. Hitya is a **bystander**
+on every one of these lines and his client shows the raw text verbatim. So EQ is
+not rewriting anything on the wire.
+
+**It is two specific machines.** Grouping `chat_messages` by `uploaded_by`:
+rewritten copies came from **Hawkner** (×3) and **Syko** (×1); verbatim copies
+from Chadivarius's owner, Hitya, Fargan and Wabumkin/Adiwen. **Not our code** —
+Hawkner, Syko, Fargan and Chadivarius's owner were all on agent **3.5.58**, and
+that build sits on both sides of the split. Not compat mode either: Chadivarius
+has it on (see the Zeal-pipe entry above) and ships verbatim.
+
+**Cause still unidentified, and deliberately not guessed at** — that is three
+wrong mechanism-guesses avoided in one day. The decisive test is cheap: have
+Hawkner search his own `eqlog_*_pq.proj.txt` for one of those lines.
+- log contains the REWRITTEN text → client-side (UI mod, chat filter, client
+  build) and there is nothing for us to fix beyond dedup;
+- log contains the VERBATIM text → our agent is mangling it on upload, which
+  would be a much bigger deal and entirely ours.
+
+**Fixed in bot 3.1.42 regardless of cause**, because two strings for one line
+must not double-post:
+- Dedup keys (`_chatDedup` and `_chatRelayDedup`) now key on a
+  **punctuation-insensitive** shadow of the normalised text. Both variants
+  collapse to one.
+- **The fuzzy slur-variant matcher could not have caught this** and must not be
+  loosened to try: it requires equal token counts, and `..` → ` . ` *inserts* a
+  token. Loosening it would degrade drunk-speech dedup, which is what it is for.
+- Punctuation-only messages (`...`, `!!!`) fall back to the exact key — stripping
+  punctuation reduces them all to the empty string, which would collapse every
+  one of them together.
+- **Collapsing alone would have been a regression half the time.** The rewritten
+  copy is lossy (`5-7 k` → `5 7 k` changes the meaning; `=x` → `x` eats the
+  emoticon) and whichever copy lands first wins the post. So the relay now
+  scores each copy by surviving punctuation and **heals the posted message** when
+  a higher-fidelity copy arrives, reusing the existing speaker-heal edit path.
+  Text and speaker heal on independent axes so neither undoes the other.
+
+**Not widened: the witness key.** `_witnessKey` has the identical blind spot —
+a rewritten copy lands in its own slot, so that uploader's testimony about the
+speaker is lost for that line. Merging them would strictly improve attribution,
+but the witness map is what drives speaker relabelling and has its own history
+of subtle bugs (the Starrburst→Wabumkin ghost). Left alone on purpose; separate,
+considered change. Tests: `test/chat-rewrite-dedup.test.js`.

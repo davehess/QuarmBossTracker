@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.1.42': [
+    '**Guild chat stopped showing the same message twice.** A couple of machines in the raid quietly rewrite the guild lines they see before they reach us — capitalising the first letter and turning dashes, slashes and exclamation marks into spaces, so "its usually 5-7 k per full clear" arrived a second time as "Its usually 5 7 k per full clear". Our duplicate check ignored capitals and spacing but not punctuation, so it read the two as different messages and posted both. It now ignores punctuation too, and when the tidied-up copy happens to arrive first, the original wording replaces it a moment later — so you get one message, with the dashes and smileys the person actually typed.',
+  ],
   '3.1.37': [
     '**Tagged mobs stay on the Extended Target list.** Tagging a mob is a deliberate "watch this one", but the list was still filtering tagged mobs by health along with everything else — so the mob you had just marked could drop off the list at exactly the moment you wanted it. Anything carrying a tag now stays put at any health, and keeps its tag through a refresh.',
     '**Shared callouts are now timed against your own clock.** When someone else\'s trigger fires and gets passed to the raid, it arrives stamped with the time THEIR PC thought it was — and PCs drift, three of ours by 14 to 56 seconds. Everyone receiving it was doing the maths against their own clock, so a sender running slow had their callouts discarded as too old before anyone heard them, a sender running fast had them arrive and then sit silent, and every countdown started from a shared trigger was off by that same gap. The bot now works out the difference as the callout arrives and hands out a corrected time. The matching Mimic update is on beta.',
