@@ -447,6 +447,41 @@
       // % is scored against the FULL fight total (every witnessed player), so
       // the visible top-N sums to <100% just like EQLogParser — and the footer
       // total below is the mob's whole incoming/outgoing number.
+      // ── Guild-merged view (docs/DESIGN-live-guild-dps.md) ──────────────────
+      // The guild number becomes the HEADLINE and this machine's own figure
+      // moves into parentheses, because the measurement that motivated this was
+      // that the worst local view saw 0.1-8.3% of a fight. A row reading
+      // "Wabumkin 164k (0)" is the whole point: he did that damage and this
+      // client saw none of it, which a local-only meter can never tell you.
+      //
+      // DPS mode only - the guild side is damage dealt; tank mode is damage
+      // taken and has no guild equivalent.
+      var GUILD = null, localBy = null;
+      try {
+        var gd = s.guildDamage;
+        // Stale/shedded guild data is worse than none in the headline position,
+        // so drop it past ~45s rather than freezing on a number that still
+        // looks live. threat_snapshot is sheddable; this is how that surfaces.
+        if (TAB_MODE === 'dps' && gd && Array.isArray(gd.players) && gd.players.length
+            && (gd.ageSec == null || gd.ageSec < 45)) {
+          GUILD = gd;
+          localBy = new Map(allRows.map(function(r){ return [String(r[0]).toLowerCase(), r]; }));
+          var merged = gd.players.map(function(p){
+            var loc = localBy.get(String(p.character).toLowerCase());
+            // [name, guildDmg, tookMax, petOwner, rank, extra, petCharm, localDmg]
+            return [p.character, p.dmg || 0, loc ? loc[2] : 0, loc ? loc[3] : null,
+                    0, 0, loc ? loc[6] : false, loc ? loc[1] : 0];
+          });
+          // Anyone we saw but the guild has not reported yet keeps their local
+          // number rather than vanishing - the merge only ever ADDS.
+          var seen = new Set(merged.map(function(m){ return String(m[0]).toLowerCase(); }));
+          allRows.forEach(function(r){
+            if (!seen.has(String(r[0]).toLowerCase())) merged.push(r.concat([r[1]]));
+          });
+          allRows = merged.sort(function(a,b){ return (b[1]||0) - (a[1]||0); });
+        }
+      } catch (e) { GUILD = null; }
+
       const totalDmg = allRows.reduce((s, r) => s + r[1], 0);
       allRows.forEach(function(r, i){ r[4] = i + 1; });            // true rank
       const me = s.character || s.uploaderCharacter || s.self || null;
@@ -525,7 +560,14 @@
              + '<span class="r">' + rank + '.</span>'
              + '<span class="n">' + esc(n) + ownerHtml + maxHitHtml + '</span>'
              + '<span class="p">' + fmtPct(pct) + '</span>'
-             + '<span class="d">' + fmt(d) + '</span>'
+             + '<span class="d">' + fmt(d)
+               // What THIS machine saw, when it differs from the guild figure.
+               // Suppressed when they agree (nothing to learn) and when there
+               // is no guild view at all (the number would just be itself).
+               + (GUILD && row[7] !== undefined && row[7] !== d
+                   ? ' <span style="color:#8b949e;font-size:9px">(' + fmt(row[7]) + ')</span>'
+                   : '')
+             + '</span>'
              + '<span class="dps">' + fmt(dps) + '</span>'
              + '<span class="sec">' + (secs > 0 ? secs : '—') + '</span>'
              + '</li>';

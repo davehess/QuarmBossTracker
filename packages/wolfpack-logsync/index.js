@@ -11229,6 +11229,10 @@ function _serializeForDashboard() {
     // (one readdir per folder, cached 60s) and enough for the dashboard to
     // decide whether to auto-open the crash review. Reading the DUMPS is the
     // expensive part and stays behind /api/crash-review.
+    // Guild-merged damage for the fight in progress (null when idle, or when
+    // the bot is too old to serve it - the HUD then shows local only).
+    guildDamage: stats.guildDamage && (Date.now() - stats.guildDamage.at < 30_000)
+      ? stats.guildDamage : null,
     crashBundleCount: _crashBundleCount(),
     // Whether crash metadata currently uploads. Mimic owns the setting
     // (cfg.crashReports) and hands it over as an env var at spawn, so this is
@@ -25899,6 +25903,44 @@ function startChatRelay() {
       per_player:  et.perPlayer,
       total:       Object.values(et.perPlayer).reduce((a, p) => a + ((p.swing||0)+(p.proc||0)+(p.spell||0)+(p.heal||0)), 0),
     });
+
+    // ── Guild view of THIS fight, for the HUD's "guild (what you saw)" rows ──
+    // docs/DESIGN-live-guild-dps.md. Deliberately hung off the SNAPSHOT
+    // uploader rather than the #106 poll bundle, which is what the design doc
+    // originally proposed: the bundle is CADENCE-gated (streams tick on their
+    // own clocks whether or not anything is happening), and this stream is
+    // FIGHT-gated. Sharing the uploader's guard means it costs exactly zero
+    // between pulls and needs no new schedule, and the bot memoises 2s per boss
+    // so a raid of agents asking the same question is still one query.
+    //
+    // Fire-and-forget: this is a display nicety, and it must never delay or
+    // fail the snapshot upload above.
+    (async () => {
+      const bossNow = et.bossName || et.targetName || null;
+      if (!bossNow) return;
+      try {
+        const base = _uploadOpts.botUrl.replace(/\/encounter(\?.*)?$/, '');
+        const r = await fetch(`${base}/live-damage?boss=${encodeURIComponent(bossNow)}`, {
+          headers: { Authorization: `Bearer ${_uploadOpts.token}` },
+        });
+        if (!r.ok) return;                       // old bot (404) → HUD just shows local
+        const j = await r.json();
+        if (!j || !Array.isArray(j.players)) return;
+        stats.guildDamage = {
+          boss:       bossNow,
+          players:    j.players.slice(0, 60),
+          uploaders:  j.uploaders || 0,
+          total:      j.total || 0,
+          // Age of the freshest sample ANY uploader contributed. The HUD needs
+          // this to say "paused" instead of freezing on a number that still
+          // looks live - threat_snapshot is sheddable, so the guild side can
+          // stop updating with nothing else visibly wrong.
+          ageSec:     j.newest_sample_age_sec,
+          at:         Date.now(),
+        };
+      } catch { /* never let the guild view break the upload path */ }
+    })();
+
     // Fixed 1s TICK, not the cadence: the cadence is read per-tick inside the
     // body (_threatSnapCadenceMs) so an officer's mid-raid change takes effect
     // within a second. A setInterval cannot change its own period, so the tick
