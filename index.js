@@ -9791,6 +9791,13 @@ async function _handleAgentOverlayTuning(req, res) {
 // + a system snapshot (never the minidump). Rows dedup on
 // (guild, uploader, zip_name) so re-scans are idempotent. Ported from the
 // 2026-07-11 local-desktop session's handoff.
+//
+// Dump-derived columns landed 2026-08-13. This constant is the contract with
+// the agent's CRASH_ANALYSIS_VERSION: the agent re-sends already-reported
+// bundles with dump detail attached, and only advances its watermark once we
+// echo a version >= its own. Bump BOTH together when new dump columns land, or
+// the fleet will never re-send for them.
+const CRASH_ANALYSIS_VERSION_SUPPORTED = 1;
 async function _handleAgentCrashReport(req, res) {
   const identity = await mimicLink.requireAgentAuth(req, res);
   if (!identity) return;
@@ -9832,6 +9839,28 @@ async function _handleAgentCrashReport(req, res) {
       callbacks:         r.callbacks || null,
       zone_id:           r.zone_id || null,
       ui_skin:           r.ui_skin || null,
+      // The context fields — what the player actually had loaded when it faulted.
+      // This map is a whitelist, so a field the agent starts sending is silently
+      // DROPPED until it is named here; agent 3.5.66 began sending these five.
+      // game_state ff/ffffffff/-1 = no world loaded, and self_ptr/spawn_info 0x0
+      // = the player entity is gone — together, the zoning fingerprint.
+      exception_string:  r.exception_string || null,
+      game_state:        r.game_state || null,
+      self_ptr:          r.self_ptr || null,
+      spawn_info:        r.spawn_info || null,
+      handler_stage:     r.handler_stage || null,
+      // Dump-derived conclusions (agent 3.5.68+). The minidump itself is NEVER
+      // sent — these are what the agent worked out from it locally, which is
+      // the difference between a row saying "0x6ef in kernelbase.dll" and one
+      // saying "Windows audio, and it was not Zeal". docs/DESIGN-crash-review.md §8c.
+      analysis_version:  Number(r.analysis_version) || null,
+      crash_subsystem:   r.crash_subsystem || null,
+      crash_blames_zeal: typeof r.crash_blames_zeal === 'boolean' ? r.crash_blames_zeal : null,
+      crash_headline:    r.crash_headline ? String(r.crash_headline).slice(0, 300) : null,
+      dump_uptime_sec:   Number.isFinite(r.dump_uptime_sec) ? r.dump_uptime_sec : null,
+      dump_stack_top:    Array.isArray(r.dump_stack_top) ? r.dump_stack_top.slice(0, 8) : null,
+      dump_churn:        Array.isArray(r.dump_churn) ? r.dump_churn.slice(0, 8) : null,
+      dump_audio_endpoints: Array.isArray(r.dump_audio_endpoints) ? r.dump_audio_endpoints.slice(0, 8) : null,
       raw_reason:        r.raw_reason ? String(r.raw_reason).slice(0, 4000) : null,
       system:            (r.system && typeof r.system === 'object') ? r.system : null,
       agent_version:     payload?.agent_version || null,
@@ -9844,7 +9873,13 @@ async function _handleAgentCrashReport(req, res) {
     .catch(err => { console.warn('[crash-report] upsert failed:', err?.message); return null; });
   _trackUpload({ endpoint: 'crash_report', character: payload?.character, agentVersion: payload?.agent_version, payloadBytes: total, agentState: payload?.agent_state || null, uploadedBy: identity.discord_id });
   res.writeHead(200);
-  res.end(JSON.stringify({ ok: true, written: Array.isArray(written) ? written.length : 0 }));
+  // Echo the analysis version we can actually STORE. The agent advances its
+  // per-bundle re-analysis watermark only on seeing this, so an older bot
+  // (which would silently drop the dump fields) leaves the backfill pending
+  // instead of burning it. Bump alongside the agent's CRASH_ANALYSIS_VERSION
+  // whenever new dump-derived columns land.
+  res.end(JSON.stringify({ ok: true, written: Array.isArray(written) ? written.length : 0,
+                           analysis_version: CRASH_ANALYSIS_VERSION_SUPPORTED }));
 }
 
 // GET /api/agent/character-live-state?name=<char> — one character's uploaded

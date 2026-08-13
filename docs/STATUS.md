@@ -2437,18 +2437,49 @@ one concrete detail. Shipped that night: stable 2.1.2 / agent 3.4.36.**
 - **Unraid Supabase stack: UP 12/12 and verified 2026-08-11** (roles present, so
   the bootstrap really ran). It is now the restore-test target for Phase 1 —
   same Postgres major (17.6) as the hosted project.
-- **Crash reports: parser fixed, data repaired, review designed (2026-08-12).**
-  Razek reported crashing twice while zoning with Mimic running. His crash is NOT
-  in our data — crash upload is gated behind `WOLFPACK_CRASH_REPORTS=1`, so 393
-  reports come from exactly TWO uploaders. Found and fixed a parser bug that hit
-  hardest on exactly this case: `\s` matches newlines, so a blank `Character:`
-  (which is what a zoning crash produces) swallowed the line break and captured
-  the next line — 55 rows had `character = 'UI Skin: ...'`, now repaired in place.
-  Agent 3.5.65, 10 tests. ⚠ Real signal worth chasing: signature
-  `0x6ef @ kernelbase.dll +9f54` went **1 crash in July → 28 in August** on an
-  unchanged Zeal 1.4.2 — but with two uploaders that is one machine, not the
-  fleet. Next: `docs/DESIGN-crash-review.md` (consent prompt in Mimic, local
-  review, dumps never uploaded).
+- **Crash reports: parser fixed, diagnostics added, Razek's crash identified
+  (2026-08-12).** Razek reported crashing twice while zoning with Mimic running.
+  Three fixes, then an answer:
+  1. **Parser bug** that hit hardest on exactly this case — `\s` matches
+     newlines, so a blank `Character:` (what a zoning crash produces) swallowed
+     the line break and captured the next line. 55 rows had
+     `character = 'UI Skin: ...'`, repaired in place. Agent 3.5.65.
+  2. **Five fields Zeal writes and we discarded** — `Exception String`,
+     `Game state`, `Self`, `SpawnInfo`, and which handler caught it. Agent
+     3.5.66 + bot 3.1.39 (the ingest map is a WHITELIST — unnamed fields were
+     being dropped) + `20260812060000_crash_reports_diagnostics.sql`, backfilled
+     over all 393 rows. 15 tests.
+  3. ⚠ **The first cut of that migration was wrong in prod for a day** — Postgres
+     POSIX `.` matches newline, so `handler_stage` without `(?n)` captured the
+     entire rest of the report in all 393 rows. Repaired. Both traps
+     (`(?n)`, and `btrim` because SQL `trim()` leaves `\r`) are commented in the
+     file.
+
+  **The answer:** zoning is the single largest crash class in the whole corpus —
+  **212 of 393 (54%)**, every one with `Self`/`SpawnInfo` `0x0` (player entity
+  gone), across every Zeal version for 19 months. Razek's 29 reports are all one
+  signature (`0x6ef @ kernelbase.dll +9f54`, Zeal 1.4.2) and the four that kept
+  context all read zoning. **But it is not a 1.4.2 regression** — the other
+  uploader ran the same Zeal build with zero `0x6ef`; what differs is Windows
+  build 26200 vs 19045. Full numbers in `docs/DESIGN-crash-review.md` §7; the
+  consent prompt that would give us n>1 is §3, and the tray toggle that exists
+  today (`main.js:5797`) is off by default and never surfaced.
+
+  ✅ **SOLVED the same night, from the minidump — it is the Windows audio stack,
+  not Zeal.** Hitya sent the actual crash zip. `0x6ef` is
+  `RPC_X_SS_IN_NULL_CONTEXT`, raised NONCONTINUABLE — not an access violation
+  like everything else in the corpus. The stack is
+  `eqgame.exe → mss32.dll (Miles) → winmmbase.dll → wdmaud2.drv → rpcrt4.dll`,
+  i.e. EQ's sound engine making an RPC call to the Windows Audio service with a
+  context handle that had gone NULL. **`Zeal.asi` is loaded and appears ZERO
+  times on the crashing thread** — nothing to report upstream. Fits the zoning
+  correlation: EQ rebuilds the sound system on a zone change, which is when it
+  reaches for the stale handle. Mitigations offered (untested, n=1) in §8.
+  ⚠ **This overturned the design's own assumption that dumps need a symbol
+  server.** They don't for the question we actually ask — module base addresses
+  resolve any address to `module+offset` with no symbols at all. New tool:
+  `scripts/read-minidump.py`, stdlib-only and offline, which is now the
+  highest-value piece of the local-review flow rather than the out-of-scope one.
 - **Local box is now an ARCHIVE, not a mirror (2026-08-12).**
   `refresh-local-archive.sh` + `lib/archive-merge.sql` merge each nightly dump:
   ARCHIVE tables (the five production sweeps + the append-only event logs) insert

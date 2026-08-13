@@ -37,6 +37,23 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'crash-review',
+    title: '\u{1FA7A} Mimic can tell you what crashed you',
+    version: 'Agent 3.5.67',
+    date: '2026-08-13',
+    channel: 'beta',
+    headline: 'When EverQuest closes on you, Mimic can now read the crash files left on your PC and tell you in plain words what broke \u2014 including whether it was anything to do with Mimic or Zeal.',
+    features: [
+      { name: '\u{1F9EA} "Was that Mimic\u2019s fault?"', blurb: 'The honest answer, per crash. On the first one we looked at, Zeal was running but had nothing to do with it \u2014 the sound device the game was playing through had been switched off underneath it.' },
+      { name: '\u{1F50D} A real answer instead of an error code', blurb: 'The summary file EverQuest leaves behind usually just says something like "error 0x6ef". Mimic now reads the full crash file next to it and says which part of your PC gave out \u2014 sound, graphics, the network, or the game itself.' },
+      { name: '\u{1F6E0} What to actually try', blurb: 'Where we can tell, you get the specific next step \u2014 which speakers the game was using when it died, or that your graphics driver restarted four times in six minutes.' },
+      { name: '\u{1F512} Nothing is uploaded', blurb: 'The crash files stay on your PC. Reading them is a button on your own dashboard, and you do not have to share anything with the guild to use it.' },
+    ],
+    fixes: [
+      'Crash reports no longer lose your character name and zone when the game crashes while zoning \u2014 which was exactly when we most wanted them.',
+    ],
+  },
+  {
     key: 'roll-officer-edits',
     title: '\u{1F3B2} Officers can fix and hide roll records',
     version: 'Web 1.1.42',
