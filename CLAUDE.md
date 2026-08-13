@@ -684,6 +684,33 @@ no fix beyond the workaround. Details in `zealPipe.js` header. Note the friction
 `detectEqDir()` intentionally supports in-EQ-folder installs for *log* detection,
 which can steer users into the layout that breaks *Zeal* detection.
 
+⚠ **Field issue (n=1, Chadivarius, 2026-08-13) — WINDOWS XP COMPATIBILITY MODE
+ON `eqgame.exe` BREAKS THE ZEAL PIPE.** Symptom: the agent log churns
+`[zeal] disconnected from \\.\pipe\zeal_<pid> (EPERM)` every poll forever, so no
+Zeal data ever arrives. **Fix: untick "Run this program in compatibility mode
+for" on eqgame.exe.** Confirmed by a clean before/after on the same machine —
+nothing else changed.
+- **`EPERM` is the tell**: libuv maps Win32 `ERROR_ACCESS_DENIED` (5) → `EPERM`,
+  so Windows is actively *refusing* the open. That is a different failure from
+  the 2026-06-12 case above (`ENOENT`, no pipe at all) and from the 2026-07-05
+  Jankzer case (connects, then the server instantly closes — no error code).
+  Three distinct causes, three distinct log signatures; read the code before
+  guessing which one a report is.
+- **The mechanism is NOT confirmed** — do not invent one. Compat mode does not
+  change a process's integrity level or user, which is why "it can't be that"
+  is the wrong call to make (it was made here, and it was wrong). To actually
+  pin it: Process Explorer → eqgame.exe → Security tab (virtualization flag +
+  integrity level), and `accesschk \\.\pipe\zeal_<pid>` to dump the pipe's ACL,
+  with compat mode on vs off.
+- ⚠ **This will recur.** `quarm.guide`'s "Xanax's Checklist for Minimal Crashes"
+  — which the guild points people at — recommends XP SP2 compatibility mode as
+  item 8, so every raider who followed it is a candidate. Ask about compat mode
+  FIRST on any `EPERM` report.
+- **Elevation is still a real cause of pipe failures** (Jankzer), just not this
+  one — the admin checkbox was confirmed unticked here. Both live on the same
+  Compatibility tab, so check them separately rather than treating them as one
+  setting.
+
 Overlays (each an `.html` file): DPS HUD (`overlay.html`, DPS/Tank tabs),
 Trigger alerts + countdown timers (`triggers.html`), Charm tracker, Pet
 tracker, Mob Info (Stats/Loot/Spells tabs), Buff queue, /who, Melody, Zeal

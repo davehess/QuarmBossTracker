@@ -126,6 +126,7 @@ which is how Armando got flagged "light on Sunday" when he had actually attended
 
 | Item | State |
 |---|---|
+| **Zeal `EPERM` → ask about compat mode FIRST** | XP compatibility mode on eqgame.exe kills the pipe, and the guide we recommend tells people to turn it on. Mechanism unconfirmed; `lastError` still isn't surfaced anywhere in the UI |
 | **Raid-Helper sync is unmonitored** | It is the ONLY copy of declared availability (the upstream board expires on raid day) and nothing alerts on failure. Add a staleness check — no new `rh_signups` rows within ~48h of a raid should be loud |
 | **Dashboard split — live check** | Sidebar + 📊 Stats / 🩺 Diagnostics are on beta only; browser-verified but not yet used in a raid. Graduate with the next Mimic stable |
 | **Task #27** | Restore the 8 muted trash triggers — unblocked, fix is on stable |
@@ -134,3 +135,96 @@ which is how Armando got flagged "light on Sunday" when he had actually attended
 | **Live guild DPS** | Open judgement call: is the parenthetical raw damage or a percentage? Currently raw |
 | **Noisy eqlogparser triggers** | Offered, not accepted: disabling Too Far / Can Not See / Can Not Hit From Here / Out of Range / Range, which were filling the trigger checkpoint journal |
 | **`docs/DESIGN-eql-support.md`** | Stranded on `claude/sharp-lamport-dC0TW` — land it or drop it |
+
+## XP compatibility mode on eqgame.exe breaks the Zeal pipe (EPERM)
+
+**The finding (Chadivarius, 2026-08-13).** Zeal data never reached Mimic; the
+agent log churned `[zeal] disconnected from \\.\pipe\zeal_36464 (EPERM)` on
+every 25s poll. **Turning OFF "Run this program in compatibility mode for
+Windows XP (Service Pack 2)" on `eqgame.exe` fixed it immediately.** Clean
+before/after on one machine, nothing else changed.
+
+**Why this is worth a decision entry and not just a support note.** The guild
+points new raiders at `quarm.guide`'s *Xanax's Checklist for Minimal Crashes*,
+and **item 8 of that checklist recommends XP SP2 compatibility mode**. So the
+guide we recommend actively steers people into a configuration that silently
+kills Zeal integration. Every `EPERM` report should now open with "is compat
+mode on?" — before elevation, before antivirus, before anything else.
+
+**Three distinct pipe failures now, with three distinct signatures.** Read the
+signature before guessing the cause; they have nothing in common but the symptom
+"no Zeal data":
+
+| Log signature | Cause | Fix |
+|---|---|---|
+| never connects, `ENOENT` | Mimic installed *inside* the EQ folder; its DLLs shadow Zeal's DX hook (Ashieron, 2026-06-12) | reinstall Mimic elsewhere |
+| connects, then instantly closes, **no error code** | EQ elevated, Mimic not — pipe ACL denies the lower-integrity process (Jankzer, 2026-07-05) | match elevation |
+| `(EPERM)` on connect | **XP compatibility mode on eqgame.exe** (Chadivarius, 2026-08-13) | untick compatibility mode |
+
+**Mechanism unknown, and deliberately left unknown rather than invented.**
+`EPERM` is libuv's mapping of Win32 `ERROR_ACCESS_DENIED` (5), so Windows is
+refusing the open outright. Compatibility mode does not change a process's
+integrity level or its user, which is exactly why I told Hitya it *couldn't* be
+the cause — an inference that sounded solid and was wrong. What would actually
+pin it: Process Explorer → eqgame.exe → Security tab (virtualization flag,
+integrity level) and `accesschk \\.\pipe\zeal_<pid>` for the pipe's ACL, taken
+with compat mode on and off. Until someone does that, the honest claim is the
+observation, not a theory.
+
+**Diagnostic worth keeping** — this splits "the pipe is broken" from "Mimic is
+being blocked" in one shot, run non-elevated as the same user with EQ up:
+
+```powershell
+$p = New-Object System.IO.Pipes.NamedPipeClientStream('.','zeal_<pid>',[System.IO.Pipes.PipeDirection]::In)
+try { $p.Connect(3000); 'CONNECTED' } catch { "FAILED: $($_.Exception.Message)" } finally { $p.Dispose() }
+```
+
+**Two product gaps this exposed, both of which cost the round-trip:**
+
+1. **We knew it was `EPERM` and never told the user.** `zealPipe.js` captures
+   `lastError` on the socket and hands it out through `onStatus` — and nothing
+   displays it. Not the Zeal health overlay, not the tray. The single most
+   diagnostic fact in the incident existed only in the raw agent log, which is
+   why the guild lead found it and the affected raider could not.
+2. **The one hint we do have fires once per install, ever.** The "Zeal pipes
+   look off" notification leads with the elevation fix, but it is latched behind
+   `cfg.zealHintShown`, persisted across launches. Dismiss it once and it can
+   never fire again — for a condition that is environmental and recurring.
+
+Fix for both: surface `lastError` on the Zeal health overlay with a
+cause-specific line per signature above, and re-arm the hint when the error
+*code* changes rather than latching forever.
+
+**Follow-up (Hitya): can the pipe be exposed WITH compat mode on?** It matters —
+compat mode is a stability lever, so "turn it off" trades crashes for Zeal data
+and nobody should have to pick. Three answers, in order of how fast they can be
+tried:
+
+1. **Run Mimic as Administrator, compat mode left ON.** A High-integrity client
+   can open a Medium/Low-integrity object, so if the shim is perturbing the
+   pipe's label or default DACL, elevating the *client* should punch through.
+   Untested as of writing; costs one minute. Note this is the exact inverse of
+   the Jankzer fix, which is a good reminder that "run as admin" is not a
+   universal answer — it is a specific answer to a specific mismatch.
+2. **Check whether XP SP2 specifically is required.** The Xanax checklist's own
+   author ranks items 2/3/4 (AV exclusion, `#server-files` patch files, latest
+   Zeal) as "the biggest contributors to stability" and describes compat mode as
+   something "people swear by" — not a top lever. A lighter mode, or none, may
+   cost nothing.
+3. **The durable fix is upstream in Zeal, and it is small.** The pipe's security
+   descriptor is set where Zeal calls `CreateNamedPipe`. If it passes `NULL` for
+   `lpSecurityAttributes` — the common default — the pipe inherits the creating
+   process's default DACL, which is precisely what the compat shim appears to
+   disturb. Passing an explicit `SECURITY_ATTRIBUTES` with a permissive DACL and
+   a low mandatory label (`S:(ML;;NW;;;LW)`) is the standard pattern for a pipe
+   that must be reachable from other contexts. ⚠ We have NOT seen that call site
+   — `docs/zeal-pipe-protocol.md` was assembled from the message format in
+   `named_pipe.cpp`, not from pipe creation — so confirm before asking.
+   **This is a far more tractable upstream ask than the spawn_id one**, which
+   `CLAUDE.md` records as having gone nowhere partly because it aimed at the
+   hardest possible surface: self-contained, well-precedented, and with a
+   reproducible user-visible bug behind it.
+
+**Mimic cannot fix this alone** — we are the client, and a client cannot widen
+permissions on an object it does not own. What we can do is stop failing
+silently, which is gap 1 above.
