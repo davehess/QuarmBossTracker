@@ -60,6 +60,7 @@ folly** — it's here.*
 | `spell-levels-local.md` | Local-session playbook: fill `spell_level_seed` via PQDI scrape | Actionable; seed still used |
 | `pvp-capture-audit.md` | Reusable local runbook for PvP kill/assist recovery (`scripts/pvp-audit.js`) | Diagnostic runbook |
 | `DECISIONS-2026-08-07.md` | **The decision record** for the 2026-08-07→09 sessions: storage/threat, attendance, release process, Zeal `/tag`, loot bidding, the `{s}` P1, the beta re-sync — each as *the call · why · where it landed*, with an "Open — read this first" table at the bottom | Read FIRST via the SessionStart digest; newest `DECISIONS-*.md` wins |
+| `DECISIONS-2026-08-13.md` | Dashboard navigation: the sidebar + the tab split, why the split carves by the QUESTION a card answers rather than by card count, and what deliberately stayed put (crash card on Info, the whole Dashboard tab) | Current — carries the live "Open — read this first" table |
 | `DESIGN-fight-timeline.md` | Fight timeline v2 — boss HP curve + MT/RAMP swimlanes + class/player highlighting; the data audit, the two paid-for correctness traps, and the two-tier storage model | Data layer BUILT 2026-08-09; chart unbuilt. ⚠ its 2026-08-06 "CORRECTION" block is WRONG and is flagged in-place |
 | `zeal-tag-spawn-id-collision.md` | Measured upstream bug report: why `/tag` spawn ids collide across zones, quantified, with N=5+ same-name evidence | Drafted, NOT sent (with `zeal-spawn-id-request.md`) |
 
