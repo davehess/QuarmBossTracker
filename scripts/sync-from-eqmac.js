@@ -1013,6 +1013,72 @@ if (require.main !== module) return;
     counts[dest] = await upsertChunks(dest, buffers[dest], PK_MAP[dest]);
   }
 
+  // ── Validation gates ──────────────────────────────────────────────────────
+  // Adapted from pq-companion's data-release job, which runs 14 row-count and
+  // 10 FK checks and FAILS THE BUILD on a mismatch
+  // (docs/pq-companion/06-data-provenance-and-gaps.md §6). We had no equivalent,
+  // and have already shipped two bugs of exactly the shape this catches:
+  //   • six tables that no migration created, so the repo could not rebuild its
+  //     own schema and nobody noticed for months;
+  //   • npc_spells/npc_spells_entries parsed and transformed correctly but left
+  //     out of the ORDER list above, so they never reached Supabase at all —
+  //     a completely silent no-op.
+  // A sync that quietly imports nothing looks identical to a sync with nothing
+  // to do. These gates are what tell them apart.
+  //
+  // FLOORS, not exact counts: upstream grows, and a sane addition must never
+  // fail the build. They are set well below current values so only a genuine
+  // collapse trips them. Update deliberately when upstream shrinks for a real
+  // reason, and say why.
+  const MIN_ROWS = {
+    eqemu_zone: 150, eqemu_items: 20000, eqemu_npc_types: 15000,
+    eqemu_spells: 3000, eqemu_spawn2: 30000, eqemu_spawnentry: 20000,
+    eqemu_spawngroup: 10000, eqemu_loottable: 5000, eqemu_lootdrop: 8000,
+    eqemu_loottable_entries: 15000, eqemu_lootdrop_entries: 30000,
+    eqemu_npc_spells: 800, eqemu_npc_spells_entries: 3000,
+    eqemu_merchantlist: 20000, eqemu_tradeskill_recipe: 5000,
+    eqemu_tradeskill_recipe_entries: 40000, eqemu_npc_emotes: 3000,
+    eqemu_zone_points: 1000, eqemu_doors: 6000,
+  };
+  const problems = [];
+  for (const [table, floor] of Object.entries(MIN_ROWS)) {
+    const got = counts[table];
+    // A table absent from `counts` was never upserted this run. That is the
+    // npc_spells failure verbatim, so treat missing as zero rather than
+    // skipping it — "not attempted" is the bug, not an exemption.
+    if (!(got > 0)) { problems.push(`${table}: NOT SYNCED (expected >= ${floor})`); continue; }
+    if (got < floor) problems.push(`${table}: ${got} rows, expected >= ${floor}`);
+  }
+
+  // Referential spot-checks. Cheap HEAD requests with an exact count, run
+  // against what actually landed rather than the local buffers — the buffers
+  // agreeing with themselves proves nothing about what Supabase stored.
+  const countWhere = async (table, query) => {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/${table}?${query}&select=*&limit=1`, {
+      method: 'HEAD',
+      headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}`, Prefer: 'count=exact' },
+    });
+    const cr = res.headers.get('content-range') || '';
+    return Number(cr.split('/')[1] || 0);
+  };
+  try {
+    const orphanSpawn = await countWhere('eqemu_spawn2', 'spawngroup_id=not.is.null&zone_short=is.null');
+    if (orphanSpawn > 0) problems.push(`eqemu_spawn2: ${orphanSpawn} rows with no zone_short`);
+    const zonesWithSpawns = await countWhere('eqemu_zone', 'short_name=not.is.null');
+    if (zonesWithSpawns < 150) problems.push(`eqemu_zone: only ${zonesWithSpawns} named zones`);
+  } catch (e) {
+    problems.push(`FK spot-checks could not run: ${e.message}`);
+  }
+
+  if (problems.length) {
+    console.error('\n❌ VALIDATION FAILED — the catalog did not import cleanly:');
+    for (const p of problems) console.error(`   • ${p}`);
+    console.error('\nNothing was rolled back (upserts already applied). Investigate before');
+    console.error('trusting this data; re-run with FORCE_RESYNC once the cause is fixed.');
+    process.exit(1);
+  }
+  console.log(`✅ validation passed — ${Object.keys(MIN_ROWS).length} row-count floors + FK spot-checks`);
+
   // Record sync_meta + sync_state
   await sb('/sync_meta', {
     method: 'POST',
