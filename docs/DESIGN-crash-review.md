@@ -47,6 +47,18 @@ the value all accrues to whoever queries the table.
 
 ## 3. The shape
 
+> **BUILT, in part — agent 3.5.67 (beta).** The *review* half of this section
+> ships: a 🩺 Crash review card on the agent dashboard, backed by
+> `GET /api/crash-review`, which reads this machine's crash zips and explains
+> them (`_readMinidump` + `_crashVerdict`). Per §8 the priority order below is
+> inverted from what was originally written — the dump, not the summary file, is
+> what actually answers anything, so the card leads with the dump's verdict.
+> **Still to build:** the detect-and-offer prompt in Mimic (§2b) and the
+> "always review" standing preference. The card is deliberately NOT gated on
+> `WOLFPACK_CRASH_REPORTS` — that flag governs uploading to the guild, and
+> reading your own crash should never require sharing it first.
+
+
 **Detect → offer → review locally → ask once about the future.**
 
 When Mimic sees EQ exit and a new crash zip appear, it shows a small,

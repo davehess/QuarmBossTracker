@@ -13876,6 +13876,68 @@ function renderZealCard(s) {
 //   4. Did the tracker open a session? (tracker entries)
 // Hidden when there\\'s nothing to show; surfaces a "Detected ✓ / Missing ✗"
 // row per stage when there is.
+// 🩺 Crash review — on demand only, never on the poll. Reads this machine's own
+// Zeal crash zips through /api/crash-review and explains them in plain language.
+// The headline answer is "was this us?", because that is what people ask when
+// EQ vanishes while Mimic is running.
+async function wpRunCrashReview() {
+  const out = document.getElementById('wpCrashOut');
+  const btn = document.getElementById('wpCrashBtn');
+  if (!out) return;
+  if (btn) { btn.disabled = true; btn.textContent = 'Reading\\u2026'; }
+  out.innerHTML = '<div class="dim" style="margin-top:8px">Reading crash files\\u2026</div>';
+  try {
+    const r = await fetch('/api/crash-review');
+    const j = await r.json();
+    const list = (j && j.crashes) || [];
+    if (!list.length) {
+      out.innerHTML = '<div style="margin-top:8px;color:#56d364">No crash files found \\u2014 '
+        + 'EverQuest has not left a crash report on this machine.</div>';
+      return;
+    }
+    let h = '';
+    for (const c of list) {
+      const v = c.verdict || {};
+      // Colour carries the answer: green when we can positively clear Mimic and
+      // Zeal, red only when Zeal is genuinely implicated, grey when unknown.
+      const tone = v.blames_us === false ? '#56d364' : (v.blames_us === true ? '#f85149' : '#6e7681');
+      const when = c.when ? new Date(c.when).toLocaleString() : c.zip_name;
+      h += '<details ' + wpKeep('crashrev|' + c.zip_name) + ' style="margin-top:8px;'
+         + 'border:1px solid #30363d;border-radius:6px;padding:8px">';
+      h += '<summary style="cursor:pointer"><b>' + esc(when) + '</b> \\u2014 '
+         + '<span style="color:' + tone + '">' + esc(v.headline || 'Unreadable') + '</span></summary>';
+      for (const n of (v.notes || [])) {
+        h += '<div style="margin:6px 0 0 0">\\u2022 ' + esc(n) + '</div>';
+      }
+      if ((v.checks || []).length) {
+        h += '<div style="margin-top:8px"><b>What to try</b></div>';
+        for (const ck of v.checks) {
+          h += '<div style="margin:4px 0;color:#ffa657">\\u2192 ' + esc(ck) + '</div>';
+        }
+      }
+      const d = c.dump;
+      if (d && d.top && d.top.length) {
+        h += '<div class="dim" style="margin-top:8px;font-size:11px">Busiest on the failing stack: '
+           + d.top.map(t => esc(t[0]) + ' (' + t[1] + ')').join(', ') + '</div>';
+      }
+      if (c.reason) {
+        h += '<div class="dim" style="font-size:11px">Zeal ' + esc(c.reason.zeal_version || '?')
+           + ' \\u00b7 ' + esc(c.reason.exception_code || '?') + ' in '
+           + esc(c.reason.exception_module || '?') + ' \\u00b7 ' + esc(c.zip_name) + '</div>';
+      }
+      h += '</details>';
+    }
+    h += '<div class="dim" style="margin-top:10px;font-size:11px">These crash dumps stay on this '
+       + 'PC. If an officer asks for one, send the .zip named above by hand.</div>';
+    out.innerHTML = h;
+  } catch (e) {
+    out.innerHTML = '<div style="margin-top:8px;color:#f85149">Could not read crash files: '
+      + esc(String(e && e.message || e)) + '</div>';
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Review my crashes'; }
+  }
+}
+
 function renderCharmDiag(s) {
   const el = document.getElementById('wpCharmDiag');
   if (!el) return;   // Triggers tab not painted yet
@@ -14268,6 +14330,15 @@ function renderTriggers(s) {
   // the volatile card means the HTML below stays byte-stable when triggers
   // don't change, so setSectionHTML short-circuits and only the card repaints.
   h += '<div id="wpZealCard" class="card wide" style="display:none"></div>';
+  // Crash review card — filled by renderCrashReview(). Hidden until the user
+  // presses the button, because reading dumps costs real work and nobody wants
+  // it happening on every 2s poll.
+  h += '<div id="wpCrashReview" class="card wide"><b>🩺 Crash review</b>'
+    +  '<div class="dim" style="margin:6px 0">Had EverQuest close on you? This reads the crash '
+    +  'files Zeal left on this machine and tells you what actually broke. Nothing is uploaded '
+    +  '\\u2014 the crash dumps never leave your PC.</div>'
+    +  '<button id="wpCrashBtn" onclick="wpRunCrashReview()">Review my crashes</button>'
+    +  '<div id="wpCrashOut"></div></div>';
   // Charm-tracking diagnostic card — filled by renderCharmDiag(). Hidden
   // until there's data to show (no watched character casting charms, etc.).
   h += '<div id="wpCharmDiag" class="card wide" style="display:none"></div>';
@@ -20518,6 +20589,56 @@ function startWebDashboard(port) {
           const out = scanLocalTriggers();
           res.writeHead(200, { 'Content-Type': 'application/json' });
           return res.end(JSON.stringify(out));
+        } catch (err) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ ok: false, error: String(err && err.message || err) }));
+        }
+      }
+
+      // Crash review — read the LOCAL crash zips and say what broke, in plain
+      // language. Deliberately NOT gated on WOLFPACK_CRASH_REPORTS: that flag
+      // governs whether crash metadata is UPLOADED to the guild, and a raider
+      // wanting to understand their own crash should never have to share it
+      // first. Nothing here touches the network; the dump is read off disk,
+      // analysed in-process, and the answer goes to localhost only.
+      if (req.url === '/api/crash-review') {
+        try {
+          const out = [];
+          for (const dir of _crashDirs()) {
+            let names = [];
+            try { names = fs.readdirSync(dir).filter(n => /\.zip$/i.test(n)); } catch { continue; }
+            names.sort().reverse();
+            for (const n of names.slice(0, 10)) {          // newest 10 per folder
+              const zip = path.join(dir, n);
+              let parsed = null, dump = null;
+              try { parsed = _parseCrashReason(_readZipEntry(zip, 'crash_reason.txt').toString('utf8')); } catch {}
+              try { dump = _readMinidump(_readZipEntry(zip, 'minidump.dmp')); } catch {}
+              let when = null;
+              try { when = fs.statSync(zip).mtimeMs; } catch {}
+              out.push({
+                zip_name: n, when,
+                // The summary file's own fields, so the card can show both what
+                // Zeal said and what the dump says — they disagree usefully:
+                // a "Multiple Crashes" summary carries no context at all while
+                // its dump still has the whole stack.
+                reason: parsed && {
+                  exception_code: parsed.exception_code, exception_module: parsed.exception_module,
+                  zeal_version: parsed.zeal_version, handler_stage: parsed.handler_stage,
+                  game_state: parsed.game_state, character: parsed.character,
+                },
+                verdict: _crashVerdict(parsed, dump),
+                dump: dump && {
+                  uptime_sec: dump.uptimeSec,
+                  top: [...dump.onStack.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6),
+                  churn: [...dump.unloaded.entries()].filter(([, c]) => c >= 3),
+                  endpoints: dump.endpoints,
+                },
+              });
+            }
+          }
+          out.sort((a, b) => (b.when || 0) - (a.when || 0));
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ ok: true, crashes: out.slice(0, 20) }));
         } catch (err) {
           res.writeHead(500, { 'Content-Type': 'application/json' });
           return res.end(JSON.stringify({ ok: false, error: String(err && err.message || err) }));
@@ -30573,6 +30694,272 @@ function _parseCrashReason(text) {
     handler_stage:     (/Unhandled exception occurred:\s*(.+)/i.exec(text)?.[1] || '').trim() || null,
     raw_reason:        text.slice(0, 4000),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Minidump review — answering "what was wrong with MY machine", locally.
+//
+// The design doc used to list this as out of scope on the grounds that reading
+// a .dmp needs a symbol server. That is true for function names and wrong for
+// the question anyone actually asks. A minidump carries the module list with
+// base addresses, so every address resolves to module+offset with no symbols at
+// all — and "was this Zeal, the client, or Windows?" falls straight out.
+//
+// Proven on Razek's 2026-08-12 dump: crash_reason.txt said "0x6ef in
+// kernelbase.dll", which is unactionable, while the dump named the audio stack,
+// the specific playback device, and a GPU driver that had reset four times in
+// six minutes. See docs/DESIGN-crash-review.md §8.
+//
+// NOTHING here leaves the machine. These functions read a local file and return
+// a verdict for the local dashboard; only the short verdict would ever upload,
+// and only if the user opted in. Reference implementation + the same logic in
+// Python: scripts/read-minidump.py.
+const MD_STREAM = { THREAD_LIST: 3, MODULE_LIST: 4, EXCEPTION: 6, SYSTEM_INFO: 7,
+                    UNLOADED_MODULES: 14, MISC_INFO: 15 };
+
+// Codes Windows raises that we can explain in plain language. 0x6ef is the one
+// that started all this: RPC stubs raise it NONCONTINUABLE with no parameters.
+const MD_CODES = {
+  0xC0000005: 'tried to read or write memory that was not there',
+  0xC0000094: 'divided by zero',
+  0xC00000FD: 'ran out of stack space',
+  0xC0000409: 'a corrupted buffer was detected and Windows stopped the program',
+  0xE06D7363: 'an internal error was thrown and nothing handled it',
+  0x6EF:      'asked Windows for something that had already gone away',
+  0x6BA:      'a Windows service it needed was not answering',
+  0x6BE:      'a call to a Windows service failed',
+};
+
+// Which subsystem a module belongs to. Order matters — first match wins, and
+// the client/wrapper entries deliberately come before the generic Windows ones.
+const MD_SUBSYSTEMS = [
+  [/^zeal\.asi$/i,                                    'Zeal'],
+  [/^(eqgame\.exe|eqgame\.dll|eqmain\.dll|eqw\.dll)$/i, 'the EverQuest client'],
+  [/^(mss32|mssdolby|mssds3d|mssfast|msseax)/i,       'the game audio engine'],
+  [/^(wdmaud|winmm|mmdevapi|audioses|dsound|ksuser|avrt)/i, 'Windows audio'],
+  [/^(nv|ig|amdvlk|atiu|d3d|dxgi|ddraw|dpvs|eqgfx|dgvoodoo|opengl|vulkan)/i, 'the graphics driver'],
+  [/^(ws2_32|wsock|mswsock|dnsapi|iphlpapi)/i,        'networking'],
+  [/^rpcrt4/i,                                        'Windows service messaging'],
+  [/^(ntdll|kernel32|kernelbase|ole32|combase|user32|gdi32|msvcr|ucrtbase)/i, 'Windows itself'],
+];
+function _mdSubsystem(mod) {
+  if (!mod) return null;
+  for (const [rx, label] of MD_SUBSYSTEMS) if (rx.test(mod)) return label;
+  return null;
+}
+
+// Parse a minidump buffer. Returns null on anything malformed — a crash review
+// must never itself throw into the agent's sweep loop.
+function _readMinidump(buf) {
+  try {
+    if (!buf || buf.length < 32 || buf.readUInt32LE(0) !== 0x504D444D) return null; // 'MDMP'
+    const nStreams = buf.readUInt32LE(8);
+    const dirRva   = buf.readUInt32LE(12);
+    const streams  = new Map();
+    for (let i = 0; i < nStreams; i++) {
+      const o = dirRva + i * 12;
+      if (o + 12 > buf.length) break;
+      const type = buf.readUInt32LE(o);
+      if (!streams.has(type)) streams.set(type, { size: buf.readUInt32LE(o + 4), rva: buf.readUInt32LE(o + 8) });
+    }
+    const mdString = (rva) => {
+      if (!rva || rva + 4 > buf.length) return '';
+      const n = buf.readUInt32LE(rva);
+      if (n <= 0 || rva + 4 + n > buf.length) return '';
+      return buf.toString('utf16le', rva + 4, rva + 4 + n);
+    };
+    const baseName = (p) => String(p || '').split(/[\\/]/).pop();
+
+    // --- modules ---------------------------------------------------------
+    const modules = [];
+    const ml = streams.get(MD_STREAM.MODULE_LIST);
+    if (ml) {
+      const n = buf.readUInt32LE(ml.rva);
+      for (let i = 0; i < n; i++) {
+        const o = ml.rva + 4 + i * 108;           // sizeof(MINIDUMP_MODULE)
+        if (o + 108 > buf.length) break;
+        // BaseOfImage is 64-bit; these are 32-bit processes so the low half is
+        // the address space we resolve against.
+        const base = buf.readUInt32LE(o);
+        const size = buf.readUInt32LE(o + 8);
+        const ms = buf.readUInt32LE(o + 32), ls = buf.readUInt32LE(o + 36); // VS_FIXEDFILEINFO
+        modules.push({
+          base, size,
+          name: baseName(mdString(buf.readUInt32LE(o + 20))),
+          version: `${ms >>> 16}.${ms & 0xffff}.${ls >>> 16}.${ls & 0xffff}`,
+        });
+      }
+    }
+    const whose = (addr) => {
+      for (const m of modules) if (addr >= m.base && addr < m.base + m.size) return m;
+      return null;
+    };
+
+    // --- exception + register context ------------------------------------
+    let exception = null, crashTid = null, esp = 0;
+    const ex = streams.get(MD_STREAM.EXCEPTION);
+    if (ex) {
+      crashTid = buf.readUInt32LE(ex.rva);
+      const er = ex.rva + 8;                       // MINIDUMP_EXCEPTION
+      const code = buf.readUInt32LE(er);
+      const flags = buf.readUInt32LE(er + 4);
+      const addr = buf.readUInt32LE(er + 16);      // ExceptionAddress (low half)
+      const ctxRva = buf.readUInt32LE(er + 156);
+      const ctxSize = buf.readUInt32LE(er + 152);
+      if (ctxSize >= 204) esp = buf.readUInt32LE(ctxRva + 196);   // x86 CONTEXT.Esp
+      const at = whose(addr);
+      exception = {
+        code, code_hex: '0x' + code.toString(16),
+        noncontinuable: !!(flags & 1),
+        plain: MD_CODES[code] || null,
+        address: '0x' + addr.toString(16),
+        module: at ? at.name : null,
+      };
+    }
+
+    // --- scan-walk the crashing thread's stack ---------------------------
+    // No unwind info and no symbols, so this is the classic scan: every 4-byte
+    // value on the thread's stack that lands inside a loaded module. It
+    // OVER-reports (stale frames from earlier calls linger), which is why the
+    // verdict below uses module FREQUENCY rather than claiming an exact call
+    // chain. It never invents a module — each hit was really on the stack.
+    const onStack = new Map();
+    let frames = [];
+    const tl = streams.get(MD_STREAM.THREAD_LIST);
+    if (tl && crashTid !== null) {
+      const n = buf.readUInt32LE(tl.rva);
+      for (let i = 0; i < n; i++) {
+        const o = tl.rva + 4 + i * 48;             // sizeof(MINIDUMP_THREAD)
+        if (buf.readUInt32LE(o) !== crashTid) continue;
+        const start = buf.readUInt32LE(o + 24);    // Stack.StartOfMemoryRange
+        const memSize = buf.readUInt32LE(o + 32);
+        const memRva  = buf.readUInt32LE(o + 36);
+        for (let off = 0; off + 4 <= memSize && memRva + off + 4 <= buf.length; off += 4) {
+          if (start + off < esp) continue;
+          const m = whose(buf.readUInt32LE(memRva + off));
+          if (!m) continue;
+          onStack.set(m.name, (onStack.get(m.name) || 0) + 1);
+          if (frames.length < 40) frames.push(m.name);
+        }
+        break;
+      }
+    }
+
+    // --- modules that were loaded and then went away ---------------------
+    // Free system-health signal: a driver cycling 3+ times means a device was
+    // being torn down and rebuilt repeatedly.
+    const unloaded = new Map();
+    const ul = streams.get(MD_STREAM.UNLOADED_MODULES);
+    if (ul) {
+      const hdr = buf.readUInt32LE(ul.rva), ent = buf.readUInt32LE(ul.rva + 4), cnt = buf.readUInt32LE(ul.rva + 8);
+      for (let i = 0; i < cnt; i++) {
+        const o = ul.rva + hdr + i * ent;
+        if (o + ent > buf.length) break;
+        const nm = baseName(mdString(buf.readUInt32LE(o + 20)));   // NOT +16
+        if (nm) unloaded.set(nm, (unloaded.get(nm) || 0) + 1);
+      }
+    }
+
+    // --- how long the process had been alive -----------------------------
+    let uptimeSec = null;
+    const mi = streams.get(MD_STREAM.MISC_INFO);
+    if (mi && mi.size >= 24) {
+      const created = buf.readUInt32LE(mi.rva + 12);
+      const written = buf.readUInt32LE(20);         // header TimeDateStamp
+      if (created && written > created) uptimeSec = written - created;
+    }
+
+    // --- audio endpoints left in memory by the wdmaud RPC binding --------
+    // Format: {0.0.<flow>.00000000}.{guid} where flow 0 = render (playback),
+    // 1 = capture. This is how "the audio stack faulted" becomes "it faulted on
+    // THIS device" — the guid resolves to a friendly name with one local
+    // registry read under MMDevices\Audio\Render\{guid}\Properties.
+    //
+    // ⚠ BOTH byte alignments must be scanned. Decoding the whole buffer as
+    // utf16le from offset 0 only sees strings that begin on an EVEN offset, and
+    // on the dump this was built from every endpoint began on an odd one — the
+    // single-alignment version returned zero endpoints while the reference
+    // implementation found three. Silent, and it drops the most useful field.
+    const endpoints = [];
+    for (const start of [0, 1]) {
+      const utf16 = buf.toString('utf16le', start);
+      const epRx = /\{0\.0\.(\d)\.0+\}\.\{([0-9a-f-]{36})\}:(\w+)/gi;
+      for (let m; (m = epRx.exec(utf16)); ) {
+        const e = { flow: m[1] === '0' ? 'playback' : 'capture', guid: m[2].toLowerCase(), call: m[3] };
+        if (!endpoints.some(x => x.guid === e.guid)) endpoints.push(e);
+      }
+    }
+
+    return { modules, exception, onStack, frames, unloaded, uptimeSec, endpoints,
+             loaded: (nm) => modules.some(m => new RegExp(nm, 'i').test(m.name)) };
+  } catch { return null; }
+}
+
+// Turn a parsed dump into something a raider can read. Deliberately hedged:
+// module attribution is strong evidence, a single crash is never proof of a
+// cause. "Here is the check to run" beats "here is the answer".
+function _crashVerdict(parsed, dump) {
+  const out = { headline: null, subsystem: null, blames_us: null, notes: [], checks: [] };
+  if (!dump || !dump.exception) {
+    out.headline = 'Could not read the crash dump — only the summary file is available.';
+    return out;
+  }
+  const ex = dump.exception;
+  const top = [...dump.onStack.entries()].sort((a, b) => b[1] - a[1]);
+
+  // The subsystem is whoever owns the most frames on the faulting stack, with
+  // the pure-plumbing modules skipped: ntdll/kernelbase/rpcrt4 are on EVERY
+  // stack and naming them tells the user nothing.
+  const PLUMBING = /^(ntdll|kernel32|kernelbase|rpcrt4|combase|ole32)\.dll$/i;
+  const meaningful = top.filter(([nm]) => !PLUMBING.test(nm));
+  const leader = meaningful[0] ? meaningful[0][0] : (ex.module || null);
+  out.subsystem = _mdSubsystem(leader) || 'the EverQuest client';
+
+  // The question members actually ask. Absence is only evidence when the module
+  // is LOADED — otherwise "not on the stack" is meaningless.
+  const zealLoaded = dump.loaded('^zeal\\.asi$');
+  const zealOnStack = [...dump.onStack.keys()].some(n => /^zeal\.asi$/i.test(n));
+  if (zealLoaded) {
+    out.blames_us = zealOnStack;
+    out.notes.push(zealOnStack
+      ? 'Zeal was on the stack when this happened, so it may be involved.'
+      : 'Zeal was running but was NOT involved in this crash — it does not appear anywhere in the failure.');
+  }
+
+  const what = ex.plain || `hit an error Windows reports as ${ex.code_hex}`;
+  out.headline = `EverQuest ${what}, inside ${out.subsystem}.`;
+
+  if (/audio/i.test(out.subsystem)) {
+    const play = dump.endpoints.find(e => e.flow === 'playback');
+    out.notes.push('This is a sound problem, not a game or Zeal problem — EQ asked '
+      + 'Windows to play audio through a device that was no longer there.');
+    if (play) {
+      out.checks.push('Check which speaker/headset EQ was using: reg query '
+        + '"HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\MMDevices\\Audio\\Render\\{'
+        + play.guid + '}\\Properties" /v "{a45c254e-df1c-4efd-8020-67d146a850e0},2"');
+    }
+    out.checks.push('If that device is your monitor, TV, or anything on the graphics card, '
+      + 'switch Windows sound output to your motherboard or a USB headset — those do not '
+      + 'disappear when the display changes.');
+  }
+
+  // Driver churn: a device that rebuilt 3+ times is worth surfacing on its own,
+  // whatever the crash turned out to be.
+  const churn = [...dump.unloaded.entries()].filter(([, c]) => c >= 3).map(([nm]) => nm);
+  if (churn.length) {
+    const mins = dump.uptimeSec ? ` in ${Math.max(1, Math.round(dump.uptimeSec / 60))} minutes` : '';
+    out.notes.push(`Your graphics driver reset itself several times${mins} `
+      + `(${churn.slice(0, 3).join(', ')}). That is not normal, and it can knock out sound `
+      + 'devices attached to the graphics card.');
+    out.checks.push('Try running EverQuest windowed or borderless instead of full screen — '
+      + 'that avoids most display resets.');
+  }
+
+  if (ex.noncontinuable) out.notes.push('This one was not survivable — the game could not have kept going.');
+  if (parsed && /^(ff|ffffffff|-1)$/i.test(String(parsed.game_state || ''))) {
+    out.notes.push('You were zoning when it happened — no world was loaded yet.');
+  }
+  return out;
 }
 
 // System snapshot, computed once per agent run (crashes cluster by machine

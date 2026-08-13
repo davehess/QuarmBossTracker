@@ -1282,6 +1282,23 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   song name (12 = Quarm AE cap, green at a full swarm; per-mob min–max in
   the tooltip). Badge goes stale-silent 30s after the last pulse.
 
+### Crash review (agent, beta)
+- **🩺 Crash review card + `/api/crash-review` (agent 3.5.67)** — reads this
+  machine's own Zeal crash zips and says, in plain language, what broke. The
+  headline answer is *"was this Zeal/Mimic?"*, because that is what people ask
+  when EQ vanishes. `_readMinidump` parses `minidump.dmp` with zero deps and no
+  symbol server (module base addresses resolve any address to `module+offset`);
+  `_crashVerdict` turns that into a subsystem, notes and concrete checks —
+  including the exact `reg query` for the audio device that failed. Dashboard
+  card is **on-demand only** (a button, never the 2s poll) and is NOT gated on
+  `WOLFPACK_CRASH_REPORTS`: that flag governs UPLOADING to the guild, and
+  reading your own crash should not require sharing it.
+  ⚠ Dumps never leave the machine. Same logic in Python for officers:
+  `scripts/read-minidump.py`. Worked example + limits:
+  `docs/DESIGN-crash-review.md` §8. Tests: `test/minidump-review.test.js`
+  (synthetic dumps built byte-by-byte; they pin two struct offsets and the
+  utf16 alignment bug that silently dropped every audio endpoint).
+
 ### Mimic (`apps/mimic/`, beta)
 - **Me card + officer Admin tab (#109)** — dashboard opens on 🐺 Me; officer
   tools + 📡 Reporters panel (#115, swap/include) + 🛑 kill switches (#118) under
