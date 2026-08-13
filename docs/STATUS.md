@@ -2376,6 +2376,19 @@ one concrete detail. Shipped that night: stable 2.1.2 / agent 3.4.36.**
   silently shows the wrong picture for every item.
   We do NOT hotlink pqdi.cc — that spends their bandwidth and breaks when they
   reorganise; we pack from the same client source they did.
+- **Live guild-vs-local DPS: designed, not built (2026-08-13).**
+  `docs/DESIGN-live-guild-dps.md`. The measurement that justifies it: across
+  five recent fights the WORST single uploader's view was **0.1-8.3% of the
+  fight** - a raider who zoned in late is looking at a twentieth of what
+  happened with no way to know.
+  ⚠ And the BEST single view **exceeded** the merged total by up to 46%, so the
+  guild number is not "truth" and the local number is not a subset of it - they
+  are different scopes (the merge drops excluded characters, folds pets, and
+  ignores non-roster names). Never present one as correcting the other.
+  Needs no new capture: `encounter_threat_snapshots` already arrives live at
+  3.5-6.4s. What is missing is a READ - `/api/agent/threat-snapshot` is
+  ingest-only. Recommendation is a coverage line ("you are seeing 38% of raid
+  damage") ahead of per-player columns; two open questions for Hitya in §6.
 
 **⚠ Needs a local (desktop) session** — cloud sessions can't reach the local
 `peq`/PQDI/EQ machine. Exact queries/files live in `archive/BACKLOG.md`; the asks:
