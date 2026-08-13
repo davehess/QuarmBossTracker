@@ -2369,7 +2369,7 @@ one concrete detail. Shipped that night: stable 2.1.2 / agent 3.4.36.**
   We already mirror `eqemu_items.icon` for all 26,971 items (872 distinct,
   range 500–2000). The client stores them as `dragitem<NN>.dds`, 6×6 grids of
   40px cells from icon 500, so 500–2000 spans dragitem01–42.
-  `scripts/pack-item-icons.sh` re-packs them into ONE atlas laid out so that
+  `scripts/pack-item-icons.ps1` re-packs them into ONE atlas laid out so that
   `col=(icon-500)%40, row=floor((icon-500)/40)` — **deterministic, so there is
   no manifest to drift**. ⚠ Blank slots are padded deliberately: a missing icon
   must still occupy its cell or everything after it shifts and the atlas
@@ -2381,9 +2381,12 @@ one concrete detail. Shipped that night: stable 2.1.2 / agent 3.4.36.**
 `peq`/PQDI/EQ machine. Exact queries/files live in `archive/BACKLOG.md`; the asks:
 - Mob-immunity backfill from the local `peq` DB (fix B for board #55).
 - Zeal exit-crash bundles from `crashes/` (board #64 — `crash_reports` is empty).
-- **Run `bash scripts/pack-item-icons.sh "A:/EQ" web/public/icons`** (needs
-  ImageMagick) and commit `web/public/icons/items.png` — the only blocker on
-  item icons; everything else about them is arithmetic.
+- **Run `powershell -ExecutionPolicy Bypass -File scripts\pack-item-icons.ps1 -EqDir "A:\EQ"`**
+  (needs `winget install ImageMagick.ImageMagick`, then a fresh terminal) and commit
+  `web/public/icons/items.png` — the only blocker on item icons; everything else
+  about them is arithmetic. ⚠ PowerShell, not bash: the first cut of this was a
+  .sh, and `bash` on Windows hands off to WSL, which fails with
+  `execvpe(/bin/bash) failed` on any box without a distro installed.
 - Per-class overlay colors / PoP P2-P3 slideshow stubs (blocked on local capture).
 - Any migration needing local verification (per CLAUDE.md Migrations rule).
 
