@@ -117,13 +117,55 @@ agent, thanks to the memo), against a table already being written 3.5–6.4s per
 uploader. That is small — but it is a NEW read on the hot path during a raid, so
 it belongs behind the same `flag_shed_*` treatment as everything else.
 
-## 6. Open questions for Hitya
+## 6. DECIDED (Hitya, 2026-08-13)
 
-1. **Coverage line, or full per-player comparison first?** The measurement argues
-   coverage; the ask as phrased ("show the diff") might mean per-player. These
-   are different builds.
-2. **Does the guild view include people not in your zone/group?** It can — the
-   snapshots are guild-wide. Almost certainly yes, since that is the point.
-3. **Excluded characters.** `exclude_from_stats` is honoured by the merge but not
-   by a raw snapshot read. The live view should honour it too, or someone who
-   opted out reappears on everyone's overlay.
+### Display: guild number primary, your own observation in parentheses
+
+> *"Showing diff would be nice to show what you observed in parenthesis if we
+> can transmit the full amounts and show what we've seen."*
+
+```
+DAMAGE
+1  Statlander    212k (44k)
+2  You           187k (187k)
+3  Wabumkin      164k (0)
+```
+
+**Guild-merged is the headline; the parenthetical is what THIS machine saw.**
+That is better than the coverage line I proposed in §4, and it supersedes it:
+one aggregate percentage tells you that you are missing something, whereas the
+parenthetical tells you *which players* you are blind to. The Wabumkin row above
+is the whole feature in one line - he did 164k and this client saw none of it.
+
+It also means the per-player comparison is the DEFAULT rather than a toggle, so
+§4's "coverage first, columns behind a toggle" is withdrawn. Keep the staleness
+rule from §3d: if the guild side is shedded or stale, say so - a frozen number
+in the headline position is worse than no number.
+
+⚠ Requires the guild payload to carry **full per-player totals**, not just a
+raid sum. That is what `per_player` already is, so no capture change - but the
+read endpoint must not pre-aggregate.
+
+### Exclusions: upload-side only, and it ALREADY WORKS THAT WAY
+
+> *"if someone excluded their character they should just not be uploading that
+> character, but if they show up from someone else's stats they should be
+> shown."*
+
+This is the existing behaviour, not a change. `index.js` (~12511): the agent
+polls `/api/agent/character-prefs` and **suppresses outbound uploads** when
+`exclude_from_stats` is set - `stats.characterPrefs` gates the parser character,
+the Quarmy export scan and the historical backfill.
+
+So the live view needs **NO read-side exclusion filter**, and adding one would
+be actively wrong: it would hide a player from the observers who legitimately
+saw them. The opt-out means "my client does not report ME", not "erase me from
+everyone else's meter".
+
+⚠ Do not "fix" this later by filtering on read. The distinction is the policy.
+
+## 7. Still open
+
+- Nothing blocking. Build order is §5; the only judgement left is whether the
+  parenthetical shows raw damage or a percentage, which is a five-minute change
+  once it is on screen and worth deciding by looking at it mid-raid.

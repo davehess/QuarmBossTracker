@@ -2387,8 +2387,12 @@ one concrete detail. Shipped that night: stable 2.1.2 / agent 3.4.36.**
   ignores non-roster names). Never present one as correcting the other.
   Needs no new capture: `encounter_threat_snapshots` already arrives live at
   3.5-6.4s. What is missing is a READ - `/api/agent/threat-snapshot` is
-  ingest-only. Recommendation is a coverage line ("you are seeing 38% of raid
-  damage") ahead of per-player columns; two open questions for Hitya in §6.
+  ingest-only. DECIDED 2026-08-13: guild-merged number is the headline with YOUR observed
+  amount in parentheses per player (`Wabumkin 164k (0)` is the whole feature in
+  one line) - which supersedes the coverage-line recommendation. Exclusions
+  stay upload-side and already work that way, so the live view must NOT filter
+  on read; doing so would hide a player from observers who legitimately saw
+  them. Nothing blocking - build order in §5.
 
 **⚠ Needs a local (desktop) session** — cloud sessions can't reach the local
 `peq`/PQDI/EQ machine. Exact queries/files live in `archive/BACKLOG.md`; the asks:
