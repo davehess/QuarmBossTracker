@@ -327,9 +327,13 @@ its own tail. **Window = start − `RAID_EVENT_PRE_MIN` (30) … end +
 `RAID_EVENT_DEFAULT_HOURS` (4) long. Overlapping windows resolve to the event
 whose *start* is nearest the timestamp. **Raid-Helper is enrichment only** —
 read from the `rh_events` mirror `utils/raidhelperApi.js` already syncs (needs
-the existing `RH_API_KEY`; the mirror is empty as of 2026-07-31, so this path
-is unverified in prod) and it can only fill an end time or add an event Discord
-never got. Everything fails open to "no event scheduled".
+the existing `RH_API_KEY`) and it can only fill an end time or add an event
+Discord never got. Everything fails open to "no event scheduled".
+⚠ **The "mirror is empty / unverified in prod" note that sat here until
+2026-08-13 was stale and cost us a wrong answer.** The mirror is live and
+healthy — 292 events + 14,741 signups going back to 2024-08-08, synced every
+30 min — and it is far more than an end-time backstop; see the signup-archive
+entry below before concluding anything about what availability data we hold.
 **Classification** (`classifyEvent`): the raids themselves are Discord events,
 so the NIGHT decides — `RAID_EVENT_RAID_DAYS` (default Sun/Wed/Thu) at/after
 `RAID_EVENT_RAID_FROM_HOUR` (17) is the raid flow, everything else the event
@@ -1377,6 +1381,21 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
 - **Comp matcher (#93)** — `web/lib/comp.ts`, `comp_templates`, `/admin/comp`,
   signups gap panel.
 - **Attendance metrics (#92)** — `member_attendance_metrics` view + `/admin/attendance`.
+- **Raid-Helper signup archive** — `utils/raidhelperApi.js` mirrors the Raid-Helper
+  board into `rh_events` + `rh_signups` every 30 min (`startRaidHelperSync` in
+  `index.js`), upsert-only, feeding `/admin/signups`. **This is the guild's only
+  record of DECLARED intent**, and the distinction matters: `opendkp_ticks` says who
+  turned up, `rh_signups` says what they said they would do. Statuses are the class
+  name (accepted), plus `absence`, `tentative`, `late` and `bench`.
+  ⚠ **Raid-Helper's own board only retains its contents until the day of the raid**
+  (Hitya, 2026-08-13) — so the mirror is not a convenience copy, it is the archive.
+  Anything a sync outage misses is gone permanently rather than late. 292 events /
+  14,741 signups back to 2024-08-08 as of 2026-08-13, no gaps against the DKP raid
+  list. Nothing monitors the sync yet; a silent failure is indistinguishable from a
+  quiet signup board.
+  Worked example of what it answers that ticks cannot: Peopleslayer marked **19 of 19
+  Wednesdays tentative** while signing in on 18/19 Sundays and 19/19 Thursdays — a
+  standing weekly constraint that attendance counts alone can only infer.
 - **Per-fight timeline (#98)** — `encounter_events` → `FightTimeline.tsx` on
   `/parses/[id]` (deaths, slows, mob heals, discs, fires); replay-this-fight link.
 - **Sprint board on `/roadmap`** — `SprintBoard.tsx` + `sprintItems` in
