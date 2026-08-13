@@ -2427,10 +2427,49 @@ one concrete detail. Shipped that night: stable 2.1.2 / agent 3.4.36.**
   "…NN older → /roadmap" tail + move the call inside the `try`); also delete the
   dead `handleWelcome*` trio (`index.js:1669`/`:1690`/`:1704`). Routes to `main`.
 
+- **Item icons: packer written, needs the client files (2026-08-13).** Hitya's
+  call, and it is the right one — PQDI has hosted EQ's icons since the server
+  opened, every long-running EQ community site does, and there is no commercial
+  angle here. Site now carries the standard Daybreak trademark/ownership notice
+  in the footer (web 1.1.47).
+  We already mirror `eqemu_items.icon` for all 26,971 items (872 distinct,
+  range 500–2000). The client stores them as `dragitem<NN>.dds`, 6×6 grids of
+  40px cells from icon 500, so 500–2000 spans dragitem01–42.
+  `scripts/pack-item-icons.ps1` re-packs them into ONE atlas laid out so that
+  `col=(icon-500)%40, row=floor((icon-500)/40)` — **deterministic, so there is
+  no manifest to drift**. ⚠ Blank slots are padded deliberately: a missing icon
+  must still occupy its cell or everything after it shifts and the atlas
+  silently shows the wrong picture for every item.
+  We do NOT hotlink pqdi.cc — that spends their bandwidth and breaks when they
+  reorganise; we pack from the same client source they did.
+- **Live guild-vs-local DPS: designed, not built (2026-08-13).**
+  `docs/DESIGN-live-guild-dps.md`. The measurement that justifies it: across
+  five recent fights the WORST single uploader's view was **0.1-8.3% of the
+  fight** - a raider who zoned in late is looking at a twentieth of what
+  happened with no way to know.
+  ⚠ And the BEST single view **exceeded** the merged total by up to 46%, so the
+  guild number is not "truth" and the local number is not a subset of it - they
+  are different scopes (the merge drops excluded characters, folds pets, and
+  ignores non-roster names). Never present one as correcting the other.
+  Needs no new capture: `encounter_threat_snapshots` already arrives live at
+  3.5-6.4s. What is missing is a READ - `/api/agent/threat-snapshot` is
+  ingest-only. DECIDED 2026-08-13: guild-merged number is the headline with YOUR observed
+  amount in parentheses per player (`Wabumkin 164k (0)` is the whole feature in
+  one line) - which supersedes the coverage-line recommendation. Exclusions
+  stay upload-side and already work that way, so the live view must NOT filter
+  on read; doing so would hide a player from observers who legitimately saw
+  them. Nothing blocking - build order in §5.
+
 **⚠ Needs a local (desktop) session** — cloud sessions can't reach the local
 `peq`/PQDI/EQ machine. Exact queries/files live in `archive/BACKLOG.md`; the asks:
 - Mob-immunity backfill from the local `peq` DB (fix B for board #55).
 - Zeal exit-crash bundles from `crashes/` (board #64 — `crash_reports` is empty).
+- **Run `powershell -ExecutionPolicy Bypass -File scripts\pack-item-icons.ps1 -EqDir "A:\EQ"`**
+  (needs `winget install ImageMagick.ImageMagick`, then a fresh terminal) and commit
+  `web/public/icons/items.png` — the only blocker on item icons; everything else
+  about them is arithmetic. ⚠ PowerShell, not bash: the first cut of this was a
+  .sh, and `bash` on Windows hands off to WSL, which fails with
+  `execvpe(/bin/bash) failed` on any box without a distro installed.
 - Per-class overlay colors / PoP P2-P3 slideshow stubs (blocked on local capture).
 - Any migration needing local verification (per CLAUDE.md Migrations rule).
 
