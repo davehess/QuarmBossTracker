@@ -10263,6 +10263,126 @@ const EXT_STALE_GRACE_MS = 90 * 1000;
 // add is deliberately never targeted/damaged, only tanked).
 const EXT_OFFTANK_FRESH_MS = 30_000;
 
+// GET /api/agent/live-damage?boss=<boss name>[&since=<ISO>]
+// The guild's view of the fight IN PROGRESS, for the DPS HUD's
+// "guild-merged (what you saw)" rows — docs/DESIGN-live-guild-dps.md.
+//
+// Measured justification: across five recent fights the WORST single uploader
+// saw 0.1–8.3% of the damage. A raider who zoned in late is watching a meter
+// showing a twentieth of the fight with nothing telling them so.
+//
+// ⚠ MERGE IS MAX-PER-PLAYER, NEVER SUM. Uploaders overlap heavily; summing
+// double-counts everyone seen by more than one. `per_player[n].dmg` is
+// CUMULATIVE within the fight, so the maximum any uploader currently reports is
+// the best available estimate, and it can only rise toward truth as more
+// uploaders report. (The sibling trap — maxing per-bucket DELTAS — over-counts
+// ~2.4x and is why the timeline differences a single canonical series instead.)
+//
+// ⚠ NO exclusion filter here, deliberately. `exclude_from_stats` is enforced
+// UPSTREAM: the agent suppresses its own outbound uploads. If another raider
+// observed you, that observation is theirs and is shown (Hitya, 2026-08-13).
+// Filtering on read would hide a player from the people who legitimately saw
+// them, which is the opposite of what the opt-out means. Do not "fix" this.
+async function _handleAgentLiveDamage(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+
+  let boss = '';
+  try { boss = (new URL(req.url, 'http://x').searchParams.get('boss') || '').trim(); }
+  catch { /* */ }
+  if (!boss) {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ players: [], note: 'no boss' }));
+  }
+
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ players: [], note: 'supabase disabled' }));
+  }
+
+  // Memo per boss — a raid of ~20 agents polls this on the same fight, and the
+  // query is identical for all of them. Same idiom as the extended-target
+  // bundle's 1.5s memo; without it this is 20x the reads for one answer.
+  const key = boss.toLowerCase();
+  const now = Date.now();
+  globalThis._liveDmgCache = globalThis._liveDmgCache || new Map();
+  const hit = globalThis._liveDmgCache.get(key);
+  if (hit && now - hit.at < 2000) {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(hit.body);
+  }
+
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+  // 3 minutes back: long enough to cover a snapshot gap or a shed blip, short
+  // enough that the PREVIOUS pull of the same boss cannot bleed in. Repeat
+  // pulls inside that window are the known limitation (see the design doc's
+  // encounter-binding section) and are why `oldest_sample_age_sec` is returned.
+  const since = new Date(now - 3 * 60 * 1000).toISOString();
+  let rows = [];
+  try {
+    rows = await supabase.select('encounter_threat_snapshots',
+      `guild_id=eq.${encodeURIComponent(guildId)}`
+      + `&boss_name=eq.${encodeURIComponent(boss)}`
+      + `&snapshot_at=gte.${encodeURIComponent(since)}`
+      + `&select=uploader,snapshot_at,per_player&order=snapshot_at.desc&limit=400`) || [];
+  } catch (err) {
+    console.warn('[live-damage] select failed:', err?.message);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ players: [], note: 'unavailable' }));
+  }
+
+  // Newest row per uploader. Ordered desc above, so the first sighting wins.
+  const newest = new Map();
+  for (const r of rows) {
+    if (!r || !r.uploader) continue;
+    if (!newest.has(r.uploader)) newest.set(r.uploader, r);
+  }
+
+  const best = new Map();       // character -> max cumulative dmg seen anywhere
+  let newestAt = 0, oldestAt = 0;
+  for (const r of newest.values()) {
+    const t = Date.parse(r.snapshot_at) || 0;
+    if (t > newestAt) newestAt = t;
+    if (!oldestAt || t < oldestAt) oldestAt = t;
+    const pp = r.per_player && typeof r.per_player === 'object' ? r.per_player : {};
+    for (const [name, v] of Object.entries(pp)) {
+      const dmg = Number(v && v.dmg) || 0;
+      if (dmg <= 0) continue;
+      // Fold pets under their owner, matching every other damage surface.
+      const who = (v && v.pet_owner) ? String(v.pet_owner) : name;
+      const prev = best.get(who) || 0;
+      // max, not +=: two uploaders reporting the same player is the norm.
+      if (dmg > prev) best.set(who, dmg);
+    }
+  }
+
+  const players = [...best.entries()]
+    .map(([character, dmg]) => ({ character, dmg }))
+    .sort((a, b) => b.dmg - a.dmg)
+    .slice(0, 60);
+
+  const body = JSON.stringify({
+    boss,
+    players,
+    uploaders: newest.size,
+    total: players.reduce((a, p) => a + p.dmg, 0),
+    // Staleness is the caller's problem to DISPLAY, but it can only do that if
+    // we tell it. A frozen number in the headline position is worse than none.
+    newest_sample_age_sec: newestAt ? Math.round((now - newestAt) / 1000) : null,
+    oldest_sample_age_sec: oldestAt ? Math.round((now - oldestAt) / 1000) : null,
+  });
+  globalThis._liveDmgCache.set(key, { at: now, body });
+  // Bound the memo — boss names are unbounded over a long uptime.
+  if (globalThis._liveDmgCache.size > 50) {
+    for (const [k, v] of globalThis._liveDmgCache) {
+      if (now - v.at > 60_000) globalThis._liveDmgCache.delete(k);
+    }
+  }
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  return res.end(body);
+}
+
 // GET /api/agent/extended-target?character=<self>
 // Powers the Extended Target raid overlay. Aggregates every ONLINE raider's
 // current target (character_live_state.target_name, Zeal slot 6) into a list of
@@ -16702,6 +16822,14 @@ const httpServer = http.createServer(async (req, res) => {
     }
   }
 
+  if (req.method === 'GET' && req.url.startsWith('/api/agent/live-damage')) {
+    try { return await _handleAgentLiveDamage(req, res); }
+    catch (err) {
+      console.error('[live-damage] handler error:', err);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ players: [], note: 'error' }));
+    }
+  }
   if (req.method === 'GET' && req.url.startsWith('/api/agent/extended-target')) {
     try { return await _handleAgentExtendedTarget(req, res); }
     catch (err) {
