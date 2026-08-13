@@ -20,11 +20,13 @@ given to it and never phones home — this is the "review it locally without
 uploading anything" half of the design.
 """
 import datetime
+import re
 import struct
 import sys
 
 # Stream types we care about (MINIDUMP_STREAM_TYPE).
 THREAD_LIST, MODULE_LIST, EXCEPTION_STREAM, SYSTEM_INFO = 3, 4, 6, 7
+UNLOADED_MODULE_LIST, MISC_INFO = 14, 15
 ARCH = {0: 'x86', 5: 'ARM', 6: 'IA64', 9: 'x64', 12: 'ARM64'}
 
 # Windows raises these through RaiseException with no parameters and the
@@ -147,6 +149,63 @@ def main(path):
     print('\n  frames, innermost first:')
     for at, w in hits[:80]:
         print(f'    [0x{at:08x}]  {w}')
+
+    unloaded(d)
+    audio_endpoints(d)
+
+
+def unloaded(d):
+    """Modules that were loaded and then went away before the crash.
+
+    Free system-health signal: on Razek's dump the NVIDIA user-mode driver
+    stack (`nvd3dum`, `nvgpucomp32`, `nvldumd`, `NvMemMapStorage`) had cycled
+    3-4 times in under six minutes of process life. That is the D3D device
+    being destroyed and rebuilt over and over — and since the GPU driver also
+    publishes the HDMI/DisplayPort *audio* endpoints, it is the most plausible
+    reason an audio session handle went stale underneath the client.
+    """
+    if UNLOADED_MODULE_LIST not in d.streams:
+        return
+    _, r = d.streams[UNLOADED_MODULE_LIST]
+    hdr, ent, cnt = struct.unpack_from('<III', d.b, r)
+    if not cnt:
+        return
+    seen = {}
+    for i in range(cnt):
+        o = r + hdr + i * ent
+        nm = d._string(d.u32(o + 20)).rsplit('\\', 1)[-1]   # NOT +16
+        seen[nm] = seen.get(nm, 0) + 1
+    print(f'\nUNLOADED MODULES ({cnt}) — loaded, then went away before the crash:')
+    for nm, c in sorted(seen.items(), key=lambda kv: -kv[1]):
+        flag = '   <-- cycling; a device was being rebuilt repeatedly' if c >= 3 else ''
+        print(f'    {c}x  {nm}{flag}')
+
+
+def audio_endpoints(d):
+    """Windows audio endpoint ids left in memory by the wdmaud RPC binding.
+
+    Format is `...:{0.0.<flow>.00000000}.{guid}:<call>:...` where flow 0 is
+    render (playback) and 1 is capture. This is how a generic "the audio stack
+    faulted" becomes "it faulted on THIS device" — and the guid resolves to a
+    friendly name with one local registry read the user can do themselves:
+
+      HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\MMDevices\\Audio\\
+        Render\\{guid}\\Properties  ->  {a45c254e-df1c-4efd-8020-67d146a850e0},2
+    """
+    found = {}
+    for s in re.findall(rb'(?:[\x20-\x7e]\x00){10,}', d.b):
+        t = s.decode('utf-16-le', 'replace')
+        m = re.search(r'\{0\.0\.(\d)\.0+\}\.\{([0-9a-f-]{36})\}:(\w+)', t)
+        if m:
+            flow = 'RENDER (playback)' if m.group(1) == '0' else 'CAPTURE (mic)'
+            found[(flow, m.group(2))] = m.group(3)
+    if not found:
+        return
+    print('\nAUDIO ENDPOINTS this process had open:')
+    for (flow, guid), call in sorted(found.items()):
+        print(f'    {flow:18s} {{{guid}}}  via {call}')
+    print('    (resolve a guid: reg query "HKLM\\SOFTWARE\\Microsoft\\Windows'
+          '\\CurrentVersion\\MMDevices\\Audio\\Render\\{<guid>}\\Properties")')
 
 
 if __name__ == '__main__':

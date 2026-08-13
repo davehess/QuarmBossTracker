@@ -222,18 +222,111 @@ sound call raised a noncontinuable exception. That is consistent with the zoning
 correlation — EQ tears down and rebuilds the sound system on a zone change, so
 zoning is when it reaches for a handle that has gone stale.
 
-**Practical mitigations, in order of bluntness** (untested, n=1 — offer, don't
-assert): make the default playback device something that never disappears (the
-motherboard analog out) rather than an HDMI/DisplayPort endpoint on the GPU,
-which comes and goes with display power and mode changes; disable unused NVIDIA
-HDMI audio endpoints in Device Manager; and as the blunt instrument, turn EQ's
-sound off entirely, which removes the failing path.
+### §8b — the specific fix, and what would confirm it (second pass on the dump)
 
-Machine, for the record: Windows 11 build 26200, RTX 4070, client at
-`C:\Users\Ryan\Desktop\TAKPv22`, `wdmaud2.drv`/`winmmbase.dll`/`rpcrt4.dll` all
-at 6.2.26100.**8875** while `dsound.dll`/`AudioSes.dll`/`wdmaud.drv` are at
-.**8737** — a split servicing state across the audio components, which may or may
-not be relevant and is worth noting if a second machine ever shows this.
+"It's the audio stack" is a subsystem, not a fix. Three more streams in the same
+dump narrow it to a device and a mechanism.
+
+**1. The GPU device was being destroyed and rebuilt, over and over.** The
+unloaded-module list, across a process that lived **5 minutes 40 seconds**
+(created 20:08:14Z, crashed 20:13:54Z):
+
+| Unloaded | times |
+|---|---|
+| `nvgpucomp32.dll` (78 MB) | 4 |
+| `NvMemMapStorage.dll` | 4 |
+| `nvldumd.dll` | 4 |
+| `nvd3dum.dll` (68 MB) | 3 |
+| `nvwgf2um.dll`, `D3D11.DLL`, `DXGI.DLL`, `DDRAW.dll`, `dwmapi.dll` | 1 each |
+
+Four full teardowns of the NVIDIA user-mode driver in under six minutes is not
+idle behaviour — that is the D3D device being lost and recreated. dgVoodoo
+(`D3D8.dll` 4.8.2.134) wraps D3D8 onto D3D11, so every EQ mode/resolution change
+takes the whole stack down with it.
+
+**2. The GPU is also what publishes HDMI/DisplayPort audio endpoints.** So the
+two findings are one finding: the display device re-enumerating is exactly the
+event that would invalidate an audio session bound to a GPU-provided endpoint,
+and `RPC_X_SS_IN_NULL_CONTEXT` is what the next `waveOut` call gets afterwards.
+
+**3. The dump names the actual endpoint.** The wdmaud RPC binding strings survive
+in memory:
+
+```
+RENDER (playback)  {9f0d0636-5fdf-4de9-b052-834835a41ca2}  via wodMessage
+CAPTURE (mic)      {8220f162-a788-4e8c-95ab-c47c9acaaa66}  via widMessage
+CAPTURE (mic)      {da8cd4f0-2b54-47b6-9873-d469d6265314}  via widMessage
+```
+
+`wodMessage` is the waveOut path — the one that faulted — on render endpoint
+`{9f0d0636-…}`.
+
+**The one lookup that settles it.** The guid resolves to a friendly device name
+with a local registry read:
+
+```
+reg query "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{9f0d0636-5fdf-4de9-b052-834835a41ca2}\Properties" /v "{a45c254e-df1c-4efd-8020-67d146a850e0},2"
+```
+
+If that comes back as a monitor/TV, "NVIDIA High Definition Audio", or anything
+on the GPU, the chain is confirmed end to end and the fix is mechanical. If it
+comes back as an onboard/USB output, the GPU-coupling story is wrong and the
+next suspect is the display resets on their own.
+
+**The fix, in the order worth trying:**
+
+1. **Move the default playback device off the GPU** — onboard analog or USB,
+   never the monitor/TV/HDMI endpoint. This severs the coupling and is the whole
+   fix if step 3 above says GPU.
+2. **Stop the display resets.** Four D3D device recreations in six minutes is
+   abnormal on its own. Windowed or borderless instead of exclusive fullscreen
+   removes most of them; so does not alt-tabbing out of fullscreen.
+3. **Only then, a driver update.** ⚠ *A newer GPU driver is NOT the indicated
+   fix* — the crash is not in the NVIDIA driver, which appears once on the stack
+   and only as a stale frame. It is worth trying third because the driver is what
+   is churning and it ships the HDMI audio component, not because anything points
+   at it.
+4. **A reboot is free to try.** `dbgcore` reports 10.0.26100.**8737** while
+   `rpcrt4`/`wdmaud2`/`winmmbase`/`MMDevAPI` are **.8875** — two servicing levels
+   loaded at once. ⚠ Mixed component versions are NORMAL on Windows (an update
+   replaces only changed files), so this is **not** evidence of a broken install
+   and should not be reported as one. It is only worth noting because a
+   pending-restart state would produce the same split and is one reboot to rule
+   out.
+
+**How we would actually confirm any of it: he is an uploader.** All 29 `0x6ef`
+reports are his, dated. Make one change, note the date, and watch whether the
+signature stops. That is the only real proof available at n=1, and we already
+have the instrument.
+
+### §8c — so could we just tell people what is wrong with their machine?
+
+Largely yes, and this dump is the worked example: `crash_reason.txt` said
+`0x6ef @ kernelbase.dll` and could tell nobody anything, while the dump gave the
+subsystem, the device, and the mechanism in one offline pass. What is achievable
+automatically, in descending confidence:
+
+| We can say | How | Confidence |
+|---|---|---|
+| **"This was not Mimic or Zeal"** | module loaded but absent from the faulting stack | high — the question members actually ask |
+| **Which subsystem** — audio, video, network, the client itself | module attribution on the faulting stack | high |
+| **Which device** | endpoint guids in memory + one local registry read for the friendly name | high where present |
+| **"Your GPU driver reset 4× in 6 minutes"** | unloaded-module cycling | high, and free |
+| **"3 others had this; changing X fixed it"** | signature match against the corpus | needs more uploaders |
+| Function-level root cause | — | ✗ needs symbols |
+| Cause of a single event | — | ✗ never; correlate, don't assert |
+
+Two things make this cheap. The analysis is **stdlib Python and entirely
+offline**, so it runs inside the agent with no new dependency and no new
+permission — the agent already reads files in the EQ folder, and the friendly-name
+lookup is one `reg query` on the user's own machine. And the privacy shape is
+unchanged: **the dump still never leaves the machine**; only the conclusion
+(subsystem + signature) would upload, and only if they opt in.
+
+The honest limit is causation. "Your audio endpoint went away and EQ died
+reaching for it" is supportable. "Changing your default device will fix it" is a
+hypothesis until the signature stops appearing — so phrase it as the check to
+run, never the answer.
 
 ### What this changes about the design
 
