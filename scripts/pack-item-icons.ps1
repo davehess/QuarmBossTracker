@@ -2,24 +2,31 @@
 #
 #   powershell -ExecutionPolicy Bypass -File scripts\pack-item-icons.ps1 -EqDir "A:\EQ"
 #
-# Windows-only ON PURPOSE. The earlier bash version was a mistake: the source
-# files only exist inside a Windows EQ install, and `bash` on a Windows box
-# hands off to WSL, which fails with
-#   execvpe(/bin/bash) failed: No such file or directory
-# on any machine without a distro installed. This is the shell the job actually
-# runs in.
+# ============================ ASCII ONLY. NO EXCEPTIONS. ======================
+# Windows PowerShell 5.1 reads a .ps1 as the system ANSI codepage unless the
+# file carries a UTF-8 BOM. A single em-dash in a comment therefore arrives as
+# the three bytes "a-hat, euro, quote" - and that stray quote character ends the
+# nearest string, which cascades into "missing terminator" and "unexpected }"
+# errors pointing at lines nowhere near the real problem. The first version of
+# this script had nine non-ASCII characters and would not parse at all.
+# Use -, ->, and (!) instead of typographic dashes, arrows and warning signs.
+# =============================================================================
 #
-# THE LAYOUT IS DETERMINISTIC, WHICH MEANS NO MANIFEST.
+# Windows-only on purpose: the source files only exist inside a Windows EQ
+# install, and `bash` on Windows hands off to WSL (which fails outright on a box
+# with no distro installed).
+#
+# THE LAYOUT IS DETERMINISTIC, SO THERE IS NO MANIFEST.
 # The client stores icons as dragitem<NN>.<ext>, each a 6x6 grid of 40x40 cells,
 # numbered from 500:
 #     sheet = floor((icon - 500) / 36) + 1
 #     cell  = (icon - 500) % 36
 # We re-lay them out as one strip 40 icons wide, indexed by (icon - 500):
 #     col = (icon - 500) % 40
-#     row = [Math]::Floor((icon - 500) / 40)
-# so the renderer is two modulos with no lookup table to drift. Verified against
-# live rows: Guise of the Deceiver icon 771 -> dragitem08 cell 19; Thick Banded
-# Belt 549 -> dragitem02 cell 13.
+#     row = floor((icon - 500) / 40)
+# so the renderer is two modulos with no lookup table to drift out of sync with
+# the catalog. Verified against live rows: Guise of the Deceiver icon 771 is
+# dragitem08 cell 19; Thick Banded Belt 549 is dragitem02 cell 13.
 #
 # Needs ImageMagick (it decodes DDS/TGA natively; .NET does not):
 #   winget install ImageMagick.ImageMagick
@@ -36,38 +43,43 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-function Fail($msg) { Write-Host "ERROR: $msg" -ForegroundColor Red; exit 1 }
-
-if (-not (Test-Path -LiteralPath $EqDir)) { Fail "EQ folder not found: $EqDir" }
-
-# ImageMagick 7 ships `magick`; 6 ships `montage`/`convert` separately.
-$magick = Get-Command magick -ErrorAction SilentlyContinue
-if (-not $magick) {
-  Fail @"
-ImageMagick not found on PATH.
-  winget install ImageMagick.ImageMagick
-Then close and reopen PowerShell so PATH refreshes, and re-run this.
-"@
+function Fail([string]$msg) {
+  Write-Host ("ERROR: " + $msg) -ForegroundColor Red
+  exit 1
 }
 
-# Report what we found BEFORE doing any work — a wrong folder should say so
-# immediately rather than after several minutes of cropping.
+if (-not (Test-Path -LiteralPath $EqDir)) { Fail ("EQ folder not found: " + $EqDir) }
+
+if (-not (Get-Command magick -ErrorAction SilentlyContinue)) {
+  Write-Host "ERROR: ImageMagick not found on PATH." -ForegroundColor Red
+  Write-Host "  winget install ImageMagick.ImageMagick"
+  Write-Host "  ...then close and REOPEN PowerShell so PATH refreshes, and re-run."
+  exit 1
+}
+
+# Report what we found BEFORE doing any work, so a wrong folder says so in a
+# second rather than after minutes of cropping.
 $sheets = Get-ChildItem -LiteralPath $EqDir -File |
   Where-Object { $_.Name -match '^dragitem\d+\.(dds|tga|bmp|png)$' } |
   Sort-Object Name
 if ($sheets.Count -eq 0) {
-  Fail "No dragitem*.dds/.tga/.bmp/.png in $EqDir — is that the EQ install root (the folder with eqgame.exe)?"
+  Fail ("No dragitem*.dds/.tga/.bmp/.png in " + $EqDir + " - is that the EQ install root (the folder with eqgame.exe)?")
 }
-Write-Host "found $($sheets.Count) icon sheet(s) in $EqDir"
-Write-Host ("  formats: " + (($sheets | Group-Object Extension | ForEach-Object { "$($_.Count)x$($_.Name)" }) -join ', '))
+Write-Host ("found " + $sheets.Count + " icon sheet(s) in " + $EqDir)
+$fmts = ($sheets | Group-Object Extension | ForEach-Object { [string]$_.Count + "x" + $_.Name }) -join ', '
+Write-Host ("  formats: " + $fmts)
 
 $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("eqicons-" + [Guid]::NewGuid().ToString('N').Substring(0, 8))
 New-Item -ItemType Directory -Path $tmp -Force | Out-Null
 New-Item -ItemType Directory -Path $OutDir -Force | Out-Null
 
+$cropArg = [string]$Cell + "x" + [string]$Cell
+$geomArg = [string]$Cell + "x" + [string]$Cell + "+0+0"
+$tileArg = [string]$PerRow + "x"
+
 try {
-  # Explode each sheet into cells named by their ICON ID, so packing is a plain
-  # ordered walk with no per-sheet bookkeeping.
+  # Explode each sheet into cells named by their ICON ID, zero-padded, so the
+  # packing step is a plain lexicographic glob - see the montage note below.
   $count = 0
   foreach ($f in $sheets) {
     if ($f.BaseName -notmatch '(\d+)$') { continue }
@@ -75,67 +87,83 @@ try {
     if ($num -lt 1) { continue }
 
     $stage = Join-Path $tmp "stage"
+    if (Test-Path -LiteralPath $stage) { Remove-Item -Recurse -Force $stage }
     New-Item -ItemType Directory -Path $stage -Force | Out-Null
-    & magick $f.FullName -crop "${Cell}x${Cell}" +repage (Join-Path $stage "c_%d.png") 2>$null
+
+    $pattern = Join-Path $stage "c_%d.png"
+    & magick $f.FullName -crop $cropArg +repage $pattern 2>$null
     if ($LASTEXITCODE -ne 0) {
-      Write-Host "  ! could not read $($f.Name) — skipping" -ForegroundColor Yellow
-      Remove-Item -Recurse -Force $stage -ErrorAction SilentlyContinue
+      Write-Host ("  ! could not read " + $f.Name + " - skipping") -ForegroundColor Yellow
       continue
     }
-    foreach ($c in Get-ChildItem -LiteralPath $stage -Filter 'c_*.png') {
+
+    foreach ($c in (Get-ChildItem -LiteralPath $stage -Filter 'c_*.png')) {
       if ($c.BaseName -notmatch 'c_(\d+)$') { continue }
       $cellIdx = [int]$Matches[1]
       $icon = $FirstIcon + (($num - 1) * 36) + $cellIdx
-      Move-Item -LiteralPath $c.FullName -Destination (Join-Path $tmp ("icon_{0:D5}.png" -f $icon)) -Force
-      $count++
+      $dest = Join-Path $tmp ("icon_{0:D5}.png" -f $icon)
+      Move-Item -LiteralPath $c.FullName -Destination $dest -Force
+      $count = $count + 1
     }
     Remove-Item -Recurse -Force $stage -ErrorAction SilentlyContinue
   }
 
-  Write-Host "extracted $count icons"
-  if ($count -eq 0) { Fail "nothing extracted — sheets unreadable, or not the EQ install root" }
+  Write-Host ("extracted " + $count + " icons")
+  if ($count -eq 0) { Fail "nothing extracted - sheets unreadable, or not the EQ install root" }
 
-  $icons = Get-ChildItem -LiteralPath $tmp -Filter 'icon_*.png'
-  $last = ($icons | ForEach-Object { [int]($_.BaseName -replace 'icon_', '') } | Measure-Object -Maximum).Maximum
+  $nums = Get-ChildItem -LiteralPath $tmp -Filter 'icon_*.png' | ForEach-Object {
+    [int]($_.BaseName -replace 'icon_', '')
+  }
+  $last = ($nums | Measure-Object -Maximum).Maximum
 
-  # ⚠ Pad gaps. A missing icon MUST still occupy its slot, or every icon after
+  # (!) Pad gaps. A missing icon MUST still occupy its slot, or every icon after
   # it shifts by one and the atlas silently shows the WRONG art for every
-  # subsequent item — which reads as "bad picture", not "broken build", and is
+  # subsequent item - which reads as "bad picture", not "broken build", and is
   # brutal to notice after the fact.
   $blank = Join-Path $tmp "blank.png"
-  & magick -size "${Cell}x${Cell}" xc:none $blank
+  & magick -size $cropArg 'xc:none' $blank
+  if ($LASTEXITCODE -ne 0) { Fail "could not create the blank padding cell" }
+
   $padded = 0
   for ($i = $FirstIcon; $i -le $last; $i++) {
     $p = Join-Path $tmp ("icon_{0:D5}.png" -f $i)
-    if (-not (Test-Path -LiteralPath $p)) { Copy-Item $blank $p; $padded++ }
+    if (-not (Test-Path -LiteralPath $p)) {
+      Copy-Item -LiteralPath $blank -Destination $p
+      $padded = $padded + 1
+    }
   }
-  if ($padded -gt 0) { Write-Host "padded $padded empty slot(s) to keep positions exact" }
+  if ($padded -gt 0) { Write-Host ("padded " + $padded + " empty slot(s) to keep positions exact") }
+  Remove-Item -LiteralPath $blank -Force
 
-  # Explicit ordered list rather than a glob — montage must lay these out in
-  # icon order, and shell glob ordering is not something to trust here.
+  # Ordering comes from the zero-padded names: icon_00500 .. icon_02000 sorts
+  # lexicographically the same as numerically, so a plain glob is correct.
+  # Deliberately NOT ImageMagick's @listfile indirection - IM7 blocks indirect
+  # file reads by default, so that path fails on a stock install.
   $total = $last - $FirstIcon + 1
-  $listFile = Join-Path $tmp "order.txt"
-  ($FirstIcon..$last | ForEach-Object { '"' + (Join-Path $tmp ("icon_{0:D5}.png" -f $_)) + '"' }) |
-    Set-Content -LiteralPath $listFile -Encoding ASCII
-
+  $glob = Join-Path $tmp "icon_*.png"
   $outPng = Join-Path $OutDir "items.png"
-  & magick montage "@$listFile" -tile "${PerRow}x" -geometry "${Cell}x${Cell}+0+0" -background none $outPng
+  Write-Host ("packing " + $total + " slots ...")
+  & magick montage $glob -tile $tileArg -geometry $geomArg -background none $outPng
   if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $outPng)) { Fail "montage failed" }
 
   $rows = [Math]::Ceiling($total / $PerRow)
   $meta = [ordered]@{
-    cell = $Cell; perRow = $PerRow; firstIcon = $FirstIcon; lastIcon = $last; rows = $rows
-    note = "Deterministic layout: col=(icon-firstIcon)%perRow, row=floor((icon-firstIcon)/perRow). Regenerate with scripts/pack-item-icons.ps1."
+    cell      = $Cell
+    perRow    = $PerRow
+    firstIcon = $FirstIcon
+    lastIcon  = $last
+    rows      = $rows
+    note      = "Deterministic layout: col=(icon-firstIcon)%perRow, row=floor((icon-firstIcon)/perRow). Regenerate with scripts/pack-item-icons.ps1."
   }
   $meta | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $OutDir "items.meta.json") -Encoding UTF8
 
-  $size = (Get-Item -LiteralPath $outPng).Length
+  $sizeKb = [Math]::Round((Get-Item -LiteralPath $outPng).Length / 1KB)
   Write-Host ""
-  Write-Host "wrote $outPng" -ForegroundColor Green
-  Write-Host ("  $total slots · ${PerRow}x$rows cells · {0:N0} KB" -f ($size / 1KB))
-  Write-Host "  icons $FirstIcon..$last"
+  Write-Host ("wrote " + $outPng) -ForegroundColor Green
+  Write-Host ("  " + $total + " slots, " + $PerRow + "x" + $rows + " cells, " + $sizeKb + " KB")
+  Write-Host ("  icons " + $FirstIcon + ".." + $last)
   Write-Host ""
-  Write-Host "Next: git add $OutDir && git commit && push — then the renderer needs no manifest."
+  Write-Host "Next: commit web/public/icons/ and the renderer needs no manifest."
 }
 finally {
   Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
