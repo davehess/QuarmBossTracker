@@ -109,10 +109,30 @@ describe('the lifecycle table covers every overlay', () => {
     // toggleHideAllOverlays snapshots _HIDEALL_FLAGS and flips them back. A
     // flag it can restore with no lifecycle entry is an overlay the hotkey
     // turns "on" that can never reappear.
+    //
+    // ONE deliberate exception, and it is the whole point of it existing:
+    // 'showTriggerOverlay' is a VISIBILITY-only flag with no window lifecycle.
+    // The trigger overlay's window is gated on 'enableTriggerTts', and listing
+    // THAT here is what used to make hide-all destroy the window and take
+    // speechSynthesis with it - callouts and Rehearse went silent with no error
+    // (2026-08-13). Hide-all must reach visibility, never existence.
+    const VISIBILITY_ONLY = new Set(['showTriggerOverlay']);
     const hideAll = sliceBlock(src, 'const _HIDEALL_FLAGS = [', '\n];');
     const flags = new Function('return ' + hideAll.slice(hideAll.indexOf('[')))();
     const known = new Set(harness()._OVERLAY_WINDOWS.map(e => e.flag));
-    for (const f of flags) expect(known.has(f), `${f} has no _OVERLAY_WINDOWS entry`).toBe(true);
+    for (const f of flags) {
+      if (VISIBILITY_ONLY.has(f)) continue;
+      expect(known.has(f), `${f} has no _OVERLAY_WINDOWS entry`).toBe(true);
+    }
+    // The exception must stay an exception: a visibility-only flag has to be
+    // honoured by an apply*Visibility(), or hide-all would do nothing at all.
+    for (const f of VISIBILITY_ONLY) {
+      expect(flags.includes(f), `${f} missing from _HIDEALL_FLAGS`).toBe(true);
+      expect(src.includes(`cfg.${f}`), `${f} is never read`).toBe(true);
+    }
+    // And the window-lifecycle flag must NOT be in the hide-all list.
+    expect(flags.includes('enableTriggerTts'),
+      'enableTriggerTts back in _HIDEALL_FLAGS - hide-all would destroy the TTS window').toBe(false);
   });
 
   it('boot no longer creates overlays unconditionally', () => {
