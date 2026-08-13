@@ -1350,6 +1350,20 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
 - **Me card + officer Admin tab (#109)** — dashboard opens on 🐺 Me; officer
   tools + 📡 Reporters panel (#115, swap/include) + 🛑 kill switches (#118) under
   🛡 Admin. LKG crash-loop rollback + beta-channel hot-swap in `main.js` (#74).
+- **Dashboard sidebar + tab split (agent 3.5.72)** — the tab strip became a
+  left rail (`.shell` flex row: sticky `.nav` beside `.panes`; collapses back to
+  a wrapping strip under 700px), and the two overgrown tabs were carved up.
+  **📊 Stats** (`renderStats`) took the session-observation cards off Info —
+  mending, top abilities, spell casts, resists, rolls, inbound spell damage,
+  loadouts + pets. **🩺 Diagnostics** (`renderDiag`) took the "is it working"
+  cards off Triggers and Info — Zeal pipe, charm + pet-buff diagnostics, trigger
+  journal, boss mechanics, Zeal explorer, raw Zeal capture. Info keeps parser
+  facts, client versions, log archiving, tag-capture readiness, backups, GINA
+  scan and the crash card; Triggers keeps recent fires, replay and the three
+  trigger lists. Tour gained a stop for each. Nothing moved between render
+  fns except the markup itself — every card's own filler is unchanged.
+  Tests: `test/dashboard-tabs.test.js` (nav ↔ pane ↔ `_sections` ↔ placeholder
+  ownership, plus filler-runs-after-emitter ordering).
 - **"Set up EQ for me" on Settings** — `settings.html` mirrors the dashboard's
   `/api/eq-setup` writer (see the Setup & onboarding entry above).
 - **Overlay fixes** — trigger-overlay auto-grow (#107), melody stale-card + setup

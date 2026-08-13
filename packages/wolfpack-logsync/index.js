@@ -12038,7 +12038,28 @@ tr:hover td { background:#1f242c }
 .name { color:var(--orange) }
 .dim { color:var(--dim) }
 .dot { color:var(--green) }
-.nav { display:flex; gap:6px; margin:12px 0; flex-wrap:wrap; align-items:center; }
+/* Sidebar navigation (Hitya 2026-08-13: "having to scroll in our dashboard is
+   somewhat annoying to navigate"). The row was FULL - 8 tabs plus Tour and
+   Panels - so every new destination had to wrap or displace something, which is
+   why features kept getting stacked INSIDE existing tabs instead of getting
+   their own. A rail has room to grow and shows every destination at once.
+   The markup is unchanged: same .nav, same data-tab buttons, so the switcher,
+   the Panels popover and the tour all keep working. */
+.shell { display:flex; align-items:flex-start; gap:14px; }
+.shell > .nav { flex:0 0 168px; position:sticky; top:8px; }
+.panes { flex:1 1 auto; min-width:0; }   /* min-width:0 or wide tables blow the flex item out */
+.nav { display:flex; flex-direction:column; gap:4px; margin:12px 0; align-items:stretch; }
+.nav button { text-align:left; }
+.nav .wp-gear { margin-left:0 !important; }   /* the row layout pushed Tour right with margin-left:auto */
+/* The dashboard is also opened in a plain browser at localhost:7777, and Mimic
+   windows get resized small. Below this the rail would eat the content, so fall
+   back to the original wrapping row. */
+@media (max-width: 700px) {
+  .shell { display:block; }
+  .shell > .nav { position:static; }
+  .nav { flex-direction:row; flex-wrap:wrap; align-items:center; }
+  .nav button { text-align:center; }
+}
 .nav button { background:#21262d; color:var(--text); border:1px solid var(--border); padding:5px 12px; border-radius:6px; cursor:pointer; font-family:inherit; font-size:12px; }
 .nav button:hover { background:#30363d }
 .nav button.active { background:#1f6feb; border-color:#1f6feb; color:#fff }
@@ -12193,13 +12214,22 @@ body.wp-overlay-mode .wp-overlay-target table th:nth-child(2) { text-align:right
     <button id="wpReload" class="wp-gear" title="Reload the dashboard — reconnect to the parser engine (use this if panels are blank after an update)" onclick="if(window.mimic&&window.mimic.openDashboard){window.mimic.openDashboard()}else{location.reload()}">🔄 Reload</button>
   </span>
 </div>
+<div class="shell">
 <div class="nav">
   <button class="active" data-tab="dash">Dashboard</button>
   <button data-tab="overlays">🪟 Overlays</button>
   <button data-tab="raid">⚔ Buffs / Raid</button>
   <button data-tab="fights">⚔️ Fights</button>
-  <button data-tab="info">Info</button>
+  <!-- 📊 Stats + 🩺 Diagnostics were carved OUT of Info and Triggers (Hitya
+       2026-08-13 — "having to scroll in our dashboard is somewhat annoying to
+       navigate"). Info had grown to 16 cards and Triggers to 12 by mixing three
+       unrelated jobs: what your log SAW (session stats), whether the machinery
+       WORKS (diagnostics), and the thing the tab is actually named for. The
+       sidebar rail is what made room for more destinations. -->
+  <button data-tab="stats">📊 Stats</button>
   <button data-tab="triggers">⚡ Triggers</button>
+  <button data-tab="diag">🩺 Diagnostics</button>
+  <button data-tab="info">Info</button>
   <button data-tab="optin">Logsync</button>
   <!-- 🛡 Admin — officer-only. Hidden by default; renderAdmin flips it visible
        ONLY when s.mimicIdentity.is_officer (the bot's authenticated reply). The
@@ -12210,6 +12240,10 @@ body.wp-overlay-mode .wp-overlay-target table th:nth-child(2) { text-align:right
   <button id="wpGear" class="wp-gear" title="Customize panels — show or hide sections (per page)">⚙ Panels</button>
 </div>
 <div id="wpPanelMenu" class="wp-menu" style="display:none"></div>
+<!-- .panes holds everything the rail sits beside. The nav KEEPS its class and
+     its data-tab buttons, so the switcher, the Panels popover and the guided
+     tour all keep working untouched - this is a layout change, not a rewrite. -->
+<div class="panes">
 <div id="wpMailPanel" style="display:none;margin:8px 0;border:1px solid var(--border);border-radius:8px;padding:10px 12px;background:rgba(88,166,255,0.04)"></div>
 <div id="dash" class="section active"></div>
 <div id="overlays" class="section"></div>
@@ -12221,10 +12255,14 @@ body.wp-overlay-mode .wp-overlay-target table th:nth-child(2) { text-align:right
   <div id="tanks"></div>
   <div id="deeps"></div>
 </div>
+<div id="stats" class="section"></div>
 <div id="info" class="section"></div>
 <div id="triggers" class="section"></div>
+<div id="diag" class="section"></div>
 <div id="optin" class="section"></div>
 <div id="admin" class="section"></div>
+</div><!-- /.panes -->
+</div><!-- /.shell -->
 <script>
 function _isNewerVersion(a, b) {
   if (!a || !b) return false;
@@ -14391,7 +14429,20 @@ function renderReplayStatus(s) {
   h += '</div>';
   morphInto(el, h);
 }
-function renderTriggers(s) {
+// ── 🩺 Diagnostics tab ─────────────────────────────────────────────────────
+// "Is the machinery working?" — everything that answers that question, and
+// nothing that answers anything else. Carved out of Triggers (the pipe/charm/
+// pet/journal/mechanics cards) and Info (the Zeal explorer + raw capture) on
+// 2026-08-13; both tabs had grown past a screenful by absorbing diagnostics
+// that had nowhere else to live.
+//
+// This function owns #diag and emits ONLY placeholders + the one static card,
+// so its HTML is byte-stable between polls (setSectionHTML short-circuits) and
+// the volatile cards repaint individually — the same isolation the cards had
+// on their old tabs. It must run BEFORE renderZealCard / renderCharmDiag /
+// renderPetBuffDiag / renderTriggerJournal / renderMechanics / renderZealExplorer
+// in the section list so those placeholders exist same-tick.
+function renderDiag(s) {
   let h = '';
   h += '<div class="grid">';
 
@@ -14399,30 +14450,55 @@ function renderTriggers(s) {
   // connected pids, total events this session, and per-type counts with the
   // newest sample of each. Only rendered under Mimic (Parser.bat has no Zeal
   // bridge); hidden entirely until at least one event arrives so it's not
-  // dead space for non-Zeal users.
-  // Zeal pipe status card lives in its OWN #wpZealCard element, filled by
-  // renderZealCard() on each poll. Its event counters + live HP gauges change
-  // every poll, so keeping it inline would make this whole section's HTML
-  // differ every 2s — forcing a full innerHTML rewrite of the (large) guild-
-  // triggers table + a remount of the trigger editor every 2 seconds. That
-  // synchronous churn reset the editor form, flashed the page, and janked the
-  // window hard enough to trip Windows' Aero Shake while dragging. Isolating
-  // the volatile card means the HTML below stays byte-stable when triggers
-  // don't change, so setSectionHTML short-circuits and only the card repaints.
+  // dead space for non-Zeal users. Filled by renderZealCard() each poll — its
+  // counters and live HP gauges change every 2s, so it has to sit in its own
+  // element or the whole section's HTML differs every poll.
   h += '<div id="wpZealCard" class="card wide" style="display:none"></div>';
   // Charm-tracking diagnostic card — filled by renderCharmDiag(). Hidden
   // until there's data to show (no watched character casting charms, etc.).
   h += '<div id="wpCharmDiag" class="card wide" style="display:none"></div>';
   // Pet-buff diagnostic card (#119) — filled by renderPetBuffDiag(). Hidden
-  // until there is a pet or a recent buff cast to explain (byte-stable/empty
-  // otherwise, so idle polls don't repaint the Triggers section).
+  // until there is a pet or a recent buff cast to explain.
   h += '<div id="wpPetBuffDiag" class="card wide" style="display:none"></div>';
-  // Trigger checkpoint journal (#76) — filled by renderTriggerJournal(). Own
-  // wp* placeholder so its volatile rows don't force this section to repaint.
+  // Trigger checkpoint journal (#76) — filled by renderTriggerJournal().
   h += '<div id="wpTriggerJournal" class="card wide" style="display:none"></div>';
-  // Boss mechanics (#206) — filled by renderMechanics(). Own wp* placeholder
-  // for the same reason as the journal: its rows carry fmtAgo stamps.
+  // Boss mechanics (#206) — filled by renderMechanics(). Its rows carry fmtAgo
+  // stamps, so it needs its own placeholder like the journal.
   h += '<div id="wpMechanics" class="card wide" style="display:none"></div>';
+  // Zeal Pipe explorer — every data element the pipe carries, per character,
+  // each group expandable. Volatile (live gauges/labels), so it fills its own
+  // placeholder via renderZealExplorer.
+  h += '<div id="wpZealExplorer" class="card wide" style="display:none"></div>';
+
+  // 🩺 Raw Zeal capture — opt-in diagnostic. The control lives here, but the
+  // capture itself runs in Mimic (it owns the pipe); we drive it through the
+  // window.mimic config bridge. wpWireZealCapture wires the buttons after render.
+  var _underMimic = !!(window.mimic && window.mimic.getConfig);
+  h += '<div class="card wide"><h2>🩺 Raw Zeal Capture <span class="dim" style="font-size:11px;font-weight:normal">(diagnostic)</span></h2>';
+  if (_underMimic) {
+    h += '<div class="subtle" style="font-size:11px;margin-bottom:8px">Dumps every raw Zeal pipe object &mdash; full and untruncated &mdash; to <code>zeal-raw.ndjson</code>. Turn it on, reproduce, then open the file. Leave off for normal play; it is capped + rotated so it cannot fill the disk.</div>';
+    h += '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">';
+    h += '<button type="button" id="wpZealCapBtn" style="cursor:pointer;font-size:12px;padding:4px 12px;border-radius:4px;border:1px solid var(--border);background:#21262d;color:var(--text)">&hellip;</button>';
+    h += '<button type="button" id="wpZealCapOpen" style="cursor:pointer;font-size:12px;padding:4px 12px;border-radius:4px;border:1px solid var(--border);background:#21262d;color:var(--blue)">Open capture file&hellip;</button>';
+    h += '</div>';
+    h += '<div id="wpZealCapHint" class="dim" style="font-size:11px;margin-top:6px"></div>';
+  } else {
+    h += '<div class="dim" style="font-size:12px">Requires Mimic &mdash; open this dashboard from the desktop app to capture raw Zeal traffic.</div>';
+  }
+  h += '</div>';
+
+  h += '</div>';
+  if (!setSectionHTML('diag', h)) return;
+  wpWireZealCapture();
+}
+
+function renderTriggers(s) {
+  let h = '';
+  h += '<div class="grid">';
+
+  // (The Zeal pipe / charm / pet-buff / trigger-journal / boss-mechanics
+  // diagnostic cards moved to the 🩺 Diagnostics tab — see renderDiag. Their
+  // render fns are unchanged; only the placeholder location moved.)
 
   // ⚡ Recent fires (recent trigger matches) — its rows carry fmtAgo timestamps
   // that tick every poll, so it MUST live in its own wp* placeholder filled by
@@ -15764,45 +15840,19 @@ document.addEventListener('click', function (ev) {
   }
 }, true);
 
-function renderInfo(s) {
-  const sessionMin = Math.max(1, Math.round((Date.now() - s.startedAt) / 60000));
-  // totalMinutes now accumulates the live session incrementally (saveStatsSoon),
-  // so it IS the lifetime — don't add sessionMin again or the current session
-  // double-counts. Floor to sessionMin so a brand-new install isn't shown below
-  // the session that's already running.
-  const lifetimeMin = Math.max(s.lifetime?.totalMinutes||0, sessionMin);
+// ── 📊 Stats tab ───────────────────────────────────────────────────────────
+// "What did my log actually see this session?" — mending, abilities, casts,
+// resists, rolls, inbound spell damage, loadouts and pets. All of it used to
+// sit on Info, which had become three tabs wearing one coat: session
+// observations, machine diagnostics, and parser facts. This is the
+// observations half (Hitya 2026-08-13 — the dashboard-navigation pass).
+//
+// Every card here is byte-stable between polls by construction: absolute
+// timestamps only, no fmtAgo, no live gauges. That is why this section needs
+// no wp* placeholders at all — a poll that changes nothing rewrites nothing,
+// so open <details> rows survive (and each one carries wpKeep besides).
+function renderStats(s) {
   let h = '';
-  // Crash review (moved here from Triggers, Hitya 2026-08-13 — a crash is a
-  // machine/diagnostic concern, not a callout one). Reading dumps costs real
-  // work, so the list fills on demand via renderCrashReview()'s one-shot.
-  // The checkbox mirrors the tray's "Share crash reports with the guild" toggle
-  // — same cfg.crashReports flag, two places to reach it, so nobody has to know
-  // the tray menu exists.
-  h += '<div id="wpCrashReview" class="card wide"><b>\\ud83e\\ude7a Crash review</b>'
-    +  '<div class="dim" style="margin:6px 0">Had EverQuest close on you? This reads the crash '
-    +  'files Zeal left on this machine and tells you what actually broke \\u2014 including '
-    +  'whether Mimic or Zeal had anything to do with it. The crash dumps never leave your PC.</div>'
-    +  '<label style="display:flex;gap:6px;align-items:center;margin:8px 0;cursor:pointer">'
-    +    '<input type="checkbox" id="wpCrashShare" onchange="wpToggleCrashShare(this.checked)"'
-    +      (s.crashReportsEnabled ? ' checked' : '') + '>'
-    +    '<span>Automatically send crash reports to the guild</span>'
-    +  '</label>'
-    +  '<div class="dim" style="font-size:11px;margin-bottom:8px">Sends only what the crash says '
-    +  '\\u2014 never the dump itself. Same setting as the tray menu; changing it restarts the '
-    +  'parser engine.</div>'
-    +  '<button id="wpCrashBtn" onclick="wpRunCrashReview()">Review my crashes</button>'
-    +  '<div id="wpCrashOut"></div></div>';
-  // NOTE: Watched Logs (#wpWatchedLogs) moved to the Dashboard's ⚙ Engine card,
-  // and the officer DKP tick / loot capture cards (#wpDkpTick / #wpDkpLoot)
-  // moved to the 🛡 Admin tab (#109). Their render fns are unchanged — only the
-  // placeholder location moved — so they are NOT re-declared here.
-  // Zeal Pipe explorer — every data element the pipe carries, per character,
-  // each group expandable. Volatile (live gauges/labels), so it fills its own
-  // placeholder via renderZealExplorer to keep the rest of #info byte-stable.
-  h += '<div id="wpZealExplorer" class="card wide" style="display:none"></div>';
-  // 🛟 Settings backups — filled by renderBackupsCard (own placeholder so the
-  // restore controls survive #info repaints).
-  h += '<div id="wpBackupsCard" class="card wide" style="display:none"></div>';
   h += '<div class="grid">';
   // 🥋 Monk Mending — only if attempts > 0
   const m = s.sessionMends || {};
@@ -15816,131 +15866,6 @@ function renderInfo(s) {
          '<tr><td>Failed</td><td class="num" style="color:var(--red)">' + m.fail + ' <span class="dim">(' + failPct + '% of attempts)</span></td></tr>' +
          '</table></div>';
   }
-  h += '<div class="card"><h2>Parser Info</h2>';
-  h += '<div>Agent v' + esc(s.version) + '</div>';
-  h += '<div>Watching ' + (s.watchedLogs?.length||0) + ' log(s)</div>';
-  h += '<div>Uploads this session: ' + (s.uploadCount||0) + ' (' + (s.uploadErrors||0) + ' errors)</div>';
-  h += '<div>This session: ' + s.sessionEvents + ' events / ' + sessionMin + ' min</div>';
-  h += '<div>Top session: ' + (s.lifetime?.topSessionEvents||0) + ' ev / ' + (s.lifetime?.topSessionMinutes||0) + ' min</div>';
-  h += '<div>Lifetime: ' + ((s.lifetime?.totalEvents||0) + s.sessionEvents) + ' ev / ' + lifetimeMin + ' min</div>';
-  if (s.lifetime?.firstSeenAt) h += '<div class="dim">First run: ' + esc(s.lifetime.firstSeenAt) + '</div>';
-  h += '</div>';
-  // 🧩 Client versions — what each watched client actually has LOADED, harvested
-  // from the /zeal version output (agent 3.5.16). Deliberately distinct from the
-  // Zeal update notice, which reports what zealUpdater found ON DISK: the two
-  // disagree exactly when Zeal has been updated but EQ has not been restarted,
-  // and that is the one state where "you are up to date" is a lie.
-  //
-  // Byte-stable between polls on purpose — these values only change when someone
-  // runs the command, so no wp* placeholder is needed. Rendering a relative
-  // "2m ago" here instead of the fixed stamp would repaint #info every 2s and
-  // reset anything the user had open (dashboard rendering rules).
-  const _cv = s.clientVersions || [];
-  h += '<div class="card"><h2>🧩 Client versions</h2>';
-  if (!_cv.length) {
-    h += '<div class="dim">Nothing captured yet. Type <b>/zeal version</b> in game and it appears here — Zeal, eqw.dll and eqgame.dll builds, per character. We never send the command for you.</div>';
-  } else {
-    h += '<table>';
-    for (const c of _cv) {
-      h += '<tr><td colspan="2" style="padding-top:6px"><b>' + esc(c.character) + '</b></td></tr>';
-      if (c.zeal)   h += '<tr><td>Zeal</td><td class="num">' + esc(c.zeal) + (c.zeal_hash ? ' <span class="dim">(' + esc(c.zeal_hash) + ')</span>' : '') + '</td></tr>';
-      if (c.eqw)    h += '<tr><td>eqw.dll</td><td class="num">' + esc(c.eqw) + '</td></tr>';
-      if (c.eqgame) h += '<tr><td>eqgame.dll</td><td class="num">' + esc(c.eqgame) + '</td></tr>';
-      if (c.at)     h += '<tr><td class="dim">read</td><td class="dim num">' + esc(String(c.at).replace('T', ' ').slice(0, 19)) + '</td></tr>';
-    }
-    h += '</table>';
-  }
-  h += '</div>';
-  // 🏷 Zeal tag capture readiness (#194). Byte-stable: zeal.ini values change
-  // rarely and the fresh-tag count only moves while tags are actually flowing
-  // (an acceptable repaint — the Info tab is not a form surface mid-raid).
-  const _ztc = s.zealTagConfig || [];
-  // 🗂 Log archiving banner — the user-facing notice + kill switch for the
-  // auto-archive feature (Ashieron feedback). Plain language: nothing is
-  // deleted, and the impacted files are named with sizes.
-  const _lr = s.logRotate;
-  if (_lr) {
-    h += '<div class="card"><h2>🗂 Log archiving</h2>';
-    // One-time NEW-FEATURE announcement (Hitya: a Mimic banner, not a Discord
-    // post). Dismissed state persists in prefs so it appears once per install.
-    if (!_lr.noticeSeen) {
-      h += '<div style="border-left:3px solid var(--green);background:rgba(63,185,80,.08);padding:6px 8px;margin-bottom:8px;font-size:12px">'
-        + '<b>New:</b> Mimic now keeps your EverQuest log files from growing without limit. '
-        + 'Nothing is ever deleted &mdash; a large log is simply moved into a <code>LogArchive</code> folder and EQ starts a fresh one. '
-        + 'Your old logs stay on your disk and can still be used to fill in past raids. '
-        + '<button class="btn" style="margin-left:6px" onclick="wpLogRotateSeen()">Got it</button></div>';
-    }
-    if (_lr.enabled) {
-      h += '<div style="font-size:12px;margin-bottom:4px">Log archiving is <b style="color:var(--green)">ON</b>. '
-        + 'A log file bigger than <b>' + esc(String(_lr.thresholdMb)) + ' MB</b> is moved into a <code>LogArchive</code> folder next to your logs once it has been quiet for 15 minutes. '
-        + 'Nothing is deleted &mdash; EQ starts a fresh file, and the old one stays on your disk.</div>';
-      if (_lr.candidates && _lr.candidates.length) {
-        h += '<div style="font-size:11px;margin-bottom:4px"><b>Will be archived on the next quiet sweep:</b> '
-          + _lr.candidates.map(function (c) { return esc(c.file) + ' (' + esc(String(c.size_mb)) + ' MB)'; }).join(', ') + '</div>';
-      } else {
-        h += '<div class="dim" style="font-size:11px;margin-bottom:4px">No log files are over the cap right now.</div>';
-      }
-      if (_lr.recent && _lr.recent.length) {
-        h += '<div class="dim" style="font-size:11px;margin-bottom:4px">Recently archived: '
-          + _lr.recent.map(function (r) { return esc(r.file) + ' (' + esc(String(r.mb)) + ' MB)'; }).join(', ') + '</div>';
-      }
-      h += '<button class="btn" onclick="wpLogRotateToggle(1)">Turn log archiving off</button>';
-    } else {
-      h += '<div class="dim" style="font-size:12px;margin-bottom:4px">Log archiving is <b>off</b>. Big log files will keep growing.</div>';
-      h += '<button class="btn" onclick="wpLogRotateToggle(0)">Turn log archiving on</button>';
-    }
-    h += '</div>';
-  }
-  h += '<div class="card"><h2>🏷 Zeal tag capture</h2>';
-  if (s.zealTagRateLimit) {
-    h += '<div style="margin-bottom:4px;color:#f2b632;font-size:11px">⚠️ The server rate limited your chat around <code>'
-      + esc(new Date(s.zealTagRateLimit.at).toLocaleTimeString())
-      + '</code> (' + esc(String(s.zealTagRateLimit.seconds)) + 's lockout). Tags sent in that window did <b>not</b> broadcast — '
-      + 'Zeal still draws the arrow, so they look tagged to you and to nobody else. Re-tag them, and spread tagging across raiders (the limit is per character).</div>';
-  }
-  if (s.zealTagsDropped > 0) {
-    h += '<div style="margin-bottom:4px;color:#f2b632;font-size:11px">⚠️ <b>' + esc(String(s.zealTagsDropped))
-      + '</b> tag(s) exceeded the upload cap and were not sent. Named mobs are kept first, then the newest — but this many live tags means the raid is marking faster than the cap allows.</div>';
-  }
-  if (s.zealTagPretty && !_ztc.some(function (z) { return z.prettyprint; })) {
-    h += '<div style="margin-bottom:4px;color:#f2b632;font-size:11px">⚠️ Saw a tag arrive already rewritten by <code>/tag prettyprint</code> (<code>' + esc(s.zealTagPretty.sample || '') + '</code>) — that strips the spawn id, so same-name mobs cannot be told apart. Run <code>/tag prettyprint off</code>.</div>';
-  }
-  if (!_ztc.length) {
-    h += '<div class="dim">No <b>zeal.ini</b> found next to the watched logs yet — it appears once Zeal runs in that EQ folder.</div>';
-  } else {
-    for (const zc of _ztc) {
-      const warns = zc.warnings || [];
-      h += '<div style="margin-bottom:4px">' + (warns.length ? '⚠️' : '✅') + ' <b>' + esc(zc.channel || 'no channel persisted') + '</b>'
-        + ' <span class="dim">' + esc(zc.dir) + '</span></div>';
-      for (const w of warns) {
-        h += '<div style="margin:0 0 4px 18px;color:#f2b632;font-size:11px">' + esc(w) + '</div>';
-      }
-    }
-    h += '<div class="dim" style="font-size:11px">The channel persists in zeal.ini once joined — no per-raid setup. Tags heard in the last 2 min: <b>' + (s.zealTagCount || 0) + '</b>. Tank usage: target the add → <code>/tag chat &lt;Name&gt;-Tanking</code> (shapes: <code>^G^</code> arrows, <code>^P^</code> paw, <code>^S^</code> stop). Any of <code>/tag chat</code>, <code>/tag gsay</code> (group) or <code>/tag rsay</code> (raid) is captured.</div>';
-    // The three causes the ini can NOT see. All of them show the nameplate
-    // arrow in game and log nothing, which is why "the arrow is right there"
-    // is not evidence the tag was broadcast.
-    if (!(s.zealTagCount || 0)) {
-      h += '<div class="dim" style="font-size:11px;margin-top:4px">Arrow in game but nothing here? The arrow only proves Zeal applied the tag locally. Three ways it never reaches the log: <code>/tag local</code> (never broadcasts at all), <code>/tag chat</code> with the channel not actually joined (Zeal prints “You must join a channel”), and <code>/tag suppress on</code> — that one hides the broadcast from your chat window AND your log while still drawing the arrow.</div>';
-    }
-  }
-  h += '</div>';
-  // 🩺 Raw Zeal capture — opt-in diagnostic. The control lives here, but the
-  // capture itself runs in Mimic (it owns the pipe); we drive it through the
-  // window.mimic config bridge. wpWireZealCapture wires the buttons after render.
-  var _underMimic = !!(window.mimic && window.mimic.getConfig);
-  h += '<div class="card"><h2>🩺 Raw Zeal Capture <span class="dim" style="font-size:11px;font-weight:normal">(diagnostic)</span></h2>';
-  if (_underMimic) {
-    h += '<div class="subtle" style="font-size:11px;margin-bottom:8px">Dumps every raw Zeal pipe object &mdash; full and untruncated &mdash; to <code>zeal-raw.ndjson</code>. Turn it on, reproduce, then open the file. Leave off for normal play; it is capped + rotated so it cannot fill the disk.</div>';
-    h += '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">';
-    h += '<button type="button" id="wpZealCapBtn" style="cursor:pointer;font-size:12px;padding:4px 12px;border-radius:4px;border:1px solid var(--border);background:#21262d;color:var(--text)">&hellip;</button>';
-    h += '<button type="button" id="wpZealCapOpen" style="cursor:pointer;font-size:12px;padding:4px 12px;border-radius:4px;border:1px solid var(--border);background:#21262d;color:var(--blue)">Open capture file&hellip;</button>';
-    h += '</div>';
-    h += '<div id="wpZealCapHint" class="dim" style="font-size:11px;margin-top:6px"></div>';
-  } else {
-    h += '<div class="dim" style="font-size:12px">Requires Mimic &mdash; open this dashboard from the desktop app to capture raw Zeal traffic.</div>';
-  }
-  h += '</div>';
   // Top abilities
   const abs = Object.entries(s.abilityStats||{}).sort((a,b)=>b[1].total-a[1].total).slice(0,20);
   h += '<div class="card wide"><h2>Top Abilities (uploader)</h2>';
@@ -16127,6 +16052,160 @@ function renderInfo(s) {
   h += '</div>';
   // Weapon Loadouts + Known Pets live here now (moved off the combat tabs).
   h += '<div class="grid">' + buildLoadoutsHtml(s) + buildPetsHtml(s) + '</div>';
+  setSectionHTML('stats', h);
+  wireLoadoutControls();
+}
+
+function renderInfo(s) {
+  const sessionMin = Math.max(1, Math.round((Date.now() - s.startedAt) / 60000));
+  // totalMinutes now accumulates the live session incrementally (saveStatsSoon),
+  // so it IS the lifetime — don't add sessionMin again or the current session
+  // double-counts. Floor to sessionMin so a brand-new install isn't shown below
+  // the session that's already running.
+  const lifetimeMin = Math.max(s.lifetime?.totalMinutes||0, sessionMin);
+  let h = '';
+  // Crash review (moved here from Triggers, Hitya 2026-08-13 — a crash is a
+  // machine/diagnostic concern, not a callout one). Reading dumps costs real
+  // work, so the list fills on demand via renderCrashReview()'s one-shot.
+  // The checkbox mirrors the tray's "Share crash reports with the guild" toggle
+  // — same cfg.crashReports flag, two places to reach it, so nobody has to know
+  // the tray menu exists.
+  h += '<div id="wpCrashReview" class="card wide"><b>\\ud83e\\ude7a Crash review</b>'
+    +  '<div class="dim" style="margin:6px 0">Had EverQuest close on you? This reads the crash '
+    +  'files Zeal left on this machine and tells you what actually broke \\u2014 including '
+    +  'whether Mimic or Zeal had anything to do with it. The crash dumps never leave your PC.</div>'
+    +  '<label style="display:flex;gap:6px;align-items:center;margin:8px 0;cursor:pointer">'
+    +    '<input type="checkbox" id="wpCrashShare" onchange="wpToggleCrashShare(this.checked)"'
+    +      (s.crashReportsEnabled ? ' checked' : '') + '>'
+    +    '<span>Automatically send crash reports to the guild</span>'
+    +  '</label>'
+    +  '<div class="dim" style="font-size:11px;margin-bottom:8px">Sends only what the crash says '
+    +  '\\u2014 never the dump itself. Same setting as the tray menu; changing it restarts the '
+    +  'parser engine.</div>'
+    +  '<button id="wpCrashBtn" onclick="wpRunCrashReview()">Review my crashes</button>'
+    +  '<div id="wpCrashOut"></div></div>';
+  // NOTE: Watched Logs (#wpWatchedLogs) moved to the Dashboard's ⚙ Engine card,
+  // and the officer DKP tick / loot capture cards (#wpDkpTick / #wpDkpLoot)
+  // moved to the 🛡 Admin tab (#109). Their render fns are unchanged — only the
+  // placeholder location moved — so they are NOT re-declared here.
+  // (The Zeal Pipe explorer + Raw Zeal Capture moved to the 🩺 Diagnostics tab
+  // — see renderDiag. Crash review and Client versions deliberately STAYED
+  // here: Hitya put the crash card on Info on purpose, and "what build is my
+  // client running" is a fact about the install, not a health check.)
+  // 🛟 Settings backups — filled by renderBackupsCard (own placeholder so the
+  // restore controls survive #info repaints).
+  h += '<div id="wpBackupsCard" class="card wide" style="display:none"></div>';
+  h += '<div class="grid">';
+  h += '<div class="card"><h2>Parser Info</h2>';
+  h += '<div>Agent v' + esc(s.version) + '</div>';
+  h += '<div>Watching ' + (s.watchedLogs?.length||0) + ' log(s)</div>';
+  h += '<div>Uploads this session: ' + (s.uploadCount||0) + ' (' + (s.uploadErrors||0) + ' errors)</div>';
+  h += '<div>This session: ' + s.sessionEvents + ' events / ' + sessionMin + ' min</div>';
+  h += '<div>Top session: ' + (s.lifetime?.topSessionEvents||0) + ' ev / ' + (s.lifetime?.topSessionMinutes||0) + ' min</div>';
+  h += '<div>Lifetime: ' + ((s.lifetime?.totalEvents||0) + s.sessionEvents) + ' ev / ' + lifetimeMin + ' min</div>';
+  if (s.lifetime?.firstSeenAt) h += '<div class="dim">First run: ' + esc(s.lifetime.firstSeenAt) + '</div>';
+  h += '</div>';
+  // 🧩 Client versions — what each watched client actually has LOADED, harvested
+  // from the /zeal version output (agent 3.5.16). Deliberately distinct from the
+  // Zeal update notice, which reports what zealUpdater found ON DISK: the two
+  // disagree exactly when Zeal has been updated but EQ has not been restarted,
+  // and that is the one state where "you are up to date" is a lie.
+  //
+  // Byte-stable between polls on purpose — these values only change when someone
+  // runs the command, so no wp* placeholder is needed. Rendering a relative
+  // "2m ago" here instead of the fixed stamp would repaint #info every 2s and
+  // reset anything the user had open (dashboard rendering rules).
+  const _cv = s.clientVersions || [];
+  h += '<div class="card"><h2>🧩 Client versions</h2>';
+  if (!_cv.length) {
+    h += '<div class="dim">Nothing captured yet. Type <b>/zeal version</b> in game and it appears here — Zeal, eqw.dll and eqgame.dll builds, per character. We never send the command for you.</div>';
+  } else {
+    h += '<table>';
+    for (const c of _cv) {
+      h += '<tr><td colspan="2" style="padding-top:6px"><b>' + esc(c.character) + '</b></td></tr>';
+      if (c.zeal)   h += '<tr><td>Zeal</td><td class="num">' + esc(c.zeal) + (c.zeal_hash ? ' <span class="dim">(' + esc(c.zeal_hash) + ')</span>' : '') + '</td></tr>';
+      if (c.eqw)    h += '<tr><td>eqw.dll</td><td class="num">' + esc(c.eqw) + '</td></tr>';
+      if (c.eqgame) h += '<tr><td>eqgame.dll</td><td class="num">' + esc(c.eqgame) + '</td></tr>';
+      if (c.at)     h += '<tr><td class="dim">read</td><td class="dim num">' + esc(String(c.at).replace('T', ' ').slice(0, 19)) + '</td></tr>';
+    }
+    h += '</table>';
+  }
+  h += '</div>';
+  // 🏷 Zeal tag capture readiness (#194). Byte-stable: zeal.ini values change
+  // rarely and the fresh-tag count only moves while tags are actually flowing
+  // (an acceptable repaint — the Info tab is not a form surface mid-raid).
+  const _ztc = s.zealTagConfig || [];
+  // 🗂 Log archiving banner — the user-facing notice + kill switch for the
+  // auto-archive feature (Ashieron feedback). Plain language: nothing is
+  // deleted, and the impacted files are named with sizes.
+  const _lr = s.logRotate;
+  if (_lr) {
+    h += '<div class="card"><h2>🗂 Log archiving</h2>';
+    // One-time NEW-FEATURE announcement (Hitya: a Mimic banner, not a Discord
+    // post). Dismissed state persists in prefs so it appears once per install.
+    if (!_lr.noticeSeen) {
+      h += '<div style="border-left:3px solid var(--green);background:rgba(63,185,80,.08);padding:6px 8px;margin-bottom:8px;font-size:12px">'
+        + '<b>New:</b> Mimic now keeps your EverQuest log files from growing without limit. '
+        + 'Nothing is ever deleted &mdash; a large log is simply moved into a <code>LogArchive</code> folder and EQ starts a fresh one. '
+        + 'Your old logs stay on your disk and can still be used to fill in past raids. '
+        + '<button class="btn" style="margin-left:6px" onclick="wpLogRotateSeen()">Got it</button></div>';
+    }
+    if (_lr.enabled) {
+      h += '<div style="font-size:12px;margin-bottom:4px">Log archiving is <b style="color:var(--green)">ON</b>. '
+        + 'A log file bigger than <b>' + esc(String(_lr.thresholdMb)) + ' MB</b> is moved into a <code>LogArchive</code> folder next to your logs once it has been quiet for 15 minutes. '
+        + 'Nothing is deleted &mdash; EQ starts a fresh file, and the old one stays on your disk.</div>';
+      if (_lr.candidates && _lr.candidates.length) {
+        h += '<div style="font-size:11px;margin-bottom:4px"><b>Will be archived on the next quiet sweep:</b> '
+          + _lr.candidates.map(function (c) { return esc(c.file) + ' (' + esc(String(c.size_mb)) + ' MB)'; }).join(', ') + '</div>';
+      } else {
+        h += '<div class="dim" style="font-size:11px;margin-bottom:4px">No log files are over the cap right now.</div>';
+      }
+      if (_lr.recent && _lr.recent.length) {
+        h += '<div class="dim" style="font-size:11px;margin-bottom:4px">Recently archived: '
+          + _lr.recent.map(function (r) { return esc(r.file) + ' (' + esc(String(r.mb)) + ' MB)'; }).join(', ') + '</div>';
+      }
+      h += '<button class="btn" onclick="wpLogRotateToggle(1)">Turn log archiving off</button>';
+    } else {
+      h += '<div class="dim" style="font-size:12px;margin-bottom:4px">Log archiving is <b>off</b>. Big log files will keep growing.</div>';
+      h += '<button class="btn" onclick="wpLogRotateToggle(0)">Turn log archiving on</button>';
+    }
+    h += '</div>';
+  }
+  h += '<div class="card"><h2>🏷 Zeal tag capture</h2>';
+  if (s.zealTagRateLimit) {
+    h += '<div style="margin-bottom:4px;color:#f2b632;font-size:11px">⚠️ The server rate limited your chat around <code>'
+      + esc(new Date(s.zealTagRateLimit.at).toLocaleTimeString())
+      + '</code> (' + esc(String(s.zealTagRateLimit.seconds)) + 's lockout). Tags sent in that window did <b>not</b> broadcast — '
+      + 'Zeal still draws the arrow, so they look tagged to you and to nobody else. Re-tag them, and spread tagging across raiders (the limit is per character).</div>';
+  }
+  if (s.zealTagsDropped > 0) {
+    h += '<div style="margin-bottom:4px;color:#f2b632;font-size:11px">⚠️ <b>' + esc(String(s.zealTagsDropped))
+      + '</b> tag(s) exceeded the upload cap and were not sent. Named mobs are kept first, then the newest — but this many live tags means the raid is marking faster than the cap allows.</div>';
+  }
+  if (s.zealTagPretty && !_ztc.some(function (z) { return z.prettyprint; })) {
+    h += '<div style="margin-bottom:4px;color:#f2b632;font-size:11px">⚠️ Saw a tag arrive already rewritten by <code>/tag prettyprint</code> (<code>' + esc(s.zealTagPretty.sample || '') + '</code>) — that strips the spawn id, so same-name mobs cannot be told apart. Run <code>/tag prettyprint off</code>.</div>';
+  }
+  if (!_ztc.length) {
+    h += '<div class="dim">No <b>zeal.ini</b> found next to the watched logs yet — it appears once Zeal runs in that EQ folder.</div>';
+  } else {
+    for (const zc of _ztc) {
+      const warns = zc.warnings || [];
+      h += '<div style="margin-bottom:4px">' + (warns.length ? '⚠️' : '✅') + ' <b>' + esc(zc.channel || 'no channel persisted') + '</b>'
+        + ' <span class="dim">' + esc(zc.dir) + '</span></div>';
+      for (const w of warns) {
+        h += '<div style="margin:0 0 4px 18px;color:#f2b632;font-size:11px">' + esc(w) + '</div>';
+      }
+    }
+    h += '<div class="dim" style="font-size:11px">The channel persists in zeal.ini once joined — no per-raid setup. Tags heard in the last 2 min: <b>' + (s.zealTagCount || 0) + '</b>. Tank usage: target the add → <code>/tag chat &lt;Name&gt;-Tanking</code> (shapes: <code>^G^</code> arrows, <code>^P^</code> paw, <code>^S^</code> stop). Any of <code>/tag chat</code>, <code>/tag gsay</code> (group) or <code>/tag rsay</code> (raid) is captured.</div>';
+    // The three causes the ini can NOT see. All of them show the nameplate
+    // arrow in game and log nothing, which is why "the arrow is right there"
+    // is not evidence the tag was broadcast.
+    if (!(s.zealTagCount || 0)) {
+      h += '<div class="dim" style="font-size:11px;margin-top:4px">Arrow in game but nothing here? The arrow only proves Zeal applied the tag locally. Three ways it never reaches the log: <code>/tag local</code> (never broadcasts at all), <code>/tag chat</code> with the channel not actually joined (Zeal prints “You must join a channel”), and <code>/tag suppress on</code> — that one hides the broadcast from your chat window AND your log while still drawing the arrow.</div>';
+    }
+  }
+  h += '</div>';
+  h += '</div>';
   // GINA/EQLP scan placeholder card — populated by wpScanLocalTriggers() on
   // dashboard load via /api/triggers/local-scan. (Hitya 2026-06-26 — v1.1.1
   // foundation; parse + import land in 1.1.2+.) Empty placeholder so the
@@ -16138,8 +16217,8 @@ function renderInfo(s) {
   setSectionHTML('info', h);
   // Fire the scan once per dashboard render; result populates #wpTriggerScanCard.
   try { wpScanLocalTriggers(); } catch (e) { void e; }
-  wireLoadoutControls();
-  wpWireZealCapture();
+  // (wireLoadoutControls moved with the loadouts card to renderStats;
+  //  wpWireZealCapture moved with the raw-capture card to renderDiag.)
 }
 
 // Wire the Info-tab raw-Zeal-capture buttons to the Mimic config bridge. The
@@ -16931,13 +17010,23 @@ async function refresh() {
                      ['healingcard', renderHealingCard], ['watchedlogs', renderWatchedLogsCard],
                      ['recenttells', renderRecentTellsCard], ['topdamage', renderTopDamageCard],
                      ['tanks', renderTanks], ['deeps', renderDeeps],
-                     ['triggers', renderTriggers], ['zealcard', renderZealCard],
+                     ['triggers', renderTriggers],
+                     // 🩺 Diagnostics owns the pipe/charm/pet/journal/mechanics/
+                     // explorer placeholders — it MUST run before their fillers
+                     // below, same rule as renderDash → renderMeCard.
+                     ['diag', renderDiag],
+                     ['zealcard', renderZealCard],
                      ['recentfires', renderRecentFires], ['replaystatus', renderReplayStatus],
-                     ['crashreview', renderCrashReview], ['charmdiag', renderCharmDiag], ['petbuffdiag', renderPetBuffDiag], ['triggerjournal', renderTriggerJournal],
+                     ['charmdiag', renderCharmDiag], ['petbuffdiag', renderPetBuffDiag], ['triggerjournal', renderTriggerJournal],
                      ['mechanics', renderMechanics],
-                     ['overlays', renderOverlays], ['info', renderInfo],
-                     // After info: fill the placeholders renderInfo just
-                     // (re)painted, so they show same-tick.
+                     ['overlays', renderOverlays], ['stats', renderStats], ['info', renderInfo],
+                     // After info: fill the placeholders renderInfo/renderDiag
+                     // just (re)painted, so they show same-tick. renderCrashReview
+                     // sat ABOVE renderInfo from the day the crash card moved onto
+                     // Info — it emits #wpCrashReview, so the filler was running a
+                     // poll early and the card was blank for the first 2s of every
+                     // cold load. Caught by test/dashboard-tabs.test.js.
+                     ['crashreview', renderCrashReview],
                      ['zealexplorer', renderZealExplorer],
                      // 🛡 Admin (officer-only) builds #wpDkpTick / #wpDkpLoot — must run
                      // BEFORE their fillers below so the placeholders exist same-tick.
@@ -17042,8 +17131,12 @@ var WP_TOUR_STEPS = [
     body: 'The raid\\'s live buff coverage plus your personal queue - who needs your buff next, sorted so the tank comes first. When someone cures you mid-raid, this is the machinery that noticed.' },
   { tab: 'fights', sel: '#fights', title: '⚔️ Your fights',
     body: 'Every pull your parser recorded - damage, healing, threat. These are the same numbers that become the guild parse cards in Discord, with your name on the rows you earned.' },
+  { tab: 'stats', sel: '#stats', title: '📊 What your log saw',
+    body: 'Everything your own log noticed this session that is not a fight - mends, abilities, casts, what you resisted, what landed on you, and every /random roll in the zone. Nobody else is looking at this page; it is yours.' },
   { tab: 'triggers', sel: '#triggers', title: '⚡ Callouts that save raids',
     body: 'Guild triggers arrive here automatically - rampage warnings, tank-buster countdowns, charm breaks. Rehearse any of them out loud before the raid, and add personal ones only you hear.' },
+  { tab: 'diag', sel: '#diag', title: '🩺 When something is not working',
+    body: 'The health page. Is Zeal connected, did your charm land, why did that callout not fire - every card here answers a "why is this not working" question. Come here first before asking, and bring what it says.' },
   { tab: 'optin', sel: '#optin', title: '🔒 Your data, your call',
     body: 'What uploads and what never leaves this machine, stream by stream. Officer chat, tells, and group chat are filtered out before parsing even happens. That\\'s the whole tour - raid well. 🐺' },
 ];

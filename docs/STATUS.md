@@ -89,6 +89,36 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ### ✅ Done — major shipped features (not exhaustive; see git + roadmapData.ts)
 
+- **Dashboard navigation: sidebar + tab split — BETA (agent 3.5.72,
+  2026-08-13).** Hitya: *"having to scroll in our dashboard is somewhat annoying
+  to navigate."* Two halves, shipped together because the second needs the
+  first. (1) The tab strip became a **left rail** — `.shell` is a flex row with a
+  sticky 168px `.nav` beside a `.panes` column; under 700px it collapses back to
+  the wrapping strip it was. (2) With room on the rail, the two overgrown tabs
+  were **split**: Info had reached 16 cards and Triggers 12 by mixing three
+  unrelated jobs. New **📊 Stats** takes the session-observation cards (mending,
+  top abilities, spell casts, resists, rolls, inbound spell damage, loadouts +
+  pets); new **🩺 Diagnostics** takes the is-it-working cards (Zeal pipe, charm
+  and pet-buff diagnostics, trigger journal, boss mechanics, Zeal explorer, raw
+  Zeal capture). Info keeps the parser facts + the crash card (Hitya put that one
+  on Info deliberately, so it stayed); Triggers keeps recent fires, replay and the
+  three trigger lists. Guided tour gained a stop for each — 8 stops now.
+  - **Only the markup moved.** Every card's own render fn and placeholder id is
+    untouched, so the volatile-card isolation that keeps sections byte-stable
+    survives intact. Verified: all 10 tabs switch, no duplicate ids, all four
+    touched sections byte-identical on a second render, whole tour walks.
+  - **Found a live bug on the way**: `renderCrashReview` sat ABOVE `renderInfo`
+    in the `_sections` loop from the day the crash card moved onto Info, so the
+    card was blank for the first poll of every cold load. Reordered.
+  - `test/dashboard-tabs.test.js` now guards the four lists that have to agree
+    (nav buttons ↔ `.section` panes ↔ `_sections` entries ↔ placeholder
+    ownership) plus filler-runs-after-emitter ordering. Every way they can
+    disagree previously failed silently.
+  - ⚠ **Moving a card resets its "hide this panel" preference** — the ✕/Panels
+    key is `sectionId|title`, so a card hidden on Info comes back once on Stats.
+    Benign (the card reappears, nothing is lost) but it is why a hidden panel
+    may look like it un-hid itself after this update.
+
 *Weekend of 2026-08-08/09 — full decision record in `DECISIONS-2026-08-07.md`.*
 
 - **Mimic 2.3.4 "Tag! You're spawn_id it!" — GRADUATED STABLE, whole Windows
