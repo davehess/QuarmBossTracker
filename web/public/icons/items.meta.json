@@ -1,0 +1,8 @@
+﻿{
+    "cell":  40,
+    "perRow":  40,
+    "firstIcon":  500,
+    "lastIcon":  1723,
+    "rows":  31,
+    "note":  "Deterministic layout: col=(icon-firstIcon)%perRow, row=floor((icon-firstIcon)/perRow). Regenerate with scripts/pack-item-icons.ps1."
+}
