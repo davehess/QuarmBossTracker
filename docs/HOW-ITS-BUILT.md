@@ -1298,6 +1298,19 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   `docs/DESIGN-crash-review.md` §8. Tests: `test/minidump-review.test.js`
   (synthetic dumps built byte-by-byte; they pin two struct offsets and the
   utf16 alignment bug that silently dropped every audio endpoint).
+- **Automatic backfill for existing uploaders (agent 3.5.68 · bot 3.1.40)** —
+  anyone who already had crash sharing on has a pile of rows that are just an
+  address, because they were uploaded before we could read dumps. The agent
+  re-sends those bundles once with the analysis attached (8 per 60s sweep; the
+  bot upserts on `zip_name`, so rows update in place rather than duplicating).
+  ⚠ The watermark (`crash-reports.state.json` → `analyzed`) advances **only**
+  when the bot echoes `analysis_version` >= the agent's `CRASH_ANALYSIS_VERSION`
+  — otherwise an older bot would drop the fields and the agent would mark the
+  history done anyway, burning the one chance to backfill it. Against an old
+  bot the agent pauses re-analysis and re-probes hourly, so a bot deploy resumes
+  it with nobody restarting anything. **`CRASH_ANALYSIS_VERSION` (agent) and
+  `CRASH_ANALYSIS_VERSION_SUPPORTED` (bot) are one contract — bump both.**
+  Tests: `test/crash-reanalysis-watermark.test.js`.
 
 ### Mimic (`apps/mimic/`, beta)
 - **Me card + officer Admin tab (#109)** — dashboard opens on 🐺 Me; officer

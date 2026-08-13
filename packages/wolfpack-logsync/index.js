@@ -8884,6 +8884,45 @@ function _doOneUpload(entry) {
 // recent-parses dashboard counter. Mirrors what the old uploadEncounter
 // did inline before the queue refactor.
 function _onUploadSuccess(entry, responseText) {
+  // Crash reports: only NOW is it safe to say a bundle has been analysed.
+  //
+  // The re-analysis watermark is what makes an existing uploader's whole
+  // history get re-sent with dump detail exactly once. If we set it at send
+  // time and the bot turned out to be too old to store the new fields, that
+  // history would be burned silently and never re-sent — the same shape of bug
+  // as the ingest whitelist dropping fields nobody noticed. So the bot echoes
+  // back the analysis_version it actually persisted, and only that confirmation
+  // advances the watermark. An older bot echoes nothing, the watermark stays
+  // put, and the next sweep tries again.
+  if (entry.kind === 'crash_report') {
+    let accepted = 0;
+    try { accepted = Number(JSON.parse(responseText).analysis_version) || 0; } catch {}
+    // A bot that does not echo the version cannot store the analysis. Say so
+    // once and stop re-reading dumps, or an uploader with hundreds of bundles
+    // would re-parse and re-send eight of them every 60s forever against a bot
+    // that throws them away. Re-probed on the interval below.
+    if (accepted < CRASH_ANALYSIS_VERSION) {
+      if (_crashAnalysisSupported !== false) {
+        console.log('[crash-reports] bot does not store dump analysis yet — '
+          + 're-analysis paused, will re-check hourly');
+      }
+      _crashAnalysisSupported = false;
+      _crashAnalysisProbedAt = Date.now();
+      return;
+    }
+    _crashAnalysisSupported = true;
+    const names = (entry.payload?.reports || []).map(r => r && r.zip_name).filter(Boolean);
+    if (names.length) {
+      const state = _loadCrashState();
+      for (const n of names) {
+        if (!state.reported[n]) state.reported[n] = Date.now();
+        state.analyzed[n] = CRASH_ANALYSIS_VERSION;
+      }
+      _saveCrashState();
+      console.log(`[crash-reports] bot stored dump analysis for ${names.length} bundle(s)`);
+    }
+    return;
+  }
   if (entry.kind !== 'encounter') return;
   try {
     const resp = JSON.parse(responseText);
@@ -11186,6 +11225,11 @@ function _serializeForDashboard() {
       arr.sort((a, b) => (b.last_tick_at || 0) - (a.last_tick_at || 0));
       return arr.slice(0, 12);
     })(),
+    // How many Zeal crash bundles sit on this machine. Just a count — cheap
+    // (one readdir per folder, cached 60s) and enough for the dashboard to
+    // decide whether to auto-open the crash review. Reading the DUMPS is the
+    // expensive part and stays behind /api/crash-review.
+    crashBundleCount: _crashBundleCount(),
     // Charm-tracking diagnostic — surfaces the four checkpoints the charm
     // detection has to pass through (cast seen → pending staged → slot 16
     // populated → tracker entry created), so a user can SEE where the
@@ -13936,6 +13980,22 @@ async function wpRunCrashReview() {
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = 'Review my crashes'; }
   }
+}
+
+// Auto-open the crash review ONCE per dashboard session, when there is
+// actually something to look at. Runs from the poll dispatch, but guarded by a
+// one-shot flag: reading dumps is real work and must never become per-poll
+// work. If crash sharing is already on, the agent has analysed these during its
+// own sweep anyway — this just means the answers are on screen without anyone
+// having to know the button exists.
+let _wpCrashAutoRan = false;
+function renderCrashReview(s) {
+  if (_wpCrashAutoRan) return;
+  const el = document.getElementById('wpCrashOut');
+  if (!el) return;                                  // card not painted yet
+  if (!s || !s.crashBundleCount) return;            // nothing on this machine
+  _wpCrashAutoRan = true;
+  wpRunCrashReview();
 }
 
 function renderCharmDiag(s) {
@@ -16842,7 +16902,7 @@ async function refresh() {
                      ['tanks', renderTanks], ['deeps', renderDeeps],
                      ['triggers', renderTriggers], ['zealcard', renderZealCard],
                      ['recentfires', renderRecentFires], ['replaystatus', renderReplayStatus],
-                     ['charmdiag', renderCharmDiag], ['petbuffdiag', renderPetBuffDiag], ['triggerjournal', renderTriggerJournal],
+                     ['crashreview', renderCrashReview], ['charmdiag', renderCharmDiag], ['petbuffdiag', renderPetBuffDiag], ['triggerjournal', renderTriggerJournal],
                      ['mechanics', renderMechanics],
                      ['overlays', renderOverlays], ['info', renderInfo],
                      // After info: fill the placeholders renderInfo just
@@ -30525,7 +30585,18 @@ const CRASH_REPORTS_ENABLED = process.env.WOLFPACK_CRASH_REPORTS === '1';
 const CRASH_STATE_FILE = path.join(process.cwd(), 'crash-reports.state.json');
 const CRASH_BACKLOG_DAYS = 30;    // first-enable backlog window
 const CRASH_BACKLOG_MAX  = 50;    // first-enable backlog cap
-let _crashState = null;           // { reported: { zipName: epochMs } }
+const CRASH_REANALYZE_PER_SWEEP = 8;   // dumps re-read per 60s sweep
+// Bump when the dump analysis changes in a way that makes old rows worth
+// re-sending. 1 = the first version that reads minidump.dmp at all; every
+// report uploaded before this carried only what crash_reason.txt said, which
+// for a "Multiple Crashes" bundle is an address and nothing else.
+const CRASH_ANALYSIS_VERSION = 1;
+let _crashState = null;           // { reported: {zip: epochMs}, analyzed: {zip: version} }
+// null = not yet probed, true/false = bot's answer. Re-probed hourly so a
+// bot deploy is picked up without restarting the agent.
+let _crashAnalysisSupported = null;
+let _crashAnalysisProbedAt  = 0;
+const CRASH_ANALYSIS_REPROBE_MS = 3600_000;
 
 function _loadCrashState() {
   if (_crashState) return _crashState;
@@ -30533,6 +30604,14 @@ function _loadCrashState() {
   catch { _crashState = null; }
   if (!_crashState || typeof _crashState !== 'object' || !_crashState.reported) {
     _crashState = { reported: {} };
+  }
+  // Migration: state files written before dump analysis existed have no
+  // `analyzed` map at all. Leaving it absent (rather than back-filling it to
+  // the current version) is what makes an existing uploader's whole history
+  // get re-sent with dump detail the first time they run this build — which is
+  // the entire point of the watermark.
+  if (!_crashState.analyzed || typeof _crashState.analyzed !== 'object') {
+    _crashState.analyzed = {};
   }
   return _crashState;
 }
@@ -31002,12 +31081,62 @@ function _crashSystemSnapshot(eqDir) {
   return snap;
 }
 
+// Cheap "is there anything to review?" for the dashboard. Counts zips only —
+// never opens one. Cached 60s because /api/state is served to every overlay
+// several times a second and a readdir per poll would be silly.
+let _crashCount = { at: 0, n: 0 };
+function _crashBundleCount() {
+  const now = Date.now();
+  if (now - _crashCount.at < 60_000) return _crashCount.n;
+  let n = 0;
+  try {
+    for (const dir of _crashDirs()) {
+      try { n += fs.readdirSync(dir).filter(x => /\.zip$/i.test(x)).length; } catch {}
+    }
+  } catch {}
+  _crashCount = { at: now, n };
+  return n;
+}
+
 // Zip filenames are local-time YYYY-MM-DD_HH-MM-SS stamps from Zeal.
 function _crashZipTime(name) {
   const m = name.match(/^(\d{4})-(\d{2})-(\d{2})_(\d{2})-(\d{2})-(\d{2})\.zip$/);
   if (!m) return null;
   const d = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]);
   return isNaN(d.getTime()) ? null : d;
+}
+
+// Read one bundle into an upload-shaped report: the crash_reason fields plus
+// everything the DUMP knows. Returns null if crash_reason itself is unreadable.
+function _buildCrashReport(dir, name, when, eqDir) {
+  let parsed;
+  try {
+    parsed = _parseCrashReason(_readZipEntry(path.join(dir, name), 'crash_reason.txt').toString('utf8'));
+  } catch { return null; }
+  let dump = null;
+  try { dump = _readMinidump(_readZipEntry(path.join(dir, name), 'minidump.dmp')); } catch {}
+  const verdict = _crashVerdict(parsed, dump);
+  return {
+    ...parsed,
+    zip_name: name,
+    crashed_at: when.toISOString(),
+    system: _crashSystemSnapshot(eqDir),
+    // Dump-derived. The DUMP ITSELF IS NOT INCLUDED and never will be — these
+    // are the conclusions drawn from it locally, which is the whole point:
+    // crash_reason.txt alone says "0x6ef in kernelbase.dll" and cannot tell
+    // anyone anything, while these say which subsystem died and whether it
+    // was us. See docs/DESIGN-crash-review.md §8c.
+    analysis_version: CRASH_ANALYSIS_VERSION,
+    crash_subsystem:  verdict.subsystem || null,
+    crash_blames_zeal: verdict.blames_us,          // true / false / null=unknown
+    crash_headline:   verdict.headline || null,
+    dump_uptime_sec:  dump ? dump.uptimeSec : null,
+    dump_stack_top:   dump ? [...dump.onStack.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8)
+                                 .map(([m, c]) => ({ module: m, frames: c })) : null,
+    dump_churn:       dump ? [...dump.unloaded.entries()].filter(([, c]) => c >= 3)
+                                 .map(([m, c]) => ({ module: m, times: c })) : null,
+    dump_audio_endpoints: dump && dump.endpoints.length ? dump.endpoints : null,
+  };
 }
 
 function scanCrashDirs() {
@@ -31017,6 +31146,17 @@ function scanCrashDirs() {
   const firstRun = Object.keys(state.reported).length === 0;
   const backlogCutoff = Date.now() - CRASH_BACKLOG_DAYS * 86400_000;
   const reports = [];
+  // Re-analysis is budgeted separately from new crashes and capped per sweep:
+  // a dump is ~1 MB to read and parse, and a long-time uploader has hundreds
+  // sitting on disk. At this cap and a 60s sweep, ~500 bundles drain in about
+  // an hour of uptime without ever making the agent stutter.
+  // Paused while the bot is known not to store it; one bundle is still sent
+  // after the re-probe interval so a bot deploy resumes the backfill on its
+  // own, without anyone restarting anything.
+  const reprobeDue = Date.now() - _crashAnalysisProbedAt > CRASH_ANALYSIS_REPROBE_MS;
+  let reanalyzeBudget = _crashAnalysisSupported === false
+    ? (reprobeDue ? 1 : 0)
+    : CRASH_REANALYZE_PER_SWEEP;
   for (const dir of _crashDirs()) {
     const eqDir = path.dirname(dir);
     let names;
@@ -31025,30 +31165,43 @@ function scanCrashDirs() {
     const dated = names.map(n => ({ n, t: _crashZipTime(n) })).filter(x => x.t)
       .sort((a, b) => a.t - b.t);
     for (const { n, t } of dated) {
-      if (state.reported[n]) continue;
+      if (state.reported[n]) {
+        // Already sent — but if it was sent BEFORE we could read dumps, its row
+        // is just an address. Re-send it once with the dump analysis attached;
+        // the bot upserts on (guild, uploader, zip_name), so this UPDATES the
+        // existing row rather than duplicating it. Newest first would be nicer
+        // but oldest-first keeps one simple ordering rule for the whole loop.
+        if (state.analyzed[n] === CRASH_ANALYSIS_VERSION) continue;
+        if (reanalyzeBudget <= 0) continue;
+        reanalyzeBudget--;
+        const again = _buildCrashReport(dir, n, t, eqDir);
+        // A bundle whose crash_reason will not parse never will — mark it here
+        // so it stops costing a slot every sweep. Everything else waits for the
+        // bot's confirmation in _onUploadSuccess.
+        if (!again) { state.analyzed[n] = CRASH_ANALYSIS_VERSION; continue; }
+        again.reanalysis = true;
+        reports.push(again);
+        continue;
+      }
       if (firstRun && t.getTime() < backlogCutoff) { state.reported[n] = 0; continue; }
       if (reports.length >= CRASH_BACKLOG_MAX) break;
-      let parsed;
-      try {
-        parsed = _parseCrashReason(_readZipEntry(path.join(dir, n), 'crash_reason.txt').toString('utf8'));
-      } catch (e) {
+      const rep = _buildCrashReport(dir, n, t, eqDir);
+      if (!rep) {
         // Zero-byte / malformed bundle (they exist in the wild) — mark seen
         // so we don't reparse it every minute, but record nothing.
         state.reported[n] = 0;
+        state.analyzed[n] = CRASH_ANALYSIS_VERSION;
         continue;
       }
-      reports.push({
-        ...parsed,
-        zip_name: n,
-        crashed_at: t.toISOString(),
-        system: _crashSystemSnapshot(eqDir),
-      });
+      reports.push(rep);
       state.reported[n] = Date.now();
     }
   }
   if (reports.length > 0) {
     enqueueUpload('crash_report', { agent_version: AGENT_VERSION, reports });
-    console.log(`[crash-reports] queued ${reports.length} crash report(s)`);
+    const redone = reports.filter(r => r.reanalysis).length;
+    console.log(`[crash-reports] queued ${reports.length} crash report(s)`
+      + (redone ? ` (${redone} re-analysed with dump detail)` : ''));
   }
   _saveCrashState();
 }
