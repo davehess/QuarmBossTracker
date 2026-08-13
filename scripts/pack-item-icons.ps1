@@ -116,8 +116,17 @@ try {
     if (Test-Path -LiteralPath $stage) { Remove-Item -Recurse -Force $stage }
     New-Item -ItemType Directory -Path $stage -Force | Out-Null
 
+    # (!) TRIM TO THE REAL GRID FIRST. The sheets are 256x256 (padded to a
+    # power of two), not 240x240, so a bare 40x40 crop tiles them 7x7 = 49 and
+    # the 7th column/row are 16px slivers of padding. Numbering those as icons
+    # shifts every cell past the sixth in each row and overwrites the next
+    # sheet's icons - measured: 34 sheets x 49 = 1666 extracted, last icon
+    # 1736 instead of 1723. Cropping to the 6x6 grid first yields exactly 36
+    # tiles per sheet, matching (num-1)*36 + cellIdx below.
+    # A 240x240 sheet is unaffected: the trim is a no-op on it.
+    $gridArg = [string]($Cell * 6) + "x" + [string]($Cell * 6) + "+0+0"
     $pattern = Join-Path $stage "c_%d.png"
-    & magick $f.FullName -crop $cropArg +repage $pattern 2>$null
+    & magick $f.FullName -crop $gridArg +repage -crop $cropArg +repage $pattern 2>$null
     if ($LASTEXITCODE -ne 0) {
       Write-Host ("  ! could not read " + $f.Name + " - skipping") -ForegroundColor Yellow
       continue
@@ -132,6 +141,14 @@ try {
       $count = $count + 1
     }
     Remove-Item -Recurse -Force $stage -ErrorAction SilentlyContinue
+  }
+
+  # Belt and braces on the trim above: 36 cells per sheet is the whole basis of
+  # the icon numbering, so make a violation loud instead of letting it render as
+  # subtly wrong art.
+  $expected = $sheets.Count * 36
+  if ($count -gt $expected) {
+    Fail ("extracted " + $count + " cells from " + $sheets.Count + " sheets, expected at most " + $expected + " (36 each). The sheets are not a 6x6 grid of " + $Cell + "px cells - the icon numbering would be wrong.")
   }
 
   Write-Host ("extracted " + $count + " icons")
