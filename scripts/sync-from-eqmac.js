@@ -406,9 +406,21 @@ function* splitTuples(valuesStr) {
 // the EQEmu schema (v1.x). All transforms return null if a row should be skipped.
 const TRANSFORMS = {
   zone: (cols, row) => {
-    const r = pick(cols, row, ['short_name', 'long_name', 'zoneidnumber', 'expansion', 'file', 'safe_x', 'safe_y', 'safe_z', 'min_status', 'note']);
+    // castoutdoor/hotzone/canlevitate/canbind/zone_exp_multiplier were in the
+    // upstream table all along and we never picked them, so "can I bind here?"
+    // was unanswerable from a mirror that already had the row (found 2026-08-13
+    // diffing our zone surface against pq-companion's — see
+    // docs/pq-companion/06-data-provenance-and-gaps.md §2).
+    const r = pick(cols, row, ['short_name', 'long_name', 'zoneidnumber', 'expansion', 'file', 'safe_x', 'safe_y', 'safe_z', 'min_status', 'note',
+      'castoutdoor', 'hotzone', 'canlevitate', 'canbind', 'zone_exp_multiplier']);
     if (!r.short_name) return null;
-    return { ...r, zone_id: r.zoneidnumber, zoneidnumber: undefined };
+    return {
+      ...r,
+      zone_id: r.zoneidnumber, zoneidnumber: undefined,
+      cast_outdoor: r.castoutdoor, castoutdoor: undefined,
+      can_levitate: r.canlevitate, canlevitate: undefined,
+      can_bind:     r.canbind,     canbind: undefined,
+    };
   },
   items: (cols, row) => {
     const r = pick(cols, row, ['id', 'name', 'lore', 'loregroup', 'nodrop', 'norent', 'magic', 'itemtype', 'slots', 'icon', 'weight', 'reclevel', 'reqlevel', 'classes', 'races', 'ac', 'hp', 'mana', 'damage', 'delay', 'focuseffect', 'proceffect', 'astr', 'asta', 'adex', 'aagi', 'aint', 'awis', 'acha', 'mr', 'cr', 'dr', 'fr', 'pr', 'price', 'casttime', 'clickeffect', 'clicktype', 'clicklevel', 'worneffect', 'worntype', 'attack', 'haste', 'regen', 'manaregen', 'damageshield']);
