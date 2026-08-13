@@ -57,15 +57,41 @@ if (-not (Get-Command magick -ErrorAction SilentlyContinue)) {
   exit 1
 }
 
-# Report what we found BEFORE doing any work, so a wrong folder says so in a
-# second rather than after minutes of cropping.
-$sheets = Get-ChildItem -LiteralPath $EqDir -File |
-  Where-Object { $_.Name -match '^dragitem\d+\.(dds|tga|bmp|png)$' } |
-  Sort-Object Name
-if ($sheets.Count -eq 0) {
-  Fail ("No dragitem*.dds/.tga/.bmp/.png in " + $EqDir + " - is that the EQ install root (the folder with eqgame.exe)?")
+# Find the sheets. They are NOT in the EQ root on a Titanium-era client - they
+# live under uifiles\<skin>\, and a custom skin (NillipussUI etc.) may ship its
+# own partial copy alongside the stock set. So: search RECURSIVELY, group by
+# folder, and prefer the folder that looks stock and complete.
+# Searching only $EqDir was the first version's mistake and produced a confident
+# "is that the EQ install root?" on a perfectly correct EQ install root.
+Write-Host ("searching " + $EqDir + " for dragitem sheets ...")
+$all = Get-ChildItem -LiteralPath $EqDir -File -Recurse -ErrorAction SilentlyContinue |
+  Where-Object { $_.Name -match '^dragitem\d+\.(dds|tga|bmp|png)$' }
+
+if (-not $all -or $all.Count -eq 0) {
+  Write-Host "ERROR: no dragitem*.dds/.tga/.bmp/.png found anywhere under this folder." -ForegroundColor Red
+  Write-Host "  Checked recursively, so this is not a subfolder problem."
+  Write-Host "  If your client keeps them inside .s3d archives they must be extracted first."
+  Write-Host "  To see what IS there:  dir /s /b `"$EqDir\dragitem*`""
+  exit 1
 }
-Write-Host ("found " + $sheets.Count + " icon sheet(s) in " + $EqDir)
+
+# Group by folder and pick: stock 'uifiles\default' if present, else whichever
+# folder has the most sheets (a custom skin overriding a handful of icons must
+# never beat the complete set).
+$byDir = $all | Group-Object DirectoryName
+$pick = $byDir | Where-Object { $_.Name -match '(?i)uifiles\\default$' } | Select-Object -First 1
+if (-not $pick) { $pick = $byDir | Sort-Object { $_.Count } -Descending | Select-Object -First 1 }
+
+if ($byDir.Count -gt 1) {
+  Write-Host ("  found sheets in " + $byDir.Count + " folder(s):")
+  foreach ($g in ($byDir | Sort-Object { $_.Count } -Descending)) {
+    $mark = if ($g.Name -eq $pick.Name) { " <- using" } else { "" }
+    Write-Host ("    " + $g.Count + " in " + $g.Name + $mark)
+  }
+}
+
+$sheets = $pick.Group | Sort-Object Name
+Write-Host ("found " + $sheets.Count + " icon sheet(s) in " + $pick.Name)
 $fmts = ($sheets | Group-Object Extension | ForEach-Object { [string]$_.Count + "x" + $_.Name }) -join ', '
 Write-Host ("  formats: " + $fmts)
 
