@@ -37,6 +37,27 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'mimic-2-4-0',
+    title: '\u{1FA7A} Crash review, raid-wide damage, and item pictures',
+    version: 'Mimic 2.4.0 \u00b7 Web 1.1.49 \u00b7 Bot 3.1.41',
+    date: '2026-08-13',
+    headline: 'Mimic can now tell you what actually crashed EverQuest, the damage meter shows what the whole raid did next to what your own machine saw, and items have their real icons on the site.',
+    features: [
+      { name: '\u{1FA7A} Find out what crashed you', blurb: 'On the Info tab, Mimic reads the crash files EverQuest leaves on your PC and says in plain words what broke \u2014 including whether Mimic or Zeal had anything to do with it. On the first one we looked at, neither did: the sound device the game was playing through had been switched off underneath it. Your crash files never leave your PC.' },
+      { name: '\u{1F4CA} The damage meter now shows the whole raid', blurb: 'Each row shows what the raid recorded, with what your own machine saw in brackets beside it. If someone did 164k and you saw none of it, you can finally tell \u2014 which matters more than it sounds, because a raider who zones in late can be watching a meter showing a twentieth of the fight.' },
+      { name: '\u{1F5E1} Items show their real icons', blurb: 'Loot on the website now appears with the same picture you see in your inventory.' },
+      { name: '\u{1F4C8} Fight timeline on parse pages', blurb: 'Boss health across the fight with every damage dealer stacked underneath it, plus a lane showing who was tanking and when. Search for a player or click a class to highlight where they were.' },
+      { name: '\u{1F5E3} Callouts can say something different to what they show', blurb: 'A personal trigger can now have its own spoken line, so an alert can read one way on screen and be said another way out loud.' },
+    ],
+    fixes: [
+      'Personal alerts like "your target is too far" no longer get broadcast to the entire raid \u2014 that was burying the trigger log.',
+      'Hiding all overlays no longer silences your callouts. The screen goes quiet, the voice does not.',
+      'Spoken callouts no longer read emoji out loud (the Divine Intervention alert was being announced as "high voltage").',
+      'The settings gear no longer appears on the Command Center overlay.',
+      'Crash reports keep your character and zone when the game crashes while zoning \u2014 which was exactly when we most wanted them.',
+    ],
+  },
+  {
     key: 'crash-review',
     title: '\u{1FA7A} Mimic can tell you what crashed you',
     version: 'Agent 3.5.67',
