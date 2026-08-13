@@ -71,10 +71,62 @@ guards the four lists that have to agree (nav buttons ↔ `.section` panes ↔
 those disagreements previously failed silently; the ordering assertion is what
 caught the crash-card bug.
 
+## Attendance has two sources, and the ephemeral one is the one that answers questions
+
+**The correction (Hitya, 2026-08-13):** asked to break out which raiders can only
+make one or two nights and who joins late, the first pass answered entirely from
+`opendkp_ticks` — who turned up. Hitya pointed out that the attendance piece is
+exposed by **Raid-Helper, whose contents only last until the day of the raid**.
+
+**Why that reframes it.** Ticks measure behaviour; Raid-Helper measures *intent*.
+The first pass explicitly caveated that it "measures showing up, not availability"
+and that separating "can't make Wednesdays" from "chooses not to" was a
+conversation rather than a query. That was wrong — the data exists, in
+`rh_signups`, with `absence` / `tentative` / `late` / `bench` statuses, and it
+settles both questions:
+
+- **Peopleslayer marked 19 of 19 Wednesdays `tentative`**, while signing in on
+  18/19 Sundays and 19/19 Thursdays. Zero accepts, zero absences on that night.
+  The inferred "blocked Wednesday" (p<0.0001 off the ticks) is his own declared,
+  unbroken, four-month-long standing conditional. Nobody had aggregated it.
+- **The late question improves into "who warns you".** Azara declares `late` 18
+  times against 14 actual late arrivals — the most-late raider is also the most
+  reliable signaller. Malthur declares 0 across 55 firm sign-ins and is late 47%
+  of nights; same shape for Stupidrichard (0 / 40%) and Jankzer (0 / 37%). The
+  actionable ask is not "be on time", it is "click late".
+
+**We already capture it — and that capture is load-bearing.**
+`utils/raidhelperApi.js` has been mirroring the board every 30 min since
+2024-08: 292 events, 14,741 signups, no gaps against the DKP raid list.
+**Because the upstream expires, the mirror is the archive, not a cache** — a sync
+outage loses that window permanently rather than delaying it. Nothing monitors
+the sync today; a silent failure looks exactly like a quiet signup board. That
+is now the top open item below.
+
+**Docs failure worth recording.** `HOW-ITS-BUILT.md` still claimed the mirror
+"is empty as of 2026-07-31, so this path is unverified in prod." It had been
+live for weeks. That single stale line is what made the first pass ship a
+"we can't know that" caveat about data we had two years of — precisely the
+failure mode the "answer from the index, not one grep" rule exists to prevent,
+except here the index itself was wrong. Corrected in place with a ⚠ marker
+naming the cost, plus a real feature entry for the archive.
+
+**Method note for re-runs.** Raw per-night counts mislead: at 72 people × 3
+nights, a raider attending 40% of raids looks "light on Thursday" a third of the
+time by chance. Test each night against that person's *own* overall rate
+(hypergeometric, one-tailed) and only six of 72 survive. Two other traps that
+bit this analysis: six `opendkp_ticks` rows are named with raw filenames
+(`RaidTick-*.txt`) plus one "Sign up Bonus" and so carry no tick position —
+filter on `description ~ '^Tick [1-4] '` and require all four; and a raider who
+*stopped* reads identically to one with a night constraint over a 120-day window,
+which is how Armando got flagged "light on Sunday" when he had actually attended
+2 of the last 25 raids.
+
 ## Open — read this first
 
 | Item | State |
 |---|---|
+| **Raid-Helper sync is unmonitored** | It is the ONLY copy of declared availability (the upstream board expires on raid day) and nothing alerts on failure. Add a staleness check — no new `rh_signups` rows within ~48h of a raid should be loud |
 | **Dashboard split — live check** | Sidebar + 📊 Stats / 🩺 Diagnostics are on beta only; browser-verified but not yet used in a raid. Graduate with the next Mimic stable |
 | **Task #27** | Restore the 8 muted trash triggers — unblocked, fix is on stable |
 | **#204–#207** | Graduate to stable after beta test + one raid cycle |
