@@ -11230,6 +11230,11 @@ function _serializeForDashboard() {
     // decide whether to auto-open the crash review. Reading the DUMPS is the
     // expensive part and stays behind /api/crash-review.
     crashBundleCount: _crashBundleCount(),
+    // Whether crash metadata currently uploads. Mimic owns the setting
+    // (cfg.crashReports) and hands it over as an env var at spawn, so this is
+    // the agent reporting what it was STARTED with - which is exactly what the
+    // Info-tab checkbox must show, since a change only takes effect on restart.
+    crashReportsEnabled: CRASH_REPORTS_ENABLED,
     // Charm-tracking diagnostic — surfaces the four checkpoints the charm
     // detection has to pass through (cast seen → pending staged → slot 16
     // populated → tracker entry created), so a user can SEE where the
@@ -13924,6 +13929,17 @@ function renderZealCard(s) {
 // Zeal crash zips through /api/crash-review and explains them in plain language.
 // The headline answer is "was this us?", because that is what people ask when
 // EQ vanishes while Mimic is running.
+// Mirror of the tray's crash-sharing checkbox. Mimic owns cfg.crashReports and
+// passes it to the agent as an env var at spawn, so flipping it restarts the
+// engine — same path the tray item uses, not a second mechanism.
+async function wpToggleCrashShare(on) {
+  try {
+    if (window.mimic && window.mimic.toggleCrashReports) {
+      await window.mimic.toggleCrashReports(!!on);
+    }
+  } catch (e) {}
+}
+
 async function wpRunCrashReview() {
   const out = document.getElementById('wpCrashOut');
   const btn = document.getElementById('wpCrashBtn');
@@ -14390,15 +14406,6 @@ function renderTriggers(s) {
   // the volatile card means the HTML below stays byte-stable when triggers
   // don't change, so setSectionHTML short-circuits and only the card repaints.
   h += '<div id="wpZealCard" class="card wide" style="display:none"></div>';
-  // Crash review card — filled by renderCrashReview(). Hidden until the user
-  // presses the button, because reading dumps costs real work and nobody wants
-  // it happening on every 2s poll.
-  h += '<div id="wpCrashReview" class="card wide"><b>🩺 Crash review</b>'
-    +  '<div class="dim" style="margin:6px 0">Had EverQuest close on you? This reads the crash '
-    +  'files Zeal left on this machine and tells you what actually broke. Nothing is uploaded '
-    +  '\\u2014 the crash dumps never leave your PC.</div>'
-    +  '<button id="wpCrashBtn" onclick="wpRunCrashReview()">Review my crashes</button>'
-    +  '<div id="wpCrashOut"></div></div>';
   // Charm-tracking diagnostic card — filled by renderCharmDiag(). Hidden
   // until there's data to show (no watched character casting charms, etc.).
   h += '<div id="wpCharmDiag" class="card wide" style="display:none"></div>';
@@ -15761,6 +15768,26 @@ function renderInfo(s) {
   // the session that's already running.
   const lifetimeMin = Math.max(s.lifetime?.totalMinutes||0, sessionMin);
   let h = '';
+  // Crash review (moved here from Triggers, Hitya 2026-08-13 — a crash is a
+  // machine/diagnostic concern, not a callout one). Reading dumps costs real
+  // work, so the list fills on demand via renderCrashReview()'s one-shot.
+  // The checkbox mirrors the tray's "Share crash reports with the guild" toggle
+  // — same cfg.crashReports flag, two places to reach it, so nobody has to know
+  // the tray menu exists.
+  h += '<div id="wpCrashReview" class="card wide"><b>\\ud83e\\ude7a Crash review</b>'
+    +  '<div class="dim" style="margin:6px 0">Had EverQuest close on you? This reads the crash '
+    +  'files Zeal left on this machine and tells you what actually broke \\u2014 including '
+    +  'whether Mimic or Zeal had anything to do with it. The crash dumps never leave your PC.</div>'
+    +  '<label style="display:flex;gap:6px;align-items:center;margin:8px 0;cursor:pointer">'
+    +    '<input type="checkbox" id="wpCrashShare" onchange="wpToggleCrashShare(this.checked)"'
+    +      (s.crashReportsEnabled ? ' checked' : '') + '>'
+    +    '<span>Automatically send crash reports to the guild</span>'
+    +  '</label>'
+    +  '<div class="dim" style="font-size:11px;margin-bottom:8px">Sends only what the crash says '
+    +  '\\u2014 never the dump itself. Same setting as the tray menu; changing it restarts the '
+    +  'parser engine.</div>'
+    +  '<button id="wpCrashBtn" onclick="wpRunCrashReview()">Review my crashes</button>'
+    +  '<div id="wpCrashOut"></div></div>';
   // NOTE: Watched Logs (#wpWatchedLogs) moved to the Dashboard's ⚙ Engine card,
   // and the officer DKP tick / loot capture cards (#wpDkpTick / #wpDkpLoot)
   // moved to the 🛡 Admin tab (#109). Their render fns are unchanged — only the
@@ -28225,7 +28252,18 @@ function _applyGuildTriggersResponse(resp) {
         const c = compileTriggerPattern(t.pattern, { flags: t.pattern_flags || 'i', use_regex: t.use_regex });
         compiled.push({ ...t, _regex: c.regex, _conditions: c.conditions, _aliases: c.aliases,
                         _excludes: _compileExcludes(t),
-                        _endRegex: _compileEndEarlyRegex(t), _scope: 'guild' });
+                        _endRegex: _compileEndEarlyRegex(t),
+                        // Honour the trigger's own default_scope. This was
+                        // hardcoded to 'guild', so _relayLocalFire's
+                        // "skip personal triggers" guard could NEVER fire for a
+                        // guild trigger and every personal alert fanned out to
+                        // the whole raid. Live symptom: "Too Far"
+                        // (default_scope personal, cooldown 0, on a line melee
+                        // produces constantly) arrived at every Mimic as
+                        // scope=guild_relay and buried the checkpoint journal.
+                        // Only 'personal' suppresses the relay - class_specific
+                        // and broadcast still fan out, which is what they mean.
+                        _scope: t.default_scope === 'personal' ? 'personal' : 'guild' });
       } catch (err) {
         console.warn(`[guild-triggers] bad pattern "${t.name}":`, err.message);
       }

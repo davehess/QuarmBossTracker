@@ -344,6 +344,9 @@ contextBridge.exposeInMainWorld('mimic', {
   // Toggle a named built-in overlay (hud/trigger/charm/pet/mobinfo) on/off from
   // the dashboard's Overlays tab. Returns the updated status snapshot.
   toggleOverlay:   (name) => ipcRenderer.invoke('toggle-overlay', name),
+  // Crash-report sharing, so the dashboard's Info tab can flip the same
+  // cfg.crashReports the tray menu owns. One setting, two ways to reach it.
+  toggleCrashReports: (on) => ipcRenderer.invoke('toggle-crash-reports', !!on),
   setOverlayTheme: (t)    => ipcRenderer.invoke('wp-theme-set', t),
   autoArrangeNow:  ()     => ipcRenderer.invoke('auto-arrange-overlays'),
   rescueOverlays:  ()     => ipcRenderer.invoke('rescue-overlays'),

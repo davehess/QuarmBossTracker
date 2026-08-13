@@ -5798,14 +5798,7 @@ function buildTrayMenu() {
     label: 'Share crash reports with the guild (opt-in)',
     type: 'checkbox',
     checked: loadConfig().crashReports === true,
-    click: (mi) => {
-      const cfg = loadConfig();
-      cfg.crashReports = !!mi.checked;
-      saveConfig(cfg);
-      appendAgentLog(`[mimic] crash-report sharing ${cfg.crashReports ? 'ENABLED — dumps stay local; only crash metadata uploads' : 'disabled'}; restarting agent\n`);
-      if (agentProc) { try { agentProc.kill(); } catch {} } else { launchAgent(); }
-      pushStatus();
-    },
+    click: (mi) => setCrashReports(!!mi.checked),
   };
 
   const menu = Menu.buildFromTemplate([
@@ -6464,6 +6457,24 @@ ipcMain.handle('overlay-hover-interactive', (e, wantInteractive) => {
 // Mirrors the tray checkboxes: flips the cfg pref, creates the window on first
 // enable (else applies visibility), and returns the fresh status so the
 // dashboard can repaint the button. Returns null for an unknown name.
+// Crash-report sharing, in ONE place. The tray checkbox and the dashboard's
+// Info-tab checkbox both call this rather than each doing their own
+// load/save/restart - two copies of a restart-the-agent side effect is exactly
+// how the two surfaces end up disagreeing about what the setting is.
+// The flag reaches the agent as an env var at SPAWN, so it only takes effect on
+// restart; killing agentProc lets the existing auto-relaunch path bring it back.
+function setCrashReports(on) {
+  const cfg = loadConfig();
+  cfg.crashReports = !!on;
+  saveConfig(cfg);
+  appendAgentLog(`[mimic] crash-report sharing ${cfg.crashReports ? 'ENABLED — dumps stay local; only crash metadata uploads' : 'disabled'}; restarting agent\n`);
+  if (agentProc) { try { agentProc.kill(); } catch {} } else { launchAgent(); }
+  pushStatus();
+  return cfg.crashReports;
+}
+
+ipcMain.handle('toggle-crash-reports', (_e, on) => setCrashReports(!!on));
+
 ipcMain.handle('toggle-overlay', (_e, name) => {
   const cfg = loadConfig();
   switch (name) {
