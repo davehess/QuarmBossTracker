@@ -6379,13 +6379,31 @@ class EncounterBuilder {
     // this.character with zero reliance on catching a one-time event, so
     // populate petLeaders from the NAME itself the first time we see it,
     // independent of whether a declaration line ever fired.
-    if (event.attacker && this.character) {
+    // ⚠ This used to self-attribute ONLY (`=== this.character`), which fixed the
+    // meter on the pet owner's own machine and nowhere else. Shavimo again,
+    // 2026-08-13: his Warder counted in the parse HE sent and was missing from
+    // every other client's copy of the same fight — 56.6K with pets on his own,
+    // 35.8K without on the relayed one. Same for Wabumkin (+Pets on his, plain
+    // on the relay) and Kravenn (in the top 10 on his, absent from the relay).
+    // A possessive name is server truth about ownership no matter WHO is
+    // reading the line, so credit the owner it names, not just ourselves.
+    // Guarded on isConfirmedPlayer so "a gnoll`s pet" style NPC possessives
+    // can't invent a player, and on the vision-eye choke point for consistency
+    // with the declaration path below (an eye is never possessive-named today,
+    // but this is the second place ownership can be born and both must agree).
+    if (event.attacker) {
       const _pl = String(event.attacker);
       const _plKey = _pl.toLowerCase();
-      if (!this.petLeaders[_plKey]) {
+      if (!this.petLeaders[_plKey] && !_isVisionEyePet(_pl)) {
         const _possessive = _pl.match(/^([A-Z][\w`]*)['`]s\s+\S/);
-        if (_possessive && _possessive[1].toLowerCase() === this.character.toLowerCase()) {
-          this.petLeaders[_plKey] = this.character;
+        if (_possessive) {
+          const _owner = _possessive[1];
+          const _isSelf = this.character && _owner.toLowerCase() === this.character.toLowerCase();
+          if (_isSelf) {
+            this.petLeaders[_plKey] = this.character;
+          } else if (isConfirmedPlayer(_owner)) {
+            this.petLeaders[_plKey] = _owner;
+          }
         }
       }
     }
