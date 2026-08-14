@@ -21630,6 +21630,16 @@ function startWebDashboard(port) {
               _charmTickTracker.delete(k);
             }
           }
+          // Same reason, different board: drop them from the Healer Mana
+          // roster. That roster deliberately does NOT age entries out while a
+          // fight is live (Hitya 2026-07-09 — a cleric who called mana at the
+          // pull must still be on the board ten minutes in), which is right for
+          // someone who is quiet and wrong for someone who is GONE. A retire is
+          // the one moment we know for certain they are gone, so it is the only
+          // safe place to remove them without weakening that rule.
+          // Manamana sat on the Command Center at 18% long after Hitya had
+          // swapped back to Hitya (live, 2026-08-13).
+          _healerManaRoster.delete(_cl);
           // Same-client swap: forward "<character> swapped to <X>" to the
           // bot so /raid moves them to "Not in raid (swapped to X)" instead
           // of showing both characters as live raiders. Fire-and-forget on
