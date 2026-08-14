@@ -8305,6 +8305,7 @@ class EncounterBuilder {
     if (stats.currentEncounterThreat) {
       stats.currentEncounterThreat = { ...stats.currentEncounterThreat, flushedAt: Date.now() };
     }
+    _recordFightHistory(stats.currentEncounterThreat);
     // Cross-builder flush propagation. If this Mimic install is tailing more
     // than one character's log (multi-box on one machine), peer builders
     // watching the SAME fight should close along with us — if their own log
@@ -11384,6 +11385,9 @@ function _serializeForDashboard() {
     // the bot is too old to serve it - the HUD then shows local only).
     guildDamage: stats.guildDamage && (Date.now() - stats.guildDamage.at < 30_000)
       ? stats.guildDamage : null,
+    // Settled per-mob guild numbers for the HUD's History tab — see
+    // _recordFightHistory. Newest first, small enough to ride every poll.
+    fightHistory: Array.isArray(stats.fightHistory) ? stats.fightHistory : [],
     crashBundleCount: _crashBundleCount(),
     // Whether crash metadata currently uploads. Mimic owns the setting
     // (cfg.crashReports) and hands it over as an env var at spawn, so this is
@@ -26218,6 +26222,85 @@ function startChatRelay() {
   }, THREAT_SNAP_TICK_MS);
 }
 
+// ── Fight history: the guild's numbers, AFTER they have settled ─────────────
+// Hitya, 2026-08-14: "instead of displaying the combined damage during the
+// fight, perhaps we just have the overlay give the last few mobs in a history
+// tab that can be opened up once it's properly deduped — the overcount from
+// time skew and whatnot is too much to account for in a live stat review and it
+// is legitimately doubling damage."
+//
+// The bot's estimator is not broken; it is UNSETTLED mid-fight. It needs three
+// independent readings before it can corroborate anything at all (below that it
+// falls back to max, which is exactly the doubling), and readings arrive on the
+// upload queue's 15s drain from twenty machines. So the number is worth showing
+// — just not yet. This captures each fight when it ends and re-asks for the
+// guild view twice as the stragglers land.
+//
+// Timing, and why two passes: the first is late enough that a 15s drain plus a
+// backoff retry has landed, the second catches a client that was mid-backoff.
+// Both must stay inside the bot's 3-minute snapshot lookback on /live-damage —
+// past that the fight has aged out of the query window and the answer is empty,
+// which would blank an entry that already had good numbers in it. Hence the
+// "only overwrite on a non-empty response" rule below.
+const FIGHT_HISTORY_MAX = 6;
+const FIGHT_HISTORY_SETTLE_MS = [40_000, 100_000];
+function _recordFightHistory(et) {
+  if (!et) return;
+  const boss = et.bossName || et.targetName || null;
+  if (!boss) return;
+  const startedMs = et.startedAt ? Date.parse(et.startedAt) : 0;
+  stats.fightHistory = Array.isArray(stats.fightHistory) ? stats.fightHistory : [];
+  // A multi-box install flushes once per builder, and flush() also propagates
+  // to peer builders on the same fight — so the same kill arrives several
+  // times. One entry per (boss, start within 60s).
+  const dupe = stats.fightHistory.find(h =>
+    String(h.boss).toLowerCase() === String(boss).toLowerCase()
+    && Math.abs((h.startedMs || 0) - startedMs) < 60_000);
+  if (dupe) return;
+  // This machine's own view, kept alongside the guild's — the "(what you saw)"
+  // half of the row is the thing a local-only meter can never give you.
+  const local = [];
+  for (const [name, p] of Object.entries(et.perPlayer || {})) {
+    const dmg = (p.swing || 0) + (p.proc || 0) + (p.spell || 0);
+    if (dmg > 0) local.push({ character: name, dmg, pet_owner: p.pet_owner || null });
+  }
+  local.sort((a, b) => b.dmg - a.dmg);
+  const entry = {
+    boss,
+    startedMs,
+    endedMs: et.flushedAt || Date.now(),
+    durationSec: startedMs ? Math.max(1, Math.round(((et.flushedAt || Date.now()) - startedMs) / 1000)) : 0,
+    local: local.slice(0, 60),
+    players: [],        // guild view; filled by the settle passes below
+    uploaders: 0,
+    settled: false,
+  };
+  stats.fightHistory.unshift(entry);
+  if (stats.fightHistory.length > FIGHT_HISTORY_MAX) stats.fightHistory.length = FIGHT_HISTORY_MAX;
+
+  if (!_uploadOpts || _uploadOpts.dryRun || !_uploadOpts.botUrl || !_uploadOpts.token) return;
+  for (const delay of FIGHT_HISTORY_SETTLE_MS) {
+    const t = setTimeout(async () => {
+      try {
+        const base = _uploadOpts.botUrl.replace(/\/encounter(\?.*)?$/, '');
+        const r = await fetch(`${base}/live-damage?boss=${encodeURIComponent(boss)}`, {
+          headers: { Authorization: `Bearer ${_uploadOpts.token}` },
+        });
+        if (!r.ok) return;                          // old bot → History shows local only
+        const j = await r.json();
+        // Never let a late empty answer erase numbers we already have.
+        if (!j || !Array.isArray(j.players) || !j.players.length) return;
+        entry.players   = j.players.slice(0, 60);
+        entry.uploaders = j.uploaders || 0;
+        entry.total     = j.total || 0;
+        entry.settled   = true;
+        entry.settledAt = Date.now();
+      } catch { /* history is a nicety; never surface a failure here */ }
+    }, delay);
+    if (t.unref) t.unref();                         // must not hold the process open
+  }
+}
+
 // ── Fun-event detection ─────────────────────────────────────────────────────
 // Lightweight, pattern-driven side stream that piggybacks on the live tail.
 // First tenant: Peopleslayer LD counter. Future tenants: CoH pearl, DI
@@ -35082,6 +35165,8 @@ module.exports = {
   SOURCELESS_SPELLS, BARD_SONGS,
   EncounterBuilder, characterFromFilename, isBackupLogFile, _splitBackupSuffix,
   trackChChainLine, chChainSnapshot, removeChChainSlot,
+  _recordFightHistory, _fightHistoryForTest: () => stats.fightHistory,
+  _resetFightHistoryForTest: () => { stats.fightHistory = []; },
   // CH cast bar / interrupt ✕ / DDR grade — exported for the scratchpad harness.
   trackChChainInterrupt, _chGradeForDelta, _chExpectedNextAt,
   CH_CAST_MS, CH_INTERRUPT_SLACK_MS, CH_INTERRUPT_LINGER_MS,

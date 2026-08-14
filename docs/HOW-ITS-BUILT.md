@@ -845,7 +845,14 @@ blocked while EQ runs). Cloud backup/restore: `uiStudioCapture` → bot
 resolution rescale on the way back.
 
 ### Overlays (one .html each)
-DPS HUD (`overlay.html`), Triggers+timers (`triggers.html`), CH chain
+DPS HUD (`overlay.html` — DPS / Tank / **History** tabs; DPS+Tank are this
+machine's own observations, History is the guild's settled numbers for the last
+6 mobs with a ◀ ▶ pager. Agent 3.5.80 moved the guild-combined merge OFF the
+live view: mid-fight the bot has under three readings per player so its
+corroboration estimator falls back to max and doubles people. `_recordFightHistory`
+captures each kill and re-asks `/live-damage` at +40s and +100s; the header says
+`· N clients` once settled, `· settling…` until then), Triggers+timers
+(`triggers.html`), CH chain
 (`chchain.html` — slots, GO pill, beat countdown, pivot, off-heal list),
 Tank (`tank.html` — MT focus, DA, DS, deathtouch, rampage+invuln, off-heal),
 Command Center (`command.html`), Extended Target (`extarget.html` — off-tank

@@ -90,6 +90,34 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ### ✅ Done — major shipped features (not exhaustive; see git + roadmapData.ts)
 
+- **Live combined damage → a History tab — BETA (agent 3.5.80, 2026-08-14).**
+  Hitya, watching the guild column double people mid-fight: *"instead of
+  displaying the combined damage during the fight, perhaps we just have the
+  overlay give the last few mobs in a history tab that can be opened up once
+  it's properly deduped."*
+  - **The estimator isn't broken, it's UNSETTLED.** `_corroboratedDamage` needs
+    three independent readings before it can corroborate anything; below that it
+    falls back to max, which is exactly the doubling. Readings arrive on the
+    upload queue's 15s drain from twenty machines, so mid-fight most players have
+    one or two. Post-fight the same estimator landed within ~1% of three
+    independent sources (Atlasius 99,979 vs his own 100k). **The fix is about
+    WHEN the number is shown, not whether it works** — don't "restore" the live
+    merge.
+  - Agent keeps a 6-deep ring of finished fights (`_recordFightHistory`), each
+    capturing this machine's own view at the kill, then re-asking
+    `/live-damage` at +40s and +100s as the stragglers land. A late EMPTY answer
+    never overwrites good numbers (the bot's snapshot lookback is 3 minutes; past
+    that the query legitimately returns nothing). Multi-box installs flush once
+    per builder, so entries dedupe on (boss, start within 60s).
+  - HUD gets a third tab with a ◀ ▶ pager. Header names the fight and says
+    `· 11 clients` when settled, `· settling…` when not — an unlabelled small
+    number reads as the guild's answer, which is the misreading the tab exists to
+    prevent. DPS/Tank are now purely local.
+  - ⚠ The `/rs` parse line is built from the LIVE encounter but read `boss` and
+    `secs` from whatever tab is showing — on History that spliced one fight's
+    rows onto another fight's header, into a line people paste in raid chat.
+    Guarded with `!HIST`.
+
 - **CH chain: un-numbered shouts never take a slot, and a ✕ removes anyone who
   shouldn't be on it — BETA (agent 3.5.79, 2026-08-14).** Live during the Aten
   Ha Ra pull: Pyxil was spot-healing the RAMPAGE target and shouting
