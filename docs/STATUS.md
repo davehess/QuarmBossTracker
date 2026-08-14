@@ -108,6 +108,15 @@ next touch one rather than assuming a missing row means a missing doc.
     degrades *silently and partially* — older items keep their counts, so the
     surface looks healthy until someone checks one specific item. Ten weeks
     unnoticed. Same family as the Raid-Helper sync below.
+  - ⚠ **Shipped broken, fixed in bot 3.1.47 the same night.** PostgREST caps a
+    response at 1000 rows and `limit=50000` does not lift it — silently. Both
+    sides of the diff were truncated, so already-folded raids looked unfolded
+    and two passes re-inserted 116 awards (deleted; range verified clean). Reads
+    now page via `selectAllPaged()`, ordered, with a failed page returning null
+    rather than a short list. **All 18 original tests passed throughout** — they
+    tested the logic given its inputs, never whether the inputs were complete.
+    Verify a data-moving feature by counting rows in the destination on the day
+    it ships.
 
 - **Raid-Helper mirror says when it stops arriving — STABLE (bot 3.1.46,
   2026-08-14).** The `rh_*` mirror is the ONLY durable copy of declared

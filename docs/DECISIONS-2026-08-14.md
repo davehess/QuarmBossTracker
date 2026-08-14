@@ -12,6 +12,7 @@ first and reach back for the older detail.
 | Item | State |
 |---|---|
 | **Task #27 — the 8 muted trash triggers** | Gate is *"the fleet is on the fix"*, not *"the fix exists"*. Mimic 2.5.0 (agent 3.5.80) shipped 04:08 UTC and **nobody has installed it yet** — flipping the rows on now puts the wall back for every raider still on 2.4.x, which is exactly what the gate prevents. Also a raid-noise call, not a code change: it reaches the whole fleet in ~2 min with no review. Restore after the fleet has updated, on Hitya's word |
+| **560 pre-existing duplicate loot rows** | 337 groups across raids 44080–92092, from overlapping `/backfillopendkploot` runs. They inflate "N× won" the same way the fold's bug did. Cleaning them is a destructive edit to historical guild data → needs Hitya's word (task #39). Once gone, a unique index on (source, raid_id, item_id, winner_character, dkp_amount) makes this class of bug structurally impossible |
 | **Mimic 2.5.0 — first raid** | The whole 2.5 line (History tab, CH ✕, dashboard split, pet fold, backup-log rule) is browser-verified and unit-tested but has not been through a raid. Sunday is the first real test |
 | **Stale live-state can shadow fresher inferred buffs** | A character who returns after a swap keeps their OLD `character_live_state` buff list (Bwavair: 9 buffs, 2h old) because `live?.buffs ?? inferred` prefers any live row over inference. Not changed — she only has 2 observed casts, so falling back would paint a cleric RED "no buffs" and that is a worse lie than a timestamped stale list. Revisit if inferred coverage improves |
 | **Item icons DISABLED — needs a local session** | The atlas maps to the wrong icon ids (633 = boots → shovel). Off behind `ICON_ATLAS_DISABLED` since web 1.1.50. Repack via `scripts/pack-item-icons.ps1` on the EQ machine, check `uifiles/default` is stock, and VERIFY 633 is boots before re-enabling |
@@ -227,3 +228,41 @@ RH alarm was committed while checked out on `beta` and pushed with
 the *local* `main` ref, which had not moved, while the commit sat on beta. The
 tell is a push that succeeds with nothing to say. Cherry-picked onto main and
 beta reset. Check `git branch --show-current` before committing, not after.
+
+
+## The loot fold read only the first 1000 rows
+
+Caught by checking, hours after shipping it, whether the thing had actually run.
+It had — badly.
+
+**PostgREST caps a response at the server's max-rows setting (1000 on Supabase),
+and `limit=50000` in the query string does NOT lift it.** The cap is silent:
+1000 rows and a 200.
+
+Both sides of the fold's set-difference were truncated. The dangerous side is
+the already-folded set: raids that HAD been folded fell outside the first 1000
+rows, looked unfolded, and got re-inserted on the next pass. Two 30-minute
+passes ran, leaving **116 duplicate rows** — inflating the very "N× won" counts
+the feature exists to fix. The same truncation meant it was walking the OLDEST
+pending raids instead of the newest, so only 5 of 28 pending raids had moved.
+
+**Fixed in bot 3.1.47:** `selectAllPaged()` walks with ordered limit/offset until
+a short page ends it. Two details that are load-bearing:
+- **ordered**, because an unordered offset walk can skip and repeat rows;
+- a failed page returns **null, not a short list**. Reading a failure as "the
+  table is empty" would mean "nothing is folded yet" and re-fold all history.
+
+The 116 duplicates were deleted, one row kept per award, and the folded range
+verified clean.
+
+**Why the tests didn't catch it, which is the part worth keeping.**
+`test/opendkp-loot-fold.test.js` shipped with 18 cases and all of them passed
+while the thing was truncating in production — because every one tested the
+*logic given its inputs* (id reconciliation, dedup keys, wiring) and none tested
+*whether the inputs were complete*. `utils/supabase.js` had documented this exact
+cap for months, on `upsert()`'s return path. It bites reads identically.
+
+**The general lesson: "did the deploy work?" is a different question from "do
+the tests pass", and only the first one would have found this.** A feature whose
+whole job is to move rows between tables should be verified by counting rows in
+the destination, on the day it ships — not by trusting green CI.
