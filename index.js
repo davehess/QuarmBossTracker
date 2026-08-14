@@ -345,6 +345,7 @@ client.once(Events.ClientReady, async (readyClient) => {
   startOpenDkpSync();
   startOpenDkpRegisterQueue(readyClient);
   startRaidHelperSync();
+  startChatClockSkewFlush();
   runStartupSequence(readyClient).catch(err => console.error('[startup] Error:', err?.message));
 
   // One-shot backfill: mirror every in-memory state.pvpKills entry into
@@ -876,6 +877,42 @@ function startRaidHelperSync() {
       console.warn('[raidhelper-freshness] check failed:', err?.message)));
   setTimeout(() => cycle('initial'), 60_000);
   setInterval(() => cycle('interval'), 30 * 60_000);
+}
+
+// ── Publish the chat-derived clock offsets ──────────────────────────────────
+// Writes `method='chat'` rows alongside `pulse` and `consensus` so the three
+// cross-check. DELIBERATELY NOT WIRED INTO CORRECTIONS YET — utils/clockOffset.js
+// still reads `pulse` only. DESIGN-clock-correction.md §2.3 is explicit that
+// consumers migrate one at a time, each verifiable against a raid night; a new
+// estimator earns that by agreeing with the other two for a while first.
+function startChatClockSkewFlush() {
+  setInterval(async () => {
+    try {
+      const rows = _chatSkew.resolveOffsets(_chatSkewPairs);
+      if (rows.length === 0) return;
+      const supabase = require('./utils/supabase');
+      if (!supabase.isEnabled()) return;
+      const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+      const now = new Date().toISOString();
+      await supabase.upsert('agent_clock_offsets', rows.map(r => ({
+        guild_id:       guildId,
+        discord_id:     r.discord_id,
+        method:         'chat',
+        offset_ms:      Math.round(r.offset_ms),
+        samples:        r.samples,
+        spread_ms:      Math.round(r.spread_ms),
+        last_sample_at: now,
+        updated_at:     now,
+      })), 'guild_id,discord_id,method', { minimal: true });
+      const worst = rows[0];
+      if (Math.abs(worst.offset_ms) >= 5000) {
+        console.log(`[chat-clock] ${rows.length} install(s) resolved; worst ${worst.discord_id} `
+          + `${(worst.offset_ms / 1000).toFixed(1)}s over ${worst.partners} partner(s)`);
+      }
+    } catch (err) {
+      console.warn('[chat-clock] flush failed:', err?.message);
+    }
+  }, CHAT_SKEW_FLUSH_MS);
 }
 
 // ── Raid-Helper staleness alarm (#34) ───────────────────────────────────────
@@ -3350,7 +3387,21 @@ const http = require('http');
 // shorter than anyone re-typing the exact same /gu line, so genuine repeats
 // aren't suppressed.
 const CHAT_DEDUP_WINDOW_MS = 60_000;
-const _chatDedup = new Map(); // key: "channel|speaker|normtext" → timestamp
+// ── Clock skew from shared chat lines ────────────────────────────────────────
+// Pairwise deltas accumulate here between flushes; utils/chatClockSkew.js owns
+// the rules and the resolve. Purely in memory on purpose — a restart re-fills
+// it within minutes of raid chat, and persisting raw pairs would be a table
+// nobody reads.
+const _chatSkew = require('./utils/chatClockSkew');
+const _chatSkewPairs = new Map();
+const CHAT_SKEW_FLUSH_MS = 5 * 60 * 1000;
+
+// Value is { at, ts, by }: `at` is OUR receive time (drives the GC below), `ts`
+// is the uploader's own claimed stamp for the line and `by` is which install
+// sent it. Those last two exist so a later duplicate can be turned into a
+// clock-skew sample instead of being dropped — see the dedup gate in
+// _handleAgentChat and utils/chatClockSkew.js.
+const _chatDedup = new Map(); // key: "channel|speaker|normtext" → { at, ts, by }
 // Relay-only dedup. The same in-game line captured by two different uploaders
 // can arrive with DIFFERENT speaker attribution (self "You say to your guild"
 // vs third-person "Canopy tells the guild", or a multi-log mis-attribution) —
@@ -3984,7 +4035,7 @@ setInterval(() => {
 
 setInterval(() => {
   const now = Date.now();
-  for (const [k, v] of _chatDedup)      if (v < now - CHAT_DEDUP_WINDOW_MS)       _chatDedup.delete(k);
+  for (const [k, v] of _chatDedup)      if ((v?.at ?? 0) < now - CHAT_DEDUP_WINDOW_MS) _chatDedup.delete(k);
   for (const [k, v] of _chatRelayDedup) if (((v && v.at) || 0) < now - CHAT_RELAY_DEDUP_WINDOW_MS) _chatRelayDedup.delete(k);
   for (const [k, v] of _triggerDedup)   if (v < now - TRIGGER_DEDUP_WINDOW_MS)    _triggerDedup.delete(k);
   for (const [gid, book] of _reporterRegistry) {
@@ -4281,8 +4332,22 @@ async function _handleAgentChat(req, res) {
     // Wabumkin's words).
     const whoForSpeaker = effectiveSpeaker.toLowerCase() === speaker.toLowerCase() ? uploadedWho : null;
     const key = `${channel}|${effectiveSpeaker.toLowerCase()}|${dedupText}`;
-    if (_chatDedup.has(key)) continue;
-    _chatDedup.set(key, Date.now());
+    const _dupOf = _chatDedup.get(key);
+    if (_dupOf) {
+      // ── Free clock-skew sample (Hitya 2026-08-14) ───────────────────────────
+      // This `continue` used to be where a thousand measurements a night went
+      // in the bin. The EQ server broadcast this line to every client at once;
+      // we are holding the FIRST uploader's stamp for it and, right now, a
+      // second uploader's stamp for the same line. The difference is their
+      // clock skew — no network in the path, and our own clock not involved,
+      // which is exactly what `pulse` cannot give us.
+      try {
+        _chatSkew.addSample(_chatSkewPairs, _dupOf.by, identity.discord_id,
+          Date.parse(_dupOf.ts), Date.parse(msgTsSafe));
+      } catch { /* a measurement must never cost us a chat line */ }
+      continue;
+    }
+    _chatDedup.set(key, { at: Date.now(), ts: msgTsSafe, by: identity.discord_id });
 
     // Relay-only dedup keyed on text alone (ignores speaker) — see the
     // _chatRelayDedup comment. Entries carry the posted Discord message +
