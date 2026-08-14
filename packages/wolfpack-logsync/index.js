@@ -1334,11 +1334,37 @@ function parseEvent(line, ts) {
 }
 
 // ── Character name from filename ────────────────────────────────────────────
+// ⚠ Trailing digits are a BACKUP MARKER, not part of the name. EverQuest
+// character names cannot contain numbers (Hitya), so "eqlog_Dant3_pq.proj.txt"
+// was never written by the client — it is what a raider gets after copying
+// their log aside and letting EQ start a fresh one.
+//
+// We treated those as separate raiders. On Va Xi Aten Ha Ra an uploader calling
+// itself "Atlasius2" reported 288,169 for Atlasius while ten real clients and
+// Atlasius himself agreed on ~100,000, and because the live-DPS merge took a
+// max across clients, the phantom set the number for the whole raid. "Dant3"
+// was doing the same thing quietly beside it.
+//
+// Strip the suffix so a backup resolves to the person who owns it, and return
+// whether it WAS one so callers can decide what that means for them — a backup
+// is a legitimate thing to backfill from, and a bad thing to live-tail
+// alongside the real log (the same events would land twice under one name).
+function _splitBackupSuffix(rawName) {
+  const raw = String(rawName || '');
+  const m = raw.match(/^(.*?[A-Za-z])(\d+)$/);
+  return m ? { base: m[1], isBackup: true } : { base: raw, isBackup: false };
+}
 function characterFromFilename(filepath) {
   const base = path.basename(filepath);
-  // eqlog_Hitya_pq.proj.txt → Hitya
+  // eqlog_Hitya_pq.proj.txt → Hitya ; eqlog_Dant3_pq.proj.txt → Dant
   const m = base.match(/^eqlog_([^_]+)_/i);
-  return m ? m[1] : null;
+  return m ? _splitBackupSuffix(m[1]).base : null;
+}
+// True when this log is a copied-aside backup rather than the live file.
+function isBackupLogFile(filepath) {
+  const base = path.basename(String(filepath || ''));
+  const m = base.match(/^eqlog_([^_]+)_/i);
+  return m ? _splitBackupSuffix(m[1]).isBackup : false;
 }
 
 // ── Encounter detection state machine ───────────────────────────────────────
@@ -3624,14 +3650,13 @@ const _CH_ROSTER_HINT = /\d\s*,\s*[A-Za-z]/;
 // gaps, are they able to be included as well?" — confirmed via 2,349 of
 // Pyxil's actual raid-chat lines that this is her own cast-macro output,
 // firing on every heal she lands, not just gap-fills; there's no slot
-// number to key off of. Per the guild's answer: a spell that's their
-// class's real CH-equivalent (CH_EQUIVALENT_SPELLS) folds into the SAME
-// numbered rotation (auto-assigned a slot); anything else is a one-off
-// spot heal — surfaced as a banner, never consumes a slot.
+// number to key off of. ⚠ These NEVER consume a chain slot — see the long note
+// at the _CH_PERSONAL_RX branch in trackChChainLine. They surface as the
+// spot-heal banner, CH-equivalent or not.
 const _CH_PERSONAL_RX = /^([A-Za-z][A-Za-z'`\s]*?)\s+Inc to\s+([A-Z][\w`]*)\s*-\s*(\d{1,3})%\s*Mana Left/i;
-// spellKey → display label shown on the slot row (Hitya 2026-07-02: "we
-// should denote Druid CH on the chain"), so the overlay reads "Pyxil [Druid
-// CH]" rather than looking like an ordinary numbered cleric slot.
+// spellKey → display label for the spot-heal banner (Hitya 2026-07-02: "we
+// should denote Druid CH"), so it reads "Pyxil spot healing (Druid CH)" and a
+// healer can tell a full-heal-tier cast from a top-off at a glance.
 const CH_EQUIVALENT_SPELLS = new Map([
   ["tunares renewal", "Druid CH"],   // Druid's Complete-Heal-tier single-target heal
 ]);
@@ -3806,6 +3831,9 @@ function trackChChainLine(line, character) {
     const c = _chChain;
     c.rosterNames = c.rosterNames || {};
     for (const p of rosterPairs) {
+      // The raid re-declaring the order outranks any manual ✕ removal on the
+      // slots it names — this call IS the rotation, stated by the raid itself.
+      if (c.removed) delete c.removed[p.num];
       c.rosterNames[p.num] = _resolveChRosterName(p.token);
       // Seed an empty slot so the planned chain shows immediately, before
       // anyone has called — no lastAtMs, so it never reads as casting/"ago".
@@ -3823,6 +3851,14 @@ function trackChChainLine(line, character) {
     if (!num || num > 30) return;          // sanity: chains are small
     _chChainEnsure(atMs);
     const c = _chChain;
+    // Someone was manually removed from this slot (the overlay's ✕) and is
+    // still shouting it. Drop the call rather than re-seating them — see
+    // removeChChainSlot for why the block is (name, number) and not name-wide.
+    const declared = (c.rosterNames && c.rosterNames[num]) || speaker;
+    if (_chIsBlocked(c, num, declared) || _chIsBlocked(c, num, speaker)) {
+      c.updatedAt = atMs;
+      return;
+    }
     if (call[2]) c.target = call[2];
     const manaM = text.match(_CH_MANA_RX);
     const mana = manaM ? Math.min(100, parseInt(manaM[1], 10)) : null;
@@ -3854,7 +3890,13 @@ function trackChChainLine(line, character) {
     const nums = Object.keys(c.slots).map(Number);
     c.nextNum = num >= Math.max.apply(null, nums) ? Math.min.apply(null, nums) : num + 1;
     c.updatedAt = atMs;
-    _maybeAnnounceChGo(c, atMs);
+    // NOTE: deliberately no _maybeAnnounceChGo here. Advancing nextNum when a
+    // cleric STARTS casting is right for the overlay (the next row lights up
+    // and its countdown runs), but speaking it here announced the next slot a
+    // full cast time before that cleric was actually due — Hitya, live
+    // 2026-08-13: "the 003 GO for Manamana is called out twice and the second
+    // one is correct; the first is hitting 002 starts casting CH". Only a real
+    // GO call speaks now (see the _CH_GO_RX branch below).
     return;
   }
   // Personal heal-cast broadcast — no slot number in the raw line at all.
@@ -3863,43 +3905,32 @@ function trackChChainLine(line, character) {
     const spellRaw = personal[1].trim();
     const spellKey = spellRaw.toLowerCase().replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').trim();
     const mana = Math.min(100, parseInt(personal[3], 10) || 0);
-    if (CH_EQUIVALENT_SPELLS.has(spellKey)) {
-      // Folds into the numbered rotation exactly like a CH call above — same
-      // beat tracking, same lastCh/nextNum advance — just with a slot number
-      // this caster doesn't say out loud. Auto-assign one the first time we
-      // see them THIS chain session (one past the highest slot in use) and
-      // remember it so they keep the same row for the rest of the fight.
-      _chChainEnsure(atMs);
-      const c = _chChain;
-      const key = speaker.toLowerCase();
-      c.autoSlots = c.autoSlots || {};
-      let num = c.autoSlots[key];
-      if (!num) {
-        const existing = Object.keys(c.slots).map(Number);
-        num = existing.length ? Math.max.apply(null, existing) + 1 : 1;
-        c.autoSlots[key] = num;
-      }
-      const ddr = _chGradeCall(c, num, atMs);   // before the gap joins the median
-      if (c.lastCh && atMs > c.lastCh.atMs && c.lastCh.num !== num) {
-        const gap = atMs - c.lastCh.atMs;
-        if (gap > 500 && gap < 30000) { c.beats.push(gap); if (c.beats.length > 10) c.beats.shift(); }
-      }
-      const prev = c.slots[num] || {};
-      const slotName = (c.rosterNames && c.rosterNames[num]) || speaker;
-      c.slots[num] = { name: slotName, mana, lastAtMs: atMs, count: (prev.count || 0) + 1, kind: CH_EQUIVALENT_SPELLS.get(spellKey),
-                       claimants: _chMergeClaimants(prev, slotName, speaker, atMs, mana) };
-      _chReleaseClaimantsElsewhere(c, [slotName, speaker], num);
-      c.lastCh = { num, name: slotName, mana, atMs };
-      _applyChGrade(c, num, ddr);
-      const nums = Object.keys(c.slots).map(Number);
-      c.nextNum = num >= Math.max.apply(null, nums) ? Math.min.apply(null, nums) : num + 1;
-      c.updatedAt = atMs;
-      _maybeAnnounceChGo(c, atMs);
-    } else if (_chChain) {
-      // Not a CH-equivalent — a one-off spot heal riding alongside an
-      // ALREADY-running chain. Never conjures a chain of its own (mirrors
-      // the GO-cue guard below), never touches beats/lastCh/nextNum/slots.
-      _chChain.spotHeal = { name: speaker, spell: spellRaw, target: personal[2] || null, mana, atMs };
+    // ⚠ An un-numbered shout NEVER takes a chain slot, even when the spell IS
+    // a CH-equivalent.
+    //
+    // This used to auto-assign a slot the first time a druid broadcast
+    // Tunare's Renewal, on the reasoning that a rotation member who doesn't say
+    // their number out loud should still keep a stable row. Live 2026-08-13:
+    // Pyxil was spot-healing the RAMPAGE target (Timberowl) and shouting
+    // "TUNARE'S RENEWAL Inc to Timberowl - 98% Mana Left" each time. She was
+    // auto-slotted into 006 — on top of Mcdorf, who really was 006 — which lit
+    // the ORDER CONFLICT banner and put a druid who was nowhere near the
+    // rotation into the middle of it. Hitya: "she shouldn't be placed back onto
+    // the CH chain even though she's posting CHs."
+    //
+    // The number is what makes it a chain. No number, no slot — a CH-equivalent
+    // shout is a spot heal like any other, and lands on the spot-heal banner
+    // where a healer can see it without it displacing anyone.
+    if (_chChain) {
+      // A one-off heal riding alongside an ALREADY-running chain. Never
+      // conjures a chain of its own (mirrors the GO-cue guard below), never
+      // touches beats/lastCh/nextNum/slots. `kind` carries the CH-equivalent
+      // label when we have one, so the banner can say "Druid CH" rather than
+      // flattening it to a generic heal.
+      _chChain.spotHeal = {
+        name: speaker, spell: spellRaw, target: personal[2] || null, mana, atMs,
+        kind: CH_EQUIVALENT_SPELLS.get(spellKey) || null,
+      };
       _chChain.updatedAt = atMs;
     }
     return;
@@ -4072,6 +4103,92 @@ function _resolveChRosterName(token) {
   if (!pick) return t;
   return pick.charAt(0).toUpperCase() + pick.slice(1);
 }
+// ── Manual "get them off the chain" (Hitya, 2026-08-14) ─────────────────────
+// The ✕ on a slot row POSTs here. Removing the row alone is not enough: the
+// caller who put them there is still shouting, so the very next numbered call
+// would re-seat them within one beat and the button would look broken. So the
+// removal also BLOCKS that name on that number for the life of the chain.
+//
+// Deliberately narrow, because over-blocking is the worse failure — a chain
+// with a missing cleric kills the tank:
+//   • blocks (name, number) only. A DIFFERENT healer calling that number is a
+//     real re-assignment and seats normally.
+//   • a roster announcement ("Fargan 001, Rapha 002, …") is the raid's own
+//     ground truth and CLEARS the block for every slot it declares.
+//   • the block dies with the chain (5-minute idle reset), so it never carries
+//     into the next pull.
+//
+// `who` is optional and only matters on a CONTESTED slot, where the overlay
+// draws one row per claimant: the ✕ on Pyxil's row must take Pyxil off 006 and
+// leave Mcdorf — who is genuinely 006 — exactly where he is. Without it the
+// only available action would be nuking the whole slot, taking the real cleric
+// down with the impostor, which is the more dangerous half of the pair.
+// The block list per number is an ARRAY, not one name — a contested slot can
+// need two ✕ (remove the impostor, then find the "real" owner was wrong too),
+// and a single-name field would silently un-block the first one.
+function _chBlock(n, name) {
+  if (!name) return;
+  _chChain.removed = _chChain.removed || {};
+  const list = _chChain.removed[n] || (_chChain.removed[n] = []);
+  const lc = String(name).toLowerCase();
+  if (!list.some(x => String(x).toLowerCase() === lc)) list.push(name);
+}
+function _chIsBlocked(c, n, name) {
+  const list = c && c.removed && c.removed[n];
+  if (!Array.isArray(list) || !name) return false;
+  const lc = String(name).toLowerCase();
+  return list.some(x => String(x).toLowerCase() === lc);
+}
+function removeChChainSlot(num, who) {
+  const n = parseInt(num, 10);
+  if (!_chChain || !n) return { ok: false, removed: false, name: null };
+  const slot = _chChain.slots[n];
+  if (!slot) return { ok: true, removed: false, name: null };
+  const target = String(who || slot.name || '').trim();
+  if (!target) return { ok: true, removed: false, name: null };
+  const targetLc = target.toLowerCase();
+  const claimants = Array.isArray(slot.claimants) ? slot.claimants : [];
+  const isOwner = String(slot.name || '').toLowerCase() === targetLc;
+  const inClaims = claimants.some(cl => String(cl && cl.name || '').toLowerCase() === targetLc);
+  if (!isOwner && !inClaims) return { ok: true, removed: false, name: null };
+  _chBlock(n, target);
+  const kept = claimants.filter(cl => String(cl && cl.name || '').toLowerCase() !== targetLc);
+  // Somebody else still claims this number, so the SLOT survives — this is the
+  // contested case, and deleting the whole row here would take the real cleric
+  // off the rotation along with the impostor.
+  if (kept.length) {
+    slot.claimants = kept;
+    if (isOwner) {
+      // The row's owner is the one leaving; hand it to the most recent of the
+      // remaining claimants. Their own last cast drives the bar from here.
+      const heir = kept.slice().sort((a, b) => (b.lastAtMs || 0) - (a.lastAtMs || 0))[0];
+      slot.name = heir.name;
+      if (heir.mana != null) slot.mana = heir.mana;
+      if (heir.lastAtMs) slot.lastAtMs = heir.lastAtMs;
+      // The grade was earned by the cast we just removed — leaving it would
+      // stamp the departing healer's sticker onto the one taking over.
+      slot.grade = null; slot.gradeAtMs = 0; slot.gradeDeltaMs = 0; slot.gradeStreak = 0;
+    }
+    _chChain.updatedAt = Date.now();
+    return { ok: true, removed: true, name: target, slot_kept: true };
+  }
+  const name = target;
+  delete _chChain.slots[n];
+  if (_chChain.rosterNames) delete _chChain.rosterNames[n];
+  // Per-SLOT streaks only — the shared 'chain' streak belongs to everybody
+  // still in the rotation and must not be reset by one row leaving.
+  if (CH_DDR_STREAK_PER_SLOT && _chChain.ddrStreak) delete _chChain.ddrStreak[_chStreakKey(n)];
+  if (_chChain.lastCh && _chChain.lastCh.num === n) _chChain.lastCh = null;
+  if (_chChain.lastGo && _chChain.lastGo.num === n) _chChain.lastGo = null;
+  // Hand the beat to the next surviving slot rather than leaving nextNum
+  // pointing at a row nobody can see — that reads as a stalled chain.
+  if (_chChain.nextNum === n) {
+    const nums = Object.keys(_chChain.slots).map(Number).sort((a, b) => a - b);
+    _chChain.nextNum = nums.length ? (nums.find(x => x > n) ?? nums[0]) : null;
+  }
+  _chChain.updatedAt = Date.now();
+  return { ok: true, removed: true, name };
+}
 function chChainSnapshot() {
   if (!_chChain) return null;
   if ((Date.now() - _chChain.updatedAt) > CH_CHAIN_IDLE_RESET_MS) { _chChain = null; return null; }
@@ -4197,10 +4314,20 @@ function _isOwnCharacterName(name) {
     && w.lastSeen && (now - w.lastSeen) <= OWN_CHARACTER_ACTIVE_MS);
 }
 
-// CH chain "0N GO" callout (#103). Called after every point that advances
-// _chChain.nextNum. When the on-deck slot (nextNum) is owned by one of our
-// watched characters — i.e. the chain has reached YOUR beat — speak "0N GO"
-// through the trigger pipeline. Debounced on the slot number so a slot only
+// CH chain "0N GO" callout (#103). Fires ONLY from an explicit "0N go" cue in
+// chat — never from a cleric starting their cast.
+//
+// ⚠ It used to fire from both. The cast path advances nextNum the moment the
+// PREVIOUS cleric begins casting, so speaking there announced the next slot a
+// full cast (~10s) before that cleric was due; the real GO call then announced
+// it again at the right moment. Two callouts, the first one wrong (Hitya, live
+// 2026-08-13). The single `_lastChGoNum` cursor hid it whenever the two fires
+// were adjacent, which is why it only showed up once a druid CH / auto-slot
+// cast landed between them and moved the cursor.
+//
+// When the on-deck slot (nextNum) is owned by one of our watched characters —
+// i.e. the chain has reached YOUR beat — speak "0N GO" through the trigger
+// pipeline. Debounced on the slot number so a slot only
 // announces once per rotation pass (nextNum cycles 1..N; each transition INTO
 // a new number can announce, re-entry to the same number can't back-to-back).
 // The master enableTriggerTts flag is honored downstream by the trigger
@@ -4290,9 +4417,9 @@ function _diSlotTurnInMs(chain, num, nowMs) {
 //
 // Hard exclusions (things we KNOW, not things we guess):
 //   • not a Cleric — DI is spell 1546, cleric-only. Chain slots are NOT all
-//     clerics: druids gap-fill via CH_EQUIVALENT_SPELLS auto-slots (which carry
-//     a `kind` label) and shamans show up too. An UNKNOWN class stays eligible;
-//     only a known non-Cleric is dropped.
+//     clerics: druids who gap-fill call a number like anyone else ("002 - DRUID
+//     CH - Currygoat"), and shamans show up too. An UNKNOWN class stays
+//     eligible; only a known non-Cleric is dropped.
 //   • dead — the 3.5.58 death registry. The design doc predates it and lists
 //     "is this cleric actually alive" under what we cannot know; we can now.
 //   • DI confirmed on cooldown — `up === false && unknown === false` means we
@@ -5085,14 +5212,20 @@ function _announceSlowDrop(name) {
 // Is `nameLower` a live Zeal target on any watched character right now? Guards
 // the DROP callout so a killed / de-targeted mob (its slow simply outliving on a
 // corpse) never nags a "reslow".
+// Same instanced-name hazard as _rampageOnMainTarget — st.target_name is Zeal's
+// string ("#Diabo_Xi_Va_Temariel"), nameLower comes from a log emote
+// ("diabo xi va temariel"). Raw compare never matches inside an instance, which
+// gated the slow-DROPPED / reslow callout shut alongside the landed one
+// (Hitya, live 2026-08-13). Normalize both sides.
 function _isNameCurrentlyTargeted(nameLower) {
   if (!nameLower) return false;
+  const want = _normMobNameAgent(nameLower);
   const now = Date.now();
   for (const ch of Object.keys(_zealState)) {
     const st = _zealState[ch];
     if (!st || !st.target_name) continue;
     if ((now - (st.updatedAt || 0)) > 60000) continue;
-    if (String(st.target_name).toLowerCase() === nameLower) return true;
+    if (_normMobNameAgent(st.target_name) === want) return true;
   }
   return false;
 }
@@ -6379,13 +6512,31 @@ class EncounterBuilder {
     // this.character with zero reliance on catching a one-time event, so
     // populate petLeaders from the NAME itself the first time we see it,
     // independent of whether a declaration line ever fired.
-    if (event.attacker && this.character) {
+    // ⚠ This used to self-attribute ONLY (`=== this.character`), which fixed the
+    // meter on the pet owner's own machine and nowhere else. Shavimo again,
+    // 2026-08-13: his Warder counted in the parse HE sent and was missing from
+    // every other client's copy of the same fight — 56.6K with pets on his own,
+    // 35.8K without on the relayed one. Same for Wabumkin (+Pets on his, plain
+    // on the relay) and Kravenn (in the top 10 on his, absent from the relay).
+    // A possessive name is server truth about ownership no matter WHO is
+    // reading the line, so credit the owner it names, not just ourselves.
+    // Guarded on isConfirmedPlayer so "a gnoll`s pet" style NPC possessives
+    // can't invent a player, and on the vision-eye choke point for consistency
+    // with the declaration path below (an eye is never possessive-named today,
+    // but this is the second place ownership can be born and both must agree).
+    if (event.attacker) {
       const _pl = String(event.attacker);
       const _plKey = _pl.toLowerCase();
-      if (!this.petLeaders[_plKey]) {
+      if (!this.petLeaders[_plKey] && !_isVisionEyePet(_pl)) {
         const _possessive = _pl.match(/^([A-Z][\w`]*)['`]s\s+\S/);
-        if (_possessive && _possessive[1].toLowerCase() === this.character.toLowerCase()) {
-          this.petLeaders[_plKey] = this.character;
+        if (_possessive) {
+          const _owner = _possessive[1];
+          const _isSelf = this.character && _owner.toLowerCase() === this.character.toLowerCase();
+          if (_isSelf) {
+            this.petLeaders[_plKey] = this.character;
+          } else if (isConfirmedPlayer(_owner)) {
+            this.petLeaders[_plKey] = _owner;
+          }
         }
       }
     }
@@ -8154,6 +8305,7 @@ class EncounterBuilder {
     if (stats.currentEncounterThreat) {
       stats.currentEncounterThreat = { ...stats.currentEncounterThreat, flushedAt: Date.now() };
     }
+    _recordFightHistory(stats.currentEncounterThreat);
     // Cross-builder flush propagation. If this Mimic install is tailing more
     // than one character's log (multi-box on one machine), peer builders
     // watching the SAME fight should close along with us — if their own log
@@ -11233,6 +11385,9 @@ function _serializeForDashboard() {
     // the bot is too old to serve it - the HUD then shows local only).
     guildDamage: stats.guildDamage && (Date.now() - stats.guildDamage.at < 30_000)
       ? stats.guildDamage : null,
+    // Settled per-mob guild numbers for the HUD's History tab — see
+    // _recordFightHistory. Newest first, small enough to ride every poll.
+    fightHistory: Array.isArray(stats.fightHistory) ? stats.fightHistory : [],
     crashBundleCount: _crashBundleCount(),
     // Whether crash metadata currently uploads. Mimic owns the setting
     // (cfg.crashReports) and hands it over as an env var at spawn, so this is
@@ -12038,7 +12193,28 @@ tr:hover td { background:#1f242c }
 .name { color:var(--orange) }
 .dim { color:var(--dim) }
 .dot { color:var(--green) }
-.nav { display:flex; gap:6px; margin:12px 0; flex-wrap:wrap; align-items:center; }
+/* Sidebar navigation (Hitya 2026-08-13: "having to scroll in our dashboard is
+   somewhat annoying to navigate"). The row was FULL - 8 tabs plus Tour and
+   Panels - so every new destination had to wrap or displace something, which is
+   why features kept getting stacked INSIDE existing tabs instead of getting
+   their own. A rail has room to grow and shows every destination at once.
+   The markup is unchanged: same .nav, same data-tab buttons, so the switcher,
+   the Panels popover and the tour all keep working. */
+.shell { display:flex; align-items:flex-start; gap:14px; }
+.shell > .nav { flex:0 0 168px; position:sticky; top:8px; }
+.panes { flex:1 1 auto; min-width:0; }   /* min-width:0 or wide tables blow the flex item out */
+.nav { display:flex; flex-direction:column; gap:4px; margin:12px 0; align-items:stretch; }
+.nav button { text-align:left; }
+.nav .wp-gear { margin-left:0 !important; }   /* the row layout pushed Tour right with margin-left:auto */
+/* The dashboard is also opened in a plain browser at localhost:7777, and Mimic
+   windows get resized small. Below this the rail would eat the content, so fall
+   back to the original wrapping row. */
+@media (max-width: 700px) {
+  .shell { display:block; }
+  .shell > .nav { position:static; }
+  .nav { flex-direction:row; flex-wrap:wrap; align-items:center; }
+  .nav button { text-align:center; }
+}
 .nav button { background:#21262d; color:var(--text); border:1px solid var(--border); padding:5px 12px; border-radius:6px; cursor:pointer; font-family:inherit; font-size:12px; }
 .nav button:hover { background:#30363d }
 .nav button.active { background:#1f6feb; border-color:#1f6feb; color:#fff }
@@ -12193,13 +12369,22 @@ body.wp-overlay-mode .wp-overlay-target table th:nth-child(2) { text-align:right
     <button id="wpReload" class="wp-gear" title="Reload the dashboard — reconnect to the parser engine (use this if panels are blank after an update)" onclick="if(window.mimic&&window.mimic.openDashboard){window.mimic.openDashboard()}else{location.reload()}">🔄 Reload</button>
   </span>
 </div>
+<div class="shell">
 <div class="nav">
   <button class="active" data-tab="dash">Dashboard</button>
   <button data-tab="overlays">🪟 Overlays</button>
   <button data-tab="raid">⚔ Buffs / Raid</button>
   <button data-tab="fights">⚔️ Fights</button>
-  <button data-tab="info">Info</button>
+  <!-- 📊 Stats + 🩺 Diagnostics were carved OUT of Info and Triggers (Hitya
+       2026-08-13 — "having to scroll in our dashboard is somewhat annoying to
+       navigate"). Info had grown to 16 cards and Triggers to 12 by mixing three
+       unrelated jobs: what your log SAW (session stats), whether the machinery
+       WORKS (diagnostics), and the thing the tab is actually named for. The
+       sidebar rail is what made room for more destinations. -->
+  <button data-tab="stats">📊 Stats</button>
   <button data-tab="triggers">⚡ Triggers</button>
+  <button data-tab="diag">🩺 Diagnostics</button>
+  <button data-tab="info">Info</button>
   <button data-tab="optin">Logsync</button>
   <!-- 🛡 Admin — officer-only. Hidden by default; renderAdmin flips it visible
        ONLY when s.mimicIdentity.is_officer (the bot's authenticated reply). The
@@ -12210,6 +12395,10 @@ body.wp-overlay-mode .wp-overlay-target table th:nth-child(2) { text-align:right
   <button id="wpGear" class="wp-gear" title="Customize panels — show or hide sections (per page)">⚙ Panels</button>
 </div>
 <div id="wpPanelMenu" class="wp-menu" style="display:none"></div>
+<!-- .panes holds everything the rail sits beside. The nav KEEPS its class and
+     its data-tab buttons, so the switcher, the Panels popover and the guided
+     tour all keep working untouched - this is a layout change, not a rewrite. -->
+<div class="panes">
 <div id="wpMailPanel" style="display:none;margin:8px 0;border:1px solid var(--border);border-radius:8px;padding:10px 12px;background:rgba(88,166,255,0.04)"></div>
 <div id="dash" class="section active"></div>
 <div id="overlays" class="section"></div>
@@ -12221,10 +12410,14 @@ body.wp-overlay-mode .wp-overlay-target table th:nth-child(2) { text-align:right
   <div id="tanks"></div>
   <div id="deeps"></div>
 </div>
+<div id="stats" class="section"></div>
 <div id="info" class="section"></div>
 <div id="triggers" class="section"></div>
+<div id="diag" class="section"></div>
 <div id="optin" class="section"></div>
 <div id="admin" class="section"></div>
+</div><!-- /.panes -->
+</div><!-- /.shell -->
 <script>
 function _isNewerVersion(a, b) {
   if (!a || !b) return false;
@@ -14391,7 +14584,20 @@ function renderReplayStatus(s) {
   h += '</div>';
   morphInto(el, h);
 }
-function renderTriggers(s) {
+// ── 🩺 Diagnostics tab ─────────────────────────────────────────────────────
+// "Is the machinery working?" — everything that answers that question, and
+// nothing that answers anything else. Carved out of Triggers (the pipe/charm/
+// pet/journal/mechanics cards) and Info (the Zeal explorer + raw capture) on
+// 2026-08-13; both tabs had grown past a screenful by absorbing diagnostics
+// that had nowhere else to live.
+//
+// This function owns #diag and emits ONLY placeholders + the one static card,
+// so its HTML is byte-stable between polls (setSectionHTML short-circuits) and
+// the volatile cards repaint individually — the same isolation the cards had
+// on their old tabs. It must run BEFORE renderZealCard / renderCharmDiag /
+// renderPetBuffDiag / renderTriggerJournal / renderMechanics / renderZealExplorer
+// in the section list so those placeholders exist same-tick.
+function renderDiag(s) {
   let h = '';
   h += '<div class="grid">';
 
@@ -14399,30 +14605,55 @@ function renderTriggers(s) {
   // connected pids, total events this session, and per-type counts with the
   // newest sample of each. Only rendered under Mimic (Parser.bat has no Zeal
   // bridge); hidden entirely until at least one event arrives so it's not
-  // dead space for non-Zeal users.
-  // Zeal pipe status card lives in its OWN #wpZealCard element, filled by
-  // renderZealCard() on each poll. Its event counters + live HP gauges change
-  // every poll, so keeping it inline would make this whole section's HTML
-  // differ every 2s — forcing a full innerHTML rewrite of the (large) guild-
-  // triggers table + a remount of the trigger editor every 2 seconds. That
-  // synchronous churn reset the editor form, flashed the page, and janked the
-  // window hard enough to trip Windows' Aero Shake while dragging. Isolating
-  // the volatile card means the HTML below stays byte-stable when triggers
-  // don't change, so setSectionHTML short-circuits and only the card repaints.
+  // dead space for non-Zeal users. Filled by renderZealCard() each poll — its
+  // counters and live HP gauges change every 2s, so it has to sit in its own
+  // element or the whole section's HTML differs every poll.
   h += '<div id="wpZealCard" class="card wide" style="display:none"></div>';
   // Charm-tracking diagnostic card — filled by renderCharmDiag(). Hidden
   // until there's data to show (no watched character casting charms, etc.).
   h += '<div id="wpCharmDiag" class="card wide" style="display:none"></div>';
   // Pet-buff diagnostic card (#119) — filled by renderPetBuffDiag(). Hidden
-  // until there is a pet or a recent buff cast to explain (byte-stable/empty
-  // otherwise, so idle polls don't repaint the Triggers section).
+  // until there is a pet or a recent buff cast to explain.
   h += '<div id="wpPetBuffDiag" class="card wide" style="display:none"></div>';
-  // Trigger checkpoint journal (#76) — filled by renderTriggerJournal(). Own
-  // wp* placeholder so its volatile rows don't force this section to repaint.
+  // Trigger checkpoint journal (#76) — filled by renderTriggerJournal().
   h += '<div id="wpTriggerJournal" class="card wide" style="display:none"></div>';
-  // Boss mechanics (#206) — filled by renderMechanics(). Own wp* placeholder
-  // for the same reason as the journal: its rows carry fmtAgo stamps.
+  // Boss mechanics (#206) — filled by renderMechanics(). Its rows carry fmtAgo
+  // stamps, so it needs its own placeholder like the journal.
   h += '<div id="wpMechanics" class="card wide" style="display:none"></div>';
+  // Zeal Pipe explorer — every data element the pipe carries, per character,
+  // each group expandable. Volatile (live gauges/labels), so it fills its own
+  // placeholder via renderZealExplorer.
+  h += '<div id="wpZealExplorer" class="card wide" style="display:none"></div>';
+
+  // 🩺 Raw Zeal capture — opt-in diagnostic. The control lives here, but the
+  // capture itself runs in Mimic (it owns the pipe); we drive it through the
+  // window.mimic config bridge. wpWireZealCapture wires the buttons after render.
+  var _underMimic = !!(window.mimic && window.mimic.getConfig);
+  h += '<div class="card wide"><h2>🩺 Raw Zeal Capture <span class="dim" style="font-size:11px;font-weight:normal">(diagnostic)</span></h2>';
+  if (_underMimic) {
+    h += '<div class="subtle" style="font-size:11px;margin-bottom:8px">Dumps every raw Zeal pipe object &mdash; full and untruncated &mdash; to <code>zeal-raw.ndjson</code>. Turn it on, reproduce, then open the file. Leave off for normal play; it is capped + rotated so it cannot fill the disk.</div>';
+    h += '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">';
+    h += '<button type="button" id="wpZealCapBtn" style="cursor:pointer;font-size:12px;padding:4px 12px;border-radius:4px;border:1px solid var(--border);background:#21262d;color:var(--text)">&hellip;</button>';
+    h += '<button type="button" id="wpZealCapOpen" style="cursor:pointer;font-size:12px;padding:4px 12px;border-radius:4px;border:1px solid var(--border);background:#21262d;color:var(--blue)">Open capture file&hellip;</button>';
+    h += '</div>';
+    h += '<div id="wpZealCapHint" class="dim" style="font-size:11px;margin-top:6px"></div>';
+  } else {
+    h += '<div class="dim" style="font-size:12px">Requires Mimic &mdash; open this dashboard from the desktop app to capture raw Zeal traffic.</div>';
+  }
+  h += '</div>';
+
+  h += '</div>';
+  if (!setSectionHTML('diag', h)) return;
+  wpWireZealCapture();
+}
+
+function renderTriggers(s) {
+  let h = '';
+  h += '<div class="grid">';
+
+  // (The Zeal pipe / charm / pet-buff / trigger-journal / boss-mechanics
+  // diagnostic cards moved to the 🩺 Diagnostics tab — see renderDiag. Their
+  // render fns are unchanged; only the placeholder location moved.)
 
   // ⚡ Recent fires (recent trigger matches) — its rows carry fmtAgo timestamps
   // that tick every poll, so it MUST live in its own wp* placeholder filled by
@@ -15764,45 +15995,19 @@ document.addEventListener('click', function (ev) {
   }
 }, true);
 
-function renderInfo(s) {
-  const sessionMin = Math.max(1, Math.round((Date.now() - s.startedAt) / 60000));
-  // totalMinutes now accumulates the live session incrementally (saveStatsSoon),
-  // so it IS the lifetime — don't add sessionMin again or the current session
-  // double-counts. Floor to sessionMin so a brand-new install isn't shown below
-  // the session that's already running.
-  const lifetimeMin = Math.max(s.lifetime?.totalMinutes||0, sessionMin);
+// ── 📊 Stats tab ───────────────────────────────────────────────────────────
+// "What did my log actually see this session?" — mending, abilities, casts,
+// resists, rolls, inbound spell damage, loadouts and pets. All of it used to
+// sit on Info, which had become three tabs wearing one coat: session
+// observations, machine diagnostics, and parser facts. This is the
+// observations half (Hitya 2026-08-13 — the dashboard-navigation pass).
+//
+// Every card here is byte-stable between polls by construction: absolute
+// timestamps only, no fmtAgo, no live gauges. That is why this section needs
+// no wp* placeholders at all — a poll that changes nothing rewrites nothing,
+// so open <details> rows survive (and each one carries wpKeep besides).
+function renderStats(s) {
   let h = '';
-  // Crash review (moved here from Triggers, Hitya 2026-08-13 — a crash is a
-  // machine/diagnostic concern, not a callout one). Reading dumps costs real
-  // work, so the list fills on demand via renderCrashReview()'s one-shot.
-  // The checkbox mirrors the tray's "Share crash reports with the guild" toggle
-  // — same cfg.crashReports flag, two places to reach it, so nobody has to know
-  // the tray menu exists.
-  h += '<div id="wpCrashReview" class="card wide"><b>\\ud83e\\ude7a Crash review</b>'
-    +  '<div class="dim" style="margin:6px 0">Had EverQuest close on you? This reads the crash '
-    +  'files Zeal left on this machine and tells you what actually broke \\u2014 including '
-    +  'whether Mimic or Zeal had anything to do with it. The crash dumps never leave your PC.</div>'
-    +  '<label style="display:flex;gap:6px;align-items:center;margin:8px 0;cursor:pointer">'
-    +    '<input type="checkbox" id="wpCrashShare" onchange="wpToggleCrashShare(this.checked)"'
-    +      (s.crashReportsEnabled ? ' checked' : '') + '>'
-    +    '<span>Automatically send crash reports to the guild</span>'
-    +  '</label>'
-    +  '<div class="dim" style="font-size:11px;margin-bottom:8px">Sends only what the crash says '
-    +  '\\u2014 never the dump itself. Same setting as the tray menu; changing it restarts the '
-    +  'parser engine.</div>'
-    +  '<button id="wpCrashBtn" onclick="wpRunCrashReview()">Review my crashes</button>'
-    +  '<div id="wpCrashOut"></div></div>';
-  // NOTE: Watched Logs (#wpWatchedLogs) moved to the Dashboard's ⚙ Engine card,
-  // and the officer DKP tick / loot capture cards (#wpDkpTick / #wpDkpLoot)
-  // moved to the 🛡 Admin tab (#109). Their render fns are unchanged — only the
-  // placeholder location moved — so they are NOT re-declared here.
-  // Zeal Pipe explorer — every data element the pipe carries, per character,
-  // each group expandable. Volatile (live gauges/labels), so it fills its own
-  // placeholder via renderZealExplorer to keep the rest of #info byte-stable.
-  h += '<div id="wpZealExplorer" class="card wide" style="display:none"></div>';
-  // 🛟 Settings backups — filled by renderBackupsCard (own placeholder so the
-  // restore controls survive #info repaints).
-  h += '<div id="wpBackupsCard" class="card wide" style="display:none"></div>';
   h += '<div class="grid">';
   // 🥋 Monk Mending — only if attempts > 0
   const m = s.sessionMends || {};
@@ -15816,131 +16021,6 @@ function renderInfo(s) {
          '<tr><td>Failed</td><td class="num" style="color:var(--red)">' + m.fail + ' <span class="dim">(' + failPct + '% of attempts)</span></td></tr>' +
          '</table></div>';
   }
-  h += '<div class="card"><h2>Parser Info</h2>';
-  h += '<div>Agent v' + esc(s.version) + '</div>';
-  h += '<div>Watching ' + (s.watchedLogs?.length||0) + ' log(s)</div>';
-  h += '<div>Uploads this session: ' + (s.uploadCount||0) + ' (' + (s.uploadErrors||0) + ' errors)</div>';
-  h += '<div>This session: ' + s.sessionEvents + ' events / ' + sessionMin + ' min</div>';
-  h += '<div>Top session: ' + (s.lifetime?.topSessionEvents||0) + ' ev / ' + (s.lifetime?.topSessionMinutes||0) + ' min</div>';
-  h += '<div>Lifetime: ' + ((s.lifetime?.totalEvents||0) + s.sessionEvents) + ' ev / ' + lifetimeMin + ' min</div>';
-  if (s.lifetime?.firstSeenAt) h += '<div class="dim">First run: ' + esc(s.lifetime.firstSeenAt) + '</div>';
-  h += '</div>';
-  // 🧩 Client versions — what each watched client actually has LOADED, harvested
-  // from the /zeal version output (agent 3.5.16). Deliberately distinct from the
-  // Zeal update notice, which reports what zealUpdater found ON DISK: the two
-  // disagree exactly when Zeal has been updated but EQ has not been restarted,
-  // and that is the one state where "you are up to date" is a lie.
-  //
-  // Byte-stable between polls on purpose — these values only change when someone
-  // runs the command, so no wp* placeholder is needed. Rendering a relative
-  // "2m ago" here instead of the fixed stamp would repaint #info every 2s and
-  // reset anything the user had open (dashboard rendering rules).
-  const _cv = s.clientVersions || [];
-  h += '<div class="card"><h2>🧩 Client versions</h2>';
-  if (!_cv.length) {
-    h += '<div class="dim">Nothing captured yet. Type <b>/zeal version</b> in game and it appears here — Zeal, eqw.dll and eqgame.dll builds, per character. We never send the command for you.</div>';
-  } else {
-    h += '<table>';
-    for (const c of _cv) {
-      h += '<tr><td colspan="2" style="padding-top:6px"><b>' + esc(c.character) + '</b></td></tr>';
-      if (c.zeal)   h += '<tr><td>Zeal</td><td class="num">' + esc(c.zeal) + (c.zeal_hash ? ' <span class="dim">(' + esc(c.zeal_hash) + ')</span>' : '') + '</td></tr>';
-      if (c.eqw)    h += '<tr><td>eqw.dll</td><td class="num">' + esc(c.eqw) + '</td></tr>';
-      if (c.eqgame) h += '<tr><td>eqgame.dll</td><td class="num">' + esc(c.eqgame) + '</td></tr>';
-      if (c.at)     h += '<tr><td class="dim">read</td><td class="dim num">' + esc(String(c.at).replace('T', ' ').slice(0, 19)) + '</td></tr>';
-    }
-    h += '</table>';
-  }
-  h += '</div>';
-  // 🏷 Zeal tag capture readiness (#194). Byte-stable: zeal.ini values change
-  // rarely and the fresh-tag count only moves while tags are actually flowing
-  // (an acceptable repaint — the Info tab is not a form surface mid-raid).
-  const _ztc = s.zealTagConfig || [];
-  // 🗂 Log archiving banner — the user-facing notice + kill switch for the
-  // auto-archive feature (Ashieron feedback). Plain language: nothing is
-  // deleted, and the impacted files are named with sizes.
-  const _lr = s.logRotate;
-  if (_lr) {
-    h += '<div class="card"><h2>🗂 Log archiving</h2>';
-    // One-time NEW-FEATURE announcement (Hitya: a Mimic banner, not a Discord
-    // post). Dismissed state persists in prefs so it appears once per install.
-    if (!_lr.noticeSeen) {
-      h += '<div style="border-left:3px solid var(--green);background:rgba(63,185,80,.08);padding:6px 8px;margin-bottom:8px;font-size:12px">'
-        + '<b>New:</b> Mimic now keeps your EverQuest log files from growing without limit. '
-        + 'Nothing is ever deleted &mdash; a large log is simply moved into a <code>LogArchive</code> folder and EQ starts a fresh one. '
-        + 'Your old logs stay on your disk and can still be used to fill in past raids. '
-        + '<button class="btn" style="margin-left:6px" onclick="wpLogRotateSeen()">Got it</button></div>';
-    }
-    if (_lr.enabled) {
-      h += '<div style="font-size:12px;margin-bottom:4px">Log archiving is <b style="color:var(--green)">ON</b>. '
-        + 'A log file bigger than <b>' + esc(String(_lr.thresholdMb)) + ' MB</b> is moved into a <code>LogArchive</code> folder next to your logs once it has been quiet for 15 minutes. '
-        + 'Nothing is deleted &mdash; EQ starts a fresh file, and the old one stays on your disk.</div>';
-      if (_lr.candidates && _lr.candidates.length) {
-        h += '<div style="font-size:11px;margin-bottom:4px"><b>Will be archived on the next quiet sweep:</b> '
-          + _lr.candidates.map(function (c) { return esc(c.file) + ' (' + esc(String(c.size_mb)) + ' MB)'; }).join(', ') + '</div>';
-      } else {
-        h += '<div class="dim" style="font-size:11px;margin-bottom:4px">No log files are over the cap right now.</div>';
-      }
-      if (_lr.recent && _lr.recent.length) {
-        h += '<div class="dim" style="font-size:11px;margin-bottom:4px">Recently archived: '
-          + _lr.recent.map(function (r) { return esc(r.file) + ' (' + esc(String(r.mb)) + ' MB)'; }).join(', ') + '</div>';
-      }
-      h += '<button class="btn" onclick="wpLogRotateToggle(1)">Turn log archiving off</button>';
-    } else {
-      h += '<div class="dim" style="font-size:12px;margin-bottom:4px">Log archiving is <b>off</b>. Big log files will keep growing.</div>';
-      h += '<button class="btn" onclick="wpLogRotateToggle(0)">Turn log archiving on</button>';
-    }
-    h += '</div>';
-  }
-  h += '<div class="card"><h2>🏷 Zeal tag capture</h2>';
-  if (s.zealTagRateLimit) {
-    h += '<div style="margin-bottom:4px;color:#f2b632;font-size:11px">⚠️ The server rate limited your chat around <code>'
-      + esc(new Date(s.zealTagRateLimit.at).toLocaleTimeString())
-      + '</code> (' + esc(String(s.zealTagRateLimit.seconds)) + 's lockout). Tags sent in that window did <b>not</b> broadcast — '
-      + 'Zeal still draws the arrow, so they look tagged to you and to nobody else. Re-tag them, and spread tagging across raiders (the limit is per character).</div>';
-  }
-  if (s.zealTagsDropped > 0) {
-    h += '<div style="margin-bottom:4px;color:#f2b632;font-size:11px">⚠️ <b>' + esc(String(s.zealTagsDropped))
-      + '</b> tag(s) exceeded the upload cap and were not sent. Named mobs are kept first, then the newest — but this many live tags means the raid is marking faster than the cap allows.</div>';
-  }
-  if (s.zealTagPretty && !_ztc.some(function (z) { return z.prettyprint; })) {
-    h += '<div style="margin-bottom:4px;color:#f2b632;font-size:11px">⚠️ Saw a tag arrive already rewritten by <code>/tag prettyprint</code> (<code>' + esc(s.zealTagPretty.sample || '') + '</code>) — that strips the spawn id, so same-name mobs cannot be told apart. Run <code>/tag prettyprint off</code>.</div>';
-  }
-  if (!_ztc.length) {
-    h += '<div class="dim">No <b>zeal.ini</b> found next to the watched logs yet — it appears once Zeal runs in that EQ folder.</div>';
-  } else {
-    for (const zc of _ztc) {
-      const warns = zc.warnings || [];
-      h += '<div style="margin-bottom:4px">' + (warns.length ? '⚠️' : '✅') + ' <b>' + esc(zc.channel || 'no channel persisted') + '</b>'
-        + ' <span class="dim">' + esc(zc.dir) + '</span></div>';
-      for (const w of warns) {
-        h += '<div style="margin:0 0 4px 18px;color:#f2b632;font-size:11px">' + esc(w) + '</div>';
-      }
-    }
-    h += '<div class="dim" style="font-size:11px">The channel persists in zeal.ini once joined — no per-raid setup. Tags heard in the last 2 min: <b>' + (s.zealTagCount || 0) + '</b>. Tank usage: target the add → <code>/tag chat &lt;Name&gt;-Tanking</code> (shapes: <code>^G^</code> arrows, <code>^P^</code> paw, <code>^S^</code> stop). Any of <code>/tag chat</code>, <code>/tag gsay</code> (group) or <code>/tag rsay</code> (raid) is captured.</div>';
-    // The three causes the ini can NOT see. All of them show the nameplate
-    // arrow in game and log nothing, which is why "the arrow is right there"
-    // is not evidence the tag was broadcast.
-    if (!(s.zealTagCount || 0)) {
-      h += '<div class="dim" style="font-size:11px;margin-top:4px">Arrow in game but nothing here? The arrow only proves Zeal applied the tag locally. Three ways it never reaches the log: <code>/tag local</code> (never broadcasts at all), <code>/tag chat</code> with the channel not actually joined (Zeal prints “You must join a channel”), and <code>/tag suppress on</code> — that one hides the broadcast from your chat window AND your log while still drawing the arrow.</div>';
-    }
-  }
-  h += '</div>';
-  // 🩺 Raw Zeal capture — opt-in diagnostic. The control lives here, but the
-  // capture itself runs in Mimic (it owns the pipe); we drive it through the
-  // window.mimic config bridge. wpWireZealCapture wires the buttons after render.
-  var _underMimic = !!(window.mimic && window.mimic.getConfig);
-  h += '<div class="card"><h2>🩺 Raw Zeal Capture <span class="dim" style="font-size:11px;font-weight:normal">(diagnostic)</span></h2>';
-  if (_underMimic) {
-    h += '<div class="subtle" style="font-size:11px;margin-bottom:8px">Dumps every raw Zeal pipe object &mdash; full and untruncated &mdash; to <code>zeal-raw.ndjson</code>. Turn it on, reproduce, then open the file. Leave off for normal play; it is capped + rotated so it cannot fill the disk.</div>';
-    h += '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">';
-    h += '<button type="button" id="wpZealCapBtn" style="cursor:pointer;font-size:12px;padding:4px 12px;border-radius:4px;border:1px solid var(--border);background:#21262d;color:var(--text)">&hellip;</button>';
-    h += '<button type="button" id="wpZealCapOpen" style="cursor:pointer;font-size:12px;padding:4px 12px;border-radius:4px;border:1px solid var(--border);background:#21262d;color:var(--blue)">Open capture file&hellip;</button>';
-    h += '</div>';
-    h += '<div id="wpZealCapHint" class="dim" style="font-size:11px;margin-top:6px"></div>';
-  } else {
-    h += '<div class="dim" style="font-size:12px">Requires Mimic &mdash; open this dashboard from the desktop app to capture raw Zeal traffic.</div>';
-  }
-  h += '</div>';
   // Top abilities
   const abs = Object.entries(s.abilityStats||{}).sort((a,b)=>b[1].total-a[1].total).slice(0,20);
   h += '<div class="card wide"><h2>Top Abilities (uploader)</h2>';
@@ -16127,6 +16207,160 @@ function renderInfo(s) {
   h += '</div>';
   // Weapon Loadouts + Known Pets live here now (moved off the combat tabs).
   h += '<div class="grid">' + buildLoadoutsHtml(s) + buildPetsHtml(s) + '</div>';
+  setSectionHTML('stats', h);
+  wireLoadoutControls();
+}
+
+function renderInfo(s) {
+  const sessionMin = Math.max(1, Math.round((Date.now() - s.startedAt) / 60000));
+  // totalMinutes now accumulates the live session incrementally (saveStatsSoon),
+  // so it IS the lifetime — don't add sessionMin again or the current session
+  // double-counts. Floor to sessionMin so a brand-new install isn't shown below
+  // the session that's already running.
+  const lifetimeMin = Math.max(s.lifetime?.totalMinutes||0, sessionMin);
+  let h = '';
+  // Crash review (moved here from Triggers, Hitya 2026-08-13 — a crash is a
+  // machine/diagnostic concern, not a callout one). Reading dumps costs real
+  // work, so the list fills on demand via renderCrashReview()'s one-shot.
+  // The checkbox mirrors the tray's "Share crash reports with the guild" toggle
+  // — same cfg.crashReports flag, two places to reach it, so nobody has to know
+  // the tray menu exists.
+  h += '<div id="wpCrashReview" class="card wide"><b>\\ud83e\\ude7a Crash review</b>'
+    +  '<div class="dim" style="margin:6px 0">Had EverQuest close on you? This reads the crash '
+    +  'files Zeal left on this machine and tells you what actually broke \\u2014 including '
+    +  'whether Mimic or Zeal had anything to do with it. The crash dumps never leave your PC.</div>'
+    +  '<label style="display:flex;gap:6px;align-items:center;margin:8px 0;cursor:pointer">'
+    +    '<input type="checkbox" id="wpCrashShare" onchange="wpToggleCrashShare(this.checked)"'
+    +      (s.crashReportsEnabled ? ' checked' : '') + '>'
+    +    '<span>Automatically send crash reports to the guild</span>'
+    +  '</label>'
+    +  '<div class="dim" style="font-size:11px;margin-bottom:8px">Sends only what the crash says '
+    +  '\\u2014 never the dump itself. Same setting as the tray menu; changing it restarts the '
+    +  'parser engine.</div>'
+    +  '<button id="wpCrashBtn" onclick="wpRunCrashReview()">Review my crashes</button>'
+    +  '<div id="wpCrashOut"></div></div>';
+  // NOTE: Watched Logs (#wpWatchedLogs) moved to the Dashboard's ⚙ Engine card,
+  // and the officer DKP tick / loot capture cards (#wpDkpTick / #wpDkpLoot)
+  // moved to the 🛡 Admin tab (#109). Their render fns are unchanged — only the
+  // placeholder location moved — so they are NOT re-declared here.
+  // (The Zeal Pipe explorer + Raw Zeal Capture moved to the 🩺 Diagnostics tab
+  // — see renderDiag. Crash review and Client versions deliberately STAYED
+  // here: Hitya put the crash card on Info on purpose, and "what build is my
+  // client running" is a fact about the install, not a health check.)
+  // 🛟 Settings backups — filled by renderBackupsCard (own placeholder so the
+  // restore controls survive #info repaints).
+  h += '<div id="wpBackupsCard" class="card wide" style="display:none"></div>';
+  h += '<div class="grid">';
+  h += '<div class="card"><h2>Parser Info</h2>';
+  h += '<div>Agent v' + esc(s.version) + '</div>';
+  h += '<div>Watching ' + (s.watchedLogs?.length||0) + ' log(s)</div>';
+  h += '<div>Uploads this session: ' + (s.uploadCount||0) + ' (' + (s.uploadErrors||0) + ' errors)</div>';
+  h += '<div>This session: ' + s.sessionEvents + ' events / ' + sessionMin + ' min</div>';
+  h += '<div>Top session: ' + (s.lifetime?.topSessionEvents||0) + ' ev / ' + (s.lifetime?.topSessionMinutes||0) + ' min</div>';
+  h += '<div>Lifetime: ' + ((s.lifetime?.totalEvents||0) + s.sessionEvents) + ' ev / ' + lifetimeMin + ' min</div>';
+  if (s.lifetime?.firstSeenAt) h += '<div class="dim">First run: ' + esc(s.lifetime.firstSeenAt) + '</div>';
+  h += '</div>';
+  // 🧩 Client versions — what each watched client actually has LOADED, harvested
+  // from the /zeal version output (agent 3.5.16). Deliberately distinct from the
+  // Zeal update notice, which reports what zealUpdater found ON DISK: the two
+  // disagree exactly when Zeal has been updated but EQ has not been restarted,
+  // and that is the one state where "you are up to date" is a lie.
+  //
+  // Byte-stable between polls on purpose — these values only change when someone
+  // runs the command, so no wp* placeholder is needed. Rendering a relative
+  // "2m ago" here instead of the fixed stamp would repaint #info every 2s and
+  // reset anything the user had open (dashboard rendering rules).
+  const _cv = s.clientVersions || [];
+  h += '<div class="card"><h2>🧩 Client versions</h2>';
+  if (!_cv.length) {
+    h += '<div class="dim">Nothing captured yet. Type <b>/zeal version</b> in game and it appears here — Zeal, eqw.dll and eqgame.dll builds, per character. We never send the command for you.</div>';
+  } else {
+    h += '<table>';
+    for (const c of _cv) {
+      h += '<tr><td colspan="2" style="padding-top:6px"><b>' + esc(c.character) + '</b></td></tr>';
+      if (c.zeal)   h += '<tr><td>Zeal</td><td class="num">' + esc(c.zeal) + (c.zeal_hash ? ' <span class="dim">(' + esc(c.zeal_hash) + ')</span>' : '') + '</td></tr>';
+      if (c.eqw)    h += '<tr><td>eqw.dll</td><td class="num">' + esc(c.eqw) + '</td></tr>';
+      if (c.eqgame) h += '<tr><td>eqgame.dll</td><td class="num">' + esc(c.eqgame) + '</td></tr>';
+      if (c.at)     h += '<tr><td class="dim">read</td><td class="dim num">' + esc(String(c.at).replace('T', ' ').slice(0, 19)) + '</td></tr>';
+    }
+    h += '</table>';
+  }
+  h += '</div>';
+  // 🏷 Zeal tag capture readiness (#194). Byte-stable: zeal.ini values change
+  // rarely and the fresh-tag count only moves while tags are actually flowing
+  // (an acceptable repaint — the Info tab is not a form surface mid-raid).
+  const _ztc = s.zealTagConfig || [];
+  // 🗂 Log archiving banner — the user-facing notice + kill switch for the
+  // auto-archive feature (Ashieron feedback). Plain language: nothing is
+  // deleted, and the impacted files are named with sizes.
+  const _lr = s.logRotate;
+  if (_lr) {
+    h += '<div class="card"><h2>🗂 Log archiving</h2>';
+    // One-time NEW-FEATURE announcement (Hitya: a Mimic banner, not a Discord
+    // post). Dismissed state persists in prefs so it appears once per install.
+    if (!_lr.noticeSeen) {
+      h += '<div style="border-left:3px solid var(--green);background:rgba(63,185,80,.08);padding:6px 8px;margin-bottom:8px;font-size:12px">'
+        + '<b>New:</b> Mimic now keeps your EverQuest log files from growing without limit. '
+        + 'Nothing is ever deleted &mdash; a large log is simply moved into a <code>LogArchive</code> folder and EQ starts a fresh one. '
+        + 'Your old logs stay on your disk and can still be used to fill in past raids. '
+        + '<button class="btn" style="margin-left:6px" onclick="wpLogRotateSeen()">Got it</button></div>';
+    }
+    if (_lr.enabled) {
+      h += '<div style="font-size:12px;margin-bottom:4px">Log archiving is <b style="color:var(--green)">ON</b>. '
+        + 'A log file bigger than <b>' + esc(String(_lr.thresholdMb)) + ' MB</b> is moved into a <code>LogArchive</code> folder next to your logs once it has been quiet for 15 minutes. '
+        + 'Nothing is deleted &mdash; EQ starts a fresh file, and the old one stays on your disk.</div>';
+      if (_lr.candidates && _lr.candidates.length) {
+        h += '<div style="font-size:11px;margin-bottom:4px"><b>Will be archived on the next quiet sweep:</b> '
+          + _lr.candidates.map(function (c) { return esc(c.file) + ' (' + esc(String(c.size_mb)) + ' MB)'; }).join(', ') + '</div>';
+      } else {
+        h += '<div class="dim" style="font-size:11px;margin-bottom:4px">No log files are over the cap right now.</div>';
+      }
+      if (_lr.recent && _lr.recent.length) {
+        h += '<div class="dim" style="font-size:11px;margin-bottom:4px">Recently archived: '
+          + _lr.recent.map(function (r) { return esc(r.file) + ' (' + esc(String(r.mb)) + ' MB)'; }).join(', ') + '</div>';
+      }
+      h += '<button class="btn" onclick="wpLogRotateToggle(1)">Turn log archiving off</button>';
+    } else {
+      h += '<div class="dim" style="font-size:12px;margin-bottom:4px">Log archiving is <b>off</b>. Big log files will keep growing.</div>';
+      h += '<button class="btn" onclick="wpLogRotateToggle(0)">Turn log archiving on</button>';
+    }
+    h += '</div>';
+  }
+  h += '<div class="card"><h2>🏷 Zeal tag capture</h2>';
+  if (s.zealTagRateLimit) {
+    h += '<div style="margin-bottom:4px;color:#f2b632;font-size:11px">⚠️ The server rate limited your chat around <code>'
+      + esc(new Date(s.zealTagRateLimit.at).toLocaleTimeString())
+      + '</code> (' + esc(String(s.zealTagRateLimit.seconds)) + 's lockout). Tags sent in that window did <b>not</b> broadcast — '
+      + 'Zeal still draws the arrow, so they look tagged to you and to nobody else. Re-tag them, and spread tagging across raiders (the limit is per character).</div>';
+  }
+  if (s.zealTagsDropped > 0) {
+    h += '<div style="margin-bottom:4px;color:#f2b632;font-size:11px">⚠️ <b>' + esc(String(s.zealTagsDropped))
+      + '</b> tag(s) exceeded the upload cap and were not sent. Named mobs are kept first, then the newest — but this many live tags means the raid is marking faster than the cap allows.</div>';
+  }
+  if (s.zealTagPretty && !_ztc.some(function (z) { return z.prettyprint; })) {
+    h += '<div style="margin-bottom:4px;color:#f2b632;font-size:11px">⚠️ Saw a tag arrive already rewritten by <code>/tag prettyprint</code> (<code>' + esc(s.zealTagPretty.sample || '') + '</code>) — that strips the spawn id, so same-name mobs cannot be told apart. Run <code>/tag prettyprint off</code>.</div>';
+  }
+  if (!_ztc.length) {
+    h += '<div class="dim">No <b>zeal.ini</b> found next to the watched logs yet — it appears once Zeal runs in that EQ folder.</div>';
+  } else {
+    for (const zc of _ztc) {
+      const warns = zc.warnings || [];
+      h += '<div style="margin-bottom:4px">' + (warns.length ? '⚠️' : '✅') + ' <b>' + esc(zc.channel || 'no channel persisted') + '</b>'
+        + ' <span class="dim">' + esc(zc.dir) + '</span></div>';
+      for (const w of warns) {
+        h += '<div style="margin:0 0 4px 18px;color:#f2b632;font-size:11px">' + esc(w) + '</div>';
+      }
+    }
+    h += '<div class="dim" style="font-size:11px">The channel persists in zeal.ini once joined — no per-raid setup. Tags heard in the last 2 min: <b>' + (s.zealTagCount || 0) + '</b>. Tank usage: target the add → <code>/tag chat &lt;Name&gt;-Tanking</code> (shapes: <code>^G^</code> arrows, <code>^P^</code> paw, <code>^S^</code> stop). Any of <code>/tag chat</code>, <code>/tag gsay</code> (group) or <code>/tag rsay</code> (raid) is captured.</div>';
+    // The three causes the ini can NOT see. All of them show the nameplate
+    // arrow in game and log nothing, which is why "the arrow is right there"
+    // is not evidence the tag was broadcast.
+    if (!(s.zealTagCount || 0)) {
+      h += '<div class="dim" style="font-size:11px;margin-top:4px">Arrow in game but nothing here? The arrow only proves Zeal applied the tag locally. Three ways it never reaches the log: <code>/tag local</code> (never broadcasts at all), <code>/tag chat</code> with the channel not actually joined (Zeal prints “You must join a channel”), and <code>/tag suppress on</code> — that one hides the broadcast from your chat window AND your log while still drawing the arrow.</div>';
+    }
+  }
+  h += '</div>';
+  h += '</div>';
   // GINA/EQLP scan placeholder card — populated by wpScanLocalTriggers() on
   // dashboard load via /api/triggers/local-scan. (Hitya 2026-06-26 — v1.1.1
   // foundation; parse + import land in 1.1.2+.) Empty placeholder so the
@@ -16138,8 +16372,8 @@ function renderInfo(s) {
   setSectionHTML('info', h);
   // Fire the scan once per dashboard render; result populates #wpTriggerScanCard.
   try { wpScanLocalTriggers(); } catch (e) { void e; }
-  wireLoadoutControls();
-  wpWireZealCapture();
+  // (wireLoadoutControls moved with the loadouts card to renderStats;
+  //  wpWireZealCapture moved with the raw-capture card to renderDiag.)
 }
 
 // Wire the Info-tab raw-Zeal-capture buttons to the Mimic config bridge. The
@@ -16931,13 +17165,23 @@ async function refresh() {
                      ['healingcard', renderHealingCard], ['watchedlogs', renderWatchedLogsCard],
                      ['recenttells', renderRecentTellsCard], ['topdamage', renderTopDamageCard],
                      ['tanks', renderTanks], ['deeps', renderDeeps],
-                     ['triggers', renderTriggers], ['zealcard', renderZealCard],
+                     ['triggers', renderTriggers],
+                     // 🩺 Diagnostics owns the pipe/charm/pet/journal/mechanics/
+                     // explorer placeholders — it MUST run before their fillers
+                     // below, same rule as renderDash → renderMeCard.
+                     ['diag', renderDiag],
+                     ['zealcard', renderZealCard],
                      ['recentfires', renderRecentFires], ['replaystatus', renderReplayStatus],
-                     ['crashreview', renderCrashReview], ['charmdiag', renderCharmDiag], ['petbuffdiag', renderPetBuffDiag], ['triggerjournal', renderTriggerJournal],
+                     ['charmdiag', renderCharmDiag], ['petbuffdiag', renderPetBuffDiag], ['triggerjournal', renderTriggerJournal],
                      ['mechanics', renderMechanics],
-                     ['overlays', renderOverlays], ['info', renderInfo],
-                     // After info: fill the placeholders renderInfo just
-                     // (re)painted, so they show same-tick.
+                     ['overlays', renderOverlays], ['stats', renderStats], ['info', renderInfo],
+                     // After info: fill the placeholders renderInfo/renderDiag
+                     // just (re)painted, so they show same-tick. renderCrashReview
+                     // sat ABOVE renderInfo from the day the crash card moved onto
+                     // Info — it emits #wpCrashReview, so the filler was running a
+                     // poll early and the card was blank for the first 2s of every
+                     // cold load. Caught by test/dashboard-tabs.test.js.
+                     ['crashreview', renderCrashReview],
                      ['zealexplorer', renderZealExplorer],
                      // 🛡 Admin (officer-only) builds #wpDkpTick / #wpDkpLoot — must run
                      // BEFORE their fillers below so the placeholders exist same-tick.
@@ -17042,8 +17286,12 @@ var WP_TOUR_STEPS = [
     body: 'The raid\\'s live buff coverage plus your personal queue - who needs your buff next, sorted so the tank comes first. When someone cures you mid-raid, this is the machinery that noticed.' },
   { tab: 'fights', sel: '#fights', title: '⚔️ Your fights',
     body: 'Every pull your parser recorded - damage, healing, threat. These are the same numbers that become the guild parse cards in Discord, with your name on the rows you earned.' },
+  { tab: 'stats', sel: '#stats', title: '📊 What your log saw',
+    body: 'Everything your own log noticed this session that is not a fight - mends, abilities, casts, what you resisted, what landed on you, and every /random roll in the zone. Nobody else is looking at this page; it is yours.' },
   { tab: 'triggers', sel: '#triggers', title: '⚡ Callouts that save raids',
     body: 'Guild triggers arrive here automatically - rampage warnings, tank-buster countdowns, charm breaks. Rehearse any of them out loud before the raid, and add personal ones only you hear.' },
+  { tab: 'diag', sel: '#diag', title: '🩺 When something is not working',
+    body: 'The health page. Is Zeal connected, did your charm land, why did that callout not fire - every card here answers a "why is this not working" question. Come here first before asking, and bring what it says.' },
   { tab: 'optin', sel: '#optin', title: '🔒 Your data, your call',
     body: 'What uploads and what never leaves this machine, stream by stream. Officer chat, tells, and group chat are filtered out before parsing even happens. That\\'s the whole tour - raid well. 🐺' },
 ];
@@ -21497,6 +21745,16 @@ function startWebDashboard(port) {
               _charmTickTracker.delete(k);
             }
           }
+          // Same reason, different board: drop them from the Healer Mana
+          // roster. That roster deliberately does NOT age entries out while a
+          // fight is live (Hitya 2026-07-09 — a cleric who called mana at the
+          // pull must still be on the board ten minutes in), which is right for
+          // someone who is quiet and wrong for someone who is GONE. A retire is
+          // the one moment we know for certain they are gone, so it is the only
+          // safe place to remove them without weakening that rule.
+          // Manamana sat on the Command Center at 18% long after Hitya had
+          // swapped back to Hitya (live, 2026-08-13).
+          _healerManaRoster.delete(_cl);
           // Same-client swap: forward "<character> swapped to <X>" to the
           // bot so /raid moves them to "Not in raid (swapped to X)" instead
           // of showing both characters as live raiders. Fire-and-forget on
@@ -21676,6 +21934,18 @@ function startWebDashboard(port) {
         _chDdrEnabled = !!(payload && payload.enabled);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ ok: true, enabled: _chDdrEnabled }));
+      }
+      // ✕ on a CH chain slot row (Hitya 2026-08-14) — takes that healer off the
+      // rotation and keeps them off it. Local-only state, so this is a plain
+      // in-memory edit: nothing uploads, and every client's chain is its own.
+      if (req.url === '/api/chchain/remove' && req.method === 'POST') {
+        const body = await _readBody(req);
+        let payload;
+        try { payload = JSON.parse(body); }
+        catch { res.writeHead(400); return res.end('invalid json'); }
+        const out = removeChChainSlot(payload && payload.num, payload && payload.name);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify(out));
       }
       // ✕ from a pet tracker card — drops the per-owner /pet health snapshot
       // + observed buff landings + stats so the row stops rendering. Useful
@@ -25952,6 +26222,85 @@ function startChatRelay() {
   }, THREAT_SNAP_TICK_MS);
 }
 
+// ── Fight history: the guild's numbers, AFTER they have settled ─────────────
+// Hitya, 2026-08-14: "instead of displaying the combined damage during the
+// fight, perhaps we just have the overlay give the last few mobs in a history
+// tab that can be opened up once it's properly deduped — the overcount from
+// time skew and whatnot is too much to account for in a live stat review and it
+// is legitimately doubling damage."
+//
+// The bot's estimator is not broken; it is UNSETTLED mid-fight. It needs three
+// independent readings before it can corroborate anything at all (below that it
+// falls back to max, which is exactly the doubling), and readings arrive on the
+// upload queue's 15s drain from twenty machines. So the number is worth showing
+// — just not yet. This captures each fight when it ends and re-asks for the
+// guild view twice as the stragglers land.
+//
+// Timing, and why two passes: the first is late enough that a 15s drain plus a
+// backoff retry has landed, the second catches a client that was mid-backoff.
+// Both must stay inside the bot's 3-minute snapshot lookback on /live-damage —
+// past that the fight has aged out of the query window and the answer is empty,
+// which would blank an entry that already had good numbers in it. Hence the
+// "only overwrite on a non-empty response" rule below.
+const FIGHT_HISTORY_MAX = 6;
+const FIGHT_HISTORY_SETTLE_MS = [40_000, 100_000];
+function _recordFightHistory(et) {
+  if (!et) return;
+  const boss = et.bossName || et.targetName || null;
+  if (!boss) return;
+  const startedMs = et.startedAt ? Date.parse(et.startedAt) : 0;
+  stats.fightHistory = Array.isArray(stats.fightHistory) ? stats.fightHistory : [];
+  // A multi-box install flushes once per builder, and flush() also propagates
+  // to peer builders on the same fight — so the same kill arrives several
+  // times. One entry per (boss, start within 60s).
+  const dupe = stats.fightHistory.find(h =>
+    String(h.boss).toLowerCase() === String(boss).toLowerCase()
+    && Math.abs((h.startedMs || 0) - startedMs) < 60_000);
+  if (dupe) return;
+  // This machine's own view, kept alongside the guild's — the "(what you saw)"
+  // half of the row is the thing a local-only meter can never give you.
+  const local = [];
+  for (const [name, p] of Object.entries(et.perPlayer || {})) {
+    const dmg = (p.swing || 0) + (p.proc || 0) + (p.spell || 0);
+    if (dmg > 0) local.push({ character: name, dmg, pet_owner: p.pet_owner || null });
+  }
+  local.sort((a, b) => b.dmg - a.dmg);
+  const entry = {
+    boss,
+    startedMs,
+    endedMs: et.flushedAt || Date.now(),
+    durationSec: startedMs ? Math.max(1, Math.round(((et.flushedAt || Date.now()) - startedMs) / 1000)) : 0,
+    local: local.slice(0, 60),
+    players: [],        // guild view; filled by the settle passes below
+    uploaders: 0,
+    settled: false,
+  };
+  stats.fightHistory.unshift(entry);
+  if (stats.fightHistory.length > FIGHT_HISTORY_MAX) stats.fightHistory.length = FIGHT_HISTORY_MAX;
+
+  if (!_uploadOpts || _uploadOpts.dryRun || !_uploadOpts.botUrl || !_uploadOpts.token) return;
+  for (const delay of FIGHT_HISTORY_SETTLE_MS) {
+    const t = setTimeout(async () => {
+      try {
+        const base = _uploadOpts.botUrl.replace(/\/encounter(\?.*)?$/, '');
+        const r = await fetch(`${base}/live-damage?boss=${encodeURIComponent(boss)}`, {
+          headers: { Authorization: `Bearer ${_uploadOpts.token}` },
+        });
+        if (!r.ok) return;                          // old bot → History shows local only
+        const j = await r.json();
+        // Never let a late empty answer erase numbers we already have.
+        if (!j || !Array.isArray(j.players) || !j.players.length) return;
+        entry.players   = j.players.slice(0, 60);
+        entry.uploaders = j.uploaders || 0;
+        entry.total     = j.total || 0;
+        entry.settled   = true;
+        entry.settledAt = Date.now();
+      } catch { /* history is a nicety; never surface a failure here */ }
+    }, delay);
+    if (t.unref) t.unref();                         // must not hold the process open
+  }
+}
+
 // ── Fun-event detection ─────────────────────────────────────────────────────
 // Lightweight, pattern-driven side stream that piggybacks on the live tail.
 // First tenant: Peopleslayer LD counter. Future tenants: CoH pearl, DI
@@ -28838,9 +29187,25 @@ const RAMPAGE_IDLE_RESET_MS = 60000;
 // a main target we still announce, so the boss's own rampage is never lost to a
 // cold cross-client cache. The Tank overlay's rampage CARD is unaffected (it
 // renders _currentRampageForDisplay regardless); this gates only the TTS/callout.
+// ⚠ Compares through _normMobNameAgent, NOT raw lowercase. Vex Thal (and every
+// other instanced zone) gives Zeal the target as "#Diabo_Xi_Va_Temariel" while
+// the log emote that carries the slow landing says "Diabo Xi Va Temariel". A
+// raw === compare never matches, so this gate silently swallowed the SLOW
+// LANDED callout for the whole instance — Beastlord and Shaman slows both
+// landed on Diabo Xi Va Temariel and nobody heard a thing (Hitya, live
+// 2026-08-13). The debuffs still SHOWED in Target Info because that path
+// deliberately does not depend on a Zeal name match; the callout did, and the
+// mismatch was invisible because a suppressed callout looks exactly like a
+// callout that was never supposed to fire.
+//
+// The hazard was already known and written down one function away (see the
+// parseDebuffLanding comment: "breaks on instanced mob names like
+// #Diabo_Xi_Va_Temariel vs the emote's Diabo Xi Va Temariel") — this gate just
+// never got the same treatment. Anything else comparing a Zeal target name to a
+// log-derived one needs to normalize too.
 function _rampageOnMainTarget(attacker) {
   if (!attacker) return true;
-  const a = String(attacker).trim().toLowerCase();
+  const a = _normMobNameAgent(attacker);
   // Active focused character (same recency heuristic the tank state uses) to
   // prime + read the Extended Target aggregate.
   let active = null, activeTs = 0;
@@ -28857,7 +29222,7 @@ function _rampageOnMainTarget(attacker) {
     if (et && (et.targetName || et.bossName)) mainName = et.targetName || et.bossName;
   }
   if (!mainName) return true;   // unresolved → fail open (never lose the boss rampage)
-  return a === String(mainName).trim().toLowerCase();
+  return a === _normMobNameAgent(mainName);
 }
 function _announceRampage(target, tsMs) {
   if (!target) return;
@@ -34037,13 +34402,27 @@ async function main() {
   const allLogs    = args.logs;
   const filtered   = [];
   const droppedFor = [];
+  const droppedBackups = [];
   for (const p of allLogs) {
     const fromName = characterFromFilename(p) || '';
     if (fromName && excludedSet.has(fromName.toLowerCase())) {
       droppedFor.push(fromName);
       continue;
     }
+    // Never LIVE-TAIL a copied-aside backup. Now that eqlog_Dant3 resolves to
+    // "Dant", tailing it alongside the real eqlog_Dant would replay the same
+    // events a second time under one name — turning a phantom extra raider
+    // into a doubled real one, which is strictly worse. Backups stay visible
+    // for BACKFILL (that is what they are good for); they just never join the
+    // live stream.
+    if (isBackupLogFile(p)) {
+      droppedBackups.push(path.basename(p));
+      continue;
+    }
     filtered.push(p);
+  }
+  if (droppedBackups.length > 0) {
+    console.log(`[logs] skipped ${droppedBackups.length} backup log file(s) — copied aside, not live: ${droppedBackups.join(', ')}`);
   }
   if (droppedFor.length > 0) {
     console.log(`[exclude] dropped ${droppedFor.length} log file(s) for excluded characters: ${droppedFor.join(', ')}`);
@@ -34784,8 +35163,10 @@ module.exports = {
   parseEvent, shouldKeep, parseEqTimestamp,
   DEFAULT_DROP_PATTERNS, KEEP_PATTERNS,
   SOURCELESS_SPELLS, BARD_SONGS,
-  EncounterBuilder, characterFromFilename,
-  trackChChainLine, chChainSnapshot,
+  EncounterBuilder, characterFromFilename, isBackupLogFile, _splitBackupSuffix,
+  trackChChainLine, chChainSnapshot, removeChChainSlot,
+  _recordFightHistory, _fightHistoryForTest: () => stats.fightHistory,
+  _resetFightHistoryForTest: () => { stats.fightHistory = []; },
   // CH cast bar / interrupt ✕ / DDR grade — exported for the scratchpad harness.
   trackChChainInterrupt, _chGradeForDelta, _chExpectedNextAt,
   CH_CAST_MS, CH_INTERRUPT_SLACK_MS, CH_INTERRUPT_LINGER_MS,

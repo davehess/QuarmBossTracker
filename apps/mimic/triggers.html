@@ -407,21 +407,89 @@
       .replace(/\s{2,}/g, ' ')
       .trim();
   }
+  // ── Speech queue with priority + preemption ────────────────────────────────
+  // This used to call speechSynthesis.cancel() before EVERY utterance, so the
+  // newest callout always won and cut off whatever was mid-sentence. In a busy
+  // fight that is exactly backwards for the one callout a cleric cannot afford
+  // to miss: "if there's another TTS going off when the callout is supposed to
+  // go off for the CH chain, it's missing that callout" (Hitya, live
+  // 2026-08-13). The CH GO was being clipped by whatever fired a moment later.
+  //
+  // Now: nothing interrupts anything of equal-or-higher priority. CH GO
+  // preempts ordinary chatter; ordinary chatter waits its turn.
+  var SPEAK_TTL_MS    = 5000;   // a callout older than this is stale — never speak it late
+  var SPEAK_QUEUE_MAX = 3;      // a raid can out-talk the engine; bound the backlog
+  var _speakQ = [];
+  var _speakingUtt = null, _speakingPrio = -1, _speakWatchdog = null;
+
+  function _speakPriority(meta){
+    var t = String((meta && meta.trigger) || '');
+    // A missed CH beat wipes the raid; everything else can wait 2 seconds.
+    if (/^CH GO$/i.test(t)) return 2;
+    return 1;
+  }
+
   function speak(text, meta){
+    if (!window.speechSynthesis){ reportPlayback('error', 'no speechSynthesis API', meta); return; }
+    var item = { text: text, meta: meta, prio: _speakPriority(meta), at: Date.now() };
+    if (!_speakingUtt){ _speakNow(item); return; }
+    if (item.prio > _speakingPrio){
+      // Preempt. The interrupted one is DROPPED, not requeued — by the time the
+      // higher-priority line finishes it would be stale anyway.
+      try { window.speechSynthesis.cancel(); } catch (e) {}
+      _speakingUtt = null;
+      _speakNow(item);
+      return;
+    }
+    _speakQ.push(item);
+    // Highest priority first, then oldest — and never let the backlog grow.
+    _speakQ.sort(function(a, b){ return (b.prio - a.prio) || (a.at - b.at); });
+    while (_speakQ.length > SPEAK_QUEUE_MAX){
+      var dropped = _speakQ.pop();
+      reportPlayback('dropped', 'queue full', dropped.meta);
+    }
+  }
+
+  function _speakPump(){
+    if (_speakWatchdog){ clearTimeout(_speakWatchdog); _speakWatchdog = null; }
+    _speakingUtt = null; _speakingPrio = -1;
+    var now = Date.now(), next = null;
+    while (_speakQ.length){
+      var cand = _speakQ.shift();
+      if (now - cand.at <= SPEAK_TTL_MS){ next = cand; break; }
+      reportPlayback('dropped', 'stale — waited behind other speech', cand.meta);
+    }
+    if (next) _speakNow(next);
+  }
+
+  function _speakNow(item){
     try{
-      if (!window.speechSynthesis){ reportPlayback('error', 'no speechSynthesis API', meta); return; }
-      const u = new SpeechSynthesisUtterance(text);
+      const u = new SpeechSynthesisUtterance(item.text);
       u.rate = 1.05; u.volume = 1;
       var settled = false;
-      u.onstart = function(){ if (settled) return; settled = true; reportPlayback('started', null, meta); };
-      u.onerror = function(e){ if (settled) return; settled = true; reportPlayback('error', (e && e.error) || 'speech error', meta); };
+      u.onstart = function(){ if (settled) return; settled = true; reportPlayback('started', null, item.meta); };
+      u.onerror = function(e){ if (settled) return; settled = true; reportPlayback('error', (e && e.error) || 'speech error', item.meta); _speakPump(); };
+      u.onend   = function(){ _speakPump(); };
       // If neither start nor error fires within 2s the engine silently swallowed
       // it (the classic user-activation block) — report so the journal still
       // shows something went wrong instead of a phantom clean dispatch.
-      setTimeout(function(){ if (!settled){ settled = true; reportPlayback('silent', 'no start/error within 2s', meta); } }, 2000);
-      window.speechSynthesis.cancel();
+      setTimeout(function(){ if (!settled){ settled = true; reportPlayback('silent', 'no start/error within 2s', item.meta); } }, 2000);
+      _speakingUtt = u; _speakingPrio = item.prio;
+      // ⚠ Watchdog, and it is load-bearing: a queue that waits on onend WEDGES
+      // FOREVER if the engine never fires it — which is the documented
+      // silent-swallow case above. Without this, one swallowed utterance would
+      // mute every callout for the rest of the raid. Far worse than the bug
+      // being fixed, so the queue always drains on a timer too.
+      var est = Math.min(10000, Math.max(2500, String(item.text || '').length * 80));
+      _speakWatchdog = setTimeout(function(){
+        if (_speakingUtt === u){ _speakingUtt = null; _speakingPrio = -1; _speakPump(); }
+      }, est);
       window.speechSynthesis.speak(u);
-    }catch(e){ reportPlayback('error', String((e && e.message) || e), meta); }
+    }catch(e){
+      reportPlayback('error', String((e && e.message) || e), item.meta);
+      _speakingUtt = null; _speakingPrio = -1;
+      _speakPump();
+    }
   }
   function playSound(url){
     if(!url) return;
