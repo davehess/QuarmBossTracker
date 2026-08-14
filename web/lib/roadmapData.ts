@@ -37,6 +37,34 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'web-1-1-51',
+    title: '\u{1F464} Raid view: people who log back in show up again',
+    version: 'Web 1.1.51',
+    date: '2026-08-14',
+    headline: 'If someone swapped characters earlier in the night and then logged their own toon back in, the raid page kept showing them as offline. It now notices they are back.',
+    features: [],
+    fixes: [
+      'A raider who came back after a character swap no longer sits under "Not seen / offline" with their group stripped — they go back into their real group as soon as they are moving around in the zone again.',
+    ],
+  },
+  {
+    key: 'mimic-beta-history-tab',
+    title: '\u{1F4CA} Raid-wide damage moves to a History tab',
+    version: 'Mimic beta',
+    date: '2026-08-14',
+    channel: 'beta',
+    headline: 'The raid-wide damage numbers were doubling people up mid-fight, so they now wait until the fight is over and every client has reported.',
+    features: [
+      { name: '\u{1F4CA} History tab on the damage meter', blurb: 'A new tab holds the last few mobs you killed, with the raid-wide numbers for each and arrows to page between them. It tells you how many clients agreed on the numbers, and says "settling" while it is still waiting on people.' },
+      { name: '\u{1F440} During the fight, the meter is yours again', blurb: 'The DPS and Tank tabs show what your own machine saw while you are fighting. Raid-wide totals need everyone to report in, and mid-fight too few have — which was making some people look like they did twice the damage they really did.' },
+      { name: '\u{274C} Take someone off the CH chain', blurb: 'Every slot on the CH chain overlay has a small ✕ to remove whoever is on it, and they stay off even if they keep calling that number.' },
+    ],
+    fixes: [
+      'A druid shouting their heals without a number no longer gets dropped into the CH chain on top of a cleric who is really on that slot.',
+      'A spot heal on the rampage target now shows on its own line instead of taking a chain slot.',
+    ],
+  },
+  {
     key: 'mimic-2-4-0',
     title: '\u{1FA7A} Crash review, raid-wide damage, and item pictures',
     version: 'Mimic 2.4.0 \u00b7 Web 1.1.49 \u00b7 Bot 3.1.41',

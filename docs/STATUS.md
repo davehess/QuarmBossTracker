@@ -60,6 +60,7 @@ folly** — it's here.*
 | `spell-levels-local.md` | Local-session playbook: fill `spell_level_seed` via PQDI scrape | Actionable; seed still used |
 | `pvp-capture-audit.md` | Reusable local runbook for PvP kill/assist recovery (`scripts/pvp-audit.js`) | Diagnostic runbook |
 | `DECISIONS-2026-08-07.md` | **The decision record** for the 2026-08-07→09 sessions: storage/threat, attendance, release process, Zeal `/tag`, loot bidding, the `{s}` P1, the beta re-sync — each as *the call · why · where it landed*, with an "Open — read this first" table at the bottom | Read FIRST via the SessionStart digest; newest `DECISIONS-*.md` wins |
+| `DECISIONS-2026-08-13.md` | Dashboard navigation: the sidebar + the tab split, why the split carves by the QUESTION a card answers rather than by card count, and what deliberately stayed put (crash card on Info, the whole Dashboard tab) | Current — carries the live "Open — read this first" table |
 | `DESIGN-fight-timeline.md` | Fight timeline v2 — boss HP curve + MT/RAMP swimlanes + class/player highlighting; the data audit, the two paid-for correctness traps, and the two-tier storage model | Data layer BUILT 2026-08-09; chart unbuilt. ⚠ its 2026-08-06 "CORRECTION" block is WRONG and is flagged in-place |
 | `zeal-tag-spawn-id-collision.md` | Measured upstream bug report: why `/tag` spawn ids collide across zones, quantified, with N=5+ same-name evidence | Drafted, NOT sent (with `zeal-spawn-id-request.md`) |
 
@@ -88,6 +89,92 @@ next touch one rather than assuming a missing row means a missing doc.
 ## The work ledger
 
 ### ✅ Done — major shipped features (not exhaustive; see git + roadmapData.ts)
+
+- **Live combined damage → a History tab — BETA (agent 3.5.80, 2026-08-14).**
+  Hitya, watching the guild column double people mid-fight: *"instead of
+  displaying the combined damage during the fight, perhaps we just have the
+  overlay give the last few mobs in a history tab that can be opened up once
+  it's properly deduped."*
+  - **The estimator isn't broken, it's UNSETTLED.** `_corroboratedDamage` needs
+    three independent readings before it can corroborate anything; below that it
+    falls back to max, which is exactly the doubling. Readings arrive on the
+    upload queue's 15s drain from twenty machines, so mid-fight most players have
+    one or two. Post-fight the same estimator landed within ~1% of three
+    independent sources (Atlasius 99,979 vs his own 100k). **The fix is about
+    WHEN the number is shown, not whether it works** — don't "restore" the live
+    merge.
+  - Agent keeps a 6-deep ring of finished fights (`_recordFightHistory`), each
+    capturing this machine's own view at the kill, then re-asking
+    `/live-damage` at +40s and +100s as the stragglers land. A late EMPTY answer
+    never overwrites good numbers (the bot's snapshot lookback is 3 minutes; past
+    that the query legitimately returns nothing). Multi-box installs flush once
+    per builder, so entries dedupe on (boss, start within 60s).
+  - HUD gets a third tab with a ◀ ▶ pager. Header names the fight and says
+    `· 11 clients` when settled, `· settling…` when not — an unlabelled small
+    number reads as the guild's answer, which is the misreading the tab exists to
+    prevent. DPS/Tank are now purely local.
+  - ⚠ The `/rs` parse line is built from the LIVE encounter but read `boss` and
+    `secs` from whatever tab is showing — on History that spliced one fight's
+    rows onto another fight's header, into a line people paste in raid chat.
+    Guarded with `!HIST`.
+
+- **CH chain: un-numbered shouts never take a slot, and a ✕ removes anyone who
+  shouldn't be on it — BETA (agent 3.5.79, 2026-08-14).** Live during the Aten
+  Ha Ra pull: Pyxil was spot-healing the RAMPAGE target and shouting
+  `TUNARE'S RENEWAL Inc to Timberowl - 98% Mana Left` on each heal. Tunare's
+  Renewal is a CH-equivalent, so the agent auto-assigned her a chain slot — 006,
+  where Mcdorf actually was — lighting ORDER CONFLICT and dropping a druid who
+  was nowhere near the rotation into the middle of it. Hitya: *"she shouldn't be
+  placed back onto the CH chain even though she's posting CHs."*
+  - **The number is what makes it a chain.** The auto-slot branch is gone; an
+    un-numbered personal-macro shout now lands on the spot-heal banner whatever
+    the spell is, carrying its `CH_EQUIVALENT_SPELLS` label so a healer can still
+    tell a full-heal-tier cast ("Druid CH") from a top-off. A druid who calls a
+    number still joins the rotation normally.
+  - **✕ on every slot row** → `POST /api/chchain/remove` → `removeChChainSlot`.
+    Deleting the row alone is not a fix: whoever seated them is still shouting,
+    so the removal blocks that (name, number) for the chain's life. Kept narrow
+    because a chain missing a real cleric kills the tank — a *different* healer
+    may still claim the number, a roster call clears the block, and on a
+    CONTESTED slot the row survives and passes to the remaining claimant instead
+    of being deleted out from under them.
+  - ⚠ **The ✕ is always drawn, only dimmed — do not "tidy" it into a
+    hover-reveal.** That was the first attempt and it fails precisely when the
+    button matters. Rows are rebuilt every paint while a cast bar moves, and a
+    newly-created element under a stationary cursor never picks up `:hover`.
+    Measured in headless Chromium against `chchain.html`: idle row reaches
+    opacity 1 in ~100ms, **casting row stays at 0 indefinitely**. The row's
+    18px right padding is the reserved gutter that keeps it off the countdown.
+
+- **Dashboard navigation: sidebar + tab split — BETA (agent 3.5.72,
+  2026-08-13).** Hitya: *"having to scroll in our dashboard is somewhat annoying
+  to navigate."* Two halves, shipped together because the second needs the
+  first. (1) The tab strip became a **left rail** — `.shell` is a flex row with a
+  sticky 168px `.nav` beside a `.panes` column; under 700px it collapses back to
+  the wrapping strip it was. (2) With room on the rail, the two overgrown tabs
+  were **split**: Info had reached 16 cards and Triggers 12 by mixing three
+  unrelated jobs. New **📊 Stats** takes the session-observation cards (mending,
+  top abilities, spell casts, resists, rolls, inbound spell damage, loadouts +
+  pets); new **🩺 Diagnostics** takes the is-it-working cards (Zeal pipe, charm
+  and pet-buff diagnostics, trigger journal, boss mechanics, Zeal explorer, raw
+  Zeal capture). Info keeps the parser facts + the crash card (Hitya put that one
+  on Info deliberately, so it stayed); Triggers keeps recent fires, replay and the
+  three trigger lists. Guided tour gained a stop for each — 8 stops now.
+  - **Only the markup moved.** Every card's own render fn and placeholder id is
+    untouched, so the volatile-card isolation that keeps sections byte-stable
+    survives intact. Verified: all 10 tabs switch, no duplicate ids, all four
+    touched sections byte-identical on a second render, whole tour walks.
+  - **Found a live bug on the way**: `renderCrashReview` sat ABOVE `renderInfo`
+    in the `_sections` loop from the day the crash card moved onto Info, so the
+    card was blank for the first poll of every cold load. Reordered.
+  - `test/dashboard-tabs.test.js` now guards the four lists that have to agree
+    (nav buttons ↔ `.section` panes ↔ `_sections` entries ↔ placeholder
+    ownership) plus filler-runs-after-emitter ordering. Every way they can
+    disagree previously failed silently.
+  - ⚠ **Moving a card resets its "hide this panel" preference** — the ✕/Panels
+    key is `sectionId|title`, so a card hidden on Info comes back once on Stats.
+    Benign (the card reappears, nothing is lost) but it is why a hidden panel
+    may look like it un-hid itself after this update.
 
 *Weekend of 2026-08-08/09 — full decision record in `DECISIONS-2026-08-07.md`.*
 

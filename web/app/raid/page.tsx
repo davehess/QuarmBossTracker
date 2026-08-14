@@ -55,6 +55,11 @@ type RosterRow = {
   hp_pct: number | null;
   uploaded_by_discord_id: string | null;
   captured_at: string | null;
+  // When Zeal last had a POSITION for this raid member. Only a live entity in
+  // the zone has one (the pipe's raid loop reads it off `Entity*`), so this is
+  // proof-of-life in a way captured_at is not — the EQ raid window keeps
+  // listing people who camped. Used to end a stale character swap; see swapFor.
+  loc_at: string | null;
 };
 
 // Color tier — at-a-glance triage signal, per the user's spec:
@@ -141,7 +146,7 @@ export default async function RaidHubPage() {
       .select('name, class, main_name, discord_id')
       .eq('guild_id', 'wolfpack'),
     admin.from('raid_roster')
-      .select('name, class, group_num, level, rank, hp_pct, captured_at, uploaded_by_discord_id')
+      .select('name, class, group_num, level, rank, hp_pct, captured_at, loc_at, uploaded_by_discord_id')
       .eq('guild_id', 'wolfpack')
       .gte('captured_at', rosterSince),
     // Signed-in user → discord_id so we can find THEIR character in the raid.
@@ -453,12 +458,45 @@ export default async function RaidHubPage() {
   const rows: RaidRow[] = [];
 
   // A character whose client logged someone else in (Mimic same-pid swap,
-  // stamped within the last 6h) is shown parked with "(swapped to X)" even if
-  // the Zeal raid window still lists their body in a group.
+  // stamped within the last 6h) is shown parked with "(swapped to X)". The raid
+  // window alone can't overturn that: EQ keeps listing people who camped, which
+  // is the whole reason the swap marker exists.
+  //
+  // ⚠ But a POSITION can. Zeal's raid stream reads loc off a live `Entity*`, so
+  // a raid member only has one while they are actually in the zone — a camped
+  // body has none. A position stamped after swapped_at therefore means they
+  // logged back in, and the swap is over.
+  //
+  // Without this the marker just sat there for its full 6 hours. Live case
+  // (Hitya, 2026-08-14): Bwavair is Bardtholemu's wife and plays her own cleric;
+  // he had played her toon on HIS client earlier in the night, which stamped a
+  // legitimate swap at 00:12. At 02:59 she was in Group 2 with her position
+  // updating every second — while Bardtholemu was simultaneously in Group 8 at
+  // a different loc, which one client cannot do — and /raid still had her filed
+  // under "Not seen / offline (swapped to Bardtholemu)", missing from her group.
+  // A cleric vanishing off the raid view is the expensive version of this bug.
   const SWAP_FRESH_MS = 6 * 60 * 60 * 1000;
-  const swapFor = (live: LiveStateRow | undefined): string | null => {
+  // Small grace so the last in-flight sample from just BEFORE the swap can't
+  // immediately cancel it — snapshots arrive about once a second per uploader.
+  const SWAP_BACK_GRACE_MS = 30 * 1000;
+  const backOnlineAt = new Map<string, number>();
+  for (const r of rosterClean) {
+    // hp_pct is entity-derived too (group window), so it counts as proof of
+    // life for the rows where Zeal reported HP but no position.
+    const stamp = r.loc_at || (r.hp_pct != null ? r.captured_at : null);
+    if (!stamp) continue;
+    const t = new Date(stamp).getTime();
+    if (!Number.isFinite(t)) continue;
+    const k = r.name.toLowerCase();
+    if (t > (backOnlineAt.get(k) ?? 0)) backOnlineAt.set(k, t);
+  }
+  const swapFor = (live: LiveStateRow | undefined, lower: string): string | null => {
     if (!live?.swapped_to || !live.swapped_at) return null;
-    return (Date.now() - new Date(live.swapped_at).getTime()) < SWAP_FRESH_MS ? live.swapped_to : null;
+    const swappedMs = new Date(live.swapped_at).getTime();
+    if (Date.now() - swappedMs >= SWAP_FRESH_MS) return null;
+    const backMs = backOnlineAt.get(lower) ?? 0;
+    if (backMs > swappedMs + SWAP_BACK_GRACE_MS) return null;   // they're back
+    return live.swapped_to;
   };
 
   // 1. Roster members first (with or without live state).
@@ -489,7 +527,7 @@ export default async function RaidHubPage() {
     // accounts had uploaded, because on a well-buffed raid nearly everyone
     // picks up an inferred buff (Hitya 2026-08-06).
     const hasAgent = !!live;
-    const swappedTo = swapFor(live);
+    const swappedTo = swapFor(live, lower);
     rows.push({
       name: rr.name,
       hasAgent,
@@ -550,7 +588,7 @@ export default async function RaidHubPage() {
       level: null,
       rank: null,
       inRaid: false,
-      swappedTo: swapFor(r),
+      swappedTo: swapFor(r, lower),
       noAgent: false,
       hasAgent: true,          // this row EXISTS because it has live state
       zone: r.zone_name,

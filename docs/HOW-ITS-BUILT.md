@@ -669,8 +669,9 @@ indexes are byte-for-byte unaffected).
 ### CH chain tracker
 Parses shout/raid callouts: numbered calls (`_CH_CALL_RX`), GO cues
 (`_CH_GO_RX` — stamps `lastGo` so the overlay flashes GO! on that slot),
-personal heal macros (`_CH_PERSONAL_RX`; CH-equivalent spells fold into the
-rotation as auto-slots, others render as spot heals), and the **roster
+personal heal macros (`_CH_PERSONAL_RX` — **never take a slot**, CH-equivalent
+or not; they render as the spot-heal banner, labelled "Druid CH" etc. from
+`CH_EQUIVALENT_SPELLS`), and the **roster
 announcement** ("Fargan 001, Rapha 002…" — ≥3 contiguous-from-1 pairs) which
 owns slot names authoritatively (short names resolve via the Zeal raid
 roster). Beat = median gap of last 10 calls → due-countdown, slip pivot
@@ -685,6 +686,13 @@ filter-suppressible). DDR grading: `_chGradeCall` scores each call against
 streak), ≤0.5s GREAT, ≤1s GOOD — flashed as an arcade sticker atop the
 caster's bar in `apps/mimic/chchain.html` (`ddrSticker`). Visual only, never
 TTS, by design; 🎯 overlay toggle + `POST /api/chchain/ddr`.
+Manual removal (agent 3.5.79): a ✕ on every slot row → `POST
+/api/chchain/remove {num,name}` → `removeChChainSlot`. Deleting the row is not
+enough — whoever put them there is still shouting — so it also blocks that
+(name, number) for the chain's life. Narrow on purpose: a different healer may
+still take the number, a roster call clears the block, and on a CONTESTED slot
+the row survives and passes to the remaining claimant rather than being deleted
+out from under the real cleric.
 
 ### Divine Intervention: readiness chips + the two-cleric callout (#204)
 Two separate things on the same overlay. **Readiness** is log-driven: a
@@ -837,7 +845,14 @@ blocked while EQ runs). Cloud backup/restore: `uiStudioCapture` → bot
 resolution rescale on the way back.
 
 ### Overlays (one .html each)
-DPS HUD (`overlay.html`), Triggers+timers (`triggers.html`), CH chain
+DPS HUD (`overlay.html` — DPS / Tank / **History** tabs; DPS+Tank are this
+machine's own observations, History is the guild's settled numbers for the last
+6 mobs with a ◀ ▶ pager. Agent 3.5.80 moved the guild-combined merge OFF the
+live view: mid-fight the bot has under three readings per player so its
+corroboration estimator falls back to max and doubles people. `_recordFightHistory`
+captures each kill and re-asks `/live-damage` at +40s and +100s; the header says
+`· N clients` once settled, `· settling…` until then), Triggers+timers
+(`triggers.html`), CH chain
 (`chchain.html` — slots, GO pill, beat countdown, pivot, off-heal list),
 Tank (`tank.html` — MT focus, DA, DS, deathtouch, rampage+invuln, off-heal),
 Command Center (`command.html`), Extended Target (`extarget.html` — off-tank
@@ -1139,6 +1154,16 @@ holds it in memory.
   editor staging into `ui_pending_edits` (applied by the agent at logout,
   status shown), guild common-macro library (≥3 characters), suggestion
   catalog (`web/lib/macroSuggestions.ts`).
+- **Character swaps on /raid (`swapFor` in `web/app/raid/page.tsx`)** — Mimic
+  detects a same-pid character switch and stamps `character_live_state
+  .swapped_to/_at`; /raid then parks that character with "(swapped to X)",
+  group stripped, for up to 6h. **A swap ENDS when `raid_roster` carries a
+  `loc_at` (or HP) newer than `swapped_at` + 30s** (web 1.1.51). Presence in the
+  raid window is NOT proof — EQ keeps listing campers, which is why the marker
+  exists — but Zeal reads loc off a live `Entity*`, so only someone in the zone
+  has one. Asymmetric on purpose: loc present proves life, loc absent proves
+  nothing (a raider in another zone has no entity here either), so the rule only
+  ever clears a swap on positive evidence.
 - **Member surfaces** — /parses, /raid (Zeal raid roster + coverage),
   /raid/review (#80 morning-after page, kernel `web/lib/raidReview.ts`),
   /guide (#81 Raid Guide, below), /buffs (coverage grid vs role targets),
@@ -1354,6 +1379,20 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
 - **Me card + officer Admin tab (#109)** — dashboard opens on 🐺 Me; officer
   tools + 📡 Reporters panel (#115, swap/include) + 🛑 kill switches (#118) under
   🛡 Admin. LKG crash-loop rollback + beta-channel hot-swap in `main.js` (#74).
+- **Dashboard sidebar + tab split (agent 3.5.72)** — the tab strip became a
+  left rail (`.shell` flex row: sticky `.nav` beside `.panes`; collapses back to
+  a wrapping strip under 700px), and the two overgrown tabs were carved up.
+  **📊 Stats** (`renderStats`) took the session-observation cards off Info —
+  mending, top abilities, spell casts, resists, rolls, inbound spell damage,
+  loadouts + pets. **🩺 Diagnostics** (`renderDiag`) took the "is it working"
+  cards off Triggers and Info — Zeal pipe, charm + pet-buff diagnostics, trigger
+  journal, boss mechanics, Zeal explorer, raw Zeal capture. Info keeps parser
+  facts, client versions, log archiving, tag-capture readiness, backups, GINA
+  scan and the crash card; Triggers keeps recent fires, replay and the three
+  trigger lists. Tour gained a stop for each. Nothing moved between render
+  fns except the markup itself — every card's own filler is unchanged.
+  Tests: `test/dashboard-tabs.test.js` (nav ↔ pane ↔ `_sections` ↔ placeholder
+  ownership, plus filler-runs-after-emitter ordering).
 - **"Set up EQ for me" on Settings** — `settings.html` mirrors the dashboard's
   `/api/eq-setup` writer (see the Setup & onboarding entry above).
 - **Overlay fixes** — trigger-overlay auto-grow (#107), melody stale-card + setup
