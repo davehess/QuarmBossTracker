@@ -844,6 +844,29 @@ blocked while EQ runs). Cloud backup/restore: `uiStudioCapture` → bot
 `ui_layout` (encrypted `ui_snapshots`) → list/download/restore with
 resolution rescale on the way back.
 
+### The Dock (`dock.html`, Mimic 2.5.1-beta) — many overlays, one renderer
+One always-on-top window that hosts other overlays as same-origin `<iframe>`
+panes. Every BrowserWindow is its own Chromium renderer at **~80 MB resident
+before it paints** (measured 2026-08-04 — the reason `_reapDisabledOverlays`
+exists), so five docked overlays cost one renderer instead of five.
+- **The panes are the REAL overlay files**, loaded unmodified. `_DOCK_CATALOG`
+  in `main.js` maps key → label/file/flag, and a test pins every `file` against
+  the `loadFile()` the standalone window uses, so a docked fork cannot drift.
+- **Docking clears the overlay's `show*` flag**, so the existing reaper
+  genuinely DESTROYS its window — that is where the saving comes from. The
+  previous pref is kept in `cfg.dockedPrev`; undocking restores the window
+  visible. `_overlayForcedOn` refuses to force-create a docked overlay, or
+  unlocking would spawn the floating copy beside its pane.
+- **`nodeIntegrationInSubFrames: true` is load-bearing**: it runs `preload.js`
+  inside each pane so `window.mimic` exists there natively. Three calls are
+  window-scoped and are redirected in preload behind `WP_IS_DOCKED` — a pane's
+  ✕ undocks that pane (`dock-set`, not `hide-overlay`), and both auto-fit paths
+  plus the resize-preset menu go inert so one pane cannot resize the dock.
+- **Not dockable, deliberately:** the trigger overlay (its flag means "make
+  sound"; #97 fires TTS from a hidden window, and its position is load-bearing)
+  and the Command Center (#65 serves it from the AGENT at `/overlay/command` for
+  hot-swaps, so a pane on the bundled file would be a silently stale copy).
+
 ### Overlays (one .html each)
 DPS HUD (`overlay.html` — DPS / Tank / **History** tabs; DPS+Tank are this
 machine's own observations, History is the guild's settled numbers for the last

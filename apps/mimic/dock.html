@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>dock</title>
+<style>
+  /* ── The Dock ──────────────────────────────────────────────────────────────
+     One always-on-top transparent window that HOSTS other overlays as panes,
+     instead of each one owning its own BrowserWindow.
+
+     Why iframes and not a rewrite: every overlay already runs standalone and
+     already talks to the agent on localhost and to Electron through
+     `window.mimic`. An <iframe> keeps all of that working unchanged — the dock
+     is a container, not a port. main.js gives this window
+     `nodeIntegrationInSubFrames: true`, so the SAME preload runs inside every
+     pane and `window.mimic` exists there natively.
+
+     What it buys: N overlays that were N windows (and N renderer processes,
+     each with its own compositor surface and its own poll loop scheduling)
+     become one window and one renderer. Same-origin file:// iframes share that
+     renderer process.
+
+     ⚠ The panes are the real overlay files. Do not fork them. Anything that
+     needs to behave differently when docked belongs in preload.js behind
+     WP_IS_DOCKED, so there is exactly one copy of every overlay. */
+  :root{ --bg-alpha:0.78; }
+  html,body{margin:0;height:100%;background:transparent;overflow:hidden;
+    font-family:ui-monospace,Menlo,Consolas,monospace;color:#e6edf3;user-select:none}
+  #shell{display:flex;flex-direction:column;height:100%;
+    background:rgb(14 17 22 / var(--bg-alpha));
+    border:1px solid rgba(163,113,247,0.45);border-radius:8px;margin:4px;
+    overflow:hidden;backdrop-filter:blur(2px)}
+  .bar{display:flex;align-items:center;gap:6px;flex:0 0 auto;
+    padding:3px 6px 3px 26px;font-size:10px;color:#d2a8ff;letter-spacing:0.1em;
+    text-transform:uppercase;border-bottom:1px solid rgba(163,113,247,0.25)}
+  .bar .count{color:#6b7280;letter-spacing:0}
+  .bar .spacer{flex:1}
+  .btn{background:rgba(255,255,255,0.05);color:#9aa4ad;
+    border:1px solid rgba(255,255,255,0.10);border-radius:4px;
+    padding:1px 7px;font-size:10px;cursor:pointer;font-family:inherit}
+  .btn:hover{color:#fff;border-color:#a371f7}
+  .btn.on{background:#2a1d3d;color:#d2a8ff;border-color:#a371f7}
+
+  /* Panes. A CSS grid so 1/2/3 columns is one variable, and each pane is its
+     own scroll container — one tall overlay must not push the others off. */
+  #panes{flex:1 1 auto;display:grid;gap:4px;padding:4px;overflow:auto;
+    grid-template-columns:repeat(var(--cols,1), minmax(0,1fr));
+    align-content:start}
+  .pane{display:flex;flex-direction:column;min-width:0;min-height:90px;
+    border:1px solid rgba(255,255,255,0.08);border-radius:5px;overflow:hidden;
+    background:rgba(255,255,255,0.02)}
+  .pane > .ph{display:flex;align-items:center;gap:4px;flex:0 0 auto;
+    padding:1px 4px;font-size:9px;color:#8b949e;letter-spacing:0.06em;
+    text-transform:uppercase;background:rgba(0,0,0,0.30)}
+  .pane > .ph .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  /* ⚠ Always drawn, only dimmed — NOT a hover-reveal. The panes repaint
+     constantly (cast bars, countdowns) and a freshly-created element under a
+     stationary cursor never picks up :hover; the same trap that made the CH
+     chain's ✕ invisible on exactly the row you wanted it on (2026-08-14). */
+  .pane > .ph .x{cursor:pointer;opacity:0.45;padding:0 3px;border-radius:3px}
+  .pane > .ph .x:hover{opacity:1;color:#f87171;background:rgba(220,38,38,0.20)}
+  .pane > iframe{flex:1 1 auto;width:100%;border:0;background:transparent;
+    min-height:0;display:block}
+  #empty{padding:14px 10px;font-size:11px;color:#6b7280;line-height:1.5}
+  #empty b{color:#d2a8ff;font-weight:600}
+
+  /* Pane picker — which overlays live in the dock. */
+  #picker{display:none;position:absolute;top:26px;left:6px;right:6px;z-index:80;
+    background:rgba(13,17,23,0.97);border:1px solid rgba(163,113,247,0.5);
+    border-radius:6px;padding:6px;max-height:70%;overflow:auto;
+    box-shadow:0 4px 16px rgba(0,0,0,0.6)}
+  #picker.show{display:block}
+  #picker .hint{font-size:9px;color:#6b7280;margin:0 0 5px;line-height:1.4}
+  #picker label{display:flex;align-items:center;gap:6px;font-size:11px;
+    padding:2px 3px;border-radius:3px;cursor:pointer;color:#c9d1d9}
+  #picker label:hover{background:rgba(163,113,247,0.14)}
+  #picker input{accent-color:#a371f7;cursor:pointer}
+
+  /* Shared overlay chrome — ✕ hide (top-right) and ✥ move (top-left), same
+     positions and behaviour as every other overlay (checklist items 1 + 2). */
+  #hide-btn{position:absolute;top:6px;right:6px;z-index:60;width:18px;height:18px;
+    display:flex;align-items:center;justify-content:center;border-radius:4px;
+    background:rgba(14,17,22,0.6);color:#6b7280;border:1px solid rgba(110,118,129,0.3);
+    font-size:11px;line-height:1;cursor:pointer;opacity:0.45;transition:opacity .12s}
+  #hide-btn:hover{opacity:1;color:#f87171;border-color:#f87171}
+  #move-btn{position:absolute;top:6px;left:6px;z-index:60;width:18px;height:18px;
+    display:flex;align-items:center;justify-content:center;border-radius:4px;
+    background:rgba(14,17,22,0.6);color:#6b7280;border:1px solid rgba(110,118,129,0.3);
+    font-size:11px;line-height:1;cursor:move;opacity:0.45;transition:opacity .12s}
+  #move-btn:hover{opacity:1;color:#58a6ff;border-color:#58a6ff}
+  body.unlocked #shell{border-color:rgba(31,111,235,0.9);
+    box-shadow:0 0 0 1px rgba(31,111,235,0.6)}
+  body.unlocked::after{content:'⤡';position:fixed;right:2px;bottom:0;
+    color:rgba(31,111,235,0.9);font-size:14px;pointer-events:none}
+</style></head>
+<body>
+  <button id="move-btn" title="Drag from this icon to move the dock">✥</button>
+  <button id="hide-btn" title="Hide the dock (turn back on from the tray → Overlays)">✕</button>
+  <div id="shell">
+    <div class="bar">
+      <span>◫ Dock</span>
+      <span class="count" id="count"></span>
+      <span class="spacer"></span>
+      <button class="btn" id="addBtn" title="Choose which overlays live in the dock">＋ Panes</button>
+      <button class="btn" id="colBtn" title="Number of columns">▥ 1</button>
+    </div>
+    <div id="panes"></div>
+    <div id="empty">
+      Nothing docked yet. Hit <b>＋ Panes</b> and pick the overlays you want
+      collected here — they move out of their own floating windows and into
+      this one.
+    </div>
+  </div>
+  <div id="picker">
+    <p class="hint">Ticked overlays live in the dock. Unticking one gives it its
+      own floating window back.</p>
+    <div id="pickerList"></div>
+  </div>
+<script>
+  // ── Bridge + chrome ────────────────────────────────────────────────────────
+  var M = window.mimic || {};
+  if (M.onOverlayLocked) M.onOverlayLocked(function (locked) {
+    document.body.classList.toggle('unlocked', !locked);
+  });
+  if (M.onBgAlpha) M.onBgAlpha(function (v) {
+    document.documentElement.style.setProperty('--bg-alpha', String(v));
+  });
+
+  // Hover-interact handshake (checklist item 3). A locked overlay is
+  // click-through, so without this every click here falls into EQ and the
+  // control "does nothing".
+  function interactive(el) {
+    if (!el) return;
+    el.addEventListener('mouseenter', function () { try { M.overlayHoverInteractive(true); } catch (e) {} });
+    el.addEventListener('mouseleave', function () { try { M.overlayHoverInteractive(false); } catch (e) {} });
+  }
+  var hideBtn = document.getElementById('hide-btn');
+  var moveBtn = document.getElementById('move-btn');
+  var addBtn  = document.getElementById('addBtn');
+  var colBtn  = document.getElementById('colBtn');
+  [hideBtn, moveBtn, addBtn, colBtn].forEach(interactive);
+  if (hideBtn) hideBtn.addEventListener('click', function () { try { M.hideThisOverlay(); } catch (e) {} });
+
+  var _dragging = false;
+  if (moveBtn) {
+    moveBtn.addEventListener('mousedown', function (e) {
+      if (e.button !== 0) return;
+      _dragging = true;
+      try { M.overlayDragStart(); } catch (err) {}
+    });
+    try { M.attachOverlayMenu(moveBtn); } catch (e) {}
+  }
+  document.addEventListener('mouseup', function () {
+    if (!_dragging) return;
+    _dragging = false;
+    try { M.overlayDragEnd(); } catch (e) {}
+    try { M.overlayHoverInteractive(false); } catch (e) {}
+  });
+
+  // ── Panes ──────────────────────────────────────────────────────────────────
+  var panesEl  = document.getElementById('panes');
+  var emptyEl  = document.getElementById('empty');
+  var countEl  = document.getElementById('count');
+  var pickEl   = document.getElementById('picker');
+  var pickList = document.getElementById('pickerList');
+  var CATALOG = [];           // [{ key, label, file }]
+  var _lastSig = null;
+
+  function render(state) {
+    var keys = (state && state.keys) || [];
+    var cols = (state && state.cols) || 1;
+    CATALOG = (state && state.catalog) || CATALOG;
+    // Byte-stability guard, same reason every other overlay has one: rebuilding
+    // the pane list would tear down and RELOAD every iframe, which is a visible
+    // flash and throws away each overlay's in-page state (open tabs, scroll,
+    // the DPS HUD's selected History fight).
+    var sig = keys.join(',') + '|' + cols;
+    if (sig === _lastSig) return;
+    _lastSig = sig;
+
+    panesEl.style.setProperty('--cols', String(cols));
+    colBtn.textContent = '▥ ' + cols;
+    countEl.textContent = keys.length ? '(' + keys.length + ')' : '';
+    emptyEl.style.display = keys.length ? 'none' : 'block';
+
+    // Reuse the iframe for any pane that is staying, so only genuinely new
+    // panes load and only removed ones are destroyed.
+    var existing = {};
+    Array.prototype.forEach.call(panesEl.children, function (p) {
+      existing[p.getAttribute('data-key')] = p;
+    });
+    panesEl.textContent = '';
+    keys.forEach(function (k) {
+      var spec = CATALOG.filter(function (c) { return c.key === k; })[0];
+      if (!spec) return;
+      var pane = existing[k];
+      if (!pane) {
+        pane = document.createElement('div');
+        pane.className = 'pane';
+        pane.setAttribute('data-key', k);
+        var ph = document.createElement('div');
+        ph.className = 'ph';
+        var nm = document.createElement('span');
+        nm.className = 'nm';
+        nm.textContent = spec.label;
+        var x = document.createElement('span');
+        x.className = 'x';
+        x.textContent = '✕';
+        x.title = 'Undock ' + spec.label + ' — it gets its own window back';
+        interactive(x);
+        x.addEventListener('click', function () { setDocked(k, false); });
+        ph.appendChild(nm); ph.appendChild(x);
+        var fr = document.createElement('iframe');
+        fr.setAttribute('src', spec.file);
+        fr.setAttribute('scrolling', 'no');
+        pane.appendChild(ph); pane.appendChild(fr);
+      }
+      panesEl.appendChild(pane);
+    });
+  }
+
+  function renderPicker() {
+    pickList.textContent = '';
+    var docked = {};
+    Array.prototype.forEach.call(panesEl.children, function (p) {
+      docked[p.getAttribute('data-key')] = true;
+    });
+    CATALOG.forEach(function (c) {
+      var lab = document.createElement('label');
+      var cb  = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = !!docked[c.key];
+      cb.addEventListener('change', function () { setDocked(c.key, cb.checked); });
+      interactive(lab);
+      var sp = document.createElement('span');
+      sp.textContent = c.label;
+      lab.appendChild(cb); lab.appendChild(sp);
+      pickList.appendChild(lab);
+    });
+  }
+
+  function setDocked(key, want) {
+    try {
+      M.dockSet(key, !!want).then(function (st) { if (st) { render(st); renderPicker(); } });
+    } catch (e) {}
+  }
+
+  if (addBtn) addBtn.addEventListener('click', function () {
+    pickEl.classList.toggle('show');
+    if (pickEl.classList.contains('show')) renderPicker();
+  });
+  // Click anywhere else to dismiss. The picker is positioned OVER the panes, so
+  // without this it blocks every pane control underneath it and the only way
+  // out is finding the same button again — which reads as a stuck panel.
+  document.addEventListener('mousedown', function (ev) {
+    if (!pickEl.classList.contains('show')) return;
+    if (pickEl.contains(ev.target) || (addBtn && addBtn.contains(ev.target))) return;
+    pickEl.classList.remove('show');
+  }, true);
+  if (colBtn) colBtn.addEventListener('click', function () {
+    try { M.dockCols().then(function (st) { if (st) render(st); }); } catch (e) {}
+  });
+
+  function refresh() {
+    try { M.dockState().then(function (st) { if (st) render(st); }); } catch (e) {}
+  }
+  refresh();
+  // Poll rather than push: the dock's state changes only when a human clicks,
+  // so a slow poll is simpler than another IPC channel and cannot get stuck.
+  setInterval(refresh, 2000);
+</script>
+</body></html>

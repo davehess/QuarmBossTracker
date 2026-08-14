@@ -112,6 +112,7 @@ function _wpPrefs(name, extra) {
 }
 
 let mainWindow = null;
+let dockWindow = null;      // the Dock — hosts other overlays as iframe panes
 let overlayWindow = null;
 let triggerWindow = null;
 let charmWindow   = null;
@@ -2958,6 +2959,7 @@ function _persistBounds(key, win) {
 // individual windows over IPC.
 function _overlayEntries() {
   const out = [];
+  if (dockWindow    && !dockWindow.isDestroyed())    out.push(['dock',    dockWindow]);
   if (overlayWindow && !overlayWindow.isDestroyed()) out.push(['hud',     overlayWindow]);
   if (triggerWindow && !triggerWindow.isDestroyed()) out.push(['trigger', triggerWindow]);
   if (charmWindow   && !charmWindow.isDestroyed())   out.push(['charm',   charmWindow]);
@@ -4996,6 +4998,51 @@ function createChChainOverlay() {
     applyOverlayOpacity(chChainWindow, 'chchain');
   });
 }
+// ── Dock window ─────────────────────────────────────────────────────────────
+// Bigger default than any single overlay because it holds several, and
+// resizable in both axes since the user decides how much goes in it.
+//
+// `nodeIntegrationInSubFrames: true` is the load-bearing line: it makes
+// preload.js run inside each <iframe> pane, so the panes get `window.mimic`
+// exactly as they do standalone and can stay unmodified copies of the real
+// overlays. Without it every pane would silently lose the bridge — it would
+// still render, still poll the agent on the default port, and quietly fail to
+// hide, drag, or arm click-through.
+//
+// `focusable: true` unlike the read-only overlays: the dock has a pane picker
+// with real checkboxes.
+function createDockWindow() {
+  const b = _resolveBounds('dockBounds', 'dockBoundsSig', { x: 40, y: 40, width: 360, height: 620 });
+  dockWindow = new BrowserWindow({
+    title: 'Wolf Pack Mimic — Dock',
+    width: b.width, height: b.height, x: b.x, y: b.y,
+    minWidth: 220, minHeight: 140,
+    frame: false, transparent: true, resizable: true,
+    alwaysOnTop: true, skipTaskbar: true,
+    focusable: true,
+    show: false,
+    webPreferences: _wpPrefs('Dock', { nodeIntegrationInSubFrames: true }),
+  });
+  dockWindow.setAlwaysOnTop(true, 'screen-saver');
+  dockWindow.setVisibleOnAllWorkspaces(true);
+  dockWindow.loadFile('dock.html');
+  dockWindow.on('moved',  () => _persistBounds('dockBounds', dockWindow));
+  dockWindow.on('resize', () => _persistBounds('dockBounds', dockWindow));
+  dockWindow.once('ready-to-show', () => {
+    dockWindow.webContents.send('agent-port', agentPort);
+    applyDockVisibility();
+    applyOverlayInteractivity();
+    applyOverlayOpacity(dockWindow, 'dock');
+  });
+}
+function applyDockVisibility() {
+  if (!dockWindow) return;
+  const cfg = loadConfig();
+  const unlocked = cfg.overlaysLocked === false;
+  const shouldShow = unlocked || (cfg.showDock && !cfg.quietMode && _eqGateOk(cfg));
+  if (shouldShow) dockWindow.showInactive(); else dockWindow.hide();
+}
+
 function applyChChainVisibility() {
   if (!chChainWindow) return;
   const cfg = loadConfig();
@@ -5026,6 +5073,7 @@ function applyChChainVisibility() {
 // creators reassign; the destroyers null them so a reaped entry reads as
 // missing rather than as a destroyed window.
 const _OVERLAY_WINDOWS = [
+  { key: 'dock',      flag: 'showDock',         get: () => dockWindow,      create: createDockWindow,          drop: () => { dockWindow = null; } },
   { key: 'hud',       flag: 'showHud',          get: () => overlayWindow,   create: createOverlayWindow,       drop: () => { overlayWindow = null; } },
   // The trigger overlay's flag is enableTriggerTts, NOT showTriggerOverlay:
   // #97 decoupled them and TTS deliberately fires from the HIDDEN window, so
@@ -5046,10 +5094,87 @@ const _OVERLAY_WINDOWS = [
   { key: 'popraid',   flag: 'showPopRaid',      get: () => popRaidWindow,   create: createPopRaidOverlay,      drop: () => { popRaidWindow = null; } },
 ];
 
+// ── The Dock ────────────────────────────────────────────────────────────────
+// One window that HOSTS overlays as same-origin <iframe> panes instead of each
+// one owning a BrowserWindow. The saving is the one measured just above: every
+// BrowserWindow is its own Chromium renderer at ~80 MB resident before it
+// paints anything, so five docked overlays are one renderer instead of five.
+//
+// The mechanism that makes it cheap to build: docking an overlay turns its
+// `show*` flag OFF, which the reaper above already handles — the standalone
+// window is genuinely destroyed and its renderer freed, not merely hidden. The
+// dock then loads that overlay's OWN .html into a pane. There is exactly one
+// copy of each overlay; the dock is a container, not a fork.
+//
+// `file` must match the loadFile() name of the standalone window — the pane IS
+// that page. `flag` is what gets flipped off while docked, and the previous
+// value is remembered in cfg.dockedPrev so undocking restores what the user
+// had rather than guessing.
+const _DOCK_CATALOG = [
+  { key: 'hud',       label: 'DPS HUD',        file: 'overlay.html',      flag: 'showHud' },
+  { key: 'chchain',   label: 'CH chain',       file: 'chchain.html',      flag: 'showChChain' },
+  { key: 'tank',      label: 'Tank',           file: 'tank.html',         flag: 'showTank' },
+  { key: 'buffQueue', label: 'Buff queue',     file: 'buffqueue.html',    flag: 'showBuffQueue' },
+  { key: 'mobinfo',   label: 'Mob Info',       file: 'mobinfo.html',      flag: 'showMobInfo' },
+  { key: 'charm',     label: 'Charm',          file: 'charm.html',        flag: 'showCharm' },
+  { key: 'pets',      label: 'Pets',           file: 'pets.html',         flag: 'showPets' },
+  { key: 'who',       label: '/who',           file: 'who.html',          flag: 'showWho' },
+  { key: 'melody',    label: 'Melody',         file: 'melody.html',       flag: 'showMelody' },
+  { key: 'threat',    label: 'Threat',         file: 'threatmeter.html',  flag: 'showThreat' },
+  { key: 'exttarget', label: 'Extended Target', file: 'extarget.html',    flag: 'showExtTarget' },
+  { key: 'zeal',      label: 'Zeal health',    file: 'zealhealth.html',   flag: 'showZeal' },
+  { key: 'popraid',   label: 'PoP raid',       file: 'popraid.html',      flag: 'showPopRaid' },
+];
+// ⚠ The TRIGGER overlay is deliberately absent. #97 has it fire TTS from a
+// HIDDEN window, and its flag (enableTriggerTts) means "make sound", not "be
+// visible" — docking it would tie the callouts to a pane's existence. It is
+// also the one overlay whose position is load-bearing (centre flash + upward
+// timer stack), which a grid cell cannot honour.
+//
+// ⚠ COMMAND CENTER is absent too, for a different and more interesting reason.
+// It is the one overlay NOT loaded from its bundled file: #65 serves it from
+// the AGENT at /overlay/command so it rides agent hot-swaps, with command.html
+// only as the offline fallback. A pane pointing at the bundled file would
+// therefore be a silently STALE copy of an overlay everyone else sees updated —
+// exactly the docked-fork drift this design exists to avoid. Docking it needs
+// the pane to resolve the agent URL first; until then it stays a window.
+
+// Accepts a catalog key OR a page filename, because a pane's own ✕ knows only
+// the file it was loaded from (see _wpDockKey in preload.js) while the dock's
+// picker sends keys.
+function _dockSpec(keyOrFile) {
+  const s = String(keyOrFile || '').replace(/\.html$/i, '').toLowerCase();
+  return _DOCK_CATALOG.find(c => c.key.toLowerCase() === s
+    || c.file.replace(/\.html$/i, '').toLowerCase() === s) || null;
+}
+function _dockedKeys(cfg) {
+  const raw = Array.isArray(cfg.dockedOverlays) ? cfg.dockedOverlays : [];
+  const seen = new Set();
+  return raw.map(k => _dockSpec(k)).filter(s => s && !seen.has(s.key) && seen.add(s.key))
+            .map(s => s.key);
+}
+function _dockCols(cfg) {
+  const n = Number(cfg.dockCols);
+  return (n === 1 || n === 2 || n === 3) ? n : 1;
+}
+function _dockStatePayload() {
+  const cfg = loadConfig();
+  return {
+    keys: _dockedKeys(cfg),
+    cols: _dockCols(cfg),
+    catalog: _DOCK_CATALOG.map(c => ({ key: c.key, label: c.label, file: c.file })),
+  };
+}
+
 // True when something OTHER than the overlay's own pref can put it on screen,
 // in which case its window has to exist (and must not be reaped) whatever the
 // flag says.
 function _overlayForcedOn(cfg, e) {
+  // A DOCKED overlay lives in the dock's window and has no standalone one.
+  // Without this, unlocking (or setup mode) would spawn the floating copy
+  // alongside the pane — the same overlay twice, and the whole point of
+  // docking undone every time someone drags their layout around.
+  if (e && e.key !== 'dock' && _dockedKeys(cfg).includes(e.key)) return false;
   if (setupMode) return true;                    // 🛠 place-them-all mode
   if (cfg.overlaysLocked === false) return true; // unlocked → every overlay force-shown for dragging
   if (_blindForceOpen(e.blind || e.key)) return true;
@@ -5123,6 +5248,7 @@ function _reapDisabledOverlays() {
 // and reap AFTER (so a window is only freed once it has been asked to hide).
 function applyAllVisibility() {
   _materializeEnabledOverlays();
+  applyDockVisibility();
   applyOverlayVisibility();
   applyTriggerVisibility();
   applyCharmVisibility();
@@ -5188,6 +5314,7 @@ function _hideAllHotkeyMenuLabel() {
 // Hide-all was the one path that reached past all of it by turning the window
 // off entirely instead of hiding it.
 const _HIDEALL_FLAGS = [
+  'showDock',
   'showHud', 'showTriggerOverlay', 'showCharm', 'showPets', 'showMobInfo',
   'showBuffQueue', 'showWho', 'showMelody', 'showZeal', 'showThreat',
   'showChChain', 'showTank', 'showExtTarget', 'showCommand', 'showPopRaid',
@@ -5592,8 +5719,19 @@ function buildTrayMenu() {
 
   // Overlays — the actual on-screen overlays + their placement controls. Renamed
   // from the old "Live alerts" (misleading: these are overlays, not alerts).
+  const _dockedNow = _dockedKeys(loadConfig());
   const overlaysSubmenu = [
-    { label: 'DPS HUD', type: 'checkbox', checked: s.showHud, enabled: !s.quietMode, click: (mi) => {
+    // The dock leads the list because it changes what the rest of the list
+    // means: a docked overlay's own entry below is disabled, since its window
+    // no longer exists and ticking it would be a lie.
+    { label: _dockedNow.length ? `◫ Dock (${_dockedNow.length} panes)` : '◫ Dock',
+      type: 'checkbox', checked: !!s.showDock, enabled: !s.quietMode, click: (mi) => {
+        const cfg = loadConfig(); cfg.showDock = mi.checked; saveConfig(cfg);
+        if (mi.checked && !dockWindow) createDockWindow(); else applyDockVisibility(); _reapDisabledOverlays();
+        pushStatus();
+      } },
+    { type: 'separator' },
+    { label: 'DPS HUD', type: 'checkbox', checked: s.showHud, enabled: !s.quietMode && !_dockedNow.includes('hud'), click: (mi) => {
         const cfg = loadConfig(); cfg.showHud = mi.checked; saveConfig(cfg);
         if (mi.checked && !overlayWindow) createOverlayWindow(); else applyOverlayVisibility(); _reapDisabledOverlays();
         pushStatus();
@@ -5605,32 +5743,32 @@ function buildTrayMenu() {
         if (mi.checked && !triggerWindow) createTriggerOverlay(); else applyTriggerVisibility(); _reapDisabledOverlays();
         pushStatus();
       } },
-    { label: 'Charm tracker', type: 'checkbox', checked: s.showCharm, enabled: !s.quietMode, click: (mi) => {
+    { label: 'Charm tracker', type: 'checkbox', checked: s.showCharm, enabled: !s.quietMode && !_dockedNow.includes('charm'), click: (mi) => {
         const cfg = loadConfig(); cfg.showCharm = mi.checked; saveConfig(cfg);
         if (mi.checked && !charmWindow) createCharmOverlay(); else applyCharmVisibility(); _reapDisabledOverlays();
         pushStatus();
       } },
-    { label: 'Pet tracker (summoned pets)', type: 'checkbox', checked: s.showPets, enabled: !s.quietMode, click: (mi) => {
+    { label: 'Pet tracker (summoned pets)', type: 'checkbox', checked: s.showPets, enabled: !s.quietMode && !_dockedNow.includes('pets'), click: (mi) => {
         const cfg = loadConfig(); cfg.showPets = mi.checked; saveConfig(cfg);
         if (mi.checked && !petsWindow) createPetsOverlay(); else applyPetsVisibility(); _reapDisabledOverlays();
         pushStatus();
       } },
-    { label: 'Target Info (target stats)', type: 'checkbox', checked: s.showMobInfo, enabled: !s.quietMode, click: (mi) => {
+    { label: 'Target Info (target stats)', type: 'checkbox', checked: s.showMobInfo, enabled: !s.quietMode && !_dockedNow.includes('mobinfo'), click: (mi) => {
         const cfg = loadConfig(); cfg.showMobInfo = mi.checked; saveConfig(cfg);
         if (mi.checked && !mobInfoWindow) createMobInfoOverlay(); else applyMobInfoVisibility(); _reapDisabledOverlays();
         pushStatus();
       } },
-    { label: 'Buff queue (raid gaps + cures)', type: 'checkbox', checked: s.showBuffQueue, enabled: !s.quietMode, click: (mi) => {
+    { label: 'Buff queue (raid gaps + cures)', type: 'checkbox', checked: s.showBuffQueue, enabled: !s.quietMode && !_dockedNow.includes('buffQueue'), click: (mi) => {
         const cfg = loadConfig(); cfg.showBuffQueue = mi.checked; saveConfig(cfg);
         if (mi.checked && !buffQueueWindow) createBuffQueueOverlay(); else applyBuffQueueVisibility(); _reapDisabledOverlays();
         pushStatus();
       } },
-    { label: '/who (zone roster)', type: 'checkbox', checked: s.showWho, enabled: !s.quietMode, click: (mi) => {
+    { label: '/who (zone roster)', type: 'checkbox', checked: s.showWho, enabled: !s.quietMode && !_dockedNow.includes('who'), click: (mi) => {
         const cfg = loadConfig(); cfg.showWho = mi.checked; saveConfig(cfg);
         if (mi.checked && !whoWindow) createWhoOverlay(); else applyWhoVisibility(); _reapDisabledOverlays();
         pushStatus();
       } },
-    { label: 'Casting tracker (melody on bards, spells otherwise)', type: 'checkbox', checked: s.showMelody, enabled: !s.quietMode, click: (mi) => {
+    { label: 'Casting tracker (melody on bards, spells otherwise)', type: 'checkbox', checked: s.showMelody, enabled: !s.quietMode && !_dockedNow.includes('melody'), click: (mi) => {
         const cfg = loadConfig(); cfg.showMelody = mi.checked; saveConfig(cfg);
         if (mi.checked && !melodyWindow) createMelodyOverlay(); else applyMelodyVisibility(); _reapDisabledOverlays();
         pushStatus();
@@ -5639,27 +5777,27 @@ function buildTrayMenu() {
         const cfg = loadConfig(); cfg.melodyBardOnly = mi.checked; saveConfig(cfg);
         pushStatus();
       } },
-    { label: 'Zeal health (diagnostic)', type: 'checkbox', checked: s.showZeal, enabled: !s.quietMode, click: (mi) => {
+    { label: 'Zeal health (diagnostic)', type: 'checkbox', checked: s.showZeal, enabled: !s.quietMode && !_dockedNow.includes('zeal'), click: (mi) => {
         const cfg = loadConfig(); cfg.showZeal = mi.checked; saveConfig(cfg);
         if (mi.checked && !zealWindow) createZealHealthOverlay(); else applyZealVisibility(); _reapDisabledOverlays();
         pushStatus();
       } },
-    { label: 'Threat meter', type: 'checkbox', checked: s.showThreat, enabled: !s.quietMode, click: (mi) => {
+    { label: 'Threat meter', type: 'checkbox', checked: s.showThreat, enabled: !s.quietMode && !_dockedNow.includes('threat'), click: (mi) => {
         const cfg = loadConfig(); cfg.showThreat = mi.checked; saveConfig(cfg);
         if (mi.checked && !threatWindow) createThreatMeterOverlay(); else applyThreatVisibility(); _reapDisabledOverlays();
         pushStatus();
       } },
-    { label: 'Tank HUD (DS, buffs, DA, rampage)', type: 'checkbox', checked: s.showTank, enabled: !s.quietMode, click: (mi) => {
+    { label: 'Tank HUD (DS, buffs, DA, rampage)', type: 'checkbox', checked: s.showTank, enabled: !s.quietMode && !_dockedNow.includes('tank'), click: (mi) => {
         const cfg = loadConfig(); cfg.showTank = mi.checked; saveConfig(cfg);
         if (mi.checked && !tankWindow) createTankOverlay(); else applyTankVisibility(); _reapDisabledOverlays();
         pushStatus();
       } },
-    { label: 'CH chain', type: 'checkbox', checked: s.showChChain, enabled: !s.quietMode, click: (mi) => {
+    { label: 'CH chain', type: 'checkbox', checked: s.showChChain, enabled: !s.quietMode && !_dockedNow.includes('chchain'), click: (mi) => {
         const cfg = loadConfig(); cfg.showChChain = mi.checked; saveConfig(cfg);
         if (mi.checked && !chChainWindow) createChChainOverlay(); else applyChChainVisibility(); _reapDisabledOverlays();
         pushStatus();
       } },
-    { label: 'Extended Target (raid-wide targets)', type: 'checkbox', checked: s.showExtTarget, enabled: !s.quietMode, click: (mi) => {
+    { label: 'Extended Target (raid-wide targets)', type: 'checkbox', checked: s.showExtTarget, enabled: !s.quietMode && !_dockedNow.includes('exttarget'), click: (mi) => {
         const cfg = loadConfig(); cfg.showExtTarget = mi.checked; saveConfig(cfg);
         if (mi.checked && !extTargetWindow) createExtTargetOverlay(); else applyExtTargetVisibility(); _reapDisabledOverlays();
         pushStatus();
@@ -5669,7 +5807,7 @@ function buildTrayMenu() {
         if (mi.checked && !commandWindow) createCommandOverlay(); else applyCommandVisibility(); _reapDisabledOverlays();
         pushStatus();
       } },
-    { label: 'PoP raids (encounter slideshow)', type: 'checkbox', checked: s.showPopRaid, enabled: !s.quietMode, click: (mi) => {
+    { label: 'PoP raids (encounter slideshow)', type: 'checkbox', checked: s.showPopRaid, enabled: !s.quietMode && !_dockedNow.includes('popraid'), click: (mi) => {
         const cfg = loadConfig(); cfg.showPopRaid = mi.checked; saveConfig(cfg);
         if (mi.checked && !popRaidWindow) createPopRaidOverlay(); else applyPopRaidVisibility(); _reapDisabledOverlays();
         pushStatus();
@@ -6688,13 +6826,61 @@ ipcMain.handle('wp-backdrop-toggle', (e) => {
 // stays hidden across restarts and the tray checkbox updates); for a panel
 // overlay we just close the window. The user re-enables named overlays from
 // the tray "Overlays" submenu.
+// ── Dock IPC ────────────────────────────────────────────────────────────────
+// All three return the new state so the dock re-renders from one round trip
+// and can never drift from what main actually saved.
+ipcMain.handle('dock-state', () => _dockStatePayload());
+
+ipcMain.handle('dock-set', (_e, keyOrFile, want) => {
+  const spec = _dockSpec(keyOrFile);
+  if (!spec) return _dockStatePayload();
+  const cfg = loadConfig();
+  const keys = _dockedKeys(cfg);
+  const has  = keys.includes(spec.key);
+  if (!!want === has) return _dockStatePayload();     // nothing to do
+  cfg.dockedPrev = (cfg.dockedPrev && typeof cfg.dockedPrev === 'object') ? cfg.dockedPrev : {};
+  if (want) {
+    // Remember whether they had this overlay ON before docking it, so undocking
+    // restores their actual preference rather than silently switching it on.
+    cfg.dockedPrev[spec.key] = !!cfg[spec.flag];
+    cfg[spec.flag] = false;                            // the reaper frees its window
+    cfg.dockedOverlays = keys.concat([spec.key]);
+    // Docking something is a clear statement that you want the dock on screen.
+    if (!cfg.showDock) cfg.showDock = true;
+  } else {
+    cfg.dockedOverlays = keys.filter(k => k !== spec.key);
+    // Undocking gives the overlay its window back VISIBLE — it was on screen a
+    // moment ago as a pane, and having it vanish would read as having lost it.
+    cfg[spec.flag] = true;
+    delete cfg.dockedPrev[spec.key];
+  }
+  saveConfig(cfg);
+  try { applyAllVisibility(); } catch {}
+  try { buildTrayMenu(); } catch {}
+  return _dockStatePayload();
+});
+
+ipcMain.handle('dock-cols', () => {
+  const cfg = loadConfig();
+  cfg.dockCols = (_dockCols(cfg) % 3) + 1;             // 1 → 2 → 3 → 1
+  saveConfig(cfg);
+  return _dockStatePayload();
+});
+
 ipcMain.handle('hide-overlay', (e) => {
   try {
     const win = BrowserWindow.fromWebContents(e.sender);
     if (!win || win.isDestroyed()) return false;
     _exitSingleSetup(win);   // (#116) never leave setup chrome on a hidden overlay
     const cfg = loadConfig();
-    if (win === overlayWindow) {
+    if (win === dockWindow) {
+      // Hides the dock itself. The overlays INSIDE it stay docked — undocking
+      // is the pane ✕, and conflating the two would scatter someone's whole
+      // layout back into floating windows on one misclick.
+      cfg.showDock = false; saveConfig(cfg);
+      try { dockWindow.hide(); } catch {}
+      try { buildTrayMenu(); } catch {}
+    } else if (win === overlayWindow) {
       cfg.showHud = false; saveConfig(cfg);
       try { overlayWindow.hide(); } catch {}
     } else if (win === triggerWindow) {
@@ -8179,7 +8365,7 @@ function _windowLabelsByPid() {
   };
   let cfg; try { cfg = loadConfig(); } catch { cfg = {}; }
   const NAMES = {
-    hud: 'DPS HUD', trigger: 'Trigger alerts', charm: 'Charm tracker',
+    dock: 'Dock', hud: 'DPS HUD', trigger: 'Trigger alerts', charm: 'Charm tracker',
     pets: 'Pet tracker', mobinfo: 'Mob Info', buffQueue: 'Buff queue',
     who: '/who', melody: 'Melody', zeal: 'Zeal health', threat: 'Threat meter',
     chchain: 'CH chain', tank: 'Tank HUD', exttarget: 'Extended target',

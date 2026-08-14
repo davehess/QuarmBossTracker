@@ -31,9 +31,13 @@ const src = readSource(MAIN);
 // The shipped lifecycle block: the table, _overlayForcedOn, and both halves.
 const block = sliceBlock(src, 'const _OVERLAY_WINDOWS = [', '// Convenience: refresh every overlay');
 
-// main.js's fifteen module-level window bindings and the creator that fills
-// each one. Order matches _OVERLAY_WINDOWS; a mismatch is caught below.
+// main.js's module-level window bindings and the creator that fills each one.
+// Order matches _OVERLAY_WINDOWS; a mismatch is caught below.
 const PAIRS = [
+  // The Dock leads the table: it hosts other overlays as iframe panes, and a
+  // docked overlay's own window is REAPED (not hidden), so the dock has to
+  // exist before anything can be docked into it.
+  ['dockWindow',      'createDockWindow'],
   ['overlayWindow',   'createOverlayWindow'],
   ['triggerWindow',   'createTriggerOverlay'],
   ['charmWindow',     'createCharmOverlay'],

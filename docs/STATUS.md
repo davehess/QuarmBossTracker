@@ -90,6 +90,38 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ### ✅ Done — major shipped features (not exhaustive; see git + roadmapData.ts)
 
+- **The Dock — BETA (Mimic 2.5.1-beta / agent 3.5.81, 2026-08-14).** Hitya:
+  *"a dock overlay that lets the user attach/consume the overlays together and
+  have it use one chromium browser."* One window hosting overlays as
+  same-origin iframe panes; docking clears the overlay's `show*` flag so the
+  reaper genuinely frees its ~80 MB renderer rather than just hiding it.
+  Browser-verified end to end (panes load the real overlay files, picker docks,
+  a pane's ✕ undocks only itself, columns cycle 1→2→3).
+  - ⚠ **The panes are the real overlay files, never forks.** Docked-only
+    behaviour lives in `preload.js` behind `WP_IS_DOCKED`.
+  - Trigger overlay and Command Center are excluded on purpose — see
+    HOW-ITS-BUILT. The Command Center exclusion was found BY the test that pins
+    every pane file against the window's `loadFile()`: it is agent-served for
+    hot-swaps, so a pane would have shipped a stale copy.
+
+- **Clock skew from a shared chat line — STABLE (bot 3.1.48, 2026-08-14).** The
+  EQ server broadcasts a `/gu` line to everyone at once, so two clients' stamps
+  for the same line differ by exactly their clock skew — no network in the path
+  and **our own server's clock not involved**, which is what makes it
+  independent of `pulse`. We were already generating it and binning it at the
+  dedup gate (1,019 lines/12h, 3 keeping a second copy). Published as
+  `method='chat'`; NOT wired into corrections yet, per DESIGN-clock-correction
+  §2.3. One-second resolution — nothing sub-second may be built on it.
+
+- **Agent asks a real time server — BETA (agent 3.5.81, 2026-08-14).** SNTP over
+  UDP/123, no dependency, inlined (a sibling file would not ship — `stage-agent.js`
+  has a hardcoded list). Fills in when the bot is unreachable, where the agent
+  previously assumed a zero offset. `ntp − pulse` is the BOT's own clock error,
+  which matters for a self-hosted tenant whose bot might sit on a desktop.
+  ⚠ Network half UNVERIFIED — UDP/123 is blocked in CI and the cloud container;
+  the arithmetic is a pure `_parseSntpReply` with 16 tests, first real
+  measurement comes from a beta machine.
+
 - **OpenDKP loot folds itself into the Loot tab — STABLE (bot 3.1.45,
   2026-08-14).** Mob Info's "N× won" counts read `loot_observations`, and the
   only thing that ever wrote the OpenDKP half of that table was an officer

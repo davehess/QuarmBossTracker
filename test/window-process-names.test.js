@@ -71,16 +71,16 @@ describe('every window goes through it', () => {
       .not.toMatch(/webPreferences: \{ preload: path\.join\(__dirname, 'preload\.js'\)/);
   });
 
-  it('names all twenty windows, with no duplicates', () => {
+  it('names all twenty-one windows, with no duplicates', () => {
     const names = [...src.matchAll(/webPreferences: _wpPrefs\((?:'([^']+)'|([^,)]+))/g)]
       .map(m => m[1] || m[2].trim());
-    expect(names).toHaveLength(20);
+    expect(names).toHaveLength(21);
     // Panel overlays are named from their runtime key, so that one is an
     // expression rather than a literal.
     const literals = names.filter(n => !n.includes('panelKey'));
     expect(new Set(literals).size, 'two windows sharing a name defeats the point')
       .toBe(literals.length);
-    for (const want of ['DPS HUD', 'Charm tracker', 'Mob Info', 'CH chain', 'Dashboard', 'Resource use']) {
+    for (const want of ['DPS HUD', 'Charm tracker', 'Mob Info', 'CH chain', 'Dashboard', 'Resource use', 'Dock']) {
       expect(literals, `${want} should be named`).toContain(want);
     }
   });

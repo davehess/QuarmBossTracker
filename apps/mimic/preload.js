@@ -1,6 +1,38 @@
 // Preload — minimal contextBridge surface. No nodeIntegration in renderers.
 const { contextBridge, ipcRenderer } = require('electron');
 
+// ── Am I a window, or a pane inside the Dock? ───────────────────────────────
+// The dock (dock.html) hosts overlays as same-origin <iframe>s in ONE window,
+// and main.js gives it `nodeIntegrationInSubFrames: true` so this same preload
+// runs in every pane. That is what lets the panes be the real overlay files
+// rather than forks of them.
+//
+// But three of the calls below are about a WINDOW, and from a pane they would
+// act on the dock:
+//   • hideThisOverlay  → would hide the whole dock instead of that one pane;
+//   • autoFitOverlay / overlayAutoHeight → would resize the dock to fit ONE
+//     pane's content, fighting every other pane for the window height;
+//   • attachOverlayMenu's resize presets → would resize the dock.
+// Each is redirected or disabled below. Everything else (drag, hover-interact,
+// opacity, agent port) is genuinely per-window and already does the right
+// thing, because the dock IS the window.
+//
+// ⚠ Keep this branch HERE rather than in the overlay files. There is exactly
+// one copy of each overlay and it must stay that way — a docked fork would
+// drift within a release.
+const WP_IS_DOCKED = (() => {
+  try { return window.top !== window.self; } catch { return false; }
+})();
+
+// A pane's identity is the file it was loaded from — the dock points each
+// iframe at that overlay's own .html.
+function _wpDockKey() {
+  try {
+    const f = String(window.location.pathname || '').split('/').pop().replace(/\.html$/i, '');
+    return f || null;
+  } catch { return null; }
+}
+
 // ── Shared overlay chrome helpers ──────────────────────────────────────────
 // Every built-in overlay used to inline ~35 lines of right-click menu HTML +
 // styling + hover-interactive handshake. They drifted over time ("alignment
@@ -211,6 +243,7 @@ function _menuFitPaused() {
 // clipped" report). Same rule: hold the last height while the menu is
 // open, replay it on close.
 function _overlayAutoHeightRaw(h) {
+  if (WP_IS_DOCKED) return Promise.resolve(true);   // see _autoFitOverlay
   try {
     if (_menuFitPaused()) { _wpMenuSuppressedRawH = h; return Promise.resolve(true); }
     return ipcRenderer.invoke('overlay-auto-height', h);
@@ -218,6 +251,9 @@ function _overlayAutoHeightRaw(h) {
 }
 
 function _attachOverlayMenu(moveBtn) {
+  // The menu's presets resize the window; from a pane that is the dock, which
+  // is not what "resize Mob Info" should mean. The dock has its own ✥ menu.
+  if (WP_IS_DOCKED) return;
   if (!moveBtn || moveBtn._wpMenuAttached) return;
   moveBtn._wpMenuAttached = true;
   moveBtn.addEventListener('contextmenu', function(ev) {
@@ -291,6 +327,9 @@ function _openOverlayMenu(state) {
 // document.body if nothing's passed. Adds a small buffer so the bottom of
 // the last card isn't flush against the window edge.
 function _autoFitOverlay(wrapEl) {
+  // In the dock the window height belongs to the dock's grid, not to whichever
+  // pane measured itself last. Without this every pane fights for the window.
+  if (WP_IS_DOCKED) return;
   try {
     _wpPageUsesAutoFit = true;
     if (wrapEl) _wpLastFitEl = wrapEl;
@@ -421,7 +460,20 @@ contextBridge.exposeInMainWorld('mimic', {
   overlayHoverInteractive: (want) => ipcRenderer.invoke('overlay-hover-interactive', !!want),
   // Hide the overlay that calls this (the ✕). Named overlays flip their pref
   // off; panel overlays close.
-  hideThisOverlay: () => ipcRenderer.invoke('hide-overlay'),
+  hideThisOverlay: () => (WP_IS_DOCKED
+    // A pane's own ✕ means "get this overlay out of my dock", not "hide the
+    // dock". It goes back to being its own floating window, still visible.
+    ? ipcRenderer.invoke('dock-set', _wpDockKey(), false)
+    : ipcRenderer.invoke('hide-overlay')),
+
+  // ── Dock ──────────────────────────────────────────────────────────────────
+  // dock.html only. dockState() returns { keys, cols, catalog }; dockSet()
+  // adds/removes a pane; dockCols() cycles the column count. All three return
+  // the new state so the dock re-renders from one round trip.
+  dockState: ()            => ipcRenderer.invoke('dock-state'),
+  dockSet:   (key, want)   => ipcRenderer.invoke('dock-set', key, !!want),
+  dockCols:  ()            => ipcRenderer.invoke('dock-cols'),
+  isDocked:  ()            => WP_IS_DOCKED,
 
   // EQ install discovery + folder picker for the multi-folder UI.
   findEqInstalls: () => ipcRenderer.invoke('find-eq-installs'),
