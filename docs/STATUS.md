@@ -90,6 +90,92 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ### ✅ Done — major shipped features (not exhaustive; see git + roadmapData.ts)
 
+- **Add mules/alts from their inventory file — STABLE (web 1.1.53,
+  2026-08-14).** Hitya: *"can you make it so that anyone can upload additional
+  inventory files from the /me page and have it bring in their other
+  characters/mules?"* Pyxil has six bank toons Mimic can see in
+  `C:\TAKPv22` but that nothing else can — no logs, no `/who`, no OpenDKP row.
+  The existing per-character 🎒 upload could not help: it is gated on the
+  character ALREADY being in `characters` AND linked to you, which is exactly
+  what a mule is not.
+  - 🧳 on `/me` takes many `<Name>-Inventory.txt` at once and names each
+    character **from the file name**, because the rows inside are items, not
+    identity. Letters-only validation, so a renamed copy can't invent a junk
+    roster row.
+  - **Claiming is the risky half and it is deliberately narrow** (`claimVerdict`
+    in `web/lib/inventoryFile.ts`): new name → create + claim; yours already →
+    upload; **someone else's → refuse**; unclaimed but carrying an `opendkp_id`
+    → take the data and say plainly it was NOT linked, since that shape is a
+    real member who simply hasn't linked Discord.
+  - Per-file results, so a batch where two of six belong to someone else names
+    those two rather than failing as a whole.
+
+- **A configured EQ folder counts as known, logs or not — BETA (Mimic
+  2.5.4-beta / agent 3.5.83, 2026-08-14).** Pyxil's onboarding: she pointed
+  Mimic at `C:\TAKPv22`, Settings listed it ticked as *"eqclient.exe · no logs
+  yet"*, and the dashboard still said **"No EQ folder selected"** while *Set up
+  EQ for me* answered **"No EQ folder known yet — point Mimic at your EverQuest
+  folder in Settings first."** She had. The folder had no logs BECAUSE in-game
+  logging was off, and the one button whose job is to turn logging on refused
+  for want of the logs it would have created. **Every user who installs EQ and
+  Mimic before typing `/log on` lands there — which is every new user.**
+  - **One list was answering two questions.** `resolveEqDirsWithLogs` gated
+    every path on `_dirHasEqLogs` including configured ones, and the agent's
+    `_eqSetupDirs` inferred folders from logs it was already tailing. Both are
+    right for *what do I TAIL* and wrong for *what do I KNOW*. Split: `dirs`
+    (has logs → tail it) vs `knownDirs` (configured / eqgame.exe-detected /
+    running → we know it), passed to the agent as `WOLFPACK_EQ_DIRS`, which
+    `_eqSetupDirs` and the dashboard banner now both read.
+  - **TAKP is scanned for.** `C:\TAKP` / `C:\TAKPv22` named, plus a drive-root
+    walk for any `takp*` directory — the version is in the folder name and moves
+    every release, so a fixed string goes stale. Local fixed drives only, since
+    probing an absent or network drive is what made Settings freeze.
+  - **The onboarding now says WHY there are no characters.** "Configure an
+    EverQuest folder above" reads as *the thing you just did did not work*; with
+    a folder present it now names the real fix (`/log on`, or the setup button
+    with EQ closed).
+
+- **The Dock — BETA (Mimic 2.5.1-beta / agent 3.5.81, 2026-08-14).** Hitya:
+  *"a dock overlay that lets the user attach/consume the overlays together and
+  have it use one chromium browser."* One window hosting overlays as
+  same-origin iframe panes; docking clears the overlay's `show*` flag so the
+  reaper genuinely frees its ~80 MB renderer rather than just hiding it.
+  Browser-verified end to end (panes load the real overlay files, picker docks,
+  a pane's ✕ undocks only itself, columns cycle 1→2→3).
+  - ⚠ **The panes are the real overlay files, never forks.** Docked-only
+    behaviour lives in `preload.js` behind `WP_IS_DOCKED`.
+  - Only the trigger overlay is excluded (its flag means "make sound"). The
+    Command Center is dockable via an `agentPath` so its pane resolves the
+    agent-served copy — the need for that was found BY the test pinning every
+    pane file against the window's `loadFile()`.
+  - **Round two, ten findings from the first live look (Hitya, 2026-08-14),
+    all addressed in Mimic 2.5.3-beta:** reachable without setup mode (holding
+    panes now implies being wanted — before, the only ways to turn it on were
+    unreachable from a hidden dock); Command Center dockable; pane drag
+    reorders the pane instead of moving the window (iframes go inert in setup);
+    per-pane column/row spans; setup bar with opacity + Done and a gutter so the
+    count clears the ✕; a DOCK button on the dashboard Overlays page; backdrop
+    off now genuinely removes the plate; per-pane background override;
+    auto-height on by default; grow-upward anchors the bottom edge.
+
+- **Clock skew from a shared chat line — STABLE (bot 3.1.48, 2026-08-14).** The
+  EQ server broadcasts a `/gu` line to everyone at once, so two clients' stamps
+  for the same line differ by exactly their clock skew — no network in the path
+  and **our own server's clock not involved**, which is what makes it
+  independent of `pulse`. We were already generating it and binning it at the
+  dedup gate (1,019 lines/12h, 3 keeping a second copy). Published as
+  `method='chat'`; NOT wired into corrections yet, per DESIGN-clock-correction
+  §2.3. One-second resolution — nothing sub-second may be built on it.
+
+- **Agent asks a real time server — BETA (agent 3.5.81, 2026-08-14).** SNTP over
+  UDP/123, no dependency, inlined (a sibling file would not ship — `stage-agent.js`
+  has a hardcoded list). Fills in when the bot is unreachable, where the agent
+  previously assumed a zero offset. `ntp − pulse` is the BOT's own clock error,
+  which matters for a self-hosted tenant whose bot might sit on a desktop.
+  ⚠ Network half UNVERIFIED — UDP/123 is blocked in CI and the cloud container;
+  the arithmetic is a pure `_parseSntpReply` with 16 tests, first real
+  measurement comes from a beta machine.
+
 - **OpenDKP loot folds itself into the Loot tab — STABLE (bot 3.1.45,
   2026-08-14).** Mob Info's "N× won" counts read `loot_observations`, and the
   only thing that ever wrote the OpenDKP half of that table was an officer

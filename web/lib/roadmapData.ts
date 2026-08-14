@@ -37,6 +37,21 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'web-1-1-53',
+    title: '\u{1F9F3} Bank mules and alts, without running Mimic on them',
+    version: 'Web 1.1.53',
+    date: '2026-08-14',
+    headline: 'Characters that never raid can now be added from a single file, so your bank toons show up on your page like everything else.',
+    features: [
+      { name: '\u{1F9F3} Add characters from inventory files', blurb: 'On your own page there is a new button that takes EverQuest inventory files. Log in on a mule once, type /outputfile inventory, and drop the file in \u2014 the character appears on your page with everything it is carrying. You can do a whole stack of them at once. Nothing needs to be running on that computer afterwards, and you do not need an officer to add them.' },
+    ],
+    fixes: [
+      'Mimic now finds EverQuest when it is installed in a TAKP folder, instead of asking you to browse for it.',
+      'Pointing Mimic at your EverQuest folder now counts even before you have any log files \u2014 previously the "Set up EQ for me" button would say it did not know where EverQuest was, on a folder you had just told it about.',
+      'When you have no characters yet, the page now explains that logging is simply switched off in game (and how to turn it on) instead of implying your folder was wrong.',
+    ],
+  },
+  {
     key: 'web-1-1-51',
     title: '\u{1F464} Raid view: people who log back in show up again',
     version: 'Web 1.1.51',

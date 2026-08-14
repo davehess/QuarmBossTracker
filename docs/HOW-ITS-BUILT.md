@@ -844,6 +844,81 @@ blocked while EQ runs). Cloud backup/restore: `uiStudioCapture` → bot
 `ui_layout` (encrypted `ui_snapshots`) → list/download/restore with
 resolution rescale on the way back.
 
+### Bringing in a character nothing else can see (🧳 on `/me`)
+A bank mule or a never-raiding alt produces no logs, no `/who` sighting and no
+OpenDKP row, so every other discovery path is blind to it — its inventory file
+is the only evidence it exists. `MuleUpload.tsx` → `uploadMuleInventories()`
+takes **many files at once** and derives the character from each **file name**
+(`<Name>-Inventory.txt`), since the rows inside are items, not identity.
+Rules live in **`web/lib/inventoryFile.ts`** (pure, tested):
+`characterFromInventoryFilename` refuses anything that is not a plausible EQ
+name — letters only, so a renamed copy cannot invent a junk roster row — and
+`claimVerdict` decides ownership: **new name → create + claim**; **already in
+your household → upload**; **someone else's → refuse**; **unclaimed but in
+OpenDKP → take the data, do NOT link it** (a real member who has not linked
+Discord must not be silently transferred to whoever uploaded a file). New rows
+carry the existing `registered_via_web_*` audit columns and join the uploader's
+family via `main_name`. Results are reported per file so a mixed batch names
+which ones failed. The older per-character 🎒 upload is unchanged and shares the
+same parse + replace-snapshot write.
+
+### EQ folder discovery — "known" vs "has logs"
+Two lists, deliberately: `resolveEqDirsWithLogs()` returns **`dirs`** (folders
+that contain eqlogs → what we TAIL) and **`knownDirs`** (configured paths,
+`eqgame.exe`-detected installs, a running client's folder → what we KNOW).
+Mimic passes the second to the agent as **`WOLFPACK_EQ_DIRS`** (path-delimited);
+`_eqSetupDirs()` reads it before falling back to watched logs, and the
+dashboard's "No EQ folder selected" banner reads the same source.
+⚠ They were one list until 2026-08-14 and the result was a deadlock for every
+new user: *Set up EQ for me* writes `Log=TRUE`, so it runs precisely when there
+are no logs — and it refused for want of logs it would have created.
+`findEqInstalls()` scans for `eqgame.exe` (present from install, no logs
+needed), including named `TAKP`/`TAKPv22` paths and a drive-root walk for any
+`takp*` folder, since TAKP carries its version in the directory name.
+
+### The Dock (`dock.html`, Mimic 2.5.1-beta) — many overlays, one renderer
+One always-on-top window that hosts other overlays as same-origin `<iframe>`
+panes. Every BrowserWindow is its own Chromium renderer at **~80 MB resident
+before it paints** (measured 2026-08-04 — the reason `_reapDisabledOverlays`
+exists), so five docked overlays cost one renderer instead of five.
+- **The panes are the REAL overlay files**, loaded unmodified. `_DOCK_CATALOG`
+  in `main.js` maps key → label/file/flag, and a test pins every `file` against
+  the `loadFile()` the standalone window uses, so a docked fork cannot drift.
+- **Docking clears the overlay's `show*` flag**, so the existing reaper
+  genuinely DESTROYS its window — that is where the saving comes from. The
+  previous pref is kept in `cfg.dockedPrev`; undocking restores the window
+  visible. `_overlayForcedOn` refuses to force-create a docked overlay, or
+  unlocking would spawn the floating copy beside its pane.
+- **`nodeIntegrationInSubFrames: true` is load-bearing**: it runs `preload.js`
+  inside each pane so `window.mimic` exists there natively. Three calls are
+  window-scoped and are redirected in preload behind `WP_IS_DOCKED` — a pane's
+  ✕ undocks that pane (`dock-set`, not `hide-overlay`), and both auto-fit paths
+  plus the resize-preset menu go inert so one pane cannot resize the dock.
+- **Layout:** 1/2/3 columns, and each pane carries a `{c,r}` span (clamped to
+  the grid) so Target Info can be 2 wide × 2 tall while the HUD is 1 × 3. Drag a
+  pane in setup mode to reorder — the iframes go `pointer-events:none` there, or
+  a mousedown inside a pane reaches that overlay's own ✥ and drags the WINDOW.
+- **Backgrounds are opt-in and per-pane.** The dock's plate only paints under
+  `body.wp-backdrop`, so "off" removes it entirely rather than dimming it. A
+  pane may override the dock (`On`/`Off`/follow); "off" sets `--bg-alpha: 0`
+  inside that pane's own document, which is what makes the overlay's own cards
+  transparent instead of just tinting the pane.
+- **Auto-height + grow-upward** (both default ON): each pane is measured from
+  its own content on a 1s heartbeat (panes grow and shrink on their own — a
+  fight starts, a queue fills), then `dock-auto-height` sizes the window,
+  keeping the BOTTOM edge fixed so it grows away from the middle of the screen.
+- **Holding panes implies being on screen** — `applyDockVisibility` and
+  `_overlayForcedOn` both treat a non-empty `dockedOverlays` as wanting the
+  dock. Without that the only ways to turn it on were the tray entry and
+  docking from inside the dock, which you cannot reach while it is hidden.
+- **Docking from the agent dashboard**: the Overlays page carries a DOCK/DOCKED
+  button per row (`wp-ov-dock` → `dock-overlay` IPC), and greys out a docked
+  overlay's own on/off toggle because its flag no longer controls anything.
+- **Not dockable, deliberately:** the trigger overlay only — its flag means
+  "make sound", #97 fires TTS from a hidden window, and its position is
+  load-bearing. The Command Center IS dockable; it carries an `agentPath` so the
+  pane resolves the agent-served copy (#65) exactly as the window does.
+
 ### Overlays (one .html each)
 DPS HUD (`overlay.html` — DPS / Tank / **History** tabs; DPS+Tank are this
 machine's own observations, History is the guild's settled numbers for the last

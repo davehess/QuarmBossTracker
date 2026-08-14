@@ -88,6 +88,7 @@ catalog source), so they can't be auto-classified — officer seed is the fallba
 | `<Name>Quarmy.txt` (manual in-game export, also for quarmy.com) | `scanQuarmyExports` | `character_gear` (equipped+bags), `character_aas` | `/character/[name]/gear` |
 | `<Name>-Inventory.txt` (`/output inventory`; Zeal ExportOnCamp regenerates on camp) | loadout scan | in-memory `characterInventories`, `character_inventory` | agent dashboard "Weapon Loadouts", `/character/[name]/inventory` |
 | Spellbook paste (📖 on `/me`) | web upload | `character_spellbook` | `/character/[name]/spells` |
+| `<Name>-Inventory.txt` **for a character we have never seen** (🧳 on `/me`) | web upload, name taken from the FILENAME | `character_inventory` + creates the `characters` row | `/me`, `/character/[name]/inventory` |
 
 - **Polling:** `scanQuarmyExports` runs 30s after agent start, then **every 10
   min**, checksum-deduped (`_quarmyUploaded[char] === checksum`) — only
