@@ -10386,23 +10386,62 @@ async function _handleAgentLiveDamage(req, res) {
     if (!newest.has(r.uploader)) newest.set(r.uploader, r);
   }
 
-  const best = new Map();       // character -> max cumulative dmg seen anywhere
+  const best = new Map();       // character -> best OBSERVER figure
+  // A player's OWN client is authoritative for their own damage and outranks
+  // every observer (Hitya, 2026-08-13). Only that log carries their damage
+  // spells, DoT ticks, procs and pets in full, so an observer can never see
+  // more of it — and when an observer reports MORE, that is over-counting, not
+  // extra detail.
+  //
+  // Measured on Diabo Xi Xin Thall: five independent clients agreed Wabumkin
+  // did 96,241 while his own client said 153,115 — the gap is his damage
+  // spells, and HIS number is the right one. In the other direction Hitya's own
+  // log said 57,848 while Hawkner read 61,085 and Squeekie 70,559 for the same
+  // player, which is observers counting hits that did not happen.
+  //
+  // The max-across-everyone rule got the first case right by accident and the
+  // second case wrong, because max is maximally sensitive to whichever client
+  // is most wrong upward. Self-reported wins outright; max across observers is
+  // the fallback for players with no Mimic of their own.
+  const selfRep = new Map();    // character -> their OWN client's figure
   let newestAt = 0, oldestAt = 0;
   for (const r of newest.values()) {
     const t = Date.parse(r.snapshot_at) || 0;
     if (t > newestAt) newestAt = t;
     if (!oldestAt || t < oldestAt) oldestAt = t;
+    const up = String(r.uploader || '').toLowerCase();
     const pp = r.per_player && typeof r.per_player === 'object' ? r.per_player : {};
+    // Roll up THIS uploader's view first: a player's total from one client is
+    // their own row PLUS every pet row that client attributes to them. Your
+    // pet's damage is your damage (Hitya, 2026-08-13) — the old code took
+    // max(owner, pet) and silently dropped whichever was smaller, so a pet
+    // class was under-reported by however much its pet contributed.
+    //
+    // Summing INSIDE one uploader is correct: the owner row and the pet row are
+    // different damage, not two views of the same damage. Summing ACROSS
+    // uploaders is the double-count we still refuse — that is why the compare
+    // below happens on whole per-uploader totals.
+    const perUploader = new Map();
     for (const [name, v] of Object.entries(pp)) {
       const dmg = Number(v && v.dmg) || 0;
       if (dmg <= 0) continue;
-      // Fold pets under their owner, matching every other damage surface.
       const who = (v && v.pet_owner) ? String(v.pet_owner) : name;
-      const prev = best.get(who) || 0;
-      // max, not +=: two uploaders reporting the same player is the norm.
-      if (dmg > prev) best.set(who, dmg);
+      perUploader.set(who, (perUploader.get(who) || 0) + dmg);
+    }
+    for (const [who, dmg] of perUploader) {
+      if (up && String(who).toLowerCase() === up) {
+        // This uploader IS the player — their own view of themselves.
+        if (dmg > (selfRep.get(who) || 0)) selfRep.set(who, dmg);
+      } else {
+        const prev = best.get(who) || 0;
+        // max, not +=: two uploaders reporting the same player is the norm.
+        if (dmg > prev) best.set(who, dmg);
+      }
     }
   }
+  // Self-reported overrides the observer figure in BOTH directions — higher
+  // (their damage spells) and lower (observer over-count).
+  for (const [who, dmg] of selfRep) best.set(who, dmg);
 
   const players = [...best.entries()]
     .map(([character, dmg]) => ({ character, dmg }))
