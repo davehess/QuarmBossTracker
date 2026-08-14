@@ -90,7 +90,7 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ### ✅ Done — major shipped features (not exhaustive; see git + roadmapData.ts)
 
-- **Add mules/alts from their inventory file — STABLE (web 1.1.53,
+- **Add mules/alts from their inventory file — STABLE (web 1.1.54,
   2026-08-14).** Hitya: *"can you make it so that anyone can upload additional
   inventory files from the /me page and have it bring in their other
   characters/mules?"* Pyxil has six bank toons Mimic can see in
@@ -102,13 +102,39 @@ next touch one rather than assuming a missing row means a missing doc.
     character **from the file name**, because the rows inside are items, not
     identity. Letters-only validation, so a renamed copy can't invent a junk
     roster row.
-  - **Claiming is the risky half and it is deliberately narrow** (`claimVerdict`
-    in `web/lib/inventoryFile.ts`): new name → create + claim; yours already →
-    upload; **someone else's → refuse**; unclaimed but carrying an `opendkp_id`
-    → take the data and say plainly it was NOT linked, since that shape is a
-    real member who simply hasn't linked Discord.
+  - **The only bar on claiming is "already claimed by somebody else"**
+    (`claimVerdict` in `web/lib/inventoryFile.ts`): yours already → upload,
+    nothing to claim; **linked to another member → refuse**; everything else —
+    brand new, or in `characters` but unclaimed — becomes yours. Created rows
+    and claimed-existing rows both stamp `registered_via_web_*`.
+  - ⚠ **Widened the same day, by Hitya, over my narrower first cut.** I refused
+    to claim an unclaimed row that carried an `opendkp_id`, on the reasoning
+    that the shape means a real member who simply hasn't linked Discord.
+    Overruled: *"We should at least take the data and allow them to see their
+    characters in their account if they have the inventory files and are not
+    already claimed by someone. Being in the guild should not be a limiter for
+    someone making a new character and trying to use the inventory function or
+    target info overlays or any of those things outside of raids."* The refusal
+    broke the real case (your own alt, already in OpenDKP, invisible to you) to
+    guard a hypothetical one, and guarded it weakly — a renamed file defeats it.
+    A wrong claim is visible, audited and one-click reversible; a refusal is a
+    dead end. **The general form of this is now an open question, below.**
   - Per-file results, so a batch where two of six belong to someone else names
     those two rather than failing as a whole.
+
+- **⚠ OPEN — guild membership gates personal tooling site-wide.** Raised by
+  Hitya in the same breath as the claim widening: *"Being in the guild should
+  not be a limiter for someone making a new character and trying to use the
+  inventory function or target info overlays or any of those things outside of
+  raids."* The claim rule is fixed; **the sign-in gates are not.**
+  wolfpack.quest has TWO (guild membership via `DISCORD_GUILD_ID`, then role
+  membership via `ALLOWED_ROLE_NAMES`), so someone outside the guild cannot
+  reach `/me` at all — the upload they'd need is behind a door they can't open.
+  Splitting *personal* surfaces (inventory, quests, `/character`, Mob Info) from
+  *guild* surfaces (parses, DKP, raid, boards, `/admin`) is a real change to who
+  can see guild data, not a flag flip, so it is **not** bundled into the
+  inventory work. Needs Hitya's call on scope: guest role? separate personal
+  tier? Mimic-only (no web account)? See `docs/DECISIONS-2026-08-14.md`.
 
 - **A configured EQ folder counts as known, logs or not — BETA (Mimic
   2.5.4-beta / agent 3.5.83, 2026-08-14).** Pyxil's onboarding: she pointed

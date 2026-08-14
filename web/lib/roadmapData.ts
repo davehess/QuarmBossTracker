@@ -39,11 +39,12 @@ export const releases: Release[] = [
   {
     key: 'web-1-1-53',
     title: '\u{1F9F3} Bank mules and alts, without running Mimic on them',
-    version: 'Web 1.1.53',
+    version: 'Web 1.1.54',
     date: '2026-08-14',
     headline: 'Characters that never raid can now be added from a single file, so your bank toons show up on your page like everything else.',
     features: [
       { name: '\u{1F9F3} Add characters from inventory files', blurb: 'On your own page there is a new button that takes EverQuest inventory files. Log in on a mule once, type /outputfile inventory, and drop the file in \u2014 the character appears on your page with everything it is carrying. You can do a whole stack of them at once. Nothing needs to be running on that computer afterwards, and you do not need an officer to add them.' },
+      { name: '\u{1F464} It also picks up alts we already knew about', blurb: 'If one of your characters was already on the roster but had never been linked to you, uploading its inventory file now adds it to your page too. The only thing it will not do is take a character that is already somebody else\u2019s.' },
     ],
     fixes: [
       'Mimic now finds EverQuest when it is installed in a TAKP folder, instead of asking you to browse for it.',

@@ -11,6 +11,7 @@ first and reach back for the older detail.
 
 | Item | State |
 |---|---|
+| **Does guild membership belong in front of PERSONAL tooling?** | Hitya, on the mule upload: *"Being in the guild should not be a limiter for someone making a new character and trying to use the inventory function or target info overlays or any of those things outside of raids."* The claim rule is fixed (below); **the two sign-in gates are not** — someone outside the guild can't reach `/me`, so the upload they need is behind a door they can't open. Splitting personal surfaces from guild surfaces changes who can see guild data, so it needs Hitya's call on shape: guest role, a separate personal tier, or Mimic-only with no web account (task #40) |
 | **Task #27 — the 8 muted trash triggers** | Gate is *"the fleet is on the fix"*, not *"the fix exists"*. Mimic 2.5.0 (agent 3.5.80) shipped 04:08 UTC and **nobody has installed it yet** — flipping the rows on now puts the wall back for every raider still on 2.4.x, which is exactly what the gate prevents. Also a raid-noise call, not a code change: it reaches the whole fleet in ~2 min with no review. Restore after the fleet has updated, on Hitya's word |
 | **560 pre-existing duplicate loot rows** | 337 groups across raids 44080–92092, from overlapping `/backfillopendkploot` runs. They inflate "N× won" the same way the fold's bug did. Cleaning them is a destructive edit to historical guild data → needs Hitya's word (task #39). Once gone, a unique index on (source, raid_id, item_id, winner_character, dkp_amount) makes this class of bug structurally impossible |
 | **Mimic 2.5.0 — first raid** | The whole 2.5 line (History tab, CH ✕, dashboard split, pet fold, backup-log rule) is browser-verified and unit-tested but has not been through a raid. Sunday is the first real test |
@@ -266,3 +267,60 @@ cap for months, on `upsert()`'s return path. It bites reads identically.
 the tests pass", and only the first one would have found this.** A feature whose
 whole job is to move rows between tables should be verified by counting rows in
 the destination, on the day it ships — not by trusting green CI.
+
+---
+
+## Holding the file is the claim
+
+**The call (Hitya, overruling me the same session).** The mule upload's
+`claimVerdict` shipped with four cases; three were uncontroversial and the
+fourth was wrong:
+
+> unclaimed but carrying an `opendkp_id` → take the data, do NOT link it
+
+My reasoning was that an OpenDKP row with no `discord_id` is a *real member who
+merely hasn't linked Discord*, so linking it to whoever uploaded a file would
+silently transfer someone's character. It sounded careful. Hitya:
+
+> "We should at least take the data and allow them to see their characters in
+> their account if they have the inventory files and are not already claimed by
+> someone. Being in the guild should not be a limiter for someone making a new
+> character and trying to use the inventory function or target info overlays or
+> any of those things outside of raids."
+
+**The rule is now one question: is it already claimed by somebody else?**
+Household → upload, nothing to claim. Linked to another member → refuse.
+Everything else — new name, or in `characters` but unclaimed — becomes yours.
+
+**Why the careful-sounding version was the worse trade.** Three things, and the
+first is the one I missed:
+
+- **Holding the file is real evidence.** You only have `Pyxtrade-Inventory.txt`
+  because you logged in on Pyxtrade and typed `/outputfile inventory`. That is a
+  stronger ownership signal than an unlinked OpenDKP row, which proves only that
+  the name once got a DKP tick.
+- **It broke the real case to guard a hypothetical one.** The population it
+  refused is overwhelmingly *your own alt that already raids*, which is exactly
+  the character a member most wants to see on `/me` — and the population it
+  protected (a stranger deliberately stealing a guildmate's character) has not
+  happened once.
+- **It guarded that weakly anyway.** The check keys on a file NAME. Anyone
+  wanting someone else's character renames a file. A guard that a rename defeats
+  is not buying the safety it costs.
+
+And the errors are asymmetric: a wrong claim is visible on `/me`, stamped with
+`registered_via_web_at` + `registered_via_web_by_discord_id`, and an officer
+reassigns it in one click. A wrong refusal is a dead end a member can't route
+around and probably won't report.
+
+**What kept the permissiveness honest:** the audit stamp now goes on the
+**claim-of-an-existing-row** branch too, not just on creation
+(`web/app/me/inventory-actions.ts`). That was the one thing genuinely missing —
+before, taking over an existing row left no trace of who took it. Refusing is
+not the only way to make a rule safe; being able to see and undo it is the
+other, and it's the one that doesn't break the legitimate case.
+
+**The general form is still open** (top table, task #40): the *claim* rule no
+longer gates on guild membership, but the *site* still does — two sign-in gates
+stand in front of `/me`, so a non-member cannot reach the upload at all. That
+one is Hitya's call on shape, not a flag flip.

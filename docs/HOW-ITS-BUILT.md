@@ -853,12 +853,22 @@ takes **many files at once** and derives the character from each **file name**
 Rules live in **`web/lib/inventoryFile.ts`** (pure, tested):
 `characterFromInventoryFilename` refuses anything that is not a plausible EQ
 name — letters only, so a renamed copy cannot invent a junk roster row — and
-`claimVerdict` decides ownership: **new name → create + claim**; **already in
-your household → upload**; **someone else's → refuse**; **unclaimed but in
-OpenDKP → take the data, do NOT link it** (a real member who has not linked
-Discord must not be silently transferred to whoever uploaded a file). New rows
-carry the existing `registered_via_web_*` audit columns and join the uploader's
-family via `main_name`. Results are reported per file so a mixed batch names
+`claimVerdict` decides ownership, and the only bar is **"is it already claimed
+by somebody else?"**: **already in your household → upload, nothing to claim**;
+**linked to another member → refuse**; **anything else — brand new, or in
+`characters` but unclaimed → it becomes yours**. Both the created row AND a
+claim of an existing one stamp the `registered_via_web_*` audit columns, and
+the character joins the uploader's family via `main_name`.
+⚠ That third case is a **deliberate widening** (Hitya, 2026-08-14). The first
+cut refused to claim an unclaimed row carrying an `opendkp_id`, reasoning it
+meant a real member who merely had not linked Discord. Overruled: *"Being in
+the guild should not be a limiter for someone making a new character and trying
+to use the inventory function or target info overlays."* Holding the file is
+real evidence — you got it by logging in on that character. The refusal broke
+the actual case (your own alt, already in OpenDKP, invisible to you) to guard a
+hypothetical one, and guarded it weakly anyway: anyone wanting someone else's
+character could just rename a file. A wrong claim is visible, audited and
+one-click reversible; a refusal is a dead end for a legitimate member. Results are reported per file so a mixed batch names
 which ones failed. The older per-character 🎒 upload is unchanged and shares the
 same parse + replace-snapshot write.
 

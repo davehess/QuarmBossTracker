@@ -95,9 +95,8 @@ export function characterFromInventoryFilename(filename: string): string | null 
 }
 
 export type ClaimVerdict =
-  | { action: 'upload'; claim: false }            // already yours
-  | { action: 'upload'; claim: true }             // new or unclaimed-and-unknown → take it
-  | { action: 'upload-unclaimed'; claim: false }  // real character, not yours to claim
+  | { action: 'upload'; claim: false }   // already yours
+  | { action: 'upload'; claim: true }    // unclaimed → it becomes yours
   | { action: 'refuse'; reason: string };
 
 export type ExistingCharacter = {
@@ -109,20 +108,32 @@ export type ExistingCharacter = {
 /**
  * May this uploader attach this inventory, and does it become theirs?
  *
- * The three cases that matter, and why each lands where it does:
+ * **The rule is simply: is it already claimed by somebody else?**
  *
  *  • **Already in your household** → upload, nothing to claim.
- *  • **Not in `characters` at all** → create it, claimed by you. The file was
- *    on your disk and nothing else in the guild has ever heard of this name;
- *    that is as strong as evidence gets for a bank mule.
- *  • **Exists but unclaimed** → split on whether it looks like a REAL raider.
- *    A row conjured from a /who sighting has no `opendkp_id`; a genuine member
- *    who simply has not linked Discord does. So an OpenDKP row is never
- *    claimed by an upload — we take the data and say plainly that it was not
- *    linked, rather than quietly transferring someone's character.
- *  • **Belongs to someone else** → refuse. Never overwrite another person's
- *    inventory snapshot, even for an officer: this is a self-service path, and
- *    officers have the per-character upload for the deliberate case.
+ *  • **Claimed by someone else** → refuse. Never overwrite another person's
+ *    inventory snapshot or take their character.
+ *  • **Anything else — new, or in `characters` but unclaimed** → it becomes
+ *    yours.
+ *
+ * ⚠ That last line is a DELIBERATE widening (Hitya, 2026-08-14). The first cut
+ * refused to claim an unclaimed character that carried an `opendkp_id`, on the
+ * reasoning that an OpenDKP row means a real member who merely has not linked
+ * Discord, and claiming it would transfer their character. Hitya overruled it:
+ *
+ *   "We should at least take the data and allow them to see their characters in
+ *    their account if they have the inventory files and are not already claimed
+ *    by someone. Being in the guild should not be a limiter for someone making
+ *    a new character and trying to use the inventory function or target info
+ *    overlays or any of those things outside of raids."
+ *
+ * Which is the better trade once you weigh what each error costs. Holding the
+ * file is real evidence — you got it by logging in on that character. Refusing
+ * broke the actual case (your own alt, already in OpenDKP, invisible to you)
+ * to guard a hypothetical one, and the guard was weak anyway: someone who
+ * wanted another player's character could just rename any file to their name.
+ * A wrong claim is visible, audited (`registered_via_web_*`), and an officer
+ * reassigns it in one click; a refusal is a dead end for a legitimate member.
  */
 export function claimVerdict(
   existing: ExistingCharacter,
@@ -133,9 +144,7 @@ export function claimVerdict(
     return { action: 'upload', claim: false };
   }
   if (existing.discord_id) {
-    return { action: 'refuse', reason: 'that character belongs to another member' };
+    return { action: 'refuse', reason: 'that character is already linked to another member' };
   }
-  // Unclaimed.
-  if (existing.opendkp_id != null) return { action: 'upload-unclaimed', claim: false };
-  return { action: 'upload', claim: true };
+  return { action: 'upload', claim: true };   // unclaimed — see the note above
 }

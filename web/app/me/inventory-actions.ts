@@ -197,8 +197,17 @@ export async function uploadMuleInventories(
       });
       if (error) { results.push({ file: fileName, character, ok: false, error: error.message }); continue; }
     } else if (verdict.claim) {
+      // Claiming a row that already existed. Stamp the SAME audit columns a
+      // created row gets — the claim rule is deliberately permissive (see
+      // claimVerdict), so being able to see who took what, and when, is what
+      // makes a wrong one cheap to undo.
       const { error } = await admin.from('characters')
-        .update({ discord_id: me.discord_id, main_name: familyMain })
+        .update({
+          discord_id: me.discord_id,
+          main_name: familyMain,
+          registered_via_web_at: new Date().toISOString(),
+          registered_via_web_by_discord_id: me.discord_id,
+        })
         .eq('guild_id', 'wolfpack').ilike('name', canonical);
       if (error) { results.push({ file: fileName, character, ok: false, error: error.message }); continue; }
     }
@@ -209,9 +218,6 @@ export async function uploadMuleInventories(
     results.push({
       file: fileName, character: canonical, ok: true, count: rows.length,
       claimed: !existing || verdict.claim,
-      note: verdict.action === 'upload-unclaimed'
-        ? 'added, but this character is in the OpenDKP roster and was NOT linked to you — ask an officer to link it'
-        : undefined,
     });
   }
 

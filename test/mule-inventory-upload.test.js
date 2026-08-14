@@ -101,19 +101,29 @@ describe('who may claim a character', () => {
       .toBe('refuse');
   });
 
-  it('takes the data but NOT the character when it is a real unclaimed raider', () => {
-    // An OpenDKP row means a genuine member who simply has not linked Discord.
-    // Silently attaching them to whoever uploaded a file would be a theft with
-    // a friendly UI.
-    const unlinkedReal = { name: 'Someone', discord_id: null, opendkp_id: 42 };
-    expect(claimVerdict(unlinkedReal, HOUSEHOLD)).toEqual({ action: 'upload-unclaimed', claim: false });
-  });
+  it('claims ANY unclaimed character, OpenDKP row or not', () => {
+    // ⚠ Deliberately widened (Hitya, 2026-08-14). The first cut refused when
+    // the row carried an opendkp_id, reasoning that it meant a real member who
+    // had not linked Discord. Overruled: "Being in the guild should not be a
+    // limiter for someone making a new character and trying to use the
+    // inventory function or target info overlays."
+    //
+    // Holding the file is real evidence — you got it by logging in on that
+    // character. The old rule broke the actual case (your own alt, already in
+    // OpenDKP, invisible to you) to guard a hypothetical one, and guarded it
+    // weakly: anyone wanting someone else's character could rename a file.
+    const inOpenDkp = { name: 'Someone', discord_id: null, opendkp_id: 42 };
+    expect(claimVerdict(inOpenDkp, HOUSEHOLD)).toEqual({ action: 'upload', claim: true });
 
-  it('does claim a row that only exists from a sighting', () => {
-    // No discord_id and no opendkp_id = conjured by a /who or a chat line.
-    // That is the shape of a mule someone typed at once, so it is claimable.
     const ghost = { name: 'Pyxtrade', discord_id: null, opendkp_id: null };
     expect(claimVerdict(ghost, HOUSEHOLD)).toEqual({ action: 'upload', claim: true });
+  });
+
+  it('still refuses one that is already linked to someone', () => {
+    // The widening is "unclaimed becomes yours", NOT "anything becomes yours".
+    // Someone else's linked character is still off limits.
+    expect(claimVerdict({ name: 'X', discord_id: '999', opendkp_id: 42 }, HOUSEHOLD).action)
+      .toBe('refuse');
   });
 
   it('honours the whole household, not just the signed-in id', () => {
@@ -197,6 +207,21 @@ describe('the server action holds the line', () => {
   it('stamps the web-registration audit trail when it creates a character', () => {
     expect(src).toMatch(/registered_via_web_at: new Date\(\)\.toISOString\(\)/);
     expect(src).toMatch(/registered_via_web_by_discord_id: me\.discord_id/);
+  });
+
+  it('audits a CLAIM of an existing row the same way as a creation', () => {
+    // The claim rule is deliberately permissive, so the thing that keeps a
+    // wrong claim cheap is being able to see who took what and when.
+    const start = src.indexOf('} else if (verdict.claim) {');
+    expect(start, 'claim-of-existing branch not found').toBeGreaterThan(-1);
+    // lastIndexOf, not indexOf: the single-character upload calls
+    // writeInventory with the same argument list EARLIER in the file, and
+    // slicing to that occurrence inverts the bounds into an empty string —
+    // which then matches nothing and passes for the wrong reason.
+    const claimBranch = src.slice(start, src.lastIndexOf('const wrote = await writeInventory(canonical, rows);'));
+    expect(claimBranch, 'slice bounds are inverted').toContain('verdict.claim');
+    expect(claimBranch).toMatch(/registered_via_web_at/);
+    expect(claimBranch).toMatch(/registered_via_web_by_discord_id: me\.discord_id/);
   });
 
   it('reports per FILE, so a mixed batch says which ones failed', () => {
