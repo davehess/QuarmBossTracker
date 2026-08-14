@@ -6,10 +6,13 @@
 // NOTHING in this file talks to Supabase.
 //
 // Two boards, two exports:
-//   • Board 1 — utility-kit coverage (`KIT_CATALOG` + `computeKitCoverage`):
-//     who owns the items that keep a raid moving, from character_gear ×
-//     eqemu_items. Extends the raidKit idiom — visible ownership only (bank is
-//     privacy-stripped before upload), opt-outs honored by the caller.
+//   • Board 1 — utility-kit coverage (`KIT_CATALOG` + `computeKitCoverage`,
+//     then `scopeKitCoverage`): who owns the items that keep a raid moving,
+//     from character_gear × eqemu_items. Extends the raidKit idiom — visible
+//     ownership only (bank is privacy-stripped before upload), opt-outs honored
+//     by the caller. Coverage is computed guild-wide and then SCOPED to the
+//     viewer: officers see every owner named, a member sees their own
+//     characters plus a nameless count.
 //   • Board 2 — common-quest checklist (`computeQuestProgress`): step-level
 //     ✓ / missing / unknown for a character against the officer-authored
 //     quest_catalog + quest_required_item, matched to that character's VISIBLE
@@ -85,8 +88,10 @@ export type KitOwner = { character: string; main: string; className: string | nu
 
 export type KitCoverage = {
   entry: KitEntry;
-  owners: KitOwner[];   // distinct characters, family-grouped then name-sorted
-  ownerCount: number;
+  owners: KitOwner[];   // owners this viewer may see BY NAME (see scopeKitCoverage)
+  ownerCount: number;   // distinct owners guild-wide — a nameless aggregate
+  yours: number;        // how many of the viewer's own characters own it
+  hidden: number;       // owners withheld from this viewer (ownerCount - owners.length)
   gap: string | null;   // "Nobody owns X" / "No <class> owns X", else null
 };
 
@@ -120,7 +125,36 @@ export function computeKitCoverage(catalog: KitEntry[], rows: KitOwnerRow[]): Ki
       if (!covered) gap = `No ${entry.wantClass} owns ${entry.label}`;
     }
 
-    return { entry, owners, ownerCount: owners.length, gap };
+    return { entry, owners, ownerCount: owners.length, yours: 0, hidden: 0, gap };
+  });
+}
+
+/**
+ * Narrow a coverage board to what a given viewer may see BY NAME.
+ *
+ * Hitya, 2026-08-14: *"quartermaster should display raider information for that
+ * user not for everyone. it can display for everyone for admins."*
+ *
+ * Board 1 shipped naming every owner of every utility item to every signed-in
+ * member — a browsable "who owns what" of the whole guild, which is more than a
+ * member needs to answer their own question. Officers keep the full list; a
+ * member now sees only their own characters named.
+ *
+ * ⚠ `ownerCount` is deliberately NOT narrowed. It is a nameless aggregate (the
+ * ANON tier in the visibility policy), and it is the whole reason the board
+ * exists for a member: "eleven people in the guild have a Puppet Strings, none
+ * of them you" is the useful answer, and it identifies nobody. Cutting the
+ * count too would leave a member unable to tell a gap from a blind spot.
+ */
+export function scopeKitCoverage(
+  coverage: KitCoverage[],
+  ownNamesLower: ReadonlySet<string>,
+  officer: boolean,
+): KitCoverage[] {
+  return coverage.map((c) => {
+    const mine = c.owners.filter((o) => ownNamesLower.has(o.character.toLowerCase()));
+    const owners = officer ? c.owners : mine;
+    return { ...c, owners, yours: mine.length, hidden: c.ownerCount - owners.length };
   });
 }
 

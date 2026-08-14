@@ -909,6 +909,23 @@ next touch one rather than assuming a missing row means a missing doc.
     on main — `index.js:8863` uses `new EmbedBuilder()` with no local/top-level
     require (Harmonic Howl announce fn, bot 3.0.222). Genuine runtime
     ReferenceError on next bot restart; needs a bot hotfix, untouched here.
+  - **⚠ Board 1 narrowed to the viewer (web 1.1.55, 2026-08-14).** Hitya:
+    *"quartermaster should display raider information for that user not for
+    everyone. it can display for everyone for admins."* As shipped, Board 1
+    named **every** owner of every kit item to **every** signed-in member — a
+    browsable who-owns-what of the whole guild, which is more than a member
+    needs to answer their own question and more than anyone asked to publish.
+    Board 2 was already scoped (own characters up top, officer rollup gated);
+    Board 1 was the outlier. Now `scopeKitCoverage(coverage, ownNamesLower,
+    officer)` runs after assembly: officer → the full list, member → their own
+    characters only, with an explicit *"None of your characters — 11 in the
+    guild have one"* line so a blank card doesn't read as a bug.
+    **The guild-wide count deliberately survives**: it is a nameless aggregate
+    (the ANON tier in the visibility policy) and it is the whole reason a member
+    opens the board — without it they cannot tell a real coverage gap from their
+    own blind spot. Six tests in `test/quartermaster.test.js`, one of which
+    serializes the scoped row and asserts no outsider's name appears **anywhere**
+    in it, so a future name-carrying field fails there rather than in production.
 - **#91 roll-loot review surface (remainder) — DONE end-to-end (2026-07-19,
   agent 3.3.97 beta + bot 3.0.219 + web 1.0.250 on main).** The capture half
   shipped a week ago (roll_sets since 3.3.78, Hot Dice PERFECT events since

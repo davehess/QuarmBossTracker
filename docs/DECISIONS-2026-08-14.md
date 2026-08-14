@@ -324,3 +324,45 @@ other, and it's the one that doesn't break the legitimate case.
 longer gates on guild membership, but the *site* still does — two sign-in gates
 stand in front of `/me`, so a non-member cannot reach the upload at all. That
 one is Hitya's call on shape, not a flag flip.
+
+---
+
+## The Quartermaster shows you YOUR raiders, not everyone's
+
+**The call (Hitya).** *"quartermaster should display raider information for that
+user not for everyone. it can display for everyone for admins."*
+
+Board 1 (utility-kit coverage) shipped in #82 naming every owner of every kit
+item to every signed-in member — thirteen cards, each listing up to thirty
+character names. That is a browsable who-owns-what of the whole guild, sitting
+on a page whose stated job is "does anyone have X?". Board 2 had the scoping
+right from the start (your characters up top, officer rollup behind
+`isOfficer`); Board 1 was the outlier and nobody noticed because the two boards
+were written to answer different questions.
+
+**Where it landed.** `scopeKitCoverage(coverage, ownNamesLower, officer)` in
+`web/lib/quartermaster.ts`. Coverage is still assembled guild-wide — the count
+has to be — and then narrowed: officer sees the full list, a member sees their
+own characters and nothing else.
+
+**The count stays, and that is the deliberate part.** `ownerCount` is not
+narrowed. It names nobody, it is the ANON tier the visibility policy already
+defines, and it is the entire reason a member opens the board: *"eleven people
+have a Puppet Strings, none of them you"* is the useful answer. Cut the count
+too and a member cannot distinguish a real coverage gap from their own blind
+spot — the board would go from over-sharing to useless in one step. So the rule
+is **names are scoped, aggregates are not**.
+
+Two things that make it hold:
+- **The rule is one function, not a JSX condition.** A `{officer && ...}` in the
+  card is a thing the next person edits around; a scoping step between assembly
+  and render is a thing they have to walk past.
+- **The test asserts on the whole serialized row**, not on `owners`. It
+  `JSON.stringify`s a member-scoped coverage row and checks no outsider's name
+  appears anywhere in it — so a future field that carries a name (a "top owner",
+  a tooltip, a class breakdown) fails in CI instead of in production.
+
+**Also worth saying plainly:** a member with no characters holding an item now
+sees *"None of your characters — 11 in the guild have one."* A card that just
+went blank next to "11 owners" would read as a bug, and people report bugs that
+are actually policy.

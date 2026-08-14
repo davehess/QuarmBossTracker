@@ -37,6 +37,17 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'web-1-1-55',
+    title: '\u{1F9F0} The Quartermaster shows your characters',
+    version: 'Web 1.1.55',
+    date: '2026-08-14',
+    headline: 'The utility-kit board used to list everyone in the guild who owned each item. It now shows yours, and a count for the rest.',
+    features: [
+      { name: '\u{1F9F0} Your kit, not the whole roster', blurb: 'On the Quartermaster page, each item now shows which of YOUR characters carry it. Everyone else is counted but not named — so you still see "eleven people in the guild have one", just not a list of who. Officers still see the full list, same as before.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'web-1-1-53',
     title: '\u{1F9F3} Bank mules and alts, without running Mimic on them',
     version: 'Web 1.1.54',

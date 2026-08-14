@@ -1501,6 +1501,16 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
 - **Roll nights (#91)** — `/rolls` (`web/lib/rolls.ts`).
 - **Quartermaster (#82)** — `/quartermaster` (`web/lib/quartermaster.ts`):
   utility-kit coverage + quest checklist (reuses the `quest_catalog` store).
+  ⚠ **Owner NAMES are officer-only** (Hitya, 2026-08-14: *"quartermaster should
+  display raider information for that user not for everyone. it can display for
+  everyone for admins"*). Board 1 originally named every owner of every kit item
+  to every signed-in member. Coverage is still computed guild-wide, then
+  **`scopeKitCoverage(coverage, ownNamesLower, officer)`** decides who may be
+  named: officer → the whole list; member → their own characters only. The
+  guild-wide `ownerCount` survives both ways **on purpose** — it is a nameless
+  aggregate (the ANON tier), and without it a member cannot tell a real coverage
+  gap from their own blind spot. Board 2 was already scoped this way (own
+  characters up top, officer rollup gated).
 - **Raid Kit (#95)** — `web/lib/raidKit.ts`, `/admin/readiness`, gear-page card.
 - **Comp matcher (#93)** — `web/lib/comp.ts`, `comp_templates`, `/admin/comp`,
   signups gap panel.
