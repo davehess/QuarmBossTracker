@@ -99,6 +99,12 @@
   .row.interrupted .num{color:#f87171;border-color:rgba(248,113,113,0.55)}
   .row.interrupted .nm{color:#fca5a5}
   .row.interrupted .bar .fill{background:#f87171;transition:none}
+  /* NEXT-up countdown bar — amber like the footer countdown it mirrors, so it
+     is never mistaken for the blue in-flight cast bar. Red once the beat has
+     run out and the row reads DUE. */
+  .row.next .bar .fill{background:#f0b429}
+  .row.next .bar.due .fill{background:#f87171}
+  .row.next .stat{color:#f0b429}
   /* ORDER CONFLICT (Hitya 2026-08-11): two callers on one slot number. Bright
      yellow letters with a red outline — loud on purpose; a contested rotation
      is a wipe risk the raid should see before the missed beat. Static text,
@@ -1083,6 +1089,17 @@
     var castSecs   = (c.ch_cast_ms > 0 ? c.ch_cast_ms / 1000 : CH_CAST_SECS);
     var lingerMs   = (c.ch_interrupt_linger_ms > 0 ? c.ch_interrupt_linger_ms : CH_INTERRUPT_LINGER_MS);
     var ddrShowMs  = (c.ddr && c.ddr.display_ms > 0 ? c.ddr.display_ms : CH_DDR_DISPLAY_MS);
+    // Countdown to the NEXT cleric's beat, computed here so the row that is
+    // about to cast can show it too. The footer works this out again lower down
+    // from the same two fields (next_expected_at, else last_ch.atMs + beat_ms),
+    // so the row and the footer can never disagree — the healer who is up next
+    // reads their own number under their own name instead of having to find it
+    // in the strip at the bottom (Hitya 2026-08-13).
+    var nextRemSec = null;
+    if (c.next_num != null && c.last_ch && beatSecs) {
+      var _dueMsRow = (c.next_expected_at > 0) ? c.next_expected_at : (c.last_ch.atMs + c.beat_ms);
+      nextRemSec = (_dueMsRow - now) / 1000;
+    }
     var nums = Object.keys(c.slots).map(Number).sort(function(a, b){ return a - b; });
     // ORDER CONFLICT: server flag is authoritative; the per-row claimant check
     // below also sets it so a row and its banner can never disagree.
@@ -1139,7 +1156,20 @@
       } else if (goActive) {
         stat = '<span class="gobadge">GO!</span>';
       } else if (isNext) {
-        stat = 'NEXT';
+        if (nextRemSec != null) {
+          // Amber (not the casting blue) so it reads as "your turn is coming",
+          // never as "a cast is in flight". DUE rather than GO! keeps it
+          // distinct from the explicit called-GO badge above.
+          var _overdue = nextRemSec <= 0;
+          var _nextPct = _overdue ? 100
+            : Math.max(0, Math.min(100, (1 - nextRemSec / beatSecs) * 100));
+          stat = _overdue ? 'DUE' : nextRemSec.toFixed(1) + 's';
+          bar  = '<div class="bar' + (_overdue ? ' due' : '') + '">'
+               +   '<div class="fill" style="width:' + _nextPct.toFixed(1) + '%"></div>'
+               + '</div>';
+        } else {
+          stat = 'NEXT';
+        }
       } else {
         stat = s.lastAtMs ? fmtAgo((now - s.lastAtMs) / 1000) : '—';
       }
