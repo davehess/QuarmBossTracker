@@ -90,6 +90,31 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ### ✅ Done — major shipped features (not exhaustive; see git + roadmapData.ts)
 
+- **A configured EQ folder counts as known, logs or not — BETA (Mimic
+  2.5.4-beta / agent 3.5.83, 2026-08-14).** Pyxil's onboarding: she pointed
+  Mimic at `C:\TAKPv22`, Settings listed it ticked as *"eqclient.exe · no logs
+  yet"*, and the dashboard still said **"No EQ folder selected"** while *Set up
+  EQ for me* answered **"No EQ folder known yet — point Mimic at your EverQuest
+  folder in Settings first."** She had. The folder had no logs BECAUSE in-game
+  logging was off, and the one button whose job is to turn logging on refused
+  for want of the logs it would have created. **Every user who installs EQ and
+  Mimic before typing `/log on` lands there — which is every new user.**
+  - **One list was answering two questions.** `resolveEqDirsWithLogs` gated
+    every path on `_dirHasEqLogs` including configured ones, and the agent's
+    `_eqSetupDirs` inferred folders from logs it was already tailing. Both are
+    right for *what do I TAIL* and wrong for *what do I KNOW*. Split: `dirs`
+    (has logs → tail it) vs `knownDirs` (configured / eqgame.exe-detected /
+    running → we know it), passed to the agent as `WOLFPACK_EQ_DIRS`, which
+    `_eqSetupDirs` and the dashboard banner now both read.
+  - **TAKP is scanned for.** `C:\TAKP` / `C:\TAKPv22` named, plus a drive-root
+    walk for any `takp*` directory — the version is in the folder name and moves
+    every release, so a fixed string goes stale. Local fixed drives only, since
+    probing an absent or network drive is what made Settings freeze.
+  - **The onboarding now says WHY there are no characters.** "Configure an
+    EverQuest folder above" reads as *the thing you just did did not work*; with
+    a folder present it now names the real fix (`/log on`, or the setup button
+    with EQ closed).
+
 - **The Dock — BETA (Mimic 2.5.1-beta / agent 3.5.81, 2026-08-14).** Hitya:
   *"a dock overlay that lets the user attach/consume the overlays together and
   have it use one chromium browser."* One window hosting overlays as

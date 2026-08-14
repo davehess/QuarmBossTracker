@@ -532,13 +532,20 @@ function _writeZealRaw(obj) {
 // uploads (especially right after boot, before any combat) can land with
 // character=null and show up as "(unknown)" in the admin agent fleet view.
 // Detecting on the Mimic side and passing --character closes that gap.
+// ⚠ TAKP installs are named for the project + its version — C:\TAKPv22 is what
+// Pyxil had (2026-08-14), and the version moves. A fixed string would go stale
+// with the next release, so the scan ALSO walks each drive root for any folder
+// starting "takp" (see _takpRoots below). The named entries here stay as the
+// cheap path that avoids a readdir when the layout is the common one.
 const EQ_DEFAULT_DIRS = [
   // C: drive — most common
   'C:\\Quarm', 'C:\\Project Quarm', 'C:\\Project1999',
+  'C:\\TAKP', 'C:\\TAKPv22',
   'C:\\Program Files\\EverQuest', 'C:\\Program Files (x86)\\EverQuest',
   'C:\\EQ',
   // D: drive — second most common
   'D:\\Quarm', 'D:\\Project Quarm', 'D:\\Project1999', 'D:\\EQ',
+  'D:\\TAKP', 'D:\\TAKPv22',
   // A: / B: / E: / F: — power-user partitions (Hitya runs A:)
   'A:\\Quarm', 'A:\\Project Quarm', 'A:\\EQ',
   'B:\\Quarm', 'B:\\EQ',
@@ -899,7 +906,34 @@ async function resolveEqDirsWithLogs() {
       } catch (e) { void e; }
     }
   }
-  return { dirs: [...withLogs], runningDirs };
+  // ── Folders we KNOW about, logs or not ────────────────────────────────────
+  // ⚠ Everything above is gated on _dirHasEqLogs, which is right for deciding
+  // what to TAIL and wrong for deciding what we KNOW. Those were the same list
+  // until 2026-08-14, and the result was a deadlock for every brand-new user:
+  //
+  //   Pyxil pointed Mimic at C:\TAKPv22, Settings showed it ticked
+  //   ("eqclient.exe · no logs yet"), and the dashboard still said "No EQ
+  //   folder selected" while "Set up EQ for me" answered "No EQ folder known
+  //   yet — point Mimic at your EverQuest folder in Settings first."
+  //
+  // She had. The folder had no logs BECAUSE logging was off, and the one button
+  // whose entire job is to turn logging on refused for want of the logs it
+  // would have created. Anyone who installs EQ and Mimic before ever typing
+  // /log on lands in exactly this state.
+  //
+  // So: configured paths count as known whether or not they have logs, plus
+  // anything the eqgame.exe scan found (that scan does not need logs either),
+  // plus a running client's folder.
+  const known = new Set(withLogs);
+  for (const p of userPaths) if (!excluded.has(String(p).toLowerCase())) known.add(p);
+  for (const d of runningDirs) if (!excluded.has(String(d).toLowerCase())) known.add(d);
+  try {
+    for (const inst of (findEqInstalls(null).found || [])) {
+      const d = inst && (inst.dir || inst.path || inst);
+      if (typeof d === 'string' && !excluded.has(d.toLowerCase())) known.add(d);
+    }
+  } catch (e) { void e; /* discovery is best-effort; never block the launch */ }
+  return { dirs: [...withLogs], runningDirs, knownDirs: [...known] };
 }
 
 // ── EQ install discovery (eqgame.exe) ──────────────────────────────────────
@@ -954,6 +988,29 @@ function findEqInstalls(hint) {
   }
   _eqScanCache.set(key, { at: Date.now(), result });
   return result;
+}
+
+// Drive-root children whose name starts "takp" — the Al'Kabor Project layout,
+// which is what Quarm players on the Mac-client lineage actually have. Returns
+// full paths; caller probes them like any other candidate.
+function _takpRoots(localDrives) {
+  const out = [];
+  // path.join rather than string concat so this is exercisable off-Windows:
+  // join('C:', sep) is 'C:\\' on win32 and a plain directory elsewhere, which
+  // lets the test point it at a temp tree instead of a drive letter.
+  const roots = localDrives && localDrives.size
+    ? [...localDrives].map(d => path.join(d, path.sep))
+    : [path.join('C:', path.sep), path.join('D:', path.sep)];
+  for (const root of roots) {
+    try {
+      for (const name of fs.readdirSync(root)) {
+        if (!/^takp/i.test(name)) continue;
+        const full = path.join(root, name);
+        try { if (fs.statSync(full).isDirectory()) out.push(full); } catch { /* unreadable */ }
+      }
+    } catch { /* drive not readable — the fixed-drive filter already tried */ }
+  }
+  return out;
 }
 
 function _findEqInstallsUncached(hint) {
@@ -1051,6 +1108,12 @@ function _findEqInstallsUncached(hint) {
     }
     probe(dir, 'common');
   }
+  // TAKP installs carry their version in the folder name — Pyxil's was
+  // C:\TAKPv22 (2026-08-14), and that number moves every release, so a fixed
+  // string goes stale. One readdir per LOCAL drive root finds any of them.
+  // Cheap: drive roots hold a handful of entries, and this whole scan is
+  // memoized for _EQ_SCAN_TTL_MS.
+  for (const root of _takpRoots(local)) probe(root, 'common');
   if (skipped.length) {
     appendAgentLog(`[eq-scan] skipped ${skipped.length} speculative path(s) on non-local drives: ${skipped.join(', ')}\n`);
   }
@@ -2420,8 +2483,12 @@ async function launchAgent() {
   //      not explicitly excluded by the user).
   // Logs from all folders get appended as --log args; each self-identifies
   // from its filename so multi-char + multi-install boxers parse correctly.
-  const { dirs: eqDirs, runningDirs } = await resolveEqDirsWithLogs();
-  const primaryEqDir = eqDirs[0] || null;
+  const { dirs: eqDirs, runningDirs, knownDirs } = await resolveEqDirsWithLogs();
+  // Tail the ones with logs; TELL the agent about every folder we know of. The
+  // agent needs the second list for "Set up EQ for me" (which writes Log=TRUE
+  // into a folder that by definition has no logs yet) and for the dashboard's
+  // "no EQ folder" banner.
+  const primaryEqDir = eqDirs[0] || (knownDirs && knownDirs[0]) || null;
 
   let totalLogs = 0;
   let firstCharacter = null;
@@ -2465,6 +2532,9 @@ async function launchAgent() {
     WOLFPACK_APP_VERSION:   app.getVersion(),
   };
   if (primaryEqDir) env.WOLFPACK_EQ_DIR = primaryEqDir;
+  // Plural, path-delimited. The agent prefers this over its own watched-log
+  // inference, which cannot see a folder that has never produced a log.
+  if (knownDirs && knownDirs.length) env.WOLFPACK_EQ_DIRS = knownDirs.join(path.delimiter);
   // Hand the bearer token to the agent out-of-band (env, not argv). Only set
   // when we have a token + upload URL — local-only installs leave it unset so
   // the agent never tries to upload.

@@ -844,6 +844,20 @@ blocked while EQ runs). Cloud backup/restore: `uiStudioCapture` → bot
 `ui_layout` (encrypted `ui_snapshots`) → list/download/restore with
 resolution rescale on the way back.
 
+### EQ folder discovery — "known" vs "has logs"
+Two lists, deliberately: `resolveEqDirsWithLogs()` returns **`dirs`** (folders
+that contain eqlogs → what we TAIL) and **`knownDirs`** (configured paths,
+`eqgame.exe`-detected installs, a running client's folder → what we KNOW).
+Mimic passes the second to the agent as **`WOLFPACK_EQ_DIRS`** (path-delimited);
+`_eqSetupDirs()` reads it before falling back to watched logs, and the
+dashboard's "No EQ folder selected" banner reads the same source.
+⚠ They were one list until 2026-08-14 and the result was a deadlock for every
+new user: *Set up EQ for me* writes `Log=TRUE`, so it runs precisely when there
+are no logs — and it refused for want of logs it would have created.
+`findEqInstalls()` scans for `eqgame.exe` (present from install, no logs
+needed), including named `TAKP`/`TAKPv22` paths and a drive-root walk for any
+`takp*` folder, since TAKP carries its version in the directory name.
+
 ### The Dock (`dock.html`, Mimic 2.5.1-beta) — many overlays, one renderer
 One always-on-top window that hosts other overlays as same-origin `<iframe>`
 panes. Every BrowserWindow is its own Chromium renderer at **~80 MB resident

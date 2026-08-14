@@ -10864,6 +10864,14 @@ function _zealExportOnCampState() {
 // log's folder (the Logs/ parent). Shared by the checklist + the setup writer.
 function _eqSetupDirs() {
   const dirs = new Set();
+  // ⚠ WOLFPACK_EQ_DIRS (plural) FIRST. Inferring the folder from watched logs
+  // is circular for the one job this list exists to do: "Set up EQ for me"
+  // writes Log=TRUE into eqclient.ini, i.e. it runs precisely when there are no
+  // logs — and it used to answer "No EQ folder known yet" to a user who had
+  // already pointed Mimic at their install (Pyxil, C:\TAKPv22, 2026-08-14).
+  // Mimic now hands over every folder it knows about, logs or not.
+  const plural = String(process.env.WOLFPACK_EQ_DIRS || '').trim();
+  if (plural) for (const d of plural.split(path.delimiter)) { if (d.trim()) dirs.add(d.trim()); }
   if (process.env.WOLFPACK_EQ_DIR) dirs.add(process.env.WOLFPACK_EQ_DIR);
   for (const w of (stats.watchedLogs || [])) {
     if (!w || !w.logPath) continue;
@@ -12707,7 +12715,7 @@ function renderHeader(s) {
     // "no logs" one. Baked server-side at boot (\${}) — process is Node-only;
     // a bare reference here crashed renderHeader for exactly the users this
     // banner exists to help (0 logs watched → this branch → throw).
-    const hasFolders = ${process.env.WOLFPACK_EQ_DIR ? 'true' : 'false'};
+    const hasFolders = ${(process.env.WOLFPACK_EQ_DIRS || process.env.WOLFPACK_EQ_DIR) ? 'true' : 'false'};
     if (isMimicHosted && !hasFolders) {
       h += '<div class="banner" style="background:#3a2a0a;color:#f6c365;border:1px solid #6b5320">'
          + '📁 <b>No EQ folder selected.</b> Mimic doesn&rsquo;t know where your EverQuest install is. '
