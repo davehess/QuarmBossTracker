@@ -1334,11 +1334,37 @@ function parseEvent(line, ts) {
 }
 
 // ── Character name from filename ────────────────────────────────────────────
+// ⚠ Trailing digits are a BACKUP MARKER, not part of the name. EverQuest
+// character names cannot contain numbers (Hitya), so "eqlog_Dant3_pq.proj.txt"
+// was never written by the client — it is what a raider gets after copying
+// their log aside and letting EQ start a fresh one.
+//
+// We treated those as separate raiders. On Va Xi Aten Ha Ra an uploader calling
+// itself "Atlasius2" reported 288,169 for Atlasius while ten real clients and
+// Atlasius himself agreed on ~100,000, and because the live-DPS merge took a
+// max across clients, the phantom set the number for the whole raid. "Dant3"
+// was doing the same thing quietly beside it.
+//
+// Strip the suffix so a backup resolves to the person who owns it, and return
+// whether it WAS one so callers can decide what that means for them — a backup
+// is a legitimate thing to backfill from, and a bad thing to live-tail
+// alongside the real log (the same events would land twice under one name).
+function _splitBackupSuffix(rawName) {
+  const raw = String(rawName || '');
+  const m = raw.match(/^(.*?[A-Za-z])(\d+)$/);
+  return m ? { base: m[1], isBackup: true } : { base: raw, isBackup: false };
+}
 function characterFromFilename(filepath) {
   const base = path.basename(filepath);
-  // eqlog_Hitya_pq.proj.txt → Hitya
+  // eqlog_Hitya_pq.proj.txt → Hitya ; eqlog_Dant3_pq.proj.txt → Dant
   const m = base.match(/^eqlog_([^_]+)_/i);
-  return m ? m[1] : null;
+  return m ? _splitBackupSuffix(m[1]).base : null;
+}
+// True when this log is a copied-aside backup rather than the live file.
+function isBackupLogFile(filepath) {
+  const base = path.basename(String(filepath || ''));
+  const m = base.match(/^eqlog_([^_]+)_/i);
+  return m ? _splitBackupSuffix(m[1]).isBackup : false;
 }
 
 // ── Encounter detection state machine ───────────────────────────────────────
@@ -34196,13 +34222,27 @@ async function main() {
   const allLogs    = args.logs;
   const filtered   = [];
   const droppedFor = [];
+  const droppedBackups = [];
   for (const p of allLogs) {
     const fromName = characterFromFilename(p) || '';
     if (fromName && excludedSet.has(fromName.toLowerCase())) {
       droppedFor.push(fromName);
       continue;
     }
+    // Never LIVE-TAIL a copied-aside backup. Now that eqlog_Dant3 resolves to
+    // "Dant", tailing it alongside the real eqlog_Dant would replay the same
+    // events a second time under one name — turning a phantom extra raider
+    // into a doubled real one, which is strictly worse. Backups stay visible
+    // for BACKFILL (that is what they are good for); they just never join the
+    // live stream.
+    if (isBackupLogFile(p)) {
+      droppedBackups.push(path.basename(p));
+      continue;
+    }
     filtered.push(p);
+  }
+  if (droppedBackups.length > 0) {
+    console.log(`[logs] skipped ${droppedBackups.length} backup log file(s) — copied aside, not live: ${droppedBackups.join(', ')}`);
   }
   if (droppedFor.length > 0) {
     console.log(`[exclude] dropped ${droppedFor.length} log file(s) for excluded characters: ${droppedFor.join(', ')}`);
@@ -34943,7 +34983,7 @@ module.exports = {
   parseEvent, shouldKeep, parseEqTimestamp,
   DEFAULT_DROP_PATTERNS, KEEP_PATTERNS,
   SOURCELESS_SPELLS, BARD_SONGS,
-  EncounterBuilder, characterFromFilename,
+  EncounterBuilder, characterFromFilename, isBackupLogFile, _splitBackupSuffix,
   trackChChainLine, chChainSnapshot,
   // CH cast bar / interrupt ✕ / DDR grade — exported for the scratchpad harness.
   trackChChainInterrupt, _chGradeForDelta, _chExpectedNextAt,
