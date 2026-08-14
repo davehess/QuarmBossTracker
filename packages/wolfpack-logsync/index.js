@@ -8936,6 +8936,10 @@ function enqueueUpload(kind, payload) {
     // rather than pretending it belongs to the event.
     if (Number.isFinite(stats.clockOffsetMs)) {
       payload.agent_state.clock_offset_ms = stats.clockOffsetMs;
+      // Uploaded so the bot can see its OWN clock error across the fleet: if
+      // every agent reports the same ntp-minus-pulse gap, that gap is the bot's.
+      if (Number.isFinite(stats.ntpOffsetMs))     payload.agent_state.ntp_offset_ms      = stats.ntpOffsetMs;
+      if (Number.isFinite(stats.botClockErrorMs)) payload.agent_state.bot_clock_error_ms = stats.botClockErrorMs;
       payload.agent_state.clock_measured_at = new Date().toISOString();
     }
   }
@@ -9874,7 +9878,13 @@ function _resolveHpForName(nameLower, active, st) {
 // POSITIVE clockOffsetMs = this machine is BEHIND, so true = local + offset.
 function _nowOnServerClock() {
   const off = stats.clockOffsetMs;
-  return Date.now() + (Number.isFinite(off) ? off : 0);
+  if (Number.isFinite(off)) return Date.now() + off;
+  // No pulse yet (first seconds after launch) or the bot is unreachable. NTP is
+  // not the bot's clock, but the bot's host IS time-synced, so true time is a
+  // far better stand-in than assuming zero — which is what this did before and
+  // which is a silent 56s error on the machines that need it most.
+  const ntp = stats.ntpOffsetMs;
+  return Date.now() + (Number.isFinite(ntp) ? ntp : 0);
 }
 // Age of a bot-issued ISO timestamp, in ms. Infinity when unusable, so every
 // caller's `age > limit` check fails closed rather than treating it as fresh.
@@ -11266,6 +11276,14 @@ function _serializeForDashboard() {
     // fix landed instead of asking the user to take it on faith. null until the
     // first heartbeat completes (and stays null with no token / offline).
     clockOffsetMs: Number.isFinite(stats.clockOffsetMs) ? stats.clockOffsetMs : null,
+    // True-time offset from SNTP, and what it implies about the BOT's own clock
+    // (ntp minus pulse — this machine cancels out of the difference).
+    ntpOffsetMs:     Number.isFinite(stats.ntpOffsetMs) ? stats.ntpOffsetMs : null,
+    ntpHost:         stats.ntpHost || null,
+    ntpRttMs:        Number.isFinite(stats.ntpRttMs) ? stats.ntpRttMs : null,
+    ntpAt:           stats.ntpAt || null,
+    ntpReachable:    stats.ntpReachable === undefined ? null : !!stats.ntpReachable,
+    botClockErrorMs: Number.isFinite(stats.botClockErrorMs) ? stats.botClockErrorMs : null,
     // Per-cleric Divine Intervention readiness (bot aggregate ⊕ local casts) —
     // chchain.html renders the chips + "only <X> has DI" callout.
     diStatus: diStatusSnapshot(),
@@ -26036,6 +26054,138 @@ function _reporterHeartbeatOnce() {
     req.write(body); req.end();
   } catch { _reporterFailOpen(); }
 }
+// ── SNTP: what time is it REALLY? ───────────────────────────────────────────
+// The heartbeat's four-stamp exchange measures this machine against OUR BOT.
+// That is the right reference for "is this bot-issued timestamp still fresh",
+// and it is the wrong reference for "is this machine's clock correct", because
+// it cannot see an error the bot shares. Two cases where that matters:
+//
+//   • **The bot is unreachable.** Today the agent knows nothing about its own
+//     clock until the first successful poll. Every live decision — relayed
+//     trigger freshness, callout ages — silently assumes zero offset.
+//   • **The bot's own clock is wrong.** On Railway it is NTP-synced and this is
+//     theoretical. For a self-hosted guild running the bot on a spare desktop
+//     it is not: pulse would correct that whole fleet *toward* the wrong clock
+//     and nothing in the system could tell. Comparing pulse against real NTP is
+//     the only thing that catches it, and the difference IS the bot's error.
+//
+// Deliberately inlined rather than put in a sibling file: apps/mimic/scripts/
+// stage-agent.js copies a HARDCODED file list into the bundle, so a new file
+// would work in dev and silently not ship.
+//
+// Plain SNTP over UDP/123 using node's dgram — no dependency, ~50 lines. If UDP
+// is blocked (some corporate/hotel networks) every server times out and we keep
+// whatever pulse gave us, which is exactly today's behaviour.
+const NTP_SERVERS = ['time.windows.com', 'pool.ntp.org', 'time.cloudflare.com'];
+const NTP_EPOCH_OFFSET_S = 2208988800;   // seconds between 1900-01-01 and 1970-01-01
+const NTP_QUERY_TIMEOUT_MS = 3000;
+const NTP_REFRESH_MS = 30 * 60 * 1000;
+// Below this, a pulse-vs-NTP gap is round-trip noise rather than a wrong bot.
+const NTP_BOT_DISAGREE_MS = 5000;
+
+// The arithmetic, split out because it is the half that can be quietly wrong —
+// a bad epoch constant or a mis-scaled fraction yields a confident number that
+// is decades or milliseconds out, and the network half cannot be unit-tested.
+// Returns null for anything unusable rather than a number we don't believe.
+function _parseSntpReply(msg, t1, t4) {
+  if (!msg || msg.length < 48) return null;
+  if (msg[1] === 0) return null;              // stratum 0 = "kiss of death", a refusal
+  const at = (off) => (msg.readUInt32BE(off) - NTP_EPOCH_OFFSET_S) * 1000
+                    + Math.round((msg.readUInt32BE(off + 4) / 4294967296) * 1000);
+  const t2 = at(32);    // server received our request
+  const t3 = at(40);    // server sent its reply
+  if (!Number.isFinite(t2) || !Number.isFinite(t3) || t3 <= 0) return null;
+  // The same four-stamp formula the bot heartbeat uses: comparing against the
+  // MIDPOINT of our round trip cancels one-way latency. Charging the whole trip
+  // to the offset instead would read as a skew of half the RTT.
+  return {
+    offsetMs: Math.round(((t2 - t1) + (t3 - t4)) / 2),
+    rttMs:    Math.max(0, (t4 - t1) - (t3 - t2)),
+  };
+}
+
+function _sntpQuery(host, timeoutMs = NTP_QUERY_TIMEOUT_MS) {
+  return new Promise((resolve) => {
+    let sock, done = false, t1 = 0;
+    const finish = (v) => {
+      if (done) return;
+      done = true;
+      try { sock && sock.close(); } catch { /* already closed */ }
+      resolve(v);
+    };
+    try { sock = require('dgram').createSocket('udp4'); }
+    catch { return resolve(null); }
+    const timer = setTimeout(() => finish(null), timeoutMs);
+    if (timer.unref) timer.unref();
+    sock.on('error', () => { clearTimeout(timer); finish(null); });
+    sock.on('message', (msg) => {
+      clearTimeout(timer);
+      const parsed = _parseSntpReply(msg, t1, Date.now());
+      finish(parsed ? { host, ...parsed } : null);
+    });
+    const pkt = Buffer.alloc(48);
+    pkt[0] = 0x1b;                      // LI=0, VN=3, Mode=3 (client)
+    t1 = Date.now();
+    sock.send(pkt, 0, pkt.length, 123, host, (err) => {
+      if (err) { clearTimeout(timer); finish(null); }
+    });
+  });
+}
+
+// Ask all three at once and take the LOWEST round trip. Standard NTP practice:
+// a short round trip bounds how wrong the offset can be, and it means one slow
+// or lying server cannot decide the answer on its own.
+async function _measureNtpOffset() {
+  const answers = (await Promise.all(NTP_SERVERS.map(h => _sntpQuery(h).catch(() => null))))
+    .filter(a => a && Number.isFinite(a.offsetMs));
+  if (answers.length === 0) return null;
+  answers.sort((a, b) => a.rttMs - b.rttMs);
+  return answers[0];
+}
+
+let _ntpDisagreeWarned = false;
+async function _refreshNtpOffset() {
+  const r = await _measureNtpOffset();
+  if (!r) {
+    stats.ntpReachable = false;
+    return;
+  }
+  stats.ntpReachable = true;
+  stats.ntpOffsetMs  = r.offsetMs;
+  stats.ntpRttMs     = r.rttMs;
+  stats.ntpHost      = r.host;
+  stats.ntpAt        = Date.now();
+  // Pulse vs true time. When both exist and disagree, the gap is OUR SERVER's
+  // error — this machine is measured against both, so it cancels out of the
+  // difference. Worth saying out loud exactly once.
+  const pulse = stats.clockOffsetMs;
+  if (Number.isFinite(pulse)) {
+    const botErr = r.offsetMs - pulse;
+    stats.botClockErrorMs = botErr;
+    if (Math.abs(botErr) >= NTP_BOT_DISAGREE_MS && !_ntpDisagreeWarned) {
+      _ntpDisagreeWarned = true;
+      console.warn(`[clock] the BOT's clock looks ${botErr > 0 ? 'ahead' : 'behind'} by `
+        + `${Math.abs(Math.round(botErr / 1000))}s (this machine is ${Math.round(r.offsetMs / 1000)}s off true time `
+        + `per ${r.host}, but only ${Math.round(pulse / 1000)}s off the bot). Server-side timestamps will inherit that.`);
+    }
+  }
+  if (Math.abs(r.offsetMs) >= 5000 && !_clockSkewWarned) {
+    _clockSkewWarned = true;
+    console.warn(`[clock] this machine is ${r.offsetMs > 0 ? 'BEHIND' : 'AHEAD OF'} true time by `
+      + `${Math.abs(Math.round(r.offsetMs / 1000))}s (${r.host}) — parses, deaths and buff timings from this `
+      + 'machine will be offset. Fix with:  w32tm /resync');
+  }
+}
+
+let _ntpOn = false;
+function startNtpRefresh() {
+  if (_ntpOn) return;
+  _ntpOn = true;
+  _refreshNtpOffset().catch(() => {});
+  const t = setInterval(() => { _refreshNtpOffset().catch(() => {}); }, NTP_REFRESH_MS);
+  if (t.unref) t.unref();
+}
+
 // One-shot latch so a bad clock warns once per session, not every 20s.
 let _clockSkewWarned = false;
 function startReporterHeartbeat() {
@@ -26043,6 +26193,8 @@ function startReporterHeartbeat() {
   _reporterHeartbeatOn = true;
   _reporterHeartbeatOnce();                                     // poll immediately on boot
   setInterval(_reporterHeartbeatOnce, REPORTER_HEARTBEAT_MS).unref();
+  // True-time reference, independent of the bot — see _refreshNtpOffset.
+  startNtpRefresh();
 }
 let _chatRelayOn   = false;     // true once the 5s relay interval is running
 
@@ -35165,6 +35317,7 @@ module.exports = {
   SOURCELESS_SPELLS, BARD_SONGS,
   EncounterBuilder, characterFromFilename, isBackupLogFile, _splitBackupSuffix,
   trackChChainLine, chChainSnapshot, removeChChainSlot,
+  _parseSntpReply,
   _recordFightHistory, _fightHistoryForTest: () => stats.fightHistory,
   _resetFightHistoryForTest: () => { stats.fightHistory = []; },
   // CH cast bar / interrupt ✕ / DDR grade — exported for the scratchpad harness.
