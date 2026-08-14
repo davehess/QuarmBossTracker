@@ -26,10 +26,9 @@ function mergeNewest(rows) {
     if (!r || !r.uploader) continue;
     if (!newest.has(r.uploader)) newest.set(r.uploader, r);
   }
-  const best = new Map();      // best OBSERVER total
-  const selfRep = new Map();   // the player's own client's total
+  const best = new Map();
+  const obs  = new Map();      // character -> every client's reading
   for (const r of newest.values()) {
-    const up = String(r.uploader || '').toLowerCase();
     // Per-uploader roll-up FIRST: own row + every pet that client gives them.
     const perUploader = new Map();
     for (const [name, v] of Object.entries(r.per_player || {})) {
@@ -39,30 +38,51 @@ function mergeNewest(rows) {
       perUploader.set(who, (perUploader.get(who) || 0) + dmg);
     }
     for (const [who, dmg] of perUploader) {
-      if (up && String(who).toLowerCase() === up) {
-        if (dmg > (selfRep.get(who) || 0)) selfRep.set(who, dmg);
-      } else if (dmg > (best.get(who) || 0)) best.set(who, dmg);
+      const arr = obs.get(who) || obs.set(who, []).get(who);
+      arr.push(dmg);
     }
   }
-  for (const [who, dmg] of selfRep) best.set(who, dmg);   // self outranks observers
+  for (const [who, values] of obs) best.set(who, corroborated(values));
   return [...best.entries()].map(([character, dmg]) => ({ character, dmg }))
     .sort((a, b) => b.dmg - a.dmg);
+}
+
+// Mirror of _corroboratedDamage.
+function corroborated(values) {
+  const v = (values || []).filter(n => Number.isFinite(n) && n > 0);
+  if (v.length === 0) return 0;
+  if (v.length < 3) return Math.max(...v);
+  const desc = v.slice().sort((a, b) => b - a);
+  for (let i = 0; i < desc.length; i++) {
+    const tol = desc[i] * 0.10;
+    for (let j = 0; j < desc.length; j++) {
+      if (i !== j && Math.abs(desc[j] - desc[i]) <= tol) return desc[i];
+    }
+  }
+  return desc[Math.floor(desc.length / 2)];
 }
 
 const row = (uploader, at, per_player) => ({ uploader, snapshot_at: at, per_player });
 
 describe('the shipped handler still merges the way this models', () => {
-  it('compares uploaders by MAX, never by sum', () => {
-    expect(handler).toMatch(/if \(dmg > prev\) best\.set\(who, dmg\)/);
-    expect(handler, 'a += across uploaders would double-count overlapping observers').not.toMatch(/best\.set\(who, prev \+/);
+  it('never sums across uploaders', () => {
+    expect(handler, 'a += across uploaders would double-count overlapping observers')
+      .not.toMatch(/best\.set\(who, prev \+/);
+  });
+
+  it('collects every reading and lets the estimator decide', () => {
+    expect(handler).toMatch(/arr\.push\(dmg\)/);
+    expect(handler).toMatch(/best\.set\(who, _corroboratedDamage\(values\)\)/);
   });
 
   it('rolls pets up per uploader BEFORE comparing', () => {
     expect(handler).toMatch(/perUploader\.set\(who, \(perUploader\.get\(who\) \|\| 0\) \+ dmg\)/);
   });
 
-  it('lets the self-report override the observer figure', () => {
-    expect(handler).toMatch(/for \(const \[who, dmg\] of selfRep\) best\.set\(who, dmg\)/);
+  it('no longer lets a client win by identity', () => {
+    // 3.1.43 gave the player's own client the last word. EQLogParser ground
+    // truth killed that: Hitya's own client said 118,192 against a true 59,504.
+    expect(handler, 'self-preference was disproven by ground truth').not.toMatch(/selfRep/);
   });
 
   it('keeps only the newest row per uploader', () => {
@@ -145,27 +165,20 @@ describe('merge arithmetic', () => {
     expect(out).toEqual([{ character: 'Real', dmg: 12 }]);
   });
 
-  it("prefers the player's OWN client over any observer — both directions", () => {
-    // Measured on Diabo Xi Xin Thall: five observers agreed Wabumkin did
-    // 96,241 while his own client said 153,115 (his damage spells — HIS number
-    // is right); and Hitya's own log said 57,848 while observers read up to
-    // 70,559 (over-count). Self wins either way.
-    const up = mergeNewest([
-      row('Wabumkin', '3', { Wabumkin: { dmg: 153115 } }),
-      row('Squeekie', '3', { Wabumkin: { dmg: 114217 } }),
-      row('Hawkner',  '3', { Wabumkin: { dmg: 96241 } }),
-    ]);
-    expect(up).toEqual([{ character: 'Wabumkin', dmg: 153115 }]);
-
-    const down = mergeNewest([
-      row('Hitya',    '3', { Hitya: { dmg: 57848 } }),
-      row('Squeekie', '3', { Hitya: { dmg: 70559 } }),
-      row('Hawkner',  '3', { Hitya: { dmg: 61085 } }),
-    ]);
-    expect(down).toEqual([{ character: 'Hitya', dmg: 57848 }]);
+  it('rejects a lone outlier no other client corroborates', () => {
+    // Real readings for Atlasius on Va Xi Aten Ha Ra. EQLogParser truth: 99,979.
+    const vals = [250060,224976,179076,145985,115538,101015,100407,100230,99789,99537,97893,78615,38555,15995];
+    expect(corroborated(vals)).toBe(101015);          // within 1% of truth
+    expect(Math.max(...vals)).toBe(250060);           // what max would have shipped
   });
 
-  it('still uses the best observer for players with no Mimic', () => {
+  it('falls back to max when there is nothing to corroborate against', () => {
+    // A thinly-observed fight must behave exactly as it did before.
+    expect(corroborated([50000, 10000])).toBe(50000);
+    expect(corroborated([42000])).toBe(42000);
+  });
+
+  it('still uses the higher figure when only two clients saw a player', () => {
     const out = mergeNewest([
       row('Hitya',    '3', { Damyu: { dmg: 100715 } }),
       row('Squeekie', '3', { Damyu: { dmg: 114569 } }),
@@ -173,13 +186,13 @@ describe('merge arithmetic', () => {
     expect(out).toEqual([{ character: 'Damyu', dmg: 114569 }]);
   });
 
-  it("counts the owner's pet into their self-reported total", () => {
+  it("counts the owner's pet into their total", () => {
     const out = mergeNewest([
       row('Shavimo', '3', {
         Shavimo: { dmg: 35750 },
         'Shavimo`s warder': { dmg: 20870, pet_owner: 'Shavimo' },
       }),
-      row('Hitya', '3', { Shavimo: { dmg: 35750 } }),
+      row('Hitya', '3', { Shavimo: { dmg: 56620 } }),
     ]);
     expect(out).toEqual([{ character: 'Shavimo', dmg: 56620 }]);
   });

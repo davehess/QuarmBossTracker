@@ -10330,6 +10330,52 @@ const EXT_OFFTANK_FRESH_MS = 30_000;
 // observed you, that observation is theirs and is shown (Hitya, 2026-08-13).
 // Filtering on read would hide a player from the people who legitimately saw
 // them, which is the opposite of what the opt-out means. Do not "fix" this.
+// Reduce many observers' readings of ONE player's damage to a single number.
+//
+// Max was the obvious choice and is wrong. An observer can only ever MISS
+// damage, never invent it — so max WOULD be right if every client were honest.
+// They are not, and max is maximally sensitive to whichever one is least
+// honest. Measured on Va Xi Aten Ha Ra: seven independent clients put Atlasius
+// at ~100,000 while an uploader calling itself "Atlasius2" reported 250,060.
+// We shipped the 250,060.
+//
+// "Atlasius2" is not a character — EQ names cannot contain digits (Hitya) — so
+// it is a name the agent derived from a stray log FILE (eqlog_Atlasius2_…),
+// i.e. a copy or backup someone left in their Logs folder, replayed as if it
+// were a separate raider. That specific cause is guarded at the source in the
+// agent, but this estimator must not depend on having anticipated the cause:
+// any single client that disagrees with everyone else, for any reason, should
+// not be able to set the number.
+//
+// Median is not the answer either: it would drag a player down toward the
+// people who barely witnessed the fight, and "the worst local view saw 0.1-8.3%
+// of a fight" is the measurement this whole feature exists to correct.
+//
+// So: take the HIGHEST reading that some OTHER observer independently
+// corroborates (within CORROBORATION_TOLERANCE). A lone inflated client has
+// nobody to agree with and is skipped; a cluster of clients who each saw the
+// whole fight agree with each other and win — which is both the honest answer
+// and, usefully, the largest well-supported one.
+const CORROBORATION_TOLERANCE = 0.10;   // within 10% counts as agreement
+function _corroboratedDamage(values) {
+  const v = (values || []).filter(n => Number.isFinite(n) && n > 0);
+  if (v.length === 0) return 0;
+  // Fewer than three readings cannot corroborate anything — fall back to max
+  // so a thinly-observed fight behaves exactly as it did before.
+  if (v.length < 3) return Math.max(...v);
+  const desc = v.slice().sort((a, b) => b - a);
+  for (let i = 0; i < desc.length; i++) {
+    const tol = desc[i] * CORROBORATION_TOLERANCE;
+    for (let j = 0; j < desc.length; j++) {
+      if (i === j) continue;
+      if (Math.abs(desc[j] - desc[i]) <= tol) return desc[i];
+    }
+  }
+  // Nobody agrees with anybody — every client saw a wildly different slice.
+  // Median is the least-wrong summary of pure disagreement.
+  return desc[Math.floor(desc.length / 2)];
+}
+
 async function _handleAgentLiveDamage(req, res) {
   const identity = await mimicLink.requireAgentAuth(req, res);
   if (!identity) return;
@@ -10403,7 +10449,7 @@ async function _handleAgentLiveDamage(req, res) {
   // second case wrong, because max is maximally sensitive to whichever client
   // is most wrong upward. Self-reported wins outright; max across observers is
   // the fallback for players with no Mimic of their own.
-  const selfRep = new Map();    // character -> their OWN client's figure
+  const obs     = new Map();    // character -> [every client's reading]
   let newestAt = 0, oldestAt = 0;
   for (const r of newest.values()) {
     const t = Date.parse(r.snapshot_at) || 0;
@@ -10428,20 +10474,23 @@ async function _handleAgentLiveDamage(req, res) {
       const who = (v && v.pet_owner) ? String(v.pet_owner) : name;
       perUploader.set(who, (perUploader.get(who) || 0) + dmg);
     }
+    // EVERY client is just a reading, including the player's own. The estimator
+    // below decides; nothing gets to win by identity.
+    //
+    // ⚠ 3.1.43 gave a player's OWN client the last word, on the reasoning that
+    // only their log carries their damage spells in full so an observer can
+    // never see MORE. EQLogParser ground truth on Va Xi Aten Ha Ra disproved it:
+    // Hitya's own client reported 118,192 against a true 59,504 — 1.99x — and
+    // Wabumkin's own 153,115 against a true 58,355. Their own clients were not
+    // more complete, they were double-counting, so "self wins" promoted the
+    // error instead of correcting it.
     for (const [who, dmg] of perUploader) {
-      if (up && String(who).toLowerCase() === up) {
-        // This uploader IS the player — their own view of themselves.
-        if (dmg > (selfRep.get(who) || 0)) selfRep.set(who, dmg);
-      } else {
-        const prev = best.get(who) || 0;
-        // max, not +=: two uploaders reporting the same player is the norm.
-        if (dmg > prev) best.set(who, dmg);
-      }
+      let arr = obs.get(who);
+      if (!arr) { arr = []; obs.set(who, arr); }
+      arr.push(dmg);
     }
   }
-  // Self-reported overrides the observer figure in BOTH directions — higher
-  // (their damage spells) and lower (observer over-count).
-  for (const [who, dmg] of selfRep) best.set(who, dmg);
+  for (const [who, values] of obs) best.set(who, _corroboratedDamage(values));
 
   const players = [...best.entries()]
     .map(([character, dmg]) => ({ character, dmg }))
