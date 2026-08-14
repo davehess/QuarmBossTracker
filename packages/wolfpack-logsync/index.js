@@ -5101,14 +5101,20 @@ function _announceSlowDrop(name) {
 // Is `nameLower` a live Zeal target on any watched character right now? Guards
 // the DROP callout so a killed / de-targeted mob (its slow simply outliving on a
 // corpse) never nags a "reslow".
+// Same instanced-name hazard as _rampageOnMainTarget — st.target_name is Zeal's
+// string ("#Diabo_Xi_Va_Temariel"), nameLower comes from a log emote
+// ("diabo xi va temariel"). Raw compare never matches inside an instance, which
+// gated the slow-DROPPED / reslow callout shut alongside the landed one
+// (Hitya, live 2026-08-13). Normalize both sides.
 function _isNameCurrentlyTargeted(nameLower) {
   if (!nameLower) return false;
+  const want = _normMobNameAgent(nameLower);
   const now = Date.now();
   for (const ch of Object.keys(_zealState)) {
     const st = _zealState[ch];
     if (!st || !st.target_name) continue;
     if ((now - (st.updatedAt || 0)) > 60000) continue;
-    if (String(st.target_name).toLowerCase() === nameLower) return true;
+    if (_normMobNameAgent(st.target_name) === want) return true;
   }
   return false;
 }
@@ -28965,9 +28971,25 @@ const RAMPAGE_IDLE_RESET_MS = 60000;
 // a main target we still announce, so the boss's own rampage is never lost to a
 // cold cross-client cache. The Tank overlay's rampage CARD is unaffected (it
 // renders _currentRampageForDisplay regardless); this gates only the TTS/callout.
+// ⚠ Compares through _normMobNameAgent, NOT raw lowercase. Vex Thal (and every
+// other instanced zone) gives Zeal the target as "#Diabo_Xi_Va_Temariel" while
+// the log emote that carries the slow landing says "Diabo Xi Va Temariel". A
+// raw === compare never matches, so this gate silently swallowed the SLOW
+// LANDED callout for the whole instance — Beastlord and Shaman slows both
+// landed on Diabo Xi Va Temariel and nobody heard a thing (Hitya, live
+// 2026-08-13). The debuffs still SHOWED in Target Info because that path
+// deliberately does not depend on a Zeal name match; the callout did, and the
+// mismatch was invisible because a suppressed callout looks exactly like a
+// callout that was never supposed to fire.
+//
+// The hazard was already known and written down one function away (see the
+// parseDebuffLanding comment: "breaks on instanced mob names like
+// #Diabo_Xi_Va_Temariel vs the emote's Diabo Xi Va Temariel") — this gate just
+// never got the same treatment. Anything else comparing a Zeal target name to a
+// log-derived one needs to normalize too.
 function _rampageOnMainTarget(attacker) {
   if (!attacker) return true;
-  const a = String(attacker).trim().toLowerCase();
+  const a = _normMobNameAgent(attacker);
   // Active focused character (same recency heuristic the tank state uses) to
   // prime + read the Extended Target aggregate.
   let active = null, activeTs = 0;
@@ -28984,7 +29006,7 @@ function _rampageOnMainTarget(attacker) {
     if (et && (et.targetName || et.bossName)) mainName = et.targetName || et.bossName;
   }
   if (!mainName) return true;   // unresolved → fail open (never lose the boss rampage)
-  return a === String(mainName).trim().toLowerCase();
+  return a === _normMobNameAgent(mainName);
 }
 function _announceRampage(target, tsMs) {
   if (!target) return;
