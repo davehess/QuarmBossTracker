@@ -12239,6 +12239,9 @@ tr:hover td { background:#1f242c }
 .wp-ov-toggle { min-width:42px; background:#21262d; color:var(--dim); border:1px solid var(--border); border-radius:5px; padding:2px 9px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit; letter-spacing:0.5px; }
 .wp-ov-toggle:hover { border-color:var(--blue); color:var(--text); }
 .wp-ov-toggle.on { background:#196c2e; border-color:#2ea043; color:#fff; }
+.wp-ov-dock { min-width:52px; background:#21262d; color:var(--dim); border:1px solid var(--border); border-radius:5px; padding:2px 9px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit; letter-spacing:0.5px; }
+.wp-ov-dock:hover { border-color:#a371f7; color:var(--text); }
+.wp-ov-dock.on { background:#2a1d3d; border-color:#a371f7; color:#d2a8ff; }
 .nav-quest { margin-left:auto; padding:5px 12px; border:1px solid var(--border); border-radius:6px; background:var(--panel); color:var(--blue); text-decoration:none; font-size:12px; font-family:inherit; }
 .nav-quest:hover { background:#30363d; border-color:var(--blue) }
 .section { display:none } .section.active { display:block }
@@ -14928,11 +14931,18 @@ function renderOverlays(s) {
   // Volatile — filled by wpRefreshOverlayToggles. Kept out of the render string
   // so the section stays byte-stable across polls (see the morphInto note).
   h += '<div id="wpHideAllBanner"></div>';
-  h += '<table style="font-size:12px"><tr><th>Overlay</th><th>State</th><th>Description</th></tr>';
+  h += '<table style="font-size:12px"><tr><th>Overlay</th><th>State</th><th>Dock</th><th>Description</th></tr>';
   for (var i = 0; i < WP_OVERLAY_ROWS.length; i++) {
     var key = WP_OVERLAY_ROWS[i][0], label = WP_OVERLAY_ROWS[i][1], desc = WP_OVERLAY_ROWS[i][2];
+    // Dock button beside the on/off toggle (Hitya 2026-08-14). Trigger alerts
+    // are not dockable — #97 fires their TTS from a HIDDEN window, so a pane
+    // would tie the callouts to being on screen.
+    var dockCell = (key === 'trigger')
+      ? '<td class="dim" style="font-size:11px">&mdash;</td>'
+      : '<td><button type="button" class="wp-ov-dock" data-ov="' + key + '">…</button></td>';
     h += '<tr><td style="color:var(--text)">' + label + '</td>'
       +  '<td><button type="button" class="wp-ov-toggle" data-ov="' + key + '">…</button></td>'
+      +  dockCell
       +  '<td class="dim">' + desc + '</td></tr>';
   }
   h += '</table>';
@@ -15091,6 +15101,19 @@ function _wpWireHotkeyRow(prefix, cfgKey, enKey, defAccel) {
   });
 }
 
+// Dock / undock an overlay from the Overlays page. Docking moves it out of its
+// own floating window and into the Dock's single renderer; undocking gives the
+// window back. Mimic owns the state, so we just re-read after the flip.
+function wpDockOverlay(name) {
+  try {
+    if (window.mimic && window.mimic.dockOverlay) {
+      var r = window.mimic.dockOverlay(name);
+      if (r && r.then) r.then(function(){ wpRefreshOverlayToggles(); });
+      else wpRefreshOverlayToggles();
+    }
+  } catch (e) { void e; }
+}
+
 // Flip an overlay via the Mimic IPC bridge, then refresh button states.
 function wpToggleOverlay(name) {
   try {
@@ -15127,6 +15150,27 @@ function wpRefreshOverlayToggles() {
         b.style.color       = wasOn ? '#f0b429' : '';
         b.title = wasOn ? 'Switched ON — hidden right now by the hide-all hotkey. Releasing hide-all brings it back.' : '';
       }
+      // Dock buttons. A docked overlay's on/off toggle is meaningless (its
+      // window no longer exists), so grey that one out rather than letting
+      // someone flip a flag with no effect.
+      var dockedList = Array.isArray(st.dockedOverlays) ? st.dockedOverlays : [];
+      var dbs = document.querySelectorAll('.wp-ov-dock');
+      for (var di = 0; di < dbs.length; di++) {
+        var db = dbs[di]; var dk = db.getAttribute('data-ov');
+        var isDocked = dockedList.indexOf(dk) >= 0;
+        db.textContent = isDocked ? 'DOCKED' : 'DOCK';
+        db.className = 'wp-ov-dock' + (isDocked ? ' on' : '');
+        db.title = isDocked
+          ? 'In the Dock. Click to give it its own floating window back.'
+          : 'Move this overlay into the Dock — one window, one renderer, instead of its own.';
+        var tb2 = document.querySelector('.wp-ov-toggle[data-ov="' + dk + '"]');
+        if (tb2) {
+          tb2.disabled = isDocked;
+          tb2.style.opacity = isDocked ? '0.4' : '';
+          if (isDocked) tb2.title = 'Docked — the Dock controls its visibility now.';
+        }
+      }
+
       var hb = document.getElementById('wpHideAllBanner');
       if (hb) {
         hb.innerHTML = hidPrev
@@ -15156,6 +15200,8 @@ if (typeof window !== 'undefined' && !window.__wpOvDelegated) {
     var t = e.target;
     var b = (t && t.closest) ? t.closest('.wp-ov-toggle') : null;
     if (b) { var name = b.getAttribute('data-ov'); if (name) wpToggleOverlay(name); return; }
+    var d = (t && t.closest) ? t.closest('.wp-ov-dock') : null;
+    if (d) { var dn = d.getAttribute('data-ov'); if (dn) wpDockOverlay(dn); return; }
     var act = (t && t.closest) ? t.closest('.wp-ov-act') : null;
     if (act && window.mimic) {
       var a = act.getAttribute('data-act');

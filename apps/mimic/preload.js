@@ -470,10 +470,20 @@ contextBridge.exposeInMainWorld('mimic', {
   // dock.html only. dockState() returns { keys, cols, catalog }; dockSet()
   // adds/removes a pane; dockCols() cycles the column count. All three return
   // the new state so the dock re-renders from one round trip.
-  dockState: ()            => ipcRenderer.invoke('dock-state'),
-  dockSet:   (key, want)   => ipcRenderer.invoke('dock-set', key, !!want),
-  dockCols:  ()            => ipcRenderer.invoke('dock-cols'),
-  isDocked:  ()            => WP_IS_DOCKED,
+  dockState:   ()             => ipcRenderer.invoke('dock-state'),
+  dockSet:     (key, want)    => ipcRenderer.invoke('dock-set', key, !!want),
+  dockCols:    ()             => ipcRenderer.invoke('dock-cols'),
+  dockSpan:    (key, c, r)    => ipcRenderer.invoke('dock-span', key, c, r),
+  dockPaneBg:  (key, want)    => ipcRenderer.invoke('dock-pane-bg', key, want),
+  dockReorder: (order)        => ipcRenderer.invoke('dock-reorder', order),
+  dockGrow:    (want)         => ipcRenderer.invoke('dock-grow', want),
+  // The dock reports its own content height; main resizes the window, keeping
+  // the BOTTOM edge fixed when grow-upward is on.
+  dockAutoHeight: (h)         => ipcRenderer.invoke('dock-auto-height', h),
+  isDocked:    ()             => WP_IS_DOCKED,
+  // Dashboard: dock/undock an overlay from the Overlays page, beside its
+  // on/off toggle.
+  dockOverlay: (name)         => ipcRenderer.invoke('dock-overlay', name),
 
   // EQ install discovery + folder picker for the multi-folder UI.
   findEqInstalls: () => ipcRenderer.invoke('find-eq-installs'),

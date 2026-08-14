@@ -99,10 +99,19 @@ next touch one rather than assuming a missing row means a missing doc.
   a pane's ✕ undocks only itself, columns cycle 1→2→3).
   - ⚠ **The panes are the real overlay files, never forks.** Docked-only
     behaviour lives in `preload.js` behind `WP_IS_DOCKED`.
-  - Trigger overlay and Command Center are excluded on purpose — see
-    HOW-ITS-BUILT. The Command Center exclusion was found BY the test that pins
-    every pane file against the window's `loadFile()`: it is agent-served for
-    hot-swaps, so a pane would have shipped a stale copy.
+  - Only the trigger overlay is excluded (its flag means "make sound"). The
+    Command Center is dockable via an `agentPath` so its pane resolves the
+    agent-served copy — the need for that was found BY the test pinning every
+    pane file against the window's `loadFile()`.
+  - **Round two, ten findings from the first live look (Hitya, 2026-08-14),
+    all addressed in Mimic 2.5.3-beta:** reachable without setup mode (holding
+    panes now implies being wanted — before, the only ways to turn it on were
+    unreachable from a hidden dock); Command Center dockable; pane drag
+    reorders the pane instead of moving the window (iframes go inert in setup);
+    per-pane column/row spans; setup bar with opacity + Done and a gutter so the
+    count clears the ✕; a DOCK button on the dashboard Overlays page; backdrop
+    off now genuinely removes the plate; per-pane background override;
+    auto-height on by default; grow-upward anchors the bottom edge.
 
 - **Clock skew from a shared chat line — STABLE (bot 3.1.48, 2026-08-14).** The
   EQ server broadcasts a `/gu` line to everyone at once, so two clients' stamps

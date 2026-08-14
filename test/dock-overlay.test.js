@@ -27,7 +27,7 @@ const dock    = fs.readFileSync(path.join(ROOT, 'apps', 'mimic', 'dock.html'), '
 
 // Pull the catalog out of main.js so the tests below run against the real list.
 const CATALOG = [...main.matchAll(
-  /\{ key: '([^']+)',\s*label: '([^']+)',\s*file: '([^']+)',\s*flag: '([^']+)' \}/g,
+  /\{ key: '([^']+)',\s*label: '([^']+)',\s*file: '([^']+)',\s*flag: '([^']+)'[\s\S]{0,80}?\}/g,
 )].map(m => ({ key: m[1], label: m[2], file: m[3], flag: m[4] }));
 
 describe('the pane catalog is real', () => {
@@ -42,11 +42,22 @@ describe('the pane catalog is real', () => {
     }
   });
 
-  it('every pane file is the one main.js loads for that overlay standalone', () => {
+  it('every pane loads what the standalone window loads', () => {
     // The pane must BE the overlay, not a copy that drifts. If these ever
     // diverge, the docked and floating versions are two different programs.
+    // Two shapes: most windows loadFile() their page; the Command Center is
+    // served from the AGENT (#65) with the bundled file as its fallback, and a
+    // pane pinned to the file alone would silently lag behind.
     for (const c of CATALOG) {
-      expect(main, `${c.key} loadFile`).toMatch(new RegExp(`loadFile\\('${c.file.replace('.', '\\.')}'\\)`));
+      const file = c.file.replace('.', '\\.');
+      const plain  = new RegExp(`loadFile\\('${file}'\\)`).test(main);
+      const served = new RegExp(`_loadOverlayPreferAgent\\([^)]*'${file}'\\)`).test(main);
+      expect(plain || served, `${c.key} → ${c.file} is not what main.js loads`).toBe(true);
+      // An agent-served overlay must carry its path in the catalog too, or the
+      // pane would fall back to the stale bundled copy.
+      if (served && !plain) {
+        expect(main, `${c.key} needs an agentPath`).toMatch(/agentPath: '\/overlay\//);
+      }
     }
   });
 
@@ -114,7 +125,7 @@ describe('the dock is an overlay like any other', () => {
     // A locked overlay is click-through; without this the clicks land in EQ.
     expect(dock).toMatch(/overlayHoverInteractive\(true\)/);
     expect(dock).toMatch(/overlayHoverInteractive\(false\)/);
-    expect(dock).toMatch(/\[hideBtn, moveBtn, addBtn, colBtn\]\.forEach\(interactive\)/);
+    expect(dock).toMatch(/\[hideBtn, moveBtn, addBtn, colBtn, growBtn, doneBtn, slider\]\.forEach\(interactive\)/);
   });
 
   it('is in _overlayEntries, the lifecycle table and _HIDEALL_FLAGS', () => {
@@ -182,8 +193,161 @@ describe('the pane ✕ is drawn, not hover-revealed', () => {
     // Panes repaint constantly (cast bars, countdowns) and a freshly-created
     // element under a stationary cursor never picks up :hover — the trap that
     // made the CH chain's own ✕ invisible on exactly the row you wanted it on.
-    const rule = /\.pane > \.ph \.x\{[^}]*opacity:\s*([0-9.]+)/.exec(dock);
+    const rule = /\.pane > \.ph \.ctl\{[^}]*opacity:\s*([0-9.]+)/.exec(dock);
     expect(rule).toBeTruthy();
     expect(Number(rule[1])).toBeGreaterThan(0.1);
+  });
+});
+
+// ── Round two (Hitya, 2026-08-14) ───────────────────────────────────────────
+// Ten findings from the first live look. The ones with a rule behind them are
+// pinned here; the rest (setup bar, spans, per-pane background, drag-reorder,
+// auto-height, grow-upward) are exercised in the headless-Chromium pass.
+
+describe('the dock can be found without setup mode', () => {
+  it('holding panes implies being on screen', () => {
+    // "The dock is only accessible from doing the 'Setup ALL Overlays' option."
+    // The only ways to set showDock were the tray entry and docking something
+    // from INSIDE the dock — unreachable while the dock is hidden. Setup mode
+    // force-shows everything, which is how it was found at all.
+    expect(main).toMatch(/const wanted = cfg\.showDock \|\| _dockedKeys\(cfg\)\.length > 0;/);
+  });
+
+  it('and the window survives as long as it holds panes', () => {
+    // Visibility is not enough: the reaper would destroy the window under them.
+    expect(main).toMatch(/if \(e && e\.key === 'dock' && _dockedKeys\(cfg\)\.length > 0\) return true;/);
+  });
+
+  it('docking from anywhere turns the dock on', () => {
+    const setH  = main.slice(main.indexOf("ipcMain.handle('dock-set'"), main.indexOf("ipcMain.handle('dock-span'"));
+    const dashH = main.slice(main.indexOf("ipcMain.handle('dock-overlay'"), main.indexOf("ipcMain.handle('toggle-overlay'"));
+    expect(setH).toMatch(/if \(!cfg\.showDock\) cfg\.showDock = true;/);
+    expect(dashH).toMatch(/if \(!cfg\.showDock\) cfg\.showDock = true;/);
+  });
+});
+
+describe('the Command Center is dockable again', () => {
+  it('is in the catalog', () => {
+    expect(CATALOG.find(c => c.key === 'command')).toBeTruthy();
+  });
+
+  it('carries its agent path, so the pane is never a stale copy', () => {
+    // #65 serves it from the AGENT for hot-swaps; the bundled file is only the
+    // offline fallback. A pane pinned to command.html would silently lag behind
+    // the version everyone else runs.
+    expect(main).toMatch(/agentPath: '\/overlay\/command'/);
+    expect(main).toMatch(/const srcFor = \(c\) => \(c\.agentPath && agentPort\)/);
+  });
+
+  it('and the pane uses that src rather than the bare filename', () => {
+    expect(dock).toMatch(/fr\.setAttribute\('src', spec\.src \|\| spec\.file\)/);
+  });
+});
+
+describe('dragging a pane moves the PANE', () => {
+  it('makes the iframes inert in setup mode', () => {
+    // "Dragging the inner dock items from inside of the setup mode moves the
+    // entire window instead of just that docked overlay" — a mousedown inside a
+    // pane reached the overlay's own ✥ handler, which drags the window.
+    expect(dock).toMatch(/body\.setup \.pane > iframe\{pointer-events:none\}/);
+  });
+
+  it('reorders through one atomic write of the whole order', () => {
+    expect(dock).toMatch(/M\.dockReorder\(order\)/);
+    const h = main.slice(main.indexOf("ipcMain.handle('dock-reorder'"), main.indexOf("ipcMain.handle('dock-grow'"));
+    // A bad payload must not silently undock anything.
+    expect(h).toMatch(/for \(const k of have\) if \(!next\.includes\(k\)\) next\.push\(k\);/);
+  });
+});
+
+describe('spans, clamped so they cannot break the grid', () => {
+  it('never lets a pane span more columns than the grid has', () => {
+    expect(main).toMatch(/const c = Math\.max\(1, Math\.min\(cols, Math\.round\(Number\(s\.c\) \|\| 1\)\)\);/);
+  });
+
+  it('bounds row span too', () => {
+    expect(main).toMatch(/const r = Math\.max\(1, Math\.min\(4, Math\.round\(Number\(s\.r\) \|\| 1\)\)\);/);
+  });
+});
+
+describe('backgrounds', () => {
+  it('the dock plate is opt-in, so "off" really removes it', () => {
+    // "Background on/off doesn't do much for the dock. It should fully remove
+    // the background from the inside of the box when off."
+    expect(dock).toMatch(/#shell\{[^}]*background:transparent/);
+    expect(dock).toMatch(/body\.wp-backdrop #shell\{background:rgb\(14 17 22 \/ var\(--bg-alpha\)\)/);
+  });
+
+  it('a pane can override the dock, and null means follow it', () => {
+    expect(main).toMatch(/return all\[key\] === undefined \? null : !!all\[key\];/);
+    expect(dock).toMatch(/\[\['Dock', null\], \['On', true\], \['Off', false\]\]/);
+  });
+
+  it('a pane with its background off zeroes the alpha INSIDE its own document', () => {
+    // Same-origin, so we can reach in. Setting --bg-alpha to 0 is what makes
+    // the overlay's own cards transparent — tinting the pane would not.
+    expect(dock).toMatch(/doc\.documentElement\.style\.setProperty\('--bg-alpha', on \? dockAlpha : '0'\)/);
+  });
+});
+
+describe('auto height and grow-upward', () => {
+  it('measures each pane from its own content', () => {
+    expect(dock).toMatch(/function fitPane\(pane\)/);
+    expect(dock).toMatch(/wrap\.scrollHeight/);
+  });
+
+  it('keeps fitting as panes grow and shrink, not just on load', () => {
+    // A fight starts, a queue fills — the content changes without any user
+    // action, so a one-shot fit on load would be wrong within seconds.
+    expect(dock).toMatch(/setInterval\(fitAll, 1000\)/);
+  });
+
+  it('grow-upward keeps the BOTTOM edge fixed', () => {
+    // That is the whole of "grow upward" — otherwise the window expands down
+    // over the game.
+    const h = main.slice(main.indexOf("ipcMain.handle('dock-auto-height'"), main.indexOf("ipcMain.handle('dock-cols'"));
+    expect(h).toMatch(/const y = growUp \? \(b\.y \+ b\.height - want\) : b\.y;/);
+    expect(h).toMatch(/if \(Math\.abs\(b\.height - want\) < 8\) return true;/);   // hysteresis
+  });
+
+  it('is on by default', () => {
+    expect(main).toMatch(/autoFit: cfg\.dockAutoFit !== false/);
+    expect(main).toMatch(/growUp: cfg\.dockGrowUp !== false/);
+  });
+});
+
+describe('the setup bar', () => {
+  it('has the opacity slider and the Done button every other overlay has', () => {
+    expect(dock).toMatch(/id="opacitySlider"/);
+    expect(dock).toMatch(/id="exitSetupBtn"/);
+    expect(dock).toMatch(/M\.setSetupMode\(false\)/);
+  });
+
+  it('reserves a gutter so the pane count is not under the ✕', () => {
+    expect(dock).toMatch(/\.bar\{[^}]*padding:3px 30px 3px 26px/);
+  });
+});
+
+describe('the dashboard Dock button', () => {
+  const agent = fs.readFileSync(path.join(ROOT, 'packages', 'wolfpack-logsync', 'index.js'), 'utf8');
+
+  it('renders a button per row and wires it', () => {
+    expect(agent).toMatch(/class="wp-ov-dock" data-ov="/);
+    expect(agent).toMatch(/function wpDockOverlay\(name\)/);
+    expect(agent).toMatch(/closest\('\.wp-ov-dock'\)/);
+  });
+
+  it('offers no Dock button for the trigger overlay', () => {
+    expect(agent).toMatch(/var dockCell = \(key === 'trigger'\)/);
+  });
+
+  it('greys out a docked overlay\'s on/off toggle', () => {
+    // Its flag no longer controls anything — the dock owns its visibility.
+    expect(agent).toMatch(/tb2\.disabled = isDocked;/);
+  });
+
+  it('reads the docked list from Mimic status', () => {
+    expect(agent).toMatch(/st\.dockedOverlays/);
+    expect(main).toMatch(/dockedOverlays: _dockedKeys\(cfg\)/);
   });
 });

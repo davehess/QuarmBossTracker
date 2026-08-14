@@ -5039,7 +5039,13 @@ function applyDockVisibility() {
   if (!dockWindow) return;
   const cfg = loadConfig();
   const unlocked = cfg.overlaysLocked === false;
-  const shouldShow = unlocked || (cfg.showDock && !cfg.quietMode && _eqGateOk(cfg));
+  // Holding panes IMPLIES being on screen. Hitya, 2026-08-14: "the dock is only
+  // accessible from doing the 'Setup ALL Overlays' option" — because the only
+  // ways to set showDock were the tray entry and docking something from inside
+  // the dock, which you cannot reach while the dock is hidden. Setup mode
+  // force-shows everything, which is how it was found at all.
+  const wanted = cfg.showDock || _dockedKeys(cfg).length > 0;
+  const shouldShow = unlocked || (wanted && !cfg.quietMode && _eqGateOk(cfg));
   if (shouldShow) dockWindow.showInactive(); else dockWindow.hide();
 }
 
@@ -5124,6 +5130,11 @@ const _DOCK_CATALOG = [
   { key: 'exttarget', label: 'Extended Target', file: 'extarget.html',    flag: 'showExtTarget' },
   { key: 'zeal',      label: 'Zeal health',    file: 'zealhealth.html',   flag: 'showZeal' },
   { key: 'popraid',   label: 'PoP raid',       file: 'popraid.html',      flag: 'showPopRaid' },
+  // #65 serves this one from the AGENT so it rides agent hot-swaps; the bundled
+  // file is only the offline fallback. `agentPath` makes the PANE resolve the
+  // same way the window does, so a docked Command Center is never a stale copy.
+  { key: 'command',   label: 'Command Center', file: 'command.html',      flag: 'showCommand',
+    agentPath: '/overlay/command' },
 ];
 // ⚠ The TRIGGER overlay is deliberately absent. #97 has it fire TTS from a
 // HIDDEN window, and its flag (enableTriggerTts) means "make sound", not "be
@@ -5131,13 +5142,10 @@ const _DOCK_CATALOG = [
 // also the one overlay whose position is load-bearing (centre flash + upward
 // timer stack), which a grid cell cannot honour.
 //
-// ⚠ COMMAND CENTER is absent too, for a different and more interesting reason.
-// It is the one overlay NOT loaded from its bundled file: #65 serves it from
-// the AGENT at /overlay/command so it rides agent hot-swaps, with command.html
-// only as the offline fallback. A pane pointing at the bundled file would
-// therefore be a silently STALE copy of an overlay everyone else sees updated —
-// exactly the docked-fork drift this design exists to avoid. Docking it needs
-// the pane to resolve the agent URL first; until then it stays a window.
+// The Command Center carries an `agentPath`: #65 serves it from the AGENT so it
+// rides hot-swaps, with the bundled file only as the offline fallback. The pane
+// resolves the same way the window does (see _dockStatePayload), so a docked
+// Command Center is never a silently stale copy.
 
 // Accepts a catalog key OR a page filename, because a pane's own ✕ knows only
 // the file it was loaded from (see _wpDockKey in preload.js) while the dock's
@@ -5157,12 +5165,34 @@ function _dockCols(cfg) {
   const n = Number(cfg.dockCols);
   return (n === 1 || n === 2 || n === 3) ? n : 1;
 }
+// A pane's span, clamped so it can never exceed the grid or collapse to zero.
+function _dockSpan(cfg, key, cols) {
+  const all = (cfg.dockSpans && typeof cfg.dockSpans === 'object') ? cfg.dockSpans : {};
+  const s = all[key] || {};
+  const c = Math.max(1, Math.min(cols, Math.round(Number(s.c) || 1)));
+  const r = Math.max(1, Math.min(4, Math.round(Number(s.r) || 1)));
+  return { c, r };
+}
+// Per-pane backdrop. Undefined means "follow the dock", which is what a user
+// who has never touched it expects.
+function _dockPaneBg(cfg, key) {
+  const all = (cfg.dockPaneBg && typeof cfg.dockPaneBg === 'object') ? cfg.dockPaneBg : {};
+  return all[key] === undefined ? null : !!all[key];
+}
 function _dockStatePayload() {
   const cfg = loadConfig();
+  const cols = _dockCols(cfg);
+  const keys = _dockedKeys(cfg);
+  const srcFor = (c) => (c.agentPath && agentPort)
+    ? `http://127.0.0.1:${agentPort}${c.agentPath}`
+    : c.file;
   return {
-    keys: _dockedKeys(cfg),
-    cols: _dockCols(cfg),
-    catalog: _DOCK_CATALOG.map(c => ({ key: c.key, label: c.label, file: c.file })),
+    keys, cols,
+    spans:  Object.fromEntries(keys.map(k => [k, _dockSpan(cfg, k, cols)])),
+    paneBg: Object.fromEntries(keys.map(k => [k, _dockPaneBg(cfg, k)])),
+    growUp: cfg.dockGrowUp !== false,          // default ON — see dock-grow
+    autoFit: cfg.dockAutoFit !== false,        // default ON (Hitya 2026-08-14)
+    catalog: _DOCK_CATALOG.map(c => ({ key: c.key, label: c.label, file: c.file, src: srcFor(c) })),
   };
 }
 
@@ -5170,6 +5200,9 @@ function _dockStatePayload() {
 // in which case its window has to exist (and must not be reaped) whatever the
 // flag says.
 function _overlayForcedOn(cfg, e) {
+  // The dock has to exist whenever anything is docked into it — see
+  // applyDockVisibility for why "has panes" implies "is wanted".
+  if (e && e.key === 'dock' && _dockedKeys(cfg).length > 0) return true;
   // A DOCKED overlay lives in the dock's window and has no standalone one.
   // Without this, unlocking (or setup mode) would spawn the floating copy
   // alongside the pane — the same overlay twice, and the whole point of
@@ -5576,6 +5609,11 @@ function currentStatus() {
     // flag false + hideAllPrev[flag] true means HIDDEN, and it is coming back.
     hideAllActive: !!_hideAllActive,
     hideAllPrev: (_hideAllActive && _hideAllPrev) ? { ..._hideAllPrev } : null,
+    // Which overlays live in the Dock — the dashboard's Overlays page paints
+    // its DOCK/DOCKED buttons from this and greys out a docked overlay's own
+    // on/off toggle, whose flag no longer controls anything.
+    showDock: !!cfg.showDock,
+    dockedOverlays: _dockedKeys(cfg),
     setupMode: !!setupMode,
     onboarded: !!cfg.onboarded,
     updatePending: updatePending ? updatePending.version : null,
@@ -5802,7 +5840,7 @@ function buildTrayMenu() {
         if (mi.checked && !extTargetWindow) createExtTargetOverlay(); else applyExtTargetVisibility(); _reapDisabledOverlays();
         pushStatus();
       } },
-    { label: 'Command Center (one-window raid board)', type: 'checkbox', checked: s.showCommand, enabled: !s.quietMode, click: (mi) => {
+    { label: 'Command Center (one-window raid board)', type: 'checkbox', checked: s.showCommand, enabled: !s.quietMode && !_dockedNow.includes('command'), click: (mi) => {
         const cfg = loadConfig(); cfg.showCommand = mi.checked; saveConfig(cfg);
         if (mi.checked && !commandWindow) createCommandOverlay(); else applyCommandVisibility(); _reapDisabledOverlays();
         pushStatus();
@@ -6632,6 +6670,36 @@ function setCrashReports(on) {
 
 ipcMain.handle('toggle-crash-reports', (_e, on) => setCrashReports(!!on));
 
+// The agent dashboard's Overlays page has a Dock button beside each on/off
+// toggle (Hitya 2026-08-14). Same handler shape as toggle-overlay so the
+// dashboard can treat them as a pair.
+ipcMain.handle('dock-overlay', (_e, name) => {
+  const spec = _dockSpec(name);
+  if (!spec) return { ok: false, docked: false };
+  const cfg = loadConfig();
+  const docked = _dockedKeys(cfg).includes(spec.key);
+  // Reuse the dock-set logic by invoking the same steps rather than
+  // duplicating them — a second copy of "docking clears the flag" is how the
+  // two would drift.
+  const keys = _dockedKeys(cfg);
+  cfg.dockedPrev = (cfg.dockedPrev && typeof cfg.dockedPrev === 'object') ? cfg.dockedPrev : {};
+  if (docked) {
+    cfg.dockedOverlays = keys.filter(k => k !== spec.key);
+    cfg[spec.flag] = true;
+    delete cfg.dockedPrev[spec.key];
+  } else {
+    cfg.dockedPrev[spec.key] = !!cfg[spec.flag];
+    cfg[spec.flag] = false;
+    cfg.dockedOverlays = keys.concat([spec.key]);
+    if (!cfg.showDock) cfg.showDock = true;
+  }
+  saveConfig(cfg);
+  try { applyAllVisibility(); } catch {}
+  try { buildTrayMenu(); } catch {}
+  try { pushStatus(); } catch {}
+  return { ok: true, docked: !docked };
+});
+
 ipcMain.handle('toggle-overlay', (_e, name) => {
   const cfg = loadConfig();
   switch (name) {
@@ -6858,6 +6926,79 @@ ipcMain.handle('dock-set', (_e, keyOrFile, want) => {
   try { applyAllVisibility(); } catch {}
   try { buildTrayMenu(); } catch {}
   return _dockStatePayload();
+});
+
+// Resize a pane by grid cells. Hitya: "certain items should be able to take up
+// multiple columns … I want Target Info to be 2 columns wide, 2 long."
+ipcMain.handle('dock-span', (_e, keyOrFile, c, r) => {
+  const spec = _dockSpec(keyOrFile);
+  if (!spec) return _dockStatePayload();
+  const cfg = loadConfig();
+  cfg.dockSpans = (cfg.dockSpans && typeof cfg.dockSpans === 'object') ? cfg.dockSpans : {};
+  cfg.dockSpans[spec.key] = {
+    c: Math.max(1, Math.min(3, Math.round(Number(c) || 1))),
+    r: Math.max(1, Math.min(4, Math.round(Number(r) || 1))),
+  };
+  saveConfig(cfg);
+  return _dockStatePayload();
+});
+
+// Per-pane backdrop. null = follow the dock, true/false = override.
+ipcMain.handle('dock-pane-bg', (_e, keyOrFile, want) => {
+  const spec = _dockSpec(keyOrFile);
+  if (!spec) return _dockStatePayload();
+  const cfg = loadConfig();
+  cfg.dockPaneBg = (cfg.dockPaneBg && typeof cfg.dockPaneBg === 'object') ? cfg.dockPaneBg : {};
+  if (want === null || want === undefined) delete cfg.dockPaneBg[spec.key];
+  else cfg.dockPaneBg[spec.key] = !!want;
+  saveConfig(cfg);
+  return _dockStatePayload();
+});
+
+// Drag-to-reorder inside the dock. The renderer sends the whole new order, so
+// a dropped pane and everything it displaced land in one atomic write.
+ipcMain.handle('dock-reorder', (_e, order) => {
+  const cfg = loadConfig();
+  const have = new Set(_dockedKeys(cfg));
+  const next = [];
+  for (const k of (Array.isArray(order) ? order : [])) {
+    const spec = _dockSpec(k);
+    if (spec && have.has(spec.key) && !next.includes(spec.key)) next.push(spec.key);
+  }
+  // Anything the renderer forgot keeps its place at the end rather than being
+  // silently undocked by a bad payload.
+  for (const k of have) if (!next.includes(k)) next.push(k);
+  cfg.dockedOverlays = next;
+  saveConfig(cfg);
+  return _dockStatePayload();
+});
+
+// Grow upward: the dock is anchored by its BOTTOM edge, so adding a pane (or a
+// pane growing) pushes the stack up instead of down over the game.
+ipcMain.handle('dock-grow', (_e, want) => {
+  const cfg = loadConfig();
+  cfg.dockGrowUp = want === undefined ? !(cfg.dockGrowUp !== false) : !!want;
+  saveConfig(cfg);
+  return _dockStatePayload();
+});
+
+// Auto-height: the dock sizes itself to its content. Anchored at the bottom
+// when growUp is on, so the window grows away from the middle of the screen.
+ipcMain.handle('dock-auto-height', (_e, h) => {
+  if (!dockWindow || dockWindow.isDestroyed()) return false;
+  const cfg = loadConfig();
+  if (cfg.dockAutoFit === false) return false;
+  const want = Math.max(140, Math.min(1600, Math.round(Number(h) || 0)));
+  if (!want) return false;
+  try {
+    const b = dockWindow.getBounds();
+    if (Math.abs(b.height - want) < 8) return true;    // hysteresis, as the overlays use
+    const growUp = cfg.dockGrowUp !== false;
+    // Keeping the BOTTOM edge fixed is the whole of "grow upward".
+    const y = growUp ? (b.y + b.height - want) : b.y;
+    dockWindow.setBounds({ x: b.x, y: Math.max(0, y), width: b.width, height: want });
+  } catch { return false; }
+  return true;
 });
 
 ipcMain.handle('dock-cols', () => {

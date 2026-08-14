@@ -862,10 +862,30 @@ exists), so five docked overlays cost one renderer instead of five.
   window-scoped and are redirected in preload behind `WP_IS_DOCKED` — a pane's
   ✕ undocks that pane (`dock-set`, not `hide-overlay`), and both auto-fit paths
   plus the resize-preset menu go inert so one pane cannot resize the dock.
-- **Not dockable, deliberately:** the trigger overlay (its flag means "make
-  sound"; #97 fires TTS from a hidden window, and its position is load-bearing)
-  and the Command Center (#65 serves it from the AGENT at `/overlay/command` for
-  hot-swaps, so a pane on the bundled file would be a silently stale copy).
+- **Layout:** 1/2/3 columns, and each pane carries a `{c,r}` span (clamped to
+  the grid) so Target Info can be 2 wide × 2 tall while the HUD is 1 × 3. Drag a
+  pane in setup mode to reorder — the iframes go `pointer-events:none` there, or
+  a mousedown inside a pane reaches that overlay's own ✥ and drags the WINDOW.
+- **Backgrounds are opt-in and per-pane.** The dock's plate only paints under
+  `body.wp-backdrop`, so "off" removes it entirely rather than dimming it. A
+  pane may override the dock (`On`/`Off`/follow); "off" sets `--bg-alpha: 0`
+  inside that pane's own document, which is what makes the overlay's own cards
+  transparent instead of just tinting the pane.
+- **Auto-height + grow-upward** (both default ON): each pane is measured from
+  its own content on a 1s heartbeat (panes grow and shrink on their own — a
+  fight starts, a queue fills), then `dock-auto-height` sizes the window,
+  keeping the BOTTOM edge fixed so it grows away from the middle of the screen.
+- **Holding panes implies being on screen** — `applyDockVisibility` and
+  `_overlayForcedOn` both treat a non-empty `dockedOverlays` as wanting the
+  dock. Without that the only ways to turn it on were the tray entry and
+  docking from inside the dock, which you cannot reach while it is hidden.
+- **Docking from the agent dashboard**: the Overlays page carries a DOCK/DOCKED
+  button per row (`wp-ov-dock` → `dock-overlay` IPC), and greys out a docked
+  overlay's own on/off toggle because its flag no longer controls anything.
+- **Not dockable, deliberately:** the trigger overlay only — its flag means
+  "make sound", #97 fires TTS from a hidden window, and its position is
+  load-bearing. The Command Center IS dockable; it carries an `agentPath` so the
+  pane resolves the agent-served copy (#65) exactly as the window does.
 
 ### Overlays (one .html each)
 DPS HUD (`overlay.html` — DPS / Tank / **History** tabs; DPS+Tank are this
