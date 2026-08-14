@@ -152,3 +152,83 @@ describe('the fold is wired into the sync', () => {
     expect(src).toMatch(/posted_at:\s+tsByRaid\.get\(a\.raid_id\)/);
   });
 });
+
+// ── The 1000-row cap (found live, 2026-08-14, by this fold) ──────────────────
+//
+// PostgREST caps a response at the server's max-rows setting — 1000 on Supabase
+// — and `limit=50000` in the query string does NOT lift it. The cap is SILENT:
+// 1000 rows and a 200.
+//
+// On its first night live both sides of the fold's diff were truncated, so
+// `foldedRaids` was a PARTIAL set: raids that HAD been folded looked unfolded,
+// and every 30-minute pass re-inserted the same 116 awards. Two passes ran
+// before it was caught, leaving 116 duplicate rows that inflated the very
+// "N× won" counts this feature exists to fix.
+//
+// utils/supabase.js already documents the cap on upsert()'s return path. It
+// bites reads exactly the same way, and nothing was testing for it.
+
+describe('reading more than a page', () => {
+  const { selectAllPaged } = require(path.join(ROOT, 'utils', 'openDkpSync.js'));
+  const rows = n => Array.from({ length: n }, (_, i) => ({ id: i }));
+
+  it('keeps asking until a short page ends it', async () => {
+    const seen = [];
+    const sel = async (t, q) => {
+      seen.push(q);
+      const off = Number(/offset=(\d+)/.exec(q)[1]);
+      return rows(Math.max(0, Math.min(1000, 2300 - off)));
+    };
+    const out = await selectAllPaged('t', 'select=id', 'id', sel);
+    expect(out).toHaveLength(2300);
+    expect(seen).toHaveLength(3);
+    expect(seen[1]).toContain('offset=1000');
+  });
+
+  it('stops after ONE call when the first page is short', async () => {
+    let calls = 0;
+    const out = await selectAllPaged('t', 'select=id', 'id', async () => { calls++; return rows(12); });
+    expect(out).toHaveLength(12);
+    expect(calls).toBe(1);
+  });
+
+  it('orders every page — an unordered offset walk skips and repeats rows', async () => {
+    const seen = [];
+    await selectAllPaged('t', 'select=id', 'id', async (t, q) => { seen.push(q); return rows(3); });
+    expect(seen[0]).toMatch(/order=id\.asc/);
+  });
+
+  it('returns null on a failed page instead of a short list', async () => {
+    // The whole bug in one assertion. A failed page read as an empty table
+    // would mean "nothing is folded yet" and re-fold the entire history.
+    const out = await selectAllPaged('t', 'select=id', 'id', async () => null);
+    expect(out).toBeNull();
+  });
+
+  it('returns null when a LATER page fails, not the rows so far', async () => {
+    let n = 0;
+    const out = await selectAllPaged('t', 'select=id', 'id', async () => (++n === 1 ? rows(1000) : null));
+    expect(out).toBeNull();
+  });
+
+  it('an exact multiple of the page size still terminates', async () => {
+    let n = 0;
+    const out = await selectAllPaged('t', 'select=id', 'id', async () => (++n === 1 ? rows(1000) : rows(0)));
+    expect(out).toHaveLength(1000);
+    expect(n).toBe(2);
+  });
+});
+
+describe('the fold reads through the pager, not a bare limit', () => {
+  const src = require('node:fs').readFileSync(path.join(ROOT, 'utils', 'openDkpSync.js'), 'utf8');
+  const fold = src.slice(src.indexOf('async function foldLootObservations'));
+
+  it('pages both sides of the diff', () => {
+    expect(fold).toMatch(/selectAllPaged\('opendkp_loot'/);
+    expect(fold).toMatch(/selectAllPaged\('loot_observations'/);
+  });
+
+  it('no longer asks for a limit the server will silently ignore', () => {
+    expect(fold).not.toMatch(/limit=50000/);
+  });
+});

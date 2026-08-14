@@ -1367,6 +1367,35 @@ function resolveCatalogItemId(row, nameById, idByName) {
   return cands.length ? cands[0] : null;           // nothing resolves; keep the id for the record
 }
 
+// ⚠ PostgREST caps a response at the server's max-rows setting — 1000 on
+// Supabase — and `limit=50000` in the query string does NOT lift it. The cap is
+// SILENT: you get 1000 rows and a 200. utils/supabase.js already documents this
+// on upsert()'s return path; it bites reads exactly the same way.
+//
+// It bit this function on its first night live (2026-08-14). Both sides of the
+// diff were truncated to their first 1000 rows, so `foldedRaids` was a PARTIAL
+// set — raids that HAD been folded looked unfolded, and every 30-minute pass
+// re-inserted the same 116 awards. Two passes ran before it was caught.
+//
+// Ordered paging, because an unordered offset walk can skip or repeat rows when
+// the underlying order isn't stable.
+const PAGE = 1000;
+// `sel` is injectable so the paging rules can be tested without a database.
+async function selectAllPaged(table, baseQuery, orderCol, sel) {
+  const fetchPage = sel || ((t, q) => supabase.select(t, q));
+  const out = [];
+  for (let offset = 0; ; offset += PAGE) {
+    const q = `${baseQuery}&order=${orderCol}.asc&limit=${PAGE}&offset=${offset}`;
+    const page = await fetchPage(table, q);
+    // A failed page is NOT an empty table. Returning [] here would read as
+    // "nothing is folded yet" and re-fold the entire history.
+    if (!Array.isArray(page)) return null;
+    out.push(...page);
+    if (page.length < PAGE) return out;
+    if (out.length > 500_000) return out;              // runaway guard
+  }
+}
+
 async function foldLootObservations(opts = {}) {
   const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
   const limit = Number.isFinite(opts.maxRaids) ? opts.maxRaids : LOOT_FOLD_RAIDS_PER_RUN;
@@ -1374,10 +1403,13 @@ async function foldLootObservations(opts = {}) {
   // Which raids are already folded? Compare raid-id SETS rather than keeping a
   // watermark — raid ids happen to be monotonic today, but a set difference
   // stays correct if that ever stops being true, and both sides are small.
+  //
+  // Both selects MUST be paged. A truncated `already` is the dangerous one: it
+  // makes folded raids look unfolded and the fold duplicates them.
   const [mirror, already] = await Promise.all([
-    supabase.select('opendkp_loot', 'select=raid_id,item_id,game_item_id,item_name,character_name,dkp&limit=50000'),
-    supabase.select('loot_observations',
-      `guild_id=eq.${encodeURIComponent(guildId)}&source=in.(opendkp,opendkp_ambiguous,opendkp_unknown)&select=raid_id&limit=50000`),
+    selectAllPaged('opendkp_loot', 'select=raid_id,item_id,game_item_id,item_name,character_name,dkp', 'id'),
+    selectAllPaged('loot_observations',
+      `guild_id=eq.${encodeURIComponent(guildId)}&source=in.(opendkp,opendkp_ambiguous,opendkp_unknown)&select=raid_id`, 'id'),
   ]);
   if (!Array.isArray(mirror) || !Array.isArray(already)) return { skipped: 'select failed' };
 
@@ -1502,5 +1534,5 @@ async function foldLootObservations(opts = {}) {
 module.exports = {
   runSync, syncRaidsList, syncRaidDetail, syncCharacters, syncAuctions, syncAudits, syncAdjustments,
   reconcileRecentLoot, classifyAuditAction, lootDiffRemovals, dedupByConflictKey,
-  foldLootObservations, resolveCatalogItemId,
+  foldLootObservations, resolveCatalogItemId, selectAllPaged,
 };
