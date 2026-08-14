@@ -11,16 +11,12 @@ first and reach back for the older detail.
 
 | Item | State |
 |---|---|
+| **Task #27 — the 8 muted trash triggers** | Gate is *"the fleet is on the fix"*, not *"the fix exists"*. Mimic 2.5.0 (agent 3.5.80) shipped 04:08 UTC and **nobody has installed it yet** — flipping the rows on now puts the wall back for every raider still on 2.4.x, which is exactly what the gate prevents. Also a raid-noise call, not a code change: it reaches the whole fleet in ~2 min with no review. Restore after the fleet has updated, on Hitya's word |
+| **Mimic 2.5.0 — first raid** | The whole 2.5 line (History tab, CH ✕, dashboard split, pet fold, backup-log rule) is browser-verified and unit-tested but has not been through a raid. Sunday is the first real test |
 | **Stale live-state can shadow fresher inferred buffs** | A character who returns after a swap keeps their OLD `character_live_state` buff list (Bwavair: 9 buffs, 2h old) because `live?.buffs ?? inferred` prefers any live row over inference. Not changed — she only has 2 observed casts, so falling back would paint a cleric RED "no buffs" and that is a worse lie than a timestamped stale list. Revisit if inferred coverage improves |
-| **OpenDKP loot never reaches `loot_observations`** | Automatic sync fills `opendkp_loot` (current); the Mob Info Loot tab reads `loot_observations`, which only the manual `/backfillopendkploot` writes and which stops at raid 96805 / 2026-06-04 — **758 awards over 28 raids missing.** Run `/backfillopendkploot days:90` to close it now; scheduled fold is task #37, main, after the freeze |
-| **Live combined guild damage is being retired from the in-fight view** | Cross-client corroboration still doubles some rows. Moving to a History tab of the last few mobs, shown only once deduped (task #38) |
 | **Item icons DISABLED — needs a local session** | The atlas maps to the wrong icon ids (633 = boots → shovel). Off behind `ICON_ATLAS_DISABLED` since web 1.1.50. Repack via `scripts/pack-item-icons.ps1` on the EQ machine, check `uifiles/default` is stock, and VERIFY 633 is boots before re-enabling |
 | **Who rewrites guild chat?** | Hawkner + Syko ship punctuation-stripped, capitalised copies of lines they witnessed. Not our code (same agent build on both sides). Have Hawkner grep his own eqlog for one of the lines — that says client-side vs ours in one step |
 | **Zeal `EPERM` → ask about compat mode FIRST** | XP compatibility mode on eqgame.exe kills the pipe, and the guide we recommend tells people to turn it on. Mechanism unconfirmed; `lastError` still isn't surfaced anywhere in the UI |
-| **Raid-Helper sync is unmonitored** | It is the ONLY copy of declared availability (the upstream board expires on raid day) and nothing alerts on failure. Add a staleness check — no new `rh_signups` rows within ~48h of a raid should be loud |
-| **Dashboard split — live check** | Sidebar + 📊 Stats / 🩺 Diagnostics are on beta only; browser-verified but not yet used in a raid. Graduate with the next Mimic stable |
-| **CH chain ✕ — live check** | Agent 3.5.79, beta only. Browser-verified; not yet pressed in a raid |
-| **Task #27** | Restore the 8 muted trash triggers — unblocked, fix is on stable |
 | **#204–#207** | Graduate to stable after beta test + one raid cycle |
 | **Item icons** | Above icon 1723 render blank — count how many real items are affected. Atlas is 1.6 MB; `pngquant` would roughly halve it |
 | **Noisy eqlogparser triggers** | Offered, not accepted: disabling Too Far / Can Not See / Can Not Hit From Here / Out of Range / Range, which were filling the trigger checkpoint journal |
@@ -188,3 +184,46 @@ corroboration is a settling process and mid-fight it has not settled. The
 decision is about **when** a number is shown, not whether the estimator works:
 combined damage becomes a post-fight artifact, and the live view stays on what
 this client observed itself. Task #38.
+
+
+## The post-raid change train — 2026-08-14
+
+Five things shipped once the raid ended, in this order and for this reason.
+
+**1. Bot 3.1.45 — OpenDKP loot folds itself in.** The night's own finding: a
+derived table (`loot_observations`) whose only writer was a human command had
+been ten weeks stale, and nobody could have known. Shipped first because it was
+the explicit ask and because every hour it waits is more availability of the
+kind that has no second copy.
+
+**2. Mimic 2.5.0 stable.** Graduated the whole beta line — nine agent versions,
+3.5.72 → 3.5.80 — because the two things Hitya hit live during the raid (the CH
+chain picking up a spot-healer, the damage meter doubling people) were both
+fixed on beta and both worth the fleet having before Sunday. A meaningful line
+takes a minor bump.
+- **The graduation was verified byte-exact, not assumed.** After promoting the
+  files, `git diff origin/main origin/beta -- apps/mimic packages/wolfpack-logsync`
+  returned exactly one line: the version park. That is the check worth repeating
+  — a graduation that silently drops a file looks identical to one that doesn't.
+- Beta re-parked at **2.5.1**, above the stable. A park at or below would tag
+  prereleases that semver-sort *below* the stable and the updater would quietly
+  stop offering betas. Discarding beta's history was safe because every beta
+  build's commit stays reachable through its release tag (v2.4.1-beta.1 … .11).
+
+**3. Web 1.1.52 — roadmap.** The 2.4.0 entry's headline feature was "the damage
+meter now shows the whole raid", which 2.5.0 partly reverses. Leaving that
+unqualified would have read as a regression rather than a correction.
+
+**4. Bot 3.1.46 — Raid-Helper staleness alarm.** Same failure family as #1,
+caught before it cost anything.
+
+**5. Task #27 held.** See the Open table. Worth stating the general rule: *the
+gate on a fleet-wide content change is whether the fleet has the fix, not
+whether the fix exists.* The stable was minutes old; nobody had it.
+
+**One process note, recorded because it nearly shipped to the wrong place.** The
+RH alarm was committed while checked out on `beta` and pushed with
+`git push -u origin main`, which reported "Everything up-to-date" — it pushed
+the *local* `main` ref, which had not moved, while the commit sat on beta. The
+tell is a push that succeeds with nothing to say. Cherry-picked onto main and
+beta reset. Check `git branch --show-current` before committing, not after.

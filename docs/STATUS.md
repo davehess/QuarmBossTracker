@@ -90,7 +90,42 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ### ✅ Done — major shipped features (not exhaustive; see git + roadmapData.ts)
 
-- **Live combined damage → a History tab — BETA (agent 3.5.80, 2026-08-14).**
+- **OpenDKP loot folds itself into the Loot tab — STABLE (bot 3.1.45,
+  2026-08-14).** Mob Info's "N× won" counts read `loot_observations`, and the
+  only thing that ever wrote the OpenDKP half of that table was an officer
+  typing `/backfillopendkploot`. Somebody last ran it on 2026-06-04, so the tab
+  was missing **758 awards across 28 raids** — Kazmodon won Silver Band of
+  Secrets at raid 98561 for 150 DKP and the item still read as never dropped.
+  `foldLootObservations()` now runs at the end of every `runSync`, 40 raids per
+  pass, newest first, as a set difference over raid ids rather than a watermark.
+  Fails open and runs AFTER reconcile so it can't copy a row about to be deleted.
+  - ⚠ **The two OpenDKP item ids are not interchangeable.** `game_item_id` is the
+    EQ catalog id; `item_id` is OpenDKP's own row id. On the 283 mirrored awards
+    where they disagree, `item_id` matched the item's real catalog name **0
+    times** and `game_item_id` matched 13. `/backfillopendkploot` preferred
+    ItemId — corrected in both places.
+  - **The shape to recognise:** a derived table fed only by a human command
+    degrades *silently and partially* — older items keep their counts, so the
+    surface looks healthy until someone checks one specific item. Ten weeks
+    unnoticed. Same family as the Raid-Helper sync below.
+
+- **Raid-Helper mirror says when it stops arriving — STABLE (bot 3.1.46,
+  2026-08-14).** The `rh_*` mirror is the ONLY durable copy of declared
+  availability (the upstream board is cleared on raid day), so a silent sync
+  failure doesn't degrade — it loses the record permanently. Two verdicts, kept
+  separate because they need different answers: **stale** (no sync in 6h, or
+  never) and **blind** (a raid inside 24h with zero sign-ups mirrored). Stale
+  outranks blind. Latched in `bot_kv` — an in-process latch would re-alarm on
+  every Railway deploy, the eleven-raid-reviews trap — keyed on the *shape* of
+  the problem so two different alarms on one day are both heard, and cleared on
+  recovery.
+  - **The 24h window is what makes it survivable.** Raids are Sun/Wed/Thu 8pm
+    ET, so 24h is "this time yesterday" — actionable, and narrow enough never to
+    fire on a normal weekend where nobody has signed up for Wednesday yet. An
+    alarm that goes off on an ordinary day is one people mute.
+  - Posts to `OFFICER_ALERT_CHANNEL_ID` → `AUDIT_TRAIL_THREAD_ID` → log-only.
+
+- **Live combined damage → a History tab — STABLE (Mimic 2.5.0 / agent 3.5.80, 2026-08-14).**
   Hitya, watching the guild column double people mid-fight: *"instead of
   displaying the combined damage during the fight, perhaps we just have the
   overlay give the last few mobs in a history tab that can be opened up once
@@ -119,7 +154,7 @@ next touch one rather than assuming a missing row means a missing doc.
     Guarded with `!HIST`.
 
 - **CH chain: un-numbered shouts never take a slot, and a ✕ removes anyone who
-  shouldn't be on it — BETA (agent 3.5.79, 2026-08-14).** Live during the Aten
+  shouldn't be on it — STABLE (Mimic 2.5.0 / agent 3.5.79, 2026-08-14).** Live during the Aten
   Ha Ra pull: Pyxil was spot-healing the RAMPAGE target and shouting
   `TUNARE'S RENEWAL Inc to Timberowl - 98% Mana Left` on each heal. Tunare's
   Renewal is a CH-equivalent, so the agent auto-assigned her a chain slot — 006,
@@ -146,8 +181,8 @@ next touch one rather than assuming a missing row means a missing doc.
     opacity 1 in ~100ms, **casting row stays at 0 indefinitely**. The row's
     18px right padding is the reserved gutter that keeps it off the countdown.
 
-- **Dashboard navigation: sidebar + tab split — BETA (agent 3.5.72,
-  2026-08-13).** Hitya: *"having to scroll in our dashboard is somewhat annoying
+- **Dashboard navigation: sidebar + tab split — STABLE (Mimic 2.5.0 / agent
+  3.5.72, graduated 2026-08-14).** Hitya: *"having to scroll in our dashboard is somewhat annoying
   to navigate."* Two halves, shipped together because the second needs the
   first. (1) The tab strip became a **left rail** — `.shell` is a flex row with a
   sticky 168px `.nav` beside a `.panes` column; under 700px it collapses back to
