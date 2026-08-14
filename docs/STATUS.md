@@ -90,6 +90,34 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ### ✅ Done — major shipped features (not exhaustive; see git + roadmapData.ts)
 
+- **CH chain: un-numbered shouts never take a slot, and a ✕ removes anyone who
+  shouldn't be on it — BETA (agent 3.5.79, 2026-08-14).** Live during the Aten
+  Ha Ra pull: Pyxil was spot-healing the RAMPAGE target and shouting
+  `TUNARE'S RENEWAL Inc to Timberowl - 98% Mana Left` on each heal. Tunare's
+  Renewal is a CH-equivalent, so the agent auto-assigned her a chain slot — 006,
+  where Mcdorf actually was — lighting ORDER CONFLICT and dropping a druid who
+  was nowhere near the rotation into the middle of it. Hitya: *"she shouldn't be
+  placed back onto the CH chain even though she's posting CHs."*
+  - **The number is what makes it a chain.** The auto-slot branch is gone; an
+    un-numbered personal-macro shout now lands on the spot-heal banner whatever
+    the spell is, carrying its `CH_EQUIVALENT_SPELLS` label so a healer can still
+    tell a full-heal-tier cast ("Druid CH") from a top-off. A druid who calls a
+    number still joins the rotation normally.
+  - **✕ on every slot row** → `POST /api/chchain/remove` → `removeChChainSlot`.
+    Deleting the row alone is not a fix: whoever seated them is still shouting,
+    so the removal blocks that (name, number) for the chain's life. Kept narrow
+    because a chain missing a real cleric kills the tank — a *different* healer
+    may still claim the number, a roster call clears the block, and on a
+    CONTESTED slot the row survives and passes to the remaining claimant instead
+    of being deleted out from under them.
+  - ⚠ **The ✕ is always drawn, only dimmed — do not "tidy" it into a
+    hover-reveal.** That was the first attempt and it fails precisely when the
+    button matters. Rows are rebuilt every paint while a cast bar moves, and a
+    newly-created element under a stationary cursor never picks up `:hover`.
+    Measured in headless Chromium against `chchain.html`: idle row reaches
+    opacity 1 in ~100ms, **casting row stays at 0 indefinitely**. The row's
+    18px right padding is the reserved gutter that keeps it off the countdown.
+
 - **Dashboard navigation: sidebar + tab split — BETA (agent 3.5.72,
   2026-08-13).** Hitya: *"having to scroll in our dashboard is somewhat annoying
   to navigate."* Two halves, shipped together because the second needs the

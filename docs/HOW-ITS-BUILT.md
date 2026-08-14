@@ -669,8 +669,9 @@ indexes are byte-for-byte unaffected).
 ### CH chain tracker
 Parses shout/raid callouts: numbered calls (`_CH_CALL_RX`), GO cues
 (`_CH_GO_RX` — stamps `lastGo` so the overlay flashes GO! on that slot),
-personal heal macros (`_CH_PERSONAL_RX`; CH-equivalent spells fold into the
-rotation as auto-slots, others render as spot heals), and the **roster
+personal heal macros (`_CH_PERSONAL_RX` — **never take a slot**, CH-equivalent
+or not; they render as the spot-heal banner, labelled "Druid CH" etc. from
+`CH_EQUIVALENT_SPELLS`), and the **roster
 announcement** ("Fargan 001, Rapha 002…" — ≥3 contiguous-from-1 pairs) which
 owns slot names authoritatively (short names resolve via the Zeal raid
 roster). Beat = median gap of last 10 calls → due-countdown, slip pivot
@@ -685,6 +686,13 @@ filter-suppressible). DDR grading: `_chGradeCall` scores each call against
 streak), ≤0.5s GREAT, ≤1s GOOD — flashed as an arcade sticker atop the
 caster's bar in `apps/mimic/chchain.html` (`ddrSticker`). Visual only, never
 TTS, by design; 🎯 overlay toggle + `POST /api/chchain/ddr`.
+Manual removal (agent 3.5.79): a ✕ on every slot row → `POST
+/api/chchain/remove {num,name}` → `removeChChainSlot`. Deleting the row is not
+enough — whoever put them there is still shouting — so it also blocks that
+(name, number) for the chain's life. Narrow on purpose: a different healer may
+still take the number, a roster call clears the block, and on a CONTESTED slot
+the row survives and passes to the remaining claimant rather than being deleted
+out from under the real cleric.
 
 ### Divine Intervention: readiness chips + the two-cleric callout (#204)
 Two separate things on the same overlay. **Readiness** is log-driven: a

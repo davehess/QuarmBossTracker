@@ -29,7 +29,10 @@
   .row{position:relative;display:grid;
     grid-template-columns:3.2em minmax(0,1fr) 3em auto;
     align-items:center;gap:6px;font-size:11px;line-height:1.3;
-    padding:3px 6px;border-radius:3px;background:rgba(255,255,255,0.03);
+    /* right padding is a reserved gutter for the ✕ (see .row .rmv) — it is
+       load-bearing, not cosmetic: without it the stat text renders under the
+       button and a countdown becomes unreadable. */
+    padding:3px 18px 3px 6px;border-radius:3px;background:rgba(255,255,255,0.03);
     text-shadow:0 1px 2px #000;border-left:2px solid transparent;
     transition:background 200ms ease}
   /* Slot number — was hard to read at 10px / dim grey. Larger + amber +
@@ -118,6 +121,24 @@
   .xbadge{display:inline-block;font-weight:800;font-size:11px;color:#fff;
     background:rgba(220,38,38,0.85);border-radius:8px;padding:0 6px;
     text-shadow:none;box-shadow:0 0 8px rgba(248,113,113,0.6)}
+  /* ── Per-row ✕ "take them off the chain" (Hitya 2026-08-14) ─────────────
+     ⚠ ALWAYS RENDERED, only dimmed — do NOT "tidy" this into a hover-reveal.
+     That was the first attempt and it fails exactly when the button is needed.
+     The rows' innerHTML is rebuilt on every paint while a cast bar is moving,
+     and a freshly-created element under a stationary cursor does not pick up
+     :hover until the mouse moves. Measured in a headless Chromium against this
+     very file: on an idle row `.row:hover .rmv` reaches opacity 1 within
+     ~100ms; on a CASTING row it stays at 0 indefinitely. Mid-fight, on the
+     slot you actually want to fix, the button would simply never appear.
+     Absolutely positioned into a reserved right gutter (see .row's
+     padding-right) rather than a 5th grid column, so the stat text can never
+     end up underneath it. */
+  .row .rmv{position:absolute;right:2px;top:1px;z-index:3;
+    color:#8b949e;font-size:11px;font-weight:700;line-height:1;cursor:pointer;
+    padding:2px 4px;border-radius:3px;background:rgba(13,17,23,0.85);
+    opacity:0.30;transition:opacity 120ms ease,color 120ms ease}
+  .row:hover .rmv{opacity:0.75}
+  .row .rmv:hover{opacity:1;color:#f87171;background:rgba(220,38,38,0.25)}
   /* ── DDR grade sticker (Hitya 2026-07-31) ──────────────────────────────
      Arcade-style GOOD / GREAT / PERFECT / MARVELOUS flash slapped on top of
      that cleric's own cast bar. Bold condensed italic, warm gradient fill,
@@ -983,6 +1004,49 @@
       + '<span class="txt" data-g="' + esc(label) + '">' + esc(label) + '</span></span>';
   }
 
+  // ✕ that takes a healer off the chain (Hitya 2026-08-14). Emitted on every
+  // row; CSS keeps it invisible until that row is hovered. The name rides in a
+  // data attribute so a CONTESTED slot removes the right claimant — see
+  // removeChChainSlot in the agent.
+  function rmvBtn(n, name){
+    return '<span class="rmv" data-num="' + n + '" data-name="' + esc(name || '') + '"'
+      + ' title="Take ' + esc(name || 'this healer') + ' off the chain">&#10006;</span>';
+  }
+  // Delegated, because the rows' innerHTML is rebuilt on every paint — a
+  // listener bound to a row would be thrown away within 150ms. mouseover /
+  // mouseout rather than mouseenter / mouseleave for the same reason: those
+  // don't bubble, so delegation can't see them.
+  (function wireRowRemove(){
+    var rowsEl = document.getElementById('rows');
+    if (!rowsEl) return;
+    function btn(e){ var t = e.target; return (t && t.classList && t.classList.contains('rmv')) ? t : null; }
+    rowsEl.addEventListener('mouseover', function(e){
+      if (btn(e)) { try { window.mimic.overlayHoverInteractive(true); } catch (err) {} }
+    });
+    rowsEl.addEventListener('mouseout', function(e){
+      if (btn(e)) { try { window.mimic.overlayHoverInteractive(false); } catch (err) {} }
+    });
+    rowsEl.addEventListener('click', function(e){
+      var b = btn(e);
+      if (!b) return;
+      e.preventDefault(); e.stopPropagation();
+      var num = parseInt(b.getAttribute('data-num'), 10);
+      if (!num) return;
+      // Drop the row immediately. The next poll is up to 2s away and the agent
+      // is authoritative, but leaving the row sitting there reads as a dead
+      // button — and this gets clicked mid-fight.
+      var row = b.parentNode;
+      if (row && row.parentNode) row.parentNode.removeChild(row);
+      if (rowsEl.__wpHtml != null) rowsEl.__wpHtml = null;   // force a real repaint next poll
+      fetch('http://127.0.0.1:' + PORT + '/api/chchain/remove', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ num: num, name: b.getAttribute('data-name') || null }),
+      }).catch(function(){});
+      try { window.mimic.overlayHoverInteractive(false); } catch (err) {}
+    });
+  })();
+
   // v1.1.5 — pivot announcement state (only speak once per slip).
   var _lastPivotKey = null;
   // Spot-heal announcement state (only speak once per event — keyed on its
@@ -1039,7 +1103,13 @@
     if (c && c.spot_heal && c.spot_heal.name) {
       var shk = c.spot_heal.atMs + '|' + c.spot_heal.name;
       spotEl.innerHTML = '<span class="spot-icon">🌿</span><span><span class="spot-name">' + esc(c.spot_heal.name) + '</span> spot healing'
-        + (c.spot_heal.spell ? ' (' + esc(c.spot_heal.spell) + ')' : '')
+        // `kind` is the CH-equivalent label ("Druid CH") when the agent
+        // recognised the spell. Preferred over the raw shout text because
+        // that's what tells a healer this was a full-heal-tier cast and not a
+        // small top-off — the same denotation the slot rows used to carry back
+        // when a druid's un-numbered shout was (wrongly) given a slot.
+        + (c.spot_heal.kind ? ' (' + esc(c.spot_heal.kind) + ')'
+           : (c.spot_heal.spell ? ' (' + esc(c.spot_heal.spell) + ')' : ''))
         + (c.spot_heal.target ? ' → <span class="spot-target">' + esc(c.spot_heal.target) + '</span>' : '') + '</span>';
       spotEl.style.display = 'flex';
       if (shk !== _lastSpotHealKey) {
@@ -1181,6 +1251,7 @@
           +   '<span class="stat">' + stat + '</span>'
           +   bar
           +   ddrSticker(s, now, ddrShowMs)
+          +   rmvBtn(n, s.name)
           + '</div>';
       } else {
         // Each contested claimant gets a real row driven by THEIR OWN last call,
@@ -1213,6 +1284,9 @@
             // DDR grade belongs to the SLOT, so it rides the first row only —
             // stamping it on both would double-count one graded beat.
             +   (ci === 0 ? ddrSticker(s, now, ddrShowMs) : '')
+            // ✕ carries THIS claimant's name: on a contested slot it must take
+            // the impostor off and leave the real cleric on the number.
+            +   rmvBtn(n, cl.name)
             + '</div>';
         }
       }

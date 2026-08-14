@@ -3650,14 +3650,13 @@ const _CH_ROSTER_HINT = /\d\s*,\s*[A-Za-z]/;
 // gaps, are they able to be included as well?" — confirmed via 2,349 of
 // Pyxil's actual raid-chat lines that this is her own cast-macro output,
 // firing on every heal she lands, not just gap-fills; there's no slot
-// number to key off of. Per the guild's answer: a spell that's their
-// class's real CH-equivalent (CH_EQUIVALENT_SPELLS) folds into the SAME
-// numbered rotation (auto-assigned a slot); anything else is a one-off
-// spot heal — surfaced as a banner, never consumes a slot.
+// number to key off of. ⚠ These NEVER consume a chain slot — see the long note
+// at the _CH_PERSONAL_RX branch in trackChChainLine. They surface as the
+// spot-heal banner, CH-equivalent or not.
 const _CH_PERSONAL_RX = /^([A-Za-z][A-Za-z'`\s]*?)\s+Inc to\s+([A-Z][\w`]*)\s*-\s*(\d{1,3})%\s*Mana Left/i;
-// spellKey → display label shown on the slot row (Hitya 2026-07-02: "we
-// should denote Druid CH on the chain"), so the overlay reads "Pyxil [Druid
-// CH]" rather than looking like an ordinary numbered cleric slot.
+// spellKey → display label for the spot-heal banner (Hitya 2026-07-02: "we
+// should denote Druid CH"), so it reads "Pyxil spot healing (Druid CH)" and a
+// healer can tell a full-heal-tier cast from a top-off at a glance.
 const CH_EQUIVALENT_SPELLS = new Map([
   ["tunares renewal", "Druid CH"],   // Druid's Complete-Heal-tier single-target heal
 ]);
@@ -3832,6 +3831,9 @@ function trackChChainLine(line, character) {
     const c = _chChain;
     c.rosterNames = c.rosterNames || {};
     for (const p of rosterPairs) {
+      // The raid re-declaring the order outranks any manual ✕ removal on the
+      // slots it names — this call IS the rotation, stated by the raid itself.
+      if (c.removed) delete c.removed[p.num];
       c.rosterNames[p.num] = _resolveChRosterName(p.token);
       // Seed an empty slot so the planned chain shows immediately, before
       // anyone has called — no lastAtMs, so it never reads as casting/"ago".
@@ -3849,6 +3851,14 @@ function trackChChainLine(line, character) {
     if (!num || num > 30) return;          // sanity: chains are small
     _chChainEnsure(atMs);
     const c = _chChain;
+    // Someone was manually removed from this slot (the overlay's ✕) and is
+    // still shouting it. Drop the call rather than re-seating them — see
+    // removeChChainSlot for why the block is (name, number) and not name-wide.
+    const declared = (c.rosterNames && c.rosterNames[num]) || speaker;
+    if (_chIsBlocked(c, num, declared) || _chIsBlocked(c, num, speaker)) {
+      c.updatedAt = atMs;
+      return;
+    }
     if (call[2]) c.target = call[2];
     const manaM = text.match(_CH_MANA_RX);
     const mana = manaM ? Math.min(100, parseInt(manaM[1], 10)) : null;
@@ -3895,43 +3905,32 @@ function trackChChainLine(line, character) {
     const spellRaw = personal[1].trim();
     const spellKey = spellRaw.toLowerCase().replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').trim();
     const mana = Math.min(100, parseInt(personal[3], 10) || 0);
-    if (CH_EQUIVALENT_SPELLS.has(spellKey)) {
-      // Folds into the numbered rotation exactly like a CH call above — same
-      // beat tracking, same lastCh/nextNum advance — just with a slot number
-      // this caster doesn't say out loud. Auto-assign one the first time we
-      // see them THIS chain session (one past the highest slot in use) and
-      // remember it so they keep the same row for the rest of the fight.
-      _chChainEnsure(atMs);
-      const c = _chChain;
-      const key = speaker.toLowerCase();
-      c.autoSlots = c.autoSlots || {};
-      let num = c.autoSlots[key];
-      if (!num) {
-        const existing = Object.keys(c.slots).map(Number);
-        num = existing.length ? Math.max.apply(null, existing) + 1 : 1;
-        c.autoSlots[key] = num;
-      }
-      const ddr = _chGradeCall(c, num, atMs);   // before the gap joins the median
-      if (c.lastCh && atMs > c.lastCh.atMs && c.lastCh.num !== num) {
-        const gap = atMs - c.lastCh.atMs;
-        if (gap > 500 && gap < 30000) { c.beats.push(gap); if (c.beats.length > 10) c.beats.shift(); }
-      }
-      const prev = c.slots[num] || {};
-      const slotName = (c.rosterNames && c.rosterNames[num]) || speaker;
-      c.slots[num] = { name: slotName, mana, lastAtMs: atMs, count: (prev.count || 0) + 1, kind: CH_EQUIVALENT_SPELLS.get(spellKey),
-                       claimants: _chMergeClaimants(prev, slotName, speaker, atMs, mana) };
-      _chReleaseClaimantsElsewhere(c, [slotName, speaker], num);
-      c.lastCh = { num, name: slotName, mana, atMs };
-      _applyChGrade(c, num, ddr);
-      const nums = Object.keys(c.slots).map(Number);
-      c.nextNum = num >= Math.max.apply(null, nums) ? Math.min.apply(null, nums) : num + 1;
-      c.updatedAt = atMs;
-      // Same reason as the numbered-call path above — advance, do not speak.
-    } else if (_chChain) {
-      // Not a CH-equivalent — a one-off spot heal riding alongside an
-      // ALREADY-running chain. Never conjures a chain of its own (mirrors
-      // the GO-cue guard below), never touches beats/lastCh/nextNum/slots.
-      _chChain.spotHeal = { name: speaker, spell: spellRaw, target: personal[2] || null, mana, atMs };
+    // ⚠ An un-numbered shout NEVER takes a chain slot, even when the spell IS
+    // a CH-equivalent.
+    //
+    // This used to auto-assign a slot the first time a druid broadcast
+    // Tunare's Renewal, on the reasoning that a rotation member who doesn't say
+    // their number out loud should still keep a stable row. Live 2026-08-13:
+    // Pyxil was spot-healing the RAMPAGE target (Timberowl) and shouting
+    // "TUNARE'S RENEWAL Inc to Timberowl - 98% Mana Left" each time. She was
+    // auto-slotted into 006 — on top of Mcdorf, who really was 006 — which lit
+    // the ORDER CONFLICT banner and put a druid who was nowhere near the
+    // rotation into the middle of it. Hitya: "she shouldn't be placed back onto
+    // the CH chain even though she's posting CHs."
+    //
+    // The number is what makes it a chain. No number, no slot — a CH-equivalent
+    // shout is a spot heal like any other, and lands on the spot-heal banner
+    // where a healer can see it without it displacing anyone.
+    if (_chChain) {
+      // A one-off heal riding alongside an ALREADY-running chain. Never
+      // conjures a chain of its own (mirrors the GO-cue guard below), never
+      // touches beats/lastCh/nextNum/slots. `kind` carries the CH-equivalent
+      // label when we have one, so the banner can say "Druid CH" rather than
+      // flattening it to a generic heal.
+      _chChain.spotHeal = {
+        name: speaker, spell: spellRaw, target: personal[2] || null, mana, atMs,
+        kind: CH_EQUIVALENT_SPELLS.get(spellKey) || null,
+      };
       _chChain.updatedAt = atMs;
     }
     return;
@@ -4103,6 +4102,92 @@ function _resolveChRosterName(token) {
   const pick = exact || (prefixHits.length === 1 ? prefixHits[0] : null);
   if (!pick) return t;
   return pick.charAt(0).toUpperCase() + pick.slice(1);
+}
+// ── Manual "get them off the chain" (Hitya, 2026-08-14) ─────────────────────
+// The ✕ on a slot row POSTs here. Removing the row alone is not enough: the
+// caller who put them there is still shouting, so the very next numbered call
+// would re-seat them within one beat and the button would look broken. So the
+// removal also BLOCKS that name on that number for the life of the chain.
+//
+// Deliberately narrow, because over-blocking is the worse failure — a chain
+// with a missing cleric kills the tank:
+//   • blocks (name, number) only. A DIFFERENT healer calling that number is a
+//     real re-assignment and seats normally.
+//   • a roster announcement ("Fargan 001, Rapha 002, …") is the raid's own
+//     ground truth and CLEARS the block for every slot it declares.
+//   • the block dies with the chain (5-minute idle reset), so it never carries
+//     into the next pull.
+//
+// `who` is optional and only matters on a CONTESTED slot, where the overlay
+// draws one row per claimant: the ✕ on Pyxil's row must take Pyxil off 006 and
+// leave Mcdorf — who is genuinely 006 — exactly where he is. Without it the
+// only available action would be nuking the whole slot, taking the real cleric
+// down with the impostor, which is the more dangerous half of the pair.
+// The block list per number is an ARRAY, not one name — a contested slot can
+// need two ✕ (remove the impostor, then find the "real" owner was wrong too),
+// and a single-name field would silently un-block the first one.
+function _chBlock(n, name) {
+  if (!name) return;
+  _chChain.removed = _chChain.removed || {};
+  const list = _chChain.removed[n] || (_chChain.removed[n] = []);
+  const lc = String(name).toLowerCase();
+  if (!list.some(x => String(x).toLowerCase() === lc)) list.push(name);
+}
+function _chIsBlocked(c, n, name) {
+  const list = c && c.removed && c.removed[n];
+  if (!Array.isArray(list) || !name) return false;
+  const lc = String(name).toLowerCase();
+  return list.some(x => String(x).toLowerCase() === lc);
+}
+function removeChChainSlot(num, who) {
+  const n = parseInt(num, 10);
+  if (!_chChain || !n) return { ok: false, removed: false, name: null };
+  const slot = _chChain.slots[n];
+  if (!slot) return { ok: true, removed: false, name: null };
+  const target = String(who || slot.name || '').trim();
+  if (!target) return { ok: true, removed: false, name: null };
+  const targetLc = target.toLowerCase();
+  const claimants = Array.isArray(slot.claimants) ? slot.claimants : [];
+  const isOwner = String(slot.name || '').toLowerCase() === targetLc;
+  const inClaims = claimants.some(cl => String(cl && cl.name || '').toLowerCase() === targetLc);
+  if (!isOwner && !inClaims) return { ok: true, removed: false, name: null };
+  _chBlock(n, target);
+  const kept = claimants.filter(cl => String(cl && cl.name || '').toLowerCase() !== targetLc);
+  // Somebody else still claims this number, so the SLOT survives — this is the
+  // contested case, and deleting the whole row here would take the real cleric
+  // off the rotation along with the impostor.
+  if (kept.length) {
+    slot.claimants = kept;
+    if (isOwner) {
+      // The row's owner is the one leaving; hand it to the most recent of the
+      // remaining claimants. Their own last cast drives the bar from here.
+      const heir = kept.slice().sort((a, b) => (b.lastAtMs || 0) - (a.lastAtMs || 0))[0];
+      slot.name = heir.name;
+      if (heir.mana != null) slot.mana = heir.mana;
+      if (heir.lastAtMs) slot.lastAtMs = heir.lastAtMs;
+      // The grade was earned by the cast we just removed — leaving it would
+      // stamp the departing healer's sticker onto the one taking over.
+      slot.grade = null; slot.gradeAtMs = 0; slot.gradeDeltaMs = 0; slot.gradeStreak = 0;
+    }
+    _chChain.updatedAt = Date.now();
+    return { ok: true, removed: true, name: target, slot_kept: true };
+  }
+  const name = target;
+  delete _chChain.slots[n];
+  if (_chChain.rosterNames) delete _chChain.rosterNames[n];
+  // Per-SLOT streaks only — the shared 'chain' streak belongs to everybody
+  // still in the rotation and must not be reset by one row leaving.
+  if (CH_DDR_STREAK_PER_SLOT && _chChain.ddrStreak) delete _chChain.ddrStreak[_chStreakKey(n)];
+  if (_chChain.lastCh && _chChain.lastCh.num === n) _chChain.lastCh = null;
+  if (_chChain.lastGo && _chChain.lastGo.num === n) _chChain.lastGo = null;
+  // Hand the beat to the next surviving slot rather than leaving nextNum
+  // pointing at a row nobody can see — that reads as a stalled chain.
+  if (_chChain.nextNum === n) {
+    const nums = Object.keys(_chChain.slots).map(Number).sort((a, b) => a - b);
+    _chChain.nextNum = nums.length ? (nums.find(x => x > n) ?? nums[0]) : null;
+  }
+  _chChain.updatedAt = Date.now();
+  return { ok: true, removed: true, name };
 }
 function chChainSnapshot() {
   if (!_chChain) return null;
@@ -4332,9 +4417,9 @@ function _diSlotTurnInMs(chain, num, nowMs) {
 //
 // Hard exclusions (things we KNOW, not things we guess):
 //   • not a Cleric — DI is spell 1546, cleric-only. Chain slots are NOT all
-//     clerics: druids gap-fill via CH_EQUIVALENT_SPELLS auto-slots (which carry
-//     a `kind` label) and shamans show up too. An UNKNOWN class stays eligible;
-//     only a known non-Cleric is dropped.
+//     clerics: druids who gap-fill call a number like anyone else ("002 - DRUID
+//     CH - Currygoat"), and shamans show up too. An UNKNOWN class stays
+//     eligible; only a known non-Cleric is dropped.
 //   • dead — the 3.5.58 death registry. The design doc predates it and lists
 //     "is this cleric actually alive" under what we cannot know; we can now.
 //   • DI confirmed on cooldown — `up === false && unknown === false` means we
@@ -21846,6 +21931,18 @@ function startWebDashboard(port) {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ ok: true, enabled: _chDdrEnabled }));
       }
+      // ✕ on a CH chain slot row (Hitya 2026-08-14) — takes that healer off the
+      // rotation and keeps them off it. Local-only state, so this is a plain
+      // in-memory edit: nothing uploads, and every client's chain is its own.
+      if (req.url === '/api/chchain/remove' && req.method === 'POST') {
+        const body = await _readBody(req);
+        let payload;
+        try { payload = JSON.parse(body); }
+        catch { res.writeHead(400); return res.end('invalid json'); }
+        const out = removeChChainSlot(payload && payload.num, payload && payload.name);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify(out));
+      }
       // ✕ from a pet tracker card — drops the per-owner /pet health snapshot
       // + observed buff landings + stats so the row stops rendering. Useful
       // when switching toons leaves stale pet state (the freshness gate now
@@ -34984,7 +35081,7 @@ module.exports = {
   DEFAULT_DROP_PATTERNS, KEEP_PATTERNS,
   SOURCELESS_SPELLS, BARD_SONGS,
   EncounterBuilder, characterFromFilename, isBackupLogFile, _splitBackupSuffix,
-  trackChChainLine, chChainSnapshot,
+  trackChChainLine, chChainSnapshot, removeChChainSlot,
   // CH cast bar / interrupt ✕ / DDR grade — exported for the scratchpad harness.
   trackChChainInterrupt, _chGradeForDelta, _chExpectedNextAt,
   CH_CAST_MS, CH_INTERRUPT_SLACK_MS, CH_INTERRUPT_LINGER_MS,
