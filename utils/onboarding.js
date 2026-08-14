@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.1.45': [
+    '**Loot you won in the last ten weeks is back on the Loot tab.** Target Info lists what a boss drops and how many times Wolf Pack has won each piece, and that count had been stuck since the 4th of June — 758 wins across 28 raids were missing, so items people had genuinely won still read as never dropped (Kazmodon\'s Silver Band of Secrets was the one that gave it away). The list of wins was only ever filled in by an officer running a command by hand, and nobody had run it since. It now fills itself in every time we sync with OpenDKP, so it stays current on its own. A second, quieter fix came with it: where OpenDKP records two different ID numbers for the same award, we had been reading the wrong one, which credited a handful of wins to whatever unrelated item happened to share that number.',
+  ],
   '3.1.42': [
     '**Guild chat stopped showing the same message twice.** A couple of machines in the raid quietly rewrite the guild lines they see before they reach us — capitalising the first letter and turning dashes, slashes and exclamation marks into spaces, so "its usually 5-7 k per full clear" arrived a second time as "Its usually 5 7 k per full clear". Our duplicate check ignored capitals and spacing but not punctuation, so it read the two as different messages and posted both. It now ignores punctuation too, and when the tidied-up copy happens to arrive first, the original wording replaces it a moment later — so you get one message, with the dashes and smileys the person actually typed.',
   ],

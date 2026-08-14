@@ -92,7 +92,13 @@ module.exports = {
         raidsScanned++;
         const items = Array.isArray(full?.Items) ? full.Items : [];
         for (const it of items) {
-          const itemId = Number(it?.ItemId ?? it?.GameItemId);
+          // GameItemId FIRST: it is the EQ catalog id, while ItemId is
+          // OpenDKP's own row id. Measured 2026-08-14 over the 283 mirrored
+          // awards where the two disagree, ItemId matched the item's real
+          // catalog name 0 times and GameItemId matched 13 — so preferring
+          // ItemId (as this did) attributed those to whatever unrelated item
+          // happened to hold that id.
+          const itemId = Number(it?.GameItemId ?? it?.ItemId);
           if (!Number.isFinite(itemId) || itemId <= 0) continue;
           awarded.push({
             item_id:   itemId,

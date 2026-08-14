@@ -664,6 +664,13 @@ async function runSync(opts = {}) {
   const reconcileResult = await reconcileRecentLoot({ full: !!opts.full, dryRun: !!opts.dryRun }).catch(err =>
     ({ error: err?.message || String(err) }));
 
+  // Fold newly-mirrored awards into loot_observations (#37). AFTER reconcile so
+  // ghosts from upstream deletions are already gone — folding first would copy
+  // a row that is about to be removed. Fail-open: the Loot tab's counts are a
+  // nicety and must never be able to fail an OpenDKP sync.
+  const lootFoldResult = await foldLootObservations({ dryRun: !!opts.dryRun }).catch(err =>
+    ({ error: err?.message || String(err) }));
+
   return {
     phase: 'done',
     raids_fetched:     listResult.fetched,
@@ -694,6 +701,10 @@ async function runSync(opts = {}) {
     reconcile_aborted:  reconcileResult?.aborted ?? false,
     reconcile_skipped:  reconcileResult?.skipped || null,
     reconcile_error:    reconcileResult?.error || null,
+    loot_fold_raids:    lootFoldResult?.raids_folded ?? 0,
+    loot_fold_rows:     lootFoldResult?.rows_written ?? 0,
+    loot_fold_pending:  lootFoldResult?.raids_pending ?? 0,
+    loot_fold_error:    lootFoldResult?.error || null,
     characters_upserted: charResult?.upserted ?? 0,
     characters_error:    charResult?.error || null,
   };
@@ -1312,7 +1323,184 @@ async function syncCharacters() {
   return { upserted, pages: pagesWalked, dropped_dupes: droppedDupes, failed_rows: failedRows };
 }
 
+// ── OpenDKP loot → loot_observations fold (#37) ──────────────────────────────
+// `opendkp_loot` is a pure mirror of what OpenDKP awarded and syncs itself.
+// `loot_observations` is what the Mob Info Loot tab reads for its "N× won"
+// counts — and until now the ONLY thing that ever wrote the OpenDKP half of it
+// was an officer typing `/backfillopendkploot`. Somebody last ran that on
+// 2026-06-04, so by 2026-08-14 the Loot tab was missing **758 awards across 28
+// raids**: Kazmodon won Silver Band of Secrets at raid 98561 for 150 DKP and the
+// item still read as never dropped (Hitya spotted it, "are we missing rows of
+// loot drops?").
+//
+// The failure mode is the point: a derived table fed only by a human command
+// degrades SILENTLY and PARTIALLY — older items keep their counts, so the
+// surface looks healthy right up until someone checks one specific item. Same
+// family as the unmonitored Raid-Helper sync. Anything whose only writer is a
+// person running a command needs an automatic feeder or a staleness alarm.
+//
+// Runs at the end of every runSync, folding raids present in opendkp_loot but
+// absent from loot_observations. Fail-open and idempotent: a raid is folded once
+// and never revisited, so a bad pass costs one cycle, not the table.
+
+// Cap per pass so a cold start (all 8k awards) spreads over a few cycles
+// instead of one enormous insert. Newest raids fold first — recent loot is what
+// people look up.
+const LOOT_FOLD_RAIDS_PER_RUN = 40;
+
+// OpenDKP carries TWO ids per award and they are not the same thing:
+// `game_item_id` is the EQ catalog id, `item_id` is OpenDKP's own row id. On the
+// 283 rows where they disagree, `item_id` matched the item's real catalog name
+// **0 times** and `game_item_id` matched 13 (measured 2026-08-14). The existing
+// /backfillopendkploot command prefers ItemId, which is why this does not.
+// Name agreement decides when we can check it; otherwise game id wins.
+function resolveCatalogItemId(row, nameById, idByName) {
+  const nm = String(row.item_name || '').toLowerCase().trim();
+  const cands = [row.game_item_id, row.item_id].filter(v => Number.isFinite(v) && v > 0);
+  for (const c of cands) {
+    const known = nameById.get(c);
+    if (known && known === nm) return c;          // id and name agree — certain
+  }
+  const byName = idByName.get(nm);
+  if (Number.isFinite(byName)) return byName;      // name is unambiguous in the catalog
+  for (const c of cands) if (nameById.has(c)) return c;   // resolves, name unverifiable
+  return cands.length ? cands[0] : null;           // nothing resolves; keep the id for the record
+}
+
+async function foldLootObservations(opts = {}) {
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+  const limit = Number.isFinite(opts.maxRaids) ? opts.maxRaids : LOOT_FOLD_RAIDS_PER_RUN;
+
+  // Which raids are already folded? Compare raid-id SETS rather than keeping a
+  // watermark — raid ids happen to be monotonic today, but a set difference
+  // stays correct if that ever stops being true, and both sides are small.
+  const [mirror, already] = await Promise.all([
+    supabase.select('opendkp_loot', 'select=raid_id,item_id,game_item_id,item_name,character_name,dkp&limit=50000'),
+    supabase.select('loot_observations',
+      `guild_id=eq.${encodeURIComponent(guildId)}&source=in.(opendkp,opendkp_ambiguous,opendkp_unknown)&select=raid_id&limit=50000`),
+  ]);
+  if (!Array.isArray(mirror) || !Array.isArray(already)) return { skipped: 'select failed' };
+
+  const foldedRaids = new Set(already.map(r => r.raid_id).filter(v => v != null));
+  const pending = new Map();                       // raid_id → rows
+  for (const r of mirror) {
+    if (r.raid_id == null || foldedRaids.has(r.raid_id)) continue;
+    if (!pending.has(r.raid_id)) pending.set(r.raid_id, []);
+    pending.get(r.raid_id).push(r);
+  }
+  if (pending.size === 0) return { raids_folded: 0, rows_written: 0, raids_pending: 0 };
+
+  const raidIds = [...pending.keys()].sort((a, b) => b - a).slice(0, limit);   // newest first
+  const raidsPending = pending.size - raidIds.length;
+  const awards = raidIds.flatMap(id => pending.get(id));
+
+  // Raid timestamps — posted_at must be WHEN the loot was awarded, not now, or
+  // every backfilled row lands in a single bogus instant.
+  const tsByRaid = new Map();
+  for (let i = 0; i < raidIds.length; i += 200) {
+    const chunk = raidIds.slice(i, i + 200);
+    const rows = await supabase.select('opendkp_raids', `raid_id=in.(${chunk.join(',')})&select=raid_id,ts&limit=1000`);
+    if (Array.isArray(rows)) for (const r of rows) if (r.ts) tsByRaid.set(r.raid_id, r.ts);
+  }
+
+  // Catalog lookup for id/name reconciliation.
+  const nameById = new Map(), idByName = new Map();
+  const wantIds = [...new Set(awards.flatMap(a => [a.game_item_id, a.item_id]).filter(v => Number.isFinite(v) && v > 0))];
+  for (let i = 0; i < wantIds.length; i += 200) {
+    const rows = await supabase.select('eqemu_items', `id=in.(${wantIds.slice(i, i + 200).join(',')})&select=id,name&limit=2000`);
+    if (Array.isArray(rows)) for (const r of rows) nameById.set(r.id, String(r.name || '').toLowerCase().trim());
+  }
+  const wantNames = [...new Set(awards.map(a => String(a.item_name || '').trim()).filter(Boolean))];
+  for (let i = 0; i < wantNames.length; i += 100) {
+    const list = wantNames.slice(i, i + 100).map(n => '"' + n.replace(/"/g, '""') + '"').join(',');
+    const rows = await supabase.select('eqemu_items', `name=in.(${encodeURIComponent(list)})&select=id,name&limit=2000`);
+    if (!Array.isArray(rows)) continue;
+    const seen = new Map();
+    for (const r of rows) {
+      const k = String(r.name || '').toLowerCase().trim();
+      seen.set(k, seen.has(k) ? null : r.id);      // null = the name is ambiguous
+    }
+    for (const [k, v] of seen) if (v != null) idByName.set(k, v);
+  }
+
+  // NPC attribution, same rules as /backfillopendkploot: exactly one NPC drops
+  // it → confident; several → ambiguous; none → unknown. Ambiguous and unknown
+  // rows are still WRITTEN (with marker sources) so what we skipped is visible
+  // rather than silently lost — the Loot tab counts source='opendkp' only.
+  const catalogIdByAward = new Map();
+  for (const a of awards) catalogIdByAward.set(a, resolveCatalogItemId(a, nameById, idByName));
+  const dropIds = [...new Set([...catalogIdByAward.values()].filter(v => Number.isFinite(v) && v > 0))];
+  const dropOwnerByItem = new Map();
+  for (let i = 0; i < dropIds.length; i += 100) {
+    const rows = await supabase.select('eqemu_npc_drops',
+      `item_id=in.(${dropIds.slice(i, i + 100).join(',')})&select=item_id,npc_id,npc_name&limit=20000`);
+    if (!Array.isArray(rows)) continue;
+    const byItem = new Map();
+    for (const row of rows) {
+      if (!byItem.has(row.item_id)) byItem.set(row.item_id, new Map());
+      byItem.get(row.item_id).set(row.npc_id, row.npc_name);
+    }
+    for (const [id, npcs] of byItem) {
+      dropOwnerByItem.set(id, npcs.size === 1
+        ? { npc_id: [...npcs.keys()][0], npc_name: [...npcs.values()][0] }
+        : null);
+    }
+  }
+
+  let confident = 0, ambiguous = 0, unknown = 0;
+  const rows = awards.map(a => {
+    const itemId = catalogIdByAward.get(a);
+    const owner = itemId != null ? dropOwnerByItem.get(itemId) : undefined;
+    const base = {
+      guild_id:             guildId,
+      item_id:              itemId,
+      item_name:            a.item_name || null,
+      posted_at:            tsByRaid.get(a.raid_id) || new Date().toISOString(),
+      posted_by_discord_id: 'opendkp:raid' + a.raid_id,
+      raid_id:              a.raid_id,
+      winner_character:     a.character_name || null,
+      dkp_amount:           Number.isFinite(a.dkp) ? a.dkp : null,
+    };
+    if (owner) {
+      confident++;
+      return { ...base, npc_name_lower: String(owner.npc_name).toLowerCase().replace(/_/g, ' ').trim(),
+               npc_id: owner.npc_id, source: 'opendkp' };
+    }
+    if (itemId != null && dropOwnerByItem.has(itemId)) {
+      ambiguous++;
+      return { ...base, npc_name_lower: '(ambiguous)', npc_id: null, source: 'opendkp_ambiguous' };
+    }
+    unknown++;
+    return { ...base, npc_name_lower: '(unknown)', npc_id: null, source: 'opendkp_unknown' };
+  });
+
+  // Collapse exact duplicates inside this batch (the same item awarded twice to
+  // the same person for the same DKP in one raid is one award as far as a
+  // per-item win count is concerned).
+  const { rows: deduped } = dedupByConflictKey(
+    rows, ['source', 'raid_id', 'item_id', 'winner_character', 'dkp_amount'], { nullsNotDistinct: true },
+  );
+
+  if (opts.dryRun) {
+    return { dry_run: true, raids_folded: raidIds.length, rows_ready: deduped.length,
+             confident, ambiguous, unknown, raids_pending: raidsPending };
+  }
+
+  let written = 0;
+  for (let i = 0; i < deduped.length; i += 500) {
+    const slice = deduped.slice(i, i + 500);
+    const w = await supabase.insert('loot_observations', slice);
+    if (Array.isArray(w)) written += w.length;
+    else console.warn(`[opendkp-loot-fold] insert of ${slice.length} row(s) failed`);
+  }
+  console.log(`[opendkp-loot-fold] folded ${raidIds.length} raid(s), ${written} row(s) `
+    + `(${confident} attributed, ${ambiguous} ambiguous, ${unknown} unknown), ${raidsPending} raid(s) still pending`);
+  return { raids_folded: raidIds.length, rows_written: written, confident, ambiguous, unknown,
+           raids_pending: raidsPending };
+}
+
 module.exports = {
   runSync, syncRaidsList, syncRaidDetail, syncCharacters, syncAuctions, syncAudits, syncAdjustments,
   reconcileRecentLoot, classifyAuditAction, lootDiffRemovals, dedupByConflictKey,
+  foldLootObservations, resolveCatalogItemId,
 };
