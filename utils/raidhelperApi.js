@@ -189,9 +189,87 @@ async function syncRecent({ pageLimit = 4 } = {}) {
   return { events: evCount, signups: sgCount };
 }
 
+// ── Staleness check (#34) ────────────────────────────────────────────────────
+// This mirror is the ONLY durable copy of who said they were coming. The
+// upstream Raid-Helper board is cleared on raid day, so a sync that quietly
+// stops working does not degrade — it deletes the record, permanently, and
+// nothing anywhere says so. Nobody would notice until an officer went looking
+// for last week's availability and found nothing.
+//
+// Two distinct failures, because they need different answers:
+//   • MIRROR STALE — no successful sync in a long while. The API key expired,
+//     RH moved hosts again (it has, .dev → .xyz), the route changed. Broad.
+//   • BLIND SPOT — a raid is coming up and we hold no signups for it. The sync
+//     may be "working" (events arriving) while the part that matters is empty,
+//     which is the failure that actually costs us availability data.
+//
+// Pure and side-effect-free: takes the facts, returns a verdict. The caller
+// decides whether to shout, so this can be tested without a Discord client.
+const RH_STALE_HOURS = 6;            // ~12 missed syncs at the 30-min cadence
+// 24h = "this time yesterday", i.e. the evening before a raid. Deliberately not
+// wider: raids are Sun/Wed/Thu at 8pm ET, and a window that reaches back into
+// Friday would alarm on a perfectly normal not-yet-signed-up weekend. An alarm
+// that fires on an ordinary day is one people learn to ignore, which is worse
+// than no alarm — and this one posts to an officer channel every 30 minutes.
+const RH_BLIND_SPOT_HOURS = 24;
+
+function assessFreshness({ nowMs, lastSyncMs, upcoming = [] } = {}) {
+  const now = Number.isFinite(nowMs) ? nowMs : Date.now();
+  if (!Number.isFinite(lastSyncMs) || lastSyncMs <= 0) {
+    return { level: 'stale', reason: 'never', ageHours: null, event: null };
+  }
+  const ageHours = (now - lastSyncMs) / 3_600_000;
+  if (ageHours >= RH_STALE_HOURS) {
+    return { level: 'stale', reason: 'age', ageHours, event: null };
+  }
+  // Soonest upcoming raid inside the window that has nothing signed up for it.
+  const soon = upcoming
+    .filter(e => e && Number.isFinite(e.startMs) && e.startMs > now
+                 && (e.startMs - now) <= RH_BLIND_SPOT_HOURS * 3_600_000)
+    .sort((a, b) => a.startMs - b.startMs);
+  const blind = soon.find(e => !(e.signupCount > 0));
+  if (blind) return { level: 'blind', reason: 'no-signups', ageHours, event: blind };
+  return { level: 'ok', reason: null, ageHours, event: null };
+}
+
+// Gather the facts assessFreshness needs. Separate from the verdict so the
+// rules stay testable without a database.
+async function freshnessSnapshot() {
+  const supabase = require('./supabase');
+  if (!supabase.isEnabled()) return null;
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+  const nowIso = new Date().toISOString();
+  const horizonIso = new Date(Date.now() + RH_BLIND_SPOT_HOURS * 3_600_000).toISOString();
+  const [latest, events] = await Promise.all([
+    supabase.select('rh_signups', 'select=synced_at&order=synced_at.desc&limit=1'),
+    supabase.select('rh_events',
+      `guild_id=eq.${encodeURIComponent(guildId)}&start_time=gte.${encodeURIComponent(nowIso)}`
+      + `&start_time=lte.${encodeURIComponent(horizonIso)}&select=id,title,start_time&order=start_time.asc&limit=20`),
+  ]);
+  const lastSyncMs = Array.isArray(latest) && latest[0]?.synced_at
+    ? Date.parse(latest[0].synced_at) : 0;
+  const upcoming = [];
+  for (const e of (Array.isArray(events) ? events : [])) {
+    // Count per event rather than trusting a join — an event row can exist with
+    // zero signups mirrored, and that gap IS the thing we are looking for.
+    let signupCount = 0;
+    try {
+      const rows = await supabase.select('rh_signups',
+        `event_id=eq.${encodeURIComponent(e.id)}&select=signup_id&limit=1000`);
+      signupCount = Array.isArray(rows) ? rows.length : 0;
+    } catch { signupCount = 0; }
+    upcoming.push({ id: e.id, title: e.title || 'raid', startMs: Date.parse(e.start_time), signupCount });
+  }
+  return { nowMs: Date.now(), lastSyncMs, upcoming };
+}
+
 module.exports = {
   isEnabled,
   listServerEvents,
   getEvent,
   syncRecent,
+  assessFreshness,
+  freshnessSnapshot,
+  RH_STALE_HOURS,
+  RH_BLIND_SPOT_HOURS,
 };

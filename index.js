@@ -869,14 +869,76 @@ function startRaidHelperSync() {
     console.log('[raidhelper-api] skipped — RH_API_KEY and/or RH_SERVER_ID unset');
     return;
   }
-  setTimeout(() => {
-    rh.syncRecent().then(r => console.log('[raidhelper-api] initial:', JSON.stringify(r)))
-                   .catch(err => console.warn('[raidhelper-api] initial failed:', err?.message));
-  }, 60_000);
-  setInterval(() => {
-    rh.syncRecent().then(r => console.log('[raidhelper-api] interval:', JSON.stringify(r)))
-                   .catch(err => console.warn('[raidhelper-api] interval failed:', err?.message));
-  }, 30 * 60_000);
+  const cycle = (label) => rh.syncRecent()
+    .then(r => console.log(`[raidhelper-api] ${label}:`, JSON.stringify(r)))
+    .catch(err => console.warn(`[raidhelper-api] ${label} failed:`, err?.message))
+    .finally(() => _checkRaidHelperFreshness().catch(err =>
+      console.warn('[raidhelper-freshness] check failed:', err?.message)));
+  setTimeout(() => cycle('initial'), 60_000);
+  setInterval(() => cycle('interval'), 30 * 60_000);
+}
+
+// ── Raid-Helper staleness alarm (#34) ───────────────────────────────────────
+// The rh_* mirror is the ONLY durable copy of declared availability — the
+// upstream board is cleared on raid day. So a sync that quietly stops working
+// does not degrade, it permanently loses the record, and until now nothing
+// anywhere said so. This runs after every sync and shouts once per episode.
+//
+// Latched in bot_kv, not in memory: state.json does not survive a Railway
+// deploy (there is no volume), so an in-process latch would re-alarm on every
+// redeploy — the same trap that posted eleven copies of one raid review.
+const _RH_FRESH_KEY = 'rh_freshness_alarm';
+async function _checkRaidHelperFreshness() {
+  const rh = require('./utils/raidhelperApi');
+  const supabase = require('./utils/supabase');
+  if (!rh.isEnabled() || !supabase.isEnabled()) return;
+  const snap = await rh.freshnessSnapshot();
+  if (!snap) return;
+  const verdict = rh.assessFreshness(snap);
+
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+  let prev = {};
+  try {
+    const rows = await supabase.select('bot_kv',
+      `guild_id=eq.${encodeURIComponent(guildId)}&key=eq.${_RH_FRESH_KEY}&select=value&limit=1`);
+    if (Array.isArray(rows) && rows[0]?.value && typeof rows[0].value === 'object') prev = rows[0].value;
+  } catch (e) { console.warn('[raidhelper-freshness] state read failed:', e?.message); }
+
+  // One alarm per episode. The key carries the SHAPE of the problem so a
+  // stale-mirror alarm and a blind-spot alarm on the same day both get heard,
+  // but neither repeats every 30 minutes.
+  const key = verdict.level === 'ok' ? null
+            : verdict.level + ':' + (verdict.event?.id || verdict.reason);
+  if (verdict.level === 'ok') {
+    if (prev.key) {
+      console.log('[raidhelper-freshness] recovered');
+      try {
+        await supabase.upsert('bot_kv', [{ guild_id: guildId, key: _RH_FRESH_KEY, value: {},
+          updated_at: new Date().toISOString() }], 'guild_id,key');
+      } catch (e) { console.warn('[raidhelper-freshness] state clear failed:', e?.message); }
+    }
+    return;
+  }
+  if (prev.key === key) return;                       // already shouted about this one
+
+  const msg = verdict.level === 'stale'
+    ? (verdict.reason === 'never'
+        ? '⚠️ **Raid-Helper sync has never landed.** Nothing is mirroring who signed up, and the Raid-Helper board itself is cleared on raid day — so availability is being lost as it happens. Check `RH_API_KEY` (regenerate with `/apikey refresh` then `/apikey show`) and `RH_SERVER_ID`.'
+        : `⚠️ **Raid-Helper sync is ${Math.floor(verdict.ageHours)}h stale.** Nothing has mirrored in since then, and the board is cleared on raid day, so anything signed up in the meantime is being lost. Check \`RH_API_KEY\` (regenerate with \`/apikey refresh\` then \`/apikey show\`) — the key expiring, or Raid-Helper moving hosts again, are the two that have bitten us.`)
+    : `⚠️ **No sign-ups mirrored for the next raid.** "${verdict.event.title}" starts <t:${Math.floor(verdict.event.startMs / 1000)}:R> and we hold zero sign-ups for it. The sync itself looks alive (last run ${Math.floor(verdict.ageHours)}h ago), so this is the events arriving without their sign-ups — worth a look before the board clears.`;
+
+  const chId = process.env.OFFICER_ALERT_CHANNEL_ID || process.env.AUDIT_TRAIL_THREAD_ID;
+  if (chId) {
+    try {
+      const ch = await client.channels.fetch(chId).catch(() => null);
+      if (ch) await ch.send(msg);
+    } catch (e) { console.warn('[raidhelper-freshness] post failed:', e?.message); }
+  }
+  console.warn('[raidhelper-freshness]', verdict.level, verdict.reason, `age=${verdict.ageHours}h`);
+  try {
+    await supabase.upsert('bot_kv', [{ guild_id: guildId, key: _RH_FRESH_KEY,
+      value: { key, at: new Date().toISOString() }, updated_at: new Date().toISOString() }], 'guild_id,key');
+  } catch (e) { console.warn('[raidhelper-freshness] state save failed:', e?.message); }
 }
 
 async function runStartupSequence(readyClient) {
