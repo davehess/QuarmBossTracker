@@ -3854,7 +3854,13 @@ function trackChChainLine(line, character) {
     const nums = Object.keys(c.slots).map(Number);
     c.nextNum = num >= Math.max.apply(null, nums) ? Math.min.apply(null, nums) : num + 1;
     c.updatedAt = atMs;
-    _maybeAnnounceChGo(c, atMs);
+    // NOTE: deliberately no _maybeAnnounceChGo here. Advancing nextNum when a
+    // cleric STARTS casting is right for the overlay (the next row lights up
+    // and its countdown runs), but speaking it here announced the next slot a
+    // full cast time before that cleric was actually due — Hitya, live
+    // 2026-08-13: "the 003 GO for Manamana is called out twice and the second
+    // one is correct; the first is hitting 002 starts casting CH". Only a real
+    // GO call speaks now (see the _CH_GO_RX branch below).
     return;
   }
   // Personal heal-cast broadcast — no slot number in the raw line at all.
@@ -3894,7 +3900,7 @@ function trackChChainLine(line, character) {
       const nums = Object.keys(c.slots).map(Number);
       c.nextNum = num >= Math.max.apply(null, nums) ? Math.min.apply(null, nums) : num + 1;
       c.updatedAt = atMs;
-      _maybeAnnounceChGo(c, atMs);
+      // Same reason as the numbered-call path above — advance, do not speak.
     } else if (_chChain) {
       // Not a CH-equivalent — a one-off spot heal riding alongside an
       // ALREADY-running chain. Never conjures a chain of its own (mirrors
@@ -4197,10 +4203,20 @@ function _isOwnCharacterName(name) {
     && w.lastSeen && (now - w.lastSeen) <= OWN_CHARACTER_ACTIVE_MS);
 }
 
-// CH chain "0N GO" callout (#103). Called after every point that advances
-// _chChain.nextNum. When the on-deck slot (nextNum) is owned by one of our
-// watched characters — i.e. the chain has reached YOUR beat — speak "0N GO"
-// through the trigger pipeline. Debounced on the slot number so a slot only
+// CH chain "0N GO" callout (#103). Fires ONLY from an explicit "0N go" cue in
+// chat — never from a cleric starting their cast.
+//
+// ⚠ It used to fire from both. The cast path advances nextNum the moment the
+// PREVIOUS cleric begins casting, so speaking there announced the next slot a
+// full cast (~10s) before that cleric was due; the real GO call then announced
+// it again at the right moment. Two callouts, the first one wrong (Hitya, live
+// 2026-08-13). The single `_lastChGoNum` cursor hid it whenever the two fires
+// were adjacent, which is why it only showed up once a druid CH / auto-slot
+// cast landed between them and moved the cursor.
+//
+// When the on-deck slot (nextNum) is owned by one of our watched characters —
+// i.e. the chain has reached YOUR beat — speak "0N GO" through the trigger
+// pipeline. Debounced on the slot number so a slot only
 // announces once per rotation pass (nextNum cycles 1..N; each transition INTO
 // a new number can announce, re-entry to the same number can't back-to-back).
 // The master enableTriggerTts flag is honored downstream by the trigger
