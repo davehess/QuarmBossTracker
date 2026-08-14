@@ -28,6 +28,14 @@
      wraps narrow. */
   li{display:grid;grid-template-columns:1.1em minmax(0,1fr) 38px 50px 42px 32px;
      gap:6px;align-items:baseline;font-size:11px;padding:1px 0}
+  /* Observed ("what THIS machine saw") is its own column, not a parenthetical
+     tucked under the guild number. Inline it wrapped onto a second line and
+     doubled the height of every row for a value most people ignore — a lot of
+     dead space on a window that is usually wide (Hitya 2026-08-13).
+     Hidden below 400px so a narrow HUD keeps the compact 6-column layout; the
+     value is not lost there, the inline fallback still renders. */
+  li .obs, .colhdr .obs{display:none}
+  .obs-inline{color:#8b949e;font-size:9px}
   li .r{color:#6b7280;text-align:right}
   li .n{color:#c9d1d9;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
   li .p{color:#6b7280;text-align:right;font-size:10px}
@@ -48,10 +56,18 @@
   .rowcfg{display:flex;align-items:center;gap:1px;margin-left:auto}
   .rowcfg .rowsn{font-size:10px;color:#9aa4ad;min-width:15px;text-align:center;font-variant-numeric:tabular-nums}
   .maxhit{font-size:9px;color:#f87171;font-weight:500;margin-left:4px}
+  @media (min-width: 400px){
+    li{grid-template-columns:1.1em minmax(0,1fr) 38px 50px 46px 42px 32px}
+    .colhdr{grid-template-columns:1.1em minmax(0,1fr) 38px 50px 46px 42px 32px}
+    li .obs, .colhdr .obs{display:block;text-align:right}
+    li .obs{color:#8b949e;font-variant-numeric:tabular-nums;font-size:10px}
+    li.total .obs{color:#8b949e;font-weight:600}
+    .obs-inline{display:none}   /* lives in its own column up here */
+  }
   .colhdr{display:grid;grid-template-columns:1.1em minmax(0,1fr) 38px 50px 42px 32px;
      gap:6px;font-size:9px;color:#6b7280;letter-spacing:0.05em;
      text-transform:uppercase;padding:2px 0 1px;border-bottom:1px solid rgba(110,118,129,0.18);margin-bottom:2px}
-  .colhdr .r,.colhdr .p,.colhdr .d,.colhdr .dps,.colhdr .sec{text-align:right}
+  .colhdr .r,.colhdr .p,.colhdr .d,.colhdr .obs,.colhdr .dps,.colhdr .sec{text-align:right}
   .dim{color:#6b7280;font-size:10px}
   .conn{font-size:9px}
   .conn.ok{color:#56d364}
@@ -151,7 +167,7 @@
       </span>
     </div>
     <div id="colhdr" class="colhdr" style="display:none">
-      <span class="r">#</span><span>Name</span><span class="p">%</span><span class="d" id="colD">Damage</span><span class="dps" id="colDps">DPS</span><span class="sec">Sec</span>
+      <span class="r">#</span><span>Name</span><span class="p">%</span><span class="d" id="colD">Damage</span><span class="obs" id="colObs" title="What YOUR machine saw of this fight">Obs</span><span class="dps" id="colDps">DPS</span><span class="sec">Sec</span>
     </div>
     <ul id="deeps"></ul>
     <div class="dim" id="empty">waiting for combat…</div>
@@ -556,18 +572,20 @@
           ? ' <span class="maxhit" title="biggest single hit absorbed">·' + fmt(mx) + '</span>'
           : '';
         var cls = (isMe ? 'me' : '') + (extra ? ' me-extra' : '');
+        var _obsDiffers = !!(GUILD && row[7] !== undefined && row[7] !== d);
         return '<li' + (cls.trim() ? ' class="' + cls.trim() + '"' : '') + '>'
              + '<span class="r">' + rank + '.</span>'
              + '<span class="n">' + esc(n) + ownerHtml + maxHitHtml + '</span>'
              + '<span class="p">' + fmtPct(pct) + '</span>'
              + '<span class="d">' + fmt(d)
-               // What THIS machine saw, when it differs from the guild figure.
-               // Suppressed when they agree (nothing to learn) and when there
-               // is no guild view at all (the number would just be itself).
-               + (GUILD && row[7] !== undefined && row[7] !== d
-                   ? ' <span style="color:#8b949e;font-size:9px">(' + fmt(row[7]) + ')</span>'
-                   : '')
+               // Narrow layout only — the same value moves to the Obs column at
+               // >=400px, where .obs-inline is hidden so it never shows twice.
+               + (_obsDiffers ? ' <span class="obs-inline">(' + fmt(row[7]) + ')</span>' : '')
              + '</span>'
+             // What THIS machine saw, when it differs from the guild figure.
+             // Suppressed when they agree (nothing to learn) and when there is
+             // no guild view at all (the number would just be itself).
+             + '<span class="obs">' + (_obsDiffers ? fmt(row[7]) : '') + '</span>'
              + '<span class="dps">' + fmt(dps) + '</span>'
              + '<span class="sec">' + (secs > 0 ? secs : '—') + '</span>'
              + '</li>';
@@ -582,6 +600,9 @@
              + '<span class="n">' + esc(totLabel) + '</span>'
              + '<span class="p"></span>'
              + '<span class="d">' + fmt(totalDmg) + '</span>'
+             // Empty, but it MUST exist: the grid has 7 columns at >=400px and
+             // a missing cell slides Sec into the Obs slot.
+             + '<span class="obs"></span>'
              + '<span class="dps">' + fmt(totalDps) + '</span>'
              + '<span class="sec">' + (secs > 0 ? secs : '—') + '</span>'
              + '</li>';
