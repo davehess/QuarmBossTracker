@@ -926,6 +926,33 @@ next touch one rather than assuming a missing row means a missing doc.
     own blind spot. Six tests in `test/quartermaster.test.js`, one of which
     serializes the scoped row and asserts no outsider's name appears **anywhere**
     in it, so a future name-carrying field fails there rather than in production.
+- **Roll calls get their item name without a `|` — BETA (agent 3.5.84,
+  2026-08-14).** Hitya, on the night's /rolls page: *"These rolls didn't get
+  consolidated to loot in the website but did on here."* Eleven sessions, all
+  **unlabeled roll**, LOOTED BY empty. Cause: `trackRollItemLine` opened with
+  `if (line.indexOf('|') === -1) return;` and the caller had used commas.
+  - **One missing label emptied TWO columns.** `attributeLoot()` starts
+    `if (!session.item) return []` — the item name is the join key to
+    `looted_items`, not just a caption. The loot was captured fine all along;
+    two of the four Tears went to someone other than the roll winner, which is
+    exactly the case that column exists for.
+  - **The pipe rule matched the documented convention, not the used one.**
+    45 days of `chat_messages` say four shapes occur and only pipes worked:
+    commas, tier lists (`311 pick, 322 upgrade` = ONE item, three ranges), and
+    bare `Atramentous Shield 333` — the last being the most common of all.
+    `parseRollItemLine` now walks the numbers instead of splitting; the tier
+    case falls out for free (the text between ranges is `pick,`, not an item).
+  - **The guards came from a sweep, not from imagination.** Running the parser
+    over every line within 20 min of a live roll set found four it would have
+    mislabelled — *"I think we were randoming 100."*, *"You didn't even bid
+    100."*, *"DI - Guts 100"*, *"Do a 777 if you want a Shield of the
+    Immaculate"* — each minutes from a real 0-100/0-777 set. All four are now
+    tests, and the sweep also caught two regressions the fixtures missed.
+  - Also bounded the label lookup to 20 min (`ROLL_ITEM_LINK_MS`); the map is
+    keyed by roll NUMBER and swept only past 200 entries, so an unbounded read
+    let an 8pm label claim an 11pm 0-333 set.
+  - Last night's four Tears backfilled via `roll_set_overrides` (additive,
+    one DELETE to undo). ⚠ Graduate to stable with the next Mimic line.
 - **#91 roll-loot review surface (remainder) — DONE end-to-end (2026-07-19,
   agent 3.3.97 beta + bot 3.0.219 + web 1.0.250 on main).** The capture half
   shipped a week ago (roll_sets since 3.3.78, Hot Dice PERFECT events since

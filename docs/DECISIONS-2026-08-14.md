@@ -12,6 +12,7 @@ first and reach back for the older detail.
 | Item | State |
 |---|---|
 | **Does guild membership belong in front of PERSONAL tooling?** | Hitya, on the mule upload: *"Being in the guild should not be a limiter for someone making a new character and trying to use the inventory function or target info overlays or any of those things outside of raids."* The claim rule is fixed (below); **the two sign-in gates are not** — someone outside the guild can't reach `/me`, so the upload they need is behind a door they can't open. Splitting personal surfaces from guild surfaces changes who can see guild data, so it needs Hitya's call on shape: guest role, a separate personal tier, or Mimic-only with no web account (task #40) |
+| **Roll labels — one line of chat is still unreachable** | Agent 3.5.84 reads commas, tier lists and bare `Item 333` calls, but `"Do a 777 if you want a Shield of the Immaculate"` names the item AFTER the number mid-sentence, and every rule that would catch it also catches real chatter. It stays unlabeled — the same line the `roll_set_overrides` migration cites as why officer edits exist. Also accepted: a roll for TURN ORDER (`Holytomato 111, Emoo 222…`) labels player names as items |
 | **Task #27 — the 8 muted trash triggers** | Gate is *"the fleet is on the fix"*, not *"the fix exists"*. Mimic 2.5.0 (agent 3.5.80) shipped 04:08 UTC and **nobody has installed it yet** — flipping the rows on now puts the wall back for every raider still on 2.4.x, which is exactly what the gate prevents. Also a raid-noise call, not a code change: it reaches the whole fleet in ~2 min with no review. Restore after the fleet has updated, on Hitya's word |
 | **560 pre-existing duplicate loot rows** | 337 groups across raids 44080–92092, from overlapping `/backfillopendkploot` runs. They inflate "N× won" the same way the fold's bug did. Cleaning them is a destructive edit to historical guild data → needs Hitya's word (task #39). Once gone, a unique index on (source, raid_id, item_id, winner_character, dkp_amount) makes this class of bug structurally impossible |
 | **Mimic 2.5.0 — first raid** | The whole 2.5 line (History tab, CH ✕, dashboard split, pet fold, backup-log rule) is browser-verified and unit-tested but has not been through a raid. Sunday is the first real test |
@@ -366,3 +367,89 @@ Two things that make it hold:
 sees *"None of your characters — 11 in the guild have one."* A card that just
 went blank next to "11 owners" would read as a bug, and people report bugs that
 are actually policy.
+
+---
+
+## A roll call is not a pipe-separated list
+
+**The report (Hitya).** *"These rolls didn't get consolidated to loot in the
+website but did on here"* — the /rolls page showing eleven sessions for the
+night, every one **unlabeled roll**, LOOTED BY empty, next to a Command Center
+screenshot of the same four ranges.
+
+**The cause was one line, and it had been there since #91:**
+
+```js
+if (!line || line.indexOf('|') === -1) return;   // the convention always separates with |
+```
+
+The convention did not always separate with `|`. Canopy's call was:
+
+```
+[G] [Canopy]: Black Tear 111 , Platinum Tear 222 , Poison Tear 333, Runed Tear 444
+```
+
+**Why one missing label emptied two columns.** `attributeLoot()` opens with
+`if (!session.item) return []`. So the item name is not just the label — it is
+the JOIN KEY to `looted_items`. No name, no loot attribution, no LOOTED BY. The
+loot itself had been captured perfectly all along: all four Tears were in
+`looted_items`, and two of them went to someone **other** than the roll winner
+(333 Canopy → looted by Gnomistakes, 444 Fargan → looted by Mammy), which is
+precisely the case the column exists to show. The data was there; the join
+wasn't.
+
+**What the chat actually looks like.** Reading 45 days of `chat_messages`
+instead of trusting the convention, three shapes matter and only the first
+worked:
+
+| | example | before |
+|---|---|---|
+| A pipe | `Choker of the Wretched 111 \| Crown of Narandi 222` | worked |
+| B comma | `Black Tear 111 , Platinum Tear 222` | dropped |
+| C tier list | `Helmet of Shadow 311 pick, 322 upgrade, 333 alt` | dropped |
+| D bare | `Atramentous Shield 333` | dropped |
+
+D is the most common of all, and C is what Tanidian/Rikel type every raid. So
+the pipe rule was matching the *documented* convention rather than the *used*
+one, and had been quietly dropping most calls for a month.
+
+**Where it landed (agent 3.5.84).** `parseRollItemLine` walks the NUMBERS
+instead of splitting on a separator: the text since the previous number names
+that number's item. Shape C falls out for free — the text between 311 and 322
+is `pick,`, which is a tier, so 322 carries the previous item forward.
+
+**The real work was the negatives, and fixtures did not find them.** A pipe is
+nearly proof of intent; a comma is not, and the parser now reads every chat
+line. So I swept it over every captured line within 20 minutes of a live roll
+set — the actual blast radius — and it wanted to label four of them:
+
+- `I think we were randoming 100.  Hawkner got a 22 I think?`
+- `You didn't even bid 100. Doubt!`
+- `DI - Guts 100 )`
+- `Do a 777 if you want a Shield of the Immaculate`
+
+Each sat minutes from a real 0-100 or 0-777 set, so each would have appeared on
+the page as that session's item. They produced four guards — majority-
+capitalised significant words, no ALL-CAPS raid shorthand (DI/CH/MT), at least
+one ≥4-letter word, and a range must be a bare 3-4 digit number not followed by
+a letter or `%`. The same sweep caught two regressions my own fixtures missed,
+where a numberless linked drop glued itself onto the next item
+(`Golden Ember Powder | Unadorned Plate Boots 444`).
+
+**The lesson is the one the loot fold taught, applied earlier this time:** a
+parser is only as good as the corpus you point it at, and the corpus is in the
+database, not in your head. Eighteen green tests hid the loot fold's truncation
+for a day. Here the tests were written FROM the real lines, and the sweep found
+four defects the tests I would otherwise have written never would have.
+
+**Known and accepted:** `Holytomato 111, Emoo 222, Glarez 333, Kaviar 444`
+labels player names as items — that roll really was about those four people, so
+it is not wrong so much as unusual, and the officer edit button covers it. And
+`Do a 777 if you want a Shield of the Immaculate` stays unlabeled: the item is
+named after the number, mid-sentence, and every rule that would catch it also
+catches real chatter. That exact line is the one cited in the
+`roll_set_overrides` migration header as the reason officer edits exist.
+
+**Backfill.** Last night's four Tears were relabelled through
+`roll_set_overrides` — additive, reversible with one DELETE, and applied before
+loot attribution, so the two pass/re-roll cases now show their real looter.

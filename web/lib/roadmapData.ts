@@ -37,6 +37,22 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'agent-3-5-84',
+    title: '\u{1F3B2} Roll nights know what you were rolling for',
+    version: 'Agent 3.5.84',
+    date: '2026-08-14',
+    channel: 'beta',
+    headline: 'The roll page kept saying "unlabeled roll" because it only understood one way of calling loot. It now understands the way people actually type.',
+    features: [],
+    fixes: [
+      'Roll calls written with commas — "Black Tear 111, Platinum Tear 222" — now name their items on the roll page. Only a vertical bar between them used to count, so most calls came through blank.',
+      'A single item with several ranges — "Helmet of Shadow 311 pick, 322 upgrade, 333 alt" — now labels all three, instead of none.',
+      'A plain "Atramentous Shield 333" on its own now works too. That is the most common way people call a roll and it had never been picked up.',
+      'Because the item name is also what links a roll to who actually looted it, all of the above were leaving the "looted by" column empty. Those now fill in — including when the person who won the roll passed it to someone else.',
+      'Last night’s Tears have been named on the roll page already.',
+    ],
+  },
+  {
     key: 'web-1-1-55',
     title: '\u{1F9F0} The Quartermaster shows your characters',
     version: 'Web 1.1.55',

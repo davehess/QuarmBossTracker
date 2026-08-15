@@ -1380,6 +1380,18 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   5b playback), real REHEARSE (`_rehearseTrigger` drives the tail), sticky
   callouts, stale-fire TTL. Reporter roles honored per stream (charm rows exempt).
 - **CH chain GO (#103)** — `_maybeAnnounceChGo` speaks "0X GO" on your slot.
+- **Roll-call item labels** — `parseRollItemLine` (pure, exported) reads
+  `<Item> <range>` out of a chat line and feeds `_rollItemByNumber`, which
+  `trackRollLine` reads when a set's first roll lands (bounded by
+  `ROLL_ITEM_LINK_MS`, 20 min — the map is keyed by NUMBER, so an unbounded
+  read lets an 8pm label claim an 11pm 0-333 set). **Separator-agnostic since
+  agent 3.5.84**: it walks the numbers rather than splitting on `|`, so commas,
+  tier lists (`311 pick, 322 upgrade` = one item) and bare `Atramentous Shield
+  333` all work. The guards in `_cleanRollItemCandidate` (Title Case, a ≥4-letter
+  word, majority-capitalised significant words, no ALL-CAPS raid shorthand,
+  3-4 digit range not followed by a letter or `%`) are what stop ordinary chat
+  becoming an item name — each was added because a REAL captured line beat the
+  previous rule. `test/roll-item-line.test.js` carries every one of them.
 - **Loot announce (#107)** — `noteLootAuction` → TTS + auction countdown chips.
 - **Timeline enrichment (#105)** — `noteSlowLanding` (SLOW_SPELLS), `noteMobHeal`,
   `DISC_LINES`/`_matchDiscLine` → `timeline_events`.
@@ -1498,7 +1510,13 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   anchors on `/me`. Mimic dashboard: `wpTourStart`/`WP_TOUR_STEPS` in
   WEB_HTML — six stops switching tabs via the real nav buttons, ✨ Tour nav
   button + one-time offer toast. Both Playwright-verified live.
-- **Roll nights (#91)** — `/rolls` (`web/lib/rolls.ts`).
+- **Roll nights (#91)** — `/rolls` (`web/lib/rolls.ts`). The item NAME is
+  captured by the agent from the roll call in chat (`parseRollItemLine`) — and
+  it is load-bearing far beyond the label, because `attributeLoot()` returns
+  early on a null item, so an unnamed session also shows an empty **LOOTED BY**.
+  Officer corrections go in `roll_set_overrides` (never onto `roll_sets`, which
+  agents upsert) and are applied BEFORE loot attribution, so typing a name in
+  fills the looter column too.
 - **Quartermaster (#82)** — `/quartermaster` (`web/lib/quartermaster.ts`):
   utility-kit coverage + quest checklist (reuses the `quest_catalog` store).
   ⚠ **Owner NAMES are officer-only** (Hitya, 2026-08-14: *"quartermaster should
