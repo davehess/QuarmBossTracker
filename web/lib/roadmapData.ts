@@ -37,6 +37,18 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'web-1-1-57',
+    title: '\u{1F3B2} See who else rolled',
+    version: 'Web 1.1.57 · Agent 3.5.85',
+    date: '2026-08-14',
+    headline: 'Roll sessions only ever showed the winner. Open one up and you can now see everybody who rolled and what they got.',
+    features: [
+      { name: '\u{1F3B2} Every roll, not just the winning one', blurb: 'On the roll page, click a winner to drop down the whole list for that item — who rolled, what they got, highest first. Re-rolls are marked, so a big number that did not win no longer looks like a mistake.' },
+      { name: '✖ Tidy up the Command Center as loot goes out', blurb: 'The same drop-down is on the Command Center overlay, and each roll now has an ✖ to clear it away once that item is handed out — plus a "clear all". It only affects your own screen, and it resets each night.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'agent-3-5-84',
     title: '\u{1F3B2} Roll nights know what you were rolling for',
     version: 'Agent 3.5.84',

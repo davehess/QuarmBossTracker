@@ -1516,7 +1516,13 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   early on a null item, so an unnamed session also shows an empty **LOOTED BY**.
   Officer corrections go in `roll_set_overrides` (never onto `roll_sets`, which
   agents upsert) and are applied BEFORE loot attribution, so typing a name in
-  fills the looter column too.
+  fills the looter column too. **Who else rolled** is a `<details>` in the
+  Won-by cell built from `rollBreakdown()` — kept pure and shared in shape with
+  the Command Center because two calls are easy to get wrong in JSX: a re-roll
+  is kept and FLAGGED (dropping it makes the list disagree with the roller
+  count), and a winner is matched on name AND value once (name alone lights up
+  that player's losing re-roll too). A native disclosure, so the page stays a
+  server component and the expansion works with JS off.
 - **Quartermaster (#82)** — `/quartermaster` (`web/lib/quartermaster.ts`):
   utility-kit coverage + quest checklist (reuses the `quest_catalog` store).
   ⚠ **Owner NAMES are officer-only** (Hitya, 2026-08-14: *"quartermaster should

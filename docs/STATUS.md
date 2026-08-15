@@ -926,6 +926,37 @@ next touch one rather than assuming a missing row means a missing doc.
     own blind spot. Six tests in `test/quartermaster.test.js`, one of which
     serializes the scoped row and asserts no outsider's name appears **anywhere**
     in it, so a future name-carrying field fails there rather than in production.
+- **Who else rolled — DONE web (1.1.57) / BETA Command Center (agent 3.5.85),
+  2026-08-14.** Hitya: *"can we start having a drop-down to open up lower rolls
+  on the page and see who else rolled? may make sense to have this and a
+  dismiss button on the command center where this lives."* Both surfaces showed
+  winners only; the losing rolls had been captured all along and simply were
+  never rendered (`RollSession.rolls` on the web, `rolls[]` in the
+  `/api/command-center` payload) — no data change needed on either side.
+  - **Web** (`/rolls`): a native `<details>` in the Won-by cell, so the page
+    stays a server component and the expansion survives JS being off. Shape
+    comes from the pure `rollBreakdown()` in `web/lib/rolls.ts`.
+  - **Command Center**: same expansion per row, plus a per-row **✕ dismiss**
+    and a header **clear all**, so a resolved item leaves the card while the
+    next one is still being rolled. Dismiss is session-scoped (unlike a
+    collapsed section — "I'm done with this item" should not outlive the loot
+    night) and both sets reconcile against each poll.
+  - **Two rules this had to obey, both already written down and both easy to
+    trip:** open/dismissed state lives in a JS store consulted at render, never
+    in DOM state — `#content` is rebuilt every 1.5s so a native `<details>`
+    would snap shut mid-distribution (the wpKeep lesson); and the controls are
+    always drawn and merely dimmed rather than hover-revealed, because an
+    element created under a stationary cursor never picks up `:hover`.
+  - **Two calls that are easy to get wrong and are unit-tested:** a re-roll is
+    KEPT and flagged (dropping it makes the list disagree with the roller
+    count, and a high roll that lost with no reason given reads as a parser
+    bug), and a winner is matched on name AND value **once** (name alone lights
+    up that same player's losing re-roll).
+  - Verified in headless Chromium on both surfaces — 15 checks on the overlay
+    at its real width including that an open panel survives a repaint and picks
+    up a roll landing while it is open, and 9 on the web markup built with the
+    project's own Tailwind config, since `group-open:` variants only exist if
+    Tailwind actually emitted them and a typecheck cannot tell you that.
 - **Roll calls get their item name without a `|` — BETA (agent 3.5.84,
   2026-08-14).** Hitya, on the night's /rolls page: *"These rolls didn't get
   consolidated to loot in the website but did on here."* Eleven sessions, all

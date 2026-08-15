@@ -19,6 +19,7 @@ import RollAdmin from './RollAdmin';
 import { userTz, fmtShort, fmtDateOnly, DEFAULT_TZ } from '@/lib/timezone';
 import {
   mergeRollSets, applyRollOverrides, attributeLoot, looterDiffersFromWinners, nightKey,
+  rollBreakdown,
   type RollSetRow, type LootedRow, type RollSession,
 } from '@/lib/rolls';
 
@@ -199,12 +200,7 @@ export default async function RollsPage() {
                         <td className="py-1.5 pr-3">
                           {s.winners.length === 0
                             ? <span className="text-dim">—</span>
-                            : s.winners.map((w, wi) => (
-                                <div key={wi}>
-                                  <span className="text-text">{w.name}</span>
-                                  <span className="text-gold tabular-nums"> {w.value}</span>
-                                </div>
-                              ))}
+                            : <WonBy session={s} />}
                         </td>
                         <td className="py-1.5 pr-3">
                           {differing.length > 0
@@ -224,5 +220,53 @@ export default async function RollsPage() {
         </section>
       ))}
     </div>
+  );
+}
+
+// Winner(s) up top, and a drop-down for everyone else who rolled (Hitya,
+// 2026-08-14: "a drop-down to open up lower rolls on the page and see who else
+// rolled").
+//
+// A plain <details> on purpose — this page is a server component, so a native
+// disclosure keeps it that way rather than shipping a client bundle for one
+// toggle. It also means the expansion works with JS off and is keyboard- and
+// screen-reader-addressable for free.
+function WonBy({ session }: { session: RollSession }) {
+  const lines = rollBreakdown(session);
+  const winners = (
+    <>
+      {session.winners.map((w, wi) => (
+        <div key={wi}>
+          <span className="text-text">{w.name}</span>
+          <span className="text-gold tabular-nums"> {w.value}</span>
+        </div>
+      ))}
+    </>
+  );
+  // Nothing to reveal when the winner was the only roller — a caret that opens
+  // onto the line you can already see reads as broken.
+  if (lines.length <= session.winners.length) return winners;
+
+  return (
+    <details className="group">
+      <summary className="cursor-pointer list-none select-none">
+        {winners}
+        <span className="text-[11px] text-dim group-hover:text-accent">
+          <span className="group-open:hidden">▸ all {lines.length} rolls</span>
+          <span className="hidden group-open:inline">▾ hide</span>
+        </span>
+      </summary>
+      <div className="mt-1 space-y-0.5 border-l border-border pl-2">
+        {lines.map((l, li) => (
+          <div key={li} className="flex items-baseline gap-2 text-[11px]">
+            <span className={l.isWinner ? 'text-text' : 'text-dim'}>{l.name}</span>
+            {/* A re-roll can never win. Saying so is the difference between a
+                reader trusting the list and thinking we got it wrong. */}
+            {l.reroll && <span className="text-[10px] text-amber-400/80 border border-amber-400/30 rounded px-1">re-roll</span>}
+            <span className={'ml-auto tabular-nums ' + (l.isWinner ? 'text-gold font-semibold' : 'text-dim')}>{l.value}</span>
+          </div>
+        ))}
+      </div>
+    </details>
   );
 }
