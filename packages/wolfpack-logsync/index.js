@@ -5367,6 +5367,7 @@ const _ROLL_DIE_RX    = /\]\s+\*\*A Magic Die is rolled by (\w+)\.\s*$/;
 const _ROLL_RESULT_RX = /\]\s+\*\*It could have been any number from (\d+) to (\d+), but this time it turned up a (\d+)\.\s*$/;
 const ROLL_SET_GAP_MS  = 10 * 60 * 1000;   // same range this long after the last roll = a NEW set
 const ROLL_SET_KEEP_MS = 2 * 60 * 60 * 1000;
+const ROLL_ITEM_LINK_MS = 20 * 60 * 1000;  // how long an announced label may claim a range
 const _pendingDieByChar = new Map();   // watched-log charLower → { name, atMs } (pair lines per log)
 const _rollSets = [];                  // oldest-first [{ from, to, item, qty, rolls, startMs, lastMs }]
 const _rollItemByNumber = new Map();   // roll number (the range TO) → { item, qty, atMs }
@@ -5433,7 +5434,14 @@ function trackRollLine(line, character) {
   set.lastMs = atMs;
   if (!set.item) {
     const linked = _rollItemByNumber.get(to);
-    if (linked) { set.item = linked.item; set.qty = linked.qty; }
+    // Bounded on purpose. The map is keyed by roll NUMBER and swept only when it
+    // grows past 200, so an unbounded lookup lets a label announced at 8pm land
+    // on an unrelated 0-333 roll at 11pm. Announcements run both ways around the
+    // first roll (measured: 54s late on one night, 10s late on another), so the
+    // window is symmetric.
+    if (linked && Math.abs(atMs - linked.atMs) <= ROLL_ITEM_LINK_MS) {
+      set.item = linked.item; set.qty = linked.qty;
+    }
   }
   // 🎲🔥 HOT DICE — a PERFECT roll (hit the very top of the range). Emits a
   // fun_event (deduped server-side across the multi-box logs). Fires on any
@@ -5517,27 +5525,165 @@ function uploadLooted() {
   }
 }
 
-// Loot-link lines in raid/guild chat: `Blue Resistance Stone 111| Boots of the
-// Ancients 222 | Primal Velium Battlehammer (3)333 | ...` — each |-separated
-// segment ends with that item's roll number, optionally preceded by (qty).
+// ── Loot-link roll-call parsing ─────────────────────────────────────────────
+// The roll caller announces which item each /random range is for. This USED to
+// require a `|` between items:
+//
+//   Blue Resistance Stone 111| Boots of the Ancients 222 | Battlehammer (3)333
+//
+// which is only one of the shapes the guild actually uses, and the others were
+// silently dropped — the caller sees their announcement in chat, the roll page
+// says "unlabeled roll", and because attributeLoot() bails on a null item the
+// LOOTED BY column stays empty too (Hitya, 2026-08-14, on Canopy's four Tears).
+// Measured against real chat, three shapes matter:
+//
+//   A  Item A 111| Item B 222 | Item C (2)333      pipe-separated  (worked)
+//   B  Black Tear 111 , Platinum Tear 222 , …      comma-separated (dropped)
+//   C  Helmet of Shadow 311 pick, 322 upgrade      ONE item, several ranges by
+//                                                  priority tier   (dropped)
+//
+// So the parse is separator-agnostic: walk the numbers, and the text since the
+// previous number names that number's item. Shape C falls out for free — the
+// text between 311 and 322 is "pick,", which is a TIER not an item, so 322
+// carries the previous item forward.
+//
+// ⚠ The risk this trades against is labelling chatter. A pipe is nearly proof of
+// intent; a comma is not, and this now looks at every chat line. The guards in
+// _cleanRollItemCandidate are what keep "CH inc to … ( Mana: 100% )" from
+// becoming an item named "CH inc to". Each one is there because a real captured
+// line needed it — see test/roll-item-line.test.js, which runs the negatives.
+
+// Words that mark a PRIORITY TIER rather than an item name. "311 pick, 322
+// upgrade, 333 alt" is one item with three ranges, not three items.
+const _ROLL_TIER_WORDS = new Set([
+  'pick', 'picks', 'picked', 'main', 'mains', 'need', 'needs', 'needed',
+  'upgrade', 'upgrades', 'up', 'greed', 'greeds', 'greedy',
+  'alt', 'alts', 'box', 'boxes', 'rot', 'rots', 'kit', 'kits',
+  'twink', 'twinks', 'second', 'seconds', 'tier', 'roll', 'rolls',
+  'for', 'and', 'or', 'then', 'also', 'plus', 'pst', 'open', 'free', 'all',
+]);
+
+// Turn the text between two roll numbers into an item name, or null when it is
+// a tier / chatter / not-an-item. Null is the "carry the previous item forward"
+// signal, which is what makes shape C work.
+function _cleanRollItemCandidate(seg) {
+  let t = String(seg || '')
+    .replace(/[\x00-\x1f]/g, ' ')        // EQ item-link control bytes
+    .replace(/\(\s*\d{1,2}\s*\)\s*$/, ' ');  // trailing (qty) belongs to the NUMBER
+  // A separator ENDS the previous item, so only the text after the LAST one is
+  // this number's name. Collapsing separators to spaces instead would glue a
+  // numberless item onto the next one — "Golden Ember Powder | Unadorned Plate
+  // Boots 444" is a linked drop nobody is rolling on, followed by the item 444
+  // is actually for.
+  const cut = Math.max(t.lastIndexOf('|'), t.lastIndexOf(','), t.lastIndexOf(';'));
+  if (cut >= 0) t = t.slice(cut + 1);
+  t = t.replace(/\s+/g, ' ').trim();
+  if (!t) return null;
+  const bare = (w) => w.toLowerCase().replace(/[^a-z]/g, '');
+  // Drop tokens that are pure punctuation — "Shadow Tendril - 111" is a real
+  // call and the dangling dash is not part of the name.
+  let words = t.split(' ').filter(w => bare(w));
+  // Strip tier words off BOTH ends: "Slime Blood of Cazic Thule greed" is an
+  // item with a tier stuck to it; "upgrade kit," is only tier words and leaves
+  // nothing, which is exactly the carry-forward case.
+  while (words.length && _ROLL_TIER_WORDS.has(bare(words[words.length - 1]))) words.pop();
+  while (words.length && _ROLL_TIER_WORDS.has(bare(words[0]))) words.shift();
+  if (!words.length) return null;
+  const item = words.join(' ');
+  // Length/word bounds: an EQ item name is short. "CH inc to -== [ Hawkner ] ==-
+  // I like pie. ( Mana:" is not.
+  if (item.length < 4 || item.length > 48 || words.length > 7) return null;
+  // Characters no EQ item name contains.
+  if (/[()[\]{}=<>%*/\\!?"]/.test(item)) return null;
+  // ⚠ The next three are what separate an item from a sentence, and every one
+  // was added because a REAL line beat the previous rule. They are ordered
+  // cheapest-first; the tests carry the line that motivated each.
+  // 1. Title Case start — "pullers kiters", "for key fetishes" are chatter.
+  if (!/^[A-Z]/.test(item)) return null;
+  // 2. A real word somewhere. "Do a 777 if you want a Shield of the Immaculate"
+  //    otherwise labels 777 as an item called "Do a".
+  if (!words.some(w => bare(w).length >= 4)) return null;
+  // 3. Raid shorthand is ALL CAPS and short — DI, CH, MT, OT, FD. No EQ item
+  //    name opens with one, and "DI - Guts 100" landed on a live 0-100 set.
+  if (/^[A-Z]{2,3}$/.test(words[0].replace(/[^A-Za-z]/g, ''))) return null;
+  // 4. Item names capitalise their significant words; sentences do not. "I think
+  //    we were randoming 100." has one capital in five and would otherwise have
+  //    become an item, on a night when a 0-100 set really was running.
+  const sig = words.filter(w => !_ITEM_NAME_STOPWORDS.has(bare(w)));
+  if (sig.length) {
+    const capped = sig.filter(w => /^[A-Z]/.test(w)).length;
+    if (capped * 2 < sig.length) return null;
+  }
+  return item;
+}
+
+// Words an item name may leave lowercase ("Wand of Allure"), so they don't drag
+// the Title-Case ratio down.
+const _ITEM_NAME_STOPWORDS = new Set(['of', 'the', 'a', 'an', 'in', 'on', 'and', 'to', 'from']);
+
+/**
+ * Parse a roll-call chat body into [{ num, item, qty }] — pure, so the shapes
+ * above can be tested against real captured lines without a log tail.
+ */
+function parseRollItemLine(text) {
+  const out = [];
+  const s = String(text || '').replace(/[\x00-\x1f]/g, ' ');
+  if (!s) return out;
+
+  const RX = /(?<!\d)(\d{2,4})(?!\d)/g;
+  let m, prevEnd = 0, carried = null, first = true;
+  const pending = [];
+  while ((m = RX.exec(s)) !== null) {
+    const num = parseInt(m[1], 10);
+    const start = m.index;
+    const end = start + m[1].length;
+    const segRaw = s.slice(prevEnd, start);
+    prevEnd = end;
+    // A roll range is a bare 3-4 digit number. These three guards are each here
+    // because a real captured line needed them:
+    //   • a trailing letter is a unit, not a range — "Aten Ha Ra in 604s",
+    //     "pull in 30s" (and no real call writes "111Black Tear");
+    //   • "%" is a mana/health callout — "( Mana: 100% )", which sat minutes
+    //     away from a live 0-100 roll set;
+    //   • two digits is a duration far more often than a range — "Pull in 30
+    //     seconds" parsed as an item called "Pull in" before this line existed.
+    const after = s.charAt(end);
+    if (/[A-Za-z%]/.test(after)) { first = false; continue; }
+    if (after === '.' && /\d/.test(s.charAt(end + 1))) { first = false; continue; }
+    if (!Number.isFinite(num) || num < 100) { first = false; continue; }
+
+    const qm = segRaw.match(/\(\s*(\d{1,2})\s*\)\s*$/);
+    const cand = _cleanRollItemCandidate(segRaw);
+    if (cand) carried = { item: cand, qty: qm ? parseInt(qm[1], 10) : null };
+    if (carried) {
+      out.push({ num, item: carried.item, qty: carried.qty });
+    } else if (first) {
+      // The number came FIRST ("222 for White Silken Bridle"). Only ever tried
+      // at the head of a line — mid-line, the text after a number belongs to the
+      // NEXT number, and reading it here would label every item one place off.
+      pending.push({ num, at: end });
+    }
+    first = false;
+  }
+  if (out.length === 0 && pending.length === 1) {
+    const tail = _cleanRollItemCandidate(s.slice(pending[0].at));
+    if (tail) out.push({ num: pending[0].num, item: tail, qty: null });
+  }
+  return out;
+}
+
 function trackRollItemLine(line) {
-  if (!line || line.indexOf('|') === -1) return;   // the convention always separates with |
+  if (!line) return;
+  // Cheap gate — this runs on every kept log line, and only player chat can
+  // carry a roll call.
+  if (line.indexOf(' tells ') === -1 && line.indexOf(' shouts') === -1
+      && line.indexOf(' says') === -1) return;
   const m = line.match(_CH_SPEAKER_RX);
   if (!m) return;
-  const text = m[2];
-  if (text.indexOf('|') === -1) return;
   const ts = parseEqTimestamp(line);
   const atMs = ts ? ts.getTime() : Date.now();
-  for (const rawSeg of text.split('|')) {
-    // Strip EQ item-link control bytes; keep the display text.
-    const seg = rawSeg.replace(/[\x00-\x1f]/g, '').trim();
-    if (!seg) continue;
-    const mm = seg.match(/^(.*?)\s*(?:\((\d{1,2})\)\s*)?(\d{2,4})$/);
-    if (!mm) continue;
-    const item = mm[1].replace(/[,–—-]+\s*$/, '').trim();
-    const num = parseInt(mm[3], 10);
-    if (!item || item.length < 3 || !Number.isFinite(num) || num < 10) continue;
-    _rollItemByNumber.set(num, { item: item.slice(0, 64), qty: mm[2] ? parseInt(mm[2], 10) : null, atMs });
+  for (const e of parseRollItemLine(m[2])) {
+    _rollItemByNumber.set(e.num, { item: e.item.slice(0, 64), qty: e.qty, atMs });
   }
   if (_rollItemByNumber.size > 200) {
     for (const [k, v] of _rollItemByNumber) if (Date.now() - v.atMs > 2 * 60 * 60 * 1000) _rollItemByNumber.delete(k);
@@ -35372,6 +35518,8 @@ module.exports = {
   EncounterBuilder, characterFromFilename, isBackupLogFile, _splitBackupSuffix,
   trackChChainLine, chChainSnapshot, removeChChainSlot,
   _parseSntpReply,
+  // Roll-call item labels — pure parser, tested against real captured chat.
+  parseRollItemLine, _cleanRollItemCandidate, ROLL_ITEM_LINK_MS,
   _recordFightHistory, _fightHistoryForTest: () => stats.fightHistory,
   _resetFightHistoryForTest: () => { stats.fightHistory = []; },
   // CH cast bar / interrupt ✕ / DDR grade — exported for the scratchpad harness.
