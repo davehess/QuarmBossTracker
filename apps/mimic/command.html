@@ -90,6 +90,31 @@
   .cure-row .cureDismiss{margin-left:6px;cursor:pointer;color:#8b949e;font-size:11px;line-height:1;
     flex-shrink:0;opacity:0.6}
   .cure-row .cureDismiss:hover{opacity:1;color:#f87171}
+  /* 🎲 Rolls — per-set expand ("who else rolled") + local dismiss (Hitya,
+     2026-08-14). Same shape as the cure card above: the extra right padding
+     keeps the controls clear of the fixed ✕-hide gutter, and BOTH controls are
+     always drawn and merely dimmed. A hover-reveal would be invisible here —
+     #content is rebuilt every poll, and an element created under a stationary
+     cursor never picks up :hover (measured on chchain.html, 2026-08-14). */
+  .card.rolls-card{padding-right:28px}
+  .head.rolls-head{display:flex;align-items:center;gap:6px}
+  .rollClearAll{margin-left:auto;cursor:pointer;color:#9aa4ad;font-size:9px;text-transform:none;
+    letter-spacing:0;border:1px solid rgba(110,118,129,0.4);border-radius:3px;padding:0 4px;opacity:0.7}
+  .rollClearAll:hover{opacity:1;color:#f87171;border-color:#f87171}
+  .roll-row .rollMore{cursor:pointer;color:#8b949e;font-size:9px;flex-shrink:0;opacity:0.8;user-select:none}
+  .roll-row .rollMore:hover{opacity:1;color:#e6edf3}
+  .roll-row .rollDismiss{margin-left:6px;cursor:pointer;color:#8b949e;font-size:11px;line-height:1;
+    flex-shrink:0;opacity:0.6}
+  .roll-row .rollDismiss:hover{opacity:1;color:#f87171}
+  .roll-detail{display:flex;flex-direction:column;gap:1px;margin:1px 0 3px 10px;
+    border-left:1px solid rgba(110,118,129,0.35);padding-left:6px}
+  .roll-detail .d{display:flex;gap:6px;font-size:9px;color:#9aa4ad;line-height:1.5}
+  .roll-detail .d .v{color:#e6edf3;font-variant-numeric:tabular-nums;margin-left:auto}
+  .roll-detail .d.win .v{color:#f0c419;font-weight:700}
+  /* A re-roll never wins, so it has to be legible at a glance or the list looks
+     like someone rolled twice and got robbed. #6e7681 on this backdrop was not. */
+  .roll-detail .d .rr{color:#c9a227;font-size:8px;flex-shrink:0;border:1px solid rgba(201,162,39,0.45);
+    border-radius:2px;padding:0 3px;line-height:1.3;align-self:center}
   /* #153 collapsible sections — the caret+label in a section header is the
      click target that collapses/expands it. Collapse state lives in a JS store
      consulted at render time (localStorage-backed), NOT DOM state, so repaints
@@ -213,6 +238,18 @@
   var _dismissedCures = new Set();
   var _lastState = null;
   function _cureId(c){ return (c && c.id) ? c.id : (c && c.name ? String(c.name).toLowerCase() : null); }
+
+  // 🎲 Rolls — which sets are expanded, and which have been dismissed (Hitya,
+  // 2026-08-14). Both LOCAL to this client and both in a JS store consulted at
+  // render time, never DOM state: #content is rebuilt every 1.5s, so a native
+  // <details> would snap shut mid-distribution (the wpKeep lesson). Session-
+  // scoped rather than localStorage-backed — unlike a collapsed section, "I'm
+  // done with this item" should not outlive the loot night.
+  var _openRolls      = new Set();
+  var _dismissedRolls = new Set();
+  // Stable across polls: a set keeps its range and its first-roll timestamp for
+  // the 15 minutes it stays in the payload.
+  function _rollId(r){ return r ? (r.from + '-' + r.to + '@' + (r.started_at_ms || 0)) : null; }
 
   // #153 Collapsible sections — per-section collapse state persisted across
   // repaints AND restarts. It lives in this JS store (consulted by render()),
@@ -392,26 +429,75 @@
     // (Hitya 2026-07-10). Winners = top-(qty) first-rolls; the qty comes
     // from the loot link "Item (3)333". Full per-roll detail lives on the
     // agent dashboard's 🎲 Rolls card.
+    // Each row expands to the FULL roll list (Hitya, 2026-08-14: "a drop-down to
+    // open up lower rolls ... and see who else rolled"), and carries a ✕ so a
+    // resolved item leaves the card while the next one is still being rolled.
     if (s.rolls && s.rolls.length) {
-      html += '<div class="card"><div class="head">🎲 Rolls</div><div class="list">';
-      // Six, then a "+N more" tail — matching the trigger overlay's cap. Four
-      // was too few for a real loot session: Hitya's Aug 11 night ran eight
-      // sets and the card silently showed half of them, with nothing to say it
-      // was truncating (2026-08-12).
-      var rMax = Math.min(s.rolls.length, 6);
-      for (var ri = 0; ri < rMax; ri++) {
-        var rs = s.rolls[ri];
-        var winners = (rs.winners || []).map(function(w){ return esc(w.name) + ' <b>' + w.value + '</b>'; }).join(', ');
-        html += '<div class="row"><span class="nm"><b>' + rs.to + '</b>'
-             +    (rs.item ? ' (' + esc(rs.item) + (rs.qty ? ' ×' + rs.qty : '') + ')' : '')
-             +    ' — <span style="color:#f0c419">' + (winners || '—') + '</span></span>'
-             +    '<span class="cls">' + rs.players + ' roll' + (rs.players === 1 ? '' : 's') + (rs.open ? ' · open' : '') + '</span></div>';
+      // Reconcile both local sets against the fresh payload, so ids that aged
+      // out of the 15-minute window don't accumulate forever.
+      var _rollIds = new Set();
+      for (var q0 = 0; q0 < s.rolls.length; q0++) { var _rid0 = _rollId(s.rolls[q0]); if (_rid0) _rollIds.add(_rid0); }
+      _dismissedRolls.forEach(function(id){ if (!_rollIds.has(id)) _dismissedRolls.delete(id); });
+      _openRolls.forEach(function(id){ if (!_rollIds.has(id)) _openRolls.delete(id); });
+      var visRolls = [];
+      for (var q1 = 0; q1 < s.rolls.length; q1++) {
+        var _ridv = _rollId(s.rolls[q1]);
+        if (_ridv && _dismissedRolls.has(_ridv)) continue;
+        visRolls.push(s.rolls[q1]);
       }
-      if (s.rolls.length > rMax) {
-        html += '<div class="row"><span class="nm" style="opacity:.6">+' + (s.rolls.length - rMax)
-             +  ' more — see the 🎲 Rolls card on the dashboard</span></div>';
+      if (visRolls.length) {
+        var rollsCollapsed = _isCollapsed('rolls');
+        html += '<div class="card rolls-card"><div class="head rolls-head">'
+             +    secToggle('rolls', '🎲 Rolls', visRolls.length)
+             +    (rollsCollapsed ? '' : '<span class="rollClearAll" title="Dismiss every roll set (this client, until new ones land)">clear all</span>')
+             +  '</div>';
+        if (!rollsCollapsed) {
+          html += '<div class="list">';
+          // Six, then a "+N more" tail — matching the trigger overlay's cap. Four
+          // was too few for a real loot session: Hitya's Aug 11 night ran eight
+          // sets and the card silently showed half of them, with nothing to say it
+          // was truncating (2026-08-12).
+          var rMax = Math.min(visRolls.length, 6);
+          for (var ri = 0; ri < rMax; ri++) {
+            var rs  = visRolls[ri];
+            var rid = _rollId(rs);
+            var expanded = !!(rid && _openRolls.has(rid));
+            var winners = (rs.winners || []).map(function(w){ return esc(w.name) + ' <b>' + w.value + '</b>'; }).join(', ');
+            html += '<div class="row roll-row"><span class="nm"><b>' + rs.to + '</b>'
+                 +    (rs.item ? ' (' + esc(rs.item) + (rs.qty ? ' ×' + rs.qty : '') + ')' : '')
+                 +    ' — <span style="color:#f0c419">' + (winners || '—') + '</span></span>'
+                 +    '<span class="rollMore" data-roll-key="' + esc(rid) + '" title="'
+                 +      (expanded ? 'Hide' : 'Show') + ' every roll in this set">'
+                 +      (expanded ? '▾' : '▸') + ' ' + rs.players + ' roll' + (rs.players === 1 ? '' : 's') + '</span>'
+                 +    '<span class="cls">' + (rs.open ? 'open' : '') + '</span>'
+                 +    '<span class="rollDismiss" data-roll-id="' + esc(rid) + '" title="Dismiss this roll set (this client)">✕</span></div>';
+            if (expanded) {
+              // Highest first, so the losing rolls read straight down from the
+              // winner. Re-rolls are shown but flagged — they never win, and
+              // hiding them would make the count disagree with the list.
+              var all = (rs.rolls || []).slice().sort(function(a, b){ return b.value - a.value; });
+              var winNames = {};
+              for (var wj = 0; wj < (rs.winners || []).length; wj++) winNames[String(rs.winners[wj].name).toLowerCase()] = true;
+              html += '<div class="roll-detail">';
+              for (var dj = 0; dj < all.length; dj++) {
+                var d = all[dj];
+                var isWin = !d.reroll && winNames[String(d.name).toLowerCase()] === true;
+                html += '<div class="d' + (isWin ? ' win' : '') + '"><span>' + esc(d.name) + '</span>'
+                     +    (d.reroll ? '<span class="rr">re-roll</span>' : '')
+                     +    '<span class="v">' + d.value + '</span></div>';
+              }
+              if (!all.length) html += '<div class="d"><span>no per-roll detail captured</span></div>';
+              html += '</div>';
+            }
+          }
+          if (visRolls.length > rMax) {
+            html += '<div class="row"><span class="nm" style="opacity:.6">+' + (visRolls.length - rMax)
+                 +  ' more — see the 🎲 Rolls card on the dashboard</span></div>';
+          }
+          html += '</div>';
+        }
+        html += '</div>';
       }
-      html += '</div></div>';
     }
 
     // Curse/Cure alerts — reuses the buff queue's real observed-debuff
@@ -469,13 +555,15 @@
   if (contentEl) {
     contentEl.addEventListener('mouseover', function(e){
       var t = e.target;
-      if (t && t.closest && (t.closest('.cureDismiss') || t.closest('.cureClearAll') || t.closest('.sec-toggle'))) {
+      if (t && t.closest && (t.closest('.cureDismiss') || t.closest('.cureClearAll') || t.closest('.sec-toggle')
+                             || t.closest('.rollMore') || t.closest('.rollDismiss') || t.closest('.rollClearAll'))) {
         try { window.mimic.overlayHoverInteractive(true); } catch (er) {}
       }
     });
     contentEl.addEventListener('mouseout', function(e){
       var t = e.target;
-      if (t && t.closest && (t.closest('.cureDismiss') || t.closest('.cureClearAll') || t.closest('.sec-toggle'))) {
+      if (t && t.closest && (t.closest('.cureDismiss') || t.closest('.cureClearAll') || t.closest('.sec-toggle')
+                             || t.closest('.rollMore') || t.closest('.rollDismiss') || t.closest('.rollClearAll'))) {
         try { window.mimic.overlayHoverInteractive(false); } catch (er) {}
       }
     });
@@ -487,6 +575,35 @@
         e.preventDefault(); e.stopPropagation();
         var key = tog.getAttribute('data-collapse-key');
         if (key) { _toggleCollapsed(key); if (_lastState) render(_lastState); }
+        return;
+      }
+      // 🎲 Rolls — expand / dismiss one set / dismiss all. Same shape as the
+      // cure controls below: flip the local store, then re-render from the last
+      // state so the click lands instantly instead of waiting for the poll.
+      var rmore = e.target && e.target.closest ? e.target.closest('.rollMore') : null;
+      if (rmore) {
+        e.preventDefault(); e.stopPropagation();
+        var rk = rmore.getAttribute('data-roll-key');
+        if (rk) { if (_openRolls.has(rk)) _openRolls.delete(rk); else _openRolls.add(rk); if (_lastState) render(_lastState); }
+        return;
+      }
+      var rone = e.target && e.target.closest ? e.target.closest('.rollDismiss') : null;
+      if (rone) {
+        e.preventDefault(); e.stopPropagation();
+        var rdid = rone.getAttribute('data-roll-id');
+        if (rdid) { _dismissedRolls.add(rdid); _openRolls.delete(rdid); if (_lastState) render(_lastState); }
+        return;
+      }
+      var rall = e.target && e.target.closest ? e.target.closest('.rollClearAll') : null;
+      if (rall) {
+        e.preventDefault(); e.stopPropagation();
+        if (_lastState && _lastState.rolls) {
+          for (var rj = 0; rj < _lastState.rolls.length; rj++) {
+            var rid2 = _rollId(_lastState.rolls[rj]);
+            if (rid2) { _dismissedRolls.add(rid2); _openRolls.delete(rid2); }
+          }
+          render(_lastState);
+        }
         return;
       }
       var one = e.target && e.target.closest ? e.target.closest('.cureDismiss') : null;
