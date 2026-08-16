@@ -27626,6 +27626,28 @@ let _debuffLandingBySuffix = new Map();
 function _rebuildBuffMatchers() {
   const m = new Map();
   const dm = new Map();
+  // Catalog-wide sharer count per landing text — over EVERY spell that has an
+  // on-other message, BEFORE any timed/detrimental filtering. This is the
+  // 2026-08-16 Kneel Test regression fix: the junk guard below used to count
+  // names WITHIN each index, but "is struck by a sudden force." is 33 catalog
+  // spells of which exactly ONE — Kneel Test, EQEmu's internal test row, the
+  // only timed+detrimental member — survived the index filters. A family of
+  // one sailed under the >8 guard and was crowned with full confidence on
+  // every Ssra knockback. The bot's ingest filter kept it out of buff_casts
+  // (0 rows server-side), so only the LOCAL Mob Info showed it — "for beta,
+  // I'm still seeing kneel test on the target info" (Hitya). Ambiguity is a
+  // property of the TEXT, so sharers must be counted over the catalog, never
+  // over the survivors of unrelated filters.
+  const sharers = new Map();
+  for (const e of _spellByNameLower.values()) {
+    if (!e || !e.other || !e.name) continue;
+    const suffix = String(e.other).trim().toLowerCase();
+    if (!suffix || suffix.length < 6) continue;
+    let s = sharers.get(suffix);
+    if (!s) { s = new Set(); sharers.set(suffix, s); }
+    s.add(e.name);
+  }
+  const sharerCount = (suffix) => (sharers.get(suffix) ? sharers.get(suffix).size : 0);
   for (const e of _spellByNameLower.values()) {
     if (!e || !e.other || !e.name) continue;
     if (!_isTimedDurationFormula(e.durf)) continue;
@@ -27648,18 +27670,15 @@ function _rebuildBuffMatchers() {
   // Junk-text guard (2026-07-07): a landing message shared by MANY unrelated
   // spells is unattributable garbage, not a family. Real families cap out
   // around 7 ("glances nervously about." = the 7 Tash spells; "looks very
-  // uncomfortable." = 6 Malos) — but generic effect texts go far wider:
-  // "is struck by a sudden force." is 33 knockback-type spells, and the
-  // ambiguous-family resolver kept crowning EQEmu's internal "Kneel Test"
-  // (the only one with a nonzero duration) as its representative, writing
-  // 10k phantom rows into buff_casts and phantom entries onto Mob Info.
-  // Anything shared by >8 distinct spell names is dropped from both indexes.
+  // uncomfortable." = 6 Malos) — but generic effect texts go far wider.
+  // Anything whose TEXT is shared by >8 distinct spell names in the CATALOG
+  // is dropped from both indexes, regardless of how many members made it in.
   let junked = 0;
-  for (const [suffix, arr] of [...m]) {
-    if (new Set(arr.map(h => h.name)).size > 8) { m.delete(suffix); junked++; }
+  for (const [suffix] of [...m]) {
+    if (sharerCount(suffix) > 8) { m.delete(suffix); junked++; }
   }
   for (const [suffix, arr] of [...dm]) {
-    if (new Set(arr.map(h => h.name)).size <= 8) continue;
+    if (sharerCount(suffix) <= 8) continue;
     // Rescue slow families before dropping (2026-07-27): every shaman slow
     // shares the generic "yawns." emote — 11 detrimental timed spells, over the
     // junk threshold — so the whole shaman slow line (Turgur's Insects et al.)
