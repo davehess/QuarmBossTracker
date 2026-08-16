@@ -14,7 +14,7 @@ import Link from 'next/link';
 import { supabaseServer } from '@/lib/supabase-server';
 import { supabaseAdmin } from '@/lib/supabase';
 import { isOfficer } from '@/lib/officer';
-import { fetchAllPages } from '@/lib/supabase-paged';
+import { selectAll } from '@/lib/selectAll';
 import RollAdmin from './RollAdmin';
 import { userTz, fmtShort, fmtDateOnly, DEFAULT_TZ } from '@/lib/timezone';
 import {
@@ -38,13 +38,13 @@ export default async function RollsPage() {
   const sinceIso = new Date(Date.now() - LOOKBACK_DAYS * 24 * 60 * 60 * 1000).toISOString();
 
   const [rollRows, lootRows, funRes, ovRes, officer] = await Promise.all([
-    fetchAllPages<RollSetRow>((from, to) => sb.from('roll_sets')
+    selectAll<RollSetRow>((from, to) => sb.from('roll_sets')
       .select('roll_from, roll_to, item, qty, zone, rolls, started_at, last_at, uploaded_by_discord_id')
       .eq('guild_id', 'wolfpack')
       .gte('started_at', sinceIso)
       .order('started_at', { ascending: false })
       .range(from, to)),
-    fetchAllPages<LootedRow>((from, to) => sb.from('looted_items')
+    selectAll<LootedRow>((from, to) => sb.from('looted_items')
       .select('looter_character, item_name, zone, looted_at')
       .eq('guild_id', 'wolfpack')
       .gte('looted_at', sinceIso)

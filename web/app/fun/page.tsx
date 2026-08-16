@@ -9,7 +9,7 @@ import { redirect } from 'next/navigation';
 import { unstable_cache } from 'next/cache';
 import { supabaseServer } from '@/lib/supabase-server';
 import { supabaseAdmin } from '@/lib/supabase';
-import { fetchAllPages } from '@/lib/supabase-paged';
+import { selectAll } from '@/lib/selectAll';
 import { userTz, fmtAbs } from '@/lib/timezone';
 import { loadNameMap } from '@/lib/roster';
 
@@ -355,7 +355,7 @@ SECTIONS.push(async (sb, counters) => {
   try {
     // 4,004 rows as of 2026-08-12 — a plain select returns PostgREST's first
     // 1000 and this counter then reported a quarter of the truth.
-    const dpRows = await fetchAllPages<{ target: string | null; event_ts: string | null }>(
+    const dpRows = await selectAll<{ target: string | null; event_ts: string | null }>(
       (from, to) => sb.from('fun_events')
         .select('target, event_ts')
         .eq('event_type', 'dragon_punch')
@@ -525,7 +525,7 @@ SECTIONS.push(async (sb, counters) => {
       .from('fun_events')
       .select('*', { count: 'exact', head: true })
       .eq('event_type', 'drunkard');
-    const drRows = await fetchAllPages<{ caster: string | null }>(
+    const drRows = await selectAll<{ caster: string | null }>(
       (from, to) => sb.from('fun_events')
         .select('caster')
         .eq('event_type', 'drunkard')

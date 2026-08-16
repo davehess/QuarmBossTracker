@@ -250,9 +250,15 @@ module.exports = {
 
     let inserted = 0;
     if (rows.length > 0) {
-      const result = await supabase.insert('loot_observations', rows)
+      // ignore-duplicates: the award unique index (2026-08-16) absorbs rows an
+      // overlapping run already wrote — the exact overlap that left 560
+      // duplicate rows across raids 44080–92092. representation:true returns
+      // only the rows actually inserted, so the embed's count is real; a null
+      // result is a FAILED request, not a success (the old fallback counted a
+      // failure as rows.length).
+      const result = await supabase.insertIgnoreDuplicates('loot_observations', rows, { representation: true })
         .catch(err => { console.warn('[backfillopendkploot] insert failed:', err?.message); return null; });
-      inserted = Array.isArray(result) ? result.length : rows.length;
+      inserted = Array.isArray(result) ? result.length : 0;
     }
 
     const embed = new EmbedBuilder()

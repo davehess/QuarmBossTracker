@@ -1367,34 +1367,11 @@ function resolveCatalogItemId(row, nameById, idByName) {
   return cands.length ? cands[0] : null;           // nothing resolves; keep the id for the record
 }
 
-// ⚠ PostgREST caps a response at the server's max-rows setting — 1000 on
-// Supabase — and `limit=50000` in the query string does NOT lift it. The cap is
-// SILENT: you get 1000 rows and a 200. utils/supabase.js already documents this
-// on upsert()'s return path; it bites reads exactly the same way.
-//
-// It bit this function on its first night live (2026-08-14). Both sides of the
-// diff were truncated to their first 1000 rows, so `foldedRaids` was a PARTIAL
-// set — raids that HAD been folded looked unfolded, and every 30-minute pass
-// re-inserted the same 116 awards. Two passes ran before it was caught.
-//
-// Ordered paging, because an unordered offset walk can skip or repeat rows when
-// the underlying order isn't stable.
-const PAGE = 1000;
-// `sel` is injectable so the paging rules can be tested without a database.
-async function selectAllPaged(table, baseQuery, orderCol, sel) {
-  const fetchPage = sel || ((t, q) => supabase.select(t, q));
-  const out = [];
-  for (let offset = 0; ; offset += PAGE) {
-    const q = `${baseQuery}&order=${orderCol}.asc&limit=${PAGE}&offset=${offset}`;
-    const page = await fetchPage(table, q);
-    // A failed page is NOT an empty table. Returning [] here would read as
-    // "nothing is folded yet" and re-fold the entire history.
-    if (!Array.isArray(page)) return null;
-    out.push(...page);
-    if (page.length < PAGE) return out;
-    if (out.length > 500_000) return out;              // runaway guard
-  }
-}
+// The paged reader lives in utils/supabase.js (the bot's ONE paginator —
+// test/db-read-discipline fails the build on a second definition). It moved
+// there 2026-08-16 after this file's local copy turned out to be the THIRD
+// independently-written drain for the same silent 1000-row cap.
+const { selectAllPaged } = supabase;
 
 async function foldLootObservations(opts = {}) {
   const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
@@ -1521,7 +1498,12 @@ async function foldLootObservations(opts = {}) {
   let written = 0;
   for (let i = 0; i < deduped.length; i += 500) {
     const slice = deduped.slice(i, i + 500);
-    const w = await supabase.insert('loot_observations', slice);
+    // ignore-duplicates: loot_observations_award_uniq (2026-08-16) absorbs any
+    // row whose award identity already exists, so a re-run — the exact failure
+    // that inserted 116 duplicates on 2026-08-14 — is now a no-op at the
+    // schema, not a bug the code has to avoid. representation:true means the
+    // response contains only rows ACTUALLY inserted, so `written` stays honest.
+    const w = await supabase.insertIgnoreDuplicates('loot_observations', slice, { representation: true });
     if (Array.isArray(w)) written += w.length;
     else console.warn(`[opendkp-loot-fold] insert of ${slice.length} row(s) failed`);
   }
