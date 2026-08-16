@@ -37,6 +37,19 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'web-1-1-62',
+    title: '\u{1F550} A readable fight timeline',
+    version: 'Web 1.1.62',
+    date: '2026-08-17',
+    headline: 'The new fight timeline list, cleaned up from its first raid night.',
+    features: [],
+    fixes: [
+      'Events from a neighboring trash pull no longer pile up at 0:00 — they fold into their own "before this pull" drop-down with real times.',
+      'Personal range-check callouts (Too Far, Can Not See, Out of Range…) are no longer shown — they are about where YOU stood, not the fight. The summary says how many were hidden.',
+      'Repeated calls fold into one line with a count even when two targets alternate, duplicate "(copy)" triggers merge into the original, and rows read cleanly on a phone.',
+    ],
+  },
+  {
     key: 'web-1-1-61',
     title: '\u{1F5C2} Fight cards',
     version: 'Web 1.1.61',
