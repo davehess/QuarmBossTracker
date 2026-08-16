@@ -29,8 +29,9 @@ from the mirrored `eqemu_npc_spells` lists, its texts verified in
 `eqemu_spells` (845), its **cycle measured at ~15s (12–17s jitter) from our
 own 2026-08-07 Ventani kill** (encounter `92ce667c`, 14 casts), and the
 trigger pair upgraded to Hitya's spec: timer 15s re-anchored on every breath,
-**"Melee out" at T-3s, "A O E" on the actual land**, 6s cooldown to collapse
-multi-land lines.
+**"Melee out" at T-3s, "A O E" on the actual land**, 4s cooldown — sized to
+absorb one breath's ~1–2s burst of lines and nothing more, since a match
+during cooldown is fully suppressed (no announce, no timer re-anchor).
 
 That is the repeatable recipe a fight card automates per boss:
 
