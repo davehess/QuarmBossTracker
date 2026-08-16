@@ -84,12 +84,16 @@ ONE merged card where there should be two.
   cards and don't chase them as bugs; History tab trash totals are the read.
 - **The 5 named**: 4 Warders (on board) + The Final Arbiter (added today).
   The Progenitor also added in case it's the fifth actually killed.
-- **The dance callouts**: the slow-landed triggers are verified live. **Open
-  question for Hitya — which text does the dance key on?** If it's OUR slow
-  landing on the named (bard/shaman lines), tonight's verification covers it.
-  If melee dance to the **Warder's own AoE** hitting the raid, no trigger for
-  that text exists yet — say the word (or paste the spell name) and it ships
-  same-day; the first pull's log also gives us the exact line.
+- **The dance callouts — ANSWERED, upgraded to Hitya's spec (08:20 ET).** The
+  AoE slow is **Ventani's Freezing Breath** (spell 845, straight from the
+  mirrored warder spell lists), and its cycle is **~15s (12–17s jitter),
+  measured from our own 2026-08-07 Ventani kill** (14 casts, encounter
+  `92ce667c`). The existing Freezing Breath trigger pair now: re-anchors a 15s
+  timer on every breath, says **"Melee out" at T-3s**, and calls **"A O E"**
+  on the actual land (6s cooldown collapses multi-land lines). If tomorrow's
+  first pull shows a different rhythm, one UPDATE recalibrates mid-raid. The
+  other 17 breath triggers stay announce-only until each cycle is measured
+  from a real kill — a wrong "Melee out" is worse than none.
 - **Task #27 gate has CLEARED**: the 8 muted trash triggers were gated on
   "the fleet is on the fix" — 178 characters are on 3.5.80 as of this
   morning. Restoring them is now purely the raid-noise call, and an ST trash
