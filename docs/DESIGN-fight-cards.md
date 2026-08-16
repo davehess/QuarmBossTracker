@@ -33,6 +33,30 @@ trigger pair upgraded to Hitya's spec: timer 15s re-anchored on every breath,
 absorb one breath's ~1–2s burst of lines and nothing more, since a match
 during cooldown is fully suppressed (no announce, no timer re-anchor).
 
+**The tank is the metronome (Hitya, 2026-08-16): "the tank never dodges is a
+key factor. the tank gets all of these debuffs because they don't move."**
+Two consequences, one structural and one tactical:
+
+- *Structural:* because the MT is in every breath, every breath is guaranteed
+  to print "<MT> is slowed by the freezing blast." — so every other client's
+  timer re-anchors off the tank's land line even when the entire melee train
+  dodges cleanly. The dance trigger is reliable BECAUSE the tank eats it.
+  (Cost: the MT hears "Melee out" too — delivery is per-class only, and class
+  ≠ role; MT-aware suppression is a possible agent follow-up.)
+- *Tactical — what the MT is actually sitting in*, decoded from the spell
+  effects (a fight-card column, per boss):
+
+| warder | breath | on the tank, per ~15s breath |
+|---|---|---|
+| Ventani | Freezing Breath (cold) | −750 + attack speed cut to ~30% — effectively **permanent 70% slow** at this recast |
+| Hraashna | Stream of Acid (fire-typed) | −500×2 + **65% snare**, ~2-min duration — permanently snared |
+| Nanzata | Lava Breath (fire) | −500 + **a dispel on every breath** — the MT's buffs strip repeatedly; long buffs on the MT mid-fight are wasted, defensives can vanish |
+| Tukaarak + Ventani | Mesmerizing Breath (magic) | 18s **silence** cloud — a healer standing in it cannot cast |
+
+That table is exactly what the Quartermaster-original concept wants surfaced
+per fight before the pull — and every cell came from `eqemu_spells` effect
+ids, not memory.
+
 That is the repeatable recipe a fight card automates per boss:
 
 1. `eqemu_npc_types → npc_spells → spells` gives the fight's REAL AoEs and
