@@ -70,11 +70,12 @@ ONE merged card where there should be two.
   NPC bleeding onto the meter through the pet whitelist.
 - **Backup-log rule**: alts night — nobody's `Atlasius2`-style backup log
   should mint a phantom character.
-- **Rolls**: alt raid = NBG rolls all night. The stable fleet (3.5.80) labels
-  only pipe-form calls — comma/tier/bare calls land unlabeled (47 already in
-  14d). That is EXPECTED, not a bug: the parser fix is 3.5.84 (beta). Beta
-  users get labels + the Command Center dropdown/✕. Officer-edit the ones
-  that matter; graduation catches the rest.
+- **Loot is DKP tonight, not NBG rolling** (Hitya's correction — the watch
+  item is the DKP path, not the rolls page): loot-post announce + auction
+  chips (#107/#149), sealed bids via place-bid, and the post-raid check that
+  the OpenDKP sync + loot fold picked the night up (fold_lag). If incidental
+  /random sets do happen, the stable fleet labels only pipe-form calls — the
+  comma/tier/bare parser is 3.5.84 beta; unlabeled is expected, not a bug.
 
 ## Tomorrow — Sleeper's Tomb
 
@@ -84,16 +85,31 @@ ONE merged card where there should be two.
   cards and don't chase them as bugs; History tab trash totals are the read.
 - **The 5 named**: 4 Warders (on board) + The Final Arbiter (added today).
   The Progenitor also added in case it's the fifth actually killed.
-- **The dance callouts — ANSWERED, upgraded to Hitya's spec (08:20 ET).** The
-  AoE slow is **Ventani's Freezing Breath** (spell 845, straight from the
-  mirrored warder spell lists), and its cycle is **~15s (12–17s jitter),
-  measured from our own 2026-08-07 Ventani kill** (14 casts, encounter
-  `92ce667c`). The existing Freezing Breath trigger pair now: re-anchors a 15s
-  timer on every breath, says **"Melee out" at T-3s**, and calls **"A O E"**
-  on the actual land (6s cooldown collapses multi-land lines). If tomorrow's
-  first pull shows a different rhythm, one UPDATE recalibrates mid-raid. The
-  other 17 breath triggers stay announce-only until each cycle is measured
-  from a real kill — a wrong "Melee out" is worse than none.
+- **The dance callouts — CONFIRMED Ventani's Freezing Breath (Hitya) and
+  armed.** Cycle **~15s (12–17s jitter), measured from our own 2026-08-07
+  Ventani kill** (14 casts, encounter `92ce667c`). ONE consolidated trigger
+  now re-anchors a 15s timer on every breath, says **"Melee out" at T-3s**,
+  and calls **"A O E"** on the actual land (6s cooldown). Its pattern carries
+  all THREE lines — hit, resist, and the cast-on-other text Hitya supplied
+  (*"<Victim> is slowed by the freezing blast."*) — because **the other-line
+  is load-bearing: a melee who successfully danced OUT sees neither hit nor
+  resist, and others' land lines are the only way their timer re-anchors.**
+  The old (Resist) twin is disabled so one breath anchors one bar, not two.
+  ⚠ Two near-misses caught in final verification, worth remembering:
+  (1) the Freezing Breath row was `use_regex: false` — the regex alternation
+  would have been matched as a LITERAL and the dance would never have fired;
+  (2) the first verification harness matched the compiler's wrapper object
+  instead of its `.regex`, making every earlier "FIRES" vacuous — the redone
+  harness runs positives AND negatives through the real return shape (all 10
+  correct). "The test fired" means nothing until the test can FAIL.
+  If tomorrow's first pull shows a different rhythm, one UPDATE recalibrates
+  mid-raid. The other 17 breath triggers stay announce-only until each cycle
+  is measured from a real kill.
+- **Slow callouts renamed for TTS (Hitya):** "SHM SLOW"/"BRD SLOW"/"ENC
+  SLOW" overlays read out as letters — now "Shaman Slow" / "Bard Slow" /
+  "Enchanter Slow" / "Plague Slow". **Enchanter Slow enabled** (it exists);
+  **Magician Slow disabled** ("mage slow isn't a thing right now" — pattern
+  kept fixed for the future).
 - **Task #27 gate has CLEARED**: the 8 muted trash triggers were gated on
   "the fleet is on the fix" — 178 characters are on 3.5.80 as of this
   morning. Restoring them is now purely the raid-noise call, and an ST trash
