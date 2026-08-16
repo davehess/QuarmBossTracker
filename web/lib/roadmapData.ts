@@ -1111,7 +1111,7 @@ export const releases: Release[] = [
     headline: 'Every /random in the zone is tracked and grouped by roll range — with the winners named, straight off your loot links.',
     features: [
       { name: 'Rolls, grouped and won', blurb: 'Rolls with the same range (0–333, 0–555, …) group into a set, EQ Log Parser-style. Link loot in raid chat as “Item Name (3)333 | …” and the set picks up its item name — the (3) means the top three rolls each win one. The Command Center shows each set as “333 (Item name) — winner names”; the Mimic dashboard has the full table with every roll expandable.' },
-      { name: 'Fair by default', blurb: 'Only each player’s FIRST roll counts — re-rolls are listed struck through and can never win. Multi-boxers hearing the same roll on two logs count once.' },
+      { name: 'Fair by default', blurb: 'Only each player’s FIRST roll counts — re-rolls are listed struck through and can never win. Hearing the same roll on two of your own logs counts once.' },
     ],
     fixes: [],
   },

@@ -614,7 +614,7 @@ export default async function AdminLinksPage({
   // dropdown only listed OTHER families IN THE SAME CLUSTER, which
   // wasn't enough when a character (Luter, Borowhay, Bardtholemu)
   // showed up in three different officers' clusters because their own
-  // Mimic isn't authenticated and several multi-boxers tail their log.
+  // Mimic isn't authenticated and several other players' installs tail their log.
   // Officers need to be able to link that row to a main OUTSIDE the
   // current cluster — Bardtholemu to themselves (he IS a main),
   // Luter to whichever real owner he is. Hitya 2026-06-21.

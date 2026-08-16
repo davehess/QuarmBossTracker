@@ -263,7 +263,7 @@ next touch one rather than assuming a missing row means a missing doc.
     capturing this machine's own view at the kill, then re-asking
     `/live-damage` at +40s and +100s as the stragglers land. A late EMPTY answer
     never overwrites good numbers (the bot's snapshot lookback is 3 minutes; past
-    that the query legitimately returns nothing). Multi-box installs flush once
+    that the query legitimately returns nothing). Multi-log installs flush once
     per builder, so entries dedupe on (boss, start within 60s).
   - HUD gets a third tab with a ◀ ▶ pager. Header names the fight and says
     `· 11 clients` when settled, `· settling…` when not — an unlabelled small
@@ -818,7 +818,7 @@ next touch one rather than assuming a missing row means a missing doc.
      attributed/dropped + why), so the next field report is self-evident.
   2. **Liveness across watched logs + live-character identity (Half 2):** the
      agent heartbeat's `last_line_ms` is now the **MIN age across EVERY watched
-     log** (any live log = a live agent — a boxer on a live alt whose primary is
+     log** (any live log = a live agent — a player on a live alt whose primary is
      logged out stays fresh; an agent with NO active log anywhere still goes
      stale, so the #112 logged-out-reporter protection is unchanged), and it
      reports **`live_character`** (the most-recently-active watched char, null
@@ -1584,7 +1584,7 @@ next touch one rather than assuming a missing row means a missing doc.
      (item COUNT, not the list).
   2. **Auction countdown chip (agent + triggers.html).** Reuses the trigger
      `_activeTimers` machinery so it looks/behaves like a Death Touch timer (gold,
-     15s warning). Same item set = reset in place (multibox + repeat posts stay
+     15s warning). Same item set = reset in place (second-watched-log + repeat posts stay
      silent — the announce fires only on first open); distinct sets stack.
      Per-chip ✕ dismiss (`kind:'loot'`/`dismissible` in the snapshot → overlay
      draws a ✕ with the hover-interact handshake → `POST /api/timers/cancel`).

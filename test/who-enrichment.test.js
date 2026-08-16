@@ -116,7 +116,7 @@ describe('_assembleWhoEnrichment (real index.js)', () => {
 });
 
 // #119 — the mimicSet (which characters earn the 🐺) now keys on BOTH the
-// reported primary AND the live_character, so a boxer on an alt shows the wolf
+// reported primary AND the live_character, so a player on an alt shows the wolf
 // on the character actually online. Fed into _assembleWhoEnrichment above.
 describe('_mimicCharacterSet (#119) — wolf keys on live_character AND primary', () => {
   const now = Date.now();

@@ -72,7 +72,7 @@ describe('_isOwnCharacterName — a stale log is not "you" (source-sliced)', () 
     expect(isOwn('Aimey')).toBe(false);   // pre-fix this was true → her 002 GO spoke at him
   });
 
-  it('a genuine two-box still counts BOTH characters — both logs are being written', () => {
+  it('two actively-watched logs still count BOTH characters — both logs are being written', () => {
     const isOwn = makeIsOwn({
       watchedLogs: [
         { character: 'Dant',  lastSeen: Date.now() - 1_000 },

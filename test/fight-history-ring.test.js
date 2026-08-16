@@ -82,9 +82,9 @@ describe('capturing a fight', () => {
 describe('one kill is one entry', () => {
   beforeEach(() => _resetFightHistoryForTest());
 
-  it('a multi-box install does not record the same fight twice', () => {
+  it('a multi-log install does not record the same fight twice', () => {
     // flush() runs per builder AND propagates to peer builders on the same
-    // fight, so a two-box machine calls this two or three times for one kill.
+    // fight, so a two-log machine calls this two or three times for one kill.
     const started = iso(60_000);
     _recordFightHistory(fight('Aten Ha Ra', { startedAt: started }));
     _recordFightHistory(fight('Aten Ha Ra', { startedAt: started }));

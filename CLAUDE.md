@@ -870,8 +870,9 @@ damage shields to the tank — keep `contributions.raw_parse->source` distinct
 wins when both exist.
 
 **Fleet adoption is counted in PLAYERS, never characters** (Hitya,
-2026-08-16: "character counts mean almost nothing"). Multiboxers run 3–12
-characters each, so `agent_upload_stats` rows inflate ~10×: the "178
+2026-08-16: "character counts mean almost nothing"). Players each play several
+characters distinctly (3–12 watched logs), so `agent_upload_stats` rows
+inflate ~10×: the "178
 characters on 3.5.80" fleet was 16 players. The honest stat: distinct
 `uploaded_by_discord_id`, each counted at their most-recent upload's version.
 Any adoption gate, graduation argument, or sentinel invariant that counts the

@@ -39,7 +39,7 @@ export const BRANCHES = [
     leaves: ['Privacy-first filter', 'Multi-char tailing', 'Zeal pipe bridge', 'Durable queue'],
     details: [
       ['Privacy filter', 'officer chat, tells, group, and private channels are dropped at byte level BEFORE parsing — they never leave the machine'],
-      ['Multi-log tailing', 'every eqlog on the box, each character self-identified — boxers fully supported'],
+      ['Multi-log tailing', 'every eqlog on the machine, each character self-identified — play as many characters as you like'],
       ['Zeal pipe bridge', 'live gauges, raid roster, cast bars, and target HP straight from the client'],
       ['Durable queue', 'every upload persists to disk first; network blips retry with backoff, nothing is lost'],
       ['Trigger engine', 'compiled patterns + Zeal gauge conditions; TTS, timers, and cross-client relays — with a checkpoint journal that proves every callout fired AND played'],

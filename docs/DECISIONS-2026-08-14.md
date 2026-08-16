@@ -572,7 +572,8 @@ taking each player's most-recent upload:
 | 3.5.71 | 4 | 0 (idle since Thu; auto-update on launch) |
 | older | 2 | 0 |
 
-The 178 characters were 16 players' box armies — a ~10× inflation. Standing
+The 178 characters were 16 players' character rosters — each player plays
+several characters distinctly, a ~10× inflation. Standing
 rule (folded into CLAUDE.md domain policies): any adoption gate, graduation
 argument, or sentinel invariant that counts the fleet counts distinct
 discord ids at their latest-upload version.
