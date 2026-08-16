@@ -132,6 +132,27 @@ the deployment. This institutionalizes the loot-fold lesson ("did the deploy
 work is a different question from do the tests pass") as a standing mechanism
 instead of a memory.
 
+## 3b. Placement addendum — the Unraid replica (Hitya, 2026-08-16)
+
+Hitya: *"I like the idea of one running on the backup local DB alongside it in
+my unraids docker."* That slots in cleanly as a SECOND sentinel tier, not a
+replacement for the bot's:
+
+- **Raid-critical freshness checks must stay on the LIVE database** — the
+  replica lags by the backup cadence, so "are rows arriving right now" is
+  unanswerable there by construction.
+- **Heavy analytical invariants belong on the replica**: the chat-rewrite
+  near-dup scan over 342k rows, dead-trigger joins, long-window skew
+  analysis — free compute, zero prod load, zero egress cost, and a read-only
+  copy by nature (the safest possible place for exploratory SQL). A container
+  in the existing Unraid stack next to `unraid-backup-supabase.sh`'s target,
+  running the same battery file on a nightly timer, posting findings back
+  through the bot's API (or just writing a findings file the triage session
+  reads).
+- This also gives the sentinel a second life in the self-host picture: on a
+  full on-prem deployment the "replica tier" IS the main DB, and the battery
+  runs entirely locally. (Recorded in DESIGN-selfhost-wizard §3.)
+
 ## 4. Cost and order
 
 - Sentinel v1 (table + battery runner + projection + 6 seed invariants):

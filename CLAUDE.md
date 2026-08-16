@@ -840,6 +840,13 @@ use only for multi-callout sequences. Curse counters for the debuff queue live
 in the bot's `_CURSE_COUNTERS` (Gravel Rain 12 … "Word of" 1).
 
 **⚠ Trigger patterns match the RAW log line — never start one with a bare `^`.**
+(Runtime nuance, discovered 2026-08-16: agent **3.5.46+** auto-rewrites a bare
+`^` to `^(?:timestamp)?` at compile time — `_rewriteAnchorsForRawLine`, part of
+the GINA compat work — so on the current fleet the bare-`^` class actually
+fires. The rule stands for what we WRITE (explicit `^\[.+?\]\s+` works on
+every agent version and is what the web normalizer stores), but the 2026-08-04
+"37 of 109 dead" measurement predates 3.5.46 and the dead-triggers runbook
+needs re-measuring before anyone acts on it.)
 The line is `[Sun Aug 02 21:10:01 2026] <message>`, and patterns compile with
 flags `i` and **no `m`**, so `^` anchors before the TIMESTAMP, not before the
 message. `^{s} yawns\.$` can never fire. Write it unanchored, or anchor as
