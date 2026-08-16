@@ -70,18 +70,22 @@ That table is exactly what the Quartermaster-original concept wants surfaced
 per fight before the pull — and every cell came from `eqemu_spells` effect
 ids, not memory.
 
-**Second worked example — Mass Insanity (Vyzh`dra the Cursed, Ssra), same
-format on Hitya's ask (2026-08-16).** The dance here guards against a CHARM,
-not damage: Mass Insanity (2813) is an AoE charm (effect 22, 18s) — getting
-hit turns you on your own raid. Trigger armed in the Freezing Breath shape
-(all three lines, "Melee out" at T-3, "A O E" on land, 4s cooldown, texts
-verified unique), with one honest difference: **the 12s timer is the spell's
-own recast FLOOR (`recast_time` 12000ms), not a measured cycle** — no trigger
-existed across our 14 recorded Vyzh`dra kills, so there are no fires to
-measure yet. The floor is the conservative direction (early out ≠ charmed);
-**recalibrate from real fires after the next Ssra clear.** Caustic Mist
-(24s recast, −500 poison) deliberately left without a dance — different
-mechanic.
+**Second worked example — Caustic Mist (Vyzh`dra the Cursed, Ssra), same
+format on Hitya's ask (2026-08-16).** First pick was WRONG and the correction
+is part of the example: I armed Mass Insanity (the AoE charm — it looked like
+the obvious dance), and Hitya corrected it: *"Caustic Mist is the one we want
+to avoid."* The data can tell you what a spell DOES; only the raid knows
+which one the tactic is about — that judgment is exactly what the fight
+card's officer-authored tactics column encodes. The dance now sits on
+Caustic Mist (2814, poison, targeted AE): all three lines, "Melee out" at
+T-3, "A O E" on land, 4s cooldown. **Timer 24s is the spell's recast FLOOR**
+(no fires across our 14 recorded kills to measure — recalibrate after the
+next Ssra clear; early-out is the safe error direction). Mass Insanity's row
+stays disabled as a denotation if a charm announce is ever wanted.
+⚠ One shared line, verified: "…flesh begins to liquefy." is also Putrefy
+Flesh — cast ONLY by Zlandicar (also a targeted AE), so on a Zlandicar fight
+this trigger announces correctly but its timer is Vyzh-calibrated; a
+Zlandicar twin is one insert if wanted.
 
 That is the repeatable recipe a fight card automates per boss:
 
