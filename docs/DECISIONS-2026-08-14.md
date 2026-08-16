@@ -550,3 +550,39 @@ have not designed in" — designed in tonight):
   `auth.uid()` policies rewritten as InitPlans (`tells` was the worst) and
   `search_path` pinned on 4 functions. The 46 "RLS enabled no policy" INFOs
   are our intended deny-all posture, not omissions.
+
+---
+
+## Fleet counts are PLAYERS, not characters
+
+**The call (Hitya, 2026-08-16).** *"when we talk about who's using the
+releases, character counts mean almost nothing. use distinct player counts by
+discord ID."*
+
+The worked example that makes the point: this morning's fleet read was "178
+characters on agent 3.5.80." Re-measured as distinct `uploaded_by_discord_id`
+taking each player's most-recent upload:
+
+| version | players (7d) | active 48h |
+|---|---|---|
+| 3.5.85 (beta) | 1 | 1 — Hitya |
+| 3.5.83 (beta) | 1 | 0 |
+| **3.5.80 (stable 2.5.0)** | **16** | **15** |
+| 3.5.72 | 1 | 1 |
+| 3.5.71 | 4 | 0 (idle since Thu; auto-update on launch) |
+| older | 2 | 0 |
+
+The 178 characters were 16 players' box armies — a ~10× inflation. Standing
+rule (folded into CLAUDE.md domain policies): any adoption gate, graduation
+argument, or sentinel invariant that counts the fleet counts distinct
+discord ids at their latest-upload version.
+
+Two claims re-checked under the new metric, both survive but read differently:
+- **#27's "fleet is on the fix" gate**: 15 of 17 active players are ≥3.5.80 —
+  still cleared, but "88% of players" is the honest phrasing, not "178
+  characters."
+- **The beta channel is effectively ONE player** — Hitya's boxes, plus one
+  tester last seen Friday. That is a structural fact about how much real-raid
+  validation beta features get before graduation, and part of why the
+  beta→stable cadence leans on browser/unit verification: the beta "fleet"
+  cannot exercise a raid.

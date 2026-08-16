@@ -5,8 +5,11 @@ Hitya's program: **Tunare tonight** (one long bard kite + one boss kill),
 callouts must fire for the AoE slow), then the **Vulak ring** (6 waves, the
 6th is Vulak`Aerr). This doc is the pre-raid review, everything below checked
 against the live database or the real compiler this morning — plus the
-watch/triage lists per night. Fleet status: **178 characters uploading on
-agent 3.5.80 (stable 2.5.0) this morning**, ~26 on beta 3.5.8x.
+watch/triage lists per night. Fleet status **in PLAYERS (distinct discord
+ids — character counts inflate ~10× from multiboxing, Hitya's rule
+2026-08-16): 16 players on stable 2.5.0 (15 active in 48h), 1–2 on beta,
+1 active straggler on 3.5.72 + 4 idle-since-Thursday on 3.5.71** who
+auto-update on next launch.
 
 ## Fixed / shipped this morning (before the freeze)
 
