@@ -131,6 +131,10 @@ export default async function GuideIndex() {
           Numbers come from confirmed kills in our own parses — nothing here is copied from a wiki.
           Design notes: <span className="font-mono">docs/DESIGN-81-raid-guide.md</span>.
         </p>
+        <p className="text-xs mt-1">
+          <Link href="/raid/plan" className="text-blue hover:underline">🗂 Fight cards</Link>
+          <span className="text-dim"> — the pre-raid checklist: comp, kit, tactics, and callouts resolved live per fight.</span>
+        </p>
       </div>
 
       {EXPANSION_ORDER.map((exp) => {

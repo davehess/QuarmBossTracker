@@ -926,6 +926,17 @@ next touch one rather than assuming a missing row means a missing doc.
     own blind spot. Six tests in `test/quartermaster.test.js`, one of which
     serializes the scoped row and asserts no outsider's name appears **anywhere**
     in it, so a future name-carrying field fails there rather than in production.
+- **Fight Cards v1 — SHIPPED (web 1.1.61, 2026-08-16, task #43 on Hitya's
+  "continue with the bits for 75").** `/raid/plan`: one pre-raid readiness
+  card per fight — officer-authored comp/kit/tactics text, callouts resolved
+  LIVE against `guild_triggers` by id (✓ armed / ○ denoted / ⚠ MISSING —
+  missing dominates the header chip; the card stores links, never copies).
+  Officers author inline on the page; migration `20260816174500_fight_cards`
+  applied + committed; 9 resolver tests. Seeded 8 draft cards for the
+  3-night program (Tunares, four warders, Arbiter, Vulak) from the
+  raid-watch content — all editable, `updated_by='pre-raid seed'`. Next
+  increment (in `DESIGN-fight-cards.md`): comp/kit live joins (#93/#82),
+  the Discord pre-pull projection (bot, post-freeze), drill result on-page.
 - **Parse page reshaped by Hitya's first-format review — DONE (web 1.1.60,
   2026-08-16).** Five asks on `/parses/4d0d6dd2` (the restless burrower), all
   shipped + harness-verified against that fight's real rows: the damage chart

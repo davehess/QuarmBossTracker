@@ -37,6 +37,18 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'web-1-1-61',
+    title: '\u{1F5C2} Fight cards',
+    version: 'Web 1.1.61',
+    date: '2026-08-16',
+    headline: 'A pre-raid checklist page: one card per fight with the comp it needs, the kit to bring, the tactics, and whether every callout is actually armed.',
+    features: [
+      { name: '\u{1F5C2} One card per fight', blurb: 'Fight cards (linked from the Raid Guide) show each fight’s composition needs, kit, and tactics before the pull — written by officers, readable by everyone. Tonight’s Tunare fights, the four warders, and the Vulak ring are already in.' },
+      { name: '✓ Callouts checked live', blurb: 'Each card lists its callouts straight from the guild trigger list — armed, deliberately off, or MISSING in red — with the timer and what the voice says. If a trigger changes, the card changes with it.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'web-1-1-60',
     title: '\u{1F4CA} Parse charts read by class',
     version: 'Web 1.1.60',

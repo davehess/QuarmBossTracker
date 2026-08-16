@@ -98,17 +98,35 @@ That is the repeatable recipe a fight card automates per boss:
 4. First-pull recalibration: if tonight's measured cycle disagrees with the
    stored timer, the post-raid triage (sentinel loop 2) proposes the update.
 
-## Shape (build later, on Hitya's go)
+## Shape — v1 SHIPPED (web 1.1.61, 2026-08-16, on "continue with the bits for 75")
 
-- `fight_cards(boss_npc_id, comp jsonb, kit_keys text[], trigger_ids uuid[],
-  guide_ref, notes)` — officer-authored at `/admin/`, one row per fight.
-- Render on the web (`/raid` or the Raid Guide page) the day of the raid:
-  each column resolves live (signups vs comp, kit vs owners, triggers vs
-  verified state, `/preraiddrill` result).
-- The Discord projection: one card per fight posted to the raid thread
-  pre-pull, per the Discord-as-projection rule.
-- Effort: ~1 day for the table + resolver + web render; the per-fight comp
-  templates are officer content, not code.
+- **`fight_cards` table** (migration `20260816174500_fight_cards.sql`, applied):
+  `boss_npc_id, title, comp_notes, kit_notes, tactics, trigger_ids uuid[],
+  guide_ref, sort_order, active`. v1 divergence from the sketch above, on
+  purpose: comp/kit are officer TEXT notes — the structured
+  comp-template/kit-key joins land with the #93 integration under NEW columns
+  (`comp jsonb`, `kit_keys text[]`), so nothing migrates.
+- **`/raid/plan`** renders the active cards; officers author INLINE there
+  (create form + per-card edit fold-out, the /parses officer-strip pattern) —
+  no separate /admin surface. Linked from the /guide index header.
+- **The callouts column resolves LIVE** (`web/lib/fightCards.ts`,
+  `test/fight-cards.test.js`): the card stores trigger IDS, never copies —
+  each renders **✓ armed / ○ denoted (exists, disabled on purpose — the LoS
+  probes) / ⚠ MISSING (id no longer resolves)** with timer / "warning at
+  T−n" / spoken text / cooldown read from the live row. MISSING dominates the
+  card's header chip: a card promising a callout that cannot fire is the worst
+  lie a pre-raid page can tell (the enabled-reads-as-coverage lesson, again).
+- **Seeded for the 3-night program** (8 draft cards, `updated_by = 'pre-raid
+  seed 2026-08-16'`, all officer-editable): both Tunares (kite 127001 / kill
+  127002 + the knit-watch), the four warders (Ventani dance armed; the other
+  three carry the breath-effects row + the hail probe with the LoS pair
+  denoted), The Final Arbiter, and the Vulak ring (queue-depth ops note).
+
+### v1 leaves for the next increment
+- Comp/kit LIVE joins (signups vs comp template, kit vs owners — #93/#82).
+- The **Discord projection**: one card per fight posted to the raid thread
+  pre-pull (bot work; post-freeze).
+- `/preraiddrill` result surfaced on the page (bot exposes it first).
 
 ## Explicitly deferred
 

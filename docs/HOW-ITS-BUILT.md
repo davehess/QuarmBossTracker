@@ -1567,6 +1567,11 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   (1-bucket sampling holes bridged; real gaps kept — the Moash "it ran" case).
 - **Sprint board on `/roadmap`** — `SprintBoard.tsx` + `sprintItems` in
   `roadmapData.ts` (sortable, platform-color aspects).
+- **Fight Cards (#43) — `/raid/plan`** (web 1.1.61): per-fight pre-raid
+  readiness cards from the `fight_cards` table; officer-authored inline;
+  callouts resolved LIVE against `guild_triggers` by id (✓ armed / ○ denoted /
+  ⚠ MISSING) via `web/lib/fightCards.ts`. Linked from the /guide index.
+  Design + v1 scope: `docs/DESIGN-fight-cards.md`.
 
 ### Designs written, build pending (read before touching)
 - **Multi-raid awareness (#114)** — `docs/DESIGN-multi-raid.md` (leader-anchored
