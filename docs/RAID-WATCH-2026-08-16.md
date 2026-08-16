@@ -89,7 +89,7 @@ ONE merged card where there should be two.
   armed.** Cycle **~15s (12–17s jitter), measured from our own 2026-08-07
   Ventani kill** (14 casts, encounter `92ce667c`). ONE consolidated trigger
   now re-anchors a 15s timer on every breath, says **"Melee out" at T-3s**,
-  and calls **"A O E"** on the actual land (6s cooldown). Its pattern carries
+  and calls **"A O E"** on the actual land (4s cooldown). Its pattern carries
   all THREE lines — hit, resist, and the cast-on-other text Hitya supplied
   (*"<Victim> is slowed by the freezing blast."*) — because **the other-line
   is load-bearing: a melee who successfully danced OUT sees neither hit nor
