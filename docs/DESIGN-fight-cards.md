@@ -70,6 +70,19 @@ That table is exactly what the Quartermaster-original concept wants surfaced
 per fight before the pull — and every cell came from `eqemu_spells` effect
 ids, not memory.
 
+**Second worked example — Mass Insanity (Vyzh`dra the Cursed, Ssra), same
+format on Hitya's ask (2026-08-16).** The dance here guards against a CHARM,
+not damage: Mass Insanity (2813) is an AoE charm (effect 22, 18s) — getting
+hit turns you on your own raid. Trigger armed in the Freezing Breath shape
+(all three lines, "Melee out" at T-3, "A O E" on land, 4s cooldown, texts
+verified unique), with one honest difference: **the 12s timer is the spell's
+own recast FLOOR (`recast_time` 12000ms), not a measured cycle** — no trigger
+existed across our 14 recorded Vyzh`dra kills, so there are no fires to
+measure yet. The floor is the conservative direction (early out ≠ charmed);
+**recalibrate from real fires after the next Ssra clear.** Caustic Mist
+(24s recast, −500 poison) deliberately left without a dance — different
+mechanic.
+
 That is the repeatable recipe a fight card automates per boss:
 
 1. `eqemu_npc_types → npc_spells → spells` gives the fight's REAL AoEs and
