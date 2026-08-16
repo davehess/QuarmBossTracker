@@ -53,6 +53,19 @@ Two consequences, one structural and one tactical:
 | Nanzata | Lava Breath (fire) | −500 + **a dispel on every breath** — the MT's buffs strip repeatedly; long buffs on the MT mid-fight are wasted, defensives can vanish |
 | Tukaarak + Ventani | Mesmerizing Breath (magic) | 18s **silence** cloud — a healer standing in it cannot cast |
 
+**The LoS hail probe (Hitya, 2026-08-16):** for every warder EXCEPT Ventani,
+*"if you can't see the main tank, you don't get hit by the cast"* — and the
+raid's probe for it is a `/hail` at the MT: **a bare `You say, 'Hail'` (no
+name) means no line of sight → safe**; `You say, 'Hail, Malthur'` means
+you're in the AoE's world. Two personal-scope triggers now encode it:
+"LoS check — SAFE" (enabled; a bare no-target hail is rare outside this
+tactic, so it's naturally quiet) and "LoS check — VISIBLE" (disabled by
+default — it matches every ordinary quest hail; flip on for warder nights).
+Personal scope is deliberate: line of sight is per-player, and relaying one
+raider's Safe would mislead everyone else. So the ST tactics column splits:
+**Ventani = the timed dance** (breath can't be LoS-dodged), **the other three
+= positioning + the hail probe**.
+
 That table is exactly what the Quartermaster-original concept wants surfaced
 per fight before the pull — and every cell came from `eqemu_spells` effect
 ids, not memory.
