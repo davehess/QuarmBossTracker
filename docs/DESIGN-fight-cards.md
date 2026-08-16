@@ -57,10 +57,10 @@ Two consequences, one structural and one tactical:
 *"if you can't see the main tank, you don't get hit by the cast"* — and the
 raid's probe for it is a `/hail` at the MT: **a bare `You say, 'Hail'` (no
 name) means no line of sight → safe**; `You say, 'Hail, Malthur'` means
-you're in the AoE's world. Two personal-scope triggers now encode it:
-"LoS check — SAFE" (enabled; a bare no-target hail is rare outside this
-tactic, so it's naturally quiet) and "LoS check — VISIBLE" (disabled by
-default — it matches every ordinary quest hail; flip on for warder nights).
+you're in the AoE's world. Two personal-scope triggers denote it in `guild_triggers`, **both disabled —
+Hitya deferred them 2026-08-16** ("let's not do those triggers for now, but
+denote them for the future"). Patterns are compiler-verified with negatives
+and the notes carry the full tactic; enabling is one toggle each.
 Personal scope is deliberate: line of sight is per-player, and relaying one
 raider's Safe would mislead everyone else. So the ST tactics column splits:
 **Ventani = the timed dance** (breath can't be LoS-dodged), **the other three

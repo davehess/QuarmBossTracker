@@ -105,13 +105,13 @@ ONE merged card where there should be two.
   If tomorrow's first pull shows a different rhythm, one UPDATE recalibrates
   mid-raid. The other 17 breath triggers stay announce-only until each cycle
   is measured from a real kill.
-- **The hail LoS probe is now a trigger pair (Hitya's tactic).** For every
-  warder EXCEPT Ventani, no line of sight to the MT = the breath can't hit
-  you, and the probe is hailing the tank: a bare `You say, 'Hail'` (no name)
-  = safe. "LoS check — SAFE" is live (green overlay + "Safe" TTS, personal
-  scope, verified vs 5 positive/negative lines through the real compiler).
-  Its "VISIBLE" twin ships DISABLED — it matches every ordinary quest hail —
-  **flip it on for the warder pulls, off after ST.**
+- **The hail LoS probe — DEFERRED by Hitya, denoted for the future.** For
+  every warder EXCEPT Ventani, no line of sight to the MT = the breath can't
+  hit you; the raid's probe is hailing the tank (a bare `You say, 'Hail'`
+  with no name = no LoS = safe). Both triggers exist in `guild_triggers`
+  **disabled** ("LoS check — SAFE" / "LoS check — VISIBLE"), patterns already
+  verified through the real compiler with negatives, scope reasoning in
+  their notes. Enabling them later is one toggle each — no other work.
 - **Slow callouts renamed for TTS (Hitya):** "SHM SLOW"/"BRD SLOW"/"ENC
   SLOW" overlays read out as letters — now "Shaman Slow" / "Bard Slow" /
   "Enchanter Slow" / "Plague Slow". **Enchanter Slow enabled** (it exists);
