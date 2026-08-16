@@ -1554,8 +1554,17 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   Worked example of what it answers that ticks cannot: Peopleslayer marked **19 of 19
   Wednesdays tentative** while signing in on 18/19 Sundays and 19/19 Thursdays — a
   standing weekly constraint that attendance counts alone can only infer.
-- **Per-fight timeline (#98)** — `encounter_events` → `FightTimeline.tsx` on
-  `/parses/[id]` (deaths, slows, mob heals, discs, fires); replay-this-fight link.
+- **Per-fight timeline (#98)** — `encounter_events` → **`FightEventLog.tsx`** on
+  `/parses/[id]` since web 1.1.60 (collapsible LIST of deaths, slows, mob heals,
+  discs, fires — names + times, repeats folded ×N; Hitya 2026-08-16: the marker
+  view was "useless in this format"). The marker chart `FightTimeline.tsx`
+  survives on `/raid/review` where wipe-spotting is the job. Replay-this-fight
+  link unchanged.
+- **Damage-over-the-fight chart** — `DamageCurve.tsx` + `lib/fightCurve.ts` on
+  `/parses/[id]`: stacked BY CLASS with right-edge `class + %` labels, click a
+  class to drill into its characters (one-axis premise holds in both views),
+  hover highlights, MT strip with honest "nobody taking hits" gap tooltips
+  (1-bucket sampling holes bridged; real gaps kept — the Moash "it ran" case).
 - **Sprint board on `/roadmap`** — `SprintBoard.tsx` + `sprintItems` in
   `roadmapData.ts` (sortable, platform-color aspects).
 

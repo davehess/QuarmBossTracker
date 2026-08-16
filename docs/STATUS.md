@@ -926,6 +926,31 @@ next touch one rather than assuming a missing row means a missing doc.
     own blind spot. Six tests in `test/quartermaster.test.js`, one of which
     serializes the scoped row and asserts no outsider's name appears **anywhere**
     in it, so a future name-carrying field fails there rather than in production.
+- **Parse page reshaped by Hitya's first-format review — DONE (web 1.1.60,
+  2026-08-16).** Five asks on `/parses/4d0d6dd2` (the restless burrower), all
+  shipped + harness-verified against that fight's real rows: the damage chart
+  stacks BY CLASS with right-edge `class + %` labels; clicking a class drills
+  into its characters with the same percentages ("everyone else" stays as one
+  muted band so the top edge is still the whole HP-removed curve); hovering a
+  chip/band/legend row highlights its region; the MT strip explains its gaps
+  (1-bucket sampling holes bridged in `mainTankLane` — measured aliasing;
+  REAL gaps get dashed hover rects — the 385s→end gap was the mob dealing
+  zero damage while the raid kept hitting it, Hitya's "it ran" confirmed);
+  and the FightTimeline marker chart on that page is replaced by
+  `FightEventLog.tsx`, a collapsible list of deaths/events/callouts with
+  names, ×N run-folding, and per-type dots (`/raid/review` keeps the marker
+  chart). Future (denoted in `DESIGN-fight-timeline.md`): per-type/callout
+  toggles — "many of these are probably personal to one character."
+- **Boxing-language scrub — DONE (web 1.1.59 main + beta comment pass,
+  2026-08-16).** Hitya: *"not boxing, these are characters that each of the
+  players will play distinctly. It shouldn't ever be talked about in anything
+  on the github either, unless we're specifically looking to suss out
+  boxers."* Every guild-member reference to boxers/multiboxing reworded
+  neutrally (multi-log / second watched log / a player's characters) across
+  docs, web, bot comments, test names (main) and agent + Mimic comments
+  (beta). Deliberately unchanged: `/pvp` (opposing players) and
+  `/admin/anomalies` + its admin-index card (the explicit detection surface —
+  Hitya's stated exception).
 - **Kneel Test phantom — FIXED for real (agent 3.5.86 beta, 2026-08-16).**
   Hitya: *"for beta, I'm still seeing kneel test on the target info."* Server
   was clean (0 buff_casts rows — ingest filter works); the phantom was LOCAL:

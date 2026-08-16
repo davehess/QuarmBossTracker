@@ -370,3 +370,50 @@ its own component. Shared geometry only.
 
 ⚠ Repeat-pull fights remain wrong until ingest binding lands (build order step 2).
 The chart labels them rather than pretending.
+
+---
+
+## 2026-08-16 — Hitya's first-format review (shipped web 1.1.60)
+
+Hitya reviewed `/parses/4d0d6dd2-…` (the restless burrower) and asked for five
+changes. All shipped in one pass; every claim below was verified against that
+fight's real rows (456 timeline rows, 224 events) in a Playwright harness
+before landing.
+
+1. **The stack groups BY CLASS now, with right-edge `class + %` labels.** The
+   per-character top-7 view became the DRILL level: click a class (chip, band,
+   or legend row) and its characters break out with the same right-edge
+   percentages, while everything outside the class collapses into one muted
+   "everyone else" band at the bottom — so the top edge is still the whole
+   fight's HP-removed curve and the ONE-AXIS premise holds in both views.
+   Class-level palette discipline matches the character fold: 7 hues + one
+   muted "N other classes" group (itself drillable — a real fight showed 10
+   damage-dealing classes).
+2. **Hovering a class chip / legend row / band highlights its region** (and its
+   MT segments); everything else dims. Same highlight set serves the name
+   search.
+3. **MT-lane gaps are explained, not mysterious.** Measured on the burrower:
+   the six mid-fight 1-bucket holes were snapshot-cadence aliasing (3.5–6.4s
+   capture vs 5s buckets) — `mainTankLane` now bridges a SINGLE empty bucket
+   when the same tank holds both sides. The 385s→end gap was REAL: the mob
+   dealt zero damage for the last ~3.5 minutes while the raid kept hitting it
+   (Hitya's "it ran, i bet" — correct). Real gaps (≥10s) render as faint
+   dashed rects with a hover tooltip ("nobody taking hits mm:ss–mm:ss") plus a
+   legend line. A gap across a tank CHANGE is never bridged.
+4. **The FightTimeline marker chart is gone from `/parses/[id]`** (Hitya:
+   "useless in this format") — replaced by `FightEventLog.tsx`: a collapsible
+   `<details>` LIST of deaths + raid events + callouts in order, with names,
+   per-type dots in the same #105 hues, and consecutive repeats folded into
+   `×N` rows with a time range. Server-rendered, no client JS.
+   `/raid/review` KEEPS the marker chart — wipe-spotting across many fights is
+   what the vertical death stack is for.
+5. **The shared-geometry constraint above ("must share an axis with the
+   FightTimeline on the page") is RETIRED for this page** — there is no second
+   time-axis chart on `/parses/[id]` anymore, which freed the right pad
+   (PADR 148) for the label gutter.
+
+**Denoted for the future (Hitya, same review):** per-type / per-callout
+toggles on the event list — "many of these are probably personal to one
+character." Needs client state and probably a per-user preference; when it
+lands, `FightEventLog` goes `'use client'` and the grouped rows become the
+toggle rows.

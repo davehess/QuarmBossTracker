@@ -37,6 +37,19 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'web-1-1-60',
+    title: '\u{1F4CA} Parse charts read by class',
+    version: 'Web 1.1.60',
+    date: '2026-08-16',
+    headline: 'The damage-over-the-fight chart on a parse page now reads the way a raid leader thinks: by class first, by character when you ask.',
+    features: [
+      { name: '\u{1F3AF} Classes first, percentages on the chart', blurb: 'The stacked chart groups damage by class, with each class named on the right edge of the graph next to its share of the total. Click a class to break it out into its characters with the same percentages; hover any class to light up its slice.' },
+      { name: '\u{1F6E1} The MT bar explains its gaps', blurb: 'A gap in the tank strip means NOBODY was taking hits — the mob was running, kited, or off the raid — not that the tank changed. Hover a gap to see exactly when. Tiny false gaps from how often the data samples are gone.' },
+      { name: '\u{1F550} The fight timeline is a list now', blurb: 'Instead of unreadable dots, the timeline is a drop-down below the chart: every death, raid event, and callout in order, with names and times. Repeats fold into one line with a count.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'web-1-1-57',
     title: '\u{1F3B2} See who else rolled',
     version: 'Web 1.1.57 · Agent 3.5.85',
