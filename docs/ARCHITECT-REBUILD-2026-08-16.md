@@ -284,3 +284,135 @@ claim, and this doc's over-engineering pick is confirmed.
    already awaiting your word; this doc only raises its priority.
 3. Set the **O1 review date** (proposed 2026-12-01) for the budget-enforce
    half: delete, or keep consciously.
+
+---
+
+# Part II — the rest of the platform (same day, after U1/U2 landed)
+
+Hitya's follow-up, verbatim on the direction: *"discord was a source of
+semi-truth. now it should just be a projection"* — decision #1 is ratified —
+and *"let's start looking at the database read/write layers as that is
+complexity I have not designed in."* Part I's six decisions covered bot state,
+the data layer, the agent build, branches, time, and deploy verification. This
+part reviews what they did NOT touch, with tonight's measurements, and outlines
+the optimizations with lasting operational effect. Everything already DONE
+tonight is marked; everything else is ordered by effect-per-hour.
+
+## What landed tonight (U1, U2, and the advisor sweep)
+
+- **U2 → 0 and pinned.** Migration `20260816041125_loot_award_unique`: all 560
+  duplicate rows backed up (service-role-only table, droppable after
+  2026-09-16), deleted keeping the earliest row per award (10,321 → 9,761),
+  and `loot_observations_award_uniq` created — PARTIAL on `raid_id IS NOT
+  NULL` (chat/loot-command DROP observations carry no raid and must not
+  collide), `NULLS NOT DISTINCT` inside the raid-bound world. Verified
+  refusing a re-inserted award with 23505. The fold and `/backfillopendkploot`
+  now write `insertIgnoreDuplicates` — a re-run is a schema no-op.
+- **U1 structural.** One paginator per runtime: `utils/supabase.js
+  selectAllPaged` (bot) and `web/lib/selectAll.ts` (web);
+  `supabase-paged.ts` retired, its four call sites migrated.
+  `test/db-read-discipline.test.js` enforces single-paginator + the
+  load-bearing properties + an **85-site ratchet** on `.limit(>1000)` — the
+  count may only shrink.
+- **Security (advisor-driven, applied):** `rollup_threat_ranks` — a
+  SECURITY DEFINER function that WRITES — was executable by `anon`; revoked
+  from public/anon/authenticated (the bot's service-role call is unaffected).
+  `search_path` pinned on the four flagged functions. The 46 "RLS enabled, no
+  policy" INFOs are the *intended* deny-all posture for bot-only tables — the
+  linter reads our default as an omission; it is the design.
+- **Performance (advisor-driven, applied):** four RLS policies re-evaluated
+  `auth.uid()` PER ROW (`tells` — 9,025 rows, every /me/tells read — plus
+  wolfpack_members, member_onboarding_state, page_views). Rewritten as
+  InitPlan subqueries; identical semantics.
+
+## The ratchet backlog, priority-ordered by measured table size
+
+The 85 over-cap sites are not equal. Crossing them with tonight's
+`pg_class.reltuples` names the ones lying TODAY (table ≥ rows the site asks
+for the impossible over):
+
+| site | table | est. rows | asked for |
+|---|---|---|---|
+| `web/lib/admin-queue.ts:477` | chat_messages | **341,750** | 20,000 |
+| `web/app/pvp/*` (4 sites) | who_observations | **117,377** | 20,000 |
+| `web/app/fun/page.tsx:109,130` | fun_events | 20,356 | 5–8,000 |
+| `web/lib/admin-queue.ts:509` | character_inventory | 18,320 | 20,000 |
+| `web/app/admin/signups/page.tsx:230` | rh_signups | 14,893 | 50,000 |
+| `web/app/admin/analytics/page.tsx:38` | page_views | 8,710 | 50,000 |
+
+Each conversion: check the ordering key (the 2026-08-05 lesson — unordered
+walks drop the NEWEST rows), swap to `selectAll`, lower `OVER_CAP_BASELINE`.
+An hour each, and the ratchet locks every one.
+
+## Discord becomes a projection — the execution order (ratified tonight)
+
+The rule for NEW state is already law (`bot_kv`). The existing five-home
+estate migrates in blast-radius order, each step leaving Discord messages as
+*renders* whose ids live in the database:
+
+1. **`state.json`'s remaining dynamic keys** (~10 reference sites measured
+   tonight: fanout marks, welcome/seen flags, agent test cards, session
+   damage, announce ids). 2–3h. Kills the redeploy-races-a-raid-night class
+   (the eleven-review night) permanently.
+2. **Roster** — chunked-JSON threads → a table + one rendered embed.
+   `utils/roster.js` (480 lines) shrinks; `/restore` loses its biggest
+   customer.
+3. **Hate state** — hidden JSON embeds → table + render.
+4. **Parses thread** — last, deliberately: it is the largest and the recovery
+   path (`loadParsesFromDiscord`) guards real history. After it moves, boot
+   no longer depends on Discord read-back at all.
+
+The projection direction also shrinks the ~114-env-var anchor lattice:
+a projection can re-post a lost message and record the new id itself — the
+anchor fallback becomes self-healing instead of hand-maintained.
+
+## Component review — what Part I didn't touch
+
+**Mimic (operations).** The 7-point overlay parity checklist in CLAUDE.md is
+manual, and "overlay missing one checklist item" was a whole class of beta
+bugs. The lasting fix is the repo's proven move — make the rule a failing
+check: `test/overlay-parity.test.js` walking the 19 overlay .html files +
+main.js for ✕-button/IPC branch, hover handshake, `WP_OVERLAY_ROWS`,
+`_HIDEALL_FLAGS`, `_overlayEntries()`. ~3h. Metric: parity bugs per beta line
+(historically ≥1; target 0). Crash-loop LKG rollback + prune-linux-releases
+are already sound.
+
+**Web (operations).** (a) **Env parity Production↔Preview** — the
+`b.wolfpack.quest` sign-in outage class ("SUPABASE_SERVICE_ROLE_KEY not set")
+recurs every time a var is added to one environment only. A ~1h script
+diffing Vercel env keys across environments (runnable in CI on env-touching
+PRs) retires the class. (b) 72 of the web's pages are `force-dynamic` — every
+view is a live Supabase fan-out. Fine at guild scale; noted as the first
+lever if hosting cost ever matters (self-host doc already owns that trade).
+
+**Bot (operations).** Decision 6 operationalized: a post-deploy smoke —
+after Railway restarts, hit `/health` and one canary read (e.g. bosses count)
+from a workflow; alert on failure. ~2h. Today a bad deploy is discovered by a
+raider mid-raid; the smoke moves discovery to deploy+2min. (The raid-freeze
+tripwire already guards WHEN; this guards WHETHER it came up.)
+
+**Supabase (remaining advisor items).** 13 unindexed FKs — the hot ones are
+`combat_events`, `encounter_players`, `encounters`, `fun_events`; one ~30min
+migration. 62 unused indexes flagged — weak evidence on a young database;
+re-run the advisor at 90 days and drop what is STILL unused (each one taxes
+every ingest write until then). Two tables carry duplicate permissive
+policies (`characters`, `bosses_local`) — merge to one each. Auth server
+capped at 10 connections — correct at guild scale, a self-host wizard note.
+
+**External dependencies.** OpenDKP is the one SaaS whose loss is
+unrecoverable-by-us — but the `opendkp_*` mirror tables ARE the archive, and
+the fold now being idempotent means a full re-pull is safe to re-fold at any
+time. Raid-Helper's board self-deletes on raid day; the mirror + staleness
+alarm (#34) already treat it as the archive. GitHub releases: the 10-entry
+atom-feed trap has its prune workflow. Discord: every projection step above
+reduces its blast radius from "source of truth" to "display."
+
+## The operating rule this all rolls up to
+
+Every lasting fix above is the same move performed on a different surface:
+**take a rule that lives in memory or prose, and make it a failing check or a
+schema constraint.** The platform's four existing gates (dashboard escape,
+wpKeep, golden logs, COMMAND_HTML sync) proved the pattern; tonight added
+three more (award uniqueness, single-paginator, the over-cap ratchet). The
+backlog above is six more instances of the identical move. That — not any
+rewrite — is what "designed in" looks like from here.

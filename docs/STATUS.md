@@ -926,6 +926,32 @@ next touch one rather than assuming a missing row means a missing doc.
     own blind spot. Six tests in `test/quartermaster.test.js`, one of which
     serializes the scoped row and asserts no outsider's name appears **anywhere**
     in it, so a future name-carrying field fails there rather than in production.
+- **U1 + U2 landed; Discord-projection ratified; advisor sweep — DONE (bot
+  3.1.49 / web 1.1.58, 2026-08-16).** Hitya: *"do U1 and land the unique
+  index"* + *"discord was a source of semi-truth. now it should just be a
+  projection"* + *"let's start looking at the database read/write layers as
+  that is complexity I have not designed in."*
+  - **U2 → 0, pinned.** Migration `20260816041125_loot_award_unique`: 560
+    dupes backed up (drop table after 2026-09-16) + deleted (10,321 → 9,761),
+    `loot_observations_award_uniq` PARTIAL on `raid_id IS NOT NULL` + NULLS
+    NOT DISTINCT — partial because chat_extracted/loot_command rows are DROP
+    observations that must not collide across nights. Verified refusing a
+    re-insert (23505). Fold + `/backfillopendkploot` now write
+    `insertIgnoreDuplicates(…, {representation:true})` — re-runs are schema
+    no-ops with honest counts. Task #39 closed.
+  - **U1 structural.** One paginator per runtime (`utils/supabase.js
+    selectAllPaged` / `web/lib/selectAll.ts`); `supabase-paged.ts` retired,
+    its 4 call sites migrated; `test/db-read-discipline.test.js` enforces
+    single-paginator + load-bearing properties + an **85-site ratchet** on
+    `.limit(>1000)` (count may only shrink; priority order by measured table
+    size in ARCHITECT doc Part II — admin-queue:477 on 342k-row chat_messages
+    is worst).
+  - **Advisor sweep, applied:** `rollup_threat_ranks` (SECURITY DEFINER,
+    WRITES) was anon-executable — revoked (migrations
+    `lock_down_definer_functions`, `rls_initplan_fix`); 4 per-row
+    `auth.uid()` RLS policies → InitPlan; `search_path` pinned ×4. Remaining
+    advisor items + full component review (Mimic overlay-parity gate, web env
+    parity, post-deploy smoke, unindexed FKs) outlined in ARCHITECT Part II.
 - **Architect's rebuild assessment — DONE docs (2026-08-16).**
   `docs/ARCHITECT-REBUILD-2026-08-16.md`, on Hitya's ask: rebuild from scratch
   knowing everything, name the first decision changed, split "couldn't have

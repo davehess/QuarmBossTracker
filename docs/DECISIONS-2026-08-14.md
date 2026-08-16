@@ -11,11 +11,10 @@ first and reach back for the older detail.
 
 | Item | State |
 |---|---|
-| **Architect's rebuild assessment — three metrics need Hitya's call** | `docs/ARCHITECT-REBUILD-2026-08-16.md`. First decision changed: durable state gets ONE home (Postgres), Discord becomes a projection. Most under-engineered: the DB read/write layer (three independent paginators, 1000-row cap bit twice, **337 dup groups / 560 excess rows live in `loot_observations` this morning**) — it costs ~an order of magnitude more than the most over-engineered thing (the never-armed `budget_enforce_*` half of #73). Asks: adopt the unpaged-read CI gate (U1)? land #39's cleanup + unique index (U2 → 0)? set 2026-12-01 as the delete-or-keep review for budget enforcement (O1)? |
+| **Architect's rebuild — U1/U2 DONE, O1 remains** | 2026-08-16: Hitya ordered U1 + the unique index and ratified *"discord was a source of semi-truth. now it should just be a projection."* Landed same night: `loot_observations_award_uniq` (560 rows deduped+backed up, dup groups **0**, re-insert refused 23505), one paginator per runtime + the 85-site over-cap RATCHET (`test/db-read-discipline.test.js`), `rollup_threat_ranks` anon-execute revoked (it WRITES), 4 per-row `auth.uid()` policies → InitPlan. Remaining: the ratchet backlog (priority table in ARCHITECT doc Part II), the Discord-projection migration order (state.json → roster → hate → parses), O1 review 2026-12-01 |
 | **Does guild membership belong in front of PERSONAL tooling?** | Hitya, on the mule upload: *"Being in the guild should not be a limiter for someone making a new character and trying to use the inventory function or target info overlays or any of those things outside of raids."* The claim rule is fixed (below); **the two sign-in gates are not** — someone outside the guild can't reach `/me`, so the upload they need is behind a door they can't open. Splitting personal surfaces from guild surfaces changes who can see guild data, so it needs Hitya's call on shape: guest role, a separate personal tier, or Mimic-only with no web account (task #40) |
 | **Roll labels — one line of chat is still unreachable** | Agent 3.5.84 reads commas, tier lists and bare `Item 333` calls, but `"Do a 777 if you want a Shield of the Immaculate"` names the item AFTER the number mid-sentence, and every rule that would catch it also catches real chatter. It stays unlabeled — the same line the `roll_set_overrides` migration cites as why officer edits exist. Also accepted: a roll for TURN ORDER (`Holytomato 111, Emoo 222…`) labels player names as items |
 | **Task #27 — the 8 muted trash triggers** | Gate is *"the fleet is on the fix"*, not *"the fix exists"*. Mimic 2.5.0 (agent 3.5.80) shipped 04:08 UTC and **nobody has installed it yet** — flipping the rows on now puts the wall back for every raider still on 2.4.x, which is exactly what the gate prevents. Also a raid-noise call, not a code change: it reaches the whole fleet in ~2 min with no review. Restore after the fleet has updated, on Hitya's word |
-| **560 pre-existing duplicate loot rows** | 337 groups across raids 44080–92092, from overlapping `/backfillopendkploot` runs. They inflate "N× won" the same way the fold's bug did. Cleaning them is a destructive edit to historical guild data → needs Hitya's word (task #39). Once gone, a unique index on (source, raid_id, item_id, winner_character, dkp_amount) makes this class of bug structurally impossible |
 | **Mimic 2.5.0 — first raid** | The whole 2.5 line (History tab, CH ✕, dashboard split, pet fold, backup-log rule) is browser-verified and unit-tested but has not been through a raid. Sunday is the first real test |
 | **Stale live-state can shadow fresher inferred buffs** | A character who returns after a swap keeps their OLD `character_live_state` buff list (Bwavair: 9 buffs, 2h old) because `live?.buffs ?? inferred` prefers any live row over inference. Not changed — she only has 2 observed casts, so falling back would paint a cleric RED "no buffs" and that is a worse lie than a timestamped stale list. Revisit if inferred coverage improves |
 | **Item icons DISABLED — needs a local session** | The atlas maps to the wrong icon ids (633 = boots → shovel). Off behind `ICON_ATLAS_DISABLED` since web 1.1.50. Repack via `scripts/pack-item-icons.ps1` on the EQ machine, check `uifiles/default` is stock, and VERIFY 633 is boots before re-enabling |
@@ -517,3 +516,35 @@ around tools (`yt-dlp`, `gh`, `feedparser`) we can invoke directly.
 Repo stats not cited: `api.github.com` is blocked here too, so the star/fork
 counts on the rendered page could not be verified — and they do not bear on the
 measurement above.
+
+---
+
+## "Discord was a source of semi-truth. Now it should just be a projection."
+
+**The call (Hitya, 2026-08-16, verbatim above).** Ratifies the architect doc's
+decision #1 as direction, not just assessment. The rule going forward: **no new
+durable state in Discord messages or state.json — Postgres is the home, Discord
+renders it.** Migration of the existing estate is opportunistic and ordered by
+blast radius (ARCHITECT doc Part II): state.json's ~10 dynamic keys first (the
+redeploy-race class), then roster chunks, then hate embeds, then the parses
+thread last — after which boot no longer reads Discord back at all.
+
+Same session, the database layer got its first structural pass ("complexity I
+have not designed in" — designed in tonight):
+
+- **Award identity is schema, not code.** `loot_observations_award_uniq`,
+  partial on `raid_id IS NOT NULL` so drop observations never collide, NULLS
+  NOT DISTINCT inside the raid-bound world. 560 dupes deleted (backed up,
+  droppable after 2026-09-16), verified refusing re-inserts. The fold and the
+  backfill command write ignore-duplicates — re-runs are no-ops now.
+- **One paginator per runtime, enforced.** Bot: `utils/supabase.js` (where the
+  cap was documented all along). Web: `lib/selectAll.ts`; `supabase-paged.ts`
+  retired. `test/db-read-discipline.test.js` fails on a second paginator, on
+  lost load-bearing properties, and on any GROWTH of the 85 `.limit(>1000)`
+  sites — the ratchet only tightens.
+- **The advisor sweep found one real hole**: `rollup_threat_ranks`, SECURITY
+  DEFINER and WRITING, executable by `anon` — any internet caller could burn
+  the jsonb rollup and touch `rolled_up_at`. Revoked. Plus 4 per-row
+  `auth.uid()` policies rewritten as InitPlans (`tells` was the worst) and
+  `search_path` pinned on 4 functions. The 46 "RLS enabled no policy" INFOs
+  are our intended deny-all posture, not omissions.

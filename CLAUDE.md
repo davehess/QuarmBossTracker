@@ -508,6 +508,12 @@ reloaded on startup), hate state (hidden JSON embeds), and roster (chunked
 messages); `data/state.json` and `data/parses.json` are local mirrors with
 atomic writes (`.tmp` + rename). Recovery: `/restore <message links>`,
 `/recoverkills` (from Supabase encounters).
+⚠ **That is the CURRENT state, no longer the direction** (Hitya, 2026-08-16:
+*"discord was a source of semi-truth. now it should just be a projection"*).
+No NEW durable state goes into Discord messages or state.json — Postgres is
+the home, Discord renders it. The existing estate migrates opportunistically
+in the order state.json keys → roster → hate → parses thread
+(`docs/ARCHITECT-REBUILD-2026-08-16.md` Part II).
 
 ### HTTP endpoints (`/api/agent/*`, bearer auth)
 Ingest: `encounter` (combat events → parse cards + Supabase), `chat` (live
