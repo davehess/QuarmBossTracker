@@ -7,7 +7,7 @@ user-facing setup guide + command reference. When they conflict, this file wins.
 
 | Component | Path | Runs on | Ships from |
 |---|---|---|---|
-| **Bot** (Discord + HTTP API) | `/` (`index.js`, ~8k lines) | Railway, auto-deploys on push to `main` | `main` |
+| **Bot** (Discord + HTTP API) | `/` (`index.js`, ~18k lines) | Railway, auto-deploys on push to `main` | `main` |
 | **Web** (`wolfpack.quest`) | `web/` (Next.js 14) | Vercel, auto-deploys on push to `main` | `main` |
 | **Agent** (`wolfpack-logsync`) | `packages/wolfpack-logsync/` (single-file Node, zero deps) | End-user machines — bundled inside Mimic, or standalone via `Parser.bat` | bundled with Mimic; CLI zip via `release-parser.yml` |
 | **Mimic** (Electron desktop) | `apps/mimic/` | End-user Windows machines, auto-updates via electron-updater | `release-mimic.yml` on version bump (`main` = stable channel, `beta` = beta channel) |
@@ -24,7 +24,7 @@ Other fixed facts: Node 20, discord.js v14, Supabase project
 ### Working rule — minimal diff
 Touch only the code the task requires. If a change appears to need edits to
 adjacent or unrelated code, stop and flag it before proceeding. (The
-13k-line `index.js` monolith makes "small line count" a poor proxy for "small
+18k-line `index.js` monolith makes "small line count" a poor proxy for "small
 blast radius" — reaching into unrelated behavior is a structural hazard here.)
 
 ### Working rule — attribution: everything is Hitya unless it came via feedback
@@ -588,7 +588,7 @@ eqemu mirror sync (`.github/workflows/sync-quarm.yml`).
 
 ---
 
-## Agent (`packages/wolfpack-logsync/index.js`, ~16k lines, zero npm deps)
+## Agent (`packages/wolfpack-logsync/index.js`, ~35k lines, zero npm deps)
 
 Tails `eqlog_*_pq.proj.txt`, filters at byte level **before** parse: officer
 chat, tells, group, custom channels never leave the machine (`docs/PRIVACY.md`).

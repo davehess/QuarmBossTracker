@@ -926,6 +926,24 @@ next touch one rather than assuming a missing row means a missing doc.
     own blind spot. Six tests in `test/quartermaster.test.js`, one of which
     serializes the scoped row and asserts no outsider's name appears **anywhere**
     in it, so a future name-carrying field fails there rather than in production.
+- **Architect's rebuild assessment — DONE docs (2026-08-16).**
+  `docs/ARCHITECT-REBUILD-2026-08-16.md`, on Hitya's ask: rebuild from scratch
+  knowing everything, name the first decision changed, split "couldn't have
+  known" from "didn't want to know", and find the most over-/under-engineered
+  things with what each costs. Headlines: **first change = durable state gets
+  one home (Postgres), Discord becomes a projection** (roster.js predates the
+  first Supabase migration by 24 days — the placements were right when made;
+  keeping the pattern after 2026-05-25 was the choice). Most under-engineered:
+  the DB read/write layer — three independently-written paginators, the
+  1000-row cap biting twice, and 337 dup groups / 560 excess rows live in
+  loot_observations (re-measured this morning). Most over-engineered: the
+  never-armed budget_enforce_* half of #73 (bidCrypto runner-up); the Discord
+  recovery machinery is explicitly NOT over-engineering but compensating
+  complexity. Verdict: under-engineering costs ~an order of magnitude more
+  (≈8–11h/fortnight documented vs sunk cost + zero claims). Three metrics
+  proposed (U1 unpaged-read call sites → CI gate; U2 dup groups → 0 via #39's
+  index; O1 enforce armed-days, review 2026-12-01) — task #41, needs Hitya.
+  Also corrected CLAUDE.md's 2.2×-stale line counts (bot 17,706; agent 35,234).
 - **Who else rolled — DONE web (1.1.57) / BETA Command Center (agent 3.5.85),
   2026-08-14.** Hitya: *"can we start having a drop-down to open up lower rolls
   on the page and see who else rolled? may make sense to have this and a
