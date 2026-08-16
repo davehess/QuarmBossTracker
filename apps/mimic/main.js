@@ -237,7 +237,7 @@ function defaultConfig() {
     overlayOpacity: {},
     // Per-character overlay layouts (v1.2 Phase B). When enabled, Mimic swaps
     // the overlay visibility set to the active character's saved profile as you
-    // change toons (multibox: monk hides Charm, enchanter shows it). Opt-in —
+    // change toons (the monk hides Charm, the enchanter shows it). Opt-in —
     // saving the first profile flips charProfilesEnabled on. Map is
     // charLower → { show: { <flag>: bool, … }, savedAt }.
     charProfilesEnabled: false,
@@ -2241,7 +2241,7 @@ function _pollBlindState() {
 }
 
 // ── Per-character overlay profiles (v1.2 Phase B) ───────────────────────────
-// A player who multiboxes wants different overlays per toon: the monk has no
+// A player with several characters wants different overlays per toon: the monk has no
 // charm pet so the Charm tracker is noise, but the same player's enchanter
 // lives by it. Mimic learns the active character from the agent's
 // /api/state.activeCharacter (the most-recently-active tailed log) and, when
@@ -2482,7 +2482,7 @@ async function launchAgent() {
   //   3. Walk-up + 14-path autodetect (only if cfg.eqPaths is empty AND
   //      not explicitly excluded by the user).
   // Logs from all folders get appended as --log args; each self-identifies
-  // from its filename so multi-char + multi-install boxers parse correctly.
+  // from its filename so multi-character + multi-install setups parse correctly.
   const { dirs: eqDirs, runningDirs, knownDirs } = await resolveEqDirsWithLogs();
   // Tail the ones with logs; TELL the agent about every folder we know of. The
   // agent needs the second list for "Set up EQ for me" (which writes Log=TRUE

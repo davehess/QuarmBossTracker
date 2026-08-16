@@ -3002,8 +3002,8 @@ const HEAL_SPELL_RX = /\b(heal(?:ing)?|renewal|chloro\w*|regrowth|torpor|lay on 
 const _lastCastRelay = new Map();   // charLower → { sig, at }
 // Recent self heal-casts with their Zeal target + expected LAND time (cast
 // start + cast length). Two consumers:
-//   1. Local join — a multiboxed healer + recipient on the SAME machine lets
-//      the recipient's "You have been healed for N" attribute to the boxed
+//   1. Local join — a watched healer + recipient on the SAME machine lets
+//      the recipient's "You have been healed for N" attribute to the local
 //      caster with no server round-trip.
 //   2. Encounter payload `heal_casts` — the bot joins these against OTHER
 //      Mimic users' heals_received events to build real per-healer totals
@@ -3077,7 +3077,7 @@ function relaySelfCastForCasting(line, character, pre) {
     heal_amount: he ? he.amount : undefined,
     heal_fixed:  he ? he.fixed  : undefined,
   }] });
-  // Heal casts also feed the attribution ring (local multibox join + the
+  // Heal casts also feed the attribution ring (local same-machine join + the
   // encounter payload's heal_casts for the bot-side cross-client join).
   if (isHeal) _noteHealCast(character, spell, target, atMs, castSecs, he);
 }
@@ -3204,7 +3204,7 @@ function noteHealLandLine(line) {
 // state to auto-pop Mob Info + Pet/Charm overlays so the player can keep
 // playing through the blind without seeing their EQ window properly.
 //
-// We track per-character (multiboxers might have one toon blinded while the
+// We track per-character (one of a player's toons might be blinded while the
 // other isn't); each entry carries source (which is what the dashboard /
 // trigger pack key off when picking a callout) and a hard expiresAt (so a
 // missed fade message doesn't leave the state stuck on forever).
@@ -3807,8 +3807,8 @@ function trackChChainLine(line, character) {
   // Chain roster announcement — a healer posts the whole planned order at the
   // pull: "Fargan 001, Rapha 002, Mcdorf 003, Mana 004, Taey 005,". This is the
   // raid's OWN ground truth for who owns each slot, so it wins over the noisy
-  // speaker-inference the numbered shout-calls do — a boxer shouting the number
-  // from the wrong window (or a short nickname) otherwise pins the wrong player
+  // speaker-inference the numbered shout-calls do — a player shouting the number
+  // from another character's window (or a short nickname) otherwise pins the wrong player
   // on a slot (Hitya 2026-07-06: "shows Dant as 004 instead of Manamana").
   const rosterPairs = [];
   {
@@ -3874,8 +3874,8 @@ function trackChChainLine(line, character) {
     }
     const prev = c.slots[num] || {};
     // A declared roster owner for this slot wins over the shout speaker — that's
-    // the whole point of the roster call (a boxer shouting from the wrong window
-    // otherwise renames the slot). Falls back to the speaker when no roster.
+    // the whole point of the roster call (a player shouting from another
+    // character's window otherwise renames the slot). Falls back to the speaker when no roster.
     const slotName = (c.rosterNames && c.rosterNames[num]) || speaker;
     // kind: null — a real numbered CH call is never a labeled auto-slot;
     // clears any stale "Druid CH" tag on the rare chance this slot number
@@ -4298,12 +4298,12 @@ function chChainSnapshot() {
 // A watched log only counts as "you" while it's actually being written. The
 // agent tails EVERY eqlog_*_pq.proj.txt in the EQ folder and seeds watchedLogs
 // from all of them at startup, so a log left behind by someone who played on
-// this machine once (shared box, couple two-boxing) made their character
+// this machine once (a shared machine) made their character
 // permanently "ours" — no live client required. That spoke the CH-chain
 // "0N GO" callout for THEIR slot and highlighted THEIR slot as yours on the
 // overlay (Dant hearing Aimey's 002 GO, 2026-08-03). Freshness gate matches the
-// existing active-log window in _resolveChatSpeaker; a genuine two-box keeps
-// working because both logs are being written.
+// existing active-log window in _resolveChatSpeaker; a player on two live
+// characters keeps working because both logs are being written.
 const OWN_CHARACTER_ACTIVE_MS = 3 * 60_000;
 function _isOwnCharacterName(name) {
   if (!name) return false;
@@ -4524,7 +4524,7 @@ function trackDiFired(line) {
   const ts = parseEqTimestamp(line);
   const atMs = ts ? ts.getTime() : Date.now();
   const tank = m[1];
-  // The line is zone-visible, so a two-boxer's every watched log carries it.
+  // The line is zone-visible, so every watched log on the machine carries it.
   const key = tank.toLowerCase();
   if (_lastDiFired.key === key && (atMs - _lastDiFired.atMs) < DI_FIRED_DEDUP_MS) return null;
   _lastDiFired = { key, atMs };
@@ -5423,7 +5423,7 @@ function trackRollLine(line, character) {
     _rollSets.push(set);
     if (_rollSets.length > 40) _rollSets.splice(0, _rollSets.length - 40);
   }
-  // Multi-box dedup: every watched log hears the same broadcast — the same
+  // Multi-log dedup: every watched log hears the same broadcast — the same
   // (name, value) within a few seconds is one roll, not two.
   const nameLower = pending.name.toLowerCase();
   if (set.rolls.some(r => r.nameLower === nameLower && r.value === value && Math.abs(r.atMs - atMs) < 5000)) return;
@@ -5444,7 +5444,7 @@ function trackRollLine(line, character) {
     }
   }
   // 🎲🔥 HOT DICE — a PERFECT roll (hit the very top of the range). Emits a
-  // fun_event (deduped server-side across the multi-box logs). Fires on any
+  // fun_event (deduped server-side across the machine's watched logs). Fires on any
   // perfect roll — even a reroll perfect is a lucky moment worth marking. The
   // >20%-of-the-night Hot Dice award is computed later from the stored roll sets.
   if (value === to && to > 1) {
@@ -6109,7 +6109,7 @@ class EncounterBuilder {
     // 2026-06-25: "x CHs and other heal types".)
     this.healSpellCounts = {};
     // Heals WE received that no local heal-cast could attribute ("You have
-    // been healed for N" with no multiboxed caster on this machine). Uploaded
+    // been healed for N" with no watched caster on this machine). Uploaded
     // as heals_received so the bot can join them against other Mimic users'
     // heal_casts. events capped at 300 (HoT-tick spam bound).
     this.healsReceived = { total: 0, ticks: 0, events: [] };
@@ -6504,7 +6504,7 @@ class EncounterBuilder {
       }
     }
     stats.currentEncounterThreat = snap;
-    // Per-character mirror so a multi-boxer can see THEIR focused character's
+    // Per-character mirror so a player with several logs sees THEIR focused character's
     // fight even when another character's log just landed an update. Keyed
     // lower-case to match the active-character normalization in /api/state.
     if (this.character) {
@@ -7130,7 +7130,7 @@ class EncounterBuilder {
         const def = /^you$/i.test(event.defender) ? (this.character || 'You') : event.defender;
         this._bumpDefender(def, 'rampageHits', 1, Date.parse(event.ts) || Date.now());
         // Callout: announce who's taking the rampage (deduped per-target so a
-        // multi-hit rampage / multi-box logs don't spam it). Silent builders
+        // multi-hit rampage / multiple watched logs don't spam it). Silent builders
         // (opt-in backfill replays) must NOT speak old rampages. #155 — gate on
         // the rampaging mob being the raid's main target so adds' rampages on a
         // multi-mob pull don't spam the TTS.
@@ -7670,8 +7670,8 @@ class EncounterBuilder {
       // Unattributed RECEIVED heal ("You have been healed for N") — this used
       // to run through `healer = this.character`, crediting the RECIPIENT as a
       // healer of themselves (the "Tildias 1,300 → You" rows on parse cards,
-      // Hitya 2026-07-14). Divert: try the local heal-cast ring (multiboxed
-      // healer on this machine attributes instantly); otherwise record it as a
+      // Hitya 2026-07-14). Divert: try the local heal-cast ring (a healer
+      // watched on this machine attributes instantly); otherwise record it as a
       // received event for the bot's cross-client cast×landing join.
       if (!event.attacker && event.defender === 'You') {
         const tsMs = Date.parse(event.ts) || Date.now();
@@ -8453,7 +8453,7 @@ class EncounterBuilder {
     }
     _recordFightHistory(stats.currentEncounterThreat);
     // Cross-builder flush propagation. If this Mimic install is tailing more
-    // than one character's log (multi-box on one machine), peer builders
+    // than one character's log (several watched logs on one machine), peer builders
     // watching the SAME fight should close along with us — if their own log
     // missed the kill line for any reason (truncation, client crash,
     // out-of-order flush), they'd otherwise sit with an open fight
@@ -8496,7 +8496,7 @@ class EncounterBuilder {
       }
     }
     // Mirror to the per-character map so the 2-min stale window applies
-    // independently per character (a multi-boxer's other character can
+    // independently per character (a player's other character can
     // still be mid-fight while this one wraps up).
     if (this.character && stats.currentEncounterThreatByChar) {
       const k = String(this.character).toLowerCase();
@@ -9546,7 +9546,7 @@ const stats = {
   // (null when no fight is active). { bossName, startedAt, perPlayer: { name: { swing, proc, spell, heal, total } } }
   // Globally last-write-wins for backward compatibility; the per-character
   // map below is the source the DPS overlay should prefer when the agent is
-  // watching multiple logs at once (multi-boxers).
+  // watching multiple logs at once (one player, several characters).
   currentEncounterThreat: null,
   // currentEncounterThreatByChar: per-character snapshot keyed on the
   // lowercased character whose log produced the encounter. Lets the DPS
@@ -9680,7 +9680,7 @@ function readActivePid() {
 // chat/encounters → duplicate Discord posts + double-counted parses.
 //
 // This lock elects ONE uploader per machine. It lives in the OS temp dir, so
-// every install on the box shares it. The holder uploads; everyone else still
+// every install on the machine shares it. The holder uploads; everyone else still
 // tails and shows its own local dashboard, but suppresses uploads. If the
 // holder exits or crashes, a non-uploader takes over (lock is "stale" when the
 // pid is dead OR the heartbeat is older than the TTL).
@@ -11281,7 +11281,7 @@ function _serializeForDashboard() {
 
   // Blind state for the ACTIVE character (Mimic auto-shows Mob Info + Pet/
   // Charm overlays while this is active; restores prior visibility on fade).
-  // Shaped as a per-char map so a future multibox UI can branch per window.
+  // Shaped as a per-char map so a future multi-log UI can branch per window.
   const _blindOut = {};
   for (const cl of Object.keys(_blindState || {})) {
     const s = _blindState[cl];
@@ -11381,7 +11381,7 @@ function _serializeForDashboard() {
     // found (can't tell). Drives the Setup-checklist row.
     zealExportOnCamp:   _zealExportOnCampState(),
     // Prefer the focused character's encounter when the agent is watching
-    // multiple logs (multi-boxer). Falls back to the last-write-wins global
+    // multiple logs (one player, several characters). Falls back to the last-write-wins global
     // when no per-character entry exists, preserving single-character UX.
     currentEncounterThreat: (() => {
       const map = stats.currentEncounterThreatByChar || {};
@@ -26242,7 +26242,7 @@ function _controlStandDown() {
 // "live" here means the same thing the bot's chat-election freshness gate means.
 const LIVE_CHARACTER_IDLE_MS = 90_000;
 // #119 — liveness across ALL watched logs. last_line_ms is the MIN age across
-// every watched character's tail (any live log = a live agent — a boxer whose
+// every watched character's tail (any live log = a live agent — a player whose
 // primary is logged out but who's actively playing an alt still tails a flowing
 // log, so the #112 chat election + fleet staleness dot treat them as fresh; an
 // agent with NO active log anywhere still yields a large age → stale, so the
@@ -26719,7 +26719,7 @@ function _recordFightHistory(et) {
   if (!boss) return;
   const startedMs = et.startedAt ? Date.parse(et.startedAt) : 0;
   stats.fightHistory = Array.isArray(stats.fightHistory) ? stats.fightHistory : [];
-  // A multi-box install flushes once per builder, and flush() also propagates
+  // A multi-log install flushes once per builder, and flush() also propagates
   // to peer builders on the same fight — so the same kill arrives several
   // times. One entry per (boss, start within 60s).
   const dupe = stats.fightHistory.find(h =>
@@ -28348,7 +28348,7 @@ const TRIGGER_TOKEN_KINDS = {
 };
 
 // Expand tokens. ctx.characters binds {c}/{char}/{self} to an alternation of
-// the watched characters (boxing-aware); when none are known yet the token is
+// the watched characters (every watched log, not just the primary); when none are known yet the token is
 // left LITERAL — an unmatchable string — rather than becoming a wildcard that
 // fires for every player in the zone (the old {c} bug). Numeric guards
 // ({N>=50000}) become fire conditions checked after the match.
@@ -32378,7 +32378,7 @@ function _serializeZealForWeb() {
   // first, with the EQ zone resolved to a name and a `live` flag. Unlike the
   // pruned diagnostic above, this deliberately KEEPS logged-out characters so
   // you can see what each one logged out carrying + where they parked. Capped
-  // so a long multibox session can't bloat the payload.
+  // so a long multi-log session can't bloat the payload.
   //
   // Pet identification (Zeal): confirmed from a live charmed-pet gauge dump —
   // slot 1 = self, slot 6 = target, and **slot 16 = the pet** (charm or
@@ -33279,7 +33279,7 @@ function _announceLootPost(items, durSec) {
 // Open (or restart) an auction chip for this item set. Same signature =
 // restart in place (repeat post RESETS, never stacks a duplicate); a distinct
 // item set = a new independent chip (concurrent auctions are real). The TTS
-// callout fires only on the FIRST open of a set — multibox second-log copies
+// callout fires only on the FIRST open of a set — second-watched-log copies
 // and repeat posts reset silently.
 function _openOrResetLootAuction(sig, items, durSec, nowMs, channel, silent) {
   const id = 'loot|' + sig;
