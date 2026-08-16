@@ -926,6 +926,20 @@ next touch one rather than assuming a missing row means a missing doc.
     own blind spot. Six tests in `test/quartermaster.test.js`, one of which
     serializes the scoped row and asserts no outsider's name appears **anywhere**
     in it, so a future name-carrying field fails there rather than in production.
+- **Kneel Test phantom — FIXED for real (agent 3.5.86 beta, 2026-08-16).**
+  Hitya: *"for beta, I'm still seeing kneel test on the target info."* Server
+  was clean (0 buff_casts rows — ingest filter works); the phantom was LOCAL:
+  the junk-landing guard counted family size WITHIN each index, and of the 33
+  catalog spells sharing "is struck by a sudden force." exactly one (Kneel
+  Test — the only timed+detrimental member) survived the filters, so a family
+  of ONE sailed under the >8 guard and was crowned on every Ssra knockback.
+  Sharers are now counted across the whole CATALOG before filtering; the slow
+  rescue is preserved; `test/kneel-test-guard.test.js` rehydrates the real
+  builder and pins all three behaviors. DoT-grouping on Target Info designed
+  in `docs/DESIGN-mobinfo-dot-groups.md` (task #44) — blocked finding: the
+  spells mirror has NO class columns (eqmac dump omits them), so grouping
+  keys on the observed CASTER's class, with a local-session spell-class
+  backfill as enrichment.
 - **U1 + U2 landed; Discord-projection ratified; advisor sweep — DONE (bot
   3.1.49 / web 1.1.58, 2026-08-16).** Hitya: *"do U1 and land the unique
   index"* + *"discord was a source of semi-truth. now it should just be a
