@@ -453,3 +453,66 @@ catches real chatter. That exact line is the one cited in the
 **Backfill.** Last night's four Tears were relabelled through
 `roll_set_overrides` — additive, reversible with one DELETE, and applied before
 loot attribution, so the two pass/re-roll cases now show their real looter.
+
+---
+
+## Agent-Reach evaluated for blocked sources — NO for cloud, marginal for local
+
+**The question (Hitya).** Would `github.com/Panniantong/Agent-Reach` let us read
+sources our cloud sessions can't reach?
+
+**What it is.** MIT-licensed CLI that routes "read this URL / platform" through a
+set of per-platform backends: **Jina Reader** (`r.jina.ai`) for web pages,
+**Exa** (`api.exa.ai`) for search, `yt-dlp` for YouTube, `gh` for GitHub,
+`feedparser` for RSS, and browser automation that **reuses the desktop's
+already-logged-in Chrome** for Twitter/Reddit/Instagram/Xiaohongshu. It makes
+**no claim** to defeat Cloudflare, bot detection or IP blocking — the README
+warns the opposite, that cookie-driven platform access risks account bans and
+recommends throwaway accounts.
+
+**Measured from a cloud session, which settles it:**
+
+| host | result |
+|---|---|
+| `r.jina.ai` (its web-page backend) | `CONNECT tunnel failed, 403` |
+| `api.exa.ai` (its search backend) | `CONNECT tunnel failed, 403` |
+| `pqdi.cc` / `eqemulator.org` / `quarm.guide` | `CONNECT tunnel failed, 403` |
+| `api.github.com` | 403 |
+| `raw.githubusercontent.com` | 200 |
+
+**Its backends are behind the same wall as the sources.** Our blocks are the
+environment's own egress policy, applied at the proxy — not site-side
+anti-scraping. A tool that "reaches more of the internet" still needs egress to
+reach it, so on a cloud box it fails at the same hop the direct fetch does.
+Routing around that proxy is not on the table either: it is a control of the
+execution environment, not a site's bot rule.
+
+**And even unblocked it would not fix our actual list:**
+- **PQDI** 403s cloud IPs *at the site*. Jina Reader fetches from a datacenter
+  IP too, so it would very likely draw the same 403 — swapping one cloud IP for
+  another is not a fix. Running it locally is, which is what we already do.
+- **`api.porkbun.com`** needs credentials on an API, not page reading.
+- **DNS-over-HTTPS** is not a web page.
+
+**Where it is genuinely capable: a LOCAL desktop session** — open egress, plus
+browser automation against a real logged-in Chrome, which does things a plain
+fetch cannot. But that is also where we *already* have what we need: local
+sessions reach pqdi.cc, quarm.guide and eqemulator.org directly, and the
+`local session fetches → mirrors into Supabase` rule already covers the handoff
+(the `spell_level_seed` and eqemu backfill precedents).
+
+**So the call is no**, and the reason is worth keeping because it generalises:
+**a fetch-aggregator cannot solve an egress-policy block.** Check whether the
+wall is the environment's or the site's before reaching for a tool — ours is the
+environment's, and the tool's own backends prove it by being blocked too.
+
+⚠ **If it is ever reconsidered, the install model is the thing to weigh.** It
+installs by handing the agent a URL and letting it run the install script
+autonomously, and the only machine it would help is the one holding `A:\EQ`,
+`D:\EQServer` (MariaDB creds in `eqemu_config.json`) and our Supabase
+service-role key. That is a large amount of trust for a convenience wrapper
+around tools (`yt-dlp`, `gh`, `feedparser`) we can invoke directly.
+
+Repo stats not cited: `api.github.com` is blocked here too, so the star/fork
+counts on the rendered page could not be verified — and they do not bear on the
+measurement above.
