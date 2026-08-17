@@ -158,3 +158,39 @@ roll sessions for the night · `/health` breaker+queue stats · did the fold run
 (newest folded raid vs newest opendkp raid) · any finding → DECISIONS. These
 manual passes are the dress rehearsal for #42's battery; whatever we find
 ourselves checking by hand three times becomes an invariant.
+
+## Post-raid triage — RUN (2026-08-16 ~22:30 ET, raid ended ~22:13 ET)
+
+**The night pivoted: the kite failed, so they keyed off Zlandicar and did
+SLEEPER'S TOMB tonight.** Tunare was never engaged — the "missing Tunare
+encounter" mystery resolves to "no combat happened"; nothing to classify.
+All four warders died 21:48–22:13 ET (Tukaarak 89s → Nanzata 93s →
+Hraashna 161s → Ventani 145s), 9–13 uploads each.
+
+- **The Ventani melee dance WORKED in the field** — the Freezing Breath
+  trigger fired on all 9 breaths of the fight. Measured cycle from the
+  merged fire clusters: gaps 12/13/13/13/13/14/16/17s — **median 13s,
+  faster than the Aug-7 kill's ~15s**. Recalibrated per the pre-authorized
+  plan: **timer 15→13s** ("Melee out" now at 10s, ahead of the fastest
+  observed 12s breath). One UPDATE, fleet-live in ~2 min, revert is one
+  UPDATE back.
+- **Zero trash encounters between Zlandicar (20:08) and Tukaarak (21:48)**
+  — and zero trash contributions, so it's not a pipeline miss: no trash
+  combat was uploaded at all, consistent with keying + a skip-to-warders
+  path. Confirm with Hitya in one line; if they DID clear trash, that's a
+  real finding.
+- **Fold lag: ZERO** (newest folded raid = newest OpenDKP raid, 100549).
+- **No digit-suffix phantom characters** — the backup-log rule held.
+- **~15 unlabeled roll sessions** around 20:11 ET (key rolls after
+  Zlandicar) — expected: the stable fleet labels only pipe-form calls; the
+  comma/tier parser is 3.5.84+ beta.
+- **One backfill oddity, harmless**: a single contribution landed tonight
+  on a March King Tormax encounter — someone's old-log replay; dedup
+  attached it instead of duplicating, as designed.
+- **Event binding is loose across fights**: Hraashna rampages (01:56) are
+  bound to the VENTANI encounter (started 02:11). Display-side the new
+  "before this pull" fold absorbs it; the binding window itself is a
+  follow-up if it ever misleads.
+- Earlier tonight, already recorded: the Caustic Mist trigger fired 3× on
+  the Zlandicar key-kill (shared Putrefy Flesh line — predicted, observed);
+  the Eye-of-Zomm meter/History pollution is fixed in agent 3.5.87 (beta).
