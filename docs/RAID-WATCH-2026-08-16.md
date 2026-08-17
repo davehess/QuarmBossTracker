@@ -194,3 +194,41 @@ Hraashna 161s → Ventani 145s), 9–13 uploads each.
 - Earlier tonight, already recorded: the Caustic Mist trigger fired 3× on
   the Zlandicar key-kill (shared Putrefy Flesh line — predicted, observed);
   the Eye-of-Zomm meter/History pollution is fixed in agent 3.5.87 (beta).
+
+## ⚠ P1 FOUND POST-RAID — first-time content is silently dropped by the encounter path
+
+Hitya: *"there were a ton of trash mobs from the start of raid at 830"* — and
+the platform recorded NONE of it. Diagnosis from the bot's own logs, complete:
+
+- **The encounter handler requires a `bosses_local` match to persist.** Every
+  ST mob missing from that table was refused with `no bosses_local match for
+  "<mob>" — encounter not persisted to Supabase` — while chat (422 msgs) and
+  buffs (2,398 casts) flowed normally through the same window. The agents
+  were 200-acked, so their queues dropped the payloads as delivered.
+- **Lost tonight:** ~75 min of ST trash (an aged caretaker, an ancient
+  sentry, a debris covered guardian, a tireless servitor) **and THE FINAL
+  ARBITER KILL** — 10 uploaders, up to 4,274 events each, started 21:41 ET.
+  The morning fix added the Arbiter to `data/bosses.json` (so the **162h
+  timer relayed fine** — "already on cooldown" — and the Discord parse card
+  posted) but NOT to `bosses_local`, which nobody knew was a separate,
+  load-bearing gate. Last night's Acrylia burrower trash persisted only
+  because someone had once added those mobs to the table.
+- **Patched immediately (bosses_local inserts, live):** final_arbiter
+  (128132), progenitor (128125), an_aged_caretaker (128112),
+  an_ancient_sentry (128101), a_newly_created_sentry (128110),
+  a_debris_covered_guardian (128111), a_tireless_servitor (128133) — all
+  zone `sleeper`. The NEXT ST clear persists everything.
+- **Recovery for tonight's lost data:** the fight payloads are gone from the
+  queues, but the logs aren't — an opt-in backfill (--since ~00:00 UTC
+  2026-08-17) from two or three of tonight's uploaders re-creates the
+  encounters with their original timestamps now that bosses_local matches;
+  `find_or_create_encounter` + `merge_encounter_players` assemble them as if
+  they'd landed live. (Bardtholemu's was the richest single view at 4,178
+  events.)
+- **The structural fix (bot, post-freeze, NOT tonight):** the handler must
+  stop treating bosses_local as an allowlist — fall back to zone-aware
+  `eqemu_npc_types` name resolution, or persist with a NULL npc_id rather
+  than dropping. Collection is sacred; a catalog-table miss must never cost
+  a first kill. This is also the strongest sentinel-invariant candidate yet:
+  "combat uploads arriving + zero encounters persisted over N minutes" is
+  precisely a loop-1 alarm.
