@@ -11,8 +11,12 @@ first and reach back for the older detail.
 
 | Item | State |
 |---|---|
+| **Architect's rebuild — U1/U2 DONE, O1 remains** | 2026-08-16: Hitya ordered U1 + the unique index and ratified *"discord was a source of semi-truth. now it should just be a projection."* Landed same night: `loot_observations_award_uniq` (560 rows deduped+backed up, dup groups **0**, re-insert refused 23505), one paginator per runtime + the 85-site over-cap RATCHET (`test/db-read-discipline.test.js`), `rollup_threat_ranks` anon-execute revoked (it WRITES), 4 per-row `auth.uid()` policies → InitPlan. Remaining: the ratchet backlog (priority table in ARCHITECT doc Part II), the Discord-projection migration order (state.json → roster → hate → parses), O1 review 2026-12-01 |
+| **Data Sentinel — designed, awaiting go (prime-agent reviewed)** | Hitya asked how prime-agent-style long-running actions fit for continuous ingest review during raids + reviewing live test cases. Verdict in `docs/DESIGN-sentinel.md`: don't adopt the stack (a code-executing daemon next to the service-role key, LLM tokens on quiet ticks, no good host), adopt the two loops — deterministic invariant battery IN THE BOT (10 seeds, each cited to a real incident; live probe tonight: **47 unlabeled roll sessions in 14d** — the 3.5.84 fix hasn't reached the fleet), judgment via post-raid scheduled Claude sessions. Plus the **live-test promotion rule**: a ship's production-verification check graduates into the battery in the same change. ~3–4h to build, deliberately NOT before Sunday's 2.5.0 raid. Needs: officer-thread choice + go (task #42) |
+| **2.5.0 raid watch — Tunare/ST/Vulak (docs/RAID-WATCH-2026-08-16.md)** | Pre-raid review shipped 08:xx ET: 4 slow triggers explicitly re-anchored + compiler-verified firing (and a DOCTRINE CORRECTION found doing it: agent 3.5.46's `_rewriteAnchorsForRawLine` auto-heals bare `^` at compile — the Aug-4 '37 dead' measurement predates it, **runbook needs re-measuring**); Final Arbiter + Progenitor added to the board (ST has FIVE named, we had four); Herald-of-Vulak false-timer risk retired by reading the exact-match code. Tonight's headline hazard: TWO Tunares, one name, tied 500k HP (127001 lootless kite / 127002 the kill) — watch for knit encounters + loot-tab binding. **#27 gate CLEARED** (178 chars on 3.5.80) — restore is now purely Hitya's noise call, ST trash night is when they'd matter. ANSWERED same morning: the dance keys on **Ventani's Freezing Breath** (845, from `eqemu_npc_spells`), cycle **~15s measured from our own Aug-7 Ventani kill** — trigger pair upgraded to Hitya's spec (timer 15s, "Melee out" at T-3, "A O E" on land). Also shipped: **`/preraiddrill`** (the #75 drill from Discord, read-only) + CHANGELOGS. Fight Cards designed (`docs/DESIGN-fight-cards.md`) — the Quartermaster's original concept, task #43 |
+| **Does guild membership belong in front of PERSONAL tooling?** | Hitya, on the mule upload: *"Being in the guild should not be a limiter for someone making a new character and trying to use the inventory function or target info overlays or any of those things outside of raids."* The claim rule is fixed (below); **the two sign-in gates are not** — someone outside the guild can't reach `/me`, so the upload they need is behind a door they can't open. Splitting personal surfaces from guild surfaces changes who can see guild data, so it needs Hitya's call on shape: guest role, a separate personal tier, or Mimic-only with no web account (task #40) |
+| **Roll labels — one line of chat is still unreachable** | Agent 3.5.84 reads commas, tier lists and bare `Item 333` calls, but `"Do a 777 if you want a Shield of the Immaculate"` names the item AFTER the number mid-sentence, and every rule that would catch it also catches real chatter. It stays unlabeled — the same line the `roll_set_overrides` migration cites as why officer edits exist. Also accepted: a roll for TURN ORDER (`Holytomato 111, Emoo 222…`) labels player names as items |
 | **Task #27 — the 8 muted trash triggers** | Gate is *"the fleet is on the fix"*, not *"the fix exists"*. Mimic 2.5.0 (agent 3.5.80) shipped 04:08 UTC and **nobody has installed it yet** — flipping the rows on now puts the wall back for every raider still on 2.4.x, which is exactly what the gate prevents. Also a raid-noise call, not a code change: it reaches the whole fleet in ~2 min with no review. Restore after the fleet has updated, on Hitya's word |
-| **560 pre-existing duplicate loot rows** | 337 groups across raids 44080–92092, from overlapping `/backfillopendkploot` runs. They inflate "N× won" the same way the fold's bug did. Cleaning them is a destructive edit to historical guild data → needs Hitya's word (task #39). Once gone, a unique index on (source, raid_id, item_id, winner_character, dkp_amount) makes this class of bug structurally impossible |
 | **Mimic 2.5.0 — first raid** | The whole 2.5 line (History tab, CH ✕, dashboard split, pet fold, backup-log rule) is browser-verified and unit-tested but has not been through a raid. Sunday is the first real test |
 | **Stale live-state can shadow fresher inferred buffs** | A character who returns after a swap keeps their OLD `character_live_state` buff list (Bwavair: 9 buffs, 2h old) because `live?.buffs ?? inferred` prefers any live row over inference. Not changed — she only has 2 observed casts, so falling back would paint a cleric RED "no buffs" and that is a worse lie than a timestamped stale list. Revisit if inferred coverage improves |
 | **Item icons DISABLED — needs a local session** | The atlas maps to the wrong icon ids (633 = boots → shovel). Off behind `ICON_ATLAS_DISABLED` since web 1.1.50. Repack via `scripts/pack-item-icons.ps1` on the EQ machine, check `uifiles/default` is stock, and VERIFY 633 is boots before re-enabling |
@@ -266,3 +270,320 @@ cap for months, on `upsert()`'s return path. It bites reads identically.
 the tests pass", and only the first one would have found this.** A feature whose
 whole job is to move rows between tables should be verified by counting rows in
 the destination, on the day it ships — not by trusting green CI.
+
+---
+
+## Holding the file is the claim
+
+**The call (Hitya, overruling me the same session).** The mule upload's
+`claimVerdict` shipped with four cases; three were uncontroversial and the
+fourth was wrong:
+
+> unclaimed but carrying an `opendkp_id` → take the data, do NOT link it
+
+My reasoning was that an OpenDKP row with no `discord_id` is a *real member who
+merely hasn't linked Discord*, so linking it to whoever uploaded a file would
+silently transfer someone's character. It sounded careful. Hitya:
+
+> "We should at least take the data and allow them to see their characters in
+> their account if they have the inventory files and are not already claimed by
+> someone. Being in the guild should not be a limiter for someone making a new
+> character and trying to use the inventory function or target info overlays or
+> any of those things outside of raids."
+
+**The rule is now one question: is it already claimed by somebody else?**
+Household → upload, nothing to claim. Linked to another member → refuse.
+Everything else — new name, or in `characters` but unclaimed — becomes yours.
+
+**Why the careful-sounding version was the worse trade.** Three things, and the
+first is the one I missed:
+
+- **Holding the file is real evidence.** You only have `Pyxtrade-Inventory.txt`
+  because you logged in on Pyxtrade and typed `/outputfile inventory`. That is a
+  stronger ownership signal than an unlinked OpenDKP row, which proves only that
+  the name once got a DKP tick.
+- **It broke the real case to guard a hypothetical one.** The population it
+  refused is overwhelmingly *your own alt that already raids*, which is exactly
+  the character a member most wants to see on `/me` — and the population it
+  protected (a stranger deliberately stealing a guildmate's character) has not
+  happened once.
+- **It guarded that weakly anyway.** The check keys on a file NAME. Anyone
+  wanting someone else's character renames a file. A guard that a rename defeats
+  is not buying the safety it costs.
+
+And the errors are asymmetric: a wrong claim is visible on `/me`, stamped with
+`registered_via_web_at` + `registered_via_web_by_discord_id`, and an officer
+reassigns it in one click. A wrong refusal is a dead end a member can't route
+around and probably won't report.
+
+**What kept the permissiveness honest:** the audit stamp now goes on the
+**claim-of-an-existing-row** branch too, not just on creation
+(`web/app/me/inventory-actions.ts`). That was the one thing genuinely missing —
+before, taking over an existing row left no trace of who took it. Refusing is
+not the only way to make a rule safe; being able to see and undo it is the
+other, and it's the one that doesn't break the legitimate case.
+
+**The general form is still open** (top table, task #40): the *claim* rule no
+longer gates on guild membership, but the *site* still does — two sign-in gates
+stand in front of `/me`, so a non-member cannot reach the upload at all. That
+one is Hitya's call on shape, not a flag flip.
+
+---
+
+## The Quartermaster shows you YOUR raiders, not everyone's
+
+**The call (Hitya).** *"quartermaster should display raider information for that
+user not for everyone. it can display for everyone for admins."*
+
+Board 1 (utility-kit coverage) shipped in #82 naming every owner of every kit
+item to every signed-in member — thirteen cards, each listing up to thirty
+character names. That is a browsable who-owns-what of the whole guild, sitting
+on a page whose stated job is "does anyone have X?". Board 2 had the scoping
+right from the start (your characters up top, officer rollup behind
+`isOfficer`); Board 1 was the outlier and nobody noticed because the two boards
+were written to answer different questions.
+
+**Where it landed.** `scopeKitCoverage(coverage, ownNamesLower, officer)` in
+`web/lib/quartermaster.ts`. Coverage is still assembled guild-wide — the count
+has to be — and then narrowed: officer sees the full list, a member sees their
+own characters and nothing else.
+
+**The count stays, and that is the deliberate part.** `ownerCount` is not
+narrowed. It names nobody, it is the ANON tier the visibility policy already
+defines, and it is the entire reason a member opens the board: *"eleven people
+have a Puppet Strings, none of them you"* is the useful answer. Cut the count
+too and a member cannot distinguish a real coverage gap from their own blind
+spot — the board would go from over-sharing to useless in one step. So the rule
+is **names are scoped, aggregates are not**.
+
+Two things that make it hold:
+- **The rule is one function, not a JSX condition.** A `{officer && ...}` in the
+  card is a thing the next person edits around; a scoping step between assembly
+  and render is a thing they have to walk past.
+- **The test asserts on the whole serialized row**, not on `owners`. It
+  `JSON.stringify`s a member-scoped coverage row and checks no outsider's name
+  appears anywhere in it — so a future field that carries a name (a "top owner",
+  a tooltip, a class breakdown) fails in CI instead of in production.
+
+**Also worth saying plainly:** a member with no characters holding an item now
+sees *"None of your characters — 11 in the guild have one."* A card that just
+went blank next to "11 owners" would read as a bug, and people report bugs that
+are actually policy.
+
+---
+
+## A roll call is not a pipe-separated list
+
+**The report (Hitya).** *"These rolls didn't get consolidated to loot in the
+website but did on here"* — the /rolls page showing eleven sessions for the
+night, every one **unlabeled roll**, LOOTED BY empty, next to a Command Center
+screenshot of the same four ranges.
+
+**The cause was one line, and it had been there since #91:**
+
+```js
+if (!line || line.indexOf('|') === -1) return;   // the convention always separates with |
+```
+
+The convention did not always separate with `|`. Canopy's call was:
+
+```
+[G] [Canopy]: Black Tear 111 , Platinum Tear 222 , Poison Tear 333, Runed Tear 444
+```
+
+**Why one missing label emptied two columns.** `attributeLoot()` opens with
+`if (!session.item) return []`. So the item name is not just the label — it is
+the JOIN KEY to `looted_items`. No name, no loot attribution, no LOOTED BY. The
+loot itself had been captured perfectly all along: all four Tears were in
+`looted_items`, and two of them went to someone **other** than the roll winner
+(333 Canopy → looted by Gnomistakes, 444 Fargan → looted by Mammy), which is
+precisely the case the column exists to show. The data was there; the join
+wasn't.
+
+**What the chat actually looks like.** Reading 45 days of `chat_messages`
+instead of trusting the convention, three shapes matter and only the first
+worked:
+
+| | example | before |
+|---|---|---|
+| A pipe | `Choker of the Wretched 111 \| Crown of Narandi 222` | worked |
+| B comma | `Black Tear 111 , Platinum Tear 222` | dropped |
+| C tier list | `Helmet of Shadow 311 pick, 322 upgrade, 333 alt` | dropped |
+| D bare | `Atramentous Shield 333` | dropped |
+
+D is the most common of all, and C is what Tanidian/Rikel type every raid. So
+the pipe rule was matching the *documented* convention rather than the *used*
+one, and had been quietly dropping most calls for a month.
+
+**Where it landed (agent 3.5.84).** `parseRollItemLine` walks the NUMBERS
+instead of splitting on a separator: the text since the previous number names
+that number's item. Shape C falls out for free — the text between 311 and 322
+is `pick,`, which is a tier, so 322 carries the previous item forward.
+
+**The real work was the negatives, and fixtures did not find them.** A pipe is
+nearly proof of intent; a comma is not, and the parser now reads every chat
+line. So I swept it over every captured line within 20 minutes of a live roll
+set — the actual blast radius — and it wanted to label four of them:
+
+- `I think we were randoming 100.  Hawkner got a 22 I think?`
+- `You didn't even bid 100. Doubt!`
+- `DI - Guts 100 )`
+- `Do a 777 if you want a Shield of the Immaculate`
+
+Each sat minutes from a real 0-100 or 0-777 set, so each would have appeared on
+the page as that session's item. They produced four guards — majority-
+capitalised significant words, no ALL-CAPS raid shorthand (DI/CH/MT), at least
+one ≥4-letter word, and a range must be a bare 3-4 digit number not followed by
+a letter or `%`. The same sweep caught two regressions my own fixtures missed,
+where a numberless linked drop glued itself onto the next item
+(`Golden Ember Powder | Unadorned Plate Boots 444`).
+
+**The lesson is the one the loot fold taught, applied earlier this time:** a
+parser is only as good as the corpus you point it at, and the corpus is in the
+database, not in your head. Eighteen green tests hid the loot fold's truncation
+for a day. Here the tests were written FROM the real lines, and the sweep found
+four defects the tests I would otherwise have written never would have.
+
+**Known and accepted:** `Holytomato 111, Emoo 222, Glarez 333, Kaviar 444`
+labels player names as items — that roll really was about those four people, so
+it is not wrong so much as unusual, and the officer edit button covers it. And
+`Do a 777 if you want a Shield of the Immaculate` stays unlabeled: the item is
+named after the number, mid-sentence, and every rule that would catch it also
+catches real chatter. That exact line is the one cited in the
+`roll_set_overrides` migration header as the reason officer edits exist.
+
+**Backfill.** Last night's four Tears were relabelled through
+`roll_set_overrides` — additive, reversible with one DELETE, and applied before
+loot attribution, so the two pass/re-roll cases now show their real looter.
+
+---
+
+## Agent-Reach evaluated for blocked sources — NO for cloud, marginal for local
+
+**The question (Hitya).** Would `github.com/Panniantong/Agent-Reach` let us read
+sources our cloud sessions can't reach?
+
+**What it is.** MIT-licensed CLI that routes "read this URL / platform" through a
+set of per-platform backends: **Jina Reader** (`r.jina.ai`) for web pages,
+**Exa** (`api.exa.ai`) for search, `yt-dlp` for YouTube, `gh` for GitHub,
+`feedparser` for RSS, and browser automation that **reuses the desktop's
+already-logged-in Chrome** for Twitter/Reddit/Instagram/Xiaohongshu. It makes
+**no claim** to defeat Cloudflare, bot detection or IP blocking — the README
+warns the opposite, that cookie-driven platform access risks account bans and
+recommends throwaway accounts.
+
+**Measured from a cloud session, which settles it:**
+
+| host | result |
+|---|---|
+| `r.jina.ai` (its web-page backend) | `CONNECT tunnel failed, 403` |
+| `api.exa.ai` (its search backend) | `CONNECT tunnel failed, 403` |
+| `pqdi.cc` / `eqemulator.org` / `quarm.guide` | `CONNECT tunnel failed, 403` |
+| `api.github.com` | 403 |
+| `raw.githubusercontent.com` | 200 |
+
+**Its backends are behind the same wall as the sources.** Our blocks are the
+environment's own egress policy, applied at the proxy — not site-side
+anti-scraping. A tool that "reaches more of the internet" still needs egress to
+reach it, so on a cloud box it fails at the same hop the direct fetch does.
+Routing around that proxy is not on the table either: it is a control of the
+execution environment, not a site's bot rule.
+
+**And even unblocked it would not fix our actual list:**
+- **PQDI** 403s cloud IPs *at the site*. Jina Reader fetches from a datacenter
+  IP too, so it would very likely draw the same 403 — swapping one cloud IP for
+  another is not a fix. Running it locally is, which is what we already do.
+- **`api.porkbun.com`** needs credentials on an API, not page reading.
+- **DNS-over-HTTPS** is not a web page.
+
+**Where it is genuinely capable: a LOCAL desktop session** — open egress, plus
+browser automation against a real logged-in Chrome, which does things a plain
+fetch cannot. But that is also where we *already* have what we need: local
+sessions reach pqdi.cc, quarm.guide and eqemulator.org directly, and the
+`local session fetches → mirrors into Supabase` rule already covers the handoff
+(the `spell_level_seed` and eqemu backfill precedents).
+
+**So the call is no**, and the reason is worth keeping because it generalises:
+**a fetch-aggregator cannot solve an egress-policy block.** Check whether the
+wall is the environment's or the site's before reaching for a tool — ours is the
+environment's, and the tool's own backends prove it by being blocked too.
+
+⚠ **If it is ever reconsidered, the install model is the thing to weigh.** It
+installs by handing the agent a URL and letting it run the install script
+autonomously, and the only machine it would help is the one holding `A:\EQ`,
+`D:\EQServer` (MariaDB creds in `eqemu_config.json`) and our Supabase
+service-role key. That is a large amount of trust for a convenience wrapper
+around tools (`yt-dlp`, `gh`, `feedparser`) we can invoke directly.
+
+Repo stats not cited: `api.github.com` is blocked here too, so the star/fork
+counts on the rendered page could not be verified — and they do not bear on the
+measurement above.
+
+---
+
+## "Discord was a source of semi-truth. Now it should just be a projection."
+
+**The call (Hitya, 2026-08-16, verbatim above).** Ratifies the architect doc's
+decision #1 as direction, not just assessment. The rule going forward: **no new
+durable state in Discord messages or state.json — Postgres is the home, Discord
+renders it.** Migration of the existing estate is opportunistic and ordered by
+blast radius (ARCHITECT doc Part II): state.json's ~10 dynamic keys first (the
+redeploy-race class), then roster chunks, then hate embeds, then the parses
+thread last — after which boot no longer reads Discord back at all.
+
+Same session, the database layer got its first structural pass ("complexity I
+have not designed in" — designed in tonight):
+
+- **Award identity is schema, not code.** `loot_observations_award_uniq`,
+  partial on `raid_id IS NOT NULL` so drop observations never collide, NULLS
+  NOT DISTINCT inside the raid-bound world. 560 dupes deleted (backed up,
+  droppable after 2026-09-16), verified refusing re-inserts. The fold and the
+  backfill command write ignore-duplicates — re-runs are no-ops now.
+- **One paginator per runtime, enforced.** Bot: `utils/supabase.js` (where the
+  cap was documented all along). Web: `lib/selectAll.ts`; `supabase-paged.ts`
+  retired. `test/db-read-discipline.test.js` fails on a second paginator, on
+  lost load-bearing properties, and on any GROWTH of the 85 `.limit(>1000)`
+  sites — the ratchet only tightens.
+- **The advisor sweep found one real hole**: `rollup_threat_ranks`, SECURITY
+  DEFINER and WRITING, executable by `anon` — any internet caller could burn
+  the jsonb rollup and touch `rolled_up_at`. Revoked. Plus 4 per-row
+  `auth.uid()` policies rewritten as InitPlans (`tells` was the worst) and
+  `search_path` pinned on 4 functions. The 46 "RLS enabled no policy" INFOs
+  are our intended deny-all posture, not omissions.
+
+---
+
+## Fleet counts are PLAYERS, not characters
+
+**The call (Hitya, 2026-08-16).** *"when we talk about who's using the
+releases, character counts mean almost nothing. use distinct player counts by
+discord ID."*
+
+The worked example that makes the point: this morning's fleet read was "178
+characters on agent 3.5.80." Re-measured as distinct `uploaded_by_discord_id`
+taking each player's most-recent upload:
+
+| version | players (7d) | active 48h |
+|---|---|---|
+| 3.5.85 (beta) | 1 | 1 — Hitya |
+| 3.5.83 (beta) | 1 | 0 |
+| **3.5.80 (stable 2.5.0)** | **16** | **15** |
+| 3.5.72 | 1 | 1 |
+| 3.5.71 | 4 | 0 (idle since Thu; auto-update on launch) |
+| older | 2 | 0 |
+
+The 178 characters were 16 players' character rosters — each player plays
+several characters distinctly, a ~10× inflation. Standing
+rule (folded into CLAUDE.md domain policies): any adoption gate, graduation
+argument, or sentinel invariant that counts the fleet counts distinct
+discord ids at their latest-upload version.
+
+Two claims re-checked under the new metric, both survive but read differently:
+- **#27's "fleet is on the fix" gate**: 15 of 17 active players are ≥3.5.80 —
+  still cleared, but "88% of players" is the honest phrasing, not "178
+  characters."
+- **The beta channel is effectively ONE player** — Hitya's boxes, plus one
+  tester last seen Friday. That is a structural fact about how much real-raid
+  validation beta features get before graduation, and part of why the
+  beta→stable cadence leans on browser/unit verification: the beta "fleet"
+  cannot exercise a raid.

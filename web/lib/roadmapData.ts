@@ -37,6 +37,86 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'web-1-1-61',
+    title: '\u{1F5C2} Fight cards',
+    version: 'Web 1.1.61',
+    date: '2026-08-16',
+    headline: 'A pre-raid checklist page: one card per fight with the comp it needs, the kit to bring, the tactics, and whether every callout is actually armed.',
+    features: [
+      { name: '\u{1F5C2} One card per fight', blurb: 'Fight cards (linked from the Raid Guide) show each fight’s composition needs, kit, and tactics before the pull — written by officers, readable by everyone. Tonight’s Tunare fights, the four warders, and the Vulak ring are already in.' },
+      { name: '✓ Callouts checked live', blurb: 'Each card lists its callouts straight from the guild trigger list — armed, deliberately off, or MISSING in red — with the timer and what the voice says. If a trigger changes, the card changes with it.' },
+    ],
+    fixes: [],
+  },
+  {
+    key: 'web-1-1-60',
+    title: '\u{1F4CA} Parse charts read by class',
+    version: 'Web 1.1.60',
+    date: '2026-08-16',
+    headline: 'The damage-over-the-fight chart on a parse page now reads the way a raid leader thinks: by class first, by character when you ask.',
+    features: [
+      { name: '\u{1F3AF} Classes first, percentages on the chart', blurb: 'The stacked chart groups damage by class, with each class named on the right edge of the graph next to its share of the total. Click a class to break it out into its characters with the same percentages; hover any class to light up its slice.' },
+      { name: '\u{1F6E1} The MT bar explains its gaps', blurb: 'A gap in the tank strip means NOBODY was taking hits — the mob was running, kited, or off the raid — not that the tank changed. Hover a gap to see exactly when. Tiny false gaps from how often the data samples are gone.' },
+      { name: '\u{1F550} The fight timeline is a list now', blurb: 'Instead of unreadable dots, the timeline is a drop-down below the chart: every death, raid event, and callout in order, with names and times. Repeats fold into one line with a count.' },
+    ],
+    fixes: [],
+  },
+  {
+    key: 'web-1-1-57',
+    title: '\u{1F3B2} See who else rolled',
+    version: 'Web 1.1.57 · Agent 3.5.85',
+    date: '2026-08-14',
+    headline: 'Roll sessions only ever showed the winner. Open one up and you can now see everybody who rolled and what they got.',
+    features: [
+      { name: '\u{1F3B2} Every roll, not just the winning one', blurb: 'On the roll page, click a winner to drop down the whole list for that item — who rolled, what they got, highest first. Re-rolls are marked, so a big number that did not win no longer looks like a mistake.' },
+      { name: '✖ Tidy up the Command Center as loot goes out', blurb: 'The same drop-down is on the Command Center overlay, and each roll now has an ✖ to clear it away once that item is handed out — plus a "clear all". It only affects your own screen, and it resets each night.' },
+    ],
+    fixes: [],
+  },
+  {
+    key: 'agent-3-5-84',
+    title: '\u{1F3B2} Roll nights know what you were rolling for',
+    version: 'Agent 3.5.84',
+    date: '2026-08-14',
+    channel: 'beta',
+    headline: 'The roll page kept saying "unlabeled roll" because it only understood one way of calling loot. It now understands the way people actually type.',
+    features: [],
+    fixes: [
+      'Roll calls written with commas — "Black Tear 111, Platinum Tear 222" — now name their items on the roll page. Only a vertical bar between them used to count, so most calls came through blank.',
+      'A single item with several ranges — "Helmet of Shadow 311 pick, 322 upgrade, 333 alt" — now labels all three, instead of none.',
+      'A plain "Atramentous Shield 333" on its own now works too. That is the most common way people call a roll and it had never been picked up.',
+      'Because the item name is also what links a roll to who actually looted it, all of the above were leaving the "looted by" column empty. Those now fill in — including when the person who won the roll passed it to someone else.',
+      'Last night’s Tears have been named on the roll page already.',
+    ],
+  },
+  {
+    key: 'web-1-1-55',
+    title: '\u{1F9F0} The Quartermaster shows your characters',
+    version: 'Web 1.1.55',
+    date: '2026-08-14',
+    headline: 'The utility-kit board used to list everyone in the guild who owned each item. It now shows yours, and a count for the rest.',
+    features: [
+      { name: '\u{1F9F0} Your kit, not the whole roster', blurb: 'On the Quartermaster page, each item now shows which of YOUR characters carry it. Everyone else is counted but not named — so you still see "eleven people in the guild have one", just not a list of who. Officers still see the full list, same as before.' },
+    ],
+    fixes: [],
+  },
+  {
+    key: 'web-1-1-53',
+    title: '\u{1F9F3} Bank mules and alts, without running Mimic on them',
+    version: 'Web 1.1.54',
+    date: '2026-08-14',
+    headline: 'Characters that never raid can now be added from a single file, so your bank toons show up on your page like everything else.',
+    features: [
+      { name: '\u{1F9F3} Add characters from inventory files', blurb: 'On your own page there is a new button that takes EverQuest inventory files. Log in on a mule once, type /outputfile inventory, and drop the file in \u2014 the character appears on your page with everything it is carrying. You can do a whole stack of them at once. Nothing needs to be running on that computer afterwards, and you do not need an officer to add them.' },
+      { name: '\u{1F464} It also picks up alts we already knew about', blurb: 'If one of your characters was already on the roster but had never been linked to you, uploading its inventory file now adds it to your page too. The only thing it will not do is take a character that is already somebody else\u2019s.' },
+    ],
+    fixes: [
+      'Mimic now finds EverQuest when it is installed in a TAKP folder, instead of asking you to browse for it.',
+      'Pointing Mimic at your EverQuest folder now counts even before you have any log files \u2014 previously the "Set up EQ for me" button would say it did not know where EverQuest was, on a folder you had just told it about.',
+      'When you have no characters yet, the page now explains that logging is simply switched off in game (and how to turn it on) instead of implying your folder was wrong.',
+    ],
+  },
+  {
     key: 'web-1-1-51',
     title: '\u{1F464} Raid view: people who log back in show up again',
     version: 'Web 1.1.51',
@@ -1056,7 +1136,7 @@ export const releases: Release[] = [
     headline: 'Every /random in the zone is tracked and grouped by roll range — with the winners named, straight off your loot links.',
     features: [
       { name: 'Rolls, grouped and won', blurb: 'Rolls with the same range (0–333, 0–555, …) group into a set, EQ Log Parser-style. Link loot in raid chat as “Item Name (3)333 | …” and the set picks up its item name — the (3) means the top three rolls each win one. The Command Center shows each set as “333 (Item name) — winner names”; the Mimic dashboard has the full table with every roll expandable.' },
-      { name: 'Fair by default', blurb: 'Only each player’s FIRST roll counts — re-rolls are listed struck through and can never win. Multi-boxers hearing the same roll on two logs count once.' },
+      { name: 'Fair by default', blurb: 'Only each player’s FIRST roll counts — re-rolls are listed struck through and can never win. Hearing the same roll on two of your own logs counts once.' },
     ],
     fixes: [],
   },

@@ -90,6 +90,52 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ### ✅ Done — major shipped features (not exhaustive; see git + roadmapData.ts)
 
+- **Add mules/alts from their inventory file — STABLE (web 1.1.54,
+  2026-08-14).** Hitya: *"can you make it so that anyone can upload additional
+  inventory files from the /me page and have it bring in their other
+  characters/mules?"* Pyxil has six bank toons Mimic can see in
+  `C:\TAKPv22` but that nothing else can — no logs, no `/who`, no OpenDKP row.
+  The existing per-character 🎒 upload could not help: it is gated on the
+  character ALREADY being in `characters` AND linked to you, which is exactly
+  what a mule is not.
+  - 🧳 on `/me` takes many `<Name>-Inventory.txt` at once and names each
+    character **from the file name**, because the rows inside are items, not
+    identity. Letters-only validation, so a renamed copy can't invent a junk
+    roster row.
+  - **The only bar on claiming is "already claimed by somebody else"**
+    (`claimVerdict` in `web/lib/inventoryFile.ts`): yours already → upload,
+    nothing to claim; **linked to another member → refuse**; everything else —
+    brand new, or in `characters` but unclaimed — becomes yours. Created rows
+    and claimed-existing rows both stamp `registered_via_web_*`.
+  - ⚠ **Widened the same day, by Hitya, over my narrower first cut.** I refused
+    to claim an unclaimed row that carried an `opendkp_id`, on the reasoning
+    that the shape means a real member who simply hasn't linked Discord.
+    Overruled: *"We should at least take the data and allow them to see their
+    characters in their account if they have the inventory files and are not
+    already claimed by someone. Being in the guild should not be a limiter for
+    someone making a new character and trying to use the inventory function or
+    target info overlays or any of those things outside of raids."* The refusal
+    broke the real case (your own alt, already in OpenDKP, invisible to you) to
+    guard a hypothetical one, and guarded it weakly — a renamed file defeats it.
+    A wrong claim is visible, audited and one-click reversible; a refusal is a
+    dead end. **The general form of this is now an open question, below.**
+  - Per-file results, so a batch where two of six belong to someone else names
+    those two rather than failing as a whole.
+
+- **⚠ OPEN — guild membership gates personal tooling site-wide.** Raised by
+  Hitya in the same breath as the claim widening: *"Being in the guild should
+  not be a limiter for someone making a new character and trying to use the
+  inventory function or target info overlays or any of those things outside of
+  raids."* The claim rule is fixed; **the sign-in gates are not.**
+  wolfpack.quest has TWO (guild membership via `DISCORD_GUILD_ID`, then role
+  membership via `ALLOWED_ROLE_NAMES`), so someone outside the guild cannot
+  reach `/me` at all — the upload they'd need is behind a door they can't open.
+  Splitting *personal* surfaces (inventory, quests, `/character`, Mob Info) from
+  *guild* surfaces (parses, DKP, raid, boards, `/admin`) is a real change to who
+  can see guild data, not a flag flip, so it is **not** bundled into the
+  inventory work. Needs Hitya's call on scope: guest role? separate personal
+  tier? Mimic-only (no web account)? See `docs/DECISIONS-2026-08-14.md`.
+
 - **A configured EQ folder counts as known, logs or not — BETA (Mimic
   2.5.4-beta / agent 3.5.83, 2026-08-14).** Pyxil's onboarding: she pointed
   Mimic at `C:\TAKPv22`, Settings listed it ticked as *"eqclient.exe · no logs
@@ -217,7 +263,7 @@ next touch one rather than assuming a missing row means a missing doc.
     capturing this machine's own view at the kill, then re-asking
     `/live-damage` at +40s and +100s as the stragglers land. A late EMPTY answer
     never overwrites good numbers (the bot's snapshot lookback is 3 minutes; past
-    that the query legitimately returns nothing). Multi-box installs flush once
+    that the query legitimately returns nothing). Multi-log installs flush once
     per builder, so entries dedupe on (boss, start within 60s).
   - HUD gets a third tab with a ◀ ▶ pager. Header names the fight and says
     `· 11 clients` when settled, `· settling…` when not — an unlabelled small
@@ -772,7 +818,7 @@ next touch one rather than assuming a missing row means a missing doc.
      attributed/dropped + why), so the next field report is self-evident.
   2. **Liveness across watched logs + live-character identity (Half 2):** the
      agent heartbeat's `last_line_ms` is now the **MIN age across EVERY watched
-     log** (any live log = a live agent — a boxer on a live alt whose primary is
+     log** (any live log = a live agent — a player on a live alt whose primary is
      logged out stays fresh; an agent with NO active log anywhere still goes
      stale, so the #112 logged-out-reporter protection is unchanged), and it
      reports **`live_character`** (the most-recently-active watched char, null
@@ -863,6 +909,175 @@ next touch one rather than assuming a missing row means a missing doc.
     on main — `index.js:8863` uses `new EmbedBuilder()` with no local/top-level
     require (Harmonic Howl announce fn, bot 3.0.222). Genuine runtime
     ReferenceError on next bot restart; needs a bot hotfix, untouched here.
+  - **⚠ Board 1 narrowed to the viewer (web 1.1.55, 2026-08-14).** Hitya:
+    *"quartermaster should display raider information for that user not for
+    everyone. it can display for everyone for admins."* As shipped, Board 1
+    named **every** owner of every kit item to **every** signed-in member — a
+    browsable who-owns-what of the whole guild, which is more than a member
+    needs to answer their own question and more than anyone asked to publish.
+    Board 2 was already scoped (own characters up top, officer rollup gated);
+    Board 1 was the outlier. Now `scopeKitCoverage(coverage, ownNamesLower,
+    officer)` runs after assembly: officer → the full list, member → their own
+    characters only, with an explicit *"None of your characters — 11 in the
+    guild have one"* line so a blank card doesn't read as a bug.
+    **The guild-wide count deliberately survives**: it is a nameless aggregate
+    (the ANON tier in the visibility policy) and it is the whole reason a member
+    opens the board — without it they cannot tell a real coverage gap from their
+    own blind spot. Six tests in `test/quartermaster.test.js`, one of which
+    serializes the scoped row and asserts no outsider's name appears **anywhere**
+    in it, so a future name-carrying field fails there rather than in production.
+- **Fight Cards v1 — SHIPPED (web 1.1.61, 2026-08-16, task #43 on Hitya's
+  "continue with the bits for 75").** `/raid/plan`: one pre-raid readiness
+  card per fight — officer-authored comp/kit/tactics text, callouts resolved
+  LIVE against `guild_triggers` by id (✓ armed / ○ denoted / ⚠ MISSING —
+  missing dominates the header chip; the card stores links, never copies).
+  Officers author inline on the page; migration `20260816174500_fight_cards`
+  applied + committed; 9 resolver tests. Seeded 8 draft cards for the
+  3-night program (Tunares, four warders, Arbiter, Vulak) from the
+  raid-watch content — all editable, `updated_by='pre-raid seed'`. Next
+  increment (in `DESIGN-fight-cards.md`): comp/kit live joins (#93/#82),
+  the Discord pre-pull projection (bot, post-freeze), drill result on-page.
+- **Parse page reshaped by Hitya's first-format review — DONE (web 1.1.60,
+  2026-08-16).** Five asks on `/parses/4d0d6dd2` (the restless burrower), all
+  shipped + harness-verified against that fight's real rows: the damage chart
+  stacks BY CLASS with right-edge `class + %` labels; clicking a class drills
+  into its characters with the same percentages ("everyone else" stays as one
+  muted band so the top edge is still the whole HP-removed curve); hovering a
+  chip/band/legend row highlights its region; the MT strip explains its gaps
+  (1-bucket sampling holes bridged in `mainTankLane` — measured aliasing;
+  REAL gaps get dashed hover rects — the 385s→end gap was the mob dealing
+  zero damage while the raid kept hitting it, Hitya's "it ran" confirmed);
+  and the FightTimeline marker chart on that page is replaced by
+  `FightEventLog.tsx`, a collapsible list of deaths/events/callouts with
+  names, ×N run-folding, and per-type dots (`/raid/review` keeps the marker
+  chart). Future (denoted in `DESIGN-fight-timeline.md`): per-type/callout
+  toggles — "many of these are probably personal to one character."
+- **Boxing-language scrub — DONE (web 1.1.59 main + beta comment pass,
+  2026-08-16).** Hitya: *"not boxing, these are characters that each of the
+  players will play distinctly. It shouldn't ever be talked about in anything
+  on the github either, unless we're specifically looking to suss out
+  boxers."* Every guild-member reference to boxers/multiboxing reworded
+  neutrally (multi-log / second watched log / a player's characters) across
+  docs, web, bot comments, test names (main) and agent + Mimic comments
+  (beta). Deliberately unchanged: `/pvp` (opposing players) and
+  `/admin/anomalies` + its admin-index card (the explicit detection surface —
+  Hitya's stated exception).
+- **Kneel Test phantom — FIXED for real (agent 3.5.86 beta, 2026-08-16).**
+  Hitya: *"for beta, I'm still seeing kneel test on the target info."* Server
+  was clean (0 buff_casts rows — ingest filter works); the phantom was LOCAL:
+  the junk-landing guard counted family size WITHIN each index, and of the 33
+  catalog spells sharing "is struck by a sudden force." exactly one (Kneel
+  Test — the only timed+detrimental member) survived the filters, so a family
+  of ONE sailed under the >8 guard and was crowned on every Ssra knockback.
+  Sharers are now counted across the whole CATALOG before filtering; the slow
+  rescue is preserved; `test/kneel-test-guard.test.js` rehydrates the real
+  builder and pins all three behaviors. DoT-grouping on Target Info designed
+  in `docs/DESIGN-mobinfo-dot-groups.md` (task #44) — blocked finding: the
+  spells mirror has NO class columns (eqmac dump omits them), so grouping
+  keys on the observed CASTER's class, with a local-session spell-class
+  backfill as enrichment.
+- **U1 + U2 landed; Discord-projection ratified; advisor sweep — DONE (bot
+  3.1.49 / web 1.1.58, 2026-08-16).** Hitya: *"do U1 and land the unique
+  index"* + *"discord was a source of semi-truth. now it should just be a
+  projection"* + *"let's start looking at the database read/write layers as
+  that is complexity I have not designed in."*
+  - **U2 → 0, pinned.** Migration `20260816041125_loot_award_unique`: 560
+    dupes backed up (drop table after 2026-09-16) + deleted (10,321 → 9,761),
+    `loot_observations_award_uniq` PARTIAL on `raid_id IS NOT NULL` + NULLS
+    NOT DISTINCT — partial because chat_extracted/loot_command rows are DROP
+    observations that must not collide across nights. Verified refusing a
+    re-insert (23505). Fold + `/backfillopendkploot` now write
+    `insertIgnoreDuplicates(…, {representation:true})` — re-runs are schema
+    no-ops with honest counts. Task #39 closed.
+  - **U1 structural.** One paginator per runtime (`utils/supabase.js
+    selectAllPaged` / `web/lib/selectAll.ts`); `supabase-paged.ts` retired,
+    its 4 call sites migrated; `test/db-read-discipline.test.js` enforces
+    single-paginator + load-bearing properties + an **85-site ratchet** on
+    `.limit(>1000)` (count may only shrink; priority order by measured table
+    size in ARCHITECT doc Part II — admin-queue:477 on 342k-row chat_messages
+    is worst).
+  - **Advisor sweep, applied:** `rollup_threat_ranks` (SECURITY DEFINER,
+    WRITES) was anon-executable — revoked (migrations
+    `lock_down_definer_functions`, `rls_initplan_fix`); 4 per-row
+    `auth.uid()` RLS policies → InitPlan; `search_path` pinned ×4. Remaining
+    advisor items + full component review (Mimic overlay-parity gate, web env
+    parity, post-deploy smoke, unindexed FKs) outlined in ARCHITECT Part II.
+- **Architect's rebuild assessment — DONE docs (2026-08-16).**
+  `docs/ARCHITECT-REBUILD-2026-08-16.md`, on Hitya's ask: rebuild from scratch
+  knowing everything, name the first decision changed, split "couldn't have
+  known" from "didn't want to know", and find the most over-/under-engineered
+  things with what each costs. Headlines: **first change = durable state gets
+  one home (Postgres), Discord becomes a projection** (roster.js predates the
+  first Supabase migration by 24 days — the placements were right when made;
+  keeping the pattern after 2026-05-25 was the choice). Most under-engineered:
+  the DB read/write layer — three independently-written paginators, the
+  1000-row cap biting twice, and 337 dup groups / 560 excess rows live in
+  loot_observations (re-measured this morning). Most over-engineered: the
+  never-armed budget_enforce_* half of #73 (bidCrypto runner-up); the Discord
+  recovery machinery is explicitly NOT over-engineering but compensating
+  complexity. Verdict: under-engineering costs ~an order of magnitude more
+  (≈8–11h/fortnight documented vs sunk cost + zero claims). Three metrics
+  proposed (U1 unpaged-read call sites → CI gate; U2 dup groups → 0 via #39's
+  index; O1 enforce armed-days, review 2026-12-01) — task #41, needs Hitya.
+  Also corrected CLAUDE.md's 2.2×-stale line counts (bot 17,706; agent 35,234).
+- **Who else rolled — DONE web (1.1.57) / BETA Command Center (agent 3.5.85),
+  2026-08-14.** Hitya: *"can we start having a drop-down to open up lower rolls
+  on the page and see who else rolled? may make sense to have this and a
+  dismiss button on the command center where this lives."* Both surfaces showed
+  winners only; the losing rolls had been captured all along and simply were
+  never rendered (`RollSession.rolls` on the web, `rolls[]` in the
+  `/api/command-center` payload) — no data change needed on either side.
+  - **Web** (`/rolls`): a native `<details>` in the Won-by cell, so the page
+    stays a server component and the expansion survives JS being off. Shape
+    comes from the pure `rollBreakdown()` in `web/lib/rolls.ts`.
+  - **Command Center**: same expansion per row, plus a per-row **✕ dismiss**
+    and a header **clear all**, so a resolved item leaves the card while the
+    next one is still being rolled. Dismiss is session-scoped (unlike a
+    collapsed section — "I'm done with this item" should not outlive the loot
+    night) and both sets reconcile against each poll.
+  - **Two rules this had to obey, both already written down and both easy to
+    trip:** open/dismissed state lives in a JS store consulted at render, never
+    in DOM state — `#content` is rebuilt every 1.5s so a native `<details>`
+    would snap shut mid-distribution (the wpKeep lesson); and the controls are
+    always drawn and merely dimmed rather than hover-revealed, because an
+    element created under a stationary cursor never picks up `:hover`.
+  - **Two calls that are easy to get wrong and are unit-tested:** a re-roll is
+    KEPT and flagged (dropping it makes the list disagree with the roller
+    count, and a high roll that lost with no reason given reads as a parser
+    bug), and a winner is matched on name AND value **once** (name alone lights
+    up that same player's losing re-roll).
+  - Verified in headless Chromium on both surfaces — 15 checks on the overlay
+    at its real width including that an open panel survives a repaint and picks
+    up a roll landing while it is open, and 9 on the web markup built with the
+    project's own Tailwind config, since `group-open:` variants only exist if
+    Tailwind actually emitted them and a typecheck cannot tell you that.
+- **Roll calls get their item name without a `|` — BETA (agent 3.5.84,
+  2026-08-14).** Hitya, on the night's /rolls page: *"These rolls didn't get
+  consolidated to loot in the website but did on here."* Eleven sessions, all
+  **unlabeled roll**, LOOTED BY empty. Cause: `trackRollItemLine` opened with
+  `if (line.indexOf('|') === -1) return;` and the caller had used commas.
+  - **One missing label emptied TWO columns.** `attributeLoot()` starts
+    `if (!session.item) return []` — the item name is the join key to
+    `looted_items`, not just a caption. The loot was captured fine all along;
+    two of the four Tears went to someone other than the roll winner, which is
+    exactly the case that column exists for.
+  - **The pipe rule matched the documented convention, not the used one.**
+    45 days of `chat_messages` say four shapes occur and only pipes worked:
+    commas, tier lists (`311 pick, 322 upgrade` = ONE item, three ranges), and
+    bare `Atramentous Shield 333` — the last being the most common of all.
+    `parseRollItemLine` now walks the numbers instead of splitting; the tier
+    case falls out for free (the text between ranges is `pick,`, not an item).
+  - **The guards came from a sweep, not from imagination.** Running the parser
+    over every line within 20 min of a live roll set found four it would have
+    mislabelled — *"I think we were randoming 100."*, *"You didn't even bid
+    100."*, *"DI - Guts 100"*, *"Do a 777 if you want a Shield of the
+    Immaculate"* — each minutes from a real 0-100/0-777 set. All four are now
+    tests, and the sweep also caught two regressions the fixtures missed.
+  - Also bounded the label lookup to 20 min (`ROLL_ITEM_LINK_MS`); the map is
+    keyed by roll NUMBER and swept only past 200 entries, so an unbounded read
+    let an 8pm label claim an 11pm 0-333 set.
+  - Last night's four Tears backfilled via `roll_set_overrides` (additive,
+    one DELETE to undo). ⚠ Graduate to stable with the next Mimic line.
 - **#91 roll-loot review surface (remainder) — DONE end-to-end (2026-07-19,
   agent 3.3.97 beta + bot 3.0.219 + web 1.0.250 on main).** The capture half
   shipped a week ago (roll_sets since 3.3.78, Hot Dice PERFECT events since
@@ -1405,7 +1620,7 @@ next touch one rather than assuming a missing row means a missing doc.
      (item COUNT, not the list).
   2. **Auction countdown chip (agent + triggers.html).** Reuses the trigger
      `_activeTimers` machinery so it looks/behaves like a Death Touch timer (gold,
-     15s warning). Same item set = reset in place (multibox + repeat posts stay
+     15s warning). Same item set = reset in place (second-watched-log + repeat posts stay
      silent — the announce fires only on first open); distinct sets stack.
      Per-chip ✕ dismiss (`kind:'loot'`/`dismissible` in the snapshot → overlay
      draws a ✕ with the hover-interact handshake → `POST /api/timers/cancel`).

@@ -180,6 +180,20 @@ describe('call sites that overflow today', () => {
     expect(s).not.toMatch(/character_spellbook[\s\S]{0,300}?\.limit\(50000\)/);
   });
 
+  it('/rolls and /fun migrated off the retired second paginator (2026-08-16)', () => {
+    // supabase-paged.ts was the THIRD independently-written drain for the same
+    // cap. Its four call sites now go through selectAll; the module is gone
+    // (test/db-read-discipline pins that it stays gone).
+    for (const p of ['app/rolls/page.tsx', 'app/fun/page.tsx']) {
+      const s = web(p);
+      expect(s, p).toMatch(/from '@\/lib\/selectAll'/);
+      expect(s, p).not.toMatch(/fetchAllPages|supabase-paged/);
+    }
+    // The migrated pulls keep their ordered range walks.
+    expect(web('app/rolls/page.tsx')).toMatch(/roll_sets'\)[\s\S]{0,300}?\.order\('started_at'/);
+    expect(web('app/fun/page.tsx')).toMatch(/dragon_punch'\)[\s\S]{0,200}?\.order\('event_ts'/);
+  });
+
   it('readiness chunks its id lookups too — a complete gear set can exceed the cap', () => {
     // Fixing the gear pull makes itemIds bigger, which would newly overflow the
     // .in() lookups. Fixing one truncation must not create another.

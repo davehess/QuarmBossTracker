@@ -7,7 +7,7 @@ user-facing setup guide + command reference. When they conflict, this file wins.
 
 | Component | Path | Runs on | Ships from |
 |---|---|---|---|
-| **Bot** (Discord + HTTP API) | `/` (`index.js`, ~8k lines) | Railway, auto-deploys on push to `main` | `main` |
+| **Bot** (Discord + HTTP API) | `/` (`index.js`, ~18k lines) | Railway, auto-deploys on push to `main` | `main` |
 | **Web** (`wolfpack.quest`) | `web/` (Next.js 14) | Vercel, auto-deploys on push to `main` | `main` |
 | **Agent** (`wolfpack-logsync`) | `packages/wolfpack-logsync/` (single-file Node, zero deps) | End-user machines — bundled inside Mimic, or standalone via `Parser.bat` | bundled with Mimic; CLI zip via `release-parser.yml` |
 | **Mimic** (Electron desktop) | `apps/mimic/` | End-user Windows machines, auto-updates via electron-updater | `release-mimic.yml` on version bump (`main` = stable channel, `beta` = beta channel) |
@@ -24,7 +24,7 @@ Other fixed facts: Node 20, discord.js v14, Supabase project
 ### Working rule — minimal diff
 Touch only the code the task requires. If a change appears to need edits to
 adjacent or unrelated code, stop and flag it before proceeding. (The
-13k-line `index.js` monolith makes "small line count" a poor proxy for "small
+18k-line `index.js` monolith makes "small line count" a poor proxy for "small
 blast radius" — reaching into unrelated behavior is a structural hazard here.)
 
 ### Working rule — attribution: everything is Hitya unless it came via feedback
@@ -508,6 +508,12 @@ reloaded on startup), hate state (hidden JSON embeds), and roster (chunked
 messages); `data/state.json` and `data/parses.json` are local mirrors with
 atomic writes (`.tmp` + rename). Recovery: `/restore <message links>`,
 `/recoverkills` (from Supabase encounters).
+⚠ **That is the CURRENT state, no longer the direction** (Hitya, 2026-08-16:
+*"discord was a source of semi-truth. now it should just be a projection"*).
+No NEW durable state goes into Discord messages or state.json — Postgres is
+the home, Discord renders it. The existing estate migrates opportunistically
+in the order state.json keys → roster → hate → parses thread
+(`docs/ARCHITECT-REBUILD-2026-08-16.md` Part II).
 
 ### HTTP endpoints (`/api/agent/*`, bearer auth)
 Ingest: `encounter` (combat events → parse cards + Supabase), `chat` (live
@@ -588,7 +594,7 @@ eqemu mirror sync (`.github/workflows/sync-quarm.yml`).
 
 ---
 
-## Agent (`packages/wolfpack-logsync/index.js`, ~16k lines, zero npm deps)
+## Agent (`packages/wolfpack-logsync/index.js`, ~35k lines, zero npm deps)
 
 Tails `eqlog_*_pq.proj.txt`, filters at byte level **before** parse: officer
 chat, tells, group, custom channels never leave the machine (`docs/PRIVACY.md`).
@@ -834,6 +840,13 @@ use only for multi-callout sequences. Curse counters for the debuff queue live
 in the bot's `_CURSE_COUNTERS` (Gravel Rain 12 … "Word of" 1).
 
 **⚠ Trigger patterns match the RAW log line — never start one with a bare `^`.**
+(Runtime nuance, discovered 2026-08-16: agent **3.5.46+** auto-rewrites a bare
+`^` to `^(?:timestamp)?` at compile time — `_rewriteAnchorsForRawLine`, part of
+the GINA compat work — so on the current fleet the bare-`^` class actually
+fires. The rule stands for what we WRITE (explicit `^\[.+?\]\s+` works on
+every agent version and is what the web normalizer stores), but the 2026-08-04
+"37 of 109 dead" measurement predates 3.5.46 and the dead-triggers runbook
+needs re-measuring before anyone acts on it.)
 The line is `[Sun Aug 02 21:10:01 2026] <message>`, and patterns compile with
 flags `i` and **no `m`**, so `^` anchors before the TIMESTAMP, not before the
 message. `^{s} yawns\.$` can never fire. Write it unanchored, or anchor as
@@ -855,6 +868,15 @@ enabled trigger reads as coverage.
 damage shields to the tank — keep `contributions.raw_parse->source` distinct
 (`eqlogparser_send_to_eq` / `local_agent_v1` / `chat_extracted`) so agent data
 wins when both exist.
+
+**Fleet adoption is counted in PLAYERS, never characters** (Hitya,
+2026-08-16: "character counts mean almost nothing"). Players each play several
+characters distinctly (3–12 watched logs), so `agent_upload_stats` rows
+inflate ~10×: the "178
+characters on 3.5.80" fleet was 16 players. The honest stat: distinct
+`uploaded_by_discord_id`, each counted at their most-recent upload's version.
+Any adoption gate, graduation argument, or sentinel invariant that counts the
+fleet counts players.
 
 **Raid schedule:** Sun/Wed/Thu 8pm–midnight Eastern — the default window for
 any "should have been there" computation.

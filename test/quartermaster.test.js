@@ -11,6 +11,7 @@ import {
   KIT_CATALOG,
   KIT_ITEM_IDS,
   computeKitCoverage,
+  scopeKitCoverage,
   ownedFromRows,
   matchStep,
   computeQuestProgress,
@@ -88,6 +89,78 @@ describe('computeKitCoverage', () => {
       { itemId: 11, character: 'Fargan', main: 'Fargan', className: 'Templar' },
     ]);
     expect(c[0].gap).toBeNull();
+  });
+});
+
+// ── Board 1 — who may see an owner's NAME ────────────────────────────────────
+//
+// Hitya, 2026-08-14: "quartermaster should display raider information for that
+// user not for everyone. it can display for everyone for admins."
+//
+// Board 1 shipped naming every owner of every utility item to every signed-in
+// member. These are the tests that keep it from drifting back: a member sees
+// their own characters and nobody else's, an officer sees the roster, and the
+// nameless COUNT survives both ways (it is what makes a gap distinguishable
+// from a blind spot).
+
+describe('scopeKitCoverage', () => {
+  const rows = [
+    { itemId: 20, character: 'Hitya', main: 'Hitya', className: 'Cleric' },
+    { itemId: 20, character: 'Uilnayar', main: 'Hitya', className: 'Enchanter' },
+    { itemId: 20, character: 'Wabumkin', main: 'Wabumkin', className: 'Wizard' },
+    { itemId: 20, character: 'Jankzer', main: 'Jankzer', className: 'Rogue' },
+  ];
+  const base = computeKitCoverage([FIX_CATALOG[1]], rows);
+  const MINE = new Set(['hitya', 'uilnayar']);
+
+  it('names only the viewer\'s own characters for a member', () => {
+    const [c] = scopeKitCoverage(base, MINE, false);
+    expect(c.owners.map(o => o.character)).toEqual(['Hitya', 'Uilnayar']);
+    expect(c.yours).toBe(2);
+  });
+
+  it('never leaks another raider\'s NAME to a member, anywhere on the row', () => {
+    // The assertion that actually matters — serialize the whole scoped row and
+    // check no outsider's name appears in it, so a future field that carries
+    // names (a "top owner", a tooltip) fails here instead of in production.
+    const [c] = scopeKitCoverage(base, MINE, false);
+    const blob = JSON.stringify(c);
+    expect(blob).not.toMatch(/Wabumkin/);
+    expect(blob).not.toMatch(/Jankzer/);
+  });
+
+  it('keeps the guild-wide COUNT, which names nobody', () => {
+    // Deliberate: "4 own it, none of them you" is the useful answer and
+    // identifies no one. Narrowing the count too would leave a member unable to
+    // tell a real coverage gap from their own blind spot.
+    const [c] = scopeKitCoverage(base, new Set(), false);
+    expect(c.ownerCount).toBe(4);
+    expect(c.owners).toEqual([]);
+    expect(c.yours).toBe(0);
+    expect(c.hidden).toBe(4);
+  });
+
+  it('gives officers the whole list', () => {
+    const [c] = scopeKitCoverage(base, MINE, true);
+    expect(c.owners).toHaveLength(4);
+    expect(c.hidden).toBe(0);
+    expect(c.yours).toBe(2);          // still tells an officer which are theirs
+  });
+
+  it('leaves the gap line alone — it is a guild fact, not a person', () => {
+    const nobody = computeKitCoverage([FIX_CATALOG[2]], []);
+    const [c] = scopeKitCoverage(nobody, new Set(), false);
+    expect(c.gap).toBe('Nobody owns Puppet Thing');
+    expect(c.ownerCount).toBe(0);
+  });
+
+  it('does not mutate the board it was given', () => {
+    // The page scopes ONE guild-wide board per request; an in-place filter would
+    // make the result depend on call order.
+    const before = base[0].owners.length;
+    scopeKitCoverage(base, MINE, false);
+    expect(base[0].owners).toHaveLength(before);
+    expect(base[0].hidden).toBe(0);
   });
 });
 

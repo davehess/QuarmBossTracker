@@ -724,6 +724,31 @@
     "pqdiUrl": "https://www.pqdi.cc/npc/128093"
   },
   {
+    "id": "final_arbiter",
+    "name": "The Final Arbiter",
+    "zone": "Sleeper's Tomb",
+    "expansion": "Velious",
+    "timerHours": 162,
+    "nicknames": [
+      "arbiter",
+      "final arbiter"
+    ],
+    "emoji": "⚰️",
+    "pqdiUrl": "https://www.pqdi.cc/npc/128132"
+  },
+  {
+    "id": "progenitor",
+    "name": "The Progenitor",
+    "zone": "Sleeper's Tomb",
+    "expansion": "Velious",
+    "timerHours": 162,
+    "nicknames": [
+      "progenitor"
+    ],
+    "emoji": "⚰️",
+    "pqdiUrl": "https://www.pqdi.cc/npc/128125"
+  },
+  {
     "id": "lord_vyemm",
     "name": "Lord Vyemm",
     "zone": "Temple of Veeshan",

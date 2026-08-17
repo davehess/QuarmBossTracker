@@ -85,7 +85,7 @@ unexercised family is exactly the one that breaks quietly.
 - **The upload/queue path.** `test/rate-limit.test.js`, `budgets.test.js`,
   `supabase-resilience.test.js` already own that; the golden stops at the
   flushed payload, which is precisely the agent/bot contract boundary.
-- **Multi-character (multi-box) cross-flush.** One builder, one character. The
+- **Multi-character (multi-log) cross-flush.** One builder, one character. The
   peer-flush propagation in `flush()` needs two logs and is worth its own
   fixture later.
 - `X misses Y.` is present in the family log and parses to **nothing** —

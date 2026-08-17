@@ -32,6 +32,24 @@ export type FightCurve = {
   totalDamage: number;
   mt: MTSegment[];
   everyone: { name: string; total: number }[];  // all contributors, for the search list
+  /** Every attributed name with its full cum array — NO top-N fold. The
+   *  class-grouped view (Hitya's 2026-08-16 parse review) needs the long tail
+   *  per-name so a class's total is right and its drill-down has every member;
+   *  the folded `bands` can't provide either. */
+  series: Band[];
+};
+
+/** One class's stacked band plus its members, for the class-level view and its
+ *  per-character drill-down. `klass` is a display label — real class, 'Pets'
+ *  is impossible here (pets fold under owners upstream), unknowns arrive as
+ *  whatever fallback the caller put in classOf (the page passes null → we
+ *  label 'Unknown'). */
+export type ClassGroup = {
+  klass: string;
+  total: number;
+  cum: number[];
+  members: Band[];            // largest first
+  isOther?: boolean;          // the folded "N other classes" group
 };
 
 /** Top N carry the categorical palette; the rest fold into one muted band.
@@ -54,7 +72,7 @@ export function attributedName(row: TimelineRow): string {
 
 export function buildFightCurve(rows: TimelineRow[], stepSec: number): FightCurve {
   if (!rows.length) {
-    return { buckets: [], bands: [], totalDamage: 0, mt: [], everyone: [] };
+    return { buckets: [], bands: [], totalDamage: 0, mt: [], everyone: [], series: [] };
   }
 
   // Bucket grid. encounter_timeline() already returns per-step deltas, so the
@@ -126,7 +144,57 @@ export function buildFightCurve(rows: TimelineRow[], stepSec: number): FightCurv
     });
   }
 
-  return { buckets, bands, totalDamage, mt: mainTankLane(tookByBucket, buckets, stepSec), everyone };
+  const series: Band[] = everyone.map(e => ({
+    name: e.name,
+    total: e.total,
+    cum: cumOf(dmgByName.get(e.name) || new Array(nB).fill(0)),
+  }));
+
+  return { buckets, bands, totalDamage, mt: mainTankLane(tookByBucket, buckets, stepSec), everyone, series };
+}
+
+/**
+ * Group the unfolded per-name series by class for the class-level stacked view
+ * (Hitya 2026-08-16: right-edge "class + %" labels, drill into a class for the
+ * same per character). Largest class first; beyond `topN` classes the rest fold
+ * into one "N other classes" group that stays drillable — same palette
+ * discipline as the character fold (7 hues + one muted overflow, never an 8th).
+ */
+export function groupSeriesByClass(
+  series: Band[],
+  classOf: Record<string, string | null>,
+  topN = TOP_N,
+): ClassGroup[] {
+  const byClass = new Map<string, Band[]>();
+  for (const b of series) {
+    const k = classOf[b.name] || 'Unknown';
+    const arr = byClass.get(k);
+    if (arr) arr.push(b); else byClass.set(k, [b]);
+  }
+  const nB = series[0]?.cum.length ?? 0;
+  const sumCum = (members: Band[]): number[] => {
+    const out = new Array(nB).fill(0);
+    for (const m of members) for (let i = 0; i < nB; i++) out[i] += m.cum[i] || 0;
+    return out;
+  };
+  const groups: ClassGroup[] = [...byClass.entries()].map(([klass, members]) => ({
+    klass,
+    total: members.reduce((a, m) => a + m.total, 0),
+    cum: sumCum(members),
+    members: [...members].sort((a, b) => b.total - a.total),
+  })).sort((a, b) => b.total - a.total);
+  if (groups.length <= topN + 1) return groups;   // +1: folding ONE class saves nothing
+  const kept = groups.slice(0, topN);
+  const rest = groups.slice(topN);
+  const restMembers = rest.flatMap(g => g.members).sort((a, b) => b.total - a.total);
+  kept.push({
+    klass: `${rest.length} other classes`,
+    total: rest.reduce((a, g) => a + g.total, 0),
+    cum: sumCum(restMembers),
+    members: restMembers,
+    isOther: true,
+  });
+  return kept;
 }
 
 /**
@@ -134,16 +202,27 @@ export function buildFightCurve(rows: TimelineRow[], stepSec: number): FightCurv
  * hitting. Run-length-encoded so a stable tank is one segment, not 200 ticks.
  *
  * Buckets where nobody took damage produce NO segment rather than extending the
- * previous tank — the boss being off everyone (mez, gate, a pause) is real
- * information and inventing continuity across it would hide a mechanic.
+ * previous tank — the boss being off everyone (mez, gate, a pause, RUNNING) is
+ * real information and inventing continuity across it would hide a mechanic.
+ *
+ * ONE exception, measured 2026-08-16 (encounter 4d0d6dd2, the restless
+ * burrower): the snapshot cadence is 3.5–6.4s against 5s buckets, so a single
+ * empty bucket inside a stable tanking stretch is usually aliasing, not the
+ * boss leaving — that fight had six scattered 1-bucket holes mid-fight and
+ * one REAL 110s tail gap (the mob ran at ~5% while the raid kept hitting it).
+ * A gap of exactly `bridgeBuckets` empty buckets with the SAME tank on both
+ * sides is bridged (took just doesn't grow there); anything longer, or a gap
+ * across a tank change, stays a hole.
  */
 export function mainTankLane(
   tookByBucket: Map<string, number>[],
   buckets: number[],
   stepSec: number,
+  bridgeBuckets = 1,
 ): MTSegment[] {
   const out: MTSegment[] = [];
   let cur: MTSegment | null = null;
+  let gapSince: number | null = null;   // toSec of `cur` when the gap began
 
   for (let i = 0; i < tookByBucket.length; i++) {
     let best: string | null = null;
@@ -152,14 +231,23 @@ export function mainTankLane(
       if (v > bestVal) { bestVal = v; best = name; }
     }
     const t = buckets[i];
-    if (!best) { cur = null; continue; }
-    if (cur && cur.name === best && cur.toSec === t) {
+    if (!best) {
+      if (cur && gapSince === null) gapSince = cur.toSec;
+      // Past the bridgeable width the hole is real — drop the segment.
+      if (cur && gapSince !== null && t + stepSec - gapSince > bridgeBuckets * stepSec) {
+        cur = null;
+        gapSince = null;
+      }
+      continue;
+    }
+    if (cur && cur.name === best && (cur.toSec === t || gapSince !== null)) {
       cur.toSec = t + stepSec;
       cur.took += bestVal;
     } else {
       cur = { fromSec: t, toSec: t + stepSec, name: best, took: bestVal };
       out.push(cur);
     }
+    gapSince = null;
   }
   return out;
 }

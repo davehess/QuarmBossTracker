@@ -1,10 +1,15 @@
 // /quartermaster — #82 Quartermaster v1. Member-visible guild logistics, two boards:
 //
-//   Board 1 — utility-kit coverage: who owns the items that keep a raid moving
-//     (charm, cures, resist buffs, emergency survival, mana, travel, invis,
-//     haste). Read from character_gear × eqemu_items, extending the raidKit
-//     idiom. VISIBLE ownership only — the bank is stripped before upload — so a
-//     blank means "not seen", not "doesn't exist".
+//   Board 1 — utility-kit coverage: the items that keep a raid moving (charm,
+//     cures, resist buffs, emergency survival, mana, travel, invis, haste).
+//     Read from character_gear × eqemu_items, extending the raidKit idiom.
+//     VISIBLE ownership only — the bank is stripped before upload — so a blank
+//     means "not seen", not "doesn't exist".
+//     ⚠ OWNER NAMES ARE OFFICER-ONLY (Hitya, 2026-08-14: "quartermaster should
+//     display raider information for that user not for everyone. it can display
+//     for everyone for admins"). A member sees their OWN characters named and a
+//     nameless guild-wide count; scoping lives in scopeKitCoverage so the rule
+//     is one tested function rather than a JSX condition.
 //   Board 2 — common-quest checklist: the guild's recurring chains from the
 //     officer-authored quest_catalog + quest_required_item, checked off against
 //     each character's VISIBLE inventory (character_inventory). Your own
@@ -22,7 +27,7 @@ import { isOfficer } from '@/lib/officer';
 import { ownedCharacters } from '@/lib/ownedCharacters';
 import { selectAll } from '@/lib/selectAll';
 import {
-  KIT_CATALOG, KIT_ITEM_IDS, KIT_CATEGORY_LABEL, computeKitCoverage,
+  KIT_CATALOG, KIT_ITEM_IDS, KIT_CATEGORY_LABEL, computeKitCoverage, scopeKitCoverage,
   ownedFromRows, computeQuestProgress,
   type KitOwnerRow, type KitCoverage, type KitCategory,
   type QuestDef, type QuestProgress, type OwnedItems,
@@ -78,7 +83,9 @@ async function load(userId: string, officer: boolean): Promise<Loaded> {
     if (!c || excluded(c)) continue;
     kitRows.push({ itemId: g.item_id, character: c.name, main: mainOf(c), className: c.class });
   }
-  const coverage = computeKitCoverage(KIT_CATALOG, kitRows);
+  // Assembled guild-wide because the COUNT is guild-wide; scopeKitCoverage
+  // below decides which owners this viewer may see by name.
+  const coverageAll = computeKitCoverage(KIT_CATALOG, kitRows);
 
   // ── Board 2 — quest defs from the officer-authored catalog ──────────────────
   const [{ data: qData }, { data: riData }] = await Promise.all([
@@ -114,6 +121,13 @@ async function load(userId: string, officer: boolean): Promise<Loaded> {
   const rosterRows = officer
     ? chars.filter(c => c.rank && ROSTER_RANKS.has(c.rank) && !excluded(c))
     : [];
+
+  // Board 1's names, scoped to the viewer. Officers keep the whole list.
+  const coverage = scopeKitCoverage(
+    coverageAll,
+    new Set(myCharRows.map(c => c.name.toLowerCase())),
+    officer,
+  );
 
   const invNames = [...new Set([...myCharRows, ...rosterRows].map(c => c.name))];
   const invByChar = new Map<string, OwnedItems>();
@@ -184,12 +198,17 @@ export default async function QuartermasterPage() {
       <section className="bg-panel border border-border rounded-lg p-6">
         <h2 className="text-2xl text-gold mb-1">🧰 Quartermaster</h2>
         <p className="text-sm text-dim leading-6">
-          Guild logistics at a glance — <b>who owns the utility items that keep a raid moving</b>, and
-          <b> how far along the recurring quest chains</b> each character is. So &quot;does anyone have X?&quot;
+          Your logistics at a glance — <b>which utility items your characters carry</b>, and
+          <b> how far along the recurring quest chains</b> each of them is. So &quot;does anyone have X?&quot;
           stops being a <code>/gu</code> question. Everything here is <b>visible ownership only</b>: the
           bank and shared bank are stripped on each member&apos;s machine before anything uploads, so a blank
           means <i>we can&apos;t see it</i>, not that nobody has it. Characters opted out of inventory/stats
           tracking never appear.
+        </p>
+        <p className="text-xs text-dim leading-5 mt-2">
+          {officer
+            ? <>🛡 You&apos;re an officer, so both boards show the <b>whole roster</b> by name. Everyone else sees only their own characters.</>
+            : <>This page shows <b>your</b> characters. Guild-wide numbers are counts only — we don&apos;t list other people&apos;s gear or quest progress by name.</>}
         </p>
       </section>
 
@@ -198,8 +217,11 @@ export default async function QuartermasterPage() {
         <div>
           <h3 className="text-lg text-orange">🎒 Utility-kit coverage</h3>
           <p className="text-xs text-dim leading-5">
-            Trackable raid movers, from worn + bag gear. Each shows how many raiders own it and who — click a
-            name for their page. {gaps.length > 0
+            Trackable raid movers, from worn + bag gear. Each shows <b>how many raiders own it</b> and{' '}
+            {officer
+              ? <>who — click a name for their page.</>
+              : <><b>which of yours do</b>. Other owners are counted, not named.</>}
+            {' '}{gaps.length > 0
               ? <>Right now <span className="text-orange font-semibold">{gaps.length}</span> {gaps.length === 1 ? 'entry has' : 'entries have'} a coverage gap (below).</>
               : <span className="text-green">No coverage gaps right now.</span>}
           </p>
@@ -218,7 +240,7 @@ export default async function QuartermasterPage() {
           <div key={cat}>
             <div className="text-xs uppercase tracking-wide text-dim mb-2">{KIT_CATEGORY_LABEL[cat]}</div>
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-              {entries.map(c => <KitCard key={c.entry.key} cov={c} />)}
+              {entries.map(c => <KitCard key={c.entry.key} cov={c} officer={officer} />)}
             </div>
           </div>
         ))}
@@ -273,7 +295,7 @@ export default async function QuartermasterPage() {
   );
 }
 
-function KitCard({ cov }: { cov: KitCoverage }) {
+function KitCard({ cov, officer }: { cov: KitCoverage; officer: boolean }) {
   const shown = cov.owners.slice(0, 30);
   const more = cov.owners.length - shown.length;
   return (
@@ -284,8 +306,15 @@ function KitCard({ cov }: { cov: KitCoverage }) {
       </div>
       <div className="text-[11px] text-dim mb-1">{cov.entry.grants}</div>
       {cov.gap && <div className="text-[11px] text-orange mb-1">⚠ {cov.gap}</div>}
+      {/* Members see only their own characters here, so say so explicitly when
+          they own none — otherwise a blank card next to "11 owners" reads as a
+          bug rather than "not you". */}
+      {!officer && cov.yours === 0 && cov.ownerCount > 0 && (
+        <div className="text-[11px] text-dim">None of your characters — {cov.ownerCount} in the guild {cov.ownerCount === 1 ? 'has' : 'have'} one.</div>
+      )}
       {cov.owners.length > 0 && (
         <div className="text-[11px] leading-5">
+          {!officer && <span className="text-green">✓ yours: </span>}
           {shown.map((o, i) => (
             <span key={o.character}>
               <Link href={`/character/${encodeURIComponent(o.character)}`} className="text-blue hover:underline">{o.character}</Link>
@@ -294,6 +323,9 @@ function KitCard({ cov }: { cov: KitCoverage }) {
             </span>
           ))}
           {more > 0 && <span className="text-dim"> +{more} more</span>}
+          {!officer && cov.hidden > 0 && (
+            <span className="text-dim"> · {cov.hidden} other {cov.hidden === 1 ? 'raider' : 'raiders'}</span>
+          )}
         </div>
       )}
     </div>

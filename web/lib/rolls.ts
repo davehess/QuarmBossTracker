@@ -168,6 +168,36 @@ export function attributeLoot(session: RollSession, looted: LootedRow[], windowM
   return out;
 }
 
+export type RollLine = { name: string; value: number; reroll: boolean; isWinner: boolean };
+
+/**
+ * Every roll in a session, highest first, with the winning roll(s) marked —
+ * what the "who else rolled" drop-down shows (Hitya, 2026-08-14).
+ *
+ * Two things it gets right that a plain sort would not:
+ *  • **Re-rolls are kept and flagged, never dropped.** A re-roll can't win, but
+ *    hiding it would make the list disagree with the roller count, and a raider
+ *    reading a high roll that lost with no explanation reads it as a bug.
+ *  • **A winner is matched on name AND value, once.** Marking every line whose
+ *    name is a winner's would light up that player's losing re-roll too.
+ */
+export function rollBreakdown(session: RollSession): RollLine[] {
+  const pending = new Map<string, number>();
+  for (const w of session.winners ?? []) {
+    const k = `${w.name.toLowerCase()}|${w.value}`;
+    pending.set(k, (pending.get(k) ?? 0) + 1);
+  }
+  return (session.rolls ?? []).slice()
+    .sort((a, b) => (b.value - a.value) || a.name.toLowerCase().localeCompare(b.name.toLowerCase()))
+    .map(r => {
+      const k = `${r.name.toLowerCase()}|${r.value}`;
+      const n = pending.get(k) ?? 0;
+      const isWinner = n > 0 && !r.reroll;
+      if (isWinner) { if (n === 1) pending.delete(k); else pending.set(k, n - 1); }
+      return { name: r.name, value: r.value, reroll: !!r.reroll, isWinner };
+    });
+}
+
 // True when a looter is NOT among the roll winners (case-insensitive) — the
 // "looted by X" callout only shows when the person who took it differs.
 export function looterDiffersFromWinners(looter: string, winners: Winner[]): boolean {

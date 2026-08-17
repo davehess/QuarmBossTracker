@@ -844,6 +844,34 @@ blocked while EQ runs). Cloud backup/restore: `uiStudioCapture` → bot
 `ui_layout` (encrypted `ui_snapshots`) → list/download/restore with
 resolution rescale on the way back.
 
+### Bringing in a character nothing else can see (🧳 on `/me`)
+A bank mule or a never-raiding alt produces no logs, no `/who` sighting and no
+OpenDKP row, so every other discovery path is blind to it — its inventory file
+is the only evidence it exists. `MuleUpload.tsx` → `uploadMuleInventories()`
+takes **many files at once** and derives the character from each **file name**
+(`<Name>-Inventory.txt`), since the rows inside are items, not identity.
+Rules live in **`web/lib/inventoryFile.ts`** (pure, tested):
+`characterFromInventoryFilename` refuses anything that is not a plausible EQ
+name — letters only, so a renamed copy cannot invent a junk roster row — and
+`claimVerdict` decides ownership, and the only bar is **"is it already claimed
+by somebody else?"**: **already in your household → upload, nothing to claim**;
+**linked to another member → refuse**; **anything else — brand new, or in
+`characters` but unclaimed → it becomes yours**. Both the created row AND a
+claim of an existing one stamp the `registered_via_web_*` audit columns, and
+the character joins the uploader's family via `main_name`.
+⚠ That third case is a **deliberate widening** (Hitya, 2026-08-14). The first
+cut refused to claim an unclaimed row carrying an `opendkp_id`, reasoning it
+meant a real member who merely had not linked Discord. Overruled: *"Being in
+the guild should not be a limiter for someone making a new character and trying
+to use the inventory function or target info overlays."* Holding the file is
+real evidence — you got it by logging in on that character. The refusal broke
+the actual case (your own alt, already in OpenDKP, invisible to you) to guard a
+hypothetical one, and guarded it weakly anyway: anyone wanting someone else's
+character could just rename a file. A wrong claim is visible, audited and
+one-click reversible; a refusal is a dead end for a legitimate member. Results are reported per file so a mixed batch names
+which ones failed. The older per-character 🎒 upload is unchanged and shares the
+same parse + replace-snapshot write.
+
 ### EQ folder discovery — "known" vs "has logs"
 Two lists, deliberately: `resolveEqDirsWithLogs()` returns **`dirs`** (folders
 that contain eqlogs → what we TAIL) and **`knownDirs`** (configured paths,
@@ -1352,6 +1380,18 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   5b playback), real REHEARSE (`_rehearseTrigger` drives the tail), sticky
   callouts, stale-fire TTL. Reporter roles honored per stream (charm rows exempt).
 - **CH chain GO (#103)** — `_maybeAnnounceChGo` speaks "0X GO" on your slot.
+- **Roll-call item labels** — `parseRollItemLine` (pure, exported) reads
+  `<Item> <range>` out of a chat line and feeds `_rollItemByNumber`, which
+  `trackRollLine` reads when a set's first roll lands (bounded by
+  `ROLL_ITEM_LINK_MS`, 20 min — the map is keyed by NUMBER, so an unbounded
+  read lets an 8pm label claim an 11pm 0-333 set). **Separator-agnostic since
+  agent 3.5.84**: it walks the numbers rather than splitting on `|`, so commas,
+  tier lists (`311 pick, 322 upgrade` = one item) and bare `Atramentous Shield
+  333` all work. The guards in `_cleanRollItemCandidate` (Title Case, a ≥4-letter
+  word, majority-capitalised significant words, no ALL-CAPS raid shorthand,
+  3-4 digit range not followed by a letter or `%`) are what stop ordinary chat
+  becoming an item name — each was added because a REAL captured line beat the
+  previous rule. `test/roll-item-line.test.js` carries every one of them.
 - **Loot announce (#107)** — `noteLootAuction` → TTS + auction countdown chips.
 - **Timeline enrichment (#105)** — `noteSlowLanding` (SLOW_SPELLS), `noteMobHeal`,
   `DISC_LINES`/`_matchDiscLine` → `timeline_events`.
@@ -1470,9 +1510,31 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   anchors on `/me`. Mimic dashboard: `wpTourStart`/`WP_TOUR_STEPS` in
   WEB_HTML — six stops switching tabs via the real nav buttons, ✨ Tour nav
   button + one-time offer toast. Both Playwright-verified live.
-- **Roll nights (#91)** — `/rolls` (`web/lib/rolls.ts`).
+- **Roll nights (#91)** — `/rolls` (`web/lib/rolls.ts`). The item NAME is
+  captured by the agent from the roll call in chat (`parseRollItemLine`) — and
+  it is load-bearing far beyond the label, because `attributeLoot()` returns
+  early on a null item, so an unnamed session also shows an empty **LOOTED BY**.
+  Officer corrections go in `roll_set_overrides` (never onto `roll_sets`, which
+  agents upsert) and are applied BEFORE loot attribution, so typing a name in
+  fills the looter column too. **Who else rolled** is a `<details>` in the
+  Won-by cell built from `rollBreakdown()` — kept pure and shared in shape with
+  the Command Center because two calls are easy to get wrong in JSX: a re-roll
+  is kept and FLAGGED (dropping it makes the list disagree with the roller
+  count), and a winner is matched on name AND value once (name alone lights up
+  that player's losing re-roll too). A native disclosure, so the page stays a
+  server component and the expansion works with JS off.
 - **Quartermaster (#82)** — `/quartermaster` (`web/lib/quartermaster.ts`):
   utility-kit coverage + quest checklist (reuses the `quest_catalog` store).
+  ⚠ **Owner NAMES are officer-only** (Hitya, 2026-08-14: *"quartermaster should
+  display raider information for that user not for everyone. it can display for
+  everyone for admins"*). Board 1 originally named every owner of every kit item
+  to every signed-in member. Coverage is still computed guild-wide, then
+  **`scopeKitCoverage(coverage, ownNamesLower, officer)`** decides who may be
+  named: officer → the whole list; member → their own characters only. The
+  guild-wide `ownerCount` survives both ways **on purpose** — it is a nameless
+  aggregate (the ANON tier), and without it a member cannot tell a real coverage
+  gap from their own blind spot. Board 2 was already scoped this way (own
+  characters up top, officer rollup gated).
 - **Raid Kit (#95)** — `web/lib/raidKit.ts`, `/admin/readiness`, gear-page card.
 - **Comp matcher (#93)** — `web/lib/comp.ts`, `comp_templates`, `/admin/comp`,
   signups gap panel.
@@ -1492,10 +1554,24 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   Worked example of what it answers that ticks cannot: Peopleslayer marked **19 of 19
   Wednesdays tentative** while signing in on 18/19 Sundays and 19/19 Thursdays — a
   standing weekly constraint that attendance counts alone can only infer.
-- **Per-fight timeline (#98)** — `encounter_events` → `FightTimeline.tsx` on
-  `/parses/[id]` (deaths, slows, mob heals, discs, fires); replay-this-fight link.
+- **Per-fight timeline (#98)** — `encounter_events` → **`FightEventLog.tsx`** on
+  `/parses/[id]` since web 1.1.60 (collapsible LIST of deaths, slows, mob heals,
+  discs, fires — names + times, repeats folded ×N; Hitya 2026-08-16: the marker
+  view was "useless in this format"). The marker chart `FightTimeline.tsx`
+  survives on `/raid/review` where wipe-spotting is the job. Replay-this-fight
+  link unchanged.
+- **Damage-over-the-fight chart** — `DamageCurve.tsx` + `lib/fightCurve.ts` on
+  `/parses/[id]`: stacked BY CLASS with right-edge `class + %` labels, click a
+  class to drill into its characters (one-axis premise holds in both views),
+  hover highlights, MT strip with honest "nobody taking hits" gap tooltips
+  (1-bucket sampling holes bridged; real gaps kept — the Moash "it ran" case).
 - **Sprint board on `/roadmap`** — `SprintBoard.tsx` + `sprintItems` in
   `roadmapData.ts` (sortable, platform-color aspects).
+- **Fight Cards (#43) — `/raid/plan`** (web 1.1.61): per-fight pre-raid
+  readiness cards from the `fight_cards` table; officer-authored inline;
+  callouts resolved LIVE against `guild_triggers` by id (✓ armed / ○ denoted /
+  ⚠ MISSING) via `web/lib/fightCards.ts`. Linked from the /guide index.
+  Design + v1 scope: `docs/DESIGN-fight-cards.md`.
 
 ### Designs written, build pending (read before touching)
 - **Multi-raid awareness (#114)** — `docs/DESIGN-multi-raid.md` (leader-anchored

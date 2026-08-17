@@ -12,7 +12,8 @@
 // Run: npx vitest run test/fight-curve.test.js
 
 import { describe, it, expect } from 'vitest';
-import { buildFightCurve, mainTankLane, attributedName, observedHpSeries, TOP_N }
+import { buildFightCurve, mainTankLane, attributedName, observedHpSeries, TOP_N,
+         groupSeriesByClass }
   from '../web/lib/fightCurve.ts';
 
 const row = (t, name, dmg, took = 0, pet_owner = null) =>
@@ -58,7 +59,7 @@ describe('bucketing', () => {
 
   it('survives an empty fight without throwing', () => {
     const c = buildFightCurve([], 5);
-    expect(c).toEqual({ buckets: [], bands: [], totalDamage: 0, mt: [], everyone: [] });
+    expect(c).toEqual({ buckets: [], bands: [], totalDamage: 0, mt: [], everyone: [], series: [] });
   });
 });
 
@@ -122,17 +123,92 @@ describe('MT lane', () => {
     expect(segs[1].fromSec).toBe(10);
   });
 
-  it('leaves a HOLE where nobody took damage instead of extending the tank', () => {
-    // The boss being off everyone (mez, gate, a pause) is a mechanic. Bridging
-    // it would erase the thing worth seeing.
-    const segs = lane([{ Abrahms: 100 }, {}, { Abrahms: 100 }]);
+  it('leaves a HOLE across a real off-everyone stretch (2+ empty buckets)', () => {
+    // The boss being off everyone (mez, gate, a pause, running) is a mechanic.
+    // Bridging it would erase the thing worth seeing.
+    const segs = lane([{ Abrahms: 100 }, {}, {}, { Abrahms: 100 }]);
     expect(segs).toHaveLength(2);
     expect(segs[0].toSec).toBe(5);
-    expect(segs[1].fromSec).toBe(10);
+    expect(segs[1].fromSec).toBe(15);
+  });
+
+  it('bridges a SINGLE empty bucket when the same tank holds both sides', () => {
+    // Snapshot cadence (3.5–6.4s) against 5s buckets aliases: a stable tanking
+    // stretch shows scattered 1-bucket holes that aren't the boss leaving.
+    // Measured on encounter 4d0d6dd2 (2026-08-16): six such holes mid-fight,
+    // all noise; the real gap (mob ran at ~5%) was 110s and stays a hole above.
+    const segs = lane([{ Abrahms: 100 }, {}, { Abrahms: 100 }]);
+    expect(segs).toHaveLength(1);
+    expect(segs[0]).toMatchObject({ name: 'Abrahms', fromSec: 0, toSec: 15, took: 200 });
+  });
+
+  it('does NOT bridge a 1-bucket hole across a tank CHANGE', () => {
+    // A handover with a pause in the middle is two tanking stretches, not one.
+    const segs = lane([{ Abrahms: 100 }, {}, { Syko: 100 }]);
+    expect(segs).toHaveLength(2);
+    expect(segs[0]).toMatchObject({ name: 'Abrahms', toSec: 5 });
+    expect(segs[1]).toMatchObject({ name: 'Syko', fromSec: 10 });
   });
 
   it('picks the largest riser, not the first seen', () => {
     expect(lane([{ Alpha: 10, Zeta: 999 }])[0].name).toBe('Zeta');
+  });
+});
+
+describe('unfolded series + class grouping (2026-08-16 parse review)', () => {
+  it('series keeps EVERY contributor un-folded, bands still fold', () => {
+    const rows = [];
+    for (let i = 0; i < TOP_N + 5; i++) rows.push(row(0, `P${i}`, 100 - i));
+    const c = buildFightCurve(rows, 5);
+    expect(c.series).toHaveLength(TOP_N + 5);
+    expect(c.bands).toHaveLength(TOP_N + 1);
+    // Same totals both ways — the fold must not change the sum.
+    const sumSeries = c.series.reduce((a, b) => a + b.total, 0);
+    expect(sumSeries).toBe(c.totalDamage);
+  });
+
+  it('groups by class, largest class first, members sorted inside', () => {
+    const c = buildFightCurve([
+      row(0, 'Wiz1', 100), row(0, 'Wiz2', 60), row(0, 'Rog1', 90),
+    ], 5);
+    const g = groupSeriesByClass(c.series, { Wiz1: 'Wizard', Wiz2: 'Wizard', Rog1: 'Rogue' });
+    expect(g.map(x => x.klass)).toEqual(['Wizard', 'Rogue']);
+    expect(g[0].total).toBe(160);
+    expect(g[0].members.map(m => m.name)).toEqual(['Wiz1', 'Wiz2']);
+    // Class cum is the member-sum at every bucket — the stack premise holds.
+    expect(g[0].cum[g[0].cum.length - 1]).toBe(160);
+  });
+
+  it('an unmapped name lands in Unknown, not dropped', () => {
+    const c = buildFightCurve([row(0, 'Mystery', 50)], 5);
+    const g = groupSeriesByClass(c.series, {});
+    expect(g).toEqual([expect.objectContaining({ klass: 'Unknown', total: 50 })]);
+  });
+
+  it('folds classes beyond topN into a drillable "other classes" group', () => {
+    const rows = [];
+    const classOf = {};
+    for (let i = 0; i < 10; i++) {
+      rows.push(row(0, `P${i}`, 100 - i));
+      classOf[`P${i}`] = `Class${i}`;
+    }
+    const c = buildFightCurve(rows, 5);
+    const g = groupSeriesByClass(c.series, classOf, 7);
+    expect(g).toHaveLength(8);
+    const other = g[g.length - 1];
+    expect(other.isOther).toBe(true);
+    expect(other.klass).toBe('3 other classes');
+    expect(other.members).toHaveLength(3);
+    // Nothing lost in the fold.
+    expect(g.reduce((a, x) => a + x.total, 0)).toBe(c.totalDamage);
+  });
+
+  it('does not fold when folding would save nothing (topN+1 classes)', () => {
+    const rows = [];
+    const classOf = {};
+    for (let i = 0; i < 8; i++) { rows.push(row(0, `P${i}`, 10)); classOf[`P${i}`] = `C${i}`; }
+    const c = buildFightCurve(rows, 5);
+    expect(groupSeriesByClass(c.series, classOf, 7)).toHaveLength(8);
   });
 });
 

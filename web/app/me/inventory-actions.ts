@@ -16,44 +16,10 @@ import { revalidatePath } from 'next/cache';
 import { supabaseServer } from '@/lib/supabase-server';
 import { supabaseAdmin } from '@/lib/supabase';
 import { isOfficer } from '@/lib/officer';
-
-type ParsedRow = { slot_label: string; item_id: number | null; item_name: string; quantity: number };
-
-// Parse the EQ inventory output. Defensive against tab vs multi-space
-// separation and a header row. Returns one row per non-empty slot.
-function parseInventory(text: string): ParsedRow[] {
-  const out: ParsedRow[] = [];
-  const seen = new Set<string>();
-  for (const raw of text.split(/\r?\n/)) {
-    const line = raw.replace(/\s+$/, '');
-    if (!line.trim()) continue;
-    // Prefer tab split; fall back to 2+ spaces if the file was space-padded.
-    let cols = line.split('\t');
-    if (cols.length < 4) cols = line.split(/\s{2,}/);
-    if (cols.length < 4) continue;
-    const [location, name, idStr, countStr] = cols.map(c => c.trim());
-    if (!location || location.toLowerCase() === 'location') continue;   // header
-    const lname = (name || '').trim();
-    if (!lname || /^empty$/i.test(lname) || lname === '(empty)') continue;
-    // Currency entries (Bank-Coin, General-Coin, SharedBank-Coin, etc.) carry
-    // platinum totals — useful but not "items," and they'd skew quantity
-    // aggregates. Drop them; the player's wallet is a separate signal.
-    if (/-Coin$/i.test(location) || /^Currency$/i.test(lname)) continue;
-    const id = parseInt(idStr, 10);
-    const count = Math.max(1, parseInt(countStr, 10) || 1);
-    // Dedup on slot (one item per slot); the file shouldn't repeat slots but
-    // be safe so the unique index upsert never collides within a batch.
-    if (seen.has(location)) continue;
-    seen.add(location);
-    out.push({
-      slot_label: location.slice(0, 64),
-      item_id: Number.isFinite(id) && id > 0 ? id : null,
-      item_name: lname.slice(0, 128),
-      quantity: count,
-    });
-  }
-  return out;
-}
+import {
+  parseInventory, characterFromInventoryFilename, claimVerdict,
+  type ParsedInvRow,
+} from '@/lib/inventoryFile';
 
 async function ownsOrOfficer(characterName: string): Promise<{ ok: boolean; officer: boolean; error?: string }> {
   const { data: { user } } = await supabaseServer().auth.getUser();
@@ -89,11 +55,21 @@ export async function uploadInventory(characterName: string, rawText: string): P
     .from('characters').select('name').eq('guild_id', 'wolfpack').ilike('name', name).maybeSingle();
   const canonical = ch?.name || name;
 
-  // Replace snapshot: delete then insert. (Inventory is a point-in-time
-  // photo; we don't merge old + new slots.)
+  const wrote = await writeInventory(canonical, rows);
+  if (wrote.error) return { ok: false, error: wrote.error };
+
+  revalidatePath('/me');
+  revalidatePath(`/character/${encodeURIComponent(canonical)}/quests`);
+  return { ok: true, count: rows.length };
+}
+
+// Replace-semantics snapshot write, shared by the single-character upload above
+// and the multi-file mule upload below. Inventory is a point-in-time photo, so
+// a fresh upload fully replaces the previous one rather than merging slots.
+async function writeInventory(canonical: string, rows: ParsedInvRow[]): Promise<{ error?: string }> {
+  const admin = supabaseAdmin();
   await admin.from('character_inventory')
     .delete().eq('guild_id', 'wolfpack').ilike('character_name', canonical);
-
   const now = new Date().toISOString();
   const payload = rows.map(r => ({
     guild_id: 'wolfpack',
@@ -104,13 +80,147 @@ export async function uploadInventory(characterName: string, rawText: string): P
     quantity: r.quantity,
     observed_at: now,
   }));
-  // Insert in chunks to stay well under any payload cap.
   for (let i = 0; i < payload.length; i += 500) {
     const { error } = await admin.from('character_inventory').insert(payload.slice(i, i + 500));
-    if (error) return { ok: false, error: error.message };
+    if (error) return { error: error.message };
+  }
+  return {};
+}
+
+// ── Multi-file mule upload (Hitya 2026-08-14) ───────────────────────────────
+// "Can you make it so that anyone can upload additional inventory files from
+// the /me page and have it bring in their other characters/mules?"
+//
+// The per-character upload above cannot do this: it is gated on the character
+// ALREADY existing in `characters` with your discord_id, which is exactly what
+// a bank mule is not. Pyxil's (Archanistsells, Lavenderna, Pyxtrade…) exist
+// only as files on her disk — no logs, no /who sighting, no OpenDKP row — so
+// the FILE is the only evidence they exist and its NAME the only claim of
+// whose they are.
+//
+// Per-file results rather than one verdict: a batch where two of six files are
+// somebody else's needs to say which two, not fail as a whole.
+export type MuleResult = {
+  file: string;
+  character: string | null;
+  ok: boolean;
+  count?: number;
+  claimed?: boolean;
+  note?: string;
+  error?: string;
+};
+
+export async function uploadMuleInventories(
+  files: { name: string; text: string }[],
+): Promise<{ ok: boolean; results: MuleResult[]; error?: string }> {
+  const { data: { user } } = await supabaseServer().auth.getUser();
+  if (!user) return { ok: false, results: [], error: 'not signed in' };
+
+  const admin = supabaseAdmin();
+  const { data: me } = await admin
+    .from('wolfpack_members')
+    .select('discord_id, merged_into_discord_id')
+    .eq('user_id', user.id).maybeSingle();
+  if (!me?.discord_id) {
+    return { ok: false, results: [], error: 'your Discord account is not linked yet — sign in from the tray or ask an officer' };
+  }
+
+  // The same household notion /me uses: a person may hold several Discord
+  // accounts merged together, and a character on any of them is theirs.
+  const root = me.merged_into_discord_id || me.discord_id;
+  const { data: aliases } = await admin
+    .from('wolfpack_members').select('discord_id')
+    .or(`discord_id.eq.${root},merged_into_discord_id.eq.${root}`);
+  const household = new Set<string>(
+    ((aliases ?? []) as { discord_id: string }[]).map(r => r.discord_id).filter(Boolean),
+  );
+  household.add(me.discord_id);
+
+  // A new mule joins the uploader's family so /me groups it with their others
+  // rather than stranding it as its own root.
+  const { data: mine } = await admin
+    .from('characters').select('name, main_name, discord_id')
+    .eq('guild_id', 'wolfpack').in('discord_id', [...household]).limit(50);
+  const familyMain = ((mine ?? []) as { name: string; main_name: string | null }[])
+    .map(c => c.main_name || c.name).find(Boolean) || null;
+
+  const results: MuleResult[] = [];
+  const seenThisBatch = new Set<string>();
+
+  for (const f of (files || []).slice(0, 40)) {
+    const fileName = String(f?.name || '(unnamed)');
+    const character = characterFromInventoryFilename(fileName);
+    if (!character) {
+      results.push({
+        file: fileName, character: null, ok: false,
+        error: 'could not tell which character this is from the file name — keep it as <Name>-Inventory.txt',
+      });
+      continue;
+    }
+    if (seenThisBatch.has(character.toLowerCase())) {
+      results.push({ file: fileName, character, ok: false, error: 'two files for the same character in one batch' });
+      continue;
+    }
+    seenThisBatch.add(character.toLowerCase());
+
+    const rows = parseInventory(f?.text || '');
+    if (rows.length === 0) {
+      results.push({
+        file: fileName, character, ok: false,
+        error: 'no items parsed — is this an EQ /outputfile inventory file?',
+      });
+      continue;
+    }
+
+    const { data: existing } = await admin
+      .from('characters').select('name, discord_id, opendkp_id')
+      .eq('guild_id', 'wolfpack').ilike('name', character).maybeSingle();
+    const verdict = claimVerdict(existing ?? null, household);
+    if (verdict.action === 'refuse') {
+      results.push({ file: fileName, character, ok: false, error: verdict.reason });
+      continue;
+    }
+
+    const canonical = existing?.name || character;
+    if (!existing) {
+      // Create it, claimed. registered_via_web_* is the existing audit trail
+      // for a character that entered the roster through the site rather than
+      // through OpenDKP or a log sighting.
+      const { error } = await admin.from('characters').insert({
+        guild_id: 'wolfpack',
+        name: canonical,
+        discord_id: me.discord_id,
+        main_name: familyMain,
+        active: true,
+        registered_via_web_at: new Date().toISOString(),
+        registered_via_web_by_discord_id: me.discord_id,
+      });
+      if (error) { results.push({ file: fileName, character, ok: false, error: error.message }); continue; }
+    } else if (verdict.claim) {
+      // Claiming a row that already existed. Stamp the SAME audit columns a
+      // created row gets — the claim rule is deliberately permissive (see
+      // claimVerdict), so being able to see who took what, and when, is what
+      // makes a wrong one cheap to undo.
+      const { error } = await admin.from('characters')
+        .update({
+          discord_id: me.discord_id,
+          main_name: familyMain,
+          registered_via_web_at: new Date().toISOString(),
+          registered_via_web_by_discord_id: me.discord_id,
+        })
+        .eq('guild_id', 'wolfpack').ilike('name', canonical);
+      if (error) { results.push({ file: fileName, character, ok: false, error: error.message }); continue; }
+    }
+
+    const wrote = await writeInventory(canonical, rows);
+    if (wrote.error) { results.push({ file: fileName, character, ok: false, error: wrote.error }); continue; }
+
+    results.push({
+      file: fileName, character: canonical, ok: true, count: rows.length,
+      claimed: !existing || verdict.claim,
+    });
   }
 
   revalidatePath('/me');
-  revalidatePath(`/character/${encodeURIComponent(canonical)}/quests`);
-  return { ok: true, count: rows.length };
+  return { ok: results.some(r => r.ok), results };
 }

@@ -71,6 +71,7 @@ local box answers questions the 3-hour window never can — slow uptime across a
 expansion, threat patterns over months.
 
 ## 3. Decisions already made that the wizard must carry
+- **2026-08-16 — sentinel tiers split by deployment** (`docs/DESIGN-sentinel.md`): freshness invariants run next to the LIVE DB (hosted: the bot; on-prem: the box itself); heavy analytical invariants run on the backup replica (hosted: Hitya's Unraid docker alongside the Supabase backup; on-prem: same DB, so the tiers collapse). The wizard should ship the battery file as config, not code.
 
 Append here as decisions land. Each entry: the choice, why, and what the wizard
 must therefore ask or verify.

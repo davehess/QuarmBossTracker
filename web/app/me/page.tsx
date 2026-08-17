@@ -31,6 +31,7 @@ import { userTz, fmtAbs, relTime, fmtDateOnly } from '@/lib/timezone';
 import ExclusionToggles from './ExclusionToggles';
 import ScrapShare from './ScrapShare';
 import InventoryUpload from './InventoryUpload';
+import MuleUpload from './MuleUpload';
 import KeysUpload from './KeysUpload';
 import SpellbookUpload from './SpellbookUpload';
 import MeCharacterCards, { type MeCard } from './MeCharacterCards';
@@ -958,12 +959,23 @@ export default async function MePage() {
           </div>
         </div>
 
+        {/* Bank mules and never-raiding alts have no logs, so nothing else on
+            this page can discover them — their inventory file is the only
+            evidence they exist. */}
+        <div className="mt-3">
+          <MuleUpload />
+        </div>
+
         {allChars.length === 0 ? (
           <div className="bg-bg border border-orange/40 rounded p-4 mt-4 text-sm">
             <div className="text-orange mb-1">No characters linked to your Discord account.</div>
             <div className="text-dim text-xs">
-              An officer needs to link your characters via the admin tool, or you can
-              ask in <code>#feedback</code>. Until then, this page will be empty.
+              Characters appear here once Mimic sees them in your EQ logs, or once an
+              officer links them. If a character never raids &mdash; a bank mule, an alt on
+              a box that does not run Mimic &mdash; use{' '}
+              <b className="text-text">Add characters from inventory files</b> above: log in
+              on it once, run <code>/outputfile inventory</code>, and drop the file in.
+              That brings it in without needing logs or an officer.
             </div>
           </div>
         ) : chars.length === 0 ? (

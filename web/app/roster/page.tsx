@@ -89,8 +89,8 @@ export default async function RosterPage(
   const totalTicks = ticks.length;
 
   // Per-character: WHICH ticks they attended (index-keyed) — the family union
-  // needs tick identity, not just counts, so a person two-boxing one tick
-  // doesn't count it twice.
+  // needs tick identity, not just counts, so a person attending one tick on
+  // two of their characters doesn't count it twice.
   const attendedIdx = new Map<string, Set<number>>();
   ticks.forEach((t, i) => {
     for (const a of t.attendees) {
@@ -311,7 +311,7 @@ export default async function RosterPage(
             <b className="text-text">Math:</b> a person&apos;s RA = distinct ticks attended on ANY of their linked
             characters ÷ {totalTicks} valid ticks{altView ? ' on alt-night raids' : ''} in the last 60 days (ticks
             with no captured attendees are sync gaps and count for nobody — same rule as OpenDKP and /admin/attendance).
-            Two-boxing one tick counts once. Alts fold under mains via character links set on /admin/links; an alt
+            Attending one tick on two of your characters counts once. Alts fold under mains via character links set on /admin/links; an alt
             missing its link shows as its own italic row. Officers: the 30/60/90 recruiting view lives at /admin/attendance.
           </section>
         </>

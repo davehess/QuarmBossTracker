@@ -204,12 +204,47 @@ async function upsert(table, rows, onConflict, opts = {}) {
 // becomes an unqualified ON CONFLICT DO NOTHING server-side and works with
 // any unique storage. Drops `return=representation` so the response body is
 // empty (saves egress on what's typically a hot insert path).
-async function insertIgnoreDuplicates(table, rows) {
+async function insertIgnoreDuplicates(table, rows, opts = {}) {
+  // opts.representation: return the rows PostgREST actually inserted —
+  // duplicates absorbed by a unique index are excluded from the response, so
+  // the caller gets an accurate new-row count (the loot fold's `written`).
+  // Default stays minimal for hot paths (buff_casts) where the body is waste.
+  const ret = opts.representation ? 'return=representation' : 'return=minimal';
   return _request(`/${table}`, {
     method: 'POST',
     body:   rows,
-    prefer: 'return=minimal,resolution=ignore-duplicates',
+    prefer: `${ret},resolution=ignore-duplicates`,
   });
+}
+
+// ── Paged reads — THE one bot-side drain for the PostgREST max-rows cap ─────
+// PostgREST silently caps EVERY response at the server's max-rows (1000 on
+// Supabase): no error, no flag, just a short array — and `limit=50000` in the
+// query string does NOT lift it (it is an upper bound applied ON TOP of the
+// cap). This bit the OpenDKP loot fold on its first night live (2026-08-14):
+// both sides of its set-diff truncated to 1000 rows, so folded raids looked
+// unfolded and two passes re-inserted 116 duplicate awards.
+//
+// This is the ONLY paginator the bot should have — test/db-read-discipline
+// fails the build if a second one appears (the web's is web/lib/selectAll.ts).
+// Ordered paging is load-bearing: an unordered offset walk can skip or repeat
+// rows between pages (2026-08-05: an unordered 1,149-row pull dropped the 149
+// NEWEST rows and main-detection kept naming the previous main).
+const SELECT_ALL_PAGE = 1000;
+// `sel` is injectable so the paging rules can be tested without a database.
+async function selectAllPaged(table, baseQuery, orderCol, sel) {
+  const fetchPage = sel || ((t, q) => select(t, q));
+  const out = [];
+  for (let offset = 0; ; offset += SELECT_ALL_PAGE) {
+    const q = `${baseQuery}&order=${orderCol}.asc&limit=${SELECT_ALL_PAGE}&offset=${offset}`;
+    const page = await fetchPage(table, q);
+    // A failed page is NOT an empty table. Returning [] would read as "no rows
+    // exist" and let a caller re-do work against history (the re-fold bug).
+    if (!Array.isArray(page)) return null;
+    out.push(...page);
+    if (page.length < SELECT_ALL_PAGE) return out;
+    if (out.length > 500_000) return out;              // runaway guard
+  }
 }
 
 async function del(table, queryString) {
@@ -785,7 +820,7 @@ module.exports = {
   isEnabled,
   breakerState,
   _resetBreaker,   // test-only
-  select, insert, insertIgnoreDuplicates, update, upsert, del, rpc,
+  select, selectAllPaged, insert, insertIgnoreDuplicates, update, upsert, del, rpc,
   getWhoOverrides, upsertWhoOverride,
   applyQuakeToPvpBoardMirror,
   getNpcIdForInternalId,

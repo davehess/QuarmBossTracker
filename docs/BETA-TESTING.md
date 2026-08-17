@@ -708,7 +708,7 @@ character now, so the 🐺 lights on the alt you are actually online as.
    **Triggers** tab (same idea as the 🐺 Charm diagnostic): it walks pet
    identified → cast seen → landing resolved → attributed → overlay fetch, with a
    resolution ring saying which resolver fired and why a land was dropped.
-2. **Liveness now spans every watched log.** A boxer whose *primary* is logged
+2. **Liveness now spans every watched log.** A player whose *primary* is logged
    out but who's actively playing an alt is now correctly treated as a **live**
    agent (any flowing log keeps the agent fresh) — the chat-reporter election and
    the fleet staleness dot follow. An agent with *no* active log anywhere still
@@ -1493,7 +1493,7 @@ timers.
 1. **Both clients announce locally, exactly once.** One raider posts a drop list
    in `/rs`. BOTH raiders (each running beta Mimic with the toggle on) should
    hear the announce and see the chip on their own overlay — driven off their own
-   local log tail, no relay. Neither should hear it twice (multibox second-log
+   local log tail, no relay. Neither should hear it twice (second-watched-log
    copies reset silently).
 
 **Status:** ~~⏳ awaiting verification~~ → **2026-08-09: ✅ live for the whole

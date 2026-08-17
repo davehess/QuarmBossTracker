@@ -16,7 +16,7 @@ import { fmtDmg, fmtDuration, fmtTime, dayKey, dayLabel, cleanBossName } from '@
 import { userTz } from '@/lib/timezone';
 import LootBlock, { type LootRow } from '@/components/LootBlock';
 import { ClassificationChip } from '@/components/KillCard';
-import { FightTimeline } from '@/components/FightTimeline';
+import { FightEventLog } from '@/components/FightEventLog';
 import { DamageCurve } from '@/components/DamageCurve';
 import { buildFightCurve, observedHpSeries } from '@/lib/fightCurve';
 import { classifyEncounter, clearClassification, markDeathIntentional, unmarkDeathIntentional } from '../actions';
@@ -399,10 +399,12 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
   const curve = (timelineRows && timelineRows.length)
     ? buildFightCurve(timelineRows, 5)
     : null;
-  // Class per contributor, for the bulk class selectors over the highlight set.
+  // Class per contributor — the chart stacks BY CLASS now (Hitya 2026-08-16),
+  // so every name in the unfolded series needs its class, not just the top-7
+  // bands. Unknowns stay null; the grouping labels them 'Unknown'.
   const classOf: Record<string, string | null> = {};
-  if (curve) for (const b of curve.bands) {
-    classOf[b.name] = whoMap.get(b.name.toLowerCase())?.class ?? null;
+  if (curve) for (const e of curve.everyone) {
+    classOf[e.name] = whoMap.get(e.name.toLowerCase())?.class ?? null;
   }
   // `date` (from load) is the ET raid-day bucket — keep it for the loot query
   // join. For DISPLAY, re-bucket the kill time in the viewer's chosen zone.
@@ -498,7 +500,7 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
 
   // #98 timeline events: dedup across uploaders (same enrage/fire seen by all →
   // collapse by kind+subtype+actor within a 3s window, like deaths), then split
-  // into the raid-event and trigger-fire lanes the FightTimeline draws.
+  // into the raid-event and callout lanes the FightEventLog lists.
   const TL_DEDUP_MS = 3000;
   const tlSorted = [...(timelineEvents ?? [])]
     .map(e => ({ ...e, t: new Date(e.at).getTime() }))
@@ -515,11 +517,13 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
   }
   const raidEvents = tlKept
     .filter(e => e.kind === 'raid_event')
-    // Pass subtype through so FightTimeline can color slow/mob-heal/disc ticks (#105).
-    .map(e => ({ at: e.at, label: e.label || e.subtype || 'event', kind: 'raid_event' as const, subtype: e.subtype }));
+    // Subtype colors the row dot (#105); actor names whose event it was — many
+    // callouts are personal to one character, and naming them is the first
+    // step toward the future per-type toggles (Hitya 2026-08-16).
+    .map(e => ({ at: e.at, label: e.label || e.subtype || 'event', kind: 'raid_event' as const, subtype: e.subtype, actor: e.actor }));
   const fireEvents = tlKept
     .filter(e => e.kind === 'fire')
-    .map(e => ({ at: e.at, label: e.label || e.subtype || 'callout', kind: 'fire' as const }));
+    .map(e => ({ at: e.at, label: e.label || e.subtype || 'callout', kind: 'fire' as const, actor: e.actor }));
 
   // Tank perspective: find contributions whose contributor is a tank class.
   const tanks = contribs.filter(c => {
@@ -815,16 +819,18 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
         </div>
       </section>
 
-      {/* Damage curve — Hitya's napkin sketch (docs/DESIGN-fight-timeline.md).
-          Sits directly above the event timeline because the two share a
-          fight-time X axis and the same geometry (W=1000, PADL/PADR=8): the
-          curve is the fight's shape, the event lane annotates it. Rendered only
-          when snapshots actually bound to this encounter — an empty chart is
-          worse than no chart, because it implies we looked and saw nothing. */}
+      {/* Damage curve — Hitya's napkin sketch (docs/DESIGN-fight-timeline.md),
+          reshaped by his 2026-08-16 review: stacked by CLASS with right-edge
+          percents, drill into a class for per-character percents, hover
+          highlighting, and honest "nobody taking hits" gaps on the MT strip.
+          Rendered only when snapshots actually bound to this encounter — an
+          empty chart is worse than no chart, because it implies we looked and
+          saw nothing. */}
       {curve && curve.bands.length > 0 && (
         <DamageCurve
           buckets={curve.buckets}
           bands={curve.bands}
+          series={curve.series}
           totalDamage={curve.totalDamage}
           mt={curve.mt}
           durationSec={enc.duration_sec || curve.buckets[curve.buckets.length - 1] || 1}
@@ -832,13 +838,13 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
         />
       )}
 
-      {/* Fight timeline (#98) — deaths + raid-wide events (rampage/enrage) +
-          which callouts fired, on one axis. Shown whenever there's anything to
-          review (a death, a raid-wide event, or a callout). */}
+      {/* Fight timeline (#98) as a collapsible LIST — deaths + raid-wide
+          events + which callouts fired, in order, with names (Hitya
+          2026-08-16: the marker view was "useless in this format"; /raid/review
+          keeps the marker chart where wipe-spotting is the job). */}
       {(deaths.length > 0 || raidEvents.length > 0 || fireEvents.length > 0) && (
-        <FightTimeline
+        <FightEventLog
           startedAt={enc.started_at}
-          endedAt={null}
           durationSec={enc.duration_sec}
           deaths={deaths}
           events={raidEvents}

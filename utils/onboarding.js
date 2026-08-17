@@ -29,6 +29,11 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.1.51': [
+    '**Officers can now run the pre-raid drill from Discord.** `/preraiddrill` answers "is the whole parse chain alive?" in one command — the parser check against our signed-off reference log, bot health, the updater channels, upload authentication, and the website — with a plain verdict at the bottom: good pull, watch it, or fix before the pull. Read-only and safe to run any time, including mid-raid.',
+    '**The Sleeper\'s Tomb board now has all the named.** The Final Arbiter and The Progenitor joined the four Warders, so their kills start timers like everything else.',
+    '**"Melee out" before the breath, not after.** The Freezing Breath call in Sleeper\'s Tomb now counts down the ~15-second breath cycle (measured from our own last Ventani kill), says "Melee out" three seconds before the next one is due, and calls "A-O-E" when it actually lands — instead of only telling you about the breath you just ate.',
+  ],
   '3.1.45': [
     '**Loot you won in the last ten weeks is back on the Loot tab.** Target Info lists what a boss drops and how many times Wolf Pack has won each piece, and that count had been stuck since the 4th of June — 758 wins across 28 raids were missing, so items people had genuinely won still read as never dropped (Kazmodon\'s Silver Band of Secrets was the one that gave it away). The list of wins was only ever filled in by an officer running a command by hand, and nobody had run it since. It now fills itself in every time we sync with OpenDKP, so it stays current on its own. A second, quieter fix came with it: where OpenDKP records two different ID numbers for the same award, we had been reading the wrong one, which credited a handful of wins to whatever unrelated item happened to share that number.',
   ],

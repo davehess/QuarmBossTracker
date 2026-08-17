@@ -12711,7 +12711,7 @@ async function _hideMainNamesSet() {
 }
 // Fresh Mimic characters — every character running Mimic right now. Since #119
 // this keys on BOTH the reported primary AND the live_character (the alt the
-// player is actively on), so a boxer playing an alt earns the 🐺 on the toon
+// player is actively on), so a player on an alt earns the 🐺 on the toon
 // actually online, not only their primary. Delegates to the pure
 // _mimicCharacterSet (in the #111 assembly block) so it's unit-testable.
 function _freshMimicPrimaries(guildId) {
@@ -12749,7 +12749,7 @@ function _assembleWhoEnrichment({ names, mainMap, mimicSet, hideSet, base }) {
 }
 // #119 — the set of characters that light the /who 🐺. For every FRESH agent
 // (heartbeat within `ttlMs`), BOTH its reported primary AND its live_character
-// (the alt it's actively playing, when present) qualify — so a boxer on an alt
+// (the alt it's actively playing, when present) qualify — so a player on an alt
 // shows the wolf on the character actually online. Pure over an entries iterable
 // so it's unit-testable without the registry.
 function _mimicCharacterSet(entries, now, ttlMs) {
@@ -16233,7 +16233,7 @@ async function _handleAgentUpload(req, res) {
             const cur = hMap.get(k);
             if (cur) {
               // Per-TARGET reconcile when the direct entry carries byTarget: a
-              // multiboxed cleric's locally-attributed heals (their own box)
+              // same-machine cleric's locally-attributed heals (their own log)
               // and the bot-joined heals (other Mimic raiders) hit DISJOINT
               // recipients — per-target MAX then sum keeps both, while the
               // same recipient seen from both sides dedupes. Flat MAX stays
