@@ -15,9 +15,12 @@
   /* DPS / Tank tabs — ported from mobinfo.html so the surface reads the
      same across overlays. Same margin-right:28px clears the ✕ hide
      button at the top-right. */
-  .tabs{display:flex;gap:2px;margin-left:6px;margin-right:28px}
+  .tabs{display:flex;gap:2px;margin-left:6px;margin-right:28px;align-items:center}
+  /* Compact on purpose (Hitya 2026-08-16, from a live History screenshot:
+     "These buttons are too large") — the strip competes with parse rows for
+     a narrow overlay's space, so it stays a size DOWN from the row text. */
   .tab{background:rgba(255,255,255,0.05);color:#9aa4ad;border:1px solid rgba(255,255,255,0.10);
-       border-radius:4px;padding:1px 7px;font-size:10px;cursor:pointer;font-family:inherit;letter-spacing:0.5px}
+       border-radius:3px;padding:0 5px;font-size:9px;line-height:14px;cursor:pointer;font-family:inherit;letter-spacing:0.3px}
   .tab:hover{color:#fff;border-color:#a371f7}
   .tab.on{background:#2a1d3d;color:#d2a8ff;border-color:#a371f7}
   .tab .beta{font-size:8px;color:#1f1300;background:#f0b429;border-radius:2px;padding:0 3px;margin-left:3px;font-weight:600}
@@ -54,7 +57,7 @@
   li.total .sec{color:#9aa4ad}
   /* Row-count stepper in the title bar (− N +). */
   .rowcfg{display:flex;align-items:center;gap:1px;margin-left:auto}
-  .rowcfg .rowsn{font-size:10px;color:#9aa4ad;min-width:15px;text-align:center;font-variant-numeric:tabular-nums}
+  .rowsn{font-size:9px;color:#9aa4ad;min-width:15px;text-align:center;font-variant-numeric:tabular-nums}
   .maxhit{font-size:9px;color:#f87171;font-weight:500;margin-left:4px}
   .colhdr{display:grid;grid-template-columns:1.1em minmax(0,1fr) 38px 50px 42px 32px;
      gap:6px;font-size:9px;color:#6b7280;letter-spacing:0.05em;
@@ -316,6 +319,10 @@
   // after the mob dies (you paste the parse after the kill, when the live
   // encounter has already flushed). Empty until a fight has damage.
   var _lastParseLine = '';
+  // History tab's copyable line — the guild-merged numbers of the fight being
+  // BROWSED. Rebuilt (or nulled) every tick, unlike _lastParseLine, because
+  // paging changes which fight it describes.
+  var _histParseLine = null;
 
   // DPS / Tank tab — same scoreboard surface, swapped data source.
   // DPS reads perPlayer[].dmg (outgoing damage to current-fight mobs);
@@ -412,16 +419,18 @@
     copyRsBtn.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch (e) {} });
     copyRsBtn.addEventListener('mouseleave', function(){ try { window.mimic.overlayHoverInteractive(false); } catch (e) {} });
     copyRsBtn.addEventListener('click', function(){
-      if (!_lastParseLine) return;
+      // History copies the browsed fight's guild-merged line; DPS the live one.
+      var line = (TAB_MODE === 'history') ? _histParseLine : _lastParseLine;
+      if (!line) return;
       var done = function(){
         copyRsBtn.textContent = '✓ copied — paste in /rs';
         setTimeout(function(){ try { copyRsBtn.textContent = '📋 /rs'; } catch (e) {} }, 2200);
       };
       try {
         if (navigator.clipboard && navigator.clipboard.writeText) {
-          navigator.clipboard.writeText(_lastParseLine).then(done, done);
+          navigator.clipboard.writeText(line).then(done, done);
         } else {
-          var ta = document.createElement('textarea'); ta.value = _lastParseLine;
+          var ta = document.createElement('textarea'); ta.value = line;
           document.body.appendChild(ta); ta.select(); document.execCommand('copy');
           document.body.removeChild(ta); done();
         }
@@ -627,9 +636,29 @@
       // after the mob dies. Format the bot expects:
       //   <Boss> in <s>s, <total>K Damage @<dps>, 1. <Name> = <d>@<dps> in <s>s | 2. …
       try {
+        // History copy (Hitya 2026-08-16: "in history there's no copy
+        // button"): build the line from the rows being BROWSED — allRows is
+        // already the guild-merged view of THAT fight and secs is ITS
+        // duration, so header and rows can never splice two fights. Rebuilt
+        // every tick and nulled first, so paging to a fight with no data
+        // can't leave the previous fight's line copyable.
+        _histParseLine = null;
+        if (HIST && boss && secs > 0 && allRows.length && totalDmg > 0) {
+          var histReal = allRows
+            .filter(function(x){ return x[0] && !x[3] && !x[6] && !/\s/.test(String(x[0])) && x[1] > 0; })
+            .slice(0, 10);
+          if (histReal.length) {
+            _histParseLine = '/rs ' + boss + ' in ' + secs + 's, ' + pnumK(totalDmg)
+              + ' Damage @' + pnum(Math.round(totalDmg / secs)) + ', '
+              + histReal.map(function(x, i){
+                  return (i + 1) + '. ' + x[0] + ' = ' + pnum(x[1]) + '@'
+                       + pnum(Math.round(x[1] / secs)) + ' in ' + secs + 's';
+                }).join(' | ');
+          }
+        }
         // ⚠ `!HIST` is load-bearing: on the History tab `boss` and `secs`
         // describe the fight being BROWSED while et.perPlayer is still the live
-        // one, so building the line here would splice one fight's rows onto
+        // one, so building the LIVE line here would splice one fight's rows onto
         // another fight's header — and that line gets pasted into /rs.
         if (!HIST && et && et.perPlayer && boss && secs > 0) {
           var dmgAll = Object.entries(et.perPlayer)
@@ -652,7 +681,8 @@
           }
         }
       } catch (e) {}
-      if (copyRsBtn) copyRsBtn.style.display = (TAB_MODE === 'dps' && _lastParseLine) ? '' : 'none';
+      if (copyRsBtn) copyRsBtn.style.display =
+        ((TAB_MODE === 'dps' && _lastParseLine) || (TAB_MODE === 'history' && _histParseLine)) ? '' : 'none';
 
       const ul = document.getElementById('deeps');
       var bodyHtml = rows.map(function(row){
