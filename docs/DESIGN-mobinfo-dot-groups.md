@@ -20,6 +20,20 @@ the spell catalog today. Two paths:
 2. **Backfill spell→class into the mirror from the local `peq` DB** (the
    eqemu_items precedent — ⚠ needs a local session): enriches path 1 so even
    uncorrelated landings can class-group by the spell itself.
+3. **Same local backfill should ALSO pull `dot_stacking_exempt`** (Hitya
+   2026-08-16, from Partil's bug-reports post quoting Quarm's
+   buffstacking.cpp:654): the server flag that says whether a DoT stacks with
+   ITSELF across casters (0 = stacks, the Luclin change — Immolate; 1 = does
+   not — Breath of Ro). The mirror carries it nowhere (no column, no `raw`
+   key — verified against both example spells). Two consumers: the target
+   debuff list must keep PER-CASTER instances for flag-0 DoTs (today the
+   second caster's land overwrites the first, which then reads "fell off"
+   while still ticking), and this design's per-tick totals are only honest if
+   N casters of a stacking DoT means N× ticks. Exact pull:
+   `SELECT id, dot_stacking_exempt FROM spells_new;` from the local peq
+   MariaDB → sync-proof addendum column. ⚠ PEQ-flavored data vs Quarm tuning:
+   spot-check against PQDI at backfill time; Partil's pair (Immolate=0,
+   Breath of Ro=1) are the free test vectors.
 
 ## The per-tick number: measured beats computed
 
