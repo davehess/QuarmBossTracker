@@ -417,3 +417,33 @@ toggles on the event list — "many of these are probably personal to one
 character." Needs client state and probably a per-user preference; when it
 lands, `FightEventLog` goes `'use client'` and the grouped rows become the
 toggle rows.
+
+### Second round, same night (web 1.1.62 — staged during the raid freeze)
+
+Hitya reviewed the list live on `/parses/d951b081` (the ST trash-merge card)
+from a phone mid-raid-prep. Three measured problems, all pinned in
+`test/fight-events.test.js` over the new pure module `web/lib/fightEvents.ts`:
+
+1. **The 0:00 wall.** 67 of that card's 126 events were stamped BEFORE
+   `started_at` (same-name trash merges attach a neighboring pull's events —
+   41 of them were *a restless burrower*'s rampages on *a summoned
+   burrower*'s card), and the old formatter clamped negatives to 0:00.
+   Pre-start events now fold into their own collapsed "N events from before
+   this pull (merged trash window)" section with signed offsets (−6:45), and
+   the main list starts at the pull.
+2. **Personal-range callouts hidden.** The Too Far / Can Not See / Can Not
+   Hit From Here / Out of Range / Range family (the standing "noisy
+   eqlogparser triggers" set) fires on YOUR positioning, not the raid's
+   fight — filtered from the list entirely, with an honest "N range-check
+   callouts hidden" note in the summary line. Hitya: *"the too far/can't see
+   callouts shouldn't be shown."*
+3. **Folding that survives alternation, and no doubled names.** "(copy)"
+   trigger clones normalize into their base label; folding is now WINDOWED
+   per (kind, label, actor) — 45s — so alternating rampage targets
+   (→ Moash / → Timberowl / → Moash…) collapse per-target instead of
+   defeating consecutive-run folding; and the actor suffix is suppressed
+   when the label already opens with it. Row layout tightened for phones
+   (the KIND text column dropped — the colored dot carries it via tooltip).
+
+Hitya's verdict on round one: *"the timeline view was fine to have it just
+needed a better look"* — the list stays, this is the look.

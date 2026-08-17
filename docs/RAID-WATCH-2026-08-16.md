@@ -135,6 +135,22 @@ ONE merged card where there should be two.
   stands ready if live streams need trimming (durables can never shed).
 - Herald false-timer: retired (exact-name matching, above).
 
+## Tonight's actuals (reported live by Hitya, ~20:35 ET)
+
+- **Pre-raid Zlandicar** to key people for Sleeper's Tomb — killed 20:08 ET
+  (187s, encounter `719dff28`). The **Caustic Mist dance trigger fired 3×**
+  during it via the shared "…flesh begins to liquefy." line (Putrefy Flesh) —
+  the documented caveat, now observed in the field. Triage: confirm no timer
+  confusion resulted; the scoping decision (leave vs narrow) is Hitya's.
+- **The Tunare kite FAILED — no kill.** No Tunare encounter row existed as of
+  20:35 ET. Triage: re-run the two-Tunares query after agents flush; if a
+  wipe engagement recorded, classify it (Mark Wipe) so it stays out of kill
+  counts; if NOTHING recorded despite real combat, that's a finding.
+- **New schedule rule (recorded in DECISIONS + CLAUDE.md): alt raids and
+  Seru+misc nights are 3 ticks / 2 hours until PoP** — tonight is the first.
+  Expect the night to end ~22:00 ET, not midnight; the attendance fold and
+  raid review should look normal, just shorter.
+
 ## Post-raid triage (the sentinel's loop 2, run by hand this week)
 
 After each night, one pass: the Tunare encounter-card query above · unlabeled
@@ -142,3 +158,77 @@ roll sessions for the night · `/health` breaker+queue stats · did the fold run
 (newest folded raid vs newest opendkp raid) · any finding → DECISIONS. These
 manual passes are the dress rehearsal for #42's battery; whatever we find
 ourselves checking by hand three times becomes an invariant.
+
+## Post-raid triage — RUN (2026-08-16 ~22:30 ET, raid ended ~22:13 ET)
+
+**The night pivoted: the kite failed, so they keyed off Zlandicar and did
+SLEEPER'S TOMB tonight.** Tunare was never engaged — the "missing Tunare
+encounter" mystery resolves to "no combat happened"; nothing to classify.
+All four warders died 21:48–22:13 ET (Tukaarak 89s → Nanzata 93s →
+Hraashna 161s → Ventani 145s), 9–13 uploads each.
+
+- **The Ventani melee dance WORKED in the field** — the Freezing Breath
+  trigger fired on all 9 breaths of the fight. Measured cycle from the
+  merged fire clusters: gaps 12/13/13/13/13/14/16/17s — **median 13s,
+  faster than the Aug-7 kill's ~15s**. Recalibrated per the pre-authorized
+  plan: **timer 15→13s** ("Melee out" now at 10s, ahead of the fastest
+  observed 12s breath). One UPDATE, fleet-live in ~2 min, revert is one
+  UPDATE back.
+- **Zero trash encounters between Zlandicar (20:08) and Tukaarak (21:48)**
+  — and zero trash contributions, so it's not a pipeline miss: no trash
+  combat was uploaded at all, consistent with keying + a skip-to-warders
+  path. Confirm with Hitya in one line; if they DID clear trash, that's a
+  real finding.
+- **Fold lag: ZERO** (newest folded raid = newest OpenDKP raid, 100549).
+- **No digit-suffix phantom characters** — the backup-log rule held.
+- **~15 unlabeled roll sessions** around 20:11 ET (key rolls after
+  Zlandicar) — expected: the stable fleet labels only pipe-form calls; the
+  comma/tier parser is 3.5.84+ beta.
+- **One backfill oddity, harmless**: a single contribution landed tonight
+  on a March King Tormax encounter — someone's old-log replay; dedup
+  attached it instead of duplicating, as designed.
+- **Event binding is loose across fights**: Hraashna rampages (01:56) are
+  bound to the VENTANI encounter (started 02:11). Display-side the new
+  "before this pull" fold absorbs it; the binding window itself is a
+  follow-up if it ever misleads.
+- Earlier tonight, already recorded: the Caustic Mist trigger fired 3× on
+  the Zlandicar key-kill (shared Putrefy Flesh line — predicted, observed);
+  the Eye-of-Zomm meter/History pollution is fixed in agent 3.5.87 (beta).
+
+## ⚠ P1 FOUND POST-RAID — first-time content is silently dropped by the encounter path
+
+Hitya: *"there were a ton of trash mobs from the start of raid at 830"* — and
+the platform recorded NONE of it. Diagnosis from the bot's own logs, complete:
+
+- **The encounter handler requires a `bosses_local` match to persist.** Every
+  ST mob missing from that table was refused with `no bosses_local match for
+  "<mob>" — encounter not persisted to Supabase` — while chat (422 msgs) and
+  buffs (2,398 casts) flowed normally through the same window. The agents
+  were 200-acked, so their queues dropped the payloads as delivered.
+- **Lost tonight:** ~75 min of ST trash (an aged caretaker, an ancient
+  sentry, a debris covered guardian, a tireless servitor) **and THE FINAL
+  ARBITER KILL** — 10 uploaders, up to 4,274 events each, started 21:41 ET.
+  The morning fix added the Arbiter to `data/bosses.json` (so the **162h
+  timer relayed fine** — "already on cooldown" — and the Discord parse card
+  posted) but NOT to `bosses_local`, which nobody knew was a separate,
+  load-bearing gate. Last night's Acrylia burrower trash persisted only
+  because someone had once added those mobs to the table.
+- **Patched immediately (bosses_local inserts, live):** final_arbiter
+  (128132), progenitor (128125), an_aged_caretaker (128112),
+  an_ancient_sentry (128101), a_newly_created_sentry (128110),
+  a_debris_covered_guardian (128111), a_tireless_servitor (128133) — all
+  zone `sleeper`. The NEXT ST clear persists everything.
+- **Recovery for tonight's lost data:** the fight payloads are gone from the
+  queues, but the logs aren't — an opt-in backfill (--since ~00:00 UTC
+  2026-08-17) from two or three of tonight's uploaders re-creates the
+  encounters with their original timestamps now that bosses_local matches;
+  `find_or_create_encounter` + `merge_encounter_players` assemble them as if
+  they'd landed live. (Bardtholemu's was the richest single view at 4,178
+  events.)
+- **The structural fix (bot, post-freeze, NOT tonight):** the handler must
+  stop treating bosses_local as an allowlist — fall back to zone-aware
+  `eqemu_npc_types` name resolution, or persist with a NULL npc_id rather
+  than dropping. Collection is sacred; a catalog-table miss must never cost
+  a first kill. This is also the strongest sentinel-invariant candidate yet:
+  "combat uploads arriving + zero encounters persisted over N minutes" is
+  precisely a loop-1 alarm.

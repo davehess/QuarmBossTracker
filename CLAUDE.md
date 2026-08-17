@@ -879,7 +879,13 @@ Any adoption gate, graduation argument, or sentinel invariant that counts the
 fleet counts players.
 
 **Raid schedule:** Sun/Wed/Thu 8pm–midnight Eastern — the default window for
-any "should have been there" computation.
+any "should have been there" computation. **Since 2026-08-16 (Hitya, live):
+alt raids and Seru+misc nights run 3 ticks / 2 hours (8–10pm ET), until
+Planes of Power**; other nights keep the full window. Tick math needs no
+change — RA is distinct-ticks ÷ total-ticks and never assumes a per-night
+count. The 19:30→00:30 ET deploy freeze deliberately stays full-length on
+all three nights (short raids can still run long; shortening the freeze is
+its own call).
 
 ---
 

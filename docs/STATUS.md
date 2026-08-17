@@ -937,6 +937,30 @@ next touch one rather than assuming a missing row means a missing doc.
   raid-watch content — all editable, `updated_by='pre-raid seed'`. Next
   increment (in `DESIGN-fight-cards.md`): comp/kit live joins (#93/#82),
   the Discord pre-pull projection (bot, post-freeze), drill result on-page.
+- **⚠ Needs a local session — `dot_stacking_exempt` backfill (2026-08-16).**
+  Hitya, from Partil's bug-reports post on Quarm's DoT stacking
+  (buffstacking.cpp:654): the server carries a per-spell flag — 0 = the DoT
+  stacks with itself across casters (Immolate), 1 = it does not (Breath of
+  Ro) — and our mirror carries it NOWHERE (no column, no `raw` key; verified
+  on both example spells). Consumers waiting on it: per-caster debuff
+  instances on Mob Info (today a second caster's land overwrites the first)
+  and task #44's per-tick math. Exact pull from the local peq MariaDB:
+  `SELECT id, dot_stacking_exempt FROM spells_new;` → sync-proof addendum
+  column (the eqemu_items backfill precedent). Spot-check vs PQDI at
+  backfill time (PEQ data vs Quarm tuning); Immolate=0 / Breath of Ro=1 are
+  the free test vectors. Details in `docs/DESIGN-mobinfo-dot-groups.md`.
+- **Fight timeline list, round two — STAGED during the freeze (web 1.1.62,
+  2026-08-16 ~20:00 ET, on `claude/sharp-lamport-dC0TW`; lands on main after
+  00:30 ET).** Hitya reviewed `/parses/d951b081` mid-raid-prep: *"the
+  timeline view was fine to have it just needed a better look"* + hide the
+  too far/can't-see callouts + "so many ramp calls at 00:00 sounds wrong."
+  Root causes measured: 67 of 126 events predate `started_at` (trash-merge
+  spillover) and were clamped to 0:00 → now a collapsed "before this pull"
+  section with signed offsets; the personal-range callout family is filtered
+  (with a "N hidden" note); "(copy)" clones fold into their base and folding
+  is windowed per-target so alternating rampages collapse. New pure module
+  `web/lib/fightEvents.ts` + 11 tests pinned to that card's failure modes;
+  browser-verified at phone width.
 - **Parse page reshaped by Hitya's first-format review — DONE (web 1.1.60,
   2026-08-16).** Five asks on `/parses/4d0d6dd2` (the restless burrower), all
   shipped + harness-verified against that fight's real rows: the damage chart

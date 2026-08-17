@@ -11,6 +11,7 @@ first and reach back for the older detail.
 
 | Item | State |
 |---|---|
+| **3-tick short raids until PoP (Hitya, 2026-08-16 live)** | Alt raids and Seru+misc nights run **3 ticks / 2 hours** until Planes of Power. Platform tick math unaffected (RA is count-agnostic); CLAUDE.md schedule line updated; deploy freeze deliberately kept full-length. Same night: pre-raid Zlandicar for ST keys → **Caustic Mist dance trigger fired 3× on Putrefy Flesh's shared line** (predicted in its notes, now observed — scoping call is Hitya's, no text-level fix exists); the Tunare kite FAILED and no Tunare encounter row existed as of 20:35 ET — post-raid: check what recorded + classify the wipe |
 | **Architect's rebuild — U1/U2 DONE, O1 remains** | 2026-08-16: Hitya ordered U1 + the unique index and ratified *"discord was a source of semi-truth. now it should just be a projection."* Landed same night: `loot_observations_award_uniq` (560 rows deduped+backed up, dup groups **0**, re-insert refused 23505), one paginator per runtime + the 85-site over-cap RATCHET (`test/db-read-discipline.test.js`), `rollup_threat_ranks` anon-execute revoked (it WRITES), 4 per-row `auth.uid()` policies → InitPlan. Remaining: the ratchet backlog (priority table in ARCHITECT doc Part II), the Discord-projection migration order (state.json → roster → hate → parses), O1 review 2026-12-01 |
 | **Data Sentinel — designed, awaiting go (prime-agent reviewed)** | Hitya asked how prime-agent-style long-running actions fit for continuous ingest review during raids + reviewing live test cases. Verdict in `docs/DESIGN-sentinel.md`: don't adopt the stack (a code-executing daemon next to the service-role key, LLM tokens on quiet ticks, no good host), adopt the two loops — deterministic invariant battery IN THE BOT (10 seeds, each cited to a real incident; live probe tonight: **47 unlabeled roll sessions in 14d** — the 3.5.84 fix hasn't reached the fleet), judgment via post-raid scheduled Claude sessions. Plus the **live-test promotion rule**: a ship's production-verification check graduates into the battery in the same change. ~3–4h to build, deliberately NOT before Sunday's 2.5.0 raid. Needs: officer-thread choice + go (task #42) |
 | **2.5.0 raid watch — Tunare/ST/Vulak (docs/RAID-WATCH-2026-08-16.md)** | Pre-raid review shipped 08:xx ET: 4 slow triggers explicitly re-anchored + compiler-verified firing (and a DOCTRINE CORRECTION found doing it: agent 3.5.46's `_rewriteAnchorsForRawLine` auto-heals bare `^` at compile — the Aug-4 '37 dead' measurement predates it, **runbook needs re-measuring**); Final Arbiter + Progenitor added to the board (ST has FIVE named, we had four); Herald-of-Vulak false-timer risk retired by reading the exact-match code. Tonight's headline hazard: TWO Tunares, one name, tied 500k HP (127001 lootless kite / 127002 the kill) — watch for knit encounters + loot-tab binding. **#27 gate CLEARED** (178 chars on 3.5.80) — restore is now purely Hitya's noise call, ST trash night is when they'd matter. ANSWERED same morning: the dance keys on **Ventani's Freezing Breath** (845, from `eqemu_npc_spells`), cycle **~15s measured from our own Aug-7 Ventani kill** — trigger pair upgraded to Hitya's spec (timer 15s, "Melee out" at T-3, "A O E" on land). Also shipped: **`/preraiddrill`** (the #75 drill from Discord, read-only) + CHANGELOGS. Fight Cards designed (`docs/DESIGN-fight-cards.md`) — the Quartermaster's original concept, task #43 |
@@ -587,3 +588,33 @@ Two claims re-checked under the new metric, both survive but read differently:
   validation beta features get before graduation, and part of why the
   beta→stable cadence leans on browser/unit verification: the beta "fleet"
   cannot exercise a raid.
+
+---
+
+## 2026-08-16 raid night — 3-tick short raids until PoP (Hitya, live mid-raid)
+
+**The call:** *"tonight's raid should only be 3 ticks, new change. two types
+of raids are going to be 3 ticks, 2 hours. alt raids and Seru+misc nights,
+until planes of power."*
+
+**Where it lands.** Mostly OpenDKP operations (officers award 3 ticks), not
+code: the platform's tick math is count-agnostic — roster RA is distinct
+ticks attended ÷ total valid ticks, and nothing assumes 4 per night. Updated
+the CLAUDE.md raid-schedule policy line. Checked and deliberately NOT
+changed: the 19:30→00:30 ET deploy freeze (short raids can spill; shortening
+it is a separate call for Hitya), `utils/timezone.js` RAID_WINDOW
+(20:30–23:30, cosmetic consumers), `utils/raidNight.js` night bucketing
+(day-keyed, unaffected).
+
+**Same night, for the record:**
+- **Pre-raid Zlandicar for ST keys** (killed 20:08 ET, 187s, encounter
+  `719dff28`) — and the **Caustic Mist dance trigger fired 3× on it** via
+  the documented shared line (Zlandicar's Putrefy Flesh prints the same
+  "…flesh begins to liquefy."). Predicted in the trigger's notes; now
+  observed. Open call: leave it (rare fight, 3 callouts of noise) or find a
+  scoping mechanism — the LINE cannot distinguish the two spells, so a
+  text-level fix does not exist; deferred to Hitya, NOT a mid-raid edit.
+- **The Tunare kite FAILED — no kill.** As of ~20:35 ET no Tunare encounter
+  row exists at all. Post-raid: check what (if anything) recorded once
+  agents flush, and classify any wipe engagement so it stays out of kill
+  counts.
