@@ -6936,6 +6936,21 @@ class EncounterBuilder {
       return;
     }
 
+    // Vision eye as a TARGET (Hitya 2026-08-16, live: "Eye of PLAYER showing
+    // up in DPS meter and history"). The _isVisionEyePet choke points cover
+    // the eye as a PET/attacker, and flush() refuses an eye BOSS name at
+    // upload — but killing your own Eye of Zomm still flowed through the
+    // damage path: the eye entered this.targets, named the live meter's boss,
+    // and the "fight" landed in the History ring before flush could refuse
+    // it. Damage dealt TO an eye is not fight damage anywhere else on the
+    // platform (the bot skips eye mobs, /parsestats excludes them), so drop
+    // the event — and the eye's death line — before ANY consumer sees them:
+    // no target, no boss, no meter row, no history entry, no kill boundary.
+    if ((event.type === 'damage' || event.type === 'death')
+        && event.defender && _isVisionEyePet(event.defender)) {
+      return;
+    }
+
     // Dirge attribution: ambiguous "was hit by non-melee" damage events (attacker=null,
     // ability='non-melee') get retagged to the most recent dirge cast if it landed
     // within the next server tick window (~7s). Each dirge cast is "consumed" by the
