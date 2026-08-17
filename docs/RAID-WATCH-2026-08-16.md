@@ -135,6 +135,22 @@ ONE merged card where there should be two.
   stands ready if live streams need trimming (durables can never shed).
 - Herald false-timer: retired (exact-name matching, above).
 
+## Tonight's actuals (reported live by Hitya, ~20:35 ET)
+
+- **Pre-raid Zlandicar** to key people for Sleeper's Tomb — killed 20:08 ET
+  (187s, encounter `719dff28`). The **Caustic Mist dance trigger fired 3×**
+  during it via the shared "…flesh begins to liquefy." line (Putrefy Flesh) —
+  the documented caveat, now observed in the field. Triage: confirm no timer
+  confusion resulted; the scoping decision (leave vs narrow) is Hitya's.
+- **The Tunare kite FAILED — no kill.** No Tunare encounter row existed as of
+  20:35 ET. Triage: re-run the two-Tunares query after agents flush; if a
+  wipe engagement recorded, classify it (Mark Wipe) so it stays out of kill
+  counts; if NOTHING recorded despite real combat, that's a finding.
+- **New schedule rule (recorded in DECISIONS + CLAUDE.md): alt raids and
+  Seru+misc nights are 3 ticks / 2 hours until PoP** — tonight is the first.
+  Expect the night to end ~22:00 ET, not midnight; the attendance fold and
+  raid review should look normal, just shorter.
+
 ## Post-raid triage (the sentinel's loop 2, run by hand this week)
 
 After each night, one pass: the Tunare encounter-card query above · unlabeled
