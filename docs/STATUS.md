@@ -937,6 +937,20 @@ next touch one rather than assuming a missing row means a missing doc.
   raid-watch content — all editable, `updated_by='pre-raid seed'`. Next
   increment (in `DESIGN-fight-cards.md`): comp/kit live joins (#93/#82),
   the Discord pre-pull projection (bot, post-freeze), drill result on-page.
+- **Task #47 SHIPPED — self-healing encounter persistence (bot 3.1.52,
+  2026-08-17).** The Final Arbiter P1's full root cause was TWO-layered: (1)
+  first-time content had no `bosses_local` row (the allowlist refusal), and
+  (2) **backfill uploads skip the bosses.json match by design** (replays must
+  not re-arm timers) and slug the display name, which never equals a curated
+  id — so even patched bosses could not be backfilled ('the_final_arbiter' ≠
+  'final_arbiter'; Hitya's morning replay had Progenitor + Master of the
+  Guard refused this way). `_resolveBossForPersist` now resolves curated id →
+  slug → article-stripped slug → exact eqemu name match (reusing a curated
+  row by npc_id) → self-registers genuinely new mobs; refusal remains only
+  for names with no exact, unambiguous eqemu match (junk boss names). 10
+  source-slice tests in `test/boss-persist-keys.test.js`. The old silent
+  drop is structurally gone; the #42 sentinel invariant ("combat uploads
+  arriving, zero encounters persisted") remains as the alarm layer.
 - **⚠ Needs a local session — `dot_stacking_exempt` backfill (2026-08-16).**
   Hitya, from Partil's bug-reports post on Quarm's DoT stacking
   (buffstacking.cpp:654): the server carries a per-spell flag — 0 = the DoT

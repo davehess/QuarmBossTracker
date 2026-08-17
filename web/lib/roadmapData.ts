@@ -37,6 +37,18 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'bot-3-1-52',
+    title: '\u{1F3C6} First kills always count',
+    version: 'Bot 3.1.52',
+    date: '2026-08-17',
+    headline: 'Killing something the guild has never killed before now always makes it into the records.',
+    features: [],
+    fixes: [
+      'Fights against brand-new content used to be silently dropped from the website records if the mob wasn’t already on our tracked list — which cost us the Final Arbiter first kill and all the Sleeper’s Tomb trash on its first clear. New mobs now register themselves automatically the moment a fight is uploaded.',
+      'Re-running your logs (backfill) over fights with tracked bosses now files them correctly — a naming mismatch used to make backfilled boss fights vanish.',
+    ],
+  },
+  {
     key: 'web-1-1-62',
     title: '\u{1F550} A readable fight timeline',
     version: 'Web 1.1.62',

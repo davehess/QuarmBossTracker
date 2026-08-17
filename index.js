@@ -15479,6 +15479,75 @@ async function _handleAgentGuildTriggers(req, res) {
   }));
 }
 
+// #47 — candidate bosses_local keys + eqemu name forms for an uploaded boss
+// name. Pure, source-slice tested (test/boss-persist-keys.test.js).
+//
+// Why THREE keys: the live path carries the curated bosses.json id
+// (matchedBossId, e.g. 'nanzata_warder'), but BACKFILL uploads skip the
+// bosses.json match on purpose (so replays can't re-arm timers) and used to
+// fall back to a raw display-name slug ('nanzata_the_warder') — which never
+// equals a curated id, so every backfilled board-boss re-upload was refused.
+// That, plus first-time content having no row at all, is how the 2026-08-16
+// Sleeper's Tomb clear lost 75 min of trash AND The Final Arbiter first kill
+// while the bot 200-acked every upload. The article-stripped form heals the
+// curated-id cases ('the_final_arbiter' → 'final_arbiter'); the eqemu forms
+// drive the self-registration fallback in _resolveBossForPersist.
+function _bossPersistKeys(bossName, matchedBossId) {
+  const name = String(bossName || '').trim();
+  const rawSlug = name.toLowerCase().replace(/\W+/g, '_').replace(/^_+|_+$/g, '');
+  const noArticle = rawSlug.replace(/^(?:the|an|a)_/, '');
+  const keys = [...new Set([matchedBossId, rawSlug, noArticle].filter(Boolean))];
+  // eqemu_npc_types.name is the display name with underscores, event/named
+  // mobs '#'-prefixed ('#Master_of_the_Guard', 'an_aged_caretaker').
+  const underscored = name.replace(/\s+/g, '_');
+  const eqemuForms = underscored ? [underscored, '#' + underscored] : [];
+  return { keys, rawSlug: rawSlug || null, eqemuForms };
+}
+
+// #47 — resolve which bosses_local row an uploaded encounter persists under.
+// Resolution order:
+//   (a) candidate keys against bosses_local (curated id, raw slug, no-article);
+//   (b) EXACT eqemu name match (± '#') → if that npc is already curated under
+//       another id, reuse it;
+//   (c) genuinely first-time content: self-register a bosses_local row so the
+//       encounter persists NOW and every later upload matches — collection is
+//       sacred, a catalog-table miss must never cost a first kill again.
+// Returns { internalId, registered } or null. Null only when the name has no
+// exact, unambiguous eqemu match — which keeps junk boss names (a mis-parsed
+// player like 'Labanab') out of the table, exactly what the old allowlist was
+// accidentally good at.
+async function _resolveBossForPersist(bossName, matchedBossId, supabase) {
+  const { keys, rawSlug, eqemuForms } = _bossPersistKeys(bossName, matchedBossId);
+  if (!keys.length || !rawSlug) return null;
+  const rows = await supabase.select(
+    'bosses_local',
+    `internal_id=in.(${keys.map(encodeURIComponent).join(',')})&select=internal_id`
+  );
+  if (Array.isArray(rows) && rows.length) {
+    const have = new Set(rows.map(r => r.internal_id));
+    for (const k of keys) if (have.has(k)) return { internalId: k, registered: false };
+  }
+  const or = eqemuForms.map(f => `name.eq.${encodeURIComponent(f)}`).join(',');
+  const npcs = await supabase.select('eqemu_npc_types', `or=(${or})&select=id&limit=3`);
+  const ids = [...new Set((Array.isArray(npcs) ? npcs : []).map(r => r.id).filter(n => Number.isFinite(n)))];
+  if (ids.length !== 1) return null;   // no exact match, or ambiguous — refuse
+  const npcId = ids[0];
+  const byNpc = await supabase.select('bosses_local', `npc_id=eq.${npcId}&select=internal_id&limit=1`);
+  if (Array.isArray(byNpc) && byNpc[0]?.internal_id) {
+    return { internalId: byNpc[0].internal_id, registered: false };
+  }
+  await supabase.insertIgnoreDuplicates('bosses_local', [{
+    npc_id: npcId, internal_id: rawSlug, nicknames: [],
+    added_at: new Date().toISOString(),
+  }]).catch(() => {});
+  // Re-read rather than trusting our insert — a concurrent upload of the same
+  // new mob may have won the race with a different-cased slug.
+  const again = await supabase.select('bosses_local', `npc_id=eq.${npcId}&select=internal_id&limit=1`);
+  const finalId = (Array.isArray(again) && again[0]?.internal_id) || rawSlug;
+  console.log(`[agent] auto-registered bosses_local "${finalId}" (npc ${npcId}) — first-time content`);
+  return { internalId: finalId, registered: true };
+}
+
 async function _handleAgentUpload(req, res) {
   // Auth: shared-secret bearer token. WOLFPACK_AGENT_TOKEN must be set.
   const identity = await mimicLink.requireAgentAuth(req, res);
@@ -16693,14 +16762,15 @@ async function _handleAgentUpload(req, res) {
                        ? encounter.boss_max_melee : undefined,
       };
 
-      // Prefer the bossId from bosses.json match; fall back to slugified name lookup
-      const slug = (encounter.boss_name || '').toLowerCase().replace(/\W+/g, '_');
-      const bossInternalId = matchedBoss?.id || slug;
-      const localMatches = await supabase.select(
-        'bosses_local',
-        `internal_id=eq.${encodeURIComponent(bossInternalId)}&select=internal_id&limit=1`
-      );
-      if (Array.isArray(localMatches) && localMatches.length) {
+      // #47 — resolve the bosses_local row: curated id (live path) → slug →
+      // article-stripped slug → exact eqemu match with self-registration for
+      // first-time content. See _resolveBossForPersist for why (the Final
+      // Arbiter P1, 2026-08-16).
+      const resolved = await _resolveBossForPersist(
+        encounter.boss_name, matchedBoss?.id || null, supabase);
+      const bossInternalId = resolved?.internalId
+        || (encounter.boss_name || '').toLowerCase().replace(/\W+/g, '_');
+      if (resolved) {
         const recParseResult = await supabase.recordParse({
           bossInternalId,
           parsed: rawParse,
@@ -16763,7 +16833,11 @@ async function _handleAgentUpload(req, res) {
           }
         }
       } else {
-        console.log(`[agent] no bosses_local match for "${bossInternalId}" — encounter not persisted to Supabase`);
+        // Only reachable when the boss name has no exact, unambiguous eqemu
+        // match — a mis-parsed boss (player name, garbled line), not real
+        // first-time content (that self-registers above). Kept as the junk
+        // filter; anything landing here repeatedly deserves a look.
+        console.warn(`[agent] no bosses_local match for "${bossInternalId}" and no exact eqemu resolution — encounter not persisted to Supabase`);
       }
     }
   } catch (err) {
