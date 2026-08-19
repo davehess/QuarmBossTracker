@@ -12869,6 +12869,18 @@ async function _handleAgentWhoLookup(req, res) {
     });
   } catch (err) { console.warn('[who-lookup] enrichment failed:', err?.message); }
 
+  // Fold EQ level titles back to base classes at the serve boundary
+  // ("Warlock" = a 60 Necromancer — Hitya 2026-08-19, Syczlak on the /who
+  // overlay). who_observations keeps whatever the /who line said, so rows
+  // harvested before agent-side normalization (or from older agents) still
+  // hold titles, and who_directory carries them into pass 2 above. The
+  // in-memory pass is already normalized (utils/state.js) — this catches
+  // the Supabase-sourced passes without rewriting history.
+  try {
+    const { normalizeClass } = require('./utils/classTitles');
+    for (const r of Object.values(results)) if (r && r.class) r.class = normalizeClass(r.class);
+  } catch (err) { console.warn('[who-lookup] class normalization skipped:', err?.message); }
+
   res.writeHead(200, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify({ ok: true, results }));
 }
