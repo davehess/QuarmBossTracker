@@ -1088,6 +1088,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (interaction.customId === 'sugnudge_other')          { await nudge.handleNudgeOther(interaction).catch(console.error); return; }
       if (interaction.customId.startsWith('sugnudge_time:'))  { await nudge.handleNudgeTime(interaction).catch(console.error); return; }
       if (interaction.customId.startsWith('sugnudge_exact:')) { await nudge.handleNudgeExactOpen(interaction).catch(console.error); return; }
+      if (interaction.customId.startsWith('sugnudge_retime:')) { await nudge.handleNudgeRetimeOpen(interaction).catch(console.error); return; }
       return;
     }
     if (interaction.customId.startsWith('suggest_host:'))        { await handleSuggestHost(interaction); return; }

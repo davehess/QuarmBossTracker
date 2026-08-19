@@ -982,6 +982,20 @@ next touch one rather than assuming a missing row means a missing doc.
   too" checkbox re-applies on toggle). Beta test: setup bars one readable
   size at 50% and 200%; smooth checkbox pre-checked; dock ignores the
   slider until its checkbox is on.
+- **Change time on a sent request (bot 3.1.58, 2026-08-19 — Hitya:
+  Hawkner "can't change time").** The nudge flow's ✅ done card was
+  one-shot (`components: []`) — Hawkner submitted "tomorrow 8pm ET",
+  actually wanted 10:30pm ET after Thursday's alt raid, and had no way
+  back. Now the done card carries **🕐 Change time** (requester-or-officer
+  only): re-opens the time step in change mode (context =
+  `officerMsgId:requesterId` riding the same `sugnudge_time/exact/modal`
+  customIds; no "Different boss" in change mode) and the submit EDITS the
+  posted Event Request card's Wanted-time field in place
+  (`updateEventRequestTime` in `commands/suggest.js`;
+  `postEventRequest` now returns the posted Message). A ≤92-char guard on
+  the button id keeps every derived customId under Discord's 100 cap.
+  Cards posted before 3.1.58 have no button — Hawkner's existing request
+  needs a fresh tap-through (or an officer word). 2 tests added.
 - **Seru Minis group event (bot 3.1.56/57, 2026-08-19 — Hitya, from
   Hawkner's thread).** The **four Praesertum** house leaders of Sanctus
   Seru — Bikun (NW, Shard of the Shoulder), Vantorus (SW, Hand), Rhugol

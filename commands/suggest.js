@@ -50,12 +50,33 @@ async function postEventRequest({ client, userId, boss = null, rawLabel = null, 
       .setStyle(ButtonStyle.Danger),
   );
 
-  await channel.send({ embeds: [embed], components: [row] });
-  return true;
+  // Return the posted Message (truthy, so existing `if (!posted)` checks keep
+  // working) — the nudge flow's "Change time" button needs its id to edit the
+  // card later.
+  return await channel.send({ embeds: [embed], components: [row] });
+}
+
+// Edit the Wanted-time field on an already-posted Event Request card — powers
+// the nudge flow's 🕐 Change time (Hitya 2026-08-19: Hawkner tapped a preset,
+// actually wanted 10:30pm ET after the alt raid, and "couldn't change time";
+// the done card was one-shot and the officer card was already posted).
+async function updateEventRequestTime({ client, messageId, timeStr }) {
+  const suggestChannelId = process.env.SUGGEST_CHANNEL_ID;
+  if (!suggestChannelId || !messageId || !timeStr) return false;
+  const channel = await client.channels.fetch(suggestChannelId).catch(() => null);
+  if (!channel) return false;
+  const msg = await channel.messages.fetch(messageId).catch(() => null);
+  if (!msg || !msg.embeds?.length) return false;
+  const eb = EmbedBuilder.from(msg.embeds[0]);
+  eb.setFields((msg.embeds[0].fields || []).map(f =>
+    f.name === 'Wanted time' ? { name: 'Wanted time', value: timeStr, inline: true } : f,
+  ));
+  return await msg.edit({ embeds: [eb] }).then(() => true).catch(() => false);
 }
 
 module.exports = {
   postEventRequest,
+  updateEventRequestTime,
   data: new SlashCommandBuilder()
     .setName('suggest')
     .setDescription('Request an officer to host an event for you')
