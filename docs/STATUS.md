@@ -982,6 +982,25 @@ next touch one rather than assuming a missing row means a missing doc.
   too" checkbox re-applies on toggle). Beta test: setup bars one readable
   size at 50% and 200%; smooth checkbox pre-checked; dock ignores the
   slider until its checkbox is on.
+- **Dock v2a: Setup-THIS + named layouts + rename (mimic, beta,
+  2026-08-19).** The dock NEVER entered setup state — its `onSetupMode`
+  handler checked `p.on`/`p.setup`, names no sender ever used (every
+  payload carries `active`). That's why "Setup THIS Overlay" looked dead
+  AND panes couldn't be dragged (pane drag is body.setup-gated); what
+  read as "editable during Setup ALL" was only the unlocked chrome.
+  Fixed, plus the Done button now exits the mode that was entered
+  (`setSetupModeThis` for scope 'this'). New: 💾 **named dock layouts** —
+  save pane set + columns + spans + per-pane backgrounds under a name,
+  load to swap the whole arrangement (dock-set semantics per key), delete
+  from the list; **Rename dock** (title shows the user's name).
+  `cfg.dockLayouts`/`cfg.dockName`, `dock-layout-save/load/delete` +
+  `dock-rename` IPC, 💾 button beside ＋ Panes. The setup-chrome
+  counter-zoom CSS is scoped `:has(#drag-controls)` so it can't restyle
+  the dock's own setup bar or hide its only move handle. **Remaining from
+  #53:** corner/side drag-resize of panes to span rows/columns (spans
+  exist via the pane ≡ menu today); pane inner-✕ needs Hitya's retest
+  post-CSS-scoping; dock layouts on the dashboard rides the #52 parity
+  audit.
 - **Dock/setup bug batch (mimic, beta, 2026-08-19 — four field bugs from
   Hitya's dock deep-dive).** (1) Dock runaway growth: auto-fit measured
   `shell.scrollHeight` with `#shell{height:100%}` — at LEAST the viewport,
