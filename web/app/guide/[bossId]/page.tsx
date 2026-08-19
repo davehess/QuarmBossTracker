@@ -299,9 +299,19 @@ export default async function BossGuide({ params }: { params: Promise<{ bossId: 
             <Stat label="CR" value={cat.cr != null ? String(cat.cr) : '—'} />
             <Stat label="DR / PR" value={`${cat.dr ?? '—'} / ${cat.pr ?? '—'}`} accent={(cat.pr ?? 0) >= 500 ? 'text-red' : undefined} />
           </div>
+          {/* Hitya 2026-08-19 (Emperor Ssraeshza): "Tash is unresistable. Same
+              with Malo. Slow is a disease slow." Corroborated by the spell
+              mirror: the Tash line + top-rank Malo/Mala are resist_type 0
+              (unresistable); the lesser Malosi/Malosini are magic and DO
+              bounce; Plague of Insects is the disease slow (resist_type 5),
+              checked against DR — so high MR alone never rules out a slow. */}
           {(cat.mr ?? 0) >= 500 && (
             <p className="text-xs text-red mt-3">
-              ⚠ MR {cat.mr} — magic-based debuffs (slows, tashes, charms) are effectively resisted. Do not plan around a slow.
+              ⚠ MR {cat.mr} — magic-based slows, mezzes, and charms are effectively resisted.
+              Tash and Malo/Mala still land (those are unresistable — the lesser Malosi/Malosini are magic-based and will bounce).{' '}
+              {(cat.dr ?? 0) >= 500
+                ? <>DR {cat.dr} means even the disease slow is effectively resisted — plan without a slow.</>
+                : <>The slow that lands here is the disease-based one (Plague of Insects) — it checks DR ({cat.dr ?? '—'}), not MR.</>}
             </p>
           )}
           {corrob && (

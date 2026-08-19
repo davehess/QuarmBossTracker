@@ -982,6 +982,17 @@ next touch one rather than assuming a missing row means a missing doc.
   too" checkbox re-applies on toggle). Beta test: setup bars one readable
   size at 50% and 200%; smooth checkbox pre-checked; dock ignores the
   slider until its checkbox is on.
+- **Guide high-MR warning corrected (web 1.1.76, 2026-08-19 — Hitya, on
+  the Emperor Ssraeshza guide: "Tash is unresistable. Same with Malo.
+  Slow is a disease slow").** The Catalog card's MR≥500 warning claimed
+  tash/slows/charms are all resisted and said "do not plan around a
+  slow". Mirror-corroborated facts now baked in: the Tash line + top-rank
+  Malo/Mala are `resist_type 0` (unresistable) and still land; the lesser
+  Malosi/Malosini ARE magic and bounce; the slow that lands on high-MR
+  mobs is the disease-based Plague of Insects (`resist_type 5`), checked
+  against DR — the warning now branches on DR (<500 → "the disease slow
+  is the play, checks DR N"; ≥500 → "plan without a slow"). General
+  logic, not an Emperor override — applies to every high-MR guide page.
 - **✨ smoOOTH SCAlers — Mimic 2.5.4 STABLE (agent 3.5.91), 2026-08-19.**
   Hitya named it and called the graduation same-day ("lets roll the
   resizing update into main in a fun way"); the name renders its own size
