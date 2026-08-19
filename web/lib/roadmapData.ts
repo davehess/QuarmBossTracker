@@ -37,6 +37,20 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'web-1-1-67',
+    title: '\u{1F6D2} Spell shopping list',
+    version: 'Web 1.1.67',
+    date: '2026-08-18',
+    headline: 'Your missing-spells page now tells you exactly who sells or drops each spell and where — and plans your shopping trip zone by zone.',
+    features: [
+      { name: '\u{1F50D} Click a spell, see the source', blurb: 'Every missing spell opens up to the vendors that sell it and the mobs that drop it, with zones — straight from our own weekly game-data mirror, no more broken outside links. An Expand-all button opens the whole list at once.' },
+      { name: '\u{1F6D2} Shopping list mode', blurb: 'Flip the view to go zone by zone: each zone lists the spells you can buy there, the zones you MUST visit sort to the top, and spells sold in only one place carry an "only here" badge so nothing gets missed on the trip.' },
+    ],
+    fixes: [
+      'The old "find" links pointed at an outside site in a form that didn’t load — sources now come from our own database, with the outside link kept only as a working cross-check.',
+    ],
+  },
+  {
     key: 'web-1-1-66',
     title: '\u{1F4C8} Adoption',
     version: 'Web 1.1.66',

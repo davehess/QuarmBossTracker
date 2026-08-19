@@ -937,6 +937,20 @@ next touch one rather than assuming a missing row means a missing doc.
   raid-watch content — all editable, `updated_by='pre-raid seed'`. Next
   increment (in `DESIGN-fight-cards.md`): comp/kit live joins (#93/#82),
   the Discord pre-pull projection (bot, post-freeze), drill result on-page.
+- **Spellbook "where from" + zone shopping list (web 1.1.67, 2026-08-18).**
+  Hitya: the missing-spells page's PQDI links "don't work. We should say
+  where it's from" + a shopping-list mode. Root enablement: the eqmac dump
+  ALWAYS carried `npc_types.merchant_id` — the sync transform never picked
+  it, which is why vendor→zone could not resolve (the page's old "we don't
+  mirror the merchant chain" comment was stale doctrine). Column added +
+  forced sync run (1,940 vendors linked); `spell_scroll_sources(int[])` RPC
+  returns every vendor + dropper per scroll with spawn-table zones. Page:
+  click any spell → who sells/drops it and where (PQDI demoted to a
+  cross-check link, now with the www host that actually resolves); Expand
+  all; 🛒 Shopping-list mode groups by ZONE with "only here" badges and
+  must-visit zones sorted first; no-vendor spells listed separately.
+  `web/lib/spellSources.ts` + 5 tests (the only-here rule: a spell's WHOLE
+  vendor footprint in one zone, not merely sold-in-this-zone).
 - **/admin/adoption — the PM product-health page (web 1.1.66, 2026-08-18).**
   Hitya: *"take your framing of the adoption bit as the PM and update the
   adoption page."* Players-not-characters throughout; three funnels kept
