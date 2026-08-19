@@ -29,6 +29,15 @@
   #shell{display:flex;flex-direction:column;height:100%;
     background:transparent;border:1px solid rgba(163,113,247,0.30);
     border-radius:8px;margin:4px;overflow:hidden}
+  /* Auto-fit measures shell.scrollHeight — with height:100% that is AT LEAST
+     the viewport, so `want = scrollHeight + 10` sat a rounding coin-flip past
+     the 8px hysteresis and the window crept +10px every 1s fit tick to the
+     1600 cap (Hitya 2026-08-19: "keeps resizing to the entire height of the
+     screen … grows each tick. It should only grow to support the size of its
+     contents"). While auto-fit is ON the shell is intrinsic-height, so the
+     measure is the CONTENT and the loop has a fixed point. Auto-fit OFF keeps
+     height:100% — the user sizes the window and the shell fills it. */
+  body.autofit #shell{height:auto}
   body.wp-backdrop #shell{background:rgb(14 17 22 / var(--bg-alpha));
     border-color:rgba(163,113,247,0.45);backdrop-filter:blur(2px)}
 
@@ -258,6 +267,8 @@
   function render(state, force) {
     if (!state) return;
     _lastState = state;
+    // Intrinsic shell while auto-fit is on (see the #shell CSS note).
+    try { document.body.classList.toggle('autofit', state.autoFit !== false); } catch (e) {}
     var keys = state.keys || [];
     var cols = state.cols || 1;
     CATALOG = state.catalog || CATALOG;

@@ -158,13 +158,20 @@ document.addEventListener('DOMContentLoaded', function () {
       // width × z then scale(1/z) cancels the page zoom exactly. The drag
       // controls (✥ 🔒) get the same treatment and park just below the bar,
       // and #wrap clears both. Every /z term is 1 when unscaled, so 100%
-      // keeps today's geometry.
-      + 'body.setup #setupbar{position:fixed;top:0;left:0;margin:0;z-index:40;box-sizing:border-box;'
-      +   'width:calc(100% * var(--wp-zoom,1));'
-      +   'transform:scale(calc(1 / var(--wp-zoom,1)));transform-origin:top left}'
-      + 'body.setup #drag-controls{top:calc(70px / var(--wp-zoom,1));left:calc(4px / var(--wp-zoom,1));'
-      +   'transform:scale(calc(1 / var(--wp-zoom,1)));transform-origin:top left}'
-      + 'body.setup #wrap{margin-top:calc(102px / var(--wp-zoom,1))}'
+      // keeps today's geometry. The corner ✥/✕ hide during setup — the
+      // framed drag handle + Done own those jobs there, and the corner pair
+      // painted ON TOP of the fixed bar ("two move icons", one over the
+      // word size). WINDOWS ONLY: inside a dock pane a fixed full-width bar
+      // covered the pane's own controls, and panes don't zoom independently
+      // — they keep the plain in-flow setup bar.
+      + (WP_IS_DOCKED ? '' :
+          'body.setup #setupbar{position:fixed;top:0;left:0;margin:0;z-index:40;box-sizing:border-box;'
+        +   'width:calc(100% * var(--wp-zoom,1));'
+        +   'transform:scale(calc(1 / var(--wp-zoom,1)));transform-origin:top left}'
+        + 'body.setup #drag-controls{top:calc(70px / var(--wp-zoom,1));left:calc(4px / var(--wp-zoom,1));'
+        +   'transform:scale(calc(1 / var(--wp-zoom,1)));transform-origin:top left}'
+        + 'body.setup #wrap{margin-top:calc(102px / var(--wp-zoom,1))}'
+        + 'body.setup #move-btn,body.setup #hide-btn{display:none}')
       + _WP_THEME_CSS;
     document.head.appendChild(st);
     ipcRenderer.invoke('wp-overlay-menu-state').then(function (s) {

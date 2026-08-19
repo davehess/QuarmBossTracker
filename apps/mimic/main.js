@@ -4690,14 +4690,14 @@ function _eqGateOk(cfg) {
 function applyOverlayVisibility() {
   if (!overlayWindow) return;
   const cfg = loadConfig();
-  const unlocked  = cfg.overlaysLocked === false;
+  const unlocked  = setupMode || cfg.overlaysLocked === false;
   const shouldShow = unlocked || (cfg.showHud && !cfg.quietMode && _eqGateOk(cfg));
   if (shouldShow) overlayWindow.showInactive(); else overlayWindow.hide();
 }
 function applyTriggerVisibility() {
   if (!triggerWindow) return;
   const cfg = loadConfig();
-  const unlocked  = cfg.overlaysLocked === false;
+  const unlocked  = setupMode || cfg.overlaysLocked === false;
   const shouldShow = unlocked || _blindForceOpen('triggers') || (cfg.enableTriggerTts && cfg.showTriggerOverlay !== false && !cfg.quietMode && _eqGateOk(cfg));
   if (shouldShow) triggerWindow.showInactive(); else triggerWindow.hide();
 }
@@ -4726,7 +4726,7 @@ function createCharmOverlay() {
 function applyCharmVisibility() {
   if (!charmWindow) return;
   const cfg = loadConfig();
-  const unlocked  = cfg.overlaysLocked === false;
+  const unlocked  = setupMode || cfg.overlaysLocked === false;
   // Charm tracker is opt-in (default off) — it's only useful to charm classes.
   const shouldShow = unlocked || _blindForceOpen('charm') || (cfg.showCharm && !cfg.quietMode && _eqGateOk(cfg));
   if (shouldShow) charmWindow.showInactive(); else charmWindow.hide();
@@ -4760,7 +4760,7 @@ function createPetsOverlay() {
 function applyPetsVisibility() {
   if (!petsWindow) return;
   const cfg = loadConfig();
-  const unlocked  = cfg.overlaysLocked === false;
+  const unlocked  = setupMode || cfg.overlaysLocked === false;
   // Opt-in (default off) — only useful to pet classes. EQ-gated.
   const shouldShow = unlocked || _blindForceOpen('pets') || (cfg.showPets && !cfg.quietMode && _eqGateOk(cfg));
   if (shouldShow) petsWindow.showInactive(); else petsWindow.hide();
@@ -4794,7 +4794,7 @@ function createBuffQueueOverlay() {
 function applyBuffQueueVisibility() {
   if (!buffQueueWindow) return;
   const cfg = loadConfig();
-  const unlocked  = cfg.overlaysLocked === false;
+  const unlocked  = setupMode || cfg.overlaysLocked === false;
   // Opt-in (default off) — most useful to support classes (clerics, druids,
   // shaman, enchanters, bards). EQ-gated.
   const shouldShow = unlocked || (cfg.showBuffQueue && !cfg.quietMode && _eqGateOk(cfg));
@@ -4830,7 +4830,7 @@ function createPopRaidOverlay() {
 function applyPopRaidVisibility() {
   if (!popRaidWindow) return;
   const cfg = loadConfig();
-  const unlocked  = cfg.overlaysLocked === false;
+  const unlocked  = setupMode || cfg.overlaysLocked === false;
   // Opt-in (default off) — raid leaders + anyone following the fight plan.
   const shouldShow = unlocked || (cfg.showPopRaid && !cfg.quietMode && _eqGateOk(cfg));
   if (shouldShow) popRaidWindow.showInactive(); else popRaidWindow.hide();
@@ -4862,7 +4862,7 @@ function createMobInfoOverlay() {
 function applyMobInfoVisibility() {
   if (!mobInfoWindow) return;
   const cfg = loadConfig();
-  const unlocked  = cfg.overlaysLocked === false;
+  const unlocked  = setupMode || cfg.overlaysLocked === false;
   const shouldShow = unlocked || _blindForceOpen('mobinfo') || (cfg.showMobInfo && !cfg.quietMode && _eqGateOk(cfg));
   if (shouldShow) mobInfoWindow.showInactive(); else mobInfoWindow.hide();
 }
@@ -4893,7 +4893,7 @@ function createWhoOverlay() {
 function applyWhoVisibility() {
   if (!whoWindow) return;
   const cfg = loadConfig();
-  const unlocked  = cfg.overlaysLocked === false;
+  const unlocked  = setupMode || cfg.overlaysLocked === false;
   const shouldShow = unlocked || (cfg.showWho && !cfg.quietMode && _eqGateOk(cfg));
   if (shouldShow) whoWindow.showInactive(); else whoWindow.hide();
 }
@@ -4925,7 +4925,7 @@ function createMelodyOverlay() {
 function applyMelodyVisibility() {
   if (!melodyWindow) return;
   const cfg = loadConfig();
-  const unlocked  = cfg.overlaysLocked === false;
+  const unlocked  = setupMode || cfg.overlaysLocked === false;
   // Opt-in (default off) — only useful to bards. EQ-gated.
   const shouldShow = unlocked || (cfg.showMelody && !cfg.quietMode && _eqGateOk(cfg));
   if (shouldShow) melodyWindow.showInactive(); else melodyWindow.hide();
@@ -4960,7 +4960,7 @@ function createZealHealthOverlay() {
 function applyZealVisibility() {
   if (!zealWindow) return;
   const cfg = loadConfig();
-  const unlocked  = cfg.overlaysLocked === false;
+  const unlocked  = setupMode || cfg.overlaysLocked === false;
   // Opt-in (default off) — diagnostic; users only need it during setup
   // or when something else looks broken. EQ-gated.
   const shouldShow = unlocked || (cfg.showZeal && !cfg.quietMode && _eqGateOk(cfg));
@@ -4997,7 +4997,7 @@ function createTankOverlay() {
 function applyTankVisibility() {
   if (!tankWindow) return;
   const cfg = loadConfig();
-  const unlocked  = cfg.overlaysLocked === false;
+  const unlocked  = setupMode || cfg.overlaysLocked === false;
   // Opt-in — most members don't tank, so default off. EQ-gated like the rest.
   const shouldShow = unlocked || (cfg.showTank && !cfg.quietMode && _eqGateOk(cfg));
   if (shouldShow) tankWindow.showInactive(); else tankWindow.hide();
@@ -5032,7 +5032,7 @@ function createThreatMeterOverlay() {
 function applyThreatVisibility() {
   if (!threatWindow) return;
   const cfg = loadConfig();
-  const unlocked  = cfg.overlaysLocked === false;
+  const unlocked  = setupMode || cfg.overlaysLocked === false;
   // Opt-in (default off) — primarily for tanks but useful to anyone who
   // wants to see if they're about to pull. EQ-gated.
   const shouldShow = unlocked || (cfg.showThreat && !cfg.quietMode && _eqGateOk(cfg));
@@ -5067,7 +5067,7 @@ function createExtTargetOverlay() {
 function applyExtTargetVisibility() {
   if (!extTargetWindow) return;
   const cfg = loadConfig();
-  const unlocked  = cfg.overlaysLocked === false;
+  const unlocked  = setupMode || cfg.overlaysLocked === false;
   // Opt-in (default off). EQ-gated like every other built-in.
   const shouldShow = unlocked || (cfg.showExtTarget && !cfg.quietMode && _eqGateOk(cfg));
   if (shouldShow) extTargetWindow.showInactive(); else extTargetWindow.hide();
@@ -5151,7 +5151,7 @@ function createCommandOverlay() {
 function applyCommandVisibility() {
   if (!commandWindow) return;
   const cfg = loadConfig();
-  const unlocked  = cfg.overlaysLocked === false;
+  const unlocked  = setupMode || cfg.overlaysLocked === false;
   // Opt-in (default off). EQ-gated like every other built-in.
   const shouldShow = unlocked || (cfg.showCommand && !cfg.quietMode && _eqGateOk(cfg));
   if (shouldShow) commandWindow.showInactive(); else commandWindow.hide();
@@ -5234,7 +5234,13 @@ function createDockWindow() {
 function applyDockVisibility() {
   if (!dockWindow) return;
   const cfg = loadConfig();
-  const unlocked = cfg.overlaysLocked === false;
+  // setupMode counts as unlocked here (and in every apply* fn above): setup
+  // force-shows every overlay ONCE in applySetupMode, but any later
+  // visibility pass (dock-set, toggle-overlay, config save) re-ran these
+  // predicates WITHOUT a setup term and hid everything whose flag is off —
+  // Hitya 2026-08-19: "adding Mob Info into the dock hid almost every other
+  // overlay, minus TTS."
+  const unlocked = setupMode || cfg.overlaysLocked === false;
   // Holding panes IMPLIES being on screen. Hitya, 2026-08-14: "the dock is only
   // accessible from doing the 'Setup ALL Overlays' option" — because the only
   // ways to set showDock were the tray entry and docking something from inside
@@ -5248,7 +5254,7 @@ function applyDockVisibility() {
 function applyChChainVisibility() {
   if (!chChainWindow) return;
   const cfg = loadConfig();
-  const unlocked  = cfg.overlaysLocked === false;
+  const unlocked  = setupMode || cfg.overlaysLocked === false;
   // Opt-in (default off) — healers + raid leads watching the rotation. EQ-gated.
   const shouldShow = unlocked || (cfg.showChChain && !cfg.quietMode && _eqGateOk(cfg));
   if (shouldShow) chChainWindow.showInactive(); else chChainWindow.hide();
@@ -6720,6 +6726,18 @@ ipcMain.handle('overlay-auto-height', (e, h) => {
     if (!win || win.isDestroyed()) return false;
     let wanted = Math.max(50, Math.round(+h || 0));
     if (!wanted) return false;
+    // Setup chrome allowance: overlays measure #wrap.scrollHeight, which has
+    // never included the setup bar — and now that the bar is position:fixed
+    // with #wrap pushed 102 painted px down (preload counter-zoom CSS), a
+    // setup-mode window sized to content alone clips the card by that much
+    // (Hitya 2026-08-19: CH chain "won't reveal anything", Zeal health
+    // shrinking to type 3). Added BEFORE the zoom multiply? No — the chrome
+    // counter-zooms to a constant painted size, so it is added after, in
+    // painted px (see below).
+    let setupChrome = 0;
+    try {
+      if (setupMode || _singleSetupWins.has(win.webContents.id)) setupChrome = 104;
+    } catch {}
     // h is measured in CSS px inside the page; with an overlay scale
     // (zoomFactor) the PAINTED height is h × zoom. Size the window in the
     // painted unit or every auto-height overlay clips at scale > 100%.
@@ -6727,6 +6745,7 @@ ipcMain.handle('overlay-auto-height', (e, h) => {
       const z = win.webContents.getZoomFactor() || 1;
       if (z !== 1) wanted = Math.round(wanted * z);
     } catch {}
+    wanted += setupChrome;
     const bounds = win.getBounds();
     const disp   = screen.getDisplayMatching(bounds);
     const maxH   = Math.max(80, disp.workArea.height - 20);
