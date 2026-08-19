@@ -37,6 +37,18 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'bot-3-1-53',
+    title: '\u{1F446} Two-tap event requests',
+    version: 'Bot 3.1.53',
+    date: '2026-08-18',
+    headline: 'Post in the suggestion box, tap the boss, tap when — the officers get your request. No command to type.',
+    features: [
+      { name: '\u{1F446} Tap the boss, tap the time', blurb: 'The bot’s reply to your suggestion post now has buttons: it offers the boss it spotted in your post (or a full picker by era), then time choices — with "Any time, any night" front and center. Your request goes to the officers instantly, linked back to your post so they see the whole story.' },
+      { name: '\u{270F} Exact times still welcome', blurb: 'An "Exact time…" button opens a small form if you have a specific night in mind — and the classic /suggest command works everywhere, unchanged.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'bot-3-1-52',
     title: '\u{1F3C6} First kills always count',
     version: 'Bot 3.1.52',

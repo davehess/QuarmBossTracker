@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.1.53': [
+    '**Asking officers to host something is now two taps.** When you post in the suggestion box, the bot\'s reply carries buttons: tap the boss it spotted in your post (or pick from a list), tap when — "Any time, any night" is right there — and the formal request lands with the officers, linked back to your post. No more typing out the `/suggest` command, though it still works everywhere.',
+  ],
   '3.1.51': [
     '**Officers can now run the pre-raid drill from Discord.** `/preraiddrill` answers "is the whole parse chain alive?" in one command — the parser check against our signed-off reference log, bot health, the updater channels, upload authentication, and the website — with a plain verdict at the bottom: good pull, watch it, or fix before the pull. Read-only and safe to run any time, including mid-raid.',
     '**The Sleeper\'s Tomb board now has all the named.** The Final Arbiter and The Progenitor joined the four Warders, so their kills start timers like everything else.',

@@ -1036,6 +1036,17 @@ client.on(Events.InteractionCreate, async (interaction) => {
     await handleParseConfirm(interaction).catch(console.error);
     return;
   }
+  if (interaction.isStringSelectMenu() && interaction.customId.startsWith('sugnudge_')) {
+    const nudge = require('./utils/suggestNudge');
+    if (interaction.customId === 'sugnudge_expsel')  { await nudge.handleNudgeExpansionSelect(interaction).catch(console.error); return; }
+    if (interaction.customId === 'sugnudge_bosssel') { await nudge.handleNudgeBossSelect(interaction).catch(console.error); return; }
+    return;
+  }
+  if (interaction.isModalSubmit?.() && interaction.customId.startsWith('sugnudge_modal:')) {
+    const { handleNudgeModalSubmit } = require('./utils/suggestNudge');
+    await handleNudgeModalSubmit(interaction).catch(console.error);
+    return;
+  }
   if (interaction.isButton()) {
     if (interaction.customId.startsWith('kill:'))               { await handleBoardButton(interaction); return; }
     if (interaction.customId.startsWith('loot_rm:'))            { await handleLootRemove(interaction); return; }
@@ -1071,6 +1082,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (interaction.customId.startsWith('hate_confirm_unkill:')){ await handleHateConfirmUnkill(interaction); return; }
     if (interaction.customId.startsWith('hate_unknown:'))       { await handleHateUnknownButton(interaction); return; }
     if (interaction.customId.startsWith('assign_hate_spot:'))   { await handleAssignHateSpot(interaction); return; }
+    if (interaction.customId.startsWith('sugnudge_')) {
+      const nudge = require('./utils/suggestNudge');
+      if (interaction.customId.startsWith('sugnudge_boss:'))  { await nudge.handleNudgeBossPick(interaction).catch(console.error); return; }
+      if (interaction.customId === 'sugnudge_other')          { await nudge.handleNudgeOther(interaction).catch(console.error); return; }
+      if (interaction.customId.startsWith('sugnudge_time:'))  { await nudge.handleNudgeTime(interaction).catch(console.error); return; }
+      if (interaction.customId.startsWith('sugnudge_exact:')) { await nudge.handleNudgeExactOpen(interaction).catch(console.error); return; }
+      return;
+    }
     if (interaction.customId.startsWith('suggest_host:'))        { await handleSuggestHost(interaction); return; }
     if (interaction.customId.startsWith('suggest_nohost:'))     { await handleSuggestNoHost(interaction); return; }
     if (interaction.customId.startsWith('suggest_confirm:'))    { await handleSuggestConfirm(interaction); return; }
@@ -2454,23 +2473,23 @@ client.on(Events.ThreadCreate, async (thread, newlyCreated) => {
     detectedLines.push(`🕐 **When:** ${[dateLabel, time].filter(Boolean).join(' ')}`);
   }
 
+  // Tap-through request flow (Hitya 2026-08-17): the card used to DESCRIBE
+  // the /suggest command, which is more effort than members put together —
+  // now it IS the flow. Buttons for the detected bosses, a picker fallback,
+  // then time buttons; the formal officer request posts on the second tap.
+  const { buildNudgeComponents } = require('./utils/suggestNudge');
   const embed = new EB()
     .setColor(0x5865F2)
     .setTitle('📣 Want officers to host this?')
     .setDescription(
       detectedLines.length
-        ? `I think I detected:\n${detectedLines.join('\n')}\n\nIf that looks right, use **\`/suggest\`** to send a formal request to officers!`
-        : `Use **\`/suggest\`** to send a formal request to the officers — they'll be notified and can claim your event.`
+        ? `I think I detected:\n${detectedLines.join('\n')}\n\n**Tap the boss below, pick a time — done.** Officers get the formal request instantly.`
+        : `**Tap the button below, pick the boss and a time — done.** Officers get the formal request instantly. (Or use \`/suggest\` anywhere.)`
     )
-    .addFields({
-      name: 'How to request',
-      value: '1. Run `/suggest` in any channel\n2. Pick the boss from the list\n3. Enter when you want to do it\n4. Officers will see it and respond',
-      inline: false,
-    })
     .setFooter({ text: 'Officers can click \'I\'ll host it\' to claim your request' });
 
   try {
-    await thread.send({ embeds: [embed] });
+    await thread.send({ embeds: [embed], components: buildNudgeComponents(matchedBosses) });
   } catch (err) {
     console.warn('[forum] Could not reply to new forum thread:', err?.message);
   }
