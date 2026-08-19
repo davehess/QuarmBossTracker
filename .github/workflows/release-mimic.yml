@@ -106,13 +106,13 @@ jobs:
             echo "No version in package.json — skipping."
             echo "build=false" >> "$GITHUB_OUTPUT"; exit 0
           fi
-          if [ "$new_version" = "$prev_version" ] && [ "${{ github.ref_name }}" != "beta" ]; then
-            # main: version unchanged = nothing to release. beta: unchanged is
-            # the NORMAL iteration case — the auto-incremented beta.N above
-            # makes each push a distinct prerelease.
-            echo "Version unchanged — nothing to release."
-            echo "build=false" >> "$GITHUB_OUTPUT"; exit 0
-          fi
+          # NOTE (2026-08-19): a "version unchanged vs HEAD~1 → skip" check
+          # lived here and silently no-opped the smoOOTH SCAlers stable cut:
+          # the graduation push carried TWO commits (version bump + docs), so
+          # HEAD~1 vs HEAD both read the new version and the run "succeeded"
+          # without releasing anything. The tag-existence guard below is the
+          # real idempotency — version already tagged → skip; version without
+          # a tag → build, no matter which commit of the push bumped it.
           # Idempotency: if the tag already exists on the remote, the
           # release was already cut. Don't rebuild on top.
           if git ls-remote --tags origin "refs/tags/$tag" | grep -q "$tag"; then
