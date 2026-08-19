@@ -961,9 +961,12 @@ churned at 130% without the conversion). A scale change resizes the window
 BOUNDS with the zoom — center-anchored, work-area clamped, ~180ms ease-out
 glide via `_scaleTween` (per-window `__wpScaleState` no-ops unchanged
 targets; boot sets zoom only, since persisted bounds were saved at that
-scale). Sliders apply on release; the dashboard's "Smooth slider" checkbox
-(`cfg.overlayScaleLive`) opts into live-follow, and main treats sets <300ms
-apart as a drag (direct apply, no glide).
+scale). Sliders apply on release; "Smooth slider" (default ON,
+`cfg.overlayScaleGlide`) IS the glide — off snaps instantly. The dock sits
+out of the global scale unless "Scale the dock too" (`cfg.overlayScaleDock`)
+is on. The setup bar and drag controls counter-zoom (`wp-zoom` push →
+`--wp-zoom` var; `width × z` + `scale(1/z)`) so the setup chrome keeps one
+painted size spanning the window width at every scale.
 
 ---
 

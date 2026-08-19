@@ -968,8 +968,20 @@ next touch one rather than assuming a missing row means a missing doc.
   controls sit on their own full-width row (inline they wrapped narrow
   overlays into a jumble). Boot still sets zoom only — persisted bounds
   were saved at that scale; resizing at ready-to-show would compound.
-  Beta test: change scale, watch the card glide and edges stay rounded;
-  dock steady at 130%; setup-ALL bars read two clean rows.
+  **Round 3 (agent 3.5.90, same day, beta.11 feedback):** the setup bar
+  no longer scales with the overlay — main mirrors the live zoom into the
+  page (`wp-zoom` → `--wp-zoom`) and preload CSS counter-zooms the bar
+  (`width × z` then `scale(1/z)`), so it keeps ONE painted size spanning
+  the window width at any scale (200% made it enormous, 50% unreadable);
+  drag controls get the same treatment and park below it. "Smooth slider"
+  now IS the glide and defaults ON (`cfg.overlayScaleGlide`; off = snap)
+  — the live-follow mode it used to toggle is gone, it's what made the
+  label read backwards (Hitya: "being off to glide doesn't make sense").
+  The dock sits OUT of the global scale by default (`overlayScaleFor`
+  returns 1.0 for `dock` unless `cfg.overlayScaleDock`; "Scale the dock
+  too" checkbox re-applies on toggle). Beta test: setup bars one readable
+  size at 50% and 200%; smooth checkbox pre-checked; dock ignores the
+  slider until its checkbox is on.
 - **/who class titles fold to base classes (bot 3.1.55, 2026-08-19 —
   Hitya: "Warlock on Anon", Syczlak).** who-lookup's Supabase passes
   (who_directory / characters) served stored class strings raw, and history
