@@ -39,7 +39,7 @@ export const releases: Release[] = [
   {
     key: 'agent-3-5-88',
     title: '\u{1F50D} Overlays your size',
-    version: 'Agent 3.5.90 · Mimic 2.5.4 beta',
+    version: 'Agent 3.5.91 · Mimic 2.5.4 beta',
     date: '2026-08-19',
     channel: 'beta',
     headline: 'Size every overlay to your screen — one slider for all of them, plus one on each — and the bard swarm counter tells the truth about the kite.',
@@ -47,12 +47,14 @@ export const releases: Release[] = [
       { name: '\u{1F50D} Overlay size, three places', blurb: 'A "Size — all overlays" slider on the dashboard Overlays tab scales everything 50%–200% for high-DPI screens. Each overlay also has its own size slider in its setup bar that overrides the global for just that one, with a reset to follow the global again.' },
       { name: '\u{2728} Overlays glide to their new size', blurb: 'Changing the size smoothly grows or shrinks the whole overlay — window, background, and rounded corners together — when you release the slider. That smooth glide is on by default; a checkbox turns it off for instant snapping.' },
       { name: '⚔ Swarm damage on the melody tracker', blurb: 'AE songs now show what each pulse hit for per mob and a running damage total for the current kite next to the hit counter. Toggle it from the tray if you prefer just the count.' },
+      { name: '\u{1F4BE} Layouts and tray controls on the Overlays page', blurb: 'Per-character overlay layouts — save the current layout for your toon, see every saved one, and turn on automatic swapping as you switch characters — now live on the Overlays page, not just the tray. Lock/unlock, Setup mode, Hide-all, and the Dock itself got buttons and a row there too.' },
     ],
     fixes: [
       'The swarm hit counter could climb past the 12-mob cap ("123/12") when the game wrote its log in bursts — pulses are now counted by the log’s own clock, so the badge always reads one pulse.',
       'Scaled-up overlays no longer clip their content or their right-click menu, and their card backgrounds stay centered with rounded edges in the right place.',
       'The dock no longer grows and shrinks on its own when a size other than 100% is set — and it now stays at 100% entirely unless you check "Scale the dock too".',
       'The setup bar keeps its controls on two tidy rows instead of wrapping into a jumble on narrow overlays, and it stays one readable size at any overlay scale, spanning the window edge to edge.',
+      'The tray could claim overlays were hidden while every one of them was on screen — that stale state now clears itself the moment it stops being true.',
     ],
   },
   {

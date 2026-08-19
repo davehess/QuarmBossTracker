@@ -982,6 +982,25 @@ next touch one rather than assuming a missing row means a missing doc.
   too" checkbox re-applies on toggle). Beta test: setup bars one readable
   size at 50% and 200%; smooth checkbox pre-checked; dock ignores the
   slider until its checkbox is on.
+- **Tray↔dashboard parity batch (agent 3.5.91 + mimic, beta, 2026-08-19).**
+  New RULE (Hitya, now in CLAUDE.md): "Anything that's available from the
+  taskbar should be available from the dashboard as well." Shipped: 💾
+  Per-character overlay layouts card on the Overlays tab (auto-swap toggle,
+  save-for-active-toon, saved chips + forget ✕ — `char-profiles-enable` /
+  `char-profile-save` / `char-profile-forget` IPC, state on the status
+  push); Lock/Unlock + Setup-mode + Hide-all buttons on the actions row
+  (`hide-all-toggle` IPC + existing bridges); a Dock row in BUILT-IN
+  OVERLAYS (Hitya: "Dock isn't available from the built in overlays
+  page"). Plus `_healMootHideAll`: flags re-enabled one-by-one bypass
+  `toggleHideAllOverlays`, leaving persisted `hideAllActive` + snapshot
+  lying ("it says hideall is on but its not" / the "0 marked HIDDEN"
+  banner) — cleared at the next status read when the snapshot has nothing
+  left to restore. Diagnosed same session: "wireframe" overlays = the
+  UNLOCKED state persisting (`overlaysLocked=false` force-shows every
+  overlay), not a build difference. **TODO — parity audit remainder:**
+  quiet mode, tells mode + DM pause, melody bard-only / AE-damage
+  toggles, auto-arrange-on-show, start-with-Windows, check-for-updates
+  are still tray-only; port in one pass.
 - **/who class titles fold to base classes (bot 3.1.55, 2026-08-19 —
   Hitya: "Warlock on Anon", Syczlak).** who-lookup's Supabase passes
   (who_directory / characters) served stored class strings raw, and history
