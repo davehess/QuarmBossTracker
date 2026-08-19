@@ -102,7 +102,7 @@ describe('group events (Seru Minis — Hitya 2026-08-19, from Hawkner\'s thread)
 
   it('matches the phrasings members actually type; never fires on the raid boss alone', () => {
     const ev = GROUP_EVENTS.find(e => e.id === 'evt_seru_minis');
-    for (const s of ['seru minis', "Seru Mini's", 'minis of sanctus seru', 'the house leaders']) {
+    for (const s of ['seru minis', "Seru Mini's", 'minis of sanctus seru', 'the house leaders', 'the four Praesertum', 'praesertum bikun']) {
       expect(ev.match.test(s), s).toBe(true);
     }
     expect(ev.match.test('Lord Inquisitor Seru raid tonight')).toBe(false);
