@@ -955,6 +955,15 @@ next touch one rather than assuming a missing row means a missing doc.
   or lose their right-click menu. Beta test: 200% on a high-DPI screen,
   per-overlay override on one overlay + ↺ back, auto-height overlays
   (melody / ext target) don't clip at 200%.
+- **/who class titles fold to base classes (bot 3.1.55, 2026-08-19 —
+  Hitya: "Warlock on Anon", Syczlak).** who-lookup's Supabase passes
+  (who_directory / characters) served stored class strings raw, and history
+  harvested before agent-side normalization still holds EQ level titles.
+  Now folded through `utils/classTitles.normalizeClass` at the serve
+  boundary (one hunk covers all passes). `test/who-lookup-class-titles.test.js`
+  also pins the bot map ↔ agent `CLASS_TITLES` mirror to each other — both
+  files said "keep in sync", nothing enforced it. Web + /whois + agent
+  parse were already normalized; this was the one raw hole.
 - **Melody AE badge: pulse merge fix + kite damage totals (agent 3.5.88 +
   mimic, beta, 2026-08-19 — Fittir via Hitya).** Fittir's overlay read
   ⚔123/12 / ⚔152/12 — "it's adding the number of hits." Root cause: pulse

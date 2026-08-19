@@ -37,6 +37,33 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'agent-3-5-88',
+    title: '\u{1F50D} Overlays your size',
+    version: 'Agent 3.5.88 · Mimic 2.5.4 beta',
+    date: '2026-08-19',
+    channel: 'beta',
+    headline: 'Size every overlay to your screen — one slider for all of them, plus one on each — and the bard swarm counter tells the truth about the kite.',
+    features: [
+      { name: '\u{1F50D} Overlay size, three places', blurb: 'A "Size — all overlays" slider on the dashboard Overlays tab scales everything 50%–200% for high-DPI screens. Each overlay also has its own size slider in its setup bar that overrides the global for just that one, with a reset to follow the global again.' },
+      { name: '⚔ Swarm damage on the melody tracker', blurb: 'AE songs now show what each pulse hit for per mob and a running damage total for the current kite next to the hit counter. Toggle it from the tray if you prefer just the count.' },
+    ],
+    fixes: [
+      'The swarm hit counter could climb past the 12-mob cap ("123/12") when the game wrote its log in bursts — pulses are now counted by the log’s own clock, so the badge always reads one pulse.',
+      'Scaled-up overlays no longer clip their content or their right-click menu.',
+    ],
+  },
+  {
+    key: 'bot-3-1-55',
+    title: '\u{1F9D9} Real class names on /who',
+    version: 'Bot 3.1.55',
+    date: '2026-08-19',
+    headline: 'The /who overlay says "Necromancer", not "Warlock" — level titles fold back to the real class.',
+    features: [],
+    fixes: [
+      'High-level characters show their level title in /who (a 60 necromancer reads "Warlock", a 60 beastlord "Savage Lord"), and the anonymous-player lookup passed those titles straight through — they now fold back to the base class everywhere the lookup feeds.',
+    ],
+  },
+  {
     key: 'web-1-1-67',
     title: '\u{1F6D2} Spell shopping list',
     version: 'Web 1.1.67',
