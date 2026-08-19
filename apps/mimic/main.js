@@ -5395,6 +5395,12 @@ function _dockStatePayload() {
     growUp: cfg.dockGrowUp !== false,          // default ON — see dock-grow
     autoFit: cfg.dockAutoFit !== false,        // default ON (Hitya 2026-08-14)
     catalog: _DOCK_CATALOG.map(c => ({ key: c.key, label: c.label, file: c.file, src: srcFor(c) })),
+    // Named layouts + user-chosen dock name (Hitya 2026-08-19).
+    dockName: (typeof cfg.dockName === 'string' && cfg.dockName.trim()) ? cfg.dockName.trim().slice(0, 24) : null,
+    layouts: Object.values(cfg.dockLayouts || {})
+      .filter(l => l && typeof l.name === 'string')
+      .map(l => ({ name: l.name, count: Array.isArray(l.keys) ? l.keys.length : 0 }))
+      .sort((a, b) => a.name.localeCompare(b.name)),
   };
 }
 
@@ -7228,6 +7234,92 @@ ipcMain.handle('dock-pane-bg', (_e, keyOrFile, want) => {
   cfg.dockPaneBg = (cfg.dockPaneBg && typeof cfg.dockPaneBg === 'object') ? cfg.dockPaneBg : {};
   if (want === null || want === undefined) delete cfg.dockPaneBg[spec.key];
   else cfg.dockPaneBg[spec.key] = !!want;
+  saveConfig(cfg);
+  return _dockStatePayload();
+});
+
+// ── Named dock layouts + rename (Hitya 2026-08-19: "Dock needs the ability
+// to save configurations, and change the dock configuration name to reflect
+// what the user wants. A 'Save layout' button or 'Load Layout' with each of
+// their layouts.") ───────────────────────────────────────────────────────────
+// cfg.dockLayouts: nameLower → { name, keys, cols, spans, paneBg, savedAt }.
+// Loading applies dock-set semantics per key (leaving keys get their floating
+// window back visible; joining keys remember their pref for a later undock).
+function _dockLayoutName(raw) {
+  const name = String(raw || '').trim().slice(0, 24);
+  return name || null;
+}
+ipcMain.handle('dock-layout-save', (_e, rawName) => {
+  const name = _dockLayoutName(rawName);
+  if (!name) return _dockStatePayload();
+  const cfg = loadConfig();
+  const keys = _dockedKeys(cfg);
+  const cols = _dockCols(cfg);
+  cfg.dockLayouts = (cfg.dockLayouts && typeof cfg.dockLayouts === 'object') ? cfg.dockLayouts : {};
+  cfg.dockLayouts[name.toLowerCase()] = {
+    name,
+    keys,
+    cols,
+    spans:  Object.fromEntries(keys.map(k => [k, _dockSpan(cfg, k, cols)])),
+    paneBg: Object.fromEntries(keys.map(k => [k, _dockPaneBg(cfg, k)])),
+    savedAt: new Date().toISOString(),
+  };
+  saveConfig(cfg);
+  return _dockStatePayload();
+});
+ipcMain.handle('dock-layout-load', (_e, rawName) => {
+  const name = _dockLayoutName(rawName);
+  const cfg = loadConfig();
+  const lay = name && cfg.dockLayouts && cfg.dockLayouts[name.toLowerCase()];
+  if (!lay) return _dockStatePayload();
+  const target = (Array.isArray(lay.keys) ? lay.keys : [])
+    .map(k => _dockSpec(k)).filter(Boolean).map(s => s.key);
+  const current = _dockedKeys(cfg);
+  cfg.dockedPrev = (cfg.dockedPrev && typeof cfg.dockedPrev === 'object') ? cfg.dockedPrev : {};
+  for (const k of current) {
+    if (target.includes(k)) continue;
+    const spec = _dockSpec(k);
+    if (spec) { cfg[spec.flag] = true; delete cfg.dockedPrev[spec.key]; }
+  }
+  for (const k of target) {
+    if (current.includes(k)) continue;
+    const spec = _dockSpec(k);
+    if (spec) { cfg.dockedPrev[spec.key] = !!cfg[spec.flag]; cfg[spec.flag] = false; }
+  }
+  cfg.dockedOverlays = target;
+  cfg.dockCols = Math.max(1, Math.min(3, Math.round(Number(lay.cols) || 1)));
+  cfg.dockSpans = (cfg.dockSpans && typeof cfg.dockSpans === 'object') ? cfg.dockSpans : {};
+  cfg.dockPaneBg = (cfg.dockPaneBg && typeof cfg.dockPaneBg === 'object') ? cfg.dockPaneBg : {};
+  for (const k of target) {
+    const sp = lay.spans && lay.spans[k];
+    if (sp && (sp.c || sp.r)) {
+      cfg.dockSpans[k] = {
+        c: Math.max(1, Math.min(3, Math.round(Number(sp.c) || 1))),
+        r: Math.max(1, Math.min(4, Math.round(Number(sp.r) || 1))),
+      };
+    }
+    const bg = lay.paneBg ? lay.paneBg[k] : undefined;
+    if (bg === true || bg === false) cfg.dockPaneBg[k] = bg; else delete cfg.dockPaneBg[k];
+  }
+  if (target.length && !cfg.showDock) cfg.showDock = true;
+  saveConfig(cfg);
+  try { applyAllVisibility(); } catch {}
+  try { buildTrayMenu(); } catch {}
+  return _dockStatePayload();
+});
+ipcMain.handle('dock-layout-delete', (_e, rawName) => {
+  const name = _dockLayoutName(rawName);
+  const cfg = loadConfig();
+  if (name && cfg.dockLayouts && cfg.dockLayouts[name.toLowerCase()]) {
+    delete cfg.dockLayouts[name.toLowerCase()];
+    saveConfig(cfg);
+  }
+  return _dockStatePayload();
+});
+ipcMain.handle('dock-rename', (_e, rawName) => {
+  const cfg = loadConfig();
+  const name = _dockLayoutName(rawName);
+  if (name) cfg.dockName = name; else delete cfg.dockName;
   saveConfig(cfg);
   return _dockStatePayload();
 });

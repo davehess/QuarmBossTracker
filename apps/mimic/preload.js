@@ -164,14 +164,19 @@ document.addEventListener('DOMContentLoaded', function () {
       // word size). WINDOWS ONLY: inside a dock pane a fixed full-width bar
       // covered the pane's own controls, and panes don't zoom independently
       // — they keep the plain in-flow setup bar.
+      // The :has(#drag-controls) guard scopes these to STANDARD overlays:
+      // the dock is a window too but has no drag-controls — its setup bar
+      // lives inside #shell with its own layout, and its corner ✥ is its
+      // ONLY move handle (no framed handle to fall back to), so the fixed
+      // restyle + button-hiding must not touch it.
       + (WP_IS_DOCKED ? '' :
-          'body.setup #setupbar{position:fixed;top:0;left:0;margin:0;z-index:40;box-sizing:border-box;'
+          'body.setup:has(#drag-controls) #setupbar{position:fixed;top:0;left:0;margin:0;z-index:40;box-sizing:border-box;'
         +   'width:calc(100% * var(--wp-zoom,1));'
         +   'transform:scale(calc(1 / var(--wp-zoom,1)));transform-origin:top left}'
         + 'body.setup #drag-controls{top:calc(70px / var(--wp-zoom,1));left:calc(4px / var(--wp-zoom,1));'
         +   'transform:scale(calc(1 / var(--wp-zoom,1)));transform-origin:top left}'
-        + 'body.setup #wrap{margin-top:calc(102px / var(--wp-zoom,1))}'
-        + 'body.setup #move-btn,body.setup #hide-btn{display:none}')
+        + 'body.setup:has(#drag-controls) #wrap{margin-top:calc(102px / var(--wp-zoom,1))}'
+        + 'body.setup:has(#drag-controls) #move-btn,body.setup:has(#drag-controls) #hide-btn{display:none}')
       + _WP_THEME_CSS;
     document.head.appendChild(st);
     ipcRenderer.invoke('wp-overlay-menu-state').then(function (s) {
@@ -585,6 +590,11 @@ contextBridge.exposeInMainWorld('mimic', {
   // The dock reports its own content height; main resizes the window, keeping
   // the BOTTOM edge fixed when grow-upward is on.
   dockAutoHeight: (h)         => ipcRenderer.invoke('dock-auto-height', h),
+  // Named dock layouts + rename (Hitya 2026-08-19).
+  dockLayoutSave:   (name) => ipcRenderer.invoke('dock-layout-save', name),
+  dockLayoutLoad:   (name) => ipcRenderer.invoke('dock-layout-load', name),
+  dockLayoutDelete: (name) => ipcRenderer.invoke('dock-layout-delete', name),
+  dockRename:       (name) => ipcRenderer.invoke('dock-rename', name),
   isDocked:    ()             => WP_IS_DOCKED,
   // Dashboard: dock/undock an overlay from the Overlays page, beside its
   // on/off toggle.

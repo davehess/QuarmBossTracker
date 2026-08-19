@@ -104,13 +104,26 @@
     padding:2px 8px;font-size:10px;font-weight:700;cursor:pointer;font-family:inherit}
   #setupbar .sb:hover{background:rgba(0,0,0,0.45)}
 
-  /* Pane picker — which overlays live in the dock. */
-  #picker{display:none;position:absolute;top:26px;left:6px;right:6px;z-index:80;
+  /* Pane picker — which overlays live in the dock. #layouts (named dock
+     layouts + rename, Hitya 2026-08-19) shares the same panel chrome. */
+  #picker,#layouts{display:none;position:absolute;top:26px;left:6px;right:6px;z-index:80;
     background:rgba(13,17,23,0.98);border:1px solid rgba(163,113,247,0.5);
     border-radius:6px;padding:6px;max-height:70%;overflow:auto;
     box-shadow:0 4px 16px rgba(0,0,0,0.6)}
-  #picker.show{display:block}
-  #picker .hint{font-size:9px;color:#6b7280;margin:0 0 5px;line-height:1.4}
+  #picker.show,#layouts.show{display:block}
+  #picker .hint,#layouts .hint{font-size:9px;color:#6b7280;margin:0 0 5px;line-height:1.4}
+  #layouts .lay{display:flex;align-items:center;gap:6px;font-size:11px;
+    padding:3px 4px;border-radius:3px;cursor:pointer;color:#c9d1d9}
+  #layouts .lay:hover{background:rgba(163,113,247,0.14)}
+  #layouts .lay .cnt{margin-left:auto;font-size:9px;color:#6b7280}
+  #layouts .lay .del{background:none;border:none;color:#6e7681;cursor:pointer;
+    font-size:11px;padding:0 3px;line-height:1}
+  #layouts .lay .del:hover{color:#f87171}
+  #layouts .lrow{display:flex;gap:6px;margin-top:6px}
+  #layouts .lrow input{flex:1;min-width:0;background:rgba(255,255,255,0.06);
+    color:#e6edf3;border:1px solid rgba(255,255,255,0.15);border-radius:4px;
+    padding:2px 6px;font-size:11px;font-family:inherit}
+  #layouts .lrow input:focus{outline:none;border-color:#a371f7}
   #picker label{display:flex;align-items:center;gap:6px;font-size:11px;
     padding:2px 3px;border-radius:3px;cursor:pointer;color:#c9d1d9}
   #picker label:hover{background:rgba(163,113,247,0.14)}
@@ -161,11 +174,12 @@
       <button class="sb" id="exitSetupBtn">Done</button>
     </div>
     <div class="bar">
-      <span>◫ Dock</span>
+      <span id="dockTitle">◫ Dock</span>
       <span class="count" id="count"></span>
       <span class="spacer"></span>
       <button class="btn" id="addBtn" title="Choose which overlays live in the dock">＋ Panes</button>
       <button class="btn" id="colBtn" title="Number of columns">▥ 1</button>
+      <button class="btn" id="layoutBtn" title="Save or load a dock layout; rename the dock">💾</button>
     </div>
     <div id="panes"></div>
     <div id="empty">
@@ -178,6 +192,19 @@
     <p class="hint">Ticked overlays live in the dock. Unticking one gives it its
       own floating window back.</p>
     <div id="pickerList"></div>
+  </div>
+  <div id="layouts">
+    <p class="hint">Saved dock layouts — click one to load it (panes, columns,
+      and sizes all swap). Save the current arrangement under a name below.</p>
+    <div id="layoutList"></div>
+    <div class="lrow">
+      <input id="layoutName" type="text" maxlength="24" placeholder="layout name…" />
+      <button class="btn" id="layoutSaveBtn">💾 Save current</button>
+    </div>
+    <div class="lrow">
+      <input id="dockNameInput" type="text" maxlength="24" placeholder="dock name…" />
+      <button class="btn" id="dockRenameBtn">✏ Rename dock</button>
+    </div>
   </div>
   <div id="panemenu"></div>
 <script>
@@ -194,8 +221,16 @@
     if (sl) sl.value = v;
     if (ov) ov.textContent = Math.round(v * 100) + '%';
   });
+  var _setupScope = null;
   if (M.onSetupMode) M.onSetupMode(function (p) {
-    SETUP = !!(p && (p === true || p.on || p.setup));
+    // `active` is the field every setup-mode payload actually carries
+    // ({ active, overlayKey, scope }). This handler checked p.on/p.setup —
+    // names no sender ever used — so the dock NEVER entered setup state:
+    // "Setup THIS Overlay" looked dead and panes could never be dragged
+    // (pane drag is body.setup-gated). What read as "editable during Setup
+    // ALL" was only the unlocked chrome (Hitya 2026-08-19).
+    SETUP = !!(p && (p === true || p.active || p.on || p.setup));
+    if (p && p.scope) _setupScope = p.scope; else if (p && p.active) _setupScope = 'all';
     document.body.classList.toggle('setup', SETUP);
     render(_lastState, true);
   });
@@ -218,7 +253,13 @@
   [hideBtn, moveBtn, addBtn, colBtn, growBtn, doneBtn, slider].forEach(interactive);
   if (hideBtn) hideBtn.addEventListener('click', function () { try { M.hideThisOverlay(); } catch (e) {} });
   if (doneBtn) doneBtn.addEventListener('click', function () {
-    try { M.setSetupMode(false); } catch (e) {}
+    // Exit the mode that was actually entered — a Setup-THIS session must
+    // clear the single-setup state, not flip the (unset) global (same
+    // contract as every overlay's Done button).
+    try {
+      if (_setupScope === 'this') M.setSetupModeThis(false); else M.setSetupMode(false);
+    } catch (e) {}
+    _setupScope = null;
   });
   if (slider) slider.addEventListener('input', function () {
     var v = Number(slider.value);
@@ -278,7 +319,7 @@
     // the pane list tears down and RELOADS every iframe, which flashes and
     // throws away each overlay's in-page state (open tabs, scroll position,
     // the DPS HUD's selected History fight).
-    var sig = keys.join(',') + '|' + cols + '|' + SETUP + '|'
+    var sig = keys.join(',') + '|' + cols + '|' + SETUP + '|' + (state.dockName || '') + '|'
       + keys.map(function (k) { return (spans[k] || {}).c + 'x' + (spans[k] || {}).r + ':' + bg[k]; }).join(',');
     if (!force && sig === _lastSig) return;
     _lastSig = sig;
@@ -287,6 +328,10 @@
     colBtn.textContent = '▥ ' + cols;
     if (growBtn) growBtn.classList.toggle('on', state.growUp !== false);
     countEl.textContent = keys.length ? '(' + keys.length + ')' : '';
+    // User-named dock (Hitya 2026-08-19: "change the dock configuration name
+    // to reflect what the user wants").
+    var titleEl = document.getElementById('dockTitle');
+    if (titleEl) titleEl.textContent = '◫ ' + (state.dockName || 'Dock');
     emptyEl.style.display = keys.length ? 'none' : 'block';
 
     // Reuse the iframe for any pane that is staying, so only genuinely new
@@ -531,18 +576,82 @@
 
   if (addBtn) addBtn.addEventListener('click', function () {
     pickEl.classList.toggle('show');
+    layEl.classList.remove('show');
     if (pickEl.classList.contains('show')) renderPicker();
   });
   if (colBtn) colBtn.addEventListener('click', function () {
     try { M.dockCols().then(function (st) { if (st) render(st, true); }); } catch (e) {}
   });
-  // Click anywhere else to dismiss the picker / pane menu. Both are positioned
-  // OVER the panes, so without this they block every control underneath and the
-  // only way out is finding the same button again — which reads as stuck.
+
+  // ── Named dock layouts + rename (Hitya 2026-08-19: "Dock needs the ability
+  // to save configurations … A 'Save layout' button or 'Load Layout' with
+  // each of their layouts") ─────────────────────────────────────────────────
+  var layEl   = document.getElementById('layouts');
+  var layList = document.getElementById('layoutList');
+  var layoutBtn = document.getElementById('layoutBtn');
+  function escL(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]; }); }
+  function renderLayouts() {
+    var st = _lastState || {};
+    var list = Array.isArray(st.layouts) ? st.layouts : [];
+    var h = '';
+    if (!list.length) h = '<p class="hint">No saved layouts yet.</p>';
+    for (var i = 0; i < list.length; i++) {
+      var n = list[i].name;
+      var c = list[i].count || 0;
+      h += '<div class="lay" data-name="' + escL(n) + '" title="Load this layout">'
+        + '<span>' + escL(n) + '</span>'
+        + '<span class="cnt">' + c + ' pane' + (c === 1 ? '' : 's') + '</span>'
+        + '<button class="del" data-name="' + escL(n) + '" title="Delete this layout">✕</button>'
+        + '</div>';
+    }
+    layList.innerHTML = h;
+    var inp = document.getElementById('dockNameInput');
+    if (inp && document.activeElement !== inp) inp.value = st.dockName || '';
+  }
+  function _layDone(st) { if (st) { render(st, true); renderLayouts(); } }
+  if (layoutBtn) layoutBtn.addEventListener('click', function () {
+    layEl.classList.toggle('show');
+    pickEl.classList.remove('show');
+    if (layEl.classList.contains('show')) renderLayouts();
+  });
+  if (layList) layList.addEventListener('click', function (ev) {
+    var del = ev.target.closest ? ev.target.closest('.del') : null;
+    if (del) {
+      try { M.dockLayoutDelete(del.getAttribute('data-name')).then(_layDone); } catch (e) {}
+      return;
+    }
+    var row = ev.target.closest ? ev.target.closest('.lay') : null;
+    if (row) {
+      try { M.dockLayoutLoad(row.getAttribute('data-name')).then(_layDone); } catch (e) {}
+      layEl.classList.remove('show');
+    }
+  });
+  var laySaveBtn = document.getElementById('layoutSaveBtn');
+  if (laySaveBtn) laySaveBtn.addEventListener('click', function () {
+    var inp = document.getElementById('layoutName');
+    var name = (inp && inp.value || '').trim();
+    if (!name) { if (inp) inp.focus(); return; }
+    try { M.dockLayoutSave(name).then(function (st) { if (inp) inp.value = ''; _layDone(st); }); } catch (e) {}
+  });
+  var dockRenBtn = document.getElementById('dockRenameBtn');
+  if (dockRenBtn) dockRenBtn.addEventListener('click', function () {
+    var inp = document.getElementById('dockNameInput');
+    try { M.dockRename((inp && inp.value || '').trim()).then(_layDone); } catch (e) {}
+  });
+  [layoutBtn, laySaveBtn, dockRenBtn].forEach(interactive);
+
+  // Click anywhere else to dismiss the picker / layouts / pane menu. All are
+  // positioned OVER the panes, so without this they block every control
+  // underneath and the only way out is finding the same button again — which
+  // reads as stuck.
   document.addEventListener('mousedown', function (ev) {
     if (pickEl.classList.contains('show')
         && !pickEl.contains(ev.target) && !(addBtn && addBtn.contains(ev.target))) {
       pickEl.classList.remove('show');
+    }
+    if (layEl.classList.contains('show')
+        && !layEl.contains(ev.target) && !(layoutBtn && layoutBtn.contains(ev.target))) {
+      layEl.classList.remove('show');
     }
     if (menuEl.classList.contains('show') && !menuEl.contains(ev.target)) closeMenu();
   }, true);
