@@ -954,9 +954,16 @@ Three surfaces: 🔍 "Size — all overlays" on the dashboard Overlays tab
 into each overlay's setup bar (`cfg.overlayScaleByKey[key]` override; key
 resolved main-side from the sender via `_boundsKeyForWindow`; ↺ follows
 the global again; dock panes skip it — one window, it would scale every
-pane), and Settings → "Overlay size". `overlay-auto-height` +
-`overlay-ensure-min-height` multiply CSS px by the window's zoomFactor so
-scaled overlays don't clip.
+pane), and Settings → "Overlay size". `overlay-auto-height`,
+`overlay-ensure-min-height` AND `dock-auto-height` multiply CSS px by the
+window's zoomFactor so scaled overlays don't clip (the dock's 1s fit loop
+churned at 130% without the conversion). A scale change resizes the window
+BOUNDS with the zoom — center-anchored, work-area clamped, ~180ms ease-out
+glide via `_scaleTween` (per-window `__wpScaleState` no-ops unchanged
+targets; boot sets zoom only, since persisted bounds were saved at that
+scale). Sliders apply on release; the dashboard's "Smooth slider" checkbox
+(`cfg.overlayScaleLive`) opts into live-follow, and main treats sets <300ms
+apart as a drag (direct apply, no glide).
 
 ---
 
