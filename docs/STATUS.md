@@ -982,6 +982,20 @@ next touch one rather than assuming a missing row means a missing doc.
   too" checkbox re-applies on toggle). Beta test: setup bars one readable
   size at 50% and 200%; smooth checkbox pre-checked; dock ignores the
   slider until its checkbox is on.
+- **✨ smoOOTH SCAlers — Mimic 2.5.4 STABLE (agent 3.5.91), 2026-08-19.**
+  Hitya named it and called the graduation same-day ("lets roll the
+  resizing update into main in a fun way"); the name renders its own size
+  wave as a case-wave on every text surface. The whole 2.5.4 beta line
+  went to the fleet: overlay size sliders ×3 surfaces + glide + counter-
+  zoomed setup chrome, dock v2 (intrinsic sizing, named layouts + rename,
+  Setup-THIS, pane reorder + ◢ corner-resize), tray→dashboard parity
+  batch (per-character layouts card, lock/setup/hide-all, dock row),
+  hide-all heal, melody AE pulse fix + kite chips, eye-of filter.
+  File-level promotion of apps/mimic/** + packages/wolfpack-logsync/** +
+  their 12 test files (the exact beta↔main diff — zero drift, sync-beta
+  working). Beta re-parked at 2.5.5. Field-pass items that stay open:
+  pane inner-✕ retest (Hitya), Fittir's 5K 200% hover-target check, the
+  #52 parity-audit remainder, the #54 design-consistency pass.
 - **Change time on a sent request (bot 3.1.58, 2026-08-19 — Hitya:
   Hawkner "can't change time").** The nudge flow's ✅ done card was
   one-shot (`components: []`) — Hawkner submitted "tomorrow 8pm ET",

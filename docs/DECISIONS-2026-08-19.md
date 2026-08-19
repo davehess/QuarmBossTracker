@@ -27,6 +27,18 @@ parallel path. **Remaining tray-only items are a queued audit** (STATUS):
 quiet mode, tells mode + DM pause, melody bard-only / AE-damage toggles,
 auto-arrange-on-show, start-with-Windows, check-for-updates.
 
+## Release name: smoOOTH SCAlers (Hitya) — GRADUATED to stable same day
+
+Hitya named the line and its rendering: *"Smoooth Scalers where it starts
+with small letters, goes to large in the middle, then small at the end."*
+Text surfaces render the size wave as a case-wave — **smoOOTH SCAlers** —
+which survives Discord, GitHub, and the roadmap identically. Cut to stable
+as **Mimic 2.5.4 (agent 3.5.91)** at 15:50 ET, 2026-08-19 — file-level
+promotion of `apps/mimic/**` + `packages/wolfpack-logsync/**` + their test
+files (the whole beta↔main diff; nothing else had drifted, sync-beta
+working as designed). Beta re-parked at **2.5.5** immediately after, per
+the park rule.
+
 ## Overlay size — the shape that survived three rounds (Hitya, live)
 
 1. **Where sliders live:** dashboard Overlays tab ("Size — all overlays") +
