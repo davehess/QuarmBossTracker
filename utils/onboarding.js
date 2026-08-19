@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.1.55': [
+    '**The /who overlay says "Necromancer", not "Warlock".** High-level characters show their level title in /who (a 60 necro reads "Warlock", a 60 beastlord "Savage Lord"), and the anon lookup was passing those titles straight through. They now fold back to the real class everywhere the lookup feeds.',
+  ],
   '3.1.54': [
     '**`/retrigger` re-runs the bot\'s reply where it should have had one.** Run it in a suggestion-box thread (or point it at one with a link) and the bot re-reads the post — plus the recent messages, how far back is up to you with `window: 10m` or `5h` — and posts its tap-through request card fresh. Older threads that got the text-only card get upgraded to buttons in place.',
   ],
