@@ -49,6 +49,7 @@ export const releases: Release[] = [
       { name: '⚔ Swarm damage on the melody tracker', blurb: 'AE songs now show what each pulse hit for per mob and a running damage total for the current kite next to the hit counter. Toggle it from the tray if you prefer just the count.' },
       { name: '\u{1F4BE} Layouts and tray controls on the Overlays page', blurb: 'Per-character overlay layouts — save the current layout for your toon, see every saved one, and turn on automatic swapping as you switch characters — now live on the Overlays page, not just the tray. Lock/unlock, Setup mode, Hide-all, and the Dock itself got buttons and a row there too.' },
       { name: '\u{25AB} Dock layouts with names', blurb: 'The dock can save its whole arrangement — which panes, how many columns, their sizes and backgrounds — under a name, and swap between saved layouts from the new 💾 button. You can also rename the dock itself.' },
+      { name: '\u{25E2} Stretch panes by their corner', blurb: 'In Setup mode every dock pane has a corner grip — drag it to stretch the pane across extra columns or rows, snapping to the grid as you go. The pane menu presets still work too.' },
     ],
     fixes: [
       'The swarm hit counter could climb past the 12-mob cap ("123/12") when the game wrote its log in bursts — pulses are now counted by the log’s own clock, so the badge always reads one pulse.',

@@ -996,11 +996,13 @@ next touch one rather than assuming a missing row means a missing doc.
   `cfg.dockLayouts`/`cfg.dockName`, `dock-layout-save/load/delete` +
   `dock-rename` IPC, 💾 button beside ＋ Panes. The setup-chrome
   counter-zoom CSS is scoped `:has(#drag-controls)` so it can't restyle
-  the dock's own setup bar or hide its only move handle. **Remaining from
-  #53:** corner/side drag-resize of panes to span rows/columns (spans
-  exist via the pane ≡ menu today); pane inner-✕ needs Hitya's retest
-  post-CSS-scoping; dock layouts on the dashboard rides the #52 parity
-  audit.
+  the dock's own setup bar or hide its only move handle. **Corner-drag
+  pane resize shipped same day:** each pane gets a ◢ grip in setup — drag
+  to stretch across columns/rows, snapping to whole grid cells (live
+  preview, `dock-span` write on release, same 3×4 caps as the ≡ presets;
+  the grip suppresses the reorder drag). **Remaining from #53:** pane
+  inner-✕ needs Hitya's retest post-CSS-scoping; dock layouts on the
+  dashboard rides the #52 parity audit.
 - **Dock/setup bug batch (mimic, beta, 2026-08-19 — four field bugs from
   Hitya's dock deep-dive).** (1) Dock runaway growth: auto-fit measured
   `shell.scrollHeight` with `#shell{height:100%}` — at LEAST the viewport,
