@@ -1567,6 +1567,11 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   (1-bucket sampling holes bridged; real gaps kept — the Moash "it ran" case).
 - **Sprint board on `/roadmap`** — `SprintBoard.tsx` + `sprintItems` in
   `roadmapData.ts` (sortable, platform-color aspects).
+- **Adoption metrics — `/admin/adoption`** (web 1.1.66): product health in
+  PLAYERS — WAU, activations (new-raider vs converted split on joined_at),
+  4-week retention, raid-window-only corroboration, fleet version, and the
+  raided-never-uploaded conversion list. `web/lib/adoption.ts` +
+  `adoption_uploader_days`/`encounter_upload_counts` views.
 - **Fight Cards (#43) — `/raid/plan`** (web 1.1.61): per-fight pre-raid
   readiness cards from the `fight_cards` table; officer-authored inline;
   callouts resolved LIVE against `guild_triggers` by id (✓ armed / ○ denoted /

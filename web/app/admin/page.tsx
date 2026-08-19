@@ -120,6 +120,11 @@ export default function AdminPage() {
           href="/admin/triggers"
         />
         <Card
+          title="📈 Adoption"
+          body="Product health in PLAYERS: weekly active contributors, new activations split new-raider vs converted-veteran, 4-week retention, raid-night corroboration, fleet version — plus the work list: who raided recently and never uploaded."
+          href="/admin/adoption"
+        />
+        <Card
           title="📊 Page analytics"
           body="Which pages members are using — top routes, top concrete pages, top viewers, with a 24h/7d/30d/90d range toggle. Sourced from middleware, anonymous + bot traffic excluded."
           href="/admin/analytics"
