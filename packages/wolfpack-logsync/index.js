@@ -15022,6 +15022,7 @@ function renderTriggers(s) {
 // status flag (showHud / enableTriggerTts / showCharm / showPets / showMobInfo)
 // resolved in wpRefreshOverlayToggles + the Mimic 'toggle-overlay' IPC handler.
 var WP_OVERLAY_ROWS = [
+  ['dock',    'Dock',                'One window that collects overlays as panes — one renderer instead of one per overlay. Use the DOCK buttons below (or + Panes on the dock itself) to pick what lives in it.'],
   ['hud',     'DPS HUD',             'Running session DPS, top damage seen, current encounter.'],
   ['trigger', 'Trigger alerts (TTS)','Centered big-text alert from triggers (guild + personal), spoken via Web Speech.'],
   ['charm',   'Charm tracker',       'Charm-pet recharm timer + 6s mob-tick counter; lingers 5m after a break.'],
@@ -15106,6 +15107,13 @@ function renderOverlays(s) {
     + '<button type="button" class="wp-ov-act" data-act="rescue" title="Lost an overlay on another monitor? Gathers every overlay onto the screen this window is on and re-arranges there. That screen becomes the overlays\\' home for future arranges." style="background:#21262d;color:#f8b87b;border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px">🧲 Rescue overlays to this screen</button>'
     + '<button type="button" class="wp-ov-act" data-act="backdrops" style="background:#21262d;color:#c9d1d9;border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px">🌫 Toggle backgrounds now</button>'
     + '<span class="dim" style="font-size:11px">arranging only ever runs when you click it — never automatically</span>'
+    // Tray parity (Hitya 2026-08-19): lock/unlock, setup mode, and hide-all
+    // live here too, not just in the tray. Stateful labels start as … and are
+    // painted by wpRefreshOverlayToggles so the render string stays byte-stable.
+    + '<span style="flex-basis:100%"></span>'
+    + '<button type="button" class="wp-ov-act" data-act="lock" id="wpOvLockBtn" style="background:#21262d;color:#58a6ff;border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px">…</button>'
+    + '<button type="button" class="wp-ov-act" data-act="setup" style="background:#21262d;color:#d6a922;border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px">🛠 Setup mode — place all overlays</button>'
+    + '<button type="button" class="wp-ov-act" data-act="hideall" id="wpOvHideAllBtn" style="background:#21262d;color:#c9d1d9;border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px">…</button>'
     + '</div>';
   // 💥 Damage-taken audio alert (Hitya 2026-07-31). Not an overlay — an opt-in
   // spoken cue — but its hotkey belongs with the other global hotkeys, so it
@@ -15122,6 +15130,31 @@ function renderOverlays(s) {
     + '<button type="button" id="wpDmgHotkeyEn" style="background:#21262d;color:var(--red)"></button>'
     + '<span id="wpDmgHotkeyHint" class="dim" style="font-size:11px"></span>'
     + '</div>';
+  // 💾 Per-character overlay layouts — tray parity (Hitya 2026-08-19:
+  // "Overlay layouts should be saves and in the overlay tab"). Baked from
+  // the Mimic status object, so the card re-renders when a save/forget or
+  // character switch pushes fresh status — same pattern as the theme picker.
+  var _cpEsc = function(x){ return String(x == null ? "" : x).replace(/[&<>"]/g, function(c){ return ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"})[c]; }); };
+  var cpOn = !!(s && s.charProfilesEnabled);
+  var cpChar = (s && s.activeCharacter) ? String(s.activeCharacter) : null;
+  var cpList = (s && Array.isArray(s.charProfiles)) ? s.charProfiles : [];
+  h += '<div style="font-size:12px;padding:8px 10px;background:#161b22;border:1px solid var(--border);border-radius:6px;margin-bottom:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">'
+    + '<b>💾 Per-character overlay layouts</b>'
+    + '<label style="display:flex;align-items:center;gap:6px;font-size:11px;cursor:pointer;color:#c9d1d9"><input id="wpCharProfEn" type="checkbox"' + (cpOn ? ' checked' : '') + ' style="cursor:pointer" /> Swap layouts automatically as you switch characters</label>'
+    + '<button type="button" id="wpCharProfSave"' + (cpChar ? '' : ' disabled') + ' style="background:#21262d;color:#7ee787;border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px">💾 Save current layout' + (cpChar ? ' for ' + _cpEsc(cpChar) : '') + '</button>'
+    + (cpChar ? '' : '<span class="dim" style="font-size:11px">no active character yet &mdash; log a toon in and this saves for them</span>');
+  if (cpList.length) {
+    h += '<span style="flex-basis:100%"></span><span class="dim" style="font-size:11px">Saved:</span>';
+    for (var cpi = 0; cpi < cpList.length; cpi++) {
+      var cpn = String(cpList[cpi].name || '');
+      h += '<span style="display:inline-flex;align-items:center;gap:6px;font-size:11px;background:#0d1117;border:1px solid var(--border);border-radius:4px;padding:2px 4px 2px 8px;color:#c9d1d9">'
+        + _cpEsc(cpn.charAt(0).toUpperCase() + cpn.slice(1))
+        + '<span class="dim">' + (cpList[cpi].shown || 0) + ' on</span>'
+        + '<button type="button" class="wp-charprof-del" data-char="' + _cpEsc(cpn) + '" title="Forget this saved layout" style="background:none;color:var(--red);border:none;cursor:pointer;font-size:11px;padding:0 4px">✕</button>'
+        + '</span>';
+    }
+  }
+  h += '</div>';
   h += '<div style="font-size:12px;padding:8px 10px;background:#161b22;border:1px solid var(--border);border-radius:6px;margin-bottom:8px">'
     + '<b style="color:var(--blue)">How to move an overlay:</b> hover the small <code style="background:#0d1117;padding:1px 5px;border-radius:3px">✥</code> icon in the <b>top-left corner</b> of any overlay and drag. Works whether the overlays are locked or unlocked &mdash; same in every overlay so the muscle memory carries. The <code style="background:#0d1117;padding:1px 5px;border-radius:3px">✕</code> in the <b>top-right</b> hides that overlay (turn it back on from this page or the tray).'
     + '</div>';
@@ -15141,8 +15174,8 @@ function renderOverlays(s) {
     var key = WP_OVERLAY_ROWS[i][0], label = WP_OVERLAY_ROWS[i][1], desc = WP_OVERLAY_ROWS[i][2];
     // Dock button beside the on/off toggle (Hitya 2026-08-14). Trigger alerts
     // are not dockable — #97 fires their TTS from a HIDDEN window, so a pane
-    // would tie the callouts to being on screen.
-    var dockCell = (key === 'trigger')
+    // would tie the callouts to being on screen. The dock can't dock itself.
+    var dockCell = (key === 'trigger' || key === 'dock')
       ? '<td class="dim" style="font-size:11px">&mdash;</td>'
       : '<td><button type="button" class="wp-ov-dock" data-ov="' + key + '">…</button></td>';
     h += '<tr><td style="color:var(--text)">' + label + '</td>'
@@ -15258,6 +15291,20 @@ function wpWireHideHotkey() {
         var p = window.mimic.saveConfig({ overlayScaleDock: !!ascDock.checked });
         if (p && p.then) p.then(_ascApply).catch(function(){}); else _ascApply();
       } catch (e) {}
+    });
+  }
+  // 💾 Per-character overlay layouts (tray parity). The forget buttons ride
+  // the delegated click handler; these two are id-bound like the rest.
+  var cpEn = document.getElementById('wpCharProfEn');
+  if (cpEn && window.mimic && window.mimic.charProfilesEnable) {
+    _bindOnce(cpEn, 'change', function(){
+      try { window.mimic.charProfilesEnable(!!cpEn.checked); } catch (e) {}
+    });
+  }
+  var cpSave = document.getElementById('wpCharProfSave');
+  if (cpSave && window.mimic && window.mimic.charProfileSave) {
+    _bindOnce(cpSave, 'click', function(){
+      try { window.mimic.charProfileSave(); } catch (e) {}
     });
   }
   _wpWireHotkeyRow('wpHideHotkey', 'hideAllHotkey', 'hideAllHotkeyEnabled', 'CommandOrControl+Shift+H');
@@ -15379,11 +15426,11 @@ function wpRefreshOverlayToggles() {
   try {
     window.mimic.getStatus().then(function(st){
       st = st || {};
-      var on = { hud: !!st.showHud, trigger: !!st.enableTriggerTts, charm: !!st.showCharm, pet: !!st.showPets, mobinfo: !!st.showMobInfo, buffQueue: !!st.showBuffQueue, who: !!st.showWho, melody: !!st.showMelody, zeal: !!st.showZeal, threat: !!st.showThreat, chchain: !!st.showChChain, tank: !!st.showTank, exttarget: !!st.showExtTarget, command: !!st.showCommand, popraid: !!st.showPopRaid };
+      var on = { dock: !!st.showDock, hud: !!st.showHud, trigger: !!st.enableTriggerTts, charm: !!st.showCharm, pet: !!st.showPets, mobinfo: !!st.showMobInfo, buffQueue: !!st.showBuffQueue, who: !!st.showWho, melody: !!st.showMelody, zeal: !!st.showZeal, threat: !!st.showThreat, chchain: !!st.showChChain, tank: !!st.showTank, exttarget: !!st.showExtTarget, command: !!st.showCommand, popraid: !!st.showPopRaid };
       // Which cfg flag each row reads, so a HIDDEN row can be told from an OFF
       // one. Hide-all writes every flag false, so without the snapshot the two
       // are indistinguishable here (Hitya 2026-08-04).
-      var flagOf = { hud: 'showHud', trigger: 'enableTriggerTts', charm: 'showCharm', pet: 'showPets', mobinfo: 'showMobInfo', buffQueue: 'showBuffQueue', who: 'showWho', melody: 'showMelody', zeal: 'showZeal', threat: 'showThreat', chchain: 'showChChain', tank: 'showTank', exttarget: 'showExtTarget', command: 'showCommand', popraid: 'showPopRaid' };
+      var flagOf = { dock: 'showDock', hud: 'showHud', trigger: 'enableTriggerTts', charm: 'showCharm', pet: 'showPets', mobinfo: 'showMobInfo', buffQueue: 'showBuffQueue', who: 'showWho', melody: 'showMelody', zeal: 'showZeal', threat: 'showThreat', chchain: 'showChChain', tank: 'showTank', exttarget: 'showExtTarget', command: 'showCommand', popraid: 'showPopRaid' };
       var hidPrev = (st.hideAllActive && st.hideAllPrev) ? st.hideAllPrev : null;
       var hidCount = 0;
       var btns = document.querySelectorAll('.wp-ov-toggle');
@@ -15419,6 +15466,17 @@ function wpRefreshOverlayToggles() {
           if (isDocked) tb2.title = 'Docked — the Dock controls its visibility now.';
         }
       }
+
+      // Tray-parity button labels — painted from status, never baked into
+      // the render string (byte-stability).
+      var lockBtn2 = document.getElementById('wpOvLockBtn');
+      if (lockBtn2) lockBtn2.textContent = (st.overlaysLocked === false)
+        ? '🔒 Lock overlays — done placing'
+        : '🔓 Unlock overlays — move & resize';
+      var haBtn2 = document.getElementById('wpOvHideAllBtn');
+      if (haBtn2) haBtn2.textContent = st.hideAllActive
+        ? '👁 Show overlays (undo hide-all)'
+        : '🙈 Hide all overlays';
 
       var hb = document.getElementById('wpHideAllBanner');
       if (hb) {
@@ -15457,6 +15515,26 @@ if (typeof window !== 'undefined' && !window.__wpOvDelegated) {
       if (a === 'arrange' && window.mimic.autoArrangeNow) window.mimic.autoArrangeNow();
       if (a === 'rescue' && window.mimic.rescueOverlays) window.mimic.rescueOverlays();
       if (a === 'backdrops' && window.mimic.toggleBackdrops) window.mimic.toggleBackdrops();
+      // Tray parity (Hitya 2026-08-19) — same IPCs the tray items drive.
+      if (a === 'lock' && window.mimic.setOverlaysLocked && window.mimic.getStatus) {
+        window.mimic.getStatus().then(function(st){
+          var locked = !(st && st.overlaysLocked === false);
+          return window.mimic.setOverlaysLocked(!locked);
+        }).then(function(){
+          setTimeout(function(){ try { wpRefreshOverlayToggles(); } catch (e2) {} }, 200);
+        }).catch(function(){});
+      }
+      if (a === 'setup' && window.mimic.setSetupMode) window.mimic.setSetupMode(true);
+      if (a === 'hideall' && window.mimic.hideAllToggle) {
+        window.mimic.hideAllToggle().then(function(){
+          setTimeout(function(){ try { wpRefreshOverlayToggles(); } catch (e2) {} }, 200);
+        }).catch(function(){});
+      }
+      return;
+    }
+    var cpd = (t && t.closest) ? t.closest('.wp-charprof-del') : null;
+    if (cpd && window.mimic && window.mimic.charProfileForget) {
+      window.mimic.charProfileForget(cpd.getAttribute('data-char'));
       return;
     }
     var th = (t && t.closest) ? t.closest('.wp-theme-pick') : null;

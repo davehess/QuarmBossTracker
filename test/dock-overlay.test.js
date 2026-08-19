@@ -337,8 +337,8 @@ describe('the dashboard Dock button', () => {
     expect(agent).toMatch(/closest\('\.wp-ov-dock'\)/);
   });
 
-  it('offers no Dock button for the trigger overlay', () => {
-    expect(agent).toMatch(/var dockCell = \(key === 'trigger'\)/);
+  it('offers no Dock button for the trigger overlay (or the dock itself)', () => {
+    expect(agent).toMatch(/var dockCell = \(key === 'trigger' \|\| key === 'dock'\)/);
   });
 
   it('greys out a docked overlay\'s on/off toggle', () => {

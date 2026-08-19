@@ -523,6 +523,11 @@ contextBridge.exposeInMainWorld('mimic', {
   // Global overlay scale (50%–200%) — Fittir's-5K-monitor knob in Settings.
   setOverlayScale:  (value)       => ipcRenderer.invoke('set-overlay-scale', value),
   getOverlayScale:  ()            => ipcRenderer.invoke('get-overlay-scale'),
+  // Tray-parity controls for the dashboard Overlays tab (Hitya 2026-08-19).
+  hideAllToggle:      ()     => ipcRenderer.invoke('hide-all-toggle'),
+  charProfilesEnable: (on)   => ipcRenderer.invoke('char-profiles-enable', !!on),
+  charProfileSave:    ()     => ipcRenderer.invoke('char-profile-save'),
+  charProfileForget:  (name) => ipcRenderer.invoke('char-profile-forget', name),
   // Background-alpha push from main → overlay renderer. The slider value drives
   // a CSS variable (--bg-alpha) on each overlay so "100%" means an OPAQUE card
   // surface (EQ hidden) rather than a dimmed window (text + bg fade together).

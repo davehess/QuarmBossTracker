@@ -5589,6 +5589,30 @@ function toggleHideAllOverlays() {
   applyAllVisibility();
   pushStatus();
 }
+// Self-heal a MOOT hide-all (Hitya 2026-08-19: "it says hideall is on but
+// its not"). Flags get toggled back on one-by-one through the tray/dashboard
+// without going through toggleHideAllOverlays, so the persisted
+// hideAllActive + snapshot outlive the hidden state — the tray then says
+// "Show overlays" and the dashboard banners "Hide-all is on. 0 overlay(s)
+// marked HIDDEN" while everything is visibly on screen. When nothing the
+// snapshot would restore is still off, the toggle means nothing: clear it.
+// Runs at the top of the status build (the one path every UI reads), so the
+// label can never outlive the state by more than one read.
+function _healMootHideAll(cfg) {
+  if (!_hideAllActive) return;
+  const stillParked = _hideAllPrev
+    ? _HIDEALL_FLAGS.some(f => _hideAllPrev[f] && !cfg[f])
+    : _HIDEALL_FLAGS.some(f => !cfg[f]);
+  if (stillParked) return;
+  _hideAllActive = false;
+  _hideAllPrev = null;
+  cfg.hideAllActive = false;
+  cfg.hideAllPrev = null;
+  saveConfig(cfg);
+  // Deferred — the status build that called us may itself be running inside
+  // a tray rebuild; a fresh menu picks up the cleared state next tick.
+  setImmediate(() => { try { buildTrayMenu(); } catch {} });
+}
 let _registeredBackdropAccel = null;
 const _DEFAULT_BACKDROP_HOTKEY = 'CommandOrControl+Shift+B';
 
@@ -5769,6 +5793,7 @@ function cleanupDuplicateAutostartEntries() {
 function currentStatus() {
   const cfg = loadConfig();
   const localOnly = !resolveUploadToken(cfg);
+  _healMootHideAll(cfg);
   return {
     agentPort,
     agentRunning: !!agentProc,
@@ -5813,6 +5838,16 @@ function currentStatus() {
     // on/off toggle, whose flag no longer controls anything.
     showDock: !!cfg.showDock,
     dockedOverlays: _dockedKeys(cfg),
+    // Per-character overlay layouts — drives the dashboard card (tray parity,
+    // Hitya 2026-08-19: "anything that's available from the taskbar should be
+    // available from the dashboard as well").
+    charProfilesEnabled: !!cfg.charProfilesEnabled,
+    charProfiles: Object.entries(cfg.charProfiles || {}).map(([name, p]) => ({
+      name,
+      savedAt: (p && p.savedAt) || null,
+      shown: p && p.show ? Object.values(p.show).filter(Boolean).length : 0,
+    })),
+    activeCharacter: _activeCharName || null,
     setupMode: !!setupMode,
     onboarded: !!cfg.onboarded,
     updatePending: updatePending ? updatePending.version : null,
@@ -6982,6 +7017,12 @@ ipcMain.handle('toggle-overlay', (_e, name) => {
       cfg.showPopRaid = !cfg.showPopRaid; saveConfig(cfg);
       if (cfg.showPopRaid && !popRaidWindow) createPopRaidOverlay(); else applyPopRaidVisibility();
       break;
+    case 'dock':
+      // The Dock itself (Hitya 2026-08-19: "Dock isn't available from the
+      // built in overlays page"). Mirrors the tray's ◫ Dock checkbox exactly.
+      cfg.showDock = !cfg.showDock; saveConfig(cfg);
+      if (cfg.showDock && !dockWindow) createDockWindow(); else applyDockVisibility();
+      break;
     default:
       return null;
   }
@@ -7970,6 +8011,42 @@ ipcMain.handle('get-overlay-scale-this', (e) => {
       effective: overlayScaleFor(key),
     };
   } catch { return null; }
+});
+// ── Tray-parity IPC (Hitya 2026-08-19: "anything that's available from the
+// taskbar should be available from the dashboard as well") ──────────────────
+// Same internals as the corresponding tray items — never a parallel path.
+ipcMain.handle('hide-all-toggle', () => {
+  try { toggleHideAllOverlays(); return !!_hideAllActive; } catch { return null; }
+});
+// Per-character overlay layouts (tray → dashboard card).
+ipcMain.handle('char-profiles-enable', (_e, on) => {
+  const cfg = loadConfig();
+  cfg.charProfilesEnabled = !!on;
+  saveConfig(cfg);
+  const char = _activeCharName;
+  if (on && char) { _lastProfileChar = null; _onActiveCharacter(char); }
+  buildTrayMenu(); pushStatus();
+  return !!cfg.charProfilesEnabled;
+});
+ipcMain.handle('char-profile-save', () => {
+  const charLc = _activeCharName ? _activeCharName.toLowerCase() : null;
+  if (!charLc) return false;
+  if (_captureCharProfile(charLc)) {
+    _lastProfileChar = charLc;
+    buildTrayMenu(); pushStatus();
+    return true;
+  }
+  return false;
+});
+ipcMain.handle('char-profile-forget', (_e, name) => {
+  const key = String(name || '').trim().toLowerCase();
+  if (!key) return false;
+  const cfg = loadConfig();
+  if (!(cfg.charProfiles && cfg.charProfiles[key])) return false;
+  delete cfg.charProfiles[key];
+  saveConfig(cfg);
+  buildTrayMenu(); pushStatus();
+  return true;
 });
 // Open an external URL in the OS default browser. Allowlist so a compromised
 // renderer can't open arbitrary links: wolfpack.quest, the GitHub repo, plus
