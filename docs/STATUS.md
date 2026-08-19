@@ -982,6 +982,30 @@ next touch one rather than assuming a missing row means a missing doc.
   too" checkbox re-applies on toggle). Beta test: setup bars one readable
   size at 50% and 200%; smooth checkbox pre-checked; dock ignores the
   slider until its checkbox is on.
+- **Dock/setup bug batch (mimic, beta, 2026-08-19 — four field bugs from
+  Hitya's dock deep-dive).** (1) Dock runaway growth: auto-fit measured
+  `shell.scrollHeight` with `#shell{height:100%}` — at LEAST the viewport,
+  so `want = winH + 10` sat a rounding coin-flip past the 8px hysteresis
+  and crept +10px/s to the 1600 cap (machine-dependent, which is why it
+  ran for weeks unseen; my zoom multiply amplified it at 130%). While
+  auto-fit is on the shell is now intrinsic (`body.autofit #shell
+  {height:auto}`) so the loop has a fixed point; empty dock collapses to
+  its header. (2) Docking anything during Setup-ALL hid every force-shown
+  overlay minus TTS: `applySetupMode` force-shows ONCE, and no
+  `apply*Visibility` predicate had a setup term — any later pass re-hid
+  flag-off overlays. `setupMode` now counts as unlocked in all 16
+  predicates. (3) Setup-mode windows clipped their cards (~102px — CH
+  chain "won't reveal anything", Zeal shrinking to type 3): `#wrap.
+  scrollHeight` never included setup chrome; `overlay-auto-height` adds a
+  constant painted allowance for in-setup senders. (4) Double move icons:
+  corner ✥/✕ hide during setup (framed handle + Done own those jobs), and
+  the counter-zoom setup CSS is scoped OUT of dock panes where the fixed
+  bar covered pane controls. **Queued from the same feedback:** Dock v2
+  (task #53 — Setup-THIS on the dock, pane drag + corner-resize spans,
+  NAMED dock layouts with Save/Load, verify the pane inner ✕ after the CSS
+  scoping fix) and the overlay design-consistency pass (task #54 — one
+  plate/card system, honest 100% opacity; today 100% = opaque card
+  SURFACES, the chrome around them differs per overlay by design drift).
 - **Tray↔dashboard parity batch (agent 3.5.91 + mimic, beta, 2026-08-19).**
   New RULE (Hitya, now in CLAUDE.md): "Anything that's available from the
   taskbar should be available from the dashboard as well." Shipped: 💾
