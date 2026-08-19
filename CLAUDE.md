@@ -722,6 +722,15 @@ Trigger alerts + countdown timers (`triggers.html`), Charm tracker, Pet
 tracker, Mob Info (Stats/Loot/Spells tabs), Buff queue, /who, Melody, Zeal
 health (diagnostic), plus Settings, UI Studio, loading.
 
+### RULE — tray ↔ dashboard parity (Hitya, 2026-08-19)
+**"Anything that's available from the taskbar should be available from the
+dashboard as well."** A control that exists only in the tray menu is a control
+people forget exists (the per-character layout saves sat tray-only from v1.2
+until Hitya met them tonight). When adding a tray item, put its equivalent on
+the dashboard's Overlays tab (or Settings) in the same change, driving the
+SAME internals — never a parallel path. Remaining tray-only items are a
+queued audit in `docs/STATUS.md`.
+
 ### Overlay feature-parity checklist
 Every overlay must have ALL of these — a whole class of beta bugs was
 overlays missing one (dead ✕ on Zeal health, no right-click on Buff queue,
