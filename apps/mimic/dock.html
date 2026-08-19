@@ -94,6 +94,15 @@
   body.setup .pane > iframe{pointer-events:none}
   body.setup .pane.drag{opacity:0.45;cursor:grabbing}
   body.setup .pane.over{outline:2px dashed #f0b429;outline-offset:-2px}
+  /* Corner grip — drag to stretch a pane across columns/rows in setup
+     (Hitya 2026-08-19). Snaps to whole grid cells; the ≡ menu presets
+     keep working. */
+  .pane{position:relative}
+  .pane .grip{display:none;position:absolute;right:0;bottom:0;width:16px;height:16px;
+    cursor:nwse-resize;z-index:5;color:rgba(240,180,41,0.85);font-size:10px;
+    line-height:16px;text-align:center;user-select:none}
+  body.setup .pane .grip{display:block}
+  body.setup .pane.resizing{outline:2px solid #f0b429;outline-offset:-2px;cursor:nwse-resize}
   .pane .span{font-size:8px;color:#6b7280;letter-spacing:0}
   #setupbar{display:none;align-items:center;gap:8px;flex:0 0 auto;
     padding:4px 8px;background:rgba(214,153,34,0.94);color:#1f1300;
@@ -377,6 +386,13 @@
         fr.setAttribute('scrolling', 'no');
         fr.addEventListener('load', function () { applyPaneBg(pane); fitPane(pane); });
         pane.appendChild(ph); pane.appendChild(fr);
+        var grip = document.createElement('span');
+        grip.className = 'grip';
+        grip.textContent = '◢';
+        grip.title = 'Drag to stretch ' + spec.label + ' across columns / rows';
+        interactive(grip);
+        grip.addEventListener('mousedown', function (ev) { startPaneResize(ev, pane); });
+        pane.appendChild(grip);
       }
       pane.style.gridColumn = 'span ' + Math.min(sp.c, cols);
       pane.style.gridRow    = 'span ' + sp.r;
@@ -514,6 +530,9 @@
   var _dragKey = null;
   panesEl.addEventListener('dragstart', function (ev) {
     var pane = ev.target.closest && ev.target.closest('.pane');
+    // A corner-resize in progress (or starting from the grip) must never
+    // become a reorder drag.
+    if (_rz || (ev.target.closest && ev.target.closest('.grip'))) { ev.preventDefault(); return; }
     if (!SETUP || !pane) { ev.preventDefault(); return; }
     _dragKey = pane.getAttribute('data-key');
     pane.classList.add('drag');
@@ -573,6 +592,50 @@
       M.dockSet(key, !!want).then(function (st) { if (st) { render(st, true); renderPicker(); } });
     } catch (e) {}
   }
+
+  // ── Corner-resize a pane across grid cells (Hitya 2026-08-19: "In setup
+  // mode i should be able to resize via the corners or sides of the docked
+  // overlays to stretch to consume additional rows or columns") ─────────────
+  // Live-preview while dragging; the real dock-span write happens on release
+  // and the render(force) that follows re-lays everything out.
+  var _rz = null;
+  function startPaneResize(ev, pane) {
+    if (!SETUP || ev.button !== 0) return;
+    ev.preventDefault();      // also stops the native reorder drag from arming
+    ev.stopPropagation();
+    var k = pane.getAttribute('data-key');
+    var st = _lastState || {};
+    var sp = (st.spans || {})[k] || { c: 1, r: 1 };
+    var cols = st.cols || 1;
+    // One column's width: `cols` equal tracks with 4px gaps inside #panes'
+    // 4px padding — measured from the grid box so a wide pane doesn't skew it.
+    var gw = panesEl.getBoundingClientRect().width;
+    var colW = Math.max(40, (gw - 8 - (cols - 1) * 4) / cols);
+    _rz = { key: k, pane: pane, startX: ev.clientX, startY: ev.clientY,
+            c0: sp.c || 1, r0: sp.r || 1, c: sp.c || 1, r: sp.r || 1,
+            colW: colW, cols: cols };
+    pane.classList.add('resizing');
+  }
+  document.addEventListener('mousemove', function (ev) {
+    if (!_rz) return;
+    var c = Math.max(1, Math.min(3, _rz.c0 + Math.round((ev.clientX - _rz.startX) / _rz.colW)));
+    var r = Math.max(1, Math.min(4, _rz.r0 + Math.round((ev.clientY - _rz.startY) / ROW_UNIT)));
+    if (c === _rz.c && r === _rz.r) return;
+    _rz.c = c; _rz.r = r;
+    _rz.pane.style.gridColumn = 'span ' + Math.min(c, _rz.cols);
+    _rz.pane.style.gridRow    = 'span ' + r;
+    _rz.pane.style.minHeight  = (r * ROW_UNIT) + 'px';
+    var lbl = _rz.pane.querySelector('.span');
+    if (lbl) lbl.textContent = (c > 1 || r > 1) ? (c + '×' + r) : '';
+  });
+  document.addEventListener('mouseup', function () {
+    if (!_rz) return;
+    var done = _rz; _rz = null;
+    done.pane.classList.remove('resizing');
+    if (done.c !== done.c0 || done.r !== done.r0) {
+      try { M.dockSpan(done.key, done.c, done.r).then(function (st) { if (st) render(st, true); }); } catch (e) {}
+    }
+  });
 
   if (addBtn) addBtn.addEventListener('click', function () {
     pickEl.classList.toggle('show');
