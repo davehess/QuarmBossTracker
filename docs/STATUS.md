@@ -993,7 +993,14 @@ next touch one rather than assuming a missing row means a missing doc.
   hide-all heal, melody AE pulse fix + kite chips, eye-of filter.
   File-level promotion of apps/mimic/** + packages/wolfpack-logsync/** +
   their 12 test files (the exact beta↔main diff — zero drift, sync-beta
-  working). Beta re-parked at 2.5.5. Field-pass items that stay open:
+  working). Beta re-parked at 2.5.5. ⚠ The first cut NO-OPPED GREEN:
+  release-mimic.yml compared the version HEAD~1 vs HEAD, and the two-commit
+  push (bump + docs) read "unchanged" — no release, successful run. Fixed
+  same hour (HEAD~1 check removed; tag-existence guard is the idempotency)
+  and the real v2.5.4 cut via workflow_dispatch, VERIFIED by fetching the
+  release: tag exists, prerelease false, /releases/latest resolves to it.
+  Lesson for monitors: a green release run is not a release — check the
+  tag. Field-pass items that stay open:
   pane inner-✕ retest (Hitya), Fittir's 5K 200% hover-target check, the
   #52 parity-audit remainder, the #54 design-consistency pass.
 - **Change time on a sent request (bot 3.1.58, 2026-08-19 — Hitya:
