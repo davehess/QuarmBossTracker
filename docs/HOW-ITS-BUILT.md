@@ -1567,6 +1567,12 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   (1-bucket sampling holes bridged; real gaps kept — the Moash "it ran" case).
 - **Sprint board on `/roadmap`** — `SprintBoard.tsx` + `sprintItems` in
   `roadmapData.ts` (sortable, platform-color aspects).
+- **Missing-spells "where from" + shopping list** (web 1.1.67):
+  `/character/[name]/spells` — per-spell vendor/dropper dropdowns from OUR
+  mirror (`spell_scroll_sources` RPC over merchantlist + npc_drops +
+  spawn-table zones; npc_types.merchant_id mirrored since 2026-08-18), zone
+  shopping mode with only-here badges. `MissingSpellsView.tsx` +
+  `lib/spellSources.ts`.
 - **Adoption metrics — `/admin/adoption`** (web 1.1.66): product health in
   PLAYERS — WAU, activations (new-raider vs converted split on joined_at),
   4-week retention, raid-window-only corroboration, fleet version, and the

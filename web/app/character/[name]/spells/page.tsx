@@ -9,8 +9,11 @@
 //   • character_spellbook — uploaded on /me (📖 Upload spellbook).
 //   • character_missing_spells(guild, character, class_bit) RPC — purchasable
 //     scrolls for the class minus what's scribed, + derived level + holders.
-//   • "Where to find" deep-links to PQDI's item page (we don't mirror the
-//     merchant→NPC→zone chain).
+//   • spell_scroll_sources(int[]) RPC — every vendor + dropper per scroll,
+//     zones resolved through the spawn tables (we DO mirror the merchant→
+//     NPC→zone chain since 2026-08-18; the old PQDI deep-links are now the
+//     cross-check, not the answer). Rendering + the zone-by-zone 🛒 shopping
+//     mode live in MissingSpellsView (client); grouping in lib/spellSources.
 //
 // Visibility mirrors the quests page: owner + officers always; others need
 // characters.show_inventory_publicly.
@@ -21,7 +24,8 @@ import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
 import { isOfficer } from '@/lib/officer';
 import { classBit, normalizeClass } from '@/lib/class-titles';
-import SpellLevelEditor from './SpellLevelEditor';
+import { groupSources, type SourceRow, type ItemSources } from '@/lib/spellSources';
+import MissingSpellsView from './MissingSpellsView';
 
 export const dynamic = 'force-dynamic';
 
@@ -102,19 +106,18 @@ export default async function CharacterSpellsPage({ params }: { params: Promise<
   }
 
   const hasBook = (scribedCount ?? 0) > 0;
-  // Group missing by level band. Unknown level (no guildmate has it yet) last.
-  const byLevel = new Map<number | 'unknown', MissingSpell[]>();
-  for (const m of missing) {
-    const k: number | 'unknown' = m.scribe_level ?? 'unknown';
-    const arr = byLevel.get(k) ?? [];
-    arr.push(m);
-    byLevel.set(k, arr);
+
+  // Where-from sources for every missing scroll, one RPC. Failure here only
+  // costs the dropdown detail — the list itself must still render.
+  let sourcesByItem: Record<number, ItemSources> = {};
+  const scrollIds = [...new Set(missing.map(m => m.scroll_item_id).filter((n): n is number => typeof n === 'number'))];
+  if (scrollIds.length) {
+    const { data: srcRows } = await sb.rpc('spell_scroll_sources', { p_item_ids: scrollIds });
+    if (Array.isArray(srcRows)) {
+      sourcesByItem = Object.fromEntries(groupSources(srcRows as SourceRow[]).entries());
+    }
   }
-  const levelKeys = [...byLevel.keys()].sort((a, b) => {
-    if (a === 'unknown') return 1;
-    if (b === 'unknown') return -1;
-    return (a as number) - (b as number);
-  });
+
   const heldCount = missing.filter(m => m.held_by.length > 0).length;
   const buyableCount = missing.filter(m => m.buyable).length;
   const otherCount = missing.length - buyableCount;
@@ -136,8 +139,9 @@ export default async function CharacterSpellsPage({ params }: { params: Promise<
           Every {baseClass ?? 'class'} spell {decoded} hasn&apos;t scribed yet —
           both vendor-buyable ones and the quest/drop/planar spells you have to
           go get. <span className="text-orange">🛒</span> = sold by a vendor;{' '}
-          <span className="text-purple">⚔</span> = not sold, acquire it in the world
-          (the <b>find ↗</b> link opens PQDI so you can see where it drops).{' '}
+          <span className="text-purple">⚔</span> = not sold, acquire it in the world.
+          <b> Click any spell</b> to see exactly who sells or drops it and where —
+          or flip to <b>🛒 Shopping list</b> to plan zone by zone.{' '}
           <span className="text-green">🎒</span> = a guildmate is holding the
           scroll right now — ask them first.{' '}
           <span className="text-[10px] font-bold px-1 py-0.5 rounded bg-blue/20 border border-blue/60 text-blue align-middle">PoP</span>{' '}
@@ -178,53 +182,12 @@ export default async function CharacterSpellsPage({ params }: { params: Promise<
               {hasBook ? `🎉 ${decoded} has every vendor-buyable spell for the class.` : 'No purchasable spells found for this class.'}
             </p>
           ) : (
-            <div className="space-y-5">
-              {levelKeys.map(lk => {
-                const rows = byLevel.get(lk)!;
-                return (
-                  <div key={String(lk)}>
-                    <h3 className="text-sm text-orange mb-1.5">
-                      {lk === 'unknown' ? 'Level unknown' : `Level ${lk}`}
-                      <span className="text-dim font-normal"> · {rows.length}</span>
-                      {lk === 'unknown' && officer && (
-                        <span className="text-dim font-normal text-[10px]"> · type a level to file it (applies guild-wide)</span>
-                      )}
-                    </h3>
-                    <ul className="text-sm grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-0.5">
-                      {rows.map(m => (
-                        <li key={m.spell_name} className="flex items-baseline gap-2">
-                          <span title={m.buyable ? 'Sold by a vendor' : 'Not sold — quest / drop / planar'}>
-                            {m.buyable ? '🛒' : '⚔'}
-                          </span>
-                          <span className={m.pop ? 'text-dim' : 'text-text'}>{m.spell_name}</span>
-                          {m.pop && (
-                            <span className="text-[9px] font-bold px-1 py-0.5 rounded bg-blue/20 border border-blue/60 text-blue"
-                                  title="Planes of Power — locked until Oct 1 (level 61+, or only from PoK / a PoP-zone drop). Can't scribe it yet.">
-                              PoP
-                            </span>
-                          )}
-                          {m.scroll_item_id && (
-                            <a href={`https://pqdi.cc/item/${m.scroll_item_id}`} target="_blank" rel="noreferrer"
-                               className="text-blue text-[10px] hover:underline"
-                               title={m.buyable ? 'Where to buy (PQDI item page)' : 'Where it drops / quests from (PQDI item page)'}>
-                              find ↗
-                            </a>
-                          )}
-                          {m.held_by.length > 0 && (
-                            <span className="text-green text-[10px]" title="A guildmate is holding this scroll">
-                              🎒 {m.held_by.join(', ')}
-                            </span>
-                          )}
-                          {officer && lk === 'unknown' && m.spell_id && (
-                            <SpellLevelEditor spellId={m.spell_id} character={decoded} />
-                          )}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                );
-              })}
-            </div>
+            <MissingSpellsView
+              missing={missing}
+              sources={sourcesByItem}
+              officer={officer}
+              character={decoded}
+            />
           )}
         </section>
       )}
