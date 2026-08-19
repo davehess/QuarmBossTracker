@@ -952,9 +952,24 @@ next touch one rather than assuming a missing row means a missing doc.
   slider. Dock panes deliberately skip the injected slider (one window —
   it would scale every pane). overlay-auto-height + ensure-min-height now
   multiply CSS px by the window's zoomFactor so scaled overlays don't clip
-  or lose their right-click menu. Beta test: 200% on a high-DPI screen,
-  per-overlay override on one overlay + ↺ back, auto-height overlays
-  (melody / ext target) don't clip at 200%.
+  or lose their right-click menu. **Round 2 (agent 3.5.89, same day, from
+  Hitya's live beta.9 testing):** a scale change now resizes the WINDOW
+  BOUNDS with the zoom (center-anchored, work-area clamped, ~180ms
+  ease-out glide — zoom in a fixed box left card edges/centering wrong);
+  sliders apply on RELEASE (mid-drag apply rescaled the setup bar under
+  the cursor; per-input apply re-zoomed everything dozens of times per
+  drag) with a "Smooth slider" live-follow checkbox under the dashboard
+  bar (`cfg.overlayScaleLive`; rapid sets <300ms apart apply direct, no
+  glide); applyOverlayScale keeps per-window state and no-ops on
+  unchanged targets (beta.9 re-zoomed on every opacity/status broadcast —
+  visible repaint churn); **dock-auto-height now does the same CSS→painted
+  conversion** (unconverted, the dock's 1s fit loop disagreed with the
+  painted size at 130% → rapid grow/shrink); the injected setup-bar size
+  controls sit on their own full-width row (inline they wrapped narrow
+  overlays into a jumble). Boot still sets zoom only — persisted bounds
+  were saved at that scale; resizing at ready-to-show would compound.
+  Beta test: change scale, watch the card glide and edges stay rounded;
+  dock steady at 130%; setup-ALL bars read two clean rows.
 - **/who class titles fold to base classes (bot 3.1.55, 2026-08-19 —
   Hitya: "Warlock on Anon", Syczlak).** who-lookup's Supabase passes
   (who_directory / characters) served stored class strings raw, and history
