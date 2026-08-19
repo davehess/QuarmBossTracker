@@ -12,7 +12,50 @@ function getBosses() {
   return require('../data/bosses.json');
 }
 
+// Shared poster — used by /suggest below AND the forum nudge card's tap-through
+// flow (utils/suggestNudge.js), so both paths produce the identical officer
+// card with the same host/no-host buttons. `boss` is a bosses.json entry when
+// resolved; `rawLabel` carries whatever the member typed when it isn't.
+// Returns true when the card posted.
+async function postEventRequest({ client, userId, boss = null, rawLabel = null, timeStr, note = null }) {
+  const suggestChannelId = process.env.SUGGEST_CHANNEL_ID;
+  if (!suggestChannelId) return false;
+  const channel = await client.channels.fetch(suggestChannelId).catch(() => null);
+  if (!channel) return false;
+
+  const bossLabel = boss
+    ? `${boss.emoji ? boss.emoji + ' ' : ''}${boss.name} — ${boss.zone}`
+    : (rawLabel || 'Unknown');
+
+  const embed = new EmbedBuilder()
+    .setColor(0x5865F2)
+    .setTitle('📣 Event Request')
+    .addFields(
+      { name: 'Requested by', value: `<@${userId}>`, inline: true },
+      { name: 'Boss / Zone',  value: bossLabel,      inline: true },
+      { name: 'Wanted time',  value: timeStr,        inline: true },
+    )
+    .setTimestamp()
+    .setFooter({ text: 'Use the buttons below to respond to this request' });
+  if (note) embed.addFields({ name: 'Note', value: note, inline: false });
+
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`suggest_host:${userId}`)
+      .setLabel("I'll host it")
+      .setStyle(ButtonStyle.Success),
+    new ButtonBuilder()
+      .setCustomId(`suggest_nohost:${userId}`)
+      .setLabel('No hosts available')
+      .setStyle(ButtonStyle.Danger),
+  );
+
+  await channel.send({ embeds: [embed], components: [row] });
+  return true;
+}
+
 module.exports = {
+  postEventRequest,
   data: new SlashCommandBuilder()
     .setName('suggest')
     .setDescription('Request an officer to host an event for you')
@@ -72,39 +115,16 @@ module.exports = {
       );
     }
 
-    const bossLabel = boss
-      ? `${boss.emoji ? boss.emoji + ' ' : ''}${boss.name} — ${boss.zone}`
-      : bossId;
-
-    const channel = await interaction.client.channels.fetch(suggestChannelId).catch(() => null);
-    if (!channel)
+    const posted = await postEventRequest({
+      client: interaction.client,
+      userId: interaction.user.id,
+      boss,
+      rawLabel: bossId,
+      timeStr,
+      note,
+    });
+    if (!posted)
       return interaction.reply({ flags: MessageFlags.Ephemeral, content: '❌ Could not find the suggestions channel.' });
-
-    const embed = new EmbedBuilder()
-      .setColor(0x5865F2)
-      .setTitle('📣 Event Request')
-      .addFields(
-        { name: 'Requested by', value: `<@${interaction.user.id}>`, inline: true },
-        { name: 'Boss / Zone',  value: bossLabel,                   inline: true },
-        { name: 'Wanted time', value: timeStr,                      inline: true },
-      )
-      .setTimestamp()
-      .setFooter({ text: 'Use the buttons below to respond to this request' });
-
-    if (note) embed.addFields({ name: 'Note', value: note, inline: false });
-
-    const row = new ActionRowBuilder().addComponents(
-      new ButtonBuilder()
-        .setCustomId(`suggest_host:${interaction.user.id}`)
-        .setLabel("I'll host it")
-        .setStyle(ButtonStyle.Success),
-      new ButtonBuilder()
-        .setCustomId(`suggest_nohost:${interaction.user.id}`)
-        .setLabel('No hosts available')
-        .setStyle(ButtonStyle.Danger),
-    );
-
-    await channel.send({ embeds: [embed], components: [row] });
 
     await interaction.reply({
       flags: MessageFlags.Ephemeral,
