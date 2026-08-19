@@ -937,6 +937,15 @@ next touch one rather than assuming a missing row means a missing doc.
   raid-watch content — all editable, `updated_by='pre-raid seed'`. Next
   increment (in `DESIGN-fight-cards.md`): comp/kit live joins (#93/#82),
   the Discord pre-pull projection (bot, post-freeze), drill result on-page.
+- **Overlay scale 50%–200% (mimic, beta, 2026-08-18 — Fittir's 5K monitor,
+  via Hitya).** One global zoomFactor across every overlay window, hooked
+  into applyOverlayOpacity's shared ready-to-show lifecycle (zero per-HTML
+  changes; future overlays inherit it). Settings "Overlay size" slider
+  applies LIVE while dragging, persists via its own IPC (cfg.overlayScale,
+  clamped 0.5–2.0); window bounds stay the user's own. Browser-verified
+  (slider + label; IPC guarded). Beta test: set 200% on a high-DPI screen,
+  confirm every overlay's text scales and the ✥/✕/hover-interact targets
+  scale with it; then 50% and back.
 - **Spellbook "where from" + zone shopping list (web 1.1.67, 2026-08-18).**
   Hitya: the missing-spells page's PQDI links "don't work. We should say
   where it's from" + a shopping-list mode. Root enablement: the eqmac dump
