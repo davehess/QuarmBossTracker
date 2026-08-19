@@ -946,6 +946,18 @@ Zeal health, Settings, loading. Overlays poll the local agent
 (`/api/state`, `/api/tank-state`, `/api/command-center`,
 `/api/extended-target`, `/api/buff-queue`) every ~1.5–2s.
 
+**Overlay size 50%–200% (mimic + agent 3.5.88, beta — Fittir's 5K monitor).**
+zoomFactor per overlay window, applied in `applyOverlayOpacity`'s shared
+ready-to-show lifecycle so every overlay (and any future one) inherits it.
+Three surfaces: 🔍 "Size — all overlays" on the dashboard Overlays tab
+(global `cfg.overlayScale`), a per-overlay "size" slider preload injects
+into each overlay's setup bar (`cfg.overlayScaleByKey[key]` override; key
+resolved main-side from the sender via `_boundsKeyForWindow`; ↺ follows
+the global again; dock panes skip it — one window, it would scale every
+pane), and Settings → "Overlay size". `overlay-auto-height` +
+`overlay-ensure-min-height` multiply CSS px by the window's zoomFactor so
+scaled overlays don't clip.
+
 ---
 
 ### Callout overlay UX — dismissible countdowns + recorded dismissals (#207) — 2026-08-11
@@ -1421,14 +1433,21 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
 - **CH cast bar + DDR grading (3.4.39)** — see the CH chain tracker entry
   above (`CH_CAST_MS`, `trackChChainInterrupt`, `_chGradeCall`,
   `POST /api/chchain/ddr`).
-- **PBAOE song mob counter (3.4.40)** — `noteSongAoeLine` (watch-loop hook,
-  display-only) counts AE landing rows per song per 2.5s burst, scoped to the
-  melody order's catalog `cast_on_other` suffixes (detrimental only — a
-  beneficial song's landing names groupmates); damage joins from
-  "has taken N damage from your <song>" lines. Surfaced per order row as
-  `aoe_hits`/`aoe_dmg`; `melody.html` renders an ⚔ hits/12 chip beside the
-  song name (12 = Quarm AE cap, green at a full swarm; per-mob min–max in
-  the tooltip). Badge goes stale-silent 30s after the last pulse.
+- **PBAOE song mob counter (3.4.40; pulse clock + kite totals 3.5.88)** —
+  `noteSongAoeLine` (watch-loop hook, display-only) counts AE landing rows
+  per song per pulse, scoped to the melody order's catalog `cast_on_other`
+  suffixes (detrimental only — a beneficial song's landing names
+  groupmates); damage joins from "has taken N damage from your <song>"
+  lines. Pulse bursts are bounded by the LINE's log timestamp
+  (`SONG_AOE_PULSE_GAP_MS`), never wall-clock arrival — the EQ client
+  flushes the log in multi-second batches under swarm load, which merged
+  pulses into ⚔123/12 badges (Fittir, 2026-08-19; `test/song-aoe-pulse.test.js`).
+  Surfaced per order row as `aoe_hits`/`aoe_dmg`/`aoe_kite` (running
+  damage total for the current kite, reset after 30s quiet); `melody.html`
+  renders an ⚔ hits/12 chip beside the song name (12 = Quarm AE cap,
+  green at a full swarm) plus per-hit damage + Σ kite total — toggleable
+  via tray "Show AE song damage" (`cfg.melodyDmgTotals`, default ON).
+  Badge goes stale-silent 30s after the last pulse.
 
 ### Crash review (agent, beta)
 - **🩺 Crash review card + `/api/crash-review` (agent 3.5.67)** — reads this
