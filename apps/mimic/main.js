@@ -3101,7 +3101,83 @@ function overlayScaleFor(key) {
 }
 function applyOverlayScale(win, key) {
   if (!win || win.isDestroyed()) return;
-  try { win.webContents.setZoomFactor(key ? overlayScaleFor(key) : overlayScale()); } catch {}
+  const target = key ? overlayScaleFor(key) : overlayScale();
+  const st = win.__wpScaleState;
+  if (!st) {
+    // First application (ready-to-show). The persisted bounds were saved at
+    // this scale — set zoom only; resizing here would compound every boot.
+    try { win.webContents.setZoomFactor(target); } catch {}
+    win.__wpScaleState = { z: target, bounds: null };
+    return;
+  }
+  if (st.z === target) return;
+  // Live scale change: the window BOUNDS scale with the zoom, anchored on the
+  // window's center and clamped to its display's work area — so the card's
+  // rounded edges and centering land exactly where a hand-resized window
+  // would put them (Hitya 2026-08-19: zoom inside fixed bounds left the card
+  // reflowing in a wrong-sized box). Base the math on the DESTINATION of any
+  // glide still in flight (st.bounds), else live bounds, so retargeting
+  // mid-glide stays exact; settle() clears st.bounds so a user's manual
+  // resize afterwards is respected.
+  const baseB = st.bounds || win.getBounds();
+  const ratio = target / st.z;
+  let w = Math.max(60, Math.round(baseB.width * ratio));
+  let h = Math.max(40, Math.round(baseB.height * ratio));
+  let x = Math.round(baseB.x + (baseB.width - w) / 2);
+  let y = Math.round(baseB.y + (baseB.height - h) / 2);
+  try {
+    const wa = screen.getDisplayMatching(baseB).workArea;
+    w = Math.min(w, wa.width); h = Math.min(h, wa.height);
+    x = Math.max(wa.x, Math.min(x, wa.x + wa.width - w));
+    y = Math.max(wa.y, Math.min(y, wa.y + wa.height - h));
+  } catch {}
+  const toB = { x, y, width: w, height: h };
+  win.__wpScaleState = { z: target, bounds: toB };
+  // A set arriving <300ms after the previous one is a live drag following the
+  // slider ("Smooth slider" mode) — apply directly, the drag IS the
+  // animation. An isolated set (slider release) glides over ~180ms.
+  const now = Date.now();
+  const rapid = (now - (win.__wpScaleSetAt || 0)) < 300;
+  win.__wpScaleSetAt = now;
+  _scaleTween(win, target, toB, !rapid);
+}
+// Glide zoom + bounds together (ease-out cubic) so a scale change grows the
+// overlay smoothly instead of snapping (Hitya 2026-08-19: "smoothly glide
+// instead of jumping"). Retargetable — a newer call clears the timer in
+// flight and the stale settle() never runs.
+const SCALE_TWEEN_MS = 180, SCALE_TWEEN_STEPS = 9;
+function _scaleTween(win, toZ, toB, smooth) {
+  if (win.__wpScaleTimer) { clearInterval(win.__wpScaleTimer); win.__wpScaleTimer = null; }
+  const settle = () => {
+    try { win.webContents.setZoomFactor(toZ); } catch {}
+    try { win.setBounds(toB); } catch {}
+    const st = win.__wpScaleState;
+    if (st && st.z === toZ) st.bounds = null;   // settled — read live bounds next time
+  };
+  if (!smooth) { settle(); return; }
+  let fromZ = toZ, fromB = toB;
+  try { fromZ = win.webContents.getZoomFactor() || toZ; } catch {}
+  try { fromB = win.getBounds(); } catch {}
+  let step = 0;
+  const timer = setInterval(() => {
+    if (win.isDestroyed()) { clearInterval(timer); return; }
+    step++;
+    if (step >= SCALE_TWEEN_STEPS) {
+      clearInterval(timer);
+      if (win.__wpScaleTimer === timer) win.__wpScaleTimer = null;
+      settle();
+      return;
+    }
+    const t = 1 - Math.pow(1 - step / SCALE_TWEEN_STEPS, 3);
+    try { win.webContents.setZoomFactor(fromZ + (toZ - fromZ) * t); } catch {}
+    try { win.setBounds({
+      x: Math.round(fromB.x + (toB.x - fromB.x) * t),
+      y: Math.round(fromB.y + (toB.y - fromB.y) * t),
+      width:  Math.round(fromB.width  + (toB.width  - fromB.width)  * t),
+      height: Math.round(fromB.height + (toB.height - fromB.height) * t),
+    }); } catch {}
+  }, SCALE_TWEEN_MS / SCALE_TWEEN_STEPS);
+  win.__wpScaleTimer = timer;
 }
 function applyAllOverlayScales() {
   for (const [key, win] of _overlayEntries()) applyOverlayScale(win, key);
@@ -7112,7 +7188,18 @@ ipcMain.handle('dock-auto-height', (_e, h) => {
   if (!dockWindow || dockWindow.isDestroyed()) return false;
   const cfg = loadConfig();
   if (cfg.dockAutoFit === false) return false;
-  const want = Math.max(140, Math.min(1600, Math.round(Number(h) || 0)));
+  // Same CSS-px → painted-px conversion as overlay-auto-height: the dock page
+  // measures #shell in CSS px, and with an overlay scale the painted height is
+  // that × zoom. Sizing the window in the unconverted unit made the dock's
+  // 1s fit loop disagree with the painted size at every pass — the rapid
+  // grow/shrink churn Hitya saw at 130% (2026-08-19). ×1 at 100%, so the
+  // dock's long-stable unscaled equilibrium is untouched.
+  let hh = Math.round(Number(h) || 0);
+  try {
+    const z = dockWindow.webContents.getZoomFactor() || 1;
+    if (z !== 1) hh = Math.round(hh * z);
+  } catch {}
+  const want = Math.max(140, Math.min(1600, hh));
   if (!want) return false;
   try {
     const b = dockWindow.getBounds();

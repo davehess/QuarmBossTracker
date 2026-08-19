@@ -181,19 +181,29 @@ document.addEventListener('DOMContentLoaded', function () {
     function refresh() {
       ipcRenderer.invoke('get-overlay-scale-this').then(paint).catch(function () {});
     }
+    // Label follows the drag; the scale itself applies on RELEASE ('change')
+    // — applying mid-drag rescales this very setup bar and yanks the thumb
+    // out from under the cursor (Hitya 2026-08-19). Keyboard steps fire
+    // 'change' per press, so arrow keys still apply immediately; main glides
+    // the window to the new size.
     slider.addEventListener('input', function () {
+      val.textContent = (parseInt(slider.value, 10) || 100) + '%';
+    });
+    slider.addEventListener('change', function () {
       const s = Math.max(0.5, Math.min(2, (parseInt(slider.value, 10) || 100) / 100));
-      val.textContent = Math.round(s * 100) + '%';
-      ipcRenderer.invoke('set-overlay-scale-this', s).catch(function () {});
+      ipcRenderer.invoke('set-overlay-scale-this', s).then(paint).catch(function () {});
     });
     reset.addEventListener('click', function () {
       ipcRenderer.invoke('set-overlay-scale-this', null).then(refresh).catch(function () {});
     });
-    const done = document.getElementById('exitSetupBtn');
-    for (const el of [lbl, slider, val, reset]) {
-      if (done && done.parentElement === bar) bar.insertBefore(el, done);
-      else bar.appendChild(el);
-    }
+    // Own full-width row (order:99 sorts it after Done without touching DOM
+    // order) — inline the four controls and narrow overlays wrap the setup
+    // bar into a jumble of half-rows (Hitya 2026-08-19, setup-ALL screenshot).
+    // Row 1 stays "🛠 Setup · opacity · Done"; row 2 is "size · slider · % · ↺".
+    const row = document.createElement('span');
+    row.style.cssText = 'display:flex;align-items:center;gap:8px;flex-basis:100%;min-width:0;order:99';
+    for (const el of [lbl, slider, val, reset]) row.appendChild(el);
+    bar.appendChild(row);
     // Re-read on every setup-mode entry so the label tracks global changes
     // made from the dashboard while this overlay sat untouched.
     ipcRenderer.on('setup-mode', function (_e, p) { if (p && p.active) refresh(); });

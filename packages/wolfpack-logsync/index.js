@@ -15076,6 +15076,8 @@ function renderOverlays(s) {
     + '<input id="wpAllScale" type="range" min="50" max="200" step="5" value="100" style="flex:1;min-width:120px;cursor:pointer" />'
     + '<span id="wpAllScaleVal" style="font-variant-numeric:tabular-nums">100%</span>'
     + '<span class="dim" style="font-size:11px">50%&ndash;200% for high-DPI screens &mdash; single overlays can override with the size slider in their setup bar</span>'
+    + '<span style="flex-basis:100%"></span>'
+    + '<label style="display:flex;align-items:center;gap:6px;font-size:11px;cursor:pointer;color:#c9d1d9"><input id="wpScaleLive" type="checkbox" style="cursor:pointer" /> Smooth slider &mdash; overlays follow the drag live (off: they glide to the new size when you let go)</label>'
     + '</div>';
   // How to move them. Convention is consistent across every overlay so users
   // build muscle memory: ✥ in the TOP-RIGHT corner = drag handle (hover to
@@ -15215,22 +15217,37 @@ function wpWireHideHotkey() {
   }
   // Global overlay-size slider — seed from the stored value on first wire of
   // each rendered element (a section repaint makes a fresh element, so the
-  // seed re-runs then and never mid-drag).
+  // seed re-runs then and never mid-drag). Applies on RELEASE by default —
+  // main glides zoom + window bounds to the new size; the "Smooth slider"
+  // checkbox opts into live-follow while dragging (rapid sets apply direct,
+  // no glide — the drag is the animation).
   var asc = document.getElementById('wpAllScale');
   var ascv = document.getElementById('wpAllScaleVal');
+  var ascLive = document.getElementById('wpScaleLive');
   if (asc && window.mimic && window.mimic.setOverlayScale) {
-    if (window.mimic.getOverlayScale && !asc.__wpInit) {
+    var _ascApply = function(){
+      var pct = parseInt(asc.value || '100', 10) || 100;
+      try { window.mimic.setOverlayScale(pct / 100); } catch (e) {}
+    };
+    if (!asc.__wpInit) {
       asc.__wpInit = true;
-      window.mimic.getOverlayScale().then(function(sc){
+      if (window.mimic.getOverlayScale) window.mimic.getOverlayScale().then(function(sc){
         var pct = Math.round(((typeof sc === 'number' && sc > 0) ? sc : 1) * 100);
         asc.value = String(pct);
         if (ascv) ascv.textContent = pct + '%';
+      }).catch(function(){});
+      if (ascLive && window.mimic.getConfig) window.mimic.getConfig().then(function(cfg){
+        ascLive.checked = !!(cfg && cfg.overlayScaleLive);
       }).catch(function(){});
     }
     _bindOnce(asc, 'input', function(){
       var pct = parseInt(asc.value || '100', 10) || 100;
       if (ascv) ascv.textContent = pct + '%';
-      try { window.mimic.setOverlayScale(pct / 100); } catch (e) {}
+      if (ascLive && ascLive.checked) _ascApply();
+    });
+    _bindOnce(asc, 'change', _ascApply);
+    if (ascLive && window.mimic.saveConfig) _bindOnce(ascLive, 'change', function(){
+      try { window.mimic.saveConfig({ overlayScaleLive: !!ascLive.checked }); } catch (e) {}
     });
   }
   _wpWireHotkeyRow('wpHideHotkey', 'hideAllHotkey', 'hideAllHotkeyEnabled', 'CommandOrControl+Shift+H');

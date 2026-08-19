@@ -609,11 +609,16 @@
     _renderUiStudio();
   }
 
-  // Overlay scale — applies live on drag (every open overlay rescales as the
-  // slider moves) and persists in main's config, independent of Save.
-  document.getElementById('overlayScale').addEventListener('input', async (e) => {
+  // Overlay scale — label follows the drag; the scale applies on RELEASE
+  // ('change'), and main glides every overlay's zoom + window bounds to the
+  // new size. Persists in main's config, independent of Save. (Applying per
+  // input tick re-zoomed every overlay dozens of times per drag — janky.)
+  document.getElementById('overlayScale').addEventListener('input', (e) => {
     const pct = Math.max(50, Math.min(200, parseInt(e.target.value, 10) || 100));
     document.getElementById('overlayScaleVal').textContent = pct + '%';
+  });
+  document.getElementById('overlayScale').addEventListener('change', async (e) => {
+    const pct = Math.max(50, Math.min(200, parseInt(e.target.value, 10) || 100));
     try { await window.mimic.setOverlayScale(pct / 100); } catch {}
   });
 
