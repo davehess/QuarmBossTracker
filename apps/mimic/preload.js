@@ -430,6 +430,9 @@ contextBridge.exposeInMainWorld('mimic', {
   // ✥ move icon. Doesn't flip the global setupMode.
   setSetupModeThis: (on)          => ipcRenderer.invoke('set-setup-mode-this', on === undefined ? true : !!on),
   setOverlayOpacity:(key, value) => ipcRenderer.invoke('set-overlay-opacity', key, value),
+  // Global overlay scale (50%–200%) — Fittir's-5K-monitor knob in Settings.
+  setOverlayScale:  (value)       => ipcRenderer.invoke('set-overlay-scale', value),
+  getOverlayScale:  ()            => ipcRenderer.invoke('get-overlay-scale'),
   // Background-alpha push from main → overlay renderer. The slider value drives
   // a CSS variable (--bg-alpha) on each overlay so "100%" means an OPAQUE card
   // surface (EQ hidden) rather than a dimmed window (text + bg fade together).

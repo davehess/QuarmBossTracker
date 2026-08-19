@@ -3069,9 +3069,30 @@ function applyOverlayOpacity(win, key) {
   const val = (typeof o === 'number' && o >= 0.15 && o <= 1.0) ? o : 1.0;
   try { win.setOpacity(1.0); } catch {}
   try { win.webContents.send('bg-alpha', val); } catch {}
+  // Scale rides the same lifecycle (every window's ready-to-show + every
+  // change broadcast), so ONE hook covers all overlays incl. future ones.
+  applyOverlayScale(win);
 }
 function applyAllOverlayOpacities() {
   for (const [key, win] of _overlayEntries()) applyOverlayOpacity(win, key);
+}
+
+// ── Overlay scale (Fittir's 5K monitor — Hitya 2026-08-18) ───────────────────
+// One GLOBAL zoom for every overlay window, 50%–200%. zoomFactor scales all
+// CSS px content, so no per-overlay HTML changes; window BOUNDS stay the
+// user's own (scale up, then drag the corner or use the right-click resize
+// presets — both keep working). cfg.overlayScale, default 1.0.
+function overlayScale() {
+  const cfg = loadConfig();
+  const s = Number(cfg.overlayScale);
+  return (Number.isFinite(s) && s >= 0.5 && s <= 2.0) ? s : 1.0;
+}
+function applyOverlayScale(win) {
+  if (!win || win.isDestroyed()) return;
+  try { win.webContents.setZoomFactor(overlayScale()); } catch {}
+}
+function applyAllOverlayScales() {
+  for (const [, win] of _overlayEntries()) applyOverlayScale(win);
 }
 
 // ── Per-overlay solid backdrop (Uilnayar 2026-07-10) ─────────────────────────
@@ -7769,6 +7790,18 @@ ipcMain.handle('set-overlay-opacity', (_e, key, value) => {
   for (const [k, win] of _overlayEntries()) if (k === key) applyOverlayOpacity(win, k);
   return true;
 });
+// Global overlay scale (Settings slider, 50%–200%). Applies live to every
+// open overlay; new windows pick it up on ready-to-show via
+// applyOverlayOpacity's shared lifecycle hook.
+ipcMain.handle('set-overlay-scale', (_e, value) => {
+  const s = Math.max(0.5, Math.min(2.0, Number(value) || 1.0));
+  const cfg = loadConfig();
+  cfg.overlayScale = s;
+  saveConfig(cfg);
+  applyAllOverlayScales();
+  return s;
+});
+ipcMain.handle('get-overlay-scale', () => overlayScale());
 // Open an external URL in the OS default browser. Allowlist so a compromised
 // renderer can't open arbitrary links: wolfpack.quest, the GitHub repo, plus
 // the PoP raid overlay's sources — EQProgression guide pages/diagrams and the
