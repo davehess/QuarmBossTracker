@@ -3071,28 +3071,40 @@ function applyOverlayOpacity(win, key) {
   try { win.webContents.send('bg-alpha', val); } catch {}
   // Scale rides the same lifecycle (every window's ready-to-show + every
   // change broadcast), so ONE hook covers all overlays incl. future ones.
-  applyOverlayScale(win);
+  applyOverlayScale(win, key);
 }
 function applyAllOverlayOpacities() {
   for (const [key, win] of _overlayEntries()) applyOverlayOpacity(win, key);
 }
 
 // ── Overlay scale (Fittir's 5K monitor — Hitya 2026-08-18) ───────────────────
-// One GLOBAL zoom for every overlay window, 50%–200%. zoomFactor scales all
-// CSS px content, so no per-overlay HTML changes; window BOUNDS stay the
-// user's own (scale up, then drag the corner or use the right-click resize
-// presets — both keep working). cfg.overlayScale, default 1.0.
-function overlayScale() {
-  const cfg = loadConfig();
-  const s = Number(cfg.overlayScale);
-  return (Number.isFinite(s) && s >= 0.5 && s <= 2.0) ? s : 1.0;
+// zoomFactor scales all CSS px content, so no per-overlay HTML changes; window
+// BOUNDS stay the user's own (scale up, then drag the corner or use the
+// right-click resize presets — both keep working). Two layers (Hitya
+// 2026-08-19: "a slider on the overlays page and one on each individual one"):
+//   cfg.overlayScale         — global default, 0.5–2.0 (dashboard Overlays
+//                              tab + Settings window);
+//   cfg.overlayScaleByKey[k] — per-overlay override from that overlay's own
+//                              setup bar; absent → falls back to the global.
+function _validScale(v) {
+  const s = Number(v);
+  return (Number.isFinite(s) && s >= 0.5 && s <= 2.0) ? s : null;
 }
-function applyOverlayScale(win) {
+function overlayScale() {
+  return _validScale(loadConfig().overlayScale) ?? 1.0;
+}
+function overlayScaleFor(key) {
+  const cfg = loadConfig();
+  return _validScale((cfg.overlayScaleByKey || {})[key])
+      ?? _validScale(cfg.overlayScale)
+      ?? 1.0;
+}
+function applyOverlayScale(win, key) {
   if (!win || win.isDestroyed()) return;
-  try { win.webContents.setZoomFactor(overlayScale()); } catch {}
+  try { win.webContents.setZoomFactor(key ? overlayScaleFor(key) : overlayScale()); } catch {}
 }
 function applyAllOverlayScales() {
-  for (const [, win] of _overlayEntries()) applyOverlayScale(win);
+  for (const [key, win] of _overlayEntries()) applyOverlayScale(win, key);
 }
 
 // ── Per-overlay solid backdrop (Uilnayar 2026-07-10) ─────────────────────────
@@ -5680,6 +5692,9 @@ function currentStatus() {
     showWho: !!cfg.showWho,
     showMelody: !!cfg.showMelody,
     melodyBardOnly: !!cfg.melodyBardOnly,
+    // AE-song damage chips on the melody overlay (per-hit + kite total).
+    // Default ON — only an explicit false hides them.
+    melodyDmgTotals: cfg.melodyDmgTotals !== false,
     showZeal: !!cfg.showZeal,
     showThreat: !!cfg.showThreat,
     showChChain: !!cfg.showChChain,
@@ -5904,6 +5919,10 @@ function buildTrayMenu() {
       } },
     { label: '  ↳ Only show on bard characters', type: 'checkbox', checked: s.melodyBardOnly, enabled: !s.quietMode && s.showMelody, click: (mi) => {
         const cfg = loadConfig(); cfg.melodyBardOnly = mi.checked; saveConfig(cfg);
+        pushStatus();
+      } },
+    { label: '  ↳ Show AE song damage (per hit + kite total)', type: 'checkbox', checked: s.melodyDmgTotals, enabled: !s.quietMode && s.showMelody, click: (mi) => {
+        const cfg = loadConfig(); cfg.melodyDmgTotals = mi.checked; saveConfig(cfg);
         pushStatus();
       } },
     { label: 'Zeal health (diagnostic)', type: 'checkbox', checked: s.showZeal, enabled: !s.quietMode && !_dockedNow.includes('zeal'), click: (mi) => {
@@ -6571,8 +6590,15 @@ ipcMain.handle('overlay-auto-height', (e, h) => {
   try {
     const win = BrowserWindow.fromWebContents(e.sender);
     if (!win || win.isDestroyed()) return false;
-    const wanted = Math.max(50, Math.round(+h || 0));
+    let wanted = Math.max(50, Math.round(+h || 0));
     if (!wanted) return false;
+    // h is measured in CSS px inside the page; with an overlay scale
+    // (zoomFactor) the PAINTED height is h × zoom. Size the window in the
+    // painted unit or every auto-height overlay clips at scale > 100%.
+    try {
+      const z = win.webContents.getZoomFactor() || 1;
+      if (z !== 1) wanted = Math.round(wanted * z);
+    } catch {}
     const bounds = win.getBounds();
     const disp   = screen.getDisplayMatching(bounds);
     const maxH   = Math.max(80, disp.workArea.height - 20);
@@ -6660,7 +6686,14 @@ ipcMain.handle('overlay-ensure-min-height', (e, h) => {
   try {
     const win = BrowserWindow.fromWebContents(e.sender);
     if (!win || win.isDestroyed()) return false;
-    const wanted = Math.max(50, Math.round(+h || 0));
+    let wanted = Math.max(50, Math.round(+h || 0));
+    // Same CSS-px → painted-px conversion as overlay-auto-height above: the
+    // chrome menu is rendered inside the zoomed page, so its measured height
+    // must be multiplied by the overlay scale before sizing the window.
+    try {
+      const z = win.webContents.getZoomFactor() || 1;
+      if (z !== 1) wanted = Math.round(wanted * z);
+    } catch {}
     if (!wanted) return false;
     const b = win.getBounds();
     if (b.height >= wanted) return true;
@@ -7790,9 +7823,10 @@ ipcMain.handle('set-overlay-opacity', (_e, key, value) => {
   for (const [k, win] of _overlayEntries()) if (k === key) applyOverlayOpacity(win, k);
   return true;
 });
-// Global overlay scale (Settings slider, 50%–200%). Applies live to every
-// open overlay; new windows pick it up on ready-to-show via
-// applyOverlayOpacity's shared lifecycle hook.
+// Global overlay scale (dashboard Overlays tab + Settings slider, 50%–200%).
+// Applies live to every open overlay; new windows pick it up on ready-to-show
+// via applyOverlayOpacity's shared lifecycle hook. Per-overlay overrides win
+// over this — applyAllOverlayScales re-resolves per key.
 ipcMain.handle('set-overlay-scale', (_e, value) => {
   const s = Math.max(0.5, Math.min(2.0, Number(value) || 1.0));
   const cfg = loadConfig();
@@ -7802,6 +7836,37 @@ ipcMain.handle('set-overlay-scale', (_e, value) => {
   return s;
 });
 ipcMain.handle('get-overlay-scale', () => overlayScale());
+// Per-overlay scale override — the "size" slider each overlay carries in its
+// own setup bar (injected by preload so every overlay gets it for free). The
+// key is resolved from the SENDER window, so overlay HTML never needs to know
+// its own name. null/0/non-number clears the override back to the global.
+ipcMain.handle('set-overlay-scale-this', (e, value) => {
+  try {
+    const win = BrowserWindow.fromWebContents(e.sender);
+    if (!win || win.isDestroyed()) return null;
+    const key = _boundsKeyForWindow(win).replace(/Bounds$/, '');
+    const cfg = loadConfig();
+    cfg.overlayScaleByKey = cfg.overlayScaleByKey || {};
+    const s = _validScale(value);
+    if (s == null) delete cfg.overlayScaleByKey[key];
+    else cfg.overlayScaleByKey[key] = s;
+    saveConfig(cfg);
+    applyOverlayScale(win, key);
+    return overlayScaleFor(key);
+  } catch { return null; }
+});
+ipcMain.handle('get-overlay-scale-this', (e) => {
+  try {
+    const win = BrowserWindow.fromWebContents(e.sender);
+    if (!win || win.isDestroyed()) return null;
+    const key = _boundsKeyForWindow(win).replace(/Bounds$/, '');
+    return {
+      global: overlayScale(),
+      own: _validScale((loadConfig().overlayScaleByKey || {})[key]),
+      effective: overlayScaleFor(key),
+    };
+  } catch { return null; }
+});
 // Open an external URL in the OS default browser. Allowlist so a compromised
 // renderer can't open arbitrary links: wolfpack.quest, the GitHub repo, plus
 // the PoP raid overlay's sources — EQProgression guide pages/diagrams and the

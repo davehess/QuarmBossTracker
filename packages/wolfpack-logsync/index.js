@@ -1897,7 +1897,13 @@ function _findSongBuff(songName, zealBuffs) {
 // landing text the first match wins (never seen in a real twist). Damage
 // lines carry the song name themselves so they need no suffix table.
 const SONG_AOE_CAP      = 12;      // Quarm AE target cap — 12 hit = full swarm
-const SONG_AOE_BURST_MS = 2500;    // landing rows within 2.5s = one pulse
+// Pulse boundary, measured in LOG time (1s stamps): rows in the same/adjacent
+// second are one pulse; the next pulse of a 3s song is ≥2s of stamp away.
+// Wall-clock arrival must NOT be the pulse clock — the EQ client flushes the
+// log in multi-second batches under swarm-kite load, so several pulses arrive
+// in one read with ~0ms between them and merge into one badge (Fittir's
+// ⚔123/12 / ⚔152/12, 2026-08-19).
+const SONG_AOE_PULSE_GAP_MS = 1500;
 const SONG_AOE_STALE_MS = 30_000;  // badge drops when the song stops pulsing
 
 // Punctuation-insensitive song key: "Selo`s" / "Selo's" / curly-apostrophe
@@ -1944,7 +1950,9 @@ function noteSongAoeLine(line, character) {
   // Chat lines can quote anything ("... winces.") — the ", '" of a chat
   // message never appears in landing/damage lines, so skip those outright.
   if (body.indexOf(", '") !== -1) return;
-  const now = Date.now();
+  // Burst boundaries use the LINE's own timestamp (see SONG_AOE_PULSE_GAP_MS).
+  const _ts = parseEqTimestamp(line);
+  const lineMs = _ts ? _ts.getTime() : Date.now();
   state.aoeBySong = state.aoeBySong || {};
 
   // Damage: "X has taken N (points of) damage from your <song>."
@@ -1955,13 +1963,22 @@ function noteSongAoeLine(line, character) {
     if (!state._aoeSongSlugs.has(slug)) return;
     const amount = parseInt(dm[2], 10) || 0;
     const b = state.aoeBySong[slug] = state.aoeBySong[slug] || { song: dm[3].trim() };
-    if (!b.dmg || (now - b.dmg.at) > SONG_AOE_BURST_MS) {
-      b.dmg = { n: 1, total: amount, min: amount, max: amount, at: now };
+    // Kite total (Hitya 2026-08-19): damage accumulates per song until the
+    // song goes quiet for SONG_AOE_STALE_MS (swarm dead / kite over) — then
+    // the next damage line starts a fresh kite.
+    if (!b.kite || (lineMs - b.kite.lastAt) > SONG_AOE_STALE_MS) {
+      b.kite = { total: 0, pulses: 0, startedAt: lineMs, lastAt: lineMs };
+    }
+    if (!b.dmg || (lineMs - b.dmg.at) > SONG_AOE_PULSE_GAP_MS) {
+      b.dmg = { n: 1, total: amount, min: amount, max: amount, at: lineMs };
+      b.kite.pulses++;
     } else {
-      b.dmg.n++; b.dmg.total += amount; b.dmg.at = now;
+      b.dmg.n++; b.dmg.total += amount; b.dmg.at = lineMs;
       if (amount < b.dmg.min) b.dmg.min = amount;
       if (amount > b.dmg.max) b.dmg.max = amount;
     }
+    b.kite.total += amount;
+    b.kite.lastAt = lineMs;
     return;
   }
 
@@ -1979,10 +1996,10 @@ function noteSongAoeLine(line, character) {
     const name = body.slice(0, s.suffix[0] === "'" ? cut : cut - 1).trim();
     if (!name || name === 'You' || name === 'Your') continue;
     const b = state.aoeBySong[s.slug] = state.aoeBySong[s.slug] || { song: s.song };
-    if (!b.hitAt || (now - b.hitAt) > SONG_AOE_BURST_MS) {
-      b.hits = 1; b.hitAt = now;
+    if (!b.hitAt || (lineMs - b.hitAt) > SONG_AOE_PULSE_GAP_MS) {
+      b.hits = 1; b.hitAt = lineMs;
     } else {
-      b.hits++; b.hitAt = now;
+      b.hits++; b.hitAt = lineMs;
     }
     return;
   }
@@ -11826,6 +11843,14 @@ function _serializeForDashboard() {
               if (aoe.dmg && aoe.dmg.n > 0 && (now - aoe.dmg.at) <= SONG_AOE_STALE_MS) {
                 out.aoe_dmg = { n: aoe.dmg.n, total: aoe.dmg.total, min: aoe.dmg.min, max: aoe.dmg.max };
               }
+              // Running total for the CURRENT kite (resets after 30s quiet).
+              if (aoe.kite && aoe.kite.total > 0 && (now - aoe.kite.lastAt) <= SONG_AOE_STALE_MS) {
+                out.aoe_kite = {
+                  total:  aoe.kite.total,
+                  pulses: aoe.kite.pulses,
+                  secs:   Math.max(0, Math.round((aoe.kite.lastAt - aoe.kite.startedAt) / 1000)),
+                };
+              }
             }
             return out;
           });
@@ -15044,6 +15069,14 @@ function renderOverlays(s) {
     + '<span id="wpAllOpacityVal" style="font-variant-numeric:tabular-nums">100%</span>'
     + '<span class="dim" style="font-size:11px">sets every overlay at once — fine-tune single ones in their setup bar</span>'
     + '</div>';
+  // 🔍 Overlay scale (Fittir's 5K monitor). Global slider here; each overlay
+  // also carries its own "size" slider in its setup bar that overrides this.
+  h += '<div style="font-size:12px;padding:8px 10px;background:#161b22;border:1px solid var(--border);border-radius:6px;margin-bottom:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">'
+    + '<b>🔍 Size — all overlays</b>'
+    + '<input id="wpAllScale" type="range" min="50" max="200" step="5" value="100" style="flex:1;min-width:120px;cursor:pointer" />'
+    + '<span id="wpAllScaleVal" style="font-variant-numeric:tabular-nums">100%</span>'
+    + '<span class="dim" style="font-size:11px">50%&ndash;200% for high-DPI screens &mdash; single overlays can override with the size slider in their setup bar</span>'
+    + '</div>';
   // How to move them. Convention is consistent across every overlay so users
   // build muscle memory: ✥ in the TOP-RIGHT corner = drag handle (hover to
   // grab + drag — works while locked); ✕ in the TOP-LEFT = hide that overlay.
@@ -15178,6 +15211,26 @@ function wpWireHideHotkey() {
       var v = parseFloat(ao.value || '1');
       if (aov) aov.textContent = Math.round(v * 100) + '%';
       try { window.mimic.setAllOpacity(v); } catch (e) {}
+    });
+  }
+  // Global overlay-size slider — seed from the stored value on first wire of
+  // each rendered element (a section repaint makes a fresh element, so the
+  // seed re-runs then and never mid-drag).
+  var asc = document.getElementById('wpAllScale');
+  var ascv = document.getElementById('wpAllScaleVal');
+  if (asc && window.mimic && window.mimic.setOverlayScale) {
+    if (window.mimic.getOverlayScale && !asc.__wpInit) {
+      asc.__wpInit = true;
+      window.mimic.getOverlayScale().then(function(sc){
+        var pct = Math.round(((typeof sc === 'number' && sc > 0) ? sc : 1) * 100);
+        asc.value = String(pct);
+        if (ascv) ascv.textContent = pct + '%';
+      }).catch(function(){});
+    }
+    _bindOnce(asc, 'input', function(){
+      var pct = parseInt(asc.value || '100', 10) || 100;
+      if (ascv) ascv.textContent = pct + '%';
+      try { window.mimic.setOverlayScale(pct / 100); } catch (e) {}
     });
   }
   _wpWireHotkeyRow('wpHideHotkey', 'hideAllHotkey', 'hideAllHotkeyEnabled', 'CommandOrControl+Shift+H');

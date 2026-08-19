@@ -150,6 +150,57 @@ document.addEventListener('DOMContentLoaded', function () {
   } catch (e) {}
 });
 
+// ── Per-overlay size slider (Hitya 2026-08-19: "a slider on the overlays
+// page and one on each individual one") ─────────────────────────────────────
+// Injected into every overlay's existing #setupbar (next to its opacity
+// slider) so each overlay gets a "size" control with zero per-HTML changes.
+// Drives the per-key scale override ('set-overlay-scale-this' — main resolves
+// the key from the sender window); ↺ clears back to the global slider's
+// value, and the % label shows "(all)" while the overlay is following the
+// global. Skipped in dock panes: the dock is ONE window, so a per-pane
+// slider would scale every pane at once — the dock follows the global scale.
+document.addEventListener('DOMContentLoaded', function () {
+  try {
+    if (WP_IS_DOCKED || !_wpOverlayDoc()) return;
+    const bar = document.getElementById('setupbar');
+    if (!bar || document.getElementById('wpScaleThis')) return;
+    const lbl = document.createElement('span'); lbl.textContent = 'size';
+    const slider = document.createElement('input');
+    slider.type = 'range'; slider.min = '50'; slider.max = '200'; slider.step = '5';
+    slider.id = 'wpScaleThis';
+    const val = document.createElement('span'); val.id = 'wpScaleThisVal';
+    val.style.minWidth = '52px'; val.style.textAlign = 'right';
+    const reset = document.createElement('button');
+    reset.id = 'wpScaleThisReset'; reset.textContent = '↺';
+    reset.title = "Follow the global overlay size (clears this overlay's own setting)";
+    function paint(st) {
+      const eff = (st && st.effective) || 1;
+      slider.value = String(Math.round(eff * 100));
+      val.textContent = Math.round(eff * 100) + '%' + (st && st.own != null ? '' : ' (all)');
+    }
+    function refresh() {
+      ipcRenderer.invoke('get-overlay-scale-this').then(paint).catch(function () {});
+    }
+    slider.addEventListener('input', function () {
+      const s = Math.max(0.5, Math.min(2, (parseInt(slider.value, 10) || 100) / 100));
+      val.textContent = Math.round(s * 100) + '%';
+      ipcRenderer.invoke('set-overlay-scale-this', s).catch(function () {});
+    });
+    reset.addEventListener('click', function () {
+      ipcRenderer.invoke('set-overlay-scale-this', null).then(refresh).catch(function () {});
+    });
+    const done = document.getElementById('exitSetupBtn');
+    for (const el of [lbl, slider, val, reset]) {
+      if (done && done.parentElement === bar) bar.insertBefore(el, done);
+      else bar.appendChild(el);
+    }
+    // Re-read on every setup-mode entry so the label tracks global changes
+    // made from the dashboard while this overlay sat untouched.
+    ipcRenderer.on('setup-mode', function (_e, p) { if (p && p.active) refresh(); });
+    refresh();
+  } catch (e) {}
+});
+
 // Build the right-click menu: setup entries, visibility/layout actions, and
 // the 5 width presets. Identical structure + styling on every overlay so the
 // muscle memory carries. `state` = wp-overlay-menu-state (toggle labels).
