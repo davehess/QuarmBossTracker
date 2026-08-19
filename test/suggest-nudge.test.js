@@ -86,3 +86,38 @@ describe('the picker respects platform rules', () => {
     for (const o of options) expect(ids.has(o.value)).toBe(true);
   });
 });
+
+describe('group events (Seru Minis — Hitya 2026-08-19, from Hawkner\'s thread)', () => {
+  const { buildNudgeCard, GROUP_EVENTS } = require('../utils/suggestNudge.js');
+
+  it('the Seru Minis event leads the buttons on Hawkner-style text, ahead of Lord Inquisitor Seru', () => {
+    const { matchedBosses, components } = buildNudgeCard(
+      "Seru Mini's for Hawkner\nLooking for a day that works for a couple groups to take down house leaders.",
+      bosses,
+    );
+    expect(matchedBosses[0].id).toBe('evt_seru_minis');
+    const comps = flat(components);
+    expect(comps[0].custom_id).toBe('sugnudge_boss:evt_seru_minis');
+  });
+
+  it('matches the phrasings members actually type; never fires on the raid boss alone', () => {
+    const ev = GROUP_EVENTS.find(e => e.id === 'evt_seru_minis');
+    for (const s of ['seru minis', "Seru Mini's", 'minis of sanctus seru', 'the house leaders']) {
+      expect(ev.match.test(s), s).toBe(true);
+    }
+    expect(ev.match.test('Lord Inquisitor Seru raid tonight')).toBe(false);
+  });
+
+  it('rides the Luclin picker list despite the 25-option cap (events lead the list)', () => {
+    const { options } = bossOptionsForExpansion(bosses, 'Luclin');
+    expect(options[0].value).toBe('evt_seru_minis');
+    expect(options).toHaveLength(25);
+  });
+
+  it('events never live in bosses.json — the board must not learn them', () => {
+    for (const e of GROUP_EVENTS) {
+      expect(e.id.startsWith('evt_')).toBe(true);
+      expect(bosses.some(b => b.id === e.id)).toBe(false);
+    }
+  });
+});

@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.1.56': [
+    '**The suggestion box knows the Seru Minis.** Post about the Sanctus Seru house leaders and the tap-through card offers "Seru Minis" as its own event (instead of guessing Lord Inquisitor Seru) — it also sits at the top of the Luclin list in the Who/Where picker. They stay off the boss board on purpose; the group hunt is the event.',
+  ],
   '3.1.55': [
     '**The /who overlay says "Necromancer", not "Warlock".** High-level characters show their level title in /who (a 60 necro reads "Warlock", a 60 beastlord "Savage Lord"), and the anon lookup was passing those titles straight through. They now fold back to the real class everywhere the lookup feeds.',
   ],
