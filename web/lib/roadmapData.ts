@@ -37,6 +37,18 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'web-1-1-66',
+    title: '\u{1F4C8} Adoption',
+    version: 'Web 1.1.66',
+    date: '2026-08-18',
+    headline: 'Officers get a product-health page: who contributes data, who’s new, who stayed, and which raiders to talk to next.',
+    features: [
+      { name: '\u{1F4C8} Contributors, counted honestly', blurb: 'Weekly active contributors, new activations (split between brand-new raiders and veterans converting), and retention — all counted in people, not characters, since one person plays many.' },
+      { name: '\u{1F4CB} The work list', blurb: 'The page names who raided in the last month without ever contributing data, who went quiet, and which attendees can’t be counted until their characters get linked — turning the numbers into next steps.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'bot-3-1-54',
     title: '\u{1F501} Retrigger',
     version: 'Bot 3.1.54',

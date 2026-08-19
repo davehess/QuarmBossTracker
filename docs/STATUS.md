@@ -937,6 +937,24 @@ next touch one rather than assuming a missing row means a missing doc.
   raid-watch content — all editable, `updated_by='pre-raid seed'`. Next
   increment (in `DESIGN-fight-cards.md`): comp/kit live joins (#93/#82),
   the Discord pre-pull projection (bot, post-freeze), drill result on-page.
+- **/admin/adoption — the PM product-health page (web 1.1.66, 2026-08-18).**
+  Hitya: *"take your framing of the adoption bit as the PM and update the
+  adoption page."* Players-not-characters throughout; three funnels kept
+  separate (conversion / new-raider adoption / raid-night coverage). Tiles:
+  WAU, 4-week retention, all-time activated, raided-never-uploaded. Sections:
+  12-week WAU bars (current week flagged partial), activations by month split
+  new-raider (joined ≤60d before first upload) vs converted-vet, raid-night
+  corroboration (raid-window fights ONLY — off-night solo grinding measured
+  at 183 Monday "fights" of 1.1 uploaders and excluded by design), fleet
+  version in players, and THE WORK LIST: raided-30d-never-uploaded (the
+  conversion targets), went-quiet churn, unlinked attendees → /admin/links.
+  Blind-spots card states what is NOT measurable yet (sessions/hours, install
+  funnel, feature usage) rather than hiding it. Data: two security_invoker
+  views (`adoption_uploader_days`, `encounter_upload_counts` — migration
+  20260819010500, applied + committed), read via selectAll; math in
+  `web/lib/adoption.ts` (10 tests incl. the ET raid-night keying and the
+  partial-week flag). Follow-ups queued in the page itself: agent_sessions
+  roll-up, first-boot ping (privacy call: Hitya), feature telemetry.
 - **Task #47 SHIPPED — self-healing encounter persistence (bot 3.1.52,
   2026-08-17).** The Final Arbiter P1's full root cause was TWO-layered: (1)
   first-time content had no `bosses_local` row (the allowlist refusal), and
