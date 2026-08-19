@@ -191,7 +191,9 @@ document.addEventListener('DOMContentLoaded', function () {
     });
     slider.addEventListener('change', function () {
       const s = Math.max(0.5, Math.min(2, (parseInt(slider.value, 10) || 100) / 100));
-      ipcRenderer.invoke('set-overlay-scale-this', s).then(paint).catch(function () {});
+      // refresh, not paint — the set handler returns a bare number, and
+      // paint() expects the {effective, own} state object.
+      ipcRenderer.invoke('set-overlay-scale-this', s).then(refresh).catch(function () {});
     });
     reset.addEventListener('click', function () {
       ipcRenderer.invoke('set-overlay-scale-this', null).then(refresh).catch(function () {});
