@@ -102,6 +102,39 @@ function timeStepComponents(bossId) {
   return [r1, r2];
 }
 
+// The whole nudge card from a blob of thread text — shared by the ThreadCreate
+// listener (new forum posts) and /retrigger (re-running it over an existing
+// thread, e.g. one that got the pre-button card). Detection identical to the
+// original listener: parseSuggestion over title + messages.
+function buildNudgeCard(combinedText, bosses) {
+  const { parseSuggestion } = require('./suggestParser');
+  const { matchedBosses, matchedZones, time, dateLabel } = parseSuggestion(combinedText, bosses);
+
+  const detectedLines = [];
+  if (matchedBosses.length) {
+    const names = matchedBosses.slice(0, 5).map(b => `${b.emoji || '⚔️'} **${b.name}** (${b.zone})`);
+    if (matchedBosses.length > 5) names.push(`…and ${matchedBosses.length - 5} more`);
+    detectedLines.push(`🎯 **Boss/Zone:** ${names.join(', ')}`);
+  } else if (matchedZones.length) {
+    detectedLines.push(`📍 **Zone:** ${matchedZones.join(', ')}`);
+  }
+  if (time || dateLabel) {
+    detectedLines.push(`🕐 **When:** ${[dateLabel, time].filter(Boolean).join(' ')}`);
+  }
+
+  const embed = new EmbedBuilder()
+    .setColor(0x5865F2)
+    .setTitle('📣 Want officers to host this?')
+    .setDescription(
+      detectedLines.length
+        ? `I think I detected:\n${detectedLines.join('\n')}\n\n**Tap the boss below, pick a time — done.** Officers get the formal request instantly.`
+        : `**Tap the button below, pick the boss and a time — done.** Officers get the formal request instantly. (Or use \`/suggest\` anywhere.)`
+    )
+    .setFooter({ text: 'Officers can click \'I\'ll host it\' to claim your request' });
+
+  return { embeds: [embed], components: buildNudgeComponents(matchedBosses), matchedBosses };
+}
+
 // ── Interaction handlers ─────────────────────────────────────────────────────
 
 function _gate(interaction) {
@@ -238,7 +271,7 @@ async function handleNudgeModalSubmit(interaction) {
 }
 
 module.exports = {
-  buildNudgeComponents, timeStepComponents, timeChoiceLabel,
+  buildNudgeComponents, buildNudgeCard, timeStepComponents, timeChoiceLabel,
   expansionOptions, bossOptionsForExpansion, TIME_CHOICES,
   handleNudgeBossPick, handleNudgeOther, handleNudgeExpansionSelect,
   handleNudgeBossSelect, handleNudgeTime, handleNudgeExactOpen,

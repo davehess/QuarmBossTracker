@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.1.54': [
+    '**`/retrigger` re-runs the bot\'s reply where it should have had one.** Run it in a suggestion-box thread (or point it at one with a link) and the bot re-reads the post — plus the recent messages, how far back is up to you with `window: 10m` or `5h` — and posts its tap-through request card fresh. Older threads that got the text-only card get upgraded to buttons in place.',
+  ],
   '3.1.53': [
     '**Asking officers to host something is now two taps.** When you post in the suggestion box, the bot\'s reply carries buttons: tap the boss it spotted in your post (or pick from a list), tap when — "Any time, any night" is right there — and the formal request lands with the officers, linked back to your post. No more typing out the `/suggest` command, though it still works everywhere.',
   ],

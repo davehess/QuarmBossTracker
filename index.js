@@ -2454,42 +2454,16 @@ client.on(Events.ThreadCreate, async (thread, newlyCreated) => {
     starterContent = starter?.content || '';
   } catch {}
 
-  const { parseSuggestion } = require('./utils/suggestParser');
-  const bosses = getBosses();
-  const combined = `${thread.name} ${starterContent}`;
-  const { matchedBosses, matchedZones, time, dateLabel } = parseSuggestion(combined, bosses);
-
-  const { EmbedBuilder: EB } = require('discord.js');
-
-  const detectedLines = [];
-  if (matchedBosses.length) {
-    const names = matchedBosses.slice(0, 5).map(b => `${b.emoji || '⚔️'} **${b.name}** (${b.zone})`);
-    if (matchedBosses.length > 5) names.push(`…and ${matchedBosses.length - 5} more`);
-    detectedLines.push(`🎯 **Boss/Zone:** ${names.join(', ')}`);
-  } else if (matchedZones.length) {
-    detectedLines.push(`📍 **Zone:** ${matchedZones.join(', ')}`);
-  }
-  if (time || dateLabel) {
-    detectedLines.push(`🕐 **When:** ${[dateLabel, time].filter(Boolean).join(' ')}`);
-  }
-
   // Tap-through request flow (Hitya 2026-08-17): the card used to DESCRIBE
   // the /suggest command, which is more effort than members put together —
   // now it IS the flow. Buttons for the detected bosses, a picker fallback,
   // then time buttons; the formal officer request posts on the second tap.
-  const { buildNudgeComponents } = require('./utils/suggestNudge');
-  const embed = new EB()
-    .setColor(0x5865F2)
-    .setTitle('📣 Want officers to host this?')
-    .setDescription(
-      detectedLines.length
-        ? `I think I detected:\n${detectedLines.join('\n')}\n\n**Tap the boss below, pick a time — done.** Officers get the formal request instantly.`
-        : `**Tap the button below, pick the boss and a time — done.** Officers get the formal request instantly. (Or use \`/suggest\` anywhere.)`
-    )
-    .setFooter({ text: 'Officers can click \'I\'ll host it\' to claim your request' });
+  // Card assembly shared with /retrigger (utils/suggestNudge.buildNudgeCard).
+  const { buildNudgeCard } = require('./utils/suggestNudge');
+  const { embeds, components } = buildNudgeCard(`${thread.name} ${starterContent}`, getBosses());
 
   try {
-    await thread.send({ embeds: [embed], components: buildNudgeComponents(matchedBosses) });
+    await thread.send({ embeds, components });
   } catch (err) {
     console.warn('[forum] Could not reply to new forum thread:', err?.message);
   }

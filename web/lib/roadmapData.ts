@@ -37,6 +37,17 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'bot-3-1-54',
+    title: '\u{1F501} Retrigger',
+    version: 'Bot 3.1.54',
+    date: '2026-08-18',
+    headline: 'Ask the bot to take another look: /retrigger re-runs its automatic reply in a thread from what has been said there.',
+    features: [
+      { name: '\u{1F501} /retrigger', blurb: 'In a suggestion-box thread (or pointing at one by link), the bot re-reads the post and recent chat — you choose how far back with "10m" or "5h" — and posts its tap-the-boss request card. Threads that still have the old text-only card get the buttons swapped in right where it sits.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'bot-3-1-53',
     title: '\u{1F446} Two-tap event requests',
     version: 'Bot 3.1.53',
