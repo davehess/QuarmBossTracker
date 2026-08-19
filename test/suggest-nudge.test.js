@@ -121,3 +121,19 @@ describe('group events (Seru Minis — Hitya 2026-08-19, from Hawkner\'s thread)
     }
   });
 });
+
+describe('change-time flow (Hitya 2026-08-19: Hawkner "can\'t change time")', () => {
+  it('change-mode customIds carry the officer message + requester, and drop Different boss', () => {
+    const comps = flat(timeStepComponents('evt_seru_minis', '123456789012345678:987654321098765432'));
+    expect(comps[0].custom_id).toBe('sugnudge_time:evt_seru_minis:any:123456789012345678:987654321098765432');
+    const exact = comps.find(c => c.custom_id.startsWith('sugnudge_exact:'));
+    expect(exact.custom_id).toBe('sugnudge_exact:evt_seru_minis:123456789012345678:987654321098765432');
+    expect(comps.some(c => c.custom_id === 'sugnudge_other')).toBe(false);
+  });
+
+  it('plain mode is unchanged — no trailing context, Different boss still offered', () => {
+    const comps = flat(timeStepComponents('trakanon'));
+    expect(comps[0].custom_id).toBe('sugnudge_time:trakanon:any');
+    expect(comps.some(c => c.custom_id === 'sugnudge_other')).toBe(true);
+  });
+});

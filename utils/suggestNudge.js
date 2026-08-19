@@ -19,7 +19,7 @@ const {
   StringSelectMenuBuilder, ModalBuilder, TextInputBuilder, TextInputStyle,
   MessageFlags,
 } = require('discord.js');
-const { hasAllowedRole, allowedRolesList } = require('./roles');
+const { hasAllowedRole, hasOfficerRole, allowedRolesList } = require('./roles');
 const { isPopLocked } = require('./config');
 
 function _bosses() {
@@ -119,19 +119,27 @@ function buildNudgeComponents(matchedBosses) {
   return [row];
 }
 
-function timeStepComponents(bossId) {
+// `ctx` (optional) = `<officerMsgId>:<requesterId>` — present when this time
+// step is a CHANGE to an already-posted request. It rides the customIds so
+// the same handlers serve both paths, and the submit edits the officer card
+// in place instead of posting a new one. No "Different boss" in change mode —
+// the request already names the target.
+function timeStepComponents(bossId, ctx = '') {
+  const suffix = ctx ? `:${ctx}` : '';
   const r1 = new ActionRowBuilder().addComponents(
     ...TIME_CHOICES.map(c => new ButtonBuilder()
-      .setCustomId(`sugnudge_time:${bossId}:${c.key}`)
+      .setCustomId(`sugnudge_time:${bossId}:${c.key}${suffix}`)
       .setLabel(`${c.emoji} ${c.short}`)
       .setStyle(c.key === 'any' ? ButtonStyle.Primary : ButtonStyle.Secondary)),
   );
   const r2 = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId(`sugnudge_exact:${bossId}`)
+    new ButtonBuilder().setCustomId(`sugnudge_exact:${bossId}${suffix}`)
       .setLabel('✏️ Exact time…').setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId('sugnudge_other')
-      .setLabel('↩ Different boss').setStyle(ButtonStyle.Secondary),
   );
+  if (!ctx) {
+    r2.addComponents(new ButtonBuilder().setCustomId('sugnudge_other')
+      .setLabel('↩ Different boss').setStyle(ButtonStyle.Secondary));
+  }
   return [r1, r2];
 }
 
@@ -247,6 +255,39 @@ async function handleNudgeBossSelect(interaction) {
   await interaction.update({ embeds: [_timeStepEmbed(boss)], components: timeStepComponents(boss.id) });
 }
 
+// The ✅ done card. When we know the posted officer message's id, it carries
+// a 🕐 Change time button (Hitya 2026-08-19: Hawkner submitted "tomorrow 8pm",
+// actually wanted 10:30pm after the alt raid, and the one-shot card left him
+// stuck — "can't change time"). The customId carries boss + officer-message +
+// requester; the ≤92 guard keeps every DERIVED customId (time/exact/modal,
+// which append up to ~8 more chars) under Discord's 100-char cap.
+function _doneCard(boss, timeStr, requesterId, reqMsgId) {
+  const done = new EmbedBuilder()
+    .setColor(0x57F287)
+    .setTitle('✅ Request sent to the officers')
+    .setDescription(`${boss.emoji ? boss.emoji + ' ' : ''}**${boss.name}** — ${boss.zone}\n🕐 ${timeStr}\nRequested by <@${requesterId}> — you'll hear back here when someone claims it.`);
+  const components = [];
+  const retimeId = `sugnudge_retime:${boss.id}:${reqMsgId}:${requesterId}`;
+  if (reqMsgId && retimeId.length <= 92) {
+    components.push(new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId(retimeId)
+        .setLabel('🕐 Change time').setStyle(ButtonStyle.Secondary),
+    ));
+  }
+  return { embeds: [done], components };
+}
+
+// Modal submits can't update the original message through the modal
+// interaction — edit it via the message reference instead.
+async function _renderDone(interaction, payload) {
+  if (interaction.isModalSubmit?.()) {
+    await interaction.deferUpdate().catch(() => {});
+    await interaction.message?.edit(payload).catch(() => {});
+  } else {
+    await interaction.update(payload);
+  }
+}
+
 async function _submitRequest(interaction, boss, timeStr) {
   const { postEventRequest } = require('../commands/suggest');
   // The tap happened inside the member's own forum thread — link the request
@@ -263,35 +304,59 @@ async function _submitRequest(interaction, boss, timeStr) {
   if (!posted) {
     return interaction.reply({ flags: MessageFlags.Ephemeral, content: '❌ Could not post the request (suggestions channel unavailable) — try `/suggest`.' });
   }
-  const done = new EmbedBuilder()
-    .setColor(0x57F287)
-    .setTitle('✅ Request sent to the officers')
-    .setDescription(`${boss.emoji ? boss.emoji + ' ' : ''}**${boss.name}** — ${boss.zone}\n🕐 ${timeStr}\nRequested by <@${interaction.user.id}> — you'll hear back here when someone claims it.`);
-  const payload = { embeds: [done], components: [] };
-  // Modal submits can't update the original message through the modal
-  // interaction — edit it via the message reference instead.
-  if (interaction.isModalSubmit?.()) {
-    await interaction.deferUpdate().catch(() => {});
-    await interaction.message?.edit(payload).catch(() => {});
-  } else {
-    await interaction.update(payload);
+  await _renderDone(interaction, _doneCard(boss, timeStr, interaction.user.id, posted?.id || null));
+}
+
+// Change the time on an ALREADY-POSTED request: edit the officer card's
+// Wanted-time field in place, then re-render the done card (button intact, so
+// it can be changed again). Requester-or-officer only — the button sits in a
+// thread everyone can see.
+async function _applyRetime(interaction, boss, timeStr, msgId, requesterId) {
+  if (interaction.user.id !== requesterId && !hasOfficerRole(interaction.member)) {
+    return interaction.reply({ flags: MessageFlags.Ephemeral, content: '❌ Only the requester (or an officer) can change the time on this request.' });
   }
+  const { updateEventRequestTime } = require('../commands/suggest');
+  const ok = await updateEventRequestTime({ client: interaction.client, messageId: msgId, timeStr });
+  if (!ok) {
+    return interaction.reply({ flags: MessageFlags.Ephemeral, content: '❌ Could not update the posted request (it may have been handled or removed) — post a fresh one with `/suggest`.' });
+  }
+  await _renderDone(interaction, _doneCard(boss, timeStr, requesterId, msgId));
 }
 
 async function handleNudgeTime(interaction) {
   if (!_gate(interaction)) return;
-  const [, bossId, key] = interaction.customId.split(':');
+  const [, bossId, key, msgId, uid] = interaction.customId.split(':');
   const boss = _findBoss(bossId);
   const timeStr = timeChoiceLabel(key);
   if (!boss || !timeStr) return interaction.reply({ flags: MessageFlags.Ephemeral, content: '❌ That option expired — use `/suggest`.' });
+  if (msgId) return _applyRetime(interaction, boss, timeStr, msgId, uid);
   await _submitRequest(interaction, boss, timeStr);
+}
+
+// 🕐 Change time on the done card → re-open the time step in change mode.
+async function handleNudgeRetimeOpen(interaction) {
+  if (!_gate(interaction)) return;
+  const [, bossId, msgId, uid] = interaction.customId.split(':');
+  const boss = _findBoss(bossId);
+  if (!boss || !msgId) return interaction.reply({ flags: MessageFlags.Ephemeral, content: '❌ That option expired — use `/suggest`.' });
+  if (interaction.user.id !== uid && !hasOfficerRole(interaction.member)) {
+    return interaction.reply({ flags: MessageFlags.Ephemeral, content: '❌ Only the requester (or an officer) can change the time on this request.' });
+  }
+  const embed = new EmbedBuilder()
+    .setColor(0x5865F2)
+    .setTitle('📣 New time?')
+    .setDescription(`${boss.emoji ? boss.emoji + ' ' : ''}**${boss.name}** — ${boss.zone}\n\nPick the new time — the officers' request card updates in place.`);
+  await interaction.update({ embeds: [embed], components: timeStepComponents(bossId, `${msgId}:${uid}`) });
 }
 
 async function handleNudgeExactOpen(interaction) {
   if (!_gate(interaction)) return;
-  const bossId = interaction.customId.split(':')[1];
+  const parts = interaction.customId.split(':');
+  const bossId = parts[1];
+  // Change-mode context (officerMsgId:requesterId) rides through the modal id.
+  const ctx = parts.slice(2).join(':');
   const modal = new ModalBuilder()
-    .setCustomId(`sugnudge_modal:${bossId}`)
+    .setCustomId(`sugnudge_modal:${bossId}${ctx ? ':' + ctx : ''}`)
     .setTitle('When do you want to run it?')
     .addComponents(new ActionRowBuilder().addComponents(
       new TextInputBuilder()
@@ -306,10 +371,11 @@ async function handleNudgeExactOpen(interaction) {
 
 async function handleNudgeModalSubmit(interaction) {
   if (!_gate(interaction)) return;
-  const bossId = interaction.customId.split(':')[1];
+  const [, bossId, msgId, uid] = interaction.customId.split(':');
   const boss = _findBoss(bossId);
   const timeStr = (interaction.fields.getTextInputValue('when') || '').trim().slice(0, 80);
   if (!boss || !timeStr) return interaction.reply({ flags: MessageFlags.Ephemeral, content: '❌ That option expired — use `/suggest`.' });
+  if (msgId) return _applyRetime(interaction, boss, timeStr, msgId, uid);
   await _submitRequest(interaction, boss, timeStr);
 }
 
@@ -318,5 +384,5 @@ module.exports = {
   expansionOptions, bossOptionsForExpansion, TIME_CHOICES, GROUP_EVENTS,
   handleNudgeBossPick, handleNudgeOther, handleNudgeExpansionSelect,
   handleNudgeBossSelect, handleNudgeTime, handleNudgeExactOpen,
-  handleNudgeModalSubmit,
+  handleNudgeModalSubmit, handleNudgeRetimeOpen,
 };

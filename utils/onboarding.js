@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.1.58': [
+    '**Sent a request with the wrong time? Change it.** The "Request sent to the officers" card now carries a 🕐 Change time button — pick a new preset or type an exact time, and the request the officers already have updates in place. Only you (or an officer) can change yours.',
+  ],
   '3.1.56': [
     '**The suggestion box knows the Seru Minis.** Post about the Sanctus Seru house leaders and the tap-through card offers "Seru Minis" as its own event (instead of guessing Lord Inquisitor Seru) — it also sits at the top of the Luclin list in the Who/Where picker. They stay off the boss board on purpose; the group hunt is the event.',
   ],
