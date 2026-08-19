@@ -15077,7 +15077,8 @@ function renderOverlays(s) {
     + '<span id="wpAllScaleVal" style="font-variant-numeric:tabular-nums">100%</span>'
     + '<span class="dim" style="font-size:11px">50%&ndash;200% for high-DPI screens &mdash; single overlays can override with the size slider in their setup bar</span>'
     + '<span style="flex-basis:100%"></span>'
-    + '<label style="display:flex;align-items:center;gap:6px;font-size:11px;cursor:pointer;color:#c9d1d9"><input id="wpScaleLive" type="checkbox" style="cursor:pointer" /> Smooth slider &mdash; overlays follow the drag live (off: they glide to the new size when you let go)</label>'
+    + '<label style="display:flex;align-items:center;gap:6px;font-size:11px;cursor:pointer;color:#c9d1d9"><input id="wpScaleGlide" type="checkbox" checked style="cursor:pointer" /> Smooth slider &mdash; overlays glide to their new size when you let go (off: they snap instantly)</label>'
+    + '<label style="display:flex;align-items:center;gap:6px;font-size:11px;cursor:pointer;color:#c9d1d9"><input id="wpScaleDock" type="checkbox" style="cursor:pointer" /> Scale the dock too (off: the dock stays at 100% and keeps its own size)</label>'
     + '</div>';
   // How to move them. Convention is consistent across every overlay so users
   // build muscle memory: ✥ in the TOP-RIGHT corner = drag handle (hover to
@@ -15217,13 +15218,16 @@ function wpWireHideHotkey() {
   }
   // Global overlay-size slider — seed from the stored value on first wire of
   // each rendered element (a section repaint makes a fresh element, so the
-  // seed re-runs then and never mid-drag). Applies on RELEASE by default —
-  // main glides zoom + window bounds to the new size; the "Smooth slider"
-  // checkbox opts into live-follow while dragging (rapid sets apply direct,
-  // no glide — the drag is the animation).
+  // seed re-runs then and never mid-drag). Label tracks the drag; the scale
+  // applies on RELEASE, and main glides zoom + window bounds to the new
+  // size. "Smooth slider" (default ON) is the glide itself — off snaps
+  // instantly. "Scale the dock too" opts the dock into the global scale
+  // (excluded by default); re-applies the current value on toggle so the
+  // dock reacts immediately.
   var asc = document.getElementById('wpAllScale');
   var ascv = document.getElementById('wpAllScaleVal');
-  var ascLive = document.getElementById('wpScaleLive');
+  var ascGlide = document.getElementById('wpScaleGlide');
+  var ascDock = document.getElementById('wpScaleDock');
   if (asc && window.mimic && window.mimic.setOverlayScale) {
     var _ascApply = function(){
       var pct = parseInt(asc.value || '100', 10) || 100;
@@ -15236,18 +15240,24 @@ function wpWireHideHotkey() {
         asc.value = String(pct);
         if (ascv) ascv.textContent = pct + '%';
       }).catch(function(){});
-      if (ascLive && window.mimic.getConfig) window.mimic.getConfig().then(function(cfg){
-        ascLive.checked = !!(cfg && cfg.overlayScaleLive);
+      if (window.mimic.getConfig) window.mimic.getConfig().then(function(cfg){
+        if (ascGlide) ascGlide.checked = !(cfg && cfg.overlayScaleGlide === false);
+        if (ascDock)  ascDock.checked  = !!(cfg && cfg.overlayScaleDock);
       }).catch(function(){});
     }
     _bindOnce(asc, 'input', function(){
       var pct = parseInt(asc.value || '100', 10) || 100;
       if (ascv) ascv.textContent = pct + '%';
-      if (ascLive && ascLive.checked) _ascApply();
     });
     _bindOnce(asc, 'change', _ascApply);
-    if (ascLive && window.mimic.saveConfig) _bindOnce(ascLive, 'change', function(){
-      try { window.mimic.saveConfig({ overlayScaleLive: !!ascLive.checked }); } catch (e) {}
+    if (ascGlide && window.mimic.saveConfig) _bindOnce(ascGlide, 'change', function(){
+      try { window.mimic.saveConfig({ overlayScaleGlide: !!ascGlide.checked }); } catch (e) {}
+    });
+    if (ascDock && window.mimic.saveConfig) _bindOnce(ascDock, 'change', function(){
+      try {
+        var p = window.mimic.saveConfig({ overlayScaleDock: !!ascDock.checked });
+        if (p && p.then) p.then(_ascApply).catch(function(){}); else _ascApply();
+      } catch (e) {}
     });
   }
   _wpWireHotkeyRow('wpHideHotkey', 'hideAllHotkey', 'hideAllHotkeyEnabled', 'CommandOrControl+Shift+H');

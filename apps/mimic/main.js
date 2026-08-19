@@ -3095,9 +3095,14 @@ function overlayScale() {
 }
 function overlayScaleFor(key) {
   const cfg = loadConfig();
-  return _validScale((cfg.overlayScaleByKey || {})[key])
-      ?? _validScale(cfg.overlayScale)
-      ?? 1.0;
+  const own = _validScale((cfg.overlayScaleByKey || {})[key]);
+  if (own != null) return own;
+  // The dock sits out of the global scale unless opted in (Hitya
+  // 2026-08-19: "don't change the [dock] with the scale by default") — it's
+  // a large, hand-sized window; the "Scale the dock too" checkbox on the
+  // dashboard Overlays tab sets cfg.overlayScaleDock.
+  if (key === 'dock' && cfg.overlayScaleDock !== true) return 1.0;
+  return _validScale(cfg.overlayScale) ?? 1.0;
 }
 function applyOverlayScale(win, key) {
   if (!win || win.isDestroyed()) return;
@@ -3107,6 +3112,7 @@ function applyOverlayScale(win, key) {
     // First application (ready-to-show). The persisted bounds were saved at
     // this scale — set zoom only; resizing here would compound every boot.
     try { win.webContents.setZoomFactor(target); } catch {}
+    _pushZoomVar(win, target);
     win.__wpScaleState = { z: target, bounds: null };
     return;
   }
@@ -3133,13 +3139,21 @@ function applyOverlayScale(win, key) {
   } catch {}
   const toB = { x, y, width: w, height: h };
   win.__wpScaleState = { z: target, bounds: toB };
-  // A set arriving <300ms after the previous one is a live drag following the
-  // slider ("Smooth slider" mode) — apply directly, the drag IS the
-  // animation. An isolated set (slider release) glides over ~180ms.
+  // "Smooth slider" (cfg.overlayScaleGlide, default ON) = glide to the new
+  // size over ~180ms; off = snap instantly. Sets arriving <300ms apart
+  // (held-down keyboard arrows) apply directly either way so the tween
+  // never rubber-bands behind a stream.
   const now = Date.now();
   const rapid = (now - (win.__wpScaleSetAt || 0)) < 300;
   win.__wpScaleSetAt = now;
-  _scaleTween(win, target, toB, !rapid);
+  const glide = loadConfig().overlayScaleGlide !== false;
+  _scaleTween(win, target, toB, glide && !rapid);
+}
+// Mirror the live zoom into the renderer ('wp-zoom' → --wp-zoom CSS var) so
+// the preload's counter-zoom rules can keep the setup bar at ONE painted
+// size spanning the window width at every overlay scale (Hitya 2026-08-19).
+function _pushZoomVar(win, z) {
+  try { win.webContents.send('wp-zoom', z); } catch {}
 }
 // Glide zoom + bounds together (ease-out cubic) so a scale change grows the
 // overlay smoothly instead of snapping (Hitya 2026-08-19: "smoothly glide
@@ -3150,6 +3164,7 @@ function _scaleTween(win, toZ, toB, smooth) {
   if (win.__wpScaleTimer) { clearInterval(win.__wpScaleTimer); win.__wpScaleTimer = null; }
   const settle = () => {
     try { win.webContents.setZoomFactor(toZ); } catch {}
+    _pushZoomVar(win, toZ);
     try { win.setBounds(toB); } catch {}
     const st = win.__wpScaleState;
     if (st && st.z === toZ) st.bounds = null;   // settled — read live bounds next time
@@ -3169,7 +3184,9 @@ function _scaleTween(win, toZ, toB, smooth) {
       return;
     }
     const t = 1 - Math.pow(1 - step / SCALE_TWEEN_STEPS, 3);
-    try { win.webContents.setZoomFactor(fromZ + (toZ - fromZ) * t); } catch {}
+    const zNow = fromZ + (toZ - fromZ) * t;
+    try { win.webContents.setZoomFactor(zNow); } catch {}
+    _pushZoomVar(win, zNow);
     try { win.setBounds({
       x: Math.round(fromB.x + (toB.x - fromB.x) * t),
       y: Math.round(fromB.y + (toB.y - fromB.y) * t),

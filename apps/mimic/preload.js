@@ -111,6 +111,17 @@ document.addEventListener('mouseout', function (ev) {
 ipcRenderer.on('wp-backdrop', function (_e, on) {
   try { if (_wpOverlayDoc()) document.body.classList.toggle('wp-backdrop', !!on); } catch (e) {}
 });
+// Live overlay zoom → --wp-zoom CSS var, pushed by main on every scale apply
+// and tween step. Feeds the counter-zoom rules injected below that keep the
+// setup bar at one painted size spanning the window width no matter the
+// overlay's scale (Hitya 2026-08-19: "the actual slider sizing shouldn't
+// change on the overlays — it should be the width of the window").
+ipcRenderer.on('wp-zoom', function (_e, z) {
+  try {
+    var v = (typeof z === 'number' && isFinite(z) && z > 0) ? z : 1;
+    if (document.documentElement) document.documentElement.style.setProperty('--wp-zoom', String(v));
+  } catch (e) {}
+});
 // ── Overlay color themes (Uilnayar 2026-07-11: "alternative color schemes
 // for people that prefer brighter colors") ─────────────────────────────────
 // One body-level CSS filter per theme restyles EVERY overlay at once with
@@ -141,6 +152,19 @@ document.addEventListener('DOMContentLoaded', function () {
       // Setup strip must survive narrow windows: wrap onto a second row
       // instead of pushing the Done button past the right edge.
       + '#setupbar{flex-wrap:wrap;row-gap:4px}#setupbar input[type=range]{min-width:60px}'
+      // Counter-zoom for the setup chrome (Hitya 2026-08-19): the bar keeps
+      // ONE painted size at every overlay scale and spans the full window
+      // width. --wp-zoom is pushed by main on every scale apply/tween step;
+      // width × z then scale(1/z) cancels the page zoom exactly. The drag
+      // controls (✥ 🔒) get the same treatment and park just below the bar,
+      // and #wrap clears both. Every /z term is 1 when unscaled, so 100%
+      // keeps today's geometry.
+      + 'body.setup #setupbar{position:fixed;top:0;left:0;margin:0;z-index:40;box-sizing:border-box;'
+      +   'width:calc(100% * var(--wp-zoom,1));'
+      +   'transform:scale(calc(1 / var(--wp-zoom,1)));transform-origin:top left}'
+      + 'body.setup #drag-controls{top:calc(70px / var(--wp-zoom,1));left:calc(4px / var(--wp-zoom,1));'
+      +   'transform:scale(calc(1 / var(--wp-zoom,1)));transform-origin:top left}'
+      + 'body.setup #wrap{margin-top:calc(102px / var(--wp-zoom,1))}'
       + _WP_THEME_CSS;
     document.head.appendChild(st);
     ipcRenderer.invoke('wp-overlay-menu-state').then(function (s) {
@@ -177,6 +201,9 @@ document.addEventListener('DOMContentLoaded', function () {
       const eff = (st && st.effective) || 1;
       slider.value = String(Math.round(eff * 100));
       val.textContent = Math.round(eff * 100) + '%' + (st && st.own != null ? '' : ' (all)');
+      // Seed the counter-zoom var too — covers a page that (re)loaded after
+      // main's last 'wp-zoom' push (main keeps it current from then on).
+      try { document.documentElement.style.setProperty('--wp-zoom', String(eff)); } catch (e) {}
     }
     function refresh() {
       ipcRenderer.invoke('get-overlay-scale-this').then(paint).catch(function () {});
