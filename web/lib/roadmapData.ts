@@ -38,11 +38,10 @@ export type Release = {
 export const releases: Release[] = [
   {
     key: 'agent-3-5-88',
-    title: '\u{1F50D} Overlays your size',
-    version: 'Agent 3.5.91 · Mimic 2.5.4 beta',
+    title: '\u{2728} smoOOTH SCAlers',
+    version: 'Mimic 2.5.4 · Agent 3.5.91',
     date: '2026-08-19',
-    channel: 'beta',
-    headline: 'Size every overlay to your screen — one slider for all of them, plus one on each — and the bard swarm counter tells the truth about the kite.',
+    headline: 'Size every overlay to your screen — one slider for all of them, plus one on each — and the bard swarm counter tells the truth about the kite. Now on stable for the whole fleet.',
     features: [
       { name: '\u{1F50D} Overlay size, three places', blurb: 'A "Size — all overlays" slider on the dashboard Overlays tab scales everything 50%–200% for high-DPI screens. Each overlay also has its own size slider in its setup bar that overrides the global for just that one, with a reset to follow the global again.' },
       { name: '\u{2728} Overlays glide to their new size', blurb: 'Changing the size smoothly grows or shrinks the whole overlay — window, background, and rounded corners together — when you release the slider. That smooth glide is on by default; a checkbox turns it off for instant snapping.' },
@@ -61,6 +60,7 @@ export const releases: Release[] = [
       'Docking an overlay while placing everything in Setup mode no longer makes the rest of your overlays vanish.',
       'Overlays in Setup mode no longer clip the bottom of their card, and the duplicate move icon over the setup bar is gone.',
       'Setup mode finally reaches the dock: "Setup THIS Overlay" works on it, and panes can be dragged to reorder while placing.',
+      '"Eye of" pets no longer sneak onto the DPS meter or history.',
     ],
   },
   {
