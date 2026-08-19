@@ -55,6 +55,9 @@ export const releases: Release[] = [
       'The dock no longer grows and shrinks on its own when a size other than 100% is set — and it now stays at 100% entirely unless you check "Scale the dock too".',
       'The setup bar keeps its controls on two tidy rows instead of wrapping into a jumble on narrow overlays, and it stays one readable size at any overlay scale, spanning the window edge to edge.',
       'The tray could claim overlays were hidden while every one of them was on screen — that stale state now clears itself the moment it stops being true.',
+      'The dock stopped growing a little taller every second — it now sizes to exactly what is in it, and an empty dock collapses to its header.',
+      'Docking an overlay while placing everything in Setup mode no longer makes the rest of your overlays vanish.',
+      'Overlays in Setup mode no longer clip the bottom of their card, and the duplicate move icon over the setup bar is gone.',
     ],
   },
   {
