@@ -937,15 +937,41 @@ next touch one rather than assuming a missing row means a missing doc.
   raid-watch content — all editable, `updated_by='pre-raid seed'`. Next
   increment (in `DESIGN-fight-cards.md`): comp/kit live joins (#93/#82),
   the Discord pre-pull projection (bot, post-freeze), drill result on-page.
-- **Overlay scale 50%–200% (mimic, beta, 2026-08-18 — Fittir's 5K monitor,
-  via Hitya).** One global zoomFactor across every overlay window, hooked
+- **Overlay scale 50%–200% (mimic + agent 3.5.88, beta, 2026-08-18/19 —
+  Fittir's 5K monitor, via Hitya).** zoomFactor per overlay window, hooked
   into applyOverlayOpacity's shared ready-to-show lifecycle (zero per-HTML
-  changes; future overlays inherit it). Settings "Overlay size" slider
-  applies LIVE while dragging, persists via its own IPC (cfg.overlayScale,
-  clamped 0.5–2.0); window bounds stay the user's own. Browser-verified
-  (slider + label; IPC guarded). Beta test: set 200% on a high-DPI screen,
-  confirm every overlay's text scales and the ✥/✕/hover-interact targets
-  scale with it; then 50% and back.
+  changes; future overlays inherit it). v1 was a Settings-only global
+  slider; Hitya corrected the placement same night ("It should be a slider
+  on the overlays page and one on each individual one" — he was also on
+  beta.8, which predates the whole feature). Now THREE surfaces: 🔍 "Size —
+  all overlays" on the dashboard Overlays tab (drives the same
+  cfg.overlayScale global), a per-overlay "size" slider injected by
+  preload into every overlay's setup bar (cfg.overlayScaleByKey override,
+  key resolved main-side from the sender window; ↺ = follow the global
+  again, % label shows "(all)" while following), and the original Settings
+  slider. Dock panes deliberately skip the injected slider (one window —
+  it would scale every pane). overlay-auto-height + ensure-min-height now
+  multiply CSS px by the window's zoomFactor so scaled overlays don't clip
+  or lose their right-click menu. Beta test: 200% on a high-DPI screen,
+  per-overlay override on one overlay + ↺ back, auto-height overlays
+  (melody / ext target) don't clip at 200%.
+- **Melody AE badge: pulse merge fix + kite damage totals (agent 3.5.88 +
+  mimic, beta, 2026-08-19 — Fittir via Hitya).** Fittir's overlay read
+  ⚔123/12 / ⚔152/12 — "it's adding the number of hits." Root cause: pulse
+  bursts in noteSongAoeLine were bounded by wall-clock arrival, and the EQ
+  client flushes the log in multi-second batches under swarm-kite load, so
+  several 12-hit pulses arrive at once and merge. Bursts now clock off the
+  LINE's own timestamp (SONG_AOE_PULSE_GAP_MS 1500ms: adjacent-second rows
+  = one pulse, the next 3s pulse is ≥2s of stamp away). Plus the asked-for
+  feature: the chip now shows per-hit damage for the last pulse ("52ea" /
+  "48–61ea") and a Σ running total for the current kite per song (agent
+  aoe_kite payload — resets after 30s quiet; pulses + duration in the
+  tooltip). Toggleable: tray → Overlays → "Show AE song damage (per hit +
+  kite total)", default ON (cfg.melodyDmgTotals, rides the status push
+  like melodyBardOnly). test/song-aoe-pulse.test.js (source-slice, 8
+  tests) covers the merge replay + kite math. Beta test: swarm kite,
+  confirm the badge stays ≤12 and Σ climbs; toggle off hides both damage
+  chips but keeps hits/12.
 - **Spellbook "where from" + zone shopping list (web 1.1.67, 2026-08-18).**
   Hitya: the missing-spells page's PQDI links "don't work. We should say
   where it's from" + a shopping-list mode. Root enablement: the eqmac dump
