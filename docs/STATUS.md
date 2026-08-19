@@ -982,6 +982,18 @@ next touch one rather than assuming a missing row means a missing doc.
   too" checkbox re-applies on toggle). Beta test: setup bars one readable
   size at 50% and 200%; smooth checkbox pre-checked; dock ignores the
   slider until its checkbox is on.
+- **Seru Minis group event (bot 3.1.56, 2026-08-19 — Hitya, from Hawkner's
+  thread).** The ~20 Sanctus Seru house leaders are now a first-class
+  suggest-flow EVENT (`GROUP_EVENTS` / `evt_seru_minis` in
+  `utils/suggestNudge.js`): the nudge card detects "Seru Mini's"/"house
+  leaders" and offers **Seru Minis** ahead of the mis-detected Lord
+  Inquisitor Seru, and the event leads the Luclin picker list (which is
+  capped at 25 of 46 — an alphabetical merge would have sliced it out).
+  Deliberately NOT in bosses.json — 18h respawns, untracked by design; the
+  group is the event. Kills persist via the 3.1.52 self-registration
+  path. Roster + stat template + the mirror's blind spots (respawn says
+  ~26min, loot is junk-era, quest "reports" absent — all Quarm-custom):
+  `docs/seru-minis.md`. 4 new tests in `test/suggest-nudge.test.js`.
 - **Dock v2a: Setup-THIS + named layouts + rename (mimic, beta,
   2026-08-19).** The dock NEVER entered setup state — its `onSetupMode`
   handler checked `p.on`/`p.setup`, names no sender ever used (every

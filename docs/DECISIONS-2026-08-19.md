@@ -69,6 +69,22 @@ Bursts now clock off the LINE's own timestamp (`SONG_AOE_PULSE_GAP_MS`,
 per-hit damage + Σ running kite total per song (resets after 30s quiet), tray
 toggle "Show AE song damage", **default ON** (agent 3.5.88).
 
+## Seru Minis are a GROUP EVENT, not board bosses (Hitya, bot 3.1.56)
+
+**The call:** *"we're not tracking them today because they're an 18 hour
+respawn. But the group of them is a worthy event. we call them Seru Minis."*
+(From Hawkner's "Seru Mini's" thread — the nudge card had mis-detected Lord
+Inquisitor Seru.)
+
+**Where it landed:** `GROUP_EVENTS` in `utils/suggestNudge.js` — pseudo-bosses
+(`evt_` ids) that ride the whole tap-through flow but can never reach
+bosses.json, the board, or timers. `evt_seru_minis` detects "seru minis" /
+"house leaders", leads the buttons ahead of any boss match, and tops the
+Luclin picker (which truncates 46→25). Roster + stats + the mirror's blind
+spots for this zone (respawn/loot/quest items are all Quarm-custom):
+`docs/seru-minis.md`. The pattern is reusable — the next multi-mob outing is
+one `GROUP_EVENTS` entry.
+
 ## /who shows base classes, never level titles (bot 3.1.55, main)
 
 "Warlock" on an anon row = the level-60 Necromancer TITLE served raw from

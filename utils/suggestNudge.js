@@ -27,6 +27,31 @@ function _bosses() {
   return require('../data/bosses.json');
 }
 
+// ── Group events — outings that are not (and must not become) board bosses ──
+// Multi-mob events members ask officers to host, riding the whole nudge flow
+// as pseudo-bosses: same {id, name, zone, emoji} shape a bosses.json entry
+// has, ids prefixed `evt_` so they can never collide with the board or leak
+// into timers. Deliberately NOT in data/bosses.json — that file drives the
+// boards and spawn timers, and these are untracked by design.
+//
+// Seru Minis (Hitya 2026-08-19, from Hawkner's "Seru Mini's" thread): the
+// ~20 Sanctus Seru house leaders (Stoic Aealin, Custos Valar, Quaestorius
+// Martolin, …) — a shared mini-boss template (100k HP, 500 all resists,
+// hits 260–376, levels 61–66), 18h respawns on Quarm, group-killable. The
+// GROUP is the event; individual kills still persist to encounters via the
+// bot 3.1.52 self-registration path. Without this entry the nudge card
+// mis-detected "Lord Inquisitor Seru" from the word Seru.
+const GROUP_EVENTS = [
+  {
+    id: 'evt_seru_minis',
+    name: 'Seru Minis',
+    zone: 'Sanctus Seru house leaders',
+    emoji: '🏛️',
+    expansion: 'Luclin',
+    match: /seru\s*mini|mini['’`]?s?\s+(?:of\s+|in\s+)?(?:sanctus\s+)?seru|house\s+leaders?/i,
+  },
+];
+
 // ── Pure builders (unit-tested in test/suggest-nudge.test.js) ────────────────
 
 const TIME_CHOICES = [
@@ -56,9 +81,16 @@ function expansionOptions(bosses, popLocked = isPopLocked()) {
 // Up to 25 bosses of one expansion, alphabetical (a Discord select's hard cap).
 // `truncated` tells the caller to say "not listed → /suggest".
 function bossOptionsForExpansion(bosses, expansion) {
-  const all = bosses
-    .filter(b => (b.expansion || 'Other') === expansion)
-    .sort((a, b) => a.name.localeCompare(b.name));
+  // Group events LEAD their era's list — Luclin already holds 46 bosses
+  // against the 25-option cap, so a merged alphabetical sort would slice
+  // "Seru Minis" straight back out of the picker.
+  const events = GROUP_EVENTS.filter(e => (e.expansion || 'Other') === expansion);
+  const all = [
+    ...events,
+    ...bosses
+      .filter(b => (b.expansion || 'Other') === expansion)
+      .sort((a, b) => a.name.localeCompare(b.name)),
+  ];
   return {
     truncated: all.length > 25,
     options: all.slice(0, 25).map(b => ({
@@ -108,7 +140,14 @@ function timeStepComponents(bossId) {
 // original listener: parseSuggestion over title + messages.
 function buildNudgeCard(combinedText, bosses) {
   const { parseSuggestion } = require('./suggestParser');
-  const { matchedBosses, matchedZones, time, dateLabel } = parseSuggestion(combinedText, bosses);
+  const parsed = parseSuggestion(combinedText, bosses);
+  const { matchedZones, time, dateLabel } = parsed;
+  // Group events match FIRST and lead the button row — "Seru Mini's" also
+  // contains the word Seru, so without this the card's only offer was Lord
+  // Inquisitor Seru. Boss matches stay after the event (someone might
+  // genuinely mean the raid boss); the member taps the right one.
+  const matchedEvents = GROUP_EVENTS.filter(e => e.match.test(combinedText || ''));
+  const matchedBosses = [...matchedEvents, ...parsed.matchedBosses.filter(b => !matchedEvents.some(e => e.id === b.id))];
 
   const detectedLines = [];
   if (matchedBosses.length) {
@@ -144,6 +183,9 @@ function _gate(interaction) {
 }
 
 function _findBoss(id) {
+  if (typeof id === 'string' && id.startsWith('evt_')) {
+    return GROUP_EVENTS.find(e => e.id === id) || null;
+  }
   return _bosses().find(b => b.id === id) || null;
 }
 
@@ -272,7 +314,7 @@ async function handleNudgeModalSubmit(interaction) {
 
 module.exports = {
   buildNudgeComponents, buildNudgeCard, timeStepComponents, timeChoiceLabel,
-  expansionOptions, bossOptionsForExpansion, TIME_CHOICES,
+  expansionOptions, bossOptionsForExpansion, TIME_CHOICES, GROUP_EVENTS,
   handleNudgeBossPick, handleNudgeOther, handleNudgeExpansionSelect,
   handleNudgeBossSelect, handleNudgeTime, handleNudgeExactOpen,
   handleNudgeModalSubmit,
