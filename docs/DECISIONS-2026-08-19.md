@@ -76,14 +76,19 @@ respawn. But the group of them is a worthy event. we call them Seru Minis."*
 (From Hawkner's "Seru Mini's" thread — the nudge card had mis-detected Lord
 Inquisitor Seru.)
 
+**The roster (Hitya's correction, same hour): "they are these four"** — the
+Praesertum: Bikun (NW → Shard of the Shoulder), Vantorus (SW → Hand), Rhugol
+(NE → Eye), Matpa (SE → Heart). A first pass wrongly fingered the city's
+20-named office tier; the Praesertum rows hide behind `#` prefixes in the
+mirror, which that query excluded.
+
 **Where it landed:** `GROUP_EVENTS` in `utils/suggestNudge.js` — pseudo-bosses
 (`evt_` ids) that ride the whole tap-through flow but can never reach
 bosses.json, the board, or timers. `evt_seru_minis` detects "seru minis" /
-"house leaders", leads the buttons ahead of any boss match, and tops the
-Luclin picker (which truncates 46→25). Roster + stats + the mirror's blind
-spots for this zone (respawn/loot/quest items are all Quarm-custom):
-`docs/seru-minis.md`. The pattern is reusable — the next multi-mob outing is
-one `GROUP_EVENTS` entry.
+"house leaders" / "praesertum", leads the buttons ahead of any boss match,
+and tops the Luclin picker (which truncates 46→25). Roster, per-mob ability
+kits, shard drops + mirror caveats: `docs/seru-minis.md`. The pattern is
+reusable — the next multi-mob outing is one `GROUP_EVENTS` entry.
 
 ## /who shows base classes, never level titles (bot 3.1.55, main)
 

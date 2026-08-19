@@ -35,20 +35,21 @@ function _bosses() {
 // boards and spawn timers, and these are untracked by design.
 //
 // Seru Minis (Hitya 2026-08-19, from Hawkner's "Seru Mini's" thread): the
-// ~20 Sanctus Seru house leaders (Stoic Aealin, Custos Valar, Quaestorius
-// Martolin, …) — a shared mini-boss template (100k HP, 500 all resists,
-// hits 260–376, levels 61–66), 18h respawns on Quarm, group-killable. The
-// GROUP is the event; individual kills still persist to encounters via the
-// bot 3.1.52 self-registration path. Without this entry the nudge card
-// mis-detected "Lord Inquisitor Seru" from the word Seru.
+// four Praesertum house leaders of Sanctus Seru — Bikun (NW), Vantorus (SW),
+// Rhugol (NE), Matpa (SE) — each dropping one Shard (Shoulder/Hand/Eye/
+// Heart). 18h respawns on Quarm, deliberately untracked; the GROUP is the
+// event. Individual kills still persist to encounters via the bot 3.1.52
+// self-registration path. Without this entry the nudge card mis-detected
+// "Lord Inquisitor Seru" from the word Seru. Roster + stats:
+// docs/seru-minis.md.
 const GROUP_EVENTS = [
   {
     id: 'evt_seru_minis',
     name: 'Seru Minis',
-    zone: 'Sanctus Seru house leaders',
+    zone: 'the four Praesertum, Sanctus Seru',
     emoji: '🏛️',
     expansion: 'Luclin',
-    match: /seru\s*mini|mini['’`]?s?\s+(?:of\s+|in\s+)?(?:sanctus\s+)?seru|house\s+leaders?/i,
+    match: /seru\s*mini|mini['’`]?s?\s+(?:of\s+|in\s+)?(?:sanctus\s+)?seru|house\s+leaders?|praesertum/i,
   },
 ];
 
