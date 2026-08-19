@@ -453,7 +453,7 @@ const TRANSFORMS = {
     };
   },
   npc_types: (cols, row) => {
-    const r = pick(cols, row, ['id', 'name', 'lastname', 'level', 'race', 'class', 'bodytype', 'hp', 'mana', 'gender', 'texture', 'size', 'AC', 'mindmg', 'maxdmg', 'attack_count', 'aggroradius', 'assistradius', 'MR', 'CR', 'DR', 'FR', 'PR', 'see_invis', 'see_invis_undead', 'see_hide', 'see_improved_hide', 'npc_spells_id', 'loottable_id', 'runspeed', 'walkspeed', 'npc_faction_id', 'maxlevel', 'scalerate', 'raid_target', 'rare_spawn', 'npcspecialattks', 'special_abilities']);
+    const r = pick(cols, row, ['id', 'name', 'lastname', 'level', 'race', 'class', 'bodytype', 'hp', 'mana', 'gender', 'texture', 'size', 'AC', 'mindmg', 'maxdmg', 'attack_count', 'aggroradius', 'assistradius', 'MR', 'CR', 'DR', 'FR', 'PR', 'see_invis', 'see_invis_undead', 'see_hide', 'see_improved_hide', 'npc_spells_id', 'loottable_id', 'runspeed', 'walkspeed', 'npc_faction_id', 'maxlevel', 'scalerate', 'raid_target', 'rare_spawn', 'npcspecialattks', 'special_abilities', 'merchant_id']);
     if (!r.id) return null;
     return {
       id: r.id, name: r.name, lastname: r.lastname,
@@ -477,6 +477,11 @@ const TRANSFORMS = {
       // newer parametrized form — kept too if the dump ever switches.
       npcspecialattks:   (r.npcspecialattks  != null && r.npcspecialattks  !== '') ? String(r.npcspecialattks)  : null,
       special_abilities: (r.special_abilities != null && r.special_abilities !== '') ? String(r.special_abilities) : null,
+      // Vendor link (2026-08-18): joins eqemu_merchantlist.merchantid so the
+      // spellbook page can say WHO sells a scroll and WHERE, instead of
+      // deep-linking PQDI. 0 = not a merchant → null keeps the partial index
+      // small.
+      merchant_id: (r.merchant_id != null && Number(r.merchant_id) > 0) ? Number(r.merchant_id) : null,
     };
   },
   loottable: (cols, row) => {
