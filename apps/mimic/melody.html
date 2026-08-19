@@ -147,17 +147,25 @@
   // takes effect in real time without needing an overlay reload. Falls
   // back to the localStorage value when no status has arrived yet.
   var _mimicMelodyBardOnly = null;
+  // "Show song damage" — per-hit + kite-total chips on AE songs. Tray toggle
+  // (default ON); rides the same status push as the bard-only flag.
+  var _mimicMelodyDmgTotals = null;
   if (window.mimic && window.mimic.onStatus) {
     window.mimic.onStatus(function(s){
       if (s && typeof s.melodyBardOnly === 'boolean') {
         _mimicMelodyBardOnly = s.melodyBardOnly;
         try { localStorage.setItem('wp.melodyBardOnly', s.melodyBardOnly ? '1' : '0'); } catch (e) {}
       }
+      if (s && typeof s.melodyDmgTotals === 'boolean') {
+        _mimicMelodyDmgTotals = s.melodyDmgTotals;
+        try { localStorage.setItem('wp.melodyDmgTotals', s.melodyDmgTotals ? '1' : '0'); } catch (e) {}
+      }
     });
   }
   if (window.mimic && window.mimic.getStatus) {
     window.mimic.getStatus().then(function(s){
       if (s && typeof s.melodyBardOnly === 'boolean') _mimicMelodyBardOnly = s.melodyBardOnly;
+      if (s && typeof s.melodyDmgTotals === 'boolean') _mimicMelodyDmgTotals = s.melodyDmgTotals;
     }).catch(function(){});
   }
   window.mimic && window.mimic.getAgentPort && window.mimic.getAgentPort().then(p => { if (p) PORT = p; });
@@ -224,6 +232,14 @@
     var s = Math.max(0, Math.floor(ms/1000));
     var m = Math.floor(s/60); var r = s - m*60;
     return m + ':' + String(r).padStart(2,'0');
+  }
+  // Compact damage totals so the kite chip stays narrow: 842 → 842,
+  // 12480 → 12.5k, 184620 → 185k.
+  function fmtDmg(n){
+    n = Math.round(n || 0);
+    if (n >= 100000) return Math.round(n/1000) + 'k';
+    if (n >= 10000)  return (n/1000).toFixed(1).replace(/\.0$/,'') + 'k';
+    return String(n);
   }
   // Trim leading possessive prefix so chips fit ("Selo`s Accelerando" → "Accelerando").
   function shortSongName(name){
@@ -311,6 +327,10 @@
       var bardOnly = false;
       try { bardOnly = localStorage.getItem('wp.melodyBardOnly') === '1'; } catch (e) {}
       if (typeof _mimicMelodyBardOnly === 'boolean') bardOnly = _mimicMelodyBardOnly;
+      // Song-damage chips (per-hit + kite total) — default ON; tray toggle.
+      var showDmg = true;
+      try { showDmg = localStorage.getItem('wp.melodyDmgTotals') !== '0'; } catch (e) {}
+      if (typeof _mimicMelodyDmgTotals === 'boolean') showDmg = _mimicMelodyDmgTotals;
       if (bardOnly) {
         keys = keys.filter(function(k){
           var st = melodyByChar[k];
@@ -474,17 +494,26 @@
           if (aoeHits > 0) {
             var full = aoeHits >= AOE_CAP;
             var d = entry.aoe_dmg;
+            var kite = entry.aoe_kite;
+            // Chip: ⚔hits/12 · <per-hit>ea · Σ<kite total>. Per-hit is what
+            // the song hits each mob for THIS pulse; Σ is the running total
+            // for the current kite (agent resets it after 30s quiet).
             var dmgChip = '';
             var dmgTip  = '';
-            if (d && d.total > 0) {
-              dmgChip = ' · ' + d.total;
-              dmgTip = '\nDamage: ' + d.total + ' total — ' + d.n + ' mob(s)'
-                     + (d.min === d.max ? ' × ' + d.max + ' each' : ' at ' + d.min + '–' + d.max + ' each');
+            if (showDmg && d && d.total > 0) {
+              var per = d.min === d.max ? String(d.max) : (d.min + '–' + d.max);
+              dmgChip = ' · ' + per + 'ea';
+              dmgTip = '\nLast pulse: ' + d.total + ' total — ' + d.n + ' mob(s) at ' + per + ' each';
+            }
+            if (showDmg && kite && kite.total > 0) {
+              dmgChip += ' · Σ' + fmtDmg(kite.total);
+              dmgTip += '\nThis kite: ' + kite.total + ' total over ' + kite.pulses + ' pulse(s)'
+                      + (kite.secs > 0 ? ' · ' + fmtElapsed(kite.secs * 1000) : '');
             }
             var tip = 'Last pulse hit ' + aoeHits + ' of the ' + AOE_CAP + '-target AE cap'
                     + (full ? ' — FULL SWARM (extra mobs are warping to you)' : '')
                     + dmgTip;
-            aoeHtml = '<span class="aoe' + (full ? ' full' : '') + '" title="' + esc(tip) + '">⚔' + aoeHits + '/' + AOE_CAP + dmgChip + '</span>';
+            aoeHtml = '<span class="aoe' + (full ? ' full' : '') + '" title="' + esc(tip) + '">⚔' + aoeHits + '/' + AOE_CAP + esc(dmgChip) + '</span>';
           }
           rowsHtml += '<div class="' + rowClass + '"' + styleAttr + ' title="' + esc(name) + '">'
                     +   '<span class="icon">' + icon + '</span>'

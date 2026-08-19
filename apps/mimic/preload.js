@@ -1,6 +1,38 @@
 // Preload — minimal contextBridge surface. No nodeIntegration in renderers.
 const { contextBridge, ipcRenderer } = require('electron');
 
+// ── Am I a window, or a pane inside the Dock? ───────────────────────────────
+// The dock (dock.html) hosts overlays as same-origin <iframe>s in ONE window,
+// and main.js gives it `nodeIntegrationInSubFrames: true` so this same preload
+// runs in every pane. That is what lets the panes be the real overlay files
+// rather than forks of them.
+//
+// But three of the calls below are about a WINDOW, and from a pane they would
+// act on the dock:
+//   • hideThisOverlay  → would hide the whole dock instead of that one pane;
+//   • autoFitOverlay / overlayAutoHeight → would resize the dock to fit ONE
+//     pane's content, fighting every other pane for the window height;
+//   • attachOverlayMenu's resize presets → would resize the dock.
+// Each is redirected or disabled below. Everything else (drag, hover-interact,
+// opacity, agent port) is genuinely per-window and already does the right
+// thing, because the dock IS the window.
+//
+// ⚠ Keep this branch HERE rather than in the overlay files. There is exactly
+// one copy of each overlay and it must stay that way — a docked fork would
+// drift within a release.
+const WP_IS_DOCKED = (() => {
+  try { return window.top !== window.self; } catch { return false; }
+})();
+
+// A pane's identity is the file it was loaded from — the dock points each
+// iframe at that overlay's own .html.
+function _wpDockKey() {
+  try {
+    const f = String(window.location.pathname || '').split('/').pop().replace(/\.html$/i, '');
+    return f || null;
+  } catch { return null; }
+}
+
 // ── Shared overlay chrome helpers ──────────────────────────────────────────
 // Every built-in overlay used to inline ~35 lines of right-click menu HTML +
 // styling + hover-interactive handshake. They drifted over time ("alignment
@@ -79,6 +111,17 @@ document.addEventListener('mouseout', function (ev) {
 ipcRenderer.on('wp-backdrop', function (_e, on) {
   try { if (_wpOverlayDoc()) document.body.classList.toggle('wp-backdrop', !!on); } catch (e) {}
 });
+// Live overlay zoom → --wp-zoom CSS var, pushed by main on every scale apply
+// and tween step. Feeds the counter-zoom rules injected below that keep the
+// setup bar at one painted size spanning the window width no matter the
+// overlay's scale (Hitya 2026-08-19: "the actual slider sizing shouldn't
+// change on the overlays — it should be the width of the window").
+ipcRenderer.on('wp-zoom', function (_e, z) {
+  try {
+    var v = (typeof z === 'number' && isFinite(z) && z > 0) ? z : 1;
+    if (document.documentElement) document.documentElement.style.setProperty('--wp-zoom', String(v));
+  } catch (e) {}
+});
 // ── Overlay color themes (Uilnayar 2026-07-11: "alternative color schemes
 // for people that prefer brighter colors") ─────────────────────────────────
 // One body-level CSS filter per theme restyles EVERY overlay at once with
@@ -109,12 +152,103 @@ document.addEventListener('DOMContentLoaded', function () {
       // Setup strip must survive narrow windows: wrap onto a second row
       // instead of pushing the Done button past the right edge.
       + '#setupbar{flex-wrap:wrap;row-gap:4px}#setupbar input[type=range]{min-width:60px}'
+      // Counter-zoom for the setup chrome (Hitya 2026-08-19): the bar keeps
+      // ONE painted size at every overlay scale and spans the full window
+      // width. --wp-zoom is pushed by main on every scale apply/tween step;
+      // width × z then scale(1/z) cancels the page zoom exactly. The drag
+      // controls (✥ 🔒) get the same treatment and park just below the bar,
+      // and #wrap clears both. Every /z term is 1 when unscaled, so 100%
+      // keeps today's geometry. The corner ✥/✕ hide during setup — the
+      // framed drag handle + Done own those jobs there, and the corner pair
+      // painted ON TOP of the fixed bar ("two move icons", one over the
+      // word size). WINDOWS ONLY: inside a dock pane a fixed full-width bar
+      // covered the pane's own controls, and panes don't zoom independently
+      // — they keep the plain in-flow setup bar.
+      // The :has(#drag-controls) guard scopes these to STANDARD overlays:
+      // the dock is a window too but has no drag-controls — its setup bar
+      // lives inside #shell with its own layout, and its corner ✥ is its
+      // ONLY move handle (no framed handle to fall back to), so the fixed
+      // restyle + button-hiding must not touch it.
+      + (WP_IS_DOCKED ? '' :
+          'body.setup:has(#drag-controls) #setupbar{position:fixed;top:0;left:0;margin:0;z-index:40;box-sizing:border-box;'
+        +   'width:calc(100% * var(--wp-zoom,1));'
+        +   'transform:scale(calc(1 / var(--wp-zoom,1)));transform-origin:top left}'
+        + 'body.setup #drag-controls{top:calc(70px / var(--wp-zoom,1));left:calc(4px / var(--wp-zoom,1));'
+        +   'transform:scale(calc(1 / var(--wp-zoom,1)));transform-origin:top left}'
+        + 'body.setup:has(#drag-controls) #wrap{margin-top:calc(102px / var(--wp-zoom,1))}'
+        + 'body.setup:has(#drag-controls) #move-btn,body.setup:has(#drag-controls) #hide-btn{display:none}')
       + _WP_THEME_CSS;
     document.head.appendChild(st);
     ipcRenderer.invoke('wp-overlay-menu-state').then(function (s) {
       if (s && s.backdrop && _wpOverlayDoc()) document.body.classList.add('wp-backdrop');
       if (s && s.theme) _wpApplyTheme(s.theme);
     }).catch(function () {});
+  } catch (e) {}
+});
+
+// ── Per-overlay size slider (Hitya 2026-08-19: "a slider on the overlays
+// page and one on each individual one") ─────────────────────────────────────
+// Injected into every overlay's existing #setupbar (next to its opacity
+// slider) so each overlay gets a "size" control with zero per-HTML changes.
+// Drives the per-key scale override ('set-overlay-scale-this' — main resolves
+// the key from the sender window); ↺ clears back to the global slider's
+// value, and the % label shows "(all)" while the overlay is following the
+// global. Skipped in dock panes: the dock is ONE window, so a per-pane
+// slider would scale every pane at once — the dock follows the global scale.
+document.addEventListener('DOMContentLoaded', function () {
+  try {
+    if (WP_IS_DOCKED || !_wpOverlayDoc()) return;
+    const bar = document.getElementById('setupbar');
+    if (!bar || document.getElementById('wpScaleThis')) return;
+    const lbl = document.createElement('span'); lbl.textContent = 'size';
+    const slider = document.createElement('input');
+    slider.type = 'range'; slider.min = '50'; slider.max = '200'; slider.step = '5';
+    slider.id = 'wpScaleThis';
+    const val = document.createElement('span'); val.id = 'wpScaleThisVal';
+    val.style.minWidth = '52px'; val.style.textAlign = 'right';
+    const reset = document.createElement('button');
+    reset.id = 'wpScaleThisReset'; reset.textContent = '↺';
+    reset.title = "Follow the global overlay size (clears this overlay's own setting)";
+    function paint(st) {
+      const eff = (st && st.effective) || 1;
+      slider.value = String(Math.round(eff * 100));
+      val.textContent = Math.round(eff * 100) + '%' + (st && st.own != null ? '' : ' (all)');
+      // Seed the counter-zoom var too — covers a page that (re)loaded after
+      // main's last 'wp-zoom' push (main keeps it current from then on).
+      try { document.documentElement.style.setProperty('--wp-zoom', String(eff)); } catch (e) {}
+    }
+    function refresh() {
+      ipcRenderer.invoke('get-overlay-scale-this').then(paint).catch(function () {});
+    }
+    // Label follows the drag; the scale itself applies on RELEASE ('change')
+    // — applying mid-drag rescales this very setup bar and yanks the thumb
+    // out from under the cursor (Hitya 2026-08-19). Keyboard steps fire
+    // 'change' per press, so arrow keys still apply immediately; main glides
+    // the window to the new size.
+    slider.addEventListener('input', function () {
+      val.textContent = (parseInt(slider.value, 10) || 100) + '%';
+    });
+    slider.addEventListener('change', function () {
+      const s = Math.max(0.5, Math.min(2, (parseInt(slider.value, 10) || 100) / 100));
+      // refresh, not paint — the set handler returns a bare number, and
+      // paint() expects the {effective, own} state object.
+      ipcRenderer.invoke('set-overlay-scale-this', s).then(refresh).catch(function () {});
+    });
+    reset.addEventListener('click', function () {
+      ipcRenderer.invoke('set-overlay-scale-this', null).then(refresh).catch(function () {});
+    });
+    // Own full-width row (order:99 sorts it after Done without touching DOM
+    // order) — inline the four controls and narrow overlays wrap the setup
+    // bar into a jumble of half-rows (Hitya 2026-08-19, setup-ALL screenshot).
+    // Row 1 stays "🛠 Setup · opacity · Done"; row 2 is "size · slider · % · ↺".
+    const row = document.createElement('span');
+    row.style.cssText = 'display:flex;align-items:center;gap:8px;flex-basis:100%;min-width:0;order:99';
+    for (const el of [lbl, slider, val, reset]) row.appendChild(el);
+    bar.appendChild(row);
+    // Re-read on every setup-mode entry so the label tracks global changes
+    // made from the dashboard while this overlay sat untouched.
+    ipcRenderer.on('setup-mode', function (_e, p) { if (p && p.active) refresh(); });
+    refresh();
   } catch (e) {}
 });
 
@@ -211,6 +345,7 @@ function _menuFitPaused() {
 // clipped" report). Same rule: hold the last height while the menu is
 // open, replay it on close.
 function _overlayAutoHeightRaw(h) {
+  if (WP_IS_DOCKED) return Promise.resolve(true);   // see _autoFitOverlay
   try {
     if (_menuFitPaused()) { _wpMenuSuppressedRawH = h; return Promise.resolve(true); }
     return ipcRenderer.invoke('overlay-auto-height', h);
@@ -218,6 +353,9 @@ function _overlayAutoHeightRaw(h) {
 }
 
 function _attachOverlayMenu(moveBtn) {
+  // The menu's presets resize the window; from a pane that is the dock, which
+  // is not what "resize Mob Info" should mean. The dock has its own ✥ menu.
+  if (WP_IS_DOCKED) return;
   if (!moveBtn || moveBtn._wpMenuAttached) return;
   moveBtn._wpMenuAttached = true;
   moveBtn.addEventListener('contextmenu', function(ev) {
@@ -291,6 +429,9 @@ function _openOverlayMenu(state) {
 // document.body if nothing's passed. Adds a small buffer so the bottom of
 // the last card isn't flush against the window edge.
 function _autoFitOverlay(wrapEl) {
+  // In the dock the window height belongs to the dock's grid, not to whichever
+  // pane measured itself last. Without this every pane fights for the window.
+  if (WP_IS_DOCKED) return;
   try {
     _wpPageUsesAutoFit = true;
     if (wrapEl) _wpLastFitEl = wrapEl;
@@ -391,6 +532,14 @@ contextBridge.exposeInMainWorld('mimic', {
   // ✥ move icon. Doesn't flip the global setupMode.
   setSetupModeThis: (on)          => ipcRenderer.invoke('set-setup-mode-this', on === undefined ? true : !!on),
   setOverlayOpacity:(key, value) => ipcRenderer.invoke('set-overlay-opacity', key, value),
+  // Global overlay scale (50%–200%) — Fittir's-5K-monitor knob in Settings.
+  setOverlayScale:  (value)       => ipcRenderer.invoke('set-overlay-scale', value),
+  getOverlayScale:  ()            => ipcRenderer.invoke('get-overlay-scale'),
+  // Tray-parity controls for the dashboard Overlays tab (Hitya 2026-08-19).
+  hideAllToggle:      ()     => ipcRenderer.invoke('hide-all-toggle'),
+  charProfilesEnable: (on)   => ipcRenderer.invoke('char-profiles-enable', !!on),
+  charProfileSave:    ()     => ipcRenderer.invoke('char-profile-save'),
+  charProfileForget:  (name) => ipcRenderer.invoke('char-profile-forget', name),
   // Background-alpha push from main → overlay renderer. The slider value drives
   // a CSS variable (--bg-alpha) on each overlay so "100%" means an OPAQUE card
   // surface (EQ hidden) rather than a dimmed window (text + bg fade together).
@@ -421,7 +570,35 @@ contextBridge.exposeInMainWorld('mimic', {
   overlayHoverInteractive: (want) => ipcRenderer.invoke('overlay-hover-interactive', !!want),
   // Hide the overlay that calls this (the ✕). Named overlays flip their pref
   // off; panel overlays close.
-  hideThisOverlay: () => ipcRenderer.invoke('hide-overlay'),
+  hideThisOverlay: () => (WP_IS_DOCKED
+    // A pane's own ✕ means "get this overlay out of my dock", not "hide the
+    // dock". It goes back to being its own floating window, still visible.
+    ? ipcRenderer.invoke('dock-set', _wpDockKey(), false)
+    : ipcRenderer.invoke('hide-overlay')),
+
+  // ── Dock ──────────────────────────────────────────────────────────────────
+  // dock.html only. dockState() returns { keys, cols, catalog }; dockSet()
+  // adds/removes a pane; dockCols() cycles the column count. All three return
+  // the new state so the dock re-renders from one round trip.
+  dockState:   ()             => ipcRenderer.invoke('dock-state'),
+  dockSet:     (key, want)    => ipcRenderer.invoke('dock-set', key, !!want),
+  dockCols:    ()             => ipcRenderer.invoke('dock-cols'),
+  dockSpan:    (key, c, r)    => ipcRenderer.invoke('dock-span', key, c, r),
+  dockPaneBg:  (key, want)    => ipcRenderer.invoke('dock-pane-bg', key, want),
+  dockReorder: (order)        => ipcRenderer.invoke('dock-reorder', order),
+  dockGrow:    (want)         => ipcRenderer.invoke('dock-grow', want),
+  // The dock reports its own content height; main resizes the window, keeping
+  // the BOTTOM edge fixed when grow-upward is on.
+  dockAutoHeight: (h)         => ipcRenderer.invoke('dock-auto-height', h),
+  // Named dock layouts + rename (Hitya 2026-08-19).
+  dockLayoutSave:   (name) => ipcRenderer.invoke('dock-layout-save', name),
+  dockLayoutLoad:   (name) => ipcRenderer.invoke('dock-layout-load', name),
+  dockLayoutDelete: (name) => ipcRenderer.invoke('dock-layout-delete', name),
+  dockRename:       (name) => ipcRenderer.invoke('dock-rename', name),
+  isDocked:    ()             => WP_IS_DOCKED,
+  // Dashboard: dock/undock an overlay from the Overlays page, beside its
+  // on/off toggle.
+  dockOverlay: (name)         => ipcRenderer.invoke('dock-overlay', name),
 
   // EQ install discovery + folder picker for the multi-folder UI.
   findEqInstalls: () => ipcRenderer.invoke('find-eq-installs'),

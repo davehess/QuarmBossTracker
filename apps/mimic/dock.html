@@ -1,0 +1,733 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>dock</title>
+<style>
+  /* ── The Dock ──────────────────────────────────────────────────────────────
+     One always-on-top transparent window that HOSTS other overlays as panes,
+     instead of each one owning its own BrowserWindow.
+
+     Why iframes and not a rewrite: every overlay already runs standalone and
+     already talks to the agent on localhost and to Electron through
+     `window.mimic`. An <iframe> keeps all of that working unchanged — the dock
+     is a container, not a port. main.js gives this window
+     `nodeIntegrationInSubFrames: true`, so the SAME preload runs inside every
+     pane and `window.mimic` exists there natively.
+
+     What it buys: N overlays that were N windows (and N renderer processes at
+     ~80 MB apiece before they paint) become one window and one renderer.
+
+     ⚠ The panes are the real overlay files. Do not fork them. Anything that
+     needs to behave differently when docked belongs in preload.js behind
+     WP_IS_DOCKED, so there is exactly one copy of every overlay. */
+  :root{ --bg-alpha:0.78; }
+  html,body{margin:0;height:100%;background:transparent;overflow:hidden;
+    font-family:ui-monospace,Menlo,Consolas,monospace;color:#e6edf3;user-select:none}
+
+  /* ⚠ The plate is OPT-IN, driven by the backdrop toggle (Hitya 2026-08-14:
+     "Background on/off doesn't do much for the dock. It should fully remove the
+     background from the inside of the box when off"). Default = no plate at
+     all, so the panes float over EQ exactly as loose overlays did. */
+  #shell{display:flex;flex-direction:column;height:100%;
+    background:transparent;border:1px solid rgba(163,113,247,0.30);
+    border-radius:8px;margin:4px;overflow:hidden}
+  /* Auto-fit measures shell.scrollHeight — with height:100% that is AT LEAST
+     the viewport, so `want = scrollHeight + 10` sat a rounding coin-flip past
+     the 8px hysteresis and the window crept +10px every 1s fit tick to the
+     1600 cap (Hitya 2026-08-19: "keeps resizing to the entire height of the
+     screen … grows each tick. It should only grow to support the size of its
+     contents"). While auto-fit is ON the shell is intrinsic-height, so the
+     measure is the CONTENT and the loop has a fixed point. Auto-fit OFF keeps
+     height:100% — the user sizes the window and the shell fills it. */
+  body.autofit #shell{height:auto}
+  body.wp-backdrop #shell{background:rgb(14 17 22 / var(--bg-alpha));
+    border-color:rgba(163,113,247,0.45);backdrop-filter:blur(2px)}
+
+  /* Title bar. The right padding is a reserved gutter for the fixed ✕ — the
+     pane count used to sit underneath it. */
+  .bar{display:flex;align-items:center;gap:6px;flex:0 0 auto;
+    padding:3px 30px 3px 26px;font-size:10px;color:#d2a8ff;letter-spacing:0.1em;
+    text-transform:uppercase;border-bottom:1px solid rgba(163,113,247,0.25)}
+  .bar .count{color:#8b949e;letter-spacing:0}
+  .bar .spacer{flex:1}
+  .btn{background:rgba(255,255,255,0.06);color:#9aa4ad;
+    border:1px solid rgba(255,255,255,0.12);border-radius:4px;
+    padding:1px 7px;font-size:10px;cursor:pointer;font-family:inherit}
+  .btn:hover{color:#fff;border-color:#a371f7}
+  .btn.on{background:#2a1d3d;color:#d2a8ff;border-color:#a371f7}
+
+  /* Panes. `min-content` rows + a per-pane height measured from its own
+     content is what makes auto-height work: a pane with two lines in it is two
+     lines tall instead of an empty box. */
+  #panes{flex:1 1 auto;display:grid;gap:4px;padding:4px;overflow:auto;
+    grid-template-columns:repeat(var(--cols,1), minmax(0,1fr));
+    grid-auto-rows:min-content;align-content:start}
+  .pane{display:flex;flex-direction:column;min-width:0;overflow:hidden;
+    border:1px solid rgba(255,255,255,0.07);border-radius:5px;
+    background:transparent}
+  /* Per-pane plate. `bgon` forces it on, `bgoff` forces it off, neither =
+     follow the dock. The pane's INNER card alpha is handled separately by
+     setting --bg-alpha inside the iframe (see applyPaneBg). */
+  body.wp-backdrop .pane:not(.bgoff){background:rgba(255,255,255,0.025)}
+  .pane.bgon{background:rgba(255,255,255,0.025)}
+  .pane.bgoff{background:transparent}
+  .pane > .ph{display:flex;align-items:center;gap:4px;flex:0 0 auto;
+    padding:1px 4px;font-size:9px;color:#8b949e;letter-spacing:0.06em;
+    text-transform:uppercase;background:rgba(0,0,0,0.30)}
+  .pane > .ph .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  /* ⚠ Always drawn, only dimmed — NOT a hover-reveal. The panes repaint
+     constantly (cast bars, countdowns) and a freshly-created element under a
+     stationary cursor never picks up :hover; the same trap that made the CH
+     chain's ✕ invisible on exactly the row you wanted it on (2026-08-14). */
+  .pane > .ph .ctl{cursor:pointer;opacity:0.45;padding:0 3px;border-radius:3px}
+  .pane > .ph .ctl:hover{opacity:1;color:#a371f7;background:rgba(163,113,247,0.18)}
+  .pane > .ph .x:hover{color:#f87171;background:rgba(220,38,38,0.20)}
+  .pane > iframe{flex:1 1 auto;width:100%;border:0;background:transparent;
+    min-height:0;display:block}
+  #empty{padding:14px 10px;font-size:11px;color:#6b7280;line-height:1.5}
+  #empty b{color:#d2a8ff;font-weight:600}
+
+  /* ── Setup mode ──────────────────────────────────────────────────────────
+     Panes become draggable cards. The iframes go pointer-events:none so the
+     drag lands on the PANE — without that, a mousedown inside a pane hits the
+     overlay's own drag handle and moves the whole window (Hitya 2026-08-14:
+     "dragging the inner dock items … moves the entire window"). */
+  body.setup .pane{cursor:grab;border-color:rgba(246,195,101,0.6)}
+  body.setup .pane > iframe{pointer-events:none}
+  body.setup .pane.drag{opacity:0.45;cursor:grabbing}
+  body.setup .pane.over{outline:2px dashed #f0b429;outline-offset:-2px}
+  /* Corner grip — drag to stretch a pane across columns/rows in setup
+     (Hitya 2026-08-19). Snaps to whole grid cells; the ≡ menu presets
+     keep working. */
+  .pane{position:relative}
+  .pane .grip{display:none;position:absolute;right:0;bottom:0;width:16px;height:16px;
+    cursor:nwse-resize;z-index:5;color:rgba(240,180,41,0.85);font-size:10px;
+    line-height:16px;text-align:center;user-select:none}
+  body.setup .pane .grip{display:block}
+  body.setup .pane.resizing{outline:2px solid #f0b429;outline-offset:-2px;cursor:nwse-resize}
+  .pane .span{font-size:8px;color:#6b7280;letter-spacing:0}
+  #setupbar{display:none;align-items:center;gap:8px;flex:0 0 auto;
+    padding:4px 8px;background:rgba(214,153,34,0.94);color:#1f1300;
+    font-size:10px;font-weight:700;flex-wrap:wrap}
+  body.setup #setupbar{display:flex}
+  #setupbar input[type=range]{flex:1;min-width:70px;cursor:pointer}
+  #setupbar .sb{background:rgba(0,0,0,0.28);color:#fff;border:0;border-radius:3px;
+    padding:2px 8px;font-size:10px;font-weight:700;cursor:pointer;font-family:inherit}
+  #setupbar .sb:hover{background:rgba(0,0,0,0.45)}
+
+  /* Pane picker — which overlays live in the dock. #layouts (named dock
+     layouts + rename, Hitya 2026-08-19) shares the same panel chrome. */
+  #picker,#layouts{display:none;position:absolute;top:26px;left:6px;right:6px;z-index:80;
+    background:rgba(13,17,23,0.98);border:1px solid rgba(163,113,247,0.5);
+    border-radius:6px;padding:6px;max-height:70%;overflow:auto;
+    box-shadow:0 4px 16px rgba(0,0,0,0.6)}
+  #picker.show,#layouts.show{display:block}
+  #picker .hint,#layouts .hint{font-size:9px;color:#6b7280;margin:0 0 5px;line-height:1.4}
+  #layouts .lay{display:flex;align-items:center;gap:6px;font-size:11px;
+    padding:3px 4px;border-radius:3px;cursor:pointer;color:#c9d1d9}
+  #layouts .lay:hover{background:rgba(163,113,247,0.14)}
+  #layouts .lay .cnt{margin-left:auto;font-size:9px;color:#6b7280}
+  #layouts .lay .del{background:none;border:none;color:#6e7681;cursor:pointer;
+    font-size:11px;padding:0 3px;line-height:1}
+  #layouts .lay .del:hover{color:#f87171}
+  #layouts .lrow{display:flex;gap:6px;margin-top:6px}
+  #layouts .lrow input{flex:1;min-width:0;background:rgba(255,255,255,0.06);
+    color:#e6edf3;border:1px solid rgba(255,255,255,0.15);border-radius:4px;
+    padding:2px 6px;font-size:11px;font-family:inherit}
+  #layouts .lrow input:focus{outline:none;border-color:#a371f7}
+  #picker label{display:flex;align-items:center;gap:6px;font-size:11px;
+    padding:2px 3px;border-radius:3px;cursor:pointer;color:#c9d1d9}
+  #picker label:hover{background:rgba(163,113,247,0.14)}
+  #picker input{accent-color:#a371f7;cursor:pointer}
+
+  /* Per-pane size + background menu. */
+  #panemenu{display:none;position:absolute;z-index:90;min-width:150px;
+    background:rgba(13,17,23,0.98);border:1px solid rgba(163,113,247,0.55);
+    border-radius:6px;padding:5px;box-shadow:0 4px 16px rgba(0,0,0,0.6)}
+  #panemenu.show{display:block}
+  #panemenu .h{font-size:9px;color:#8b949e;letter-spacing:0.08em;
+    text-transform:uppercase;padding:2px 3px}
+  #panemenu .row{display:flex;gap:3px;padding:2px 3px}
+  #panemenu .mb{flex:1;background:rgba(255,255,255,0.06);color:#c9d1d9;
+    border:1px solid rgba(255,255,255,0.12);border-radius:3px;
+    padding:2px 0;font-size:10px;cursor:pointer;font-family:inherit}
+  #panemenu .mb:hover{border-color:#a371f7;color:#fff}
+  #panemenu .mb.on{background:#2a1d3d;color:#d2a8ff;border-color:#a371f7}
+
+  /* Shared overlay chrome — ✕ hide (top-right) and ✥ move (top-left), same
+     positions and behaviour as every other overlay (checklist items 1 + 2). */
+  #hide-btn{position:absolute;top:6px;right:6px;z-index:60;width:18px;height:18px;
+    display:flex;align-items:center;justify-content:center;border-radius:4px;
+    background:rgba(14,17,22,0.6);color:#6b7280;border:1px solid rgba(110,118,129,0.3);
+    font-size:11px;line-height:1;cursor:pointer;opacity:0.45;transition:opacity .12s}
+  #hide-btn:hover{opacity:1;color:#f87171;border-color:#f87171}
+  #move-btn{position:absolute;top:6px;left:6px;z-index:60;width:18px;height:18px;
+    display:flex;align-items:center;justify-content:center;border-radius:4px;
+    background:rgba(14,17,22,0.6);color:#6b7280;border:1px solid rgba(110,118,129,0.3);
+    font-size:11px;line-height:1;cursor:move;opacity:0.45;transition:opacity .12s}
+  #move-btn:hover{opacity:1;color:#58a6ff;border-color:#58a6ff}
+  body.setup #hide-btn,body.setup #move-btn{top:30px}
+  body.unlocked #shell{border-color:rgba(31,111,235,0.9);
+    box-shadow:0 0 0 1px rgba(31,111,235,0.6)}
+  body.unlocked::after{content:'⤡';position:fixed;right:2px;bottom:0;
+    color:rgba(31,111,235,0.9);font-size:14px;pointer-events:none}
+</style></head>
+<body>
+  <button id="move-btn" title="Drag from this icon to move the dock">✥</button>
+  <button id="hide-btn" title="Hide the dock (turn back on from the tray → Overlays)">✕</button>
+  <div id="shell">
+    <div id="setupbar">
+      <span>🛠 Dock setup</span>
+      <span>opacity</span>
+      <input id="opacitySlider" type="range" min="0.15" max="1" step="0.05" value="1" />
+      <span id="opacityVal">100%</span>
+      <button class="sb" id="growBtn" title="Anchor the dock by its bottom edge so it grows upward">↑ Grow up</button>
+      <button class="sb" id="exitSetupBtn">Done</button>
+    </div>
+    <div class="bar">
+      <span id="dockTitle">◫ Dock</span>
+      <span class="count" id="count"></span>
+      <span class="spacer"></span>
+      <button class="btn" id="addBtn" title="Choose which overlays live in the dock">＋ Panes</button>
+      <button class="btn" id="colBtn" title="Number of columns">▥ 1</button>
+      <button class="btn" id="layoutBtn" title="Save or load a dock layout; rename the dock">💾</button>
+    </div>
+    <div id="panes"></div>
+    <div id="empty">
+      Nothing docked yet. Hit <b>＋ Panes</b> and pick the overlays you want
+      collected here — they move out of their own floating windows and into
+      this one.
+    </div>
+  </div>
+  <div id="picker">
+    <p class="hint">Ticked overlays live in the dock. Unticking one gives it its
+      own floating window back.</p>
+    <div id="pickerList"></div>
+  </div>
+  <div id="layouts">
+    <p class="hint">Saved dock layouts — click one to load it (panes, columns,
+      and sizes all swap). Save the current arrangement under a name below.</p>
+    <div id="layoutList"></div>
+    <div class="lrow">
+      <input id="layoutName" type="text" maxlength="24" placeholder="layout name…" />
+      <button class="btn" id="layoutSaveBtn">💾 Save current</button>
+    </div>
+    <div class="lrow">
+      <input id="dockNameInput" type="text" maxlength="24" placeholder="dock name…" />
+      <button class="btn" id="dockRenameBtn">✏ Rename dock</button>
+    </div>
+  </div>
+  <div id="panemenu"></div>
+<script>
+  // ── Bridge + chrome ────────────────────────────────────────────────────────
+  var M = window.mimic || {};
+  var SETUP = false;
+  if (M.onOverlayLocked) M.onOverlayLocked(function (locked) {
+    document.body.classList.toggle('unlocked', !locked);
+  });
+  if (M.onBgAlpha) M.onBgAlpha(function (v) {
+    document.documentElement.style.setProperty('--bg-alpha', String(v));
+    var sl = document.getElementById('opacitySlider');
+    var ov = document.getElementById('opacityVal');
+    if (sl) sl.value = v;
+    if (ov) ov.textContent = Math.round(v * 100) + '%';
+  });
+  var _setupScope = null;
+  if (M.onSetupMode) M.onSetupMode(function (p) {
+    // `active` is the field every setup-mode payload actually carries
+    // ({ active, overlayKey, scope }). This handler checked p.on/p.setup —
+    // names no sender ever used — so the dock NEVER entered setup state:
+    // "Setup THIS Overlay" looked dead and panes could never be dragged
+    // (pane drag is body.setup-gated). What read as "editable during Setup
+    // ALL" was only the unlocked chrome (Hitya 2026-08-19).
+    SETUP = !!(p && (p === true || p.active || p.on || p.setup));
+    if (p && p.scope) _setupScope = p.scope; else if (p && p.active) _setupScope = 'all';
+    document.body.classList.toggle('setup', SETUP);
+    render(_lastState, true);
+  });
+
+  // Hover-interact handshake (checklist item 3). A locked overlay is
+  // click-through, so without this every click here falls into EQ and the
+  // control "does nothing".
+  function interactive(el) {
+    if (!el) return;
+    el.addEventListener('mouseenter', function () { try { M.overlayHoverInteractive(true); } catch (e) {} });
+    el.addEventListener('mouseleave', function () { try { M.overlayHoverInteractive(false); } catch (e) {} });
+  }
+  var hideBtn = document.getElementById('hide-btn');
+  var moveBtn = document.getElementById('move-btn');
+  var addBtn  = document.getElementById('addBtn');
+  var colBtn  = document.getElementById('colBtn');
+  var growBtn = document.getElementById('growBtn');
+  var doneBtn = document.getElementById('exitSetupBtn');
+  var slider  = document.getElementById('opacitySlider');
+  [hideBtn, moveBtn, addBtn, colBtn, growBtn, doneBtn, slider].forEach(interactive);
+  if (hideBtn) hideBtn.addEventListener('click', function () { try { M.hideThisOverlay(); } catch (e) {} });
+  if (doneBtn) doneBtn.addEventListener('click', function () {
+    // Exit the mode that was actually entered — a Setup-THIS session must
+    // clear the single-setup state, not flip the (unset) global (same
+    // contract as every overlay's Done button).
+    try {
+      if (_setupScope === 'this') M.setSetupModeThis(false); else M.setSetupMode(false);
+    } catch (e) {}
+    _setupScope = null;
+  });
+  if (slider) slider.addEventListener('input', function () {
+    var v = Number(slider.value);
+    document.documentElement.style.setProperty('--bg-alpha', String(v));
+    var ov = document.getElementById('opacityVal');
+    if (ov) ov.textContent = Math.round(v * 100) + '%';
+    try { M.setOverlayOpacity('dock', v); } catch (e) {}
+  });
+  if (growBtn) growBtn.addEventListener('click', function () {
+    try { M.dockGrow().then(function (st) { if (st) render(st, true); }); } catch (e) {}
+  });
+
+  var _dragging = false;
+  if (moveBtn) {
+    moveBtn.addEventListener('mousedown', function (e) {
+      if (e.button !== 0) return;
+      _dragging = true;
+      try { M.overlayDragStart(); } catch (err) {}
+    });
+    try { M.attachOverlayMenu(moveBtn); } catch (e) {}
+  }
+  document.addEventListener('mouseup', function () {
+    if (!_dragging) return;
+    _dragging = false;
+    try { M.overlayDragEnd(); } catch (e) {}
+    try { M.overlayHoverInteractive(false); } catch (e) {}
+  });
+
+  // ── Panes ──────────────────────────────────────────────────────────────────
+  var panesEl  = document.getElementById('panes');
+  var emptyEl  = document.getElementById('empty');
+  var countEl  = document.getElementById('count');
+  var pickEl   = document.getElementById('picker');
+  var pickList = document.getElementById('pickerList');
+  var menuEl   = document.getElementById('panemenu');
+  var CATALOG = [];
+  var _lastState = null;
+  var _lastSig = null;
+  var ROW_UNIT = 120;          // one grid "row" of height, in px
+
+  function specFor(k) {
+    for (var i = 0; i < CATALOG.length; i++) if (CATALOG[i].key === k) return CATALOG[i];
+    return null;
+  }
+
+  function render(state, force) {
+    if (!state) return;
+    _lastState = state;
+    // Intrinsic shell while auto-fit is on (see the #shell CSS note).
+    try { document.body.classList.toggle('autofit', state.autoFit !== false); } catch (e) {}
+    var keys = state.keys || [];
+    var cols = state.cols || 1;
+    CATALOG = state.catalog || CATALOG;
+    var spans = state.spans || {};
+    var bg = state.paneBg || {};
+    // Byte-stability guard, same reason every other overlay has one: rebuilding
+    // the pane list tears down and RELOADS every iframe, which flashes and
+    // throws away each overlay's in-page state (open tabs, scroll position,
+    // the DPS HUD's selected History fight).
+    var sig = keys.join(',') + '|' + cols + '|' + SETUP + '|' + (state.dockName || '') + '|'
+      + keys.map(function (k) { return (spans[k] || {}).c + 'x' + (spans[k] || {}).r + ':' + bg[k]; }).join(',');
+    if (!force && sig === _lastSig) return;
+    _lastSig = sig;
+
+    panesEl.style.setProperty('--cols', String(cols));
+    colBtn.textContent = '▥ ' + cols;
+    if (growBtn) growBtn.classList.toggle('on', state.growUp !== false);
+    countEl.textContent = keys.length ? '(' + keys.length + ')' : '';
+    // User-named dock (Hitya 2026-08-19: "change the dock configuration name
+    // to reflect what the user wants").
+    var titleEl = document.getElementById('dockTitle');
+    if (titleEl) titleEl.textContent = '◫ ' + (state.dockName || 'Dock');
+    emptyEl.style.display = keys.length ? 'none' : 'block';
+
+    // Reuse the iframe for any pane that is staying, so only genuinely new
+    // panes load and only removed ones are destroyed.
+    var existing = {};
+    Array.prototype.forEach.call(panesEl.children, function (p) {
+      existing[p.getAttribute('data-key')] = p;
+    });
+    panesEl.textContent = '';
+    keys.forEach(function (k) {
+      var spec = specFor(k);
+      if (!spec) return;
+      var sp = spans[k] || { c: 1, r: 1 };
+      var pane = existing[k];
+      if (!pane) {
+        pane = document.createElement('div');
+        pane.className = 'pane';
+        pane.setAttribute('data-key', k);
+        var ph = document.createElement('div');
+        ph.className = 'ph';
+        var nm = document.createElement('span');
+        nm.className = 'nm';
+        nm.textContent = spec.label;
+        var szl = document.createElement('span');
+        szl.className = 'span';
+        var gear = document.createElement('span');
+        gear.className = 'ctl';
+        gear.textContent = '▦';
+        gear.title = 'Size + background for ' + spec.label;
+        interactive(gear);
+        gear.addEventListener('click', function (ev) { openPaneMenu(ev, k); });
+        var x = document.createElement('span');
+        x.className = 'ctl x';
+        x.textContent = '✕';
+        x.title = 'Undock ' + spec.label + ' — it gets its own window back';
+        interactive(x);
+        x.addEventListener('click', function () { setDocked(k, false); });
+        ph.appendChild(nm); ph.appendChild(szl); ph.appendChild(gear); ph.appendChild(x);
+        var fr = document.createElement('iframe');
+        // `src` may be an agent URL (the Command Center is served from the
+        // agent so it rides hot-swaps) — main.js resolves which.
+        fr.setAttribute('src', spec.src || spec.file);
+        fr.setAttribute('scrolling', 'no');
+        fr.addEventListener('load', function () { applyPaneBg(pane); fitPane(pane); });
+        pane.appendChild(ph); pane.appendChild(fr);
+        var grip = document.createElement('span');
+        grip.className = 'grip';
+        grip.textContent = '◢';
+        grip.title = 'Drag to stretch ' + spec.label + ' across columns / rows';
+        interactive(grip);
+        grip.addEventListener('mousedown', function (ev) { startPaneResize(ev, pane); });
+        pane.appendChild(grip);
+      }
+      pane.style.gridColumn = 'span ' + Math.min(sp.c, cols);
+      pane.style.gridRow    = 'span ' + sp.r;
+      pane.style.minHeight  = (sp.r * ROW_UNIT) + 'px';
+      pane.classList.toggle('bgon',  bg[k] === true);
+      pane.classList.toggle('bgoff', bg[k] === false);
+      pane.setAttribute('draggable', SETUP ? 'true' : 'false');
+      var lbl = pane.querySelector('.span');
+      if (lbl) lbl.textContent = (sp.c > 1 || sp.r > 1) ? (sp.c + '×' + sp.r) : '';
+      applyPaneBg(pane);
+      panesEl.appendChild(pane);
+    });
+    fitAll();
+  }
+
+  // ── Per-pane background ───────────────────────────────────────────────────
+  // The pane's own cards live INSIDE the iframe and get their alpha from that
+  // document's --bg-alpha. Same-origin, so we can set it directly — which
+  // means "no background" genuinely removes the plate rather than tinting it.
+  function applyPaneBg(pane) {
+    if (!pane) return;
+    var k = pane.getAttribute('data-key');
+    var want = (_lastState && _lastState.paneBg) ? _lastState.paneBg[k] : null;
+    var fr = pane.querySelector('iframe');
+    if (!fr) return;
+    try {
+      var doc = fr.contentDocument;
+      if (!doc || !doc.documentElement) return;
+      var dockAlpha = getComputedStyle(document.documentElement).getPropertyValue('--bg-alpha').trim() || '0.78';
+      var on = (want === null || want === undefined)
+        ? document.body.classList.contains('wp-backdrop')
+        : !!want;
+      doc.documentElement.style.setProperty('--bg-alpha', on ? dockAlpha : '0');
+    } catch (e) { /* cross-origin agent-served pane — leave it alone */ }
+  }
+
+  // ── Auto height ───────────────────────────────────────────────────────────
+  // Hitya: "Automatic height adjustment needs to be turned on." Each pane is
+  // sized from its OWN content (same-origin, so we can measure it), then the
+  // dock asks main to size the window to the total. main keeps the BOTTOM edge
+  // fixed when grow-upward is on, so it grows away from the middle of the
+  // screen rather than down over the game.
+  function fitPane(pane) {
+    if (!pane) return;
+    var fr = pane.querySelector('iframe');
+    if (!fr) return;
+    var sp = 1;
+    var m = /span (\d+)/.exec(pane.style.gridRow || '');
+    if (m) sp = Number(m[1]) || 1;
+    var floor = sp * ROW_UNIT - 16;
+    var h = floor;
+    try {
+      var doc = fr.contentDocument;
+      var body = doc && doc.body;
+      if (body) {
+        var wrap = doc.getElementById('wrap') || doc.querySelector('.hud') || body;
+        h = Math.max(floor, (wrap.scrollHeight || 0) + 8);
+      }
+    } catch (e) { /* not measurable — keep the floor */ }
+    h = Math.min(h, 900);
+    if (Math.abs((parseInt(fr.style.height, 10) || 0) - h) >= 6) fr.style.height = h + 'px';
+  }
+  function fitAll() {
+    Array.prototype.forEach.call(panesEl.children, fitPane);
+    if (!_lastState || _lastState.autoFit === false) return;
+    var shell = document.getElementById('shell');
+    if (!shell) return;
+    // +margins: #shell has 4px each side.
+    var want = shell.scrollHeight + 10;
+    try { M.dockAutoHeight(want); } catch (e) {}
+  }
+
+  // ── Pane size + background menu ───────────────────────────────────────────
+  function openPaneMenu(ev, key) {
+    ev.stopPropagation();
+    var st = _lastState || {};
+    var sp = (st.spans || {})[key] || { c: 1, r: 1 };
+    var bg = (st.paneBg || {})[key];
+    menuEl.textContent = '';
+    function section(title) {
+      var h = document.createElement('div');
+      h.className = 'h'; h.textContent = title;
+      menuEl.appendChild(h);
+      var row = document.createElement('div');
+      row.className = 'row';
+      menuEl.appendChild(row);
+      return row;
+    }
+    var cRow = section('Columns wide');
+    for (var c = 1; c <= 3; c++) (function (c) {
+      var b = document.createElement('button');
+      b.className = 'mb' + (sp.c === c ? ' on' : '');
+      b.textContent = String(c);
+      interactive(b);
+      b.addEventListener('click', function () {
+        M.dockSpan(key, c, sp.r).then(function (s) { render(s, true); closeMenu(); });
+      });
+      cRow.appendChild(b);
+    })(c);
+    var rRow = section('Rows tall');
+    for (var r = 1; r <= 4; r++) (function (r) {
+      var b = document.createElement('button');
+      b.className = 'mb' + (sp.r === r ? ' on' : '');
+      b.textContent = String(r);
+      interactive(b);
+      b.addEventListener('click', function () {
+        M.dockSpan(key, sp.c, r).then(function (s) { render(s, true); closeMenu(); });
+      });
+      rRow.appendChild(b);
+    })(r);
+    var bRow = section('Background');
+    [['Dock', null], ['On', true], ['Off', false]].forEach(function (pair) {
+      var b = document.createElement('button');
+      b.className = 'mb' + (bg === pair[1] ? ' on' : '');
+      b.textContent = pair[0];
+      interactive(b);
+      b.addEventListener('click', function () {
+        M.dockPaneBg(key, pair[1]).then(function (s) { render(s, true); closeMenu(); });
+      });
+      bRow.appendChild(b);
+    });
+    menuEl.classList.add('show');
+    var r0 = menuEl.getBoundingClientRect();
+    var x = Math.max(4, Math.min(window.innerWidth - r0.width - 4, ev.clientX - 20));
+    var y = Math.max(4, Math.min(window.innerHeight - r0.height - 4, ev.clientY + 8));
+    menuEl.style.left = x + 'px';
+    menuEl.style.top  = y + 'px';
+  }
+  function closeMenu() { menuEl.classList.remove('show'); }
+
+  // ── Drag to reorder (setup mode) ──────────────────────────────────────────
+  // Only in setup mode, and the iframes go pointer-events:none there so the
+  // drag lands on the PANE. Without that a mousedown inside a pane reaches the
+  // overlay's own ✥ handler and moves the whole window instead.
+  var _dragKey = null;
+  panesEl.addEventListener('dragstart', function (ev) {
+    var pane = ev.target.closest && ev.target.closest('.pane');
+    // A corner-resize in progress (or starting from the grip) must never
+    // become a reorder drag.
+    if (_rz || (ev.target.closest && ev.target.closest('.grip'))) { ev.preventDefault(); return; }
+    if (!SETUP || !pane) { ev.preventDefault(); return; }
+    _dragKey = pane.getAttribute('data-key');
+    pane.classList.add('drag');
+    try { ev.dataTransfer.effectAllowed = 'move'; ev.dataTransfer.setData('text/plain', _dragKey); } catch (e) {}
+  });
+  panesEl.addEventListener('dragover', function (ev) {
+    if (!SETUP || !_dragKey) return;
+    ev.preventDefault();
+    var pane = ev.target.closest && ev.target.closest('.pane');
+    Array.prototype.forEach.call(panesEl.children, function (p) { p.classList.remove('over'); });
+    if (pane && pane.getAttribute('data-key') !== _dragKey) pane.classList.add('over');
+  });
+  panesEl.addEventListener('drop', function (ev) {
+    if (!SETUP || !_dragKey) return;
+    ev.preventDefault();
+    var pane = ev.target.closest && ev.target.closest('.pane');
+    var order = Array.prototype.map.call(panesEl.children, function (p) { return p.getAttribute('data-key'); });
+    var from = order.indexOf(_dragKey);
+    var to   = pane ? order.indexOf(pane.getAttribute('data-key')) : order.length - 1;
+    if (from >= 0 && to >= 0 && from !== to) {
+      order.splice(to, 0, order.splice(from, 1)[0]);
+      try { M.dockReorder(order).then(function (s) { render(s, true); }); } catch (e) {}
+    }
+    cleanupDrag();
+  });
+  panesEl.addEventListener('dragend', cleanupDrag);
+  function cleanupDrag() {
+    _dragKey = null;
+    Array.prototype.forEach.call(panesEl.children, function (p) {
+      p.classList.remove('drag'); p.classList.remove('over');
+    });
+  }
+
+  // ── Picker ────────────────────────────────────────────────────────────────
+  function renderPicker() {
+    pickList.textContent = '';
+    var docked = {};
+    Array.prototype.forEach.call(panesEl.children, function (p) {
+      docked[p.getAttribute('data-key')] = true;
+    });
+    CATALOG.forEach(function (c) {
+      var lab = document.createElement('label');
+      var cb  = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = !!docked[c.key];
+      cb.addEventListener('change', function () { setDocked(c.key, cb.checked); });
+      interactive(lab);
+      var sp = document.createElement('span');
+      sp.textContent = c.label;
+      lab.appendChild(cb); lab.appendChild(sp);
+      pickList.appendChild(lab);
+    });
+  }
+
+  function setDocked(key, want) {
+    try {
+      M.dockSet(key, !!want).then(function (st) { if (st) { render(st, true); renderPicker(); } });
+    } catch (e) {}
+  }
+
+  // ── Corner-resize a pane across grid cells (Hitya 2026-08-19: "In setup
+  // mode i should be able to resize via the corners or sides of the docked
+  // overlays to stretch to consume additional rows or columns") ─────────────
+  // Live-preview while dragging; the real dock-span write happens on release
+  // and the render(force) that follows re-lays everything out.
+  var _rz = null;
+  function startPaneResize(ev, pane) {
+    if (!SETUP || ev.button !== 0) return;
+    ev.preventDefault();      // also stops the native reorder drag from arming
+    ev.stopPropagation();
+    var k = pane.getAttribute('data-key');
+    var st = _lastState || {};
+    var sp = (st.spans || {})[k] || { c: 1, r: 1 };
+    var cols = st.cols || 1;
+    // One column's width: `cols` equal tracks with 4px gaps inside #panes'
+    // 4px padding — measured from the grid box so a wide pane doesn't skew it.
+    var gw = panesEl.getBoundingClientRect().width;
+    var colW = Math.max(40, (gw - 8 - (cols - 1) * 4) / cols);
+    _rz = { key: k, pane: pane, startX: ev.clientX, startY: ev.clientY,
+            c0: sp.c || 1, r0: sp.r || 1, c: sp.c || 1, r: sp.r || 1,
+            colW: colW, cols: cols };
+    pane.classList.add('resizing');
+  }
+  document.addEventListener('mousemove', function (ev) {
+    if (!_rz) return;
+    var c = Math.max(1, Math.min(3, _rz.c0 + Math.round((ev.clientX - _rz.startX) / _rz.colW)));
+    var r = Math.max(1, Math.min(4, _rz.r0 + Math.round((ev.clientY - _rz.startY) / ROW_UNIT)));
+    if (c === _rz.c && r === _rz.r) return;
+    _rz.c = c; _rz.r = r;
+    _rz.pane.style.gridColumn = 'span ' + Math.min(c, _rz.cols);
+    _rz.pane.style.gridRow    = 'span ' + r;
+    _rz.pane.style.minHeight  = (r * ROW_UNIT) + 'px';
+    var lbl = _rz.pane.querySelector('.span');
+    if (lbl) lbl.textContent = (c > 1 || r > 1) ? (c + '×' + r) : '';
+  });
+  document.addEventListener('mouseup', function () {
+    if (!_rz) return;
+    var done = _rz; _rz = null;
+    done.pane.classList.remove('resizing');
+    if (done.c !== done.c0 || done.r !== done.r0) {
+      try { M.dockSpan(done.key, done.c, done.r).then(function (st) { if (st) render(st, true); }); } catch (e) {}
+    }
+  });
+
+  if (addBtn) addBtn.addEventListener('click', function () {
+    pickEl.classList.toggle('show');
+    layEl.classList.remove('show');
+    if (pickEl.classList.contains('show')) renderPicker();
+  });
+  if (colBtn) colBtn.addEventListener('click', function () {
+    try { M.dockCols().then(function (st) { if (st) render(st, true); }); } catch (e) {}
+  });
+
+  // ── Named dock layouts + rename (Hitya 2026-08-19: "Dock needs the ability
+  // to save configurations … A 'Save layout' button or 'Load Layout' with
+  // each of their layouts") ─────────────────────────────────────────────────
+  var layEl   = document.getElementById('layouts');
+  var layList = document.getElementById('layoutList');
+  var layoutBtn = document.getElementById('layoutBtn');
+  function escL(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]; }); }
+  function renderLayouts() {
+    var st = _lastState || {};
+    var list = Array.isArray(st.layouts) ? st.layouts : [];
+    var h = '';
+    if (!list.length) h = '<p class="hint">No saved layouts yet.</p>';
+    for (var i = 0; i < list.length; i++) {
+      var n = list[i].name;
+      var c = list[i].count || 0;
+      h += '<div class="lay" data-name="' + escL(n) + '" title="Load this layout">'
+        + '<span>' + escL(n) + '</span>'
+        + '<span class="cnt">' + c + ' pane' + (c === 1 ? '' : 's') + '</span>'
+        + '<button class="del" data-name="' + escL(n) + '" title="Delete this layout">✕</button>'
+        + '</div>';
+    }
+    layList.innerHTML = h;
+    var inp = document.getElementById('dockNameInput');
+    if (inp && document.activeElement !== inp) inp.value = st.dockName || '';
+  }
+  function _layDone(st) { if (st) { render(st, true); renderLayouts(); } }
+  if (layoutBtn) layoutBtn.addEventListener('click', function () {
+    layEl.classList.toggle('show');
+    pickEl.classList.remove('show');
+    if (layEl.classList.contains('show')) renderLayouts();
+  });
+  if (layList) layList.addEventListener('click', function (ev) {
+    var del = ev.target.closest ? ev.target.closest('.del') : null;
+    if (del) {
+      try { M.dockLayoutDelete(del.getAttribute('data-name')).then(_layDone); } catch (e) {}
+      return;
+    }
+    var row = ev.target.closest ? ev.target.closest('.lay') : null;
+    if (row) {
+      try { M.dockLayoutLoad(row.getAttribute('data-name')).then(_layDone); } catch (e) {}
+      layEl.classList.remove('show');
+    }
+  });
+  var laySaveBtn = document.getElementById('layoutSaveBtn');
+  if (laySaveBtn) laySaveBtn.addEventListener('click', function () {
+    var inp = document.getElementById('layoutName');
+    var name = (inp && inp.value || '').trim();
+    if (!name) { if (inp) inp.focus(); return; }
+    try { M.dockLayoutSave(name).then(function (st) { if (inp) inp.value = ''; _layDone(st); }); } catch (e) {}
+  });
+  var dockRenBtn = document.getElementById('dockRenameBtn');
+  if (dockRenBtn) dockRenBtn.addEventListener('click', function () {
+    var inp = document.getElementById('dockNameInput');
+    try { M.dockRename((inp && inp.value || '').trim()).then(_layDone); } catch (e) {}
+  });
+  [layoutBtn, laySaveBtn, dockRenBtn].forEach(interactive);
+
+  // Click anywhere else to dismiss the picker / layouts / pane menu. All are
+  // positioned OVER the panes, so without this they block every control
+  // underneath and the only way out is finding the same button again — which
+  // reads as stuck.
+  document.addEventListener('mousedown', function (ev) {
+    if (pickEl.classList.contains('show')
+        && !pickEl.contains(ev.target) && !(addBtn && addBtn.contains(ev.target))) {
+      pickEl.classList.remove('show');
+    }
+    if (layEl.classList.contains('show')
+        && !layEl.contains(ev.target) && !(layoutBtn && layoutBtn.contains(ev.target))) {
+      layEl.classList.remove('show');
+    }
+    if (menuEl.classList.contains('show') && !menuEl.contains(ev.target)) closeMenu();
+  }, true);
+
+  function refresh() {
+    try { M.dockState().then(function (st) { if (st) render(st); }); } catch (e) {}
+  }
+  refresh();
+  // Poll rather than push: the dock's state changes only when a human clicks,
+  // so a slow poll is simpler than another IPC channel and cannot get stuck.
+  setInterval(refresh, 2000);
+  // Panes grow and shrink on their own (a fight starts, a queue fills), so the
+  // fit has to be a heartbeat rather than a one-shot on load.
+  setInterval(fitAll, 1000);
+</script>
+</body></html>

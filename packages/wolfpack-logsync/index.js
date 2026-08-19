@@ -1897,7 +1897,13 @@ function _findSongBuff(songName, zealBuffs) {
 // landing text the first match wins (never seen in a real twist). Damage
 // lines carry the song name themselves so they need no suffix table.
 const SONG_AOE_CAP      = 12;      // Quarm AE target cap — 12 hit = full swarm
-const SONG_AOE_BURST_MS = 2500;    // landing rows within 2.5s = one pulse
+// Pulse boundary, measured in LOG time (1s stamps): rows in the same/adjacent
+// second are one pulse; the next pulse of a 3s song is ≥2s of stamp away.
+// Wall-clock arrival must NOT be the pulse clock — the EQ client flushes the
+// log in multi-second batches under swarm-kite load, so several pulses arrive
+// in one read with ~0ms between them and merge into one badge (Fittir's
+// ⚔123/12 / ⚔152/12, 2026-08-19).
+const SONG_AOE_PULSE_GAP_MS = 1500;
 const SONG_AOE_STALE_MS = 30_000;  // badge drops when the song stops pulsing
 
 // Punctuation-insensitive song key: "Selo`s" / "Selo's" / curly-apostrophe
@@ -1944,7 +1950,9 @@ function noteSongAoeLine(line, character) {
   // Chat lines can quote anything ("... winces.") — the ", '" of a chat
   // message never appears in landing/damage lines, so skip those outright.
   if (body.indexOf(", '") !== -1) return;
-  const now = Date.now();
+  // Burst boundaries use the LINE's own timestamp (see SONG_AOE_PULSE_GAP_MS).
+  const _ts = parseEqTimestamp(line);
+  const lineMs = _ts ? _ts.getTime() : Date.now();
   state.aoeBySong = state.aoeBySong || {};
 
   // Damage: "X has taken N (points of) damage from your <song>."
@@ -1955,13 +1963,22 @@ function noteSongAoeLine(line, character) {
     if (!state._aoeSongSlugs.has(slug)) return;
     const amount = parseInt(dm[2], 10) || 0;
     const b = state.aoeBySong[slug] = state.aoeBySong[slug] || { song: dm[3].trim() };
-    if (!b.dmg || (now - b.dmg.at) > SONG_AOE_BURST_MS) {
-      b.dmg = { n: 1, total: amount, min: amount, max: amount, at: now };
+    // Kite total (Hitya 2026-08-19): damage accumulates per song until the
+    // song goes quiet for SONG_AOE_STALE_MS (swarm dead / kite over) — then
+    // the next damage line starts a fresh kite.
+    if (!b.kite || (lineMs - b.kite.lastAt) > SONG_AOE_STALE_MS) {
+      b.kite = { total: 0, pulses: 0, startedAt: lineMs, lastAt: lineMs };
+    }
+    if (!b.dmg || (lineMs - b.dmg.at) > SONG_AOE_PULSE_GAP_MS) {
+      b.dmg = { n: 1, total: amount, min: amount, max: amount, at: lineMs };
+      b.kite.pulses++;
     } else {
-      b.dmg.n++; b.dmg.total += amount; b.dmg.at = now;
+      b.dmg.n++; b.dmg.total += amount; b.dmg.at = lineMs;
       if (amount < b.dmg.min) b.dmg.min = amount;
       if (amount > b.dmg.max) b.dmg.max = amount;
     }
+    b.kite.total += amount;
+    b.kite.lastAt = lineMs;
     return;
   }
 
@@ -1979,10 +1996,10 @@ function noteSongAoeLine(line, character) {
     const name = body.slice(0, s.suffix[0] === "'" ? cut : cut - 1).trim();
     if (!name || name === 'You' || name === 'Your') continue;
     const b = state.aoeBySong[s.slug] = state.aoeBySong[s.slug] || { song: s.song };
-    if (!b.hitAt || (now - b.hitAt) > SONG_AOE_BURST_MS) {
-      b.hits = 1; b.hitAt = now;
+    if (!b.hitAt || (lineMs - b.hitAt) > SONG_AOE_PULSE_GAP_MS) {
+      b.hits = 1; b.hitAt = lineMs;
     } else {
-      b.hits++; b.hitAt = now;
+      b.hits++; b.hitAt = lineMs;
     }
     return;
   }
@@ -3002,8 +3019,8 @@ const HEAL_SPELL_RX = /\b(heal(?:ing)?|renewal|chloro\w*|regrowth|torpor|lay on 
 const _lastCastRelay = new Map();   // charLower → { sig, at }
 // Recent self heal-casts with their Zeal target + expected LAND time (cast
 // start + cast length). Two consumers:
-//   1. Local join — a multiboxed healer + recipient on the SAME machine lets
-//      the recipient's "You have been healed for N" attribute to the boxed
+//   1. Local join — a watched healer + recipient on the SAME machine lets
+//      the recipient's "You have been healed for N" attribute to the local
 //      caster with no server round-trip.
 //   2. Encounter payload `heal_casts` — the bot joins these against OTHER
 //      Mimic users' heals_received events to build real per-healer totals
@@ -3077,7 +3094,7 @@ function relaySelfCastForCasting(line, character, pre) {
     heal_amount: he ? he.amount : undefined,
     heal_fixed:  he ? he.fixed  : undefined,
   }] });
-  // Heal casts also feed the attribution ring (local multibox join + the
+  // Heal casts also feed the attribution ring (local same-machine join + the
   // encounter payload's heal_casts for the bot-side cross-client join).
   if (isHeal) _noteHealCast(character, spell, target, atMs, castSecs, he);
 }
@@ -3204,7 +3221,7 @@ function noteHealLandLine(line) {
 // state to auto-pop Mob Info + Pet/Charm overlays so the player can keep
 // playing through the blind without seeing their EQ window properly.
 //
-// We track per-character (multiboxers might have one toon blinded while the
+// We track per-character (one of a player's toons might be blinded while the
 // other isn't); each entry carries source (which is what the dashboard /
 // trigger pack key off when picking a callout) and a hard expiresAt (so a
 // missed fade message doesn't leave the state stuck on forever).
@@ -3807,8 +3824,8 @@ function trackChChainLine(line, character) {
   // Chain roster announcement — a healer posts the whole planned order at the
   // pull: "Fargan 001, Rapha 002, Mcdorf 003, Mana 004, Taey 005,". This is the
   // raid's OWN ground truth for who owns each slot, so it wins over the noisy
-  // speaker-inference the numbered shout-calls do — a boxer shouting the number
-  // from the wrong window (or a short nickname) otherwise pins the wrong player
+  // speaker-inference the numbered shout-calls do — a player shouting the number
+  // from another character's window (or a short nickname) otherwise pins the wrong player
   // on a slot (Hitya 2026-07-06: "shows Dant as 004 instead of Manamana").
   const rosterPairs = [];
   {
@@ -3874,8 +3891,8 @@ function trackChChainLine(line, character) {
     }
     const prev = c.slots[num] || {};
     // A declared roster owner for this slot wins over the shout speaker — that's
-    // the whole point of the roster call (a boxer shouting from the wrong window
-    // otherwise renames the slot). Falls back to the speaker when no roster.
+    // the whole point of the roster call (a player shouting from another
+    // character's window otherwise renames the slot). Falls back to the speaker when no roster.
     const slotName = (c.rosterNames && c.rosterNames[num]) || speaker;
     // kind: null — a real numbered CH call is never a labeled auto-slot;
     // clears any stale "Druid CH" tag on the rare chance this slot number
@@ -4298,12 +4315,12 @@ function chChainSnapshot() {
 // A watched log only counts as "you" while it's actually being written. The
 // agent tails EVERY eqlog_*_pq.proj.txt in the EQ folder and seeds watchedLogs
 // from all of them at startup, so a log left behind by someone who played on
-// this machine once (shared box, couple two-boxing) made their character
+// this machine once (a shared machine) made their character
 // permanently "ours" — no live client required. That spoke the CH-chain
 // "0N GO" callout for THEIR slot and highlighted THEIR slot as yours on the
 // overlay (Dant hearing Aimey's 002 GO, 2026-08-03). Freshness gate matches the
-// existing active-log window in _resolveChatSpeaker; a genuine two-box keeps
-// working because both logs are being written.
+// existing active-log window in _resolveChatSpeaker; a player on two live
+// characters keeps working because both logs are being written.
 const OWN_CHARACTER_ACTIVE_MS = 3 * 60_000;
 function _isOwnCharacterName(name) {
   if (!name) return false;
@@ -4524,7 +4541,7 @@ function trackDiFired(line) {
   const ts = parseEqTimestamp(line);
   const atMs = ts ? ts.getTime() : Date.now();
   const tank = m[1];
-  // The line is zone-visible, so a two-boxer's every watched log carries it.
+  // The line is zone-visible, so every watched log on the machine carries it.
   const key = tank.toLowerCase();
   if (_lastDiFired.key === key && (atMs - _lastDiFired.atMs) < DI_FIRED_DEDUP_MS) return null;
   _lastDiFired = { key, atMs };
@@ -5367,6 +5384,7 @@ const _ROLL_DIE_RX    = /\]\s+\*\*A Magic Die is rolled by (\w+)\.\s*$/;
 const _ROLL_RESULT_RX = /\]\s+\*\*It could have been any number from (\d+) to (\d+), but this time it turned up a (\d+)\.\s*$/;
 const ROLL_SET_GAP_MS  = 10 * 60 * 1000;   // same range this long after the last roll = a NEW set
 const ROLL_SET_KEEP_MS = 2 * 60 * 60 * 1000;
+const ROLL_ITEM_LINK_MS = 20 * 60 * 1000;  // how long an announced label may claim a range
 const _pendingDieByChar = new Map();   // watched-log charLower → { name, atMs } (pair lines per log)
 const _rollSets = [];                  // oldest-first [{ from, to, item, qty, rolls, startMs, lastMs }]
 const _rollItemByNumber = new Map();   // roll number (the range TO) → { item, qty, atMs }
@@ -5422,7 +5440,7 @@ function trackRollLine(line, character) {
     _rollSets.push(set);
     if (_rollSets.length > 40) _rollSets.splice(0, _rollSets.length - 40);
   }
-  // Multi-box dedup: every watched log hears the same broadcast — the same
+  // Multi-log dedup: every watched log hears the same broadcast — the same
   // (name, value) within a few seconds is one roll, not two.
   const nameLower = pending.name.toLowerCase();
   if (set.rolls.some(r => r.nameLower === nameLower && r.value === value && Math.abs(r.atMs - atMs) < 5000)) return;
@@ -5433,10 +5451,17 @@ function trackRollLine(line, character) {
   set.lastMs = atMs;
   if (!set.item) {
     const linked = _rollItemByNumber.get(to);
-    if (linked) { set.item = linked.item; set.qty = linked.qty; }
+    // Bounded on purpose. The map is keyed by roll NUMBER and swept only when it
+    // grows past 200, so an unbounded lookup lets a label announced at 8pm land
+    // on an unrelated 0-333 roll at 11pm. Announcements run both ways around the
+    // first roll (measured: 54s late on one night, 10s late on another), so the
+    // window is symmetric.
+    if (linked && Math.abs(atMs - linked.atMs) <= ROLL_ITEM_LINK_MS) {
+      set.item = linked.item; set.qty = linked.qty;
+    }
   }
   // 🎲🔥 HOT DICE — a PERFECT roll (hit the very top of the range). Emits a
-  // fun_event (deduped server-side across the multi-box logs). Fires on any
+  // fun_event (deduped server-side across the machine's watched logs). Fires on any
   // perfect roll — even a reroll perfect is a lucky moment worth marking. The
   // >20%-of-the-night Hot Dice award is computed later from the stored roll sets.
   if (value === to && to > 1) {
@@ -5517,27 +5542,165 @@ function uploadLooted() {
   }
 }
 
-// Loot-link lines in raid/guild chat: `Blue Resistance Stone 111| Boots of the
-// Ancients 222 | Primal Velium Battlehammer (3)333 | ...` — each |-separated
-// segment ends with that item's roll number, optionally preceded by (qty).
+// ── Loot-link roll-call parsing ─────────────────────────────────────────────
+// The roll caller announces which item each /random range is for. This USED to
+// require a `|` between items:
+//
+//   Blue Resistance Stone 111| Boots of the Ancients 222 | Battlehammer (3)333
+//
+// which is only one of the shapes the guild actually uses, and the others were
+// silently dropped — the caller sees their announcement in chat, the roll page
+// says "unlabeled roll", and because attributeLoot() bails on a null item the
+// LOOTED BY column stays empty too (Hitya, 2026-08-14, on Canopy's four Tears).
+// Measured against real chat, three shapes matter:
+//
+//   A  Item A 111| Item B 222 | Item C (2)333      pipe-separated  (worked)
+//   B  Black Tear 111 , Platinum Tear 222 , …      comma-separated (dropped)
+//   C  Helmet of Shadow 311 pick, 322 upgrade      ONE item, several ranges by
+//                                                  priority tier   (dropped)
+//
+// So the parse is separator-agnostic: walk the numbers, and the text since the
+// previous number names that number's item. Shape C falls out for free — the
+// text between 311 and 322 is "pick,", which is a TIER not an item, so 322
+// carries the previous item forward.
+//
+// ⚠ The risk this trades against is labelling chatter. A pipe is nearly proof of
+// intent; a comma is not, and this now looks at every chat line. The guards in
+// _cleanRollItemCandidate are what keep "CH inc to … ( Mana: 100% )" from
+// becoming an item named "CH inc to". Each one is there because a real captured
+// line needed it — see test/roll-item-line.test.js, which runs the negatives.
+
+// Words that mark a PRIORITY TIER rather than an item name. "311 pick, 322
+// upgrade, 333 alt" is one item with three ranges, not three items.
+const _ROLL_TIER_WORDS = new Set([
+  'pick', 'picks', 'picked', 'main', 'mains', 'need', 'needs', 'needed',
+  'upgrade', 'upgrades', 'up', 'greed', 'greeds', 'greedy',
+  'alt', 'alts', 'box', 'boxes', 'rot', 'rots', 'kit', 'kits',
+  'twink', 'twinks', 'second', 'seconds', 'tier', 'roll', 'rolls',
+  'for', 'and', 'or', 'then', 'also', 'plus', 'pst', 'open', 'free', 'all',
+]);
+
+// Turn the text between two roll numbers into an item name, or null when it is
+// a tier / chatter / not-an-item. Null is the "carry the previous item forward"
+// signal, which is what makes shape C work.
+function _cleanRollItemCandidate(seg) {
+  let t = String(seg || '')
+    .replace(/[\x00-\x1f]/g, ' ')        // EQ item-link control bytes
+    .replace(/\(\s*\d{1,2}\s*\)\s*$/, ' ');  // trailing (qty) belongs to the NUMBER
+  // A separator ENDS the previous item, so only the text after the LAST one is
+  // this number's name. Collapsing separators to spaces instead would glue a
+  // numberless item onto the next one — "Golden Ember Powder | Unadorned Plate
+  // Boots 444" is a linked drop nobody is rolling on, followed by the item 444
+  // is actually for.
+  const cut = Math.max(t.lastIndexOf('|'), t.lastIndexOf(','), t.lastIndexOf(';'));
+  if (cut >= 0) t = t.slice(cut + 1);
+  t = t.replace(/\s+/g, ' ').trim();
+  if (!t) return null;
+  const bare = (w) => w.toLowerCase().replace(/[^a-z]/g, '');
+  // Drop tokens that are pure punctuation — "Shadow Tendril - 111" is a real
+  // call and the dangling dash is not part of the name.
+  let words = t.split(' ').filter(w => bare(w));
+  // Strip tier words off BOTH ends: "Slime Blood of Cazic Thule greed" is an
+  // item with a tier stuck to it; "upgrade kit," is only tier words and leaves
+  // nothing, which is exactly the carry-forward case.
+  while (words.length && _ROLL_TIER_WORDS.has(bare(words[words.length - 1]))) words.pop();
+  while (words.length && _ROLL_TIER_WORDS.has(bare(words[0]))) words.shift();
+  if (!words.length) return null;
+  const item = words.join(' ');
+  // Length/word bounds: an EQ item name is short. "CH inc to -== [ Hawkner ] ==-
+  // I like pie. ( Mana:" is not.
+  if (item.length < 4 || item.length > 48 || words.length > 7) return null;
+  // Characters no EQ item name contains.
+  if (/[()[\]{}=<>%*/\\!?"]/.test(item)) return null;
+  // ⚠ The next three are what separate an item from a sentence, and every one
+  // was added because a REAL line beat the previous rule. They are ordered
+  // cheapest-first; the tests carry the line that motivated each.
+  // 1. Title Case start — "pullers kiters", "for key fetishes" are chatter.
+  if (!/^[A-Z]/.test(item)) return null;
+  // 2. A real word somewhere. "Do a 777 if you want a Shield of the Immaculate"
+  //    otherwise labels 777 as an item called "Do a".
+  if (!words.some(w => bare(w).length >= 4)) return null;
+  // 3. Raid shorthand is ALL CAPS and short — DI, CH, MT, OT, FD. No EQ item
+  //    name opens with one, and "DI - Guts 100" landed on a live 0-100 set.
+  if (/^[A-Z]{2,3}$/.test(words[0].replace(/[^A-Za-z]/g, ''))) return null;
+  // 4. Item names capitalise their significant words; sentences do not. "I think
+  //    we were randoming 100." has one capital in five and would otherwise have
+  //    become an item, on a night when a 0-100 set really was running.
+  const sig = words.filter(w => !_ITEM_NAME_STOPWORDS.has(bare(w)));
+  if (sig.length) {
+    const capped = sig.filter(w => /^[A-Z]/.test(w)).length;
+    if (capped * 2 < sig.length) return null;
+  }
+  return item;
+}
+
+// Words an item name may leave lowercase ("Wand of Allure"), so they don't drag
+// the Title-Case ratio down.
+const _ITEM_NAME_STOPWORDS = new Set(['of', 'the', 'a', 'an', 'in', 'on', 'and', 'to', 'from']);
+
+/**
+ * Parse a roll-call chat body into [{ num, item, qty }] — pure, so the shapes
+ * above can be tested against real captured lines without a log tail.
+ */
+function parseRollItemLine(text) {
+  const out = [];
+  const s = String(text || '').replace(/[\x00-\x1f]/g, ' ');
+  if (!s) return out;
+
+  const RX = /(?<!\d)(\d{2,4})(?!\d)/g;
+  let m, prevEnd = 0, carried = null, first = true;
+  const pending = [];
+  while ((m = RX.exec(s)) !== null) {
+    const num = parseInt(m[1], 10);
+    const start = m.index;
+    const end = start + m[1].length;
+    const segRaw = s.slice(prevEnd, start);
+    prevEnd = end;
+    // A roll range is a bare 3-4 digit number. These three guards are each here
+    // because a real captured line needed them:
+    //   • a trailing letter is a unit, not a range — "Aten Ha Ra in 604s",
+    //     "pull in 30s" (and no real call writes "111Black Tear");
+    //   • "%" is a mana/health callout — "( Mana: 100% )", which sat minutes
+    //     away from a live 0-100 roll set;
+    //   • two digits is a duration far more often than a range — "Pull in 30
+    //     seconds" parsed as an item called "Pull in" before this line existed.
+    const after = s.charAt(end);
+    if (/[A-Za-z%]/.test(after)) { first = false; continue; }
+    if (after === '.' && /\d/.test(s.charAt(end + 1))) { first = false; continue; }
+    if (!Number.isFinite(num) || num < 100) { first = false; continue; }
+
+    const qm = segRaw.match(/\(\s*(\d{1,2})\s*\)\s*$/);
+    const cand = _cleanRollItemCandidate(segRaw);
+    if (cand) carried = { item: cand, qty: qm ? parseInt(qm[1], 10) : null };
+    if (carried) {
+      out.push({ num, item: carried.item, qty: carried.qty });
+    } else if (first) {
+      // The number came FIRST ("222 for White Silken Bridle"). Only ever tried
+      // at the head of a line — mid-line, the text after a number belongs to the
+      // NEXT number, and reading it here would label every item one place off.
+      pending.push({ num, at: end });
+    }
+    first = false;
+  }
+  if (out.length === 0 && pending.length === 1) {
+    const tail = _cleanRollItemCandidate(s.slice(pending[0].at));
+    if (tail) out.push({ num: pending[0].num, item: tail, qty: null });
+  }
+  return out;
+}
+
 function trackRollItemLine(line) {
-  if (!line || line.indexOf('|') === -1) return;   // the convention always separates with |
+  if (!line) return;
+  // Cheap gate — this runs on every kept log line, and only player chat can
+  // carry a roll call.
+  if (line.indexOf(' tells ') === -1 && line.indexOf(' shouts') === -1
+      && line.indexOf(' says') === -1) return;
   const m = line.match(_CH_SPEAKER_RX);
   if (!m) return;
-  const text = m[2];
-  if (text.indexOf('|') === -1) return;
   const ts = parseEqTimestamp(line);
   const atMs = ts ? ts.getTime() : Date.now();
-  for (const rawSeg of text.split('|')) {
-    // Strip EQ item-link control bytes; keep the display text.
-    const seg = rawSeg.replace(/[\x00-\x1f]/g, '').trim();
-    if (!seg) continue;
-    const mm = seg.match(/^(.*?)\s*(?:\((\d{1,2})\)\s*)?(\d{2,4})$/);
-    if (!mm) continue;
-    const item = mm[1].replace(/[,–—-]+\s*$/, '').trim();
-    const num = parseInt(mm[3], 10);
-    if (!item || item.length < 3 || !Number.isFinite(num) || num < 10) continue;
-    _rollItemByNumber.set(num, { item: item.slice(0, 64), qty: mm[2] ? parseInt(mm[2], 10) : null, atMs });
+  for (const e of parseRollItemLine(m[2])) {
+    _rollItemByNumber.set(e.num, { item: e.item.slice(0, 64), qty: e.qty, atMs });
   }
   if (_rollItemByNumber.size > 200) {
     for (const [k, v] of _rollItemByNumber) if (Date.now() - v.atMs > 2 * 60 * 60 * 1000) _rollItemByNumber.delete(k);
@@ -5963,7 +6126,7 @@ class EncounterBuilder {
     // 2026-06-25: "x CHs and other heal types".)
     this.healSpellCounts = {};
     // Heals WE received that no local heal-cast could attribute ("You have
-    // been healed for N" with no multiboxed caster on this machine). Uploaded
+    // been healed for N" with no watched caster on this machine). Uploaded
     // as heals_received so the bot can join them against other Mimic users'
     // heal_casts. events capped at 300 (HoT-tick spam bound).
     this.healsReceived = { total: 0, ticks: 0, events: [] };
@@ -6358,7 +6521,7 @@ class EncounterBuilder {
       }
     }
     stats.currentEncounterThreat = snap;
-    // Per-character mirror so a multi-boxer can see THEIR focused character's
+    // Per-character mirror so a player with several logs sees THEIR focused character's
     // fight even when another character's log just landed an update. Keyed
     // lower-case to match the active-character normalization in /api/state.
     if (this.character) {
@@ -6790,6 +6953,21 @@ class EncounterBuilder {
       return;
     }
 
+    // Vision eye as a TARGET (Hitya 2026-08-16, live: "Eye of PLAYER showing
+    // up in DPS meter and history"). The _isVisionEyePet choke points cover
+    // the eye as a PET/attacker, and flush() refuses an eye BOSS name at
+    // upload — but killing your own Eye of Zomm still flowed through the
+    // damage path: the eye entered this.targets, named the live meter's boss,
+    // and the "fight" landed in the History ring before flush could refuse
+    // it. Damage dealt TO an eye is not fight damage anywhere else on the
+    // platform (the bot skips eye mobs, /parsestats excludes them), so drop
+    // the event — and the eye's death line — before ANY consumer sees them:
+    // no target, no boss, no meter row, no history entry, no kill boundary.
+    if ((event.type === 'damage' || event.type === 'death')
+        && event.defender && _isVisionEyePet(event.defender)) {
+      return;
+    }
+
     // Dirge attribution: ambiguous "was hit by non-melee" damage events (attacker=null,
     // ability='non-melee') get retagged to the most recent dirge cast if it landed
     // within the next server tick window (~7s). Each dirge cast is "consumed" by the
@@ -6984,7 +7162,7 @@ class EncounterBuilder {
         const def = /^you$/i.test(event.defender) ? (this.character || 'You') : event.defender;
         this._bumpDefender(def, 'rampageHits', 1, Date.parse(event.ts) || Date.now());
         // Callout: announce who's taking the rampage (deduped per-target so a
-        // multi-hit rampage / multi-box logs don't spam it). Silent builders
+        // multi-hit rampage / multiple watched logs don't spam it). Silent builders
         // (opt-in backfill replays) must NOT speak old rampages. #155 — gate on
         // the rampaging mob being the raid's main target so adds' rampages on a
         // multi-mob pull don't spam the TTS.
@@ -7524,8 +7702,8 @@ class EncounterBuilder {
       // Unattributed RECEIVED heal ("You have been healed for N") — this used
       // to run through `healer = this.character`, crediting the RECIPIENT as a
       // healer of themselves (the "Tildias 1,300 → You" rows on parse cards,
-      // Hitya 2026-07-14). Divert: try the local heal-cast ring (multiboxed
-      // healer on this machine attributes instantly); otherwise record it as a
+      // Hitya 2026-07-14). Divert: try the local heal-cast ring (a healer
+      // watched on this machine attributes instantly); otherwise record it as a
       // received event for the bot's cross-client cast×landing join.
       if (!event.attacker && event.defender === 'You') {
         const tsMs = Date.parse(event.ts) || Date.now();
@@ -8307,7 +8485,7 @@ class EncounterBuilder {
     }
     _recordFightHistory(stats.currentEncounterThreat);
     // Cross-builder flush propagation. If this Mimic install is tailing more
-    // than one character's log (multi-box on one machine), peer builders
+    // than one character's log (several watched logs on one machine), peer builders
     // watching the SAME fight should close along with us — if their own log
     // missed the kill line for any reason (truncation, client crash,
     // out-of-order flush), they'd otherwise sit with an open fight
@@ -8350,7 +8528,7 @@ class EncounterBuilder {
       }
     }
     // Mirror to the per-character map so the 2-min stale window applies
-    // independently per character (a multi-boxer's other character can
+    // independently per character (a player's other character can
     // still be mid-fight while this one wraps up).
     if (this.character && stats.currentEncounterThreatByChar) {
       const k = String(this.character).toLowerCase();
@@ -8936,6 +9114,10 @@ function enqueueUpload(kind, payload) {
     // rather than pretending it belongs to the event.
     if (Number.isFinite(stats.clockOffsetMs)) {
       payload.agent_state.clock_offset_ms = stats.clockOffsetMs;
+      // Uploaded so the bot can see its OWN clock error across the fleet: if
+      // every agent reports the same ntp-minus-pulse gap, that gap is the bot's.
+      if (Number.isFinite(stats.ntpOffsetMs))     payload.agent_state.ntp_offset_ms      = stats.ntpOffsetMs;
+      if (Number.isFinite(stats.botClockErrorMs)) payload.agent_state.bot_clock_error_ms = stats.botClockErrorMs;
       payload.agent_state.clock_measured_at = new Date().toISOString();
     }
   }
@@ -9396,7 +9578,7 @@ const stats = {
   // (null when no fight is active). { bossName, startedAt, perPlayer: { name: { swing, proc, spell, heal, total } } }
   // Globally last-write-wins for backward compatibility; the per-character
   // map below is the source the DPS overlay should prefer when the agent is
-  // watching multiple logs at once (multi-boxers).
+  // watching multiple logs at once (one player, several characters).
   currentEncounterThreat: null,
   // currentEncounterThreatByChar: per-character snapshot keyed on the
   // lowercased character whose log produced the encounter. Lets the DPS
@@ -9530,7 +9712,7 @@ function readActivePid() {
 // chat/encounters → duplicate Discord posts + double-counted parses.
 //
 // This lock elects ONE uploader per machine. It lives in the OS temp dir, so
-// every install on the box shares it. The holder uploads; everyone else still
+// every install on the machine shares it. The holder uploads; everyone else still
 // tails and shows its own local dashboard, but suppresses uploads. If the
 // holder exits or crashes, a non-uploader takes over (lock is "stale" when the
 // pid is dead OR the heartbeat is older than the TTL).
@@ -9874,7 +10056,13 @@ function _resolveHpForName(nameLower, active, st) {
 // POSITIVE clockOffsetMs = this machine is BEHIND, so true = local + offset.
 function _nowOnServerClock() {
   const off = stats.clockOffsetMs;
-  return Date.now() + (Number.isFinite(off) ? off : 0);
+  if (Number.isFinite(off)) return Date.now() + off;
+  // No pulse yet (first seconds after launch) or the bot is unreachable. NTP is
+  // not the bot's clock, but the bot's host IS time-synced, so true time is a
+  // far better stand-in than assuming zero — which is what this did before and
+  // which is a silent 56s error on the machines that need it most.
+  const ntp = stats.ntpOffsetMs;
+  return Date.now() + (Number.isFinite(ntp) ? ntp : 0);
 }
 // Age of a bot-issued ISO timestamp, in ms. Infinity when unusable, so every
 // caller's `age > limit` check fails closed rather than treating it as fresh.
@@ -10854,6 +11042,14 @@ function _zealExportOnCampState() {
 // log's folder (the Logs/ parent). Shared by the checklist + the setup writer.
 function _eqSetupDirs() {
   const dirs = new Set();
+  // ⚠ WOLFPACK_EQ_DIRS (plural) FIRST. Inferring the folder from watched logs
+  // is circular for the one job this list exists to do: "Set up EQ for me"
+  // writes Log=TRUE into eqclient.ini, i.e. it runs precisely when there are no
+  // logs — and it used to answer "No EQ folder known yet" to a user who had
+  // already pointed Mimic at their install (Pyxil, C:\TAKPv22, 2026-08-14).
+  // Mimic now hands over every folder it knows about, logs or not.
+  const plural = String(process.env.WOLFPACK_EQ_DIRS || '').trim();
+  if (plural) for (const d of plural.split(path.delimiter)) { if (d.trim()) dirs.add(d.trim()); }
   if (process.env.WOLFPACK_EQ_DIR) dirs.add(process.env.WOLFPACK_EQ_DIR);
   for (const w of (stats.watchedLogs || [])) {
     if (!w || !w.logPath) continue;
@@ -11117,7 +11313,7 @@ function _serializeForDashboard() {
 
   // Blind state for the ACTIVE character (Mimic auto-shows Mob Info + Pet/
   // Charm overlays while this is active; restores prior visibility on fade).
-  // Shaped as a per-char map so a future multibox UI can branch per window.
+  // Shaped as a per-char map so a future multi-log UI can branch per window.
   const _blindOut = {};
   for (const cl of Object.keys(_blindState || {})) {
     const s = _blindState[cl];
@@ -11217,7 +11413,7 @@ function _serializeForDashboard() {
     // found (can't tell). Drives the Setup-checklist row.
     zealExportOnCamp:   _zealExportOnCampState(),
     // Prefer the focused character's encounter when the agent is watching
-    // multiple logs (multi-boxer). Falls back to the last-write-wins global
+    // multiple logs (one player, several characters). Falls back to the last-write-wins global
     // when no per-character entry exists, preserving single-character UX.
     currentEncounterThreat: (() => {
       const map = stats.currentEncounterThreatByChar || {};
@@ -11266,6 +11462,14 @@ function _serializeForDashboard() {
     // fix landed instead of asking the user to take it on faith. null until the
     // first heartbeat completes (and stays null with no token / offline).
     clockOffsetMs: Number.isFinite(stats.clockOffsetMs) ? stats.clockOffsetMs : null,
+    // True-time offset from SNTP, and what it implies about the BOT's own clock
+    // (ntp minus pulse — this machine cancels out of the difference).
+    ntpOffsetMs:     Number.isFinite(stats.ntpOffsetMs) ? stats.ntpOffsetMs : null,
+    ntpHost:         stats.ntpHost || null,
+    ntpRttMs:        Number.isFinite(stats.ntpRttMs) ? stats.ntpRttMs : null,
+    ntpAt:           stats.ntpAt || null,
+    ntpReachable:    stats.ntpReachable === undefined ? null : !!stats.ntpReachable,
+    botClockErrorMs: Number.isFinite(stats.botClockErrorMs) ? stats.botClockErrorMs : null,
     // Per-cleric Divine Intervention readiness (bot aggregate ⊕ local casts) —
     // chchain.html renders the chips + "only <X> has DI" callout.
     diStatus: diStatusSnapshot(),
@@ -11638,6 +11842,14 @@ function _serializeForDashboard() {
               }
               if (aoe.dmg && aoe.dmg.n > 0 && (now - aoe.dmg.at) <= SONG_AOE_STALE_MS) {
                 out.aoe_dmg = { n: aoe.dmg.n, total: aoe.dmg.total, min: aoe.dmg.min, max: aoe.dmg.max };
+              }
+              // Running total for the CURRENT kite (resets after 30s quiet).
+              if (aoe.kite && aoe.kite.total > 0 && (now - aoe.kite.lastAt) <= SONG_AOE_STALE_MS) {
+                out.aoe_kite = {
+                  total:  aoe.kite.total,
+                  pulses: aoe.kite.pulses,
+                  secs:   Math.max(0, Math.round((aoe.kite.lastAt - aoe.kite.startedAt) / 1000)),
+                };
               }
             }
             return out;
@@ -12221,6 +12433,9 @@ tr:hover td { background:#1f242c }
 .wp-ov-toggle { min-width:42px; background:#21262d; color:var(--dim); border:1px solid var(--border); border-radius:5px; padding:2px 9px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit; letter-spacing:0.5px; }
 .wp-ov-toggle:hover { border-color:var(--blue); color:var(--text); }
 .wp-ov-toggle.on { background:#196c2e; border-color:#2ea043; color:#fff; }
+.wp-ov-dock { min-width:52px; background:#21262d; color:var(--dim); border:1px solid var(--border); border-radius:5px; padding:2px 9px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit; letter-spacing:0.5px; }
+.wp-ov-dock:hover { border-color:#a371f7; color:var(--text); }
+.wp-ov-dock.on { background:#2a1d3d; border-color:#a371f7; color:#d2a8ff; }
 .nav-quest { margin-left:auto; padding:5px 12px; border:1px solid var(--border); border-radius:6px; background:var(--panel); color:var(--blue); text-decoration:none; font-size:12px; font-family:inherit; }
 .nav-quest:hover { background:#30363d; border-color:var(--blue) }
 .section { display:none } .section.active { display:block }
@@ -12686,7 +12901,7 @@ function renderHeader(s) {
     // "no logs" one. Baked server-side at boot (\${}) — process is Node-only;
     // a bare reference here crashed renderHeader for exactly the users this
     // banner exists to help (0 logs watched → this branch → throw).
-    const hasFolders = ${process.env.WOLFPACK_EQ_DIR ? 'true' : 'false'};
+    const hasFolders = ${(process.env.WOLFPACK_EQ_DIRS || process.env.WOLFPACK_EQ_DIR) ? 'true' : 'false'};
     if (isMimicHosted && !hasFolders) {
       h += '<div class="banner" style="background:#3a2a0a;color:#f6c365;border:1px solid #6b5320">'
          + '📁 <b>No EQ folder selected.</b> Mimic doesn&rsquo;t know where your EverQuest install is. '
@@ -14807,6 +15022,7 @@ function renderTriggers(s) {
 // status flag (showHud / enableTriggerTts / showCharm / showPets / showMobInfo)
 // resolved in wpRefreshOverlayToggles + the Mimic 'toggle-overlay' IPC handler.
 var WP_OVERLAY_ROWS = [
+  ['dock',    'Dock',                'One window that collects overlays as panes — one renderer instead of one per overlay. Use the DOCK buttons below (or + Panes on the dock itself) to pick what lives in it.'],
   ['hud',     'DPS HUD',             'Running session DPS, top damage seen, current encounter.'],
   ['trigger', 'Trigger alerts (TTS)','Centered big-text alert from triggers (guild + personal), spoken via Web Speech.'],
   ['charm',   'Charm tracker',       'Charm-pet recharm timer + 6s mob-tick counter; lingers 5m after a break.'],
@@ -14854,6 +15070,17 @@ function renderOverlays(s) {
     + '<span id="wpAllOpacityVal" style="font-variant-numeric:tabular-nums">100%</span>'
     + '<span class="dim" style="font-size:11px">sets every overlay at once — fine-tune single ones in their setup bar</span>'
     + '</div>';
+  // 🔍 Overlay scale (Fittir's 5K monitor). Global slider here; each overlay
+  // also carries its own "size" slider in its setup bar that overrides this.
+  h += '<div style="font-size:12px;padding:8px 10px;background:#161b22;border:1px solid var(--border);border-radius:6px;margin-bottom:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">'
+    + '<b>🔍 Size — all overlays</b>'
+    + '<input id="wpAllScale" type="range" min="50" max="200" step="5" value="100" style="flex:1;min-width:120px;cursor:pointer" />'
+    + '<span id="wpAllScaleVal" style="font-variant-numeric:tabular-nums">100%</span>'
+    + '<span class="dim" style="font-size:11px">50%&ndash;200% for high-DPI screens &mdash; single overlays can override with the size slider in their setup bar</span>'
+    + '<span style="flex-basis:100%"></span>'
+    + '<label style="display:flex;align-items:center;gap:6px;font-size:11px;cursor:pointer;color:#c9d1d9"><input id="wpScaleGlide" type="checkbox" checked style="cursor:pointer" /> Smooth slider &mdash; overlays glide to their new size when you let go (off: they snap instantly)</label>'
+    + '<label style="display:flex;align-items:center;gap:6px;font-size:11px;cursor:pointer;color:#c9d1d9"><input id="wpScaleDock" type="checkbox" style="cursor:pointer" /> Scale the dock too (off: the dock stays at 100% and keeps its own size)</label>'
+    + '</div>';
   // How to move them. Convention is consistent across every overlay so users
   // build muscle memory: ✥ in the TOP-RIGHT corner = drag handle (hover to
   // grab + drag — works while locked); ✕ in the TOP-LEFT = hide that overlay.
@@ -14880,6 +15107,13 @@ function renderOverlays(s) {
     + '<button type="button" class="wp-ov-act" data-act="rescue" title="Lost an overlay on another monitor? Gathers every overlay onto the screen this window is on and re-arranges there. That screen becomes the overlays\\' home for future arranges." style="background:#21262d;color:#f8b87b;border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px">🧲 Rescue overlays to this screen</button>'
     + '<button type="button" class="wp-ov-act" data-act="backdrops" style="background:#21262d;color:#c9d1d9;border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px">🌫 Toggle backgrounds now</button>'
     + '<span class="dim" style="font-size:11px">arranging only ever runs when you click it — never automatically</span>'
+    // Tray parity (Hitya 2026-08-19): lock/unlock, setup mode, and hide-all
+    // live here too, not just in the tray. Stateful labels start as … and are
+    // painted by wpRefreshOverlayToggles so the render string stays byte-stable.
+    + '<span style="flex-basis:100%"></span>'
+    + '<button type="button" class="wp-ov-act" data-act="lock" id="wpOvLockBtn" style="background:#21262d;color:#58a6ff;border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px">…</button>'
+    + '<button type="button" class="wp-ov-act" data-act="setup" style="background:#21262d;color:#d6a922;border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px">🛠 Setup mode — place all overlays</button>'
+    + '<button type="button" class="wp-ov-act" data-act="hideall" id="wpOvHideAllBtn" style="background:#21262d;color:#c9d1d9;border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px">…</button>'
     + '</div>';
   // 💥 Damage-taken audio alert (Hitya 2026-07-31). Not an overlay — an opt-in
   // spoken cue — but its hotkey belongs with the other global hotkeys, so it
@@ -14896,6 +15130,31 @@ function renderOverlays(s) {
     + '<button type="button" id="wpDmgHotkeyEn" style="background:#21262d;color:var(--red)"></button>'
     + '<span id="wpDmgHotkeyHint" class="dim" style="font-size:11px"></span>'
     + '</div>';
+  // 💾 Per-character overlay layouts — tray parity (Hitya 2026-08-19:
+  // "Overlay layouts should be saves and in the overlay tab"). Baked from
+  // the Mimic status object, so the card re-renders when a save/forget or
+  // character switch pushes fresh status — same pattern as the theme picker.
+  var _cpEsc = function(x){ return String(x == null ? "" : x).replace(/[&<>"]/g, function(c){ return ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"})[c]; }); };
+  var cpOn = !!(s && s.charProfilesEnabled);
+  var cpChar = (s && s.activeCharacter) ? String(s.activeCharacter) : null;
+  var cpList = (s && Array.isArray(s.charProfiles)) ? s.charProfiles : [];
+  h += '<div style="font-size:12px;padding:8px 10px;background:#161b22;border:1px solid var(--border);border-radius:6px;margin-bottom:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">'
+    + '<b>💾 Per-character overlay layouts</b>'
+    + '<label style="display:flex;align-items:center;gap:6px;font-size:11px;cursor:pointer;color:#c9d1d9"><input id="wpCharProfEn" type="checkbox"' + (cpOn ? ' checked' : '') + ' style="cursor:pointer" /> Swap layouts automatically as you switch characters</label>'
+    + '<button type="button" id="wpCharProfSave"' + (cpChar ? '' : ' disabled') + ' style="background:#21262d;color:#7ee787;border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px">💾 Save current layout' + (cpChar ? ' for ' + _cpEsc(cpChar) : '') + '</button>'
+    + (cpChar ? '' : '<span class="dim" style="font-size:11px">no active character yet &mdash; log a toon in and this saves for them</span>');
+  if (cpList.length) {
+    h += '<span style="flex-basis:100%"></span><span class="dim" style="font-size:11px">Saved:</span>';
+    for (var cpi = 0; cpi < cpList.length; cpi++) {
+      var cpn = String(cpList[cpi].name || '');
+      h += '<span style="display:inline-flex;align-items:center;gap:6px;font-size:11px;background:#0d1117;border:1px solid var(--border);border-radius:4px;padding:2px 4px 2px 8px;color:#c9d1d9">'
+        + _cpEsc(cpn.charAt(0).toUpperCase() + cpn.slice(1))
+        + '<span class="dim">' + (cpList[cpi].shown || 0) + ' on</span>'
+        + '<button type="button" class="wp-charprof-del" data-char="' + _cpEsc(cpn) + '" title="Forget this saved layout" style="background:none;color:var(--red);border:none;cursor:pointer;font-size:11px;padding:0 4px">✕</button>'
+        + '</span>';
+    }
+  }
+  h += '</div>';
   h += '<div style="font-size:12px;padding:8px 10px;background:#161b22;border:1px solid var(--border);border-radius:6px;margin-bottom:8px">'
     + '<b style="color:var(--blue)">How to move an overlay:</b> hover the small <code style="background:#0d1117;padding:1px 5px;border-radius:3px">✥</code> icon in the <b>top-left corner</b> of any overlay and drag. Works whether the overlays are locked or unlocked &mdash; same in every overlay so the muscle memory carries. The <code style="background:#0d1117;padding:1px 5px;border-radius:3px">✕</code> in the <b>top-right</b> hides that overlay (turn it back on from this page or the tray).'
     + '</div>';
@@ -14910,11 +15169,18 @@ function renderOverlays(s) {
   // Volatile — filled by wpRefreshOverlayToggles. Kept out of the render string
   // so the section stays byte-stable across polls (see the morphInto note).
   h += '<div id="wpHideAllBanner"></div>';
-  h += '<table style="font-size:12px"><tr><th>Overlay</th><th>State</th><th>Description</th></tr>';
+  h += '<table style="font-size:12px"><tr><th>Overlay</th><th>State</th><th>Dock</th><th>Description</th></tr>';
   for (var i = 0; i < WP_OVERLAY_ROWS.length; i++) {
     var key = WP_OVERLAY_ROWS[i][0], label = WP_OVERLAY_ROWS[i][1], desc = WP_OVERLAY_ROWS[i][2];
+    // Dock button beside the on/off toggle (Hitya 2026-08-14). Trigger alerts
+    // are not dockable — #97 fires their TTS from a HIDDEN window, so a pane
+    // would tie the callouts to being on screen. The dock can't dock itself.
+    var dockCell = (key === 'trigger' || key === 'dock')
+      ? '<td class="dim" style="font-size:11px">&mdash;</td>'
+      : '<td><button type="button" class="wp-ov-dock" data-ov="' + key + '">…</button></td>';
     h += '<tr><td style="color:var(--text)">' + label + '</td>'
       +  '<td><button type="button" class="wp-ov-toggle" data-ov="' + key + '">…</button></td>'
+      +  dockCell
       +  '<td class="dim">' + desc + '</td></tr>';
   }
   h += '</table>';
@@ -14981,6 +15247,64 @@ function wpWireHideHotkey() {
       var v = parseFloat(ao.value || '1');
       if (aov) aov.textContent = Math.round(v * 100) + '%';
       try { window.mimic.setAllOpacity(v); } catch (e) {}
+    });
+  }
+  // Global overlay-size slider — seed from the stored value on first wire of
+  // each rendered element (a section repaint makes a fresh element, so the
+  // seed re-runs then and never mid-drag). Label tracks the drag; the scale
+  // applies on RELEASE, and main glides zoom + window bounds to the new
+  // size. "Smooth slider" (default ON) is the glide itself — off snaps
+  // instantly. "Scale the dock too" opts the dock into the global scale
+  // (excluded by default); re-applies the current value on toggle so the
+  // dock reacts immediately.
+  var asc = document.getElementById('wpAllScale');
+  var ascv = document.getElementById('wpAllScaleVal');
+  var ascGlide = document.getElementById('wpScaleGlide');
+  var ascDock = document.getElementById('wpScaleDock');
+  if (asc && window.mimic && window.mimic.setOverlayScale) {
+    var _ascApply = function(){
+      var pct = parseInt(asc.value || '100', 10) || 100;
+      try { window.mimic.setOverlayScale(pct / 100); } catch (e) {}
+    };
+    if (!asc.__wpInit) {
+      asc.__wpInit = true;
+      if (window.mimic.getOverlayScale) window.mimic.getOverlayScale().then(function(sc){
+        var pct = Math.round(((typeof sc === 'number' && sc > 0) ? sc : 1) * 100);
+        asc.value = String(pct);
+        if (ascv) ascv.textContent = pct + '%';
+      }).catch(function(){});
+      if (window.mimic.getConfig) window.mimic.getConfig().then(function(cfg){
+        if (ascGlide) ascGlide.checked = !(cfg && cfg.overlayScaleGlide === false);
+        if (ascDock)  ascDock.checked  = !!(cfg && cfg.overlayScaleDock);
+      }).catch(function(){});
+    }
+    _bindOnce(asc, 'input', function(){
+      var pct = parseInt(asc.value || '100', 10) || 100;
+      if (ascv) ascv.textContent = pct + '%';
+    });
+    _bindOnce(asc, 'change', _ascApply);
+    if (ascGlide && window.mimic.saveConfig) _bindOnce(ascGlide, 'change', function(){
+      try { window.mimic.saveConfig({ overlayScaleGlide: !!ascGlide.checked }); } catch (e) {}
+    });
+    if (ascDock && window.mimic.saveConfig) _bindOnce(ascDock, 'change', function(){
+      try {
+        var p = window.mimic.saveConfig({ overlayScaleDock: !!ascDock.checked });
+        if (p && p.then) p.then(_ascApply).catch(function(){}); else _ascApply();
+      } catch (e) {}
+    });
+  }
+  // 💾 Per-character overlay layouts (tray parity). The forget buttons ride
+  // the delegated click handler; these two are id-bound like the rest.
+  var cpEn = document.getElementById('wpCharProfEn');
+  if (cpEn && window.mimic && window.mimic.charProfilesEnable) {
+    _bindOnce(cpEn, 'change', function(){
+      try { window.mimic.charProfilesEnable(!!cpEn.checked); } catch (e) {}
+    });
+  }
+  var cpSave = document.getElementById('wpCharProfSave');
+  if (cpSave && window.mimic && window.mimic.charProfileSave) {
+    _bindOnce(cpSave, 'click', function(){
+      try { window.mimic.charProfileSave(); } catch (e) {}
     });
   }
   _wpWireHotkeyRow('wpHideHotkey', 'hideAllHotkey', 'hideAllHotkeyEnabled', 'CommandOrControl+Shift+H');
@@ -15073,6 +15397,19 @@ function _wpWireHotkeyRow(prefix, cfgKey, enKey, defAccel) {
   });
 }
 
+// Dock / undock an overlay from the Overlays page. Docking moves it out of its
+// own floating window and into the Dock's single renderer; undocking gives the
+// window back. Mimic owns the state, so we just re-read after the flip.
+function wpDockOverlay(name) {
+  try {
+    if (window.mimic && window.mimic.dockOverlay) {
+      var r = window.mimic.dockOverlay(name);
+      if (r && r.then) r.then(function(){ wpRefreshOverlayToggles(); });
+      else wpRefreshOverlayToggles();
+    }
+  } catch (e) { void e; }
+}
+
 // Flip an overlay via the Mimic IPC bridge, then refresh button states.
 function wpToggleOverlay(name) {
   try {
@@ -15089,11 +15426,11 @@ function wpRefreshOverlayToggles() {
   try {
     window.mimic.getStatus().then(function(st){
       st = st || {};
-      var on = { hud: !!st.showHud, trigger: !!st.enableTriggerTts, charm: !!st.showCharm, pet: !!st.showPets, mobinfo: !!st.showMobInfo, buffQueue: !!st.showBuffQueue, who: !!st.showWho, melody: !!st.showMelody, zeal: !!st.showZeal, threat: !!st.showThreat, chchain: !!st.showChChain, tank: !!st.showTank, exttarget: !!st.showExtTarget, command: !!st.showCommand, popraid: !!st.showPopRaid };
+      var on = { dock: !!st.showDock, hud: !!st.showHud, trigger: !!st.enableTriggerTts, charm: !!st.showCharm, pet: !!st.showPets, mobinfo: !!st.showMobInfo, buffQueue: !!st.showBuffQueue, who: !!st.showWho, melody: !!st.showMelody, zeal: !!st.showZeal, threat: !!st.showThreat, chchain: !!st.showChChain, tank: !!st.showTank, exttarget: !!st.showExtTarget, command: !!st.showCommand, popraid: !!st.showPopRaid };
       // Which cfg flag each row reads, so a HIDDEN row can be told from an OFF
       // one. Hide-all writes every flag false, so without the snapshot the two
       // are indistinguishable here (Hitya 2026-08-04).
-      var flagOf = { hud: 'showHud', trigger: 'enableTriggerTts', charm: 'showCharm', pet: 'showPets', mobinfo: 'showMobInfo', buffQueue: 'showBuffQueue', who: 'showWho', melody: 'showMelody', zeal: 'showZeal', threat: 'showThreat', chchain: 'showChChain', tank: 'showTank', exttarget: 'showExtTarget', command: 'showCommand', popraid: 'showPopRaid' };
+      var flagOf = { dock: 'showDock', hud: 'showHud', trigger: 'enableTriggerTts', charm: 'showCharm', pet: 'showPets', mobinfo: 'showMobInfo', buffQueue: 'showBuffQueue', who: 'showWho', melody: 'showMelody', zeal: 'showZeal', threat: 'showThreat', chchain: 'showChChain', tank: 'showTank', exttarget: 'showExtTarget', command: 'showCommand', popraid: 'showPopRaid' };
       var hidPrev = (st.hideAllActive && st.hideAllPrev) ? st.hideAllPrev : null;
       var hidCount = 0;
       var btns = document.querySelectorAll('.wp-ov-toggle');
@@ -15109,6 +15446,38 @@ function wpRefreshOverlayToggles() {
         b.style.color       = wasOn ? '#f0b429' : '';
         b.title = wasOn ? 'Switched ON — hidden right now by the hide-all hotkey. Releasing hide-all brings it back.' : '';
       }
+      // Dock buttons. A docked overlay's on/off toggle is meaningless (its
+      // window no longer exists), so grey that one out rather than letting
+      // someone flip a flag with no effect.
+      var dockedList = Array.isArray(st.dockedOverlays) ? st.dockedOverlays : [];
+      var dbs = document.querySelectorAll('.wp-ov-dock');
+      for (var di = 0; di < dbs.length; di++) {
+        var db = dbs[di]; var dk = db.getAttribute('data-ov');
+        var isDocked = dockedList.indexOf(dk) >= 0;
+        db.textContent = isDocked ? 'DOCKED' : 'DOCK';
+        db.className = 'wp-ov-dock' + (isDocked ? ' on' : '');
+        db.title = isDocked
+          ? 'In the Dock. Click to give it its own floating window back.'
+          : 'Move this overlay into the Dock — one window, one renderer, instead of its own.';
+        var tb2 = document.querySelector('.wp-ov-toggle[data-ov="' + dk + '"]');
+        if (tb2) {
+          tb2.disabled = isDocked;
+          tb2.style.opacity = isDocked ? '0.4' : '';
+          if (isDocked) tb2.title = 'Docked — the Dock controls its visibility now.';
+        }
+      }
+
+      // Tray-parity button labels — painted from status, never baked into
+      // the render string (byte-stability).
+      var lockBtn2 = document.getElementById('wpOvLockBtn');
+      if (lockBtn2) lockBtn2.textContent = (st.overlaysLocked === false)
+        ? '🔒 Lock overlays — done placing'
+        : '🔓 Unlock overlays — move & resize';
+      var haBtn2 = document.getElementById('wpOvHideAllBtn');
+      if (haBtn2) haBtn2.textContent = st.hideAllActive
+        ? '👁 Show overlays (undo hide-all)'
+        : '🙈 Hide all overlays';
+
       var hb = document.getElementById('wpHideAllBanner');
       if (hb) {
         hb.innerHTML = hidPrev
@@ -15138,12 +15507,34 @@ if (typeof window !== 'undefined' && !window.__wpOvDelegated) {
     var t = e.target;
     var b = (t && t.closest) ? t.closest('.wp-ov-toggle') : null;
     if (b) { var name = b.getAttribute('data-ov'); if (name) wpToggleOverlay(name); return; }
+    var d = (t && t.closest) ? t.closest('.wp-ov-dock') : null;
+    if (d) { var dn = d.getAttribute('data-ov'); if (dn) wpDockOverlay(dn); return; }
     var act = (t && t.closest) ? t.closest('.wp-ov-act') : null;
     if (act && window.mimic) {
       var a = act.getAttribute('data-act');
       if (a === 'arrange' && window.mimic.autoArrangeNow) window.mimic.autoArrangeNow();
       if (a === 'rescue' && window.mimic.rescueOverlays) window.mimic.rescueOverlays();
       if (a === 'backdrops' && window.mimic.toggleBackdrops) window.mimic.toggleBackdrops();
+      // Tray parity (Hitya 2026-08-19) — same IPCs the tray items drive.
+      if (a === 'lock' && window.mimic.setOverlaysLocked && window.mimic.getStatus) {
+        window.mimic.getStatus().then(function(st){
+          var locked = !(st && st.overlaysLocked === false);
+          return window.mimic.setOverlaysLocked(!locked);
+        }).then(function(){
+          setTimeout(function(){ try { wpRefreshOverlayToggles(); } catch (e2) {} }, 200);
+        }).catch(function(){});
+      }
+      if (a === 'setup' && window.mimic.setSetupMode) window.mimic.setSetupMode(true);
+      if (a === 'hideall' && window.mimic.hideAllToggle) {
+        window.mimic.hideAllToggle().then(function(){
+          setTimeout(function(){ try { wpRefreshOverlayToggles(); } catch (e2) {} }, 200);
+        }).catch(function(){});
+      }
+      return;
+    }
+    var cpd = (t && t.closest) ? t.closest('.wp-charprof-del') : null;
+    if (cpd && window.mimic && window.mimic.charProfileForget) {
+      window.mimic.charProfileForget(cpd.getAttribute('data-char'));
       return;
     }
     var th = (t && t.closest) ? t.closest('.wp-theme-pick') : null;
@@ -20234,6 +20625,31 @@ const COMMAND_HTML = `<!doctype html>
   .cure-row .cureDismiss{margin-left:6px;cursor:pointer;color:#8b949e;font-size:11px;line-height:1;
     flex-shrink:0;opacity:0.6}
   .cure-row .cureDismiss:hover{opacity:1;color:#f87171}
+  /* 🎲 Rolls — per-set expand ("who else rolled") + local dismiss (Hitya,
+     2026-08-14). Same shape as the cure card above: the extra right padding
+     keeps the controls clear of the fixed ✕-hide gutter, and BOTH controls are
+     always drawn and merely dimmed. A hover-reveal would be invisible here —
+     #content is rebuilt every poll, and an element created under a stationary
+     cursor never picks up :hover (measured on chchain.html, 2026-08-14). */
+  .card.rolls-card{padding-right:28px}
+  .head.rolls-head{display:flex;align-items:center;gap:6px}
+  .rollClearAll{margin-left:auto;cursor:pointer;color:#9aa4ad;font-size:9px;text-transform:none;
+    letter-spacing:0;border:1px solid rgba(110,118,129,0.4);border-radius:3px;padding:0 4px;opacity:0.7}
+  .rollClearAll:hover{opacity:1;color:#f87171;border-color:#f87171}
+  .roll-row .rollMore{cursor:pointer;color:#8b949e;font-size:9px;flex-shrink:0;opacity:0.8;user-select:none}
+  .roll-row .rollMore:hover{opacity:1;color:#e6edf3}
+  .roll-row .rollDismiss{margin-left:6px;cursor:pointer;color:#8b949e;font-size:11px;line-height:1;
+    flex-shrink:0;opacity:0.6}
+  .roll-row .rollDismiss:hover{opacity:1;color:#f87171}
+  .roll-detail{display:flex;flex-direction:column;gap:1px;margin:1px 0 3px 10px;
+    border-left:1px solid rgba(110,118,129,0.35);padding-left:6px}
+  .roll-detail .d{display:flex;gap:6px;font-size:9px;color:#9aa4ad;line-height:1.5}
+  .roll-detail .d .v{color:#e6edf3;font-variant-numeric:tabular-nums;margin-left:auto}
+  .roll-detail .d.win .v{color:#f0c419;font-weight:700}
+  /* A re-roll never wins, so it has to be legible at a glance or the list looks
+     like someone rolled twice and got robbed. #6e7681 on this backdrop was not. */
+  .roll-detail .d .rr{color:#c9a227;font-size:8px;flex-shrink:0;border:1px solid rgba(201,162,39,0.45);
+    border-radius:2px;padding:0 3px;line-height:1.3;align-self:center}
   /* #153 collapsible sections — the caret+label in a section header is the
      click target that collapses/expands it. Collapse state lives in a JS store
      consulted at render time (localStorage-backed), NOT DOM state, so repaints
@@ -20357,6 +20773,18 @@ const COMMAND_HTML = `<!doctype html>
   var _dismissedCures = new Set();
   var _lastState = null;
   function _cureId(c){ return (c && c.id) ? c.id : (c && c.name ? String(c.name).toLowerCase() : null); }
+
+  // 🎲 Rolls — which sets are expanded, and which have been dismissed (Hitya,
+  // 2026-08-14). Both LOCAL to this client and both in a JS store consulted at
+  // render time, never DOM state: #content is rebuilt every 1.5s, so a native
+  // <details> would snap shut mid-distribution (the wpKeep lesson). Session-
+  // scoped rather than localStorage-backed — unlike a collapsed section, "I'm
+  // done with this item" should not outlive the loot night.
+  var _openRolls      = new Set();
+  var _dismissedRolls = new Set();
+  // Stable across polls: a set keeps its range and its first-roll timestamp for
+  // the 15 minutes it stays in the payload.
+  function _rollId(r){ return r ? (r.from + '-' + r.to + '@' + (r.started_at_ms || 0)) : null; }
 
   // #153 Collapsible sections — per-section collapse state persisted across
   // repaints AND restarts. It lives in this JS store (consulted by render()),
@@ -20536,26 +20964,75 @@ const COMMAND_HTML = `<!doctype html>
     // (Hitya 2026-07-10). Winners = top-(qty) first-rolls; the qty comes
     // from the loot link "Item (3)333". Full per-roll detail lives on the
     // agent dashboard's 🎲 Rolls card.
+    // Each row expands to the FULL roll list (Hitya, 2026-08-14: "a drop-down to
+    // open up lower rolls ... and see who else rolled"), and carries a ✕ so a
+    // resolved item leaves the card while the next one is still being rolled.
     if (s.rolls && s.rolls.length) {
-      html += '<div class="card"><div class="head">🎲 Rolls</div><div class="list">';
-      // Six, then a "+N more" tail — matching the trigger overlay's cap. Four
-      // was too few for a real loot session: Hitya's Aug 11 night ran eight
-      // sets and the card silently showed half of them, with nothing to say it
-      // was truncating (2026-08-12).
-      var rMax = Math.min(s.rolls.length, 6);
-      for (var ri = 0; ri < rMax; ri++) {
-        var rs = s.rolls[ri];
-        var winners = (rs.winners || []).map(function(w){ return esc(w.name) + ' <b>' + w.value + '</b>'; }).join(', ');
-        html += '<div class="row"><span class="nm"><b>' + rs.to + '</b>'
-             +    (rs.item ? ' (' + esc(rs.item) + (rs.qty ? ' ×' + rs.qty : '') + ')' : '')
-             +    ' — <span style="color:#f0c419">' + (winners || '—') + '</span></span>'
-             +    '<span class="cls">' + rs.players + ' roll' + (rs.players === 1 ? '' : 's') + (rs.open ? ' · open' : '') + '</span></div>';
+      // Reconcile both local sets against the fresh payload, so ids that aged
+      // out of the 15-minute window don't accumulate forever.
+      var _rollIds = new Set();
+      for (var q0 = 0; q0 < s.rolls.length; q0++) { var _rid0 = _rollId(s.rolls[q0]); if (_rid0) _rollIds.add(_rid0); }
+      _dismissedRolls.forEach(function(id){ if (!_rollIds.has(id)) _dismissedRolls.delete(id); });
+      _openRolls.forEach(function(id){ if (!_rollIds.has(id)) _openRolls.delete(id); });
+      var visRolls = [];
+      for (var q1 = 0; q1 < s.rolls.length; q1++) {
+        var _ridv = _rollId(s.rolls[q1]);
+        if (_ridv && _dismissedRolls.has(_ridv)) continue;
+        visRolls.push(s.rolls[q1]);
       }
-      if (s.rolls.length > rMax) {
-        html += '<div class="row"><span class="nm" style="opacity:.6">+' + (s.rolls.length - rMax)
-             +  ' more — see the 🎲 Rolls card on the dashboard</span></div>';
+      if (visRolls.length) {
+        var rollsCollapsed = _isCollapsed('rolls');
+        html += '<div class="card rolls-card"><div class="head rolls-head">'
+             +    secToggle('rolls', '🎲 Rolls', visRolls.length)
+             +    (rollsCollapsed ? '' : '<span class="rollClearAll" title="Dismiss every roll set (this client, until new ones land)">clear all</span>')
+             +  '</div>';
+        if (!rollsCollapsed) {
+          html += '<div class="list">';
+          // Six, then a "+N more" tail — matching the trigger overlay's cap. Four
+          // was too few for a real loot session: Hitya's Aug 11 night ran eight
+          // sets and the card silently showed half of them, with nothing to say it
+          // was truncating (2026-08-12).
+          var rMax = Math.min(visRolls.length, 6);
+          for (var ri = 0; ri < rMax; ri++) {
+            var rs  = visRolls[ri];
+            var rid = _rollId(rs);
+            var expanded = !!(rid && _openRolls.has(rid));
+            var winners = (rs.winners || []).map(function(w){ return esc(w.name) + ' <b>' + w.value + '</b>'; }).join(', ');
+            html += '<div class="row roll-row"><span class="nm"><b>' + rs.to + '</b>'
+                 +    (rs.item ? ' (' + esc(rs.item) + (rs.qty ? ' ×' + rs.qty : '') + ')' : '')
+                 +    ' — <span style="color:#f0c419">' + (winners || '—') + '</span></span>'
+                 +    '<span class="rollMore" data-roll-key="' + esc(rid) + '" title="'
+                 +      (expanded ? 'Hide' : 'Show') + ' every roll in this set">'
+                 +      (expanded ? '▾' : '▸') + ' ' + rs.players + ' roll' + (rs.players === 1 ? '' : 's') + '</span>'
+                 +    '<span class="cls">' + (rs.open ? 'open' : '') + '</span>'
+                 +    '<span class="rollDismiss" data-roll-id="' + esc(rid) + '" title="Dismiss this roll set (this client)">✕</span></div>';
+            if (expanded) {
+              // Highest first, so the losing rolls read straight down from the
+              // winner. Re-rolls are shown but flagged — they never win, and
+              // hiding them would make the count disagree with the list.
+              var all = (rs.rolls || []).slice().sort(function(a, b){ return b.value - a.value; });
+              var winNames = {};
+              for (var wj = 0; wj < (rs.winners || []).length; wj++) winNames[String(rs.winners[wj].name).toLowerCase()] = true;
+              html += '<div class="roll-detail">';
+              for (var dj = 0; dj < all.length; dj++) {
+                var d = all[dj];
+                var isWin = !d.reroll && winNames[String(d.name).toLowerCase()] === true;
+                html += '<div class="d' + (isWin ? ' win' : '') + '"><span>' + esc(d.name) + '</span>'
+                     +    (d.reroll ? '<span class="rr">re-roll</span>' : '')
+                     +    '<span class="v">' + d.value + '</span></div>';
+              }
+              if (!all.length) html += '<div class="d"><span>no per-roll detail captured</span></div>';
+              html += '</div>';
+            }
+          }
+          if (visRolls.length > rMax) {
+            html += '<div class="row"><span class="nm" style="opacity:.6">+' + (visRolls.length - rMax)
+                 +  ' more — see the 🎲 Rolls card on the dashboard</span></div>';
+          }
+          html += '</div>';
+        }
+        html += '</div>';
       }
-      html += '</div></div>';
     }
 
     // Curse/Cure alerts — reuses the buff queue's real observed-debuff
@@ -20613,13 +21090,15 @@ const COMMAND_HTML = `<!doctype html>
   if (contentEl) {
     contentEl.addEventListener('mouseover', function(e){
       var t = e.target;
-      if (t && t.closest && (t.closest('.cureDismiss') || t.closest('.cureClearAll') || t.closest('.sec-toggle'))) {
+      if (t && t.closest && (t.closest('.cureDismiss') || t.closest('.cureClearAll') || t.closest('.sec-toggle')
+                             || t.closest('.rollMore') || t.closest('.rollDismiss') || t.closest('.rollClearAll'))) {
         try { window.mimic.overlayHoverInteractive(true); } catch (er) {}
       }
     });
     contentEl.addEventListener('mouseout', function(e){
       var t = e.target;
-      if (t && t.closest && (t.closest('.cureDismiss') || t.closest('.cureClearAll') || t.closest('.sec-toggle'))) {
+      if (t && t.closest && (t.closest('.cureDismiss') || t.closest('.cureClearAll') || t.closest('.sec-toggle')
+                             || t.closest('.rollMore') || t.closest('.rollDismiss') || t.closest('.rollClearAll'))) {
         try { window.mimic.overlayHoverInteractive(false); } catch (er) {}
       }
     });
@@ -20631,6 +21110,35 @@ const COMMAND_HTML = `<!doctype html>
         e.preventDefault(); e.stopPropagation();
         var key = tog.getAttribute('data-collapse-key');
         if (key) { _toggleCollapsed(key); if (_lastState) render(_lastState); }
+        return;
+      }
+      // 🎲 Rolls — expand / dismiss one set / dismiss all. Same shape as the
+      // cure controls below: flip the local store, then re-render from the last
+      // state so the click lands instantly instead of waiting for the poll.
+      var rmore = e.target && e.target.closest ? e.target.closest('.rollMore') : null;
+      if (rmore) {
+        e.preventDefault(); e.stopPropagation();
+        var rk = rmore.getAttribute('data-roll-key');
+        if (rk) { if (_openRolls.has(rk)) _openRolls.delete(rk); else _openRolls.add(rk); if (_lastState) render(_lastState); }
+        return;
+      }
+      var rone = e.target && e.target.closest ? e.target.closest('.rollDismiss') : null;
+      if (rone) {
+        e.preventDefault(); e.stopPropagation();
+        var rdid = rone.getAttribute('data-roll-id');
+        if (rdid) { _dismissedRolls.add(rdid); _openRolls.delete(rdid); if (_lastState) render(_lastState); }
+        return;
+      }
+      var rall = e.target && e.target.closest ? e.target.closest('.rollClearAll') : null;
+      if (rall) {
+        e.preventDefault(); e.stopPropagation();
+        if (_lastState && _lastState.rolls) {
+          for (var rj = 0; rj < _lastState.rolls.length; rj++) {
+            var rid2 = _rollId(_lastState.rolls[rj]);
+            if (rid2) { _dismissedRolls.add(rid2); _openRolls.delete(rid2); }
+          }
+          render(_lastState);
+        }
         return;
       }
       var one = e.target && e.target.closest ? e.target.closest('.cureDismiss') : null;
@@ -25907,7 +26415,7 @@ function _controlStandDown() {
 // "live" here means the same thing the bot's chat-election freshness gate means.
 const LIVE_CHARACTER_IDLE_MS = 90_000;
 // #119 — liveness across ALL watched logs. last_line_ms is the MIN age across
-// every watched character's tail (any live log = a live agent — a boxer whose
+// every watched character's tail (any live log = a live agent — a player whose
 // primary is logged out but who's actively playing an alt still tails a flowing
 // log, so the #112 chat election + fleet staleness dot treat them as fresh; an
 // agent with NO active log anywhere still yields a large age → stale, so the
@@ -26036,6 +26544,138 @@ function _reporterHeartbeatOnce() {
     req.write(body); req.end();
   } catch { _reporterFailOpen(); }
 }
+// ── SNTP: what time is it REALLY? ───────────────────────────────────────────
+// The heartbeat's four-stamp exchange measures this machine against OUR BOT.
+// That is the right reference for "is this bot-issued timestamp still fresh",
+// and it is the wrong reference for "is this machine's clock correct", because
+// it cannot see an error the bot shares. Two cases where that matters:
+//
+//   • **The bot is unreachable.** Today the agent knows nothing about its own
+//     clock until the first successful poll. Every live decision — relayed
+//     trigger freshness, callout ages — silently assumes zero offset.
+//   • **The bot's own clock is wrong.** On Railway it is NTP-synced and this is
+//     theoretical. For a self-hosted guild running the bot on a spare desktop
+//     it is not: pulse would correct that whole fleet *toward* the wrong clock
+//     and nothing in the system could tell. Comparing pulse against real NTP is
+//     the only thing that catches it, and the difference IS the bot's error.
+//
+// Deliberately inlined rather than put in a sibling file: apps/mimic/scripts/
+// stage-agent.js copies a HARDCODED file list into the bundle, so a new file
+// would work in dev and silently not ship.
+//
+// Plain SNTP over UDP/123 using node's dgram — no dependency, ~50 lines. If UDP
+// is blocked (some corporate/hotel networks) every server times out and we keep
+// whatever pulse gave us, which is exactly today's behaviour.
+const NTP_SERVERS = ['time.windows.com', 'pool.ntp.org', 'time.cloudflare.com'];
+const NTP_EPOCH_OFFSET_S = 2208988800;   // seconds between 1900-01-01 and 1970-01-01
+const NTP_QUERY_TIMEOUT_MS = 3000;
+const NTP_REFRESH_MS = 30 * 60 * 1000;
+// Below this, a pulse-vs-NTP gap is round-trip noise rather than a wrong bot.
+const NTP_BOT_DISAGREE_MS = 5000;
+
+// The arithmetic, split out because it is the half that can be quietly wrong —
+// a bad epoch constant or a mis-scaled fraction yields a confident number that
+// is decades or milliseconds out, and the network half cannot be unit-tested.
+// Returns null for anything unusable rather than a number we don't believe.
+function _parseSntpReply(msg, t1, t4) {
+  if (!msg || msg.length < 48) return null;
+  if (msg[1] === 0) return null;              // stratum 0 = "kiss of death", a refusal
+  const at = (off) => (msg.readUInt32BE(off) - NTP_EPOCH_OFFSET_S) * 1000
+                    + Math.round((msg.readUInt32BE(off + 4) / 4294967296) * 1000);
+  const t2 = at(32);    // server received our request
+  const t3 = at(40);    // server sent its reply
+  if (!Number.isFinite(t2) || !Number.isFinite(t3) || t3 <= 0) return null;
+  // The same four-stamp formula the bot heartbeat uses: comparing against the
+  // MIDPOINT of our round trip cancels one-way latency. Charging the whole trip
+  // to the offset instead would read as a skew of half the RTT.
+  return {
+    offsetMs: Math.round(((t2 - t1) + (t3 - t4)) / 2),
+    rttMs:    Math.max(0, (t4 - t1) - (t3 - t2)),
+  };
+}
+
+function _sntpQuery(host, timeoutMs = NTP_QUERY_TIMEOUT_MS) {
+  return new Promise((resolve) => {
+    let sock, done = false, t1 = 0;
+    const finish = (v) => {
+      if (done) return;
+      done = true;
+      try { sock && sock.close(); } catch { /* already closed */ }
+      resolve(v);
+    };
+    try { sock = require('dgram').createSocket('udp4'); }
+    catch { return resolve(null); }
+    const timer = setTimeout(() => finish(null), timeoutMs);
+    if (timer.unref) timer.unref();
+    sock.on('error', () => { clearTimeout(timer); finish(null); });
+    sock.on('message', (msg) => {
+      clearTimeout(timer);
+      const parsed = _parseSntpReply(msg, t1, Date.now());
+      finish(parsed ? { host, ...parsed } : null);
+    });
+    const pkt = Buffer.alloc(48);
+    pkt[0] = 0x1b;                      // LI=0, VN=3, Mode=3 (client)
+    t1 = Date.now();
+    sock.send(pkt, 0, pkt.length, 123, host, (err) => {
+      if (err) { clearTimeout(timer); finish(null); }
+    });
+  });
+}
+
+// Ask all three at once and take the LOWEST round trip. Standard NTP practice:
+// a short round trip bounds how wrong the offset can be, and it means one slow
+// or lying server cannot decide the answer on its own.
+async function _measureNtpOffset() {
+  const answers = (await Promise.all(NTP_SERVERS.map(h => _sntpQuery(h).catch(() => null))))
+    .filter(a => a && Number.isFinite(a.offsetMs));
+  if (answers.length === 0) return null;
+  answers.sort((a, b) => a.rttMs - b.rttMs);
+  return answers[0];
+}
+
+let _ntpDisagreeWarned = false;
+async function _refreshNtpOffset() {
+  const r = await _measureNtpOffset();
+  if (!r) {
+    stats.ntpReachable = false;
+    return;
+  }
+  stats.ntpReachable = true;
+  stats.ntpOffsetMs  = r.offsetMs;
+  stats.ntpRttMs     = r.rttMs;
+  stats.ntpHost      = r.host;
+  stats.ntpAt        = Date.now();
+  // Pulse vs true time. When both exist and disagree, the gap is OUR SERVER's
+  // error — this machine is measured against both, so it cancels out of the
+  // difference. Worth saying out loud exactly once.
+  const pulse = stats.clockOffsetMs;
+  if (Number.isFinite(pulse)) {
+    const botErr = r.offsetMs - pulse;
+    stats.botClockErrorMs = botErr;
+    if (Math.abs(botErr) >= NTP_BOT_DISAGREE_MS && !_ntpDisagreeWarned) {
+      _ntpDisagreeWarned = true;
+      console.warn(`[clock] the BOT's clock looks ${botErr > 0 ? 'ahead' : 'behind'} by `
+        + `${Math.abs(Math.round(botErr / 1000))}s (this machine is ${Math.round(r.offsetMs / 1000)}s off true time `
+        + `per ${r.host}, but only ${Math.round(pulse / 1000)}s off the bot). Server-side timestamps will inherit that.`);
+    }
+  }
+  if (Math.abs(r.offsetMs) >= 5000 && !_clockSkewWarned) {
+    _clockSkewWarned = true;
+    console.warn(`[clock] this machine is ${r.offsetMs > 0 ? 'BEHIND' : 'AHEAD OF'} true time by `
+      + `${Math.abs(Math.round(r.offsetMs / 1000))}s (${r.host}) — parses, deaths and buff timings from this `
+      + 'machine will be offset. Fix with:  w32tm /resync');
+  }
+}
+
+let _ntpOn = false;
+function startNtpRefresh() {
+  if (_ntpOn) return;
+  _ntpOn = true;
+  _refreshNtpOffset().catch(() => {});
+  const t = setInterval(() => { _refreshNtpOffset().catch(() => {}); }, NTP_REFRESH_MS);
+  if (t.unref) t.unref();
+}
+
 // One-shot latch so a bad clock warns once per session, not every 20s.
 let _clockSkewWarned = false;
 function startReporterHeartbeat() {
@@ -26043,6 +26683,8 @@ function startReporterHeartbeat() {
   _reporterHeartbeatOn = true;
   _reporterHeartbeatOnce();                                     // poll immediately on boot
   setInterval(_reporterHeartbeatOnce, REPORTER_HEARTBEAT_MS).unref();
+  // True-time reference, independent of the bot — see _refreshNtpOffset.
+  startNtpRefresh();
 }
 let _chatRelayOn   = false;     // true once the 5s relay interval is running
 
@@ -26250,7 +26892,7 @@ function _recordFightHistory(et) {
   if (!boss) return;
   const startedMs = et.startedAt ? Date.parse(et.startedAt) : 0;
   stats.fightHistory = Array.isArray(stats.fightHistory) ? stats.fightHistory : [];
-  // A multi-box install flushes once per builder, and flush() also propagates
+  // A multi-log install flushes once per builder, and flush() also propagates
   // to peer builders on the same fight — so the same kill arrives several
   // times. One entry per (boss, start within 60s).
   const dupe = stats.fightHistory.find(h =>
@@ -27157,6 +27799,28 @@ let _debuffLandingBySuffix = new Map();
 function _rebuildBuffMatchers() {
   const m = new Map();
   const dm = new Map();
+  // Catalog-wide sharer count per landing text — over EVERY spell that has an
+  // on-other message, BEFORE any timed/detrimental filtering. This is the
+  // 2026-08-16 Kneel Test regression fix: the junk guard below used to count
+  // names WITHIN each index, but "is struck by a sudden force." is 33 catalog
+  // spells of which exactly ONE — Kneel Test, EQEmu's internal test row, the
+  // only timed+detrimental member — survived the index filters. A family of
+  // one sailed under the >8 guard and was crowned with full confidence on
+  // every Ssra knockback. The bot's ingest filter kept it out of buff_casts
+  // (0 rows server-side), so only the LOCAL Mob Info showed it — "for beta,
+  // I'm still seeing kneel test on the target info" (Hitya). Ambiguity is a
+  // property of the TEXT, so sharers must be counted over the catalog, never
+  // over the survivors of unrelated filters.
+  const sharers = new Map();
+  for (const e of _spellByNameLower.values()) {
+    if (!e || !e.other || !e.name) continue;
+    const suffix = String(e.other).trim().toLowerCase();
+    if (!suffix || suffix.length < 6) continue;
+    let s = sharers.get(suffix);
+    if (!s) { s = new Set(); sharers.set(suffix, s); }
+    s.add(e.name);
+  }
+  const sharerCount = (suffix) => (sharers.get(suffix) ? sharers.get(suffix).size : 0);
   for (const e of _spellByNameLower.values()) {
     if (!e || !e.other || !e.name) continue;
     if (!_isTimedDurationFormula(e.durf)) continue;
@@ -27179,18 +27843,15 @@ function _rebuildBuffMatchers() {
   // Junk-text guard (2026-07-07): a landing message shared by MANY unrelated
   // spells is unattributable garbage, not a family. Real families cap out
   // around 7 ("glances nervously about." = the 7 Tash spells; "looks very
-  // uncomfortable." = 6 Malos) — but generic effect texts go far wider:
-  // "is struck by a sudden force." is 33 knockback-type spells, and the
-  // ambiguous-family resolver kept crowning EQEmu's internal "Kneel Test"
-  // (the only one with a nonzero duration) as its representative, writing
-  // 10k phantom rows into buff_casts and phantom entries onto Mob Info.
-  // Anything shared by >8 distinct spell names is dropped from both indexes.
+  // uncomfortable." = 6 Malos) — but generic effect texts go far wider.
+  // Anything whose TEXT is shared by >8 distinct spell names in the CATALOG
+  // is dropped from both indexes, regardless of how many members made it in.
   let junked = 0;
-  for (const [suffix, arr] of [...m]) {
-    if (new Set(arr.map(h => h.name)).size > 8) { m.delete(suffix); junked++; }
+  for (const [suffix] of [...m]) {
+    if (sharerCount(suffix) > 8) { m.delete(suffix); junked++; }
   }
   for (const [suffix, arr] of [...dm]) {
-    if (new Set(arr.map(h => h.name)).size <= 8) continue;
+    if (sharerCount(suffix) <= 8) continue;
     // Rescue slow families before dropping (2026-07-27): every shaman slow
     // shares the generic "yawns." emote — 11 detrimental timed spells, over the
     // junk threshold — so the whole shaman slow line (Turgur's Insects et al.)
@@ -27860,7 +28521,7 @@ const TRIGGER_TOKEN_KINDS = {
 };
 
 // Expand tokens. ctx.characters binds {c}/{char}/{self} to an alternation of
-// the watched characters (boxing-aware); when none are known yet the token is
+// the watched characters (every watched log, not just the primary); when none are known yet the token is
 // left LITERAL — an unmatchable string — rather than becoming a wildcard that
 // fires for every player in the zone (the old {c} bug). Numeric guards
 // ({N>=50000}) become fire conditions checked after the match.
@@ -31890,7 +32551,7 @@ function _serializeZealForWeb() {
   // first, with the EQ zone resolved to a name and a `live` flag. Unlike the
   // pruned diagnostic above, this deliberately KEEPS logged-out characters so
   // you can see what each one logged out carrying + where they parked. Capped
-  // so a long multibox session can't bloat the payload.
+  // so a long multi-log session can't bloat the payload.
   //
   // Pet identification (Zeal): confirmed from a live charmed-pet gauge dump —
   // slot 1 = self, slot 6 = target, and **slot 16 = the pet** (charm or
@@ -32791,7 +33452,7 @@ function _announceLootPost(items, durSec) {
 // Open (or restart) an auction chip for this item set. Same signature =
 // restart in place (repeat post RESETS, never stacks a duplicate); a distinct
 // item set = a new independent chip (concurrent auctions are real). The TTS
-// callout fires only on the FIRST open of a set — multibox second-log copies
+// callout fires only on the FIRST open of a set — second-watched-log copies
 // and repeat posts reset silently.
 function _openOrResetLootAuction(sig, items, durSec, nowMs, channel, silent) {
   const id = 'loot|' + sig;
@@ -35165,6 +35826,9 @@ module.exports = {
   SOURCELESS_SPELLS, BARD_SONGS,
   EncounterBuilder, characterFromFilename, isBackupLogFile, _splitBackupSuffix,
   trackChChainLine, chChainSnapshot, removeChChainSlot,
+  _parseSntpReply,
+  // Roll-call item labels — pure parser, tested against real captured chat.
+  parseRollItemLine, _cleanRollItemCandidate, ROLL_ITEM_LINK_MS,
   _recordFightHistory, _fightHistoryForTest: () => stats.fightHistory,
   _resetFightHistoryForTest: () => { stats.fightHistory = []; },
   // CH cast bar / interrupt ✕ / DDR grade — exported for the scratchpad harness.

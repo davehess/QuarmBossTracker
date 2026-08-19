@@ -132,8 +132,8 @@ describe('the dashboard renders the third state', () => {
 
     const rows = sliceBlock(agent, 'var WP_OVERLAY_ROWS = [', '\n];');
     const keys = [...rows.matchAll(/^\s*\['([a-zA-Z]+)',/gm)].map(m => m[1]);
-    expect(keys.length).toBe(15);
-    expect(onKeys).toHaveLength(15);
+    expect(keys.length).toBe(16);   // 15 overlays + the dock row (2026-08-19)
+    expect(onKeys).toHaveLength(keys.length);
     for (const k of keys) {
       expect(map[k], `row '${k}' has no flag mapping`).toBeTruthy();
       expect(onKeys, `row '${k}' missing from the on-state map`).toContain(k);

@@ -285,7 +285,7 @@ describe('_windowLabelsByPid', () => {
     const names = sliceBlock(src, '  const NAMES = {', '\n  };');
     const table = new Function('return ' + names.slice(names.indexOf('{')))();
     const keys = [...src.matchAll(/\{ key: '([a-zA-Z]+)',\s+flag:/g)].map(m => m[1]);
-    expect(keys.length).toBe(15);
+    expect(keys.length).toBe(16);   // 15 overlays + the Dock
     for (const k of keys) expect(table[k], `${k} has no display name`).toBeTruthy();
   });
 });

@@ -596,8 +596,24 @@
     const list = $('charsList');
     const badge = $('charsBadge');
     if (_chars.length === 0) {
-      list.innerHTML = '<div class="saved" style="color:#8b949e">No characters detected yet. Configure an EverQuest folder above and we\'ll list them here.</div>';
-      badge.textContent = '0 chars'; badge.className = 'badge';
+      // Two very different reasons for an empty list, and telling them apart is
+      // the whole value of this message. Pyxil (2026-08-14) had configured
+      // C:\TAKPv22 and still got "configure an EverQuest folder above", which
+      // reads as "the thing you just did didn't work". Her actual state was a
+      // perfectly good folder with in-game logging never switched on — nothing
+      // to fix in Mimic at all.
+      var haveFolder = (_checkedFound.size + _manualFolders.length) > 0;
+      list.innerHTML = haveFolder
+        ? '<div class="saved" style="color:#f6c365;line-height:1.6">'
+          + 'Folder found, but there are no log files in it yet &mdash; which just means EverQuest '
+          + 'has not been told to write them.<br>'
+          + '<b>In EQ, type <code>/log on</code></b> once, and characters appear here the moment '
+          + 'they write their first line. The <b>Set up EQ for me</b> button in Settings can turn '
+          + 'logging on for you (close EverQuest first &mdash; it rewrites its settings on exit).'
+          + '</div>'
+        : '<div class="saved" style="color:#8b949e">No characters detected yet. Configure an EverQuest folder above and we\'ll list them here.</div>';
+      badge.textContent = haveFolder ? 'no logs yet' : '0 chars';
+      badge.className = 'badge';
       return;
     }
     const fmtSize = (n) => {

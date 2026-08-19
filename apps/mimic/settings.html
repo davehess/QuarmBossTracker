@@ -164,6 +164,13 @@
   </div>
   <div class="hint">When unlocked, a blue drag bar appears on each overlay — drag to move, pull the edges to resize, then re-lock. Changes apply instantly, no engine restart.</div>
 
+  <div class="row" style="align-items:center;gap:8px">
+    <label for="overlayScale">Overlay size</label>
+    <input id="overlayScale" type="range" min="50" max="200" step="5" value="100" style="flex:1;cursor:pointer" />
+    <span id="overlayScaleVal" style="min-width:44px;text-align:right;color:#8b949e">100%</span>
+  </div>
+  <div class="hint">Scales the text and controls of every overlay — 50% to 200%. Made for high-DPI screens (a 5K monitor renders overlays tiny at 100%). Applies instantly as you drag. This same slider lives on the dashboard's Overlays tab, and every overlay has its own "size" slider in its setup bar (right-click ✥ → Setup THIS overlay) that overrides the global for just that overlay.</div>
+
   <div class="row">
     <input id="autoStart" type="checkbox" />
     <label for="autoStart">Start Mimic with Windows</label>
@@ -585,6 +592,13 @@
     document.getElementById('autoStart').checked         = (c.autoStart !== false);
     document.getElementById('hideOverlaysWhenEqDown').checked = (c.hideOverlaysWhenEqDown !== false);
     document.getElementById('zealAutoCheck').checked = (c.zealAutoCheck !== false);
+    // Overlay scale — its own live IPC, not part of the Save payload.
+    try {
+      const s = await window.mimic.getOverlayScale();
+      const pct = Math.round((Number(s) || 1) * 100);
+      document.getElementById('overlayScale').value = String(pct);
+      document.getElementById('overlayScaleVal').textContent = pct + '%';
+    } catch {}
     _renderZealStatus();
     _renderUiPacks();
     const tm = c.tellsMode || 'off';
@@ -594,6 +608,19 @@
     // configured EQ folders, no token needed for the scan itself.
     _renderUiStudio();
   }
+
+  // Overlay scale — label follows the drag; the scale applies on RELEASE
+  // ('change'), and main glides every overlay's zoom + window bounds to the
+  // new size. Persists in main's config, independent of Save. (Applying per
+  // input tick re-zoomed every overlay dozens of times per drag — janky.)
+  document.getElementById('overlayScale').addEventListener('input', (e) => {
+    const pct = Math.max(50, Math.min(200, parseInt(e.target.value, 10) || 100));
+    document.getElementById('overlayScaleVal').textContent = pct + '%';
+  });
+  document.getElementById('overlayScale').addEventListener('change', async (e) => {
+    const pct = Math.max(50, Math.min(200, parseInt(e.target.value, 10) || 100));
+    try { await window.mimic.setOverlayScale(pct / 100); } catch {}
+  });
 
   document.getElementById('save').onclick = async () => {
     const btn = document.getElementById('save');
