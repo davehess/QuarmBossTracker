@@ -126,6 +126,30 @@ notes written member-facing per the v1.1.20 rule, beta re-parked at 2.6.1.
 Unnamed release (plain version string — naming is the guild lead's call and
 none was given).
 
+## Backfill Dismiss was a no-op inside Mimic: Electron has no window.prompt()
+
+**The finding (Hitya: "dismiss button for backfill doesn't do anything, and
+closing that panel just refreshes and brings it back").** Two bugs. (1) The
+Dismiss handler opened `window.prompt()` for the optional officer reason —
+Electron renderers do not support prompt() (it THROWS), so inside Mimic the
+async handler died before the POST. It worked in a plain browser, which is
+why it survived testing: **test dashboard interactions inside Mimic, not just
+localhost in Chrome — prompt/alert/confirm support differs** (prompt: never;
+alert/confirm: fine). (2) The per-card ✕ persisted its hide, but renderers
+that rebuild innerHTML (renderOptin) resurrected hidden cards — only some
+renderers had learned the Watched Logs re-consult lesson. Agent **3.6.1**
+(beta, 2.6.1-beta.N): confirm() guards the dismiss (optional reason dropped),
+and decorateButtons — which already observes every section — re-asserts
+wp-hidden from the persisted set on every repaint, healing all sections
+generically.
+
+**Cleanup.** Hitya's two stuck June-12 requests (Rockin, Manamana) dismissed
+server-side per his clicks. ⚠ **~115 more stale June 9–15 data-gap requests
+are still open fleet-wide** — every member with a matching character sees
+their own undismissable-until-3.6.1 nag card. Bulk-dismissing the June sweep
+is Hitya's call (the four 2026-08-17 Sleeper's Tomb recovery requests must
+survive any sweep — they are the live P1 tail).
+
 ## Process: a silent Monitor death delayed the freeze-lift landing ~9h
 
 The 00:31 ET landing (bot 3.1.59 + web 1.1.77) was armed on a persistent
