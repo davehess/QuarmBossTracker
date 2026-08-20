@@ -1,0 +1,99 @@
+# Decisions — 2026-08-20
+
+Overnight (the Wed 08-19 raid ran into this morning) plus the Thursday-morning
+landing. Previous file: `DECISIONS-2026-08-19.md`.
+
+## DT countdown: a gated fire on a timer-bearing trigger still ARMS the timer (Hitya, mid-raid)
+
+**The call.** *"we still missed the deathtouch timer from the second cursed
+cycle mob on a pet."* Two holes, two fixes: (1) the guild trigger's target
+capture had no space in its class, so multi-word victims (warders, charm pets)
+never matched on ANY agent — pattern broadened in the `guild_triggers` row
+directly (live in ≤2 min via the poll, no deploy); (2) the
+`require_raid_member` gate early-returned BEFORE `_startTimer`, so a fire whose
+victim an agent couldn't prove dropped the whole countdown — agent **3.5.93**
+arms the timer on a gated fire and suppresses only the text/tts actions.
+
+**Why.** A DT countdown is CYCLE state, not a victim callout — a Death Touch
+spent on anyone's pet still means the next one is 120s away. This deliberately
+INVERTS the 2026-08-09 note that treated "a pet got a countdown" as the bug;
+the inversion is recorded in the trigger row's notes so it doesn't get
+re-fixed backwards.
+
+**Where it landed.** `packages/wolfpack-logsync/index.js`
+(`_fireTriggerActions`), guild_triggers `d1a04e39…`, beta build off `0debca07`.
+
+## /parses: collection is open, DISPLAY is curated (Hitya: "not the right parses for nonbosses")
+
+**The call.** Bot 3.1.52's self-registration (first kills are sacred) turned
+out to have removed the page's only boss filter — one overnight farm session
+put 336 trash cards on /parses and ate the 250-row query window. Collection
+stays open; display gets its own axis: `bosses_local.auto_registered`
+(migration, backfilled for the 188 rows since 3.1.52). Cards = curated rows
+only; everything else rolls up to one 🗡 line per zone per night
+(`parses_offcard_rollup` RPC, zone derived from npc_id = zone_id*1000+n — the
+page finally says Ssraeshza Temple instead of "Unknown zone").
+
+**Where it landed.** Web **1.1.77** + bot **3.1.60**, two migrations (applied
+via MCP 2026-08-20 ~02:1x UTC, identical files committed).
+
+## "If they have a loot lockout we can keep them on" (Hitya) — lockout ⇒ card-worthy, self-enforcing
+
+**The call.** Uncurated NAMEDS (instanced City of Mist / Ssra minis) shouldn't
+be promoted by hand-picked lists: the SERVER already declares what's a boss —
+it hands out loot lockouts. The /sll relay and bosskill broadcasts carry
+exactly those names, so bot **3.1.61** promotes any auto-registered
+`bosses_local` row they mention (`_promoteLockoutBoss` — flips the flag only;
+never creates rows, never touches timers, war-god PVP names are no-ops).
+
+**Why organic, not backfilled.** No lockout history is stored (the old handler
+dropped non-board names), so tonight's nameds promote the first time anyone
+locked to them runs /sll after the deploy, or on their next kill broadcast.
+
+## /announce for a future event DEFERS its parse session (Hitya: "it hasn't happened yet!")
+
+**The call.** The All-Night Leaderboard appeared at 12:21 AM in the "Sanctus
+Seru — Thu, Aug 20, 10:30 PM EDT" thread, full of overnight FARM kills.
+`/announce` auto-opened the parse session at ANNOUNCE time whenever none was
+active — and the event was announced just after midnight, right after the
+midnight chain cleared Wednesday's session, so tomorrow-night's thread became
+"tonight's session home" for every agent upload. Bot **3.1.62**: announce
+opens the session only when the event starts ≤2h out; further-out announces
+park `pending_parse_session` in `bot_kv` (NOT state.json — deploys wipe it)
+and the spawn checker opens it 30 min before start. /adjusttime + /adjustdate
+move it, cancel clears it, an officer /raidnight supersedes it, start+6h
+drops it unopened.
+
+**One-off for tonight (2026-08-20 10:30 PM).** The event was announced BEFORE
+3.1.62, so no pending record exists, and the deploy wipes the polluted
+session. An officer should run `/raidnight here` in the event thread at raid
+time (or re-announce ≤2h out, which now opens immediately). Also: the stale
+All-Night Leaderboard message from 12:21 AM in that thread is farm data —
+delete it by hand.
+
+## Process: a silent Monitor death delayed the freeze-lift landing ~9h
+
+The 00:31 ET landing (bot 3.1.59 + web 1.1.77) was armed on a persistent
+Monitor that died at its 30-min timeout without firing — the second monitor to
+do so that night. The landing happened Thursday morning instead (no harm —
+freeze-safe window), but the lesson stands: **a cloud-session timer is a hope,
+not a schedule.** For time-critical follow-ups, prefer `send_later` /
+scheduled triggers (they survive container churn) over Monitors, and write
+the pending landing into the task list + docs so ANY next session picks it up.
+
+---
+
+## Open — read this first
+
+| Item | State |
+|---|---|
+| **Tonight (Thu 10:30 PM): Sanctus Seru event needs `/raidnight here`** | Announced pre-3.1.62 → no pending session record. Officer runs `/raidnight here` in the event thread at raid time (or re-announce ≤2h out). Delete the stale 12:21 AM All-Night Leaderboard message in that thread |
+| **Instanced nameds promote on first /sll** | Post-deploy, anyone locked to the CoM/Ssra instanced nameds runs `/sll` once → they earn /parses cards with history. Verify the first few promotions in the bot log (`[lockout] promoted …`) |
+| **Buff-queue batch needs a field pass** | Landed: overlay collapse groups + burst ⏳ countdowns (mimic beta), dashboard cures-only/Feral-only filters (agent 3.5.92), bot 3.1.59 burst carry. Watch tonight's raid |
+| **DT trigger: verify on the next cursed cycle** | Pattern fix is fleet-wide already; agent 3.5.93 (timer-arm) reaches beta Mimics via hot-swap. The next Vyzh`dra cycle DT on a pet should produce a raid-wide countdown with no callout |
+| **Tray↔dashboard parity audit — remainder** | Still tray-only: quiet mode, tells mode + DM pause, melody toggles, auto-arrange-on-show, start-with-Windows, check-for-updates (task #52) |
+| **P1 recovery tail (bot 3.1.52)** | 4 backfills (Chadivarius/Bardtholemu/Dafeet/Lowang) recover The Final Arbiter — still pending. Stage branch `…-stage-web-1-1-62` still needs local-session deletion |
+| **Overlay design-consistency pass** | Task #54 — load frontend-design skill first; Hitya flagged it hardest |
+| **Task #27 — the 8 muted trash triggers** | Restore on Hitya's word — raid-noise call |
+| **Dead-triggers runbook needs re-measuring** | Agent 3.5.46+ auto-heals bare-`^`; the Aug-4 "37 of 109" predates it |
+| **Item icons / Zeal EPERM / #204–#207 / Data Sentinel / guild-gate / ratchet+O1 / Mob Info DoT grouping / eql-support doc** | Unchanged — see `DECISIONS-2026-08-19.md` for detail (tasks #36, #31, #42, #40, #41, #44) |

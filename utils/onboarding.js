@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.1.62': [
+    '**The parses page shows boss kills again — farm and trash roll up into one line per zone.** Every kill still counts and is kept, but only real bosses get cards, so a night of clearing can\'t bury the boss kills. Any mob the server gives a loot lockout for counts as a boss automatically — instanced nameds earn their card the first time a lockout or kill broadcast names them, history intact. And announcing tomorrow\'s raid no longer starts tonight\'s scoreboard early — the parse session opens shortly before the event, not the moment it\'s announced.',
+  ],
   '3.1.59': [
     '**The Feral Avatar / Savagery queue shows who already has it, and for how long.** Buffed targets used to vanish from the list — now they sit at the bottom with a ⏳ countdown, soonest to drop first, so the recast is always the bottom row. Pairs with the buff-queue overlay update that starts buff sections collapsed (tap a section header to open it).',
   ],
