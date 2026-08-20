@@ -37,6 +37,20 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'agent-3-5-94',
+    title: '\u{1F392} Inventory that keeps itself current',
+    version: 'Agent 3.5.94 · Web 1.1.78',
+    date: '2026-08-20',
+    channel: 'beta',
+    headline: 'Run /outputfile inventory and forget about it — Mimic picks the file up within ~10 minutes, so the item search and your character pages stay current.',
+    features: [
+      { name: '\u{1F392} Automatic inventory uploads', blurb: 'Mimic now watches your <Name>-Inventory.txt files the same way it already watches spellbook and Quarmy exports. Re-run /outputfile inventory any time — the fresh snapshot uploads on its own, no more visiting the website to re-upload by hand. Money is never uploaded, and the /me privacy opt-out is honored as always.' },
+    ],
+    fixes: [
+      'The item search was showing months-old inventories (new spells and gear missing) — snapshots only updated when someone re-uploaded manually. They now stay fresh automatically.',
+    ],
+  },
+  {
     key: 'web-1-1-77',
     title: '\u{1F5E1} Boss kills back in front',
     version: 'Web 1.1.77 · Bot 3.1.61',
