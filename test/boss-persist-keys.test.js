@@ -106,7 +106,13 @@ describe('_resolveBossForPersist — resolution order', () => {
     const sb = fakeSupabase({ eqemuByName: { '#Master_of_the_Guard': 128120 } });
     const r = await _resolveBossForPersist('Master of the Guard', null, sb);
     expect(r).toEqual({ internalId: 'master_of_the_guard', registered: true });
-    expect(sb.inserts).toEqual([expect.objectContaining({ npc_id: 128120, internal_id: 'master_of_the_guard' })]);
+    expect(sb.inserts).toEqual([expect.objectContaining({
+      npc_id: 128120, internal_id: 'master_of_the_guard',
+      // Provenance flag: display surfaces filter on it (Hitya 2026-08-19,
+      // the /parses trash-card flood) — a self-registered row must never
+      // masquerade as curated.
+      auto_registered: true,
+    })]);
   });
 
   it('a name with NO exact eqemu match is refused — the junk filter holds', async () => {

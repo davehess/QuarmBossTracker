@@ -15565,6 +15565,11 @@ async function _resolveBossForPersist(bossName, matchedBossId, supabase) {
   await supabase.insertIgnoreDuplicates('bosses_local', [{
     npc_id: npcId, internal_id: rawSlug, nicknames: [],
     added_at: new Date().toISOString(),
+    // Provenance, not a gate: collection stays open, but display surfaces
+    // (/parses cards, landing widget) show curated rows only — without this
+    // flag, one farm night put 300+ trash cards on /parses (2026-08-19).
+    // Flip to false to promote a named to card status.
+    auto_registered: true,
   }]).catch(() => {});
   // Re-read rather than trusting our insert — a concurrent upload of the same
   // new mob may have won the race with a different-cased slug.
