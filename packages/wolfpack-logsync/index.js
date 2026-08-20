@@ -34020,11 +34020,22 @@ function _fireTriggerActions(t, captures, tsMs, test, isRelay) {
       // Pass when the captured name is a raid member OR one of our pets (#150);
       // only a genuinely-unknown non-pet non-member suppresses.
       if (!val || (!_raidRosterHas(val) && !_isOurPetName(String(val).toLowerCase()))) {
-        if (!test) console.log('[trigger] ' + (t.name || 'trigger') + ' suppressed — ' + a.require_raid_member + '=' + val + ' not a raid member');
+        // TIMER-BEARING triggers still ARM on a suppressed fire (Hitya
+        // 2026-08-19, second cursed-cycle DT landed on a pet and the raid
+        // had no countdown): a countdown is CYCLE state, not a victim
+        // callout — a Death Touch spent on ANY pet still means the next one
+        // is timer_duration away, and most agents can't prove someone
+        // else's charm pet is "ours". Only the gated actions (text / tts /
+        // discord) stay suppressed. The Aug-09 six-chips-for-one-name spam
+        // this gate was tightened against was an id-explosion in
+        // captureSuffix, fixed separately — not a reason to drop the arm.
+        const hasTimer = (t.timer_duration_sec > 0 || t.timer_duration_capture);
+        if (hasTimer) _startTimer(t, tsMs, test, captures);
+        if (!test) console.log('[trigger] ' + (t.name || 'trigger') + ' ' + (hasTimer ? 'timer armed, actions suppressed' : 'suppressed') + ' — ' + a.require_raid_member + '=' + val + ' not a raid member');
         if (!t._noJournal) {
           _journalTrigger({ trigger: t.name, scope: t._scope || (test ? 'test' : 'personal'), checkpoint: TJ.GATES,
                             stopped: true, rehearsal: !!t._rehearsal,
-                            reason: 'suppressed — ' + a.require_raid_member + '=' + (val || '?') + ' not a raid member' });
+                            reason: (hasTimer ? 'timer armed; actions suppressed — ' : 'suppressed — ') + a.require_raid_member + '=' + (val || '?') + ' not a raid member' });
         }
         return;
       }
