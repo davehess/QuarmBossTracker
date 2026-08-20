@@ -68,9 +68,9 @@ describe('sameAccount', () => {
     expect(MIN_COMMON_SLOTS).toBeGreaterThan(1);
   });
 
-  it('grouping is transitive across a whole account (ten characters, one stack)', () => {
-    const chars = ['utoh', 'manamana', 'melting', 'rockin', 'canopy',
-                   'hidya', 'hitya', 'hopeya', 'okigetyou', 'pearlclutcher'];
+  it('grouping is transitive across a FULL account (8 characters, one stack)', () => {
+    const chars = ['utoh', 'manamana', 'melting', 'rockin',
+                   'canopy', 'hitya', 'hopeya', 'pearlclutcher'];
     const { accountCount, skip } = clusterSharedBanks(bank(chars, TEN_SLOTS, { drift: true }));
     expect(accountCount).toBe(1);
     expect(skip.size).toBe(chars.length - 1);   // exactly one bank counts
@@ -126,13 +126,38 @@ describe('guards against over-merging', () => {
     expect(skip.size).toBe(0);       // nobody dropped
   });
 
-  it('a real-world-sized account (10 characters, measured) still dedups', () => {
-    // Hitya's own account: Canopy/Hidya/Hitya/Hopeya/Manamana/Melting/
-    // Okigetyou/Pearlclutcher/Rockin/Utoh — the guard must never veto it.
-    const chars = Array.from({ length: 10 }, (_, i) => `c${i}`);
+  it('a full 8-character account dedups; the cap is the server rule', () => {
+    const chars = Array.from({ length: MAX_ACCOUNT_CHARACTERS }, (_, i) => `c${i}`);
     const { skip, oversized } = clusterSharedBanks(bank(chars, TEN_SLOTS));
     expect(oversized).toHaveLength(0);
-    expect(skip.size).toBe(9);
-    expect(MAX_ACCOUNT_CHARACTERS).toBeGreaterThanOrEqual(10);
+    expect(skip.size).toBe(MAX_ACCOUNT_CHARACTERS - 1);
+    expect(MAX_ACCOUNT_CHARACTERS).toBe(8);      // 8 characters per game account
+  });
+
+  it('THE MEASURED CASE: 8 tight + 2 looser split into two accounts, not one of 10', () => {
+    // Real numbers from Hitya's family: the true account agrees at >=0.99
+    // internally, while two characters transferred to another game account
+    // (#charactertransfer) still carry a near-copy of the old bank in a stale
+    // export — 0.97 with each other, <=0.95 with the account. A 10-member
+    // cluster is impossible (8 per account), so the escalation must split it
+    // at that gap rather than refuse the whole group.
+    const SLOTS = 100;
+    const base = Array.from({ length: SLOTS }, (_, i) => `id:${3000 + i}|1`);
+    const rows = [];
+    const core = ['canopy', 'hitya', 'hopeya', 'manamana', 'melting', 'pearlclutcher', 'rockin', 'utoh'];
+    for (const c of core) {
+      base.forEach((k, i) => rows.push({ character: c, slot: `SharedBank1-Slot${i + 1}`, itemKey: k }));
+    }
+    // The two transferred characters: 5 of 100 slots differ from the account.
+    for (const c of ['hidya', 'okigetyou']) {
+      base.forEach((k, i) => rows.push({
+        character: c, slot: `SharedBank1-Slot${i + 1}`,
+        itemKey: i < 5 ? `id:${9000 + i}|1` : k,
+      }));
+    }
+    const { accountCount, skip, oversized } = clusterSharedBanks(rows);
+    expect(oversized).toHaveLength(0);
+    expect(accountCount).toBe(2);          // 8 + 2, both plausible accounts
+    expect(skip.size).toBe(8);             // 7 from the account, 1 from the pair
   });
 });

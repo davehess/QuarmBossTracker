@@ -39,13 +39,14 @@ export const releases: Release[] = [
   {
     key: 'web-1-1-83',
     title: '\u{1F3E6} Shared banks, actually counted once',
-    version: 'Web 1.1.83',
+    version: 'Web 1.1.84',
     date: '2026-08-20',
     headline: 'The shared-bank fix from this morning only worked when every character had an identical snapshot — which is almost never. Now it holds.',
     features: [],
     fixes: [
       'One stack in the shared bank could still be counted once per character (ten characters, ten copies of the same three Words of the Spectre). Characters on an account are now matched by which bank slots agree, so snapshots taken hours apart still group — the stack counts once.',
       'Unrelated mule accounts could be chained together into one giant fake "account" — they stay separate now.',
+      'Characters moved between your game accounts are recognised as belonging to the account they are on now, even while their last inventory export still shows the old one.',
     ],
   },
   {
