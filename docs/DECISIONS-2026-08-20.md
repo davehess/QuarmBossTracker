@@ -150,6 +150,42 @@ their own undismissable-until-3.6.1 nag card. Bulk-dismissing the June sweep
 is Hitya's call (the four 2026-08-17 Sleeper's Tomb recovery requests must
 survive any sweep — they are the live P1 tail).
 
+## Shared banks: fingerprint the content, group by account, count once (Hitya: "build fingerprinting on shared bank lines")
+
+**The problem.** The shared bank is ACCOUNT-level — every character on a game
+account exports identical SharedBank rows — so /me/inventory's totals counted
+shared-bank items up to 8×, and the auto-upload (3.6.0) made that the default
+state. No game-account grouping existed anywhere (person-level family via
+Discord/OpenDKP is a different axis), and characters can move between game
+accounts (same TAKP forum account), so a curated mapping would rot.
+
+**The design (web 1.1.81 + `shared_bank_groups` view).** The shared bank's
+identity IS the account fingerprint: hash each character's SharedBank row-set
+(slot|item|qty, ordered); identical hash = same game account; the freshest
+snapshot in a group is its representative and the only one whose shared bank
+counts. Regrouping is automatic — a moved character's next upload carries the
+new account's shared bank. Verified against live data: Hitya's alt account
+(Utoh/Manamana/Melting/Pearlclutcher/Rockin) and the mule accounts
+(Zbag/Hurryupandbuy/Morebagsplz/…, Holdquest/Holdgems/…) grouped correctly on
+the first query. Designed-in caveats, recorded in the migration: empty shared
+banks never group (no rows → no fingerprint); differently-aged snapshots can
+transiently split a group until the stale one refreshes (auto-upload closes
+that within ~10 min); cross-family collisions on trivial identical banks are
+possible, so family-scoped consumers pick the representative within their own
+subset.
+
+**Scope corrections made alongside.** `DESIGN-quarmy-gear.md`'s "no bank data
+persisted anywhere, by construction" was true for the Quarmy path only — the
+`/outputfile inventory` paths deliberately persist bank + shared-bank ITEM
+rows (coin never uploads); the doc now says so. `web/lib/quartermaster.ts`'s
+"bank already stripped upstream" comment was false — and per-character kit
+checks are CORRECT to count bank/shared-bank (reachability), so behavior is
+unchanged there; only /me/inventory sums across characters and only it dedups.
+Worn/equipped items were already uploaded + searchable on every path (Hitya
+asked — confirmed, no change needed). Follow-up noted, not built: the
+`character_missing_spells` `held_by[]` list can still name every same-account
+character for a shared-bank scroll (names, not counts — low harm).
+
 ## Process: a silent Monitor death delayed the freeze-lift landing ~9h
 
 The 00:31 ET landing (bot 3.1.59 + web 1.1.77) was armed on a persistent

@@ -185,8 +185,14 @@ export type QuestDef = {
   steps: QuestStep[];
 };
 
-// A character's VISIBLE holdings (character_inventory, bank already stripped
-// upstream). Both maps sum quantity — `byId` per item id, `names` per
+// A character's VISIBLE holdings from character_inventory — ALL slots,
+// including bank and shared bank (an earlier comment claimed bank was
+// "stripped upstream"; it never was, and for kit checks REACHABILITY is the
+// right semantic anyway: a character can pull from their bank and shared bank
+// before a raid). Per-character checks never sum across characters, so the
+// account-level shared bank does not overcount here — cross-character totals
+// live on /me/inventory, which dedups via shared_bank_groups.
+// Both maps sum quantity — `byId` per item id, `names` per
 // lowercased name (the fallback when a step is name-only). Assembled by the
 // caller; the lib never touches the DB.
 export type OwnedItems = {

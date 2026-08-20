@@ -1281,6 +1281,15 @@ holds it in memory.
   /sll lockout or bosskill relay flips its row to curated
   (`_promoteLockoutBoss`, bot `index.js`) — "if they have a loot lockout we
   can keep them on" (Hitya 2026-08-19).
+- **Shared-bank account fingerprinting (web 1.1.81, 2026-08-20)** — the
+  `shared_bank_groups` view hashes each character's SharedBank rows from
+  `character_inventory`; identical hash = same game account (the shared bank
+  is account-level, so its content IS the fingerprint — no manual grouping,
+  auto-regroups when a character changes accounts). `/me/inventory` counts
+  each group's shared bank once, via the freshest snapshot; the Quartermaster
+  deliberately does NOT dedup (per-character reachability). Caveats + the
+  cross-family collision rule live in the migration
+  (`20260820210000_shared_bank_groups.sql`).
 - **Inventory auto-upload (agent 3.5.94, beta, 2026-08-20)** —
   `scanInventoryUploads` in the agent watches `<Char>-Inventory.txt` beside
   its quarmy/spellbook siblings (same prefs gate, fingerprint + checksum
