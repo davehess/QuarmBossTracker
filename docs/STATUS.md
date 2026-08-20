@@ -114,13 +114,16 @@ next touch one rather than assuming a missing row means a missing doc.
     at announce time (the 12:21 AM All-Night-Leaderboard-of-farm-kills
     incident) — pending record in `bot_kv`, opened by the spawn checker 30
     min before start; adjusttime/adjustdate/cancel keep it honest.
-  - **Inventory auto-upload (agent 3.5.94 beta + web 1.1.78, Hitya: "are we
-    not consuming inventory files?").** The `/api/agent/inventory` endpoint
-    existed since June but its agent-side scan was never built — inventories
-    were manual-/me-only and frozen (2/122 characters fresh). Now
+  - **Inventory auto-upload — STABLE (Mimic 2.6.0 · agent 3.6.0 + web
+    1.1.78, Hitya: "are we not consuming inventory files?" → "this is pretty
+    important", same day).** The `/api/agent/inventory` endpoint existed
+    since June but its agent-side scan was never built — inventories were
+    manual-/me-only and frozen (2/122 characters fresh). Now
     `<Char>-Inventory.txt` uploads like its quarmy/spellbook siblings; page
     copy corrected (it claimed "Mimic 1.0.78+" auto-upload that never
-    existed). Details + lesson in `DECISIONS-2026-08-20.md`.
+    existed). Graduated same-day to the whole fleet as Mimic 2.6.0 (carrying
+    the buff-queue overlay + DT timer-arm from beta); beta re-parked at
+    2.6.1. Details + lesson in `DECISIONS-2026-08-20.md`.
 
 - **Add mules/alts from their inventory file — STABLE (web 1.1.54,
   2026-08-14).** Hitya: *"can you make it so that anyone can upload additional

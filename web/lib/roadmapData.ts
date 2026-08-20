@@ -37,17 +37,18 @@ export type Release = {
 
 export const releases: Release[] = [
   {
-    key: 'agent-3-5-94',
+    key: 'mimic-2-6-0',
     title: '\u{1F392} Inventory that keeps itself current',
-    version: 'Agent 3.5.94 · Web 1.1.78',
+    version: 'Mimic 2.6.0 · Agent 3.6.0',
     date: '2026-08-20',
-    channel: 'beta',
-    headline: 'Run /outputfile inventory and forget about it — Mimic picks the file up within ~10 minutes, so the item search and your character pages stay current.',
+    headline: 'Run /outputfile inventory and forget about it — Mimic picks the file up within ~10 minutes, so the item search and your character pages stay current. Stable for the whole fleet; Mimic updates itself.',
     features: [
-      { name: '\u{1F392} Automatic inventory uploads', blurb: 'Mimic now watches your <Name>-Inventory.txt files the same way it already watches spellbook and Quarmy exports. Re-run /outputfile inventory any time — the fresh snapshot uploads on its own, no more visiting the website to re-upload by hand. Money is never uploaded, and the /me privacy opt-out is honored as always.' },
+      { name: '\u{1F392} Automatic inventory uploads', blurb: 'Mimic now watches your <Name>-Inventory.txt files the same way it already watches spellbook and Quarmy exports. Re-run /outputfile inventory any time — the fresh snapshot uploads on its own, no more visiting the website to re-upload by hand. Works for mules and bank alts too. Money is never uploaded, and the /me privacy opt-out is honored as always.' },
+      { name: '\u{1F9F9} Buff queue fits on screen', blurb: 'Buff sections start collapsed with the first few names previewed on the header — tap to open. The cure/debuff queue stays always-visible. The Feral Avatar / Savagery list shows who already has it with time remaining, soonest to drop first, and the dashboard gained cures-only / Feral-only options to run it lean.' },
     ],
     fixes: [
       'The item search was showing months-old inventories (new spells and gear missing) — snapshots only updated when someone re-uploaded manually. They now stay fresh automatically.',
+      'Death touch countdowns are more dependable: the raid-wide timer now starts even when the hit lands on a pet, so the next cycle is always on the clock.',
     ],
   },
   {
