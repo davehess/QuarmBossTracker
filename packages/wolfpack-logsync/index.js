@@ -15199,11 +15199,32 @@ function renderOverlays(s) {
   h += '<div class="dim" style="font-size:11px;margin-top:6px">When on, the Extended Target list hides targets reported by Mimics in a different zone, so a splinter group elsewhere does not clutter your list. Turn off to include every online raider regardless of zone.</div>';
   h += '</div>';
 
+  // Buff-queue section filters (Hitya 2026-08-19: "add some options on the
+  // dashboard for debuff / feral only"). Agent-side pref like Extended
+  // Target's — checkboxes here, POST /api/bq-pref, and the overlay obeys on
+  // its next poll. HTML byte-stable; checked state applied by wpWireBqPref.
+  h += '<div class="card wide"><h2>🛡 Buff queue options</h2>';
+  h += '<div class="dim" style="font-size:11px;margin-bottom:6px">Choose which sections the Buff queue overlay shows. Untick all but one to run it lean &mdash; cures-only for a curer, the Feral Avatar / Savagery list only for a shaman or beastlord.</div>';
+  h += '<label style="display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer;margin-bottom:4px">'
+    +  '<input type="checkbox" id="wpBqDebuffs" data-bq="debuffs" class="wp-bq-pref" style="cursor:pointer" />'
+    +  '<span><b>🩸 Cure / debuff queue</b> <span class="dim">(default on)</span></span>'
+    +  '</label>';
+  h += '<label style="display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer;margin-bottom:4px">'
+    +  '<input type="checkbox" id="wpBqBuffs" data-bq="buffs" class="wp-bq-pref" style="cursor:pointer" />'
+    +  '<span><b>🛡 Buff lines</b> <span class="dim">(default on) &mdash; the HP / Haste / Resists&hellip; sections</span></span>'
+    +  '</label>';
+  h += '<label style="display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer">'
+    +  '<input type="checkbox" id="wpBqBurst" data-bq="burst" class="wp-bq-pref" style="cursor:pointer" />'
+    +  '<span><b>⚡ Feral Avatar / Savagery queue</b> <span class="dim">(default on)</span></span>'
+    +  '</label>';
+  h += '</div>';
+
   h += '</div>';
   setSectionHTML('overlays', h);
   wpRefreshOverlayToggles();
   wpWireHideHotkey();
   wpWireExtPref();
+  wpWireBqPref();
 }
 
 // #113 Extended Target "same-zone targets only" checkbox wiring. The pref lives
@@ -15232,6 +15253,41 @@ function wpWireExtPref() {
       }
     }).catch(function(){});
   }
+}
+
+// Buff-queue section checkboxes — same contract as wpWireExtPref: values are
+// cached JS-side so a section re-morph reapplies them instead of resetting
+// the boxes; fetched once until known; POST /api/bq-pref persists and the
+// overlay obeys on its next 1.5s poll (the flags ride every payload).
+var _wpBqPrefVals = null;
+function wpWireBqPref() {
+  var cbs = document.querySelectorAll('.wp-bq-pref');
+  if (!cbs.length) return;
+  function paint() {
+    if (!_wpBqPrefVals) return;
+    for (var i = 0; i < cbs.length; i++) {
+      var k = cbs[i].getAttribute('data-bq');
+      if (k in _wpBqPrefVals) cbs[i].checked = _wpBqPrefVals[k] !== false;
+    }
+  }
+  for (var i = 0; i < cbs.length; i++) {
+    _bindOnce(cbs[i], 'change', function(ev){
+      var cb = ev.target;
+      var k = cb.getAttribute('data-bq');
+      if (!k) return;
+      _wpBqPrefVals = _wpBqPrefVals || { debuffs: true, buffs: true, burst: true };
+      _wpBqPrefVals[k] = !!cb.checked;
+      var body = {}; body[k] = !!cb.checked;
+      fetch('/api/bq-pref', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      }).catch(function(){});
+    });
+  }
+  if (_wpBqPrefVals) { paint(); return; }
+  fetch('/api/bq-pref', { cache: 'no-store' }).then(function(r){ return r.json(); }).then(function(j){
+    if (j && typeof j === 'object') { _wpBqPrefVals = j; paint(); }
+  }).catch(function(){});
 }
 
 // Hotkey row wiring — read the current accelerator from config, and capture a
@@ -21570,6 +21626,13 @@ function startWebDashboard(port) {
         // Tell the overlay which class AUTO resolved to so the picker can
         // read "Auto (Druid)" instead of a blank.
         payload.auto_class = autoClass;
+        // Section filters (dashboard "Buff queue options") ride every payload
+        // so a checkbox change reaches the overlay on its next 1.5s poll.
+        payload.sections = {
+          debuffs: _optinState.bqShowDebuffs !== false,
+          buffs:   _optinState.bqShowBuffs !== false,
+          burst:   _optinState.bqShowBurst !== false,
+        };
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify(payload));
       }
@@ -21705,6 +21768,42 @@ function startWebDashboard(port) {
             try { _extTargetCache.clear(); } catch { /* */ }
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ ok: true, same_zone_only: _optinState.extSameZoneOnly }));
+          } catch {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: false }));
+          }
+        });
+        return;
+      }
+      // Buff-queue overlay section filters (Hitya 2026-08-19: "debuff / feral
+      // only"). Same shape as /api/ext-pref: GET for the dashboard checkboxes,
+      // POST persists; the overlay picks the change up on its next 1.5s poll
+      // because the flags ride every /api/buff-queue payload as `sections`.
+      if (req.url === '/api/bq-pref' && req.method === 'GET') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({
+          debuffs: _optinState.bqShowDebuffs !== false,
+          buffs:   _optinState.bqShowBuffs !== false,
+          burst:   _optinState.bqShowBurst !== false,
+        }));
+      }
+      if (req.url === '/api/bq-pref' && req.method === 'POST') {
+        let bqBody = '';
+        req.on('data', c => { bqBody += c; if (bqBody.length > 4096) req.destroy(); });
+        req.on('end', () => {
+          try {
+            const p = JSON.parse(bqBody || '{}');
+            if ('debuffs' in p) _optinState.bqShowDebuffs = (p.debuffs !== false);
+            if ('buffs'   in p) _optinState.bqShowBuffs   = (p.buffs !== false);
+            if ('burst'   in p) _optinState.bqShowBurst   = (p.burst !== false);
+            _saveOptInState();
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+              ok: true,
+              debuffs: _optinState.bqShowDebuffs !== false,
+              buffs:   _optinState.bqShowBuffs !== false,
+              burst:   _optinState.bqShowBurst !== false,
+            }));
           } catch {
             res.writeHead(400, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ ok: false }));
@@ -23740,6 +23839,14 @@ const _optinState = {
   // Personal triggers the user created themselves are never gated. Persisted
   // here like the other dashboard-set flags.
   calloutAllowlist: true,
+  // Buff-queue overlay section filters (Hitya 2026-08-19: "add some options
+  // on the dashboard for debuff / feral only"). All ON by default; a curer
+  // unticks buffs+burst to run cures-only, a shaman unticks the rest for a
+  // Feral-only list. Same ext-pref pattern: dashboard checkbox → agent state
+  // → riding the /api/buff-queue payload as `sections`.
+  bqShowDebuffs: true,
+  bqShowBuffs:   true,
+  bqShowBurst:   true,
 };
 
 function _optinSortFn() {
@@ -23775,6 +23882,10 @@ function _loadOptInState() {
     }
     // #136 default ON: absent (old files) → true; only an explicit false disables.
     _optinState.calloutAllowlist     = (raw.calloutAllowlist !== false);
+    // Buff-queue section filters — same absent-means-on convention.
+    _optinState.bqShowDebuffs        = (raw.bqShowDebuffs !== false);
+    _optinState.bqShowBuffs          = (raw.bqShowBuffs !== false);
+    _optinState.bqShowBurst          = (raw.bqShowBurst !== false);
   } catch { /* missing or unreadable — fresh state */ }
 }
 function _saveOptInState() {
@@ -23787,6 +23898,9 @@ function _saveOptInState() {
       lootAuctionTts:        _optinState.lootAuctionTts !== false,
       lootAuctionDefaultSec: _optinState.lootAuctionDefaultSec || 120,
       calloutAllowlist:      _optinState.calloutAllowlist !== false,
+      bqShowDebuffs:         _optinState.bqShowDebuffs !== false,
+      bqShowBuffs:           _optinState.bqShowBuffs !== false,
+      bqShowBurst:           _optinState.bqShowBurst !== false,
     }, null, 2));
   } catch { /* non-fatal */ }
 }

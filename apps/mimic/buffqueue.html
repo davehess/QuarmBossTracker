@@ -554,6 +554,9 @@
     // section header so the bot can pick the right ability name.
     var burst = (payload && (payload.feral_queue || payload.savagery_queue)) || [];
     var burstLabel = (payload && payload.burst_label) || null;
+    // Section filters from the dashboard's "Buff queue options" card (Hitya
+    // 2026-08-19: "debuff / feral only"). Absent field = show (older agent).
+    var sec = (payload && payload.sections) || {};
     var html = '';
     // Debuff / cure queue FIRST (per user) — cures are time-critical and the
     // bot already orders them curse → blind → poison → disease. Locally
@@ -565,12 +568,12 @@
       if (!(rv.curses && rv.curses.length)) continue;
       dqVis.push(rv);
     }
-    if (dqVis.length) {
+    if (sec.debuffs !== false && dqVis.length) {
       html += '<div class="sec debuffs"><div class="hdr"><span class="lab">🩸 Debuff queue</span><span class="ct">'+dqVis.length+'</span><span class="hint">cures needed · curse → blind → poison → disease</span></div>';
       for (var di = 0; di < dqVis.length; di++) html += renderRow(dqVis[di], 'd');
       html += '</div>';
     }
-    if (bq.length) {
+    if (sec.buffs !== false && bq.length) {
       var hint = bufferClass ? ('severity-first · gaps a '+esc(bufferClass)+' can fix') : 'pick a class to filter';
       html += '<div class="sec buffs"><div class="hdr"><span class="lab">🛡 Buff queue</span><span class="ct">'+bq.length+'</span><span class="hint">'+hint+'</span></div>';
       // Group by buff line: a raider missing two categories appears under
@@ -619,7 +622,7 @@
       }
       html += '</div>';
     }
-    if (burst.length && burstLabel) {
+    if (sec.burst !== false && burst.length && burstLabel) {
       html += '<div class="sec burst"><div class="hdr"><span class="lab">⚡ '+esc(burstLabel)+' queue</span><span class="ct">'+burst.length+'</span><span class="hint">damage descending · tonight\'s session</span></div>';
       for (var i = 0; i < burst.length; i++) html += renderRow(burst[i], 'burst');
       html += '</div>';
