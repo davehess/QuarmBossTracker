@@ -776,14 +776,21 @@ async function _processRegisterQueue(client) {
           // Local-only ranks: record the family link directly. discord_id
           // gets set to the uploader so /admin/links shows them under the
           // right owner; main_name_override survives the OpenDKP sync.
-          ...(skipOpenDkp && parentMainName ? {
-            main_name:           parentMainName,
-            main_name_override:  parentMainName,
+          // OWNERSHIP is stamped even when no family root resolved (2026-08-20)
+          // — it used to be gated on parentMainName, so a trader whose uploader
+          // had no OpenDKP family came back UNLINKED and reappeared in the
+          // review queue forever. The parent link is a bonus; the owner is the
+          // point.
+          ...(skipOpenDkp ? {
             discord_id:          row.uploader_discord_id || null,
             rank:                row.rank,
             class:               row.class,
             race:                row.race || null,
             active:              true,
+            ...(parentMainName ? {
+              main_name:          parentMainName,
+              main_name_override: parentMainName,
+            } : {}),
           } : {}),
         };
         await supabase.upsert('characters', [audit], 'guild_id,name').catch(err =>

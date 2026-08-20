@@ -37,6 +37,21 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'web-1-1-82',
+    title: '\u{1F50E} Tell us about your traders',
+    version: 'Web 1.1.82 · Bot 3.1.63',
+    date: '2026-08-20',
+    headline: 'Your /me page now lists the characters uploading from your machine that nobody has claimed — file them as traders in one click, no class needed.',
+    features: [
+      { name: '\u{1F50E} "Characters we think are yours"', blurb: 'A new section on /me lists every character uploading from your machine that isn\'t linked to anyone. You know what they are, so you file them: Trader, Raid alt, or Not mine. Once filed, their inventories join your account inventory.' },
+      { name: '\u{1F3E6} Traders need nothing', blurb: 'Bank mules and bazaar toons file as Traders with one click — no class, no level, and they never go into OpenDKP. Previously the Trader button demanded a class that a mule has never had, which is why so many stayed unlinked.' },
+      { name: '\u{2694} The raid-alt bar, spelled out', blurb: 'Raid alts show which eras their level can actually raid — 46+ for Classic, 50+ Kunark, 55+ Velious, 60 for Luclin. Below 46 nothing is raidable, so we say so and point you at Trader instead of asking for an OpenDKP entry nobody needs.' },
+    ],
+    fixes: [
+      'A trader whose owner had no OpenDKP family came back unlinked after being filed, and reappeared in the review queue forever.',
+    ],
+  },
+  {
     key: 'web-1-1-81',
     title: '\u{1F3E6} Shared banks count once',
     version: 'Web 1.1.81',

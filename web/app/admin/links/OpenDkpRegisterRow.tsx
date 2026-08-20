@@ -13,6 +13,7 @@
 
 import { useState, useTransition } from 'react';
 import { registerInOpenDKP, ignoreUnregistered } from './opendkp-actions';
+import { raidAltVerdict, TRADER_DEFAULTS } from '@/lib/characterRoles';
 
 // "UNKNOWN" sentinel for CLASS only — /who almost always gives us the class,
 // so leaving it required in the rare no-/who case is a reasonable guard (a
@@ -63,13 +64,25 @@ export default function OpenDkpRegisterRow({
 
   const canDm = !!uploaderDiscordId;
   const classMissing = cls === UNKNOWN;
+  // Raid alts have a level floor per era (46 classic → 60 Luclin). Below 46
+  // nothing is raidable, so OpenDKP registration is refused and Trader is the
+  // right button. Traders themselves have no class/level bar at all.
+  const altVerdict = raidAltVerdict(level);
+  const raidAltBlocked = classMissing || !altVerdict.ok;
 
   function register(rankChoice: string) {
     setErr(null);
     setStatus('idle');
+    // Traders are level-1 Human placeholders by definition — the selects
+    // above are about the OpenDKP entry a Trader never gets.
+    const isTrader = rankChoice === 'Trader';
     startTransition(async () => {
       const res = await registerInOpenDKP({
-        name, cls, race, level, rank: rankChoice,
+        name,
+        cls:   isTrader ? TRADER_DEFAULTS.cls   : cls,
+        race:  isTrader ? TRADER_DEFAULTS.race  : race,
+        level: isTrader ? TRADER_DEFAULTS.level : level,
+        rank: rankChoice,
         parentOpenDkpId:   parentOpenDkpId ?? null,
         parentName:        parentName ?? null,
         uploaderDiscordId: uploaderDiscordId ?? null,
@@ -156,16 +169,24 @@ export default function OpenDkpRegisterRow({
       {/* Two common ranks as one-click register buttons (Hitya: "simple
           trader / raid alt button"). Raid Alt goes to OpenDKP; Trader stays
           local-only. Both blocked only when the class is genuinely unknown. */}
-      <button type="button" onClick={() => register('Raid Alt')} disabled={busy || classMissing}
-        title={classMissing ? 'Pick a class first.' : 'Register as a Raid Alt in OpenDKP (parented under the family root).'}
+      <button type="button" onClick={() => register('Raid Alt')} disabled={busy || raidAltBlocked}
+        title={classMissing ? 'Pick a class first.' : altVerdict.message}
         className="px-2 py-0.5 rounded border border-green bg-green/15 text-green hover:bg-green/25 disabled:opacity-40 disabled:cursor-not-allowed">
         {busy ? '…' : '+ Raid Alt'}
       </button>
-      <button type="button" onClick={() => register('Trader')} disabled={busy || classMissing}
-        title={classMissing ? 'Pick a class first.' : "Register as a Trader — kept off OpenDKP's top-nav, just linked on our side."}
+      {/* Trader takes NO class/level — a bank mule /who never saw has neither,
+          and it never reaches OpenDKP. Blocking it on class is what stranded
+          ~110 uploading characters (Hitya 2026-08-20). */}
+      <button type="button" onClick={() => register('Trader')} disabled={busy}
+        title="Register as a Trader — level 1 Human placeholder, linked to the owner on our side, never sent to OpenDKP. No class needed."
         className="px-2 py-0.5 rounded border border-border bg-bg text-text hover:border-blue disabled:opacity-40 disabled:cursor-not-allowed">
         + Trader
       </button>
+      {!altVerdict.ok && (
+        <span className="text-dim text-[10px]" title="Raid alts: 46+ Classic · 50+ Kunark · 55+ Velious · 60 Luclin.">
+          below raid-alt floor — Trader
+        </span>
+      )}
       <button type="button" onClick={ignore} disabled={busy}
         title="Not ours — dismiss this name so it stops being suggested (a foreign guild's player, an operator/junk stream). Restorable from the dismissed view."
         className="px-2 py-0.5 rounded border border-border text-dim hover:border-red hover:text-red disabled:opacity-40 disabled:cursor-not-allowed">

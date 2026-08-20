@@ -1281,6 +1281,15 @@ holds it in memory.
   /sll lockout or bosskill relay flips its row to curated
   (`_promoteLockoutBoss`, bot `index.js`) — "if they have a loot lockout we
   can keep them on" (Hitya 2026-08-19).
+- **Member-side character filing (web 1.1.82 + bot 3.1.63, 2026-08-20)** —
+  `/me` → "Characters we think are yours": characters whose uploads carry the
+  member's own `agent_upload_stats.uploaded_by_discord_id` but have no
+  `characters.discord_id`. Actions in `web/app/me/claim-actions.ts` (Trader =
+  one-click local link; Raid alt = the same `opendkp_register_requests` queue
+  the officer surface uses; Not mine = `link_ignored`), all gated on
+  "your agent uploaded it AND nobody else owns it". The level ladder + trader
+  placeholders are `web/lib/characterRoles.ts` (pure, tested) and are shared
+  with `/admin/links` — Trader there no longer demands a class.
 - **Shared-bank account fingerprinting (web 1.1.81, 2026-08-20)** — the
   `shared_bank_groups` view hashes each character's SharedBank rows from
   `character_inventory`; identical hash = same game account (the shared bank

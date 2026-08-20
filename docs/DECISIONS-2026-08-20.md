@@ -186,6 +186,48 @@ asked — confirmed, no change needed). Follow-up noted, not built: the
 `character_missing_spells` `held_by[]` list can still name every same-account
 character for a shared-bank scroll (names, not counts — low harm).
 
+## Character filing moves to the MEMBER; traders stop needing a class (Hitya)
+
+**The call.** *"I need a way for the end user that we suspect these are a part
+of to tell us about these users."* Plus the blocker: *"For all of the ones that
+uploaded from my files, they are primarily traders and I can't easily make them
+traders because of the class requirement."*
+
+**Why officers couldn't do this.** ~110 characters upload from members' machines
+with no `characters.discord_id`. An officer cannot classify them — they don't
+know whose Beltbroker is whose — and the one button that fit (Trader) was
+disabled until a class was picked, for a bank mule `/who` has never seen. So
+the queue only grew.
+
+**The ownership signal already existed.** The agent authenticates as its owner,
+so `agent_upload_stats.uploaded_by_discord_id` says whose machine a character
+uploads from — the same first-party signal the web mule-upload already trusts
+(`claimVerdict`: unclaimed → yours, someone else's → refuse). `/me` now lists
+those characters and their owner files each: **Trader** (one click, no class,
+never OpenDKP), **Raid alt** (class + level, through the same
+`opendkp_register_requests` queue officers use), **Not mine** (`link_ignored`).
+Both surfaces refuse anything your agent never uploaded or that someone else
+owns. Filed traders link to the family root, so their inventories join
+`/me/inventory` immediately (shared-bank dedup from earlier today applies).
+
+**The raid-alt ladder is DATA, not a number** (`web/lib/characterRoles.ts`,
+tested): 46 Classic / 50 Kunark / 55 Velious / 60 Luclin. We never answer
+"is this a raid alt" yes/no — we answer WHICH ERAS, because a L50 alt genuinely
+raids Classic + Kunark and genuinely cannot raid Velious. Only "below 46, no
+era at all" hard-stops OpenDKP registration, and it points at Trader rather
+than scolding. Trader placeholders are fixed: level 1, Human, class Unknown.
+
+**Bot fix riding along (3.1.63).** The register queue only stamped
+`discord_id`/`rank` on a local-only rank when a family root ALSO resolved — so
+a trader whose owner had no OpenDKP family was filed and came back unlinked,
+reappearing in the review queue forever. Ownership is now stamped
+unconditionally; the parent link is a bonus.
+
+**Two tests earned their keep in review**: the db-read-discipline ratchet
+caught a new `.limit(2000)` (PostgREST silently caps at 1000 — switched to the
+shared paginator), and the roles test caught `Number(null) === 0` rendering an
+unknown level as the nonsense "L0".
+
 ## Process: a silent Monitor death delayed the freeze-lift landing ~9h
 
 The 00:31 ET landing (bot 3.1.59 + web 1.1.77) was armed on a persistent
