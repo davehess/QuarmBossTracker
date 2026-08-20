@@ -215,14 +215,33 @@ chained those weak links into a 29-character and a 17-character "account".
 Over the union a 20-slot mule bank scores 20/108 against a 108-slot bank and
 stays separate, while two snapshots of the same bank score 0.99.
 
-**Measured against the live guild, not assumed.** Post-fix the largest cluster
-is 10 (Hitya's own account: Canopy/Hidya/Hitya/Hopeya/Manamana/Melting/
-Okigetyou/Pearlclutcher/Rockin/Utoh, agreeing on 107 of 108 slots); every other
-cluster is ≤8. Note the process point: I first capped clusters at 8 "because EQ
-accounts hold 8 characters" — an invented fact that would have vetoed a REAL
-10-character account. The guard is now 16 and documented as a runaway-merge
-net, explicitly not a game rule. **Don't encode a game fact you haven't
-verified; calibrate against measured data instead.**
+**The account model, from Hitya (this is the authoritative version).** A game
+account holds **at most 8 characters**. One person can own **~10 game accounts
+under one forum account**, so "same owner" and "same account" are different
+questions — ownership is answered by the Discord/OpenDKP family, and this
+grouping answers only "same shared bank". Characters move between a person's
+accounts with **`#charactertransfer <account name>`**, so account membership
+is not stable and the grouping must re-derive itself from fresh uploads rather
+than be curated (it does — a transferred character carries the new account's
+bank on its next export).
+
+**Two wrong caps before the right one, worth recording.** I first capped
+clusters at 8 "because EQ accounts hold 8 characters" — correct number,
+asserted without checking. Then a measured 10-character cluster made me
+conclude the cap was invented and raise it to 16 — wrong conclusion from real
+data: 8 IS the rule, and the 10-cluster was an over-merge. The lesson is not
+"don't guess" alone; it is **when measurement contradicts a rule, suspect the
+measurement's interpretation too** — here the extra two characters
+(Hidya, Okigetyou) were transfers to a second account still carrying a stale
+near-copy of the first account's bank.
+
+**Final shape.** Cap is 8 (the server rule). A cluster that comes out larger is
+re-clustered at progressively stricter thresholds and split at the FIRST one
+that fits, so it breaks at the natural gap instead of shattering. Measured on
+the real case: the true account agrees at ≥0.9907 internally, the two
+transferred characters at 0.9714 with each other and ≤0.9533 with the account —
+so 0.96 separates them into 8 + 2, both plausible accounts. Only a group that
+survives every threshold is left un-deduped and logged.
 
 ## Character filing moves to the MEMBER; traders stop needing a class (Hitya)
 

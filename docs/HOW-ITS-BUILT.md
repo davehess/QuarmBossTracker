@@ -1290,13 +1290,17 @@ holds it in memory.
   "your agent uploaded it AND nobody else owns it". The level ladder + trader
   placeholders are `web/lib/characterRoles.ts` (pure, tested) and are shared
   with `/admin/links` — Trader there no longer demands a class.
-- **Shared-bank account grouping (web 1.1.83, 2026-08-20)** — the shared bank
+- **Shared-bank account grouping (web 1.1.84, 2026-08-20)** — the shared bank
   is account-level, so summing it per character over-counted every stack.
   `web/lib/sharedBank.ts` clusters characters into accounts by SLOT AGREEMENT
   (Jaccard over the union of their `SharedBank*-Slot*` → item maps), and
   `/me/inventory` counts only the freshest snapshot per account. Skew-tolerant
   by design — snapshots of one account drift because each character's file is
-  written when that character last ran `/outputfile inventory`. An earlier
+  written when that character last ran `/outputfile inventory`. Server rules it
+  encodes: 8 characters per game account, ~10 game accounts per forum account
+  (so owner ≠ account), and `#charactertransfer` moves characters between them,
+  which is why grouping re-derives from fresh uploads instead of being curated.
+  A cluster exceeding 8 is re-split at stricter thresholds. An earlier
   whole-bank-hash view (`shared_bank_groups`) was tried and dropped the same
   day; see `DECISIONS-2026-08-20.md`. The Quartermaster deliberately does NOT
   dedup (per-character reachability).

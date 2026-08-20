@@ -1,24 +1,28 @@
 // Grouping characters into GAME ACCOUNTS by their shared bank, tolerant of
 // snapshot skew. Pure + tested (test/shared-bank.test.js).
 //
-// Why this replaced a whole-bank hash (Hitya 2026-08-20, second look): the
-// first cut fingerprinted each character's entire SharedBank row-set and
-// grouped exact matches. That is correct in theory and useless in practice —
-// each character's inventory file is written whenever THAT character last ran
-// /outputfile inventory, so ten characters on one account hold ten snapshots
-// taken minutes or hours apart. Items move between them, row counts drift
-// (107 / 104 / 108 on one real account), and a SINGLE differing row breaks the
-// whole hash. Result: no grouping at all, and one stack of Words of the
-// Spectre counted ten times.
+// The server rules that shape this (Hitya, 2026-08-20):
+//   • A game account holds at most 8 characters.
+//   • One person can own ~10 game accounts under a single forum account, so
+//     "same owner" and "same account" are DIFFERENT questions. Ownership is
+//     already answered elsewhere (Discord link / OpenDKP family); this file
+//     answers only "same shared bank".
+//   • Characters move between a person's game accounts with
+//     `#charactertransfer <account name>` — so account membership is not
+//     stable, and any grouping has to re-derive itself from fresh data rather
+//     than be curated.
 //
-// The durable signal is the SLOT ADDRESS. `SharedBank6-Slot9` is account-
-// scoped: if two characters both report that slot holding the same item, they
-// are reading the same physical stack. So we compare characters slot-by-slot
-// and cluster on AGREEMENT RATIO rather than demanding identity — a snapshot
-// that is 4 rows stale still agrees on the other 100.
+// Why the shared bank is the signal: it is account-level, so every character
+// on an account exports the same SharedBank rows. Summing them per character
+// counted one physical stack once per character (ten characters each
+// reporting SharedBank6-Slot9 = Words of the Spectre x3).
 //
-// Two same-account characters therefore cluster; two genuinely different
-// accounts (different items at the same slot numbers) do not.
+// Why SLOT AGREEMENT rather than hashing the whole bank: a character's
+// inventory file is written whenever THAT character last ran /outputfile
+// inventory, so one account's snapshots are taken hours or days apart and
+// drift (measured: 104 / 107 / 108 rows on one real account). Whole-bank
+// identity almost never holds. A slot address is account-scoped and stable,
+// so a stale snapshot still agrees on the slots that did not change.
 
 export type SharedBankRow = {
   character: string;
@@ -27,45 +31,48 @@ export type SharedBankRow = {
   observedAt?: string | null;
 };
 
-// Tuning. MIN_COMMON_SLOTS stops two nearly-empty banks from "agreeing" on one
-// coincidental Water Flask; MIN_AGREEMENT allows real drift between snapshots.
-//
-// The score is JACCARD — matching slots over the UNION of both banks, not over
-// their overlap. Measuring only the overlap lets a small bank "fully agree"
-// with a big one it is merely a subset of, and union-find then chains those
-// weak links into absurd clusters (a first pass produced a 29-character and a
-// 17-character "account"; an EQ account holds at most 8). Over the union, a
-// 20-slot mule bank scores 20/108 against a 108-slot bank and stays separate,
-// while two snapshots of the SAME bank score ~0.99 (measured: 107/108).
+// Two banks are the same account when their slot->item maps agree, scored
+// JACCARD over the UNION of both banks. Scoring over the overlap alone let a
+// small bank "fully agree" with a big one it is merely a subset of, and
+// union-find chained those weak links into a 29-character and a 17-character
+// "account" (measured before this changed).
 export const MIN_COMMON_SLOTS = 5;
 export const MIN_AGREEMENT     = 0.75;
-// Runaway-merge guard, NOT a game fact — we do not know Quarm's per-account
-// character limit and must not invent one. Calibrated against reality: with
-// the Jaccard score above, the largest genuine cluster measured across the
-// whole guild is 10 characters (one real account, ~100% slot agreement over
-// 107 slots), and every other cluster is 8 or fewer. A cluster far past that
-// means the scoring has gone wrong somewhere, so we stop deduping it rather
-// than silently hiding items.
-export const MAX_ACCOUNT_CHARACTERS = 16;
+
+// Hard server rule, not a guess: 8 characters per game account.
+export const MAX_ACCOUNT_CHARACTERS = 8;
+
+// When a cluster comes out larger than an account can hold, the threshold was
+// too loose for that neighbourhood — two of the owner's accounts hold similar
+// stock, or a transferred character still carries its old account's bank in a
+// stale export. Re-cluster just those members at progressively stricter
+// thresholds and stop at the FIRST one that fits, so we split at the natural
+// gap instead of shattering the group. Measured on the real case: the true
+// 8-character account agrees at >=0.99 internally, the two transferred
+// characters at 0.97 with each other and <=0.95 with the account, so 0.96
+// separates them correctly.
+const ESCALATION = [0.80, 0.85, 0.90, 0.93, 0.95, 0.96, 0.97, 0.98, 0.99];
 
 export type SharedBankClusters = {
-  /** character (lowercased) → the character whose shared bank COUNTS for its account. */
+  /** character (lowercased) -> the character whose shared bank COUNTS for its account. */
   repByCharacter: Map<string, string>;
   /** Characters whose shared-bank rows must be skipped (someone else represents their account). */
   skip: Set<string>;
   /** Number of distinct accounts seen. */
   accountCount: number;
   /**
-   * Clusters larger than an EQ account can hold. These are NOT deduped — a
-   * merge we cannot explain would silently hide items, and a visible duplicate
-   * is a much better failure than a missing one. Surfaced so it can be logged.
+   * Groups that could not be split down to a plausible account even at the
+   * strictest threshold. NOT deduped — a merge we cannot explain would hide
+   * items, and a visible duplicate is a far better failure than a missing one.
    */
   oversized: string[][];
 };
 
-function slotMaps(rows: SharedBankRow[]) {
-  const maps = new Map<string, Map<string, string>>();     // char → slot → itemKey
-  const newest = new Map<string, string>();                // char → newest observedAt
+type SlotMap = Map<string, string>;
+
+function buildMaps(rows: SharedBankRow[]) {
+  const maps = new Map<string, SlotMap>();
+  const newest = new Map<string, string>();
   for (const r of rows) {
     if (!r.character || !r.slot) continue;
     let m = maps.get(r.character);
@@ -77,8 +84,8 @@ function slotMaps(rows: SharedBankRow[]) {
   return { maps, newest };
 }
 
-/** Do these two characters read the same physical shared bank? */
-export function sameAccount(a: Map<string, string>, b: Map<string, string>): boolean {
+/** Jaccard agreement between two banks: matching slots over the union. */
+export function agreement(a: SlotMap, b: SlotMap): { common: number; score: number } {
   const [small, large] = a.size <= b.size ? [a, b] : [b, a];
   let common = 0, agree = 0;
   for (const [slot, key] of small) {
@@ -87,58 +94,74 @@ export function sameAccount(a: Map<string, string>, b: Map<string, string>): boo
     common++;
     if (other === key) agree++;
   }
-  if (common < MIN_COMMON_SLOTS) return false;
   const union = a.size + b.size - common;
-  if (union <= 0) return false;
-  return agree / union >= MIN_AGREEMENT;      // Jaccard — see the note above
+  return { common, score: union > 0 ? agree / union : 0 };
 }
 
-/**
- * Cluster characters by shared bank and pick one representative per account.
- * The representative is the FRESHEST snapshot — it is the closest thing we
- * have to the bank's current truth.
- */
-export function clusterSharedBanks(rows: SharedBankRow[]): SharedBankClusters {
-  const { maps, newest } = slotMaps(rows);
-  const chars = [...maps.keys()];
+/** Do these two characters read the same physical shared bank? */
+export function sameAccount(a: SlotMap, b: SlotMap, threshold = MIN_AGREEMENT): boolean {
+  const { common, score } = agreement(a, b);
+  if (common < MIN_COMMON_SLOTS) return false;
+  return score >= threshold;
+}
 
-  // Union-find over "same account".
-  const parent = new Map<string, string>(chars.map(c => [c, c]));
+/** Connected components over "same account at `threshold`", within `members`. */
+function componentsAt(members: string[], maps: Map<string, SlotMap>, threshold: number): string[][] {
+  const parent = new Map<string, string>(members.map(c => [c, c]));
   const find = (x: string): string => {
     let p = parent.get(x)!;
     while (p !== parent.get(p)!) p = parent.get(p)!;
     parent.set(x, p);
     return p;
   };
-  const union = (x: string, y: string) => {
-    const rx = find(x), ry = find(y);
-    if (rx !== ry) parent.set(rx, ry);
-  };
-
-  for (let i = 0; i < chars.length; i++) {
-    for (let j = i + 1; j < chars.length; j++) {
-      if (sameAccount(maps.get(chars[i])!, maps.get(chars[j])!)) union(chars[i], chars[j]);
+  for (let i = 0; i < members.length; i++) {
+    for (let j = i + 1; j < members.length; j++) {
+      const a = maps.get(members[i])!, b = maps.get(members[j])!;
+      if (sameAccount(a, b, threshold)) {
+        const rx = find(members[i]), ry = find(members[j]);
+        if (rx !== ry) parent.set(rx, ry);
+      }
     }
   }
-
   const groups = new Map<string, string[]>();
-  for (const c of chars) {
+  for (const c of members) {
     const root = find(c);
     (groups.get(root) ?? groups.set(root, []).get(root)!).push(c);
+  }
+  return [...groups.values()];
+}
+
+/**
+ * Cluster characters by shared bank and pick one representative per account.
+ * The representative is the freshest, largest snapshot — the closest thing we
+ * have to the bank's current truth. (Note `observedAt` is UPLOAD time, and a
+ * batch upload gives a whole family the same instant, so bank SIZE does most
+ * of the tie-breaking in practice.)
+ */
+export function clusterSharedBanks(rows: SharedBankRow[]): SharedBankClusters {
+  const { maps, newest } = buildMaps(rows);
+  const chars = [...maps.keys()];
+
+  const accepted: string[][] = [];
+  const oversized: string[][] = [];
+
+  // Split anything larger than an account can hold by tightening the bar.
+  const queue: Array<{ members: string[]; step: number }> =
+    componentsAt(chars, maps, MIN_AGREEMENT).map(members => ({ members, step: 0 }));
+
+  while (queue.length) {
+    const { members, step } = queue.shift()!;
+    if (members.length <= MAX_ACCOUNT_CHARACTERS) { accepted.push(members); continue; }
+    if (step >= ESCALATION.length) { oversized.push([...members].sort()); continue; }
+    const parts = componentsAt(members, maps, ESCALATION[step]);
+    // No progress at this threshold — try the next one on the same group.
+    if (parts.length === 1) { queue.push({ members, step: step + 1 }); continue; }
+    for (const p of parts) queue.push({ members: p, step: step + 1 });
   }
 
   const repByCharacter = new Map<string, string>();
   const skip = new Set<string>();
-  const oversized: string[][] = [];
-  for (const members of groups.values()) {
-    if (members.length > MAX_ACCOUNT_CHARACTERS) {
-      // Cannot be one account. Leave every member counting its own bank.
-      oversized.push([...members].sort());
-      for (const m of members) repByCharacter.set(m.toLowerCase(), m);
-      continue;
-    }
-    // Freshest snapshot wins; then the bigger bank (less likely to be a
-    // truncated read); then name, so the pick is deterministic.
+  for (const members of accepted) {
     const rep = [...members].sort((x, y) => {
       const nx = newest.get(x) || '', ny = newest.get(y) || '';
       if (nx !== ny) return nx < ny ? 1 : -1;
@@ -151,6 +174,9 @@ export function clusterSharedBanks(rows: SharedBankRow[]): SharedBankClusters {
       if (m !== rep) skip.add(m);
     }
   }
+  for (const members of oversized) {
+    for (const m of members) repByCharacter.set(m.toLowerCase(), m);
+  }
 
-  return { repByCharacter, skip, accountCount: groups.size, oversized };
+  return { repByCharacter, skip, accountCount: accepted.length + oversized.length, oversized };
 }
