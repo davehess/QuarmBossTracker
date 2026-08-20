@@ -39,11 +39,12 @@ export const releases: Release[] = [
   {
     key: 'web-1-1-77',
     title: '\u{1F5E1} Boss kills back in front',
-    version: 'Web 1.1.77 · Bot 3.1.60',
+    version: 'Web 1.1.77 · Bot 3.1.61',
     date: '2026-08-20',
     headline: 'The parses page shows boss kills as cards again — farm and trash kills roll up into one line per zone instead of burying the night.',
     features: [
       { name: '\u{1F5E1} Trash rolls up', blurb: 'Every kill still counts and is kept — but only real bosses get kill cards. Farm sessions and raid trash show as a single line per zone with the kill count and total damage, so a night of clearing can’t push the boss kills off the page.' },
+      { name: '\u{1F513} Lockout bosses earn their card', blurb: 'Any mob the server gives a loot lockout for counts as a boss — instanced nameds outside the boards promote themselves to kill cards the first time a lockout or kill broadcast names them, with their whole kill history attached.' },
       { name: '\u{1F4CD} Zones instead of "Unknown zone"', blurb: 'Kills now resolve their zone from the mob itself, so the page says Ssraeshza Temple or The Fungus Grove instead of lumping everything under Unknown zone.' },
     ],
     fixes: [

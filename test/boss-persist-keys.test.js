@@ -18,10 +18,11 @@ const src = readSource(BOT_INDEX);
 const block = sliceBlock(
   src,
   'function _bossPersistKeys(',
-  'return { internalId: finalId, registered: true };\n}',
+  "console.warn('[lockout] promote failed for \"' + bossName + '\":', e?.message);\n  }\n}",
 );
-const { _bossPersistKeys, _resolveBossForPersist } =
-  evalBlock('const console = { log(){}, warn(){} };\n' + block, ['_bossPersistKeys', '_resolveBossForPersist']);
+const { _bossPersistKeys, _resolveBossForPersist, _promoteLockoutBoss } =
+  evalBlock('const console = { log(){}, warn(){} };\n' + block,
+    ['_bossPersistKeys', '_resolveBossForPersist', '_promoteLockoutBoss']);
 
 describe('_bossPersistKeys — the three candidate keys', () => {
   it('backfilled board bosses heal via the article-stripped key', () => {
@@ -54,13 +55,23 @@ describe('_bossPersistKeys — the three candidate keys', () => {
 
 // Minimal fake of utils/supabase for the resolver — each test scripts the
 // three tables it touches.
-function fakeSupabase({ localByKey = {}, localByNpc = {}, eqemuByName = {} }) {
+function fakeSupabase({ localByKey = {}, localByNpc = {}, eqemuByName = {}, autoByKey = {} }) {
   const inserts = [];
+  const updates = [];
   return {
     inserts,
+    updates,
+    async update(table, query, body) {
+      updates.push({ table, query, body });
+      return [];
+    },
     async select(table, query) {
       if (table === 'bosses_local' && query.startsWith('internal_id=in.')) {
         const keys = decodeURIComponent(query.slice('internal_id=in.('.length).split(')')[0]).split(',');
+        // The promote path filters to auto-registered rows only.
+        if (query.includes('auto_registered=eq.true')) {
+          return keys.filter(k => autoByKey[k]).map(k => ({ internal_id: k }));
+        }
         return keys.filter(k => localByKey[k]).map(k => ({ internal_id: k }));
       }
       if (table === 'bosses_local' && query.startsWith('npc_id=eq.')) {
@@ -131,5 +142,26 @@ describe('_resolveBossForPersist — resolution order', () => {
     const sb = fakeSupabase({ localByKey: { nanzata_warder: true, nanzata_the_warder: true } });
     const r = await _resolveBossForPersist('Nanzata the Warder', 'nanzata_warder', sb);
     expect(r.internalId).toBe('nanzata_warder');
+  });
+});
+
+describe('_promoteLockoutBoss — "if they have a loot lockout we can keep them on" (Hitya 2026-08-19)', () => {
+  it('a lockout/bosskill name flips its auto-registered row to curated', async () => {
+    const sb = fakeSupabase({ autoByKey: { 'lord_rak_ashiir': true } });
+    await _promoteLockoutBoss('Lord Rak`Ashiir', sb);
+    expect(sb.updates).toEqual([{
+      table: 'bosses_local',
+      query: 'internal_id=eq.lord_rak_ashiir',
+      body: { auto_registered: false },
+    }]);
+    expect(sb.inserts).toHaveLength(0);   // promotion NEVER creates rows
+  });
+
+  it('an already-curated or unknown name is a no-op (war gods, board bosses)', async () => {
+    const sb = fakeSupabase({ localByKey: { tallon_zek: true } });   // curated, not auto
+    await _promoteLockoutBoss('Tallon Zek', sb);
+    await _promoteLockoutBoss('Somebody Unheard Of', sb);
+    expect(sb.updates).toHaveLength(0);
+    expect(sb.inserts).toHaveLength(0);
   });
 });

@@ -5320,6 +5320,11 @@ async function _handleAgentBossKill(req, res) {
     const { character, guild, boss: bossName, zone, ts } = kill || {};
     if (!bossName) continue;
 
+    // A server kill broadcast = lockout content → card-worthy. Promote its
+    // bosses_local row if the persist path auto-registered it (fire-and-
+    // forget — timers below don't depend on it).
+    _promoteLockoutBoss(bossName, require('./utils/supabase'));
+
     delete require.cache[require.resolve('./data/bosses.json')];
     const bosses = require('./data/bosses.json');
     const nameLower = bossName.toLowerCase();
@@ -8253,6 +8258,13 @@ async function _handleAgentLockout(req, res) {
   for (const entry of entries) {
     const { bossName, remainingMs, character } = entry || {};
     if (!bossName || typeof remainingMs !== 'number') continue;
+
+    // /sll names a mob → the server gives loot lockouts for it → card-worthy.
+    // Promote its bosses_local row if it was auto-registered (fire-and-forget;
+    // the timer logic below doesn't depend on it, and unlike the bosses.json
+    // gate two lines down this must run for NON-board names too — those are
+    // exactly the instanced nameds this exists for).
+    _promoteLockoutBoss(bossName, require('./utils/supabase'));
 
     delete require.cache[require.resolve('./data/bosses.json')];
     const bosses    = require('./data/bosses.json');
@@ -15577,6 +15589,31 @@ async function _resolveBossForPersist(bossName, matchedBossId, supabase) {
   const finalId = (Array.isArray(again) && again[0]?.internal_id) || rawSlug;
   console.log(`[agent] auto-registered bosses_local "${finalId}" (npc ${npcId}) — first-time content`);
   return { internalId: finalId, registered: true };
+}
+
+// Hitya 2026-08-19: "If they have a loot lockout we can keep them on." A mob
+// the SERVER hands out a loot lockout for is card-worthy by definition — and
+// the lockout (/sll) + bosskill relays carry exactly those names, including
+// the ones bosses.json doesn't know (instanced nameds outside the boards).
+// So any bosses_local row those relays name gets promoted out of
+// auto_registered and earns kill cards on /parses, history intact. Display
+// provenance only: never creates rows, never touches timers, and a name with
+// no auto_registered row is a no-op — so PVP-event names (war gods) and
+// already-curated bosses pass through harmlessly.
+async function _promoteLockoutBoss(bossName, supabase) {
+  try {
+    const { keys } = _bossPersistKeys(bossName, null);
+    if (!keys.length) return;
+    const q = `internal_id=in.(${keys.map(encodeURIComponent).join(',')})&auto_registered=eq.true&select=internal_id`;
+    const rows = await supabase.select('bosses_local', q);
+    for (const r of (Array.isArray(rows) ? rows : [])) {
+      await supabase.update('bosses_local',
+        `internal_id=eq.${encodeURIComponent(r.internal_id)}`, { auto_registered: false });
+      console.log(`[lockout] promoted "${r.internal_id}" to curated — the server gives a loot lockout for it`);
+    }
+  } catch (e) {
+    console.warn('[lockout] promote failed for "' + bossName + '":', e?.message);
+  }
 }
 
 async function _handleAgentUpload(req, res) {
