@@ -11981,11 +11981,18 @@ async function _handleAgentRaidBuffQueue(req, res) {
         if (role !== 'tank' && role !== 'melee') continue;
         const buffs = buffsFor(live, inferred);
         const isInferred = !live && (inferred && inferred.length > 0);
-        const alreadyBuffed = buffs.some(b => b && b.name && burstSpec.carriesRx.test(b.name));
-        if (alreadyBuffed) continue;
+        // Already carrying the burst buff: KEEP the row, with time remaining
+        // (Hitya 2026-08-19, mid-raid: "should have timers left on feral
+        // avatar targets"). Silently dropping the target meant the shaman/BL
+        // never saw the recast coming — carried rows now list after the
+        // needs-it rows, soonest-to-expire first, so the next recast is
+        // always the bottom of the queue.
+        const carrying = buffs.find(b => b && b.name && burstSpec.carriesRx.test(b.name));
         const damage = dmgByName.get(name.toLowerCase()) || 0;
         // Avatar / Celestial Tranquility / SK Touch-of-Hate-Recourse chips on
-        // burst rows — see the per-row block above for the rationale.
+        // burst rows — see the per-row block above for the rationale. The 🪶
+        // chip is redundant on a row whose ⏳ IS the carried Avatar, so it
+        // only reports a DIFFERENT avatar-family buff there.
         const avatarBuff = buffs.find(b => b && b.name && /\b(feral avatar|primal avatar|avatar)\b/i.test(b.name));
         const celestial  = buffs.find(b => b && b.name && /celestial tranquility/i.test(b.name));
         const skRecourse = (cls && /shadow ?knight|^sk$/i.test(cls))
@@ -11995,26 +12002,39 @@ async function _handleAgentRaidBuffQueue(req, res) {
           name, class: cls, group: rr ? rr.group_num : null,
           damage,
           inferred:              isInferred,
-          avatar_buff:           avatarBuff ? avatarBuff.name : null,
+          carrying:              carrying ? carrying.name : null,
+          remaining_secs:        (carrying && typeof carrying.ticks === 'number' && carrying.ticks > 0 && carrying.ticks < 6000)
+                                   ? Math.round(carrying.ticks * 6) : null,
+          avatar_buff:           (avatarBuff && !(carrying && avatarBuff.name === carrying.name)) ? avatarBuff.name : null,
           celestial_tranquility: !!celestial,
           sk_recourse:           skRecourse ? skRecourse.name : null,
           casting: _castingOnTarget(name),
         });
       }
-      // Highest damage first; raiders with no damage signal yet sink (they may
-      // be new arrivals, but a buffer shouldn't rank them above proven DPS).
-      burstQueue.sort((a, b) => (b.damage || 0) - (a.damage || 0) || a.name.localeCompare(b.name));
+      // Needs-it rows first, highest damage first (no-damage rows sink — they
+      // may be new arrivals, but a buffer shouldn't rank them above proven
+      // DPS). Carried rows follow, soonest-to-expire first.
+      burstQueue.sort((a, b) =>
+        ((a.carrying ? 1 : 0) - (b.carrying ? 1 : 0))
+        || (a.carrying
+              ? ((a.remaining_secs ?? Infinity) - (b.remaining_secs ?? Infinity))
+              : ((b.damage || 0) - (a.damage || 0)))
+        || a.name.localeCompare(b.name));
       // Not everyone gets the burst buff — cap at 3 targets per provider of
       // the buffer's class in this raid (1 shaman → top 3, 2 shamans → top 6).
       // Slightly tighter than the original ~4: in practice each shaman cycles
       // ~2-3 targets between Feral Avatar cooldowns, so the longer queue was
-      // showing names that would never actually get the buff.
+      // showing names that would never actually get the buff. The cap applies
+      // to the NEEDS-IT slice; carried rows ride along uncapped (there can
+      // only be as many as were actually buffed).
       let providers = 0;
       for (const [k2] of rosterByName) {
         const c2 = classFor((rosterByName.get(k2) || {}).name || k2);
         if (c2 && String(c2).toLowerCase() === bufferClass.toLowerCase()) providers++;
       }
-      burstQueue = burstQueue.slice(0, Math.min(15, Math.max(3, providers * 3)));
+      const capN = Math.min(15, Math.max(3, providers * 3));
+      burstQueue = burstQueue.filter(r => !r.carrying).slice(0, capN)
+        .concat(burstQueue.filter(r => r.carrying));
     }
 
     // Compact live-roster view for the dashboard's Raid card — the buffer's

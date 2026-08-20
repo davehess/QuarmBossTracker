@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.1.59': [
+    '**The Feral Avatar / Savagery queue shows who already has it, and for how long.** Buffed targets used to vanish from the list — now they sit at the bottom with a ⏳ countdown, soonest to drop first, so the recast is always the bottom row. Pairs with the buff-queue overlay update that starts buff sections collapsed (tap a section header to open it).',
+  ],
   '3.1.58': [
     '**Sent a request with the wrong time? Change it.** The "Request sent to the officers" card now carries a 🕐 Change time button — pick a new preset or type an exact time, and the request the officers already have updates in place. Only you (or an officer) can change yours.',
   ],
