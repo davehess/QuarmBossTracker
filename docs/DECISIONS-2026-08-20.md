@@ -117,6 +117,15 @@ upload for <Char>` in the agent log within ~40s of boot; Manamana's page
 fills; `character_inventory.observed_at` goes current for every character
 with a file on a running box.
 
+**Graduated same-day (Hitya: "lets go to a new minor version for agent and
+send this out as a miMIC update as well since this is pretty important").**
+Agent re-versioned **3.6.0** (new minor line), Mimic stable **2.6.0** cut
+from main carrying the whole beta delta (inventory auto-upload + buff-queue
+overlay + DT timer-arm — byte-identical file promotion, verified), release
+notes written member-facing per the v1.1.20 rule, beta re-parked at 2.6.1.
+Unnamed release (plain version string — naming is the guild lead's call and
+none was given).
+
 ## Process: a silent Monitor death delayed the freeze-lift landing ~9h
 
 The 00:31 ET landing (bot 3.1.59 + web 1.1.77) was armed on a persistent
