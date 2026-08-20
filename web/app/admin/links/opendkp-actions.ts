@@ -18,6 +18,7 @@ import { revalidatePath } from 'next/cache';
 import { supabaseServer } from '@/lib/supabase-server';
 import { supabaseAdmin } from '@/lib/supabase';
 import { isOfficer } from '@/lib/officer';
+import { isLocalOnlyRank, raidAltVerdict, TRADER_DEFAULTS } from '@/lib/characterRoles';
 
 type RegisterArgs = {
   name:  string;
@@ -43,13 +44,31 @@ export async function registerInOpenDKP(args: RegisterArgs): Promise<{ ok: boole
   const ok = await isOfficer(user.id);
   if (!ok) return { ok: false, error: 'officer role required' };
 
-  // Reject the UNKNOWN sentinel — OpenDKP rejects it anyway, and a clear
-  // "pick a class/race" beats a downstream failure row in the queue.
-  if (!args.cls  || args.cls  === 'UNKNOWN') return { ok: false, error: 'class required — pick one before registering' };
-  if (!args.race || args.race === 'UNKNOWN') return { ok: false, error: 'race required — pick one before registering' };
   if (!args.name) return { ok: false, error: 'name required' };
-  if (!Number.isFinite(args.level)) return { ok: false, error: 'level required' };
   if (!args.rank) return { ok: false, error: 'rank required' };
+
+  // Traders never reach OpenDKP (the bot's SKIP_OPENDKP_RANKS drops them), so
+  // the class/race/level gate that exists FOR OpenDKP must not apply to them.
+  // Demanding a class for a bank mule /who never saw is what left ~110
+  // uploading characters unlinked (Hitya 2026-08-20: "I can't easily make them
+  // traders because of the class requirement"). Traders get fixed honest
+  // placeholders instead — level 1 Human, class Unknown.
+  const localOnly = isLocalOnlyRank(args.rank);
+  const cls   = localOnly ? TRADER_DEFAULTS.cls   : args.cls;
+  const race  = localOnly ? TRADER_DEFAULTS.race  : args.race;
+  const level = localOnly ? TRADER_DEFAULTS.level : args.level;
+
+  if (!localOnly) {
+    // Reject the UNKNOWN sentinel — OpenDKP rejects it anyway, and a clear
+    // "pick a class/race" beats a downstream failure row in the queue.
+    if (!cls  || cls  === 'UNKNOWN') return { ok: false, error: 'class required — pick one before registering' };
+    if (!race || race === 'UNKNOWN') return { ok: false, error: 'race required — pick one before registering' };
+    if (!Number.isFinite(level)) return { ok: false, error: 'level required' };
+    // The raid-alt level floor. Below 46 nothing can be raided in any era, so
+    // an OpenDKP entry is pure clutter — file it as a Trader / non-raid alt.
+    const verdict = raidAltVerdict(level);
+    if (!verdict.ok) return { ok: false, error: verdict.message };
+  }
 
   const admin = supabaseAdmin();
 
@@ -68,9 +87,9 @@ export async function registerInOpenDKP(args: RegisterArgs): Promise<{ ok: boole
     .insert({
       guild_id:                'wolfpack',
       name:                    args.name,
-      class:                   args.cls,
-      race:                    args.race,
-      level:                   args.level,
+      class:                   cls,
+      race:                    race,
+      level:                   level,
       rank:                    args.rank,
       parent_opendkp_id:       args.parentOpenDkpId ?? null,
       parent_name:             args.parentName ?? null,

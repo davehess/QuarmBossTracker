@@ -34,6 +34,8 @@ import InventoryUpload from './InventoryUpload';
 import MuleUpload from './MuleUpload';
 import KeysUpload from './KeysUpload';
 import SpellbookUpload from './SpellbookUpload';
+import SuspectedCharacters, { type Suspect } from './SuspectedCharacters';
+import { selectAll } from '@/lib/selectAll';
 import MeCharacterCards, { type MeCard } from './MeCharacterCards';
 
 export const dynamic = 'force-dynamic';
@@ -531,6 +533,79 @@ function fmtBuffTime(ticks: number | null): string | null {
   return `${secs}s`;
 }
 
+// Characters that upload FROM THIS MEMBER'S MACHINE but belong to nobody.
+// The agent authenticates as its owner, so uploaded_by_discord_id is a
+// first-party ownership signal — the member can file each one as a trader or
+// a raid alt (see SuspectedCharacters / claim-actions). Cheap: three bounded
+// reads, and it returns [] the moment there's nothing to file.
+async function loadSuspectedCharacters(discordId: string | null): Promise<Suspect[]> {
+  if (!discordId) return [];
+  const admin = supabaseAdmin();
+  const { data: aliases } = await admin
+    .from('wolfpack_members').select('discord_id')
+    .or(`discord_id.eq.${discordId},merged_into_discord_id.eq.${discordId}`);
+  const household = new Set(((aliases ?? []) as { discord_id: string }[]).map(r => r.discord_id).filter(Boolean));
+  household.add(discordId);
+
+  // Paginated — a .limit() above 1000 does NOT lift PostgREST's silent cap
+  // (test/db-read-discipline.test.js ratchets on this), and a member with many
+  // boxed characters can exceed it across endpoints.
+  const ups = await selectAll<{ character: string; last_uploaded_at: string | null }>(
+    (from, to) => admin
+      .from('agent_upload_stats')
+      .select('character, last_uploaded_at, uploaded_by_discord_id')
+      .in('uploaded_by_discord_id', [...household])
+      .order('character')
+      .range(from, to));
+  const byName = new Map<string, string | null>();   // name → newest upload
+  for (const u of ups) {
+    if (!u.character) continue;
+    const k = u.character;
+    const cur = byName.get(k);
+    if (!cur || (u.last_uploaded_at && u.last_uploaded_at > cur)) byName.set(k, u.last_uploaded_at);
+  }
+  if (byName.size === 0) return [];
+
+  const names = [...byName.keys()];
+  const { data: rows } = await admin
+    .from('characters')
+    .select('name, discord_id, link_ignored, deleted')
+    .eq('guild_id', 'wolfpack')
+    .in('name', names);
+  const known = new Map<string, { discord_id: string | null; link_ignored: boolean | null; deleted: boolean | null }>();
+  for (const r of (rows ?? []) as { name: string; discord_id: string | null; link_ignored: boolean | null; deleted: boolean | null }[]) {
+    known.set(r.name.toLowerCase(), r);
+  }
+
+  const unlinked = names.filter(n => {
+    const k = known.get(n.toLowerCase());
+    if (!k) return true;                       // no roster row at all — definitely unfiled
+    if (k.discord_id) return false;            // already linked (to you or anyone)
+    if (k.link_ignored || k.deleted) return false;
+    return true;
+  });
+  if (unlinked.length === 0) return [];
+
+  // /who sightings give class + level when we have them (mules never appear).
+  const { data: who } = await admin
+    .from('who_directory').select('character, observed_class, level')
+    .in('character', unlinked.slice(0, 200));
+  const whoBy = new Map<string, { observed_class: string | null; level: number | null }>();
+  for (const w of (who ?? []) as { character: string; observed_class: string | null; level: number | null }[]) {
+    whoBy.set(w.character.toLowerCase(), w);
+  }
+
+  return unlinked
+    .map(n => ({
+      name: n,
+      observedClass: whoBy.get(n.toLowerCase())?.observed_class ?? null,
+      observedLevel: whoBy.get(n.toLowerCase())?.level ?? null,
+      lastUpload: byName.get(n) ?? null,
+      invRows: 0,
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
 export default async function MePage() {
   const supabase = supabaseServer();
   const { data: { user } } = await supabase.auth.getUser();
@@ -539,6 +614,7 @@ export default async function MePage() {
   const tz = await userTz();
 
   const { discordId, nickname, chars: allChars } = await loadOwnedCharacters(user.id);
+  const suspects = await loadSuspectedCharacters(discordId);
 
   // Honor the per-character data opt-out (characters.exclude_from_stats). We
   // still surface excluded chars in a small footer so the owner can see + flip
@@ -938,6 +1014,8 @@ export default async function MePage() {
           )}
         </section>
       )}
+      <SuspectedCharacters suspects={suspects} />
+
       <section data-tour="me-characters" className="bg-panel border border-border rounded-lg p-6">
         <div className="flex items-start justify-between gap-3 flex-wrap">
           <div>
