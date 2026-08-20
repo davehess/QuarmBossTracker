@@ -1443,6 +1443,12 @@ async function handleCancelAnnounce(interaction) {
     }
     await origMsg.delete();
     removeAnnounceMessageId(origMsg.id);
+    // A cancelled announce must not open its deferred parse session later.
+    try {
+      const { loadPendingSession, clearPendingSession } = require('./commands/raidnight');
+      const pending = await loadPendingSession();
+      if (pending?.announceMsgId === origMsg.id) await clearPendingSession();
+    } catch { /* stale-expiry in pendingSessionAction still covers it */ }
     await interaction.editReply('✅ Announcement cancelled and archived.');
   } catch (err) {
     await interaction.editReply('❌ Could not archive.');
@@ -2479,12 +2485,36 @@ const liveAlertedSoon = new Set(), liveAlertedSpawned = new Set();
 const PVP_SOON_MS  = 30 * 60 * 1000;
 const SOON_WARN_MS = 30 * 60 * 1000;
 
+// Deferred /announce parse session (Hitya 2026-08-20): a future announce parks
+// its session in bot_kv instead of opening it immediately; open it here once
+// the event is PENDING_SESSION_ARM_MS out. Pure decision in
+// pendingSessionAction (commands/raidnight.js), so this stays a thin shell.
+async function _maybeOpenPendingSession(readyClient) {
+  try {
+    const { loadPendingSession, clearPendingSession, pendingSessionAction,
+            openSession, getTonightParses } = require('./commands/raidnight');
+    const pending = await loadPendingSession();
+    if (!pending) return;
+    const action = pendingSessionAction(pending, Date.now(), !!getRaidSession());
+    if (action === 'skip') return;
+    if (action === 'clear') { await clearPendingSession(); return; }
+    const thread = await readyClient.channels.fetch(pending.threadId).catch(() => null);
+    if (!thread) { await clearPendingSession(); return; }
+    await openSession(thread, thread.id, pending.label || 'Raid session', getTonightParses());
+    await clearPendingSession();
+    console.log(`[announce] deferred parse session opened in thread ${pending.threadId} (${pending.label || '?'})`);
+  } catch (e) {
+    console.warn('[announce] pending session check failed:', e?.message);
+  }
+}
+
 function startSpawnChecker(readyClient) {
   const channelId = process.env.TIMER_CHANNEL_ID;
   if (!channelId) { console.warn('⚠️ TIMER_CHANNEL_ID not set'); return; }
 
   setInterval(async () => {
     try {
+      await _maybeOpenPendingSession(readyClient);
       const bosses        = getBosses();
       const histThreadId  = process.env.HISTORIC_KILLS_THREAD_ID;
       const historyThread = histThreadId ? await readyClient.channels.fetch(histThreadId).catch(() => null) : null;

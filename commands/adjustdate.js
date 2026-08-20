@@ -65,6 +65,20 @@ module.exports = {
     const newTimeStr = formatInDefaultTz(newStart);
     updateAnnounceTime(announce.messageId, newStart.getTime(), newTimeStr);
 
+    // A deferred parse session for this announce must follow the new date.
+    try {
+      const { loadPendingSession, savePendingSession } = require('./raidnight');
+      const pending = await loadPendingSession();
+      if (pending?.announceMsgId === announce.messageId) {
+        await savePendingSession({
+          ...pending,
+          startMs: newStart.getTime(),
+          label: typeof pending.label === 'string'
+            ? pending.label.replace(/ — [^—]*$/, ` — ${newTimeStr}`) : pending.label,
+        });
+      }
+    } catch (err) { console.warn('adjustdate: pending session update failed:', err?.message); }
+
     // Update Discord event
     if (announce.eventId) {
       try {

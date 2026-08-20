@@ -411,13 +411,34 @@ const zoneSiblings = boss ? bosses.filter(b => b.zone === boss.zone && !targets.
     // If no raid session is active yet, use this thread as tonight's session home.
     // Agent uploads for this zone will append parse cards here automatically.
     // /raidnight will honour the existing session and link here instead of creating a new thread.
+    //
+    // ONLY when the event starts soon (Hitya 2026-08-20: announcing tomorrow's
+    // event just after midnight opened the session immediately, and the
+    // All-Night Leaderboard filled the event thread with overnight FARM kills
+    // for an event that hadn't happened). A future announce parks a pending
+    // session in bot_kv; the spawn checker opens it shortly before start.
     if (raidThread && !getRaidSession()) {
-      try {
-        const { openSession, getTonightParses } = require('./raidnight');
-        await openSession(raidThread, raidThread.id, `${announceName} — ${plannedTimeStr}`, getTonightParses());
-        console.log(`[announce] parse session opened in thread ${raidThread.id} (${announceName})`);
-      } catch (err) {
-        console.warn('[announce] could not open parse session:', err?.message);
+      const { openSession, getTonightParses, sessionOpenDecision,
+              savePendingSession, PENDING_SESSION_ARM_MS } = require('./raidnight');
+      if (sessionOpenDecision(eventStart.getTime(), Date.now()) === 'now') {
+        try {
+          await openSession(raidThread, raidThread.id, `${announceName} — ${plannedTimeStr}`, getTonightParses());
+          console.log(`[announce] parse session opened in thread ${raidThread.id} (${announceName})`);
+        } catch (err) {
+          console.warn('[announce] could not open parse session:', err?.message);
+        }
+      } else {
+        try {
+          await savePendingSession({
+            threadId: raidThread.id,
+            label:    `${announceName} — ${plannedTimeStr}`,
+            startMs:  eventStart.getTime(),
+            announceMsgId: annMsg.id,
+          });
+          console.log(`[announce] parse session deferred — opens ~${Math.round(PENDING_SESSION_ARM_MS / 60000)} min before ${plannedTimeStr} (${announceName})`);
+        } catch (err) {
+          console.warn('[announce] could not park pending parse session:', err?.message);
+        }
       }
     }
 

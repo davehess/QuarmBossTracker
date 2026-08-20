@@ -331,6 +331,67 @@ async function openSession(thread, channelId, label, tonightParses) {
   });
 }
 
+// ── Deferred parse sessions (Hitya 2026-08-20) ───────────────────────────────
+// /announce used to open the parse session AT ANNOUNCE TIME whenever none was
+// active — so announcing tomorrow's event just after midnight turned its thread
+// into "tonight's session home", and the All-Night Leaderboard filled with
+// overnight FARM kills for an event that hadn't happened ("Sanctus Seru — Thu
+// 10:30 PM", posted 12:21 AM). The session is a live collector fed by every
+// agent upload; it must not exist before the night it belongs to.
+//
+// Rule: announce opens the session only when the event starts within
+// SESSION_OPEN_LEAD_MS (the "announce right before raid" flow, unchanged).
+// Anything further out parks a pending record in bot_kv — NOT state.json,
+// which does not survive a Railway deploy — and the spawn checker opens it
+// PENDING_SESSION_ARM_MS before start.
+const SESSION_OPEN_LEAD_MS    = 2 * 60 * 60 * 1000;   // ≤2h out → open now
+const PENDING_SESSION_ARM_MS  = 30 * 60 * 1000;       // deferred → open at T-30m
+const PENDING_SESSION_STALE_MS = 6 * 60 * 60 * 1000;  // start +6h → drop, never open
+const _PENDING_SESSION_KEY = 'pending_parse_session';
+
+function _kvGuildId() { return process.env.SUPABASE_GUILD_ID || 'wolfpack'; }
+
+async function loadPendingSession() {
+  const supabase = require('../utils/supabase');
+  const rows = await supabase.select('bot_kv',
+    `guild_id=eq.${encodeURIComponent(_kvGuildId())}&key=eq.${_PENDING_SESSION_KEY}&select=value&limit=1`);
+  const row = Array.isArray(rows) && rows[0];
+  return (row && row.value && typeof row.value === 'object') ? row.value : null;
+}
+
+async function savePendingSession(pending) {
+  const supabase = require('../utils/supabase');
+  await supabase.upsert('bot_kv',
+    [{ guild_id: _kvGuildId(), key: _PENDING_SESSION_KEY, value: pending,
+       updated_at: new Date().toISOString() }],
+    'guild_id,key');
+}
+
+async function clearPendingSession() {
+  const supabase = require('../utils/supabase');
+  await supabase.update('bot_kv',
+    `guild_id=eq.${encodeURIComponent(_kvGuildId())}&key=eq.${_PENDING_SESSION_KEY}`,
+    { value: null, updated_at: new Date().toISOString() });
+}
+
+/** 'now' when the announce should open the session immediately; 'defer' otherwise. Pure. */
+function sessionOpenDecision(eventStartMs, nowMs) {
+  return (eventStartMs - nowMs <= SESSION_OPEN_LEAD_MS) ? 'now' : 'defer';
+}
+
+/**
+ * What the spawn checker should do with a pending session. Pure.
+ * 'skip' = leave it parked; 'open' = open it now; 'clear' = drop it
+ * (stale, superseded by an officer's live session, or malformed).
+ */
+function pendingSessionAction(pending, nowMs, hasActiveSession) {
+  if (!pending || !pending.threadId || !Number.isFinite(pending.startMs)) return 'clear';
+  if (nowMs > pending.startMs + PENDING_SESSION_STALE_MS) return 'clear';
+  if (nowMs < pending.startMs - PENDING_SESSION_ARM_MS) return 'skip';
+  if (hasActiveSession) return 'clear';
+  return 'open';
+}
+
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('raidnight')
@@ -444,6 +505,9 @@ module.exports = {
   postNightSummaryToSession,
   refreshSessionSummary,
   openSession,
+  loadPendingSession, savePendingSession, clearPendingSession,
+  sessionOpenDecision, pendingSessionAction,
+  SESSION_OPEN_LEAD_MS, PENDING_SESSION_ARM_MS, PENDING_SESSION_STALE_MS,
   getTonightParses,
   buildSummaryEmbed,
   buildParseboardEmbed,
