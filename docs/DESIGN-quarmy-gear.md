@@ -90,7 +90,14 @@ The owner supplied the page source + three real export files
    `characters` gains deity_id / quarmy_checksum / quarmy_synced_at;
    `eqemu_items` gains worneffect/worntype/attack/haste/regen/manaregen/
    damageshield (populated by the next weekly sync — sync-from-eqmac.js
-   updated). No bank data persisted anywhere, by construction.
+   updated). No bank data persisted BY THIS PATH, by construction.
+   ⚠ Scope correction (2026-08-20): that guarantee is Quarmy-path only. The
+   `/outputfile inventory` path (manual 🎒 on /me since it shipped, agent
+   auto-upload since 3.6.0) DOES persist bank + shared-bank ITEM rows into
+   `character_inventory` — deliberately, so tradeables parked in banks are
+   searchable. Coin never uploads on any path. The shared bank being
+   account-level is handled by `shared_bank_groups` fingerprint dedup
+   (`DECISIONS-2026-08-20.md`), not by dropping the data.
    Web: `/character/<name>/gear` (BETA) — equipped table with
    focus/worn/click/proc joins, item-sum totals, vision-item callout,
    clicky list, raw AA ranks.

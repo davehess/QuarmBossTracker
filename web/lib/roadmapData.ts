@@ -37,6 +37,19 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'web-1-1-81',
+    title: '\u{1F3E6} Shared banks count once',
+    version: 'Web 1.1.81',
+    date: '2026-08-20',
+    headline: 'Your account inventory no longer counts shared-bank items once per character — characters on the same game account are grouped automatically.',
+    features: [
+      { name: '\u{1F3E6} Automatic account grouping', blurb: 'Characters whose shared-bank contents match are recognized as the same game account — no setup, and it regroups itself if you move a character to another account. Shared-bank items count once per account on My Inventory, with a new "Shared banks" counter showing how many accounts you have.' },
+    ],
+    fixes: [
+      'Items in a shared bank were counted up to 8 times — once for every character on the account that uploaded an inventory.',
+    ],
+  },
+  {
     key: 'mimic-2-6-0',
     title: '\u{1F392} Inventory that keeps itself current',
     version: 'Mimic 2.6.0 · Agent 3.6.0',

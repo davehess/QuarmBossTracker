@@ -62,6 +62,7 @@ export default async function MyInventoryPage() {
 
   let items: InvItem[] = [];
   let rowCount = 0;
+  let sharedAccountCount = 0;
   if (charNames.length > 0) {
     const admin = supabaseAdmin();
     // Paginated: an active player's family is 2,238 rows today and PostgREST
@@ -77,6 +78,36 @@ export default async function MyInventoryPage() {
       .range(from, to));
     rowCount = rows.length;
 
+    // Shared-bank dedup (Hitya 2026-08-20): the shared bank is ACCOUNT-level —
+    // every character on a game account exports the same SharedBank rows, so
+    // summing them counted those items up to 8×. shared_bank_groups
+    // fingerprints each character's SharedBank content; identical fingerprint
+    // = same game account, and only the FRESHEST snapshot in each group (the
+    // representative, picked within this family — cross-family fingerprint
+    // collisions on trivial identical banks are possible) contributes its
+    // shared bank to the totals. Regrouping is automatic: a character moved
+    // to another account uploads that account's shared bank next time. Empty
+    // shared banks never group (no rows → no fingerprint).
+    const { data: sbgRows } = await admin
+      .from('shared_bank_groups')
+      .select('character_name, fingerprint, newest_observed_at')
+      .eq('guild_id', 'wolfpack')
+      .in('character_name', charNames);
+    const repByFingerprint = new Map<string, { name: string; newest: string }>();
+    for (const g of (sbgRows ?? []) as { character_name: string; fingerprint: string; newest_observed_at: string }[]) {
+      const cur = repByFingerprint.get(g.fingerprint);
+      if (!cur || g.newest_observed_at > cur.newest
+          || (g.newest_observed_at === cur.newest && g.character_name < cur.name)) {
+        repByFingerprint.set(g.fingerprint, { name: g.character_name, newest: g.newest_observed_at });
+      }
+    }
+    const sharedReps = new Set([...repByFingerprint.values()].map(r => r.name));
+    const skipShared = new Set(
+      ((sbgRows ?? []) as { character_name: string }[])
+        .map(g => g.character_name).filter(n => !sharedReps.has(n)),
+    );
+    sharedAccountCount = repByFingerprint.size;
+
     const ids = [...new Set(rows.map(r => r.item_id).filter((n): n is number => !!n))];
     const metaById = new Map<number, ItemMeta>();
     for (let i = 0; i < ids.length; i += 800) {
@@ -90,6 +121,9 @@ export default async function MyInventoryPage() {
     // Aggregate by item (by id when present, else by name).
     const byKey = new Map<string, InvItem>();
     for (const r of rows) {
+      // Shared-bank rows count once per ACCOUNT — skip every copy except the
+      // group representative's (see the dedup block above).
+      if (locGroup(r.slot_label) === 'shared' && skipShared.has(r.character_name)) continue;
       const key = r.item_id ? `id:${r.item_id}` : `nm:${r.item_name.toLowerCase()}`;
       let it = byKey.get(key);
       if (!it) {
@@ -119,7 +153,9 @@ export default async function MyInventoryPage() {
         <p className="text-sm text-dim leading-6">
           Everything across <b className="text-text">all your characters</b> at once — total count of each item and
           exactly who&apos;s holding it. Items in the <b className="text-purple">shared bank</b> are tagged, since any
-          of your characters can pull those. Filter by type, and toggle which characters or which places (equipped /
+          of your characters can pull those — and they count <b className="text-text">once per game account</b>, not
+          once per character (characters whose shared-bank contents match are grouped as one account automatically).
+          Filter by type, and toggle which characters or which places (equipped /
           bags / bank / shared) to include. Data comes from your <code>/outputfile inventory</code> uploads
           (📖 on <Link href="/me" className="text-blue hover:underline">/me</Link>) — only your own characters, private to you.
         </p>
@@ -127,6 +163,11 @@ export default async function MyInventoryPage() {
           <span>Characters: <span className="text-text">{chars.length}</span></span>
           <span>Inventory rows: <span className="text-text">{rowCount.toLocaleString()}</span></span>
           <span>Distinct items: <span className="text-text">{items.length.toLocaleString()}</span></span>
+          {sharedAccountCount > 0 && (
+            <span title="Characters whose shared-bank contents match are grouped as one game account — shared-bank items count once per account, not once per character.">
+              Shared banks: <span className="text-text">{sharedAccountCount} account{sharedAccountCount === 1 ? '' : 's'}</span>
+            </span>
+          )}
         </div>
       </section>
 
