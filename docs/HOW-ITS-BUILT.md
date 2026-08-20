@@ -1290,15 +1290,16 @@ holds it in memory.
   "your agent uploaded it AND nobody else owns it". The level ladder + trader
   placeholders are `web/lib/characterRoles.ts` (pure, tested) and are shared
   with `/admin/links` — Trader there no longer demands a class.
-- **Shared-bank account fingerprinting (web 1.1.81, 2026-08-20)** — the
-  `shared_bank_groups` view hashes each character's SharedBank rows from
-  `character_inventory`; identical hash = same game account (the shared bank
-  is account-level, so its content IS the fingerprint — no manual grouping,
-  auto-regroups when a character changes accounts). `/me/inventory` counts
-  each group's shared bank once, via the freshest snapshot; the Quartermaster
-  deliberately does NOT dedup (per-character reachability). Caveats + the
-  cross-family collision rule live in the migration
-  (`20260820210000_shared_bank_groups.sql`).
+- **Shared-bank account grouping (web 1.1.83, 2026-08-20)** — the shared bank
+  is account-level, so summing it per character over-counted every stack.
+  `web/lib/sharedBank.ts` clusters characters into accounts by SLOT AGREEMENT
+  (Jaccard over the union of their `SharedBank*-Slot*` → item maps), and
+  `/me/inventory` counts only the freshest snapshot per account. Skew-tolerant
+  by design — snapshots of one account drift because each character's file is
+  written when that character last ran `/outputfile inventory`. An earlier
+  whole-bank-hash view (`shared_bank_groups`) was tried and dropped the same
+  day; see `DECISIONS-2026-08-20.md`. The Quartermaster deliberately does NOT
+  dedup (per-character reachability).
 - **Inventory auto-upload (agent 3.5.94, beta, 2026-08-20)** —
   `scanInventoryUploads` in the agent watches `<Char>-Inventory.txt` beside
   its quarmy/spellbook siblings (same prefs gate, fingerprint + checksum

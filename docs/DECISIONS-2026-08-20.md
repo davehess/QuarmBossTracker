@@ -159,7 +159,9 @@ state. No game-account grouping existed anywhere (person-level family via
 Discord/OpenDKP is a different axis), and characters can move between game
 accounts (same TAKP forum account), so a curated mapping would rot.
 
-**The design (web 1.1.81 + `shared_bank_groups` view).** The shared bank's
+**⚠ SUPERSEDED THE SAME DAY — read the correction below before trusting this paragraph.**
+
+**The first design (web 1.1.81 + `shared_bank_groups` view).** The shared bank's
 identity IS the account fingerprint: hash each character's SharedBank row-set
 (slot|item|qty, ordered); identical hash = same game account; the freshest
 snapshot in a group is its representative and the only one whose shared bank
@@ -185,6 +187,42 @@ Worn/equipped items were already uploaded + searchable on every path (Hitya
 asked — confirmed, no change needed). Follow-up noted, not built: the
 `character_missing_spells` `held_by[]` list can still name every same-account
 character for a shared-bank scroll (names, not counts — low harm).
+
+## Correction: shared-bank grouping had to be rebuilt hours later (skew, then chaining)
+
+**What was wrong.** The morning's `shared_bank_groups` view hashed each
+character's WHOLE SharedBank row-set and grouped exact matches. It grouped
+almost nothing, and Hitya caught it the same evening: *"Fairly certain that
+these are duplicates for the shared bank bits of 1 or 3 items"* — ten
+characters each reporting `SharedBank6-Slot9 = Words of the Spectre ×3`, one
+physical stack counted ten times. Root cause: an inventory file is written
+whenever THAT character last ran `/outputfile inventory`, so one account's
+snapshots sit minutes-to-hours apart and drift (measured: 107 / 104 / 108 rows
+on one account). Whole-bank identity is therefore the EXCEPTION, not the rule —
+the "transient split" caveat I wrote into the migration was in fact the normal
+case. My error, and the doc said the feature worked.
+
+**What replaced it** (`web/lib/sharedBank.ts`, web 1.1.83): cluster on the
+SLOT ADDRESS, which is account-scoped and stable. Two characters are the same
+account when their slot→item maps agree, scored **Jaccard over the union** of
+both banks. Runs over rows `/me/inventory` already loads — no view, no extra
+query. The view is dropped (a brittle view that still looks authoritative is
+how the next reader gets a confidently wrong answer).
+
+**Why Jaccard and not overlap.** Scoring agreement over the OVERLAP alone let a
+small bank "fully agree" with a big one it is merely a subset of, and union-find
+chained those weak links into a 29-character and a 17-character "account".
+Over the union a 20-slot mule bank scores 20/108 against a 108-slot bank and
+stays separate, while two snapshots of the same bank score 0.99.
+
+**Measured against the live guild, not assumed.** Post-fix the largest cluster
+is 10 (Hitya's own account: Canopy/Hidya/Hitya/Hopeya/Manamana/Melting/
+Okigetyou/Pearlclutcher/Rockin/Utoh, agreeing on 107 of 108 slots); every other
+cluster is ≤8. Note the process point: I first capped clusters at 8 "because EQ
+accounts hold 8 characters" — an invented fact that would have vetoed a REAL
+10-character account. The guard is now 16 and documented as a runaway-merge
+net, explicitly not a game rule. **Don't encode a game fact you haven't
+verified; calibrate against measured data instead.**
 
 ## Character filing moves to the MEMBER; traders stop needing a class (Hitya)
 

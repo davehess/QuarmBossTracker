@@ -1,0 +1,19 @@
+-- Retire shared_bank_groups (added earlier today, 20260820210000).
+--
+-- It grouped characters into game accounts by hashing each character's ENTIRE
+-- SharedBank row-set and matching exactly. Correct in theory, useless in
+-- practice: each character's inventory file is written whenever THAT character
+-- last ran /outputfile inventory, so one account's snapshots sit minutes or
+-- hours apart and drift (107 / 104 / 108 rows on one real account). A single
+-- differing row broke the hash, so nothing grouped and one stack of Words of
+-- the Spectre was still counted ten times (Hitya, same day: "Fairly certain
+-- that these are duplicates for the shared bank bits of 1 or 3 items").
+--
+-- Replaced by slot-agreement clustering in web/lib/sharedBank.ts, which scores
+-- Jaccard over the union of two banks' slot→item maps and therefore survives
+-- skew (the same ten characters agree on 107/108 slots). It runs over rows the
+-- page already loads, so it needs no view and no extra round trip.
+--
+-- Dropping rather than leaving it unused: a brittle view that still LOOKS
+-- authoritative is exactly how a future reader gets a confidently wrong answer.
+DROP VIEW IF EXISTS shared_bank_groups;
