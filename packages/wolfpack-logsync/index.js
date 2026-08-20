@@ -8860,6 +8860,7 @@ function _endpointForKind(kind, botUrl) {
     case 'pop_flag':        return base + '/pop_flags';
     case 'quarmy':          return base + '/quarmy';
     case 'spellbook':       return base + '/spellbook';
+    case 'inventory':       return base + '/inventory';
     case 'buff_cast':       return base + '/buff_casts';
     case 'tells':           return base + '/tells';
     case 'threat_snapshot': return base + '/threat-snapshot';
@@ -24434,6 +24435,7 @@ function _loadUploadedState() {
     if (j && typeof j === 'object') {
       Object.assign(_quarmyUploaded,    j.quarmy    || {});
       Object.assign(_spellbookUploaded, j.spellbook || {});
+      Object.assign(_inventoryUploaded, j.inventory || {});
       Object.assign(_scannedFiles,      j.files     || {});
     }
   } catch { /* first run or corrupt file — start empty, re-uploads dedup server-side */ }
@@ -24444,7 +24446,7 @@ function _saveUploadedStateSoon() {
   _uploadedSaveTimer = setTimeout(() => {
     _uploadedSaveTimer = null;
     let body;
-    try { body = JSON.stringify({ quarmy: _quarmyUploaded, spellbook: _spellbookUploaded, files: _scannedFiles }); }
+    try { body = JSON.stringify({ quarmy: _quarmyUploaded, spellbook: _spellbookUploaded, inventory: _inventoryUploaded, files: _scannedFiles }); }
     catch { return; }
     const tmp = UPLOADED_STATE_FILE + '.tmp';
     fs.writeFile(tmp, body, (err) => {
@@ -24595,7 +24597,8 @@ function scanQuarmyExports() {
 // web/app/me/spellbook-actions.ts parseSpellbook (same columns).
 const SPELLBOOK_FILENAME_RX = /^([A-Za-z]+)[-_ ]?Spellbook\.txt$/i;
 const _spellbookUploaded = {};   // char(lower) → content checksum already enqueued
-_loadUploadedState();   // both maps declared — safe to hydrate from disk now
+const _inventoryUploaded = {};   // char(lower) → content checksum already enqueued
+_loadUploadedState();   // all maps declared — safe to hydrate from disk now
 
 function parseSpellbookFile(text) {
   const out = [];
@@ -24668,6 +24671,110 @@ function scanSpellbookFiles() {
       _saveUploadedStateSoon();
       enqueueUpload('spellbook', { agent_version: AGENT_VERSION, character, checksum, spells });
       console.log(`[spellbook] queued ${spells.length} spells for ${character}`);
+    } catch { /* unreadable / malformed — skip, retry next scan */ }
+  }
+}
+
+// ── Inventory export ingest ──────────────────────────────────────────────────
+// The THIRD sibling — and the one that was never built. The bot's
+// /api/agent/inventory endpoint has existed since 2026-06-23 (Hitya: "load the
+// inventory, spellbook, and quarmy files via mimic the way we are the logs");
+// quarmy and spellbook shipped their agent halves, inventory quietly stayed
+// manual-/me-upload-only, which is how character_inventory froze at whatever
+// people last uploaded by hand (found 2026-08-20: Ancient spell scrolls bought
+// in August invisible to the item search — the family's newest snapshot was
+// July 15, and only 2 of 122 characters were fresher than 30 days).
+//
+// Same dir, same prefs gate, same fingerprint + checksum dedup as its two
+// siblings. Row shape matches the bot handler AND the /me manual upload:
+// slot_label / item_id / item_name / quantity. Coin rows (`*-Coin` slots,
+// `Currency`) and the transient Held cursor never leave the machine; bank
+// ITEM slots DO upload — the /me manual path has always included them and the
+// search page's Bank chip expects them. exclude_inventory stops the upload
+// entirely, checked under the KNOWN prefs only (the scan refuses to run
+// before the prefs poll answers).
+function parseInventoryFileForUpload(text) {
+  const rows = [];
+  const seen = new Set();
+  for (const rawLine of String(text || '').split(/\r?\n/)) {
+    if (!rawLine) continue;
+    if (/^Location\b/i.test(rawLine)) continue;        // header row
+    const cols = rawLine.split('\t');
+    if (cols.length < 2) continue;
+    const slot     = (cols[0] || '').trim();
+    const itemName = (cols[1] || '').trim();
+    if (!slot || !itemName || itemName.toLowerCase() === 'empty') continue;
+    // Coin/currency appears as a SLOT label ('Bank-Coin', 'Currency') and the
+    // bot's defense-in-depth also checks the item name — drop on either.
+    if (/-Coin$/i.test(slot) || /^Currency$/i.test(slot) || /^Currency$/i.test(itemName) || /^Held$/i.test(slot)) continue;
+    const key = slot.toLowerCase();
+    if (seen.has(key)) continue;                        // schema is unique-by-slot
+    seen.add(key);
+    const itemId = parseInt(cols[2], 10);
+    rows.push({
+      slot_label: slot.slice(0, 64),
+      item_id:    Number.isFinite(itemId) && itemId > 0 ? itemId : null,
+      item_name:  itemName.slice(0, 128),
+      quantity:   Math.max(1, parseInt(cols[3], 10) || 1),
+    });
+  }
+  return rows;
+}
+
+// Content checksum over the row set (slot+item+qty, order-independent) so a
+// re-output with nothing moved is a no-op both here and at the bot.
+function _inventoryChecksum(rows) {
+  const parts = rows
+    .map(r => r.slot_label + '|' + (r.item_id ?? '') + '|' + r.item_name + '|' + r.quantity)
+    .sort()
+    .join('\n');
+  return 'inv' + rows.length + '-' + crypto.createHash('sha1').update(parts).digest('hex').slice(0, 16);
+}
+
+function scanInventoryUploads() {
+  if (_raidHold) return;   // raid hold — files wait on disk, scanned when it lifts
+  if (!stats.characterPrefsCheckedAt) return;   // exclude_inventory must be known first
+  const firstLog = stats.watchedLogs[0]?.logPath;
+  if (!firstLog) return;
+  const dir = path.dirname(firstLog);
+  let entries;
+  try { entries = fs.readdirSync(dir); } catch { return; }
+  const envExcluded = new Set(
+    (process.env.WOLFPACK_EXCLUDED_CHARS || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean),
+  );
+  const dryRun = !!(_uploadOpts && _uploadOpts.dryRun);
+  for (const name of entries) {
+    const m = name.match(INVENTORY_FILENAME_RX);
+    if (!m) continue;
+    const character = m[1].charAt(0).toUpperCase() + m[1].slice(1).toLowerCase();
+    const lower = character.toLowerCase();
+    if (envExcluded.has(lower) || _quarmyPrefsBlock(lower)) continue;   // prefs can flip — never fingerprint
+    const fullPath = path.join(dir, name);
+    try {
+      // stat-only skip — same contract as the quarmy/spellbook scans, but under
+      // its own key: the loadout scanner reads the same file for the dashboard
+      // and must not share upload bookkeeping.
+      const fpKey = fullPath + '#upload';
+      const _st = fs.statSync(fullPath);
+      const _fp = _fileFingerprint(_st);
+      if (_scannedFiles[fpKey] === _fp) continue;
+      const rows = parseInventoryFileForUpload(fs.readFileSync(fullPath, 'utf8'));
+      if (rows.length === 0) {
+        _scannedFiles[fpKey] = _fp; _saveUploadedStateSoon(); continue;
+      }
+      const checksum = _inventoryChecksum(rows);
+      if (_inventoryUploaded[lower] === checksum) {
+        _scannedFiles[fpKey] = _fp; _saveUploadedStateSoon(); continue;
+      }
+      if (dryRun) {
+        console.log(`[inventory] DRY RUN — would upload ${character}: ${rows.length} rows (checksum ${checksum})`);
+        continue;
+      }
+      _inventoryUploaded[lower] = checksum;
+      _scannedFiles[fpKey] = _fp;
+      _saveUploadedStateSoon();
+      enqueueUpload('inventory', { agent_version: AGENT_VERSION, character, checksum, rows });
+      console.log(`[inventory] queued inventory upload for ${character} (${rows.length} rows)`);
     } catch { /* unreadable / malformed — skip, retry next scan */ }
   }
 }
@@ -35083,6 +35190,12 @@ async function main() {
   // "missing spells" page current with no manual paste.
   setTimeout(scanSpellbookFiles, 35_000);
   setInterval(scanSpellbookFiles, 10 * 60_000);
+
+  // Inventory export ingest — <Char>-Inventory.txt, the third sibling. The
+  // bot endpoint existed since June; this scan is the half that was missing
+  // (2026-08-20, the invisible Ancient scrolls). Same prefs gate + cadence.
+  setTimeout(scanInventoryUploads, 40_000);
+  setInterval(scanInventoryUploads, 10 * 60_000);
 
   // Version polling — reach out to the bot every 10 min so idle agents
   // still learn about new releases promptly (without needing an encounter
