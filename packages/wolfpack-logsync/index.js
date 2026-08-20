@@ -17538,8 +17538,13 @@ function renderOptin(o) {
       let reason = null;
       if (act === 'dismiss') {
         const char = b.dataset.bfChar || 'this character';
-        reason = prompt('Dismiss backfill request for ' + char + '?\\n\\nOptional reason (shown to the officer):', '');
-        if (reason === null) return;  // cancelled
+        // window.prompt() is UNSUPPORTED in Electron renderers — it throws,
+        // which made this button a silent no-op inside Mimic (the async
+        // handler died before the POST; Hitya 2026-08-20, two June requests
+        // undismissable). confirm() IS supported, so the dismiss ships
+        // without the optional officer-facing reason rather than blocking
+        // on an input dialog Electron cannot show.
+        if (!confirm('Dismiss backfill request for ' + char + '?')) return;
       }
       const action = act === 'ack' ? 'ack-backfill' : 'dismiss-backfill';
       await postOptin(action, { id, reason });
@@ -18476,8 +18481,20 @@ async function dismissTopDamage(key) {
   function decorateButtons(){
     if (!mimicHosts()) return;
     var cards = document.querySelectorAll(".section .card");
+    // Re-assert persisted hidden state on EVERY pass. This observer fires on
+    // every section repaint, and a renderer that rebuilds its innerHTML (e.g.
+    // renderOptin) resurrects hidden cards without the wp-hidden class — the
+    // same bounce-back the Watched Logs card had, except most renderers never
+    // learned to consult the set. Healing it here covers all of them (Hitya
+    // 2026-08-20: closing the backfill panel "just refreshes and brings it
+    // back").
+    var hiddenSet = _loadHiddenSet();
     for (var i = 0; i < cards.length; i++){
       var card = cards[i];
+      try {
+        var hk = _scopedHideKey(card);
+        if (hk && hiddenSet.has(hk)) card.classList.add("wp-hidden");
+      } catch (err) { /* never let hide-state block decoration */ }
       var h = card.querySelector("h2");
       if (!h) continue;
       if (h.querySelector(".wp-overlay-btn")) continue; // already decorated
