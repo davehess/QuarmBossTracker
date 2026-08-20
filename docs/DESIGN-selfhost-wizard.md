@@ -94,6 +94,17 @@ must therefore ask or verify.
   and friends, `0` disables). A self-hoster with cheap storage may want them
   disabled entirely — the wizard should offer that rather than leaving the
   hosted-tier defaults in place.
+- **Encounter collection is OPEN — volume scales with member farming**
+  (2026-08-20). Since bot 3.1.52 every exactly-matched mob persists encounters
+  (first kills are sacred); one member's overnight farm session wrote 336
+  encounter rows in a day. Display filters (`bosses_local.auto_registered`),
+  not ingest gates, keep the surfaces readable — so `encounters` growth is a
+  hosting-bill question the wizard must surface alongside the buff_casts
+  windows. There is deliberately no encounters retention window today.
+- **The `parses_offcard_rollup` RPC hardcodes `America/New_York`** as the
+  raid-day bucket (matches the web's `dayKey`). That is OUR raid timezone — a
+  guild setting the wizard must parameterize (same knob as the raid schedule
+  and the deploy freeze).
 
 - **Crash dumps NEVER leave the machine** (2026-08-12). Zeal writes
   `crashes/<ts>.zip` (minidump + `crash_reason.txt`); the agent uploads only the

@@ -90,6 +90,31 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ### ✅ Done — major shipped features (not exhaustive; see git + roadmapData.ts)
 
+- **Overnight batch 2026-08-19 → 20 (landed on main Thursday morning; details
+  in `DECISIONS-2026-08-20.md`):**
+  - **DT countdown fix (agent 3.5.93 + guild_triggers row, mid-raid).** Target
+    capture broadened to match multi-word victims (warders, charm pets) —
+    live fleet-wide via the trigger poll — and a gated `require_raid_member`
+    fire on a timer-bearing trigger now ARMS the timer (cycle state), only
+    suppressing the callout. Inverts the Aug-09 note, recorded in the row.
+  - **Buff queue overhaul (mimic beta + agent 3.5.92 + bot 3.1.59, Hitya:
+    "buff queue is off the page").** Overlay type-groups collapse by default
+    with name previews; Feral Avatar/Savagery carried targets stay listed with
+    ⏳ remaining (soonest-to-drop = recast order); dashboard 🛡 options card
+    adds cures-only / Feral-only section filters served on `/api/buff-queue`.
+  - **/parses trash-flood fix (web 1.1.77 + bot 3.1.60/61, Hitya: "not the
+    right parses for nonbosses").** Cards = curated bosses
+    (`bosses_local.auto_registered`, filtered in-query); farm/trash/uncurated
+    nameds roll up to one 🗡 line per zone per night (`parses_offcard_rollup`
+    RPC, zones finally resolve via npc_id = zone_id*1000+n). Lockout-named
+    mobs self-promote to cards (`_promoteLockoutBoss` — "if they have a loot
+    lockout we can keep them on"). Landing Recent Kills widget same filter.
+  - **Deferred /announce parse sessions (bot 3.1.62, Hitya: "it hasn't
+    happened yet!").** Announcing a future event no longer opens the session
+    at announce time (the 12:21 AM All-Night-Leaderboard-of-farm-kills
+    incident) — pending record in `bot_kv`, opened by the spawn checker 30
+    min before start; adjusttime/adjustdate/cancel keep it honest.
+
 - **Add mules/alts from their inventory file — STABLE (web 1.1.54,
   2026-08-14).** Hitya: *"can you make it so that anyone can upload additional
   inventory files from the /me page and have it bring in their other

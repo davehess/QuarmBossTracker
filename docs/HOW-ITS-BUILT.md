@@ -1271,6 +1271,21 @@ holds it in memory.
   has one. Asymmetric on purpose: loc present proves life, loc absent proves
   nothing (a raider in another zone has no entity here either), so the rule only
   ever clears a swap on positive evidence.
+- **/parses boss cards vs trash rollup (2026-08-20)** — kill cards are CURATED
+  bosses only (`bosses_local.auto_registered = false`, filtered IN THE QUERY so
+  trash can't eat the 250-row window; `web/lib/bossFilter.ts`, shared with the
+  landing widget). Everything else — farm, raid trash, uncurated nameds — is
+  still collected and renders as one 🗡 line per zone per night via the
+  `parses_offcard_rollup` RPC (ET day buckets, zone derived from
+  npc_id = zone_id*1000+n). Promotion is automatic: a name arriving on the
+  /sll lockout or bosskill relay flips its row to curated
+  (`_promoteLockoutBoss`, bot `index.js`) — "if they have a loot lockout we
+  can keep them on" (Hitya 2026-08-19).
+- **Deferred /announce parse sessions (bot 3.1.62)** — announcing a future
+  event parks `pending_parse_session` in `bot_kv`; the 5-min spawn checker
+  opens it 30 min before start (`pendingSessionAction`,
+  `commands/raidnight.js`). Announce opens immediately only when the event is
+  ≤2h out. /adjusttime + /adjustdate move the pending start; cancel clears it.
 - **Member surfaces** — /parses, /raid (Zeal raid roster + coverage),
   /raid/review (#80 morning-after page, kernel `web/lib/raidReview.ts`),
   /guide (#81 Raid Guide, below), /buffs (coverage grid vs role targets),

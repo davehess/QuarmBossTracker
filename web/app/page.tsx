@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { PlatformMap, PlatformStats } from '@/components/PlatformMap';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
+import { curatedNpcIds } from '@/lib/bossFilter';
 import { fmtDmg, fmtTime, dayKey, dayLabel, cleanBossName } from '@/lib/format';
 import { userTz } from '@/lib/timezone';
 
@@ -21,10 +22,14 @@ type RecentRow = {
 async function loadRecent() {
   try {
     const sb = supabaseAdmin();
+    // Curated bosses only — same filter as /parses, or the widget fills with
+    // whatever someone farmed overnight (Hitya 2026-08-19).
+    const curated = await curatedNpcIds(sb);
     const { data } = await sb
       .from('encounters')
       .select('id, started_at, total_damage, eqemu_npc_types ( name )')
       .gt('total_damage', 0)
+      .in('npc_id', curated)
       .order('started_at', { ascending: false })
       .limit(6);
     return (data as unknown as RecentRow[]) ?? [];

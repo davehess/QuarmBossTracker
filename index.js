@@ -1443,6 +1443,12 @@ async function handleCancelAnnounce(interaction) {
     }
     await origMsg.delete();
     removeAnnounceMessageId(origMsg.id);
+    // A cancelled announce must not open its deferred parse session later.
+    try {
+      const { loadPendingSession, clearPendingSession } = require('./commands/raidnight');
+      const pending = await loadPendingSession();
+      if (pending?.announceMsgId === origMsg.id) await clearPendingSession();
+    } catch { /* stale-expiry in pendingSessionAction still covers it */ }
     await interaction.editReply('✅ Announcement cancelled and archived.');
   } catch (err) {
     await interaction.editReply('❌ Could not archive.');
@@ -2479,12 +2485,36 @@ const liveAlertedSoon = new Set(), liveAlertedSpawned = new Set();
 const PVP_SOON_MS  = 30 * 60 * 1000;
 const SOON_WARN_MS = 30 * 60 * 1000;
 
+// Deferred /announce parse session (Hitya 2026-08-20): a future announce parks
+// its session in bot_kv instead of opening it immediately; open it here once
+// the event is PENDING_SESSION_ARM_MS out. Pure decision in
+// pendingSessionAction (commands/raidnight.js), so this stays a thin shell.
+async function _maybeOpenPendingSession(readyClient) {
+  try {
+    const { loadPendingSession, clearPendingSession, pendingSessionAction,
+            openSession, getTonightParses } = require('./commands/raidnight');
+    const pending = await loadPendingSession();
+    if (!pending) return;
+    const action = pendingSessionAction(pending, Date.now(), !!getRaidSession());
+    if (action === 'skip') return;
+    if (action === 'clear') { await clearPendingSession(); return; }
+    const thread = await readyClient.channels.fetch(pending.threadId).catch(() => null);
+    if (!thread) { await clearPendingSession(); return; }
+    await openSession(thread, thread.id, pending.label || 'Raid session', getTonightParses());
+    await clearPendingSession();
+    console.log(`[announce] deferred parse session opened in thread ${pending.threadId} (${pending.label || '?'})`);
+  } catch (e) {
+    console.warn('[announce] pending session check failed:', e?.message);
+  }
+}
+
 function startSpawnChecker(readyClient) {
   const channelId = process.env.TIMER_CHANNEL_ID;
   if (!channelId) { console.warn('⚠️ TIMER_CHANNEL_ID not set'); return; }
 
   setInterval(async () => {
     try {
+      await _maybeOpenPendingSession(readyClient);
       const bosses        = getBosses();
       const histThreadId  = process.env.HISTORIC_KILLS_THREAD_ID;
       const historyThread = histThreadId ? await readyClient.channels.fetch(histThreadId).catch(() => null) : null;
@@ -5319,6 +5349,11 @@ async function _handleAgentBossKill(req, res) {
   for (const kill of kills) {
     const { character, guild, boss: bossName, zone, ts } = kill || {};
     if (!bossName) continue;
+
+    // A server kill broadcast = lockout content → card-worthy. Promote its
+    // bosses_local row if the persist path auto-registered it (fire-and-
+    // forget — timers below don't depend on it).
+    _promoteLockoutBoss(bossName, require('./utils/supabase'));
 
     delete require.cache[require.resolve('./data/bosses.json')];
     const bosses = require('./data/bosses.json');
@@ -8253,6 +8288,13 @@ async function _handleAgentLockout(req, res) {
   for (const entry of entries) {
     const { bossName, remainingMs, character } = entry || {};
     if (!bossName || typeof remainingMs !== 'number') continue;
+
+    // /sll names a mob → the server gives loot lockouts for it → card-worthy.
+    // Promote its bosses_local row if it was auto-registered (fire-and-forget;
+    // the timer logic below doesn't depend on it, and unlike the bosses.json
+    // gate two lines down this must run for NON-board names too — those are
+    // exactly the instanced nameds this exists for).
+    _promoteLockoutBoss(bossName, require('./utils/supabase'));
 
     delete require.cache[require.resolve('./data/bosses.json')];
     const bosses    = require('./data/bosses.json');
@@ -11981,11 +12023,18 @@ async function _handleAgentRaidBuffQueue(req, res) {
         if (role !== 'tank' && role !== 'melee') continue;
         const buffs = buffsFor(live, inferred);
         const isInferred = !live && (inferred && inferred.length > 0);
-        const alreadyBuffed = buffs.some(b => b && b.name && burstSpec.carriesRx.test(b.name));
-        if (alreadyBuffed) continue;
+        // Already carrying the burst buff: KEEP the row, with time remaining
+        // (Hitya 2026-08-19, mid-raid: "should have timers left on feral
+        // avatar targets"). Silently dropping the target meant the shaman/BL
+        // never saw the recast coming — carried rows now list after the
+        // needs-it rows, soonest-to-expire first, so the next recast is
+        // always the bottom of the queue.
+        const carrying = buffs.find(b => b && b.name && burstSpec.carriesRx.test(b.name));
         const damage = dmgByName.get(name.toLowerCase()) || 0;
         // Avatar / Celestial Tranquility / SK Touch-of-Hate-Recourse chips on
-        // burst rows — see the per-row block above for the rationale.
+        // burst rows — see the per-row block above for the rationale. The 🪶
+        // chip is redundant on a row whose ⏳ IS the carried Avatar, so it
+        // only reports a DIFFERENT avatar-family buff there.
         const avatarBuff = buffs.find(b => b && b.name && /\b(feral avatar|primal avatar|avatar)\b/i.test(b.name));
         const celestial  = buffs.find(b => b && b.name && /celestial tranquility/i.test(b.name));
         const skRecourse = (cls && /shadow ?knight|^sk$/i.test(cls))
@@ -11995,26 +12044,39 @@ async function _handleAgentRaidBuffQueue(req, res) {
           name, class: cls, group: rr ? rr.group_num : null,
           damage,
           inferred:              isInferred,
-          avatar_buff:           avatarBuff ? avatarBuff.name : null,
+          carrying:              carrying ? carrying.name : null,
+          remaining_secs:        (carrying && typeof carrying.ticks === 'number' && carrying.ticks > 0 && carrying.ticks < 6000)
+                                   ? Math.round(carrying.ticks * 6) : null,
+          avatar_buff:           (avatarBuff && !(carrying && avatarBuff.name === carrying.name)) ? avatarBuff.name : null,
           celestial_tranquility: !!celestial,
           sk_recourse:           skRecourse ? skRecourse.name : null,
           casting: _castingOnTarget(name),
         });
       }
-      // Highest damage first; raiders with no damage signal yet sink (they may
-      // be new arrivals, but a buffer shouldn't rank them above proven DPS).
-      burstQueue.sort((a, b) => (b.damage || 0) - (a.damage || 0) || a.name.localeCompare(b.name));
+      // Needs-it rows first, highest damage first (no-damage rows sink — they
+      // may be new arrivals, but a buffer shouldn't rank them above proven
+      // DPS). Carried rows follow, soonest-to-expire first.
+      burstQueue.sort((a, b) =>
+        ((a.carrying ? 1 : 0) - (b.carrying ? 1 : 0))
+        || (a.carrying
+              ? ((a.remaining_secs ?? Infinity) - (b.remaining_secs ?? Infinity))
+              : ((b.damage || 0) - (a.damage || 0)))
+        || a.name.localeCompare(b.name));
       // Not everyone gets the burst buff — cap at 3 targets per provider of
       // the buffer's class in this raid (1 shaman → top 3, 2 shamans → top 6).
       // Slightly tighter than the original ~4: in practice each shaman cycles
       // ~2-3 targets between Feral Avatar cooldowns, so the longer queue was
-      // showing names that would never actually get the buff.
+      // showing names that would never actually get the buff. The cap applies
+      // to the NEEDS-IT slice; carried rows ride along uncapped (there can
+      // only be as many as were actually buffed).
       let providers = 0;
       for (const [k2] of rosterByName) {
         const c2 = classFor((rosterByName.get(k2) || {}).name || k2);
         if (c2 && String(c2).toLowerCase() === bufferClass.toLowerCase()) providers++;
       }
-      burstQueue = burstQueue.slice(0, Math.min(15, Math.max(3, providers * 3)));
+      const capN = Math.min(15, Math.max(3, providers * 3));
+      burstQueue = burstQueue.filter(r => !r.carrying).slice(0, capN)
+        .concat(burstQueue.filter(r => r.carrying));
     }
 
     // Compact live-roster view for the dashboard's Raid card — the buffer's
@@ -15545,6 +15607,11 @@ async function _resolveBossForPersist(bossName, matchedBossId, supabase) {
   await supabase.insertIgnoreDuplicates('bosses_local', [{
     npc_id: npcId, internal_id: rawSlug, nicknames: [],
     added_at: new Date().toISOString(),
+    // Provenance, not a gate: collection stays open, but display surfaces
+    // (/parses cards, landing widget) show curated rows only — without this
+    // flag, one farm night put 300+ trash cards on /parses (2026-08-19).
+    // Flip to false to promote a named to card status.
+    auto_registered: true,
   }]).catch(() => {});
   // Re-read rather than trusting our insert — a concurrent upload of the same
   // new mob may have won the race with a different-cased slug.
@@ -15552,6 +15619,31 @@ async function _resolveBossForPersist(bossName, matchedBossId, supabase) {
   const finalId = (Array.isArray(again) && again[0]?.internal_id) || rawSlug;
   console.log(`[agent] auto-registered bosses_local "${finalId}" (npc ${npcId}) — first-time content`);
   return { internalId: finalId, registered: true };
+}
+
+// Hitya 2026-08-19: "If they have a loot lockout we can keep them on." A mob
+// the SERVER hands out a loot lockout for is card-worthy by definition — and
+// the lockout (/sll) + bosskill relays carry exactly those names, including
+// the ones bosses.json doesn't know (instanced nameds outside the boards).
+// So any bosses_local row those relays name gets promoted out of
+// auto_registered and earns kill cards on /parses, history intact. Display
+// provenance only: never creates rows, never touches timers, and a name with
+// no auto_registered row is a no-op — so PVP-event names (war gods) and
+// already-curated bosses pass through harmlessly.
+async function _promoteLockoutBoss(bossName, supabase) {
+  try {
+    const { keys } = _bossPersistKeys(bossName, null);
+    if (!keys.length) return;
+    const q = `internal_id=in.(${keys.map(encodeURIComponent).join(',')})&auto_registered=eq.true&select=internal_id`;
+    const rows = await supabase.select('bosses_local', q);
+    for (const r of (Array.isArray(rows) ? rows : [])) {
+      await supabase.update('bosses_local',
+        `internal_id=eq.${encodeURIComponent(r.internal_id)}`, { auto_registered: false });
+      console.log(`[lockout] promoted "${r.internal_id}" to curated — the server gives a loot lockout for it`);
+    }
+  } catch (e) {
+    console.warn('[lockout] promote failed for "' + bossName + '":', e?.message);
+  }
 }
 
 async function _handleAgentUpload(req, res) {

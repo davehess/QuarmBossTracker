@@ -16,6 +16,7 @@ import NightSummary, { type NightStats } from '@/components/NightSummary';
 import { dayKey, dayLabel, fmtDmg, cleanBossName } from '@/lib/format';
 import { userTz } from '@/lib/timezone';
 import { guildShare, isAutoForeign } from '@/lib/anomalies';
+import { curatedNpcIds } from '@/lib/bossFilter';
 import { classifyEncounter, clearClassification } from './actions';
 import WindowPicker from '@/components/WindowPicker';
 import { resolveWindow, windowCaveat, type ResolvedWindow } from '@/lib/timeWindow';
@@ -36,7 +37,10 @@ type EncounterRow = {
   eqemu_npc_types: NpcRef | null;
   encounter_players: PlayerRow[];
 };
-type ZoneRow = { short_name: string; long_name: string; expansion: number | null };
+type ZoneRow = { short_name: string; long_name: string; expansion: number | null; zone_id: number | null };
+// One per raid-day + zone: kills of mobs that aren't curated bosses (farm,
+// raid trash, uncurated nameds) — collected in full, displayed as a line.
+type OffcardRow = { day: string; zone_short: string | null; kills: number; total_damage: number };
 type LootDbRow = {
   raid_date: string;
   raid_id: number;
@@ -58,14 +62,22 @@ const ROW_LIMIT = 250;
 
 async function loadAll(w: ResolvedWindow): Promise<{
   rows: EncounterRow[];
+  offcard: OffcardRow[];
   zones: Map<string, ZoneRow>;
   loot: Map<string, LootDbRow[]>;
   attendance: Map<string, AttendanceRollup>;
   roster: Set<string>;
   error: string | null;
 }> {
+  const empty = { rows: [], offcard: [], zones: new Map(), loot: new Map(), attendance: new Map(), roster: new Set<string>() };
   try {
     const sb = supabaseAdmin();
+
+    // Cards are CURATED bosses only — since bot 3.1.52 the ingest path
+    // self-registers every exactly-matched mob (so first kills persist), which
+    // put 300+ farm-trash cards a day on this page. Filtering in the QUERY
+    // (not post-hoc) matters: trash must not consume the ROW_LIMIT window.
+    const curated = await curatedNpcIds(sb);
 
     let encQuery = sb
       .from('encounters')
@@ -75,11 +87,18 @@ async function loadAll(w: ResolvedWindow): Promise<{
         encounter_players ( character_name, total_damage, dps, rank )
       `)
       .gt('total_damage', 0)
+      .in('npc_id', curated)
       .order('started_at', { ascending: false })
       .limit(ROW_LIMIT);
     if (w.sinceIso) encQuery = encQuery.gte('started_at', w.sinceIso);
     const { data: encs, error: encErr } = await encQuery;
-    if (encErr) return { rows: [], zones: new Map(), loot: new Map(), attendance: new Map(), roster: new Set(), error: encErr.message };
+    if (encErr) return { ...empty, error: encErr.message };
+
+    // Everything off-card in the window, rolled up server-side per raid-day +
+    // zone (the RPC buckets days in ET to match dayKey).
+    const { data: offcardRows } = await sb
+      .rpc('parses_offcard_rollup', { p_since: w.sinceIso ?? '1970-01-01T00:00:00Z' });
+    const offcard = ((offcardRows ?? []) as OffcardRow[]);
 
     // Guild roster names (lowercased) — presence = Pack member. Used to detect
     // "foreign" raids: an upload where almost no named player is on our roster
@@ -94,7 +113,7 @@ async function loadAll(w: ResolvedWindow): Promise<{
 
     const { data: zoneRows } = await sb
       .from('eqemu_zone')
-      .select('short_name, long_name, expansion');
+      .select('short_name, long_name, expansion, zone_id');
     const zones = new Map<string, ZoneRow>(
       (zoneRows ?? []).map((z: ZoneRow) => [z.short_name, z]),
     );
@@ -169,15 +188,22 @@ async function loadAll(w: ResolvedWindow): Promise<{
       }
     }
 
-    return { rows: (encs as unknown as EncounterRow[]) ?? [], zones, loot, attendance, roster, error: null };
+    return { rows: (encs as unknown as EncounterRow[]) ?? [], offcard, zones, loot, attendance, roster, error: null };
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
-    return { rows: [], zones: new Map(), loot: new Map(), attendance: new Map(), roster: new Set(), error: msg };
+    return { ...empty, error: msg };
   }
 }
 
-function resolveZone(enc: EncounterRow, zones: Map<string, ZoneRow>) {
-  const short = enc.zone_short || enc.eqemu_npc_types?.zone_short || null;
+function resolveZone(enc: EncounterRow, zones: Map<string, ZoneRow>, zonesById: Map<number, ZoneRow>) {
+  // Final fallback: the catalog id convention npc_id = zone_id*1000 + n
+  // (docs/eqemu-catalog-cheatsheet.md) — the denormalized zone columns are
+  // NULL for every fresh encounter, which is why everything sat under
+  // "Unknown zone".
+  const derived = enc.eqemu_npc_types?.id != null
+    ? zonesById.get(Math.floor(enc.eqemu_npc_types.id / 1000))?.short_name ?? null
+    : null;
+  const short = enc.zone_short || enc.eqemu_npc_types?.zone_short || derived;
   const long  = short ? zones.get(short)?.long_name : null;
   return { short, long: long || short || 'Unknown zone' };
 }
@@ -254,13 +280,13 @@ function CardAdminBar({ encId, current }: { encId: string; current: string | nul
 type ZoneBucket = { label: string; encounters: EncounterRow[] };
 type DayBucket  = { label: string; zones: Map<string, ZoneBucket> };
 
-function bucket(rows: EncounterRow[], zones: Map<string, ZoneRow>) {
+function bucket(rows: EncounterRow[], zones: Map<string, ZoneRow>, zonesById: Map<number, ZoneRow>) {
   const days = new Map<string, DayBucket>();
   for (const enc of rows) {
     const dKey = dayKey(enc.started_at);
     if (!days.has(dKey)) days.set(dKey, { label: dayLabel(dKey), zones: new Map() });
     const day = days.get(dKey)!;
-    const { short, long } = resolveZone(enc, zones);
+    const { short, long } = resolveZone(enc, zones, zonesById);
     const zKey = short || '__unknown__';
     if (!day.zones.has(zKey)) day.zones.set(zKey, { label: long, encounters: [] });
     day.zones.get(zKey)!.encounters.push(enc);
@@ -324,7 +350,10 @@ export default async function ParsesPage(
   const { w: wParam } = await searchParams;
   const w = resolveWindow(wParam, '60d');
   const caveat = windowCaveat('parses', w);
-  const { rows: allRows, zones, loot, attendance, roster, error } = await loadAll(w);
+  const { rows: allRows, offcard, zones, loot, attendance, roster, error } = await loadAll(w);
+  const zonesById = new Map<number, ZoneRow>(
+    [...zones.values()].filter(z => z.zone_id != null).map(z => [z.zone_id as number, z]),
+  );
   // 'foreign' = a raid that's primarily NOT Wolf Pack members (a guildie pugging
   // another guild, whose agent uploaded the fight). Hidden from /parses entirely
   // — officers review these on /admin/anomalies, not dimmed inline like wipes.
@@ -353,9 +382,21 @@ export default async function ParsesPage(
   });
   // Remove engaged rows from the day-bucketed list so they don't double up.
   const completedRows = rows.filter(r => !engagedRows.some(e => e.id === r.id));
-  const days = bucket(completedRows, zones);
+  const days = bucket(completedRows, zones, zonesById);
   const dayEntries = [...days.entries()];
   const headlineNight = dayEntries.length > 0 ? dayEntries[0] : null;
+
+  // Off-card kills (farm / raid trash / uncurated nameds) grouped per day —
+  // rendered as one muted line per zone under the day, never as cards. A day
+  // with ONLY off-card kills still gets a (compact) section.
+  const offcardByDay = new Map<string, OffcardRow[]>();
+  for (const o of offcard) {
+    if (!offcardByDay.has(o.day)) offcardByDay.set(o.day, []);
+    offcardByDay.get(o.day)!.push(o);
+  }
+  for (const list of offcardByDay.values()) list.sort((a, b) => b.kills - a.kills);
+  const allDayKeys = [...new Set([...days.keys(), ...offcardByDay.keys()])]
+    .sort().reverse();
 
   return (
     <div className="space-y-6">
@@ -397,8 +438,9 @@ export default async function ParsesPage(
           {w.key === 'life' ? `Newest ${ROW_LIMIT} merged encounters` : `${w.label} window (newest ${ROW_LIMIT})`},
           grouped by raid night and zone. Within each zone, kills are shown in the order they happened. Damage
           is the max-per-player merge across all parser uploads for the same
-          kill. Click a card for the full breakdown. Loot blocks and attendance
-          rollups come from OpenDKP, mirrored every 6h (or via{' '}
+          kill. Click a card for the full breakdown. Non-boss kills (farm and
+          raid trash) roll up into the 🗡 lines under each night. Loot blocks
+          and attendance rollups come from OpenDKP, mirrored every 6h (or via{' '}
           <code>/syncopendkp</code>).
         </p>
         {caveat && <p className="text-xs text-orange mt-1">⚠ {caveat}</p>}
@@ -417,14 +459,16 @@ export default async function ParsesPage(
         </section>
       )}
 
-      {[...days.entries()].map(([dKey, day]) => {
+      {allDayKeys.map((dKey) => {
+        const day = days.get(dKey) ?? null;
+        const dayOff = offcardByDay.get(dKey) ?? [];
         const nightLoot = loot.get(dKey) ?? [];
         const nightAttendance = attendance.get(dKey) ?? null;
         return (
           <section key={dKey} className="space-y-4">
             <div className="border-b border-border pb-1 flex items-baseline justify-between flex-wrap gap-2">
               <h3 className="text-lg text-blue">
-                {day.label} <span className="text-dim text-xs">— {dKey}</span>
+                {dayLabel(dKey)} <span className="text-dim text-xs">— {dKey}</span>
               </h3>
               {nightAttendance && (
                 <div className="text-xs text-dim flex gap-3">
@@ -434,7 +478,7 @@ export default async function ParsesPage(
               )}
             </div>
 
-            {[...day.zones.entries()].map(([zKey, zone]) => {
+            {day && [...day.zones.entries()].map(([zKey, zone]) => {
               // Kill count + total damage excludes classified rows (wipes,
               // Live, PvP, test) — they're still rendered (with their chip +
               // dimmed) so the night's full history is visible, but they
@@ -471,6 +515,23 @@ export default async function ParsesPage(
                 </div>
               );
             })}
+
+            {dayOff.length > 0 && (
+              <div
+                className="text-xs text-dim space-y-0.5"
+                title="Kills of mobs that aren't curated bosses — farm, raid trash, uncurated nameds. Still collected in full; shown as totals so they don't bury the boss kills."
+              >
+                {dayOff.map(o => {
+                  const label = (o.zone_short && zones.get(o.zone_short)?.long_name) || o.zone_short || 'Unknown zone';
+                  return (
+                    <p key={o.zone_short ?? '__unknown__'} className="flex items-center gap-2">
+                      <span aria-hidden>🗡</span>
+                      <span>{label} — {o.kills} other kill{o.kills === 1 ? '' : 's'} · {fmtDmg(o.total_damage)}</span>
+                    </p>
+                  );
+                })}
+              </div>
+            )}
 
             {nightLoot.length > 0 && (
               <LootBlock loot={nightLoot as LootRow[]} />
