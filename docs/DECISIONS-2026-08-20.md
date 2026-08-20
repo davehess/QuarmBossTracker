@@ -37,6 +37,20 @@ page finally says Ssraeshza Temple instead of "Unknown zone").
 **Where it landed.** Web **1.1.77** + bot **3.1.60**, two migrations (applied
 via MCP 2026-08-20 ~02:1x UTC, identical files committed).
 
+**Post-deploy leak + cleanup (Hitya, Thu morning: "Still seeing a bunch of
+trash").** The backfill ran at 02:13 UTC but the flag-stamping bot only
+deployed at 13:46 UTC — for those ~11.5 hours the OLD bot kept self-registering
+first-seen mobs with the column DEFAULT (false = curated), so last night's
+Sebilis frogloks/myconids and Thursday's farm (34 rows, 03:23–13:32 UTC) came
+through as cards. Flipped by hand at ~14:10 UTC with the exact gap-window
+predicate; verified the 2-day card query then returned only the 11 real raid
+bosses. Lesson: **a default-valued backfill has a race against the still-running
+old writer — re-run the backfill after the writer deploys, or write the
+migration idempotently enough to re-apply.** Open-world farm nameds caught in
+the sweep (Tolapumj, Prophet Grikplag, Centurion Regorator, Legionnaire Rukos)
+stay off-card by the lockout rule; any that ever appears in a lockout/bosskill
+relay self-promotes.
+
 ## "If they have a loot lockout we can keep them on" (Hitya) — lockout ⇒ card-worthy, self-enforcing
 
 **The call.** Uncurated NAMEDS (instanced City of Mist / Ssra minis) shouldn't
