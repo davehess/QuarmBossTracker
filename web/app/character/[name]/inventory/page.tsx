@@ -197,7 +197,7 @@ export default async function CharacterInventoryPage({ params }: { params: Promi
         </h2>
         <p className="text-sm text-dim leading-6">
           Stored snapshot from {decoded}&apos;s last <code className="text-text">/outputfile inventory</code>{' '}
-          (Mimic uploads this automatically in 1.0.78+). Hover an item for stats. Click through to PQDI for the full sheet.
+          (Mimic picks the file up automatically within ~10 minutes — beta 2.5.5+, stable at the next release). Hover an item for stats. Click through to PQDI for the full sheet.
         </p>
         <div className="mt-3 flex flex-wrap gap-x-6 gap-y-1 text-xs text-dim">
           <span>Total items: <span className="text-text">{totalSlotsUsed.toLocaleString()}</span></span>
@@ -208,7 +208,7 @@ export default async function CharacterInventoryPage({ params }: { params: Promi
         </div>
         {inv.length === 0 && (
           <p className="text-xs text-orange mt-3">
-            ⚠ No inventory snapshot yet for {decoded}. Run <code>/outputfile inventory</code> in EQ — Mimic 1.0.78+ uploads it automatically. Or upload manually via 🎒 on <Link href="/me" className="text-blue hover:underline">/me</Link>.
+            ⚠ No inventory snapshot yet for {decoded}. Run <code>/outputfile inventory</code> in EQ with Mimic running — it picks the file up within ~10 minutes (beta 2.5.5+; stable at the next release). Or upload manually via 🎒 on <Link href="/me" className="text-blue hover:underline">/me</Link>.
           </p>
         )}
       </section>

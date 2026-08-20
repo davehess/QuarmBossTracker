@@ -1281,6 +1281,14 @@ holds it in memory.
   /sll lockout or bosskill relay flips its row to curated
   (`_promoteLockoutBoss`, bot `index.js`) — "if they have a loot lockout we
   can keep them on" (Hitya 2026-08-19).
+- **Inventory auto-upload (agent 3.5.94, beta, 2026-08-20)** —
+  `scanInventoryUploads` in the agent watches `<Char>-Inventory.txt` beside
+  its quarmy/spellbook siblings (same prefs gate, fingerprint + checksum
+  dedup, 10-min cadence) and POSTs to the bot's `/api/agent/inventory`
+  (existed since 2026-06-23, unused until now — the agent half was never
+  built, so `character_inventory` was manual-/me-upload-only and froze at
+  upload time). Coin/Currency/Held never leave the machine; bank item slots
+  upload. Page copy: `web/app/character/[name]/inventory/page.tsx`.
 - **Deferred /announce parse sessions (bot 3.1.62)** — announcing a future
   event parks `pending_parse_session` in `bot_kv`; the 5-min spawn checker
   opens it 30 min before start (`pendingSessionAction`,

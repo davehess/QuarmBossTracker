@@ -85,6 +85,38 @@ time (or re-announce ≤2h out, which now opens immediately). Also: the stale
 All-Night Leaderboard message from 12:21 AM in that thread is farm data —
 delete it by hand.
 
+## Inventory auto-upload: the third sibling was never built (Hitya: "are we not consuming inventory files when they get updated?")
+
+**The finding.** The bot's `/api/agent/inventory` endpoint has existed since
+2026-06-23 (Hitya: *"load the inventory, spellbook, and quarmy files via
+mimic the way we are the logs"*) and the `/character/<name>/inventory` page
+copy claimed "Mimic uploads this automatically in 1.0.78+" — but the
+agent-side scan was NEVER written, in any version, anywhere (repo history
+searched). Quarmy and spellbook shipped their halves; inventory silently
+stayed manual-/me-upload-only. Result: 2 of 122 characters fresher than 30
+days, family snapshots frozen at July 15, August's Ancient scrolls invisible
+to the item search, Manamana's file sitting unconsumed in the scanned dir.
+
+**The fix.** Agent **3.5.94** (beta): `scanInventoryUploads`, an exact
+sibling of the quarmy/spellbook scans — same dir, same exclude_inventory
+prefs gate, fingerprint + checksum dedup persisted in logsync.uploaded.json,
+10-min cadence. Coin slots / Currency / the Held cursor never leave the
+machine; bank ITEM slots upload (the manual path always included them). Web
+**1.1.78** fixes the page copy to the truth.
+
+**The lesson (rhymes with "an enabled trigger reads as coverage").**
+Aspirational UI copy is how a missing feature hides: the page SAID uploads
+were automatic, so nobody filed "it doesn't upload" for two months — the
+report only came when a specific item (an Ancient scroll) was visibly
+missing. When copy promises an automated behavior, the behavior's absence is
+invisible by construction — verify the pipe end-to-end when shipping the
+copy, not just the endpoint.
+
+**Verify (next Mimic beta on any box):** `[inventory] queued inventory
+upload for <Char>` in the agent log within ~40s of boot; Manamana's page
+fills; `character_inventory.observed_at` goes current for every character
+with a file on a running box.
+
 ## Process: a silent Monitor death delayed the freeze-lift landing ~9h
 
 The 00:31 ET landing (bot 3.1.59 + web 1.1.77) was armed on a persistent
