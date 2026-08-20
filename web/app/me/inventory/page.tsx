@@ -20,11 +20,12 @@ import { supabaseServer } from '@/lib/supabase-server';
 import { ownedCharacters } from '@/lib/ownedCharacters';
 import InventoryExplorer, { type InvItem, type LocGroup } from './InventoryExplorer';
 import { selectAll } from '@/lib/selectAll';
+import { clusterSharedBanks } from '@/lib/sharedBank';
 
 export const dynamic = 'force-dynamic';
 export const metadata = { title: 'My inventory — Wolf Pack' };
 
-type InvRow = { character_name: string; slot_label: string; item_id: number | null; item_name: string; quantity: number | null };
+type InvRow = { character_name: string; slot_label: string; item_id: number | null; item_name: string; quantity: number | null; observed_at: string | null };
 type ItemMeta = { id: number; damage: number | null; ac: number | null; nodrop: boolean | null; itemtype: number | null; slots: number | null };
 
 function locGroup(slot: string): LocGroup {
@@ -71,42 +72,43 @@ export default async function MyInventoryPage() {
     // to be capped at 1000".
     const rows = await selectAll<InvRow>((from, to) => admin
       .from('character_inventory')
-      .select('character_name, slot_label, item_id, item_name, quantity')
+      .select('character_name, slot_label, item_id, item_name, quantity, observed_at')
       .eq('guild_id', 'wolfpack')
       .in('character_name', charNames)
       .order('character_name').order('slot_label')
       .range(from, to));
     rowCount = rows.length;
 
-    // Shared-bank dedup (Hitya 2026-08-20): the shared bank is ACCOUNT-level —
-    // every character on a game account exports the same SharedBank rows, so
-    // summing them counted those items up to 8×. shared_bank_groups
-    // fingerprints each character's SharedBank content; identical fingerprint
-    // = same game account, and only the FRESHEST snapshot in each group (the
-    // representative, picked within this family — cross-family fingerprint
-    // collisions on trivial identical banks are possible) contributes its
-    // shared bank to the totals. Regrouping is automatic: a character moved
-    // to another account uploads that account's shared bank next time. Empty
-    // shared banks never group (no rows → no fingerprint).
-    const { data: sbgRows } = await admin
-      .from('shared_bank_groups')
-      .select('character_name, fingerprint, newest_observed_at')
-      .eq('guild_id', 'wolfpack')
-      .in('character_name', charNames);
-    const repByFingerprint = new Map<string, { name: string; newest: string }>();
-    for (const g of (sbgRows ?? []) as { character_name: string; fingerprint: string; newest_observed_at: string }[]) {
-      const cur = repByFingerprint.get(g.fingerprint);
-      if (!cur || g.newest_observed_at > cur.newest
-          || (g.newest_observed_at === cur.newest && g.character_name < cur.name)) {
-        repByFingerprint.set(g.fingerprint, { name: g.character_name, newest: g.newest_observed_at });
-      }
+    // Shared-bank dedup (Hitya 2026-08-20). The shared bank is ACCOUNT-level:
+    // every character on a game account reads the SAME physical bank, so
+    // summing their rows counted one stack once per character (ten characters
+    // each reporting SharedBank6-Slot9 = Words of the Spectre x3).
+    //
+    // Grouping is by SLOT AGREEMENT, not by hashing the whole bank. The first
+    // cut hashed every SharedBank row and grouped exact matches — useless in
+    // practice, because each character's inventory file is written whenever
+    // THAT character last ran /outputfile inventory. Snapshots sit minutes or
+    // hours apart, stacks move, row counts drift (107 / 104 / 108 on one real
+    // account), and one differing row broke the whole hash. Slot addresses are
+    // account-scoped and stable, so a 4-rows-stale snapshot still agrees on
+    // the other 100. See web/lib/sharedBank.ts.
+    const sharedRows = rows.filter(r => locGroup(r.slot_label) === 'shared');
+    const clusters = clusterSharedBanks(sharedRows.map(r => ({
+      character: r.character_name,
+      slot:      r.slot_label,
+      itemKey:   (r.item_id ? `id:${r.item_id}` : `nm:${r.item_name.toLowerCase()}`)
+                 + '|' + String(r.quantity ?? 1),
+      observedAt: r.observed_at,
+    })));
+    // Only the freshest snapshot of each account contributes its shared bank.
+    const skipShared = clusters.skip;
+    sharedAccountCount = clusters.accountCount;
+    // A cluster too large to be one account means the scoring misfired; those
+    // are left un-deduped (visible duplicates beat hidden losses) and logged
+    // so it is noticed rather than silently absorbed.
+    for (const grp of clusters.oversized) {
+      console.warn('[shared-bank] refusing to dedup an implausible account cluster:', grp.join(', '));
     }
-    const sharedReps = new Set([...repByFingerprint.values()].map(r => r.name));
-    const skipShared = new Set(
-      ((sbgRows ?? []) as { character_name: string }[])
-        .map(g => g.character_name).filter(n => !sharedReps.has(n)),
-    );
-    sharedAccountCount = repByFingerprint.size;
 
     const ids = [...new Set(rows.map(r => r.item_id).filter((n): n is number => !!n))];
     const metaById = new Map<number, ItemMeta>();

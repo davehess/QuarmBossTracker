@@ -37,6 +37,18 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'web-1-1-83',
+    title: '\u{1F3E6} Shared banks, actually counted once',
+    version: 'Web 1.1.83',
+    date: '2026-08-20',
+    headline: 'The shared-bank fix from this morning only worked when every character had an identical snapshot — which is almost never. Now it holds.',
+    features: [],
+    fixes: [
+      'One stack in the shared bank could still be counted once per character (ten characters, ten copies of the same three Words of the Spectre). Characters on an account are now matched by which bank slots agree, so snapshots taken hours apart still group — the stack counts once.',
+      'Unrelated mule accounts could be chained together into one giant fake "account" — they stay separate now.',
+    ],
+  },
+  {
     key: 'web-1-1-82',
     title: '\u{1F50E} Tell us about your traders',
     version: 'Web 1.1.82 · Bot 3.1.63',
