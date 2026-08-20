@@ -8860,6 +8860,7 @@ function _endpointForKind(kind, botUrl) {
     case 'pop_flag':        return base + '/pop_flags';
     case 'quarmy':          return base + '/quarmy';
     case 'spellbook':       return base + '/spellbook';
+    case 'inventory':       return base + '/inventory';
     case 'buff_cast':       return base + '/buff_casts';
     case 'tells':           return base + '/tells';
     case 'threat_snapshot': return base + '/threat-snapshot';
@@ -15199,11 +15200,32 @@ function renderOverlays(s) {
   h += '<div class="dim" style="font-size:11px;margin-top:6px">When on, the Extended Target list hides targets reported by Mimics in a different zone, so a splinter group elsewhere does not clutter your list. Turn off to include every online raider regardless of zone.</div>';
   h += '</div>';
 
+  // Buff-queue section filters (Hitya 2026-08-19: "add some options on the
+  // dashboard for debuff / feral only"). Agent-side pref like Extended
+  // Target's — checkboxes here, POST /api/bq-pref, and the overlay obeys on
+  // its next poll. HTML byte-stable; checked state applied by wpWireBqPref.
+  h += '<div class="card wide"><h2>🛡 Buff queue options</h2>';
+  h += '<div class="dim" style="font-size:11px;margin-bottom:6px">Choose which sections the Buff queue overlay shows. Untick all but one to run it lean &mdash; cures-only for a curer, the Feral Avatar / Savagery list only for a shaman or beastlord.</div>';
+  h += '<label style="display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer;margin-bottom:4px">'
+    +  '<input type="checkbox" id="wpBqDebuffs" data-bq="debuffs" class="wp-bq-pref" style="cursor:pointer" />'
+    +  '<span><b>🩸 Cure / debuff queue</b> <span class="dim">(default on)</span></span>'
+    +  '</label>';
+  h += '<label style="display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer;margin-bottom:4px">'
+    +  '<input type="checkbox" id="wpBqBuffs" data-bq="buffs" class="wp-bq-pref" style="cursor:pointer" />'
+    +  '<span><b>🛡 Buff lines</b> <span class="dim">(default on) &mdash; the HP / Haste / Resists&hellip; sections</span></span>'
+    +  '</label>';
+  h += '<label style="display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer">'
+    +  '<input type="checkbox" id="wpBqBurst" data-bq="burst" class="wp-bq-pref" style="cursor:pointer" />'
+    +  '<span><b>⚡ Feral Avatar / Savagery queue</b> <span class="dim">(default on)</span></span>'
+    +  '</label>';
+  h += '</div>';
+
   h += '</div>';
   setSectionHTML('overlays', h);
   wpRefreshOverlayToggles();
   wpWireHideHotkey();
   wpWireExtPref();
+  wpWireBqPref();
 }
 
 // #113 Extended Target "same-zone targets only" checkbox wiring. The pref lives
@@ -15232,6 +15254,41 @@ function wpWireExtPref() {
       }
     }).catch(function(){});
   }
+}
+
+// Buff-queue section checkboxes — same contract as wpWireExtPref: values are
+// cached JS-side so a section re-morph reapplies them instead of resetting
+// the boxes; fetched once until known; POST /api/bq-pref persists and the
+// overlay obeys on its next 1.5s poll (the flags ride every payload).
+var _wpBqPrefVals = null;
+function wpWireBqPref() {
+  var cbs = document.querySelectorAll('.wp-bq-pref');
+  if (!cbs.length) return;
+  function paint() {
+    if (!_wpBqPrefVals) return;
+    for (var i = 0; i < cbs.length; i++) {
+      var k = cbs[i].getAttribute('data-bq');
+      if (k in _wpBqPrefVals) cbs[i].checked = _wpBqPrefVals[k] !== false;
+    }
+  }
+  for (var i = 0; i < cbs.length; i++) {
+    _bindOnce(cbs[i], 'change', function(ev){
+      var cb = ev.target;
+      var k = cb.getAttribute('data-bq');
+      if (!k) return;
+      _wpBqPrefVals = _wpBqPrefVals || { debuffs: true, buffs: true, burst: true };
+      _wpBqPrefVals[k] = !!cb.checked;
+      var body = {}; body[k] = !!cb.checked;
+      fetch('/api/bq-pref', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      }).catch(function(){});
+    });
+  }
+  if (_wpBqPrefVals) { paint(); return; }
+  fetch('/api/bq-pref', { cache: 'no-store' }).then(function(r){ return r.json(); }).then(function(j){
+    if (j && typeof j === 'object') { _wpBqPrefVals = j; paint(); }
+  }).catch(function(){});
 }
 
 // Hotkey row wiring — read the current accelerator from config, and capture a
@@ -21570,6 +21627,13 @@ function startWebDashboard(port) {
         // Tell the overlay which class AUTO resolved to so the picker can
         // read "Auto (Druid)" instead of a blank.
         payload.auto_class = autoClass;
+        // Section filters (dashboard "Buff queue options") ride every payload
+        // so a checkbox change reaches the overlay on its next 1.5s poll.
+        payload.sections = {
+          debuffs: _optinState.bqShowDebuffs !== false,
+          buffs:   _optinState.bqShowBuffs !== false,
+          burst:   _optinState.bqShowBurst !== false,
+        };
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify(payload));
       }
@@ -21705,6 +21769,42 @@ function startWebDashboard(port) {
             try { _extTargetCache.clear(); } catch { /* */ }
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ ok: true, same_zone_only: _optinState.extSameZoneOnly }));
+          } catch {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: false }));
+          }
+        });
+        return;
+      }
+      // Buff-queue overlay section filters (Hitya 2026-08-19: "debuff / feral
+      // only"). Same shape as /api/ext-pref: GET for the dashboard checkboxes,
+      // POST persists; the overlay picks the change up on its next 1.5s poll
+      // because the flags ride every /api/buff-queue payload as `sections`.
+      if (req.url === '/api/bq-pref' && req.method === 'GET') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({
+          debuffs: _optinState.bqShowDebuffs !== false,
+          buffs:   _optinState.bqShowBuffs !== false,
+          burst:   _optinState.bqShowBurst !== false,
+        }));
+      }
+      if (req.url === '/api/bq-pref' && req.method === 'POST') {
+        let bqBody = '';
+        req.on('data', c => { bqBody += c; if (bqBody.length > 4096) req.destroy(); });
+        req.on('end', () => {
+          try {
+            const p = JSON.parse(bqBody || '{}');
+            if ('debuffs' in p) _optinState.bqShowDebuffs = (p.debuffs !== false);
+            if ('buffs'   in p) _optinState.bqShowBuffs   = (p.buffs !== false);
+            if ('burst'   in p) _optinState.bqShowBurst   = (p.burst !== false);
+            _saveOptInState();
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+              ok: true,
+              debuffs: _optinState.bqShowDebuffs !== false,
+              buffs:   _optinState.bqShowBuffs !== false,
+              burst:   _optinState.bqShowBurst !== false,
+            }));
           } catch {
             res.writeHead(400, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ ok: false }));
@@ -23740,6 +23840,14 @@ const _optinState = {
   // Personal triggers the user created themselves are never gated. Persisted
   // here like the other dashboard-set flags.
   calloutAllowlist: true,
+  // Buff-queue overlay section filters (Hitya 2026-08-19: "add some options
+  // on the dashboard for debuff / feral only"). All ON by default; a curer
+  // unticks buffs+burst to run cures-only, a shaman unticks the rest for a
+  // Feral-only list. Same ext-pref pattern: dashboard checkbox → agent state
+  // → riding the /api/buff-queue payload as `sections`.
+  bqShowDebuffs: true,
+  bqShowBuffs:   true,
+  bqShowBurst:   true,
 };
 
 function _optinSortFn() {
@@ -23775,6 +23883,10 @@ function _loadOptInState() {
     }
     // #136 default ON: absent (old files) → true; only an explicit false disables.
     _optinState.calloutAllowlist     = (raw.calloutAllowlist !== false);
+    // Buff-queue section filters — same absent-means-on convention.
+    _optinState.bqShowDebuffs        = (raw.bqShowDebuffs !== false);
+    _optinState.bqShowBuffs          = (raw.bqShowBuffs !== false);
+    _optinState.bqShowBurst          = (raw.bqShowBurst !== false);
   } catch { /* missing or unreadable — fresh state */ }
 }
 function _saveOptInState() {
@@ -23787,6 +23899,9 @@ function _saveOptInState() {
       lootAuctionTts:        _optinState.lootAuctionTts !== false,
       lootAuctionDefaultSec: _optinState.lootAuctionDefaultSec || 120,
       calloutAllowlist:      _optinState.calloutAllowlist !== false,
+      bqShowDebuffs:         _optinState.bqShowDebuffs !== false,
+      bqShowBuffs:           _optinState.bqShowBuffs !== false,
+      bqShowBurst:           _optinState.bqShowBurst !== false,
     }, null, 2));
   } catch { /* non-fatal */ }
 }
@@ -24320,6 +24435,7 @@ function _loadUploadedState() {
     if (j && typeof j === 'object') {
       Object.assign(_quarmyUploaded,    j.quarmy    || {});
       Object.assign(_spellbookUploaded, j.spellbook || {});
+      Object.assign(_inventoryUploaded, j.inventory || {});
       Object.assign(_scannedFiles,      j.files     || {});
     }
   } catch { /* first run or corrupt file — start empty, re-uploads dedup server-side */ }
@@ -24330,7 +24446,7 @@ function _saveUploadedStateSoon() {
   _uploadedSaveTimer = setTimeout(() => {
     _uploadedSaveTimer = null;
     let body;
-    try { body = JSON.stringify({ quarmy: _quarmyUploaded, spellbook: _spellbookUploaded, files: _scannedFiles }); }
+    try { body = JSON.stringify({ quarmy: _quarmyUploaded, spellbook: _spellbookUploaded, inventory: _inventoryUploaded, files: _scannedFiles }); }
     catch { return; }
     const tmp = UPLOADED_STATE_FILE + '.tmp';
     fs.writeFile(tmp, body, (err) => {
@@ -24481,7 +24597,8 @@ function scanQuarmyExports() {
 // web/app/me/spellbook-actions.ts parseSpellbook (same columns).
 const SPELLBOOK_FILENAME_RX = /^([A-Za-z]+)[-_ ]?Spellbook\.txt$/i;
 const _spellbookUploaded = {};   // char(lower) → content checksum already enqueued
-_loadUploadedState();   // both maps declared — safe to hydrate from disk now
+const _inventoryUploaded = {};   // char(lower) → content checksum already enqueued
+_loadUploadedState();   // all maps declared — safe to hydrate from disk now
 
 function parseSpellbookFile(text) {
   const out = [];
@@ -24554,6 +24671,110 @@ function scanSpellbookFiles() {
       _saveUploadedStateSoon();
       enqueueUpload('spellbook', { agent_version: AGENT_VERSION, character, checksum, spells });
       console.log(`[spellbook] queued ${spells.length} spells for ${character}`);
+    } catch { /* unreadable / malformed — skip, retry next scan */ }
+  }
+}
+
+// ── Inventory export ingest ──────────────────────────────────────────────────
+// The THIRD sibling — and the one that was never built. The bot's
+// /api/agent/inventory endpoint has existed since 2026-06-23 (Hitya: "load the
+// inventory, spellbook, and quarmy files via mimic the way we are the logs");
+// quarmy and spellbook shipped their agent halves, inventory quietly stayed
+// manual-/me-upload-only, which is how character_inventory froze at whatever
+// people last uploaded by hand (found 2026-08-20: Ancient spell scrolls bought
+// in August invisible to the item search — the family's newest snapshot was
+// July 15, and only 2 of 122 characters were fresher than 30 days).
+//
+// Same dir, same prefs gate, same fingerprint + checksum dedup as its two
+// siblings. Row shape matches the bot handler AND the /me manual upload:
+// slot_label / item_id / item_name / quantity. Coin rows (`*-Coin` slots,
+// `Currency`) and the transient Held cursor never leave the machine; bank
+// ITEM slots DO upload — the /me manual path has always included them and the
+// search page's Bank chip expects them. exclude_inventory stops the upload
+// entirely, checked under the KNOWN prefs only (the scan refuses to run
+// before the prefs poll answers).
+function parseInventoryFileForUpload(text) {
+  const rows = [];
+  const seen = new Set();
+  for (const rawLine of String(text || '').split(/\r?\n/)) {
+    if (!rawLine) continue;
+    if (/^Location\b/i.test(rawLine)) continue;        // header row
+    const cols = rawLine.split('\t');
+    if (cols.length < 2) continue;
+    const slot     = (cols[0] || '').trim();
+    const itemName = (cols[1] || '').trim();
+    if (!slot || !itemName || itemName.toLowerCase() === 'empty') continue;
+    // Coin/currency appears as a SLOT label ('Bank-Coin', 'Currency') and the
+    // bot's defense-in-depth also checks the item name — drop on either.
+    if (/-Coin$/i.test(slot) || /^Currency$/i.test(slot) || /^Currency$/i.test(itemName) || /^Held$/i.test(slot)) continue;
+    const key = slot.toLowerCase();
+    if (seen.has(key)) continue;                        // schema is unique-by-slot
+    seen.add(key);
+    const itemId = parseInt(cols[2], 10);
+    rows.push({
+      slot_label: slot.slice(0, 64),
+      item_id:    Number.isFinite(itemId) && itemId > 0 ? itemId : null,
+      item_name:  itemName.slice(0, 128),
+      quantity:   Math.max(1, parseInt(cols[3], 10) || 1),
+    });
+  }
+  return rows;
+}
+
+// Content checksum over the row set (slot+item+qty, order-independent) so a
+// re-output with nothing moved is a no-op both here and at the bot.
+function _inventoryChecksum(rows) {
+  const parts = rows
+    .map(r => r.slot_label + '|' + (r.item_id ?? '') + '|' + r.item_name + '|' + r.quantity)
+    .sort()
+    .join('\n');
+  return 'inv' + rows.length + '-' + crypto.createHash('sha1').update(parts).digest('hex').slice(0, 16);
+}
+
+function scanInventoryUploads() {
+  if (_raidHold) return;   // raid hold — files wait on disk, scanned when it lifts
+  if (!stats.characterPrefsCheckedAt) return;   // exclude_inventory must be known first
+  const firstLog = stats.watchedLogs[0]?.logPath;
+  if (!firstLog) return;
+  const dir = path.dirname(firstLog);
+  let entries;
+  try { entries = fs.readdirSync(dir); } catch { return; }
+  const envExcluded = new Set(
+    (process.env.WOLFPACK_EXCLUDED_CHARS || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean),
+  );
+  const dryRun = !!(_uploadOpts && _uploadOpts.dryRun);
+  for (const name of entries) {
+    const m = name.match(INVENTORY_FILENAME_RX);
+    if (!m) continue;
+    const character = m[1].charAt(0).toUpperCase() + m[1].slice(1).toLowerCase();
+    const lower = character.toLowerCase();
+    if (envExcluded.has(lower) || _quarmyPrefsBlock(lower)) continue;   // prefs can flip — never fingerprint
+    const fullPath = path.join(dir, name);
+    try {
+      // stat-only skip — same contract as the quarmy/spellbook scans, but under
+      // its own key: the loadout scanner reads the same file for the dashboard
+      // and must not share upload bookkeeping.
+      const fpKey = fullPath + '#upload';
+      const _st = fs.statSync(fullPath);
+      const _fp = _fileFingerprint(_st);
+      if (_scannedFiles[fpKey] === _fp) continue;
+      const rows = parseInventoryFileForUpload(fs.readFileSync(fullPath, 'utf8'));
+      if (rows.length === 0) {
+        _scannedFiles[fpKey] = _fp; _saveUploadedStateSoon(); continue;
+      }
+      const checksum = _inventoryChecksum(rows);
+      if (_inventoryUploaded[lower] === checksum) {
+        _scannedFiles[fpKey] = _fp; _saveUploadedStateSoon(); continue;
+      }
+      if (dryRun) {
+        console.log(`[inventory] DRY RUN — would upload ${character}: ${rows.length} rows (checksum ${checksum})`);
+        continue;
+      }
+      _inventoryUploaded[lower] = checksum;
+      _scannedFiles[fpKey] = _fp;
+      _saveUploadedStateSoon();
+      enqueueUpload('inventory', { agent_version: AGENT_VERSION, character, checksum, rows });
+      console.log(`[inventory] queued inventory upload for ${character} (${rows.length} rows)`);
     } catch { /* unreadable / malformed — skip, retry next scan */ }
   }
 }
@@ -33906,11 +34127,22 @@ function _fireTriggerActions(t, captures, tsMs, test, isRelay) {
       // Pass when the captured name is a raid member OR one of our pets (#150);
       // only a genuinely-unknown non-pet non-member suppresses.
       if (!val || (!_raidRosterHas(val) && !_isOurPetName(String(val).toLowerCase()))) {
-        if (!test) console.log('[trigger] ' + (t.name || 'trigger') + ' suppressed — ' + a.require_raid_member + '=' + val + ' not a raid member');
+        // TIMER-BEARING triggers still ARM on a suppressed fire (Hitya
+        // 2026-08-19, second cursed-cycle DT landed on a pet and the raid
+        // had no countdown): a countdown is CYCLE state, not a victim
+        // callout — a Death Touch spent on ANY pet still means the next one
+        // is timer_duration away, and most agents can't prove someone
+        // else's charm pet is "ours". Only the gated actions (text / tts /
+        // discord) stay suppressed. The Aug-09 six-chips-for-one-name spam
+        // this gate was tightened against was an id-explosion in
+        // captureSuffix, fixed separately — not a reason to drop the arm.
+        const hasTimer = (t.timer_duration_sec > 0 || t.timer_duration_capture);
+        if (hasTimer) _startTimer(t, tsMs, test, captures);
+        if (!test) console.log('[trigger] ' + (t.name || 'trigger') + ' ' + (hasTimer ? 'timer armed, actions suppressed' : 'suppressed') + ' — ' + a.require_raid_member + '=' + val + ' not a raid member');
         if (!t._noJournal) {
           _journalTrigger({ trigger: t.name, scope: t._scope || (test ? 'test' : 'personal'), checkpoint: TJ.GATES,
                             stopped: true, rehearsal: !!t._rehearsal,
-                            reason: 'suppressed — ' + a.require_raid_member + '=' + (val || '?') + ' not a raid member' });
+                            reason: (hasTimer ? 'timer armed; actions suppressed — ' : 'suppressed — ') + a.require_raid_member + '=' + (val || '?') + ' not a raid member' });
         }
         return;
       }
@@ -34958,6 +35190,12 @@ async function main() {
   // "missing spells" page current with no manual paste.
   setTimeout(scanSpellbookFiles, 35_000);
   setInterval(scanSpellbookFiles, 10 * 60_000);
+
+  // Inventory export ingest — <Char>-Inventory.txt, the third sibling. The
+  // bot endpoint existed since June; this scan is the half that was missing
+  // (2026-08-20, the invisible Ancient scrolls). Same prefs gate + cadence.
+  setTimeout(scanInventoryUploads, 40_000);
+  setInterval(scanInventoryUploads, 10 * 60_000);
 
   // Version polling — reach out to the bot every 10 min so idle agents
   // still learn about new releases promptly (without needing an encounter

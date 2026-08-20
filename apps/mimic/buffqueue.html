@@ -523,12 +523,20 @@
       }
       line += '<span class="curse">'+chips+'</span>';
     } else if (kind === 'burst') {
-      var dmg = (r.damage || 0);
-      var dmgTxt = dmg >= 1e6 ? (dmg/1e6).toFixed(1)+'M'
-                : dmg >= 1e3 ? (dmg/1e3).toFixed(0)+'k'
-                : dmg > 0    ? String(dmg)
-                :             'no data';
-      line += '<span class="miss">'+esc(dmgTxt)+'</span>';
+      // Already carrying the burst buff → countdown instead of damage (Hitya
+      // 2026-08-19: "should have timers left on feral avatar targets") so the
+      // shaman/BL times the recast instead of the row vanishing.
+      if (r.carrying) {
+        var ct2 = (r.remaining_secs != null) ? fmtSecs(r.remaining_secs) : 'on';
+        line += '<span class="miss" title="'+esc(r.carrying)+' active — recast when it drops">⏳ '+ct2+'</span>';
+      } else {
+        var dmg = (r.damage || 0);
+        var dmgTxt = dmg >= 1e6 ? (dmg/1e6).toFixed(1)+'M'
+                  : dmg >= 1e3 ? (dmg/1e3).toFixed(0)+'k'
+                  : dmg > 0    ? String(dmg)
+                  :             'no data';
+        line += '<span class="miss">'+esc(dmgTxt)+'</span>';
+      }
     } else {
       line += '<span class="miss">'+esc((r.missing || []).join(' · '))+'</span>';
     }
@@ -546,6 +554,9 @@
     // section header so the bot can pick the right ability name.
     var burst = (payload && (payload.feral_queue || payload.savagery_queue)) || [];
     var burstLabel = (payload && payload.burst_label) || null;
+    // Section filters from the dashboard's "Buff queue options" card (Hitya
+    // 2026-08-19: "debuff / feral only"). Absent field = show (older agent).
+    var sec = (payload && payload.sections) || {};
     var html = '';
     // Debuff / cure queue FIRST (per user) — cures are time-critical and the
     // bot already orders them curse → blind → poison → disease. Locally
@@ -557,12 +568,12 @@
       if (!(rv.curses && rv.curses.length)) continue;
       dqVis.push(rv);
     }
-    if (dqVis.length) {
+    if (sec.debuffs !== false && dqVis.length) {
       html += '<div class="sec debuffs"><div class="hdr"><span class="lab">🩸 Debuff queue</span><span class="ct">'+dqVis.length+'</span><span class="hint">cures needed · curse → blind → poison → disease</span></div>';
       for (var di = 0; di < dqVis.length; di++) html += renderRow(dqVis[di], 'd');
       html += '</div>';
     }
-    if (bq.length) {
+    if (sec.buffs !== false && bq.length) {
       var hint = bufferClass ? ('severity-first · gaps a '+esc(bufferClass)+' can fix') : 'pick a class to filter';
       html += '<div class="sec buffs"><div class="hdr"><span class="lab">🛡 Buff queue</span><span class="ct">'+bq.length+'</span><span class="hint">'+hint+'</span></div>';
       // Group by buff line: a raider missing two categories appears under
@@ -583,13 +594,25 @@
       for (var ci = 0; ci < catOrder.length; ci++) {
         var label = catOrder[ci];
         var rowsC = byCat[label];
-        var isCollapsed = !!_collapsed[label];
+        // Collapsed by DEFAULT (Hitya 2026-08-19: "buff queue is off the page
+        // - needs to collapse buff types down groups"): a mid-raid queue with
+        // every section expanded is a wall. Absent = collapsed; an explicit
+        // false (the user expanded it) persists their choice.
+        var isCollapsed = _collapsed[label] !== false;
         var mem = memmedHint(label, recent);
+        // Collapsed headers still tell the buffer WHO: first few names inline.
+        var preview = '';
+        if (isCollapsed && rowsC.length) {
+          var nms = rowsC.slice(0, 3).map(function(r){ return r.name; }).join(', ');
+          if (rowsC.length > 3) nms += ' +' + (rowsC.length - 3);
+          preview = '<span style="color:#8b949e;font-size:9px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:160px">'+esc(nms)+'</span>';
+        }
         html += '<div class="cat">'
               +   '<div class="cathdr" data-cat="'+esc(label)+'" style="display:flex;align-items:baseline;gap:5px;cursor:pointer;padding:2px 4px;font-size:10px;color:#79c0ff;background:rgba(88,166,255,0.07);border-radius:3px;margin:3px 0 2px">'
               +     '<span style="font-size:9px">'+(isCollapsed ? '▸' : '▾')+'</span>'
               +     '<span style="font-weight:600">'+esc(label)+'</span>'
               +     '<span style="color:#6e7681;font-variant-numeric:tabular-nums">'+rowsC.length+'</span>'
+              +     preview
               +     (mem ? '<span style="margin-left:auto;color:#7ee787;font-size:9px" title="You cast '+esc(mem)+' this session — likely still on a gem">🔮 '+esc(mem)+'</span>' : '')
               +   '</div>';
         if (!isCollapsed) {
@@ -599,7 +622,7 @@
       }
       html += '</div>';
     }
-    if (burst.length && burstLabel) {
+    if (sec.burst !== false && burst.length && burstLabel) {
       html += '<div class="sec burst"><div class="hdr"><span class="lab">⚡ '+esc(burstLabel)+' queue</span><span class="ct">'+burst.length+'</span><span class="hint">damage descending · tonight\'s session</span></div>';
       for (var i = 0; i < burst.length; i++) html += renderRow(burst[i], 'burst');
       html += '</div>';
@@ -649,7 +672,10 @@
     if (!hdr) return;
     var label = hdr.getAttribute('data-cat');
     if (!label) return;
-    _collapsed[label] = !_collapsed[label];
+    // Effective state is "collapsed unless explicitly false" — flip against
+    // THAT, not the raw stored value, or the first click on a default-
+    // collapsed section stores true and changes nothing.
+    _collapsed[label] = (_collapsed[label] !== false) ? false : true;
     _saveCollapsed();
     if (_lastPayload) render(_lastPayload);
   });
