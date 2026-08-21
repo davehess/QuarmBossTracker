@@ -25,12 +25,51 @@ import {
   POP_ZONES, POP_ZONE_BY_KEY, POP_FLAGS, POP_FLAG_DEFS, TIER_LABELS,
   zoneAccess, missingFor, type PopNode,
 } from '@/lib/popFlags';
+import { POP_TURN_INS, POP_TURN_IN_ORDER, tierForLevel, type TurnInKey } from '@/lib/popSpells';
+import { ownedCharacters } from '@/lib/ownedCharacters';
+import SpellbookSubmit from './SpellbookSubmit';
 
 export const dynamic = 'force-dynamic';
 export const metadata = { title: 'PoP Flags (Preview) — Wolf Pack' };
 
 type FlagRow = { character: string; flag_key: string; earned_at: string; boss: string | null; zone: string | null };
 type CharFlags = { name: string; flags: Set<string>; unmapped: number };
+
+// One row per (main, PoP spell they haven't scribed). Ordered by character
+// level descending in the RPC — first to the level gets first dibs.
+type SpellNeed = {
+  spell_name: string; spell_id: number | null; scroll_item_id: number | null;
+  spell_level: number | null; character_name: string; char_class: string | null;
+  char_level: number | null; held_by: string[];
+};
+
+type NeedByChar = {
+  name: string; cls: string | null; level: number | null;
+  tiers: Record<TurnInKey, SpellNeed[]>;
+  total: number;
+};
+
+// Group the flat RPC rows per character, then per turn-in tier — because a
+// parchment hands out a RANDOM spell from its tier, so "how many does this
+// person still need at this tier" is the number that decides who gets it.
+function groupNeeds(rows: SpellNeed[]): NeedByChar[] {
+  const by = new Map<string, NeedByChar>();
+  for (const r of rows) {
+    const tier = tierForLevel(r.spell_level);
+    if (!tier) continue;                       // unknown level → no tier to claim
+    let e = by.get(r.character_name);
+    if (!e) {
+      e = { name: r.character_name, cls: r.char_class, level: r.char_level,
+            tiers: { ethereal: [], spectral: [], glyphed: [] }, total: 0 };
+      by.set(r.character_name, e);
+    }
+    e.tiers[tier.key].push(r);
+    e.total++;
+  }
+  // RPC already sorts by level desc; keep that order and break ties by name.
+  return [...by.values()].sort((a, b) =>
+    (b.level ?? -1) - (a.level ?? -1) || a.name.localeCompare(b.name));
+}
 
 const TIER_COLORS: Record<number, string> = {
   1: '#8b949e', 2: '#58a6ff', 3: '#d29922', 4: '#f0883e', 5: '#a371f7',
@@ -45,6 +84,14 @@ export default async function PopFlagsPage(
   const { zone: zoneKey, view } = await searchParams;
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect('/auth/signin?next=/pop');
+
+  // PoP spell needs + the viewer's own characters (for the submit widget).
+  const sbAdmin = supabaseAdmin();
+  const [{ data: needRows }, myChars] = await Promise.all([
+    sbAdmin.rpc('pop_spell_needs', { p_guild_id: 'wolfpack' }),
+    ownedCharacters(user.id),
+  ]);
+  const spellNeeds = groupNeeds((needRows ?? []) as SpellNeed[]);
 
   const sb = supabaseAdmin();
   const [{ data: flagRowsRaw }, { count: rosterCount }] = await Promise.all([
@@ -347,6 +394,80 @@ export default async function PopFlagsPage(
           </section>
         </>
       )}
+
+      {/* ── PoP spells mains still need ─────────────────────────────────── */}
+      <section className="bg-panel border border-border rounded-lg p-4">
+        <div className="flex items-start justify-between gap-3 flex-wrap">
+          <div>
+            <h2 className="text-lg text-gold mb-1">📜 PoP spells mains still need</h2>
+            <p className="text-sm text-dim leading-6 max-w-3xl">
+              Level 61–65 spells come from turning a parchment in to your class&apos;s spell NPC, and each turn-in
+              gives a <b className="text-text">random</b> spell of that tier — so what matters is how many a person
+              still needs at each tier. Highest level first: whoever reaches the level first gets first dibs.
+              Only mains who have <b className="text-text">submitted a spellbook</b> appear — without one we
+              can&apos;t tell &ldquo;doesn&apos;t have it&rdquo; from &ldquo;we don&apos;t know&rdquo;.
+            </p>
+          </div>
+          <div className="shrink-0"><SpellbookSubmit characters={myChars.map(c => c.name)} /></div>
+        </div>
+
+        <div className="mt-3 flex flex-wrap gap-2 text-[11px]">
+          {POP_TURN_IN_ORDER.map(k => (
+            <span key={k} className="px-2 py-0.5 rounded border border-border text-dim">
+              <b className="text-text">{POP_TURN_INS[k].item}</b> → level {POP_TURN_INS[k].levels[0]}
+              {POP_TURN_INS[k].levels[0] === POP_TURN_INS[k].levels[1] ? '' : `–${POP_TURN_INS[k].levels[1]}`}
+            </span>
+          ))}
+        </div>
+
+        {spellNeeds.length === 0 ? (
+          <p className="text-sm text-dim mt-3">
+            Nobody with a submitted spellbook is missing a PoP spell yet — or no spellbooks have been submitted.
+          </p>
+        ) : (
+          <div className="mt-3 overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-dim text-xs text-left">
+                  <th className="py-1 pr-3">Character</th>
+                  <th className="py-1 pr-3">Class</th>
+                  <th className="py-1 pr-3 text-right">Level</th>
+                  {POP_TURN_IN_ORDER.map(k => (
+                    <th key={k} className="py-1 pr-3 text-right" title={POP_TURN_INS[k].blurb}>
+                      {POP_TURN_INS[k].item.replace(' Parchment', '').replace('Glyphed Rune Word', 'Rune Word')}
+                    </th>
+                  ))}
+                  <th className="py-1 pr-3 text-right">Total</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border/50">
+                {spellNeeds.map(n => (
+                  <tr key={n.name} className="hover:bg-[#1a212c] align-top">
+                    <td className="py-1.5 pr-3">
+                      <Link href={`/character/${encodeURIComponent(n.name)}/spells`} className="text-blue hover:underline">{n.name}</Link>
+                    </td>
+                    <td className="py-1.5 pr-3 text-dim">{n.cls ?? '—'}</td>
+                    <td className="py-1.5 pr-3 text-right text-text">{n.level ?? '—'}</td>
+                    {POP_TURN_IN_ORDER.map(k => {
+                      const list = n.tiers[k];
+                      return (
+                        <td key={k} className="py-1.5 pr-3 text-right"
+                            title={list.length ? list.map(x => x.spell_name).join(', ') : 'nothing needed at this tier'}>
+                          <span className={list.length ? 'text-orange' : 'text-dim/50'}>{list.length || '—'}</span>
+                        </td>
+                      );
+                    })}
+                    <td className="py-1.5 pr-3 text-right text-text">{n.total}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <p className="text-[11px] text-dim mt-2">
+              Hover a tier count to see the exact spells. Click a name for their full missing-spell list.
+            </p>
+          </div>
+        )}
+      </section>
 
       <section className="bg-panel border border-border rounded-lg p-4 text-xs text-dim leading-5">
         <b className="text-text">How this fills in:</b> agents detect the universal grant line and the bot attributes
