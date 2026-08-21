@@ -88,6 +88,15 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ## The work ledger
 
+- **⚠ Needs a local session — PoP quest extract (`docs/HANDOFF-pop-quest-extract.md`).**
+  Two shipped features are waiting on data only the `D:\EQServer` box has:
+  (1) the flagging-NPC list + the phrase list for phrase-granted flags — agent
+  3.6.4 already captures witnessed hails, but the bot can only map three NPCs
+  today, so everything else lands `unmapped`; (2) a second class's spell
+  turn-in script, to confirm or break the inferred tier rule (Ethereal 61-62 /
+  Spectral 63-64 / Glyphed 65, derived from the cleric script alone). The
+  runbook has the exact searches and the JSON shape to commit back.
+
 ### ✅ Done — major shipped features (not exhaustive; see git + roadmapData.ts)
 
 - **Overnight batch 2026-08-19 → 20 (landed on main Thursday morning; details

@@ -107,6 +107,18 @@ export default function PrivacyPage() {
             private channels. They're filtered out on your own machine before anything
             leaves it.
           </li>
+          <li>
+            Ordinary <code className="text-text">/say</code>, shouts, OOC and auctions are
+            filtered out too — with{' '}
+            <strong className="text-text">one narrow exception: hails</strong>. A line that
+            starts with &ldquo;Hail&rdquo; (<em>Fittir says, &lsquo;Hail, Seer Mal
+            Nae&rsquo;</em>) is kept, because hailing an NPC is how Planes of Power flags
+            are granted. The confirmation the game prints is only visible to the person who
+            got it, so without this, anyone not running Mimic would have no flag record at
+            all. We store the name, who they hailed, the zone and the time —{' '}
+            <strong className="text-text">nothing else that was said</strong>, and never a
+            hail between two players unless it looks exactly like an NPC greeting.
+          </li>
         </ul>
       </section>
 
