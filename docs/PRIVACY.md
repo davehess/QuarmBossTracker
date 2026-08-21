@@ -90,3 +90,27 @@ mobs apart by where their tanks stand. Scope and limits:
 - Positions of guildmates who run nothing are forwarded by raiders who DO run
   Mimic, exactly as their raid HP already is. The existing per-character
   opt-out flags apply to derived display surfaces.
+
+
+### Hail greetings (PoP flagging coverage, agent 3.6.4+)
+
+Public `says` chat is dropped at the byte filter and always has been. ONE
+narrow exception was added 2026-08-20: a line whose say-body begins with
+**Hail** — `Fittir says, 'Hail, Seer Mal Nae'`.
+
+Why: PoP flags are granted by hailing an NPC, and the authoritative
+confirmation line ("You have received a character flag!") is a SELF message,
+so it only ever reaches us for people running Mimic. A hail is visible to
+everyone in range, so one Mimic user in the zone can cover raiders who don't
+run it — which is the whole point (Hitya: "we need people that don't use mimic
+to be covered as well").
+
+Scope of the exception:
+- ONLY the greeting form. Ordinary say-chat, shouts, OOC and auctions stay
+  dropped. "Dant says, 'we should hail him after'" is NOT kept.
+- What is stored: the hailer's name, the NPC hailed, the zone, and when.
+  No other say-chat, and no message body beyond the hailed name.
+- It is EVIDENCE, not proof: hailing only grants a flag if the person already
+  meets the prerequisites, which we cannot see. These rows carry
+  `source = 'hail_witnessed'` and are shown as provisional, never as equal to
+  a self-reported grant.

@@ -317,6 +317,19 @@ const DEFAULT_DROP_PATTERNS = [
 //   EQ log format: "[Fri May 26 02:34:04 2026] Gobn says, 'My leader is Utoh.'"
 const PRIORITY_KEEP_PATTERNS = [
   /\bsays,?\s*['"]My leader is \w+/i,
+  // PoP flagging coverage for people who do NOT run Mimic (Hitya 2026-08-20:
+  // "When someone Hails a flagging NPC and we see that from a mimic-enabled
+  // raider, we should record that as a proper flag"). The authoritative line
+  // — "You have received a character flag!" — is a SELF message, so it only
+  // ever reaches us for Mimic users. A hail, by contrast, is visible to
+  // everyone in range, which is exactly the coverage we're missing.
+  //
+  // Deliberately narrow: ONLY the hail greeting form, never say-chat. A hail
+  // is a ceremonial greeting to an NPC, not conversation — the body must
+  // begin with "Hail". Which NPCs matter is decided BOT-side against the
+  // flag catalog, so the NPC list can grow data-only with no agent release.
+  // Recorded in docs/PRIVACY.md.
+  /\bsays,?\s*['"]Hail[,!. ]/i,
   // Charm-pet attribution. EQ only tells the CHARMER about its pet's target:
   //   "A Soriz Skeleton tells you, 'Attacking A Shissar Taskmaster Master.'"
   // Without this priority-keep, the line is dropped by the generic
@@ -3615,6 +3628,40 @@ function parsePopFlagLine(line, character) {
     zone:  zone ? String(zone).slice(0, 64) : null,
     boss:  boss ? boss.slice(0, 64) : null,
     ts:    ts ? ts.toISOString() : new Date().toISOString(),
+  };
+}
+
+// A hail we WITNESSED — someone else greeting an NPC in our zone. Evidence of
+// a possible flag grant, not proof of one: hailing only grants a flag when the
+// hailer already meets the prerequisites, and we cannot see that. So these are
+// uploaded with their own source and must never be shown as equal to the
+// self-reported grant line. The bot decides whether the hailed NPC is a
+// flagging NPC.
+const _HAIL_WITNESS_RX = /\]\s+(\w+) says,?\s*['"]Hail[,!. ]+\s*([^'"]{2,48}?)[!.?]*['"]/i;
+function parseWitnessedHail(line, character) {
+  if (!line || line.indexOf('Hail') === -1) return null;
+  const m = line.match(_HAIL_WITNESS_RX);
+  if (!m) return null;
+  const hailer = String(m[1] || '').trim();
+  const npc    = String(m[2] || '').trim();
+  if (!hailer || !npc) return null;
+  // "You say, 'Hail, X'" renders as the uploader's own name on Quarm, but a
+  // self-hail is already covered by the authoritative grant line — keep it
+  // anyway, since the bot dedups and a witness for yourself costs nothing.
+  const ts = parseEqTimestamp(line);
+  let zone = null;
+  const cl = String(character || '').toLowerCase();
+  for (const ch of Object.keys(_zealState)) {
+    if (String(ch).toLowerCase() === cl) { zone = _zealState[ch].zone || null; break; }
+  }
+  return {
+    character: hailer.slice(0, 64),
+    npc:       npc.slice(0, 64),
+    zone:      zone ? String(zone).slice(0, 64) : null,
+    boss:      null,
+    source:    'hail_witnessed',
+    witness:   character ? String(character).slice(0, 64) : null,
+    ts:        ts ? ts.toISOString() : new Date().toISOString(),
   };
 }
 
@@ -25330,6 +25377,8 @@ function runOptinBackfill(files, opts = {}) {
             if (conFacEvt) factionBuffer.push(conFacEvt);
             const pfEvt = parsePopFlagLine(line, f.character);
             if (pfEvt) popFlagBuffer.push(pfEvt);
+            const hailEvt = parseWitnessedHail(line, f.character);
+            if (hailEvt) popFlagBuffer.push(hailEvt);
             // Observed buff landing on another player. Backfilled casts are
             // almost always already-expired by display time (harmless — the web
             // filters expired), but they cost nothing and cover the case where a
@@ -34945,7 +34994,7 @@ function uploadLockouts(entries, { botUrl, token, dryRun, character }) {
 function uploadPopFlags(events, { dryRun } = {}) {
   if (!Array.isArray(events) || events.length === 0) return Promise.resolve();
   if (dryRun) {
-    for (const e of events) console.log(`[pop-flag] ${e.character} · ${e.zone || '?'} · ${e.boss || '?'} · ${e.ts}`);
+    for (const e of events) console.log(`[pop-flag] ${e.character} · ${e.source || 'event'}${e.npc ? ' → ' + e.npc : ''} · ${e.zone || '?'} · ${e.boss || '?'} · ${e.ts}`);
     return Promise.resolve();
   }
   enqueueUpload('pop_flag', { agent_version: AGENT_VERSION, events });
@@ -35751,6 +35800,9 @@ async function main() {
         if (conFacEvt) factionBuffer.push(conFacEvt);
         const pfEvt = parsePopFlagLine(line, b.character);
         if (pfEvt) popFlagBuffer.push(pfEvt);
+        // Witnessed hails — coverage for raiders who don't run Mimic.
+        const hailEvt = parseWitnessedHail(line, b.character);
+        if (hailEvt) popFlagBuffer.push(hailEvt);
         // Observed buff landings on other players — same as opt-in path.
         // Almost always expired by the time --since runs, but the web
         // filters expired so this costs nothing and occasionally rescues
