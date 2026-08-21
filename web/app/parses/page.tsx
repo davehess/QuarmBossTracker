@@ -40,7 +40,7 @@ type EncounterRow = {
 type ZoneRow = { short_name: string; long_name: string; expansion: number | null; zone_id: number | null };
 // One per raid-day + zone: kills of mobs that aren't curated bosses (farm,
 // raid trash, uncurated nameds) — collected in full, displayed as a line.
-type OffcardRow = { day: string; zone_short: string | null; kills: number; total_damage: number };
+type OffcardRow = { day: string; zone_short: string | null; is_raid: boolean; kills: number; total_damage: number };
 type LootDbRow = {
   raid_date: string;
   raid_id: number;
@@ -438,8 +438,9 @@ export default async function ParsesPage(
           {w.key === 'life' ? `Newest ${ROW_LIMIT} merged encounters` : `${w.label} window (newest ${ROW_LIMIT})`},
           grouped by raid night and zone. Within each zone, kills are shown in the order they happened. Damage
           is the max-per-player merge across all parser uploads for the same
-          kill. Click a card for the full breakdown. Non-boss kills (farm and
-          raid trash) roll up into the 🗡 lines under each night. Loot blocks
+          kill. Click a card for the full breakdown. Non-boss kills roll up into
+          the 🗡 lines under each night, split into what the raid cleared and
+          what was killed outside it. Loot blocks
           and attendance rollups come from OpenDKP, mirrored every 6h (or via{' '}
           <code>/syncopendkp</code>).
         </p>
@@ -516,22 +517,42 @@ export default async function ParsesPage(
               );
             })}
 
-            {dayOff.length > 0 && (
-              <div
-                className="text-xs text-dim space-y-0.5"
-                title="Kills of mobs that aren't curated bosses — farm, raid trash, uncurated nameds. Still collected in full; shown as totals so they don't bury the boss kills."
-              >
-                {dayOff.map(o => {
-                  const label = (o.zone_short && zones.get(o.zone_short)?.long_name) || o.zone_short || 'Unknown zone';
-                  return (
-                    <p key={o.zone_short ?? '__unknown__'} className="flex items-center gap-2">
-                      <span aria-hidden>🗡</span>
-                      <span>{label} — {o.kills} other kill{o.kills === 1 ? '' : 's'} · {fmtDmg(o.total_damage)}</span>
-                    </p>
-                  );
-                })}
-              </div>
-            )}
+            {dayOff.length > 0 && (() => {
+              // Raid trash and someone's afternoon farming are different
+              // things and no longer share a line (Hitya 2026-08-20). The
+              // split comes from encounters.raid_night_id, which the bot
+              // stamps during a raid night — not from clock arithmetic, so
+              // short nights and post-midnight spillover both land right.
+              const raidOff = dayOff.filter(o => o.is_raid);
+              const soloOff = dayOff.filter(o => !o.is_raid);
+              const line = (o: OffcardRow) => {
+                const label = (o.zone_short && zones.get(o.zone_short)?.long_name) || o.zone_short || 'Unknown zone';
+                return (
+                  <p key={(o.is_raid ? 'r:' : 's:') + (o.zone_short ?? '__unknown__')} className="flex items-center gap-2">
+                    <span aria-hidden>🗡</span>
+                    <span>{label} — {o.kills} kill{o.kills === 1 ? '' : 's'} · {fmtDmg(o.total_damage)}</span>
+                  </p>
+                );
+              };
+              return (
+                <div className="text-xs space-y-2">
+                  {raidOff.length > 0 && (
+                    <div className="text-dim space-y-0.5"
+                         title="Trash cleared during the raid — everything the raid killed that isn't a boss.">
+                      <p className="text-orange/80 uppercase tracking-wide text-[10px]">During the raid</p>
+                      {raidOff.map(line)}
+                    </div>
+                  )}
+                  {soloOff.length > 0 && (
+                    <div className="text-dim/70 space-y-0.5"
+                         title="Killed outside the raid — farming, groups, alt runs. Collected in full, kept out of the raid's numbers.">
+                      <p className="uppercase tracking-wide text-[10px]">Outside the raid</p>
+                      {soloOff.map(line)}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
 
             {nightLoot.length > 0 && (
               <LootBlock loot={nightLoot as LootRow[]} />
