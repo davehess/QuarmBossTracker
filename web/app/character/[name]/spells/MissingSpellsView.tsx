@@ -6,6 +6,7 @@
 // spell_scroll_sources — PQDI is the escape hatch, not the answer.
 
 import { useMemo, useState } from 'react';
+import { tierForLevel } from '@/lib/popSpells';
 import type { ItemSources } from '@/lib/spellSources';
 import { shoppingList, type MissingForShopping } from '@/lib/spellSources';
 import SpellLevelEditor from './SpellLevelEditor';
@@ -163,12 +164,20 @@ export default function MissingSpellsView({
                         >
                           {m.spell_name} <span className="text-dim text-[10px]">{isOpen(m.spell_name) ? '▾' : '▸'}</span>
                         </button>
-                        {m.pop && (
-                          <span className="text-[9px] font-bold px-1 py-0.5 rounded bg-blue/20 border border-blue/60 text-blue"
-                                title="Planes of Power — locked until Oct 1. Can't scribe it yet.">
-                            PoP
-                          </span>
-                        )}
+                        {m.pop && (() => {
+                          // Name the TURN-IN, not just the era: a PoP spell is
+                          // bought with a parchment whose tier follows the
+                          // spell's level (web/lib/popSpells.ts).
+                          const t = tierForLevel(m.scribe_level);
+                          return (
+                            <span className="text-[9px] font-bold px-1 py-0.5 rounded bg-blue/20 border border-blue/60 text-blue"
+                                  title={t
+                                    ? `${t.blurb} Hand a ${t.item} to your class's spell NPC — the spell you get is random from that tier.`
+                                    : "Planes of Power — locked until Oct 1. Can't scribe it yet."}>
+                              {t ? `PoP · ${t.item}` : 'PoP'}
+                            </span>
+                          );
+                        })()}
                         {m.held_by.length > 0 && (
                           <span className="text-green text-[10px]" title="A guildmate is holding this scroll">
                             🎒 {m.held_by.join(', ')}
@@ -218,7 +227,15 @@ export default function MissingSpellsView({
                       <span className="text-[9px] font-bold px-1 py-0.5 rounded bg-orange/20 border border-orange/60 text-orange"
                             title="Sold only in this zone.">only here</span>
                     )}
-                    {s.pop && <span className="text-[9px] font-bold px-1 py-0.5 rounded bg-blue/20 border border-blue/60 text-blue">PoP</span>}
+                    {s.pop && (() => {
+                      const t = tierForLevel(s.level ?? null);
+                      return (
+                        <span className="text-[9px] font-bold px-1 py-0.5 rounded bg-blue/20 border border-blue/60 text-blue"
+                              title={t ? t.blurb : 'Planes of Power'}>
+                          {t ? `PoP · ${t.item}` : 'PoP'}
+                        </span>
+                      );
+                    })()}
                     <span className="text-dim text-[10px]">{s.vendors.slice(0, 3).join(', ')}{s.vendors.length > 3 ? ` +${s.vendors.length - 3}` : ''}</span>
                     {s.heldBy.length > 0 && <span className="text-green text-[10px]">🎒 {s.heldBy.join(', ')}</span>}
                   </li>
