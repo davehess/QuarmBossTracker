@@ -91,10 +91,25 @@
   }
   .bar{grid-column:1 / -1;height:4px;background:rgba(255,255,255,0.08);
     border-radius:2px;overflow:hidden;margin-top:3px;position:relative}
-  /* Anchored RIGHT: width growth extends leftward. The interrupted state
-     inherits the anchor so a frozen bar is visibly the same bar, stopped. */
+  /* Anchored LEFT by default: a COUNTDOWN fills left→right, toward the GO at
+     the right end (Hitya 2026-08-20: "The Yellow on the CH chain should go
+     Left to Right, then say GO on the right when its time, then right to left
+     in blue when casting"). The in-flight cast bar re-anchors right below, so
+     the two read as opposite motions at a glance. */
   .bar .fill{height:100%;background:#58a6ff;transition:width 120ms linear;
-    position:absolute;top:0;right:0}
+    position:absolute;top:0;left:0}
+  /* The cast itself drains RIGHT→LEFT, blue — the opposite direction from the
+     amber countdown that preceded it. Interrupted inherits the anchor so a
+     frozen bar is visibly the same bar, stopped. */
+  .row.casting .bar .fill,
+  .row.interrupted .bar .fill{left:auto;right:0}
+  /* GO at the right end of the countdown — where the fill is heading. Appears
+     the moment the beat runs out. */
+  .bar .go-mark{position:absolute;top:50%;right:2px;transform:translateY(-50%);
+    font-size:8px;font-weight:800;letter-spacing:0.08em;color:#052e12;
+    background:#7ee787;border-radius:6px;padding:0 4px;line-height:11px;
+    opacity:0;transition:opacity 120ms linear;pointer-events:none}
+  .bar.due .go-mark{opacity:1;box-shadow:0 0 6px rgba(126,231,135,0.75)}
   /* Interrupted cast — the bar FREEZES at however far the cast got and turns
      red, and the row's stat cell becomes a ✕. Distinct from every other row
      state: casting is blue-and-moving-right-to-left, this is red-and-stopped. */
@@ -1236,6 +1251,7 @@
           stat = _overdue ? 'DUE' : nextRemSec.toFixed(1) + 's';
           bar  = '<div class="bar' + (_overdue ? ' due' : '') + '">'
                +   '<div class="fill" style="width:' + _nextPct.toFixed(1) + '%"></div>'
+               +   '<span class="go-mark">GO</span>'
                + '</div>';
         } else {
           stat = 'NEXT';
