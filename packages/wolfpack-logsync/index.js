@@ -2970,6 +2970,23 @@ function noteDiInterrupt(line, character) {
 // Returns the parsed cast ({ name, atMs }) or null, so the relay can reuse the
 // match instead of re-running the identical regex on the same line (the two
 // ran back-to-back per log line — efficiency review 2026-07-07).
+// Rez spells (and the Water Sprinkler clicky). Casting one is the other
+// "somebody is on it" signal Hitya named — but the cast line never says WHOSE
+// corpse, so we only attribute it when exactly one corpse is outstanding.
+// Guessing between two would put the glow on the wrong name.
+const _REZ_SPELL_RX = /\b(?:Revive|Resurrection|Resuscitate|Reviviscence|Water Sprinkler of Nem Ankh)\b/i;
+function _noteSelfRezCast(spellName, character, atMs) {
+  try {
+    if (!spellName || !_REZ_SPELL_RX.test(spellName)) return;
+    const dead = _deadNamesSnapshot(atMs);
+    if (dead.length === 1) {
+      noteRezIncoming(dead[0].name, character || null, atMs);
+    } else {
+      console.log(`[rez] ${character || 'you'} cast ${spellName} — ${dead.length} corpses outstanding, not guessing which`);
+    }
+  } catch (e) { void e; }
+}
+
 function noteSelfCast(line, character) {
   if (!line || !character) return null;
   if (line.indexOf('You begin') === -1) return null;   // cheap gate
@@ -2987,6 +3004,10 @@ function noteSelfCast(line, character) {
   arr.push({ spellLower, name: m[1].trim(), atMs, target: _zealTargetForChar(cl) });
   // DI availability — stamp the recast on every Divine Intervention cast.
   if (spellLower === 'divine intervention') _noteDiCast(cl, atMs);
+  // Needs-rez board: casting a rez is "somebody is on it". typeof-guarded so
+  // the source-slice tests that eval noteSelfCast alone still run (they lift
+  // this function out of the file without its neighbours).
+  if (typeof _noteSelfRezCast === 'function') _noteSelfRezCast(m[1].trim(), character, atMs);
   // Prune old / cap length.
   const cutoff = atMs - SELF_CAST_WINDOW_MS;
   while (arr.length && arr[0].atMs < cutoff) arr.shift();
@@ -8861,6 +8882,7 @@ function _endpointForKind(kind, botUrl) {
     case 'quarmy':          return base + '/quarmy';
     case 'spellbook':       return base + '/spellbook';
     case 'inventory':       return base + '/inventory';
+    case 'rez_dismiss':     return base + '/rez-dismiss';
     case 'buff_cast':       return base + '/buff_casts';
     case 'tells':           return base + '/tells';
     case 'threat_snapshot': return base + '/threat-snapshot';
@@ -10094,7 +10116,14 @@ function _noteDeath(name, atMs) {
 }
 function _clearDeath(name) {
   const k = String(name || '').toLowerCase();
+  // Ask BEFORE deleting: the needs-rez board only wants to say "rezzed" about
+  // someone we actually had down.
+  const wasDead = !!k && _deadSince.has(k);
   if (k) _deadSince.delete(k);
+  // Life on an independent channel is also the rez confirmation for the
+  // needs-rez board (defined below): HP above zero after a death is exactly
+  // the "enter the zone with about 20% health" moment.
+  if (wasDead) { try { noteRezDone(k); } catch (e) { void e; } }
 }
 // Deliberately forgets a death after DEAD_FORGET_MS. We do not see every rez —
 // an un-cleared entry would tombstone someone for the rest of the night, which
@@ -10110,6 +10139,175 @@ function _deadNamesSnapshot(nowMs) {
   const out = [];
   for (const [n, t] of _deadSince) if (now - t <= DEAD_FORGET_MS) out.push({ name: n, since_ms: now - t });
   return out;
+}
+
+// ── Needs-rez board (Hitya 2026-08-20) ──────────────────────────────────────
+// "a 'needs rez' section of command center … if the rezzer has mimic and we
+// see them rezzing the corpse OR if someone calls it out in guild/raid chat as
+// 'REZ <name>' or 'rezzing <name>' we can make that person's name glow brighter
+// until it says 'rezzed' next to them."
+//
+// WHO IS DEAD is already answered above — _deadSince, fed by the log line AND
+// the independent group-HP watcher (#205). The board is that set plus a thin
+// layer of rez INTENT, so it inherits the feign-death discrimination for free
+// and can never tombstone anyone (DEAD_FORGET_MS still applies).
+//
+// The three states Hitya described:
+//   needs    — a corpse nobody has spoken for.
+//   incoming — somebody is on it. The row glows. Two sources: a chat call-out
+//              (raid-wide by nature — every agent tails the same /gu + /rs, so
+//              this works today with no bot round-trip) and a local rez cast.
+//   rezzed   — they are back. The confirmation is life on an independent
+//              channel: _clearDeath fires when the group-HP watcher sees HP
+//              above zero after a death, which IS the "enter the zone with
+//              about 20% health" moment. Lingers briefly so the row can say
+//              "rezzed" before it leaves.
+//
+// A rez can also be REQUESTED by someone already standing in the zone (a
+// corpse-runner who wants their XP back). That row has no death behind it, so
+// it is kept until it is answered or ages out rather than being cleared by
+// life evidence that was never in doubt.
+const REZ_DONE_LINGER_MS = 45_000;      // how long "rezzed ✓" stays visible
+const REZ_REQUEST_TTL_MS = 10 * 60_000; // an unanswered "rez me" ages out
+const _rezState = new Map();            // lowerName -> { name, state, rezzer, since, requested, cls }
+
+// Words that follow "rez" but are not a person.
+const _REZ_NOT_A_NAME = new Set([
+  'me', 'please', 'plz', 'pls', 'now', 'up', 'inc', 'incoming', 'him', 'her',
+  'them', 'us', 'that', 'this', 'it', 'when', 'someone', 'anyone', 'soon',
+  'here', 'there', 'ready', 'needed', 'need', 'on', 'the', 'a', 'my', 'and',
+]);
+
+/**
+ * Parse a rez call-out from one chat body. PURE — tested in
+ * test/rez-board.test.js.
+ *   "REZ Hitya" / "rezzing Hitya" / "rez on Hitya"  -> { target: 'Hitya' }
+ *   "rez me" / "need a rez" / "rez plz"             -> { selfRequest: true }
+ *   anything else                                   -> null
+ */
+function parseRezCallout(body) {
+  const text = String(body || '').trim();
+  if (!text) return null;
+  if (!/\brez/i.test(text)) return null;             // cheap gate
+  const m = text.match(/\brez(?:z?ing|z)?\b\s*(?:on\s+)?([A-Za-z]{2,})?/i);
+  if (!m) return null;
+  const word = (m[1] || '').trim();
+  if (word && !_REZ_NOT_A_NAME.has(word.toLowerCase())) {
+    return { target: word.charAt(0).toUpperCase() + word.slice(1).toLowerCase() };
+  }
+  // "rez" with no name, or followed by a non-name ("rez me", "rez plz") — the
+  // speaker is asking for one.
+  return { selfRequest: true };
+}
+
+function _rezEntry(name) {
+  const k = String(name || '').toLowerCase();
+  if (!k) return null;
+  let e = _rezState.get(k);
+  if (!e) {
+    e = { name: String(name), state: 'needs', rezzer: null, since: Date.now(), requested: false, cls: null };
+    _rezState.set(k, e);
+  }
+  return e;
+}
+
+/** Somebody is on this corpse — from chat, or from a rez cast we watched. */
+function noteRezIncoming(name, rezzer, atMs) {
+  const e = _rezEntry(name);
+  if (!e) return;
+  if (e.state === 'rezzed') return;                 // already home
+  e.state  = 'incoming';
+  e.rezzer = rezzer || e.rezzer || null;
+  e.since  = atMs || Date.now();
+}
+
+/** A rez was asked for by someone who may not be a corpse we saw drop. */
+function noteRezRequest(name, atMs) {
+  const e = _rezEntry(name);
+  if (!e) return;
+  if (e.state === 'rezzed') { e.state = 'needs'; e.rezzer = null; }
+  e.requested = true;
+  e.since = e.since || atMs || Date.now();
+}
+
+/**
+ * They are back. Called from _clearDeath — life on an independent channel.
+ * Creates the row if nothing had claimed the corpse: a quiet death that just
+ * got rezzed should still get to say so before it leaves the board.
+ */
+function noteRezDone(name, atMs) {
+  const e = _rezEntry(name);
+  if (!e) return;
+  e.state = 'rezzed';
+  e.doneAt = atMs || Date.now();
+}
+
+/**
+ * Clear a row for the WHOLE raid (Hitya 2026-08-20: "add the X button on the
+ * command center that removes it for everyone"). Someone got up and we missed
+ * the confirmation, or they released — either way one person's click should
+ * settle it for every Command Center, so this also drops the corpse from the
+ * death registry. Without that the very next snapshot re-adds them as "needs"
+ * and the button looks broken.
+ */
+function noteRezDismiss(name, byWhom) {
+  const k = String(name || '').toLowerCase();
+  if (!k) return;
+  _rezState.delete(k);
+  _deadSince.delete(k);
+  console.log(`[rez] ${byWhom || 'someone'} cleared ${name} from the needs-rez board`);
+}
+
+function noteRezFromChat(chatMsg) {
+  try {
+    if (!chatMsg || (chatMsg.channel !== 'guild' && chatMsg.channel !== 'raid')) return;
+    const call = parseRezCallout(chatMsg.body || chatMsg.message || '');
+    if (!call) return;
+    const atMs = Date.parse(chatMsg.ts) || Date.now();
+    if (call.target) {
+      // "rez Hitya" — Hitya is the one who needs it; the speaker is on it.
+      noteRezIncoming(call.target, chatMsg.speaker || null, atMs);
+    } else if (chatMsg.speaker) {
+      noteRezRequest(chatMsg.speaker, atMs);
+    }
+  } catch (e) { void e; }
+}
+
+/**
+ * Rows for the Command Center. Merges the corpse registry with rez intent, so
+ * a death nobody has spoken for still shows up as "needs".
+ */
+function _rezBoardSnapshot(nowMs) {
+  const now = nowMs || Date.now();
+  const rows = new Map();
+  for (const d of _deadNamesSnapshot(now)) {
+    rows.set(d.name, { name: d.name, state: 'needs', rezzer: null, dead_ms: d.since_ms, requested: false });
+  }
+  for (const [k, e] of _rezState) {
+    if (e.state === 'rezzed' && e.doneAt && (now - e.doneAt) > REZ_DONE_LINGER_MS) { _rezState.delete(k); continue; }
+    // A bare request (no corpse behind it) ages out on its own.
+    if (e.state !== 'rezzed' && !rows.has(k) && e.requested && (now - e.since) > REZ_REQUEST_TTL_MS) {
+      _rezState.delete(k); continue;
+    }
+    // Not dead, never asked, not mid-rez → nothing to show.
+    if (!rows.has(k) && !e.requested && e.state === 'needs') continue;
+    const base = rows.get(k) || { name: e.name, state: 'needs', dead_ms: null, requested: e.requested };
+    rows.set(k, {
+      ...base,
+      name:      e.name || base.name,
+      state:     e.state,
+      rezzer:    e.rezzer || null,
+      requested: e.requested || base.requested,
+      done_ms:   e.doneAt ? (now - e.doneAt) : null,
+    });
+  }
+  return [...rows.values()].sort((a, b) => {
+    // Glowing rows first (someone is acting), then longest-dead, then name.
+    const rank = s => (s === 'incoming' ? 0 : s === 'needs' ? 1 : 2);
+    return rank(a.state) - rank(b.state)
+        || (b.dead_ms || 0) - (a.dead_ms || 0)
+        || String(a.name).localeCompare(String(b.name));
+  });
 }
 
 // ── #205 group-HP death watcher — a SECOND, independent death source ────────
@@ -10939,6 +11137,7 @@ function _serializeCommandCenterState() {
     rampage:       tank.rampage,
     enrage:        tank.enrage,
     deathtouch:    tank.deathtouch,
+    needs_rez:     _rezBoardSnapshot(),
     da_broadcasts: daBroadcastsSnapshot(),
     // ALL healer mana, merged from every source we have (Hitya 2026-07-15:
     // "Command center should have all healer mana if its reported in the CH
@@ -20724,6 +20923,32 @@ const COMMAND_HTML = `<!doctype html>
      like someone rolled twice and got robbed. #6e7681 on this backdrop was not. */
   .roll-detail .d .rr{color:#c9a227;font-size:8px;flex-shrink:0;border:1px solid rgba(201,162,39,0.45);
     border-radius:2px;padding:0 3px;line-height:1.3;align-self:center}
+  /* Needs-rez board. A row someone is actively on GLOWS (Hitya 2026-08-20:
+     "make that person's name glow brighter until it says 'rezzed' next to
+     them"); a row nobody has spoken for sits quiet so the glow means
+     something. prefers-reduced-motion keeps the brightness, drops the pulse. */
+  .rez-row .nm { font-weight: 600; }
+  .rez-row.needs .nm { color: #c9d1d9; }
+  .rez-row.incoming .nm {
+    color: #fff3c4; text-shadow: 0 0 6px rgba(255,214,64,.95), 0 0 14px rgba(255,214,64,.55);
+    animation: rezGlow 1.4s ease-in-out infinite;
+  }
+  .rez-row.rezzed .nm { color: #7ee787; text-shadow: none; }
+  .rez-tag { font-size: 10px; margin-left: 6px; opacity: .95; }
+  .rez-row.incoming .rez-tag { color: #ffd640; }
+  .rez-row.rezzed  .rez-tag { color: #7ee787; }
+  .rez-row .rez-age { margin-left: auto; font-size: 10px; color: #8b949e; }
+  .rez-row .rezDismiss { margin-left: 6px; cursor: pointer; color: #8b949e; font-size: 11px;
+                         line-height: 1; opacity: .75; }
+  .rez-row .rezDismiss:hover { opacity: 1; color: #f87171; }
+  @keyframes rezGlow {
+    0%, 100% { text-shadow: 0 0 5px rgba(255,214,64,.75), 0 0 12px rgba(255,214,64,.40); }
+    50%      { text-shadow: 0 0 9px rgba(255,214,64,1),   0 0 20px rgba(255,214,64,.75); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .rez-row.incoming .nm { animation: none; }
+  }
+
   /* #153 collapsible sections — the caret+label in a section header is the
      click target that collapses/expands it. Collapse state lives in a JS store
      consulted at render time (localStorage-backed), NOT DOM state, so repaints
@@ -21148,6 +21373,38 @@ const COMMAND_HTML = `<!doctype html>
       }
     }
 
+    // ── Needs rez ─────────────────────────────────────────────────────────
+    // Corpses first: this is the only section where somebody is waiting on a
+    // human to act. Rows glow while a rezzer is on them, then say "rezzed".
+    if (s.needs_rez && s.needs_rez.length) {
+      var rezCollapsed = _isCollapsed('needsrez');
+      var glowing = 0;
+      for (var rq = 0; rq < s.needs_rez.length; rq++) if (s.needs_rez[rq].state === 'incoming') glowing++;
+      html += '<div class="card"><div class="head">'
+           +    secToggle('needsrez', '⚰ Needs rez', s.needs_rez.length)
+           +    (rezCollapsed || !glowing ? '' : '<span class="rez-tag">' + glowing + ' being rezzed</span>')
+           +  '</div>';
+      if (!rezCollapsed) {
+        html += '<div class="list">';
+        for (var rr = 0; rr < s.needs_rez.length; rr++) {
+          var r = s.needs_rez[rr];
+          var tag = '';
+          if (r.state === 'incoming') tag = r.rezzer ? ('rezzing — ' + esc(r.rezzer)) : 'rezzing…';
+          else if (r.state === 'rezzed') tag = 'rezzed ✓';
+          else if (r.requested && !r.dead_ms) tag = 'asked for a rez';
+          var age = (r.dead_ms != null) ? (Math.floor(r.dead_ms / 60000) + 'm') : '';
+          html += '<div class="row rez-row ' + esc(r.state) + '">'
+               +    '<span class="nm">' + esc(r.name) + '</span>'
+               +    (tag ? '<span class="rez-tag">' + tag + '</span>' : '')
+               +    (age ? '<span class="rez-age">dead ' + age + '</span>' : '<span class="rez-age"></span>')
+               +    '<span class="rezDismiss" data-rez-name="' + esc(r.name) + '" title="Clear this row for the WHOLE raid — use when they are up and we missed it.">✕</span>'
+               +  '</div>';
+        }
+        html += '</div>';
+      }
+      html += '</div>';
+    }
+
     if (!html) html = '<div id="empty">Nothing to report — no active target, DA/mana call-outs, rolls, or curses seen yet.</div>';
 
     if (contentEl.__wpHtml !== html) {   // byte-stability guard (2026-07-07)
@@ -21164,14 +21421,14 @@ const COMMAND_HTML = `<!doctype html>
   if (contentEl) {
     contentEl.addEventListener('mouseover', function(e){
       var t = e.target;
-      if (t && t.closest && (t.closest('.cureDismiss') || t.closest('.cureClearAll') || t.closest('.sec-toggle')
+      if (t && t.closest && (t.closest('.rezDismiss') || t.closest('.cureDismiss') || t.closest('.cureClearAll') || t.closest('.sec-toggle')
                              || t.closest('.rollMore') || t.closest('.rollDismiss') || t.closest('.rollClearAll'))) {
         try { window.mimic.overlayHoverInteractive(true); } catch (er) {}
       }
     });
     contentEl.addEventListener('mouseout', function(e){
       var t = e.target;
-      if (t && t.closest && (t.closest('.cureDismiss') || t.closest('.cureClearAll') || t.closest('.sec-toggle')
+      if (t && t.closest && (t.closest('.rezDismiss') || t.closest('.cureDismiss') || t.closest('.cureClearAll') || t.closest('.sec-toggle')
                              || t.closest('.rollMore') || t.closest('.rollDismiss') || t.closest('.rollClearAll'))) {
         try { window.mimic.overlayHoverInteractive(false); } catch (er) {}
       }
@@ -21212,6 +21469,23 @@ const COMMAND_HTML = `<!doctype html>
             if (rid2) { _dismissedRolls.add(rid2); _openRolls.delete(rid2); }
           }
           render(_lastState);
+        }
+        return;
+      }
+      var rezX = e.target && e.target.closest ? e.target.closest('.rezDismiss') : null;
+      if (rezX) {
+        e.preventDefault(); e.stopPropagation();
+        var rname = rezX.getAttribute('data-rez-name');
+        if (rname) {
+          // Clears the row for EVERYONE (Hitya 2026-08-20). The agent drops it
+          // locally at once so the click feels instant, and relays it to the
+          // rest of the raid through the bot; other Command Centers drop the
+          // row on their next poll.
+          rezX.textContent = '…';
+          fetch('http://127.0.0.1:' + PORT + '/api/rez-dismiss', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: rname }),
+          }).then(function(){ tick(); }).catch(function(){});
         }
         return;
       }
@@ -21590,6 +21864,25 @@ function startWebDashboard(port) {
         catch (e) { console.error('[api/command-center] serialize failed, serving last-good:', e && (e.stack || e.message || e)); _b = _commandCenterLastGood; }
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(_b || 'null');
+      }
+      // Command Center ✕ on a needs-rez row — clears it for the WHOLE raid.
+      // Local state drops immediately so the click feels instant; the relay
+      // rides the durable upload queue, and every other Command Center drops
+      // the row on its next poll of the bot.
+      if (req.url === '/api/rez-dismiss' && req.method === 'POST') {
+        let body = '';
+        req.on('data', c => { body += c; if (body.length > 4096) req.destroy(); });
+        req.on('end', () => {
+          let name = null;
+          try { name = (JSON.parse(body || '{}') || {}).name || null; } catch (e) { void e; }
+          if (!name) { res.writeHead(400, { 'Content-Type': 'application/json' }); return res.end('{"error":"name required"}'); }
+          const by = (stats.watchedLogs && stats.watchedLogs[0] && stats.watchedLogs[0].character) || null;
+          noteRezDismiss(name, by);
+          enqueueUpload('rez_dismiss', { agent_version: AGENT_VERSION, name: String(name), by, at: new Date().toISOString() });
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, name }));
+        });
+        return;
       }
       // Mimic's buff-queue overlay polls this — we proxy the bot's
       // /api/agent/raid-buff-queue with a 3s cache so a room of Mimics doesn't
@@ -35469,6 +35762,7 @@ async function main() {
         if (chatMsg) {
           chatBatch.push({ ...chatMsg, uploadedBy: b.character });
           noteLootFromChat(chatMsg);   // officer Loot panel — LIVE tail
+          noteRezFromChat(chatMsg);    // needs-rez board — "REZ <name>" / "rezzing <name>"
           if (chatBatch.length >= 500) flushChat(true).catch(() => {});
           return;
         }
