@@ -519,10 +519,12 @@ export default async function ParsesPage(
 
             {dayOff.length > 0 && (() => {
               // Raid trash and someone's afternoon farming are different
-              // things and no longer share a line (Hitya 2026-08-20). The
-              // split comes from encounters.raid_night_id, which the bot
-              // stamps during a raid night — not from clock arithmetic, so
-              // short nights and post-midnight spillover both land right.
+              // things and no longer share a line (Hitya 2026-08-20). A kill
+              // is the RAID's when the bot stamped it with a raid_night_id
+              // AND enough of the raid was on it — the night tag alone is
+              // time-based, so it also caught the lone wolf one raider killed
+              // walking to Vex Thal and reported it as a third raid zone.
+              // Rule + evidence live in the rollup migration.
               const raidOff = dayOff.filter(o => o.is_raid);
               const soloOff = dayOff.filter(o => !o.is_raid);
               const line = (o: OffcardRow) => {
