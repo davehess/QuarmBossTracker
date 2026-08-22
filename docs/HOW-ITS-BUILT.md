@@ -1290,7 +1290,10 @@ holds it in memory.
   "your agent uploaded it AND nobody else owns it". The level ladder + trader
   placeholders are `web/lib/characterRoles.ts` (pure, tested) and are shared
   with `/admin/links` — Trader there no longer demands a class.
-- **Loot lockouts, ours vs foreign (bot 3.1.64 + web 1.1.88, 2026-08-21)** —
+- **Raid lockouts, ours vs foreign (bot 3.1.64 + web 1.1.88/89, 2026-08-21)** —
+  ⚠ an ENGAGE lock, not a loot lock: a locked character can't fight the mob and
+  is teleported out of the zone on engage, so this is a pre-pull check (see
+  CLAUDE.md domain policies).
   the `/sll` relay now records a `character_lockouts` row per character/boss
   alongside its boss-timer work (`_handleAgentLockout`). `ours` is three-state:
   true = the lockout lines up with a kill on our board (30-min tolerance),

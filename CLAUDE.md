@@ -820,6 +820,17 @@ RLS: Tier 1 readable by `anon`+`authenticated`; guild tables
 
 ## Domain policies (load-bearing — don't re-derive)
 
+**Raid lockouts are ENGAGE locks, not loot locks (Hitya, 2026-08-21).** A
+character with an active lockout on a raid mob **cannot fight it at all** — on
+engage the server *teleports them out of the zone*. They can't participate and
+can't loot. It is **per character**, so it is normally an ALT that carries one
+for a current-era boss (a main raiding with us has no way to pick one up
+elsewhere). Consequences for anything we build on `character_lockouts`: this is
+a PRE-PULL question, not a loot-distribution one — a locked raider who pulls
+anyway is a body that vanishes mid-fight, so the useful surface is "who in
+tonight's raid is locked", not "who couldn't loot". Do not describe these as
+"loot lockouts" in UI copy; the phrase understates what happens.
+
 **Character identity scopes.** Three different "who is this" questions:
 guild *membership* = union of (Discord role `Pack Member`+ via
 `characters.discord_id`→`wolfpack_members`) OR (OpenDKP rank `Raid Pack`+).
