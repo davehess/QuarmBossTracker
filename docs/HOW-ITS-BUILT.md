@@ -1325,13 +1325,19 @@ holds it in memory.
   RaidHelper event) × active `character_lockouts`, grouped by zone, mains
   first, plus the targets that are clear. Pre-pull by design — see the engage-
   lock note below.
-  ⚠ **It reports `actionable`, not `total`.** A lockout runs as long as the
-  boss's respawn, so after one of our own kills the whole raid is locked AND
-  the boss is down — a headcount with nothing to act on. Only UP targets are
-  named; down-target lockouts are counted in `onDownTargets`, and an unknown
-  boss state counts as UP so a missing timer can never hide a real block.
-  Characters not on the roster are counted in `outsiders` and never listed —
-  a parse of a joint raid carries the other guild's whole roster.
+  ⚠ **The verdict is `mainsBlocked`, not a headcount** (Hitya 2026-08-22: "as
+  long as mains are good to go"). Three filters, all needed, all learned the
+  hard way — they take 753 rows down to the six an officer acts on:
+  (1) only UP targets count, because a lockout runs as long as the boss's
+  respawn and after our own kill the whole raid is locked AND the boss is down
+  (`onDownTargets` keeps the rest; an unknown boss state counts as UP so a
+  missing timer can never hide a real block);
+  (2) mains drive the ✅/⚠ and the checklist flag, alts ride along in
+  `altsBlocked` — a blocked alt is a swap;
+  (3) characters off the roster go to `outsiders`, counted and never listed,
+  because a joint-raid parse carries the other guild's whole roster.
+  Era scoping is the web's job (`currentEraNames` in `web/lib/eras.ts`) — the
+  briefing is already scoped to the night's targets.
 - **Raid lockouts, ours vs foreign (bot 3.1.64 + web 1.1.88/89, 2026-08-21)** —
   ⚠ an ENGAGE lock, not a loot lock: a locked character can't fight the mob and
   is teleported out of the zone on engage, so this is a pre-pull check (see
@@ -1342,8 +1348,18 @@ holds it in memory.
   happened elsewhere, null = we cannot tell — never an accusation. The /sll
   path judges by a ±30min match against our board; the kill path by the
   encounter's `raid_nights` binding, falling back to the raid window.
-  `/admin/lockouts` shows four bands (foreign / unknown / ours / not on our
-  roster) and links each kill-derived row to the parse it came from. Distinct from `/admin/anomalies`, which keeps foreign RAIDS out
+  `/admin/lockouts` shows five bands (foreign / unknown / ours, all three
+  scoped to `currentEraNames()` and sorted mains-first, then older content,
+  then not-on-our-roster) and links each kill-derived row to the parse it came
+  from.
+  ⚠ **A raid night is not the only thing we run.** `ours` also comes out true
+  when the majority of named players are on the roster — that is what tells an
+  off-calendar GUILD event from somebody else's raid (Hitya 2026-08-22:
+  "Friday was a guild rolling event, so internal, but still a lockout").
+  Measured: our raids 0.75–0.89 roster share, pug raids 0.14–0.22. The 0.5 line
+  is `GUILD_EVENT_MIN_MEMBER_FRAC`, kept identical to
+  `REVIEW_FOREIGN_MAX_MEMBER_FRAC` in `web/lib/anomalies.ts`. Under 3 named
+  players it returns null, never false. Distinct from `/admin/anomalies`, which keeps foreign RAIDS out
   of our parses — foreign LOCKOUTS are deliberately kept in, because they bind
   us on our own raid night.
 - **Witnessed hails → PoP flags (agent 3.6.4, 2026-08-21)** — the authoritative

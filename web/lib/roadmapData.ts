@@ -39,7 +39,7 @@ export const releases: Release[] = [
   {
     key: 'bot-3-1-68',
     title: 'Lockouts we can actually see',
-    version: 'Bot 3.1.68 · Web 1.1.90',
+    version: 'Bot 3.1.69 · Web 1.1.91',
     date: '2026-08-22',
     headline: 'Raid lockouts now come from the parses you already upload, instead of waiting for someone to type /sll.',
     features: [
@@ -53,7 +53,15 @@ export const releases: Release[] = [
       },
       {
         name: 'Lockout page shows where each one came from',
-        blurb: 'Every entry says whether it came from a /sll or from a kill parse, and links straight to that parse. Characters who are not on our roster get their own section instead of crowding the list.',
+        blurb: 'Every entry says whether it came from a /sll or from a kill parse, and links straight to that parse. Characters who are not on our roster, and bosses from expansions we are past, each get their own section instead of crowding the list.',
+      },
+      {
+        name: 'It tells you about mains first',
+        blurb: 'A blocked alt is a swap; a blocked main is a hole in the raid. The officer post now leads with mains and says "all mains clear" when that is the answer, with the alts noted underneath.',
+      },
+      {
+        name: 'A guild event off the calendar still counts as ours',
+        blurb: 'Our Friday rolling events are not on the raid schedule, so they were being filed as if we had raided with another guild. If most of the people in a fight are ours, it is ours.',
       },
     ],
     fixes: [

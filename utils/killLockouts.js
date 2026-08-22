@@ -74,17 +74,53 @@ function participantsFromUpload({ contributor, players, healers, defenders } = {
 }
 
 /**
- * Was this kill ours? Three-state, and never guessed — the same contract the
- * /sll path uses, for the same reason: an unknown must not read as an
- * accusation that somebody raided elsewhere.
- *
- *   true  — the encounter is bound to one of our raid nights.
- *   null  — not bound, but it happened inside a raid window. Almost certainly
- *           ours with a binding that didn't take; not evidence of anything.
- *   false — not bound and outside every raid window. They killed it elsewhere.
+ * Share of the named players who are on our roster. This is the signal that
+ * separates a guild event from somebody else's raid, and it separates them
+ * cleanly — measured over ten days of real encounters, our raids run 0.75–0.89
+ * and the pug raids our people joined run 0.14–0.22.
  */
-function classifyOurs({ inRaidNight, inRaidWindow }) {
+function memberFraction(participants, roster) {
+  if (!Array.isArray(participants) || participants.length === 0) return null;
+  const have = roster instanceof Set ? roster
+             : new Set((roster || []).map(n => String(n).toLowerCase()));
+  if (have.size === 0) return null;
+  let members = 0;
+  for (const p of participants) if (have.has(String(p).toLowerCase())) members++;
+  return members / participants.length;
+}
+
+/** Majority-of-roster is a guild event. Same line as
+ *  REVIEW_FOREIGN_MAX_MEMBER_FRAC in web/lib/anomalies.ts — kept identical on
+ *  purpose so the two surfaces can never disagree about the same fight. */
+const GUILD_EVENT_MIN_MEMBER_FRAC = 0.5;
+
+/** Below this many named players the fraction is too noisy to accuse anyone
+ *  with. A 2-player fight that happens to name one outsider is not evidence. */
+const MIN_PLAYERS_TO_JUDGE = 3;
+
+/**
+ * Was this kill ours? Three-state, and never guessed — an unknown must not
+ * read as an accusation that somebody raided elsewhere.
+ *
+ *   true  — bound to one of our raid nights, OR most of the named players are
+ *           on our roster. The second clause exists because a raid night is
+ *           not the only thing we run: Hitya 2026-08-22, on the Friday classic
+ *           kills this first shipped as foreign — "Friday was a guild rolling
+ *           event, so internal, but still a lockout." An internal event off
+ *           the calendar is ours; only the roster share can tell us that.
+ *   false — mostly strangers, on enough players to be sure.
+ *   null  — we cannot tell: too few players to judge, no roster to judge
+ *           against, or an unbound kill inside a raid window (a binding that
+ *           didn't take, not evidence of anything).
+ */
+function classifyOurs({ inRaidNight, inRaidWindow, memberFrac, playerCount } = {}) {
   if (inRaidNight === true) return true;
+  if (Number.isFinite(memberFrac)) {
+    if (memberFrac >= GUILD_EVENT_MIN_MEMBER_FRAC) return true;
+    // A clear minority of ours AND enough bodies to mean it.
+    if (Number.isFinite(playerCount) && playerCount >= MIN_PLAYERS_TO_JUDGE) return false;
+    return null;
+  }
   if (inRaidWindow === true) return null;
   return false;
 }
@@ -98,6 +134,8 @@ function classifyOurs({ inRaidNight, inRaidWindow }) {
  * @param {string[]} a.participants  from participantsFromUpload()
  * @param {boolean}  [a.inRaidNight] encounter bound to a raid_nights row
  * @param {boolean}  [a.inRaidWindow] kill time falls in a scheduled raid window
+ * @param {Set|Array} [a.roster]     lowercased guild character names, for the
+ *                                   guild-event test in classifyOurs
  * @param {string}   [a.guildId]
  * @param {string}   [a.encounterId]
  * @param {string}   [a.observedBy]  the uploading character
@@ -106,7 +144,7 @@ function classifyOurs({ inRaidNight, inRaidWindow }) {
  */
 function buildKillLockouts({
   boss, killedAtMs, participants,
-  inRaidNight, inRaidWindow,
+  inRaidNight, inRaidWindow, roster,
   guildId, encounterId, observedBy, observedAtMs,
 } = {}) {
   if (!boss || !boss.id || !boss.name) return [];
@@ -121,7 +159,11 @@ function buildKillLockouts({
   // this table, so drop it here rather than making each reader filter.
   if (expiresAt <= (Number.isFinite(observedAtMs) ? observedAtMs : Date.now())) return [];
 
-  const ours = classifyOurs({ inRaidNight, inRaidWindow });
+  const ours = classifyOurs({
+    inRaidNight, inRaidWindow,
+    memberFrac: memberFraction(participants, roster),
+    playerCount: participants.length,
+  });
   const gid  = guildId || 'wolfpack';
   const obs  = new Date(Number.isFinite(observedAtMs) ? observedAtMs : Date.now()).toISOString();
 
@@ -168,7 +210,10 @@ function dropRowsShadowedBySll(rows, existing, nowMs) {
 module.exports = {
   normalizeCharacterName,
   participantsFromUpload,
+  memberFraction,
   classifyOurs,
+  GUILD_EVENT_MIN_MEMBER_FRAC,
+  MIN_PLAYERS_TO_JUDGE,
   buildKillLockouts,
   dropRowsShadowedBySll,
   MAX_TIMER_HOURS,

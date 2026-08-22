@@ -176,6 +176,18 @@ named AS (
 ),
 -- One row per (character, boss): the most recent kill wins, because a lockout
 -- cannot be held twice on one boss and the latest is the one still binding.
+-- Roster share per encounter: the signal that tells an off-calendar GUILD
+-- event from somebody else's raid. Same 0.5 line as
+-- REVIEW_FOREIGN_MAX_MEMBER_FRAC in web/lib/anomalies.ts.
+share AS (
+  SELECT n.id,
+         count(*) AS players,
+         count(*) FILTER (WHERE ch.name IS NOT NULL)::numeric / count(*) AS member_frac
+    FROM named n
+    LEFT JOIN characters ch
+      ON lower(ch.name) = lower(n.character) AND ch.guild_id = 'wolfpack'
+   GROUP BY n.id
+),
 latest AS (
   SELECT DISTINCT ON (n.character, k.boss_key)
          n.character, k.boss_key, k.boss_name, k.id AS encounter_id,
@@ -185,11 +197,20 @@ latest AS (
          k.killed_at + make_interval(hours => k.timer_hours::int,
                                      mins  => ((k.timer_hours - floor(k.timer_hours)) * 60)::int)
            AS expires_at,
-         CASE WHEN k.in_raid_night  THEN true
-              WHEN k.in_raid_window THEN NULL       -- unknown, never an accusation
+         -- Same three-state rule as utils/killLockouts.classifyOurs, including
+         -- the roster-share clause: a raid night is not the only thing we run
+         -- (Hitya 2026-08-22: "Friday was a guild rolling event, so internal,
+         -- but still a lockout"). Measured over ten days, our raids sit at
+         -- 0.75-0.89 roster share and the pug raids our people joined at
+         -- 0.14-0.22, so 0.5 separates them with room on both sides.
+         CASE WHEN k.in_raid_night      THEN true
+              WHEN s.member_frac >= 0.5 THEN true
+              WHEN s.member_frac IS NOT NULL AND s.players >= 3 THEN false
+              WHEN k.in_raid_window     THEN NULL   -- never an accusation
               ELSE false END AS ours
     FROM named n
     JOIN kill  k ON k.id = n.id
+    JOIN share s ON s.id = n.id
    ORDER BY n.character, k.boss_key, k.killed_at DESC
 )
 INSERT INTO character_lockouts

@@ -219,3 +219,55 @@ Both were invisible while the table was empty.
    lockouts are counted (`onDownTargets`), never dropped — lockout-length ==
    respawn-length is a model we have not measured, and an unknown timer is
    treated as UP so a missing boss state can never hide a real block.
+
+## Three corrections to the lockout model, same evening (Hitya)
+
+> "Friday was a guild rolling event, so internal, but still a lockout. only the
+> lockouts from current era or night's targets really matter, and as long as
+> mains are good to go"
+
+**1. A raid night is not the only thing we run.** The first cut decided `ours`
+from the `raid_nights` binding with the raid window as fallback, so Friday's
+guild classic run (Vox / Nagafen / Terror, seven roster characters) came out as
+FOREIGN. Wrong, and the wrong direction to be wrong in.
+
+The fix is a signal the codebase already had: **roster share**. Over ten days of
+real encounters the separation is not close —
+
+| | roster share |
+|---|---|
+| our raid-night kills | 0.75 – 0.89 |
+| Friday's guild rolling event | 0.78 / 0.88 / 1.00 |
+| the Breakfast Club morning raids | 0.14 / 0.18 / 0.20 / 0.22 |
+
+so `classifyOurs` now reads: bound to a raid night → true; **else majority of
+named players on the roster → true** (a guild event, calendar or not); else a
+clear minority on ≥3 players → false; else null. The 0.5 line is
+`GUILD_EVENT_MIN_MEMBER_FRAC`, deliberately identical to
+`REVIEW_FOREIGN_MAX_MEMBER_FRAC` in `web/lib/anomalies.ts` so the two surfaces
+can never disagree about the same fight. Under 3 named players it returns
+**null**, never false — a duo that happens to name one outsider is not evidence.
+
+Reclassifying the backfill moved Friday's 14 rows to `ours`, and left the
+foreign list as exactly the five Breakfast Club bosses.
+
+**2. Era scoping.** A Lady Vox lockout is real and changes nothing about a
+Sunday in Vex Thal. `currentEraNames()` in `web/lib/eras.ts` returns the era
+containing *now* **plus the one below it** — Luclin + Velious today, because
+Sleeper's Tomb is very much a current target; PoP + Luclin from 2026-10-01,
+derived from the same `ERAS` table the rest of the site uses, so nobody has to
+edit a list. `/admin/lockouts` leads with those and drops older content to the
+bottom. The officer briefing needs no era filter — it is already scoped to the
+night's targets, which is the other half of the same sentence.
+
+**3. Mains are the verdict.** A blocked alt is a swap; a blocked main is a hole
+in the raid. `buildLockoutBriefing` now returns `mainsBlocked` / `altsBlocked`
+counted **only on targets that are up**, and that drives the ✅/⚠, the embed
+colour and the checklist flag. An alt-only night reads "✅ All mains clear —
+2 alts blocked, swap and carry on" instead of a warning. `/admin/lockouts`
+sorts mains first inside each band.
+
+**What the three filters do to the signal.** 753 rows → the officer-relevant
+set for Sunday Aug 23 is **six**, of which four are mains: Chadivarius and
+Hawkner on Grieg Veneficus (locked to Mon Aug 24, boss up since Aug 19), and
+Fittir on both Sleeper's warders (locked to Fri Aug 28, both up Sun ~4pm).

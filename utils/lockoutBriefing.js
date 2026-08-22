@@ -15,6 +15,11 @@
 // that carries one. A MAIN on this list is the surprising case and is called
 // out — that's the "someone raided with another guild" signal.
 //
+// THE VERDICT IS MAINS, NOT THE HEADCOUNT (Hitya 2026-08-22: "as long as mains
+// are good to go"). A blocked alt is a swap; a blocked main is a hole in the
+// raid. So `mainsBlocked` drives the ✅/⚠ and the checklist flag, and the alt
+// count rides along as detail.
+//
 // ⚠ WHY THE TARGET'S UP/DOWN STATE MATTERS MORE THAN THE HEADCOUNT (2026-08-22).
 // A lockout runs the same length as the boss's respawn, so after one of OUR
 // kills the entire raid is locked AND the boss is down — 32 names that mean
@@ -36,7 +41,8 @@
  * @param {Function} [a.isTargetUp]    boss id -> boolean. Unknown => treat as up,
  *                                     so a missing timer never hides a real block.
  * @returns {{ zones: Array, total: number, mains: number, outsiders: number,
- *             actionable: number, onDownTargets: number, targetsWithNone: string[] }}
+ *             actionable: number, mainsBlocked: number, altsBlocked: number,
+ *             onDownTargets: number, targetsWithNone: string[] }}
  */
 function buildLockoutBriefing({ targetBossIds = [], bosses = [], lockouts = [], kindOf, isTargetUp } = {}) {
   const wanted = new Set(targetBossIds.map(id => String(id).toLowerCase()));
@@ -66,6 +72,7 @@ function buildLockoutBriefing({ targetBossIds = [], bosses = [], lockouts = [], 
 
   const zoneMap = new Map();
   let total = 0, mains = 0, actionable = 0, onDownTargets = 0;
+  let mainsBlocked = 0, altsBlocked = 0;
   for (const [key, rows] of byBoss) {
     const boss = bossById.get(key);
     const zone = (boss && boss.zone) || 'Unknown zone';
@@ -77,7 +84,15 @@ function buildLockoutBriefing({ targetBossIds = [], bosses = [], lockouts = [], 
                    || String(a.name).localeCompare(String(b.name)));
     total += chars.length;
     mains += chars.filter(c => c.kind === 'main').length;
-    if (up) actionable += chars.length; else onDownTargets += chars.length;
+    if (up) {
+      actionable   += chars.length;
+      // Only an UP target can block anyone, so only these count toward the
+      // verdict. `mains` above still counts every main for context.
+      mainsBlocked += chars.filter(c => c.kind === 'main').length;
+      altsBlocked  += chars.filter(c => c.kind !== 'main').length;
+    } else {
+      onDownTargets += chars.length;
+    }
     if (!zoneMap.has(zone)) zoneMap.set(zone, []);
     zoneMap.get(zone).push({
       bossId: key,
@@ -113,7 +128,7 @@ function buildLockoutBriefing({ targetBossIds = [], bosses = [], lockouts = [], 
       return (b && b.name) || String(id);
     });
 
-  return { zones, total, mains, outsiders, actionable, onDownTargets, targetsWithNone: clear };
+  return { zones, total, mains, outsiders, actionable, mainsBlocked, altsBlocked, onDownTargets, targetsWithNone: clear };
 }
 
 module.exports = { buildLockoutBriefing };

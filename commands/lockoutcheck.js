@@ -61,16 +61,20 @@ async function buildBriefingEmbed(client) {
   const b = buildLockoutBriefing({ targetBossIds: planned.bossIds, bosses, lockouts, kindOf, isTargetUp });
 
   const embed = new EmbedBuilder()
-    .setColor(b.total > 0 ? 0xf0883e : 0x1a7f37)
+    .setColor(b.mainsBlocked > 0 ? 0xf0883e : 0x1a7f37)
     .setTitle('🔒 Lockout check — tonight\'s targets')
     .setTimestamp();
 
   const header = [
     planned.eventTitle ? `**${planned.eventTitle}**` : null,
-    b.actionable === 0
-      ? '✅ Nobody on the roster is blocked from anything that\'s up tonight.'
-      : `⚠️ **${b.actionable}** character${b.actionable === 1 ? '' : 's'} cannot engage a target that IS up` +
-        (b.mains ? ` — **${b.mains}** of them ${b.mains === 1 ? 'is a main' : 'are mains'}` : ''),
+    // Mains are the verdict — a blocked alt is a swap, a blocked main is a hole
+    // in the raid (Hitya 2026-08-22: "as long as mains are good to go").
+    b.mainsBlocked === 0
+      ? (b.altsBlocked
+          ? `✅ **All mains clear.** ${b.altsBlocked} alt${b.altsBlocked === 1 ? '' : 's'} blocked — swap and carry on.`
+          : '✅ **All mains clear**, and no alts blocked either.')
+      : `⚠️ **${b.mainsBlocked} main${b.mainsBlocked === 1 ? '' : 's'}** cannot engage a target that IS up`
+        + (b.altsBlocked ? ` (plus ${b.altsBlocked} alt${b.altsBlocked === 1 ? '' : 's'})` : ''),
     'A lockout stops them **fighting** it, not just looting — they get teleported out of the zone on engage.',
     // Our own kill locks the raid and drops the boss for the same window, so
     // these two numbers move together and mean nothing on their own.
@@ -105,7 +109,7 @@ async function buildBriefingEmbed(client) {
     });
   }
   if (planned.eventUrl) embed.addFields({ name: 'Planner', value: planned.eventUrl, inline: false });
-  return { embed, reason: null, total: b.actionable };
+  return { embed, reason: null, total: b.actionable, mainsBlocked: b.mainsBlocked };
 }
 
 async function postLockoutBriefing(client) {

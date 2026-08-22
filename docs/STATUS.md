@@ -121,6 +121,16 @@ next touch one rather than assuming a missing row means a missing doc.
     briefing now reports `actionable` (locked to a target that is UP) rather
     than a raw headcount, and non-roster characters from joint raids are
     counted, not listed.
+    Same-evening corrections from Hitya ("Friday was a guild rolling event, so
+    internal… only the lockouts from current era or night's targets really
+    matter, and as long as mains are good to go"): `ours` now also comes out
+    true on a majority-roster share, so an off-calendar guild event is internal
+    (our raids measure 0.75–0.89, pug raids 0.14–0.22 — the 0.5 line matches
+    `web/lib/anomalies.ts`); `/admin/lockouts` scopes to `currentEraNames()`
+    (era containing now + the one below, so Velious stays in and it moves
+    itself at the PoP unlock); and the verdict is `mainsBlocked`, not a
+    headcount. Net effect: 753 rows → six that matter for Sunday, four of them
+    mains.
   - **Buff queue overhaul (mimic beta + agent 3.5.92 + bot 3.1.59, Hitya:
     "buff queue is off the page").** Overlay type-groups collapse by default
     with name previews; Feral Avatar/Savagery carried targets stay listed with

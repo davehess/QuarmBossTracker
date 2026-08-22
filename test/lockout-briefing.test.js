@@ -168,10 +168,35 @@ describe('buildLockoutBriefing', () => {
     expect(out.targetsWithNone).toEqual(['Aten Ha Ra']);
   });
 
+  it('separates blocked mains from blocked alts on up targets', () => {
+    // The verdict is mains: a blocked alt is a swap, a blocked main is a hole.
+    const out = buildLockoutBriefing({
+      targetBossIds: ['aten_ha_ra'],
+      bosses: BOSSES,
+      lockouts: [lk('Hitya', 'aten_ha_ra'), lk('Melting', 'aten_ha_ra'), lk('Rockin', 'aten_ha_ra')],
+      kindOf,   // Hitya = main, the rest = alt
+    });
+    expect(out.mainsBlocked).toBe(1);
+    expect(out.altsBlocked).toBe(2);
+  });
+
+  it('does not count a main toward the verdict when the target is down', () => {
+    const out = buildLockoutBriefing({
+      targetBossIds: ['aten_ha_ra'],
+      bosses: BOSSES,
+      lockouts: [lk('Hitya', 'aten_ha_ra')],
+      kindOf,
+      isTargetUp: () => false,
+    });
+    expect(out.mains).toBe(1);          // still counted for context
+    expect(out.mainsBlocked).toBe(0);   // but nothing to act on
+  });
+
   it('survives empty input without throwing', () => {
     expect(buildLockoutBriefing()).toEqual({
       zones: [], total: 0, mains: 0, outsiders: 0,
-      actionable: 0, onDownTargets: 0, targetsWithNone: [],
+      actionable: 0, mainsBlocked: 0, altsBlocked: 0,
+      onDownTargets: 0, targetsWithNone: [],
     });
   });
 });

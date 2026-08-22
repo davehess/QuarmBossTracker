@@ -38,6 +38,7 @@ import Link from 'next/link';
 import { supabaseAdmin } from '@/lib/supabase';
 import { selectAll } from '@/lib/selectAll';
 import { userTz, fmtAbs } from '@/lib/timezone';
+import { isCurrentEraName, currentEraNames } from '@/lib/eras';
 
 export const dynamic = 'force-dynamic';
 export const metadata = { title: 'Loot lockouts — Wolf Pack admin' };
@@ -141,15 +142,37 @@ export default async function LockoutsPage() {
       !c.main_name || c.main_name.toLowerCase() === c.name.toLowerCase() ? 'main' : 'alt');
   }
   const kindOf = (n: string): Kind => kindByName.get(n.toLowerCase()) ?? 'unknown';
+
+  // Era, so the page can lead with the content we actually raid (Hitya
+  // 2026-08-22: "only the lockouts from current era or night's targets really
+  // matter"). expansion_label is populated for every curated boss, which is
+  // the only kind that produces a lockout.
+  const bossKeys = [...new Set(rows.map(r => r.boss_key))];
+  const { data: bossRows } = bossKeys.length
+    ? await sb.from('bosses_local').select('internal_id, expansion_label').in('internal_id', bossKeys)
+    : { data: [] as { internal_id: string; expansion_label: string | null }[] };
+  const eraByBoss = new Map<string, string | null>(
+    ((bossRows ?? []) as { internal_id: string; expansion_label: string | null }[])
+      .map(b => [b.internal_id, b.expansion_label]));
+  const isCurrent = (r: Row) => isCurrentEraName(eraByBoss.get(r.boss_key));
+
   // A kill parse of a raid one of ours joined carries the OTHER guild's whole
   // roster, and those are real lockouts — on characters that are not ours to
   // plan around. Split them out rather than letting sixty strangers bury the
   // handful of names an officer has to act on.
   const mine    = rows.filter(r => kindOf(r.character) !== 'unknown');
   const notMine = rows.filter(r => kindOf(r.character) === 'unknown');
-  const foreign = mine.filter(r => r.ours === false);
-  const unknown = mine.filter(r => r.ours === null);
-  const ours    = mine.filter(r => r.ours === true);
+  const current = mine.filter(isCurrent);
+  const legacy  = mine.filter(r => !isCurrent(r));
+  // Within current era, mains first — a blocked main is a hole in the raid,
+  // a blocked alt is a swap.
+  const byMainFirst = (a: Row, b: Row) =>
+    (kindOf(a.character) === 'main' ? 0 : 1) - (kindOf(b.character) === 'main' ? 0 : 1)
+    || a.character.localeCompare(b.character);
+  const foreign = current.filter(r => r.ours === false).sort(byMainFirst);
+  const unknown = current.filter(r => r.ours === null).sort(byMainFirst);
+  const ours    = current.filter(r => r.ours === true).sort(byMainFirst);
+  const eraLabel = currentEraNames().join(' + ');
 
   return (
     <div className="space-y-6">
@@ -161,6 +184,8 @@ export default async function LockoutsPage() {
           <b className="text-text">engage lock, not a loot lock</b> — a locked character can&apos;t fight the mob
           at all, and gets <b className="text-text">teleported out of the zone on engage</b>. So this is a
           before-the-pull question: someone locked who engages anyway is a body that vanishes mid-fight. The point
+          The first three sections cover <b className="text-text">{eraLabel}</b> — the content we actually raid;
+          anything older is real but changes nothing about a raid night, so it sits at the bottom. The point
           of the split is the first section — a character who killed a boss with{' '}
           <b className="text-text">another guild</b> is locked on ours, and we used to read those relays only to
           nudge boss timers and throw the rest away. Foreign <i>raids</i> are a different problem and stay on{' '}
@@ -186,6 +211,12 @@ export default async function LockoutsPage() {
         tone="text-green"
         blurb="Bound to a Wolf Pack raid night. Here for completeness — this is the expected case."
         rows={ours} tz={tz} kindOf={kindOf}
+      />
+      <Section
+        title="· Older content"
+        tone="text-dim"
+        blurb="Lockouts on expansions we are past. Real, and they still stop that character engaging that mob — but they do not touch a raid night, so they stay out of the way."
+        rows={legacy} tz={tz} kindOf={kindOf}
       />
       <Section
         title="· Not on our roster"

@@ -16,9 +16,14 @@ const block = sliceBlock(src, 'async function _recordKillLockouts({', '\n}\n');
 const VENTANI = { id: 'ventani_warder', name: 'Ventani the Warder', timerHours: 162 };
 
 let calls;
-function makeSupabase({ raidNightId = null, existing = [] } = {}) {
+function makeSupabase({ raidNightId = null, existing = [], roster = [] } = {}) {
   return {
     isEnabled: () => true,
+    selectAllPaged: async (table, q) => {
+      calls.push({ op: 'selectAllPaged', table, q });
+      if (table === 'characters') return roster.map(name => ({ name }));
+      return [];
+    },
     select: async (table, q) => {
       calls.push({ op: 'select', table, q });
       if (table === 'encounters')          return [{ raid_night_id: raidNightId }];
@@ -72,6 +77,32 @@ describe('_recordKillLockouts', () => {
     await fn(baseArgs());
     expect(calls.find(c => c.op === 'upsert').onConflict)
       .toBe('guild_id,character,boss_key');
+  });
+
+  it('reads the roster only when the encounter is NOT bound to a raid night', async () => {
+    const bound = load({ supabase: makeSupabase({ raidNightId: 'rn-1' }) });
+    await bound(baseArgs());
+    expect(calls.some(c => c.op === 'selectAllPaged')).toBe(false);
+
+    calls = [];
+    const unbound = load({ supabase: makeSupabase({ raidNightId: null }) });
+    await unbound(baseArgs());
+    expect(calls.some(c => c.op === 'selectAllPaged' && c.table === 'characters')).toBe(true);
+  });
+
+  it('calls an off-calendar guild event ours, not foreign', async () => {
+    // Hitya 2026-08-22: "Friday was a guild rolling event, so internal, but
+    // still a lockout." No raid-night binding, outside the window, but the
+    // named players are ours.
+    const fn = load({ supabase: makeSupabase({ roster: ['Taeya', 'Badcop', 'Sevilla'] }) });
+    await fn(baseArgs());
+    expect(calls.find(c => c.op === 'upsert').rows.every(r => r.ours === true)).toBe(true);
+  });
+
+  it('still calls a pug raid foreign when the roster share is thin', async () => {
+    const fn = load({ supabase: makeSupabase({ roster: ['Taeya'] }) });
+    await fn(baseArgs());
+    expect(calls.find(c => c.op === 'upsert').rows.every(r => r.ours === false)).toBe(true);
   });
 
   it('marks a kill outside every raid window as not ours', async () => {
