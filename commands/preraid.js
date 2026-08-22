@@ -13,6 +13,7 @@
 const { SlashCommandBuilder, EmbedBuilder, MessageFlags } = require('discord.js');
 const { hasOfficerRole, officerRolesList } = require('../utils/roles');
 const { buildPreRaidChecklist } = require('../utils/preRaidChecklist');
+const { getOfficerChannelId, setOfficerChannelId } = require('../utils/officerChannel');
 
 const MIMIC_ACTIVE_DAYS = 7;           // uploaded at all in the last week
 const CLASS_AVG_NIGHTS  = 6;           // how far back "our average" looks
@@ -214,8 +215,11 @@ function renderEmbed({ planned, nightCount, checklist: c }) {
 }
 
 async function postPreRaidChecklist(client) {
-  const chId = process.env.OFFICER_CHAT_CHANNEL_ID;
-  if (!chId) return { ok: false, reason: 'OFFICER_CHAT_CHANNEL_ID not set' };
+  const supabase = require('../utils/supabase');
+  const chId = await getOfficerChannelId(supabase);
+  if (!chId) {
+    return { ok: false, reason: 'no officer channel configured — run `/preraid here:true` in the officer channel once' };
+  }
   const data = await gather(client);
   const ch = await client.channels.fetch(chId).catch(() => null);
   if (!ch) return { ok: false, reason: 'officer channel not reachable' };
@@ -282,7 +286,10 @@ async function postMiddayRaidInfo(client) {
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('preraid')
-    .setDescription('Post the pre-raid checklist (signups, classes, Mimic, lockouts, targets) to officer chat.'),
+    .setDescription('Post the pre-raid checklist (signups, classes, Mimic, lockouts, targets) to officer chat.')
+    .addBooleanOption(opt => opt.setName('here')
+      .setDescription('Post in THIS channel and remember it for the automatic pre-raid posts')
+      .setRequired(false)),
 
   async execute(interaction) {
     if (!hasOfficerRole(interaction.member)) {
@@ -290,6 +297,19 @@ module.exports = {
         content: `❌ Officers only. Roles: ${officerRolesList()}` });
     }
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+    // `here:true` is how the officer channel gets wired WITHOUT an env var and
+    // a redeploy — the id lands in bot_kv, which survives deploys.
+    if (interaction.options.getBoolean('here')) {
+      const supabase = require('../utils/supabase');
+      const saved = await setOfficerChannelId(supabase, interaction.channelId, interaction.user?.id);
+      if (!saved.ok) return interaction.editReply(`❌ Could not remember this channel: ${saved.error}`);
+      const data = await gather(interaction.client).catch(err => ({ error: err?.message }));
+      if (data.error) return interaction.editReply(`✅ Officer channel set to <#${interaction.channelId}>, but the checklist failed: ${data.error}`);
+      await interaction.channel.send({ embeds: [renderEmbed(data)] });
+      return interaction.editReply(`✅ Posted here, and the automatic pre-raid checklist will use <#${interaction.channelId}> from now on.`);
+    }
+
     const res = await postPreRaidChecklist(interaction.client).catch(err => ({ ok: false, reason: err?.message }));
     return interaction.editReply(res.ok ? '✅ Posted the pre-raid checklist to officer chat.' : `❌ ${res.reason || 'failed'}`);
   },

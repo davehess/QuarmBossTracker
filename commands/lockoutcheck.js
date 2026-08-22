@@ -90,8 +90,12 @@ async function buildBriefingEmbed(client) {
 }
 
 async function postLockoutBriefing(client) {
-  const chId = process.env.OFFICER_CHAT_CHANNEL_ID;
-  if (!chId) return { ok: false, reason: 'OFFICER_CHAT_CHANNEL_ID not set' };
+  const supabase = require('../utils/supabase');
+  const { getOfficerChannelId } = require('../utils/officerChannel');
+  const chId = await getOfficerChannelId(supabase);
+  if (!chId) {
+    return { ok: false, reason: 'no officer channel configured — run `/preraid here:true` in the officer channel once' };
+  }
   const { embed, reason } = await buildBriefingEmbed(client);
   if (!embed) return { ok: false, reason };
   const ch = await client.channels.fetch(chId).catch(() => null);
