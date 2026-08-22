@@ -94,12 +94,25 @@ describe('buildPreRaidChecklist', () => {
       lockoutInput: {
         targetBossIds: ['aten_ha_ra'], bosses: BOSSES,
         lockouts: [{ character: 'Melting', boss_key: 'aten_ha_ra', expires_at: 'x', ours: false }],
-        kindOf: () => 'alt',
+        kindOf: () => 'main',
       },
     });
     expect(out.lockouts.total).toBe(1);
     expect(out.lockouts.zones[0].zone).toBe('Vex Thal');
-    expect(out.flags).toContain('1 locked out');
+    expect(out.flags).toContain('1 main locked out');
+  });
+
+  it('does not flag a blocked ALT — that is a swap, not a problem with tonight', () => {
+    const out = buildPreRaidChecklist({
+      ...base,
+      lockoutInput: {
+        targetBossIds: ['aten_ha_ra'], bosses: BOSSES,
+        lockouts: [{ character: 'Melting', boss_key: 'aten_ha_ra', expires_at: 'x', ours: false }],
+        kindOf: () => 'alt',
+      },
+    });
+    expect(out.lockouts.altsBlocked).toBe(1);
+    expect(out.flags.some(f => f.includes('locked out'))).toBe(false);
   });
 
   it('does not flag lockouts on a target that is still on cooldown', () => {
@@ -116,7 +129,7 @@ describe('buildPreRaidChecklist', () => {
     });
     expect(out.lockouts.total).toBe(1);
     expect(out.lockouts.onDownTargets).toBe(1);
-    expect(out.flags).not.toContain('1 locked out');
+    expect(out.flags.some(f => f.includes('locked out'))).toBe(false);
   });
 
   it('no signups is its own flag, not just a thin roster', () => {

@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   normalizeCharacterName,
   participantsFromUpload,
+  memberFraction,
   classifyOurs,
   buildKillLockouts,
   dropRowsShadowedBySll,
@@ -66,14 +67,51 @@ describe('participantsFromUpload', () => {
   });
 });
 
+describe('memberFraction', () => {
+  const roster = new Set(['hitya', 'taeya', 'uilz']);
+  it('is the share of named players on the roster', () => {
+    expect(memberFraction(['Hitya', 'Taeya', 'Badcop', 'Sevilla'], roster)).toBe(0.5);
+  });
+  it('is case-insensitive and accepts an array roster', () => {
+    expect(memberFraction(['HITYA'], ['Hitya'])).toBe(1);
+  });
+  it('is null when there is nothing to measure', () => {
+    expect(memberFraction([], roster)).toBeNull();
+    expect(memberFraction(['Hitya'], new Set())).toBeNull();
+  });
+});
+
 describe('classifyOurs', () => {
   it('is true when the encounter is bound to a raid night', () => {
     expect(classifyOurs({ inRaidNight: true, inRaidWindow: false })).toBe(true);
   });
-  it('is null — never false — when unbound but inside a raid window', () => {
+
+  it('is true for an off-calendar guild event — most of the raid is ours', () => {
+    // Hitya 2026-08-22: "Friday was a guild rolling event, so internal, but
+    // still a lockout." Measured, our raids run 0.75-0.89 roster share.
+    expect(classifyOurs({
+      inRaidNight: false, inRaidWindow: false, memberFrac: 0.78, playerCount: 9,
+    })).toBe(true);
+  });
+
+  it('is false for somebody else\'s raid our people joined', () => {
+    // The Breakfast Club morning raids measured 0.14-0.22.
+    expect(classifyOurs({
+      inRaidNight: false, inRaidWindow: false, memberFrac: 0.22, playerCount: 9,
+    })).toBe(false);
+  });
+
+  it('will not accuse on a thin player count', () => {
+    expect(classifyOurs({
+      inRaidNight: false, inRaidWindow: false, memberFrac: 0, playerCount: 2,
+    })).toBeNull();
+  });
+
+  it('is null — never false — when unbound, unmeasurable, but inside a raid window', () => {
     expect(classifyOurs({ inRaidNight: false, inRaidWindow: true })).toBeNull();
   });
-  it('is false only when unbound and outside every raid window', () => {
+
+  it('is false only when unbound, unmeasurable and outside every raid window', () => {
     expect(classifyOurs({ inRaidNight: false, inRaidWindow: false })).toBe(false);
   });
 });
@@ -93,6 +131,11 @@ describe('buildKillLockouts', () => {
 
   it('marks a Friday-morning kill as not ours', () => {
     expect(buildKillLockouts(base).every(r => r.ours === false)).toBe(true);
+  });
+
+  it('marks the same off-calendar kill as OURS when the roster fills it', () => {
+    const out = buildKillLockouts({ ...base, roster: new Set(['taeya', 'badcop']) });
+    expect(out.every(r => r.ours === true)).toBe(true);
   });
 
   it('stamps source and encounter so the row is traceable to its parse', () => {

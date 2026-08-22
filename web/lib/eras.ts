@@ -21,6 +21,34 @@ export function eraForTimestamp(iso: string | Date | null | undefined): EraName 
   return null;
 }
 
+/**
+ * The eras whose raid content we are currently RUNNING.
+ *
+ * Hitya 2026-08-22, on lockouts: "only the lockouts from current era or
+ * night's targets really matter." A lockout on Lady Vox is real and changes
+ * nothing about a Sunday in Vex Thal.
+ *
+ * Two eras, not one: the era below the live one is still on the target
+ * rotation — with Luclin live that is Velious, and Sleeper's Tomb is very much
+ * a current target. Derived from ERAS above, so it moves on its own when PoP
+ * opens on 2026-10-01 (the same date as the bot's POP_UNLOCK_MS) without
+ * anyone editing a list.
+ */
+export function currentEraNames(now: Date = new Date()): EraName[] {
+  const t = now.toISOString();
+  const i = ERAS.findIndex(e => t >= e.start && t < e.end);
+  if (i < 0) return [ERAS[ERAS.length - 1].name];
+  return ERAS.slice(Math.max(0, i - 1), i + 1).map(e => e.name);
+}
+
+/** True when a boss's expansion label is content we are currently running.
+ *  An unknown/missing label is NOT current era — a mis-labelled boss must not
+ *  inflate an officer's "act on this" list. */
+export function isCurrentEraName(label: string | null | undefined, now?: Date): boolean {
+  if (!label) return false;
+  return (currentEraNames(now) as string[]).some(n => n.toLowerCase() === label.toLowerCase());
+}
+
 export function eraByName(name: string | undefined | null) {
   if (!name) return null;
   return ERAS.find(e => e.name.toLowerCase() === name.toLowerCase()) || null;

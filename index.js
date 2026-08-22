@@ -15796,9 +15796,12 @@ async function _recordKillLockouts({
   const participants = kl.participantsFromUpload({ contributor, players, healers, defenders });
   if (!participants.length) return;
 
-  // Was this one of OUR kills? The encounter's raid_nights binding is the only
-  // direct answer; the raid-window check is the fallback that keeps an unbound
-  // in-window kill at `null` (unknown) instead of `false` (raided elsewhere).
+  // Was this one of OUR kills? The encounter's raid_nights binding is the
+  // direct answer when it exists. When it doesn't, the ROSTER SHARE decides —
+  // a raid night is not the only thing we run (Hitya 2026-08-22: "Friday was a
+  // guild rolling event, so internal, but still a lockout"), and only the
+  // share of named players who are ours can tell an off-calendar guild event
+  // from somebody else's raid. The raid-window check is the last fallback.
   let inRaidNight = false;
   try {
     const enc = await supabase.select('encounters',
@@ -15806,8 +15809,18 @@ async function _recordKillLockouts({
     inRaidNight = !!(Array.isArray(enc) && enc[0] && enc[0].raid_night_id);
   } catch (e) { void e; }
 
+  let roster = null;
+  if (!inRaidNight) {
+    try {
+      const chars = await supabase.selectAllPaged('characters',
+        `guild_id=eq.${encodeURIComponent(process.env.SUPABASE_GUILD_ID || 'wolfpack')}&select=name`, 'name');
+      roster = new Set((Array.isArray(chars) ? chars : [])
+        .map(c => String(c && c.name || '').toLowerCase()).filter(Boolean));
+    } catch (e) { void e; }
+  }
+
   const rows = kl.buildKillLockouts({
-    boss, killedAtMs, participants, inRaidNight, inRaidWindow,
+    boss, killedAtMs, participants, inRaidNight, inRaidWindow, roster,
     guildId: process.env.SUPABASE_GUILD_ID || 'wolfpack',
     encounterId, observedBy: contributor,
   });

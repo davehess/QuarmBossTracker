@@ -196,9 +196,12 @@ function renderEmbed({ planned, nightCount, checklist: c }) {
   const lk = c.lockouts;
   e.addFields({
     name: '🔒 Lockouts on tonight\'s targets',
-    value: ((lk.actionable === 0
-      ? 'Nobody on our roster is blocked from a target that\'s up.'
-      : (`**${lk.actionable}** blocked${lk.mains ? ` (${lk.mains} main${lk.mains === 1 ? '' : 's'})` : ''} — ` +
+    value: ((lk.mainsBlocked === 0
+      ? (lk.altsBlocked
+          ? `All mains clear — ${lk.altsBlocked} alt${lk.altsBlocked === 1 ? '' : 's'} blocked, swap and carry on.`
+          : 'All mains clear, and no alts blocked either.')
+      : (`**${lk.mainsBlocked} main${lk.mainsBlocked === 1 ? '' : 's'}** blocked` +
+         `${lk.altsBlocked ? ` (plus ${lk.altsBlocked} alt${lk.altsBlocked === 1 ? '' : 's'})` : ''} — ` +
          'a lockout stops them **fighting** it, and teleports them out on engage.\n' +
          lk.zones.map(z => `**${z.zone}** — ` +
            z.bosses.map(b => `${b.bossName}: ${b.chars.map(ch => ch.kind === 'main' ? `**${ch.name}**` : ch.name).join(', ')}`).join(' · ')
