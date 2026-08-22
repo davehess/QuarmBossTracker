@@ -2515,12 +2515,14 @@ async function _maybeOpenPendingSession(readyClient) {
   }
 }
 
-// Pre-raid lockout briefing (Hitya 2026-08-21). Posted to officer chat in the
-// 90 minutes before a raid night starts, once per night — a lockout is an
-// ENGAGE lock, so "who can't fight what we're pulling" has to arrive BEFORE
-// the pull, not at loot time. Officers can also force it with /lockoutcheck.
-const _LOCKOUT_BRIEF_KEY = 'lockout_briefing';
-async function _maybeLockoutBriefing(readyClient) {
+// Pre-raid checklist (Hitya 2026-08-21). Posted to officer chat in the 90
+// minutes before a raid night starts, once per night, while there is still
+// time to act: signups, class shortages vs our own average, Mimic coverage,
+// lockouts (an ENGAGE lock — it has to arrive BEFORE the pull), and whether
+// the planned targets are actually up. Officers can force it with /preraid;
+// /lockoutcheck posts just the lockout section.
+const _PRERAID_POST_KEY = 'preraid_checklist';
+async function _maybePreRaidChecklist(readyClient) {
   try {
     if (!process.env.OFFICER_CHAT_CHANNEL_ID) return;
     const { nowPartsInTz, getDefaultTz } = require('./utils/timezone');
@@ -2536,20 +2538,54 @@ async function _maybeLockoutBriefing(readyClient) {
     const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
     const key = rn.nightKey(Date.now());
     const rows = await supabase.select('bot_kv',
-      `guild_id=eq.${encodeURIComponent(guildId)}&key=eq.${_LOCKOUT_BRIEF_KEY}&select=value&limit=1`)
+      `guild_id=eq.${encodeURIComponent(guildId)}&key=eq.${_PRERAID_POST_KEY}&select=value&limit=1`)
       .catch(() => null);
     const last = (Array.isArray(rows) && rows[0] && rows[0].value) ? rows[0].value.night_key : null;
     if (last === key) return;                       // already posted for tonight
 
-    const { postLockoutBriefing } = require('./commands/lockoutcheck');
-    const res = await postLockoutBriefing(readyClient);
-    if (!res.ok) { console.log(`[lockout-brief] skipped — ${res.reason}`); return; }
+    const { postPreRaidChecklist } = require('./commands/preraid');
+    const res = await postPreRaidChecklist(readyClient);
+    if (!res.ok) { console.log(`[pre-raid] skipped — ${res.reason}`); return; }
     await supabase.upsert('bot_kv',
-      [{ guild_id: guildId, key: _LOCKOUT_BRIEF_KEY, value: { night_key: key },
+      [{ guild_id: guildId, key: _PRERAID_POST_KEY, value: { night_key: key },
          updated_at: new Date().toISOString() }], 'guild_id,key').catch(() => {});
-    console.log(`[lockout-brief] posted tonight's briefing (${key})`);
+    console.log(`[pre-raid] posted tonight's checklist (${key})`);
   } catch (e) {
-    console.warn('[lockout-brief] failed:', e?.message);
+    console.warn('[pre-raid] failed:', e?.message);
+  }
+}
+
+// Midday raid-info post (Hitya 2026-08-21: "post the raid info midday to our
+// channel"). Member-facing, to the raid channel, once per raid day in the
+// noon hour — re-surfacing the header block officers already typed into the
+// signup post plus which classes are still wanted, while there's most of a day
+// left to fix a gap. Distinct from the officer checklist at T-90m.
+const _MIDDAY_POST_KEY = 'midday_raid_info';
+async function _maybeMiddayRaidInfo(readyClient) {
+  try {
+    const { nowPartsInTz, getDefaultTz } = require('./utils/timezone');
+    const rn = require('./utils/raidNight');
+    const p = nowPartsInTz(getDefaultTz());
+    if (!rn.RAID_DAY_NAMES.has(String(p.dayOfWeek || '').toLowerCase())) return;
+    if (p.hour !== 12) return;                       // the noon hour, ET
+
+    const supabase = require('./utils/supabase');
+    const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+    const key = rn.nightKey(Date.now());
+    const rows = await supabase.select('bot_kv',
+      `guild_id=eq.${encodeURIComponent(guildId)}&key=eq.${_MIDDAY_POST_KEY}&select=value&limit=1`)
+      .catch(() => null);
+    if (Array.isArray(rows) && rows[0] && rows[0].value && rows[0].value.night_key === key) return;
+
+    const { postMiddayRaidInfo } = require('./commands/preraid');
+    const res = await postMiddayRaidInfo(readyClient);
+    if (!res.ok) { console.log(`[midday-raid] skipped — ${res.reason}`); return; }
+    await supabase.upsert('bot_kv',
+      [{ guild_id: guildId, key: _MIDDAY_POST_KEY, value: { night_key: key },
+         updated_at: new Date().toISOString() }], 'guild_id,key').catch(() => {});
+    console.log(`[midday-raid] posted raid info (${key})`);
+  } catch (e) {
+    console.warn('[midday-raid] failed:', e?.message);
   }
 }
 
@@ -2560,7 +2596,8 @@ function startSpawnChecker(readyClient) {
   setInterval(async () => {
     try {
       await _maybeOpenPendingSession(readyClient);
-      await _maybeLockoutBriefing(readyClient);
+      await _maybePreRaidChecklist(readyClient);
+      await _maybeMiddayRaidInfo(readyClient);
       const bosses        = getBosses();
       const histThreadId  = process.env.HISTORIC_KILLS_THREAD_ID;
       const historyThread = histThreadId ? await readyClient.channels.fetch(histThreadId).catch(() => null) : null;

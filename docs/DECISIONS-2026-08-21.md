@@ -91,3 +91,43 @@ posts automatically once per raid night in the T-90m window, deduped on
 **Mains are called out** because lockouts are per character: an alt carrying one
 for a current-era boss is the expected Breakfast Club case, a main is the
 surprising one.
+
+## Officer pre-raid checklist + midday raid-info post (Hitya)
+
+**The calls.** *"let's build an admin-facing officer-chat pre-raid checklist,
+active mimics, class shortages below our average, lockouts, other pertinent
+details (suggest some)"* and, with the real signup embed attached, *"this is
+the information that we go off of from signups. post the raid info midday to
+our channel."*
+
+**The design rule I picked, and why.** Every section must be **actionable in the
+next hour**. A number an officer can't do anything about before the pull belongs
+on a web page, not in a Discord post — which is why there is no DKP, no
+attendance history and no parse stats here. All true, all useless at 7pm.
+
+**Officer checklist (`/preraid`, auto at T-90m, bot 3.1.66):**
+1. Signups — going/tentative/out, flagged thin only against OUR OWN recent
+   average, never a magic number.
+2. Class shortages — a class is short when it fails BOTH a ratio and an
+   absolute-head test (2 of 3 clerics is a crisis, 9 of 12 wizards is a
+   Tuesday), sorted by heads missing rather than ratio: 0-of-4 warriors
+   outranks 3-of-6 clerics because you can raid a cleric light and you cannot
+   raid with no warriors.
+3. Mimic coverage — counted in PLAYERS, never characters (CLAUDE.md adoption
+   rule), naming who we won't see. A signup with no Discord id is assumed
+   covered rather than accused.
+4. Lockouts on tonight's targets — the engage-lock briefing, folded in.
+5. Targets actually UP — the most expensive thing to discover at pull time.
+
+**Midday member post (`/raidinfo`, auto in the noon hour, to the raid
+channel):** re-surfaces the header block the officers ALREADY typed into the
+signup post — Raid Set / Muster Point / Raid Lead / Raid Window / Loot / Ticks —
+rather than inventing a format, plus who has signed by class and which classes
+are still wanted. Deliberately NOT the officer checklist: no Mimic coverage, no
+lockout names. What a raider needs at noon is where to be, who's leading, and
+whether their class is wanted.
+
+Both dedupe per night in `bot_kv` (not state.json — deploys wipe it). The
+header parser is tested against the REAL Vex Thal signup post; its first cut
+silently dropped "Raid Set 1 - Vex Thal" because the label pattern didn't allow
+digits, which the fixture caught.
