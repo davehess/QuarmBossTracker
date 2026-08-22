@@ -1290,6 +1290,13 @@ holds it in memory.
   "your agent uploaded it AND nobody else owns it". The level ladder + trader
   placeholders are `web/lib/characterRoles.ts` (pure, tested) and are shared
   with `/admin/links` — Trader there no longer demands a class.
+- **Pre-raid lockout briefing (bot 3.1.65, 2026-08-21)** — `/lockoutcheck`
+  (officer) and an automatic officer-chat post in the T-90m window before a
+  raid night, deduped per night in `bot_kv`. Pure builder in
+  `utils/lockoutBriefing.js`: tonight's targets (`loadTonightsTargets` off the
+  RaidHelper event) × active `character_lockouts`, grouped by zone, mains
+  first, plus the targets that are clear. Pre-pull by design — see the engage-
+  lock note below.
 - **Raid lockouts, ours vs foreign (bot 3.1.64 + web 1.1.88/89, 2026-08-21)** —
   ⚠ an ENGAGE lock, not a loot lock: a locked character can't fight the mob and
   is teleported out of the zone on engage, so this is a pre-pull check (see

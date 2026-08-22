@@ -65,3 +65,29 @@ have a kill and it does not line up, so it happened elsewhere; **null = we have
 no kill of that boss at all, so we cannot say**. /admin/lockouts shows the three
 bands separately, and the null band is labelled "usually just a boss we don't
 track — not evidence of anything". An unknown must not read as an accusation.
+
+## Pre-raid lockout briefing to officer chat (Hitya)
+
+**The call.** *"put it into a post in officer chat about characters currently
+locked out for the upcoming night's raid by zone from the raid planner's
+event."*
+
+**Why the timing is the feature.** Because a lockout is an ENGAGE lock, the
+useful moment is BEFORE the pull — a locked raider who engages is a body that
+vanishes mid-fight. So the briefing is answered against the planner's target
+list and posted in the 90 minutes before start, not after loot.
+
+**Shape.** `utils/lockoutBriefing.js` is pure and tested: given tonight's target
+boss ids (`loadTonightsTargets` reads the RaidHelper event), the boss catalog
+and the active `character_lockouts` rows, it groups blocked characters by ZONE,
+busiest zone first, MAINS first within each boss, and also names the targets
+nobody is locked to — so the post reads as a check that ran rather than a list
+that happened to be short.
+
+**Two ways in:** `/lockoutcheck` (officer) posts on demand; the spawn checker
+posts automatically once per raid night in the T-90m window, deduped on
+`nightKey` in `bot_kv` (not state.json — deploys wipe it). Bot **3.1.65**.
+
+**Mains are called out** because lockouts are per character: an alt carrying one
+for a current-era boss is the expected Breakfast Club case, a main is the
+surprising one.
