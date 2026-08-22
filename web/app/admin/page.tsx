@@ -41,7 +41,7 @@ export default function AdminPage() {
         />
         <Card
           title="🔒 Loot lockouts"
-          body="Who is currently locked out of which raid boss, split by whether the kill was ours. A raider who killed a boss with another guild still can't loot it on our night — captured from the /sll relay, which we previously read only for boss timers."
+          body="Who is currently locked out of which raid boss, split by whether the kill was ours. A lockout is an ENGAGE lock — a locked character can't fight the mob at all and is teleported out of the zone on engage — so this is a before-the-pull check, not a loot question. Captured from the /sll relay, which we previously read only for boss timers."
           href="/admin/lockouts"
         />
         <Card

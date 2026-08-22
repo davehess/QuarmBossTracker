@@ -39,6 +39,17 @@ on alts. we need to remain vigilant about these not being included, but also
 capture loot lockouts for raid mobs when they don't occur with our guild — put
 those into another admin section."*
 
+**⚠ Corrected same day by Hitya — a lockout is an ENGAGE lock.** I built and
+described this as a *loot* lockout. It is stronger: a locked character
+**cannot fight the mob at all** and is **teleported out of the zone on
+engage**. That moves the whole feature from a loot-distribution question to a
+PRE-PULL one — a locked raider who engages is a body that vanishes mid-fight.
+It is per character, so for a current-era boss it is normally an ALT that
+carries one; a MAIN appearing on the foreign list is the surprising case, which
+is why the page now marks main vs alt. Recorded in CLAUDE.md's don't-re-derive
+section, and the UI no longer says "loot lockout" anywhere. The stored data was
+already right — only my model of what it meant was wrong.
+
 **Two jobs that were being conflated.** A foreign RAID must stay out of our
 numbers — /parses already auto-hides an upload whose players are mostly not
 ours, and /admin/anomalies owns the review. A foreign LOCKOUT is the opposite:
