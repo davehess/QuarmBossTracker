@@ -40,6 +40,11 @@ export default function AdminPage() {
           href="/admin/anomalies"
         />
         <Card
+          title="🔒 Loot lockouts"
+          body="Who is currently locked out of which raid boss, split by whether the kill was ours. A raider who killed a boss with another guild still can't loot it on our night — captured from the /sll relay, which we previously read only for boss timers."
+          href="/admin/lockouts"
+        />
+        <Card
           title="👥 Member dashboard"
           body="Silent-member outreach list. Cross-references guild members against character roster, chat, parses, and /who observations to find inactive raiders and roster gaps."
           href="/admin/members"

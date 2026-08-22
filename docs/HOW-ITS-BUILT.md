@@ -1290,6 +1290,35 @@ holds it in memory.
   "your agent uploaded it AND nobody else owns it". The level ladder + trader
   placeholders are `web/lib/characterRoles.ts` (pure, tested) and are shared
   with `/admin/links` — Trader there no longer demands a class.
+- **Loot lockouts, ours vs foreign (bot 3.1.64 + web 1.1.88, 2026-08-21)** —
+  the `/sll` relay now records a `character_lockouts` row per character/boss
+  alongside its boss-timer work (`_handleAgentLockout`). `ours` is three-state:
+  true = the lockout lines up with a kill on our board (30-min tolerance),
+  false = we have a kill and it doesn't line up (so it happened elsewhere),
+  null = no kill of that boss at all, so unknown. `/admin/lockouts` shows the
+  three bands. Distinct from `/admin/anomalies`, which keeps foreign RAIDS out
+  of our parses — foreign LOCKOUTS are deliberately kept in, because they bind
+  us on our own raid night.
+- **Witnessed hails → PoP flags (agent 3.6.4, 2026-08-21)** — the authoritative
+  grant line is a self-message, so non-Mimic raiders had no flag record.
+  `parseWitnessedHail` captures `X says, 'Hail, <NPC>'` — the ONE exception to
+  the say-chat drop (see `docs/PRIVACY.md` and the member-facing `/privacy`) —
+  and uploads it as `source='hail_witnessed'`, evidence not proof. The NPC→flag
+  decision is bot-side so the catalog grows data-only. Bot half + manual entry
+  are still TODO (task #58); the NPC/phrase list needs
+  `docs/HANDOFF-pop-quest-extract.md` run on the EQServer box.
+- **PoP spell turn-ins (web 1.1.86, 2026-08-20)** — `web/lib/popSpells.ts` maps
+  spell LEVEL to the parchment that buys it (Ethereal 61-62 / Spectral 63-64 /
+  Glyphed Rune Word 65), inferred from one class's quest script and held as one
+  witness. `pop_spell_needs(guild)` RPC drives the /pop section: each main ×
+  unscribed PoP spell, ordered by character level desc (first to the level gets
+  first dibs), restricted to mains who submitted a spellbook. /pop also takes
+  spellbook submissions, reusing the /me uploader + action.
+- **/parses raid split (web 1.1.85, 2026-08-20)** — the 🗡 rollup lines split
+  into "During the raid" / "Outside the raid". A kill is the raid's when
+  `encounters.raid_night_id` is set AND participation ≥ max(6, 25% of that
+  night's peak) — the night tag alone is time-based and caught a solo wolf
+  killed en route to Vex Thal. Rule + evidence in the rollup migration.
 - **Shared-bank account grouping (web 1.1.84, 2026-08-20)** — the shared bank
   is account-level, so summing it per character over-counted every stack.
   `web/lib/sharedBank.ts` clusters characters into accounts by SLOT AGREEMENT
