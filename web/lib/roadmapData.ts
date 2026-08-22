@@ -37,6 +37,20 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'web-1-1-88',
+    title: '\u{1F4DC} PoP spells, raid-only parses, and flag coverage for everyone',
+    version: 'Web 1.1.88 · Bot 3.1.64 · Agent 3.6.4',
+    date: '2026-08-21',
+    headline: 'Planes of Power prep: see what you need to turn in for each spell, and get your flags recorded even if you do not run Mimic.',
+    features: [
+      { name: '\u{1F4DC} What to turn in for a PoP spell', blurb: 'Missing spell lists now name the parchment that buys it — Ethereal for level 61-62, Spectral for 63-64, Glyphed Rune Word for 65 — and remind you the spell you get is random from that tier.' },
+      { name: '\u{1F5F3} Who needs which PoP spell', blurb: 'The PoP page lists every main who has submitted a spellbook and how many spells they still need at each tier, highest level first — whoever gets to the level first has first dibs. You can submit your spellbook right there.' },
+      { name: '\u{2694} Raid kills separated from farming', blurb: 'The parses page now splits each night into what the raid cleared and what was killed outside it, so a day of farming no longer hides the raid.' },
+      { name: '\u{1F6A9} Flags recorded even without Mimic', blurb: 'The game only tells YOU when you get a flag, so anyone not running Mimic had no record. Now, if someone running Mimic is standing there when you hail a flagging NPC, that gets recorded for you.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'web-1-1-83',
     title: '\u{1F3E6} Shared banks, actually counted once',
     version: 'Web 1.1.84',

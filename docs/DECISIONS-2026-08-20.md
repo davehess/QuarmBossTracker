@@ -285,6 +285,54 @@ caught a new `.limit(2000)` (PostgREST silently caps at 1000 — switched to the
 shared paginator), and the roles test caught `Number(null) === 0` rendering an
 unknown level as the nonsense "L0".
 
+## /parses: raid kills split from everything else (Hitya, mid-raid)
+
+**The call.** *"separate raid kills from no raid kills"*, then the spec when the
+first cut showed three zones: *"tonight is Seru and VT trash, so it should just
+be two zones."*
+
+**Two conditions, because one wasn't enough.** `encounters.raid_night_id` (the
+bot stamps it during a raid night, and through the post-midnight spillover) is
+the right anchor — better than deriving a 20:30-23:30 window, which mis-bins
+every short night, and the Seru/alt nights run 3 ticks until PoP. But the night
+tag is TIME-based, so it also caught `a_ferocious_wolf` in The Dawnshroud Peaks
+— 54 damage, one player, someone clearing a path to Vex Thal — and reported it
+as a third raid zone. A kill is the raid's only if **enough of the raid was on
+it**: a quarter of that night's peak participation, floor of a full group. The
+bar is RELATIVE so it calibrates to the raid's size instead of hard-coding
+ours, which the self-host wizard inherits.
+
+**Evidence.** Every genuine raid kill that night had 10-31 players; across
+August 37 raid-night-tagged encounters have ≤5 players and 198 have ≥7. Verified
+against the night: Sanctus Seru 12 + Vex Thal 3 as raid, wolf out. Web 1.1.85.
+
+**Known, not fixed:** day bucketing still uses `started_at` in ET, so a raid
+running past midnight puts its late kills on the next calendar day even though
+`raid_night_id` knows better. Raised with Hitya; unanswered.
+
+## PoP spell turn-ins are LEVEL TIERS, not per-class lists
+
+**The finding.** The quest script hands a random spell per turn-in item, which
+reads like a per-class pool needing every NPC's script. Resolving all 25 spells
+in the one script we had (a cleric NPC) against the catalog showed the pools are
+level tiers with no overlap: **Ethereal Parchment 61-62 · Spectral Parchment
+63-64 · Glyphed Rune Word 65**. Tier is therefore a function of the spell's
+LEVEL, which `spell_level_seed` holds for every class — one script generalises
+to all of them.
+
+**Held as one witness, not a law.** `web/lib/popSpells.ts` records the
+provenance and returns null for an unknown level rather than guessing;
+`docs/HANDOFF-pop-quest-extract.md` asks a local session to try to FALSIFY it
+against another class's script.
+
+**Shipped with it (web 1.1.86):** `pop_spell_needs(guild)` — each main × the
+PoP spells they haven't scribed, ordered by character level desc so
+first-to-level is first in the queue; restricted to mains who submitted a
+spellbook, because without one we can't tell "doesn't have it" from "we don't
+know". /pop renders needs-per-tier and takes spellbook submissions. First cut of
+the RPC timed out at 60s scanning every 'Spell: %' item; rebuilt from the 209
+seeded PoP rows.
+
 ## Process: a silent Monitor death delayed the freeze-lift landing ~9h
 
 The 00:31 ET landing (bot 3.1.59 + web 1.1.77) was armed on a persistent

@@ -8292,6 +8292,7 @@ async function _handleAgentLockout(req, res) {
   const channelId = process.env.TIMER_CHANNEL_ID;
 
   let set = 0;
+  const lockoutRows = [];
   for (const entry of entries) {
     const { bossName, remainingMs, character } = entry || {};
     if (!bossName || typeof remainingMs !== 'number') continue;
@@ -8325,6 +8326,35 @@ async function _handleAgentLockout(req, res) {
     const nextSpawn   = Date.now() + remainingMs;
     const existing    = getBossState(boss.id);
 
+    // Record the lockout itself, not just what it implies for the timer
+    // (Hitya 2026-08-21: capture lockouts from raids that weren't ours). A
+    // lockout binds US even when the kill wasn't ours — they cannot loot that
+    // boss on our night. `ours` is three-state and NEVER guessed:
+    //   • our board has a kill whose respawn matches theirs → ours
+    //   • our board has a kill that does NOT match          → somewhere else
+    //   • no kill on the board at all                       → unknown (null)
+    // The tolerance is generous (30 min) because a personal lockout and a
+    // guild timer are both derived values and drift; only a materially
+    // different time is evidence of a different kill.
+    if (character) {
+      const impliedKillAt = nextSpawn - boss.timerHours * 3600000;
+      let ours = null;
+      if (existing && Number.isFinite(existing.nextSpawn)) {
+        ours = Math.abs(existing.nextSpawn - nextSpawn) <= 30 * 60000;
+      }
+      lockoutRows.push({
+        guild_id:        process.env.SUPABASE_GUILD_ID || 'wolfpack',
+        character:       String(character).slice(0, 64),
+        boss_key:        boss.id,
+        boss_name:       boss.name,
+        expires_at:      new Date(nextSpawn).toISOString(),
+        implied_kill_at: new Date(impliedKillAt).toISOString(),
+        ours,
+        observed_at:     new Date().toISOString(),
+        observed_by:     payload?.character ? String(payload.character).slice(0, 64) : null,
+      });
+    }
+
     if (existing) {
       // Guild timer already running — only refine it if the lockout suggests
       // the real spawn is LATER (i.e., our timer might be too early).
@@ -8345,9 +8375,21 @@ async function _handleAgentLockout(req, res) {
     }
   }
 
+  if (lockoutRows.length) {
+    const supabase = require('./utils/supabase');
+    // Upsert: the same /sll run gets re-relayed as people re-run it, and the
+    // PK is (guild, character, boss, expires_at) so a re-observation of the
+    // SAME lockout collapses instead of duplicating.
+    await supabase.upsert('character_lockouts', lockoutRows,
+      'guild_id,character,boss_key,expires_at')
+      .catch(err => console.warn('[lockout] character_lockouts upsert failed:', err?.message));
+    const foreign = lockoutRows.filter(r => r.ours === false).length;
+    if (foreign) console.log(`[lockout] recorded ${lockoutRows.length} lockout(s), ${foreign} from kills that aren't ours`);
+  }
+
   _trackUpload({ endpoint: 'lockout', character: payload?.character, agentVersion: payload?.agent_version, payloadBytes: total, agentState: payload?.agent_state || null, uploadedBy: identity.discord_id });
   res.writeHead(200);
-  res.end(JSON.stringify({ ok: true, set }));
+  res.end(JSON.stringify({ ok: true, set, lockouts: lockoutRows.length }));
 }
 
 // In-memory card cache: mirrors agentTestCards in state.json but updated
