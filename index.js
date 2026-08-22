@@ -2515,6 +2515,44 @@ async function _maybeOpenPendingSession(readyClient) {
   }
 }
 
+// Pre-raid lockout briefing (Hitya 2026-08-21). Posted to officer chat in the
+// 90 minutes before a raid night starts, once per night — a lockout is an
+// ENGAGE lock, so "who can't fight what we're pulling" has to arrive BEFORE
+// the pull, not at loot time. Officers can also force it with /lockoutcheck.
+const _LOCKOUT_BRIEF_KEY = 'lockout_briefing';
+async function _maybeLockoutBriefing(readyClient) {
+  try {
+    if (!process.env.OFFICER_CHAT_CHANNEL_ID) return;
+    const { nowPartsInTz, getDefaultTz } = require('./utils/timezone');
+    const rn = require('./utils/raidNight');
+    const p = nowPartsInTz(getDefaultTz());
+    if (!rn.RAID_DAY_NAMES.has(String(p.dayOfWeek || '').toLowerCase())) return;
+    const mins = p.hour * 60 + p.minute;
+    // [start-90min, start). After the raid starts the board is the source of
+    // truth and a briefing is just noise.
+    if (mins < rn.RAID_START_MIN - 90 || mins >= rn.RAID_START_MIN) return;
+
+    const supabase = require('./utils/supabase');
+    const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+    const key = rn.nightKey(Date.now());
+    const rows = await supabase.select('bot_kv',
+      `guild_id=eq.${encodeURIComponent(guildId)}&key=eq.${_LOCKOUT_BRIEF_KEY}&select=value&limit=1`)
+      .catch(() => null);
+    const last = (Array.isArray(rows) && rows[0] && rows[0].value) ? rows[0].value.night_key : null;
+    if (last === key) return;                       // already posted for tonight
+
+    const { postLockoutBriefing } = require('./commands/lockoutcheck');
+    const res = await postLockoutBriefing(readyClient);
+    if (!res.ok) { console.log(`[lockout-brief] skipped — ${res.reason}`); return; }
+    await supabase.upsert('bot_kv',
+      [{ guild_id: guildId, key: _LOCKOUT_BRIEF_KEY, value: { night_key: key },
+         updated_at: new Date().toISOString() }], 'guild_id,key').catch(() => {});
+    console.log(`[lockout-brief] posted tonight's briefing (${key})`);
+  } catch (e) {
+    console.warn('[lockout-brief] failed:', e?.message);
+  }
+}
+
 function startSpawnChecker(readyClient) {
   const channelId = process.env.TIMER_CHANNEL_ID;
   if (!channelId) { console.warn('⚠️ TIMER_CHANNEL_ID not set'); return; }
@@ -2522,6 +2560,7 @@ function startSpawnChecker(readyClient) {
   setInterval(async () => {
     try {
       await _maybeOpenPendingSession(readyClient);
+      await _maybeLockoutBriefing(readyClient);
       const bosses        = getBosses();
       const histThreadId  = process.env.HISTORIC_KILLS_THREAD_ID;
       const historyThread = histThreadId ? await readyClient.channels.fetch(histThreadId).catch(() => null) : null;
