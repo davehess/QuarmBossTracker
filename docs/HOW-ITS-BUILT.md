@@ -1290,6 +1290,12 @@ holds it in memory.
   "your agent uploaded it AND nobody else owns it". The level ladder + trader
   placeholders are `web/lib/characterRoles.ts` (pure, tested) and are shared
   with `/admin/links` — Trader there no longer demands a class.
+- **Officer channel resolution (bot 3.1.67)** — `utils/officerChannel.js`:
+  bot_kv `officer_channel_id` → `OFFICER_CHAT_CHANNEL_ID` →
+  `OFFICER_ALERT_CHANNEL_ID`, null when unconfigured (callers must say so, not
+  guess). `/preraid here:true` wires it from Discord with no env var and no
+  redeploy — needed because the env var was never set on Railway and every
+  officer post was silently skipping.
 - **Officer pre-raid checklist + midday raid info (bot 3.1.66, 2026-08-21)** —
   `/preraid` (officer, auto at T-90m to officer chat): signups vs our own
   average, class shortages (ratio AND absolute-head test, sorted by heads

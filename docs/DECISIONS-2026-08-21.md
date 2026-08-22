@@ -131,3 +131,24 @@ Both dedupe per night in `bot_kv` (not state.json — deploys wipe it). The
 header parser is tested against the REAL Vex Thal signup post; its first cut
 silently dropped "Raid Set 1 - Vex Thal" because the label pattern didn't allow
 digits, which the fixture caught.
+
+## The officer channel is wired from Discord, not from an env var (Hitya: "wire it to officer channel")
+
+**The finding that forced this.** `OFFICER_CHAT_CHANNEL_ID` is **not set on
+Railway** (checked against the live service, 2026-08-21). Both officer posts I
+had just shipped would have skipped silently with "not set" — the same
+shipped-but-never-fires shape as the inventory uploader earlier this week, and
+for the same reason: nothing forces a config value to exist just because the
+code reads one.
+
+**Why not simply set the env var.** It can only be set by a human in the
+Railway UI, and it needs a redeploy to take effect. That is a poor dependency
+for "which channel do officer posts go to" — a thing an officer should be able
+to point at themselves, in Discord, at the moment they care.
+
+**Resolution order** (`utils/officerChannel.js`): bot_kv `officer_channel_id`
+→ `OFFICER_CHAT_CHANNEL_ID` → `OFFICER_ALERT_CHANNEL_ID`. `/preraid here:true`
+run in a channel stores its id in **bot_kv**, which survives deploys (state.json
+does not — the eleven-copies-of-the-raid-review lesson). When nothing resolves,
+callers SAY so and post nothing: an officer briefing in the wrong channel is
+worse than no briefing.

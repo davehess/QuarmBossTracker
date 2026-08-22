@@ -2524,7 +2524,6 @@ async function _maybeOpenPendingSession(readyClient) {
 const _PRERAID_POST_KEY = 'preraid_checklist';
 async function _maybePreRaidChecklist(readyClient) {
   try {
-    if (!process.env.OFFICER_CHAT_CHANNEL_ID) return;
     const { nowPartsInTz, getDefaultTz } = require('./utils/timezone');
     const rn = require('./utils/raidNight');
     const p = nowPartsInTz(getDefaultTz());
