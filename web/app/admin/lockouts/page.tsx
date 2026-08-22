@@ -22,13 +22,21 @@
 //     loot it on our Sunday. We were reading /sll only to nudge boss timers and
 //     throwing the rest away.
 //
-// `ours` is three-state on purpose (bot: _handleAgentLockout). true = lines up
-// with a kill on our board; false = we have a kill and it does NOT line up, so
-// it happened elsewhere; null = we have no kill of that boss at all, so we
-// genuinely cannot say. Null is shown as "unknown", never as an accusation —
-// it is usually just a boss we don't track.
+// `ours` is three-state on purpose. true = the kill is bound to one of our
+// raid nights; false = it isn't, and it happened outside every raid window;
+// null = we cannot say. Null is shown as "unknown", never as an accusation.
+//
+// TWO SOURCES (2026-08-22). `sll` is a relay of the character's own /sll — the
+// server's remaining time, authoritative. `kill` is derived from a confirmed
+// boss-kill parse we already had; its expiry is computed from the boss timer.
+// The second exists because the first needs a human to type /sll in game, and
+// in the day after this page shipped it produced ZERO rows while the encounter
+// pipe had already captured three foreign raid kills from one player. Hitya,
+// on that parse: "taeya reported this Ventani kill so they should have a
+// lockout." A kill row never overwrites a live /sll row.
 import Link from 'next/link';
 import { supabaseAdmin } from '@/lib/supabase';
+import { selectAll } from '@/lib/selectAll';
 import { userTz, fmtAbs } from '@/lib/timezone';
 
 export const dynamic = 'force-dynamic';
@@ -38,6 +46,7 @@ type Row = {
   character: string; boss_key: string; boss_name: string;
   expires_at: string; implied_kill_at: string | null;
   ours: boolean | null; observed_at: string; observed_by: string | null;
+  source: 'sll' | 'kill' | 'manual'; encounter_id: string | null;
 };
 type Kind = 'main' | 'alt' | 'unknown';
 
@@ -60,7 +69,7 @@ function Section({
               <th className="py-1 pr-3">Boss</th>
               <th className="py-1 pr-3">Locked until</th>
               <th className="py-1 pr-3">Implied kill</th>
-              <th className="py-1 pr-3">Seen by</th>
+              <th className="py-1 pr-3">How we know</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-border/50">
@@ -84,7 +93,15 @@ function Section({
                 <td className="py-1.5 pr-3 text-text">{r.boss_name}</td>
                 <td className="py-1.5 pr-3 text-dim">{fmtAbs(r.expires_at, tz)}</td>
                 <td className="py-1.5 pr-3 text-dim">{r.implied_kill_at ? fmtAbs(r.implied_kill_at, tz) : '—'}</td>
-                <td className="py-1.5 pr-3 text-dim text-xs">{r.observed_by ?? '—'}</td>
+                <td className="py-1.5 pr-3 text-dim text-xs">
+                  {r.source === 'kill' && r.encounter_id ? (
+                    <Link href={`/parses/${r.encounter_id}`} className="text-blue hover:underline">
+                      their parse
+                    </Link>
+                  ) : r.source === 'kill' ? 'a kill parse'
+                    : r.source === 'manual' ? 'entered by an officer'
+                    : `/sll${r.observed_by ? ` — ${r.observed_by}` : ''}`}
+                </td>
               </tr>
             ))}
           </tbody>
@@ -99,14 +116,18 @@ export default async function LockoutsPage() {
   const tz = await userTz();
   // Only lockouts that are still BINDING — an expired one is history, and the
   // question this page answers ("can they loot it with us?") is about now.
-  const { data } = await sb
+  // Paginated, not .limit() — kill-derived lockouts took this table past 700
+  // rows on day one, and PostgREST caps a response at 1000 SILENTLY, so a bare
+  // limit would drop the tail with no error (web/lib/selectAll.ts).
+  const rows = await selectAll<Row>((from, to) => sb
     .from('character_lockouts')
-    .select('character, boss_key, boss_name, expires_at, implied_kill_at, ours, observed_at, observed_by')
+    .select('character, boss_key, boss_name, expires_at, implied_kill_at, ours, observed_at, observed_by, source, encounter_id')
     .eq('guild_id', 'wolfpack')
     .gt('expires_at', new Date().toISOString())
     .order('expires_at', { ascending: true })
-    .limit(500);
-  const rows = (data ?? []) as Row[];
+    .order('character', { ascending: true })
+    .order('boss_key', { ascending: true })
+    .range(from, to));
 
   // Main vs alt, so a MAIN on the foreign list stands out — that's the case
   // that shouldn't normally happen for a current-era boss.
@@ -120,22 +141,29 @@ export default async function LockoutsPage() {
       !c.main_name || c.main_name.toLowerCase() === c.name.toLowerCase() ? 'main' : 'alt');
   }
   const kindOf = (n: string): Kind => kindByName.get(n.toLowerCase()) ?? 'unknown';
-  const foreign = rows.filter(r => r.ours === false);
-  const unknown = rows.filter(r => r.ours === null);
-  const ours    = rows.filter(r => r.ours === true);
+  // A kill parse of a raid one of ours joined carries the OTHER guild's whole
+  // roster, and those are real lockouts — on characters that are not ours to
+  // plan around. Split them out rather than letting sixty strangers bury the
+  // handful of names an officer has to act on.
+  const mine    = rows.filter(r => kindOf(r.character) !== 'unknown');
+  const notMine = rows.filter(r => kindOf(r.character) === 'unknown');
+  const foreign = mine.filter(r => r.ours === false);
+  const unknown = mine.filter(r => r.ours === null);
+  const ours    = mine.filter(r => r.ours === true);
 
   return (
     <div className="space-y-6">
       <section className="bg-panel border border-border rounded-lg p-5">
         <h1 className="text-xl text-gold">🔒 Loot lockouts</h1>
         <p className="text-sm text-dim mt-1 max-w-3xl leading-6">
-          Who is currently locked out of which raid boss, from the <code>/sll</code> relay. A lockout is an{' '}
+          Who is currently locked out of which raid boss — from a <code>/sll</code> relay, or worked out from a
+          boss-kill parse they uploaded. A lockout is an{' '}
           <b className="text-text">engage lock, not a loot lock</b> — a locked character can&apos;t fight the mob
           at all, and gets <b className="text-text">teleported out of the zone on engage</b>. So this is a
           before-the-pull question: someone locked who engages anyway is a body that vanishes mid-fight. The point
           of the split is the first section — a character who killed a boss with{' '}
-          <b className="text-text">another guild</b> is locked on ours, and until now we read those relays only to
-          nudge boss timers and threw the rest away. Foreign <i>raids</i> are a different problem and stay on{' '}
+          <b className="text-text">another guild</b> is locked on ours, and we used to read those relays only to
+          nudge boss timers and throw the rest away. Foreign <i>raids</i> are a different problem and stay on{' '}
           <Link href="/admin/anomalies" className="text-blue hover:underline">Anomalies</Link> — they are kept out
           of our parses; these are kept <i>in</i>, on purpose.
         </p>
@@ -156,8 +184,14 @@ export default async function LockoutsPage() {
       <Section
         title="✓ From our own raids"
         tone="text-green"
-        blurb="Lines up with a Wolf Pack kill. Here for completeness — this is the expected case."
+        blurb="Bound to a Wolf Pack raid night. Here for completeness — this is the expected case."
         rows={ours} tz={tz} kindOf={kindOf}
+      />
+      <Section
+        title="· Not on our roster"
+        tone="text-dim"
+        blurb="Characters we don't have in the roster, picked up from the damage lists of parses our people uploaded — mostly the other guild's raiders on a joint or pickup raid. Real lockouts, but not ours to plan around, so they're kept out of the officer briefing."
+        rows={notMine} tz={tz} kindOf={kindOf}
       />
     </div>
   );

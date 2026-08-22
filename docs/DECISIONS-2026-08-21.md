@@ -152,3 +152,70 @@ run in a channel stores its id in **bot_kv**, which survives deploys (state.json
 does not — the eleven-copies-of-the-raid-review lesson). When nothing resolves,
 callers SAY so and post nothing: an officer briefing in the wrong channel is
 worse than no briefing.
+
+---
+
+# 2026-08-22
+
+## A kill parse IS a lockout observation (Hitya: "taeya reported this Ventani kill so they should have a lockout")
+
+**Context.** Hitya linked a Ventani parse
+(`/parses/1b943d2d-0059-4407-8ab2-9346421f0d79`) uploaded by **Taeya** from a
+raid that was not ours, and asked why she had no lockout.
+
+**The finding.** She had none because `character_lockouts` had **zero rows,
+full stop** — the table shipped 2026-08-21 reading only the `/sll` relay, and
+`/sll` needs a human to type it in game. The last lockout relay of any kind
+arrived 2026-08-21 01:26 UTC, 23 hours *before* the write path existed. In that
+same window the encounter pipe had already captured **three** foreign raid kills
+from that one player (Tukaarak, Ventani, Seru). The evidence was in the
+database; nothing was reading it.
+
+Same shipped-but-never-fires shape as the officer channel above and the
+inventory scanner earlier in the week. The pattern to watch for: **a feature
+whose only input is an action a human has to remember to take.**
+
+**The call.** A confirmed kill of a lockout-bearing raid boss is itself a
+lockout observation, so derive them from parses (`utils/killLockouts.js`, wired
+into the encounter handler as `_recordKillLockouts`). Load-bearing details:
+
+- **Participants come from four places, not just the damage list.** The
+  uploader, `players`, `healers`, `defenders`. This is the case that prompted
+  the work: Taeya is a **cleric** — zero damage, therefore no
+  `encounter_players` row on the very kill she uploaded. A damage-list-only
+  derivation would still have missed her.
+- **We never infer who else was there.** A healer on a night nobody ran Mimic
+  is invisible to us and stays invisible.
+- **`ours` stays three-state**, now on better evidence than the /sll path's
+  ±30min timer heuristic: bound to a `raid_nights` row → true; unbound but
+  inside a raid window → **null** (a binding that didn't take, not an
+  accusation); unbound and outside every window → false.
+- **The primary key changed to (guild, character, boss).** /sll reports the
+  server's remaining time; a kill row computes expiry from the boss timer. The
+  two disagree by minutes about the *same* lockout, so keeping `expires_at` in
+  the key filed them as two. A character cannot hold two live lockouts on one
+  boss. This table is a **current-state projection**; the permanent audit trail
+  of who killed what with whom is `encounters` + `contributions`, which is
+  richer than this table could ever be.
+- **A kill row never overwrites a live /sll row** (`dropRowsShadowedBySll`).
+
+**Backfill** (`scripts/backfill-kill-lockouts.sql`, run 2026-08-22): 753 live
+lockouts across 162 characters and 21 bosses. Taeya's three now show, all
+lifting Aug 28.
+
+## Two things the new data volume broke, found by looking at what the post would say
+
+Both were invisible while the table was empty.
+
+1. **Non-roster names.** A parse of a joint raid carries the *other* guild's
+   whole roster, so ~90 of those 753 rows are strangers. The officer briefing
+   now counts them and does not list them (`outsiders`); `/admin/lockouts` gives
+   them their own section. Sixty strangers would bury the two names that matter.
+2. **The headcount was the wrong number.** A lockout runs the same length as the
+   boss's respawn, so after one of OUR kills the whole raid is locked *and* the
+   boss is down — 32 names, nothing to act on. The briefing now splits on the
+   **divergence**: a target that is UP with our people still locked to it, which
+   essentially only happens when somebody killed it elsewhere. Down-target
+   lockouts are counted (`onDownTargets`), never dropped — lockout-length ==
+   respawn-length is a model we have not measured, and an unknown timer is
+   treated as UP so a missing boss state can never hide a real block.

@@ -92,7 +92,9 @@ function buildPreRaidChecklist({
   }
   if (shortages.length) flags.push(`${shortages.length} class shortage${shortages.length === 1 ? '' : 's'}`);
   if (targetStatus.down.length) flags.push(`${targetStatus.down.length} target${targetStatus.down.length === 1 ? '' : 's'} not up`);
-  if (lockouts.total) flags.push(`${lockouts.total} locked out`);
+  // `actionable`, not `total` — a lockout on a target that is still on cooldown
+  // is the expected aftermath of our own kill and is not a problem with tonight.
+  if (lockouts.actionable) flags.push(`${lockouts.actionable} locked out`);
   if (mimic.missing.length) flags.push(`${mimic.missing.length} without Mimic`);
 
   return {

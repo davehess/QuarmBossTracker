@@ -49,7 +49,16 @@ async function buildBriefingEmbed(client) {
   }
   const kindOf = n => kindByName.get(String(n || '').toLowerCase()) || 'unknown';
 
-  const b = buildLockoutBriefing({ targetBossIds: planned.bossIds, bosses, lockouts, kindOf });
+  // Only an UP target can actually block anyone. After one of our own kills the
+  // whole raid is locked and the boss is down — real, but nothing to act on.
+  const { getBossState } = require('../utils/state');
+  const nowMs = Date.now();
+  const isTargetUp = (id) => {
+    const st = getBossState(id);
+    if (!st || !Number.isFinite(st.nextSpawn)) return undefined;  // unknown => treat as up
+    return st.nextSpawn <= nowMs;
+  };
+  const b = buildLockoutBriefing({ targetBossIds: planned.bossIds, bosses, lockouts, kindOf, isTargetUp });
 
   const embed = new EmbedBuilder()
     .setColor(b.total > 0 ? 0xf0883e : 0x1a7f37)
@@ -58,11 +67,21 @@ async function buildBriefingEmbed(client) {
 
   const header = [
     planned.eventTitle ? `**${planned.eventTitle}**` : null,
-    b.total === 0
-      ? '✅ Nobody is locked out of anything on tonight\'s list.'
-      : `⚠️ **${b.total}** character${b.total === 1 ? '' : 's'} cannot engage tonight` +
+    b.actionable === 0
+      ? '✅ Nobody on the roster is blocked from anything that\'s up tonight.'
+      : `⚠️ **${b.actionable}** character${b.actionable === 1 ? '' : 's'} cannot engage a target that IS up` +
         (b.mains ? ` — **${b.mains}** of them ${b.mains === 1 ? 'is a main' : 'are mains'}` : ''),
     'A lockout stops them **fighting** it, not just looting — they get teleported out of the zone on engage.',
+    // Our own kill locks the raid and drops the boss for the same window, so
+    // these two numbers move together and mean nothing on their own.
+    b.onDownTargets
+      ? `_(${b.onDownTargets} more are locked to targets that are still on cooldown — expected after our own kill.)_`
+      : null,
+    // Non-roster names come from parses of raids our people joined. Real, but
+    // not ours to plan around — counted so the number isn't silently missing.
+    b.outsiders
+      ? `_(${b.outsiders} lockout${b.outsiders === 1 ? '' : 's'} on characters outside our roster, not listed)_`
+      : null,
   ].filter(Boolean).join('\n');
   embed.setDescription(header);
 
@@ -86,7 +105,7 @@ async function buildBriefingEmbed(client) {
     });
   }
   if (planned.eventUrl) embed.addFields({ name: 'Planner', value: planned.eventUrl, inline: false });
-  return { embed, reason: null, total: b.total };
+  return { embed, reason: null, total: b.actionable };
 }
 
 async function postLockoutBriefing(client) {

@@ -102,6 +102,23 @@ describe('buildPreRaidChecklist', () => {
     expect(out.flags).toContain('1 locked out');
   });
 
+  it('does not flag lockouts on a target that is still on cooldown', () => {
+    // Our own kill locks the raid and drops the boss for the same window, so
+    // this pair always moves together and is not a problem with tonight.
+    const out = buildPreRaidChecklist({
+      ...base,
+      lockoutInput: {
+        targetBossIds: ['aten_ha_ra'], bosses: BOSSES,
+        lockouts: [{ character: 'Melting', boss_key: 'aten_ha_ra', expires_at: 'x', ours: true }],
+        kindOf: () => 'alt',
+        isTargetUp: () => false,
+      },
+    });
+    expect(out.lockouts.total).toBe(1);
+    expect(out.lockouts.onDownTargets).toBe(1);
+    expect(out.flags).not.toContain('1 locked out');
+  });
+
   it('no signups is its own flag, not just a thin roster', () => {
     const out = buildPreRaidChecklist({ ...base, signups: { going: 0, tentative: 0, absent: 0, bench: 0 } });
     expect(out.flags).toContain('no signups yet');

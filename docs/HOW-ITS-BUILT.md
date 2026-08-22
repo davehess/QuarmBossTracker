@@ -1306,23 +1306,44 @@ holds it in memory.
   block (muster/lead/window/loot/ticks) via `utils/raidInfoPost.js` plus
   classes still wanted — no Mimic or lockout detail. Both dedupe per night in
   `bot_kv`.
-- **Pre-raid lockout briefing (bot 3.1.65, 2026-08-21)** — `/lockoutcheck`
-  (officer) and an automatic officer-chat post in the T-90m window before a
-  raid night, deduped per night in `bot_kv`. Pure builder in
+- **Lockouts derived from kill parses (bot 3.1.68, 2026-08-22)** — the second,
+  and much higher-coverage, source for `character_lockouts`. A confirmed kill
+  of a lockout-bearing raid boss IS a lockout observation, so
+  `utils/killLockouts.js` + `_recordKillLockouts` (bot `index.js`) write rows
+  straight off the encounter pipe. Participants come from FOUR places —
+  uploader, `players`, `healers`, `defenders` — because a damage list alone
+  misses a cleric (the case that prompted it: Taeya uploaded a Ventani kill and
+  had no `encounter_players` row on it). Expiry = kill + boss timer, so a live
+  `/sll` row always wins (`dropRowsShadowedBySll`); `source` on the row says
+  which. PK is (guild, character, boss) — see `docs/DECISIONS-2026-08-21.md`
+  2026-08-22 for why, and `scripts/backfill-kill-lockouts.sql` for the history
+  walk (753 rows on first run).
+- **Pre-raid lockout briefing (bot 3.1.65/3.1.68, 2026-08-21/22)** —
+  `/lockoutcheck` (officer) and an automatic officer-chat post in the T-90m
+  window before a raid night, deduped per night in `bot_kv`. Pure builder in
   `utils/lockoutBriefing.js`: tonight's targets (`loadTonightsTargets` off the
   RaidHelper event) × active `character_lockouts`, grouped by zone, mains
   first, plus the targets that are clear. Pre-pull by design — see the engage-
   lock note below.
+  ⚠ **It reports `actionable`, not `total`.** A lockout runs as long as the
+  boss's respawn, so after one of our own kills the whole raid is locked AND
+  the boss is down — a headcount with nothing to act on. Only UP targets are
+  named; down-target lockouts are counted in `onDownTargets`, and an unknown
+  boss state counts as UP so a missing timer can never hide a real block.
+  Characters not on the roster are counted in `outsiders` and never listed —
+  a parse of a joint raid carries the other guild's whole roster.
 - **Raid lockouts, ours vs foreign (bot 3.1.64 + web 1.1.88/89, 2026-08-21)** —
   ⚠ an ENGAGE lock, not a loot lock: a locked character can't fight the mob and
   is teleported out of the zone on engage, so this is a pre-pull check (see
   CLAUDE.md domain policies).
-  the `/sll` relay now records a `character_lockouts` row per character/boss
-  alongside its boss-timer work (`_handleAgentLockout`). `ours` is three-state:
-  true = the lockout lines up with a kill on our board (30-min tolerance),
-  false = we have a kill and it doesn't line up (so it happened elsewhere),
-  null = no kill of that boss at all, so unknown. `/admin/lockouts` shows the
-  three bands. Distinct from `/admin/anomalies`, which keeps foreign RAIDS out
+  the `/sll` relay records a `character_lockouts` row per character/boss
+  alongside its boss-timer work (`_handleAgentLockout`); since 2026-08-22 kill
+  parses do too (entry above). `ours` is three-state: true = ours, false = it
+  happened elsewhere, null = we cannot tell — never an accusation. The /sll
+  path judges by a ±30min match against our board; the kill path by the
+  encounter's `raid_nights` binding, falling back to the raid window.
+  `/admin/lockouts` shows four bands (foreign / unknown / ours / not on our
+  roster) and links each kill-derived row to the parse it came from. Distinct from `/admin/anomalies`, which keeps foreign RAIDS out
   of our parses — foreign LOCKOUTS are deliberately kept in, because they bind
   us on our own raid night.
 - **Witnessed hails → PoP flags (agent 3.6.4, 2026-08-21)** — the authoritative

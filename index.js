@@ -8427,6 +8427,10 @@ async function _handleAgentLockout(req, res) {
         ours,
         observed_at:     new Date().toISOString(),
         observed_by:     payload?.character ? String(payload.character).slice(0, 64) : null,
+        // Authoritative: the SERVER told us the remaining time. A kill-derived
+        // row computes expiry from the boss timer and must never overwrite one
+        // of these (utils/killLockouts.dropRowsShadowedBySll).
+        source:          'sll',
       });
     }
 
@@ -8453,10 +8457,12 @@ async function _handleAgentLockout(req, res) {
   if (lockoutRows.length) {
     const supabase = require('./utils/supabase');
     // Upsert: the same /sll run gets re-relayed as people re-run it, and the
-    // PK is (guild, character, boss, expires_at) so a re-observation of the
-    // SAME lockout collapses instead of duplicating.
+    // PK is (guild, character, boss) so a re-observation of the SAME lockout
+    // collapses instead of duplicating. Keyed WITHOUT expires_at on purpose —
+    // /sll and a kill-derived row disagree by minutes about the same lockout,
+    // and a character cannot hold two live lockouts on one boss.
     await supabase.upsert('character_lockouts', lockoutRows,
-      'guild_id,character,boss_key,expires_at')
+      'guild_id,character,boss_key')
       .catch(err => console.warn('[lockout] character_lockouts upsert failed:', err?.message));
     const foreign = lockoutRows.filter(r => r.ours === false).length;
     if (foreign) console.log(`[lockout] recorded ${lockoutRows.length} lockout(s), ${foreign} from kills that aren't ours`);
@@ -15770,6 +15776,64 @@ async function _promoteLockoutBoss(bossName, supabase) {
   }
 }
 
+// ── Kill-derived lockouts ───────────────────────────────────────────────────
+// The other half of character_lockouts. `_handleAgentLockout` records what a
+// character's own /sll says; this records what their PARSE proves. See
+// utils/killLockouts.js for why the parse is the higher-coverage source, and
+// the 2026-08-22 migration for why the two share one row per (character, boss).
+async function _recordKillLockouts({
+  boss, encounterId, killedAtMs, contributor, players, healers, defenders, inRaidWindow,
+}) {
+  const kl       = require('./utils/killLockouts');
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) return;
+
+  // PoP stays locked until 2026-10-01, and for the same reason the /sll path
+  // gates on it: PVP-event names collide with Plane of Tactics bosses, and a
+  // synthesized lockout on a locked boss is a phantom on every officer surface.
+  if (isPopLocked(boss)) return;
+
+  const participants = kl.participantsFromUpload({ contributor, players, healers, defenders });
+  if (!participants.length) return;
+
+  // Was this one of OUR kills? The encounter's raid_nights binding is the only
+  // direct answer; the raid-window check is the fallback that keeps an unbound
+  // in-window kill at `null` (unknown) instead of `false` (raided elsewhere).
+  let inRaidNight = false;
+  try {
+    const enc = await supabase.select('encounters',
+      `id=eq.${encodeURIComponent(encounterId)}&select=raid_night_id&limit=1`);
+    inRaidNight = !!(Array.isArray(enc) && enc[0] && enc[0].raid_night_id);
+  } catch (e) { void e; }
+
+  const rows = kl.buildKillLockouts({
+    boss, killedAtMs, participants, inRaidNight, inRaidWindow,
+    guildId: process.env.SUPABASE_GUILD_ID || 'wolfpack',
+    encounterId, observedBy: contributor,
+  });
+  if (!rows.length) return;
+
+  // One read to protect any live /sll row: the server's own remaining time
+  // beats a number we computed off the boss timer.
+  let existing = [];
+  try {
+    const names = [...new Set(rows.map(r => r.character))];
+    existing = await supabase.select('character_lockouts',
+      `guild_id=eq.${encodeURIComponent(rows[0].guild_id)}`
+      + `&boss_key=eq.${encodeURIComponent(boss.id)}`
+      + `&character=in.(${names.map(encodeURIComponent).join(',')})`
+      + '&select=character,boss_key,source,expires_at') || [];
+  } catch (e) { void e; }
+
+  const keep = kl.dropRowsShadowedBySll(rows, existing);
+  if (!keep.length) return;
+
+  await supabase.upsert('character_lockouts', keep, 'guild_id,character,boss_key');
+  const foreign = keep.filter(r => r.ours === false).length;
+  console.log(`[lockout] ${boss.name}: ${keep.length} lockout(s) from the kill parse`
+    + (foreign ? `, ${foreign} not from our raid` : ''));
+}
+
 async function _handleAgentUpload(req, res) {
   // Auth: shared-secret bearer token. WOLFPACK_AGENT_TOKEN must be set.
   const identity = await mimicLink.requireAgentAuth(req, res);
@@ -17028,6 +17092,27 @@ async function _handleAgentUpload(req, res) {
             `id=eq.${encodeURIComponent(recParseResult.encounterId)}&ended_at=is.null`,
             { ended_at: endedIso }
           ).catch(err => console.warn('[agent] ended_at set failed:', err?.message));
+        }
+
+        // A confirmed kill of a lockout-bearing raid boss IS a lockout
+        // observation for everyone who was there — Hitya 2026-08-22, on a
+        // Ventani parse Taeya had uploaded from a non-guild raid: "taeya
+        // reported this Ventani kill so they should have a lockout." The
+        // /sll relay this table was built on needs a human to type /sll in
+        // game, so it had produced zero rows while the encounter pipe had
+        // already captured three foreign raid kills from that same player.
+        // Fire-and-forget: a lockout write must never fail an upload.
+        if (recParseResult?.encounterId && encounter.confirmed_kill === true && matchedBoss) {
+          _recordKillLockouts({
+            boss:        matchedBoss,
+            encounterId: recParseResult.encounterId,
+            killedAtMs:  encounter.ended_at
+                           ? new Date(encounter.ended_at).getTime()
+                           : startedMs + duration * 1000,
+            contributor: character || null,
+            players, healers: uploadedHealers, defenders: uploadedDefenders,
+            inRaidWindow: isRaidWindow,
+          }).catch(err => console.warn('[lockout] kill-derived write failed:', err?.message));
         }
 
         // Persist charm sessions for this encounter. Upsert dedup'd by

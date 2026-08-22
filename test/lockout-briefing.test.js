@@ -91,7 +91,87 @@ describe('buildLockoutBriefing', () => {
     expect(out.total).toBe(1);
   });
 
+  it('counts characters we do not know but keeps them out of the post', () => {
+    // A parse of a raid we joined carries the other guild's whole roster, and
+    // since 2026-08-22 those become lockout rows too. They are real, but an
+    // officer briefing that lists sixty strangers hides the two names that
+    // matter.
+    const out = buildLockoutBriefing({
+      targetBossIds: ['lord_inquisitor_seru'],
+      bosses: BOSSES,
+      lockouts: [
+        lk('Hitya',  'lord_inquisitor_seru'),
+        lk('Nobody', 'lord_inquisitor_seru'),
+        lk('Nobody', 'lord_inquisitor_seru'),
+      ],
+      kindOf,
+    });
+    expect(out.total).toBe(1);
+    expect(out.outsiders).toBe(2);
+    expect(JSON.stringify(out)).not.toContain('Nobody');
+  });
+
+  it('reports a target as clear when only outsiders are locked to it', () => {
+    const out = buildLockoutBriefing({
+      targetBossIds: ['aten_ha_ra'],
+      bosses: BOSSES,
+      lockouts: [lk('Nobody', 'aten_ha_ra')],
+      kindOf,
+    });
+    expect(out.total).toBe(0);
+    expect(out.targetsWithNone).toEqual(['Aten Ha Ra']);
+  });
+
+  it('names only the targets that are actually UP', () => {
+    // After one of our own kills the whole raid is locked AND the boss is
+    // down — the headcount is real but nobody was going to pull it. The
+    // divergence (target up, our people still locked) is the officer signal.
+    const out = buildLockoutBriefing({
+      targetBossIds: ['lord_inquisitor_seru', 'aten_ha_ra'],
+      bosses: BOSSES,
+      lockouts: [
+        lk('Hitya',   'aten_ha_ra'),            // up — must be named
+        lk('Melting', 'lord_inquisitor_seru'),  // down — counted, not named
+        lk('Rockin',  'lord_inquisitor_seru'),
+      ],
+      kindOf,
+      isTargetUp: id => id !== 'lord_inquisitor_seru',
+    });
+    expect(out.total).toBe(3);
+    expect(out.actionable).toBe(1);
+    expect(out.onDownTargets).toBe(2);
+    expect(out.zones.map(z => z.zone)).toEqual(['Vex Thal']);
+    expect(JSON.stringify(out.zones)).not.toContain('Melting');
+  });
+
+  it('treats an unknown timer as up, so a missing state never hides a block', () => {
+    const out = buildLockoutBriefing({
+      targetBossIds: ['aten_ha_ra'],
+      bosses: BOSSES,
+      lockouts: [lk('Hitya', 'aten_ha_ra')],
+      kindOf,
+      isTargetUp: () => undefined,
+    });
+    expect(out.actionable).toBe(1);
+    expect(out.zones).toHaveLength(1);
+  });
+
+  it('calls a down target clear, since nobody can be blocked from a corpse', () => {
+    const out = buildLockoutBriefing({
+      targetBossIds: ['aten_ha_ra'],
+      bosses: BOSSES,
+      lockouts: [lk('Hitya', 'aten_ha_ra')],
+      kindOf,
+      isTargetUp: () => false,
+    });
+    expect(out.actionable).toBe(0);
+    expect(out.targetsWithNone).toEqual(['Aten Ha Ra']);
+  });
+
   it('survives empty input without throwing', () => {
-    expect(buildLockoutBriefing()).toEqual({ zones: [], total: 0, mains: 0, targetsWithNone: [] });
+    expect(buildLockoutBriefing()).toEqual({
+      zones: [], total: 0, mains: 0, outsiders: 0,
+      actionable: 0, onDownTargets: 0, targetsWithNone: [],
+    });
   });
 });
