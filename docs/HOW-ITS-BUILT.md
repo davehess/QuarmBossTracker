@@ -1290,6 +1290,16 @@ holds it in memory.
   "your agent uploaded it AND nobody else owns it". The level ladder + trader
   placeholders are `web/lib/characterRoles.ts` (pure, tested) and are shared
   with `/admin/links` — Trader there no longer demands a class.
+- **Officer pre-raid checklist + midday raid info (bot 3.1.66, 2026-08-21)** —
+  `/preraid` (officer, auto at T-90m to officer chat): signups vs our own
+  average, class shortages (ratio AND absolute-head test, sorted by heads
+  missing), Mimic coverage counted in PLAYERS, lockouts on tonight's targets,
+  and whether those targets are up. Pure builder + tests in
+  `utils/preRaidChecklist.js`. `/raidinfo` (auto in the noon hour to the raid
+  channel) is the member-facing half: re-surfaces the signup post's own header
+  block (muster/lead/window/loot/ticks) via `utils/raidInfoPost.js` plus
+  classes still wanted — no Mimic or lockout detail. Both dedupe per night in
+  `bot_kv`.
 - **Pre-raid lockout briefing (bot 3.1.65, 2026-08-21)** — `/lockoutcheck`
   (officer) and an automatic officer-chat post in the T-90m window before a
   raid night, deduped per night in `bot_kv`. Pure builder in
