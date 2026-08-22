@@ -37,6 +37,31 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'bot-3-1-68',
+    title: 'Lockouts we can actually see',
+    version: 'Bot 3.1.68 · Web 1.1.90',
+    date: '2026-08-22',
+    headline: 'Raid lockouts now come from the parses you already upload, instead of waiting for someone to type /sll.',
+    features: [
+      {
+        name: 'Your kills tell us your lockouts',
+        blurb: 'When someone uploads a boss kill, everyone the parse can see gets a lockout recorded — the person who uploaded it, the damage list, the healers and the tanks. That includes healers who did no damage, who used to be invisible to this.',
+      },
+      {
+        name: 'The pre-raid check only flags what matters',
+        blurb: 'A lockout lasts as long as the boss takes to come back, so after our own kill the whole raid is locked and the boss is down anyway. The officer post now only names people blocked from a boss that is actually up — which is the case worth asking about.',
+      },
+      {
+        name: 'Lockout page shows where each one came from',
+        blurb: 'Every entry says whether it came from a /sll or from a kill parse, and links straight to that parse. Characters who are not on our roster get their own section instead of crowding the list.',
+      },
+    ],
+    fixes: [
+      'The lockout list was reading only the first 500 entries; it now reads all of them.',
+      'A lockout seen twice — once from /sll and once from a kill — used to show up as two separate entries for the same boss.',
+    ],
+  },
+  {
     key: 'web-1-1-88',
     title: '\u{1F4DC} PoP spells, raid-only parses, and flag coverage for everyone',
     version: 'Web 1.1.88 · Bot 3.1.64 · Agent 3.6.4',

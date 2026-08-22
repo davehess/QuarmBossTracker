@@ -106,6 +106,21 @@ next touch one rather than assuming a missing row means a missing doc.
     live fleet-wide via the trigger poll — and a gated `require_raid_member`
     fire on a timer-bearing trigger now ARMS the timer (cycle state), only
     suppressing the callout. Inverts the Aug-09 note, recorded in the row.
+  - **Lockouts derived from kill parses (bot 3.1.68 + web 1.1.90, Hitya:
+    "taeya reported this Ventani kill so they should have a lockout").**
+    `character_lockouts` shipped 2026-08-21 reading only the `/sll` relay and
+    held ZERO rows — /sll needs a human to type it, and none had arrived since
+    the write path existed, while the encounter pipe had already captured three
+    foreign raid kills from that one player. `utils/killLockouts.js` +
+    `_recordKillLockouts` now derive lockouts from confirmed boss-kill parses:
+    participants from uploader + damage + healers + tanks (a damage list alone
+    misses a cleric, which is exactly the case reported). `source` distinguishes
+    them and a live /sll row always wins; PK moved to (guild, character, boss).
+    `scripts/backfill-kill-lockouts.sql` walked history — 753 live lockouts,
+    162 characters, 21 bosses. Two things the volume exposed: the officer
+    briefing now reports `actionable` (locked to a target that is UP) rather
+    than a raw headcount, and non-roster characters from joint raids are
+    counted, not listed.
   - **Buff queue overhaul (mimic beta + agent 3.5.92 + bot 3.1.59, Hitya:
     "buff queue is off the page").** Overlay type-groups collapse by default
     with name previews; Feral Avatar/Savagery carried targets stay listed with

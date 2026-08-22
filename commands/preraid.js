@@ -144,6 +144,12 @@ async function gather(client) {
       lockoutInput: {
         targetBossIds: targetIds, bosses, lockouts: lockRows,
         kindOf: n => kindByName.get(String(n || '').toLowerCase()) || 'unknown',
+        // `targets` above already resolved up/down off the board — reuse it so
+        // the checklist can't disagree with its own Targets section.
+        isTargetUp: id => {
+          const t = targets.find(x => x.bossId === id);
+          return t ? t.upNow : undefined;
+        },
       },
       nowMs: now,
     }),
@@ -190,13 +196,18 @@ function renderEmbed({ planned, nightCount, checklist: c }) {
   const lk = c.lockouts;
   e.addFields({
     name: '🔒 Lockouts on tonight\'s targets',
-    value: lk.total === 0
-      ? 'Nobody is locked out of tonight\'s list.'
-      : (`**${lk.total}** blocked${lk.mains ? ` (${lk.mains} main${lk.mains === 1 ? '' : 's'})` : ''} — ` +
+    value: ((lk.actionable === 0
+      ? 'Nobody on our roster is blocked from a target that\'s up.'
+      : (`**${lk.actionable}** blocked${lk.mains ? ` (${lk.mains} main${lk.mains === 1 ? '' : 's'})` : ''} — ` +
          'a lockout stops them **fighting** it, and teleports them out on engage.\n' +
          lk.zones.map(z => `**${z.zone}** — ` +
            z.bosses.map(b => `${b.bossName}: ${b.chars.map(ch => ch.kind === 'main' ? `**${ch.name}**` : ch.name).join(', ')}`).join(' · ')
-         ).join('\n')).slice(0, 1024),
+         ).join('\n')))
+      // Lockouts we derived from parses of raids our people joined carry the
+      // other guild's roster too. Counted, never listed.
+      + (lk.onDownTargets ? `\n_(+${lk.onDownTargets} locked to targets still on cooldown — expected after our own kill)_` : '')
+      + (lk.outsiders ? `\n_(+${lk.outsiders} on characters outside our roster)_` : '')
+      ).slice(0, 1024),
     inline: false,
   });
 
