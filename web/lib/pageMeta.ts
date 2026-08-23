@@ -32,6 +32,7 @@ const STATIC_META: Record<string, { title: string; description: string }> = {
   '/mimic':        { title: 'Download Mimic', description: 'Mimic — the Wolf Pack desktop overlay: DPS HUD, triggers, buff queue, and log sync for Project Quarm.' },
   '/feedback':     { title: 'Feedback', description: 'Bugs, ideas, kudos — straight to the officer inbox.' },
   '/roadmap':      { title: 'Roadmap', description: 'What’s shipped and what’s next for the Wolf Pack platform.' },
+  '/ai':           { title: 'Built with AI', description: 'The working method behind the platform: the rules, the incident behind each one, and a timeline you can scrub.' },
 };
 
 export function metaForPath(rawPath: string): { title: string; description: string } {

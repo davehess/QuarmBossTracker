@@ -106,6 +106,15 @@ next touch one rather than assuming a missing row means a missing doc.
     live fleet-wide via the trigger poll — and a gated `require_raid_member`
     fire on a timer-bearing trigger now ARMS the timer (cycle state), only
     suppressing the callout. Inverts the Aug-09 note, recorded in the row.
+  - **`/ai` — the methodology, published (web 1.1.92, Hitya: "publish all of
+    this detail to wolfpack.quest/ai … human and agent readable").** One data
+    module (`web/lib/aiMethodology.ts`) renders three ways: the page, `/ai.json`
+    and `/ai.txt`. 16 rules each paired with the incident that caused it, 16
+    milestones linked to real commits, the 9-stage task workflow as a decision
+    tree, and the 5-command gate. A scrubbable spine un-adopts rules as you drag
+    back to April. `test/ai-methodology.test.js` holds the published copy to the
+    source docs (every quote must still appear verbatim) — and had to be fixed
+    once for passing vacuously. Linked from the front page and `/platform`.
   - **`docs/GEMINI-SPARK-HELPER.md` (docs only, Hitya: "a starter/help file
     that Gemini spark could use to operate similarly to how we do here").**
     Boot order (CLAUDE.md → STATUS → HOW-ITS-BUILT → newest DECISIONS), the

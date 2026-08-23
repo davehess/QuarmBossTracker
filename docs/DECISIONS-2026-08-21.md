@@ -271,3 +271,63 @@ sorts mains first inside each band.
 set for Sunday Aug 23 is **six**, of which four are mains: Chadivarius and
 Hawkner on Grieg Veneficus (locked to Mon Aug 24, boss up since Aug 19), and
 Fittir on both Sleeper's warders (locked to Fri Aug 28, both up Sun ~4pm).
+
+## The methodology gets published at wolfpack.quest/ai (Hitya, 2026-08-23)
+
+> "publish all of this detail to wolfpack.quest/ai. it should be human and
+> agent readable. I would like the current view and be able to unwind a slider
+> from the current view to milestones in the adoption of these instructions and
+> the linked PRs from the development that they caused … any agentic workflow
+> could review that page and understand our methodology for developing and
+> maintaining this without GitHub access, but if the agent has GitHub access it
+> could see the full picture and set up its own workflow to match."
+
+**One source, three renderings.** `web/lib/aiMethodology.ts` holds the rules,
+milestones, workflow stages and gates; `/ai` renders them, `/ai.json` serves
+them structured, `/ai.txt` serves them as one plain-markdown document. Never
+write methodology prose into any of the three renderings — the JSON and text
+would drift from the page within a week.
+
+**Publishing a restatement needed a guard, or it becomes the thing we warn
+about.** The page restates rules that live in `CLAUDE.md` and `docs/`, which is
+a second copy, and a second copy rots — the exact failure mode several of the
+published rules exist to prevent. `test/ai-methodology.test.js` holds the copy
+to the source: every cited document must exist, and every `quote` must still
+appear verbatim in the file it cites. Rewrite a rule in `CLAUDE.md` and the
+test goes red until the published copy follows.
+⚠ The first version of that test passed **vacuously** — the quote-pairing regex
+had a `\n` after a `\s*` that had already eaten the newline, so it captured
+nothing and verified nothing. Caught by deliberately corrupting a quote and
+watching it stay green. The test now asserts a minimum number of *captured
+quotes*, not just of entries.
+
+**There are no PRs to link.** This repo ships by direct push, so commits are
+the durable unit of history; the timeline links commits, and the page says so
+rather than leaving an agent looking for a PR workflow that does not exist.
+
+**Documenting the read-discipline footgun tripped the read-discipline
+ratchet.** The prose explaining that an over-cap row limit does not lift
+PostgREST's cap contained the literal signature, and `aiMethodology.ts` is
+inside the ratchet's scan roots — so describing the bug registered as
+committing it and failed CI. Fixed by rewording rather than exempting the file:
+an exemption would have to be maintained forever, and the ratchet is only worth
+having if it has no holes. Noted in that file's header for whoever writes the
+next entry.
+
+**The two structures on the page are different on purpose** — chronology is a
+line (the scrubbable spine), routing is a tree (the task workflow, with its
+branch points drawn as branches). Colour carries the thesis before the prose
+does: orange is what went wrong, green is the rule that came out of it, blue is
+the commit that implemented it. Gold marks only the slider position.
+
+**Motion is allowed here and almost nowhere else.** The overlay rule is that
+animation is a cost because those surfaces are read mid-fight; this page is
+read deliberately, and Hitya asked for smooth transitions. Principle cards stay
+mounted and toggle a class rather than unmounting, which is what makes
+scrubbing continuous instead of a re-layout flash. All of it is off under
+`prefers-reduced-motion`, and every state is also carried by colour and text.
+
+**The page ships with a caveat about itself**: this method suits a repo with two
+very large single files, few readers, and consequences that land on a schedule.
+Visiting agents are told to adopt the shape and derive their own rules from
+their own incidents.

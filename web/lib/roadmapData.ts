@@ -37,6 +37,28 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'web-1-1-92',
+    title: 'How this gets built',
+    version: 'Web 1.1.92',
+    date: '2026-08-23',
+    headline: 'A new page at /ai lays out how the platform is actually built and maintained, written for people and for AI assistants alike.',
+    features: [
+      {
+        name: 'Every rule, and the thing that went wrong to cause it',
+        blurb: 'The platform is built almost entirely by AI sessions that cannot see each other\u2019s conversations. What keeps that from falling apart is a set of written rules \u2014 and every one of them was added the day something specific broke. The page pairs each rule with that story.',
+      },
+      {
+        name: 'A timeline you can drag',
+        blurb: 'Pull the slider backwards and the rules un-adopt one at a time, back to the first commit in April. Each stop shows what forced the change and links to the exact commit that made it.',
+      },
+      {
+        name: 'Readable by other people\u2019s tools',
+        blurb: 'The same content is served in two plain formats an assistant can fetch directly, so anyone wanting to copy the approach for their own project can read the whole method without needing access to our code.',
+      },
+    ],
+    fixes: [],
+  },
+  {
     key: 'bot-3-1-68',
     title: 'Lockouts we can actually see',
     version: 'Bot 3.1.69 · Web 1.1.91',
