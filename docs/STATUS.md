@@ -106,6 +106,16 @@ next touch one rather than assuming a missing row means a missing doc.
     live fleet-wide via the trigger poll — and a gated `require_raid_member`
     fire on a timer-bearing trigger now ARMS the timer (cycle state), only
     suppressing the callout. Inverts the Aug-09 note, recorded in the row.
+  - **`docs/GEMINI-SPARK-HELPER.md` (docs only, Hitya: "a starter/help file
+    that Gemini spark could use to operate similarly to how we do here").**
+    Boot order (CLAUDE.md → STATUS → HOW-ITS-BUILT → newest DECISIONS), the
+    per-task loop, branch routing + version bumping, the full verification gate
+    (`npm run lint` / `check:dashboard` / `test`, plus the two CI does NOT run
+    — `cd web && npx tsc --noEmit` and `golden:check`), the three test tiers
+    including the source-slice harness, migration protocol, and the footguns
+    that have already shipped bugs. Complements `docs/AI-CONTRIBUTOR-BRIEF.md`,
+    which is for a chat AI with no repo access; cross-referenced both ways and
+    from CLAUDE.md.
   - **Lockouts derived from kill parses (bot 3.1.68 + web 1.1.90, Hitya:
     "taeya reported this Ventani kill so they should have a lockout").**
     `character_lockouts` shipped 2026-08-21 reading only the `/sll` relay and

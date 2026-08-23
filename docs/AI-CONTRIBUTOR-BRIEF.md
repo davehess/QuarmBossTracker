@@ -9,6 +9,11 @@ project's Claude Code session to evaluate, harden, and merge.
 *Snapshot date: 2026-07-20. The live queue lives in `docs/STATUS.md` +
 `docs/DESIGN-platform-queue.md`; the guardrails below are stable.*
 
+> **Wrong file?** If the assistant CAN read the repo and run commands (Gemini
+> Spark, an agentic IDE session), use **`docs/GEMINI-SPARK-HELPER.md`** instead
+> — it covers boot order, branch routing, the verification gate and the test
+> tiers. This file is only for a chat with no repo access.
+
 ---
 
 ## 1. What the project is

@@ -362,6 +362,13 @@ Then rebuild on the true head.
 Two kinds of Claude sessions work on this platform, and they cannot share a
 conversation — they share **the repo, Supabase, and these docs** instead:
 
+⚠ **A non-Claude agentic session** (Gemini Spark or similar) gets none of this
+file automatically and does not run the SessionStart hook. Point it at
+**`docs/GEMINI-SPARK-HELPER.md`** — boot order, branch routing, the full
+verification gate, the test tiers, and the footguns that have already shipped
+bugs. (`docs/AI-CONTRIBUTOR-BRIEF.md` is the different case: a chat AI with no
+repo access, producing draft text a human carries back.)
+
 - **Local (desktop) sessions** have the machine: `A:\EQ` (live Quarm client,
   Zeal, crash bundles in `crashes/`, character exports, trader `BZR_*.ini`
   price files), `D:\EQServer` (local MariaDB — authoritative `peq` item/NPC
