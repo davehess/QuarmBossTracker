@@ -1306,6 +1306,19 @@ holds it in memory.
   block (muster/lead/window/loot/ticks) via `utils/raidInfoPost.js` plus
   classes still wanted — no Mimic or lockout detail. Both dedupe per night in
   `bot_kv`.
+- **`/ai` — published development methodology (web 1.1.92, 2026-08-23)** —
+  public, un-gated, and written for three readers: a person, an agent with no
+  repo access, and an agent with one. `web/lib/aiMethodology.ts` is the single
+  source (rules + milestones + workflow stages + gates); `web/app/ai/page.tsx`
+  renders it with a scrubbable milestone spine
+  (`components/AiMethodology.tsx`, client) and a static workflow decision tree
+  (`components/AiWorkflowTree.tsx`); `app/ai.json/` and `app/ai.txt/` serve the
+  same data structured and as plain markdown, both CORS-open.
+  ⚠ **Never write methodology prose into the renderings** — put it in the data
+  module or the three views drift. `test/ai-methodology.test.js` asserts every
+  cited doc exists and every quote still appears verbatim in it.
+  ⚠ The data module is inside the read-discipline ratchet's scan roots, so
+  describing an over-cap row limit in its own notation fails CI.
 - **Lockouts derived from kill parses (bot 3.1.68, 2026-08-22)** — the second,
   and much higher-coverage, source for `character_lockouts`. A confirmed kill
   of a lockout-bearing raid boss IS a lockout observation, so

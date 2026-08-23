@@ -62,6 +62,14 @@ export default async function HomePage() {
             🗺 New here? See the whole platform on one page →
           </Link>
         </p>
+        {/* /ai is written for people AND for agents (it serves /ai.txt and
+            /ai.json alongside the page), so it needs a real link from the
+            front page rather than only being reachable if you guess the URL. */}
+        <p className="text-sm mt-1">
+          <Link href="/ai" className="text-blue hover:underline">
+            🤖 How this is built and maintained with AI →
+          </Link>
+        </p>
       </section>
 
       {/* Signed-out visitors get the platform map right here on the front page —

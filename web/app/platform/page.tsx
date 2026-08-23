@@ -119,6 +119,7 @@ export default function PlatformPage() {
           <a href="https://github.com/davehess/QuarmBossTracker" target="_blank" rel="noreferrer"
              className="text-blue hover:underline">source on GitHub ↗</a>
           <Link href="/roadmap" className="text-blue hover:underline">roadmap</Link>
+          <Link href="/ai" className="text-blue hover:underline">how it&rsquo;s built with AI</Link>
           <Link href="/mimic" className="text-blue hover:underline">get miMIC</Link>
           <Link href="/privacy" className="text-blue hover:underline">privacy</Link>
         </p>

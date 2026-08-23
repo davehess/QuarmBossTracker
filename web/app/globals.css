@@ -16,3 +16,85 @@
   .animate-wp-fade-in { animation: wp-fade-in 150ms ease-out; }
   .animate-wp-zoom-in { animation: wp-zoom-in 200ms ease-out; }
 }
+
+/* /ai — the methodology scrubber (web/components/AiMethodology.tsx).
+   Motion is deliberate here and nowhere else on the site: the overlays treat
+   animation as a cost because they are read mid-fight, but this page is read
+   on purpose, and the transition is what makes "un-adopting a rule" legible as
+   a movement rather than a redraw. One duration, one easing, everywhere. */
+@layer utilities {
+  .wp-anim {
+    transition:
+      opacity 320ms cubic-bezier(0.22, 0.61, 0.36, 1),
+      background-color 320ms cubic-bezier(0.22, 0.61, 0.36, 1),
+      border-color 320ms cubic-bezier(0.22, 0.61, 0.36, 1),
+      color 320ms cubic-bezier(0.22, 0.61, 0.36, 1),
+      grid-template-rows 320ms cubic-bezier(0.22, 0.61, 0.36, 1),
+      height 320ms cubic-bezier(0.22, 0.61, 0.36, 1),
+      transform 320ms cubic-bezier(0.22, 0.61, 0.36, 1);
+  }
+  /* The lit rail is the page's one piece of real motion — its height is the
+     elapsed method, so it should visibly travel when you scrub. */
+  .wp-rail { transition: height 420ms cubic-bezier(0.22, 0.61, 0.36, 1); }
+
+  /* Range input, themed to the platform tokens. --wp-pct is set inline from
+     React so the filled track tracks the thumb without a second element. */
+  .wp-scrub {
+    -webkit-appearance: none;
+    appearance: none;
+    height: 22px;
+    background: transparent;
+    cursor: pointer;
+  }
+  .wp-scrub:focus { outline: none; }
+  .wp-scrub:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 4px rgba(88, 166, 255, 0.45); }
+  .wp-scrub:focus-visible::-moz-range-thumb     { box-shadow: 0 0 0 4px rgba(88, 166, 255, 0.45); }
+
+  .wp-scrub::-webkit-slider-runnable-track {
+    height: 4px;
+    border-radius: 999px;
+    background: linear-gradient(
+      to right,
+      #56d364 0%, #d29922 var(--wp-pct, 100%), #30363d var(--wp-pct, 100%), #30363d 100%);
+  }
+  .wp-scrub::-moz-range-track {
+    height: 4px;
+    border-radius: 999px;
+    background: linear-gradient(
+      to right,
+      #56d364 0%, #d29922 var(--wp-pct, 100%), #30363d var(--wp-pct, 100%), #30363d 100%);
+  }
+  .wp-scrub::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    margin-top: -7px;
+    height: 18px;
+    width: 18px;
+    border-radius: 999px;
+    background: #d29922;
+    border: 3px solid #0d1117;
+    box-shadow: 0 0 0 1px #d29922;
+    transition: transform 160ms cubic-bezier(0.22, 0.61, 0.36, 1);
+  }
+  .wp-scrub::-moz-range-thumb {
+    height: 18px;
+    width: 18px;
+    border-radius: 999px;
+    background: #d29922;
+    border: 3px solid #0d1117;
+    box-shadow: 0 0 0 1px #d29922;
+    transition: transform 160ms cubic-bezier(0.22, 0.61, 0.36, 1);
+  }
+  .wp-scrub:active::-webkit-slider-thumb { transform: scale(1.15); }
+  .wp-scrub:active::-moz-range-thumb     { transform: scale(1.15); }
+}
+
+/* Someone who has asked the OS for less motion gets none of the above. The
+   page still works — every state change is also carried by colour and text. */
+@media (prefers-reduced-motion: reduce) {
+  .wp-anim, .wp-rail,
+  .wp-scrub::-webkit-slider-thumb, .wp-scrub::-moz-range-thumb {
+    transition: none !important;
+  }
+  .animate-wp-fade-in, .animate-wp-zoom-in { animation: none !important; }
+}
