@@ -12,6 +12,7 @@ fleet** — the stable/beta Mimic builds are unchanged.
 | **UI Studio** — resolution updates, hotkey/spellset backup + import | ✅ Phase 1 | just the EQ folder path (ini files are plain files on the Linux FS) |
 | **Dashboard** (`localhost:7779`) | ✅ Phase 1 | nothing — it's a local web server |
 | **Log-based upload** — parses, /gu + /rs chat, triggers that key off log lines | ✅ Phase 1 | the EQ folder path (tails `eqlog_*_pq.proj.txt`) |
+| **Resolution lock** — puts `[VideoMode]` back to 1280×800 after the client stomps it to 4:3 | ✅ Phase 1, **opt-in** | the EQ folder path. Off by default; corrects the file only while EQ is closed (the client holds it open and rewrites it at exit). See `DECISIONS-2026-08-24.md` |
 | **Live overlays** — DPS/Tank HUD, Target Info, Buff queue, charm/pet | ⚠️ Phase 2 | Zeal's Windows named pipe **bridged out of Wine** (winestreamproxy) |
 | **Auto-update** | later | Linux `latest.yml` channel — off for the hand-built AppImage |
 

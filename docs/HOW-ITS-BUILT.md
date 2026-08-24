@@ -854,6 +854,26 @@ blocked while EQ runs). Cloud backup/restore: `uiStudioCapture` → bot
 `ui_layout` (encrypted `ui_snapshots`) → list/download/restore with
 resolution rescale on the way back.
 
+### Resolution lock (`resolutionLock.js`, #156)
+Holds `eqclient.ini`'s `[VideoMode]` `Width=`/`Height=` at the resolution the
+user chose, because the client rewrites that block on exit and from its
+first-run display dialog and stomps a Deck's 1280×800 back to 4:3
+(640×480 / 800×600 / 1024×768). `applyVideoMode` is a pure regex-level
+transform — it edits only those two keys, only inside `[VideoMode]`, never
+invents the section, and returns the INPUT string unchanged when nothing
+differs so an already-correct file is byte-identical and never rewritten.
+`enforce()` adds one-time `.mimic-bak` + tmp-and-rename, latin1 so every byte
+round-trips, and logs one `[reslock]` line per write (old → new + trigger).
+Config `cfg.resolutionLock = { enabled, width, height }`, DEFAULT OFF; blank
+width/height falls back to 1280×800 only on a detected Deck (`_deckDetected`
+reuses `_deckModeCached` from Background Mode) and refuses to guess elsewhere.
+Triggers in `main.js`, all gated on `_isEqRunning()` being false because EQ
+holds the file open and flushes at exit: the running→stopped edge (+2.5s
+settle), an `fs.watch` on the EQ folder (`_armResolutionLockWatch`, LINUX-ONLY
+— Windows users manage this in-client), and a settings save. A
+Mimic-initiated launch is the obvious fourth trigger and has no call site
+because Mimic does not start EverQuest. Tests: `test/resolution-lock.test.js`.
+
 ### Bringing in a character nothing else can see (🧳 on `/me`)
 A bank mule or a never-raiding alt produces no logs, no `/who` sighting and no
 OpenDKP row, so every other discovery path is blind to it — its inventory file

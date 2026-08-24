@@ -97,6 +97,20 @@ next touch one rather than assuming a missing row means a missing doc.
   Spectral 63-64 / Glyphed 65, derived from the cleric script alone). The
   runbook has the exact searches and the JSON shape to commit back.
 
+- **🔧 In flight on `claude/deck-156-refresh` — resolution lock (#156, Hitya
+  2026-08-24: "make sure we're resetting the height and width each time the
+  game tries to overwrite it into the crapped 4:3 formats it expects").**
+  `apps/mimic/resolutionLock.js` + `main.js` wiring holds `eqclient.ini`'s
+  `[VideoMode]` at the user's resolution against a client that rewrites it on
+  exit and stomps a Deck's 1280×800 back to 4:3. DEFAULT OFF; the Deck
+  suggestion fills the numbers, never the switch. Every write is gated on EQ
+  being down (it holds the file open and flushes at exit), an already-correct
+  file is left byte-identical, and the watcher is Linux-only for now.
+  35 tests in `test/resolution-lock.test.js`. **Not shipped yet — no Settings
+  control exists, so enabling it today means hand-editing the config.** Full
+  reasoning + open items in `DECISIONS-2026-08-24.md`; indexed in
+  `HOW-ITS-BUILT.md`.
+
 ### ✅ Done — major shipped features (not exhaustive; see git + roadmapData.ts)
 
 - **Overnight batch 2026-08-19 → 20 (landed on main Thursday morning; details

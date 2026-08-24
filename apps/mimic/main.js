@@ -30,6 +30,7 @@ const { startZealWatch } = require('./zealPipe');
 const { startLinuxZealBridge } = require('./linuxZealBridge');
 const zealUpdater = require('./zealUpdater');
 const uiPacks = require('./uiPacks');
+const resolutionLock = require('./resolutionLock');
 
 // Hide the default File/Edit/View/Window/Help menubar — this is a focused
 // tray app, those entries just look unfinished. Must run before window
@@ -240,6 +241,14 @@ function defaultConfig() {
     // Mode (gamescope can't host our floating windows) and off in Desktop Mode;
     // 'on'/'off' force it. Callouts + parse upload keep running either way.
     backgroundMode: 'auto',  // 'auto' | 'on' | 'off'
+    // Resolution lock (#156, Hitya 2026-08-24) — hold eqclient.ini's
+    // [VideoMode] Width/Height at the resolution the user picked, because the
+    // client rewrites that block on exit and stomps it back to a 4:3 mode.
+    // DEFAULT OFF and it stays off until the user turns it on: silently pinning
+    // somebody's resolution is the same class of surprise we are fixing.
+    // width/height null = "use the suggestion" (1280×800 on a detected Steam
+    // Deck; off-Deck an enabled lock with no numbers stays inert).
+    resolutionLock: { enabled: false, width: null, height: null },
     // Quiet updates (default ON): a downloaded update applies silently on the
     // next quit (autoInstallOnAppQuit), so the "Restart now?" pop-up is just
     // nagging — especially when releases come in bursts. When true we skip the
@@ -4963,6 +4972,16 @@ async function _pollEqPresence() {
     try { applyAllVisibility(); } catch {}
     // EQ just went away — take the free restart.
     if (wasRunning && !running) { try { _installPendingUpdateOnEqClose(); } catch { /* never break presence polling */ } }
+    // …and this is the moment the [VideoMode] stomp lands: the client flushes
+    // eqclient.ini on its way out, so the falling edge is both when the damage
+    // is done and the first instant it is safe for us to write. The settle
+    // delay lets that flush finish before we read it back.
+    // Kept as its own `if` rather than folded into the one above: these are
+    // unrelated concerns that merely share a trigger, and the updater line is
+    // load-bearing enough (see test/update-on-eq-close.test.js) to leave be.
+    if (wasRunning && !running) {
+      setTimeout(() => { _enforceResolutionLock('eq-closed'); }, RESOLUTION_LOCK_SETTLE_MS);
+    }
   }
   // EQ is closed and an update is waiting — install it, EVEN THOUGH no
   // close-transition happened on our watch.
@@ -5083,6 +5102,115 @@ function _backgroundActive() {
   if (mode === 'off') return false;
   if (mode === 'on')  return true;
   return _deckModeCached === 'gaming';
+}
+
+// ── Resolution lock (#156) ──────────────────────────────────────────────────
+// Hitya, 2026-08-24: "make sure we're resetting the height and width each time
+// the game tries to overwrite it into the crapped 4:3 formats it expects."
+//
+// The client rewrites eqclient.ini's [VideoMode] on exit and from its first-run
+// display dialog, so a Deck set to 1280×800 comes back as 640×480 / 800×600 /
+// 1024×768. The transform + the file I/O live in resolutionLock.js; what lives
+// HERE is the part that needs Mimic's context — the config, the EQ-folder
+// resolution, and above all the "is eqgame running?" gate.
+//
+// ⚠ Every path into _enforceResolutionLock is gated on EQ being DOWN. EQ holds
+// the ini open and flushes it at exit: a write landing mid-session is
+// overwritten anyway and risks a torn file in the meantime.
+const RESOLUTION_LOCK_SETTLE_MS   = 2500;  // let the client's own exit-flush land first
+const RESOLUTION_LOCK_DEBOUNCE_MS = 750;   // coalesce an editor's / the client's write burst
+// The Deck's native panel. quarm.guide's Bonus Step 7 recommends 1440×900
+// instead (a supersample — it's a UI Studio preset), but the SUGGESTION here is
+// native per Hitya. Suggested only: nothing in this feature auto-enables.
+const DECK_SUGGESTED_RESOLUTION = { width: 1280, height: 800 };
+
+function _deckDetected() {
+  // Reuse the Background-Mode session probe rather than adding a second
+  // detector. On Linux it resolves to 'gaming' (gamescope) or 'desktop'
+  // (plasmashell) — the two Steam Deck sessions — and stays 'unknown' elsewhere.
+  return process.platform === 'linux'
+    && (_deckModeCached === 'gaming' || _deckModeCached === 'desktop');
+}
+function _resolutionLockTarget(cfg) {
+  const rl = (cfg && cfg.resolutionLock) || {};
+  if (!rl.enabled) return null;
+  const w = Number(rl.width), h = Number(rl.height);
+  if (Number.isInteger(w) && w > 0 && Number.isInteger(h) && h > 0) return { width: w, height: h };
+  // Enabled with nothing filled in: on a Deck fall back to the suggestion so
+  // "switch it on" is the only step. Off-Deck we refuse rather than guess —
+  // pinning someone to a resolution they never chose is the bug we are fixing,
+  // pointed the other way.
+  return _deckDetected() ? { ...DECK_SUGGESTED_RESOLUTION } : null;
+}
+// Which eqclient.ini? The one in the EQ folder Mimic is actually watching.
+async function _resolutionLockEqDir() {
+  try {
+    const { dirs, knownDirs } = await resolveEqDirsWithLogs();
+    return dirs[0] || knownDirs[0] || null;
+  } catch { return null; }
+}
+let _resLockBusy = false;
+let _resLockLastMiss = '';   // last no-op reason logged, so we say it once not every poll
+async function _enforceResolutionLock(trigger) {
+  if (_resLockBusy) return;
+  const target = _resolutionLockTarget(loadConfig());
+  if (!target) return;
+  _resLockBusy = true;
+  try {
+    // THE gate — see the block comment above.
+    if (await _isEqRunning()) return;
+    const eqDir = await _resolutionLockEqDir();
+    const r = resolutionLock.enforce({
+      eqDir, width: target.width, height: target.height,
+      trigger, log: appendAgentLog,
+    });
+    // enforce() logs the write itself. A silent no-op is normal (nothing to
+    // fix), but "enabled and we can't find the file" is a misconfiguration the
+    // user will otherwise never see — say it once per distinct reason.
+    if (!r.changed && (r.reason === 'no-eq-dir' || r.reason === 'missing-file' || r.reason === 'no-videomode')) {
+      const key = `${r.reason}:${r.path || eqDir || ''}`;
+      if (key !== _resLockLastMiss) {
+        _resLockLastMiss = key;
+        appendAgentLog(`[reslock] ${trigger}: nothing to lock — ${r.reason}${eqDir ? ` (${eqDir})` : ''}\n`);
+      }
+    } else if (r.changed) { _resLockLastMiss = ''; }
+  } catch (e) {
+    appendAgentLog(`[reslock] ${trigger}: failed — ${(e && e.message) || e}\n`);
+  } finally { _resLockBusy = false; }
+}
+// Watch the EQ folder so a stomp from the client's display dialog (which can
+// rewrite the ini without the process ever exiting on our watch) is corrected
+// too. Linux-only for now: Windows users manage resolution in-client and their
+// behaviour is deliberately unchanged by this feature.
+let _resLockWatcher  = null;
+let _resLockWatchDir = null;
+let _resLockDebounce = null;
+function _disarmResolutionLockWatch() {
+  try { if (_resLockWatcher) _resLockWatcher.close(); } catch { /* already gone */ }
+  _resLockWatcher = null; _resLockWatchDir = null;
+  if (_resLockDebounce) { clearTimeout(_resLockDebounce); _resLockDebounce = null; }
+}
+async function _armResolutionLockWatch() {
+  if (process.platform !== 'linux') return;
+  if (!_resolutionLockTarget(loadConfig())) { _disarmResolutionLockWatch(); return; }
+  const dir = await _resolutionLockEqDir();
+  if (!dir) { _disarmResolutionLockWatch(); return; }
+  if (_resLockWatcher && _resLockWatchDir === dir) return;   // already on it
+  _disarmResolutionLockWatch();
+  try {
+    // Watch the DIRECTORY, not the file. EQ rewrites eqclient.ini by replacing
+    // it, which detaches a file-level inotify watch after the very first stomp
+    // — the exact event this exists to catch.
+    _resLockWatcher = fs.watch(dir, (_evt, name) => {
+      if (name && !/^eqclient\.ini$/i.test(String(name))) return;
+      if (_resLockDebounce) clearTimeout(_resLockDebounce);
+      _resLockDebounce = setTimeout(() => { _enforceResolutionLock('ini-changed'); }, RESOLUTION_LOCK_DEBOUNCE_MS);
+    });
+    _resLockWatchDir = dir;
+    appendAgentLog(`[reslock] watching ${dir} for eqclient.ini changes\n`);
+  } catch (e) {
+    appendAgentLog(`[reslock] could not watch ${dir} — ${(e && e.message) || e}\n`);
+  }
 }
 
 function _eqGateOk(cfg) {
@@ -8284,6 +8412,13 @@ ipcMain.handle('save-config', async (_e, incoming) => {
   if (incoming && Object.prototype.hasOwnProperty.call(incoming, 'zealRawCapture')) {
     try { setZealRawCapture(!!merged.zealRawCapture); } catch {}
   }
+  // Resolution lock: re-point the eqclient.ini watch when the lock or the EQ
+  // folder changed, then enforce once. Without that second call, turning the
+  // lock on does nothing visible until the next time they launch AND close EQ
+  // — which reads as a dead toggle. Still EQ-gated inside.
+  if (incoming && ['resolutionLock', 'eqPaths', 'eqPathsExcluded'].some(k => Object.prototype.hasOwnProperty.call(incoming, k))) {
+    try { _armResolutionLockWatch(); _enforceResolutionLock('settings-saved'); } catch {}
+  }
   // Create any newly-enabled overlay window that doesn't exist yet — windows
   // are only created at startup when their pref was already on, so a flip
   // from onboarding/settings was a silent no-op until restart (the apply*
@@ -9495,6 +9630,10 @@ app.whenReady().then(async () => {
   // #156 — Steam Deck session watch: detect Gaming vs Desktop for Background
   // Mode, then re-check every 15s so a mode switch flips overlays on its own.
   if (process.platform === 'linux') { _refreshDeckMode(); setInterval(_refreshDeckMode, 15000); }
+  // #156 — resolution lock: arm the eqclient.ini watch once the EQ folder has
+  // settled. Deferred for the same reason the Zeal check is, and it needs
+  // _refreshDeckMode to have resolved before the Deck suggestion can apply.
+  setTimeout(() => { _armResolutionLockWatch(); }, 30000);
   createMainWindow();
   makeTrayIcon();
   wireAutoUpdater();

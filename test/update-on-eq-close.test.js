@@ -53,6 +53,12 @@ function harness({ eqRunning = false, pending = { version: '9.9.9' } } = {}) {
     const appendAgentLog = (s) => __log.push(String(s).trim());
     const _checkEqRunning = async () => __eqNext;
     const applyAllVisibility = () => {};
+    // The falling edge also kicks the #156 resolution lock (EQ flushes
+    // eqclient.ini's [VideoMode] on the way out). Stubbed here because this
+    // file characterizes the UPDATER; the lock's own wiring is pinned in
+    // test/resolution-lock.test.js.
+    const RESOLUTION_LOCK_SETTLE_MS = 2500;
+    const _enforceResolutionLock = () => {};
     const Notification = function (o) { this.show = () => __notes.push(o); };
     Notification.isSupported = () => true;
   `;
