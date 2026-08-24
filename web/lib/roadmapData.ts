@@ -37,6 +37,20 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'web-1-1-93',
+    title: 'Mimic without the Discord wall',
+    version: 'Bot 3.1.70 \u00b7 Web 1.1.93',
+    date: '2026-08-24',
+    headline: 'Members whose Discord account can\u2019t authorize the website can now get Mimic signed in with an officer\u2019s help.',
+    features: [
+      {
+        name: 'Officer-assisted Mimic sign-in',
+        blurb: 'If Discord shows you the \u201cverify your account\u201d wall when signing in, you\u2019re no longer stuck. Open Mimic, click Sign in to Wolf Pack, and read the short code it shows to an officer \u2014 they enter it on the site, pick your name, and your Mimic links up with your real identity. Uploads, parses and your character pages all work.',
+      },
+    ],
+    fixes: [],
+  },
+  {
     key: 'web-1-1-92',
     title: 'How this gets built',
     version: 'Web 1.1.92',

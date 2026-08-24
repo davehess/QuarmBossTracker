@@ -26,6 +26,7 @@ import { supabaseServer } from '@/lib/supabase-server';
 import OpenDkpRegisterRow from './OpenDkpRegisterRow';
 import UnregisteredTable from './UnregisteredTable';
 import MainCombobox from './MainCombobox';
+import { authorizeMimicForMember } from './mimic-link-actions';
 
 export const dynamic = 'force-dynamic';
 
@@ -483,9 +484,9 @@ async function dismissLinkRequest(formData: FormData) {
 export default async function AdminLinksPage({
   searchParams,
 }: {
-  searchParams: Promise<{ show?: string }>;
+  searchParams: Promise<{ show?: string; mlok?: string; mlerr?: string }>;
 }) {
-  const { show } = await searchParams;
+  const { show, mlok, mlerr } = await searchParams;
   const showInactive = show === 'inactive' || show === 'all';
   const showLinked   = show === 'linked'   || show === 'all';
   const showIgnored  = show === 'ignored'  || show === 'all';
@@ -804,6 +805,75 @@ export default async function AdminLinksPage({
       <div className="text-sm flex items-center gap-2">
         <Link href="/admin" className="text-blue hover:underline">← back to admin</Link>
       </div>
+
+      {/* Officer-assisted Mimic linking — the path for members Discord blocks
+          from OAuth (unverified accounts can't complete consent, so the
+          member-side /auth/mimic-link page can never work for them). The
+          member reads Mimic's code to an officer; the officer attests the
+          identity here. Trust model + audit trail: mimic-link-actions.ts. */}
+      <section className="bg-panel border border-border rounded-lg p-6">
+        <h2 className="text-xl text-gold mb-1">🖥 Link a Mimic without Discord sign-in</h2>
+        <p className="text-sm text-dim leading-6 max-w-3xl">
+          For members whose Discord account can&apos;t authorize the website (the
+          &ldquo;verify your account&rdquo; wall). Have them open Mimic → <b className="text-text">Sign in
+          to Wolf Pack</b> — it shows a short code with a 10-minute timer. Enter that code
+          here and pick who it belongs to. You are vouching for the identity; every use is
+          recorded against your name.
+        </p>
+        {mlok && (
+          <p className="mt-3 text-sm text-green">
+            {mlok === 'already' ? '✓ That code was already authorized — Mimic should be signed in.'
+              : '✓ Linked. Their Mimic picks it up within a couple of seconds.'}
+          </p>
+        )}
+        {mlerr && (
+          <p className="mt-3 text-sm text-red">
+            {({
+              invalid_code:  'That code doesn\u2019t look right — it\u2019s the short code Mimic shows.',
+              pick_member:   'Pick the member the code belongs to.',
+              not_member:    'That person isn\u2019t on the current member list.',
+              unknown_code:  'No matching code — expired (10-minute window) or mistyped.',
+              expired:       'That code expired. Have them click \u201CSign in to Wolf Pack\u201D again for a fresh one.',
+              update_failed: 'Couldn\u2019t save the link (database error). Try again in a moment.',
+            } as Record<string, string>)[mlerr] || `Error: ${mlerr}`}
+          </p>
+        )}
+        <form action={authorizeMimicForMember} className="mt-4 flex flex-wrap items-end gap-3">
+          <label className="text-sm">
+            <span className="block text-dim text-xs mb-1">Code from their Mimic</span>
+            <input
+              name="user_code"
+              required
+              autoComplete="off"
+              placeholder="e.g. 7KQ2WV"
+              className="bg-bg border border-border rounded px-3 py-2 w-40 uppercase tracking-widest"
+            />
+          </label>
+          <label className="text-sm">
+            <span className="block text-dim text-xs mb-1">Belongs to</span>
+            <select
+              name="member_discord_id"
+              required
+              defaultValue=""
+              className="bg-bg border border-border rounded px-3 py-2 min-w-[16rem]"
+            >
+              <option value="" disabled>— pick the member —</option>
+              {memberList.map(m => (
+                <option key={m.discord_id} value={m.discord_id}>
+                  {m.nickname || m.global_name || m.discord_id}
+                  {m.nickname && m.global_name && m.nickname !== m.global_name ? ` (${m.global_name})` : ''}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button
+            type="submit"
+            className="bg-accent hover:bg-blue text-white text-sm rounded px-4 py-2"
+          >
+            Authorize link
+          </button>
+        </form>
+      </section>
 
       <section className="bg-panel border border-border rounded-lg p-6">
         <h2 className="text-xl text-gold mb-1">🔗 Character → Discord links</h2>
