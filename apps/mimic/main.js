@@ -803,7 +803,13 @@ function _fixedDriveSet() {
 // from every one of them before returning false, and that is the case that got
 // slower as rotated logs piled up.
 const _eqDirLogCache = new Map();   // dir (lowercased) → { at, has }
-function _invalidateEqScan() { _eqDirLogCache.clear(); if (typeof _eqScanCache !== 'undefined') _eqScanCache.clear(); }
+// Same shape, same TTL, for the newest-log TIMESTAMP (see _newestEqLogMs).
+// Declared here rather than beside its function so _invalidateEqScan can clear
+// it unconditionally — a const initialized further down would be in the TDZ if
+// anything ever invalidated during module init (the trap flagged at
+// _EQ_SCAN_TTL_MS above, and why the _eqScanCache clear below needs a typeof).
+const _eqDirNewestLogCache = new Map();   // dir (lowercased) → { at, ms }
+function _invalidateEqScan() { _eqDirLogCache.clear(); _eqDirNewestLogCache.clear(); if (typeof _eqScanCache !== 'undefined') _eqScanCache.clear(); }
 function _dirHasEqLogs(dir) {
   if (!dir) return false;
   const key = String(dir).toLowerCase();
@@ -817,11 +823,139 @@ function _dirHasEqLogs(dir) {
   return has;
 }
 
+// Newest EQ-log mtime in `dir` (ms since epoch), or 0 when it holds none.
+// _dirHasEqLogs plus a timestamp — kept as a SEPARATE probe, and called only
+// from the Linux candidate ranking, so the Windows paths never pay for the
+// extra statSync per log file (this file's whole performance story is that sync
+// fs on the main process freezes every window — see the scan-cache note below).
+// Memoized on the same 30s TTL for the same reason.
+//
+// 0 also means "we could not read it". That is deliberately indistinguishable
+// here: the ranking treats "has logs" as its own field (_dirHasEqLogs, which is
+// still true when only the stats failed), so an unreadable timestamp costs a
+// candidate its tiebreak, never its place.
+function _newestEqLogMs(dir) {
+  if (!dir) return 0;
+  const key = String(dir).toLowerCase();
+  const hit = _eqDirNewestLogCache.get(key);
+  if (hit && (Date.now() - hit.at) < _EQ_SCAN_TTL_MS) return hit.ms;
+  let ms = 0;
+  try {
+    for (const f of fs.readdirSync(dir)) {
+      if (!_isEqLogFile(dir, f)) continue;
+      try {
+        const st = fs.statSync(path.join(dir, f));
+        if (st.mtimeMs > ms) ms = st.mtimeMs;
+      } catch { /* one unreadable log must not lose us the other four */ }
+    }
+  } catch { ms = 0; }
+  _eqDirNewestLogCache.set(key, { at: Date.now(), ms });
+  return ms;
+}
+
 // ── Linux / Steam Deck EQ discovery (Wine-prefix scan) ──────────────────────
-// EQ on Linux lives inside a Wine/Proton prefix's drive_c. We enumerate the
-// common managers' prefixes (Bottles, Lutris, Proton, ~/.wine) plus SD-card
-// mounts and scan each drive_c shallowly for a folder holding eqgame.exe or an
-// EQ log. Best-effort only — the Settings folder-picker is the guaranteed path.
+// EQ on Linux lives in a Wine/Proton prefix, and the two package managers a
+// Deck owner actually uses put it in DIFFERENT places relative to that prefix:
+//
+//   Bottles (flatpak)  ~/.var/app/com.usebottles.bottles/data/bottles/bottles/
+//                        ProjectQuarm/drive_c/ProjectQuarm/eqgame.exe
+//                      → the game is INSIDE drive_c.
+//   Lutris             ~/Games/ProjectQuarm/eqgame.exe, with drive_c/ as a
+//                        SIBLING — the game folder IS the prefix root.
+//
+// Both layouts measured on one live Deck (2026-08-23), which had a copy under
+// each manager. Only the first was ever scanned: _linuxDriveCRoots handed back
+// `<name>/drive_c` and the walk started there, so a Lutris install was invisible
+// no matter how deep we looked — it is not below drive_c, it is beside it.
+// Hence two root kinds, scanned at different depths (see _linuxEqCandidates).
+//
+// Best-effort throughout — the Settings folder-picker is the guaranteed path.
+//
+// Per-game/per-bottle base dirs: each holds one child dir per install, so a
+// child is a drive_c parent AND (Lutris) a possible game folder in its own
+// right. Shared by both root builders so the two can never drift apart.
+function _linuxPrefixBases() {
+  if (process.platform !== 'linux') return [];
+  const os = require('os');
+  const home = os.homedir();
+  const bases = [
+    // Lutris default install root — the same ~/Games for the native package and
+    // the flatpak (net.lutris.Lutris keeps runners/runtime under its own
+    // ~/.var/app data dir, but installs GAMES here). A prefix the user parked
+    // somewhere else entirely is folder-picker territory, not scan territory.
+    path.join(home, 'Games'),
+    // Bottles (flatpak) — one dir per bottle.
+    path.join(home, '.var/app/com.usebottles.bottles/data/bottles/bottles'),
+  ];
+  // SD card / external mounts (Steam Deck: /run/media/deck/<label>/…). A Deck's
+  // internal drive fills up fast, so the card is where the second copy lands;
+  // mirroring ~/Games there costs one readdir per mounted card.
+  const user = (() => { try { return os.userInfo().username; } catch { return ''; } })();
+  for (const mediaBase of ['/run/media/deck', user && path.join('/run/media', user)].filter(Boolean)) {
+    let labels = [];
+    try { labels = fs.readdirSync(mediaBase); } catch { continue; }
+    for (const label of labels) bases.push(path.join(mediaBase, label, 'Games'));
+  }
+  return bases;
+}
+
+// The prefix ROOTS themselves — `<base>/<name>`, the folder that HOLDS drive_c.
+// This is the Lutris layout above, and the coverage gap it closes.
+function _linuxPrefixRoots() {
+  if (process.platform !== 'linux') return [];
+  const roots = [];
+  for (const base of _linuxPrefixBases()) {
+    let names = [];
+    try { names = fs.readdirSync(base); } catch { continue; }
+    for (const name of names) {
+      const dir = path.join(base, name);
+      try { if (fs.statSync(dir).isDirectory()) roots.push(dir); } catch {}
+    }
+  }
+  return roots;
+}
+
+// Bare copies of the client that are NOT inside any Wine prefix — an extracted
+// download rather than an install. The same Deck had one: /home/deck/Downloads/
+// EQ/eqgame.exe, the pristine copy both real installs were made from
+// (2026-08-23).
+//
+// Scanned at depth 1 and nowhere else: one readdir of ~/Downloads plus one per
+// top-level entry. Downloads is the one directory on a Deck guaranteed to be
+// full of unrelated bulk, and this scan runs sync on the main process, so it
+// gets the tightest budget of the three root kinds.
+//
+// Worth finding ONLY because _linuxLooksPrefixed can tell the two cases apart.
+// A folder like this that someone genuinely plays — a system-wide WINEPREFIX
+// pointed at a plain directory — has logs, and ranks on them like anything
+// else. The pristine source copy has neither a prefix nor logs, and
+// _pickEqCandidate refuses to auto-select it: handing that folder to the agent
+// (or to "Set up EQ for me", which would write eqclient.ini into it) would
+// quietly configure the one copy the game never launches from.
+function _linuxLooseCopyRoots() {
+  if (process.platform !== 'linux') return [];
+  const os = require('os');
+  return [path.join(os.homedir(), 'Downloads')];
+}
+
+// Can the game actually RUN from `dir` — is it part of a Wine prefix? Two
+// shapes, one per layout above: somewhere INSIDE a prefix (an ancestor segment
+// is drive_c — the Bottles/Proton/.wine case), or the prefix ROOT itself
+// (drive_c / dosdevices / system.reg sits alongside the game — the Lutris
+// case). Neither means a loose copy.
+//
+// Fails OPEN by design: an unreadable dir answers "prefixed" so that a folder
+// we merely could not classify stays a candidate. Hiding a real EQ install is a
+// far worse outcome than ranking a dud too highly.
+function _linuxLooksPrefixed(dir) {
+  if (!dir) return true;
+  if (String(dir).split(path.sep).some(p => p.toLowerCase() === 'drive_c')) return true;
+  for (const marker of ['drive_c', 'dosdevices', 'system.reg']) {
+    try { if (fs.existsSync(path.join(dir, marker))) return true; } catch { return true; }
+  }
+  return false;
+}
+
 function _linuxDriveCRoots() {
   if (process.platform !== 'linux') return [];
   const os = require('os');
@@ -838,10 +972,10 @@ function _linuxDriveCRoots() {
   };
   const addDriveC = (dc) => { try { if (fs.statSync(dc).isDirectory()) roots.push(dc); } catch {} };
 
-  // Bottles (flatpak) — one dir per bottle
-  addPrefixChildren(path.join(home, '.var/app/com.usebottles.bottles/data/bottles/bottles'), 'drive_c');
-  // Lutris-style — ~/Games/<game>/drive_c
-  addPrefixChildren(path.join(home, 'Games'), 'drive_c');
+  // Bottles bottles + Lutris ~/Games (+ any SD-card Games) — one dir per
+  // install, each holding a drive_c. Same base list _linuxPrefixRoots walks, so
+  // adding a manager there covers both layouts at once.
+  for (const base of _linuxPrefixBases()) addPrefixChildren(base, 'drive_c');
   // Proton — steamapps/compatdata/<appid>/pfx/drive_c (both Steam layouts)
   addPrefixChildren(path.join(home, '.steam/steam/steamapps/compatdata'), 'pfx/drive_c');
   addPrefixChildren(path.join(home, '.local/share/Steam/steamapps/compatdata'), 'pfx/drive_c');
@@ -861,10 +995,18 @@ function _linuxDriveCRoots() {
   }
   return roots;
 }
-// Shallow BFS under a drive_c for the folder that holds eqgame.exe or an EQ log.
+// Shallow BFS under a scan root for the folder that holds eqgame.exe or an EQ
+// log. Used for both root kinds — a drive_c (deep) and a prefix root (shallow).
 function _findEqUnderRoot(root, maxDepth) {
   const SKIP = new Set(['windows', 'Windows', 'users', 'Users', 'ProgramData',
-    '$Recycle.Bin', 'windows.old', 'Program Files (x86)']);
+    '$Recycle.Bin', 'windows.old', 'Program Files (x86)',
+    // Prefix-root internals. `drive_c` is already its own scan root with its own
+    // (deeper) budget, so descending into it from the prefix root would walk the
+    // same tree twice and shallower. `dosdevices` is nothing but drive-letter
+    // symlinks, one of which (z:) points at `/` — Dirent.isDirectory() is false
+    // for a symlink so the walk would not follow it today, but naming it keeps
+    // that from being an accident.
+    'drive_c', 'dosdevices']);
   const queue = [[root, 0]];
   const found = [];
   while (queue.length) {
@@ -883,10 +1025,66 @@ function _findEqUnderRoot(root, maxDepth) {
 }
 function _linuxEqCandidates() {
   const out = [];
-  for (const dc of _linuxDriveCRoots()) {
-    for (const d of _findEqUnderRoot(dc, 3)) if (!out.includes(d)) out.push(d);
-  }
+  const add = (d) => { if (!out.includes(d)) out.push(d); };
+  // Inside a prefix (Bottles): the game is buried a couple of levels under
+  // drive_c, so this one keeps the depth-3 budget it has always had.
+  for (const dc of _linuxDriveCRoots()) for (const d of _findEqUnderRoot(dc, 3)) add(d);
+  // The prefix root itself (Lutris): the proven layout is eqgame.exe at depth
+  // ZERO. Depth 1 buys the "unzipped the client into the prefix" variant
+  // (<prefix>/ProjectQuarm/eqgame.exe) for one readdir per child — and with
+  // drive_c/dosdevices skipped, a prefix root has barely any children left.
+  // Deliberately NOT depth 3: that would re-walk every prefix's whole contents
+  // and is the widening this scan has to stay out of.
+  for (const pr of _linuxPrefixRoots()) for (const d of _findEqUnderRoot(pr, 1)) add(d);
+  // Loose copies (~/Downloads/EQ). LAST on purpose: rule 5 of _pickEqCandidate
+  // keeps the first-found candidate on a tie, so scan order is the tiebreak, and
+  // an unpacked archive should never win one against an install.
+  for (const lr of _linuxLooseCopyRoots()) for (const d of _findEqUnderRoot(lr, 1)) add(d);
   return out;
+}
+
+// Pick the install the player is actually USING, from one entry per candidate
+// folder: { dir, hasLogs, newestLogMs, prefixed }. Pure — no fs, no path, no
+// platform — so it is exercisable from test/eq-candidate-ranking.test.js.
+//
+// WHY RANK AT ALL: a Deck can hold several copies of EverQuest, and one live
+// Deck held THREE (2026-08-23) — a Bottles bottle, a Lutris prefix, and the
+// pristine ~/Downloads/EQ archive both were made from. "First candidate found"
+// then picks by scan order, which is an artifact of this file's base list —
+// not of which client the raider launches. The log timestamps know the answer:
+// the folder written to most recently is the one being played. Rules, in order:
+//   1. an explicitly configured folder is an ANSWER, not a candidate — it wins
+//      outright, whatever its logs look like;
+//   2. a loose copy with no logs is a SOURCE ARCHIVE, not an install, and is
+//      never auto-selected (`prefixed: false` — see _linuxLooksPrefixed). Only
+//      an explicit false disqualifies: an entry that never got classified stays
+//      in the running, because failing open costs a bad rank while failing
+//      closed costs someone their real install;
+//   3. a folder with logs beats one without (eqgame.exe alone is a real answer
+//      for a fresh install, just a weaker one than a played install);
+//   4. among played installs, newest log wins;
+//   5. ties keep the first-found candidate — which is exactly the old behaviour,
+//      so a machine with nothing to rank on resolves as it always did.
+// Returning null is a legitimate answer: with nothing but a source archive on
+// the box, "no EQ folder found — pick one" is true, and pointing Mimic at an
+// archive would not be.
+// Compares paths case-sensitively: this ranks Linux candidates, and Linux paths
+// are case-sensitive. Do not reuse it on the Windows side without fixing that.
+function _pickEqCandidate(entries, hintDir) {
+  const trim = (d) => String(d || '').replace(/\/+$/, '');
+  const hint = trim(hintDir);
+  const newest = (e) => (Number(e && e.newestLogMs) || 0);
+  let best = null;
+  for (const e of (entries || [])) {
+    if (!e || !e.dir) continue;
+    if (hint && trim(e.dir) === hint) return e.dir;
+    if (e.prefixed === false && !e.hasLogs) continue;
+    if (!best) { best = e; continue; }
+    if (!!e.hasLogs !== !!best.hasLogs) { if (e.hasLogs) best = e; continue; }
+    // Strict > is what preserves rule 5.
+    if (e.hasLogs && newest(e) > newest(best)) best = e;
+  }
+  return best ? best.dir : null;
 }
 
 function detectEqDir(hint) {
@@ -912,13 +1110,26 @@ function detectEqDir(hint) {
     if (_dirHasEqLogs(dir)) return dir;
   }
 
-  // 4. Linux / Steam Deck: scan Wine-prefix drive_c trees for the EQ folder.
-  //    Prefer a folder that already has logs; otherwise the first that holds
-  //    eqgame.exe (fresh install, never launched — still the right dir to pass).
+  // 4. Linux / Steam Deck: scan the Wine-prefix trees for the EQ folder(s) and
+  //    RANK them — a Deck routinely holds one copy per package manager, so
+  //    "first hit" was picking by scan order rather than by which client the
+  //    raider plays. _pickEqCandidate carries the rules and the reasoning.
+  //
+  //    `hint` is passed through even though step 1 already tried it: step 1
+  //    only accepts a hint that HAS LOGS, so a folder the user configured
+  //    before ever typing /log on used to lose here to whichever other copy did
+  //    have logs. Their explicit choice outranks our scan either way.
   if (process.platform === 'linux') {
-    const cands = _linuxEqCandidates();
-    for (const dir of cands) if (_dirHasEqLogs(dir)) return dir;
-    if (cands.length) return cands[0];
+    const best = _pickEqCandidate(
+      _linuxEqCandidates().map(dir => ({
+        dir,
+        hasLogs: _dirHasEqLogs(dir),
+        newestLogMs: _newestEqLogMs(dir),
+        prefixed: _linuxLooksPrefixed(dir),
+      })),
+      hint,
+    );
+    if (best) return best;
   }
 
   return null;
