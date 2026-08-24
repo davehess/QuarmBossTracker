@@ -158,11 +158,16 @@ if [ -z "$GE_FOUND" ]; then
 else
   info "Lutris wine runners present:"
   printf '%s\n' "$GE_FOUND" | sed 's/^/          /'
-  for pin in GE-Proton8-7 GE-Proton8-26; do
-    if printf '%s\n' "$GE_FOUND" | grep -qx -- "$pin"; then
-      pass "pinned runner present: $pin"
+  # The same build ships under two directory names depending on how it was
+  # installed: ProtonUp-Qt writes "GE-Proton8-26", Lutris's own runner manager
+  # writes "wine-ge-8-26-x86_64". A live Deck (2026-08-24) had the pin
+  # installed as the latter and this check cried MISSING — match the version
+  # digits, not one tool's spelling.
+  for pin in 8-7 8-26; do
+    if printf '%s\n' "$GE_FOUND" | grep -qiE -- "(ge-proton${pin}$|wine-ge-${pin}(-|$))"; then
+      pass "pinned runner present (GE ${pin})"
     else
-      warn "pinned runner MISSING: $pin" "the lutris.net Quarm script is written against the pins; 'Latest' is not a substitute. $RUNBOOK §2"
+      warn "pinned runner MISSING: GE-Proton${pin} / wine-ge-${pin}" "the lutris.net Quarm script is written against the pins; 'Latest' is not a substitute. $RUNBOOK §2"
     fi
   done
 fi
@@ -339,7 +344,10 @@ for eqdir in "${EQ_DIRS[@]-}"; do
     # eqgame.exe at the prefix ROOT (beside drive_c) is the layout Mimic's
     # auto-detect misses — it starts scanning at drive_c.
     if [ "$eqdir" = "$PREFIX" ]; then
-      warn "eqgame.exe sits at the PREFIX ROOT, beside drive_c" "Mimic's Linux auto-detect starts at drive_c and will miss it — set the folder by hand in Mimic Settings. $RUNBOOK §4"
+      # Auto-detect handles this layout since Mimic 2.6.1-linux.20 (prefix-root
+      # scan + newest-log ranking). Informational now; the manual pick remains
+      # the fallback for an older build.
+      info "eqgame.exe sits at the PREFIX ROOT, beside drive_c — auto-detected by Mimic ≥2.6.1-linux.20; on older builds set the folder by hand in Mimic Settings ($RUNBOOK §4)"
     fi
   else
     info "could not resolve a Wine prefix above this folder (manual layout?)"
