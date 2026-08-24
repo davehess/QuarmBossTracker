@@ -11,6 +11,24 @@ name: build-mimic-linux
 # sees a newer build → the rapid dev loop. The AppImage also uploads as a run
 # artifact as a belt-and-suspenders download.
 #
+# ⚠ A Deck build only stays DISCOVERABLE while it is inside the 10-entry
+# releases.atom window. On 2026-08-23 the Deck was still on -linux.9 and every
+# update check said "No published versions on GitHub": -linux.17/.18 had been
+# published on Jul 30 and were still there, but ~50 Windows beta releases had
+# been published since, so the Linux client walking the atom feed never saw
+# them. Cutting a fresh Deck build puts it back at the top of the feed and the
+# Deck updates again — but the window is the reason a Deck build goes stale
+# silently rather than loudly. Anything better needs the client to resolve by
+# tag instead of by feed.
+#
+# ⚠ The isolation above covers what a client INSTALLS, not how it DISCOVERS
+# releases. Every release here — linux, beta, stable — shares ONE releases.atom
+# feed that GitHub caps at 10 entries. On 2026-07-30 fourteen Deck builds shoved
+# v2.1.1-beta.2/-beta.1/v2.1.0 out of that window and the entire Windows BETA
+# channel broke with "No published versions on GitHub". Hence the `prune` job
+# below: it runs after every build and keeps only the newest few -linux.N
+# releases, so this dev loop can never starve the Windows channels again.
+#
 # Triggers on push to a claude/* working branch or manual dispatch.
 
 on:
@@ -41,13 +59,32 @@ jobs:
         working-directory: apps/mimic
         run: npm install
 
-      # Version = 2.1.1-linux.<run_number>. The `-linux.N` prerelease suffix makes
-      # electron-builder generate linux.yml (the isolated channel) and mark the
-      # GitHub release as a prerelease. --publish always uploads the AppImage +
-      # linux.yml + blockmap to that release, which is the auto-update feed.
+      # Version = <mimic base>-linux.<run_number>, e.g. 2.6.1-linux.19.
+      #
+      # The base is READ FROM package.json, not hard-coded. It used to be a
+      # literal "2.1.1" and stayed that way while Mimic went 2.1.1 → 2.6.1, so
+      # every Deck build claimed a version six minors old and the Deck could
+      # not tell how stale it was (#156, 2026-08-23).
+      #
+      # Any prerelease suffix on the base is stripped first: beta parks the
+      # version at e.g. 2.6.1 and the release workflow appends `-beta.N`, but a
+      # semver can carry only ONE prerelease section, so `2.6.1-beta.5-linux.19`
+      # is invalid and electron-builder would reject it.
+      - name: Resolve version
+        id: ver
+        working-directory: apps/mimic
+        run: |
+          BASE=$(node -p "require('./package.json').version.split('-')[0]")
+          echo "value=${BASE}-linux.${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+          echo "Building ${BASE}-linux.${{ github.run_number }}"
+
+      # The `-linux.N` prerelease suffix makes electron-builder generate
+      # linux.yml (the isolated channel) and mark the GitHub release as a
+      # prerelease. --publish always uploads the AppImage + linux.yml + blockmap
+      # to that release, which is the auto-update feed.
       - name: Build + publish Linux AppImage (linux channel)
         working-directory: apps/mimic
-        run: npx --no-install electron-builder --linux AppImage --publish always -c.extraMetadata.version=2.1.1-linux.${{ github.run_number }}
+        run: npx --no-install electron-builder --linux AppImage --publish always -c.extraMetadata.version=${{ steps.ver.outputs.value }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -57,3 +94,14 @@ jobs:
           name: wolf-pack-mimic-linux-appimage
           path: apps/mimic/dist/*.AppImage
           if-no-files-found: error
+
+  # Keep the shared releases.atom feed from filling with Deck builds (see the
+  # header note). Keeps this build + the previous one so a Deck tester can still
+  # roll back one version; everything older goes.
+  prune:
+    needs: build
+    permissions:
+      contents: write
+    uses: ./.github/workflows/prune-linux-releases.yml
+    with:
+      keep: '2'
