@@ -207,11 +207,11 @@ The guide's default layout:
 which one you have, because every path below is written as
 `<EQ folder>` = *the directory containing `eqgame.exe`*.
 
-⚠ **Mimic's Linux auto-detect starts at `~/Games/<name>/drive_c`.** With
-`eqgame.exe` at the prefix root (the variant above) auto-detect will **miss it**.
-That is not a Mimic bug you need to work around — just use **Settings → pick EQ
-folder** once and Mimic remembers it (stage 7). Noted here so nobody spends time
-on "Mimic can't find my install."
+✅ **Fixed as of Mimic 2.6.1-linux.20** — auto-detect now scans prefix roots
+too, so the variant above is found, and with several installs present it
+follows the one with the newest log files. On an older build, or if detection
+still misses, **Settings → pick EQ folder** once and Mimic remembers it
+(stage 7).
 
 **Runner note (observed 2026-08-23):** flatpak Lutris ran this via **umu +
 Proton** rather than a bare `wine` binary. That matters only for the Zeal bridge
@@ -548,7 +548,7 @@ Start here. Match the string you actually saw.
 | Wine log: `dxgi_factory_IsCurrent` stub · `shader_set_limits "4.0"` · `CheckFormatSupport` partial stub | positive proof you are on **Wine's stub d3d11**, not DXVK | §6 trap 1 |
 | Splash paints, then hangs forever, no error | empty Working Directory; assets not found by relative path | §6 trap 2 |
 | Crash at character select, or on `/loadskin` | non-Zeal-compatible UI | §8b — `UISkin=Default` |
-| Mimic "can't find my EQ folder" | `eqgame.exe` at prefix root; detector starts at `drive_c` | §4 / §8a — pick it manually |
+| Mimic "can't find my EQ folder" | Mimic older than 2.6.1-linux.20 (prefix-root scan), or an unusual layout | update Mimic, else §4 / §8a — pick it manually |
 | Mimic sees EQ but no logs | in-game logging off | §7b — `/log on` |
 | UI windows all moved | `[VideoMode]` stomped back to 4:3 on exit | §7b |
 | Lutris warns about `/usr/lib/i386-linux-gnu/GL` / `amdgpu.ids` | 32-bit GL runtime missing | §1 — install `org.freedesktop.Platform.GL32` |
