@@ -50,6 +50,19 @@ writes.
 - **Agent → bot**: per-user bearer tokens minted at Mimic sign-in
   (`mimicLink.requireAgentAuth` on every `/api/agent/*` route). `/token` in
   Discord lists/revokes sessions. Every upload is traceable to a Discord id.
+- **Mimic sign-in (device-code flow)**: Mimic → `POST /api/mimic-link/start`
+  (6-char user code + secret device code, 10-min TTL) → member confirms at
+  `/auth/mimic-link` (Discord OAuth) → Mimic's 2s poll exchanges for a
+  `mimic_sessions` token. **Officer-assisted path (bot 3.1.70 + web 1.1.93,
+  2026-08-24)**: for members Discord blocks from OAuth (the unverified-account
+  wall — Gonner), an officer enters the code on `/admin/links` and picks the
+  member; the code is stamped discord-only (`authorized_user_id` NULL — the
+  shape the poll has accepted since 2026-07-31 but nothing could write) with
+  `authorized_via='officer'` + the attesting officer's id, copied to
+  `mimic_sessions.linked_via/linked_by_discord_id` at mint since the code row
+  is deleted on exchange. Trust model: the officer attests the identity —
+  same trust as this page's character↔member links; target must be a current
+  `wolfpack_members` row. Action: `web/app/admin/links/mimic-link-actions.ts`.
 - **Web sign-in**: Supabase Auth Discord OAuth; callback checks guild
   membership + role names (`ALLOWED_ROLE_NAMES` via `wolfpack_roles`).
   Officer gating = `isOfficer()` per request server-side.

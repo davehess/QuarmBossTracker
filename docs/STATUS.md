@@ -125,6 +125,16 @@ next touch one rather than assuming a missing row means a missing doc.
     that have already shipped bugs. Complements `docs/AI-CONTRIBUTOR-BRIEF.md`,
     which is for a chat AI with no repo access; cross-referenced both ways and
     from CLAUDE.md.
+  - **Officer-assisted Mimic linking (bot 3.1.70 + web 1.1.93, Hitya via
+    Gonner: "doesn't have discord auth working").** The device-code flow's
+    missing half: the poll handler accepted discord-only authorizations since
+    2026-07-31 but nothing could write them. Officers now stamp a member's
+    code on /admin/links (attestation trust model, audited onto
+    mimic_sessions.linked_via/linked_by). Migration
+    20260824050000_mimic_link_officer_assist applied + committed. QUEUED
+    follow-up, deliberately not built tonight: email+password secondary auth
+    with reset — needs a design doc (identity linking without discord_id,
+    role gating without Discord, later-merge story).
   - **Lockouts derived from kill parses (bot 3.1.68 + web 1.1.90, Hitya:
     "taeya reported this Ventani kill so they should have a lockout").**
     `character_lockouts` shipped 2026-08-21 reading only the `/sll` relay and
