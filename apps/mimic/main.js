@@ -27,6 +27,7 @@ const net   = require('net');
 const http  = require('http');
 const { spawn } = require('child_process');
 const { startZealWatch } = require('./zealPipe');
+const { startLinuxZealBridge } = require('./linuxZealBridge');
 const zealUpdater = require('./zealUpdater');
 const uiPacks = require('./uiPacks');
 
@@ -1791,6 +1792,11 @@ function _stopWindowDrag() {
 // Opt-out via cfg.zealPipe === false.
 let zealWatch = null;
 let zealLastConnectedPids = [];
+// Linux / Steam Deck (#156 Phase 2): the supervisor that runs a bridge program
+// INSIDE EQ's Wine environment and hands us a Unix socket. Null on Windows —
+// there the named pipe is reachable directly. All logic lives in
+// linuxZealBridge.js; this file only owns its lifetime and its status.
+let zealBridge = null;
 // Batched forward to the agent so the dashboard's Triggers tab can show Zeal
 // status. We coalesce events into a ~2s window: one sample per type per flush
 // (the agent keeps the latest), plus per-type counts, so a chatty pipe doesn't
@@ -2510,6 +2516,21 @@ function startZealCapture() {
       } catch {}
     }, 15_000);
     appendAgentLog('[zeal] capture started — watching for eqgame.exe + Zeal pipes\n');
+    // Linux / Steam Deck (#156 Phase 2). On Windows the reader above opens
+    // Zeal's named pipe itself; under Wine that pipe belongs to EQ's wineserver
+    // and is unreachable from a native process, so a bridge program has to run
+    // inside that same Wine environment and hand the stream out on a Unix
+    // socket (docs/mimic-steamdeck-zeal-bridge.md). The supervisor sets
+    // ZEAL_PIPE_SOCKET when it succeeds — which is exactly what zealPipe.js's
+    // non-Windows poll already reads, so nothing else has to change.
+    if (process.platform === 'linux') {
+      zealBridge = startLinuxZealBridge({
+        log: appendAgentLog,
+        getConfig: loadConfig,
+        eqDirs: () => { const c = loadConfig(); return (c.eqPaths && c.eqPaths.length) ? c.eqPaths : (c.eqPath ? [c.eqPath] : []); },
+        onStatus: () => { try { pushStatus(); } catch { /* window not up yet */ } },
+      });
+    }
   } catch (e) {
     appendAgentLog(`[zeal] capture failed to start: ${e && e.message}\n`);
   }
@@ -6247,6 +6268,12 @@ function currentStatus() {
       shown: p && p.show ? Object.values(p.show).filter(Boolean).length : 0,
     })),
     activeCharacter: _activeCharName || null,
+    // Linux Zeal bridge (#156 Phase 2) — null on Windows, where there is
+    // nothing to bridge. Carries a ready-to-show `message`: on a Deck with no
+    // bridge program installed it names the download and the folder to put it
+    // in, so "live overlays are blank" has an on-screen answer instead of
+    // silence.
+    zealBridge: zealBridge ? zealBridge.status() : null,
     setupMode: !!setupMode,
     onboarded: !!cfg.onboarded,
     updatePending: updatePending ? updatePending.version : null,
@@ -9555,6 +9582,10 @@ app.on('window-all-closed', () => { /* stay alive in tray */ });
 app.on('before-quit', () => {
   quitting = true;
   _stopEqPolling();
+  // Kill the Wine-side pipe bridge with us — it is a child process in EQ's Wine
+  // environment, and leaving it behind would hold a stale socket that the next
+  // Mimic launch would connect to and get nothing from.
+  try { if (zealBridge) zealBridge.stop(); } catch { /* already gone */ }
   try { const { globalShortcut } = require('electron'); globalShortcut.unregisterAll(); } catch {}
   if (agentProc) { try { agentProc.kill(); } catch {} }
 });

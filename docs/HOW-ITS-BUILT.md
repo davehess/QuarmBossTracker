@@ -827,6 +827,16 @@ raid 5, group 6 (reserved). Elevation mismatch (EQ admin, Mimic not) =
 connect-then-close with no error — run Mimic as admin (field-diagnosed
 2026-07-05; auto-hint in the Zeal notification + zealhealth.html).
 In-EQ-folder installs can break DX-hook detection — reinstall outside.
+**Linux / Steam Deck (#156, working branch only):** there is no Win32 pipe to
+enumerate — a Wine named pipe belongs to EQ's own wineserver — so
+`linuxZealBridge.js` reconstructs that Wine environment from `/proc/<pid>/`
+(environ + exe + cmdline), asks it for eqgame's WINDOWS pid via `wine tasklist`,
+and spawns a bridge program (`outflow.exe`, else winestreamproxy) inside it
+— directly for a host wineserver, via `flatpak enter <pid>` for Bottles, refused
+for Steam's pressure-vessel. It publishes `ZEAL_PIPE_SOCKET`, which `zealPipe.js`
+already polls. No bridge binary ships with Mimic: absent one, the status
+(`currentStatus().zealBridge`) says what to download and where to put it.
+Design + open unknowns: `docs/mimic-steamdeck-zeal-bridge.md`.
 
 ### UI Studio (`ui-studio.html`)
 Loads the character's ini bundle (`ui-studio-read-bundle`), parses window

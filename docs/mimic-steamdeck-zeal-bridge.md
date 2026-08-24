@@ -158,20 +158,76 @@ GE-Proton at all**.
 
 ---
 
-## What Mimic could do to make this one-click (proposed)
+## What Mimic does automatically — BUILT (`apps/mimic/linuxZealBridge.js`)
 
-Once the manual path is proven on the Deck, fold it into Mimic so nobody scripts:
-1. **Bundle `outflow.exe`** in the Linux build's resources.
-2. On Linux, add a **"Bridge Zeal (Linux)"** action to the Zeal Health overlay
-   that: derives the wine + prefix from the detected EQ dir's parent, discovers
-   eqgame's pid, runs `wine outflow.exe … --outbound-pipe`, and sets its own
-   `ZEAL_PIPE_SOCKET` — then reconnects `zealPipe.js` live.
-3. Make the Zeal Health overlay **Linux-aware** (drop the Windows "Run as
-   Administrator" hint; show bridge status instead) — small, already on the
-   Phase-1 cleanup list.
+The launcher script above is now a supervisor inside Mimic. It runs only on
+Linux, is inert on Windows, and needs no launcher, no wrapper and no env var
+from the user. What it does, every poll:
 
-That turns Phase 2 into a button. But step 0 is always: prove Zeal's pipe exists
-under GE-Proton with the manual `outflow.exe` test above.
+1. **Find the client** — `pgrep -f eqgame.exe` (the same probe `_isEqRunning()`
+   already uses), then keep only pids that have a `WINEPREFIX` and eqgame.exe in
+   their argv, preferring one whose `/proc/<pid>/exe` really is a wine loader.
+2. **Reconstruct EQ's Wine environment from `/proc`**, which is same-user
+   readable and needs no root: `environ` gives `WINEPREFIX` / `WINELOADER` /
+   `PROTONPATH` / `XDG_RUNTIME_DIR`, `exe` gives the wine binary actually hosting
+   the game (`wine-preloader` is mapped back to `wine`), `cmdline` backs both up.
+   Only the wine-selecting vars travel to the bridge — the game's `LD_PRELOAD`
+   (Steam overlay, gamemode) deliberately does not.
+3. **Classify the world**, because the spawn shape differs:
+   - **host** (Lutris / umu / plain wine) — exec the loader directly.
+   - **flatpak** (Bottles: a `/app/…` loader, or one absent from the host, or
+     `FLATPAK_ID` in the env) — `flatpak enter <pid> env … <wine> <bridge> …`.
+     **`flatpak run` is the wrong call** even though it reads right: it starts a
+     NEW instance with its own `/tmp` and `XDG_RUNTIME_DIR`, so it finds a
+     *different* wineserver and no pipe. `enter` joins the namespaces EQ is
+     already in. (`cfg.zealBridgeFlatpakMode: 'run'` remains as an escape hatch.)
+   - **container** (Steam-launched Proton / pressure-vessel) — reported as
+     unsupported with the "re-home to Lutris + GE-Proton" answer, not silently
+     attempted.
+4. **Get the WINDOWS pid** — `zeal_<PID>` is Zeal's `GetCurrentProcessId()`,
+   which the wineserver assigned; it is unrelated to the Linux pid pgrep just
+   returned. The only source is the same wineserver, so we run `wine tasklist`
+   through the identical spawn plan and parse eqgame.exe's pid out of it.
+5. **Spawn the bridge** — `outflow.exe` gets
+   `--pipe \\.\pipe\zeal_<PID> --socket <sock> --outbound-pipe`; anything else
+   gets winestreamproxy's positional `zeal_<PID> unix:<sock>`;
+   `cfg.zealBridgeArgs` overrides both. Its stdout/stderr goes to the agent log.
+6. **Publish the socket** — sets `process.env.ZEAL_PIPE_SOCKET`, which is what
+   `zealPipe.js`'s non-Windows poll already re-reads every 25s, so the reader
+   connects on its own with zero change on that side. A `ZEAL_PIPE_SOCKET` you
+   exported yourself (the manual path above) wins: Mimic then manages nothing.
+7. **Lifecycle** — retry with exponential backoff (15s → 5m), kill the bridge
+   when EQ exits or restarts, kill it on quit, and warn in the log if the socket
+   never appears 15s after a successful spawn (that is the "Zeal's DX hook did
+   not load under Proton" signature).
+
+**Socket path is not `/tmp` on Bottles.** A Flatpak's `/tmp` and
+`XDG_RUNTIME_DIR` are per-instance tmpfs mounts, so a socket there is invisible
+to host Mimic; the sandbox case writes to
+`~/.var/app/<id>/data/wolfpack-zeal.sock`, the one directory that is the same on
+both sides. Host case: `$XDG_RUNTIME_DIR/wolfpack-zeal.sock`.
+
+**Mimic still does not ship a bridge binary**, and it never silently no-ops
+about it: with none found, the status goes to `needs-bridge` with a message
+naming the download (`github.com/FyraLabs/outflow`) and the folder to drop it in
+(next to `eqgame.exe`, which is inside the prefix and therefore visible from both
+the host and the sandbox), and the same line lands in the agent log every 10
+minutes so it can be pasted as evidence.
+
+Config, all optional, in `mimic.config.json`: `zealBridge:false` disables the
+whole thing, `zealBridgeExe`, `zealBridgeSocket`, `zealBridgeArgs`,
+`zealBridgeFlatpakMode`, `zealBridgePipeName`. The status object rides
+`currentStatus().zealBridge` (state + human message + the exact command spawned).
+
+Still open, and only a Deck can answer: **does Zeal create its pipe under
+GE-Proton at all** (the make-or-break), whether `wine tasklist` reports eqgame's
+pid cleanly in every runner, and whether `flatpak enter` is permitted on
+SteamOS's flatpak build. Untested against real hardware — this is the runtime
+half, ready for the first Deck session.
+
+Still worth doing on top: a Zeal-Health overlay card showing the bridge status
+(it currently reads the agent's `/api/state`, which knows nothing about the
+bridge) and a "Bridge Zeal now" retry button.
 
 ---
 
