@@ -1,57 +1,89 @@
 # Wolf Pack Mimic on Steam Deck / Linux (#156)
 
 Native Linux build of Mimic for the Steam Deck (and any Linux EQ setup running
-Project Quarm under Wine/Proton). This is the working design + setup guide for
-the build cut on `claude/sharp-lamport-dC0TW`. **It does not touch the Windows
-fleet** — the stable/beta Mimic builds are unchanged.
+Project Quarm under Wine/Proton). **It does not touch the Windows fleet** — the
+stable/beta Mimic builds are unchanged; the Linux build ships on its own
+`linux.yml` channel from `build-mimic-linux.yml`.
 
-## What works where
+> **Installing?** Follow **`docs/RUNBOOK-deck-install.md`** — the ordered,
+> checkable install (prereqs → pinned GE-Proton → lutris.net script → the
+> renderer chain → Mimic → Zeal last), with the failure signatures for every way
+> it breaks. Before you play, run **`bash scripts/deck-preflight.sh`**.
+> This file is the *design + capability* map; the runbook is the *procedure*.
+
+## Status — where the Deck line actually stands (2026-08-23)
 
 | Feature | Native Linux | Needs |
 |---|---|---|
-| **UI Studio** — resolution updates, hotkey/spellset backup + import | ✅ Phase 1 | just the EQ folder path (ini files are plain files on the Linux FS) |
+| **Mimic itself** — launches and renders on the Deck | ✅ **field-verified** (2.6.1-linux.19) | nothing — the AppImage runs in Desktop Mode |
+| **UI Studio** — resolution presets (1280×800 + 1440×900), hotkey/spellset backup + import | ✅ Phase 1 | just the EQ folder path (ini files are plain files on the Linux FS) |
 | **Dashboard** (`localhost:7779`) | ✅ Phase 1 | nothing — it's a local web server |
 | **Log-based upload** — parses, /gu + /rs chat, triggers that key off log lines | ✅ Phase 1 | the EQ folder path (tails `eqlog_*_pq.proj.txt`) |
-| **Resolution lock** — puts `[VideoMode]` back to 1280×800 after the client stomps it to 4:3 | ✅ Phase 1, **opt-in** | the EQ folder path. Off by default; corrects the file only while EQ is closed (the client holds it open and rewrites it at exit). See `DECISIONS-2026-08-24.md` |
-| **Live overlays** — DPS/Tank HUD, Target Info, Buff queue, charm/pet | ⚠️ Phase 2 | Zeal's Windows named pipe **bridged out of Wine** (winestreamproxy) |
-| **Auto-update** | later | Linux `latest.yml` channel — off for the hand-built AppImage |
+| **Zeal + custom-UI-pack install** — one click, no file dragging | ✅ Phase 1 | the EQ folder path; EQ closed for the Zeal write |
+| **EQ itself** — client boots and renders under Lutris + GE-Proton | ✅ **field-verified**, chain documented | the dgVoodoo → DXVK chain intact (`RUNBOOK-deck-install.md` §5) |
+| **Resolution lock** — puts `[VideoMode]` back to the Deck target after the client stomps it to 4:3 | ✅ **landed**, opt-in, no Settings card yet | the EQ folder path. Off by default; corrects the file only while EQ is closed (the client holds it open and rewrites it at exit). See `DECISIONS-2026-08-24.md` |
+| **Live overlays** — DPS/Tank HUD, Mob Info, Buff queue, charm/pet | ⚠️ Phase 2 — bridge supervisor **landed**, needs `outflow.exe` dropped in + on-Deck verification | Zeal's Windows named pipe **bridged out of Wine** from inside EQ's own wineserver (`linuxZealBridge.js`); see `docs/mimic-steamdeck-zeal-bridge.md` |
+| **Auto-update** | ✅ on the isolated `linux` channel | `autoUpdater.channel = 'linux'`; never serves Windows clients |
 
 The split is fundamental: UI Studio and the dashboard are filesystem + HTTP, so
 they run natively. The overlays read **Zeal's `\\.\pipe\zeal_<pid>` named pipe**,
 which lives *inside* the Wine prefix — a native Linux process can't see it
-without a bridge. Phase 2 is that bridge, and it's genuinely experimental (make-
-or-break is whether Zeal's DX hook survives DXVK under Proton).
+without a bridge. Phase 2 is that bridge.
+
+### What 2026-08-23 settled on the EQ side
+
+The evening's real cost was the **renderer chain**, not Mimic. Recorded in full
+in `docs/RUNBOOK-deck-install.md` §5; the short version:
+
+- The Quarm client is the **TAKP/EQMac-era D3D8 client**. On a Deck it renders
+  through `eqgame → dgVoodoo D3D8 → D3D11 → DXVK → Vulkan/RADV`, and every link
+  is load-bearing.
+- **Two files in the game folder are the whole dgVoodoo requirement:
+  `D3D8.dll` + `dgVoodoo.conf`.** (`D3D9.dll` and the `*backup.dll` copies exist
+  on both Deck installs but are absent from the working Windows desktop set —
+  installer drift, not requirement.)
+- Break the wrapper and you get **`Failed to load the graphics DLL!`**; break
+  DXVK behind it and you get **`EverQuest requires DirectX 6.0 or higher`**,
+  with `dxgi_factory_IsCurrent` stub / `shader_set_limits "4.0"` /
+  `CheckFormatSupport` partial-stub in the Wine log. Two strings, two
+  directions — debug from the signature.
+- **Bottles is not the destination** (its sandboxed wineserver blocks the
+  bridge), and it carries two traps that produce those signatures: a
+  **per-program** override can force DXVK off while the bottle says on, and an
+  **empty Working Directory** hangs the client after the splash.
+- ⚠ **Mimic's Linux auto-detect scans `~/Games/<name>/drive_c`**, but a Lutris
+  install can put `eqgame.exe` at the **prefix root, beside `drive_c`** (observed:
+  `/home/deck/Games/ProjectQuarm`). Auto-detect misses that layout — the
+  Settings folder-picker is the answer, and the preflight script flags it.
 
 ---
 
 ## Recommended reference setup (fresh install)
 
-You said you'd install fresh for a cleaner result — do. A **known, fixed layout**
-makes EQ auto-detection deterministic and gives the pipe bridge a predictable
-socket path. Use **Bottles** (matches your "same bottle" wording and makes it
-trivial to add the bridge later).
+**Lutris + a pinned GE-Proton, installed by the lutris.net Quarm script.** Full
+procedure: **`docs/RUNBOOK-deck-install.md`**.
 
-1. **Install Bottles** (Discover → Bottles, or `flatpak install flathub com.usebottles.bottles`).
-2. **Create one gaming bottle** named exactly **`Quarm`**. That fixes the prefix at:
-   ```
-   ~/.var/app/com.usebottles.bottles/data/bottles/bottles/Quarm/drive_c/
-   ```
-3. **Put EQ at a fixed subfolder**: extract your TAKP/Quarm files (no installer —
-   it's a folder copy) to:
-   ```
-   .../Quarm/drive_c/Quarm/          ← eqgame.exe + eqclient.ini + UI_*.ini live here
-   ```
-4. **Install Zeal** into that same EQ folder as you would on Windows.
-5. **Run EQ from the bottle** (add `eqgame.exe patchme` as the bottle's program,
-   or a shortcut). Confirm it launches and writes `eqlog_<You>_pq.proj.txt`.
+Two reasons this is the destination, not a preference:
 
-Mimic's Linux detector already scans Bottles/Lutris/Proton/`~/.wine` prefixes for
-`eqgame.exe` + `eqlog_*` — with the layout above it will find `.../Quarm/drive_c/Quarm`
-on its own. If it doesn't, the **Settings → pick EQ folder** dialog always works;
-point it at that folder once and Mimic remembers it.
+1. **The Zeal bridge needs a host wineserver.** Bottles runs Wine inside a
+   Flatpak sandbox with its own `/tmp` + `XDG_RUNTIME_DIR`, so a bridge started
+   as a normal host process talks to a *different* wineserver and sees nothing.
+   No env var fixes it — it is a deployment property
+   (`docs/mimic-steamdeck-zeal-bridge.md`).
+2. **The installer script encodes the working prefix** — the dgVoodoo placement
+   and the DLL overrides the renderer chain depends on. A hand-built prefix is
+   how you end up debugging §5 of the runbook.
 
-> Lutris works too (the detector scans `~/Games/*/drive_c`), but Bottles gives the
-> cleanest path for the Phase 2 bridge, so prefer it if starting fresh.
+> ⚠ **This reverses the earlier recommendation in this file, which said to use
+> Bottles.** It was written before the wineserver constraint was understood and
+> before the 2026-08-23 field session; Bottles also carries the two traps in
+> `RUNBOOK-deck-install.md` §6. If you are on Bottles today, that section has the
+> migration checklist.
+
+Mimic's Linux detector scans Bottles/Lutris/Proton/`~/.wine` prefixes for
+`eqgame.exe` + `eqlog_*`, but see the prefix-root caveat above — **the
+Settings → pick EQ folder dialog always works**, and on the Deck it is the
+recommended step rather than the fallback.
 
 ---
 
@@ -89,8 +121,16 @@ one-tap icon — say the word.
 
 ## Phase 2 — live overlays via the Wine→Unix pipe bridge (experimental)
 
+> **Status: implementation in progress** (companion work on this line, as of
+> 2026-08-23). **`docs/mimic-steamdeck-zeal-bridge.md` is the current design and
+> supersedes this section** — it prefers **`outflow`** (Wine 10 `AF_UNIX`, with an
+> `--outbound-pipe` mode matching Zeal's `PIPE_ACCESS_OUTBOUND`) over
+> winestreamproxy, and it is where the wineserver constraint that rules out
+> Bottles is worked through. The sketch below is kept for the flow diagram and
+> the Mimic-side wiring, both of which are unchanged.
+
 Goal: expose Zeal's named pipe to the native Linux Mimic so the overlays get
-their live gauge/target/HP stream. The clean tool is **winestreamproxy**
+their live gauge/target/HP stream. The original candidate was **winestreamproxy**
 (github.com/openglfreak/winestreamproxy) — it runs a tiny server *inside* the
 Wine prefix that connects to a Win32 named pipe and forwards its bytes to a Unix
 socket on the Linux side.
@@ -152,13 +192,23 @@ session and adapts:
 
 ## Build / delivery
 
-- `.github/workflows/build-mimic-linux.yml` — `workflow_dispatch` on any branch,
-  builds the AppImage on `ubuntu-latest` and uploads it as a run **artifact**
-  (no release-page clutter, no auto-update channel). This is how you get each
-  iteration.
+- `.github/workflows/build-mimic-linux.yml` — builds the AppImage on
+  `ubuntu-latest` from a `claude/**` working branch and publishes it as a
+  prerelease versioned **`<parked>-linux.<run_number>`** (e.g. `2.6.1-linux.19`).
+  The `-linux.N` prerelease suffix is what makes electron-builder emit
+  **`linux.yml`** — the isolated channel the Linux client pins via
+  `autoUpdater.channel = 'linux'`. Windows clients read `latest`/`beta` and can
+  never install a `-linux.N` build.
+  ⚠ **Isolation covers what a client INSTALLS, not how it DISCOVERS releases** —
+  every release lands in one 10-entry `releases.atom` feed, and a burst of Deck
+  builds once pushed the whole Windows beta channel out of it.
+  `prune-linux-releases.yml` runs after every Linux build to keep that from
+  recurring. See CLAUDE.md → "Mimic release channels".
 - The AppImage is built from the SAME `apps/mimic` source as Windows; the only
   Linux-specific code is guarded by `process.platform === 'linux'` (EQ-dir scan,
   `--no-sandbox`, `_isEqRunning` via `pgrep`, the `ZEAL_PIPE_SOCKET` reader), so
   it never affects the Windows build.
-- Promotion to a real Linux release channel (auto-updating) waits until Phase 1
-  is proven on your Deck.
+- Phase 1 **is** proven on the Deck (2.6.1-linux.19 launches and renders,
+  2026-08-23). Graduating the Linux support code off the working branch still
+  waits on Phase 2 — see CLAUDE.md for the cherry-pick rule that keeps the
+  experimental Linux plumbing off the Windows fleet.
