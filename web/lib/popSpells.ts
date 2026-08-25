@@ -1,29 +1,24 @@
-// PoP spell turn-ins — which parchment buys which spell tier.
+// PoP spell turn-ins — which parchment buys which spell, per class.
 //
 // Hitya 2026-08-20: "look at the PoP spell quests. Add some of that
 // information to the spells page so people know what they need to turn in."
 //
-// HOW THIS WAS DERIVED (and why it generalises past the one script we saw).
-// The quest script hands a RANDOM spell from a pool per turn-in item. Read
-// naively that is a per-class list we would need every NPC's script to
-// reproduce. But resolving all 25 spells in the cleric script against the
-// catalog showed the pools are LEVEL TIERS, cleanly and without overlap:
+// v1 inferred the pools from spell LEVELS (Ethereal→61-62, Spectral→63-64,
+// Glyphed→65), derived from the one quest script we could read (cleric) and
+// explicitly flagged as one-witness. The second witness killed it
+// (Lacunanight, 2026-08-25, with Quarm's necro script in hand): the pools are
+// HAND-CURATED per class. The necro Glyphed awards exactly three spells, not
+// "every level-65 necro spell", and Destroy Undead (cleric 64 / necro 65)
+// lives in the CLERIC Spectral pool — the level rule overcounted necro 12
+// where the quest gives ~8.
 //
-//   Ethereal Parchment  → 61-62   (Faith, Symbol of Kazad, Ward of Gallantry,
-//                                  Tarnation, Virtue, Condemnation, …)
-//   Spectral Parchment  → 63-64   (Supernal Light, Sound of Might, Mark of
-//                                  Kings, Word of Replenishment, …)
-//   Glyphed Rune Word   → 65      (Yaulp VI, The Silent Command, Armor of the
-//                                  Zealot, Mark of the Righteous, Hand of Virtue)
-//
-// So the tier is a function of the spell's LEVEL, which we already hold for
-// every class in spell_level_seed — no other class's script required.
-//
-// ⚠ CONFIRMED AGAINST ONE CLASS (cleric). The rule fits all 25 of its spells
-// with no exceptions, which is strong but is still one witness. When another
-// class's script turns up (a local session can read D:\EQServer's quest
-// files), check it against tierForLevel before trusting this for that class.
-// A spell whose level we don't know returns null rather than a guess.
+// v2 reads the actual scripts: the `pop_parchment_pools` view over our
+// ProjectEQ turn-in mirror (scripted_npc_turnins), per (class, tier, scroll).
+// Verified byte-for-byte against Lacunanight's live-Quarm screenshot on the
+// necro Glyphed trio; one known ±1 divergence on necro Ethereal is recorded in
+// the migration header (20260825030000). There is deliberately NO level
+// fallback — a spell absent from a class's pools shows as "not from your
+// turn-ins", which is information, not a gap.
 
 export type TurnInKey = 'ethereal' | 'spectral' | 'glyphed';
 
@@ -31,41 +26,46 @@ export type TurnIn = {
   key: TurnInKey;
   item: string;
   itemId: number;
-  levels: [number, number];
   blurb: string;
 };
 
 export const POP_TURN_INS: Record<TurnInKey, TurnIn> = {
   ethereal: {
-    key: 'ethereal', item: 'Ethereal Parchment', itemId: 29112, levels: [61, 62],
-    blurb: 'Turn in for a random level 61-62 spell of your class.',
+    key: 'ethereal', item: 'Ethereal Parchment', itemId: 29112,
+    blurb: 'Turn in to your class trainer in PoK for a random spell from their Ethereal list (mostly level 61-62).',
   },
   spectral: {
-    key: 'spectral', item: 'Spectral Parchment', itemId: 29131, levels: [63, 64],
-    blurb: 'Turn in for a random level 63-64 spell of your class.',
+    key: 'spectral', item: 'Spectral Parchment', itemId: 29131,
+    blurb: 'Turn in to your class trainer in PoK for a random spell from their Spectral list (mostly level 63-64).',
   },
   glyphed: {
-    key: 'glyphed', item: 'Glyphed Rune Word', itemId: 29132, levels: [65, 65],
-    blurb: 'Turn in for a random level 65 spell of your class.',
+    key: 'glyphed', item: 'Glyphed Rune Word', itemId: 29132,
+    blurb: 'Turn in to your class trainer in PoK for a random spell from their Glyphed list (mostly level 65).',
   },
 };
 
 export const POP_TURN_IN_ORDER: TurnInKey[] = ['ethereal', 'spectral', 'glyphed'];
 
-/** Which parchment yields a spell of this level. null when the level is unknown or pre-PoP. */
-export function tierForLevel(level: number | null | undefined): TurnIn | null {
-  if (level == null) return null;
-  const lv = Number(level);
-  if (!Number.isFinite(lv)) return null;
-  for (const k of POP_TURN_IN_ORDER) {
-    const t = POP_TURN_INS[k];
-    if (lv >= t.levels[0] && lv <= t.levels[1]) return t;
-  }
-  return null;
-}
+/** A row of the pop_parchment_pools view. */
+export type PoolRow = {
+  class_name: string;
+  tier: TurnInKey;
+  scroll_item_id: number;
+  spell_name: string;
+};
 
-/** The random pool means a turn-in is a LOTTERY — worth saying out loud. */
-export function tierOdds(poolSize: number): string {
-  if (!Number.isFinite(poolSize) || poolSize <= 0) return '';
-  return `random from ${poolSize} spell${poolSize === 1 ? '' : 's'} at this tier`;
+const normClass = (c: string | null | undefined) =>
+  String(c || '').toLowerCase().replace(/\s+/g, '');
+
+/** spell name (lowercased) → tier, for ONE class. The lookup the badge and
+ *  matrix code use — keyed by name because every consumer already has the
+ *  spell's display name, and the view's names are catalog-canonical. */
+export function poolTierByName(pools: PoolRow[], charClass: string | null | undefined): Record<string, TurnInKey> {
+  const want = normClass(charClass);
+  const out: Record<string, TurnInKey> = {};
+  for (const p of pools) {
+    if (normClass(p.class_name) !== want) continue;
+    out[p.spell_name.toLowerCase()] = p.tier;
+  }
+  return out;
 }

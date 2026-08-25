@@ -6,7 +6,7 @@
 // spell_scroll_sources — PQDI is the escape hatch, not the answer.
 
 import { useMemo, useState } from 'react';
-import { tierForLevel } from '@/lib/popSpells';
+import { POP_TURN_INS, type TurnInKey } from '@/lib/popSpells';
 import type { ItemSources } from '@/lib/spellSources';
 import { shoppingList, type MissingForShopping } from '@/lib/spellSources';
 import SpellLevelEditor from './SpellLevelEditor';
@@ -72,12 +72,16 @@ function SourcePanel({ src, itemId }: { src: ItemSources | undefined; itemId: nu
 }
 
 export default function MissingSpellsView({
-  missing, sources, officer, character,
+  missing, sources, officer, character, popTiers = {},
 }: {
   missing: MissingSpellRow[];
   sources: Record<number, ItemSources>;
   officer: boolean;
   character: string;
+  // spell name (lowercased) -> parchment tier, from the quest-script pools
+  // for THIS character's class (lib/popSpells.poolTierByName). Replaces the
+  // level-based guess that overcounted (Lacunanight, 2026-08-25).
+  popTiers?: Record<string, TurnInKey>;
 }) {
   const [mode, setMode] = useState<'levels' | 'shopping'>('levels');
   const [open, setOpen] = useState<Set<string>>(new Set());
@@ -165,16 +169,18 @@ export default function MissingSpellsView({
                           {m.spell_name} <span className="text-dim text-[10px]">{isOpen(m.spell_name) ? '▾' : '▸'}</span>
                         </button>
                         {m.pop && (() => {
-                          // Name the TURN-IN, not just the era: a PoP spell is
-                          // bought with a parchment whose tier follows the
-                          // spell's level (web/lib/popSpells.ts).
-                          const t = tierForLevel(m.scribe_level);
+                          // Name the TURN-IN from the quest-script pools —
+                          // not the spell's level, which overcounted
+                          // (Lacunanight, 2026-08-25). No pool entry = the
+                          // class's turn-ins can't award it.
+                          const k = popTiers[m.spell_name.toLowerCase()];
+                          const t = k ? POP_TURN_INS[k] : null;
                           return (
                             <span className="text-[9px] font-bold px-1 py-0.5 rounded bg-blue/20 border border-blue/60 text-blue"
                                   title={t
-                                    ? `${t.blurb} Hand a ${t.item} to your class's spell NPC — the spell you get is random from that tier.`
-                                    : "Planes of Power — locked until Oct 1. Can't scribe it yet."}>
-                              {t ? `PoP · ${t.item}` : 'PoP'}
+                                    ? `${t.blurb}`
+                                    : 'Planes of Power — not in your class trainer\u2019s turn-in lists (research, or another class\u2019s tradeable scroll).'}>
+                              {t ? `PoP \u00b7 ${t.item}` : 'PoP \u00b7 not a turn-in'}
                             </span>
                           );
                         })()}
@@ -228,11 +234,12 @@ export default function MissingSpellsView({
                             title="Sold only in this zone.">only here</span>
                     )}
                     {s.pop && (() => {
-                      const t = tierForLevel(s.level ?? null);
+                      const k = popTiers[s.spellName.toLowerCase()];
+                      const t = k ? POP_TURN_INS[k] : null;
                       return (
                         <span className="text-[9px] font-bold px-1 py-0.5 rounded bg-blue/20 border border-blue/60 text-blue"
-                              title={t ? t.blurb : 'Planes of Power'}>
-                          {t ? `PoP · ${t.item}` : 'PoP'}
+                              title={t ? t.blurb : 'Planes of Power \u2014 not in your class trainer\u2019s turn-in lists.'}>
+                          {t ? `PoP \u00b7 ${t.item}` : 'PoP'}
                         </span>
                       );
                     })()}

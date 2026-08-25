@@ -126,6 +126,16 @@ next touch one rather than assuming a missing row means a missing doc.
     that have already shipped bugs. Complements `docs/AI-CONTRIBUTOR-BRIEF.md`,
     which is for a chat AI with no repo access; cross-referenced both ways and
     from CLAUDE.md.
+  - **PoP parchment pools from quest scripts (web 1.1.96, Lacunanight's
+    first-night catch: "necros have 9 spells but shows 12").** The level-tier
+    inference overcounted; pop_parchment_pools (view over the ProjectEQ
+    turn-in mirror) now drives the /pop matrix, the pop_spell_needs RPC
+    (+tier column, +Song: support — bards were silently dropped), and the
+    spell-page badges. Verified byte-for-byte vs live Quarm on necro Glyphed.
+    ⚠ Needs a local session: reconcile the ±1 necro-Ethereal divergence
+    against Quarm's Lua quest fork (HANDOFF-pop-quest-extract.md route);
+    also queued: character_missing_spells has the same 'Spell: %'-only
+    filter — bards under-served on the non-PoP path too.
   - **Officer-assisted Mimic linking (bot 3.1.70 + web 1.1.93, Hitya via
     Gonner: "doesn't have discord auth working").** The device-code flow's
     missing half: the poll handler accepted discord-only authorizations since

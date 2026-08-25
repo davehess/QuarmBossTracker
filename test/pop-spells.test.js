@@ -1,55 +1,66 @@
-// test/pop-spells.test.js — PoP spell turn-in tiers.
-// Real-imports the pure catalog (web/lib/popSpells.ts).
+// test/pop-spells.test.js — the PoP parchment helpers (web/lib/popSpells.ts).
 //
-// Hitya 2026-08-20: "look at the PoP spell quests. Add some of that
-// information to the spells page so people know what they need to turn in."
-//
-// The quest script hands a RANDOM spell per turn-in item, which reads like a
-// per-class list. Resolving all 25 spells in the one script we have against
-// the catalog showed the pools are LEVEL TIERS with no overlap — which is what
-// lets this work for every class off spell_level_seed instead of needing each
-// class's script.
-
+// HISTORY: this file used to characterize tierForLevel(), the level→parchment
+// ladder inferred from the one quest script we could read. Its own header
+// called it a one-witness inference, and the second witness killed it
+// (Lacunanight, 2026-08-25, with Quarm's necro script in hand): pools are
+// hand-curated per class, the necro Glyphed awards exactly three spells, and
+// Destroy Undead (cleric 64 / necro 65) rides the CLERIC Spectral pool. The
+// old tests asserted the disproven behavior, so they died with the function —
+// what's characterized now is the pool lookup that replaced it.
 import { describe, it, expect } from 'vitest';
-import { tierForLevel, POP_TURN_INS, POP_TURN_IN_ORDER } from '../web/lib/popSpells.ts';
+import { POP_TURN_INS, POP_TURN_IN_ORDER, poolTierByName } from '../web/lib/popSpells.ts';
 
-describe('tierForLevel — the tier ladder', () => {
-  it('matches the pools measured in the cleric script', () => {
-    // Ethereal pool: Faith 61, Symbol of Kazad 61, Virtue 62, Condemnation 62.
-    expect(tierForLevel(61).item).toBe('Ethereal Parchment');
-    expect(tierForLevel(62).item).toBe('Ethereal Parchment');
-    // Spectral pool: Supernal Light 63, Sound of Might 63, Mark of Kings 64.
-    expect(tierForLevel(63).item).toBe('Spectral Parchment');
-    expect(tierForLevel(64).item).toBe('Spectral Parchment');
-    // Glyphed pool: Yaulp VI, The Silent Command, Hand of Virtue — all 65.
-    expect(tierForLevel(65).item).toBe('Glyphed Rune Word');
+const POOLS = [
+  // The verified necro Glyphed trio — byte-for-byte what Quarm's script awards.
+  { class_name: 'Necromancer',   tier: 'glyphed',  scroll_item_id: 28416, spell_name: 'Blood of Thule' },
+  { class_name: 'Necromancer',   tier: 'glyphed',  scroll_item_id: 28425, spell_name: 'Child of Bertoxxulous' },
+  { class_name: 'Necromancer',   tier: 'glyphed',  scroll_item_id: 28427, spell_name: 'Word of Terris' },
+  // The cross-class case that broke the level rule: cleric SPECTRAL, level 64.
+  { class_name: 'Cleric',        tier: 'spectral', scroll_item_id: 28426, spell_name: 'Destroy Undead' },
+  { class_name: 'Shadow Knight', tier: 'ethereal', scroll_item_id: 21649, spell_name: 'Mental Corruption' },
+];
+
+describe('poolTierByName — quest-script pools, per class', () => {
+  it('resolves the verified necro Glyphed trio', () => {
+    const t = poolTierByName(POOLS, 'Necromancer');
+    expect(t['blood of thule']).toBe('glyphed');
+    expect(t['child of bertoxxulous']).toBe('glyphed');
+    expect(t['word of terris']).toBe('glyphed');
   });
 
-  it('pre-PoP levels have no turn-in', () => {
-    expect(tierForLevel(60)).toBeNull();
-    expect(tierForLevel(1)).toBeNull();
+  it('Destroy Undead is a CLERIC spectral reward and absent from necro pools', () => {
+    // The exact case Lacunanight reported: necro learns it at 65, but the
+    // necro Glyphed cannot award it — the scroll is cleric-tier.
+    expect(poolTierByName(POOLS, 'Cleric')['destroy undead']).toBe('spectral');
+    expect(poolTierByName(POOLS, 'Necromancer')['destroy undead']).toBeUndefined();
   });
 
-  it('an unknown level returns null rather than guessing a tier', () => {
-    expect(tierForLevel(null)).toBeNull();
-    expect(tierForLevel(undefined)).toBeNull();
-    expect(tierForLevel(NaN)).toBeNull();
+  it('class matching survives the Shadow Knight spelling split', () => {
+    // characters.class carries both 'Shadow Knight' and 'Shadowknight'.
+    expect(poolTierByName(POOLS, 'Shadowknight')['mental corruption']).toBe('ethereal');
+    expect(poolTierByName(POOLS, 'Shadow Knight')['mental corruption']).toBe('ethereal');
   });
 
-  it('the tiers cover 61-65 with no gaps and no overlap', () => {
-    const seen = [];
-    for (let lv = 61; lv <= 65; lv++) {
-      const t = tierForLevel(lv);
-      expect(t, `level ${lv}`).not.toBeNull();
-      seen.push(t.key);
-    }
-    expect(seen).toEqual(['ethereal', 'ethereal', 'spectral', 'spectral', 'glyphed']);
+  it('an unknown class or empty pools yields an empty map, never a guess', () => {
+    expect(poolTierByName(POOLS, null)).toEqual({});
+    expect(poolTierByName(POOLS, 'Warrior')).toEqual({});
+    expect(poolTierByName([], 'Necromancer')).toEqual({});
   });
+});
 
-  it('carries the real turn-in item ids from the catalog', () => {
+describe('the turn-in constants', () => {
+  it('cover the three parchments with their real item ids', () => {
+    expect(POP_TURN_IN_ORDER).toEqual(['ethereal', 'spectral', 'glyphed']);
     expect(POP_TURN_INS.ethereal.itemId).toBe(29112);
     expect(POP_TURN_INS.spectral.itemId).toBe(29131);
     expect(POP_TURN_INS.glyphed.itemId).toBe(29132);
-    expect(POP_TURN_IN_ORDER).toEqual(['ethereal', 'spectral', 'glyphed']);
+  });
+
+  it('no blurb promises a level range — the pools are hand-curated, not level tiers', () => {
+    for (const k of POP_TURN_IN_ORDER) {
+      expect(POP_TURN_INS[k].blurb).not.toMatch(/level \d+-\d+ spell/);
+      expect(POP_TURN_INS[k].blurb).toMatch(/trainer/i);
+    }
   });
 });
