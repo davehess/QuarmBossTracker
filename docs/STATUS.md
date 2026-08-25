@@ -35,6 +35,7 @@ folly** — it's here.*
 | File | What it is | Why it stays |
 |---|---|---|
 | `DESIGN-platform-queue.md` | The post-audit wave plan + agreed execution order | **The live queue.** |
+| `RUNBOOK-site-access.md` | Officer procedure: getting a member in when Discord sign-in won't work — site invite + Mimic code, reset-via-reinvite, troubleshooting | **The no-Discord door.** First live use 2026-08-25 |
 | `BETA-TESTING.md` | Test plan for features in the beta channel (versions + ✅ solo / 👥 multi-person cases) | **Where to verify beta work.** |
 | `DESIGN-buff-debuff-queue.md` | Design spec for the raid buff/debuff/cure queue overlay | CLAUDE.md roadmap ref; feature is live but spec still guides changes |
 | `DESIGN-ch-chain.md` | Design spec for the CH-rotation overlay | CLAUDE.md roadmap ref |
@@ -132,10 +133,12 @@ next touch one rather than assuming a missing row means a missing doc.
     code on /admin/links (attestation trust model, audited onto
     mimic_sessions.linked_via/linked_by). Migration
     20260824050000_mimic_link_officer_assist applied + committed. The
-    follow-up shipped same-day (web 1.1.94): officer-issued site-access
-    invites → /auth/claim username+password bound to wolfpack_members.user_id,
-    reset via re-invite, no SMTP. Design + merge story in
-    DECISIONS-2026-08-24.
+    follow-up shipped same-day (web 1.1.94, error-surfacing fix 1.1.95):
+    officer-issued site-access invites → /auth/claim username+password bound
+    to wolfpack_members.user_id, reset via re-invite, no SMTP. FIRST LIVE USE
+    SUCCEEDED (Gonner/Lacunanight, 2026-08-25 02:47 UTC). Officer procedure:
+    RUNBOOK-site-access.md; design + merge story: DECISIONS-2026-08-24;
+    self-host choices: DESIGN-selfhost-wizard.md §3.
   - **Lockouts derived from kill parses (bot 3.1.68 + web 1.1.90, Hitya:
     "taeya reported this Ventani kill so they should have a lockout").**
     `character_lockouts` shipped 2026-08-21 reading only the `/sll` relay and

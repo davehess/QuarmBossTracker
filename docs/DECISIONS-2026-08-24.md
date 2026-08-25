@@ -81,3 +81,13 @@ below "Continue with Discord"; a bare username gets the login domain appended.
 - **Dashboard prerequisite, unverifiable from cloud:** Supabase Auth's Email
   provider must be enabled (default on; the MCP has no auth-config read —
   same shape as the 2026-08-10 redirect-URL finding).
+
+**Outcome (same night):** first live use succeeded end to end — invite
+generated, claimed as `gonner`, signed in at 02:47 UTC. The one defect the
+live run exposed: the sign-in form flattened every auth error into "wrong
+password", which sent diagnosis down the credentials road while the server
+showed the sign-in had already succeeded — fixed in web 1.1.95 (credential
+failures keep the friendly line; everything else surfaces verbatim).
+Officer procedure for both no-Discord paths: `docs/RUNBOOK-site-access.md`.
+Deployment-shaped choices (login domain constants, Email provider, signups
+toggle, no-SMTP reset): recorded in `DESIGN-selfhost-wizard.md` §3.
