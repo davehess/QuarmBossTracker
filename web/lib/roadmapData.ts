@@ -37,6 +37,20 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'web-1-1-94',
+    title: 'A door that isn\u2019t Discord',
+    version: 'Web 1.1.94',
+    date: '2026-08-24',
+    headline: 'Members who can\u2019t get past Discord\u2019s sign-in checks can now use the whole site with a username and password.',
+    features: [
+      {
+        name: 'Officer invite \u2192 username + password',
+        blurb: 'If Discord\u2019s \u201cverify your account\u201d wall blocks you from signing in, an officer can send you a personal invite link. Open it, pick a username and password, and you\u2019re in \u2014 parses, raid pages, your characters, everything, same as everyone else. Forgot the password later? A fresh invite from an officer doubles as the reset.',
+      },
+    ],
+    fixes: [],
+  },
+  {
     key: 'web-1-1-93',
     title: 'Mimic without the Discord wall',
     version: 'Bot 3.1.70 \u00b7 Web 1.1.93',

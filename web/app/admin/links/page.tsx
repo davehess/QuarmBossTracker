@@ -27,6 +27,7 @@ import OpenDkpRegisterRow from './OpenDkpRegisterRow';
 import UnregisteredTable from './UnregisteredTable';
 import MainCombobox from './MainCombobox';
 import { authorizeMimicForMember } from './mimic-link-actions';
+import { createSiteAccessInvite } from './site-access-actions';
 
 export const dynamic = 'force-dynamic';
 
@@ -484,9 +485,9 @@ async function dismissLinkRequest(formData: FormData) {
 export default async function AdminLinksPage({
   searchParams,
 }: {
-  searchParams: Promise<{ show?: string; mlok?: string; mlerr?: string }>;
+  searchParams: Promise<{ show?: string; mlok?: string; mlerr?: string; sitok?: string; sifor?: string; sierr?: string }>;
 }) {
-  const { show, mlok, mlerr } = await searchParams;
+  const { show, mlok, mlerr, sitok, sifor, sierr } = await searchParams;
   const showInactive = show === 'inactive' || show === 'all';
   const showLinked   = show === 'linked'   || show === 'all';
   const showIgnored  = show === 'ignored'  || show === 'all';
@@ -871,6 +872,64 @@ export default async function AdminLinksPage({
             className="bg-accent hover:bg-blue text-white text-sm rounded px-4 py-2"
           >
             Authorize link
+          </button>
+        </form>
+      </section>
+
+      {/* Officer-issued SITE-ACCESS invites — the no-Discord path for the
+          website itself (Lacunanight: wants site access, not Mimic, and
+          Discord's phone-verification wall blocks OAuth). The invite link
+          leads to /auth/claim where the member picks a username + password
+          bound to their member identity. A re-invite for the same member
+          doubles as the password reset. Trust model: site-access-actions.ts. */}
+      <section className="bg-panel border border-border rounded-lg p-6">
+        <h2 className="text-xl text-gold mb-1">🔑 Site access without Discord sign-in</h2>
+        <p className="text-sm text-dim leading-6 max-w-3xl">
+          For members whose Discord account can&apos;t authorize the website. Pick the member,
+          generate the invite, and DM them the link — it&apos;s single-use, expires in 7 days,
+          and lets them choose a username + password. Sending them a <b className="text-text">new</b>{' '}
+          invite later resets their password.
+        </p>
+        {sitok && (
+          <div className="mt-3 text-sm">
+            <p className="text-green">✓ Invite created for <b>{sifor}</b> — DM them this link:</p>
+            <code className="block mt-2 bg-bg border border-border rounded px-3 py-2 text-xs break-all select-all">
+              https://wolfpack.quest/auth/claim?token={sitok}
+            </code>
+          </div>
+        )}
+        {sierr && (
+          <p className="mt-3 text-sm text-red">
+            {({
+              pick_member:   'Pick the member to invite.',
+              not_member:    'That person isn\u2019t on the current member list.',
+              insert_failed: 'Couldn\u2019t create the invite (database error). Try again in a moment.',
+            } as Record<string, string>)[sierr] || `Error: ${sierr}`}
+          </p>
+        )}
+        <form action={createSiteAccessInvite} className="mt-4 flex flex-wrap items-end gap-3">
+          <label className="text-sm">
+            <span className="block text-dim text-xs mb-1">Member</span>
+            <select
+              name="member_discord_id"
+              required
+              defaultValue=""
+              className="bg-bg border border-border rounded px-3 py-2 min-w-[16rem]"
+            >
+              <option value="" disabled>— pick the member —</option>
+              {memberList.map(m => (
+                <option key={m.discord_id} value={m.discord_id}>
+                  {m.nickname || m.global_name || m.discord_id}
+                  {m.nickname && m.global_name && m.nickname !== m.global_name ? ` (${m.global_name})` : ''}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button
+            type="submit"
+            className="bg-accent hover:bg-blue text-white text-sm rounded px-4 py-2"
+          >
+            Generate invite link
           </button>
         </form>
       </section>

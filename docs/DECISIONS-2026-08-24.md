@@ -40,3 +40,44 @@ reset-mail deliverability, and the merge story when a member later verifies
 Discord. That is a design doc, not a midnight patch. Tonight's path unblocks
 the actual person: Gonner can run Mimic with his real identity TODAY; site
 sign-in for OAuth-blocked members is the follow-up.
+
+## Site access without Discord: officer invites + username/password (Hitya, from Lacunanight)
+
+> "he doesn't want to install but wants site access. we need that alternative
+> below the discord signin. login and pass and an invite link"
+
+Lacunanight's wall is Discord demanding a phone number for OAuth consent ("I
+have 2FA already"); he is fully present in the guild — only consent is blocked.
+
+**The architectural key that made this small:** every gate on the site
+resolves `auth.uid() → wolfpack_members.user_id`; Discord OAuth's only
+structural job is stamping that binding in `/auth/callback`. So the feature is
+just a second, officer-attested way to create the SAME binding for a
+password-based `auth.users` — zero changes to any page gate, officer check, or
+the /me ownership walk.
+
+**The flow:** officer picks the member on `/admin/links` → single-use 7-day
+invite link (`/auth/claim?token=…`, 32-byte token, service-role-only table) →
+member picks username + password (≥10 chars) → account created PRE-CONFIRMED
+via the admin API with email `<username>@login.wolfpack.quest` — synthesized,
+never mailed — and stamped onto the member row (only where `user_id` is NULL,
+so a concurrent OAuth can't be clobbered). Sign-in is a username+password form
+below "Continue with Discord"; a bare username gets the login domain appended.
+
+**Deliberate mirrors and models:**
+- The `ALLOWED_ROLE_NAMES` gate runs at CLAIM time — the OAuth callback runs
+  it at sign-in time, and claim is this flow's equivalent moment. Roles come
+  from the member row (bot-synced every 6h).
+- **Password reset = officer re-invite.** No SMTP dependency anywhere: a fresh
+  invite for a member whose bound account carries `wp_invited` metadata RESETS
+  that account's password instead of creating a second identity. The reset is
+  attested by an officer exactly like the original grant.
+- **The later-OAuth merge story, stated not solved:** if an invited member
+  ever completes Discord OAuth, the callback re-stamps `user_id` with the
+  OAuth account and the password account stops resolving to a member row. A
+  subsequent re-invite REFUSES (the bound account is no longer `wp_invited`)
+  rather than silently minting a second identity. Cleanup of the orphaned
+  password account is manual; acceptable at guild scale, revisit if it recurs.
+- **Dashboard prerequisite, unverifiable from cloud:** Supabase Auth's Email
+  provider must be enabled (default on; the MCP has no auth-config read —
+  same shape as the 2026-08-10 redirect-URL finding).
