@@ -66,6 +66,17 @@ writes.
 - **Web sign-in**: Supabase Auth Discord OAuth; callback checks guild
   membership + role names (`ALLOWED_ROLE_NAMES` via `wolfpack_roles`).
   Officer gating = `isOfficer()` per request server-side.
+  **No-Discord path (web 1.1.94, 2026-08-24, Lacunanight's phone-verification
+  wall):** officer generates a single-use 7-day invite on `/admin/links`
+  (`site_access_invites`, service-role only) → member sets username+password
+  on `/auth/claim` → account created pre-confirmed as
+  `<username>@login.wolfpack.quest` (synthesized, never mailed) and stamped
+  onto `wolfpack_members.user_id` — the same binding OAuth writes, so every
+  gate works unchanged. `ALLOWED_ROLE_NAMES` enforced at claim (the flow's
+  sign-in moment). Password reset = officer re-invite (detects `wp_invited`
+  metadata and resets instead of creating). Sign-in form lives below the
+  Discord button (`PasswordSignIn.tsx`). Later-OAuth merge story + dashboard
+  prerequisite (Email provider enabled): `docs/DECISIONS-2026-08-24.md`.
 - **Character ownership** (who may see/edit a character's private data): the
   household+family walk — `wolfpack_members.user_id → discord_id` (+
   `merged_into_discord_id` aliases) → `characters.discord_id` anchors →
