@@ -28,7 +28,15 @@ export default function PasswordSignIn({ next, prefill }: { next: string; prefil
     const { error: err } = await supabaseBrowser().auth.signInWithPassword({ email, password });
     if (err) {
       setBusy(false);
-      setError('Wrong username or password. Forgot it? Ask an officer for a fresh invite link — it doubles as the reset.');
+      // Only a credential failure gets the friendly line. Everything else
+      // surfaces verbatim — flattening all errors into "wrong password" cost
+      // a diagnosis round on the very first live use (2026-08-24: the server
+      // showed a SUCCESSFUL sign-in while the user believed the password was
+      // wrong; had it been a config error instead, this message would have
+      // sent everyone down the wrong road entirely).
+      setError(/invalid login credentials/i.test(err.message)
+        ? 'Wrong username or password. Forgot it? Ask an officer for a fresh invite link — it doubles as the reset.'
+        : `Sign-in error: ${err.message}`);
       return;
     }
     router.push(next);
