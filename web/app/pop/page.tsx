@@ -25,7 +25,7 @@ import {
   POP_ZONES, POP_ZONE_BY_KEY, POP_FLAGS, POP_FLAG_DEFS, TIER_LABELS,
   zoneAccess, missingFor, type PopNode,
 } from '@/lib/popFlags';
-import { POP_TURN_INS, POP_TURN_IN_ORDER, tierForLevel, type TurnInKey } from '@/lib/popSpells';
+import { POP_TURN_INS, POP_TURN_IN_ORDER, type TurnInKey } from '@/lib/popSpells';
 import { ownedCharacters } from '@/lib/ownedCharacters';
 import SpellbookSubmit from './SpellbookSubmit';
 
@@ -39,13 +39,22 @@ type CharFlags = { name: string; flags: Set<string>; unmapped: number };
 // level descending in the RPC — first to the level gets first dibs.
 type SpellNeed = {
   spell_name: string; spell_id: number | null; scroll_item_id: number | null;
-  spell_level: number | null; character_name: string; char_class: string | null;
+  spell_level: number | null;
+  // Which parchment buys this spell FOR THIS CHARACTER'S CLASS, straight from
+  // the quest-script pools (pop_parchment_pools). null = their class's
+  // turn-ins can't award it (research, or another class's tradeable scroll).
+  tier: TurnInKey | null;
+  character_name: string; char_class: string | null;
   char_level: number | null; held_by: string[];
 };
 
 type NeedByChar = {
   name: string; cls: string | null; level: number | null;
   tiers: Record<TurnInKey, SpellNeed[]>;
+  // Needed, but NOT awarded by this class's turn-ins — kept visible instead
+  // of miscounted into a tier (the v1 bug Lacunanight caught: "necros have 9
+  // spells but shows 12").
+  other: SpellNeed[];
   total: number;
 };
 
@@ -55,15 +64,15 @@ type NeedByChar = {
 function groupNeeds(rows: SpellNeed[]): NeedByChar[] {
   const by = new Map<string, NeedByChar>();
   for (const r of rows) {
-    const tier = tierForLevel(r.spell_level);
-    if (!tier) continue;                       // unknown level → no tier to claim
     let e = by.get(r.character_name);
     if (!e) {
       e = { name: r.character_name, cls: r.char_class, level: r.char_level,
-            tiers: { ethereal: [], spectral: [], glyphed: [] }, total: 0 };
+            tiers: { ethereal: [], spectral: [], glyphed: [] }, other: [], total: 0 };
       by.set(r.character_name, e);
     }
-    e.tiers[tier.key].push(r);
+    // r.tier comes from the actual quest-script pools, per class. No level
+    // guessing — a spell outside the class's pools lands in `other`.
+    if (r.tier) e.tiers[r.tier].push(r); else e.other.push(r);
     e.total++;
   }
   // RPC already sorts by level desc; keep that order and break ties by name.
@@ -401,9 +410,10 @@ export default async function PopFlagsPage(
           <div>
             <h2 className="text-lg text-gold mb-1">📜 PoP spells mains still need</h2>
             <p className="text-sm text-dim leading-6 max-w-3xl">
-              Level 61–65 spells come from turning a parchment in to your class&apos;s spell NPC, and each turn-in
-              gives a <b className="text-text">random</b> spell of that tier — so what matters is how many a person
-              still needs at each tier. Highest level first: whoever reaches the level first gets first dibs.
+              PoP spells come from turning a parchment in to your class&apos;s spell NPC, and each turn-in
+              gives a <b className="text-text">random</b> spell from that trainer&apos;s hand-picked list for that
+              parchment (read from the actual quest scripts — not guessed from spell levels) — so what matters is
+              how many a person still needs from each list. Highest level first: whoever reaches the level first gets first dibs.
               Only mains who have <b className="text-text">submitted a spellbook</b> appear — without one we
               can&apos;t tell &ldquo;doesn&apos;t have it&rdquo; from &ldquo;we don&apos;t know&rdquo;.
             </p>
@@ -413,9 +423,8 @@ export default async function PopFlagsPage(
 
         <div className="mt-3 flex flex-wrap gap-2 text-[11px]">
           {POP_TURN_IN_ORDER.map(k => (
-            <span key={k} className="px-2 py-0.5 rounded border border-border text-dim">
-              <b className="text-text">{POP_TURN_INS[k].item}</b> → level {POP_TURN_INS[k].levels[0]}
-              {POP_TURN_INS[k].levels[0] === POP_TURN_INS[k].levels[1] ? '' : `–${POP_TURN_INS[k].levels[1]}`}
+            <span key={k} className="px-2 py-0.5 rounded border border-border text-dim" title={POP_TURN_INS[k].blurb}>
+              <b className="text-text">{POP_TURN_INS[k].item}</b> → random from your class trainer&apos;s list
             </span>
           ))}
         </div>
@@ -437,6 +446,10 @@ export default async function PopFlagsPage(
                       {POP_TURN_INS[k].item.replace(' Parchment', '').replace('Glyphed Rune Word', 'Rune Word')}
                     </th>
                   ))}
+                  <th className="py-1 pr-3 text-right"
+                      title="Needed, but not awarded by this class's parchment turn-ins — research spells, or another class's tradeable scroll (e.g. necro Destroy Undead rides a cleric 64 scroll).">
+                    Other
+                  </th>
                   <th className="py-1 pr-3 text-right">Total</th>
                 </tr>
               </thead>
@@ -457,13 +470,18 @@ export default async function PopFlagsPage(
                         </td>
                       );
                     })}
+                    <td className="py-1.5 pr-3 text-right"
+                        title={n.other.length ? n.other.map(x => x.spell_name).join(', ') : 'nothing outside the turn-in lists'}>
+                      <span className={n.other.length ? 'text-purple' : 'text-dim/50'}>{n.other.length || '—'}</span>
+                    </td>
                     <td className="py-1.5 pr-3 text-right text-text">{n.total}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
             <p className="text-[11px] text-dim mt-2">
-              Hover a tier count to see the exact spells. Click a name for their full missing-spell list.
+              Hover a count to see the exact spells. <b>Other</b> = needed but not in this class&apos;s turn-in
+              lists (research, or another class&apos;s tradeable scroll). Click a name for their full missing-spell list.
             </p>
           </div>
         )}

@@ -26,6 +26,7 @@ import { isOfficer } from '@/lib/officer';
 import { classBit, normalizeClass } from '@/lib/class-titles';
 import { groupSources, type SourceRow, type ItemSources } from '@/lib/spellSources';
 import MissingSpellsView from './MissingSpellsView';
+import { poolTierByName, type PoolRow } from '@/lib/popSpells';
 
 export const dynamic = 'force-dynamic';
 
@@ -87,6 +88,14 @@ export default async function CharacterSpellsPage({ params }: { params: Promise<
 
   const bit = classBit(char.class);
   const baseClass = normalizeClass(char.class);
+
+  // Quest-script parchment pools for this class (pop_parchment_pools view) —
+  // drives the "PoP · <parchment>" badges from what the trainer actually
+  // awards, not from spell levels (Lacunanight, 2026-08-25).
+  const { data: poolRows } = await sb
+    .from('pop_parchment_pools')
+    .select('class_name, tier, scroll_item_id, spell_name');
+  const popTiers = poolTierByName((poolRows ?? []) as PoolRow[], char.class);
 
   // Scribed count (for the header summary).
   const { count: scribedCount } = await sb
@@ -187,6 +196,7 @@ export default async function CharacterSpellsPage({ params }: { params: Promise<
               sources={sourcesByItem}
               officer={officer}
               character={decoded}
+              popTiers={popTiers}
             />
           )}
         </section>

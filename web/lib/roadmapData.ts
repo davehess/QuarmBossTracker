@@ -37,6 +37,26 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'web-1-1-96',
+    title: 'Parchment math, from the source',
+    version: 'Web 1.1.96',
+    date: '2026-08-25',
+    headline: 'The PoP spell matrix now reads the actual turn-in quests instead of guessing from spell levels \u2014 thanks to Gonner catching the overcount on night one.',
+    features: [
+      {
+        name: 'Counts you can plan around',
+        blurb: 'Each class trainer hands out a hand-picked list per parchment, and the matrix now shows exactly those lists. A new Other column shows spells you still need that your own turn-ins can\u2019t award \u2014 research spells, or another class\u2019s tradeable scroll \u2014 instead of quietly miscounting them.',
+      },
+      {
+        name: 'Bards exist now',
+        blurb: 'Bard rewards are Songs, not Spells, and the old filter dropped every one of them. The needs list and the matrix now cover bards like everyone else.',
+      },
+    ],
+    fixes: [
+      'Spell-page PoP badges name the parchment from the real quest lists; a spell your trainer can\u2019t award says so instead of showing the wrong parchment.',
+    ],
+  },
+  {
     key: 'web-1-1-94',
     title: 'A door that isn\u2019t Discord',
     version: 'Web 1.1.94',

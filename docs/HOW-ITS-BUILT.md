@@ -1407,10 +1407,15 @@ holds it in memory.
   decision is bot-side so the catalog grows data-only. Bot half + manual entry
   are still TODO (task #58); the NPC/phrase list needs
   `docs/HANDOFF-pop-quest-extract.md` run on the EQServer box.
-- **PoP spell turn-ins (web 1.1.86, 2026-08-20)** — `web/lib/popSpells.ts` maps
-  spell LEVEL to the parchment that buys it (Ethereal 61-62 / Spectral 63-64 /
-  Glyphed Rune Word 65), inferred from one class's quest script and held as one
-  witness. `pop_spell_needs(guild)` RPC drives the /pop section: each main ×
+- **PoP spell turn-ins (web 1.1.86 → 1.1.96, 2026-08-20/25)** — v2 reads the
+  ACTUAL trainer scripts: `pop_parchment_pools` view over the ProjectEQ
+  turn-in mirror (`scripted_npc_turnins`), per (class, tier, scroll), trainer
+  class DERIVED via bit_and over scroll class-bitmasks. The v1 level-tier
+  inference in `web/lib/popSpells.ts` overcounted (necro "12" vs the quest's
+  ~8 — Lacunanight, 2026-08-25) and is gone; a PoP spell outside the class's
+  pools shows "not a turn-in". `pop_spell_needs` gained `tier` + `'Song: %'`
+  support (bards were silently dropped). Known ±1 Quarm-fork divergence on
+  necro Ethereal: migration 20260825030000 header. `pop_spell_needs(guild)` RPC drives the /pop section: each main ×
   unscribed PoP spell, ordered by character level desc (first to the level gets
   first dibs), restricted to mains who submitted a spellbook. /pop also takes
   spellbook submissions, reusing the /me uploader + action.
