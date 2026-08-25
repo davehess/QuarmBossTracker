@@ -158,6 +158,29 @@ must therefore ask or verify.
   not listed and substitutes `SITE_URL`; nothing errors. The wizard must
   round-trip an actual sign-in, not just write the config.
 
+- **A no-Discord door exists and carries deployment-shaped choices
+  (2026-08-24, Gonner/Lacunanight — Discord's phone-verification wall).**
+  Officer-issued invites (`site_access_invites`, service-role only) let a
+  member set username+password on `/auth/claim`; the account is created
+  pre-confirmed as `<username>@<login domain>` and stamped onto
+  `wolfpack_members.user_id` — the same binding OAuth writes. What the wizard
+  must handle:
+  - **The login domain is a per-deployment value.** Production hardcodes
+    `login.wolfpack.quest` in `web/app/auth/claim/page.tsx` AND
+    `web/components/PasswordSignIn.tsx` (two constants that must agree). The
+    wizard should template it — any never-mailed domain the deployer controls
+    conceptually; it exists only inside GoTrue.
+  - **Supabase Auth "Email" provider must be ENABLED** (dashboard-only; no
+    MCP/API surface — same shape as the redirect-URL step). "Allow new users
+    to sign up" must stay ON (first-time Discord OAuth counts as a signup);
+    "Confirm email" state is irrelevant (invites pre-confirm via admin API).
+  - **No SMTP anywhere by design** — password reset is an officer re-invite.
+    A deployment wanting real email reset is an optional extension with its
+    own SMTP config, not a default the wizard should demand.
+  - **`ALLOWED_ROLE_NAMES` is enforced at claim time** (the flow's sign-in
+    moment) — one more consumer of that env var to keep in parity across
+    environments.
+
 ### Hosting & deployment
 - **Env vars are per environment on Vercel**, and a Production-only value leaves
   preview deployments rendering fine while server-side paths fail.
