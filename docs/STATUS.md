@@ -126,6 +126,15 @@ next touch one rather than assuming a missing row means a missing doc.
     that have already shipped bugs. Complements `docs/AI-CONTRIBUTOR-BRIEF.md`,
     which is for a chat AI with no repo access; cross-referenced both ways and
     from CLAUDE.md.
+  - **Per-class spell levels (migration 20260825050000, Lacunanight's second
+    catch the same night).** `spell_level_seed.level` is the MINIMUM across
+    classes (verified 308/308 rows); per-class truth lived only in a text
+    note. 19 class-rows over 15 spells displayed a level wrong for that class,
+    worst 25 levels off (Shadow Sight: necro 24 shown, SK 49). New
+    `spell_class_levels` view + `pop_spell_needs` v3 uses the class's level.
+    ⚠ QUEUED: character spell pages and `character_missing_spells` still read
+    the seed minimum — they know the character's class, so the join is
+    available; move them next.
   - **PoP parchment pools from quest scripts (web 1.1.96, Lacunanight's
     first-night catch: "necros have 9 spells but shows 12").** The level-tier
     inference overcounted; pop_parchment_pools (view over the ProjectEQ

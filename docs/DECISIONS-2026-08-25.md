@@ -45,3 +45,53 @@ actual script files (⚠ needs a local session via
 **Queued, found while here:** `character_missing_spells` (the non-PoP
 missing-spells path) likely has the same `'Spell: %'`-only filter — bards
 under-served there too. Not expanded tonight (minimal diff).
+
+## Per-class spell levels: `spell_level_seed.level` is the MINIMUM, not the truth
+
+> Lacunanight, following his own catch: "Spell: Petrifying Earth is a Cleric 64
+> spell but get it under Ethereal parchment (61-62) spells. Cleric turn in
+> quest. … So is the quarm DB incorrect or was it adjusted to give some spells
+> at lesser parchments. Who knows."
+
+Neither. The Quarm DB is right, and it wasn't adjusted — **two errors of ours
+stacked into one confusing display**, and he'd caught the first one an hour
+earlier:
+
+1. **The "(61-62)" label was our own inference**, deleted the same night
+   (20260825030000). Vicar Ceraen's Ethereal list genuinely holds Petrifying
+   Earth and Pacification. Verified: our cleric pools match his PQDI page
+   exactly, 25/25 spells across all three tiers (13/7/5).
+2. **The level we showed for Petrifying Earth — 62 — was the NECROMANCER's.**
+   `spell_level_seed` stores one integer per spell, and the 2026-07-08 PQDI
+   scrape stored the **minimum across all classes**, keeping per-class truth
+   only in a free-text `note` ("Cleric 64, Shaman 64, Necromancer 62").
+   Verified across all 308 seeds: `level` = min(note levels) in every row.
+
+**Measured blast radius:** 355 class rows over 308 spells; **19 rows (15
+spells) show a level wrong for that class**. Worst is 25 levels — Shadow Sight
+displays necro 24 to a shadow knight whose level is 49. Infusion of Spirit
+shows a beastlord 49 when theirs is 61. This affected every surface reading a
+level, not just PoP.
+
+**The fix** (20260825050000): promote the note to a real relation,
+`spell_class_levels` (spell_id, class_name, class_key, level), and have
+`pop_spell_needs` v3 return `COALESCE(class level, seed minimum)`. The note is
+machine-readable and parsed cleanly — 308/308 seeds, 355 rows, 11 class
+tokens, all valid class names, zero unknown tokens.
+
+**Guarded because the failure mode is silent.** A regex that stops matching
+doesn't error — it drops per-class levels and restores the old wrongness.
+`spell_class_levels_parse_ok` is the health view; `test/spell-class-levels.test.js`
+extracts the regex FROM the shipped migration and runs it against real notes.
+Mutation-checked: narrowing the class pattern to exclude spaces kills two
+tests (Shadow Knight).
+
+**The deeper lesson, worth stating.** Both bugs were the same shape: a
+single value standing in for a per-class fact — one level for all classes, one
+level band for all pools. This platform's spell data is inherently
+per-(spell, class), and any future collapse of that will be wrong the same way.
+
+**Still open:** other consumers of `spell_level_seed.level` (character spell
+pages, `character_missing_spells`) have the same substitution and should move
+to `spell_class_levels` — those pages know the character's class, so the join
+is available. Not done tonight (minimal diff); queued in STATUS.
