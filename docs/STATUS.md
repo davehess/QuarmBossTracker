@@ -132,9 +132,12 @@ next touch one rather than assuming a missing row means a missing doc.
     note. 19 class-rows over 15 spells displayed a level wrong for that class,
     worst 25 levels off (Shadow Sight: necro 24 shown, SK 49). New
     `spell_class_levels` view + `pop_spell_needs` v3 uses the class's level.
-    ⚠ QUEUED: character spell pages and `character_missing_spells` still read
-    the seed minimum — they know the character's class, so the join is
-    available; move them next.
+    Follow-up SHIPPED same night (20260825060000): `character_missing_spells`
+    had the bug twice more — its `min(spell_level)` was guild-wide across all
+    classes (SKs were shown the necro's 24 for Shadow Sight, real level 49),
+    and its `'Spell: %'` filter matched 1 bard item vs 107 `'Song: %'`, so
+    bard pages were effectively empty. Now resolves same-class observed level
+    → spell_class_levels → seed minimum.
   - **PoP parchment pools from quest scripts (web 1.1.96, Lacunanight's
     first-night catch: "necros have 9 spells but shows 12").** The level-tier
     inference overcounted; pop_parchment_pools (view over the ProjectEQ

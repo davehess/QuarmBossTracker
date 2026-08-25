@@ -1407,6 +1407,16 @@ holds it in memory.
   decision is bot-side so the catalog grows data-only. Bot half + manual entry
   are still TODO (task #58); the NPC/phrase list needs
   `docs/HANDOFF-pop-quest-extract.md` run on the EQServer box.
+- **Per-class spell levels (2026-08-25)** — a spell's level differs per class,
+  and three places collapsed that to one number. `spell_level_seed.level` is
+  the MINIMUM across classes (per-class truth lives in its text `note`);
+  `character_missing_spells` additionally took a guild-wide `min(spell_level)`
+  across every class's spellbook. Both fixed: `spell_class_levels` view
+  (parsed from the note, health view `spell_class_levels_parse_ok`, guarded by
+  `test/spell-class-levels.test.js` which extracts the regex from the shipped
+  migration). Resolution order where a class is known: same-class observed
+  spellbook level → `spell_class_levels` → seed minimum. ⚠ Any new consumer of
+  `spell_level_seed.level` without a class join reintroduces this.
 - **PoP spell turn-ins (web 1.1.86 → 1.1.96, 2026-08-20/25)** — v2 reads the
   ACTUAL trainer scripts: `pop_parchment_pools` view over the ProjectEQ
   turn-in mirror (`scripted_npc_turnins`), per (class, tier, scroll), trainer

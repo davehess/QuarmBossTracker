@@ -95,3 +95,41 @@ per-(spell, class), and any future collapse of that will be wrong the same way.
 pages, `character_missing_spells`) have the same substitution and should move
 to `spell_class_levels` — those pages know the character's class, so the join
 is available. Not done tonight (minimal diff); queued in STATUS.
+
+## …and the same bug twice more in `character_missing_spells` (the pages he's reading next)
+
+Followed the queued item to the character spell pages before Lacunanight got
+there. Same root cause, two more instances, and **the worse one was not the
+seed**:
+
+```
+scribe_level := coalesce(l.lvl, sd.level)
+```
+
+- **`l.lvl` was `min(spell_level)` over `character_spellbook` grouped by SPELL
+  NAME ONLY** — a guild-wide minimum across every class, and it takes
+  precedence, so it was the value actually shown. Live proof: three
+  necromancers hold Shadow Sight at 24, one shadow knight holds it at 49 → the
+  function returned **24 to every shadow knight**.
+- `sd.level` is the seed minimum (fixed in 20260825050000).
+
+**The spellbook data was never wrong** — necro 24 / SK 49 matches the PQDI
+note exactly. Only the `GROUP BY` threw the class away. So group by
+(spell, class) and prefer the observed same-class level: it comes from a real
+Quarm spellbook export, which outranks a pqdi.cc scrape wherever the two could
+disagree (relevant given the open Quarm-fork question above).
+
+Resolution order, most to least authoritative:
+1. observed level from a **same-class** spellbook (live Quarm truth)
+2. `spell_class_levels` — the class's level from the PQDI note
+3. `spell_level_seed.level` — the cross-class minimum, last resort
+
+**Bards, again.** `i.name like 'Spell: %'` matched exactly **1** bard-flagged
+item; their scrolls are `'Song: %'`, of which there are **107**. So a bard's
+missing-spell page was effectively empty and had been since the function
+shipped. Same omission `pop_spell_needs` had — worth noting the filter was
+copied between them, which is how one wrong assumption became three.
+
+Verified after: SK Shadow Sight now 49; bards return 42–60 missing rows.
+Function signature unchanged, so no web change — the pages just get correct
+numbers.
