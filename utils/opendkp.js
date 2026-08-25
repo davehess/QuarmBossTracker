@@ -13,10 +13,51 @@
 //   OPENDKP_POOL_ID          — DKP pool ID (default 5 = SoL)
 //   OPENDKP_API_URL          — base URL for the OpenDKP REST API (default: https://api.opendkp.com)
 //   OPENDKP_CLIENT_NAME      — client/guild slug in OpenDKP (default: wolfpack)
+//   OPENDKP_HALT             — set to 1 to stop ALL outbound OpenDKP traffic
+//                              (see the halt switch below)
 
 const https = require('https');
 
+// ── HALT SWITCH ─────────────────────────────────────────────────────────────
+// OPENDKP_HALT=1 stops EVERY outbound request to OpenDKP — background syncs,
+// the register-queue drain, and on-demand slash commands alike.
+//
+// Why this exists (2026-08-25): OpenDKP's owner posted that API Gateway
+// requests had "skyrocketed", pushing his infrastructure bill past $200 for
+// the month, and asked anyone running automation to make contact. Wolf Pack
+// runs the heaviest automation we know of against that API — the 30-minute
+// background sync alone can issue ~50 raid-detail calls per pass, plus
+// characters, raids list, auctions, audits and adjustments, and the register
+// queue polls every 20s. Whether or not we are the cause, the right move
+// while a third party is paying real money and asking questions is to stop
+// first and measure second (Hitya: "can you halt all traffic to opendkp").
+//
+// Deliberately at the two HTTP primitives rather than at each of the ~25
+// endpoint wrappers or the loop schedulers: a halt that lives at the choke
+// point cannot be bypassed by a caller nobody remembered to gate.
+//
+// Set OPENDKP_HALT=0 (or remove it) to resume. Nothing is destroyed and no
+// credential is touched, so resuming is one env var and a restart.
+function opendkpHalted() {
+  const v = String(process.env.OPENDKP_HALT || '').trim().toLowerCase();
+  return v === '1' || v === 'true' || v === 'yes';
+}
+const HALT_ERROR = 'OpenDKP traffic halted locally (OPENDKP_HALT). '
+  + 'Set OPENDKP_HALT=0 on the bot service to resume.';
+
+// One log line per minute, not per blocked call — a halted 20s queue would
+// otherwise write 4,300 lines a day and bury everything else.
+let _lastHaltLog = 0;
+function _logHalt(where) {
+  const now = Date.now();
+  if (now - _lastHaltLog < 60_000) return;
+  _lastHaltLog = now;
+  console.warn(`[opendkp] HALTED — ${where} blocked by OPENDKP_HALT. `
+    + 'No requests are reaching OpenDKP. Unset to resume.');
+}
+
 function _post(options, body) {
+  if (opendkpHalted()) { _logHalt('write'); return Promise.reject(new Error(HALT_ERROR)); }
   return new Promise((resolve, reject) => {
     const req = https.request(options, (res) => {
       let data = '';
@@ -35,6 +76,7 @@ function _post(options, body) {
 }
 
 function _get(options) {
+  if (opendkpHalted()) { _logHalt('read'); return Promise.reject(new Error(HALT_ERROR)); }
   return new Promise((resolve, reject) => {
     https.get(options, (res) => {
       let data = '';
@@ -515,6 +557,7 @@ async function updateRaidById(raidId, raidObject) {
 }
 
 module.exports = {
+  opendkpHalted,
   getRaids, getRaid, createRaid, updateRaid, updateRaidById, getMostRecentRaid,
   getCharacters, createCharacter, linkCharacter,
   createAuctions, getAuctions, getAuction, restoreAuction, deleteAuction,
