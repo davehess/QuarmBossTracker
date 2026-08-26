@@ -56,8 +56,61 @@ function _logHalt(where) {
     + 'No requests are reaching OpenDKP. Unset to resume.');
 }
 
+// ── Outbound governor ─────────────────────────────────────────────────────────
+// 2026-08-25 (Moncs incident): the dashboard's uncached 7s auction poll put
+// 1,678 calls / 1.1 GB on OpenDKP's API Gateway in one afternoon, from ONE
+// open dashboard. Caching upstream fixes the known caller — this governor is
+// the guarantee that no FUTURE caller can do it again, and the ready position
+// for the rate limiting Moncs is likely to add. Same placement philosophy as
+// the halt: at the two primitives, where it cannot be bypassed.
+//
+//   • Sliding-window budget: OPENDKP_MAX_CALLS_PER_MIN (default 60, 0 = off).
+//     Over budget → local reject; every caller is already fail-open.
+//   • HTTP 429 → global cooldown honoring Retry-After (default 30s). While
+//     cooling down, calls reject locally instead of hammering the API.
+const _callTimes = [];   // epoch ms of calls in the last 60s
+let _cooldownUntil = 0;  // set by a 429's Retry-After
+let _lastBudgetLog = 0;
+
+function _budgetPerMin() {
+  const n = Number(process.env.OPENDKP_MAX_CALLS_PER_MIN);
+  return Number.isFinite(n) && n >= 0 ? n : 60;
+}
+
+// Returns null when the call may proceed (and records it), else an Error.
+function _admitCall(where) {
+  const now = Date.now();
+  if (now < _cooldownUntil) {
+    return new Error(`OpenDKP cooling down after HTTP 429 — retry in ${Math.ceil((_cooldownUntil - now) / 1000)}s`);
+  }
+  const budget = _budgetPerMin();
+  if (budget > 0) {
+    while (_callTimes.length && _callTimes[0] <= now - 60_000) _callTimes.shift();
+    if (_callTimes.length >= budget) {
+      if (now - _lastBudgetLog >= 60_000) {
+        _lastBudgetLog = now;
+        console.warn(`[opendkp] outbound budget hit — ${where} rejected locally `
+          + `(${_callTimes.length}/${budget} calls in the last 60s; OPENDKP_MAX_CALLS_PER_MIN to tune)`);
+      }
+      return new Error(`OpenDKP outbound budget exceeded (${budget}/min) — call rejected locally`);
+    }
+    _callTimes.push(now);
+  }
+  return null;
+}
+
+function _noteRateLimited(res) {
+  if (res?.statusCode !== 429) return;
+  const ra = Number(res.headers?.['retry-after']);
+  const waitMs = (Number.isFinite(ra) && ra > 0 ? Math.min(ra, 300) : 30) * 1000;
+  _cooldownUntil = Date.now() + waitMs;
+  console.warn(`[opendkp] HTTP 429 from OpenDKP — backing off all calls for ${waitMs / 1000}s`);
+}
+
 function _post(options, body) {
   if (opendkpHalted()) { _logHalt('write'); return Promise.reject(new Error(HALT_ERROR)); }
+  const denied = _admitCall('write');
+  if (denied) return Promise.reject(denied);
   return new Promise((resolve, reject) => {
     const req = https.request(options, (res) => {
       let data = '';
@@ -65,7 +118,7 @@ function _post(options, body) {
       res.on('end', () => {
         let parsed;
         try { parsed = JSON.parse(data); } catch { parsed = data; }
-        if (res.statusCode >= 400) reject(new Error(`HTTP ${res.statusCode}: ${JSON.stringify(parsed)}`));
+        if (res.statusCode >= 400) { _noteRateLimited(res); reject(new Error(`HTTP ${res.statusCode}: ${JSON.stringify(parsed)}`)); }
         else resolve(parsed);
       });
     });
@@ -77,6 +130,8 @@ function _post(options, body) {
 
 function _get(options) {
   if (opendkpHalted()) { _logHalt('read'); return Promise.reject(new Error(HALT_ERROR)); }
+  const denied = _admitCall('read');
+  if (denied) return Promise.reject(denied);
   return new Promise((resolve, reject) => {
     https.get(options, (res) => {
       let data = '';
@@ -84,7 +139,7 @@ function _get(options) {
       res.on('end', () => {
         let parsed;
         try { parsed = JSON.parse(data); } catch { parsed = data; }
-        if (res.statusCode >= 400) reject(new Error(`HTTP ${res.statusCode}: ${JSON.stringify(parsed)}`));
+        if (res.statusCode >= 400) { _noteRateLimited(res); reject(new Error(`HTTP ${res.statusCode}: ${JSON.stringify(parsed)}`)); }
         else resolve(parsed);
       });
     }).on('error', reject);
@@ -326,6 +381,16 @@ async function getAuctions(page = 1) {
   return _get({ ..._clientUrl('/auctions' + p), headers });
 }
 
+// GET /clients/{name}/auctions/active — "Get Active Auctions" in OpenDKP's own
+// Postman doc. Returns ONLY currently-open auctions, which is all the live
+// bidding panel ever needed — the full /auctions list we polled instead is the
+// entire settled history (~665 KB per response, measured by OpenDKP's owner,
+// 2026-08-25). Same shape family as /auctions; each auction carries Bids[].
+async function getActiveAuctions() {
+  const headers = await _bearerHeaders();
+  return _get({ ..._clientUrl('/auctions/active'), headers });
+}
+
 // PUT /clients/{name}/auctions/{auctionId}/bids — submit a bid on an active auction.
 // Captured cURL (2026-05-26, auth token redacted):
 //   PUT /clients/wolfpack/auctions/993920/bids
@@ -560,7 +625,7 @@ module.exports = {
   opendkpHalted,
   getRaids, getRaid, createRaid, updateRaid, updateRaidById, getMostRecentRaid,
   getCharacters, createCharacter, linkCharacter,
-  createAuctions, getAuctions, getAuction, restoreAuction, deleteAuction,
+  createAuctions, getAuctions, getActiveAuctions, getAuction, restoreAuction, deleteAuction,
   submitBid, cancelBid, extendAuctions, endAuctions,
   getAudits, getAdjustments,
 };

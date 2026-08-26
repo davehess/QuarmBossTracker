@@ -76,6 +76,23 @@ expansion, threat patterns over months.
 Append here as decisions land. Each entry: the choice, why, and what the wizard
 must therefore ask or verify.
 
+### Third-party API citizenship (outbound call budgets)
+- **2026-08-25 — every third-party API the platform calls gets an outbound
+  budget at its HTTP primitives** (the Moncs/OpenDKP incident: one uncached
+  7s dashboard poll = 1,678 calls / 1.1 GB in an afternoon on someone ELSE'S
+  AWS bill, and our IP blocked). The pattern (see `utils/opendkp.js`):
+  per-service kill switch (`OPENDKP_HALT`), sliding per-minute budget
+  (`OPENDKP_MAX_CALLS_PER_MIN`, default 60, 0=off), 429/Retry-After cooldown,
+  and a fan-in cache so N clients cost one upstream call
+  (`_panelAuctions` in `index.js`). All of it env-tunable because the right
+  numbers differ per deployment: hosted-OpenDKP guilds are spending the
+  provider's money (budget LOW, cache LONG); a guild self-hosting OpenDKP on
+  its own box can turn the budget off. The wizard must ask which OpenDKP the
+  guild uses and set `OPENDKP_MAX_CALLS_PER_MIN` + cache TTLs accordingly,
+  and it must carry the inbound admission budgets (#73,
+  `budget_<kind>_per_min`) as the same knob pointing the other direction —
+  sizing a deployment means setting BOTH tables.
+
 ### Storage & retention
 - **Local is an ARCHIVE, not a mirror** (2026-08-12). `refresh-local-archive.sh`
   merges each nightly dump instead of restoring with `--clean`, so rows

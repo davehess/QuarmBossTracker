@@ -788,6 +788,7 @@ async function _syncListEndpoint({
   let pagesWalked   = 0;
   let totalUpserted = 0;
   let totalOffered  = 0;
+  let newestFirstProven = false;   // set from page 1; gates the early break
 
   for (let page = 1; page <= AUDIT_PAGE_LIMIT; page++) {
     let arr;
@@ -847,6 +848,20 @@ async function _syncListEndpoint({
     const freshRows = rows.filter(r => Number(r[pkCol]) > priorMax);
     const toSend    = fullSweep ? rows : freshRows;
 
+    // Early break (2026-08-25, the Moncs incident): these endpoints have no
+    // "since" filter, so this walk made OpenDKP re-serialise its ENTIRE audit
+    // table (~15 pages, 48k rows) every 30 minutes for three months. The pages
+    // are newest-first, so once a page yields nothing above our watermark,
+    // every later page is older still — stop asking for them. The ordering is
+    // PROVEN per run, not assumed: page 1's max id must be >= our watermark
+    // (oldest-first paging would put the SMALLEST ids on page 1 and fail this
+    // test, and the walk then continues exactly as before). The 24h fullSweep
+    // still walks everything, so a gap below the watermark still heals.
+    if (page === 1 && rows.length > 0) {
+      newestFirstProven = Number.isFinite(priorMax) &&
+        Math.max(...rows.map(r => Number(r[pkCol]))) >= priorMax;
+    }
+
     if (toSend.length > 0) {
       totalOffered += toSend.length;
       // ON CONFLICT DO NOTHING, not merge-duplicates. These endpoints are
@@ -865,6 +880,10 @@ async function _syncListEndpoint({
       await supabase.insertIgnoreDuplicates(table, toSend);
     }
     totalUpserted += freshRows.length;
+
+    // Nothing on this page was new and newer-first paging is proven for this
+    // run → every remaining page is older than what we hold. Done.
+    if (!fullSweep && newestFirstProven && freshRows.length === 0) break;
 
     if (arr?.TotalPages && arr?.CurrentPage && arr.CurrentPage >= arr.TotalPages) break;
   }

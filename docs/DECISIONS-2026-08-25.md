@@ -133,3 +133,56 @@ copied between them, which is how one wrong assumption became three.
 Verified after: SK Shadow Sight now 49; bards return 42–60 missing rows.
 Function signature unchanged, so no web change — the pages just get correct
 numbers.
+
+---
+
+## The OpenDKP incident — halt, root cause, and the governor (bot 3.1.71–3.1.72)
+
+**What happened.** OpenDKP's owner (Moncs) reported high-volume automated
+traffic and blocked our bot's IP at his WAF. His API Gateway logs (6h window,
+2026-08-25): **1,678 calls to `GET /clients/{client}/auctions`, 1,115 MB**
+(~665 KB per response), plus 632 `GET /clients/{client}/dkp` and 416
+`GET /clients/{client}/characters`.
+
+**Root cause — NOT the 30-min mirror sync.** The Mimic dashboard's Loot
+bidding panel polls every 7s per open dashboard, and the bot's `server-panel`
+`auctions`/`my-bids` keys forwarded **every poll upstream, uncached** — with
+`my-bids` adding a per-auction `getAuction()` N+1 and a `getCharacters()` per
+request. One open dashboard ≈ 37k upstream calls/day. The poll shipped broken
+(mis-escaped `WEB_HTML` interval — never armed), was *fixed* in `90024a1f`,
+and reached the whole fleet in Mimic v2.0.0 on **2026-07-19**. Correct
+escaping is what turned the firehose on.
+
+**Decisions:**
+1. **`OPENDKP_HALT=1`** stays until fixes are verified and Moncs unblocks.
+   The halt lives at `_get`/`_post` in `utils/opendkp.js` — no wrapper can
+   bypass it (bot 3.1.71 + `test/opendkp-halt.test.js`).
+2. **The panel reads `GET /clients/{name}/auctions/active`** — OpenDKP's own
+   documented "Get Active Auctions" (their Postman doc) — through ONE shared
+   bot-side cache: 15s TTL while auctions are live, 120s idle, stale-on-error.
+   N dashboards now cost the same as one. `my-bids` reads the same cache's
+   inline `Bids[]`; its N+1 and per-request roster fetch are deleted (roster
+   cached 1h). Bot 3.1.72, `test/server-panel-auction-cache.test.js`.
+3. **`opendkp-auth-config` is halt-gated (503).** The agent's #124 standings
+   fetch calls OpenDKP **directly from members' machines** — the one path the
+   bot-side halt can't block. It CAN starve it: token refresh depends on this
+   config (≤1h config cache + ~1h token life), so a halted bot dries up the
+   whole fleet's direct calls within ~2h, no agent update needed.
+4. **Outbound governor at the primitives** (bot 3.1.72):
+   `OPENDKP_MAX_CALLS_PER_MIN` sliding budget (default 60, 0=off) + global
+   cooldown honoring 429 `Retry-After` (default 30s, cap 5min). This is the
+   standing guarantee no future caller repeats this, and the ready position
+   for the rate limiting Moncs will likely add.
+   `test/opendkp-outbound-budget.test.js`.
+5. **Audits/adjustments early-break**: the list walk stops at the first page
+   with nothing above the watermark, but only after page 1 *proves*
+   newest-first ordering (page-1 max id ≥ watermark); the 24h full sweep
+   still heals gaps. Steady state: 15 pages/48k rows per pass → 1 page.
+6. **Queued for the next agent/Mimic beta** (fleet can't update by raid
+   night; bot-side cache already makes these cheap): panel poll 7s→adaptive,
+   agent standings cache 60s→5min, back-off when `document.hidden`.
+
+**Numbers for the record** (model in the artifact page shown to Moncs):
+before = ~37k upstream calls/day per open dashboard; after = ≤720/day idle
+fleet-wide, ~1.5k on a raid night with bidding, bounded by the governor at
+60/min worst case.
