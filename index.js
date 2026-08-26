@@ -7484,47 +7484,107 @@ async function _handleAgentUiLayoutDownload(req, res, snapshotId) {
 
 // Looks up CharacterId + Rank from OpenDKP roster and forwards as a bid.
 // Returns the OpenDKP response (or a 4xx if the input is bad).
-// ── Autobid gate: "you have to be in the raid for it to fire" ───────────────
-// Hitya, 2026-08-26, answering whether autobid may fire while the member is
-// away from the keyboard. This is the answer and it is a better gate than a
-// time window: away-but-raiding is exactly when you want it, and not-in-the-raid
-// is exactly when you do not.
+// ── Autobid gate ────────────────────────────────────────────────────────────
+// Hitya, 2026-08-26, twice — the second time correcting my first build:
+//   "you have to be in the raid for it to fire"
+//   "one of your characters needs to be in the raid currently OR have been on a
+//    tick so far that night"
 //
-// ⚠ FAILS CLOSED, and that is an INVERSION of the identical predicate in the
-// agent's trigger path. There, `require_raid_member` deliberately falls OPEN on
-// an empty roster ("so out-of-raid testing still fires") because a missed
-// callout is worse than a spurious one. Here the polarity flips: an empty
-// roster means we cannot prove you are in the raid, and "cannot prove" must
-// never spend someone's DKP. No roster, no autobid.
+// Both halves matter and my first version had neither right:
 //
-// Enforced HERE, on the bot, not in the agent. The agent's local check is a
-// useful fast path, but the bid is submitted from the bot — a gate that lives
-// only next to the decision is advisory, and stale local state would bypass it.
+//   • FAMILY, not the bidding character. You bid on the alt you want the item
+//     for while your MAIN is the one standing in the raid. Checking only the
+//     bidding character would refuse exactly the normal case.
+//   • "or on a tick tonight", not just "in the roster right now". You raided
+//     the first two hours, took the ticks, then logged or went AFK — you are
+//     still owed the loot you are bidding on. A roster-only check would refuse
+//     the person who earned the DKP being spent.
 //
-// Practical consequence, stated plainly rather than discovered later: Zeal
-// populates raid_roster, so a member without Zeal (every Deck user until the
-// pipe bridge lands) gets NO autobid. That is the safe direction.
+// ⚠ FAILS CLOSED, an INVERSION of the identical predicate in the agent's
+// trigger path. `require_raid_member` there deliberately falls OPEN on an empty
+// roster ("so out-of-raid testing still fires") because a missed callout is
+// worse than a spurious one. Here the polarity flips: cannot prove you were in
+// the raid ⇒ do not spend your DKP. Same question, opposite correct answer.
+//
+// Enforced HERE, on the bot, not the agent — the bid is submitted from the bot,
+// so a gate living only next to the decision is advisory and stale local state
+// walks past it.
 const _AUTOBID_ROSTER_FRESH_MS = 10 * 60 * 1000;
-async function _isCharacterInRaid(characterName, { freshMs = _AUTOBID_ROSTER_FRESH_MS } = {}) {
-  const name = String(characterName || '').trim();
-  if (!name) return { inRaid: false, reason: 'no character' };
+
+// "Tonight" = since the most recent 6pm ET boundary. Raids are Sun/Wed/Thu
+// 8pm-midnight ET but routinely run past midnight, so a calendar-day boundary
+// would cut a live raid in half at 00:00 and refuse everyone still standing
+// there. 6pm is comfortably before any pull and after the previous night ended.
+function _raidNightStartIso(now = new Date()) {
+  const et = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  const boundary = new Date(et);
+  boundary.setHours(18, 0, 0, 0);
+  if (et < boundary) boundary.setDate(boundary.getDate() - 1);
+  // Convert the ET wall-clock boundary back to a real instant.
+  const offsetMs = now.getTime() - et.getTime();
+  return new Date(boundary.getTime() + offsetMs).toISOString();
+}
+
+// Every character sharing a family root with `name` (root = main_name || name),
+// lowercased. Includes the input even when we know nothing about it, so a
+// character missing from `characters` still checks itself rather than nothing.
+async function _bidFamilyNamesFor(name) {
+  const out = new Set([String(name || '').trim().toLowerCase()].filter(Boolean));
   try {
     const supabase = require('./utils/supabase');
-    if (!supabase.isEnabled()) return { inRaid: false, reason: 'supabase disabled' };
     const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
-    const since = new Date(Date.now() - freshMs).toISOString();
-    const rows = await supabase.select('raid_roster',
+    const rows = await supabase.select('characters',
+      `guild_id=eq.${encodeURIComponent(guildId)}&select=name,main_name&limit=1000`) || [];
+    const lc = (v) => String(v || '').trim().toLowerCase();
+    const rootOf = (r) => lc(r.main_name) || lc(r.name);
+    const me = rows.find(r => lc(r.name) === lc(name));
+    if (!me) return out;
+    const root = rootOf(me);
+    for (const r of rows) if (rootOf(r) === root) out.add(lc(r.name));
+  } catch { /* fall back to just the input — never widens permission on error */ }
+  return out;
+}
+
+async function _familyInRaidTonight(characterName, { freshMs = _AUTOBID_ROSTER_FRESH_MS, now = new Date() } = {}) {
+  const name = String(characterName || '').trim();
+  if (!name) return { ok: false, reason: 'no character' };
+  try {
+    const supabase = require('./utils/supabase');
+    if (!supabase.isEnabled()) return { ok: false, reason: 'supabase disabled' };
+    const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+    const family = await _bidFamilyNamesFor(name);
+
+    // (a) Any family member standing in the raid right now.
+    const since = new Date(now.getTime() - freshMs).toISOString();
+    const roster = await supabase.select('raid_roster',
       `guild_id=eq.${encodeURIComponent(guildId)}`
-      + `&name=ilike.${encodeURIComponent(name)}`
-      + `&captured_at=gte.${encodeURIComponent(since)}`
-      + `&select=name,captured_at&limit=1`);
-    if (Array.isArray(rows) && rows.length > 0) {
-      return { inRaid: true, reason: 'in raid roster', at: rows[0].captured_at };
+      + `&captured_at=gte.${encodeURIComponent(since)}&select=name&limit=1000`) || [];
+    const hit = roster.find(r => family.has(String(r.name || '').trim().toLowerCase()));
+    if (hit) return { ok: true, via: 'roster', character: hit.name, family: family.size };
+
+    // (b) Any family member credited on a tick since tonight's boundary.
+    // opendkp_ticks carries no tick timestamp of its own — `fetched_at` is OUR
+    // sync time and is never an ordering key (bot 3.1.33 lesson) — so the time
+    // filter has to come from the RAID's ts.
+    const nightStart = _raidNightStartIso(now);
+    const raids = await supabase.select('opendkp_raids',
+      `ts=gte.${encodeURIComponent(nightStart)}&select=raid_id&limit=1000`) || [];
+    if (raids.length === 0) return { ok: false, reason: 'no raid tonight', family: family.size };
+    const ids = raids.map(r => r.raid_id).filter(Number.isFinite);
+    if (ids.length === 0) return { ok: false, reason: 'no raid tonight', family: family.size };
+    const ticks = await supabase.select('opendkp_ticks',
+      `raid_id=in.(${ids.join(',')})&select=tick_id,attendees&limit=1000`) || [];
+    for (const t of ticks) {
+      for (const a of (Array.isArray(t.attendees) ? t.attendees : [])) {
+        if (family.has(String(a || '').trim().toLowerCase())) {
+          return { ok: true, via: 'tick', character: a, tick_id: t.tick_id, family: family.size };
+        }
+      }
     }
-    return { inRaid: false, reason: 'not in a recent raid roster (no Zeal, or not in the raid)' };
+    return { ok: false, reason: 'no family member in the raid or on a tick tonight', family: family.size };
   } catch (err) {
     // A lookup failure is NOT permission to bid.
-    return { inRaid: false, reason: 'roster lookup failed: ' + (err && err.message) };
+    return { ok: false, reason: 'gate lookup failed: ' + (err && err.message) };
   }
 }
 

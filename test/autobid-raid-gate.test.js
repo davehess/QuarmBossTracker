@@ -1,16 +1,16 @@
-// "you have to be in the raid for it to fire" — Hitya, 2026-08-26, answering
-// whether autobid may fire while the member is away from the keyboard.
+// The autobid gate — the single most dangerous predicate in the bidding
+// feature, because getting it wrong spends someone else's DKP while they are
+// not looking. Almost every test here is a NEGATIVE case.
 //
-// This is the single most dangerous predicate in the bidding feature, because
-// getting it wrong spends someone else's DKP while they are not looking. The
-// tests are therefore almost entirely about the NEGATIVE cases.
+// Hitya set it in two passes, and the second corrected my first build:
+//   "you have to be in the raid for it to fire"
+//   "one of your characters needs to be in the raid currently OR have been on a
+//    tick so far that night"
 //
-// The polarity is an INVERSION of the same predicate in the agent's trigger
-// path (`require_raid_member`), which deliberately falls OPEN on an empty
-// roster so out-of-raid testing still fires. A missed callout is worse than a
-// spurious one; a spurious BID is worse than a missed one. Same question,
-// opposite correct answer — which is exactly the kind of thing that gets
-// copied across by pattern and quietly inverted.
+// Both halves were wrong in v1: it checked only the BIDDING character (so the
+// normal case — main in the raid, bidding for an alt — was refused), and only
+// the live roster (so someone who raided the first two hours and logged was
+// refused the loot they had just earned the DKP for).
 //
 // Run: npx vitest run test/autobid-raid-gate.test.js
 import { describe, it, expect } from 'vitest';
@@ -20,87 +20,153 @@ const src = readSource(BOT_INDEX);
 const block = sliceBlock(
   src,
   'const _AUTOBID_ROSTER_FRESH_MS',
-  "return { inRaid: false, reason: 'roster lookup failed: ' + (err && err.message) };\n  }\n}",
+  "return { ok: false, reason: 'gate lookup failed: ' + (err && err.message) };\n  }\n}",
 );
 
-function build({ rows = [], throws = false } = {}) {
+// now = Wed 2026-08-26 21:00 ET (a raid night, mid-raid).
+const NOW = new Date('2026-08-27T01:00:00Z');
+const FAMILY = [
+  { name: 'Hitya',    main_name: null },
+  { name: 'Uilnayar', main_name: 'Hitya' },
+  { name: 'Canopy',   main_name: 'Hitya' },
+  { name: 'Stranger', main_name: null },
+];
+
+function build({ roster = [], raids = [], ticks = [], chars = FAMILY, enabled = true, throws = null } = {}) {
   const calls = [];
   const harness = `
     const require = (m) => ({
-      isEnabled: () => ${rows === null ? 'false' : 'true'},
+      isEnabled: () => ${enabled},
       async select(table, q) {
         calls.push({ table, q });
-        if (${throws}) throw new Error('boom');
-        return ${JSON.stringify(rows === null ? [] : rows)};
+        if (${JSON.stringify(throws)} && table === ${JSON.stringify(throws)}) throw new Error('boom');
+        if (table === 'characters')     return ${JSON.stringify(chars)};
+        if (table === 'raid_roster')    return ${JSON.stringify(roster)};
+        if (table === 'opendkp_raids')  return ${JSON.stringify(raids)};
+        if (table === 'opendkp_ticks')  return ${JSON.stringify(ticks)};
+        return [];
       },
     });
     const process = { env: {} };
   ` + block + `
-    return { _isCharacterInRaid, calls };
+    return { _familyInRaidTonight, _raidNightStartIso, _bidFamilyNamesFor, calls };
   `;
   // eslint-disable-next-line no-new-func
   return new Function('calls', harness)(calls);
 }
 
-const ROW = [{ name: 'Hitya', captured_at: '2026-08-26T20:00:00Z' }];
+const RAID = [{ raid_id: 412 }];
 
-describe('the gate', () => {
-  it('fires when the character is in a recent raid roster', async () => {
-    const h = build({ rows: ROW });
-    expect((await h._isCharacterInRaid('Hitya')).inRaid).toBe(true);
+describe('family scope — "one of YOUR characters"', () => {
+  it('fires when a DIFFERENT family member is in the raid', async () => {
+    // The normal case: main is standing in the raid, you are bidding for an alt.
+    // v1 refused this outright.
+    const h = build({ roster: [{ name: 'Hitya' }] });
+    const r = await h._familyInRaidTonight('Canopy', { now: NOW });
+    expect(r.ok).toBe(true);
+    expect(r.via).toBe('roster');
+    expect(r.character).toBe('Hitya');
   });
 
-  it('REFUSES when the roster is empty — no Zeal, or not in the raid', async () => {
-    // The inversion: the agent's trigger gate falls OPEN here. Autobid must not.
-    const h = build({ rows: [] });
-    const r = await h._isCharacterInRaid('Hitya');
-    expect(r.inRaid).toBe(false);
-    expect(r.reason).toMatch(/not in a recent raid roster/);
+  it('does NOT fire for someone outside the family', async () => {
+    const h = build({ roster: [{ name: 'Stranger' }] });
+    expect((await h._familyInRaidTonight('Canopy', { now: NOW })).ok).toBe(false);
   });
 
-  it('REFUSES when the roster lookup throws — a failure is not permission', async () => {
-    const h = build({ rows: ROW, throws: true });
-    expect((await h._isCharacterInRaid('Hitya')).inRaid).toBe(false);
+  it('matches family names case-insensitively', async () => {
+    const h = build({ roster: [{ name: 'uILNAYAR' }] });
+    expect((await h._familyInRaidTonight('Hitya', { now: NOW })).ok).toBe(true);
   });
 
-  it('REFUSES when Supabase is disabled', async () => {
-    const h = build({ rows: null });
-    expect((await h._isCharacterInRaid('Hitya')).inRaid).toBe(false);
-  });
-
-  it('REFUSES an empty or missing character name', async () => {
-    const h = build({ rows: ROW });
-    for (const bad of ['', '   ', null, undefined]) {
-      expect((await h._isCharacterInRaid(bad)).inRaid, String(bad)).toBe(false);
-    }
-  });
-
-  it('only accepts a FRESH roster entry — last night does not count', async () => {
-    // Without the freshness bound, "was in a raid once" would read as "is in
-    // the raid", and autobid would fire on a Tuesday afternoon.
-    const h = build({ rows: ROW });
-    await h._isCharacterInRaid('Hitya');
-    expect(h.calls[0].q).toContain('captured_at=gte.');
-  });
-
-  it('scopes the lookup to the character, not the whole roster', async () => {
-    const h = build({ rows: ROW });
-    await h._isCharacterInRaid('Hitya');
-    expect(h.calls[0].q).toMatch(/name=ilike\./);
-    expect(h.calls[0].table).toBe('raid_roster');
+  it('still checks the character itself when it is unknown to us', async () => {
+    // A character missing from `characters` must check ITSELF, not nothing.
+    const h = build({ roster: [{ name: 'Ghost' }], chars: [] });
+    expect((await h._familyInRaidTonight('Ghost', { now: NOW })).ok).toBe(true);
   });
 });
 
-describe('the record', () => {
-  it('states the fail-closed inversion where someone will read it', () => {
-    const note = src.slice(src.indexOf('// ── Autobid gate:'), src.indexOf('const _AUTOBID_ROSTER_FRESH_MS'));
-    expect(note).toMatch(/FAILS CLOSED/);
-    expect(note).toMatch(/INVERSION/);
-    expect(note).toMatch(/No roster, no autobid/i);
+describe('"or have been on a tick so far that night"', () => {
+  it('fires on a tick even when nobody is in the roster now', async () => {
+    // Raided the first two hours, took ticks, then logged. Still owed the loot.
+    const h = build({ roster: [], raids: RAID, ticks: [{ tick_id: 9, attendees: ['Uilnayar', 'Someone'] }] });
+    const r = await h._familyInRaidTonight('Canopy', { now: NOW });
+    expect(r.ok).toBe(true);
+    expect(r.via).toBe('tick');
   });
 
-  it('says plainly that no Zeal means no autobid', () => {
-    const note = src.slice(src.indexOf('// ── Autobid gate:'), src.indexOf('const _AUTOBID_ROSTER_FRESH_MS'));
-    expect(note).toMatch(/without Zeal.*NO autobid|NO autobid/i);
+  it('does NOT fire on a tick that contains only strangers', async () => {
+    const h = build({ roster: [], raids: RAID, ticks: [{ tick_id: 9, attendees: ['Stranger'] }] });
+    expect((await h._familyInRaidTonight('Canopy', { now: NOW })).ok).toBe(false);
+  });
+
+  it('scopes ticks to TONIGHT via the raid ts, not the mirror fetched_at', () => {
+    // opendkp_ticks has no tick timestamp; fetched_at is OUR sync time and is
+    // never an ordering key (the bot 3.1.33 lesson).
+    const h = build({ roster: [], raids: RAID, ticks: [] });
+    return h._familyInRaidTonight('Canopy', { now: NOW }).then(() => {
+      const raidQ = h.calls.find(c => c.table === 'opendkp_raids');
+      expect(raidQ.q).toContain('ts=gte.');
+      const tickQ = h.calls.find(c => c.table === 'opendkp_ticks');
+      expect(tickQ.q).not.toContain('fetched_at');
+    });
+  });
+
+  it('refuses when there was no raid tonight at all', async () => {
+    const h = build({ roster: [], raids: [], ticks: [{ tick_id: 9, attendees: ['Hitya'] }] });
+    const r = await h._familyInRaidTonight('Hitya', { now: NOW });
+    expect(r.ok).toBe(false);
+    expect(r.reason).toMatch(/no raid tonight/);
+  });
+});
+
+describe('the raid-night boundary', () => {
+  const inEt = (h, iso) => new Date(h._raidNightStartIso(new Date(iso)))
+    .toLocaleString('en-US', { timeZone: 'America/New_York' });
+
+  it('does not cut a past-midnight raid in half', async () => {
+    // A calendar-day boundary would refuse everyone still standing there at
+    // 00:30, which is exactly when the last loot goes up.
+    const h = build({});
+    expect(inEt(h, '2026-08-27T04:30:00Z')).toContain('8/26/2026');   // Thu 00:30 ET
+    expect(inEt(h, '2026-08-27T01:00:00Z')).toContain('8/26/2026');   // Wed 21:00 ET
+  });
+
+  it('rolls forward once the next day is properly under way', async () => {
+    const h = build({});
+    expect(inEt(h, '2026-08-27T18:00:00Z')).toContain('8/26/2026');   // Thu 14:00 ET -> still Wed 6pm
+    expect(inEt(h, '2026-08-28T01:00:00Z')).toContain('8/27/2026');   // Thu 21:00 ET -> Thu 6pm
+  });
+});
+
+describe('fails closed', () => {
+  it('refuses when the roster is empty and there are no ticks', async () => {
+    // The INVERSION: the agent's trigger gate falls OPEN here. Autobid must not.
+    const h = build({ roster: [], raids: RAID, ticks: [] });
+    expect((await h._familyInRaidTonight('Hitya', { now: NOW })).ok).toBe(false);
+  });
+
+  it('refuses when a lookup throws — a failure is not permission', async () => {
+    for (const table of ['raid_roster', 'opendkp_raids', 'opendkp_ticks']) {
+      const h = build({ roster: [], raids: RAID, ticks: [], throws: table });
+      expect((await h._familyInRaidTonight('Hitya', { now: NOW })).ok, table).toBe(false);
+    }
+  });
+
+  it('refuses when Supabase is disabled', async () => {
+    const h = build({ enabled: false });
+    expect((await h._familyInRaidTonight('Hitya', { now: NOW })).ok).toBe(false);
+  });
+
+  it('refuses an empty or missing character name', async () => {
+    const h = build({ roster: [{ name: 'Hitya' }] });
+    for (const bad of ['', '   ', null, undefined]) {
+      expect((await h._familyInRaidTonight(bad, { now: NOW })).ok, String(bad)).toBe(false);
+    }
+  });
+
+  it('a family lookup failure narrows to the character, never widens', async () => {
+    // If we cannot resolve the family we must check fewer names, not more.
+    const h = build({ roster: [{ name: 'Uilnayar' }], throws: 'characters' });
+    expect((await h._familyInRaidTonight('Canopy', { now: NOW })).ok).toBe(false);
   });
 });

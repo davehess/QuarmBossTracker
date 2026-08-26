@@ -113,12 +113,17 @@ next touch one rather than assuming a missing row means a missing doc.
   Local file stays the LIVE source of truth; last-writer-wins on `updated_at`,
   deliberately not a merge (a stale Deck must not resurrect a bid the desktop
   just cleared).
-  **Autobid's gate is ANSWERED and built** (Hitya: *"you have to be in the raid
-  for it to fire"*): `_isCharacterInRaid()` against `raid_roster`, 10-min
-  freshness, **fails closed** — an INVERSION of the agent's `require_raid_member`
-  which falls open on an empty roster. Enforced on the bot, not the agent.
-  ⚠ No Zeal ⇒ no `raid_roster` ⇒ no autobid (every Deck user until the pipe
-  bridge lands). `test/autobid-raid-gate.test.js`, mutation-checked.
+  **Autobid's gate is ANSWERED and built** — Hitya, in two passes: *"you have to
+  be in the raid for it to fire"*, then *"one of your characters needs to be in
+  the raid currently or have been on a tick so far that night"*.
+  `_familyInRaidTonight()` passes if ANY family member (root = `main_name ||
+  name`) is in a fresh `raid_roster` snapshot **or** named on an
+  `opendkp_ticks.attendees` for a raid since tonight's **6pm ET** boundary (not
+  calendar day — raids run past midnight). **Fails closed** — an INVERSION of
+  the agent's `require_raid_member`, which falls open on an empty roster.
+  Enforced on the bot, not the agent. ⚠ The tick path means a Deck user with no
+  Zeal still qualifies once they are on a tick, which the roster-only v1 would
+  have refused. 15 cases, mutation-checked.
   **Still TODO (in order):** (2) won-vs-LOST ledger with what they bid —
   `bid-history` returns wins only today, losses are already in
   `opendkp_auction_bids`; (3) the auto-bid tickbox + ceiling + clear-on-win,
