@@ -75,3 +75,49 @@ session re-checks them.
 | **PoP page: this session's `?view=mine` + mains-default scope** | Shipped clean (web 1.1.97, migration `20260826010000` applied). No open follow-up |
 | **Everything from `DECISIONS-2026-08-20.md`'s table** | Not re-verified since — re-check before treating as current (raid-night items especially age fast) |
 
+
+---
+
+## A public OpenDKP counter, and a kill switch that doesn't need a deploy
+
+> "moncs is ready to unblock us, so I need a live counter site that's open
+> access on wolfpack.quest (make it /opendkp) and I need to be able to shut it
+> down quickly if it's not fixed."
+
+**`wolfpack.quest/opendkp` — no sign-in, deliberately.** It is the only
+member-facing page without an auth check. The reason is the whole point of the
+page: the person who most needs it is OpenDKP's owner, who is not in our
+Discord and is being asked to unblock our IP on our word after our traffic cost
+him real money. A page behind our sign-in would be useless to exactly one
+person, and he is the one.
+
+**What it exposes, and nothing else:** endpoint shapes, call counts, bytes,
+error counts, halt state. No member names, no character names, no DKP, no
+credentials. `opendkp_call_stats` is consequently the single `anon`-readable
+table in the schema — a deliberate exception, recorded here so nobody widens it
+by pattern-matching later.
+
+**Endpoints are normalized to HIS log shape** (`/clients/{client}/auctions/{id}/bids`)
+rather than ours, so his API Gateway table and our page can be read across
+without a translation step. Our numbers in our own format is what he already had
+reason to distrust.
+
+**The counter must not become the thing it measures.** Counts aggregate in
+memory and flush once per COMPLETED minute; a row per call would be the same
+write amplification that caused the incident. Blocked calls are still counted,
+so the page distinguishes "the kill switch is working" from "the bot fell over"
+— without that, halted and dead look identical from outside.
+
+**TWO halts now, and the difference matters:**
+1. `OPENDKP_HALT` env var — needs a Railway redeploy (~90s).
+2. `flag_opendkp_halt` in the `overlay_tuning` map — set from `/admin/overlays`,
+   lands within the existing 60s tuning cache, **no deploy**.
+
+The second is what "shut it down quickly" actually requires; a build is not
+quickly, and promising a fast stop we could not deliver would be the second
+broken promise in the same conversation. Either halts; both must be clear to
+resume. Officer-gated by living on `/admin/overlays` — the counter page is
+public, the switch is not, because a public kill switch is an abuse surface.
+
+Shipped: bot 3.1.73, web 1.1.98, migration `20260826120000_opendkp_call_stats`
+(applied + committed). Tests: `test/opendkp-call-stats.test.js` (11).

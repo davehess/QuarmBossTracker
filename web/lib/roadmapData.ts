@@ -37,6 +37,24 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'web-1-1-98',
+    title: 'A public counter for our OpenDKP traffic',
+    version: 'Web 1.1.98 · Bot 3.1.73',
+    date: '2026-08-26',
+    headline: 'Anyone can now watch exactly what we send the DKP site — including the person who pays for it.',
+    features: [
+      {
+        name: 'wolfpack.quest/opendkp',
+        blurb: 'A live counter of every request our bot makes to OpenDKP, open to anyone with the link and no sign-in needed. It shows calls per endpoint, data returned, and whether we are currently paused.',
+      },
+      {
+        name: 'A pause button that works in under a minute',
+        blurb: 'Officers can stop all DKP traffic from the admin page and it takes effect within 60 seconds, with no code deploy — so if anything looks wrong we can stop first and work it out after.',
+      },
+    ],
+    fixes: [],
+  },
+  {
     key: 'web-1-1-97',
     title: 'My Characters on the PoP page',
     version: 'Web 1.1.97',

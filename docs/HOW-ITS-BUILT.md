@@ -1592,6 +1592,25 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
 - **Control plane (#74)** — `flag_shed_<kind>` for every ingest kind
   (`_SHED_KINDS`/`_SHED_NEVER`), `flag_agent_kill`, `min_agent_ver_num`,
   per-channel manifest (`?channel=beta`); officer `flag-override` write path.
+- **Public OpenDKP counter (`/opendkp`, web 1.1.98 + bot 3.1.73)** — the only
+  member-facing page with NO auth check, deliberately: it exists so OpenDKP's
+  owner (not in our Discord) can verify our volume himself after the 2026-08-25
+  incident, and a page behind our sign-in would be useless to him. Exposes only
+  endpoint shapes, counts, bytes and halt state — no names, no DKP, no
+  credentials. `opendkp_call_stats` is the single `anon`-readable table in the
+  schema for the same reason. Endpoints are normalized in `utils/opendkp.js`
+  `_normalizeEndpoint` to the shape HIS API Gateway log groups by
+  (`/clients/{client}/auctions/{id}/bids`) so the two tables read across without
+  translation. Counted at the same two primitives as the halt and the governor;
+  aggregated in memory and flushed once per COMPLETED minute — a row per call
+  would be the exact write amplification that caused the incident.
+  ⚠ **Two halts now.** `OPENDKP_HALT` (env, needs a Railway redeploy) and
+  `flag_opendkp_halt` in the `overlay_tuning` map (no deploy, lands within the
+  60s cache via `_refreshOverlayTuningCache` → `setRuntimeHalt`). The second is
+  the one promised to Moncs as "we can stop quickly" — a build is not quickly.
+  Either halts; both must be clear to resume. Blocked calls are still COUNTED,
+  so the page can tell "the kill switch works" from "the bot fell over".
+  Tests: `test/opendkp-call-stats.test.js`.
 - **OpenDKP reconcile (#110)** — `utils/openDkpSync.js` `reconcileRecentLoot`:
   upstream deletions propagate to the `opendkp_loot` mirror within a sync.
 - **Guild rules (#94)** — `guild_rules` table + `/ingestrules`
