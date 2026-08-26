@@ -100,6 +100,25 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ### ✅ Done — major shipped features (not exhaustive; see git + roadmapData.ts)
 
+- **The OpenDKP incident: halt + fan-in cache + outbound governor (bot
+  3.1.71–3.1.72, 2026-08-25; Moncs: "high volume automated traffic … I've
+  currently blocked the ip address").** Root cause was NOT the 30-min sync:
+  the Loot bidding panel's 7s dashboard poll went upstream uncached
+  (server-panel `auctions`/`my-bids`, + a getAuction() N+1) — his API Gateway
+  logs showed 1,678 calls / 1.1 GB in ~3.3h from ONE open dashboard; live
+  since Mimic v2.0.0 (2026-07-19) when an escaping fix armed the timer.
+  Shipped: `OPENDKP_HALT` kill switch at the `_get`/`_post` primitives
+  (3.1.71); panel reads OpenDKP's documented `/auctions/active` through one
+  shared cache (15s live / 120s idle), my-bids N+1 deleted, `opendkp-auth-config`
+  halt-gated to starve the agents' DIRECT `/dkp` calls, audits/adjustments
+  early-break (15 pages → 1), outbound budget `OPENDKP_MAX_CALLS_PER_MIN` +
+  429/Retry-After cooldown (3.1.72). Full story: DECISIONS-2026-08-25;
+  budget-as-config for other deployments: DESIGN-selfhost-wizard §3.
+  ⚠ OPEN: halt stays ON until Moncs unblocks the Railway IP; flip
+  `OPENDKP_HALT=0` before Wed's raid for bidding. Queued for next Mimic beta:
+  panel poll 7s→adaptive, agent standings cache 60s→5min, document.hidden
+  back-off.
+
 - **Overnight batch 2026-08-19 → 20 (landed on main Thursday morning; details
   in `DECISIONS-2026-08-20.md`):**
   - **DT countdown fix (agent 3.5.93 + guild_triggers row, mid-raid).** Target

@@ -1575,6 +1575,16 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   (`commands/ingestrules.js`, `utils/rulesParser.js`) + `/admin/rules`.
 - **Loot bidding serving (#108/#121)** — `server-panel` keys `opendkp-auth-config`
   / `item-history` / `bid-history`; `_lootItemSummary`/`_familyDkpTotals`.
+  Since bot 3.1.72 (the Moncs incident) the `auctions`/`my-bids` keys read
+  OpenDKP's `GET /clients/{name}/auctions/active` through ONE shared cache
+  (`_panelAuctions`: 15s TTL live / 120s idle / stale-on-error; roster 1h via
+  `_panelCharacters`) — N dashboards cost one upstream call, and the my-bids
+  `getAuction()` N+1 is gone (Bids[] ride the active list inline).
+  `opendkp-auth-config` returns 503 while `OPENDKP_HALT` is set, which starves
+  the agents' DIRECT `/clients/{name}/dkp` standings calls fleet-wide (~2h:
+  config cache + token life). Outbound governor at `_get`/`_post`:
+  `OPENDKP_MAX_CALLS_PER_MIN` + 429/Retry-After cooldown
+  (`test/opendkp-outbound-budget.test.js`, `test/server-panel-auction-cache.test.js`).
   ⚠ In `bid-history` the "already won" set (`wonItemIds`) is a SEPARATE uncapped
   `opendkp_loot` sweep — never seeded from the `wins` display array, which is
   `limit=100`. Seeding from `wins` left 87 of one family's 187 awards looking

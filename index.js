@@ -5993,6 +5993,58 @@ async function _handleAgentUiEditResult(req, res) {
 // two are cached (60s) since a room of Mimics polls them — same spirit as the
 // target-buffs cache.
 
+// ── Panel auction cache (source-sliced by test/server-panel-auction-cache.test.js)
+// 2026-08-25, from OpenDKP's own API Gateway logs: every open Mimic dashboard
+// polled the "auctions" + "my-bids" keys every 7s, and this handler forwarded
+// EVERY poll upstream — 1,678 calls / 1.1 GB in one afternoon from ONE open
+// dashboard, which is what got our IP blocked. Two changes:
+//   • upstream is now GET /clients/{name}/auctions/active (OpenDKP's own
+//     documented "Get Active Auctions") — the open auctions the panel renders,
+//     not the ~665 KB full settled history;
+//   • one shared cache serves the whole fleet: 15s TTL while auctions are up
+//     (bid-fresh), 120s while none are (idle) — so N dashboards cost the same
+//     as one, and an idle fleet costs ≤30 upstream calls/hour, demand-driven
+//     (nobody polling → zero upstream). "my-bids" reads the same cache: each
+//     active auction already carries Bids[] inline (the same fact the mirror
+//     sync exploits), so its per-auction getAuction() N+1 and per-request
+//     getCharacters() are gone entirely (roster cached 1h below).
+const _PANEL_AUCTIONS_TTL_ACTIVE_MS = 15_000;
+const _PANEL_AUCTIONS_TTL_IDLE_MS   = 120_000;
+let _panelAuctionsCache = null;   // { at, list }
+async function _panelAuctions(deps = {}) {
+  const now   = deps.now   || Date.now;
+  const fetch = deps.fetch || (() => require('./utils/opendkp').getActiveAuctions());
+  const c = _panelAuctionsCache;
+  if (c) {
+    const ttl = c.list.length > 0 ? _PANEL_AUCTIONS_TTL_ACTIVE_MS : _PANEL_AUCTIONS_TTL_IDLE_MS;
+    if (now() - c.at < ttl) return c.list;
+  }
+  let raw;
+  try { raw = await fetch(); }
+  catch (err) {
+    // Serve stale over erroring — a raid-night blip should not blank the
+    // bidding panel. No cache at all → surface the failure to the caller.
+    if (c) return c.list;
+    throw err;
+  }
+  const list = Array.isArray(raw?.Items) ? raw.Items : Array.isArray(raw) ? raw : [];
+  _panelAuctionsCache = { at: now(), list };
+  return list;
+}
+
+// OpenDKP roster, cached 1h — consumed only by "my-bids" CharacterId matching.
+// The roster changes on officer action, not mid-raid; the 30-min mirror sync
+// keeps Supabase current independently of this.
+let _panelCharsCache = null;      // { at, chars }
+async function _panelCharacters() {
+  if (_panelCharsCache && Date.now() - _panelCharsCache.at < 3600_000) return _panelCharsCache.chars;
+  const opendkp = require('./utils/opendkp');
+  const raw = await opendkp.getCharacters().catch(() => null);
+  const chars = Array.isArray(raw) ? raw : (raw?.Items || []);
+  if (chars.length) _panelCharsCache = { at: Date.now(), chars };
+  return chars;
+}
+
 // ── #108 pure helpers (source-sliced by test/loot-bidding.test.js) ──────────
 // Derive an item's { winner, winning_bid, runner_up } from its settled OpenDKP
 // auctions (most-recent first) + that auction's mirrored bids. Runner-up is the
@@ -6349,12 +6401,8 @@ async function _handleAgentServerPanel(req, res) {
       // in-game Bidding overlay (Mimic) + the dashboard "💸 Live Bidding"
       // panel. We also enrich with the caller's matching wishlist entries
       // so the overlay can show "you wishlisted this for X DKP" inline.
-      const opendkp = require('./utils/opendkp');
       try {
-        const auctions = await opendkp.getAuctions().catch(() => ({}));
-        const list = Array.isArray(auctions?.Items) ? auctions.Items
-                    : Array.isArray(auctions) ? auctions
-                    : [];
+        const list = await _panelAuctions().catch(() => []);
         // Wishlist enrichment for the caller (optional ?character=).
         let wishById = new Map();
         if (character) {
@@ -6394,31 +6442,25 @@ async function _handleAgentServerPanel(req, res) {
     }
     if (key === 'my-bids') {
       // The caller's currently-active bids across all open auctions. OpenDKP
-      // doesn't expose a "list my bids" endpoint, so we walk the auctions
-      // list and pull each auction's Bids[] (getAuction returns them) and
-      // filter to entries whose CharacterId belongs to the caller's
-      // characters. Returns one row per (auction, item) the caller has bid on.
+      // doesn't expose a "list my bids" endpoint, so we read the cached active
+      // list — each auction carries its Bids[] inline (same fact the mirror
+      // sync exploits) — and filter to entries whose CharacterId belongs to
+      // the caller's characters (roster cached 1h). ZERO extra upstream calls
+      // beyond the shared _panelAuctions cache.
       if (!character) { res.writeHead(400); return res.end(JSON.stringify({ error: 'character required' })); }
-      const opendkp = require('./utils/opendkp');
       try {
-        const chars = await opendkp.getCharacters().catch(() => []);
+        const chars = await _panelCharacters().catch(() => []);
         const myCharIds = new Set(
-          (Array.isArray(chars) ? chars : (chars?.Items || []))
+          chars
             .filter(c => (c.Name || '').toLowerCase() === character.toLowerCase() || (c.ParentName || '').toLowerCase() === character.toLowerCase())
             .map(c => c.Id || c.CharacterId)
         );
-        const auctions = await opendkp.getAuctions().catch(() => ({}));
-        const list = Array.isArray(auctions?.Items) ? auctions.Items
-                    : Array.isArray(auctions) ? auctions
-                    : [];
+        const list = await _panelAuctions().catch(() => []);
         const mine = [];
         for (const a of list) {
           const aid = a.AuctionId || a.SessionId || a.Id;
           if (!aid) continue;
-          // getAuction returns Bids[]; cap concurrent fetches to keep this cheap.
-          let full;
-          try { full = await opendkp.getAuction(aid); } catch { continue; }
-          const bids = (full && (full.Bids || full.bids)) || [];
+          const bids = a.Bids || a.bids || [];
           for (const b of bids) {
             if (myCharIds.has(b.CharacterId)) {
               mine.push({
@@ -6451,6 +6493,19 @@ async function _handleAgentServerPanel(req, res) {
       // site JS). Lets Mimic's Loot bidding panel drive USER_PASSWORD_AUTH
       // locally without the agent carrying any OpenDKP secret. Never returns
       // the officer username/password — those stay in the bot's env.
+      //
+      // HALT GATE (2026-08-25): agents call OpenDKP's /clients/{name}/dkp
+      // DIRECTLY from members' machines (the #124 standings fetch) — the only
+      // OpenDKP traffic that does NOT flow through _get/_post above, so
+      // OPENDKP_HALT alone can't stop it. It CAN starve it: the agent's
+      // Cognito token refresh depends on this config (≤1h config cache, ~1h
+      // token life), so refusing here dries up the whole fleet's direct calls
+      // within ~2 hours — no agent update needed. 503 (not 200-empty) so the
+      // agent's cfg cache never stores a hollow config.
+      if (require('./utils/opendkp').opendkpHalted()) {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ error: 'OpenDKP traffic halted (OPENDKP_HALT) — login config withheld so agents stop calling OpenDKP directly' }));
+      }
       res.writeHead(200, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({
         key,

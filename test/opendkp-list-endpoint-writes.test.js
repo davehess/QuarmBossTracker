@@ -91,6 +91,11 @@ const audits = (...ids) => ({
   CurrentPage: 1,
 });
 
+// Multi-page variant for the early-break cases: page N of M.
+const auditsPage = (page, totalPages, ...ids) => ({
+  ...audits(...ids), TotalPages: totalPages, CurrentPage: page,
+});
+
 describe('_syncListEndpoint write path', () => {
   it('never uses merge-duplicates — the write is insert-only', async () => {
     const h = build({ mirroredIds: [1, 2, 3], pages: [audits(1, 2, 3, 4)] });
@@ -177,5 +182,64 @@ describe('_syncListEndpoint write path', () => {
     await h._syncListEndpoint({ ...AUDIT_ARGS, fetchPage: h.fetchPage, shapeFlag: { value: true } });
     expect(h.calls.selects[0].q).toContain('select=audit_id');
     expect(h.calls.inserts[0].rows[0]).toHaveProperty('audit_id', 1);
+  });
+});
+
+// ── Early break (2026-08-25, the Moncs incident) ─────────────────────────────
+// The endpoints have no "since" filter, so before this the walk pulled every
+// page every run — OpenDKP re-serialised its whole 48k-row audit table 48×/day
+// for three months. Pages are newest-first, so a page with nothing above our
+// watermark means every later page is older still. The break requires PROOF of
+// newest-first ordering (page 1's max id >= watermark); anything else walks
+// exactly as before.
+describe('_syncListEndpoint early break', () => {
+  it('stops after page 1 when nothing is new (the steady state)', async () => {
+    const h = build({ mirroredIds: [10, 11, 12], pages: [
+      auditsPage(1, 3, 12, 11, 10), auditsPage(2, 3, 9, 8), auditsPage(3, 3, 7),
+    ] });
+    h._lastFullSweepAt.set('opendkp_audits', Date.now());
+    const res = await h._syncListEndpoint({
+      ...AUDIT_ARGS, fetchPage: h.fetchPage, shapeFlag: { value: true },
+    });
+    expect(res.pages).toBe(1);          // pages 2 and 3 were never requested
+    expect(h.calls.inserts).toHaveLength(0);
+  });
+
+  it('walks exactly to the first all-known page, writing the fresh rows first', async () => {
+    const h = build({ mirroredIds: [10], pages: [
+      auditsPage(1, 3, 13, 12, 11), auditsPage(2, 3, 10, 9), auditsPage(3, 3, 8),
+    ] });
+    h._lastFullSweepAt.set('opendkp_audits', Date.now());
+    const res = await h._syncListEndpoint({
+      ...AUDIT_ARGS, fetchPage: h.fetchPage, shapeFlag: { value: true },
+    });
+    expect(res.pages).toBe(2);          // page 3 skipped
+    expect(res.upserted).toBe(3);       // 13, 12, 11 written before the break
+  });
+
+  it('refuses to break when page 1 disproves newest-first ordering', async () => {
+    // Oldest-first would put the SMALLEST ids on page 1 — all below the
+    // watermark. Breaking there would silently miss the new tail pages.
+    const h = build({ mirroredIds: [100], pages: [
+      auditsPage(1, 3, 1, 2, 3), auditsPage(2, 3, 4, 5), auditsPage(3, 3, 101, 102),
+    ] });
+    h._lastFullSweepAt.set('opendkp_audits', Date.now());
+    const res = await h._syncListEndpoint({
+      ...AUDIT_ARGS, fetchPage: h.fetchPage, shapeFlag: { value: true },
+    });
+    expect(res.pages).toBe(3);          // walked everything, exactly as before
+    expect(res.upserted).toBe(2);       // and still caught 101, 102
+  });
+
+  it('a full sweep still walks every page', async () => {
+    const h = build({ mirroredIds: [10, 11, 12], pages: [
+      auditsPage(1, 3, 12, 11, 10), auditsPage(2, 3, 9), auditsPage(3, 3, 8),
+    ] });
+    // no sweep marker → sweep due
+    const res = await h._syncListEndpoint({
+      ...AUDIT_ARGS, fetchPage: h.fetchPage, shapeFlag: { value: true },
+    });
+    expect(res.full_sweep).toBe(true);
+    expect(res.pages).toBe(3);
   });
 });
