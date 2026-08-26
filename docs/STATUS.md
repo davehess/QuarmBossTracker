@@ -113,14 +113,16 @@ next touch one rather than assuming a missing row means a missing doc.
   Local file stays the LIVE source of truth; last-writer-wins on `updated_at`,
   deliberately not a merge (a stale Deck must not resurrect a bid the desktop
   just cleared).
+  **Autobid's gate is ANSWERED and built** (Hitya: *"you have to be in the raid
+  for it to fire"*): `_isCharacterInRaid()` against `raid_roster`, 10-min
+  freshness, **fails closed** — an INVERSION of the agent's `require_raid_member`
+  which falls open on an empty roster. Enforced on the bot, not the agent.
+  ⚠ No Zeal ⇒ no `raid_roster` ⇒ no autobid (every Deck user until the pipe
+  bridge lands). `test/autobid-raid-gate.test.js`, mutation-checked.
   **Still TODO (in order):** (2) won-vs-LOST ledger with what they bid —
   `bid-history` returns wins only today, losses are already in
-  `opendkp_auction_bids`; (3) the auto-bid tickbox, **deliberately last** and
-  gated on one open question for Hitya: *should autobid fire while the member is
-  away from the keyboard?* That is the feature's whole point and its whole risk.
-  Autobid rules already fixed by Hitya and pinned in the design doc: off until
-  explicitly ticked, never inferred from wishlist membership, cleared on any
-  win, and a ceiling is mandatory.
+  `opendkp_auction_bids`; (3) the auto-bid tickbox + ceiling + clear-on-win,
+  wired to the gate above.
 
 - **PoP page: My Characters tab + mains-default scope (web 1.1.97, 2026-08-26,
   Hitya: "due to the nature of pop flagging they may do it for many of their

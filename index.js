@@ -7484,6 +7484,50 @@ async function _handleAgentUiLayoutDownload(req, res, snapshotId) {
 
 // Looks up CharacterId + Rank from OpenDKP roster and forwards as a bid.
 // Returns the OpenDKP response (or a 4xx if the input is bad).
+// ── Autobid gate: "you have to be in the raid for it to fire" ───────────────
+// Hitya, 2026-08-26, answering whether autobid may fire while the member is
+// away from the keyboard. This is the answer and it is a better gate than a
+// time window: away-but-raiding is exactly when you want it, and not-in-the-raid
+// is exactly when you do not.
+//
+// ⚠ FAILS CLOSED, and that is an INVERSION of the identical predicate in the
+// agent's trigger path. There, `require_raid_member` deliberately falls OPEN on
+// an empty roster ("so out-of-raid testing still fires") because a missed
+// callout is worse than a spurious one. Here the polarity flips: an empty
+// roster means we cannot prove you are in the raid, and "cannot prove" must
+// never spend someone's DKP. No roster, no autobid.
+//
+// Enforced HERE, on the bot, not in the agent. The agent's local check is a
+// useful fast path, but the bid is submitted from the bot — a gate that lives
+// only next to the decision is advisory, and stale local state would bypass it.
+//
+// Practical consequence, stated plainly rather than discovered later: Zeal
+// populates raid_roster, so a member without Zeal (every Deck user until the
+// pipe bridge lands) gets NO autobid. That is the safe direction.
+const _AUTOBID_ROSTER_FRESH_MS = 10 * 60 * 1000;
+async function _isCharacterInRaid(characterName, { freshMs = _AUTOBID_ROSTER_FRESH_MS } = {}) {
+  const name = String(characterName || '').trim();
+  if (!name) return { inRaid: false, reason: 'no character' };
+  try {
+    const supabase = require('./utils/supabase');
+    if (!supabase.isEnabled()) return { inRaid: false, reason: 'supabase disabled' };
+    const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+    const since = new Date(Date.now() - freshMs).toISOString();
+    const rows = await supabase.select('raid_roster',
+      `guild_id=eq.${encodeURIComponent(guildId)}`
+      + `&name=ilike.${encodeURIComponent(name)}`
+      + `&captured_at=gte.${encodeURIComponent(since)}`
+      + `&select=name,captured_at&limit=1`);
+    if (Array.isArray(rows) && rows.length > 0) {
+      return { inRaid: true, reason: 'in raid roster', at: rows[0].captured_at };
+    }
+    return { inRaid: false, reason: 'not in a recent raid roster (no Zeal, or not in the raid)' };
+  } catch (err) {
+    // A lookup failure is NOT permission to bid.
+    return { inRaid: false, reason: 'roster lookup failed: ' + (err && err.message) };
+  }
+}
+
 // Roaming bid prefs — the WRITE half (docs/DESIGN-bid-assist.md).
 // Body: { prefs: [{ character, item_id, planned_bid, autobid, dismissed,
 //                   item_name, updated_at }] }

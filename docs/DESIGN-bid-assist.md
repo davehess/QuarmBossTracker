@@ -120,11 +120,37 @@ Therefore:
 - **Every autobid submission is announced locally** in the panel and logged, so
   a member can see a bid was placed on their behalf without reading OpenDKP.
 
-**Open question for Hitya before autobid ships:** should autobid fire when the
-member is *not at the keyboard* (Mimic running, player away)? That is the
-feature's whole point and also its whole risk. Current assumption: **yes, that
-is the point** — but it is not implemented until confirmed, because the failure
-mode is spending someone's DKP while they are asleep.
+### ANSWERED — "you have to be in the raid for it to fire"
+
+Hitya, 2026-08-26. Away-from-keyboard is fine; **not being in the raid is not.**
+That is a better gate than any time window: away-but-raiding is exactly when you
+want autobid, and not-in-the-raid is exactly when you do not.
+
+**Implemented as `_isCharacterInRaid()` (bot), against `raid_roster` with a
+10-minute freshness bound** — "was in a raid last night" must never read as
+"is in the raid now".
+
+Three properties, each pinned by `test/autobid-raid-gate.test.js`:
+
+1. **It FAILS CLOSED, and that is an INVERSION of the identical predicate in
+   the agent's trigger path.** `require_raid_member` there deliberately falls
+   OPEN on an empty roster ("so out-of-raid testing still fires") because a
+   missed callout is worse than a spurious one. For autobid the polarity flips:
+   an empty roster means we cannot *prove* you are in the raid, and "cannot
+   prove" must never spend DKP. Same question, opposite correct answer — which
+   is precisely the kind of thing that gets copied across by pattern and
+   silently inverted.
+2. **Enforced on the BOT, not the agent.** The agent's local
+   `_raidRosterHas()` is a useful fast path, but the bid is submitted from the
+   bot; a gate living only next to the decision is advisory, and stale local
+   state would walk straight past it.
+3. **A lookup failure is not permission.** Errors, a disabled Supabase, and a
+   missing character name all return false.
+
+**Stated plainly so it is not discovered later: Zeal populates `raid_roster`, so
+a member without Zeal — every Deck user until the pipe bridge lands — gets no
+autobid at all.** That is the safe direction, and it is the honest cost of this
+gate.
 
 ## Order of work
 
