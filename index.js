@@ -641,6 +641,14 @@ async function announceAgentReleaseIfNew(discordClient) {
 // quickly enough for the web "Tonight" panel to be useful). Was 6h, which
 // hid in-progress raid attendance until well after the raid ended.
 const OPENDKP_SYNC_INTERVAL_MS = 30 * 60 * 1000;
+// Public call counter → wolfpack.quest/opendkp. Flushes completed minute
+// buckets every 60s. Runs unconditionally (not inside the Cognito-creds gate
+// below) because BLOCKED calls are worth counting too: while halted, the page
+// should show zero outbound and a non-zero "refused locally", which is the
+// difference between "the halt works" and "the bot is dead".
+setInterval(() => {
+  try { require('./utils/opendkp').flushCallStats(); } catch { /* fail-open */ }
+}, 60_000).unref?.();
 function startOpenDkpSync() {
   // Sync uses bearer auth exclusively now (post-v2.5.11) — characters,
   // raids list, raid detail, and auctions all live under /clients/{name}/*
@@ -9342,6 +9350,15 @@ async function _refreshOverlayTuningCache() {
     const row = Array.isArray(rows) && rows[0];
     const asObj = (v) => (v && typeof v === 'object' && !Array.isArray(v)) ? v : {};
     _overlayTuningCache = { at: Date.now(), values: asObj(row && row.tuning), classSets: asObj(row && row.class_sets) };
+    // No-deploy OpenDKP kill switch. `flag_opendkp_halt = 1` on /admin/overlays
+    // stops every outbound OpenDKP call within one cache period (60s). The env
+    // var OPENDKP_HALT still works and still needs a redeploy; this is the one
+    // we promised OpenDKP's owner we could hit "quickly" when he unblocks us,
+    // and a build is not quickly. Either halts; both must be clear to resume.
+    try {
+      require('./utils/opendkp').setRuntimeHalt(
+        Number(_overlayTuningCache.values.flag_opendkp_halt) >= 1);
+    } catch { /* never let a tuning refresh take the bot down */ }
   } catch {
     _overlayTuningCache.at = Date.now();   // don't hammer on failure
   }

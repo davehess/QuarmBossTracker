@@ -38,7 +38,16 @@ const https = require('https');
 //
 // Set OPENDKP_HALT=0 (or remove it) to resume. Nothing is destroyed and no
 // credential is touched, so resuming is one env var and a restart.
+// TWO halts, deliberately. The env var needs a Railway redeploy (~90s); the
+// runtime flag is pushed in from the 60s overlay_tuning refresh in index.js, so
+// an officer can stop the fleet from /admin/overlays with NO deploy at all.
+// That mattered on 2026-08-26: we asked OpenDKP's owner to unblock our IP on
+// the promise that we could stop again quickly, and "quickly" cannot mean a
+// build. Either one halts; only clearing BOTH resumes.
+let _runtimeHalt = false;
+function setRuntimeHalt(on) { _runtimeHalt = !!on; }
 function opendkpHalted() {
+  if (_runtimeHalt) return true;
   const v = String(process.env.OPENDKP_HALT || '').trim().toLowerCase();
   return v === '1' || v === 'true' || v === 'yes';
 }
@@ -99,6 +108,62 @@ function _admitCall(where) {
   return null;
 }
 
+// ── Public call counter ─────────────────────────────────────────────────────
+// Feeds wolfpack.quest/opendkp, which is open-access so OpenDKP's owner can
+// watch our volume himself rather than take our word for it.
+//
+// Aggregated in memory and flushed once a minute. A row per call would be the
+// very write-amplification pattern that caused this incident — writing our
+// apology in the same handwriting as the offence.
+//
+// Endpoints are NORMALIZED to the shape his API Gateway groups by
+// (`/clients/{client}/auctions/{id}/bids`), so the page can be read straight
+// across against his own log table instead of needing a translation step.
+function _normalizeEndpoint(pathname) {
+  return String(pathname || '')
+    .split('?')[0]
+    .replace(/\/clients\/[^/]+/i, '/clients/{client}')
+    .replace(/\/\d+(?=\/|$)/g, '/{id}')
+    || '/';
+}
+
+const _stats = new Map();   // "minuteISO|endpoint|method" -> row
+function _bucket(pathname, method) {
+  const minute = new Date(Math.floor(Date.now() / 60000) * 60000).toISOString();
+  const endpoint = _normalizeEndpoint(pathname);
+  const key = `${minute}|${endpoint}|${method}`;
+  let r = _stats.get(key);
+  if (!r) { r = { minute, endpoint, method, calls: 0, bytes: 0, errors: 0, blocked: 0 }; _stats.set(key, r); }
+  return r;
+}
+function noteCall(pathname, method, { bytes = 0, error = false, blocked = false } = {}) {
+  const r = _bucket(pathname, method);
+  if (blocked) { r.blocked++; return; }   // refused locally — never left the box
+  r.calls++;
+  r.bytes += Number(bytes) || 0;
+  if (error) r.errors++;
+}
+
+// Flush everything except the minute still filling, so a bucket is written once
+// and never rewritten — the same insert-only discipline the audits sync learned.
+let _flushing = false;
+async function flushCallStats(force = false) {
+  if (_flushing || _stats.size === 0) return { flushed: 0 };
+  const cutoff = new Date(Math.floor(Date.now() / 60000) * 60000).toISOString();
+  const ready = [..._stats.entries()].filter(([, r]) => force || r.minute < cutoff);
+  if (ready.length === 0) return { flushed: 0 };
+  _flushing = true;
+  try {
+    const supabase = require('./supabase');
+    if (!supabase.isEnabled()) return { flushed: 0 };
+    await supabase.upsert('opendkp_call_stats', ready.map(([, r]) => r), 'minute,endpoint,method');
+    for (const [k] of ready) _stats.delete(k);
+    return { flushed: ready.length };
+  } catch {
+    return { flushed: 0 };            // fail-open: counters are never worth an outage
+  } finally { _flushing = false; }
+}
+
 function _noteRateLimited(res) {
   if (res?.statusCode !== 429) return;
   const ra = Number(res.headers?.['retry-after']);
@@ -108,14 +173,20 @@ function _noteRateLimited(res) {
 }
 
 function _post(options, body) {
-  if (opendkpHalted()) { _logHalt('write'); return Promise.reject(new Error(HALT_ERROR)); }
+  const _m = options.method || 'POST';
+  if (opendkpHalted()) {
+    _logHalt('write');
+    noteCall(options.path, _m, { blocked: true });
+    return Promise.reject(new Error(HALT_ERROR));
+  }
   const denied = _admitCall('write');
-  if (denied) return Promise.reject(denied);
+  if (denied) { noteCall(options.path, _m, { blocked: true }); return Promise.reject(denied); }
   return new Promise((resolve, reject) => {
     const req = https.request(options, (res) => {
       let data = '';
       res.on('data', c => (data += c));
       res.on('end', () => {
+        noteCall(options.path, _m, { bytes: Buffer.byteLength(data), error: res.statusCode >= 400 });
         let parsed;
         try { parsed = JSON.parse(data); } catch { parsed = data; }
         if (res.statusCode >= 400) { _noteRateLimited(res); reject(new Error(`HTTP ${res.statusCode}: ${JSON.stringify(parsed)}`)); }
@@ -129,14 +200,19 @@ function _post(options, body) {
 }
 
 function _get(options) {
-  if (opendkpHalted()) { _logHalt('read'); return Promise.reject(new Error(HALT_ERROR)); }
+  if (opendkpHalted()) {
+    _logHalt('read');
+    noteCall(options.path, 'GET', { blocked: true });
+    return Promise.reject(new Error(HALT_ERROR));
+  }
   const denied = _admitCall('read');
-  if (denied) return Promise.reject(denied);
+  if (denied) { noteCall(options.path, 'GET', { blocked: true }); return Promise.reject(denied); }
   return new Promise((resolve, reject) => {
     https.get(options, (res) => {
       let data = '';
       res.on('data', c => (data += c));
       res.on('end', () => {
+        noteCall(options.path, 'GET', { bytes: Buffer.byteLength(data), error: res.statusCode >= 400 });
         let parsed;
         try { parsed = JSON.parse(data); } catch { parsed = data; }
         if (res.statusCode >= 400) { _noteRateLimited(res); reject(new Error(`HTTP ${res.statusCode}: ${JSON.stringify(parsed)}`)); }
@@ -622,7 +698,7 @@ async function updateRaidById(raidId, raidObject) {
 }
 
 module.exports = {
-  opendkpHalted,
+  opendkpHalted, setRuntimeHalt, noteCall, flushCallStats, _normalizeEndpoint,
   getRaids, getRaid, createRaid, updateRaid, updateRaidById, getMostRecentRaid,
   getCharacters, createCharacter, linkCharacter,
   createAuctions, getAuctions, getActiveAuctions, getAuction, restoreAuction, deleteAuction,
