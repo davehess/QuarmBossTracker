@@ -394,6 +394,17 @@ function parseLutrisGameFile(filename, text) {
     exe: grab('exe'),
     prefix: grab('prefix'),
     workingDir: grab('working_dir'),
+    // The renderer switches, read from Lutris's own per-game config. These are
+    // set PER GAME in Lutris, not by the installer script — which is what the
+    // runbook spent weeks not knowing (RUNBOOK §5 link 3).
+    //   d3d8: 'n,b' = native,builtin = load the game folder's dgVoodoo D3D8.dll.
+    //   Absent => Wine uses its BUILTIN d3d8 and the wrapper sitting right
+    //   there is never loaded, which breaks the chain at link 3.
+    d3d8Override: grab('d3d8'),
+    dxvk: grab('dxvk'),
+    // eqgame.exe is the 1999 client; LaunchPad.exe is EverQuest LEGENDS, a
+    // different modern game that also installs under the `everquest` slug.
+    looksLikeQuarm: /eqgame\.exe\s*$/i.test(grab('exe') || ''),
     // The trap this surfaces: eqgame.exe resolves eqmain.dll by RELATIVE path,
     // so a launch with no working_dir fails exactly like the file is missing
     // ("Couldn't load eqmain.dll"). Flagged per game so the UI can say which
@@ -426,7 +437,24 @@ function discoverLutrisGames(home, fsLike) {
   // `lutris:rungame/<slug>` picks one of them and the user cannot tell which.
   const bySlug = new Map();
   for (const g of out) bySlug.set(g.slug, (bySlug.get(g.slug) || 0) + 1);
-  for (const g of out) g.slugAmbiguous = (bySlug.get(g.slug) || 0) > 1;
+  for (const g of out) {
+    g.slugAmbiguous = (bySlug.get(g.slug) || 0) > 1;
+    // Chain link 3: no d3d8 override means Wine's builtin wins and the
+    // dgVoodoo wrapper in the game folder is dead weight. Measured on the
+    // 2026-08-26 Deck: the Quarm entry had no `wine:` block at all, while the
+    // OTHER entry on the same box carried `d3d8: n,b` — so this is the
+    // difference between the install that runs and the one that does not.
+    g.missingD3d8Override = g.looksLikeQuarm && !/^n/i.test(g.d3d8Override || '');
+    // Chain link 4. dgVoodoo outputs D3D11; with DXVK off there is nothing
+    // behind it, which is the "requires DirectX 6.0" signature.
+    g.dxvkOff = g.looksLikeQuarm && /^false$/i.test(g.dxvk || '');
+  }
+  // A slug shared with a DIFFERENT GAME is worse than a shared slug: launching
+  // it can start EverQuest Legends instead of Quarm.
+  for (const g of out) {
+    g.slugCollidesWithOtherGame = g.slugAmbiguous &&
+      out.some(h => h.slug === g.slug && h.looksLikeQuarm !== g.looksLikeQuarm);
+  }
   return out.sort((a, b) => a.slug.localeCompare(b.slug) || String(a.id).localeCompare(String(b.id)));
 }
 

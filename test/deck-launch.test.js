@@ -357,3 +357,75 @@ describe('discoverLutrisGames', () => {
     expect(games[0].exe).toBeNull();
   });
 });
+
+// ── The renderer switches Lutris keeps PER GAME ─────────────────────────────
+// Read off the 2026-08-26 Deck. Two entries, same box, both pointing at
+// eqgame.exe, and the difference between them is the whole diagnosis:
+//   projectquarm-1785095494 → wine.overrides.d3d8: n,b   + wine.dxvk: false
+//   everquest-1787744830    → no `wine:` block at all
+// That settles a question RUNBOOK §5 carried as [verify] for weeks: the d3d8
+// override is NOT written by the installer script, it is per-game Lutris config.
+describe('Lutris renderer switches', () => {
+  const QUARM_NO_WINE = 'game:\n  exe: /home/deck/Games/lutrisquarm/eqgame.exe\n  working_dir: /home/deck/Games/lutrisquarm\n';
+  const QUARM_CONFIGURED = 'game:\n  exe: /home/deck/Games/ProjectQuarm/eqgame.exe\nwine:\n  dxvk: false\n  dxvk_nvapi: false\n  overrides:\n    d3d8: n,b\n    d3d9: n,b\n';
+  const LEGENDS = 'game:\n  exe: /home/deck/Games/eqlegends/prefix/drive_c/users/Public/Daybreak Game Company/Installed\n    Games/EverQuest Legends/LaunchPad.exe\n  prefix: /home/deck/Games/eqlegends/prefix\n';
+
+  it('reads the d3d8 override, which is what loads the dgVoodoo wrapper', () => {
+    expect(D.parseLutrisGameFile('a-1.yml', QUARM_CONFIGURED).d3d8Override).toBe('n,b');
+    expect(D.parseLutrisGameFile('a-1.yml', QUARM_NO_WINE).d3d8Override).toBeNull();
+  });
+
+  it('does not mistake dxvk_nvapi for dxvk', () => {
+    expect(D.parseLutrisGameFile('a-1.yml', QUARM_CONFIGURED).dxvk).toBe('false');
+  });
+
+  it('tells the 1999 client from EverQuest LEGENDS by its executable', () => {
+    // Both install under the `everquest` slug; only one is the game we want.
+    expect(D.parseLutrisGameFile('a-1.yml', QUARM_NO_WINE).looksLikeQuarm).toBe(true);
+    expect(D.parseLutrisGameFile('b-2.yml', LEGENDS).looksLikeQuarm).toBe(false);
+  });
+
+  it('flags a Quarm entry with no d3d8 override (chain link 3 broken)', () => {
+    const F = {
+      existsSync: (p) => p.endsWith('games'),
+      readdirSync: () => ['everquest-1787744830.yml', 'projectquarm-1785095494.yml'],
+      readFileSync: (p) => p.includes('everquest-') ? QUARM_NO_WINE : QUARM_CONFIGURED,
+    };
+    const games = D.discoverLutrisGames('/home/deck', F);
+    expect(games.find(g => g.id === '1787744830').missingD3d8Override).toBe(true);
+    expect(games.find(g => g.id === '1785095494').missingD3d8Override).toBe(false);
+  });
+
+  it('flags DXVK explicitly off (chain link 4 — the DirectX 6 signature)', () => {
+    const F = {
+      existsSync: (p) => p.endsWith('games'),
+      readdirSync: () => ['projectquarm-1785095494.yml'],
+      readFileSync: () => QUARM_CONFIGURED,
+    };
+    expect(D.discoverLutrisGames('/home/deck', F)[0].dxvkOff).toBe(true);
+  });
+
+  it('warns when a slug is shared with a DIFFERENT GAME, not just another entry', () => {
+    // lutris:rungame/everquest on this box could start EverQuest Legends.
+    const F = {
+      existsSync: (p) => p.endsWith('games'),
+      readdirSync: () => ['everquest-1787744830.yml', 'everquest-1783136886.yml'],
+      readFileSync: (p) => p.includes('1787744830') ? QUARM_NO_WINE : LEGENDS,
+    };
+    const games = D.discoverLutrisGames('/home/deck', F);
+    expect(games.every(g => g.slugCollidesWithOtherGame)).toBe(true);
+  });
+
+  it('does not flag renderer switches on a non-Quarm entry', () => {
+    // EverQuest Legends is a modern D3D game; it wants DXVK ON and no d3d8
+    // override. Flagging it would be noise pointing the wrong way.
+    const F = {
+      existsSync: (p) => p.endsWith('games'),
+      readdirSync: () => ['everquest-1783136886.yml'],
+      readFileSync: () => LEGENDS,
+    };
+    const g = D.discoverLutrisGames('/home/deck', F)[0];
+    expect(g.missingD3d8Override).toBe(false);
+    expect(g.dxvkOff).toBe(false);
+  });
+});

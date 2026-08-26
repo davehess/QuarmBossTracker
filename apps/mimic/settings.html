@@ -946,15 +946,24 @@
       found.innerHTML = 'Found in Lutris: ' + games.map(g => {
         const where = g.prefix || g.exe || '?';
         const flags = [];
-        if (g.slugAmbiguous) flags.push('<b style="color:#d29922">slug shared</b>');
+        if (g.slugCollidesWithOtherGame) flags.push('<b style="color:#f0883e">name shared with a DIFFERENT game</b>');
+        else if (g.slugAmbiguous) flags.push('<b style="color:#d29922">name shared</b>');
         if (g.missingWorkingDir) flags.push('<b style="color:#d29922">no working folder</b>');
+        if (g.missingD3d8Override) flags.push('<b style="color:#f0883e">graphics override missing</b>');
+        if (g.dxvkOff) flags.push('<b style="color:#f0883e">DXVK off</b>');
         return '<code>' + g.slug + '</code> → ' + where + (flags.length ? ' (' + flags.join(', ') + ')' : '');
       }).join('<br>') +
       (games.some(g => g.slugAmbiguous)
         ? '<br><b style="color:#d29922">Two entries share a name</b>, so launching by name picks one of them at random. Remove the one you do not use in Lutris, or use the Wine option below to point at a folder directly.'
         : '') +
       (games.some(g => g.missingWorkingDir)
-        ? '<br><b style="color:#d29922">An entry has no working folder set</b> — that is what causes “Couldn\'t load eqmain.dll”. Fix it in Lutris → Configure → Game options.'
+        ? '<br><b style="color:#d29922">An entry has no working folder set</b> — fix it in Lutris → Configure → Game options.'
+        : '') +
+      (games.some(g => g.missingD3d8Override)
+        ? '<br><b style="color:#f0883e">Graphics override missing.</b> EverQuest needs Lutris → Configure → Runner options → <b>DLL overrides</b> set to <code>d3d8 = n,b</code> (also <code>d3d9</code> and <code>ddraw</code>). Without it Wine ignores the dgVoodoo file in your EverQuest folder, and the game fails to start — often reported as “Couldn\'t load eqmain.dll”.'
+        : '') +
+      (games.some(g => g.dxvkOff)
+        ? '<br><b style="color:#f0883e">DXVK is off</b> on an EverQuest entry — turn it on in Lutris → Configure → Runner options, or you get “requires DirectX 6.0 or higher”.'
         : '');
     }
     _deckEl('deckAutofill').checked  = !!s.autofillEnabled;

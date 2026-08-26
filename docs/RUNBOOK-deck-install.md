@@ -334,6 +334,17 @@ parked in a `*-backup/` or `*-off/` folder are files the install no longer has;
 if DXVK or Zeal was moved out during an earlier session, put it back before
 concluding anything.
 
+**Cause A2 — the `d3d8` DLL override is missing, so the renderer never loads.**
+This is the one a live Deck actually had (2026-08-26). `eqmain.dll` is the login
+screen and it needs the DirectX chain; with no `d3d8: n,b` override Wine uses its
+builtin d3d8, dgVoodoo's wrapper is ignored, and `eqmain.dll`'s own dependencies
+fail to resolve — which the client reports as *"Couldn't load eqmain.dll"* rather
+than as a graphics error. **Every file is present the whole time**, which is why
+this reads as a missing-file problem and is not one. Fix: Lutris → Configure →
+Runner options → DLL overrides → `d3d8 = n,b` (plus `d3d9`, `ddraw`), and make
+sure **DXVK is on** for that entry. Compare against another entry on the same box
+that works before assuming yours is configured.
+
 **Cause C — a zip extracted into a subfolder instead of merging into the game
 folder.** The installer runs three
 extracts into `$GAMEDIR` back to back (§2's note on the script). If the client
@@ -381,8 +392,18 @@ renderer problem. That is the working-directory trap (§6, trap 2).
   directory's native DLL.** If you rebuild a prefix by hand this is the link
   that silently reverts to Wine's builtin d3d8 and produces the DirectX-6
   signature (link 3) with `D3D8.dll` still sitting right there.
-  ⚠ **Corrected 2026-08-26 — this runbook used to say "the lutris.net installer
-  sets this up; you never touch it." That is NOT true of the current installer.**
+  ✅ **ANSWERED 2026-08-26 — the override is `d3d8: n,b` (native, then builtin),
+  and it is PER-GAME LUTRIS CONFIG, not something any installer writes.** Read
+  off a live Deck: `projectquarm-1785095494.yml` carries
+  `wine: { overrides: { d3d8: n,b, d3d9: n,b, ddraw: n,b } }`, while the Quarm
+  entry `everquest-1787744830.yml` on the SAME box has no `wine:` block at all.
+  Set it in **Lutris → Configure → Runner options → DLL overrides**. Without it
+  Wine loads its builtin d3d8 and the dgVoodoo `D3D8.dll` sitting in the game
+  folder is never used — chain link 3, broken, with every file apparently
+  present. Mimic's Deck card now reads this per game and says which entry is
+  missing it.
+  ⚠ **Also corrected 2026-08-26 — this runbook used to say "the lutris.net
+  installer sets this up; you never touch it." That is NOT true.**
   Reading the actual installer script (lutris.net revision `quarmNov2025`, the
   one quarm.guide links) settles it: the whole script is *create the prefix,
   then extract three zips* — client, Quarm patch, Zeal. There is **no dgVoodoo
@@ -738,7 +759,7 @@ Start here. Match the string you actually saw.
 | `Failed to load the graphics DLL!` | `D3D8.dll` (or `dgVoodoo.conf`) is gone/renamed | §5 links 1–2 |
 | `EverQuest requires DirectX 6.0 or higher` | dgVoodoo loaded, DXVK behind it did not | §5 link 3, then §6 trap 1 |
 | Wine log: `dxgi_factory_IsCurrent` stub · `shader_set_limits "4.0"` · `CheckFormatSupport` partial stub | positive proof you are on **Wine's stub d3d11**, not DXVK | §6 trap 1 |
-| `ERROR: Couldn't load eqmain.dll` (window opened first) | login DLL missing, or a zip extracted into a subfolder — **renderer is fine** | §5 link 5 |
+| `ERROR: Couldn't load eqmain.dll` (window opened first) | usually the **`d3d8` DLL override missing** in Lutris → Runner options, so the login DLL's DirectX deps do not resolve. Files are all present. | §5 link 5, cause A2 |
 | Splash paints, then hangs forever, no error | empty Working Directory; assets not found by relative path | §6 trap 2 |
 | Crash at character select, or on `/loadskin` | non-Zeal-compatible UI | §8b — `UISkin=Default` |
 | Mimic "can't find my EQ folder" | Mimic older than 2.6.1-linux.20 (prefix-root scan), or an unusual layout | update Mimic, else §4 / §8a — pick it manually |
