@@ -1425,10 +1425,33 @@ holds it in memory.
   ~8 — Lacunanight, 2026-08-25) and is gone; a PoP spell outside the class's
   pools shows "not a turn-in". `pop_spell_needs` gained `tier` + `'Song: %'`
   support (bards were silently dropped). Known ±1 Quarm-fork divergence on
-  necro Ethereal: migration 20260825030000 header. `pop_spell_needs(guild)` RPC drives the /pop section: each main ×
-  unscribed PoP spell, ordered by character level desc (first to the level gets
-  first dibs), restricted to mains who submitted a spellbook. /pop also takes
-  spellbook submissions, reusing the /me uploader + action.
+  necro Ethereal: migration 20260825030000 header. `pop_spell_needs(guild)` RPC drives the /pop section: each
+  character × unscribed PoP spell, ordered by character level desc (first to
+  the level gets first dibs), restricted to characters who submitted a
+  spellbook. /pop also takes spellbook submissions, reusing the /me uploader +
+  action.
+  **v4 (web 1.1.97, bot-adjacent migration 20260826010000, Hitya: "we
+  shouldn't only track mains")** — dropped the mains-only filter (`main_name
+  IS NULL OR main_name = name`); the function now covers every eligible
+  character (main + alt) and returns `is_main` per row so callers pick their
+  own default. `/pop`'s guild-wide surfaces (chart, matrix, planner, spell
+  table) filter to `is_main`/`?scope=all` client-side, defaulting to mains; a
+  new `?view=mine` tab ignores scope entirely and shows the SIGNED-IN
+  member's own characters (mains + alts, `ownedCharacters()`), same table
+  shapes as Matrix + the spell-needs table, plus which of their characters
+  have no spellbook on file (a check the guild-wide table can't make — it can
+  only say "nothing missing OR nothing submitted" in aggregate).
+  ⚠ **Widening from 28 mains to 117 characters exposed a real perf bug**,
+  not caused by the widening itself: the per-character level lookup was a
+  correlated subquery against `who_directory` (a view with six DISTINCT-ON
+  passes over all of `who_observations`, no materialization) — Postgres
+  can't push the character filter below those passes, so EVERY row of the
+  candidate set re-ran the whole view (267k buffer hits each, measured).
+  At 28 rows that was already ~7.5M buffer hits; at 117 it was ~31M and a
+  reproducible 60s+ hang. Fixed by `LEFT JOIN who_directory wd ON
+  wd.character_key = lower(c.name)` instead of a correlated `SELECT MAX(...)`
+  — the view computes once, characters hash-join against it (1.2s measured).
+  Guarded by `test/pop-spell-needs-all-characters.test.js`.
 - **/parses raid split (web 1.1.85, 2026-08-20)** — the 🗡 rollup lines split
   into "During the raid" / "Outside the raid". A kill is the raid's when
   `encounters.raid_night_id` is set AND participation ≥ max(6, 25% of that
