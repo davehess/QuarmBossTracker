@@ -448,6 +448,16 @@ function discoverLutrisGames(home, fsLike) {
     // Chain link 4. dgVoodoo outputs D3D11; with DXVK off there is nothing
     // behind it, which is the "requires DirectX 6.0" signature.
     g.dxvkOff = g.looksLikeQuarm && /^false$/i.test(g.dxvk || '');
+    // The exe lives outside the prefix Lutris configures for it. Legal in
+    // Wine — an absolute exe path runs under any WINEPREFIX — but it means the
+    // runner options (DLL overrides, DXVK) apply to a DIFFERENT folder than
+    // the one the game sits in. Measured on the 2026-08-26 Deck:
+    //   exe    /home/deck/Games/ProjectQuarm/eqgame.exe   (capital P)
+    //   prefix /home/deck/Games/projectquarm              (lowercase p)
+    // Linux filesystems are case-sensitive, so those are two prefixes. This is
+    // the shape of every "I copied the DLLs in and nothing changed" hour: DXVK
+    // has to be in the CONFIGURED prefix, not the one beside the exe.
+    g.exeOutsidePrefix = !!(g.exe && g.prefix && !g.exe.startsWith(g.prefix.replace(/\/+$/, '') + '/'));
   }
   // A slug shared with a DIFFERENT GAME is worse than a shared slug: launching
   // it can start EverQuest Legends instead of Quarm.

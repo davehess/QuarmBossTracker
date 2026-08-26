@@ -429,3 +429,37 @@ describe('Lutris renderer switches', () => {
     expect(g.dxvkOff).toBe(false);
   });
 });
+
+describe('exe outside its configured prefix', () => {
+  // The real 2026-08-26 config: capital-P exe, lowercase-p prefix. Linux is
+  // case-sensitive, so Lutris's runner options (DXVK, DLL overrides) land in a
+  // folder that is NOT the one beside the game.
+  const MISMATCH = 'game:\n  exe: /home/deck/Games/ProjectQuarm/eqgame.exe\n  prefix: /home/deck/Games/projectquarm\n  working_dir: /home/deck/Games/ProjectQuarm\n';
+  const MATCHED  = 'game:\n  exe: /home/deck/Games/lutrisquarm/eqgame.exe\n  prefix: /home/deck/Games/lutrisquarm\n';
+  const mk = (text) => D.discoverLutrisGames('/home/deck', {
+    existsSync: (p) => p.endsWith('games'),
+    readdirSync: () => ['x-1.yml'],
+    readFileSync: () => text,
+  })[0];
+
+  it('flags a case-differing prefix as a different folder', () => {
+    expect(mk(MISMATCH).exeOutsidePrefix).toBe(true);
+  });
+
+  it('does not flag the normal Lutris layout, where the prefix root IS the game dir', () => {
+    expect(mk(MATCHED).exeOutsidePrefix).toBe(false);
+  });
+
+  it('is not fooled by a trailing slash on the prefix', () => {
+    expect(mk('game:\n  exe: /home/deck/Games/eq/eqgame.exe\n  prefix: /home/deck/Games/eq/\n').exeOutsidePrefix).toBe(false);
+  });
+
+  it('does not flag a prefix that is merely a name prefix of the exe path', () => {
+    // /Games/eq2 must not count as being inside /Games/eq.
+    expect(mk('game:\n  exe: /home/deck/Games/eq2/eqgame.exe\n  prefix: /home/deck/Games/eq\n').exeOutsidePrefix).toBe(true);
+  });
+
+  it('stays quiet when either path is unknown', () => {
+    expect(mk('game:\n  exe: /x/eqgame.exe\n').exeOutsidePrefix).toBe(false);
+  });
+});

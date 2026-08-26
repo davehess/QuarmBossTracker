@@ -317,10 +317,35 @@ directory**, and confirm it equals the folder holding `eqgame.exe`. The current
 installer sets `working_dir: $GAMEDIR` for you, so an empty one means something
 edited it after the fact.
 
+**Cause A3 — the exe and the Wine prefix are different folders, so your fix
+landed in the wrong one.** Measured on the 2026-08-26 Deck, the hand-made
+`projectquarm` entry read:
+
+```
+exe:         /home/deck/Games/ProjectQuarm/eqgame.exe    <- capital P
+prefix:      /home/deck/Games/projectquarm               <- lowercase p
+working_dir: /home/deck/Games/ProjectQuarm               <- capital P
+```
+
+Linux filesystems are case-sensitive, so those are **two different prefixes**.
+Wine will happily run an absolute exe path under any prefix, so nothing errors —
+but DXVK and the DLL overrides live in the **configured** prefix, while anything
+you copy in "next to the game" lands in the other one. That is the shape of every
+*"I copied the DLLs in and nothing changed"* hour. Check both paths in Lutris →
+Configure and make them the same folder; Mimic's Deck card flags this per entry.
+
 **Cause B — you are launching a different install than the one you repaired.**
 A Deck that has been debugged for a while accumulates them. The 2026-08-26 box
-had `~/Games/ProjectQuarm` AND `~/Games/lutrisquarm`, plus `eq-rescue-*/`,
-`zeal-off/` and `dxvk-backup/` holding files moved out during earlier surgery.
+had **three Quarm installs** — one under Bottles, one hand-made in Lutris
+(`~/Games/ProjectQuarm`), one from the lutris.net script (`~/Games/lutrisquarm`)
+— plus `eq-rescue-*/`, `zeal-off/` and `dxvk-backup/` holding files moved out
+during earlier surgery. (A fourth Lutris entry on that box, also under the
+`everquest` slug, was **EverQuest Legends** — Daybreak's modern client, working
+fine and unrelated. It matters only because it makes the slug ambiguous.)
+
+**Consolidate once you know which one works.** Three partially-repaired installs
+on a Deck's storage is not a backup, it is three chances to fix the wrong
+folder — and the failure is silent every time.
 Read the Lutris config and believe it rather than your memory:
 
 ```bash
