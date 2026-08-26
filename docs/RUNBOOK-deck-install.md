@@ -538,6 +538,15 @@ you*, and that carries real costs:
   autofill is free, typing your password into Discord is not.
 - It needs `xdotool` (`sudo pacman -S xdotool`, or it silently skips).
 
+> ⚠ **Nobody has watched this type yet.** It was built and tested in a cloud
+> session with no Deck attached, so two things are genuinely unverified: whether
+> `xdotool` can reach the Wine window under Desktop Mode's XWayland at all, and
+> whether the EQ client accepts *synthetic* keystrokes (some games ignore
+> injected input by design). The safe failure is the likely one — it types
+> nothing and you log in by hand. **First person to try it: run
+> `~/.local/share/wolfpack/deck-launch.sh` from a terminal** and read the
+> `[wolfpack] autofill: …` lines, which say exactly which step gave up.
+
 The password is never passed as a command-line argument — argv is world-readable
 through `/proc/<pid>/cmdline`. It is piped to the typing tool on stdin, which is
 the entire reason it lives in a file rather than a variable.
