@@ -231,3 +231,57 @@ Two self-inflicted errors worth noting: the first slice-marker change dropped
 `_pkColFor` and broke all 11 existing tests, and the first raid-window fixture
 used a SATURDAY timestamp while claiming Sunday — asserting the opposite of
 what it said. Both caught by the suite, both now commented in place.
+
+
+---
+
+## Audits: PROVED oldest-first, and the fast path that follows from it
+
+> "8MB in the last hour is still too much on audits"
+
+Right. The idle backoff (3.1.75) halved the frequency but every walk was still
+17 calls / 6.2 MB, so a raid window — where backoff correctly pins it to every
+pass — puts it straight back to 12 MB/hour.
+
+**The ordering probe answered the open question from production:**
+
+```
+audits: page1 ids 1669729..1968002 vs watermark 4627656 — NOT newest-first
+```
+
+Page 1 holds the OLDEST audits **by 2.7 million ids**. A forward walk from page
+1 can never reach a new row, which the sync result confirms exactly:
+`audits_pages: 17, audits_offered: 0` — seventeen calls, zero rows offered,
+every single pass. So the 2026-08-25 early break could never have fired, and my
+newest-first assumption (inferred from the auctions endpoint's "page 1 = most
+recent" note) was simply wrong for this endpoint.
+
+**Fix: new rows land at the END, so go straight to the LAST page.** If nothing
+there is above the watermark, done in ONE call instead of seventeen —
+**6.2 MB → ~365 KB per check, and it works during raids**, which the backoff
+deliberately cannot.
+
+- `TotalPages` is learned from any response and cached per table. A page fills
+  roughly every couple of months at ~37 audits/day, so the hint is stable and a
+  stale one self-corrects on the next response.
+- If the last page DOES hold something new, it falls through to the full walk —
+  correctness over cheapness. At 37 audits/day that is once or twice a day
+  instead of 48 times.
+- **A full sweep still walks everything** (the 24h heal is untouched).
+- **An unknown payload shape does NOT read as "nothing new."** Silently treating
+  an unrecognised response as empty would stop the sync dead while reporting
+  success — the worst available failure — so it throws and falls through to the
+  walk, which reports the shape properly.
+- The payload-shape extraction is now ONE helper shared by both paths.
+  Duplicating that list is how one of them silently starts seeing nothing.
+
+Two of my own errors caught by the suite while building this, both worth the
+telling: the page-count capture was initially placed at the END of the loop
+body, *after* the early break — so it never ran and the fast path had no hint to
+work from; and the fall-through test's fixture returned the SAME rows on every
+page, which double-counted the fresh row and proved nothing. Both now commented
+in place.
+
+Tests: 6 more in `test/opendkp-list-endpoint-writes.test.js` (22 total),
+mutation-checked — claiming done on an unknown shape, running during a full
+sweep, and ignoring a grown page count each kill a test.

@@ -79,7 +79,7 @@ function build({ mirroredIds = [], pages = [], envHours = null } = {}) {
     }
     const console = { log() {}, warn() {} };
   ` + block + `
-    return { _syncListEndpoint, _lastFullSweepAt, _nextDueAt, _idleStreak, calls };
+    return { _syncListEndpoint, _lastFullSweepAt, _nextDueAt, _idleStreak, _lastPageHint, calls };
   `;
   // eslint-disable-next-line no-new-func
   const made = new Function('calls', harness)(calls);
@@ -311,5 +311,104 @@ describe('idle backoff', () => {
   it('is disableable, so a bad backoff can never wedge the sync', () => {
     expect(srcText).toContain('OPENDKP_LIST_IDLE_BACKOFF');
     expect(srcText).toContain('OPENDKP_LIST_IDLE_MAX_HOURS');
+  });
+});
+
+// ── Oldest-first fast path (2026-08-26, PROVED not assumed) ─────────────────
+// The ordering probe shipped in 3.1.75 logged, from production:
+//
+//   audits: page1 ids 1669729..1968002 vs watermark 4627656 — NOT newest-first
+//
+// Page 1 holds the OLDEST audits by 2.7 MILLION ids, so a forward walk from
+// page 1 can never reach a new row. The logs confirm the waste exactly:
+// `audits_pages: 17, audits_offered: 0`, every pass, 6.2 MB a time.
+//
+// New rows land at the END, so the fast path checks the LAST page and stops.
+describe('oldest-first fast path', () => {
+  const paged = (page, total, ...ids) => ({
+    Audits: ids.map(id => ({ AuditId: id, Timestamp: '2026-08-26T03:32:45Z', Action: 'Raid Updated' })),
+    TotalPages: total, CurrentPage: page,
+  });
+
+  it('learns the page count from a normal walk', async () => {
+    const h = build({ mirroredIds: [10], pages: [paged(1, 3, 10)] });
+    h._lastFullSweepAt.set('opendkp_audits', Date.now());
+    await h._syncListEndpoint({ ...AUDIT_ARGS, fetchPage: h.fetchPage, shapeFlag: { value: true } });
+    expect(h._lastPageHint.get('opendkp_audits')).toBe(3);
+  });
+
+  it('then checks ONLY the last page and stops — 1 call, not 17', async () => {
+    const h = build({ mirroredIds: [10], pages: [] });
+    h._lastFullSweepAt.set('opendkp_audits', Date.now());
+    h._lastPageHint.set('opendkp_audits', 17);
+    h._nextDueAt.delete('opendkp_audits');
+    const asked = [];
+    const res = await h._syncListEndpoint({
+      ...AUDIT_ARGS, shapeFlag: { value: true },
+      fetchPage: async (p) => { asked.push(p); return paged(p, 17, 9, 10); },  // all <= watermark
+    });
+    expect(asked).toEqual([17]);                 // the whole point
+    expect(res.fast_path).toBe('last-page');
+    expect(res.pages).toBe(1);
+  });
+
+  it('follows the page count when it has grown since we cached it', async () => {
+    const h = build({ mirroredIds: [10], pages: [] });
+    h._lastFullSweepAt.set('opendkp_audits', Date.now());
+    h._lastPageHint.set('opendkp_audits', 17);
+    h._nextDueAt.delete('opendkp_audits');
+    const asked = [];
+    await h._syncListEndpoint({
+      ...AUDIT_ARGS, shapeFlag: { value: true },
+      fetchPage: async (p) => { asked.push(p); return paged(p, 18, 9, 10); },
+    });
+    expect(asked).toEqual([17, 18]);             // corrected itself, still cheap
+    expect(h._lastPageHint.get('opendkp_audits')).toBe(18);
+  });
+
+  it('falls through to the full walk when the last page HAS something new', async () => {
+    // Correctness beats cheapness: new rows must still be collected properly.
+    const h = build({ mirroredIds: [10], pages: [] });
+    h._lastFullSweepAt.set('opendkp_audits', Date.now());
+    h._lastPageHint.set('opendkp_audits', 2);
+    h._nextDueAt.delete('opendkp_audits');
+    const asked = [];
+    // Realistic paging: distinct rows per page, newest at the END (oldest-first).
+    // My first fixture returned the SAME rows on every page, which double-counted
+    // the fresh row and told me nothing.
+    const byPage = { 1: [8, 9], 2: [10, 11] };   // 11 is above the watermark
+    const res = await h._syncListEndpoint({
+      ...AUDIT_ARGS, shapeFlag: { value: true },
+      fetchPage: async (p) => { asked.push(p); return paged(p, 2, ...(byPage[p] || [])); },
+    });
+    expect(res.fast_path).toBeUndefined();
+    expect(asked.length).toBeGreaterThan(1);
+    expect(res.upserted).toBe(1);
+  });
+
+  it('a full sweep still walks everything, fast path or not', async () => {
+    const h = build({ mirroredIds: [10], pages: [] });
+    h._lastPageHint.set('opendkp_audits', 2);
+    const asked = [];
+    const res = await h._syncListEndpoint({
+      ...AUDIT_ARGS, shapeFlag: { value: true },
+      fetchPage: async (p) => { asked.push(p); return paged(p, 2, 9, 10); },
+    });
+    expect(res.full_sweep).toBe(true);
+    expect(asked[0]).toBe(1);                    // never short-circuited
+  });
+
+  it('an unknown payload shape does NOT read as "nothing new"', async () => {
+    // Silently treating an unrecognised response as empty would stop the sync
+    // dead while reporting success — the worst possible failure here.
+    const h = build({ mirroredIds: [10], pages: [] });
+    h._lastFullSweepAt.set('opendkp_audits', Date.now());
+    h._lastPageHint.set('opendkp_audits', 2);
+    h._nextDueAt.delete('opendkp_audits');
+    const res = await h._syncListEndpoint({
+      ...AUDIT_ARGS, shapeFlag: { value: true },
+      fetchPage: async () => ({ Unexpected: 'shape' }),
+    });
+    expect(res.fast_path).toBeUndefined();       // fell through, did not claim done
   });
 });
