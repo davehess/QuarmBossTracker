@@ -35,6 +35,7 @@ const zealUpdater = require('./zealUpdater');
 // the one box that runs it.
 const deckLaunch = require('./deckLaunch');
 const steamShortcuts = require('./steamShortcuts');
+const dgvoodooConf = require('./dgvoodooConf');
 const uiPacks = require('./uiPacks');
 const resolutionLock = require('./resolutionLock');
 
@@ -9302,6 +9303,7 @@ ipcMain.handle('deck-launcher-status', () => {
       stopMimicOnExit: d.stopMimicOnExit !== false,
       autofillEnabled: !!(d.autofill && d.autofill.enabled),
       autofillUser: (d.autofill && d.autofill.username) || '',
+      fpsLimit: Number.isInteger(d.fpsLimit) ? d.fpsLimit : null,
       hasStoredPassword: !!(d.autofill && d.autofill.passwordBox),
       // Surfaced so the UI can tell the truth about at-rest protection instead
       // of implying a keychain that may not exist on SteamOS.
@@ -9325,6 +9327,10 @@ ipcMain.handle('deck-launcher-save', (_e, s) => {
       winePrefix: String((s && s.winePrefix) || '').trim(),
       wineLoader: String((s && s.wineLoader) || '').trim(),
       stopMimicOnExit: !(s && s.stopMimicOnExit === false),
+      // null/'' = leave dgVoodoo.conf alone entirely. 0 is a real value
+      // (dgVoodoo's own "unlimited"), so it must survive the falsy check.
+      fpsLimit: (s && s.fpsLimit !== '' && s.fpsLimit != null && Number.isInteger(Number(s.fpsLimit)))
+        ? Number(s.fpsLimit) : null,
       autofill: {
         ...(prev.autofill || {}),
         enabled:  !!(s && s.autofillEnabled),
@@ -9369,6 +9375,18 @@ ipcMain.handle('deck-launcher-install', async () => {
       } else {
         notes.push('Autofill is on but no password is saved — the launcher will skip it.');
       }
+    }
+
+    // FPS cap. The client IGNORES eqclient.ini's limiter (the lutris.net
+    // installer's own notes say so), so dgVoodoo.conf is the only place this
+    // works — and it ships at 0 = unlimited, which on a Deck is fan noise and
+    // half the battery. Best-effort: a missing/unrecognised conf is reported,
+    // never fatal to installing the launcher.
+    if (Number.isInteger(d.fpsLimit)) {
+      const eqForConf = (d.eqDir || '').trim() || _zealEqDir();
+      const r = dgvoodooConf.enforce(eqForConf, { fps: d.fpsLimit });
+      if (r.ok && r.changed) notes.push(`Frame cap set to ${d.fpsLimit} in dgVoodoo.conf (was ${r.from}).`);
+      else if (!r.ok) notes.push(`Could not set the frame cap: ${r.reason}.`);
     }
 
     const preflight = path.join(__dirname, '..', '..', 'scripts', 'deck-preflight.sh');

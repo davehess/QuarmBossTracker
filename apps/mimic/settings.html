@@ -159,6 +159,12 @@
       <div class="hint">Only closes Mimic if the launcher was the thing that started it — a Mimic you already had open keeps running.</div>
 
       <div class="row" style="margin-top:12px">
+        <label for="deckFps" style="min-width:150px">Frame cap</label>
+        <input id="deckFps" type="number" min="0" max="1000" placeholder="leave blank to not touch it" style="flex:1" />
+      </div>
+      <div class="hint">EverQuest <b>ignores</b> the frame limit in its own settings file — <code>dgVoodoo.conf</code> is the only place a cap works, and it ships unlimited. On a Deck that means the fan running flat out on character select and roughly half the battery life. <b>60</b> is a sensible cap (<b>90</b> on an OLED). <code>0</code> means unlimited; blank leaves the file alone.</div>
+
+      <div class="row" style="margin-top:12px">
         <input id="deckAutofill" type="checkbox" />
         <label for="deckAutofill">Type my login automatically</label>
       </div>
@@ -922,6 +928,7 @@
     _deckEl('deckWinePrefix').value  = s.winePrefix || '';
     _deckEl('deckWineLoader').value  = s.wineLoader || '';
     _deckEl('deckStopMimic').checked = s.stopMimicOnExit !== false;
+    _deckEl('deckFps').value = (s.fpsLimit === null || s.fpsLimit === undefined) ? '' : String(s.fpsLimit);
     _deckEl('deckAutofill').checked  = !!s.autofillEnabled;
     _deckEl('deckAutofillUser').value = s.autofillUser || '';
     _deckEl('deckAutofillPass').placeholder = s.hasStoredPassword ? '(saved — leave blank to keep)' : '';
@@ -951,6 +958,7 @@
       winePrefix: _deckEl('deckWinePrefix').value,
       wineLoader: _deckEl('deckWineLoader').value,
       stopMimicOnExit: _deckEl('deckStopMimic').checked,
+      fpsLimit: _deckEl('deckFps').value,
       autofillEnabled: _deckEl('deckAutofill').checked,
       autofillUser:    _deckEl('deckAutofillUser').value,
       password:        _deckEl('deckAutofillPass').value,

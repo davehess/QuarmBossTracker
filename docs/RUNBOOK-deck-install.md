@@ -91,6 +91,19 @@ folklore, not an optional extra.
 > version you moved to — that is the first thing anyone debugging your box will
 > ask.
 
+⚠ **The installer's own notes disagree with the paragraph above, and they are
+probably right now (2026-08-26).** Revision `quarmNov2025` says, verbatim: *"Once
+Lutris finishes installing do not launch, instead: Configure Everquest → Runner
+options → Change 'wine version' to 'GE-Proton (latest)' → Save."* That reading is
+consistent with what the script actually does — create a prefix and extract three
+zips, which has nothing version-sensitive in it, so the "Quarm won't install
+without GE-Proton8-26" folklore looks like it belongs to an older revision.
+
+**What to do:** install the pins anyway (they cost a download and rule out a
+whole class of failure), run the installer, then **switch the runner to
+GE-Proton latest before first launch** as the notes say. If you ever need to
+bisect a graphics problem, the pins are already sitting there to fall back to.
+
 **Verify:** ProtonUp-Qt lists both `GE-Proton8-7` and `GE-Proton8-26` under
 Lutris. `scripts/deck-preflight.sh` reports them too.
 
@@ -298,12 +311,23 @@ renderer problem. That is the working-directory trap (§6, trap 2).
   `system32`. A prefix with 64-bit DXVK and builtin 32-bit d3d11 fails exactly
   like "DXVK off". The preflight script checks both and says which.
 - **The wrapper only loads because a DLL override points `d3d8` at the app
-  directory's native DLL.** The lutris.net installer sets this up; you never
-  touch it. It is listed here because if you ever rebuild a prefix by hand, this
-  is the link that silently reverts to Wine's builtin d3d8 and produces the
-  DirectX-6 signature (link 3) with `D3D8.dll` still sitting right there.
-  *[verify on install — the exact override string the installer writes was not
-  captured on 2026-08-23.]*
+  directory's native DLL.** If you rebuild a prefix by hand this is the link
+  that silently reverts to Wine's builtin d3d8 and produces the DirectX-6
+  signature (link 3) with `D3D8.dll` still sitting right there.
+  ⚠ **Corrected 2026-08-26 — this runbook used to say "the lutris.net installer
+  sets this up; you never touch it." That is NOT true of the current installer.**
+  Reading the actual installer script (lutris.net revision `quarmNov2025`, the
+  one quarm.guide links) settles it: the whole script is *create the prefix,
+  then extract three zips* — client, Quarm patch, Zeal. There is **no dgVoodoo
+  extraction step and no DLL-override task**, and its `game:` block sets only
+  `exe` / `prefix` / `working_dir`. So dgVoodoo arrives **inside one of those
+  zips** (the Quarm patch is the only candidate that ships renderer files), and
+  whatever makes the override stick is not something the installer writes. The
+  `D3D9.dll` + `*backup.dll` extras on the 2026-08-23 Deck are the tell that it
+  was built from an **older** installer revision that DID have a
+  `dg_voodoo2_79_3.zip` step. **Still open:** what actually points `d3d8` at the
+  native DLL on a current install. Do not assert an answer without checking
+  `winecfg` → Libraries on a real prefix.
 
 ---
 
@@ -343,6 +367,9 @@ lives in.
 
 - **Bottles:** the program entry's *Working Directory* field.
 - **Lutris analogue:** Game Options → **Working directory**.
+  ⚠ The current installer (`quarmNov2025`) already sets
+  `working_dir: $GAMEDIR`, so a Lutris install made with it should never hit
+  this. If yours is empty, something edited it after the fact.
 - **Symptom recap:** splash, then nothing, no dialog. Not a graphics failure —
   do not go re-reading §5.
 
@@ -580,9 +607,28 @@ hidden. The dashboard is still reachable: add `http://localhost:7779` as a
 non-Steam browser shortcut, or open it in the Steam overlay's browser. See
 `docs/mimic-steamdeck.md` → Background Mode.
 
-**Optional — remove the dgVoodoo watermark:** Lutris → the second arrow beside
-Play → **Run EXE inside Wine prefix** → `.../dgvoodoo/dgVoodooCpl.exe` → DirectX
-tab → untick the watermark → Apply/OK.
+**Optional — remove the dgVoodoo watermark:** the `dgVoodoo.conf` that ships
+with the current install already has `dgVoodooWatermark = false`, so check
+before bothering. If yours shows one: Lutris → the second arrow beside Play →
+**Run EXE inside Wine prefix** → `.../dgvoodoo/dgVoodooCpl.exe` → DirectX tab →
+untick the watermark → Apply/OK. Mimic can also flip that key directly
+(`apps/mimic/dgvoodooConf.js`), which beats driving a Windows control panel
+through Wine on a handheld.
+
+### 9e. Cap the frame rate — do this one, it is free battery
+
+**EverQuest ignores the FPS limit in `eqclient.ini`.** That is the installer
+author's own finding, and `dgVoodoo.conf` ships with `FPSLimit = 0`, i.e.
+**unlimited**. A 1999 game rendering uncapped is nothing on a desktop and a real
+problem on a handheld: the fan spins up on the character-select screen, the APU
+heats, and the battery goes roughly twice as fast for frames nobody can see.
+
+**Mimic Settings → Steam Deck — one launcher → Frame cap.** Put `60` in it
+(`90` on an OLED Deck), press Install, done — it edits only that one key, backs
+the file up once as `dgVoodoo.conf.mimic-bak`, and leaves the other ~330 lines
+byte-for-byte alone. Blank means "don't touch the file"; `0` restores unlimited.
+
+By hand: `FPSLimit` under `[GeneralExt]` in `<EQ folder>/dgVoodoo.conf`.
 
 ---
 

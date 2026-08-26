@@ -878,6 +878,29 @@ hook. The existing running→stopped edge + `fs.watch` already repair the stomp
 either way; a pre-launch enforce from the script is the open follow-up.
 Tests: `test/resolution-lock.test.js`.
 
+### dgVoodoo frame cap (`dgvoodooConf.js`, #156)
+**EverQuest ignores the FPS limit in `eqclient.ini`** — the lutris.net Quarm
+installer's own notes say so (revision `quarmNov2025`), and the `dgVoodoo.conf`
+that ships with the install has `FPSLimit = 0`, i.e. unlimited. Nothing on a
+desktop; on a Deck it is the fan at full tilt on character select and roughly
+half the battery. `[GeneralExt] FPSLimit` is the ONLY limiter this client
+honours, so this module owns it. Deliberately a SIBLING of `resolutionLock.js`
+rather than part of it: eqclient.ini is held open and rewritten by the client at
+exit so resolutionLock must fight for it, whereas nothing rewrites
+dgVoodoo.conf except dgVoodooCpl.exe — so this is an ordinary one-time write
+with no enforcement loop, and sharing a module would mean sharing machinery only
+one of them needs. Same byte-exactness discipline: regex-level line edit,
+alignment padding preserved, CRLF preserved, latin1 round-trip, byte-identical
+no-op when already correct, one-time `.mimic-bak`, tmp+rename. **Never invents
+`[GeneralExt]`** — writing a section into a file that turns out not to be
+dgVoodoo.conf breaks the renderer, the hardest failure to recover from on a
+Deck. Also flips `[DirectX] dgVoodooWatermark`, which beats driving
+dgVoodooCpl.exe through Wine on a handheld (RUNBOOK §9d). The file lives beside
+`eqgame.exe`, NOT under `drive_c` — on a Lutris install the prefix root is the
+game dir. Wired into the Deck launcher's install action (Linux-only surface);
+blank = don't touch the file, `0` = restore unlimited. Tests:
+`test/dgvoodoo-conf.test.js` (21).
+
 ### One Steam shortcut for Mimic + EQ (`deckLaunch.js` + `steamShortcuts.js`, #156)
 The Deck install used to end with TWO things to start by hand — the Lutris
 Steam shortcut and the Mimic AppImage — and Gaming Mode has no tray or file
