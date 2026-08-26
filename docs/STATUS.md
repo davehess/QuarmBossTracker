@@ -100,6 +100,23 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ### ✅ Done — major shipped features (not exhaustive; see git + roadmapData.ts)
 
+- **PoP page: My Characters tab + mains-default scope (web 1.1.97, 2026-08-26,
+  Hitya: "due to the nature of pop flagging they may do it for many of their
+  toons and we shouldn't only track mains").** `pop_spell_needs` v4 (migration
+  `20260826010000`) drops the mains-only filter and returns `is_main` per row;
+  guild-wide surfaces (chart/matrix/planner/spell-needs) default to
+  `?scope=mains` with a toggle to `all`; a new `?view=mine` tab always shows
+  the signed-in member's full roster (main+alt, `ownedCharacters()`) — zone
+  access + spell needs side by side, plus which owned characters have no
+  spellbook on file (a per-character check the aggregate guild table can't
+  make). ⚠ Widening 28→117 eligible characters exposed a real perf bug (not
+  caused by the widening): a per-row correlated subquery against
+  `who_directory` (6 unmaterialized DISTINCT-ON passes over 120k+ rows) made
+  every candidate re-run the whole view — 60s+ hangs, confirmed on prod.
+  Fixed with a plain `LEFT JOIN who_directory` (1.2s verified, same output).
+  `test/pop-spell-needs-all-characters.test.js` guards both fixes. Full story:
+  `DECISIONS-2026-08-26.md`.
+
 - **The OpenDKP incident: halt + fan-in cache + outbound governor (bot
   3.1.71–3.1.72, 2026-08-25; Moncs: "high volume automated traffic … I've
   currently blocked the ip address").** Root cause was NOT the 30-min sync:

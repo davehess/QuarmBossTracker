@@ -37,6 +37,24 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'web-1-1-97',
+    title: 'My Characters on the PoP page',
+    version: 'Web 1.1.97',
+    date: '2026-08-26',
+    headline: 'The PoP page can now show your whole roster in one place — alts included, since flagging isn’t just a main’s job.',
+    features: [
+      {
+        name: 'My Characters tab',
+        blurb: 'A new tab on /pop lists every character linked to your account — mains and alts alike — with their zone access and PoP spells still needed side by side.',
+      },
+      {
+        name: 'Guild views now default to mains',
+        blurb: 'The chart, matrix, planner, and spell-needs table default to showing mains, with a one-click toggle to widen to every character when you want the fuller picture.',
+      },
+    ],
+    fixes: [],
+  },
+  {
     key: 'web-1-1-96',
     title: 'Parchment math, from the source',
     version: 'Web 1.1.96',
