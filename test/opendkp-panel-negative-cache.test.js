@@ -7,7 +7,7 @@ const block = sliceBlock(src, 'const _PANEL_AUCTIONS_TTL_ACTIVE_MS',
   '\n  _panelAuctionsCache = { at: now(), list };\n  return list;\n}');
 
 function build() {
-  const { _panelAuctions } = evalBlock('const console = { warn() {} };\n' + block, ['_panelAuctions']);
+  const { _panelAuctions } = evalBlock('const console = { warn() {}, log() {} };\n' + block, ['_panelAuctions']);
   let t = 1_000_000, calls = 0, fail = false;
   return {
     get calls() { return calls; },
