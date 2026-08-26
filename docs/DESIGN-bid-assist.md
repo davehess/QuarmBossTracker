@@ -126,11 +126,37 @@ Hitya, 2026-08-26. Away-from-keyboard is fine; **not being in the raid is not.**
 That is a better gate than any time window: away-but-raiding is exactly when you
 want autobid, and not-in-the-raid is exactly when you do not.
 
-**Implemented as `_isCharacterInRaid()` (bot), against `raid_roster` with a
-10-minute freshness bound** — "was in a raid last night" must never read as
-"is in the raid now".
+**Corrected same day, by Hitya, after I built it too narrowly:**
 
-Three properties, each pinned by `test/autobid-raid-gate.test.js`:
+> "one of your characters needs to be in the raid currently **or have been on a
+> tick so far that night**"
+
+Both halves were wrong in v1 and both are the *normal* case, not edge cases:
+
+- **FAMILY, not the bidding character.** You bid on the alt you want the item
+  for while your MAIN is the one standing in the raid. v1 checked only the
+  bidding character and would have refused exactly that.
+- **"or on a tick tonight", not just the live roster.** You raid the first two
+  hours, take the ticks, then log or go AFK — you are still owed the loot you
+  are bidding on. v1 would have refused the person who earned the DKP being
+  spent.
+
+**Implemented as `_familyInRaidTonight()` (bot).** Family root = `main_name ||
+name`. Passes if ANY family member is either (a) in a `raid_roster` snapshot
+from the last 10 minutes, or (b) named in an `opendkp_ticks.attendees` array for
+a raid since tonight's boundary.
+
+⚠ `opendkp_ticks` carries **no tick timestamp of its own** — `fetched_at` is OUR
+mirror-sync time and is never an ordering key (the bot 3.1.33 lesson) — so the
+"tonight" filter comes from the joined `opendkp_raids.ts`.
+
+**Raid-night boundary = the most recent 6pm ET.** Not the calendar day: raids
+run past midnight routinely, and a midnight boundary would refuse everyone still
+standing there at 00:30, which is exactly when the last loot goes up.
+
+Properties, each pinned by `test/autobid-raid-gate.test.js` (15 cases,
+mutation-checked — reverting to either v1 bug, or to a calendar-day boundary,
+kills tests):
 
 1. **It FAILS CLOSED, and that is an INVERSION of the identical predicate in
    the agent's trigger path.** `require_raid_member` there deliberately falls
@@ -144,8 +170,9 @@ Three properties, each pinned by `test/autobid-raid-gate.test.js`:
    `_raidRosterHas()` is a useful fast path, but the bid is submitted from the
    bot; a gate living only next to the decision is advisory, and stale local
    state would walk straight past it.
-3. **A lookup failure is not permission.** Errors, a disabled Supabase, and a
-   missing character name all return false.
+3. **A lookup failure is not permission.** Errors on any of the three lookups,
+   a disabled Supabase, and a missing character name all return false. A
+   *family* lookup failure narrows to the single character — it never widens.
 
 **Stated plainly so it is not discovered later: Zeal populates `raid_roster`, so
 a member without Zeal — every Deck user until the pipe bridge lands — gets no
