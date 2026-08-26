@@ -100,6 +100,28 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ### ✅ Done — major shipped features (not exhaustive; see git + roadmapData.ts)
 
+- **Bid assist — roaming planned bids (bot 3.1.77, 2026-08-26).** ⚠ **This
+  feature was described in an earlier session and NEVER WRITTEN DOWN** — Hitya:
+  *"the local mimic bidding piece I described and queued up with you
+  disappeared."* It had: nothing in STATUS, the platform queue, any DECISIONS
+  file, or git history on any branch. The spec now lives in
+  **`docs/DESIGN-bid-assist.md`** and that file is the record.
+  Shipped: `character_bid_prefs` (migration `20260826160000`, applied +
+  committed) + `GET server-panel?key=bid-prefs` + authed
+  `POST /api/agent/bid-prefs`, so `logsync.plannedbids.json` /
+  `lootdismiss.json` stop dying on reinstall or a move between desktop and Deck.
+  Local file stays the LIVE source of truth; last-writer-wins on `updated_at`,
+  deliberately not a merge (a stale Deck must not resurrect a bid the desktop
+  just cleared).
+  **Still TODO (in order):** (2) won-vs-LOST ledger with what they bid —
+  `bid-history` returns wins only today, losses are already in
+  `opendkp_auction_bids`; (3) the auto-bid tickbox, **deliberately last** and
+  gated on one open question for Hitya: *should autobid fire while the member is
+  away from the keyboard?* That is the feature's whole point and its whole risk.
+  Autobid rules already fixed by Hitya and pinned in the design doc: off until
+  explicitly ticked, never inferred from wishlist membership, cleared on any
+  win, and a ceiling is mandatory.
+
 - **PoP page: My Characters tab + mains-default scope (web 1.1.97, 2026-08-26,
   Hitya: "due to the nature of pop flagging they may do it for many of their
   toons and we shouldn't only track mains").** `pop_spell_needs` v4 (migration
