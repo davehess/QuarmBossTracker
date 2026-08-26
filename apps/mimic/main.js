@@ -9298,6 +9298,11 @@ ipcMain.handle('deck-launcher-status', () => {
       appImage: process.env.APPIMAGE || null,
       launchMode: launch.mode, launchDisplay: launch.display, launchError: launch.error || null,
       steamUsers: users.length,
+      // Discovered Lutris entries, so the card can offer a pick list instead of
+      // asking someone to type a slug they have no way to look up.
+      lutrisGames: (() => {
+        try { return deckLaunch.discoverLutrisGames(paths.home); } catch { return []; }
+      })(),
       lutrisSlug: d.lutrisSlug || '', eqDir: d.eqDir || '',
       winePrefix: d.winePrefix || '', wineLoader: d.wineLoader || '',
       stopMimicOnExit: d.stopMimicOnExit !== false,

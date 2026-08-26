@@ -131,8 +131,10 @@
 
       <div class="row" style="margin-top:10px">
         <label for="deckLutrisSlug" style="min-width:150px">Lutris game name</label>
-        <input id="deckLutrisSlug" type="text" placeholder="everquest" style="flex:1" />
+        <input id="deckLutrisSlug" type="text" placeholder="everquest" list="deckLutrisList" style="flex:1" />
+        <datalist id="deckLutrisList"></datalist>
       </div>
+      <div class="hint" id="deckLutrisFound" style="display:none"></div>
       <div class="hint">The identifier Lutris uses for the game — usually <code>everquest</code>. This is the recommended way: launching through Lutris keeps the graphics settings that make the game start at all.</div>
 
       <details style="margin-top:8px">
@@ -929,6 +931,32 @@
     _deckEl('deckWineLoader').value  = s.wineLoader || '';
     _deckEl('deckStopMimic').checked = s.stopMimicOnExit !== false;
     _deckEl('deckFps').value = (s.fpsLimit === null || s.fpsLimit === undefined) ? '' : String(s.fpsLimit);
+
+    // What Lutris actually has. A real Deck had three entries, two sharing the
+    // `everquest` slug — so show the folder each one points at, and say plainly
+    // when a slug cannot identify a single install.
+    const games = s.lutrisGames || [];
+    _deckEl('deckLutrisList').innerHTML =
+      [...new Set(games.map(g => g.slug))].map(sl => '<option value="' + sl + '">').join('');
+    const found = _deckEl('deckLutrisFound');
+    if (games.length === 0) {
+      found.style.display = 'none';
+    } else {
+      found.style.display = '';
+      found.innerHTML = 'Found in Lutris: ' + games.map(g => {
+        const where = g.prefix || g.exe || '?';
+        const flags = [];
+        if (g.slugAmbiguous) flags.push('<b style="color:#d29922">slug shared</b>');
+        if (g.missingWorkingDir) flags.push('<b style="color:#d29922">no working folder</b>');
+        return '<code>' + g.slug + '</code> → ' + where + (flags.length ? ' (' + flags.join(', ') + ')' : '');
+      }).join('<br>') +
+      (games.some(g => g.slugAmbiguous)
+        ? '<br><b style="color:#d29922">Two entries share a name</b>, so launching by name picks one of them at random. Remove the one you do not use in Lutris, or use the Wine option below to point at a folder directly.'
+        : '') +
+      (games.some(g => g.missingWorkingDir)
+        ? '<br><b style="color:#d29922">An entry has no working folder set</b> — that is what causes “Couldn\'t load eqmain.dll”. Fix it in Lutris → Configure → Game options.'
+        : '');
+    }
     _deckEl('deckAutofill').checked  = !!s.autofillEnabled;
     _deckEl('deckAutofillUser').value = s.autofillUser || '';
     _deckEl('deckAutofillPass').placeholder = s.hasStoredPassword ? '(saved — leave blank to keep)' : '';

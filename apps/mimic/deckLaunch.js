@@ -354,8 +354,87 @@ function steamShortcutFor({ scriptPath, appName = 'Everquest Quarm', iconPath = 
   };
 }
 
+// ── Discovering what Lutris actually has ────────────────────────────────────
+// Asking a member to type a "Lutris game name" assumed they could find one.
+// A real Deck (2026-08-26) had THREE entries — `projectquarm-…`,
+// `everquest-1783136886` and `everquest-1787744830` — two of which share the
+// `everquest` slug base, so `lutris:rungame/everquest` is ambiguous there and
+// typing it is a coin flip between installs. So discover instead of ask.
+//
+// ⚠ PATHS ARE VERIFIED, not guessed — an earlier pass at this looked under
+// `config/lutris/games` and found nothing, because Flatpak maps XDG_DATA_HOME
+// to `.var/app/<id>/data/`, not `share/` or `config/`. Lutris keeps game YAML
+// in XDG_DATA_HOME/lutris/games, so under Flatpak that is
+// `~/.var/app/net.lutris.Lutris/data/lutris/games/`.
+function lutrisGameDirs(home) {
+  const p = require('path');
+  return [
+    p.join(home, '.var', 'app', 'net.lutris.Lutris', 'data', 'lutris', 'games'),
+    p.join(home, '.local', 'share', 'lutris', 'games'),
+  ];
+}
+
+// Lutris names each file `<slug>-<numeric id>.yml`, so the slug comes from the
+// FILENAME and needs no YAML parser. The body is read with targeted regexes
+// rather than a parser for the same reason the ini transforms are regex-level:
+// we only ever read four keys, and a dependency-free Mimic is a hard rule.
+function parseLutrisGameFile(filename, text) {
+  const base = String(filename).replace(/\.yml$/i, '');
+  const m = /^(.*)-(\d+)$/.exec(base);
+  const slug = m ? m[1] : base;
+  const src = String(text == null ? '' : text);
+  const grab = (key) => {
+    const r = new RegExp('^\\s*' + key + '\\s*:\\s*(.+?)\\s*$', 'm').exec(src);
+    if (!r) return null;
+    return r[1].replace(/^['"]|['"]$/g, '') || null;
+  };
+  return {
+    slug,
+    id: m ? m[2] : null,
+    exe: grab('exe'),
+    prefix: grab('prefix'),
+    workingDir: grab('working_dir'),
+    // The trap this surfaces: eqgame.exe resolves eqmain.dll by RELATIVE path,
+    // so a launch with no working_dir fails exactly like the file is missing
+    // ("Couldn't load eqmain.dll"). Flagged per game so the UI can say which
+    // entry is misconfigured instead of the user guessing.
+    missingWorkingDir: !grab('working_dir'),
+  };
+}
+
+function discoverLutrisGames(home, fsLike) {
+  const fsx = fsLike || require('fs');
+  const p = require('path');
+  const out = [];
+  const seen = new Set();
+  for (const dir of lutrisGameDirs(home)) {
+    let names = [];
+    try { if (!fsx.existsSync(dir)) continue; names = fsx.readdirSync(dir); }
+    catch { continue; }
+    for (const n of names) {
+      if (!/\.yml$/i.test(n)) continue;
+      let text = '';
+      try { text = fsx.readFileSync(p.join(dir, n), 'utf8'); } catch { /* unreadable */ }
+      const g = parseLutrisGameFile(n, text);
+      const key = g.slug + '|' + (g.id || '');
+      if (seen.has(key)) continue;      // same entry visible under both roots
+      seen.add(key);
+      out.push({ ...g, file: p.join(dir, n) });
+    }
+  }
+  // Ambiguity is the thing worth surfacing: two entries sharing a slug means
+  // `lutris:rungame/<slug>` picks one of them and the user cannot tell which.
+  const bySlug = new Map();
+  for (const g of out) bySlug.set(g.slug, (bySlug.get(g.slug) || 0) + 1);
+  for (const g of out) g.slugAmbiguous = (bySlug.get(g.slug) || 0) > 1;
+  return out.sort((a, b) => a.slug.localeCompare(b.slug) || String(a.id).localeCompare(String(b.id)));
+}
+
 module.exports = {
   buildLaunchScript,
+  lutrisGameDirs,
+  parseLutrisGameFile,
+  discoverLutrisGames,
   resolveEqLaunch,
   autofillPlan,
   steamShortcutFor,

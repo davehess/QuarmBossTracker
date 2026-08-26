@@ -266,3 +266,94 @@ describe('script hygiene', () => {
     expect(lutris()).toContain('mv -f "$LOGFILE" "$LOGFILE.1"');
   });
 });
+
+// ── Lutris discovery ────────────────────────────────────────────────────────
+// Asking a member to type a "Lutris game name" assumed they could find one. A
+// real Deck (2026-08-26) had THREE entries — projectquarm-1785095494,
+// everquest-1783136886 and everquest-1787744830 — two sharing the `everquest`
+// slug, which makes `lutris:rungame/everquest` a coin flip between installs.
+// These tests are built from that box's actual filenames.
+describe('discoverLutrisGames', () => {
+  const FLAT = '/home/deck/.var/app/net.lutris.Lutris/data/lutris/games';
+  const NATIVE = '/home/deck/.local/share/lutris/games';
+  const mkFs = (tree) => ({
+    existsSync: (p) => Object.prototype.hasOwnProperty.call(tree, p),
+    readdirSync: (p) => Object.keys(tree[p] || {}),
+    readFileSync: (p) => {
+      const dir = p.slice(0, p.lastIndexOf('/'));
+      const f = p.slice(p.lastIndexOf('/') + 1);
+      return tree[dir][f];
+    },
+  });
+  const yml = (dir) => `game:\n  exe: ${dir}/eqgame.exe\n  prefix: ${dir}\n  working_dir: ${dir}\n`;
+
+  it('looks in the FLATPAK data dir, not config/ or share/', () => {
+    // The earlier attempt used config/lutris/games and silently found nothing,
+    // because Flatpak maps XDG_DATA_HOME to .var/app/<id>/data/.
+    const dirs = D.lutrisGameDirs('/home/deck');
+    expect(dirs[0]).toBe(FLAT);
+    // The FLATPAK root specifically must be data/, not config/ or share/.
+    // (The NATIVE root below is legitimately ~/.local/share/lutris/games —
+    // asserting "no /share/ anywhere" was my own sloppy first draft.)
+    expect(dirs[0]).toContain('/data/lutris/games');
+    expect(dirs[0]).not.toContain('/config/');
+    expect(dirs[0]).not.toContain('/share/');
+    expect(dirs[1]).toBe(NATIVE);
+  });
+
+  it('finds all three of the real Deck entries and takes the slug from the filename', () => {
+    const F = mkFs({ [FLAT]: {
+      'projectquarm-1785095494.yml': yml('/home/deck/Games/ProjectQuarm'),
+      'everquest-1783136886.yml':    yml('/home/deck/Games/eq-old'),
+      'everquest-1787744830.yml':    yml('/home/deck/Games/lutrisquarm'),
+    } });
+    const games = D.discoverLutrisGames('/home/deck', F);
+    expect(games).toHaveLength(3);
+    expect(games.map(g => g.slug).sort()).toEqual(['everquest', 'everquest', 'projectquarm']);
+    expect(games.find(g => g.id === '1787744830').prefix).toBe('/home/deck/Games/lutrisquarm');
+  });
+
+  it('flags a slug shared by two entries as ambiguous', () => {
+    // This is the whole reason discovery exists: lutris:rungame/everquest
+    // cannot say WHICH everquest, so the UI has to.
+    const F = mkFs({ [FLAT]: {
+      'everquest-1783136886.yml': yml('/a'),
+      'everquest-1787744830.yml': yml('/b'),
+      'projectquarm-1785095494.yml': yml('/c'),
+    } });
+    const games = D.discoverLutrisGames('/home/deck', F);
+    expect(games.filter(g => g.slug === 'everquest').every(g => g.slugAmbiguous)).toBe(true);
+    expect(games.find(g => g.slug === 'projectquarm').slugAmbiguous).toBe(false);
+  });
+
+  it('flags an entry with no working_dir — the eqmain.dll trap', () => {
+    // eqgame.exe resolves eqmain.dll by RELATIVE path, so a missing working_dir
+    // fails identically to the file being absent ("Couldn't load eqmain.dll").
+    const F = mkFs({ [FLAT]: {
+      'projectquarm-1.yml': 'game:\n  exe: /x/eqgame.exe\n  prefix: /x\n',
+      'everquest-2.yml':    yml('/y'),
+    } });
+    const games = D.discoverLutrisGames('/home/deck', F);
+    expect(games.find(g => g.slug === 'projectquarm').missingWorkingDir).toBe(true);
+    expect(games.find(g => g.slug === 'everquest').missingWorkingDir).toBe(false);
+  });
+
+  it('de-dupes an entry visible under both roots', () => {
+    const F = mkFs({
+      [FLAT]:   { 'everquest-1787744830.yml': yml('/a') },
+      [NATIVE]: { 'everquest-1787744830.yml': yml('/a') },
+    });
+    expect(D.discoverLutrisGames('/home/deck', F)).toHaveLength(1);
+  });
+
+  it('returns [] rather than throwing when Lutris is absent', () => {
+    expect(D.discoverLutrisGames('/home/deck', mkFs({}))).toEqual([]);
+  });
+
+  it('survives an unreadable or malformed yml', () => {
+    const F = mkFs({ [FLAT]: { 'everquest-1.yml': 'not: [valid', 'notes.txt': 'x' } });
+    const games = D.discoverLutrisGames('/home/deck', F);
+    expect(games).toHaveLength(1);            // .txt ignored, bad yml kept
+    expect(games[0].exe).toBeNull();
+  });
+});
