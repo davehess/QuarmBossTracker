@@ -170,3 +170,64 @@ counted and displayed **separately and explicitly labelled "not OpenDKP"**.
 Tests: `test/opendkp-panel-negative-cache.test.js` (5, mutation-checked —
 removing the negative cache kills two), plus 5 more in
 `test/opendkp-call-stats.test.js`. Suite green (2,361).
+
+---
+
+## "Why are we auditing so frequently" — the early break was never engaging
+
+> "this still feels like a lot. the dkp numbers don't change outside of raids
+> unless we have to override something. why are we auditing so frequently"
+
+Right on both counts, and the live counter proved it. Grouping
+`opendkp_call_stats` by minute:
+
+```
+14:58  17 calls  6214 kB
+14:28  17 calls  6214 kB
+13:58  17 calls  6214 kB
+13:29  17 calls  6214 kB
+```
+
+**Byte-for-byte identical, every 30 minutes — 297 MB/day, essentially all of it
+spent discovering that nothing had happened.** The 2026-08-26 early break is
+NOT engaging.
+
+**Why:** the break only fires once page 1 *proves* newest-first ordering
+(page-1 max id ≥ our watermark). That guard is doing exactly its job — it
+cannot prove it, so it falls back to the full walk. Which means **audits almost
+certainly page OLDEST-first**, and the assumption behind the break (inferred
+from the auctions endpoint's "page 1 = most recent" note) was wrong for this
+endpoint. Recorded rather than fixed blind: a one-line probe now logs page 1's
+id range against the watermark each pass, so the next session reads the ordering
+off Railway instead of inferring it from a sibling endpoint a second time.
+
+**The fix shipped now is Hitya's framing, not mine, and it is better** — it
+needs no ordering assumption at all. The endpoint has no `since` filter, so
+there is no cheap way to *ask* whether anything changed. If the answer keeps
+being no, ask less often:
+
+- Doubling idle backoff per consecutive empty pass: 30m → 1h → 2h → 4h, capped
+  at `OPENDKP_LIST_IDLE_MAX_HOURS` (default 6).
+- **Any new row resets it instantly.**
+- **A raid window pins it to every pass** (Sun/Wed/Thu 8pm–midnight ET, hour
+  either side) — DKP moves during raids, and a 6h delay there is the one time
+  it would matter.
+- `OPENDKP_LIST_IDLE_BACKOFF=0` disables the whole thing, so a bad backoff can
+  never wedge the sync.
+- When backed off it makes **no HTTP call at all** — not a cheaper call, none.
+
+Expected effect on an ordinary Tuesday: **48 walks/day → ~6**, i.e. 297 MB/day
+→ roughly 37 MB. The deliberate trade: a manual override made at 3pm on a
+non-raid day is picked up within 6 hours instead of within 30 minutes.
+
+Still open, and the reason the probe exists: if audits really are oldest-first,
+the *right* fix is to jump to the LAST page (new rows land at the end) instead
+of walking from page 1 — which would take a pass from 17 calls to ~1 even
+during raids. Do not implement that until the log confirms the ordering.
+
+Tests: 5 more in `test/opendkp-list-endpoint-writes.test.js`, mutation-checked
+(disabling the skip, and making the raid window always-true, each kill tests).
+Two self-inflicted errors worth noting: the first slice-marker change dropped
+`_pkColFor` and broke all 11 existing tests, and the first raid-window fixture
+used a SATURDAY timestamp while claiming Sunday — asserting the opposite of
+what it said. Both caught by the suite, both now commented in place.

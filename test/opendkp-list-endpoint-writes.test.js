@@ -34,6 +34,17 @@ const block = sliceBlock(
   '\n    full_sweep: fullSweep,\n  };\n}',
 );
 
+const srcText = src;
+// _inRaidWindow is pure; slice it out and exercise the shipped copy directly.
+const _raidFn = new Function('return ' + src.slice(
+  src.indexOf('function _inRaidWindow'),
+  src.indexOf('function _backoffCapMs')).trim())();
+const h_inRaid = (d) => _raidFn(d);
+
+// NOTE: _pkColFor sits ABOVE the backoff helpers in the file, so the original
+// block already carries them — no second slice needed. (Two earlier attempts
+// got this wrong in opposite directions: moving the start marker dropped
+// _pkColFor, and prepending a second slice declared _idleStreak twice.)
 function build({ mirroredIds = [], pages = [], envHours = null } = {}) {
   const calls = { selects: [], inserts: [], upserts: [] };
   const harness = `
@@ -68,7 +79,7 @@ function build({ mirroredIds = [], pages = [], envHours = null } = {}) {
     }
     const console = { log() {}, warn() {} };
   ` + block + `
-    return { _syncListEndpoint, _lastFullSweepAt, calls };
+    return { _syncListEndpoint, _lastFullSweepAt, _nextDueAt, _idleStreak, calls };
   `;
   // eslint-disable-next-line no-new-func
   const made = new Function('calls', harness)(calls);
@@ -241,5 +252,64 @@ describe('_syncListEndpoint early break', () => {
     });
     expect(res.full_sweep).toBe(true);
     expect(res.pages).toBe(3);
+  });
+});
+
+// ── Idle backoff (2026-08-26) ───────────────────────────────────────────────
+// Hitya, looking at the live counter: "the dkp numbers don't change outside of
+// raids unless we have to override something. why are we auditing so
+// frequently". Measured that day: 17 calls / 6.2 MB EVERY 30 MINUTES, byte for
+// byte identical — 297 MB/day spent discovering nothing had happened. The
+// endpoint has no `since` filter and does not page newest-first, so there is no
+// cheap way to ASK; the fix is to ask less often when the answer keeps being no.
+describe('idle backoff', () => {
+  const buildB = (over = {}) => {
+    const h = build(over);
+    // Reach into the sliced module's own state, so these exercise the SHIPPED
+    // maps rather than a paraphrase of them.
+    return h;
+  };
+
+  it('skips the walk entirely — no HTTP — once backed off', async () => {
+    const h = buildB({ mirroredIds: [1, 2, 3], pages: [audits(1, 2, 3), audits(1, 2, 3)] });
+    h._lastFullSweepAt.set('opendkp_audits', Date.now());
+    const first = await h._syncListEndpoint({ ...AUDIT_ARGS, fetchPage: h.fetchPage, shapeFlag: { value: true } });
+    expect(first.pages).toBe(1);                 // it walked once and found nothing
+
+    const second = await h._syncListEndpoint({ ...AUDIT_ARGS, fetchPage: h.fetchPage, shapeFlag: { value: true } });
+    expect(second.skipped).toBe('idle-backoff');
+    expect(second.pages).toBe(0);                // the point: zero calls made
+  });
+
+  it('resets the moment something new appears', async () => {
+    const h = buildB({ mirroredIds: [1, 2, 3], pages: [audits(1, 2, 3), audits(1, 2, 3, 4)] });
+    h._lastFullSweepAt.set('opendkp_audits', Date.now());
+    await h._syncListEndpoint({ ...AUDIT_ARGS, fetchPage: h.fetchPage, shapeFlag: { value: true } });
+    // Force the backoff to have elapsed, then a pass that DOES find a new row.
+    h._nextDueAt.delete('opendkp_audits');
+    const withNew = await h._syncListEndpoint({ ...AUDIT_ARGS, fetchPage: h.fetchPage, shapeFlag: { value: true } });
+    expect(withNew.upserted).toBe(1);
+    expect(h._nextDueAt.get('opendkp_audits')).toBeUndefined();   // streak cleared
+  });
+
+  it('never backs off during a raid window', () => {
+    // DKP moves during raids; a 6h delay there would be the one time it matters.
+    // Sun/Wed/Thu 8pm-midnight ET, hour either side.
+    // (First draft used Aug 30 01:00Z, which is SATURDAY 21:00 ET — not a raid
+    // night at all, so it asserted the opposite of what it claimed.)
+    expect(h_inRaid(new Date('2026-08-31T01:00:00Z'))).toBe(true);   // Sun 21:00 ET
+    expect(h_inRaid(new Date('2026-08-27T01:00:00Z'))).toBe(true);   // Wed 21:00 ET
+  });
+
+  it('DOES back off on a non-raid night', () => {
+    // Without this the raid-window test would pass on a function that always
+    // returned true, which would disable the backoff entirely.
+    expect(h_inRaid(new Date('2026-08-26T01:00:00Z'))).toBe(false);  // Mon 21:00 ET
+    expect(h_inRaid(new Date('2026-08-27T18:00:00Z'))).toBe(false);  // Thu 14:00 ET
+  });
+
+  it('is disableable, so a bad backoff can never wedge the sync', () => {
+    expect(srcText).toContain('OPENDKP_LIST_IDLE_BACKOFF');
+    expect(srcText).toContain('OPENDKP_LIST_IDLE_MAX_HOURS');
   });
 });
