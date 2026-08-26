@@ -121,3 +121,52 @@ public, the switch is not, because a public kill switch is an abuse surface.
 
 Shipped: bot 3.1.73, web 1.1.98, migration `20260826120000_opendkp_call_stats`
 (applied + committed). Tests: `test/opendkp-call-stats.test.js` (11).
+
+---
+
+## Unblock day: what the 1,486 actually was (bot 3.1.74 / web 1.1.99)
+
+Moncs lifted the block, `OPENDKP_HALT` went to 0, and the page immediately read
+**1,486 "refused by us" against 4 real calls.** Hitya: *"stats are flowing but
+I'm concerned by our block."* Right to be — that reads like we tried to hammer
+him 1,486 times an hour.
+
+**We didn't. Every one of them was AWS Cognito** — our own sign-in provider,
+`POST /`, which never touches OpenDKP's API. Zero reached his infrastructure.
+Confirmed by grouping `opendkp_call_stats` by endpoint rather than reasoning
+about it.
+
+But the cause was a real hole I shipped on 2026-08-25, and the halt was the only
+thing hiding it:
+
+**1. The fan-in cache had no negative caching.** `_panelAuctions` cached
+successes only. With a COLD cache and a failing upstream, every dashboard poll
+re-attempted — so the guarantee the whole design rests on ("N dashboards cost
+what one costs") **evaporated exactly when OpenDKP was unreachable**, which is
+the moment it matters most. Measured: ~106 attempts/minute, which is 4
+dashboards × 7s × the auctions+my-bids pair. Had Moncs's API been merely *slow*
+rather than blocking us, we would have done this to him for real. Failures now
+cache for 20s — long enough to collapse a poll storm, short enough that
+recovery is seconds, and on its own TTL so "upstream broken" never masquerades
+as "no auctions open" for the 120s idle window.
+
+**2. A failing token turns one retrying caller into an auth storm.** Every
+endpoint wrapper calls `getAuthToken()` first, and because a *local* refusal
+fails without touching the network, the loop spun at CPU speed rather than
+network speed. Failed auth now backs off 15s.
+
+**3. …but a local refusal must NOT arm that backoff.** Caught by
+`test/opendkp-halt.test.js`, which asserts both wrappers report "halted": with
+the naive version the first refusal armed the auth backoff and the second call
+reported *"auth backing off"* instead — for 15s after the halt was cleared.
+A halted call never reaches Cognito, so there is nothing to back off from.
+Local refusals are now tagged (`err.localRefusal`) and skip it.
+
+**4. The page was overstating our traffic.** Folding Cognito into "calls to
+OpenDKP" is wrong in the one direction a page built to regain trust must never
+be wrong in — it invites a re-block for traffic we never sent. Auth is now
+counted and displayed **separately and explicitly labelled "not OpenDKP"**.
+
+Tests: `test/opendkp-panel-negative-cache.test.js` (5, mutation-checked —
+removing the negative cache kills two), plus 5 more in
+`test/opendkp-call-stats.test.js`. Suite green (2,361).

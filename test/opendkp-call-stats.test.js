@@ -101,7 +101,49 @@ describe('the two halts', () => {
   it('blocked calls are still counted — halted must not look like dead', () => {
     // If a halt zeroed the counters entirely, the public page could not
     // distinguish "the kill switch works" from "the bot fell over".
-    expect(SRC).toMatch(/noteCall\(options\.path, _m, \{ blocked: true \}\)/);
-    expect(SRC).toMatch(/noteCall\(options\.path, 'GET', \{ blocked: true \}\)/);
+    // Asserted on the PROPERTY, not the exact argument list — an earlier
+    // version pinned the literal and broke the moment `hostname` was threaded
+    // through, which told us nothing about whether blocked calls are counted.
+    expect(SRC).toMatch(/noteCall\(options\.path, _m, \{ blocked: true[^)]*\}\)/);
+    expect(SRC).toMatch(/noteCall\(options\.path, 'GET', \{ blocked: true[^)]*\}\)/);
+  });
+});
+
+// ── The 2026-08-26 unblock-day finding ──────────────────────────────────────
+// The public page showed 1,486 "refused by us" against 4 real calls, which
+// reads like we tried to hammer OpenDKP 1,486 times. We did not: every one was
+// AWS Cognito, our own sign-in provider, which never touches his API. Two
+// separate bugs produced it, and both are fixed here.
+describe('Cognito is not OpenDKP traffic', () => {
+  it('labels the auth host distinctly so the page cannot overstate our volume', () => {
+    // Overstating is the ONE direction a page built to regain trust must never
+    // be wrong in — it invites a re-block for traffic we never sent.
+    const e = api._normalizeEndpoint('/', 'cognito-idp.us-east-2.amazonaws.com');
+    expect(e).toMatch(/^cognito:/);
+    expect(e).toMatch(/not OpenDKP/i);
+  });
+
+  it('still labels real OpenDKP paths normally', () => {
+    expect(api._normalizeEndpoint('/clients/wolfpack/auctions', 'api.opendkp.com'))
+      .toBe('/clients/{client}/auctions');
+  });
+
+  it('does not collapse an unknown host into the auth bucket', () => {
+    expect(api._normalizeEndpoint('/clients/x/dkp', 'example.invalid'))
+      .toBe('/clients/{client}/dkp');
+  });
+});
+
+describe('auth failures back off instead of spinning', () => {
+  it('a recent auth failure short-circuits the next attempt', () => {
+    // Every endpoint wrapper calls getAuthToken FIRST, so a failing token turns
+    // one retrying caller into an auth storm — and a LOCAL refusal fails without
+    // touching the network, so it spins at CPU speed (~106/min measured).
+    expect(SRC).toMatch(/_authFailUntil/);
+    expect(SRC).toMatch(/backing off after a recent failure/);
+  });
+
+  it('keeps the happy path cached, not re-authenticating per call', () => {
+    expect(SRC).toMatch(/if \(_token && Date\.now\(\) < _tokenExpiry\) return _token;/);
   });
 });

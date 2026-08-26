@@ -66,8 +66,16 @@ export default async function OpenDkpPage() {
   const inWindow = (r: Row, mins: number) => now - Date.parse(r.minute) <= mins * 60 * 1000;
   const sum = (rs: Row[], k: keyof Row) => rs.reduce((n, r) => n + (Number(r[k]) || 0), 0);
 
-  const last60 = rows.filter(r => inWindow(r, 60));
-  const last24 = rows.filter(r => inWindow(r, 60 * 24));
+  // Split OUR auth provider (AWS Cognito) from OpenDKP's own API. Counting
+  // Cognito is useful — a token storm is still a bug of ours — but folding it
+  // into "calls to OpenDKP" overstates what we send him, which is the one
+  // direction a page built to regain trust must never be wrong in.
+  const isAuth = (r: Row) => r.endpoint.startsWith('cognito:');
+  const all60 = rows.filter(r => inWindow(r, 60));
+  const all24 = rows.filter(r => inWindow(r, 60 * 24));
+  const last60 = all60.filter(r => !isAuth(r));
+  const last24 = all24.filter(r => !isAuth(r));
+  const auth60 = all60.filter(isAuth);
 
   // By endpoint over 24h — the bar chart from the writeup.
   const byEndpoint = new Map<string, { calls: number; bytes: number; errors: number }>();
@@ -90,6 +98,8 @@ export default async function OpenDkpPage() {
 
   const callsNow = sum(last60, 'calls');
   const blockedNow = sum(last60, 'blocked');
+  const authCalls = sum(auth60, 'calls');
+  const authBlocked = sum(auth60, 'blocked');
   const everSeen = rows.length > 0;
 
   // Three states, and the distinction matters to a reader deciding whether to
@@ -131,7 +141,7 @@ export default async function OpenDkpPage() {
         {[
           { k: 'Calls, last hour', v: fmt(callsNow), n: `${fmtBytes(sum(last60, 'bytes'))} returned` },
           { k: 'Calls, last 24h', v: fmt(sum(last24, 'calls')), n: `${fmtBytes(sum(last24, 'bytes'))} returned` },
-          { k: 'Refused by us', v: fmt(blockedNow), n: 'last hour — stopped before leaving our server' },
+          { k: 'Refused by us', v: fmt(blockedNow), n: 'last hour — stopped before reaching OpenDKP' },
           { k: 'Errors, last 24h', v: fmt(sum(last24, 'errors')), n: 'HTTP 4xx/5xx from OpenDKP' },
         ].map(s => (
           <div key={s.k} className="bg-panel border border-border rounded-lg p-4">
@@ -191,6 +201,20 @@ export default async function OpenDkpPage() {
           <span>48h ago</span><span>24h ago</span><span>now</span>
         </div>
       </section>
+
+      {(authCalls > 0 || authBlocked > 0) && (
+        <section className="bg-panel border border-border rounded-lg p-4">
+          <h2 className="text-base text-orange mb-1">Sign-in traffic (not OpenDKP)</h2>
+          <p className="text-xs text-dim">
+            Counted separately and on purpose: these go to <b className="text-text">Amazon Cognito</b>,
+            the sign-in service, and never touch OpenDKP&apos;s own API. They are shown because a
+            burst of them is still a bug worth seeing on our side — not because they cost OpenDKP
+            anything. Last hour: <b className="text-text">{fmt(authCalls)}</b> sign-in
+            {authCalls === 1 ? '' : 's'}
+            {authBlocked > 0 && <> · <b className="text-text">{fmt(authBlocked)}</b> refused by us before sending</>}.
+          </p>
+        </section>
+      )}
 
       <section className="bg-panel border border-border rounded-lg p-4 text-xs text-dim leading-6">
         <b className="text-text">What changed after the incident.</b> The live-bidding panel used to

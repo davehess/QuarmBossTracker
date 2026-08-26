@@ -6018,21 +6018,39 @@ async function _handleAgentUiEditResult(req, res) {
 //     getCharacters() are gone entirely (roster cached 1h below).
 const _PANEL_AUCTIONS_TTL_ACTIVE_MS = 15_000;
 const _PANEL_AUCTIONS_TTL_IDLE_MS   = 120_000;
+const _PANEL_AUCTIONS_TTL_FAILED_MS = 20_000;
 let _panelAuctionsCache = null;   // { at, list }
 async function _panelAuctions(deps = {}) {
   const now   = deps.now   || Date.now;
   const fetch = deps.fetch || (() => require('./utils/opendkp').getActiveAuctions());
   const c = _panelAuctionsCache;
   if (c) {
-    const ttl = c.list.length > 0 ? _PANEL_AUCTIONS_TTL_ACTIVE_MS : _PANEL_AUCTIONS_TTL_IDLE_MS;
-    if (now() - c.at < ttl) return c.list;
+    // A cached FAILURE gets its own short TTL: long enough to collapse a poll
+    // storm, short enough that recovery is seconds not minutes. It must never
+    // inherit the 120s idle TTL, which would make "upstream is broken" look
+    // identical to "no auctions are open" for two minutes.
+    const ttl = c.failed ? _PANEL_AUCTIONS_TTL_FAILED_MS
+              : (c.list.length > 0 ? _PANEL_AUCTIONS_TTL_ACTIVE_MS : _PANEL_AUCTIONS_TTL_IDLE_MS);
+    if (now() - c.at < ttl) {
+      if (c.failed) throw new Error('OpenDKP unreachable (cached failure) — not re-attempting yet');
+      return c.list;
+    }
   }
   let raw;
   try { raw = await fetch(); }
   catch (err) {
     // Serve stale over erroring — a raid-night blip should not blank the
-    // bidding panel. No cache at all → surface the failure to the caller.
+    // bidding panel.
     if (c) return c.list;
+    // ⚠ NEGATIVE CACHE (2026-08-26). Without this, a COLD cache plus a failing
+    // upstream meant the fan-in protection vanished exactly when it mattered:
+    // every dashboard poll re-attempted, because a failure cached nothing.
+    // Measured during the halt — 1,486 auth attempts in 14 minutes, ~106/min,
+    // which is 4 dashboards × 7s × the auctions+my-bids pair. The cache is
+    // supposed to make N dashboards cost the same as one; that guarantee has
+    // to hold while OpenDKP is DOWN too, or we hammer whoever we depend on at
+    // precisely the moment they are already struggling.
+    _panelAuctionsCache = { at: now(), list: [], failed: true };
     throw err;
   }
   const list = Array.isArray(raw?.Items) ? raw.Items : Array.isArray(raw) ? raw : [];

@@ -119,7 +119,12 @@ function _admitCall(where) {
 // Endpoints are NORMALIZED to the shape his API Gateway groups by
 // (`/clients/{client}/auctions/{id}/bids`), so the page can be read straight
 // across against his own log table instead of needing a translation step.
-function _normalizeEndpoint(pathname) {
+function _normalizeEndpoint(pathname, hostname) {
+  // AWS Cognito is OUR identity provider, not OpenDKP. Counting its calls is
+  // useful (a token storm is still a bug of ours) but showing them as OpenDKP
+  // traffic OVERSTATES what we send him — the one direction a page built to
+  // regain trust must never be wrong in. Labelled so the page can separate it.
+  if (/cognito-idp/i.test(String(hostname || ''))) return 'cognito:InitiateAuth (our auth — not OpenDKP)';
   return String(pathname || '')
     .split('?')[0]
     .replace(/\/clients\/[^/]+/i, '/clients/{client}')
@@ -128,16 +133,16 @@ function _normalizeEndpoint(pathname) {
 }
 
 const _stats = new Map();   // "minuteISO|endpoint|method" -> row
-function _bucket(pathname, method) {
+function _bucket(pathname, method, hostname) {
   const minute = new Date(Math.floor(Date.now() / 60000) * 60000).toISOString();
-  const endpoint = _normalizeEndpoint(pathname);
+  const endpoint = _normalizeEndpoint(pathname, hostname);
   const key = `${minute}|${endpoint}|${method}`;
   let r = _stats.get(key);
   if (!r) { r = { minute, endpoint, method, calls: 0, bytes: 0, errors: 0, blocked: 0 }; _stats.set(key, r); }
   return r;
 }
-function noteCall(pathname, method, { bytes = 0, error = false, blocked = false } = {}) {
-  const r = _bucket(pathname, method);
+function noteCall(pathname, method, { bytes = 0, error = false, blocked = false, hostname = '' } = {}) {
+  const r = _bucket(pathname, method, hostname);
   if (blocked) { r.blocked++; return; }   // refused locally — never left the box
   r.calls++;
   r.bytes += Number(bytes) || 0;
@@ -172,21 +177,26 @@ function _noteRateLimited(res) {
   console.warn(`[opendkp] HTTP 429 from OpenDKP — backing off all calls for ${waitMs / 1000}s`);
 }
 
+// A LOCAL refusal is not an upstream failure, and conflating the two arms
+// backoffs for outages that never happened. Tagged so getAuthToken can tell
+// "we declined to send this" from "Cognito rejected us".
+function _refusal(msg) { const e = new Error(msg); e.localRefusal = true; return e; }
+
 function _post(options, body) {
   const _m = options.method || 'POST';
   if (opendkpHalted()) {
     _logHalt('write');
-    noteCall(options.path, _m, { blocked: true });
-    return Promise.reject(new Error(HALT_ERROR));
+    noteCall(options.path, _m, { blocked: true, hostname: options.hostname });
+    return Promise.reject(_refusal(HALT_ERROR));
   }
   const denied = _admitCall('write');
-  if (denied) { noteCall(options.path, _m, { blocked: true }); return Promise.reject(denied); }
+  if (denied) { denied.localRefusal = true; noteCall(options.path, _m, { blocked: true, hostname: options.hostname }); return Promise.reject(denied); }
   return new Promise((resolve, reject) => {
     const req = https.request(options, (res) => {
       let data = '';
       res.on('data', c => (data += c));
       res.on('end', () => {
-        noteCall(options.path, _m, { bytes: Buffer.byteLength(data), error: res.statusCode >= 400 });
+        noteCall(options.path, _m, { bytes: Buffer.byteLength(data), error: res.statusCode >= 400, hostname: options.hostname });
         let parsed;
         try { parsed = JSON.parse(data); } catch { parsed = data; }
         if (res.statusCode >= 400) { _noteRateLimited(res); reject(new Error(`HTTP ${res.statusCode}: ${JSON.stringify(parsed)}`)); }
@@ -202,17 +212,17 @@ function _post(options, body) {
 function _get(options) {
   if (opendkpHalted()) {
     _logHalt('read');
-    noteCall(options.path, 'GET', { blocked: true });
-    return Promise.reject(new Error(HALT_ERROR));
+    noteCall(options.path, 'GET', { blocked: true, hostname: options.hostname });
+    return Promise.reject(_refusal(HALT_ERROR));
   }
   const denied = _admitCall('read');
-  if (denied) { noteCall(options.path, 'GET', { blocked: true }); return Promise.reject(denied); }
+  if (denied) { denied.localRefusal = true; noteCall(options.path, 'GET', { blocked: true, hostname: options.hostname }); return Promise.reject(denied); }
   return new Promise((resolve, reject) => {
     https.get(options, (res) => {
       let data = '';
       res.on('data', c => (data += c));
       res.on('end', () => {
-        noteCall(options.path, 'GET', { bytes: Buffer.byteLength(data), error: res.statusCode >= 400 });
+        noteCall(options.path, 'GET', { bytes: Buffer.byteLength(data), error: res.statusCode >= 400, hostname: options.hostname });
         let parsed;
         try { parsed = JSON.parse(data); } catch { parsed = data; }
         if (res.statusCode >= 400) { _noteRateLimited(res); reject(new Error(`HTTP ${res.statusCode}: ${JSON.stringify(parsed)}`)); }
@@ -225,8 +235,30 @@ function _get(options) {
 // ── Cognito auth (cached) ─────────────────────────────────────────────────────
 let _token = null, _tokenExpiry = 0;
 
+let _authFailUntil = 0;
 async function getAuthToken() {
   if (_token && Date.now() < _tokenExpiry) return _token;
+  // Every endpoint wrapper calls this FIRST, so a failing token turns one
+  // retrying caller into an auth storm — and because a local refusal fails
+  // without touching the network, it spins at CPU speed rather than network
+  // speed (measured: ~106/min during the 2026-08-26 halt). Back off so the
+  // failure costs one attempt per window, not one per caller.
+  if (Date.now() < _authFailUntil) throw new Error('OpenDKP auth backing off after a recent failure');
+  try {
+    return await _getAuthTokenUncached();
+  } catch (e) {
+    // Do NOT back off on our OWN refusal. A halted or budget-capped call never
+    // reaches Cognito, so there is nothing to back off from — and arming it
+    // here made the halt's error read "auth backing off" for 15s after the
+    // halt was cleared, which is a confusing thing to hand an operator who is
+    // trying to work out whether the switch took. (Caught by
+    // test/opendkp-halt.test.js, which asserts BOTH wrappers say "halted".)
+    if (!e || !e.localRefusal) _authFailUntil = Date.now() + 15_000;
+    throw e;
+  }
+}
+
+async function _getAuthTokenUncached() {
 
   // OpenDKP's Cognito user pool authenticates against the USERNAME field, not
   // the email address.  OPENDKP_USERNAME is the preferred env var; we still
