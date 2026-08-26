@@ -120,6 +120,78 @@
     <div id="uiStudioCharList" style="margin-top:8px"></div>
   </div>
 
+  <!-- Steam Deck launcher (#156). Hidden entirely off Linux — main.js returns
+       { supported:false } and _renderDeckLauncher() removes the section. -->
+  <div id="deckSection" style="display:none">
+    <h2>Steam Deck — one launcher</h2>
+    <div class="sub">Put <b>one entry in Steam</b> that starts Mimic and EverQuest together, so Gaming Mode needs a single press. Mimic writes a launcher script and adds it to your Steam library. It waits for EverQuest to close before letting go, so Steam tracks your playtime properly.</div>
+
+    <div id="deckPanel" style="margin-top:10px">
+      <div class="hint" id="deckStatusLine">Checking…</div>
+
+      <div class="row" style="margin-top:10px">
+        <label for="deckLutrisSlug" style="min-width:150px">Lutris game name</label>
+        <input id="deckLutrisSlug" type="text" placeholder="everquest" style="flex:1" />
+      </div>
+      <div class="hint">The identifier Lutris uses for the game — usually <code>everquest</code>. This is the recommended way: launching through Lutris keeps the graphics settings that make the game start at all.</div>
+
+      <details style="margin-top:8px">
+        <summary style="cursor:pointer;font-size:12px;color:#8b949e">No Lutris? Launch through Wine directly</summary>
+        <div class="row" style="margin-top:8px">
+          <label for="deckEqDir" style="min-width:150px">EverQuest folder</label>
+          <input id="deckEqDir" type="text" placeholder="/home/deck/Games/everquest/drive_c/ProjectQuarm" style="flex:1" />
+        </div>
+        <div class="row" style="margin-top:6px">
+          <label for="deckWinePrefix" style="min-width:150px">Wine prefix</label>
+          <input id="deckWinePrefix" type="text" placeholder="/home/deck/Games/everquest" style="flex:1" />
+        </div>
+        <div class="row" style="margin-top:6px">
+          <label for="deckWineLoader" style="min-width:150px">Wine command</label>
+          <input id="deckWineLoader" type="text" placeholder="wine" style="flex:1" />
+        </div>
+        <div class="hint">Both the folder and the prefix are required. Mimic will not guess a prefix — guessing wrong creates a second, empty EverQuest install instead of showing an error.</div>
+      </details>
+
+      <div class="row" style="margin-top:10px">
+        <input id="deckStopMimic" type="checkbox" checked />
+        <label for="deckStopMimic">Close Mimic when EverQuest closes</label>
+      </div>
+      <div class="hint">Only closes Mimic if the launcher was the thing that started it — a Mimic you already had open keeps running.</div>
+
+      <div class="row" style="margin-top:12px">
+        <input id="deckAutofill" type="checkbox" />
+        <label for="deckAutofill">Type my login automatically</label>
+      </div>
+      <div class="hint" id="deckAutofillWarn" style="display:none;border-left:2px solid #d29922;padding-left:8px;margin-top:6px">
+        <b style="color:#d29922">Read this before turning it on.</b> EverQuest has no built-in
+        auto-login, so Mimic types your password for you like a keyboard would.
+        That means:
+        <ul style="margin:6px 0 0 16px;padding:0">
+          <li>Your password is stored on this device in a file only your user account can read. <span id="deckKeychainNote"></span></li>
+          <li>It only works in <b>Desktop Mode</b>. Gaming Mode does not allow it, and the launcher skips it there.</li>
+          <li>If anything steals focus while it is typing, the launcher stops rather than typing your password into another window.</li>
+        </ul>
+      </div>
+      <div id="deckAutofillFields" style="display:none">
+        <div class="row" style="margin-top:8px">
+          <label for="deckAutofillUser" style="min-width:150px">Login name</label>
+          <input id="deckAutofillUser" type="text" autocomplete="off" style="flex:1" />
+        </div>
+        <div class="row" style="margin-top:6px">
+          <label for="deckAutofillPass" style="min-width:150px">Password</label>
+          <input id="deckAutofillPass" type="password" autocomplete="off" placeholder="(unchanged)" style="flex:1" />
+          <button id="deckClearPass" type="button" style="background:#21262d;border:1px solid #2a3140">Forget</button>
+        </div>
+        <div class="hint">Leave the password blank to keep the one already saved.</div>
+      </div>
+
+      <div style="margin-top:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <button id="deckInstallBtn" type="button" style="background:#1f6feb;color:#fff;border:0;border-radius:5px;padding:6px 14px;cursor:pointer;font-weight:600">⬇ Install launcher &amp; add to Steam</button>
+        <span id="deckMsg" style="font-size:11px;color:#8b949e"></span>
+      </div>
+    </div>
+  </div>
+
   <h2>Zeal</h2>
   <div class="sub">Keep the CoastalRedwood <b>Zeal</b> mod current without dragging files around. Mimic downloads the latest release and drops <code>Zeal.asi</code> + <code>uifiles/</code> into your EverQuest folder — backing up whatever's there first. Close EverQuest before installing (the game holds the file while it's running).</div>
 
@@ -600,6 +672,7 @@
       document.getElementById('overlayScaleVal').textContent = pct + '%';
     } catch {}
     _renderZealStatus();
+    _renderDeckLauncher();
     _renderUiPacks();
     const tm = c.tellsMode || 'off';
     document.querySelectorAll('input[name=tells]').forEach(r => { r.checked = (r.value === tm); });
@@ -824,6 +897,96 @@
       } finally { btn.disabled = false; btn.textContent = orig; }
     });
   })();
+
+  // ── Steam Deck launcher card (#156) ───────────────────────────────────────
+  // Writes a launcher script + one Steam shortcut so Gaming Mode is a single
+  // press. Whole section stays hidden off Linux.
+  const _deckEl = (id) => document.getElementById(id);
+  let _deckStatus = null;
+
+  function _deckAutofillVis() {
+    const on = _deckEl('deckAutofill').checked;
+    _deckEl('deckAutofillFields').style.display = on ? '' : 'none';
+    _deckEl('deckAutofillWarn').style.display   = on ? '' : 'none';
+  }
+
+  async function _renderDeckLauncher() {
+    let s;
+    try { s = await window.mimic.deckLauncherStatus(); } catch { s = null; }
+    _deckStatus = s;
+    if (!s || !s.supported) return;                       // not Linux — stay hidden
+    _deckEl('deckSection').style.display = '';
+
+    _deckEl('deckLutrisSlug').value  = s.lutrisSlug || '';
+    _deckEl('deckEqDir').value       = s.eqDir || '';
+    _deckEl('deckWinePrefix').value  = s.winePrefix || '';
+    _deckEl('deckWineLoader').value  = s.wineLoader || '';
+    _deckEl('deckStopMimic').checked = s.stopMimicOnExit !== false;
+    _deckEl('deckAutofill').checked  = !!s.autofillEnabled;
+    _deckEl('deckAutofillUser').value = s.autofillUser || '';
+    _deckEl('deckAutofillPass').placeholder = s.hasStoredPassword ? '(saved — leave blank to keep)' : '';
+    // Be straight about at-rest protection: SteamOS often has no keyring, and
+    // implying one that isn't there is worse than saying so.
+    _deckEl('deckKeychainNote').textContent = s.keychain
+      ? 'On this device it is also encrypted with the system keyring.'
+      : 'This device has no unlocked keyring, so it is stored as plain text.';
+    _deckAutofillVis();
+
+    const bits = [];
+    bits.push(s.installed ? 'Launcher installed.' : 'Launcher not installed yet.');
+    bits.push(s.launchMode === 'none'
+      ? ('<span style="color:#d29922">' + (s.launchError || 'Not configured.') + '</span>')
+      : ('Will launch: <b>' + s.launchDisplay + '</b>'));
+    if (!s.appImage) bits.push('<span style="color:#d29922">Running unpacked — the launcher can start EverQuest but not Mimic.</span>');
+    bits.push(s.steamUsers > 0
+      ? ('Steam profile' + (s.steamUsers === 1 ? '' : 's') + ' found: ' + s.steamUsers)
+      : '<span style="color:#d29922">No Steam profile found.</span>');
+    _deckEl('deckStatusLine').innerHTML = bits.join(' &nbsp;·&nbsp; ');
+  }
+
+  function _deckFormPayload(extra) {
+    return Object.assign({
+      lutrisSlug: _deckEl('deckLutrisSlug').value,
+      eqDir:      _deckEl('deckEqDir').value,
+      winePrefix: _deckEl('deckWinePrefix').value,
+      wineLoader: _deckEl('deckWineLoader').value,
+      stopMimicOnExit: _deckEl('deckStopMimic').checked,
+      autofillEnabled: _deckEl('deckAutofill').checked,
+      autofillUser:    _deckEl('deckAutofillUser').value,
+      password:        _deckEl('deckAutofillPass').value,
+    }, extra || {});
+  }
+
+  _deckEl('deckAutofill').addEventListener('change', _deckAutofillVis);
+
+  _deckEl('deckClearPass').addEventListener('click', async () => {
+    const msg = _deckEl('deckMsg');
+    try {
+      await window.mimic.deckLauncherSave(_deckFormPayload({ password: '', clearPassword: true }));
+      _deckEl('deckAutofillPass').value = '';
+      msg.textContent = 'Saved password forgotten. Re-install the launcher to remove it from disk.';
+      await _renderDeckLauncher();
+    } catch (e) { msg.textContent = 'Could not clear: ' + (e && e.message ? e.message : e); }
+  });
+
+  _deckEl('deckInstallBtn').addEventListener('click', async () => {
+    const btn = _deckEl('deckInstallBtn'), msg = _deckEl('deckMsg');
+    btn.disabled = true; msg.textContent = 'Installing…';
+    try {
+      const saved = await window.mimic.deckLauncherSave(_deckFormPayload());
+      if (!saved || !saved.ok) throw new Error((saved && saved.error) || 'could not save settings');
+      _deckEl('deckAutofillPass').value = '';       // don't keep it in the DOM
+      const r = await window.mimic.deckLauncherInstall();
+      if (!r || !r.ok) { msg.textContent = '⚠ ' + ((r && r.error) || 'install failed'); }
+      else {
+        const where = r.steamAdded ? 'Added to Steam.' : (r.steamUpdated ? 'Updated the Steam entry.' : '');
+        msg.textContent = '✓ Installed. ' + where + ' ' + (r.notes || []).join(' ');
+      }
+      await _renderDeckLauncher();
+    } catch (e) {
+      msg.textContent = '⚠ ' + (e && e.message ? e.message : String(e));
+    } finally { btn.disabled = false; }
+  });
 
   // ── Zeal auto-updater card ────────────────────────────────────────────────
   // Local status on open (no network); Check hits GitHub; Install downloads +

@@ -29,6 +29,12 @@ const { spawn } = require('child_process');
 const { startZealWatch } = require('./zealPipe');
 const { startLinuxZealBridge } = require('./linuxZealBridge');
 const zealUpdater = require('./zealUpdater');
+// Steam Deck one-shortcut launcher (#156). Linux-only in effect — the IPC
+// handlers below refuse on other platforms — but required unconditionally so a
+// typo in either module fails loudly at boot on every OS rather than only on
+// the one box that runs it.
+const deckLaunch = require('./deckLaunch');
+const steamShortcuts = require('./steamShortcuts');
 const uiPacks = require('./uiPacks');
 const resolutionLock = require('./resolutionLock');
 
@@ -9254,6 +9260,184 @@ ipcMain.handle('zeal-install-update', async () => {
     return { ok: false, error: e && e.message ? e.message : String(e) };
   }
 });
+// ── Steam Deck: one shortcut that starts Mimic + EQ (#156) ──────────────────
+// See apps/mimic/deckLaunch.js for why the generated script polls for
+// eqgame.exe instead of waiting on the Lutris pid, and why the password is fed
+// to xdotool over stdin rather than as an argument.
+function _deckPaths() {
+  const os = require('os');
+  const home = os.homedir();
+  const xdgData  = process.env.XDG_DATA_HOME   || path.join(home, '.local', 'share');
+  const xdgConf  = process.env.XDG_CONFIG_HOME || path.join(home, '.config');
+  const xdgState = process.env.XDG_STATE_HOME  || path.join(home, '.local', 'state');
+  return {
+    home,
+    scriptPath: path.join(xdgData,  'wolfpack', 'deck-launch.sh'),
+    credPath:   path.join(xdgConf,  'wolfpack', 'eq.cred'),
+    logPath:    path.join(xdgState, 'wolfpack', 'launch.log'),
+  };
+}
+
+ipcMain.handle('deck-launcher-status', () => {
+  try {
+    if (process.platform !== 'linux') return { ok: false, supported: false };
+    const cfg = loadConfig();
+    const d = cfg.deckLaunch || {};
+    const paths = _deckPaths();
+    const launch = deckLaunch.resolveEqLaunch(cfg);
+    const users = steamShortcuts.findSteamUserConfigs(paths.home);
+    return {
+      ok: true, supported: true,
+      installed: fs.existsSync(paths.scriptPath),
+      scriptPath: paths.scriptPath,
+      // The AppImage runtime sets APPIMAGE to the bundle's own path. When it is
+      // absent we are running unpacked (dev), and the launcher would bake in a
+      // path that does not exist on the user's box — so say so rather than
+      // writing a script that silently never starts Mimic.
+      appImage: process.env.APPIMAGE || null,
+      launchMode: launch.mode, launchDisplay: launch.display, launchError: launch.error || null,
+      steamUsers: users.length,
+      lutrisSlug: d.lutrisSlug || '', eqDir: d.eqDir || '',
+      winePrefix: d.winePrefix || '', wineLoader: d.wineLoader || '',
+      stopMimicOnExit: d.stopMimicOnExit !== false,
+      autofillEnabled: !!(d.autofill && d.autofill.enabled),
+      autofillUser: (d.autofill && d.autofill.username) || '',
+      hasStoredPassword: !!(d.autofill && d.autofill.passwordBox),
+      // Surfaced so the UI can tell the truth about at-rest protection instead
+      // of implying a keychain that may not exist on SteamOS.
+      keychain: (() => { try { return safeStorage.isEncryptionAvailable(); } catch { return false; } })(),
+    };
+  } catch (e) { return { ok: false, error: e && e.message ? e.message : String(e) }; }
+});
+
+// Persist the launcher settings. The password is encrypted with safeStorage
+// when a keyring exists (see _encryptSecret) — on SteamOS it often does not,
+// and the helper falls back to plaintext. The UI says so; we do not pretend.
+ipcMain.handle('deck-launcher-save', (_e, s) => {
+  try {
+    if (process.platform !== 'linux') return { ok: false, error: 'Linux only' };
+    const cfg = loadConfig();
+    const prev = cfg.deckLaunch || {};
+    const d = cfg.deckLaunch = {
+      ...prev,
+      lutrisSlug: String((s && s.lutrisSlug) || '').trim(),
+      eqDir:      String((s && s.eqDir) || '').trim(),
+      winePrefix: String((s && s.winePrefix) || '').trim(),
+      wineLoader: String((s && s.wineLoader) || '').trim(),
+      stopMimicOnExit: !(s && s.stopMimicOnExit === false),
+      autofill: {
+        ...(prev.autofill || {}),
+        enabled:  !!(s && s.autofillEnabled),
+        username: String((s && s.autofillUser) || '').trim(),
+      },
+    };
+    // Empty string means "leave the stored one alone"; an explicit clear is a
+    // separate flag, so re-saving the form never silently wipes the password.
+    if (s && s.clearPassword) delete d.autofill.passwordBox;
+    else if (s && s.password) d.autofill.passwordBox = _encryptSecret(String(s.password));
+    saveConfig(cfg);
+    return { ok: true };
+  } catch (e) { return { ok: false, error: e && e.message ? e.message : String(e) }; }
+});
+
+ipcMain.handle('deck-launcher-install', async () => {
+  try {
+    if (process.platform !== 'linux') return { ok: false, error: 'Linux only' };
+    const cfg = loadConfig();
+    const d = cfg.deckLaunch || {};
+    const paths = _deckPaths();
+    const launch = deckLaunch.resolveEqLaunch(cfg);
+    if (launch.mode === 'none') return { ok: false, error: launch.error };
+
+    const autofill = deckLaunch.autofillPlan(cfg);
+    const notes = [];
+
+    // Credential file: written only when autofill is armed AND we hold a
+    // password. 0600, and re-written from scratch each install so a disabled
+    // autofill leaves nothing behind.
+    let credFile = '';
+    try { fs.unlinkSync(paths.credPath); } catch { /* absent is fine */ }
+    if (autofill.enabled) {
+      const pw = d.autofill && d.autofill.passwordBox ? _decryptSecret(d.autofill.passwordBox) : null;
+      if (pw) {
+        fs.mkdirSync(path.dirname(paths.credPath), { recursive: true, mode: 0o700 });
+        // No trailing newline — xdotool --file types the file verbatim and a
+        // newline would submit the form before the Return we send deliberately.
+        fs.writeFileSync(paths.credPath, pw, { mode: 0o600 });
+        try { fs.chmodSync(paths.credPath, 0o600); } catch { /* best effort */ }
+        credFile = paths.credPath;
+      } else {
+        notes.push('Autofill is on but no password is saved — the launcher will skip it.');
+      }
+    }
+
+    const preflight = path.join(__dirname, '..', '..', 'scripts', 'deck-preflight.sh');
+    const script = deckLaunch.buildLaunchScript({
+      mimicAppImage: process.env.APPIMAGE || '',
+      launch,
+      autofill,
+      credFile,
+      stopMimicOnExit: d.stopMimicOnExit !== false,
+      preflightScript: fs.existsSync(preflight) ? preflight : '',
+      logFile: paths.logPath,
+    });
+    fs.mkdirSync(path.dirname(paths.scriptPath), { recursive: true });
+    fs.writeFileSync(paths.scriptPath, script, { mode: 0o755 });
+    try { fs.chmodSync(paths.scriptPath, 0o755); } catch { /* best effort */ }
+    if (!process.env.APPIMAGE) {
+      notes.push('Running unpacked, so the launcher starts EQ only. Re-run this from the installed AppImage to have it start Mimic too.');
+    }
+
+    // Steam shortcut — idempotent per user config, so pressing the button
+    // twice never doubles the library entry.
+    const shortcut = deckLaunch.steamShortcutFor({ scriptPath: paths.scriptPath });
+    shortcut.appid = steamShortcuts.shortcutAppId(shortcut.Exe, shortcut.AppName);
+    const users = steamShortcuts.findSteamUserConfigs(paths.home);
+    let added = 0, updated = 0, skipped = 0;
+
+    // Steam keeps shortcuts.vdf in memory and rewrites it from that copy on
+    // exit, so writing underneath a running Steam is silently discarded at
+    // logout with no error anywhere. Refuse instead of lying about success.
+    const steamUp = await new Promise((resolve) => {
+      try {
+        const { exec } = require('child_process');
+        exec('pgrep -x steam', { timeout: 5000 }, (err, stdout) => resolve(!err && /\d/.test(stdout || '')));
+      } catch { resolve(false); }
+    });
+    if (steamUp && users.length > 0) {
+      notes.push('Steam is running, so the library entry was NOT written — Steam would overwrite it on exit. Close Steam completely and press this again.');
+    } else {
+      for (const u of users) {
+        let list;
+        try {
+          list = steamShortcuts.readShortcutsFile(u.shortcutsPath);
+        } catch (err) {
+          // parseShortcuts throws on a structurally corrupt file. Falling back
+          // to [] here would write a file containing ONLY our shortcut —
+          // silently deleting every other non-Steam game this user has. Skip.
+          skipped++;
+          notes.push(`Could not read ${u.shortcutsPath} (${err && err.message}); left it untouched rather than risk deleting your other non-Steam games.`);
+          continue;
+        }
+        const res = steamShortcuts.upsertShortcut(list, shortcut);
+        steamShortcuts.writeShortcutsFile(u.shortcutsPath, res.list);
+        if (res.added) added++; else updated++;
+      }
+      if (users.length === 0) {
+        notes.push('No Steam profile found — the script is installed, but add it to Steam yourself (Games → Add a Non-Steam Game).');
+      } else if (added || updated) {
+        notes.push('Start Steam to see it in your library.');
+      }
+    }
+
+    appendAgentLog(`[deck-launch] wrote ${paths.scriptPath} (${launch.mode}); steam users=${users.length} added=${added} updated=${updated} skipped=${skipped}; autofill=${autofill.enabled && credFile ? 'on' : 'off'}\n`);
+    return { ok: true, scriptPath: paths.scriptPath, steamAdded: added, steamUpdated: updated, steamSkipped: skipped, notes };
+  } catch (e) {
+    appendAgentLog(`[deck-launch] install failed: ${e && e.message}\n`);
+    return { ok: false, error: e && e.message ? e.message : String(e) };
+  }
+});
+
 // Background NOTIFY-ONLY check. Never installs on its own — Zeal.asi is a game
 // mod and silently overwriting it mid-session would be surprising (and fails
 // while EQ is up anyway). Shows a native notification once per newly-seen tag;

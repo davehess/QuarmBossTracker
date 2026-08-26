@@ -510,6 +510,11 @@ contextBridge.exposeInMainWorld('mimic', {
   // Windows clock: read the w32time service state, and (elevated) fix it.
   clockStatus:           () => ipcRenderer.invoke('clock-status'),
   clockResync:           () => ipcRenderer.invoke('clock-resync'),
+  // Steam Deck one-shortcut launcher (#156) — Linux only; the handlers return
+  // { supported:false } elsewhere so the Settings card can hide itself.
+  deckLauncherStatus:  ()  => ipcRenderer.invoke('deck-launcher-status'),
+  deckLauncherSave:    (s) => ipcRenderer.invoke('deck-launcher-save', s),
+  deckLauncherInstall: ()  => ipcRenderer.invoke('deck-launcher-install'),
   zealStatus:        ()   => ipcRenderer.invoke('zeal-status'),
   zealCheckUpdate:   ()   => ipcRenderer.invoke('zeal-check-update'),
   zealInstallUpdate: ()   => ipcRenderer.invoke('zeal-install-update'),

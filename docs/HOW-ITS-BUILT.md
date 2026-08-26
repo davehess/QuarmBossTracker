@@ -871,8 +871,52 @@ Triggers in `main.js`, all gated on `_isEqRunning()` being false because EQ
 holds the file open and flushes at exit: the running→stopped edge (+2.5s
 settle), an `fs.watch` on the EQ folder (`_armResolutionLockWatch`, LINUX-ONLY
 — Windows users manage this in-client), and a settings save. A
-Mimic-initiated launch is the obvious fourth trigger and has no call site
-because Mimic does not start EverQuest. Tests: `test/resolution-lock.test.js`.
+Mimic-initiated launch is the obvious fourth trigger and still has no call
+site: as of the one-launcher work below Mimic *orchestrates* a launch, but the
+generated bash script is what execs EQ, so there is no in-process moment to
+hook. The existing running→stopped edge + `fs.watch` already repair the stomp
+either way; a pre-launch enforce from the script is the open follow-up.
+Tests: `test/resolution-lock.test.js`.
+
+### One Steam shortcut for Mimic + EQ (`deckLaunch.js` + `steamShortcuts.js`, #156)
+The Deck install used to end with TWO things to start by hand — the Lutris
+Steam shortcut and the Mimic AppImage — and Gaming Mode has no tray or file
+manager to start the second one with, so people raided without Mimic and the
+night lost its parse + chat upload. Mimic Settings → **Steam Deck — one
+launcher** writes `~/.local/share/wolfpack/deck-launch.sh` and registers ONE
+Steam entry (`Everquest Quarm` — the exact name the community controller
+layouts key off, RUNBOOK §9c).
+- **`deckLaunch.js`** is pure string/plan construction (no Electron import) so
+  the emitted script is diffable in tests. `resolveEqLaunch` prefers a Lutris
+  slug because Lutris carries the DXVK + DLL-override config the renderer chain
+  needs; direct-Wine needs BOTH an EQ folder and a prefix and refuses to guess a
+  prefix, since a wrong guess silently creates a second empty install.
+- **The script polls for `eqgame.exe`; it never waits on the launch pid** —
+  `lutris lutris:rungame/<slug>` hands off to the running Lutris and exits
+  immediately, so waiting on it would make Steam show the session ending
+  seconds after Play. It holds open until the game exits, and only stops Mimic
+  if it was the one that started it.
+- **Autofill (OFF by default).** Zeal has no auto-login (verified against
+  CoastalRedwood/Zeal's docs 2026-08-26), so this is keystroke injection with
+  every fragility that implies. Three rules are load-bearing: the password is
+  fed to `xdotool type --file -` on **stdin, never as an argv** (argv is
+  world-readable via `/proc/<pid>/cmdline`); focus is re-checked before each
+  typed step and the sequence aborts if EQ lost it (otherwise the password
+  lands in whatever stole focus); and it self-skips with no `DISPLAY`, i.e.
+  under Gaming Mode's gamescope. Secret at rest is `safeStorage` when a keyring
+  exists — **on SteamOS it often does not**, and the UI says which case you are
+  in rather than implying a keychain.
+- **`steamShortcuts.js`** reads/writes Steam's binary `shortcuts.vdf`
+  (KeyValues: `0x00` map / `0x01` string / `0x02` int32-LE, `0x08` closes).
+  Three rules protect the user's library: unknown fields survive a round trip
+  (Steam adds fields across versions); `upsertShortcut` is idempotent, matching
+  on `AppName` or unquoted `Exe` so re-running never doubles the entry; and
+  `parseShortcuts` **throws** on a corrupt file rather than parsing short —
+  main.js must NOT fall back to `[]`, because writing that back deletes every
+  other non-Steam game the user has. `main.js` also refuses to write while
+  Steam is running, since Steam rewrites the file from memory at exit and would
+  silently discard it. Tests: `test/deck-launch.test.js` (34),
+  `test/steam-shortcuts.test.js` (27).
 
 ### Bringing in a character nothing else can see (🧳 on `/me`)
 A bank mule or a never-raiding alt produces no logs, no `/who` sighting and no

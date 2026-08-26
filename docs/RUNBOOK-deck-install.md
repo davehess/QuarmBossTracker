@@ -483,16 +483,86 @@ upload, and log-driven trigger callouts. That is most of raid night.
 
 ## 9. Stage 9 — Steam shortcut, controller, Gaming Mode
 
-1. Lutris → right-click **Everquest** → **Create Steam Shortcut**
-   *(may take a couple of tries, or a Steam restart)*
-2. Return to Gaming Mode → find it under **Non-Steam** games
-3. Rename it to **exactly `Everquest Quarm`** (Settings cog → Properties) — the
-   community controller layouts key off that name
+### 9a. One shortcut that starts BOTH (preferred)
+
+The manual route below gives Steam a shortcut for *EQ only*, so Mimic is a
+second thing to remember — and in Gaming Mode there is no tray and no file
+manager to start it with. In practice that means raiding without Mimic and
+losing the night's parse + chat upload. **Mimic Settings → Steam Deck — one
+launcher** replaces the whole dance:
+
+1. Fill in the **Lutris game name** (usually `everquest` — the identifier in
+   the Lutris URL, not the display name). Launching through Lutris is
+   deliberate: it carries the DXVK + DLL-override config that §5's renderer
+   chain depends on. Running `eqgame.exe` directly bypasses all of it and
+   reproduces the DirectX-6 failure on an otherwise-correct install.
+2. **Close Steam completely.** Steam holds `shortcuts.vdf` in memory and
+   rewrites it from that copy on exit, so a write underneath a running Steam is
+   silently discarded at logout. Mimic checks, and refuses rather than
+   reporting a success that will evaporate.
+3. Press **Install launcher & add to Steam**.
+
+It writes `~/.local/share/wolfpack/deck-launch.sh` and adds one library entry
+named **`Everquest Quarm`** (step 3 below explains why that exact name). The
+script starts Mimic if it is not already up, starts EQ, and then **waits for
+`eqgame.exe` to exit** before returning — so Steam's playtime and its
+"stop game" button both track the real session. It only closes Mimic on the way
+out if it was the thing that started it, so a Mimic you already had open
+(mid-backfill, dashboard on a monitor) survives.
+
+Re-running it is safe: the entry is matched on name/path and updated in place,
+so you never end up with five copies of the game in your library. The generated
+script is plain bash — read it, or run it in a terminal to see every step.
+
+> **Autofill** (optional, off by default) is covered in §9b, including what it
+> costs you. Read that before turning it on.
+
+### 9b. Login autofill — read this before enabling
+
+**Zeal does not do auto-login** (checked against CoastalRedwood/Zeal's own docs,
+2026-08-26 — it covers keybinds, UI and maps, nothing authentication). Neither
+does the client. So the only mechanism available is *typing the password for
+you*, and that carries real costs:
+
+- **Your password is stored on the Deck**, in `~/.config/wolfpack/eq.cred`, mode
+  `0600`. Mimic encrypts it in its own config with the system keyring when one
+  is available — **on SteamOS there usually is not**, and the Settings card says
+  which case you are in rather than implying a keychain that isn't there. Treat
+  it as "readable by anyone who can log in as `deck`".
+- **Desktop Mode only.** Gaming Mode runs gamescope, which does not expose an X
+  display the typing tool can reach. The launcher detects that and skips
+  autofill instead of hanging.
+- **It stops if focus moves.** The script re-checks that EQ still owns the
+  focused window before the username, before the password, and before Enter. If
+  anything steals focus mid-sequence it abandons the attempt — losing an
+  autofill is free, typing your password into Discord is not.
+- It needs `xdotool` (`sudo pacman -S xdotool`, or it silently skips).
+
+The password is never passed as a command-line argument — argv is world-readable
+through `/proc/<pid>/cmdline`. It is piped to the typing tool on stdin, which is
+the entire reason it lives in a file rather than a variable.
+
+### 9c. Controller layout (either route)
+
+3. The entry must be named **exactly `Everquest Quarm`** — the community
+   controller layouts key off that name. Mimic's launcher already names it that;
+   if you made the shortcut by hand, rename it (Settings cog → Properties).
 4. Controller icon → up-arrow to **Browse Community Layouts…** → R1
    **Community Layouts** → X **Show All Layouts** → **"Pastrami's Layout with
    workable keyboard (based off Yuuhi's P99)"** → A → X to apply
 5. If the game will not start from Steam, add **`ENABLE_GAMESCOPE_WSI=0`** to
-   Properties → Launch Options
+   Properties → Launch Options. *(Mimic's launcher pre-sets this, so this step
+   is only for a hand-made shortcut.)*
+
+### 9d. The manual route (fallback)
+
+If Mimic cannot find a Steam profile, or you would rather do it by hand:
+
+1. Lutris → right-click **Everquest** → **Create Steam Shortcut**
+   *(may take a couple of tries, or a Steam restart)*
+2. Return to Gaming Mode → find it under **Non-Steam** games — then do §9c.
+
+This gives you EQ only; start Mimic yourself before raid.
 
 **Mimic in Gaming Mode:** gamescope cannot host floating overlay windows, so
 Mimic auto-detects the session and switches to **Background Mode** — audio
