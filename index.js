@@ -6020,6 +6020,7 @@ const _PANEL_AUCTIONS_TTL_ACTIVE_MS = 15_000;
 const _PANEL_AUCTIONS_TTL_IDLE_MS   = 120_000;
 const _PANEL_AUCTIONS_TTL_FAILED_MS = 20_000;
 let _panelAuctionsCache = null;   // { at, list }
+let _loggedActiveAuctionShape = false;
 async function _panelAuctions(deps = {}) {
   const now   = deps.now   || Date.now;
   const fetch = deps.fetch || (() => require('./utils/opendkp').getActiveAuctions());
@@ -6053,7 +6054,31 @@ async function _panelAuctions(deps = {}) {
     _panelAuctionsCache = { at: now(), list: [], failed: true };
     throw err;
   }
-  const list = Array.isArray(raw?.Items) ? raw.Items : Array.isArray(raw) ? raw : [];
+  // ⚠ SHAPE TOLERANCE + PROBE (2026-08-26). We moved the panel onto
+  // /auctions/active in 3.1.72 on the strength of OpenDKP's Postman doc listing
+  // "Get Active Auctions" — without ever seeing a response. The live counter
+  // then showed 85 calls returning 170 BYTES TOTAL (~2 each), i.e. `[]` every
+  // time, which is either "nothing is up for bid" or "we are reading the wrong
+  // key off a shape we guessed". Those look identical from here and only one
+  // of them means bidding is dead on raid night.
+  //
+  // So: accept every wrapper the rest of this client already tolerates
+  // (OpenDKP varies the key per endpoint — BidResults, Items, Results…), and
+  // log the actual top-level shape ONCE when it parses to empty, so the answer
+  // is in Railway rather than inferred from a doc a second time.
+  const list = Array.isArray(raw) ? raw
+             : Array.isArray(raw?.Items) ? raw.Items
+             : Array.isArray(raw?.Results) ? raw.Results
+             : Array.isArray(raw?.Auctions) ? raw.Auctions
+             : Array.isArray(raw?.BidResults) ? raw.BidResults
+             : [];
+  if (list.length === 0 && !_loggedActiveAuctionShape) {
+    _loggedActiveAuctionShape = true;
+    const keys = raw && typeof raw === 'object' ? Object.keys(raw) : [];
+    console.log('[panel-auctions] /auctions/active parsed EMPTY —'
+      + ` typeof=${typeof raw} isArray=${Array.isArray(raw)} keys=[${keys.join(', ')}]`
+      + ` sample=${(() => { try { return JSON.stringify(raw).slice(0, 300); } catch { return '?'; } })()}`);
+  }
   _panelAuctionsCache = { at: now(), list };
   return list;
 }

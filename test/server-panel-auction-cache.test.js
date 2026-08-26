@@ -20,7 +20,7 @@ const block = sliceBlock(
 
 function build() {
   const { _panelAuctions } = evalBlock(
-    'const console = { warn() {} };\n' + block,
+    'const console = { warn() {}, log() {} };\n' + block,
     ['_panelAuctions'],
   );
   let t = 1_000_000;

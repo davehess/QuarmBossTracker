@@ -752,6 +752,54 @@ async function _maxMirroredId(table, pkCol) {
 // optimization, not correctness state, so losing it on redeploy is harmless —
 // a redeploy just buys one extra (write-free) full offer.
 const _lastFullSweepAt = new Map();
+
+// ── Idle backoff (Hitya, 2026-08-26: "the dkp numbers don't change outside of
+// raids unless we have to override something. why are we auditing so
+// frequently") ──────────────────────────────────────────────────────────────
+// Measured that day: the audits walk cost 17 calls / 6.2 MB EVERY 30 MINUTES,
+// identically — 297 MB/day, essentially all of it spent discovering that
+// nothing had happened. The endpoint has no "since" filter and (per the
+// ordering probe below) does not appear to page newest-first, so there is no
+// cheap way to ASK whether anything changed. The answer is therefore to ask
+// less often when the answer keeps being no.
+//
+// Doubling backoff per consecutive empty pass, from the natural 30-min cadence
+// to a cap. Any new row resets it instantly, and a raid window pins it back to
+// every pass — which is exactly the shape of the real world: DKP moves during
+// raids and during the occasional manual override, and is static in between.
+// An override made at 3pm on a Tuesday is picked up within the cap rather than
+// within 30 minutes, which is the deliberate trade.
+const _idleStreak = new Map();
+const _nextDueAt  = new Map();
+
+// Raid nights: Sun/Wed/Thu 8pm-midnight ET, with an hour either side so a late
+// start or a long night is never the thing that delays a sync.
+function _inRaidWindow(now = new Date()) {
+  const et = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  const day = et.getDay();                       // 0 Sun, 3 Wed, 4 Thu
+  if (![0, 3, 4].includes(day)) return false;
+  const h = et.getHours();
+  return h >= 19 || h < 1;
+}
+
+function _backoffCapMs() { return _envNum('OPENDKP_LIST_IDLE_MAX_HOURS', 6) * 3600 * 1000; }
+
+// Returns true when the walk should be skipped entirely — no HTTP at all.
+function _skipForIdleBackoff(table) {
+  if (_envNum('OPENDKP_LIST_IDLE_BACKOFF', 1) < 1) return false;
+  if (_inRaidWindow()) return false;
+  const due = _nextDueAt.get(table);
+  return Number.isFinite(due) && Date.now() < due;
+}
+
+function _noteIdleResult(table, freshCount) {
+  if (freshCount > 0) { _idleStreak.set(table, 0); _nextDueAt.delete(table); return; }
+  const streak = (_idleStreak.get(table) || 0) + 1;
+  _idleStreak.set(table, streak);
+  // 30min base, doubling: 30m, 1h, 2h, 4h, capped.
+  const wait = Math.min(30 * 60 * 1000 * Math.pow(2, streak - 1), _backoffCapMs());
+  _nextDueAt.set(table, Date.now() + wait);
+}
 function _fullSweepIntervalMs() {
   return _envNum('OPENDKP_LIST_FULL_SWEEP_HOURS', 24) * 3600 * 1000;
 }
@@ -774,6 +822,11 @@ async function _syncListEndpoint({
   if (!supabase.isEnabled()) return { error: 'supabase disabled', upserted: 0, pages: 0 };
 
   const pkCol = _pkColFor(idKeys);
+
+  // Cheapest possible pass: no HTTP at all while the answer keeps being "no".
+  if (_skipForIdleBackoff(table)) {
+    return { upserted: 0, pages: 0, offered: 0, full_sweep: false, skipped: 'idle-backoff' };
+  }
 
   // Highest id we already hold. Everything at or below it is already mirrored
   // and — because these endpoints are append-only — can never have changed, so
@@ -858,8 +911,19 @@ async function _syncListEndpoint({
     // test, and the walk then continues exactly as before). The 24h fullSweep
     // still walks everything, so a gap below the watermark still heals.
     if (page === 1 && rows.length > 0) {
-      newestFirstProven = Number.isFinite(priorMax) &&
-        Math.max(...rows.map(r => Number(r[pkCol]))) >= priorMax;
+      const pageMax = Math.max(...rows.map(r => Number(r[pkCol])));
+      newestFirstProven = Number.isFinite(priorMax) && pageMax >= priorMax;
+      // ⚠ ORDERING PROBE. The early break assumed newest-first (inferred from
+      // the auctions endpoint's "page 1 = most recent" note). The 2026-08-26
+      // measurement says otherwise for audits: a full 17-page walk every pass,
+      // which is what this guard does when it CANNOT prove the ordering. Log it
+      // once per pass so the next session can read the truth off Railway
+      // instead of inferring it from a sibling endpoint again.
+      if (!newestFirstProven) {
+        const pageMin = Math.min(...rows.map(r => Number(r[pkCol])));
+        console.log(`[opendkp-sync] ${label}: page1 ids ${pageMin}..${pageMax} vs watermark ${priorMax}`
+          + ` — NOT newest-first, walking all pages (this is the expensive path)`);
+      }
     }
 
     if (toSend.length > 0) {
@@ -889,6 +953,7 @@ async function _syncListEndpoint({
   }
 
   if (fullSweep) _markFullSweep(table);
+  _noteIdleResult(table, totalUpserted);
 
   return {
     upserted:   totalUpserted,
