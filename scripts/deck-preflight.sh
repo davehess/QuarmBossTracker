@@ -404,7 +404,15 @@ for eqdir in "${EQ_DIRS[@]-}"; do
   # another zip that nested. So look for a stray copy before declaring it gone —
   # "missing" and "one level down" need opposite fixes.
   if has_ci "$eqdir" 'eqmain.dll'; then
-    pass "eqmain.dll present (login screen can load)"
+    # ⚠ PRESENCE IS NOT LOADABILITY. Measured on the 2026-08-26 Deck: the file
+    # was at the top level of BOTH installs and the client still said
+    # "Couldn't load eqmain.dll". The client resolves it with a RELATIVE
+    # LoadLibrary, so a wrong working directory fails exactly like a missing
+    # file — as does a launch pointed at a different install than the one you
+    # repaired. Both are checked further down (working dir, and the
+    # multiple-install list at the top of this report).
+    pass "eqmain.dll present in this folder"
+    info "  present != loadable: if you still get \"Couldn't load eqmain.dll\", it is the WORKING DIRECTORY or the wrong install, not this file ($RUNBOOK §5 link 5)"
   else
     NESTED=$(find "$eqdir" -maxdepth 3 -iname 'eqmain.dll' 2>/dev/null | head -n 3)
     if [ -n "$NESTED" ]; then

@@ -303,15 +303,46 @@ failure is one link further on: `eqmain.dll` is the login-screen module
 `eqgame.exe` loads once graphics are up. **Do not re-read links 1–4 for this
 error.** Nothing in the dgVoodoo/DXVK chain can produce it.
 
-Most likely cause on a fresh Lutris install is **a zip that extracted into a
-subfolder instead of merging into the game folder.** The installer runs three
+**First: is the file actually missing?** Measured on the 2026-08-26 Deck, it was
+**not** — `eqmain.dll` sat at the top level of both installs and the client still
+refused to load it. So check presence, but do not stop there; the failure below
+is at least as likely.
+
+**Cause A — the file loads by RELATIVE path, so the working directory decides.**
+The client resolves `eqmain.dll` with a relative `LoadLibrary`, which fails
+*identically* to the file being absent when the working directory is not the
+game folder. This is the same root cause as §6 trap 2, presenting as an error
+box instead of a hang. Check Lutris → Configure → Game options → **Working
+directory**, and confirm it equals the folder holding `eqgame.exe`. The current
+installer sets `working_dir: $GAMEDIR` for you, so an empty one means something
+edited it after the fact.
+
+**Cause B — you are launching a different install than the one you repaired.**
+A Deck that has been debugged for a while accumulates them. The 2026-08-26 box
+had `~/Games/ProjectQuarm` AND `~/Games/lutrisquarm`, plus `eq-rescue-*/`,
+`zeal-off/` and `dxvk-backup/` holding files moved out during earlier surgery.
+Read the Lutris config and believe it rather than your memory:
+
+```bash
+cat ~/.var/app/net.lutris.Lutris/config/lutris/games/everquest-*.yml 2>/dev/null \
+  || cat ~/.config/lutris/games/everquest-*.yml
+```
+
+That one file names the `exe`, the `prefix` and the `working_dir` Lutris will
+actually use — which settles both causes above at once. Note also that files
+parked in a `*-backup/` or `*-off/` folder are files the install no longer has;
+if DXVK or Zeal was moved out during an earlier session, put it back before
+concluding anything.
+
+**Cause C — a zip extracted into a subfolder instead of merging into the game
+folder.** The installer runs three
 extracts into `$GAMEDIR` back to back (§2's note on the script). If the client
 zip is flat, `eqgame.exe` lands correctly and the game launches — while another
 zip creates `$GAMEDIR/Patch-10-22-2025-1/…` and everything it carried, including
 files the client needs, sits one level down where nothing looks for it.
 
-Check that before assuming the file is simply gone — "missing" and "one level
-down" need opposite fixes:
+Check all three before assuming the file is simply gone — "missing", "one level
+down" and "present but unreachable" need different fixes:
 
 ```bash
 cd <EQ folder>
