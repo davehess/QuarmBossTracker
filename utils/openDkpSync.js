@@ -772,6 +772,44 @@ const _lastFullSweepAt = new Map();
 const _idleStreak = new Map();
 const _nextDueAt  = new Map();
 
+// ── Oldest-first fast path ──────────────────────────────────────────────────
+// PROVED on 2026-08-26, not assumed. The ordering probe logged:
+//
+//   audits: page1 ids 1669729..1968002 vs watermark 4627656 — NOT newest-first
+//
+// Page 1 holds the OLDEST audits by 2.7 million ids, so a forward walk from
+// page 1 can never reach a new row — it just re-reads 17 pages and offers zero
+// (`audits_pages: 17, audits_offered: 0`, every single pass, 6.2 MB a time).
+//
+// New rows land at the END. So: go straight to the LAST page. If nothing there
+// is above the watermark, we are done in ONE call instead of seventeen. Only
+// when the last page DOES hold something new do we fall back to the full walk,
+// which at ~37 audits/day is once or twice a day rather than 48 times.
+//
+// `TotalPages` is learned from any response and cached per table; a page count
+// only changes when a page fills (~2,800 rows, i.e. every couple of months), so
+// the hint is stable and a stale one self-corrects on the next response.
+const _lastPageHint = new Map();
+
+// OpenDKP wraps list payloads inside { TotalPages, CurrentPage, <KEY> } where
+// <KEY> varies per endpoint — BidResults (auctions), Audits, Adjustments,
+// Items, Results — and in some cases the response IS a bare array. Extracted
+// into one place so the fast path below and the full walk can never disagree
+// about what counts as "the rows"; duplicating this list is how one of them
+// silently starts seeing nothing.
+function _rowsFromListPayload(arr, label) {
+  const capLabel = label ? label.charAt(0).toUpperCase() + label.slice(1) : null;
+  return Array.isArray(arr?.BidResults)  ? arr.BidResults
+       : Array.isArray(arr?.Audits)      ? arr.Audits
+       : Array.isArray(arr?.Adjustments) ? arr.Adjustments
+       : (capLabel && Array.isArray(arr?.[capLabel])) ? arr[capLabel]
+       : Array.isArray(arr?.Results)     ? arr.Results
+       : Array.isArray(arr?.Items)       ? arr.Items
+       : Array.isArray(arr)              ? arr
+       : Array.isArray(arr?.data)        ? arr.data
+       : null;
+}
+
 // Raid nights: Sun/Wed/Thu 8pm-midnight ET, with an hour either side so a late
 // start or a long night is never the thing that delays a sync.
 function _inRaidWindow(now = new Date()) {
@@ -843,6 +881,41 @@ async function _syncListEndpoint({
   let totalOffered  = 0;
   let newestFirstProven = false;   // set from page 1; gates the early break
 
+  // Oldest-first fast path: check the LAST page and stop if it holds nothing
+  // new. Skipped on a full sweep (which must genuinely walk everything) and on
+  // a cold process (no hint yet — the first walk after a deploy learns it).
+  const hintPage = Number(_lastPageHint.get(table));
+  if (!fullSweep && Number.isFinite(hintPage) && hintPage > 1) {
+    try {
+      let arr = await fetchPage(hintPage);
+      let seen = 1;
+      // The count can have grown since we cached it; go to the real last page.
+      const total = Number(arr?.TotalPages);
+      if (Number.isFinite(total) && total > hintPage) {
+        _lastPageHint.set(table, total);
+        arr = await fetchPage(total);
+        seen = 2;
+      } else if (Number.isFinite(total)) {
+        _lastPageHint.set(table, total);
+      }
+      const rows = _rowsFromListPayload(arr, label) || [];
+      // Unknown shape → no rows → treated as "nothing new", which would be
+      // WRONG. Fall through to the walk, which reports the shape properly.
+      if (!_rowsFromListPayload(arr, label)) throw new Error('unknown shape on fast path');
+      const hasFresh = rows.some(r => {
+        const id = _firstNumber(r, ...idKeys);
+        return Number.isFinite(id) && id > priorMax;
+      });
+      if (!hasFresh) {
+        // One call (two if the page count grew) instead of the full walk.
+        _noteIdleResult(table, 0);
+        return { upserted: 0, pages: seen, offered: 0, full_sweep: false, fast_path: 'last-page' };
+      }
+      // Something new IS there — fall through to the full walk, which knows how
+      // to page, dedup and write. Rare by construction (~37 audits/day).
+    } catch { /* fast path is an optimization; any failure just walks normally */ }
+  }
+
   for (let page = 1; page <= AUDIT_PAGE_LIMIT; page++) {
     let arr;
     try { arr = await fetchPage(page); }
@@ -853,16 +926,11 @@ async function _syncListEndpoint({
     // Items, Results — and in some cases the response IS a bare array. We accept
     // all of those, plus a capitalized form derived from the endpoint label
     // ("audits" → "Audits") as the primary fallback.
-    const capLabel = label ? label.charAt(0).toUpperCase() + label.slice(1) : null;
-    const list = Array.isArray(arr?.BidResults) ? arr.BidResults
-              : Array.isArray(arr?.Audits)     ? arr.Audits
-              : Array.isArray(arr?.Adjustments) ? arr.Adjustments
-              : (capLabel && Array.isArray(arr?.[capLabel])) ? arr[capLabel]
-              : Array.isArray(arr?.Results)    ? arr.Results
-              : Array.isArray(arr?.Items)      ? arr.Items
-              : Array.isArray(arr)             ? arr
-              : Array.isArray(arr?.data)       ? arr.data
-              : null;
+    const list = _rowsFromListPayload(arr, label);
+    // Capture the page count HERE, before any of the breaks below — putting it
+    // at the end of the loop meant the early break skipped it and the fast path
+    // never got a hint to work from.
+    if (Number.isFinite(Number(arr?.TotalPages))) _lastPageHint.set(table, Number(arr.TotalPages));
 
     if (!list) {
       if (!shapeFlag.value) {
