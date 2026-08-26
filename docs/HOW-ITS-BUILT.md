@@ -1615,6 +1615,15 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   upstream deletions propagate to the `opendkp_loot` mirror within a sync.
 - **Guild rules (#94)** — `guild_rules` table + `/ingestrules`
   (`commands/ingestrules.js`, `utils/rulesParser.js`) + `/admin/rules`.
+- **Roaming bid prefs (bot 3.1.77)** — `character_bid_prefs` +
+  `server-panel?key=bid-prefs` (read) + `POST /api/agent/bid-prefs`
+  (`_handleAgentBidPrefs`, `requireAgentAuth` REQUIRED — rows are keyed by
+  character name, so an unauthenticated write overwrites anyone's planned
+  bids). Makes the agent's local-only `logsync.plannedbids.json` /
+  `lootdismiss.json` survive a reinstall or a desktop↔Deck move. Local file
+  remains the LIVE source of truth; last-writer-wins on `updated_at`, NOT a
+  merge. Design + the autobid safety rules: `docs/DESIGN-bid-assist.md`.
+  Tests: `test/bid-prefs-roaming.test.js`.
 - **Loot bidding serving (#108/#121)** — `server-panel` keys `opendkp-auth-config`
   / `item-history` / `bid-history`; `_lootItemSummary`/`_familyDkpTotals`.
   Since bot 3.1.72 (the Moncs incident) the `auctions`/`my-bids` keys read

@@ -6610,6 +6610,25 @@ async function _handleAgentServerPanel(req, res) {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       return res.end(out);
     }
+    if (key === 'bid-prefs') {
+      // Roaming half of the bidding panel's local state (#121 → bid assist).
+      // The agent's logsync.plannedbids.json / lootdismiss.json stay the LIVE
+      // source of truth; this is the backup that makes them survive a
+      // reinstall or a move between machines (docs/DESIGN-bid-assist.md).
+      //
+      // Scoped to the caller's own characters — a member reads and writes only
+      // their own rows, and the family csv is what scopes it, the same way
+      // bid-history below is scoped.
+      const famRaw = (url.searchParams.get('characters') || character || '').trim();
+      const fam = famRaw.split(',').map(s => s.trim()).filter(Boolean).slice(0, 40);
+      if (fam.length === 0) { res.writeHead(400); return res.end(JSON.stringify({ error: 'characters required' })); }
+      const inList = fam.map(n => `"${n.replace(/"/g, '')}"`).join(',');
+      const rows = await supabase.select('character_bid_prefs',
+        `guild_id=eq.${encodeURIComponent(guildId)}&character=in.(${encodeURIComponent(inList)})`
+        + `&select=character,item_id,planned_bid,autobid,dismissed,item_name,updated_at&limit=1000`) || [];
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ key, characters: fam, prefs: rows, updated_at: new Date().toISOString() }));
+    }
     if (key === 'bid-history') {
       // The caller's own loot: wins (opendkp_loot) + wishlist (explicit prereg
       // from `wishlists` MERGED with items inferred from OpenDKP bid history via
@@ -7465,6 +7484,98 @@ async function _handleAgentUiLayoutDownload(req, res, snapshotId) {
 
 // Looks up CharacterId + Rank from OpenDKP roster and forwards as a bid.
 // Returns the OpenDKP response (or a 4xx if the input is bad).
+// ── Autobid gate: "you have to be in the raid for it to fire" ───────────────
+// Hitya, 2026-08-26, answering whether autobid may fire while the member is
+// away from the keyboard. This is the answer and it is a better gate than a
+// time window: away-but-raiding is exactly when you want it, and not-in-the-raid
+// is exactly when you do not.
+//
+// ⚠ FAILS CLOSED, and that is an INVERSION of the identical predicate in the
+// agent's trigger path. There, `require_raid_member` deliberately falls OPEN on
+// an empty roster ("so out-of-raid testing still fires") because a missed
+// callout is worse than a spurious one. Here the polarity flips: an empty
+// roster means we cannot prove you are in the raid, and "cannot prove" must
+// never spend someone's DKP. No roster, no autobid.
+//
+// Enforced HERE, on the bot, not in the agent. The agent's local check is a
+// useful fast path, but the bid is submitted from the bot — a gate that lives
+// only next to the decision is advisory, and stale local state would bypass it.
+//
+// Practical consequence, stated plainly rather than discovered later: Zeal
+// populates raid_roster, so a member without Zeal (every Deck user until the
+// pipe bridge lands) gets NO autobid. That is the safe direction.
+const _AUTOBID_ROSTER_FRESH_MS = 10 * 60 * 1000;
+async function _isCharacterInRaid(characterName, { freshMs = _AUTOBID_ROSTER_FRESH_MS } = {}) {
+  const name = String(characterName || '').trim();
+  if (!name) return { inRaid: false, reason: 'no character' };
+  try {
+    const supabase = require('./utils/supabase');
+    if (!supabase.isEnabled()) return { inRaid: false, reason: 'supabase disabled' };
+    const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+    const since = new Date(Date.now() - freshMs).toISOString();
+    const rows = await supabase.select('raid_roster',
+      `guild_id=eq.${encodeURIComponent(guildId)}`
+      + `&name=ilike.${encodeURIComponent(name)}`
+      + `&captured_at=gte.${encodeURIComponent(since)}`
+      + `&select=name,captured_at&limit=1`);
+    if (Array.isArray(rows) && rows.length > 0) {
+      return { inRaid: true, reason: 'in raid roster', at: rows[0].captured_at };
+    }
+    return { inRaid: false, reason: 'not in a recent raid roster (no Zeal, or not in the raid)' };
+  } catch (err) {
+    // A lookup failure is NOT permission to bid.
+    return { inRaid: false, reason: 'roster lookup failed: ' + (err && err.message) };
+  }
+}
+
+// Roaming bid prefs — the WRITE half (docs/DESIGN-bid-assist.md).
+// Body: { prefs: [{ character, item_id, planned_bid, autobid, dismissed,
+//                   item_name, updated_at }] }
+//
+// LAST-WRITER-WINS on updated_at, deliberately not a merge: these are one
+// person's preferences edited on one machine at a time, and merging would let a
+// stale Deck resurrect a planned bid the desktop just cleared.
+//
+// requireAgentAuth is not optional here. These rows are keyed by character
+// name, so without it any valid agent token could overwrite anyone else's
+// planned bids — and a planned bid is what someone is about to spend DKP on.
+async function _handleAgentBidPrefs(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const chunks = []; let total = 0;
+  for await (const chunk of req) {
+    total += chunk.length;
+    // A corrupt local file must not become a multi-megabyte write.
+    if (total > 256 * 1024) { res.writeHead(413); return res.end(); }
+    chunks.push(chunk);
+  }
+  let payload;
+  try { payload = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+  catch { res.writeHead(400); return res.end(JSON.stringify({ error: 'invalid JSON' })); }
+
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+  const rows = Array.isArray(payload && payload.prefs) ? payload.prefs : [];
+  const clean = rows.slice(0, 2000).map(r => ({
+    guild_id:    guildId,
+    character:   String(r.character || '').slice(0, 64),
+    item_id:     parseInt(r.item_id, 10),
+    planned_bid: Number.isFinite(parseInt(r.planned_bid, 10)) ? parseInt(r.planned_bid, 10) : null,
+    autobid:     !!r.autobid,
+    dismissed:   !!r.dismissed,
+    item_name:   r.item_name ? String(r.item_name).slice(0, 200) : null,
+    updated_at:  r.updated_at || new Date().toISOString(),
+  })).filter(r => r.character && Number.isInteger(r.item_id) && r.item_id > 0);
+
+  if (clean.length === 0) {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ ok: true, written: 0 }));
+  }
+  const supabase = require('./utils/supabase');
+  await supabase.upsert('character_bid_prefs', clean, 'guild_id,character,item_id');
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  return res.end(JSON.stringify({ ok: true, written: clean.length }));
+}
+
 async function _handleAgentPlaceBid(req, res) {
   const identity = await mimicLink.requireAgentAuth(req, res);
   if (!identity) return;
@@ -18102,6 +18213,14 @@ const httpServer = http.createServer(async (req, res) => {
     }
   }
 
+  if (req.method === 'POST' && req.url === '/api/agent/bid-prefs') {
+    try { return await _handleAgentBidPrefs(req, res); }
+    catch (err) {
+      console.error('[bid-prefs] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
   if (req.method === 'POST' && req.url === '/api/agent/place-bid') {
     try { return await _handleAgentPlaceBid(req, res); }
     catch (err) {
