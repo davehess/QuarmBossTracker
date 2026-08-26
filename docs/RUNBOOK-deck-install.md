@@ -292,7 +292,43 @@ via the installer's `dg_voodoo2_79_3.zip` step.
 `scripts/deck-preflight.sh` follows this: it FAILs only on a missing `D3D8.dll`
 or `dgVoodoo.conf`, and reports the D3D9/backup files as drift.
 
-### Reading the two error strings
+### Link 5 — `eqmain.dll`, the login screen (DOWNSTREAM of everything above)
+
+**Signature: a Fatal Error box saying `ERROR: Couldn't load eqmain.dll`, AFTER
+the window has opened and painted splash art** (Deck, 2026-08-26).
+
+**That ordering IS the diagnosis.** If you got a window and any artwork, the
+renderer chain already worked — dgVoodoo loaded, DXVK answered behind it. This
+failure is one link further on: `eqmain.dll` is the login-screen module
+`eqgame.exe` loads once graphics are up. **Do not re-read links 1–4 for this
+error.** Nothing in the dgVoodoo/DXVK chain can produce it.
+
+Most likely cause on a fresh Lutris install is **a zip that extracted into a
+subfolder instead of merging into the game folder.** The installer runs three
+extracts into `$GAMEDIR` back to back (§2's note on the script). If the client
+zip is flat, `eqgame.exe` lands correctly and the game launches — while another
+zip creates `$GAMEDIR/Patch-10-22-2025-1/…` and everything it carried, including
+files the client needs, sits one level down where nothing looks for it.
+
+Check that before assuming the file is simply gone — "missing" and "one level
+down" need opposite fixes:
+
+```bash
+cd <EQ folder>
+ls -1 eqmain.dll                          # present?
+find . -maxdepth 3 -iname 'eqmain.dll'    # where is it REALLY?
+ls -d */                                  # a stray Patch-*/ folder is the tell
+```
+
+- **Found deeper in the tree** → a nested extract. Move that folder's contents up
+  into the game folder (overwriting), delete the empty folder, relaunch.
+- **Not found anywhere** → re-extract the client and Quarm patch zips *into* the
+  game folder, or copy `eqmain.dll` from the known-good set in §3a.
+
+`scripts/deck-preflight.sh` now checks both cases, and separately flags a second
+`eqgame.exe` in a subfolder — the giveaway that a whole payload nested.
+
+### Reading the error strings
 
 - **"Failed to load the graphics DLL!"** → look **left** in the chain. The
   wrapper is missing, renamed, or shadowed. Restore `D3D8.dll` (and check
@@ -671,6 +707,7 @@ Start here. Match the string you actually saw.
 | `Failed to load the graphics DLL!` | `D3D8.dll` (or `dgVoodoo.conf`) is gone/renamed | §5 links 1–2 |
 | `EverQuest requires DirectX 6.0 or higher` | dgVoodoo loaded, DXVK behind it did not | §5 link 3, then §6 trap 1 |
 | Wine log: `dxgi_factory_IsCurrent` stub · `shader_set_limits "4.0"` · `CheckFormatSupport` partial stub | positive proof you are on **Wine's stub d3d11**, not DXVK | §6 trap 1 |
+| `ERROR: Couldn't load eqmain.dll` (window opened first) | login DLL missing, or a zip extracted into a subfolder — **renderer is fine** | §5 link 5 |
 | Splash paints, then hangs forever, no error | empty Working Directory; assets not found by relative path | §6 trap 2 |
 | Crash at character select, or on `/loadskin` | non-Zeal-compatible UI | §8b — `UISkin=Default` |
 | Mimic "can't find my EQ folder" | Mimic older than 2.6.1-linux.20 (prefix-root scan), or an unusual layout | update Mimic, else §4 / §8a — pick it manually |

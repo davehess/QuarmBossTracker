@@ -218,6 +218,7 @@ if [ -d "$SRC_DIR" ]; then
   S_D8=0; S_CF=0; S_D9=0; S_BK=0
   has_ci "$SRC_DIR" 'd3d8.dll'         && S_D8=1
   has_ci "$SRC_DIR" 'dgvoodoo.conf'    && S_CF=1
+  has_ci "$SRC_DIR" 'eqmain.dll'       && SRC_HAS_EQMAIN=1
   has_ci "$SRC_DIR" 'd3d9.dll'         && S_D9=1
   has_ci "$SRC_DIR" 'd3d8backup.dll'   && S_BK=1
   has_ci "$SRC_DIR" 'd3d9backup.dll'   && S_BK=1
@@ -388,6 +389,42 @@ for eqdir in "${EQ_DIRS[@]-}"; do
     info "installer drift present (not required, harmless, leave it):$DRIFT — tells you the lutris.net installer wrote here"
   else
     info "no D3D9/backup DLLs — matches the known-good desktop set exactly"
+  fi
+
+  # --- 6a2. the login DLL (chain link 5 — DOWNSTREAM of the renderer) ---
+  # Signature: "ERROR: Couldn't load eqmain.dll" in a Fatal Error box, AFTER the
+  # window opens and paints splash art. That ordering is the whole diagnosis: if
+  # you got this far the renderer chain WORKED, so nothing in 6a/6b is at fault
+  # and re-reading RUNBOOK §5 is wasted time (Deck, 2026-08-26).
+  #
+  # eqmain.dll is the login-screen module eqgame.exe loads once graphics are up.
+  # The most likely cause on a fresh Lutris install is a zip that extracted into
+  # a SUBFOLDER instead of merging into the game dir: eqgame.exe comes from the
+  # client zip (flat, so the game launches) while the file it wants arrives from
+  # another zip that nested. So look for a stray copy before declaring it gone —
+  # "missing" and "one level down" need opposite fixes.
+  if has_ci "$eqdir" 'eqmain.dll'; then
+    pass "eqmain.dll present (login screen can load)"
+  else
+    NESTED=$(find "$eqdir" -maxdepth 3 -iname 'eqmain.dll' 2>/dev/null | head -n 3)
+    if [ -n "$NESTED" ]; then
+      fail "eqmain.dll is NOT in the game folder, but a copy exists deeper in the tree" \
+        "a zip extracted into its own folder instead of merging. Move the contents of that folder up into $eqdir (overwriting), then relaunch. Found: $(echo $NESTED | tr '\n' ' '). $RUNBOOK §5 link 5"
+    elif [ "${SRC_HAS_EQMAIN:-0}" -eq 1 ]; then
+      fail "eqmain.dll MISSING — 'Couldn't load eqmain.dll' at launch" \
+        "copy it from $SRC_DIR (the known-good set). This is NOT a renderer fault: the window opened, so D3D8/DXVK are fine. $RUNBOOK §5 link 5"
+    else
+      fail "eqmain.dll MISSING — 'Couldn't load eqmain.dll' at launch" \
+        "re-extract the client and Quarm patch zips INTO the game folder (merge, do not create a subfolder). This is NOT a renderer fault: the window opened, so D3D8/DXVK are fine. $RUNBOOK §5 link 5"
+    fi
+  fi
+
+  # A nested extract usually leaves the WHOLE payload one level down, not just
+  # one file, so name the folder — moving its contents up is the single fix.
+  STRAY=$(find "$eqdir" -maxdepth 2 -mindepth 2 -iname 'eqgame.exe' 2>/dev/null | head -n 1)
+  if [ -n "$STRAY" ]; then
+    warn "a SECOND eqgame.exe sits in a subfolder: $(dirname "$STRAY")" \
+      "a zip extracted into its own folder instead of merging. Move that folder's contents up into $eqdir (overwriting), then delete the empty folder. $RUNBOOK §5 link 5"
   fi
 
   # --- 6b. DXVK (renderer chain link 4) — 32-bit is the one that matters ---
