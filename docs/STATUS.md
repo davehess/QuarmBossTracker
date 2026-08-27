@@ -166,6 +166,25 @@ next touch one rather than assuming a missing row means a missing doc.
   `test/pop-spell-needs-all-characters.test.js` guards both fixes. Full story:
   `DECISIONS-2026-08-26.md`.
 
+- **⚠ Adjustments are an OFF-RAID burst, not a raid-time trickle (measured
+  2026-08-27).** Hitya described them as *"rare beyond what happens during the
+  raid, someone rarely passing because they can't loot or for the next person,
+  or missed ticks"* — the CAUSES are right, the timing is not, and the timing is
+  what our backoff design depends on. Of 295 adjustment rows, **only 8 (2.7%)
+  were made during raid hours**. Biggest cluster is **Friday: 113 rows, 101 of
+  them a single `30 days no raids` inactivity purge** — housekeeping after the
+  raid week. The small ±20 pass/missed-tick corrections are real but a minority
+  (78 rows) and are also logged after the raid, not during it.
+  **Consequence:** "DKP only moves during raids" is true of TICKS, not of
+  adjustments. The raids-only live check still holds (off-raid the panel reads
+  the mirror), but a member checking a balance shortly after a bulk purge can
+  see a stale figure for up to the 3h block. **An officer doing a purge should
+  run `/syncopendkp`** (force-flagged, never throttled). We cannot hook it
+  automatically — adjustments are made in OpenDKP's own web UI, not through our
+  bot. The audit-cursor proposal's `Adjustment Created` delta would close it.
+  Also: they arrive in BURSTS, so reason about the `opendkp_adjustments` 1000-row
+  cap against a bad Friday, not a monthly average.
+
 - **API proposal to OpenDKP: an incremental audit feed (designed 2026-08-27,
   NOT SENT).** `docs/DESIGN-opendkp-audit-cursor.md` + artifact. The finding:
   **OpenDKP already has the change feed we need — it is the audit log** (Action

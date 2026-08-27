@@ -6127,10 +6127,14 @@ async function _familyDkpFromMirror(family) {
     supabase.select('opendkp_ticks', `select=value,attendees,fetched_at&attendees=ov.{${family.join(',')}}&limit=3000`),
     // ⚠ Unfiltered: adjustments have no queryable character column (the name is
     // inside `raw`), so this pulls the whole table and filters in JS. 295 rows
-    // today against a 1000 cap, growing ~8/month — decades of headroom, but it
-    // is the SAME shape as the bug that made /opendkp under-report by a third
-    // (an ordered-wrong limit silently dropping rows), and here it would drop
-    // DKP off somebody's balance rather than off a chart. Loud if it ever bites.
+    // today against a 1000 cap — lots of headroom, but it is the SAME shape as
+    // the bug that made /opendkp under-report by a third (an ordered-wrong
+    // limit silently dropping rows), and here it would drop DKP off somebody's
+    // BALANCE rather than off a chart. Loud if it ever bites.
+    //
+    // ⚠ They arrive in BURSTS, not at a steady rate — 113 of the 295 landed on
+    // a Friday, 101 of those a single "30 days no raids" inactivity purge. So
+    // reason about the cap against a bad Friday, not against a monthly average.
     supabase.select('opendkp_adjustments', `select=raw,fetched_at&limit=${ADJ_LIMIT}`),
     supabase.select('opendkp_loot', `select=character_name,dkp,fetched_at&${famClause || 'character_name=eq.__none__'}&limit=3000`),
   ]);
