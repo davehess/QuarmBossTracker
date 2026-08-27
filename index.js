@@ -6122,11 +6122,22 @@ async function _panelAuctions(deps = {}) {
 async function _familyDkpFromMirror(family) {
   const supabase = require('./utils/supabase');
   const famClause = _ilikeAnyClause('character_name', family);
+  const ADJ_LIMIT = 1000;
   const [tickRows, adjRows, spentRows] = await Promise.all([
     supabase.select('opendkp_ticks', `select=value,attendees,fetched_at&attendees=ov.{${family.join(',')}}&limit=3000`),
-    supabase.select('opendkp_adjustments', `select=raw,fetched_at&limit=1000`),
+    // ⚠ Unfiltered: adjustments have no queryable character column (the name is
+    // inside `raw`), so this pulls the whole table and filters in JS. 295 rows
+    // today against a 1000 cap, growing ~8/month — decades of headroom, but it
+    // is the SAME shape as the bug that made /opendkp under-report by a third
+    // (an ordered-wrong limit silently dropping rows), and here it would drop
+    // DKP off somebody's balance rather than off a chart. Loud if it ever bites.
+    supabase.select('opendkp_adjustments', `select=raw,fetched_at&limit=${ADJ_LIMIT}`),
     supabase.select('opendkp_loot', `select=character_name,dkp,fetched_at&${famClause || 'character_name=eq.__none__'}&limit=3000`),
   ]);
+  if ((adjRows || []).length >= ADJ_LIMIT) {
+    console.warn(`[dkp-mirror] adjustments hit the ${ADJ_LIMIT}-row cap — balances may be UNDERSTATED.`
+      + ' Paginate this read or give adjustments a queryable character column.');
+  }
   const famLc = new Set(family.map(f => f.toLowerCase()));
   const per = new Map(family.map(f => [f.toLowerCase(), { name: f, earned: 0, adjustments: 0, spent: 0 }]));
   let fresh = 0;
