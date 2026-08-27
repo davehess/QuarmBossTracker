@@ -166,6 +166,31 @@ next touch one rather than assuming a missing row means a missing doc.
   `test/pop-spell-needs-all-characters.test.js` guards both fixes. Full story:
   `DECISIONS-2026-08-26.md`.
 
+- **Off-raid mirror-sync backoff + the stranded beta line (bot 3.1.89 · beta
+  agent 3.6.5 / Mimic park 2.6.3 · 2026-08-27).** Hitya: *"cut down the number
+  of calls as much as possible outside of raid times."* With the agent's direct
+  calls gone, the 30-min mirror sync was the bulk of our OpenDKP traffic
+  (12h: `/auctions` 26 calls/11.9 MB, `/characters` 65/8.9 MB, `/raids/{id}`
+  245/1.5 MB). Now full cadence in the raid window (widened to 6pm ET so the
+  board is current when the pull starts), **once every 3 hours otherwise**
+  (`OPENDKP_OFFRAID_SYNC_HOURS`) — ~6× fewer off-raid passes.
+  ⚠ Anchored to wall-clock BLOCKS, not elapsed time: with a relative test either
+  every deploy forces a sync (the audits redeploy amplification) or a bot
+  restarting faster than the interval never syncs at all, silently.
+  ⚠ `/syncopendkp` passes `force: true` — caught pre-ship that the officer
+  command would otherwise have been silently swallowed off-raid.
+  **Beta was stranded:** agent 3.6.4 (Aug 21) sorts ABOVE stable 3.6.2, so 2
+  players could never be offered the fix, and `sync-beta` pushes with
+  `GITHUB_TOKEN` which by design triggers no build. Re-parked Mimic 2.6.2 →
+  **2.6.3** (the sync had left it EQUAL to stable, the documented trap where
+  `v2.6.2-beta.N` sorts below `v2.6.2` and the beta channel goes silent) and
+  bumped the agent to 3.6.5 to cut a build.
+  **Fleet at the time: 4 of 28 players on the fix**, 20 on agent 3.6.0.
+  ⚠ There is NO auto-update opt-out in Mimic — the only toggles are the update
+  pop-up, the beta channel and a stable pin — so lag is un-restarted clients,
+  not opt-outs. The agent hot-swaps independently of the Mimic shell (one player
+  on Mimic 2.1.0 was already running agent 3.6.2), which is the fast path.
+
 - **The agent no longer talks to OpenDKP at all — and the blindspot that hid it
   (agent 3.6.2 · bot 3.1.87 · Mimic 2.6.2 · 2026-08-27).** Moncs: *"Do you
   purposefully call /dkp once a minute? Looking back over the past 60 minutes,

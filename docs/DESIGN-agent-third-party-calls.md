@@ -222,6 +222,54 @@ entire problem.
 
 ---
 
+## 4a. The mirror sync also backs off between raids
+
+Hitya, 2026-08-27: *"cut down the number of calls as much as possible outside of
+raid times."*
+
+Once the agent stopped calling OpenDKP, the **30-minute mirror sync** became the
+bulk of what he sees from us. Measured over a 12h window that day:
+
+| endpoint | calls | data |
+|---|---|---|
+| `/auctions` | 26 | 11.9 MB |
+| `/characters` | 65 | 8.9 MB |
+| `/audits` | 26 | 7.3 MB |
+| `/raids/{id}` | 245 | 1.5 MB |
+| `/raids` · `/adjustments` | 33 | 0.8 MB |
+| `/auctions/active` | 537 | ~0 |
+
+All maintenance, none urgent, and between raids it overwhelmingly re-learns that
+nothing changed — the same argument that made the live DKP check raids-only, and
+it applies harder here: a raid is also the only time new raids, new auctions and
+new loot appear at all.
+
+**Full 30-minute cadence inside the raid window (widened to start at 6pm ET so
+the board is current when the pull starts); once every three hours otherwise**
+(`OPENDKP_OFFRAID_SYNC_HOURS`). Roughly a 6× cut on off-raid passes.
+
+⚠ **Anchored to clock BLOCKS, not to elapsed time, and that is load-bearing.**
+The marker is process-local and `main` takes 12–42 pushes a day. With a relative
+"has it been three hours" test, either every boot forces a sync — the redeploy
+amplification that turned out to dominate the audits bill — or a cold process
+adopts the clock and a bot restarting more often than the interval **never syncs
+at all**, silently, looking exactly like it is working. Wall-clock blocks make
+both impossible: a restart re-adopts the current block, and the next block
+arrives on schedule regardless.
+
+⚠ **The officer command is never throttled.** `/syncopendkp` passes
+`force: true`, and `full` implies force. That is an officer saying "go now",
+usually *because* something looks wrong or they just made an off-raid
+adjustment — the exact moment a silent throttle would report success having done
+nothing. (Caught pre-ship: the command did not pass force.)
+
+The cost is latency on an off-raid officer edit — it reaches the mirror within
+three hours rather than thirty minutes, the same trade already accepted for the
+audits idle backoff. Bidding is unaffected: the loot panel reads `_panelAuctions`
+on demand, not this sync.
+
+---
+
 ## 5. Open
 
 | Item | State |
