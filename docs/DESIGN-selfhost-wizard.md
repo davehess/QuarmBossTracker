@@ -95,14 +95,22 @@ must therefore ask or verify.
 - **2026-08-27 — a "refresh everything" pass is scheduled against the DOMAIN'S
   clock, never a rolling timer.** Hitya, looking at 140 MB/day of audits:
   *"we don't need a full download that often, just before a raid. three times a
-  week."* Any endpoint with no `since` filter forces a choice between a cheap
-  incremental read and a periodic full re-read that heals gaps; the full one
-  should land where the data actually moves. Ours anchors to 6pm ET on
-  Sun/Wed/Thu (`OPENDKP_LIST_FULL_SWEEP_HOUR_ET` /
-  `_LIST_FULL_SWEEP_MAX_HOURS`), because DKP is a thing raids change — 3 full
-  pulls a week instead of 7. **The wizard must ask for the guild's raid nights
+  week"* — and an hour later, *"once per week then until we have the new version
+  that has the since tag."* Any endpoint with no `since` filter forces a choice
+  between a cheap incremental read and a periodic full re-read that heals gaps;
+  the full one should land where the data actually moves, and **how often is a
+  negotiation with the upstream operator, not a constant.** Ours is
+  `OPENDKP_LIST_FULL_SWEEP_DAYS` (default `0` = Sunday) at
+  `_FULL_SWEEP_HOUR_ET` (18). **The wizard must ask for the guild's raid nights
   and write them here, not default to 24h**: a rolling interval fires at
   whatever hour the process last booted, which for us was mid-raid.
+  ⚠ **And the max-age safety net must be derived from the schedule, not typed
+  next to it.** Ours was 96h under a three-a-week cadence; the moment the
+  cadence went weekly (a 168h gap) that net would have fired every fourth day
+  and silently restored the old volume. A net tighter than the schedule *is*
+  the schedule. The wizard should compute it from the chosen days, and any
+  hand-written value needs a test asserting the relationship rather than the
+  number.
 - **2026-08-27 — cadence state that is process-local must not make a redeploy
   expensive.** The same sweep marker lives in a `Map`, so "no marker → sweep"
   meant a full download per boot; `main` takes 12–42 pushes a day and that
