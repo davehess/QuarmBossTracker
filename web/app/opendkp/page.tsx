@@ -47,6 +47,13 @@ type Summary = {
   auth_calls_1h: number; auth_blocked_1h: number; ever_seen: boolean;
   endpoints: { endpoint: string; calls: number; bytes: number; errors: number }[];
   hours: { at: string; calls: number; blocked: number }[];
+  fine:  { at: string; calls: number; bytes: number }[];
+  raid: {
+    started_at: string | null; ends_at: string | null; in_progress: boolean | null;
+    calls: number; bytes: number; errors: number;
+    endpoints: { endpoint: string; calls: number; bytes: number; errors: number }[];
+    series: { at: string; calls: number; bytes: number }[];
+  } | null;
 };
 
 export default async function OpenDkpPage() {
@@ -93,6 +100,21 @@ export default async function OpenDkpPage() {
     at: Date.parse(h.at), calls: num(h.calls), blocked: num(h.blocked),
   }));
   const maxHour = Math.max(1, ...hours.map(h => h.calls));
+
+  // 10-minute buckets over the last 6 hours. An hourly bar cannot show a spike
+  // while it is happening — by the time the bar is tall, the moment has passed.
+  const fine = (S?.fine ?? []).map(f => ({ at: Date.parse(f.at), calls: num(f.calls), bytes: num(f.bytes) }));
+  const maxFine = Math.max(1, ...fine.map(f => f.calls));
+
+  const raid = S?.raid ?? null;
+  const raidEndpoints = (raid?.endpoints ?? []).map(e => [e.endpoint, {
+    calls: num(e.calls), bytes: num(e.bytes), errors: num(e.errors),
+  }] as const);
+  const maxRaidEp = Math.max(1, ...raidEndpoints.map(([, v]) => v.calls));
+  const raidSeries = (raid?.series ?? []).map(r => ({ at: Date.parse(r.at), calls: num(r.calls), bytes: num(r.bytes) }));
+  const maxRaidSlot = Math.max(1, ...raidSeries.map(r => r.calls));
+  const etTime = (ms: number) => new Date(ms).toLocaleTimeString('en-US',
+    { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' });
 
   // A failed summary must NOT render as zeros. Zeros on this page say "we sent
   // nothing", which is a claim — and the wrong one to make by accident.
@@ -184,6 +206,103 @@ export default async function OpenDkpPage() {
         )}
       </section>
 
+      {raid && raid.started_at && !broken && (
+        <section className="bg-panel border border-border rounded-lg p-4">
+          <div className="flex items-baseline justify-between gap-3 flex-wrap mb-1">
+            <h2 className="text-base text-orange">
+              {raid.in_progress ? 'This raid — live' : 'Most recent raid'}
+            </h2>
+            <span className="text-[11px] text-dim tabular-nums">
+              {etTime(Date.parse(raid.started_at))}
+              {raid.ends_at ? ` – ${etTime(Date.parse(raid.ends_at))}` : ''} ET
+              {raid.in_progress && <span className="text-green ml-2">● in progress</span>}
+            </span>
+          </div>
+          <p className="text-xs text-dim mb-3">
+            The raid window is when our traffic is supposed to be at its highest — the DKP balance
+            check runs only inside it, and the mirror sync moves to its full cadence. This is the
+            whole window so far, broken out.
+          </p>
+
+          <div className="grid grid-cols-3 gap-3 mb-4">
+            {[
+              { k: 'Calls', v: fmt(num(raid.calls)) },
+              { k: 'Data', v: fmtBytes(num(raid.bytes)) },
+              { k: 'Errors', v: fmt(num(raid.errors)) },
+            ].map(x => (
+              <div key={x.k} className="bg-bg border border-border rounded p-3">
+                <div className="text-[10px] uppercase tracking-wider text-dim">{x.k}</div>
+                <div className="text-xl text-text font-semibold tabular-nums mt-1">{x.v}</div>
+              </div>
+            ))}
+          </div>
+
+          {raidEndpoints.length === 0 ? (
+            <p className="text-sm text-dim">Nothing sent yet this raid.</p>
+          ) : (
+            <div className="space-y-1 mb-4">
+              {raidEndpoints.map(([name, v], i) => (
+                <div key={name} className="flex items-center gap-3 text-sm py-1">
+                  <code className="text-xs text-text w-[240px] shrink-0 truncate" title={name}>{name}</code>
+                  <div className="flex-1 min-w-0 flex items-center gap-2">
+                    <div className="h-4 rounded-r"
+                         style={{ width: `${Math.max(0.5, (v.calls / maxRaidEp) * 100)}%`, background: SERIES[i % SERIES.length] }} />
+                    <span className="text-xs text-text tabular-nums whitespace-nowrap">
+                      {fmt(v.calls)}<span className="text-dim ml-2">{fmtBytes(v.bytes)}</span>
+                      {v.errors > 0 && <span className="text-red ml-2">{fmt(v.errors)} err</span>}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {raidSeries.length > 1 && (
+            <>
+              <div className="text-[10px] uppercase tracking-wider text-dim mb-1">15-minute slots</div>
+              <div className="flex items-end gap-[3px] h-16">
+                {raidSeries.map((r, i) => (
+                  <div key={i} className="flex-1 min-w-0 rounded-t"
+                       title={`${etTime(r.at)} ET — ${fmt(r.calls)} calls, ${fmtBytes(r.bytes)}`}
+                       style={{
+                         height: `${Math.max(r.calls ? 4 : 2, (r.calls / maxRaidSlot) * 100)}%`,
+                         background: r.calls ? '#3987e5' : '#2a2f38',
+                       }} />
+                ))}
+              </div>
+              <div className="flex justify-between text-[10px] text-dim mt-1 tabular-nums">
+                <span>{etTime(raidSeries[0].at)}</span>
+                <span>{etTime(raidSeries[raidSeries.length - 1].at)} ET</span>
+              </div>
+            </>
+          )}
+        </section>
+      )}
+
+      {fine.length > 1 && !broken && (
+        <section className="bg-panel border border-border rounded-lg p-4">
+          <h2 className="text-base text-orange mb-1">Last 6 hours, 10 minutes a bar</h2>
+          <p className="text-xs text-dim mb-3">
+            Fine enough to watch a spike as it happens. The hourly chart below only shows one once
+            it is already over.
+          </p>
+          <div className="flex items-end gap-[2px] h-20">
+            {fine.map((f, i) => (
+              <div key={i} className="flex-1 min-w-0 rounded-t"
+                   title={`${etTime(f.at)} ET — ${fmt(f.calls)} calls, ${fmtBytes(f.bytes)}`}
+                   style={{
+                     height: `${Math.max(f.calls ? 3 : 1, (f.calls / maxFine) * 100)}%`,
+                     background: f.calls ? '#199e70' : '#2a2f38',
+                   }} />
+            ))}
+          </div>
+          <div className="flex justify-between text-[10px] text-dim mt-1 tabular-nums">
+            {[0, Math.floor(fine.length / 3), Math.floor((fine.length * 2) / 3), fine.length - 1]
+              .map((idx, k) => <span key={k}>{etTime(fine[idx].at)}</span>)}
+          </div>
+        </section>
+      )}
+
       <section className="bg-panel border border-border rounded-lg p-4">
         <h2 className="text-base text-orange mb-1">Last 48 hours, hour by hour</h2>
         <p className="text-xs text-dim mb-3">
@@ -200,8 +319,13 @@ export default async function OpenDkpPage() {
                  }} />
           ))}
         </div>
-        <div className="flex justify-between text-[10px] text-dim mt-1">
-          <span>48h ago</span><span>24h ago</span><span>now</span>
+        <div className="flex justify-between text-[10px] text-dim mt-1 tabular-nums">
+          {[0, 12, 24, 36, 47].map(i => (
+            <span key={i}>{hours[i] ? etTime(hours[i].at) : ''}</span>
+          ))}
+        </div>
+        <div className="flex justify-between text-[10px] text-dim">
+          <span>48h ago</span><span>36h</span><span>24h</span><span>12h</span><span>now</span>
         </div>
       </section>
 
