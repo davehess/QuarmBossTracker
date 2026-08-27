@@ -11225,6 +11225,77 @@ const _EQ_SETUP_KEYS = [
   ['zeal.ini',     'Zeal',     'PipeVerbose',  'TRUE'],
   ['eqclient.ini', 'Defaults', 'Log',          'TRUE'],
 ];
+// ── /tag channel autojoin ───────────────────────────────────────────────────
+// Hitya, 2026-08-26: "we need to add this channel to people's autojoins if
+// they don't have them in their ini file." The channel spec is
+// `<name>:<password>` — the colon denotes a password.
+//
+// ⚠ The PASSWORD IS NOT IN THIS FILE and must never be. It is a shared guild
+// secret; a literal here would sit in git history forever and in every clone.
+// The NAME lives in source (below), the password is supplied at runtime from
+// config. test/tag-channel-autojoin.test.js asserts source stays clean — it
+// caught this comment quoting it verbatim on the first draft.
+//
+// Why it matters: the /tag channel is the ONLY surface that carries a spawn id
+// (CLAUDE.md scope note) — the Zeal pipe's gauges do not, so same-name mobs are
+// otherwise indistinguishable. A raider who never joined the channel silently
+// contributes nothing and receives nothing, and the failure is invisible: Zeal
+// still draws their arrow locally.
+//
+// ⚠ THE CHANNEL STRING CARRIES A PASSWORD (`name:password`). Two consequences
+// the code has to respect:
+//   1. Never log or upload the joined value — it is a shared secret for the
+//      guild's channel. The dashboard shows the channel NAME only.
+//   2. When comparing "is it already there", compare on the NAME half only.
+//      Someone who joined with the right name and a wrong/absent password must
+//      be corrected, not skipped — and a duplicate entry with a second password
+//      is worse than either.
+const TAG_CHANNEL_NAME = 'Ztwolfpacktag';
+
+// Split "name:password" -> { name, password }. A channel with no colon has no
+// password; a name is never empty.
+function _parseChannelSpec(spec) {
+  const raw = String(spec == null ? '' : spec).trim();
+  if (!raw) return null;
+  const i = raw.indexOf(':');
+  if (i < 0) return { name: raw, password: null };
+  const name = raw.slice(0, i).trim();
+  if (!name) return null;
+  return { name, password: raw.slice(i + 1).trim() || null };
+}
+
+// Merge `spec` into an existing comma-separated autojoin list.
+// Returns { changed, value, reason }. PURE — no file IO, so it is testable
+// without an EQ install.
+function _mergeAutojoin(existingValue, spec) {
+  const want = _parseChannelSpec(spec);
+  if (!want) return { changed: false, value: String(existingValue || ''), reason: 'bad channel spec' };
+  const parts = String(existingValue || '').split(',').map(p => p.trim()).filter(Boolean);
+  const wantLc = want.name.toLowerCase();
+  const target = want.password ? want.name + ':' + want.password : want.name;
+
+  let found = false, changed = false;
+  const out = [];
+  for (const p of parts) {
+    const got = _parseChannelSpec(p);
+    if (got && got.name.toLowerCase() === wantLc) {
+      // Same NAME. Collapse duplicates and correct a wrong/missing password —
+      // a half-joined channel looks joined and receives nothing.
+      if (found) { changed = true; continue; }        // drop the duplicate
+      found = true;
+      // Case-insensitive comparison: EQ channel names are not case-sensitive,
+      // so rewriting `ztwolfpacktag` to `Ztwolfpacktag` would report a change
+      // on every single run and rewrite the ini for nothing.
+      if (p.toLowerCase() !== target.toLowerCase()) changed = true;
+      out.push(changed ? target : p);
+      continue;
+    }
+    out.push(p);                                       // leave every other channel alone
+  }
+  if (!found) { out.push(target); changed = true; }
+  return { changed, value: out.join(','), reason: found ? 'already present' : 'added' };
+}
+
 function _applyEqSetup() {
   const now = Date.now();
   if ((stats.watchedLogs || []).some(w => w && w.lastSeen && (now - w.lastSeen) < 90_000)) {
