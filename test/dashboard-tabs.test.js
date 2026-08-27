@@ -167,11 +167,34 @@ describe('the split actually moved the cards', () => {
   it('Stats owns the session-observation cards, Info no longer does', () => {
     const stats = bodyOf('renderStats');
     const info  = bodyOf('renderInfo');
-    for (const h of ['Monk Mending', 'Top Abilities', 'Spells Resisted', 'Rolls (this session)',
+    for (const h of ['Monk Mending', 'Top Abilities', 'Spells Resisted',
                      'Spell Damage Inbound', 'Spell Casts This Session']) {
       expect(stats, `Stats should carry "${h}"`).toContain(h);
       expect(info, `Info should no longer carry "${h}"`).not.toContain(h);
     }
+  });
+
+  it('Loot owns rolls AND bidding — Stats no longer carries rolls', () => {
+    // Hitya, 2026-08-27: "move the opendkp bits to their own loot tab with
+    // rolls". Rolls were on Stats and bidding was on the Dashboard, which put
+    // the two ways of handing out the same drop on two different screens.
+    // This exact assertion caught the move when it happened, which is the
+    // point of it — it was asserting Stats owned rolls.
+    const loot = bodyOf('renderLootTab');
+    expect(loot, 'Loot should carry the roll sets').toContain('Rolls (this session)');
+    expect(bodyOf('renderStats'), 'Stats should no longer carry rolls').not.toContain('Rolls (this session)');
+    // The bidding card is a persistent element, not markup in a render string,
+    // so it is asserted by where it MOUNTS.
+    expect(src).toContain('var lootSec = document.getElementById("loot"); if (!lootSec) return;');
+    expect(src).toContain('lootSec.insertBefore(card, lootSec.firstChild);');
+  });
+
+  it('the Loot tab has a button and a section to switch to', () => {
+    // A render function with no tab to paint into is invisible, and nothing
+    // else in the suite would notice.
+    expect(src).toContain('<button data-tab="loot">');
+    expect(src).toContain('<div id="loot" class="section"></div>');
+    expect(src).toContain("['loottab', renderLootTab]");
   });
 
   it('Diagnostics owns the raw Zeal capture, Info no longer does', () => {

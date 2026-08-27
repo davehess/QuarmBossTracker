@@ -1,0 +1,198 @@
+# Who the agent is allowed to talk to
+
+**Status: rule in force as of 2026-08-27 (agent 3.6.2 / bot 3.1.87).**
+Written because we broke it for fourteen months without noticing.
+
+---
+
+## 1. The blindspot
+
+> **A counter that watches one caller reads as "we're clean" when a second
+> caller exists.**
+
+On 2026-08-26 we published `wolfpack.quest/opendkp` — a public, no-sign-in
+counter of every request we make to OpenDKP — specifically so its operator
+would not have to take our word for our traffic. We spent two days driving the
+numbers on it down: 140 MB/day of audits to under 10, a fan-in auction cache,
+an outbound governor, a kill switch.
+
+The next morning Moncs asked:
+
+> "Do you purposefully call /dkp once a minute? Looking back over the past 60
+> minutes, it looks like theres about 54 calls from 184.144.103.149 calling it"
+
+**That ip was a member's home PC.** `opendkp_call_stats` is populated by
+`utils/opendkp.js`, which is bot code. The agent called `api.opendkp.com`
+directly, from every machine running Mimic, and so:
+
+- it never appeared on the counter we built for exactly this purpose;
+- it was not covered by `OPENDKP_MAX_CALLS_PER_MIN`;
+- it scaled with **how many people had Mimic open**, which is the one dimension
+  a server-side counter cannot even see; and
+- we showed the counter to the person paying the bill and said "watch this
+  rather than take our word for it."
+
+The bug was one line — a 60-second cache. The blindspot was the belief that the
+bot was the only thing that talked to OpenDKP. Nobody checked, because the
+question never got asked: **every conversation about our OpenDKP volume was
+implicitly scoped to the bot.**
+
+### The general form
+
+Ask it of any integration, not just this one:
+
+1. **How many processes can originate this call?** If the answer is "one per
+   user", the cost is a fleet multiplier and no server-side number can see it.
+2. **Does the thing that measures us sit on the same path as the thing that
+   calls?** If measurement is in `utils/opendkp.js` and a caller is in
+   `packages/wolfpack-logsync/`, the measurement is structurally incomplete.
+3. **Can the kill switch reach every caller?** `OPENDKP_HALT` does reach the
+   agent, but only within ~2h via token expiry — a real gap while an incident
+   is live.
+4. **Whose money is it?** Our own bandwidth is a budget question. A third
+   party's is a relationship question, and it is not ours to spend.
+
+---
+
+## 2. The rule
+
+> **The agent does not call third-party APIs. The bot does, and the agent asks
+> the bot.**
+
+Not "the agent calls them slowly", not "the agent caches harder". A TTL is a
+number somebody can turn back up; an absent hostname is not. The agent has no
+address for OpenDKP's API and must not regain one —
+`test/opendkp-standings-cache.test.js` fails the build if it does.
+
+**Why the bot instead:** a call from the bot is one call for the whole guild
+regardless of fleet size, it lands in `opendkp_call_stats` so the public
+counter is honest, `OPENDKP_MAX_CALLS_PER_MIN` caps it, and `OPENDKP_HALT`
+stops it in seconds rather than hours.
+
+### The one exception, stated so it is never mis-described
+
+**AWS Cognito, for the member's own OpenDKP login.** The agent drives
+`USER_PASSWORD_AUTH` against `cognito-idp.<region>.amazonaws.com` and stores the
+token locally (`logsync.opendkp.json`, never uploaded). This stays on the client
+because it is the member's own credential and a bid must be attributable to a
+person — routing it through the bot would mean the bot handling member
+passwords. It is **per-token (~1h), not per-minute**, and it is not OpenDKP's
+API Gateway. Anyone saying "the agent talks to no third party" is wrong; the
+accurate sentence is "the agent makes no third-party **data** calls."
+
+### What the trigger is, and what it is deliberately not
+
+Hitya, when this was scoped: *"if there is an auction it should be something
+they receive, or it should be a poll that happens on the bot side that happens
+after a named mob is killed. maybe there's a better design than those two given
+what we know about loot being posted from trash mobs as well."*
+
+There is, and the trash-mob observation is what rules the second option out.
+**The refresh trigger is an open auction, not a mob kill.** Keying off named
+kills is wrong on both sides:
+
+- it **misses** loot, because loot gets posted off trash mobs too — the exact
+  case the question raises; and
+- it **fires for nothing**, because a mob dying does not move anybody's DKP.
+  A *bid settling* does.
+
+An auction being open is the precise signal that bidding is happening, and we
+already have it for free: `_panelAuctions` is 113 bytes a call, demand-driven
+and shared fleet-wide. So the policy in `_standingsRefreshDecision` is:
+
+| State | Upstream refresh |
+|---|---|
+| An auction is open | at most every **60s** |
+| Raid window, nothing open | at most every **30 min** |
+| Neither | **never** — serve the cached figure with its age, or nothing |
+| Last attempt failed | not for 60s, even mid-auction |
+
+Idle is the state a dashboard sits in for most of the week, and it is the state
+that produced 54 calls an hour.
+
+---
+
+## 3. Every call the agent makes
+
+Complete as of agent 3.6.2. Everything in §3.2 goes to **our own bot**
+(`WOLFPACK_AGENT_TOKEN` bearer); nothing in it reaches a third party.
+
+### 3.1 Outside our infrastructure — the whole list
+
+| Destination | What | When | Notes |
+|---|---|---|---|
+| `cognito-idp.<region>.amazonaws.com` | member's OpenDKP login + token refresh | on login, then ~1h token life | The documented exception above. No data calls. |
+| ~~`api.opendkp.com/clients/{name}/dkp`~~ | ~~standings~~ | ~~every 60s per agent~~ | **REMOVED 2026-08-27.** This entire row is the incident. |
+
+That is the list. Two rows, one of them deleted.
+
+### 3.2 To the bot — ingest (POST, durable queue)
+
+Every one persists to `logsync.queue.json` first: 15s drain, exponential backoff
+to 10m, 4xx drops as permanent.
+
+`encounter` · `chat` · `historical_chat` · `bosskill` · `lockout` ·
+`live-state` · `raid-roster` · `buff_casts` · `casting` · `tells` · `pvp` ·
+`pvp_assists` · `trigger` · `trigger-relay` · `trigger_feedback` · `fun_event` ·
+`quake` · `ui_layout` · `threat-snapshot` · `crash_report` · `inventory` ·
+`spellbook` · `quarmy` · `pop_flags` · `pop-anomaly` · `faction` · `rolls` ·
+`looted` · `loot-post` · `dkp-tick` · `hatekill` · `live-damage` ·
+`extended-target` · `di-status` · `debuff-clear` · `buff-lag-report` ·
+`who-override` · `reporter-override` · `flag-override` · `place-bid` ·
+`ui-edit-result` · `bid-prefs` · `ari-lead`
+
+**Load-shed:** `flag_shed_<kind>` 200-acks-and-drops the ephemeral streams.
+`_SHED_NEVER` protects `encounter`, `chat`, `bosskill`, `lockout`,
+`historical_chat` — the durable ones — so nobody can fat-finger the raid's
+parse collection off.
+
+### 3.3 To the bot — polls (GET), with cadence
+
+| Cadence | Endpoint | Purpose |
+|---|---|---|
+| 1.5s | `poll` (#106 multiplexed) | one loop carrying `recent_fires` + `tuning` + `triggers` + `prefs` + `backfill` + `ui_edits` at each stream's own cadence, with per-stream cursors. Falls back to the individual routes on a 404. |
+| 20s | `reporter-poll` | reporter heartbeat + control plane (`flag_agent_kill`, `min_agent_ver_num`) |
+| 2 min | `guild-triggers` | backup path for the trigger set, and the second carrier of the control-plane keys |
+| on demand | `mob-info`, `target-casts`, `target-buffs`, `who-lookup`, `raid-buff-queue`, `incomplete-encounters`, `raid-objectives` | overlays, as the fight needs them |
+| ETag'd | `spell-catalog`, `item-clickies` | catalogs; 304s cost nothing |
+| on update check | `latest-version` | agent update prompts |
+| **raid window or Loot tab open** | `server-panel/*` — `auctions`, `my-bids`, `account-dkp`, `bid-history`, `item-history`, `loot`, `reporters` | the Loot tab. **Gated as of 2026-08-27** — see §4. |
+
+### 3.4 Local only, never uploaded
+
+`logsync.opendkp.json` (bearer token) · `logsync.bidfamily.json` ·
+`personal_triggers.json` · `logsync.queue.json` · the dashboard on
+`localhost:7777`. Officer chat, tells, group and custom channels are filtered at
+byte level **before** parse and never leave the machine (`docs/PRIVACY.md`).
+
+---
+
+## 4. The Loot tab, and the raid gate
+
+Hitya: *"move the opendkp bits to their own loot tab with rolls and make sure it
+only checks for loot during raids."*
+
+Bidding lived on the Dashboard and rolls lived on Stats — two ways of handing
+out the same drop, on two different screens. Both now live on **💰 Loot**
+(`renderLootTab`, `#loot`), bidding above rolls.
+
+**The gate is `wpLootPollWanted()`: a raid window OR the Loot tab being open.**
+
+⚠ The `OR` is deliberate and should not be tightened to raid-window-only. Loot
+*is* handed out off-raid — DKP-market nights, a late award, an officer clearing
+a backlog — and a hard raid-only gate leaves the panel dead with no explanation
+for exactly the person who went looking for it. Opening the tab is an explicit
+"I am doing loot right now", which is the same signal a raid window is, only
+stated by hand. What the gate does stop is the background case: a dashboard left
+open on the Fights tab all week, polling loot nobody is looking at. That was the
+entire problem.
+
+---
+
+## 5. Open
+
+| Item | State |
+|---|---|
+| **`/opendkp` still under-reports** | It counts the bot only. Now that the agent makes no OpenDKP data calls that is *true* rather than misleading — but the page should say so explicitly, because the guarantee is a code property, not something a reader can see. |
+| **`OPENDKP_HALT` reaches agents in ~2h, not instantly** | Via Cognito token expiry (`DECISIONS-2026-08-25.md` §3). With the data call gone this no longer gates any traffic, but the same latency would apply to any future client-side integration. |
+| **Nothing enforces the rule for OTHER third parties** | The test names OpenDKP. A future integration could reintroduce the same class of bug against a different host; a generic "no third-party hosts in agent code" lint would be the real fix. |

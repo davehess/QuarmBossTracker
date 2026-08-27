@@ -6083,6 +6083,121 @@ async function _panelAuctions(deps = {}) {
   return list;
 }
 
+// Pick a family's pooled balance out of the standings array. Behaviour is
+// ported from the agent's #124 _pickAccountDkp so the number members saw before
+// this moved server-side is the number they see after: prefer the main's own
+// row, else the highest-DKP row among the alts. OpenDKP's field name for the
+// balance varies by instance, hence the ladder.
+function _pickAccountDkpFromModels(models, main, familyNames) {
+  const rows = Array.isArray(models) ? models
+             : (models && Array.isArray(models.Models)) ? models.Models : [];
+  const byName = new Map();
+  for (const r of rows) {
+    if (!r) continue;
+    const nm = r.CharacterName || r.Name || r.character_name;
+    if (!nm) continue;
+    const raw = r.CurrentDKP ?? r.CurrentDkp ?? r.currentDkp ?? r.Dkp ?? r.DKP ?? null;
+    const dkp = Number(raw);
+    if (!Number.isFinite(dkp)) continue;
+    const k = String(nm).toLowerCase();
+    if (!byName.has(k)) byName.set(k, { name: String(nm), dkp });   // one active row per name
+  }
+  const mainKey = main ? String(main).trim().toLowerCase() : '';
+  if (mainKey && byName.has(mainKey)) {
+    const m = byName.get(mainKey);
+    return { dkp: m.dkp, character: m.name, matched: 'main' };
+  }
+  let best = null;
+  for (const f of (Array.isArray(familyNames) ? familyNames : [])) {
+    const k = f ? String(f).trim().toLowerCase() : '';
+    const row = k && byName.get(k);
+    if (row && (best === null || row.dkp > best.dkp)) best = row;
+  }
+  return best ? { dkp: best.dkp, character: best.name, matched: 'family' } : null;
+}
+
+// ── Panel standings cache (#… agent third-party removal, 2026-08-27) ────────
+// Moncs: "Do you purposefully call /dkp once a minute? Looking back over the
+// past 60 minutes, it looks like theres about 54 calls from <ip> calling it".
+// That ip was a MEMBER'S PC. Every open Mimic asked OpenDKP for the full 472-
+// character standings array once a minute, directly, to render one number.
+//
+// The standings now live here — one fetch for the whole guild, through
+// utils/opendkp so the call counter sees it, the outbound governor caps it and
+// OPENDKP_HALT stops it. Agents read the answer from the bot and never speak to
+// OpenDKP themselves.
+//
+// ⚠ THE REFRESH TRIGGER IS AN OPEN AUCTION, NOT A MOB KILL (Hitya, 2026-08-27:
+// "maybe there's a better design than those two given what we know about loot
+// being posted from trash mobs as well"). Keying off named-mob kills would have
+// been wrong on both sides: loot gets posted off trash too, so it would MISS
+// auctions; and a mob dying does not move anyone's DKP, so it would refresh for
+// no reason. What actually changes a balance is a bid settling, and an auction
+// being open is the cheap, already-cached signal that bidding is happening.
+// _panelAuctions is 113 bytes a call and demand-driven, so gating on it costs
+// nothing extra.
+//
+// Outside a raid window with nothing live, we do not refresh at all — a stale
+// figure is served with its age attached, and the panel can say so. DKP does
+// not move when nobody is raiding.
+const _PANEL_DKP_TTL_BIDDING_MS = 60_000;         // an auction is open
+const _PANEL_DKP_TTL_RAID_MS    = 30 * 60_000;    // raiding, nothing live
+const _PANEL_DKP_TTL_FAILED_MS  = 60_000;
+let _panelStandingsCache = null;  // { at, models, failed }
+
+// Pure: given what we know right now, may we spend an upstream call?
+// Split out so the policy is testable without a clock, a network or a raid.
+function _standingsRefreshDecision({ cache, nowMs, auctionsLive, inRaid }) {
+  if (cache && cache.failed && (nowMs - cache.at) < _PANEL_DKP_TTL_FAILED_MS) {
+    return { refresh: false, reason: 'cached-failure' };
+  }
+  const ttl = auctionsLive ? _PANEL_DKP_TTL_BIDDING_MS
+            : inRaid       ? _PANEL_DKP_TTL_RAID_MS
+            : Infinity;
+  if (cache && !cache.failed && (nowMs - cache.at) < ttl) {
+    return { refresh: false, reason: 'fresh' };
+  }
+  // No cache at all and nothing is happening: still refuse. The first raid pass
+  // or the first open auction fills it. Serving nothing is honest; spending a
+  // call so an idle dashboard can show a number nobody is acting on is not.
+  if (!auctionsLive && !inRaid) {
+    return { refresh: false, reason: cache ? 'stale-but-idle' : 'idle-no-data' };
+  }
+  return { refresh: true, reason: auctionsLive ? 'auction-open' : 'raid-window' };
+}
+
+async function _panelStandings(deps = {}) {
+  const now   = deps.now   || Date.now;
+  const fetch = deps.fetch || (() => require('./utils/opendkp').getStandings());
+  const inRaid = deps.inRaid !== undefined ? deps.inRaid : _inRaidWindowEt(new Date(now()));
+  let auctionsLive = false;
+  if (deps.auctionsLive !== undefined) auctionsLive = deps.auctionsLive;
+  else { try { auctionsLive = (await _panelAuctions()).length > 0; } catch { auctionsLive = false; } }
+
+  const d = _standingsRefreshDecision({ cache: _panelStandingsCache, nowMs: now(), auctionsLive, inRaid });
+  if (!d.refresh) {
+    return { models: _panelStandingsCache?.models || null, at: _panelStandingsCache?.at || null, reason: d.reason };
+  }
+  let models = null;
+  try { models = await fetch(); } catch { models = null; }
+  if (!models) {
+    _panelStandingsCache = { at: now(), models: _panelStandingsCache?.models || null, failed: true };
+    return { models: _panelStandingsCache.models, at: _panelStandingsCache.at, reason: 'fetch-failed' };
+  }
+  _panelStandingsCache = { at: now(), models, failed: false };
+  return { models, at: _panelStandingsCache.at, reason: d.reason };
+}
+
+// Raid window, ET: Sun/Wed/Thu 8pm-midnight with an hour either side, matching
+// utils/openDkpSync's _inRaidWindow. Duplicated rather than exported across the
+// module boundary because index.js must not import the sync's private state.
+function _inRaidWindowEt(now = new Date()) {
+  const et = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  if (![0, 3, 4].includes(et.getDay())) return false;
+  const h = et.getHours();
+  return h >= 19 || h < 1;
+}
+
 // OpenDKP roster, cached 1h — consumed only by "my-bids" CharacterId matching.
 // The roster changes on officer action, not mid-raid; the 30-min mirror sync
 // keeps Supabase current independently of this.
@@ -6491,6 +6606,35 @@ async function _handleAgentServerPanel(req, res) {
         return res.end(JSON.stringify({ error: 'opendkp fetch failed' }));
       }
     }
+    if (key === 'account-dkp') {
+      // The authoritative pooled account balance, from OpenDKP's own standings.
+      // Replaces the per-member DIRECT call that Moncs caught on 2026-08-27 —
+      // see _panelStandings above. One upstream fetch serves the whole guild,
+      // gated on an auction being open (or a raid window), and it is counted,
+      // governed and haltable like every other call this bot makes.
+      //
+      // Always 200. `ok:false` means "no figure available right now", which the
+      // panel already knows how to render (it falls back to the mirror "est."
+      // number). A stale figure is returned WITH its age so the panel can say
+      // how old it is rather than quietly present it as live.
+      const main  = (url.searchParams.get('main') || character || '').trim();
+      const chars = (url.searchParams.get('characters') || '').split(',').map(x => x.trim()).filter(Boolean);
+      let out = { ok: false, reason: 'unavailable' };
+      try {
+        const { models, at, reason } = await _panelStandings();
+        const picked = models ? _pickAccountDkpFromModels(models, main, chars.length ? chars : (main ? [main] : [])) : null;
+        out = picked
+          ? { ok: true, source: 'opendkp', account_dkp: Math.round(picked.dkp),
+              character: picked.character, matched: picked.matched,
+              as_of: at ? new Date(at).toISOString() : null, reason }
+          : { ok: false, reason: models ? 'no-matching-character' : reason };
+      } catch (err) {
+        console.warn('[server-panel:account-dkp] failed:', err?.message);
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify(out));
+    }
+
     if (key === 'my-bids') {
       // The caller's currently-active bids across all open auctions. OpenDKP
       // doesn't expose a "list my bids" endpoint, so we read the cached active

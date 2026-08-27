@@ -12914,6 +12914,7 @@ body.wp-overlay-mode .wp-overlay-target table th:nth-child(2) { text-align:right
        unrelated jobs: what your log SAW (session stats), whether the machinery
        WORKS (diagnostics), and the thing the tab is actually named for. The
        sidebar rail is what made room for more destinations. -->
+  <button data-tab="loot">💰 Loot</button>
   <button data-tab="stats">📊 Stats</button>
   <button data-tab="triggers">⚡ Triggers</button>
   <button data-tab="diag">🩺 Diagnostics</button>
@@ -12943,6 +12944,7 @@ body.wp-overlay-mode .wp-overlay-target table th:nth-child(2) { text-align:right
   <div id="tanks"></div>
   <div id="deeps"></div>
 </div>
+<div id="loot" class="section"></div>
 <div id="stats" class="section"></div>
 <div id="info" class="section"></div>
 <div id="triggers" class="section"></div>
@@ -16771,6 +16773,67 @@ document.addEventListener('click', function (ev) {
 // timestamps only, no fmtAgo, no live gauges. That is why this section needs
 // no wp* placeholders at all — a poll that changes nothing rewrites nothing,
 // so open <details> rows survive (and each one carries wpKeep besides).
+// ── 💰 Loot tab (Hitya, 2026-08-27) ────────────────────────────────────────
+// "move the opendkp bits to their own loot tab with rolls and make sure it
+// only checks for loot during raids."
+//
+// Bidding and rolling are two ways of handing out the same drop, so they share
+// a screen instead of being split across the Dashboard (bids) and Stats
+// (rolls). The bidding card mounts itself here — see its ensure().
+function renderLootTab(s) {
+  const sec = document.getElementById('loot');
+  if (!sec) return;
+  var h = '';
+  // /random roll sets — EQ Log Parser-style table. One expandable row per set
+  // ("333 (Item name) — winner names"); the winners come from the loot-link
+  // roll-number convention: Item (3)333 in raid chat = top-3 rolls on 0-333
+  // each win one. Absolute times only (byte-stable across polls).
+  var _rollSets = s.rollSets || [];
+  if (_rollSets.length > 0) {
+    h += '<div class="card wide"><h2>🎲 Rolls (this session)</h2>';
+    h += '<div class="subtle" style="font-size:11px;margin-bottom:6px">Every /random heard in the zone, grouped by roll range. Link loot in raid chat as <code>Item Name (qty)NNN | ...</code> and each set picks up its item name — (3) means the top three rolls win one each. First roll per player counts; re-rolls are listed struck through.</div>';
+    for (var rsi = 0; rsi < _rollSets.length; rsi++) {
+      var rset = _rollSets[rsi];
+      var rWinners = (rset.winners || []).map(function (w) { return esc(w.name) + ' <b>' + w.value + '</b>'; }).join(', ');
+      var rTime = new Date(rset.started_at_ms).toLocaleTimeString();
+      h += '<details ' + wpKeep('roll|' + rset.started_at_ms + '|' + rset.to) + '>';
+      h += '<summary><b>' + rset.from + '–' + rset.to + '</b>'
+         + (rset.item ? ' (' + esc(rset.item) + (rset.qty ? ' ×' + rset.qty : '') + ')' : '')
+         + ' — <span style="color:var(--gold,#f0c419)">' + (rWinners || '—') + '</span>'
+         + ' <span class="dim">· ' + rset.players + ' roller' + (rset.players === 1 ? '' : 's')
+         + ' · ' + rTime + (rset.open ? ' · open' : '') + '</span></summary>';
+      h += '<table><tr><th>Rolled</th><th>Player</th><th>Time</th></tr>';
+      var rRows = (rset.rolls || []).slice().sort(function (a, b) { return b.value - a.value; });
+      for (var rri = 0; rri < rRows.length; rri++) {
+        var rr = rRows[rri];
+        h += '<tr' + (rr.reroll ? ' style="opacity:0.45;text-decoration:line-through"' : '') + '>'
+           + '<td class="num">' + rr.value + '</td>'
+           + '<td>' + esc(rr.name) + (rr.reroll ? ' (re-roll)' : '') + '</td>'
+           + '<td class="dim">' + new Date(rr.at_ms).toLocaleTimeString() + '</td></tr>';
+      }
+      h += '</table></details>';
+    }
+    h += '</div>';
+  }
+
+
+  if (!h) {
+    h = '<div class="card wide"><h2>🎲 Rolls (this session)</h2>'
+      + '<div class="dim" style="padding:6px">No /random rolls heard yet this session.</div></div>';
+  }
+  // ⚠ The bidding card is a persistent element that mounts ITSELF into this
+  // section, so it must not live inside the string morphInto rewrites — the
+  // rewrite would delete it on every poll. Roll markup goes in its own stable
+  // host div; the bidding card stays a sibling.
+  var host = document.getElementById('wpLootRolls');
+  if (!host) {
+    host = document.createElement('div');
+    host.id = 'wpLootRolls';
+    sec.appendChild(host);
+  }
+  morphInto(host, h);
+}
+
 function renderStats(s) {
   let h = '';
   h += '<div class="grid">';
@@ -16908,37 +16971,9 @@ function renderStats(s) {
     h += '</div>';
   }
 
-  // /random roll sets — EQ Log Parser-style table. One expandable row per set
-  // ("333 (Item name) — winner names"); the winners come from the loot-link
-  // roll-number convention: Item (3)333 in raid chat = top-3 rolls on 0-333
-  // each win one. Absolute times only (byte-stable across polls).
-  var _rollSets = s.rollSets || [];
-  if (_rollSets.length > 0) {
-    h += '<div class="card wide"><h2>🎲 Rolls (this session)</h2>';
-    h += '<div class="subtle" style="font-size:11px;margin-bottom:6px">Every /random heard in the zone, grouped by roll range. Link loot in raid chat as <code>Item Name (qty)NNN | ...</code> and each set picks up its item name — (3) means the top three rolls win one each. First roll per player counts; re-rolls are listed struck through.</div>';
-    for (var rsi = 0; rsi < _rollSets.length; rsi++) {
-      var rset = _rollSets[rsi];
-      var rWinners = (rset.winners || []).map(function (w) { return esc(w.name) + ' <b>' + w.value + '</b>'; }).join(', ');
-      var rTime = new Date(rset.started_at_ms).toLocaleTimeString();
-      h += '<details ' + wpKeep('roll|' + rset.started_at_ms + '|' + rset.to) + '>';
-      h += '<summary><b>' + rset.from + '–' + rset.to + '</b>'
-         + (rset.item ? ' (' + esc(rset.item) + (rset.qty ? ' ×' + rset.qty : '') + ')' : '')
-         + ' — <span style="color:var(--gold,#f0c419)">' + (rWinners || '—') + '</span>'
-         + ' <span class="dim">· ' + rset.players + ' roller' + (rset.players === 1 ? '' : 's')
-         + ' · ' + rTime + (rset.open ? ' · open' : '') + '</span></summary>';
-      h += '<table><tr><th>Rolled</th><th>Player</th><th>Time</th></tr>';
-      var rRows = (rset.rolls || []).slice().sort(function (a, b) { return b.value - a.value; });
-      for (var rri = 0; rri < rRows.length; rri++) {
-        var rr = rRows[rri];
-        h += '<tr' + (rr.reroll ? ' style="opacity:0.45;text-decoration:line-through"' : '') + '>'
-           + '<td class="num">' + rr.value + '</td>'
-           + '<td>' + esc(rr.name) + (rr.reroll ? ' (re-roll)' : '') + '</td>'
-           + '<td class="dim">' + new Date(rr.at_ms).toLocaleTimeString() + '</td></tr>';
-      }
-      h += '</table></details>';
-    }
-    h += '</div>';
-  }
+  // 🎲 Rolls moved to the Loot tab (Hitya, 2026-08-27: "move the opendkp bits
+  // to their own loot tab with rolls"). Rolls and bids are two ways of handing
+  // out the same drop, so they belong on one screen — see renderLootTab().
 
   // Inbound spell damage on YOU, grouped by caster → spell. Counterpart to the
   // resisted card: what got through. Caster is the group; the spell names sit
@@ -17945,6 +17980,7 @@ async function refresh() {
                      ['charmdiag', renderCharmDiag], ['petbuffdiag', renderPetBuffDiag], ['triggerjournal', renderTriggerJournal],
                      ['mechanics', renderMechanics],
                      ['overlays', renderOverlays], ['stats', renderStats], ['info', renderInfo],
+                     ['loottab', renderLootTab],
                      // After info: fill the placeholders renderInfo/renderDiag
                      // just (re)painted, so they show same-tick. renderCrashReview
                      // sat ABOVE renderInfo from the day the crash card moved onto
@@ -19626,9 +19662,11 @@ async function dismissTopDamage(key) {
   function ensure(){
     var found = document.getElementById("wpBiddingCard");
     if (found){ card = found; return; }
-    var dash = document.getElementById("dash"); if (!dash) return;
-    var grid = dash.querySelector(".grid"); var host = grid || dash;
-    host.insertBefore(card, host.firstChild);
+    // Moved off the Dashboard onto the Loot tab (2026-08-27). Mounted FIRST so
+    // bidding sits above the roll history — mid-raid the live auction is what
+    // you opened the tab for.
+    var lootSec = document.getElementById("loot"); if (!lootSec) return;
+    lootSec.insertBefore(card, lootSec.firstChild);
   }
 
   function pickChar(){
@@ -20123,13 +20161,45 @@ async function dismissTopDamage(key) {
     var main=(cfg.family&&cfg.family.main)||""; var fam=famList();
     if (!main && !fam.length){ acctDkp=null; return Promise.resolve(); }
     var key=main+"|"+fam.join(",");
-    if (acctDkp!==null && key===lastAcctKey && (Date.now()-lastAcctAt)<30000) return Promise.resolve();
+    if (acctDkp!==null && key===lastAcctKey && (Date.now()-lastAcctAt)<300000) return Promise.resolve();
     var q="?main="+encodeURIComponent(main)+"&characters="+encodeURIComponent(fam.join(","));
-    return fetch("/api/loot/dkp"+q).then(function(r){return r.ok?r.json():null;}).then(function(j){
+    // Was /api/loot/dkp, which called api.opendkp.com from THIS machine once a
+    // minute. Now it is the bot, which fetches the standings once for the whole
+    // guild. Same number, one caller.
+    return fetch("/api/server/account-dkp"+q).then(function(r){return r.ok?r.json():null;}).then(function(j){
       acctDkp=(j&&j.ok)?j:null; lastAcctKey=key; lastAcctAt=Date.now();
     }).catch(function(){ acctDkp=null; lastAcctKey=key; lastAcctAt=Date.now(); });
   }
+  // ── Raid gate (Hitya, 2026-08-27: "make sure it only checks for loot during
+  // raids") ────────────────────────────────────────────────────────────────
+  // Sun/Wed/Thu 8pm-midnight ET, an hour either side, matching the bot.
+  // Computed from the browser clock in ET so it is right regardless of where
+  // the raider actually lives.
+  function wpInRaidWindow(){
+    try {
+      var et = new Date(new Date().toLocaleString("en-US", { timeZone: "America/New_York" }));
+      var d = et.getDay();
+      if (d !== 0 && d !== 3 && d !== 4) return false;
+      var hr = et.getHours();
+      return hr >= 19 || hr < 1;
+    } catch (e) { return true; }   // unknown clock: behave as before, do not go dark
+  }
+  // ⚠ Deliberately raid window OR the Loot tab being open, not raid window
+  // alone. Loot IS handed out off-raid — DKP-market nights, a late award, an
+  // officer clearing a backlog — and a hard raid-only gate would leave the
+  // panel dead with no explanation for exactly the person who went looking for
+  // it. Opening the tab is an explicit "I am doing loot right now", which is
+  // the same signal a raid window is, just stated by hand. What this does stop
+  // is the background case: a dashboard sitting open on the Fights tab all
+  // week, polling loot nobody is looking at. That was the entire problem.
+  function wpLootPollWanted(){
+    if (wpInRaidWindow()) return true;
+    var sec = document.getElementById("loot");
+    return !!(sec && sec.classList.contains("active"));
+  }
+
   function fetchServer(){
+    if (!wpLootPollWanted()) { return Promise.resolve(); }
     var who=pickChar();
     var q = who ? ("?character="+encodeURIComponent(who)) : "";
     var jobs=[ fetch("/api/server/auctions"+q).then(function(r){return r.ok?r.json():{auctions:[]};}).then(function(j){ srvAucs=(j&&j.auctions)||[]; }).catch(function(){ srvAucs=[]; }) ];
@@ -22468,24 +22538,17 @@ function startWebDashboard(port) {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ auctions: _lootAuctionsSnapshot(), updated_at: new Date().toISOString() }));
       }
-      // #124 — the REAL pooled account DKP, read from OpenDKP's own standings
-      // (not the mirror recompute). ?main=<name>&characters=<csv>. Requires the
-      // #108 OpenDKP login (Bearer). { ok:false } → the panel shows the mirror
-      // figure labeled "est." instead. Never blocks: fail-open to ok:false.
-      if (req.url.startsWith('/api/loot/dkp') && req.method === 'GET') {
-        const u = new URL(req.url, 'http://localhost');
-        const main  = (u.searchParams.get('main') || '').trim();
-        const chars = (u.searchParams.get('characters') || '').split(',').map(s => s.trim()).filter(Boolean);
-        if (!_opendkpAuthed() && !(_opendkpAuth && _opendkpAuth.refresh_token)) {
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          return res.end(JSON.stringify({ ok: false, reason: 'not authed' }));
-        }
-        let out;
-        try { out = await _opendkpAccountDkp(main, chars.length ? chars : (main ? [main] : [])); }
-        catch { out = { ok: false }; }
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify(out));
-      }
+      // ⚠ GONE (2026-08-27): the local /api/loot/dkp route used to call
+      // api.opendkp.com DIRECTLY from this machine, once a minute per running
+      // agent, to fetch the whole 472-character standings array and render one
+      // number. Moncs saw ~54 calls/hour from a single member's home ip.
+      //
+      // Hitya: "agents shouldnt be reaching out to opendkp like this."
+      // The bot now owns that call — one fetch for the whole guild, counted,
+      // governed and haltable — and the dashboard reads it through the generic
+      // /api/server/ passthrough below as `account-dkp`. There is deliberately
+      // no agent-side replacement route: a route here is a route that can grow
+      // a direct call again.
       // Increment 2f passthrough: GET /api/server/<key>?character=... proxies
       // to the bot's /api/agent/server-panel/<key> with our stored bearer
       // token so the dashboard can render wolfpack.quest aggregates next to
@@ -24575,8 +24638,10 @@ async function _opendkpEnsureFresh() {
 // in prod — so the agent has identical read capability and needs no extra
 // credential). Server-side call from Node, so there is no browser CORS.
 
-const OPENDKP_API_HOST = (process.env.OPENDKP_API_HOST || 'https://api.opendkp.com').replace(/\/+$/, '');
-let _opendkpStandingsCache = null;   // { at, models }
+// ⚠ There is no OPENDKP_API_HOST here any more, and there must not be one
+// again: the agent has no address for OpenDKP's API to call. The only host it
+// still speaks to besides our own bot is AWS Cognito, for the member's own
+// login — see the inventory in docs/DESIGN-agent-third-party-calls.md.
 
 function _opendkpClientName() {
   return (_opendkpCfgCache && _opendkpCfgCache.client_name) || process.env.OPENDKP_CLIENT_NAME || 'wolfpack';
@@ -24620,97 +24685,17 @@ function _pickAccountDkp(models, main, familyNames) {
 }
 // ── end #124 pure helper ──
 
-function _opendkpGetJson(pathStr, token) {
-  return new Promise((resolve) => {
-    let u; try { u = new URL(OPENDKP_API_HOST + pathStr); } catch { return resolve(null); }
-    const rq = https.request({
-      method: 'GET', hostname: u.hostname, port: u.port || 443,
-      path: u.pathname + (u.search || ''),
-      headers: { 'Authorization': 'Bearer ' + token, 'Accept': 'application/json' }, timeout: 12000,
-    }, (r) => {
-      let d = ''; r.on('data', c => d += c);
-      r.on('end', () => {
-        if ((r.statusCode || 500) >= 400) return resolve(null);
-        try { resolve(JSON.parse(d || 'null')); } catch { resolve(null); }
-      });
-    });
-    rq.on('error', () => resolve(null));
-    rq.on('timeout', () => { rq.destroy(); resolve(null); });
-    rq.end();
-  });
-}
-
-// ── Standings cache TTL (Moncs, 2026-08-27) ────────────────────────────────
-// "Do you purposefully call /dkp once a minute? Looking back over the past 60
-// minutes, it looks like theres about 54 calls from <ip> calling it"
+// ⚠ REMOVED 2026-08-27 — the agent's direct line to OpenDKP.
+// _opendkpGetJson / _opendkpFetchStandings / _opendkpAccountDkp lived here and
+// called api.opendkp.com from every member's PC once a minute. They are gone,
+// not merely throttled, because a throttle is a number somebody can turn back
+// up: the whole class of "agent talks to a third party's API" is what we are
+// removing. The balance now comes from the bot (server-panel/account-dkp).
 //
-// Yes, and not on purpose. The dashboard polls every 7s; the browser throttles
-// to 30s; this cache was 60s — so a running agent asked OpenDKP for the FULL
-// standings array (472 characters) once a minute, forever, to render one
-// number: your account DKP in the loot panel. 54 calls/hour per open Mimic,
-// and it scales with the fleet: sixteen raiders would be ~860/hour.
-//
-// ⚠ This path does NOT go through the bot. It calls api.opendkp.com directly
-// (OPENDKP_API_HOST), so it never appeared in opendkp_call_stats and the
-// wolfpack.quest/opendkp counter could not see it. Our page was only ever
-// showing the bot's half of what we send him.
-//
-// DKP moves when a bid settles, not every minute. Ten minutes is still fresher
-// than the loot flow needs, and it takes one user from 54 calls/hour to 6.
-const _STANDINGS_TTL_DEFAULT_MS = 10 * 60 * 1000;
-
-function _standingsTtlMs() {
-  const n = Number(process.env.WP_OPENDKP_STANDINGS_TTL_MS);
-  // Floor at 60s: this knob exists to lengthen the cache, never to hand
-  // someone a way to hammer a third party's API harder than we already did.
-  return (Number.isFinite(n) && n >= 60000) ? n : _STANDINGS_TTL_DEFAULT_MS;
-}
-
-// Pure, so the TTL is testable without a clock or a network.
-function _standingsCacheFresh(cache, nowMs, ttlMs) {
-  // ⚠ Must be a real POSITIVE number, not merely coercible. `Number(null)`,
-  // `Number('')`, `Number(false)` and `Number([])` are all 0 — a stamp of 0
-  // reads as "cached at the epoch", which is fresh whenever the clock is
-  // small, and a wrongly-fresh cache freezes the DKP figure in the bidding
-  // panel with no error to notice. (My first guard used Number()+isFinite and
-  // let every one of those through; mutation testing found it.)
-  const at = (cache && typeof cache.at === 'number') ? cache.at : NaN;
-  if (!Number.isFinite(at) || at <= 0) return false;
-  return (nowMs - at) < ttlMs;
-}
-
-// Fetch the standings Models[] (Bearer). The hosted multi-tenant API serves each
-// legacy /beta/<res> lambda under /clients/<name>/<res>; the DKP summary lambda's
-// legacy path is /beta/dkp, so its hosted path is /clients/<name>/dkp (we also
-// try /summary as a fallback). Cached ~60s. Returns the array or null. NEVER
-// throws — any failure just falls back to the mirror figure in the panel.
-async function _opendkpFetchStandings() {
-  if (_standingsCacheFresh(_opendkpStandingsCache, Date.now(), _standingsTtlMs())) {
-    return _opendkpStandingsCache.models;
-  }
-  if (!_opendkpAuthed()) { const ok = await _opendkpEnsureFresh(); if (!ok) return null; }
-  const token = _opendkpAuth && _opendkpAuth.id_token;
-  if (!token) return null;
-  try { await _fetchOpendkpAuthConfig(); } catch { /* client name defaults to wolfpack */ }
-  const name = encodeURIComponent(_opendkpClientName());
-  const routes = ['/clients/' + name + '/dkp', '/clients/' + name + '/summary'];
-  for (const route of routes) {
-    const j = await _opendkpGetJson(route, token);
-    const models = Array.isArray(j) ? j : (j && Array.isArray(j.Models)) ? j.Models : null;
-    if (models && models.length) { _opendkpStandingsCache = { at: Date.now(), models: models }; return models; }
-  }
-  return null;
-}
-
-// Resolve the pooled account balance for a family. Returns
-// { ok:true, source:'opendkp', account_dkp, character, matched } or { ok:false }.
-async function _opendkpAccountDkp(main, familyNames) {
-  const models = await _opendkpFetchStandings();
-  if (!models) return { ok: false };
-  const picked = _pickAccountDkp(models, main, familyNames);
-  if (!picked) return { ok: false };
-  return { ok: true, source: 'opendkp', account_dkp: Math.round(picked.dkp), character: picked.character, matched: picked.matched };
-}
+// _pickAccountDkp stays — it is pure, it is tested, and the same selection
+// logic now runs on the BOT as _pickAccountDkpFromModels. Keeping this copy is
+// what lets test/loot-dkp-standings.test.js keep proving the behaviour members
+// actually see did not change when the call moved.
 
 // Hydrate both from disk at startup (defaults on missing/unreadable files).
 _loadOpendkpAuth();
