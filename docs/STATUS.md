@@ -166,34 +166,38 @@ next touch one rather than assuming a missing row means a missing doc.
   `test/pop-spell-needs-all-characters.test.js` guards both fixes. Full story:
   `DECISIONS-2026-08-26.md`.
 
-- **Mimic was calling OpenDKP's `/dkp` once a minute, and our own counter could
-  not see it (agent 3.6.1 · Mimic 2.6.1 stable · 2026-08-27).** Moncs: *"Do you
+- **The agent no longer talks to OpenDKP at all — and the blindspot that hid it
+  (agent 3.6.2 · bot 3.1.87 · Mimic 2.6.2 · 2026-08-27).** Moncs: *"Do you
   purposefully call /dkp once a minute? Looking back over the past 60 minutes,
   it looks like theres about 54 calls from 184.144.103.149 calling it"* — a
-  RESIDENTIAL ip, i.e. one person's PC, not Railway. Chain, all in
-  `packages/wolfpack-logsync/index.js`: dashboard polls every 7s → 30s browser
-  throttle → **60s agent cache** (`_opendkpFetchStandings`) → `GET
-  /clients/wolfpack/dkp`. One open Mimic = ~54 calls/hour, pulling the full
-  472-character standings array to render ONE number (your account DKP in the
-  loot panel); sixteen raiders would be ~860/hour. Cache is now **10 min**
-  (`WP_OPENDKP_STANDINGS_TTL_MS`, floored at 60s so the knob can only ever be
-  kinder), and the fetch is skipped while the window is hidden. 54/hr → 6/hr.
-  ⚠ **The reason it hid for so long: this path calls `api.opendkp.com` DIRECTLY
-  and never touches the bot**, so it is absent from `opendkp_call_stats` and
-  invisible on `wolfpack.quest/opendkp`. That page only ever showed the BOT's
-  half of what we send him — which is why it looked clean while he saw traffic.
-  (The `OPENDKP_HALT` gate on `opendkp-auth-config` does still cover these
-  calls, within ~2h via token expiry, exactly as `DECISIONS-2026-08-25.md` §3
-  describes — that doc was right.)
-  7 mutation-checked tests in `test/opendkp-standings-cache.test.js`; one
-  mutation survived twice before the test was made to discriminate, written up
-  in the file header.
-  ⚠ OPEN: `/opendkp` must either count agent-side traffic too or say plainly
-  that it does not. As it stands it under-reports by an unknown amount, and we
-  showed it to the person paying the bill.
-  ⚠ OPEN: re-park `beta` above the new stable (beta is at 2.6.1, stable is now
-  2.6.1 — park beta at **2.6.2**), and expect `sync-beta.yml` to need a hand:
-  beta carries ~373 lines of in-flight agent work in the same file.
+  RESIDENTIAL ip: one member's PC. Every open Mimic pulled the full
+  472-character standings array once a minute to render one number.
+  ⚠ **The blindspot, written up in `DESIGN-agent-third-party-calls.md` §1: a
+  counter that watches one caller reads as "we're clean" when a second caller
+  exists.** We had published `/opendkp` the day before *specifically* so its
+  operator would not have to take our word for our traffic — and it counts
+  `utils/opendkp.js`, which is BOT code. The agent's calls went direct, so they
+  were off the counter, outside the outbound governor, and scaled with how many
+  people had Mimic open — the one dimension a server-side number cannot see.
+  Hitya: *"agents shouldnt be reaching out to opendkp like this."*
+  **Rule now in force: the agent does not call third-party APIs; the bot does
+  and the agent asks the bot.** Not a slower cache — the hostname is gone, and
+  `test/opendkp-standings-cache.test.js` fails the build if it returns. The bot
+  serves `server-panel/account-dkp` from `_panelStandings`: one fetch for the
+  whole guild, counted, governed, haltable.
+  ⚠ **The refresh trigger is an OPEN AUCTION, not a mob kill** — Hitya raised
+  trash-mob loot, which rules mob kills out on both sides: they miss loot posted
+  off trash, and a mob dying does not move anyone's DKP (a bid settling does).
+  60s while an auction is open · 30 min in a raid window · **never** when idle.
+  Also shipped: 💰 **Loot tab** (`renderLootTab`) carrying bidding + rolls, which
+  were split across Dashboard and Stats; and `wpLootPollWanted()` gating the loot
+  poll on a raid window OR the tab being open (⚠ the OR is deliberate — loot is
+  handed out off-raid too; see §4 of the design doc before tightening it).
+  Full agent call inventory — every endpoint, every cadence — is §3 of
+  `docs/DESIGN-agent-third-party-calls.md`.
+  11 mutation-checked tests. ⚠ OPEN: `/opendkp` counts the bot only; now that
+  that is the whole truth it should SAY so, since the guarantee is a code
+  property a reader cannot see.
 
 - **OpenDKP audits: the full download is once a week now, and the redeploy walk
   was the real bill (bot 3.1.84 → 3.1.85, 2026-08-27).** Hitya, twice: *"we

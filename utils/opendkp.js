@@ -625,6 +625,32 @@ async function getRaids(opts = {}) {
   return _get({ ..._clientUrl('/raids' + q), headers });
 }
 
+// GET /clients/{name}/dkp — the authoritative standings array (Models[]).
+//
+// ⚠ THIS IS THE CALL MONCS CAUGHT (2026-08-27): "Do you purposefully call /dkp
+// once a minute?" It used to be made by every member's Mimic, DIRECTLY to
+// api.opendkp.com, once a minute each — bypassing this module entirely, so it
+// never appeared in our call counter, was not covered by the outbound governor,
+// and scaled linearly with how many people had Mimic open.
+//
+// It lives here now so that it CANNOT do that again: one call for the whole
+// guild, through _get, which means the counter sees it, the per-minute budget
+// caps it, and OPENDKP_HALT stops it instantly. Agents read the result from the
+// bot. See docs/DESIGN-agent-third-party-calls.md.
+//
+// The hosted multi-tenant API serves each legacy /beta/<res> lambda under
+// /clients/<name>/<res>; the DKP summary lambda's legacy path is /beta/dkp.
+// /summary is a documented fallback for older instances.
+async function getStandings() {
+  const headers = await _bearerHeaders();
+  for (const route of ['/dkp', '/summary']) {
+    const j = await _get({ ..._clientUrl(route), headers });
+    const models = Array.isArray(j) ? j : (j && Array.isArray(j.Models)) ? j.Models : null;
+    if (models && models.length) return models;
+  }
+  return null;
+}
+
 // GET /clients/{name}/raids/:id — single raid with full Ticks + Items
 async function getRaid(raidId) {
   const headers = await _bearerHeaders();
@@ -740,6 +766,7 @@ async function updateRaidById(raidId, raidObject) {
 }
 
 module.exports = {
+  getStandings,
   opendkpHalted, setRuntimeHalt, noteCall, flushCallStats, _normalizeEndpoint,
   getRaids, getRaid, createRaid, updateRaid, updateRaidById, getMostRecentRaid,
   getCharacters, createCharacter, linkCharacter,

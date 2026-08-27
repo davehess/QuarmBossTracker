@@ -1,106 +1,115 @@
-// test/opendkp-standings-cache.test.js — the agent's OpenDKP standings cache.
+// test/opendkp-standings-cache.test.js — nothing but the BOT talks to OpenDKP.
 //
 // Moncs, OpenDKP's operator, 2026-08-27: "Do you purposefully call /dkp once a
 // minute? Looking back over the past 60 minutes, it looks like theres about 54
-// calls from <ip> calling it".
+// calls from 184.144.103.149 calling it".
 //
-// We did, and not on purpose. The dashboard polls every 7s, the browser
-// throttles to 30s, and this cache was 60s — so one running agent pulled the
-// FULL standings array (472 characters) once a minute to render a single
-// number. 54 calls/hour per open Mimic, scaling with the fleet.
+// That ip was a MEMBER'S PC. Every open Mimic asked OpenDKP for the full 472-
+// character standings array once a minute, directly, to render one number — so
+// the cost scaled with how many people had Mimic open, and none of it appeared
+// in our own call counter because it never passed through the bot.
 //
-// ⚠ The reason it went unnoticed for so long: this path calls api.opendkp.com
-// DIRECTLY, never through the bot, so it was absent from opendkp_call_stats and
-// invisible on wolfpack.quest/opendkp. A counter that only sees one of two
-// callers reads as "we're clean".
+// Hitya: "agents shouldnt be reaching out to opendkp like this." So the call
+// moved to the bot, where it is counted, governed and haltable, and this file
+// holds BOTH halves of that: the agent has no line to OpenDKP at all, and the
+// bot's refresh policy spends a call only when one is warranted.
 //
 // Run: npx vitest run test/opendkp-standings-cache.test.js
 
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { readSource, sliceBlock, ROOT } from './_source-slice.js';
 import path from 'node:path';
 
-const SRC = path.join(ROOT, 'packages', 'wolfpack-logsync', 'index.js');
-const src = readSource(SRC);
+const agentSrc = readSource(path.join(ROOT, 'packages', 'wolfpack-logsync', 'index.js'));
+const botSrc   = readSource(path.join(ROOT, 'index.js'));
 
-// Slice the shipped helpers, so the TTL under test is the one that ships.
+// Comment-stripped view. The removal left tombstone comments explaining what
+// used to be here and why it must not come back — those mention the hostname,
+// and a naive .not.toContain() matches the explanation instead of the code.
+// (It did. That is what this exists for: the first version of these assertions
+// failed against its own documentation.) Whole-line comments only, so that
+// "https://" inside a real string literal survives.
+const agentCode = agentSrc.split('\n').filter(l => !l.trim().startsWith('//')).join('\n');
+
+// The bot's policy is pure; exercise the shipped copy.
 const block = sliceBlock(
-  src,
-  'const _STANDINGS_TTL_DEFAULT_MS =',
-  'return (nowMs - at) < ttlMs;\n}',
+  botSrc,
+  'const _PANEL_DKP_TTL_BIDDING_MS =',
+  "return { refresh: true, reason: auctionsLive ? 'auction-open' : 'raid-window' };\n}",
 );
-const h = new Function(`${block}\nreturn { _standingsTtlMs, _standingsCacheFresh, _STANDINGS_TTL_DEFAULT_MS };`)();
+const h = new Function(`${block}\nreturn { _standingsRefreshDecision, _PANEL_DKP_TTL_BIDDING_MS, _PANEL_DKP_TTL_RAID_MS };`)();
+const decide = (o) => h._standingsRefreshDecision({ nowMs: 1_000_000, ...o });
 
-const prev = process.env.WP_OPENDKP_STANDINGS_TTL_MS;
-afterEach(() => {
-  if (prev === undefined) delete process.env.WP_OPENDKP_STANDINGS_TTL_MS;
-  else process.env.WP_OPENDKP_STANDINGS_TTL_MS = prev;
-});
-
-describe('OpenDKP standings cache TTL', () => {
-  it('defaults to ten minutes, not one', () => {
-    delete process.env.WP_OPENDKP_STANDINGS_TTL_MS;
-    expect(h._standingsTtlMs()).toBe(10 * 60 * 1000);
+describe('the agent has no line to OpenDKP', () => {
+  it('carries no address for OpenDKP’s API', () => {
+    // The rule is "no host", not "a slower cache". A cache TTL is a number
+    // somebody can turn back up; an absent hostname is not.
+    expect(agentCode).not.toMatch(/OPENDKP_API_HOST\s*=/);
+    expect(agentCode).not.toContain('api.opendkp.com');
   });
 
-  it('turns 54 upstream calls an hour into 6', () => {
-    // The measurement Moncs sent, expressed as the thing that caused it: the
-    // dashboard asks every 7s, and the cache decides how many of those escape.
-    delete process.env.WP_OPENDKP_STANDINGS_TTL_MS;
-    const perHour = ttl => Math.floor(3600_000 / ttl);
-    expect(perHour(60_000)).toBe(60);                    // what he measured (~54)
-    expect(perHour(h._standingsTtlMs())).toBe(6);
-  });
-
-  it('can be lengthened, but NEVER shortened below a minute', () => {
-    // The knob exists to be kinder to a third party's API, not to hand someone
-    // a way to hammer it harder than the bug already did.
-    process.env.WP_OPENDKP_STANDINGS_TTL_MS = String(30 * 60 * 1000);
-    expect(h._standingsTtlMs()).toBe(30 * 60 * 1000);
-    for (const bad of ['1000', '0', '-5', 'soon', '']) {
-      process.env.WP_OPENDKP_STANDINGS_TTL_MS = bad;
-      expect(h._standingsTtlMs()).toBe(h._STANDINGS_TTL_DEFAULT_MS);
+  it('has no fetcher that could call it', () => {
+    for (const gone of ['_opendkpGetJson', '_opendkpFetchStandings', '_opendkpAccountDkp']) {
+      expect(agentCode, `${gone} must stay deleted`).not.toMatch(new RegExp(`function\\s+${gone}\\s*\\(`));
     }
   });
 
-  it('serves from cache inside the window and refetches after it', () => {
-    const ttl = 600_000;
-    const at = 1_000_000;
-    expect(h._standingsCacheFresh({ at }, at, ttl)).toBe(true);
-    expect(h._standingsCacheFresh({ at }, at + ttl - 1, ttl)).toBe(true);
-    expect(h._standingsCacheFresh({ at }, at + ttl, ttl)).toBe(false);
-    expect(h._standingsCacheFresh({ at }, at + ttl + 1, ttl)).toBe(false);
+  it('serves no local route that used to front that call', () => {
+    expect(agentCode).not.toContain("req.url.startsWith('/api/loot/dkp')");
   });
 
-  it('treats a missing or malformed cache as stale, never as fresh', () => {
-    // Reading a junk cache as fresh would silently freeze the DKP figure at
-    // whatever it was — wrong numbers in a bidding panel, with no error.
-    for (const bad of [null, undefined, {}, { at: 'soon' }, { at: NaN }]) {
-      expect(h._standingsCacheFresh(bad, 1_000_000, 600_000)).toBe(false);
-    }
-    // ⚠ The cases above do NOT exercise the guard — they all coerce to NaN, and
-    // every NaN comparison is false regardless. Caught by mutation: deleting the
-    // isFinite check left them all green. These are the ones that discriminate,
-    // because `Number(null)` / `Number('')` / `Number(false)` are 0, not NaN —
-    // a zero timestamp reads as "cached at the epoch", which is fresh whenever
-    // the clock is small.
-    for (const coercible of [{ at: null }, { at: '' }, { at: false }, { at: [] }]) {
-      expect(h._standingsCacheFresh(coercible, 1000, 600_000)).toBe(false);
-    }
+  it('reads the balance from the bot instead', () => {
+    expect(agentSrc).toContain('fetch("/api/server/account-dkp"');
+    expect(botSrc).toContain("if (key === 'account-dkp') {");
+  });
+
+  it('still speaks to Cognito, and ONLY Cognito', () => {
+    // The member's own login is not the thing being removed — it is per-token,
+    // not per-minute, and it is how a bid is attributed to a person. Asserted so
+    // that "the agent talks to no third party" is never mis-stated as true.
+    expect(agentSrc).toContain('cognito-idp.');
   });
 });
 
-describe('the dashboard poll', () => {
-  it('skips the DKP refresh while the window is hidden', () => {
-    // This is the one dashboard poll that costs a THIRD PARTY money, so it is
-    // the one that must stop when nobody is looking.
-    expect(src).toContain('document.hidden && acctDkp !== null) return Promise.resolve();');
+describe('the bot spends an upstream call only when one is warranted', () => {
+  it('refreshes while an auction is open', () => {
+    expect(decide({ cache: null, auctionsLive: true, inRaid: false }))
+      .toEqual({ refresh: true, reason: 'auction-open' });
   });
 
-  it('still calls OpenDKP directly — so our own counter cannot see it', () => {
-    // Locked down deliberately. If this ever moves behind the bot, delete this
-    // test AND the "invisible to opendkp_call_stats" warnings that depend on it.
-    expect(src).toContain("'/clients/' + name + '/dkp'");
-    expect(src).toContain('OPENDKP_API_HOST');
+  it('refreshes during a raid even with nothing live', () => {
+    expect(decide({ cache: null, auctionsLive: false, inRaid: true }))
+      .toEqual({ refresh: true, reason: 'raid-window' });
+  });
+
+  it('NEVER refreshes when idle — the whole point', () => {
+    // No raid, no auction: nobody is being handed loot, so nobody's balance is
+    // moving. This is the state a dashboard sits in for most of the week, and
+    // it is the state that produced 54 calls an hour.
+    expect(decide({ cache: null, auctionsLive: false, inRaid: false }).refresh).toBe(false);
+    expect(decide({ cache: { at: 0, models: [] }, auctionsLive: false, inRaid: false }).refresh).toBe(false);
+    // …even when the cached figure is a week old.
+    expect(decide({ cache: { at: 1_000_000 - 7 * 864e5, models: [] }, auctionsLive: false, inRaid: false }).refresh)
+      .toBe(false);
+  });
+
+  it('holds a bidding-fresh figure for a minute, not for every poll', () => {
+    const at = 1_000_000 - h._PANEL_DKP_TTL_BIDDING_MS + 1;
+    expect(decide({ cache: { at, models: [] }, auctionsLive: true, inRaid: true }).refresh).toBe(false);
+    const stale = 1_000_000 - h._PANEL_DKP_TTL_BIDDING_MS;
+    expect(decide({ cache: { at: stale, models: [] }, auctionsLive: true, inRaid: true }).refresh).toBe(true);
+  });
+
+  it('is far slacker mid-raid when nothing is actually up for bid', () => {
+    const at = 1_000_000 - h._PANEL_DKP_TTL_BIDDING_MS - 1;   // stale for bidding
+    expect(decide({ cache: { at, models: [] }, auctionsLive: false, inRaid: true }).refresh).toBe(false);
+    expect(h._PANEL_DKP_TTL_RAID_MS).toBeGreaterThan(h._PANEL_DKP_TTL_BIDDING_MS);
+  });
+
+  it('does not retry a failure immediately, even mid-auction', () => {
+    // Otherwise a broken upstream turns into a poll storm against a third party
+    // that is already having a bad time.
+    expect(decide({ cache: { at: 999_000, failed: true }, auctionsLive: true, inRaid: true }))
+      .toEqual({ refresh: false, reason: 'cached-failure' });
   });
 });

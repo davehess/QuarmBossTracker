@@ -37,6 +37,30 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'mimic-2-6-2',
+    title: 'A Loot tab, and Mimic stops phoning the DKP site',
+    version: 'Mimic 2.6.2 · Agent 3.6.2 · Bot 3.1.87 · Web 1.2.1',
+    date: '2026-08-27',
+    headline: 'Bidding and rolls now share one Loot tab, and your copy of Mimic no longer contacts the DKP site directly at all.',
+    features: [
+      {
+        name: 'New 💰 Loot tab',
+        blurb: 'Bidding was on the Dashboard and rolls were buried in Stats — two ways of handing out the same drop, on two different screens. They are one tab now, with the live auction at the top.',
+      },
+      {
+        name: 'Mimic no longer contacts the DKP site',
+        blurb: 'Your DKP balance now comes from our bot, which looks it up once for the whole guild instead of every raider\u2019s PC asking separately. Same number, and the DKP site sees one visitor instead of one per person online.',
+      },
+      {
+        name: 'Loot is only checked when loot is happening',
+        blurb: 'During raids, or whenever you have the Loot tab open. A dashboard left open on another tab all week no longer checks for auctions in the background.',
+      },
+    ],
+    fixes: [
+      'The balance refreshes when an auction is actually open rather than on a timer — which also means it now picks up loot posted off trash mobs, not just named ones.',
+    ],
+  },
+  {
     key: 'mimic-2-6-1',
     title: 'Mimic asks the DKP site far less often',
     version: 'Mimic 2.6.1 · Agent 3.6.1 · Web 1.2.0',
