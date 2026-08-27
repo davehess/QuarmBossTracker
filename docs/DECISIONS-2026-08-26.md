@@ -285,3 +285,44 @@ in place.
 Tests: 6 more in `test/opendkp-list-endpoint-writes.test.js` (22 total),
 mutation-checked — claiming done on an unknown shape, running during a full
 sweep, and ignoring a grown page count each kill a test.
+
+---
+
+## The fast path was fast only while idle (bot 3.1.82) — MID-RAID FIX
+
+> "clients/{client}/audits is still WAAAAY too often or high. we're mid raid now"
+
+The per-minute data named it immediately, and the shape is the whole story:
+
+```
+22:43    1 call     438 bytes   <- fast path working
+23:13    1 call     438 bytes   <- fast path working
+23:43   18 calls    6.2 MB      <- raid starts
+00:13   18 calls    6.2 MB
+00:43   18 calls    6.2 MB
+```
+
+**3.1.80's fast path fell through to the full 17-page walk whenever the last
+page held anything new — and during a raid EVERY pass does**, because loot
+awards and ticks generate audit entries. So it was fast exactly while nothing
+was happening and reverted to 6.2 MB a pass exactly when raiding, which is the
+worst possible split and precisely the hours that cost OpenDKP money.
+
+**The fall-through was lazy, not necessary.** Oldest-first means new rows
+APPEND to the end, so the last page — which we have already fetched — *already
+contains them*. There is nothing to go back for. It now collects the fresh rows
+from that page and writes them: **one call, ~438 bytes, raid or not.**
+
+The one case that genuinely needs the walk is a page ROLLOVER, which shows up
+as *every* row on the last page being fresh. At ~37 audits/day against a
+~2,800-row page that is a once-every-couple-of-months event, and the code
+detects it precisely (`fresh.length === rows.length`) rather than guessing.
+
+Expected: audits drops from 109 MB/24h to well under 1 MB, during raids
+included.
+
+Tests: 23 in `test/opendkp-list-endpoint-writes.test.js`, mutation-checked —
+reverting the fall-through, dropping the write, and treating a full page of
+fresh rows as done each kill a test. The last of those matters most: it would
+silently LOSE audit rows on a rollover, which is the kind of bug that shows up
+as a missing loot correction weeks later.

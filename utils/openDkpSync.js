@@ -797,6 +797,22 @@ const _lastPageHint = new Map();
 // into one place so the fast path below and the full walk can never disagree
 // about what counts as "the rows"; duplicating this list is how one of them
 // silently starts seeing nothing.
+// Map a raw payload list into mirror rows. Shared by the walk and the fast
+// path so the two can never disagree about row shape.
+function _mapListRows(list, pkCol, idKeys, tsKeys) {
+  return (list || []).map(row => {
+    const id = _firstNumber(row, ...idKeys);
+    if (id == null) return null;
+    const tsRaw = _firstString(row, ...tsKeys);
+    return {
+      [pkCol]:    id,
+      ts:         tsRaw ? new Date(tsRaw).toISOString() : null,
+      raw:        row,
+      fetched_at: new Date().toISOString(),
+    };
+  }).filter(Boolean);
+}
+
 function _rowsFromListPayload(arr, label) {
   const capLabel = label ? label.charAt(0).toUpperCase() + label.slice(1) : null;
   return Array.isArray(arr?.BidResults)  ? arr.BidResults
@@ -898,21 +914,35 @@ async function _syncListEndpoint({
       } else if (Number.isFinite(total)) {
         _lastPageHint.set(table, total);
       }
-      const rows = _rowsFromListPayload(arr, label) || [];
-      // Unknown shape → no rows → treated as "nothing new", which would be
-      // WRONG. Fall through to the walk, which reports the shape properly.
-      if (!_rowsFromListPayload(arr, label)) throw new Error('unknown shape on fast path');
-      const hasFresh = rows.some(r => {
-        const id = _firstNumber(r, ...idKeys);
-        return Number.isFinite(id) && id > priorMax;
-      });
-      if (!hasFresh) {
-        // One call (two if the page count grew) instead of the full walk.
-        _noteIdleResult(table, 0);
-        return { upserted: 0, pages: seen, offered: 0, full_sweep: false, fast_path: 'last-page' };
+      const list = _rowsFromListPayload(arr, label);
+      // Unknown shape → no rows → would read as "nothing new", which is WRONG.
+      // Fall through to the walk, which reports the shape properly.
+      if (!list) throw new Error('unknown shape on fast path');
+      const rows = _mapListRows(list, pkCol, idKeys, tsKeys);
+      const fresh = rows.filter(r => Number(r[pkCol]) > priorMax);
+
+      // ⚠ THE CASE THAT COST US A RAID NIGHT (2026-08-26). v1 fell through to
+      // the full 17-page walk whenever the last page held anything new — and
+      // during a raid EVERY pass holds something new, because loot awards and
+      // ticks generate audits. So the "fast" path was fast only while idle and
+      // reverted to 6.2 MB a pass exactly when raiding. Measured: 1 call /
+      // 438 bytes at 22:43 and 23:13, then 18 calls / 6.2 MB every pass from
+      // 23:43 once the raid started.
+      //
+      // Oldest-first means new rows APPEND to the end, so the last page already
+      // contains them — there is nothing to go back for unless the page has
+      // JUST rolled over, which shows up as every row on it being fresh.
+      if (fresh.length === 0 || fresh.length < rows.length) {
+        if (fresh.length > 0) await supabase.insertIgnoreDuplicates(table, fresh);
+        _noteIdleResult(table, fresh.length);
+        return {
+          upserted: fresh.length, pages: seen, offered: fresh.length,
+          full_sweep: false, fast_path: 'last-page',
+        };
       }
-      // Something new IS there — fall through to the full walk, which knows how
-      // to page, dedup and write. Rare by construction (~37 audits/day).
+      // Every row on the last page is new → the boundary is on an earlier page
+      // (a page rollover, roughly every couple of months at ~37 audits/day).
+      // Fall through to the full walk, which knows how to page back.
     } catch { /* fast path is an optimization; any failure just walks normally */ }
   }
 
