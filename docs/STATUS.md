@@ -166,6 +166,25 @@ next touch one rather than assuming a missing row means a missing doc.
   `test/pop-spell-needs-all-characters.test.js` guards both fixes. Full story:
   `DECISIONS-2026-08-26.md`.
 
+- **⚠ `/opendkp` was under-reporting by ~36%, in our favour (web 1.2.3,
+  migration `20260827220000`, 2026-08-27).** Hitya: *"haven't seen any opendkp
+  calls on here for a while."* Not a quiet bot — a **broken page**. It selected
+  raw rows with `.order('minute', { ascending: true }).limit(1000)`: ascending
+  WITH a limit, so it kept the OLDEST 1000 rows of the 48h window and silently
+  dropped everything newer. At 1,440 rows in the window the newest 440 were
+  gone, starting with the most recent hour. Page said **0 calls last hour /
+  1,330 per 24h / 91.3 MB**; truth was **49 / 2,074 / 115.9 MB**.
+  ⚠ **This is the page we pointed OpenDKP's operator at so he would not have to
+  take our word for our traffic, and it was flattering us.** Wrong in that
+  direction is worse than being down.
+  Fixed by aggregating in Postgres — `opendkp_traffic_summary()` RPC, anon-
+  executable like the table — so there is no row limit to outgrow; raising the
+  limit would only have moved the cliff. Hour buckets are gap-filled, Cognito is
+  split out, and a failed read now renders **UNAVAILABLE** rather than zeros
+  (zeros are a claim that we sent nothing).
+  ⚠ Also closes the older open item: the page now states that it counts
+  server-side traffic and that the desktop app no longer calls OpenDKP at all.
+
 - **Off-raid mirror-sync backoff + the stranded beta line (bot 3.1.89 · beta
   agent 3.6.5 / Mimic park 2.6.3 · 2026-08-27).** Hitya: *"cut down the number
   of calls as much as possible outside of raid times."* With the agent's direct

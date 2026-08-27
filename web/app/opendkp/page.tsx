@@ -29,11 +29,6 @@ export const metadata = {
   description: 'Live count of every API request Wolf Pack sends to OpenDKP.',
 };
 
-type Row = {
-  minute: string; endpoint: string; method: string;
-  calls: number; bytes: number; errors: number; blocked: number;
-};
-
 const fmt = (n: number) => n.toLocaleString('en-US');
 function fmtBytes(n: number) {
   if (!n) return '0 B';
@@ -46,70 +41,73 @@ function fmtBytes(n: number) {
 // graphs here and the ones Moncs was shown read as the same system.
 const SERIES = ['#3987e5', '#d95926', '#199e70', '#c98500', '#d55181', '#8b949e'];
 
+type Summary = {
+  calls_1h: number; bytes_1h: number; blocked_1h: number;
+  calls_24h: number; bytes_24h: number; errors_24h: number;
+  auth_calls_1h: number; auth_blocked_1h: number; ever_seen: boolean;
+  endpoints: { endpoint: string; calls: number; bytes: number; errors: number }[];
+  hours: { at: string; calls: number; blocked: number }[];
+};
+
 export default async function OpenDkpPage() {
   const sb = supabaseAdmin();
-  const since = new Date(Date.now() - 48 * 3600 * 1000).toISOString();
 
-  const [{ data: rowsRaw }, { data: tuneRows }] = await Promise.all([
-    sb.from('opendkp_call_stats')
-      .select('minute, endpoint, method, calls, bytes, errors, blocked')
-      .gte('minute', since)
-      .order('minute', { ascending: true })
-      .limit(1000),
+  // ⚠ Aggregated in Postgres, NOT by selecting rows and summing them here.
+  // This used to be `.order('minute', { ascending: true }).limit(1000)` — the
+  // oldest 1000 rows of the 48h window, silently discarding everything newer.
+  // Once volume passed 1000 rows/48h the newest data fell off the end, starting
+  // with the last hour. Caught 2026-08-27 at 1,440 rows: the page read "0 calls
+  // in the last hour" against a true 49, and 1,330 calls / 91.3 MB over 24h
+  // against a true 2,074 / 115.9 MB.
+  //
+  // It under-reported by ~36%, IN OUR FAVOUR, on the one page whose whole
+  // purpose is that OpenDKP's operator need not take our word for our traffic.
+  // Wrong in the flattering direction is worse here than being down. Raising
+  // the limit would only move the cliff; the RPC removes it.
+  const [{ data: summaryRaw, error: summaryErr }, { data: tuneRows }] = await Promise.all([
+    sb.rpc('opendkp_traffic_summary'),
     sb.from('overlay_tuning').select('tuning').eq('guild_id', 'wolfpack').limit(1),
   ]);
-  const rows = (rowsRaw ?? []) as Row[];
   const tuning = (tuneRows?.[0]?.tuning ?? {}) as Record<string, unknown>;
   const haltFlag = Number(tuning.flag_opendkp_halt) >= 1;
 
-  const now = Date.now();
-  const inWindow = (r: Row, mins: number) => now - Date.parse(r.minute) <= mins * 60 * 1000;
-  const sum = (rs: Row[], k: keyof Row) => rs.reduce((n, r) => n + (Number(r[k]) || 0), 0);
+  const S = (summaryRaw ?? null) as Summary | null;
+  const num = (v: unknown) => Number(v) || 0;
 
-  // Split OUR auth provider (AWS Cognito) from OpenDKP's own API. Counting
-  // Cognito is useful — a token storm is still a bug of ours — but folding it
-  // into "calls to OpenDKP" overstates what we send him, which is the one
-  // direction a page built to regain trust must never be wrong in.
-  const isAuth = (r: Row) => r.endpoint.startsWith('cognito:');
-  const all60 = rows.filter(r => inWindow(r, 60));
-  const all24 = rows.filter(r => inWindow(r, 60 * 24));
-  const last60 = all60.filter(r => !isAuth(r));
-  const last24 = all24.filter(r => !isAuth(r));
-  const auth60 = all60.filter(isAuth);
+  const callsNow   = num(S?.calls_1h);
+  const bytesNow   = num(S?.bytes_1h);
+  const blockedNow = num(S?.blocked_1h);
+  const calls24    = num(S?.calls_24h);
+  const bytes24    = num(S?.bytes_24h);
+  const errors24   = num(S?.errors_24h);
+  const authCalls  = num(S?.auth_calls_1h);
+  const authBlocked = num(S?.auth_blocked_1h);
+  const everSeen   = !!S?.ever_seen;
 
-  // By endpoint over 24h — the bar chart from the writeup.
-  const byEndpoint = new Map<string, { calls: number; bytes: number; errors: number }>();
-  for (const r of last24) {
-    const e = byEndpoint.get(r.endpoint) ?? { calls: 0, bytes: 0, errors: 0 };
-    e.calls += r.calls; e.bytes += Number(r.bytes) || 0; e.errors += r.errors;
-    byEndpoint.set(r.endpoint, e);
-  }
-  const endpoints = [...byEndpoint.entries()].sort((a, b) => b[1].calls - a[1].calls);
+  const endpoints = (S?.endpoints ?? []).map(e => [e.endpoint, {
+    calls: num(e.calls), bytes: num(e.bytes), errors: num(e.errors),
+  }] as const);
   const maxCalls = Math.max(1, ...endpoints.map(([, v]) => v.calls));
 
-  // Hourly timeline, oldest → newest, 48 buckets.
-  const hours: { at: number; calls: number; blocked: number }[] = [];
-  for (let i = 47; i >= 0; i--) {
-    const start = now - (i + 1) * 3600 * 1000, end = now - i * 3600 * 1000;
-    const inHour = rows.filter(r => { const t = Date.parse(r.minute); return t >= start && t < end; });
-    hours.push({ at: end, calls: sum(inHour, 'calls'), blocked: sum(inHour, 'blocked') });
-  }
+  const hours = (S?.hours ?? []).map(h => ({
+    at: Date.parse(h.at), calls: num(h.calls), blocked: num(h.blocked),
+  }));
   const maxHour = Math.max(1, ...hours.map(h => h.calls));
 
-  const callsNow = sum(last60, 'calls');
-  const blockedNow = sum(last60, 'blocked');
-  const authCalls = sum(auth60, 'calls');
-  const authBlocked = sum(auth60, 'blocked');
-  const everSeen = rows.length > 0;
+  // A failed summary must NOT render as zeros. Zeros on this page say "we sent
+  // nothing", which is a claim — and the wrong one to make by accident.
+  const broken = !!summaryErr || !S;
 
-  // Three states, and the distinction matters to a reader deciding whether to
-  // re-block us: halted on purpose, live and quiet, or no data at all.
-  const state = haltFlag ? 'halted' : (callsNow > 0 ? 'live' : (everSeen ? 'quiet' : 'nodata'));
+  const state = broken ? 'broken' : haltFlag ? 'halted' : (callsNow > 0 ? 'live' : (everSeen ? 'quiet' : 'nodata'));
   const STATE = {
     halted: { label: 'HALTED', color: '#d29922', note: 'Wolf Pack is not sending anything to OpenDKP. Every call is being refused before it leaves our server.' },
     live:   { label: 'LIVE',   color: '#3fae74', note: 'Sending normally, within the limits below.' },
     quiet:  { label: 'IDLE',   color: '#8b949e', note: 'Running, but nothing has needed to be sent in the last hour.' },
     nodata: { label: 'NO DATA', color: '#8b949e', note: 'No calls recorded yet in the last 48 hours.' },
+    // Explicit, because the alternative is rendering zeros — and a zero here
+    // reads as "we sent nothing", which is a claim this page must never make
+    // by accident.
+    broken: { label: 'UNAVAILABLE', color: '#d29922', note: 'The counter could not be read just now, so these figures are not current. This is a fault on our side, not a claim that nothing was sent.' },
   }[state];
 
   return (
@@ -125,6 +123,11 @@ export default async function OpenDkpPage() {
               Endpoint names match the shape OpenDKP&apos;s own API Gateway logs use, so this can be
               read side by side with them.
             </p>
+            <p className="text-sm text-dim leading-6 max-w-2xl mt-2">
+              This counts what our <b className="text-text">server</b> sends. Since 27 Aug 2026 that
+              is everything: the desktop app no longer contacts the OpenDKP API at all — the call it
+              used to make from each player&apos;s PC was removed, not just slowed down.
+            </p>
           </div>
           <div className="text-right shrink-0">
             <div className="text-xs tracking-widest font-bold px-3 py-1 rounded border inline-block"
@@ -139,10 +142,10 @@ export default async function OpenDkpPage() {
 
       <section className="grid sm:grid-cols-4 gap-3">
         {[
-          { k: 'Calls, last hour', v: fmt(callsNow), n: `${fmtBytes(sum(last60, 'bytes'))} returned` },
-          { k: 'Calls, last 24h', v: fmt(sum(last24, 'calls')), n: `${fmtBytes(sum(last24, 'bytes'))} returned` },
-          { k: 'Refused by us', v: fmt(blockedNow), n: 'last hour — stopped before reaching OpenDKP' },
-          { k: 'Errors, last 24h', v: fmt(sum(last24, 'errors')), n: 'HTTP 4xx/5xx from OpenDKP' },
+          { k: 'Calls, last hour', v: broken ? '—' : fmt(callsNow), n: broken ? 'counter unavailable' : `${fmtBytes(bytesNow)} returned` },
+          { k: 'Calls, last 24h', v: broken ? '—' : fmt(calls24), n: broken ? 'counter unavailable' : `${fmtBytes(bytes24)} returned` },
+          { k: 'Refused by us', v: broken ? '—' : fmt(blockedNow), n: 'last hour — stopped before reaching OpenDKP' },
+          { k: 'Errors, last 24h', v: broken ? '—' : fmt(errors24), n: 'HTTP 4xx/5xx from OpenDKP' },
         ].map(s => (
           <div key={s.k} className="bg-panel border border-border rounded-lg p-4">
             <div className="text-[10px] uppercase tracking-wider text-dim">{s.k}</div>
