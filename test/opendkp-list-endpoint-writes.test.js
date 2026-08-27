@@ -372,24 +372,44 @@ describe('oldest-first fast path', () => {
     expect(h._lastPageHint.get('opendkp_audits')).toBe(18);
   });
 
-  it('falls through to the full walk when the last page HAS something new', async () => {
-    // Correctness beats cheapness: new rows must still be collected properly.
+  it('COLLECTS new rows from the last page in one call — the raid-night case', async () => {
+    // v1 fell through to the full 17-page walk whenever the last page held
+    // anything new, and during a raid EVERY pass does (loot and ticks generate
+    // audits). So the "fast" path was fast only while idle and reverted to
+    // 6.2 MB a pass exactly when raiding. Oldest-first means new rows APPEND,
+    // so the last page already has them — there is nothing to go back for.
     const h = build({ mirroredIds: [10], pages: [] });
     h._lastFullSweepAt.set('opendkp_audits', Date.now());
     h._lastPageHint.set('opendkp_audits', 2);
     h._nextDueAt.delete('opendkp_audits');
     const asked = [];
-    // Realistic paging: distinct rows per page, newest at the END (oldest-first).
-    // My first fixture returned the SAME rows on every page, which double-counted
-    // the fresh row and told me nothing.
     const byPage = { 1: [8, 9], 2: [10, 11] };   // 11 is above the watermark
+    const res = await h._syncListEndpoint({
+      ...AUDIT_ARGS, shapeFlag: { value: true },
+      fetchPage: async (p) => { asked.push(p); return paged(p, 2, ...(byPage[p] || [])); },
+    });
+    expect(asked).toEqual([2]);                  // ONE call, not the whole walk
+    expect(res.fast_path).toBe('last-page');
+    expect(res.upserted).toBe(1);
+    expect(h.calls.inserts[0].rows.map(r => r.audit_id)).toEqual([11]);
+  });
+
+  it('falls through only when the last page is ENTIRELY new (a page rollover)', async () => {
+    // If every row on the last page is fresh, the boundary is on an earlier
+    // page and we genuinely do have to go back. At ~37 audits/day against a
+    // ~2,800-row page that is roughly a once-every-couple-of-months event.
+    const h = build({ mirroredIds: [10], pages: [] });
+    h._lastFullSweepAt.set('opendkp_audits', Date.now());
+    h._lastPageHint.set('opendkp_audits', 2);
+    h._nextDueAt.delete('opendkp_audits');
+    const asked = [];
+    const byPage = { 1: [9, 10], 2: [11, 12] };  // page 2 is 100% above watermark
     const res = await h._syncListEndpoint({
       ...AUDIT_ARGS, shapeFlag: { value: true },
       fetchPage: async (p) => { asked.push(p); return paged(p, 2, ...(byPage[p] || [])); },
     });
     expect(res.fast_path).toBeUndefined();
     expect(asked.length).toBeGreaterThan(1);
-    expect(res.upserted).toBe(1);
   });
 
   it('a full sweep still walks everything, fast path or not', async () => {
