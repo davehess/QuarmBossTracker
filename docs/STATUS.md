@@ -202,6 +202,23 @@ next touch one rather than assuming a missing row means a missing doc.
   the earlier "more calls, 2,300× less data" ask was not.
   Supersedes the earlier per-endpoint `?since` request.
 
+- **`/opendkp` gained a raid view and finer resolution (web 1.2.4, migration
+  `20260827233000`, 2026-08-27).** Hitya, 25 min before the Thursday pull:
+  *"we're probably about to spike, right? give me more notches on that graph,
+  and a breakdown view of the calls during this raid."*
+  `opendkp_traffic_summary()` now also returns **`fine`** (10-min buckets over
+  6h — an hourly bar only shows a spike once it is over) and **`raid`**
+  (the current-or-most-recent Sun/Wed/Thu 19:00→01:00 ET window: totals,
+  per-endpoint, 15-min series, `in_progress`). The 48h axis gained ET clock
+  labels at 5 points instead of three vague ones.
+  The raid window matches `_inRaidWindowEt`, i.e. the gate that changes our
+  behaviour, not the 20:00 pull time. Raid rows are read from the base table
+  rather than the 48h CTE — the most recent raid can be older than 48h in a
+  non-raid week.
+  **First live confirmation of the raids-only DKP check:** `/clients/{client}/dkp`
+  appeared for the first time at 19:00 ET, 2 calls / 204 KB, and is absent from
+  every off-raid hour.
+
 - **⚠ `/opendkp` was under-reporting by ~36%, in our favour (web 1.2.3,
   migration `20260827220000`, 2026-08-27).** Hitya: *"haven't seen any opendkp
   calls on here for a while."* Not a quiet bot — a **broken page**. It selected
