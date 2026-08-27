@@ -284,24 +284,37 @@ The cost is latency on an off-raid officer edit — it reaches the mirror within
 three hours rather than thirty minutes, the same trade already accepted for the
 audits idle backoff.
 
-⚠ **Measured 2026-08-27, and it is bigger than the "DKP only moves during raids"
-reasoning implies.** Adjustments are the exception to that rule, and they are
-almost entirely off-raid: of 295 adjustment rows, **only 8 (2.7%) were made
-during raid hours** (8pm–midnight ET). The largest single cluster is **Friday**
-— 113 rows, 101 of them a `30 days no raids` inactivity purge — i.e. officer
-housekeeping done after the raid week ends. Small ±20 corrections (a pass
-because someone was locked out, a ceded item, a missed tick) are real but a
-minority at 78 rows, and they are also logged after the raid rather than during
-it.
+⚠ **Adjustments are the exception to "DKP only moves during raids" — but they
+are automated, and the cadence happens to catch them.** Hitya, 2026-08-27:
+*"all of this dkp work was happening manually beforehand and the decay happens
+automatically based on settings that we've deployed in open dkp."*
 
-So the accurate statement is: **ticks only move DKP during raids; adjustments
-move it mostly on Fridays.** The design still holds — off-raid the panel reads
-the mirror, and the mirror catches up within the 3h block — but a member who
-checks their balance in the hours right after a bulk purge can see a stale
-figure. **An officer doing a purge should run `/syncopendkp`**, which is
-force-flagged and never throttled, rather than waiting for the block. We cannot
-hook this automatically: adjustments are made in OpenDKP's own web UI, not
-through our bot, so the first we hear of one is the next sync.
+Measured: the dominant adjustment is OpenDKP's own **inactivity decay**, and
+**165 of its 168 rows landed at exactly 12:00 UTC across 62 separate days**. That
+is a scheduled job. The only three at other times are from 2024 — the manual era,
+visible in the data.
+
+**12:00 UTC is a 3-hour block boundary** (00·03·06·09·**12**·15·18·21), so the
+first 30-minute tick after the decay job lands in a new block and syncs.
+**Decay reaches the mirror within ~30 minutes, not within 3 hours**, with no
+human involved and nothing for anyone to remember. That alignment is luck rather
+than design — if `OPENDKP_OFFRAID_SYNC_HOURS` is ever changed to a value that
+does not divide 12:00 UTC evenly, decay could wait a full block instead.
+
+⚠ **Two earlier readings of this table were wrong and are recorded so nobody
+rebuilds on them.** (1) "A Friday burst of officer housekeeping" — a day-of-week
+rollup flattened a recurring daily job into a fake spike. (2) "An officer doing
+a purge should run `/syncopendkp`" — there is no officer in that loop; the
+advice was unusable. (3) "Only 2.7% of adjustments happen during raid hours" —
+true but evidentially worthless, since a job pinned to 08:00 ET can never appear
+in a raid window; it said nothing about human behaviour.
+
+The genuinely human adjustments Hitya described — *"someone rarely passing
+because they can't loot or for the next person, or missed ticks"* — are real and
+small (78 rows at ±20 or less). They are also not urgent: a pass or a missed tick
+is corrected after the fact, and the member is not bidding on it in the next
+three hours.
+
 (If the audit-cursor proposal lands, `Adjustment Created` in the delta feed
 closes this properly — see `DESIGN-opendkp-audit-cursor.md`.) Bidding is unaffected: the loot panel reads `_panelAuctions`
 on demand, not this sync.

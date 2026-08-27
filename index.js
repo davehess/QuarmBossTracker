@@ -6132,9 +6132,13 @@ async function _familyDkpFromMirror(family) {
     // limit silently dropping rows), and here it would drop DKP off somebody's
     // BALANCE rather than off a chart. Loud if it ever bites.
     //
-    // ⚠ They arrive in BURSTS, not at a steady rate — 113 of the 295 landed on
-    // a Friday, 101 of those a single "30 days no raids" inactivity purge. So
-    // reason about the cap against a bad Friday, not against a monthly average.
+    // Volume is a steady trickle, not a burst: the dominant category is
+    // OpenDKP's OWN automated inactivity decay, which fires at 12:00 UTC and
+    // wrote 165 rows across 62 days — ~2.6 on a day it runs at all. (An earlier
+    // comment here called it a Friday burst by officers; that was a day-of-week
+    // rollup flattening a recurring job into a fake spike. Hitya: the decay
+    // "happens automatically based on settings that we've deployed in open
+    // dkp". The handful of 2024 rows at other times are the manual era.)
     supabase.select('opendkp_adjustments', `select=raw,fetched_at&limit=${ADJ_LIMIT}`),
     supabase.select('opendkp_loot', `select=character_name,dkp,fetched_at&${famClause || 'character_name=eq.__none__'}&limit=3000`),
   ]);
