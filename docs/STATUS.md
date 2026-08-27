@@ -100,6 +100,26 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ### ✅ Done — major shipped features (not exhaustive; see git + roadmapData.ts)
 
+- **/tag channel autojoin — merge logic (agent, 2026-08-26).** Hitya: *"we need
+  to add this channel to people's autojoins if they don't have them in their ini
+  file."* `_mergeAutojoin()` merges the guild tag channel into a character's
+  existing autojoin list: appends without disturbing other channels, idempotent,
+  **corrects a right-name/no-password join** (the nasty case — looks joined,
+  silently sends and receives nothing), collapses duplicates, case-insensitive.
+  ⚠ **The channel PASSWORD is deliberately not in source or docs** — shared
+  guild secret; name in source, password from config at runtime.
+  `test/tag-channel-autojoin.test.js` (13) asserts source stays clean, and
+  caught a first-draft comment quoting it verbatim.
+  ⚠ **NOT YET WIRED TO A FILE.** Autojoin is per-character
+  (`<Char>_pq.proj.ini`) and the exact section/key is unconfirmed — writing the
+  wrong key is a silent no-op that looks like success. **Needs one line from a
+  real character ini** before the file-write half lands.
+- **Faction attribution — specified, not built.** `docs/DESIGN-faction-attribution.md`.
+  Data availability VERIFIED: `eqemu_npc_faction_entries` carries the actual
+  values, so exact attribution is possible for known npc_ids; the inference tier
+  (fingerprint the observed hit combination, report a RANGE across candidate
+  mobs) is designed but unbuilt.
+
 - **Bid assist — roaming planned bids (bot 3.1.77, 2026-08-26).** ⚠ **This
   feature was described in an earlier session and NEVER WRITTEN DOWN** — Hitya:
   *"the local mimic bidding piece I described and queued up with you

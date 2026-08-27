@@ -79,6 +79,12 @@ function build({ mirroredIds = [], pages = [], envHours = null } = {}) {
     }
     const console = { log() {}, warn() {} };
   ` + block + `
+    // Pin the raid-window check OFF. Without this the backoff tests depend on
+    // the wall clock and fail during an actual raid window (Sun/Wed/Thu evening
+    // ET) — which is precisely when someone is most likely to be running the
+    // suite. The window's own behaviour is asserted separately, from the pure
+    // function, in the 'never backs off during a raid window' cases.
+    _inRaidWindow = () => false;
     return { _syncListEndpoint, _lastFullSweepAt, _nextDueAt, _idleStreak, _lastPageHint, calls };
   `;
   // eslint-disable-next-line no-new-func
