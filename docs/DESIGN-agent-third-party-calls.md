@@ -257,6 +257,23 @@ at all**, silently, looking exactly like it is working. Wall-clock blocks make
 both impossible: a restart re-adopts the current block, and the next block
 arrives on schedule regardless.
 
+⚠ **There is no boot pull.** Hitya, 2026-08-27: *"can we take the opendkp pull
+out of main redeploy? we have the data that isn't stale prior to the raid, save
+for peoples saved bids and wishlists."* A sync used to run 45s after start; on a
+platform that redeploys on every push to `main` that is a per-deploy pull of data
+the process we just replaced had mirrored minutes earlier — the same
+redeploy-amplification shape that dominated the audits bill, and a hole straight
+through the block-anchored cadence above. The interval is now the only trigger.
+After a deploy the mirror waits one scheduled pass (≤30 min in a raid window,
+else the next 3h block).
+
+⚠ **A bids-only boot pass is not the answer to the wishlist caveat.** Bids arrive
+on `/auctions`, which at ~680 KB is the single most expensive call we make — so
+"just refresh the bids" costs more than waiting. Live auctions never come from
+the mirror anyway (`_panelAuctions` reads `/auctions/active` on demand), so
+bidding itself is unaffected; what waits is bid HISTORY, from which the wishlist
+is inferred.
+
 ⚠ **The officer command is never throttled.** `/syncopendkp` passes
 `force: true`, and `full` implies force. That is an officer saying "go now",
 usually *because* something looks wrong or they just made an off-raid
