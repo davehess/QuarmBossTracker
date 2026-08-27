@@ -186,6 +186,13 @@ next touch one rather than assuming a missing row means a missing doc.
   backoff. Steady state is 1 call / ~6 KB, mid-raid included.
   16 mutation-checked tests in `test/opendkp-list-endpoint-writes.test.js`.
   Full story + the per-minute evidence: `DECISIONS-2026-08-27.md`.
+  ⚠ OPEN: **one full sweep fired at 00:02 ET on 2026-08-27 that the shipped
+  decision function replays as `false`.** Restart, env, version and any second
+  code path were each ruled out with evidence. Bot 3.1.86 adds a diagnostic that
+  logs every input on any sweep rather than guessing at a fix — read it the next
+  time one fires (expected Sunday 18:00 ET). Also fixed there: `Number('') === 0`
+  made the day-list fallback unreachable, and its test passed for the wrong
+  reason.
   ⚠ OPEN: the weekly cadence is TEMPORARY — revert to `0,3,4` when OpenDKP
   ships a `since` parameter. The API request to Moncs is written (framed as
   "one full pull a week + deltas in between") but unsent. Next targets on the
