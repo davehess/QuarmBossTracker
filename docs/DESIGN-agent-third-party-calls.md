@@ -102,13 +102,36 @@ and shared fleet-wide. So the policy in `_standingsRefreshDecision` is:
 
 | State | Upstream refresh |
 |---|---|
-| An auction is open | at most every **60s** |
-| Raid window, nothing open | at most every **30 min** |
-| Neither | **never** — serve the cached figure with its age, or nothing |
+| **Raid window** + an auction open | at most every **60s** |
+| **Raid window**, nothing open | at most every **30 min** |
+| **Outside a raid window** | **never** — answer from the mirror instead |
 | Last attempt failed | not for 60s, even mid-auction |
 
-Idle is the state a dashboard sits in for most of the week, and it is the state
-that produced 54 calls an hour.
+### ⚠ The gate is the raid window. An open auction only sets the pace inside it.
+
+Corrected 2026-08-27, same day, after the first cut let an open auction alone
+justify a live call. Hitya:
+
+> "the live dkp checkin should be raids-only since users are getting more dkp
+> with each tick. the rest of the time the checkin should be just to the bot and
+> database."
+
+That is the actual reason a live figure is worth paying for: **DKP moves per
+TICK, and ticks only happen while raiding.** Between raids nobody is earning, so
+the mirror holds the same number — an off-raid live call buys a value we already
+have, on somebody else's bill. And an auction *can* sit open off-raid (a market
+night, a late award), so the first version would have kept a trickle running all
+week for nothing.
+
+**Off-raid the panel is not empty** — `account-dkp` falls back to
+`_familyDkpFromMirror()`: ticks earned + adjustments − loot spent, straight from
+Supabase, no upstream call. The response carries `source: 'opendkp' | 'mirror'`
+so the panel can label an estimate as an estimate rather than quietly present it
+as live.
+
+⚠ `_familyDkpFromMirror` was **extracted** from the `bid-history` key, not
+copied. Two hand-maintained copies of a DKP formula is how the loot panel and
+the bid panel start disagreeing about what somebody can afford.
 
 ---
 
@@ -156,7 +179,7 @@ parse collection off.
 | on demand | `mob-info`, `target-casts`, `target-buffs`, `who-lookup`, `raid-buff-queue`, `incomplete-encounters`, `raid-objectives` | overlays, as the fight needs them |
 | ETag'd | `spell-catalog`, `item-clickies` | catalogs; 304s cost nothing |
 | on update check | `latest-version` | agent update prompts |
-| **raid window or Loot tab open** | `server-panel/*` — `auctions`, `my-bids`, `account-dkp`, `bid-history`, `item-history`, `loot`, `reporters` | the Loot tab. **Gated as of 2026-08-27** — see §4. |
+| **raid window or Loot tab open** | `server-panel/*` — `auctions`, `my-bids`, `account-dkp`, `bid-history`, `item-history`, `loot`, `reporters` | the Loot tab. **Gated as of 2026-08-27** — see §4. These reach the bot only; whether the BOT then goes upstream is §2's raid-window question, answered separately. |
 
 ### 3.4 Local only, never uploaded
 
@@ -177,6 +200,16 @@ out the same drop, on two different screens. Both now live on **💰 Loot**
 (`renderLootTab`, `#loot`), bidding above rolls.
 
 **The gate is `wpLootPollWanted()`: a raid window OR the Loot tab being open.**
+
+These are two different gates and it matters which is which:
+
+| | Gate | Effect of being wrong |
+|---|---|---|
+| Agent → **bot** | raid window **OR** Loot tab open | our own infrastructure; costs us bandwidth |
+| Bot → **OpenDKP** | raid window, **full stop** (§2) | somebody else's API bill |
+
+So off-raid a member with the tab open still gets a live-updating panel — it is
+just being served from our database instead of from OpenDKP.
 
 ⚠ The `OR` is deliberate and should not be tightened to raid-window-only. Loot
 *is* handed out off-raid — DKP-market nights, a late award, an officer clearing

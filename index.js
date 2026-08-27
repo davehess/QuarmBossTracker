@@ -6083,6 +6083,51 @@ async function _panelAuctions(deps = {}) {
   return list;
 }
 
+// Pooled family DKP recomputed from OUR MIRROR — ticks earned, plus
+// adjustments, minus loot spent. No upstream call: it reads the Supabase tables
+// the 30-minute sync fills.
+//
+// This is the off-raid answer (Hitya, 2026-08-27: "the live dkp checkin should
+// be raids-only since users are getting more dkp with each tick. the rest of
+// the time the checkin should be just to the bot and database"). Between raids
+// nobody is earning ticks, so the mirror is not merely an acceptable
+// approximation — it is the same number, sourced without spending anybody's
+// API budget.
+//
+// ⚠ Extracted from the bid-history key rather than copied. Two hand-maintained
+// copies of a DKP formula is how the loot panel and the bid panel start
+// quietly disagreeing about what somebody can afford.
+async function _familyDkpFromMirror(family) {
+  const supabase = require('./utils/supabase');
+  const famClause = _ilikeAnyClause('character_name', family);
+  const [tickRows, adjRows, spentRows] = await Promise.all([
+    supabase.select('opendkp_ticks', `select=value,attendees,fetched_at&attendees=ov.{${family.join(',')}}&limit=3000`),
+    supabase.select('opendkp_adjustments', `select=raw,fetched_at&limit=1000`),
+    supabase.select('opendkp_loot', `select=character_name,dkp,fetched_at&${famClause || 'character_name=eq.__none__'}&limit=3000`),
+  ]);
+  const famLc = new Set(family.map(f => f.toLowerCase()));
+  const per = new Map(family.map(f => [f.toLowerCase(), { name: f, earned: 0, adjustments: 0, spent: 0 }]));
+  let fresh = 0;
+  for (const t of (tickRows || [])) {
+    const att = Array.isArray(t.attendees) ? t.attendees : [];
+    for (const nm of att) { const k = String(nm).toLowerCase(); if (per.has(k)) per.get(k).earned += (t.value || 0); }
+    if (t.fetched_at) fresh = Math.max(fresh, Date.parse(t.fetched_at) || 0);
+  }
+  for (const a of (adjRows || [])) {
+    const nm = a.raw && a.raw.Character && a.raw.Character.Name;
+    const k = nm ? String(nm).toLowerCase() : '';
+    if (k && per.has(k)) per.get(k).adjustments += Number(a.raw.Value) || 0;
+    if (a.fetched_at) fresh = Math.max(fresh, Date.parse(a.fetched_at) || 0);
+  }
+  for (const l of (spentRows || [])) {
+    const k = String(l.character_name || '').toLowerCase();
+    if (famLc.has(k) && per.has(k)) per.get(k).spent += (l.dkp || 0);
+    if (l.fetched_at) fresh = Math.max(fresh, Date.parse(l.fetched_at) || 0);
+  }
+  return { ..._familyDkpTotals([...per.values()]), source: 'mirror', pooled: true,
+           fetched_at: fresh ? new Date(fresh).toISOString() : null };
+}
+
 // Pick a family's pooled balance out of the standings array. Behaviour is
 // ported from the agent's #124 _pickAccountDkp so the number members saw before
 // this moved server-side is the number they see after: prefer the main's own
@@ -6148,20 +6193,27 @@ let _panelStandingsCache = null;  // { at, models, failed }
 // Pure: given what we know right now, may we spend an upstream call?
 // Split out so the policy is testable without a clock, a network or a raid.
 function _standingsRefreshDecision({ cache, nowMs, auctionsLive, inRaid }) {
+  // ⚠ RAID WINDOW IS THE GATE, and an open auction only sets the pace inside
+  // it. Hitya, 2026-08-27: "the live dkp checkin should be raids-only since
+  // users are getting more dkp with each tick. the rest of the time the
+  // checkin should be just to the bot and database."
+  //
+  // That is the actual reason a live figure is worth anything: DKP moves per
+  // TICK, and ticks only happen while raiding. Between raids the mirror holds
+  // the same number — so an off-raid upstream call buys a value we already
+  // have, on somebody else's bill. The first cut of this let an open auction
+  // alone justify a refresh; an auction can sit open off-raid (a market night,
+  // a late award) and that would have kept a trickle running all week.
+  if (!inRaid) return { refresh: false, reason: cache ? 'off-raid-use-mirror' : 'off-raid-no-live-data' };
+
   if (cache && cache.failed && (nowMs - cache.at) < _PANEL_DKP_TTL_FAILED_MS) {
     return { refresh: false, reason: 'cached-failure' };
   }
-  const ttl = auctionsLive ? _PANEL_DKP_TTL_BIDDING_MS
-            : inRaid       ? _PANEL_DKP_TTL_RAID_MS
-            : Infinity;
+  // Inside a raid, an open auction is the signal that somebody is about to
+  // spend — that is when a stale balance actually costs a member something.
+  const ttl = auctionsLive ? _PANEL_DKP_TTL_BIDDING_MS : _PANEL_DKP_TTL_RAID_MS;
   if (cache && !cache.failed && (nowMs - cache.at) < ttl) {
     return { refresh: false, reason: 'fresh' };
-  }
-  // No cache at all and nothing is happening: still refuse. The first raid pass
-  // or the first open auction fills it. Serving nothing is honest; spending a
-  // call so an idle dashboard can show a number nobody is acting on is not.
-  if (!auctionsLive && !inRaid) {
-    return { refresh: false, reason: cache ? 'stale-but-idle' : 'idle-no-data' };
   }
   return { refresh: true, reason: auctionsLive ? 'auction-open' : 'raid-window' };
 }
@@ -6619,15 +6671,35 @@ async function _handleAgentServerPanel(req, res) {
       // how old it is rather than quietly present it as live.
       const main  = (url.searchParams.get('main') || character || '').trim();
       const chars = (url.searchParams.get('characters') || '').split(',').map(x => x.trim()).filter(Boolean);
+      const family = chars.length ? chars : (main ? [main] : []);
       let out = { ok: false, reason: 'unavailable' };
       try {
         const { models, at, reason } = await _panelStandings();
-        const picked = models ? _pickAccountDkpFromModels(models, main, chars.length ? chars : (main ? [main] : [])) : null;
-        out = picked
-          ? { ok: true, source: 'opendkp', account_dkp: Math.round(picked.dkp),
-              character: picked.character, matched: picked.matched,
-              as_of: at ? new Date(at).toISOString() : null, reason }
-          : { ok: false, reason: models ? 'no-matching-character' : reason };
+        const picked = models ? _pickAccountDkpFromModels(models, main, family) : null;
+        if (picked) {
+          out = { ok: true, source: 'opendkp', account_dkp: Math.round(picked.dkp),
+                  character: picked.character, matched: picked.matched,
+                  as_of: at ? new Date(at).toISOString() : null, reason };
+        } else if (family.length) {
+          // No live figure — off-raid by design, or upstream is unwell. Answer
+          // from our own database rather than making the panel show nothing:
+          // between raids nobody is earning ticks, so this IS the number.
+          // `source` tells the panel which it got, so it can label an estimate
+          // as an estimate instead of quietly presenting it as live.
+          // ⚠ Normalise to the SAME shape as the live answer. _familyDkpTotals
+          // returns `family_total`, not `account_dkp` — handing its object
+          // through unchanged would have given the panel a response with no
+          // balance field at all, which reads as "no data" rather than as an
+          // error. Only `source` differs between the two paths.
+          const m = await _familyDkpFromMirror(family);
+          out = Number.isFinite(m?.family_total)
+            ? { ok: true, source: 'mirror', account_dkp: Math.round(m.family_total),
+                character: main || family[0], matched: 'family',
+                as_of: m.fetched_at || null, breakdown: m, reason }
+            : { ok: false, reason: models ? 'no-matching-character' : reason };
+        } else {
+          out = { ok: false, reason: models ? 'no-matching-character' : reason };
+        }
       } catch (err) {
         console.warn('[server-panel:account-dkp] failed:', err?.message);
       }
@@ -6947,33 +7019,8 @@ async function _handleAgentServerPanel(req, res) {
       // attended; adj = adjustment rows for family names; spent = loot dkp.
       let dkp = null;
       if (family.length) {
-        try {
-          const [tickRows, adjRows, spentRows] = await Promise.all([
-            supabase.select('opendkp_ticks', `select=value,attendees,fetched_at&attendees=ov.{${family.join(',')}}&limit=3000`),
-            supabase.select('opendkp_adjustments', `select=raw,fetched_at&limit=1000`),
-            supabase.select('opendkp_loot', `select=character_name,dkp,fetched_at&${famClause || 'character_name=eq.__none__'}&limit=3000`),
-          ]);
-          const famLc = new Set(family.map(f => f.toLowerCase()));
-          const per = new Map(family.map(f => [f.toLowerCase(), { name: f, earned: 0, adjustments: 0, spent: 0 }]));
-          let fresh = 0;
-          for (const t of (tickRows || [])) {
-            const att = Array.isArray(t.attendees) ? t.attendees : [];
-            for (const nm of att) { const k = String(nm).toLowerCase(); if (per.has(k)) per.get(k).earned += (t.value || 0); }
-            if (t.fetched_at) fresh = Math.max(fresh, Date.parse(t.fetched_at) || 0);
-          }
-          for (const a of (adjRows || [])) {
-            const nm = a.raw && a.raw.Character && a.raw.Character.Name;
-            const k = nm ? String(nm).toLowerCase() : '';
-            if (k && per.has(k)) per.get(k).adjustments += Number(a.raw.Value) || 0;
-            if (a.fetched_at) fresh = Math.max(fresh, Date.parse(a.fetched_at) || 0);
-          }
-          for (const l of (spentRows || [])) {
-            const k = String(l.character_name || '').toLowerCase();
-            if (famLc.has(k) && per.has(k)) per.get(k).spent += (l.dkp || 0);
-            if (l.fetched_at) fresh = Math.max(fresh, Date.parse(l.fetched_at) || 0);
-          }
-          dkp = { ..._familyDkpTotals([...per.values()]), source: 'mirror', pooled: true, fetched_at: fresh ? new Date(fresh).toISOString() : null };
-        } catch (e) { console.warn('[server-panel:bid-history] dkp failed:', e?.message); }
+        try { dkp = await _familyDkpFromMirror(family); }
+        catch (e) { console.warn('[server-panel:bid-history] dkp failed:', e?.message); }
       }
       // Suggested family (auto-prefill) — main = most auction wins.
       const suggested_family = _suggestFamily(famCharIds.map(cid => ({

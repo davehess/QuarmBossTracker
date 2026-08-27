@@ -185,10 +185,18 @@ next touch one rather than assuming a missing row means a missing doc.
   `test/opendkp-standings-cache.test.js` fails the build if it returns. The bot
   serves `server-panel/account-dkp` from `_panelStandings`: one fetch for the
   whole guild, counted, governed, haltable.
-  ⚠ **The refresh trigger is an OPEN AUCTION, not a mob kill** — Hitya raised
-  trash-mob loot, which rules mob kills out on both sides: they miss loot posted
-  off trash, and a mob dying does not move anyone's DKP (a bid settling does).
-  60s while an auction is open · 30 min in a raid window · **never** when idle.
+  ⚠ **The live check is RAIDS-ONLY; an open auction only sets the pace inside a
+  raid** (Hitya, same day, correcting the first cut: *"the live dkp checkin
+  should be raids-only since users are getting more dkp with each tick. the rest
+  of the time the checkin should be just to the bot and database"*). DKP moves
+  per TICK and ticks only happen while raiding, so an off-raid live call buys a
+  number the mirror already has — and an auction CAN sit open off-raid, which
+  would have kept a trickle running all week. 60s with an auction open in a raid
+  · 30 min in a raid otherwise · **never** outside one, where `account-dkp`
+  answers from `_familyDkpFromMirror()` (extracted from the bid-history key, not
+  copied) and labels itself `source: 'mirror'`.
+  Mob kills were considered and rejected: they miss loot posted off trash, and a
+  mob dying does not move anyone's DKP anyway.
   Also shipped: 💰 **Loot tab** (`renderLootTab`) carrying bidding + rolls, which
   were split across Dashboard and Stats; and `wpLootPollWanted()` gating the loot
   poll on a raid window OR the tab being open (⚠ the OR is deliberate — loot is
