@@ -282,7 +282,28 @@ nothing. (Caught pre-ship: the command did not pass force.)
 
 The cost is latency on an off-raid officer edit — it reaches the mirror within
 three hours rather than thirty minutes, the same trade already accepted for the
-audits idle backoff. Bidding is unaffected: the loot panel reads `_panelAuctions`
+audits idle backoff.
+
+⚠ **Measured 2026-08-27, and it is bigger than the "DKP only moves during raids"
+reasoning implies.** Adjustments are the exception to that rule, and they are
+almost entirely off-raid: of 295 adjustment rows, **only 8 (2.7%) were made
+during raid hours** (8pm–midnight ET). The largest single cluster is **Friday**
+— 113 rows, 101 of them a `30 days no raids` inactivity purge — i.e. officer
+housekeeping done after the raid week ends. Small ±20 corrections (a pass
+because someone was locked out, a ceded item, a missed tick) are real but a
+minority at 78 rows, and they are also logged after the raid rather than during
+it.
+
+So the accurate statement is: **ticks only move DKP during raids; adjustments
+move it mostly on Fridays.** The design still holds — off-raid the panel reads
+the mirror, and the mirror catches up within the 3h block — but a member who
+checks their balance in the hours right after a bulk purge can see a stale
+figure. **An officer doing a purge should run `/syncopendkp`**, which is
+force-flagged and never throttled, rather than waiting for the block. We cannot
+hook this automatically: adjustments are made in OpenDKP's own web UI, not
+through our bot, so the first we hear of one is the next sync.
+(If the audit-cursor proposal lands, `Adjustment Created` in the delta feed
+closes this properly — see `DESIGN-opendkp-audit-cursor.md`.) Bidding is unaffected: the loot panel reads `_panelAuctions`
 on demand, not this sync.
 
 ---
