@@ -610,9 +610,19 @@ async function deleteAuction(auctionId) {
 // bearer path; getRaids/getRaid now match.
 //
 // GET /clients/{name}/raids — all raids (summary, no ticks detail)
-async function getRaids() {
+// GET /clients/{name}/raids[?count=N] — raid summary list.
+//
+// `count` is DOCUMENTED (OpenDKP's own Postman collection: `/raids?count=10`)
+// and we were not using it: every pass pulled all 412 raids, ~90 KB a call.
+// Raids are append-only in practice — an old raid's summary does not change —
+// so the routine pass only needs the newest few. A periodic UNCOUNTED fetch
+// still heals anything edited upstream, and the #110 audit reconcile is the
+// second net under that.
+async function getRaids(opts = {}) {
   const headers = await _bearerHeaders();
-  return _get({ ..._clientUrl('/raids'), headers });
+  const n = Number(opts.count);
+  const q = Number.isInteger(n) && n > 0 ? `?count=${n}` : '';
+  return _get({ ..._clientUrl('/raids' + q), headers });
 }
 
 // GET /clients/{name}/raids/:id — single raid with full Ticks + Items

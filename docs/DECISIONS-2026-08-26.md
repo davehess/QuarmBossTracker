@@ -326,3 +326,45 @@ reverting the fall-through, dropping the write, and treating a full page of
 fresh rows as done each kill a test. The last of those matters most: it would
 silently LOSE audit rows on a rollover, which is the kind of bug that shows up
 as a missing loot correction weeks later.
+
+---
+
+## "Is there an alternative in the APIs?" — checked the doc, mixed answer
+
+**Audits: NO.** OpenDKP's own Postman collection documents exactly one
+parameter on `/clients/{client}/audits` — `page`. No `since`, no `count`, no
+sort. `GET /audits/{id}` exists but ids are global across all OpenDKP clients
+(page 1 held 1,669,729–1,968,002 against our watermark of 4,627,656), so
+probing forward from a watermark would mostly 404. **So there is no way to ask
+for less; the only lever is asking for the RIGHT page**, which is what the
+last-page fast path does. That fix stands as the ceiling for this endpoint.
+
+**Raids: YES, and we were not using it.** `/clients/{client}/raids?count=10` is
+documented. We were pulling all 412 raids every 30 minutes at ~90 KB a call to
+re-learn rows that had not moved.
+
+Shipped (3.1.83): the routine pass asks for the newest `OPENDKP_RAIDS_COUNT`
+(default 25); an **uncounted full fetch still runs every
+`OPENDKP_RAIDS_FULL_HOURS` (default 24)** so an upstream EDIT to an older raid
+cannot hide forever, with the #110 audit reconcile as a second net. The result
+reports `scope: 'newest 25' | 'full'` so the logs are not ambiguous about why a
+count changed.
+
+### A vacuous test of mine, caught by mutation-checking
+
+The first version of the "still takes the FULL list periodically" test asserted
+only that the strings `_raidsFullEveryHours` and `const fullDue` appeared in the
+source. A mutation forcing `useCount = true` — which **deletes the periodic heal
+entirely** — left it green. A test that cannot fail is worse than no test,
+because it manufactures confidence.
+
+Fixed by extracting the decision into a pure `_raidsFetchMode(now, lastFullAt,
+count, fullEveryHours)` and testing the BEHAVIOUR: routine pass uses the count,
+elapsed interval forces full, a cold process forces full, and a nonsense count
+(0, negative, fractional, null, 'ten', NaN) falls back to full rather than
+sending `?count=0` and asking for nothing. The same mutation now kills three
+tests.
+
+Still untouched and worth a look after the raid: `/characters` (73 calls,
+9.9 MB — roster changes on officer action, not mid-raid) and the mirror's
+`/auctions` full-history pull (30 calls, 18.6 MB).

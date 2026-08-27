@@ -425,11 +425,36 @@ async function syncAuctions(opts = {}) {
 }
 
 // Upsert the raid summary list. Returns { fetched, upserted }.
+// How many recent raids the routine pass asks for, and how often we still take
+// the whole list so an upstream EDIT to an older raid cannot hide forever.
+function _raidsCount()          { return _envNum('OPENDKP_RAIDS_COUNT', 25); }
+function _raidsFullEveryHours() { return _envNum('OPENDKP_RAIDS_FULL_HOURS', 24); }
+let _lastRaidsFullAt = 0;
+
+// PURE so the decision can be tested as BEHAVIOUR rather than by grepping the
+// source for the right words. The first version of this test asserted only
+// that `_raidsFullEveryHours` appeared in the file, which stayed green when a
+// mutation forced useCount=true and deleted the periodic heal entirely — a
+// test that cannot fail is worse than no test, because it manufactures
+// confidence.
+function _raidsFetchMode(nowMs, lastFullAtMs, count, fullEveryHours) {
+  const n = Number(count);
+  const usable = Number.isInteger(n) && n > 0;
+  const fullDue = (nowMs - (lastFullAtMs || 0)) >= fullEveryHours * 3600 * 1000;
+  return { useCount: usable && !fullDue, count: usable ? n : null, fullDue };
+}
+
 async function syncRaidsList() {
   if (!supabase.isEnabled()) return { fetched: 0, upserted: 0, error: 'supabase disabled' };
+  // Full list on a schedule, newest-N otherwise. A raid summary is append-only
+  // in practice, so pulling all 412 every 30 minutes was ~90 KB a pass to
+  // re-learn rows that had not moved.
+  const count = _raidsCount();
+  const { useCount } = _raidsFetchMode(Date.now(), _lastRaidsFullAt, count, _raidsFullEveryHours());
   let raids;
-  try { raids = await getRaids(); }
+  try { raids = await getRaids(useCount ? { count } : {}); }
   catch (err) { return { fetched: 0, upserted: 0, error: err?.message || String(err) }; }
+  if (!useCount) _lastRaidsFullAt = Date.now();
 
   if (!Array.isArray(raids)) return { fetched: 0, upserted: 0, error: 'getRaids returned non-array' };
 
@@ -444,6 +469,7 @@ async function syncRaidsList() {
   return {
     fetched:  raids.length,
     upserted: rows.length,
+    scope:    useCount ? `newest ${count}` : 'full',
   };
 }
 
