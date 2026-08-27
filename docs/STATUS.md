@@ -179,6 +179,13 @@ next touch one rather than assuming a missing row means a missing doc.
   restarting faster than the interval never syncs at all, silently.
   ⚠ `/syncopendkp` passes `force: true` — caught pre-ship that the officer
   command would otherwise have been silently swallowed off-raid.
+  ⚠ **No boot pull as of bot 3.1.90** (Hitya: *"take the opendkp pull out of
+  main redeploy"*) — the 45s post-start sync was a per-deploy fetch of data the
+  replaced process had just mirrored. The interval is the only trigger; after a
+  deploy the mirror waits one pass. A bids-only boot pass was considered and
+  rejected: bids ride `/auctions` at ~680 KB, our most expensive call, so
+  waiting is cheaper than refreshing. Live bidding is unaffected — the panel
+  reads `/auctions/active` on demand, not the mirror.
   **Beta was stranded:** agent 3.6.4 (Aug 21) sorts ABOVE stable 3.6.2, so 2
   players could never be offered the fix, and `sync-beta` pushes with
   `GITHUB_TOKEN` which by design triggers no build. Re-parked Mimic 2.6.2 →

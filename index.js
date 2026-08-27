@@ -665,10 +665,32 @@ function startOpenDkpSync() {
     return;
   }
   const { runSync } = require('./utils/openDkpSync');
-  setTimeout(() => {
-    runSync().then(r => console.log('[opendkp-sync] initial:', JSON.stringify(r)))
-             .catch(err => console.warn('[opendkp-sync] initial failed:', err?.message));
-  }, 45_000);
+  // ⚠ NO BOOT PULL. Hitya, 2026-08-27: "can we take the opendkp pull out of
+  // main redeploy? we have the data that isn't stale prior to the raid, save
+  // for peoples saved bids and wishlists."
+  //
+  // There used to be a sync 45s after start. On a platform that redeploys on
+  // every push to main — 12-42 a day — that is a per-deploy OpenDKP pull for
+  // data the process we just replaced had already mirrored minutes earlier.
+  // It is the same redeploy-amplification shape that turned out to dominate
+  // the audits bill (3.1.84) and that the block-anchored off-raid cadence was
+  // built to avoid (3.1.89); leaving the boot pass in place would have been a
+  // hole straight through both.
+  //
+  // The interval below is the only trigger now. Cost of removing it: after a
+  // deploy, the mirror waits one scheduled pass — up to 30 min inside a raid
+  // window, up to the next 3h block outside one.
+  //
+  // ⚠ Bids and wishlists are the one thing that genuinely could be stale (the
+  // wishlist is INFERRED from bid history), and a bids-only boot pass is NOT
+  // the answer: bids arrive on /auctions, which at ~680 KB is the single most
+  // expensive call we make. Waiting for the scheduled pass is strictly cheaper
+  // than "just refreshing the bids". Live auctions do not come from the mirror
+  // at all — the loot panel reads /auctions/active on demand (_panelAuctions),
+  // so bidding itself is unaffected by any of this.
+  //
+  // An officer who needs it now runs /syncopendkp, which is force-flagged and
+  // never throttled.
   setInterval(() => {
     runSync().then(r => console.log('[opendkp-sync] interval:', JSON.stringify(r)))
              .catch(err => console.warn('[opendkp-sync] interval failed:', err?.message));

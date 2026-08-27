@@ -97,6 +97,24 @@ describe('off-raid sync cadence', () => {
     expect(cmd).toContain('runSync({ full, force: true })');
   });
 
+  it('does NOT pull OpenDKP on boot at all', () => {
+    // Hitya: "can we take the opendkp pull out of main redeploy? we have the
+    // data that isn't stale prior to the raid". main redeploys 12-42 times a
+    // day, and a boot pull is a per-deploy fetch of data the process we just
+    // replaced had mirrored minutes earlier — the same shape that dominated
+    // the audits bill. The interval is the only trigger.
+    const bot = readSource(path.join(ROOT, 'index.js'));
+    const start = bot.indexOf('function startOpenDkpSync()');
+    const end   = bot.indexOf('function startOpenDkpRegisterQueue');
+    expect(start).toBeGreaterThan(-1);
+    const body = bot.slice(start, end);
+    // No timer that fires runSync once shortly after start…
+    expect(body).not.toMatch(/setTimeout\([\s\S]*?runSync\(/);
+    // …and exactly one scheduled trigger, the interval.
+    expect((body.match(/runSync\(/g) || []).length).toBe(1);
+    expect(body).toMatch(/setInterval\([\s\S]*?runSync\(/);
+  });
+
   it('widens the window an hour EARLIER than the backoff one', () => {
     // The board should be current when the pull starts, not catching up during
     // it. _inRaidWindow (shared with the idle backoff) starts at 19:00 ET.
