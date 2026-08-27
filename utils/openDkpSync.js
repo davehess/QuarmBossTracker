@@ -880,12 +880,71 @@ function _noteIdleResult(table, freshCount) {
   const wait = Math.min(30 * 60 * 1000 * Math.pow(2, streak - 1), _backoffCapMs());
   _nextDueAt.set(table, Date.now() + wait);
 }
-function _fullSweepIntervalMs() {
-  return _envNum('OPENDKP_LIST_FULL_SWEEP_HOURS', 24) * 3600 * 1000;
+// ── Full sweep cadence: anchored to raid nights, not a rolling clock ────────
+// Hitya, 2026-08-27: "we don't need a full download that often, just before a
+// raid. three times a week."
+//
+// The full sweep is the healing pass — it re-offers EVERY row, so a gap below
+// the watermark (a partial run, an upstream out-of-order insert) closes. It is
+// also the single most expensive thing we ask OpenDKP for: 17 pages / 6.2 MB on
+// audits. A 24h rolling timer fired it at whatever time of day the process
+// happened to boot, which on 2026-08-26 meant mid-raid.
+//
+// DKP is a thing raids change, so sweep at 6pm ET on the three raid days: two
+// hours ahead of the pull, clear of the 19:30 deploy freeze, three times a week
+// instead of seven. Worst case a gap waits from Thu 6pm to Sun 6pm (74h), which
+// is fine for a pass whose whole job is closing gaps that should not exist.
+const _SWEEP_ANCHOR_DAYS = [0, 3, 4];        // Sun, Wed, Thu — the raid nights
+
+function _sweepAnchorHourEt() {
+  const h = _envNum('OPENDKP_LIST_FULL_SWEEP_HOUR_ET', 18);
+  return (Number.isFinite(h) && h >= 0 && h <= 23) ? Math.floor(h) : 18;
 }
-function _dueForFullSweep(table) {
-  const last = _lastFullSweepAt.get(table);
-  return last == null || (Date.now() - last) >= _fullSweepIntervalMs();
+// Safety net ONLY. The anchors already bound the gap at 74h, so this firing
+// means the anchor math is wrong — not that the schedule is too slack.
+function _sweepMaxAgeMs() {
+  return _envNum('OPENDKP_LIST_FULL_SWEEP_MAX_HOURS', 96) * 3600 * 1000;
+}
+
+// Epoch ms of the most recent pre-raid anchor at or before `nowMs`. Pure, so
+// the tests can drive it across a whole week without waiting for one.
+// ET comes from toLocaleString, the same trick _inRaidWindow uses: the returned
+// Date carries ET wall-clock in its LOCAL fields, and its distance from the real
+// instant is the offset that converts a wall time back to an epoch. A DST
+// changeover can leave that offset an hour out for a day; an hour of slop on a
+// 6pm anchor changes nothing.
+function _lastSweepAnchor(nowMs = Date.now(), hourEt = _sweepAnchorHourEt()) {
+  const et = new Date(new Date(nowMs).toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  const offsetMs = et.getTime() - nowMs;
+  for (let back = 0; back < 8; back++) {
+    const d = new Date(et.getTime());
+    d.setDate(d.getDate() - back);
+    if (!_SWEEP_ANCHOR_DAYS.includes(d.getDay())) continue;
+    d.setHours(hourEt, 0, 0, 0);
+    const epoch = d.getTime() - offsetMs;
+    if (epoch <= nowMs) return epoch;
+  }
+  return nowMs;                              // unreachable: 8 days covers every case
+}
+
+// Pure decision, split out so it can be tested without a clock or a Map.
+// `adopt` is the cold-process case: do NOT sweep just because we lost the
+// timestamp on a redeploy — main takes 12–42 pushes a day, and a per-boot full
+// sweep is precisely the thing that kept the audits bill up. Adopt the current
+// anchor instead; the next real anchor still fires, at most 74h out.
+function _sweepDecision(lastMs, nowMs, anchorMs, maxAgeMs) {
+  if (lastMs == null)                  return { due: false, adopt: anchorMs };
+  if ((nowMs - lastMs) >= maxAgeMs)    return { due: true,  adopt: null };
+  return { due: lastMs < anchorMs, adopt: null };
+}
+
+function _dueForFullSweep(table, nowMs = Date.now()) {
+  const d = _sweepDecision(
+    _lastFullSweepAt.has(table) ? _lastFullSweepAt.get(table) : null,
+    nowMs, _lastSweepAnchor(nowMs), _sweepMaxAgeMs(),
+  );
+  if (d.adopt != null) _lastFullSweepAt.set(table, d.adopt);
+  return d.due;
 }
 function _markFullSweep(table) {
   _lastFullSweepAt.set(table, Date.now());
@@ -922,6 +981,8 @@ async function _syncListEndpoint({
   let totalUpserted = 0;
   let totalOffered  = 0;
   let newestFirstProven = false;   // set from page 1; gates the early break
+  let jumpedToLast      = false;   // set when page 1 proves oldest-first
+  let lastPageDone      = 0;       // the page the jump already processed
 
   // Oldest-first fast path: check the LAST page and stop if it holds nothing
   // new. Skipped on a full sweep (which must genuinely walk everything) and on
@@ -973,6 +1034,11 @@ async function _syncListEndpoint({
   }
 
   for (let page = 1; page <= AUDIT_PAGE_LIMIT; page++) {
+    // The rollback below resumes the walk at page 2, but the jump has already
+    // fetched and written the last page — don't pay for it a second time (and
+    // don't double-count its rows in `upserted`).
+    if (lastPageDone && page >= lastPageDone) break;
+
     let arr;
     try { arr = await fetchPage(page); }
     catch (err) { return { error: err?.message || String(err), upserted: totalUpserted, pages: pagesWalked }; }
@@ -1068,6 +1134,32 @@ async function _syncListEndpoint({
       await supabase.insertIgnoreDuplicates(table, toSend);
     }
     totalUpserted += freshRows.length;
+
+    // ── Cold-start jump (2026-08-27) ────────────────────────────────
+    // The fast path above needs a cached page count and a fresh process has
+    // none — so every redeploy walked all 17 pages to re-learn what page 1 had
+    // just told it: the ids run OLDEST-first, so nothing between here and the
+    // end can sit above our watermark. Measured the night this shipped — three
+    // deploys inside ten minutes, 17 calls / 6.2 MB apiece — that per-boot walk,
+    // not the periodic sweep, was most of what remained of the audits bill.
+    // Page 1 has just proven the ordering, so jump to the last page: two calls.
+    const totalPages = Number(arr?.TotalPages);
+    if (!fullSweep && !jumpedToLast && page === 1 && !newestFirstProven
+        && Number.isFinite(totalPages) && totalPages > 2) {
+      jumpedToLast = true;
+      page = totalPages - 1;          // the loop's page++ lands us on the last one
+      continue;
+    }
+
+    // The last page came back ENTIRELY new, so the boundary sits on an earlier
+    // page (a rollover — every couple of months at ~37 audits/day). Hand the
+    // saved calls back and walk the middle: a silent gap is the worse outcome.
+    if (jumpedToLast && rows.length > 0 && freshRows.length === rows.length) {
+      jumpedToLast = false;
+      lastPageDone = page;
+      page = 1;                       // … and page++ resumes the walk at page 2
+      continue;
+    }
 
     // Nothing on this page was new and newer-first paging is proven for this
     // run → every remaining page is older than what we hold. Done.

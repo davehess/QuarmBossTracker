@@ -85,7 +85,8 @@ function build({ mirroredIds = [], pages = [], envHours = null } = {}) {
     // suite. The window's own behaviour is asserted separately, from the pure
     // function, in the 'never backs off during a raid window' cases.
     _inRaidWindow = () => false;
-    return { _syncListEndpoint, _lastFullSweepAt, _nextDueAt, _idleStreak, _lastPageHint, calls };
+    return { _syncListEndpoint, _lastFullSweepAt, _nextDueAt, _idleStreak, _lastPageHint,
+             _lastSweepAnchor, _sweepDecision, calls };
   `;
   // eslint-disable-next-line no-new-func
   const made = new Function('calls', harness)(calls);
@@ -94,6 +95,13 @@ function build({ mirroredIds = [], pages = [], envHours = null } = {}) {
   const fetchPage = async () => remaining.shift() ?? { Audits: [] };
   return { ...made, fetchPage, calls };
 }
+
+// A sweep marker old enough to be due under ANY schedule — past the 96h safety
+// net, so these cases don't depend on which day of the week the suite runs.
+// (Before 2026-08-27 they relied on "no marker → sweep due"; a cold process now
+// adopts the current anchor instead, because a per-boot full sweep was most of
+// what remained of the audits bill.)
+const SWEEP_DUE = () => Date.now() - 8 * 24 * 3600 * 1000;
 
 const AUDIT_ARGS = {
   label: 'audits',
@@ -149,7 +157,7 @@ describe('_syncListEndpoint write path', () => {
 
   it('offers every row on a full sweep, but still counts only new ones', async () => {
     const h = build({ mirroredIds: [1, 2, 3], pages: [audits(1, 2, 3, 4)] });
-    // no _lastFullSweepAt entry → first run for this table → sweep is due
+    h._lastFullSweepAt.set('opendkp_audits', SWEEP_DUE());
 
     const res = await h._syncListEndpoint({
       ...AUDIT_ARGS, fetchPage: h.fetchPage, shapeFlag: { value: true },
@@ -161,8 +169,9 @@ describe('_syncListEndpoint write path', () => {
     expect(res.upserted).toBe(1);       // only #4 is genuinely new
   });
 
-  it('stops sweeping once one has run, and resumes after the interval', async () => {
+  it('stops sweeping once one has run, and resumes at the next anchor', async () => {
     const h = build({ mirroredIds: [1, 2, 3], pages: [audits(1, 2, 3), audits(1, 2, 3)] });
+    h._lastFullSweepAt.set('opendkp_audits', SWEEP_DUE());
 
     const first = await h._syncListEndpoint({
       ...AUDIT_ARGS, fetchPage: h.fetchPage, shapeFlag: { value: true },
@@ -175,10 +184,9 @@ describe('_syncListEndpoint write path', () => {
     expect(second.full_sweep).toBe(false);
     expect(second.offered).toBe(0);
 
-    // Age the marker past the 24h default → due again.
-    h._lastFullSweepAt.set('opendkp_audits', Date.now() - 25 * 3600 * 1000);
+    // Age the marker past every anchor → due again.
     const h2 = build({ mirroredIds: [1, 2, 3], pages: [audits(1, 2, 3)] });
-    h2._lastFullSweepAt.set('opendkp_audits', Date.now() - 25 * 3600 * 1000);
+    h2._lastFullSweepAt.set('opendkp_audits', SWEEP_DUE());
     const third = await h2._syncListEndpoint({
       ...AUDIT_ARGS, fetchPage: h2.fetchPage, shapeFlag: { value: true },
     });
@@ -234,25 +242,26 @@ describe('_syncListEndpoint early break', () => {
     expect(res.upserted).toBe(3);       // 13, 12, 11 written before the break
   });
 
-  it('refuses to break when page 1 disproves newest-first ordering', async () => {
-    // Oldest-first would put the SMALLEST ids on page 1 — all below the
-    // watermark. Breaking there would silently miss the new tail pages.
-    const h = build({ mirroredIds: [100], pages: [
-      auditsPage(1, 3, 1, 2, 3), auditsPage(2, 3, 4, 5), auditsPage(3, 3, 101, 102),
-    ] });
+  it('never breaks on page 1 when the ordering is oldest-first', async () => {
+    // Oldest-first puts the SMALLEST ids on page 1 — all below the watermark.
+    // Breaking there would silently miss the new tail pages. (It no longer
+    // walks pages 2..N either; see the cold-start jump below. What matters
+    // here is that the new tail rows are still caught.)
+    const h = build({ mirroredIds: [100], pages: [] });
     h._lastFullSweepAt.set('opendkp_audits', Date.now());
+    const byPage = { 1: [1, 2, 3], 2: [4, 5], 3: [101, 102] };
     const res = await h._syncListEndpoint({
-      ...AUDIT_ARGS, fetchPage: h.fetchPage, shapeFlag: { value: true },
+      ...AUDIT_ARGS, shapeFlag: { value: true },
+      fetchPage: async (p) => ({ ...auditsPage(p, 3, ...(byPage[p] || [])) }),
     });
-    expect(res.pages).toBe(3);          // walked everything, exactly as before
-    expect(res.upserted).toBe(2);       // and still caught 101, 102
+    expect(res.upserted).toBe(2);       // still caught 101, 102
   });
 
   it('a full sweep still walks every page', async () => {
     const h = build({ mirroredIds: [10, 11, 12], pages: [
       auditsPage(1, 3, 12, 11, 10), auditsPage(2, 3, 9), auditsPage(3, 3, 8),
     ] });
-    // no sweep marker → sweep due
+    h._lastFullSweepAt.set('opendkp_audits', SWEEP_DUE());
     const res = await h._syncListEndpoint({
       ...AUDIT_ARGS, fetchPage: h.fetchPage, shapeFlag: { value: true },
     });
@@ -414,6 +423,7 @@ describe('oldest-first fast path', () => {
 
   it('a full sweep still walks everything, fast path or not', async () => {
     const h = build({ mirroredIds: [10], pages: [] });
+    h._lastFullSweepAt.set('opendkp_audits', SWEEP_DUE());
     h._lastPageHint.set('opendkp_audits', 2);
     const asked = [];
     const res = await h._syncListEndpoint({
@@ -436,5 +446,146 @@ describe('oldest-first fast path', () => {
       fetchPage: async () => ({ Unexpected: 'shape' }),
     });
     expect(res.fast_path).toBeUndefined();       // fell through, did not claim done
+  });
+});
+
+// ── Raid-anchored full sweep (Hitya, 2026-08-27) ────────────────────────────
+// "we don't need a full download that often, just before a raid. three times
+// a week." The full sweep re-offers EVERY row — 17 pages / 6.2 MB on audits —
+// so its cadence IS the bill. A 24h rolling timer fired it at whatever time of
+// day the process last booted, which on 2026-08-26 was mid-raid.
+//
+// August 2026 is EDT (UTC-4), so the 6pm ET anchor is 22:00Z. 2026-08-23 is a
+// Sunday, -26 a Wednesday, -27 a Thursday.
+describe('full sweep anchors to raid nights', () => {
+  const H = build();
+  const anchor = (iso) => new Date(H._lastSweepAnchor(new Date(iso).getTime())).toISOString();
+
+  it('lands on 6pm ET of the raid day once that hour has passed', () => {
+    expect(anchor('2026-08-26T23:00:00Z')).toBe('2026-08-26T22:00:00.000Z');  // Wed 19:00 ET
+  });
+
+  it('reaches BACK to the previous raid night before the hour arrives', () => {
+    // Wed 17:00 ET — the anchor is still Sunday's. Without this the sweep would
+    // fire at midnight on a raid day, i.e. at an arbitrary hour again.
+    expect(anchor('2026-08-26T21:00:00Z')).toBe('2026-08-23T22:00:00.000Z');  // Sun
+  });
+
+  it('holds the Thursday anchor across the whole Fri/Sat gap', () => {
+    expect(anchor('2026-08-28T12:00:00Z')).toBe('2026-08-27T22:00:00.000Z');  // Fri
+    expect(anchor('2026-08-29T23:00:00Z')).toBe('2026-08-27T22:00:00.000Z');  // Sat
+  });
+
+  it('produces exactly THREE anchors a week — the whole ask', () => {
+    // Sample every hour for a week. A mutation that widened the anchor days,
+    // or that fell back to a rolling interval, changes this count.
+    const start = new Date('2026-08-23T00:00:00Z').getTime();
+    const seen = new Set();
+    for (let h = 0; h < 24 * 7; h++) seen.add(H._lastSweepAnchor(start + h * 3600 * 1000));
+    // 3 anchors inside the week, plus the one carried in from the Thursday
+    // before it (Sun 00:00Z is Sat 8pm ET, still on the prior anchor).
+    expect(seen.size).toBe(4);
+    const days = [...seen].sort().map(ms =>
+      new Date(ms).toLocaleString('en-US', { timeZone: 'America/New_York', weekday: 'short', hour: 'numeric' }));
+    expect(days.map(d => d.replace(',', ''))).toEqual(['Thu 6 PM', 'Sun 6 PM', 'Wed 6 PM', 'Thu 6 PM']);
+  });
+
+  it('a cold process adopts the anchor instead of sweeping', () => {
+    // THE point of the change. main takes 12-42 pushes a day and the marker is
+    // process-local, so "no marker → sweep" meant a 6.2 MB full download per
+    // deploy — measured 2026-08-27: three deploys inside ten minutes, 17 calls
+    // and 6.2 MB apiece.
+    const now = new Date('2026-08-26T23:00:00Z').getTime();
+    const d = H._sweepDecision(null, now, H._lastSweepAnchor(now), 96 * 3600 * 1000);
+    expect(d.due).toBe(false);
+    expect(d.adopt).toBe(H._lastSweepAnchor(now));
+  });
+
+  it('sweeps once an anchor has passed since the last one', () => {
+    const now  = new Date('2026-08-26T23:00:00Z').getTime();   // Wed 19:00 ET
+    const anch = H._lastSweepAnchor(now);                      // Wed 18:00 ET
+    const max  = 96 * 3600 * 1000;
+    expect(H._sweepDecision(anch - 1, now, anch, max).due).toBe(true);   // before it
+    expect(H._sweepDecision(anch + 1, now, anch, max).due).toBe(false);  // after it
+  });
+
+  it('still has a max-age safety net if the anchor math is ever wrong', () => {
+    const now = new Date('2026-08-26T23:00:00Z').getTime();
+    const anch = H._lastSweepAnchor(now);
+    // A marker in the FUTURE would never be < the anchor, so without the net a
+    // clock skew could wedge the healing pass off forever.
+    expect(H._sweepDecision(now - 200 * 3600 * 1000, now, anch, 96 * 3600 * 1000).due).toBe(true);
+  });
+
+  it('the cadence is tunable, so a bad anchor can be moved without a deploy', () => {
+    expect(srcText).toContain('OPENDKP_LIST_FULL_SWEEP_HOUR_ET');
+    expect(srcText).toContain('OPENDKP_LIST_FULL_SWEEP_MAX_HOURS');
+  });
+});
+
+// ── Cold-start jump (2026-08-27) ────────────────────────────────────────────
+// The last-page fast path needs a cached page count, and a fresh process has
+// none — so every redeploy re-walked all 17 pages to re-learn what page 1 had
+// just told it. Measured that night, the per-boot walk was most of what
+// remained of the audits bill, dwarfing the periodic sweep.
+describe('cold-start jump', () => {
+  const paged = (page, total, ...ids) => ({
+    Audits: ids.map(id => ({ AuditId: id, Timestamp: '2026-08-26T03:32:45Z', Action: 'Raid Updated' })),
+    TotalPages: total, CurrentPage: page,
+  });
+
+  it('goes straight to the last page once page 1 proves oldest-first', async () => {
+    const h = build({ mirroredIds: [100], pages: [] });
+    h._lastFullSweepAt.set('opendkp_audits', Date.now());   // not a sweep pass
+    // deliberately NO _lastPageHint — this is a process that just booted
+    const asked = [];
+    const byPage = { 1: [1, 2, 3], 2: [4, 5], 3: [6, 7], 4: [99, 101] };
+    const res = await h._syncListEndpoint({
+      ...AUDIT_ARGS, shapeFlag: { value: true },
+      fetchPage: async (p) => { asked.push(p); return paged(p, 4, ...(byPage[p] || [])); },
+    });
+    expect(asked).toEqual([1, 4]);        // pages 2 and 3 never requested
+    expect(res.upserted).toBe(1);         // and 101 still landed
+    expect(h.calls.inserts[0].rows.map(r => r.audit_id)).toEqual([101]);
+  });
+
+  it('walks the middle when the last page is ENTIRELY new (a rollover)', async () => {
+    // The one case the jump can be wrong about: the boundary sits on an
+    // earlier page. Correctness wins — hand the saved calls back.
+    const h = build({ mirroredIds: [100], pages: [] });
+    h._lastFullSweepAt.set('opendkp_audits', Date.now());
+    const asked = [];
+    const byPage = { 1: [1, 2], 2: [3, 4], 3: [99, 101], 4: [102, 103] };
+    const res = await h._syncListEndpoint({
+      ...AUDIT_ARGS, shapeFlag: { value: true },
+      fetchPage: async (p) => { asked.push(p); return paged(p, 4, ...(byPage[p] || [])); },
+    });
+    expect(asked).toEqual([1, 4, 2, 3]);  // jumped, backed off, never re-fetched 4
+    expect(res.upserted).toBe(3);         // 102, 103 from the jump + 101 from page 3
+  });
+
+  it('does NOT jump when page 1 is newest-first — the early break owns that', async () => {
+    const h = build({ mirroredIds: [100], pages: [] });
+    h._lastFullSweepAt.set('opendkp_audits', Date.now());
+    const asked = [];
+    const res = await h._syncListEndpoint({
+      ...AUDIT_ARGS, shapeFlag: { value: true },
+      fetchPage: async (p) => { asked.push(p); return paged(p, 4, 100, 99, 98); },
+    });
+    expect(asked).toEqual([1]);           // broke on page 1, did not jump to 4
+    expect(res.upserted).toBe(0);
+  });
+
+  it('a full sweep never jumps — it is the pass that must see everything', async () => {
+    const h = build({ mirroredIds: [100], pages: [] });
+    h._lastFullSweepAt.set('opendkp_audits', SWEEP_DUE());
+    const asked = [];
+    const byPage = { 1: [1, 2], 2: [3, 4], 3: [5, 6], 4: [99, 101] };
+    const res = await h._syncListEndpoint({
+      ...AUDIT_ARGS, shapeFlag: { value: true },
+      fetchPage: async (p) => { asked.push(p); return paged(p, 4, ...(byPage[p] || [])); },
+    });
+    expect(res.full_sweep).toBe(true);
+    expect(asked).toEqual([1, 2, 3, 4]);
   });
 });

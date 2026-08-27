@@ -92,6 +92,25 @@ must therefore ask or verify.
   and it must carry the inbound admission budgets (#73,
   `budget_<kind>_per_min`) as the same knob pointing the other direction —
   sizing a deployment means setting BOTH tables.
+- **2026-08-27 — a "refresh everything" pass is scheduled against the DOMAIN'S
+  clock, never a rolling timer.** Hitya, looking at 140 MB/day of audits:
+  *"we don't need a full download that often, just before a raid. three times a
+  week."* Any endpoint with no `since` filter forces a choice between a cheap
+  incremental read and a periodic full re-read that heals gaps; the full one
+  should land where the data actually moves. Ours anchors to 6pm ET on
+  Sun/Wed/Thu (`OPENDKP_LIST_FULL_SWEEP_HOUR_ET` /
+  `_LIST_FULL_SWEEP_MAX_HOURS`), because DKP is a thing raids change — 3 full
+  pulls a week instead of 7. **The wizard must ask for the guild's raid nights
+  and write them here, not default to 24h**: a rolling interval fires at
+  whatever hour the process last booted, which for us was mid-raid.
+- **2026-08-27 — cadence state that is process-local must not make a redeploy
+  expensive.** The same sweep marker lives in a `Map`, so "no marker → sweep"
+  meant a full download per boot; `main` takes 12–42 pushes a day and that
+  per-deploy walk turned out to be MOST of the remaining bill (measured: three
+  deploys inside ten minutes, 17 calls / 6.2 MB apiece). A cold process now
+  adopts the current anchor rather than sweeping. Generalises to any deployment
+  whose platform restarts on push — which is all of the PaaS options the wizard
+  offers.
 
 ### Storage & retention
 - **Local is an ARCHIVE, not a mirror** (2026-08-12). `refresh-local-archive.sh`
