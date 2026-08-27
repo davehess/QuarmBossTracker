@@ -72,25 +72,51 @@ describe('the agent has no line to OpenDKP', () => {
 });
 
 describe('the bot spends an upstream call only when one is warranted', () => {
-  it('refreshes while an auction is open', () => {
-    expect(decide({ cache: null, auctionsLive: true, inRaid: false }))
-      .toEqual({ refresh: true, reason: 'auction-open' });
+  it('NEVER goes live outside a raid — not even for an open auction', () => {
+    // Hitya, 2026-08-27: "the live dkp checkin should be raids-only since users
+    // are getting more dkp with each tick. the rest of the time the checkin
+    // should be just to the bot and database."
+    //
+    // Ticks are the only thing that moves a balance, and ticks only happen
+    // while raiding — so an off-raid live call buys a number the mirror already
+    // has, on somebody else's bill. The FIRST cut of this policy let an open
+    // auction alone justify a refresh, and an auction can sit open off-raid (a
+    // market night, a late award), which would have kept a trickle running all
+    // week. This case is that mistake, pinned.
+    expect(decide({ cache: null, auctionsLive: true, inRaid: false }).refresh).toBe(false);
+    expect(decide({ cache: { at: 0, models: [] }, auctionsLive: true, inRaid: false }).refresh).toBe(false);
+    // …and it stays refused no matter how stale the cached figure gets.
+    expect(decide({ cache: { at: 1_000_000 - 7 * 864e5, models: [] }, auctionsLive: true, inRaid: false }).refresh)
+      .toBe(false);
   });
 
-  it('refreshes during a raid even with nothing live', () => {
+  it('refreshes during a raid even with nothing up for bid', () => {
     expect(decide({ cache: null, auctionsLive: false, inRaid: true }))
       .toEqual({ refresh: true, reason: 'raid-window' });
   });
 
-  it('NEVER refreshes when idle — the whole point', () => {
-    // No raid, no auction: nobody is being handed loot, so nobody's balance is
-    // moving. This is the state a dashboard sits in for most of the week, and
-    // it is the state that produced 54 calls an hour.
-    expect(decide({ cache: null, auctionsLive: false, inRaid: false }).refresh).toBe(false);
-    expect(decide({ cache: { at: 0, models: [] }, auctionsLive: false, inRaid: false }).refresh).toBe(false);
-    // …even when the cached figure is a week old.
-    expect(decide({ cache: { at: 1_000_000 - 7 * 864e5, models: [] }, auctionsLive: false, inRaid: false }).refresh)
-      .toBe(false);
+  it('refreshes faster during a raid once an auction opens', () => {
+    expect(decide({ cache: null, auctionsLive: true, inRaid: true }))
+      .toEqual({ refresh: true, reason: 'auction-open' });
+  });
+
+  it('falls back to the mirror off-raid instead of showing nothing', () => {
+    // The panel must still carry a number between raids — it just comes from
+    // our own database. Reason codes say which, so the UI can label it.
+    expect(decide({ cache: { at: 0, models: [] }, auctionsLive: false, inRaid: false }).reason)
+      .toBe('off-raid-use-mirror');
+    expect(decide({ cache: null, auctionsLive: false, inRaid: false }).reason)
+      .toBe('off-raid-no-live-data');
+    expect(botSrc).toContain('const m = await _familyDkpFromMirror(family);');
+    expect(botSrc).toContain("out = Number.isFinite(m?.family_total)");
+  });
+
+  it('computes the mirror figure in ONE place, shared with bid-history', () => {
+    // It was inline in bid-history. Two hand-maintained copies of a DKP formula
+    // is how the loot panel and the bid panel start disagreeing about what
+    // somebody can afford.
+    expect(botSrc.match(/async function _familyDkpFromMirror/g) || []).toHaveLength(1);
+    expect(botSrc).toContain('try { dkp = await _familyDkpFromMirror(family); }');
   });
 
   it('holds a bidding-fresh figure for a minute, not for every poll', () => {

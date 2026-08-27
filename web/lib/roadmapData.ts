@@ -39,7 +39,7 @@ export const releases: Release[] = [
   {
     key: 'mimic-2-6-2',
     title: 'A Loot tab, and Mimic stops phoning the DKP site',
-    version: 'Mimic 2.6.2 · Agent 3.6.2 · Bot 3.1.87 · Web 1.2.1',
+    version: 'Mimic 2.6.2 · Agent 3.6.2 · Bot 3.1.88 · Web 1.2.2',
     date: '2026-08-27',
     headline: 'Bidding and rolls now share one Loot tab, and your copy of Mimic no longer contacts the DKP site directly at all.',
     features: [
@@ -55,9 +55,13 @@ export const releases: Release[] = [
         name: 'Loot is only checked when loot is happening',
         blurb: 'During raids, or whenever you have the Loot tab open. A dashboard left open on another tab all week no longer checks for auctions in the background.',
       },
+      {
+        name: 'Your balance is checked live during raids, and read from our own records the rest of the time',
+        blurb: 'DKP only moves when a tick lands, and ticks only happen while raiding — so that is the only time the number needs checking against the DKP site. Between raids the panel shows the figure from our own database, which is the same number.',
+      },
     ],
     fixes: [
-      'The balance refreshes when an auction is actually open rather than on a timer — which also means it now picks up loot posted off trash mobs, not just named ones.',
+      'Inside a raid the balance refreshes faster once an auction is actually open, rather than on a fixed timer — which also means it picks up loot posted off trash mobs, not just named ones.',
     ],
   },
   {
