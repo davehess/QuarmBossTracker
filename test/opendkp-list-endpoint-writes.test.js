@@ -86,7 +86,7 @@ function build({ mirroredIds = [], pages = [], envHours = null } = {}) {
     // function, in the 'never backs off during a raid window' cases.
     _inRaidWindow = () => false;
     return { _syncListEndpoint, _lastFullSweepAt, _nextDueAt, _idleStreak, _lastPageHint,
-             _lastSweepAnchor, _sweepDecision, calls };
+             _lastSweepAnchor, _sweepDecision, _parseSweepDays, calls };
   `;
   // eslint-disable-next-line no-new-func
   const made = new Function('calls', harness)(calls);
@@ -101,7 +101,7 @@ function build({ mirroredIds = [], pages = [], envHours = null } = {}) {
 // (Before 2026-08-27 they relied on "no marker → sweep due"; a cold process now
 // adopts the current anchor instead, because a per-boot full sweep was most of
 // what remained of the audits bill.)
-const SWEEP_DUE = () => Date.now() - 8 * 24 * 3600 * 1000;
+const SWEEP_DUE = () => Date.now() - 20 * 24 * 3600 * 1000;
 
 const AUDIT_ARGS = {
   label: 'audits',
@@ -449,45 +449,92 @@ describe('oldest-first fast path', () => {
   });
 });
 
-// ── Raid-anchored full sweep (Hitya, 2026-08-27) ────────────────────────────
+// ── Calendar-anchored full sweep (Hitya, 2026-08-27) ────────────────────────
 // "we don't need a full download that often, just before a raid. three times
-// a week." The full sweep re-offers EVERY row — 17 pages / 6.2 MB on audits —
-// so its cadence IS the bill. A 24h rolling timer fired it at whatever time of
-// day the process last booted, which on 2026-08-26 was mid-raid.
+// a week" — then, an hour later, "let's make the full audit once per week then
+// until we have the new version that has the since tag."
 //
-// August 2026 is EDT (UTC-4), so the 6pm ET anchor is 22:00Z. 2026-08-23 is a
-// Sunday, -26 a Wednesday, -27 a Thursday.
-describe('full sweep anchors to raid nights', () => {
+// The full sweep re-offers EVERY row — 17 pages / 6.2 MB on audits — so its
+// cadence IS the bill. A 24h rolling timer fired it at whatever time of day the
+// process last booted, which on 2026-08-26 was mid-raid.
+//
+// August 2026 is EDT (UTC-4), so the 6pm ET anchor is 22:00Z. 2026-08-23 and
+// -30 are Sundays; -26 a Wednesday, -27 a Thursday.
+describe('full sweep anchors to the raid calendar', () => {
   const H = build();
   const anchor = (iso) => new Date(H._lastSweepAnchor(new Date(iso).getTime())).toISOString();
 
-  it('lands on 6pm ET of the raid day once that hour has passed', () => {
-    expect(anchor('2026-08-26T23:00:00Z')).toBe('2026-08-26T22:00:00.000Z');  // Wed 19:00 ET
+  it('lands on 6pm ET Sunday once that hour has passed', () => {
+    expect(anchor('2026-08-23T23:00:00Z')).toBe('2026-08-23T22:00:00.000Z');  // Sun 19:00 ET
   });
 
-  it('reaches BACK to the previous raid night before the hour arrives', () => {
-    // Wed 17:00 ET — the anchor is still Sunday's. Without this the sweep would
-    // fire at midnight on a raid day, i.e. at an arbitrary hour again.
-    expect(anchor('2026-08-26T21:00:00Z')).toBe('2026-08-23T22:00:00.000Z');  // Sun
+  it('reaches BACK to the previous Sunday before the hour arrives', () => {
+    // Sun 17:00 ET — still last week's anchor. Without this the sweep would
+    // fire at midnight on the anchor day, i.e. at an arbitrary hour again.
+    expect(anchor('2026-08-23T21:00:00Z')).toBe('2026-08-16T22:00:00.000Z');
   });
 
-  it('holds the Thursday anchor across the whole Fri/Sat gap', () => {
-    expect(anchor('2026-08-28T12:00:00Z')).toBe('2026-08-27T22:00:00.000Z');  // Fri
-    expect(anchor('2026-08-29T23:00:00Z')).toBe('2026-08-27T22:00:00.000Z');  // Sat
+  it('holds that anchor across the whole week, raid nights included', () => {
+    expect(anchor('2026-08-26T23:00:00Z')).toBe('2026-08-23T22:00:00.000Z');  // Wed, mid-raid
+    expect(anchor('2026-08-27T23:00:00Z')).toBe('2026-08-23T22:00:00.000Z');  // Thu, mid-raid
+    expect(anchor('2026-08-29T23:00:00Z')).toBe('2026-08-23T22:00:00.000Z');  // Sat
   });
 
-  it('produces exactly THREE anchors a week — the whole ask', () => {
-    // Sample every hour for a week. A mutation that widened the anchor days,
-    // or that fell back to a rolling interval, changes this count.
-    const start = new Date('2026-08-23T00:00:00Z').getTime();
+  it('produces exactly ONE anchor a week — the whole ask', () => {
+    // Sample every hour for a week. A mutation that widened the anchor days, or
+    // that fell back to a rolling interval, changes this count.
+    const start = new Date('2026-08-23T22:00:00Z').getTime();   // on the anchor
     const seen = new Set();
     for (let h = 0; h < 24 * 7; h++) seen.add(H._lastSweepAnchor(start + h * 3600 * 1000));
-    // 3 anchors inside the week, plus the one carried in from the Thursday
-    // before it (Sun 00:00Z is Sat 8pm ET, still on the prior anchor).
-    expect(seen.size).toBe(4);
-    const days = [...seen].sort().map(ms =>
-      new Date(ms).toLocaleString('en-US', { timeZone: 'America/New_York', weekday: 'short', hour: 'numeric' }));
-    expect(days.map(d => d.replace(',', ''))).toEqual(['Thu 6 PM', 'Sun 6 PM', 'Wed 6 PM', 'Thu 6 PM']);
+    expect(seen.size).toBe(1);
+    expect(new Date([...seen][0]).toISOString()).toBe('2026-08-23T22:00:00.000Z');
+  });
+
+  it('the max-age net sits ABOVE the widest gap the anchors can make', () => {
+    // If the net is tighter than the schedule it BECOMES the schedule — at the
+    // 96h that suited three-a-week it would fire every fourth day and quietly
+    // reinstate the cadence we just removed. One anchor a week = a 168h gap.
+    const start = new Date('2026-08-23T22:00:00Z').getTime();
+    const anchors = new Set();
+    for (let h = 0; h < 24 * 28; h++) anchors.add(H._lastSweepAnchor(start + h * 3600 * 1000));
+    const sorted = [...anchors].sort((a, b) => a - b);
+    const widest = Math.max(...sorted.slice(1).map((v, i) => v - sorted[i]));
+    const net = 240 * 3600 * 1000;                       // the shipped default
+    expect(widest).toBeLessThan(net);
+    expect(srcText).toContain("'OPENDKP_LIST_FULL_SWEEP_MAX_HOURS', 240");
+  });
+
+  it('the cadence is a list, so three-a-week comes back without a deploy', () => {
+    expect(H._parseSweepDays('0,3,4')).toEqual([0, 3, 4]);
+    expect(H._parseSweepDays(' 3 , 3 , 4 ')).toEqual([3, 4]);      // deduped, trimmed
+    expect(H._lastSweepAnchor(new Date('2026-08-26T23:00:00Z').getTime(), 18, [0, 3, 4]))
+      .toBe(new Date('2026-08-26T22:00:00Z').getTime());           // Wed anchor is back
+  });
+
+  it('reads that list from the ENV, with no argument passed', () => {
+    // The case above hands `days` in directly, so on its own it would still
+    // pass if _lastSweepAnchor's default never consulted the env — i.e. if the
+    // knob were dead. Caught by mutation; this drives the real default path.
+    const prev = process.env.OPENDKP_LIST_FULL_SWEEP_DAYS;
+    try {
+      const wed = new Date('2026-08-26T23:00:00Z').getTime();
+      delete process.env.OPENDKP_LIST_FULL_SWEEP_DAYS;
+      expect(H._lastSweepAnchor(wed)).toBe(new Date('2026-08-23T22:00:00Z').getTime());
+      process.env.OPENDKP_LIST_FULL_SWEEP_DAYS = '0,3,4';
+      expect(H._lastSweepAnchor(wed)).toBe(new Date('2026-08-26T22:00:00Z').getTime());
+    } finally {
+      if (prev === undefined) delete process.env.OPENDKP_LIST_FULL_SWEEP_DAYS;
+      else process.env.OPENDKP_LIST_FULL_SWEEP_DAYS = prev;
+    }
+  });
+
+  it('a malformed day list falls back to the default, never to none', () => {
+    // An empty list would mean the healing pass never runs again — and would
+    // look exactly like it working.
+    expect(H._parseSweepDays('')).toEqual([0]);
+    expect(H._parseSweepDays('sunday')).toEqual([0]);
+    expect(H._parseSweepDays('9,-1')).toEqual([0]);
+    expect(H._parseSweepDays(undefined)).toEqual([0]);
   });
 
   it('a cold process adopts the anchor instead of sweeping', () => {
@@ -495,31 +542,32 @@ describe('full sweep anchors to raid nights', () => {
     // process-local, so "no marker → sweep" meant a 6.2 MB full download per
     // deploy — measured 2026-08-27: three deploys inside ten minutes, 17 calls
     // and 6.2 MB apiece.
-    const now = new Date('2026-08-26T23:00:00Z').getTime();
-    const d = H._sweepDecision(null, now, H._lastSweepAnchor(now), 96 * 3600 * 1000);
+    const now = new Date('2026-08-23T23:00:00Z').getTime();
+    const d = H._sweepDecision(null, now, H._lastSweepAnchor(now), 240 * 3600 * 1000);
     expect(d.due).toBe(false);
     expect(d.adopt).toBe(H._lastSweepAnchor(now));
   });
 
   it('sweeps once an anchor has passed since the last one', () => {
-    const now  = new Date('2026-08-26T23:00:00Z').getTime();   // Wed 19:00 ET
-    const anch = H._lastSweepAnchor(now);                      // Wed 18:00 ET
-    const max  = 96 * 3600 * 1000;
+    const now  = new Date('2026-08-23T23:00:00Z').getTime();   // Sun 19:00 ET
+    const anch = H._lastSweepAnchor(now);                      // Sun 18:00 ET
+    const max  = 240 * 3600 * 1000;
     expect(H._sweepDecision(anch - 1, now, anch, max).due).toBe(true);   // before it
     expect(H._sweepDecision(anch + 1, now, anch, max).due).toBe(false);  // after it
   });
 
   it('still has a max-age safety net if the anchor math is ever wrong', () => {
-    const now = new Date('2026-08-26T23:00:00Z').getTime();
+    const now = new Date('2026-08-23T23:00:00Z').getTime();
     const anch = H._lastSweepAnchor(now);
     // A marker in the FUTURE would never be < the anchor, so without the net a
     // clock skew could wedge the healing pass off forever.
-    expect(H._sweepDecision(now - 200 * 3600 * 1000, now, anch, 96 * 3600 * 1000).due).toBe(true);
+    expect(H._sweepDecision(now - 400 * 3600 * 1000, now, anch, 240 * 3600 * 1000).due).toBe(true);
   });
 
   it('the cadence is tunable, so a bad anchor can be moved without a deploy', () => {
     expect(srcText).toContain('OPENDKP_LIST_FULL_SWEEP_HOUR_ET');
     expect(srcText).toContain('OPENDKP_LIST_FULL_SWEEP_MAX_HOURS');
+    expect(srcText).toContain('OPENDKP_LIST_FULL_SWEEP_DAYS');
   });
 });
 

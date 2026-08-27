@@ -18,15 +18,35 @@ The sweep used to run on a 24-hour rolling timer, which meant it fired at
 whatever time of day the bot process last happened to boot. On 2026-08-26 that
 was mid-raid.
 
-**It now anchors to 6pm ET on Sun/Wed/Thu** — two hours ahead of the pull, clear
-of the 19:30 deploy freeze, and three times a week instead of seven. DKP is a
-thing raids change, so the healing pass belongs immediately before one. Worst
-case a gap waits from Thursday 6pm to Sunday 6pm (74h), which is fine for a pass
-whose entire job is closing gaps that should not exist in the first place.
+It first became **6pm ET on Sun/Wed/Thu** — two hours ahead of the pull, clear
+of the 19:30 deploy freeze, three times a week instead of seven. An hour later
+Hitya cut it again:
 
-Tunable without a deploy: `OPENDKP_LIST_FULL_SWEEP_HOUR_ET` (default 18) and
-`OPENDKP_LIST_FULL_SWEEP_MAX_HOURS` (default 96 — a safety net, not a schedule;
-if it ever fires, the anchor math is wrong).
+> "let's make the full audit once per week then until we have the new version
+> that has the since tag."
+
+**So it is Sunday 6pm ET only — one full download a week** (bot 3.1.85), ahead of
+the first pull of the raid week.
+
+That is deliberately slacker than the healing pass wants: a gap can now sit for
+seven days. **It is temporary, and it is tied to the API request.** If OpenDKP
+gains a `since` / `afterId` parameter, a full pull stops costing anything and
+this goes back to being frequent — or stops being a separate mode at all. Until
+then we are buying his bandwidth with our staleness, which is the right way
+round: the rows we would be healing are rows his API has no cheap way to hand us.
+
+Tunable without a deploy, and the days are a **list** on purpose:
+`OPENDKP_LIST_FULL_SWEEP_DAYS=0,3,4` restores the three raid nights, which is the
+first thing to try if audit rows ever go missing.
+`OPENDKP_LIST_FULL_SWEEP_HOUR_ET` (default 18) moves the hour.
+
+⚠ **The safety net has to move with the schedule.** `OPENDKP_LIST_FULL_SWEEP_MAX_HOURS`
+was 96 when the cadence was three-a-week. Left there it would have fired every
+fourth day and quietly reinstated the cadence we had just removed — **a net
+tighter than the schedule *becomes* the schedule.** It is now **240** (10 days),
+above the 168h gap one weekly anchor can produce. A test asserts that
+*relationship* rather than the number, so the next change to the days cannot
+reintroduce it.
 
 ## …and the bigger cost turned out to be the redeploys
 
@@ -63,7 +83,7 @@ Two fixes, both shipped in bot **3.1.84**:
    deploy. The next real anchor still fires, at most 74h out.
 
 **Expected per-day audits volume after this: ~48 fast-path calls (a few hundred
-KB) + 3 sweeps a week + 2 calls per deploy — against 381 calls / 140 MB
+KB) + ONE 6.2 MB sweep a week + 2 calls per deploy — against 381 calls / 140 MB
 measured over the preceding 24h.**
 
 ## Why this matters for the API request to Moncs
@@ -71,10 +91,11 @@ measured over the preceding 24h.**
 It changes what we are asking for. The ask is no longer "let us keep polling" —
 it is:
 
-- we take **three full pulls a week**, anchored to raid nights, and
+- we take **one full pull a week**, on Sunday ahead of the raid week, and
 - **deltas in between** (a single last-page read per 30-minute pass),
 - so a `since`/time-window parameter on the list endpoints would let even those
-  three become nothing.
+  one become nothing — and would let us go back to reading *often*, which is
+  what we actually want.
 
 That is a materially more sympathetic request than the one we could have made
 yesterday, and it is true before we send it rather than after.
@@ -85,8 +106,9 @@ yesterday, and it is true before we send it rather than after.
 
 | Item | State |
 |---|---|
-| **Verify 3.1.84 on the live counter** | Expect `/clients/{client}/audits` at ~1 call per 30-min pass, 2 per deploy, and a 17-page walk only at 18:00 ET Sun/Wed/Thu. `wolfpack.quest/opendkp`, or the per-minute query in this file |
-| **The API request to Moncs** | Not sent. Reframe around "3 full pulls a week + deltas", per above |
+| **Verify 3.1.85 on the live counter** | Expect `/clients/{client}/audits` at ~1 call per 30-min pass, 2 per deploy, and a 17-page walk only at **18:00 ET Sunday**. `wolfpack.quest/opendkp`, or the per-minute query in this file |
+| **The weekly sweep is a TEMPORARY setting** | Revert to `OPENDKP_LIST_FULL_SWEEP_DAYS=0,3,4` the moment OpenDKP ships a `since` parameter — and it is also the first thing to try if audit rows go missing |
+| **The API request to Moncs** | Not sent. Framed as "one full pull a week + deltas in between" — artifact updated |
 | **`OPENDKP_HALT` is OFF** (unblocked 2026-08-26) | Stats flowing. The kill switch still works from `/admin` without a deploy if he reports trouble again |
 | **`/characters` (85 calls / 12.1 MB per day) and the mirror `/auctions` (34 / 22.3 MB)** | Untouched. Next two candidates once audits is confirmed settled |
 | **Tag channel autojoin file-write** | Still blocked on one line from a real character ini — see `STATUS.md` |

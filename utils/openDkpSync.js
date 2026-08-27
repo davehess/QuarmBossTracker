@@ -880,9 +880,11 @@ function _noteIdleResult(table, freshCount) {
   const wait = Math.min(30 * 60 * 1000 * Math.pow(2, streak - 1), _backoffCapMs());
   _nextDueAt.set(table, Date.now() + wait);
 }
-// ── Full sweep cadence: anchored to raid nights, not a rolling clock ────────
-// Hitya, 2026-08-27: "we don't need a full download that often, just before a
-// raid. three times a week."
+// ── Full sweep cadence: anchored to the raid calendar, not a rolling clock ──
+// Hitya, 2026-08-27, twice. First: "we don't need a full download that often,
+// just before a raid. three times a week." Then, an hour later:
+// "let's make the full audit once per week then until we have the new version
+// that has the since tag."
 //
 // The full sweep is the healing pass — it re-offers EVERY row, so a gap below
 // the watermark (a partial run, an upstream out-of-order insert) closes. It is
@@ -890,20 +892,43 @@ function _noteIdleResult(table, freshCount) {
 // audits. A 24h rolling timer fired it at whatever time of day the process
 // happened to boot, which on 2026-08-26 meant mid-raid.
 //
-// DKP is a thing raids change, so sweep at 6pm ET on the three raid days: two
-// hours ahead of the pull, clear of the 19:30 deploy freeze, three times a week
-// instead of seven. Worst case a gap waits from Thu 6pm to Sun 6pm (74h), which
-// is fine for a pass whose whole job is closing gaps that should not exist.
-const _SWEEP_ANCHOR_DAYS = [0, 3, 4];        // Sun, Wed, Thu — the raid nights
+// It now runs ONCE A WEEK, at 6pm ET on Sunday — two hours ahead of the first
+// pull of the raid week, clear of the 19:30 deploy freeze. That is deliberately
+// slacker than the healing pass wants: a gap can now wait a full 7 days. It is
+// **temporary, and tied to the API request** — if OpenDKP gains a `since` /
+// `afterId` parameter, the full pull stops costing anything and this goes back
+// to being frequent (or unnecessary). Until then we are buying his bandwidth
+// with our staleness, which is the right way round.
+//
+// ⚠ The days are a LIST because the cadence is a policy, not a constant:
+// `OPENDKP_LIST_FULL_SWEEP_DAYS=0,3,4` restores the three raid nights without a
+// deploy, which is the first thing to do if a gap ever shows up.
+const _SWEEP_ANCHOR_DAYS_DEFAULT = [0];      // Sunday — one full pull a week
+
+function _sweepAnchorDays() {
+  return _parseSweepDays(process.env.OPENDKP_LIST_FULL_SWEEP_DAYS);
+}
+// Pure, so a malformed env value is testable. Anything unparseable falls back
+// to the default rather than to an empty list — an empty list would mean the
+// healing pass never runs again, and would look exactly like it working.
+function _parseSweepDays(raw) {
+  const days = String(raw || '').split(',')
+    .map(x => Number(String(x).trim()))
+    .filter(n => Number.isInteger(n) && n >= 0 && n <= 6);
+  return days.length ? [...new Set(days)] : _SWEEP_ANCHOR_DAYS_DEFAULT;
+}
 
 function _sweepAnchorHourEt() {
   const h = _envNum('OPENDKP_LIST_FULL_SWEEP_HOUR_ET', 18);
   return (Number.isFinite(h) && h >= 0 && h <= 23) ? Math.floor(h) : 18;
 }
-// Safety net ONLY. The anchors already bound the gap at 74h, so this firing
-// means the anchor math is wrong — not that the schedule is too slack.
+// Safety net ONLY — it must sit ABOVE the widest gap the anchors can produce,
+// or it becomes the schedule. At one anchor a week that gap is 168h, so 240h
+// (10 days). ⚠ This moves whenever the anchor days do: left at the 96h that
+// suited three-a-week, it would have fired every fourth day and quietly
+// reinstated the cadence we just removed.
 function _sweepMaxAgeMs() {
-  return _envNum('OPENDKP_LIST_FULL_SWEEP_MAX_HOURS', 96) * 3600 * 1000;
+  return _envNum('OPENDKP_LIST_FULL_SWEEP_MAX_HOURS', 240) * 3600 * 1000;
 }
 
 // Epoch ms of the most recent pre-raid anchor at or before `nowMs`. Pure, so
@@ -913,13 +938,13 @@ function _sweepMaxAgeMs() {
 // instant is the offset that converts a wall time back to an epoch. A DST
 // changeover can leave that offset an hour out for a day; an hour of slop on a
 // 6pm anchor changes nothing.
-function _lastSweepAnchor(nowMs = Date.now(), hourEt = _sweepAnchorHourEt()) {
+function _lastSweepAnchor(nowMs = Date.now(), hourEt = _sweepAnchorHourEt(), days = _sweepAnchorDays()) {
   const et = new Date(new Date(nowMs).toLocaleString('en-US', { timeZone: 'America/New_York' }));
   const offsetMs = et.getTime() - nowMs;
   for (let back = 0; back < 8; back++) {
     const d = new Date(et.getTime());
     d.setDate(d.getDate() - back);
-    if (!_SWEEP_ANCHOR_DAYS.includes(d.getDay())) continue;
+    if (!days.includes(d.getDay())) continue;
     d.setHours(hourEt, 0, 0, 0);
     const epoch = d.getTime() - offsetMs;
     if (epoch <= nowMs) return epoch;
@@ -931,7 +956,7 @@ function _lastSweepAnchor(nowMs = Date.now(), hourEt = _sweepAnchorHourEt()) {
 // `adopt` is the cold-process case: do NOT sweep just because we lost the
 // timestamp on a redeploy — main takes 12–42 pushes a day, and a per-boot full
 // sweep is precisely the thing that kept the audits bill up. Adopt the current
-// anchor instead; the next real anchor still fires, at most 74h out.
+// anchor instead; the next real anchor still fires, at most a week out.
 function _sweepDecision(lastMs, nowMs, anchorMs, maxAgeMs) {
   if (lastMs == null)                  return { due: false, adopt: anchorMs };
   if ((nowMs - lastMs) >= maxAgeMs)    return { due: true,  adopt: null };

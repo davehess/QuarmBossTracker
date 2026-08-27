@@ -166,22 +166,31 @@ next touch one rather than assuming a missing row means a missing doc.
   `test/pop-spell-needs-all-characters.test.js` guards both fixes. Full story:
   `DECISIONS-2026-08-26.md`.
 
-- **OpenDKP audits: the full download moved onto the raid calendar, and the
-  redeploy walk was the real bill (bot 3.1.84, 2026-08-27).** Hitya: *"we don't
-  need a full download that often, just before a raid. three times a week."*
-  The gap-healing full sweep now anchors to **6pm ET Sun/Wed/Thu** instead of a
-  24h rolling timer that fired at whatever hour the process last booted (on
-  2026-08-26, mid-raid) — `OPENDKP_LIST_FULL_SWEEP_HOUR_ET` /
-  `_MAX_HOURS`. Measuring for it turned up the bigger cost: **three deploys
-  inside ten minutes, 17 calls / 6.2 MB apiece**, because the last-page fast
-  path needs a page-count hint that a fresh process doesn't have. Fixed by
-  jumping straight to the last page once page 1 proves oldest-first (2 calls,
-  not 17), and by having a cold process adopt the current anchor rather than
-  sweep. Steady state is now 1 call / ~6 KB a pass, mid-raid included.
-  12 mutation-checked tests in `test/opendkp-list-endpoint-writes.test.js`.
+- **OpenDKP audits: the full download is once a week now, and the redeploy walk
+  was the real bill (bot 3.1.84 → 3.1.85, 2026-08-27).** Hitya, twice: *"we
+  don't need a full download that often, just before a raid. three times a
+  week"*, then *"let's make the full audit once per week then until we have the
+  new version that has the since tag."* The gap-healing full sweep now anchors
+  to **6pm ET Sunday** instead of a 24h rolling timer that fired at whatever
+  hour the process last booted (on 2026-08-26, mid-raid).
+  `OPENDKP_LIST_FULL_SWEEP_DAYS` is a list — `0,3,4` restores the three raid
+  nights without a deploy, and is the first thing to try if audit rows ever go
+  missing. ⚠ The `_MAX_HOURS` safety net moved 96 → **240** with it: a net
+  tighter than the schedule *becomes* the schedule.
+  Measuring for all this turned up the bigger cost: **three deploys inside ten
+  minutes, 17 calls / 6.2 MB apiece**, because the last-page fast path needs a
+  page-count hint a fresh process doesn't have. Fixed by jumping straight to the
+  last page once page 1 proves oldest-first, and by having a cold process adopt
+  the current anchor rather than sweep. **VERIFIED live: the 3.1.84 boot sync
+  cost 2 calls / 403 KB**, and the next pass was skipped entirely by the idle
+  backoff. Steady state is 1 call / ~6 KB, mid-raid included.
+  16 mutation-checked tests in `test/opendkp-list-endpoint-writes.test.js`.
   Full story + the per-minute evidence: `DECISIONS-2026-08-27.md`.
-  ⚠ OPEN: verify on `wolfpack.quest/opendkp`; the API request to Moncs is
-  unsent and should now be framed as "3 full pulls a week + deltas in between".
+  ⚠ OPEN: the weekly cadence is TEMPORARY — revert to `0,3,4` when OpenDKP
+  ships a `since` parameter. The API request to Moncs is written (framed as
+  "one full pull a week + deltas in between") but unsent. Next targets on the
+  same surface: `/characters` (279 KB/pass) and the `/auctions` mirror
+  (680 KB/pass).
 
 - **The OpenDKP incident: halt + fan-in cache + outbound governor (bot
   3.1.71–3.1.72, 2026-08-25; Moncs: "high volume automated traffic … I've
