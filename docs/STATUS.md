@@ -166,6 +166,23 @@ next touch one rather than assuming a missing row means a missing doc.
   `test/pop-spell-needs-all-characters.test.js` guards both fixes. Full story:
   `DECISIONS-2026-08-26.md`.
 
+- **OpenDKP audits: the full download moved onto the raid calendar, and the
+  redeploy walk was the real bill (bot 3.1.84, 2026-08-27).** Hitya: *"we don't
+  need a full download that often, just before a raid. three times a week."*
+  The gap-healing full sweep now anchors to **6pm ET Sun/Wed/Thu** instead of a
+  24h rolling timer that fired at whatever hour the process last booted (on
+  2026-08-26, mid-raid) — `OPENDKP_LIST_FULL_SWEEP_HOUR_ET` /
+  `_MAX_HOURS`. Measuring for it turned up the bigger cost: **three deploys
+  inside ten minutes, 17 calls / 6.2 MB apiece**, because the last-page fast
+  path needs a page-count hint that a fresh process doesn't have. Fixed by
+  jumping straight to the last page once page 1 proves oldest-first (2 calls,
+  not 17), and by having a cold process adopt the current anchor rather than
+  sweep. Steady state is now 1 call / ~6 KB a pass, mid-raid included.
+  12 mutation-checked tests in `test/opendkp-list-endpoint-writes.test.js`.
+  Full story + the per-minute evidence: `DECISIONS-2026-08-27.md`.
+  ⚠ OPEN: verify on `wolfpack.quest/opendkp`; the API request to Moncs is
+  unsent and should now be framed as "3 full pulls a week + deltas in between".
+
 - **The OpenDKP incident: halt + fan-in cache + outbound governor (bot
   3.1.71–3.1.72, 2026-08-25; Moncs: "high volume automated traffic … I've
   currently blocked the ip address").** Root cause was NOT the 30-min sync:
