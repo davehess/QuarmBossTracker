@@ -606,7 +606,82 @@ async function syncRaidDetail(raidId) {
 //
 // opts.full = true forces detail fetch for every raid (use sparingly — only for
 // manual /syncopendkp).
+// ── Off-raid sync cadence (Hitya, 2026-08-27: "cut down the number of calls as
+// much as possible outside of raid times") ─────────────────────────────────
+// The mirror sync runs every 30 minutes, around the clock, and it is now the
+// bulk of what OpenDKP sees from us: over a recent 12h window, /auctions cost
+// 26 calls / 11.9 MB, /characters 65 / 8.9 MB, /raids/{id} 245 / 1.5 MB — all
+// of it maintenance, none of it urgent.
+//
+// The same argument that made the live DKP check raids-only applies here, and
+// harder: DKP moves per TICK, raids are when ticks happen, and a raid is also
+// the only time new raids, new auctions and new loot appear. Between raids the
+// sync overwhelmingly re-learns that nothing changed.
+//
+// So: full cadence inside a raid window (and the hour before it, so the board
+// is current when the pull starts), and once every few hours otherwise.
+// Deliberately a SKIP rather than a re-scheduled timer — the interval stays a
+// dumb 30-minute tick and this decides whether the pass is worth making, which
+// is the same shape as _skipForIdleBackoff and needs no restart to re-arm.
+//
+// ⚠ The cost is latency on an OFF-RAID officer edit (a manual adjustment, a
+// corrected tick): it lands in the mirror within OPENDKP_OFFRAID_SYNC_HOURS
+// rather than 30 minutes. That is the same trade already accepted for the
+// audits idle backoff, which caps at 6h. Bidding is unaffected — the loot panel
+// reads _panelAuctions on demand, not this sync.
+// ⚠ SLOTS, NOT AN ELAPSED INTERVAL, and the difference is load-bearing.
+// `_lastSyncSlot` is process-local, and `main` takes 12-42 pushes a day. With a
+// relative "has it been 3 hours" test, either every boot forces a sync (the
+// redeploy amplification we just spent two days removing from the audits walk)
+// or a cold process adopts the clock and a bot restarting more often than the
+// interval NEVER syncs at all — starved indefinitely, silently, and it would
+// look exactly like working. Anchoring to fixed clock blocks makes both
+// impossible: a restart re-adopts the CURRENT block, and the next block still
+// arrives on schedule no matter how many times we deploy.
+let _lastSyncSlot = null;
+
+function _offRaidSyncIntervalMs() {
+  return _envNum('OPENDKP_OFFRAID_SYNC_HOURS', 3) * 3600 * 1000;
+}
+
+// Pure: should this scheduled pass actually run? `adopt` is the cold-process
+// case — take the current block without spending a pass on it.
+function _syncPassWanted({ nowMs, lastSlot, inRaid, offRaidIntervalMs }) {
+  if (inRaid) return { run: true, reason: 'raid-window', adopt: null };
+  const slot = Math.floor(nowMs / offRaidIntervalMs);
+  if (lastSlot == null) return { run: false, reason: 'off-raid-cold', adopt: slot };
+  if (slot > lastSlot)  return { run: true,  reason: 'off-raid-due',  adopt: null };
+  return { run: false, reason: 'off-raid-throttled', adopt: null };
+}
+
+// The raid window, widened an hour EARLIER than _inRaidWindow so the board is
+// already current when the pull starts. (_inRaidWindow itself is shared with
+// the idle backoff and deliberately left alone.)
+function _inSyncRaidWindow(now = new Date()) {
+  const et = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  const day = et.getDay();
+  if (![0, 3, 4].includes(day)) return false;
+  const h = et.getHours();
+  return h >= 18 || h < 1;
+}
+
 async function runSync(opts = {}) {
+  // ⚠ The manual path is NEVER throttled. /syncopendkp is an officer saying
+  // "go now", usually BECAUSE something looks wrong or they just made an
+  // off-raid adjustment — precisely the moment the off-raid throttle would
+  // otherwise swallow the request and report success having done nothing.
+  // `full` implies force too: nobody asks for a full sweep and means "maybe".
+  if (!opts.force && !opts.full) {
+    const ivl = _offRaidSyncIntervalMs();
+    const d = _syncPassWanted({
+      nowMs: Date.now(), lastSlot: _lastSyncSlot,
+      inRaid: _inSyncRaidWindow(), offRaidIntervalMs: ivl,
+    });
+    if (d.adopt != null) _lastSyncSlot = d.adopt;
+    if (!d.run) return { phase: 'skipped', skipped: d.reason };
+    _lastSyncSlot = Math.floor(Date.now() / ivl);
+  }
+
   // Characters first — uses bearer auth, works even when OPENDKP_CLIENT_ID
   // (the read-side base64 token) is missing. Independent of the raids flow
   // so a CLIENT_ID outage still keeps the roster fresh.
