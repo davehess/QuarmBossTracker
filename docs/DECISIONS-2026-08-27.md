@@ -100,13 +100,69 @@ it is:
 That is a materially more sympathetic request than the one we could have made
 yesterday, and it is true before we send it rather than after.
 
+## ⚠ UNEXPLAINED: one full sweep fired at ET midnight, and the model says it shouldn't have
+
+The morning after 3.1.85 shipped, `/audits` for the whole night was **20 calls /
+6.10 MB**, against 381 calls / 140 MB the day before. Per-minute:
+
+| minute (UTC) | calls | payload | |
+|---|---|---|---|
+| 03:03 | 2 | 403 KB | boot — cold-start jump, as designed |
+| 03:32 | 1 | 7.3 KB | fast path |
+| **04:02** | **17** | **6.2 MB** | **`audits_full_sweep: true` — should not have happened** |
+| 04:32 | 1 | 7.3 KB | fast path |
+| 09:02 | 1 | 7.3 KB | fast path |
+
+04:02 UTC is **00:02 ET** — the first pass after ET midnight. Both `audits` and
+`adjustments` swept on the same pass.
+
+**What was ruled out, with evidence rather than reasoning:**
+- **Not a restart.** Railway shows one deployment and no new container; the logs
+  run continuously across the window (agent uploads 03:38–03:52, the midnight
+  chain at 04:00:10). So the process was warm and its marker was the one adopted
+  at boot.
+- **Not another code path.** `full_sweep` in the result can only come from
+  `_dueForFullSweep` — grep confirms one assignment, one call site.
+- **Not the environment.** Railway has no `OPENDKP_LIST_*` var and no `TZ`.
+- **Not the version.** `audits_pages: 2` at boot is a signature only 3.1.84+ can
+  produce (the jump), and `full_sweep: false` at boot only 3.1.84+ (the adopt).
+
+**And the shipped decision function, replayed offline against those exact
+timestamps, returns `false` at 04:02 — under 3.1.85's Sunday anchor AND under
+3.1.84's Sun/Wed/Thu anchors.** Worked by hand both ways too: for `last < anchor`
+to be true, the anchor must move between 03:02 and 04:02, and a 6pm anchor
+cannot. So the model and production genuinely disagree and the cause is not yet
+known.
+
+**What was done about it: an instrument, not a guess.** A full sweep now logs
+every input the decision took — prior marker, anchor, day list, hour, max-age,
+now. The next occurrence is one log line to diagnose instead of an evening of
+inference. **Do not remove that line until a sweep has been seen firing on the
+right day for the right reason.**
+
+⚠ **Cost of the unknown is bounded and small** — one extra 6.2 MB read. Weigh
+that against shipping a speculative fix to a mechanism that is otherwise
+measurably working; the volume is already down ~95%.
+
+## A real bug the investigation did turn up: `Number('') === 0`
+
+`_parseSweepDays` split the env var, then `Number()`'d each segment. An unset
+var produced `['']` → `Number('') === 0` → a legitimate-looking **Sunday**, so
+the documented fallback was unreachable. It agreed with the default by luck,
+which is exactly why it would have gone unnoticed until the default changed —
+and **the test passed for the wrong reason**, asserting `toEqual([0])` where both
+paths give `[0]`. Empty segments are now dropped before `Number()`, and the test
+asserts the fallback by **identity** (`toBe(_SWEEP_ANCHOR_DAYS_DEFAULT)`), which
+distinguishes the two paths.
+
 ---
 
 ## Open — read this first
 
 | Item | State |
 |---|---|
-| **Verify 3.1.85 on the live counter** | Expect `/clients/{client}/audits` at ~1 call per 30-min pass, 2 per deploy, and a 17-page walk only at **18:00 ET Sunday**. `wolfpack.quest/opendkp`, or the per-minute query in this file |
+| ⚠ **One unexplained full sweep at 00:02 ET on 2026-08-27** | Ruled out restart / env / version / another code path; the shipped decision replays as `false` for that instant. A diagnostic log line now prints every input on any sweep — **read it the next time one fires** (expected Sunday 18:00 ET). Bounded cost: one extra 6.2 MB read. See the section above |
+| **Otherwise 3.1.85 is behaving** | Verified: boot 2 calls / 403 KB, routine passes 1 call / 7.3 KB. Overnight `/audits` total 20 calls / 6.10 MB, against 381 / 140 MB the day before |
 | **The weekly sweep is a TEMPORARY setting** | Revert to `OPENDKP_LIST_FULL_SWEEP_DAYS=0,3,4` the moment OpenDKP ships a `since` parameter — and it is also the first thing to try if audit rows go missing |
 | **The API request to Moncs** | Not sent. Framed as "one full pull a week + deltas in between" — artifact updated |
 | **`OPENDKP_HALT` is OFF** (unblocked 2026-08-26) | Stats flowing. The kill switch still works from `/admin` without a deploy if he reports trouble again |

@@ -912,8 +912,15 @@ function _sweepAnchorDays() {
 // to the default rather than to an empty list — an empty list would mean the
 // healing pass never runs again, and would look exactly like it working.
 function _parseSweepDays(raw) {
-  const days = String(raw || '').split(',')
-    .map(x => Number(String(x).trim()))
+  // ⚠ Empty segments must be dropped BEFORE Number(): `Number('')` is 0, not
+  // NaN, so an unset env used to arrive at the filter as a valid "Sunday" and
+  // the fallback below was unreachable. It happened to agree with the default,
+  // which is exactly why it would have survived unnoticed until the default
+  // changed.
+  const days = String(raw ?? '').split(',')
+    .map(x => String(x).trim())
+    .filter(x => x !== '')
+    .map(Number)
     .filter(n => Number.isInteger(n) && n >= 0 && n <= 6);
   return days.length ? [...new Set(days)] : _SWEEP_ANCHOR_DAYS_DEFAULT;
 }
@@ -1000,7 +1007,25 @@ async function _syncListEndpoint({
   // Periodic full offer so a gap below priorMax (a partial run, an upstream
   // out-of-order insert) still heals. Costs nothing to be wrong about: the
   // write path is DO NOTHING, so re-offering a known row is an index probe.
+  // Read the marker BEFORE _dueForFullSweep, which mutates it on the cold path.
+  const _priorMarker = _lastFullSweepAt.has(table) ? _lastFullSweepAt.get(table) : null;
   const fullSweep = _dueForFullSweep(table);
+  if (fullSweep) {
+    // ⚠ UNEXPLAINED SWEEP, 2026-08-27 04:02 UTC (00:02 ET). A warm process —
+    // no restart in the logs — swept both audits and adjustments one pass after
+    // ET midnight. Replaying the shipped decision offline against that exact
+    // timestamp returns false, under this version's anchors AND the previous
+    // one's. So the model and production disagree and we do not yet know how.
+    // This line is the instrument: it prints every input the decision took, so
+    // the next occurrence is diagnosable from one log line instead of another
+    // evening of inference. Do not remove it until a sweep has been seen to
+    // fire on the right day for the right reason.
+    console.log(`[opendkp-sync] ${label}: FULL SWEEP —`
+      + ` marker=${_priorMarker == null ? 'none (cold)' : new Date(_priorMarker).toISOString()}`
+      + ` anchor=${new Date(_lastSweepAnchor()).toISOString()}`
+      + ` days=[${_sweepAnchorDays()}] hourEt=${_sweepAnchorHourEt()}`
+      + ` maxAgeH=${_sweepMaxAgeMs() / 3600000} now=${new Date().toISOString()}`);
+  }
 
   let pagesWalked   = 0;
   let totalUpserted = 0;

@@ -86,7 +86,8 @@ function build({ mirroredIds = [], pages = [], envHours = null } = {}) {
     // function, in the 'never backs off during a raid window' cases.
     _inRaidWindow = () => false;
     return { _syncListEndpoint, _lastFullSweepAt, _nextDueAt, _idleStreak, _lastPageHint,
-             _lastSweepAnchor, _sweepDecision, _parseSweepDays, calls };
+             _lastSweepAnchor, _sweepDecision, _parseSweepDays,
+             _SWEEP_ANCHOR_DAYS_DEFAULT, calls };
   `;
   // eslint-disable-next-line no-new-func
   const made = new Function('calls', harness)(calls);
@@ -531,10 +532,18 @@ describe('full sweep anchors to the raid calendar', () => {
   it('a malformed day list falls back to the default, never to none', () => {
     // An empty list would mean the healing pass never runs again — and would
     // look exactly like it working.
-    expect(H._parseSweepDays('')).toEqual([0]);
-    expect(H._parseSweepDays('sunday')).toEqual([0]);
-    expect(H._parseSweepDays('9,-1')).toEqual([0]);
-    expect(H._parseSweepDays(undefined)).toEqual([0]);
+    // ⚠ Asserted by IDENTITY, not value. `Number('')` is 0, so an unset env
+    // used to arrive at the day filter as a legitimate "Sunday" and take the
+    // parse path — which produced [0] and made a toEqual([0]) check pass while
+    // the fallback was unreachable. It agreed with the default by luck, so it
+    // would have gone unnoticed until the default changed.
+    for (const bad of ['', undefined, null, ',,', ' , ', 'sunday', '9,-1', '1.5']) {
+      expect(H._parseSweepDays(bad)).toBe(H._SWEEP_ANCHOR_DAYS_DEFAULT);
+    }
+    // …and a real value must still take the parse path, not the fallback.
+    expect(H._parseSweepDays('1')).not.toBe(H._SWEEP_ANCHOR_DAYS_DEFAULT);
+    expect(H._parseSweepDays('1')).toEqual([1]);
+    expect(H._parseSweepDays('0')).toEqual([0]);
   });
 
   it('a cold process adopts the anchor instead of sweeping', () => {
