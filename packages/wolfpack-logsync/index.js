@@ -19853,6 +19853,10 @@ async function dismissTopDamage(key) {
   // falls back to the mirror "~est." figure.
   function fetchLootDkp(){
     if (!cfg.authed){ acctDkp=null; return Promise.resolve(); }
+    // A dashboard nobody is looking at does not need a fresh DKP figure, and
+    // this is the one poll that costs a THIRD PARTY money. Keep whatever we
+    // have; the next visible poll refreshes it.
+    if (typeof document !== "undefined" && document.hidden && acctDkp !== null) return Promise.resolve();
     var main=(cfg.family&&cfg.family.main)||""; var fam=famList();
     if (!main && !fam.length){ acctDkp=null; return Promise.resolve(); }
     var key=main+"|"+fam.join(",");
@@ -24279,13 +24283,54 @@ function _opendkpGetJson(pathStr, token) {
   });
 }
 
+// ── Standings cache TTL (Moncs, 2026-08-27) ────────────────────────────────
+// "Do you purposefully call /dkp once a minute? Looking back over the past 60
+// minutes, it looks like theres about 54 calls from <ip> calling it"
+//
+// Yes, and not on purpose. The dashboard polls every 7s; the browser throttles
+// to 30s; this cache was 60s — so a running agent asked OpenDKP for the FULL
+// standings array (472 characters) once a minute, forever, to render one
+// number: your account DKP in the loot panel. 54 calls/hour per open Mimic,
+// and it scales with the fleet: sixteen raiders would be ~860/hour.
+//
+// ⚠ This path does NOT go through the bot. It calls api.opendkp.com directly
+// (OPENDKP_API_HOST), so it never appeared in opendkp_call_stats and the
+// wolfpack.quest/opendkp counter could not see it. Our page was only ever
+// showing the bot's half of what we send him.
+//
+// DKP moves when a bid settles, not every minute. Ten minutes is still fresher
+// than the loot flow needs, and it takes one user from 54 calls/hour to 6.
+const _STANDINGS_TTL_DEFAULT_MS = 10 * 60 * 1000;
+
+function _standingsTtlMs() {
+  const n = Number(process.env.WP_OPENDKP_STANDINGS_TTL_MS);
+  // Floor at 60s: this knob exists to lengthen the cache, never to hand
+  // someone a way to hammer a third party's API harder than we already did.
+  return (Number.isFinite(n) && n >= 60000) ? n : _STANDINGS_TTL_DEFAULT_MS;
+}
+
+// Pure, so the TTL is testable without a clock or a network.
+function _standingsCacheFresh(cache, nowMs, ttlMs) {
+  // ⚠ Must be a real POSITIVE number, not merely coercible. `Number(null)`,
+  // `Number('')`, `Number(false)` and `Number([])` are all 0 — a stamp of 0
+  // reads as "cached at the epoch", which is fresh whenever the clock is
+  // small, and a wrongly-fresh cache freezes the DKP figure in the bidding
+  // panel with no error to notice. (My first guard used Number()+isFinite and
+  // let every one of those through; mutation testing found it.)
+  const at = (cache && typeof cache.at === 'number') ? cache.at : NaN;
+  if (!Number.isFinite(at) || at <= 0) return false;
+  return (nowMs - at) < ttlMs;
+}
+
 // Fetch the standings Models[] (Bearer). The hosted multi-tenant API serves each
 // legacy /beta/<res> lambda under /clients/<name>/<res>; the DKP summary lambda's
 // legacy path is /beta/dkp, so its hosted path is /clients/<name>/dkp (we also
 // try /summary as a fallback). Cached ~60s. Returns the array or null. NEVER
 // throws — any failure just falls back to the mirror figure in the panel.
 async function _opendkpFetchStandings() {
-  if (_opendkpStandingsCache && (Date.now() - _opendkpStandingsCache.at) < 60000) return _opendkpStandingsCache.models;
+  if (_standingsCacheFresh(_opendkpStandingsCache, Date.now(), _standingsTtlMs())) {
+    return _opendkpStandingsCache.models;
+  }
   if (!_opendkpAuthed()) { const ok = await _opendkpEnsureFresh(); if (!ok) return null; }
   const token = _opendkpAuth && _opendkpAuth.id_token;
   if (!token) return null;

@@ -166,6 +166,35 @@ next touch one rather than assuming a missing row means a missing doc.
   `test/pop-spell-needs-all-characters.test.js` guards both fixes. Full story:
   `DECISIONS-2026-08-26.md`.
 
+- **Mimic was calling OpenDKP's `/dkp` once a minute, and our own counter could
+  not see it (agent 3.6.1 · Mimic 2.6.1 stable · 2026-08-27).** Moncs: *"Do you
+  purposefully call /dkp once a minute? Looking back over the past 60 minutes,
+  it looks like theres about 54 calls from 184.144.103.149 calling it"* — a
+  RESIDENTIAL ip, i.e. one person's PC, not Railway. Chain, all in
+  `packages/wolfpack-logsync/index.js`: dashboard polls every 7s → 30s browser
+  throttle → **60s agent cache** (`_opendkpFetchStandings`) → `GET
+  /clients/wolfpack/dkp`. One open Mimic = ~54 calls/hour, pulling the full
+  472-character standings array to render ONE number (your account DKP in the
+  loot panel); sixteen raiders would be ~860/hour. Cache is now **10 min**
+  (`WP_OPENDKP_STANDINGS_TTL_MS`, floored at 60s so the knob can only ever be
+  kinder), and the fetch is skipped while the window is hidden. 54/hr → 6/hr.
+  ⚠ **The reason it hid for so long: this path calls `api.opendkp.com` DIRECTLY
+  and never touches the bot**, so it is absent from `opendkp_call_stats` and
+  invisible on `wolfpack.quest/opendkp`. That page only ever showed the BOT's
+  half of what we send him — which is why it looked clean while he saw traffic.
+  (The `OPENDKP_HALT` gate on `opendkp-auth-config` does still cover these
+  calls, within ~2h via token expiry, exactly as `DECISIONS-2026-08-25.md` §3
+  describes — that doc was right.)
+  7 mutation-checked tests in `test/opendkp-standings-cache.test.js`; one
+  mutation survived twice before the test was made to discriminate, written up
+  in the file header.
+  ⚠ OPEN: `/opendkp` must either count agent-side traffic too or say plainly
+  that it does not. As it stands it under-reports by an unknown amount, and we
+  showed it to the person paying the bill.
+  ⚠ OPEN: re-park `beta` above the new stable (beta is at 2.6.1, stable is now
+  2.6.1 — park beta at **2.6.2**), and expect `sync-beta.yml` to need a hand:
+  beta carries ~373 lines of in-flight agent work in the same file.
+
 - **OpenDKP audits: the full download is once a week now, and the redeploy walk
   was the real bill (bot 3.1.84 → 3.1.85, 2026-08-27).** Hitya, twice: *"we
   don't need a full download that often, just before a raid. three times a

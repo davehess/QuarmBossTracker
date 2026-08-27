@@ -37,6 +37,26 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'mimic-2-6-1',
+    title: 'Mimic asks the DKP site far less often',
+    version: 'Mimic 2.6.1 · Agent 3.6.1 · Web 1.2.0',
+    date: '2026-08-27',
+    headline: 'The loot panel was checking your DKP balance every single minute. Now it checks every ten, and stops entirely when you are not looking at it.',
+    features: [
+      {
+        name: 'Your DKP balance updates every ten minutes instead of every minute',
+        blurb: 'The number in the loot panel comes from the DKP site itself, and Mimic was asking for the full standings list once a minute for as long as it was open. DKP only moves when a bid settles, so ten minutes is still fresher than bidding needs — and it is a tenth of the requests.',
+      },
+      {
+        name: 'Nothing is fetched while the dashboard is hidden',
+        blurb: 'Minimise the dashboard or switch to another window and the balance check stops until you come back.',
+      },
+    ],
+    fixes: [
+      'The DKP site owner spotted this on his side before we did, because these requests went straight from your PC to the DKP site and never touched our bot — so they were missing from our own traffic counter. The counter page now says so.',
+    ],
+  },
+  {
     key: 'web-1-1-98',
     title: 'A public counter for our OpenDKP traffic',
     version: 'Web 1.1.98 · Bot 3.1.73',
