@@ -166,6 +166,22 @@ next touch one rather than assuming a missing row means a missing doc.
   `test/pop-spell-needs-all-characters.test.js` guards both fixes. Full story:
   `DECISIONS-2026-08-26.md`.
 
+- **API proposal to OpenDKP: an incremental audit feed (designed 2026-08-27,
+  NOT SENT).** `docs/DESIGN-opendkp-audit-cursor.md` + artifact. The finding:
+  **OpenDKP already has the change feed we need — it is the audit log** (Action
+  taxonomy verified against our 48,055-row mirror: Auction Created/Closed/
+  Updated/Restored/Deleted, Bid Update/Delete, Raid Created/Updated, Character
+  Created/Updated, Adjustment Created). **What is missing is the entity id** — a
+  row says an auction closed, never which one, so the only way to find out is to
+  download the 665 KB auction list and diff.
+  Ask is two fields on ONE existing endpoint: `?since=<AuditId>` and the
+  affected row's id. No new endpoints — `/auctions/{id}` and `/raids/{id}`
+  already exist and we already call them. **The whole guild generates 63 audit
+  events a day (163 busiest); we download 116 MB/day to find them.** Projected
+  ~1.5 MB/day AND fewer requests — cheaper on both axes API Gateway bills, which
+  the earlier "more calls, 2,300× less data" ask was not.
+  Supersedes the earlier per-endpoint `?since` request.
+
 - **⚠ `/opendkp` was under-reporting by ~36%, in our favour (web 1.2.3,
   migration `20260827220000`, 2026-08-27).** Hitya: *"haven't seen any opendkp
   calls on here for a while."* Not a quiet bot — a **broken page**. It selected
