@@ -71,6 +71,44 @@ Uilnayar sat on it, wrongly, for nearly three weeks.**
 examples (the `{s}`-capture rule below turns on capturing `" Uilnayar"` with a
 leading space). Attribution text only — never blanket-rename.
 
+### Working rule — the two vendored agent skills, and what they DON'T override
+Installed 2026-08-28 at Hitya's request. Both are permissively licensed and
+vendored into `.claude/skills/` (committed, so cloud sessions get them too)
+rather than installed per-machine.
+
+| Skill | What it does | Licence |
+|---|---|---|
+| **`impeccable`** (pbakaus) | 23 design commands + 59 deterministic anti-pattern detectors; a `PostToolUse` hook scans UI files after every Edit/Write and a `Stop` hook runs a deep pass | Apache-2.0 |
+| **`ponytail`** (DietrichGebert) | "Laziest solution that works" — YAGNI ladder, stdlib/native/existing-dep before new code | MIT |
+
+⚠ **`frontend-design` WINS over impeccable where they disagree.** That skill
+carries this platform's *real* tokens and the constraints generic design advice
+does not know about — an overlay is read mid-raid, at a glance, over a moving 3D
+scene, by someone who cannot afford to parse it. Use impeccable's **detectors**
+(deterministic, checkable) freely; treat its **aesthetic** guidance as a default
+that repo-specific guidance overrides.
+
+⚠ **Ponytail reinforces the minimal-diff rule above; it does not replace it.**
+They answer different questions — ponytail asks *"should this code exist at
+all?"*, minimal-diff asks *"what else does this change touch?"* In an 18k-line
+monolith the second is the one that bites, so ponytail's ladder does not license
+a "simpler" change that reaches into unrelated behaviour. Its own SKILL.md is
+explicit that it never simplifies security, validation, or explicit
+requirements — that holds here too.
+
+⚠ **Do NOT run `/impeccable init` without a decision first.** It writes
+`PRODUCT.md` and `DESIGN.md` at the repo root, and **this file is the authority**
+(it says so at the top). Three competing doc roots is how the next session reads
+the wrong one. If we want them, the precedence goes in here first.
+
+⚠ **The hooks run on every turn.** `PostToolUse` (5s) fires on Edit/Write —
+verified to no-op on non-UI files — and `Stop` (30s) runs a design deep pass.
+They were MERGED into `.claude/settings.json` alongside the existing
+`SessionStart` digest hook, not copied over it: impeccable ships its own
+`settings.json` which would have replaced ours and silently killed
+`session-digest.sh`. If the deep pass ever costs more than it returns, delete
+the `Stop` block and keep `PostToolUse`.
+
 ### Working rule — decisions get WRITTEN DOWN, same session
 A decision that lives only in chat is lost: cloud and desktop sessions cannot
 share a conversation, and a container reset takes the scratchpad with it. When
