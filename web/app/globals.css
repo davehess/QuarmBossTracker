@@ -112,11 +112,13 @@
 
 .wolf-stage svg { display: block; width: 100%; height: 100%; overflow: visible; }
 
-.wolf-ink   { stroke: var(--wolf-line, #e8e2d4); }
-.wolf-ink-2 { stroke: var(--wolf-line, #e8e2d4); opacity: .68; }
-.wolf-hatch { stroke: var(--wolf-line, #e8e2d4); opacity: .3; stroke-width: 1.1; }
-.wolf-nose  { stroke: var(--wolf-line, #e8e2d4); fill: var(--wolf-line, #e8e2d4); opacity: .8; }
-.wolf-eye   { stroke: #d29922; fill: #d29922; }
+/* Filled forms, not strokes — the taper is the point. */
+.wolf-ink   { fill: var(--wolf-line, #e8e2d4); stroke: none; }
+.wolf-ink-2 { fill: var(--wolf-line, #e8e2d4); stroke: none; opacity: .75; }
+.wolf-hatch { fill: var(--wolf-line, #e8e2d4); stroke: none; opacity: .3; }
+.wolf-nose  { fill: var(--wolf-line, #e8e2d4); stroke: none; }
+.wolf-eye   { fill: #d29922; stroke: none; }
+.wolf-mass  { fill: none; stroke: none; }
 
 .wolf-alpha {
   position: absolute; inset: 0;
