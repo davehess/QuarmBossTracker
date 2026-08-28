@@ -16,3 +16,17 @@ Source 1024×1024 → shipped 973×973.
 Not traced from, and not derived from, any third-party illustration. The
 reference image discussed during the session was used to describe a STYLE in
 words; no part of it was copied into this asset.
+
+wolf-eyes.png — derived, same session
+=====================================
+Not generated and not drawn: computed from wolf.png in this repo. The keyed
+plate leaves the eye interior as two small OPAQUE islands, isolated from the
+face by the dark linework that keying turned transparent. Those two islands
+were found by connected-component labelling of the alpha channel, kept with
+their own alpha (so the edge stays antialiased) and painted flat #FFCF5C on the
+same 973x973 canvas. The pupil is a hole in each island and stays a hole.
+
+Same canvas is deliberate: the glow carries no coordinates, so it is pinned
+edge-to-edge over the wolf and cannot drift from it. Regenerating wolf.png at
+any other size means regenerating this one too — test/wolf-eyeglow.test.js
+fails if the two ever disagree.

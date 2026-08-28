@@ -11,11 +11,6 @@
 // read as ghosts rather than as distance.
 import Image from 'next/image';
 
-// Measured on the shipped asset, as a fraction of its square. The keyed art
-// leaves the eye slits TRANSPARENT, so a warm source behind the plate reads
-// through them and nowhere else.
-const EYES = [{ x: 34.5, y: 41.5 }, { x: 65.5, y: 41.5 }];
-
 // Ordered BACK TO FRONT: DOM order is the depth order, so the nearest wolf
 // paints last and covers the ones behind it.
 const PACK = [
@@ -35,27 +30,32 @@ function Plate({ priority = false }: { priority?: boolean }) {
       height={973}
       priority={priority}
       sizes="(max-width: 640px) 104vw, 600px"
-      className="h-full w-full select-none"
+      className="wolf-plate h-full w-full select-none"
     />
   );
 }
 
-function Eyes({ at, scale = 1 }: { at: string; scale?: number }) {
+// ⚠ The glow is a PLATE, not a positioned blob, and it paints ON TOP.
+//
+// The keying left the eye interior OPAQUE BONE and cut only the dark linework,
+// so a warm source behind the wolf does not read through the eye — it reads
+// through the brow strokes, which is the smear this replaces (Hitya, 2026-08-28:
+// "this is the area that should glow"). `wolf-eyes.png` is that exact interior,
+// measured off the shipped asset as its two isolated opaque islands and painted
+// gold on the same 973² canvas — so it needs no coordinates of its own and can
+// never drift from the art it sits on. The pupil stays a hole, and stays dark.
+function EyeGlow({ at, dim = false, priority = false }: { at: string; dim?: boolean; priority?: boolean }) {
   return (
-    <>
-      {EYES.map((e, i) => (
-        <span
-          key={i}
-          className="wolf-eyelight"
-          style={{
-            left: `${e.x}%`,
-            top: `${e.y}%`,
-            animationDelay: at,
-            ['--eye-scale' as string]: scale,
-          }}
-        />
-      ))}
-    </>
+    <Image
+      src="/wolf-eyes.png"
+      alt=""
+      width={973}
+      height={973}
+      priority={priority}
+      sizes="(max-width: 640px) 104vw, 600px"
+      className={`wolf-eyeglow ${dim ? 'wolf-eyeglow-far' : ''}`}
+      style={{ animationDelay: at }}
+    />
   );
 }
 
@@ -75,13 +75,13 @@ export default function WolfPack({ className = '' }: { className?: string }) {
             ['--wolf-blur' as string]: w.blur,
           }}
         >
-          <Eyes at={w.eyeAt} scale={0.8} />
           <Plate />
+          <EyeGlow at={w.eyeAt} dim />
         </div>
       ))}
       <div className="wolf-alpha">
-        <Eyes at="0.2s" />
         <Plate priority />
+        <EyeGlow at="0.2s" priority />
       </div>
     </div>
   );

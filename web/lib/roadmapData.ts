@@ -37,6 +37,31 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'web-1-4-1',
+    title: 'A new front page',
+    version: 'Web 1.4.1',
+    date: '2026-08-28',
+    channel: 'beta',
+    headline: 'The front page opens on the pack coming out of the dark, and the row of buttons underneath is now four doors instead of twenty.',
+    features: [
+      {
+        name: 'The pack arrives out of the dark',
+        blurb: 'Eyes first, in the black \u2014 hers, then the ones behind her. Her face comes into focus, then the rest of the pack, each one a little further back and a little darker. Nothing is see-through: the wolves in front cover the ones behind them, the way bodies do.',
+      },
+      {
+        name: 'Four doors instead of twenty',
+        blurb: 'Everything is now under Raid, Stats, Prep, or your own /me page. Hover one on a desktop, or tap it on a phone, and the pages inside open up underneath. Nothing was removed \u2014 it just stopped all being on screen at once.',
+      },
+      {
+        name: 'Set to stay still if you asked it to',
+        blurb: 'If your computer or phone is set to reduce motion, the whole scene is simply there when the page loads, fully lit, with nothing moving.',
+      },
+    ],
+    fixes: [
+      'The eyes now light up inside the eye itself. They had been glowing behind the artwork, which put the light in the brow instead.',
+    ],
+  },
+  {
     key: 'mimic-2-6-2',
     title: 'A Loot tab, and Mimic stops phoning the DKP site',
     version: 'Mimic 2.6.2 · Agent 3.6.2 · Bot 3.1.88 · Web 1.2.2',

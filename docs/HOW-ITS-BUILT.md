@@ -1277,6 +1277,26 @@ holds it in memory.
 
 ## Web features
 
+- **Landing page + top nav (`web/app/page.tsx`, `components/WolfPack.tsx`,
+  `components/Nav.tsx`, `components/PlateIcons.tsx`, web 1.4.x)** — the hero is a
+  raster wolf plate (`public/wolf.png`, 973²) with five scaled copies behind it,
+  revealed as a SEQUENCE: eyes, then the pack's eyes, then the alpha's lines,
+  then each pack member nearest-first. **Depth is `filter: brightness()`, never
+  `opacity`** — brightness darkens the bone while leaving alpha intact, so a
+  nearer wolf occludes the one behind it; fading with opacity made them ghosts.
+  ⚠ **The eye light is its own plate (`public/wolf-eyes.png`) painted ON TOP.**
+  Keying cut the dark linework and left the eye interior OPAQUE, so a glow
+  behind the wolf reads through the brow strokes and not the eye — that was
+  shipped, and looked plausible. The overlay is computed from `wolf.png` by
+  connected-component labelling of its alpha (see `wolf.provenance.txt`) and
+  shares its canvas, so it needs no coordinates and cannot drift. The reveal
+  filter must stay scoped to `.wolf-plate`: written as `.wolf-alpha img` it also
+  matches the glow and the eyes can never open first. Both traps are held by
+  `test/wolf-eyeglow.test.js`. Nav is four groups (Raid / Stats / Prep / **/me**)
+  with hover-to-open on fine pointers and tap-to-open elsewhere — the open state
+  is guarded on `matchMedia('(hover: hover) and (pointer: fine)')` because a
+  tap's compatibility `mouseenter` plus the click otherwise open and immediately
+  close the panel.
 - **/me** — per-character private hub (parse stats, rollups, chat counts,
   PvP, loot, wishlists count, live buffs/zone, exclusion toggles). Data floor
   via `character_data_floor`; excluded characters honored everywhere.
