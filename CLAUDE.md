@@ -28,18 +28,28 @@ adjacent or unrelated code, stop and flag it before proceeding. (The
 blast radius" — reaching into unrelated behavior is a structural hazard here.)
 
 ### Working rule — attribution: mostly Hitya, with named exceptions
-**You almost always interact with one person: Hitya.** They also play Canopy,
-Rockin, vj, Hopeya, Utoh, Melting and others, so a decision, a bug report, a
-sketch or a live-test result arriving under one of THOSE names is still Hitya.
-Credit it to **Hitya** (established 2026-08-09).
+**You almost always interact with one person: Hitya.** A decision, a bug report,
+a sketch or a live-test result arriving under one of their characters is still
+Hitya, and gets credited to **Hitya**.
 
-⚠ **`Uilnayar` is NOT Hitya — they are a different person** (corrected by Hitya,
-2026-08-28). This file listed them as an alt from 2026-08-09 until then, so
-**any attribution to Hitya dated in that window may actually be Uilnayar's** —
-treat those as suspect rather than settled, and prefer the original report if
-you can find it. Uilnayar keeps their own name, like the feedback submitters
-below. Existing `(Uilnayar <date>)` credits in code comments are CORRECT and
-must not be rewritten to Hitya.
+**The alt list, CONFIRMED BY HITYA 2026-08-28** (not inferred — asked and
+answered, which is the only reason it can be trusted):
+
+`Canopy` · `Rockin` · `Manamana` · `Utoh` · `vj` · `Melting` · `Hopeya`
+
+⚠ **`Uilnayar` is NOT Hitya — a different person** (corrected 2026-08-28). This
+file listed them as an alt from 2026-08-09 until then, so **any attribution to
+Hitya dated in that window may actually be Uilnayar's** — treat those as suspect
+rather than settled, and prefer the original report if you can find it.
+Uilnayar keeps their own name. Existing `(Uilnayar <date>)` credits in code
+comments are CORRECT and must not be rewritten to Hitya.
+
+⚠ **`Dant` is treated as a different person too.** They @-mention Hitya in
+Discord (the 2026-08-27 loot/raid-selection report), and they are absent from the
+confirmed list above. Not explicitly confirmed either way, so this is the safe
+default rather than a fact: **crediting a real member by their own name costs
+nothing if wrong; collapsing them into Hitya erases them, silently.** Apply that
+asymmetry to any new name — keep it until Hitya says otherwise.
 
 **The other exception is the `feedback` table** — the wolfpack.quest feedback
 form and `/feedback`. Those are genuinely other members and KEEP their own

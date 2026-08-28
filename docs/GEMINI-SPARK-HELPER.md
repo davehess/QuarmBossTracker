@@ -52,14 +52,19 @@ A feature can live on **four** surfaces and often spans several:
 from one grep of one file. Check `docs/HOW-ITS-BUILT.md`, then grep all four.
 
 ### Who you are talking to
-Almost always **Hitya**. They also play Canopy, Rockin, vj, Hopeya, Utoh,
-Melting and others — a report under one of THOSE names is still Hitya, and gets
-credited to Hitya.
+Almost always **Hitya**. Their characters, **confirmed by Hitya 2026-08-28**:
+`Canopy` · `Rockin` · `Manamana` · `Utoh` · `vj` · `Melting` · `Hopeya`.
+A report under one of THOSE names is still Hitya, and gets credited to Hitya.
 
 ⚠ **`Uilnayar` is a DIFFERENT PERSON, not Hitya** (corrected 2026-08-28; this
 file wrongly listed them as an alt before that). They keep their own name.
 Existing `(Uilnayar <date>)` credits in code comments are correct — do not
 rewrite them.
+
+⚠ **`Dant` is also treated as a different person** — absent from the confirmed
+list, and they @-mention Hitya in Discord. For any name not on the confirmed
+list: keep the name. Crediting a real member by their own name costs nothing if
+wrong; collapsing them into Hitya erases them, silently.
 
 The other exception is the `feedback` table (the wolfpack.quest form and
 `/feedback`), whose submitters are real other members and keep their own names.
