@@ -439,7 +439,21 @@ let _lastRaidsFullAt = 0;
 // confidence.
 function _raidsFetchMode(nowMs, lastFullAtMs, count, fullEveryHours) {
   const n = Number(count);
-  const usable = Number.isInteger(n) && n > 0;
+  // ⚠ DISABLED 2026-08-27, mid-raid. `?count=N` was added in 3.1.83 on the
+  // assumption that it returns the NEWEST N raids. That assumption was never
+  // verified and the evidence says it is wrong: the mirror's newest raid stayed
+  // at #101101 (8-26) all through the 8-27 raid, while #101157 existed upstream
+  // and the UNCOUNTED full fetch (once a day) was the only thing that ever
+  // advanced it. An ordering assumption on a paginated endpoint is exactly the
+  // mistake that cost us the audits walk — page 1 of /auctions is oldest-first,
+  // proved by probe — and I made it again from a Postman doc that documents the
+  // parameter but not its order.
+  //
+  // The raid mirror feeds attendance, ticks and loot attribution, so a silently
+  // stale one is expensive. Full list every pass until `count`'s ordering is
+  // PROVED against production, the same standard the audits fast path had to
+  // meet. Re-enable with OPENDKP_RAIDS_COUNT once proved.
+  const usable = false && Number.isInteger(n) && n > 0;
   const fullDue = (nowMs - (lastFullAtMs || 0)) >= fullEveryHours * 3600 * 1000;
   return { useCount: usable && !fullDue, count: usable ? n : null, fullDue };
 }

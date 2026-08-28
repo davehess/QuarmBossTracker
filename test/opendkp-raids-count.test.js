@@ -43,10 +43,17 @@ const _raidsFetchMode = new Function('return ' + modeBlock.trim())();
 const HOUR = 3600 * 1000;
 
 describe('the fetch-mode decision', () => {
-  it('uses the count on a routine pass', () => {
-    const r = _raidsFetchMode(100 * HOUR, 100 * HOUR, 25, 24);
-    expect(r.useCount).toBe(true);
-    expect(r.count).toBe(25);
+  it('does NOT use the count — the ordering was never proved', () => {
+    // 3.1.83 added ?count=25 assuming it returns the NEWEST 25 raids. Disabled
+    // 2026-08-27 mid-raid: the mirror's newest raid sat at #101101 all through
+    // the 8-27 raid while #101157 existed upstream, and only the uncounted
+    // daily full fetch ever advanced it. Same class of mistake as assuming
+    // /auctions pages newest-first, which a production probe disproved.
+    //
+    // This asserts the CURRENT, deliberate state. When someone proves the
+    // ordering against production, flip it back and this test with it.
+    const m = _raidsFetchMode(Date.now(), Date.now(), 25, 24);
+    expect(m.useCount).toBe(false);
   });
 
   it('takes the FULL list once the interval has elapsed', () => {

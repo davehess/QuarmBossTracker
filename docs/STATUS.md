@@ -202,6 +202,33 @@ next touch one rather than assuming a missing row means a missing doc.
   the earlier "more calls, 2,300× less data" ask was not.
   Supersedes the earlier per-endpoint `?since` request.
 
+- **⚠ P1, mid-raid 2026-08-27: loot posted against the WRONG RAID (bot 3.1.94).**
+  Reported at 21:01 ET while officers were posting: *"the raid bot didn't select
+  the raid properly when i'm posting loot tonight"*. Tonight's raid was
+  **#101157**; the bot linked to **#101101**, the previous night's.
+  **Cause:** `getMostRecentRaid()` sorted by `Timestamp` alone. Two independent
+  problems, both measured against the 413-raid mirror rather than reasoned
+  about: (1) `Timestamp` is a DATE AN OFFICER TYPES and it drifts — "8-23-26 Vex
+  Thal" carries ts 8-22 — so a raid created tonight with yesterday's date sorts
+  BELOW yesterday's and loses outright; (2) **10 raids share a timestamp with
+  another raid across 9 dates** (main + alt on one night, a re-created raid), and
+  the comparator returns 0 there, leaving the winner to OpenDKP's array order —
+  which for the sibling `/auctions` endpoint a probe PROVED is oldest-first.
+  **Fix:** pick by `RaidId`, which OpenDKP assigns monotonically (id order and ts
+  order disagree on 10/413 rows and the id is right), excluding future-dated
+  raids so a staged one can't collect tonight's loot. `_raidLooksStale()` (>36h,
+  clearing the date-only noon-UTC stamp) now warns in the `/loot` embed and in
+  the `loot-post` response + log, so a wrong link is visible AT POST TIME rather
+  than discovered afterwards. 9 mutation-checked tests.
+  **Second bug found via the same report:** the raids MIRROR never ingested
+  #101157 — `?count=25` (added 3.1.83 on my unverified assumption it returns the
+  NEWEST 25) appears to return the oldest, so only the daily uncounted full
+  fetch ever advanced the mirror. **Disabled**; full list every pass until the
+  ordering is PROVED against production — the same standard the audits fast path
+  had to meet. `OPENDKP_RAIDS_COUNT` stays for when it is.
+  ⚠ The raid mirror feeds attendance, ticks and loot attribution, so verify
+  tonight's raid + ticks landed once the sync catches up.
+
 - **`/opendkp` gained a raid view and finer resolution (web 1.2.4, migration
   `20260827233000`, 2026-08-27).** Hitya, 25 min before the Thursday pull:
   *"we're probably about to spike, right? give me more notches on that graph,

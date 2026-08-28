@@ -7406,13 +7406,27 @@ async function _handleAgentLootPost(req, res) {
       return res.end(JSON.stringify({ ok: true, dryRun: true, matched: matched.map(m => ({ name: m.name, quantity: m.quantity })), unmatched: unmatched.map(u => u.name), duration }));
     }
     if (matched.length === 0) { res.writeHead(409, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ ok: false, reason: 'No items matched the item catalog — nothing posted.', unmatched: unmatched.map(u => u.name) })); }
-    const { createAuctions, getMostRecentRaid } = require('./utils/opendkp');
+    const { createAuctions, getMostRecentRaid, _raidLooksStale } = require('./utils/opendkp');
     // Link the auctions to the current raid so DKP charges attach correctly
     // (captured: the site passes RaidId on the auction). Best-effort — if the
     // lookup fails the auction still posts, just unlinked.
+    //
+    // ⚠ The chosen raid is REPORTED BACK, not just used. Reported 2026-08-27
+    // mid-raid: loot was being linked to the previous night's raid, and the
+    // officer posting had no way to see which raid they had just charged.
+    // Silent best-effort is fine for a failure; it is not fine for a wrong
+    // answer that looks like a right one.
     let linkRaidId = 0;
-    try { const raid = await getMostRecentRaid(); if (raid && raid.RaidId) linkRaidId = raid.RaidId; }
-    catch (e) { console.warn('[loot-post] raid link lookup failed:', e?.message); }
+    let linkedRaid = null;
+    try {
+      const raid = await getMostRecentRaid();
+      if (raid && raid.RaidId) { linkRaidId = raid.RaidId; linkedRaid = raid; }
+    } catch (e) { console.warn('[loot-post] raid link lookup failed:', e?.message); }
+    const raidStale = linkedRaid ? _raidLooksStale(linkedRaid) : false;
+    if (raidStale) {
+      console.warn(`[loot-post] ⚠ linking to raid #${linkRaidId} "${linkedRaid.Name}" dated`
+        + ` ${linkedRaid.Timestamp} — more than a day old. Tonight's raid may not exist yet.`);
+    }
     const auctions = matched.map(m => ({
       BidType: 'Closed', ItemQuantity: m.quantity || 1, Duration: duration, Bids: [],
       Item: { Name: m.name, GameItemId: m.gameItemId },
@@ -7455,7 +7469,12 @@ async function _handleAgentLootPost(req, res) {
     } catch (e) { console.warn('[loot-post] thread announce failed:', e?.message); }
 
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ ok: true, posted: matched.map(m => m.name), count: matched.length, unmatched: unmatched.map(u => u.name), duration }));
+    return res.end(JSON.stringify({ ok: true, posted: matched.map(m => m.name), count: matched.length,
+      unmatched: unmatched.map(u => u.name), duration,
+      // Which raid this loot was actually charged to, so Mimic can show it
+      // rather than the officer finding out after the raid.
+      linked_raid: linkedRaid ? { id: linkRaidId, name: linkedRaid.Name || null,
+                                  dated: linkedRaid.Timestamp || null, stale: raidStale } : null }));
   } catch (err) {
     console.error('[loot-post] failed:', err);
     res.writeHead(502, { 'Content-Type': 'application/json' });
