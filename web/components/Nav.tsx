@@ -21,6 +21,7 @@ const GROUPS: Group[] = [
       { href: '/raid',          label: 'Raid HQ' },
       { href: '/boards',        label: 'Spawn boards' },
       { href: '/who',           label: '/who' },
+      { href: '/buffs',         label: 'Buffs' },
       { href: '/rolls',         label: 'Rolls' },
       { href: '/quartermaster', label: 'Quartermaster' },
     ],
@@ -40,7 +41,6 @@ const GROUPS: Group[] = [
     items: [
       { href: '/guide',   label: 'Raid guide' },
       { href: '/db',      label: 'Database' },
-      { href: '/buffs',   label: 'Buffs' },
       { href: '/pop',     label: 'PoP flags' },
       { href: '/roadmap', label: 'Roadmap' },
     ],

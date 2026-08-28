@@ -117,6 +117,21 @@
 .wolf-alpha { inset: 0; }
 .wolf-packmember { transform: translateX(-50%); }
 
+/* Each wolf's own silhouette, filled in the page ground and sitting under its
+   plate. The keyed art is bone-on-transparency: every dark LINE is a hole, so
+   without this a wolf in front showed the wolf behind through its own linework
+   and the overlaps read as smeared glass rather than as one body in front of
+   another. Painted #0d1117, so against the ground it is invisible and its only
+   job is to occlude. Blurred to its wolf's own distance so the occlusion edge
+   matches the body it belongs to. */
+.wolf-solid {
+  position: absolute;
+  inset: 0;
+  height: 100%;
+  width: 100%;
+}
+.wolf-packmember .wolf-solid { filter: blur(var(--wolf-blur, 0)); }
+
 /* ⚠ The reveal filter goes on the PLATE, never on the wrapper and never on
    every img. The eye glow is a sibling image inside the same wrapper, and a
    filter that reaches it darkens the one lit thing on the page — which
@@ -179,6 +194,20 @@
   .wolf-alpha .wolf-plate      { animation: none; filter: brightness(1) drop-shadow(0 18px 42px rgba(0,0,0,.55)); }
   .wolf-packmember .wolf-plate { animation: none; filter: brightness(var(--wolf-bright)) blur(var(--wolf-blur)); }
   .wolf-eyeglow                { animation: none; opacity: var(--eye-lit, 1); transform: scale(1); }
+}
+
+/* Everything that is not the wolf waits for her (Hitya, 2026-08-28: "give a
+   little delay until everything else fades in"). One beat, one class — long
+   enough that the eyes land in an empty frame, short enough that nobody on a
+   phone thinks the page is broken. Content is in the DOM the whole time; only
+   its paint is deferred. */
+.page-reveal { animation: page-in .7s ease-out 1.05s both; }
+@keyframes page-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .page-reveal { animation: none; }
 }
 
 /* ── Browser surfaces ─────────────────────────────────────────────────────

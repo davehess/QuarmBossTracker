@@ -19,6 +19,8 @@ import path from 'node:path';
 const WEB = path.join(__dirname, '..', 'web');
 const css = fs.readFileSync(path.join(WEB, 'app/globals.css'), 'utf8');
 const tsx = fs.readFileSync(path.join(WEB, 'components/WolfPack.tsx'), 'utf8');
+const page = fs.readFileSync(path.join(WEB, 'app/page.tsx'), 'utf8');
+const nav = fs.readFileSync(path.join(WEB, 'components/Nav.tsx'), 'utf8');
 
 // Comments describe the bug in the same words the assertion looks for, and have
 // twice satisfied an assertion on their own. Strip them before matching.
@@ -33,13 +35,36 @@ function pngSize(file) {
 }
 
 describe('wolf hero eye glow', () => {
-  it('ships an eye plate on the same canvas as the wolf, so it cannot drift', () => {
+  it('ships every derived plate on the same canvas as the wolf, so none can drift', () => {
     const wolf = pngSize(path.join(WEB, 'public/wolf.png'));
-    const eyes = pngSize(path.join(WEB, 'public/wolf-eyes.png'));
-    // The glow carries no coordinates of its own — it is pinned edge-to-edge
-    // over the plate. Identical geometry is the whole alignment guarantee.
-    expect(eyes).toEqual(wolf);
+    // Neither derived plate carries coordinates of its own — both are pinned
+    // edge-to-edge over the wolf. Identical geometry is the whole guarantee.
+    expect(pngSize(path.join(WEB, 'public/wolf-eyes.png'))).toEqual(wolf);
+    expect(pngSize(path.join(WEB, 'public/wolf-solid.png'))).toEqual(wolf);
     expect(wolf.w).toBe(wolf.h);
+  });
+
+  it('gives every wolf an opaque silhouette, under its own plate', () => {
+    // Only the BONE is opaque in the keyed art; every dark line is a hole, so
+    // without a filled silhouette beneath it a wolf in front shows the wolf
+    // behind through its own linework (Hitya: "the transparency overlap looks
+    // bad"). Brightness-not-opacity is necessary but was not sufficient.
+    // The rule that actually positions it. `.wolf-packmember .wolf-solid` also
+    // mentions the class, and satisfied a laxer version of this assertion while
+    // the positioning rule was renamed out from under it.
+    expect(cssCode).toMatch(/\.wolf-solid\s*\{[^}]*position:\s*absolute[^}]*\}/);
+    expect(cssCode).toMatch(/\.wolf-solid\s*\{[^}]*inset:\s*0[^}]*\}/);
+
+    // Scope to each wolf's own block: `indexOf('<Solid />')` finds the PACK's
+    // copy first, so comparing it against the alpha's plate always passed.
+    const alphaBlock = tsxCode.slice(tsxCode.indexOf('className="wolf-alpha"'));
+    expect(alphaBlock.indexOf('<Solid />')).toBeGreaterThan(-1);
+    expect(alphaBlock.indexOf('<Solid />')).toBeLessThan(alphaBlock.indexOf('<Plate'));
+
+    const packBlock = tsxCode.slice(tsxCode.indexOf('className="wolf-packmember"'),
+                                    tsxCode.indexOf('className="wolf-alpha"'));
+    expect(packBlock.indexOf('<Solid />')).toBeGreaterThan(-1);
+    expect(packBlock.indexOf('<Solid />')).toBeLessThan(packBlock.indexOf('<Plate'));
   });
 
   it('scopes the reveal filter to the plate, never to every image', () => {
@@ -72,5 +97,40 @@ describe('wolf hero eye glow', () => {
     // The nearest pack wolf lights up before the furthest one.
     const eyeTimes = rows.map(r => secs(r[1]));
     expect(Math.min(...eyeTimes)).toBe(eyeTimes[eyeTimes.length - 1]);
+  });
+});
+
+describe('landing page fit and pacing', () => {
+  it('clips the hero horizontally, so the bleeding pack cannot scroll the page', () => {
+    // The pack fans to 1.35x the alpha's box on purpose. Measured 2026-08-28:
+    // without this the document was 477px wide inside a 390px phone.
+    expect(page).toMatch(/<section className="relative isolate -mx-3 overflow-x-clip/);
+  });
+
+  it('keeps the alpha inside the viewport on a phone', () => {
+    // Her width sets whether the pack's eyes clear her ruff. Over 100% put the
+    // outermost eye on the screen edge; the fix is width, not a tighter fan.
+    const m = page.match(/mx-auto w-\[(\d+)%\] max-w-\[600px\]/);
+    expect(m).toBeTruthy();
+    expect(Number(m[1])).toBeLessThanOrEqual(100);
+  });
+
+  it('holds the rest of the page back until the wolf has arrived', () => {
+    expect(page).toMatch(/className="page-reveal/);
+    const delay = cssCode.match(/\.page-reveal\s*\{[^}]*animation:[^;]*?([\d.]+)s\s+(?:both|backwards|forwards)?/);
+    expect(cssCode).toMatch(/\.page-reveal\s*\{[^}]*animation:/);
+    // Deferred paint must not become permanently-blank content for anyone who
+    // asked for less motion.
+    const reduced = cssCode.slice(cssCode.indexOf('prefers-reduced-motion'));
+    expect(reduced).toMatch(/\.page-reveal\s*\{\s*animation:\s*none/);
+    void delay;
+  });
+
+  it('files Buffs under Raid', () => {
+    // Hitya, 2026-08-28. Buffs is something you run during a raid, not before.
+    const raid = nav.slice(nav.indexOf("id: 'raid'"), nav.indexOf("id: 'stats'"));
+    const prep = nav.slice(nav.indexOf("id: 'prep'"));
+    expect(raid).toContain("'/buffs'");
+    expect(prep).not.toContain("'/buffs'");
   });
 });

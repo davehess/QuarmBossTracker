@@ -120,6 +120,18 @@ next touch one rather than assuming a missing row means a missing doc.
   so the eyes could not open before the body — it must stay scoped to
   `.wolf-plate`. Depth is `brightness()`, never `opacity`: the pack must occlude,
   not ghost.
+  ⚠ **A third trap, found on a phone (web 1.4.2):** brightness-not-opacity was
+  necessary but not sufficient. Only the bone is opaque, so every dark line was
+  a hole and the wolves showed through each other's linework (Hitya: *"the
+  transparency overlap looks bad"*). Each wolf now carries `wolf-solid.png`, its
+  own filled silhouette in the page ground, beneath its plate. Same round fixed
+  87px of horizontal page scroll on a 390px phone (`overflow-x: clip` + she is
+  86% wide there — her WIDTH is the lever; a tighter pack fan hid the pack's eyes
+  behind her ruff, which is the half of the brief that matters).
+  ⚠ **`docs/DESIGN.md` was rewritten by hand the same day.** The generated file
+  was 357,109 lines — one paragraph repeated 23,774 times, once per character of
+  a string a loop walked — and still asserted the eye slits were transparent,
+  which is what caused trap (1). Do not restore it from git.
   ⚠ **Not on `main`.** Graduate deliberately — this replaces the front door.
   Nav grouping is still a guess at where each destination belongs and Hitya may
   reclassify; the header chrome above the nav (Download / Beta / timezone) is

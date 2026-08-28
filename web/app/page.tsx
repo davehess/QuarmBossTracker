@@ -66,25 +66,39 @@ export default async function HomePage() {
       {/* The plate is symmetric and frontal, so the type is centred on its axis.
           Left-aligned type beside a centred wolf read as two unrelated objects
           — the first render proved it. */}
-      <section className="relative isolate -mx-3 sm:-mx-4">
+      {/* ⚠ `overflow-x: clip` is load-bearing, not tidying. The outer pack
+          members sit at ±45% with their own width on top, so the composition
+          is 1.35× the alpha's box and reached -71px..477px on a 390px phone —
+          87px of horizontal page scroll (measured 2026-08-28). Fitting the
+          whole pack inside instead would shrink her to 289px on that screen,
+          against a brief that pins a HUGE wolf face. So she stays big and the
+          pack bleeds off-frame, which is the intended read; `clip` rather than
+          `hidden` because `hidden` would make this a scroll container. */}
+      <section className="relative isolate -mx-3 overflow-x-clip sm:-mx-4">
         {/* Sized for the BOLD mark. The earlier thin wolf could run 1040px
             wide; these filled forms carry far more weight, and at that size the
             ears alone filled the viewport while the face fell below the fold. */}
-        <div className="pointer-events-none absolute inset-x-0 top-0 mx-auto w-[104%] max-w-[600px] sm:w-[66%]">
+        {/* 86% on a phone, not 104%. The pack fans to ±67.5% of HER box, so her
+            width sets whether their eyes clear her ruff or sit behind it. At 104%
+            the outermost eye landed exactly on the viewport edge and read as a
+            rendering fault; pulling the fan in instead hid the pack's eyes
+            altogether, which is the half of the brief that matters most. Giving
+            her the width back is what lets both be true. */}
+        <div className="pointer-events-none absolute inset-x-0 top-0 mx-auto w-[86%] max-w-[600px] sm:w-[66%]">
           <WolfPack />
         </div>
         {/* Clears the type without erasing her: transparent across the ears and
             eyes, opaque where the headline lands. */}
         <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-transparent via-bg/60 via-62% to-bg" />
 
-        <div className="relative px-4 pt-[74vw] pb-10 text-center sm:pt-[40vw] sm:pb-14 lg:pt-[25rem]">
+        <div className="page-reveal relative px-4 pt-[70vw] pb-10 text-center sm:pt-[40vw] sm:pb-14 lg:pt-[25rem]">
           <h1 className="font-[family-name:var(--font-display)] mx-auto text-[clamp(2rem,7vw,4.25rem)] leading-[1.04] tracking-[-0.02em] text-[#f2ede1] text-balance max-w-[18ch]">
             One wolf sees a fight.<br />The pack sees the raid.
           </h1>
           <p className="font-[family-name:var(--font-prose)] mx-auto mt-5 max-w-[58ch] text-[1.0625rem] leading-7 text-text">
-            Forty people log the same four hours from forty different places on the
+            Forty people log the same three hours from forty different places on the
             field. Wolf Pack merges them into one record — who did the damage, who
-            held the chain together, who was standing where when it went wrong.
+            held the chain together, what went right or wrong in the fight timelines.
             No single client can see it. This is where it lives afterwards.
           </p>
 
@@ -105,6 +119,7 @@ export default async function HomePage() {
         </div>
       </section>
 
+      <div className="page-reveal">
       {/* ── The proof ──────────────────────────────────────────────────── */}
       {recent.length > 0 && (
         <section className="mt-2 border-t border-border/70 pt-6">
@@ -185,6 +200,7 @@ export default async function HomePage() {
           <IconSpark /> How this is built with AI
         </Link>
       </section>
+      </div>
     </div>
   );
 }

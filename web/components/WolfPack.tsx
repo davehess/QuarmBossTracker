@@ -9,6 +9,14 @@
 // nearer wolf occludes the one behind it the way a real body would. Fading them
 // with opacity let the rear wolves show straight through the front one, which
 // read as ghosts rather than as distance.
+//
+// ⚠ Brightness alone was NOT enough, and the overlaps looked wrong on a phone
+// (Hitya, 2026-08-28: "the transparency overlap looks bad"). Only the BONE is
+// opaque in the keyed art — every dark line is a hole, 121,313 px of them — so
+// a wolf in front was showing the wolf behind through its own linework. Each
+// wolf therefore gets a filled silhouette of itself in the page ground beneath
+// its plate. Invisible against the ground, and the whole difference where two
+// wolves overlap.
 import Image from 'next/image';
 
 // Ordered BACK TO FRONT: DOM order is the depth order, so the nearest wolf
@@ -20,6 +28,23 @@ const PACK = [
   { x: -27, y:  7, s: 0.63, bright: 0.36, blur: '1.0px', eyeAt: '0.86s', bodyAt: '2.28s' },
   { x:  27, y:  7, s: 0.63, bright: 0.36, blur: '1.0px', eyeAt: '0.74s', bodyAt: '2.16s' },
 ];
+
+// The wolf's own outline, filled solid in the page ground: bone plus every
+// hole the linework cut, found by flood-filling `wolf.png` inward from its
+// border (see wolf.provenance.txt). Same canvas as the plate, so it is pinned
+// to it and needs no geometry of its own.
+function Solid() {
+  return (
+    <Image
+      src="/wolf-solid.png"
+      alt=""
+      width={973}
+      height={973}
+      sizes="(max-width: 640px) 96vw, 600px"
+      className="wolf-solid"
+    />
+  );
+}
 
 function Plate({ priority = false }: { priority?: boolean }) {
   return (
@@ -75,11 +100,13 @@ export default function WolfPack({ className = '' }: { className?: string }) {
             ['--wolf-blur' as string]: w.blur,
           }}
         >
+          <Solid />
           <Plate />
           <EyeGlow at={w.eyeAt} dim />
         </div>
       ))}
       <div className="wolf-alpha">
+        <Solid />
         <Plate priority />
         <EyeGlow at="0.2s" priority />
       </div>

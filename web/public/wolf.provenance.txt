@@ -30,3 +30,17 @@ Same canvas is deliberate: the glow carries no coordinates, so it is pinned
 edge-to-edge over the wolf and cannot drift from it. Regenerating wolf.png at
 any other size means regenerating this one too — test/wolf-eyeglow.test.js
 fails if the two ever disagree.
+
+wolf-solid.png — derived, 2026-08-28
+====================================
+Also computed from wolf.png, not drawn. The keyed art is bone-on-transparency,
+so every dark LINE in it is a hole — 121,313 px of them — and a wolf drawn in
+front of another showed the one behind through its own linework. This is that
+wolf's filled outline: transparent pixels reachable from the image border are
+"outside" and stay transparent; everything else, bone or linework hole alike, is
+filled solid with the page ground #0D1117. Outer boundary pixels keep the
+source alpha so the silhouette stays antialiased.
+
+It is invisible against the page and exists only to occlude. Same 973x973
+canvas as the other two plates, for the same reason: pinned, no coordinates of
+its own, cannot drift. test/wolf-eyeglow.test.js fails if the three disagree.

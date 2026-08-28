@@ -1284,6 +1284,12 @@ holds it in memory.
   then each pack member nearest-first. **Depth is `filter: brightness()`, never
   `opacity`** — brightness darkens the bone while leaving alpha intact, so a
   nearer wolf occludes the one behind it; fading with opacity made them ghosts.
+  ⚠ **Brightness was necessary but NOT sufficient** (2026-08-28): only the bone
+  is opaque, so every dark line was a hole and a wolf in front showed the one
+  behind through its own linework. Each wolf also gets `public/wolf-solid.png` —
+  its filled silhouette in the page ground, flood-filled inward from the image
+  border — beneath its plate. Invisible against the ground; the whole difference
+  where two wolves overlap.
   ⚠ **The eye light is its own plate (`public/wolf-eyes.png`) painted ON TOP.**
   Keying cut the dark linework and left the eye interior OPAQUE, so a glow
   behind the wolf reads through the brow strokes and not the eye — that was
@@ -1292,7 +1298,13 @@ holds it in memory.
   shares its canvas, so it needs no coordinates and cannot drift. The reveal
   filter must stay scoped to `.wolf-plate`: written as `.wolf-alpha img` it also
   matches the glow and the eyes can never open first. Both traps are held by
-  `test/wolf-eyeglow.test.js`. Nav is four groups (Raid / Stats / Prep / **/me**)
+  `test/wolf-eyeglow.test.js`. **Mobile fit:** the pack fans to 1.35× the alpha's
+  box, which put the document at 477px inside a 390px phone — the hero clips with
+  `overflow-x: clip` (not `hidden`, which would make it a scroll container) and
+  she is 86% wide there. Her width, not a tighter fan, is the lever: pulling the
+  fan in instead hid the pack's eyes behind her ruff. The rest of the page is
+  held one beat behind the wolf by `.page-reveal`, disabled under reduced motion.
+  Nav is four groups (Raid / Stats / Prep / **/me**)
   with hover-to-open on fine pointers and tap-to-open elsewhere — the open state
   is guarded on `matchMedia('(hover: hover) and (pointer: fine)')` because a
   tap's compatibility `mouseenter` plus the click otherwise open and immediately

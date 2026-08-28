@@ -39,7 +39,7 @@ export const releases: Release[] = [
   {
     key: 'web-1-4-1',
     title: 'A new front page',
-    version: 'Web 1.4.1',
+    version: 'Web 1.4.2',
     date: '2026-08-28',
     channel: 'beta',
     headline: 'The front page opens on the pack coming out of the dark, and the row of buttons underneath is now four doors instead of twenty.',
@@ -50,7 +50,11 @@ export const releases: Release[] = [
       },
       {
         name: 'Four doors instead of twenty',
-        blurb: 'Everything is now under Raid, Stats, Prep, or your own /me page. Hover one on a desktop, or tap it on a phone, and the pages inside open up underneath. Nothing was removed \u2014 it just stopped all being on screen at once.',
+        blurb: 'Everything is now under Raid, Stats, Prep, or your own /me page. Buffs sits under Raid. Hover one on a desktop, or tap it on a phone, and the pages inside open up underneath. Nothing was removed \u2014 it just stopped all being on screen at once.',
+      },
+      {
+        name: 'The rest of the page waits its turn',
+        blurb: 'The wolves arrive first, on their own, and everything else fades in a beat later.',
       },
       {
         name: 'Set to stay still if you asked it to',
@@ -59,6 +63,8 @@ export const releases: Release[] = [
     ],
     fixes: [
       'The eyes now light up inside the eye itself. They had been glowing behind the artwork, which put the light in the brow instead.',
+      'The wolves no longer show through each other. Only the pale part of the drawing was solid, so every dark line was a gap you could see the next wolf through.',
+      'On a phone the page no longer slides sideways. The pack runs wider than the screen on purpose, and it is now cropped at the edge instead of dragging the page with it.',
     ],
   },
   {
