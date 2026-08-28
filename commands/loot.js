@@ -22,7 +22,7 @@
 
 const { SlashCommandBuilder, MessageFlags } = require('discord.js');
 const { hasAllowedRole, allowedRolesList }  = require('../utils/roles');
-const { getRaids, getRaid, getMostRecentRaid } = require('../utils/opendkp');
+const { getRaids, getRaid, getMostRecentRaid, _raidLooksStale } = require('../utils/opendkp');
 const { setPendingLoot }                    = require('../utils/state');
 const {
   parseZealLoot,
@@ -186,9 +186,18 @@ module.exports = {
     const bossName = boss?.name ?? null;
     const embed    = buildLootAnnounceEmbed(enrichedItems, bossName, bidMinutes);
     if (activeRaid) {
+      // ⚠ Say WHICH raid, and say loudly when it looks like the wrong night.
+      // Reported 2026-08-27 mid-raid: loot was linking to the previous night's
+      // raid and nobody noticed until someone happened to check afterwards. The
+      // id was already on this embed; what was missing was any signal that it
+      // was the wrong one.
+      const stale = _raidLooksStale(activeRaid);
       embed.addFields({
-        name:  'Linked raid',
-        value: `**${activeRaid.Name || '?'}** · #${activeRaid.RaidId}`,
+        name:  stale ? '⚠ Linked raid — CHECK THIS' : 'Linked raid',
+        value: `**${activeRaid.Name || '?'}** · #${activeRaid.RaidId}`
+             + (activeRaid.Timestamp ? ` · dated ${String(activeRaid.Timestamp).slice(0, 10)}` : '')
+             + (stale ? '\n⚠ That raid is more than a day old — tonight\'s raid may not exist in'
+                      + ' OpenDKP yet. Create it first, or this loot charges the wrong night.' : ''),
         inline: false,
       });
     } else {

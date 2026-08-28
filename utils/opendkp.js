@@ -664,12 +664,60 @@ async function getRaid(raidId) {
 // post if there's no raid at all).
 //
 // Returns null when the API returns no raids.
+// The raid a loot post should charge against.
+//
+// ⚠ ORDER BY RaidId, NOT Timestamp. Reported mid-raid 2026-08-27: "the raid bot
+// didn't select the raid properly when i'm posting loot tonight". Two reasons
+// the old `sort by Timestamp desc` picks wrong, both measured against our
+// 413-raid mirror:
+//
+//  1. `Timestamp` is a DATE an officer types, and it drifts from reality — the
+//     raid named "8-23-26 Vex Thal" carries a timestamp of 8-22. A raid created
+//     tonight with yesterday's date sorts BELOW yesterday's raid and loses.
+//  2. **Ten raids share a timestamp with another raid** (9 separate dates —
+//     a main raid and an alt raid on one night, a re-created raid). On those,
+//     the comparator returns 0 and the winner is decided by OpenDKP's array
+//     order, which for the sibling /auctions endpoint we PROVED is not
+//     newest-first. So it was a coin flip.
+//
+// RaidId is server-assigned and monotonic; id order and timestamp order
+// disagree on 10 of 413 rows, and the id is the one that is right.
+//
+// ⚠ Future-dated raids are excluded rather than trusted: an officer staging
+// next week's raid would otherwise become "most recent" and silently collect
+// tonight's loot. Anything dated more than a day out is not tonight.
+function _pickCurrentRaid(raids, nowMs = Date.now()) {
+  const rows = Array.isArray(raids) ? raids : [];
+  const horizon = nowMs + 36 * 3600 * 1000;
+  const usable = rows.filter(r => {
+    if (!r || !Number.isFinite(Number(r.RaidId))) return false;
+    const t = Date.parse(r.Timestamp || '');
+    return !Number.isFinite(t) || t <= horizon;   // undated rows stay eligible
+  });
+  if (usable.length === 0) return null;
+  return [...usable].sort((a, b) => Number(b.RaidId) - Number(a.RaidId))[0];
+}
+
+// How stale the picked raid looks, so callers can warn instead of silently
+// charging the wrong night. Raid timestamps are date-only (noon UTC), so a
+// raid created for TODAY reads as ~12h old by mid-raid — the threshold has to
+// clear that or every normal post would warn.
+function _raidLooksStale(raid, nowMs = Date.now()) {
+  const t = Date.parse(raid?.Timestamp || '');
+  if (!Number.isFinite(t)) return false;
+  return (nowMs - t) > 36 * 3600 * 1000;
+}
+
 async function getMostRecentRaid() {
   const raids = await getRaids();
   if (!Array.isArray(raids) || raids.length === 0) return null;
-  return [...raids].sort((a, b) =>
-    new Date(b.Timestamp || 0) - new Date(a.Timestamp || 0)
-  )[0];
+  const picked = _pickCurrentRaid(raids);
+  if (picked && _raidLooksStale(picked)) {
+    console.warn(`[opendkp] most-recent raid #${picked.RaidId} "${picked.Name}" is dated`
+      + ` ${picked.Timestamp} — more than 36h old. Loot linked to it will charge the WRONG raid.`
+      + ' Has tonight\'s raid been created in OpenDKP?');
+  }
+  return picked;
 }
 
 // ── Audits + Adjustments ──────────────────────────────────────────────────────
@@ -766,7 +814,7 @@ async function updateRaidById(raidId, raidObject) {
 }
 
 module.exports = {
-  getStandings,
+  getStandings, _pickCurrentRaid, _raidLooksStale,
   opendkpHalted, setRuntimeHalt, noteCall, flushCallStats, _normalizeEndpoint,
   getRaids, getRaid, createRaid, updateRaid, updateRaidById, getMostRecentRaid,
   getCharacters, createCharacter, linkCharacter,
