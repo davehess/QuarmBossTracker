@@ -618,11 +618,33 @@ async function deleteAuction(auctionId) {
 // so the routine pass only needs the newest few. A periodic UNCOUNTED fetch
 // still heals anything edited upstream, and the #110 audit reconcile is the
 // second net under that.
+// Unwrap a list payload to its rows. OpenDKP wraps list responses
+// inconsistently — /auctions and /audits both do, /raids at least sometimes
+// does — so every consumer that assumed a bare array was one shape change away
+// from breaking. Returns the raw value untouched when no rows can be found, so
+// a genuine failure still reaches the caller's guard instead of looking like an
+// empty list.
+function _listRows(raw) {
+  if (Array.isArray(raw)) return raw;
+  for (const k of ['Results', 'Raids', 'Items', 'data']) {
+    if (Array.isArray(raw?.[k])) return raw[k];
+  }
+  return raw;
+}
+
+// GET /clients/{name}/raids — ALWAYS returns rows, not a wrapper.
+//
+// ⚠ The unwrap lives HERE, not in one caller. 2026-08-28: syncRaidsList was
+// taught to unwrap and started working again, while getMostRecentRaid — which
+// still demanded a bare array — kept returning null. That is the loot bug:
+// null raid → `linkRaidId = 0` → auctions posted against NO raid, which is
+// what "the raid bot didn't select the raid properly" actually looked like.
+// Fixing one call site and leaving the other is how a bug survives its own fix.
 async function getRaids(opts = {}) {
   const headers = await _bearerHeaders();
   const n = Number(opts.count);
   const q = Number.isInteger(n) && n > 0 ? `?count=${n}` : '';
-  return _get({ ..._clientUrl('/raids' + q), headers });
+  return _listRows(await _get({ ..._clientUrl('/raids' + q), headers }));
 }
 
 // GET /clients/{name}/dkp — the authoritative standings array (Models[]).
@@ -814,7 +836,7 @@ async function updateRaidById(raidId, raidObject) {
 }
 
 module.exports = {
-  getStandings, _pickCurrentRaid, _raidLooksStale,
+  getStandings, _pickCurrentRaid, _raidLooksStale, _listRows,
   opendkpHalted, setRuntimeHalt, noteCall, flushCallStats, _normalizeEndpoint,
   getRaids, getRaid, createRaid, updateRaid, updateRaidById, getMostRecentRaid,
   getCharacters, createCharacter, linkCharacter,

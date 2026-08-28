@@ -22,7 +22,9 @@
 // Run: npx vitest run test/opendkp-raid-pick.test.js
 
 import { describe, it, expect } from 'vitest';
-import { _pickCurrentRaid, _raidLooksStale } from '../utils/opendkp.js';
+import { readSource, ROOT } from './_source-slice.js';
+import path from 'node:path';
+import { _pickCurrentRaid, _raidLooksStale, _listRows } from '../utils/opendkp.js';
 
 const NOW = Date.parse('2026-08-28T02:00:00Z');   // 10pm ET Thursday, mid-raid
 const raid = (id, name, ts) => ({ RaidId: id, Name: name, Timestamp: ts });
@@ -83,5 +85,34 @@ describe('staleness warning', () => {
 
   it('does not flag a raid with no timestamp to judge', () => {
     expect(_raidLooksStale(raid(1, 'x', null), NOW)).toBe(false);
+  });
+});
+
+// ── The shape unwrap belongs in getRaids, not in one caller ─────────────────
+// 2026-08-28: syncRaidsList was taught to unwrap and started working again,
+// while getMostRecentRaid — which still demanded a bare array — kept returning
+// null. A null raid means linkRaidId = 0, i.e. loot posted against NO raid,
+// which is what the reported symptom actually was. Fixing one call site and
+// leaving the other is how a bug survives its own fix.
+describe('list payload unwrapping', () => {
+  const rows = [{ RaidId: 101157 }];
+
+  it('returns rows for a bare array and for every wrapper this API uses', () => {
+    for (const payload of [rows, { Results: rows }, { Raids: rows }, { Items: rows }, { data: rows }]) {
+      expect(_listRows(payload)).toEqual(rows);
+    }
+  });
+
+  it('passes an unrecognised payload THROUGH rather than faking an empty list', () => {
+    // Returning [] here would turn "we cannot read the response" into "there
+    // are no raids", which reads as success and silently unlinks every auction.
+    const weird = { Nope: 1 };
+    expect(_listRows(weird)).toBe(weird);
+    expect(Array.isArray(_listRows(weird))).toBe(false);
+  });
+
+  it('getRaids applies it, so every caller is covered at once', () => {
+    const src = readSource(path.join(ROOT, 'utils', 'opendkp.js'));
+    expect(src).toContain('return _listRows(await _get({ ..._clientUrl(\'/raids\' + q), headers }));');
   });
 });

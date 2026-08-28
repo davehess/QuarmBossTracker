@@ -202,6 +202,38 @@ next touch one rather than assuming a missing row means a missing doc.
   the earlier "more calls, 2,300× less data" ask was not.
   Supersedes the earlier per-endpoint `?since` request.
 
+- **RA% could exceed 100% — SuperBloodWolf read 175% (migration
+  `20260828140000`, 2026-08-28).** Numerator and denominator in
+  `member_attendance_metrics` were written to different boundary rules:
+  numerator `ts > now()-90d` (no clamp), denominator
+  `ts > GREATEST(now()-90d, first_attended)` (**strict >**), lifetime
+  `ts >= first_attended`. Raid timestamps are date-only (noon UTC) so every tick
+  in a raid shares one `ts`, and for a new member `first_attended` IS that
+  timestamp — the strict `>` dropped their **entire first raid** from the
+  denominator while the numerator kept it. 7 / (7−3) = 175%. Lifetime used `>=`,
+  which is why that column alone was right and why nobody saw it until a member
+  joined recently enough for the clamp to bind.
+  Fixed to `>=` on all six windowed clamps. **Verified: SuperBloodWolf 7/7 =
+  100%, and zero members now exceed 100%.**
+  ⚠ This view feeds the #80 review cards and `/admin/attendance`, so the wrong
+  number was driving real decisions about people.
+  `test/ra-window-boundary.test.js` guards it — and note its own header: the
+  first version of that test matched the migration's comment DOCUMENTING the
+  broken form instead of the code, the second time in one night that an
+  assertion was fooled by its own documentation. Strip comments, then assert.
+
+- **`getRaids` unwrap belongs in the client, not one caller (bot 3.1.96).**
+  3.1.95 taught `syncRaidsList` to unwrap the `/raids` payload and the mirror
+  recovered (#101157 landed 09:10 UTC). But `getMostRecentRaid` still demanded a
+  bare array, so it kept returning **null** → `linkRaidId = 0` → **loot posted
+  against NO raid**. That, not the timestamp tie, is what the 2026-08-27 report
+  actually was. ⚠ Correcting the 3.1.94 note: #101157's `ts` is 8-27, LATER than
+  #101101's 8-26, so the old timestamp sort would have picked it correctly once
+  it was in the list. The RaidId sort is still right (10 raids share timestamps)
+  but it was not the cause. `_listRows()` now unwraps inside `getRaids()` so
+  every caller is covered, and passes an unrecognised payload THROUGH rather
+  than faking an empty list.
+
 - **⚠ P1, mid-raid 2026-08-27: loot posted against the WRONG RAID (bot 3.1.94).**
   Reported at 21:01 ET while officers were posting: *"the raid bot didn't select
   the raid properly when i'm posting loot tonight"*. Tonight's raid was
