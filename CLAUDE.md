@@ -109,6 +109,16 @@ They were MERGED into `.claude/settings.json` alongside the existing
 `session-digest.sh`. If the deep pass ever costs more than it returns, delete
 the `Stop` block and keep `PostToolUse`.
 
+### Working rule — commit messages go through a FILE, never `-m`
+`git commit -m "…"` in a double-quoted shell string executes anything in
+backticks. It happened twice on 2026-08-27/28: once eating two words, once
+running `npx impeccable install` mid-commit and splicing its help output into
+the message (which then had to be amended and force-pushed). Our messages quote
+code constantly, so this is not an edge case here — it is the normal case.
+
+**Write the message to a file and use `git commit -F <file>`.** Put the file in
+the scratchpad. Costs one extra line; removes the whole class.
+
 ### Working rule — decisions get WRITTEN DOWN, same session
 A decision that lives only in chat is lost: cloud and desktop sessions cannot
 share a conversation, and a container reset takes the scratchpad with it. When
