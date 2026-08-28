@@ -1304,8 +1304,15 @@ holds it in memory.
   she is 86% wide there. Her width, not a tighter fan, is the lever: pulling the
   fan in instead hid the pack's eyes behind her ruff. The rest of the page is
   held one beat behind the wolf by `.page-reveal`, disabled under reduced motion.
-  Nav is four groups (Raid / Stats / Prep / **/me**)
-  with hover-to-open on fine pointers and tap-to-open elsewhere — the open state
+  Nav is four doors — Raid / Stats / Prep / **/me**.
+  ⚠ **`/me` renders unconditionally**; gating it on `showMe` made the four doors
+  three for every signed-out visitor and it went missing. `/me` redirects to
+  `/auth/signin?next=/me` itself, so the link never dead-ends. Placement rulings
+  (Hitya, 2026-08-28): Buffs is Raid; Quartermaster and `/who` are Prep — Raid is
+  what you touch DURING one, Prep is what you do beforehand. Each ruling is
+  asserted as a pair (in the right group, out of the wrong one) so a move done
+  by copying leaves a failing test rather than a duplicate.
+  Groups open on hover on fine pointers and on tap elsewhere — the open state
   is guarded on `matchMedia('(hover: hover) and (pointer: fine)')` because a
   tap's compatibility `mouseenter` plus the click otherwise open and immediately
   close the panel.

@@ -126,11 +126,36 @@ describe('landing page fit and pacing', () => {
     void delay;
   });
 
-  it('files Buffs under Raid', () => {
-    // Hitya, 2026-08-28. Buffs is something you run during a raid, not before.
-    const raid = nav.slice(nav.indexOf("id: 'raid'"), nav.indexOf("id: 'stats'"));
-    const prep = nav.slice(nav.indexOf("id: 'prep'"));
-    expect(raid).toContain("'/buffs'");
-    expect(prep).not.toContain("'/buffs'");
+  // Every ruling Hitya has made on where a destination belongs. Each one is a
+  // pair — in the right group AND out of the wrong one — because moving an item
+  // by copying it leaves a duplicate that looks fine in the menu.
+  const RULINGS = [
+    { href: '/buffs',         into: 'raid', outOf: 'prep' },   // during a raid
+    { href: '/quartermaster', into: 'prep', outOf: 'raid' },   // beforehand
+    { href: '/who',           into: 'prep', outOf: 'raid' },
+  ];
+  const group = id => {
+    const order = ['raid', 'stats', 'prep'];
+    const start = nav.indexOf(`id: '${id}'`);
+    const next = order.slice(order.indexOf(id) + 1)
+      .map(g => nav.indexOf(`id: '${g}'`)).find(i => i > start);
+    return nav.slice(start, next === undefined ? nav.indexOf('const chip') : next);
+  };
+
+  it.each(RULINGS)('files $href under $into, not $outOf', ({ href, into, outOf }) => {
+    expect(group(into)).toContain(`'${href}'`);
+    expect(group(outOf)).not.toContain(`'${href}'`);
+  });
+
+  it('always offers /me — it is a top-level door, not a signed-in extra', () => {
+    // Gating it on `showMe` made the four doors three for every signed-out
+    // visitor, which is exactly how it went missing (Hitya, 2026-08-28).
+    // /me redirects to sign-in itself, so the link never dead-ends.
+    const me = nav.match(/^\s*(?:\{showMe[^\n]*)?<Link href="\/me"/m);
+    expect(nav).toMatch(/<Link href="\/me"/);
+    expect(nav).not.toMatch(/\{\s*showMe\s*&&\s*<Link href="\/me"/);
+    void me;
+    const mePage = fs.readFileSync(path.join(WEB, 'app/me/page.tsx'), 'utf8');
+    expect(mePage).toMatch(/redirect\('\/auth\/signin\?next=\/me'\)/);
   });
 });

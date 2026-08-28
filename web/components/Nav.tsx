@@ -8,9 +8,10 @@ import { useEffect, useRef, useState } from 'react';
 // viewport below the fold. Everything is still one click away — the difference
 // is that you now choose a category first.
 //
-// Grouping is a judgment call: Raid is what you touch during one, Stats is what
-// happened, Prep is what you do beforehand. Say so if a destination is filed
-// wrong; nothing here is load-bearing beyond the label.
+// Grouping is a judgment call: Raid is what you touch DURING one, Stats is what
+// happened, Prep is what you do beforehand. Hitya has ruled on three so far —
+// Buffs is Raid; Quartermaster and /who are Prep (2026-08-28). Say so if a
+// destination is filed wrong; nothing here is load-bearing beyond the label.
 type Item = { href: string; label: string };
 type Group = { id: string; label: string; items: Item[] };
 
@@ -20,10 +21,8 @@ const GROUPS: Group[] = [
     items: [
       { href: '/raid',          label: 'Raid HQ' },
       { href: '/boards',        label: 'Spawn boards' },
-      { href: '/who',           label: '/who' },
       { href: '/buffs',         label: 'Buffs' },
       { href: '/rolls',         label: 'Rolls' },
-      { href: '/quartermaster', label: 'Quartermaster' },
     ],
   },
   {
@@ -39,10 +38,12 @@ const GROUPS: Group[] = [
   {
     id: 'prep', label: 'Prep',
     items: [
-      { href: '/guide',   label: 'Raid guide' },
-      { href: '/db',      label: 'Database' },
-      { href: '/pop',     label: 'PoP flags' },
-      { href: '/roadmap', label: 'Roadmap' },
+      { href: '/guide',         label: 'Raid guide' },
+      { href: '/db',            label: 'Database' },
+      { href: '/quartermaster', label: 'Quartermaster' },
+      { href: '/who',           label: '/who' },
+      { href: '/pop',           label: 'PoP flags' },
+      { href: '/roadmap',       label: 'Roadmap' },
     ],
   },
 ];
@@ -126,7 +127,13 @@ export default function Nav({ showAdmin = false, showMe = false }: { showAdmin?:
           );
         })}
 
-        {showMe   && <Link href="/me"    className={`${chip} ${path?.startsWith('/me') ? chipActive : chipIdle}`}>/me</Link>}
+        {/* ⚠ Always rendered. The brief is four top-level doors — Raid, Stats,
+            Prep and /me (Hitya) — and gating this one on `showMe` quietly made
+            it three for every signed-out visitor, which is how it went missing.
+            /me redirects to `/auth/signin?next=/me` on its own, so a signed-out
+            click lands on sign-in and comes back here rather than dead-ending;
+            for a prospective member it is the invitation, not a broken link. */}
+        <Link href="/me" className={`${chip} ${path?.startsWith('/me') ? chipActive : chipIdle}`}>/me</Link>
         {showAdmin && <Link href="/admin" className={`${chip} ${path?.startsWith('/admin') ? chipActive : chipIdle}`}>Admin</Link>}
         {showMe   && <Link href="/test-server" className={`${chip} ${chipIdle} opacity-70`}>Test server</Link>}
       </nav>

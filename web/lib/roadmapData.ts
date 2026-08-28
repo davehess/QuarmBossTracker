@@ -39,7 +39,7 @@ export const releases: Release[] = [
   {
     key: 'web-1-4-1',
     title: 'A new front page',
-    version: 'Web 1.4.2',
+    version: 'Web 1.4.3',
     date: '2026-08-28',
     channel: 'beta',
     headline: 'The front page opens on the pack coming out of the dark, and the row of buttons underneath is now four doors instead of twenty.',
@@ -50,7 +50,7 @@ export const releases: Release[] = [
       },
       {
         name: 'Four doors instead of twenty',
-        blurb: 'Everything is now under Raid, Stats, Prep, or your own /me page. Buffs sits under Raid. Hover one on a desktop, or tap it on a phone, and the pages inside open up underneath. Nothing was removed \u2014 it just stopped all being on screen at once.',
+        blurb: 'Everything is now under Raid, Stats, Prep, or your own /me page \u2014 and /me is always there, signed in or not. Raid is what you touch during one (buffs, boards, rolls); Prep is what you do beforehand (the guide, the database, quartermaster, /who). Hover one on a desktop, or tap it on a phone, and the pages inside open up underneath. Nothing was removed \u2014 it just stopped all being on screen at once.',
       },
       {
         name: 'The rest of the page waits its turn',

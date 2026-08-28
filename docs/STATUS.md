@@ -133,9 +133,12 @@ next touch one rather than assuming a missing row means a missing doc.
   a string a loop walked — and still asserted the eye slits were transparent,
   which is what caused trap (1). Do not restore it from git.
   ⚠ **Not on `main`.** Graduate deliberately — this replaces the front door.
-  Nav grouping is still a guess at where each destination belongs and Hitya may
-  reclassify; the header chrome above the nav (Download / Beta / timezone) is
-  still ~380px on a phone and was flagged but not touched.
+  Nav grouping was a guess; Hitya has since ruled on three (2026-08-28): Buffs →
+  Raid, Quartermaster and `/who` → Prep. `/me` is now rendered unconditionally —
+  it had been gated on being signed in, which silently made the four doors three
+  for exactly the visitor the landing page is written for. The header chrome
+  above the nav (Download / Beta / timezone) is still ~380px on a phone and was
+  flagged but not touched.
 
 - **/tag channel autojoin — merge logic (agent, 2026-08-26).** Hitya: *"we need
   to add this channel to people's autojoins if they don't have them in their ini
