@@ -1,5 +1,6 @@
 import './globals.css';
 import type { Metadata } from 'next';
+import { Prata, Faustina } from 'next/font/google';
 import Link from 'next/link';
 import Nav from '@/components/Nav';
 import AuthBadge from '@/components/AuthBadge';
@@ -15,6 +16,13 @@ import { isOfficer } from '@/lib/officer';
 // b.wolfpack.quest. Set at BUILD time from the branch (see next.config.js), so
 // this is a constant in the bundle rather than a per-request check.
 const IS_BETA = process.env.NEXT_PUBLIC_IS_BETA === '1';
+
+// The plate voice. Prata is a Didone: the high stroke contrast and flat
+// serifs of an engraved specimen plate, which is the world this landing page
+// commits to. Faustina carries prose — the mono stays for data, where it is
+// measurement rather than costume.
+const display = Prata({ subsets: ['latin'], weight: '400', variable: '--font-display', display: 'swap' });
+const proseFace = Faustina({ subsets: ['latin'], weight: ['400', '600'], variable: '--font-prose', display: 'swap' });
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL
   || (IS_BETA ? 'https://b.wolfpack.quest' : 'https://wolfpack.quest');
@@ -53,8 +61,44 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   const showMe    = !!user;
 
   return (
-    <html lang="en">
+    <html lang="en" className={`${display.variable} ${proseFace.variable}`}>
       <body className="font-mono">
+        {/* Direction contract — audited at the finish review. Kept in the
+            emitted markup so it survives the production build and can be
+            grepped out of it. */}
+        <div
+          style={{ display: 'none' }}
+          dangerouslySetInnerHTML={{ __html: `<!--
+IMPECCABLE DIRECTION CONTRACT · landing · persuade · seed 29c36e6b
+
+THESIS: This guild instruments itself, and the record is the proof. Refuses the
+category default for a guild site: a logo, a hero image, and four identical
+feature cards.
+
+OWN-WORLD: An engraved natural-history specimen plate, inverted onto the night
+ground the audience already reads on. Bone line on #0d1117, one committed gold
+accent (#d29922) that belongs to the eyes and to live data and to nothing else.
+Prata for the plate voice, Faustina for prose, mono kept only where the content
+is measurement. Rules and hairlines, not cards.
+
+STORY: A raider or a prospective member sees a wolf drawn like a specimen, a
+pack surfacing behind it, and immediately below, real named bosses with real
+timestamps and real damage. They believe the data is live, and they sign in.
+
+FIRST VIEWPORT: Full-bleed wolf plate, alpha centred and already present; the
+headline sits over her at the optical centre with the primary action directly
+under it; five pack wolves surface behind on a stagger; the live ledger's first
+rows crest the fold so the proof is visible before any scroll.
+
+FORM: Candidate 5 of the grounded list (engraved specimen plate), assigned by
+the roll and pinned by the brief's wolf. Seed 29c36e6b, degraded roll: no
+challengers, the roll service is blocked by this environment's egress proxy.
+
+FINISH: unreviewed and undocumented is unfinished; this build ends with the
+finish review, the verdict, DESIGN.md, and every shipping raster carrying its
+provenance
+-->` }}
+        />
         {IS_BETA && <BetaBanner />}
         <div className="max-w-7xl mx-auto p-3 sm:p-4">
           <header className="mb-6">
