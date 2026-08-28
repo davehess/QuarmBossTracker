@@ -1,31 +1,30 @@
-// The wolf plate. One authored moment on the landing page: the alpha is already
-// there when you arrive, and the pack surfaces out of the dark behind her.
+// The wolf plate, and the page's one authored moment.
 //
-// The mark is a raster now (web/public/wolf.png) rather than the hand-authored
-// SVG this file used to carry. Four passes of bezier work got close to the
-// reference in weight and structure but not to its finish, and the craft floor
-// is explicit that open-ended self-QA is worse than stopping. Provenance and
-// the keying pipeline: web/public/wolf.provenance.txt.
+// The reveal is a sequence, not a fade (Hitya, 2026-08-28): the alpha's eyes
+// open in the dark first, then the pack's eyes behind her, then her own lines
+// resolve, then the pack resolves one by one, nearest first.
 //
-// Everything below the asset is unchanged: same composition, same stagger, same
-// blur-and-mask reveal, same reduced-motion contract.
+// ⚠ THE PACK IS OPAQUE. Depth is carried by BRIGHTNESS, never by opacity —
+// `filter: brightness()` darkens the bone while leaving alpha intact, so a
+// nearer wolf occludes the one behind it the way a real body would. Fading them
+// with opacity let the rear wolves show straight through the front one, which
+// read as ghosts rather than as distance.
 import Image from 'next/image';
-
-// The pack. Each wolf is the same animal, further back: smaller, softer, later.
-// Behind the alpha, never beside her — the reveal is depth, not a row.
-const PACK = [
-  { x: -26, y:  6, s: 0.62, d: '0.35s', o: 0.26, b: '1.1px' },
-  { x:  26, y:  6, s: 0.62, d: '0.55s', o: 0.26, b: '1.1px' },
-  { x: -44, y: 11, s: 0.44, d: '0.80s', o: 0.17, b: '2.0px' },
-  { x:  44, y: 11, s: 0.44, d: '1.00s', o: 0.17, b: '2.0px' },
-  { x:   0, y: 14, s: 0.38, d: '1.25s', o: 0.12, b: '2.6px' },
-];
 
 // Measured on the shipped asset, as a fraction of its square. The keyed art
 // leaves the eye slits TRANSPARENT, so a warm source behind the plate reads
-// through them and nowhere else — which is how the eyes stay the only lit
-// thing on the page without painting anything onto the wolf.
+// through them and nowhere else.
 const EYES = [{ x: 34.5, y: 41.5 }, { x: 65.5, y: 41.5 }];
+
+// Ordered BACK TO FRONT: DOM order is the depth order, so the nearest wolf
+// paints last and covers the ones behind it.
+const PACK = [
+  { x:   0, y: 15, s: 0.38, bright: 0.17, blur: '2.4px', eyeAt: '1.30s', bodyAt: '2.85s' },
+  { x: -45, y: 12, s: 0.45, bright: 0.24, blur: '1.8px', eyeAt: '1.12s', bodyAt: '2.62s' },
+  { x:  45, y: 12, s: 0.45, bright: 0.24, blur: '1.8px', eyeAt: '1.00s', bodyAt: '2.50s' },
+  { x: -27, y:  7, s: 0.63, bright: 0.36, blur: '1.0px', eyeAt: '0.86s', bodyAt: '2.28s' },
+  { x:  27, y:  7, s: 0.63, bright: 0.36, blur: '1.0px', eyeAt: '0.74s', bodyAt: '2.16s' },
+];
 
 function Plate({ priority = false }: { priority?: boolean }) {
   return (
@@ -41,6 +40,25 @@ function Plate({ priority = false }: { priority?: boolean }) {
   );
 }
 
+function Eyes({ at, scale = 1 }: { at: string; scale?: number }) {
+  return (
+    <>
+      {EYES.map((e, i) => (
+        <span
+          key={i}
+          className="wolf-eyelight"
+          style={{
+            left: `${e.x}%`,
+            top: `${e.y}%`,
+            animationDelay: at,
+            ['--eye-scale' as string]: scale,
+          }}
+        />
+      ))}
+    </>
+  );
+}
+
 export default function WolfPack({ className = '' }: { className?: string }) {
   return (
     <div className={`wolf-stage ${className}`} aria-hidden="true">
@@ -52,19 +70,17 @@ export default function WolfPack({ className = '' }: { className?: string }) {
             left: `calc(50% + ${w.x}%)`,
             top: `${w.y}%`,
             width: `${w.s * 100}%`,
-            animationDelay: w.d,
-            ['--wolf-o' as string]: w.o,
-            ['--wolf-b' as string]: w.b,
+            ['--body-at' as string]: w.bodyAt,
+            ['--wolf-bright' as string]: w.bright,
+            ['--wolf-blur' as string]: w.blur,
           }}
         >
+          <Eyes at={w.eyeAt} scale={0.8} />
           <Plate />
         </div>
       ))}
       <div className="wolf-alpha">
-        {EYES.map((e, i) => (
-          <span key={i} className="wolf-eyelight"
-                style={{ left: `${e.x}%`, top: `${e.y}%` }} />
-        ))}
+        <Eyes at="0.2s" />
         <Plate priority />
       </div>
     </div>
