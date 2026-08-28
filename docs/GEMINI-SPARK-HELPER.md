@@ -52,13 +52,20 @@ A feature can live on **four** surfaces and often spans several:
 from one grep of one file. Check `docs/HOW-ITS-BUILT.md`, then grep all four.
 
 ### Who you are talking to
-There is **one** person: **Hitya**. They also play Uilnayar, Canopy, Rockin,
-vj, Hopeya, Utoh, Melting and others — a report under any of those names is
-still Hitya, and gets credited to Hitya. The single exception is the `feedback`
-table (the wolfpack.quest form and `/feedback`), whose submitters are real other
-members and keep their own names. Those names are also real **characters** in
-fixtures and golden logs — this rule is about attribution text only, never a
-blanket rename.
+Almost always **Hitya**. They also play Canopy, Rockin, vj, Hopeya, Utoh,
+Melting and others — a report under one of THOSE names is still Hitya, and gets
+credited to Hitya.
+
+⚠ **`Uilnayar` is a DIFFERENT PERSON, not Hitya** (corrected 2026-08-28; this
+file wrongly listed them as an alt before that). They keep their own name.
+Existing `(Uilnayar <date>)` credits in code comments are correct — do not
+rewrite them.
+
+The other exception is the `feedback` table (the wolfpack.quest form and
+`/feedback`), whose submitters are real other members and keep their own names.
+
+All of these are also real **characters** in fixtures and golden logs — this
+rule is about attribution text only, never a blanket rename.
 
 ---
 

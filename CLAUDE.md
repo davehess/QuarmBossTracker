@@ -27,15 +27,23 @@ adjacent or unrelated code, stop and flag it before proceeding. (The
 18k-line `index.js` monolith makes "small line count" a poor proxy for "small
 blast radius" — reaching into unrelated behavior is a structural hazard here.)
 
-### Working rule — attribution: everything is Hitya unless it came via feedback
-**You only ever interact with one person: Hitya.** They also play Uilnayar,
-Canopy, Rockin, vj, Hopeya, Utoh, Melting and others, so a decision, a bug
-report, a sketch or a live-test result arriving under any of those names is
-still Hitya. Credit it to **Hitya** (established 2026-08-09).
+### Working rule — attribution: mostly Hitya, with named exceptions
+**You almost always interact with one person: Hitya.** They also play Canopy,
+Rockin, vj, Hopeya, Utoh, Melting and others, so a decision, a bug report, a
+sketch or a live-test result arriving under one of THOSE names is still Hitya.
+Credit it to **Hitya** (established 2026-08-09).
 
-**The one exception is the `feedback` table** — the wolfpack.quest feedback form
-and `/feedback`. Those are genuinely other members and KEEP their own names.
-The complete list, from the table itself:
+⚠ **`Uilnayar` is NOT Hitya — they are a different person** (corrected by Hitya,
+2026-08-28). This file listed them as an alt from 2026-08-09 until then, so
+**any attribution to Hitya dated in that window may actually be Uilnayar's** —
+treat those as suspect rather than settled, and prefer the original report if
+you can find it. Uilnayar keeps their own name, like the feedback submitters
+below. Existing `(Uilnayar <date>)` credits in code comments are CORRECT and
+must not be rewritten to Hitya.
+
+**The other exception is the `feedback` table** — the wolfpack.quest feedback
+form and `/feedback`. Those are genuinely other members and KEEP their own
+names. The complete list, from the table itself:
 
 | Submitter | What |
 |---|---|
@@ -43,9 +51,11 @@ The complete list, from the table itself:
 | `Jankzer` | bug + idea (Jul 2026) |
 | `Ashieron/Donaldus/Oravayne` | the log-archiving idea (2026-08-07) |
 
-If you are about to credit anyone NOT in that table, it is Hitya. Check the
-table rather than trusting an existing comment — a name being in a code comment
-today is not evidence, since that is exactly what was wrong before.
+If you are about to credit anyone who is NOT `Uilnayar` and NOT in that table,
+it is Hitya. Check the table rather than trusting an existing comment — a name
+being in a code comment today is not evidence, since that is exactly what was
+wrong before. **And a name being on the alt list above is not evidence either:
+Uilnayar sat on it, wrongly, for nearly three weeks.**
 
 ⚠ These are also real CHARACTER NAMES in test fixtures, golden logs and worked
 examples (the `{s}`-capture rule below turns on capturing `" Uilnayar"` with a
