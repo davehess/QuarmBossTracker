@@ -85,10 +85,12 @@ STORY: A raider or a prospective member sees a wolf drawn like a specimen, a
 pack surfacing behind it, and immediately below, real named bosses with real
 timestamps and real damage. They believe the data is live, and they sign in.
 
-FIRST VIEWPORT: Full-bleed wolf plate, alpha centred and already present; the
-headline sits over her at the optical centre with the primary action directly
-under it; five pack wolves surface behind on a stagger; the live ledger's first
-rows crest the fold so the proof is visible before any scroll.
+FIRST VIEWPORT: Full-bleed wolf plate, alpha centred and already present, ears
+unclipped; the headline is centred on her axis with the primary action directly
+under it; five pack wolves surface behind on a stagger. The proof below the fold
+is the platform map and its counts for a signed-out visitor, and the live kill
+ledger for a signed-in member — corrected after the finish review caught the
+first draft promising a ledger that a first-time visitor never sees.
 
 FORM: Candidate 5 of the grounded list (engraved specimen plate), assigned by
 the roll and pinned by the brief's wolf. Seed 29c36e6b, degraded roll: no

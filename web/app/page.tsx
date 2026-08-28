@@ -63,25 +63,29 @@ export default async function HomePage() {
     <div className="[--wolf-line:#e8e2d4]">
 
       {/* ── The plate ──────────────────────────────────────────────────── */}
-      <section className="relative isolate -mx-3 sm:-mx-4 overflow-hidden">
-        <div className="pointer-events-none absolute inset-x-0 -top-6 mx-auto w-[125%] max-w-[820px] opacity-[0.92] sm:w-full">
+      {/* The plate is symmetric and frontal, so the type is centred on its axis.
+          Left-aligned type beside a centred wolf read as two unrelated objects
+          — the first render proved it. */}
+      <section className="relative isolate -mx-3 sm:-mx-4">
+        <div className="pointer-events-none absolute inset-x-0 top-0 mx-auto w-[150%] max-w-[1040px] sm:w-[112%]">
           <WolfPack />
         </div>
-        {/* Lets the headline sit on the plate and stay ≥4.5:1 against it. */}
-        <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-bg/45 via-bg/75 to-bg" />
+        {/* Clears the type without erasing her: transparent across the ears and
+            eyes, opaque where the headline lands. */}
+        <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-transparent via-bg/70 via-55% to-bg" />
 
-        <div className="relative px-4 pt-[46vw] pb-10 sm:pt-[30vw] sm:pb-14 lg:pt-[22rem]">
-          <h1 className="font-[family-name:var(--font-display)] text-[clamp(2rem,7vw,4.25rem)] leading-[1.04] tracking-[-0.02em] text-[#f2ede1] text-balance max-w-[16ch]">
+        <div className="relative px-4 pt-[62vw] pb-10 text-center sm:pt-[42vw] sm:pb-14 lg:pt-[26rem]">
+          <h1 className="font-[family-name:var(--font-display)] mx-auto text-[clamp(2rem,7vw,4.25rem)] leading-[1.04] tracking-[-0.02em] text-[#f2ede1] text-balance max-w-[18ch]">
             One wolf sees a fight.<br />The pack sees the raid.
           </h1>
-          <p className="font-[family-name:var(--font-prose)] mt-5 max-w-[62ch] text-[1.0625rem] leading-7 text-text">
+          <p className="font-[family-name:var(--font-prose)] mx-auto mt-5 max-w-[58ch] text-[1.0625rem] leading-7 text-text">
             Forty people log the same four hours from forty different places on the
             field. Wolf Pack merges them into one record — who did the damage, who
             held the chain together, who was standing where when it went wrong.
             No single client can see it. This is where it lives afterwards.
           </p>
 
-          <div className="mt-7 flex flex-wrap items-center gap-3">
+          <div className="mt-7 flex flex-wrap items-center justify-center gap-3">
             {user ? (
               <Link href="/me" className="no-underline rounded-md bg-[#d29922] px-5 py-2.5 text-sm font-semibold text-[#1a1206] transition-colors hover:bg-[#e0a92c]">
                 Your record

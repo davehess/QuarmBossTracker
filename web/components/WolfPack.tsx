@@ -85,11 +85,11 @@ export function WolfHead({ className = '', strokeWidth = 2.4, hatch = true }: Wo
 // The pack. Each wolf is the same animal, further back: smaller, softer, later.
 // Behind the alpha, never beside her — the reveal is depth, not a row.
 const PACK = [
-  { x: -26, y:  6, s: 0.62, d: '0.35s', o: 0.30, b: '1.1px' },
-  { x:  26, y:  6, s: 0.62, d: '0.55s', o: 0.30, b: '1.1px' },
-  { x: -44, y: 11, s: 0.44, d: '0.80s', o: 0.20, b: '2.0px' },
-  { x:  44, y: 11, s: 0.44, d: '1.00s', o: 0.20, b: '2.0px' },
-  { x:   0, y: 14, s: 0.38, d: '1.25s', o: 0.16, b: '2.6px' },
+  { x: -26, y:  6, s: 0.62, d: '0.35s', o: 0.46, b: '1.1px' },
+  { x:  26, y:  6, s: 0.62, d: '0.55s', o: 0.46, b: '1.1px' },
+  { x: -44, y: 11, s: 0.44, d: '0.80s', o: 0.32, b: '2.0px' },
+  { x:  44, y: 11, s: 0.44, d: '1.00s', o: 0.32, b: '2.0px' },
+  { x:   0, y: 14, s: 0.38, d: '1.25s', o: 0.24, b: '2.6px' },
 ];
 
 export default function WolfPack({ className = '' }: { className?: string }) {

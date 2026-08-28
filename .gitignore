@@ -55,3 +55,8 @@ gemini-image-*.png
 
 # Agent-tool git worktrees (transient per-session workspaces for subagents)
 .claude/worktrees/
+
+# Impeccable review captures and generated comps — evidence for a review round,
+# not source. The findings live in the commit message and DESIGN.md.
+.impeccable/review/
+.impeccable/mocks/
