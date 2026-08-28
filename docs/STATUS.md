@@ -202,6 +202,23 @@ next touch one rather than assuming a missing row means a missing doc.
   the earlier "more calls, 2,300× less data" ask was not.
   Supersedes the earlier per-endpoint `?since` request.
 
+- **`/admin/attendance` hides inactive members by default (web 1.2.6,
+  2026-08-28).** Hitya: *"if someone falls off of the 30 day list (no ticks in
+  30 days) they become inactive. we should filter by default on that page by
+  that stat. Topflight is an example."* Measured: **290 rows, 218 with zero
+  ticks in 30 days** — three quarters of the page was people not raiding, which
+  is what made a real signal (Topflight: 30% 90d RA, no tick since 2026-07-22)
+  something you had to hunt for. Default is now active-only, with the counts and
+  a `?show=all` toggle in the header; inactive rows render dimmed and labelled
+  with their last tick date when shown.
+  ⚠ **Inactive is defined on TICKS, not RA%** — a returning member can sit at 0%
+  for a window and still have raided this week, and someone at 40% 90d RA can
+  have stopped a month ago (which is precisely Topflight). Filtering on the
+  percentage hides the wrong people.
+  8 mutation-checked tests in `test/attendance-active-filter.test.js`, incl. the
+  filter-computed-but-table-still-unfiltered case and dropping query params on
+  toggle.
+
 - **RA% could exceed 100% — SuperBloodWolf read 175% (migration
   `20260828140000`, 2026-08-28).** Numerator and denominator in
   `member_attendance_metrics` were written to different boundary rules:
