@@ -430,6 +430,7 @@ async function syncAuctions(opts = {}) {
 function _raidsCount()          { return _envNum('OPENDKP_RAIDS_COUNT', 25); }
 function _raidsFullEveryHours() { return _envNum('OPENDKP_RAIDS_FULL_HOURS', 24); }
 let _lastRaidsFullAt = 0;
+let _loggedRaidsShape = false;
 
 // PURE so the decision can be tested as BEHAVIOUR rather than by grepping the
 // source for the right words. The first version of this test asserted only
@@ -470,7 +471,32 @@ async function syncRaidsList() {
   catch (err) { return { fetched: 0, upserted: 0, error: err?.message || String(err) }; }
   if (!useCount) _lastRaidsFullAt = Date.now();
 
-  if (!Array.isArray(raids)) return { fetched: 0, upserted: 0, error: 'getRaids returned non-array' };
+  // ⚠ /raids is NOT reliably a bare array. Measured 2026-08-28 03:05 UTC,
+  // mid-raid: an uncounted call returned 11,469 bytes with ZERO errors and
+  // `Array.isArray` false, which aborted the whole sync. Every sibling list
+  // endpoint on this API wraps its rows ({ Results }, { Items }, { Raids }, or
+  // a { TotalPages, CurrentPage, … } page object) — /auctions and /audits both
+  // do, which is why _rowsFromListPayload exists. Accept the same shapes here
+  // instead of assuming the one that happened to work.
+  const raidList = Array.isArray(raids) ? raids
+                 : Array.isArray(raids?.Results) ? raids.Results
+                 : Array.isArray(raids?.Raids)   ? raids.Raids
+                 : Array.isArray(raids?.Items)   ? raids.Items
+                 : Array.isArray(raids?.data)    ? raids.data
+                 : null;
+  if (!raidList) {
+    // Log the shape ONCE rather than guess at it a third time tonight — the
+    // same probe pattern the audits walk uses. Two diagnoses were already wrong
+    // for want of this line.
+    if (!_loggedRaidsShape) {
+      _loggedRaidsShape = true;
+      const keys = Object.keys(raids || {}).filter(k => typeof raids[k] !== 'function');
+      console.log('[opendkp-sync] raids unexpected shape — top-level keys:', keys.join(', '));
+      try { console.log('[opendkp-sync] raids sample:', JSON.stringify(raids).slice(0, 600)); } catch { /* */ }
+    }
+    return { fetched: 0, upserted: 0, error: 'getRaids returned non-array' };
+  }
+  raids = raidList;
 
   const rows = raids.map(_raidSummaryRow).filter(Boolean);
   if (rows.length === 0) return { fetched: raids.length, upserted: 0 };
@@ -705,13 +731,15 @@ async function runSync(opts = {}) {
   // fails we still surface the character sync result so the caller knows
   // SOMETHING worked.
   const listResult = await syncRaidsList();
+  // ⚠ A raids failure used to RETURN HERE, killing the entire pass — audits,
+  // adjustments, auctions, loot folding, tick detail, all of it. Seen live
+  // 2026-08-28 mid-raid: one bad response shape on /raids took the whole
+  // mirror offline and the only symptom was `phase: "list"` in a log line.
+  // The raid list is one input among several; the rest do not depend on it
+  // having succeeded, so they now run regardless and the error is reported
+  // alongside their results rather than instead of them.
   if (listResult.error) {
-    return {
-      phase: 'list',
-      ...listResult,
-      characters_upserted: charResult?.upserted ?? 0,
-      characters_error:    charResult?.error || null,
-    };
+    console.warn('[opendkp-sync] raids list failed, continuing with the rest:', listResult.error);
   }
 
   // Pull the freshly-upserted raid list (oldest first so backfills land in
@@ -790,6 +818,7 @@ async function runSync(opts = {}) {
     phase: 'done',
     raids_fetched:     listResult.fetched,
     raids_upserted:    listResult.upserted,
+    raids_error:       listResult.error || null,
     detail_synced:     candidates.length,
     detail_errors:     detailErrors,
     tick_rows_written: tickRowsWritten,

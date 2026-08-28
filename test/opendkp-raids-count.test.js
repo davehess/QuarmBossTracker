@@ -101,3 +101,35 @@ describe('audits has no such alternative — checked, not assumed', () => {
     expect(sync).toMatch(/fast_path: 'last-page'/);
   });
 });
+
+// ── Shape + fail-open (2026-08-28, mid-raid) ────────────────────────────────
+// A single uncounted /raids call returned 11,469 bytes with ZERO errors and
+// Array.isArray false. syncRaidsList rejected it, runSync RETURNED at
+// phase 'list', and the entire mirror pass — audits, adjustments, auctions,
+// loot folding, tick detail — silently stopped running. One endpoint's shape
+// took everything down and the only symptom was a word in a log line.
+import { readSource as _read, ROOT as _ROOT } from './_source-slice.js';
+import _path from 'node:path';
+const syncSrc = _read(_path.join(_ROOT, 'utils', 'openDkpSync.js'));
+
+describe('raids list shape and blast radius', () => {
+  it('accepts the wrapped shapes every sibling endpoint uses', () => {
+    // /auctions and /audits both wrap their rows; assuming /raids never would
+    // was the mistake.
+    for (const key of ['Results', 'Raids', 'Items', 'data']) {
+      expect(syncSrc, `should unwrap ${key}`).toContain(`Array.isArray(raids?.${key})`);
+    }
+  });
+
+  it('logs the shape once instead of guessing at it', () => {
+    expect(syncSrc).toContain('raids unexpected shape — top-level keys:');
+  });
+
+  it('a raids failure NO LONGER aborts the whole sync', () => {
+    // The regression: `if (listResult.error) return { phase: 'list', ... }`.
+    expect(syncSrc).toContain('raids list failed, continuing with the rest:');
+    expect(syncSrc).not.toMatch(/if \(listResult\.error\) \{\s*\n\s*return \{/);
+    // …and the failure is still REPORTED, not swallowed.
+    expect(syncSrc).toContain('raids_error:       listResult.error || null,');
+  });
+});
