@@ -180,6 +180,12 @@ Corrected in both files. What the fix has to preserve, in both directions:
 - Uilnayar remains a real character name in fixtures, golden logs and the
   `{s}`-capture worked example. Attribution text only — never a blanket rename.
 
+**Confirmed the next morning** — Hitya: *"canopy, rockin, manamana, Utoh, vj,
+melting, Hopeya, all me."* Note `Manamana`, which had never been on the list at
+all: the list was wrong in both directions, carrying someone who did not belong
+and missing someone who did. It is now marked as ASKED AND ANSWERED rather than
+assembled by inference, which is the only thing that makes it trustworthy.
+
 **The lesson is about the rule's shape, not this one name.** A rule that
 collapses many names into one person fails in the direction that *erases other
 people's contributions*, and it fails silently: the wrong attribution reads
@@ -197,7 +203,7 @@ not evidence either, because this one sat there wrongly for nearly three weeks.
 | ⚠ **One unexplained full sweep at 00:02 ET on 2026-08-27** | Ruled out restart / env / version / another code path; the shipped decision replays as `false` for that instant. A diagnostic log line now prints every input on any sweep — **read it the next time one fires** (expected Sunday 18:00 ET). Bounded cost: one extra 6.2 MB read. See the section above |
 | **Otherwise 3.1.85 is behaving** | Verified: boot 2 calls / 403 KB, routine passes 1 call / 7.3 KB. Overnight `/audits` total 20 calls / 6.10 MB, against 381 / 140 MB the day before |
 | **The weekly sweep is a TEMPORARY setting** | Revert to `OPENDKP_LIST_FULL_SWEEP_DAYS=0,3,4` the moment OpenDKP ships a `since` parameter — and it is also the first thing to try if audit rows go missing |
-| ⚠ **The alt list needs a human pass** | `Uilnayar` was wrongly on it for 3 weeks. The remaining names (Canopy, Rockin, vj, Hopeya, Utoh, Melting) have NOT been re-verified with Hitya. `Dant` is also evidently distinct — they @-mention Hitya in Discord — but is not in the `feedback` table, so the rule as written would still collapse them into Hitya |
+| **Alt list — CONFIRMED 2026-08-28** | Hitya: *"canopy, rockin, manamana, Utoh, vj, melting, Hopeya, all me."* `Manamana` was missing from the list entirely; `Uilnayar` is off it. `Dant` is absent from the confirmed list and @-mentions Hitya, so is treated as a distinct person by default — not confirmed either way, but that is the safe direction |
 | **The API request to Moncs** | Not sent. Framed as "one full pull a week + deltas in between" — artifact updated |
 | **`OPENDKP_HALT` is OFF** (unblocked 2026-08-26) | Stats flowing. The kill switch still works from `/admin` without a deploy if he reports trouble again |
 | **`/characters` (85 calls / 12.1 MB per day) and the mirror `/auctions` (34 / 22.3 MB)** | Untouched. Next two candidates once audits is confirmed settled |
