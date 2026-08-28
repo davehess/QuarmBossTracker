@@ -202,6 +202,25 @@ next touch one rather than assuming a missing row means a missing doc.
   the earlier "more calls, 2,300× less data" ask was not.
   Supersedes the earlier per-endpoint `?since` request.
 
+- **Vendored two agent skills: `impeccable` + `ponytail` (2026-08-28).** Hitya
+  asked to start using both. Vendored into `.claude/skills/` (committed, so
+  cloud sessions get them) rather than installed per-machine — impeccable
+  Apache-2.0, ponytail MIT, both LICENSE files kept alongside.
+  ⚠ **impeccable's installer could not run here**: it fetches its skills from
+  `impeccable.style`, which the egress proxy refuses (403 CONNECT), while
+  `raw.githubusercontent.com` and npm are reachable. Installed from the repo's
+  root `.claude/` instead — note the README's documented `dist/claude-code/`
+  path does not exist.
+  ⚠ **Its `settings.json` would have CLOBBERED ours** and silently killed the
+  `SessionStart` digest hook. Hooks were merged, not copied; `SessionStart` +
+  `PostToolUse` + `Stop` now coexist and the merge is verified.
+  Composition rules recorded in `CLAUDE.md`: `frontend-design` wins over
+  impeccable's generic aesthetics (it knows the mid-raid overlay constraints);
+  ponytail reinforces rather than replaces the minimal-diff rule; and
+  **`/impeccable init` is deliberately NOT run** — it writes `PRODUCT.md` and
+  `DESIGN.md` at the root, and CLAUDE.md is the authority, so precedence needs
+  deciding first.
+
 - **`/admin/attendance` hides inactive members by default (web 1.2.6,
   2026-08-28).** Hitya: *"if someone falls off of the 30 day list (no ticks in
   30 days) they become inactive. we should filter by default on that page by
