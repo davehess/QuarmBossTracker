@@ -41,7 +41,6 @@ export const releases: Release[] = [
     title: 'The platform map, read top down',
     version: 'Web 1.7.0',
     date: '2026-08-28',
-    channel: 'beta',
     headline: 'The map now reads top to bottom \u2014 the website at the top, and everything that feeds it standing underneath in columns.',
     features: [
       {
@@ -64,7 +63,6 @@ export const releases: Release[] = [
     title: 'Getting started, step by step',
     version: 'Web 1.6.1',
     date: '2026-08-28',
-    channel: 'beta',
     headline: 'A new page walks you through installing miMIC click by click, and the front page now points straight at it.',
     features: [
       {
@@ -87,7 +85,6 @@ export const releases: Release[] = [
     title: 'One top bar that folds',
     version: 'Web 1.5.1',
     date: '2026-08-28',
-    channel: 'beta',
     headline: 'The top of the site is now a single bar that folds itself down as soon as you scroll, and folds the same way on a phone.',
     features: [
       {
@@ -116,7 +113,6 @@ export const releases: Release[] = [
     title: 'A new front page',
     version: 'Web 1.4.5',
     date: '2026-08-28',
-    channel: 'beta',
     headline: 'The front page opens on the pack coming out of the dark, and the row of buttons underneath is now four doors instead of twenty.',
     features: [
       {

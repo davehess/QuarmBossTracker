@@ -129,8 +129,8 @@ next touch one rather than assuming a missing row means a missing doc.
   editing files, capture `vitest run` output to a file immediately** — the name
   is in the "Failed Tests" section and re-running loses it.
 
-- **Landing page + nav redesign (web 1.4.x, ON `beta` ONLY — read it at
-  `b.wolfpack.quest`, 2026-08-28).** Hitya asked for a huge wolf face with the
+- **Landing page + nav redesign (web 1.2.7 → 1.7.0, GRADUATED TO `main`
+  2026-08-29 — live on `wolfpack.quest`).** Hitya asked for a huge wolf face with the
   pack appearing behind it, then specified the order: *"make the yellow of the
   eyes pop out of the darkness first, then the yellow of the eyes of the wolves
   behind, then the front wolf's lines come into focus, then each of the wolves
@@ -161,7 +161,13 @@ next touch one rather than assuming a missing row means a missing doc.
   was 357,109 lines — one paragraph repeated 23,774 times, once per character of
   a string a loop walked — and still asserted the eye slits were transparent,
   which is what caused trap (1). Do not restore it from git.
-  ⚠ **Not on `main`.** Graduate deliberately — this replaces the front door.
+  **Graduated 2026-08-29 at web 1.7.0** (Hitya: *"push this all up to main"*).
+  File-level promotion, not a branch merge — `beta` still carries the Mimic park
+  and the agent 3.6.x line, so `apps/mimic/**`, `packages/wolfpack-logsync/**`,
+  their two tests, and the `docs/PRIVACY.md` note that belongs to agent 3.6.4
+  were deliberately held back. The four roadmap entries lost their `beta` pill
+  in the same commit; a graduated feature still flagged beta is a release
+  surface telling members something false.
   Nav grouping was a guess; Hitya has since ruled on three (2026-08-28): Buffs →
   Raid, Quartermaster and `/who` → Prep. `/me` is now rendered unconditionally —
   it had been gated on being signed in, which silently made the four doors three
