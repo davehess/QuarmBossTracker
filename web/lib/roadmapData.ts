@@ -37,6 +37,35 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'web-1-5-0',
+    title: 'One top bar that folds',
+    version: 'Web 1.5.0',
+    date: '2026-08-28',
+    channel: 'beta',
+    headline: 'The top of the site is now a single bar that folds itself down as soon as you scroll, and folds the same way on a phone.',
+    features: [
+      {
+        name: 'One bar, and it gets out of the way',
+        blurb: 'Downloads on the left, the page categories in the middle, the clock and your account on the right. Scroll down and it collapses to a single strip that follows you: the miMIC icon, the beta and Linux buttons, a Menu, and sign in.',
+      },
+      {
+        name: 'Menu holds everything that folded away',
+        blurb: 'Nothing was removed to make room. When the bar is folded \u2014 scrolled down, or on a phone \u2014 every page is under Menu, sorted into Raid, Stats and Prep.',
+      },
+      {
+        name: 'The three downloads are symbols now',
+        blurb: 'The miMIC icon for the normal download, \u03b2 for the beta build, and a penguin for Linux and Steam Deck. When the bar is full they keep their names next to them.',
+      },
+      {
+        name: 'The clock shows your timezone',
+        blurb: 'A clock and three letters \u2014 EDT, PST, GMT \u2014 instead of a long dropdown. Tap it to change zone exactly as before.',
+      },
+    ],
+    fixes: [
+      'The platform map on a phone now says it can be dragged sideways, and needs less dragging to read.',
+    ],
+  },
+  {
     key: 'web-1-4-1',
     title: 'A new front page',
     version: 'Web 1.4.5',

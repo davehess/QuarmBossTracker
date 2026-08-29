@@ -11,6 +11,20 @@
 
 import { useEffect, useState } from 'react';
 import { TZ_CHOICES, TZ_COOKIE } from '@/lib/timezone-shared';
+import { ClockFace } from './HeaderIcons';
+
+// "make the time a clock and the 3 character abbreviation for the time zone"
+// (Hitya, 2026-08-28). A <select> can only display its own option text, so the
+// native control stays — it is still the focusable, labelled, OS-rendered
+// picker — and is laid transparent over the clock+abbreviation that replaces
+// its face. Nothing about choosing a zone changes; only what it reads as.
+function abbreviate(zone: string): string {
+  try {
+    return new Intl.DateTimeFormat('en-US', { timeZone: zone, timeZoneName: 'short' })
+      .formatToParts(new Date())
+      .find(p => p.type === 'timeZoneName')?.value ?? '';
+  } catch { return ''; }
+}
 
 function getCookie(name: string): string | null {
   if (typeof document === 'undefined') return null;
@@ -44,16 +58,29 @@ export default function TimezonePicker() {
     if (typeof window !== 'undefined') window.location.reload();
   };
 
+  // Zones only resolve on the client, and `new Date()` differs between a server
+  // render and a client one across a DST edge — so the abbreviation is rendered
+  // only once mounted, and the server and first client render agree on the
+  // placeholder.
+  const zone = tz === 'auto' ? (browserTz || 'America/New_York') : tz;
+  const abbr = browserTz || tz !== 'America/New_York' ? abbreviate(zone) : '';
+
   return (
-    <label className="inline-flex items-center gap-1.5 text-[11px] text-dim" title="Timezone for all displayed times. Defaults to Eastern (most of the pack). 'Auto' picks up your device's zone.">
-      <span aria-hidden>🕒</span>
-      {/* Capped on a phone so it shares the download row instead of taking one
-          of its own. The label clips; the native picker still shows every
-          option in full, which is where the choice is actually made. */}
+    <label
+      className="relative inline-flex items-center gap-1 rounded border border-border bg-panel
+                 px-2 py-1 text-[11px] text-text transition-colors hover:bg-[#21262d]"
+      title="Timezone for all displayed times. Defaults to Eastern (most of the pack). 'Auto' picks up your device's zone."
+    >
+      <ClockFace className="text-dim" />
+      <span className="font-mono tabular-nums">{abbr || '\u00b7\u00b7\u00b7'}</span>
+      {/* The real control, kept native and kept focusable — laid over the face
+          above rather than replaced by it, so the OS picker, the keyboard and
+          the accessible name all still work. */}
       <select
+        aria-label="Timezone for all displayed times"
         value={tz}
         onChange={(e) => onChange(e.target.value)}
-        className="bg-bg border border-border rounded px-1 py-0.5 text-text font-mono text-[10px] cursor-pointer hover:border-dim/80 max-w-[124px] sm:max-w-none"
+        className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
       >
         {TZ_CHOICES.map(c => (
           <option key={c.value} value={c.value}>{c.label}</option>

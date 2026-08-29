@@ -12,10 +12,12 @@ import { useEffect, useRef, useState } from 'react';
 // happened, Prep is what you do beforehand. Hitya has ruled on three so far —
 // Buffs is Raid; Quartermaster and /who are Prep (2026-08-28). Say so if a
 // destination is filed wrong; nothing here is load-bearing beyond the label.
-type Item = { href: string; label: string };
-type Group = { id: string; label: string; items: Item[] };
+export type Item = { href: string; label: string };
+export type Group = { id: string; label: string; items: Item[] };
 
-const GROUPS: Group[] = [
+// ⚠ Exported: the compact header's Menu renders the SAME array. Two copies of
+// the site's navigation is how one of them goes stale.
+export const GROUPS: Group[] = [
   {
     id: 'raid', label: 'Raid',
     items: [

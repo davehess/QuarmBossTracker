@@ -53,7 +53,7 @@ export default function BetaBanner() {
         onClick={() => store(false)}
         aria-expanded={false}
         aria-label="Show the beta notice"
-        className="sticky top-0 z-50 flex w-full items-center justify-center gap-1.5
+        className="flex w-full items-center justify-center gap-1.5
                    border-b border-amber-500/45 bg-amber-500/20 py-0.5
                    font-mono text-[10px] tracking-wider text-amber-300
                    transition-colors hover:bg-amber-500/30"
@@ -70,7 +70,7 @@ export default function BetaBanner() {
   return (
     <div
       role="status"
-      className="sticky top-0 z-50 bg-amber-500 text-black text-xs sm:text-sm font-mono"
+      className="bg-amber-500 text-black text-xs sm:text-sm font-mono"
     >
       <div className="max-w-7xl mx-auto px-3 sm:px-4 py-1.5 flex items-center gap-x-2 sm:gap-x-3 gap-y-1 flex-wrap">
         <span className="font-bold tracking-wider">BETA</span>

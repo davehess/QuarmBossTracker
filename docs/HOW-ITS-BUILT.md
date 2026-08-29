@@ -1277,6 +1277,22 @@ holds it in memory.
 
 ## Web features
 
+- **Top bar (`components/SiteHeader.tsx` + `HeaderIcons.tsx`, web 1.5.0)** — one
+  bar in two shapes. FULL (top of a window ≥1180px): brand, the three download
+  channels with labels, the link categories in the middle, then clock, utility
+  chips and account. COMPACT (**scrolled OR too narrow — one `compact` state, so
+  there is one folded layout, not two**): mimic icon, `β`, `🐧`, a Menu
+  drop-down, sign in. ⚠ **Nothing is dropped, only folded** — the Menu is built
+  from `Nav`'s exported `GROUPS`, so a second copy of the site's navigation
+  cannot go stale, and it also carries `/me`, Feedback, OpenDKP, Admin and the
+  timezone. ⚠ **Banner and bar share ONE `sticky top-0` container** in the
+  layout: two independently sticky elements stack on each other, and the bar has
+  to sit under a banner whose height changes when folded. ⚠ Compact channels are
+  the symbol ALONE — keeping the download arrow cost 45px across the three chips
+  and pushed the bar 12px past a 360px viewport. `TimezonePicker` now reads as a
+  clock plus the 3-letter zone (`Intl` `timeZoneName: 'short'`), with the native
+  `<select>` kept and laid transparent over it so the OS picker, keyboard and
+  accessible name all still work. Guarded by `test/header-chrome.test.js`.
 - **Header chrome + the beta bar (`app/layout.tsx`, `components/BetaBanner.tsx`,
   `components/TimezonePicker.tsx`, web 1.4.4)** — 362px of banner + header sat
   above the page on a 390px phone. Measured per row rather than guessed, and the

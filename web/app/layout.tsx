@@ -2,9 +2,8 @@ import './globals.css';
 import type { Metadata } from 'next';
 import { Prata, Faustina } from 'next/font/google';
 import Link from 'next/link';
-import Nav from '@/components/Nav';
+import SiteHeader from '@/components/SiteHeader';
 import AuthBadge from '@/components/AuthBadge';
-import TimezonePicker from '@/components/TimezonePicker';
 import LocalDashboardLink from '@/components/LocalDashboardLink';
 import GlobalSearch from '@/components/GlobalSearch';
 import GuidedTour, { TourLauncher } from '@/components/GuidedTour';
@@ -101,135 +100,20 @@ finish review, the verdict, DESIGN.md, and every shipping raster carrying its
 provenance
 -->` }}
         />
-        {IS_BETA && <BetaBanner />}
+        {/* ⚠ Banner and bar share ONE sticky container. Two independently
+            sticky elements at top-0 stack on top of each other; the header also
+            has to sit below a banner whose height changes when it is folded. */}
+        <div className="sticky top-0 z-50">
+          {IS_BETA && <BetaBanner />}
+          <SiteHeader
+            showMe={showMe}
+            showAdmin={showAdmin}
+            authBadge={<AuthBadge />}
+            tour={showMe ? <TourLauncher /> : null}
+            search={showMe ? <GlobalSearch /> : null}
+          />
+        </div>
         <div className="max-w-7xl mx-auto p-3 sm:p-4">
-          <header className="mb-4 sm:mb-6">
-            {/* Row 1 — wordmark (left) + account block (right), on ONE line.
-                The account block used to share this row with the whole brand
-                COLUMN (wordmark + three download CTAs + search); together they
-                overflow max-w-7xl, so flex-wrap dropped the account block onto
-                a line of its own and the header read as four ragged rows
-                (Hitya 2026-08-05). Only the wordmark shares the row now, so
-                the account block stays beside it at every width. */}
-            {/* ⚠ The gaps here are load-bearing on a phone, not cosmetic. Measured
-                2026-08-28 at 390px: the account block needed 185px and had 181,
-                so it wrapped "Sign in" onto a line of its own and cost 34px —
-                by FOUR pixels. Tightening the two gaps below sm buys ~8px and
-                keeps the whole row on one line. */}
-            <div className="flex items-center justify-between gap-2 sm:gap-3">
-              <a href="/" aria-label="WolfPack.quest — home" className="flex items-center gap-2 sm:gap-2.5 no-underline min-w-0">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src="/mimic-logo.png" alt="Wolf Pack miMIC" width={38} height={38} className="rounded-md shrink-0 h-8 w-8 sm:h-[38px] sm:w-[38px]" />
-                {/* One size down on a phone. The wordmark plus the account block
-                    overflowed a 360px row by ~10px, which cost a whole wrapped
-                    line for the Sign in button alone. */}
-                <span className="text-base sm:text-2xl text-blue font-bold whitespace-nowrap">
-                  WolfPack<span className="text-dim hidden min-[400px]:inline">.quest</span>
-                </span>
-              </a>
-              {/* Account block — Tour / Feedback / OpenDKP / Admin / avatar.
-                  Wraps internally on narrow screens rather than pushing the
-                  wordmark off its line. */}
-              <div className="flex items-center justify-end gap-1.5 sm:gap-2 flex-wrap">
-                {/* ✨ new-member walkthrough — re-runnable any time; the
-                    engine itself is mounted at the end of <body>. */}
-                {showMe && <TourLauncher />}
-                {/* ⚠ Emoji-only below sm, with the label carried by aria-label
-                    rather than by visible text. These three chips plus the
-                    wordmark and the avatar overflow a 360px row, and the wrap
-                    is what made the header 292px there (measured 2026-08-28).
-                    aria-label wins over content, so the accessible name is the
-                    same word at every width. */}
-                <Link
-                  href="/feedback"
-                  aria-label="Feedback"
-                  className="px-2.5 py-1 rounded border border-border bg-panel text-xs sm:text-sm text-text hover:bg-[#21262d] transition-colors whitespace-nowrap no-underline"
-                >
-                  <span aria-hidden>💬</span><span className="hidden sm:inline"> Feedback</span>
-                </Link>
-                {/* Direct link to the Wolf Pack OpenDKP roster + auction
-                    site. External — opens in a new tab so it doesn't
-                    nuke the user's current wolfpack.quest context. */}
-                <a
-                  href="https://wolfpack.opendkp.com"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded border border-border bg-panel text-xs sm:text-sm text-text hover:bg-[#21262d] transition-colors whitespace-nowrap no-underline"
-                  aria-label="OpenDKP"
-                  title="Wolf Pack OpenDKP — roster, DKP, raid attendance, auctions"
-                >
-                  <span aria-hidden>💰</span><span className="hidden sm:inline"> OpenDKP</span>
-                  <span aria-hidden className="text-dim text-[10px]">↗</span>
-                </a>
-                {showAdmin && (
-                  <Link
-                    href="/admin"
-                    aria-label="Admin"
-                    className="px-2.5 py-1 rounded border border-border bg-panel text-xs sm:text-sm text-text hover:bg-[#21262d] transition-colors whitespace-nowrap no-underline"
-                  >
-                    <span aria-hidden>🛡️</span><span className="hidden sm:inline"> Admin</span>
-                  </Link>
-                )}
-                <AuthBadge />
-              </div>
-            </div>
-
-            {/* Row 2 — download CTAs + search on the left, timezone on the
-                right. These are the wide elements; giving them their own strip
-                is what keeps the account block beside the wordmark above. */}
-            <div className="flex items-start justify-between gap-x-3 gap-y-1.5 flex-wrap mt-1.5 sm:mt-2">
-                <div className="flex flex-wrap items-center gap-2">
-                  <a
-                    href="/mimic?direct=1"
-                    target="_blank"
-                    rel="noreferrer"
-                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded border border-blue bg-[#1f6feb33] text-blue text-xs hover:bg-[#1f6feb66] transition-colors whitespace-nowrap no-underline"
-                    title="Wolf Pack miMIC — the all-in-one desktop client (bundles the wolfpack-logsync agent + DPS overlay, trigger TTS, charm tracker, /tells). Downloads the latest STABLE installer directly. SmartScreen will warn (not code-signed yet) — More info → Run anyway."
-                  >
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src="/mimic-logo.png" alt="" width={14} height={14} className="rounded-sm" />
-                    <span><span className="hidden sm:inline">Download </span>mi<span className="tracking-wide">MIC</span></span>
-                    <span aria-hidden className="text-dim text-[10px]">↗</span>
-                  </a>
-                  {/* Beta channel — same installer pipeline, prerelease tag.
-                      Quiet styling so the stable button stays the primary CTA. */}
-                  <a
-                    href="/mimic/beta?direct=1"
-                    target="_blank"
-                    rel="noreferrer"
-                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded border border-border bg-bg/40 text-dim text-xs hover:bg-bg/70 hover:text-fg transition-colors whitespace-nowrap no-underline"
-                    title="Wolf Pack miMIC — BETA channel. Latest prerelease build with in-progress features. Less stable than the main download; only grab this if you're testing or have been asked to."
-                  >
-                    <span>Beta</span>
-                    <span aria-hidden className="text-dim text-[10px]">↗</span>
-                  </a>
-                  {/* Linux / SteamOS (Steam Deck) beta — the native AppImage
-                      (#156). Own update channel, experimental. Quiet styling. */}
-                  <a
-                    href="/mimic/linux?direct=1"
-                    target="_blank"
-                    rel="noreferrer"
-                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded border border-border bg-bg/40 text-dim text-xs hover:bg-bg/70 hover:text-fg transition-colors whitespace-nowrap no-underline"
-                    title="Wolf Pack Mimic — Linux / SteamOS (Steam Deck) BETA. Native AppImage: UI Studio, dashboard, log-based callouts. Auto-updates on its own channel. Experimental — grab this only if you're testing on Linux/Deck."
-                  >
-                    <span>Linux<span className="hidden sm:inline"> / SteamOS</span></span>
-                    <span aria-hidden className="text-dim text-[10px]">↗</span>
-                  </a>
-                  {/* Site-wide search sits beside the download CTAs (Hitya
-                      2026-06-23). Signed-in only — the search API is
-                      members-only. Enter opens the full /search results page. */}
-                  {showMe && <GlobalSearch />}
-                </div>
-              <TimezonePicker />
-            </div>
-
-            {/* Row 3 — primary nav on its own clean strip. Search sits beside
-                the download CTAs; Feedback + Admin live in the account
-                block. */}
-            <div className="flex items-start justify-between gap-3 flex-wrap border-t border-border/60 mt-2 pt-2 sm:mt-3 sm:pt-3">
-              <Nav showMe={showMe} />
-            </div>
-          </header>
           <main>{children}</main>
           <footer className="mt-12 text-xs text-dim space-y-1">
             <div>

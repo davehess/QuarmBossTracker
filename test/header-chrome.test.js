@@ -54,30 +54,85 @@ describe('beta banner', () => {
   });
 });
 
-describe('header chrome on a phone', () => {
-  // Chips that drop their text below sm MUST carry the label some other way,
-  // or their accessible name becomes an emoji.
+describe('header chrome', () => {
+  const header = read('components/SiteHeader.tsx');
+  const headerCode = strip(header);
+  const icons = strip(read('components/HeaderIcons.tsx'));
+  const tzCode = strip(read('components/TimezonePicker.tsx'));
+
+  // Chips that drop their text MUST carry the label some other way, or their
+  // accessible name becomes an emoji.
   it.each([['/feedback', 'Feedback'], ['https://wolfpack.opendkp.com', 'OpenDKP'], ['/admin', 'Admin']])(
     'keeps an accessible name on the %s chip when its text is hidden',
     (href, label) => {
-      const i = layoutCode.indexOf(href);
+      const i = headerCode.indexOf(href);
       expect(i).toBeGreaterThan(-1);
-      const el = layoutCode.slice(i, i + 700);
+      const el = headerCode.slice(i - 120, i + 400);
       expect(el).toContain(`aria-label="${label}"`);
-      expect(el).toMatch(/hidden sm:inline/);
+      expect(el).toMatch(/hidden xl:inline/);
     },
   );
 
-  it('keeps the home link named when the wordmark is trimmed', () => {
-    // ".quest" is dropped under 400px; the link's name must not shrink with it.
-    expect(layoutCode).toMatch(/aria-label="WolfPack\.quest — home"/);
-    expect(layoutCode).toMatch(/min-\[400px\]:inline/);
+  it('keeps the home link named when the wordmark is dropped', () => {
+    expect(headerCode).toMatch(/aria-label="WolfPack\.quest — home"/);
+    // The wordmark is the first thing to go when the bar folds.
+    expect(headerCode).toMatch(/!compact && \(/);
   });
 
-  it('tightens only horizontal padding on nav chips, never the tap target', () => {
-    const nav = strip(read('components/Nav.tsx'));
-    const chip = nav.slice(nav.indexOf('const chip'), nav.indexOf('const chipIdle'));
-    expect(chip).toMatch(/px-2 sm:px-3/);
-    expect(chip).toMatch(/py-1\.5/);      // vertical size is a tap target — unchanged
+  it('folds on scroll AND on width, through one piece of state', () => {
+    // "when you scroll down collapse it to one bar" and "when there isn't
+    // enough room, like in mobile mode" are the same layout, so they must not
+    // become two. One `compact` drives both.
+    expect(headerCode).toMatch(/const compact = scrolled \|\| !roomy/);
+    expect(headerCode).toMatch(/window\.addEventListener\('scroll'/);
+    expect(headerCode).toMatch(/matchMedia\(ROOMY\)/);
+    // Passive, or the listener fights the scroll it is watching.
+    expect(headerCode).toMatch(/\{ passive: true \}/);
+  });
+
+  it('builds the Menu from the nav\'s own groups, never a second copy', () => {
+    expect(headerCode).toMatch(/import Nav, \{ GROUPS \} from '\.\/Nav'/);
+    expect(headerCode).toMatch(/GROUPS\.map/);
+    // A second hard-coded list is how one of them goes stale.
+    expect(headerCode).not.toMatch(/const GROUPS\s*[:=]/);
+  });
+
+  it('folds every bar link into the Menu rather than dropping it', () => {
+    const menu = headerCode.slice(headerCode.indexOf('id="site-menu"'));
+    for (const href of ['/', '/me', '/feedback', 'wolfpack.opendkp.com']) {
+      expect(menu).toContain(href);
+    }
+    expect(menu).toMatch(/TimezonePicker/);
+  });
+
+  it('shows the three channels as symbols alone when space is short', () => {
+    // Hitya: "just show the mimic icon, beta symbol, then Linux symbol".
+    // The label AND the download arrow are both gated on showLabel — keeping
+    // the arrow cost 45px and pushed the bar past a 360px viewport.
+    expect(icons).toMatch(/showLabel && <><span>\{c\.label\}<\/span><DownloadArrow/);
+    // Every channel keeps a real name even with no visible text.
+    const names = icons.match(/name: '[^']+'/g) || [];
+    expect(names.length).toBe(3);
+    expect(icons).toMatch(/aria-label=\{c\.name\}/);
+    expect(icons).toMatch(/🐧/);
+  });
+
+  it('reads the timezone as a clock and an abbreviation, over a real select', () => {
+    expect(tzCode).toMatch(/ClockFace/);
+    expect(tzCode).toMatch(/timeZoneName: 'short'/);
+    // The native control has to survive: it is the focusable, labelled picker.
+    expect(tzCode).toMatch(/<select/);
+    expect(tzCode).toMatch(/aria-label="Timezone for all displayed times"/);
+    expect(tzCode).toMatch(/opacity-0/);
+  });
+
+  it('stacks the banner and the bar in ONE sticky container', () => {
+    // Two independently sticky elements at top-0 sit on top of each other, and
+    // the bar has to sit below a banner whose height changes when folded.
+    expect(bannerCode).not.toMatch(/sticky/);
+    expect(layoutCode).toMatch(/<div className="sticky top-0 z-50">/);
+    const box = layoutCode.slice(layoutCode.indexOf('sticky top-0 z-50'));
+    expect(box.indexOf('BetaBanner')).toBeGreaterThan(-1);
+    expect(box.indexOf('SiteHeader')).toBeGreaterThan(box.indexOf('BetaBanner'));
   });
 });
