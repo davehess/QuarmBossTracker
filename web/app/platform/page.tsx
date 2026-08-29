@@ -7,7 +7,8 @@
 // system, not aspirational — update them when they drift.
 import Link from 'next/link';
 import type { Metadata } from 'next';
-import { BRANCHES, TINT, PlatformMap, PlatformStats } from '@/components/PlatformMap';
+import { BRANCHES, TINT } from '@/components/platformData';
+import { PlatformMap, PlatformStats } from '@/components/PlatformMap';
 
 export const metadata: Metadata = {
   title: 'The Platform — wolfpack.quest',
@@ -44,22 +45,11 @@ export default function PlatformPage() {
         <PlatformStats />
       </section>
 
-      {/* The mindmap.
-          ⚠ It is a radial SVG on a 1200x780 viewBox, and its labels are sized in
-          user units — letting it shrink to a phone's width would scale 14-unit
-          text to about 4.5px. So it keeps a floor and scrolls INSIDE its own box
-          rather than widening the page (the house rule for wide content), which
-          measurement confirms: the document is 390/390 at 390px. What was
-          missing was any sign that it scrolls, so a phone reader saw a
-          half-diagram and no reason to think there was more. The floor also
-          drops to 600px below md — still a scroll, but a much shorter one. */}
-      <section className="bg-panel border border-border rounded-lg p-2 md:p-6 overflow-x-auto">
-        <p className="md:hidden mb-1 text-center text-[11px] text-dim">
-          drag the map sideways to follow a branch →
-        </p>
-        <div className="min-w-[600px] md:min-w-[760px]">
-          <PlatformMap />
-        </div>
+      {/* The map. Top-down DOM, so it reflows instead of needing a width floor
+          and a sideways drag — the radial SVG it replaces was laid out on a
+          1200x780 viewBox with labels in user units, which could not shrink. */}
+      <section className="bg-panel border border-border rounded-lg p-3 md:p-6">
+        <PlatformMap />
         <p className="text-center text-[11px] text-dim mt-1 mb-2">
           click any node to drill into the minutiae ↓
         </p>

@@ -178,8 +178,8 @@ export default async function HomePage() {
           <h2 className="font-[family-name:var(--font-display)] flex items-center gap-2 text-xl text-[#f2ede1]">
             <IconMap className="text-[#d29922]" /> The whole platform
           </h2>
-          <div className="mt-4 overflow-x-auto">
-            <div className="min-w-[760px]"><PlatformMap anchorBase="/platform" /></div>
+          <div className="mt-4">
+            <PlatformMap anchorBase="/platform" />
           </div>
           <div className="pb-1 pt-3"><PlatformStats /></div>
           <p className="mt-3 text-xs">

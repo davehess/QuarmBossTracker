@@ -37,6 +37,29 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'web-1-7-0',
+    title: 'The platform map, read top down',
+    version: 'Web 1.7.0',
+    date: '2026-08-28',
+    channel: 'beta',
+    headline: 'The map now reads top to bottom \u2014 the website at the top, and everything that feeds it standing underneath in columns.',
+    features: [
+      {
+        name: 'Top down, not a wheel',
+        blurb: 'wolfpack.quest sits at the top. The desktop app, the log agent, the Discord bot, the database and the release machinery line up beneath it in the order things actually flow.',
+      },
+      {
+        name: 'Hover a column to see what is in it',
+        blurb: 'Point at any column and it lists everything that piece does. On a phone there is no hovering, so the lists are simply open.',
+      },
+      {
+        name: 'It fits a phone now',
+        blurb: 'The old map was one fixed-size drawing you had to drag sideways to read. This one reflows, so the whole thing is on screen at any size.',
+      },
+    ],
+    fixes: [],
+  },
+  {
     key: 'web-1-6-0',
     title: 'Getting started, step by step',
     version: 'Web 1.6.1',

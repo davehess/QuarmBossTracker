@@ -1277,6 +1277,25 @@ holds it in memory.
 
 ## Web features
 
+- **Platform map (`components/PlatformMap.tsx` + `platformData.ts`, web 1.7.0)** —
+  top-down, not radial (Hitya): `wolfpack.quest` is the ROOT and the other five
+  branches stand under it in pipeline order, joined by a CSS rail. Hovering a
+  column lists that branch's `details` names via a `0fr → 1fr` grid-row
+  transition, with `items-start` on the grid so only the hovered column grows.
+  ⚠ **Hover reveals on a pointer; on touch the list is simply always open** —
+  there is no hover to discover on a phone, and a tap-toggle would fight the
+  card's own link (the bug the nav disclosure took four attempts to kill).
+  `canHover` decides and nothing else does.
+  ⚠ **The branch DATA lives in its own module with no `'use client'`.**
+  `'use client'` marks every export in a file as client-side, including plain
+  arrays — and `/platform` and `/` are server components that `.map()` over
+  `BRANCHES`. Doing that across the boundary throws *"Attempted to call map()
+  from the server but map is on the client"* at RUNTIME: it type-checks, it
+  builds, and the page 500s. Found by loading the page, not by any gate; held by
+  `test/platform-map.test.js`.
+  It also replaced the 1200×780 radial SVG whose labels were sized in user
+  units — that is why it needed a 760px floor and a sideways drag on a phone.
+  This is ordinary DOM, so it reflows and both width floors are gone.
 - **`/start` — the install walkthrough (`web/app/start/page.tsx`, web 1.6.0)** —
   the landing page's one CTA, "Run with us.", points here. Five steps, each
   naming the button as it appears on screen, plus the three one-click installers
