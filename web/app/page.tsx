@@ -1,8 +1,15 @@
-// Landing page — public marketing copy + cards. The Recent Kills widget is
-// data and only renders for signed-in users (guild members), matching the
-// rest of the site's gate. Cards link to gated pages, which redirect
-// unauthenticated visitors to /auth/signin?next=...
+// Landing page — the only public marketing surface. Persuade: a prospective
+// member or a returning raider decides this guild is worth their Sunday.
+//
+// Redesigned 2026-08-28 under the direction contract in app/layout.tsx
+// (seed 29c36e6b): an engraved specimen plate on the night ground the audience
+// already reads on. The proof is the live ledger, not adjectives.
+//
+// The signed-in data widgets are unchanged in behaviour — Recent Kills is still
+// gated, still curated-boss filtered, still the viewer's timezone.
 import Link from 'next/link';
+import WolfPack from '@/components/WolfPack';
+import { IconParse, IconTimer, IconBlades, IconRank, IconMap, IconSpark } from '@/components/PlateIcons';
 import { PlatformMap, PlatformStats } from '@/components/PlatformMap';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
@@ -36,10 +43,16 @@ async function loadRecent() {
   } catch { return []; }
 }
 
-// Auto-raid-invite (ARI) banner was removed: invites are coordinated
-// in-game via /who, so the website doesn't need to mirror that state.
-// Bot-side ari_state mirror is kept (utils/state.js) since it's
-// internal data.
+const SURFACES = [
+  { href: '/parses',       Icon: IconParse,  name: 'Parses',
+    line: 'Every kill grouped by night and zone — damage, healing, deaths, and what dropped.' },
+  { href: '/boards',       Icon: IconTimer,  name: 'Boards',
+    line: 'Live raid-boss spawn timers across every expansion, and what is coming in the next 24 hours.' },
+  { href: '/pvp',          Icon: IconBlades, name: 'PvP',
+    line: 'Kill records per character, assists, and spawn windows on the PvP server.' },
+  { href: '/leaderboards', Icon: IconRank,   name: 'Ranks',
+    line: 'Top parses, raid attendance, and DKP spent over the last thirty days.' },
+];
 
 export default async function HomePage() {
   const { data: { user } } = await supabaseServer().auth.getUser();
@@ -47,115 +60,168 @@ export default async function HomePage() {
   const tz = await userTz();   // viewer's chosen zone (wp_tz cookie) → all times below
 
   return (
-    <div className="space-y-6">
-      <section className="bg-panel border border-border rounded-lg p-6">
-        <h2 className="text-xl text-gold mb-3">Welcome to <span className="text-blue">wolfpack.quest</span></h2>
-        <p className="text-sm leading-6">
-          The guild-wide companion to the Wolf Pack Discord bot. Shared parses,
-          per-character history, raid attendance, loot, leaderboards.
-          The local agent dashboard at <code>http://localhost:7779</code> still
-          runs your in-raid HUD; this site is where you compare against the rest
-          of the pack between fights.
-        </p>
-        <p className="text-sm mt-3">
-          <Link href="/platform" className="text-blue hover:underline">
-            🗺 New here? See the whole platform on one page →
+    <div className="[--wolf-line:#e8e2d4]">
+
+      {/* ── The plate ──────────────────────────────────────────────────── */}
+      {/* The plate is symmetric and frontal, so the type is centred on its axis.
+          Left-aligned type beside a centred wolf read as two unrelated objects
+          — the first render proved it. */}
+      {/* ⚠ `overflow-x: clip` is load-bearing, not tidying. The outer pack
+          members sit at ±45% with their own width on top, so the composition
+          is 1.35× the alpha's box and reached -71px..477px on a 390px phone —
+          87px of horizontal page scroll (measured 2026-08-28). Fitting the
+          whole pack inside instead would shrink her to 289px on that screen,
+          against a brief that pins a HUGE wolf face. So she stays big and the
+          pack bleeds off-frame, which is the intended read; `clip` rather than
+          `hidden` because `hidden` would make this a scroll container. */}
+      <section className="relative isolate -mx-3 overflow-x-clip sm:-mx-4">
+        {/* Sized for the BOLD mark. The earlier thin wolf could run 1040px
+            wide; these filled forms carry far more weight, and at that size the
+            ears alone filled the viewport while the face fell below the fold. */}
+        {/* 86% on a phone, not 104%. The pack fans to ±67.5% of HER box, so her
+            width sets whether their eyes clear her ruff or sit behind it. At 104%
+            the outermost eye landed exactly on the viewport edge and read as a
+            rendering fault; pulling the fan in instead hid the pack's eyes
+            altogether, which is the half of the brief that matters most. Giving
+            her the width back is what lets both be true. */}
+        <div className="pointer-events-none absolute inset-x-0 top-0 mx-auto w-[86%] max-w-[600px] sm:w-[66%]">
+          <WolfPack />
+        </div>
+        {/* Clears the type without erasing her: transparent across the ears and
+            eyes, opaque where the headline lands. */}
+        <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-transparent via-bg/60 via-62% to-bg" />
+
+        <div className="page-reveal relative px-4 pt-[70vw] pb-10 text-center sm:pt-[40vw] sm:pb-14 lg:pt-[25rem]">
+          {/* ⚠ The break is explicit and the couplet rhymes, so BOTH halves have to
+              hold one line each — a wrapped third line breaks the rhyme where the
+              reader hears it. Measured 2026-08-28: the longer line needs a
+              consistent ~7.6–7.85vw to fit from 320 to 430px, so the clamp's
+              floor drops below its old 2rem rather than letting the type wrap.
+              The ch cap is sized in the SAME em, so it shrinks with the font and
+              would re-wrap what the clamp just fixed; it is only a safety stop
+              for very wide screens now that the break is authored. */}
+          <h1 className="font-[family-name:var(--font-display)] mx-auto text-[clamp(1.4rem,7.3vw,4.25rem)] leading-[1.04] tracking-[-0.02em] text-[#f2ede1] text-balance max-w-[28ch]">
+            One wolf starts to growl.<br />The whole pack will howl.
+          </h1>
+          {/* The one call to action, and the only place the display face is used
+              twice on this page. It is a LINK, not a button, because it reads as
+              the third line of the couplet above it. */}
+          <Link
+            href="/start"
+            className="font-[family-name:var(--font-display)] group mt-4 inline-block text-[clamp(1.4rem,4.4vw,2.25rem)]
+                       leading-tight text-[#d29922] no-underline transition-colors hover:text-[#e0a92c]"
+          >
+            Run with us.
+            <span aria-hidden className="ml-2 inline-block transition-transform group-hover:translate-x-1">→</span>
           </Link>
-        </p>
-        {/* /ai is written for people AND for agents (it serves /ai.txt and
-            /ai.json alongside the page), so it needs a real link from the
-            front page rather than only being reachable if you guess the URL. */}
-        <p className="text-sm mt-1">
-          <Link href="/ai" className="text-blue hover:underline">
-            🤖 How this is built and maintained with AI →
-          </Link>
-        </p>
+
+          <p className="font-[family-name:var(--font-prose)] mx-auto mt-5 max-w-[58ch] text-[1.0625rem] leading-7 text-text">
+            Our guild raids three hours per night, three nights a week, dispersed across the
+            map. The Wolf Pack miMIC logsync agent merges them into one common record here —
+            it parses who did the damage, helps keep the chain together, calls out raid comms,
+            and helps us figure out what went right or wrong in the fight timelines. No single
+            client can see it all. Never hunt alone. AWROOOOOO!
+          </p>
+
+          <div className="mt-7 flex flex-wrap items-center justify-center gap-3">
+            {user ? (
+              <Link href="/me" className="no-underline rounded-md bg-[#d29922] px-5 py-2.5 text-sm font-semibold text-[#1a1206] transition-colors hover:bg-[#e0a92c]">
+                Your record
+              </Link>
+            ) : (
+              <Link href="/auth/signin" className="no-underline rounded-md bg-[#d29922] px-5 py-2.5 text-sm font-semibold text-[#1a1206] transition-colors hover:bg-[#e0a92c]">
+                Sign in with Discord
+              </Link>
+            )}
+            <Link href="/platform" className="no-underline rounded-md border border-border px-5 py-2.5 text-sm text-text transition-colors hover:border-[#d29922] hover:text-[#f2ede1]">
+              See everything it tracks
+            </Link>
+          </div>
+        </div>
       </section>
 
-      {/* Signed-out visitors get the platform map right here on the front page —
-          the "what IS all of this?" answer without needing to find /platform.
-          Node clicks land on the full page's drill-down cards. Members skip it
-          (their homepage is the daily dashboard; the link above suffices). */}
-      {!user && (
-        <section className="bg-panel border border-border rounded-lg p-2 md:p-6 overflow-x-auto">
-          <div className="min-w-[760px]">
-            <PlatformMap anchorBase="/platform" />
-          </div>
-          <div className="px-4 pb-3">
-            <PlatformStats />
-            <p className="text-center text-xs mt-4">
-              <Link href="/platform" className="text-blue hover:underline">
-                explore every branch, the evolution, and the privacy story →
-              </Link>
-            </p>
-          </div>
-        </section>
-      )}
-
+      <div className="page-reveal">
+      {/* ── The proof ──────────────────────────────────────────────────── */}
       {recent.length > 0 && (
-        <section className="bg-panel border border-border rounded-lg p-4">
-          <h3 className="text-sm text-orange mb-2">🔥 Recent kills</h3>
-          <ul className="text-xs space-y-0.5">
+        <section className="mt-2 border-t border-border/70 pt-6">
+          <div className="flex items-baseline justify-between gap-4">
+            <h2 className="font-[family-name:var(--font-display)] text-xl text-[#f2ede1]">Last six kills</h2>
+            <Link href="/parses" className="text-xs text-dim no-underline transition-colors hover:text-[#d29922]">
+              all parses →
+            </Link>
+          </div>
+          <ol className="mt-4">
             {recent.map((r) => (
-              <li key={r.id} className="flex justify-between gap-2 border-b border-border/30 py-0.5">
-                <Link href={`/parses/${r.id}`} className="text-text hover:text-blue truncate">
-                  <span className="text-gold">{cleanBossName(r.eqemu_npc_types?.name)}</span>
-                  <span className="text-dim"> · {dayLabel(dayKey(r.started_at, tz), tz)} {fmtTime(r.started_at, tz)}</span>
+              <li key={r.id} className="border-b border-border/40 last:border-0">
+                <Link href={`/parses/${r.id}`}
+                      className="group flex items-baseline justify-between gap-4 py-2.5 no-underline">
+                  <span className="min-w-0 truncate">
+                    <span className="font-[family-name:var(--font-prose)] text-[0.95rem] text-[#e8e2d4] transition-colors group-hover:text-[#d29922]">
+                      {cleanBossName(r.eqemu_npc_types?.name)}
+                    </span>
+                    <span className="ml-2 text-xs text-dim">
+                      {dayLabel(dayKey(r.started_at, tz), tz)} · {fmtTime(r.started_at, tz)}
+                    </span>
+                  </span>
+                  <span className="tnum whitespace-nowrap text-sm text-[#d29922]">{fmtDmg(r.total_damage)}</span>
                 </Link>
-                <span className="text-dim whitespace-nowrap">{fmtDmg(r.total_damage)}</span>
               </li>
             ))}
-          </ul>
-          <Link href="/parses" className="text-xs text-blue hover:underline mt-2 inline-block">
-            See all parses →
-          </Link>
+          </ol>
         </section>
       )}
 
-      <section className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <Card
-          title="📊 Parses"
-          body="Every kill grouped by night and zone. Click any to see the full damage breakdown, deaths, loot for the night."
-          href="/parses"
-        />
-        <Card
-          title="🗺️ Boards"
-          body="Live raid-boss spawn timers across every expansion — what's up now and what's coming in the next 24 hours."
-          href="/boards"
-        />
-        <Card
-          title="⚔️ PvP"
-          body="Wolf Pack PvP kill leaderboard, per-character records + assists, and PvP-server boss spawn windows."
-          href="/pvp"
-        />
-        <Card
-          title="🏆 Ranks"
-          body="Top damage parses, raid attendance, and DKP spenders over the last 30 days."
-          href="/leaderboards"
-        />
-      </section>
-
+      {/* Signed-out visitors get the map here — the "what IS all of this?"
+          answer without having to find /platform first. */}
       {!user && (
-        <section className="bg-panel border border-border rounded-lg p-6 text-sm text-dim">
-          <p>
-            Parses, leaderboards, and per-character history require a Wolf Pack
-            EQ Discord sign-in.{' '}
-            <Link href="/auth/signin" className="text-blue hover:underline">
-              Sign in
-            </Link>{' '}
-            to see them.
+        <section className="mt-2 border-t border-border/70 pt-6">
+          <h2 className="font-[family-name:var(--font-display)] flex items-center gap-2 text-xl text-[#f2ede1]">
+            <IconMap className="text-[#d29922]" /> The whole platform
+          </h2>
+          <div className="mt-4">
+            <PlatformMap anchorBase="/platform" />
+          </div>
+          <div className="pb-1 pt-3"><PlatformStats /></div>
+          <p className="mt-3 text-xs">
+            <Link href="/platform" className="text-dim no-underline transition-colors hover:text-[#d29922]">
+              every branch, how it grew, and what it does not collect →
+            </Link>
           </p>
         </section>
       )}
-    </div>
-  );
-}
 
-function Card({ title, body, href }: { title: string; body: string; href: string }) {
-  return (
-    <Link href={href} className="block bg-panel border border-border rounded-lg p-4 hover:border-blue transition-colors no-underline">
-      <h3 className="text-base text-orange mb-1">{title}</h3>
-      <p className="text-xs text-dim leading-5">{body}</p>
-    </Link>
+      {/* ── Where to go ────────────────────────────────────────────────── */}
+      <section className="mt-8 border-t border-border/70 pt-6">
+        <ul>
+          {SURFACES.map(({ href, Icon, name, line }) => (
+            <li key={href} className="border-b border-border/40 last:border-0">
+              <Link href={href} className="group flex items-start gap-4 py-4 no-underline">
+                <Icon className="mt-0.5 shrink-0 text-dim transition-colors group-hover:text-[#d29922]" />
+                <span className="min-w-0">
+                  <span className="font-[family-name:var(--font-display)] block text-lg text-[#e8e2d4] transition-colors group-hover:text-[#d29922]">
+                    {name}
+                  </span>
+                  <span className="font-[family-name:var(--font-prose)] mt-0.5 block max-w-[68ch] text-sm leading-6 text-dim">
+                    {line}
+                  </span>
+                </span>
+              </Link>
+            </li>
+          ))}
+        </ul>
+      </section>
+
+      <section className="mt-8 flex flex-col gap-3 border-t border-border/70 pt-6 sm:flex-row sm:items-center sm:justify-between">
+        <p className="font-[family-name:var(--font-prose)] max-w-[58ch] text-sm leading-6 text-dim">
+          {user
+            ? 'Built and maintained in the open — the methodology, the mistakes, and what the agents are allowed to touch.'
+            : 'Parses, ranks, and per-character history need a Wolf Pack Discord sign-in. The platform map above is open to anyone.'}
+        </p>
+        <Link href="/ai" className="inline-flex shrink-0 items-center gap-2 text-sm text-dim no-underline transition-colors hover:text-[#d29922]">
+          <IconSpark /> How this is built with AI
+        </Link>
+      </section>
+      </div>
+    </div>
   );
 }

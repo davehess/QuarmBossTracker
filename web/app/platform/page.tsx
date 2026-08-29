@@ -7,7 +7,8 @@
 // system, not aspirational — update them when they drift.
 import Link from 'next/link';
 import type { Metadata } from 'next';
-import { BRANCHES, TINT, PlatformMap, PlatformStats } from '@/components/PlatformMap';
+import { BRANCHES, TINT } from '@/components/platformData';
+import { PlatformMap, PlatformStats } from '@/components/PlatformMap';
 
 export const metadata: Metadata = {
   title: 'The Platform — wolfpack.quest',
@@ -44,11 +45,11 @@ export default function PlatformPage() {
         <PlatformStats />
       </section>
 
-      {/* The mindmap */}
-      <section className="bg-panel border border-border rounded-lg p-2 md:p-6 overflow-x-auto">
-        <div className="min-w-[760px]">
-          <PlatformMap />
-        </div>
+      {/* The map. Top-down DOM, so it reflows instead of needing a width floor
+          and a sideways drag — the radial SVG it replaces was laid out on a
+          1200x780 viewBox with labels in user units, which could not shrink. */}
+      <section className="bg-panel border border-border rounded-lg p-3 md:p-6">
+        <PlatformMap />
         <p className="text-center text-[11px] text-dim mt-1 mb-2">
           click any node to drill into the minutiae ↓
         </p>

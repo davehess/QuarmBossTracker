@@ -37,6 +37,116 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'web-1-7-0',
+    title: 'The platform map, read top down',
+    version: 'Web 1.7.0',
+    date: '2026-08-28',
+    headline: 'The map now reads top to bottom \u2014 the website at the top, and everything that feeds it standing underneath in columns.',
+    features: [
+      {
+        name: 'Top down, not a wheel',
+        blurb: 'wolfpack.quest sits at the top. The desktop app, the log agent, the Discord bot, the database and the release machinery line up beneath it in the order things actually flow.',
+      },
+      {
+        name: 'Hover a column to see what is in it',
+        blurb: 'Point at any column and it lists everything that piece does. On a phone there is no hovering, so the lists are simply open.',
+      },
+      {
+        name: 'It fits a phone now',
+        blurb: 'The old map was one fixed-size drawing you had to drag sideways to read. This one reflows, so the whole thing is on screen at any size.',
+      },
+    ],
+    fixes: [],
+  },
+  {
+    key: 'web-1-6-0',
+    title: 'Getting started, step by step',
+    version: 'Web 1.6.1',
+    date: '2026-08-28',
+    headline: 'A new page walks you through installing miMIC click by click, and the front page now points straight at it.',
+    features: [
+      {
+        name: '\u201cRun with us.\u201d',
+        blurb: 'The front page has one thing to click now, and it goes to the walkthrough.',
+      },
+      {
+        name: 'Five steps, with the buttons named',
+        blurb: 'Download, sign in with Discord, point it at your EverQuest folder, let it set the game up for you, open the dashboard. Every button is named exactly as it appears on your screen, and the three downloads \u2014 Windows, beta, Steam Deck \u2014 are one click each.',
+      },
+      {
+        name: 'What to do when it does not work',
+        blurb: 'The three things that have actually gone wrong for people, each with the symptom that tells them apart. The compatibility-mode one is first, because a popular crash-reduction checklist recommends the exact setting that breaks it.',
+      },
+    ],
+    fixes: [],
+  },
+  {
+    key: 'web-1-5-0',
+    title: 'One top bar that folds',
+    version: 'Web 1.5.1',
+    date: '2026-08-28',
+    headline: 'The top of the site is now a single bar that folds itself down as soon as you scroll, and folds the same way on a phone.',
+    features: [
+      {
+        name: 'One bar, and it gets out of the way',
+        blurb: 'Downloads on the left, the page categories in the middle, the clock and your account on the right. Scroll down and it collapses to a single strip that follows you: the miMIC icon, the beta and Linux buttons, a Menu, and sign in.',
+      },
+      {
+        name: 'Menu holds everything that folded away',
+        blurb: 'Nothing was removed to make room. When the bar is folded \u2014 scrolled down, or on a phone \u2014 every page is under Menu, sorted into Raid, Stats and Prep.',
+      },
+      {
+        name: 'The three downloads are symbols now',
+        blurb: 'A download arrow for the normal download, \u03b2 for the beta build, and a penguin for Linux and Steam Deck. When the bar is full they keep their names next to them.',
+      },
+      {
+        name: 'The clock shows your timezone',
+        blurb: 'A clock and three letters \u2014 EDT, PST, GMT \u2014 instead of a long dropdown. Tap it to change zone exactly as before.',
+      },
+    ],
+    fixes: [
+      'The platform map on a phone now says it can be dragged sideways, and needs less dragging to read.',
+    ],
+  },
+  {
+    key: 'web-1-4-1',
+    title: 'A new front page',
+    version: 'Web 1.4.5',
+    date: '2026-08-28',
+    headline: 'The front page opens on the pack coming out of the dark, and the row of buttons underneath is now four doors instead of twenty.',
+    features: [
+      {
+        name: 'The pack arrives out of the dark',
+        blurb: 'Eyes first, in the black \u2014 hers, then the ones behind her. Her face comes into focus, then the rest of the pack, each one a little further back and a little darker. Nothing is see-through: the wolves in front cover the ones behind them, the way bodies do.',
+      },
+      {
+        name: 'Four doors instead of twenty',
+        blurb: 'Everything is now under Raid, Stats, Prep, or your own /me page \u2014 and /me is always there, signed in or not. Raid is what you touch during one (buffs, boards, rolls); Prep is what you do beforehand (the guide, the database, quartermaster, /who). Hover one on a desktop, or tap it on a phone, and the pages inside open up underneath. Nothing was removed \u2014 it just stopped all being on screen at once.',
+      },
+      {
+        name: 'Less clutter above the page on a phone',
+        blurb: 'The bar at the top of the site took up most of a phone screen before you saw anything. It is roughly half that now \u2014 nothing was removed, the buttons just stopped wrapping onto extra lines.',
+      },
+      {
+        name: 'The beta notice can be put away',
+        blurb: 'On the beta site, the orange bar now has an \u00d7. It shrinks to a thin strip that still says BETA, with an arrow to bring it back, and it stays put away until you say otherwise.',
+      },
+      {
+        name: 'The rest of the page waits its turn',
+        blurb: 'The wolves arrive first, on their own, and everything else fades in a beat later.',
+      },
+      {
+        name: 'Set to stay still if you asked it to',
+        blurb: 'If your computer or phone is set to reduce motion, the whole scene is simply there when the page loads, fully lit, with nothing moving.',
+      },
+    ],
+    fixes: [
+      'The eyes now light up inside the eye itself. They had been glowing behind the artwork, which put the light in the brow instead.',
+      'The wolves no longer show through each other. Only the pale part of the drawing was solid, so every dark line was a gap you could see the next wolf through.',
+      'On a phone the page no longer slides sideways. The pack runs wider than the screen on purpose, and it is now cropped at the edge instead of dragging the page with it.',
+    ],
+  },
+  {
     key: 'mimic-2-6-2',
     title: 'A Loot tab, and Mimic stops phoning the DKP site',
     version: 'Mimic 2.6.2 · Agent 3.6.2 · Bot 3.1.88 · Web 1.2.2',

@@ -98,3 +98,128 @@
   }
   .animate-wp-fade-in, .animate-wp-zoom-in { animation: none !important; }
 }
+
+/* ── The wolf plate ───────────────────────────────────────────────────────
+   The page's one authored moment, and a SEQUENCE rather than a fade: the
+   alpha's eyes open in the dark, then the pack's eyes behind her, then her
+   lines resolve, then the pack resolves nearest-first.
+
+   ⚠ Depth is BRIGHTNESS, not opacity. Every wolf is fully opaque; the ones
+   further back are darker. Opacity let the rear wolves show through the front
+   one, which read as ghosts rather than as distance. Each plate therefore
+   starts near-black and is lit up, not faded in — which is also why the eye
+   slits can mask the glow into eye shapes before the body is visible at all. */
+.wolf-stage { position: relative; width: 100%; aspect-ratio: 1 / 1; }
+.wolf-stage img { display: block; width: 100%; height: 100%; }
+
+.wolf-alpha,
+.wolf-packmember { position: absolute; }
+.wolf-alpha { inset: 0; }
+.wolf-packmember { transform: translateX(-50%); }
+
+/* Each wolf's own silhouette, filled in the page ground and sitting under its
+   plate. The keyed art is bone-on-transparency: every dark LINE is a hole, so
+   without this a wolf in front showed the wolf behind through its own linework
+   and the overlaps read as smeared glass rather than as one body in front of
+   another. Painted #0d1117, so against the ground it is invisible and its only
+   job is to occlude. Blurred to its wolf's own distance so the occlusion edge
+   matches the body it belongs to. */
+.wolf-solid {
+  position: absolute;
+  inset: 0;
+  height: 100%;
+  width: 100%;
+}
+.wolf-packmember .wolf-solid { filter: blur(var(--wolf-blur, 0)); }
+
+/* ⚠ The reveal filter goes on the PLATE, never on the wrapper and never on
+   every img. The eye glow is a sibling image inside the same wrapper, and a
+   filter that reaches it darkens the one lit thing on the page — which
+   silently defeated the whole sequence: the eyes could not open before the
+   body, because the thing hiding the body was hiding them as well. */
+.wolf-alpha .wolf-plate {
+  filter: brightness(0.05) blur(3px);
+  animation: wolf-focus 1.1s cubic-bezier(.16, 1, .3, 1) 1.6s forwards;
+}
+.wolf-packmember .wolf-plate {
+  filter: brightness(0.03) blur(4px);
+  animation: wolf-emerge 1s cubic-bezier(.16, 1, .3, 1) var(--body-at, 2.2s) forwards;
+}
+
+/* The alpha resolves to full bone and full focus. */
+@keyframes wolf-focus {
+  to { filter: brightness(1) blur(0) drop-shadow(0 18px 42px rgba(0, 0, 0, .55)); }
+}
+/* The pack resolves to its own distance: darker the further back, never
+   more transparent. */
+@keyframes wolf-emerge {
+  to { filter: brightness(var(--wolf-bright)) blur(var(--wolf-blur)); }
+}
+
+/* The eyes are the only lit thing, and the first.
+   The plate is pinned edge-to-edge over the wolf it belongs to, at the same
+   973² geometry, so the light lands inside the eye and nowhere else. The bloom
+   is `drop-shadow`, which follows the alpha — so it spills from the eye
+   OUTLINE rather than from a bounding box, and leaks out through the
+   transparent brow strokes the way light in the dark actually would. */
+.wolf-eyeglow {
+  position: absolute;
+  inset: 0;
+  height: 100%;
+  width: 100%;
+  opacity: 0;
+  transform: scale(.86);
+  transform-origin: 50% 45%;
+  filter: drop-shadow(0 0 3px rgba(255, 207, 92, .95))
+          drop-shadow(0 0 10px rgba(210, 153, 34, .75))
+          drop-shadow(0 0 30px rgba(210, 153, 34, .45));
+  animation: wolf-eyes-open .9s cubic-bezier(.16, 1, .3, 1) forwards;
+}
+/* Eyes at the back of the pack carry less light, for the same reason their
+   bodies carry less bone. */
+.wolf-eyeglow-far {
+  filter: drop-shadow(0 0 2px rgba(255, 207, 92, .8))
+          drop-shadow(0 0 8px rgba(210, 153, 34, .55));
+  --eye-lit: .62;
+}
+@keyframes wolf-eyes-open {
+  0%   { opacity: 0; transform: scale(.86); }
+  55%  { opacity: var(--eye-lit, 1); transform: scale(1.06); }
+  100% { opacity: var(--eye-lit, 1); transform: scale(1); }
+}
+
+/* Reduced motion keeps the composition — the pack is content, not decoration,
+   so everything arrives already lit rather than being removed. */
+@media (prefers-reduced-motion: reduce) {
+  .wolf-alpha .wolf-plate      { animation: none; filter: brightness(1) drop-shadow(0 18px 42px rgba(0,0,0,.55)); }
+  .wolf-packmember .wolf-plate { animation: none; filter: brightness(var(--wolf-bright)) blur(var(--wolf-blur)); }
+  .wolf-eyeglow                { animation: none; opacity: var(--eye-lit, 1); transform: scale(1); }
+}
+
+/* Everything that is not the wolf waits for her (Hitya, 2026-08-28: "give a
+   little delay until everything else fades in"). One beat, one class — long
+   enough that the eyes land in an empty frame, short enough that nobody on a
+   phone thinks the page is broken. Content is in the DOM the whole time; only
+   its paint is deferred. */
+.page-reveal { animation: page-in .7s ease-out 1.05s both; }
+@keyframes page-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .page-reveal { animation: none; }
+}
+
+/* ── Browser surfaces ─────────────────────────────────────────────────────
+   The parts we did not draw still carry the design. */
+::selection { background: rgba(210, 153, 34, .28); color: #f2ede1; }
+:root { caret-color: #d29922; accent-color: #d29922; }
+:focus-visible { outline: 2px solid #d29922; outline-offset: 2px; border-radius: 2px; }
+* { scrollbar-color: #30363d #0d1117; scrollbar-width: thin; }
+::-webkit-scrollbar { width: 11px; height: 11px; }
+::-webkit-scrollbar-track { background: #0d1117; }
+::-webkit-scrollbar-thumb { background: #30363d; border: 3px solid #0d1117; border-radius: 99px; }
+::-webkit-scrollbar-thumb:hover { background: #4a5560; }
+.tnum { font-variant-numeric: tabular-nums; }
+/* The head has to close as a mass before any line reads as anatomy. */
+.wolf-mass { fill: #141b25; stroke: none; }

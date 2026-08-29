@@ -1277,6 +1277,128 @@ holds it in memory.
 
 ## Web features
 
+- **Platform map (`components/PlatformMap.tsx` + `platformData.ts`, web 1.7.0)** —
+  top-down, not radial (Hitya): `wolfpack.quest` is the ROOT and the other five
+  branches stand under it in pipeline order, joined by a CSS rail. Hovering a
+  column lists that branch's `details` names via a `0fr → 1fr` grid-row
+  transition, with `items-start` on the grid so only the hovered column grows.
+  ⚠ **Hover reveals on a pointer; on touch the list is simply always open** —
+  there is no hover to discover on a phone, and a tap-toggle would fight the
+  card's own link (the bug the nav disclosure took four attempts to kill).
+  `canHover` decides and nothing else does.
+  ⚠ **The branch DATA lives in its own module with no `'use client'`.**
+  `'use client'` marks every export in a file as client-side, including plain
+  arrays — and `/platform` and `/` are server components that `.map()` over
+  `BRANCHES`. Doing that across the boundary throws *"Attempted to call map()
+  from the server but map is on the client"* at RUNTIME: it type-checks, it
+  builds, and the page 500s. Found by loading the page, not by any gate; held by
+  `test/platform-map.test.js`.
+  It also replaced the 1200×780 radial SVG whose labels were sized in user
+  units — that is why it needed a 760px floor and a sideways drag on a phone.
+  This is ordinary DOM, so it reflows and both width floors are gone.
+- **`/start` — the install walkthrough (`web/app/start/page.tsx`, web 1.6.0)** —
+  the landing page's one CTA, "Run with us.", points here. Five steps, each
+  naming the button as it appears on screen, plus the three one-click installers
+  (`/mimic`, `/mimic/beta`, `/mimic/linux`, all `?direct=1`) and the three field
+  failures with the symptom that separates them.
+  ⚠ **Nothing on it is authored — it is DOWNSTREAM of two other surfaces** and
+  quotes their labels verbatim: steps 1–4 from `commands/parsehelp.js` (the
+  Discord walkthrough, the guide of record) and `🔧 Set up EQ for me` + the
+  exact ini keys from `apps/mimic/settings.html`. Rename a button on either and
+  this page confidently sends people to click something that no longer exists,
+  which no build or browser can notice — so `test/start-page.test.js` asserts
+  every quoted label still exists in the file it came from, and fails the build
+  when one drifts. ⚠ **Deliberately public** (no session read): the reader does
+  not have an account yet — that is the point (`DESIGN-onboarding-overhaul.md`
+  §Surface 2). Phase 1 of that spec; the auto-checkoff steps are still unbuilt.
+- **Top bar (`components/SiteHeader.tsx` + `HeaderIcons.tsx`, web 1.5.0)** — one
+  bar in two shapes. FULL (top of a window ≥1180px): brand, the three download
+  channels with labels, the link categories in the middle, then clock, utility
+  chips and account. COMPACT (**scrolled OR too narrow — one `compact` state, so
+  there is one folded layout, not two**): mimic icon, `β`, `🐧`, a Menu
+  drop-down, sign in. ⚠ **Nothing is dropped, only folded** — the Menu is built
+  from `Nav`'s exported `GROUPS`, so a second copy of the site's navigation
+  cannot go stale, and it also carries `/me`, Feedback, OpenDKP, Admin and the
+  timezone. ⚠ **Banner and bar share ONE `sticky top-0` container** in the
+  layout: two independently sticky elements stack on each other, and the bar has
+  to sit under a banner whose height changes when folded. ⚠ Compact channels are
+  the symbol ALONE, which is also what keeps the bar inside a 360px viewport —
+  the labels are 45px across the three chips. ⚠ **The stable channel's symbol is
+  the download arrow, not the mimic logo** (Hitya, 2026-08-28): the logo is the
+  brand mark in the same bar, so the folded bar was showing one picture twice —
+  as "home" and as "download" — with only a blue box telling them apart. One
+  download mark per chip; there is no trailing arrow. `TimezonePicker` now reads as a
+  clock plus the 3-letter zone (`Intl` `timeZoneName: 'short'`), with the native
+  `<select>` kept and laid transparent over it so the OS picker, keyboard and
+  accessible name all still work. Guarded by `test/header-chrome.test.js`.
+- **Header chrome + the beta bar (`app/layout.tsx`, `components/BetaBanner.tsx`,
+  `components/TimezonePicker.tsx`, web 1.4.4)** — 362px of banner + header sat
+  above the page on a 390px phone. Measured per row rather than guessed, and the
+  costs were not where they looked: the account block wrapped `Sign in` onto its
+  own line **by four pixels** (185px needed, 181px available), the nav wrapped at
+  360px, and the beta bar's single sentence ran three lines. All three are width
+  problems, so every fix is responsive and **none removes a control** — chips go
+  emoji-only below `sm` with the label carried by `aria-label` (which wins over
+  content, so the accessible name is the same word at every width), `.quest` is
+  dropped under 400px with the home link named explicitly, download labels
+  shorten, the timezone `<select>` is capped (the native picker still shows every
+  option), and gaps/chip padding tighten horizontally only — `py-1.5` is a tap
+  target and is untouched. Result 362 → 214px, and 186 with the bar collapsed.
+  ⚠ **`BetaBanner` is dismissible but never disappears.** Collapsing leaves a
+  20px amber strip that still reads BETA with a gold chevron back; "you are not
+  on production" has to survive dismissal or someone files a bug against the
+  wrong site. State is in `localStorage` (both accesses try/catch'd — private
+  mode *throws* rather than returning null) and is applied via `useLayoutEffect`
+  so it lands **before paint**; a plain `useEffect` flashes the full-height bar
+  on every navigation. The effect is picked by environment because React warns
+  on `useLayoutEffect` during SSR. Guarded by `test/header-chrome.test.js`.
+- **Landing page + top nav (`web/app/page.tsx`, `components/WolfPack.tsx`,
+  `components/Nav.tsx`, `components/PlateIcons.tsx`, web 1.4.x)** — the hero is a
+  raster wolf plate (`public/wolf.png`, 973²) with five scaled copies behind it,
+  revealed as a SEQUENCE: eyes, then the pack's eyes, then the alpha's lines,
+  then each pack member nearest-first. **Depth is `filter: brightness()`, never
+  `opacity`** — brightness darkens the bone while leaving alpha intact, so a
+  nearer wolf occludes the one behind it; fading with opacity made them ghosts.
+  ⚠ **Brightness was necessary but NOT sufficient** (2026-08-28): only the bone
+  is opaque, so every dark line was a hole and a wolf in front showed the one
+  behind through its own linework. Each wolf also gets `public/wolf-solid.png` —
+  its filled silhouette in the page ground, flood-filled inward from the image
+  border — beneath its plate. Invisible against the ground; the whole difference
+  where two wolves overlap.
+  ⚠ **The eye light is its own plate (`public/wolf-eyes.png`) painted ON TOP.**
+  Keying cut the dark linework and left the eye interior OPAQUE, so a glow
+  behind the wolf reads through the brow strokes and not the eye — that was
+  shipped, and looked plausible. The overlay is computed from `wolf.png` by
+  connected-component labelling of its alpha (see `wolf.provenance.txt`) and
+  shares its canvas, so it needs no coordinates and cannot drift. The reveal
+  filter must stay scoped to `.wolf-plate`: written as `.wolf-alpha img` it also
+  matches the glow and the eyes can never open first. Both traps are held by
+  `test/wolf-eyeglow.test.js`. **Mobile fit:** the pack fans to 1.35× the alpha's
+  box, which put the document at 477px inside a 390px phone — the hero clips with
+  `overflow-x: clip` (not `hidden`, which would make it a scroll container) and
+  she is 86% wide there. Her width, not a tighter fan, is the lever: pulling the
+  fan in instead hid the pack's eyes behind her ruff. The rest of the page is
+  held one beat behind the wolf by `.page-reveal`, disabled under reduced motion.
+  ⚠ **The headline is a rhyming couplet across an authored `<br />`**, so both
+  halves must hold one line each — a wrapped third line breaks the rhyme where
+  the reader hears it. Measured: the longer half needs ~7.6–7.85vw from 320 to
+  430px, so the clamp floor sits *below* the usual 2rem instead of pinning the
+  type larger than the line. The `ch` cap is sized in the same em, so it shrinks
+  with the font and will re-wrap what the clamp just fixed — widen both together
+  or neither. `test/wolf-eyeglow.test.js` derives the requirement from the copy's
+  own length, so growing the copy fails the test rather than the page.
+  Nav is four doors — Raid / Stats / Prep / **/me**.
+  ⚠ **`/me` renders unconditionally**; gating it on `showMe` made the four doors
+  three for every signed-out visitor and it went missing. `/me` redirects to
+  `/auth/signin?next=/me` itself, so the link never dead-ends. Placement rulings
+  (Hitya, 2026-08-28): Buffs is Raid; Quartermaster and `/who` are Prep — Raid is
+  what you touch DURING one, Prep is what you do beforehand. Each ruling is
+  asserted as a pair (in the right group, out of the wrong one) so a move done
+  by copying leaves a failing test rather than a duplicate.
+  Groups open on hover on fine pointers and on tap elsewhere — the open state
+  is guarded on `matchMedia('(hover: hover) and (pointer: fine)')` because a
+  tap's compatibility `mouseenter` plus the click otherwise open and immediately
+  close the panel.
 - **/me** — per-character private hub (parse stats, rollups, chat counts,
   PvP, loot, wishlists count, live buffs/zone, exclusion toggles). Data floor
   via `character_data_floor`; excluded characters honored everywhere.
