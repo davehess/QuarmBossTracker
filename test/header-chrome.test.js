@@ -106,10 +106,16 @@ describe('header chrome', () => {
   });
 
   it('shows the three channels as symbols alone when space is short', () => {
-    // Hitya: "just show the mimic icon, beta symbol, then Linux symbol".
-    // The label AND the download arrow are both gated on showLabel — keeping
-    // the arrow cost 45px and pushed the bar past a 360px viewport.
-    expect(icons).toMatch(/showLabel && <><span>\{c\.label\}<\/span><DownloadArrow/);
+    // Only the label drops; the glyph is what stays.
+    expect(icons).toMatch(/\{showLabel && <span>\{c\.label\}<\/span>\}/);
+    // ⚠ The stable channel's symbol is the DOWNLOAD icon, not the mimic logo
+    // (Hitya, 2026-08-28) — the logo is the brand mark in the same bar, so the
+    // folded bar was showing one picture twice, as "home" and as "download".
+    expect(icons).toMatch(/glyph: <DownloadArrow/);
+    expect(icons).not.toMatch(/glyph:[^\n]*mimic-logo/);
+    // ...and exactly one download mark per chip, not a glyph plus a trailing one.
+    const link = icons.slice(icons.indexOf('function ChannelLink'));
+    expect((link.match(/DownloadArrow/g) || []).length).toBe(0);
     // Every channel keeps a real name even with no visible text.
     const names = icons.match(/name: '[^']+'/g) || [];
     expect(names.length).toBe(3);

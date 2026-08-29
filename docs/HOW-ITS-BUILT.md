@@ -1288,8 +1288,12 @@ holds it in memory.
   timezone. ⚠ **Banner and bar share ONE `sticky top-0` container** in the
   layout: two independently sticky elements stack on each other, and the bar has
   to sit under a banner whose height changes when folded. ⚠ Compact channels are
-  the symbol ALONE — keeping the download arrow cost 45px across the three chips
-  and pushed the bar 12px past a 360px viewport. `TimezonePicker` now reads as a
+  the symbol ALONE, which is also what keeps the bar inside a 360px viewport —
+  the labels are 45px across the three chips. ⚠ **The stable channel's symbol is
+  the download arrow, not the mimic logo** (Hitya, 2026-08-28): the logo is the
+  brand mark in the same bar, so the folded bar was showing one picture twice —
+  as "home" and as "download" — with only a blue box telling them apart. One
+  download mark per chip; there is no trailing arrow. `TimezonePicker` now reads as a
   clock plus the 3-letter zone (`Intl` `timeZoneName: 'short'`), with the native
   `<select>` kept and laid transparent over it so the OS picker, keyboard and
   accessible name all still work. Guarded by `test/header-chrome.test.js`.

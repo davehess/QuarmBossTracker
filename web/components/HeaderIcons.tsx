@@ -1,10 +1,14 @@
 // The three download channels, as a symbol plus an optional label.
 //
 // Hitya, 2026-08-28: "a download symbol next to miMIC, beta, and a Linux
-// penguin logo 🐧" — and when space is short, "just show the mimic icon, beta
-// symbol, then Linux symbol". So each channel owns its glyph, the label is what
-// drops, and the accessible name is pinned with aria-label so nothing is lost
-// when the words go.
+// penguin logo 🐧", and when space is short show only those symbols. So each
+// channel owns ONE glyph, the label is what drops, and the accessible name is
+// pinned with aria-label so nothing is lost when the words go.
+//
+// ⚠ The stable channel's glyph is the download arrow, NOT the mimic logo
+// (Hitya): the logo is the brand mark in the same bar, so the folded bar was
+// showing the same picture twice — once as "home", once as "download" — with
+// only a blue box telling them apart.
 import type { ReactNode } from 'react';
 
 export function DownloadArrow({ className = '' }: { className?: string }) {
@@ -43,8 +47,7 @@ export const CHANNELS: Channel[] = [
     label: 'miMIC',
     name: 'Download miMIC',
     primary: true,
-    /* eslint-disable-next-line @next/next/no-img-element */
-    glyph: <img src="/mimic-logo.png" alt="" width={14} height={14} className="rounded-sm" />,
+    glyph: <DownloadArrow className="scale-110" />,
     title: "Wolf Pack miMIC — the all-in-one desktop client (bundles the wolfpack-logsync agent + DPS overlay, trigger TTS, charm tracker, /tells). Downloads the latest STABLE installer directly. SmartScreen will warn (not code-signed yet) — More info → Run anyway.",
   },
   {
@@ -81,9 +84,9 @@ export function ChannelLink({ c, showLabel }: { c: Channel; showLabel: boolean }
     >
       {c.glyph}
       {/* Compact is the symbol ALONE — "just show the mimic icon, beta symbol,
-          then Linux symbol". Keeping the arrow there cost 45px across the three
-          chips and pushed the bar 12px past a 360px viewport. */}
-      {showLabel && <><span>{c.label}</span><DownloadArrow className="opacity-70" /></>}
+          then Linux symbol" — which is also what keeps the bar inside a 360px
+          viewport: the labels are 45px across the three chips. */}
+      {showLabel && <span>{c.label}</span>}
     </a>
   );
 }

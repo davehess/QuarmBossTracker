@@ -39,7 +39,7 @@ export const releases: Release[] = [
   {
     key: 'web-1-5-0',
     title: 'One top bar that folds',
-    version: 'Web 1.5.0',
+    version: 'Web 1.5.1',
     date: '2026-08-28',
     channel: 'beta',
     headline: 'The top of the site is now a single bar that folds itself down as soon as you scroll, and folds the same way on a phone.',
@@ -54,7 +54,7 @@ export const releases: Release[] = [
       },
       {
         name: 'The three downloads are symbols now',
-        blurb: 'The miMIC icon for the normal download, \u03b2 for the beta build, and a penguin for Linux and Steam Deck. When the bar is full they keep their names next to them.',
+        blurb: 'A download arrow for the normal download, \u03b2 for the beta build, and a penguin for Linux and Steam Deck. When the bar is full they keep their names next to them.',
       },
       {
         name: 'The clock shows your timezone',
