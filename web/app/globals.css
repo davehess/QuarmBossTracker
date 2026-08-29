@@ -139,7 +139,7 @@
    body, because the thing hiding the body was hiding them as well. */
 .wolf-alpha .wolf-plate {
   filter: brightness(0.05) blur(3px);
-  animation: wolf-focus 1.1s cubic-bezier(.16, 1, .3, 1) 1.6s forwards;
+  animation: wolf-focus 1.1s cubic-bezier(.16, 1, .3, 1) .85s forwards;
 }
 .wolf-packmember .wolf-plate {
   filter: brightness(0.03) blur(4px);

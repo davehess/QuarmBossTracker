@@ -1355,8 +1355,13 @@ holds it in memory.
 - **Landing page + top nav (`web/app/page.tsx`, `components/WolfPack.tsx`,
   `components/Nav.tsx`, `components/PlateIcons.tsx`, web 1.4.x)** — the hero is a
   raster wolf plate (`public/wolf.png`, 973²) with five scaled copies behind it,
-  revealed as a SEQUENCE: eyes, then the pack's eyes, then the alpha's lines,
-  then each pack member nearest-first. **Depth is `filter: brightness()`, never
+  revealed as a SEQUENCE (reordered 2026-08-29): her eyes → HER, whole → the
+  pack's eyes → the pack, nearest-first. The first cut interleaved the halves,
+  so the alpha landed at the same instant as a wall of pack. ⚠ The order is
+  decided by four numbers split across a CSS rule and a TSX array, none of
+  which states the intent on its own — `test/wolf-eyeglow.test.js` asserts the
+  alpha's focus (delay + duration) completes before the earliest pack `eyeAt`,
+  so stretching her duration alone also fails. **Depth is `filter: brightness()`, never
   `opacity`** — brightness darkens the bone while leaving alpha intact, so a
   nearer wolf occludes the one behind it; fading with opacity made them ghosts.
   ⚠ **Brightness was necessary but NOT sufficient** (2026-08-28): only the bone

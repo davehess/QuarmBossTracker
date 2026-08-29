@@ -88,6 +88,24 @@ describe('wolf hero eye glow', () => {
     expect(packGlow).toBeGreaterThan(pack);
   });
 
+  it('finishes the alpha before a single pack eye opens', () => {
+    // The order Hitya asked for (2026-08-29): her eyes, then HER, then their
+    // eyes, then them. The first cut interleaved the two halves, so she landed
+    // at the same moment as a wall of pack. Four numbers spread across a CSS
+    // rule and a TSX array decide this, and none of them says so on its own.
+    const focus = cssCode.match(
+      /\.wolf-alpha\s+\.wolf-plate\s*\{[^}]*animation:\s*wolf-focus\s+([\d.]+)s[^;]*?\s([\d.]+)s\s+forwards/);
+    expect(focus, 'alpha focus animation should declare duration and delay').toBeTruthy();
+    const alphaDone = parseFloat(focus[1]) + parseFloat(focus[2]);   // duration + delay
+
+    const alphaEye = parseFloat((tsxCode.match(/<EyeGlow at="([\d.]+)s"/) || [])[1]);
+    expect(alphaEye).toBeLessThan(parseFloat(focus[2]));             // her eyes lead her body
+
+    const packEyes = [...tsxCode.matchAll(/eyeAt: '([\d.]+)s'/g)].map(m => parseFloat(m[1]));
+    expect(packEyes.length).toBe(5);
+    expect(Math.min(...packEyes)).toBeGreaterThanOrEqual(alphaDone);
+  });
+
   it('opens every eye before its own body resolves', () => {
     const secs = s => parseFloat(s);
     // The alpha leads, and each wolf's eyes precede its body.

@@ -37,6 +37,21 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'web-1-7-1',
+    title: 'The wolves arrive in turn',
+    version: 'Web 1.7.1',
+    date: '2026-08-29',
+    channel: 'beta',
+    headline: 'The front page now introduces one wolf before the rest of the pack shows up.',
+    features: [
+      {
+        name: 'Her, then them',
+        blurb: 'Two yellow eyes open in the dark. She comes into focus alone. Only then do the eyes light up around her, and the pack steps out behind her one at a time.',
+      },
+    ],
+    fixes: [],
+  },
+  {
     key: 'web-1-7-0',
     title: 'The platform map, read top down',
     version: 'Web 1.7.0',
