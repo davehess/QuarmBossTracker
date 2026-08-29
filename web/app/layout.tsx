@@ -103,7 +103,7 @@ provenance
         />
         {IS_BETA && <BetaBanner />}
         <div className="max-w-7xl mx-auto p-3 sm:p-4">
-          <header className="mb-6">
+          <header className="mb-4 sm:mb-6">
             {/* Row 1 — wordmark (left) + account block (right), on ONE line.
                 The account block used to share this row with the whole brand
                 COLUMN (wordmark + three download CTAs + search); together they
@@ -111,26 +111,41 @@ provenance
                 a line of its own and the header read as four ragged rows
                 (Hitya 2026-08-05). Only the wordmark shares the row now, so
                 the account block stays beside it at every width. */}
-            <div className="flex items-center justify-between gap-3">
-              <a href="/" className="flex items-center gap-2.5 no-underline min-w-0">
+            {/* ⚠ The gaps here are load-bearing on a phone, not cosmetic. Measured
+                2026-08-28 at 390px: the account block needed 185px and had 181,
+                so it wrapped "Sign in" onto a line of its own and cost 34px —
+                by FOUR pixels. Tightening the two gaps below sm buys ~8px and
+                keeps the whole row on one line. */}
+            <div className="flex items-center justify-between gap-2 sm:gap-3">
+              <a href="/" aria-label="WolfPack.quest — home" className="flex items-center gap-2 sm:gap-2.5 no-underline min-w-0">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src="/mimic-logo.png" alt="Wolf Pack miMIC" width={38} height={38} className="rounded-md shrink-0" />
-                <span className="text-lg sm:text-2xl text-blue font-bold whitespace-nowrap">
-                  WolfPack<span className="text-dim">.quest</span>
+                <img src="/mimic-logo.png" alt="Wolf Pack miMIC" width={38} height={38} className="rounded-md shrink-0 h-8 w-8 sm:h-[38px] sm:w-[38px]" />
+                {/* One size down on a phone. The wordmark plus the account block
+                    overflowed a 360px row by ~10px, which cost a whole wrapped
+                    line for the Sign in button alone. */}
+                <span className="text-base sm:text-2xl text-blue font-bold whitespace-nowrap">
+                  WolfPack<span className="text-dim hidden min-[400px]:inline">.quest</span>
                 </span>
               </a>
               {/* Account block — Tour / Feedback / OpenDKP / Admin / avatar.
                   Wraps internally on narrow screens rather than pushing the
                   wordmark off its line. */}
-              <div className="flex items-center justify-end gap-2 flex-wrap">
+              <div className="flex items-center justify-end gap-1.5 sm:gap-2 flex-wrap">
                 {/* ✨ new-member walkthrough — re-runnable any time; the
                     engine itself is mounted at the end of <body>. */}
                 {showMe && <TourLauncher />}
+                {/* ⚠ Emoji-only below sm, with the label carried by aria-label
+                    rather than by visible text. These three chips plus the
+                    wordmark and the avatar overflow a 360px row, and the wrap
+                    is what made the header 292px there (measured 2026-08-28).
+                    aria-label wins over content, so the accessible name is the
+                    same word at every width. */}
                 <Link
                   href="/feedback"
+                  aria-label="Feedback"
                   className="px-2.5 py-1 rounded border border-border bg-panel text-xs sm:text-sm text-text hover:bg-[#21262d] transition-colors whitespace-nowrap no-underline"
                 >
-                  💬 Feedback
+                  <span aria-hidden>💬</span><span className="hidden sm:inline"> Feedback</span>
                 </Link>
                 {/* Direct link to the Wolf Pack OpenDKP roster + auction
                     site. External — opens in a new tab so it doesn't
@@ -140,17 +155,19 @@ provenance
                   target="_blank"
                   rel="noreferrer"
                   className="inline-flex items-center gap-1 px-2.5 py-1 rounded border border-border bg-panel text-xs sm:text-sm text-text hover:bg-[#21262d] transition-colors whitespace-nowrap no-underline"
+                  aria-label="OpenDKP"
                   title="Wolf Pack OpenDKP — roster, DKP, raid attendance, auctions"
                 >
-                  💰 OpenDKP
+                  <span aria-hidden>💰</span><span className="hidden sm:inline"> OpenDKP</span>
                   <span aria-hidden className="text-dim text-[10px]">↗</span>
                 </a>
                 {showAdmin && (
                   <Link
                     href="/admin"
+                    aria-label="Admin"
                     className="px-2.5 py-1 rounded border border-border bg-panel text-xs sm:text-sm text-text hover:bg-[#21262d] transition-colors whitespace-nowrap no-underline"
                   >
-                    🛡️ Admin
+                    <span aria-hidden>🛡️</span><span className="hidden sm:inline"> Admin</span>
                   </Link>
                 )}
                 <AuthBadge />
@@ -160,7 +177,7 @@ provenance
             {/* Row 2 — download CTAs + search on the left, timezone on the
                 right. These are the wide elements; giving them their own strip
                 is what keeps the account block beside the wordmark above. */}
-            <div className="flex items-start justify-between gap-3 flex-wrap mt-2">
+            <div className="flex items-start justify-between gap-x-3 gap-y-1.5 flex-wrap mt-1.5 sm:mt-2">
                 <div className="flex flex-wrap items-center gap-2">
                   <a
                     href="/mimic?direct=1"
@@ -171,7 +188,7 @@ provenance
                   >
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img src="/mimic-logo.png" alt="" width={14} height={14} className="rounded-sm" />
-                    <span>Download mi<span className="tracking-wide">MIC</span></span>
+                    <span><span className="hidden sm:inline">Download </span>mi<span className="tracking-wide">MIC</span></span>
                     <span aria-hidden className="text-dim text-[10px]">↗</span>
                   </a>
                   {/* Beta channel — same installer pipeline, prerelease tag.
@@ -195,7 +212,7 @@ provenance
                     className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded border border-border bg-bg/40 text-dim text-xs hover:bg-bg/70 hover:text-fg transition-colors whitespace-nowrap no-underline"
                     title="Wolf Pack Mimic — Linux / SteamOS (Steam Deck) BETA. Native AppImage: UI Studio, dashboard, log-based callouts. Auto-updates on its own channel. Experimental — grab this only if you're testing on Linux/Deck."
                   >
-                    <span>Linux / SteamOS</span>
+                    <span>Linux<span className="hidden sm:inline"> / SteamOS</span></span>
                     <span aria-hidden className="text-dim text-[10px]">↗</span>
                   </a>
                   {/* Site-wide search sits beside the download CTAs (Hitya
@@ -209,7 +226,7 @@ provenance
             {/* Row 3 — primary nav on its own clean strip. Search sits beside
                 the download CTAs; Feedback + Admin live in the account
                 block. */}
-            <div className="flex items-start justify-between gap-3 flex-wrap border-t border-border/60 mt-3 pt-3">
+            <div className="flex items-start justify-between gap-3 flex-wrap border-t border-border/60 mt-2 pt-2 sm:mt-3 sm:pt-3">
               <Nav showMe={showMe} />
             </div>
           </header>

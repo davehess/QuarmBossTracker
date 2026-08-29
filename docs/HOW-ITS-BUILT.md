@@ -1277,6 +1277,27 @@ holds it in memory.
 
 ## Web features
 
+- **Header chrome + the beta bar (`app/layout.tsx`, `components/BetaBanner.tsx`,
+  `components/TimezonePicker.tsx`, web 1.4.4)** — 362px of banner + header sat
+  above the page on a 390px phone. Measured per row rather than guessed, and the
+  costs were not where they looked: the account block wrapped `Sign in` onto its
+  own line **by four pixels** (185px needed, 181px available), the nav wrapped at
+  360px, and the beta bar's single sentence ran three lines. All three are width
+  problems, so every fix is responsive and **none removes a control** — chips go
+  emoji-only below `sm` with the label carried by `aria-label` (which wins over
+  content, so the accessible name is the same word at every width), `.quest` is
+  dropped under 400px with the home link named explicitly, download labels
+  shorten, the timezone `<select>` is capped (the native picker still shows every
+  option), and gaps/chip padding tighten horizontally only — `py-1.5` is a tap
+  target and is untouched. Result 362 → 214px, and 186 with the bar collapsed.
+  ⚠ **`BetaBanner` is dismissible but never disappears.** Collapsing leaves a
+  20px amber strip that still reads BETA with a gold chevron back; "you are not
+  on production" has to survive dismissal or someone files a bug against the
+  wrong site. State is in `localStorage` (both accesses try/catch'd — private
+  mode *throws* rather than returning null) and is applied via `useLayoutEffect`
+  so it lands **before paint**; a plain `useEffect` flashes the full-height bar
+  on every navigation. The effect is picked by environment because React warns
+  on `useLayoutEffect` during SSR. Guarded by `test/header-chrome.test.js`.
 - **Landing page + top nav (`web/app/page.tsx`, `components/WolfPack.tsx`,
   `components/Nav.tsx`, `components/PlateIcons.tsx`, web 1.4.x)** — the hero is a
   raster wolf plate (`public/wolf.png`, 973²) with five scaled copies behind it,

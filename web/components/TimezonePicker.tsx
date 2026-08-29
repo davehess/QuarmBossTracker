@@ -47,10 +47,13 @@ export default function TimezonePicker() {
   return (
     <label className="inline-flex items-center gap-1.5 text-[11px] text-dim" title="Timezone for all displayed times. Defaults to Eastern (most of the pack). 'Auto' picks up your device's zone.">
       <span aria-hidden>🕒</span>
+      {/* Capped on a phone so it shares the download row instead of taking one
+          of its own. The label clips; the native picker still shows every
+          option in full, which is where the choice is actually made. */}
       <select
         value={tz}
         onChange={(e) => onChange(e.target.value)}
-        className="bg-bg border border-border rounded px-1 py-0.5 text-text font-mono text-[10px] cursor-pointer hover:border-dim/80"
+        className="bg-bg border border-border rounded px-1 py-0.5 text-text font-mono text-[10px] cursor-pointer hover:border-dim/80 max-w-[124px] sm:max-w-none"
       >
         {TZ_CHOICES.map(c => (
           <option key={c.value} value={c.value}>{c.label}</option>

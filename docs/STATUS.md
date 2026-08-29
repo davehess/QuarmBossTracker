@@ -100,6 +100,19 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ### ✅ Done — major shipped features (not exhaustive; see git + roadmapData.ts)
 
+- **⚠ OPEN — an unidentified flaky test (noticed 2026-08-28, web work).** The
+  suite failed once on 2026-08-28 at 2516+1 and once at 2525+1, and passed on
+  every one of ~30 other runs including three with a `next dev` server up. Both
+  failures came on the FIRST run after a batch of file edits, which is the only
+  pattern there is. **The failing test was never identified** — by the time the
+  reporter was re-run it was green, and it has not reproduced on demand. Two
+  hypotheses, neither confirmed: contention from a watching dev server (weakened
+  — three runs with one up were clean), or vitest's mtime-keyed transform cache
+  serving one stale module on the first run after a write. Not blocking, and
+  deliberately not written off. **If you see a single-test failure right after
+  editing files, capture `vitest run` output to a file immediately** — the name
+  is in the "Failed Tests" section and re-running loses it.
+
 - **Landing page + nav redesign (web 1.4.x, ON `beta` ONLY — read it at
   `b.wolfpack.quest`, 2026-08-28).** Hitya asked for a huge wolf face with the
   pack appearing behind it, then specified the order: *"make the yellow of the
@@ -136,9 +149,10 @@ next touch one rather than assuming a missing row means a missing doc.
   Nav grouping was a guess; Hitya has since ruled on three (2026-08-28): Buffs →
   Raid, Quartermaster and `/who` → Prep. `/me` is now rendered unconditionally —
   it had been gated on being signed in, which silently made the four doors three
-  for exactly the visitor the landing page is written for. The header chrome
-  above the nav (Download / Beta / timezone) is still ~380px on a phone and was
-  flagged but not touched.
+  for exactly the visitor the landing page is written for. The header chrome above the nav is **done**
+  (web 1.4.4): 362px → 214px on a 390px phone, 186px with the beta bar
+  collapsed, with nothing removed — see `HOW-ITS-BUILT.md`. The beta bar is now
+  dismissible to a 20px strip that still reads BETA.
 
 - **/tag channel autojoin — merge logic (agent, 2026-08-26).** Hitya: *"we need
   to add this channel to people's autojoins if they don't have them in their ini

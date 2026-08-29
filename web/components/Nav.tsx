@@ -48,8 +48,11 @@ const GROUPS: Group[] = [
   },
 ];
 
+// Tighter horizontal padding below sm: five top-level chips wrapped to two
+// rows at 360px, which cost 36px of a phone's first viewport (measured
+// 2026-08-28). Vertical padding is untouched — these are tap targets.
 const chip =
-  'px-3 py-1.5 rounded border text-xs sm:text-sm transition-colors whitespace-nowrap';
+  'px-2 sm:px-3 py-1.5 rounded border text-xs sm:text-sm transition-colors whitespace-nowrap';
 const chipIdle   = 'bg-panel border-border text-text hover:bg-[#21262d]';
 const chipActive = 'bg-accent border-accent text-white';
 
