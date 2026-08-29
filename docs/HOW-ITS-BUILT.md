@@ -1277,6 +1277,21 @@ holds it in memory.
 
 ## Web features
 
+- **`/start` — the install walkthrough (`web/app/start/page.tsx`, web 1.6.0)** —
+  the landing page's one CTA, "Run with us.", points here. Five steps, each
+  naming the button as it appears on screen, plus the three one-click installers
+  (`/mimic`, `/mimic/beta`, `/mimic/linux`, all `?direct=1`) and the three field
+  failures with the symptom that separates them.
+  ⚠ **Nothing on it is authored — it is DOWNSTREAM of two other surfaces** and
+  quotes their labels verbatim: steps 1–4 from `commands/parsehelp.js` (the
+  Discord walkthrough, the guide of record) and `🔧 Set up EQ for me` + the
+  exact ini keys from `apps/mimic/settings.html`. Rename a button on either and
+  this page confidently sends people to click something that no longer exists,
+  which no build or browser can notice — so `test/start-page.test.js` asserts
+  every quoted label still exists in the file it came from, and fails the build
+  when one drifts. ⚠ **Deliberately public** (no session read): the reader does
+  not have an account yet — that is the point (`DESIGN-onboarding-overhaul.md`
+  §Surface 2). Phase 1 of that spec; the auto-checkoff steps are still unbuilt.
 - **Top bar (`components/SiteHeader.tsx` + `HeaderIcons.tsx`, web 1.5.0)** — one
   bar in two shapes. FULL (top of a window ≥1180px): brand, the three download
   channels with labels, the link categories in the middle, then clock, utility

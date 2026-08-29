@@ -40,6 +40,7 @@ export const GROUPS: Group[] = [
   {
     id: 'prep', label: 'Prep',
     items: [
+      { href: '/start',         label: 'Getting started' },
       { href: '/guide',         label: 'Raid guide' },
       { href: '/db',            label: 'Database' },
       { href: '/quartermaster', label: 'Quartermaster' },

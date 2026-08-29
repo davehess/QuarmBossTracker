@@ -37,6 +37,29 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'web-1-6-0',
+    title: 'Getting started, step by step',
+    version: 'Web 1.6.0',
+    date: '2026-08-28',
+    channel: 'beta',
+    headline: 'A new page walks you through installing miMIC click by click, and the front page now points straight at it.',
+    features: [
+      {
+        name: '\u201cRun with us.\u201d',
+        blurb: 'The front page has one thing to click now, and it goes to the walkthrough.',
+      },
+      {
+        name: 'Five steps, with the buttons named',
+        blurb: 'Download, sign in with Discord, point it at your EverQuest folder, let it set the game up for you, open the dashboard. Every button is named exactly as it appears on your screen, and the three downloads \u2014 Windows, beta, Steam Deck \u2014 are one click each.',
+      },
+      {
+        name: 'What to do when it does not work',
+        blurb: 'The three things that have actually gone wrong for people, each with the symptom that tells them apart. The compatibility-mode one is first, because a popular crash-reduction checklist recommends the exact setting that breaks it.',
+      },
+    ],
+    fixes: [],
+  },
+  {
     key: 'web-1-5-0',
     title: 'One top bar that folds',
     version: 'Web 1.5.1',

@@ -100,6 +100,22 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ### ✅ Done — major shipped features (not exhaustive; see git + roadmapData.ts)
 
+- **`/start` install walkthrough (web 1.6.0, beta, 2026-08-28).** Hitya: the
+  landing page's *"Run with us."* needed to link to "a getting started page with
+  a click by click on what to do to get installed, setup buttons mentioned and
+  deep linked to." Built as **Phase 1 of `docs/DESIGN-onboarding-overhaul.md`
+  §Surface 2** rather than a new page — same route (`/start`), same public-first
+  rule. The auto-checkoff steps in that spec are still unbuilt.
+  ⚠ **Every step and button name is copied from the surface it describes**, not
+  written: `commands/parsehelp.js` for steps 1–4, `apps/mimic/settings.html` for
+  `🔧 Set up EQ for me` and the ini keys, and CLAUDE.md's field-issue log for the
+  three failure modes. `test/start-page.test.js` asserts each quoted label still
+  exists in its source, so a rename in Mimic or Discord fails the build instead
+  of silently sending people to a button that is gone.
+  ⚠ The screenshot slots stay empty — `STEP_IMAGES` in `parsehelp.js` is still
+  `{}` and this page has no shots either. That is the same open item, and the
+  cheapest single upgrade to both surfaces.
+
 - **⚠ OPEN — an unidentified flaky test (noticed 2026-08-28, web work).** The
   suite failed once on 2026-08-28 at 2516+1 and once at 2525+1, and passed on
   every one of ~30 other runs including three with a `next dev` server up. Both

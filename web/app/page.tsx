@@ -103,11 +103,24 @@ export default async function HomePage() {
           <h1 className="font-[family-name:var(--font-display)] mx-auto text-[clamp(1.4rem,7.3vw,4.25rem)] leading-[1.04] tracking-[-0.02em] text-[#f2ede1] text-balance max-w-[28ch]">
             One wolf starts to growl.<br />The whole pack will howl.
           </h1>
+          {/* The one call to action, and the only place the display face is used
+              twice on this page. It is a LINK, not a button, because it reads as
+              the third line of the couplet above it. */}
+          <Link
+            href="/start"
+            className="font-[family-name:var(--font-display)] group mt-4 inline-block text-[clamp(1.4rem,4.4vw,2.25rem)]
+                       leading-tight text-[#d29922] no-underline transition-colors hover:text-[#e0a92c]"
+          >
+            Run with us.
+            <span aria-hidden className="ml-2 inline-block transition-transform group-hover:translate-x-1">→</span>
+          </Link>
+
           <p className="font-[family-name:var(--font-prose)] mx-auto mt-5 max-w-[58ch] text-[1.0625rem] leading-7 text-text">
-            Forty people log the same three hours from forty different places on the
-            field. Wolf Pack merges them into one record — who did the damage, who
-            held the chain together, what went right or wrong in the fight timelines.
-            No single client can see it. This is where it lives afterwards.
+            Our guild raids three hours per night, dispersed across the map. The Wolf Pack
+            miMIC logsync agent merges them into one common record here — it parses who did
+            the damage, helps keep the chain together, calls out raid comms, and helps us
+            figure out what went right or wrong in the fight timelines. No single client can
+            see it all. Never hunt alone. AWROOOOOO!
           </p>
 
           <div className="mt-7 flex flex-wrap items-center justify-center gap-3">
