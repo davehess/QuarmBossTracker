@@ -116,11 +116,11 @@ export default async function HomePage() {
           </Link>
 
           <p className="font-[family-name:var(--font-prose)] mx-auto mt-5 max-w-[58ch] text-[1.0625rem] leading-7 text-text">
-            Our guild raids three hours per night, dispersed across the map. The Wolf Pack
-            miMIC logsync agent merges them into one common record here — it parses who did
-            the damage, helps keep the chain together, calls out raid comms, and helps us
-            figure out what went right or wrong in the fight timelines. No single client can
-            see it all. Never hunt alone. AWROOOOOO!
+            Our guild raids three hours per night, three nights a week, dispersed across the
+            map. The Wolf Pack miMIC logsync agent merges them into one common record here —
+            it parses who did the damage, helps keep the chain together, calls out raid comms,
+            and helps us figure out what went right or wrong in the fight timelines. No single
+            client can see it all. Never hunt alone. AWROOOOOO!
           </p>
 
           <div className="mt-7 flex flex-wrap items-center justify-center gap-3">

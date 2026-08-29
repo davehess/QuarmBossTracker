@@ -39,7 +39,7 @@ export const releases: Release[] = [
   {
     key: 'web-1-6-0',
     title: 'Getting started, step by step',
-    version: 'Web 1.6.0',
+    version: 'Web 1.6.1',
     date: '2026-08-28',
     channel: 'beta',
     headline: 'A new page walks you through installing miMIC click by click, and the front page now points straight at it.',
