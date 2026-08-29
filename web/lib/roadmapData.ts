@@ -39,7 +39,7 @@ export const releases: Release[] = [
   {
     key: 'web-1-4-1',
     title: 'A new front page',
-    version: 'Web 1.4.4',
+    version: 'Web 1.4.5',
     date: '2026-08-28',
     channel: 'beta',
     headline: 'The front page opens on the pack coming out of the dark, and the row of buttons underneath is now four doors instead of twenty.',

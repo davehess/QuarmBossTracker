@@ -92,8 +92,16 @@ export default async function HomePage() {
         <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-transparent via-bg/60 via-62% to-bg" />
 
         <div className="page-reveal relative px-4 pt-[70vw] pb-10 text-center sm:pt-[40vw] sm:pb-14 lg:pt-[25rem]">
-          <h1 className="font-[family-name:var(--font-display)] mx-auto text-[clamp(2rem,7vw,4.25rem)] leading-[1.04] tracking-[-0.02em] text-[#f2ede1] text-balance max-w-[18ch]">
-            One wolf sees a fight.<br />The pack sees the raid.
+          {/* ⚠ The break is explicit and the couplet rhymes, so BOTH halves have to
+              hold one line each — a wrapped third line breaks the rhyme where the
+              reader hears it. Measured 2026-08-28: the longer line needs a
+              consistent ~7.6–7.85vw to fit from 320 to 430px, so the clamp's
+              floor drops below its old 2rem rather than letting the type wrap.
+              The ch cap is sized in the SAME em, so it shrinks with the font and
+              would re-wrap what the clamp just fixed; it is only a safety stop
+              for very wide screens now that the break is authored. */}
+          <h1 className="font-[family-name:var(--font-display)] mx-auto text-[clamp(1.4rem,7.3vw,4.25rem)] leading-[1.04] tracking-[-0.02em] text-[#f2ede1] text-balance max-w-[28ch]">
+            One wolf starts to growl.<br />The whole pack will howl.
           </h1>
           <p className="font-[family-name:var(--font-prose)] mx-auto mt-5 max-w-[58ch] text-[1.0625rem] leading-7 text-text">
             Forty people log the same three hours from forty different places on the

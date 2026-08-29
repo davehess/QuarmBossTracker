@@ -1325,6 +1325,14 @@ holds it in memory.
   she is 86% wide there. Her width, not a tighter fan, is the lever: pulling the
   fan in instead hid the pack's eyes behind her ruff. The rest of the page is
   held one beat behind the wolf by `.page-reveal`, disabled under reduced motion.
+  ⚠ **The headline is a rhyming couplet across an authored `<br />`**, so both
+  halves must hold one line each — a wrapped third line breaks the rhyme where
+  the reader hears it. Measured: the longer half needs ~7.6–7.85vw from 320 to
+  430px, so the clamp floor sits *below* the usual 2rem instead of pinning the
+  type larger than the line. The `ch` cap is sized in the same em, so it shrinks
+  with the font and will re-wrap what the clamp just fixed — widen both together
+  or neither. `test/wolf-eyeglow.test.js` derives the requirement from the copy's
+  own length, so growing the copy fails the test rather than the page.
   Nav is four doors — Raid / Stats / Prep / **/me**.
   ⚠ **`/me` renders unconditionally**; gating it on `showMe` made the four doors
   three for every signed-out visitor and it went missing. `/me` redirects to

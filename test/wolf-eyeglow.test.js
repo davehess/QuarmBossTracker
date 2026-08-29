@@ -115,6 +115,36 @@ describe('landing page fit and pacing', () => {
     expect(Number(m[1])).toBeLessThanOrEqual(100);
   });
 
+  it('lets the headline couplet hold two lines at phone widths', () => {
+    // The copy rhymes across an authored <br />, so a wrapped third line breaks
+    // the rhyme exactly where the reader hears it. Measured 2026-08-28: the
+    // longer half needs ~7.6-7.85vw to fit from 320px to 430px, so the clamp
+    // floor has to sit BELOW the old 2rem rather than pinning the type larger
+    // than the line. Browser measurement is the real check; this catches the
+    // floor being raised back up under copy that no longer fits at that size.
+    const h1 = page.slice(page.indexOf('<h1'), page.indexOf('</h1>'));
+    const halves = h1.slice(h1.indexOf('>') + 1).split('<br />').map(t => t.trim());
+    expect(halves).toHaveLength(2);
+    for (const half of halves) expect(half.length).toBeGreaterThan(0);
+
+    const clamp = h1.match(/clamp\(([\d.]+)rem,\s*([\d.]+)vw,\s*([\d.]+)rem\)/);
+    expect(clamp, 'headline should size with a clamp()').toBeTruthy();
+    const [, floorRem, vw] = clamp;
+    const longest = Math.max(...halves.map(h => h.length));
+    // 0.471em per character, measured off the shipped face (Prata) — 377px for
+    // 25 characters at 32px. A line must fit the ~92% of the viewport the hero
+    // leaves it at its SMALLEST supported width, 320px.
+    const needPx = longest * 0.471 * (parseFloat(vw) / 100) * 320;
+    expect(needPx).toBeLessThanOrEqual(320 * 0.9);
+    expect(parseFloat(floorRem) * 16).toBeLessThanOrEqual((parseFloat(vw) / 100) * 320);
+
+    // The ch cap is sized in the same em, so it shrinks with the font and can
+    // re-wrap what the clamp just fixed.
+    const cap = h1.match(/max-w-\[(\d+)ch\]/);
+    expect(cap).toBeTruthy();
+    expect(Number(cap[1])).toBeGreaterThanOrEqual(longest * 0.471 / 0.5);
+  });
+
   it('holds the rest of the page back until the wolf has arrived', () => {
     expect(page).toMatch(/className="page-reveal/);
     const delay = cssCode.match(/\.page-reveal\s*\{[^}]*animation:[^;]*?([\d.]+)s\s+(?:both|backwards|forwards)?/);
