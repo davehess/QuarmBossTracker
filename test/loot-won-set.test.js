@@ -35,15 +35,19 @@ describe('bid-history: the won-item set is independent of the display cap', () =
   it('builds wonItemIds from its own opendkp_loot sweep, not from `wins`', () => {
     expect(handler).toMatch(/const wonItemIds = new Set\(\);/);
     // The seeding loop reads the dedicated sweep…
-    expect(handler).toMatch(/for \(const r of wonIdRows\) if \(r\.item_id != null\) wonItemIds\.add\(r\.item_id\);/);
+    expect(handler).toMatch(/for \(const r of wonIdRows\)/);
+    expect(handler).toMatch(/wonItemIds\.add\(r\.item_id\)/);
     // …and NOT the capped display list. This exact line was the bug.
-    expect(handler).not.toMatch(/for \(const w of wins\).*wonItemIds\.add/);
+    expect(handler).not.toMatch(/for \(const w of wins\)[^\n]*wonItemIds\.add/);
   });
 
-  it('the won-set sweep selects item_id only and is not capped at the display limit', () => {
+  it('the won-set sweep stays narrow and is not capped at the display limit', () => {
+    // character_name joined it on 2026-08-29 so ownership can be answered PER
+    // CHARACTER; it is still two tiny columns and still uncapped relative to
+    // the display list, which is the property that mattered.
     const sweep = handler.slice(handler.indexOf('const wonItemIds'));
-    const q = sweep.match(/`select=item_id&\$\{famClause\}&limit=(\d+)`/);
-    expect(q, 'won-set query should select item_id only').toBeTruthy();
+    const q = sweep.match(/`select=item_id,character_name&\$\{famClause\}&limit=(\d+)`/);
+    expect(q, 'won-set query should select item_id + character_name only').toBeTruthy();
     expect(Number(q[1])).toBeGreaterThanOrEqual(5000);
   });
 
@@ -75,25 +79,24 @@ describe('a won item never resurfaces as wishlist or miss', () => {
     expect(helpers._pruneWonWishlist(wl, WON).map(w => w.item_id)).toEqual([11616]);
   });
 
-  it('drops won items from RECENT MISSES even when the family lost that auction', () => {
-    // Bid and lost on auction 1, then won the item later in auction 2. Only the
-    // uncapped won-set knows about auction 2 — with the capped one this row came
-    // back as a miss.
+  it('drops a miss once THAT character holds the item, even if it lost the auction', () => {
+    // Bid and lost on auction 1, then got the item later. Still not a miss for
+    // that character — this is the 2026-08-09 intent, now scoped per character.
     const bidRows = [
       { auction_id: 1, character_id: 108064, value: 40, item_id: 28996, item_name: 'Bracer of Black Blood', winner_character_id: 999, end_at: '2026-07-01', raid_id: 7 },
     ];
     const misses = helpers._buildMisses({
-      bidRows, famCharIds: [108064], nameByCharId: { 108064: 'Hitya' }, wonItemIds: WON,
+      bidRows, nameByCharId: { 108064: 'Hitya' }, wonByChar: { 108064: new Set(WON) },
     });
     expect(misses).toEqual([]);
   });
 
-  it('still reports a genuine miss on an item the family has never won', () => {
+  it('still reports a genuine miss on an item that character has never had', () => {
     const bidRows = [
       { auction_id: 5, character_id: 108064, value: 40, item_id: 12345, item_name: 'Cloak of Flames', winner_character_id: 999, end_at: '2026-07-01', raid_id: 7 },
     ];
     const misses = helpers._buildMisses({
-      bidRows, famCharIds: [108064], nameByCharId: { 108064: 'Hitya' }, wonItemIds: WON,
+      bidRows, nameByCharId: { 108064: 'Hitya' }, wonByChar: { 108064: new Set(WON) },
     });
     expect(misses).toHaveLength(1);
     expect(misses[0].item_name).toBe('Cloak of Flames');

@@ -1310,6 +1310,25 @@ holds it in memory.
 
 ## Web features
 
+- **Loot bidding: RECENT MISSES is PER CHARACTER (`_buildMisses`, bot 3.1.97)** —
+  Hitya, 2026-08-29: *"removed for that character after that character wins that
+  item"*, and *"I know for a fact that there are items that I've bid on in the
+  past and not won."* They were right, and the shortfall was large.
+  ⚠ **The 2026-08-09 fix (drop items the family already owns) was right about
+  the principle and wrong about the scope.** `wonItemIds` is built from
+  `opendkp_loot` for the whole family — *every item any character ever looted* —
+  and any hit removed the miss for everyone. **Measured on the reporting account
+  before changing anything: 20 items bid on and lost, 19 hidden by that sweep, 1
+  displayed** — exactly the single row in their screenshot.
+  `_buildMisses` now keys on **(item, character)** and drops a pair only when
+  THAT character owns the item (its own auction wins ∪ its own loot rows), so a
+  sibling's copy no longer erases your miss and two characters bidding on one
+  item get a row each with their own last bid. ⚠ Bids carry the OpenDKP account
+  login in `character_name`, not the in-game character — `character_id` is the
+  only per-character key, which is why the loot sweep now also selects
+  `character_name` to answer ownership per character.
+  Past wins raised 100 → 400 and made searchable by item or character in the
+  agent dashboard (filtered in place; a re-render per keystroke steals focus).
 - **Platform map (`components/PlatformMap.tsx` + `platformData.ts`, web 1.7.0)** —
   top-down, not radial (Hitya): `wolfpack.quest` is the ROOT and the other five
   branches stand under it in pipeline order, joined by a CSS rail. Hovering a

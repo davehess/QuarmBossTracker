@@ -37,6 +37,30 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'bot-3-1-97',
+    title: 'Loot you bid on and lost, per character',
+    version: 'Bot 3.1.97',
+    date: '2026-08-29',
+    headline: 'The Loot tab was hiding almost everything you have bid on and lost. It now tracks it per character, the way items actually work.',
+    features: [
+      {
+        name: 'An item only leaves your list when THAT character gets it',
+        blurb: 'Before, if any of your characters had ever looted an item, it disappeared from everyone\u2019s list \u2014 so an alt picking up a cloak erased your main\u2019s near-miss on it. Items belong to a character, and the list now works the same way.',
+      },
+      {
+        name: 'Each character gets its own row',
+        blurb: 'If two of your characters both bid on the same item, you see both, each with its own last bid.',
+      },
+      {
+        name: 'Past items are searchable',
+        blurb: 'Search your won items by name or character to see which of your characters has one.',
+      },
+    ],
+    fixes: [
+      'Measured on one real account: 20 items bid on and lost, 19 of them hidden. One row was showing.',
+    ],
+  },
+  {
     key: 'agent-3-6-6',
     title: 'Undo an import',
     version: 'Agent 3.6.6',
@@ -60,21 +84,6 @@ export const releases: Release[] = [
     fixes: [
       'A trigger that watches health instead of chat text is no longer labelled "bad pattern". It never had a text pattern to begin with \u2014 that was the only kind of trigger that label could appear on.',
     ],
-  },
-  {
-    key: 'web-1-7-1',
-    title: 'The wolves arrive in turn',
-    version: 'Web 1.7.1',
-    date: '2026-08-29',
-    channel: 'beta',
-    headline: 'The front page now introduces one wolf before the rest of the pack shows up.',
-    features: [
-      {
-        name: 'Her, then them',
-        blurb: 'Two yellow eyes open in the dark. She comes into focus alone. Only then do the eyes light up around her, and the pack steps out behind her one at a time.',
-      },
-    ],
-    fixes: [],
   },
   {
     key: 'web-1-7-0',
