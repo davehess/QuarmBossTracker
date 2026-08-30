@@ -23241,6 +23241,20 @@ function startWebDashboard(port) {
       // and merges into the evaluator. The Triggers tab on the dashboard now
       // edits that list through these endpoints; we always replace the whole
       // list (simpler than per-id PATCH/DELETE and the list is tiny).
+      // GET /api/item-search?q=<text>&limit=<n> — the wishlist picker's
+      // typeahead. Served entirely from the on-disk catalog: no bot round-trip,
+      // no database, and it keeps working with the network down.
+      if (req.url.startsWith('/api/item-search') && req.method === 'GET') {
+        const u = new URL(req.url, 'http://localhost');
+        const results = searchItemCatalog(u.searchParams.get('q'), u.searchParams.get('limit'));
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({
+          ok: true,
+          catalog: _itemCatalogMeta ? _itemCatalogMeta.count : 0,
+          fetched_at: _itemCatalogMeta ? _itemCatalogMeta.fetchedAt : null,
+          results,
+        }));
+      }
       if (req.url === '/api/personal-triggers' && req.method === 'GET') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({
@@ -28557,6 +28571,113 @@ function fetchItemClickies({ botUrl, token }) {
       req.on('timeout', () => { req.destroy(); resolve(); });
       req.end();
     } catch (err) { console.warn('[item-clickies] setup error:', err && err.message); resolve(); }
+  });
+}
+
+// ── Item catalog (wishlist picker) ─────────────────────────────────────────
+// Every item any catalogued NPC can drop, fetched once from the bot and cached
+// on disk, so picking a wishlist item searches LOCALLY and never waits on the
+// network (Hitya, 2026-08-30). 11,099 rows / ~380 kB / ~130 kB on the wire, and
+// a 304 on every startup after the weekly mirror sync.
+//
+// ⚠ Includes Planes of Power on purpose — the point is to let people build a
+// wishlist BEFORE the 2026-10-01 unlock, which the boss-driven list could not
+// do (only 12 PoP bosses are registered until that board is built out).
+const ITEM_CATALOG_FILE = path.join(__dirname, 'logsync.item-catalog.json');
+let _itemCatalog = [];          // [[id, name, era], ...] — array rows, as sent
+let _itemCatalogLower = [];     // parallel lowercase names, so search never re-lowercases
+let _itemCatalogMeta = null;    // { fetchedAt, etag, count }
+
+function _indexItemCatalog(entries) {
+  _itemCatalog = Array.isArray(entries) ? entries : [];
+  _itemCatalogLower = _itemCatalog.map(e => String((e && e[1]) || '').toLowerCase());
+}
+
+function loadItemCatalogFromDisk() {
+  try {
+    if (!fs.existsSync(ITEM_CATALOG_FILE)) return;
+    const raw = JSON.parse(fs.readFileSync(ITEM_CATALOG_FILE, 'utf8'));
+    if (!Array.isArray(raw.entries)) return;
+    _indexItemCatalog(raw.entries);
+    _itemCatalogMeta = { fetchedAt: raw.fetched_at, etag: raw.etag || null, count: raw.entries.length };
+    console.log(`[item-catalog] loaded ${raw.entries.length} items from disk (cached ${raw.fetched_at || '?'})`);
+  } catch (err) {
+    console.warn('[item-catalog] disk load failed:', err && err.message);
+  }
+}
+
+function fetchItemCatalog({ botUrl, token }) {
+  if (!botUrl || !token) return Promise.resolve();
+  const url = botUrl.replace(/\/encounter(\?.*)?$/, '/item-catalog');
+  return new Promise((resolve) => {
+    try {
+      const u = new URL(url);
+      const mod = u.protocol === 'https:' ? https : http;
+      const headers = {
+        'Authorization': `Bearer ${token}`,
+        'User-Agent':    `wolfpack-logsync/${AGENT_VERSION}`,
+      };
+      // The whole point of the ETag: an unchanged week costs ~200 bytes.
+      if (_itemCatalogMeta && _itemCatalogMeta.etag) headers['If-None-Match'] = _itemCatalogMeta.etag;
+      const req = mod.request({
+        method: 'GET', hostname: u.hostname, port: u.port,
+        path: u.pathname + u.search, headers, timeout: 30000,
+      }, (res) => {
+        if (res.statusCode === 304) { res.resume(); return resolve(); }
+        if (res.statusCode !== 200) { res.resume(); return resolve(); }  // older bot: no route
+        const etag = res.headers && res.headers.etag;
+        const ctype = (res.headers && res.headers['content-type']) || '';
+        let body = '';
+        res.on('data', c => body += c);
+        res.on('end', () => {
+          const looksJson = /json/i.test(ctype) || /^\s*[{[]/.test(body);
+          if (!looksJson) return resolve();
+          try {
+            const data = JSON.parse(body);
+            if (!Array.isArray(data.entries)) { resolve(); return; }
+            _indexItemCatalog(data.entries);
+            _itemCatalogMeta = { fetchedAt: data.fetched_at, etag: etag || null, count: data.entries.length };
+            try {
+              const out = { fetched_at: data.fetched_at, etag: etag || null, entries: data.entries };
+              fs.writeFileSync(ITEM_CATALOG_FILE + '.tmp', JSON.stringify(out));
+              fs.renameSync(ITEM_CATALOG_FILE + '.tmp', ITEM_CATALOG_FILE);
+            } catch (e) { void e; /* disk cache best-effort */ }
+            console.log(`[item-catalog] fetched ${data.entries.length} items from bot`);
+          } catch (err) { console.warn('[item-catalog] parse failed:', err && err.message); }
+          resolve();
+        });
+      });
+      req.on('error',   () => resolve());
+      req.on('timeout', () => { req.destroy(); resolve(); });
+      req.end();
+    } catch (err) { console.warn('[item-catalog] setup error:', err && err.message); resolve(); }
+  });
+}
+
+// Local item search for the wishlist picker. No network, no database.
+// Ranked so typing "cloak" puts "Cloak of Flames" above "Shroud Cloak Clasp":
+// exact, then prefix, then word-start, then anywhere; ties alphabetical.
+function searchItemCatalog(q, limit) {
+  const query = String(q || '').trim().toLowerCase();
+  const cap = Math.max(1, Math.min(50, parseInt(limit, 10) || 20));
+  if (query.length < 2 || !_itemCatalog.length) return [];
+  const hits = [];
+  for (let i = 0; i < _itemCatalogLower.length; i++) {
+    const name = _itemCatalogLower[i];
+    const at = name.indexOf(query);
+    if (at < 0) continue;
+    let rank;
+    if (name === query) rank = 0;
+    else if (at === 0) rank = 1;
+    else if (name[at - 1] === ' ') rank = 2;
+    else rank = 3;
+    hits.push({ i, rank, len: name.length });
+  }
+  hits.sort((a, b) => a.rank - b.rank || a.len - b.len
+                   || (_itemCatalogLower[a.i] < _itemCatalogLower[b.i] ? -1 : 1));
+  return hits.slice(0, cap).map(h => {
+    const e = _itemCatalog[h.i];
+    return { id: e[0], name: e[1], era: e[2] == null ? null : e[2] };
   });
 }
 
@@ -35768,6 +35889,7 @@ async function main() {
   // boot, and the resisted-spell card just shows plain names until it lands.
   _loadSpellCatalogFromDisk();
   _loadItemClickiesFromDisk();
+  loadItemCatalogFromDisk();
   // Restore the Pet tracker's in-memory state (last /pet health, observed buff
   // landings, running combat stats) so a Mimic restart or LD reconnect brings
   // the existing pet timers + stats back instead of starting blank. TTLs in
@@ -35776,6 +35898,7 @@ async function main() {
   if (!dryRun && token) {
     fetchSpellCatalog({ botUrl, token }).catch(() => {});
     fetchItemClickies({ botUrl, token }).catch(() => {});
+    fetchItemCatalog({ botUrl, token }).catch(() => {});
     startReporterHeartbeat();   // #72 — poll the bot for our upload roles (fail-open)
     setInterval(() => { try { uploadRollSets(); } catch {} }, 60_000).unref();   // #91 off-night roll capture
     setInterval(() => { try { uploadLooted(); } catch {} }, 60_000).unref();     // #91 looted-line capture
@@ -35785,6 +35908,7 @@ async function main() {
     setInterval(() => {
       fetchSpellCatalog({ botUrl, token }).catch(() => {});
       fetchItemClickies({ botUrl, token }).catch(() => {});
+      fetchItemCatalog({ botUrl, token }).catch(() => {});
     }, 24 * 60 * 60 * 1000).unref();
   }
   // Operator's declared main (if the launcher passed --character) — used to
