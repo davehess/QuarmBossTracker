@@ -13,7 +13,7 @@ import path from 'node:path';
 
 const WEB = path.join(__dirname, '..', 'web');
 const read = f => fs.readFileSync(path.join(WEB, f), 'utf8');
-const strip = s => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+import { stripJs as strip } from './_source-slice.js';
 
 const map = strip(read('components/PlatformMap.tsx'));
 // ⚠ Stripped like the rest. This file's own header explains why it must not
