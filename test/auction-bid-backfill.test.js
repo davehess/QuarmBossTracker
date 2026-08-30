@@ -54,6 +54,50 @@ describe('pending-bids pass', () => {
   });
 });
 
+describe('pending-bids pass — executed against a stub', () => {
+  // ⚠ Behaviour, not text. The marker write shipped with update()'s arguments
+  // SWAPPED — update(table, body, queryString) against a helper whose
+  // signature is update(table, queryString, body). It PATCHed garbage, matched
+  // nothing, threw nothing, and left every marker NULL, so the pass re-detailed
+  // the same newest 10 auctions forever. Every text assertion stayed green
+  // through that; only running the code against the real signature shape
+  // catches an argument-order bug.
+  async function run({ pending, bidResult }) {
+    const calls = { select: [], update: [], details: [] };
+    const block =
+      'const supabase = {\n' +
+      '  select: async (t, q) => { calls.select.push([t, q]); return pending; },\n' +
+      '  update: async (t, q, body) => { calls.update.push([t, q, body]); return []; },\n' +
+      '};\n' +
+      'const syncAuctionBids = async (id) => { calls.details.push(id); return bidResult; };\n' +
+      'const console = { warn: () => {}, log: () => {} };\n' +
+      'const setTimeout = (fn) => fn();\n' +   // no real 250ms waits in tests
+      sliceBlock(syncSrc, 'const BIDS_PER_PASS', '};') + '\n' +
+      sliceBlock(syncSrc, 'async function syncPendingAuctionBids()', '\n}');
+    const fn = new Function('calls', 'pending', 'bidResult', block + '\nreturn syncPendingAuctionBids();');
+    const result = await fn(calls, pending, bidResult);
+    return { calls, result };
+  }
+
+  it('marks each detailed auction with a QUERYSTRING filter and a body patch', async () => {
+    const { calls } = await run({ pending: [{ auction_id: 777 }], bidResult: { bids_written: 3 } });
+    expect(calls.details).toEqual([777]);
+    expect(calls.update).toHaveLength(1);
+    const [table, q, body] = calls.update[0];
+    expect(table).toBe('opendkp_auctions');
+    expect(q).toBe('auction_id=eq.777');                      // arg 2 is the FILTER
+    expect(body).toHaveProperty('bids_synced_at');            // arg 3 is the PATCH
+    expect(typeof body.bids_synced_at).toBe('string');
+  });
+
+  it('does not mark an auction whose detail call failed', async () => {
+    const { calls, result } = await run({ pending: [{ auction_id: 1 }, { auction_id: 2 }], bidResult: { error: 'boom' } });
+    expect(calls.details).toEqual([1]);                       // aborted after the first
+    expect(calls.update).toHaveLength(0);
+    expect(result.error).toBe('boom');
+  });
+});
+
 describe('char_id → name resolution', () => {
   it('prefers characters.opendkp_id and keeps MODE as fallback only', () => {
     const h = botCode.slice(botCode.indexOf("if (key === 'bid-history')"));

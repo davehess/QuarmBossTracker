@@ -285,8 +285,12 @@ async function syncPendingAuctionBids() {
     written += r?.bids_written || 0;
     // Mark synced even at 0 bids written: the detail answered, and answering
     // is the thing we never ask twice for.
-    await supabase.update('opendkp_auctions', { bids_synced_at: new Date().toISOString() },
-      `auction_id=eq.${row.auction_id}`);
+    // ⚠ signature is update(table, QUERYSTRING, body) — these were swapped on
+    // first ship, which PATCHed garbage, matched nothing, threw nothing, and
+    // left every marker NULL: the pass re-detailed the same newest 10 forever
+    // (caught night one: "10 auctions, 40 bid rows" logged, 0 rows marked).
+    await supabase.update('opendkp_auctions', `auction_id=eq.${row.auction_id}`,
+      { bids_synced_at: new Date().toISOString() });
     await new Promise(res => setTimeout(res, 250));
   }
   if (calls) console.log(`[opendkp-sync] bid details: ${calls} auction(s), ${written} bid row(s)`);
