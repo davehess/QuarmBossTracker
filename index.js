@@ -6440,22 +6440,42 @@ function _eraFromPool(poolName) {
 // char's best bid), and the most-recent auction end (ordering + raid deep-link).
 // last_winning_bid / last_second_bid are attached by the caller from the item's
 // MOST-RECENT auction (via _lootItemSummary) — not from the specific loss.
-function _buildMisses({ bidRows, famCharIds, nameByCharId, wonItemIds }) {
-  const famSet = new Set((famCharIds || []).map(Number));
-  const won = new Set((wonItemIds || []).filter(n => Number.isFinite(n)));
-  const byItem = new Map();
+// ⚠ PER CHARACTER, not per family (Hitya, 2026-08-29: "removed for that
+// character after that character wins that item").
+//
+// This used to group by item and drop anything ANY family character owned. The
+// 2026-08-09 fix that introduced the family-wide drop was right that an item you
+// already hold is not a miss — but wrong about WHOSE. EverQuest items belong to
+// a character, and one alt looting a Cloak does not give it to your main.
+//
+// Measured on Hitya's own account before changing it: 20 items bid on and lost,
+// 19 of them hidden because some character in the family had looted that item at
+// some point. The panel showed ONE row — which is exactly what they reported.
+// Keying on (item, character) and only dropping what THAT character owns puts
+// the other 19 back.
+function _buildMisses({ bidRows, nameByCharId, wonByChar }) {
+  const owns = (charId, itemId) => {
+    const set = wonByChar && (wonByChar[charId] || wonByChar[String(charId)]);
+    if (!set) return false;
+    return typeof set.has === 'function' ? set.has(itemId) : (Array.isArray(set) && set.includes(itemId));
+  };
+  const byPair = new Map();
   for (const b of (bidRows || [])) {
     if (b == null || b.item_id == null) continue;
-    if (won.has(b.item_id)) continue;                                            // already won → not a miss
-    if (b.winner_character_id != null && famSet.has(Number(b.winner_character_id))) continue; // family won this auction
-    let cur = byItem.get(b.item_id);
-    if (!cur) { cur = { item_id: b.item_id, item_name: b.item_name || null, char_id: null, my_last_bid: null, last_end: null, raid_id: null, auction_id: null, _t: -1 }; byItem.set(b.item_id, cur); }
-    if ((b.value || 0) > (cur.my_last_bid || 0)) { cur.my_last_bid = b.value || 0; if (b.character_id != null) cur.char_id = Number(b.character_id); }
+    const cid = b.character_id != null ? Number(b.character_id) : null;
+    if (cid == null || !Number.isFinite(cid)) continue;
+    // Only THIS character winning this auction settles it for this character.
+    if (b.winner_character_id != null && Number(b.winner_character_id) === cid) continue;
+    if (owns(cid, b.item_id)) continue;                       // this character already has it
+    const key = b.item_id + '|' + cid;
+    let cur = byPair.get(key);
+    if (!cur) { cur = { item_id: b.item_id, item_name: b.item_name || null, char_id: cid, my_last_bid: null, last_end: null, raid_id: null, auction_id: null, _t: -1 }; byPair.set(key, cur); }
+    if ((b.value || 0) > (cur.my_last_bid || 0)) cur.my_last_bid = b.value || 0;
     const t = b.end_at ? (Date.parse(b.end_at) || 0) : 0;
     if (t >= cur._t) { cur._t = t; cur.last_end = b.end_at || cur.last_end; if (b.raid_id != null) cur.raid_id = b.raid_id; if (b.auction_id != null) cur.auction_id = b.auction_id; }
     if (!cur.item_name && b.item_name) cur.item_name = b.item_name;
   }
-  const rows = [...byItem.values()].map(r => ({
+  const rows = [...byPair.values()].map(r => ({
     item_id: r.item_id, item_name: r.item_name,
     character: (r.char_id != null && nameByCharId && nameByCharId[r.char_id]) || null,
     char_id: r.char_id, my_last_bid: r.my_last_bid,
@@ -6908,7 +6928,7 @@ async function _handleAgentServerPanel(req, res) {
       if (famClause) {
         const winRows = await supabase.select(
           'opendkp_loot',
-          `select=character_name,item_id,item_name,dkp,raid_id,fetched_at&${famClause}&order=raid_id.desc&limit=100`
+          `select=character_name,item_id,item_name,dkp,raid_id,fetched_at&${famClause}&order=raid_id.desc&limit=400`
         ) || [];
         wins = winRows.map(r => ({ character: r.character_name, item_id: r.item_id, item_name: r.item_name, dkp: r.dkp, raid_id: r.raid_id, when: r.fetched_at }));
       }
@@ -6919,12 +6939,23 @@ async function _handleAgentServerPanel(req, res) {
       // not yet won" and as RECENT MISSES (reported 2026-08-09). item_id only,
       // so the row is tiny and the high cap is cheap.
       const wonItemIds = new Set();
+      const lootByName = new Map();   // character_name(lower) → Set(item_id) — per-character ownership
       if (famClause) {
+        // character_name comes along so ownership can be answered PER CHARACTER.
+        // The family-wide set below still prunes the wishlist; RECENT MISSES
+        // uses the per-character map instead (Hitya, 2026-08-29).
         const wonIdRows = await supabase.select(
           'opendkp_loot',
-          `select=item_id&${famClause}&limit=5000`
+          `select=item_id,character_name&${famClause}&limit=5000`
         ) || [];
-        for (const r of wonIdRows) if (r.item_id != null) wonItemIds.add(r.item_id);
+        for (const r of wonIdRows) {
+          if (r.item_id == null) continue;
+          wonItemIds.add(r.item_id);
+          const nm = String(r.character_name || '').toLowerCase();
+          if (!nm) continue;
+          if (!lootByName.has(nm)) lootByName.set(nm, new Set());
+          lootByName.get(nm).add(r.item_id);
+        }
       }
       // Explicit prereg wishlist (+ resolve item names from eqemu_items).
       let preregRows = [];
@@ -7005,7 +7036,22 @@ async function _handleAgentServerPanel(req, res) {
       // Wishlist = merge, then DROP items the family already WON (preregs stay).
       const wishlist = _pruneWonWishlist(_mergeWishlist(preregForMerge, bidItemRows), [...wonItemIds]).slice(0, 60);
       // RECENT MISSES + per-item last winning / second-place figures.
-      let misses = _buildMisses({ bidRows, famCharIds, nameByCharId, wonItemIds: [...wonItemIds] }).slice(0, 40);
+      // What each character already HAS: the auctions that character won, plus
+      // everything the mirror shows in their loot. Family-wide ownership is
+      // deliberately NOT used here — see _buildMisses.
+      const wonByChar = {};
+      const ownedAdd = (cid, itemId) => {
+        if (cid == null || itemId == null) return;
+        if (!wonByChar[cid]) wonByChar[cid] = new Set();
+        wonByChar[cid].add(itemId);
+      };
+      for (const a of wonAuctions) ownedAdd(Number(a.winner_character_id), a.item_id);
+      for (const cid of famCharIds) {
+        const nm = String((nameByCharId && nameByCharId[cid]) || '').toLowerCase();
+        const owned = nm && lootByName.get(nm);
+        if (owned) for (const itemId of owned) ownedAdd(Number(cid), itemId);
+      }
+      let misses = _buildMisses({ bidRows, nameByCharId, wonByChar }).slice(0, 60);
       if (misses.length) {
         const missIds = misses.map(m => m.item_id);
         const mAuc = await supabase.select(

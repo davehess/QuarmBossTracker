@@ -37,6 +37,30 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'bot-3-1-97',
+    title: 'Loot you bid on and lost, per character',
+    version: 'Bot 3.1.97',
+    date: '2026-08-29',
+    headline: 'The Loot tab was hiding almost everything you have bid on and lost. It now tracks it per character, the way items actually work.',
+    features: [
+      {
+        name: 'An item only leaves your list when THAT character gets it',
+        blurb: 'Before, if any of your characters had ever looted an item, it disappeared from everyone\u2019s list \u2014 so an alt picking up a cloak erased your main\u2019s near-miss on it. Items belong to a character, and the list now works the same way.',
+      },
+      {
+        name: 'Each character gets its own row',
+        blurb: 'If two of your characters both bid on the same item, you see both, each with its own last bid.',
+      },
+      {
+        name: 'Past items are searchable',
+        blurb: 'Search your won items by name or character to see which of your characters has one.',
+      },
+    ],
+    fixes: [
+      'Measured on one real account: 20 items bid on and lost, 19 of them hidden. One row was showing.',
+    ],
+  },
+  {
     key: 'web-1-7-0',
     title: 'The platform map, read top down',
     version: 'Web 1.7.0',
