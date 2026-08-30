@@ -113,6 +113,22 @@ writes.
 
 ## Bot features
 
+### Reporter fleet: one account, several machines, one slot (bot 3.1.102)
+
+The fleet registry keys on discord_id, so a player's second PC used to clobber
+their first on every heartbeat — Hitya's two machines flip-flopped Canopy
+(idle, 320h since a log line) against Rockin (live, 4s) in the officer panel.
+`_reporterClaimAllowed` now gates the ingest: **the freshest LOG holds the
+slot, not the latest heartbeat.** Ages are projected to now; a 5s slack keeps a
+lone idle machine updating its own entry (without it, an unchanged log ties
+itself and the entry starves to TTL death); dead or camping incumbents are
+always claimable; agents too old to send `last_line_ms` keep last-writer
+behavior between themselves but never displace a signalled incumbent. A refused
+machine loses only the panel row — roles and elections key on the shared
+discord_id either way. Two machines BOTH actively logging still trade the slot
+within the slack; that is genuine two-boxing, not a bug. Behaviour-tested by
+executing the helper (`test/reporter-claim.test.js`).
+
 ### Raid timers & boards
 `data/bosses.json` (hot-reloaded, 133 bosses) defines spawn windows.
 Kills arrive via `/kill`-family commands or agent `bosskill` uploads

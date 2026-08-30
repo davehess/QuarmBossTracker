@@ -3761,6 +3761,32 @@ const REPORTER_BUFF_PER_ZONE = 3;     // buff landings dedup to 3 reporters per 
 const REPORTER_ROSTER_PER_GROUP = 1;  // raid roster dedup to 1 reporter per raid group (P1c)
 const REPORTER_LIVENESS_MAX_MS_DEFAULT = 90_000; // #112: chat candidacy requires a live log line newer than this (tunable key reporter_liveness_max_ms)
 const _reporterRegistry   = new Map(); // guild_id → Map(discord_id → {last_seen, primary, zone, group_num, camping, has_zeal, ver, mimic_ver, last_line_ms, live_character})
+// One account, several machines: may THIS heartbeat claim the account's fleet
+// slot? (Hitya, 2026-08-30: two PCs both on, Canopy idle on one at 320h since
+// its last log line, Rockin live on the other at 4s — the panel flip-flopped
+// between them because the ingest was last-writer-wins on discord_id.)
+//
+// Rule: the freshest LOG wins the slot, not the latest heartbeat. Ages are
+// projected to `now` (the incumbent's stored age grows while it sits), and
+// CLAIM_SLACK_MS absorbs jitter so a lone idle machine keeps updating its own
+// entry — without slack, an unchanged log ties itself and the entry starves to
+// TTL death. A dead or camping incumbent is always claimable. Agents too old
+// to report last_line_ms count as never-saw-a-line, but two such agents keep
+// the old last-writer behavior rather than deadlocking.
+const REPORTER_CLAIM_SLACK_MS = 5000;
+function _reporterClaimAllowed({ incoming, incumbent, now, ttlMs }) {
+  if (!incumbent) return true;
+  if (incumbent.camping) return true;
+  if ((now - (incumbent.last_seen || 0)) > ttlMs) return true;      // effectively gone
+  const incAge = Number.isFinite(incoming?.last_line_ms) ? incoming.last_line_ms : null;
+  const curAge = incumbent.last_line_ms == null
+    ? null
+    : incumbent.last_line_ms + Math.max(0, now - (incumbent.last_seen || now));
+  if (curAge == null) return true;                 // incumbent has no line signal
+  if (incAge == null) return false;                // it does, we don't — keep it
+  return incAge <= curAge + REPORTER_CLAIM_SLACK_MS;
+}
+
 function _reporterGuildBook(guildId) {
   let book = _reporterRegistry.get(guildId);
   if (!book) { book = new Map(); _reporterRegistry.set(guildId, book); }
@@ -15034,12 +15060,15 @@ async function _handleAgentReporterPoll(req, res) {
     }
   } catch { /* never break the heartbeat over telemetry */ }
 
-  // Always record the heartbeat so liveness/failover works even while disabled.
-  // `camping` (agent typed /camp) demotes this agent from every election ~30s
-  // before its logout would trip the TTL — see _dropCampers. `last_line_ms`
-  // (#112) is the agent's ms-since-last-live-log-line from its primary's tail —
-  // the liveness signal that catches a logged-out-but-heartbeating reporter.
-  _reporterGuildBook(guildId).set(id, {
+  // Record the heartbeat so liveness/failover works even while disabled —
+  // UNLESS a fresher sibling holds the slot: one account's several machines
+  // share this key, and the freshest LOG keeps it, not the latest heartbeat
+  // (see _reporterClaimAllowed). A refused machine loses nothing but the
+  // panel row — roles and elections key on the shared discord_id either way.
+  const _claimBook = _reporterGuildBook(guildId);
+  const _incoming = { last_line_ms: Number.isFinite(payload.last_line_ms) ? Math.max(0, Math.floor(payload.last_line_ms)) : null };
+  if (_reporterClaimAllowed({ incoming: _incoming, incumbent: _claimBook.get(id), now: Date.now(), ttlMs: REPORTER_TTL_MS }))
+  _claimBook.set(id, {
     last_seen: Date.now(),
     primary:   payload.primary_character ? String(payload.primary_character).slice(0, 32) : '',
     zone:      payload.zone ? String(payload.zone).slice(0, 64) : null,
