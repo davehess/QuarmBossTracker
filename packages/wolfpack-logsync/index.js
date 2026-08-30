@@ -19938,13 +19938,26 @@ async function dismissTopDamage(key) {
         h += "</table>";
       }
 
+      // PAST ITEMS — "fine to be able to look through or search through and see
+      // which of your characters has/had them" (Hitya, 2026-08-29). The rows are
+      // all rendered; the search filters them IN PLACE rather than re-rendering,
+      // because render() rebuilds this card and a re-render per keystroke takes
+      // the focus out of the box you are typing in.
       var winsF = wins.filter(function(x){ return passEra(x.era); });
       if (winsF.length){
-        h += "<div style='font-size:11px;color:var(--dim,#8b949e);text-transform:uppercase;letter-spacing:.05em;margin:12px 0 4px'>recent wins</div>";
-        h += "<table><tr><th>Item</th><th>Char</th><th class=num>DKP</th></tr>";
-        for (var wn=0;wn<winsF.length && wn<12;wn++){
+        h += "<div style='display:flex;align-items:baseline;gap:8px;margin:12px 0 4px'>"
+          + "<span style='font-size:11px;color:var(--dim,#8b949e);text-transform:uppercase;letter-spacing:.05em'>past items <span style='text-transform:none;letter-spacing:0'>· what your characters have won</span></span>"
+          + "<input id=wpLootWinQ type=search placeholder='search item or character' style='margin-left:auto;width:190px;background:#0e1116;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 6px;font-family:inherit;font-size:11px'>"
+          + "<span id=wpLootWinCount class=dim style='font-size:10px'></span>"
+          + "</div>";
+        h += "<table id=wpLootWins><tr><th>Item</th><th>Char</th><th class=num>DKP</th></tr>";
+        for (var wn=0;wn<winsF.length && wn<400;wn++){
           var win = winsF[wn];
-          h += "<tr><td>"+itemLink(win.item_name||"?", win.raid_id)+eraTag(win.era)+"</td><td"+(win.character?" class=name":"")+">"+esc(win.character||"?")+"</td><td class=num>"+fmt(win.dkp)+"</td></tr>";
+          var wkey = String((win.item_name||"") + " " + (win.character||"")).toLowerCase();
+          h += "<tr data-w='"+esc(wkey)+"'"+(wn>=12?" data-extra=1 style='display:none'":"")+">"
+            + "<td>"+itemLink(win.item_name||"?", win.raid_id)+eraTag(win.era)+"</td>"
+            + "<td"+(win.character?" class=name":"")+">"+esc(win.character||"?")+"</td>"
+            + "<td class=num>"+fmt(win.dkp)+"</td></tr>";
         }
         h += "</table>";
       }
@@ -19954,6 +19967,28 @@ async function dismissTopDamage(key) {
     wire();
     restoreDrafts();
     runTicks();
+  }
+
+  // Search text for PAST ITEMS. Module state, not DOM state, so it survives the
+  // card's own repaints; the filter runs over the rendered rows so typing never
+  // triggers a re-render.
+  var winQ = "";
+  function applyWinFilter(){
+    var tbl = document.getElementById("wpLootWins");
+    var out = document.getElementById("wpLootWinCount");
+    if (!tbl) return;
+    var q = String(winQ||"").trim().toLowerCase();
+    var rows = tbl.querySelectorAll("tr[data-w]");
+    var shown = 0;
+    for (var i=0;i<rows.length;i++){
+      var r = rows[i];
+      var hit = q ? (r.getAttribute("data-w").indexOf(q) >= 0)
+                  : (r.getAttribute("data-extra") !== "1");   // no query = the first 12
+      r.style.display = hit ? "" : "none";
+      if (hit) shown++;
+    }
+    if (out) out.textContent = q ? (shown + " of " + rows.length + " match")
+                                 : (rows.length > shown ? ("showing " + shown + " of " + rows.length + " — search to see the rest") : "");
   }
 
   function wire(){
@@ -19971,6 +20006,12 @@ async function dismissTopDamage(key) {
     el = document.getElementById("wpLootReveal"); if (el) el.onclick = function(){ showLoot=true; render(); };
     el = document.getElementById("wpLootHide"); if (el) el.onclick = function(){ showLoot=false; render(); };
     el = document.getElementById("wpLootRestore"); if (el) el.onclick = function(){ setDismissed("all", false); };
+    el = document.getElementById("wpLootWinQ");
+    if (el){
+      el.value = winQ;
+      el.oninput = function(){ winQ = this.value; applyWinFilter(); };
+      applyWinFilter();
+    }
     var xs = card.querySelectorAll(".wpLootX");
     for (var x=0;x<xs.length;x++){ (function(sp){ sp.onclick=function(){ setDismissed(sp.getAttribute("data-item"), true); }; })(xs[x]); }
     // Typing in the family editor marks it dirty so the 7s poll can't overwrite
