@@ -165,6 +165,17 @@ present this as a feature cost, not an optimisation.
 wrong trade. The local copy exists for Mimic, which has to work mid-raid without
 waiting on the network.
 
+### Auction bid details (added 2026-08-30)
+
+The auctions list is winners-only, so full bid histories come from the
+per-auction detail endpoint: **at most `OPENDKP_BIDS_PER_PASS` (default 10,
+0 = off) detail calls per auctions-sync pass, and each auction pays that call
+exactly once per lifetime** (`bids_synced_at` marker — a closed auction's bids
+are immutable). Newest-first, so it self-backfills history as a trickle behind
+normal passes rather than as a sweep. Steady state ≈ one call per closed
+auction ≈ 15–25 per raid night. A self-host deployment inherits the same knob
+and the same never-refetch guarantee.
+
 ### Storage & retention
 - **Local is an ARCHIVE, not a mirror** (2026-08-12). `refresh-local-archive.sh`
   merges each nightly dump instead of restoring with `--clean`, so rows

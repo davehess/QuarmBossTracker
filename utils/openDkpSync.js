@@ -252,6 +252,47 @@ function _bidsFromAuction(auctionId, a) {
   }).filter(Boolean);
 }
 
+// ── Full-bid backfill: one detail call per auction, per lifetime ────────────
+// A closed auction's bid list is immutable, so bids_synced_at makes each
+// auction cost exactly ONE detail call ever. Newest-first, so the RECENT
+// MISSES window heals first and deep history trickles in behind it.
+//
+// Outbound-traffic contract (the OpenDKP citizenship rules apply — see
+// DESIGN-selfhost-wizard §3): at most OPENDKP_BIDS_PER_PASS (default 10)
+// detail calls per sync pass, 0 disables, and the pass runs inside
+// syncAuctions so OPENDKP_HALT and every cadence gate already cover it. The
+// first error aborts the pass — a struggling API gets quiet, not hammered.
+const BIDS_PER_PASS = () => {
+  const n = parseInt(process.env.OPENDKP_BIDS_PER_PASS, 10);
+  return Number.isFinite(n) ? Math.max(0, Math.min(50, n)) : 10;
+};
+
+async function syncPendingAuctionBids() {
+  const cap = BIDS_PER_PASS();
+  if (cap === 0) return { detail_calls: 0, bids_written: 0, disabled: true };
+  const pending = await supabase.select(
+    'opendkp_auctions',
+    `select=auction_id&bids_synced_at=is.null&winner_character_id=not.is.null&order=end_at.desc.nullslast&limit=${cap}`
+  ) || [];
+  let calls = 0, written = 0;
+  for (const row of pending) {
+    const r = await syncAuctionBids(row.auction_id);
+    calls++;
+    if (r && r.error) {
+      console.warn(`[opendkp-sync] bid detail ${row.auction_id} failed (${r.error}) — aborting pass`);
+      return { detail_calls: calls, bids_written: written, error: r.error };
+    }
+    written += r?.bids_written || 0;
+    // Mark synced even at 0 bids written: the detail answered, and answering
+    // is the thing we never ask twice for.
+    await supabase.update('opendkp_auctions', { bids_synced_at: new Date().toISOString() },
+      `auction_id=eq.${row.auction_id}`);
+    await new Promise(res => setTimeout(res, 250));
+  }
+  if (calls) console.log(`[opendkp-sync] bid details: ${calls} auction(s), ${written} bid row(s)`);
+  return { detail_calls: calls, bids_written: written };
+}
+
 // Walk /clients/wolfpack/auctions?page=N until an empty page (or the safety
 // cap) is hit. OpenDKP's "Include all" toggle issues exactly the same fetches
 // pages 1..13 currently, so AUCTION_PAGE_LIMIT=25 is generous headroom.
@@ -381,8 +422,11 @@ async function syncAuctions(opts = {}) {
       totalUpserted += auctionRows.length;
     }
 
-    // Bid rows live inline in each auction's Bids[] — no detail call needed.
-    // Flatten across all auctions on this page, upsert as one batch.
+    // ⚠ The list's Bids[] carries ONLY the winning bid(s) — measured
+    // 2026-08-30: 1.08 bids/auction mirrored, 92% of auctions with no losing
+    // bid at all. These rows are kept (they make winners visible immediately),
+    // but the FULL list needs the detail endpoint — syncPendingAuctionBids,
+    // one call per auction per lifetime.
     const allBids = list.flatMap(a => {
       const auctionId = a?.AuctionId ?? a?.AuctionID ?? a?.Id;
       if (auctionId == null) return [];
@@ -414,13 +458,16 @@ async function syncAuctions(opts = {}) {
     if (arr?.TotalPages && arr?.CurrentPage && arr.CurrentPage >= arr.TotalPages) break;
   }
 
+  // Full bid lists: up to OPENDKP_BIDS_PER_PASS detail calls, newest-first,
+  // each auction paying that call exactly once (bids_synced_at).
+  const detail = await syncPendingAuctionBids().catch(err => ({ detail_calls: 0, bids_written: 0, error: err?.message || String(err) }));
+
   return {
     upserted:       totalUpserted,
     pages:          pagesWalked,
-    bids_written:   bidsWritten,
-    // Kept for backwards-compat with the /syncopendkp reply formatter
-    auctions_detailed: pagesWalked, // bids are now extracted inline, not via per-auction calls
-    bid_errors:        0,
+    bids_written:   bidsWritten + (detail.bids_written || 0),
+    auctions_detailed: detail.detail_calls || 0,
+    bid_errors:        detail.error ? 1 : 0,
   };
 }
 
@@ -1982,7 +2029,7 @@ async function foldLootObservations(opts = {}) {
 }
 
 module.exports = {
-  runSync, syncRaidsList, syncRaidDetail, syncCharacters, syncAuctions, syncAudits, syncAdjustments,
+  runSync, syncRaidsList, syncRaidDetail, syncCharacters, syncAuctions, syncAuctionBids, syncPendingAuctionBids, syncAudits, syncAdjustments,
   reconcileRecentLoot, classifyAuditAction, lootDiffRemovals, dedupByConflictKey,
   foldLootObservations, resolveCatalogItemId, selectAllPaged,
 };
