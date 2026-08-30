@@ -100,6 +100,17 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ### ✅ Done — major shipped features (not exhaustive; see git + roadmapData.ts)
 
+- **Dashboard slice — Decision #3 step 1 (agent 3.6.9, beta, 2026-08-30).**
+  Hitya: *"do the dashboard slice."* `WEB_HTML` is now GENERATED from
+  `packages/wolfpack-logsync/dashboard.html` (`npm run sync:dashboard`); the
+  escape-hazard class that blanked the page four times is retired — proven by
+  authoring the three historical killers naively and serving them byte-correct.
+  Shipped artifact still one file; update chain untouched. Drift is a failing
+  check in `check:dashboard` AND `test/dashboard-embed.test.js`. **Next slices
+  when earned:** extract-on-touch for the bot monolith (rule, not project), and
+  full agent modularisation only after this build step survives a stable
+  graduation.
+
 - **`/start` install walkthrough (web 1.6.0, beta, 2026-08-28).** Hitya: the
   landing page's *"Run with us."* needed to link to "a getting started page with
   a click by click on what to do to get installed, setup buttons mentioned and

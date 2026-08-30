@@ -527,6 +527,21 @@ auctions link (`opendkpAuctionsUrl()` in `utils/loot.js`, built from
 
 ## Agent features
 
+### Dashboard as a real file (`dashboard.html` + `sync-dashboard-embed.js`) — agent 3.6.9
+
+Decision #3's first slice (`ARCHITECT-REBUILD-2026-08-16.md`): the 533 kB
+dashboard is authored in `packages/wolfpack-logsync/dashboard.html` and
+machine-folded into the `WEB_HTML` literal by `npm run sync:dashboard`; the
+shipped artifact stays the single committed `index.js`, so the update chain
+(raw fetch, sha, LKG) is untouched. Interpolations: `{{WP:expr}}` in the .html
+→ `${expr}` in the literal — distinct syntax because `${}` legitimately occurs
+as page CONTENT. Drift fails `check:dashboard` in both directions, with the
+checker importing the sync tool's own transform so gate and generator cannot
+disagree. Ship-time proof of byte identity: evaluated `WEB_HTML` and the served
+page both compared byte-for-byte against pre-change captures; the three
+historical page-killers (backtick-in-comment, `${}`, bare `\n`) authored
+naively and served correctly. Guarded by `test/dashboard-embed.test.js`.
+
 ### Log tail & privacy filter
 Tails `eqlog_*_pq.proj.txt`. Officer chat, tells, group, custom channels are
 dropped at the **byte level before parse** (`docs/PRIVACY.md`). Modes:

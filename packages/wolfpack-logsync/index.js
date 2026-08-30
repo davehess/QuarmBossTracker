@@ -12700,6 +12700,10 @@ function _updateBlockedReason() {
 // ALWAYS run `node scripts/check-agent-dashboard.js` after touching this
 // template — it extracts the served <script> body and parses it, catching
 // these before they reach a user. (The release workflow runs it too.)
+// ⚠ GENERATED — do not edit this literal. The dashboard is AUTHORED in
+// packages/wolfpack-logsync/dashboard.html (agent-side interpolations written
+// as {{WP:expr}}); `npm run sync:dashboard` folds it in here with all escaping
+// done mechanically, and check:dashboard fails the build on any drift.
 const WEB_HTML = `<!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>Wolf Pack EQ — Parser</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -13068,7 +13072,7 @@ function _morphAttrs(live, tmpl) {
       // live (wp-hidden from the show/hide-panels feature, wp-drop-target
       // flash). Stripping those would un-hide hidden panels every poll.
       var keep = [];
-      var lc = (live.getAttribute('class') || '').split(/\s+/);
+      var lc = (live.getAttribute('class') || '').split(/s+/);
       for (var j = 0; j < lc.length; j++) if (lc[j].indexOf('wp-') === 0) keep.push(lc[j]);
       var merged = a.value + (keep.length ? ' ' + keep.join(' ') : '');
       if (live.getAttribute('class') !== merged) live.setAttribute('class', merged);
@@ -13078,7 +13082,7 @@ function _morphAttrs(live, tmpl) {
   }
   // Template has no class but live carries wp-* state classes → keep just those.
   if (!tmpl.hasAttribute('class') && live.hasAttribute('class')) {
-    var k2 = (live.getAttribute('class') || '').split(/\s+/).filter(function (x) { return x.indexOf('wp-') === 0; });
+    var k2 = (live.getAttribute('class') || '').split(/s+/).filter(function (x) { return x.indexOf('wp-') === 0; });
     if (k2.length) live.setAttribute('class', k2.join(' ')); else live.removeAttribute('class');
   }
 }
@@ -16877,7 +16881,7 @@ function renderStats(s) {
     function _ccIsPlayerName(n) {
       if (!n) return false;
       if (n === '(unknown)') return false;
-      if (/\s/.test(n)) return false;
+      if (/s/.test(n)) return false;
       return /^[A-Z][a-zA-Z]{2,}$/.test(n);
     }
     // Resisted-spell attribution per mob: EQ logs a mob's cast as the anonymous
@@ -18260,14 +18264,14 @@ function _dkpTickPlayers(source) {
   var s = window.__wpLastState || {};
   var t = s.dkpTick || {};
   if (source === 'roster') return (t.liveRoster && t.liveRoster.players) || [];
-  var m = /^file:(\d+)$/.exec(source);
+  var m = /^file:(d+)$/.exec(source);
   if (m && t.files && t.files[+m[1]]) return t.files[+m[1]].players || [];
   return [];
 }
 function _dkpTickPoints(source) {
   var s = window.__wpLastState || {};
   var t = s.dkpTick || {};
-  var m = /^file:(\d+)$/.exec(source);
+  var m = /^file:(d+)$/.exec(source);
   if (m && t.files && t.files[+m[1]]) return t.files[+m[1]].points || 1;
   return 1;   // live roster ticks default to 1 DKP
 }
@@ -19420,7 +19424,7 @@ async function dismissTopDamage(key) {
       var html = "<h5>🎯 Suggested for you" + (me ? " (" + me + ")" : "") + "</h5>";
       ranked.forEach(function(r){
         var cls = r.score >= 10 ? "priority" : "";
-        var label = (r.label || r.key).replace(/^✥\s*/, "").split("(")[0].split("—")[0].trim();
+        var label = (r.label || r.key).replace(/^✥s*/, "").split("(")[0].split("—")[0].trim();
         html += "<button class='" + cls + "' data-suggest-key='" + r.key + "'>" + label + "</button>";
       });
       box.innerHTML = html;
@@ -20312,7 +20316,7 @@ async function dismissTopDamage(key) {
       + '      <input id="trigNewPattern" type="text" placeholder="e.g. (?&lt;target&gt;\\\\w+) begins to cast Mass Cancel Magic" style="width:100%;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px"></label>'
       + '    <label style="grid-column:1/3">Overlay text<br>'
       + '      <input id="trigNewOverlay" type="text" placeholder="e.g. CANCEL ON {target}!" style="width:100%;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px"></label>'
-      + '    <label style="grid-column:1/3">Spoken text (optional \u2014 leave blank to speak the overlay text)<br>'
+      + '    <label style="grid-column:1/3">Spoken text (optional — leave blank to speak the overlay text)<br>'
       + '      <input id="trigNewTts" type="text" placeholder="e.g. D I fired on {tank}" style="width:100%;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px"></label>'
       + '    <label>Color<br><select id="trigNewColor" style="width:100%;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px"><option value="red">red</option><option value="orange">orange</option><option value="gold">gold</option><option value="green">green</option><option value="blue">blue</option><option value="purple">purple</option><option value="white">white</option></select></label>'
       + '    <label>Duration (ms)<br><input id="trigNewDuration" type="number" min="500" max="60000" value="5000" style="width:100%;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px"></label>'
@@ -20392,9 +20396,9 @@ async function dismissTopDamage(key) {
       + '<button type="button" data-sel="off"  style="background:#21262d;color:var(--dim);border:1px solid var(--border);padding:2px 8px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:11px" title="Every trigger currently switched off">Disabled</button>'
       + '<span class="dim" style="font-size:11px">|</span>'
       + '<span id="trigSelCount" class="dim" style="font-size:11px">0 selected</span>'
-      + '<button type="button" data-bulk="disable" style="background:#21262d;color:var(--text);border:1px solid var(--border);padding:2px 8px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:11px" title="Switch them off but keep them, so you can come back and fix them later">\u23f8 Park for review</button>'
-      + '<button type="button" data-bulk="enable"  style="background:#21262d;color:var(--green);border:1px solid var(--border);padding:2px 8px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:11px">\u25b6 Enable</button>'
-      + '<button type="button" data-bulk="delete"  style="background:#21262d;color:var(--red);border:1px solid var(--border);padding:2px 8px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:11px">\ud83d\uddd1 Delete selected</button>'
+      + '<button type="button" data-bulk="disable" style="background:#21262d;color:var(--text);border:1px solid var(--border);padding:2px 8px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:11px" title="Switch them off but keep them, so you can come back and fix them later">⏸ Park for review</button>'
+      + '<button type="button" data-bulk="enable"  style="background:#21262d;color:var(--green);border:1px solid var(--border);padding:2px 8px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:11px">▶ Enable</button>'
+      + '<button type="button" data-bulk="delete"  style="background:#21262d;color:var(--red);border:1px solid var(--border);padding:2px 8px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:11px">🗑 Delete selected</button>'
       + '<button type="button" id="trigDeleteAll" style="background:transparent;color:var(--red);border:1px solid var(--red);padding:2px 8px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:11px" title="Remove every personal trigger. Guild triggers are not touched.">Delete all ' + triggers.length + '</button>'
       + '</div>';
     html += '<table style="font-size:12px;width:100%"><tr><th style="width:18px"></th><th></th><th>Name</th><th>Pattern</th><th>Cooldown</th><th>Text</th><th></th></tr>';
