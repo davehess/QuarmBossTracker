@@ -317,7 +317,12 @@ describe('hard cap + "+N more" (v2 §3)', () => {
 
 describe('the overlay surface itself', () => {
   it('EVERY countdown carries a ✕, not only the ones the server marks dismissible', () => {
-    expect(overlay).toMatch(/#207: EVERY countdown gets a ✕/);
+    // ⚠ This used to match the COMMENT "#207: EVERY countdown gets a ✕" —
+    // caught by the 2026-08-30 comment-strip sweep: deleting the ✕ code while
+    // keeping the comment left it green. Assert the code that builds the ✕.
+    expect(overlay).toMatch(/x\.className = 'timer-x'/);
+    expect(overlay).toMatch(/x\.textContent = '✕'/);
+    expect(overlay).toMatch(/dismissTimer\(t\.id\)/);
     expect(overlay, 'the #107 loot-only gate is gone').not.toMatch(/if \(t\.dismissible\)\{/);
   });
 

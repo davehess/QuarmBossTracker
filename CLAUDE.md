@@ -119,6 +119,33 @@ code constantly, so this is not an edge case here — it is the normal case.
 **Write the message to a file and use `git commit -F <file>`.** Put the file in
 the scratchpad. Costs one extra line; removes the whole class.
 
+### Working rule — comments satisfy text assertions; strip before matching
+A test that asserts on source TEXT (`toMatch`/`toContain`/`indexOf` over a file
+read) is matching the comments too — and this repo's comments are good enough
+to answer for the code: they quote reporters, name removed code, and describe
+the exact behavior under test. It bit five times in 2026-08-28..30 alone, in
+BOTH directions: a deleted warning stayed green because the file's own header
+still named it, and a migration failed a `not.toMatch(/bosses_local/)` because
+its header explained why it avoids `bosses_local`. The false PASS is the
+dangerous direction — a green test guarding nothing, invisible until mutation.
+A full sweep (2026-08-30, comments stripped from all sources, suite re-run)
+found two more shipped: the #207 every-countdown-✕ test matched only the
+comment, and a sync-ordering test anchored to a comment's position.
+
+**The rules:**
+- Strip comments before any text assertion: `stripJs` / `stripSql` / `stripCss`
+  in `test/_source-slice.js`. Whole-line strip only — a `//`-anywhere strip
+  eats `https://` inside string literals and corrupts what you're asserting on.
+- ⚠ Never strip a source you also `sliceBlock` with comment anchors — the
+  anchors ARE comments and stripping breaks them loudly. Comment anchors are
+  FINE (they fail loud, never pass silent); strip only the string handed to
+  `toMatch`. Negative assertions are exactly as vulnerable as positive ones.
+- Prefer behaviour over text where possible: `evalBlock` runs the real
+  function, and a comment cannot satisfy a function call.
+- Sibling trap, same symptom: the VACUOUS assertion — a cap tested with a
+  corpus smaller than the cap passes whether the cap exists or not. Mutation-
+  check new assertions; green alone proves nothing.
+
 ### Working rule — decisions get WRITTEN DOWN, same session
 A decision that lives only in chat is lost: cloud and desktop sessions cannot
 share a conversation, and a container reset takes the scratchpad with it. When

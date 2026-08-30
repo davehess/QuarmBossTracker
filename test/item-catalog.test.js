@@ -9,7 +9,7 @@
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
-import { BOT_INDEX, readSource, sliceBlock } from './_source-slice.js';
+import { BOT_INDEX, readSource, sliceBlock, stripSql } from './_source-slice.js';
 
 const src = readSource(BOT_INDEX);
 const handler = sliceBlock(src, 'async function _handleAgentItemCatalog(req, res)', '\n}');
@@ -65,7 +65,7 @@ describe('the migration that backs it', () => {
   // it does NOT key on bosses_local, and that explanation satisfied the
   // assertion checking bosses_local is absent. Fifth time in this session that
   // a comment has stood in for the code it describes — see CLAUDE.md.
-  const sql = fs.readFileSync(file, 'utf8').replace(/^\s*--.*$/gm, '');
+  const sql = stripSql(fs.readFileSync(file, 'utf8'));
 
   it('is idempotent', () => {
     expect(sql).toMatch(/create or replace view/i);

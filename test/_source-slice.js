@@ -55,3 +55,18 @@ export function sliceArrayLiteral(src, declMarker) {
   // eslint-disable-next-line no-new-func
   return new Function('return ' + text)();
 }
+
+// ── Comment stripping ───────────────────────────────────────────────────────
+// A text assertion on source matches COMMENTS too, and this repo's comments
+// are good enough to satisfy them: they quote reporters, name removed code,
+// and describe the exact behavior under test. Five assertions were caught
+// passing (or failing) on a comment during 2026-08-28..30 — see CLAUDE.md
+// "comments satisfy text assertions". Strip before matching.
+//
+// Whole-line comments only, on purpose: a //-anywhere strip eats https://
+// inside string literals and corrupts the source being asserted on.
+// ⚠ Do NOT strip a source you also sliceBlock with comment anchors — the
+// anchors are comments; strip only the string you hand to toMatch/toContain.
+export const stripJs  = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
+export const stripSql = (s) => s.replace(/^[ \t]*--.*$/gm, '');
+export const stripCss = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '');

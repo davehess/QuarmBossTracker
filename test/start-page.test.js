@@ -20,7 +20,7 @@ const read = f => fs.readFileSync(path.join(ROOT, f), 'utf8');
 // for one of them while the warning itself had been edited away. That is the
 // third time a comment has stood in for the code it describes in this repo.
 // Whole-line only, so `https://` inside a string survives.
-const strip = s => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+import { stripJs as strip } from './_source-slice.js';
 
 const start = strip(read('web/app/start/page.tsx'));
 const landing = strip(read('web/app/page.tsx'));

@@ -15,6 +15,7 @@
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
+import { stripJs, stripCss } from './_source-slice.js';
 
 const WEB = path.join(__dirname, '..', 'web');
 const css = fs.readFileSync(path.join(WEB, 'app/globals.css'), 'utf8');
@@ -24,8 +25,8 @@ const nav = fs.readFileSync(path.join(WEB, 'components/Nav.tsx'), 'utf8');
 
 // Comments describe the bug in the same words the assertion looks for, and have
 // twice satisfied an assertion on their own. Strip them before matching.
-const cssCode = css.replace(/\/\*[\s\S]*?\*\//g, '');
-const tsxCode = tsx.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+const cssCode = stripCss(css);
+const tsxCode = stripJs(tsx);
 
 // Read width/height straight out of the PNG's IHDR (bytes 16..23).
 function pngSize(file) {
