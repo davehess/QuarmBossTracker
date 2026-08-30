@@ -6453,23 +6453,40 @@ function _eraFromPool(poolName) {
 // some point. The panel showed ONE row — which is exactly what they reported.
 // Keying on (item, character) and only dropping what THAT character owns puts
 // the other 19 back.
-function _buildMisses({ bidRows, nameByCharId, wonByChar }) {
+function _buildMisses({ bidRows, nameByCharId, wonByChar, ownsByName }) {
   const owns = (charId, itemId) => {
     const set = wonByChar && (wonByChar[charId] || wonByChar[String(charId)]);
+    if (!set) return false;
+    return typeof set.has === 'function' ? set.has(itemId) : (Array.isArray(set) && set.includes(itemId));
+  };
+  const ownsName = (nameLower, itemId) => {
+    const set = ownsByName && ownsByName[nameLower];
     if (!set) return false;
     return typeof set.has === 'function' ? set.has(itemId) : (Array.isArray(set) && set.includes(itemId));
   };
   const byPair = new Map();
   for (const b of (bidRows || [])) {
     if (b == null || b.item_id == null) continue;
-    const cid = b.character_id != null ? Number(b.character_id) : null;
-    if (cid == null || !Number.isFinite(cid)) continue;
-    // Only THIS character winning this auction settles it for this character.
-    if (b.winner_character_id != null && Number(b.winner_character_id) === cid) continue;
-    if (owns(cid, b.item_id)) continue;                       // this character already has it
-    const key = b.item_id + '|' + cid;
+    const cid = (b.character_id != null && Number.isFinite(Number(b.character_id))) ? Number(b.character_id) : null;
+    // ⚠ DETAIL-sourced bid rows have NO CharacterId — OpenDKP's per-auction
+    // bid history is Name/Rank/Value/Date. Dropping id-less rows silently
+    // hid every backfilled loss (Utoh's Vengeful Mail bid, 2026-08-30), which
+    // is precisely the data the backfill exists to surface. Key by the
+    // character NAME when the id is absent; a row with neither is unusable.
+    const nameLower = String(b.character_name || '').toLowerCase();
+    if (cid == null && !nameLower) continue;
+    if (cid != null) {
+      // Only THIS character winning this auction settles it for this character.
+      if (b.winner_character_id != null && Number(b.winner_character_id) === cid) continue;
+      if (owns(cid, b.item_id)) continue;                     // already has it
+    } else {
+      // No id to compare against the winner; ownership answers instead — a
+      // winner's award writes a loot row, so ownsName covers the won case.
+      if (ownsName(nameLower, b.item_id)) continue;
+    }
+    const key = b.item_id + '|' + (cid != null ? 'c' + cid : 'n' + nameLower);
     let cur = byPair.get(key);
-    if (!cur) { cur = { item_id: b.item_id, item_name: b.item_name || null, char_id: cid, my_last_bid: null, last_end: null, raid_id: null, auction_id: null, _t: -1 }; byPair.set(key, cur); }
+    if (!cur) { cur = { item_id: b.item_id, item_name: b.item_name || null, char_id: cid, char_name: b.character_name || null, my_last_bid: null, last_end: null, raid_id: null, auction_id: null, _t: -1 }; byPair.set(key, cur); }
     if ((b.value || 0) > (cur.my_last_bid || 0)) cur.my_last_bid = b.value || 0;
     const t = b.end_at ? (Date.parse(b.end_at) || 0) : 0;
     if (t >= cur._t) { cur._t = t; cur.last_end = b.end_at || cur.last_end; if (b.raid_id != null) cur.raid_id = b.raid_id; if (b.auction_id != null) cur.auction_id = b.auction_id; }
@@ -6477,7 +6494,7 @@ function _buildMisses({ bidRows, nameByCharId, wonByChar }) {
   }
   const rows = [...byPair.values()].map(r => ({
     item_id: r.item_id, item_name: r.item_name,
-    character: (r.char_id != null && nameByCharId && nameByCharId[r.char_id]) || null,
+    character: (r.char_id != null && nameByCharId && nameByCharId[r.char_id]) || r.char_name || null,
     char_id: r.char_id, my_last_bid: r.my_last_bid,
     raid_id: r.raid_id, auction_id: r.auction_id, last_end: r.last_end,
   }));
@@ -6974,9 +6991,14 @@ async function _handleAgentServerPanel(req, res) {
       if (login) bidClauses.push(`user_login.ilike.${encodeURIComponent(login)}`);
       for (const n of family) if (/^[A-Za-z]{2,20}$/.test(n)) bidClauses.push(`character_name.ilike.${encodeURIComponent(n)}`);
       if (bidClauses.length) {
+        // character_name comes along because DETAIL-sourced bid rows have no
+        // CharacterId — OpenDKP's per-auction bid history is Name/Rank/Value/
+        // Date only. Without the name those rows are unkeyable and every miss
+        // they witness is silently invisible (Utoh's Vengeful Mail loss,
+        // 2026-08-30 — present in the mirror, skipped by the builder).
         const rawBids = await supabase.select(
           'opendkp_auction_bids',
-          `select=auction_id,character_id,value&or=(${bidClauses.slice(0, 26).join(',')})&limit=3000`
+          `select=auction_id,character_id,character_name,value&or=(${bidClauses.slice(0, 26).join(',')})&limit=3000`
         ) || [];
         const aids = [...new Set(rawBids.map(b => b.auction_id).filter(Boolean))].slice(0, 1000);
         const aucById = new Map();
@@ -6995,7 +7017,8 @@ async function _handleAgentServerPanel(req, res) {
         for (const b of rawBids) {
           const a = aucById.get(b.auction_id);
           if (!a) continue;
-          bidRows.push({ auction_id: b.auction_id, character_id: b.character_id, value: b.value,
+          bidRows.push({ auction_id: b.auction_id, character_id: b.character_id,
+            character_name: b.character_name || null, value: b.value,
             item_id: a.item_id, item_name: a.item_name, winner_character_id: a.winner_character_id,
             end_at: a.end_at, raid_id: a.raid_id });
           if (a.item_id != null && !seen.has(a.item_id)) { seen.add(a.item_id); bidItemRows.push({ item_id: a.item_id, item_name: a.item_name }); }
@@ -7067,7 +7090,18 @@ async function _handleAgentServerPanel(req, res) {
         const owned = nm && lootByName.get(nm);
         if (owned) for (const itemId of owned) ownedAdd(Number(cid), itemId);
       }
-      let misses = _buildMisses({ bidRows, nameByCharId, wonByChar }).slice(0, 60);
+      // Name-keyed ownership for detail-sourced rows (no CharacterId): the
+      // loot mirror is by real name, and auction wins map into it through the
+      // authoritative name table.
+      const ownsByName = {};
+      for (const [nm, set] of lootByName) ownsByName[nm] = set;
+      for (const [cid, set] of Object.entries(wonByChar)) {
+        const nm = String((nameByCharId && nameByCharId[cid]) || '').toLowerCase();
+        if (!nm) continue;
+        if (!ownsByName[nm]) ownsByName[nm] = new Set();
+        for (const itemId of set) ownsByName[nm].add(itemId);
+      }
+      let misses = _buildMisses({ bidRows, nameByCharId, wonByChar, ownsByName }).slice(0, 60);
       if (misses.length) {
         const missIds = misses.map(m => m.item_id);
         const mAuc = await supabase.select(

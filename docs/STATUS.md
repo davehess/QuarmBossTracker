@@ -109,7 +109,16 @@ next touch one rather than assuming a missing row means a missing doc.
   answer. Fix + traffic contract in `DECISIONS-2026-08-30.md`; details in
   `HOW-ITS-BUILT.md`. **Verify after tonight's raid:** Vengeful Mail shows
   Utoh · 8 · 24 · 22, the Thorny row is GONE (Rockin won it), and the backfill
-  log lines look sane.
+  log lines look sane. **(3.1.100, same day)** detail rows carry no CharacterId,
+  so the builder now keys by NAME — without this the backfilled losses stayed
+  invisible even once mirrored. First pass lands ~14:00 ET (post-deploy slot
+  adoption), then freely in the raid window.
+  ⚠ **Queued:** wire the dashboard's loot ✕ to the bot's roaming
+  `character_bid_prefs.dismissed` (server half shipped 2026-08-26, no client
+  calls it — dismissals are per-machine today). The Hsagra shard is the
+  motivating case: consumed in its quest turn-in, so no automatic ownership
+  source can ever clear it — manual dismiss is the honest mechanism and should
+  survive a reinstall.
 
 - **`/start` install walkthrough (web 1.6.0, beta, 2026-08-28).** Hitya: the
   landing page's *"Run with us."* needed to link to "a getting started page with
@@ -127,7 +136,15 @@ next touch one rather than assuming a missing row means a missing doc.
   `{}` and this page has no shots either. That is the same open item, and the
   cheapest single upgrade to both surfaces.
 
-- **⚠ OPEN — an unidentified flaky test (noticed 2026-08-28, web work).** The
+- **✅ CLOSED 2026-08-30 — the flaky test was `db-read-discipline` timing out.**
+  Caught red-handed with its name in the log at last: the paginator-discipline
+  test walked the ENTIRE repo from ROOT and filtered to its scan roots
+  afterwards, and under I/O load (a suite run sharing a command with big file
+  writes — exactly the only condition it ever failed under) the walk breached
+  the 5s timeout. Fixed by walking only the scan roots. Both prior hypotheses
+  were wrong; the "capture the output on the failing run" advice is what
+  cracked it. (Original entry follows for the record.)
+  **⚠ was: an unidentified flaky test (noticed 2026-08-28, web work).** The
   suite failed once on 2026-08-28 at 2516+1 and once at 2525+1, and passed on
   every one of ~30 other runs including three with a `next dev` server up. Both
   failures came on the FIRST run after a batch of file edits, which is the only

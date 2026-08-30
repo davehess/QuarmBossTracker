@@ -203,6 +203,38 @@ describe('_buildMisses — bid-and-lost, per (item, character)', () => {
     const bidRows = [{ auction_id: 10, character_id: 108064, value: 12, item_id: 1, item_name: 'Robe', winner_character_id: 500, end_at: 'x', raid_id: 1 }];
     expect(_buildMisses({ bidRows, nameByCharId, wonByChar: { 108064: [1] } })).toEqual([]);
   });
+
+  it('keys a DETAIL-sourced row by name when CharacterId is absent', () => {
+    // ⚠ The Utoh regression (2026-08-30). OpenDKP's per-auction bid history is
+    // Name/Rank/Value/Date — no CharacterId — and the builder used to skip
+    // id-less rows entirely, silently hiding every backfilled loss: exactly
+    // the data the detail backfill exists to surface.
+    const bidRows = [
+      { auction_id: 20, character_id: null, character_name: 'Utoh', value: 8,
+        item_id: 5, item_name: 'Vengeful Mail of the Void', winner_character_id: 94262,
+        end_at: '2026-08-20', raid_id: 3 },
+    ];
+    const rows = _buildMisses({ bidRows, nameByCharId, wonByChar: {}, ownsByName: {} });
+    expect(rows).toHaveLength(1);
+    expect(rows[0].character).toBe('Utoh');
+    expect(rows[0].my_last_bid).toBe(8);
+  });
+
+  it('drops a name-keyed row once that character owns the item', () => {
+    // No id to compare to the winner, so the loot mirror answers instead — a
+    // winner's award writes a loot row, so this also covers the won case.
+    const bidRows = [
+      { auction_id: 21, character_id: null, character_name: 'Utoh', value: 8,
+        item_id: 5, item_name: 'Vengeful Mail', winner_character_id: 94262, end_at: 'x', raid_id: 3 },
+    ];
+    expect(_buildMisses({ bidRows, nameByCharId, wonByChar: {}, ownsByName: { utoh: new Set([5]) } })).toEqual([]);
+  });
+
+  it('ignores a row with neither id nor name — there is nothing to key on', () => {
+    const bidRows = [{ auction_id: 22, character_id: null, character_name: '', value: 9,
+      item_id: 6, item_name: 'X', winner_character_id: 1, end_at: 'x', raid_id: 1 }];
+    expect(_buildMisses({ bidRows, nameByCharId, wonByChar: {}, ownsByName: {} })).toEqual([]);
+  });
 });
 
 describe('_familyDkpTotals — family-pooled balance', () => {
