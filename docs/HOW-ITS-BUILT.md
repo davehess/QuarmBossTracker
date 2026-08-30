@@ -1362,6 +1362,18 @@ holds it in memory.
   `character_name` to answer ownership per character.
   Past wins raised 100 → 400 and made searchable by item or character in the
   agent dashboard (filtered in place; a re-render per keystroke steals focus).
+  ⚠ **(bot 3.1.99) The per-character fix exposed the deeper hole: the bids
+  mirror only ever held WINNING bids.** The auctions LIST payload's `Bids[]` is
+  winners-only — measured 1.08 bids/auction, 92% of auctions with zero losing
+  bids — and `syncAuctionBids` (the detail fetch with the full list) had NO
+  CALLERS since it was written. `syncPendingAuctionBids` now runs at the tail
+  of `syncAuctions`: ≤`OPENDKP_BIDS_PER_PASS` (default 10, 0=off) detail calls
+  per pass, newest-first so the misses window heals first, each auction paying
+  its one call EVER (`opendkp_auctions.bids_synced_at`; closed bid lists are
+  immutable). First error aborts the pass. Char naming: `characters.opendkp_id`
+  is now authoritative for char_id→name with the MODE-over-loot heuristic as
+  fallback only — the heuristic failing silently is what blanked CHAR and made
+  Rockin's multi-winner Thorny Chain Helm WIN render as a family miss.
 - **Platform map (`components/PlatformMap.tsx` + `platformData.ts`, web 1.7.0)** —
   top-down, not radial (Hitya): `wolfpack.quest` is the ROOT and the other five
   branches stand under it in pipeline order, joined by a CSS rail. Hovering a

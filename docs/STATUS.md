@@ -110,6 +110,16 @@ next touch one rather than assuming a missing row means a missing doc.
   when earned:** extract-on-touch for the bot monolith (rule, not project), and
   full agent modularisation only after this build step survives a stable
   graduation.
+- **Auction bids: full histories backfilled (bot 3.1.99, 2026-08-30).** The
+  mirror was winners-only and RECENT MISSES was blind to ~92% of losses —
+  Hitya's field report (missing Vengeful Mail row, blank runner-up on a 15/15
+  tie, Rockin's win shown as a miss with CHAR "—") diagnosed to three causes:
+  the list payload carries only winning bids, `syncAuctionBids` had NO callers,
+  and the MODE name heuristic failed where `characters.opendkp_id` had the
+  answer. Fix + traffic contract in `DECISIONS-2026-08-30.md`; details in
+  `HOW-ITS-BUILT.md`. **Verify after tonight's raid:** Vengeful Mail shows
+  Utoh · 8 · 24 · 22, the Thorny row is GONE (Rockin won it), and the backfill
+  log lines look sane.
 
 - **`/start` install walkthrough (web 1.6.0, beta, 2026-08-28).** Hitya: the
   landing page's *"Run with us."* needed to link to "a getting started page with

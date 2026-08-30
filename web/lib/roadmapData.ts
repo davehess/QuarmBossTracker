@@ -37,6 +37,27 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'bot-3-1-99',
+    title: 'The misses list gets its missing bids',
+    version: 'Bot 3.1.99',
+    date: '2026-08-30',
+    headline: 'Almost every losing bid was invisible to the Loot tab \u2014 the mirror only ever saw winners. It now backfills the full bid list for every auction.',
+    features: [
+      {
+        name: 'Losing bids are finally recorded',
+        blurb: 'The DKP site\u2019s auction list only tells us who won. The bot now fetches each auction\u2019s full bid history \u2014 once per auction, ever \u2014 so the items you bid on and lost actually show up, with the real runner-up numbers.',
+      },
+      {
+        name: 'Your characters get their right names back',
+        blurb: 'Rows that showed a blank character now name the alt that bid, and an alt that WON an item no longer shows the whole account as having missed it.',
+      },
+    ],
+    fixes: [
+      'A tie for the winning bid no longer shows a blank second place.',
+      'The backfill works newest-first, so recent misses fill in over the first day and older history follows.',
+    ],
+  },
+  {
     key: 'bot-3-1-97',
     title: 'Loot you bid on and lost, per character',
     version: 'Bot 3.1.97',

@@ -7013,8 +7013,21 @@ async function _handleAgentServerPanel(req, res) {
         ) || [];
       }
       for (const a of wonAuctions) if (a.item_id != null) wonItemIds.add(a.item_id);
-      // char_id → real name (MODE over the won-auction ↔ loot join).
+      // char_id → real name. characters.opendkp_id is AUTHORITATIVE (473 rows
+      // maintained by the character sync) — the MODE-over-loot heuristic below
+      // stays only as a fallback for ids the table doesn't know. The heuristic
+      // failing silently is what showed CHAR "—" on Hitya's misses AND broke
+      // per-character ownership: Rockin (opendkp_id 144802) WON a Thorny Chain
+      // Helm, but with no name for 144802 the loot join never connected, so
+      // her win rendered as a family miss (2026-08-30).
       let nameByCharId = {};
+      if (famCharIds.length) {
+        const mapped = await supabase.select(
+          'characters',
+          `select=name,opendkp_id&opendkp_id=in.(${famCharIds.join(',')})&limit=200`
+        ) || [];
+        for (const r of mapped) if (r.opendkp_id != null && r.name) nameByCharId[Number(r.opendkp_id)] = r.name;
+      }
       if (wonAuctions.length) {
         const raidIds = [...new Set(wonAuctions.map(a => a.raid_id).filter(Boolean))].slice(0, 400);
         let lootRows = [];
@@ -7023,7 +7036,10 @@ async function _handleAgentServerPanel(req, res) {
           const lr = await supabase.select('opendkp_loot', `select=raid_id,item_id,character_name&raid_id=in.(${chunk.join(',')})&limit=5000`) || [];
           lootRows = lootRows.concat(lr);
         }
-        nameByCharId = _resolveCharIdNames(wonAuctions, lootRows);
+        const inferred = _resolveCharIdNames(wonAuctions, lootRows);
+        for (const [cid, nm] of Object.entries(inferred)) {
+          if (nameByCharId[cid] == null) nameByCharId[cid] = nm;   // fallback only
+        }
       }
       // Resolve prereg item names.
       const preregIds = [...new Set(preregRows.map(r => r.item_id).filter(n => Number.isFinite(n)))].slice(0, 200);
