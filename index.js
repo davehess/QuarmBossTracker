@@ -9470,6 +9470,70 @@ async function _handleAgentItemClickies(req, res) {
   return res.end(_itemClickyCache.body);
 }
 
+// GET /api/agent/item-catalog
+//
+// The wishlist picker's universe: every item any catalogued NPC can drop, with
+// its expansion. Agents cache it on disk and search it locally, so choosing a
+// wishlist item costs nothing at the time you choose it (Hitya, 2026-08-30).
+//
+// Measured before building it: 11,099 rows, ~380 kB of JSON, ~130 kB gzipped.
+// At ~16 players and a source that only moves on the weekly sync, that is
+// ~2 MB/week of egress and a 304 on every other startup.
+//
+// ⚠ The TTL is the thing that actually costs money here. The spell catalog
+// uses 1h; at that rate a full miss cycle would re-read this 24×/day. The
+// source table changes WEEKLY (sync-quarm.yml), so 12h is both safe and ~20×
+// cheaper. Do not lower it without a reason.
+const _ITEM_CATALOG_TTL_MS = 12 * 60 * 60 * 1000;
+let _itemCatalogCache = null;        // { fetchedAt, body, etag }
+async function _handleAgentItemCatalog(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+
+  const fresh = _itemCatalogCache && (Date.now() - _itemCatalogCache.fetchedAt) < _ITEM_CATALOG_TTL_MS;
+  if (!fresh) {
+    const entries = [];
+    try {
+      const supabase = require('./utils/supabase');
+      let from = 0;
+      const PAGE = 2000;
+      while (true) {
+        const data = await supabase.select('item_catalog_droppable',
+          `select=item_id,item_name,era&order=item_id.asc&offset=${from}&limit=${PAGE}`);
+        if (!Array.isArray(data) || data.length === 0) break;
+        // Array-of-arrays, not objects: at 11k rows the key names would be
+        // most of the payload.
+        for (const r of data) entries.push([r.item_id, r.item_name, r.era]);
+        if (data.length < PAGE) break;
+        from += PAGE;
+      }
+    } catch (err) {
+      // Keep the bot alive and serve what we have. An empty catalog makes the
+      // picker fall back to asking the server, which is how it worked before.
+      console.warn('[item-catalog] fetch failed (serving', entries.length, 'rows):', err && err.message);
+    }
+    const body = JSON.stringify({
+      version: 1,
+      fetched_at: new Date().toISOString(),
+      count: entries.length,
+      entries,
+    });
+    const etag = '"' + require('crypto').createHash('sha1').update(body).digest('hex') + '"';
+    _itemCatalogCache = { fetchedAt: Date.now(), body, etag };
+  }
+  const ifNoneMatch = req.headers['if-none-match'];
+  if (ifNoneMatch && ifNoneMatch === _itemCatalogCache.etag) {
+    res.writeHead(304, { 'ETag': _itemCatalogCache.etag, 'Cache-Control': 'max-age=43200' });
+    return res.end();
+  }
+  res.writeHead(200, {
+    'Content-Type': 'application/json',
+    'ETag': _itemCatalogCache.etag,
+    'Cache-Control': 'max-age=43200',
+  });
+  return res.end(_itemCatalogCache.body);
+}
+
 // GET /api/agent/mob-info?name=<npc>
 //
 // Target-mob lookup for Mimic's Mob Info overlay. Resolves the agent's current
@@ -18110,6 +18174,15 @@ const httpServer = http.createServer(async (req, res) => {
     try { return await _handleAgentItemClickies(req, res); }
     catch (err) {
       console.error('[item-clickies] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  if (req.method === 'GET' && req.url.startsWith('/api/agent/item-catalog')) {
+    try { return await _handleAgentItemCatalog(req, res); }
+    catch (err) {
+      console.error('[item-catalog] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
     }

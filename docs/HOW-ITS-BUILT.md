@@ -1310,6 +1310,24 @@ holds it in memory.
 
 ## Web features
 
+- **Item catalog for the wishlist picker (`/api/agent/item-catalog` +
+  `item_catalog_droppable` view, bot 3.1.98)** — every item any catalogued NPC
+  can drop, with its expansion, served ETag'd so agents cache it on disk and
+  search locally. 11,099 rows · ~380 kB JSON · ~130 kB gzipped.
+  ⚠ **The universe is "everything droppable", NOT "everything our tracked
+  bosses drop"** (Hitya, 2026-08-30 — include PoP so people can build a wishlist
+  before the 2026-10-01 unlock). Only 12 PoP bosses are registered in
+  `bosses_local` against 407 Luclin, because that board is built out AFTER
+  unlock, so a boss-driven universe reached 113 of 1,212 PoP items. The drop
+  table needs no boss registration and cannot go stale when `/addboss` runs.
+  ⚠ **The 12h TTL is the only expensive knob.** The bot serves from memory so
+  clients never reach Supabase; at the spell catalog's 1h TTL a miss cycle would
+  re-read 380 kB 24×/day. The source moves weekly — do not lower it.
+  Era comes from the dropping NPC's zone (`id = zoneid*1000 + n`), the recipe in
+  `eqemu-catalog-cheatsheet.md`, since items carry no expansion column; an item
+  in several eras takes the earliest, and the 22 with no zone match keep a NULL
+  era rather than vanishing from the picker. Costs recorded in
+  `DESIGN-selfhost-wizard.md` §3. Guarded by `test/item-catalog.test.js`.
 - **Loot bidding: RECENT MISSES is PER CHARACTER (`_buildMisses`, bot 3.1.97)** —
   Hitya, 2026-08-29: *"removed for that character after that character wins that
   item"*, and *"I know for a fact that there are items that I've bid on in the

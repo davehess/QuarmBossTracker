@@ -120,6 +120,51 @@ must therefore ask or verify.
   whose platform restarts on push — which is all of the PaaS options the wizard
   offers.
 
+### Catalog fan-out to clients (item catalog, 2026-08-30)
+
+**Decision: the item list is pushed to every agent as an ETag'd catalog it
+caches on disk, NOT queried per keystroke.** Hitya asked what it would cost
+before agreeing to it, so the numbers are the decision:
+
+| Universe | Rows | Raw | Gzipped |
+|---|---|---|---|
+| Every item in the catalog | 26,972 | 865 kB | ~295 kB |
+| **Everything any NPC can drop** (shipped) | **11,099** | **380 kB** | **~130 kB** |
+| Only what our tracked bosses drop | 3,191 | — | — |
+| Only what this guild has ever seen | 1,700 | 54 kB | ~19 kB |
+
+Gzip ratio 2.93× measured on a real 250-name sample; the full payload does
+better (a 32 kB window understates 380 kB of repetitive armour-set names).
+
+- **Fleet cost ≈ 2 MB/week.** ~16 PLAYERS (not 178 characters — the fleet is
+  counted in players), source moves only on the weekly `sync-quarm.yml`, so each
+  agent downloads once a week and 304s otherwise (~200 bytes).
+- **Supabase cost is set by the TTL, and that is the only expensive knob.** The
+  bot builds the catalog once and serves it from memory, so clients never reach
+  the database. At the spell catalog's 1h TTL a full miss cycle re-reads 380 kB
+  24×/day (~9 MB/day); at **12h** it is twice (~760 kB/day). ⚠ Do not lower it —
+  the source table changes weekly.
+- **Client cost:** 380 kB on disk, ~1.5 MB resident. Irrelevant next to Electron.
+
+⚠ **The universe is "everything droppable", deliberately not "everything our
+bosses drop".** Hitya: include Planes of Power so people can build a wishlist
+before the 2026-10-01 unlock. Only **12 PoP bosses** are registered in
+`bosses_local` (against 407 Luclin) because that board is built out AFTER
+unlock, so a boss-driven universe reached **113 of 1,212** PoP items. Keying on
+the drop table needs no boss registration and cannot go stale when `/addboss`
+runs later. A self-hosting guild inherits this: their picker works for content
+they have not started tracking yet.
+
+⚠ **There was nothing to save — this ENABLES a feature.** Before it, adding a
+wishlist item was one `ilike` with `limit=2`, so you had to type the name almost
+exactly or it failed; there was no item typeahead anywhere. The wizard should
+present this as a feature cost, not an optimisation.
+
+**Web does NOT get a local copy.** `/api/search` already does server-side
+`ilike` on `eqemu_items`; a browser pulling 130 kB to avoid a 20 ms query is the
+wrong trade. The local copy exists for Mimic, which has to work mid-raid without
+waiting on the network.
+
 ### Storage & retention
 - **Local is an ARCHIVE, not a mirror** (2026-08-12). `refresh-local-archive.sh`
   merges each nightly dump instead of restoring with `--clean`, so rows
