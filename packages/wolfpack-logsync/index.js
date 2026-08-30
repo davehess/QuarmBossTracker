@@ -20318,7 +20318,45 @@ async function dismissTopDamage(key) {
       listEl.innerHTML = '<div class="dim" style="font-size:12px;padding:6px 0">No personal triggers yet. Use the form below to add one. Patterns support .NET-style named groups: <code style="background:#161b22;border:1px solid var(--border);padding:1px 4px;border-radius:3px">(?&lt;name&gt;...)</code>; reference them in the overlay text as <code style="background:#161b22;border:1px solid var(--border);padding:1px 4px;border-radius:3px">{name}</code>.</div>';
       return;
     }
-    var html = '<table style="font-size:12px;width:100%"><tr><th></th><th>Name</th><th>Pattern</th><th>Cooldown</th><th>Text</th><th></th></tr>';
+    // ⚠ Triggers the loader could not compile are NOT in the list above — they
+    // dropped, and the only record was a line in the agent log. Someone who
+    // imports a pack of 200 and gets 193 deserves to be told which seven and
+    // why, right where the list is.
+    var dropped = (payload && payload.dropped) || [];
+    var html = '';
+    if (dropped.length) {
+      html += '<div style="margin:2px 0 8px;padding:6px 8px;border:1px solid var(--red);border-radius:6px;background:#2b1113">'
+        + '<div style="font-size:12px;color:var(--red)"><b>' + dropped.length + '</b> trigger'
+        + (dropped.length === 1 ? '' : 's') + ' in your file could not be compiled, so '
+        + (dropped.length === 1 ? 'it is' : 'they are') + ' not loaded and will never fire.</div>'
+        + '<div class="dim" style="font-size:11px;margin-top:4px">Saving any change below rewrites the file without '
+        + (dropped.length === 1 ? 'it' : 'them') + '.</div>';
+      for (var d = 0; d < dropped.length && d < 25; d++) {
+        html += '<div style="font-size:11px;margin-top:4px"><b>' + esc(dropped[d].name || '?') + '</b>'
+          + ' <code style="font-size:10px;background:#0d1117;border:1px solid var(--border);padding:1px 4px;border-radius:3px">'
+          + esc(String(dropped[d].pattern || '').slice(0, 60)) + '</code>'
+          + ' <span class="dim">' + esc(dropped[d].error || '') + '</span></div>';
+      }
+      if (dropped.length > 25) html += '<div class="dim" style="font-size:11px;margin-top:4px">…and ' + (dropped.length - 25) + ' more.</div>';
+      html += '</div>';
+    }
+
+    // Bulk bar. Uilnayar imported a large pack and had no way out of it except
+    // one ✕ at a time (Discord, 2026-08-29) — an import can add hundreds in a
+    // click, so the undo has to be the same size as the do.
+    html += '<div id="trigBulk" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:2px 0 8px">'
+      + '<span class="dim" style="font-size:11px">Select</span>'
+      + '<button type="button" data-sel="all"  style="background:#21262d;color:var(--text);border:1px solid var(--border);padding:2px 8px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:11px">All</button>'
+      + '<button type="button" data-sel="none" style="background:#21262d;color:var(--text);border:1px solid var(--border);padding:2px 8px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:11px">None</button>'
+      + '<button type="button" data-sel="off"  style="background:#21262d;color:var(--dim);border:1px solid var(--border);padding:2px 8px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:11px" title="Every trigger currently switched off">Disabled</button>'
+      + '<span class="dim" style="font-size:11px">|</span>'
+      + '<span id="trigSelCount" class="dim" style="font-size:11px">0 selected</span>'
+      + '<button type="button" data-bulk="disable" style="background:#21262d;color:var(--text);border:1px solid var(--border);padding:2px 8px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:11px" title="Switch them off but keep them, so you can come back and fix them later">\u23f8 Park for review</button>'
+      + '<button type="button" data-bulk="enable"  style="background:#21262d;color:var(--green);border:1px solid var(--border);padding:2px 8px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:11px">\u25b6 Enable</button>'
+      + '<button type="button" data-bulk="delete"  style="background:#21262d;color:var(--red);border:1px solid var(--border);padding:2px 8px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:11px">\ud83d\uddd1 Delete selected</button>'
+      + '<button type="button" id="trigDeleteAll" style="background:transparent;color:var(--red);border:1px solid var(--red);padding:2px 8px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:11px" title="Remove every personal trigger. Guild triggers are not touched.">Delete all ' + triggers.length + '</button>'
+      + '</div>';
+    html += '<table style="font-size:12px;width:100%"><tr><th style="width:18px"></th><th></th><th>Name</th><th>Pattern</th><th>Cooldown</th><th>Text</th><th></th></tr>';
     for (var i = 0; i < triggers.length; i++) {
       var t = triggers[i];
       var actionText = '';
@@ -20328,6 +20366,8 @@ async function dismissTopDamage(key) {
         actionColor = String(t.actions[0].color || 'red');
       }
       html += '<tr data-trig-id="' + esc(t.id || '') + '">'
+        + '<td><input type="checkbox" data-trig-sel="' + esc(t.id || '') + '"'
+        + (t.enabled === false ? ' data-trig-off="1"' : '') + '></td>'
         + '<td><input type="checkbox" ' + (t.enabled !== false ? 'checked' : '') + ' data-trig-toggle="' + esc(t.id || '') + '"></td>'
         + '<td class="name">' + esc(t.name || '?') + (t.valid === false ? ' <span style="color:var(--red);font-size:10px">(bad pattern)</span>' : '') + '</td>'
         + '<td><code style="font-size:10px;background:#0d1117;border:1px solid var(--border);padding:1px 4px;border-radius:3px">' + esc(String(t.pattern || '').slice(0, 60)) + '</code></td>'
@@ -20355,6 +20395,41 @@ async function dismissTopDamage(key) {
     listEl.querySelectorAll('[data-trig-promote]').forEach(function(b){
       b.addEventListener('click', function(){ onPromote(b.getAttribute('data-trig-promote')); });
     });
+
+    // ── Bulk selection ────────────────────────────────────────────────────
+    // POST /api/personal-triggers REPLACES the whole list, so every bulk verb
+    // here is the same shape as the single-row delete already was: read, map or
+    // filter, write back. No new endpoint, and nothing that can drift from the
+    // one-at-a-time path.
+    function selBoxes() { return listEl.querySelectorAll('[data-trig-sel]'); }
+    function selectedIds() {
+      var out = [];
+      selBoxes().forEach(function(c){ if (c.checked) out.push(c.getAttribute('data-trig-sel')); });
+      return out;
+    }
+    function refreshCount() {
+      var n = selectedIds().length;
+      var el = listEl.querySelector('#trigSelCount');
+      if (el) el.textContent = n + ' selected';
+    }
+    selBoxes().forEach(function(c){ c.addEventListener('change', refreshCount); });
+    listEl.querySelectorAll('[data-sel]').forEach(function(b){
+      b.addEventListener('click', function(){
+        var mode = b.getAttribute('data-sel');
+        selBoxes().forEach(function(c){
+          if (mode === 'all')       c.checked = true;
+          else if (mode === 'none') c.checked = false;
+          else if (mode === 'off')  c.checked = c.getAttribute('data-trig-off') === '1';
+        });
+        refreshCount();
+      });
+    });
+    listEl.querySelectorAll('[data-bulk]').forEach(function(b){
+      b.addEventListener('click', function(){ onBulk(b.getAttribute('data-bulk'), selectedIds()); });
+    });
+    var delAll = listEl.querySelector('#trigDeleteAll');
+    if (delAll) delAll.addEventListener('click', function(){ onDeleteAll(triggers.length); });
+    refreshCount();
   }
   // Open wolfpack.quest/admin/triggers prefilled with this trigger's config
   // so an officer can review + click Create. We deliberately DON'T post
@@ -20499,6 +20574,50 @@ async function dismissTopDamage(key) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ triggers: remaining }),
+    });
+    fetchAndRenderList();
+  }
+  // Bulk verbs. Same read-transform-write as onDelete above, over a set.
+  async function onBulk(action, ids) {
+    if (!ids || !ids.length) return;
+    var n = ids.length;
+    if (action === 'delete' && !confirm('Delete ' + n + ' trigger' + (n === 1 ? '' : 's') + '? This cannot be undone.')) return;
+    const r = await fetch('/api/personal-triggers');
+    const j = r.ok ? await r.json() : { triggers: [] };
+    var all = j.triggers || [];
+    var set = {};
+    for (var i = 0; i < ids.length; i++) set[ids[i]] = true;
+    var next;
+    if (action === 'delete') {
+      next = all.filter(function(t){ return !set[t.id]; });
+    } else {
+      // Park for review = switched off but KEPT. Someone who imported a large
+      // pack wants the noise to stop now and to sort it out later; deleting is
+      // the only irreversible option here, so it must not be the only one.
+      next = all.map(function(t){
+        if (!set[t.id]) return t;
+        var c = Object.assign({}, t);
+        c.enabled = (action === 'enable');
+        return c;
+      });
+    }
+    await fetch('/api/personal-triggers', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ triggers: next }),
+    });
+    fetchAndRenderList();
+  }
+  // Deliberately harder than the others: an import can add hundreds in one
+  // click, and so can this remove them. Guild triggers live server-side and are
+  // untouched — say so, because "delete all" reads like it might take those too.
+  async function onDeleteAll(count) {
+    if (!count) return;
+    if (!confirm('Delete ALL ' + count + ' of your personal triggers?\\n\\nGuild triggers are not affected. This cannot be undone.')) return;
+    await fetch('/api/personal-triggers', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ triggers: [] }),
     });
     fetchAndRenderList();
   }
@@ -23083,7 +23202,10 @@ function startWebDashboard(port) {
       // list (simpler than per-id PATCH/DELETE and the list is tiny).
       if (req.url === '/api/personal-triggers' && req.method === 'GET') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ triggers: _serializePersonalTriggers() }));
+        return res.end(JSON.stringify({
+          triggers: _serializePersonalTriggers(),
+          dropped:  _personalTriggerDrops,
+        }));
       }
       // GET /api/triggers/suggested — read-only catalog of one-click trigger
       // templates, enriched with the user's current enabled/TTS state for each.
@@ -30072,6 +30194,12 @@ function pollGuildTriggers({ botUrl, token }) {
 //       "actions": [{ "type":"text_overlay", "text":"NEED CLARITY", "color":"yellow", "duration_ms": 4000 }] }
 //   ]
 let _personalTriggers = [];
+// Triggers present in personal_triggers.json that could not be compiled. They
+// are NOT loaded and never fire, and until now they vanished with only a line
+// in the agent log — so someone who imported a pack saw a shorter list than
+// they imported and had no way to learn which ones went missing or why
+// (Uilnayar, 2026-08-29). Surfaced on GET /api/personal-triggers as `dropped`.
+let _personalTriggerDrops = [];
 function loadPersonalTriggers() {
   try {
     // personal_triggers.json lives next to the agent's other state files
@@ -30085,6 +30213,7 @@ function loadPersonalTriggers() {
     const raw = JSON.parse(fs.readFileSync(p, 'utf8'));
     const arr = Array.isArray(raw) ? raw : (Array.isArray(raw.triggers) ? raw.triggers : []);
     const compiled = [];
+    const drops = [];
     for (const t of arr) {
       try {
         // Reuse the shared compile path so pure-Zeal triggers (no pattern)
@@ -30092,8 +30221,14 @@ function loadPersonalTriggers() {
         compiled.push(_compilePersonalTrigger(t));
       } catch (err) {
         console.warn(`[personal-triggers] bad pattern "${t.name}":`, err.message);
+        drops.push({
+          name:    String((t && t.name) || 'untitled').slice(0, 100),
+          pattern: String((t && t.pattern) || '').slice(0, 200),
+          error:   String(err && err.message || 'would not compile').slice(0, 200),
+        });
       }
     }
+    _personalTriggerDrops = drops;
     _personalTriggers = compiled;
     console.log(`[personal-triggers] loaded ${compiled.length} from ${p}`);
   } catch (err) {
@@ -30131,7 +30266,17 @@ function _serializePersonalTriggers() {
   return _personalTriggers.map(t => {
     const { _regex, _scope, ...rest } = t;
     void _scope;
-    return { ...rest, valid: !!_regex };
+    // ⚠ `valid` used to be `!!_regex`, which was wrong in BOTH directions
+    // (found 2026-08-29 while looking into Uilnayar's import):
+    //   · a pattern that does not compile THROWS in _compilePersonalTrigger and
+    //     is dropped by the loader, so it never reaches this list — the flag
+    //     could never mark a genuinely broken trigger;
+    //   · a pure-Zeal gauge trigger legitimately has no _regex, so the one
+    //     thing the flag DID mark was a working trigger, labelled "(bad
+    //     pattern)" in the dashboard.
+    // A trigger is valid if it has something to fire on: a compiled pattern or
+    // a gauge condition. The genuinely-broken ones are reported via `dropped`.
+    return { ...rest, valid: !!_regex || !!t.zeal_condition };
   });
 }
 

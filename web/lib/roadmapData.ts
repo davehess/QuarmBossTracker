@@ -37,6 +37,31 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'agent-3-6-6',
+    title: 'Undo an import',
+    version: 'Agent 3.6.6',
+    date: '2026-08-29',
+    channel: 'beta',
+    headline: 'Imported a big trigger pack and regretted it? You can now clear them out in one go instead of one at a time.',
+    features: [
+      {
+        name: 'Select and delete in bulk',
+        blurb: 'Tick the ones you want, or hit All, then delete them together \u2014 or wipe every personal trigger with one button. Your guild triggers are never touched.',
+      },
+      {
+        name: 'Park for review instead of deleting',
+        blurb: 'Switches the selected triggers off but keeps them, so the noise stops now and you can sort out which ones you actually wanted later.',
+      },
+      {
+        name: 'It tells you which triggers did not survive the import',
+        blurb: 'A trigger whose pattern will not compile has always been quietly skipped, so importing 200 could leave you 193 with no explanation. The list now names each one and says what was wrong with it.',
+      },
+    ],
+    fixes: [
+      'A trigger that watches health instead of chat text is no longer labelled "bad pattern". It never had a text pattern to begin with \u2014 that was the only kind of trigger that label could appear on.',
+    ],
+  },
+  {
     key: 'web-1-7-1',
     title: 'The wolves arrive in turn',
     version: 'Web 1.7.1',

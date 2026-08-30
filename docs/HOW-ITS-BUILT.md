@@ -626,6 +626,39 @@ budget is 120/min per uploader). `encounter_id` is claimed bot-side at flush
 (`claimThreatSnapshots`) because the agent cannot know it — the encounter row
 does not exist until the fight ends.
 
+### Personal triggers — bulk management + what the loader threw away (agent 3.6.6)
+
+Uilnayar imported a large trigger pack into miMIC and asked how to undo it; the
+only answer was one `✕` at a time (Discord, 2026-08-29). The dashboard's
+personal-trigger list now has a bulk bar: **Select All / None / Disabled**,
+**⏸ Park for review** (disable, keep), **Enable**, **Delete selected**, and
+**Delete all N**. No new endpoint — `POST /api/personal-triggers` already
+REPLACES the whole list, so every bulk verb is the same read-transform-write the
+single-row delete was, and cannot drift from it. Selection is its OWN checkbox
+column: the first checkbox in each row already meant *enabled*, and reusing it
+would have made ticking a row to delete it switch it on first.
+
+⚠ **Two bugs found while looking into that import, neither related to the bulk
+gap:**
+- **A pattern that will not compile is dropped at load**, with only a line in
+  the agent log (`_compilePersonalTrigger` throws, `loadPersonalTriggers`
+  catches and skips). Import 200 and get 193, with nothing on screen saying
+  which seven or why. They are now collected into `_personalTriggerDrops`,
+  served as `dropped` on `GET /api/personal-triggers`, and reported above the
+  list with each name, pattern and compiler error — plus a warning that saving
+  any change rewrites the file without them.
+- **`valid` was `!!_regex`, wrong in BOTH directions.** A broken pattern never
+  reaches the list (it threw), so the flag could never mark one; and a pure-Zeal
+  gauge trigger legitimately has no regex, so the ONE thing it did mark was a
+  working trigger, rendered "(bad pattern)". Now `!!_regex || !!zeal_condition`.
+
+⚠ `packages/wolfpack-logsync/personal_triggers.json` is a user's own trigger set
+living in the package dir (`STATS_FILE` anchors state there) and was **not
+gitignored** — it is now, along with `logsync.queue.json`.
+
+Guarded by `test/personal-trigger-bulk.test.js` (source-sliced from the shipped
+agent, so a rename fails loudly rather than passing on a stale copy).
+
 ### Charm pipeline
 `_charmTickTracker` (slot-16 gauge-driven; 1.5s land debounce, 10s re-charm
 grace), `CHARM_SPELLS` map (backtick + apostrophe spellings), pending-charm
