@@ -460,7 +460,13 @@ async function syncAuctions(opts = {}) {
 
   // Full bid lists: up to OPENDKP_BIDS_PER_PASS detail calls, newest-first,
   // each auction paying that call exactly once (bids_synced_at).
-  const detail = await syncPendingAuctionBids().catch(err => ({ detail_calls: 0, bids_written: 0, error: err?.message || String(err) }));
+  const detail = await syncPendingAuctionBids().catch(err => {
+    // A THROW here (vs the per-auction error the pass logs itself) means the
+    // pending-picker query or the marker write failed — the shape of failure
+    // that produced "0 auctions detailed, no log line" on day one. Never quiet.
+    console.warn('[opendkp-sync] bid-detail pass threw:', err?.message || String(err));
+    return { detail_calls: 0, bids_written: 0, error: err?.message || String(err) };
+  });
 
   return {
     upserted:       totalUpserted,

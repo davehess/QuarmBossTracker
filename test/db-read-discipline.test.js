@@ -44,17 +44,23 @@ const SCAN_ROOTS = ['index.js', 'utils', 'commands', 'web/app', 'web/lib', 'web/
 const SKIP_DIRS = new Set(['node_modules', '.next', '.claude']);
 
 function sourceFiles() {
+  // ⚠ Walk ONLY the scan roots. This used to walk the whole repo from ROOT
+  // and filter afterwards — thousands of wasted stat() calls — and under I/O
+  // load (a run sharing the box with big file writes) it breached the 5s test
+  // timeout. That was THE phantom flake of 2026-08-28..30: one test failing
+  // once, green on every re-run, never reproducible on a quiet box.
+  // STATUS.md's "unidentified flaky test" entry is this line's tombstone.
   const out = [];
-  (function walk(rel) {
+  const walk = (rel) => {
     const full = path.join(ROOT, rel);
-    if (!fs.existsSync(full)) return;
     const st = fs.statSync(full);
     if (st.isDirectory()) {
       if (SKIP_DIRS.has(path.basename(full))) return;
       for (const e of fs.readdirSync(full)) walk(path.join(rel, e));
     } else if (/\.(js|ts|tsx)$/.test(rel)) out.push(rel);
-  })('');
-  return out.filter(f => SCAN_ROOTS.some(r => f === r || f.startsWith(r + '/')));
+  };
+  for (const r of SCAN_ROOTS) if (fs.existsSync(path.join(ROOT, r))) walk(r);
+  return out;
 }
 
 describe('one paginator per runtime', () => {

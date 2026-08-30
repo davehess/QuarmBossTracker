@@ -1374,6 +1374,16 @@ holds it in memory.
   is now authoritative for char_id→name with the MODE-over-loot heuristic as
   fallback only — the heuristic failing silently is what blanked CHAR and made
   Rockin's multi-winner Thorny Chain Helm WIN render as a family miss.
+  ⚠ **(bot 3.1.100) Detail-sourced bid rows have NO CharacterId** — OpenDKP's
+  per-auction history is Name/Rank/Value/Date — and `_buildMisses` used to skip
+  id-less rows, silently hiding every backfilled loss (the exact data the
+  backfill exists to surface). It now keys by character NAME when the id is
+  absent, with ownership answered by the loot mirror (`ownsByName`) since a
+  winner's award always writes a loot row. An item that leaves the game (the
+  Hsagra shard is consumed in its turn-in) is invisible to every automatic
+  ownership source — the row's ✕ dismiss is the mechanism for that, and it is
+  currently PER-MACHINE (`logsync.lootdismiss.json`); the bot's roaming
+  `character_bid_prefs.dismissed` field exists but no client calls it — queued.
 - **Platform map (`components/PlatformMap.tsx` + `platformData.ts`, web 1.7.0)** —
   top-down, not radial (Hitya): `wolfpack.quest` is the ROOT and the other five
   branches stand under it in pipeline order, joined by a CSS rail. Hovering a
