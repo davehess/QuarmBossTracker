@@ -89,14 +89,22 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ## The work ledger
 
-- **⚠ Needs Hitya to press the button — the Zeal spawn-id PR is written.**
-  Everything is in `docs/upstream/zeal-spawn-id/`: two `git am`-able patches
-  against Zeal `a5f5cbf` (1.4.5), the PR title and body, and the fork/push
-  steps. It cannot be filed from here — this session's GitHub tooling is scoped
-  to `davehess/quarmbosstracker`, so it cannot fork or open a PR on
-  `CoastalRedwood/Zeal`. Two softer approaches already got no response, which
-  is why it is a diff this time. ⚠ It has NOT been compiled (no Windows/MSVC
-  x86 here) and the PR body says so; expect to fix whatever their build finds.
+- **🔭 In flight — Zeal PR #229 (filed 2026-08-31).**
+  https://github.com/CoastalRedwood/Zeal/pull/229 — adds `spawn_id` to the pipe's
+  raid/group/player messages plus `target_id` and `pet_id`. 23 insertions, 0
+  deletions. Implements the PIPE half of upstream issue #218 (open since
+  2026-06-29), whose author is running the same `/tag` workaround we are;
+  `Refs`, not `Closes`, because their target-bar display half is not in it.
+  ⚠ **NOT compiled** — no Windows/MSVC x86 here; the PR says so and offers to
+  test their build against the four-same-name-mob repro.
+  ⚠ **No session can watch it.** GitHub tooling here is scoped to
+  `davehess/quarmbosstracker`, so review comments must be relayed by Hitya.
+  **Expect slow:** #227 has been open since Aug 1 and #218 sat two months.
+  Most likely asks back: key naming (#218 suggested `NPC_ID`) or gating the
+  fields behind `pipe_verbose` — both one-liners.
+  **Consumer work waits for a release** — `docs/zeal-pipe-protocol.md` carries a
+  forward note, and the agent's parser must treat all five keys as optional so
+  older Zeal builds keep working.
 - **⚠ Needs a local session — PoP quest extract (`docs/HANDOFF-pop-quest-extract.md`).**
   Two shipped features are waiting on data only the `D:\EQServer` box has:
   (1) the flagging-NPC list + the phrase list for phrase-granted flags — agent

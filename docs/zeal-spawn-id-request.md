@@ -1,6 +1,7 @@
 # Zeal: expose spawn ids on the named pipe — the EVIDENCE
 
-**Status: superseded as an ASK — the code is written.** Hitya, 2026-08-31:
+**Status: FILED as [PR #229](https://github.com/CoastalRedwood/Zeal/pull/229)
+on 2026-08-31, implementing the pipe half of upstream issue #218.** Hitya, 2026-08-31:
 *"I think we should prepare the pull request for Zeal to include spawn id in
 pipes. It's not happening otherwise."* Two softer approaches (a forum post on
 2026-07-20, and this document as a would-be issue) produced no response, so the

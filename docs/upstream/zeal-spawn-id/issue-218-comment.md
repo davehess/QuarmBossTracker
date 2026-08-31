@@ -1,12 +1,15 @@
 Post this as a comment on
-[#218](https://github.com/CoastalRedwood/Zeal/issues/218) **after** the PR is
-open, with the PR number filled in. It links the two, notifies `derekwolfson`,
-and makes clear we are not trying to take over their request.
+[#218](https://github.com/CoastalRedwood/Zeal/issues/218). It links the two,
+notifies `derekwolfson`, and makes clear we are not trying to take over their
+request.
+
+**The PR is open: [#229](https://github.com/CoastalRedwood/Zeal/pull/229).**
+The number is already filled in below — paste the fenced block as-is.
 
 ---
 
 ```markdown
-I've opened a PR for the pipe half of this: #<PR NUMBER>.
+I've opened a PR for the pipe half of this: #229.
 
 It adds `spawn_id` to the raid and group messages and `spawn_id` / `target_id` /
 `pet_id` to the player message — 10 added lines, nothing existing changed. Your
