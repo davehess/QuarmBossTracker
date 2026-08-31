@@ -20051,7 +20051,38 @@ async function dismissTopDamage(key) {
       h += "<div style='display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:12px 0 4px;font-size:11px'>";
       if (acctDkp && acctDkp.account_dkp!=null){
         var whoTxt = acctDkp.character ? (" · "+esc(acctDkp.character)) : "";
-        h += "<span style='background:rgba(63,185,80,.12);border:1px solid var(--border);border-radius:5px;padding:2px 9px' title='Live from OpenDKP standings — your account&#39;s Current DKP'>💰 <b>"+fmt(acctDkp.account_dkp)+"</b> <span class=dim>DKP · account (OpenDKP)"+whoTxt+"</span></span>";
+        // ⚠ SAY WHICH NUMBER THIS IS (Hitya, 2026-08-31: "i'm noticing that the
+        // 192 dkp is wrong. i'm actually at 143 total"). This pill used to
+        // hardcode "account (OpenDKP)" and show no age, so all three cases —
+        // live standings, standings CACHED FROM AN EARLIER RAID, and the
+        // mirror estimate — rendered identically. That is what made a wrong
+        // figure undiagnosable: nobody could tell whether the number was
+        // stale, estimated, or genuinely what OpenDKP says right now.
+        //
+        // The bot already returns \`source\` and \`as_of\` for exactly this
+        // ("so it can label an estimate as an estimate instead of quietly
+        // presenting it as live") — the panel simply threw them away.
+        //
+        // Standings are NOT refreshed off-raid by design, so between raids
+        // this figure is expected to be stale and must say so.
+        var isMirror = acctDkp.source === "mirror";
+        var ageTxt = "", ageTitle = "";
+        if (acctDkp.as_of){
+          var asOf = Date.parse(acctDkp.as_of);
+          if (asOf){
+            var mins = Math.floor((Date.now()-asOf)/60000);
+            ageTxt = mins < 2 ? "" : (mins < 60 ? (" · "+mins+"m old")
+                   : (mins < 1440 ? (" · "+Math.floor(mins/60)+"h old")
+                                  : (" · "+Math.floor(mins/1440)+"d old")));
+            ageTitle = " · as of "+String(acctDkp.as_of).replace("T"," ").split(".")[0]+" UTC";
+          }
+        }
+        var srcTxt = isMirror ? "~est. (mirror)" : "account (OpenDKP)";
+        var tone   = isMirror ? "rgba(212,175,55,.10)" : "rgba(63,185,80,.12)";
+        var tip = isMirror
+          ? "Estimated from the local mirror — OpenDKP standings were unavailable, so this is earned + adjustments − spent, not OpenDKP's own figure."
+          : ("OpenDKP standings. Standings are not refreshed between raids, so this can lag anything spent since." + ageTitle);
+        h += "<span style='background:"+tone+";border:1px solid var(--border);border-radius:5px;padding:2px 9px' title='"+esc(tip)+"'>💰 <b>"+(isMirror?"~":"")+fmt(acctDkp.account_dkp)+"</b> <span class=dim>DKP · "+srcTxt+whoTxt+ageTxt+"</span></span>";
       } else if (dkp){
         var fa = String(dkp.fetched_at||"").replace("T"," "); var dotIx = fa.indexOf("."); if (dotIx>=0) fa = fa.substring(0,dotIx);
         var freshTitle = "~estimate from the local mirror (OpenDKP pools alts) — the real balance appears once your OpenDKP standings load" + (dkp.fetched_at ? (" · as of "+fa+" UTC") : "");
@@ -20074,18 +20105,41 @@ async function dismissTopDamage(key) {
       if (dCount) h += "<span class=dim style='font-size:10px'>"+dCount+" hidden · <span id=wpLootRestore style='cursor:pointer;color:var(--blue,#58a6ff)'>restore all</span></span>";
       h += "</div>";
 
+      // The account DKP cell, shared by both tables below.
+      var dkpCellShared = (acctDkp&&acctDkp.account_dkp!=null) ? fmt(acctDkp.account_dkp) : (dkp?("~"+fmt(dkp.family_total)):"—");
+      // Bid figures live on the MISSES rows, so the wishlist borrows them by
+      // item (Hitya, 2026-08-31: "the wishlist ... just needs to show the
+      // fields from the Recent misses"). The two lists overlap almost entirely
+      // — everything inferred "from bid history" is by definition something you
+      // bid on and lost — so this is a join, not a second fetch.
+      var missByItem = {};
+      for (var mb2=0;mb2<misses.length;mb2++) missByItem[misses[mb2].item_id] = misses[mb2];
+
       var wlF = wl.filter(function(x){ return passEra(x.era) && notDismissed(x); });
       if (wlF.length){
         h += "<div style='font-size:11px;color:var(--dim,#8b949e);text-transform:uppercase;letter-spacing:.05em;margin:8px 0 4px'>your wishlist <span style='text-transform:none;letter-spacing:0'>· bid on but not yet won</span></div>";
-        h += "<div style='font-size:11px'>";
+        h += "<table><tr><th>Item</th><th>Char</th><th class=num>Your last</th><th class=num>Last win</th><th class=num>2nd place</th><th class=num>Planned</th><th class=num>DKP</th><th></th></tr>";
         for (var w=0;w<wlF.length && w<25;w++){
           var it = wlF[w];
+          var wm = missByItem[it.item_id] || {};
           var srcTag = it.source==="prereg"
-            ? "<span title='preregistered' style='color:var(--gold,#d4af37)'>★ prereg</span>"
-            : "<span class=dim title='inferred from your bid history'>↺ from bid history</span>";
-          h += "<div style='display:flex;gap:6px;padding:1px 0'>"+itemLink(it.item_name||("item "+it.item_id), it.raid_id)+eraTag(it.era)+"<span style='margin-left:auto'>"+srcTag+"</span>"+dismissBtn(it.item_id)+"</div>";
+            ? " <span title='preregistered' style='color:var(--gold,#d4af37)'>★</span>"
+            : " <span class=dim title='inferred from your bid history'>↺</span>";
+          var wpv = (planned[it.item_id]!=null) ? planned[it.item_id] : "";
+          h += "<tr>";
+          h += "<td>"+itemLink(it.item_name||("item "+it.item_id), it.raid_id)+eraTag(it.era)+srcTag+"</td>";
+          // A prereg you have never bid on has no figures, and shows dashes
+          // rather than borrowing someone else's row.
+          h += "<td"+(wm.character?" class=name":"")+">"+esc(wm.character||"—")+"</td>";
+          h += "<td class=num>"+(wm.my_last_bid!=null?fmt(wm.my_last_bid):"—")+"</td>";
+          h += "<td class=num>"+(wm.last_winning_bid!=null?fmt(wm.last_winning_bid):"—")+"</td>";
+          h += "<td class=num>"+(wm.last_second_bid!=null?fmt(wm.last_second_bid):"—")+"</td>";
+          h += "<td class=num><input id=wpPlanW_"+it.item_id+" class=wpPlanIn data-item='"+esc(it.item_id)+"' type=number min=1 value='"+esc(wpv)+"' placeholder='—' style='width:52px;background:#0e1116;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:1px 4px;font-family:inherit;text-align:right'></td>";
+          h += "<td class=num>"+dkpCellShared+"</td>";
+          h += "<td>"+dismissBtn(it.item_id)+"</td>";
+          h += "</tr>";
         }
-        h += "</div>";
+        h += "</table>";
       }
 
       // RECENT MISSES — bid on and lost. Full width; per-item columns.
@@ -20102,9 +20156,8 @@ async function dismissTopDamage(key) {
           h += "<td class=num>"+(m.my_last_bid!=null?fmt(m.my_last_bid):"—")+"</td>";
           h += "<td class=num>"+(m.last_winning_bid!=null?fmt(m.last_winning_bid):"—")+"</td>";
           h += "<td class=num>"+(m.last_second_bid!=null?fmt(m.last_second_bid):"—")+"</td>";
-          h += "<td class=num><input id=wpPlan_"+m.item_id+" type=number min=1 value='"+esc(pv)+"' placeholder='—' style='width:52px;background:#0e1116;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:1px 4px;font-family:inherit;text-align:right'></td>";
-          var dkpCell = (acctDkp&&acctDkp.account_dkp!=null) ? fmt(acctDkp.account_dkp) : (dkp?("~"+fmt(dkp.family_total)):"—");
-          h += "<td class=num>"+dkpCell+"</td>";
+          h += "<td class=num><input id=wpPlan_"+m.item_id+" class=wpPlanIn data-item='"+esc(m.item_id)+"' type=number min=1 value='"+esc(pv)+"' placeholder='—' style='width:52px;background:#0e1116;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:1px 4px;font-family:inherit;text-align:right'></td>";
+          h += "<td class=num>"+dkpCellShared+"</td>";
           h += "<td>"+dismissBtn(m.item_id)+"</td>";
           h += "</tr>";
         }
@@ -20231,9 +20284,13 @@ async function dismissTopDamage(key) {
     el = document.getElementById("wpLootEra"); if (el) el.onchange = function(){ eraFilter = el.value || ""; render(); };
     // Planned-bid inputs — keep the client mirror current on every keystroke
     // (so a repaint never drops mid-typed text) and persist locally on commit.
-    var plans = card.querySelectorAll("input[id^=wpPlan_]");
+    // ⚠ Class + data-item, NOT an id prefix. An item can appear in BOTH the
+    // wishlist and the misses table, so the two inputs must be wired
+    // independently and must agree — parsing the id would also break the
+    // moment a second prefix (wpPlanW_) existed.
+    var plans = card.querySelectorAll("input.wpPlanIn");
     for (var pp=0;pp<plans.length;pp++){ (function(inp){
-      var id = inp.id.substring("wpPlan_".length);
+      var id = inp.getAttribute("data-item");
       inp.oninput = function(){ if(inp.value==="") delete planned[id]; else planned[id]=parseInt(inp.value,10)||0; };
       inp.onchange = function(){ savePlanned(id, inp.value); };
     })(plans[pp]); }

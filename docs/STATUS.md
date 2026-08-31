@@ -89,6 +89,33 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ## The work ledger
 
+- **⚠ OPEN BUG — the account DKP figure is wrong, and I could not finish
+  diagnosing it (2026-08-31).** Hitya: *"i'm noticing that the 192 dkp is wrong.
+  i'm actually at 143 total"*. What is established:
+  - The **mirror estimate computes 817** for the family, not 192 and not 143.
+    So the pill's 192 came from the OpenDKP standings path, not the fallback.
+    (`_familyDkpFromMirror`: earned 6167 / adj −15 / spent 5335.)
+  - **All characters are on ONE OpenDKP account** (Hitya, confirmed), so
+    pooling across the family is correct and is not the error.
+  - `_familyDkpFromMirror` adds a tick's value **once per attending family
+    character**, so the 50 ticks with two family members present are counted
+    twice (6167 vs 5907 once-per-tick). Real, but it only explains 260 of the
+    gap — once-per-tick still gives 557 against a stated 143.
+  - ⚠ Two wrong inferences were made and retracted along the way: that Hitya
+    boxes (they do not — his wife played Canopy as a zone anchor), and that
+    decay was unmodelled (it rides `opendkp_adjustments`, only −15 for this
+    family). Do not rebuild either theory without new evidence.
+  **What is NOT known:** what OpenDKP's standings actually return for the
+  account, and therefore whether 192 is a stale figure, the wrong field, or a
+  correct reading of something that is not the balance. **Needs:** the number
+  the OpenDKP site shows for the account, compared against the pill.
+  **Made observable meanwhile (agent 3.6.15):** the pill now states its source
+  (`account (OpenDKP)` vs `~est. (mirror)`) and its age. It previously
+  hardcoded "(OpenDKP)" and showed no age, so live, stale-from-last-raid and
+  mirror-estimate all rendered identically — which is what made this
+  undiagnosable. Standings are deliberately not refreshed off-raid, so a stale
+  figure between raids is expected and must now say so.
+
 - **🔭 In flight — Zeal PR #229 (filed 2026-08-31).**
   https://github.com/CoastalRedwood/Zeal/pull/229 — adds `spawn_id` to the pipe's
   raid/group/player messages plus `target_id` and `pet_id`. 27 insertions, 0
