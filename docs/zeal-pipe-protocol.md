@@ -9,46 +9,48 @@
 
 ## ⚠ What a spawn id actually IS (measured 2026-08-31)
 
-Before building anything on spawn ids, know these properties. All measured on a
-live client with `/tag` (which broadcasts the same `Entity::SpawnId` the pipe
-carries), not inferred:
+Read this before building anything on spawn ids. Every statement below was
+measured on a live client with `/tag` (which broadcasts the same
+`Entity::SpawnId` the pipe carries), not inferred from source.
 
-**1. DEATH gives a character a new id.** One character, minutes apart:
+**A spawn id is a slot in the ZONE's entity table, not an identity.**
 
-```
-ZEALTAG | beforeidie | Mycorpseishere | 4425     <- alive
-  ... died to Deputy Vastin, returned to bind ...
-ZEALTAG | afteridied | Mycorpseishere | 985      <- same character, new id
-```
+Three observations of one character, `Mycorpseishere`, and its corpse:
 
-**2. The old id stays with the CORPSE.** With the character now running around
-as 985, targeting their own corpse reported `target_id` **4425** — the id they
-had when they died.
+| event | own id | corpse id |
+|---|---|---|
+| alive, before dying | **4425** | — |
+| died → returned to bind (a zone load) | **985** | 4425 |
+| zoned out and back, **no death** | **3158** | 4425 |
 
-**3. The id belongs to the ENTITY and survives the observer zoning.** Zoning
-out and back in, the corpse still reported **4425**. So an id is not a handle
-scoped to your current zone session; it identifies an entity for as long as
-that entity exists.
+What that shows:
 
-The working model, then: an id names an entity, not a character. Death ends the
-living entity (its id continues as the corpse) and creates a new one.
+1. **You get a new id every time you ENTER a zone.** 985 → 3158 happened with
+   no death involved at all — a plain zone out and back. Death looked like the
+   cause of 4425 → 985 only because returning to bind is itself a zone load.
+2. **An entity already resident in the zone keeps its slot.** The corpse held
+   4425 across both events, including a zone reload.
+3. **The id follows the corpse, not the person.** With the character running
+   around as 3158, targeting their own corpse still reported `target_id` 4425.
 
 Consequences worth planning around:
 
-- **Never treat a spawn id as a durable key for a character.** Name is the
-  durable key. Anything cached name→id is invalidated by that character dying.
-- **An id does not tell you alive from dead.** The pipe carries no spawn
-  *type* (`Entity::Type` exists at `0x00A8`, `SPAWN_TYPE_x`, but is not
-  emitted), so a consumer's only signal is the display name's `'s corpse`
-  suffix.
-- **For mob tracking within a fight this is a feature.** The id stays put
-  across the kill, so damage attributed to it does not scatter at the moment
-  of death.
-- ⚠ **STILL UNMEASURED:** whether a plain zone — no death — changes your OWN
-  id. Property 3 says the corpse's id survived a zone, which makes it likely
-  yours does too, and that 4425→985 was purely the death. But likely is not
-  measured. `/tag` yourself, zone, `/tag` again would settle it in a minute.
-  Do not write it down as fact until someone does.
+- **Never cache name→id across a zone.** Not for raiders, not for mobs. The id
+  is valid only for the zone session it was observed in. Name remains the
+  durable key for a character.
+- **An id does not tell you alive from dead.** The pipe carries no spawn *type*
+  (`Entity::Type` exists at `0x00A8`, `SPAWN_TYPE_x`, but PR #229 does not emit
+  it), so a consumer's only signal is the display name's `'s corpse` suffix.
+- **Within a single fight this is exactly what we want** — which is the whole
+  point of the feature. Nobody zones mid-pull, ids are stable for the duration,
+  and the id stays put across the kill so damage attributed to it does not
+  scatter at the moment of death.
+- `raid[]` and `group[]` re-resolve by NAME every poll
+  (`entity_manager->Get(member.Name)`), so those ids self-correct after a zone
+  without a consumer doing anything.
+- ⚠ Not separated: whether a death WITHOUT a zone load (an in-zone rez) also
+  changes your id. Low stakes, since the caching rule above covers it either
+  way.
 
 Assembled 2026-07-08 from CoastalRedwood/Zeal `named_pipe.cpp` (the
 `LabelNames` / `GaugeNames` maps) cross-checked against live side-by-side
