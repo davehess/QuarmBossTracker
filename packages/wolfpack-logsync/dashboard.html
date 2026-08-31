@@ -366,7 +366,7 @@ function _morphAttrs(live, tmpl) {
       // live (wp-hidden from the show/hide-panels feature, wp-drop-target
       // flash). Stripping those would un-hide hidden panels every poll.
       var keep = [];
-      var lc = (live.getAttribute('class') || '').split(/s+/);
+      var lc = (live.getAttribute('class') || '').split(/\s+/);
       for (var j = 0; j < lc.length; j++) if (lc[j].indexOf('wp-') === 0) keep.push(lc[j]);
       var merged = a.value + (keep.length ? ' ' + keep.join(' ') : '');
       if (live.getAttribute('class') !== merged) live.setAttribute('class', merged);
@@ -376,7 +376,7 @@ function _morphAttrs(live, tmpl) {
   }
   // Template has no class but live carries wp-* state classes → keep just those.
   if (!tmpl.hasAttribute('class') && live.hasAttribute('class')) {
-    var k2 = (live.getAttribute('class') || '').split(/s+/).filter(function (x) { return x.indexOf('wp-') === 0; });
+    var k2 = (live.getAttribute('class') || '').split(/\s+/).filter(function (x) { return x.indexOf('wp-') === 0; });
     if (k2.length) live.setAttribute('class', k2.join(' ')); else live.removeAttribute('class');
   }
 }
@@ -5558,14 +5558,14 @@ function _dkpTickPlayers(source) {
   var s = window.__wpLastState || {};
   var t = s.dkpTick || {};
   if (source === 'roster') return (t.liveRoster && t.liveRoster.players) || [];
-  var m = /^file:(d+)$/.exec(source);
+  var m = /^file:(\d+)$/.exec(source);
   if (m && t.files && t.files[+m[1]]) return t.files[+m[1]].players || [];
   return [];
 }
 function _dkpTickPoints(source) {
   var s = window.__wpLastState || {};
   var t = s.dkpTick || {};
-  var m = /^file:(d+)$/.exec(source);
+  var m = /^file:(\d+)$/.exec(source);
   if (m && t.files && t.files[+m[1]]) return t.files[+m[1]].points || 1;
   return 1;   // live roster ticks default to 1 DKP
 }
@@ -6718,7 +6718,7 @@ async function dismissTopDamage(key) {
       var html = "<h5>🎯 Suggested for you" + (me ? " (" + me + ")" : "") + "</h5>";
       ranked.forEach(function(r){
         var cls = r.score >= 10 ? "priority" : "";
-        var label = (r.label || r.key).replace(/^✥s*/, "").split("(")[0].split("—")[0].trim();
+        var label = (r.label || r.key).replace(/^✥\s*/, "").split("(")[0].split("—")[0].trim();
         html += "<button class='" + cls + "' data-suggest-key='" + r.key + "'>" + label + "</button>";
       });
       box.innerHTML = html;

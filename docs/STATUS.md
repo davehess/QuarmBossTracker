@@ -100,6 +100,26 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ### ✅ Done — major shipped features (not exhaustive; see git + roadmapData.ts)
 
+- **Five eaten backslashes, and a build check so they cannot come back (agent
+  3.6.12, beta, 2026-08-30).** Hitya: *"this upload did not work from the raid
+  tick that was taken. copying directly in worked."* The DKP tick card listed
+  the RaidTick file and its 44 players correctly, but clicking a slot said "No
+  attendees in that source" — because `/^file:(d+)$/` matches a literal "d" and
+  could never match `file:0`. A sweep found four more survivors of the old
+  hand-escaped `WEB_HTML` literal: `.split(/s+/)` twice, which silently
+  defeated the wp-* class preservation its own comment describes (hidden panels
+  reappeared on the next 2s poll), and `/^✥s*/`. All five fixed;
+  `checkEatenBackslashes` now fails the build on the whole class.
+  ⚠ **This is the strongest argument yet for the dashboard slice** — the class
+  was created by the escaping scheme the slice retired, and was invisible to
+  review for months because a lost backslash is still valid regex.
+- **Discipline cooldown on the Command Center (agent 3.6.12, beta,
+  2026-08-30).** Hitya: *"discipline cooldowns should be tracked on the command
+  center for the user only."* Parses the client's own refusal line, which is
+  the only exact statement of the shared melee reuse timer and is self-only by
+  construction. Not on the raid-wide defensives board, and no "ready" line
+  invented.
+
 - **Loot page: 2nd place in the bidding area + a "Loot won" card (agent 3.6.11,
   beta, 2026-08-30).** Two of the raid-night reports. (1) *"Second place should
   show up as well in the bidding area"* — `runner_up` was already served and

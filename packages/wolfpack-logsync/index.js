@@ -5376,6 +5376,66 @@ function _matchDiscLine(line, selfName) {
   return null;
 }
 
+// ── Discipline reuse timer — SELF ONLY (Hitya, 2026-08-30) ──────────────────
+// "discipline cooldowns should be tracked on the command center for the user
+// only."
+//
+// EQ's melee disciplines share ONE reuse timer per character, and the client
+// states exactly how much is left the moment you try too early:
+//
+//   [Sat Aug 30 22:46:23 2026] You can use a new discipline in 10 minutes 34 seconds.
+//
+// That line is the only EXACT signal for this timer, and it is self-only by
+// construction — it appears in your own log, about your own character, and
+// never names anyone else. Which is also why this is deliberately NOT a
+// raid-wide board like `da_broadcasts`: there is no equivalent line for other
+// people, and deriving one from their activation emote would mean guessing a
+// reuse that differs per discipline and per level. A wrong "Bob's disc is
+// ready" is worse than no line at all.
+//
+// ⚠ Only the REFUSAL line is matched. A "you may use a discipline again" line
+// may or may not exist on this client — nothing in any log we hold shows one,
+// and inventing the text is exactly how the Divine Intervention trigger ended
+// up watching a string that appears nowhere (CLAUDE.md, "invented pattern").
+// So the countdown simply runs out on its own, which needs no line at all.
+//
+// Keyed per character because the agent tails 3-12 logs at once; the Command
+// Center reads only the ACTIVE character's, which is what "for the user only"
+// asks for.
+const _DISC_REFUSAL_RX =
+  /\bYou can use a new discipline in (?:(\d+) minutes?)?\s*(?:(\d+) seconds?)?\s*\./i;
+const _discReadyAt = new Map();     // characterLower -> { at, name }
+
+function trackDisciplineTimerLine(line, character) {
+  if (!line || line.indexOf('new discipline') === -1) return;   // cheap gate
+  const m = _DISC_REFUSAL_RX.exec(line);
+  if (!m) return;
+  const mins = m[1] ? parseInt(m[1], 10) : 0;
+  const secs = m[2] ? parseInt(m[2], 10) : 0;
+  const total = mins * 60 + secs;
+  if (!total) return;                                           // "in ." — nothing to count
+  const name = String(character || '').trim();
+  if (!name) return;
+  const at = parseEqTimestamp(line) || Date.now();
+  _discReadyAt.set(name.toLowerCase(), { at: at + total * 1000, name });
+}
+
+// The active character's remaining reuse, or null when it is ready (or was
+// never observed). Expired entries are dropped on read so the map cannot grow.
+function _disciplineTimerSnapshot(activeChar) {
+  const k = String(activeChar || '').trim().toLowerCase();
+  if (!k) return null;
+  const e = _discReadyAt.get(k);
+  if (!e) return null;
+  const left = e.at - Date.now();
+  if (left <= 0) { _discReadyAt.delete(k); return null; }
+  return {
+    character: e.name,
+    ready_at:  new Date(e.at).toISOString(),
+    seconds:   Math.round(left / 1000),
+  };
+}
+
 // ── Raid-wide healer/caster mana roster ─────────────────────────────────────
 // Self-reported "N% mana" status tickers many healers run on a macro —
 // actual examples from guild raid chat: "Druid -- current mana 45%.",
@@ -11227,6 +11287,8 @@ function _serializeCommandCenterState() {
     deathtouch:    tank.deathtouch,
     needs_rez:     _rezBoardSnapshot(),
     da_broadcasts: daBroadcastsSnapshot(),
+    // SELF ONLY — see trackDisciplineTimerLine. Null when ready or unobserved.
+    discipline:    _disciplineTimerSnapshot(activeChar),
     // ALL healer mana, merged from every source we have (Hitya 2026-07-15:
     // "Command center should have all healer mana if its reported in the CH
     // chain or as %n mana or mana %n or if they're in mimic"):
@@ -13113,7 +13175,7 @@ function _morphAttrs(live, tmpl) {
       // live (wp-hidden from the show/hide-panels feature, wp-drop-target
       // flash). Stripping those would un-hide hidden panels every poll.
       var keep = [];
-      var lc = (live.getAttribute('class') || '').split(/s+/);
+      var lc = (live.getAttribute('class') || '').split(/\\s+/);
       for (var j = 0; j < lc.length; j++) if (lc[j].indexOf('wp-') === 0) keep.push(lc[j]);
       var merged = a.value + (keep.length ? ' ' + keep.join(' ') : '');
       if (live.getAttribute('class') !== merged) live.setAttribute('class', merged);
@@ -13123,7 +13185,7 @@ function _morphAttrs(live, tmpl) {
   }
   // Template has no class but live carries wp-* state classes → keep just those.
   if (!tmpl.hasAttribute('class') && live.hasAttribute('class')) {
-    var k2 = (live.getAttribute('class') || '').split(/s+/).filter(function (x) { return x.indexOf('wp-') === 0; });
+    var k2 = (live.getAttribute('class') || '').split(/\\s+/).filter(function (x) { return x.indexOf('wp-') === 0; });
     if (k2.length) live.setAttribute('class', k2.join(' ')); else live.removeAttribute('class');
   }
 }
@@ -18305,14 +18367,14 @@ function _dkpTickPlayers(source) {
   var s = window.__wpLastState || {};
   var t = s.dkpTick || {};
   if (source === 'roster') return (t.liveRoster && t.liveRoster.players) || [];
-  var m = /^file:(d+)$/.exec(source);
+  var m = /^file:(\\d+)$/.exec(source);
   if (m && t.files && t.files[+m[1]]) return t.files[+m[1]].players || [];
   return [];
 }
 function _dkpTickPoints(source) {
   var s = window.__wpLastState || {};
   var t = s.dkpTick || {};
-  var m = /^file:(d+)$/.exec(source);
+  var m = /^file:(\\d+)$/.exec(source);
   if (m && t.files && t.files[+m[1]]) return t.files[+m[1]].points || 1;
   return 1;   // live roster ticks default to 1 DKP
 }
@@ -19465,7 +19527,7 @@ async function dismissTopDamage(key) {
       var html = "<h5>🎯 Suggested for you" + (me ? " (" + me + ")" : "") + "</h5>";
       ranked.forEach(function(r){
         var cls = r.score >= 10 ? "priority" : "";
-        var label = (r.label || r.key).replace(/^✥s*/, "").split("(")[0].split("—")[0].trim();
+        var label = (r.label || r.key).replace(/^✥\\s*/, "").split("(")[0].split("—")[0].trim();
         html += "<button class='" + cls + "' data-suggest-key='" + r.key + "'>" + label + "</button>";
       });
       box.innerHTML = html;
@@ -21678,6 +21740,22 @@ const COMMAND_HTML = `<!doctype html>
         html += '</div>';
       }
       html += '</div>';
+    }
+
+    // YOUR discipline reuse timer (Hitya, 2026-08-30: "discipline cooldowns
+    // should be tracked on the command center for the user only"). Self only,
+    // on purpose — EQ only ever states this timer for your own character, and
+    // guessing someone else's from their activation emote would mean guessing
+    // a reuse that differs per discipline. Absent = ready, or never observed:
+    // the line only appears when you try a disc too early, so an empty card
+    // is not a claim that you are ready, and the copy says so.
+    if (s.discipline && s.discipline.seconds > 0) {
+      html += '<div class="card"><div class="head">Your discipline</div>'
+           +    '<div class="list"><div class="row">'
+           +      '<span class="nm">' + esc(s.discipline.character || 'You') + '</span>'
+           +      '<span class="cls">recharging</span>'
+           +      '<span class="da-chip down">' + fmtSec(s.discipline.seconds) + '</span>'
+           +    '</div></div></div>';
     }
 
     // Healer mana roster — self-reported "N% mana" call-outs, lowest first
@@ -36753,6 +36831,8 @@ async function main() {
         if (!_sourceExcluded) { try { trackDaBroadcastLine(line, b.character); } catch {} }
         if (!_sourceExcluded) { try { trackDefensiveDiscLine(line, b.character); } catch {} }
         if (!_sourceExcluded) { try { trackHealerManaLine(line, b.character); } catch {} }
+        // Self-only discipline reuse timer -> Command Center.
+        if (!_sourceExcluded) { try { trackDisciplineTimerLine(line, b.character); } catch {} }
         // /random rolls + the loot-link roll-number convention — feeds the
         // Command Center Rolls card + the dashboard roll table. Local-only.
         if (!_sourceExcluded) { try { trackRollLine(line, b.character); trackRollItemLine(line); } catch {} }

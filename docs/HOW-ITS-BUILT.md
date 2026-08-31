@@ -1971,6 +1971,29 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   already rendered — as a 10px dim sub-line INSIDE the `Last win` cell, which
   is why it read as missing. Empty renders an em-dash so the column never
   collapses. Tests: `test/loot-second-place-column.test.js`.
+- **Discipline reuse timer — SELF ONLY (agent 3.6.12)** —
+  `trackDisciplineTimerLine` parses the client's own refusal line ("You can use
+  a new discipline in 10 minutes 34 seconds."), the only place EQ states the
+  shared melee-discipline reuse exactly. Keyed per watched character;
+  `_disciplineTimerSnapshot(activeChar)` rides the Command Center payload as
+  `discipline` and renders as a one-row card (Hitya, 2026-08-30: *"discipline
+  cooldowns should be tracked on the command center for the user only"*).
+  Deliberately NOT on the raid-wide defensives board — no equivalent line
+  exists for other people, and deriving one from their activation emote means
+  guessing a reuse that differs per disc. Only the REFUSAL line is matched; no
+  "ready" line is invented (see the DI trigger precedent). Tests:
+  `test/discipline-timer.test.js`.
+- **Eaten-backslash detector (`scripts/check-agent-dashboard.js`, 2026-08-30)** —
+  the hand-escaped `WEB_HTML` era ate backslashes, and five survivors were still
+  shipping: `/^file:(d+)$/` ×2 (a picked RaidTick file resolved to zero
+  attendees — "No attendees in that source", reported by Hitya after a raid),
+  `.split(/s+/)` ×2 (silently defeated the wp-* class preservation its own
+  comment describes, so hidden panels reappeared every 2s poll), and `/^✥s*/`.
+  A lost backslash is valid regex that matches the wrong thing, so it never
+  throws — `checkEatenBackslashes` flags a bare `d`/`s`/`w` before a quantifier
+  inside any regex literal in `dashboard.html` and `command.html`, and FAILS the
+  build. Tests: `test/dashboard-eaten-backslash.test.js` (runs the real
+  detector, with a positive control on all five historical bugs).
 - **Replay (#101)** — `startReplay`/`_replayWorker`: walk a log slice through the
   REAL trigger pipeline as a rehearsal (no uploads, refuses during a live fight).
 - **Pet buffs + range (#117/#119)** — own-pet landing attribution; buff-queue

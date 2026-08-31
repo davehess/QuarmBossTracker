@@ -424,6 +424,22 @@
       html += '</div>';
     }
 
+    // YOUR discipline reuse timer (Hitya, 2026-08-30: "discipline cooldowns
+    // should be tracked on the command center for the user only"). Self only,
+    // on purpose — EQ only ever states this timer for your own character, and
+    // guessing someone else's from their activation emote would mean guessing
+    // a reuse that differs per discipline. Absent = ready, or never observed:
+    // the line only appears when you try a disc too early, so an empty card
+    // is not a claim that you are ready, and the copy says so.
+    if (s.discipline && s.discipline.seconds > 0) {
+      html += '<div class="card"><div class="head">Your discipline</div>'
+           +    '<div class="list"><div class="row">'
+           +      '<span class="nm">' + esc(s.discipline.character || 'You') + '</span>'
+           +      '<span class="cls">recharging</span>'
+           +      '<span class="da-chip down">' + fmtSec(s.discipline.seconds) + '</span>'
+           +    '</div></div></div>';
+    }
+
     // Healer mana roster — self-reported "N% mana" call-outs, lowest first
     // so the group needing a mana break is easy to spot at a glance. Divine
     // Intervention readiness (#50) rides in the header as compact chips (#66);
