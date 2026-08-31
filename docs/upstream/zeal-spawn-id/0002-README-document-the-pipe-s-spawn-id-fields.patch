@@ -1,6 +1,6 @@
-From aa46c6736e3131b06f4bb51cb01c9681da1170ec Mon Sep 17 00:00:00 2001
+From 2946393a7b63a0efda42d681ccf62ed6811795b8 Mon Sep 17 00:00:00 2001
 From: davehess <davehess@users.noreply.github.com>
-Date: Mon, 31 Aug 2026 13:20:30 +0000
+Date: Mon, 31 Aug 2026 14:27:48 +0000
 Subject: [PATCH 2/2] README: document the pipe's spawn id fields
 
 The Zeal pipes section did not describe any pipe fields, so this documents only

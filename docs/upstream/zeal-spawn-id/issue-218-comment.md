@@ -12,7 +12,7 @@ The number is already filled in below — paste the fenced block as-is.
 I've opened a PR for the pipe half of this: #229.
 
 It adds `spawn_id` to the raid and group messages and `spawn_id` / `target_id` /
-`pet_id` to the player message — 10 added lines, nothing existing changed. Your
+`pet_id` to the player message — 14 added lines, nothing existing changed. Your
 `ZEALTAG | this | Lookout Reloen | 156` number is `Entity::SpawnId`
 (`nameplate.cpp` builds it with `int spawn_id = is_clear ? 0 : target->SpawnId`),
 and `target_id` is that same field, so it should drop straight into your overlay

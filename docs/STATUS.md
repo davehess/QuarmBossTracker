@@ -91,7 +91,7 @@ next touch one rather than assuming a missing row means a missing doc.
 
 - **🔭 In flight — Zeal PR #229 (filed 2026-08-31).**
   https://github.com/CoastalRedwood/Zeal/pull/229 — adds `spawn_id` to the pipe's
-  raid/group/player messages plus `target_id` and `pet_id`. 23 insertions, 0
+  raid/group/player messages plus `target_id` and `pet_id`. 27 insertions, 0
   deletions. Implements the PIPE half of upstream issue #218 (open since
   2026-06-29), whose author is running the same `/tag` workaround we are;
   `Refs`, not `Closes`, because their target-bar display half is not in it.
@@ -172,7 +172,7 @@ next touch one rather than assuming a missing row means a missing doc.
   issue draft that was never filed), so the ask is now a diff:
   `docs/upstream/zeal-spawn-id/` holds two `git am`-able patches against Zeal
   `a5f5cbf` (1.4.5) plus the PR title, body and push steps.
-  **10 added lines, 0 changed** — `spawn_id` on raid/group/player, `target_id`
+  **14 added lines, 0 changed** — `spawn_id` on raid/group/player, `target_id`
   and `pet_id` on player, all read off `Entity*`s the loops already hold.
   ⚠ **Re-aimed at the ENTITY surface**, per CLAUDE.md — the old draft targeted
   the gauges, which are a stringly-typed channel with nowhere to put a field.
