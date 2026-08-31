@@ -28,30 +28,47 @@ this comment is posted, or it describes code that is no longer there.
 ---
 
 ```markdown
-Update: I've now built and run this, so it's no longer unverified.
+Update: I've built and run this on Project Quarm, so it is no longer unverified.
 
 I also found a bug doing so, and have pushed the fix: with no pet up the first
 version emitted `pet_id: -1`. `ActorInfo::PetID` is a SHORT that holds -1 rather
-than 0 for "no pet", so a truthiness guard let the sentinel through and broke
-the "omitted, never sentinel-valued" contract this PR describes. It is now
+than 0 for "no pet", so a truthiness guard let the sentinel through and broke the
+"omitted, never sentinel-valued" contract this PR describes. It is now
 `PetID > 0`. (`zone_map.cpp` uses the same truthiness test and is fine, because
 `get_entity_by_id()` rejects negative ids downstream; the pipe had no such
-backstop.)
+backstop. Reading that code is what made the original guard look idiomatic.)
 
 **Build** — `msbuild /m /p:Configuration=Release /p:Platform=x86 Zeal.sln`,
 MSVC linker 14.44 (v143 family). `Build succeeded. 0 Warning(s) 0 Error(s)`.
-The produced `Zeal.asi` is PE32/x86 as expected, and `spawn_id`, `target_id`
-and `pet_id` are all present in the binary.
+The resulting `Zeal.asi` is PE32/x86 and contains all three new keys.
 
-**Runtime** — running that build on Project Quarm, reading the pipe:
+**Runtime** — all five keys observed on a live client:
+
+| key | observed |
+|---|---|
+| `player.spawn_id` | 2354 |
+| `player.target_id` | 3385 |
+| `player.pet_id` | 3005 (and correctly absent with no pet, after the fix) |
+| `raid[].spawn_id` | 2533, 1027 (2 members) |
+| `group[].spawn_id` | 3385 |
+
+**Cross-checked against `/tag`**, which is the part that matters for #218 —
+the tag broadcast and the pipe agree on the same mob, from independent code
+paths:
 
 ```
-[PASTE the zeal-pipe-peek.js output here]
+ZEALTAG | hawknizzle | Hawkner | 3385     ->  target_id 3385, group[] 3385
+ZEALTAG | canoopp | Canopy | 2354         ->  player.spawn_id 2354
+ZEALTAG | hi | Jayson Bri`Tian | 10       ->  target_id 10
 ```
 
-[If you confirmed it against a tag, say so here — e.g. "`/tag`'d the same mob
-and the ZEALTAG id matched `target_id` exactly."]
+The raid values are internally consistent too: `player.spawn_id` 1027 appeared
+in its own `raid[]` list, and targeting the other raid member gave
+`target_id` 2533, also present in that list.
 
-Happy to gather anything else useful — a raw capture with several same-named
-mobs up, or the same run against a stock build for comparison.
+So the id on the pipe is the same id `/tag` already exposes — which is exactly
+what #218 asks for, without the hotkey and the chat rate limit.
+
+Happy to gather more if useful: a capture with several same-named mobs up, or
+the same run against a stock build for comparison.
 ```
