@@ -89,6 +89,23 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ## The work ledger
 
+- **⚠ `/characters` is our biggest OpenDKP cost, not `/audits` (corrected
+  2026-08-31 from the live dashboard).** 24h: **128 calls / 17.5 MB**, against
+  audits' 37 / 8.6 MB — and **100 of those calls are inside the raid window**,
+  13.7 MB of its 27.7 MB. My 7-day average had misranked it: it contained the
+  weekly Sunday full sweep, so a once-a-week 6.2 MB event amortised into a fake
+  daily audits cost. Averaging across a window holding a rare expensive event is
+  how a ranking lies.
+  **Cause:** two uncached pagers — `openDkpSync._fetchAllCharacters` (up to 40
+  pages, EVERY 30-min pass) and `dkpTick._resolveCharacterIds` (up to 12 pages,
+  per tick submission). ⚠ The endpoint may ignore `?page` entirely (our own
+  comment says so), so a "walk" is ≥2 full-roster pulls of ~137 KB.
+  **Two fixes, neither needing upstream:** (1) gate the roster walk on a
+  `Character Created/Updated` audit signal — `classifyAuditAction` already does
+  this for loot and adjustments, so it is the proven #110 pattern; (2)
+  `_resolveCharacterIds` should read `characters.opendkp_id`, which the
+  2026-08-30 decision made authoritative, instead of walking 12 pages upstream
+  for an answer already mirrored locally.
 - **📨 The upstream ask to Moncs is REFRESHED and ready to send
   (`docs/DESIGN-opendkp-audit-cursor.md`, 2026-08-31).** Hitya: *"we should give
   an upstream request that would find the outliers for a cheaper cost than the

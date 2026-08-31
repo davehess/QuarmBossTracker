@@ -105,7 +105,7 @@ them — 48,377 rows re-serialised so we can notice a few dozen new ones.
 | endpoint | today (per day) | after Tier 0 | after Tiers 1+2 |
 |---|---|---|---|
 | `/audits` | 82 calls · **27.02 MB** | ~82 calls · ~0.1 MB | delta poll, a few hundred bytes |
-| `/characters` | 63 · 8.53 MB | unchanged | only on Character events |
+| `/characters` | 63 · 8.53 MB (⚠ **128 · 17.5 MB** on a normal 24h — see note) | unchanged | only on Character events |
 | `/auctions` | 19 · 7.84 MB | unchanged | gone — `/auctions/{id}` on the few that changed |
 | `/raids` + `/raids/{id}` | 179 · 1.74 MB | unchanged | detail only on Raid events |
 | `/adjustments` | 10 · 0.60 MB | unchanged | only on Adjustment Created |
@@ -114,6 +114,13 @@ them — 48,377 rows re-serialised so we can notice a few dozen new ones.
 
 **Total ≈ 46 MB/day.** Tier 0 alone takes it to **~19 MB/day**. Tiers 1+2 take
 it to roughly **1.5 MB/day**, and reduce request count too.
+
+⚠ **The `/characters` row is understated by the 7-day average.** A live 24h
+sample shows 128 calls / 17.5 MB — it is our largest single line on a normal
+day, and 100 of those calls land inside the raid window. The weekly full sweep
+inflates the `/audits` average and deflates everything else by comparison. If
+Moncs looks at a single day rather than a week, `/characters` is what he will
+see at the top, so the ask should not open by calling `/audits` the biggest.
 
 ⚠ Note `/auctions/active`: **656 calls for 0.11 MB.** That is the whole guild's
 live bidding panel, served through one shared bot-side cache. It is already the
