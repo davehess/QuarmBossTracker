@@ -115,6 +115,27 @@ next touch one rather than assuming a missing row means a missing doc.
   mirror-estimate all rendered identically — which is what made this
   undiagnosable. Standings are deliberately not refreshed off-raid, so a stale
   figure between raids is expected and must now say so.
+- **📋 OpenDKP API review, against MEASURED spend
+  (`docs/opendkp-api-review-2026-08-31.md`, 2026-08-31).** Hitya supplied the
+  full API reference and asked whether we target OpenDKP well. Real 7-day cost:
+  **≈325 MB**, of which `/audits` is **189 MB (58%)** and `/characters` 60 MB —
+  the two are 76% of everything. Ranked findings, none yet actioned:
+  1. **Audits: persist `_lastPageHint` + watermark to `bot_kv`.** The walk is
+     already optimised; the residual is a 330 KB page fetched per COLD BOOT to
+     re-learn `TotalPages`, and this platform redeploys 12–42×/day. Audits is
+     load-bearing (the #110 reconcile trigger) — do not switch it off.
+  2. **`AssociatedId` is the authoritative main/alt link**, arrives in the
+     `/characters` roster we already pay for, and is captured NOWHERE. We infer
+     families from bidding patterns instead. Cheapest accuracy win available.
+  3. **Most reads are `noauth`** (`/dkp`, `/auctions*`, `/raids*`,
+     `/adjustments`, `/characters/{id}*`); only `/characters`, `/audits`,
+     `/settings/*` and writes need oauth2. We spend 405 Cognito calls/week and
+     break public reads when a token blips. ⚠ Verify against the live API —
+     "noauth" in a Postman collection is evidence, not proof.
+  4. **`/characters/{id}/adjustments` exists**, retiring the whole-table pull
+     whose 1,000-row cap is documented as silently understating balances.
+  ⚠ `auctions/active` is 4,586 calls for 0.8 MB — the shared cache working as
+  designed. Do not "optimise" it.
 
 - **🔭 In flight — Zeal PR #229 (filed 2026-08-31).**
   https://github.com/CoastalRedwood/Zeal/pull/229 — adds `spawn_id` to the pipe's
