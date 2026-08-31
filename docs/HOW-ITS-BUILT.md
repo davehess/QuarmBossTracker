@@ -1311,6 +1311,26 @@ holds it in memory.
   in several eras takes the earliest, and the 22 with no zone match keep a NULL
   era rather than vanishing from the picker. Costs recorded in
   `DESIGN-selfhost-wizard.md` §3. Guarded by `test/item-catalog.test.js`.
+- **Loot bidding: runner-up is POSITION-based (`_lootItemSummary`, bot 3.1.103)** —
+  second place is the highest bid with `position > 1`, read straight off
+  `opendkp_auction_bids.position`. It used to be derived by removing ONE copy of
+  the winning VALUE from the bid list and taking the next highest, which is
+  wrong whenever several people bid the same number: Thorny Chain Sleeves
+  reported 10 (really 5) and Bone Chill Shield 20 (really 7), both because a
+  losing bid tied the winner's value and got read as the runner-up (Hitya,
+  2026-08-30). The value rule survives only as the fallback for rows the
+  detail backfill has not reached, which carry no `position`.
+- **Panel auction cache: the idle TTL is raid-aware (`_panelAuctions`, bot
+  3.1.103)** — "nothing is up for bid" used to be cached for 120s, exactly the
+  length of a bidding window, so a raider's Loot tab could hold an empty list
+  for the whole auction (Hitya, 2026-08-30: *"The loot is not posted quickly on
+  the channel"*). Now: `_invalidatePanelAuctions()` fires from
+  `_handleAgentLootPost` the moment an officer opens bidding — exact, and free,
+  since it only moves a call forward — and inside a raid window the idle TTL is
+  `_PANEL_AUCTIONS_TTL_IDLE_RAID_MS` (30s, env-overridable) as a backstop for
+  auctions opened on the OpenDKP website, which the bot never sees. Off-raid
+  stays 120s and the 15s ACTIVE TTL is untouched. Tests:
+  `test/server-panel-auction-cache.test.js`.
 - **Loot bidding: RECENT MISSES is PER CHARACTER (`_buildMisses`, bot 3.1.97)** —
   Hitya, 2026-08-29: *"removed for that character after that character wins that
   item"*, and *"I know for a fact that there are items that I've bid on in the

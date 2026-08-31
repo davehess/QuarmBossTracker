@@ -37,6 +37,36 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'loot-page-2026-08-30',
+    title: 'Second place, an archive of its own, and loot that shows up on time',
+    version: 'Bot 3.1.103 \u00b7 Mimic beta',
+    date: '2026-08-30',
+    headline: 'A raid night\u2019s worth of Loot tab reports, fixed together \u2014 the runner-up figures were wrong, second place was hiding, past items were in the way, and loot took too long to appear.',
+    features: [
+      {
+        name: 'Second place is a column now',
+        blurb: 'It used to be tiny grey text tucked under the last winning bid, which is why nobody could find it. It now sits in its own column next to the item, the same way it does in your misses list.',
+      },
+      {
+        name: 'The runner-up numbers are right',
+        blurb: 'Second place was reading the wrong bid when several people bid the same amount \u2014 Thorny Chain Sleeves showed 10 when it was 5, Bone Chill Shield showed 20 when it was 7. It now reads the real placings.',
+      },
+      {
+        name: 'Loot won is its own area',
+        blurb: 'Everything your characters have won moved out of the bidding list into its own searchable area underneath, so the bidding list stays about what is up right now and what you have lost. It has its own show/hide, so you can look through your wins without putting your wishlist on screen.',
+      },
+      {
+        name: 'Loot appears as soon as it is posted',
+        blurb: 'When an officer opened bidding, your Loot tab could take up to two minutes to notice \u2014 the same length as the bidding window itself, so an item could come and go before you ever saw it. It now shows up on the next refresh.',
+      },
+    ],
+    fixes: [
+      'Divine Intervention no longer shows up as a Divine Aura timer \u2014 it is a ten minute buff, not an eighteen second one, and it was making the DA timer look broken.',
+      'Names on the rez board keep their capitals, and your pets stay off it.',
+      'Searching your won items now matches the expansion as well as the item and character.',
+    ],
+  },
+  {
     key: 'bot-3-1-99',
     title: 'The misses list gets its missing bids',
     version: 'Bot 3.1.99',

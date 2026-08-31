@@ -100,6 +100,21 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ### ✅ Done — major shipped features (not exhaustive; see git + roadmapData.ts)
 
+- **Loot: right runner-up figures, and loot that arrives inside its own window
+  (bot 3.1.103 · web 1.7.5 · 2026-08-30).** The other two raid-night reports.
+  (1) *"Thorny Chain Sleeves second place bid was 5 not 10 / Bone chill shield
+  second place was 7 not 20"* — `_lootItemSummary` derived second place by
+  removing one copy of the winning VALUE and taking the next highest, which
+  misreads every auction where a loser tied the winner's number. It now reads
+  `position > 1` off the mirrored bid rows; the value rule stays only as the
+  fallback for rows the detail backfill has not reached. Verified against all
+  three real auctions (1068644 → 5, 1068673 → 7, 1010784 tie → 15).
+  (2) *"The loot is not posted quickly on the channel"* — the panel's
+  "nothing up for bid" cache held for 120s and every auction that night ran for
+  120s, so the window could close before the item appeared. The officer's own
+  post now drops the cache in-process, and the in-raid idle TTL is 30s.
+  13 tests added across the two, six mutations caught.
+
 - **Auction bids: full histories backfilled (bot 3.1.99, 2026-08-30).** The
   mirror was winners-only and RECENT MISSES was blind to ~92% of losses —
   Hitya's field report (missing Vengeful Mail row, blank runner-up on a 15/15

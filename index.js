@@ -6064,22 +6064,45 @@ async function _handleAgentUiEditResult(req, res) {
 //     active auction already carries Bids[] inline (the same fact the mirror
 //     sync exploits), so its per-auction getAuction() N+1 and per-request
 //     getCharacters() are gone entirely (roster cached 1h below).
+//
+// ⚠ THE IDLE TTL USED TO BE THE ENTIRE BIDDING WINDOW (Hitya, 2026-08-30: "The
+// loot is not posted quickly on the channel"). Every auction opened on that
+// raid ran for 2 MINUTES and the idle TTL was 120s — so from the moment an
+// officer opened bidding, a raider's panel could sit on a cached EMPTY list
+// until the auction had already closed. Nothing errored; the item simply was
+// not there yet, and then it was gone. Two changes, in order of what they buy:
+//   • the officer's own post drops the cache in-process
+//     (`_invalidatePanelAuctions`, called from POST /api/agent/loot-post).
+//     That is the path all twelve of that night's posts took, it is exact, and
+//     it costs NOTHING upstream — it moves a call we were going to make within
+//     the TTL anyway, earlier.
+//   • inside a raid window the idle TTL drops to 30s, purely as a backstop for
+//     auctions opened on the OpenDKP website, which our handler never sees.
+//     Off-raid stays 120s: nobody is bidding, so nobody is waiting on it.
+// The 15s ACTIVE TTL is untouched — once an auction is up, that is the number
+// that governs, and it was never the problem.
 const _PANEL_AUCTIONS_TTL_ACTIVE_MS = 15_000;
 const _PANEL_AUCTIONS_TTL_IDLE_MS   = 120_000;
+const _PANEL_AUCTIONS_TTL_IDLE_RAID_MS =
+  Number(process.env.PANEL_AUCTIONS_TTL_IDLE_RAID_MS) || 30_000;
 const _PANEL_AUCTIONS_TTL_FAILED_MS = 20_000;
 let _panelAuctionsCache = null;   // { at, list }
 let _loggedActiveAuctionShape = false;
 async function _panelAuctions(deps = {}) {
   const now   = deps.now   || Date.now;
   const fetch = deps.fetch || (() => require('./utils/opendkp').getActiveAuctions());
+  const inRaid = deps.inRaid !== undefined ? deps.inRaid : _inRaidWindowEt(new Date(now()));
   const c = _panelAuctionsCache;
   if (c) {
     // A cached FAILURE gets its own short TTL: long enough to collapse a poll
     // storm, short enough that recovery is seconds not minutes. It must never
     // inherit the 120s idle TTL, which would make "upstream is broken" look
     // identical to "no auctions are open" for two minutes.
+    // "Nothing is up for bid" is the answer that goes stale in a way somebody
+    // is actually waiting on, and only while a raid is on.
+    const idleTtl = inRaid ? _PANEL_AUCTIONS_TTL_IDLE_RAID_MS : _PANEL_AUCTIONS_TTL_IDLE_MS;
     const ttl = c.failed ? _PANEL_AUCTIONS_TTL_FAILED_MS
-              : (c.list.length > 0 ? _PANEL_AUCTIONS_TTL_ACTIVE_MS : _PANEL_AUCTIONS_TTL_IDLE_MS);
+              : (c.list.length > 0 ? _PANEL_AUCTIONS_TTL_ACTIVE_MS : idleTtl);
     if (now() - c.at < ttl) {
       if (c.failed) throw new Error('OpenDKP unreachable (cached failure) — not re-attempting yet');
       return c.list;
@@ -6130,6 +6153,12 @@ async function _panelAuctions(deps = {}) {
   _panelAuctionsCache = { at: now(), list };
   return list;
 }
+
+// Drop the shared auctions cache so the NEXT poll goes upstream. Called only
+// when we already know the answer changed — an officer opening bidding — never
+// on a timer and never from a request we did not cause. A no-op if nothing is
+// cached, so it is safe to call unconditionally.
+function _invalidatePanelAuctions() { _panelAuctionsCache = null; }
 
 // Pooled family DKP recomputed from OUR MIRROR — ticks earned, plus
 // adjustments, minus loot spent. No upstream call: it reads the Supabase tables
@@ -6343,15 +6372,41 @@ function _lootItemSummary(auctionsDesc, bidsByAuction) {
   }
   const winningBid = auc.bid_amount;
   const bids = (bidsByAuction && bidsByAuction[auc.auction_id]) || [];
-  const vals = bids.map(b => Number(b.value)).filter(v => Number.isFinite(v));
-  // Remove ONE instance of the winning value (the winner), max of the rest.
-  let removed = false;
-  const losing = [];
-  for (const v of vals) {
-    if (!removed && v === winningBid) { removed = true; continue; }
-    losing.push(v);
+  // ⚠ SECOND PLACE COMES FROM `position`, NOT FROM THE VALUES.
+  //
+  // Verified against OpenDKP's own results pages (Hitya, 2026-08-30):
+  //   Thorny Chain Sleeves 1068644 — FawxFF@10 AND Fawx@10 both at position 1
+  //     (the account login and the character name are the SAME bid, mirrored
+  //     twice), real second = Fittir@5 at position 2. We showed 10.
+  //   Bone Chill Shield  1068673 — fromuthman@20 and SuperBloodWolf@20 both at
+  //     position 1, real second = Ellah@7 at position 2. We showed 20.
+  // The old rule dropped ONE instance of the winning value and took the max of
+  // the rest, so the winner's duplicate row became "second place" every time an
+  // auction had one — which is most of them.
+  //
+  // Position is OpenDKP's own ranking from the per-auction detail, so it also
+  // keeps a GENUINE tie correct: Thorny Chain HELM 1010784 is Fayce@15 (1),
+  // Philomena@15 (2), Smokestomp@7 (3) — a real second bidder at the same
+  // value, and position 2 still reports 15, which is what Hitya asked for on
+  // 2026-08-30. A value-based rule cannot tell these two shapes apart.
+  const ranked = bids.filter(b => Number.isFinite(Number(b.position)) && Number(b.position) > 1
+                                && Number.isFinite(Number(b.value)));
+  let runnerUp;
+  if (ranked.length) {
+    runnerUp = Math.max(...ranked.map(b => Number(b.value)));
+  } else {
+    // No ranked rows: this auction has only list-path bids (winners-only, all
+    // position 1) and has not been detail-synced yet. Fall back to the old
+    // value rule so nothing regresses while the backfill catches up.
+    const vals = bids.map(b => Number(b.value)).filter(v => Number.isFinite(v));
+    let removed = false;
+    const losing = [];
+    for (const v of vals) {
+      if (!removed && v === winningBid) { removed = true; continue; }
+      losing.push(v);
+    }
+    runnerUp = losing.length ? Math.max(...losing) : null;
   }
-  const runnerUp = losing.length ? Math.max(...losing) : null;
   return { winner: auc.winner || null, winning_bid: winningBid, runner_up: runnerUp, item_name: auc.item_name || null };
 }
 
@@ -6914,7 +6969,7 @@ async function _handleAgentServerPanel(req, res) {
       if (winAuctionIds.length) {
         const bidRows = await supabase.select(
           'opendkp_auction_bids',
-          `select=auction_id,value&auction_id=in.(${winAuctionIds.slice(0, 60).join(',')})&limit=1000`
+          `select=auction_id,value,position&auction_id=in.(${winAuctionIds.slice(0, 60).join(',')})&limit=1000`
         ) || [];
         for (const b of bidRows) { (bidsByAuction[b.auction_id] = bidsByAuction[b.auction_id] || []).push(b); }
       }
@@ -7140,7 +7195,7 @@ async function _handleAgentServerPanel(req, res) {
         for (const list of mByItem.values()) { const top = list.find(x => x.winner != null && x.bid_amount != null); if (top) mWinAids.push(top.auction_id); }
         let mBidsByAuc = {};
         if (mWinAids.length) {
-          const mBids = await supabase.select('opendkp_auction_bids', `select=auction_id,value&auction_id=in.(${mWinAids.slice(0, 60).join(',')})&limit=1500`) || [];
+          const mBids = await supabase.select('opendkp_auction_bids', `select=auction_id,value,position&auction_id=in.(${mWinAids.slice(0, 60).join(',')})&limit=1500`) || [];
           for (const b of mBids) { (mBidsByAuc[b.auction_id] = mBidsByAuc[b.auction_id] || []).push(b); }
         }
         misses = misses.map(m => {
@@ -7557,6 +7612,12 @@ async function _handleAgentLootPost(req, res) {
     }));
     await createAuctions(auctions);
     console.log(`[loot-post] ${identity.display_name || identity.discord_id} opened ${auctions.length} closed auction(s), ${duration}m`);
+
+    // The panel's shared auctions cache is stale BY CONSTRUCTION now — we just
+    // created these auctions upstream. Drop it so the next 7s dashboard poll
+    // renders them instead of waiting out the idle TTL, which used to be as
+    // long as the whole bidding window (see the cache header above).
+    try { _invalidatePanelAuctions(); } catch { /* fail-open — the TTL still expires */ }
 
     // Broadcast a loot-posted event to every agent (#149) so the raid-wide
     // "Loot posted — N items" TTS can fire off this REAL post instead of chat

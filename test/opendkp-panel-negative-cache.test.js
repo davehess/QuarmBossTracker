@@ -6,8 +6,13 @@ const src = readSource(BOT_INDEX);
 const block = sliceBlock(src, 'const _PANEL_AUCTIONS_TTL_ACTIVE_MS',
   '\n  _panelAuctionsCache = { at: now(), list };\n  return list;\n}');
 
-function build() {
-  const { _panelAuctions } = evalBlock('const console = { warn() {}, log() {} };\n' + block, ['_panelAuctions']);
+// `inRaid` is injected rather than left to default: the slice above stops at
+// _panelAuctions, so _inRaidWindowEt is not in scope here. It also keeps these
+// cases about the FAILURE path — the raid-window idle TTL is characterized in
+// test/server-panel-auction-cache.test.js.
+function build({ inRaid = false } = {}) {
+  const { _panelAuctions } = evalBlock(
+    'const console = { warn() {}, log() {} };\nconst process = { env: {} };\n' + block, ['_panelAuctions']);
   let t = 1_000_000, calls = 0, fail = false;
   return {
     get calls() { return calls; },
@@ -15,6 +20,7 @@ function build() {
     advance: (ms) => { t += ms; },
     get: () => _panelAuctions({
       now: () => t,
+      inRaid,
       fetch: async () => { calls++; if (fail) throw new Error('upstream down'); return [{ AuctionId: 1 }]; },
     }),
   };
