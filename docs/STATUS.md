@@ -116,8 +116,11 @@ next touch one rather than assuming a missing row means a missing doc.
   that claim is safe to leave in the body.
   ⚠ The PR BODY still says we could not compile it. That was true when filed;
   the follow-up comment (`pr-229-build-report.md`) is what corrects it.
-  ⚠ **Force-push still pending** — until Hitya pushes, GitHub has the `-1` bug
-  and the report comment describes code that is not on the PR.
+  ✅ **Force-push landed 2026-08-31.** `origin/pipe-spawn-id` carries the fixed
+  14-line version, authored `davehess <5070156+davehess@users.noreply.github.com>`
+  — no leaked address. The PR on GitHub is now the code that was tested.
+  ➡️ **Only remaining step: post `pr-229-build-report.md` as a PR comment**, and
+  `issue-218-comment.md` on #218. After that it is purely waiting on upstream.
   ⚠ **No session can watch it.** GitHub tooling here is scoped to
   `davehess/quarmbosstracker`, so review comments must be relayed by Hitya.
   **Expect slow:** #227 has been open since Aug 1 and #218 sat two months.
