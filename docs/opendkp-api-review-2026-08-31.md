@@ -20,6 +20,62 @@ than by guesswork: the table below is our real 7-day spend from
 
 ≈ **325 MB/week**. Two lines are 76% of it.
 
+## ⚠ CORRECTION — the 7-day average misranks the top two
+
+The live `/opendkp` dashboard for the **last 24h** tells a different story, and
+it is the more actionable one:
+
+| endpoint | calls / 24h | MB / 24h |
+|---|---:|---:|
+| `/characters` | 128 | **17.5** |
+| `/audits` | 37 | 8.6 |
+| `/auctions` | 30 | 5.6 |
+| `/dkp` | 20 | 2.0 |
+| `/raids/{id}` | 204 | 1.4 |
+| `/auctions/active` | 968 | 0.4 |
+
+**`/characters` is the real number one.** The 7-day average put `/audits` on top
+because it includes the weekly Sunday full sweep — a once-a-week 6.2 MB event
+amortised across seven days looked like a daily cost. Averaging over a window
+containing a rare expensive event is exactly how a ranking lies; the 24h view is
+the honest one for "what does a normal day cost".
+
+**And it concentrates in the raid window**: 100 of those 128 calls, 13.7 MB of
+the raid window's 27.7 MB total. Half of raid-night traffic is the roster.
+
+### Why the roster costs 17.5 MB/day
+
+Two callers page the full roster, neither cached:
+
+- `openDkpSync._fetchAllCharacters` — up to 40 pages, **every 30-minute sync
+  pass**.
+- `dkpTick._resolveCharacterIds` — up to 12 pages, **per tick submission**,
+  purely to map names → CharacterIds.
+
+⚠ And the endpoint may **ignore `?page` entirely** — our own comment says so,
+and the walk relies on a new-id check to stop after page 2 in that case. So a
+"walk" is at least 2 full-roster pulls of ~137 KB.
+
+We re-pull the entire roster every half hour to detect changes that happen on
+officer action — the same "poll everything to discover nothing changed" shape as
+audits, which we already fixed once.
+
+### Two fixes, neither needing upstream
+
+1. **Gate the roster walk on a Character audit signal.** `classifyAuditAction`
+   already classifies `loot` and `adjustment`; the audit taxonomy carries
+   `Character Created` / `Character Updated` (2,530 rows). Add a `character`
+   class and walk the roster only when one appears since the last walk, plus a
+   periodic floor. This is the #110 reconcile-trigger pattern, already proven in
+   this file.
+2. **`dkpTick._resolveCharacterIds` should read `characters.opendkp_id`**, which
+   the 2026-08-30 decision made the authoritative char_id→name map. It is
+   resolving names against a 12-page upstream walk when the answer is already
+   mirrored locally, for free. Fall back to the walk only for unresolved names.
+
+⚠ Both are worth doing even if the upstream ask lands — they remove OUR waste,
+which is the half we control, and they are the credibility behind the ask.
+
 ⚠ Note `auctions/active`: **4,586 calls for 0.8 MB.** The shared bot-side cache
 is doing its job — that is the whole fleet's bidding panel served for less than
 a megabyte. It is not a problem and should not be "optimised".
