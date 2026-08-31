@@ -37,6 +37,35 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'raid-night-2026-08-30b',
+    title: 'End the raid when it ends, and a top bar that fits',
+    version: 'Bot 3.1.104 \u00b7 Web 1.7.6 \u00b7 Mimic beta',
+    date: '2026-08-30',
+    headline: 'The rest of Sunday\u2019s reports \u2014 the signed-in top bar, the raid tick upload, your discipline timer, and a way to tell the bot the night is over.',
+    features: [
+      {
+        name: 'End raid button',
+        blurb: 'Officers and leaders get an End raid button on the attendance posts in the raid night thread. Press it and no more attendance ticks are taken for the night \u2014 which is what short nights needed, since the ticks otherwise keep firing until 11:30. Pressed it too early? There is a Reopen button.',
+      },
+      {
+        name: 'The top bar fits again when you are signed in',
+        blurb: 'Signing in added the search box and your account chip, and the bar had nowhere left to put the menu \u2014 so every link stacked into a tall column down the middle. It now measures itself: it stays one row where there is room, and folds into the Menu button where there is not.',
+      },
+      {
+        name: 'Raid tick files work again',
+        blurb: 'Picking an exported raid tick file in Mimic and choosing a slot said "No attendees in that source", even though it listed everyone correctly. Pasting the same list in by hand worked. Fixed.',
+      },
+      {
+        name: 'Your discipline timer',
+        blurb: 'The Command Center now counts down your discipline reuse timer, so you can see when you can use another one. Yours only \u2014 the game only ever tells you about your own.',
+      },
+    ],
+    fixes: [
+      'The search box no longer overlaps the clock in the top bar.',
+      'Panels you hide on the Mimic dashboard stay hidden instead of coming back a couple of seconds later.',
+    ],
+  },
+  {
     key: 'loot-page-2026-08-30',
     title: 'Second place, an archive of its own, and loot that shows up on time',
     version: 'Bot 3.1.103 \u00b7 Mimic beta',
