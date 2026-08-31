@@ -48,6 +48,27 @@ Then open the PR with the title and body below.
 
 ---
 
+## Testing it with a local build
+
+The PR's weak point is that it is unverified. Zeal builds locally with **Visual
+Studio 2022 Community (free), `Release` + `x86`** — that is all the README asks
+for. Output is `Release\Zeal.asi`; nothing else in the release zip changes, so
+only that one file needs swapping in the EQ folder (back up the existing one).
+
+Then `node scripts/zeal-pipe-peek.js` from this repo reads the live pipe and
+says whether the build carries the patch. It reuses `apps/mimic/zealPipe.js`
+rather than reimplementing the reader — the pipe is a stream of CONCATENATED
+JSON objects whose payload is double-encoded as a string, and a hand-rolled
+reader gets both wrong and reports a false negative.
+
+Verdict rule: `player.spawn_id` is emitted unconditionally, so it alone decides.
+`target_id` and `pet_id` are omitted by design with no target / no pet, so their
+absence is never evidence. Exit 0 carries it, 1 does not, 2 could not tell.
+
+⚠ **Report the result on the PR either way.** "Built it, ran it, here are the
+ids" is the single thing most likely to move a maintainer, and if it does NOT
+work that is worth knowing before they spend review time on it.
+
 ## ⚠ Read first: this implements an EXISTING open issue
 
 [#218](https://github.com/CoastalRedwood/Zeal/issues/218) (open since
