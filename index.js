@@ -6335,7 +6335,41 @@ async function _panelStandings(deps = {}) {
     return { models: _panelStandingsCache.models, at: _panelStandingsCache.at, reason: 'fetch-failed' };
   }
   _panelStandingsCache = { at: now(), models, failed: false };
+  _logStandingsShapeOnce(models);
   return { models, at: _panelStandingsCache.at, reason: d.reason };
+}
+
+// ── One-shot shape probe for /clients/{client}/dkp ─────────────────────────
+// Hitya, 2026-08-31: the panel showed 192 where OpenDKP says 143. OpenDKP's own
+// docs describe this endpoint as returning "current DKP ... and calculated
+// values for different time periods (30, 60, 90 days, and lifetime)", so the
+// right number IS in the response we already fetch and _pickAccountDkpFromModels
+// is reading the wrong key out of it — its ladder guesses at five spellings and
+// falls through to `Dkp`, which on a row carrying period totals is not
+// necessarily the balance.
+//
+// We cannot fix the ladder without knowing the real key names, and the last
+// time this bit us the lesson was written down: /auctions/active was adopted
+// "on the strength of OpenDKP's Postman doc ... without ever seeing a response".
+// So log the actual keys ONCE rather than infer from a doc a second time.
+//
+// Free: it prints what has already been fetched, adds no upstream call, logs a
+// single line per process, and prints KEY NAMES plus the caller's own row —
+// not the guild's balances.
+let _loggedStandingsShape = false;
+function _logStandingsShapeOnce(models) {
+  if (_loggedStandingsShape) return;
+  try {
+    const rows = Array.isArray(models) ? models : (models && models.Models) || [];
+    if (!rows.length) return;
+    _loggedStandingsShape = true;
+    console.log('[panel-standings] row keys=[' + Object.keys(rows[0]).join(', ') + ']');
+    // A sample row makes the mapping obvious (which key holds 143 vs 192).
+    // Restricted to ONE row so this is a shape probe, not a roster dump.
+    console.log('[panel-standings] sample=' + (() => {
+      try { return JSON.stringify(rows[0]).slice(0, 600); } catch { return '?'; }
+    })());
+  } catch { /* a probe must never break the caller */ }
 }
 
 // Raid window, ET: Sun/Wed/Thu 8pm-midnight with an hour either side, matching
