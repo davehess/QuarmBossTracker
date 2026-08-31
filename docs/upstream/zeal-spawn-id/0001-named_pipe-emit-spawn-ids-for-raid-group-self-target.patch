@@ -1,0 +1,75 @@
+From 2854c836f8ce8f3f6cdfc81fc66b0c051f6efc0f Mon Sep 17 00:00:00 2001
+From: Wolf Pack tooling <dmhess+claude@gmail.com>
+Date: Mon, 31 Aug 2026 12:38:12 +0000
+Subject: [PATCH 1/2] named_pipe: emit spawn ids for raid, group, self, target
+ and pet
+
+The pipe serializes rich per-entity data for raid (type 5) and group (type 6)
+members, and position/heading/zone for self, but never the client's own unique
+identifier for any of them. For mobs the entire surface is the gauge stream:
+target = slot 6, pet = slot 16, each carrying a display name and an HP
+per-mille value. Two spawns of the same type therefore share a byte-identical
+name and frequently the same HP, and a pipe consumer has no way to tell them
+apart.
+
+Each of these loops already holds the Entity* and dereferences it for
+Position/Heading/HpCurrent, so the id is a read off an object already in hand:
+
+  raid_data["spawn_id"]   = entity->SpawnId
+  group_data["spawn_id"]  = member->SpawnId
+  player_data["spawn_id"] = get_self()->SpawnId
+  player_data["target_id"] = get_target()->SpawnId
+  player_data["pet_id"]    = get_self()->ActorInfo->PetID
+
+target_id and pet_id are omitted rather than zeroed when there is no target or
+no pet, so a consumer tests for presence instead of a sentinel.
+
+No new spawn-list walk and no extra per-frame cost: ActorInfo->PetID is already
+the pet's spawn id (zone_map.cpp passes it straight to get_entity_by_id), and
+main_loop() runs on the game thread via the MainLoop hook, so get_target() is
+exactly as safe here as the get_self() calls beside it.
+
+Additive only. Existing consumers key on the fields they already read and
+ignore unknown ones, so no existing key changes shape or meaning.
+---
+ Zeal/named_pipe.cpp | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+diff --git a/Zeal/named_pipe.cpp b/Zeal/named_pipe.cpp
+index 07fad7d..5b21505 100644
+--- a/Zeal/named_pipe.cpp
++++ b/Zeal/named_pipe.cpp
+@@ -213,6 +213,7 @@ void NamedPipe::main_loop() {
+ 
+         const auto &entity = entity_manager->Get(member.Name);
+         if (entity) {
++          raid_data["spawn_id"] = entity->SpawnId;
+           raid_data["loc"] = toJson(entity->Position);
+           raid_data["heading"] = entity->Heading;
+           if (pipe_verbose.get()) {
+@@ -246,6 +247,7 @@ void NamedPipe::main_loop() {
+         if ((strlen(group_info->Names[i]) > 0) && member) {
+           nlohmann::json group_data = nlohmann::json::object();
+           group_data["name"] = group_info->Names[i];
++          group_data["spawn_id"] = member->SpawnId;
+           group_data["loc"] = toJson(member->Position);
+           group_data["heading"] = member->Heading;
+           if (pipe_verbose.get()) {
+@@ -303,6 +305,14 @@ void NamedPipe::main_loop() {
+       player_data["location"] = toJson(Zeal::Game::get_self()->Position);
+       player_data["heading"] = Zeal::Game::get_self()->Heading;
+       player_data["autoattack"] = (bool)(*(BYTE *)0x7f6ffe);
++      player_data["spawn_id"] = Zeal::Game::get_self()->SpawnId;
++      // Spawn id of the current target and pet. Both keys are omitted when
++      // there is no target / no pet, so a consumer tests for presence rather
++      // than for a sentinel value.
++      const auto *target = Zeal::Game::get_target();
++      if (target) player_data["target_id"] = target->SpawnId;
++      const auto *actor_info = Zeal::Game::get_self()->ActorInfo;
++      if (actor_info && actor_info->PetID) player_data["pet_id"] = actor_info->PetID;
+       // nlohmann::json data = { {"zone", Zeal::Game::get_self()->ZoneId}, {"location",
+       // Zeal::Game::get_self()->Position.toJson() }, {"heading", Zeal::Game::get_self()->Heading}, {"autoattack",
+       // (bool)(*(BYTE*)0x7f6ffe)} };
+-- 
+2.43.0
+

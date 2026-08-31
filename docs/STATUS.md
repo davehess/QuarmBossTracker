@@ -89,6 +89,14 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ## The work ledger
 
+- **⚠ Needs Hitya to press the button — the Zeal spawn-id PR is written.**
+  Everything is in `docs/upstream/zeal-spawn-id/`: two `git am`-able patches
+  against Zeal `a5f5cbf` (1.4.5), the PR title and body, and the fork/push
+  steps. It cannot be filed from here — this session's GitHub tooling is scoped
+  to `davehess/quarmbosstracker`, so it cannot fork or open a PR on
+  `CoastalRedwood/Zeal`. Two softer approaches already got no response, which
+  is why it is a diff this time. ⚠ It has NOT been compiled (no Windows/MSVC
+  x86 here) and the PR body says so; expect to fix whatever their build finds.
 - **⚠ Needs a local session — PoP quest extract (`docs/HANDOFF-pop-quest-extract.md`).**
   Two shipped features are waiting on data only the `D:\EQServer` box has:
   (1) the flagging-NPC list + the phrase list for phrase-granted flags — agent
@@ -144,6 +152,23 @@ next touch one rather than assuming a missing row means a missing doc.
   when earned:** extract-on-touch for the bot monolith (rule, not project), and
   full agent modularisation only after this build step survives a stable
   graduation.
+- **Zeal spawn-id PR prepared (2026-08-31).** Hitya: *"I think we should prepare
+  the pull request for Zeal to include spawn id in pipes. It's not happening
+  otherwise."* Two softer routes got no response (forum post 2026-07-20; the
+  issue draft that was never filed), so the ask is now a diff:
+  `docs/upstream/zeal-spawn-id/` holds two `git am`-able patches against Zeal
+  `a5f5cbf` (1.4.5) plus the PR title, body and push steps.
+  **10 added lines, 0 changed** — `spawn_id` on raid/group/player, `target_id`
+  and `pet_id` on player, all read off `Entity*`s the loops already hold.
+  ⚠ **Re-aimed at the ENTITY surface**, per CLAUDE.md — the old draft targeted
+  the gauges, which are a stringly-typed channel with nowhere to put a field.
+  ⚠ **NOT compiled** — no Windows/MSVC x86 here; the PR body says so plainly and
+  offers to test their build. Field names/offsets, signatures and thread context
+  were each verified against the 1.4.5 tree rather than from notes.
+  **Needs a human:** the PR must be opened from Hitya's own GitHub account —
+  this session's GitHub tooling is scoped to `davehess/quarmbosstracker` and
+  cannot fork or file on `CoastalRedwood/Zeal`.
+
 - **"End raid" button, and the top bar fits again signed in (bot 3.1.104 ·
   web 1.7.6 · 2026-08-30).** (1) Hitya: *"We need a button on the raid night
   thread for officers and leaders to be able to click to end the raid."* It
