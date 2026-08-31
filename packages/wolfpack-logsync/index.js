@@ -33559,6 +33559,18 @@ function flushLiveStateToBot(opts) {
       // everyone regardless of party size (Hitya 2026-06-29).
       target_name:    st.target_name || null,
       target_hp_pct:  st.target_hp_pct != null ? st.target_hp_pct : null,
+      // Spawn id of that target (Zeal PR #229). NULL on every released Zeal —
+      // the bot must keep working from target_name alone, and does.
+      //
+      // What this buys: _handleAgentExtendedTarget currently separates
+      // same-name mobs by HP CLUSTERING, which is a guess that fails whenever
+      // two "a cliff golem" sit at the same health. An id is exact.
+      //
+      // ⚠ Only meaningful WITH the zone on this same row. An id is a slot in
+      // the zone's entity table, so slot 4425 in Sebilis and slot 4425 in The
+      // Deep are unrelated mobs. Any consumer keys on (zone, target_id) or it
+      // will merge two zones' mobs into one row.
+      target_id:      Number.isFinite(st.target_id) ? st.target_id : null,
       // Position (Zeal loc {x,y,z}) → character_live_state.loc_* → the bot's
       // raid-buff-queue "likely out of range" flag (#117). NOT in the change
       // signature (it churns on every step) — it rides the heartbeat floor

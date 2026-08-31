@@ -1589,9 +1589,37 @@ function _zealAbsorb(obj, pid) {
         s.target_hp_pct = null;
         s.pet_name      = null;
         s.pet_hp_pct    = null;
+        // ⚠ Spawn ids are deliberately NOT cleared here, though they are just
+        // as zone-scoped as the names above — an id is a slot in the ZONE's
+        // entity table, so the same number is a different mob in a different
+        // zone (measured 2026-08-31, docs/zeal-pipe-protocol.md).
+        //
+        // They need no clearing because they arrive on THIS message: the reads
+        // below assign all three unconditionally, nulling any the pipe omits,
+        // so the ids can never outlive the zone they belong to. The names are
+        // different — they come from GAUGE messages (type 2), which can lag the
+        // zone event, so without this clear the pre-zone target would linger.
+        //
+        // A clear was written here first and proved to be dead code: removing
+        // it changed no test, because the assignment below had already run.
       }
       s.zone = inner.zone;
       s.autoattack = !!inner.autoattack;
+      // Spawn ids (Zeal PR #229 — CoastalRedwood/Zeal). ABSENT on every
+      // released Zeal, so every read is optional and null is the normal case;
+      // nothing downstream may require them.
+      //
+      // ⚠ The pipe OMITS target_id / pet_id when there is no target / no pet,
+      // so each is explicitly nulled rather than left at its previous value —
+      // otherwise the last target's id would persist after you clear target,
+      // which is exactly the stale-identity bug ids exist to prevent.
+      //
+      // ⚠ Key names are NOT final upstream: #218 suggested `NPC_ID`, and the
+      // PR offers to rename. They are read in this one place so a rename is a
+      // three-line edit here rather than a hunt across four surfaces.
+      s.spawn_id  = Number.isFinite(inner.spawn_id)  ? inner.spawn_id  : null;
+      s.target_id = Number.isFinite(inner.target_id) ? inner.target_id : null;
+      s.pet_id    = Number.isFinite(inner.pet_id)    ? inner.pet_id    : null;
       // Live position + facing (Zeal named_pipe.cpp player payload:
       // location {x,y,z}, heading). Note EQ's in-game /loc prints as Y, X, Z
       // — these are the raw Zeal Vec3 fields (x,y,z), transpose when matching

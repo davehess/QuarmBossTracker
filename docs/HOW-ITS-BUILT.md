@@ -2035,6 +2035,20 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   inside any regex literal in `dashboard.html` and `command.html`, and FAILS the
   build. Tests: `test/dashboard-eaten-backslash.test.js` (runs the real
   detector, with a positive control on all five historical bugs).
+- **Zeal spawn-id capture (Mimic + agent 3.6.13)** — Mimic's pipe handler reads
+  `spawn_id` / `target_id` / `pet_id` off the `player` message (Zeal PR #229)
+  into `_zealState`, and the agent uploads `target_id` beside `target_name` on
+  the live-state flush. ⚠ **Absent on every released Zeal** — all three are
+  optional, null is the normal case, and nothing downstream may require them.
+  ⚠ **A consumer MUST key on (zone, id).** An id is a slot in the zone's entity
+  table, so the same number is a different mob in another zone
+  (`docs/zeal-pipe-protocol.md`). ⚠ Ids need no zone-change clearing even
+  though names do: they ride the player message itself and are assigned
+  unconditionally, so the message that rezones replaces them — whereas names
+  come from gauge messages that can lag the zone event. A clear was written
+  first and removed as dead code. Key names are read in ONE place so an
+  upstream rename (#218 suggested `NPC_ID`) is a three-line edit. Tests:
+  `test/zeal-spawn-id-capture.test.js`.
 - **Replay (#101)** — `startReplay`/`_replayWorker`: walk a log slice through the
   REAL trigger pipeline as a rehearsal (no uploads, refuses during a live fight).
 - **Pet buffs + range (#117/#119)** — own-pet landing attribution; buff-queue
