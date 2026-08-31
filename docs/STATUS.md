@@ -89,6 +89,20 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ## The work ledger
 
+- **📨 The upstream ask to Moncs is REFRESHED and ready to send
+  (`docs/DESIGN-opendkp-audit-cursor.md`, 2026-08-31).** Hitya: *"we should give
+  an upstream request that would find the outliers for a cheaper cost than the
+  full rip."* It existed but was unsendable: its numbers were from 2026-08-27,
+  before we cut our own traffic 60% (116 → 46 MB/day), and quoting stale figures
+  to someone who can read his own logs is the wrong kind of wrong.
+  Now a **ladder**, so declining the big ask still leaves an easy yes:
+  **Tier 0** `?count=N` newest-first on `/audits` — a parameter he has ALREADY
+  built on `/raids`; alone it takes 27.0 → ~0.1 MB/day, the single largest line.
+  **Tier 1** `?since=<AuditId>`. **Tier 2** the affected entity's id on each
+  audit row — the multiplier that turns every other full pull into a targeted
+  read. 46 → ~1.5 MB/day at the top of the ladder.
+  ⚠ **The artifact Moncs would read still has the stale numbers** — refresh it
+  from the doc before sending.
 - **📋 OpenDKP API review, against MEASURED spend
   (`docs/opendkp-api-review-2026-08-31.md`, 2026-08-31).** Hitya supplied the
   full API reference and asked whether we target OpenDKP well. Real 7-day cost:
