@@ -1,5 +1,12 @@
 # Zeal Named-Pipe Protocol — complete field reference
 
+> ⚠ **Forward note (2026-08-31).** Five identity keys are proposed upstream and
+> are **not in any released Zeal** — `spawn_id` on raid/group/player, plus
+> `target_id` and `pet_id` on player. See `docs/upstream/zeal-spawn-id/`. Do NOT
+> document them here as if they exist; add a row per key only once a build
+> carrying them ships, and keep the agent's parser treating all five as
+> optional so older Zeal versions keep working.
+
 Assembled 2026-07-08 from CoastalRedwood/Zeal `named_pipe.cpp` (the
 `LabelNames` / `GaugeNames` maps) cross-checked against live side-by-side
 captures (Canopy the druid, Manamana the cleric — dashboard char-info dump vs
