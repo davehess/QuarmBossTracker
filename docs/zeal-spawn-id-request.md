@@ -170,8 +170,8 @@ why this request got no traction the first time it was made.
   "character": "Hopeya",
   "data": [
     { "type": 1,  "text": "Hopeya",         "value": 999 },
-    { "type": 6,  "text": "an orc warrior", "value": 1000, "spawn_id": 14823 },
-    { "type": 16, "text": "an orc warrior", "value": 874,  "spawn_id": 14911 }
+    { "type": 6,  "text": "an orc warrior", "value": 1000, "spawn_id": 1482 },
+    { "type": 16, "text": "an orc warrior", "value": 874,  "spawn_id": 1491 }
   ]
 }
 ```
@@ -228,6 +228,40 @@ identity in memory. We verified by uniquely tagging several identically-named
 mobs while exporting the verbose pipe: **tag state does not serialize to the
 pipe** (consistent with the capture above). The ask is only to expose the id
 that tagging demonstrably already keys on.
+
+## Independent corroboration — upstream issue #218 (found 2026-08-31)
+
+**Someone else asked for this first, and got no answer either.**
+[#218](https://github.com/CoastalRedwood/Zeal/issues/218), *"[FEATURE REQUEST]
+Allow for Native Display of Zeal ID to Target Bar + Pipe Zeal ID for overlays"*,
+opened 2026-06-29 by `derekwolfson`, still open, no labels, no assignee, no
+linked branch or PR.
+
+They are running **our workaround**, arrived at independently: a `/tag` hotkey
+to force the id into the chat log, scraped back out to feed an overlay. Their
+words: *"I have a workaround that uses a zealtag hotkey to assign a tag name to
+show the ID in the log that I use to populate my overlay -- and it is fine --
+but would be nice to have that information natively available on the zeal pipe."*
+
+Verified that their ask and ours are the same field, not merely similar. The
+`156` in their example `ZEALTAG | this | Lookout Reloen | 156` is
+`Entity::SpawnId` — `nameplate.cpp` builds the broadcast with
+`int spawn_id = is_clear ? 0 : target->SpawnId;` (line 960). That is the exact
+field the patch emits as `target_id`.
+
+Two consequences:
+
+1. **The PR references #218 rather than closing it.** #218 asks for two things
+   — the pipe id AND a native target-bar display toggle — and we implement only
+   the first. `Closes #218` would auto-close on merge and drop the other half on
+   the floor, which would be rude to the person who raised it.
+2. **Their suggested key name was `NPC_ID`.** We used `target_id`/`spawn_id`
+   because these ids cover players and pets too, not just NPCs — but naming is
+   the maintainers' call and the PR says so.
+
+⚠ Spawn ids are indices into a 5,000-entry array (`kEntityIdArraySize` in
+`game_addresses.h`), so they are small numbers — their `156` is typical. Any
+example in this doc showing a five-digit id is illustrative and wrong.
 
 ## Prior outreach
 

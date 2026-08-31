@@ -1,7 +1,7 @@
 // test/upstream-zeal-pr.test.js — the Zeal spawn-id PR material stays coherent.
 //
-// `docs/upstream/zeal-spawn-id/` holds two git-am-able patches plus the PR body
-// a human pastes into GitHub. Those two can drift, and the failure is
+// `docs/upstream/zeal-spawn-id/` holds two git-am-able patches plus pr-body.md,
+// the text a human pastes into GitHub. Those two can drift, and the failure is
 // externally visible in a way our own bugs are not: the guild lead files a PR
 // whose description contradicts its own diff, on someone else's repo, once.
 //
@@ -20,7 +20,8 @@ import { ROOT } from './_source-slice.js';
 const DIR = path.join(ROOT, 'docs', 'upstream', 'zeal-spawn-id');
 const patches = fs.readdirSync(DIR).filter(f => f.endsWith('.patch')).sort();
 const codePatch = fs.readFileSync(path.join(DIR, patches[0]), 'utf8');
-const prBody = fs.readFileSync(path.join(DIR, 'PULL-REQUEST.md'), 'utf8');
+// The single copy of the text that gets pasted into GitHub.
+const prBody = fs.readFileSync(path.join(DIR, 'pr-body.md'), 'utf8');
 
 // ⚠ A .patch file is PROSE + DIFF: the commit message sits above the first
 // `diff --git`, and format-patch appends a `-- ` signature below. Asserting
