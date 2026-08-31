@@ -95,8 +95,14 @@ next touch one rather than assuming a missing row means a missing doc.
   deletions. Implements the PIPE half of upstream issue #218 (open since
   2026-06-29), whose author is running the same `/tag` workaround we are;
   `Refs`, not `Closes`, because their target-bar display half is not in it.
-  ⚠ **NOT compiled** — no Windows/MSVC x86 here; the PR says so and offers to
-  test their build against the four-same-name-mob repro.
+  ✅ **COMPILED AND VERIFIED 2026-08-31** (Hitya, VS Build Tools, Release|x86):
+  `0 Warning(s) 0 Error(s)`; the artifact is PE32/Intel 80386 and carries
+  `spawn_id`/`target_id`/`pet_id` as string literals (checked against
+  `autoattack`/`heading` as a control); linker 14.44 = the v143 family CI uses;
+  stamped `1.4.5 (pr229)`. So the PR's one real weakness is gone — report it on
+  the PR via `docs/upstream/zeal-spawn-id/pr-229-build-report.md`.
+  ⚠ The PR BODY still says we could not compile it. That was true when filed;
+  the follow-up comment is what corrects it.
   ⚠ **No session can watch it.** GitHub tooling here is scoped to
   `davehess/quarmbosstracker`, so review comments must be relayed by Hitya.
   **Expect slow:** #227 has been open since Aug 1 and #218 sat two months.
