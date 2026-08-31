@@ -10054,7 +10054,21 @@ function loadSessionState() {
 // holdover name for "one of these", not literally Divine Aura only (Hitya
 // 2026-07-03: "this should also include Shadowknights harmshield and other
 // forms of invulnerability").
-const DA_SPELL_RX = /^(divine aura|divine barrier|divine intervention|harmshield|forced sound channeling|invulnerability)/i;
+// ⚠ DIVINE INTERVENTION IS NOT ON THIS LIST, and must never be added back.
+// It was, until 2026-08-30, and the Tank card told healers Hawkner was
+// INVULNERABLE with 5:36 on the clock. DI is a one-shot DEATH SAVE, not an
+// immunity window: under DI the tank takes full damage and can die, so "INV"
+// is the most dangerous thing the overlay could say about them. The catalog
+// settles it — every true invuln here is buffduration 3 (3 ticks = 18s) while
+// Divine Intervention (spell 1546) is 100 ticks = TEN MINUTES. DI has its own
+// surfaces (#204 readiness chips, the Command Center DI row); it does not
+// belong in this one.
+const DA_SPELL_RX = /^(divine aura|divine barrier|harmshield|forced sound channeling|invulnerability)/i;
+// Belt-and-braces for the same class of mistake: a name-whitelist can be wrong
+// again, but a multi-minute buff is not an invulnerability whatever it is
+// called. 18s is the real ceiling; 60 leaves room for a variant we have not
+// seen without ever admitting a DI-length buff.
+const DA_MAX_PLAUSIBLE_SEC = 60;
 const DA_CRITICAL_TICKS = 2;  // ≤12s remaining (1 tick = 6s) → flash + ramp callout
 // Bosses that enrage at low HP — primary use is the warning gauge. ~8% on
 // Quarm per Hitya 2026-06-25; not every boss enrages. Until we have a
@@ -10150,15 +10164,28 @@ const HP_EXACT_MAX_AGE_MS = 20_000;
 
 // Who is currently dead. Fed by confirmed player deaths in the encounter
 // builder; cleared when they turn up alive again (a rez, or any fresh self-HP).
-const _deadSince = new Map();     // nameLower → diedAtMs
+// nameLower → { at, display }. ⚠ The VALUE carries the name as written.
+// This used to be nameLower → diedAtMs, and the rez board rendered the KEY —
+// so the Command Center listed "dafeet, meditate, shavimo…" in lowercase
+// (Hitya, 2026-08-30). The key stays lowercase because every lookup here
+// matches case-insensitively; only the display string is new.
+const _deadSince = new Map();
 const DEAD_FORGET_MS = 15 * 60_000;
 function _noteDeath(name, atMs) {
-  const k = String(name || '').toLowerCase();
+  const raw = String(name || '').trim();
+  const k = raw.toLowerCase();
   if (!k) return;
-  _deadSince.set(k, atMs || Date.now());
+  // ⚠ Pets do not get rezzed — they are re-summoned. Jtik on the needs-rez
+  // board (Hitya, same report) is a charm/summoned pet, and a healer reading
+  // that row wastes a rez cast and a queue slot on something no rez can touch.
+  // _isOurPetName is the purpose-built predicate and covers all three
+  // ownership signals the DPS meter uses: the charm tracker, Zeal slot 16,
+  // and the cross-builder declared pet-leaders registry.
+  if (_isOurPetName(k)) return;
+  _deadSince.set(k, { at: atMs || Date.now(), display: raw });
   if (_deadSince.size > 200) {
     const cutoff = Date.now() - DEAD_FORGET_MS;
-    for (const [n, t] of _deadSince) if (t < cutoff) _deadSince.delete(n);
+    for (const [n, v] of _deadSince) if ((v && v.at ? v.at : 0) < cutoff) _deadSince.delete(n);
   }
 }
 function _clearDeath(name) {
@@ -10175,8 +10202,16 @@ function _clearDeath(name) {
 // Deliberately forgets a death after DEAD_FORGET_MS. We do not see every rez —
 // an un-cleared entry would tombstone someone for the rest of the night, which
 // is a worse failure than briefly missing a corpse.
+// When did this name die? One accessor, so no caller has to know that the map
+// value gained a shape (it was a bare timestamp until 2026-08-30).
+function _deadAt(nameLower) {
+  const v = _deadSince.get(String(nameLower || '').toLowerCase());
+  if (v == null) return null;
+  const at = typeof v === 'object' ? v.at : v;
+  return Number.isFinite(at) ? at : null;
+}
 function _isDead(nameLower, nowMs) {
-  const t = _deadSince.get(String(nameLower || '').toLowerCase());
+  const t = _deadAt(nameLower);
   if (t == null) return false;
   if ((nowMs || Date.now()) - t > DEAD_FORGET_MS) return false;
   return true;
@@ -10184,7 +10219,11 @@ function _isDead(nameLower, nowMs) {
 function _deadNamesSnapshot(nowMs) {
   const now = nowMs || Date.now();
   const out = [];
-  for (const [n, t] of _deadSince) if (now - t <= DEAD_FORGET_MS) out.push({ name: n, since_ms: now - t });
+  for (const [n, v] of _deadSince) {
+    const at = v && typeof v === 'object' ? v.at : v;   // tolerate a pre-upgrade entry
+    if (!(now - at <= DEAD_FORGET_MS)) continue;
+    out.push({ name: (v && v.display) || n, since_ms: now - at, key: n });
+  }
   return out;
 }
 
@@ -10490,7 +10529,7 @@ function _noteGroupHpFromState(character, st, nowMs) {
       // ("a rez, or any fresh self-HP") — but never on evidence younger than a
       // freshly recorded death, which is the log-vs-gauge race above.
       t.sawAlive = true; t.zeroSince = 0; t.zeroSamples = 0; t.noted = 0;
-      const diedAt = _deadSince.get(k);
+      const diedAt = _deadAt(k);
       if (diedAt != null && (now - diedAt) >= GROUP_ALIVE_CLEAR_MIN_AGE_MS) {
         _clearDeath(k);
         t.clearedAt = now;
@@ -10649,6 +10688,8 @@ function _findDA(buffsList, greenSecs) {
   for (const b of (buffsList || [])) {
     if (!b || !b.name || b.fell_off) continue;   // a nameless/null entry must not throw DA_SPELL_RX.test(undefined)
     if (DA_SPELL_RX.test(b.name)) {
+      // A DA-class buff reading minutes is a misidentification, not a long DA.
+      if (typeof b.seconds === 'number' && b.seconds > DA_MAX_PLAUSIBLE_SEC) continue;
       return { name: b.name, seconds: b.seconds, ticks: b.ticks, critical: typeof b.seconds === 'number' && b.seconds <= greenSecs };
     }
   }

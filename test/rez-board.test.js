@@ -19,15 +19,20 @@ const block = sliceBlock(
   "|| String(a.name).localeCompare(String(b.name));\n  });\n}",
 );
 const api = evalBlock(
-  'const console = { log(){}, warn(){} };\n' + block,
+  // _isOurPetName is a free identifier in the slice (pets never reach the
+  // board, added 2026-08-30). Default: nothing is a pet; one test overrides it.
+  'const console = { log(){}, warn(){} };\n'
+  + 'let _petNames = new Set();\n'
+  + 'const _isOurPetName = (n) => _petNames.has(String(n||"").toLowerCase());\n'
+  + 'const _setPetNames = (arr) => { _petNames = new Set(arr); };\n' + block,
   ['parseRezCallout', 'noteRezIncoming', 'noteRezRequest', 'noteRezDone',
    'noteRezFromChat', '_rezBoardSnapshot', '_noteDeath', '_clearDeath',
-   '_rezState', '_deadSince', 'REZ_DONE_LINGER_MS', 'REZ_REQUEST_TTL_MS'],
+   '_rezState', '_deadSince', 'REZ_DONE_LINGER_MS', 'REZ_REQUEST_TTL_MS', '_setPetNames'],
 );
 const {
   parseRezCallout, noteRezIncoming, noteRezRequest, noteRezDone,
   noteRezFromChat, _rezBoardSnapshot, _noteDeath, _rezState, _deadSince,
-  REZ_DONE_LINGER_MS, REZ_REQUEST_TTL_MS,
+  REZ_DONE_LINGER_MS, REZ_REQUEST_TTL_MS, _setPetNames,
 } = api;
 
 beforeEach(() => { _rezState.clear(); _deadSince.clear(); });
@@ -117,5 +122,26 @@ describe('the board', () => {
     _noteDeath('dant', Date.now() - 10_000);
     noteRezFromChat({ channel: 'tell', speaker: 'Someone', body: 'rez Dant' });
     expect(_rezBoardSnapshot()[0].state).toBe('needs');
+  });
+});
+
+describe('pets never reach the board', () => {
+  it('a summoned/charm pet is not a rez candidate', () => {
+    // Hitya, 2026-08-30: "Jtik is a pet". A healer reading that row spends a
+    // rez on something no rez can touch, and it pushes a real corpse down.
+    _setPetNames(['jtik']);
+    _noteDeath('Jtik', Date.now() - 30_000);
+    _noteDeath('Dafeet', Date.now() - 30_000);
+    const names = _rezBoardSnapshot(Date.now()).map(r => String(r.name).toLowerCase());
+    expect(names).not.toContain('jtik');
+    expect(names).toContain('dafeet');
+    _setPetNames([]);
+  });
+
+  it('keeps the name as written for a real corpse', () => {
+    _noteDeath('Dwimmerlaik', Date.now() - 20_000);
+    const row = _rezBoardSnapshot(Date.now()).find(r => String(r.name).toLowerCase() === 'dwimmerlaik');
+    expect(row).toBeTruthy();
+    expect(row.name).toBe('Dwimmerlaik');
   });
 });

@@ -690,6 +690,31 @@ gitignored** — it is now, along with `logsync.queue.json`.
 Guarded by `test/personal-trigger-bulk.test.js` (source-sliced from the shipped
 agent, so a rename fails loudly rather than passing on a stale copy).
 
+### Divine Intervention is not invulnerability (agent 3.6.10)
+
+⚠ `DA_SPELL_RX` listed **Divine Intervention**, so the Tank/Command cards
+rendered "INV 5:36" over a rampage target (Hitya, 2026-08-30). DI is a one-shot
+DEATH SAVE — under it the tank takes full damage and can die — so INV is the
+most dangerous claim the overlay can make. The catalog settles it: every true
+invuln (Divine Aura 207, Divine Barrier 130, Harmshield 199) is `buffduration`
+3 = 3 ticks = 18s; **DI (1546) is 100 ticks = 10 minutes**, which is exactly
+the 5:36 → 2:06 → 0s countdown observed. DI is out of the list, and `_findDA`
+additionally rejects any DA-named buff over `DA_MAX_PLAUSIBLE_SEC` (60s) —
+a name whitelist can be wrong again, a duration cannot. DI keeps its own
+surfaces (#204 chips, the Command Center DI row).
+
+### Needs-rez board: real spelling, no pets (agent 3.6.10)
+
+`_deadSince` was `nameLower → diedAtMs` and the board rendered the KEY, so the
+Command Center listed "dafeet, meditate, shavimo…". The value is now
+`{ at, display }`; the key stays lowercase for matching, `name` is the spelling
+a healer reads, and `key` carries the match form. ⚠ Every consumer reads the
+time through `_deadAt()` — the value has a shape now, and a direct
+`_deadSince.get()` silently compares a number to an object (asserted: exactly
+one direct read remains, inside the accessor). Pets are excluded at
+`_noteDeath` via `_isOurPetName` — Jtik was on the board, and a rez spent on a
+pet is a wasted cast and a queue slot ahead of a real corpse.
+
 ### Charm pipeline
 `_charmTickTracker` (slot-16 gauge-driven; 1.5s land debounce, 10s re-charm
 grace), `CHARM_SPELLS` map (backtick + apostrophe spellings), pending-charm
