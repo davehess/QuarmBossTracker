@@ -48,7 +48,7 @@ The resulting `Zeal.asi` is PE32/x86 and contains all three new keys.
 |---|---|
 | `player.spawn_id` | 2354 |
 | `player.target_id` | 3385 |
-| `player.pet_id` | 3005 (and correctly absent with no pet, after the fix) |
+| `player.pet_id` | 3005 with a pet; key absent with none (verified on the rebuilt client) |
 | `raid[].spawn_id` | 2533, 1027 (2 members) |
 | `group[].spawn_id` | 3385 |
 
