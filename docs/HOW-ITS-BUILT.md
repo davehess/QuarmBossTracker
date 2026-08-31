@@ -1954,6 +1954,23 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   the dashboard gets screen-shared); the expansion filter one-shots onto the
   current expansion via `currentEra()`, falling back to "all" if that would
   render an empty list.
+- **Loot won card (agent 3.6.11)** — the archive split out of the bidding card
+  into its own `wpLootWonCard` in the Loot section (`renderWon()` in
+  `dashboard.html`; Hitya 2026-08-30: *"Move Past Items to a different 'loot
+  won' area"*). The bidding card is the LIVE HAND — what is up, what you lost,
+  what you plan to spend; this is the ARCHIVE. The split also splits the
+  privacy gate: `showWon` is independent of `showLoot`, so you can browse what
+  you have won without exposing your wishlist and misses. Deliberately NOT era
+  filtered — it is a lookup surface, so every row renders (capped 400) and the
+  search box narrows it; era joined the search key so "kunark" matches
+  alongside item and character. First 12 rows show, the rest carry
+  `data-extra=1` until a query. Tests: `test/loot-won-card.test.js`.
+- **2nd place in the bidding area (agent 3.6.11)** — the auctions table gained
+  a `2nd place` column between `Last win` and `Bid`, matching RECENT MISSES
+  (Hitya 2026-08-30). `runner_up` was already served by `_lootItemSummary` and
+  already rendered — as a 10px dim sub-line INSIDE the `Last win` cell, which
+  is why it read as missing. Empty renders an em-dash so the column never
+  collapses. Tests: `test/loot-second-place-column.test.js`.
 - **Replay (#101)** — `startReplay`/`_replayWorker`: walk a log slice through the
   REAL trigger pipeline as a rehearsal (no uploads, refuses during a live fight).
 - **Pet buffs + range (#117/#119)** — own-pet landing attribution; buff-queue

@@ -100,6 +100,20 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ### ✅ Done — major shipped features (not exhaustive; see git + roadmapData.ts)
 
+- **Loot page: 2nd place in the bidding area + a "Loot won" card (agent 3.6.11,
+  beta, 2026-08-30).** Two of the raid-night reports. (1) *"Second place should
+  show up as well in the bidding area"* — `runner_up` was already served and
+  already rendered, but as a 10px dim sub-line INSIDE the `Last win` cell; it
+  now has its own `2nd place` column matching RECENT MISSES, em-dash when
+  nobody else bid. (2) *"Move Past Items to a different 'loot won' area"* — the
+  archive moved out of the bidding card into `wpLootWonCard` with its own
+  privacy gate, so you can browse your wins without exposing your wishlist and
+  misses. Not era-filtered (it is a lookup surface); era joined the search key.
+  25 behavioural tests, all four mutations caught.
+  ⚠ **Still on `main` and waiting:** the runner-up FIGURES themselves were also
+  wrong (Thorny Chain Sleeves showed 10, actually 5; Bone Chill Shield showed
+  20, actually 7) — that is a bot fix, held for the raid freeze. See the open
+  table at the bottom.
 - **Dashboard slice — Decision #3 step 1 (agent 3.6.9, beta, 2026-08-30).**
   Hitya: *"do the dashboard slice."* `WEB_HTML` is now GENERATED from
   `packages/wolfpack-logsync/dashboard.html` (`npm run sync:dashboard`); the

@@ -19648,6 +19648,7 @@ async function dismissTopDamage(key) {
   // dashboard load. The dashboard gets screen-shared and shoulder-surfed during
   // raids; a wishlist on screen is a bidding tell.
   var showLoot     = false;
+  var showWon      = false;   // Loot won card — its own gate, see renderWon()
   var loginErr     = "";
   var lastHistKey  = "";
   var lastBidHistAt = 0;
@@ -19704,6 +19705,22 @@ async function dismissTopDamage(key) {
     return c;
   }
   var card = makeCard();
+  // Its own card, so the archive is a separate area from the live bidding hand.
+  var wonCard = null;
+  function ensureWon(){
+    var found = document.getElementById("wpLootWonCard");
+    if (found){ wonCard = found; return; }
+    var lootSec = document.getElementById("loot"); if (!lootSec) return;
+    var c = document.createElement("div");
+    c.id = "wpLootWonCard";
+    c.className = "card wide";
+    c.style.display = "none";
+    c.innerHTML = "<h2>\\u{1F3C6} Loot won <span class=dim style='font-size:11px;text-transform:none;letter-spacing:0'>\\u00b7 what your characters have won</span></h2><div class=card-body></div>";
+    // Directly under the bidding card — the live hand first, the archive after.
+    if (card && card.parentNode === lootSec) lootSec.insertBefore(c, card.nextSibling);
+    else lootSec.insertBefore(c, lootSec.firstChild);
+    wonCard = c;
+  }
   function ensure(){
     var found = document.getElementById("wpBiddingCard");
     if (found){ card = found; return; }
@@ -19846,13 +19863,17 @@ async function dismissTopDamage(key) {
     if (!rows.length){
       h += "<div class=dim style='padding:4px 0 6px'>no loot up for bid right now</div>";
     } else {
-      h += "<table><tr><th>Item</th><th>Ends</th><th>Last win</th><th>Bid</th></tr>";
+      h += "<table><tr><th>Item</th><th>Ends</th><th>Last win</th><th class=num>2nd place</th><th>Bid</th></tr>";
       for (var r=0;r<rows.length;r++){
         var row = rows[r];
         var hist = row.item_id!=null ? itemHist[row.item_id] : null;
         var star = row.wishlisted ? " <span title='on your wishlist' style='color:var(--gold,#d4af37)'>★</span>" : "";
         var lastWin = (hist && hist.winning_bid!=null) ? (fmt(hist.winning_bid)+(hist.winner?(" · "+esc(hist.winner)):"")) : "—";
-        var ru = (hist && hist.runner_up!=null) ? ("<div class=dim style='font-size:10px'>runner-up "+fmt(hist.runner_up)+"</div>") : "";
+        // #5 (Hitya, 2026-08-30: "Second place should show up as well in the
+        // bidding area") — second place used to be a dim sub-line tucked under
+        // "Last win"; the misses table gave it a real column and the bidding
+        // area did not. Same column, same header, so the two tables read alike.
+        var ru = (hist && hist.runner_up!=null) ? fmt(hist.runner_up) : "\\u2014";
         var endSpanId = "wpEnd_"+row.key;
         if (row.ends) ticks[endSpanId] = row.ends;
         // #133: "(k of N)" distinguishes N separate OpenDKP auctions for the
@@ -19863,7 +19884,8 @@ async function dismissTopDamage(key) {
         h += "<tr>";
         h += "<td class=name>"+esc(row.name)+copyAffix+qtyAffix+star+(row.pending?" <span class=dim style='font-size:10px'>(called)</span>":"")+"</td>";
         h += "<td style='font-size:11px'><span id="+endSpanId+">"+(row.ends?endLabel(row.ends):"")+"</span></td>";
-        h += "<td style='font-size:11px'>"+lastWin+ru+"</td>";
+        h += "<td style='font-size:11px'>"+lastWin+"</td>";
+        h += "<td class=num style='font-size:11px'>"+ru+"</td>";
         h += "<td style='white-space:nowrap'>";
         if (row.biddable && cfg.authed && char){
           var pf = prefillFor(row.item_id);
@@ -19896,7 +19918,7 @@ async function dismissTopDamage(key) {
     // History + wishlist + misses (authed only). COLLAPSED until asked for —
     // this is your bidding hand, and the dashboard gets shoulder-surfed.
     if (cfg.authed && bidHist && !showLoot){
-      h += "<div style='margin:12px 0 2px'><button id=wpLootReveal style='background:#21262d;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:3px 10px;font-size:11px;cursor:pointer;font-family:inherit'>👁 show my loot history</button> <span class=dim style='font-size:10px'>hidden by default — your wishlist, misses and wins</span></div>";
+      h += "<div style='margin:12px 0 2px'><button id=wpLootReveal style='background:#21262d;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:3px 10px;font-size:11px;cursor:pointer;font-family:inherit'>👁 show my loot history</button> <span class=dim style='font-size:10px'>hidden by default — your wishlist and misses</span></div>";
     }
     if (cfg.authed && bidHist && showLoot){
       var wins = bidHist.wins||[]; var wl = bidHist.wishlist||[]; var misses = bidHist.misses||[]; var dkp = bidHist.dkp||null;
@@ -19983,35 +20005,70 @@ async function dismissTopDamage(key) {
         h += "</table>";
       }
 
-      // PAST ITEMS — "fine to be able to look through or search through and see
-      // which of your characters has/had them" (Hitya, 2026-08-29). The rows are
-      // all rendered; the search filters them IN PLACE rather than re-rendering,
-      // because render() rebuilds this card and a re-render per keystroke takes
-      // the focus out of the box you are typing in.
-      var winsF = wins.filter(function(x){ return passEra(x.era); });
-      if (winsF.length){
-        h += "<div style='display:flex;align-items:baseline;gap:8px;margin:12px 0 4px'>"
-          + "<span style='font-size:11px;color:var(--dim,#8b949e);text-transform:uppercase;letter-spacing:.05em'>past items <span style='text-transform:none;letter-spacing:0'>· what your characters have won</span></span>"
-          + "<input id=wpLootWinQ type=search placeholder='search item or character' style='margin-left:auto;width:190px;background:#0e1116;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 6px;font-family:inherit;font-size:11px'>"
-          + "<span id=wpLootWinCount class=dim style='font-size:10px'></span>"
-          + "</div>";
-        h += "<table id=wpLootWins><tr><th>Item</th><th>Char</th><th class=num>DKP</th></tr>";
-        for (var wn=0;wn<winsF.length && wn<400;wn++){
-          var win = winsF[wn];
-          var wkey = String((win.item_name||"") + " " + (win.character||"")).toLowerCase();
-          h += "<tr data-w='"+esc(wkey)+"'"+(wn>=12?" data-extra=1 style='display:none'":"")+">"
-            + "<td>"+itemLink(win.item_name||"?", win.raid_id)+eraTag(win.era)+"</td>"
-            + "<td"+(win.character?" class=name":"")+">"+esc(win.character||"?")+"</td>"
-            + "<td class=num>"+fmt(win.dkp)+"</td></tr>";
-        }
-        h += "</table>";
-      }
     }
 
     morphInto(body, h);
     wire();
     restoreDrafts();
     runTicks();
+    renderWon();
+  }
+
+  // ── LOOT WON ───────────────────────────────────────────────────────────────
+  // "Move Past Items to a different 'loot won' area on the loot page of mimic"
+  // (Hitya, 2026-08-30). It used to be the last section of the bidding card,
+  // which mixed two different questions: the bidding card is your LIVE HAND
+  // (what is up, what you lost, what you plan to spend) and this is your
+  // ARCHIVE. Splitting them splits the privacy gate too — you can browse what
+  // you have won without revealing your wishlist and misses to whoever is
+  // looking at your screen.
+  //
+  // Era is deliberately NOT filtered here: the archive is a lookup surface, so
+  // every row is rendered and the search box narrows it. Era joined the search
+  // key so typing "kunark" works alongside item and character.
+  function renderWon(){
+    ensureWon();
+    if (!wonCard) return;
+    var wins = (cfg.authed && bidHist) ? (bidHist.wins||[]) : [];
+    if (!wins.length){ wonCard.style.display = "none"; return; }
+    wonCard.style.display = "";
+    var wbody = wonCard.querySelector(".card-body");
+    if (!wbody) return;
+
+    var h = "";
+    if (!showWon){
+      h += "<div style='padding:2px 0'><button id=wpWonReveal style='background:#21262d;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:3px 10px;font-size:11px;cursor:pointer;font-family:inherit'>\\u{1F441} show what my characters have won</button> <span class=dim style='font-size:10px'>"+wins.length+" item"+(wins.length===1?"":"s")+" \\u00b7 hidden by default</span></div>";
+      morphInto(wbody, h);
+      var rv = document.getElementById("wpWonReveal");
+      if (rv) rv.onclick = function(){ showWon = true; renderWon(); };
+      return;
+    }
+
+    h += "<div style='display:flex;align-items:baseline;gap:8px;margin:0 0 4px'>"
+      + "<button id=wpWonHide style='background:#21262d;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:3px 10px;font-size:11px;cursor:pointer;font-family:inherit'>\\u{1F648} hide</button>"
+      + "<input id=wpLootWinQ type=search placeholder='search item, character or era' style='margin-left:auto;width:210px;background:#0e1116;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 6px;font-family:inherit;font-size:11px'>"
+      + "<span id=wpLootWinCount class=dim style='font-size:10px'></span>"
+      + "</div>";
+    h += "<table id=wpLootWins><tr><th>Item</th><th>Char</th><th class=num>DKP</th></tr>";
+    for (var wn=0;wn<wins.length && wn<400;wn++){
+      var win = wins[wn];
+      var wkey = String((win.item_name||"") + " " + (win.character||"") + " " + (win.era||"")).toLowerCase();
+      h += "<tr data-w='"+esc(wkey)+"'"+(wn>=12?" data-extra=1 style='display:none'":"")+">"
+        + "<td>"+itemLink(win.item_name||"?", win.raid_id)+eraTag(win.era)+"</td>"
+        + "<td"+(win.character?" class=name":"")+">"+esc(win.character||"?")+"</td>"
+        + "<td class=num>"+fmt(win.dkp)+"</td></tr>";
+    }
+    h += "</table>";
+
+    morphInto(wbody, h);
+    var el = document.getElementById("wpWonHide");
+    if (el) el.onclick = function(){ showWon = false; renderWon(); };
+    el = document.getElementById("wpLootWinQ");
+    if (el){
+      el.value = winQ;
+      el.oninput = function(){ winQ = this.value; applyWinFilter(); };
+      applyWinFilter();
+    }
   }
 
   // Search text for PAST ITEMS. Module state, not DOM state, so it survives the
@@ -20051,12 +20108,6 @@ async function dismissTopDamage(key) {
     el = document.getElementById("wpLootReveal"); if (el) el.onclick = function(){ showLoot=true; render(); };
     el = document.getElementById("wpLootHide"); if (el) el.onclick = function(){ showLoot=false; render(); };
     el = document.getElementById("wpLootRestore"); if (el) el.onclick = function(){ setDismissed("all", false); };
-    el = document.getElementById("wpLootWinQ");
-    if (el){
-      el.value = winQ;
-      el.oninput = function(){ winQ = this.value; applyWinFilter(); };
-      applyWinFilter();
-    }
     var xs = card.querySelectorAll(".wpLootX");
     for (var x=0;x<xs.length;x++){ (function(sp){ sp.onclick=function(){ setDismissed(sp.getAttribute("data-item"), true); }; })(xs[x]); }
     // Typing in the family editor marks it dirty so the 7s poll can't overwrite
