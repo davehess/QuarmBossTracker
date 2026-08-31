@@ -1,6 +1,6 @@
-From 2854c836f8ce8f3f6cdfc81fc66b0c051f6efc0f Mon Sep 17 00:00:00 2001
-From: Wolf Pack tooling <dmhess+claude@gmail.com>
-Date: Mon, 31 Aug 2026 12:38:12 +0000
+From b0ac8df18fcf5cb7a2bdb04de319f9eb58d0d782 Mon Sep 17 00:00:00 2001
+From: davehess <davehess@users.noreply.github.com>
+Date: Mon, 31 Aug 2026 13:20:30 +0000
 Subject: [PATCH 1/2] named_pipe: emit spawn ids for raid, group, self, target
  and pet
 
