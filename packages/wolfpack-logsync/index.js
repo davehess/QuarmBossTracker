@@ -2678,7 +2678,39 @@ function _isHotBuff(name) { return _categorizeBuff(name) === 'regen'; }
 // here (no spawn id on the pipe — the #194 problem in another costume). The
 // /pet health reconcile below is what catches that case.
 const _lastPetByOwner = new Map();   // ownerLower → last confidently-seen petLower
+// ownerLower → last confidently-seen pet SPAWN ID (Zeal PR #229). Separate from
+// the name map because the two disagree in exactly the case that matters: a
+// same-named re-charm changes the id and not the name.
+const _lastPetIdByOwner = new Map();
 function _reconcilePetIdentity(ownerLower) {
+  // ── Spawn id: exact, and closes the gap the name check cannot see ─────────
+  // Re-charming a DIFFERENT mob with the SAME name was invisible here
+  // (Hitya, 2026-08-31: "in case people switch their charmed pets") — two
+  // `an orc warrior` are one string, so the name comparison below returns
+  // "unchanged" and the dead pet's buffs stay on the new one. That is the same
+  // failure that put a charmed rat's Tunare's Request on a summoned warder,
+  // in the case a name simply cannot distinguish.
+  //
+  // ⚠ null is UNKNOWN, never CHANGED. It is null on every released Zeal, and
+  // whenever there is no pet — including the ~3s slot-16 dip during a
+  // re-charm. Wiping on null would erase a live pet's buffs every swap, which
+  // is exactly the bug the "empty is not an identity change" rule exists to
+  // prevent. So a change requires BOTH ids to be real and different.
+  const petId = _petIdForOwner(ownerLower);
+  if (petId != null) {
+    const prevId = _lastPetIdByOwner.get(ownerLower);
+    _lastPetIdByOwner.set(ownerLower, petId);
+    if (prevId != null && prevId !== petId) {
+      _petBuffLandings.delete(ownerLower);
+      _petHealthByOwner.delete(ownerLower);
+      _lastPetByOwner.set(ownerLower, String(_petNameForOwner(ownerLower) || '').toLowerCase() || undefined);
+      console.log(`[pet] ${ownerLower}'s pet changed by spawn id ${prevId} → ${petId} — dropped the previous pet's buffs`);
+      _savePetStateSoon();
+      return;
+    }
+  }
+
+  // ── Name: the pre-#229 path, and still the only one on a stock client ─────
   const petName = _petNameForOwner(ownerLower);
   if (!petName) return;                                  // unknown → never wipe on a dropout
   const petLower = String(petName).toLowerCase();
@@ -3468,6 +3500,18 @@ function _petNameForOwner(ownerLower) {
     const st = _zealState[ch];
     if (st && Array.isArray(st.gauges)) { const p = st.gauges.find(g => g && g.slot === 16 && g.text); if (p) return String(p.text); }
     if (st && st.pet_name) return String(st.pet_name);
+  }
+  return null;
+}
+// Spawn id of the owner's pet, from the pipe's player message (Zeal PR #229).
+// NULL on every released Zeal and whenever there is no pet — callers must treat
+// null as "unknown", never as "changed". Only the local uploader's own
+// characters stream a player message, same scope as _petNameForOwner.
+function _petIdForOwner(ownerLower) {
+  for (const ch of Object.keys(_zealState)) {
+    if (String(ch).toLowerCase() !== ownerLower) continue;
+    const st = _zealState[ch];
+    if (st && Number.isFinite(st.pet_id)) return st.pet_id;
   }
   return null;
 }

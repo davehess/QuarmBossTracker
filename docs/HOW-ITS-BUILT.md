@@ -743,9 +743,22 @@ treating that as a new pet erases a live pet's buffs — fixture-enforced).
 only once the report has CLOSED (`PET_REPORT_GAP_MS`; mid-stream the set is
 still filling), never for landings newer than the snapshot, never for
 uncatalogued spells (`applyPetHealthLine` can only record catalog names, so
-their absence says nothing). KNOWN GAP: re-charming a DIFFERENT mob with the
-SAME name is invisible to the identity check — the `/pet health` reconcile is
-what catches it. Tests: `test/pet-buff-landing.test.js`.
+their absence says nothing). ~~KNOWN GAP: re-charming a DIFFERENT mob with the
+SAME name is invisible to the identity check— the `/pet health` reconcile is
+what catches it.~~
+**GAP CLOSED by spawn id (agent 3.6.14)** — `_petIdForOwner` reads `pet_id`
+off the pipe's player message (Zeal PR #229) and `_reconcilePetIdentity` checks
+it BEFORE the name: two `an orc warrior` are one string but two ids, so a
+same-name re-charm now drops the previous pet's buffs instead of unioning them
+onto the new one (Hitya, 2026-08-31: *"in case people switch their charmed
+pets"*). ⚠ **null is UNKNOWN, never CHANGED** — it is null on every released
+Zeal, whenever there is no pet, and during the ~3s slot-16 dip of a re-charm, so
+a change requires BOTH ids real and different; wiping on null would erase a live
+pet's buffs on every swap, which is the very failure the "empty is not an
+identity change" rule exists to prevent. The name path is untouched and remains
+the only one on a stock client, with `/pet health` still the backstop. An id
+wipe also refreshes the name map, or the next poll fires a second spurious wipe.
+Tests: `test/pet-buff-landing.test.js`.
 
 ### Instant boss mechanics — the third capture path (#206, 2026-08-11)
 Two paths existed and both are keyed on things an instant effect does not have:
