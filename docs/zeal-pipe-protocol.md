@@ -7,6 +7,49 @@
 > carrying them ships, and keep the agent's parser treating all five as
 > optional so older Zeal versions keep working.
 
+## ⚠ What a spawn id actually IS (measured 2026-08-31)
+
+Before building anything on spawn ids, know these properties. All measured on a
+live client with `/tag` (which broadcasts the same `Entity::SpawnId` the pipe
+carries), not inferred:
+
+**1. DEATH gives a character a new id.** One character, minutes apart:
+
+```
+ZEALTAG | beforeidie | Mycorpseishere | 4425     <- alive
+  ... died to Deputy Vastin, returned to bind ...
+ZEALTAG | afteridied | Mycorpseishere | 985      <- same character, new id
+```
+
+**2. The old id stays with the CORPSE.** With the character now running around
+as 985, targeting their own corpse reported `target_id` **4425** — the id they
+had when they died.
+
+**3. The id belongs to the ENTITY and survives the observer zoning.** Zoning
+out and back in, the corpse still reported **4425**. So an id is not a handle
+scoped to your current zone session; it identifies an entity for as long as
+that entity exists.
+
+The working model, then: an id names an entity, not a character. Death ends the
+living entity (its id continues as the corpse) and creates a new one.
+
+Consequences worth planning around:
+
+- **Never treat a spawn id as a durable key for a character.** Name is the
+  durable key. Anything cached name→id is invalidated by that character dying.
+- **An id does not tell you alive from dead.** The pipe carries no spawn
+  *type* (`Entity::Type` exists at `0x00A8`, `SPAWN_TYPE_x`, but is not
+  emitted), so a consumer's only signal is the display name's `'s corpse`
+  suffix.
+- **For mob tracking within a fight this is a feature.** The id stays put
+  across the kill, so damage attributed to it does not scatter at the moment
+  of death.
+- ⚠ **STILL UNMEASURED:** whether a plain zone — no death — changes your OWN
+  id. Property 3 says the corpse's id survived a zone, which makes it likely
+  yours does too, and that 4425→985 was purely the death. But likely is not
+  measured. `/tag` yourself, zone, `/tag` again would settle it in a minute.
+  Do not write it down as fact until someone does.
+
 Assembled 2026-07-08 from CoastalRedwood/Zeal `named_pipe.cpp` (the
 `LabelNames` / `GaugeNames` maps) cross-checked against live side-by-side
 captures (Canopy the druid, Manamana the cleric — dashboard char-info dump vs
