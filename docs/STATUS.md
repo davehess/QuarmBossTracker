@@ -101,8 +101,19 @@ next touch one rather than assuming a missing row means a missing doc.
   `autoattack`/`heading` as a control); linker 14.44 = the v143 family CI uses;
   stamped `1.4.5 (pr229)`. So the PR's one real weakness is gone — report it on
   the PR via `docs/upstream/zeal-spawn-id/pr-229-build-report.md`.
+  ✅ **ALL FIVE KEYS OBSERVED LIVE** (2026-08-31): `player.spawn_id` 2354,
+  `target_id` 3385, `pet_id` 3005, `raid[]` 2533+1027, `group[]` 3385.
+  Cross-checked against `/tag` on the same mobs from independent code paths —
+  `Hawkner|3385` = target_id + group[], `Canopy|2354` = player.spawn_id,
+  `Jayson Bri\`Tian|10` = target_id. That is the #218 corroboration: the pipe
+  id IS the tag id.
+  🐞 **Live testing found a real bug**: `pet_id` emitted `-1` with no pet
+  (`ActorInfo::PetID` is a SHORT holding -1, not 0, and the guard tested
+  truthiness). Fixed to `PetID > 0`; diff grew 10 → 14 lines.
   ⚠ The PR BODY still says we could not compile it. That was true when filed;
-  the follow-up comment is what corrects it.
+  the follow-up comment (`pr-229-build-report.md`) is what corrects it.
+  ⚠ **Force-push still pending** — until Hitya pushes, GitHub has the `-1` bug
+  and the report comment describes code that is not on the PR.
   ⚠ **No session can watch it.** GitHub tooling here is scoped to
   `davehess/quarmbosstracker`, so review comments must be relayed by Hitya.
   **Expect slow:** #227 has been open since Aug 1 and #218 sat two months.
