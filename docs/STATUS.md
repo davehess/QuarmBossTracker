@@ -100,6 +100,30 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ### ✅ Done — major shipped features (not exhaustive; see git + roadmapData.ts)
 
+- **"End raid" button, and the top bar fits again signed in (bot 3.1.104 ·
+  web 1.7.6 · 2026-08-30).** (1) Hitya: *"We need a button on the raid night
+  thread for officers and leaders to be able to click to end the raid."* It
+  stops the automatic attendance ticks for the rest of the night — the real gap
+  since alt/Seru nights run three ticks over two hours while the slots fire
+  until 23:30. bot_kv, officer-gated, fails open, reopenable.
+  (2) *"Top nav is broken when you log in on desktop in chrome."* Signing in
+  adds the search box, Tour, Admin, Test server and the account chip; the ROOMY
+  breakpoint was measured on the signed-OUT bar, so a 1400px window passed it
+  with nowhere to put the categories and Nav wrapped into a ten-row vertical
+  stack. The bar now MEASURES itself (every row child `shrink-0`, Nav
+  `flex-nowrap`, overflow → fold, with hysteresis so it cannot oscillate), the
+  row is allowed past the 1280px content column, and Test server moved to the
+  utility chips. Verified in a real browser: one row and zero overflow at
+  1401/1600/1920, compact at ≤1300, nothing clipped at 390.
+- **⚠ `stripJs` was eating 6.7% of the bot (2026-08-30).** Found while writing
+  the above. Block comments were stripped before line comments, so a `/*` in a
+  line comment opened a block comment running to the next `*/`; two of them in
+  `index.js` swallowed 1,652 lines including the whole button-routing table.
+  ~40 test files use this helper, and the failure direction is silent — a
+  `not.toMatch` over deleted code passes for free. No existing assertion was
+  actually relying on it (the full suite still passed after the fix), so this
+  is a near miss rather than a shipped bug. Now has its own tests.
+
 - **Loot: right runner-up figures, and loot that arrives inside its own window
   (bot 3.1.103 · web 1.7.5 · 2026-08-30).** The other two raid-night reports.
   (1) *"Thorny Chain Sleeves second place bid was 5 not 10 / Bone chill shield

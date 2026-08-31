@@ -1115,6 +1115,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (interaction.customId === 'onb_show_again')              { await handleOnbShowAgain(interaction); return; }
     if (interaction.customId.startsWith('mark_avail:'))           { await handleMarkAvail(interaction); return; }
     if (interaction.customId.startsWith('pvp_window_spawned:')) { await handlePvpWindowSpawned(interaction); return; }
+    if (interaction.customId.startsWith('raid_end:'))           { await handleRaidEndButton(interaction, true);  return; }
+    if (interaction.customId.startsWith('raid_reopen:'))        { await handleRaidEndButton(interaction, false); return; }
     if (interaction.customId.startsWith('hate_kill:'))          { await handleHateKillButton(interaction); return; }
     if (interaction.customId.startsWith('hate_confirm_unkill:')){ await handleHateConfirmUnkill(interaction); return; }
     if (interaction.customId.startsWith('hate_unknown:'))       { await handleHateUnknownButton(interaction); return; }
@@ -10774,6 +10776,15 @@ async function _captureRaidTickIfDue() {
   // window instead of paging the roster five times. Not the safety guard — the
   // unique index is — so a failed read falls THROUGH to the insert, which the
   // constraint will refuse if it is genuinely a duplicate.
+  // An officer pressed "End raid" — the night is over, whoever is still
+  // logged in. This is checked BEFORE the roster paging, so an ended night
+  // costs one cached lookup a minute rather than five roster pages.
+  const endedBy = await _raidEndedInfo(nightKey);
+  if (endedBy) {
+    console.log(`[raid-tick] slot ${slot.slot}: night ${nightKey} was ended by ${endedBy.by || 'an officer'} — not recording`);
+    return;
+  }
+
   const existing = await supabase.select('raid_attendance_ticks',
     `select=id&guild_id=eq.${encodeURIComponent(guildId)}` +
     `&night_key=eq.${encodeURIComponent(nightKey)}&slot=eq.${slot.slot}&limit=1`);
@@ -10832,6 +10843,124 @@ async function _captureRaidTickIfDue() {
 // already written by the time this runs, so a Discord failure loses a card, not
 // an attendance record. It says NOT SUBMITTED on its face because that is the
 // one thing an officer must not have to guess about.
+// ── "End raid" — an officer says the night is over ──────────────────────────
+// Hitya, 2026-08-30: "We need a button on the raid night thread for officers
+// and leaders to be able to click to end the raid."
+//
+// WHAT IT ACTUALLY DOES: stops the automatic attendance ticks for the rest of
+// the night. The four slots fire on the clock (20:30 / 21:30 / 22:30 / 23:30
+// ET), and since 2026-08-16 alt raids and Seru/misc nights deliberately run
+// THREE ticks over two hours — so on those nights slot 4 is a row claiming
+// people were present at 23:30 when the raid ended at 22:00. Until now the
+// only defence was the MIN_NAMES floor, which is a guess about how many
+// stragglers are still logged in, not a statement that the raid is over. This
+// is the statement.
+//
+// ⚠ bot_kv, never state.json. It is keyed per NIGHT, and state.json does not
+// survive a Railway deploy — the exact shape that posted eleven copies of one
+// raid review (CLAUDE.md).
+const _raidEndedKey = (nightKey) => `raid_ended_${nightKey}`;
+
+// The tick checker runs every 60s all evening, so the lookup is cached rather
+// than costing a Supabase read a minute. Bounded staleness is fine here: the
+// only way it can be wrong is one extra tick card in the minute after the
+// button is pressed, and both writers refresh the cache anyway.
+const _RAID_ENDED_TTL_MS = 60_000;
+let _raidEndedCache = { night: null, at: 0, value: null };
+
+async function _raidEndedInfo(nightKey) {
+  if (_raidEndedCache.night === nightKey && (Date.now() - _raidEndedCache.at) < _RAID_ENDED_TTL_MS) {
+    return _raidEndedCache.value;
+  }
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) return null;
+  try {
+    const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+    const rows = await supabase.select('bot_kv',
+      `guild_id=eq.${encodeURIComponent(guildId)}&key=eq.${encodeURIComponent(_raidEndedKey(nightKey))}&select=value&limit=1`);
+    const v = (Array.isArray(rows) && rows[0]?.value) || null;
+    const value = (v && v.ended) ? v : null;
+    _raidEndedCache = { night: nightKey, at: Date.now(), value };
+    return value;
+  } catch (err) {
+    // ⚠ FAIL OPEN, deliberately. A failed read must not silently stop
+    // attendance capture — a missing tick is unrecoverable (raid_roster is a
+    // live view pruned hourly), while an extra one is visible and editable.
+    console.warn('[raid-end] state read failed — capturing anyway:', err?.message);
+    return null;
+  }
+}
+
+async function _setRaidEnded(nightKey, { ended, by, byId }) {
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) return false;
+  const value = ended
+    ? { ended: true, by: by || null, by_id: byId || null, at: new Date().toISOString() }
+    : { ended: false, by: by || null, by_id: byId || null, at: new Date().toISOString() };
+  try {
+    await supabase.upsert('bot_kv', [{
+      guild_id: process.env.SUPABASE_GUILD_ID || 'wolfpack',
+      key: _raidEndedKey(nightKey), value, updated_at: new Date().toISOString(),
+    }], 'guild_id,key');
+    _raidEndedCache = { night: nightKey, at: Date.now(), value: ended ? value : null };
+    return true;
+  } catch (err) {
+    console.warn('[raid-end] state write failed:', err?.message);
+    return false;
+  }
+}
+
+// The button row a tick card carries. Ended nights offer the way back, because
+// an officer who ends the raid one tick early has no other route to undo it.
+function _raidEndComponents(nightKey, ended) {
+  const { ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+  return [new ActionRowBuilder().addComponents(
+    ended
+      ? new ButtonBuilder().setCustomId(`raid_reopen:${nightKey}`)
+          .setLabel('Reopen the raid').setEmoji('↩').setStyle(ButtonStyle.Secondary)
+      : new ButtonBuilder().setCustomId(`raid_end:${nightKey}`)
+          .setLabel('End raid').setEmoji('🏁').setStyle(ButtonStyle.Secondary),
+  )];
+}
+
+async function handleRaidEndButton(interaction, ending) {
+  const nightKey = (interaction.customId.split(':')[1] || '').trim();
+  if (!nightKey) return interaction.reply({ content: 'This button has lost its night.', ephemeral: true });
+
+  // Officers and leaders only — the same gate every other officer control uses.
+  if (!interaction.member || !hasOfficerRole(interaction.member)) {
+    return interaction.reply({
+      content: `Only ${officerRolesList()} can end the raid.`, ephemeral: true,
+    });
+  }
+
+  const already = await _raidEndedInfo(nightKey);
+  if (ending && already) {
+    return interaction.reply({
+      content: `🏁 Already ended — ${already.by || 'an officer'} called it <t:${Math.floor(Date.parse(already.at) / 1000)}:R>.`,
+      ephemeral: true,
+    });
+  }
+
+  const who = interaction.member.displayName || interaction.user.username;
+  const ok = await _setRaidEnded(nightKey, { ended: ending, by: who, byId: interaction.user.id });
+  if (!ok) {
+    return interaction.reply({ content: '⚠ Could not save that — try again in a moment.', ephemeral: true });
+  }
+  console.log(`[raid-end] ${who} ${ending ? 'ENDED' : 'reopened'} night ${nightKey}`);
+
+  // Flip the button on the card that was clicked. Other tick cards keep the
+  // stale label; pressing one is idempotent and answers "already ended".
+  await interaction.update({ components: _raidEndComponents(nightKey, ending) }).catch(async () => {
+    await interaction.reply({ content: 'Saved.', ephemeral: true }).catch(() => {});
+  });
+
+  const note = ending
+    ? `🏁 **Raid ended** by ${who} — no further attendance ticks will be captured tonight.`
+    : `↩ **Raid reopened** by ${who} — the remaining attendance ticks will be captured as usual.`;
+  await interaction.followUp({ content: note, allowedMentions: { parse: [] } }).catch(() => {});
+}
+
 async function _postRaidTickCard(slot, names, uploaders, scheduledForIso, nightKey) {
   const raidReview = require('./utils/raidReview');
   const target = await require('./utils/raidNight').getRaidNightTarget(client, Date.now()).catch(() => null);
@@ -10861,9 +10990,10 @@ async function _postRaidTickCard(slot, names, uploaders, scheduledForIso, nightK
 
   // Try the reserved slot; fall back to a normal post rather than losing the card.
   const idx = raidReview.tickSlotIndex(slot.slot);
-  const claimed = await raidReview.claimSlot(target.thread, nightKey, idx, { embeds: [emb] });
+  const components = _raidEndComponents(nightKey, false);
+  const claimed = await raidReview.claimSlot(target.thread, nightKey, idx, { embeds: [emb], components });
   if (!claimed) {
-    await target.thread.send({ embeds: [emb], allowedMentions: { parse: [] } });
+    await target.thread.send({ embeds: [emb], components, allowedMentions: { parse: [] } });
     console.log(`[raid-tick] slot ${slot.slot}: no reserved slot ${idx} — posted at the end instead`);
   }
 }
