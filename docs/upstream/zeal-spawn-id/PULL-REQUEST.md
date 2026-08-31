@@ -15,6 +15,25 @@ git am /path/to/0001-*.patch /path/to/0002-*.patch
 git push -u origin pipe-spawn-id
 ```
 
+### ⚠ Set your git identity BEFORE pushing
+
+`git am` takes the author from the patch file, not from your git config. The
+patches are stamped `davehess <davehess@users.noreply.github.com>` so that a
+forgotten step still produces something correct and leak-free — but set it to
+whatever you actually want on a permanent public commit:
+
+```
+git config user.name "Your Name"
+git config user.email "you@example.com"
+git rebase HEAD~2 --exec "git commit --amend --no-edit --reset-author"
+git log -2 --format='%an <%ae>'
+```
+
+`git config` without `--global` scopes this to the clone. To avoid publishing a
+real address, GitHub Settings -> Emails -> "Keep my email addresses private"
+gives you `<id>+<user>@users.noreply.github.com`, which still links commits to
+your account.
+
 Then open the PR with the title and body below.
 
 ---

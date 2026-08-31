@@ -72,6 +72,43 @@ describe('the Zeal PR patches', () => {
   });
 });
 
+// ⚠ This material is published under a PERSON'S name on someone else's repo,
+// permanently. A stray address or tool marker in a patch's From: line is not a
+// bug we can quietly fix later — it is in the upstream commit history forever.
+// The first cut of these patches carried a private `+claude` address into a
+// public repo, which is why this is checked mechanically now.
+describe('the PR material leaks no identity', () => {
+  const files = fs.readdirSync(DIR).map(f => [f, fs.readFileSync(path.join(DIR, f), 'utf8')]);
+
+  it('reads the whole directory, not an empty list', () => {
+    expect(files.length).toBeGreaterThanOrEqual(5);
+  });
+
+  it('names no tool or vendor anywhere', () => {
+    for (const [name, body] of files) {
+      expect(`${name}: ${body}`.toLowerCase()).not.toContain('claude');
+      expect(`${name}: ${body}`.toLowerCase()).not.toContain('anthropic');
+    }
+  });
+
+  it('carries no real email address — noreply only', () => {
+    for (const [name, body] of files) {
+      const emails = [...body.matchAll(/[\w.+-]+@[\w.-]+\.\w+/g)].map(m => m[0]);
+      const real = emails.filter(e => !e.endsWith('users.noreply.github.com')
+                                   && !e.includes('example.com'));
+      expect({ file: name, leaked: real }).toEqual({ file: name, leaked: [] });
+    }
+  });
+
+  it('stamps both patches with the same non-bot author', () => {
+    const froms = files.filter(([n]) => n.endsWith('.patch'))
+      .map(([, b]) => /^From: (.+)$/m.exec(b)[1]);
+    expect(froms).toHaveLength(2);
+    expect(new Set(froms).size).toBe(1);
+    expect(froms[0]).toMatch(/@users\.noreply\.github\.com>$/);
+  });
+});
+
 describe('the PR body matches the patch', () => {
   it('advertises every key the patch emits', () => {
     for (const key of emitted) expect(prBody).toContain(`\`${key}\``);
