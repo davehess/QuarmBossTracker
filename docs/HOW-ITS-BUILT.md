@@ -1384,6 +1384,47 @@ holds it in memory.
   in several eras takes the earliest, and the 22 with no zone match keep a NULL
   era rather than vanishing from the picker. Costs recorded in
   `DESIGN-selfhost-wizard.md` §3. Guarded by `test/item-catalog.test.js`.
+- **"End raid" button (bot 3.1.104)** — `_raidEndComponents` puts an officer-
+  gated 🏁 button on every attendance tick card in the raid-night thread;
+  `handleRaidEndButton` writes `raid_ended_<nightKey>` to **bot_kv** (never
+  state.json — it is keyed per night) and `_captureRaidTickIfDue` returns early
+  on it, BEFORE the roster paging. Hitya, 2026-08-30. The four tick slots fire
+  on the clock (20:30/21:30/22:30/23:30 ET) and since 2026-08-16 alt and
+  Seru/misc nights run three ticks over two hours, so slot 4 was recording
+  attendance an hour after those raids ended; the `MIN_NAMES` floor is a guess
+  about stragglers, this is a statement. ⚠ The read **fails open** — a broken
+  lookup captures anyway, because `raid_roster` is a live view pruned hourly so
+  a missed tick is unrecoverable while an extra one is editable. A ↩ Reopen
+  button undoes an early press. Tests: `test/raid-end-button.test.js`.
+- **⚠ `stripJs` ORDER (test/_source-slice.js, fixed 2026-08-30)** — block
+  comments were stripped BEFORE line comments, so a `/*` inside a line comment
+  (`// See supabase/migrations/*_target_observations.sql`, `// … under
+  /clients/{name}/*`) opened a block comment that ran to the next `*/` anywhere.
+  The two in `index.js` swallowed **1,652 lines / 66,804 chars — 6.7% of the
+  bot**, including the whole button-routing table. Nothing failed, because the
+  silent direction is a `not.toMatch` over deleted code. Line comments now go
+  first and block comments are matched in two bounded shapes only. Tests:
+  `test/source-slice-strippers.test.js`.
+- **Loot bidding: runner-up is POSITION-based (`_lootItemSummary`, bot 3.1.103)** —
+  second place is the highest bid with `position > 1`, read straight off
+  `opendkp_auction_bids.position`. It used to be derived by removing ONE copy of
+  the winning VALUE from the bid list and taking the next highest, which is
+  wrong whenever several people bid the same number: Thorny Chain Sleeves
+  reported 10 (really 5) and Bone Chill Shield 20 (really 7), both because a
+  losing bid tied the winner's value and got read as the runner-up (Hitya,
+  2026-08-30). The value rule survives only as the fallback for rows the
+  detail backfill has not reached, which carry no `position`.
+- **Panel auction cache: the idle TTL is raid-aware (`_panelAuctions`, bot
+  3.1.103)** — "nothing is up for bid" used to be cached for 120s, exactly the
+  length of a bidding window, so a raider's Loot tab could hold an empty list
+  for the whole auction (Hitya, 2026-08-30: *"The loot is not posted quickly on
+  the channel"*). Now: `_invalidatePanelAuctions()` fires from
+  `_handleAgentLootPost` the moment an officer opens bidding — exact, and free,
+  since it only moves a call forward — and inside a raid window the idle TTL is
+  `_PANEL_AUCTIONS_TTL_IDLE_RAID_MS` (30s, env-overridable) as a backstop for
+  auctions opened on the OpenDKP website, which the bot never sees. Off-raid
+  stays 120s and the 15s ACTIVE TTL is untouched. Tests:
+  `test/server-panel-auction-cache.test.js`.
 - **Loot bidding: RECENT MISSES is PER CHARACTER (`_buildMisses`, bot 3.1.97)** —
   Hitya, 2026-08-29: *"removed for that character after that character wins that
   item"*, and *"I know for a fact that there are items that I've bid on in the

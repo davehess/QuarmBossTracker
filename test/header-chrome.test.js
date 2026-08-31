@@ -69,7 +69,9 @@ describe('header chrome', () => {
       expect(i).toBeGreaterThan(-1);
       const el = headerCode.slice(i - 120, i + 400);
       expect(el).toContain(`aria-label="${label}"`);
-      expect(el).toMatch(/hidden xl:inline/);
+      // The breakpoint itself moved (2026-08-30) and may move again; what must
+      // hold is that the text IS conditional and the aria-label survives it.
+      expect(el).toMatch(/hidden (?:\w+|min-\[\d+px\]):inline/);
     },
   );
 
@@ -107,7 +109,7 @@ describe('header chrome', () => {
 
   it('shows the three channels as symbols alone when space is short', () => {
     // Only the label drops; the glyph is what stays.
-    expect(icons).toMatch(/\{showLabel && <span>\{c\.label\}<\/span>\}/);
+    expect(icons).toMatch(/\{showLabel && <span className="hidden (?:\w+|min-\[\d+px\]):inline">\{c\.label\}<\/span>\}/);
     // ⚠ The stable channel's symbol is the DOWNLOAD icon, not the mimic logo
     // (Hitya, 2026-08-28) — the logo is the brand mark in the same bar, so the
     // folded bar was showing one picture twice, as "home" and as "download".
@@ -140,5 +142,92 @@ describe('header chrome', () => {
     const box = layoutCode.slice(layoutCode.indexOf('sticky top-0 z-50'));
     expect(box.indexOf('BetaBanner')).toBeGreaterThan(-1);
     expect(box.indexOf('SiteHeader')).toBeGreaterThan(box.indexOf('BetaBanner'));
+  });
+});
+
+// ── The signed-in bar (Hitya, 2026-08-30) ──────────────────────────────────
+// "Top nav is broken when you log in on desktop in chrome and the resize is
+// messing with the formatting of the page."
+//
+// Signing in adds five things to the row — the search box, Tour, Admin, Test
+// server and the account chip — and the ROOMY media query was measured on the
+// signed-out bar. So a 1400px window passed the query with nowhere to put the
+// categories: the middle group was `min-w-0`, the right group was `shrink-0`,
+// and Nav wrapped. The result was every chip on its own line, a ten-row
+// vertical stack down the middle of the header.
+//
+// Measured in a real browser at 1401px (the reported width) after the fix:
+// one nav row, zero row overflow, zero page overflow; compact at 1300 and
+// below; full and labelled at 1920.
+describe('the signed-in bar fits, or folds — never stacks', () => {
+  const headerCode = strip(read('components/SiteHeader.tsx'));
+  const navCode    = strip(read('components/Nav.tsx'));
+
+  it('Nav never wraps: not fitting must be an overflow, not a second row', () => {
+    // A wrapping nav is what produced the vertical stack. The REVEALED row
+    // below still wraps — it has the full width to itself.
+    const bar = navCode.slice(navCode.indexOf('<nav'), navCode.indexOf('</nav>'));
+    expect(bar).toContain('flex-nowrap');
+    expect(bar).not.toContain('flex-wrap');
+    expect(navCode.slice(navCode.indexOf('</nav>'))).toContain('flex-wrap');
+  });
+
+  it('every child of the row is shrink-0, so the row reports its true width', () => {
+    // A `min-w-0` middle absorbs the overshoot silently and there is nothing
+    // left to measure.
+    expect(headerCode).toContain('<div className="mx-auto shrink-0"><Nav');
+    expect(headerCode).not.toContain('<div className="mx-auto min-w-0"><Nav');
+  });
+
+  it('measures itself rather than trusting the breakpoint alone', () => {
+    expect(headerCode).toMatch(/scrollWidth > el\.clientWidth/);
+    expect(headerCode).toContain('ResizeObserver');
+    // Before paint — nobody should see the too-wide bar.
+    expect(headerCode).toMatch(/useIsoLayout\(\(\) => \{[\s\S]{0,400}scrollWidth/);
+    expect(headerCode).toMatch(/const compact = scrolled \|\| !roomy \|\| tight;/);
+  });
+
+  it('has hysteresis, or folding would immediately unfold and oscillate', () => {
+    // Folding removes the overflow, so the same measurement would say "fits"
+    // on the very next pass. Recovery is keyed on the viewport growing past
+    // the width at which it stopped fitting.
+    expect(headerCode).toMatch(/tightAt\.current = w/);
+    expect(headerCode).toMatch(/w > tightAt\.current \+ \d+/);
+  });
+
+  it('clips rather than scrolls the page sideways while it is deciding', () => {
+    const row = headerCode.slice(headerCode.indexOf('<div ref={row}'), headerCode.indexOf('<div ref={row}') + 200);
+    expect(row).toContain('overflow-hidden');
+  });
+
+  it('gives the header row more than the 1280px content column', () => {
+    // max-w-7xl capped the row at 1280 no matter how wide the window was, so
+    // the signed-in bar (measured 1739px of content) could not fit at ANY
+    // width — widening the window bought it nothing.
+    expect(headerCode).toMatch(/max-w-\[1800px\]/);
+    expect(headerCode).not.toMatch(/flex max-w-7xl items-center/);
+  });
+
+  it('brings the chip labels back only where the row can afford them', () => {
+    // The labels are ~420px together. They may only appear at a width where
+    // the row is wide enough to hold them, and the row is capped at 1800 — so
+    // the label breakpoint and the cap have to be the same number.
+    const caps = headerCode.match(/max-w-\[(\d+)px\]/);
+    const labels = headerCode.match(/min-\[(\d+)px\]:inline/);
+    expect(caps).toBeTruthy();
+    expect(labels).toBeTruthy();
+    expect(labels[1]).toBe(caps[1]);
+  });
+
+  it('moved Test server out of the four top-level doors', () => {
+    // It was a fifth door only signed-in members saw, and it was the 95px
+    // that stopped the bar fitting.
+    expect(navCode).not.toContain('/test-server');
+    expect(headerCode).toContain('/test-server');
+  });
+
+  it('sizes the search field from the header, not from inside the component', () => {
+    // A hardcoded sm:w-72 overflowed its slot and painted under the clock.
+    expect(headerCode).toMatch(/w-\[\d+px\] shrink-0">\{search\}/);
   });
 });

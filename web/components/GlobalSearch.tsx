@@ -106,7 +106,12 @@ export default function GlobalSearch() {
   let runningIdx = -1;
 
   return (
-    <div ref={wrapRef} className="relative w-full sm:w-72">
+    // ⚠ Width comes from the CALLER (2026-08-30). This used to force sm:w-72,
+    // which ignored the header slot it sits in — the 288px input overflowed a
+    // narrower slot and painted UNDER the clock chip beside it. The results
+    // panel still sets its own comfortable width; only the field follows the
+    // slot.
+    <div ref={wrapRef} className="relative w-full">
       <input
         ref={inputRef}
         value={q}

@@ -1115,6 +1115,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (interaction.customId === 'onb_show_again')              { await handleOnbShowAgain(interaction); return; }
     if (interaction.customId.startsWith('mark_avail:'))           { await handleMarkAvail(interaction); return; }
     if (interaction.customId.startsWith('pvp_window_spawned:')) { await handlePvpWindowSpawned(interaction); return; }
+    if (interaction.customId.startsWith('raid_end:'))           { await handleRaidEndButton(interaction, true);  return; }
+    if (interaction.customId.startsWith('raid_reopen:'))        { await handleRaidEndButton(interaction, false); return; }
     if (interaction.customId.startsWith('hate_kill:'))          { await handleHateKillButton(interaction); return; }
     if (interaction.customId.startsWith('hate_confirm_unkill:')){ await handleHateConfirmUnkill(interaction); return; }
     if (interaction.customId.startsWith('hate_unknown:'))       { await handleHateUnknownButton(interaction); return; }
@@ -6064,22 +6066,45 @@ async function _handleAgentUiEditResult(req, res) {
 //     active auction already carries Bids[] inline (the same fact the mirror
 //     sync exploits), so its per-auction getAuction() N+1 and per-request
 //     getCharacters() are gone entirely (roster cached 1h below).
+//
+// ⚠ THE IDLE TTL USED TO BE THE ENTIRE BIDDING WINDOW (Hitya, 2026-08-30: "The
+// loot is not posted quickly on the channel"). Every auction opened on that
+// raid ran for 2 MINUTES and the idle TTL was 120s — so from the moment an
+// officer opened bidding, a raider's panel could sit on a cached EMPTY list
+// until the auction had already closed. Nothing errored; the item simply was
+// not there yet, and then it was gone. Two changes, in order of what they buy:
+//   • the officer's own post drops the cache in-process
+//     (`_invalidatePanelAuctions`, called from POST /api/agent/loot-post).
+//     That is the path all twelve of that night's posts took, it is exact, and
+//     it costs NOTHING upstream — it moves a call we were going to make within
+//     the TTL anyway, earlier.
+//   • inside a raid window the idle TTL drops to 30s, purely as a backstop for
+//     auctions opened on the OpenDKP website, which our handler never sees.
+//     Off-raid stays 120s: nobody is bidding, so nobody is waiting on it.
+// The 15s ACTIVE TTL is untouched — once an auction is up, that is the number
+// that governs, and it was never the problem.
 const _PANEL_AUCTIONS_TTL_ACTIVE_MS = 15_000;
 const _PANEL_AUCTIONS_TTL_IDLE_MS   = 120_000;
+const _PANEL_AUCTIONS_TTL_IDLE_RAID_MS =
+  Number(process.env.PANEL_AUCTIONS_TTL_IDLE_RAID_MS) || 30_000;
 const _PANEL_AUCTIONS_TTL_FAILED_MS = 20_000;
 let _panelAuctionsCache = null;   // { at, list }
 let _loggedActiveAuctionShape = false;
 async function _panelAuctions(deps = {}) {
   const now   = deps.now   || Date.now;
   const fetch = deps.fetch || (() => require('./utils/opendkp').getActiveAuctions());
+  const inRaid = deps.inRaid !== undefined ? deps.inRaid : _inRaidWindowEt(new Date(now()));
   const c = _panelAuctionsCache;
   if (c) {
     // A cached FAILURE gets its own short TTL: long enough to collapse a poll
     // storm, short enough that recovery is seconds not minutes. It must never
     // inherit the 120s idle TTL, which would make "upstream is broken" look
     // identical to "no auctions are open" for two minutes.
+    // "Nothing is up for bid" is the answer that goes stale in a way somebody
+    // is actually waiting on, and only while a raid is on.
+    const idleTtl = inRaid ? _PANEL_AUCTIONS_TTL_IDLE_RAID_MS : _PANEL_AUCTIONS_TTL_IDLE_MS;
     const ttl = c.failed ? _PANEL_AUCTIONS_TTL_FAILED_MS
-              : (c.list.length > 0 ? _PANEL_AUCTIONS_TTL_ACTIVE_MS : _PANEL_AUCTIONS_TTL_IDLE_MS);
+              : (c.list.length > 0 ? _PANEL_AUCTIONS_TTL_ACTIVE_MS : idleTtl);
     if (now() - c.at < ttl) {
       if (c.failed) throw new Error('OpenDKP unreachable (cached failure) — not re-attempting yet');
       return c.list;
@@ -6130,6 +6155,12 @@ async function _panelAuctions(deps = {}) {
   _panelAuctionsCache = { at: now(), list };
   return list;
 }
+
+// Drop the shared auctions cache so the NEXT poll goes upstream. Called only
+// when we already know the answer changed — an officer opening bidding — never
+// on a timer and never from a request we did not cause. A no-op if nothing is
+// cached, so it is safe to call unconditionally.
+function _invalidatePanelAuctions() { _panelAuctionsCache = null; }
 
 // Pooled family DKP recomputed from OUR MIRROR — ticks earned, plus
 // adjustments, minus loot spent. No upstream call: it reads the Supabase tables
@@ -6343,15 +6374,41 @@ function _lootItemSummary(auctionsDesc, bidsByAuction) {
   }
   const winningBid = auc.bid_amount;
   const bids = (bidsByAuction && bidsByAuction[auc.auction_id]) || [];
-  const vals = bids.map(b => Number(b.value)).filter(v => Number.isFinite(v));
-  // Remove ONE instance of the winning value (the winner), max of the rest.
-  let removed = false;
-  const losing = [];
-  for (const v of vals) {
-    if (!removed && v === winningBid) { removed = true; continue; }
-    losing.push(v);
+  // ⚠ SECOND PLACE COMES FROM `position`, NOT FROM THE VALUES.
+  //
+  // Verified against OpenDKP's own results pages (Hitya, 2026-08-30):
+  //   Thorny Chain Sleeves 1068644 — FawxFF@10 AND Fawx@10 both at position 1
+  //     (the account login and the character name are the SAME bid, mirrored
+  //     twice), real second = Fittir@5 at position 2. We showed 10.
+  //   Bone Chill Shield  1068673 — fromuthman@20 and SuperBloodWolf@20 both at
+  //     position 1, real second = Ellah@7 at position 2. We showed 20.
+  // The old rule dropped ONE instance of the winning value and took the max of
+  // the rest, so the winner's duplicate row became "second place" every time an
+  // auction had one — which is most of them.
+  //
+  // Position is OpenDKP's own ranking from the per-auction detail, so it also
+  // keeps a GENUINE tie correct: Thorny Chain HELM 1010784 is Fayce@15 (1),
+  // Philomena@15 (2), Smokestomp@7 (3) — a real second bidder at the same
+  // value, and position 2 still reports 15, which is what Hitya asked for on
+  // 2026-08-30. A value-based rule cannot tell these two shapes apart.
+  const ranked = bids.filter(b => Number.isFinite(Number(b.position)) && Number(b.position) > 1
+                                && Number.isFinite(Number(b.value)));
+  let runnerUp;
+  if (ranked.length) {
+    runnerUp = Math.max(...ranked.map(b => Number(b.value)));
+  } else {
+    // No ranked rows: this auction has only list-path bids (winners-only, all
+    // position 1) and has not been detail-synced yet. Fall back to the old
+    // value rule so nothing regresses while the backfill catches up.
+    const vals = bids.map(b => Number(b.value)).filter(v => Number.isFinite(v));
+    let removed = false;
+    const losing = [];
+    for (const v of vals) {
+      if (!removed && v === winningBid) { removed = true; continue; }
+      losing.push(v);
+    }
+    runnerUp = losing.length ? Math.max(...losing) : null;
   }
-  const runnerUp = losing.length ? Math.max(...losing) : null;
   return { winner: auc.winner || null, winning_bid: winningBid, runner_up: runnerUp, item_name: auc.item_name || null };
 }
 
@@ -6914,7 +6971,7 @@ async function _handleAgentServerPanel(req, res) {
       if (winAuctionIds.length) {
         const bidRows = await supabase.select(
           'opendkp_auction_bids',
-          `select=auction_id,value&auction_id=in.(${winAuctionIds.slice(0, 60).join(',')})&limit=1000`
+          `select=auction_id,value,position&auction_id=in.(${winAuctionIds.slice(0, 60).join(',')})&limit=1000`
         ) || [];
         for (const b of bidRows) { (bidsByAuction[b.auction_id] = bidsByAuction[b.auction_id] || []).push(b); }
       }
@@ -7140,7 +7197,7 @@ async function _handleAgentServerPanel(req, res) {
         for (const list of mByItem.values()) { const top = list.find(x => x.winner != null && x.bid_amount != null); if (top) mWinAids.push(top.auction_id); }
         let mBidsByAuc = {};
         if (mWinAids.length) {
-          const mBids = await supabase.select('opendkp_auction_bids', `select=auction_id,value&auction_id=in.(${mWinAids.slice(0, 60).join(',')})&limit=1500`) || [];
+          const mBids = await supabase.select('opendkp_auction_bids', `select=auction_id,value,position&auction_id=in.(${mWinAids.slice(0, 60).join(',')})&limit=1500`) || [];
           for (const b of mBids) { (mBidsByAuc[b.auction_id] = mBidsByAuc[b.auction_id] || []).push(b); }
         }
         misses = misses.map(m => {
@@ -7557,6 +7614,12 @@ async function _handleAgentLootPost(req, res) {
     }));
     await createAuctions(auctions);
     console.log(`[loot-post] ${identity.display_name || identity.discord_id} opened ${auctions.length} closed auction(s), ${duration}m`);
+
+    // The panel's shared auctions cache is stale BY CONSTRUCTION now — we just
+    // created these auctions upstream. Drop it so the next 7s dashboard poll
+    // renders them instead of waiting out the idle TTL, which used to be as
+    // long as the whole bidding window (see the cache header above).
+    try { _invalidatePanelAuctions(); } catch { /* fail-open — the TTL still expires */ }
 
     // Broadcast a loot-posted event to every agent (#149) so the raid-wide
     // "Loot posted — N items" TTS can fire off this REAL post instead of chat
@@ -10713,6 +10776,15 @@ async function _captureRaidTickIfDue() {
   // window instead of paging the roster five times. Not the safety guard — the
   // unique index is — so a failed read falls THROUGH to the insert, which the
   // constraint will refuse if it is genuinely a duplicate.
+  // An officer pressed "End raid" — the night is over, whoever is still
+  // logged in. This is checked BEFORE the roster paging, so an ended night
+  // costs one cached lookup a minute rather than five roster pages.
+  const endedBy = await _raidEndedInfo(nightKey);
+  if (endedBy) {
+    console.log(`[raid-tick] slot ${slot.slot}: night ${nightKey} was ended by ${endedBy.by || 'an officer'} — not recording`);
+    return;
+  }
+
   const existing = await supabase.select('raid_attendance_ticks',
     `select=id&guild_id=eq.${encodeURIComponent(guildId)}` +
     `&night_key=eq.${encodeURIComponent(nightKey)}&slot=eq.${slot.slot}&limit=1`);
@@ -10771,6 +10843,124 @@ async function _captureRaidTickIfDue() {
 // already written by the time this runs, so a Discord failure loses a card, not
 // an attendance record. It says NOT SUBMITTED on its face because that is the
 // one thing an officer must not have to guess about.
+// ── "End raid" — an officer says the night is over ──────────────────────────
+// Hitya, 2026-08-30: "We need a button on the raid night thread for officers
+// and leaders to be able to click to end the raid."
+//
+// WHAT IT ACTUALLY DOES: stops the automatic attendance ticks for the rest of
+// the night. The four slots fire on the clock (20:30 / 21:30 / 22:30 / 23:30
+// ET), and since 2026-08-16 alt raids and Seru/misc nights deliberately run
+// THREE ticks over two hours — so on those nights slot 4 is a row claiming
+// people were present at 23:30 when the raid ended at 22:00. Until now the
+// only defence was the MIN_NAMES floor, which is a guess about how many
+// stragglers are still logged in, not a statement that the raid is over. This
+// is the statement.
+//
+// ⚠ bot_kv, never state.json. It is keyed per NIGHT, and state.json does not
+// survive a Railway deploy — the exact shape that posted eleven copies of one
+// raid review (CLAUDE.md).
+const _raidEndedKey = (nightKey) => `raid_ended_${nightKey}`;
+
+// The tick checker runs every 60s all evening, so the lookup is cached rather
+// than costing a Supabase read a minute. Bounded staleness is fine here: the
+// only way it can be wrong is one extra tick card in the minute after the
+// button is pressed, and both writers refresh the cache anyway.
+const _RAID_ENDED_TTL_MS = 60_000;
+let _raidEndedCache = { night: null, at: 0, value: null };
+
+async function _raidEndedInfo(nightKey) {
+  if (_raidEndedCache.night === nightKey && (Date.now() - _raidEndedCache.at) < _RAID_ENDED_TTL_MS) {
+    return _raidEndedCache.value;
+  }
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) return null;
+  try {
+    const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+    const rows = await supabase.select('bot_kv',
+      `guild_id=eq.${encodeURIComponent(guildId)}&key=eq.${encodeURIComponent(_raidEndedKey(nightKey))}&select=value&limit=1`);
+    const v = (Array.isArray(rows) && rows[0]?.value) || null;
+    const value = (v && v.ended) ? v : null;
+    _raidEndedCache = { night: nightKey, at: Date.now(), value };
+    return value;
+  } catch (err) {
+    // ⚠ FAIL OPEN, deliberately. A failed read must not silently stop
+    // attendance capture — a missing tick is unrecoverable (raid_roster is a
+    // live view pruned hourly), while an extra one is visible and editable.
+    console.warn('[raid-end] state read failed — capturing anyway:', err?.message);
+    return null;
+  }
+}
+
+async function _setRaidEnded(nightKey, { ended, by, byId }) {
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) return false;
+  const value = ended
+    ? { ended: true, by: by || null, by_id: byId || null, at: new Date().toISOString() }
+    : { ended: false, by: by || null, by_id: byId || null, at: new Date().toISOString() };
+  try {
+    await supabase.upsert('bot_kv', [{
+      guild_id: process.env.SUPABASE_GUILD_ID || 'wolfpack',
+      key: _raidEndedKey(nightKey), value, updated_at: new Date().toISOString(),
+    }], 'guild_id,key');
+    _raidEndedCache = { night: nightKey, at: Date.now(), value: ended ? value : null };
+    return true;
+  } catch (err) {
+    console.warn('[raid-end] state write failed:', err?.message);
+    return false;
+  }
+}
+
+// The button row a tick card carries. Ended nights offer the way back, because
+// an officer who ends the raid one tick early has no other route to undo it.
+function _raidEndComponents(nightKey, ended) {
+  const { ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+  return [new ActionRowBuilder().addComponents(
+    ended
+      ? new ButtonBuilder().setCustomId(`raid_reopen:${nightKey}`)
+          .setLabel('Reopen the raid').setEmoji('↩').setStyle(ButtonStyle.Secondary)
+      : new ButtonBuilder().setCustomId(`raid_end:${nightKey}`)
+          .setLabel('End raid').setEmoji('🏁').setStyle(ButtonStyle.Secondary),
+  )];
+}
+
+async function handleRaidEndButton(interaction, ending) {
+  const nightKey = (interaction.customId.split(':')[1] || '').trim();
+  if (!nightKey) return interaction.reply({ content: 'This button has lost its night.', ephemeral: true });
+
+  // Officers and leaders only — the same gate every other officer control uses.
+  if (!interaction.member || !hasOfficerRole(interaction.member)) {
+    return interaction.reply({
+      content: `Only ${officerRolesList()} can end the raid.`, ephemeral: true,
+    });
+  }
+
+  const already = await _raidEndedInfo(nightKey);
+  if (ending && already) {
+    return interaction.reply({
+      content: `🏁 Already ended — ${already.by || 'an officer'} called it <t:${Math.floor(Date.parse(already.at) / 1000)}:R>.`,
+      ephemeral: true,
+    });
+  }
+
+  const who = interaction.member.displayName || interaction.user.username;
+  const ok = await _setRaidEnded(nightKey, { ended: ending, by: who, byId: interaction.user.id });
+  if (!ok) {
+    return interaction.reply({ content: '⚠ Could not save that — try again in a moment.', ephemeral: true });
+  }
+  console.log(`[raid-end] ${who} ${ending ? 'ENDED' : 'reopened'} night ${nightKey}`);
+
+  // Flip the button on the card that was clicked. Other tick cards keep the
+  // stale label; pressing one is idempotent and answers "already ended".
+  await interaction.update({ components: _raidEndComponents(nightKey, ending) }).catch(async () => {
+    await interaction.reply({ content: 'Saved.', ephemeral: true }).catch(() => {});
+  });
+
+  const note = ending
+    ? `🏁 **Raid ended** by ${who} — no further attendance ticks will be captured tonight.`
+    : `↩ **Raid reopened** by ${who} — the remaining attendance ticks will be captured as usual.`;
+  await interaction.followUp({ content: note, allowedMentions: { parse: [] } }).catch(() => {});
+}
+
 async function _postRaidTickCard(slot, names, uploaders, scheduledForIso, nightKey) {
   const raidReview = require('./utils/raidReview');
   const target = await require('./utils/raidNight').getRaidNightTarget(client, Date.now()).catch(() => null);
@@ -10800,9 +10990,10 @@ async function _postRaidTickCard(slot, names, uploaders, scheduledForIso, nightK
 
   // Try the reserved slot; fall back to a normal post rather than losing the card.
   const idx = raidReview.tickSlotIndex(slot.slot);
-  const claimed = await raidReview.claimSlot(target.thread, nightKey, idx, { embeds: [emb] });
+  const components = _raidEndComponents(nightKey, false);
+  const claimed = await raidReview.claimSlot(target.thread, nightKey, idx, { embeds: [emb], components });
   if (!claimed) {
-    await target.thread.send({ embeds: [emb], allowedMentions: { parse: [] } });
+    await target.thread.send({ embeds: [emb], components, allowedMentions: { parse: [] } });
     console.log(`[raid-tick] slot ${slot.slot}: no reserved slot ${idx} — posted at the end instead`);
   }
 }

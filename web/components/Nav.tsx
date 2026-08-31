@@ -108,7 +108,17 @@ export default function Nav({ showAdmin = false, showMe = false }: { showAdmin?:
 
   return (
     <div ref={wrap} onMouseLeave={() => { if (canHover) setOpen(null); }}>
-      <nav className="flex flex-wrap items-center gap-1.5 sm:gap-2">
+      {/* ⚠ NOWRAP, deliberately (Hitya, 2026-08-30: "Top nav is broken when you
+          log in on desktop in chrome"). This row is only ever the header's
+          middle group, and its container can be squeezed thin by a wide
+          right-hand block — signed in that block gains the search box, Tour,
+          Admin and the account chip. While this wrapped, "squeezed thin" came
+          out as every chip on its own line: a 10-row vertical stack down the
+          middle of the bar. Not fitting is now a measurable overflow instead,
+          which SiteHeader reads to fold the whole bar into its compact shape —
+          the outcome the design already had for "not enough room". The
+          revealed row below still wraps; it has the full width to itself. */}
+      <nav className="flex flex-nowrap items-center gap-1.5 sm:gap-2">
         <Link href="/" className={`${chip} ${path === '/' ? chipActive : chipIdle}`}>Home</Link>
 
         {GROUPS.map(g => {
@@ -141,7 +151,10 @@ export default function Nav({ showAdmin = false, showMe = false }: { showAdmin?:
             for a prospective member it is the invitation, not a broken link. */}
         <Link href="/me" className={`${chip} ${path?.startsWith('/me') ? chipActive : chipIdle}`}>/me</Link>
         {showAdmin && <Link href="/admin" className={`${chip} ${path?.startsWith('/admin') ? chipActive : chipIdle}`}>Admin</Link>}
-        {showMe   && <Link href="/test-server" className={`${chip} ${chipIdle} opacity-70`}>Test server</Link>}
+        {/* ⚠ Test server MOVED to the header's utility chips (2026-08-30). The
+            brief here is four top-level doors — Raid, Stats, Prep and /me — and
+            this was a fifth that only signed-in members saw, which is both off
+            brief and exactly the 95px that stopped the signed-in bar fitting. */}
       </nav>
 
       {/* The revealed row. Rendered in flow rather than absolutely positioned so

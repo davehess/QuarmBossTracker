@@ -47,7 +47,11 @@ export default function SiteHeader({
   const [scrolled, setScrolled] = useState(false);
   const [roomy, setRoomy] = useState(true);
   const [menu, setMenu] = useState(false);
+  const [tight, setTight] = useState(false);
   const wrap = useRef<HTMLDivElement>(null);
+  const row = useRef<HTMLDivElement>(null);
+  const tightRef = useRef(false);
+  const tightAt = useRef(0);
 
   useIsoLayout(() => {
     const mq = window.matchMedia(ROOMY);
@@ -59,7 +63,45 @@ export default function SiteHeader({
     return () => { mq.removeEventListener('change', syncRoom); window.removeEventListener('scroll', syncScroll); };
   }, []);
 
-  const compact = scrolled || !roomy;
+  // ── Does the full bar actually FIT? ────────────────────────────────────────
+  // ROOMY alone could not answer that (Hitya, 2026-08-30: "Top nav is broken
+  // when you log in on desktop in chrome"). It was measured on the SIGNED-OUT
+  // bar, and signing in adds five things to the row — the search box, Tour,
+  // Admin, the avatar chip and Sign out — so a 1400px window passed the media
+  // query while genuinely having nowhere to put the categories. A wider
+  // breakpoint would only move the failure, because how much the account block
+  // needs depends on the length of your own name.
+  //
+  // So the bar measures itself. Every child of the row is now shrink-0, which
+  // makes "does not fit" a real horizontal overflow rather than a silently
+  // squeezed middle. Measured in a LAYOUT effect, so the fold happens before
+  // paint and nobody sees the too-wide bar.
+  //
+  // The hysteresis matters: folding to compact removes the overflow, so
+  // re-measuring would immediately unfold and oscillate. We remember the
+  // viewport width at which it stopped fitting and only try the full bar again
+  // once the window is meaningfully wider than that.
+  useIsoLayout(() => {
+    const measure = () => {
+      const el = row.current;
+      if (!el) return;
+      const w = window.innerWidth;
+      if (!tightRef.current) {
+        if (el.scrollWidth > el.clientWidth + 1) {
+          tightAt.current = w; tightRef.current = true; setTight(true);
+        }
+      } else if (w > tightAt.current + 64) {
+        tightRef.current = false; setTight(false);
+      }
+    };
+    measure();
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measure) : null;
+    if (ro && row.current) ro.observe(row.current);
+    window.addEventListener('resize', measure);
+    return () => { ro?.disconnect(); window.removeEventListener('resize', measure); };
+  }, []);
+
+  const compact = scrolled || !roomy || tight;
 
   // The menu belongs to the compact bar; going back to the full one must not
   // leave an orphaned panel open.
@@ -82,16 +124,22 @@ export default function SiteHeader({
     <>
       {tour}
       <Link href="/feedback" aria-label="Feedback" className={chip}>
-        <span aria-hidden>💬</span><span className="hidden xl:inline">Feedback</span>
+        <span aria-hidden>💬</span><span className="hidden min-[1800px]:inline">Feedback</span>
       </Link>
       <a href="https://wolfpack.opendkp.com" target="_blank" rel="noreferrer"
          aria-label="OpenDKP" title="Wolf Pack OpenDKP — roster, DKP, raid attendance, auctions"
          className={chip}>
-        <span aria-hidden>💰</span><span className="hidden xl:inline">OpenDKP</span>
+        <span aria-hidden>💰</span><span className="hidden min-[1800px]:inline">OpenDKP</span>
       </a>
       {showAdmin && (
         <Link href="/admin" aria-label="Admin" className={chip}>
-          <span aria-hidden>🛡️</span><span className="hidden xl:inline">Admin</span>
+          <span aria-hidden>🛡️</span><span className="hidden min-[1800px]:inline">Admin</span>
+        </Link>
+      )}
+      {showMe && (
+        <Link href="/test-server" aria-label="Test server" title="Test server"
+              className={`${chip} opacity-70`}>
+          <span aria-hidden>🧪</span><span className="hidden min-[1800px]:inline">Test server</span>
         </Link>
       )}
     </>
@@ -99,7 +147,7 @@ export default function SiteHeader({
 
   return (
     <div ref={wrap} className="border-b border-border/60 bg-bg/95 backdrop-blur">
-      <div className="mx-auto flex max-w-7xl items-center gap-2 px-3 py-2 sm:px-4">
+      <div ref={row} className="mx-auto flex max-w-[1800px] items-center gap-2 overflow-hidden px-3 py-2 sm:px-4">
 
         {/* Brand. The wordmark is the first thing to go when space is short. */}
         <Link href="/" aria-label="WolfPack.quest — home" className="flex shrink-0 items-center gap-2 no-underline">
@@ -125,9 +173,9 @@ export default function SiteHeader({
         ) : (
           <>
             {/* Categories in the middle. */}
-            <div className="mx-auto min-w-0"><Nav showMe={showMe} /></div>
+            <div className="mx-auto shrink-0"><Nav showMe={showMe} /></div>
             <div className="flex shrink-0 items-center gap-2">
-              {search}
+              <div className="w-[180px] shrink-0">{search}</div>
               <TimezonePicker />
               {utility}
               {authBadge}
@@ -159,7 +207,7 @@ export default function SiteHeader({
             ))}
             <div className="mt-3 flex items-center gap-3 border-t border-border/60 pt-3">
               <TimezonePicker />
-              {search}
+              <div className="w-[180px] shrink-0">{search}</div>
             </div>
           </div>
         </div>

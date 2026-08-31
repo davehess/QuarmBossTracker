@@ -86,7 +86,9 @@ export function ChannelLink({ c, showLabel }: { c: Channel; showLabel: boolean }
       {/* Compact is the symbol ALONE — "just show the mimic icon, beta symbol,
           then Linux symbol" — which is also what keeps the bar inside a 360px
           viewport: the labels are 45px across the three chips. */}
-      {showLabel && <span>{c.label}</span>}
+      {/* The label is the first casualty when the row is tight — the icon and
+          the tooltip carry the meaning on their own. */}
+      {showLabel && <span className="hidden min-[1800px]:inline">{c.label}</span>}
     </a>
   );
 }
