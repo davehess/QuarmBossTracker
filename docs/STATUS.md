@@ -110,6 +110,10 @@ next touch one rather than assuming a missing row means a missing doc.
   🐞 **Live testing found a real bug**: `pet_id` emitted `-1` with no pet
   (`ActorInfo::PetID` is a SHORT holding -1, not 0, and the guard tested
   truthiness). Fixed to `PetID > 0`; diff grew 10 → 14 lines.
+  ✅ **Fix verified on a rebuilt client, both directions**: `pet_id` 3005 with a
+  pet, and the key ABSENT with none. So the "omitted, never sentinel-valued"
+  contract the PR body promises now actually holds — which is the only reason
+  that claim is safe to leave in the body.
   ⚠ The PR BODY still says we could not compile it. That was true when filed;
   the follow-up comment (`pr-229-build-report.md`) is what corrects it.
   ⚠ **Force-push still pending** — until Hitya pushes, GitHub has the `-1` bug
