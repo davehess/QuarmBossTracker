@@ -1,0 +1,1 @@
+named_pipe: emit spawn ids for raid, group, self, target and pet
