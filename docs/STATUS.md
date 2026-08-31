@@ -144,8 +144,11 @@ next touch one rather than assuming a missing row means a missing doc.
   **Tier 1** `?since=<AuditId>`. **Tier 2** the affected entity's id on each
   audit row — the multiplier that turns every other full pull into a targeted
   read. 46 → ~1.5 MB/day at the top of the ladder.
-  ⚠ **The artifact Moncs would read still has the stale numbers** — refresh it
-  from the doc before sending.
+  ✅ **The artifact is refreshed and sendable**
+  (https://claude.ai/code/artifact/924ea487-4fb4-4e55-ac66-4cb8ed6be897) —
+  live 24h figures, the ladder, the bid-detail case, and `/characters` shown as
+  the top line. Retitled *"Which Thing Changed"*. **Nothing is blocking the
+  send.**
 - **📋 OpenDKP API review, against MEASURED spend
   (`docs/opendkp-api-review-2026-08-31.md`, 2026-08-31).** Hitya supplied the
   full API reference and asked whether we target OpenDKP well. Real 7-day cost:
