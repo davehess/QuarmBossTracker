@@ -22,7 +22,7 @@ entity. Five keys, all additive:
 `target_id` and `pet_id` are omitted rather than zeroed when there is no target
 or no pet, so a consumer tests for presence instead of a sentinel.
 
-The diff is 10 added lines and 0 changed lines in `Zeal/named_pipe.cpp`. A
+The diff is 14 added lines and 0 changed lines in `Zeal/named_pipe.cpp`. A
 second commit documents the new fields in the README's "Zeal pipes" section and
 can be dropped independently if you would rather document it elsewhere.
 

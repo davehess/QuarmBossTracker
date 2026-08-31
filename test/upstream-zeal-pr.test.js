@@ -67,8 +67,20 @@ describe('the Zeal PR patches', () => {
   it('sources every key from an Entity the loop already holds', () => {
     // No new spawn-list walk is the cost argument; a get_entity_by_id call
     // would still be O(1) but would contradict the body as written.
-    expect(diffBody).not.toContain('get_entity_by_id');
-    expect(diffBody).not.toContain('get_entity_list');
+    //
+    // ⚠ Assert on added CODE, not added lines. The patch's own comments explain
+    // why zone_map.cpp can get away with a truthiness test on PetID — which
+    // names get_entity_by_id — and a bare substring check cannot tell that
+    // mention from a call. Same trap as CLAUDE.md's comments-satisfy-text-
+    // assertions rule, one level in: here the prose lives inside the diff.
+    const addedCode = added
+      .map(l => l.slice(1))
+      .filter(l => !l.trim().startsWith('//'))
+      .join('\n');
+    expect(addedCode).not.toContain('get_entity_by_id');
+    expect(addedCode).not.toContain('get_entity_list');
+    // ...and the stripping must not have eaten the code itself.
+    expect(addedCode).toContain('player_data["spawn_id"]');
   });
 });
 

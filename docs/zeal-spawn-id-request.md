@@ -117,7 +117,7 @@ the case for enchanter charm rotations, adds, and pulls.
 
 ⚠ **This is the section that matches the patch.** Everything above is the
 argument; everything below "Secondary" is the rejected alternative. The shipped
-diff is 10 added lines and 0 changed lines in `Zeal/named_pipe.cpp`:
+diff is 14 added lines and 0 changed lines in `Zeal/named_pipe.cpp`:
 
 | Message | Key | Source |
 |---|---|---|

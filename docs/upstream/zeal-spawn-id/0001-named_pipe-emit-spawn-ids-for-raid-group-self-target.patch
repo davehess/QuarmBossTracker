@@ -1,6 +1,6 @@
-From b0ac8df18fcf5cb7a2bdb04de319f9eb58d0d782 Mon Sep 17 00:00:00 2001
+From fe3e90813a23c3e4c04d4a8f24ead8ee5afa7853 Mon Sep 17 00:00:00 2001
 From: davehess <davehess@users.noreply.github.com>
-Date: Mon, 31 Aug 2026 13:20:30 +0000
+Date: Mon, 31 Aug 2026 14:27:48 +0000
 Subject: [PATCH 1/2] named_pipe: emit spawn ids for raid, group, self, target
  and pet
 
@@ -32,11 +32,11 @@ exactly as safe here as the get_self() calls beside it.
 Additive only. Existing consumers key on the fields they already read and
 ignore unknown ones, so no existing key changes shape or meaning.
 ---
- Zeal/named_pipe.cpp | 10 ++++++++++
- 1 file changed, 10 insertions(+)
+ Zeal/named_pipe.cpp | 14 ++++++++++++++
+ 1 file changed, 14 insertions(+)
 
 diff --git a/Zeal/named_pipe.cpp b/Zeal/named_pipe.cpp
-index 07fad7d..5b21505 100644
+index 07fad7d..f6069f1 100644
 --- a/Zeal/named_pipe.cpp
 +++ b/Zeal/named_pipe.cpp
 @@ -213,6 +213,7 @@ void NamedPipe::main_loop() {
@@ -55,7 +55,7 @@ index 07fad7d..5b21505 100644
            group_data["loc"] = toJson(member->Position);
            group_data["heading"] = member->Heading;
            if (pipe_verbose.get()) {
-@@ -303,6 +305,14 @@ void NamedPipe::main_loop() {
+@@ -303,6 +305,18 @@ void NamedPipe::main_loop() {
        player_data["location"] = toJson(Zeal::Game::get_self()->Position);
        player_data["heading"] = Zeal::Game::get_self()->Heading;
        player_data["autoattack"] = (bool)(*(BYTE *)0x7f6ffe);
@@ -63,10 +63,14 @@ index 07fad7d..5b21505 100644
 +      // Spawn id of the current target and pet. Both keys are omitted when
 +      // there is no target / no pet, so a consumer tests for presence rather
 +      // than for a sentinel value.
++      // PetID is a SHORT that holds -1 (not 0) when there is no pet, so it is
++      // range checked rather than tested for truthiness. zone_map.cpp gets away
++      // with a plain truthiness test only because get_entity_by_id() rejects a
++      // negative id downstream; there is no such backstop here.
 +      const auto *target = Zeal::Game::get_target();
 +      if (target) player_data["target_id"] = target->SpawnId;
 +      const auto *actor_info = Zeal::Game::get_self()->ActorInfo;
-+      if (actor_info && actor_info->PetID) player_data["pet_id"] = actor_info->PetID;
++      if (actor_info && actor_info->PetID > 0) player_data["pet_id"] = actor_info->PetID;
        // nlohmann::json data = { {"zone", Zeal::Game::get_self()->ZoneId}, {"location",
        // Zeal::Game::get_self()->Position.toJson() }, {"heading", Zeal::Game::get_self()->Heading}, {"autoattack",
        // (bool)(*(BYTE*)0x7f6ffe)} };
