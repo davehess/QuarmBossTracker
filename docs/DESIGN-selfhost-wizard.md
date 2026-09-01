@@ -70,6 +70,78 @@ something neither pure option does: production stays small and cheap while the
 local box answers questions the 3-hour window never can — slow uptime across an
 expansion, threat patterns over months.
 
+### 2a. Free tier vs paid — what another guild should actually expect
+
+⚠ **Wolf Pack runs PAID on both layers, and a lot of this repo's reasoning
+silently assumes it.** Measured 2026-09-01, so a reader can tell which numbers
+are ours and which are theirs:
+
+| Layer | What we run | Measured usage |
+|---|---|---|
+| Supabase | **Pro** (org `hesstastic`, $25/mo) | DB **1.72 GB of 8 GB** (21%) |
+| Railway | **Paid** — Hobby or Pro | avg **0.128 GB RAM · 0.032 vCPU**, peak 0.70 GB / 0.69 vCPU |
+| Vercel | Hobby | — |
+
+(The Railway tier is Hobby-or-Pro rather than known: the service's 8 vCPU / 8 GB
+per-service limits are impossible on Free's 1 vCPU / 0.5 GB or Trial's 2 / 1, but
+the Management API does not expose the subscription. Dashboard-only.)
+
+**Can another guild run this free? Per layer, with the reason:**
+
+| Layer | Free tier gives | Verdict |
+|---|---|---|
+| **Supabase Free** | 500 MB DB · 5 GB egress/mo · 1 GB storage · **project pauses after 7 days idle** · 2 free projects per owner | **Viable only briefly, and only with retention tuned down** — see below |
+| **Railway Free** | 1 replica · **0.5 GB RAM** · 1 vCPU · $1 credit/mo | **No.** The bot's observed peak RSS is **0.70 GB**, over the ceiling. Hobby ($5/mo, $5 usage included) fits with room — our measured draw is ≈ **$1.92/mo** at Railway's $10/GB + $20/vCPU |
+| **Vercel Hobby** | free | **Yes** for a guild site. ⚠ Hobby is non-commercial under Vercel's ToS; a guild qualifies, a paid service would not |
+
+**So the honest hosted floor is ≈ $30/mo** ($25 Supabase Pro + $5 Railway Hobby),
+against $0-plus-electricity fully on-prem. Railway Free is ruled out on memory
+regardless of how small the guild is; Supabase Free is the interesting one.
+
+**Why Supabase Free is tighter than it looks — and this is the number to give
+people.** 500 MB total, and a fresh deployment spends **119 MB on the `eqemu_*`
+catalog before a single raid** (that mirror is the same size for everyone; it is
+shared EQ reference data, not guild data). That leaves **~380 MB of real
+headroom.**
+
+Then measure what fills it. Ours, by table:
+
+| Table | Size | Span | Retention |
+|---|---|---|---|
+| `encounter_threat_snapshots` | **920 MB** | 61 days | 30d sweep coded — **not working**, see §3 |
+| `chat_messages` | 214 MB | 913 days | none, deliberate (guild history) |
+| `who_observations` | 131 MB | 1026 days | 60d raw + latest-sighting |
+| `buff_casts` | 53 MB | 8 days | 7d sweep, **working** |
+| `target_observations` | 53 MB | 28 days | — |
+
+⚠ **`encounter_threat_snapshots` accretes ~15 MB/day and is 57% of our whole
+database.** Two consequences the wizard has to carry:
+
+1. On Supabase Free it consumes the entire 380 MB of headroom in **under four
+   weeks** unpruned. Even with the intended 30-day sweep working it settles
+   around **450 MB** — still more than a Free project can hold. **The 30-day
+   threat retention is sized for a paid deployment and must not be the default
+   the wizard offers a free one.** A free deployment wants ~7 days (≈105 MB), or
+   the `threat_snapshot` stream shed off entirely (`flag_shed_threat_snapshot`)
+   — it is already in the sheddable set precisely because it is re-derivable.
+2. This is the general shape: **the ephemeral high-volume streams, not the
+   durable guild data, are what fill a small database.** `chat_messages` carries
+   two and a half YEARS of guild history in 214 MB; threat telemetry carries two
+   months in 920 MB. A wizard sizing a deployment should ask about retention
+   windows per stream, not about guild size.
+
+**And the meter is not what people assume.** Neither Supabase nor Railway meters
+REQUESTS on any plan. Supabase bills Egress (250 GB/mo on Pro, 5 GB Free) and
+Database Size; Railway bills RAM/CPU-minutes and egress. So upload frequency is
+close to free, while **poll cadences, wide `select`s and un-cached refreshes are
+the actual bill** — a self-hoster tuning for cost should tighten the read side
+and leave the ingest streams alone.
+
+⚠ **Two numbers nobody has read, both dashboard-only:** Supabase's **Spend Cap**
+setting (with it ON an overage means read-only mode and 402s, not a charge — very
+different failure for a raid night) and current egress against the 250 GB. The
+Management API exposes neither. Do not quote an egress figure until someone does.
+
 ## 3. Decisions already made that the wizard must carry
 - **2026-08-16 — sentinel tiers split by deployment** (`docs/DESIGN-sentinel.md`): freshness invariants run next to the LIVE DB (hosted: the bot; on-prem: the box itself); heavy analytical invariants run on the backup replica (hosted: Hitya's Unraid docker alongside the Supabase backup; on-prem: same DB, so the tiers collapse). The wizard should ship the battery file as config, not code.
 
@@ -177,6 +249,16 @@ auction ≈ 15–25 per raid night. A self-host deployment inherits the same kno
 and the same never-refetch guarantee.
 
 ### Storage & retention
+- **2026-09-01 — retention defaults are PLAN-DEPENDENT and must be asked, not
+  assumed.** Our 30-day `encounter_threat_snapshots` window was chosen against
+  an 8 GB Pro database; on a 500 MB Free project the same window alone exceeds
+  the whole plan. The wizard must size each stream's retention from the target
+  plan's database ceiling, and should default a free deployment to ~7 days on
+  the ephemeral telemetry streams (or shed them). Corollary found the same day:
+  a retention sweep whose predicate has no index is a seq scan that the client's
+  10s abort kills silently — **every retention window the wizard sets needs a
+  matching index, and a sweep that reports how many rows it actually removed.**
+  A sweep that fails quietly looks exactly like a sweep that had nothing to do.
 - **Local is an ARCHIVE, not a mirror** (2026-08-12). `refresh-local-archive.sh`
   merges each nightly dump instead of restoring with `--clean`, so rows
   production prunes survive locally forever. The wizard must ask *"do you want
