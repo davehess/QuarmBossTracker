@@ -401,6 +401,27 @@ known bosses always pass, everything else needs
 floors restores v1 "post everything". Filtering is presentation only — the
 Parse Log embed and Supabase always get every encounter.
 
+### Extended Target: spawn-id instance separation (bot 3.1.106)
+`character_live_state.target_id` (migration `20260901120000`) carries each
+raider's Zeal spawn id (PR #229, agent 3.6.13+). `_extIdInstances` groups
+observations by it and, at ≥2 distinct ids for one name, REPLACES the HP guess
+for that name — an id says which mob it is, where HP clustering fails the moment
+two sit at the same health and position clustering needs two engaged tanks.
+Everything downstream (position clustering, tag welding, per-instance debuff
+attribution) runs on the result unchanged.
+⚠ **The key is `(zone_name, target_id)`, never the id alone** — `inScope` spans
+every zone when the same-zone filter is off, and an id is a slot in the ZONE's
+entity table. An id whose reporter has no `zone_name` is treated as absent.
+⚠ **Inert without ids** — returns `[]` below 2 distinct ids, so a fleet with no
+patched Zeal (i.e. all of it, today) takes the old path byte-identically. A
+mixed fleet is the steady state.
+⚠ **`ambiguous` stays TRUE on a proven split** — it also gates the NAME-keyed
+restore cache, which two instances of one name would clobber. The row carries a
+separate `id_proven` flag for the overlay's asterisk.
+Reporters without an id are attached to the nearest-HP instance (first, if they
+have no HP) so nobody vanishes; instance HP is derived only from reporters who
+named the id. Tests: `test/ext-target-spawn-id.test.js`.
+
 ### Extended Target aggregation (`_handleAgentExtendedTarget`)
 Aggregates every online raider's `character_live_state.target_name` (Zeal
 slot 6, freshness window) by name; classifies each name player/pet/NPC
