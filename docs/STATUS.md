@@ -222,6 +222,28 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ### ✅ Done — major shipped features (not exhaustive; see git + roadmapData.ts)
 
+- **Zeal version + spawn-id capability tracking (bot 3.1.107 · agent 3.6.16 ·
+  web 1.7.7, 2026-09-01).** Hitya: *"let me start tracking zeal versions so we
+  can work towards knowing when someone has that Target and spawn ID. fall back
+  is if they tag."* Two columns on `agent_upload_stats` (migration
+  `20260901160000`), both riding the existing `agent_state` decoration so no
+  `_trackUpload` call site changed. Surfaced on `/admin/agents` as a 🧿 Zeal
+  card — players active, players reporting a version, players **proven**
+  capable — plus a `zeal <ver> 🎯` chip per character.
+  ⚠ **Capability is OBSERVED, never inferred from the version, and that is the
+  whole design.** PR #229 is unreleased, so a patched build reports the same
+  version string as a stock one — a version test would call a capable client
+  incapable. The version chases adoption; only "this client actually sent an
+  id" answers capability. Both facts are sticky (`coalesce` / `greatest`):
+  proving it once is enough, and an upload carrying neither must not retract it.
+  ⚠ Counted in **players, not characters** — one person runs 3–12 boxes off one
+  Zeal install. Details in `HOW-ITS-BUILT.md`.
+- **Extended Target: same-name mobs separated by spawn id (bot 3.1.106 · Mimic
+  2.6.4, 2026-09-01).** At ≥2 distinct `(zone, target_id)` pairs for one name,
+  the id REPLACES the HP-clustering guess, and the overlay swaps the amber `*`
+  warning for a green `#<id>`. Inert on an unpatched fleet (i.e. all of it
+  today) — returns `[]` below 2 ids, so the old path runs byte-identically.
+
 - **Five eaten backslashes, and a build check so they cannot come back (agent
   3.6.12, beta, 2026-08-30).** Hitya: *"this upload did not work from the raid
   tick that was taken. copying directly in worked."* The DKP tick card listed

@@ -432,6 +432,47 @@ Reporters without an id are attached to the nearest-HP instance (first, if they
 have no HP) so nobody vanishes; instance HP is derived only from reporters who
 named the id. Tests: `test/ext-target-spawn-id.test.js`.
 
+### Zeal version + spawn-id capability tracking (bot 3.1.107 · agent 3.6.16 · web 1.7.7)
+Answers "who can actually give us a spawn id, and who still needs `/tag`."
+Two columns on `agent_upload_stats` (migration `20260901160000`), both fed
+through the existing `agent_state` decoration so **no `_trackUpload` call site
+changed**: `zeal_version` (what the client reports) and `spawn_id_seen_at` (when
+it last actually sent one).
+
+⚠ **THE VERSION CANNOT ANSWER THE CAPABILITY QUESTION, which is why there are
+two columns.** Zeal PR #229 is not in a numbered release, and a build carrying
+it reports the SAME version string as a stock build of the same release (the
+author's own patched client reports `1.4.5`). A version test would call a
+capable client incapable. Capability is therefore OBSERVED; the version only
+chases adoption. Both are sticky in SQL — `coalesce()` for the version,
+`greatest()` for the timestamp — because an upload that carries neither must
+not retract an earlier proof.
+
+**Agent half** (`packages/wolfpack-logsync/index.js`): `_newestZealVersion()`
+picks the freshest reading across `_clientVersions` (Zeal is per-MACHINE — one
+install serves every character on the box, so per-character would just report
+whoever zoned last). `noteSpawnIdSeen()` latches `_spawnIdSeen` on the first
+finite id and never un-latches: not targeting anything is the common case
+between pulls, and a flag that flapped with targeting would make the board
+useless.
+⚠ **The latch sits on the `/api/zeal-state` INTAKE, not on the live-state
+upload.** That upload is change-signature gated, so a capable client can hand
+us ids for a whole fight without tripping a send — latching there would report
+it incapable. All three ids (`spawn_id`/`target_id`/`pet_id`) count: a client
+parked at the guild lobby still streams its own `spawn_id` every frame.
+
+**Board half** (`/admin/agents`, 🧿 Zeal card): players active 24h, players
+reporting a version, players proven capable — **counted in PLAYERS, never
+characters** (one person runs 3–12 boxes off one Zeal install, so a character
+count overstates adoption ~10×). Per-character rows get a `zeal <ver> 🎯` chip.
+⚠ **"Not yet proven" is rendered as nothing, not as a red failure** — it does
+not distinguish stock Zeal from a patched client that has not fought yet, and
+showing that ambiguity as a failure sends officers chasing people with nothing
+to fix.
+Tests: `test/zeal-version-capability.test.js` (bot + board, on `main`) and
+`test/zeal-capability-agent.test.js` (the latch + the agent↔bot contract, on
+`beta` — the only branch carrying both sources).
+
 ### Extended Target aggregation (`_handleAgentExtendedTarget`)
 Aggregates every online raider's `character_live_state.target_name` (Zeal
 slot 6, freshness window) by name; classifies each name player/pet/NPC
