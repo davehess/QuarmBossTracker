@@ -33741,8 +33741,10 @@ function flushLiveStateToBot(opts) {
       // clustering pairs these names with type-5 raid positions. Deduped per
       // (mob, tank) keeping the newest connect; players only (the recorder's
       // heuristic can misread backtick pet names — the bot re-filters, but no
-      // reason to ship them). Capped small; NOT in the change signature (rides
-      // the heartbeat + existing triggers, like loc).
+      // reason to ship them). Capped small. ⚠ IS in the change signature as of
+      // agent 3.6.17 — see tankKeys below. It rode the heartbeat until then,
+      // which meant "who is tanking that add" could be up to 45s stale on a
+      // fight that only lasts 45s.
       observed_tanks: (() => {
         const cutoff = now - 30_000;
         const seen = new Map();   // mobLower|tankLower → { mob, tank, since }
@@ -33807,17 +33809,43 @@ function flushLiveStateToBot(opts) {
     // DI up/down transition (not the raw timestamp — that's static between
     // casts; the STATE flip 96s after a cast is what the raid cares about).
     const diUp = rec.di_ready_at == null || Date.parse(rec.di_ready_at) <= now;
+    // The spawn id, NOT just the name (Hitya 2026-09-01: "many fights only last
+    // about 45 seconds ... even 2 seconds can feel like an eternity"). Switching
+    // between two mobs that SHARE a name leaves target_name identical, so
+    // without this the swap doesn't trip the signature and the new id waits for
+    // the heartbeat — up to 45s of the board showing the wrong instance. That is
+    // precisely the case the id exists to resolve, so it has to be its own term.
+    // Cheap: an id changes on a target swap, which is an event, not churn.
+    //
+    // ⚠ Raw, NOT keyed by zone — unlike every CONSUMER of this field, which
+    // must key on (zone, id) because an id is a slot in the zone's entity table.
+    // Here it would be dead weight: rec.zone_id is already term #1 below, so a
+    // zone change re-sends whatever this holds. A `${zone}|${id}` prefix reads
+    // like a safeguard and is one no test can ever fail — which is worse than
+    // not having it. The zone-scoping that actually matters lives at the read
+    // side (_extIdInstances).
+    const targetIdKey = rec.target_id != null ? rec.target_id : null;
+    // Who is tanking what (#194). Was heartbeat-only "like loc", which is wrong
+    // by analogy: loc churns every step and is advisory, whereas this set only
+    // changes when a tank PICKS UP or LOSES a mob — a discrete raid event, and
+    // one nobody can afford to learn 45s late. Keys only, sorted: the `since`
+    // timestamps move constantly and would re-send on every flush, and Map
+    // iteration order must not decide whether we consider it changed.
+    const tankKeys = (rec.observed_tanks || [])
+      .map(o => `${o.mob}|${String(o.tank).toLowerCase()}`).sort();
     const sig = JSON.stringify([
       rec.zone_id,
       buffs.map(b => b && b.name),
       rec.pet_name,
       petBuffs.map(b => b && b.name),
       (rec.target_name || '').toLowerCase(),
+      targetIdKey,
       targetHpBucket,
       selfManaBucket,
       selfHpBucket,
       diUp,
       (rec.incoming_mob || '').toLowerCase(),
+      tankKeys,
     ]);
     // Send when the signature changed, OR the heartbeat floor elapsed —
     // UNCONDITIONALLY, not just while targeting something. A STABLE target
