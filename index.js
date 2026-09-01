@@ -11442,6 +11442,61 @@ function _extPosCluster(engaged, units, hOpts) {
 // (same references, Object.is — fixture-enforced). With exactly one instance
 // and one HP cluster the single row is returned labeled; the EMIT layer drops
 // the label at K=1, so the K=1 payload stays byte-identical either way.
+// Instances proven by SPAWN ID (Zeal PR #229). The strongest evidence we have:
+// HP clustering guesses that two "a cliff golem" at different health are two
+// mobs and fails the moment they match, position clustering needs two engaged
+// tanks — an id just says which mob it is.
+//
+// Returns [] unless the ids prove something (≥2 distinct ids for this name), so
+// a fleet with no ids, or with everyone on the same mob, falls through to the
+// existing HP/position machinery completely unchanged.
+//
+// ⚠ Reporters WITHOUT an id still belong on the board. Each is attached to the
+// instance whose HP is closest, and with no HP to compare, to the first — the
+// same "nobody vanishes" rule the position binder uses for unplaceable
+// raiders. Their membership is a guess; the instance's own HP is not, because
+// it is derived only from reporters who actually named the id.
+function _extIdInstances(obs) {
+  // Same median as the handler's (round-half-up on an even count), duplicated
+  // rather than shared so this stays a pure, independently testable function.
+  // ⚠ It must MATCH: two medians in one pipeline would make an id-split row's
+  // HP disagree with an HP-split row's for no visible reason.
+  const median = (arr) => {
+    if (!arr.length) return null;
+    const a = [...arr].sort((x, y) => x - y); const m = Math.floor(a.length / 2);
+    return a.length % 2 ? a[m] : Math.round((a[m - 1] + a[m]) / 2);
+  };
+  const byId = new Map();
+  for (const o of (obs || [])) {
+    if (!o || o.id == null) continue;
+    if (!byId.has(o.id)) byId.set(o.id, { spawn_id: o.spawn_id, raiders: [], hps: [] });
+    const g = byId.get(o.id);
+    g.raiders.push(o.raider);
+    if (o.hp != null) g.hps.push(o.hp);
+  }
+  if (byId.size < 2) return [];
+  const insts = [...byId.values()].map(g => ({
+    raiders: g.raiders,
+    hp: g.hps.length ? median(g.hps) : null,
+    spawn_id: g.spawn_id,
+    id_proven: true,
+  }));
+  for (const o of (obs || [])) {
+    if (!o || o.id != null) continue;
+    let best = insts[0];
+    if (o.hp != null) {
+      let bestDist = Infinity;
+      for (const inst of insts) {
+        if (inst.hp == null) continue;
+        const d = Math.abs(inst.hp - o.hp);
+        if (d < bestDist) { bestDist = d; best = inst; }
+      }
+    }
+    best.raiders.push(o.raider);
+  }
+  return insts;
+}
+
 function _extBindInstances(hpClusters, posInstances) {
   if (!posInstances || posInstances.length === 0) return hpClusters;
   const memberOf = new Map();   // raiderLower → instance index
@@ -11822,7 +11877,7 @@ async function _handleAgentExtendedTarget(req, res) {
     [liveRows, buffRows, rosterLocRows] = await Promise.all([
       supabase.select('character_live_state',
         `guild_id=eq.${encodeURIComponent(guildId)}&updated_at=gte.${encodeURIComponent(onlineSince)}` +
-        `&select=character,zone_name,self_hp_pct,self_hp_cur,self_hp_max,target_name,target_hp_pct,pet_name,pet_hp_pct,` +
+        `&select=character,zone_name,self_hp_pct,self_hp_cur,self_hp_max,target_name,target_hp_pct,target_id,pet_name,pet_hp_pct,` +
         `incoming_mob,incoming_mob_since,loc_x,loc_y,loc_z,observed_tanks,zeal_tags,updated_at`),
       supabase.select('buff_casts',
         `guild_id=eq.${encodeURIComponent(guildId)}&cast_at=gte.${encodeURIComponent(debuffSince)}` +
@@ -12057,7 +12112,21 @@ async function _handleAgentExtendedTarget(req, res) {
       const key = tn.toLowerCase();
       let g = byName.get(key);
       if (!g) { g = { name: tn, key, obs: [] }; byName.set(key, g); }
-      g.obs.push({ raider: r.character, hp: (r.target_hp_pct != null ? Number(r.target_hp_pct) : null) });
+      g.obs.push({
+        raider: r.character,
+        hp: (r.target_hp_pct != null ? Number(r.target_hp_pct) : null),
+        // Zeal spawn id (PR #229) — null on every released Zeal, so a mixed
+        // fleet is the steady state and this must never be required.
+        //
+        // ⚠ SCOPED BY ZONE, deliberately. inScope spans every zone when the
+        // same-zone filter is off, and even with it on it keeps null-zone
+        // rows — and an id is a slot in the ZONE's entity table, so slot 4425
+        // in Sebilis is an unrelated mob to slot 4425 in The Deep. An id whose
+        // reporter has no zone_name cannot be matched against another
+        // reporter's, so it is treated as absent rather than trusted.
+        id: (r.target_id != null && r.zone_name) ? `${r.zone_name}|${r.target_id}` : null,
+        spawn_id: r.target_id != null ? Number(r.target_id) : null,
+      });
     }
     // #194: an engaged tank is a TARGETER whether or not they run Mimic — a
     // tag-channel claim ("tag <mob>") or an observed melee connect puts them on
@@ -12095,9 +12164,18 @@ async function _handleAgentExtendedTarget(req, res) {
       // spawns. Players, pets, and uniquely-named NPCs are one entity —
       // clustering those just turns reporter HP disagreement into fake
       // duplicate rows, so collapse straight to a single median-HP row.
-      const clusters = cls.ambiguous
-        ? clusterByHp(g.obs)
-        : [{ raiders: g.obs.map(o => o.raider), hp: median(g.obs.filter(o => o.hp != null).map(o => o.hp)) }];
+      // Spawn ids first: when they prove ≥2 instances they REPLACE the HP
+      // guess for this name rather than being reconciled with it, because a
+      // guess adds nothing to a fact. Everything below — position clustering,
+      // tag welding, per-instance debuff attribution — runs on the result
+      // unchanged, so an id-split name gets the same treatment a
+      // heuristic-split one always did.
+      const idInstances = _extIdInstances(g.obs);
+      const clusters = idInstances.length >= 2
+        ? idInstances
+        : (cls.ambiguous
+            ? clusterByHp(g.obs)
+            : [{ raiders: g.obs.map(o => o.raider), hp: median(g.obs.filter(o => o.hp != null).map(o => o.hp)) }]);
       // #194: position instances for this name. Runs for CAPITALIZED npc names
       // too — Vex Thal-style adds share a capitalized name with no article
       // ("Thall Va Xakra" ×2), which the classifier calls unique and collapses.
@@ -12194,13 +12272,26 @@ async function _handleAgentExtendedTarget(req, res) {
           hp_pct: c.hp,
           is_named: cls.is_named,
           ambiguous: cls.ambiguous || multi,
+          // ⚠ `ambiguous` stays TRUE on an id-proven split, even though the
+          // split is a fact rather than a guess. It is not only the overlay's
+          // asterisk — it also gates the restore cache below, which is keyed by
+          // NAME, so two proven instances of one name would overwrite each
+          // other there. The overlay reads `id_proven` for the asterisk
+          // instead, which separates "we know which mob this is" from "this row
+          // is safe to cache under its name".
+          ...(c.id_proven ? { id_proven: true } : {}),
           same_name_count: rows.length,
           dup_index: multi ? idx + 1 : null,
           debuffs: multi ? (c.debuffs || []) : debuffs,
           // Tank labels only at K≥2 — the K=1 payload stays byte-identical
           // (the non-negotiable guarantee; fixture-enforced).
           ...(multi && c.tanks && c.tanks.length ? { tanks: c.tanks.slice(0, 4) } : {}),
-          ...(c._tag ? { tag_text: c._tag.text, tag_shape: c._tag.shape, spawn_id: c._tag.spawn_id } : {}),
+          // A tag wins over the pipe id for display because it also carries the
+          // operator's text and shape — they are the SAME field upstream
+          // (Entity::SpawnId), so they should agree, and a disagreement means
+          // the tag is stale rather than that either source is wrong.
+          ...(c._tag ? { tag_text: c._tag.text, tag_shape: c._tag.shape, spawn_id: c._tag.spawn_id }
+                     : (c.spawn_id != null ? { spawn_id: c.spawn_id } : {})),
           ...(idx === 0 && tagPool.length ? { tag_pool: tagPool.slice(0, 8) } : {}),
           hurt: false, hurt_secs: 0,
           zone: scopeZone || null,
@@ -14318,10 +14409,18 @@ async function _handleAgentLiveState(req, res) {
       if (petBuffs.length === 0) petBuffs = null;
     }
     // Current target (Zeal slot 6) — name + HP%. Powers the Extended Target
-    // overlay's "who's targeting what" aggregation. No spawn id on the pipe, so
-    // same-name mobs collapse to one name (the overlay asterisks non-unique).
+    // overlay's "who's targeting what" aggregation.
     const targetName = st?.target_name ? String(st.target_name).slice(0, 80) : null;
     const targetHp   = (st?.target_hp_pct != null && Number.isFinite(Number(st.target_hp_pct))) ? Number(st.target_hp_pct) : null;
+    // Spawn id of that target (Zeal PR #229, agent 3.6.13+). NULL on every
+    // released Zeal — this is an enhancement over target_name, never a
+    // requirement, and a mixed fleet is the steady state.
+    //
+    // ⚠ Only meaningful WITH zone_id on the same row: an id is a slot in the
+    // zone's entity table, so slot 4425 in Sebilis and slot 4425 in The Deep
+    // are unrelated mobs. Consumers key on (zone_id, target_id).
+    const targetId = (st?.target_id != null && Number.isFinite(Number(st.target_id)))
+      ? Math.trunc(Number(st.target_id)) : null;
     // Position (agent v3.3.94+, Zeal loc {x,y,z}) — powers the raid-buff-queue's
     // advisory "likely out of range" flag (#117). Nullable; fail-open downstream.
     const locX = (st?.loc_x != null && Number.isFinite(Number(st.loc_x))) ? Number(st.loc_x) : null;
@@ -14341,6 +14440,7 @@ async function _handleAgentLiveState(req, res) {
       self_mana_max: selfManaMax,
       target_name: targetName,
       target_hp_pct: targetHp,
+      target_id:   targetId,
       // Off-tank surfacing (#rn-serialization audit 2026-07-31): the agent has
       // sent these since 2026-07-04 and _handleAgentExtendedTarget selects +
       // consumes them — but this row never wrote them, so the column sat 100%
