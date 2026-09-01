@@ -418,6 +418,16 @@ mixed fleet is the steady state.
 ⚠ **`ambiguous` stays TRUE on a proven split** — it also gates the NAME-keyed
 restore cache, which two instances of one name would clobber. The row carries a
 separate `id_proven` flag for the overlay's asterisk.
+**Overlay half (Mimic 2.6.4)** — `extarget.html` shows `#<spawn_id>` in a
+settled green on an `id_proven` row instead of the amber `*`. The asterisk is a
+WARNING ("debuffs here may belong to a different mob of the same name"), and on
+a proven row that warning is false. ⚠ The footer legend that explains the
+asterisk is gated on `ambiguous && !id_proven` — keyed on `ambiguous` alone, a
+board of proven rows would explain a symbol that is not on screen.
+⚠ Same-name debuff POOLING is deliberately left in place for proven rows:
+un-pooling is the next step but needs real multi-reporter id data to validate,
+and wrong per-mob debuffs are worse than pooled ones.
+
 Reporters without an id are attached to the nearest-HP instance (first, if they
 have no HP) so nobody vanishes; instance HP is derived only from reporters who
 named the id. Tests: `test/ext-target-spawn-id.test.js`.
