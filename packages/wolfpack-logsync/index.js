@@ -9265,6 +9265,27 @@ function enqueueUpload(kind, payload) {
       app_version:  process.env.WOLFPACK_APP_VERSION || null,
       platform:     process.platform,
       node_version: process.versions && process.versions.node,
+      // Which Zeal this box is running, harvested from `/zeal` output
+      // (_clientVersions). ADOPTION TRACKING ONLY — see below for why it
+      // cannot answer the capability question. Any watched character's report
+      // will do: Zeal is per-CLIENT and one install serves every character on
+      // the machine, so the newest reading is the machine's version.
+      zeal_version: _newestZealVersion(),
+      // Whether this install has ACTUALLY seen a spawn id on the pipe (Zeal
+      // PR #229). This is the capability, observed — and it is a separate
+      // field from the version on purpose:
+      //
+      // ⚠ THE VERSION CANNOT ANSWER IT. A build carrying the patch reports the
+      // SAME version string as a stock one of the same release (the author's
+      // own patched 1.4.5 reports "1.4.5"), so a version test would call a
+      // capable client incapable. After the PR ships there will be a release
+      // to compare against; there is not one today, and guessing the number
+      // would bake in a wrong answer.
+      //
+      // Sticky for the process, deliberately: not having a target right now is
+      // not evidence the client cannot supply an id, so this latches on the
+      // first one seen rather than reporting the current instant.
+      spawn_id_capable: _spawnIdSeen,
     };
     // This machine's measured clock offset, attached to EVERY payload (#202).
     //
@@ -23324,6 +23345,16 @@ function startWebDashboard(port) {
           const prevCasting = (prevState.casting || '').trim();
           const newCasting  = (st.casting || '').trim();
           _zealState[character] = { ...st, updatedAt: Date.now() };
+          // Zeal PR #229 capability latch. Latched HERE, where the ids
+          // actually arrive off the pipe, and NOT at the live-state upload:
+          // that upload is change-signature gated, so a capable client can hand
+          // us ids for a whole fight without ever tripping a send, and we would
+          // report it as incapable. Any one of the three proves the build
+          // carries the patch — a client with no target still streams its own
+          // spawn_id every frame.
+          noteSpawnIdSeen(st.spawn_id);
+          noteSpawnIdSeen(st.target_id);
+          noteSpawnIdSeen(st.pet_id);
           // #105 — mob self-heal: the Zeal target gauge HP% rising for the same
           // target across frames → a mob_heal timeline tick on the live fight.
           try { _noteMobHealFromState(character, prevState, st); } catch (e) { void e; }
@@ -30307,6 +30338,29 @@ function noteClientVersionLine(line, character) {
   _clientVersions.set(key, rec);
   return true;
 }
+// Newest Zeal version across the watched characters. Zeal is per-CLIENT — one
+// install serves every character on the box — so the freshest reading is the
+// machine's, and picking per-character would just report whoever last typed
+// `/zeal`.
+function _newestZealVersion() {
+  let best = null, bestAt = '';
+  for (const v of _clientVersions.values()) {
+    if (!v || !v.zeal) continue;
+    const at = String(v.at || '');
+    if (!best || at > bestAt) { best = v.zeal; bestAt = at; }
+  }
+  return best;
+}
+// Latches TRUE the first time the pipe hands us ANY spawn id — own, target or
+// pet — and never goes back. "No target right now" is the common case and is
+// not evidence the client cannot supply one, so a flapping capability flag
+// would make the fleet board useless. Reset only by restarting the agent,
+// which is correct: that is also when a Zeal swap takes effect.
+let _spawnIdSeen = false;
+function noteSpawnIdSeen(id) {
+  if (!_spawnIdSeen && Number.isFinite(id)) _spawnIdSeen = true;
+}
+
 // Snapshot for the dashboard + /api/state. Newest-first so the box the user is
 // actually playing leads.
 function clientVersionsSnapshot() {
