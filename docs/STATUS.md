@@ -89,6 +89,32 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ## The work ledger
 
+- **⚠ OPEN BUG — the account DKP figure is wrong, and I could not finish
+  diagnosing it (2026-08-31).** Hitya: *"i'm noticing that the 192 dkp is wrong.
+  i'm actually at 143 total"*. What is established:
+  - The **mirror estimate computes 817** for the family, not 192 and not 143.
+    So the pill's 192 came from the OpenDKP standings path, not the fallback.
+    (`_familyDkpFromMirror`: earned 6167 / adj −15 / spent 5335.)
+  - **All characters are on ONE OpenDKP account** (Hitya, confirmed), so
+    pooling across the family is correct and is not the error.
+  - `_familyDkpFromMirror` adds a tick's value **once per attending family
+    character**, so the 50 ticks with two family members present are counted
+    twice (6167 vs 5907 once-per-tick). Real, but it only explains 260 of the
+    gap — once-per-tick still gives 557 against a stated 143.
+  - ⚠ Two wrong inferences were made and retracted along the way: that Hitya
+    boxes (they do not — his wife played Canopy as a zone anchor), and that
+    decay was unmodelled (it rides `opendkp_adjustments`, only −15 for this
+    family). Do not rebuild either theory without new evidence.
+  **What is NOT known:** what OpenDKP's standings actually return for the
+  account, and therefore whether 192 is a stale figure, the wrong field, or a
+  correct reading of something that is not the balance. **Needs:** the number
+  the OpenDKP site shows for the account, compared against the pill.
+  **Made observable meanwhile (agent 3.6.15):** the pill now states its source
+  (`account (OpenDKP)` vs `~est. (mirror)`) and its age. It previously
+  hardcoded "(OpenDKP)" and showed no age, so live, stale-from-last-raid and
+  mirror-estimate all rendered identically — which is what made this
+  undiagnosable. Standings are deliberately not refreshed off-raid, so a stale
+  figure between raids is expected and must now say so.
 - **⚠ `/characters` is our biggest OpenDKP cost, not `/audits` (corrected
   2026-08-31 from the live dashboard).** 24h: **128 calls / 17.5 MB**, against
   audits' 37 / 8.6 MB — and **100 of those calls are inside the raid window**,
@@ -196,6 +222,72 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ### ✅ Done — major shipped features (not exhaustive; see git + roadmapData.ts)
 
+- **Zeal version + spawn-id capability tracking (bot 3.1.107 · agent 3.6.16 ·
+  web 1.7.7, 2026-09-01).** Hitya: *"let me start tracking zeal versions so we
+  can work towards knowing when someone has that Target and spawn ID. fall back
+  is if they tag."* Two columns on `agent_upload_stats` (migration
+  `20260901160000`), both riding the existing `agent_state` decoration so no
+  `_trackUpload` call site changed. Surfaced on `/admin/agents` as a 🧿 Zeal
+  card — players active, players reporting a version, players **proven**
+  capable — plus a `zeal <ver> 🎯` chip per character.
+  ⚠ **Capability is OBSERVED, never inferred from the version, and that is the
+  whole design.** PR #229 is unreleased, so a patched build reports the same
+  version string as a stock one — a version test would call a capable client
+  incapable. The version chases adoption; only "this client actually sent an
+  id" answers capability. Both facts are sticky (`coalesce` / `greatest`):
+  proving it once is enough, and an upload carrying neither must not retract it.
+  ⚠ Counted in **players, not characters** — one person runs 3–12 boxes off one
+  Zeal install. Details in `HOW-ITS-BUILT.md`.
+- **Extended Target: same-name mobs separated by spawn id (bot 3.1.106 · Mimic
+  2.6.4, 2026-09-01).** At ≥2 distinct `(zone, target_id)` pairs for one name,
+  the id REPLACES the HP-clustering guess, and the overlay swaps the amber `*`
+  warning for a green `#<id>`. Inert on an unpatched fleet (i.e. all of it
+  today) — returns `[]` below 2 ids, so the old path runs byte-identically.
+
+- **Five eaten backslashes, and a build check so they cannot come back (agent
+  3.6.12, beta, 2026-08-30).** Hitya: *"this upload did not work from the raid
+  tick that was taken. copying directly in worked."* The DKP tick card listed
+  the RaidTick file and its 44 players correctly, but clicking a slot said "No
+  attendees in that source" — because `/^file:(d+)$/` matches a literal "d" and
+  could never match `file:0`. A sweep found four more survivors of the old
+  hand-escaped `WEB_HTML` literal: `.split(/s+/)` twice, which silently
+  defeated the wp-* class preservation its own comment describes (hidden panels
+  reappeared on the next 2s poll), and `/^✥s*/`. All five fixed;
+  `checkEatenBackslashes` now fails the build on the whole class.
+  ⚠ **This is the strongest argument yet for the dashboard slice** — the class
+  was created by the escaping scheme the slice retired, and was invisible to
+  review for months because a lost backslash is still valid regex.
+- **Discipline cooldown on the Command Center (agent 3.6.12, beta,
+  2026-08-30).** Hitya: *"discipline cooldowns should be tracked on the command
+  center for the user only."* Parses the client's own refusal line, which is
+  the only exact statement of the shared melee reuse timer and is self-only by
+  construction. Not on the raid-wide defensives board, and no "ready" line
+  invented.
+
+- **Loot page: 2nd place in the bidding area + a "Loot won" card (agent 3.6.11,
+  beta, 2026-08-30).** Two of the raid-night reports. (1) *"Second place should
+  show up as well in the bidding area"* — `runner_up` was already served and
+  already rendered, but as a 10px dim sub-line INSIDE the `Last win` cell; it
+  now has its own `2nd place` column matching RECENT MISSES, em-dash when
+  nobody else bid. (2) *"Move Past Items to a different 'loot won' area"* — the
+  archive moved out of the bidding card into `wpLootWonCard` with its own
+  privacy gate, so you can browse your wins without exposing your wishlist and
+  misses. Not era-filtered (it is a lookup surface); era joined the search key.
+  25 behavioural tests, all four mutations caught.
+  ⚠ **Still on `main` and waiting:** the runner-up FIGURES themselves were also
+  wrong (Thorny Chain Sleeves showed 10, actually 5; Bone Chill Shield showed
+  20, actually 7) — that is a bot fix, held for the raid freeze. See the open
+  table at the bottom.
+- **Dashboard slice — Decision #3 step 1 (agent 3.6.9, beta, 2026-08-30).**
+  Hitya: *"do the dashboard slice."* `WEB_HTML` is now GENERATED from
+  `packages/wolfpack-logsync/dashboard.html` (`npm run sync:dashboard`); the
+  escape-hazard class that blanked the page four times is retired — proven by
+  authoring the three historical killers naively and serving them byte-correct.
+  Shipped artifact still one file; update chain untouched. Drift is a failing
+  check in `check:dashboard` AND `test/dashboard-embed.test.js`. **Next slices
+  when earned:** extract-on-touch for the bot monolith (rule, not project), and
+  full agent modularisation only after this build step survives a stable
+  graduation.
 - **Zeal spawn-id PR prepared (2026-08-31).** Hitya: *"I think we should prepare
   the pull request for Zeal to include spawn id in pipes. It's not happening
   otherwise."* Two softer routes got no response (forum post 2026-07-20; the

@@ -418,9 +418,60 @@ mixed fleet is the steady state.
 ⚠ **`ambiguous` stays TRUE on a proven split** — it also gates the NAME-keyed
 restore cache, which two instances of one name would clobber. The row carries a
 separate `id_proven` flag for the overlay's asterisk.
+**Overlay half (Mimic 2.6.4)** — `extarget.html` shows `#<spawn_id>` in a
+settled green on an `id_proven` row instead of the amber `*`. The asterisk is a
+WARNING ("debuffs here may belong to a different mob of the same name"), and on
+a proven row that warning is false. ⚠ The footer legend that explains the
+asterisk is gated on `ambiguous && !id_proven` — keyed on `ambiguous` alone, a
+board of proven rows would explain a symbol that is not on screen.
+⚠ Same-name debuff POOLING is deliberately left in place for proven rows:
+un-pooling is the next step but needs real multi-reporter id data to validate,
+and wrong per-mob debuffs are worse than pooled ones.
+
 Reporters without an id are attached to the nearest-HP instance (first, if they
 have no HP) so nobody vanishes; instance HP is derived only from reporters who
 named the id. Tests: `test/ext-target-spawn-id.test.js`.
+
+### Zeal version + spawn-id capability tracking (bot 3.1.107 · agent 3.6.16 · web 1.7.7)
+Answers "who can actually give us a spawn id, and who still needs `/tag`."
+Two columns on `agent_upload_stats` (migration `20260901160000`), both fed
+through the existing `agent_state` decoration so **no `_trackUpload` call site
+changed**: `zeal_version` (what the client reports) and `spawn_id_seen_at` (when
+it last actually sent one).
+
+⚠ **THE VERSION CANNOT ANSWER THE CAPABILITY QUESTION, which is why there are
+two columns.** Zeal PR #229 is not in a numbered release, and a build carrying
+it reports the SAME version string as a stock build of the same release (the
+author's own patched client reports `1.4.5`). A version test would call a
+capable client incapable. Capability is therefore OBSERVED; the version only
+chases adoption. Both are sticky in SQL — `coalesce()` for the version,
+`greatest()` for the timestamp — because an upload that carries neither must
+not retract an earlier proof.
+
+**Agent half** (`packages/wolfpack-logsync/index.js`): `_newestZealVersion()`
+picks the freshest reading across `_clientVersions` (Zeal is per-MACHINE — one
+install serves every character on the box, so per-character would just report
+whoever zoned last). `noteSpawnIdSeen()` latches `_spawnIdSeen` on the first
+finite id and never un-latches: not targeting anything is the common case
+between pulls, and a flag that flapped with targeting would make the board
+useless.
+⚠ **The latch sits on the `/api/zeal-state` INTAKE, not on the live-state
+upload.** That upload is change-signature gated, so a capable client can hand
+us ids for a whole fight without tripping a send — latching there would report
+it incapable. All three ids (`spawn_id`/`target_id`/`pet_id`) count: a client
+parked at the guild lobby still streams its own `spawn_id` every frame.
+
+**Board half** (`/admin/agents`, 🧿 Zeal card): players active 24h, players
+reporting a version, players proven capable — **counted in PLAYERS, never
+characters** (one person runs 3–12 boxes off one Zeal install, so a character
+count overstates adoption ~10×). Per-character rows get a `zeal <ver> 🎯` chip.
+⚠ **"Not yet proven" is rendered as nothing, not as a red failure** — it does
+not distinguish stock Zeal from a patched client that has not fought yet, and
+showing that ambiguity as a failure sends officers chasing people with nothing
+to fix.
+Tests: `test/zeal-version-capability.test.js` (bot + board, on `main`) and
+`test/zeal-capability-agent.test.js` (the latch + the agent↔bot contract, on
+`beta` — the only branch carrying both sources).
 
 ### Extended Target aggregation (`_handleAgentExtendedTarget`)
 Aggregates every online raider's `character_live_state.target_name` (Zeal
@@ -564,6 +615,21 @@ auctions link (`opendkpAuctionsUrl()` in `utils/loot.js`, built from
 
 ## Agent features
 
+### Dashboard as a real file (`dashboard.html` + `sync-dashboard-embed.js`) — agent 3.6.9
+
+Decision #3's first slice (`ARCHITECT-REBUILD-2026-08-16.md`): the 533 kB
+dashboard is authored in `packages/wolfpack-logsync/dashboard.html` and
+machine-folded into the `WEB_HTML` literal by `npm run sync:dashboard`; the
+shipped artifact stays the single committed `index.js`, so the update chain
+(raw fetch, sha, LKG) is untouched. Interpolations: `{{WP:expr}}` in the .html
+→ `${expr}` in the literal — distinct syntax because `${}` legitimately occurs
+as page CONTENT. Drift fails `check:dashboard` in both directions, with the
+checker importing the sync tool's own transform so gate and generator cannot
+disagree. Ship-time proof of byte identity: evaluated `WEB_HTML` and the served
+page both compared byte-for-byte against pre-change captures; the three
+historical page-killers (backtick-in-comment, `${}`, bare `\n`) authored
+naively and served correctly. Guarded by `test/dashboard-embed.test.js`.
+
 ### Log tail & privacy filter
 Tails `eqlog_*_pq.proj.txt`. Officer chat, tells, group, custom channels are
 dropped at the **byte level before parse** (`docs/PRIVACY.md`). Modes:
@@ -663,6 +729,64 @@ budget is 120/min per uploader). `encounter_id` is claimed bot-side at flush
 (`claimThreatSnapshots`) because the agent cannot know it — the encounter row
 does not exist until the fight ends.
 
+### Personal triggers — bulk management + what the loader threw away (agent 3.6.6)
+
+Uilnayar imported a large trigger pack into miMIC and asked how to undo it; the
+only answer was one `✕` at a time (Discord, 2026-08-29). The dashboard's
+personal-trigger list now has a bulk bar: **Select All / None / Disabled**,
+**⏸ Park for review** (disable, keep), **Enable**, **Delete selected**, and
+**Delete all N**. No new endpoint — `POST /api/personal-triggers` already
+REPLACES the whole list, so every bulk verb is the same read-transform-write the
+single-row delete was, and cannot drift from it. Selection is its OWN checkbox
+column: the first checkbox in each row already meant *enabled*, and reusing it
+would have made ticking a row to delete it switch it on first.
+
+⚠ **Two bugs found while looking into that import, neither related to the bulk
+gap:**
+- **A pattern that will not compile is dropped at load**, with only a line in
+  the agent log (`_compilePersonalTrigger` throws, `loadPersonalTriggers`
+  catches and skips). Import 200 and get 193, with nothing on screen saying
+  which seven or why. They are now collected into `_personalTriggerDrops`,
+  served as `dropped` on `GET /api/personal-triggers`, and reported above the
+  list with each name, pattern and compiler error — plus a warning that saving
+  any change rewrites the file without them.
+- **`valid` was `!!_regex`, wrong in BOTH directions.** A broken pattern never
+  reaches the list (it threw), so the flag could never mark one; and a pure-Zeal
+  gauge trigger legitimately has no regex, so the ONE thing it did mark was a
+  working trigger, rendered "(bad pattern)". Now `!!_regex || !!zeal_condition`.
+
+⚠ `packages/wolfpack-logsync/personal_triggers.json` is a user's own trigger set
+living in the package dir (`STATS_FILE` anchors state there) and was **not
+gitignored** — it is now, along with `logsync.queue.json`.
+
+Guarded by `test/personal-trigger-bulk.test.js` (source-sliced from the shipped
+agent, so a rename fails loudly rather than passing on a stale copy).
+
+### Divine Intervention is not invulnerability (agent 3.6.10)
+
+⚠ `DA_SPELL_RX` listed **Divine Intervention**, so the Tank/Command cards
+rendered "INV 5:36" over a rampage target (Hitya, 2026-08-30). DI is a one-shot
+DEATH SAVE — under it the tank takes full damage and can die — so INV is the
+most dangerous claim the overlay can make. The catalog settles it: every true
+invuln (Divine Aura 207, Divine Barrier 130, Harmshield 199) is `buffduration`
+3 = 3 ticks = 18s; **DI (1546) is 100 ticks = 10 minutes**, which is exactly
+the 5:36 → 2:06 → 0s countdown observed. DI is out of the list, and `_findDA`
+additionally rejects any DA-named buff over `DA_MAX_PLAUSIBLE_SEC` (60s) —
+a name whitelist can be wrong again, a duration cannot. DI keeps its own
+surfaces (#204 chips, the Command Center DI row).
+
+### Needs-rez board: real spelling, no pets (agent 3.6.10)
+
+`_deadSince` was `nameLower → diedAtMs` and the board rendered the KEY, so the
+Command Center listed "dafeet, meditate, shavimo…". The value is now
+`{ at, display }`; the key stays lowercase for matching, `name` is the spelling
+a healer reads, and `key` carries the match form. ⚠ Every consumer reads the
+time through `_deadAt()` — the value has a shape now, and a direct
+`_deadSince.get()` silently compares a number to an object (asserted: exactly
+one direct read remains, inside the accessor). Pets are excluded at
+`_noteDeath` via `_isOurPetName` — Jtik was on the board, and a rez spent on a
+pet is a wasted cast and a queue slot ahead of a real corpse.
+
 ### Charm pipeline
 `_charmTickTracker` (slot-16 gauge-driven; 1.5s land debounce, 10s re-charm
 grace), `CHARM_SPELLS` map (backtick + apostrophe spellings), pending-charm
@@ -691,9 +815,22 @@ treating that as a new pet erases a live pet's buffs — fixture-enforced).
 only once the report has CLOSED (`PET_REPORT_GAP_MS`; mid-stream the set is
 still filling), never for landings newer than the snapshot, never for
 uncatalogued spells (`applyPetHealthLine` can only record catalog names, so
-their absence says nothing). KNOWN GAP: re-charming a DIFFERENT mob with the
-SAME name is invisible to the identity check — the `/pet health` reconcile is
-what catches it. Tests: `test/pet-buff-landing.test.js`.
+their absence says nothing). ~~KNOWN GAP: re-charming a DIFFERENT mob with the
+SAME name is invisible to the identity check— the `/pet health` reconcile is
+what catches it.~~
+**GAP CLOSED by spawn id (agent 3.6.14)** — `_petIdForOwner` reads `pet_id`
+off the pipe's player message (Zeal PR #229) and `_reconcilePetIdentity` checks
+it BEFORE the name: two `an orc warrior` are one string but two ids, so a
+same-name re-charm now drops the previous pet's buffs instead of unioning them
+onto the new one (Hitya, 2026-08-31: *"in case people switch their charmed
+pets"*). ⚠ **null is UNKNOWN, never CHANGED** — it is null on every released
+Zeal, whenever there is no pet, and during the ~3s slot-16 dip of a re-charm, so
+a change requires BOTH ids real and different; wiping on null would erase a live
+pet's buffs on every swap, which is the very failure the "empty is not an
+identity change" rule exists to prevent. The name path is untouched and remains
+the only one on a stock client, with `/pet health` still the backstop. An id
+wipe also refreshes the name map, or the next poll fires a second spurious wipe.
+Tests: `test/pet-buff-landing.test.js`.
 
 ### Instant boss mechanics — the third capture path (#206, 2026-08-11)
 Two paths existed and both are keyed on things an instant effect does not have:
@@ -1492,8 +1629,13 @@ holds it in memory.
 - **Landing page + top nav (`web/app/page.tsx`, `components/WolfPack.tsx`,
   `components/Nav.tsx`, `components/PlateIcons.tsx`, web 1.4.x)** — the hero is a
   raster wolf plate (`public/wolf.png`, 973²) with five scaled copies behind it,
-  revealed as a SEQUENCE: eyes, then the pack's eyes, then the alpha's lines,
-  then each pack member nearest-first. **Depth is `filter: brightness()`, never
+  revealed as a SEQUENCE (reordered 2026-08-29): her eyes → HER, whole → the
+  pack's eyes → the pack, nearest-first. The first cut interleaved the halves,
+  so the alpha landed at the same instant as a wall of pack. ⚠ The order is
+  decided by four numbers split across a CSS rule and a TSX array, none of
+  which states the intent on its own — `test/wolf-eyeglow.test.js` asserts the
+  alpha's focus (delay + duration) completes before the earliest pack `eyeAt`,
+  so stretching her duration alone also fails. **Depth is `filter: brightness()`, never
   `opacity`** — brightness darkens the bone while leaving alpha intact, so a
   nearer wolf occludes the one behind it; fading with opacity made them ghosts.
   ⚠ **Brightness was necessary but NOT sufficient** (2026-08-28): only the bone
@@ -1938,6 +2080,60 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   the dashboard gets screen-shared); the expansion filter one-shots onto the
   current expansion via `currentEra()`, falling back to "all" if that would
   render an empty list.
+- **Loot won card (agent 3.6.11)** — the archive split out of the bidding card
+  into its own `wpLootWonCard` in the Loot section (`renderWon()` in
+  `dashboard.html`; Hitya 2026-08-30: *"Move Past Items to a different 'loot
+  won' area"*). The bidding card is the LIVE HAND — what is up, what you lost,
+  what you plan to spend; this is the ARCHIVE. The split also splits the
+  privacy gate: `showWon` is independent of `showLoot`, so you can browse what
+  you have won without exposing your wishlist and misses. Deliberately NOT era
+  filtered — it is a lookup surface, so every row renders (capped 400) and the
+  search box narrows it; era joined the search key so "kunark" matches
+  alongside item and character. First 12 rows show, the rest carry
+  `data-extra=1` until a query. Tests: `test/loot-won-card.test.js`.
+- **2nd place in the bidding area (agent 3.6.11)** — the auctions table gained
+  a `2nd place` column between `Last win` and `Bid`, matching RECENT MISSES
+  (Hitya 2026-08-30). `runner_up` was already served by `_lootItemSummary` and
+  already rendered — as a 10px dim sub-line INSIDE the `Last win` cell, which
+  is why it read as missing. Empty renders an em-dash so the column never
+  collapses. Tests: `test/loot-second-place-column.test.js`.
+- **Discipline reuse timer — SELF ONLY (agent 3.6.12)** —
+  `trackDisciplineTimerLine` parses the client's own refusal line ("You can use
+  a new discipline in 10 minutes 34 seconds."), the only place EQ states the
+  shared melee-discipline reuse exactly. Keyed per watched character;
+  `_disciplineTimerSnapshot(activeChar)` rides the Command Center payload as
+  `discipline` and renders as a one-row card (Hitya, 2026-08-30: *"discipline
+  cooldowns should be tracked on the command center for the user only"*).
+  Deliberately NOT on the raid-wide defensives board — no equivalent line
+  exists for other people, and deriving one from their activation emote means
+  guessing a reuse that differs per disc. Only the REFUSAL line is matched; no
+  "ready" line is invented (see the DI trigger precedent). Tests:
+  `test/discipline-timer.test.js`.
+- **Eaten-backslash detector (`scripts/check-agent-dashboard.js`, 2026-08-30)** —
+  the hand-escaped `WEB_HTML` era ate backslashes, and five survivors were still
+  shipping: `/^file:(d+)$/` ×2 (a picked RaidTick file resolved to zero
+  attendees — "No attendees in that source", reported by Hitya after a raid),
+  `.split(/s+/)` ×2 (silently defeated the wp-* class preservation its own
+  comment describes, so hidden panels reappeared every 2s poll), and `/^✥s*/`.
+  A lost backslash is valid regex that matches the wrong thing, so it never
+  throws — `checkEatenBackslashes` flags a bare `d`/`s`/`w` before a quantifier
+  inside any regex literal in `dashboard.html` and `command.html`, and FAILS the
+  build. Tests: `test/dashboard-eaten-backslash.test.js` (runs the real
+  detector, with a positive control on all five historical bugs).
+- **Zeal spawn-id capture (Mimic + agent 3.6.13)** — Mimic's pipe handler reads
+  `spawn_id` / `target_id` / `pet_id` off the `player` message (Zeal PR #229)
+  into `_zealState`, and the agent uploads `target_id` beside `target_name` on
+  the live-state flush. ⚠ **Absent on every released Zeal** — all three are
+  optional, null is the normal case, and nothing downstream may require them.
+  ⚠ **A consumer MUST key on (zone, id).** An id is a slot in the zone's entity
+  table, so the same number is a different mob in another zone
+  (`docs/zeal-pipe-protocol.md`). ⚠ Ids need no zone-change clearing even
+  though names do: they ride the player message itself and are assigned
+  unconditionally, so the message that rezones replaces them — whereas names
+  come from gauge messages that can lag the zone event. A clear was written
+  first and removed as dead code. Key names are read in ONE place so an
+  upstream rename (#218 suggested `NPC_ID`) is a three-line edit. Tests:
+  `test/zeal-spawn-id-capture.test.js`.
 - **Replay (#101)** — `startReplay`/`_replayWorker`: walk a log slice through the
   REAL trigger pipeline as a rehearsal (no uploads, refuses during a live fight).
 - **Pet buffs + range (#117/#119)** — own-pet landing attribution; buff-queue

@@ -37,6 +37,30 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'extended-target-ids-2026-09-01',
+    title: 'Telling two mobs of the same name apart',
+    version: 'Bot 3.1.107 \u00b7 Web 1.7.7 \u00b7 Mimic beta',
+    date: '2026-09-01',
+    headline: 'The Extended Target list has always had to guess which of two identically-named mobs it was looking at. On a patched client it no longer guesses \u2014 and the officer board now shows who is running one.',
+    features: [
+      {
+        name: 'Two mobs with the same name are now separate rows',
+        blurb: 'When several raiders are on different mobs that share a name, the list used to tell them apart by health, which fails the moment two of them sit at the same health. Where the game client can say which mob is which, it now says so \u2014 the row shows the mob\u2019s own number in green instead of the amber asterisk that warns you the debuffs might belong to the other one.',
+      },
+      {
+        name: 'Everyone else is unaffected',
+        blurb: 'This needs a change to Zeal that has not been released yet, so today nothing on the board looks different. When a raider updates, their rows start separating on their own \u2014 there is nothing to turn on and nothing to configure.',
+      },
+      {
+        name: 'Officers can see who has it',
+        blurb: 'The agent page now shows which version of Zeal each raider is running, and \u2014 separately \u2014 whether their client has actually sent us one of those mob numbers. Those are two different questions: a patched client reports the same version as an unpatched one, so the only honest answer is whether it has actually done it.',
+      },
+    ],
+    fixes: [
+      'Until the change is out, tagging a mob still works as the accurate way to tell two of them apart.',
+    ],
+  },
+  {
     key: 'raid-night-2026-08-30b',
     title: 'End the raid when it ends, and a top bar that fits',
     version: 'Bot 3.1.104 \u00b7 Web 1.7.6 \u00b7 Mimic beta',
@@ -138,6 +162,31 @@ export const releases: Release[] = [
     ],
     fixes: [
       'Measured on one real account: 20 items bid on and lost, 19 of them hidden. One row was showing.',
+    ],
+  },
+  {
+    key: 'agent-3-6-6',
+    title: 'Undo an import',
+    version: 'Agent 3.6.6',
+    date: '2026-08-29',
+    channel: 'beta',
+    headline: 'Imported a big trigger pack and regretted it? You can now clear them out in one go instead of one at a time.',
+    features: [
+      {
+        name: 'Select and delete in bulk',
+        blurb: 'Tick the ones you want, or hit All, then delete them together \u2014 or wipe every personal trigger with one button. Your guild triggers are never touched.',
+      },
+      {
+        name: 'Park for review instead of deleting',
+        blurb: 'Switches the selected triggers off but keeps them, so the noise stops now and you can sort out which ones you actually wanted later.',
+      },
+      {
+        name: 'It tells you which triggers did not survive the import',
+        blurb: 'A trigger whose pattern will not compile has always been quietly skipped, so importing 200 could leave you 193 with no explanation. The list now names each one and says what was wrong with it.',
+      },
+    ],
+    fixes: [
+      'A trigger that watches health instead of chat text is no longer labelled "bad pattern". It never had a text pattern to begin with \u2014 that was the only kind of trigger that label could appear on.',
     ],
   },
   {
