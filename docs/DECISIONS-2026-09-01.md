@@ -57,6 +57,44 @@ the ids REPLACE HP clustering for that name. Below that, nothing changes.
   next step but needs real multi-reporter id data to validate, and wrong per-mob
   debuffs are worse than pooled ones.
 
+## We are on Supabase Pro, and there is no call budget to blow
+
+**Corrected 2026-09-01.** Code comments and archived docs across the repo say the
+project is on the Supabase **free tier**. It is on **Pro** (org `hesstastic`,
+verified through the Management API), and has been since before several of those
+comments were written. Three live files carried the stale claim, one of them in
+copy displayed to officers on `/admin/agents`; all three fixed.
+
+**The bigger correction is what Supabase actually meters: NOT requests.** Neither
+Free nor Pro has a per-request quota — the line items are Egress (250 GB/mo on
+Pro), Database Size (8 GB/project), Storage, MAU, Edge Function invocations and
+Realtime. So "how many POSTs a day can we afford" has no answer, and any design
+that budgets calls is budgeting against a limit that does not exist.
+
+What follows from that, and it is close to the opposite of how this repo has been
+reasoning:
+
+- **Uploads are nearly free. READS are what cost.** Egress is data leaving
+  Supabase. A stream's send frequency barely registers; a poll cadence, a wide
+  `select`, or an un-cached overlay refresh is the bill. Optimise the read side.
+- **Database size is the only meter that ratchets.** 1.72 GB of 8 GB (21%) today.
+  That is the real justification for pruning `buff_casts` to 7 days and for
+  retiring the row-per-upload `agent_uploads` log — both were argued as call-cap
+  savings, and both are right for the wrong reason.
+- **Railway is not a constraint at all.** The bot averages 0.4% of an 8-vCPU limit
+  and 1.6% of 8 GB RAM over 7 days, peaking at 8.7% CPU.
+
+⚠ **Two things nobody has actually checked, both dashboard-only:** the **Spend
+Cap** setting (with it ON, an overage means read-only mode and 402s, not a bill),
+and **current egress against the 250 GB**. The Management API exposes neither.
+Until someone reads them off the dashboard, do not quote an egress percentage and
+do not assume an overage would merely cost money.
+
+This is also why the mid-raid load-shed flags and the admission-control budgets
+are still worth having — they exist to protect *raid-night latency and the bot's
+own responsiveness*, not a billing quota. Keep them; just stop justifying them
+with the free tier.
+
 ## Open — read this first
 
 | Item | State |
@@ -69,6 +107,7 @@ the ids REPLACE HP clustering for that name. Below that, nothing changes.
 | **Autobid button** | Deliberately NOT shipped: the flag exists but nothing consumes it, and `DESIGN-bid-assist.md` needs a ceiling column that does not exist yet |
 | **`bump_agent_upload_stat` now has three overloads** | 8-, 9- and 11-arg. Pre-existing pattern (the 8-arg predates this work) and PostgREST resolves by named args, so nothing is broken — but the two stale ones should be dropped once the fleet is fully on bot ≥3.1.107 |
 | **The weekly OpenDKP sweep is TEMPORARY** | Revert to `OPENDKP_LIST_FULL_SWEEP_DAYS=0,3,4` when OpenDKP ships `since` |
+| ⚠ **Supabase Spend Cap + current egress** | Both dashboard-only, both unread. Needed before any "we can afford it" claim |
 | **Tag channel autojoin file-write** | Still blocked on one line from a real character ini |
 
 _Carried forward from `DECISIONS-2026-08-30.md`; the bid-detail backfill and the

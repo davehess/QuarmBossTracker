@@ -4238,9 +4238,14 @@ setInterval(() => {
 // Fire-and-forget — bump a per-(character, endpoint) COUNTER in
 // agent_upload_stats so the /admin/agents board (and /me upload panel) can show
 // who is uploading what, when, on what version, and error counts. This replaced
-// the old row-per-upload `agent_uploads` log, which grew ~30k rows/day and was
-// the fastest path to the Supabase free-tier cap. The RPC upserts + increments
-// in one call. Best-effort: failures are warned and swallowed so the upload
+// the old row-per-upload `agent_uploads` log, which grew ~30k rows/day. The RPC
+// upserts + increments in one call.
+// ⚠ That retirement is often cited as "to stay on the free tier", which has been
+// WRONG since the org moved to Pro (verified 2026-09-01: org `hesstastic`, plan
+// `pro`). The reason still holds; it is just a different one. Supabase meters
+// DATABASE SIZE (8 GB/project included — we are at 1.7 GB) and EGRESS (250
+// GB/mo), and NEITHER plan has a per-request quota at all. So a table growing
+// 30k rows a day was a real cost, and the calls that wrote it were not. Best-effort: failures are warned and swallowed so the upload
 // response is never blocked on the metadata write. (payloadBytes is no longer
 // stored — the counter doesn't track per-upload bytes.)
 // Zeal version + spawn-id capability ride the agent_state jsonb this function

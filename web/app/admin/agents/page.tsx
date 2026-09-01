@@ -18,10 +18,13 @@ import { supabaseAdmin } from '@/lib/supabase';
 export const dynamic = 'force-dynamic';
 
 // One row per (character, endpoint) — a running counter, not a per-upload log.
-// agent_uploads (a row per upload) was retired: at ~30k rows/day it was the
-// fastest path to the Supabase free-tier cap. We keep the SAME signals (total
-// uploads, last-seen, version, errors, agent_state) in a few hundred rows that
-// never grow. Trade-off: no per-window (24h/7d) activity — just all-time totals
+// agent_uploads (a row per upload) was retired at ~30k rows/day. We keep the
+// SAME signals (total uploads, last-seen, version, errors, agent_state) in a few
+// hundred rows that never grow.
+// ⚠ Older copy said this was "to stay on the free tier". The org has been on Pro
+// since before that was written (verified 2026-09-01). What Supabase actually
+// meters is database SIZE (8 GB/project included) and EGRESS (250 GB/mo) — there
+// is no request-count quota on any plan. Row growth was the cost, not calls. Trade-off: no per-window (24h/7d) activity — just all-time totals
 // + recency.
 type StatRow = {
   character: string | null;
@@ -624,8 +627,9 @@ export default async function AdminAgentsPage() {
         <p className="text-sm text-dim leading-6">
           Every upload to <code>/api/agent/*</code> bumps a per-character counter
           in <code>agent_upload_stats</code> (a few hundred rows total — the old
-          row-per-upload <code>agent_uploads</code> log was retired to stay on the
-          Supabase free tier). Totals are all-time; activity is shown by last-seen.
+          row-per-upload <code>agent_uploads</code> log was retired at ~30k rows a
+          day, because Supabase bills on database size, not on how many calls we
+          make). Totals are all-time; activity is shown by last-seen.
         </p>
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mt-4 text-xs">
           <Stat label="Active 24h"    value={active.length} color="text-green" />
