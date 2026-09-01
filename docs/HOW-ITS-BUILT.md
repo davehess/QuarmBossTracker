@@ -473,6 +473,31 @@ Tests: `test/zeal-version-capability.test.js` (bot + board, on `main`) and
 `test/zeal-capability-agent.test.js` (the latch + the agent↔bot contract, on
 `beta` — the only branch carrying both sources).
 
+### Extended Target: a killed mob leaves the board on death (bot 3.1.109)
+`_extMobLastSeen` is a 90s grace cache that keeps a hurt mob on the overlay
+through a targeting gap. It was purely time-based, so a boss killed at 5% sat
+there as a "last seen 56s ago" corpse carrying its whole debuff list — while the
+bot had *already announced the kill* (Hitya 2026-09-01, Lord of Ire in Plane of
+Hate). `_extEvictDeadMob(name)` now drops it the moment a death is confirmed,
+from two signals: the `bosskill` relay (server broadcasts — instanced/lockout
+content) and any `encounter` upload with `confirmed_kill === true` (whatever a
+raider's own agent saw die, broadcast or not).
+⚠ **The grace window is a TIMEOUT, not a death signal.** It was already cut
+5min → 90s for this exact report on 2026-07-06 and the symptom returned;
+shortening a timeout is not the same as knowing the mob died. Do not "fix" a
+recurrence by shortening it again — 90s is what a real target swap needs.
+⚠ **Matches the NAME segment and ignores the zone on purpose** — the key is
+`<guild>|<zone>|<name>` and the zone strings disagree between sources
+(live-state carries a Zeal zone name, the relay carries the broadcast's, e.g.
+"Plane of Hate (Instanced)"). Only unique, non-ambiguous mobs are ever cached,
+so a name match can't evict the wrong same-name instance.
+⚠ **Slayer-agnostic, deliberately.** The report's killing blow came from
+`a kiraikuei` — a pet — so the death line named an article-prefixed NPC instead
+of a player. That is incidental: the row lingered because nothing told the cache
+about the death, not because of who swung. Filtering these paths to
+player-slayers would rebuild the bug. Tests:
+`test/ext-target-death-eviction.test.js`.
+
 ### Extended Target aggregation (`_handleAgentExtendedTarget`)
 Aggregates every online raider's `character_live_state.target_name` (Zeal
 slot 6, freshness window) by name; classifies each name player/pet/NPC

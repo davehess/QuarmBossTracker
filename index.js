@@ -5515,6 +5515,11 @@ async function _handleAgentBossKill(req, res) {
     const { character, guild, boss: bossName, zone, ts } = kill || {};
     if (!bossName) continue;
 
+    // Dead → off the Extended Target board, before anything else can `continue`
+    // past it. Deliberately ABOVE the PoP lock check below: that gate is about
+    // timers and boards, and a locked boss is every bit as dead on the overlay.
+    _extEvictDeadMob(bossName);
+
     // A server kill broadcast = lockout content → card-worthy. Promote its
     // bosses_local row if the persist path auto-registered it (fire-and-
     // forget — timers below don't depend on it).
@@ -11625,6 +11630,31 @@ const _extMobLastSeen = new Map();
 // "corpse" on the tracker (Hitya 2026-07-06). 90s covers a real target swap;
 // genuinely off-tanked mobs are kept alive independently by the off-tank path.
 const EXT_STALE_GRACE_MS = 90 * 1000;
+// Evict a mob from that cache the moment we KNOW it died, instead of waiting
+// out the grace timer.
+//
+// ⚠ The grace window is a timeout, not a death signal, and shortening it was
+// never a fix. The 5min → 90s cut above was made for exactly this report on
+// 2026-07-06; Hitya hit the same thing again on 2026-09-01 (Lord of Ire, Plane
+// of Hate, killed at 5% and still sitting on the board at "last seen 56s ago"
+// carrying its whole debuff list). The bot ALREADY knew — it had announced the
+// kill — the board just had no way to hear about it.
+//
+// Matches on the NAME segment and deliberately ignores the zone: the key is
+// <guild>|<zone>|<name>, and the zone strings do not agree across sources
+// (live-state carries a Zeal zone name, the kill relay carries whatever the
+// server broadcast said — "Plane of Hate (Instanced)"). Only unique-name,
+// non-ambiguous mobs are ever cached here, so a name match can never evict the
+// wrong same-name instance — the ambiguous ones were never in the map.
+function _extEvictDeadMob(mobName) {
+  const n = String(mobName || '').trim().toLowerCase();
+  if (!n) return 0;
+  let gone = 0;
+  for (const k of [..._extMobLastSeen.keys()]) {
+    if (k.slice(k.lastIndexOf('|') + 1) === n) { _extMobLastSeen.delete(k); gone++; }
+  }
+  return gone;
+}
 // Off-tank freshness — how recently the agent's own recentTankHits must have
 // confirmed a mob hitting a raider for it to still count as "currently
 // hitting someone" for the 100%-HP off-tank case (Emperor-style fights: an
@@ -18165,6 +18195,12 @@ async function _handleAgentUpload(req, res) {
 
         // #83 — remember the encounter id for the post-200 parse deep-link step.
         if (recParseResult?.encounterId) _encIdForLink = recParseResult.encounterId;
+
+        // Same eviction as the kill relay, on the broader signal: the relay
+        // only fires for server broadcasts (instanced / lockout content), while
+        // this fires whenever ANY raider's agent saw the death line — so a mob
+        // killed without a broadcast also leaves the board immediately.
+        if (encounter.confirmed_kill === true) _extEvictDeadMob(encounter.boss_name);
 
         // Register the kill the moment ANY contributor's agent confirms the
         // boss's slain line (confirmed_kill). Sets encounters.ended_at — the
