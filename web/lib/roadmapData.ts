@@ -37,6 +37,30 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'extended-target-ids-2026-09-01',
+    title: 'Telling two mobs of the same name apart',
+    version: 'Bot 3.1.107 \u00b7 Web 1.7.7 \u00b7 Mimic beta',
+    date: '2026-09-01',
+    headline: 'The Extended Target list has always had to guess which of two identically-named mobs it was looking at. On a patched client it no longer guesses \u2014 and the officer board now shows who is running one.',
+    features: [
+      {
+        name: 'Two mobs with the same name are now separate rows',
+        blurb: 'When several raiders are on different mobs that share a name, the list used to tell them apart by health, which fails the moment two of them sit at the same health. Where the game client can say which mob is which, it now says so \u2014 the row shows the mob\u2019s own number in green instead of the amber asterisk that warns you the debuffs might belong to the other one.',
+      },
+      {
+        name: 'Everyone else is unaffected',
+        blurb: 'This needs a change to Zeal that has not been released yet, so today nothing on the board looks different. When a raider updates, their rows start separating on their own \u2014 there is nothing to turn on and nothing to configure.',
+      },
+      {
+        name: 'Officers can see who has it',
+        blurb: 'The agent page now shows which version of Zeal each raider is running, and \u2014 separately \u2014 whether their client has actually sent us one of those mob numbers. Those are two different questions: a patched client reports the same version as an unpatched one, so the only honest answer is whether it has actually done it.',
+      },
+    ],
+    fixes: [
+      'Until the change is out, tagging a mob still works as the accurate way to tell two of them apart.',
+    ],
+  },
+  {
     key: 'raid-night-2026-08-30b',
     title: 'End the raid when it ends, and a top bar that fits',
     version: 'Bot 3.1.104 \u00b7 Web 1.7.6 \u00b7 Mimic beta',

@@ -4243,6 +4243,24 @@ setInterval(() => {
 // in one call. Best-effort: failures are warned and swallowed so the upload
 // response is never blocked on the metadata write. (payloadBytes is no longer
 // stored — the counter doesn't track per-upload bytes.)
+// Zeal version + spawn-id capability ride the agent_state jsonb this function
+// already receives on every tracked endpoint, so all ~17 call sites get them
+// with no edits.
+// ⚠ live-state — the endpoint where the target spawn id ACTUALLY arrives — is
+// deliberately not one of them, which is the whole reason the agent reports its
+// own capability instead of the bot inferring it from traffic it can see.
+// Measured 2026-09-01: 56 characters in 24h, batched to ~16 installs, at a 45s
+// per-character heartbeat floor ≈ 30k POSTs/day before the change-driven sends
+// that dominate a raid. Same order as the row-per-upload `agent_uploads` log
+// retired above, so a Supabase RPC per live-state POST is a real cost — not a
+// catastrophic one, but not one worth paying for a fact the agent can just
+// state.
+//
+// ⚠ They answer two DIFFERENT questions and neither substitutes for the other
+// (see migration 20260901160000). The version is for chasing adoption; the
+// observed id is the capability. A patched Zeal reports the same version
+// string as a stock one, so a version test would call a capable client
+// incapable — consumers branch on spawn_id_seen_at.
 function _trackUpload({ endpoint, character, agentVersion, ok = true, statusCode = 200, errorMessage = null, payloadBytes = null, agentState = null, uploadedBy = null }) {
   void payloadBytes;
   try {
@@ -4258,6 +4276,8 @@ function _trackUpload({ endpoint, character, agentVersion, ok = true, statusCode
       p_error:       errorMessage,
       p_agent_state: agentState,
       p_uploaded_by: uploadedBy || null,
+      p_zeal_version:  (agentState && agentState.zeal_version) ? String(agentState.zeal_version).slice(0, 40) : null,
+      p_spawn_id_seen: !!(agentState && agentState.spawn_id_capable),
     }).catch(err => console.warn('[agent-uploads] stat bump failed:', err?.message));
   } catch (err) {
     console.warn('[agent-uploads] track failed:', err?.message);

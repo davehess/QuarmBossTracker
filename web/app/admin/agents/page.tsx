@@ -36,6 +36,13 @@ type StatRow = {
   last_error: string | null;
   last_agent_state: any;
   uploaded_by_discord_id: string | null;
+  // Which Zeal this client reports, and when it last actually SENT a spawn id.
+  // ⚠ Two columns because one cannot answer the other's question: a build
+  // carrying Zeal PR #229 reports the same version string as a stock build of
+  // the same release, so the version can only chase adoption. Capability is the
+  // observed one.
+  zeal_version: string | null;
+  spawn_id_seen_at: string | null;
 };
 
 type BackfillRow = {
@@ -64,7 +71,7 @@ async function loadData() {
   const [{ data: stats }, { data: backfills }, { data: roster }, { data: members }] = await Promise.all([
     admin
       .from('agent_upload_stats')
-      .select('character, endpoint, upload_count, error_count, first_uploaded_at, last_uploaded_at, agent_version, last_ok, last_status_code, last_error, last_agent_state, uploaded_by_discord_id')
+      .select('character, endpoint, upload_count, error_count, first_uploaded_at, last_uploaded_at, agent_version, last_ok, last_status_code, last_error, last_agent_state, uploaded_by_discord_id, zeal_version, spawn_id_seen_at')
       .order('last_uploaded_at', { ascending: false })
       .limit(2000),
     admin
@@ -155,6 +162,13 @@ type CharSummary = {
   // True when this character isn't in the OpenDKP roster but we folded it into a
   // family via its uploader's Discord token (e.g. an un-rostered extra box).
   unrostered: boolean;
+  // Zeal version this client reports. Zeal is per-MACHINE, so several
+  // characters on one box all report the same string.
+  zealVersion: string | null;
+  // When this character's client last handed us a spawn id (Zeal PR #229).
+  // null = never proven. ⚠ Never proven is NOT the same as incapable: it is
+  // also what a capable client looks like before it has been in a fight.
+  spawnIdSeenAt: string | null;
 };
 
 // Real EQ player names are letters only. The "(unknown)" sentinel (and the
@@ -192,6 +206,8 @@ function summarize(stats: StatRow[]): CharSummary[] {
         everAuthed: false,
         foreignUploaderName: null,
         unrostered: false,
+        zealVersion: null,
+        spawnIdSeenAt: null,
       };
       byChar.set(name, s);
     }
@@ -207,6 +223,15 @@ function summarize(stats: StatRow[]): CharSummary[] {
         s.client       = (r.last_agent_state.client ?? null) as string | null;
         s.appVersion   = (r.last_agent_state.app_version ?? null) as string | null;
       }
+    }
+    // Both Zeal facts fold across EVERY endpoint row, not just the newest one
+    // the way agent_version does. They are per-machine and per-lifetime rather
+    // than per-upload: a character whose newest row happens to be an endpoint
+    // that predates these columns would otherwise read as "no Zeal, never
+    // capable" while an older row on the same character holds the proof.
+    if (r.zeal_version) s.zealVersion = r.zeal_version;
+    if (r.spawn_id_seen_at && (!s.spawnIdSeenAt || r.spawn_id_seen_at > s.spawnIdSeenAt)) {
+      s.spawnIdSeenAt = r.spawn_id_seen_at;
     }
     s.totalUploads += Number(r.upload_count) || 0;
     s.totalErrors  += Number(r.error_count) || 0;
@@ -241,6 +266,13 @@ type Family = {
   // family's — almost always one human whose alts were never parented in
   // OpenDKP (Adiwen/Wabumkin). Fixable from /admin/links → Family links.
   sameUploaderAs: string[];
+  // Zeal, rolled up to the player. Version = the newest reading any of their
+  // characters reported (Zeal is per-machine; a family usually spans one box).
+  // spawnIdSeenAt = the most recent id ANY of their characters sent — one
+  // proven character proves the install, and a character that has simply not
+  // been in a fight yet must not drag that back to "incapable".
+  zealVersion: string | null;
+  spawnIdSeenAt: string | null;
 };
 
 // Group uploading characters into one family per owner. Discord-auth aware:
@@ -307,7 +339,7 @@ function groupByMain(summaries: CharSummary[], roster: RosterRow[], memberName: 
 
     let f = fams.get(key);
     if (!f) {
-      f = { mainName, discordId: mainDiscord.get(key) ?? null, ownerNick: null, members: [], latestMs: 0, latestUpload: '', totalUploads: 0, totalErrors: 0, versions: [], queueMax: 0, anyFight: false, anyForeign: false, linked: false, sameUploaderAs: [] };
+      f = { mainName, discordId: mainDiscord.get(key) ?? null, ownerNick: null, members: [], latestMs: 0, latestUpload: '', totalUploads: 0, totalErrors: 0, versions: [], queueMax: 0, anyFight: false, anyForeign: false, linked: false, sameUploaderAs: [], zealVersion: null, spawnIdSeenAt: null };
       fams.set(key, f);
     }
     f.members.push(s);
@@ -315,6 +347,8 @@ function groupByMain(summaries: CharSummary[], roster: RosterRow[], memberName: 
     f.totalErrors  += s.totalErrors;
     if (s.lastUploadMs > f.latestMs) { f.latestMs = s.lastUploadMs; f.latestUpload = s.lastUpload; }
     if (s.agentVersion && !f.versions.includes(s.agentVersion)) f.versions.push(s.agentVersion);
+    if (s.zealVersion) f.zealVersion = s.zealVersion;
+    if (s.spawnIdSeenAt && (!f.spawnIdSeenAt || s.spawnIdSeenAt > f.spawnIdSeenAt)) f.spawnIdSeenAt = s.spawnIdSeenAt;
     if ((s.queuePending ?? 0) > f.queueMax) f.queueMax = s.queuePending ?? 0;
     if (s.fightActive) f.anyFight = true;
     if (s.foreignUploaderName) f.anyForeign = true;
@@ -431,6 +465,10 @@ function mergeFamiliesByUploader(families: Family[]): Family[] {
       totalUploads: allMembers.reduce((acc, m) => acc + m.totalUploads, 0),
       totalErrors:  allMembers.reduce((acc, m) => acc + m.totalErrors,  0),
       versions:     [...new Set(allMembers.map(m => m.agentVersion).filter(Boolean) as string[])],
+      zealVersion:  allMembers.map(m => m.zealVersion).find(Boolean) ?? null,
+      // Max, not first: one proven character proves the whole install.
+      spawnIdSeenAt: allMembers.map(m => m.spawnIdSeenAt).filter(Boolean)
+        .sort().reverse()[0] ?? null,
       latestMs:     Math.max(...allMembers.map(m => m.lastUploadMs)),
       latestUpload: allMembers[0]?.lastUpload || owner.latestUpload,
       queueMax:     Math.max(...group.map(f => f.queueMax)),
@@ -537,6 +575,28 @@ export default async function AdminAgentsPage() {
   }
   const versions = [...byVersion.entries()].sort((a, b) => (a[0] < b[0] ? 1 : -1));
 
+  // ── Zeal: who runs what, and whose client can hand us a spawn id ────────
+  //
+  // ⚠ COUNTED IN PLAYERS, NEVER CHARACTERS (Hitya, 2026-08-16: "character
+  // counts mean almost nothing"). One person runs 3-12 boxes, so a character
+  // count inflates roughly 10x and would read as fleet-wide adoption when it is
+  // a handful of people. A family here IS a player.
+  //
+  // ⚠ And the two numbers below are NOT interchangeable. "Capable" is observed
+  // — a client that actually sent an id — because Zeal PR #229 is unreleased
+  // and a build carrying it reports the SAME version string as a stock build of
+  // the same release. A version comparison would call a patched client
+  // incapable. Once the PR ships in a numbered release the version becomes a
+  // legitimate second signal; until then it only answers "who is behind".
+  const zealPlayers    = activeFamilies.filter(f => f.zealVersion);
+  const capablePlayers = activeFamilies.filter(f => f.spawnIdSeenAt);
+  const byZeal = new Map<string, number>();
+  for (const f of activeFamilies) {
+    const v = f.zealVersion || '(not reported)';
+    byZeal.set(v, (byZeal.get(v) ?? 0) + 1);
+  }
+  const zealVersions = [...byZeal.entries()].sort((a, b) => (a[0] < b[0] ? 1 : -1));
+
   // Backfill request status breakdown
   const bfByStatus = new Map<string, BackfillRow[]>();
   for (const b of backfills) {
@@ -583,6 +643,55 @@ export default async function AdminAgentsPage() {
               <span key={v}>
                 {i > 0 && ' · '}
                 <span className="text-text">{v}</span>
+                <span className="text-dim"> ×{n}</span>
+              </span>
+            ))}
+          </div>
+        )}
+      </section>
+
+      {/* Zeal — what each box is running, and whether it can hand us a spawn
+          id yet. Separate from the agent-fleet card above because it is a
+          DIFFERENT program on the same machine: raiders update Mimic without
+          touching Zeal and vice versa, so one card mixing the two hides which
+          of the two is behind. */}
+      <section className="bg-panel border border-border rounded-lg p-6">
+        <h2 className="text-xl text-gold mb-1">🧿 Zeal</h2>
+        <p className="text-sm text-dim leading-6">
+          Zeal is the in-game DLL, not ours — it prints its version to the log at
+          zone-in, and the agent forwards whatever it sees. Counted in{' '}
+          <strong className="text-text">players</strong>, not characters: one person
+          runs several boxes off one Zeal install, so a character count would
+          overstate this roughly tenfold.
+        </p>
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mt-4 text-xs">
+          <Stat label="Players active 24h" value={activeFamilies.length} />
+          <Stat label="Reporting a Zeal version" value={zealPlayers.length} color="text-blue" />
+          <Stat label="Proven spawn-id capable" value={capablePlayers.length} color={capablePlayers.length > 0 ? 'text-green' : 'text-dim'} />
+        </div>
+        <p className="text-xs text-dim leading-6 mt-4">
+          <strong className="text-orange">Capability is observed, never inferred from the version.</strong>{' '}
+          Zeal <a href="https://github.com/CoastalRedwood/Zeal/pull/229" target="_blank" rel="noreferrer" className="text-blue hover:underline">PR #229</a>{' '}
+          — which puts spawn ids on the pipe — is not in a numbered release yet, and a
+          build carrying it reports the <em>same</em> version string as a stock build of the
+          same release. So &ldquo;capable&rdquo; here means the client actually sent us an id.
+          Nothing proven yet is not the same as incapable: it is also what a capable
+          client looks like before its first fight.
+        </p>
+        <p className="text-xs text-dim leading-6 mt-2">
+          Until that number is non-zero across the raid, same-name mobs are separated by
+          HP clustering (a guess that fails when two of them sit at the same health), with{' '}
+          <code>/tag</code> as the accurate fallback — it broadcasts the same spawn id over
+          chat, but a human has to target and tag each mob, against a server rate limit.
+        </p>
+        {zealVersions.length > 0 && (
+          <div className="text-xs text-dim mt-4">
+            <span className="text-dim">Zeal versions in the active fleet:</span>
+            {' '}
+            {zealVersions.map(([v, n], i) => (
+              <span key={v}>
+                {i > 0 && ' · '}
+                <span className={v === '(not reported)' ? 'text-dim' : 'text-text'}>{v}</span>
                 <span className="text-dim"> ×{n}</span>
               </span>
             ))}
@@ -950,6 +1059,7 @@ function FamilyRow({ fam, stale = false }: { fam: Family; stale?: boolean }) {
                       </span>
                     )}
                     <ClientChip client={s.client} appVersion={s.appVersion} agentVersion={s.agentVersion} />
+                    <ZealChip zealVersion={s.zealVersion} spawnIdSeenAt={s.spawnIdSeenAt} />
                     <div className="text-dim text-[10px] sm:hidden">{s.agentVersion || '—'} · {s.totalUploads.toLocaleString()} uploads</div>
                   </td>
                   <td className="px-3 py-1.5 text-dim whitespace-nowrap">{rel(s.lastUpload)}{stale && <span className="text-[10px]"> · {fmtTs(s.lastUpload)}</span>}</td>
@@ -971,6 +1081,25 @@ function FamilyRow({ fam, stale = false }: { fam: Family; stale?: boolean }) {
         </table>
       </div>
     </details>
+  );
+}
+
+// Zeal chip — the DLL version this box reports, plus a 🎯 when its client has
+// actually handed us a spawn id.
+//
+// ⚠ The absence of 🎯 is deliberately styled as nothing at all rather than a
+// red "no". It genuinely does not distinguish "stock Zeal, cannot" from "Zeal
+// PR #229, just hasn't been in a fight yet" — and rendering that ambiguity as a
+// failure would send officers chasing people who have nothing to fix.
+function ZealChip({ zealVersion, spawnIdSeenAt }: { zealVersion: string | null; spawnIdSeenAt: string | null }) {
+  if (!zealVersion && !spawnIdSeenAt) return null;
+  return (
+    <span className="ml-1.5 text-[9px] tracking-wide text-dim border border-border rounded px-1 py-0.5 align-middle whitespace-nowrap"
+          title={spawnIdSeenAt
+            ? `Zeal ${zealVersion || '(version not reported)'} — this client has sent us a target spawn id (last: ${fmtTs(spawnIdSeenAt)}), so its same-name mobs separate exactly instead of by HP guess.`
+            : `Zeal ${zealVersion} — no spawn id seen from this client yet. That may mean stock Zeal (PR #229 not merged), or simply that it hasn't been in a fight since the tracking landed.`}>
+      zeal {zealVersion || '?'}{spawnIdSeenAt && <span className="text-green ml-0.5">🎯</span>}
+    </span>
   );
 }
 
