@@ -884,6 +884,42 @@ sessions fresh without re-rendering (and visually flashing) the whole list.
 
 ## Supabase
 
+**Plan: Pro, org `hesstastic` (verified 2026-09-01 via the Management API).** Not
+the free tier — several code comments and archived docs still say "free tier" and
+are stale; correct them when you touch them rather than propagating the claim.
+
+⚠ **There is NO per-request quota on any Supabase plan.** "How many calls can we
+afford?" has no numeric answer, and designing around a call budget is designing
+around a limit that does not exist. The metered items are:
+
+| Item | Pro includes | Over |
+|---|---|---|
+| **Database size** | 8 GB / project | $0.125/GB/mo |
+| **Egress** (unified: DB + auth + storage + realtime) | 250 GB/mo | $0.09/GB |
+| Storage | 100 GB | $0.021/GB |
+| MAU | 100k | — |
+| Compute | $10 credit ≈ one Micro instance | ~$10/mo per extra project |
+
+Consequences that keep being got backwards:
+- **Writes are nearly free; READS cost egress.** Egress is data leaving Supabase,
+  so an upload stream's frequency is cheap while a poll cadence, a wide `select`,
+  or an un-cached overlay refresh is what actually bills. Tighten the read side
+  first.
+- **Database size is the one that only ever grows**, which is the real reason
+  `buff_casts` prunes to 7 days and why the row-per-upload `agent_uploads` log
+  was retired — not a call cap. Measured 2026-09-01: **1.72 GB of 8 GB (21%)**.
+- ⚠ **Spend Cap is dashboard-only and unread.** On Pro with the cap ON, exceeding
+  a quota means *restrictions* (read-only, 402s), not charges. Nobody has checked
+  which way it is set; the Management API does not expose it. Check before
+  assuming an overage would merely cost money.
+- ⚠ **Actual egress usage is also dashboard-only** — the MCP cannot read it, so
+  "we are at X% of 250 GB" has never been measured. Do not quote a number.
+
+**The bot's Railway box is not the constraint either.** 7-day average (2026-09-01):
+**0.4% of its 8-vCPU limit, 1.6% of 8 GB RAM**, peaking at 8.7% CPU. Railway bills
+compute + egress, also with no request cap.
+
+
 Tier 1 `eqemu_*` mirrors (zone/items/npc_types/spells/loot tree/spawn —
 weekly sync via `sync-quarm.yml`; the `spawn*` tables ARE populated as of
 2026-07-27 — ~43.6k placed spawn points w/ coords+respawn across 182 zones —
