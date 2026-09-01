@@ -95,6 +95,59 @@ are still worth having — they exist to protect *raid-night latency and the bot
 own responsiveness*, not a billing quota. Keep them; just stop justifying them
 with the free tier.
 
+## The retention sweep that has never swept (found 2026-09-01, NOT fixed)
+
+Chasing "what does the plan afford" turned up the real answer: not calls, but one
+table. **`encounter_threat_snapshots` is 920 MB — 57% of the entire 1.72 GB
+database — and accretes ~15 MB/day.**
+
+It has a 30-day retention sweep in the midnight chain, coded correctly, enabled
+(`THREAT_SNAPSHOT_RETENTION_DAYS` unset → default 30). **It has never removed a
+row.** 857k rows span 61 days in a FLAT age distribution; 448k of them (52%) are
+past the cutoff. A working sweep cannot produce a flat distribution.
+
+**Diagnosis — the predicate has no index.** The table's seven indexes all either
+lead on another column (`guild_id, uploader, …`, `lower(boss_name), …`) or are
+partial (`snapshot_at WHERE encounter_id IS NULL`). Nothing serves a bare
+`snapshot_at < cutoff`. So the nightly DELETE seq-scans 857k rows / 920 MB to
+remove 448k, exceeds the Supabase client's ~10s AbortController, aborts, rolls
+back, and the surrounding try/catch logs a warning and moves on. Every night.
+The 7-day `thin_threat_snapshots` downsample is the same shape and shows the same
+symptom (aged buckets are not smaller — the 50-59 day bucket is the LARGEST).
+
+⚠ **Not fixed, deliberately.** The fix deletes ~448k rows, which is destructive
+and irreversible, and it wants a decision on shape: add the index and let one
+sweep run, or batch the delete so it never depends on a single statement
+finishing inside the timeout — probably both, plus a row count in the log line so
+a future failure is visible. Awaiting Hitya.
+
+**The transferable lesson, already written into the wizard doc:** a retention
+sweep whose predicate has no index looks *exactly* like a sweep with nothing to
+do. Every retention window needs a matching index and a sweep that reports rows
+actually removed.
+
+## Free tier vs paid, written down for other guilds
+
+Hitya, 2026-09-01: *"we should denote the difference between free and paid for
+others' implementation expectations."* Written into
+`docs/DESIGN-selfhost-wizard.md` §2a rather than here, since that is the doc the
+wizard gets built from. The load-bearing findings:
+
+- **Railway Free cannot run the bot at all** — 0.5 GB RAM ceiling against our
+  observed 0.70 GB peak. Hobby ($5/mo) fits with room; our measured draw is
+  ≈ $1.92/mo.
+- **Supabase Free is tighter than 500 MB sounds**: a fresh deployment spends
+  119 MB on the `eqemu_*` catalog before its first raid, leaving ~380 MB.
+- **Our 30-day threat retention is a PAID default.** Even working, it settles
+  around 450 MB — more than a whole Free project. A free deployment needs ~7 days
+  or the stream shed off. Retention windows must be sized from the target plan's
+  ceiling, not copied from ours.
+- **The ephemeral streams fill a small database, not the durable guild data.**
+  `chat_messages` holds 913 days of guild history in 214 MB; threat telemetry
+  holds 61 days in 920 MB.
+- Hosted floor ≈ **$30/mo**. Vercel Hobby is fine for a guild but is
+  non-commercial under Vercel's ToS.
+
 ## Open — read this first
 
 | Item | State |
@@ -107,6 +160,7 @@ with the free tier.
 | **Autobid button** | Deliberately NOT shipped: the flag exists but nothing consumes it, and `DESIGN-bid-assist.md` needs a ceiling column that does not exist yet |
 | **`bump_agent_upload_stat` now has three overloads** | 8-, 9- and 11-arg. Pre-existing pattern (the 8-arg predates this work) and PostgREST resolves by named args, so nothing is broken — but the two stale ones should be dropped once the fleet is fully on bot ≥3.1.107 |
 | **The weekly OpenDKP sweep is TEMPORARY** | Revert to `OPENDKP_LIST_FULL_SWEEP_DAYS=0,3,4` when OpenDKP ships `since` |
+| 🔴 **`encounter_threat_snapshots` retention has never run** | 920 MB / 57% of the DB, 448k rows past cutoff. Needs an index + a batched delete. Destructive — awaiting a go-ahead |
 | ⚠ **Supabase Spend Cap + current egress** | Both dashboard-only, both unread. Needed before any "we can afford it" claim |
 | **Tag channel autojoin file-write** | Still blocked on one line from a real character ini |
 

@@ -926,9 +926,27 @@ Consequences that keep being got backwards:
 - ⚠ **Actual egress usage is also dashboard-only** — the MCP cannot read it, so
   "we are at X% of 250 GB" has never been measured. Do not quote a number.
 
-**The bot's Railway box is not the constraint either.** 7-day average (2026-09-01):
-**0.4% of its 8-vCPU limit, 1.6% of 8 GB RAM**, peaking at 8.7% CPU. Railway bills
-compute + egress, also with no request cap.
+**The bot's Railway box is not the constraint either, and it is also PAID.**
+7-day average (2026-09-01): **0.4% of its 8-vCPU limit, 1.6% of 8 GB RAM**,
+peaking at 8.7% CPU — about **$1.92/mo** of resources at Railway's $10/GB +
+$20/vCPU. Railway bills compute + egress, also with no request cap. (Hobby or
+Pro; the 8 vCPU / 8 GB service limits rule out Free's 1/0.5 and Trial's 2/1, but
+the API does not expose the tier.)
+
+⚠ **Both layers are paid, and much of this repo's reasoning silently assumes it.**
+When writing anything another guild might follow, say which numbers are ours.
+The free-vs-paid split — what Supabase Free and Railway Free actually afford, why
+Railway Free cannot run the bot at all (0.5 GB ceiling vs our 0.70 GB peak), and
+why our 30-day threat retention is a PAID default — lives in
+`docs/DESIGN-selfhost-wizard.md` §2a. Keep it there, not here.
+
+⚠ **`encounter_threat_snapshots` is 920 MB — 57% of the whole database — and its
+30-day sweep has never worked.** The predicate `snapshot_at < cutoff` has no
+usable index (the only ones with `snapshot_at` lead on other columns or are
+partial), so the nightly DELETE seq-scans 857k rows, blows the client's 10s
+AbortController, and the catch logs a warning. 448k rows (52%) sit past
+retention in a flat age distribution — the signature of a sweep that has never
+removed anything. Unfixed as of 2026-09-01; see `docs/DECISIONS-2026-09-01.md`.
 
 
 Tier 1 `eqemu_*` mirrors (zone/items/npc_types/spells/loot tree/spawn —
