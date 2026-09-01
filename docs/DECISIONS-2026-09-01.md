@@ -152,8 +152,8 @@ wizard gets built from. The load-bearing findings:
 
 | Item | State |
 |---|---|
-| ⚠ **Zeal PR #229** | Approved by the server owner; the Zeal maintainer was to review it. Nothing on our side is blocked — everything shipped is inert without it |
-| ⚠ **Two comments still unposted by Hitya** | `docs/upstream/zeal-spawn-id/pr-229-build-report.md` on the PR, and `issue-218-comment.md` on issue #218 (drop its now-false "no Windows/MSVC setup" paragraph first) |
+| ✅ **Zeal PR #229 — MERGED** | CoastalRedwood merged it into `CoastalRedwood:main` 2026-08-31. **Now waiting on a tagged Zeal RELEASE**, then on raiders updating. Everything on our side is already shipped and inert until a client actually sends an id |
+| ⚠ **The issue #218 comment, still unposted** | `docs/upstream/zeal-spawn-id/issue-218-comment.md` — #218 is the feature request the merge ANSWERS, so this is now more worth posting, not less. Drop its stale "no Windows/MSVC setup" paragraph first. ~~`pr-229-build-report.md`~~ is moot: the PR merged without needing it |
 | **The API request to Moncs** | Still unsent. Artifact written and refreshed; the bids-detail need is already folded in |
 | **Two local OpenDKP fixes, recommended before sending** | Gate the roster walk on a `Character Created/Updated` audit signal; make `dkpTick._resolveCharacterIds` read `characters.opendkp_id` instead of walking 12 pages |
 | **`_logStandingsShapeOnce`** | Prints on the next raid-window standings refresh (Wednesday) — that resolves the DKP field-name question |
