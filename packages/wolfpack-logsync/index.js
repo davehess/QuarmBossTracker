@@ -2808,6 +2808,37 @@ function _shouldSuppressBuffLanding(bcEvt) {
   if (_cat) return !_isTimedDurationFormula(_cat.durf) && !(Number(_cat.dur) > 0);
   return !!bcEvt._selfCast;   // uncatalogued self-cast → nuke/proc
 }
+// Instanced mobs arrive spelled two ways — the Zeal target gauge says
+// "#Diabo_Xi_Va_Temariel", the log's landing emote says "Diabo Xi Va Temariel"
+// — so a raw string compare below would silently never match on exactly the
+// raid bosses this matters most for.
+function _normMobName(v) {
+  return String(v || '').trim().replace(/^#/, '').replace(/_/g, ' ').toLowerCase();
+}
+// The spawn id of the mob a landing was observed on — but ONLY when we can
+// PROVE it, which is much narrower than it sounds and is the whole reason
+// buff_casts.target_id is nullable.
+//
+// A landing line names its target by NAME. The Zeal pipe carries a spawn id for
+// exactly ONE mob: the observer's own current target. So the id is knowable
+// only when this observer happened to be targeting the thing the effect landed
+// on. A cleric who was on the tank when the debuff landed genuinely cannot say
+// which of three same-name adds took it, and must return null rather than guess
+// — a wrong id is worse than no id, because the read side TRUSTS a present id
+// and drops rows that disagree with it.
+function _provableTargetId(observer, targetName) {
+  const want = _normMobName(targetName);
+  if (!observer || !want) return null;
+  const obsLower = String(observer).toLowerCase();
+  for (const ch of Object.keys(_zealState)) {
+    if (String(ch).toLowerCase() !== obsLower) continue;
+    const st = _zealState[ch];
+    if (!st || !Number.isFinite(st.target_id)) return null;
+    return _normMobName(st.target_name) === want ? st.target_id : null;
+  }
+  return null;
+}
+// Record one observed landing under its TARGET NAME — the map Mob Info reads.
 function recordTargetBuffLanding(bcEvt) {
   if (!bcEvt || !bcEvt.spell_name || !bcEvt.target) return;
   if (_shouldSuppressBuffLanding(bcEvt)) return;
@@ -2861,6 +2892,11 @@ function recordTargetBuffLanding(bcEvt) {
     name: bcEvt.spell_name,
     dur_ticks: _durTicksForLevel(bcEvt.dur_formula, bcEvt.dur_ticks, lvl),
     landed_at: bcEvt.cast_at ? Date.parse(bcEvt.cast_at) : Date.now(),
+    // Which SPAWN this landed on, when the observer could prove it. The map
+    // stays keyed by NAME on purpose — an id-keyed map would fragment a mob's
+    // effect list the moment one landing was unprovable, which is most of them.
+    // Scoping happens at READ time in targetBuffsFor(), where null fails open.
+    target_id: Number.isFinite(bcEvt.target_id) ? bcEvt.target_id : null,
   });
   // Bound memory: keep the 400 most-recently-touched targets.
   if (_buffLandingsByTarget.size > 400) {
@@ -2873,13 +2909,21 @@ function recordTargetBuffLanding(bcEvt) {
 }
 // Live observed buffs for a target → [{ name, remaining_secs, total_secs }],
 // pruning expired. Drives the Mob Info overlay's buff list.
-function targetBuffsFor(targetLower) {
+// wantId: the spawn id of the mob being displayed, when the client knows it.
+// Entries proven to belong to a DIFFERENT spawn of the same name are dropped;
+// entries with no id are kept, because unproven is not disproven and on every
+// released Zeal that is every single one of them.
+function targetBuffsFor(targetLower, wantId) {
   if (!targetLower) return [];
   const mp = _buffLandingsByTarget.get(targetLower);
   if (!mp) return [];
   const now = Date.now();
   const out = [];
   for (const [k, b] of mp) {
+    // Same name, provably a different spawn → someone else's debuff. Never
+    // deleted, only hidden: it still belongs to its own mob, and the id we are
+    // filtering against changes every time the user swaps target.
+    if (wantId != null && b && b.target_id != null && Number(b.target_id) !== Number(wantId)) continue;
     const durSecs = (Number(b.dur_ticks) || 0) * 6;
     let rem = durSecs - (now - (b.landed_at || now)) / 1000;
     let fellOff = false;
@@ -25967,6 +26011,13 @@ function runOptinBackfill(files, opts = {}) {
             // almost always already-expired by display time (harmless — the web
             // filters expired), but they cost nothing and cover the case where a
             // recent log replay catches a still-active buff.
+            // ⚠ NO target_id STAMP HERE, and never add one. _provableTargetId
+            // reads the LIVE Zeal gauge, but this line is being replayed out of
+            // an old log — so a stamp would attach the spawn id of whatever the
+            // user is targeting NOW to a landing from hours ago. It would fire
+            // precisely when the names match, i.e. exactly the same-name case
+            // the id exists to disambiguate, and the read side TRUSTS a present
+            // id. A backfilled landing has no knowable spawn; null is the truth.
             const bcEvt = parseBuffLanding(line, f.character);
             if (bcEvt) buffCastBuffer.push(bcEvt);
 
@@ -32007,8 +32058,12 @@ const TARGET_CASTS_TTL_MS = 2000;
 // #141 — the cross-client relay cache is keyed by (target, requester) so the
 // zone-scoped Mob Info fetch (passes selfChar → bot filters to our zone) never
 // collides with an unscoped caller for the same target name.
-function _relayCacheKey(name, selfChar) {
-  return String(name || '').trim().toLowerCase() + '|' + String(selfChar || '').trim().toLowerCase();
+// ⚠ targetId is part of the key, not just the query. Without it, swapping
+// between two same-name mobs reuses the first one's cached relay answer and the
+// bot-side filtering is undone on the way back in.
+function _relayCacheKey(name, selfChar, targetId) {
+  return String(name || '').trim().toLowerCase() + '|' + String(selfChar || '').trim().toLowerCase()
+       + (targetId != null ? '|' + targetId : '');
 }
 function fetchTargetCasts(name, selfChar) {
   const opts = _uploadOpts;
@@ -32062,17 +32117,20 @@ const _targetBuffsInflight = new Set();
 // Original was 5s; 6s splits the difference so Mob Info feels live again
 // without the full pre-squeeze churn. Override via WP_TARGET_BUFFS_TTL_MS.
 const TARGET_BUFFS_TTL_MS = parseInt(process.env.WP_TARGET_BUFFS_TTL_MS, 10) || 6000;
-function fetchTargetBuffs(name, selfChar) {
+function fetchTargetBuffs(name, selfChar, targetId) {
   const opts = _uploadOpts;
   if (!opts || !opts.botUrl || !opts.token) return;
   if (!String(name || '').trim()) return;
-  const key = _relayCacheKey(name, selfChar);   // #141 (target, requester) key
+  const key = _relayCacheKey(name, selfChar, targetId);   // #141 (target, requester) + spawn
   if (_targetBuffsInflight.has(key)) return;
   const cached = _targetBuffsByName.get(key);
   if (cached && (Date.now() - cached.at) < TARGET_BUFFS_TTL_MS) return;
   _targetBuffsInflight.add(key);
   let url = opts.botUrl.replace(/\/encounter(\?.*)?$/, '/target-buffs') + '?name=' + encodeURIComponent(name);
   if (selfChar) url += '&character=' + encodeURIComponent(selfChar);   // #141 zone scope
+  // Lets the bot drop rows proven to belong to a different same-name spawn.
+  // Omitted when unknown → the bot serves unfiltered, exactly as before.
+  if (targetId != null) url += '&target_id=' + encodeURIComponent(targetId);
   try {
     const u = new URL(url);
     const mod = u.protocol === 'https:' ? https : http;
@@ -32844,6 +32902,9 @@ function buildMobInfo() {
   // Stalker, Spirit of Wolf, etc., with real remaining time). Otherwise show
   // the buffs we observed landing on the target (mobs, other players).
   const tnameLower = String(st.target_name).toLowerCase();
+  // The spawn we are looking at, when the client can name it (Zeal PR #229).
+  // Null on every unpatched client → every path below behaves as it does today.
+  const _curIdForRelay = Number.isFinite(st.target_id) ? st.target_id : null;
   const relayKey = _relayCacheKey(st.target_name, selfChar);
   const zealBuffs = _zealBuffsForName(tnameLower);
   // Cross-client casting on this target (who's casting what on it, with a
@@ -32855,8 +32916,15 @@ function buildMobInfo() {
   // users on the same target show up here too. Merged with locally-
   // observed buffs by spell name (local wins — most accurate timer
   // when we saw it ourselves; remote fills the gap when we didn't).
-  const ctb = _targetBuffsByName.get(relayKey);
-  if (!ctb || (Date.now() - ctb.at) >= TARGET_BUFFS_TTL_MS) fetchTargetBuffs(st.target_name, selfChar);
+  // ⚠ A SEPARATE key from relayKey above, which target-casts also uses. Only
+  // the buffs relay is spawn-scoped so far, and folding the id into the shared
+  // key would leave fetchTargetCasts computing a key it never writes — a casts
+  // cache that misses every time and refetches on every poll.
+  const buffsKey = _relayCacheKey(st.target_name, selfChar, _curIdForRelay);
+  const ctb = _targetBuffsByName.get(buffsKey);
+  if (!ctb || (Date.now() - ctb.at) >= TARGET_BUFFS_TTL_MS) {
+    fetchTargetBuffs(st.target_name, selfChar, _curIdForRelay);
+  }
   let buffs;
   // Cross-client live buffs — the target is another Mimic-running raider:
   // use THEIR uploaded Zeal list (real remaining time — actual counters, not
@@ -32886,7 +32954,7 @@ function buildMobInfo() {
   } else if (liveBuffs !== null) {
     buffs = liveBuffs;
   } else {
-    const local  = targetBuffsFor(tnameLower);
+    const local  = targetBuffsFor(tnameLower, _curIdForRelay);
     const remote = (ctb && Array.isArray(ctb.buffs)) ? ctb.buffs : [];
     const seen = new Set(local.map(b => String(b.name || '').toLowerCase()));
     buffs = local.slice();
@@ -36587,6 +36655,13 @@ async function main() {
         // Almost always expired by the time --since runs, but the web
         // filters expired so this costs nothing and occasionally rescues
         // a still-active buff from a recent log replay.
+        // ⚠ NO target_id STAMP HERE, and never add one. _provableTargetId
+        // reads the LIVE Zeal gauge, but this line is being replayed out of
+        // an old log — so a stamp would attach the spawn id of whatever the
+        // user is targeting NOW to a landing from hours ago. It would fire
+        // precisely when the names match, i.e. exactly the same-name case
+        // the id exists to disambiguate, and the read side TRUSTS a present
+        // id. A backfilled landing has no knowable spawn; null is the truth.
         const bcEvt = parseBuffLanding(line, b.character);
         if (bcEvt) buffCastBuffer.push(bcEvt);
 
@@ -36923,6 +36998,10 @@ async function main() {
         const bcEvt = (!_sourceExcluded ? resolveSelfCastLanding(line, b.character) : null)
                    || parseBuffLanding(line, b.character);
         if (bcEvt && !_sourceExcluded) {
+          // Which spawn did this land on? Provable only when this observer was
+          // targeting it (see _provableTargetId). Stamped BEFORE the upload push
+          // below so the local map and buff_casts carry the same answer.
+          bcEvt.target_id = _provableTargetId(b.character, bcEvt.target);
           const _bcFp = `buffcast|${bcEvt.target}|${bcEvt.spell_id}|${bcEvt.landing_text}|${bcEvt.cast_at}`;
           // #154 — don't upload instant/uncatalogued self-cast nukes to
           // buff_casts: they carry no debuff timer and the cross-client
@@ -36964,6 +37043,7 @@ async function main() {
           }
           const dbEvt = parseDebuffLanding(line, b.character);
           if (dbEvt && dbEvt.spell_name) {
+            dbEvt.target_id = _provableTargetId(b.character, dbEvt.target);
             // Local Target Info — show the debuff on whatever's targeted (mob or
             // player), timed from the land. This is the emote-based path, so it
             // does NOT depend on a Zeal target-name match (the caster-self-cast
