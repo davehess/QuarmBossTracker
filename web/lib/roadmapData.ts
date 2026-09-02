@@ -37,6 +37,39 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'pacify-and-see-invis-2026-09-02',
+    title: 'Knowing what is safe to walk past',
+    version: 'Mimic 2.6.5 \u00b7 Bot 3.1.115',
+    date: '2026-09-02',
+    headline: 'Mob Info now tracks pacify and lull with a countdown, and tells you whether invis will actually hide you from what you are looking at.',
+    features: [
+      {
+        name: 'Pacify and lull get their own line, with a timer',
+        blurb: 'Anything that lowers a mob\u2019s aggro now sits at the top of Mob Info on its own row, above the mob\u2019s buffs and your debuffs, counting down. The game never prints a message when one wears off, so that countdown is the only warning you get \u2014 it turns red and says WORE OFF the moment it lapses.',
+      },
+      {
+        name: 'Harmony finally shows up at all',
+        blurb: 'Harmony, Harmony of Nature and Lull Animal print nothing in anybody\u2019s log, not even the caster\u2019s, so until now a druid pull left no trace. Mimic now times them from your own cast and shares that with the rest of the raid, so everyone can see it.',
+      },
+      {
+        name: 'Harmony is marked as what it is',
+        blurb: 'It is flagged AE, because it lands on nearby mobs too, and the row says plainly that it only shrinks the aggro radius \u2014 the mob will still come for you if you stand on top of it. A Pacify will not. Those two used to look identical on screen.',
+      },
+      {
+        name: 'No timer on a mob that cannot be pacified',
+        blurb: 'Plenty of mobs simply ignore the whole lull line \u2014 nearly everything in Plane of Sky, for one. Mimic knows which ones and stays quiet rather than showing you a countdown that was never real.',
+      },
+      {
+        name: 'Mob Info says whether invis will hide you',
+        blurb: 'A chip on the mob when your invis will not work on it \u2014 and it picks the right one for what you are looking at: Invis versus Undead on undead, ordinary invis on everything else. It also flags the rare mobs that see through a rogue\u2019s Shroud of Stealth.',
+      },
+    ],
+    fixes: [
+      'A timer that came from your own cast rather than a confirmed landing is now marked, so you know which ones to trust.',
+      'A mob with an invis warning and no special attacks used to show no chips at all.',
+    ],
+  },
+  {
     key: 'mimic-feedback-buffs-2026-09-02',
     title: 'Send feedback without leaving Mimic',
     version: 'Mimic 2.6.4 \u00b7 Bot 3.1.113',

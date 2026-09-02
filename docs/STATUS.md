@@ -211,6 +211,20 @@ next touch one rather than assuming a missing row means a missing doc.
   **Consumer work waits for a release** — `docs/zeal-pipe-protocol.md` carries a
   forward note, and the agent's parser must treat all five keys as optional so
   older Zeal builds keep working.
+- **⚠ Needs a local session — the pacify FAILURE message (one string).**
+  Harmony is `resist_type 0` (unresistable), so the resist branch of
+  `notePacifyMiss` can never fire for it — but it still fails against a
+  too-high-level mob, and Hitya confirms *"it will give a message if the mob
+  cannot be pacified"* (2026-09-02). We do not have that string, and a
+  synthesized Harmony timer is a phantom until we do.
+  **The ask:** the exact server text, from `D:\EQServer` (EQEmu `spells.cpp`,
+  the SPA 30 / `SE_Lull` level-check branch) or from a live client log after
+  casting Harmony at something too high. Also worth capturing: whether the AE
+  members print anything per-mob.
+  ⚠ **Do NOT guess it.** An invented pattern is the Divine Intervention mistake
+  — a trigger that was *enabled*, matched text that appears nowhere, and read as
+  coverage for months. Wire it into `notePacifyMiss` once it is real.
+
 - **⚠ Needs a local session — PoP quest extract (`docs/HANDOFF-pop-quest-extract.md`).**
   Two shipped features are waiting on data only the `D:\EQServer` box has:
   (1) the flagging-NPC list + the phrase list for phrase-granted flags — agent
@@ -221,6 +235,66 @@ next touch one rather than assuming a missing row means a missing doc.
   runbook has the exact searches and the JSON shape to commit back.
 
 ### ✅ Done — major shipped features (not exhaustive; see git + roadmapData.ts)
+
+- **Mob Info answers "will invis hide me from this?" (bot 3.1.115 · agent
+  3.6.28 · STABLE in Mimic 2.6.5, 2026-09-02).** Hitya: *"mob info needs to also denote if a mob can see
+  invis."* The four sight flags were already fetched AND already returned — the
+  bot comment has said "drive Mob Info chips" since they were added — but no
+  surface rendered them.
+  ⚠ **Chipping the raw flags would have been noise.** Over the 18,033-row
+  catalog: non-undead see_invis **11%** / see_invis_undead 96%; undead
+  (`bodytype` 3) see_invis 98% / see_invis_undead **15%**. Each flag is
+  near-universal on one side, so the chip follows the spell you would actually
+  cast — IVU on undead, plain invis on the living. The bot now ships `undead`
+  because the flags are unreadable without it.
+  ⚠ `see_hide` is **0 rows catalog-wide** — that chip renders for nobody today.
+  `see_improved_hide` is 91 rows and always shows.
+  Amber sight tone, separate from the red combat-warning tone, and rendered
+  first: it answers a question asked BEFORE the pull. Details in
+  `HOW-ITS-BUILT.md`.
+
+- **Pacify gets its own line, and the silent ones get a timer at all (agent
+  3.6.25–3.6.27 · STABLE in Mimic 2.6.5, 2026-09-02).** Hitya: *"mob info is important to
+  distinguish buffs and debuffs... things like pacifying where we lower aggro
+  radius for a mob and don't engage. but keep the timer is vital for certain
+  operations."*
+  ⚠ **The countdown is the only signal that will ever exist** — `spell_fades` is
+  NULL for all 14 timed SPA-30 spells, so EQ never prints a wear-off line and
+  nothing can correct a wrong number after the fact.
+  - **The emote-bearing pacifies already worked, and it is worth knowing why.**
+    `resolveSelfCastLanding` is index-independent, so it never needed
+    `_TRACKED_BUFF_KEYWORDS` (raid-buff shaped — no pacify matches) or the
+    `good === 0` debuff index (the whole family is `good_effect=1`). It
+    disambiguates the SEVEN spells sharing `"looks less aggressive."` — 42s
+    (Calm) to 360s (Pacify) at L60, an 8.5x spread — using the fact that we cast
+    it. Verified by running the shipped resolver, not by reading it.
+  - **Harmony / Harmony of Nature / Lull Animal emit no log line at all**
+    (`cast_on_other` NULL), so a druid pull was invisible to every log in the
+    raid. Now synthesized from our own cast (`_synthesizePacifyLanding`), the
+    charm-spell answer to the charm-spell problem, and uploaded — no other
+    client could otherwise know.
+  - **Own line above both sections, blue, "WORE OFF" in red on expiry.** Left
+    alone it renders green among the mob's own buffs (the catalog is right:
+    it IS good for the mob), which is not where you look before a pull.
+  ⚠ **HARMONY IS NOT PACIFY — corrected by Hitya the same day, after a first cut
+  shipped them as interchangeable.** `targettype` proves it: Pacify is 5
+  (single) and the mob **will not attack even if you are colliding with it**;
+  Harmony and Wake of Tranquility are **8, targeted AE** — they only SHRINK the
+  aggro radius, **still aggro up close**, and land on nearby mobs as well. The
+  overlay therefore **never says "safe to pull past"** for either (the first cut
+  did, which is the one sentence it must not say); it states the effect and the
+  clock and leaves the pull to the caller. AE members carry an `AE` badge.
+  ⚠ **Unresistable is not unstoppable, and the reason is per-MOB.** Harmony is
+  `resist_type 0` but simply does not work on many mobs — EQEmu NPC special
+  ability **31, Immune Pacify**, which we already decode and chip. The synthesis
+  now records nothing when the cached catalog row carries it.
+  **Plane of Sky is the case that proves it is not a zone rule** (Hitya): it is
+  `cast_outdoor = 1` — flagged outdoors, so the usual heuristic says Harmony
+  works — and **116 of its 118 NPCs carry ability 31**.
+  ⚠ Stamped at cast begin and reverted on interrupt/fizzle/resist — there is no
+  landing signal to wait for. An intervening cast closes that window early, or
+  an unrelated fizzle deletes a Harmony that actually landed.
+  Details in `HOW-ITS-BUILT.md`. 31 tests, every assertion mutation-checked.
 
 - **Mimic 2.6.4 STABLE — feedback from inside Mimic, a Buffs tab, a nav that
   stays put (Mimic 2.6.4 · agent 3.6.24 · bot 3.1.113, 2026-09-02).** Hitya:

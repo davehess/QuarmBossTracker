@@ -693,9 +693,149 @@ already matched on name AND zone.
 ⚠ **The spawn id is in the relay CACHE KEY too.** Without it, two raiders
 targeting different same-name mobs in one zone share a cached list and the cache
 silently undoes the filter — fixed in code, unfixed on screen.
-⚠ Only `target-buffs` is id-scoped so far; `target-casts` and `mob-info` share
-the same name-keyed merge and are the obvious follow-ups.
+⚠ `target-casts` joined it on the same predicate (bot 3.1.113, above).
+`mob-info` stays name-keyed **by design**, not as a follow-up — see the note in
+that section for why a spawn key there would fragment a catalog cache for
+nothing.
 Tests: `test/target-info-spawn-id-scope.test.js`.
+
+### Mob Info: "will invis hide me from this?" (bot 3.1.115 · agent 3.6.28 · Mimic 2.6.5)
+Hitya 2026-09-02: *"mob info needs to also denote if a mob can see invis."* The
+four sight flags were already selected AND already returned by `mob-info` — the
+comment above them has said "drive Mob Info chips" since they were added — but
+nothing ever rendered them. This is the render, plus the one field that makes
+them readable.
+
+⚠ **The raw flag is not the answer, and chipping all four would be noise.**
+Measured over the 18,033-row catalog:
+| | `see_invis` | `see_invis_undead` |
+|---|---|---|
+| non-undead | **11%** | 96% |
+| **undead** (`bodytype` 3) | 98% | **15%** |
+Each flag is near-universal on one side and rare on the other. "Sees invis" on
+an undead mob says nothing (almost all do, and you would not be casting plain
+invis at undead anyway); "sees invis vs undead" on a living mob says nothing
+either (IVU never hid you from the living). So `sightChips()` shows the flag for
+**the spell you would actually cast**: IVU on undead, plain invis on the living.
+`bodytype` 3 is the only value in the catalog with that inverted signature,
+which is why the bot now ships `undead` alongside the flags.
+- `see_improved_hide` — 91 rows catalog-wide, rare enough to always show.
+- `see_hide` — **0 rows in the entire catalog.** The branch is kept (it costs
+  nothing and covers a future sync) but it renders for nobody today; do not go
+  looking for the chip.
+- Amber `chip sight` tone, deliberately not the red `chip warn` used for
+  Rampage/Summon: a sight flag defeats a PLAN made before the pull, it is not
+  something the mob does to you in a fight, and the two must stay tellable apart
+  at a glance. Sight chips render FIRST for the same reason.
+⚠ The chip row used to open only when `mob.specials` was non-empty, so a mob
+with a sight warning and no special attacks would have rendered nothing —
+`if (chips)` now gates it.
+Tests: `test/mobinfo-sight-flags.test.js` (bot payload, incl. that every
+returned column is in the select list — a returned-but-unfetched column is
+`undefined`, which reads as a false all-clear) and
+`test/mobinfo-sight-chips.test.js` (the real `sightChips`, plus its call site —
+deleting the call left all ten behaviour tests green).
+
+### Pacify: its own line, and a timer for the silent ones (agent 3.6.25–3.6.27 · Mimic 2.6.5)
+The pull-safety family — SPA 30, aggro-radius reduction — is what lets you pull
+past a mob **without engaging it**. Hitya 2026-09-02: *"things like pacifying
+where we lower aggro radius for a mob and don't engage. but keep the timer is
+vital for certain operations."*
+
+⚠ **The countdown is the only signal that will ever exist.** `spell_fades` is
+NULL for all 14 timed SPA-30 spells, so EQ never prints a wear-off line. Nothing
+downstream can notice a wrong number and correct it the way a re-land refreshes
+a slow — which is why both halves below are about *not guessing*.
+
+**Where it shows.** `targetBuffsFor` stamps `pacified` (from `_isPacifySpell`,
+the 14-name set grounded in `eqemu_spells`), and `mobinfo.html` splits that out
+into its own section rendered ABOVE both debuffs and buffs, in blue (`#79c0ff`)
+— deliberately off the good/bad axis. Left alone it renders green among the
+mob's own buffs, because the catalog calls it beneficial (`good_effect=1`, and
+it is — to the mob). What the raid wants from it is "is this still safe to walk
+past", which is the first thing checked before a pull. On expiry it says
+**WORE OFF** in hazard red, not "fell off" in rebuff purple: the moment means
+the aggro radius is back, not that a buff needs recasting.
+
+**Why the emote-bearing ones already worked.** SEVEN spells share
+`"looks less aggressive."` — Calm and Wake of Tranquility 42s, Lull 120s,
+Soothe 150s, Pacify 360s at L60. An 8.5x spread, in the direction that walks
+you into the add. `resolveSelfCastLanding` resolves them exactly, because it is
+index-independent (it matches the spell YOU cast against its own
+`cast_on_other`) — so it never needed `_TRACKED_BUFF_KEYWORDS` or the
+`good === 0` debuff index, neither of which would ever have carried a pacify.
+A **bystander's** pacify still does not resolve locally; it reaches others only
+through the caster's `buff_casts` upload and the (spawn-scoped) `target-buffs`
+relay.
+
+⚠ **HARMONY IS NOT PACIFY, AND THE DIFFERENCE IS A SAFETY DIFFERENCE**
+(Hitya 2026-09-02, correcting a first cut that treated the family as
+interchangeable). `targettype` confirms it:
+| | targettype | Behaviour |
+|---|---|---|
+| **Pacify**, Lull, Soothe, Calm, Pacification, Harmony of Nature | 5 (single) | will not attack **even if you are colliding with it** |
+| **Harmony**, Wake of Tranquility | **8 (targeted AE)** | only SHRINKS the aggro radius — **still aggros up close** — and lands on nearby mobs too |
+| Calm/Lull Animal (9), Numb/Rest the Dead (10) | single, restricted | as above, animal/undead only |
+So the overlay **never says "safe to pull past"** for either. It states the
+effect and the clock; the pull is the caller's judgement and it differs per
+spell. AE members carry an `AE` badge and say so in the tooltip, because a
+Harmony row otherwise reads exactly like a Pacify row while licensing different
+behaviour at melee range.
+
+**Harmony, Harmony of Nature and Lull Animal emit NO log line at all**
+(`cast_on_other` NULL), so a druid pull was invisible to every log in the raid.
+`_synthesizePacifyLanding` takes the charm-spell answer for the charm-spell
+problem: the caster's own `"You begin casting X."` is the only evidence in
+existence, so it records the landing on the Zeal target with the catalog
+duration scaled to the caster's level, stamps `_provableTargetId`, and uploads
+it — without that upload no other client could possibly know.
+⚠ **Those rows are flagged `unconfirmed` and marked `~` on screen, and Harmony's
+failure is currently UNDETECTABLE.** It is `resist_type 0` — unresistable — so
+the resist branch of `notePacifyMiss` can never fire for it, yet it still fails
+against a too-high-level mob with a server message we have not captured. Until
+that string is known the timer can be a phantom, which is why the row says it
+came from your cast rather than from a witnessed land. **Do not invent the
+string** — that is the Divine-Intervention-trigger mistake (a pattern matching
+text that appears nowhere). It needs a local session; the ask is in
+`docs/STATUS.md`.
+⚠ An AE Harmony is recorded on the Zeal target ONLY, because that is the one
+mob whose identity we can prove. The other mobs it hit are real and untracked —
+another reason the row must not read as a coverage guarantee.
+
+**Immune mobs: unresistable is not unstoppable.** `_pacifyImmuneKnown(target)`
+reads the cached `mob-info` row's decoded specials for **ability 31, Immune
+Pacify**, and the synthesis records NOTHING when it is present — a phantom timer
+on a mob that cannot be pacified says "handled" about the exact mob that is
+about to add. Three-valued on purpose: `true` suppresses, `false` records,
+`null` (mob not in the catalog cache yet) records and fails open, with the row
+still marked unconfirmed.
+⚠ **This is a MOB property, not a zone rule, and Plane of Sky is why**
+(Hitya 2026-09-02: *"plane of sky is a place where it does not work, despite
+being outdoors"*). The zone is `cast_outdoor = 1` in `eqemu_zone` — genuinely
+flagged outdoors — so the "Harmony needs outdoors" heuristic predicts it works.
+What actually decides it: **116 of that zone's 118 NPCs carry ability 31**
+(measured). A zone allowlist would have been wrong here and wrong generally.
+⚠ Only the SYNTHESIZED path consults it. An emote-bearing pacify that printed a
+landing line demonstrably worked, so immunity cannot apply.
+⚠ The lookup matches the cache key's NAME segment and ignores its zone bucket —
+without that, one immune mob in the cache would suppress every pacify timer in
+the game (caught by mutation, not review).
+⚠ **Stamped at cast BEGIN and reverted on interrupt/fizzle/resist**
+(`notePacifyMiss`), following `_noteDiCast`/`noteDiInterrupt`. There is no
+landing signal to wait for, so "assume it landed, take it back if the log says
+otherwise" is the only shape available; the error it trades for is a timer that
+briefly shows on a resisted Harmony, which is far safer than believing a mob is
+pacified when it is not.
+⚠ **An intervening cast closes the revert window early**
+(`_clearPendingPacifyOnNewCast`). The interrupt line names no spell, so without
+it a Harmony that LANDED would be deleted by an unrelated fizzle a few seconds
+later. Elapsed time cannot separate those two; a different cast can.
+⚠ `Atone` is SPA 30 but `buffduration`/`formula` are 0 — instant, so it is
+deliberately absent from the set; it could never carry the clock the section
+exists to show.
+Tests: `test/pacify-tracking.test.js` (23), `test/pacify-overlay.test.js` (8) —
+every assertion mutation-checked, including the seam that sets `pacified`, which
+was green against a `pacified: false` mutation until a test was written for it.
 
 ### Extended Target: a killed mob leaves the board on death (bot 3.1.109)
 `_extMobLastSeen` is a 90s grace cache that keeps a hurt mob on the overlay
