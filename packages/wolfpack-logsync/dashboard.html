@@ -43,7 +43,15 @@ tr:hover td { background:#1f242c }
   #wpTopBar #header { display:none; }
 }
 .shell { display:flex; align-items:flex-start; gap:14px; }
-.shell > .nav { flex:0 0 168px; position:sticky; top:8px; }
+/* ⚠ The rail sticks BELOW the sticky top bar, not at a fixed 8px. When the bar
+   became sticky the rail kept sticking to top:8px — i.e. underneath it — so the
+   first few tabs (Dashboard, Overlays, Raid, Buffs) slid under the header and
+   vanished the moment you scrolled (Hitya 2026-09-02).
+   --wp-topbar-h is MEASURED and republished by _wpSyncTopBarHeight(); the
+   fallback only covers the first paint. A hardcoded offset would be wrong the
+   moment the bar wraps or the short-window breakpoint fires. */
+.shell > .nav { flex:0 0 168px; position:sticky; top:calc(var(--wp-topbar-h, 118px) + 8px);
+                max-height:calc(100vh - var(--wp-topbar-h, 118px) - 20px); overflow-y:auto; }
 .panes { flex:1 1 auto; min-width:0; }   /* min-width:0 or wide tables blow the flex item out */
 .nav { display:flex; flex-direction:column; gap:4px; margin:12px 0; align-items:stretch; }
 .nav button { text-align:left; }
@@ -358,6 +366,32 @@ function wpKeep(key, defaultOpen) {
   var _seen = (key in _wpOpenDetails) ? _wpOpenDetails[key] : !!defaultOpen;
   return 'data-keep="' + esc(String(key)) + '"' + (_seen ? ' open' : '');
 }
+// Publish the sticky top bar's REAL height so the tab rail can sit below it.
+// The bar changes height when the links wrap, when the update/beta pills appear,
+// and at the short-window breakpoint, so this is measured rather than assumed —
+// the same reason the feedback jump measures instead of guessing.
+function _wpSyncTopBarHeight() {
+  var bar = document.getElementById('wpTopBar');
+  if (!bar) return;
+  var h = Math.round(bar.getBoundingClientRect().height);
+  if (h > 0 && h !== _wpLastTopBarH) {
+    _wpLastTopBarH = h;
+    document.documentElement.style.setProperty('--wp-topbar-h', h + 'px');
+  }
+}
+var _wpLastTopBarH = 0;
+// Resize changes wrapping and can cross the short-window breakpoint, and the
+// first paint happens before any poll has run.
+window.addEventListener('resize', function () { try { _wpSyncTopBarHeight(); } catch (e) { void e; } });
+window.addEventListener('load',   function () { try { _wpSyncTopBarHeight(); } catch (e) { void e; } });
+// ⚠ And once RIGHT NOW, not only from events. This script's scope runs at an
+// unclear point relative to `load` in the packaged artifact, and a measurement
+// that never happens leaves the rail on its CSS fallback — which is close enough
+// today and silently wrong the moment the bar grows a row. #wpTopBar is earlier
+// in the document than this script, so it is already in the DOM here; the poll
+// and resize handlers refine the value once fonts and wrapping settle.
+try { _wpSyncTopBarHeight(); } catch (e) { void e; }
+
 // Jump to the feedback card from the sticky top bar: switch to the Dashboard
 // tab (that is where the card lives), expand it, and scroll it into view.
 // ⚠ scrollIntoView with a sticky header would tuck the card's own heading UNDER
@@ -5692,6 +5726,11 @@ async function refresh() {
       }
     }
     if (window.scrollX !== _sx || window.scrollY !== _sy) window.scrollTo(_sx, _sy);
+    // The bar's height can change on any render — the update pill appears, the
+    // links wrap, a beta badge shows up — and the rail's sticky offset is
+    // derived from it. Cheap: it only writes the custom property on a real
+    // change, so a steady bar costs one getBoundingClientRect per poll.
+    try { _wpSyncTopBarHeight(); } catch (e) { void e; }
     // Surface pending backfill request count on the Opt-in tab so officers
     // notice without clicking through.
     const pending = (s.backfillRequests || []).filter(r => r.status === 'pending').length;

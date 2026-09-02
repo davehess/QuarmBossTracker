@@ -500,6 +500,26 @@ be a confidently wrong number. The `vs catalog` ratio column is the answer
 instead: it is the focus effect **observed**, correct for Quarm's own tuning.
 Tests: `test/buff-durations.test.js`.
 
+### Dashboard: the tab rail clears the sticky bar (agent 3.6.23)
+Regression from 3.6.21: the rail was already `position:sticky; top:8px`, so once
+the header became sticky the rail pinned itself UNDER it and the first four tabs
+(Dashboard, Overlays, Raid, Buffs) vanished on any scroll (Hitya 2026-09-02).
+Now `top:calc(var(--wp-topbar-h, 118px) + 8px)`, plus `max-height` +
+`overflow-y:auto` so a rail taller than the space below the bar scrolls itself
+rather than pushing its last tabs off-screen.
+⚠ `--wp-topbar-h` is **measured** by `_wpSyncTopBarHeight()` — on resize, on
+load, immediately at script eval, and after every render — never a constant. The
+bar changes height when the quick links wrap, when the update/beta pills appear,
+and at the short-window breakpoint. The CSS fallback covers first paint only.
+Measured after the fix at `scrollY` 1200 on 1200×760: bar bottom 106, first tab
+top 126, "Dashboard" visible. Tests: `test/dashboard-rail-offset.test.js`.
+
+⚠ **Harness note for the next session:** a local test harness that strips
+`{{WP:…}}` from `dashboard.html` with `/\{\{WP:[\s\S]*?\}\}/g` CORRUPTS the page —
+the non-greedy match runs past JS object literals ending in `}}`, silently
+breaking every script block. Two "renderer is not defined" dead ends came from
+that, not from the code. Serve the real artifact from the agent instead.
+
 ### Dashboard: sticky top bar (agent 3.6.21)
 `#wpTopBar` wraps the title, session-stats line and quick links and is
 `position:sticky; top:0`. ✨ Tour and ⚙ Panels moved out of the left rail into

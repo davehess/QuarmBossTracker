@@ -29,7 +29,7 @@ function build() {
   return evalBlock(
     'var _wpOpenDetails = {};\n'
     + 'function esc(v){ return String(v); }\n'
-    + sliceBlock(src, 'function wpKeep(key, defaultOpen) {', '\n// ── The DOM write path')
+    + sliceBlock(src, 'function wpKeep(key, defaultOpen) {', '\n// Publish the sticky top bar')
     + '\nfunction setOpen(k, v){ _wpOpenDetails[k] = v; }',
     ['wpKeep', 'setOpen'],
   );
