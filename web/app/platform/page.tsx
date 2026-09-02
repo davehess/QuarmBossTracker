@@ -40,6 +40,16 @@ export default function PlatformPage() {
         </p>
       </section>
 
+      <section className="text-center">
+        <Link
+          href="/platform/architecture"
+          className="no-underline inline-flex items-center gap-2 rounded-md border border-border px-5 py-2.5 text-sm text-text transition-colors hover:border-[#d29922] hover:text-[#f2ede1]"
+        >
+          Go deeper: every overlay, dashboard and integration
+          <span aria-hidden className="text-gold">→</span>
+        </Link>
+      </section>
+
       {/* Stat strip */}
       <section className="bg-panel border border-border rounded-lg px-4 py-5">
         <PlatformStats />
@@ -117,6 +127,7 @@ export default function PlatformPage() {
           raid-night by raid-night.
         </p>
         <p className="space-x-3">
+          <Link href="/platform/architecture" className="text-blue hover:underline">how it actually works</Link>
           <a href="https://github.com/davehess/QuarmBossTracker" target="_blank" rel="noreferrer"
              className="text-blue hover:underline">source on GitHub ↗</a>
           <Link href="/roadmap" className="text-blue hover:underline">roadmap</Link>

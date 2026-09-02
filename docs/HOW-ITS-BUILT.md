@@ -473,6 +473,25 @@ Tests: `test/zeal-version-capability.test.js` (bot + board, on `main`) and
 `test/zeal-capability-agent.test.js` (the latch + the agent↔bot contract, on
 `beta` — the only branch carrying both sources).
 
+### /platform/architecture — the deep platform page (web 1.7.10)
+`/platform` answers "what is all this?"; this answers "how does it work?" — every
+overlay, dashboard and integration, plus the path one log line takes to the guild.
+Four interactive diagrams rendered with [archify](https://github.com/tt-a1i/archify)
+(MIT), embedded as iframes from `web/public/platform/`.
+⚠ **`docs/diagrams/*.json` is the source of truth; the HTML is build output.**
+Never hand-edit the HTML — it is a validated artifact. Regeneration steps, the
+showcase-profile requirement, and the renderer gotchas that cost the most time
+(crossings are structural not cosmetic; labels collide with ROUTES; dataflow caps
+stages at 5 and requires a label per flow; the viewBox-width readability formula)
+are in `docs/diagrams/README.md`.
+⚠ **archify is deliberately NOT vendored into `.claude/skills/`** unlike
+`impeccable` and `ponytail` — 7.5 MB, and only needed when a diagram changes.
+⚠ **Frames use `?theme=dark`, never `&embed=1`** — embed strips the guided views,
+legend and cards, which is the interactivity that justifies the format over a PNG.
+The 15 overlays are enumerated in a TABLE on the page, not in the diagram: a
+first draft with all fifteen produced 22 crossing errors and would have been
+unreadable even if it had passed.
+
 ### Site chrome: favicon, link previews, error + loading boundaries (web 1.7.9)
 Audit against a "20 things a real site has" checklist (Hitya, 2026-09-02). Four
 real gaps out of nineteen; the rest were marketing-site advice that does not

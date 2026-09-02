@@ -1,0 +1,222 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "How an overlay knows anything",
+    "subtitle": "Three sources, one tracker layer, fifteen windows",
+    "quality_profile": "showcase",
+    "viewBox": [
+      1120,
+      640
+    ],
+    "views": [
+      {
+        "id": "sources",
+        "label": "Where the facts come from",
+        "focus": [
+          "pipe",
+          "log",
+          "relay",
+          "trackers"
+        ],
+        "note": "Two local sources with different clocks, plus everything other raiders reported. All three land in the same tracker layer."
+      },
+      {
+        "id": "surfaces",
+        "label": "What gets drawn",
+        "focus": [
+          "trackers",
+          "healing",
+          "damage",
+          "target",
+          "utility"
+        ],
+        "note": "Overlays hold no state of their own. They poll the agent and render whatever the trackers currently believe."
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "pipe",
+      "type": "external",
+      "label": "Zeal named pipe",
+      "sublabel": "Gauges, sub-second",
+      "pos": [
+        40,
+        96
+      ],
+      "size": [
+        166,
+        68
+      ]
+    },
+    {
+      "id": "log",
+      "type": "external",
+      "label": "Combat log",
+      "sublabel": "Lines, authoritative",
+      "pos": [
+        40,
+        286
+      ],
+      "size": [
+        166,
+        68
+      ]
+    },
+    {
+      "id": "relay",
+      "type": "cloud",
+      "label": "Bot relays",
+      "sublabel": "What others reported",
+      "pos": [
+        40,
+        476
+      ],
+      "size": [
+        166,
+        68
+      ]
+    },
+    {
+      "id": "trackers",
+      "type": "backend",
+      "label": "Agent trackers",
+      "sublabel": "Charm, threat, buffs, CH",
+      "pos": [
+        420,
+        286
+      ],
+      "size": [
+        180,
+        68
+      ]
+    },
+    {
+      "id": "healing",
+      "type": "frontend",
+      "label": "Healing",
+      "sublabel": "CH chain · Tank · Buff queue",
+      "pos": [
+        810,
+        60
+      ],
+      "size": [
+        200,
+        68
+      ]
+    },
+    {
+      "id": "damage",
+      "type": "frontend",
+      "label": "Damage",
+      "sublabel": "DPS HUD · Threat · Melody",
+      "pos": [
+        810,
+        210
+      ],
+      "size": [
+        200,
+        68
+      ]
+    },
+    {
+      "id": "target",
+      "type": "frontend",
+      "label": "Target",
+      "sublabel": "Extended Target · Target Info",
+      "pos": [
+        810,
+        360
+      ],
+      "size": [
+        200,
+        68
+      ]
+    },
+    {
+      "id": "utility",
+      "type": "frontend",
+      "label": "Utility",
+      "sublabel": "Triggers · Charm · Pet · Command",
+      "pos": [
+        810,
+        510
+      ],
+      "size": [
+        200,
+        68
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "pipe-trackers",
+      "from": "pipe",
+      "to": "trackers",
+      "label": "health, target",
+      "variant": "emphasis",
+      "labelDy": -26
+    },
+    {
+      "id": "log-trackers",
+      "from": "log",
+      "to": "trackers",
+      "variant": "emphasis"
+    },
+    {
+      "id": "relay-trackers",
+      "from": "relay",
+      "to": "trackers",
+      "label": "cross-client",
+      "variant": "dashed",
+      "labelDy": -26
+    },
+    {
+      "id": "trackers-healing",
+      "from": "trackers",
+      "to": "healing"
+    },
+    {
+      "id": "trackers-damage",
+      "from": "trackers",
+      "to": "damage"
+    },
+    {
+      "id": "trackers-target",
+      "from": "trackers",
+      "to": "target"
+    },
+    {
+      "id": "trackers-utility",
+      "from": "trackers",
+      "to": "utility"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Two clocks, deliberately",
+      "items": [
+        "The pipe is fast and shallow: names and health, no identity",
+        "The log is slower and exact: it says who did what to whom"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "Overlays are dumb on purpose",
+      "items": [
+        "No overlay holds state; each polls the agent and paints",
+        "One tracker fix corrects every window that shows it"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Locked overlays are click-through",
+      "items": [
+        "Clicks fall through to EverQuest by default",
+        "Every control does a hover handshake to take the click back"
+      ]
+    }
+  ]
+}

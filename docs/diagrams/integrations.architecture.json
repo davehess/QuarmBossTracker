@@ -1,0 +1,213 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "What the bot talks to",
+    "subtitle": "Six integrations, three of them somebody else's server",
+    "quality_profile": "showcase",
+    "viewBox": [
+      1120,
+      660
+    ],
+    "views": [
+      {
+        "id": "inbound",
+        "label": "Things that call us",
+        "focus": [
+          "agents",
+          "raidhelper",
+          "bot"
+        ],
+        "note": "The fleet uploads over a bearer-auth HTTP surface. Signups are pulled from Raid-Helper on a schedule, never pushed."
+      },
+      {
+        "id": "outbound",
+        "label": "Servers we call",
+        "focus": [
+          "bot",
+          "discord",
+          "dkp",
+          "db"
+        ],
+        "note": "OpenDKP is somebody else's AWS bill, so every call is budgeted, cached and killable without a deploy."
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "raidhelper",
+      "type": "external",
+      "label": "Raid-Helper",
+      "sublabel": "Signups, polled",
+      "pos": [
+        40,
+        80
+      ],
+      "size": [
+        166,
+        68
+      ]
+    },
+    {
+      "id": "agents",
+      "type": "backend",
+      "label": "Agent fleet",
+      "sublabel": "~16 raiders' PCs",
+      "pos": [
+        40,
+        296
+      ],
+      "size": [
+        166,
+        68
+      ]
+    },
+    {
+      "id": "dkp",
+      "type": "external",
+      "label": "OpenDKP",
+      "sublabel": "Attendance, auctions",
+      "pos": [
+        40,
+        512
+      ],
+      "size": [
+        166,
+        68
+      ]
+    },
+    {
+      "id": "bot",
+      "type": "backend",
+      "label": "Wolf Pack bot",
+      "sublabel": "Railway, one instance",
+      "brand": "railway",
+      "pos": [
+        452,
+        296
+      ],
+      "size": [
+        180,
+        68
+      ]
+    },
+    {
+      "id": "discord",
+      "type": "messagebus",
+      "label": "Discord",
+      "sublabel": "Boards, alerts, roster",
+      "brand": "discord",
+      "pos": [
+        452,
+        80
+      ],
+      "size": [
+        180,
+        68
+      ]
+    },
+    {
+      "id": "db",
+      "type": "database",
+      "label": "Supabase",
+      "sublabel": "Postgres, auth, RLS",
+      "brand": "supabase",
+      "pos": [
+        860,
+        296
+      ],
+      "size": [
+        180,
+        68
+      ]
+    },
+    {
+      "id": "quarm",
+      "type": "cloud",
+      "label": "Quarm mirror",
+      "sublabel": "Weekly catalog sync",
+      "brand": "github-actions",
+      "pos": [
+        860,
+        512
+      ],
+      "size": [
+        180,
+        68
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "agents-bot",
+      "from": "agents",
+      "to": "bot",
+      "label": "uploads",
+      "variant": "emphasis",
+      "labelDy": -28,
+      "labelDx": 68
+    },
+    {
+      "id": "raidhelper-bot",
+      "from": "raidhelper",
+      "to": "bot",
+      "variant": "dashed"
+    },
+    {
+      "id": "bot-dkp",
+      "from": "bot",
+      "to": "dkp",
+      "variant": "dashed"
+    },
+    {
+      "id": "bot-discord",
+      "from": "bot",
+      "to": "discord",
+      "label": "posts",
+      "fromSide": "top",
+      "toSide": "bottom"
+    },
+    {
+      "id": "bot-db",
+      "from": "bot",
+      "to": "db",
+      "label": "read, write",
+      "variant": "emphasis",
+      "labelDy": -28
+    },
+    {
+      "id": "quarm-db",
+      "from": "quarm",
+      "to": "db",
+      "label": "items, spells",
+      "fromSide": "top",
+      "toSide": "bottom"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "rose",
+      "title": "Outbound calls cost somebody money",
+      "items": [
+        "OpenDKP runs on a guild member's AWS account",
+        "Per-minute budget, fan-in cache, and a kill switch that needs no deploy"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Nothing pushes into us but the fleet",
+      "items": [
+        "Signups and the catalog are pulled on a schedule",
+        "One bearer-auth surface, per-uploader admission budgets"
+      ]
+    },
+    {
+      "dot": "cyan",
+      "title": "Discord is becoming a projection",
+      "items": [
+        "It used to be the source of truth for parses and roster",
+        "New durable state goes to Postgres; Discord renders it"
+      ]
+    }
+  ]
+}
