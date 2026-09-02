@@ -13245,9 +13245,16 @@ document.addEventListener('toggle', function (e) {
   var key = d.getAttribute('data-keep');
   if (key) _wpOpenDetails[key] = !!d.open;
 }, true);   // capture phase — 'toggle' does not bubble
-function wpKeep(key) {
-  return 'data-keep="' + esc(String(key)) + '"' + (_wpOpenDetails[key] ? ' open' : '');
+function wpKeep(key, defaultOpen) {
+  // defaultOpen applies ONLY until the user touches this <details>. The store
+  // records a boolean on every toggle, so an "in" test on the key is exactly
+  // "they have expressed a preference" — without it a default-open panel would
+  // spring back open on the next 2s repaint after someone closed it, which is
+  // worse than never opening it at all.
+  var _seen = (key in _wpOpenDetails) ? _wpOpenDetails[key] : !!defaultOpen;
+  return 'data-keep="' + esc(String(key)) + '"' + (_seen ? ' open' : '');
 }
+// ── The DOM write path ──────────────────────────────────────────────────────
 function morphInto(el, html) {
   if (!el) return false;
   if (el._wpLastHtml === html) return false;   // change-detection: skip identical
@@ -13881,9 +13888,29 @@ function renderMeCard(s) {
 function renderEngine(s) {
   const el = document.getElementById('wpEngine');
   if (!el) return;
-  const h = '<details ' + wpKeep('engine') + ' class="card wide" style="margin-top:0">'
-    + '<summary style="cursor:pointer;font-weight:600;color:var(--text)">⚙ Engine'
-    + ' <span class="dim" style="font-weight:normal;font-size:11px">— logsync status: files tailed, queue, uploads, reporter</span></summary>'
+  // ⚙ SETUP, not "Engine" (Hitya 2026-09-02: "The main dashboard says Engine and
+  // is by default minimized where the setup is. We should callout that it's the
+  // setup for first time users."). The first-run checklist lived behind a
+  // collapsed panel named after our internals, so the one person who most needed
+  // it — someone whose logging is off and who does not know it — had no reason
+  // to open it.
+  //
+  // Two changes, both aimed at that person:
+  //   • the panel opens BY DEFAULT while any check is failing, and stops doing
+  //     that the moment they open or close it themselves (see wpKeep);
+  //   • the summary carries the outstanding count, so it is legible even closed.
+  // Once everything passes it collapses back to a quiet status card, which is
+  // all a working install ever needs.
+  const _rows = _setupCheckRows(s);
+  const _todo = _rows.filter(function (r) { return !r.ok; }).length;
+  const _badge = _todo > 0
+    ? ' <span style="background:#3b2a09;color:#f0b429;border:1px solid #7a5c12;border-radius:9px;'
+      + 'font-size:10px;font-weight:700;padding:1px 7px;margin-left:4px">'
+      + _todo + ' to finish</span>'
+    : ' <span style="color:var(--green);font-size:11px;font-weight:normal;margin-left:4px">✓ ready</span>';
+  const h = '<details ' + wpKeep('engine', _todo > 0) + ' class="card wide" style="margin-top:0">'
+    + '<summary style="cursor:pointer;font-weight:600;color:var(--text)">⚙ Setup' + _badge
+    + ' <span class="dim" style="font-weight:normal;font-size:11px">— first-run checks, plus files tailed, queue, uploads, reporter</span></summary>'
     + '<div id="wpSetupChecks" style="display:none;margin-top:8px"></div>'
     + '<div id="wpEngineStats" style="display:none;margin-top:8px"></div>'
     + '<div id="wpWatchedLogs" style="display:none;margin-top:8px"></div>'
@@ -13948,10 +13975,10 @@ function _isPanelHidden(el) {
 // row is a ✓ (good) / ✗ (action needed) / ? (can't tell) derived from
 // /api/state. Self-updating #wpSetupChecks. We don't hide rows that pass — the
 // whole point is a member can glance at it and confirm everything is green.
-function renderSetupChecks(s) {
-  const el = document.getElementById('wpSetupChecks');
-  if (!el) return;
-  if (!_isPanelHidden(el) && el.style.display === 'none') el.style.display = '';
+// The five first-run checks, extracted so the Setup summary can count what is
+// outstanding without a second copy of the logic. Two copies drift, and a badge
+// that disagrees with the list underneath it is worse than no badge.
+function _setupCheckRows(s) {
   const now = Date.now();
   const logs = Array.isArray(s.watchedLogs) ? s.watchedLogs : [];
   const freshLog = logs.some(w => w && w.lastSeen && (now - w.lastSeen) < 15 * 60 * 1000);
@@ -13975,6 +14002,13 @@ function renderSetupChecks(s) {
       bad: 'no live Zeal feed — install/enable Zeal so buffs, groups and Target Info work',
       info: zeal.length > 0 && !zealLive ? 'last-seen snapshots only — log a character in' : null },
   ];
+  return rows;
+}
+function renderSetupChecks(s) {
+  const el = document.getElementById('wpSetupChecks');
+  if (!el) return;
+  if (!_isPanelHidden(el) && el.style.display === 'none') el.style.display = '';
+  const rows = _setupCheckRows(s);
   let h = '<h2>🩺 Setup checklist</h2><table style="font-size:12px">';
   for (const r of rows) {
     const mark = r.ok ? '<span style="color:var(--green)">✓</span>'
