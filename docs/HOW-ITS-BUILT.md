@@ -473,6 +473,28 @@ Tests: `test/zeal-version-capability.test.js` (bot + board, on `main`) and
 `test/zeal-capability-agent.test.js` (the latch + the agent↔bot contract, on
 `beta` — the only branch carrying both sources).
 
+### Dashboard: sticky top bar (agent 3.6.21)
+`#wpTopBar` wraps the title, session-stats line and quick links and is
+`position:sticky; top:0`. ✨ Tour and ⚙ Panels moved out of the left rail into
+it, joined by a 💬 Feedback button (`wpOpenFeedback()` switches to Dashboard,
+expands the card, scrolls to it and focuses the box). Ids are unchanged, so every
+existing handler still binds.
+⚠ **Two things break silently when a control moves into a sticky container, and
+both bit here:** the Panels popover positioned itself at
+`button.bottom + window.scrollY`, which walks the menu down the page as you
+scroll because a sticky button keeps its *viewport* position — it is now
+`position:fixed` with no scrollY term; and `scrollIntoView` tucks the target
+under the bar, so the feedback jump offsets by the bar's **measured**
+`getBoundingClientRect().height`, never a constant (the bar changes height at
+the short-window breakpoint and on wrap).
+⚠ Background is solid, not translucent: content scrolls under it.
+⚠ Below 620px tall the logo and stats line stand down — a three-row sticky bar
+leaves no room for the page.
+Verified in headless Chromium against the authored file: at `scrollY` 900 the bar
+reported `position: sticky` and `getBoundingClientRect().top === 0`. (A scrolled
+`--screenshot` capture returns blank in this environment; the computed geometry
+is the evidence.) Tests: `test/dashboard-topbar.test.js`.
+
 ### Feedback from inside Mimic, with an opt-in log slice (agent 3.6.20 · bot 3.1.112)
 Dashboard card (💬 Send feedback) + tray item, both landing on
 `POST /api/agent/feedback` → the `feedback` table (migration `20260902170000`
