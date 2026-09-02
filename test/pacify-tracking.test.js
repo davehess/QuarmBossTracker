@@ -72,19 +72,29 @@ function loadSynth() {
       if (cap > 0 && t > cap) t = cap;
       return t;
     }
+    const _mobInfoByName = new Map();
+    function _normMobNameAgent(n){
+      return String(n || '').trim().toLowerCase()
+        .replace(/'s\\s+corpse$/, '')
+        .replace(/[\\s\\u0060'\\u2019]+/g, '_').replace(/^#/, '');
+    }
     let _provableId = 4425;
     function _provableTargetId(){ return _provableId; }
     function parseEqTimestamp(line){ const m=String(line).match(/^\\[(.+?)\\]/); return m ? new Date(m[1] + ' UTC') : null; }
     ${block}
     function __setTarget(v){ _zealTarget = v; }
     function __setUncatalogued(){ CATALOG.clear(); }
+    function __cacheMob(name, specials){
+      _mobInfoByName.set(_normMobNameAgent(name) + '|71', { at: Date.now(), mob: { specials } });
+    }
     function __setProvableId(v){ _provableId = v; }
   `;
   return evalBlock(harness, [
     '_synthesizePacifyLanding', 'notePacifyMiss', '_pendingPacify',
     '_clearPendingPacifyOnNewCast',
     '_buffLandingsByTarget', 'buffCastBuffer', 'whoData',
-    '__setTarget', '__setProvableId', '__setUncatalogued',
+    '__setTarget', '__setProvableId', '__setUncatalogued', '__cacheMob',
+    '_pacifyImmuneKnown',
   ]);
 }
 
@@ -310,6 +320,58 @@ describe('synthesizing the silent pacifies', () => {
     h2._synthesizePacifyLanding('Harmony of Nature', 'Hitya', T0);
     expect(h2._buffLandingsByTarget.size).toBe(0);
     expect(h2.buffCastBuffer.length).toBe(0);
+  });
+
+  // ⚠ Hitya, 2026-09-02: "harmony is unresistable, but it will not work on
+  // certain mobs. plane of sky is a place where it does not work, despite being
+  // outdoors." The zone flag genuinely does not explain it — Plane of Sky is
+  // cast_outdoor=1 in eqemu_zone. What explains it is EQEmu NPC special ability
+  // 31, Immune Pacify, which 116 of that zone's 118 NPCs carry.
+  it('records nothing on a mob flagged Immune Pacify', () => {
+    const h = loadSynth();
+    h.__cacheMob('a froglok tad', ['Rampage', 'Immune Pacify']);
+    h._synthesizePacifyLanding('Harmony', 'Hitya', T0);
+    expect(h._buffLandingsByTarget.size, 'no phantom timer on an immune mob').toBe(0);
+    expect(h.buffCastBuffer.length, 'and nothing relayed to the raid either').toBe(0);
+  });
+
+  it('still records on a mob whose catalog row has other specials', () => {
+    // The guard must key on the ONE ability, not on "has specials at all".
+    const h = loadSynth();
+    h.__cacheMob('a froglok tad', ['Rampage', 'Immune Taunt', 'Immune Feign Death']);
+    h._synthesizePacifyLanding('Harmony', 'Hitya', T0);
+    expect(h._buffLandingsByTarget.get('a froglok tad').get('harmony')).toBeTruthy();
+  });
+
+  it('fails OPEN when the mob is not in the catalog cache yet', () => {
+    // First sighting of a mob must not silently swallow the timer — unknown is
+    // not "immune", and the row is marked unconfirmed regardless.
+    const h = loadSynth();
+    expect(h._pacifyImmuneKnown('a froglok tad')).toBe(null);
+    h._synthesizePacifyLanding('Harmony', 'Hitya', T0);
+    expect(h._buffLandingsByTarget.get('a froglok tad').get('harmony')).toBeTruthy();
+  });
+
+  it('answers the immunity question three ways, not two', () => {
+    const h = loadSynth();
+    expect(h._pacifyImmuneKnown('a froglok tad'), 'uncached').toBe(null);
+    h.__cacheMob('a froglok tad', ['Rampage']);
+    expect(h._pacifyImmuneKnown('a froglok tad'), 'cached, not immune').toBe(false);
+    h.__cacheMob('an elder thought horror', ['Immune Pacify']);
+    expect(h._pacifyImmuneKnown('an elder thought horror'), 'cached, immune').toBe(true);
+    // ⚠ And the immune mob must not answer for the OTHER one. The cache is
+    // keyed name|zone and holds every mob seen this session, so a lookup that
+    // ignores the name would let one Plane of Sky mob suppress every pacify
+    // timer in the game.
+    expect(h._pacifyImmuneKnown('a froglok tad'), 'still its own answer').toBe(false);
+  });
+
+  it('does not let an immune mob elsewhere in the cache suppress this one', () => {
+    const h = loadSynth();
+    h.__cacheMob('an elder thought horror', ['Immune Pacify']);   // some other mob
+    h.__cacheMob('a froglok tad', ['Rampage']);                   // the target
+    h._synthesizePacifyLanding('Harmony', 'Hitya', T0);
+    expect(h._buffLandingsByTarget.get('a froglok tad').get('harmony')).toBeTruthy();
   });
 
   it('records nothing when Zeal cannot name a target', () => {

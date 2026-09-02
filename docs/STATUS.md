@@ -267,6 +267,13 @@ next touch one rather than assuming a missing row means a missing doc.
   overlay therefore **never says "safe to pull past"** for either (the first cut
   did, which is the one sentence it must not say); it states the effect and the
   clock and leaves the pull to the caller. AE members carry an `AE` badge.
+  ⚠ **Unresistable is not unstoppable, and the reason is per-MOB.** Harmony is
+  `resist_type 0` but simply does not work on many mobs — EQEmu NPC special
+  ability **31, Immune Pacify**, which we already decode and chip. The synthesis
+  now records nothing when the cached catalog row carries it.
+  **Plane of Sky is the case that proves it is not a zone rule** (Hitya): it is
+  `cast_outdoor = 1` — flagged outdoors, so the usual heuristic says Harmony
+  works — and **116 of its 118 NPCs carry ability 31**.
   ⚠ Stamped at cast begin and reverted on interrupt/fizzle/resist — there is no
   landing signal to wait for. An intervening cast closes that window early, or
   an unrelated fizzle deletes a Harmony that actually landed.

@@ -764,6 +764,25 @@ text that appears nowhere). It needs a local session; the ask is in
 ⚠ An AE Harmony is recorded on the Zeal target ONLY, because that is the one
 mob whose identity we can prove. The other mobs it hit are real and untracked —
 another reason the row must not read as a coverage guarantee.
+
+**Immune mobs: unresistable is not unstoppable.** `_pacifyImmuneKnown(target)`
+reads the cached `mob-info` row's decoded specials for **ability 31, Immune
+Pacify**, and the synthesis records NOTHING when it is present — a phantom timer
+on a mob that cannot be pacified says "handled" about the exact mob that is
+about to add. Three-valued on purpose: `true` suppresses, `false` records,
+`null` (mob not in the catalog cache yet) records and fails open, with the row
+still marked unconfirmed.
+⚠ **This is a MOB property, not a zone rule, and Plane of Sky is why**
+(Hitya 2026-09-02: *"plane of sky is a place where it does not work, despite
+being outdoors"*). The zone is `cast_outdoor = 1` in `eqemu_zone` — genuinely
+flagged outdoors — so the "Harmony needs outdoors" heuristic predicts it works.
+What actually decides it: **116 of that zone's 118 NPCs carry ability 31**
+(measured). A zone allowlist would have been wrong here and wrong generally.
+⚠ Only the SYNTHESIZED path consults it. An emote-bearing pacify that printed a
+landing line demonstrably worked, so immunity cannot apply.
+⚠ The lookup matches the cache key's NAME segment and ignores its zone bucket —
+without that, one immune mob in the cache would suppress every pacify timer in
+the game (caught by mutation, not review).
 ⚠ **Stamped at cast BEGIN and reverted on interrupt/fizzle/resist**
 (`notePacifyMiss`), following `_noteDiCast`/`noteDiInterrupt`. There is no
 landing signal to wait for, so "assume it landed, take it back if the log says

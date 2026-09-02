@@ -3377,6 +3377,34 @@ function _noteSelfRezCast(spellName, character, atMs) {
 // mob is pacified when it is not.
 const _pendingPacify = new Map();   // charLower → { key, target, atMs }
 const PACIFY_REVERT_WINDOW_MS = 12_000;   // cast + travel; matches SELF_CAST_WINDOW_MS
+// Is this mob KNOWN to be immune to the lull line? EQEmu NPC special ability
+// **31 = Immune Pacify**, which the bot already decodes and ships on the
+// mob-info row (and the overlay already chips). Hitya 2026-09-02: *"harmony is
+// unresistable, but it will not work on certain mobs. plane of sky is a place
+// where it does not work, despite being outdoors."*
+//
+// ⚠ **The zone flag does NOT explain it** — Plane of Sky is `cast_outdoor = 1`
+// in `eqemu_zone`, i.e. flagged outdoors, exactly as Hitya says. What DOES
+// explain it is per-mob: **116 of the 118 Plane of Sky NPCs carry ability 31**
+// (measured 2026-09-02). So this is a mob property, not a zone rule, and a
+// zone allowlist would be both wrong here and wrong everywhere else.
+//
+// Returns true (known immune) / false (known not) / null (not cached yet).
+// Only the SYNTHESIZED path consults it: an emote-bearing pacify that printed a
+// landing line demonstrably worked, so immunity is moot there.
+function _pacifyImmuneKnown(targetName) {
+  if (typeof _mobInfoByName === 'undefined' || typeof _normMobNameAgent !== 'function') return null;
+  const want = _normMobNameAgent(targetName) + '|';
+  let sawRow = false;
+  for (const [k, v] of _mobInfoByName) {
+    if (!k.startsWith(want)) continue;                 // zone bucket is the suffix
+    const mob = v && v.mob;
+    if (!mob || !Array.isArray(mob.specials)) continue;
+    sawRow = true;
+    if (mob.specials.includes('Immune Pacify')) return true;
+  }
+  return sawRow ? false : null;
+}
 function _synthesizePacifyLanding(spellName, character, atMs) {
   const key = String(spellName || '').toLowerCase().replace(/`/g, "'").trim();
   if (!PACIFY_NO_EMOTE.has(key)) return;
@@ -3387,6 +3415,14 @@ function _synthesizePacifyLanding(spellName, character, atMs) {
   // something, so this only happens when Zeal isn't streaming — and inventing
   // a target would be worse than showing nothing.
   if (!target) return;
+  // Known-immune → record nothing. A phantom timer on a mob that cannot be
+  // pacified is the worst row this feature can produce: it says "handled" about
+  // the exact mob that is about to add. Unknown (not cached yet) still records,
+  // fail-open like the rest of this path, and the row stays marked unconfirmed.
+  if (_pacifyImmuneKnown(target) === true) {
+    console.log(`[pacify] ${spellName} on ${target} — mob is flagged Immune Pacify; no timer recorded`);
+    return;
+  }
   const e = _spellByNameLower.get(key) || null;
   const lvl = (whoData.get(cl) || {}).level || _assumedCasterLevel();
   const durTicks = e ? _durTicksForLevel(e.durf, e.dur, lvl) : 0;

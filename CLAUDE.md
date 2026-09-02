@@ -999,10 +999,18 @@ safety fact:
 So never write UI copy, a trigger, or a doc that turns either into "safe to pull
 past" — that is the caller's judgement and it differs per spell. Anything that
 tracks one mob's pacify is also under-reporting an AE cast by construction.
-⚠ Harmony is `resist_type 0` (unresistable) but still FAILS on a too-high-level
-mob with a message we have not captured — so its failure is currently
-undetectable and a synthesized timer can be a phantom. The ask is filed in
-`docs/STATUS.md`; **do not invent the string.**
+⚠ **Unresistable is not the same as unstoppable.** Harmony is `resist_type 0`,
+yet it simply does not work on many mobs — and the reason is **per-MOB, not
+per-zone**: EQEmu NPC special ability **31 = Immune Pacify**, which the bot
+already decodes onto the `mob-info` row and the Mob Info overlay already chips.
+**Plane of Sky is the case to remember** (Hitya, 2026-09-02): it is
+`cast_outdoor = 1` in `eqemu_zone` — flagged outdoors, so the usual
+"Harmony needs outdoors" heuristic says it should work — and **116 of its 118
+NPCs carry ability 31**. So never reason about the lull line from zone type;
+read ability 31. `_pacifyImmuneKnown()` in the agent is the shared answer.
+⚠ It ALSO fails on a too-high-level mob, with a message we have not captured, so
+that failure stays undetectable and a synthesized timer can still be a phantom.
+The ask is filed in `docs/STATUS.md`; **do not invent the string.**
 ⚠ `Atone` is SPA 30 but instant (`buffduration`/formula 0) — it can never carry
 a timer.
 
