@@ -547,6 +547,21 @@ session; a banner would be cargo cult), robots.txt/sitemap.xml (gated surface,
 nothing to index), analytics (costs egress and would *create* the banner
 obligation), terms page, sticky mobile CTA.
 
+### target-casts: spawn id first, name second (bot 3.1.113)
+Same treatment as `target-buffs`, through the SAME `_idScopeKeep` predicate —
+one predicate means one null rule, and the null rule is the part that empties the
+board if it drifts. Ingest stores the spawn the caster was on; the read applies
+the id filter AFTER the zone filter.
+⚠ **`mob-info` is deliberately NOT spawn-scoped, and that is not an omission.**
+It returns catalog rows from `eqemu_npc_types` — HP, AC, resists, loot for the
+NPC *type*. Every spawn of "a cliff golem" in a zone shares that row, so a
+spawn-id key would fragment a cache for zero benefit. Zone is the right
+granularity there and it already has it (#141).
+⚠ Agent side: a cast carries the caster's OWN target id, so there is nothing to
+prove — but it still goes through the name check, because a cast line can arrive
+a beat after they switched target and stamping the new id onto the old target's
+cast is worse than sending nothing.
+
 ### Target Info: effects scoped to the SPAWN, not just the name (bot 3.1.110)
 `buff_casts` keyed a landing by target NAME, so the cross-client Target Info
 relay merged every same-name mob in the zone into one effect list — the mob you
