@@ -699,7 +699,7 @@ that section for why a spawn key there would fragment a catalog cache for
 nothing.
 Tests: `test/target-info-spawn-id-scope.test.js`.
 
-### Mob Info: "will invis hide me from this?" (bot 3.1.115 · agent 3.6.28)
+### Mob Info: "will invis hide me from this?" (bot 3.1.115 · agent 3.6.28 · Mimic 2.6.5)
 Hitya 2026-09-02: *"mob info needs to also denote if a mob can see invis."* The
 four sight flags were already selected AND already returned by `mob-info` — the
 comment above them has said "drive Mob Info chips" since they were added — but
@@ -736,7 +736,7 @@ returned column is in the select list — a returned-but-unfetched column is
 `test/mobinfo-sight-chips.test.js` (the real `sightChips`, plus its call site —
 deleting the call left all ten behaviour tests green).
 
-### Pacify: its own line, and a timer for the silent ones (agent 3.6.25)
+### Pacify: its own line, and a timer for the silent ones (agent 3.6.25–3.6.27 · Mimic 2.6.5)
 The pull-safety family — SPA 30, aggro-radius reduction — is what lets you pull
 past a mob **without engaging it**. Hitya 2026-09-02: *"things like pacifying
 where we lower aggro radius for a mob and don't engage. but keep the timer is
