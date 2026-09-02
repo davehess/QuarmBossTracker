@@ -8969,6 +8969,10 @@ async function _handleAgentBuffCasts(req, res) {
       dur_formula:  Number.isFinite(c.dur_formula) ? Math.trunc(c.dur_formula) : null,
       cast_at:      castDate.toISOString(),
       observer:     c.observer ? String(c.observer).slice(0, 64) : null,
+      // Which SPAWN it landed on, when the observer could prove it by targeting
+      // that mob (Zeal PR #229; migration 20260902100000). NULL is the normal
+      // case and means UNPROVEN, never "a different mob" — see _idScopeKeep.
+      target_id:    Number.isFinite(Number(c.target_id)) ? Math.trunc(Number(c.target_id)) : null,
       is_charm_spell: !!c.is_charm_spell,
       uploaded_by_discord_id: identity.discord_id,
     };
@@ -9934,6 +9938,29 @@ function _zoneScopeKeep(requesterZone, observerZone) {
   if (!observerZone)  return false;
   return String(observerZone) === String(requesterZone);
 }
+// Sibling of the above, one level down: same NAME, same ZONE, DIFFERENT SPAWN.
+// Zone scoping stopped "a geonid" in Crystal Caverns leaking into The Wakening
+// Land's Target Info; this stops three "a thought horror evoker" standing next
+// to each other from sharing one pooled effect list (Hitya, 2026-09-02).
+//
+// ⚠ ITS NULL RULE IS THE OPPOSITE OF _zoneScopeKeep'S, ON PURPOSE — COPYING
+// THAT FUNCTION'S SHAPE HERE WOULD EMPTY TARGET INFO FOR THE WHOLE GUILD.
+// An unknown observer ZONE is suspicious: a wrong-zone mob is never useful, so
+// that case drops. An unknown row ID is the ORDINARY case: a landing line names
+// its target by name only, and the pipe carries an id for exactly one mob — the
+// observer's own current target — so anyone targeting something else when the
+// debuff landed has nothing to send, and no released Zeal sends one at all.
+// Unproven is not disproven: those rows already matched on name AND zone.
+//
+//   requester has no id     → keep  (every unpatched client; today's behaviour)
+//   row id is null          → keep  (unproven, not disproven)
+//   row id === requester's  → keep  (the mob in front of you)
+//   row id differs          → DROP  (a proven sibling — the whole point)
+function _idScopeKeep(requesterId, rowId) {
+  if (requesterId == null) return true;
+  if (rowId == null) return true;
+  return Number(rowId) === Number(requesterId);
+}
 
 // GET /api/agent/target-casts?name=<npc|player> → active casts on that target,
 // from the cross-client casting relay (_castingByTarget). Each entry counts down
@@ -10027,11 +10054,15 @@ const _targetBuffsRelayCache = new Map();   // nameLower → { at, payload }
 async function _handleAgentTargetBuffs(req, res) {
   const identity = await mimicLink.requireAgentAuth(req, res);
   if (!identity) return;
-  let name = '', selfChar = '';
+  let name = '', selfChar = '', targetId = null;
   try {
     const sp = new URL(req.url, 'http://x').searchParams;
     name = sp.get('name') || '';
     selfChar = (sp.get('character') || '').trim();   // #141 requester → zone scope
+    // The spawn id of the mob the requester is actually looking at, when their
+    // client can supply one. Absent on every unpatched Zeal → served unfiltered.
+    const _tid = sp.get('target_id');
+    if (_tid && Number.isFinite(Number(_tid))) targetId = Math.trunc(Number(_tid));
   } catch { /* */ }
   if (!name) {
     res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -10042,7 +10073,11 @@ async function _handleAgentTargetBuffs(req, res) {
   // zones don't share (and cross-contaminate) one cached debuff list.
   const zoneMap = await _liveZoneMap();
   const requesterZone = selfChar ? ((zoneMap.get(selfChar.toLowerCase()) || {}).zone_name || null) : null;
-  const cacheKey = name.trim().toLowerCase() + '|' + (requesterZone || '*');
+  // ⚠ The spawn id belongs in the cache key for the same reason the zone does:
+  // without it two raiders targeting DIFFERENT same-name mobs in one zone share
+  // a cached list, and the cache silently undoes the filtering below.
+  const cacheKey = name.trim().toLowerCase() + '|' + (requesterZone || '*')
+                 + '|' + (targetId != null ? targetId : '*');
   const cached = _targetBuffsRelayCache.get(cacheKey);
   if (cached && Date.now() - cached.at < TARGET_BUFFS_CACHE_MS) {
     res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -10061,7 +10096,7 @@ async function _handleAgentTargetBuffs(req, res) {
     const rows = await supabase.select('buff_casts',
       `guild_id=eq.${encodeURIComponent(guildId)}&target=ilike.${encodeURIComponent(name)}` +
       `&cast_at=gte.${encodeURIComponent(since)}` +
-      `&select=spell_name,dur_ticks,cast_at,observer,is_charm_spell&order=cast_at.desc&limit=50`);
+      `&select=spell_name,dur_ticks,cast_at,observer,is_charm_spell,target_id&order=cast_at.desc&limit=50`);
     const now = Date.now();
     // Dedup by spell_name — most recent cast wins (a recast overwrites the
     // previous landing's timer).
@@ -10072,6 +10107,8 @@ async function _handleAgentTargetBuffs(req, res) {
       // (a same-name mob in another zone is never our target's data).
       const observerZone = (zoneMap.get(String(r.observer || '').toLowerCase()) || {}).zone_name || null;
       if (!_zoneScopeKeep(requesterZone, observerZone)) continue;
+      // Same name, same zone, provably a different spawn → not our target's.
+      if (!_idScopeKeep(targetId, r.target_id)) continue;
       if (_isJunkSpellName(r.spell_name)) continue;   // hide phantom "Kneel Test"
       const castMs  = Date.parse(r.cast_at) || 0;
       if (!castMs) continue;
