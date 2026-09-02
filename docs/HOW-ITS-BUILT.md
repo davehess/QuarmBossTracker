@@ -473,6 +473,28 @@ Tests: `test/zeal-version-capability.test.js` (bot + board, on `main`) and
 `test/zeal-capability-agent.test.js` (the latch + the agent↔bot contract, on
 `beta` — the only branch carrying both sources).
 
+### Target Info: effects scoped to the SPAWN, not just the name (bot 3.1.110)
+`buff_casts` keyed a landing by target NAME, so the cross-client Target Info
+relay merged every same-name mob in the zone into one effect list — the mob you
+are targeting showed timers belonging to its siblings (Hitya 2026-09-02).
+Migration `20260902100000` adds `buff_casts.target_id`; the ingest persists it
+and `_handleAgentTargetBuffs` filters on it through `_idScopeKeep`, which sits
+beside `_zoneScopeKeep` as the same idea one level down: #141 scoped ACROSS
+zones, this scopes WITHIN one.
+⚠ **`_idScopeKeep`'s NULL rule is deliberately the OPPOSITE of
+`_zoneScopeKeep`'s, and "tidying" them to match would blank Target Info for the
+whole guild.** An unknown observer *zone* is suspicious, so it drops. An unknown
+row *id* is the ORDINARY case: a landing line names its target by name only, the
+pipe carries an id for the observer's own target and nothing else, and no
+released Zeal sends one at all — so unproven must keep, not drop. Those rows
+already matched on name AND zone.
+⚠ **The spawn id is in the relay CACHE KEY too.** Without it, two raiders
+targeting different same-name mobs in one zone share a cached list and the cache
+silently undoes the filter — fixed in code, unfixed on screen.
+⚠ Only `target-buffs` is id-scoped so far; `target-casts` and `mob-info` share
+the same name-keyed merge and are the obvious follow-ups.
+Tests: `test/target-info-spawn-id-scope.test.js`.
+
 ### Extended Target: a killed mob leaves the board on death (bot 3.1.109)
 `_extMobLastSeen` is a 90s grace cache that keeps a hurt mob on the overlay
 through a targeting gap. It was purely time-based, so a boss killed at 5% sat
