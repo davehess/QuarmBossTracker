@@ -222,6 +222,53 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ### ✅ Done — major shipped features (not exhaustive; see git + roadmapData.ts)
 
+- **Mimic 2.6.4 STABLE — feedback from inside Mimic, a Buffs tab, a nav that
+  stays put (Mimic 2.6.4 · agent 3.6.24 · bot 3.1.113, 2026-09-02).** Hitya:
+  *"give mimic a feedback entry point that allows for direct log collection
+  timeframe / move buffs to the buffs tab and give it a more robust view of
+  effects and timeframes / also provide an estimate of how long cast buffs will
+  last by character based on AA/Focus effects / rename Engine to Setup."*
+  Graduated the same day it was built, because it was wanted before raid.
+  Beta re-parked at **2.6.5** immediately after (the documented trap: a park
+  EQUAL to the stable tags prereleases that semver-sort below it and the beta
+  channel goes silent).
+  - **Feedback, with an optional log slice.** Top-bar button + tray item →
+    `POST /api/agent/feedback`. `buildFeedbackLogSlice(minutes)` reuses the
+    trigger-visibility filter plus a /who drop, so chat, tells, group and /who
+    never leave the machine; the user sees the exact slice and the count of
+    removed lines BEFORE sending. Caps 6000 lines / 512KB. Migration
+    `20260902170000_feedback_log_excerpt`. **The bot does not redact** — the
+    agent is the only place that can, and doing it twice would hide which side
+    is failing.
+  - **Buffs tab** — per-character buffs with time remaining, plus a measured
+    table of how long each buff actually runs for that character.
+  - **Setup** (was Engine), and it opens itself when a check is unsatisfied.
+  - **Sticky top bar** carrying Tour, Panels and Feedback; the tab rail is
+    offset below it so the first tabs stop sliding under the header.
+- **Buff duration factor — measured, never guessed (agent 3.6.22, 2026-09-02).**
+  Answers *"how much longer do MY buffs run than the spell book says"* from
+  observed landings: per-spell observed/catalog ratios, median across spells,
+  and **`{factor: null, why}` below `BUFF_FACTOR_MIN_SPELLS = 3`** rather than
+  a number invented from one sample.
+  ⚠ **The zone-change guard is on `next`, not `prev`** — a character walking
+  into a zone that clears the list must not record every buff as "expired now".
+  Mutation testing found it the wrong way round; a guard on `prev` is a no-op
+  that reads exactly like a working one.
+- **Guild trigger relays are scoped to the fight you are in (bot 3.1.110–3.1.113,
+  2026-09-02).** Hitya: *"Every so often we hear 'Shaman Slow' when we're not
+  around combat. It's a guildwide scope. These should only trigger for local
+  fights or during raids, not outside."* `_relayScopeKeep` keeps a relay when
+  the requester is in the origin zone, OR inside the raid window. Fail-open by
+  construction: unknown zone on either side keeps the relay, so the failure mode
+  is the status quo (a spurious callout), never a swallowed one.
+- **`target-buffs` and `target-casts` are spawn-id-first, name-keyed second
+  (bot 3.1.113 · agent 3.6.24, 2026-09-02).** Hitya: *"those two relays should
+  be spawn id first if available, then name keying."* Both share one
+  `_idScopeKeep(requesterId, rowId)`: when the requester proves an id AND the
+  row carries one, they must match; either side missing falls back to the name.
+  `buff_casts.target_id` added by `20260902100000`. **Inert on today's fleet** —
+  PR #229 is still unreleased, so no client sends an id and every row takes the
+  name path byte-identically.
 - **Zeal version + spawn-id capability tracking (bot 3.1.107 · agent 3.6.16 ·
   web 1.7.7, 2026-09-01).** Hitya: *"let me start tracking zeal versions so we
   can work towards knowing when someone has that Target and spawn ID. fall back

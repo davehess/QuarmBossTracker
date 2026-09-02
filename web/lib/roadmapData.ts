@@ -37,6 +37,51 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'mimic-feedback-buffs-2026-09-02',
+    title: 'Send feedback without leaving Mimic',
+    version: 'Mimic 2.6.4 \u00b7 Bot 3.1.113',
+    date: '2026-09-02',
+    headline: 'Report a bug from inside Mimic and bring your log with it, see every buff your characters are carrying in one place, and stop losing the top of the page when you scroll.',
+    features: [
+      {
+        name: 'A Feedback button, in the top bar and the tray',
+        blurb: 'Report a bug or suggest an idea and it goes straight to the officers. You no longer have to remember where the form lives.',
+      },
+      {
+        name: 'A bug report can bring your log with it',
+        blurb: 'Tick the box and pick the last 15, 30 or 60 minutes. Chat, tells, group and /who are stripped out before it leaves your machine \u2014 you see the exact slice and how many private lines were removed before you send it. Your character name, zones, spells and combat lines stay, because that is what makes a bug reproducible.',
+      },
+      {
+        name: 'A Buffs tab',
+        blurb: 'Every buff your characters are carrying, with time remaining, and a table of how long each buff actually lasts for you.',
+      },
+      {
+        name: 'Your own buff duration, measured rather than guessed',
+        blurb: 'How much longer your buffs really run than the spell book says. It waits until it has seen enough of your own buffs to be sure, and says so plainly instead of showing a number it made up.',
+      },
+      {
+        name: 'The top bar stays put',
+        blurb: 'Tour, Panels and Feedback moved up there, so they are always in reach no matter how far down the page you are.',
+      },
+      {
+        name: 'Engine is now called Setup',
+        blurb: 'And it opens itself when something still needs doing, instead of sitting closed while you wonder why nothing works.',
+      },
+      {
+        name: 'Two mobs with the same name can be told apart',
+        blurb: 'If your client supports it. Their health, debuffs and who is casting on them stop being mixed together. Nothing changes for anyone else until the client update is out.',
+      },
+    ],
+    fixes: [
+      'Guild callouts like \u201cShaman Slow\u201d no longer fire when someone else lands one in another zone. Outside raid hours you only hear callouts from your own zone.',
+      'A mob you killed leaves the Extended Target list straight away instead of lingering.',
+      'Raid tick files pick up their attendees again.',
+      'Panels you hide on the dashboard stay hidden.',
+      'The first few tabs stop sliding under the header when you scroll.',
+      'Discipline reuse timers on the Command Center, and second place shows in the loot bidding area.',
+    ],
+  },
+  {
     key: 'site-chrome-2026-09-02',
     title: 'Links to the site finally look like something',
     version: 'Web 1.7.9',
