@@ -6318,6 +6318,12 @@ function buildTrayMenu() {
     connectItem,
     { label: 'Show agent log…', click: () => shell.openPath(AGENT_LOG()) },
     { label: 'Open dashboard in browser', click: () => shell.openExternal(`http://127.0.0.1:${agentPort}/`) },
+    // Tray ↔ dashboard parity (CLAUDE.md): the feedback card lives on the
+    // dashboard, so it needs a tray route too. Same destination, same internals
+    // — this opens the dashboard with the card expanded rather than duplicating
+    // the form in a second window that would then drift.
+    { label: 'Send feedback — bug or idea',
+      click: () => shell.openExternal(`http://127.0.0.1:${agentPort}/#feedback`) },
     { label: 'UI Studio — rescale EQ UI for a new resolution', click: () => openUiStudio() },
     { label: 'Resource use — what Mimic costs this machine', click: () => openResources() },
     updatePopupItem,

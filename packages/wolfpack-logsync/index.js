@@ -13254,6 +13254,176 @@ function wpKeep(key, defaultOpen) {
   var _seen = (key in _wpOpenDetails) ? _wpOpenDetails[key] : !!defaultOpen;
   return 'data-keep="' + esc(String(key)) + '"' + (_seen ? ' open' : '');
 }
+// 💬 Send feedback — a bug report or an idea, from inside the app, optionally
+// carrying the last N minutes of this install's log.
+//
+// ⚠ NOTHING IS ATTACHED UNTIL THE REPORTER HAS SEEN IT. The checkbox builds a
+// PREVIEW first and shows the real redacted lines; the send is a second,
+// deliberate click. A tool that silently ships someone's log because they filled
+// in a text box would be the single worst thing this platform could do, given
+// its central promise is that private channels never leave the machine.
+//
+// Static markup, built once and left alone: this card holds a half-typed bug
+// report, and the dashboard repaints every ~2s. Anything volatile lives in the
+// #wpFbPreview / #wpFbMsg children, which the handlers fill directly rather than
+// through a re-render (morphInto would wipe the textarea mid-sentence).
+function renderFeedback(s) {
+  const el = document.getElementById('wpFeedback');
+  if (!el) return;
+  if (el._wpBuilt) return;
+  el._wpBuilt = true;
+  // The tray's "Send feedback" item opens /#feedback. Honour that by expanding
+  // the card, otherwise the tray route drops someone on a dashboard with the
+  // thing they asked for still collapsed.
+  const _fbWanted = (location.hash || '').toLowerCase() === '#feedback';
+  el.innerHTML =
+    '<details ' + wpKeep('feedback', _fbWanted) + ' class="card wide" style="margin-top:0">'
+    + '<summary style="cursor:pointer;font-weight:600;color:var(--text)">💬 Send feedback'
+    +   ' <span class="dim" style="font-weight:normal;font-size:11px">— a bug or an idea, straight to the officers</span></summary>'
+    + '<div style="margin-top:10px;display:flex;gap:6px">'
+    +   '<button type="button" id="wpFbBug"  class="wp-fb-kind" data-kind="bug">🐞 Bug report</button>'
+    +   '<button type="button" id="wpFbIdea" class="wp-fb-kind" data-kind="idea">💡 Idea</button>'
+    + '</div>'
+    + '<textarea id="wpFbText" rows="4" maxlength="4000" placeholder="What happened, or what would you like?" '
+    +   'style="width:100%;margin-top:8px;background:#0d1117;color:var(--text);border:1px solid var(--border);'
+    +   'border-radius:6px;padding:8px;font-family:inherit;font-size:12px"></textarea>'
+    + '<div id="wpFbAttachRow" style="margin-top:8px;display:none;align-items:center;gap:8px;flex-wrap:wrap">'
+    +   '<label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px">'
+    +     '<input type="checkbox" id="wpFbAttach"> Attach a slice of my EverQuest log</label>'
+    +   '<span id="wpFbMins" style="display:none;gap:4px">'
+    +     '<button type="button" class="wp-fb-min" data-min="15">15 min</button>'
+    +     '<button type="button" class="wp-fb-min" data-min="30">30 min</button>'
+    +     '<button type="button" class="wp-fb-min" data-min="60">60 min</button>'
+    +   '</span>'
+    + '</div>'
+    + '<div id="wpFbPreview" style="margin-top:8px"></div>'
+    + '<div style="margin-top:10px;display:flex;align-items:center;gap:10px">'
+    +   '<button type="button" id="wpFbSend">Send</button>'
+    +   '<span id="wpFbMsg" class="dim" style="font-size:11px"></span>'
+    + '</div>'
+    + '</details>';
+  _wpFbWire();
+}
+
+// Card state. Deliberately module-level, not re-derived from the DOM: the
+// selected minutes must survive a preview refresh.
+var _wpFbKind = 'bug';
+var _wpFbMin  = 30;
+function _wpFbSetKind(k) {
+  _wpFbKind = (k === 'idea') ? 'idea' : 'bug';
+  var b = document.getElementById('wpFbBug'), i = document.getElementById('wpFbIdea');
+  if (b) b.style.opacity = _wpFbKind === 'bug'  ? '1' : '0.55';
+  if (i) i.style.opacity = _wpFbKind === 'idea' ? '1' : '0.55';
+  // A log slice explains a BUG. Offering it on an idea invites someone to attach
+  // their log to "please add a dark mode", which is data we asked for and do not
+  // need — so the whole row disappears rather than being merely ignored.
+  var row = document.getElementById('wpFbAttachRow');
+  if (row) row.style.display = _wpFbKind === 'bug' ? 'flex' : 'none';
+  if (_wpFbKind !== 'bug') {
+    var cb = document.getElementById('wpFbAttach');
+    if (cb) cb.checked = false;
+    _wpFbRenderPreview(null);
+  }
+}
+function _wpFbRenderPreview(slice) {
+  var el = document.getElementById('wpFbPreview');
+  if (!el) return;
+  if (!slice) { el.innerHTML = ''; return; }
+  if (!slice.ok) {
+    el.innerHTML = '<div style="color:var(--orange);font-size:11px">'
+      + esc(slice.reason || 'could not read the log') + '</div>';
+    return;
+  }
+  var head = '<div class="dim" style="font-size:11px;margin-bottom:4px">'
+    + slice.lines + ' lines'
+    + (slice.removed ? ' · <b style="color:var(--green)">' + slice.removed + ' private lines removed</b>' : '')
+    + (slice.truncated ? ' · <span style="color:var(--orange)">truncated</span>' : '')
+    + ' · ' + Math.round((slice.bytes || 0) / 1024) + ' KB'
+    + '</div>';
+  var note = '<div class="dim" style="font-size:10px;margin-bottom:6px">'
+    + 'Chat, tells, group and /who are removed. Your character name, zones, spells and combat lines stay '
+    + '— that is what makes a bug reproducible. This preview shows the first 400 lines; every line sent '
+    + 'is filtered the same way.</div>';
+  el.innerHTML = head + note
+    + '<pre style="max-height:220px;overflow:auto;background:#0d1117;border:1px solid var(--border);'
+    + 'border-radius:6px;padding:8px;font-size:10px;line-height:1.45;margin:0;white-space:pre-wrap">'
+    + esc(slice.text || '') + '</pre>';
+}
+async function _wpFbPreviewNow() {
+  var cb = document.getElementById('wpFbAttach');
+  if (!cb || !cb.checked) { _wpFbRenderPreview(null); return; }
+  _wpFbRenderPreview({ ok: true, lines: 0, removed: 0, bytes: 0, text: 'reading your log…' });
+  try {
+    var r = await fetch('/api/feedback-preview', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ minutes: _wpFbMin }),
+    });
+    _wpFbRenderPreview(await r.json());
+  } catch (e) { _wpFbRenderPreview({ ok: false, reason: 'could not read the log' }); }
+}
+function _wpFbWire() {
+  var root = document.getElementById('wpFeedback');
+  if (!root) return;
+  _wpFbSetKind('bug');
+  _wpFbSetMin(_wpFbMin);
+  root.addEventListener('click', async function (e) {
+    var t = e.target;
+    if (!t || !t.closest) return;
+    var kind = t.closest('.wp-fb-kind');
+    if (kind) { _wpFbSetKind(kind.getAttribute('data-kind')); return; }
+    var min = t.closest('.wp-fb-min');
+    if (min) { _wpFbSetMin(parseInt(min.getAttribute('data-min'), 10) || 30); _wpFbPreviewNow(); return; }
+    if (t.id === 'wpFbSend') { _wpFbSend(); return; }
+  });
+  root.addEventListener('change', function (e) {
+    if (e.target && e.target.id === 'wpFbAttach') {
+      var span = document.getElementById('wpFbMins');
+      if (span) span.style.display = e.target.checked ? 'inline-flex' : 'none';
+      _wpFbPreviewNow();
+    }
+  });
+}
+function _wpFbSetMin(m) {
+  _wpFbMin = m;
+  var btns = document.querySelectorAll('.wp-fb-min');
+  for (var i = 0; i < btns.length; i++) {
+    btns[i].style.opacity = (parseInt(btns[i].getAttribute('data-min'), 10) === m) ? '1' : '0.55';
+  }
+}
+async function _wpFbSend() {
+  var ta  = document.getElementById('wpFbText');
+  var msg = document.getElementById('wpFbMsg');
+  var btn = document.getElementById('wpFbSend');
+  var cb  = document.getElementById('wpFbAttach');
+  var text = (ta && ta.value ? ta.value : '').trim();
+  if (text.length < 10) { if (msg) msg.textContent = 'say a little more (10 characters minimum)'; return; }
+  if (btn) { btn.disabled = true; }
+  if (msg) msg.textContent = 'sending…';
+  try {
+    var r = await fetch('/api/feedback-send', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        category: _wpFbKind, message: text,
+        attach_log: !!(cb && cb.checked && _wpFbKind === 'bug'), minutes: _wpFbMin,
+      }),
+    });
+    var j = await r.json();
+    if (j && j.ok) {
+      if (ta) ta.value = '';
+      if (cb) { cb.checked = false; }
+      _wpFbRenderPreview(null);
+      var span = document.getElementById('wpFbMins');
+      if (span) span.style.display = 'none';
+      if (msg) msg.textContent = '✓ sent' + (j.attached_lines ? ' with ' + j.attached_lines + ' log lines' : '') + ' — thank you';
+    } else if (msg) {
+      msg.textContent = '✕ ' + ((j && j.reason) || 'could not send');
+    }
+  } catch (e) {
+    if (msg) msg.textContent = '✕ could not reach the engine';
+  }
+  if (btn) btn.disabled = false;
+}
+
 // ── The DOM write path ──────────────────────────────────────────────────────
 function morphInto(el, html) {
   if (!el) return false;
@@ -13694,6 +13864,7 @@ function renderDash(s) {
   // #wpEngineStats #wpWatchedLogs) are preserved so their existing render fns
   // still fill them — a placement change, not a plumbing change.
   h += '<div id="wpEngine"></div>';
+  h += '<div id="wpFeedback"></div>';
 
   // Per-character "buffs & zone" card — what each watched character is carrying
   // and where they are right now, OR what they logged out with (the last Zeal
@@ -18211,6 +18382,7 @@ async function refresh() {
                      // nested #wpSetupChecks/#wpEngineStats/#wpWatchedLogs children BEFORE
                      // their own fillers run later in this list).
                      ['mecard', renderMeCard], ['engine', renderEngine], ['enginestats', renderEngineStats],
+                     ['feedback', renderFeedback],
                      ['zealclients', renderZealClients],
                      ['critscard', renderCritsCard],
                      // Isolated dashboard volatile cards (fill their own wp* placeholders
@@ -22769,6 +22941,81 @@ function startWebDashboard(port) {
           });
         }
         return res.end(JSON.stringify({ notices: out }));
+      }
+      // ── Feedback (#feedback entry point, Hitya 2026-09-02) ───────────────
+      // Two routes on purpose. PREVIEW builds the redacted slice and hands it
+      // back WITHOUT sending anything, so the reporter can read every line that
+      // would leave their machine before deciding. SEND is the only route that
+      // talks to the bot.
+      //
+      // ⚠ The preview must show the SAME text the send would upload — building
+      // it twice with different code is how a "preview" starts lying. Both call
+      // buildFeedbackLogSlice.
+      if (req.url === '/api/feedback-preview' && req.method === 'POST') {
+        const body = await _readBody(req, 4 * 1024);
+        let p = null; try { p = JSON.parse(body); } catch { p = null; }
+        const slice = buildFeedbackLogSlice((p && p.minutes) || 30, Date.now());
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        // Cap what the PREVIEW ships back to the local page — the full slice can
+        // be half a megabyte and the dashboard only shows the head of it. The
+        // send path uses the whole thing.
+        const head = slice.ok ? slice.text.split('\n').slice(0, 400).join('\n') : '';
+        return res.end(JSON.stringify({ ...slice, text: head, preview_lines: head ? head.split('\n').length : 0 }));
+      }
+      if (req.url === '/api/feedback-send' && req.method === 'POST') {
+        const body = await _readBody(req, 8 * 1024);
+        let p = null; try { p = JSON.parse(body); } catch { p = null; }
+        const message = String((p && p.message) || '').trim();
+        if (message.length < 10) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ ok: false, reason: 'say a little more (10 characters minimum)' }));
+        }
+        const opts = _uploadOpts;
+        if (!opts || !opts.botUrl || !opts.token) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ ok: false, reason: 'not connected to Wolf Pack — sign in from Settings first' }));
+        }
+        let slice = null;
+        if (p && p.attach_log) {
+          const built = buildFeedbackLogSlice(p.minutes || 30, Date.now());
+          if (built.ok) slice = built;
+        }
+        const payload = {
+          agent_version: AGENT_VERSION,
+          category:      (p && p.category === 'bug') ? 'bug' : 'idea',
+          message:       message.slice(0, 4000),
+          character:     _primaryCharacter() || null,
+          client:        process.env.WOLFPACK_CLIENT || 'parser',
+          app_version:   process.env.WOLFPACK_APP_VERSION || null,
+          platform:      process.platform,
+          ...(slice ? {
+            log_excerpt: slice.text,
+            log_meta: {
+              minutes: slice.minutes, lines: slice.lines, removed: slice.removed,
+              bytes: slice.bytes, truncated: slice.truncated,
+              from: slice.from, to: slice.to, character: slice.character,
+            },
+          } : {}),
+        };
+        const url = opts.botUrl.replace(/\/encounter(\?.*)?$/, '/feedback');
+        try {
+          const r = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + opts.token },
+            body: JSON.stringify(payload),
+          });
+          const ok = r.ok;
+          let j = null; try { j = await r.json(); } catch { /* body optional */ }
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({
+            ok,
+            reason: ok ? null : ((j && j.error) || ('bot said ' + r.status)),
+            attached_lines: slice ? slice.lines : 0,
+          }));
+        } catch (err) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ ok: false, reason: 'could not reach the bot: ' + (err && err.message) }));
+        }
       }
       // Mimic pushes Zeal update status here (it owns zealUpdater + the EQ dir).
       if (req.url === '/api/zeal-update' && req.method === 'POST') {
@@ -31443,6 +31690,106 @@ function _setDamageAlert(enabled, announce) {
   return changed;
 }
 
+// ── Feedback log slice (Hitya, 2026-09-02) ─────────────────────────────────
+// "give mimic a feedback entry point that allows for direct log collection
+// timeframe."
+//
+// A bug report with no log is a guessing game; a bug report with someone's whole
+// log is a privacy incident. This builds the middle thing: the last N minutes of
+// THIS install's log, redacted, previewable, and attached only if the user ticks
+// the box.
+//
+// ⚠ REDACTION REUSES triggerVisibleLine — the SAME predicate that decides what
+// the local trigger engine may see. That is deliberate: a second, bespoke filter
+// would be a second thing to keep correct, and this one is already the audited
+// privacy boundary (officer channels, tells both directions, group chat, public
+// say). Never hand-roll a filter here.
+//
+// /who output is dropped ON TOP of that: it is not private to the reporter but
+// it names other players wholesale, and it is never what makes a bug
+// reproducible.
+const FEEDBACK_WHO_DROP = [
+  /\]\s+Players (?:on EverQuest|in EverQuest)/i,
+  /\]\s*\[\d+\s+[A-Za-z' ]+\]\s+\w+\s+\(/,      // "[60 Wizard] Name (Gnome) <Guild>"
+  /\]\s+There (?:is|are) \d+ players? in/i,
+  /\]\s+Your Location is/i,
+];
+const FEEDBACK_MAX_LINES = 6000;      // a raid hour is ~40k lines; this is plenty
+const FEEDBACK_MAX_BYTES = 512 * 1024;
+const FEEDBACK_TAIL_BYTES = 24 * 1024 * 1024;   // how far back we are willing to read
+
+function _feedbackLineAllowed(line) {
+  if (!triggerVisibleLine(line)) return false;
+  for (const rx of FEEDBACK_WHO_DROP) if (rx.test(line)) return false;
+  return true;
+}
+
+// Newest watched log — the one the user is most likely reporting about.
+function _feedbackSourceLog() {
+  let best = null;
+  for (const w of (stats.watchedLogs || [])) {
+    if (!w || !w.logPath) continue;
+    if (!best || (w.lastSeen || 0) > (best.lastSeen || 0)) best = w;
+  }
+  return best;
+}
+
+// Slice the last `minutes` of that log. Returns a preview-able object; the
+// caller decides whether to send it.
+function buildFeedbackLogSlice(minutes, nowMs) {
+  const mins = Math.max(1, Math.min(180, parseInt(minutes, 10) || 30));
+  const src = _feedbackSourceLog();
+  if (!src) return { ok: false, reason: 'no EQ log is being watched' };
+  let buf;
+  try {
+    const size = fs.statSync(src.logPath).size;
+    const start = Math.max(0, size - FEEDBACK_TAIL_BYTES);
+    const fd = fs.openSync(src.logPath, 'r');
+    try {
+      const len = size - start;
+      buf = Buffer.alloc(len);
+      fs.readSync(fd, buf, 0, len, start);
+    } finally { fs.closeSync(fd); }
+  } catch (err) {
+    return { ok: false, reason: 'could not read the log: ' + (err && err.message) };
+  }
+  const all = buf.toString('utf8').split(/\r?\n/);
+  // A partial first line when we started mid-file. Drop it rather than ship a
+  // fragment that no longer parses as a log line.
+  if (all.length && !/^\[/.test(all[0])) all.shift();
+
+  const cutoff = (Number.isFinite(nowMs) ? nowMs : Date.now()) - mins * 60_000;
+  const kept = [];
+  let removed = 0, bytes = 0, truncated = false, firstTs = null, lastTs = null;
+  for (let i = 0; i < all.length; i++) {
+    const line = all[i];
+    if (!line) continue;
+    const ts = parseEqTimestamp(line);
+    const tsMs = ts ? ts.getTime() : null;
+    // Lines older than the window are outside the slice entirely — not
+    // "removed" in the redaction sense, so they are not counted as such.
+    if (tsMs != null && tsMs < cutoff) continue;
+    if (!_feedbackLineAllowed(line)) { removed++; continue; }
+    if (tsMs != null) { if (firstTs == null) firstTs = tsMs; lastTs = tsMs; }
+    if (kept.length >= FEEDBACK_MAX_LINES || bytes + line.length + 1 > FEEDBACK_MAX_BYTES) {
+      truncated = true; break;
+    }
+    kept.push(line); bytes += line.length + 1;
+  }
+  return {
+    ok: true,
+    character: src.character || null,
+    minutes: mins,
+    lines: kept.length,
+    removed,
+    bytes,
+    truncated,
+    from: firstTs ? new Date(firstTs).toISOString() : null,
+    to:   lastTs  ? new Date(lastTs).toISOString()  : null,
+    text: kept.join('\n'),
+  };
+}
+
 // ── Cross-Mimic trigger relay (fan-out) ────────────────────────────────────
 // Each local guild-trigger fire is sent up to the bot via POST
 // /api/agent/trigger-relay. Other Mimics poll GET /api/agent/recent-fires
@@ -37320,6 +37667,7 @@ module.exports = {
   AGENT_VERSION,
   parseEvent, shouldKeep, parseEqTimestamp,
   DEFAULT_DROP_PATTERNS, KEEP_PATTERNS,
+  buildFeedbackLogSlice, _feedbackLineAllowed,
   SOURCELESS_SPELLS, BARD_SONGS,
   EncounterBuilder, characterFromFilename, isBackupLogFile, _splitBackupSuffix,
   trackChChainLine, chChainSnapshot, removeChChainSlot,

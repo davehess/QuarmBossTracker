@@ -473,6 +473,29 @@ Tests: `test/zeal-version-capability.test.js` (bot + board, on `main`) and
 `test/zeal-capability-agent.test.js` (the latch + the agent↔bot contract, on
 `beta` — the only branch carrying both sources).
 
+### Feedback from inside Mimic, with an opt-in log slice (agent 3.6.20 · bot 3.1.112)
+Dashboard card (💬 Send feedback) + tray item, both landing on
+`POST /api/agent/feedback` → the `feedback` table (migration `20260902170000`
+adds `log_excerpt`, `log_meta`, `client`, `client_version`, `platform`) and the
+officer feedback thread.
+**The slice**: `buildFeedbackLogSlice(minutes)` tails the newest watched log,
+keeps the last 15/30/60 minutes, and caps at 6000 lines / 512 KB.
+⚠ **Redaction REUSES `triggerVisibleLine`** — the same audited predicate the
+local trigger engine is gated on — plus a `/who` + location drop. Never
+hand-roll a second filter: this one is already the privacy boundary, and a
+bespoke copy is a second thing to keep correct.
+⚠ **The bot deliberately does NOT redact.** By the time bytes arrive, the private
+channels are gone. A filter there would run *after* the data left the reporter's
+machine — the illusion of a safety net. A test fails if anyone adds one.
+⚠ **Nothing attaches without a tick, and the preview must match what sends.**
+Both paths call the same builder; the preview shows the first 400 lines and says
+so, and reports the count of private lines removed so the filter is visibly
+running. The attach row is hidden entirely for ideas — a log explains a bug, and
+offering it on "add a dark mode" collects data we asked for and do not need.
+⚠ The card **builds once** (`_wpBuilt`); the dashboard repaints every ~2s and
+would otherwise wipe a half-typed report.
+Tests: `test/feedback-log-slice.test.js` (agent + card), `test/feedback-ingest.test.js` (bot).
+
 ### Cross-Mimic trigger relay: scope gate (bot 3.1.111)
 The relay had **no scope of any kind** — every guild-trigger fire from any raider
 ran on every other Mimic within 15s, gated only by an 8s dedup and a staleness
