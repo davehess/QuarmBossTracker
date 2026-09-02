@@ -1,8 +1,13 @@
 // The wolf plate, and the page's one authored moment.
 //
-// The reveal is a sequence, not a fade (Hitya, 2026-08-28): the alpha's eyes
-// open in the dark first, then the pack's eyes behind her, then her own lines
-// resolve, then the pack resolves one by one, nearest first.
+// The reveal is a sequence, not a fade (Hitya, 2026-08-28), reordered 2026-08-29
+// to: her eyes in the dark → HER, whole → the pack's eyes around her → the pack.
+//
+// The first cut interleaved them — every eye, then every body — so the alpha
+// arrived at the same time as a wall of pack. Resolving her completely before
+// anything else lights gives the frame a subject to have found first, and the
+// eyes that open around her afterwards read as the rest arriving, which is the
+// line the page is making.
 //
 // ⚠ THE PACK IS OPAQUE. Depth is carried by BRIGHTNESS, never by opacity —
 // `filter: brightness()` darkens the bone while leaving alpha intact, so a
@@ -22,11 +27,11 @@ import Image from 'next/image';
 // Ordered BACK TO FRONT: DOM order is the depth order, so the nearest wolf
 // paints last and covers the ones behind it.
 const PACK = [
-  { x:   0, y: 15, s: 0.38, bright: 0.17, blur: '2.4px', eyeAt: '1.30s', bodyAt: '2.85s' },
-  { x: -45, y: 12, s: 0.45, bright: 0.24, blur: '1.8px', eyeAt: '1.12s', bodyAt: '2.62s' },
-  { x:  45, y: 12, s: 0.45, bright: 0.24, blur: '1.8px', eyeAt: '1.00s', bodyAt: '2.50s' },
-  { x: -27, y:  7, s: 0.63, bright: 0.36, blur: '1.0px', eyeAt: '0.86s', bodyAt: '2.28s' },
-  { x:  27, y:  7, s: 0.63, bright: 0.36, blur: '1.0px', eyeAt: '0.74s', bodyAt: '2.16s' },
+  { x:   0, y: 15, s: 0.38, bright: 0.17, blur: '2.4px', eyeAt: '2.48s', bodyAt: '3.25s' },
+  { x: -45, y: 12, s: 0.45, bright: 0.24, blur: '1.8px', eyeAt: '2.36s', bodyAt: '3.10s' },
+  { x:  45, y: 12, s: 0.45, bright: 0.24, blur: '1.8px', eyeAt: '2.24s', bodyAt: '2.95s' },
+  { x: -27, y:  7, s: 0.63, bright: 0.36, blur: '1.0px', eyeAt: '2.12s', bodyAt: '2.80s' },
+  { x:  27, y:  7, s: 0.63, bright: 0.36, blur: '1.0px', eyeAt: '2.00s', bodyAt: '2.65s' },
 ];
 
 // The wolf's own outline, filled solid in the page ground: bone plus every
