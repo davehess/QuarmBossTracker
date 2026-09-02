@@ -13878,6 +13878,18 @@ async function _handleAgentMobInfo(req, res) {
         see_invis_undead:    !!r.see_invis_undead,
         see_hide:            !!r.see_hide,
         see_improved_hide:   !!r.see_improved_hide,
+        // Undead-ness, because the sight flags are only READABLE with it
+        // (Hitya 2026-09-02, asking for see-invis on Mob Info). Measured over
+        // the 18,033-row catalog:
+        //   • non-undead: see_invis 11%, see_invis_undead 96%
+        //   • UNDEAD (bodytype 3): see_invis 98%, see_invis_undead 15%
+        // So "sees invis" is near-universal on undead and says nothing, while
+        // "sees invis vs undead" is near-universal on the LIVING and says
+        // nothing there. Each flag is signal on exactly one side, and the
+        // overlay needs this to know which one to show. bodytype 3 is the only
+        // value in the catalog with that inverted signature.
+        bodytype:            r.bodytype ?? null,
+        undead:              Number(r.bodytype) === 3,
         // #171 movement — `rooted` is runspeed 0 (stationary: Itraer Vius,
         // Yelinak, most NToV dragons); `flees` is true/false/null where null
         // means the catalog doesn't say, and `flee_pct` is the HP% of code 37.
