@@ -24,6 +24,7 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import agent from '../packages/wolfpack-logsync/index.js';
+import { readSource, AGENT_INDEX } from './_source-slice.js';
 
 const { _noteBuffDurationsFromState, buffDurationStats, _noteBuffDurationSample } = agent;
 const buff = (name, ticks) => ({ name, ticks });
@@ -142,5 +143,60 @@ describe('the statistics', () => {
     // Keeps the NEWEST, so a character who re-specs is not averaged against
     // their old focus forever.
     expect(st.max).toBe(299);
+  });
+});
+
+// ── Item 3: the per-character duration factor ───────────────────────────────
+//
+// ⚠ MEASURED, NOT COMPUTED FROM AAs — and that is a finding, not a shortcut.
+// Checked against our own mirror: in eqemu_aa_effects, Spell Casting Mastery
+// (mana cost) and Spell Casting Reinforcement (buff DURATION) both carry
+// effectid 5; Natural Durability (max HP) and Combat Fury (crit) both carry
+// effectid 9. So effectid is not a semantic effect type and base1 is not a
+// percentage of anything identifiable. Reading Reinforcement's base1 of 10 as
+// "+10% duration" would be a confidently wrong number. Watching what actually
+// happens sidesteps the question and is correct for Quarm's own tuning.
+describe('the per-character duration factor', () => {
+  const { buffDurationFactorFor, _noteBuffDurationsFromState: note } = agent;
+
+  it('says why rather than inventing a number when it has too little', () => {
+    const r = buffDurationFactorFor('nobodyatall');
+    expect(r.factor).toBe(null);
+    expect(String(r.why)).toMatch(/not enough/i);
+  });
+
+  it('refuses a character it has never seen', () => {
+    expect(buffDurationFactorFor('')).toBe(null);
+  });
+
+  // ⚠ A box runs several characters, so attributing the machine's whole corpus
+  // to each of them would not be "by character" at all.
+  //
+  // ⚠ ASSERTED ON THE CODE, NOT THE BEHAVIOUR, and labelled as such because
+  // mutation testing showed a behavioural version here is VACUOUS: no spell
+  // catalog is loaded in a test process, so _catalogDurationSec returns null for
+  // every spell, every ratio list is empty, and the factor takes the "not enough
+  // data" path no matter what the per-character filter does. Removing the filter
+  // entirely still passed. Reaching it for real needs a catalog seam this does
+  // not have; until then this pins the guard's presence and says so, rather than
+  // implying coverage it has not got.
+  it('filters the corpus to spells that character was seen carrying', () => {
+    const src = readSource(AGENT_INDEX);
+    expect(src).toContain("if (!_buffSeenByChar.has(ch + '|' + spellLower)) continue;");
+    expect(src).toContain('_buffSeenByChar.add(key);');
+  });
+
+  // The factor is a median of per-spell RATIOS, not a ratio of totals — one
+  // long buff would otherwise decide the whole answer.
+  it('is documented as a median of ratios, not a ratio of totals', () => {
+    const src = readSource(AGENT_INDEX);
+    expect(src).toContain('median of per-spell ratios');
+  });
+
+  it('reports the spread so a noisy factor is not read as precision', () => {
+    const r = buffDurationFactorFor('nobodyatall');
+    // Even the refusal shape carries the fields the card renders.
+    expect(r).toHaveProperty('spells');
+    expect(r).toHaveProperty('character');
   });
 });

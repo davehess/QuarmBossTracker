@@ -473,6 +473,27 @@ Tests: `test/zeal-version-capability.test.js` (bot + board, on `main`) and
 `test/zeal-capability-agent.test.js` (the latch + the agent↔bot contract, on
 `beta` — the only branch carrying both sources).
 
+### Buff duration factor, per character (agent 3.6.24)
+Item 3. A 🎯 card on the Buffs tab showing each character's **measured** duration
+factor: the median of per-spell ratios of what their buffs actually lasted
+against what the catalog predicts. That ratio IS their focus effect, observed.
+⚠ **It is NOT computed from AA data, because our mirror cannot give it.** In
+`eqemu_aa_effects`, Spell Casting Mastery (mana cost) and Spell Casting
+Reinforcement (buff duration) both carry `effectid 5`; Natural Durability (max
+HP) and Combat Fury (crit) both carry `effectid 9`. `effectid` is therefore not a
+semantic effect type and `base1` is not a percentage of anything identifiable —
+reading Reinforcement's `base1: 10` as "+10% duration" would be a confidently
+wrong number. The real values live in server code we do not mirror.
+⚠ **Median of per-spell RATIOS, not a ratio of totals** — one long buff would
+otherwise decide the whole answer. Needs ≥3 qualifying spells, and says *why* it
+cannot answer rather than returning 1.0.
+⚠ Scoped per character via `_buffSeenByChar`, because a box runs several.
+⚠ **Known test gap, recorded rather than papered over:** no spell catalog loads
+in a test process, so every ratio list is empty and the factor always takes the
+"not enough data" path — a behavioural test of the per-character filter is
+vacuous (proven: removing the filter still passed). That one assertion is on the
+code and labelled as such. Reaching it for real needs a catalog seam.
+
 ### ✨ Buffs tab: measured durations (agent 3.6.22)
 Split out of "⚔ Buffs / Raid" (now just ⚔ Raid). Two cards: **Active buffs** per
 character, and **Durations** — what we have watched buffs actually last, against

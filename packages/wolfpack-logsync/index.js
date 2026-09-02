@@ -2893,6 +2893,7 @@ function _noteBuffDurationsFromState(character, prev, next) {
     if (!Number.isFinite(ticks) || ticks <= 0) continue;   // permanent/unknown
     const cur = _buffLiveMax.get(key);
     if (!cur || ticks > cur.ticks) _buffLiveMax.set(key, { ticks, name: b.name });
+    _buffSeenByChar.add(key);
   }
   // ⚠ THE GUARD IS ON `next`, NOT `prev`, AND THAT IS THE WHOLE POINT.
   // An earlier version tested `prev` — which protects nothing, because looping
@@ -2980,6 +2981,65 @@ function _activeBuffsForDashboard() {
   return out;
 }
 
+// ── Per-character duration factor (item 3, Hitya 2026-09-02) ────────────────
+// "provide an estimate of how long cast buffs will last by character based on
+// AA/Focus effects."
+//
+// ⚠ WE CANNOT COMPUTE THIS FROM THE AA DATA, AND GUESSING IT WOULD BE WORSE
+// THAN NOT SHIPPING IT. Checked against our own mirror on 2026-09-02: in
+// eqemu_aa_effects, Spell Casting Mastery (mana cost) and Spell Casting
+// Reinforcement (buff DURATION) both carry effectid 5, and Natural Durability
+// (max HP) and Combat Fury (crit) both carry effectid 9. So `effectid` is not a
+// semantic effect type and `base1` is not a percentage of anything
+// identifiable — reading Reinforcement's base1 of 10 as "+10% duration" would be
+// a confidently wrong number of exactly the kind this repo keeps getting bitten
+// by. The real values live in the server's code, not in anything we mirror.
+//
+// So it is MEASURED instead. For one character, compare how long their buffs
+// actually lasted against what the catalog predicts for the same spells; the
+// ratio IS their focus effect, observed — and it is correct for Quarm's own
+// tuning rather than stock EQEmu's, which a formula would not have been.
+//
+// ⚠ Only spells with BOTH a measurement and a catalog duration can contribute,
+// and the result is a median of per-spell ratios rather than a ratio of totals:
+// one long buff would otherwise dominate the answer entirely.
+const BUFF_FACTOR_MIN_SPELLS = 3;   // below this it is an anecdote, not a factor
+function buffDurationFactorFor(character) {
+  const ch = String(character || '').toLowerCase();
+  if (!ch) return null;
+  const ratios = [];
+  for (const [spellLower, arr] of _buffDurSamples) {
+    if (!arr || !arr.length) continue;
+    // Only spells this character was actually seen carrying — otherwise every
+    // character reports the whole machine's average, which is not "by character"
+    // at all on a box that runs several.
+    if (!_buffSeenByChar.has(ch + '|' + spellLower)) continue;
+    const cat = _catalogDurationSec(spellLower);
+    if (!(cat > 0)) continue;
+    const st = buffDurationStats(spellLower);
+    if (!st || !(st.median > 0)) continue;
+    ratios.push({ spell: spellLower, ratio: st.median / cat, n: st.n });
+  }
+  if (ratios.length < BUFF_FACTOR_MIN_SPELLS) {
+    return { character, spells: ratios.length, factor: null,
+             why: 'not enough watched buffs yet — needs ' + BUFF_FACTOR_MIN_SPELLS + ' spells with a catalog duration' };
+  }
+  const sorted = ratios.map(r => r.ratio).sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  const factor = sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+  return {
+    character,
+    spells: ratios.length,
+    factor: Math.round(factor * 100) / 100,
+    // The spread is shown so nobody reads a noisy factor as precision.
+    lo: Math.round(sorted[0] * 100) / 100,
+    hi: Math.round(sorted[sorted.length - 1] * 100) / 100,
+  };
+}
+// Which characters have been seen carrying which spell, so a factor is per
+// character rather than per machine.
+const _buffSeenByChar = new Set();   // "char|spellLower"
+
 // Everything we have measured, newest-touched first, for the dashboard table.
 function buffDurationTable() {
   const out = [];
@@ -2991,6 +3051,13 @@ function buffDurationTable() {
 }
 
 // Record one observed landing under its TARGET NAME — the map Mob Info reads.
+// The caster's own target spawn id, for a cast THEY made. Narrower than
+// _provableTargetId only in intent: same name check, because a cast line can
+// arrive a beat after they switched target, and stamping the new target's id
+// onto the old target's cast would be worse than sending nothing.
+function _ownTargetIdFor(character, targetName) {
+  return _provableTargetId(character, targetName);
+}
 function recordTargetBuffLanding(bcEvt) {
   if (!bcEvt || !bcEvt.spell_name || !bcEvt.target) return;
   if (_shouldSuppressBuffLanding(bcEvt)) return;
@@ -3350,6 +3417,10 @@ function relaySelfCastForCasting(line, character, pre) {
   const isHeal = !!he || HEAL_SPELL_RX.test(spell);
   enqueueUpload('casting', { agent_version: AGENT_VERSION, casts: [{
     caster: character, spell, target,
+    // Which spawn the caster was on. Unlike a witnessed buff landing there is
+    // nothing to prove here — this IS the caster's own current target — so it
+    // comes straight off their pipe state rather than through _provableTargetId.
+    target_id: _ownTargetIdFor(character, target),
     started_at: new Date(atMs).toISOString(),
     cast_secs: castSecs,
     // Inbound-heal fields for the recipient's tank overlay (est. catalog amount).
@@ -3404,6 +3475,7 @@ function noteCureCastFailed(line, character) {
   prev.cancelled = true;
   enqueueUpload('casting', { agent_version: AGENT_VERSION, casts: [{
     caster: character, spell: prev.spell, target: prev.target,
+    target_id: _ownTargetIdFor(character, prev.target),
     started_at: new Date(prev.at).toISOString(),
     cast_secs: prev.castSecs,
     // Bot: void the pending ledger entry for this exact cast (bot 3.0.2xx+).
@@ -12063,6 +12135,10 @@ function _serializeForDashboard() {
     //   buffDurations what we have WATCHED buffs actually last on this machine,
     //                 with the catalog's prediction beside it.
     buffsActive:        _activeBuffsForDashboard(),
+    // Item 3: per-character duration factor, MEASURED. See
+    // buffDurationFactorFor — the AA tables cannot give this and guessing it
+    // would be a confidently wrong number.
+    buffFactors:        Object.keys(_zealState || {}).map(c => buffDurationFactorFor(c)).filter(Boolean),
     buffDurations:      buffDurationTable().map(d => ({
       ...d,
       // The catalog's own answer, so the table can show measured against
@@ -13753,6 +13829,38 @@ function renderBuffsTab(s) {
     h += '</div></div>';
   }
   h += '</div>';
+
+  // ── Per-character duration factor (item 3) ───────────────────────────────
+  var factors = (s && s.buffFactors) || [];
+  if (factors.length) {
+    h += '<div class="card wide"><h2>🎯 Your buff duration factor '
+      +  '<span class="dim" style="font-size:11px;font-weight:normal">measured, not assumed</span></h2>';
+    h += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:8px">';
+    for (var fi = 0; fi < factors.length; fi++) {
+      var f = factors[fi];
+      var known = f.factor != null;
+      var fcol = !known ? 'var(--dim)' : (f.factor > 1.05 ? 'var(--green)' : (f.factor < 0.95 ? 'var(--orange)' : 'var(--text)'));
+      h += '<div style="border:1px solid var(--border);border-radius:6px;padding:8px 10px">'
+        +   '<div style="font-size:12px;color:var(--gold);font-weight:600">' + esc(f.character) + '</div>'
+        +   '<div style="font-size:20px;color:' + fcol + ';font-variant-numeric:tabular-nums;margin:2px 0">'
+        +     (known ? '×' + f.factor.toFixed(2) : '—') + '</div>'
+        +   '<div class="dim" style="font-size:10px;line-height:1.5">'
+        +     (known
+                ? 'across ' + f.spells + ' spells · range ×' + f.lo.toFixed(2) + '–×' + f.hi.toFixed(2)
+                  + '<br>how long their buffs actually last, against the catalog'
+                : esc(f.why || 'not enough data yet'))
+        +   '</div>'
+        + '</div>';
+    }
+    h += '</div>';
+    h += '<div class="dim" style="font-size:10px;margin-top:8px;line-height:1.5">'
+      +  '⚠ This is <b>observed</b>, not computed from your AAs. The AA tables we mirror cannot give it: '
+      +  'Spell Casting Mastery (mana cost) and Spell Casting Reinforcement (buff duration) share the same '
+      +  'effect id, so the number beside them is not a duration percentage and reading it as one would be '
+      +  'wrong. Watching what actually happens sidesteps that — and is right for Quarm\\'s tuning rather than '
+      +  'stock EQEmu\\'s. A median of per-spell ratios, so one long buff cannot dominate it.</div>';
+    h += '</div>';
+  }
 
   // ── Durations: measured vs predicted ─────────────────────────────────────
   h += '<div class="card wide"><h2>⏱ Durations '
@@ -32832,17 +32940,20 @@ function _relayCacheKey(name, selfChar, targetId) {
   return String(name || '').trim().toLowerCase() + '|' + String(selfChar || '').trim().toLowerCase()
        + (targetId != null ? '|' + targetId : '');
 }
-function fetchTargetCasts(name, selfChar) {
+function fetchTargetCasts(name, selfChar, targetId) {
   const opts = _uploadOpts;
   if (!opts || !opts.botUrl || !opts.token) return;
   if (!String(name || '').trim()) return;
-  const key = _relayCacheKey(name, selfChar);
+  const key = _relayCacheKey(name, selfChar, targetId);
   if (_targetCastsInflight.has(key)) return;
   const cached = _targetCastsByName.get(key);
   if (cached && (Date.now() - cached.at) < TARGET_CASTS_TTL_MS) return;
   _targetCastsInflight.add(key);
   let url = opts.botUrl.replace(/\/encounter(\?.*)?$/, '/target-casts') + '?name=' + encodeURIComponent(name);
   if (selfChar) url += '&character=' + encodeURIComponent(selfChar);   // #141 zone scope
+  // Spawn id first, name second — the bot drops casts proven to be on a
+  // different same-name spawn. Omitted when unknown → served unfiltered.
+  if (targetId != null) url += '&target_id=' + encodeURIComponent(targetId);
   try {
     const u = new URL(url);
     const mod = u.protocol === 'https:' ? https : http;
@@ -33672,23 +33783,22 @@ function buildMobInfo() {
   // The spawn we are looking at, when the client can name it (Zeal PR #229).
   // Null on every unpatched client → every path below behaves as it does today.
   const _curIdForRelay = Number.isFinite(st.target_id) ? st.target_id : null;
-  const relayKey = _relayCacheKey(st.target_name, selfChar);
+  // Both cross-client relays are now spawn-scoped, so they share ONE id-keyed
+  // cache key again. (It was split when only target-buffs was scoped: folding
+  // the id into a key fetchTargetCasts did not send would have left the casts
+  // cache missing every poll.)
+  const relayKey = _relayCacheKey(st.target_name, selfChar, _curIdForRelay);
   const zealBuffs = _zealBuffsForName(tnameLower);
   // Cross-client casting on this target (who's casting what on it, with a
   // countdown). Refresh on a short TTL; bystanders we can't name are absent.
   const ctc = _targetCastsByName.get(relayKey);
-  if (!ctc || (Date.now() - ctc.at) >= TARGET_CASTS_TTL_MS) fetchTargetCasts(st.target_name, selfChar);
+  if (!ctc || (Date.now() - ctc.at) >= TARGET_CASTS_TTL_MS) fetchTargetCasts(st.target_name, selfChar, _curIdForRelay);
   // Cross-client target_buffs — fetched from the bot's relay so charm
   // spells (Allure, etc.) and other buff landings cast by OTHER Mimic
   // users on the same target show up here too. Merged with locally-
   // observed buffs by spell name (local wins — most accurate timer
   // when we saw it ourselves; remote fills the gap when we didn't).
-  // ⚠ A SEPARATE key from relayKey above, which target-casts also uses. Only
-  // the buffs relay is spawn-scoped so far, and folding the id into the shared
-  // key would leave fetchTargetCasts computing a key it never writes — a casts
-  // cache that misses every time and refetches on every poll.
-  const buffsKey = _relayCacheKey(st.target_name, selfChar, _curIdForRelay);
-  const ctb = _targetBuffsByName.get(buffsKey);
+  const ctb = _targetBuffsByName.get(relayKey);
   if (!ctb || (Date.now() - ctb.at) >= TARGET_BUFFS_TTL_MS) {
     fetchTargetBuffs(st.target_name, selfChar, _curIdForRelay);
   }
@@ -38055,6 +38165,7 @@ module.exports = {
   DEFAULT_DROP_PATTERNS, KEEP_PATTERNS,
   buildFeedbackLogSlice, _feedbackLineAllowed,
   _noteBuffDurationsFromState, buffDurationStats, buffDurationTable, _noteBuffDurationSample,
+  buffDurationFactorFor,
   SOURCELESS_SPELLS, BARD_SONGS,
   EncounterBuilder, characterFromFilename, isBackupLogFile, _splitBackupSuffix,
   trackChChainLine, chChainSnapshot, removeChChainSlot,

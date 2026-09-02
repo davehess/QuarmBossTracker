@@ -128,11 +128,25 @@ describe('wiring', () => {
     expect(agent).toContain('_relayCacheKey(st.target_name, selfChar, _curIdForRelay)');
   });
 
-  // ⚠ target-casts shares _relayCacheKey and is NOT spawn-scoped yet. Folding
-  // the id into the key both use would leave fetchTargetCasts computing a key
-  // it never writes — a cache that misses every poll and refetches forever.
-  it('leaves the target-casts key alone', () => {
-    expect(agent).toContain('fetchTargetCasts(st.target_name, selfChar);');
-    expect(agent).toContain('const relayKey = _relayCacheKey(st.target_name, selfChar);');
+  // Both cross-client relays are spawn-scoped as of agent 3.6.24, so they share
+  // ONE id-keyed cache key again. ⚠ The invariant that matters is that whatever
+  // key a fetch WRITES is the key the reader COMPUTES — when only buffs was
+  // scoped, folding the id into the shared key would have left the casts cache
+  // missing every poll and refetching forever.
+  it('casts and buffs share one id-keyed cache key, and both send the id', () => {
+    expect(agent).toContain('const relayKey = _relayCacheKey(st.target_name, selfChar, _curIdForRelay);');
+    expect(agent).toContain('fetchTargetCasts(st.target_name, selfChar, _curIdForRelay)');
+    expect(agent).toContain('fetchTargetBuffs(st.target_name, selfChar, _curIdForRelay)');
+    expect(agent).toContain('_targetCastsByName.get(relayKey)');
+    expect(agent).toContain('_targetBuffsByName.get(relayKey)');
+  });
+
+  // A cast is the caster's OWN target, so there is nothing to prove — but the
+  // name check still matters: a cast line can arrive a beat after they switched
+  // target, and stamping the new id onto the old target's cast is worse than
+  // sending nothing.
+  it('stamps the caster\'s own target id on both cast uploads', () => {
+    expect(agent).toContain('target_id: _ownTargetIdFor(character, target),');
+    expect(agent).toContain('target_id: _ownTargetIdFor(character, prev.target),');
   });
 });
