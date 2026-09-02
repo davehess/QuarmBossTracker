@@ -473,6 +473,27 @@ Tests: `test/zeal-version-capability.test.js` (bot + board, on `main`) and
 `test/zeal-capability-agent.test.js` (the latch + the agent↔bot contract, on
 `beta` — the only branch carrying both sources).
 
+### Cross-Mimic trigger relay: scope gate (bot 3.1.111)
+The relay had **no scope of any kind** — every guild-trigger fire from any raider
+ran on every other Mimic within 15s, gated only by an 8s dedup and a staleness
+drop. Someone landing a slow while soloing an alt in another zone spoke on the
+whole guild's machines (Hitya, 2026-09-02: *"we hear Shaman Slow when we're not
+around combat"*).
+**The rule: raid-wide during a raid window (`_inRaidWindowEt`), same-zone-only
+outside it.** `_relayScopeKeep()` is the pure predicate; `_relayScopeFor()`
+resolves the inputs once per poll and both poll paths (`/recent-fires` and the
+#106 multiplexed `/poll`) go through it.
+⚠ **The sender's zone is resolved BOT-SIDE at ingest** from `character_live_state`,
+not sent by the agent — so the gate covers the whole fleet the moment the bot
+deploys instead of waiting on ~16 people to update Mimic.
+⚠ **FAIL OPEN in both unknown cases and do not tighten them.** This gate decides
+whether a raid callout is SPOKEN. Dropping a real Death Touch warning because a
+zone lookup came back empty is far worse than a stray "Shaman Slow", so an
+unplaceable sender OR an unplaceable listener both pass through. Tests fail if
+either branch flips.
+⚠ The zone lookup is **skipped entirely inside a raid window**, which is when the
+fleet polls hardest. Tests: `test/relay-scope-gate.test.js`.
+
 ### /platform/architecture — the deep platform page (web 1.7.10)
 `/platform` answers "what is all this?"; this answers "how does it work?" — every
 overlay, dashboard and integration, plus the path one log line takes to the guild.
