@@ -987,6 +987,25 @@ RLS: Tier 1 readable by `anon`+`authenticated`; guild tables
 
 ## Domain policies (load-bearing — don't re-derive)
 
+**Harmony is NOT Pacify — the lull line splits on behaviour, not just duration
+(Hitya, 2026-09-02).** Both are SPA 30 "aggro reduction" and it is tempting to
+treat the family as one thing. Two facts make that wrong, and one of them is a
+safety fact:
+- **Pacify** (and Lull/Soothe/Calm/Pacification/Harmony of Nature, `targettype`
+  5, single) — the mob **will not attack even if you are colliding with it**.
+- **Harmony** and **Wake of Tranquility** (`targettype` **8, targeted AE**) —
+  only SHRINK the aggro radius, so the mob **still aggros if you stand very
+  close**, and the spell lands on **nearby mobs too**, not just your target.
+So never write UI copy, a trigger, or a doc that turns either into "safe to pull
+past" — that is the caller's judgement and it differs per spell. Anything that
+tracks one mob's pacify is also under-reporting an AE cast by construction.
+⚠ Harmony is `resist_type 0` (unresistable) but still FAILS on a too-high-level
+mob with a message we have not captured — so its failure is currently
+undetectable and a synthesized timer can be a phantom. The ask is filed in
+`docs/STATUS.md`; **do not invent the string.**
+⚠ `Atone` is SPA 30 but instant (`buffduration`/formula 0) — it can never carry
+a timer.
+
 **Raid lockouts are ENGAGE locks, not loot locks (Hitya, 2026-08-21).** A
 character with an active lockout on a raid mob **cannot fight it at all** — on
 engage the server *teleports them out of the zone*. They can't participate and
