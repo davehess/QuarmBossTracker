@@ -731,6 +731,20 @@ A **bystander's** pacify still does not resolve locally; it reaches others only
 through the caster's `buff_casts` upload and the (spawn-scoped) `target-buffs`
 relay.
 
+⚠ **HARMONY IS NOT PACIFY, AND THE DIFFERENCE IS A SAFETY DIFFERENCE**
+(Hitya 2026-09-02, correcting a first cut that treated the family as
+interchangeable). `targettype` confirms it:
+| | targettype | Behaviour |
+|---|---|---|
+| **Pacify**, Lull, Soothe, Calm, Pacification, Harmony of Nature | 5 (single) | will not attack **even if you are colliding with it** |
+| **Harmony**, Wake of Tranquility | **8 (targeted AE)** | only SHRINKS the aggro radius — **still aggros up close** — and lands on nearby mobs too |
+| Calm/Lull Animal (9), Numb/Rest the Dead (10) | single, restricted | as above, animal/undead only |
+So the overlay **never says "safe to pull past"** for either. It states the
+effect and the clock; the pull is the caller's judgement and it differs per
+spell. AE members carry an `AE` badge and say so in the tooltip, because a
+Harmony row otherwise reads exactly like a Pacify row while licensing different
+behaviour at melee range.
+
 **Harmony, Harmony of Nature and Lull Animal emit NO log line at all**
 (`cast_on_other` NULL), so a druid pull was invisible to every log in the raid.
 `_synthesizePacifyLanding` takes the charm-spell answer for the charm-spell
@@ -738,6 +752,18 @@ problem: the caster's own `"You begin casting X."` is the only evidence in
 existence, so it records the landing on the Zeal target with the catalog
 duration scaled to the caster's level, stamps `_provableTargetId`, and uploads
 it — without that upload no other client could possibly know.
+⚠ **Those rows are flagged `unconfirmed` and marked `~` on screen, and Harmony's
+failure is currently UNDETECTABLE.** It is `resist_type 0` — unresistable — so
+the resist branch of `notePacifyMiss` can never fire for it, yet it still fails
+against a too-high-level mob with a server message we have not captured. Until
+that string is known the timer can be a phantom, which is why the row says it
+came from your cast rather than from a witnessed land. **Do not invent the
+string** — that is the Divine-Intervention-trigger mistake (a pattern matching
+text that appears nowhere). It needs a local session; the ask is in
+`docs/STATUS.md`.
+⚠ An AE Harmony is recorded on the Zeal target ONLY, because that is the one
+mob whose identity we can prove. The other mobs it hit are real and untracked —
+another reason the row must not read as a coverage guarantee.
 ⚠ **Stamped at cast BEGIN and reverted on interrupt/fizzle/resist**
 (`notePacifyMiss`), following `_noteDiCast`/`noteDiInterrupt`. There is no
 landing signal to wait for, so "assume it landed, take it back if the log says

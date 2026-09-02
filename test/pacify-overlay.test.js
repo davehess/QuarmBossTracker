@@ -34,7 +34,8 @@ const { renderTargetBuffs } = evalBlock(
 );
 
 const pacify  = { name: 'Pacify',   remaining_secs: 300, total_secs: 360, good: 1, pacified: true };
-const harmony = { name: 'Harmony',  remaining_secs: 90,  total_secs: 120, good: 1, pacified: true, owner: 'Canopy' };
+const harmony = { name: 'Harmony',  remaining_secs: 90,  total_secs: 120, good: 1, pacified: true,
+                  owner: 'Canopy', pacify_ae: true, unconfirmed: true };
 const tash    = { name: 'Tashania', remaining_secs: 100, total_secs: 200, good: 0 };
 const haste   = { name: 'Celerity', remaining_secs: 400, total_secs: 600, good: 1 };
 
@@ -43,7 +44,7 @@ describe('where a pacify lands on the overlay', () => {
     // Order is the feature. Rendering it last would leave the pull-safety
     // answer below a screenful of the mob's own buffs.
     const html = renderTargetBuffs({ target_buffs: [haste, tash, pacify] });
-    const p = html.indexOf('pacified');
+    const p = html.indexOf('aggro reduced');
     const d = html.indexOf('debuffs');
     const b = html.indexOf('buffs (observed)');
     expect(p).toBeGreaterThan(-1);
@@ -79,11 +80,42 @@ describe('where a pacify lands on the overlay', () => {
     expect(html).not.toContain('fell off');
   });
 
-  it('tells you what the timer MEANS, not just how long is left', () => {
-    const live = renderTargetBuffs({ target_buffs: [pacify] });
-    expect(live).toContain('safe to pull past until then');
+  // ⚠ Hitya, 2026-09-02: Pacify means the mob will not attack even at contact;
+  // Harmony only SHRINKS the aggro radius and still aggros up close, and being
+  // AE it is also on nearby mobs this row says nothing about. An earlier cut of
+  // this overlay told the reader a Harmony'd mob was "safe to pull past", which
+  // is the one sentence it must never say.
+  it('never promises the pull is safe — for either spell', () => {
+    for (const row of [pacify, harmony]) {
+      const html = renderTargetBuffs({ target_buffs: [row] });
+      expect(html, row.name).not.toMatch(/safe to pull/i);
+      expect(html, row.name).not.toMatch(/do not pull/i);
+    }
+  });
+
+  it('says an AE pacify is AE, and that it only shrinks the radius', () => {
+    // Harmony on screen without this reads exactly like Pacify, and the two
+    // license different behaviour at melee range.
+    const html = renderTargetBuffs({ target_buffs: [harmony] });
+    expect(html).toContain('AE');
+    expect(html).toMatch(/nearby mobs were hit too/);
+    expect(html).toMatch(/still aggros up close/i);
+    // Pacify is single-target and must NOT carry the AE claim.
+    expect(renderTargetBuffs({ target_buffs: [pacify] })).not.toMatch(/nearby mobs were hit too/);
+  });
+
+  it('marks a synthesized timer as unconfirmed', () => {
+    // Harmony prints no landing line and cannot be resisted, so its failure is
+    // undetectable to us today — the row must not read as a witnessed land.
+    const html = renderTargetBuffs({ target_buffs: [harmony] });
+    expect(html).toMatch(/from your cast, not a confirmed land/);
+    expect(renderTargetBuffs({ target_buffs: [pacify] })).not.toMatch(/not a confirmed land/);
+  });
+
+  it('still states the clock, which is the only signal there is', () => {
+    expect(renderTargetBuffs({ target_buffs: [pacify] })).toMatch(/5:00 left/);
     const gone = renderTargetBuffs({ target_buffs: [{ ...pacify, fell_off: true, remaining_secs: 0 }] });
-    expect(gone).toContain('do not pull past it');
+    expect(gone).toContain('the aggro reduction is gone');
   });
 
   it('still names who cast it, for a pacify relayed from another client', () => {
@@ -102,7 +134,7 @@ describe('where a pacify lands on the overlay', () => {
     // The regression that matters: this change must not disturb the two
     // sections that were already there.
     const html = renderTargetBuffs({ target_buffs: [haste, tash] });
-    expect(html).not.toContain('pacified');
+    expect(html).not.toContain('aggro reduced');
     expect(html.indexOf('debuffs')).toBeLessThan(html.indexOf('buffs (observed)'));
     expect(html).toContain('Tashania');
     expect(html).toContain('Celerity');

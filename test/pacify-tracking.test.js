@@ -137,6 +137,38 @@ describe('the flag the overlay actually branches on', () => {
     expect(row.owner).toBe('Canopy');
   });
 
+  // ⚠ Hitya, 2026-09-02: "harmony is not the same as pacify... it's AOE so
+  // nearby mobs will get harmony as well. harmony will still aggro mobs if you
+  // stand very close, vs pacify that will not attack even if you're colliding
+  // with them." targettype confirms it: Harmony and Wake of Tranquility are 8
+  // (targeted AE), the rest of the family is 5/9/10 (single).
+  it('separates the AE members from the single-target ones', () => {
+    seed([
+      { name: 'Harmony',             dur_ticks: 20 },
+      { name: 'Wake of Tranquility', dur_ticks: 7 },
+      { name: 'Pacify',              dur_ticks: 60 },
+      { name: 'Lull Animal',         dur_ticks: 20 },
+    ]);
+    const by = Object.fromEntries(targetBuffsFor('a froglok tad', null).map(r => [r.name, r]));
+    expect(by.Harmony.pacify_ae).toBe(true);
+    expect(by['Wake of Tranquility'].pacify_ae).toBe(true);
+    expect(by.Pacify.pacify_ae).toBe(false);
+    expect(by['Lull Animal'].pacify_ae).toBe(false);
+    // All four are still pacifies — AE is a property OF one, not a category.
+    for (const n of Object.keys(by)) expect(by[n].pacified, n).toBe(true);
+  });
+
+  it('flags a synthesized row as unconfirmed and a witnessed one as not', () => {
+    // Harmony is resist_type 0, so the resist line never fires for it, and its
+    // level-failure message is not yet known to us — a synthesized row can be a
+    // phantom and must not render as a witnessed land.
+    seed([{ name: 'Harmony', dur_ticks: 20, unconfirmed: true },
+          { name: 'Pacify',  dur_ticks: 60 }]);
+    const by = Object.fromEntries(targetBuffsFor('a froglok tad', null).map(r => [r.name, r]));
+    expect(by.Harmony.unconfirmed).toBe(true);
+    expect(by.Pacify.unconfirmed).toBe(false);
+  });
+
   it('keeps the catalog good-flag intact underneath it', () => {
     // The pacify flag is ADDITIVE. Overwriting `good` here would change how the
     // row renders anywhere that still reads the good/bad split.
@@ -215,6 +247,7 @@ describe('synthesizing the silent pacifies', () => {
     expect(row.dur_ticks).toBe(20);
     expect(row.landed_at).toBe(T0);
     expect(row.owner).toBe('Hitya');
+    expect(row.unconfirmed, 'we never saw it land — nothing prints one').toBe(true);
   });
 
   it('scales off the CASTER level, not the era cap, when /who knows it', () => {

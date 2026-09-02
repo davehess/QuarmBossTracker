@@ -256,12 +256,27 @@
     // running it. Rendered dim/italic to differentiate from the spell name
     // itself.
     var ownerStr = (b.owner) ? ' <span style="color:#8b949e;font-style:italic">(' + esc(b.owner) + ')</span>' : '';
-    var tip = esc(b.name) + (b.owner ? ' · cast by ' + esc(b.owner) : '')
-            + (isPacify
-                ? (b.fell_off
-                    ? ' · WORE OFF — aggro radius is back, do not pull past it'
-                    : ' · pacified for ' + fmtSecs(b.remaining_secs) + ' — safe to pull past until then')
-                : (b.fell_off ? ' · fell off (rebuff)' : (hasRem ? ' · ' + fmtSecs(b.remaining_secs) + ' left' : ' · present')));
+    // Two marks that must survive a glance, because both change what the timer
+    // means: AE (it is on other mobs too, and is the weaker aggro-radius kind)
+    // and ~ (synthesized from our own cast — no landing line exists to confirm).
+    if (isPacify && b.pacify_ae)   ownerStr = ' <span style="color:#79c0ff;font-size:9px">AE</span>' + ownerStr;
+    if (isPacify && b.unconfirmed) ownerStr = ' <span style="color:#8b949e" title="from your cast — unconfirmed">~</span>' + ownerStr;
+    // ⚠ NEVER a blanket "safe to pull past" (Hitya 2026-09-02). Pacify means the
+    // mob will not attack even at contact; Harmony only shrinks the aggro
+    // radius and STILL aggros up close, and being AE it is on nearby mobs we
+    // are not showing. The row states the effect and the clock; the pull is the
+    // caller's call, and it differs per spell.
+    var tip;
+    if (isPacify) {
+      tip = esc(b.name) + (b.owner ? ' · cast by ' + esc(b.owner) : '')
+          + (b.fell_off ? ' · WORE OFF — the aggro reduction is gone'
+                        : ' · ' + fmtSecs(b.remaining_secs) + ' left');
+      if (b.pacify_ae) tip += ' · area effect — nearby mobs were hit too, and it only SHRINKS the aggro radius (it still aggros up close)';
+      if (b.unconfirmed) tip += ' · this spell prints no landing line, so this timer is from your cast, not a confirmed land';
+    } else {
+      tip = esc(b.name) + (b.owner ? ' · cast by ' + esc(b.owner) : '')
+          + (b.fell_off ? ' · fell off (rebuff)' : (hasRem ? ' · ' + fmtSecs(b.remaining_secs) + ' left' : ' · present'));
+    }
     return '<div class="tbuff" title="'+tip+'">'
          +    '<span class="bn">'+esc(b.name)+ownerStr+'</span>'
          +    '<div class="bbar"><div style="width:'+pct.toFixed(0)+'%;background:'+col+'"></div></div>'
@@ -299,7 +314,7 @@
       else goods.push(b);
     }
     var suffix = (mi && mi.target_is_pc) ? '(live)' : '(observed)';
-    return _tbuffSection('pacified', pacified, true)
+    return _tbuffSection('aggro reduced', pacified, true)
          + _tbuffSection('debuffs '+suffix, debuffs)
          + _tbuffSection('buffs '+suffix, goods);
   }

@@ -211,6 +211,20 @@ next touch one rather than assuming a missing row means a missing doc.
   **Consumer work waits for a release** — `docs/zeal-pipe-protocol.md` carries a
   forward note, and the agent's parser must treat all five keys as optional so
   older Zeal builds keep working.
+- **⚠ Needs a local session — the pacify FAILURE message (one string).**
+  Harmony is `resist_type 0` (unresistable), so the resist branch of
+  `notePacifyMiss` can never fire for it — but it still fails against a
+  too-high-level mob, and Hitya confirms *"it will give a message if the mob
+  cannot be pacified"* (2026-09-02). We do not have that string, and a
+  synthesized Harmony timer is a phantom until we do.
+  **The ask:** the exact server text, from `D:\EQServer` (EQEmu `spells.cpp`,
+  the SPA 30 / `SE_Lull` level-check branch) or from a live client log after
+  casting Harmony at something too high. Also worth capturing: whether the AE
+  members print anything per-mob.
+  ⚠ **Do NOT guess it.** An invented pattern is the Divine Intervention mistake
+  — a trigger that was *enabled*, matched text that appears nowhere, and read as
+  coverage for months. Wire it into `notePacifyMiss` once it is real.
+
 - **⚠ Needs a local session — PoP quest extract (`docs/HANDOFF-pop-quest-extract.md`).**
   Two shipped features are waiting on data only the `D:\EQServer` box has:
   (1) the flagging-NPC list + the phrase list for phrase-granted flags — agent
@@ -245,6 +259,14 @@ next touch one rather than assuming a missing row means a missing doc.
   - **Own line above both sections, blue, "WORE OFF" in red on expiry.** Left
     alone it renders green among the mob's own buffs (the catalog is right:
     it IS good for the mob), which is not where you look before a pull.
+  ⚠ **HARMONY IS NOT PACIFY — corrected by Hitya the same day, after a first cut
+  shipped them as interchangeable.** `targettype` proves it: Pacify is 5
+  (single) and the mob **will not attack even if you are colliding with it**;
+  Harmony and Wake of Tranquility are **8, targeted AE** — they only SHRINK the
+  aggro radius, **still aggro up close**, and land on nearby mobs as well. The
+  overlay therefore **never says "safe to pull past"** for either (the first cut
+  did, which is the one sentence it must not say); it states the effect and the
+  clock and leaves the pull to the caller. AE members carry an `AE` badge.
   ⚠ Stamped at cast begin and reverted on interrupt/fizzle/resist — there is no
   landing signal to wait for. An intervening cast closes that window early, or
   an unrelated fizzle deletes a Harmony that actually landed.

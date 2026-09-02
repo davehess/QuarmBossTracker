@@ -664,6 +664,22 @@ function _isPacifySpell(name) {
 // "looks less aggressive." (Calm 42s ... Pacify 360s at L60 — an 8.5x spread)
 // by knowing which one we cast. Synthesizing those too would double-record.
 const PACIFY_NO_EMOTE = new Set(['harmony', 'harmony of nature', 'lull animal']);
+// ⚠ HARMONY IS NOT PACIFY, AND THE DIFFERENCE IS A SAFETY DIFFERENCE
+// (Hitya, 2026-09-02, correcting an earlier version of this file that treated
+// the whole family as interchangeable):
+//   • Pacify (targettype 5, single) — the mob will not attack even if you are
+//     colliding with it.
+//   • Harmony (targettype 8, TARGETED AE) — reduces the aggro radius, but the
+//     mob STILL aggros if you stand very close, and it lands on nearby mobs
+//     too, not just the one you targeted.
+// So a single row saying "pacified" cannot carry one meaning for both, and the
+// UI must never turn either into a blanket "safe to pull past" — that is the
+// caller's judgement and it differs per spell.
+const PACIFY_AE = new Set(['harmony', 'wake of tranquility']);   // targettype 8
+function _isAePacify(name) {
+  if (!name) return false;
+  return PACIFY_AE.has(String(name).toLowerCase().replace(/`/g, "'").trim());
+}
 
 // ── EQ class-title → base class ───────────────────────────────────────────────
 // A /who line shows the LEVEL TITLE for the character's class (e.g. a level-55
@@ -3217,6 +3233,8 @@ function targetBuffsFor(targetLower, wantId) {
       total_secs: durSecs > 0 ? Math.round(durSecs) : null, observed_at_ms: b.landed_at,
       good: isCharm ? 0 : _spellGood(b.name), fell_off: fellOff,
       pacified: _isPacifySpell(b.name),
+      pacify_ae: _isAePacify(b.name),
+      unconfirmed: !!(b && b.unconfirmed),
       owner: (b && b.owner) ? b.owner : null });
   }
   if (mp.size === 0) _buffLandingsByTarget.delete(targetLower);
@@ -3382,6 +3400,13 @@ function _synthesizePacifyLanding(spellName, character, atMs) {
     landed_at: atMs,
     target_id: _provableTargetId(character, target),
     owner: String(character),
+    // ⚠ We never saw this land, and for Harmony we CANNOT: it is resist_type 0
+    // (unresistable, so the resist line never fires) yet it still fails against
+    // a too-high-level mob with a server message we have not captured — see the
+    // needs-a-local-session item in docs/STATUS.md. Until that string is known,
+    // a synthesized row can be a phantom, so it is labelled rather than shown
+    // as fact.
+    unconfirmed: true,
   });
   _pendingPacify.set(cl, { key, target: tk, atMs });
   // Cross-client mirror — same reason as charm: with no log line, the caster's
@@ -34002,6 +34027,7 @@ function buildMobInfo() {
       // Harmony/Pacify would miss its own line. Resolved from the name here,
       // exactly as `good` is above.
       if (b.pacified == null) b.pacified = _isPacifySpell(b.name);
+      if (b.pacify_ae == null) b.pacify_ae = _isAePacify(b.name);
       buffs.push(b);
       seen.add(k);
     }
