@@ -16126,6 +16126,13 @@ async function _handleTriggerRelayPost(req, res) {
   }
 
   const senderOffset = _senderClockOffsetMs(payload);
+  // The sender's zone, for the scope gate. One 2s-cached read shared by every
+  // relay POST; resolved once per request, not per fire.
+  let originZone = null;
+  try {
+    const senderChar = String(payload?.character || '').trim().toLowerCase();
+    if (senderChar) originZone = ((await _liveZoneMap()).get(senderChar) || {}).zone_name || null;
+  } catch { /* fail open — a zone lookup must never reject a fire */ }
 
   let accepted = 0;
   for (const f of fires.slice(0, 10)) {
@@ -16164,6 +16171,12 @@ async function _handleTriggerRelayPost(req, res) {
       fired_at_true_ms:    firedAtTrue,    // skew-resolved; what receivers time off
       posted_at_ms:        now,
       uploaded_by:         identity.discord_id,
+      // Where the sender was standing, resolved HERE rather than sent by the
+      // agent: the bot already knows every character's live zone, so the gate
+      // works on the whole fleet the moment this deploys instead of waiting for
+      // ~16 people to update Mimic. Null when live-state is stale — that fails
+      // open at read time (see _relayScopeKeep).
+      origin_zone:         originZone,
     };
     _triggerRelay.entries.push(entry);
     accepted++;
@@ -16177,6 +16190,62 @@ async function _handleTriggerRelayPost(req, res) {
   return res.end(JSON.stringify({ ok: true, accepted, next_id: _triggerRelay.nextId }));
 }
 
+// ── Relay scope gate (Hitya, 2026-09-02) ────────────────────────────────────
+// "Every so often we hear Shaman Slow when we're not around combat. These should
+// only trigger for local fights or during raids, not outside."
+//
+// The relay had NO scope of any kind: every guild-trigger fire from any raider
+// ran on every other Mimic within 15s. Someone soloing an alt in East Commons on
+// a Tuesday landed a slow, and the whole guild heard it.
+//
+// The rule: raid-wide during a raid window, same-zone-only outside it.
+//
+// ⚠ FAIL OPEN IN BOTH UNKNOWN CASES, and that is deliberate. This gate decides
+// whether a raid callout is spoken. Dropping a real Death Touch warning because
+// a zone lookup came back empty is far worse than an occasional stray "Shaman
+// Slow", so anything we cannot prove is out-of-zone passes through.
+function _relayScopeKeep({ inRaidWindow, originZone, requesterZones }) {
+  if (inRaidWindow) return true;                                   // raid night: unchanged
+  if (!originZone) return true;                                    // can't place the sender
+  if (!requesterZones || requesterZones.size === 0) return true;   // can't place ourselves
+  return requesterZones.has(originZone);
+}
+
+// character name (lower) → owning discord id. Cached 5 min: the roster changes on
+// officer action, never mid-fight.
+let _charDiscordCache = { at: 0, map: new Map() };
+async function _charDiscordMap() {
+  if (_charDiscordCache.map.size && (Date.now() - _charDiscordCache.at) < 300_000) return _charDiscordCache.map;
+  const supabase = require('./utils/supabase');
+  const map = new Map();
+  if (supabase.isEnabled()) {
+    const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+    try {
+      const rows = await supabase.select('characters',
+        `guild_id=eq.${encodeURIComponent(guildId)}&discord_id=not.is.null&select=name,discord_id`);
+      for (const r of (rows || [])) {
+        if (r && r.name && r.discord_id) map.set(String(r.name).toLowerCase(), String(r.discord_id));
+      }
+    } catch (err) { console.warn('[relay-scope] char→discord fetch failed:', err && err.message); }
+  }
+  _charDiscordCache = { at: Date.now(), map };
+  return map;
+}
+
+// Every zone this discord account currently has a live character in. A set, not
+// a single value: one person can have several characters streaming at once, and
+// a fire in ANY of their zones is local to them.
+async function _requesterZones(discordId) {
+  if (!discordId) return new Set();
+  const [zoneByChar, discordByChar] = await Promise.all([_liveZoneMap(), _charDiscordMap()]);
+  const out = new Set();
+  for (const [charLower, z] of zoneByChar) {
+    if (!z || !z.zone_name) continue;
+    if (discordByChar.get(charLower) === discordId) out.add(z.zone_name);
+  }
+  return out;
+}
+
 // Assemble the recent-fires payload from the in-memory relay ring buffer.
 // Shared by the standalone GET /recent-fires and the multiplexed GET /poll
 // (#106) so both stay byte-identical. Suppresses the caller's own fires — they
@@ -16186,9 +16255,15 @@ async function _handleTriggerRelayPost(req, res) {
 // own `loot_since_id`/`loot_next_id` cursor is independent of the fires cursor
 // (loot events are NOT suppressed by uploader — the officer's own Mimic should
 // announce too, since the post came from Discord/OpenDKP, not a fire it played).
-function _recentFiresFor(identity, sinceId, lootSinceId = 0) {
+// `scope` is { inRaidWindow, requesterZones } resolved by the caller (both call
+// sites are async; this stays sync and pure so it can be tested directly).
+// Omitting it keeps every fire — the pre-gate behaviour.
+function _recentFiresFor(identity, sinceId, lootSinceId = 0, scope = null) {
+  const inRaidWindow  = scope ? !!scope.inRaidWindow : true;
+  const requesterZones = scope ? scope.requesterZones : null;
   const fires = _triggerRelay.entries
     .filter(e => e.id > sinceId && e.uploaded_by !== identity.discord_id)
+    .filter(e => _relayScopeKeep({ inRaidWindow, originZone: e.origin_zone, requesterZones }))
     .map(e => ({
       id:                  e.id,
       name:                e.name,
@@ -16208,14 +16283,27 @@ function _recentFiresFor(identity, sinceId, lootSinceId = 0) {
   return { next_id: _triggerRelay.nextId, fires, loot_posted: loot.loot_posted, loot_next_id: loot.loot_next_id };
 }
 
+// Resolve the scope inputs once per poll. During a raid window this costs
+// nothing — the zone lookup is skipped entirely, which is also when the fleet
+// polls hardest.
+async function _relayScopeFor(identity) {
+  const inRaidWindow = _inRaidWindowEt(new Date());
+  if (inRaidWindow) return { inRaidWindow: true, requesterZones: null };
+  let requesterZones = null;
+  try { requesterZones = await _requesterZones(identity && identity.discord_id); }
+  catch { requesterZones = null; }   // fail open
+  return { inRaidWindow: false, requesterZones };
+}
+
 async function _handleRecentFiresGet(req, res) {
   const identity = await mimicLink.requireAgentAuth(req, res);
   if (!identity) return;
   const url = new URL(req.url, 'http://x');
   const sinceId     = parseInt(url.searchParams.get('since_id') || '0', 10) || 0;
   const lootSinceId = parseInt(url.searchParams.get('loot_since_id') || '0', 10) || 0;
+  const scope = await _relayScopeFor(identity);
   res.writeHead(200, { 'Content-Type': 'application/json' });
-  return res.end(JSON.stringify(_recentFiresFor(identity, sinceId, lootSinceId)));
+  return res.end(JSON.stringify(_recentFiresFor(identity, sinceId, lootSinceId, scope)));
 }
 
 // ── Multiplexed agent poll (#106) ────────────────────────────────────────────
@@ -16295,7 +16383,7 @@ async function _handleAgentPoll(req, res) {
   if (_pollStreamDecision('recent_fires', want, tune, null, null) === 'send') {
     const sinceId     = parseInt(url.searchParams.get('since_id') || '0', 10) || 0;
     const lootSinceId = parseInt(url.searchParams.get('loot_since_id') || '0', 10) || 0;
-    out.streams.recent_fires = _recentFiresFor(identity, sinceId, lootSinceId);
+    out.streams.recent_fires = _recentFiresFor(identity, sinceId, lootSinceId, await _relayScopeFor(identity));
   }
 
   // tuning — 60s cache; version-gated so an unchanged blob costs a few bytes.
