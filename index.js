@@ -16097,6 +16097,74 @@ function _senderClockOffsetMs(payload) {
   return raw;
 }
 
+async function _handleAgentFeedback(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const chunks = []; let total = 0;
+  for await (const chunk of req) {
+    total += chunk.length;
+    // Generous vs the other ingest routes because a log excerpt rides along.
+    // The agent caps its slice at 512KB; this is that plus headroom, and a
+    // report bigger than this is malformed rather than thorough.
+    if (total > 1024 * 1024) { res.writeHead(413); return res.end(JSON.stringify({ error: 'payload too large' })); }
+    chunks.push(chunk);
+  }
+  let p;
+  try { p = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+  catch { res.writeHead(400); return res.end(JSON.stringify({ error: 'invalid JSON' })); }
+
+  const message = String(p?.message || '').trim();
+  if (message.length < 10) {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'message too short' }));
+  }
+
+  const supabase = require('./utils/supabase');
+  const row = {
+    guild_id:             process.env.SUPABASE_GUILD_ID || 'wolfpack',
+    submitter_discord_id: identity.discord_id || null,
+    submitter_name:       p?.character ? String(p.character).slice(0, 64) : null,
+    category:             p?.category === 'bug' ? 'bug' : 'idea',
+    message:              message.slice(0, 4000),
+    client:               p?.client ? String(p.client).slice(0, 32) : null,
+    client_version:       p?.app_version ? String(p.app_version).slice(0, 40) : null,
+    platform:             p?.platform ? String(p.platform).slice(0, 32) : null,
+    // Opt-in, already redacted agent-side. Stored as-is so an officer reads
+    // exactly what the reporter previewed.
+    log_excerpt:          typeof p?.log_excerpt === 'string' ? p.log_excerpt.slice(0, 600_000) : null,
+    log_meta:             (p?.log_meta && typeof p.log_meta === 'object') ? p.log_meta : null,
+  };
+
+  let saved = null;
+  if (supabase.isEnabled()) {
+    saved = await supabase.insert('feedback', [row])
+      .catch(err => { console.warn('[feedback] insert failed:', err?.message); return null; });
+  }
+
+  // Tell the officers, post-ack — a slow Discord must never fail the submit.
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ ok: true, stored: !!saved }));
+
+  const threadId = process.env.FEEDBACK_THREAD_ID;
+  if (!threadId) return;
+  try {
+    const ch = await client.channels.fetch(threadId).catch(() => null);
+    if (!ch) return;
+    const m = row.log_meta || {};
+    const who = row.submitter_name || 'someone';
+    const tag = row.category === 'bug' ? '\u{1F41E} Bug' : '\u{1F4A1} Idea';
+    const attached = row.log_excerpt
+      ? `\n\u{1F4CE} log: ${m.lines || 0} lines over ${m.minutes || '?'} min` +
+        `${m.removed ? ` (${m.removed} private lines removed)` : ''}` +
+        `${m.truncated ? ' \u2014 truncated' : ''}`
+      : '';
+    await ch.send(
+      `${tag} from **${who}** via ${row.client || 'Mimic'}${row.client_version ? ' ' + row.client_version : ''}\n` +
+      `>>> ${message.slice(0, 1500)}${attached}`
+    );
+  } catch (err) { console.warn('[feedback] discord post failed:', err?.message); }
+}
+
 async function _handleTriggerRelayPost(req, res) {
   const identity = await mimicLink.requireAgentAuth(req, res);
   if (!identity) return;
@@ -18993,6 +19061,19 @@ const httpServer = http.createServer(async (req, res) => {
   // Fan-out POST — agent reports a local fire so other Mimics that
   // missed the source line can replay it. Stored in _triggerRelay ring
   // buffer; receivers fetch via GET /api/agent/recent-fires below.
+  // Feedback from inside Mimic, with an optional redacted log slice
+  // (Hitya 2026-09-02). The agent does the redaction — officer chat, tells,
+  // group and /who are gone before this ever sees the bytes — so the bot's job
+  // is to store it and tell the officers.
+  if (req.method === 'POST' && req.url === '/api/agent/feedback') {
+    try { return await _handleAgentFeedback(req, res); }
+    catch (err) {
+      console.error('[feedback] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
   if (req.method === 'POST' && req.url === '/api/agent/trigger-relay') {
     if (await _isShedded('trigger_relay', res)) return;
     try { return await _handleTriggerRelayPost(req, res); }
