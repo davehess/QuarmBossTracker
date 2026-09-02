@@ -236,6 +236,23 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ### ✅ Done — major shipped features (not exhaustive; see git + roadmapData.ts)
 
+- **Mob Info answers "will invis hide me from this?" (bot 3.1.115 · agent
+  3.6.28, 2026-09-02).** Hitya: *"mob info needs to also denote if a mob can see
+  invis."* The four sight flags were already fetched AND already returned — the
+  bot comment has said "drive Mob Info chips" since they were added — but no
+  surface rendered them.
+  ⚠ **Chipping the raw flags would have been noise.** Over the 18,033-row
+  catalog: non-undead see_invis **11%** / see_invis_undead 96%; undead
+  (`bodytype` 3) see_invis 98% / see_invis_undead **15%**. Each flag is
+  near-universal on one side, so the chip follows the spell you would actually
+  cast — IVU on undead, plain invis on the living. The bot now ships `undead`
+  because the flags are unreadable without it.
+  ⚠ `see_hide` is **0 rows catalog-wide** — that chip renders for nobody today.
+  `see_improved_hide` is 91 rows and always shows.
+  Amber sight tone, separate from the red combat-warning tone, and rendered
+  first: it answers a question asked BEFORE the pull. Details in
+  `HOW-ITS-BUILT.md`.
+
 - **Pacify gets its own line, and the silent ones get a timer at all (agent
   3.6.25 · Mimic beta, 2026-09-02).** Hitya: *"mob info is important to
   distinguish buffs and debuffs... things like pacifying where we lower aggro

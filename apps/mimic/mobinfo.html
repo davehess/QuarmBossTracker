@@ -110,6 +110,10 @@
     color:#d2a8ff;border:1px solid #3d2a57}
   .spec .chip.warn{background:#3d1d1d;color:#ffb3b3;border-color:#5a2a2a}
   .spec .chip.imm{background:#1d2a3d;color:#9ecbff;border-color:#2a3d57}
+  /* sight chips — "invis will not hide you". Amber rather than the red warn
+     tone: it defeats a PLAN (a pull, a corpse run), it is not something the mob
+     does to you in a fight, and the two must stay tellable apart at a glance. */
+  .spec .chip.sight{background:#3d2f1d;color:#ffd9a0;border-color:#5a4522}
   #empty{color:rgba(255,255,255,0.5);font-size:12px;text-shadow:0 1px 2px #000;padding:4px 0}
   /* drag/lock/setup chrome — same pattern as the other overlays. */
   #drag-controls{display:none;position:fixed;top:4px;left:4px;gap:4px;z-index:60}
@@ -350,6 +354,37 @@
   var WARN_SPECS = { 'Summon':1,'Enrage':1,'Rampage':1,'Area Rampage':1,'Flurry':1,'Bane':1 };
   function specClass(label){ if (WARN_SPECS[label]) return 'chip warn'; if (label.indexOf('Immune')===0 || label.indexOf('Un')===0) return 'chip imm'; return 'chip'; }
 
+  // Sight chips — "will invis hide me from this?" (Hitya 2026-09-02).
+  //
+  // ⚠ THE RAW FLAGS ARE NOT THE ANSWER. Measured over the 18,033-row catalog:
+  //     non-undead           see_invis 11%   see_invis_undead 96%
+  //     UNDEAD (bodytype 3)  see_invis 98%   see_invis_undead 15%
+  // Each flag is signal on exactly ONE side and near-universal on the other, so
+  // chipping both on every mob would put a chip on ~everything and mean nothing.
+  // We show the one that is actually load-bearing for the mob in front of you:
+  //   • undead  → Invis vs Undead is the spell you would use, so ITS flag is
+  //               the warning. (Regular invis is near-useless on undead anyway,
+  //               which is why 98% of them see it — not worth a chip.)
+  //   • living  → regular invis is the spell you would use, so its flag is the
+  //               warning. (IVU never hid you from the living to begin with.)
+  // see_improved_hide is 91 rows catalog-wide — rare enough to always be worth
+  // saying. see_hide is 0 rows today; the branch costs nothing and covers a
+  // future sync that sets one.
+  function sightChips(mob){
+    if (!mob) return '';
+    var out = [];
+    function add(txt, tip){ out.push('<span class="chip sight" title="'+esc(tip)+'">'+esc(txt)+'</span>'); }
+    if (mob.undead) {
+      if (mob.see_invis_undead) add('Sees Invis vs Undead', 'Invisibility versus Undead will NOT hide you from this mob. Only 15% of undead see it, so this one is the exception.');
+    } else if (mob.see_invis) {
+      add('Sees Invis', 'Invisibility will NOT hide you from this mob.');
+    }
+    if (mob.see_improved_hide) add('Sees Improved Hide', 'Shroud of Stealth will not hide a rogue from this mob.');
+    else if (mob.see_hide)     add('Sees Hide', 'Hide will not hide a rogue from this mob.');
+    return out.join('');
+  }
+
+  // ── DOM handles + tab state ─────────────────────────────────────────────────
   var bodyEl = document.getElementById('body');
   var emptyEl = document.getElementById('empty');
 
@@ -640,11 +675,11 @@
         res = '<div class="res">'+res+'</div>';
       }
       var spec = '';
+      var chips = sightChips(mob);          // before the specials: asked before the pull
       if (mob && Array.isArray(mob.specials) && mob.specials.length){
-        var chips='';
         for (var j=0;j<mob.specials.length;j++){ var lab=mob.specials[j]; chips += '<span class="'+specClass(lab)+'">'+esc(lab)+'</span>'; }
-        spec = '<div class="spec">'+chips+'</div>';
       }
+      if (chips) spec = '<div class="spec">'+chips+'</div>';
       var loadingNote = (!mob && mi.loading) ? '<div class="sub" style="color:#a371f7">looking up stats…</div>'
                        : (!mob ? '<div class="sub">no catalog stats for this target</div>' : '');
       tabBody = res + spec + loadingNote;
