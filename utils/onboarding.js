@@ -29,6 +29,11 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.1.114': [
+    '**Guild callouts stop firing when you are nowhere near the fight.** \u201cShaman Slow\u201d and the rest are guild-wide by design, but they were reaching everyone regardless of where they were standing \u2014 so people got called out for a slow landing in a zone they were not in. A callout now reaches you if you are in the same zone as the person who set it off, or if it is raid night. Outside raid hours you only hear your own zone. When the bot cannot tell where somebody is, the callout still goes out; being noisy is the safer mistake.',
+    '**Two mobs with the same name stop sharing their debuffs and their casts.** Mob Info shows what has landed on a mob and who is casting on it. Both of those were matched by name alone, so two mobs called the same thing pooled everything together. They are now matched by the mob itself where your game client can say which one it is, and by name everywhere else \u2014 which is still everywhere, until the client update is released. Nothing changes for anyone today.',
+    '**Feedback can come from inside Mimic now, and it can bring your log.** There is a Feedback button in Mimic\u2019s top bar and in its tray menu. If you are reporting a bug you can attach the last 15, 30 or 60 minutes of your log \u2014 with chat, tells, group and /who stripped out on your machine before it sends, and the exact text shown to you first.',
+  ],
   '3.1.62': [
     '**The parses page shows boss kills again — farm and trash roll up into one line per zone.** Every kill still counts and is kept, but only real bosses get cards, so a night of clearing can\'t bury the boss kills. Any mob the server gives a loot lockout for counts as a boss automatically — instanced nameds earn their card the first time a lockout or kill broadcast names them, history intact. And announcing tomorrow\'s raid no longer starts tonight\'s scoreboard early — the parse session opens shortly before the event, not the moment it\'s announced.',
   ],
