@@ -18,6 +18,15 @@ import QuakeBanner from './QuakeBanner';
 import WindowPicker from '@/components/WindowPicker';
 import { resolveWindow, type ResolvedWindow } from '@/lib/timeWindow';
 
+// Per-page metadata so a link pasted into Discord unfurls as what it IS.
+// Without this the page inherits the site-wide description and every
+// shared link reads identically, which is what 68 of them used to do.
+export const metadata = {
+  title: 'PvP',
+  description:
+    'Wolf Pack kill leaderboard on the Zeks, with assists and who was nearby.',
+};
+
 export const dynamic = 'force-dynamic';
 
 type KillRow = {

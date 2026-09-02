@@ -14,6 +14,15 @@ import { supabaseAdmin } from '@/lib/supabase';
 import { fmtDuration } from '@/lib/format';
 import { median } from '@/lib/raidGuide';
 
+// Per-page metadata so a link pasted into Discord unfurls as what it IS.
+// Without this the page inherits the site-wide description and every
+// shared link reads identically, which is what 68 of them used to do.
+export const metadata = {
+  title: 'Raid guide',
+  description:
+    'How Wolf Pack does each fight — positioning, assignments and callouts, written by the people who run them.',
+};
+
 export const dynamic = 'force-dynamic';
 
 const EXPANSION_ORDER = ['Classic', 'Kunark', 'Velious', 'Luclin', 'PoP'] as const;

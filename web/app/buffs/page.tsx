@@ -18,6 +18,15 @@ import {
 import BuffsGrid, { type BuffRow } from './BuffsGrid';
 import Link from 'next/link';
 
+// Per-page metadata so a link pasted into Discord unfurls as what it IS.
+// Without this the page inherits the site-wide description and every
+// shared link reads identically, which is what 68 of them used to do.
+export const metadata = {
+  title: 'Buffs',
+  description:
+    'Who is missing what, right now — buff coverage across the raid so buffers can see the gaps.',
+};
+
 export const dynamic = 'force-dynamic';
 
 type PetBuff = { name: string; remaining_secs: number | null; total_secs: number | null; good: number | null };

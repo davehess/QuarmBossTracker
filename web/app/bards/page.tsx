@@ -19,6 +19,15 @@ import { promises as fs } from 'fs';
 import path from 'path';
 import Image from 'next/image';
 
+// Per-page metadata so a link pasted into Discord unfurls as what it IS.
+// Without this the page inherits the site-wide description and every
+// shared link reads identically, which is what 68 of them used to do.
+export const metadata = {
+  title: 'Bards',
+  description:
+    'Collaborative bard setups and song rotations built by the guild.',
+};
+
 export const dynamic = 'force-static';
 export const revalidate = 3600;
 

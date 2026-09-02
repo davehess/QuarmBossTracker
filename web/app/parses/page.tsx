@@ -21,6 +21,15 @@ import { classifyEncounter, clearClassification } from './actions';
 import WindowPicker from '@/components/WindowPicker';
 import { resolveWindow, windowCaveat, type ResolvedWindow } from '@/lib/timeWindow';
 
+// Per-page metadata so a link pasted into Discord unfurls as what it IS.
+// Without this the page inherits the site-wide description and every
+// shared link reads identically, which is what 68 of them used to do.
+export const metadata = {
+  title: 'Parses',
+  description:
+    'Every raid parse the guild has uploaded — damage, healing, tanking and per-ability detail, fight by fight.',
+};
+
 export const dynamic = 'force-dynamic';
 
 type NpcRef         = { id: number; name: string; zone_short: string | null };

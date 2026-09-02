@@ -26,6 +26,15 @@ import { supabaseServer } from '@/lib/supabase-server';
 import { isOfficer } from '@/lib/officer';
 import { ownedCharacters } from '@/lib/ownedCharacters';
 import { selectAll } from '@/lib/selectAll';
+
+// Per-page metadata so a link pasted into Discord unfurls as what it IS.
+// Without this the page inherits the site-wide description and every
+// shared link reads identically, which is what 68 of them used to do.
+export const metadata = {
+  title: 'Quartermaster',
+  description:
+    'Guild logistics: what the bank holds, what is spoken for, and what still needs sourcing.',
+};
 import {
   KIT_CATALOG, KIT_ITEM_IDS, KIT_CATEGORY_LABEL, computeKitCoverage, scopeKitCoverage,
   ownedFromRows, computeQuestProgress,

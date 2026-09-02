@@ -15,6 +15,15 @@ import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
 import { deUnderscore } from '@/lib/npcDecode';
 
+// Per-page metadata so a link pasted into Discord unfurls as what it IS.
+// Without this the page inherits the site-wide description and every
+// shared link reads identically, which is what 68 of them used to do.
+export const metadata = {
+  title: 'Item & spell database',
+  description:
+    'Search every item, spell, NPC and faction on Project Quarm, with drop tables and where things come from.',
+};
+
 export const dynamic = 'force-dynamic';
 
 const LIMIT = 40;

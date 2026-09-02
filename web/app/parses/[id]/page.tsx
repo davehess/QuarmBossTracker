@@ -7,6 +7,7 @@
 // whole night here.
 
 import Link from 'next/link';
+import type { Metadata } from 'next';
 import WpDbLink from '@/components/WpDbLink';
 import { notFound, redirect } from 'next/navigation';
 import { supabaseServer } from '@/lib/supabase-server';
@@ -373,6 +374,39 @@ async function load(id: string) {
   } catch (err: unknown) {
     return { error: err instanceof Error ? err.message : String(err) };
   }
+}
+
+// A parse link is the single most-pasted URL in the guild's Discord, and it used
+// to unfurl as "WolfPack.quest" with the site-wide description — identical for
+// every fight anyone had ever linked. Name the boss and the night instead.
+//
+// ⚠ Its own narrow query on purpose. load() above pulls the full encounter with
+// every player row; calling that here would double the heaviest read on the site
+// for a string. Supabase calls are not request-deduped the way fetch() is.
+//
+// ⚠ Fails soft to the inherited metadata. An unfurl is never worth a 500 on the
+// page itself, and this runs for logged-out crawlers too.
+export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
+  try {
+    const { id } = await params;
+    const { data } = await supabaseAdmin()
+      .from('encounters')
+      .select('started_at, duration_sec, total_dps, eqemu_npc_types ( name )')
+      .eq('id', id)
+      .maybeSingle();
+    if (!data) return {};
+    const boss = cleanBossName((data as { eqemu_npc_types?: { name?: string } }).eqemu_npc_types?.name);
+    if (!boss) return {};
+    const when = data.started_at
+      ? new Date(data.started_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+      : null;
+    const dps = Number(data.total_dps) > 0 ? `${Math.round(Number(data.total_dps)).toLocaleString()} raid DPS` : null;
+    const secs = Number(data.duration_sec) > 0 ? `${Math.round(Number(data.duration_sec))}s` : null;
+    return {
+      title: boss,
+      description: [`Wolf Pack parse — ${boss}`, when, secs, dps].filter(Boolean).join(' · '),
+    };
+  } catch { return {}; }
 }
 
 export default async function EncounterDetailPage({ params }: { params: Promise<{ id: string }> }) {
