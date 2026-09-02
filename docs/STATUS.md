@@ -222,6 +222,34 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ### ✅ Done — major shipped features (not exhaustive; see git + roadmapData.ts)
 
+- **Pacify gets its own line, and the silent ones get a timer at all (agent
+  3.6.25 · Mimic beta, 2026-09-02).** Hitya: *"mob info is important to
+  distinguish buffs and debuffs... things like pacifying where we lower aggro
+  radius for a mob and don't engage. but keep the timer is vital for certain
+  operations."*
+  ⚠ **The countdown is the only signal that will ever exist** — `spell_fades` is
+  NULL for all 14 timed SPA-30 spells, so EQ never prints a wear-off line and
+  nothing can correct a wrong number after the fact.
+  - **The emote-bearing pacifies already worked, and it is worth knowing why.**
+    `resolveSelfCastLanding` is index-independent, so it never needed
+    `_TRACKED_BUFF_KEYWORDS` (raid-buff shaped — no pacify matches) or the
+    `good === 0` debuff index (the whole family is `good_effect=1`). It
+    disambiguates the SEVEN spells sharing `"looks less aggressive."` — 42s
+    (Calm) to 360s (Pacify) at L60, an 8.5x spread — using the fact that we cast
+    it. Verified by running the shipped resolver, not by reading it.
+  - **Harmony / Harmony of Nature / Lull Animal emit no log line at all**
+    (`cast_on_other` NULL), so a druid pull was invisible to every log in the
+    raid. Now synthesized from our own cast (`_synthesizePacifyLanding`), the
+    charm-spell answer to the charm-spell problem, and uploaded — no other
+    client could otherwise know.
+  - **Own line above both sections, blue, "WORE OFF" in red on expiry.** Left
+    alone it renders green among the mob's own buffs (the catalog is right:
+    it IS good for the mob), which is not where you look before a pull.
+  ⚠ Stamped at cast begin and reverted on interrupt/fizzle/resist — there is no
+  landing signal to wait for. An intervening cast closes that window early, or
+  an unrelated fizzle deletes a Harmony that actually landed.
+  Details in `HOW-ITS-BUILT.md`. 31 tests, every assertion mutation-checked.
+
 - **Mimic 2.6.4 STABLE — feedback from inside Mimic, a Buffs tab, a nav that
   stays put (Mimic 2.6.4 · agent 3.6.24 · bot 3.1.113, 2026-09-02).** Hitya:
   *"give mimic a feedback entry point that allows for direct log collection

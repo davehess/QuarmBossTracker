@@ -622,6 +622,49 @@ function _charmDurationSec(spellName, mapDur, owner) {
   return mapDur;
 }
 
+// ── Pacify / lull line (SPA 30, aggro-radius reduction) ──────────────────────
+// The pull-safety family: drop a mob's assist radius so you can pull past it
+// WITHOUT engaging it. Hitya 2026-09-02: "things like pacifying where we lower
+// aggro radius for a mob and don't engage. but keep the timer is vital for
+// certain operations." The timer is the whole point — walk into the radius
+// after it lapses and you take the add you were avoiding.
+//
+// ⚠ THE COUNTDOWN IS THE ONLY SIGNAL THERE WILL EVER BE. `spell_fades` is NULL
+// for every member of this family, so EQ never prints a wear-off line. Nothing
+// downstream can notice a wrong number and correct it — unlike a slow, where a
+// re-land refreshes the tracker. That asymmetry is why the no-emote members
+// below are synthesized from our OWN cast rather than guessed at.
+//
+// The complete SPA-30 timed set, from eqemu_spells (effect_id_* = 30 with a
+// timed duration formula) — 14 spells, verified 2026-09-02, not inferred.
+const PACIFY_SPELLS = new Set([
+  // Cleric / paladin. NOT 'Atone' — it is SPA 30 but buffduration 0 /
+  // formula 0, i.e. instant, so it can never carry a timer and listing it
+  // would put an un-timed row in the section whose entire purpose is the clock.
+  'calm', 'pacification', 'pacify', 'soothe',
+  // Druid / ranger
+  'harmony', 'harmony of nature', 'wake of tranquility',
+  // Animal + undead variants
+  'calm animal', 'lull animal', 'lull', 'numb the dead', 'rest the dead',
+  // Bard songs (SPA 30 too, 2-tick — included for completeness, not for pulls)
+  "kelin's lugubrious lament", 'silent song of quellious',
+]);
+function _isPacifySpell(name) {
+  if (!name) return false;
+  return PACIFY_SPELLS.has(String(name).toLowerCase().replace(/`/g, "'").trim());
+}
+// The three that emit NO log line at all — `cast_on_other` is NULL in the
+// catalog, so no observer (not even the caster) ever sees a landing message.
+// Exactly the charm-spell problem, and it gets the charm-spell answer: the
+// caster's own "You begin casting X." is the only evidence that exists, so we
+// synthesize the landing from it (_synthesizePacifyLanding).
+//
+// ⚠ Do NOT extend this to the emote-bearing members. They resolve properly
+// through resolveSelfCastLanding, which disambiguates the SEVEN spells sharing
+// "looks less aggressive." (Calm 42s ... Pacify 360s at L60 — an 8.5x spread)
+// by knowing which one we cast. Synthesizing those too would double-record.
+const PACIFY_NO_EMOTE = new Set(['harmony', 'harmony of nature', 'lull animal']);
+
 // ── EQ class-title → base class ───────────────────────────────────────────────
 // A /who line shows the LEVEL TITLE for the character's class (e.g. a level-55
 // Enchanter reads "[55 Beguiler]", a level-60 Ranger "[60 Warder]", a level-60
@@ -3166,9 +3209,14 @@ function targetBuffsFor(targetLower, wantId) {
     // (good=0) so it lands in the Debuff section regardless of catalog
     // lookup.
     const isCharm = !!(b && b.is_charm_spell);
+    // Pacify/lull rides its own flag rather than the good/debuff split, because
+    // it is neither: the catalog calls it beneficial (good_effect=1, it IS good
+    // for the mob) but it is a state WE applied and check before pulling. The
+    // overlay gives it its own line above both (Hitya, 2026-09-02).
     out.push({ name: b.name, remaining_secs: Math.max(0, Math.round(rem)),
       total_secs: durSecs > 0 ? Math.round(durSecs) : null, observed_at_ms: b.landed_at,
       good: isCharm ? 0 : _spellGood(b.name), fell_off: fellOff,
+      pacified: _isPacifySpell(b.name),
       owner: (b && b.owner) ? b.owner : null });
   }
   if (mp.size === 0) _buffLandingsByTarget.delete(targetLower);
@@ -3295,6 +3343,102 @@ function _noteSelfRezCast(spellName, character, atMs) {
   } catch (e) { void e; }
 }
 
+// ── No-emote pacify synthesis (Harmony / Harmony of Nature / Lull Animal) ────
+// These three land silently: `cast_on_other` is NULL, so a druid who pulls with
+// Harmony leaves no trace in ANY log — not the raid's, not their own — and no
+// timer can be derived after the fact. The caster's "You begin casting Harmony."
+// is the only evidence in existence, which is precisely the charm-spell
+// situation, so this is the charm-spell answer (_recordCharmSpellOnTarget).
+//
+// Stamped at cast BEGIN and reverted on interrupt/fizzle/resist, following
+// _noteDiCast/noteDiInterrupt. That ordering is deliberate: there is no landing
+// signal to wait for, so "assume it landed, take it back if the log says
+// otherwise" is the only shape available. The failure it trades for is a timer
+// that briefly shows on a resisted Harmony — visible, self-correcting, and far
+// safer than the alternative, since the dangerous error here is believing a
+// mob is pacified when it is not.
+const _pendingPacify = new Map();   // charLower → { key, target, atMs }
+const PACIFY_REVERT_WINDOW_MS = 12_000;   // cast + travel; matches SELF_CAST_WINDOW_MS
+function _synthesizePacifyLanding(spellName, character, atMs) {
+  const key = String(spellName || '').toLowerCase().replace(/`/g, "'").trim();
+  if (!PACIFY_NO_EMOTE.has(key)) return;
+  const cl = String(character || '').toLowerCase();
+  if (!cl) return;
+  const target = _zealTargetForChar(cl);
+  // No target = no mob to hang the timer on. A pacify is always cast AT
+  // something, so this only happens when Zeal isn't streaming — and inventing
+  // a target would be worse than showing nothing.
+  if (!target) return;
+  const e = _spellByNameLower.get(key) || null;
+  const lvl = (whoData.get(cl) || {}).level || _assumedCasterLevel();
+  const durTicks = e ? _durTicksForLevel(e.durf, e.dur, lvl) : 0;
+  if (!(durTicks > 0)) return;
+  const tk = String(target).toLowerCase();
+  let mp = _buffLandingsByTarget.get(tk);
+  if (!mp) { mp = new Map(); _buffLandingsByTarget.set(tk, mp); }
+  mp.set(key, {
+    name: e ? e.name : spellName,
+    dur_ticks: durTicks,
+    landed_at: atMs,
+    target_id: _provableTargetId(character, target),
+    owner: String(character),
+  });
+  _pendingPacify.set(cl, { key, target: tk, atMs });
+  // Cross-client mirror — same reason as charm: with no log line, the caster's
+  // client is the ONLY one that can know, so without this upload a Harmony pull
+  // is invisible to every other raider's Mob Info.
+  if (typeof buffCastBuffer !== 'undefined' && Array.isArray(buffCastBuffer)) {
+    buffCastBuffer.push({
+      target:       String(target),
+      spell_id:     e ? (e.id || 0) : 0,
+      spell_name:   e ? e.name : spellName,
+      landing_text: '',                                  // no log line exists
+      dur_ticks:    durTicks,
+      dur_formula:  e ? (e.durf || 0) : 0,
+      cast_at:      new Date(atMs).toISOString(),
+      observer:     String(character),
+      target_id:    _provableTargetId(character, target),
+    });
+  }
+}
+// An interrupted / fizzled / resisted no-emote pacify never landed — drop the
+// synthesized entry. Only within the cast window: a later unrelated interrupt
+// is not this pacify's, same guard noteDiInterrupt uses.
+function notePacifyMiss(line, character) {
+  if (!line || !character) return;
+  const isMiss = /\]\s+Your spell (?:is interrupted|fizzles)[.!]\s*$/i.test(line)
+              || /\]\s+Your target resisted the\s+(.+?)\s+spell\./i.test(line)
+              || /\]\s+(.+?)\s+resisted your\s+(.+?)\s+spell\./i.test(line);
+  if (!isMiss) return;
+  const cl = String(character).toLowerCase();
+  const pend = _pendingPacify.get(cl);
+  if (!pend) return;
+  const ts = parseEqTimestamp(line);
+  const atMs = ts ? ts.getTime() : Date.now();
+  if (atMs - pend.atMs > PACIFY_REVERT_WINDOW_MS) { _pendingPacify.delete(cl); return; }
+  const mp = _buffLandingsByTarget.get(pend.target);
+  if (mp) {
+    const row = mp.get(pend.key);
+    // Only revert OUR synthesized row, and only if nothing has re-landed since.
+    if (row && row.landed_at === pend.atMs) mp.delete(pend.key);
+    if (mp.size === 0) _buffLandingsByTarget.delete(pend.target);
+  }
+  _pendingPacify.delete(cl);
+}
+// Any cast that is not the pending pacify itself ends its revert window — see
+// the call site in noteSelfCast for why elapsed time alone cannot do this.
+function _clearPendingPacifyOnNewCast(charLower, spellLower) {
+  const pend = _pendingPacify.get(charLower);
+  if (!pend) return;
+  const k = String(spellLower || '').replace(/`/g, "'").trim();
+  if (k !== pend.key) _pendingPacify.delete(charLower);
+}
+
+// ── Self-cast capture ────────────────────────────────────────────────────────
+// Every "You begin casting X." — no allowlist. Several pipelines depend on that
+// completeness (DI recast, rez attribution, charm staging, the pacify synthesis
+// above, and resolveSelfCastLanding's disambiguation of shared landing texts),
+// so narrowing this to a known-spell list would silently break all of them.
 function noteSelfCast(line, character) {
   if (!line || !character) return null;
   if (line.indexOf('You begin') === -1) return null;   // cheap gate
@@ -3312,6 +3456,17 @@ function noteSelfCast(line, character) {
   arr.push({ spellLower, name: m[1].trim(), atMs, target: _zealTargetForChar(cl) });
   // DI availability — stamp the recast on every Divine Intervention cast.
   if (spellLower === 'divine intervention') _noteDiCast(cl, atMs);
+  // Silent pacifies (Harmony et al.) have no landing line — this cast is the
+  // only evidence they will ever produce. typeof-guarded like the rez hook
+  // below so source-slice tests that lift noteSelfCast alone still run.
+  if (typeof _synthesizePacifyLanding === 'function') _synthesizePacifyLanding(m[1].trim(), character, atMs);
+  // ⚠ Starting a DIFFERENT cast closes the pacify's revert window early.
+  // Without this, casting Harmony (which lands) and then anything else that
+  // fizzles inside 12s would revert the good Harmony — the interrupt line names
+  // no spell, so elapsed time is the only thing that could tell them apart, and
+  // it cannot. An intervening cast can: whatever gets interrupted next is that
+  // cast's problem, not the pacify's.
+  if (typeof _clearPendingPacifyOnNewCast === 'function') _clearPendingPacifyOnNewCast(cl, spellLower);
   // Needs-rez board: casting a rez is "somebody is on it". typeof-guarded so
   // the source-slice tests that eval noteSelfCast alone still run (they lift
   // this function out of the file without its neighbours).
@@ -33843,6 +33998,10 @@ function buildMobInfo() {
       // good_effect). Resolve it from our own catalog so relayed DEBUFFS land in
       // the red debuff section instead of being mislabeled as buffs.
       if (b.good == null) { const e = _spellByNameLower.get(k); if (e && (e.good === 0 || e.good === 1)) b.good = e.good; }
+      // Same for the pacify flag: buff_casts carries no SPA, so a relayed
+      // Harmony/Pacify would miss its own line. Resolved from the name here,
+      // exactly as `good` is above.
+      if (b.pacified == null) b.pacified = _isPacifySpell(b.name);
       buffs.push(b);
       seen.add(k);
     }
@@ -37851,6 +38010,10 @@ async function main() {
           if (selfCast) relaySelfCastForCasting(line, b.character, selfCast);
           // A DI cast that gets interrupted/fizzles never consumed its recast.
           noteDiInterrupt(line, b.character);
+          // Same for a silent pacify: it was stamped at cast begin because no
+          // landing line exists, so an interrupt/fizzle/resist is the only
+          // chance to take the timer back before someone trusts it.
+          notePacifyMiss(line, b.character);
           // A CURE that fizzles/gets interrupted never landed — void the cure
           // the relay above just registered, so the bot doesn't retire a
           // debuff the raider is still carrying.

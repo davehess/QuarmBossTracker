@@ -693,9 +693,67 @@ already matched on name AND zone.
 ⚠ **The spawn id is in the relay CACHE KEY too.** Without it, two raiders
 targeting different same-name mobs in one zone share a cached list and the cache
 silently undoes the filter — fixed in code, unfixed on screen.
-⚠ Only `target-buffs` is id-scoped so far; `target-casts` and `mob-info` share
-the same name-keyed merge and are the obvious follow-ups.
+⚠ `target-casts` joined it on the same predicate (bot 3.1.113, above).
+`mob-info` stays name-keyed **by design**, not as a follow-up — see the note in
+that section for why a spawn key there would fragment a catalog cache for
+nothing.
 Tests: `test/target-info-spawn-id-scope.test.js`.
+
+### Pacify: its own line, and a timer for the silent ones (agent 3.6.25)
+The pull-safety family — SPA 30, aggro-radius reduction — is what lets you pull
+past a mob **without engaging it**. Hitya 2026-09-02: *"things like pacifying
+where we lower aggro radius for a mob and don't engage. but keep the timer is
+vital for certain operations."*
+
+⚠ **The countdown is the only signal that will ever exist.** `spell_fades` is
+NULL for all 14 timed SPA-30 spells, so EQ never prints a wear-off line. Nothing
+downstream can notice a wrong number and correct it the way a re-land refreshes
+a slow — which is why both halves below are about *not guessing*.
+
+**Where it shows.** `targetBuffsFor` stamps `pacified` (from `_isPacifySpell`,
+the 14-name set grounded in `eqemu_spells`), and `mobinfo.html` splits that out
+into its own section rendered ABOVE both debuffs and buffs, in blue (`#79c0ff`)
+— deliberately off the good/bad axis. Left alone it renders green among the
+mob's own buffs, because the catalog calls it beneficial (`good_effect=1`, and
+it is — to the mob). What the raid wants from it is "is this still safe to walk
+past", which is the first thing checked before a pull. On expiry it says
+**WORE OFF** in hazard red, not "fell off" in rebuff purple: the moment means
+the aggro radius is back, not that a buff needs recasting.
+
+**Why the emote-bearing ones already worked.** SEVEN spells share
+`"looks less aggressive."` — Calm and Wake of Tranquility 42s, Lull 120s,
+Soothe 150s, Pacify 360s at L60. An 8.5x spread, in the direction that walks
+you into the add. `resolveSelfCastLanding` resolves them exactly, because it is
+index-independent (it matches the spell YOU cast against its own
+`cast_on_other`) — so it never needed `_TRACKED_BUFF_KEYWORDS` or the
+`good === 0` debuff index, neither of which would ever have carried a pacify.
+A **bystander's** pacify still does not resolve locally; it reaches others only
+through the caster's `buff_casts` upload and the (spawn-scoped) `target-buffs`
+relay.
+
+**Harmony, Harmony of Nature and Lull Animal emit NO log line at all**
+(`cast_on_other` NULL), so a druid pull was invisible to every log in the raid.
+`_synthesizePacifyLanding` takes the charm-spell answer for the charm-spell
+problem: the caster's own `"You begin casting X."` is the only evidence in
+existence, so it records the landing on the Zeal target with the catalog
+duration scaled to the caster's level, stamps `_provableTargetId`, and uploads
+it — without that upload no other client could possibly know.
+⚠ **Stamped at cast BEGIN and reverted on interrupt/fizzle/resist**
+(`notePacifyMiss`), following `_noteDiCast`/`noteDiInterrupt`. There is no
+landing signal to wait for, so "assume it landed, take it back if the log says
+otherwise" is the only shape available; the error it trades for is a timer that
+briefly shows on a resisted Harmony, which is far safer than believing a mob is
+pacified when it is not.
+⚠ **An intervening cast closes the revert window early**
+(`_clearPendingPacifyOnNewCast`). The interrupt line names no spell, so without
+it a Harmony that LANDED would be deleted by an unrelated fizzle a few seconds
+later. Elapsed time cannot separate those two; a different cast can.
+⚠ `Atone` is SPA 30 but `buffduration`/`formula` are 0 — instant, so it is
+deliberately absent from the set; it could never carry the clock the section
+exists to show.
+Tests: `test/pacify-tracking.test.js` (23), `test/pacify-overlay.test.js` (8) —
+every assertion mutation-checked, including the seam that sets `pacified`, which
+was green against a `pacified: false` mutation until a test was written for it.
 
 ### Extended Target: a killed mob leaves the board on death (bot 3.1.109)
 `_extMobLastSeen` is a 90s grace cache that keeps a hurt mob on the overlay

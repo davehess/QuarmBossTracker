@@ -229,25 +229,39 @@
   // buffs (real remaining time, no original duration → full bar). For mobs /
   // other players they're observed cast-landings (proportional bar).
   // One buff/debuff row.
-  function _tbuffRow(b){
+  function _tbuffRow(b, isPacify){
     var hasRem   = b.remaining_secs != null;
     var hasTotal = hasRem && b.total_secs;
     var pct = hasTotal ? Math.max(0, Math.min(100, (b.remaining_secs / b.total_secs) * 100)) : (hasRem ? 100 : 0);
     // Buff = green, debuff (good===0) = red; unknown remaining = gray.
-    var col = (b.good === 0) ? '#f85149' : (!hasRem ? '#6e7681' : '#56d364');
+    // Pacify is BLUE — deliberately outside the good/bad axis. It is not a buff
+    // on the mob and not a debuff we want it to suffer; it is a pull condition
+    // that is either still true or no longer true.
+    var col = isPacify ? '#79c0ff'
+            : (b.good === 0) ? '#f85149' : (!hasRem ? '#6e7681' : '#56d364');
     // Right-side label: "cur/max · M:SS" when we know the full duration, else M:SS.
     var bt;
     if (hasTotal) bt = Math.max(0, Math.ceil(b.remaining_secs/6)) + '/' + Math.max(1, Math.round(b.total_secs/6)) + ' · ' + fmtSecs(b.remaining_secs);
     else bt = hasRem ? fmtSecs(b.remaining_secs) : '?';
     // Fell off in the last 5 min → solid purple rebuff cue.
-    if (b.fell_off) { col = '#a371f7'; pct = 100; bt = 'fell off'; }
+    // "fell off" is a rebuff cue; for a pacify the same moment means the mob's
+    // aggro radius is back and the pull is no longer safe, so it says so and
+    // stays red rather than borrowing the purple rebuff colour.
+    if (b.fell_off) {
+      if (isPacify) { col = '#f85149'; pct = 100; bt = 'WORE OFF'; }
+      else { col = '#a371f7'; pct = 100; bt = 'fell off'; }
+    }
     // Owner-in-parens: charm-spell entries (Allure, etc.) carry the caster's
     // name so other Mimic users targeting the same charmed mob can see who's
     // running it. Rendered dim/italic to differentiate from the spell name
     // itself.
     var ownerStr = (b.owner) ? ' <span style="color:#8b949e;font-style:italic">(' + esc(b.owner) + ')</span>' : '';
     var tip = esc(b.name) + (b.owner ? ' · cast by ' + esc(b.owner) : '')
-            + (b.fell_off ? ' · fell off (rebuff)' : (hasRem ? ' · ' + fmtSecs(b.remaining_secs) + ' left' : ' · present'));
+            + (isPacify
+                ? (b.fell_off
+                    ? ' · WORE OFF — aggro radius is back, do not pull past it'
+                    : ' · pacified for ' + fmtSecs(b.remaining_secs) + ' — safe to pull past until then')
+                : (b.fell_off ? ' · fell off (rebuff)' : (hasRem ? ' · ' + fmtSecs(b.remaining_secs) + ' left' : ' · present')));
     return '<div class="tbuff" title="'+tip+'">'
          +    '<span class="bn">'+esc(b.name)+ownerStr+'</span>'
          +    '<div class="bbar"><div style="width:'+pct.toFixed(0)+'%;background:'+col+'"></div></div>'
@@ -256,7 +270,7 @@
   }
   // Render a titled section for a buff list, sorted by time-left ascending
   // (lowest at top; untimed sink to the bottom). Returns '' if the list is empty.
-  function _tbuffSection(hdr, list){
+  function _tbuffSection(hdr, list, isPacify){
     if (!list || !list.length) return '';
     list.sort(function(a, b){
       var ar = (a && a.remaining_secs != null) ? a.remaining_secs : Infinity;
@@ -264,18 +278,30 @@
       return ar - br;
     });
     var rows = '';
-    for (var i=0;i<list.length;i++){ var b = list[i]; if (b && b.name) rows += _tbuffRow(b); }
+    for (var i=0;i<list.length;i++){ var b = list[i]; if (b && b.name) rows += _tbuffRow(b, isPacify); }
     if (!rows) return '';
     return '<div class="tbuffs"><div class="hdr">'+hdr+'</div>'+rows+'</div>';
   }
   function renderTargetBuffs(mi){
     var buffs = (mi && Array.isArray(mi.target_buffs)) ? mi.target_buffs.slice() : null;
     if (!buffs || !buffs.length) return '';
-    // Split into Debuffs (good===0) and Buffs (everything else), debuffs first.
-    var debuffs = [], goods = [];
-    for (var i=0;i<buffs.length;i++){ var b = buffs[i]; if (!b || !b.name) continue; if (b.good === 0) debuffs.push(b); else goods.push(b); }
+    // Pacify FIRST, on its own line, then Debuffs (good===0), then Buffs
+    // (Hitya 2026-09-02). It is pulled out before the good/bad split because it
+    // is neither — the catalog calls it beneficial (it is, to the mob) but what
+    // the raid needs from it is "is this mob still safe to walk past", which is
+    // the first thing you check and the last thing that should be buried in a
+    // list of the mob's own buffs.
+    var pacified = [], debuffs = [], goods = [];
+    for (var i=0;i<buffs.length;i++){
+      var b = buffs[i]; if (!b || !b.name) continue;
+      if (b.pacified) pacified.push(b);
+      else if (b.good === 0) debuffs.push(b);
+      else goods.push(b);
+    }
     var suffix = (mi && mi.target_is_pc) ? '(live)' : '(observed)';
-    return _tbuffSection('debuffs '+suffix, debuffs) + _tbuffSection('buffs '+suffix, goods);
+    return _tbuffSection('pacified', pacified, true)
+         + _tbuffSection('debuffs '+suffix, debuffs)
+         + _tbuffSection('buffs '+suffix, goods);
   }
   // Cross-client "Casting" section — who is casting what on this target, right
   // now, with a live countdown. Fed by the bot's casting relay; only raiders
