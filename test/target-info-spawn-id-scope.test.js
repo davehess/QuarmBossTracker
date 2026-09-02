@@ -116,3 +116,39 @@ describe('wiring', () => {
     expect(bot).toContain('target_id:    Number.isFinite(Number(c.target_id)) ? Math.trunc(Number(c.target_id)) : null,');
   });
 });
+
+// ── target-casts: spawn id first, name second (Hitya 2026-09-02) ────────────
+//
+// ⚠ mob-info is deliberately NOT scoped this way and that is not an omission.
+// It returns catalog rows from eqemu_npc_types — HP, AC, resists, loot for the
+// NPC TYPE. Every spawn of "a cliff golem" in a zone shares that row, so a
+// spawn-id key there would fragment a cache for zero benefit. Zone is the right
+// granularity for it and it already has that.
+describe('target-casts is spawn-scoped too', () => {
+  const bot = stripJs(readSource(BOT_INDEX));
+  const fn  = sliceBlock(bot, 'async function _handleAgentTargetCasts(', '\nasync function ');
+
+  it('reads the requester id and fails open when absent', () => {
+    expect(fn).toContain("sp.get('target_id')");
+    expect(fn).toMatch(/let name = '', selfChar = '', targetId = null;/);
+  });
+
+  it('applies the id filter after the zone filter, not instead of it', () => {
+    const zoneAt = fn.indexOf('_zoneScopeKeep(requesterZone, casterZone)');
+    const idAt   = fn.indexOf('_idScopeKeep(targetId, c.target_id)');
+    expect(zoneAt).toBeGreaterThan(-1);
+    expect(idAt).toBeGreaterThan(zoneAt);
+  });
+
+  it('stores the spawn id the caster was on', () => {
+    expect(bot).toContain('target_id: Number.isFinite(Number(c.target_id)) ? Math.trunc(Number(c.target_id)) : null,');
+  });
+
+  it('uses the SAME predicate as the buffs relay, not a second copy', () => {
+    // One predicate means one null rule. Two would drift, and the null rule is
+    // the part that empties the board if it drifts the wrong way.
+    const uses = (bot.match(/_idScopeKeep\(/g) || []).length;
+    expect(uses).toBeGreaterThanOrEqual(3);   // definition + buffs + casts
+    expect((bot.match(/function _idScopeKeep/g) || []).length).toBe(1);
+  });
+});

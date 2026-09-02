@@ -9968,11 +9968,15 @@ function _idScopeKeep(requesterId, rowId) {
 async function _handleAgentTargetCasts(req, res) {
   const identity = await mimicLink.requireAgentAuth(req, res);
   if (!identity) return;
-  let name = '', selfChar = '';
+  let name = '', selfChar = '', targetId = null;
   try {
     const sp = new URL(req.url, 'http://x').searchParams;
     name = sp.get('name') || '';
     selfChar = (sp.get('character') || '').trim();   // #141 requester → zone scope
+    // The spawn the requester is looking at, when their client can name it.
+    // Absent on every unpatched Zeal → served unfiltered, exactly as before.
+    const _tid = sp.get('target_id');
+    if (_tid && Number.isFinite(Number(_tid))) targetId = Math.trunc(Number(_tid));
   } catch { /* */ }
   const tk = String(name).trim().toLowerCase();
   const now = Date.now();
@@ -9988,6 +9992,11 @@ async function _handleAgentTargetCasts(req, res) {
     for (const c of mp.values()) {
       const casterZone = (zoneMap.get(String(c.caster || '').toLowerCase()) || {}).zone_name || null;
       if (!_zoneScopeKeep(requesterZone, casterZone)) continue;
+      // Spawn id FIRST, name second (Hitya 2026-09-02). Same name, same zone,
+      // provably a different spawn → somebody else's mob. _idScopeKeep fails
+      // open on either side being unknown, so a fleet with no ids behaves
+      // exactly as it does today and a mixed fleet gets the benefit per client.
+      if (!_idScopeKeep(targetId, c.target_id)) continue;
       casts.push({
         caster:         c.caster,
         spell:          c.spell,
@@ -15134,6 +15143,11 @@ async function _handleAgentCasting(req, res) {
     const startMs = Number.isFinite(startedMs) ? startedMs : now;
     mp.set(caster.toLowerCase(), {
       caster, spell, target,
+      // Which SPAWN the caster was on (Zeal PR #229). The caster's own client
+      // knows this for certain — it is their current target — so unlike a
+      // witnessed buff landing there is nothing to prove here. Null on every
+      // unpatched Zeal, which the read side treats as unproven, never as wrong.
+      target_id: Number.isFinite(Number(c.target_id)) ? Math.trunc(Number(c.target_id)) : null,
       started_at_ms: startMs,
       cast_secs: castSecs, received_at: now,
       // Heal casts carry their estimated catalog amount (agent-attached, agent
