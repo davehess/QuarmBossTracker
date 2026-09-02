@@ -17,6 +17,15 @@ import { isOfficer } from '@/lib/officer';
 import { selectAll } from '@/lib/selectAll';
 import RollAdmin from './RollAdmin';
 import { userTz, fmtShort, fmtDateOnly, DEFAULT_TZ } from '@/lib/timezone';
+
+// Per-page metadata so a link pasted into Discord unfurls as what it IS.
+// Without this the page inherits the site-wide description and every
+// shared link reads identically, which is what 68 of them used to do.
+export const metadata = {
+  title: 'Roll nights',
+  description:
+    'Off-night NBG roll results — what dropped and who took it home.',
+};
 import {
   mergeRollSets, applyRollOverrides, attributeLoot, looterDiffersFromWinners, nightKey,
   rollBreakdown,

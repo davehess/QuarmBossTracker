@@ -37,6 +37,30 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'site-chrome-2026-09-02',
+    title: 'Links to the site finally look like something',
+    version: 'Web 1.7.9',
+    date: '2026-09-02',
+    headline: 'The site had no icon and no link preview. Paste a page into Discord now and it shows a proper card with the Mimic chest on it.',
+    features: [
+      {
+        name: 'Link previews in Discord',
+        blurb: 'Every link anyone shared used to unfurl as one line of text with no picture and the same description, whatever page it was. Parse links now name the boss, the night and the raid DPS; character links name the character; the rest say what the page actually is.',
+      },
+      {
+        name: 'The site has an icon',
+        blurb: 'The Mimic chest, in your browser tab and on your phone home screen if you save it there. There was supposed to be one all along \u2014 it pointed at a file nobody had ever added.',
+      },
+      {
+        name: 'Pages tell you they are loading',
+        blurb: 'Tapping through to parses, the raid board or the roster used to sit on the old page with no sign anything was happening. Seventeen pages now show a skeleton while they fetch.',
+      },
+    ],
+    fixes: [
+      'A page that fails now says so, with a reference you can paste in Discord, instead of a blank screen.',
+    ],
+  },
+  {
     key: 'extended-target-ids-2026-09-01',
     title: 'Telling two mobs of the same name apart',
     version: 'Bot 3.1.107 \u00b7 Web 1.7.7 \u00b7 Mimic beta',

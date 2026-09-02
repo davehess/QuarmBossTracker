@@ -45,8 +45,17 @@ export const metadata: Metadata = {
     siteName:    'WolfPack.quest',
     type:        'website',
   },
-  twitter: { card: 'summary' },
-  icons: { icon: '/favicon.ico' },
+  // ⚠ Deliberately NO `icons:` key. This used to say `{ icon: '/favicon.ico' }`
+  // pointing at a file that was never committed — every tab rendered the blank
+  // default, silently, because a missing favicon does not error anywhere.
+  // app/icon.png + app/apple-icon.png (the Mimic mark) are the App Router file
+  // convention and Next emits the <link> tags itself; re-adding an `icons` key
+  // here would OVERRIDE those files and is how the dangling reference happened.
+  //
+  // summary_large_image, not summary: links to this site are pasted into
+  // Discord all day, and that is the card shape Discord renders as a banner
+  // rather than a 64px thumbnail. app/opengraph-image.tsx supplies the picture.
+  twitter: { card: 'summary_large_image' },
 };
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {

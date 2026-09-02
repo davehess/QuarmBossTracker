@@ -6,6 +6,7 @@
 // the canonical character name.
 
 import Link from 'next/link';
+import type { Metadata } from 'next';
 import { redirect, notFound } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
@@ -192,6 +193,19 @@ async function load(name: string) {
       error: err instanceof Error ? err.message : String(err),
     };
   }
+}
+
+// The character name is already in the route, so this needs no query at all —
+// the unfurl goes from "WolfPack.quest" to the character being linked for free.
+export async function generateMetadata({ params }: { params: Promise<{ name: string }> }): Promise<Metadata> {
+  const { name } = await params;
+  const clean = decodeURIComponent(name || '').trim().replace(/[^A-Za-z]/g, '').slice(0, 24);
+  if (!clean) return {};
+  const display = clean.charAt(0).toUpperCase() + clean.slice(1).toLowerCase();
+  return {
+    title: display,
+    description: `${display} on WolfPack.quest — gear, inventory, spells, factions and parse history.`,
+  };
 }
 
 export default async function CharacterPage({ params }: { params: Promise<{ name: string }> }) {

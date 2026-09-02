@@ -15,6 +15,15 @@ import { supabaseAdmin } from '@/lib/supabase';
 import { userTz, fmtAbs } from '@/lib/timezone';
 import { fmtDmg, fmtDuration, cleanBossName } from '@/lib/format';
 
+// Per-page metadata so a link pasted into Discord unfurls as what it IS.
+// Without this the page inherits the site-wide description and every
+// shared link reads identically, which is what 68 of them used to do.
+export const metadata = {
+  title: 'Search',
+  description:
+    'Search characters, items, spells and NPCs across the site.',
+};
+
 export const dynamic = 'force-dynamic';
 
 type Defender = { name?: string; damageTaken?: number; firstAttackAt?: number };

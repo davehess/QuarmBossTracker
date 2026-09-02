@@ -473,6 +473,40 @@ Tests: `test/zeal-version-capability.test.js` (bot + board, on `main`) and
 `test/zeal-capability-agent.test.js` (the latch + the agent↔bot contract, on
 `beta` — the only branch carrying both sources).
 
+### Site chrome: favicon, link previews, error + loading boundaries (web 1.7.9)
+Audit against a "20 things a real site has" checklist (Hitya, 2026-09-02). Four
+real gaps out of nineteen; the rest were marketing-site advice that does not
+apply to a member-gated guild tool.
+- **The favicon was BROKEN, not missing.** `layout.tsx` declared
+  `icons: { icon: '/favicon.ico' }` and no such file was ever committed, so every
+  tab rendered the blank default — silently, because a missing favicon errors
+  nowhere. Now `app/icon.png` + `app/apple-icon.png` (the Mimic mark) via the App
+  Router file convention. ⚠ **Do not re-add an `icons:` key** — a `metadata.icons`
+  entry OVERRIDES those files, which is exactly how the dangling reference
+  survived.
+- **`app/opengraph-image.tsx`** generates a 1200×630 card with `next/og`
+  (`runtime = 'nodejs'`; the Mimic mark is read off disk and inlined as a data
+  URI — `ImageResponse` cannot fetch `/public` by path and renders nothing at all
+  if you try). `twitter.card` moved to `summary_large_image`. **The reason is
+  Discord, not SEO**: the guild pastes links all day and every one of them
+  unfurled as a bare title.
+- **Per-page titles + descriptions** on the 15 shared member routes, plus
+  `generateMetadata` on `/parses/[id]` (its own narrow query — `load()` pulls the
+  whole encounter and is far too heavy for a string) and `/character/[name]` (no
+  query at all; the name is the route param). Both fail soft to inherited
+  metadata: an unfurl is never worth a 500.
+- **`app/error.tsx` + `app/global-error.tsx`** — there were none, so any throw in
+  a server component dropped a raider onto Next's raw error screen. ⚠ Neither
+  prints `error.message`: these pages read Supabase with the service role and a
+  Postgres error can carry table and column names. The digest is the safe handle.
+- **`components/PageSkeleton.tsx`** extracted from the one existing skeleton, now
+  used by **17** `loading.tsx` boundaries (was 1 of 84 routes).
+⚠ **Deliberately NOT done, with reasons** (`docs/DECISIONS-2026-09-02.md`): cookie
+banner (no analytics, no tracking cookies — only the strictly-necessary auth
+session; a banner would be cargo cult), robots.txt/sitemap.xml (gated surface,
+nothing to index), analytics (costs egress and would *create* the banner
+obligation), terms page, sticky mobile CTA.
+
 ### Target Info: effects scoped to the SPAWN, not just the name (bot 3.1.110)
 `buff_casts` keyed a landing by target NAME, so the cross-client Target Info
 relay merged every same-name mob in the zone into one effect list — the mob you

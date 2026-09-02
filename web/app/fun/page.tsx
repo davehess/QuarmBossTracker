@@ -13,6 +13,15 @@ import { selectAll } from '@/lib/selectAll';
 import { userTz, fmtAbs } from '@/lib/timezone';
 import { loadNameMap } from '@/lib/roster';
 
+// Per-page metadata so a link pasted into Discord unfurls as what it IS.
+// Without this the page inherits the site-wide description and every
+// shared link reads identically, which is what 68 of them used to do.
+export const metadata = {
+  title: 'Fun stats',
+  description:
+    'Guild flavour counters that change nothing and are worth knowing anyway.',
+};
+
 export const dynamic = 'force-dynamic';
 
 // value is `number | string` so cards like "Longest Dire Charm" can show
