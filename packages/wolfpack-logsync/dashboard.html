@@ -223,7 +223,8 @@ body.wp-overlay-mode .wp-overlay-target table th:nth-child(2) { text-align:right
 <div class="nav">
   <button class="active" data-tab="dash">Dashboard</button>
   <button data-tab="overlays">🪟 Overlays</button>
-  <button data-tab="raid">⚔ Buffs / Raid</button>
+  <button data-tab="raid">⚔ Raid</button>
+  <button data-tab="buffs">✨ Buffs</button>
   <button data-tab="fights">⚔️ Fights</button>
   <!-- 📊 Stats + 🩺 Diagnostics were carved OUT of Info and Triggers (Hitya
        2026-08-13 — "having to scroll in our dashboard is somewhat annoying to
@@ -255,6 +256,7 @@ body.wp-overlay-mode .wp-overlay-target table th:nth-child(2) { text-align:right
 <div id="dash" class="section active"></div>
 <div id="overlays" class="section"></div>
 <div id="raid" class="section"></div>
+<div id="buffs" class="section"></div>
 <!-- Fights = Tanks/Healers + DPS combined. #tanks and #deeps are inner
      render-targets (renderTanks/renderDeeps still setSectionHTML into them),
      not independent .section tabs, so both show whenever Fights is active. -->
@@ -545,6 +547,136 @@ async function _wpFbSend() {
     if (msg) msg.textContent = '✕ could not reach the engine';
   }
   if (btn) btn.disabled = false;
+}
+
+// ✨ Buffs tab (Hitya 2026-09-02: "Move buffs to the buffs tab and give it a
+// more robust view of effects and timeframes").
+//
+// ⚠ THREE NUMBERS, AND THE TAB MUST NEVER BLEND THEM. Blending is how a screen
+// like this starts lying:
+//   zeal — the client's own remaining counter. Authoritative. Shown in
+//          preference to everything else, because it is not our arithmetic.
+//   log  — what we have WATCHED this buff actually last on this machine.
+//          Real, and scarce: n is always on screen because one sample is an
+//          anecdote, not a duration.
+//   db   — what the catalog formula predicts at the era-cap caster level.
+//          Available for nearly every spell and right for nobody in particular,
+//          since it knows nothing about who cast it.
+// Every figure carries the badge for where it came from.
+function _wpBuffProv(kind) {
+  var c = kind === 'zeal' ? 'var(--green)' : (kind === 'log' ? 'var(--gold)' : 'var(--dim)');
+  var t = kind === 'zeal' ? 'From the game client\'s own buff window — a real counter, not an estimate.'
+        : kind === 'log'  ? 'Measured on this machine: how long we have watched this buff actually last.'
+        :                   'Predicted by the spell catalog at the era-cap caster level. Knows nothing about who cast it.';
+  return '<span title="' + t + '" style="font-size:9px;border:1px solid ' + c + ';color:' + c
+       + ';border-radius:3px;padding:0 4px;margin-left:4px;vertical-align:middle">' + kind + '</span>';
+}
+function _wpDur(secs) {
+  if (secs == null) return '—';
+  var s = Math.max(0, Math.round(secs));
+  if (s < 60) return s + 's';
+  var m = Math.floor(s / 60), r = s % 60;
+  if (m < 60) return m + 'm ' + (r < 10 ? '0' : '') + r + 's';
+  var h = Math.floor(m / 60);
+  return h + 'h ' + ((m % 60) < 10 ? '0' : '') + (m % 60) + 'm';
+}
+function renderBuffsTab(s) {
+  var root = document.getElementById('buffs');
+  if (!root) return;
+  var active = (s && s.buffsActive) || [];
+  var durs   = (s && s.buffDurations) || [];
+
+  var h = '<div class="grid">';
+
+  // ── Active, grouped by character ─────────────────────────────────────────
+  var byChar = {}; var order = [];
+  for (var i = 0; i < active.length; i++) {
+    var a = active[i];
+    if (!byChar[a.character]) { byChar[a.character] = []; order.push(a.character); }
+    byChar[a.character].push(a);
+  }
+  h += '<div class="card wide"><h2>✨ Active buffs '
+    + '<span class="dim" style="font-size:11px;font-weight:normal">(' + active.length + ' across ' + order.length + ' character' + (order.length === 1 ? '' : 's') + ')</span></h2>';
+  if (!order.length) {
+    h += '<div class="dim" style="font-size:12px">Nothing streaming yet — log a character in with Zeal running and this fills in within seconds.</div>';
+  }
+  for (var oi = 0; oi < order.length; oi++) {
+    var cname = order[oi], list = byChar[cname];
+    h += '<div style="margin-top:10px"><div style="font-size:12px;color:var(--gold);font-weight:600;margin-bottom:5px">' + esc(cname)
+       + ' <span class="dim" style="font-weight:normal;font-size:10px">' + list.length + ' buff' + (list.length === 1 ? '' : 's') + '</span></div>';
+    h += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(215px,1fr));gap:7px">';
+    for (var li = 0; li < list.length; li++) {
+      var b = list[li];
+      // The bar needs a whole to be a fraction OF. Prefer what we measured on
+      // this machine, fall back to the catalog, and when neither exists draw no
+      // bar at all rather than a full one — a full bar on an unknown duration
+      // reads as "just landed", which is the opposite of what we know.
+      var whole = b.measured_secs || b.catalog_secs || null;
+      var pct = (whole && b.remaining_secs != null) ? Math.max(0, Math.min(100, (b.remaining_secs / whole) * 100)) : null;
+      var col = b.remaining_secs == null ? 'var(--dim)'
+              : (b.remaining_secs < 60 ? 'var(--red)' : (b.remaining_secs < 300 ? 'var(--orange)' : 'var(--green)'));
+      h += '<div style="border:1px solid var(--border);border-radius:6px;padding:6px 8px;background:rgba(255,255,255,0.02)">'
+        +   '<div style="display:flex;align-items:baseline;gap:5px">'
+        +     '<span style="font-size:11px;font-weight:600;color:' + (b.good === 0 ? 'var(--red)' : 'var(--text)') + ';overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(b.name) + '</span>'
+        +     (b.song ? '<span class="dim" style="font-size:9px">song</span>' : '')
+        +     '<span style="margin-left:auto;font-size:11px;color:' + col + ';font-variant-numeric:tabular-nums">'
+        +       (b.remaining_secs == null ? 'permanent' : _wpDur(b.remaining_secs)) + '</span>'
+        +   '</div>'
+        +   (pct != null
+              ? '<div style="height:3px;background:rgba(255,255,255,0.08);border-radius:2px;margin-top:4px;overflow:hidden">'
+                + '<div style="height:100%;width:' + pct.toFixed(1) + '%;background:' + col + '"></div></div>'
+              : '')
+        +   '<div class="dim" style="font-size:9px;margin-top:3px">'
+        +     (b.remaining_secs != null ? 'left' + _wpBuffProv('zeal') : '')
+        +     (b.measured_secs ? ' · of ~' + _wpDur(b.measured_secs) + _wpBuffProv('log') + '<span class="dim">n=' + b.measured_n + '</span>'
+                              : (b.catalog_secs ? ' · of ~' + _wpDur(b.catalog_secs) + _wpBuffProv('db') : ''))
+        +   '</div>'
+        + '</div>';
+    }
+    h += '</div></div>';
+  }
+  h += '</div>';
+
+  // ── Durations: measured vs predicted ─────────────────────────────────────
+  h += '<div class="card wide"><h2>⏱ Durations '
+    + '<span class="dim" style="font-size:11px;font-weight:normal">what we have watched, against what the catalog predicts</span></h2>';
+  if (!durs.length) {
+    h += '<div class="dim" style="font-size:12px">Nothing measured yet. A duration is recorded when a buff we were watching ends, '
+      +  'so this fills up over a session — and it only ever counts buffs whose whole life we saw.</div>';
+  } else {
+    durs.sort(function (a, b) { return (b.n || 0) - (a.n || 0); });
+    h += '<table style="width:100%;font-size:11px"><thead><tr>'
+      +  '<th style="text-align:left">Spell</th><th style="text-align:right">measured</th>'
+      +  '<th style="text-align:right">n</th><th style="text-align:right">spread (p25–p75)</th>'
+      +  '<th style="text-align:right">min–max</th><th style="text-align:right">catalog</th>'
+      +  '<th style="text-align:right">vs catalog</th></tr></thead><tbody>';
+    for (var di = 0; di < durs.length; di++) {
+      var d = durs[di];
+      // The ratio is the interesting column: it is this caster's focus effect,
+      // observed, rather than a percentage we assumed from an AA table.
+      var ratio = (d.catalog_secs && d.median) ? (d.median / d.catalog_secs) : null;
+      var rcol = ratio == null ? 'var(--dim)' : (ratio > 1.08 ? 'var(--green)' : (ratio < 0.92 ? 'var(--orange)' : 'var(--dim)'));
+      h += '<tr>'
+        + '<td style="text-align:left">' + esc(d.spell) + '</td>'
+        + '<td style="text-align:right;font-variant-numeric:tabular-nums">' + _wpDur(d.median) + _wpBuffProv('log') + '</td>'
+        + '<td style="text-align:right" class="dim">' + d.n + '</td>'
+        + '<td style="text-align:right" class="dim">' + _wpDur(d.p25) + ' – ' + _wpDur(d.p75) + '</td>'
+        + '<td style="text-align:right" class="dim">' + _wpDur(d.min) + ' – ' + _wpDur(d.max) + '</td>'
+        + '<td style="text-align:right" class="dim">' + _wpDur(d.catalog_secs) + '</td>'
+        + '<td style="text-align:right;color:' + rcol + '">' + (ratio == null ? '—' : ('×' + ratio.toFixed(2))) + '</td>'
+        + '</tr>';
+    }
+    h += '</tbody></table>';
+    h += '<div class="dim" style="font-size:10px;margin-top:8px;line-height:1.5">'
+      +  '⚠ A measurement is a <b>lower bound</b>. We time a buff from the highest remaining reading we ever saw for it, '
+      +  'so a buff first seen halfway through measures short — which is why the spread and <b>n</b> are on screen and a '
+      +  'single sample is an anecdote, not a duration. The <b>vs catalog</b> column is the interesting one: it is your '
+      +  'focus effect <i>observed</i>, rather than a percentage assumed from an AA table.</div>';
+  }
+  h += '</div>';
+
+  h += '</div>';
+  setSectionHTML('buffs', h);
 }
 
 // ── The DOM write path ──────────────────────────────────────────────────────
@@ -5524,7 +5656,7 @@ async function refresh() {
                      ['recentfires', renderRecentFires], ['replaystatus', renderReplayStatus],
                      ['charmdiag', renderCharmDiag], ['petbuffdiag', renderPetBuffDiag], ['triggerjournal', renderTriggerJournal],
                      ['mechanics', renderMechanics],
-                     ['overlays', renderOverlays], ['stats', renderStats], ['info', renderInfo],
+                     ['buffs', renderBuffsTab], ['overlays', renderOverlays], ['stats', renderStats], ['info', renderInfo],
                      ['loottab', renderLootTab],
                      // After info: fill the placeholders renderInfo/renderDiag
                      // just (re)painted, so they show same-tick. renderCrashReview

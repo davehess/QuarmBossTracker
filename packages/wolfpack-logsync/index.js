@@ -2838,6 +2838,158 @@ function _provableTargetId(observer, targetName) {
   }
   return null;
 }
+// ── Measured buff durations (Hitya 2026-09-02) ──────────────────────────────
+// "give it a more robust view of effects and timeframes ... provide an estimate
+// of how long cast buffs will last by character."
+//
+// Two different numbers, and the UI must never blur them:
+//   db  — what the CATALOG says: the spell's duration formula at an assumed
+//         caster level. A prediction, available for every spell, right for
+//         nobody in particular.
+//   log — what we WATCHED happen on this machine. Fewer spells, real numbers.
+//
+// The measurement: Zeal reports REMAINING ticks per buff slot every poll, so the
+// highest remaining value we ever see for one instance is the reading taken
+// closest to the moment it landed — our best estimate of its full duration. That
+// is strictly better than parsing land/fade lines, which miss every buff applied
+// before we started watching and every fade that happens off-screen.
+//
+// ⚠ It is a LOWER BOUND, never an upper one. If we first see a buff halfway
+// through, the sample is half its real length — which is why the UI shows a
+// median and a spread rather than a single confident number, and why n is on
+// screen. One sample is an anecdote.
+const _buffDurSamples = new Map();    // spellLower → [seconds, ...]
+const _buffLiveMax    = new Map();    // "char|spellLower" → { ticks, name }
+const BUFF_DUR_MAX_SAMPLES = 60;      // per spell; bounded so this cannot grow
+const BUFF_DUR_MAX_SPELLS  = 400;
+
+function _noteBuffDurationSample(spellName, seconds) {
+  const key = String(spellName || '').toLowerCase();
+  if (!key || !(seconds > 0) || seconds > 24 * 3600) return;
+  let arr = _buffDurSamples.get(key);
+  if (!arr) {
+    if (_buffDurSamples.size >= BUFF_DUR_MAX_SPELLS) {
+      const oldest = _buffDurSamples.keys().next().value;
+      if (oldest) _buffDurSamples.delete(oldest);
+    }
+    arr = []; _buffDurSamples.set(key, arr);
+  }
+  arr.push(Math.round(seconds));
+  if (arr.length > BUFF_DUR_MAX_SAMPLES) arr.shift();
+}
+
+// Diff one character's Zeal buff slots against the previous poll. A buff that
+// vanished has ended: emit the highest remaining time we ever saw for it.
+function _noteBuffDurationsFromState(character, prev, next) {
+  if (!character) return;
+  const ch = String(character).toLowerCase();
+  const listOf = (st) => (st && Array.isArray(st.buffs)) ? st.buffs : [];
+  const nowNames = new Set();
+  for (const b of listOf(next)) {
+    if (!b || !b.name) continue;
+    const key = ch + '|' + String(b.name).toLowerCase();
+    nowNames.add(key);
+    const ticks = Number(b.ticks);
+    if (!Number.isFinite(ticks) || ticks <= 0) continue;   // permanent/unknown
+    const cur = _buffLiveMax.get(key);
+    if (!cur || ticks > cur.ticks) _buffLiveMax.set(key, { ticks, name: b.name });
+  }
+  // ⚠ THE GUARD IS ON `next`, NOT `prev`, AND THAT IS THE WHOLE POINT.
+  // An earlier version tested `prev` — which protects nothing, because looping
+  // an empty prev list is already a no-op. The real hazard is the other
+  // direction: prev had buffs and next has NONE. Buffs do not all expire on the
+  // same tick; that pattern is a client zoning, camping, or the pipe dropping,
+  // and sampling it would record every buff the character was carrying as
+  // truncated — dragging every median down by however long they had left.
+  // Found by mutation testing, which killed the useless guard and exposed this.
+  if (listOf(next).length === 0 && listOf(prev).length > 0) return;
+  for (const b of listOf(prev)) {
+    if (!b || !b.name) continue;
+    const key = ch + '|' + String(b.name).toLowerCase();
+    if (nowNames.has(key)) continue;
+    const seen = _buffLiveMax.get(key);
+    _buffLiveMax.delete(key);
+    if (seen && seen.ticks > 0) _noteBuffDurationSample(seen.name, seen.ticks * 6);
+  }
+}
+
+function _median(sorted) {
+  if (!sorted.length) return null;
+  const m = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[m] : Math.round((sorted[m - 1] + sorted[m]) / 2);
+}
+function _quantile(sorted, q) {
+  if (!sorted.length) return null;
+  const i = Math.min(sorted.length - 1, Math.max(0, Math.round((sorted.length - 1) * q)));
+  return sorted[i];
+}
+// Stats for one spell, or null when we have watched it zero times.
+function buffDurationStats(spellName) {
+  const arr = _buffDurSamples.get(String(spellName || '').toLowerCase());
+  if (!arr || !arr.length) return null;
+  const sorted = [...arr].sort((a, b) => a - b);
+  return {
+    n: sorted.length,
+    median: _median(sorted),
+    p25: _quantile(sorted, 0.25),
+    p75: _quantile(sorted, 0.75),
+    min: sorted[0],
+    max: sorted[sorted.length - 1],
+  };
+}
+// The catalog's predicted duration for a spell, at the era-cap caster level.
+// This is the "db" number: available for nearly every spell, right for nobody
+// in particular, because it knows nothing about who cast it.
+function _catalogDurationSec(spellName) {
+  const key = String(spellName || '').toLowerCase();
+  const e = _spellByNameLower.get(key) || _spellByNameLower.get(key.replace(/`/g, "'"));
+  if (!e) return null;
+  const t = _durTicksForLevel(e.durf, e.dur, _assumedCasterLevel());
+  return t > 0 ? t * 6 : null;
+}
+
+// What every watched character is carrying right now, straight off the Zeal buff
+// window. Remaining time here is AUTHORITATIVE — it is the client's own counter,
+// not our arithmetic — which is why the tab shows it in preference to anything
+// we computed.
+function _activeBuffsForDashboard() {
+  const out = [];
+  const now = Date.now();
+  for (const ch of Object.keys(_zealState || {})) {
+    const st = _zealState[ch];
+    if (!st || (now - (st.updatedAt || 0)) > ZEAL_STALE_MS) continue;
+    const buffs = Array.isArray(st.buffs) ? st.buffs : [];
+    for (const b of buffs) {
+      if (!b || !b.name) continue;
+      const ticks = Number(b.ticks);
+      const measured = buffDurationStats(b.name);
+      out.push({
+        character: ch,
+        name: b.name,
+        song: !!b.song,
+        // Permanent buffs report no tick count; that is a fact about the buff,
+        // not a missing reading, so it is carried as null rather than zero.
+        remaining_secs: (Number.isFinite(ticks) && ticks > 0) ? ticks * 6 : null,
+        catalog_secs: _catalogDurationSec(b.name),
+        measured_secs: measured ? measured.median : null,
+        measured_n: measured ? measured.n : 0,
+        good: _spellGood(b.name),
+      });
+    }
+  }
+  return out;
+}
+
+// Everything we have measured, newest-touched first, for the dashboard table.
+function buffDurationTable() {
+  const out = [];
+  for (const [key] of _buffDurSamples) {
+    const st = buffDurationStats(key);
+    if (st) out.push({ spell: key, ...st });
+  }
+  return out;
+}
+
 // Record one observed landing under its TARGET NAME — the map Mob Info reads.
 function recordTargetBuffLanding(bcEvt) {
   if (!bcEvt || !bcEvt.spell_name || !bcEvt.target) return;
@@ -11904,6 +12056,19 @@ function _serializeForDashboard() {
     abilityStats:       Object.fromEntries(stats.abilityStats),
     castCounts:         stats.castCounts,
     watchedLogs:        stats.watchedLogs,
+    // ── Buffs tab (Hitya 2026-09-02) ───────────────────────────────────────
+    // Two provenances, never blended:
+    //   buffsActive   what each watched character is carrying RIGHT NOW, from
+    //                 the Zeal buff window — real remaining time, not a guess.
+    //   buffDurations what we have WATCHED buffs actually last on this machine,
+    //                 with the catalog's prediction beside it.
+    buffsActive:        _activeBuffsForDashboard(),
+    buffDurations:      buffDurationTable().map(d => ({
+      ...d,
+      // The catalog's own answer, so the table can show measured against
+      // predicted rather than either alone.
+      catalog_secs: _catalogDurationSec(d.spell),
+    })),
     uploadCount:        stats.uploadCount,
     uploadErrors:       stats.uploadErrors,
     updateAvailable:    stats.updateAvailable,
@@ -13141,7 +13306,8 @@ body.wp-overlay-mode .wp-overlay-target table th:nth-child(2) { text-align:right
 <div class="nav">
   <button class="active" data-tab="dash">Dashboard</button>
   <button data-tab="overlays">🪟 Overlays</button>
-  <button data-tab="raid">⚔ Buffs / Raid</button>
+  <button data-tab="raid">⚔ Raid</button>
+  <button data-tab="buffs">✨ Buffs</button>
   <button data-tab="fights">⚔️ Fights</button>
   <!-- 📊 Stats + 🩺 Diagnostics were carved OUT of Info and Triggers (Hitya
        2026-08-13 — "having to scroll in our dashboard is somewhat annoying to
@@ -13173,6 +13339,7 @@ body.wp-overlay-mode .wp-overlay-target table th:nth-child(2) { text-align:right
 <div id="dash" class="section active"></div>
 <div id="overlays" class="section"></div>
 <div id="raid" class="section"></div>
+<div id="buffs" class="section"></div>
 <!-- Fights = Tanks/Healers + DPS combined. #tanks and #deeps are inner
      render-targets (renderTanks/renderDeeps still setSectionHTML into them),
      not independent .section tabs, so both show whenever Fights is active. -->
@@ -13463,6 +13630,136 @@ async function _wpFbSend() {
     if (msg) msg.textContent = '✕ could not reach the engine';
   }
   if (btn) btn.disabled = false;
+}
+
+// ✨ Buffs tab (Hitya 2026-09-02: "Move buffs to the buffs tab and give it a
+// more robust view of effects and timeframes").
+//
+// ⚠ THREE NUMBERS, AND THE TAB MUST NEVER BLEND THEM. Blending is how a screen
+// like this starts lying:
+//   zeal — the client's own remaining counter. Authoritative. Shown in
+//          preference to everything else, because it is not our arithmetic.
+//   log  — what we have WATCHED this buff actually last on this machine.
+//          Real, and scarce: n is always on screen because one sample is an
+//          anecdote, not a duration.
+//   db   — what the catalog formula predicts at the era-cap caster level.
+//          Available for nearly every spell and right for nobody in particular,
+//          since it knows nothing about who cast it.
+// Every figure carries the badge for where it came from.
+function _wpBuffProv(kind) {
+  var c = kind === 'zeal' ? 'var(--green)' : (kind === 'log' ? 'var(--gold)' : 'var(--dim)');
+  var t = kind === 'zeal' ? 'From the game client\\'s own buff window — a real counter, not an estimate.'
+        : kind === 'log'  ? 'Measured on this machine: how long we have watched this buff actually last.'
+        :                   'Predicted by the spell catalog at the era-cap caster level. Knows nothing about who cast it.';
+  return '<span title="' + t + '" style="font-size:9px;border:1px solid ' + c + ';color:' + c
+       + ';border-radius:3px;padding:0 4px;margin-left:4px;vertical-align:middle">' + kind + '</span>';
+}
+function _wpDur(secs) {
+  if (secs == null) return '—';
+  var s = Math.max(0, Math.round(secs));
+  if (s < 60) return s + 's';
+  var m = Math.floor(s / 60), r = s % 60;
+  if (m < 60) return m + 'm ' + (r < 10 ? '0' : '') + r + 's';
+  var h = Math.floor(m / 60);
+  return h + 'h ' + ((m % 60) < 10 ? '0' : '') + (m % 60) + 'm';
+}
+function renderBuffsTab(s) {
+  var root = document.getElementById('buffs');
+  if (!root) return;
+  var active = (s && s.buffsActive) || [];
+  var durs   = (s && s.buffDurations) || [];
+
+  var h = '<div class="grid">';
+
+  // ── Active, grouped by character ─────────────────────────────────────────
+  var byChar = {}; var order = [];
+  for (var i = 0; i < active.length; i++) {
+    var a = active[i];
+    if (!byChar[a.character]) { byChar[a.character] = []; order.push(a.character); }
+    byChar[a.character].push(a);
+  }
+  h += '<div class="card wide"><h2>✨ Active buffs '
+    + '<span class="dim" style="font-size:11px;font-weight:normal">(' + active.length + ' across ' + order.length + ' character' + (order.length === 1 ? '' : 's') + ')</span></h2>';
+  if (!order.length) {
+    h += '<div class="dim" style="font-size:12px">Nothing streaming yet — log a character in with Zeal running and this fills in within seconds.</div>';
+  }
+  for (var oi = 0; oi < order.length; oi++) {
+    var cname = order[oi], list = byChar[cname];
+    h += '<div style="margin-top:10px"><div style="font-size:12px;color:var(--gold);font-weight:600;margin-bottom:5px">' + esc(cname)
+       + ' <span class="dim" style="font-weight:normal;font-size:10px">' + list.length + ' buff' + (list.length === 1 ? '' : 's') + '</span></div>';
+    h += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(215px,1fr));gap:7px">';
+    for (var li = 0; li < list.length; li++) {
+      var b = list[li];
+      // The bar needs a whole to be a fraction OF. Prefer what we measured on
+      // this machine, fall back to the catalog, and when neither exists draw no
+      // bar at all rather than a full one — a full bar on an unknown duration
+      // reads as "just landed", which is the opposite of what we know.
+      var whole = b.measured_secs || b.catalog_secs || null;
+      var pct = (whole && b.remaining_secs != null) ? Math.max(0, Math.min(100, (b.remaining_secs / whole) * 100)) : null;
+      var col = b.remaining_secs == null ? 'var(--dim)'
+              : (b.remaining_secs < 60 ? 'var(--red)' : (b.remaining_secs < 300 ? 'var(--orange)' : 'var(--green)'));
+      h += '<div style="border:1px solid var(--border);border-radius:6px;padding:6px 8px;background:rgba(255,255,255,0.02)">'
+        +   '<div style="display:flex;align-items:baseline;gap:5px">'
+        +     '<span style="font-size:11px;font-weight:600;color:' + (b.good === 0 ? 'var(--red)' : 'var(--text)') + ';overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(b.name) + '</span>'
+        +     (b.song ? '<span class="dim" style="font-size:9px">song</span>' : '')
+        +     '<span style="margin-left:auto;font-size:11px;color:' + col + ';font-variant-numeric:tabular-nums">'
+        +       (b.remaining_secs == null ? 'permanent' : _wpDur(b.remaining_secs)) + '</span>'
+        +   '</div>'
+        +   (pct != null
+              ? '<div style="height:3px;background:rgba(255,255,255,0.08);border-radius:2px;margin-top:4px;overflow:hidden">'
+                + '<div style="height:100%;width:' + pct.toFixed(1) + '%;background:' + col + '"></div></div>'
+              : '')
+        +   '<div class="dim" style="font-size:9px;margin-top:3px">'
+        +     (b.remaining_secs != null ? 'left' + _wpBuffProv('zeal') : '')
+        +     (b.measured_secs ? ' · of ~' + _wpDur(b.measured_secs) + _wpBuffProv('log') + '<span class="dim">n=' + b.measured_n + '</span>'
+                              : (b.catalog_secs ? ' · of ~' + _wpDur(b.catalog_secs) + _wpBuffProv('db') : ''))
+        +   '</div>'
+        + '</div>';
+    }
+    h += '</div></div>';
+  }
+  h += '</div>';
+
+  // ── Durations: measured vs predicted ─────────────────────────────────────
+  h += '<div class="card wide"><h2>⏱ Durations '
+    + '<span class="dim" style="font-size:11px;font-weight:normal">what we have watched, against what the catalog predicts</span></h2>';
+  if (!durs.length) {
+    h += '<div class="dim" style="font-size:12px">Nothing measured yet. A duration is recorded when a buff we were watching ends, '
+      +  'so this fills up over a session — and it only ever counts buffs whose whole life we saw.</div>';
+  } else {
+    durs.sort(function (a, b) { return (b.n || 0) - (a.n || 0); });
+    h += '<table style="width:100%;font-size:11px"><thead><tr>'
+      +  '<th style="text-align:left">Spell</th><th style="text-align:right">measured</th>'
+      +  '<th style="text-align:right">n</th><th style="text-align:right">spread (p25–p75)</th>'
+      +  '<th style="text-align:right">min–max</th><th style="text-align:right">catalog</th>'
+      +  '<th style="text-align:right">vs catalog</th></tr></thead><tbody>';
+    for (var di = 0; di < durs.length; di++) {
+      var d = durs[di];
+      // The ratio is the interesting column: it is this caster's focus effect,
+      // observed, rather than a percentage we assumed from an AA table.
+      var ratio = (d.catalog_secs && d.median) ? (d.median / d.catalog_secs) : null;
+      var rcol = ratio == null ? 'var(--dim)' : (ratio > 1.08 ? 'var(--green)' : (ratio < 0.92 ? 'var(--orange)' : 'var(--dim)'));
+      h += '<tr>'
+        + '<td style="text-align:left">' + esc(d.spell) + '</td>'
+        + '<td style="text-align:right;font-variant-numeric:tabular-nums">' + _wpDur(d.median) + _wpBuffProv('log') + '</td>'
+        + '<td style="text-align:right" class="dim">' + d.n + '</td>'
+        + '<td style="text-align:right" class="dim">' + _wpDur(d.p25) + ' – ' + _wpDur(d.p75) + '</td>'
+        + '<td style="text-align:right" class="dim">' + _wpDur(d.min) + ' – ' + _wpDur(d.max) + '</td>'
+        + '<td style="text-align:right" class="dim">' + _wpDur(d.catalog_secs) + '</td>'
+        + '<td style="text-align:right;color:' + rcol + '">' + (ratio == null ? '—' : ('×' + ratio.toFixed(2))) + '</td>'
+        + '</tr>';
+    }
+    h += '</tbody></table>';
+    h += '<div class="dim" style="font-size:10px;margin-top:8px;line-height:1.5">'
+      +  '⚠ A measurement is a <b>lower bound</b>. We time a buff from the highest remaining reading we ever saw for it, '
+      +  'so a buff first seen halfway through measures short — which is why the spread and <b>n</b> are on screen and a '
+      +  'single sample is an anecdote, not a duration. The <b>vs catalog</b> column is the interesting one: it is your '
+      +  'focus effect <i>observed</i>, rather than a percentage assumed from an AA table.</div>';
+  }
+  h += '</div>';
+
+  h += '</div>';
+  setSectionHTML('buffs', h);
 }
 
 // ── The DOM write path ──────────────────────────────────────────────────────
@@ -18442,7 +18739,7 @@ async function refresh() {
                      ['recentfires', renderRecentFires], ['replaystatus', renderReplayStatus],
                      ['charmdiag', renderCharmDiag], ['petbuffdiag', renderPetBuffDiag], ['triggerjournal', renderTriggerJournal],
                      ['mechanics', renderMechanics],
-                     ['overlays', renderOverlays], ['stats', renderStats], ['info', renderInfo],
+                     ['buffs', renderBuffsTab], ['overlays', renderOverlays], ['stats', renderStats], ['info', renderInfo],
                      ['loottab', renderLootTab],
                      // After info: fill the placeholders renderInfo/renderDiag
                      // just (re)painted, so they show same-tick. renderCrashReview
@@ -23723,6 +24020,10 @@ function startWebDashboard(port) {
           // report it as incapable. Any one of the three proves the build
           // carries the patch — a client with no target still streams its own
           // spawn_id every frame.
+          // Measured buff durations: diff this poll's buff slots against the
+          // last one. Must run BEFORE _zealState is reassigned above? No — it
+          // takes prevState explicitly, which is captured above.
+          try { _noteBuffDurationsFromState(character, prevState, st); } catch (e) { void e; }
           noteSpawnIdSeen(st.spawn_id);
           noteSpawnIdSeen(st.target_id);
           noteSpawnIdSeen(st.pet_id);
@@ -37714,6 +38015,7 @@ module.exports = {
   parseEvent, shouldKeep, parseEqTimestamp,
   DEFAULT_DROP_PATTERNS, KEEP_PATTERNS,
   buildFeedbackLogSlice, _feedbackLineAllowed,
+  _noteBuffDurationsFromState, buffDurationStats, buffDurationTable, _noteBuffDurationSample,
   SOURCELESS_SPELLS, BARD_SONGS,
   EncounterBuilder, characterFromFilename, isBackupLogFile, _splitBackupSuffix,
   trackChChainLine, chChainSnapshot, removeChChainSlot,

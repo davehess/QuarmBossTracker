@@ -473,6 +473,33 @@ Tests: `test/zeal-version-capability.test.js` (bot + board, on `main`) and
 `test/zeal-capability-agent.test.js` (the latch + the agent↔bot contract, on
 `beta` — the only branch carrying both sources).
 
+### ✨ Buffs tab: measured durations (agent 3.6.22)
+Split out of "⚔ Buffs / Raid" (now just ⚔ Raid). Two cards: **Active buffs** per
+character, and **Durations** — what we have watched buffs actually last, against
+what the catalog predicts.
+⚠ **THREE PROVENANCES, NEVER BLENDED**, each badged on screen: `zeal` (the
+client's own remaining counter — authoritative, not our arithmetic), `log`
+(measured on this machine), `db` (catalog formula at the era cap — available for
+nearly every spell, right for nobody in particular).
+**How it measures**: Zeal reports REMAINING ticks per buff slot each poll, so the
+highest reading ever seen for an instance is the one taken closest to the land.
+⚠ **A LOWER BOUND, never exact** — a buff first seen halfway through measures
+short, which is why median/spread/`n` are all on screen.
+⚠ **The zone guard is on `next`, not `prev`.** Buffs do not all expire on one
+tick; a buff window emptying completely is a zone/camp/pipe-drop, and sampling it
+would record everything the character carried as truncated. An earlier version
+guarded `prev`, which protects nothing (looping an empty list is already a
+no-op) — **found by mutation testing**. Accepted false negative: a character
+carrying exactly one buff that expires looks like a zone and is discarded.
+⚠ **Item 3 (AA/Focus estimates) cannot be computed from our mirror.** In
+`eqemu_aa_effects`, Spell Casting Mastery (mana cost) and Spell Casting
+Reinforcement (buff duration) BOTH have `effectid 5`; Natural Durability (HP) and
+Combat Fury (crit) both have `effectid 9`. `base1` is therefore not a percentage
+of anything identifiable, and reading SCR's `base1: 10` as "+10% duration" would
+be a confidently wrong number. The `vs catalog` ratio column is the answer
+instead: it is the focus effect **observed**, correct for Quarm's own tuning.
+Tests: `test/buff-durations.test.js`.
+
 ### Dashboard: sticky top bar (agent 3.6.21)
 `#wpTopBar` wraps the title, session-stats line and quick links and is
 `position:sticky; top:0`. ✨ Tour and ⚙ Panels moved out of the left rail into
