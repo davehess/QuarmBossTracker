@@ -81,11 +81,16 @@ describe('the death registry', () => {
     expect(_isDead('hawkner')).toBe(false);
   });
 
-  it('snapshots the currently dead with how long ago', () => {
+  it('snapshots the currently dead with how long ago, name AS WRITTEN', () => {
+    // ⚠ This used to look up 'currygoat' — it was asserting the bug that put
+    // lowercase names on the Command Center's needs-rez board (Hitya,
+    // 2026-08-30). The key stays lowercase for matching; `name` is the
+    // spelling a healer reads.
     _noteDeath('Currygoat', Date.now() - 5000);
     const snap = _deadNamesSnapshot();
-    const row = snap.find(r => r.name === 'currygoat');
+    const row = snap.find(r => r.key === 'currygoat');
     expect(row).toBeTruthy();
+    expect(row.name).toBe('Currygoat');
     expect(row.since_ms).toBeGreaterThanOrEqual(4000);
   });
 });

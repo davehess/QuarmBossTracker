@@ -743,16 +743,27 @@ Key subsystems and their non-obvious rules:
   charm pet. Zeal gauge conditions (`target_hp_pct` etc.) fire without a log
   line.
 
-### ⚠ Dashboard escape hazard — ALWAYS check after editing `WEB_HTML`
-The entire agent dashboard (HTML + browser `<script>`) lives in ONE backtick
-template literal. Two escape layers apply; one mis-escaped char renders the
-whole localhost page blank with an `Uncaught SyntaxError`:
-- browser-JS newlines → write `\\n` (a bare `\n` becomes a real newline)
-- apostrophes in single-quoted browser strings → write `\\'`
-- client-side backslashes → write `\\\\`
+### Dashboard authoring — edit `dashboard.html`, NEVER the `WEB_HTML` literal
+**The agent dashboard is authored in `packages/wolfpack-logsync/dashboard.html`**
+(Decision #3's first slice, `docs/ARCHITECT-REBUILD-2026-08-16.md`, shipped
+agent 3.6.9). `npm run sync:dashboard` folds it into the generated `WEB_HTML`
+literal — the shipped artifact is still ONE committed `index.js`, so the fleet's
+raw-fetch update chain is untouched. Agent-side interpolations are written as
+`{{WP:expr}}` (e.g. `{{WP:AGENT_VERSION}}`) — everything between `{{WP:` and
+`}}` becomes CODE inside the agent; `${}` in the .html is page content and is
+escaped. `check:dashboard` fails the build on any drift, in either direction
+(unsynced .html edit, or a hand-edit to the literal).
 
-We shipped this bug twice. After ANY change to that template run
-**`npm run check:dashboard`** (also runs in `release-parser.yml`).
+This retired the escape-hazard class: the old hand-escaped template literal
+blanked the whole page on one bad character and shipped that way twice
+(v2.4.25 bare `\n`, v2.4.27 bare `\'`), then bit twice more in review
+2026-08-29..30 (a bare `\n`; a backtick inside a COMMENT terminating the
+literal). All escaping is now mechanical (`\`→`\\` · backtick→escaped ·
+`${`→`\${`), and the three historical killers were authored naively into
+`dashboard.html` and served byte-correct as the ship-time proof
+(`test/dashboard-embed.test.js`). `command.html` keeps its own stricter
+verbatim scheme (`sync-command-embed.js`) — it BANS the special characters
+instead of escaping them; don't unify the two without reading both headers.
 
 ### Dashboard rendering rules
 `morphInto`/`setSectionHTML` is plain `innerHTML` with byte-level

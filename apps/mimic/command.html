@@ -115,6 +115,32 @@
      like someone rolled twice and got robbed. #6e7681 on this backdrop was not. */
   .roll-detail .d .rr{color:#c9a227;font-size:8px;flex-shrink:0;border:1px solid rgba(201,162,39,0.45);
     border-radius:2px;padding:0 3px;line-height:1.3;align-self:center}
+  /* Needs-rez board. A row someone is actively on GLOWS (Hitya 2026-08-20:
+     "make that person's name glow brighter until it says 'rezzed' next to
+     them"); a row nobody has spoken for sits quiet so the glow means
+     something. prefers-reduced-motion keeps the brightness, drops the pulse. */
+  .rez-row .nm { font-weight: 600; }
+  .rez-row.needs .nm { color: #c9d1d9; }
+  .rez-row.incoming .nm {
+    color: #fff3c4; text-shadow: 0 0 6px rgba(255,214,64,.95), 0 0 14px rgba(255,214,64,.55);
+    animation: rezGlow 1.4s ease-in-out infinite;
+  }
+  .rez-row.rezzed .nm { color: #7ee787; text-shadow: none; }
+  .rez-tag { font-size: 10px; margin-left: 6px; opacity: .95; }
+  .rez-row.incoming .rez-tag { color: #ffd640; }
+  .rez-row.rezzed  .rez-tag { color: #7ee787; }
+  .rez-row .rez-age { margin-left: auto; font-size: 10px; color: #8b949e; }
+  .rez-row .rezDismiss { margin-left: 6px; cursor: pointer; color: #8b949e; font-size: 11px;
+                         line-height: 1; opacity: .75; }
+  .rez-row .rezDismiss:hover { opacity: 1; color: #f87171; }
+  @keyframes rezGlow {
+    0%, 100% { text-shadow: 0 0 5px rgba(255,214,64,.75), 0 0 12px rgba(255,214,64,.40); }
+    50%      { text-shadow: 0 0 9px rgba(255,214,64,1),   0 0 20px rgba(255,214,64,.75); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .rez-row.incoming .nm { animation: none; }
+  }
+
   /* #153 collapsible sections — the caret+label in a section header is the
      click target that collapses/expands it. Collapse state lives in a JS store
      consulted at render time (localStorage-backed), NOT DOM state, so repaints
@@ -398,6 +424,22 @@
       html += '</div>';
     }
 
+    // YOUR discipline reuse timer (Hitya, 2026-08-30: "discipline cooldowns
+    // should be tracked on the command center for the user only"). Self only,
+    // on purpose — EQ only ever states this timer for your own character, and
+    // guessing someone else's from their activation emote would mean guessing
+    // a reuse that differs per discipline. Absent = ready, or never observed:
+    // the line only appears when you try a disc too early, so an empty card
+    // is not a claim that you are ready, and the copy says so.
+    if (s.discipline && s.discipline.seconds > 0) {
+      html += '<div class="card"><div class="head">Your discipline</div>'
+           +    '<div class="list"><div class="row">'
+           +      '<span class="nm">' + esc(s.discipline.character || 'You') + '</span>'
+           +      '<span class="cls">recharging</span>'
+           +      '<span class="da-chip down">' + fmtSec(s.discipline.seconds) + '</span>'
+           +    '</div></div></div>';
+    }
+
     // Healer mana roster — self-reported "N% mana" call-outs, lowest first
     // so the group needing a mana break is easy to spot at a glance. Divine
     // Intervention readiness (#50) rides in the header as compact chips (#66);
@@ -539,6 +581,38 @@
       }
     }
 
+    // ── Needs rez ─────────────────────────────────────────────────────────
+    // Corpses first: this is the only section where somebody is waiting on a
+    // human to act. Rows glow while a rezzer is on them, then say "rezzed".
+    if (s.needs_rez && s.needs_rez.length) {
+      var rezCollapsed = _isCollapsed('needsrez');
+      var glowing = 0;
+      for (var rq = 0; rq < s.needs_rez.length; rq++) if (s.needs_rez[rq].state === 'incoming') glowing++;
+      html += '<div class="card"><div class="head">'
+           +    secToggle('needsrez', '⚰ Needs rez', s.needs_rez.length)
+           +    (rezCollapsed || !glowing ? '' : '<span class="rez-tag">' + glowing + ' being rezzed</span>')
+           +  '</div>';
+      if (!rezCollapsed) {
+        html += '<div class="list">';
+        for (var rr = 0; rr < s.needs_rez.length; rr++) {
+          var r = s.needs_rez[rr];
+          var tag = '';
+          if (r.state === 'incoming') tag = r.rezzer ? ('rezzing — ' + esc(r.rezzer)) : 'rezzing…';
+          else if (r.state === 'rezzed') tag = 'rezzed ✓';
+          else if (r.requested && !r.dead_ms) tag = 'asked for a rez';
+          var age = (r.dead_ms != null) ? (Math.floor(r.dead_ms / 60000) + 'm') : '';
+          html += '<div class="row rez-row ' + esc(r.state) + '">'
+               +    '<span class="nm">' + esc(r.name) + '</span>'
+               +    (tag ? '<span class="rez-tag">' + tag + '</span>' : '')
+               +    (age ? '<span class="rez-age">dead ' + age + '</span>' : '<span class="rez-age"></span>')
+               +    '<span class="rezDismiss" data-rez-name="' + esc(r.name) + '" title="Clear this row for the WHOLE raid — use when they are up and we missed it.">✕</span>'
+               +  '</div>';
+        }
+        html += '</div>';
+      }
+      html += '</div>';
+    }
+
     if (!html) html = '<div id="empty">Nothing to report — no active target, DA/mana call-outs, rolls, or curses seen yet.</div>';
 
     if (contentEl.__wpHtml !== html) {   // byte-stability guard (2026-07-07)
@@ -555,14 +629,14 @@
   if (contentEl) {
     contentEl.addEventListener('mouseover', function(e){
       var t = e.target;
-      if (t && t.closest && (t.closest('.cureDismiss') || t.closest('.cureClearAll') || t.closest('.sec-toggle')
+      if (t && t.closest && (t.closest('.rezDismiss') || t.closest('.cureDismiss') || t.closest('.cureClearAll') || t.closest('.sec-toggle')
                              || t.closest('.rollMore') || t.closest('.rollDismiss') || t.closest('.rollClearAll'))) {
         try { window.mimic.overlayHoverInteractive(true); } catch (er) {}
       }
     });
     contentEl.addEventListener('mouseout', function(e){
       var t = e.target;
-      if (t && t.closest && (t.closest('.cureDismiss') || t.closest('.cureClearAll') || t.closest('.sec-toggle')
+      if (t && t.closest && (t.closest('.rezDismiss') || t.closest('.cureDismiss') || t.closest('.cureClearAll') || t.closest('.sec-toggle')
                              || t.closest('.rollMore') || t.closest('.rollDismiss') || t.closest('.rollClearAll'))) {
         try { window.mimic.overlayHoverInteractive(false); } catch (er) {}
       }
@@ -603,6 +677,23 @@
             if (rid2) { _dismissedRolls.add(rid2); _openRolls.delete(rid2); }
           }
           render(_lastState);
+        }
+        return;
+      }
+      var rezX = e.target && e.target.closest ? e.target.closest('.rezDismiss') : null;
+      if (rezX) {
+        e.preventDefault(); e.stopPropagation();
+        var rname = rezX.getAttribute('data-rez-name');
+        if (rname) {
+          // Clears the row for EVERYONE (Hitya 2026-08-20). The agent drops it
+          // locally at once so the click feels instant, and relays it to the
+          // rest of the raid through the bot; other Command Centers drop the
+          // row on their next poll.
+          rezX.textContent = '…';
+          fetch('http://127.0.0.1:' + PORT + '/api/rez-dismiss', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: rname }),
+          }).then(function(){ tick(); }).catch(function(){});
         }
         return;
       }

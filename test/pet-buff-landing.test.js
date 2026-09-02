@@ -62,6 +62,8 @@ const BLOCKS = [
      '  _savePetStateSoon();\n}'),
   fn('function _petNameForOwner(ownerLower) {',
      '  }\n  return null;\n}'),
+  fn('function _petIdForOwner(ownerLower) {',
+     '  return null;\n}'),
   fn('const _lastPetByOwner = new Map();',
      '  return Array.from(byName.values());\n}'),
   fn('function _zealTargetForChar(charLower) {',
@@ -131,7 +133,7 @@ const PRELUDE = `
 const EXPORTS = [
   'noteSelfCast', 'resolveSelfCastLanding', 'parseBuffLanding',
   'recordPetBuffLanding', 'petBuffsForOwner', '_rebuildBuffMatchers',
-  '_reconcilePetIdentity', '_lastPetByOwner',
+  '_reconcilePetIdentity', '_lastPetByOwner', '_lastPetIdByOwner', '_petIdForOwner',
   '_petOwnerByName', '_isTrackedBuffName',
   '_zealState', '_spellByNameLower', '_petBuffLandings', '_petHealthByOwner',
   '_recentSelfCast', '_petBuffDiagRing',
@@ -397,5 +399,110 @@ describe('pet identity change (charm break → summoned warder)', () => {
       hp_pct: 100, buffs: new Map(), last_line_at: Date.now(), last_seen_at: Date.now(),
     });
     expect(a.petBuffsForOwner('canopy')).toHaveLength(2);
+  });
+});
+
+// ── Same-name re-charm: the gap the NAME check structurally cannot see ──────
+// "Charm overlay could also do well to have the spawn IDs in case people switch
+// their charmed pets" (Hitya, 2026-08-31).
+//
+// _reconcilePetIdentity compared pet NAMES, so swapping one `an orc warrior`
+// for another read as "unchanged" and the dead pet's buffs stayed on the new
+// one. That is the same failure that put a charmed rat's Tunare's Request on a
+// summoned warder, in the case a name cannot distinguish. Zeal PR #229's
+// `pet_id` closes it exactly: the id differs even when the name does not.
+//
+// ⚠ The dangerous direction here is wiping TOO EAGERLY. `pet_id` is null on
+// every released Zeal and whenever there is no pet — including the ~3s slot-16
+// dip during a re-charm — and treating null as "changed" would erase a live
+// pet's buffs on every swap. So a change requires BOTH ids real and different.
+describe('pet identity by spawn id', () => {
+  const setPet = (A, owner, name, petId) => {
+    A._zealState[owner] = { pet_name: name, pet_id: petId, gauges: [{ slot: 16, text: name, hp_pct: 90 }] };
+  };
+  const seedBuff = (A, owner) => {
+    A._petBuffLandings.set(owner, new Map([['haste', { name: 'Haste', landed_at: Date.now() }]]));
+    A._petHealthByOwner.set(owner, { buffs: new Map(), last_seen_at: Date.now() });
+  };
+  const hasBuffs = (A, owner) => A._petBuffLandings.has(owner);
+
+  it('drops the old pet’s buffs when the id changes but the NAME does not', () => {
+    const A = buildAgent();
+    setPet(A, 'hitya', 'an orc warrior', 1817);
+    A._reconcilePetIdentity('hitya');
+    seedBuff(A, 'hitya');
+    setPet(A, 'hitya', 'an orc warrior', 1820);       // different mob, same string
+    A._reconcilePetIdentity('hitya');
+    expect(hasBuffs(A, 'hitya')).toBe(false);
+  });
+
+  it('keeps them when the same pet is re-observed', () => {
+    const A = buildAgent();
+    setPet(A, 'hitya', 'an orc warrior', 1817);
+    A._reconcilePetIdentity('hitya');
+    seedBuff(A, 'hitya');
+    A._reconcilePetIdentity('hitya');
+    expect(hasBuffs(A, 'hitya')).toBe(true);
+  });
+
+  // ⚠ The eager-wipe guard, in its three forms.
+  it('does NOT wipe when the id goes away — slot 16 dips during a re-charm', () => {
+    const A = buildAgent();
+    setPet(A, 'hitya', 'an orc warrior', 1817);
+    A._reconcilePetIdentity('hitya');
+    seedBuff(A, 'hitya');
+    setPet(A, 'hitya', 'an orc warrior', null);       // pet gauge briefly empty
+    A._reconcilePetIdentity('hitya');
+    expect(hasBuffs(A, 'hitya')).toBe(true);
+  });
+
+  it('does NOT wipe on the FIRST id seen — there is nothing to compare to', () => {
+    const A = buildAgent();
+    setPet(A, 'hitya', 'an orc warrior', null);
+    A._reconcilePetIdentity('hitya');
+    seedBuff(A, 'hitya');
+    setPet(A, 'hitya', 'an orc warrior', 1817);       // ids appear mid-session
+    A._reconcilePetIdentity('hitya');
+    expect(hasBuffs(A, 'hitya')).toBe(true);
+  });
+
+  it('is inert on a released Zeal that emits no id at all', () => {
+    const A = buildAgent();
+    setPet(A, 'hitya', 'a cliff golem', null);
+    A._reconcilePetIdentity('hitya');
+    seedBuff(A, 'hitya');
+    A._reconcilePetIdentity('hitya');
+    expect(hasBuffs(A, 'hitya')).toBe(true);
+  });
+
+  // The pre-#229 path must keep working unchanged.
+  it('still drops on a NAME change when no id is available', () => {
+    const A = buildAgent();
+    setPet(A, 'hitya', 'a cliff golem', null);
+    A._reconcilePetIdentity('hitya');
+    seedBuff(A, 'hitya');
+    setPet(A, 'hitya', 'an orc warrior', null);
+    A._reconcilePetIdentity('hitya');
+    expect(hasBuffs(A, 'hitya')).toBe(false);
+  });
+
+  it('the id wins when both changed, and leaves the name map consistent', () => {
+    const A = buildAgent();
+    setPet(A, 'hitya', 'a cliff golem', 1817);
+    A._reconcilePetIdentity('hitya');
+    seedBuff(A, 'hitya');
+    setPet(A, 'hitya', 'an orc warrior', 1820);
+    A._reconcilePetIdentity('hitya');
+    expect(hasBuffs(A, 'hitya')).toBe(false);
+    // A stale name map would fire a SECOND wipe on the next poll.
+    expect(A._lastPetByOwner.get('hitya')).toBe('an orc warrior');
+    expect(A._lastPetIdByOwner.get('hitya')).toBe(1820);
+  });
+
+  it('resolves the id only for the owner’s own character', () => {
+    const A = buildAgent();
+    setPet(A, 'hitya', 'an orc warrior', 1817);
+    expect(A._petIdForOwner('hitya')).toBe(1817);
+    expect(A._petIdForOwner('someoneelse')).toBe(null);
   });
 });

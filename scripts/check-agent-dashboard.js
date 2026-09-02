@@ -25,6 +25,59 @@ const path = require('path');
 const AGENT = path.join(__dirname, '..', 'packages', 'wolfpack-logsync', 'index.js');
 const COMMAND_FILE = path.join(__dirname, '..', 'apps', 'mimic', 'command.html');
 
+// WEB_HTML must be the machine-generated fold of dashboard.html — the file is
+// authoritative (Decision #3 slice, 2026-08-30). A hand-edit to the literal,
+// or an unsynced edit to the .html, both land here as a byte diff.
+function checkDashboardDrift() {
+  const { buildLiteral, literalRegion, HTML } = require('./sync-dashboard-embed.js');
+  const src = fs.readFileSync(AGENT, 'utf8');
+  const region = literalRegion(src);
+  if (!region) { console.error('✗ WEB_HTML literal not found'); return 1; }
+  const expected = buildLiteral(fs.readFileSync(HTML, 'utf8'));
+  const actual = src.slice(region[0], region[1]);
+  if (expected === actual) {
+    console.log(`✓ WEB_HTML matches dashboard.html fold (${actual.length} literal chars)`);
+    return 0;
+  }
+  const at = firstDiff(expected, actual);
+  console.error(`✗ WEB_HTML has DRIFTED from dashboard.html (first diff at literal offset ${at}).`);
+  console.error('  If you edited dashboard.html:      npm run sync:dashboard');
+  console.error('  If you edited the literal by hand: revert — dashboard.html is authoritative.');
+  return 1;
+}
+
+// ── Eaten-backslash detector ────────────────────────────────────────────────
+// The old hand-escaped WEB_HTML literal ate backslashes, and the survivors sat
+// in the shipped dashboard for months looking like valid code. Found 2026-08-30
+// by a raid-night report — an officer's RaidTick file gave "No attendees in
+// that source" because `/^file:(d+)$/` matches a literal "d", never "file:0".
+// The same sweep found `.split(/s+/)` twice (which silently defeated the
+// wp-* class preservation its own comment describes) and `/^✥s*/`.
+//
+// A lost backslash is INVISIBLE in review and never throws: `d+`, `s*` and `w+`
+// are all valid regex, they just match the wrong thing. So it is checked
+// mechanically instead. Only the character classes that read as ordinary
+// letters are flagged (d s w D S W) and only when followed by a quantifier —
+// that is the shape that is always a mistake, and it keeps the check free of
+// judgement calls about legitimate literal letters.
+const EATEN_BACKSLASH = /(^|[^\\])[dswDSW][+*{]/;
+function checkEatenBackslashes(html, label) {
+  let bad = 0;
+  const lines = html.split('\n');
+  lines.forEach((line, i) => {
+    if (line.length > 2000) return;   // data: URIs — no code lives there
+    for (const m of line.matchAll(/\/((?:[^/\\\n[]|\\.|\[(?:[^\]\\]|\\.)*\])+)\/[gimsuy]*/g)) {
+      if (!EATEN_BACKSLASH.test(m[1])) continue;
+      bad++;
+      console.error(`\u2717 ${label}:${i + 1} regex ${m[0]} looks like it lost a backslash.`);
+      console.error(`    ${line.trim().slice(0, 160)}`);
+      console.error('    → a bare d/s/w before a quantifier matches the LETTER, not the class.');
+    }
+  });
+  if (!bad) console.log(`\u2713 no eaten backslashes in ${label} regex literals`);
+  return bad;
+}
+
 function loadEmbeds() {
   let code = fs.readFileSync(AGENT, 'utf8');
   // Prevent the agent from actually starting when we _compile() it.
@@ -222,7 +275,20 @@ function main() {
     process.exit(1);
   }
 
-  console.log('\nAll dashboard script blocks parse cleanly; all <details> carry wpKeep; COMMAND_HTML in sync. ✅');
+  if (checkDashboardDrift() > 0) process.exit(1);
+
+  const dashText = fs.readFileSync(require('./sync-dashboard-embed.js').HTML, 'utf8');
+  const eaten = checkEatenBackslashes(dashText, 'dashboard.html')
+              + checkEatenBackslashes(file, 'command.html');
+  if (eaten > 0) {
+    console.error(`\n${eaten} regex literal(s) missing a backslash — fix before shipping.`);
+    process.exit(1);
+  }
+
+  console.log('\nAll dashboard script blocks parse cleanly; all <details> carry wpKeep; COMMAND_HTML and WEB_HTML in sync. ✅');
 }
 
-main();
+// Guarded so tests can require the detector without running the whole check.
+if (require.main === module) main();
+
+module.exports = { checkEatenBackslashes, EATEN_BACKSLASH };

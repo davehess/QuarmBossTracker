@@ -26,6 +26,11 @@ npm-debug.log*
 package-lock.json
 dist/
 packages/wolfpack-logsync/logsync.stats.json
+# A user's own imported/authored triggers — local state that happens to live
+# in the package dir (STATS_FILE anchors it there). Never commit someone's set.
+packages/wolfpack-logsync/personal_triggers.json
+packages/wolfpack-logsync/logsync.queue.json
+packages/wolfpack-logsync/logsync.item-catalog.json
 packages/wolfpack-logsync/logsync.optin.json
 packages/wolfpack-logsync/logsync.session.json
 packages/wolfpack-logsync/logsync.pid.json
@@ -35,6 +40,7 @@ packages/wolfpack-logsync/logsync.pid.json
 # show up as untracked. They carry real guild data (queued trigger fires with
 # raider names, observed buff landings), so they must never be committed.
 packages/wolfpack-logsync/logsync.queue.json
+packages/wolfpack-logsync/logsync.item-catalog.json
 packages/wolfpack-logsync/logsync.pet-state.json
 # Loot-bidding local state. `beta` has ignored these since agent 3.3.100 and
 # main never picked them up — the entries were added on the branch the feature

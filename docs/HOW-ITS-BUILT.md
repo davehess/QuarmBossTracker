@@ -473,6 +473,119 @@ Tests: `test/zeal-version-capability.test.js` (bot + board, on `main`) and
 `test/zeal-capability-agent.test.js` (the latch + the agent↔bot contract, on
 `beta` — the only branch carrying both sources).
 
+### Buff duration factor, per character (agent 3.6.24)
+Item 3. A 🎯 card on the Buffs tab showing each character's **measured** duration
+factor: the median of per-spell ratios of what their buffs actually lasted
+against what the catalog predicts. That ratio IS their focus effect, observed.
+⚠ **It is NOT computed from AA data, because our mirror cannot give it.** In
+`eqemu_aa_effects`, Spell Casting Mastery (mana cost) and Spell Casting
+Reinforcement (buff duration) both carry `effectid 5`; Natural Durability (max
+HP) and Combat Fury (crit) both carry `effectid 9`. `effectid` is therefore not a
+semantic effect type and `base1` is not a percentage of anything identifiable —
+reading Reinforcement's `base1: 10` as "+10% duration" would be a confidently
+wrong number. The real values live in server code we do not mirror.
+⚠ **Median of per-spell RATIOS, not a ratio of totals** — one long buff would
+otherwise decide the whole answer. Needs ≥3 qualifying spells, and says *why* it
+cannot answer rather than returning 1.0.
+⚠ Scoped per character via `_buffSeenByChar`, because a box runs several.
+⚠ **Known test gap, recorded rather than papered over:** no spell catalog loads
+in a test process, so every ratio list is empty and the factor always takes the
+"not enough data" path — a behavioural test of the per-character filter is
+vacuous (proven: removing the filter still passed). That one assertion is on the
+code and labelled as such. Reaching it for real needs a catalog seam.
+
+### ✨ Buffs tab: measured durations (agent 3.6.22)
+Split out of "⚔ Buffs / Raid" (now just ⚔ Raid). Two cards: **Active buffs** per
+character, and **Durations** — what we have watched buffs actually last, against
+what the catalog predicts.
+⚠ **THREE PROVENANCES, NEVER BLENDED**, each badged on screen: `zeal` (the
+client's own remaining counter — authoritative, not our arithmetic), `log`
+(measured on this machine), `db` (catalog formula at the era cap — available for
+nearly every spell, right for nobody in particular).
+**How it measures**: Zeal reports REMAINING ticks per buff slot each poll, so the
+highest reading ever seen for an instance is the one taken closest to the land.
+⚠ **A LOWER BOUND, never exact** — a buff first seen halfway through measures
+short, which is why median/spread/`n` are all on screen.
+⚠ **The zone guard is on `next`, not `prev`.** Buffs do not all expire on one
+tick; a buff window emptying completely is a zone/camp/pipe-drop, and sampling it
+would record everything the character carried as truncated. An earlier version
+guarded `prev`, which protects nothing (looping an empty list is already a
+no-op) — **found by mutation testing**. Accepted false negative: a character
+carrying exactly one buff that expires looks like a zone and is discarded.
+⚠ **Item 3 (AA/Focus estimates) cannot be computed from our mirror.** In
+`eqemu_aa_effects`, Spell Casting Mastery (mana cost) and Spell Casting
+Reinforcement (buff duration) BOTH have `effectid 5`; Natural Durability (HP) and
+Combat Fury (crit) both have `effectid 9`. `base1` is therefore not a percentage
+of anything identifiable, and reading SCR's `base1: 10` as "+10% duration" would
+be a confidently wrong number. The `vs catalog` ratio column is the answer
+instead: it is the focus effect **observed**, correct for Quarm's own tuning.
+Tests: `test/buff-durations.test.js`.
+
+### Dashboard: the tab rail clears the sticky bar (agent 3.6.23)
+Regression from 3.6.21: the rail was already `position:sticky; top:8px`, so once
+the header became sticky the rail pinned itself UNDER it and the first four tabs
+(Dashboard, Overlays, Raid, Buffs) vanished on any scroll (Hitya 2026-09-02).
+Now `top:calc(var(--wp-topbar-h, 118px) + 8px)`, plus `max-height` +
+`overflow-y:auto` so a rail taller than the space below the bar scrolls itself
+rather than pushing its last tabs off-screen.
+⚠ `--wp-topbar-h` is **measured** by `_wpSyncTopBarHeight()` — on resize, on
+load, immediately at script eval, and after every render — never a constant. The
+bar changes height when the quick links wrap, when the update/beta pills appear,
+and at the short-window breakpoint. The CSS fallback covers first paint only.
+Measured after the fix at `scrollY` 1200 on 1200×760: bar bottom 106, first tab
+top 126, "Dashboard" visible. Tests: `test/dashboard-rail-offset.test.js`.
+
+⚠ **Harness note for the next session:** a local test harness that strips
+`{{WP:…}}` from `dashboard.html` with `/\{\{WP:[\s\S]*?\}\}/g` CORRUPTS the page —
+the non-greedy match runs past JS object literals ending in `}}`, silently
+breaking every script block. Two "renderer is not defined" dead ends came from
+that, not from the code. Serve the real artifact from the agent instead.
+
+### Dashboard: sticky top bar (agent 3.6.21)
+`#wpTopBar` wraps the title, session-stats line and quick links and is
+`position:sticky; top:0`. ✨ Tour and ⚙ Panels moved out of the left rail into
+it, joined by a 💬 Feedback button (`wpOpenFeedback()` switches to Dashboard,
+expands the card, scrolls to it and focuses the box). Ids are unchanged, so every
+existing handler still binds.
+⚠ **Two things break silently when a control moves into a sticky container, and
+both bit here:** the Panels popover positioned itself at
+`button.bottom + window.scrollY`, which walks the menu down the page as you
+scroll because a sticky button keeps its *viewport* position — it is now
+`position:fixed` with no scrollY term; and `scrollIntoView` tucks the target
+under the bar, so the feedback jump offsets by the bar's **measured**
+`getBoundingClientRect().height`, never a constant (the bar changes height at
+the short-window breakpoint and on wrap).
+⚠ Background is solid, not translucent: content scrolls under it.
+⚠ Below 620px tall the logo and stats line stand down — a three-row sticky bar
+leaves no room for the page.
+Verified in headless Chromium against the authored file: at `scrollY` 900 the bar
+reported `position: sticky` and `getBoundingClientRect().top === 0`. (A scrolled
+`--screenshot` capture returns blank in this environment; the computed geometry
+is the evidence.) Tests: `test/dashboard-topbar.test.js`.
+
+### Feedback from inside Mimic, with an opt-in log slice (agent 3.6.20 · bot 3.1.112)
+Dashboard card (💬 Send feedback) + tray item, both landing on
+`POST /api/agent/feedback` → the `feedback` table (migration `20260902170000`
+adds `log_excerpt`, `log_meta`, `client`, `client_version`, `platform`) and the
+officer feedback thread.
+**The slice**: `buildFeedbackLogSlice(minutes)` tails the newest watched log,
+keeps the last 15/30/60 minutes, and caps at 6000 lines / 512 KB.
+⚠ **Redaction REUSES `triggerVisibleLine`** — the same audited predicate the
+local trigger engine is gated on — plus a `/who` + location drop. Never
+hand-roll a second filter: this one is already the privacy boundary, and a
+bespoke copy is a second thing to keep correct.
+⚠ **The bot deliberately does NOT redact.** By the time bytes arrive, the private
+channels are gone. A filter there would run *after* the data left the reporter's
+machine — the illusion of a safety net. A test fails if anyone adds one.
+⚠ **Nothing attaches without a tick, and the preview must match what sends.**
+Both paths call the same builder; the preview shows the first 400 lines and says
+so, and reports the count of private lines removed so the filter is visibly
+running. The attach row is hidden entirely for ideas — a log explains a bug, and
+offering it on "add a dark mode" collects data we asked for and do not need.
+⚠ The card **builds once** (`_wpBuilt`); the dashboard repaints every ~2s and
+would otherwise wipe a half-typed report.
+Tests: `test/feedback-log-slice.test.js` (agent + card), `test/feedback-ingest.test.js` (bot).
+
 ### Cross-Mimic trigger relay: scope gate (bot 3.1.111)
 The relay had **no scope of any kind** — every guild-trigger fire from any raider
 ran on every other Mimic within 15s, gated only by an 8s dedup and a staleness

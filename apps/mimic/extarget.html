@@ -60,6 +60,9 @@
     box-shadow:0 0 6px rgba(240,180,41,0.5)}
   /* The non-unique asterisk — amber, help cursor; tooltip explains the caveat. */
   .row .amb{color:#f0b429;font-weight:700;cursor:help;margin-left:2px}
+  /* Reads as settled, not as a warning: the amber asterisk means "this might be
+     the wrong mob", so its replacement must not borrow that colour. */
+  .row .known{color:#6fb98f;font-size:9px;cursor:help;margin-left:3px;font-variant-numeric:tabular-nums}
   .row .dup{color:#9aa4ad;font-size:9px;margin-left:3px;font-variant-numeric:tabular-nums}
   /* #194 — which tank this same-name instance is melee'ing. The label that
      finally tells two "Thall Va Xakra" apart on screen. */
@@ -425,7 +428,16 @@
     // #143 — MEZ / SLOW pills right next to the name (shown even for pooled
     // same-name rows; classification is over this row's own debuffs).
     nm += ccBadges(t.debuffs);
-    if (t.ambiguous) nm += '<span class="amb" title="Non-unique name — same-name mobs share a name on the Zeal pipe, so buffs/debuffs here may be from a different mob of the same name. Split out below by HP when health differs.">*</span>';
+    // The asterisk is a WARNING: this row's debuffs may belong to a different
+    // mob of the same name, because the pipe could not tell them apart. When
+    // the client gave us a spawn id that warning is simply false — we know
+    // which mob this is — so the row shows the id instead of the caveat.
+    // Zeal PR #229; null on every released Zeal, so most rows still warn.
+    if (t.id_proven) {
+      nm += '<span class="known" title="A distinct mob, confirmed by its spawn id from the game client — not inferred from health. Debuffs on this row belong to this mob.">#' + esc(t.spawn_id != null ? t.spawn_id : '?') + '</span>';
+    } else if (t.ambiguous) {
+      nm += '<span class="amb" title="Non-unique name — same-name mobs share a name on the Zeal pipe, so buffs/debuffs here may be from a different mob of the same name. Split out below by HP when health differs.">*</span>';
+    }
     if (t.dup_index) nm += '<span class="dup">#' + t.dup_index + '/' + (t.same_name_count || '?') + '</span>';
     // #194 — the bot's position clustering names the tank(s) each same-name
     // instance is hitting. THE disambiguator: "#1 @ Grabthar" vs "#2 @ Borim".
@@ -613,7 +625,10 @@
     var renderedGroup = {};
     for (var i = 0; i < targets.length; i++) {
       var t = targets[i];
-      if (t.ambiguous) anyAmb = true;
+      // An id-proven row shows no asterisk, so it must not summon the footnote
+      // that explains one — a legend for a symbol that is not on screen reads
+      // as a warning about rows that are actually certain.
+      if (t.ambiguous && !t.id_proven) anyAmb = true;
       var grp = groupsByName[t.name];
       if (grp && grp.length > 1) {
         if (renderedGroup[t.name]) continue;   // group already emitted

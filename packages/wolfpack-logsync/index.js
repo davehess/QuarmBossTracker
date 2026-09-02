@@ -317,6 +317,19 @@ const DEFAULT_DROP_PATTERNS = [
 //   EQ log format: "[Fri May 26 02:34:04 2026] Gobn says, 'My leader is Utoh.'"
 const PRIORITY_KEEP_PATTERNS = [
   /\bsays,?\s*['"]My leader is \w+/i,
+  // PoP flagging coverage for people who do NOT run Mimic (Hitya 2026-08-20:
+  // "When someone Hails a flagging NPC and we see that from a mimic-enabled
+  // raider, we should record that as a proper flag"). The authoritative line
+  // — "You have received a character flag!" — is a SELF message, so it only
+  // ever reaches us for Mimic users. A hail, by contrast, is visible to
+  // everyone in range, which is exactly the coverage we're missing.
+  //
+  // Deliberately narrow: ONLY the hail greeting form, never say-chat. A hail
+  // is a ceremonial greeting to an NPC, not conversation — the body must
+  // begin with "Hail". Which NPCs matter is decided BOT-side against the
+  // flag catalog, so the NPC list can grow data-only with no agent release.
+  // Recorded in docs/PRIVACY.md.
+  /\bsays,?\s*['"]Hail[,!. ]/i,
   // Charm-pet attribution. EQ only tells the CHARMER about its pet's target:
   //   "A Soriz Skeleton tells you, 'Attacking A Shissar Taskmaster Master.'"
   // Without this priority-keep, the line is dropped by the generic
@@ -2665,7 +2678,39 @@ function _isHotBuff(name) { return _categorizeBuff(name) === 'regen'; }
 // here (no spawn id on the pipe — the #194 problem in another costume). The
 // /pet health reconcile below is what catches that case.
 const _lastPetByOwner = new Map();   // ownerLower → last confidently-seen petLower
+// ownerLower → last confidently-seen pet SPAWN ID (Zeal PR #229). Separate from
+// the name map because the two disagree in exactly the case that matters: a
+// same-named re-charm changes the id and not the name.
+const _lastPetIdByOwner = new Map();
 function _reconcilePetIdentity(ownerLower) {
+  // ── Spawn id: exact, and closes the gap the name check cannot see ─────────
+  // Re-charming a DIFFERENT mob with the SAME name was invisible here
+  // (Hitya, 2026-08-31: "in case people switch their charmed pets") — two
+  // `an orc warrior` are one string, so the name comparison below returns
+  // "unchanged" and the dead pet's buffs stay on the new one. That is the same
+  // failure that put a charmed rat's Tunare's Request on a summoned warder,
+  // in the case a name simply cannot distinguish.
+  //
+  // ⚠ null is UNKNOWN, never CHANGED. It is null on every released Zeal, and
+  // whenever there is no pet — including the ~3s slot-16 dip during a
+  // re-charm. Wiping on null would erase a live pet's buffs every swap, which
+  // is exactly the bug the "empty is not an identity change" rule exists to
+  // prevent. So a change requires BOTH ids to be real and different.
+  const petId = _petIdForOwner(ownerLower);
+  if (petId != null) {
+    const prevId = _lastPetIdByOwner.get(ownerLower);
+    _lastPetIdByOwner.set(ownerLower, petId);
+    if (prevId != null && prevId !== petId) {
+      _petBuffLandings.delete(ownerLower);
+      _petHealthByOwner.delete(ownerLower);
+      _lastPetByOwner.set(ownerLower, String(_petNameForOwner(ownerLower) || '').toLowerCase() || undefined);
+      console.log(`[pet] ${ownerLower}'s pet changed by spawn id ${prevId} → ${petId} — dropped the previous pet's buffs`);
+      _savePetStateSoon();
+      return;
+    }
+  }
+
+  // ── Name: the pre-#229 path, and still the only one on a stock client ─────
   const petName = _petNameForOwner(ownerLower);
   if (!petName) return;                                  // unknown → never wipe on a dropout
   const petLower = String(petName).toLowerCase();
@@ -2763,6 +2808,256 @@ function _shouldSuppressBuffLanding(bcEvt) {
   if (_cat) return !_isTimedDurationFormula(_cat.durf) && !(Number(_cat.dur) > 0);
   return !!bcEvt._selfCast;   // uncatalogued self-cast → nuke/proc
 }
+// Instanced mobs arrive spelled two ways — the Zeal target gauge says
+// "#Diabo_Xi_Va_Temariel", the log's landing emote says "Diabo Xi Va Temariel"
+// — so a raw string compare below would silently never match on exactly the
+// raid bosses this matters most for.
+function _normMobName(v) {
+  return String(v || '').trim().replace(/^#/, '').replace(/_/g, ' ').toLowerCase();
+}
+// The spawn id of the mob a landing was observed on — but ONLY when we can
+// PROVE it, which is much narrower than it sounds and is the whole reason
+// buff_casts.target_id is nullable.
+//
+// A landing line names its target by NAME. The Zeal pipe carries a spawn id for
+// exactly ONE mob: the observer's own current target. So the id is knowable
+// only when this observer happened to be targeting the thing the effect landed
+// on. A cleric who was on the tank when the debuff landed genuinely cannot say
+// which of three same-name adds took it, and must return null rather than guess
+// — a wrong id is worse than no id, because the read side TRUSTS a present id
+// and drops rows that disagree with it.
+function _provableTargetId(observer, targetName) {
+  const want = _normMobName(targetName);
+  if (!observer || !want) return null;
+  const obsLower = String(observer).toLowerCase();
+  for (const ch of Object.keys(_zealState)) {
+    if (String(ch).toLowerCase() !== obsLower) continue;
+    const st = _zealState[ch];
+    if (!st || !Number.isFinite(st.target_id)) return null;
+    return _normMobName(st.target_name) === want ? st.target_id : null;
+  }
+  return null;
+}
+// ── Measured buff durations (Hitya 2026-09-02) ──────────────────────────────
+// "give it a more robust view of effects and timeframes ... provide an estimate
+// of how long cast buffs will last by character."
+//
+// Two different numbers, and the UI must never blur them:
+//   db  — what the CATALOG says: the spell's duration formula at an assumed
+//         caster level. A prediction, available for every spell, right for
+//         nobody in particular.
+//   log — what we WATCHED happen on this machine. Fewer spells, real numbers.
+//
+// The measurement: Zeal reports REMAINING ticks per buff slot every poll, so the
+// highest remaining value we ever see for one instance is the reading taken
+// closest to the moment it landed — our best estimate of its full duration. That
+// is strictly better than parsing land/fade lines, which miss every buff applied
+// before we started watching and every fade that happens off-screen.
+//
+// ⚠ It is a LOWER BOUND, never an upper one. If we first see a buff halfway
+// through, the sample is half its real length — which is why the UI shows a
+// median and a spread rather than a single confident number, and why n is on
+// screen. One sample is an anecdote.
+const _buffDurSamples = new Map();    // spellLower → [seconds, ...]
+const _buffLiveMax    = new Map();    // "char|spellLower" → { ticks, name }
+const BUFF_DUR_MAX_SAMPLES = 60;      // per spell; bounded so this cannot grow
+const BUFF_DUR_MAX_SPELLS  = 400;
+
+function _noteBuffDurationSample(spellName, seconds) {
+  const key = String(spellName || '').toLowerCase();
+  if (!key || !(seconds > 0) || seconds > 24 * 3600) return;
+  let arr = _buffDurSamples.get(key);
+  if (!arr) {
+    if (_buffDurSamples.size >= BUFF_DUR_MAX_SPELLS) {
+      const oldest = _buffDurSamples.keys().next().value;
+      if (oldest) _buffDurSamples.delete(oldest);
+    }
+    arr = []; _buffDurSamples.set(key, arr);
+  }
+  arr.push(Math.round(seconds));
+  if (arr.length > BUFF_DUR_MAX_SAMPLES) arr.shift();
+}
+
+// Diff one character's Zeal buff slots against the previous poll. A buff that
+// vanished has ended: emit the highest remaining time we ever saw for it.
+function _noteBuffDurationsFromState(character, prev, next) {
+  if (!character) return;
+  const ch = String(character).toLowerCase();
+  const listOf = (st) => (st && Array.isArray(st.buffs)) ? st.buffs : [];
+  const nowNames = new Set();
+  for (const b of listOf(next)) {
+    if (!b || !b.name) continue;
+    const key = ch + '|' + String(b.name).toLowerCase();
+    nowNames.add(key);
+    const ticks = Number(b.ticks);
+    if (!Number.isFinite(ticks) || ticks <= 0) continue;   // permanent/unknown
+    const cur = _buffLiveMax.get(key);
+    if (!cur || ticks > cur.ticks) _buffLiveMax.set(key, { ticks, name: b.name });
+    _buffSeenByChar.add(key);
+  }
+  // ⚠ THE GUARD IS ON `next`, NOT `prev`, AND THAT IS THE WHOLE POINT.
+  // An earlier version tested `prev` — which protects nothing, because looping
+  // an empty prev list is already a no-op. The real hazard is the other
+  // direction: prev had buffs and next has NONE. Buffs do not all expire on the
+  // same tick; that pattern is a client zoning, camping, or the pipe dropping,
+  // and sampling it would record every buff the character was carrying as
+  // truncated — dragging every median down by however long they had left.
+  // Found by mutation testing, which killed the useless guard and exposed this.
+  if (listOf(next).length === 0 && listOf(prev).length > 0) return;
+  for (const b of listOf(prev)) {
+    if (!b || !b.name) continue;
+    const key = ch + '|' + String(b.name).toLowerCase();
+    if (nowNames.has(key)) continue;
+    const seen = _buffLiveMax.get(key);
+    _buffLiveMax.delete(key);
+    if (seen && seen.ticks > 0) _noteBuffDurationSample(seen.name, seen.ticks * 6);
+  }
+}
+
+function _median(sorted) {
+  if (!sorted.length) return null;
+  const m = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[m] : Math.round((sorted[m - 1] + sorted[m]) / 2);
+}
+function _quantile(sorted, q) {
+  if (!sorted.length) return null;
+  const i = Math.min(sorted.length - 1, Math.max(0, Math.round((sorted.length - 1) * q)));
+  return sorted[i];
+}
+// Stats for one spell, or null when we have watched it zero times.
+function buffDurationStats(spellName) {
+  const arr = _buffDurSamples.get(String(spellName || '').toLowerCase());
+  if (!arr || !arr.length) return null;
+  const sorted = [...arr].sort((a, b) => a - b);
+  return {
+    n: sorted.length,
+    median: _median(sorted),
+    p25: _quantile(sorted, 0.25),
+    p75: _quantile(sorted, 0.75),
+    min: sorted[0],
+    max: sorted[sorted.length - 1],
+  };
+}
+// The catalog's predicted duration for a spell, at the era-cap caster level.
+// This is the "db" number: available for nearly every spell, right for nobody
+// in particular, because it knows nothing about who cast it.
+function _catalogDurationSec(spellName) {
+  const key = String(spellName || '').toLowerCase();
+  const e = _spellByNameLower.get(key) || _spellByNameLower.get(key.replace(/`/g, "'"));
+  if (!e) return null;
+  const t = _durTicksForLevel(e.durf, e.dur, _assumedCasterLevel());
+  return t > 0 ? t * 6 : null;
+}
+
+// What every watched character is carrying right now, straight off the Zeal buff
+// window. Remaining time here is AUTHORITATIVE — it is the client's own counter,
+// not our arithmetic — which is why the tab shows it in preference to anything
+// we computed.
+function _activeBuffsForDashboard() {
+  const out = [];
+  const now = Date.now();
+  for (const ch of Object.keys(_zealState || {})) {
+    const st = _zealState[ch];
+    if (!st || (now - (st.updatedAt || 0)) > ZEAL_STALE_MS) continue;
+    const buffs = Array.isArray(st.buffs) ? st.buffs : [];
+    for (const b of buffs) {
+      if (!b || !b.name) continue;
+      const ticks = Number(b.ticks);
+      const measured = buffDurationStats(b.name);
+      out.push({
+        character: ch,
+        name: b.name,
+        song: !!b.song,
+        // Permanent buffs report no tick count; that is a fact about the buff,
+        // not a missing reading, so it is carried as null rather than zero.
+        remaining_secs: (Number.isFinite(ticks) && ticks > 0) ? ticks * 6 : null,
+        catalog_secs: _catalogDurationSec(b.name),
+        measured_secs: measured ? measured.median : null,
+        measured_n: measured ? measured.n : 0,
+        good: _spellGood(b.name),
+      });
+    }
+  }
+  return out;
+}
+
+// ── Per-character duration factor (item 3, Hitya 2026-09-02) ────────────────
+// "provide an estimate of how long cast buffs will last by character based on
+// AA/Focus effects."
+//
+// ⚠ WE CANNOT COMPUTE THIS FROM THE AA DATA, AND GUESSING IT WOULD BE WORSE
+// THAN NOT SHIPPING IT. Checked against our own mirror on 2026-09-02: in
+// eqemu_aa_effects, Spell Casting Mastery (mana cost) and Spell Casting
+// Reinforcement (buff DURATION) both carry effectid 5, and Natural Durability
+// (max HP) and Combat Fury (crit) both carry effectid 9. So `effectid` is not a
+// semantic effect type and `base1` is not a percentage of anything
+// identifiable — reading Reinforcement's base1 of 10 as "+10% duration" would be
+// a confidently wrong number of exactly the kind this repo keeps getting bitten
+// by. The real values live in the server's code, not in anything we mirror.
+//
+// So it is MEASURED instead. For one character, compare how long their buffs
+// actually lasted against what the catalog predicts for the same spells; the
+// ratio IS their focus effect, observed — and it is correct for Quarm's own
+// tuning rather than stock EQEmu's, which a formula would not have been.
+//
+// ⚠ Only spells with BOTH a measurement and a catalog duration can contribute,
+// and the result is a median of per-spell ratios rather than a ratio of totals:
+// one long buff would otherwise dominate the answer entirely.
+const BUFF_FACTOR_MIN_SPELLS = 3;   // below this it is an anecdote, not a factor
+function buffDurationFactorFor(character) {
+  const ch = String(character || '').toLowerCase();
+  if (!ch) return null;
+  const ratios = [];
+  for (const [spellLower, arr] of _buffDurSamples) {
+    if (!arr || !arr.length) continue;
+    // Only spells this character was actually seen carrying — otherwise every
+    // character reports the whole machine's average, which is not "by character"
+    // at all on a box that runs several.
+    if (!_buffSeenByChar.has(ch + '|' + spellLower)) continue;
+    const cat = _catalogDurationSec(spellLower);
+    if (!(cat > 0)) continue;
+    const st = buffDurationStats(spellLower);
+    if (!st || !(st.median > 0)) continue;
+    ratios.push({ spell: spellLower, ratio: st.median / cat, n: st.n });
+  }
+  if (ratios.length < BUFF_FACTOR_MIN_SPELLS) {
+    return { character, spells: ratios.length, factor: null,
+             why: 'not enough watched buffs yet — needs ' + BUFF_FACTOR_MIN_SPELLS + ' spells with a catalog duration' };
+  }
+  const sorted = ratios.map(r => r.ratio).sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  const factor = sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+  return {
+    character,
+    spells: ratios.length,
+    factor: Math.round(factor * 100) / 100,
+    // The spread is shown so nobody reads a noisy factor as precision.
+    lo: Math.round(sorted[0] * 100) / 100,
+    hi: Math.round(sorted[sorted.length - 1] * 100) / 100,
+  };
+}
+// Which characters have been seen carrying which spell, so a factor is per
+// character rather than per machine.
+const _buffSeenByChar = new Set();   // "char|spellLower"
+
+// Everything we have measured, newest-touched first, for the dashboard table.
+function buffDurationTable() {
+  const out = [];
+  for (const [key] of _buffDurSamples) {
+    const st = buffDurationStats(key);
+    if (st) out.push({ spell: key, ...st });
+  }
+  return out;
+}
+
+// Record one observed landing under its TARGET NAME — the map Mob Info reads.
+// The caster's own target spawn id, for a cast THEY made. Narrower than
+// _provableTargetId only in intent: same name check, because a cast line can
+// arrive a beat after they switched target, and stamping the new target's id
+// onto the old target's cast would be worse than sending nothing.
+function _ownTargetIdFor(character, targetName) {
+  return _provableTargetId(character, targetName);
+}
 function recordTargetBuffLanding(bcEvt) {
   if (!bcEvt || !bcEvt.spell_name || !bcEvt.target) return;
   if (_shouldSuppressBuffLanding(bcEvt)) return;
@@ -2816,6 +3111,11 @@ function recordTargetBuffLanding(bcEvt) {
     name: bcEvt.spell_name,
     dur_ticks: _durTicksForLevel(bcEvt.dur_formula, bcEvt.dur_ticks, lvl),
     landed_at: bcEvt.cast_at ? Date.parse(bcEvt.cast_at) : Date.now(),
+    // Which SPAWN this landed on, when the observer could prove it. The map
+    // stays keyed by NAME on purpose — an id-keyed map would fragment a mob's
+    // effect list the moment one landing was unprovable, which is most of them.
+    // Scoping happens at READ time in targetBuffsFor(), where null fails open.
+    target_id: Number.isFinite(bcEvt.target_id) ? bcEvt.target_id : null,
   });
   // Bound memory: keep the 400 most-recently-touched targets.
   if (_buffLandingsByTarget.size > 400) {
@@ -2828,13 +3128,21 @@ function recordTargetBuffLanding(bcEvt) {
 }
 // Live observed buffs for a target → [{ name, remaining_secs, total_secs }],
 // pruning expired. Drives the Mob Info overlay's buff list.
-function targetBuffsFor(targetLower) {
+// wantId: the spawn id of the mob being displayed, when the client knows it.
+// Entries proven to belong to a DIFFERENT spawn of the same name are dropped;
+// entries with no id are kept, because unproven is not disproven and on every
+// released Zeal that is every single one of them.
+function targetBuffsFor(targetLower, wantId) {
   if (!targetLower) return [];
   const mp = _buffLandingsByTarget.get(targetLower);
   if (!mp) return [];
   const now = Date.now();
   const out = [];
   for (const [k, b] of mp) {
+    // Same name, provably a different spawn → someone else's debuff. Never
+    // deleted, only hidden: it still belongs to its own mob, and the id we are
+    // filtering against changes every time the user swaps target.
+    if (wantId != null && b && b.target_id != null && Number(b.target_id) !== Number(wantId)) continue;
     const durSecs = (Number(b.dur_ticks) || 0) * 6;
     let rem = durSecs - (now - (b.landed_at || now)) / 1000;
     let fellOff = false;
@@ -2970,6 +3278,23 @@ function noteDiInterrupt(line, character) {
 // Returns the parsed cast ({ name, atMs }) or null, so the relay can reuse the
 // match instead of re-running the identical regex on the same line (the two
 // ran back-to-back per log line — efficiency review 2026-07-07).
+// Rez spells (and the Water Sprinkler clicky). Casting one is the other
+// "somebody is on it" signal Hitya named — but the cast line never says WHOSE
+// corpse, so we only attribute it when exactly one corpse is outstanding.
+// Guessing between two would put the glow on the wrong name.
+const _REZ_SPELL_RX = /\b(?:Revive|Resurrection|Resuscitate|Reviviscence|Water Sprinkler of Nem Ankh)\b/i;
+function _noteSelfRezCast(spellName, character, atMs) {
+  try {
+    if (!spellName || !_REZ_SPELL_RX.test(spellName)) return;
+    const dead = _deadNamesSnapshot(atMs);
+    if (dead.length === 1) {
+      noteRezIncoming(dead[0].name, character || null, atMs);
+    } else {
+      console.log(`[rez] ${character || 'you'} cast ${spellName} — ${dead.length} corpses outstanding, not guessing which`);
+    }
+  } catch (e) { void e; }
+}
+
 function noteSelfCast(line, character) {
   if (!line || !character) return null;
   if (line.indexOf('You begin') === -1) return null;   // cheap gate
@@ -2987,6 +3312,10 @@ function noteSelfCast(line, character) {
   arr.push({ spellLower, name: m[1].trim(), atMs, target: _zealTargetForChar(cl) });
   // DI availability — stamp the recast on every Divine Intervention cast.
   if (spellLower === 'divine intervention') _noteDiCast(cl, atMs);
+  // Needs-rez board: casting a rez is "somebody is on it". typeof-guarded so
+  // the source-slice tests that eval noteSelfCast alone still run (they lift
+  // this function out of the file without its neighbours).
+  if (typeof _noteSelfRezCast === 'function') _noteSelfRezCast(m[1].trim(), character, atMs);
   // Prune old / cap length.
   const cutoff = atMs - SELF_CAST_WINDOW_MS;
   while (arr.length && arr[0].atMs < cutoff) arr.shift();
@@ -3088,6 +3417,10 @@ function relaySelfCastForCasting(line, character, pre) {
   const isHeal = !!he || HEAL_SPELL_RX.test(spell);
   enqueueUpload('casting', { agent_version: AGENT_VERSION, casts: [{
     caster: character, spell, target,
+    // Which spawn the caster was on. Unlike a witnessed buff landing there is
+    // nothing to prove here — this IS the caster's own current target — so it
+    // comes straight off their pipe state rather than through _provableTargetId.
+    target_id: _ownTargetIdFor(character, target),
     started_at: new Date(atMs).toISOString(),
     cast_secs: castSecs,
     // Inbound-heal fields for the recipient's tank overlay (est. catalog amount).
@@ -3142,6 +3475,7 @@ function noteCureCastFailed(line, character) {
   prev.cancelled = true;
   enqueueUpload('casting', { agent_version: AGENT_VERSION, casts: [{
     caster: character, spell: prev.spell, target: prev.target,
+    target_id: _ownTargetIdFor(character, prev.target),
     started_at: new Date(prev.at).toISOString(),
     cast_secs: prev.castSecs,
     // Bot: void the pending ledger entry for this exact cast (bot 3.0.2xx+).
@@ -3437,6 +3771,18 @@ function _petNameForOwner(ownerLower) {
   }
   return null;
 }
+// Spawn id of the owner's pet, from the pipe's player message (Zeal PR #229).
+// NULL on every released Zeal and whenever there is no pet — callers must treat
+// null as "unknown", never as "changed". Only the local uploader's own
+// characters stream a player message, same scope as _petNameForOwner.
+function _petIdForOwner(ownerLower) {
+  for (const ch of Object.keys(_zealState)) {
+    if (String(ch).toLowerCase() !== ownerLower) continue;
+    const st = _zealState[ch];
+    if (st && Number.isFinite(st.pet_id)) return st.pet_id;
+  }
+  return null;
+}
 function notePetBuffWornOff(line, character) {
   if (!line || !character) return;
   const m = line.match(/\]\s+Your pet's\s+(.+?)\s+spell has worn off\.\s*$/i);
@@ -3594,6 +3940,40 @@ function parsePopFlagLine(line, character) {
     zone:  zone ? String(zone).slice(0, 64) : null,
     boss:  boss ? boss.slice(0, 64) : null,
     ts:    ts ? ts.toISOString() : new Date().toISOString(),
+  };
+}
+
+// A hail we WITNESSED — someone else greeting an NPC in our zone. Evidence of
+// a possible flag grant, not proof of one: hailing only grants a flag when the
+// hailer already meets the prerequisites, and we cannot see that. So these are
+// uploaded with their own source and must never be shown as equal to the
+// self-reported grant line. The bot decides whether the hailed NPC is a
+// flagging NPC.
+const _HAIL_WITNESS_RX = /\]\s+(\w+) says,?\s*['"]Hail[,!. ]+\s*([^'"]{2,48}?)[!.?]*['"]/i;
+function parseWitnessedHail(line, character) {
+  if (!line || line.indexOf('Hail') === -1) return null;
+  const m = line.match(_HAIL_WITNESS_RX);
+  if (!m) return null;
+  const hailer = String(m[1] || '').trim();
+  const npc    = String(m[2] || '').trim();
+  if (!hailer || !npc) return null;
+  // "You say, 'Hail, X'" renders as the uploader's own name on Quarm, but a
+  // self-hail is already covered by the authoritative grant line — keep it
+  // anyway, since the bot dedups and a witness for yourself costs nothing.
+  const ts = parseEqTimestamp(line);
+  let zone = null;
+  const cl = String(character || '').toLowerCase();
+  for (const ch of Object.keys(_zealState)) {
+    if (String(ch).toLowerCase() === cl) { zone = _zealState[ch].zone || null; break; }
+  }
+  return {
+    character: hailer.slice(0, 64),
+    npc:       npc.slice(0, 64),
+    zone:      zone ? String(zone).slice(0, 64) : null,
+    boss:      null,
+    source:    'hail_witnessed',
+    witness:   character ? String(character).slice(0, 64) : null,
+    ts:        ts ? ts.toISOString() : new Date().toISOString(),
   };
 }
 
@@ -5306,6 +5686,66 @@ function _matchDiscLine(line, selfName) {
     if (mm) return { name: d.name, actor: mm[1] };
   }
   return null;
+}
+
+// ── Discipline reuse timer — SELF ONLY (Hitya, 2026-08-30) ──────────────────
+// "discipline cooldowns should be tracked on the command center for the user
+// only."
+//
+// EQ's melee disciplines share ONE reuse timer per character, and the client
+// states exactly how much is left the moment you try too early:
+//
+//   [Sat Aug 30 22:46:23 2026] You can use a new discipline in 10 minutes 34 seconds.
+//
+// That line is the only EXACT signal for this timer, and it is self-only by
+// construction — it appears in your own log, about your own character, and
+// never names anyone else. Which is also why this is deliberately NOT a
+// raid-wide board like `da_broadcasts`: there is no equivalent line for other
+// people, and deriving one from their activation emote would mean guessing a
+// reuse that differs per discipline and per level. A wrong "Bob's disc is
+// ready" is worse than no line at all.
+//
+// ⚠ Only the REFUSAL line is matched. A "you may use a discipline again" line
+// may or may not exist on this client — nothing in any log we hold shows one,
+// and inventing the text is exactly how the Divine Intervention trigger ended
+// up watching a string that appears nowhere (CLAUDE.md, "invented pattern").
+// So the countdown simply runs out on its own, which needs no line at all.
+//
+// Keyed per character because the agent tails 3-12 logs at once; the Command
+// Center reads only the ACTIVE character's, which is what "for the user only"
+// asks for.
+const _DISC_REFUSAL_RX =
+  /\bYou can use a new discipline in (?:(\d+) minutes?)?\s*(?:(\d+) seconds?)?\s*\./i;
+const _discReadyAt = new Map();     // characterLower -> { at, name }
+
+function trackDisciplineTimerLine(line, character) {
+  if (!line || line.indexOf('new discipline') === -1) return;   // cheap gate
+  const m = _DISC_REFUSAL_RX.exec(line);
+  if (!m) return;
+  const mins = m[1] ? parseInt(m[1], 10) : 0;
+  const secs = m[2] ? parseInt(m[2], 10) : 0;
+  const total = mins * 60 + secs;
+  if (!total) return;                                           // "in ." — nothing to count
+  const name = String(character || '').trim();
+  if (!name) return;
+  const at = parseEqTimestamp(line) || Date.now();
+  _discReadyAt.set(name.toLowerCase(), { at: at + total * 1000, name });
+}
+
+// The active character's remaining reuse, or null when it is ready (or was
+// never observed). Expired entries are dropped on read so the map cannot grow.
+function _disciplineTimerSnapshot(activeChar) {
+  const k = String(activeChar || '').trim().toLowerCase();
+  if (!k) return null;
+  const e = _discReadyAt.get(k);
+  if (!e) return null;
+  const left = e.at - Date.now();
+  if (left <= 0) { _discReadyAt.delete(k); return null; }
+  return {
+    character: e.name,
+    ready_at:  new Date(e.at).toISOString(),
+    seconds:   Math.round(left / 1000),
+  };
 }
 
 // ── Raid-wide healer/caster mana roster ─────────────────────────────────────
@@ -8861,6 +9301,7 @@ function _endpointForKind(kind, botUrl) {
     case 'quarmy':          return base + '/quarmy';
     case 'spellbook':       return base + '/spellbook';
     case 'inventory':       return base + '/inventory';
+    case 'rez_dismiss':     return base + '/rez-dismiss';
     case 'buff_cast':       return base + '/buff_casts';
     case 'tells':           return base + '/tells';
     case 'threat_snapshot': return base + '/threat-snapshot';
@@ -9092,6 +9533,27 @@ function enqueueUpload(kind, payload) {
       app_version:  process.env.WOLFPACK_APP_VERSION || null,
       platform:     process.platform,
       node_version: process.versions && process.versions.node,
+      // Which Zeal this box is running, harvested from `/zeal` output
+      // (_clientVersions). ADOPTION TRACKING ONLY — see below for why it
+      // cannot answer the capability question. Any watched character's report
+      // will do: Zeal is per-CLIENT and one install serves every character on
+      // the machine, so the newest reading is the machine's version.
+      zeal_version: _newestZealVersion(),
+      // Whether this install has ACTUALLY seen a spawn id on the pipe (Zeal
+      // PR #229). This is the capability, observed — and it is a separate
+      // field from the version on purpose:
+      //
+      // ⚠ THE VERSION CANNOT ANSWER IT. A build carrying the patch reports the
+      // SAME version string as a stock one of the same release (the author's
+      // own patched 1.4.5 reports "1.4.5"), so a version test would call a
+      // capable client incapable. After the PR ships there will be a release
+      // to compare against; there is not one today, and guessing the number
+      // would bake in a wrong answer.
+      //
+      // Sticky for the process, deliberately: not having a target right now is
+      // not evidence the client cannot supply an id, so this latches on the
+      // first one seen rather than reporting the current instant.
+      spawn_id_capable: _spawnIdSeen,
     };
     // This machine's measured clock offset, attached to EVERY payload (#202).
     //
@@ -9985,7 +10447,21 @@ function loadSessionState() {
 // holdover name for "one of these", not literally Divine Aura only (Hitya
 // 2026-07-03: "this should also include Shadowknights harmshield and other
 // forms of invulnerability").
-const DA_SPELL_RX = /^(divine aura|divine barrier|divine intervention|harmshield|forced sound channeling|invulnerability)/i;
+// ⚠ DIVINE INTERVENTION IS NOT ON THIS LIST, and must never be added back.
+// It was, until 2026-08-30, and the Tank card told healers Hawkner was
+// INVULNERABLE with 5:36 on the clock. DI is a one-shot DEATH SAVE, not an
+// immunity window: under DI the tank takes full damage and can die, so "INV"
+// is the most dangerous thing the overlay could say about them. The catalog
+// settles it — every true invuln here is buffduration 3 (3 ticks = 18s) while
+// Divine Intervention (spell 1546) is 100 ticks = TEN MINUTES. DI has its own
+// surfaces (#204 readiness chips, the Command Center DI row); it does not
+// belong in this one.
+const DA_SPELL_RX = /^(divine aura|divine barrier|harmshield|forced sound channeling|invulnerability)/i;
+// Belt-and-braces for the same class of mistake: a name-whitelist can be wrong
+// again, but a multi-minute buff is not an invulnerability whatever it is
+// called. 18s is the real ceiling; 60 leaves room for a variant we have not
+// seen without ever admitting a DI-length buff.
+const DA_MAX_PLAUSIBLE_SEC = 60;
 const DA_CRITICAL_TICKS = 2;  // ≤12s remaining (1 tick = 6s) → flash + ramp callout
 // Bosses that enrage at low HP — primary use is the warning gauge. ~8% on
 // Quarm per Hitya 2026-06-25; not every boss enrages. Until we have a
@@ -10081,26 +10557,54 @@ const HP_EXACT_MAX_AGE_MS = 20_000;
 
 // Who is currently dead. Fed by confirmed player deaths in the encounter
 // builder; cleared when they turn up alive again (a rez, or any fresh self-HP).
-const _deadSince = new Map();     // nameLower → diedAtMs
+// nameLower → { at, display }. ⚠ The VALUE carries the name as written.
+// This used to be nameLower → diedAtMs, and the rez board rendered the KEY —
+// so the Command Center listed "dafeet, meditate, shavimo…" in lowercase
+// (Hitya, 2026-08-30). The key stays lowercase because every lookup here
+// matches case-insensitively; only the display string is new.
+const _deadSince = new Map();
 const DEAD_FORGET_MS = 15 * 60_000;
 function _noteDeath(name, atMs) {
-  const k = String(name || '').toLowerCase();
+  const raw = String(name || '').trim();
+  const k = raw.toLowerCase();
   if (!k) return;
-  _deadSince.set(k, atMs || Date.now());
+  // ⚠ Pets do not get rezzed — they are re-summoned. Jtik on the needs-rez
+  // board (Hitya, same report) is a charm/summoned pet, and a healer reading
+  // that row wastes a rez cast and a queue slot on something no rez can touch.
+  // _isOurPetName is the purpose-built predicate and covers all three
+  // ownership signals the DPS meter uses: the charm tracker, Zeal slot 16,
+  // and the cross-builder declared pet-leaders registry.
+  if (_isOurPetName(k)) return;
+  _deadSince.set(k, { at: atMs || Date.now(), display: raw });
   if (_deadSince.size > 200) {
     const cutoff = Date.now() - DEAD_FORGET_MS;
-    for (const [n, t] of _deadSince) if (t < cutoff) _deadSince.delete(n);
+    for (const [n, v] of _deadSince) if ((v && v.at ? v.at : 0) < cutoff) _deadSince.delete(n);
   }
 }
 function _clearDeath(name) {
   const k = String(name || '').toLowerCase();
+  // Ask BEFORE deleting: the needs-rez board only wants to say "rezzed" about
+  // someone we actually had down.
+  const wasDead = !!k && _deadSince.has(k);
   if (k) _deadSince.delete(k);
+  // Life on an independent channel is also the rez confirmation for the
+  // needs-rez board (defined below): HP above zero after a death is exactly
+  // the "enter the zone with about 20% health" moment.
+  if (wasDead) { try { noteRezDone(k); } catch (e) { void e; } }
 }
 // Deliberately forgets a death after DEAD_FORGET_MS. We do not see every rez —
 // an un-cleared entry would tombstone someone for the rest of the night, which
 // is a worse failure than briefly missing a corpse.
+// When did this name die? One accessor, so no caller has to know that the map
+// value gained a shape (it was a bare timestamp until 2026-08-30).
+function _deadAt(nameLower) {
+  const v = _deadSince.get(String(nameLower || '').toLowerCase());
+  if (v == null) return null;
+  const at = typeof v === 'object' ? v.at : v;
+  return Number.isFinite(at) ? at : null;
+}
 function _isDead(nameLower, nowMs) {
-  const t = _deadSince.get(String(nameLower || '').toLowerCase());
+  const t = _deadAt(nameLower);
   if (t == null) return false;
   if ((nowMs || Date.now()) - t > DEAD_FORGET_MS) return false;
   return true;
@@ -10108,8 +10612,181 @@ function _isDead(nameLower, nowMs) {
 function _deadNamesSnapshot(nowMs) {
   const now = nowMs || Date.now();
   const out = [];
-  for (const [n, t] of _deadSince) if (now - t <= DEAD_FORGET_MS) out.push({ name: n, since_ms: now - t });
+  for (const [n, v] of _deadSince) {
+    const at = v && typeof v === 'object' ? v.at : v;   // tolerate a pre-upgrade entry
+    if (!(now - at <= DEAD_FORGET_MS)) continue;
+    out.push({ name: (v && v.display) || n, since_ms: now - at, key: n });
+  }
   return out;
+}
+
+// ── Needs-rez board (Hitya 2026-08-20) ──────────────────────────────────────
+// "a 'needs rez' section of command center … if the rezzer has mimic and we
+// see them rezzing the corpse OR if someone calls it out in guild/raid chat as
+// 'REZ <name>' or 'rezzing <name>' we can make that person's name glow brighter
+// until it says 'rezzed' next to them."
+//
+// WHO IS DEAD is already answered above — _deadSince, fed by the log line AND
+// the independent group-HP watcher (#205). The board is that set plus a thin
+// layer of rez INTENT, so it inherits the feign-death discrimination for free
+// and can never tombstone anyone (DEAD_FORGET_MS still applies).
+//
+// The three states Hitya described:
+//   needs    — a corpse nobody has spoken for.
+//   incoming — somebody is on it. The row glows. Two sources: a chat call-out
+//              (raid-wide by nature — every agent tails the same /gu + /rs, so
+//              this works today with no bot round-trip) and a local rez cast.
+//   rezzed   — they are back. The confirmation is life on an independent
+//              channel: _clearDeath fires when the group-HP watcher sees HP
+//              above zero after a death, which IS the "enter the zone with
+//              about 20% health" moment. Lingers briefly so the row can say
+//              "rezzed" before it leaves.
+//
+// A rez can also be REQUESTED by someone already standing in the zone (a
+// corpse-runner who wants their XP back). That row has no death behind it, so
+// it is kept until it is answered or ages out rather than being cleared by
+// life evidence that was never in doubt.
+const REZ_DONE_LINGER_MS = 45_000;      // how long "rezzed ✓" stays visible
+const REZ_REQUEST_TTL_MS = 10 * 60_000; // an unanswered "rez me" ages out
+const _rezState = new Map();            // lowerName -> { name, state, rezzer, since, requested, cls }
+
+// Words that follow "rez" but are not a person.
+const _REZ_NOT_A_NAME = new Set([
+  'me', 'please', 'plz', 'pls', 'now', 'up', 'inc', 'incoming', 'him', 'her',
+  'them', 'us', 'that', 'this', 'it', 'when', 'someone', 'anyone', 'soon',
+  'here', 'there', 'ready', 'needed', 'need', 'on', 'the', 'a', 'my', 'and',
+]);
+
+/**
+ * Parse a rez call-out from one chat body. PURE — tested in
+ * test/rez-board.test.js.
+ *   "REZ Hitya" / "rezzing Hitya" / "rez on Hitya"  -> { target: 'Hitya' }
+ *   "rez me" / "need a rez" / "rez plz"             -> { selfRequest: true }
+ *   anything else                                   -> null
+ */
+function parseRezCallout(body) {
+  const text = String(body || '').trim();
+  if (!text) return null;
+  if (!/\brez/i.test(text)) return null;             // cheap gate
+  const m = text.match(/\brez(?:z?ing|z)?\b\s*(?:on\s+)?([A-Za-z]{2,})?/i);
+  if (!m) return null;
+  const word = (m[1] || '').trim();
+  if (word && !_REZ_NOT_A_NAME.has(word.toLowerCase())) {
+    return { target: word.charAt(0).toUpperCase() + word.slice(1).toLowerCase() };
+  }
+  // "rez" with no name, or followed by a non-name ("rez me", "rez plz") — the
+  // speaker is asking for one.
+  return { selfRequest: true };
+}
+
+function _rezEntry(name) {
+  const k = String(name || '').toLowerCase();
+  if (!k) return null;
+  let e = _rezState.get(k);
+  if (!e) {
+    e = { name: String(name), state: 'needs', rezzer: null, since: Date.now(), requested: false, cls: null };
+    _rezState.set(k, e);
+  }
+  return e;
+}
+
+/** Somebody is on this corpse — from chat, or from a rez cast we watched. */
+function noteRezIncoming(name, rezzer, atMs) {
+  const e = _rezEntry(name);
+  if (!e) return;
+  if (e.state === 'rezzed') return;                 // already home
+  e.state  = 'incoming';
+  e.rezzer = rezzer || e.rezzer || null;
+  e.since  = atMs || Date.now();
+}
+
+/** A rez was asked for by someone who may not be a corpse we saw drop. */
+function noteRezRequest(name, atMs) {
+  const e = _rezEntry(name);
+  if (!e) return;
+  if (e.state === 'rezzed') { e.state = 'needs'; e.rezzer = null; }
+  e.requested = true;
+  e.since = e.since || atMs || Date.now();
+}
+
+/**
+ * They are back. Called from _clearDeath — life on an independent channel.
+ * Creates the row if nothing had claimed the corpse: a quiet death that just
+ * got rezzed should still get to say so before it leaves the board.
+ */
+function noteRezDone(name, atMs) {
+  const e = _rezEntry(name);
+  if (!e) return;
+  e.state = 'rezzed';
+  e.doneAt = atMs || Date.now();
+}
+
+/**
+ * Clear a row for the WHOLE raid (Hitya 2026-08-20: "add the X button on the
+ * command center that removes it for everyone"). Someone got up and we missed
+ * the confirmation, or they released — either way one person's click should
+ * settle it for every Command Center, so this also drops the corpse from the
+ * death registry. Without that the very next snapshot re-adds them as "needs"
+ * and the button looks broken.
+ */
+function noteRezDismiss(name, byWhom) {
+  const k = String(name || '').toLowerCase();
+  if (!k) return;
+  _rezState.delete(k);
+  _deadSince.delete(k);
+  console.log(`[rez] ${byWhom || 'someone'} cleared ${name} from the needs-rez board`);
+}
+
+function noteRezFromChat(chatMsg) {
+  try {
+    if (!chatMsg || (chatMsg.channel !== 'guild' && chatMsg.channel !== 'raid')) return;
+    const call = parseRezCallout(chatMsg.body || chatMsg.message || '');
+    if (!call) return;
+    const atMs = Date.parse(chatMsg.ts) || Date.now();
+    if (call.target) {
+      // "rez Hitya" — Hitya is the one who needs it; the speaker is on it.
+      noteRezIncoming(call.target, chatMsg.speaker || null, atMs);
+    } else if (chatMsg.speaker) {
+      noteRezRequest(chatMsg.speaker, atMs);
+    }
+  } catch (e) { void e; }
+}
+
+/**
+ * Rows for the Command Center. Merges the corpse registry with rez intent, so
+ * a death nobody has spoken for still shows up as "needs".
+ */
+function _rezBoardSnapshot(nowMs) {
+  const now = nowMs || Date.now();
+  const rows = new Map();
+  for (const d of _deadNamesSnapshot(now)) {
+    rows.set(d.name, { name: d.name, state: 'needs', rezzer: null, dead_ms: d.since_ms, requested: false });
+  }
+  for (const [k, e] of _rezState) {
+    if (e.state === 'rezzed' && e.doneAt && (now - e.doneAt) > REZ_DONE_LINGER_MS) { _rezState.delete(k); continue; }
+    // A bare request (no corpse behind it) ages out on its own.
+    if (e.state !== 'rezzed' && !rows.has(k) && e.requested && (now - e.since) > REZ_REQUEST_TTL_MS) {
+      _rezState.delete(k); continue;
+    }
+    // Not dead, never asked, not mid-rez → nothing to show.
+    if (!rows.has(k) && !e.requested && e.state === 'needs') continue;
+    const base = rows.get(k) || { name: e.name, state: 'needs', dead_ms: null, requested: e.requested };
+    rows.set(k, {
+      ...base,
+      name:      e.name || base.name,
+      state:     e.state,
+      rezzer:    e.rezzer || null,
+      requested: e.requested || base.requested,
+      done_ms:   e.doneAt ? (now - e.doneAt) : null,
+    });
+  }
+  return [...rows.values()].sort((a, b) => {
+    // Glowing rows first (someone is acting), then longest-dead, then name.
+    const rank = s => (s === 'incoming' ? 0 : s === 'needs' ? 1 : 2);
+    return rank(a.state) - rank(b.state)
+        || (b.dead_ms || 0) - (a.dead_ms || 0)
+        || String(a.name).localeCompare(String(b.name));
+  });
 }
 
 // ── #205 group-HP death watcher — a SECOND, independent death source ────────
@@ -10245,7 +10922,7 @@ function _noteGroupHpFromState(character, st, nowMs) {
       // ("a rez, or any fresh self-HP") — but never on evidence younger than a
       // freshly recorded death, which is the log-vs-gauge race above.
       t.sawAlive = true; t.zeroSince = 0; t.zeroSamples = 0; t.noted = 0;
-      const diedAt = _deadSince.get(k);
+      const diedAt = _deadAt(k);
       if (diedAt != null && (now - diedAt) >= GROUP_ALIVE_CLEAR_MIN_AGE_MS) {
         _clearDeath(k);
         t.clearedAt = now;
@@ -10404,6 +11081,8 @@ function _findDA(buffsList, greenSecs) {
   for (const b of (buffsList || [])) {
     if (!b || !b.name || b.fell_off) continue;   // a nameless/null entry must not throw DA_SPELL_RX.test(undefined)
     if (DA_SPELL_RX.test(b.name)) {
+      // A DA-class buff reading minutes is a misidentification, not a long DA.
+      if (typeof b.seconds === 'number' && b.seconds > DA_MAX_PLAUSIBLE_SEC) continue;
       return { name: b.name, seconds: b.seconds, ticks: b.ticks, critical: typeof b.seconds === 'number' && b.seconds <= greenSecs };
     }
   }
@@ -10939,7 +11618,10 @@ function _serializeCommandCenterState() {
     rampage:       tank.rampage,
     enrage:        tank.enrage,
     deathtouch:    tank.deathtouch,
+    needs_rez:     _rezBoardSnapshot(),
     da_broadcasts: daBroadcastsSnapshot(),
+    // SELF ONLY — see trackDisciplineTimerLine. Null when ready or unobserved.
+    discipline:    _disciplineTimerSnapshot(activeChar),
     // ALL healer mana, merged from every source we have (Hitya 2026-07-15:
     // "Command center should have all healer mana if its reported in the CH
     // chain or as %n mana or mana %n or if they're in mimic"):
@@ -11446,6 +12128,23 @@ function _serializeForDashboard() {
     abilityStats:       Object.fromEntries(stats.abilityStats),
     castCounts:         stats.castCounts,
     watchedLogs:        stats.watchedLogs,
+    // ── Buffs tab (Hitya 2026-09-02) ───────────────────────────────────────
+    // Two provenances, never blended:
+    //   buffsActive   what each watched character is carrying RIGHT NOW, from
+    //                 the Zeal buff window — real remaining time, not a guess.
+    //   buffDurations what we have WATCHED buffs actually last on this machine,
+    //                 with the catalog's prediction beside it.
+    buffsActive:        _activeBuffsForDashboard(),
+    // Item 3: per-character duration factor, MEASURED. See
+    // buffDurationFactorFor — the AA tables cannot give this and guessing it
+    // would be a confidently wrong number.
+    buffFactors:        Object.keys(_zealState || {}).map(c => buffDurationFactorFor(c)).filter(Boolean),
+    buffDurations:      buffDurationTable().map(d => ({
+      ...d,
+      // The catalog's own answer, so the table can show measured against
+      // predicted rather than either alone.
+      catalog_secs: _catalogDurationSec(d.spell),
+    })),
     uploadCount:        stats.uploadCount,
     uploadErrors:       stats.uploadErrors,
     updateAvailable:    stats.updateAvailable,
@@ -12454,6 +13153,10 @@ function _updateBlockedReason() {
 // ALWAYS run `node scripts/check-agent-dashboard.js` after touching this
 // template — it extracts the served <script> body and parses it, catching
 // these before they reach a user. (The release workflow runs it too.)
+// ⚠ GENERATED — do not edit this literal. The dashboard is AUTHORED in
+// packages/wolfpack-logsync/dashboard.html (agent-side interpolations written
+// as {{WP:expr}}); `npm run sync:dashboard` folds it in here with all escaping
+// done mechanically, and check:dashboard fails the build on any drift.
 const WEB_HTML = `<!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>Wolf Pack EQ — Parser</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -12484,8 +13187,30 @@ tr:hover td { background:#1f242c }
    their own. A rail has room to grow and shows every destination at once.
    The markup is unchanged: same .nav, same data-tab buttons, so the switcher,
    the Panels popover and the tour all keep working. */
+/* The top bar stays put while the page scrolls (Hitya 2026-09-02: "lets also
+   lock the top nav as we scroll"). Everything a user reaches for repeatedly —
+   the tab rail, Panels, Tour, Feedback, Reload — is now reachable without
+   scrolling back up. Solid background, not translucent: content passes UNDER
+   this and a see-through bar makes both unreadable. */
+#wpTopBar { position:sticky; top:0; z-index:120; background:var(--bg,#0d1117);
+            border-bottom:1px solid var(--border); padding-bottom:6px; margin-bottom:4px; }
+#wpTopBar h1 { margin-bottom:2px; }
+/* On a short window a 3-row sticky bar eats the screen, so the logo and the
+   session-stats line stand down below 620px tall and the links stay. */
+@media (max-height:620px) {
+  #wpTopBar h1 img { display:none; }
+  #wpTopBar #header { display:none; }
+}
 .shell { display:flex; align-items:flex-start; gap:14px; }
-.shell > .nav { flex:0 0 168px; position:sticky; top:8px; }
+/* ⚠ The rail sticks BELOW the sticky top bar, not at a fixed 8px. When the bar
+   became sticky the rail kept sticking to top:8px — i.e. underneath it — so the
+   first few tabs (Dashboard, Overlays, Raid, Buffs) slid under the header and
+   vanished the moment you scrolled (Hitya 2026-09-02).
+   --wp-topbar-h is MEASURED and republished by _wpSyncTopBarHeight(); the
+   fallback only covers the first paint. A hardcoded offset would be wrong the
+   moment the bar wraps or the short-window breakpoint fires. */
+.shell > .nav { flex:0 0 168px; position:sticky; top:calc(var(--wp-topbar-h, 118px) + 8px);
+                max-height:calc(100vh - var(--wp-topbar-h, 118px) - 20px); overflow-y:auto; }
 .panes { flex:1 1 auto; min-width:0; }   /* min-width:0 or wide tables blow the flex item out */
 .nav { display:flex; flex-direction:column; gap:4px; margin:12px 0; align-items:stretch; }
 .nav button { text-align:left; }
@@ -12631,6 +13356,7 @@ body.wp-overlay-mode .wp-overlay-target table td {
 body.wp-overlay-mode .wp-overlay-target table td:nth-child(2),
 body.wp-overlay-mode .wp-overlay-target table th:nth-child(2) { text-align:right !important; }
 </style></head><body>
+<div id="wpTopBar">
 <h1 style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;row-gap:2px"><img src="data:image/png;base64,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" alt="" style="height:48px;width:48px;flex:none"><span style="white-space:nowrap">Wolf Pack ${process.env.WOLFPACK_CLIENT === 'mimic' ? 'mi<span style="letter-spacing:0.5px">MIC</span>' : 'EQ — Parser'}</span><span style="font-size:13px;font-weight:normal;color:#8b949e;vertical-align:middle">${process.env.WOLFPACK_APP_VERSION ? '(v' + process.env.WOLFPACK_APP_VERSION + ') ' : ''}(agent ${AGENT_VERSION})</span><span id="wpUpdSlot"></span>${/-/.test(String(process.env.WOLFPACK_APP_VERSION || '')) ? ' <span title="Running a beta (pre-release) build" style="font-size:10px;font-weight:600;color:#1f1300;background:#f0b429;border-radius:3px;padding:2px 5px;margin-left:6px;vertical-align:middle;letter-spacing:0.5px">BETA</span> <button id="wpRevertStable" title="Switch back to the stable release — Mimic confirms before doing anything" style="font-size:10px;color:#8b949e;background:none;border:1px solid #30363d;border-radius:3px;padding:1px 6px;margin-left:4px;vertical-align:middle;cursor:pointer;font-family:inherit">↩ stable</button>' : ''}</h1>
 <div class="subtle" id="header"></div>
 <div class="wp-quicklinks" id="wpQuickLinks" style="display:flex;align-items:center;flex-wrap:wrap;gap:6px">
@@ -12653,14 +13379,19 @@ body.wp-overlay-mode .wp-overlay-target table th:nth-child(2) { text-align:right
     <button id="wpResourcesBtn" type="button"
        style="display:none;background:transparent;border:1px solid var(--border);color:var(--fg);padding:3px 9px;border-radius:5px;cursor:pointer;font:inherit"
        title="What Mimic costs this machine — live CPU and memory for every Mimic process, measured here and never uploaded">📊 Resources</button>
+    <button id="wpTourBtn" class="wp-gear" title="Take the guided walkthrough of the dashboard — every stop is your own live data. Re-run any time." onclick="wpTourStart()">✨ Tour</button>
+    <button id="wpGear" class="wp-gear" title="Customize panels — show or hide sections (per page)">⚙ Panels</button>
+    <button id="wpFbBtn" class="wp-gear" title="Send a bug report or an idea to the officers — optionally with a slice of your log" onclick="wpOpenFeedback()">💬 Feedback</button>
     <button id="wpReload" class="wp-gear" title="Reload the dashboard — reconnect to the parser engine (use this if panels are blank after an update)" onclick="if(window.mimic&&window.mimic.openDashboard){window.mimic.openDashboard()}else{location.reload()}">🔄 Reload</button>
   </span>
+</div>
 </div>
 <div class="shell">
 <div class="nav">
   <button class="active" data-tab="dash">Dashboard</button>
   <button data-tab="overlays">🪟 Overlays</button>
-  <button data-tab="raid">⚔ Buffs / Raid</button>
+  <button data-tab="raid">⚔ Raid</button>
+  <button data-tab="buffs">✨ Buffs</button>
   <button data-tab="fights">⚔️ Fights</button>
   <!-- 📊 Stats + 🩺 Diagnostics were carved OUT of Info and Triggers (Hitya
        2026-08-13 — "having to scroll in our dashboard is somewhat annoying to
@@ -12679,8 +13410,9 @@ body.wp-overlay-mode .wp-overlay-target table th:nth-child(2) { text-align:right
        officer-gated card DATA is served only to officers, so this is a real
        gate, not a CSS hide. -->
   <button data-tab="admin" id="wpAdminTab" style="display:none" title="Officer quick menu — DKP ticks, loot capture, admin links">🛡 Admin</button>
-  <button id="wpTourBtn" class="wp-gear" style="margin-left:auto" title="Take the guided walkthrough of the dashboard — every stop is your own live data. Re-run any time." onclick="wpTourStart()">✨ Tour</button>
-  <button id="wpGear" class="wp-gear" title="Customize panels — show or hide sections (per page)">⚙ Panels</button>
+  <!-- ✨ Tour and ⚙ Panels moved to the sticky top bar (Hitya 2026-09-02) so
+       they are reachable from anywhere on a long page, alongside Feedback. The
+       ids are unchanged, so every handler that binds to them still binds. -->
 </div>
 <div id="wpPanelMenu" class="wp-menu" style="display:none"></div>
 <!-- .panes holds everything the rail sits beside. The nav KEEPS its class and
@@ -12691,6 +13423,7 @@ body.wp-overlay-mode .wp-overlay-target table th:nth-child(2) { text-align:right
 <div id="dash" class="section active"></div>
 <div id="overlays" class="section"></div>
 <div id="raid" class="section"></div>
+<div id="buffs" class="section"></div>
 <!-- Fights = Tanks/Healers + DPS combined. #tanks and #deeps are inner
      render-targets (renderTanks/renderDeeps still setSectionHTML into them),
      not independent .section tabs, so both show whenever Fights is active. -->
@@ -12783,9 +13516,395 @@ document.addEventListener('toggle', function (e) {
   var key = d.getAttribute('data-keep');
   if (key) _wpOpenDetails[key] = !!d.open;
 }, true);   // capture phase — 'toggle' does not bubble
-function wpKeep(key) {
-  return 'data-keep="' + esc(String(key)) + '"' + (_wpOpenDetails[key] ? ' open' : '');
+function wpKeep(key, defaultOpen) {
+  // defaultOpen applies ONLY until the user touches this <details>. The store
+  // records a boolean on every toggle, so an "in" test on the key is exactly
+  // "they have expressed a preference" — without it a default-open panel would
+  // spring back open on the next 2s repaint after someone closed it, which is
+  // worse than never opening it at all.
+  var _seen = (key in _wpOpenDetails) ? _wpOpenDetails[key] : !!defaultOpen;
+  return 'data-keep="' + esc(String(key)) + '"' + (_seen ? ' open' : '');
 }
+// Publish the sticky top bar's REAL height so the tab rail can sit below it.
+// The bar changes height when the links wrap, when the update/beta pills appear,
+// and at the short-window breakpoint, so this is measured rather than assumed —
+// the same reason the feedback jump measures instead of guessing.
+function _wpSyncTopBarHeight() {
+  var bar = document.getElementById('wpTopBar');
+  if (!bar) return;
+  var h = Math.round(bar.getBoundingClientRect().height);
+  if (h > 0 && h !== _wpLastTopBarH) {
+    _wpLastTopBarH = h;
+    document.documentElement.style.setProperty('--wp-topbar-h', h + 'px');
+  }
+}
+var _wpLastTopBarH = 0;
+// Resize changes wrapping and can cross the short-window breakpoint, and the
+// first paint happens before any poll has run.
+window.addEventListener('resize', function () { try { _wpSyncTopBarHeight(); } catch (e) { void e; } });
+window.addEventListener('load',   function () { try { _wpSyncTopBarHeight(); } catch (e) { void e; } });
+// ⚠ And once RIGHT NOW, not only from events. This script's scope runs at an
+// unclear point relative to \`load\` in the packaged artifact, and a measurement
+// that never happens leaves the rail on its CSS fallback — which is close enough
+// today and silently wrong the moment the bar grows a row. #wpTopBar is earlier
+// in the document than this script, so it is already in the DOM here; the poll
+// and resize handlers refine the value once fonts and wrapping settle.
+try { _wpSyncTopBarHeight(); } catch (e) { void e; }
+
+// Jump to the feedback card from the sticky top bar: switch to the Dashboard
+// tab (that is where the card lives), expand it, and scroll it into view.
+// ⚠ scrollIntoView with a sticky header would tuck the card's own heading UNDER
+// the bar, so the final scroll is offset by the bar's real measured height
+// rather than a guessed constant — the bar changes height at the short-window
+// breakpoint and on wrap.
+function wpOpenFeedback() {
+  var tab = document.querySelector('.nav button[data-tab="dash"]');
+  if (tab && !tab.classList.contains('active')) tab.click();
+  var card = document.getElementById('wpFeedback');
+  if (!card) return;
+  var d = card.querySelector('details');
+  if (d) d.open = true;
+  var bar = document.getElementById('wpTopBar');
+  var pad = (bar ? bar.getBoundingClientRect().height : 0) + 10;
+  var y = card.getBoundingClientRect().top + window.scrollY - pad;
+  window.scrollTo({ top: Math.max(0, y), behavior: 'smooth' });
+  var ta = document.getElementById('wpFbText');
+  if (ta) setTimeout(function () { try { ta.focus(); } catch (e) { void e; } }, 350);
+}
+
+// 💬 Send feedback — a bug report or an idea, from inside the app, optionally
+// carrying the last N minutes of this install's log.
+//
+// ⚠ NOTHING IS ATTACHED UNTIL THE REPORTER HAS SEEN IT. The checkbox builds a
+// PREVIEW first and shows the real redacted lines; the send is a second,
+// deliberate click. A tool that silently ships someone's log because they filled
+// in a text box would be the single worst thing this platform could do, given
+// its central promise is that private channels never leave the machine.
+//
+// Static markup, built once and left alone: this card holds a half-typed bug
+// report, and the dashboard repaints every ~2s. Anything volatile lives in the
+// #wpFbPreview / #wpFbMsg children, which the handlers fill directly rather than
+// through a re-render (morphInto would wipe the textarea mid-sentence).
+function renderFeedback(s) {
+  const el = document.getElementById('wpFeedback');
+  if (!el) return;
+  if (el._wpBuilt) return;
+  el._wpBuilt = true;
+  // The tray's "Send feedback" item opens /#feedback. Honour that by expanding
+  // the card, otherwise the tray route drops someone on a dashboard with the
+  // thing they asked for still collapsed.
+  const _fbWanted = (location.hash || '').toLowerCase() === '#feedback';
+  el.innerHTML =
+    '<details ' + wpKeep('feedback', _fbWanted) + ' class="card wide" style="margin-top:0">'
+    + '<summary style="cursor:pointer;font-weight:600;color:var(--text)">💬 Send feedback'
+    +   ' <span class="dim" style="font-weight:normal;font-size:11px">— a bug or an idea, straight to the officers</span></summary>'
+    + '<div style="margin-top:10px;display:flex;gap:6px">'
+    +   '<button type="button" id="wpFbBug"  class="wp-fb-kind" data-kind="bug">🐞 Bug report</button>'
+    +   '<button type="button" id="wpFbIdea" class="wp-fb-kind" data-kind="idea">💡 Idea</button>'
+    + '</div>'
+    + '<textarea id="wpFbText" rows="4" maxlength="4000" placeholder="What happened, or what would you like?" '
+    +   'style="width:100%;margin-top:8px;background:#0d1117;color:var(--text);border:1px solid var(--border);'
+    +   'border-radius:6px;padding:8px;font-family:inherit;font-size:12px"></textarea>'
+    + '<div id="wpFbAttachRow" style="margin-top:8px;display:none;align-items:center;gap:8px;flex-wrap:wrap">'
+    +   '<label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px">'
+    +     '<input type="checkbox" id="wpFbAttach"> Attach a slice of my EverQuest log</label>'
+    +   '<span id="wpFbMins" style="display:none;gap:4px">'
+    +     '<button type="button" class="wp-fb-min" data-min="15">15 min</button>'
+    +     '<button type="button" class="wp-fb-min" data-min="30">30 min</button>'
+    +     '<button type="button" class="wp-fb-min" data-min="60">60 min</button>'
+    +   '</span>'
+    + '</div>'
+    + '<div id="wpFbPreview" style="margin-top:8px"></div>'
+    + '<div style="margin-top:10px;display:flex;align-items:center;gap:10px">'
+    +   '<button type="button" id="wpFbSend">Send</button>'
+    +   '<span id="wpFbMsg" class="dim" style="font-size:11px"></span>'
+    + '</div>'
+    + '</details>';
+  _wpFbWire();
+}
+
+// Card state. Deliberately module-level, not re-derived from the DOM: the
+// selected minutes must survive a preview refresh.
+var _wpFbKind = 'bug';
+var _wpFbMin  = 30;
+function _wpFbSetKind(k) {
+  _wpFbKind = (k === 'idea') ? 'idea' : 'bug';
+  var b = document.getElementById('wpFbBug'), i = document.getElementById('wpFbIdea');
+  if (b) b.style.opacity = _wpFbKind === 'bug'  ? '1' : '0.55';
+  if (i) i.style.opacity = _wpFbKind === 'idea' ? '1' : '0.55';
+  // A log slice explains a BUG. Offering it on an idea invites someone to attach
+  // their log to "please add a dark mode", which is data we asked for and do not
+  // need — so the whole row disappears rather than being merely ignored.
+  var row = document.getElementById('wpFbAttachRow');
+  if (row) row.style.display = _wpFbKind === 'bug' ? 'flex' : 'none';
+  if (_wpFbKind !== 'bug') {
+    var cb = document.getElementById('wpFbAttach');
+    if (cb) cb.checked = false;
+    _wpFbRenderPreview(null);
+  }
+}
+function _wpFbRenderPreview(slice) {
+  var el = document.getElementById('wpFbPreview');
+  if (!el) return;
+  if (!slice) { el.innerHTML = ''; return; }
+  if (!slice.ok) {
+    el.innerHTML = '<div style="color:var(--orange);font-size:11px">'
+      + esc(slice.reason || 'could not read the log') + '</div>';
+    return;
+  }
+  var head = '<div class="dim" style="font-size:11px;margin-bottom:4px">'
+    + slice.lines + ' lines'
+    + (slice.removed ? ' · <b style="color:var(--green)">' + slice.removed + ' private lines removed</b>' : '')
+    + (slice.truncated ? ' · <span style="color:var(--orange)">truncated</span>' : '')
+    + ' · ' + Math.round((slice.bytes || 0) / 1024) + ' KB'
+    + '</div>';
+  var note = '<div class="dim" style="font-size:10px;margin-bottom:6px">'
+    + 'Chat, tells, group and /who are removed. Your character name, zones, spells and combat lines stay '
+    + '— that is what makes a bug reproducible. This preview shows the first 400 lines; every line sent '
+    + 'is filtered the same way.</div>';
+  el.innerHTML = head + note
+    + '<pre style="max-height:220px;overflow:auto;background:#0d1117;border:1px solid var(--border);'
+    + 'border-radius:6px;padding:8px;font-size:10px;line-height:1.45;margin:0;white-space:pre-wrap">'
+    + esc(slice.text || '') + '</pre>';
+}
+async function _wpFbPreviewNow() {
+  var cb = document.getElementById('wpFbAttach');
+  if (!cb || !cb.checked) { _wpFbRenderPreview(null); return; }
+  _wpFbRenderPreview({ ok: true, lines: 0, removed: 0, bytes: 0, text: 'reading your log…' });
+  try {
+    var r = await fetch('/api/feedback-preview', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ minutes: _wpFbMin }),
+    });
+    _wpFbRenderPreview(await r.json());
+  } catch (e) { _wpFbRenderPreview({ ok: false, reason: 'could not read the log' }); }
+}
+function _wpFbWire() {
+  var root = document.getElementById('wpFeedback');
+  if (!root) return;
+  _wpFbSetKind('bug');
+  _wpFbSetMin(_wpFbMin);
+  root.addEventListener('click', async function (e) {
+    var t = e.target;
+    if (!t || !t.closest) return;
+    var kind = t.closest('.wp-fb-kind');
+    if (kind) { _wpFbSetKind(kind.getAttribute('data-kind')); return; }
+    var min = t.closest('.wp-fb-min');
+    if (min) { _wpFbSetMin(parseInt(min.getAttribute('data-min'), 10) || 30); _wpFbPreviewNow(); return; }
+    if (t.id === 'wpFbSend') { _wpFbSend(); return; }
+  });
+  root.addEventListener('change', function (e) {
+    if (e.target && e.target.id === 'wpFbAttach') {
+      var span = document.getElementById('wpFbMins');
+      if (span) span.style.display = e.target.checked ? 'inline-flex' : 'none';
+      _wpFbPreviewNow();
+    }
+  });
+}
+function _wpFbSetMin(m) {
+  _wpFbMin = m;
+  var btns = document.querySelectorAll('.wp-fb-min');
+  for (var i = 0; i < btns.length; i++) {
+    btns[i].style.opacity = (parseInt(btns[i].getAttribute('data-min'), 10) === m) ? '1' : '0.55';
+  }
+}
+async function _wpFbSend() {
+  var ta  = document.getElementById('wpFbText');
+  var msg = document.getElementById('wpFbMsg');
+  var btn = document.getElementById('wpFbSend');
+  var cb  = document.getElementById('wpFbAttach');
+  var text = (ta && ta.value ? ta.value : '').trim();
+  if (text.length < 10) { if (msg) msg.textContent = 'say a little more (10 characters minimum)'; return; }
+  if (btn) { btn.disabled = true; }
+  if (msg) msg.textContent = 'sending…';
+  try {
+    var r = await fetch('/api/feedback-send', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        category: _wpFbKind, message: text,
+        attach_log: !!(cb && cb.checked && _wpFbKind === 'bug'), minutes: _wpFbMin,
+      }),
+    });
+    var j = await r.json();
+    if (j && j.ok) {
+      if (ta) ta.value = '';
+      if (cb) { cb.checked = false; }
+      _wpFbRenderPreview(null);
+      var span = document.getElementById('wpFbMins');
+      if (span) span.style.display = 'none';
+      if (msg) msg.textContent = '✓ sent' + (j.attached_lines ? ' with ' + j.attached_lines + ' log lines' : '') + ' — thank you';
+    } else if (msg) {
+      msg.textContent = '✕ ' + ((j && j.reason) || 'could not send');
+    }
+  } catch (e) {
+    if (msg) msg.textContent = '✕ could not reach the engine';
+  }
+  if (btn) btn.disabled = false;
+}
+
+// ✨ Buffs tab (Hitya 2026-09-02: "Move buffs to the buffs tab and give it a
+// more robust view of effects and timeframes").
+//
+// ⚠ THREE NUMBERS, AND THE TAB MUST NEVER BLEND THEM. Blending is how a screen
+// like this starts lying:
+//   zeal — the client's own remaining counter. Authoritative. Shown in
+//          preference to everything else, because it is not our arithmetic.
+//   log  — what we have WATCHED this buff actually last on this machine.
+//          Real, and scarce: n is always on screen because one sample is an
+//          anecdote, not a duration.
+//   db   — what the catalog formula predicts at the era-cap caster level.
+//          Available for nearly every spell and right for nobody in particular,
+//          since it knows nothing about who cast it.
+// Every figure carries the badge for where it came from.
+function _wpBuffProv(kind) {
+  var c = kind === 'zeal' ? 'var(--green)' : (kind === 'log' ? 'var(--gold)' : 'var(--dim)');
+  var t = kind === 'zeal' ? 'From the game client\\'s own buff window — a real counter, not an estimate.'
+        : kind === 'log'  ? 'Measured on this machine: how long we have watched this buff actually last.'
+        :                   'Predicted by the spell catalog at the era-cap caster level. Knows nothing about who cast it.';
+  return '<span title="' + t + '" style="font-size:9px;border:1px solid ' + c + ';color:' + c
+       + ';border-radius:3px;padding:0 4px;margin-left:4px;vertical-align:middle">' + kind + '</span>';
+}
+function _wpDur(secs) {
+  if (secs == null) return '—';
+  var s = Math.max(0, Math.round(secs));
+  if (s < 60) return s + 's';
+  var m = Math.floor(s / 60), r = s % 60;
+  if (m < 60) return m + 'm ' + (r < 10 ? '0' : '') + r + 's';
+  var h = Math.floor(m / 60);
+  return h + 'h ' + ((m % 60) < 10 ? '0' : '') + (m % 60) + 'm';
+}
+function renderBuffsTab(s) {
+  var root = document.getElementById('buffs');
+  if (!root) return;
+  var active = (s && s.buffsActive) || [];
+  var durs   = (s && s.buffDurations) || [];
+
+  var h = '<div class="grid">';
+
+  // ── Active, grouped by character ─────────────────────────────────────────
+  var byChar = {}; var order = [];
+  for (var i = 0; i < active.length; i++) {
+    var a = active[i];
+    if (!byChar[a.character]) { byChar[a.character] = []; order.push(a.character); }
+    byChar[a.character].push(a);
+  }
+  h += '<div class="card wide"><h2>✨ Active buffs '
+    + '<span class="dim" style="font-size:11px;font-weight:normal">(' + active.length + ' across ' + order.length + ' character' + (order.length === 1 ? '' : 's') + ')</span></h2>';
+  if (!order.length) {
+    h += '<div class="dim" style="font-size:12px">Nothing streaming yet — log a character in with Zeal running and this fills in within seconds.</div>';
+  }
+  for (var oi = 0; oi < order.length; oi++) {
+    var cname = order[oi], list = byChar[cname];
+    h += '<div style="margin-top:10px"><div style="font-size:12px;color:var(--gold);font-weight:600;margin-bottom:5px">' + esc(cname)
+       + ' <span class="dim" style="font-weight:normal;font-size:10px">' + list.length + ' buff' + (list.length === 1 ? '' : 's') + '</span></div>';
+    h += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(215px,1fr));gap:7px">';
+    for (var li = 0; li < list.length; li++) {
+      var b = list[li];
+      // The bar needs a whole to be a fraction OF. Prefer what we measured on
+      // this machine, fall back to the catalog, and when neither exists draw no
+      // bar at all rather than a full one — a full bar on an unknown duration
+      // reads as "just landed", which is the opposite of what we know.
+      var whole = b.measured_secs || b.catalog_secs || null;
+      var pct = (whole && b.remaining_secs != null) ? Math.max(0, Math.min(100, (b.remaining_secs / whole) * 100)) : null;
+      var col = b.remaining_secs == null ? 'var(--dim)'
+              : (b.remaining_secs < 60 ? 'var(--red)' : (b.remaining_secs < 300 ? 'var(--orange)' : 'var(--green)'));
+      h += '<div style="border:1px solid var(--border);border-radius:6px;padding:6px 8px;background:rgba(255,255,255,0.02)">'
+        +   '<div style="display:flex;align-items:baseline;gap:5px">'
+        +     '<span style="font-size:11px;font-weight:600;color:' + (b.good === 0 ? 'var(--red)' : 'var(--text)') + ';overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(b.name) + '</span>'
+        +     (b.song ? '<span class="dim" style="font-size:9px">song</span>' : '')
+        +     '<span style="margin-left:auto;font-size:11px;color:' + col + ';font-variant-numeric:tabular-nums">'
+        +       (b.remaining_secs == null ? 'permanent' : _wpDur(b.remaining_secs)) + '</span>'
+        +   '</div>'
+        +   (pct != null
+              ? '<div style="height:3px;background:rgba(255,255,255,0.08);border-radius:2px;margin-top:4px;overflow:hidden">'
+                + '<div style="height:100%;width:' + pct.toFixed(1) + '%;background:' + col + '"></div></div>'
+              : '')
+        +   '<div class="dim" style="font-size:9px;margin-top:3px">'
+        +     (b.remaining_secs != null ? 'left' + _wpBuffProv('zeal') : '')
+        +     (b.measured_secs ? ' · of ~' + _wpDur(b.measured_secs) + _wpBuffProv('log') + '<span class="dim">n=' + b.measured_n + '</span>'
+                              : (b.catalog_secs ? ' · of ~' + _wpDur(b.catalog_secs) + _wpBuffProv('db') : ''))
+        +   '</div>'
+        + '</div>';
+    }
+    h += '</div></div>';
+  }
+  h += '</div>';
+
+  // ── Per-character duration factor (item 3) ───────────────────────────────
+  var factors = (s && s.buffFactors) || [];
+  if (factors.length) {
+    h += '<div class="card wide"><h2>🎯 Your buff duration factor '
+      +  '<span class="dim" style="font-size:11px;font-weight:normal">measured, not assumed</span></h2>';
+    h += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:8px">';
+    for (var fi = 0; fi < factors.length; fi++) {
+      var f = factors[fi];
+      var known = f.factor != null;
+      var fcol = !known ? 'var(--dim)' : (f.factor > 1.05 ? 'var(--green)' : (f.factor < 0.95 ? 'var(--orange)' : 'var(--text)'));
+      h += '<div style="border:1px solid var(--border);border-radius:6px;padding:8px 10px">'
+        +   '<div style="font-size:12px;color:var(--gold);font-weight:600">' + esc(f.character) + '</div>'
+        +   '<div style="font-size:20px;color:' + fcol + ';font-variant-numeric:tabular-nums;margin:2px 0">'
+        +     (known ? '×' + f.factor.toFixed(2) : '—') + '</div>'
+        +   '<div class="dim" style="font-size:10px;line-height:1.5">'
+        +     (known
+                ? 'across ' + f.spells + ' spells · range ×' + f.lo.toFixed(2) + '–×' + f.hi.toFixed(2)
+                  + '<br>how long their buffs actually last, against the catalog'
+                : esc(f.why || 'not enough data yet'))
+        +   '</div>'
+        + '</div>';
+    }
+    h += '</div>';
+    h += '<div class="dim" style="font-size:10px;margin-top:8px;line-height:1.5">'
+      +  '⚠ This is <b>observed</b>, not computed from your AAs. The AA tables we mirror cannot give it: '
+      +  'Spell Casting Mastery (mana cost) and Spell Casting Reinforcement (buff duration) share the same '
+      +  'effect id, so the number beside them is not a duration percentage and reading it as one would be '
+      +  'wrong. Watching what actually happens sidesteps that — and is right for Quarm\\'s tuning rather than '
+      +  'stock EQEmu\\'s. A median of per-spell ratios, so one long buff cannot dominate it.</div>';
+    h += '</div>';
+  }
+
+  // ── Durations: measured vs predicted ─────────────────────────────────────
+  h += '<div class="card wide"><h2>⏱ Durations '
+    + '<span class="dim" style="font-size:11px;font-weight:normal">what we have watched, against what the catalog predicts</span></h2>';
+  if (!durs.length) {
+    h += '<div class="dim" style="font-size:12px">Nothing measured yet. A duration is recorded when a buff we were watching ends, '
+      +  'so this fills up over a session — and it only ever counts buffs whose whole life we saw.</div>';
+  } else {
+    durs.sort(function (a, b) { return (b.n || 0) - (a.n || 0); });
+    h += '<table style="width:100%;font-size:11px"><thead><tr>'
+      +  '<th style="text-align:left">Spell</th><th style="text-align:right">measured</th>'
+      +  '<th style="text-align:right">n</th><th style="text-align:right">spread (p25–p75)</th>'
+      +  '<th style="text-align:right">min–max</th><th style="text-align:right">catalog</th>'
+      +  '<th style="text-align:right">vs catalog</th></tr></thead><tbody>';
+    for (var di = 0; di < durs.length; di++) {
+      var d = durs[di];
+      // The ratio is the interesting column: it is this caster's focus effect,
+      // observed, rather than a percentage we assumed from an AA table.
+      var ratio = (d.catalog_secs && d.median) ? (d.median / d.catalog_secs) : null;
+      var rcol = ratio == null ? 'var(--dim)' : (ratio > 1.08 ? 'var(--green)' : (ratio < 0.92 ? 'var(--orange)' : 'var(--dim)'));
+      h += '<tr>'
+        + '<td style="text-align:left">' + esc(d.spell) + '</td>'
+        + '<td style="text-align:right;font-variant-numeric:tabular-nums">' + _wpDur(d.median) + _wpBuffProv('log') + '</td>'
+        + '<td style="text-align:right" class="dim">' + d.n + '</td>'
+        + '<td style="text-align:right" class="dim">' + _wpDur(d.p25) + ' – ' + _wpDur(d.p75) + '</td>'
+        + '<td style="text-align:right" class="dim">' + _wpDur(d.min) + ' – ' + _wpDur(d.max) + '</td>'
+        + '<td style="text-align:right" class="dim">' + _wpDur(d.catalog_secs) + '</td>'
+        + '<td style="text-align:right;color:' + rcol + '">' + (ratio == null ? '—' : ('×' + ratio.toFixed(2))) + '</td>'
+        + '</tr>';
+    }
+    h += '</tbody></table>';
+    h += '<div class="dim" style="font-size:10px;margin-top:8px;line-height:1.5">'
+      +  '⚠ A measurement is a <b>lower bound</b>. We time a buff from the highest remaining reading we ever saw for it, '
+      +  'so a buff first seen halfway through measures short — which is why the spread and <b>n</b> are on screen and a '
+      +  'single sample is an anecdote, not a duration. The <b>vs catalog</b> column is the interesting one: it is your '
+      +  'focus effect <i>observed</i>, rather than a percentage assumed from an AA table.</div>';
+  }
+  h += '</div>';
+
+  h += '</div>';
+  setSectionHTML('buffs', h);
+}
+
+// ── The DOM write path ──────────────────────────────────────────────────────
 function morphInto(el, html) {
   if (!el) return false;
   if (el._wpLastHtml === html) return false;   // change-detection: skip identical
@@ -12822,7 +13941,7 @@ function _morphAttrs(live, tmpl) {
       // live (wp-hidden from the show/hide-panels feature, wp-drop-target
       // flash). Stripping those would un-hide hidden panels every poll.
       var keep = [];
-      var lc = (live.getAttribute('class') || '').split(/\s+/);
+      var lc = (live.getAttribute('class') || '').split(/\\s+/);
       for (var j = 0; j < lc.length; j++) if (lc[j].indexOf('wp-') === 0) keep.push(lc[j]);
       var merged = a.value + (keep.length ? ' ' + keep.join(' ') : '');
       if (live.getAttribute('class') !== merged) live.setAttribute('class', merged);
@@ -12832,7 +13951,7 @@ function _morphAttrs(live, tmpl) {
   }
   // Template has no class but live carries wp-* state classes → keep just those.
   if (!tmpl.hasAttribute('class') && live.hasAttribute('class')) {
-    var k2 = (live.getAttribute('class') || '').split(/\s+/).filter(function (x) { return x.indexOf('wp-') === 0; });
+    var k2 = (live.getAttribute('class') || '').split(/\\s+/).filter(function (x) { return x.indexOf('wp-') === 0; });
     if (k2.length) live.setAttribute('class', k2.join(' ')); else live.removeAttribute('class');
   }
 }
@@ -13225,6 +14344,7 @@ function renderDash(s) {
   // #wpEngineStats #wpWatchedLogs) are preserved so their existing render fns
   // still fill them — a placement change, not a plumbing change.
   h += '<div id="wpEngine"></div>';
+  h += '<div id="wpFeedback"></div>';
 
   // Per-character "buffs & zone" card — what each watched character is carrying
   // and where they are right now, OR what they logged out with (the last Zeal
@@ -13419,9 +14539,29 @@ function renderMeCard(s) {
 function renderEngine(s) {
   const el = document.getElementById('wpEngine');
   if (!el) return;
-  const h = '<details ' + wpKeep('engine') + ' class="card wide" style="margin-top:0">'
-    + '<summary style="cursor:pointer;font-weight:600;color:var(--text)">⚙ Engine'
-    + ' <span class="dim" style="font-weight:normal;font-size:11px">— logsync status: files tailed, queue, uploads, reporter</span></summary>'
+  // ⚙ SETUP, not "Engine" (Hitya 2026-09-02: "The main dashboard says Engine and
+  // is by default minimized where the setup is. We should callout that it's the
+  // setup for first time users."). The first-run checklist lived behind a
+  // collapsed panel named after our internals, so the one person who most needed
+  // it — someone whose logging is off and who does not know it — had no reason
+  // to open it.
+  //
+  // Two changes, both aimed at that person:
+  //   • the panel opens BY DEFAULT while any check is failing, and stops doing
+  //     that the moment they open or close it themselves (see wpKeep);
+  //   • the summary carries the outstanding count, so it is legible even closed.
+  // Once everything passes it collapses back to a quiet status card, which is
+  // all a working install ever needs.
+  const _rows = _setupCheckRows(s);
+  const _todo = _rows.filter(function (r) { return !r.ok; }).length;
+  const _badge = _todo > 0
+    ? ' <span style="background:#3b2a09;color:#f0b429;border:1px solid #7a5c12;border-radius:9px;'
+      + 'font-size:10px;font-weight:700;padding:1px 7px;margin-left:4px">'
+      + _todo + ' to finish</span>'
+    : ' <span style="color:var(--green);font-size:11px;font-weight:normal;margin-left:4px">✓ ready</span>';
+  const h = '<details ' + wpKeep('engine', _todo > 0) + ' class="card wide" style="margin-top:0">'
+    + '<summary style="cursor:pointer;font-weight:600;color:var(--text)">⚙ Setup' + _badge
+    + ' <span class="dim" style="font-weight:normal;font-size:11px">— first-run checks, plus files tailed, queue, uploads, reporter</span></summary>'
     + '<div id="wpSetupChecks" style="display:none;margin-top:8px"></div>'
     + '<div id="wpEngineStats" style="display:none;margin-top:8px"></div>'
     + '<div id="wpWatchedLogs" style="display:none;margin-top:8px"></div>'
@@ -13486,10 +14626,10 @@ function _isPanelHidden(el) {
 // row is a ✓ (good) / ✗ (action needed) / ? (can't tell) derived from
 // /api/state. Self-updating #wpSetupChecks. We don't hide rows that pass — the
 // whole point is a member can glance at it and confirm everything is green.
-function renderSetupChecks(s) {
-  const el = document.getElementById('wpSetupChecks');
-  if (!el) return;
-  if (!_isPanelHidden(el) && el.style.display === 'none') el.style.display = '';
+// The five first-run checks, extracted so the Setup summary can count what is
+// outstanding without a second copy of the logic. Two copies drift, and a badge
+// that disagrees with the list underneath it is worse than no badge.
+function _setupCheckRows(s) {
   const now = Date.now();
   const logs = Array.isArray(s.watchedLogs) ? s.watchedLogs : [];
   const freshLog = logs.some(w => w && w.lastSeen && (now - w.lastSeen) < 15 * 60 * 1000);
@@ -13513,6 +14653,13 @@ function renderSetupChecks(s) {
       bad: 'no live Zeal feed — install/enable Zeal so buffs, groups and Target Info work',
       info: zeal.length > 0 && !zealLive ? 'last-seen snapshots only — log a character in' : null },
   ];
+  return rows;
+}
+function renderSetupChecks(s) {
+  const el = document.getElementById('wpSetupChecks');
+  if (!el) return;
+  if (!_isPanelHidden(el) && el.style.display === 'none') el.style.display = '';
+  const rows = _setupCheckRows(s);
   let h = '<h2>🩺 Setup checklist</h2><table style="font-size:12px">';
   for (const r of rows) {
     const mark = r.ok ? '<span style="color:var(--green)">✓</span>'
@@ -16631,7 +17778,7 @@ function renderStats(s) {
     function _ccIsPlayerName(n) {
       if (!n) return false;
       if (n === '(unknown)') return false;
-      if (/\s/.test(n)) return false;
+      if (/s/.test(n)) return false;
       return /^[A-Z][a-zA-Z]{2,}$/.test(n);
     }
     // Resisted-spell attribution per mob: EQ logs a mob's cast as the anonymous
@@ -17644,8 +18791,13 @@ function renderOptin(o) {
       let reason = null;
       if (act === 'dismiss') {
         const char = b.dataset.bfChar || 'this character';
-        reason = prompt('Dismiss backfill request for ' + char + '?\\n\\nOptional reason (shown to the officer):', '');
-        if (reason === null) return;  // cancelled
+        // window.prompt() is UNSUPPORTED in Electron renderers — it throws,
+        // which made this button a silent no-op inside Mimic (the async
+        // handler died before the POST; Hitya 2026-08-20, two June requests
+        // undismissable). confirm() IS supported, so the dismiss ships
+        // without the optional officer-facing reason rather than blocking
+        // on an input dialog Electron cannot show.
+        if (!confirm('Dismiss backfill request for ' + char + '?')) return;
       }
       const action = act === 'ack' ? 'ack-backfill' : 'dismiss-backfill';
       await postOptin(action, { id, reason });
@@ -17710,6 +18862,7 @@ async function refresh() {
                      // nested #wpSetupChecks/#wpEngineStats/#wpWatchedLogs children BEFORE
                      // their own fillers run later in this list).
                      ['mecard', renderMeCard], ['engine', renderEngine], ['enginestats', renderEngineStats],
+                     ['feedback', renderFeedback],
                      ['zealclients', renderZealClients],
                      ['critscard', renderCritsCard],
                      // Isolated dashboard volatile cards (fill their own wp* placeholders
@@ -17728,7 +18881,7 @@ async function refresh() {
                      ['recentfires', renderRecentFires], ['replaystatus', renderReplayStatus],
                      ['charmdiag', renderCharmDiag], ['petbuffdiag', renderPetBuffDiag], ['triggerjournal', renderTriggerJournal],
                      ['mechanics', renderMechanics],
-                     ['overlays', renderOverlays], ['stats', renderStats], ['info', renderInfo],
+                     ['buffs', renderBuffsTab], ['overlays', renderOverlays], ['stats', renderStats], ['info', renderInfo],
                      ['loottab', renderLootTab],
                      // After info: fill the placeholders renderInfo/renderDiag
                      // just (re)painted, so they show same-tick. renderCrashReview
@@ -17764,6 +18917,11 @@ async function refresh() {
       }
     }
     if (window.scrollX !== _sx || window.scrollY !== _sy) window.scrollTo(_sx, _sy);
+    // The bar's height can change on any render — the update pill appears, the
+    // links wrap, a beta badge shows up — and the rail's sticky offset is
+    // derived from it. Cheap: it only writes the custom property on a real
+    // change, so a steady bar costs one getBoundingClientRect per poll.
+    try { _wpSyncTopBarHeight(); } catch (e) { void e; }
     // Surface pending backfill request count on the Opt-in tab so officers
     // notice without clicking through.
     const pending = (s.backfillRequests || []).filter(r => r.status === 'pending').length;
@@ -18009,14 +19167,14 @@ function _dkpTickPlayers(source) {
   var s = window.__wpLastState || {};
   var t = s.dkpTick || {};
   if (source === 'roster') return (t.liveRoster && t.liveRoster.players) || [];
-  var m = /^file:(\d+)$/.exec(source);
+  var m = /^file:(\\d+)$/.exec(source);
   if (m && t.files && t.files[+m[1]]) return t.files[+m[1]].players || [];
   return [];
 }
 function _dkpTickPoints(source) {
   var s = window.__wpLastState || {};
   var t = s.dkpTick || {};
-  var m = /^file:(\d+)$/.exec(source);
+  var m = /^file:(\\d+)$/.exec(source);
   if (m && t.files && t.files[+m[1]]) return t.files[+m[1]].points || 1;
   return 1;   // live roster ticks default to 1 DKP
 }
@@ -18462,7 +19620,12 @@ async function dismissTopDamage(key) {
       e.stopPropagation();
       if (menu.style.display !== "block"){
         buildMenu();
-        menu.style.top = (gear.getBoundingClientRect().bottom + window.scrollY + 4) + "px";
+        // ⚠ FIXED, not absolute+scrollY. The gear now lives in the sticky top
+        // bar, so its viewport position stays put while scrollY grows — the old
+        // maths put the popover further down the page the further you had
+        // scrolled, eventually off-screen entirely.
+        menu.style.position = "fixed";
+        menu.style.top = (gear.getBoundingClientRect().bottom + 4) + "px";
         menu.style.right = "16px";
         menu.style.display = "block";
       } else {
@@ -18583,8 +19746,20 @@ async function dismissTopDamage(key) {
   function decorateButtons(){
     if (!mimicHosts()) return;
     var cards = document.querySelectorAll(".section .card");
+    // Re-assert persisted hidden state on EVERY pass. This observer fires on
+    // every section repaint, and a renderer that rebuilds its innerHTML (e.g.
+    // renderOptin) resurrects hidden cards without the wp-hidden class — the
+    // same bounce-back the Watched Logs card had, except most renderers never
+    // learned to consult the set. Healing it here covers all of them (Hitya
+    // 2026-08-20: closing the backfill panel "just refreshes and brings it
+    // back").
+    var hiddenSet = _loadHiddenSet();
     for (var i = 0; i < cards.length; i++){
       var card = cards[i];
+      try {
+        var hk = _scopedHideKey(card);
+        if (hk && hiddenSet.has(hk)) card.classList.add("wp-hidden");
+      } catch (err) { /* never let hide-state block decoration */ }
       var h = card.querySelector("h2");
       if (!h) continue;
       if (h.querySelector(".wp-overlay-btn")) continue; // already decorated
@@ -19157,7 +20332,7 @@ async function dismissTopDamage(key) {
       var html = "<h5>🎯 Suggested for you" + (me ? " (" + me + ")" : "") + "</h5>";
       ranked.forEach(function(r){
         var cls = r.score >= 10 ? "priority" : "";
-        var label = (r.label || r.key).replace(/^✥\s*/, "").split("(")[0].split("—")[0].trim();
+        var label = (r.label || r.key).replace(/^✥\\s*/, "").split("(")[0].split("—")[0].trim();
         html += "<button class='" + cls + "' data-suggest-key='" + r.key + "'>" + label + "</button>";
       });
       box.innerHTML = html;
@@ -19340,6 +20515,7 @@ async function dismissTopDamage(key) {
   // dashboard load. The dashboard gets screen-shared and shoulder-surfed during
   // raids; a wishlist on screen is a bidding tell.
   var showLoot     = false;
+  var showWon      = false;   // Loot won card — its own gate, see renderWon()
   var loginErr     = "";
   var lastHistKey  = "";
   var lastBidHistAt = 0;
@@ -19396,6 +20572,22 @@ async function dismissTopDamage(key) {
     return c;
   }
   var card = makeCard();
+  // Its own card, so the archive is a separate area from the live bidding hand.
+  var wonCard = null;
+  function ensureWon(){
+    var found = document.getElementById("wpLootWonCard");
+    if (found){ wonCard = found; return; }
+    var lootSec = document.getElementById("loot"); if (!lootSec) return;
+    var c = document.createElement("div");
+    c.id = "wpLootWonCard";
+    c.className = "card wide";
+    c.style.display = "none";
+    c.innerHTML = "<h2>\\u{1F3C6} Loot won <span class=dim style='font-size:11px;text-transform:none;letter-spacing:0'>\\u00b7 what your characters have won</span></h2><div class=card-body></div>";
+    // Directly under the bidding card — the live hand first, the archive after.
+    if (card && card.parentNode === lootSec) lootSec.insertBefore(c, card.nextSibling);
+    else lootSec.insertBefore(c, lootSec.firstChild);
+    wonCard = c;
+  }
   function ensure(){
     var found = document.getElementById("wpBiddingCard");
     if (found){ card = found; return; }
@@ -19538,13 +20730,17 @@ async function dismissTopDamage(key) {
     if (!rows.length){
       h += "<div class=dim style='padding:4px 0 6px'>no loot up for bid right now</div>";
     } else {
-      h += "<table><tr><th>Item</th><th>Ends</th><th>Last win</th><th>Bid</th></tr>";
+      h += "<table><tr><th>Item</th><th>Ends</th><th>Last win</th><th class=num>2nd place</th><th>Bid</th></tr>";
       for (var r=0;r<rows.length;r++){
         var row = rows[r];
         var hist = row.item_id!=null ? itemHist[row.item_id] : null;
         var star = row.wishlisted ? " <span title='on your wishlist' style='color:var(--gold,#d4af37)'>★</span>" : "";
         var lastWin = (hist && hist.winning_bid!=null) ? (fmt(hist.winning_bid)+(hist.winner?(" · "+esc(hist.winner)):"")) : "—";
-        var ru = (hist && hist.runner_up!=null) ? ("<div class=dim style='font-size:10px'>runner-up "+fmt(hist.runner_up)+"</div>") : "";
+        // #5 (Hitya, 2026-08-30: "Second place should show up as well in the
+        // bidding area") — second place used to be a dim sub-line tucked under
+        // "Last win"; the misses table gave it a real column and the bidding
+        // area did not. Same column, same header, so the two tables read alike.
+        var ru = (hist && hist.runner_up!=null) ? fmt(hist.runner_up) : "\\u2014";
         var endSpanId = "wpEnd_"+row.key;
         if (row.ends) ticks[endSpanId] = row.ends;
         // #133: "(k of N)" distinguishes N separate OpenDKP auctions for the
@@ -19555,7 +20751,8 @@ async function dismissTopDamage(key) {
         h += "<tr>";
         h += "<td class=name>"+esc(row.name)+copyAffix+qtyAffix+star+(row.pending?" <span class=dim style='font-size:10px'>(called)</span>":"")+"</td>";
         h += "<td style='font-size:11px'><span id="+endSpanId+">"+(row.ends?endLabel(row.ends):"")+"</span></td>";
-        h += "<td style='font-size:11px'>"+lastWin+ru+"</td>";
+        h += "<td style='font-size:11px'>"+lastWin+"</td>";
+        h += "<td class=num style='font-size:11px'>"+ru+"</td>";
         h += "<td style='white-space:nowrap'>";
         if (row.biddable && cfg.authed && char){
           var pf = prefillFor(row.item_id);
@@ -19588,7 +20785,7 @@ async function dismissTopDamage(key) {
     // History + wishlist + misses (authed only). COLLAPSED until asked for —
     // this is your bidding hand, and the dashboard gets shoulder-surfed.
     if (cfg.authed && bidHist && !showLoot){
-      h += "<div style='margin:12px 0 2px'><button id=wpLootReveal style='background:#21262d;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:3px 10px;font-size:11px;cursor:pointer;font-family:inherit'>👁 show my loot history</button> <span class=dim style='font-size:10px'>hidden by default — your wishlist, misses and wins</span></div>";
+      h += "<div style='margin:12px 0 2px'><button id=wpLootReveal style='background:#21262d;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:3px 10px;font-size:11px;cursor:pointer;font-family:inherit'>👁 show my loot history</button> <span class=dim style='font-size:10px'>hidden by default — your wishlist and misses</span></div>";
     }
     if (cfg.authed && bidHist && showLoot){
       var wins = bidHist.wins||[]; var wl = bidHist.wishlist||[]; var misses = bidHist.misses||[]; var dkp = bidHist.dkp||null;
@@ -19615,7 +20812,38 @@ async function dismissTopDamage(key) {
       h += "<div style='display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:12px 0 4px;font-size:11px'>";
       if (acctDkp && acctDkp.account_dkp!=null){
         var whoTxt = acctDkp.character ? (" · "+esc(acctDkp.character)) : "";
-        h += "<span style='background:rgba(63,185,80,.12);border:1px solid var(--border);border-radius:5px;padding:2px 9px' title='Live from OpenDKP standings — your account&#39;s Current DKP'>💰 <b>"+fmt(acctDkp.account_dkp)+"</b> <span class=dim>DKP · account (OpenDKP)"+whoTxt+"</span></span>";
+        // ⚠ SAY WHICH NUMBER THIS IS (Hitya, 2026-08-31: "i'm noticing that the
+        // 192 dkp is wrong. i'm actually at 143 total"). This pill used to
+        // hardcode "account (OpenDKP)" and show no age, so all three cases —
+        // live standings, standings CACHED FROM AN EARLIER RAID, and the
+        // mirror estimate — rendered identically. That is what made a wrong
+        // figure undiagnosable: nobody could tell whether the number was
+        // stale, estimated, or genuinely what OpenDKP says right now.
+        //
+        // The bot already returns \`source\` and \`as_of\` for exactly this
+        // ("so it can label an estimate as an estimate instead of quietly
+        // presenting it as live") — the panel simply threw them away.
+        //
+        // Standings are NOT refreshed off-raid by design, so between raids
+        // this figure is expected to be stale and must say so.
+        var isMirror = acctDkp.source === "mirror";
+        var ageTxt = "", ageTitle = "";
+        if (acctDkp.as_of){
+          var asOf = Date.parse(acctDkp.as_of);
+          if (asOf){
+            var mins = Math.floor((Date.now()-asOf)/60000);
+            ageTxt = mins < 2 ? "" : (mins < 60 ? (" · "+mins+"m old")
+                   : (mins < 1440 ? (" · "+Math.floor(mins/60)+"h old")
+                                  : (" · "+Math.floor(mins/1440)+"d old")));
+            ageTitle = " · as of "+String(acctDkp.as_of).replace("T"," ").split(".")[0]+" UTC";
+          }
+        }
+        var srcTxt = isMirror ? "~est. (mirror)" : "account (OpenDKP)";
+        var tone   = isMirror ? "rgba(212,175,55,.10)" : "rgba(63,185,80,.12)";
+        var tip = isMirror
+          ? "Estimated from the local mirror — OpenDKP standings were unavailable, so this is earned + adjustments − spent, not OpenDKP's own figure."
+          : ("OpenDKP standings. Standings are not refreshed between raids, so this can lag anything spent since." + ageTitle);
+        h += "<span style='background:"+tone+";border:1px solid var(--border);border-radius:5px;padding:2px 9px' title='"+esc(tip)+"'>💰 <b>"+(isMirror?"~":"")+fmt(acctDkp.account_dkp)+"</b> <span class=dim>DKP · "+srcTxt+whoTxt+ageTxt+"</span></span>";
       } else if (dkp){
         var fa = String(dkp.fetched_at||"").replace("T"," "); var dotIx = fa.indexOf("."); if (dotIx>=0) fa = fa.substring(0,dotIx);
         var freshTitle = "~estimate from the local mirror (OpenDKP pools alts) — the real balance appears once your OpenDKP standings load" + (dkp.fetched_at ? (" · as of "+fa+" UTC") : "");
@@ -19638,18 +20866,41 @@ async function dismissTopDamage(key) {
       if (dCount) h += "<span class=dim style='font-size:10px'>"+dCount+" hidden · <span id=wpLootRestore style='cursor:pointer;color:var(--blue,#58a6ff)'>restore all</span></span>";
       h += "</div>";
 
+      // The account DKP cell, shared by both tables below.
+      var dkpCellShared = (acctDkp&&acctDkp.account_dkp!=null) ? fmt(acctDkp.account_dkp) : (dkp?("~"+fmt(dkp.family_total)):"—");
+      // Bid figures live on the MISSES rows, so the wishlist borrows them by
+      // item (Hitya, 2026-08-31: "the wishlist ... just needs to show the
+      // fields from the Recent misses"). The two lists overlap almost entirely
+      // — everything inferred "from bid history" is by definition something you
+      // bid on and lost — so this is a join, not a second fetch.
+      var missByItem = {};
+      for (var mb2=0;mb2<misses.length;mb2++) missByItem[misses[mb2].item_id] = misses[mb2];
+
       var wlF = wl.filter(function(x){ return passEra(x.era) && notDismissed(x); });
       if (wlF.length){
         h += "<div style='font-size:11px;color:var(--dim,#8b949e);text-transform:uppercase;letter-spacing:.05em;margin:8px 0 4px'>your wishlist <span style='text-transform:none;letter-spacing:0'>· bid on but not yet won</span></div>";
-        h += "<div style='font-size:11px'>";
+        h += "<table><tr><th>Item</th><th>Char</th><th class=num>Your last</th><th class=num>Last win</th><th class=num>2nd place</th><th class=num>Planned</th><th class=num>DKP</th><th></th></tr>";
         for (var w=0;w<wlF.length && w<25;w++){
           var it = wlF[w];
+          var wm = missByItem[it.item_id] || {};
           var srcTag = it.source==="prereg"
-            ? "<span title='preregistered' style='color:var(--gold,#d4af37)'>★ prereg</span>"
-            : "<span class=dim title='inferred from your bid history'>↺ from bid history</span>";
-          h += "<div style='display:flex;gap:6px;padding:1px 0'>"+itemLink(it.item_name||("item "+it.item_id), it.raid_id)+eraTag(it.era)+"<span style='margin-left:auto'>"+srcTag+"</span>"+dismissBtn(it.item_id)+"</div>";
+            ? " <span title='preregistered' style='color:var(--gold,#d4af37)'>★</span>"
+            : " <span class=dim title='inferred from your bid history'>↺</span>";
+          var wpv = (planned[it.item_id]!=null) ? planned[it.item_id] : "";
+          h += "<tr>";
+          h += "<td>"+itemLink(it.item_name||("item "+it.item_id), it.raid_id)+eraTag(it.era)+srcTag+"</td>";
+          // A prereg you have never bid on has no figures, and shows dashes
+          // rather than borrowing someone else's row.
+          h += "<td"+(wm.character?" class=name":"")+">"+esc(wm.character||"—")+"</td>";
+          h += "<td class=num>"+(wm.my_last_bid!=null?fmt(wm.my_last_bid):"—")+"</td>";
+          h += "<td class=num>"+(wm.last_winning_bid!=null?fmt(wm.last_winning_bid):"—")+"</td>";
+          h += "<td class=num>"+(wm.last_second_bid!=null?fmt(wm.last_second_bid):"—")+"</td>";
+          h += "<td class=num><input id=wpPlanW_"+it.item_id+" class=wpPlanIn data-item='"+esc(it.item_id)+"' type=number min=1 value='"+esc(wpv)+"' placeholder='—' style='width:52px;background:#0e1116;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:1px 4px;font-family:inherit;text-align:right'></td>";
+          h += "<td class=num>"+dkpCellShared+"</td>";
+          h += "<td>"+dismissBtn(it.item_id)+"</td>";
+          h += "</tr>";
         }
-        h += "</div>";
+        h += "</table>";
       }
 
       // RECENT MISSES — bid on and lost. Full width; per-item columns.
@@ -19666,31 +20917,100 @@ async function dismissTopDamage(key) {
           h += "<td class=num>"+(m.my_last_bid!=null?fmt(m.my_last_bid):"—")+"</td>";
           h += "<td class=num>"+(m.last_winning_bid!=null?fmt(m.last_winning_bid):"—")+"</td>";
           h += "<td class=num>"+(m.last_second_bid!=null?fmt(m.last_second_bid):"—")+"</td>";
-          h += "<td class=num><input id=wpPlan_"+m.item_id+" type=number min=1 value='"+esc(pv)+"' placeholder='—' style='width:52px;background:#0e1116;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:1px 4px;font-family:inherit;text-align:right'></td>";
-          var dkpCell = (acctDkp&&acctDkp.account_dkp!=null) ? fmt(acctDkp.account_dkp) : (dkp?("~"+fmt(dkp.family_total)):"—");
-          h += "<td class=num>"+dkpCell+"</td>";
+          h += "<td class=num><input id=wpPlan_"+m.item_id+" class=wpPlanIn data-item='"+esc(m.item_id)+"' type=number min=1 value='"+esc(pv)+"' placeholder='—' style='width:52px;background:#0e1116;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:1px 4px;font-family:inherit;text-align:right'></td>";
+          h += "<td class=num>"+dkpCellShared+"</td>";
           h += "<td>"+dismissBtn(m.item_id)+"</td>";
           h += "</tr>";
         }
         h += "</table>";
       }
 
-      var winsF = wins.filter(function(x){ return passEra(x.era); });
-      if (winsF.length){
-        h += "<div style='font-size:11px;color:var(--dim,#8b949e);text-transform:uppercase;letter-spacing:.05em;margin:12px 0 4px'>recent wins</div>";
-        h += "<table><tr><th>Item</th><th>Char</th><th class=num>DKP</th></tr>";
-        for (var wn=0;wn<winsF.length && wn<12;wn++){
-          var win = winsF[wn];
-          h += "<tr><td>"+itemLink(win.item_name||"?", win.raid_id)+eraTag(win.era)+"</td><td"+(win.character?" class=name":"")+">"+esc(win.character||"?")+"</td><td class=num>"+fmt(win.dkp)+"</td></tr>";
-        }
-        h += "</table>";
-      }
     }
 
     morphInto(body, h);
     wire();
     restoreDrafts();
     runTicks();
+    renderWon();
+  }
+
+  // ── LOOT WON ───────────────────────────────────────────────────────────────
+  // "Move Past Items to a different 'loot won' area on the loot page of mimic"
+  // (Hitya, 2026-08-30). It used to be the last section of the bidding card,
+  // which mixed two different questions: the bidding card is your LIVE HAND
+  // (what is up, what you lost, what you plan to spend) and this is your
+  // ARCHIVE. Splitting them splits the privacy gate too — you can browse what
+  // you have won without revealing your wishlist and misses to whoever is
+  // looking at your screen.
+  //
+  // Era is deliberately NOT filtered here: the archive is a lookup surface, so
+  // every row is rendered and the search box narrows it. Era joined the search
+  // key so typing "kunark" works alongside item and character.
+  function renderWon(){
+    ensureWon();
+    if (!wonCard) return;
+    var wins = (cfg.authed && bidHist) ? (bidHist.wins||[]) : [];
+    if (!wins.length){ wonCard.style.display = "none"; return; }
+    wonCard.style.display = "";
+    var wbody = wonCard.querySelector(".card-body");
+    if (!wbody) return;
+
+    var h = "";
+    if (!showWon){
+      h += "<div style='padding:2px 0'><button id=wpWonReveal style='background:#21262d;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:3px 10px;font-size:11px;cursor:pointer;font-family:inherit'>\\u{1F441} show what my characters have won</button> <span class=dim style='font-size:10px'>"+wins.length+" item"+(wins.length===1?"":"s")+" \\u00b7 hidden by default</span></div>";
+      morphInto(wbody, h);
+      var rv = document.getElementById("wpWonReveal");
+      if (rv) rv.onclick = function(){ showWon = true; renderWon(); };
+      return;
+    }
+
+    h += "<div style='display:flex;align-items:baseline;gap:8px;margin:0 0 4px'>"
+      + "<button id=wpWonHide style='background:#21262d;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:3px 10px;font-size:11px;cursor:pointer;font-family:inherit'>\\u{1F648} hide</button>"
+      + "<input id=wpLootWinQ type=search placeholder='search item, character or era' style='margin-left:auto;width:210px;background:#0e1116;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 6px;font-family:inherit;font-size:11px'>"
+      + "<span id=wpLootWinCount class=dim style='font-size:10px'></span>"
+      + "</div>";
+    h += "<table id=wpLootWins><tr><th>Item</th><th>Char</th><th class=num>DKP</th></tr>";
+    for (var wn=0;wn<wins.length && wn<400;wn++){
+      var win = wins[wn];
+      var wkey = String((win.item_name||"") + " " + (win.character||"") + " " + (win.era||"")).toLowerCase();
+      h += "<tr data-w='"+esc(wkey)+"'"+(wn>=12?" data-extra=1 style='display:none'":"")+">"
+        + "<td>"+itemLink(win.item_name||"?", win.raid_id)+eraTag(win.era)+"</td>"
+        + "<td"+(win.character?" class=name":"")+">"+esc(win.character||"?")+"</td>"
+        + "<td class=num>"+fmt(win.dkp)+"</td></tr>";
+    }
+    h += "</table>";
+
+    morphInto(wbody, h);
+    var el = document.getElementById("wpWonHide");
+    if (el) el.onclick = function(){ showWon = false; renderWon(); };
+    el = document.getElementById("wpLootWinQ");
+    if (el){
+      el.value = winQ;
+      el.oninput = function(){ winQ = this.value; applyWinFilter(); };
+      applyWinFilter();
+    }
+  }
+
+  // Search text for PAST ITEMS. Module state, not DOM state, so it survives the
+  // card's own repaints; the filter runs over the rendered rows so typing never
+  // triggers a re-render.
+  var winQ = "";
+  function applyWinFilter(){
+    var tbl = document.getElementById("wpLootWins");
+    var out = document.getElementById("wpLootWinCount");
+    if (!tbl) return;
+    var q = String(winQ||"").trim().toLowerCase();
+    var rows = tbl.querySelectorAll("tr[data-w]");
+    var shown = 0;
+    for (var i=0;i<rows.length;i++){
+      var r = rows[i];
+      var hit = q ? (r.getAttribute("data-w").indexOf(q) >= 0)
+                  : (r.getAttribute("data-extra") !== "1");   // no query = the first 12
+      r.style.display = hit ? "" : "none";
+      if (hit) shown++;
+    }
+    if (out) out.textContent = q ? (shown + " of " + rows.length + " match")
+                                 : (rows.length > shown ? ("showing " + shown + " of " + rows.length + " — search to see the rest") : "");
   }
 
   function wire(){
@@ -19725,9 +21045,13 @@ async function dismissTopDamage(key) {
     el = document.getElementById("wpLootEra"); if (el) el.onchange = function(){ eraFilter = el.value || ""; render(); };
     // Planned-bid inputs — keep the client mirror current on every keystroke
     // (so a repaint never drops mid-typed text) and persist locally on commit.
-    var plans = card.querySelectorAll("input[id^=wpPlan_]");
+    // ⚠ Class + data-item, NOT an id prefix. An item can appear in BOTH the
+    // wishlist and the misses table, so the two inputs must be wired
+    // independently and must agree — parsing the id would also break the
+    // moment a second prefix (wpPlanW_) existed.
+    var plans = card.querySelectorAll("input.wpPlanIn");
     for (var pp=0;pp<plans.length;pp++){ (function(inp){
-      var id = inp.id.substring("wpPlan_".length);
+      var id = inp.getAttribute("data-item");
       inp.oninput = function(){ if(inp.value==="") delete planned[id]; else planned[id]=parseInt(inp.value,10)||0; };
       inp.onchange = function(){ savePlanned(id, inp.value); };
     })(plans[pp]); }
@@ -20008,7 +21332,7 @@ async function dismissTopDamage(key) {
       + '      <input id="trigNewPattern" type="text" placeholder="e.g. (?&lt;target&gt;\\\\w+) begins to cast Mass Cancel Magic" style="width:100%;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px"></label>'
       + '    <label style="grid-column:1/3">Overlay text<br>'
       + '      <input id="trigNewOverlay" type="text" placeholder="e.g. CANCEL ON {target}!" style="width:100%;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px"></label>'
-      + '    <label style="grid-column:1/3">Spoken text (optional \u2014 leave blank to speak the overlay text)<br>'
+      + '    <label style="grid-column:1/3">Spoken text (optional — leave blank to speak the overlay text)<br>'
       + '      <input id="trigNewTts" type="text" placeholder="e.g. D I fired on {tank}" style="width:100%;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px"></label>'
       + '    <label>Color<br><select id="trigNewColor" style="width:100%;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px"><option value="red">red</option><option value="orange">orange</option><option value="gold">gold</option><option value="green">green</option><option value="blue">blue</option><option value="purple">purple</option><option value="white">white</option></select></label>'
       + '    <label>Duration (ms)<br><input id="trigNewDuration" type="number" min="500" max="60000" value="5000" style="width:100%;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px"></label>'
@@ -20055,7 +21379,45 @@ async function dismissTopDamage(key) {
       listEl.innerHTML = '<div class="dim" style="font-size:12px;padding:6px 0">No personal triggers yet. Use the form below to add one. Patterns support .NET-style named groups: <code style="background:#161b22;border:1px solid var(--border);padding:1px 4px;border-radius:3px">(?&lt;name&gt;...)</code>; reference them in the overlay text as <code style="background:#161b22;border:1px solid var(--border);padding:1px 4px;border-radius:3px">{name}</code>.</div>';
       return;
     }
-    var html = '<table style="font-size:12px;width:100%"><tr><th></th><th>Name</th><th>Pattern</th><th>Cooldown</th><th>Text</th><th></th></tr>';
+    // ⚠ Triggers the loader could not compile are NOT in the list above — they
+    // dropped, and the only record was a line in the agent log. Someone who
+    // imports a pack of 200 and gets 193 deserves to be told which seven and
+    // why, right where the list is.
+    var dropped = (payload && payload.dropped) || [];
+    var html = '';
+    if (dropped.length) {
+      html += '<div style="margin:2px 0 8px;padding:6px 8px;border:1px solid var(--red);border-radius:6px;background:#2b1113">'
+        + '<div style="font-size:12px;color:var(--red)"><b>' + dropped.length + '</b> trigger'
+        + (dropped.length === 1 ? '' : 's') + ' in your file could not be compiled, so '
+        + (dropped.length === 1 ? 'it is' : 'they are') + ' not loaded and will never fire.</div>'
+        + '<div class="dim" style="font-size:11px;margin-top:4px">Saving any change below rewrites the file without '
+        + (dropped.length === 1 ? 'it' : 'them') + '.</div>';
+      for (var d = 0; d < dropped.length && d < 25; d++) {
+        html += '<div style="font-size:11px;margin-top:4px"><b>' + esc(dropped[d].name || '?') + '</b>'
+          + ' <code style="font-size:10px;background:#0d1117;border:1px solid var(--border);padding:1px 4px;border-radius:3px">'
+          + esc(String(dropped[d].pattern || '').slice(0, 60)) + '</code>'
+          + ' <span class="dim">' + esc(dropped[d].error || '') + '</span></div>';
+      }
+      if (dropped.length > 25) html += '<div class="dim" style="font-size:11px;margin-top:4px">…and ' + (dropped.length - 25) + ' more.</div>';
+      html += '</div>';
+    }
+
+    // Bulk bar. Uilnayar imported a large pack and had no way out of it except
+    // one ✕ at a time (Discord, 2026-08-29) — an import can add hundreds in a
+    // click, so the undo has to be the same size as the do.
+    html += '<div id="trigBulk" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:2px 0 8px">'
+      + '<span class="dim" style="font-size:11px">Select</span>'
+      + '<button type="button" data-sel="all"  style="background:#21262d;color:var(--text);border:1px solid var(--border);padding:2px 8px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:11px">All</button>'
+      + '<button type="button" data-sel="none" style="background:#21262d;color:var(--text);border:1px solid var(--border);padding:2px 8px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:11px">None</button>'
+      + '<button type="button" data-sel="off"  style="background:#21262d;color:var(--dim);border:1px solid var(--border);padding:2px 8px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:11px" title="Every trigger currently switched off">Disabled</button>'
+      + '<span class="dim" style="font-size:11px">|</span>'
+      + '<span id="trigSelCount" class="dim" style="font-size:11px">0 selected</span>'
+      + '<button type="button" data-bulk="disable" style="background:#21262d;color:var(--text);border:1px solid var(--border);padding:2px 8px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:11px" title="Switch them off but keep them, so you can come back and fix them later">⏸ Park for review</button>'
+      + '<button type="button" data-bulk="enable"  style="background:#21262d;color:var(--green);border:1px solid var(--border);padding:2px 8px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:11px">▶ Enable</button>'
+      + '<button type="button" data-bulk="delete"  style="background:#21262d;color:var(--red);border:1px solid var(--border);padding:2px 8px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:11px">🗑 Delete selected</button>'
+      + '<button type="button" id="trigDeleteAll" style="background:transparent;color:var(--red);border:1px solid var(--red);padding:2px 8px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:11px" title="Remove every personal trigger. Guild triggers are not touched.">Delete all ' + triggers.length + '</button>'
+      + '</div>';
+    html += '<table style="font-size:12px;width:100%"><tr><th style="width:18px"></th><th></th><th>Name</th><th>Pattern</th><th>Cooldown</th><th>Text</th><th></th></tr>';
     for (var i = 0; i < triggers.length; i++) {
       var t = triggers[i];
       var actionText = '';
@@ -20065,6 +21427,8 @@ async function dismissTopDamage(key) {
         actionColor = String(t.actions[0].color || 'red');
       }
       html += '<tr data-trig-id="' + esc(t.id || '') + '">'
+        + '<td><input type="checkbox" data-trig-sel="' + esc(t.id || '') + '"'
+        + (t.enabled === false ? ' data-trig-off="1"' : '') + '></td>'
         + '<td><input type="checkbox" ' + (t.enabled !== false ? 'checked' : '') + ' data-trig-toggle="' + esc(t.id || '') + '"></td>'
         + '<td class="name">' + esc(t.name || '?') + (t.valid === false ? ' <span style="color:var(--red);font-size:10px">(bad pattern)</span>' : '') + '</td>'
         + '<td><code style="font-size:10px;background:#0d1117;border:1px solid var(--border);padding:1px 4px;border-radius:3px">' + esc(String(t.pattern || '').slice(0, 60)) + '</code></td>'
@@ -20092,6 +21456,41 @@ async function dismissTopDamage(key) {
     listEl.querySelectorAll('[data-trig-promote]').forEach(function(b){
       b.addEventListener('click', function(){ onPromote(b.getAttribute('data-trig-promote')); });
     });
+
+    // ── Bulk selection ────────────────────────────────────────────────────
+    // POST /api/personal-triggers REPLACES the whole list, so every bulk verb
+    // here is the same shape as the single-row delete already was: read, map or
+    // filter, write back. No new endpoint, and nothing that can drift from the
+    // one-at-a-time path.
+    function selBoxes() { return listEl.querySelectorAll('[data-trig-sel]'); }
+    function selectedIds() {
+      var out = [];
+      selBoxes().forEach(function(c){ if (c.checked) out.push(c.getAttribute('data-trig-sel')); });
+      return out;
+    }
+    function refreshCount() {
+      var n = selectedIds().length;
+      var el = listEl.querySelector('#trigSelCount');
+      if (el) el.textContent = n + ' selected';
+    }
+    selBoxes().forEach(function(c){ c.addEventListener('change', refreshCount); });
+    listEl.querySelectorAll('[data-sel]').forEach(function(b){
+      b.addEventListener('click', function(){
+        var mode = b.getAttribute('data-sel');
+        selBoxes().forEach(function(c){
+          if (mode === 'all')       c.checked = true;
+          else if (mode === 'none') c.checked = false;
+          else if (mode === 'off')  c.checked = c.getAttribute('data-trig-off') === '1';
+        });
+        refreshCount();
+      });
+    });
+    listEl.querySelectorAll('[data-bulk]').forEach(function(b){
+      b.addEventListener('click', function(){ onBulk(b.getAttribute('data-bulk'), selectedIds()); });
+    });
+    var delAll = listEl.querySelector('#trigDeleteAll');
+    if (delAll) delAll.addEventListener('click', function(){ onDeleteAll(triggers.length); });
+    refreshCount();
   }
   // Open wolfpack.quest/admin/triggers prefilled with this trigger's config
   // so an officer can review + click Create. We deliberately DON'T post
@@ -20236,6 +21635,50 @@ async function dismissTopDamage(key) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ triggers: remaining }),
+    });
+    fetchAndRenderList();
+  }
+  // Bulk verbs. Same read-transform-write as onDelete above, over a set.
+  async function onBulk(action, ids) {
+    if (!ids || !ids.length) return;
+    var n = ids.length;
+    if (action === 'delete' && !confirm('Delete ' + n + ' trigger' + (n === 1 ? '' : 's') + '? This cannot be undone.')) return;
+    const r = await fetch('/api/personal-triggers');
+    const j = r.ok ? await r.json() : { triggers: [] };
+    var all = j.triggers || [];
+    var set = {};
+    for (var i = 0; i < ids.length; i++) set[ids[i]] = true;
+    var next;
+    if (action === 'delete') {
+      next = all.filter(function(t){ return !set[t.id]; });
+    } else {
+      // Park for review = switched off but KEPT. Someone who imported a large
+      // pack wants the noise to stop now and to sort it out later; deleting is
+      // the only irreversible option here, so it must not be the only one.
+      next = all.map(function(t){
+        if (!set[t.id]) return t;
+        var c = Object.assign({}, t);
+        c.enabled = (action === 'enable');
+        return c;
+      });
+    }
+    await fetch('/api/personal-triggers', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ triggers: next }),
+    });
+    fetchAndRenderList();
+  }
+  // Deliberately harder than the others: an import can add hundreds in one
+  // click, and so can this remove them. Guild triggers live server-side and are
+  // untouched — say so, because "delete all" reads like it might take those too.
+  async function onDeleteAll(count) {
+    if (!count) return;
+    if (!confirm('Delete ALL ' + count + ' of your personal triggers?\\n\\nGuild triggers are not affected. This cannot be undone.')) return;
+    await fetch('/api/personal-triggers', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ triggers: [] }),
     });
     fetchAndRenderList();
   }
@@ -20852,6 +22295,32 @@ const COMMAND_HTML = `<!doctype html>
      like someone rolled twice and got robbed. #6e7681 on this backdrop was not. */
   .roll-detail .d .rr{color:#c9a227;font-size:8px;flex-shrink:0;border:1px solid rgba(201,162,39,0.45);
     border-radius:2px;padding:0 3px;line-height:1.3;align-self:center}
+  /* Needs-rez board. A row someone is actively on GLOWS (Hitya 2026-08-20:
+     "make that person's name glow brighter until it says 'rezzed' next to
+     them"); a row nobody has spoken for sits quiet so the glow means
+     something. prefers-reduced-motion keeps the brightness, drops the pulse. */
+  .rez-row .nm { font-weight: 600; }
+  .rez-row.needs .nm { color: #c9d1d9; }
+  .rez-row.incoming .nm {
+    color: #fff3c4; text-shadow: 0 0 6px rgba(255,214,64,.95), 0 0 14px rgba(255,214,64,.55);
+    animation: rezGlow 1.4s ease-in-out infinite;
+  }
+  .rez-row.rezzed .nm { color: #7ee787; text-shadow: none; }
+  .rez-tag { font-size: 10px; margin-left: 6px; opacity: .95; }
+  .rez-row.incoming .rez-tag { color: #ffd640; }
+  .rez-row.rezzed  .rez-tag { color: #7ee787; }
+  .rez-row .rez-age { margin-left: auto; font-size: 10px; color: #8b949e; }
+  .rez-row .rezDismiss { margin-left: 6px; cursor: pointer; color: #8b949e; font-size: 11px;
+                         line-height: 1; opacity: .75; }
+  .rez-row .rezDismiss:hover { opacity: 1; color: #f87171; }
+  @keyframes rezGlow {
+    0%, 100% { text-shadow: 0 0 5px rgba(255,214,64,.75), 0 0 12px rgba(255,214,64,.40); }
+    50%      { text-shadow: 0 0 9px rgba(255,214,64,1),   0 0 20px rgba(255,214,64,.75); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .rez-row.incoming .nm { animation: none; }
+  }
+
   /* #153 collapsible sections — the caret+label in a section header is the
      click target that collapses/expands it. Collapse state lives in a JS store
      consulted at render time (localStorage-backed), NOT DOM state, so repaints
@@ -21135,6 +22604,22 @@ const COMMAND_HTML = `<!doctype html>
       html += '</div>';
     }
 
+    // YOUR discipline reuse timer (Hitya, 2026-08-30: "discipline cooldowns
+    // should be tracked on the command center for the user only"). Self only,
+    // on purpose — EQ only ever states this timer for your own character, and
+    // guessing someone else's from their activation emote would mean guessing
+    // a reuse that differs per discipline. Absent = ready, or never observed:
+    // the line only appears when you try a disc too early, so an empty card
+    // is not a claim that you are ready, and the copy says so.
+    if (s.discipline && s.discipline.seconds > 0) {
+      html += '<div class="card"><div class="head">Your discipline</div>'
+           +    '<div class="list"><div class="row">'
+           +      '<span class="nm">' + esc(s.discipline.character || 'You') + '</span>'
+           +      '<span class="cls">recharging</span>'
+           +      '<span class="da-chip down">' + fmtSec(s.discipline.seconds) + '</span>'
+           +    '</div></div></div>';
+    }
+
     // Healer mana roster — self-reported "N% mana" call-outs, lowest first
     // so the group needing a mana break is easy to spot at a glance. Divine
     // Intervention readiness (#50) rides in the header as compact chips (#66);
@@ -21276,6 +22761,38 @@ const COMMAND_HTML = `<!doctype html>
       }
     }
 
+    // ── Needs rez ─────────────────────────────────────────────────────────
+    // Corpses first: this is the only section where somebody is waiting on a
+    // human to act. Rows glow while a rezzer is on them, then say "rezzed".
+    if (s.needs_rez && s.needs_rez.length) {
+      var rezCollapsed = _isCollapsed('needsrez');
+      var glowing = 0;
+      for (var rq = 0; rq < s.needs_rez.length; rq++) if (s.needs_rez[rq].state === 'incoming') glowing++;
+      html += '<div class="card"><div class="head">'
+           +    secToggle('needsrez', '⚰ Needs rez', s.needs_rez.length)
+           +    (rezCollapsed || !glowing ? '' : '<span class="rez-tag">' + glowing + ' being rezzed</span>')
+           +  '</div>';
+      if (!rezCollapsed) {
+        html += '<div class="list">';
+        for (var rr = 0; rr < s.needs_rez.length; rr++) {
+          var r = s.needs_rez[rr];
+          var tag = '';
+          if (r.state === 'incoming') tag = r.rezzer ? ('rezzing — ' + esc(r.rezzer)) : 'rezzing…';
+          else if (r.state === 'rezzed') tag = 'rezzed ✓';
+          else if (r.requested && !r.dead_ms) tag = 'asked for a rez';
+          var age = (r.dead_ms != null) ? (Math.floor(r.dead_ms / 60000) + 'm') : '';
+          html += '<div class="row rez-row ' + esc(r.state) + '">'
+               +    '<span class="nm">' + esc(r.name) + '</span>'
+               +    (tag ? '<span class="rez-tag">' + tag + '</span>' : '')
+               +    (age ? '<span class="rez-age">dead ' + age + '</span>' : '<span class="rez-age"></span>')
+               +    '<span class="rezDismiss" data-rez-name="' + esc(r.name) + '" title="Clear this row for the WHOLE raid — use when they are up and we missed it.">✕</span>'
+               +  '</div>';
+        }
+        html += '</div>';
+      }
+      html += '</div>';
+    }
+
     if (!html) html = '<div id="empty">Nothing to report — no active target, DA/mana call-outs, rolls, or curses seen yet.</div>';
 
     if (contentEl.__wpHtml !== html) {   // byte-stability guard (2026-07-07)
@@ -21292,14 +22809,14 @@ const COMMAND_HTML = `<!doctype html>
   if (contentEl) {
     contentEl.addEventListener('mouseover', function(e){
       var t = e.target;
-      if (t && t.closest && (t.closest('.cureDismiss') || t.closest('.cureClearAll') || t.closest('.sec-toggle')
+      if (t && t.closest && (t.closest('.rezDismiss') || t.closest('.cureDismiss') || t.closest('.cureClearAll') || t.closest('.sec-toggle')
                              || t.closest('.rollMore') || t.closest('.rollDismiss') || t.closest('.rollClearAll'))) {
         try { window.mimic.overlayHoverInteractive(true); } catch (er) {}
       }
     });
     contentEl.addEventListener('mouseout', function(e){
       var t = e.target;
-      if (t && t.closest && (t.closest('.cureDismiss') || t.closest('.cureClearAll') || t.closest('.sec-toggle')
+      if (t && t.closest && (t.closest('.rezDismiss') || t.closest('.cureDismiss') || t.closest('.cureClearAll') || t.closest('.sec-toggle')
                              || t.closest('.rollMore') || t.closest('.rollDismiss') || t.closest('.rollClearAll'))) {
         try { window.mimic.overlayHoverInteractive(false); } catch (er) {}
       }
@@ -21340,6 +22857,23 @@ const COMMAND_HTML = `<!doctype html>
             if (rid2) { _dismissedRolls.add(rid2); _openRolls.delete(rid2); }
           }
           render(_lastState);
+        }
+        return;
+      }
+      var rezX = e.target && e.target.closest ? e.target.closest('.rezDismiss') : null;
+      if (rezX) {
+        e.preventDefault(); e.stopPropagation();
+        var rname = rezX.getAttribute('data-rez-name');
+        if (rname) {
+          // Clears the row for EVERYONE (Hitya 2026-08-20). The agent drops it
+          // locally at once so the click feels instant, and relays it to the
+          // rest of the raid through the bot; other Command Centers drop the
+          // row on their next poll.
+          rezX.textContent = '…';
+          fetch('http://127.0.0.1:' + PORT + '/api/rez-dismiss', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: rname }),
+          }).then(function(){ tick(); }).catch(function(){});
         }
         return;
       }
@@ -21719,6 +23253,25 @@ function startWebDashboard(port) {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(_b || 'null');
       }
+      // Command Center ✕ on a needs-rez row — clears it for the WHOLE raid.
+      // Local state drops immediately so the click feels instant; the relay
+      // rides the durable upload queue, and every other Command Center drops
+      // the row on its next poll of the bot.
+      if (req.url === '/api/rez-dismiss' && req.method === 'POST') {
+        let body = '';
+        req.on('data', c => { body += c; if (body.length > 4096) req.destroy(); });
+        req.on('end', () => {
+          let name = null;
+          try { name = (JSON.parse(body || '{}') || {}).name || null; } catch (e) { void e; }
+          if (!name) { res.writeHead(400, { 'Content-Type': 'application/json' }); return res.end('{"error":"name required"}'); }
+          const by = (stats.watchedLogs && stats.watchedLogs[0] && stats.watchedLogs[0].character) || null;
+          noteRezDismiss(name, by);
+          enqueueUpload('rez_dismiss', { agent_version: AGENT_VERSION, name: String(name), by, at: new Date().toISOString() });
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, name }));
+        });
+        return;
+      }
       // Mimic's buff-queue overlay polls this — we proxy the bot's
       // /api/agent/raid-buff-queue with a 3s cache so a room of Mimics doesn't
       // hammer Supabase. ?class=<bufferClass> filters the buff list to what
@@ -21878,6 +23431,81 @@ function startWebDashboard(port) {
           });
         }
         return res.end(JSON.stringify({ notices: out }));
+      }
+      // ── Feedback (#feedback entry point, Hitya 2026-09-02) ───────────────
+      // Two routes on purpose. PREVIEW builds the redacted slice and hands it
+      // back WITHOUT sending anything, so the reporter can read every line that
+      // would leave their machine before deciding. SEND is the only route that
+      // talks to the bot.
+      //
+      // ⚠ The preview must show the SAME text the send would upload — building
+      // it twice with different code is how a "preview" starts lying. Both call
+      // buildFeedbackLogSlice.
+      if (req.url === '/api/feedback-preview' && req.method === 'POST') {
+        const body = await _readBody(req, 4 * 1024);
+        let p = null; try { p = JSON.parse(body); } catch { p = null; }
+        const slice = buildFeedbackLogSlice((p && p.minutes) || 30, Date.now());
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        // Cap what the PREVIEW ships back to the local page — the full slice can
+        // be half a megabyte and the dashboard only shows the head of it. The
+        // send path uses the whole thing.
+        const head = slice.ok ? slice.text.split('\n').slice(0, 400).join('\n') : '';
+        return res.end(JSON.stringify({ ...slice, text: head, preview_lines: head ? head.split('\n').length : 0 }));
+      }
+      if (req.url === '/api/feedback-send' && req.method === 'POST') {
+        const body = await _readBody(req, 8 * 1024);
+        let p = null; try { p = JSON.parse(body); } catch { p = null; }
+        const message = String((p && p.message) || '').trim();
+        if (message.length < 10) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ ok: false, reason: 'say a little more (10 characters minimum)' }));
+        }
+        const opts = _uploadOpts;
+        if (!opts || !opts.botUrl || !opts.token) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ ok: false, reason: 'not connected to Wolf Pack — sign in from Settings first' }));
+        }
+        let slice = null;
+        if (p && p.attach_log) {
+          const built = buildFeedbackLogSlice(p.minutes || 30, Date.now());
+          if (built.ok) slice = built;
+        }
+        const payload = {
+          agent_version: AGENT_VERSION,
+          category:      (p && p.category === 'bug') ? 'bug' : 'idea',
+          message:       message.slice(0, 4000),
+          character:     _primaryCharacter() || null,
+          client:        process.env.WOLFPACK_CLIENT || 'parser',
+          app_version:   process.env.WOLFPACK_APP_VERSION || null,
+          platform:      process.platform,
+          ...(slice ? {
+            log_excerpt: slice.text,
+            log_meta: {
+              minutes: slice.minutes, lines: slice.lines, removed: slice.removed,
+              bytes: slice.bytes, truncated: slice.truncated,
+              from: slice.from, to: slice.to, character: slice.character,
+            },
+          } : {}),
+        };
+        const url = opts.botUrl.replace(/\/encounter(\?.*)?$/, '/feedback');
+        try {
+          const r = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + opts.token },
+            body: JSON.stringify(payload),
+          });
+          const ok = r.ok;
+          let j = null; try { j = await r.json(); } catch { /* body optional */ }
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({
+            ok,
+            reason: ok ? null : ((j && j.error) || ('bot said ' + r.status)),
+            attached_lines: slice ? slice.lines : 0,
+          }));
+        } catch (err) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ ok: false, reason: 'could not reach the bot: ' + (err && err.message) }));
+        }
       }
       // Mimic pushes Zeal update status here (it owns zealUpdater + the EQ dir).
       if (req.url === '/api/zeal-update' && req.method === 'POST') {
@@ -22532,6 +24160,20 @@ function startWebDashboard(port) {
           const prevCasting = (prevState.casting || '').trim();
           const newCasting  = (st.casting || '').trim();
           _zealState[character] = { ...st, updatedAt: Date.now() };
+          // Zeal PR #229 capability latch. Latched HERE, where the ids
+          // actually arrive off the pipe, and NOT at the live-state upload:
+          // that upload is change-signature gated, so a capable client can hand
+          // us ids for a whole fight without ever tripping a send, and we would
+          // report it as incapable. Any one of the three proves the build
+          // carries the patch — a client with no target still streams its own
+          // spawn_id every frame.
+          // Measured buff durations: diff this poll's buff slots against the
+          // last one. Must run BEFORE _zealState is reassigned above? No — it
+          // takes prevState explicitly, which is captured above.
+          try { _noteBuffDurationsFromState(character, prevState, st); } catch (e) { void e; }
+          noteSpawnIdSeen(st.spawn_id);
+          noteSpawnIdSeen(st.target_id);
+          noteSpawnIdSeen(st.pet_id);
           // #105 — mob self-heal: the Zeal target gauge HP% rising for the same
           // target across frames → a mob_heal timeline tick on the live fight.
           try { _noteMobHealFromState(character, prevState, st); } catch (e) { void e; }
@@ -22724,9 +24366,26 @@ function startWebDashboard(port) {
       // and merges into the evaluator. The Triggers tab on the dashboard now
       // edits that list through these endpoints; we always replace the whole
       // list (simpler than per-id PATCH/DELETE and the list is tiny).
+      // GET /api/item-search?q=<text>&limit=<n> — the wishlist picker's
+      // typeahead. Served entirely from the on-disk catalog: no bot round-trip,
+      // no database, and it keeps working with the network down.
+      if (req.url.startsWith('/api/item-search') && req.method === 'GET') {
+        const u = new URL(req.url, 'http://localhost');
+        const results = searchItemCatalog(u.searchParams.get('q'), u.searchParams.get('limit'));
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({
+          ok: true,
+          catalog: _itemCatalogMeta ? _itemCatalogMeta.count : 0,
+          fetched_at: _itemCatalogMeta ? _itemCatalogMeta.fetchedAt : null,
+          results,
+        }));
+      }
       if (req.url === '/api/personal-triggers' && req.method === 'GET') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ triggers: _serializePersonalTriggers() }));
+        return res.end(JSON.stringify({
+          triggers: _serializePersonalTriggers(),
+          dropped:  _personalTriggerDrops,
+        }));
       }
       // GET /api/triggers/suggested — read-only catalog of one-click trigger
       // templates, enriched with the user's current enabled/TTS state for each.
@@ -25121,10 +26780,19 @@ function runOptinBackfill(files, opts = {}) {
             if (conFacEvt) factionBuffer.push(conFacEvt);
             const pfEvt = parsePopFlagLine(line, f.character);
             if (pfEvt) popFlagBuffer.push(pfEvt);
+            const hailEvt = parseWitnessedHail(line, f.character);
+            if (hailEvt) popFlagBuffer.push(hailEvt);
             // Observed buff landing on another player. Backfilled casts are
             // almost always already-expired by display time (harmless — the web
             // filters expired), but they cost nothing and cover the case where a
             // recent log replay catches a still-active buff.
+            // ⚠ NO target_id STAMP HERE, and never add one. _provableTargetId
+            // reads the LIVE Zeal gauge, but this line is being replayed out of
+            // an old log — so a stamp would attach the spawn id of whatever the
+            // user is targeting NOW to a landing from hours ago. It would fire
+            // precisely when the names match, i.e. exactly the same-name case
+            // the id exists to disambiguate, and the read side TRUSTS a present
+            // id. A backfilled landing has no knowable spawn; null is the truth.
             const bcEvt = parseBuffLanding(line, f.character);
             if (bcEvt) buffCastBuffer.push(bcEvt);
 
@@ -28038,6 +29706,113 @@ function fetchItemClickies({ botUrl, token }) {
   });
 }
 
+// ── Item catalog (wishlist picker) ─────────────────────────────────────────
+// Every item any catalogued NPC can drop, fetched once from the bot and cached
+// on disk, so picking a wishlist item searches LOCALLY and never waits on the
+// network (Hitya, 2026-08-30). 11,099 rows / ~380 kB / ~130 kB on the wire, and
+// a 304 on every startup after the weekly mirror sync.
+//
+// ⚠ Includes Planes of Power on purpose — the point is to let people build a
+// wishlist BEFORE the 2026-10-01 unlock, which the boss-driven list could not
+// do (only 12 PoP bosses are registered until that board is built out).
+const ITEM_CATALOG_FILE = path.join(__dirname, 'logsync.item-catalog.json');
+let _itemCatalog = [];          // [[id, name, era], ...] — array rows, as sent
+let _itemCatalogLower = [];     // parallel lowercase names, so search never re-lowercases
+let _itemCatalogMeta = null;    // { fetchedAt, etag, count }
+
+function _indexItemCatalog(entries) {
+  _itemCatalog = Array.isArray(entries) ? entries : [];
+  _itemCatalogLower = _itemCatalog.map(e => String((e && e[1]) || '').toLowerCase());
+}
+
+function loadItemCatalogFromDisk() {
+  try {
+    if (!fs.existsSync(ITEM_CATALOG_FILE)) return;
+    const raw = JSON.parse(fs.readFileSync(ITEM_CATALOG_FILE, 'utf8'));
+    if (!Array.isArray(raw.entries)) return;
+    _indexItemCatalog(raw.entries);
+    _itemCatalogMeta = { fetchedAt: raw.fetched_at, etag: raw.etag || null, count: raw.entries.length };
+    console.log(`[item-catalog] loaded ${raw.entries.length} items from disk (cached ${raw.fetched_at || '?'})`);
+  } catch (err) {
+    console.warn('[item-catalog] disk load failed:', err && err.message);
+  }
+}
+
+function fetchItemCatalog({ botUrl, token }) {
+  if (!botUrl || !token) return Promise.resolve();
+  const url = botUrl.replace(/\/encounter(\?.*)?$/, '/item-catalog');
+  return new Promise((resolve) => {
+    try {
+      const u = new URL(url);
+      const mod = u.protocol === 'https:' ? https : http;
+      const headers = {
+        'Authorization': `Bearer ${token}`,
+        'User-Agent':    `wolfpack-logsync/${AGENT_VERSION}`,
+      };
+      // The whole point of the ETag: an unchanged week costs ~200 bytes.
+      if (_itemCatalogMeta && _itemCatalogMeta.etag) headers['If-None-Match'] = _itemCatalogMeta.etag;
+      const req = mod.request({
+        method: 'GET', hostname: u.hostname, port: u.port,
+        path: u.pathname + u.search, headers, timeout: 30000,
+      }, (res) => {
+        if (res.statusCode === 304) { res.resume(); return resolve(); }
+        if (res.statusCode !== 200) { res.resume(); return resolve(); }  // older bot: no route
+        const etag = res.headers && res.headers.etag;
+        const ctype = (res.headers && res.headers['content-type']) || '';
+        let body = '';
+        res.on('data', c => body += c);
+        res.on('end', () => {
+          const looksJson = /json/i.test(ctype) || /^\s*[{[]/.test(body);
+          if (!looksJson) return resolve();
+          try {
+            const data = JSON.parse(body);
+            if (!Array.isArray(data.entries)) { resolve(); return; }
+            _indexItemCatalog(data.entries);
+            _itemCatalogMeta = { fetchedAt: data.fetched_at, etag: etag || null, count: data.entries.length };
+            try {
+              const out = { fetched_at: data.fetched_at, etag: etag || null, entries: data.entries };
+              fs.writeFileSync(ITEM_CATALOG_FILE + '.tmp', JSON.stringify(out));
+              fs.renameSync(ITEM_CATALOG_FILE + '.tmp', ITEM_CATALOG_FILE);
+            } catch (e) { void e; /* disk cache best-effort */ }
+            console.log(`[item-catalog] fetched ${data.entries.length} items from bot`);
+          } catch (err) { console.warn('[item-catalog] parse failed:', err && err.message); }
+          resolve();
+        });
+      });
+      req.on('error',   () => resolve());
+      req.on('timeout', () => { req.destroy(); resolve(); });
+      req.end();
+    } catch (err) { console.warn('[item-catalog] setup error:', err && err.message); resolve(); }
+  });
+}
+
+// Local item search for the wishlist picker. No network, no database.
+// Ranked so typing "cloak" puts "Cloak of Flames" above "Shroud Cloak Clasp":
+// exact, then prefix, then word-start, then anywhere; ties alphabetical.
+function searchItemCatalog(q, limit) {
+  const query = String(q || '').trim().toLowerCase();
+  const cap = Math.max(1, Math.min(50, parseInt(limit, 10) || 20));
+  if (query.length < 2 || !_itemCatalog.length) return [];
+  const hits = [];
+  for (let i = 0; i < _itemCatalogLower.length; i++) {
+    const name = _itemCatalogLower[i];
+    const at = name.indexOf(query);
+    if (at < 0) continue;
+    let rank;
+    if (name === query) rank = 0;
+    else if (at === 0) rank = 1;
+    else if (name[at - 1] === ' ') rank = 2;
+    else rank = 3;
+    hits.push({ i, rank, len: name.length });
+  }
+  hits.sort((a, b) => a.rank - b.rank || a.len - b.len
+                   || (_itemCatalogLower[a.i] < _itemCatalogLower[b.i] ? -1 : 1));
+  return hits.slice(0, cap).map(h => {
+    const e = _itemCatalog[h.i];
+    return { id: e[0], name: e[1], era: e[2] == null ? null : e[2] };
+  });
+}
+
 // Returns the PQDI URL for a spell NAME (case-insensitive), or null if we
 // don't have it in the catalog. Used by the dashboard renderer to turn spell
 // names into clickable PQDI links.
@@ -29389,6 +31164,29 @@ function noteClientVersionLine(line, character) {
   _clientVersions.set(key, rec);
   return true;
 }
+// Newest Zeal version across the watched characters. Zeal is per-CLIENT — one
+// install serves every character on the box — so the freshest reading is the
+// machine's, and picking per-character would just report whoever last typed
+// `/zeal`.
+function _newestZealVersion() {
+  let best = null, bestAt = '';
+  for (const v of _clientVersions.values()) {
+    if (!v || !v.zeal) continue;
+    const at = String(v.at || '');
+    if (!best || at > bestAt) { best = v.zeal; bestAt = at; }
+  }
+  return best;
+}
+// Latches TRUE the first time the pipe hands us ANY spawn id — own, target or
+// pet — and never goes back. "No target right now" is the common case and is
+// not evidence the client cannot supply one, so a flapping capability flag
+// would make the fleet board useless. Reset only by restarting the agent,
+// which is correct: that is also when a Zeal swap takes effect.
+let _spawnIdSeen = false;
+function noteSpawnIdSeen(id) {
+  if (!_spawnIdSeen && Number.isFinite(id)) _spawnIdSeen = true;
+}
+
 // Snapshot for the dashboard + /api/state. Newest-first so the box the user is
 // actually playing leads.
 function clientVersionsSnapshot() {
@@ -29713,6 +31511,12 @@ function pollGuildTriggers({ botUrl, token }) {
 //       "actions": [{ "type":"text_overlay", "text":"NEED CLARITY", "color":"yellow", "duration_ms": 4000 }] }
 //   ]
 let _personalTriggers = [];
+// Triggers present in personal_triggers.json that could not be compiled. They
+// are NOT loaded and never fire, and until now they vanished with only a line
+// in the agent log — so someone who imported a pack saw a shorter list than
+// they imported and had no way to learn which ones went missing or why
+// (Uilnayar, 2026-08-29). Surfaced on GET /api/personal-triggers as `dropped`.
+let _personalTriggerDrops = [];
 function loadPersonalTriggers() {
   try {
     // personal_triggers.json lives next to the agent's other state files
@@ -29726,6 +31530,7 @@ function loadPersonalTriggers() {
     const raw = JSON.parse(fs.readFileSync(p, 'utf8'));
     const arr = Array.isArray(raw) ? raw : (Array.isArray(raw.triggers) ? raw.triggers : []);
     const compiled = [];
+    const drops = [];
     for (const t of arr) {
       try {
         // Reuse the shared compile path so pure-Zeal triggers (no pattern)
@@ -29733,8 +31538,14 @@ function loadPersonalTriggers() {
         compiled.push(_compilePersonalTrigger(t));
       } catch (err) {
         console.warn(`[personal-triggers] bad pattern "${t.name}":`, err.message);
+        drops.push({
+          name:    String((t && t.name) || 'untitled').slice(0, 100),
+          pattern: String((t && t.pattern) || '').slice(0, 200),
+          error:   String(err && err.message || 'would not compile').slice(0, 200),
+        });
       }
     }
+    _personalTriggerDrops = drops;
     _personalTriggers = compiled;
     console.log(`[personal-triggers] loaded ${compiled.length} from ${p}`);
   } catch (err) {
@@ -29772,7 +31583,17 @@ function _serializePersonalTriggers() {
   return _personalTriggers.map(t => {
     const { _regex, _scope, ...rest } = t;
     void _scope;
-    return { ...rest, valid: !!_regex };
+    // ⚠ `valid` used to be `!!_regex`, which was wrong in BOTH directions
+    // (found 2026-08-29 while looking into Uilnayar's import):
+    //   · a pattern that does not compile THROWS in _compilePersonalTrigger and
+    //     is dropped by the loader, so it never reaches this list — the flag
+    //     could never mark a genuinely broken trigger;
+    //   · a pure-Zeal gauge trigger legitimately has no _regex, so the one
+    //     thing the flag DID mark was a working trigger, labelled "(bad
+    //     pattern)" in the dashboard.
+    // A trigger is valid if it has something to fire on: a compiled pattern or
+    // a gauge condition. The genuinely-broken ones are reported via `dropped`.
+    return { ...rest, valid: !!_regex || !!t.zeal_condition };
   });
 }
 
@@ -30361,6 +32182,106 @@ function _setDamageAlert(enabled, announce) {
     });
   }
   return changed;
+}
+
+// ── Feedback log slice (Hitya, 2026-09-02) ─────────────────────────────────
+// "give mimic a feedback entry point that allows for direct log collection
+// timeframe."
+//
+// A bug report with no log is a guessing game; a bug report with someone's whole
+// log is a privacy incident. This builds the middle thing: the last N minutes of
+// THIS install's log, redacted, previewable, and attached only if the user ticks
+// the box.
+//
+// ⚠ REDACTION REUSES triggerVisibleLine — the SAME predicate that decides what
+// the local trigger engine may see. That is deliberate: a second, bespoke filter
+// would be a second thing to keep correct, and this one is already the audited
+// privacy boundary (officer channels, tells both directions, group chat, public
+// say). Never hand-roll a filter here.
+//
+// /who output is dropped ON TOP of that: it is not private to the reporter but
+// it names other players wholesale, and it is never what makes a bug
+// reproducible.
+const FEEDBACK_WHO_DROP = [
+  /\]\s+Players (?:on EverQuest|in EverQuest)/i,
+  /\]\s*\[\d+\s+[A-Za-z' ]+\]\s+\w+\s+\(/,      // "[60 Wizard] Name (Gnome) <Guild>"
+  /\]\s+There (?:is|are) \d+ players? in/i,
+  /\]\s+Your Location is/i,
+];
+const FEEDBACK_MAX_LINES = 6000;      // a raid hour is ~40k lines; this is plenty
+const FEEDBACK_MAX_BYTES = 512 * 1024;
+const FEEDBACK_TAIL_BYTES = 24 * 1024 * 1024;   // how far back we are willing to read
+
+function _feedbackLineAllowed(line) {
+  if (!triggerVisibleLine(line)) return false;
+  for (const rx of FEEDBACK_WHO_DROP) if (rx.test(line)) return false;
+  return true;
+}
+
+// Newest watched log — the one the user is most likely reporting about.
+function _feedbackSourceLog() {
+  let best = null;
+  for (const w of (stats.watchedLogs || [])) {
+    if (!w || !w.logPath) continue;
+    if (!best || (w.lastSeen || 0) > (best.lastSeen || 0)) best = w;
+  }
+  return best;
+}
+
+// Slice the last `minutes` of that log. Returns a preview-able object; the
+// caller decides whether to send it.
+function buildFeedbackLogSlice(minutes, nowMs) {
+  const mins = Math.max(1, Math.min(180, parseInt(minutes, 10) || 30));
+  const src = _feedbackSourceLog();
+  if (!src) return { ok: false, reason: 'no EQ log is being watched' };
+  let buf;
+  try {
+    const size = fs.statSync(src.logPath).size;
+    const start = Math.max(0, size - FEEDBACK_TAIL_BYTES);
+    const fd = fs.openSync(src.logPath, 'r');
+    try {
+      const len = size - start;
+      buf = Buffer.alloc(len);
+      fs.readSync(fd, buf, 0, len, start);
+    } finally { fs.closeSync(fd); }
+  } catch (err) {
+    return { ok: false, reason: 'could not read the log: ' + (err && err.message) };
+  }
+  const all = buf.toString('utf8').split(/\r?\n/);
+  // A partial first line when we started mid-file. Drop it rather than ship a
+  // fragment that no longer parses as a log line.
+  if (all.length && !/^\[/.test(all[0])) all.shift();
+
+  const cutoff = (Number.isFinite(nowMs) ? nowMs : Date.now()) - mins * 60_000;
+  const kept = [];
+  let removed = 0, bytes = 0, truncated = false, firstTs = null, lastTs = null;
+  for (let i = 0; i < all.length; i++) {
+    const line = all[i];
+    if (!line) continue;
+    const ts = parseEqTimestamp(line);
+    const tsMs = ts ? ts.getTime() : null;
+    // Lines older than the window are outside the slice entirely — not
+    // "removed" in the redaction sense, so they are not counted as such.
+    if (tsMs != null && tsMs < cutoff) continue;
+    if (!_feedbackLineAllowed(line)) { removed++; continue; }
+    if (tsMs != null) { if (firstTs == null) firstTs = tsMs; lastTs = tsMs; }
+    if (kept.length >= FEEDBACK_MAX_LINES || bytes + line.length + 1 > FEEDBACK_MAX_BYTES) {
+      truncated = true; break;
+    }
+    kept.push(line); bytes += line.length + 1;
+  }
+  return {
+    ok: true,
+    character: src.character || null,
+    minutes: mins,
+    lines: kept.length,
+    removed,
+    bytes,
+    truncated,
+    from: firstTs ? new Date(firstTs).toISOString() : null,
+    to:   lastTs  ? new Date(lastTs).toISOString()  : null,
+    text: kept.join('\n'),
+  };
 }
 
 // ── Cross-Mimic trigger relay (fan-out) ────────────────────────────────────
@@ -31012,20 +32933,27 @@ const TARGET_CASTS_TTL_MS = 2000;
 // #141 — the cross-client relay cache is keyed by (target, requester) so the
 // zone-scoped Mob Info fetch (passes selfChar → bot filters to our zone) never
 // collides with an unscoped caller for the same target name.
-function _relayCacheKey(name, selfChar) {
-  return String(name || '').trim().toLowerCase() + '|' + String(selfChar || '').trim().toLowerCase();
+// ⚠ targetId is part of the key, not just the query. Without it, swapping
+// between two same-name mobs reuses the first one's cached relay answer and the
+// bot-side filtering is undone on the way back in.
+function _relayCacheKey(name, selfChar, targetId) {
+  return String(name || '').trim().toLowerCase() + '|' + String(selfChar || '').trim().toLowerCase()
+       + (targetId != null ? '|' + targetId : '');
 }
-function fetchTargetCasts(name, selfChar) {
+function fetchTargetCasts(name, selfChar, targetId) {
   const opts = _uploadOpts;
   if (!opts || !opts.botUrl || !opts.token) return;
   if (!String(name || '').trim()) return;
-  const key = _relayCacheKey(name, selfChar);
+  const key = _relayCacheKey(name, selfChar, targetId);
   if (_targetCastsInflight.has(key)) return;
   const cached = _targetCastsByName.get(key);
   if (cached && (Date.now() - cached.at) < TARGET_CASTS_TTL_MS) return;
   _targetCastsInflight.add(key);
   let url = opts.botUrl.replace(/\/encounter(\?.*)?$/, '/target-casts') + '?name=' + encodeURIComponent(name);
   if (selfChar) url += '&character=' + encodeURIComponent(selfChar);   // #141 zone scope
+  // Spawn id first, name second — the bot drops casts proven to be on a
+  // different same-name spawn. Omitted when unknown → served unfiltered.
+  if (targetId != null) url += '&target_id=' + encodeURIComponent(targetId);
   try {
     const u = new URL(url);
     const mod = u.protocol === 'https:' ? https : http;
@@ -31067,17 +32995,20 @@ const _targetBuffsInflight = new Set();
 // Original was 5s; 6s splits the difference so Mob Info feels live again
 // without the full pre-squeeze churn. Override via WP_TARGET_BUFFS_TTL_MS.
 const TARGET_BUFFS_TTL_MS = parseInt(process.env.WP_TARGET_BUFFS_TTL_MS, 10) || 6000;
-function fetchTargetBuffs(name, selfChar) {
+function fetchTargetBuffs(name, selfChar, targetId) {
   const opts = _uploadOpts;
   if (!opts || !opts.botUrl || !opts.token) return;
   if (!String(name || '').trim()) return;
-  const key = _relayCacheKey(name, selfChar);   // #141 (target, requester) key
+  const key = _relayCacheKey(name, selfChar, targetId);   // #141 (target, requester) + spawn
   if (_targetBuffsInflight.has(key)) return;
   const cached = _targetBuffsByName.get(key);
   if (cached && (Date.now() - cached.at) < TARGET_BUFFS_TTL_MS) return;
   _targetBuffsInflight.add(key);
   let url = opts.botUrl.replace(/\/encounter(\?.*)?$/, '/target-buffs') + '?name=' + encodeURIComponent(name);
   if (selfChar) url += '&character=' + encodeURIComponent(selfChar);   // #141 zone scope
+  // Lets the bot drop rows proven to belong to a different same-name spawn.
+  // Omitted when unknown → the bot serves unfiltered, exactly as before.
+  if (targetId != null) url += '&target_id=' + encodeURIComponent(targetId);
   try {
     const u = new URL(url);
     const mod = u.protocol === 'https:' ? https : http;
@@ -31849,19 +33780,28 @@ function buildMobInfo() {
   // Stalker, Spirit of Wolf, etc., with real remaining time). Otherwise show
   // the buffs we observed landing on the target (mobs, other players).
   const tnameLower = String(st.target_name).toLowerCase();
-  const relayKey = _relayCacheKey(st.target_name, selfChar);
+  // The spawn we are looking at, when the client can name it (Zeal PR #229).
+  // Null on every unpatched client → every path below behaves as it does today.
+  const _curIdForRelay = Number.isFinite(st.target_id) ? st.target_id : null;
+  // Both cross-client relays are now spawn-scoped, so they share ONE id-keyed
+  // cache key again. (It was split when only target-buffs was scoped: folding
+  // the id into a key fetchTargetCasts did not send would have left the casts
+  // cache missing every poll.)
+  const relayKey = _relayCacheKey(st.target_name, selfChar, _curIdForRelay);
   const zealBuffs = _zealBuffsForName(tnameLower);
   // Cross-client casting on this target (who's casting what on it, with a
   // countdown). Refresh on a short TTL; bystanders we can't name are absent.
   const ctc = _targetCastsByName.get(relayKey);
-  if (!ctc || (Date.now() - ctc.at) >= TARGET_CASTS_TTL_MS) fetchTargetCasts(st.target_name, selfChar);
+  if (!ctc || (Date.now() - ctc.at) >= TARGET_CASTS_TTL_MS) fetchTargetCasts(st.target_name, selfChar, _curIdForRelay);
   // Cross-client target_buffs — fetched from the bot's relay so charm
   // spells (Allure, etc.) and other buff landings cast by OTHER Mimic
   // users on the same target show up here too. Merged with locally-
   // observed buffs by spell name (local wins — most accurate timer
   // when we saw it ourselves; remote fills the gap when we didn't).
   const ctb = _targetBuffsByName.get(relayKey);
-  if (!ctb || (Date.now() - ctb.at) >= TARGET_BUFFS_TTL_MS) fetchTargetBuffs(st.target_name, selfChar);
+  if (!ctb || (Date.now() - ctb.at) >= TARGET_BUFFS_TTL_MS) {
+    fetchTargetBuffs(st.target_name, selfChar, _curIdForRelay);
+  }
   let buffs;
   // Cross-client live buffs — the target is another Mimic-running raider:
   // use THEIR uploaded Zeal list (real remaining time — actual counters, not
@@ -31891,7 +33831,7 @@ function buildMobInfo() {
   } else if (liveBuffs !== null) {
     buffs = liveBuffs;
   } else {
-    const local  = targetBuffsFor(tnameLower);
+    const local  = targetBuffsFor(tnameLower, _curIdForRelay);
     const remote = (ctb && Array.isArray(ctb.buffs)) ? ctb.buffs : [];
     const seen = new Set(local.map(b => String(b.name || '').toLowerCase()));
     buffs = local.slice();
@@ -32719,6 +34659,18 @@ function flushLiveStateToBot(opts) {
       // everyone regardless of party size (Hitya 2026-06-29).
       target_name:    st.target_name || null,
       target_hp_pct:  st.target_hp_pct != null ? st.target_hp_pct : null,
+      // Spawn id of that target (Zeal PR #229). NULL on every released Zeal —
+      // the bot must keep working from target_name alone, and does.
+      //
+      // What this buys: _handleAgentExtendedTarget currently separates
+      // same-name mobs by HP CLUSTERING, which is a guess that fails whenever
+      // two "a cliff golem" sit at the same health. An id is exact.
+      //
+      // ⚠ Only meaningful WITH the zone on this same row. An id is a slot in
+      // the zone's entity table, so slot 4425 in Sebilis and slot 4425 in The
+      // Deep are unrelated mobs. Any consumer keys on (zone, target_id) or it
+      // will merge two zones' mobs into one row.
+      target_id:      Number.isFinite(st.target_id) ? st.target_id : null,
       // Position (Zeal loc {x,y,z}) → character_live_state.loc_* → the bot's
       // raid-buff-queue "likely out of range" flag (#117). NOT in the change
       // signature (it churns on every step) — it rides the heartbeat floor
@@ -32734,8 +34686,10 @@ function flushLiveStateToBot(opts) {
       // clustering pairs these names with type-5 raid positions. Deduped per
       // (mob, tank) keeping the newest connect; players only (the recorder's
       // heuristic can misread backtick pet names — the bot re-filters, but no
-      // reason to ship them). Capped small; NOT in the change signature (rides
-      // the heartbeat + existing triggers, like loc).
+      // reason to ship them). Capped small. ⚠ IS in the change signature as of
+      // agent 3.6.17 — see tankKeys below. It rode the heartbeat until then,
+      // which meant "who is tanking that add" could be up to 45s stale on a
+      // fight that only lasts 45s.
       observed_tanks: (() => {
         const cutoff = now - 30_000;
         const seen = new Map();   // mobLower|tankLower → { mob, tank, since }
@@ -32800,17 +34754,43 @@ function flushLiveStateToBot(opts) {
     // DI up/down transition (not the raw timestamp — that's static between
     // casts; the STATE flip 96s after a cast is what the raid cares about).
     const diUp = rec.di_ready_at == null || Date.parse(rec.di_ready_at) <= now;
+    // The spawn id, NOT just the name (Hitya 2026-09-01: "many fights only last
+    // about 45 seconds ... even 2 seconds can feel like an eternity"). Switching
+    // between two mobs that SHARE a name leaves target_name identical, so
+    // without this the swap doesn't trip the signature and the new id waits for
+    // the heartbeat — up to 45s of the board showing the wrong instance. That is
+    // precisely the case the id exists to resolve, so it has to be its own term.
+    // Cheap: an id changes on a target swap, which is an event, not churn.
+    //
+    // ⚠ Raw, NOT keyed by zone — unlike every CONSUMER of this field, which
+    // must key on (zone, id) because an id is a slot in the zone's entity table.
+    // Here it would be dead weight: rec.zone_id is already term #1 below, so a
+    // zone change re-sends whatever this holds. A `${zone}|${id}` prefix reads
+    // like a safeguard and is one no test can ever fail — which is worse than
+    // not having it. The zone-scoping that actually matters lives at the read
+    // side (_extIdInstances).
+    const targetIdKey = rec.target_id != null ? rec.target_id : null;
+    // Who is tanking what (#194). Was heartbeat-only "like loc", which is wrong
+    // by analogy: loc churns every step and is advisory, whereas this set only
+    // changes when a tank PICKS UP or LOSES a mob — a discrete raid event, and
+    // one nobody can afford to learn 45s late. Keys only, sorted: the `since`
+    // timestamps move constantly and would re-send on every flush, and Map
+    // iteration order must not decide whether we consider it changed.
+    const tankKeys = (rec.observed_tanks || [])
+      .map(o => `${o.mob}|${String(o.tank).toLowerCase()}`).sort();
     const sig = JSON.stringify([
       rec.zone_id,
       buffs.map(b => b && b.name),
       rec.pet_name,
       petBuffs.map(b => b && b.name),
       (rec.target_name || '').toLowerCase(),
+      targetIdKey,
       targetHpBucket,
       selfManaBucket,
       selfHpBucket,
       diUp,
       (rec.incoming_mob || '').toLowerCase(),
+      tankKeys,
     ]);
     // Send when the signature changed, OR the heartbeat floor elapsed —
     // UNCONDITIONALLY, not just while targeting something. A STABLE target
@@ -34736,7 +36716,7 @@ function uploadLockouts(entries, { botUrl, token, dryRun, character }) {
 function uploadPopFlags(events, { dryRun } = {}) {
   if (!Array.isArray(events) || events.length === 0) return Promise.resolve();
   if (dryRun) {
-    for (const e of events) console.log(`[pop-flag] ${e.character} · ${e.zone || '?'} · ${e.boss || '?'} · ${e.ts}`);
+    for (const e of events) console.log(`[pop-flag] ${e.character} · ${e.source || 'event'}${e.npc ? ' → ' + e.npc : ''} · ${e.zone || '?'} · ${e.boss || '?'} · ${e.ts}`);
     return Promise.resolve();
   }
   enqueueUpload('pop_flag', { agent_version: AGENT_VERSION, events });
@@ -35223,6 +37203,7 @@ async function main() {
   // boot, and the resisted-spell card just shows plain names until it lands.
   _loadSpellCatalogFromDisk();
   _loadItemClickiesFromDisk();
+  loadItemCatalogFromDisk();
   // Restore the Pet tracker's in-memory state (last /pet health, observed buff
   // landings, running combat stats) so a Mimic restart or LD reconnect brings
   // the existing pet timers + stats back instead of starting blank. TTLs in
@@ -35231,6 +37212,7 @@ async function main() {
   if (!dryRun && token) {
     fetchSpellCatalog({ botUrl, token }).catch(() => {});
     fetchItemClickies({ botUrl, token }).catch(() => {});
+    fetchItemCatalog({ botUrl, token }).catch(() => {});
     startReporterHeartbeat();   // #72 — poll the bot for our upload roles (fail-open)
     setInterval(() => { try { uploadRollSets(); } catch {} }, 60_000).unref();   // #91 off-night roll capture
     setInterval(() => { try { uploadLooted(); } catch {} }, 60_000).unref();     // #91 looted-line capture
@@ -35240,6 +37222,7 @@ async function main() {
     setInterval(() => {
       fetchSpellCatalog({ botUrl, token }).catch(() => {});
       fetchItemClickies({ botUrl, token }).catch(() => {});
+      fetchItemCatalog({ botUrl, token }).catch(() => {});
     }, 24 * 60 * 60 * 1000).unref();
   }
   // Operator's declared main (if the launcher passed --character) — used to
@@ -35542,10 +37525,20 @@ async function main() {
         if (conFacEvt) factionBuffer.push(conFacEvt);
         const pfEvt = parsePopFlagLine(line, b.character);
         if (pfEvt) popFlagBuffer.push(pfEvt);
+        // Witnessed hails — coverage for raiders who don't run Mimic.
+        const hailEvt = parseWitnessedHail(line, b.character);
+        if (hailEvt) popFlagBuffer.push(hailEvt);
         // Observed buff landings on other players — same as opt-in path.
         // Almost always expired by the time --since runs, but the web
         // filters expired so this costs nothing and occasionally rescues
         // a still-active buff from a recent log replay.
+        // ⚠ NO target_id STAMP HERE, and never add one. _provableTargetId
+        // reads the LIVE Zeal gauge, but this line is being replayed out of
+        // an old log — so a stamp would attach the spawn id of whatever the
+        // user is targeting NOW to a landing from hours ago. It would fire
+        // precisely when the names match, i.e. exactly the same-name case
+        // the id exists to disambiguate, and the read side TRUSTS a present
+        // id. A backfilled landing has no knowable spawn; null is the truth.
         const bcEvt = parseBuffLanding(line, b.character);
         if (bcEvt) buffCastBuffer.push(bcEvt);
 
@@ -35553,6 +37546,7 @@ async function main() {
         if (chatMsg) {
           chatBatch.push({ ...chatMsg, uploadedBy: b.character });
           noteLootFromChat(chatMsg);   // officer Loot panel — LIVE tail
+          noteRezFromChat(chatMsg);    // needs-rez board — "REZ <name>" / "rezzing <name>"
           if (chatBatch.length >= 500) flushChat(true).catch(() => {});
           return;
         }
@@ -35881,6 +37875,10 @@ async function main() {
         const bcEvt = (!_sourceExcluded ? resolveSelfCastLanding(line, b.character) : null)
                    || parseBuffLanding(line, b.character);
         if (bcEvt && !_sourceExcluded) {
+          // Which spawn did this land on? Provable only when this observer was
+          // targeting it (see _provableTargetId). Stamped BEFORE the upload push
+          // below so the local map and buff_casts carry the same answer.
+          bcEvt.target_id = _provableTargetId(b.character, bcEvt.target);
           const _bcFp = `buffcast|${bcEvt.target}|${bcEvt.spell_id}|${bcEvt.landing_text}|${bcEvt.cast_at}`;
           // #154 — don't upload instant/uncatalogued self-cast nukes to
           // buff_casts: they carry no debuff timer and the cross-client
@@ -35922,6 +37920,7 @@ async function main() {
           }
           const dbEvt = parseDebuffLanding(line, b.character);
           if (dbEvt && dbEvt.spell_name) {
+            dbEvt.target_id = _provableTargetId(b.character, dbEvt.target);
             // Local Target Info — show the debuff on whatever's targeted (mob or
             // player), timed from the land. This is the emote-based path, so it
             // does NOT depend on a Zeal target-name match (the caster-self-cast
@@ -35984,6 +37983,8 @@ async function main() {
         if (!_sourceExcluded) { try { trackDaBroadcastLine(line, b.character); } catch {} }
         if (!_sourceExcluded) { try { trackDefensiveDiscLine(line, b.character); } catch {} }
         if (!_sourceExcluded) { try { trackHealerManaLine(line, b.character); } catch {} }
+        // Self-only discipline reuse timer -> Command Center.
+        if (!_sourceExcluded) { try { trackDisciplineTimerLine(line, b.character); } catch {} }
         // /random rolls + the loot-link roll-number convention — feeds the
         // Command Center Rolls card + the dashboard roll table. Local-only.
         if (!_sourceExcluded) { try { trackRollLine(line, b.character); trackRollItemLine(line); } catch {} }
@@ -36162,6 +38163,9 @@ module.exports = {
   AGENT_VERSION,
   parseEvent, shouldKeep, parseEqTimestamp,
   DEFAULT_DROP_PATTERNS, KEEP_PATTERNS,
+  buildFeedbackLogSlice, _feedbackLineAllowed,
+  _noteBuffDurationsFromState, buffDurationStats, buffDurationTable, _noteBuffDurationSample,
+  buffDurationFactorFor,
   SOURCELESS_SPELLS, BARD_SONGS,
   EncounterBuilder, characterFromFilename, isBackupLogFile, _splitBackupSuffix,
   trackChChainLine, chChainSnapshot, removeChChainSlot,
