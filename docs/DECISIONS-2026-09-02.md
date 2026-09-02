@@ -68,13 +68,39 @@ banner, analytics) would have cost us something real.
   would double the heaviest read on the site to produce a string. Both
   generateMetadata functions fail soft: an unfurl is never worth a 500.
 
+## The 2.6.4 graduation, and the file it should not have touched
+
+**A partial promotion must exclude the excluded file's TESTS too.** The Mimic
+2.6.4 cut promoted beta → main file-by-file (the documented shape — beta must
+never promote stale bot/web files), deliberately holding back
+`web/app/globals.css` and `web/components/WolfPack.tsx`, which carry beta-only
+web work still under review at b.wolfpack.quest. But it promoted
+`test/wolf-eyeglow.test.js` along with everything else, and that test asserts
+on the reveal ORDERING those two files implement. It failed on main, correctly.
+
+⚠ **The fix taken at the time was to delete it — and main had owned that file
+since `ee3fddd8`.** It was never beta's to promote; both branches had a valid
+version of the same test, each matching its own branch's web code. Deleting it
+removed 13 real assertions from main, and then produced a modify/delete
+conflict on the next main→beta sync, which is the only reason it was noticed.
+
+Restored on main as `034acd4a` (main's own copy, verbatim from `4ae5bccb`,
+13/13 green). Beta keeps its own version, which adds the one ordering
+assertion for the held-back reveal.
+
+**The rule:** when a graduation's file list excludes a source file, grep for
+tests that read it and exclude those too. And when a test fails after a partial
+promotion, that is evidence the FILE LIST is wrong — check whether the target
+branch already had its own copy before touching the test.
+
 ## Open — read this first
 
 | Item | State |
 |---|---|
 | ✅ **Zeal PR #229 — MERGED** | Waiting on a tagged Zeal RELEASE, then on raiders updating. Everything our side is shipped and inert until a client sends an id |
 | ⚠ **The issue #218 comment, still unposted** | `docs/upstream/zeal-spawn-id/issue-218-comment.md`; drop its stale "no Windows/MSVC setup" paragraph first |
-| **`target-casts` + `mob-info` are still name-keyed** | Only `target-buffs` is spawn-scoped (bot 3.1.110). The other two relays share the same merge and are the obvious follow-ups |
+| **`mob-info` is still name-keyed** | ✅ `target-casts` joined `target-buffs` on spawn-id-first keying (bot 3.1.113 · agent 3.6.24). `mob-info` is the last of the three |
+| ⚠ **The Buffs tab has never been LOOKED at** | It ships in Mimic 2.6.4 and its logic is tested, but no session has seen it render. First raider to open it is the first visual check |
 | **The API request to Moncs** | Still unsent |
 | **Two local OpenDKP fixes, recommended before sending** | Gate the roster walk on a `Character Created/Updated` audit signal; make `dkpTick._resolveCharacterIds` read `characters.opendkp_id` |
 | **`_logStandingsShapeOnce`** | Prints on the next raid-window standings refresh — resolves the DKP field-name question |
