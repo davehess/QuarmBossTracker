@@ -237,7 +237,6 @@ next touch one rather than assuming a missing row means a missing doc.
 ### ✅ Done — major shipped features (not exhaustive; see git + roadmapData.ts)
 
 - **Mob Info answers "will invis hide me from this?" (bot 3.1.115 · agent
-  3.6.28, 2026-09-02).** Hitya: *"mob info needs to also denote if a mob can see
   3.6.28 · STABLE in Mimic 2.6.5, 2026-09-02).** Hitya: *"mob info needs to also denote if a mob can see
   invis."* The four sight flags were already fetched AND already returned — the
   bot comment has said "drive Mob Info chips" since they were added — but no
@@ -255,7 +254,6 @@ next touch one rather than assuming a missing row means a missing doc.
   `HOW-ITS-BUILT.md`.
 
 - **Pacify gets its own line, and the silent ones get a timer at all (agent
-  3.6.25 · Mimic beta, 2026-09-02).** Hitya: *"mob info is important to
   3.6.25–3.6.27 · STABLE in Mimic 2.6.5, 2026-09-02).** Hitya: *"mob info is important to
   distinguish buffs and debuffs... things like pacifying where we lower aggro
   radius for a mob and don't engage. but keep the timer is vital for certain
