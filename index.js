@@ -8443,6 +8443,10 @@ async function _handleAgentFaction(req, res) {
       if (!a) {
         a = { guild_id: guildId, character, faction, better: 0, worse: 0,
               better_total: 0, worse_total: 0,
+              // Hits whose point value was actually resolved (line magnitude or
+              // catalog lookup). The page needs this to say "points from N of
+              // M hits" instead of implying every hit was priced.
+              better_priced: 0, worse_priced: 0,
               capped_max_at: null, capped_min_at: null,
               first_hit_at: iso, last_hit_at: iso, last_direction: null };
         agg.set(key, a);
@@ -8467,7 +8471,8 @@ async function _handleAgentFaction(req, res) {
         if (Number.isFinite(v) && Math.abs(v) > 0 && Math.abs(v) < 100000) mag = Math.abs(Math.trunc(v));
       }
       if (mag != null) {
-        if (dir > 0) a.better_total += mag; else a.worse_total += mag;
+        if (dir > 0) { a.better_total += mag; a.better_priced++; }
+        else         { a.worse_total  += mag; a.worse_priced++;  }
       }
       if (e.capped && dir > 0 && (!a.capped_max_at || iso > a.capped_max_at)) a.capped_max_at = iso;
       if (e.capped && dir < 0 && (!a.capped_min_at || iso > a.capped_min_at)) a.capped_min_at = iso;
