@@ -211,6 +211,31 @@ next touch one rather than assuming a missing row means a missing doc.
   **Consumer work waits for a release** — `docs/zeal-pipe-protocol.md` carries a
   forward note, and the agent's parser must treat all five keys as optional so
   older Zeal builds keep working.
+- **🔴 I DESTROYED ONE ENCOUNTER'S PLAYER ROWS (2026-09-03).** Silverwing,
+  Veeshan's Peak, **2025-03-21 00:13:53Z**, 130s, encounter
+  `d78bcea4-a55e-4096-a04d-c75dbd0c8cf9`, previously **117,219** total damage
+  across its players. I called `merge_encounter_players` on it to verify a fix;
+  the function deletes and rebuilds from `contributions.raw_parse`, that
+  encounter's `raw_parse` had been pruned to NULL, so it deleted and rebuilt
+  nothing. `encounter_threat_snapshots` has 0 rows for it, so there is no
+  second copy in the database.
+  ➡️ **Recovery, if wanted:** the parse card should still be in the Discord
+  Parses Log thread (Discord is the source of truth for parses) — `/restore
+  <message link>` is the documented path. Otherwise Supabase backups.
+  ⚠ **The guard is in now** (`20260903121500`): the RPC refuses to touch an
+  encounter it cannot rebuild. Verified on a real pruned encounter, 45 rows
+  before and after.
+- **⚠ 198 encounters still list the mob as their own participant.** The ingest
+  fix (`20260903120000`) only affects FUTURE merges, and **all 198 have a pruned
+  `raw_parse`**, so they cannot be repaired by re-merging — that would delete
+  them (which is exactly what the guard now prevents). Clearing them needs a
+  targeted DELETE of the rows where `character_name` = the encounter's own NPC:
+  **199 rows, 17 mobs, 2,493,697 damage**. Destructive — awaiting a go-ahead,
+  like the threat-snapshots sweep.
+  ⚠ Do NOT widen that to "any name in the NPC catalog": our parses contain a
+  player called **Susanna** (47 rows, never a boss) and real players named
+  Dread, Terror and Fright, all of which are also mob names.
+
 - **⚠ Needs a local session — the pacify FAILURE message (one string).**
   Harmony is `resist_type 0` (unresistable), so the resist branch of
   `notePacifyMiss` can never fire for it — but it still fails against a
