@@ -17,12 +17,14 @@
 // Data flows while the owner runs Mimic/Parser with logging on; the agent's
 // complete-log backfill fills history (counters add; caps + cons are exact).
 
+import React from 'react';
 import Link from 'next/link';
 import { redirect, notFound } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
 import { groupFactions } from '@/lib/factionGroups';
 import ConsTable from './ConsTable';
+import { selectAll } from '@/lib/selectAll';
 
 export const dynamic = 'force-dynamic';
 
@@ -56,6 +58,13 @@ export type ConEnriched = {
   factionName: string | null;
   isMax: boolean;
 };
+
+// A kill that RAISES a faction, with what it is worth. From
+// eqemu_npc_faction_entries (value > 0) via npc_faction → npc_types, zone from
+// the id encoding (id = zoneid*1000 + n). Validated on live rows 2026-09-03:
+// Heart of Seru → Grieg Veneficus +1000 (Grieg's End), Lcea Katta +500,
+// Praesertum ×4 +200 — matching Hitya's own repair arithmetic.
+export type RepairSource = { mob: string; value: number; zone: string | null; npcId: number | null };
 
 const STANDING_COLORS: Record<string, string> = {
   ally:           'text-green',
@@ -230,11 +239,113 @@ async function load(decoded: string) {
     }
   }
 
+  const standings = (standingRes.data ?? []) as StandingRow[];
+
+  // ── Repair sources: what RAISES each faction the character has hit, and by
+  // how much (Hitya 2026-09-03: "add the repair table to factions"). The chain
+  // is faction name → faction_list_full id → npc_faction_entries (value > 0)
+  // → npc_faction_id → npc_types (mob, and zone from id/1000).
+  //
+  // ⚠ PAGED, then capped IN JS. Measured for one character with 55 factions:
+  // 5,434 source rows, 512 on the largest single faction. PostgREST silently
+  // caps a response at 1,000 rows, so an un-paged read would have quietly
+  // dropped most of the table and the page would look thin rather than broken.
+  // The per-faction cap keeps the page readable; the count of what was cut is
+  // shown so nobody mistakes "top 8" for "all 8".
+  const REPAIR_TOP = 8;
+  const repairByFaction = new Map<string, { top: RepairSource[]; more: number }>();
+  const myFactionNames = [...new Set(standings.map(f => f.faction.toLowerCase()))];
+  if (myFactionNames.length > 0) {
+    // ⚠ Paged. eqemu_faction_list_full holds 2,123 rows; a `.limit(5000)` here
+    // returns 1,000 and some of the character's factions silently fail to
+    // resolve to an id — no error, just missing repair lists. The over-cap
+    // ratchet caught exactly this on the first cut.
+    type FL = { id: number; name: string | null };
+    const fl = await selectAll<FL>((from, to) =>
+      sb.from('eqemu_faction_list_full').select('id, name').order('id', { ascending: true }).range(from, to));
+    const idByName = new Map<string, number>();
+    const nameById = new Map<number, string>();
+    for (const f of fl) {
+      if (f.name && myFactionNames.includes(f.name.toLowerCase())) { idByName.set(f.name.toLowerCase(), f.id); nameById.set(f.id, f.name); }
+    }
+    const fids = [...idByName.values()];
+    if (fids.length > 0) {
+      type Entry = { npc_faction_id: number; faction_id: number; value: number };
+      // selectAll takes a (from, to) RANGE builder and drains page by page —
+      // the shape the over-cap ratchet test exists to enforce.
+      const entries = await selectAll<Entry>((from, to) =>
+        sb.from('eqemu_npc_faction_entries')
+          .select('npc_faction_id, faction_id, value')
+          .in('faction_id', fids).gt('value', 0)
+          .order('npc_faction_id', { ascending: true }).order('faction_id', { ascending: true })
+          .range(from, to));
+      const nfids = [...new Set(entries.map(e => e.npc_faction_id))];
+      type Npc = { id: number; name: string; npc_faction_id: number };
+      const npcs = nfids.length > 0
+        ? await selectAll<Npc>((from, to) =>
+            sb.from('eqemu_npc_types')
+              .select('id, name, npc_faction_id')
+              .in('npc_faction_id', nfids)
+              .order('id', { ascending: true })
+              .range(from, to))
+        : [];
+      const zoneIds = [...new Set(npcs.map(n => Math.floor(n.id / 1000)))];
+      const { data: zones } = zoneIds.length > 0
+        ? await sb.from('eqemu_zone').select('zone_id, long_name').in('zone_id', zoneIds)
+        : { data: [] as { zone_id: number; long_name: string | null }[] };
+      const zoneName = new Map<number, string>();
+      for (const z of ((zones ?? []) as { zone_id: number; long_name: string | null }[])) if (z.long_name) zoneName.set(z.zone_id, z.long_name);
+      // npc_faction_id → the mobs that carry it (one per display name, lowest id).
+      const mobsByNf = new Map<number, Map<string, { npcId: number; zone: string | null }>>();
+      for (const n of npcs) {
+        const disp = (n.name || '').replace(/^#/, '').replace(/_/g, ' ').trim();
+        if (!disp) continue;
+        let m = mobsByNf.get(n.npc_faction_id);
+        if (!m) { m = new Map(); mobsByNf.set(n.npc_faction_id, m); }
+        const cur = m.get(disp);
+        if (!cur || n.id < cur.npcId) m.set(disp, { npcId: n.id, zone: zoneName.get(Math.floor(n.id / 1000)) ?? null });
+      }
+      const all = new Map<string, RepairSource[]>();
+      for (const e of entries) {
+        const fname = nameById.get(e.faction_id); if (!fname) continue;
+        const mobs = mobsByNf.get(e.npc_faction_id); if (!mobs) continue;
+        const key = fname.toLowerCase();
+        let arr = all.get(key); if (!arr) { arr = []; all.set(key, arr); }
+        for (const [mob, info] of mobs) arr.push({ mob, value: e.value, zone: info.zone, npcId: info.npcId });
+      }
+      for (const [key, arr] of all) {
+        // Same mob can reach a faction through several npc_faction rows at the
+        // same value (instanced #-variants); keep one line per (mob, value).
+        const seen = new Set<string>(); const dedup: RepairSource[] = [];
+        for (const r of arr) { const k = `${r.mob.toLowerCase()}|${r.value}`; if (!seen.has(k)) { seen.add(k); dedup.push(r); } }
+        dedup.sort((a, b) => b.value - a.value || a.mob.localeCompare(b.mob));
+        repairByFaction.set(key, { top: dedup.slice(0, REPAIR_TOP), more: Math.max(0, dedup.length - REPAIR_TOP) });
+      }
+    }
+  }
+
+  // ── Cons grouped by the faction they pin (Hitya 2026-09-03: "The Conning of
+  // npcs on those factions is important"). A /con is the only log-visible way
+  // to read the REAL tier: hit counts say which way it moved, a con says where
+  // it IS. Best tier first, then most recent.
+  const consByFaction = new Map<string, ConEnriched[]>();
+  for (const c of consEnriched) {
+    if (!c.factionName) continue;
+    const key = c.factionName.toLowerCase();
+    let arr = consByFaction.get(key); if (!arr) { arr = []; consByFaction.set(key, arr); }
+    arr.push(c);
+  }
+  for (const arr of consByFaction.values()) {
+    arr.sort((a, b) => ((b.rank ?? -1) - (a.rank ?? -1)) || b.eventTs.localeCompare(a.eventTs));
+  }
+
   return {
-    standings: (standingRes.data ?? []) as StandingRow[],
+    standings,
     cons:      consEnriched,
     race, cls, deityId,
     baseline,
+    repairByFaction,
+    consByFaction,
   };
 }
 
@@ -246,7 +357,7 @@ export default async function CharacterFactionsPage({ params }: { params: Promis
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect(`/auth/signin?next=/character/${encodeURIComponent(name)}/factions`);
 
-  const { standings, cons, race, cls, deityId, baseline } = await load(decoded);
+  const { standings, cons, race, cls, deityId, baseline , repairByFaction, consByFaction } = await load(decoded);
   // Name-keyed lookup so the standings table (keyed by faction NAME, not id)
   // can find the baseline for a row.
   const baselineByFactionName = new Map<string, { name: string | null; base: number; total: number; mods: { code: string; mod: number }[] }>();
@@ -378,7 +489,8 @@ export default async function CharacterFactionsPage({ params }: { params: Promis
                         return <span className={tone} title={`base ${bl.base >= 0 ? '+' : ''}${bl.base} · ${modsLine} = ${sign}${total}`}>{sign}{total}</span>;
                       })() : <span className="text-dim/40">—</span>;
                       return (
-                      <tr key={f.faction}>
+                      <React.Fragment key={f.faction}>
+                      <tr>
                         <td className="py-1.5 pr-3 text-text">{f.faction}</td>
                         <td className="py-1.5 pr-3 text-right">{baseCell}</td>
                         <td className="py-1.5 pr-3 text-right text-green" title={betterHead.tip}>{betterHead.val}</td>
@@ -415,6 +527,86 @@ export default async function CharacterFactionsPage({ params }: { params: Promis
                           )}
                         </td>
                       </tr>
+                      {(() => {
+                        // ── Per-faction detail: unconfirmed hits · cons · repair ──
+                        // (Hitya 2026-09-03). Collapsed by default; one <details>
+                        // per faction row so a 55-faction page stays scannable.
+                        const key = f.faction.toLowerCase();
+                        const unB = Math.max(0, f.better_count - (f.better_priced ?? 0));
+                        const unW = Math.max(0, f.worse_count  - (f.worse_priced  ?? 0));
+                        const cons = consByFaction.get(key) ?? [];
+                        const rep  = repairByFaction.get(key);
+                        const hasDetail = unB > 0 || unW > 0 || cons.length > 0 || (rep && rep.top.length > 0);
+                        if (!hasDetail) return null;
+                        return (
+                          <tr key={f.faction + '::detail'} className="bg-black/10">
+                            <td colSpan={6} className="px-3 pb-2 pt-0">
+                              <details className="group">
+                                <summary className="cursor-pointer text-xs text-dim select-none py-1">
+                                  <span className="text-orange group-open:hidden">▸</span><span className="text-orange hidden group-open:inline">▾</span>
+                                  {' '}details
+                                  {(unB + unW) > 0 && <span className="ml-2 text-dim">· {(unB + unW).toLocaleString()} unconfirmed</span>}
+                                  {cons.length > 0 && <span className="ml-2 text-dim">· {cons.length} con{cons.length === 1 ? '' : 's'}</span>}
+                                  {rep && rep.top.length > 0 && <span className="ml-2 text-dim">· {rep.top.length + rep.more} repair source{(rep.top.length + rep.more) === 1 ? '' : 's'}</span>}
+                                </summary>
+                                <div className="grid gap-4 md:grid-cols-3 text-xs mt-1">
+                                  {/* Unconfirmed hits — recorded, direction known, value unknown. */}
+                                  <div>
+                                    <div className="text-dim uppercase tracking-wide text-[10px] mb-1">Unconfirmed hits</div>
+                                    {(unB + unW) === 0
+                                      ? <div className="text-dim/60">every hit priced</div>
+                                      : <div className="text-text leading-5">
+                                          {unB > 0 && <div><span className="text-green">▲ {unB.toLocaleString()}</span> raised, value unknown</div>}
+                                          {unW > 0 && <div><span className="text-red">▼ {unW.toLocaleString()}</span> lowered, value unknown</div>}
+                                          <div className="text-dim mt-1">A hit is priced only when the agent saw the kill that caused it in the same second. These moved the faction by at least 1 each.</div>
+                                        </div>}
+                                  </div>
+                                  {/* Cons on this faction — the only log-visible read of the REAL tier. */}
+                                  <div>
+                                    <div className="text-dim uppercase tracking-wide text-[10px] mb-1">Cons on this faction</div>
+                                    {cons.length === 0
+                                      ? <div className="text-dim/60">none — /con a mob on this faction to pin the tier</div>
+                                      : <ul className="leading-5">
+                                          {cons.slice(0, 6).map(c => (
+                                            <li key={c.mob + c.eventTs}>
+                                              <span className={STANDING_COLORS[(c.standing || '').toLowerCase()] ?? 'text-dim'}>{c.standing}</span>
+                                              <span className="text-dim"> · </span>
+                                              {c.npcId
+                                                ? <a className="text-text hover:underline" href={`https://www.pqdi.cc/npc/${c.npcId}`} target="_blank" rel="noreferrer">{c.mob}</a>
+                                                : <span className="text-text">{c.mob}</span>}
+                                              {c.isMax && <span className="text-gold ml-1" title="ally — the maximum standing tier">★</span>}
+                                              <span className="text-dim ml-1">{fmtDate(c.eventTs)}</span>
+                                            </li>
+                                          ))}
+                                          {cons.length > 6 && <li className="text-dim">+{cons.length - 6} more in the cons table below</li>}
+                                        </ul>}
+                                  </div>
+                                  {/* Repair — what raises it, best value first. */}
+                                  <div>
+                                    <div className="text-dim uppercase tracking-wide text-[10px] mb-1">Repair — kills that raise it</div>
+                                    {!rep || rep.top.length === 0
+                                      ? <div className="text-dim/60">no known kill raises this faction (quest turn-ins are not mirrored)</div>
+                                      : <ul className="leading-5">
+                                          {rep.top.map(r => (
+                                            <li key={r.mob + r.value}>
+                                              <span className="text-green font-medium">+{r.value.toLocaleString()}</span>
+                                              <span className="text-dim"> · </span>
+                                              {r.npcId
+                                                ? <a className="text-text hover:underline" href={`https://www.pqdi.cc/npc/${r.npcId}`} target="_blank" rel="noreferrer">{r.mob}</a>
+                                                : <span className="text-text">{r.mob}</span>}
+                                              {r.zone && <span className="text-dim ml-1">— {r.zone}</span>}
+                                            </li>
+                                          ))}
+                                          {rep.more > 0 && <li className="text-dim">+{rep.more} more at lower values</li>}
+                                        </ul>}
+                                  </div>
+                                </div>
+                              </details>
+                            </td>
+                          </tr>
+                        );
+                      })()}
+                      </React.Fragment>
                       );
                     })}
                     {missing.map(m => {

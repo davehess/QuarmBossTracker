@@ -304,8 +304,23 @@ next touch one rather than assuming a missing row means a missing doc.
   idempotent" — it does not exist. Re-running the agent over old logs to price
   history will DOUBLE every count and total. Do not recommend a re-run until a
   dedup key (character, faction, ts) exists on the ingest.
-  ➡️ Still to do: surface the repair path on the page (what raises this faction
-  and by how much — the mirror has it; see the Seru numbers in DECISIONS).
+  ✅ **Repair table, unconfirmed hits, and cons-per-faction (web 1.7.15).**
+  Hitya: *"add the repair table to factions, but also we can have an
+  'unconfirmed hits' section on the table also. The Conning of npcs on those
+  factions is important."* Every faction row opens into three blocks:
+  **Unconfirmed hits** (count − priced, per direction — each moved it by ≥1),
+  **Cons on this faction** (the page already resolved each con'd mob to its
+  primary faction; they were only ever shown in one flat table at the bottom,
+  nowhere near the faction they pin — a /con is the only log-visible read of
+  where a faction actually IS), and **Repair — kills that raise it** (top 8 by
+  value, with zone and PQDI link, and the count of what was cut so "top 8"
+  never reads as "all 8").
+  ⚠ **The over-cap ratchet caught two real bugs in this one change.** Repair
+  data for one 55-faction character is **5,434 rows (512 on the largest)**, and
+  `eqemu_faction_list_full` is 2,123 rows; both first cuts used bare
+  `.limit(N)`, which PostgREST silently truncates to 1,000 — thin pages, no
+  error. All three catalog reads go through `selectAll` now. That test has
+  earned its place twice today.
 
 - **Mob Info answers "will invis hide me from this?" (bot 3.1.115 · agent
   3.6.28 · STABLE in Mimic 2.6.5, 2026-09-02).** Hitya: *"mob info needs to also denote if a mob can see
