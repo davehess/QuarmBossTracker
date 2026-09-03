@@ -357,9 +357,25 @@ next touch one rather than assuming a missing row means a missing doc.
   silently caps at 1000 rows, so the first cut's `limit=20000` would have built
   a quietly incomplete map — caught by the over-cap ratchet test, which is
   exactly what it is for.
-  ➡️ **Still to do: the WEB page.** It renders hit counts with +/- signs. Now
-  that totals populate, it should show points, mark unattributed hits honestly,
-  and surface the repair path (what raises this faction, and by how much).
+  ✅ **Web page done (web 1.7.14 · bot 3.1.119).** Hitya: *"how many positive
+  and negative hits total in parentheses for raised and lowered, and the
+  raised/lowered should specifically call out how much the faction has been
+  raised or lowered."* Cells now read **`+228 (586)`** — points, then hits — and
+  never let one stand in for the other. The old cell showed points when
+  non-zero else the hit count, both as `+N`, so it changed UNIT the moment
+  pricing began (586 → 228 overnight, same shape).
+  ⚠ **A partial total is a FLOOR and says so: `≥ +228 (586)`.** New
+  `better_priced`/`worse_priced` counters (`20260903140000`) record how many hits
+  were actually priced; unpriced hits each moved it by ≥1, so "≥" is true and
+  "=" is not. Keyed off `total`, not `priced` — bot 3.1.118 priced a day of hits
+  before the counter existed, and keying off `priced` would have hidden them.
+  ⚠ **`bump_faction_standing` is purely additive with NO cross-request dedup**
+  (verified 2026-09-03). The agent comment claims "bot-side dedup makes backfill
+  idempotent" — it does not exist. Re-running the agent over old logs to price
+  history will DOUBLE every count and total. Do not recommend a re-run until a
+  dedup key (character, faction, ts) exists on the ingest.
+  ➡️ Still to do: surface the repair path on the page (what raises this faction
+  and by how much — the mirror has it; see the Seru numbers in DECISIONS).
 
 - **Mob Info answers "will invis hide me from this?" (bot 3.1.115 · agent
   3.6.28 · STABLE in Mimic 2.6.5, 2026-09-02).** Hitya: *"mob info needs to also denote if a mob can see

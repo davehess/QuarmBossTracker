@@ -35,6 +35,8 @@ type StandingRow = {
   // older agent or no magnitude in the log line. Web prefers totals when > 0.
   better_total?: number | null;
   worse_total?:  number | null;
+  better_priced?: number | null;
+  worse_priced?:  number | null;
   capped_max_at: string | null;
   capped_min_at: string | null;
   first_hit_at: string;
@@ -71,7 +73,7 @@ async function load(decoded: string) {
   const sb = supabaseAdmin();
   const [standingRes, consRes, charRes] = await Promise.all([
     sb.from('faction_standing')
-      .select('faction, better_count, worse_count, better_total, worse_total, capped_max_at, capped_min_at, first_hit_at, last_hit_at, last_direction')
+      .select('faction, better_count, worse_count, better_total, worse_total, better_priced, worse_priced, capped_max_at, capped_min_at, first_hit_at, last_hit_at, last_direction')
       .ilike('character', decoded)
       .order('last_hit_at', { ascending: false })
       .limit(500),
@@ -321,24 +323,47 @@ export default async function CharacterFactionsPage({ params }: { params: Promis
                   </thead>
                   <tbody className="divide-y divide-border/50">
                     {rows.map(f => {
-                      // Prefer summed magnitudes when the agent has captured
-                      // any (Quarm prints per-line deltas); fall back to hit
-                      // counts when not. Tooltip surfaces whichever number
-                      // ISN'T the headline so officers can sanity-check
-                      // "+96 points (8 hits)" vs "+8 hits (no per-hit deltas
-                      // captured)" (Hitya 2026-06-23).
-                      const bTot = f.better_total ?? 0;
-                      const wTot = f.worse_total  ?? 0;
-                      const betterHead = bTot > 0
-                        ? { val: `+${bTot.toLocaleString()}`, tip: `+${bTot.toLocaleString()} points across ${f.better_count.toLocaleString()} hit${f.better_count === 1 ? '' : 's'}` }
-                        : f.better_count > 0
-                          ? { val: `+${f.better_count}`, tip: `${f.better_count.toLocaleString()} hit${f.better_count === 1 ? '' : 's'} — no per-line magnitude captured (older agent, or the server didn’t print one)` }
-                          : { val: '—', tip: '' };
-                      const worseHead = wTot > 0
-                        ? { val: `−${wTot.toLocaleString()}`, tip: `−${wTot.toLocaleString()} points across ${f.worse_count.toLocaleString()} hit${f.worse_count === 1 ? '' : 's'}` }
-                        : f.worse_count > 0
-                          ? { val: `−${f.worse_count}`, tip: `${f.worse_count.toLocaleString()} hit${f.worse_count === 1 ? '' : 's'} — no per-line magnitude captured` }
-                          : { val: '—', tip: '' };
+                      // POINTS, then HITS in parentheses — always both, never one
+                      // standing in for the other (Hitya 2026-09-03: "how many
+                      // positive and negative hits total in parentheses for
+                      // raised and lowered, and the raised/lowered should
+                      // specifically call out how much the faction has been
+                      // raised or lowered"). The old cell showed points when it
+                      // had any and the hit count otherwise, both as "+N", so it
+                      // silently changed UNIT the moment pricing started.
+                      //
+                      // ⚠ A partial total is a FLOOR, and says so. Points are
+                      // only known for hits the agent could attribute to a kill
+                      // (or that carried a magnitude); the rest each moved the
+                      // faction by at least 1, so "≥" is true and "=" is not.
+                      // Repair arithmetic off a sum that quietly omits 472 of
+                      // 586 hits is exactly the wrong answer this page exists to
+                      // prevent.
+                      const bTot = f.better_total ?? 0, bN = f.better_count, bP = f.better_priced ?? 0;
+                      const wTot = f.worse_total  ?? 0, wN = f.worse_count,  wP = f.worse_priced  ?? 0;
+                      const hits = (n: number) => `${n.toLocaleString()} hit${n === 1 ? '' : 's'}`;
+                      const side = (tot: number, n: number, priced: number, sign: '+' | '−') => {
+                        if (n === 0) return { val: '—', tip: '' };
+                        const pts = tot.toLocaleString();
+                        // Key the "unknown" case off the TOTAL, not the priced
+                        // count: bot 3.1.118 priced hits for a day before the
+                        // priced counter existed, so those rows carry points
+                        // with priced = 0. Keying off priced would hide points
+                        // the user can already see.
+                        if (tot === 0) return {
+                          val: `? (${n.toLocaleString()})`,
+                          tip: `${hits(n)} — none priced. A hit is priced when the agent saw the kill that caused it in the same second, or the line carried a magnitude. Re-running the agent over old logs prices history.`,
+                        };
+                        if (priced < n) return {
+                          val: `≥ ${sign}${pts} (${n.toLocaleString()})`,
+                          tip: priced > 0
+                            ? `${sign}${pts} points from ${priced.toLocaleString()} of ${hits(n)}; the other ${(n - priced).toLocaleString()} are unpriced and each moved it by at least 1, so the true total is higher.`
+                            : `${sign}${pts} points across some of ${hits(n)} (priced before per-hit counting began, so how many is not recorded); the rest each moved it by at least 1, so the true total is higher.`,
+                        };
+                        return { val: `${sign}${pts} (${n.toLocaleString()})`, tip: `${sign}${pts} points across ${hits(n)}, every one priced.` };
+                      };
+                      const betterHead = side(bTot, bN, bP, '+');
+                      const worseHead  = side(wTot, wN, wP, '−');
                       // Per-character baseline (faction_list.base + mods for
                       // your race/class/deity). Empty until the eqemu_faction_*
                       // mirror is populated.
