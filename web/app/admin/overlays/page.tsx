@@ -137,10 +137,10 @@ const VERSION_FLOOR_KEY = 'min_agent_ver_num';
 // control on this page saves a number, and a first cut put them in FLAGS,
 // where "checked" saves as 1 and a typed password could never have been stored.
 const TEXT_KEYS = [
-  { key: 'tag_channel_password', label: '🏷 Tag channel password (raid)',
-    hint: 'Raiders\u2019 dashboards render \u201c/join Ztwolfpacktag:<this>\u201d. Clear to unset.' },
-  { key: 'tag_officer_channel',  label: '🏷 Officer channel spec',
-    hint: 'A full \u201cname:password\u201d, e.g. the officer chat channel. The agent shows it only to signed-in officers. Clear to unset.' },
+  { key: 'tag_channel_spec', label: '🏷 Tag channel join spec (raid)',
+    hint: 'Full \u201cZtwolfpacktag:<password>\u201d. Overrides the bot\u2019s TAG_CHANNEL_SPEC env var. Raiders\u2019 \u201cSet up EQ for me\u201d writes it into ChannelAutoJoin. Clear to fall back to env.' },
+  { key: 'officer_channel_spec', label: '🏷 Officer channel join spec',
+    hint: 'Full \u201cname:password\u201d for officer chat. Overrides OFFICER_CHANNEL_SPEC. Written only for signed-in officers. Clear to fall back to env.' },
 ] as const;
 const TEXT_KEY_SET = new Set<string>(TEXT_KEYS.map(t => t.key));
 

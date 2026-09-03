@@ -10444,9 +10444,40 @@ async function _refreshOverlayTuningCache() {
     _overlayTuningCache.at = Date.now();   // don't hammer on failure
   }
 }
+// ── /tag + officer channel join specs (Hitya 2026-09-03) ────────────────────
+// "We can save the channel:pass as an environmental variable for officer chat
+// and for tagging. The tagging piece is critical."
+//
+// Resolved HERE, once, so every path that hands tuning to an agent (the
+// overlay-tuning GET and the /poll bundle both call _overlayTuningMap) carries
+// two READY-TO-WRITE specs — `tag_channel_spec` and `officer_channel_spec` —
+// and the agent holds no policy and no secret of its own. Precedent:
+// AGENT_RELEASE_REF_BETA (env default, tuning key overrides live, no redeploy).
+//
+// ⚠ These are shared guild secrets. They live in env (Railway) or in the
+// /admin/overlays tuning row, and nowhere else: never in source, never logged
+// (the tuning cache refresh logs key COUNTS, not values — keep it that way),
+// and they reach only bearer-authenticated agents.
+const TAG_CHANNEL_SPEC     = (process.env.TAG_CHANNEL_SPEC     || '').trim();
+const OFFICER_CHANNEL_SPEC = (process.env.OFFICER_CHANNEL_SPEC || '').trim();
+function _withChannelSpecs(values) {
+  const v = values && typeof values === 'object' ? values : {};
+  const pick = (key, envVal) => {
+    const t = typeof v[key] === 'string' ? v[key].trim() : '';
+    return t || envVal || '';
+  };
+  const tag = pick('tag_channel_spec', TAG_CHANNEL_SPEC);
+  const off = pick('officer_channel_spec', OFFICER_CHANNEL_SPEC);
+  // Return a COPY — the cache object is shared and must not grow env-derived
+  // keys that a later refresh would then treat as officer-set overrides.
+  const out = { ...v };
+  if (tag) out.tag_channel_spec = tag; else delete out.tag_channel_spec;
+  if (off) out.officer_channel_spec = off; else delete out.officer_channel_spec;
+  return out;
+}
 async function _overlayTuningMap() {
   await _refreshOverlayTuningCache();
-  return _overlayTuningCache.values;
+  return _withChannelSpecs(_overlayTuningCache.values);
 }
 async function _overlayClassSets() {
   await _refreshOverlayTuningCache();
