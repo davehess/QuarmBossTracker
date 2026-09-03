@@ -261,6 +261,36 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ### ✅ Done — major shipped features (not exhaustive; see git + roadmapData.ts)
 
+- **Faction hits get a POINT value, by naming the kill (bot 3.1.118 · agent
+  3.6.32, 2026-09-03).** Hitya: the page *"is currently not helping"* — a −2000
+  Lord Seru hit and a +5 spire-spirit kill both rendered as one anonymous
+  "hit", with `+586 / −97` hit COUNTS shown in a way that reads like points
+  (`better_total`/`worse_total` existed and were all zero).
+  Hitya's own diagnosis is the mechanism: *"If we see the mob that died and at
+  the same time, we end up seeing the faction, then it's not so bad."* Every
+  line of a kill shares one timestamp SECOND, so the agent stamps the slain mob
+  onto the faction hits from that second and the bot resolves the exact value
+  from `eqemu_npc_faction_entries`.
+  ⚠ **Order-independent**: a hit looks back at a kill already seen that second,
+  a kill reaches forward to patch hits already buffered. Which the client prints
+  first is unpinned, and guessing wrong loses attribution on every kill.
+  ⚠ Keyed to the SECOND, never a window; an existing attribution is never
+  overwritten; unattributable hits keep `mob` undefined and still record
+  direction + at-cap, which pin position on their own.
+  **Validated against Hitya's live log before any code**: `#Lord_Inquisitor_Seru`
+  = −2000 to Seru/Hand/Eye/Heart/Shoulders + 200 to four Katta factions (9
+  entries, 9 lines); `A_Greater_Spire_Spirit` = +5 to six Seru-bloc factions,
+  −5 The Recuso, −50 Spire Spirits (8 entries, 8 lines).
+  ⚠ Faction NAMES come from `eqemu_faction_list_full`, not `eqemu_faction_list`
+  — the short table has NULL names for these ids and a null name drops the value.
+  ⚠ The catalog reads use `selectAllPaged` with a narrow `select`. PostgREST
+  silently caps at 1000 rows, so the first cut's `limit=20000` would have built
+  a quietly incomplete map — caught by the over-cap ratchet test, which is
+  exactly what it is for.
+  ➡️ **Still to do: the WEB page.** It renders hit counts with +/- signs. Now
+  that totals populate, it should show points, mark unattributed hits honestly,
+  and surface the repair path (what raises this faction, and by how much).
+
 - **Mob Info answers "will invis hide me from this?" (bot 3.1.115 · agent
   3.6.28 · STABLE in Mimic 2.6.5, 2026-09-02).** Hitya: *"mob info needs to also denote if a mob can see
   invis."* The four sight flags were already fetched AND already returned — the
